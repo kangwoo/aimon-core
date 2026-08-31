@@ -71,7 +71,7 @@ docker-java = "3.7.1"
 kubernetes-client = "24.0.0"
 
 # HTTP & Networking
-okhttp = "4.12.0"
+okhttp = "5.5.0"
 javalin = "6.3.0"
 
 # AI & LLM
