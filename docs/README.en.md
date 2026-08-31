@@ -1,6 +1,6 @@
 ---
 translated_from: docs/README.md
-source_commit: aaae6c3c
+source_commit: a56317a
 ---
 
 # AIMON Documentation
@@ -15,6 +15,8 @@ The entry point for the AIMON project's documentation. The docs are organised
 |------|----------|
 | **I want to skim what AIMON can do** | [`overview/features.en.md`](overview/features.en.md) ← **feature catalogue** |
 | I want to see what AIMON is and what abstractions it has | [`overview/architecture.en.md`](overview/architecture.en.md) |
+| **I want to know what is outside this framework and what is mandatory** | [`overview/context.en.md`](overview/context.en.md) |
+| I want to see what runs where once it is deployed on several nodes | [`overview/deployment.en.md`](overview/deployment.en.md) |
 | The lifetimes behind terms like Session / Live session / Turn confuse me | [`overview/glossary.en.md`](overview/glossary.en.md) |
 | I don't know where to put this value or when to close it | [`overview/scope-model.en.md`](overview/scope-model.en.md) |
 | I want to embed AIMON in my own application | [`getting-started/embedding-agent-in-application.en.md`](getting-started/embedding-agent-in-application.en.md) |
@@ -30,7 +32,7 @@ The entry point for the AIMON project's documentation. The docs are organised
 
 ```
 docs/
-├── overview/          The whole of AIMON — feature catalogue, architecture, terms, lifetime rules
+├── overview/          The whole of AIMON — feature catalogue, architecture, boundary, deployment, terms, lifetime rules
 ├── getting-started/   Attaching it for the first time — embedding, integration reference
 ├── features/          Per-feature guides (use, development and operations grouped by feature)
 ├── design/            Design rationale and implementation notes
@@ -46,6 +48,8 @@ docs/
 |------|------|
 | [`features.en.md`](overview/features.en.md) | **Feature catalogue** — what `aimon-core` can do, what the entry point is, and whether it is built into core or a separate module |
 | [`architecture.en.md`](overview/architecture.en.md) | Reference for the core abstractions (Agent, AgentExecutor, Tool, LlmClient, VirtualFileSystem, …) |
+| [`context.en.md`](overview/context.en.md) | **System boundary** — what is outside, which module attaches it, and what is left if you remove it |
+| [`deployment.en.md`](overview/deployment.en.md) | **Deployment view** — single-node vs multi-node, the node-local/shared boundary, deployment checklist |
 | [`glossary.en.md`](overview/glossary.en.md) | Glossary — the lifetime of each term, and `SessionRecord`:`LiveSession` = 1:0..N |
 | [`scope-model.en.md`](overview/scope-model.en.md) | Lifetime, ownership and teardown rules — read before creating a new type or calling `close()` |
 

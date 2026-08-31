@@ -4,6 +4,8 @@
 바꿔 끼울 수 있는지를 다룬다.
 
 - 무슨 기능이 있는지부터 알고 싶다면 → [`features.md`](features.md)
+- 경계 바깥에 무엇이 있는지 → [`context.md`](context.md)
+- 여러 노드로 띄우면 어떻게 되는지 → [`deployment.md`](deployment.md)
 - 용어의 뜻과 수명 → [`glossary.md`](glossary.md)
 - 값을 어디 두고 언제 닫는가 → [`scope-model.md`](scope-model.md)
 
@@ -11,13 +13,16 @@
 
 ## 1. 성격
 
-| 특성 | 내용 |
-|------|------|
-| **Java 17** | 불변 값 객체 + 빌더 패턴 (`record` 보다 `class` 를 선호한다) |
-| **Stateless tools** | 도구는 실행 간 상태를 갖지 않는다 — 설계상 thread-safe |
-| **Fail-safe** | `Tool.execute()` 는 예외를 던지지 않고 항상 `ToolResult` 를 반환한다 |
-| **Multi-instance ready** | 상태를 가진 컴포넌트는 저장소를 인터페이스로 분리해 스케일아웃 가능 |
-| **Pluggable backends** | LLM, 파일시스템, 셸, 세션 저장소, 스케줄러가 전부 추상화되어 있다 |
+| 특성 | 내용 | 대신 치르는 비용 |
+|------|------|-----------------|
+| **Java 17** | 불변 값 객체 + 빌더 패턴 (`record` 보다 `class` 를 선호한다) | 보일러플레이트를 손으로 쓴다. 예외는 `GenericTool` 의 입력 DTO 하나뿐 |
+| **Stateless tools** | 도구는 실행 간 상태를 갖지 않는다 — 설계상 thread-safe | 실행 간 캐시가 없다. 필요하면 도구 **바깥**의 협력자로 뺀다 (`WebToolCacheRepository`) |
+| **Fail-safe** | `Tool.execute()` 는 예외를 던지지 않고 항상 `ToolResult` 를 반환한다 | 실패가 제어 흐름이 아니라 값이 된다 — 호출자는 예외 타입으로 분기하지 못하고 `isError()` 를 본다 (원 예외는 `getException()` 에 남는다) |
+| **Multi-instance ready** | 상태를 가진 컴포넌트는 저장소를 인터페이스로 분리해 스케일아웃 가능 | 단일 노드에서도 상태 접근이 SPI 한 겹을 거친다. sticky 를 배제한 대가로 **같은 세션의 핸들이 노드마다 중복**될 수 있음을 받아들인다 ([`deployment.md` §4](deployment.md)) |
+| **Pluggable backends** | LLM, 파일시스템, 셸, 세션 저장소, 스케줄러가 전부 추상화되어 있다 | 코어 단독으로는 LLM 호출조차 못 한다 — 무엇을 붙일지 고르는 조립 비용이 항상 든다 ([`context.md` §3](context.md)) |
+
+이 표의 세 번째 열은 arc42 의 품질 목표(§1·§10)가 있어야 할 자리다. **무엇을 얻었는가만 적힌 표는
+설계 문서가 아니라 홍보문**이므로, 얻은 것 옆에 내준 것을 같이 적는다.
 
 ## 2. 패키지 구조
 
@@ -614,6 +619,8 @@ Orca는 도구를 도메인별 프로바이더로 조립한다. 외부 모듈은
 ## 관련 문서
 
 - [`features.md`](features.md) — 기능 카탈로그 (무엇을 할 수 있는가)
+- [`context.md`](context.md) — 시스템 경계와 외부 시스템 (무엇이 바깥에 있는가)
+- [`deployment.md`](deployment.md) — 멀티 노드 배포 뷰
 - [`glossary.md`](glossary.md) — 용어와 수명 사전
 - [`scope-model.md`](scope-model.md) — 수명·소유권·소멸 책임 규칙
 - [`../features/`](../features/) — 기능별 상세 가이드

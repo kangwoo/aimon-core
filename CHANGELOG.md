@@ -1715,6 +1715,24 @@ deployment can hold data under the old value.
 - `docs/overview/glossary.md` — lifetime table, session-vs-live-session comparison, the five distinct
   meanings of "session", the approval-reach table, the `turn` / `iteration` / `execution` rule, and
   the note that "conversation" is not a retired word.
+- **`docs/overview/context.md` and `docs/overview/deployment.md`** — the two views the docs did not
+  have, added after weighing C4, ADR and arc42 and adopting **none of them as a framework**. Each
+  already has a local equivalent that would be made worse by a second one: the `design/<domain>/`
+  documents are ADRs in content but deliberately *living* rather than append-only, and
+  `docs/README.md`'s placement table is already the single authority arc42's twelve sections would
+  compete with. What the comparison did surface was two empty slots — arc42 §3 (context and scope,
+  which is also C4 L1) and §7 (deployment view) — so those were filled directly. `context.md` states
+  that the boundary is the **host application** rather than the framework, tables every external
+  system with a *without it* column (only the LLM provider is mandatory; leaving the sandbox module
+  out removes isolation rather than weakening it), and records why there is no container-level
+  diagram: the core is not a deployment unit, and the component level is already enforced by ArchUnit
+  rather than drawn. `deployment.md` draws the multi-node topology, the node-local/shared boundary,
+  the path one turn takes through a non-holder node, and a ten-row cluster checklist. Diagrams are
+  mermaid, which is what `mkdocs.yml` now registers as a `superfences` custom fence — Korean labels
+  break ASCII box alignment (Hangul is two columns wide), and GitHub renders the same fences, so one
+  source works in both places. `architecture.md` §1 gains a third column, *what it costs instead*:
+  a table listing only what was gained is marketing copy, and that column is where arc42's quality
+  goals belong. English translations ship in the same commit.
 - `docs/getting-started/embedding-agent-in-application.md` now leads with the starter (hand-wiring is
   Appendix A) and covers the property tree, the four scopes, streaming, budgets, multi-agent and
   per-tenant runtimes, multi-instance deployment, two-phase shutdown, health and metrics; a
