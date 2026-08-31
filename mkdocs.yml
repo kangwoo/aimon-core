@@ -104,7 +104,22 @@ markdown_extensions:
   - pymdownx.keys
   - pymdownx.mark
   - pymdownx.smartsymbols
-  - pymdownx.superfences
+  # `custom_fences` is what turns a ```mermaid block into a rendered diagram --
+  # Material ships the mermaid.js integration, but only activates it when the
+  # fence is registered here. Registering it also keeps GitHub and the site in
+  # agreement: GitHub renders ```mermaid natively, so one source renders in both
+  # places. ASCII diagrams stay valid where they already are; mermaid is for new
+  # ones, where a Korean label would otherwise break box alignment (Hangul is
+  # two columns wide -- see docs/project/translation-glossary.md).
+  #
+  # Material lazy-loads mermaid from https://unpkg.com/mermaid@11 at view time
+  # rather than bundling it, so diagrams need the reader's browser to reach that
+  # CDN. GitHub renders the same fences server-side, which is the fallback.
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.tabbed:
       alternate_style: true
   - pymdownx.tasklist:

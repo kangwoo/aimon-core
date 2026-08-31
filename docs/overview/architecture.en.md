@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/architecture.md
-source_commit: d57e3e45
+source_commit: a56317a
 ---
 
 # Architecture
@@ -9,6 +9,8 @@ The **reference for `aimon-core`'s core abstractions**. It covers what each inte
 contracts, where it lives, and what you can swap in for it.
 
 - To find out what features exist first → [`features.en.md`](features.en.md)
+- What sits outside the boundary → [`context.en.md`](context.en.md)
+- What happens once you run several nodes → [`deployment.en.md`](deployment.en.md)
 - The meaning and lifetime of the terms → [`glossary.en.md`](glossary.en.md)
 - Where to put a value and when to close it → [`scope-model.en.md`](scope-model.en.md)
 
@@ -16,13 +18,17 @@ contracts, where it lives, and what you can swap in for it.
 
 ## 1. Character
 
-| Property | Detail |
-|------|------|
-| **Java 17** | Immutable value objects plus the builder pattern (`class` is preferred over `record`) |
-| **Stateless tools** | A tool holds no state between executions — thread-safe by design |
-| **Fail-safe** | `Tool.execute()` never throws; it always returns a `ToolResult` |
-| **Multi-instance ready** | Stateful components separate their storage behind an interface, so they scale out |
-| **Pluggable backends** | The LLM, filesystem, shell, session store and scheduler are all abstracted |
+| Property | Detail | What it costs instead |
+|------|------|-----------------|
+| **Java 17** | Immutable value objects plus the builder pattern (`class` is preferred over `record`) | The boilerplate is written by hand. The one exception is the input DTO of a `GenericTool` |
+| **Stateless tools** | A tool holds no state between executions — thread-safe by design | There is no cache between executions. When one is needed it moves to a collaborator **outside** the tool (`WebToolCacheRepository`) |
+| **Fail-safe** | `Tool.execute()` never throws; it always returns a `ToolResult` | Failure becomes a value rather than control flow — the caller cannot branch on an exception type and reads `isError()` instead (the original exception stays in `getException()`) |
+| **Multi-instance ready** | Stateful components separate their storage behind an interface, so they scale out | Even on a single node every state access passes through a layer of SPI. The price of ruling out sticky routing is accepting that **handles for the same session may be duplicated across nodes** ([`deployment.en.md` §4](deployment.en.md)) |
+| **Pluggable backends** | The LLM, filesystem, shell, session store and scheduler are all abstracted | The core alone cannot even call an LLM — the assembly cost of choosing what to attach is always paid ([`context.en.md` §3](context.en.md)) |
+
+The third column of this table is where arc42's quality goals (§1 · §10) belong. **A table
+listing only what was gained is marketing copy, not a design document**, so what was given up
+is written next to what was won.
 
 ## 2. Package layout
 
@@ -642,6 +648,8 @@ For the design principles themselves see the [SOLID principles document](../proj
 ## Related documents
 
 - [`features.en.md`](features.en.md) — the feature catalogue (what it can do)
+- [`context.en.md`](context.en.md) — the system boundary and the external systems (what is outside)
+- [`deployment.en.md`](deployment.en.md) — the multi-node deployment view
 - [`glossary.en.md`](glossary.en.md) — the dictionary of terms and lifetimes
 - [`scope-model.en.md`](scope-model.en.md) — the lifetime, ownership and teardown rules
 - [`../features/`](../features/) — the per-feature guides

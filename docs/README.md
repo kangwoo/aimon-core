@@ -9,6 +9,8 @@ AIMON 프로젝트 문서의 시작점. 문서는 **기능 축**으로 정리되
 |------|----------|
 | **AIMON이 무슨 기능을 갖고 있는지 훑고 싶다** | [`overview/features.md`](overview/features.md) ← **기능 카탈로그** |
 | AIMON이 무엇이고 어떤 추상화를 가지는지 보고 싶다 | [`overview/architecture.md`](overview/architecture.md) |
+| **무엇이 이 프레임워크 바깥에 있고 무엇이 필수인지** 알고 싶다 | [`overview/context.md`](overview/context.md) |
+| 여러 노드로 띄우면 무엇이 어디에 뜨는지 보고 싶다 | [`overview/deployment.md`](overview/deployment.md) |
 | Session / Live session / Turn 같은 용어의 수명이 헷갈린다 | [`overview/glossary.md`](overview/glossary.md) |
 | 이 값을 어디 두고 언제 닫아야 하는지 모르겠다 | [`overview/scope-model.md`](overview/scope-model.md) |
 | 내 애플리케이션에 AIMON을 임베딩하고 싶다 | [`getting-started/embedding-agent-in-application.md`](getting-started/embedding-agent-in-application.md) |
@@ -24,7 +26,7 @@ AIMON 프로젝트 문서의 시작점. 문서는 **기능 축**으로 정리되
 
 ```
 docs/
-├── overview/          AIMON 전체 조망 — 기능 카탈로그, 아키텍처, 용어, 수명 규칙
+├── overview/          AIMON 전체 조망 — 기능 카탈로그, 아키텍처, 경계, 배포, 용어, 수명 규칙
 ├── getting-started/   처음 붙일 때 — 임베딩, 통합 레퍼런스
 ├── features/          기능별 상세 가이드 (사용·개발·운영을 기능 단위로 묶음)
 ├── design/            설계 근거와 구현 노트
@@ -40,6 +42,8 @@ docs/
 |------|------|
 | [`features.md`](overview/features.md) | **기능 카탈로그** — `aimon-core`가 무엇을 할 수 있는지, 진입점은 무엇이고 코어 내장인지 별도 모듈인지 |
 | [`architecture.md`](overview/architecture.md) | 핵심 추상화(Agent, AgentExecutor, Tool, LlmClient, VirtualFileSystem, …) 레퍼런스 |
+| [`context.md`](overview/context.md) | **시스템 경계** — 무엇이 바깥에 있고, 어느 모듈이 붙이고, 빼면 무엇이 남는가 |
+| [`deployment.md`](overview/deployment.md) | **배포 뷰** — 단일 노드 vs 멀티 노드, 노드 로컬과 공유의 경계, 배포 체크리스트 |
 | [`glossary.md`](overview/glossary.md) | 용어집 — 각 용어의 수명과 `SessionRecord`:`LiveSession` = 1:0..N |
 | [`scope-model.md`](overview/scope-model.md) | 수명·소유권·소멸 책임 규칙 — 새 타입을 만들거나 `close()`를 부르기 전에 본다 |
 
