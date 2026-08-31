@@ -8,7 +8,7 @@
 
 `LiveSession` 은 바로 그 차이를 메우는 컴포넌트입니다.
 
-> 📌 옛 이름을 본 적이 있다면: 이 타입은 예전에 `AgentSession` 이었고 대화 식별자는 `ConversationId` 였습니다. 지금은 `LiveSession` 과 `SessionId` 이며, 맨 단어 `AgentSession` 은 타입 이름으로 **금지**되어 ArchUnit 이 빌드에서 막습니다. 옛 이름 ↔ 새 이름 표는 [`CHANGELOG.md`](../../../CHANGELOG.md) 에 있습니다.
+> 📌 옛 이름을 본 적이 있다면: 이 타입은 예전에 `AgentSession` 이었고 대화 식별자는 `ConversationId` 였습니다. 지금은 `LiveSession` 과 `SessionId` 이며, 맨 단어 `AgentSession` 은 타입 이름으로 **금지**되어 ArchUnit 이 빌드에서 막습니다. 옛 이름 ↔ 새 이름 표는 [`rename-maps.md`](../../migration/rename-maps.md) 에 있습니다.
 
 ## 목차
 

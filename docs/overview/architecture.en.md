@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/architecture.md
-source_commit: d57e3e45
+source_commit: a56317a
 ---
 
 # Architecture
@@ -636,6 +636,39 @@ budget is per **execution unit** rather than per session becomes visible.
 | **Repository** | `SessionRecordStore`, `SkillRepository`, `SubagentRepository`, `RunStore` | abstracting data access |
 
 For the design principles themselves see the [SOLID principles document](../project/solid-principles.md).
+
+---
+
+## 9. Rules the build enforces
+
+A good number of this repository's architecture rules exist as **tests** rather than as prose.
+Breaking one breaks the build, so the table below is the list of what is actually held to. That is
+also why they are not redrawn as a diagram or restated in prose — a diagram is free to drift from
+the code and these tests are not.
+
+| Rule (test) | What it enforces |
+|---|---|
+| `ArchitectureTest` | Core architecture rules — `*.impl` encapsulation and the scope invariants |
+| `ArchitectureRulesTest` | `aimon-core` depends on no sibling `aimon-*` module |
+| `PackageDependencyArchitectureTest` | Layer dependency direction, the isolation of `at.aimon.core.config.hook`, and a **cycle baseline** between top-level packages — a new pair outside the list fails, and so does a listed pair that is no longer cyclic |
+| `BuiltInToolSchemaArchitectureTest` | Every tool in `at.aimon.core.tools` declares `additionalProperties: false` at top level |
+| `ToolExecutionGateArchitectureTest` | `Tool#execute` is reachable only through the schema-validation gate |
+| `MemoryArchitectureTest` | Multi-tenant isolation in `at.aimon.core.memory` |
+| `TurnVocabularyArchitectureTest` | `Turn` stays out of identifiers in five package trees. It cannot cover `agent.impl.orca`, where turns and iterations are both real |
+| `YamlParserInstanceArchitectureTest` | No `Yaml` field anywhere in main sources (one per parse call). Reflection over field declarations rather than a source grep, so it also catches one reached through a wrapper |
+| `PublishedModuleApiScopeTest` | Only a facade declares a sibling module on `api`; every other published module uses `implementation` |
+| `PublishedModuleLoggingBindingTest` | A published library logs through the SLF4J API and does not choose the binding for its consumers |
+| `ReleaseGateMatchesCiGateTest` | `scripts/release.sh` runs the **same** Gradle task the CI workflow does |
+| `ExternalSchedulerWiringTest` | Performs the external-scheduler wiring from a different package, so `executeTask`'s visibility cannot quietly narrow |
+| `SessionNamingArchitectureTest` | The bare names `Session` and `AgentSession` cannot be used as type names (`aimon-session-routing`) |
+| `SessionRecordSoleWriterArchitectureTest` | No production code outside `agent.session.store` depends on the mutable `SessionRecord` (`aimon-session-routing`) |
+| `AimonDocumentedPropertiesTest` | Every `@ConfigurationProperties` key the starter binds appears in the embedding guide, and every key documented there is bindable (`aimon-spring-boot-starter`) |
+
+IMPORTANT: the last three live **outside** `aimon-core`. Looking only at the
+`at.aimon.core.architecture` package will miss them — a rule lives in the module whose code it holds.
+
+Several of these exist because they caught something, and what they caught is recorded in
+[`CHANGELOG.md`](../../CHANGELOG.md).
 
 ---
 

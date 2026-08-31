@@ -89,6 +89,15 @@ jobs:
               "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$RAW_TAG" > release-notes.md
           fi
 
+          # The reason the fallback above is an absolute URL applies to the extracted body too: a
+          # relative link resolves against the release page and 404s. This is not hypothetical --
+          # two of the three released sections carry one already, and the unreleased block carries
+          # ten. The changelog keeps writing them relative on purpose, because that is what renders
+          # on GitHub and what check-doc-links.py can verify, so the rewrite happens here, at the one
+          # point where the text leaves the repository.
+          python3 scripts/absolutize-release-links.py release-notes.md \
+            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" "$RAW_TAG"
+
           cat release-notes.md
 
       - name: Create release

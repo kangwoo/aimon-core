@@ -171,7 +171,7 @@ web `LiveSessionOpener`)에서 1회 수행하고, 종료는 앱 shutdown 또는 
 
 이름의 유래: 이 타입은 `AgentExecutionContext` 였고 `AgentRuntime` 으로 개명되었다 — "context" 가 실행마다 새로
 생기는 값처럼 읽혔지만 실제로는 agent 당 하나 살아 있는 장수명 런타임이기 때문이다. 옛 이름으로 검색하면
-`CHANGELOG.md` 의 매핑 표를 볼 것.
+@docs/migration/rename-maps.md 의 매핑 표를 볼 것.
 
 ## Tool Development
 

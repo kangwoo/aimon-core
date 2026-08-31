@@ -14,7 +14,7 @@
 이 문서가 설계한 타입은 당시 `AgentExecutionContext` 라는 이름이었고 지금은 **`AgentRuntime`** 이다.
 개명의 이유가 곧 이 문서의 결론이다 — "context" 는 실행마다 새로 생기는 값처럼 읽히지만, 실제로는
 agent 당 하나 살아 있는 장수명 런타임이다. 옛 이름의 매핑표는
-[`CHANGELOG.md`](../../../CHANGELOG.md) 에 있다.
+[`rename-maps.md`](../../migration/rename-maps.md) 에 있다.
 
 ---
 

@@ -1,6 +1,6 @@
 ---
 translated_from: docs/README.md
-source_commit: aaae6c3c
+source_commit: a56317a
 ---
 
 # AIMON Documentation
@@ -36,7 +36,7 @@ docs/
 ├── design/            Design rationale and implementation notes
 ├── backlog/           Open items left behind by finished work — canonical open/closed
 ├── references/        External standards and pattern specifications
-├── migration/         Version upgrade procedures
+├── migration/         Version upgrade procedures, rename and frozen-name lookups
 └── project/           Running the project — direction, compatibility promises, coding principles, releases
 ```
 
@@ -140,6 +140,14 @@ External standards or pattern specifications that AIMON references or extends.
 | Document | Target version |
 |------|----------|
 | [`custom-command-to-skill.md`](migration/custom-command-to-skill.md) | 0.0.37 → 0.1.0 (`CustomCommand` removed) |
+| [`rename-maps.md`](migration/rename-maps.md) | Version-independent — the **old-name → new-name lookup**. It grows with every rename |
+| [`frozen-names.md`](migration/frozen-names.md) | Version-independent — the names **deliberately not renamed**. Changing one is a data migration |
+
+IMPORTANT: the last two are lookup tables rather than upgrade **procedures**. They used to sit inside
+`[Unreleased]` in `CHANGELOG.md`, where the first release to ship would have buried them under a
+version heading and turned all twelve files citing them into "go read the 0.2.0 section". A change
+record is written once and never revisited; these tables are consulted indefinitely and keep growing
+— the same criterion that separates `design/` from `plan/`.
 
 ### [`project/`](project/) — running the project
 
@@ -192,7 +200,7 @@ reads it**.
 | **Open items left behind by finished work** | `backlog/` — the canonical open/closed |
 | The progress and next steps of work spanning several PRs | `plan/` |
 | A citation of an external specification or pattern | `references/` |
-| A version upgrade procedure | `migration/` |
+| A version upgrade procedure, or a rename / frozen-name lookup | `migration/` |
 | Running the project itself (principles, releases, quality) | `project/` |
 
 IMPORTANT: Do not split the "for developers" and "for operators" documents of one feature into

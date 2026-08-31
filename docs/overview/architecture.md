@@ -611,6 +611,38 @@ Orca는 도구를 도메인별 프로바이더로 조립한다. 외부 모듈은
 
 ---
 
+## 9. 빌드가 강제하는 규칙
+
+이 저장소의 아키텍처 규칙 상당수는 문서가 아니라 **테스트**로 존재한다. 어기면 빌드가 깨지므로,
+아래 표가 곧 "무엇이 실제로 지켜지고 있는가"의 목록이다. 그림이나 산문으로 다시 그리지 않는 이유가
+이것이다 — 그림은 코드와 어긋날 자유가 있고 이 테스트들은 없다.
+
+| 규칙 (테스트) | 무엇을 강제하나 |
+|---|---|
+| `ArchitectureTest` | 코어 아키텍처 규칙 — `*.impl` 캡슐화와 스코프 불변식 |
+| `ArchitectureRulesTest` | `aimon-core` 는 형제 `aimon-*` 모듈에 의존하지 않는다 |
+| `PackageDependencyArchitectureTest` | 계층 의존 방향, `at.aimon.core.config.hook` 격리, 그리고 최상위 패키지 간 **사이클 베이스라인** — 목록 밖의 새 사이클도, 더 이상 사이클이 아닌 항목도 실패시킨다 |
+| `BuiltInToolSchemaArchitectureTest` | `at.aimon.core.tools` 의 모든 도구가 최상위에 `additionalProperties: false` 를 선언한다 |
+| `ToolExecutionGateArchitectureTest` | `Tool#execute` 는 스키마 검증 게이트를 통해서만 닿는다 |
+| `MemoryArchitectureTest` | `at.aimon.core.memory` 의 멀티테넌트 격리 |
+| `TurnVocabularyArchitectureTest` | `Turn` 이 다섯 패키지 트리의 식별자에 나타나지 않는다. `agent.impl.orca` 는 턴과 iteration 이 둘 다 실재하므로 덮지 못한다 |
+| `YamlParserInstanceArchitectureTest` | main 소스 어디에도 `Yaml` 필드가 없다 (파스마다 새로 만든다). 소스 grep 이 아니라 필드 선언 리플렉션이라 래퍼를 거친 것도 잡는다 |
+| `PublishedModuleApiScopeTest` | 형제 모듈을 `api` 로 선언하는 것은 파사드뿐, 나머지 published 모듈은 `implementation` |
+| `PublishedModuleLoggingBindingTest` | published 라이브러리는 SLF4J API 로만 로깅하고 바인딩을 소비자 대신 고르지 않는다 |
+| `ReleaseGateMatchesCiGateTest` | `scripts/release.sh` 가 CI 워크플로와 **같은** Gradle 태스크를 돌린다 |
+| `ExternalSchedulerWiringTest` | 외부 스케줄러 결선을 다른 패키지에서 수행해 `executeTask` 의 가시성이 조용히 좁아지지 못하게 한다 |
+| `SessionNamingArchitectureTest` | 맨 `Session` · `AgentSession` 을 타입 이름으로 쓸 수 없다 (`aimon-session-routing`) |
+| `SessionRecordSoleWriterArchitectureTest` | 가변 `SessionRecord` 에 의존하는 production 코드는 `agent.session.store` 밖에 없다 (`aimon-session-routing`) |
+| `AimonDocumentedPropertiesTest` | 스타터가 바인딩하는 모든 `@ConfigurationProperties` 키가 임베딩 가이드에 적혀 있고, 거기 적힌 키는 전부 바인딩된다 (`aimon-spring-boot-starter`) |
+
+IMPORTANT: 마지막 셋은 `aimon-core` **밖**에 있다. 규칙을 찾을 때 `at.aimon.core.architecture`
+패키지만 보면 놓친다 — 규칙은 그것이 지키는 코드가 있는 모듈에 산다.
+
+이 목록 중 여럿은 실제로 무언가를 잡아서 생겼고, 무엇을 잡았는지는
+[`CHANGELOG.md`](../../CHANGELOG.md) 에 남아 있다.
+
+---
+
 ## 관련 문서
 
 - [`features.md`](features.md) — 기능 카탈로그 (무엇을 할 수 있는가)

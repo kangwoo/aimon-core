@@ -261,9 +261,9 @@ IMPORTANT: **"이름에 들어간 스코프 명사 = 그 타입의 수명" 은 �
 빠졌고, LLM 메시지 교환을 가리키는 자리에는 그대로 남아 있다 (`getConversationHistory()`,
 "Conversation compacted"). 이 구분이 §4 의 마지막 금지 항목이다.
 
-옛 이름 ↔ 새 이름 매핑표는 [`../../CHANGELOG.md`](../../CHANGELOG.md) 의 `[Unreleased]` 항목에 있다.
+옛 이름 ↔ 새 이름 매핑표는 [`../migration/rename-maps.md`](../migration/rename-maps.md) 에 있다.
 두 리팩터 모두에서 **wire format / DDL / 채널명 / 키 prefix / 영속 필드는 하나도 바뀌지 않았다** —
-CHANGELOG 의 "Not changed (deliberately frozen)" 목록이 그 경계다. 그래서 Java 식별자는 `Session*`
+[`../migration/frozen-names.md`](../migration/frozen-names.md) 이 그 경계다. 그래서 Java 식별자는 `Session*`
 인데 저장된 이름은 `conversation_*` 인 자리가 남아 있다 (§6).
 
 ---

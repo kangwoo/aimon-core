@@ -56,7 +56,8 @@ Most changes need no ceremony: open a PR, get a review, merge. Three kinds do.
 **Breaking changes.** Renaming or removing a public type, changing a method signature on an SPI, or
 changing anything in the frozen surfaces listed in
 [`api-stability.md`](docs/project/api-stability.md) §4 needs the
-old ↔ new mapping written into [`CHANGELOG.md`](CHANGELOG.md) in the same PR. This is not optional
+old ↔ new mapping written into [`docs/migration/rename-maps.md`](docs/migration/rename-maps.md) in
+the same PR. This is not optional
 bookkeeping — the last two breaking changes were renames, and the mapping tables are how anyone
 upgrading finds their way.
 

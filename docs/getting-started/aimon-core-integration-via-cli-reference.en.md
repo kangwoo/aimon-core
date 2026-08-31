@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/aimon-core-integration-via-cli-reference.md
-source_commit: 65ef0f88
+source_commit: a56317a
 ---
 
 # aimon-core integration guide — following aimon-cli as the reference
@@ -309,7 +309,7 @@ and the transcript side stops seeing the totals the live session wrote back.
 > (`conversation_*`), the wire keys (`"conversationId"`, `"invokingConversationId"`) and the Redis key
 > prefixes are **deliberately frozen** — the rename happened in Java identifiers only, so that already
 > deployed data would not be forced through a migration. The boundary is the "Not changed (deliberately
-> frozen)" list in `CHANGELOG.md`. If your own store implementation uses those names, **leaving them alone
+> frozen)" list, [`../migration/frozen-names.md`](../migration/frozen-names.md). If your own store implementation uses those names, **leaving them alone
 > is the correct move.**
 
 ### 4.4 Skill policy and the pending-turn registry (line 738-767)
