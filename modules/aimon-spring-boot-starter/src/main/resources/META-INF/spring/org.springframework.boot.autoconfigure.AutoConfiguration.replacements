@@ -1,0 +1,13 @@
+# Maps retired autoconfiguration class names to their current ones.
+#
+# An application that turns a slice off writes the class name into `spring.autoconfigure.exclude`. Renaming
+# the class then silently reactivates the slice: the exclusion still parses, it just no longer matches
+# anything, and the only symptom is a bean the application deliberately removed coming back. An entry here
+# keeps the old name working.
+#
+# Intentionally empty. One rename has happened — AimonSessionStoreAutoConfiguration became
+# AimonSessionAutoConfiguration when the cluster beans joined it — but it happened before this module appeared
+# in any tag, so the old name was never a name an application could have written down. An entry for it would be
+# a permanent alias to something that never shipped, which costs more than it protects: every future reader has
+# to work out whether some deployment still depends on it. Add a line the first time a *published* name changes:
+#   at.aimon.spring.boot.autoconfigure.OldName=at.aimon.spring.boot.autoconfigure.NewName

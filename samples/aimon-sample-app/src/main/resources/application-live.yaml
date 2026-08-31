@@ -1,0 +1,76 @@
+# The `live` profile: aimon-core exercised in the shape the Spring Boot starter assembles it in.
+#
+# Every setting here overrides a *server* default that the CLI does not have. That is the point — the CLI turns
+# the shell on, approves skills interactively and runs a scheduler, so those paths are covered by its own tests.
+# What is not covered is the same code reached through the starter, with a Spring context around it, from an HTTP
+# request thread. This profile is the configuration that makes them reachable.
+#
+#   ./gradlew :aimon-sample-app:bootRun --args='--spring.profiles.active=live'
+#
+# It is a manual verification profile and nothing in the build depends on it. The packaging tests run under the
+# default profile and assert a scripted answer verbatim, so nothing here may change what they see.
+
+server:
+  # A fixed port, unlike the default profile's 0. The packaging tests are told which port their child JVM got;
+  # a human running curl is not.
+  port: 18080
+
+aimon:
+  # Same as the default profile: the application supplies its own LlmClient (ScenarioLlmClient under this
+  # profile), so the starter must not go looking for a credential.
+  llm:
+    provider: none
+
+  # A third agent, on top of the `sample` and `noindex` the base config declares — Spring merges map properties
+  # across profiles rather than replacing them. Declared only here on purpose: its bundle sits in this module's
+  # resources under the default profile too, but an agent nobody configures is never loaded, so the packaging
+  # tier keeps seeing exactly the two agents it asserts on.
+  agents:
+    approval:
+      bundle: approval
+
+  # The server default is a finite 20 iterations / 120s, which is already right for this. It is restated rather
+  # than inherited silently because a scenario that hits the ceiling should read as a budget decision made here,
+  # not as a framework limit nobody chose.
+  budget:
+    max-iterations: 12
+    max-wall-clock: 120s
+
+  tools:
+    # Off by default on a server, and deliberately so: a deployment should have to say that it wants a shell.
+    # Saying it is the tool-execution axis.
+    bash:
+      enabled: true
+
+  skill:
+    approval:
+      # The server default is `deny`, which is safe and also proves least — every invocation fails the same way
+      # whether the chain works or not. `allow-list` makes the two outcomes distinguishable, so a pair of turns
+      # shows the chain deciding rather than refusing.
+      #
+      # The pair is `guarded-open` / `guarded-shut` in the `approval` bundle, not the two `sample` skills. Those
+      # two never reach this setting: RuleBasedSkillInvocationPolicy allows any INLINE skill with no per-skill
+      # hooks before `defaultDecision` is consulted, and both of them are exactly that. Naming them here would
+      # produce a list that looks enforced and is not.
+      mode: allow-list
+      allow:
+        - guarded-open
+
+  scheduling:
+    # `none` by default. Quartz rather than in-memory because that is the backend a real deployment clusters on,
+    # and because it is the one whose classes have to be added to the runtime classpath by hand — the starter
+    # holds them compileOnly. See this module's build.gradle.kts.
+    backend: quartz
+    auto-startup: true
+    quartz:
+      # Default is true — borrow the application's own Quartz Scheduler. This application has none, and the
+      # three settings below only mean something for a scheduler AIMON builds itself; the starter refuses the
+      # combination at startup rather than binding them to nothing, which is how this line came to be written.
+      use-application-scheduler: false
+      instance-name: aimon-sample
+      thread-count: 2
+      daemon-threads: true
+
+logging:
+  level:
+    at.aimon: DEBUG

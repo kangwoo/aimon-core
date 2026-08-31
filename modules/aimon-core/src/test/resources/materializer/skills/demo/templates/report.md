@@ -1,0 +1,4 @@
+# Report Template
+
+- summary:
+- details:

@@ -1,0 +1,5 @@
+# Bundled skills contributed to the `sample` agent by aimon-sample-skills-beta.
+#
+# Same resource path as the alpha module's index, on purpose. If this file's declarations are missing from the
+# running agent, the class path was read first-root-only — the P0-6 regression this sample exists to catch.
+beta-notes

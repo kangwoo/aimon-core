@@ -1,0 +1,118 @@
+# Dependency updates.
+#
+# Three ecosystems, all anchored at the repository root: Gradle resolves the version catalog at
+# `gradle/libs.versions.toml` plus every module's build file from there, GitHub Actions reads
+# `.github/workflows/`, and pip reads `docs-requirements.txt` — the pins the docs site builds
+# with. Updates are grouped so a quiet week produces a handful of reviewable PRs
+# instead of thirty — on a build whose single gate is `./gradlew checkAll`, one grouped PR that runs
+# the gate once is worth more than ten that each run it separately.
+#
+# Every Gradle coordinate below appears in `gradle/libs.versions.toml`. Keep it that way: a pattern that
+# matches nothing is invisible, and the group it belongs to silently stops grouping.
+version: 2
+
+updates:
+  - package-ecosystem: gradle
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Seoul
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    commit-message:
+      prefix: build
+      include: scope
+    groups:
+      # Test-only dependencies are the safest to take in bulk: a break shows up as a red build,
+      # never as a runtime surprise for a downstream user.
+      test-dependencies:
+        patterns:
+          - "org.junit.jupiter:*"
+          - "org.junit.platform:*"
+          - "org.assertj:*"
+          - "org.mockito:*"
+          - "org.testcontainers:*"
+          - "com.tngtech.archunit:*"
+        update-types:
+          - minor
+          - patch
+      # Storage and search backends. Grouped because their versions tend to land as a set, and
+      # because each one is covered by the same Testcontainers suite.
+      storage-clients:
+        patterns:
+          - "org.mongodb:*"
+          - "software.amazon.awssdk:*"
+          - "io.lettuce:*"
+          - "org.postgresql:*"
+          - "org.opensearch.client:*"
+          - "com.zaxxer:HikariCP"
+          - "com.h2database:*"
+        update-types:
+          - minor
+          - patch
+      # Everything else, patch level only. Minors and majors on production dependencies arrive as
+      # individual PRs so somebody reads the changelog before the merge — that matters most for the
+      # LLM SDKs (`com.openai:openai-java`, `com.anthropic:anthropic-java`), which move fast and
+      # carry wire-format changes.
+      production-patches:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "org.junit.jupiter:*"
+          - "org.junit.platform:*"
+          - "org.assertj:*"
+          - "org.mockito:*"
+          - "org.testcontainers:*"
+          - "com.tngtech.archunit:*"
+          - "org.mongodb:*"
+          - "software.amazon.awssdk:*"
+          - "io.lettuce:*"
+          - "org.postgresql:*"
+          - "org.opensearch.client:*"
+          - "com.zaxxer:HikariCP"
+          - "com.h2database:*"
+        update-types:
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Seoul
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - ci
+    commit-message:
+      prefix: ci
+      include: scope
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  # The MkDocs toolchain (`docs-requirements.txt`) is pinned exactly so the Pages build is
+  # reproducible — which also means a security fix in mkdocs-material or a transitive
+  # jinja2/markdown release never arrives unless something opens the PR. This is that something.
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Seoul
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+    commit-message:
+      prefix: docs
+      include: scope
+    groups:
+      docs-site:
+        patterns:
+          - "*"

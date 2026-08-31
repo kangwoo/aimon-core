@@ -1,0 +1,5 @@
+# Bundled skills contributed to the `sample` agent by aimon-sample-skills-alpha.
+#
+# The beta module ships a second file at this exact same resource path. Neither shadows the other:
+# ClasspathIndexReader enumerates every root through getResources() and merges the declarations.
+alpha-notes

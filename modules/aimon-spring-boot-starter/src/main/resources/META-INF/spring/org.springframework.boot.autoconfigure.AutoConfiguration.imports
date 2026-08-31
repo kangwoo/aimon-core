@@ -1,0 +1,8 @@
+at.aimon.spring.boot.autoconfigure.AimonAutoConfiguration
+at.aimon.spring.boot.autoconfigure.AimonFileSystemAutoConfiguration
+at.aimon.spring.boot.autoconfigure.AimonKnowledgeAutoConfiguration
+at.aimon.spring.boot.autoconfigure.AimonLlmAutoConfiguration
+at.aimon.spring.boot.autoconfigure.AimonMemoryAutoConfiguration
+at.aimon.spring.boot.autoconfigure.AimonObservabilityAutoConfiguration
+at.aimon.spring.boot.autoconfigure.AimonSchedulingAutoConfiguration
+at.aimon.spring.boot.autoconfigure.AimonSessionAutoConfiguration

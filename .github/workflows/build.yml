@@ -1,0 +1,158 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # No path filter, and none is wanted: the checker walks every *.md in the repo, so a
+  # link that breaks in a module README is caught by the same run as one in docs/.
+  docs-links:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check relative markdown links and anchors
+        run: python3 scripts/check-doc-links.py
+
+  # Reports translations that have fallen behind their canonical, and is
+  # deliberately not a gate -- the script exits 0 even when it finds some. A
+  # translation backlog that blocks edits to the canonical would make the
+  # canonical go stale instead, which is the worse failure of the two. The
+  # findings surface as PR annotations via --github.
+  translation-staleness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The check compares each translation's source_commit against the
+          # canonical's history, so the default shallow clone is not enough.
+          fetch-depth: 0
+
+      - name: Report stale translations
+        run: python3 scripts/check-translation-staleness.py --github
+
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+
+      - name: Format check + checkstyle + tests
+        run: ./gradlew --no-daemon checkAll
+
+      - name: JaCoCo coverage reports
+        if: always()
+        run: ./gradlew --no-daemon jacocoTestReport
+
+      # Only on a red run, and that is the whole point of the step. Actions storage is one
+      # account-wide quota, so a green run's reports -- which answer no question anyone asked --
+      # were what filled it, and a full quota does not fail quietly: the upload itself errors out
+      # and turns a build that passed every check red. That is how it surfaced here, with
+      # `checkAll` green and `Upload test reports` red.
+      #
+      # `test-results/*/binary` is left out deliberately. It is Gradle's own intermediate format,
+      # read by neither a person nor a reporter action, and it was 8.9 MB of the 21 MB.
+      - name: Upload test reports
+        if: failure()
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-reports
+          path: |
+            modules/*/build/reports/tests/
+            modules/*/build/test-results/*/*.xml
+          if-no-files-found: ignore
+          retention-days: 7
+
+      # XML only -- and unlike the reports above, this one still runs on green, because it is the
+      # artifact someone actually goes looking for. The per-class HTML is 45 MB raw (9.7 MB zipped)
+      # against 0.6 MB for the XML every coverage tool reads, and `./gradlew jacocoTestReport`
+      # regenerates the HTML locally in one command.
+      # `continue-on-error` because this artifact is a convenience, not a gate. Losing it should
+      # never be able to overturn the verdict of the checks above -- which is precisely what went
+      # wrong: a full storage quota failed the upload, the upload failed the job, and a build that
+      # had passed formatting, checkstyle and every test reported as broken. The same applies to
+      # the test reports above; there the job is already red, so it only keeps the cause honest.
+      - name: Upload JaCoCo coverage XML
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: jacoco-xml
+          path: modules/*/build/reports/jacoco/*/*.xml
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # Testcontainers-backed tests (@Tag("docker")), which `test` — and therefore `checkAll` and the `build`
+  # job above — excludes by design so the unit loop stays fast and needs no Docker daemon.
+  #
+  # A separate job rather than a step in `build` for two reasons. It runs in parallel, so the slow half does
+  # not push out the fast feedback everyone actually waits on; and when it fails, the failing check names the
+  # infrastructure tier rather than "build", which is the first thing a reader needs to know.
+  #
+  # This is not an optional extra. For aimon-filesystem-{gridfs,s3}, aimon-session-{redis,postgres,mongodb}
+  # and aimon-memory-{postgres,mongodb} these are the ONLY tests there are — every one of those modules is
+  # published to Maven Central, so leaving the tier ungated meant shipping seven artifacts whose sole
+  # verification had never run. `scripts/release.sh` gates on the same task for the same reason, and
+  # ReleaseGateMatchesCiGateTest holds the two lists together.
+  #
+  # The ubuntu runner ships a working Docker daemon, so Testcontainers needs no setup step of its own.
+  # `playwrightTest` (@Tag("playwright")) and `packagingTest` (@Tag("packaging")) are still opt-in: the first
+  # needs browser binaries installed, the second depends on `bootJar` having run. Neither is one job.
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+
+      - name: Docker/Testcontainers integration tests
+        run: ./gradlew --no-daemon integrationTest
+
+      # Red runs only, and never fatal. Actions storage is one account-wide quota, and this job's
+      # upload arrived after that quota was already full -- `integration-test-reports` has uploaded
+      # exactly zero times, while failing every build it was attached to. So: a green run's HTML
+      # report answers no question and is not worth the bytes; `test-results/*/binary` is Gradle's
+      # intermediate format that neither a person nor a reporter action reads; and losing a
+      # convenience artifact must not overturn what the tests actually found. The `build` job's
+      # two uploads above run on the same policy, for the same reasons.
+      - name: Upload integration test reports
+        if: failure()
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: integration-test-reports
+          path: |
+            modules/*/build/reports/tests/
+            modules/*/build/test-results/*/*.xml
+          if-no-files-found: ignore
+          retention-days: 7

@@ -1,0 +1,7 @@
+# Skills contributed to the `approval` agent, which exists only under the `live` profile.
+#
+# An index is required: a classpath directory is not listable through getResource once it lives inside a jar, so
+# a bundle without this file loads zero skills and says so. The `noindex` bundle in the beta module is the
+# deliberate demonstration of that; this one is not trying to demonstrate it.
+guarded-open
+guarded-shut

@@ -1,0 +1,67 @@
+# Aimon CLI Default Configuration
+
+# LLM Provider Configuration
+llm:
+  provider: "openai"
+  baseUrl: https://api.openai.com/v1
+  apiKey: "${OPENAI_KEY}"
+  model: "gpt-5.1"
+  timeout: 60
+
+# Agent Configuration
+agent:
+  name: "default"
+
+
+
+# MCP (Model Context Protocol) Server Configuration
+#mcp:
+#  servers:
+#    - name: "github"
+#      transportType: "STDIO"
+#      command: "npx"
+#      args: ["-y", "@modelcontextprotocol/server-github"]
+#      env:
+#        GITHUB_TOKEN: "${GITHUB_TOKEN}"
+#    - name: "custom-api"
+#      transportType: "STREAMABLE_HTTP"
+#      url: "http://localhost:8080/mcp"
+#      requestTimeout: 30
+
+# CLI Settings
+cli:
+#  prompt: "aimon> "
+  colorOutput: true
+  showIterations: true
+  showToolCalls: true  # Display tools calls with parameters
+  streaming: true      # PSTREAM-11: stream assistant text token-by-token (disable with --no-streaming)
+  enableWorkflow: false  # Opt-in: register the experimental multi-perspective `Workflow` tool
+  enableWorkflowJs: false  # Opt-in: register the GraalJS-scripted `WorkflowJs` tool (module aimon-workflow-graaljs)
+
+# Peer Memory (SK-MEM Stage 9, Honcho-analogue)
+# Uncomment and fill all three required fields to enable MemoryRecallTool and the
+# MemoryToolContextEnricher. Disabled by default — when this block is absent or
+# any required field is blank, no memory store is built and no memory tool is
+# registered.
+#memory:
+#  workspaceId: "default"                            # required
+#  peerId: "agent-default"                           # required (agent's own peer identity)
+#  peerName: "Aimon Agent"                           # optional (defaults to peerId)
+#  storagePath: ".aimon/memory/representations.jsonl"  # required (JSONL log; observations.jsonl is a sibling file)
+#  backend: "file"                                   # optional — file (default, durable) | in-memory (dev/test, lost on restart)
+#  reconcilerEnabled: false                          # optional — opt-in LLM-as-judge reconciler at session-close
+#  dreamer:                                          # optional — background consolidation (Honcho dreamer)
+#    enabled: false                                  # gate; default false
+#    cron: "*/30 * * * *"                            # five-field cron (default: every 30 minutes); not Quartz's six-field form
+#    scorer:                                         # optional — selects the SurprisalScorer implementation
+#      type: llm                                     # default: llm | embedding
+#      llm:                                          # used when type=llm (no extra credentials required)
+#        model: "gpt-4o-mini"                        # optional — overrides the global LLM model for the judge
+#      embedding:                                    # required when type=embedding (currently OpenAI-compatible only)
+#        apiKey: "${OPENAI_KEY}"                     # required for embedding scorer
+#        baseUrl: "https://api.openai.com/v1"       # optional (defaults to OpenAI)
+#        model: "text-embedding-3-small"            # optional
+#        dimensions: 1536                            # optional
+#    surprisalThreshold: 0.25                        # optional — pairs below threshold are merged
+#    walkSeedCount: 8                                # optional — most recent seeds per subject
+#    neighborTopK: 8                                 # optional — semanticSearch fan-out per seed

@@ -1,0 +1,117 @@
+site_name: AIMON Core
+site_description: IT 운영 자동화를 위한 ReAct 에이전트 프레임워크
+site_url: https://kangwoo.github.io/aimon-core/
+repo_url: https://github.com/kangwoo/aimon-core
+repo_name: kangwoo/aimon-core
+edit_uri: edit/main/docs/
+copyright: Copyright &copy; 2025 AIMON contributors &middot; Apache License 2.0
+
+docs_dir: docs
+
+# No `nav:`. The site navigation is generated from the directory tree, so the
+# curated index lives in exactly one place -- docs/README.md -- instead of being
+# maintained twice and drifting. See docs/README.md 의 "문서 배치 규칙".
+
+theme:
+  name: material
+  language: ko
+  icon:
+    repo: fontawesome/brands/github
+  features:
+    # navigation.instant is deliberately absent: mkdocs-static-i18n warns that it
+    # breaks the language switcher's contextual link, which would drop a reader
+    # on /en/ back to the site root instead of the page they were reading.
+    - navigation.tracking
+    - navigation.indexes
+    - navigation.top
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.action.edit
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: 다크 모드로 전환
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: 라이트 모드로 전환
+
+hooks:
+  - scripts/mkdocs_github_links.py
+
+plugins:
+  # `separator` is tuned, not decorative.
+  #
+  # Material's Korean locale sets the lunr pipeline to " ", so the built index
+  # runs with no stemmer, no stopword filter and -- the part that matters -- no
+  # *trimmer*. Punctuation therefore stays glued to tokens, while Material
+  # appends `*` to every query term, making each one a prefix query. A word is
+  # then only findable when it *starts* a token. With the stock separator
+  # `이터레이션` returns nothing, because it never appears alone in these docs --
+  # only as `Iteration(이터레이션)`. Splitting on brackets, quotes and commas
+  # fixes that (verified: 0 hits -> 5).
+  #
+  # `.` is deliberately NOT a separator, so dotted identifiers survive whole:
+  # `aimon.llm.provider` and `at.aimon.core.agent` stay searchable as one token.
+  - search:
+      lang: [ko, en]
+      separator: '[\s\-,:!=\[\]()"/]+'
+  - i18n:
+      docs_structure: suffix
+      # Korean sources carry no suffix, so Korean must be the default locale --
+      # the default locale is what builds at the site root. Making English the
+      # root is not a preference we gave up, it is a build error. See
+      # docs/plan/open-source-readiness.md §0.2.
+      languages:
+        - locale: ko
+          default: true
+          name: 한국어
+          build: true
+        - locale: en
+          name: English
+          build: true
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      # GitHub deletes '.' without leaving a hyphen; matching that keeps an
+      # anchor written for GitHub working on the site, and vice versa.
+      slugify: !!python/object/apply:pymdownx.slugs.slugify {kwds: {case: lower}}
+  - pymdownx.betterem
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/kangwoo/aimon-core

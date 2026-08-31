@@ -1,0 +1,226 @@
+[versions]
+# Language
+java = "17"
+
+# Frameworks
+# Spring Boot baseline the starter compiles against (spring-boot-starter-design.md D6): the 3.5 line is
+# the last of Boot 3 and is commercially supported to 2032-06, which is what matters to a library author.
+# The same ref pins spring-boot-starter-test, which every module gets from aimon.java-conventions,
+# and the Boot Gradle plugin in [plugins] — one ref, so a version bump is provably one edit. There was
+# a second pair of keys (spring-boot-plugin / dependency-management-plugin) holding the same two values
+# for the plugins alone; it was collapsed because nothing kept the two halves in step. If you ever need
+# the plugin to lead or trail the library BOM, split the ref back out deliberately rather than by drift.
+spring-boot = "3.5.16"
+spring-dependency-management = "1.1.7"
+
+# Libraries
+lombok = "1.18.46"
+mapstruct = "1.5.5.Final"
+
+# Database
+postgresql = "42.7.13"
+h2 = "2.4.240"
+hikari = "5.1.0"
+mongodb = "4.11.1"
+
+# Cloud & Storage
+aws-sdk = "2.54.6"
+
+# Testing
+# JUnit carries no version here on purpose. Every module gets spring-boot-starter-test
+# (aimon.java-conventions), which brings org.junit:junit-bom transitively, and the BOM wins over
+# whatever this catalog asks for. A number here would be a dead letter that reads like the truth:
+# the effective version is governed by the `spring-boot` key above.
+assertj = "3.27.7"
+mockito = "5.23.0"
+testcontainers = "1.21.4"
+archunit = "1.5.0"
+
+# Observability
+micrometer = "1.12.1"
+opentelemetry = "1.34.1"
+
+# Scheduling
+quartz = "2.5.2"
+
+# Caching
+caffeine = "3.1.8"
+
+# Redis
+lettuce = "6.5.1.RELEASE"
+
+# Utilities
+guava = "33.0.0-jre"
+commons-lang3 = "3.18.0"
+jackson = "2.16.1"
+snakeyaml = "2.2"
+cron-utils = "9.2.1"
+mustache = "0.9.14"
+picocli = "4.7.7"
+jline = "3.24.1"
+jansi = "2.4.3"
+
+# HTML Parsing
+jsoup = "1.18.3"
+
+# Browser Automation
+playwright = "1.58.0"
+
+# Container
+docker-java = "3.4.1"
+kubernetes-client = "24.0.0"
+
+# HTTP & Networking
+okhttp = "4.12.0"
+javalin = "6.3.0"
+
+# AI & LLM
+openai = "4.18.0"
+anthropic = "2.13.0"
+jtokkit = "1.1.0"
+
+# GraalJS (Phase 5 workflow frontend). JDK-17 line: 23.0.x is the last GraalVM-for-JDK-17
+# release train (23.1+ requires JDK 21). Upgrade seam: on a JDK-21 baseline, bump to 24.x and swap
+# graal-sdk -> org.graalvm.polyglot:polyglot, js -> org.graalvm.polyglot:js-community@pom.
+graaljs = "23.0.8"
+
+# Search
+opensearch = "2.20.0"
+opensearch-rest-client = "2.18.0"
+
+# Logging
+slf4j = "2.0.18"
+logback = "1.5.13"
+
+# Code quality tools
+checkstyle = "10.12.5"
+spotbugs = "6.0.7"
+jacoco = "0.8.11"
+spotless = "6.25.0"
+
+# Publishing
+maven-publish = "0.30.0"
+
+[libraries]
+# Spring Boot
+spring-boot-starter = { module = "org.springframework.boot:spring-boot-starter", version.ref = "spring-boot" }
+spring-boot-starter-web = { module = "org.springframework.boot:spring-boot-starter-web", version.ref = "spring-boot" }
+spring-boot-starter-data-jpa = { module = "org.springframework.boot:spring-boot-starter-data-jpa", version.ref = "spring-boot" }
+spring-boot-starter-actuator = { module = "org.springframework.boot:spring-boot-starter-actuator", version.ref = "spring-boot" }
+spring-boot-starter-validation = { module = "org.springframework.boot:spring-boot-starter-validation", version.ref = "spring-boot" }
+spring-boot-starter-test = { module = "org.springframework.boot:spring-boot-starter-test", version.ref = "spring-boot" }
+# The platform behind the starter above. Needed only where the testing bundle lands on a *main* source set
+# (aimon-filesystem-testkit): the starter — and with it the junit-bom that supplies JUnit's otherwise absent
+# version — is added by aimon.java-conventions to test configurations only. Declaring the platform there keeps
+# the version governed by the same `spring-boot` key rather than by a second number written down elsewhere.
+spring-boot-dependencies = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "spring-boot" }
+# Starter authoring: the autoconfigure jar plus the two annotation processors that generate
+# spring-configuration-metadata.json (IDE completion) and the AutoConfiguration condition index.
+spring-boot-autoconfigure = { module = "org.springframework.boot:spring-boot-autoconfigure", version.ref = "spring-boot" }
+spring-boot-configuration-processor = { module = "org.springframework.boot:spring-boot-configuration-processor", version.ref = "spring-boot" }
+spring-boot-autoconfigure-processor = { module = "org.springframework.boot:spring-boot-autoconfigure-processor", version.ref = "spring-boot" }
+
+# Database
+postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" }
+h2 = { module = "com.h2database:h2", version.ref = "h2" }
+hikari = { module = "com.zaxxer:HikariCP", version.ref = "hikari" }
+mongodb-driver = { module = "org.mongodb:mongodb-driver-sync", version.ref = "mongodb" }
+
+# Cloud & Storage
+aws-s3 = { module = "software.amazon.awssdk:s3", version.ref = "aws-sdk" }
+
+# Annotations
+jetbrains-annotations = { module = "org.jetbrains:annotations", version = "26.0.2" }
+
+# Code Generation
+lombok = { module = "org.projectlombok:lombok", version.ref = "lombok" }
+mapstruct = { module = "org.mapstruct:mapstruct", version.ref = "mapstruct" }
+mapstruct-processor = { module = "org.mapstruct:mapstruct-processor", version.ref = "mapstruct" }
+
+# Testing
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
+assertj-core = { module = "org.assertj:assertj-core", version.ref = "assertj" }
+mockito-core = { module = "org.mockito:mockito-core", version.ref = "mockito" }
+mockito-junit-jupiter = { module = "org.mockito:mockito-junit-jupiter", version.ref = "mockito" }
+testcontainers = { module = "org.testcontainers:testcontainers", version.ref = "testcontainers" }
+testcontainers-mongodb = { module = "org.testcontainers:mongodb", version.ref = "testcontainers" }
+testcontainers-postgresql = { module = "org.testcontainers:postgresql", version.ref = "testcontainers" }
+testcontainers-localstack = { module = "org.testcontainers:localstack", version.ref = "testcontainers" }
+testcontainers-junit-jupiter = { module = "org.testcontainers:junit-jupiter", version.ref = "testcontainers" }
+archunit-junit5 = { module = "com.tngtech.archunit:archunit-junit5", version.ref = "archunit" }
+
+# Observability
+micrometer-core = { module = "io.micrometer:micrometer-core", version.ref = "micrometer" }
+micrometer-registry-prometheus = { module = "io.micrometer:micrometer-registry-prometheus", version.ref = "micrometer" }
+
+# Utilities
+guava = { module = "com.google.guava:guava", version.ref = "guava" }
+commons-lang3 = { module = "org.apache.commons:commons-lang3", version.ref = "commons-lang3" }
+jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
+jackson-datatype-jsr310 = { module = "com.fasterxml.jackson.datatype:jackson-datatype-jsr310", version.ref = "jackson" }
+jackson-dataformat-yaml = { module = "com.fasterxml.jackson.dataformat:jackson-dataformat-yaml", version.ref = "jackson" }
+snakeyaml = { module = "org.yaml:snakeyaml", version.ref = "snakeyaml" }
+mustache-java = { module = "com.github.spullara.mustache.java:compiler", version.ref = "mustache" }
+cron-utils = { module = "com.cronutils:cron-utils", version.ref = "cron-utils" }
+picocli = { module = "info.picocli:picocli", version.ref = "picocli" }
+picocli-codegen = { module = "info.picocli:picocli-codegen", version.ref = "picocli" }
+jline = { module = "org.jline:jline", version.ref = "jline" }
+jansi = { module = "org.fusesource.jansi:jansi", version.ref = "jansi" }
+
+# Scheduling
+quartz = { module = "org.quartz-scheduler:quartz", version.ref = "quartz" }
+
+# Caching
+caffeine = { module = "com.github.ben-manes.caffeine:caffeine", version.ref = "caffeine" }
+
+# Redis
+lettuce-core = { module = "io.lettuce:lettuce-core", version.ref = "lettuce" }
+
+# HTTP & Networking
+okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
+okhttp-logging = { module = "com.squareup.okhttp3:logging-interceptor", version.ref = "okhttp" }
+okhttp-mockwebserver = { module = "com.squareup.okhttp3:mockwebserver", version.ref = "okhttp" }
+javalin = { module = "io.javalin:javalin", version.ref = "javalin" }
+
+# HTML Parsing
+jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
+
+# Browser Automation
+playwright = { module = "com.microsoft.playwright:playwright", version.ref = "playwright" }
+
+# Container
+docker-java-core = { module = "com.github.docker-java:docker-java-core", version.ref = "docker-java" }
+docker-java-transport-httpclient5 = { module = "com.github.docker-java:docker-java-transport-httpclient5", version.ref = "docker-java" }
+kubernetes-client-java = { module = "io.kubernetes:client-java", version.ref = "kubernetes-client" }
+kubernetes-client-java-extended = { module = "io.kubernetes:client-java-extended", version.ref = "kubernetes-client" }
+
+# AI & LLM
+openai-client = { module = "com.openai:openai-java", version.ref = "openai" }
+anthropic-client = { module = "com.anthropic:anthropic-java", version.ref = "anthropic" }
+jtokkit = { module = "com.knuddels:jtokkit", version.ref = "jtokkit" }
+
+# GraalJS (JDK-17 line): Polyglot embedding API (graal-sdk) + JS language (brings truffle-api)
+graaljs-polyglot = { module = "org.graalvm.sdk:graal-sdk", version.ref = "graaljs" }
+graaljs-js = { module = "org.graalvm.js:js", version.ref = "graaljs" }
+
+# Search
+opensearch-client = { module = "org.opensearch.client:opensearch-java", version.ref = "opensearch" }
+opensearch-rest-client = { module = "org.opensearch.client:opensearch-rest-client", version.ref = "opensearch-rest-client" }
+
+# Logging
+slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
+logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
+
+[bundles]
+spring-boot-web = ["spring-boot-starter-web", "spring-boot-starter-validation"]
+spring-boot-data = ["spring-boot-starter-data-jpa", "hikari"]
+testing = ["junit-jupiter", "assertj-core", "mockito-core", "mockito-junit-jupiter"]
+jackson = ["jackson-databind", "jackson-datatype-jsr310"]
+
+[plugins]
+spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }
+spring-dependency-management = { id = "io.spring.dependency-management", version.ref = "spring-dependency-management" }
+spotbugs = { id = "com.github.spotbugs", version.ref = "spotbugs" }
+spotless = { id = "com.diffplug.spotless", version.ref = "spotless" }
+maven-publish = { id = "com.vanniktech.maven.publish", version.ref = "maven-publish" }

@@ -1,0 +1,41 @@
+spring:
+  application:
+    name: aimon-sample-app
+  main:
+    banner-mode: off
+
+server:
+  # The packaging tests launch this application repeatedly and in parallel with whatever else the machine is
+  # doing, so a fixed port would be a source of flakes rather than of determinism. PortFileWriter reports where
+  # it landed.
+  port: 0
+
+logging:
+  level:
+    # The packaging tier reads the child's stdout for diagnostics the framework is required to emit — notably the
+    # warning about an agent bundle that ships skills with no index. INFO here keeps that assertion honest: a
+    # message the tests can only see because logging was turned up specially would not be a message an operator
+    # ever sees.
+    at.aimon: INFO
+
+aimon:
+  # No vendor client, no API key: the application supplies its own LlmClient bean (SampleApplication) and this is
+  # the declared way to tell the starter to stand aside rather than fail for want of a credential.
+  llm:
+    provider: none
+  workspace:
+    # Overridden per run by the packaging tests, which need each launch to materialize into a fresh directory
+    # they can then inspect from outside the JVM.
+    root: ${java.io.tmpdir}/aimon-sample-app
+  agent-defaults:
+    default-agent: sample
+  agents:
+    # The bundle assembled from this module's own agents/sample/agent.md plus whatever the dependency jars
+    # contribute under the same resource path.
+    sample:
+      bundle: sample
+    # A second bundle, shipped by aimon-sample-skills-beta, that carries a skill directory and no index. It is
+    # declared here so the packaging tier can assert the framework says so out loud instead of loading zero
+    # skills in silence.
+    noindex:
+      bundle: noindex

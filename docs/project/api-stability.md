@@ -1,0 +1,159 @@
+# API 안정성 정책 (API Stability)
+
+AIMON Core 가 **무엇을 약속하고 무엇을 약속하지 않는지** 정의한다. 이 문서의 대상은
+Maven Central 에 배포되는 모듈을 의존성으로 쓰는 사람이다.
+
+현재 버전은 `0.x` 다. 아래 내용은 그 사실에서 대부분 따라 나온다.
+
+---
+
+## 1. 한 줄 요약
+
+> **`0.x` 동안 마이너 버전 올림(`0.2` → `0.3`)은 호환성을 깨뜨릴 수 있다.**
+> 패치 올림(`0.2.2` → `0.2.3`)은 깨뜨리지 않는다.
+
+Semantic Versioning 은 `0.x` 를 "아직 안정을 약속하지 않은 구간"으로 규정한다. 이 프로젝트는 그것을
+문자 그대로 쓴다 — 지어낸 예외 조항이 없다는 뜻이다.
+
+| 버전 변화 | 약속 |
+|-----------|------|
+| `0.2.2` → `0.2.3` (patch) | **소스·바이너리 호환**. 버그 수정과 내부 변경만 |
+| `0.2` → `0.3` (minor) | **깨질 수 있다.** 변경은 `CHANGELOG.md` 에 전부 기록된다 |
+| `0.x` → `1.0` | §6 의 조건이 충족될 때 |
+
+의존성을 고정할 때 `0.2.+` 같은 열린 범위를 쓰지 않기를 권한다. 정확한 버전을 박고,
+올릴 때 CHANGELOG 를 읽는 편이 이 구간에서는 더 싸다.
+
+---
+
+## 2. 무엇이 공개 API 인가
+
+**패키지 위치가 답이다.** 애노테이션이 아니다.
+
+| 패키지 모양 | 지위 |
+|-------------|------|
+| `at.aimon.core.<domain>` | **공개 API** — 인터페이스, 도메인 타입, 불변 값 객체 |
+| `at.aimon.core.<domain>.impl` | **내부 구현** — 예고 없이 바뀐다 |
+| `at.aimon.core.agent.orca` | **공개 SPI** — 외부 모듈이 구현하는 확장점 |
+| 그 외 모듈의 `at.aimon.<module>` | 해당 모듈의 공개 API |
+
+이 경계는 문서상의 권고가 아니라 **빌드가 강제한다**. `PackageDependencyArchitectureTest`
+(`aimon-core`) 가 `*.impl` 패키지를 그 도메인 트리 밖에서 import 하는 것을 막는다. 즉
+`at.aimon.core.filesystem.impl` 을 다른 곳에서 쓰려고 하면 리뷰가 아니라 빌드가 먼저 거절한다.
+
+현재 `impl` 로 격리된 도메인은 일곱 개다 — `tracing`, `shell`, `agent`, `filesystem`, `workflow`,
+`hook`, `hook.rewake`.
+
+> 이 프로젝트에는 아직 `@Experimental` · `@Beta` · `@Internal` 애노테이션이 **없다**. 만들지 않은
+> 이유는 패키지 경계가 이미 그 일을 하고 있고, 강제되지 않는 애노테이션은 지켜지지 않는 표식이 되기
+> 때문이다. 패키지로 가를 수 없는 실험적 표면이 생기면 그때 도입하고, **도입과 동시에 ArchUnit 규칙을
+> 함께 넣는다.**
+
+### 공개 API 가 *아닌* 것
+
+- `*.impl` 아래의 모든 것
+- 테스트 소스, `aimon-filesystem-testkit` 이 노출하는 계약 테스트의 내부 구조
+- `aimon-cli` 전체 — 애플리케이션이지 라이브러리가 아니며 배포 대상도 아니다
+- `samples/` 아래 모듈 — 예제이며 배포하지 않는다
+- 로그 메시지의 문구, 예외 메시지의 문구
+- **저장 포맷의 자바 식별자와 와이어 키가 어긋나 있는 자리** — 예를 들어 자바 타입은 `Session*` 인데
+  Mongo 컬렉션은 `conversation_*` 다. 이것은 실수가 아니라 **의도적으로 동결된** 경계이며, 자바 이름이
+  바뀌어도 저장된 이름은 바뀌지 않는다 (§4)
+
+---
+
+## 3. 이름이 바뀔 때
+
+`0.x` 구간에서 이 프로젝트는 이름을 실제로 바꿔 왔다. 최근 두 번은 둘 다
+**이름이 수명을 잘못 말하고 있었기** 때문이다:
+
+- `AgentExecutionContext` → `AgentRuntime`
+- `Conversation` → `SessionRecord`, `AgentSession` → `LiveSession`
+
+배경은 [`../overview/scope-model.md` §7](../overview/scope-model.md) 에 있다.
+
+이런 변경은 `CHANGELOG.md` 에 **옛 이름 ↔ 새 이름 매핑표**와 함께 기록한다. 릴리스 노트에서
+"rename" 세 글자만 보고 grep 으로 알아내야 하는 상황을 만들지 않는다는 뜻이다.
+
+---
+
+## 4. 명시적으로 동결된 것 — 이름보다 강한 약속
+
+자바 식별자보다 **더 강하게 보장되는** 표면이 있다. 저장된 데이터와 프로세스 간 계약이다.
+
+| 표면 | 정책 |
+|------|------|
+| 영속 필드 이름, 컬렉션·테이블·채널 이름 | **동결.** 리팩터가 건드리지 않는다 |
+| 툴 컨텍스트의 와이어 키 (`"conversationId"` 등) | **동결** |
+| Redis 키 prefix, Postgres DDL | **동결** |
+
+`aimon-session-*` / `aimon-memory-*` 백엔드로 이미 데이터를 쌓아 둔 쪽에게는, 자바 API 보다 이쪽이
+중요하다. 그래서 자바 이름이 `Session*` 로 바뀐 뒤에도 저장된 이름은 `conversation_*` 로 남아 있다 —
+**어긋나 보이는 것이 정상이고, 그것이 약속의 증거다.**
+
+깨야 할 일이 생기면 마이그레이션 경로 없이는 하지 않는다.
+
+---
+
+## 5. Deprecation 절차
+
+현재 코드베이스에 `@Deprecated` 는 **0건**이다. 이름을 바꿀 때 어댑터를 남기는 대신 한 번에 옮겨 왔기
+때문이며, `0.x` 에서는 그쪽이 정직하다 — 지키지 않을 유예 기간을 표시하는 것보다 낫다.
+
+`1.0` 이후로는 다음을 따른다:
+
+1. `@Deprecated` 와 `@deprecated` javadoc 을 함께 단다. javadoc 에는 **대체 수단을 명시**한다
+2. `CHANGELOG.md` 에 기록한다
+3. **최소 한 번의 마이너 릴리스**를 유예 기간으로 둔다
+4. 그다음 메이저에서 제거한다
+
+`0.x` 동안 deprecation 을 쓴다면 위 절차를 따르되, 유예 기간은 보장하지 않는다.
+
+---
+
+## 6. `1.0` 진입 조건
+
+`1.0` 은 날짜가 아니라 **상태**로 정한다. 아래가 모두 참일 때 올린다.
+
+- [ ] **핵심 SPI 가 한 릴리스 주기 동안 변경 없이 유지됨** — `Tool`, `Hook`, `LlmClient`,
+      `VirtualFileSystem`, `SessionRecordStore`, `AgentExecutor`
+- [ ] **`aimon-core` 밖에서 온 백엔드 구현이 하나 이상 존재** — SPI 가 정말 구현 가능한지는 이 프로젝트가
+      직접 쓴 구현체만으로는 증명되지 않는다
+- [ ] **스코프 모델이 이름 변경 없이 한 주기를 넘김** — 최근 두 번의 파괴적 변경이 모두 여기서 나왔다
+- [ ] **Spring Boot starter 의 미결 항목이 정리됨**
+      ([`../backlog/spring-boot-starter-open-items.md`](../backlog/spring-boot-starter-open-items.md))
+- [ ] **공개 API 에 대한 javadoc 이 빠짐없이 존재**
+- [ ] **번역된 문서가 코드와 어긋나지 않음을 검사하는 CI 가 동작** — 문서가 API 의 일부인 프로젝트이므로
+
+이 목록은 [`roadmap.md`](roadmap.md) 와 함께 읽는다.
+
+---
+
+## 7. 호환성을 확인하는 방법
+
+지금 이 저장소가 자동으로 검사하는 것과 검사하지 않는 것을 구분해 둔다.
+
+**검사한다:**
+
+- `*.impl` 경계 침범 (`PackageDependencyArchitectureTest`)
+- 금지된 타입 이름 — 맨 `Session` / `AgentSession` (`SessionNamingArchitectureTest`)
+- `turn` / `iteration` / `execution` 어휘 혼용 (`TurnVocabularyArchitectureTest`)
+- BOM 이 관리하는 좌표와 실제 배포 대상의 일치 (`:aimon-bom:verifyBom`)
+- 릴리스 게이트가 CI 게이트보다 좁지 않은지 (`ReleaseGateMatchesCiGateTest`)
+
+**아직 검사하지 않는다:**
+
+- **바이너리 호환성 (japicmp / revapi 같은 도구)** — `0.x` 에서 마이너가 깨져도 되는 동안에는
+  검사기가 매번 "깨졌다"고만 말한다. `1.0` 진입 조건에 함께 넣는 것이 자연스럽다
+
+즉 **"빌드가 통과했다"가 "호환된다"를 뜻하지 않는다.** 지금은 `CHANGELOG.md` 가 그 역할을 한다.
+
+---
+
+## 관련 문서
+
+- [`../../CHANGELOG.md`](../../CHANGELOG.md) — 변경 이력과 옛 이름 ↔ 새 이름 매핑
+- [`roadmap.md`](roadmap.md) — 어디로 가고 있는가
+- [`publishing-guide.md`](publishing-guide.md) — 릴리스 절차
+- [`../overview/scope-model.md`](../overview/scope-model.md) — 수명·소유권 규칙과 개명의 배경
+- [`../../CONTRIBUTING.md`](../../CONTRIBUTING.md) — 기여 절차

@@ -1,0 +1,109 @@
+name: Bug report
+description: Something in AIMON behaves differently from what the docs say
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a report.
+
+        **Do not use this form for security vulnerabilities** — see
+        [SECURITY.md](https://github.com/kangwoo/aimon-core/blob/main/SECURITY.md)
+        for the private disclosure channel.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: What you observed, and what you expected instead.
+      placeholder: |
+        Calling LiveSession.submit() after the record was evicted returns ... but
+        agent-session-guide.md says it should ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: >
+        Minimal steps or a code snippet. A failing test is the fastest path to a fix.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: module
+    attributes:
+      label: Module
+      description: Which module does this affect? Pick the closest one.
+      multiple: true
+      options:
+        - aimon-core
+        - aimon-bootstrap
+        - aimon-spring-boot-starter
+        - aimon-cli
+        - aimon-llm-openai
+        - aimon-llm-anthropic
+        - aimon-filesystem-gridfs
+        - aimon-filesystem-s3
+        - aimon-sandbox (docker / kubernetes)
+        - aimon-session (mongodb / postgres / redis / routing)
+        - aimon-memory (file / mongodb / postgres)
+        - aimon-knowledge-opensearch
+        - aimon-scheduling-quartz
+        - aimon-workflow-graaljs
+        - aimon-rewake-webhook
+        - aimon-browser-playwright
+        - Documentation only
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: AIMON version
+      placeholder: "0.2.2 (or a git SHA if building from source)"
+    validations:
+      required: true
+
+  - type: input
+    id: java
+    attributes:
+      label: Java version
+      description: Output of `java -version`
+      placeholder: "temurin-17.0.11"
+    validations:
+      required: true
+
+  - type: input
+    id: env
+    attributes:
+      label: OS / runtime
+      placeholder: "macOS 15.5 (arm64), or Linux container, or Kubernetes 1.30"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: provider
+    attributes:
+      label: LLM provider
+      description: Leave blank if the bug does not involve an LLM call.
+      options:
+        - OpenAI
+        - Anthropic
+        - Custom LlmClient
+        - Not applicable
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / stack trace
+      description: >
+        Relevant output. **Redact API keys, credentials, and any private data
+        before pasting** — issues are public.
+      render: text
+    validations:
+      required: false

@@ -1,0 +1,26 @@
+{
+  "hints": [
+    {
+      "name": "aimon.llm.provider",
+      "values": [
+        {
+          "value": "anthropic",
+          "description": "Anthropic Claude. Requires aimon-llm-anthropic on the classpath. Assumed when the property is absent."
+        },
+        {
+          "value": "openai",
+          "description": "OpenAI. Requires aimon-llm-openai on the classpath."
+        },
+        {
+          "value": "none",
+          "description": "Build no LlmClient. The application defines the bean itself; startup fails by name if it does not."
+        }
+      ],
+      "providers": [
+        {
+          "name": "any"
+        }
+      ]
+    }
+  ]
+}
