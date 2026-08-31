@@ -10,7 +10,7 @@ java = "17"
 # a second pair of keys (spring-boot-plugin / dependency-management-plugin) holding the same two values
 # for the plugins alone; it was collapsed because nothing kept the two halves in step. If you ever need
 # the plugin to lead or trail the library BOM, split the ref back out deliberately rather than by drift.
-spring-boot = "3.5.16"
+spring-boot = "4.1.1"
 spring-dependency-management = "1.1.7"
 
 # Libraries
