@@ -77,6 +77,23 @@ updates:
         update-types:
           - patch
 
+    # Boot majors do not arrive here. `docs/design/integration/spring-boot-starter.md` D6 fixes the
+    # baseline the starter compiles against at the 3.5 line, and the reason is the support window rather
+    # than the API: 3.5 is the last of Boot 3 and is commercially supported to 2032-06-30, where 4.0 ends
+    # 2027-12-31 and 4.1 ends 2028-07-31. Taking a major here would cut roughly four years off what a
+    # consumer can sit on, which is the opposite of why that line was chosen.
+    #
+    # Majors only. 3.5.x patches still arrive — those are the security updates that picking a line
+    # supported that long was for. A Boot 4 artifact ships separately when it is needed; D6 rules out one
+    # artifact serving both majors, so there is no version here that would satisfy both.
+    #
+    # The catalog collapses the libraries and the Gradle plugin onto a single `spring-boot` ref and both
+    # resolve under the same group id, so one pattern covers the pair.
+    ignore:
+      - dependency-name: "org.springframework.boot:*"
+        update-types:
+          - "version-update:semver-major"
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
