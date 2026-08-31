@@ -72,7 +72,8 @@ Semantic Versioning 은 `0.x` 를 "아직 안정을 약속하지 않은 구간"�
 
 배경은 [`../overview/scope-model.md` §7](../overview/scope-model.md) 에 있다.
 
-이런 변경은 `CHANGELOG.md` 에 **옛 이름 ↔ 새 이름 매핑표**와 함께 기록한다. 릴리스 노트에서
+이런 변경은 `CHANGELOG.md` 에 기록하고, **옛 이름 ↔ 새 이름 매핑표**는
+[`../migration/rename-maps.md`](../migration/rename-maps.md) 에 더한다. 릴리스 노트에서
 "rename" 세 글자만 보고 grep 으로 알아내야 하는 상황을 만들지 않는다는 뜻이다.
 
 ---
@@ -152,7 +153,9 @@ Semantic Versioning 은 `0.x` 를 "아직 안정을 약속하지 않은 구간"�
 
 ## 관련 문서
 
-- [`../../CHANGELOG.md`](../../CHANGELOG.md) — 변경 이력과 옛 이름 ↔ 새 이름 매핑
+- [`../../CHANGELOG.md`](../../CHANGELOG.md) — 변경 이력
+- [`../migration/rename-maps.md`](../migration/rename-maps.md) — 옛 이름 ↔ 새 이름 매핑
+- [`../migration/frozen-names.md`](../migration/frozen-names.md) — 개명하지 않기로 한 이름들
 - [`roadmap.md`](roadmap.md) — 어디로 가고 있는가
 - [`publishing-guide.md`](publishing-guide.md) — 릴리스 절차
 - [`../overview/scope-model.md`](../overview/scope-model.md) — 수명·소유권 규칙과 개명의 배경

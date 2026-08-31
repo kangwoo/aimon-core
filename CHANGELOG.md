@@ -32,10 +32,10 @@ Six themes:
    [Breaking](#breaking).
 
 Renames are Java-symbol only. **No wire format, DDL, channel name, key prefix or persisted field
-changed anywhere in this block** — see [Not changed (deliberately frozen)](#not-changed-deliberately-frozen).
+changed anywhere in this block** — see [`docs/migration/frozen-names.md`](docs/migration/frozen-names.md).
 The one adjacent value that did change is the GridFS **default** database name, which no deployment
 can have stored anything under (MongoDB rejected it); it is filed under [Fixed](#fixed).
-Old names are searchable in [Rename maps](#rename-maps).
+Old names are searchable in [`docs/migration/rename-maps.md`](docs/migration/rename-maps.md).
 
 ---
 
@@ -1318,343 +1318,30 @@ And two from the starter register:
 
 ### Rename maps
 
-Search here for a name that no longer resolves.
+Moved out of this file: **[`docs/migration/rename-maps.md`](docs/migration/rename-maps.md)**.
 
-#### `Conversation` / `AgentSession` → `SessionRecord` / `LiveSession`
-
-The persistent aggregate was called `Conversation` and the node-local handle that ran turns against
-it was called `AgentSession`. Both names were wrong in a way that cost data: "session" is what a user
-resumes across a restart, so state that had to survive eviction kept getting parked on the thing named
-`Session*` — the handle that dies with the process.
-
-**Neither lifetime is called `Session`.** `Session` and `AgentSession` are both banned as type names,
-enforced by `SessionNamingArchitectureTest` (production classes only). The rule bans the names, not
-the token — `SessionRecord`, `SessionTotals` and `LiveSessionStatus` are all correct. The payoff is
-in prose: with no type called `Session`, the phrase "the session" in a comment has no referent to be
-quietly wrong about.
-
-**"Conversation" is not a retired word.** It was demoted from a *lifetime* word to the *LLM
-message-exchange* word and stays in that role — `SessionSnapshot.getConversationHistory()`,
-`/compact`'s "Conversation compacted", the summarization prompt. A new type about message history
-should be `Transcript*`; a new type about lifetime should be `Session*`.
-
-*The durable record and its stores*
-
-| Old | New |
-|-----|-----|
-| `Conversation` | `SessionRecord` |
-| `ConversationView` | `SessionRecordView` |
-| `ConversationRepository` | `SessionRecordStore` |
-| `InMemoryConversationRepository` | `InMemorySessionRecordStore` |
-| `ConversationId` | `SessionId` |
-| `ConversationTotals` | `SessionTotals` |
-| `ConversationStore` | `SessionStore` |
-| `DefaultConversationStore` | `DefaultSessionStore` |
-| `ConversationLeaseStore` | `SessionLeaseStore` |
-| `InMemoryConversationLeaseStore` | `InMemorySessionLeaseStore` |
-| `ConversationLease` | `SessionLease` |
-| `ConversationCheckpointMailbox` | `SessionCheckpointMailbox` |
-| `ConversationLeaseException` | `SessionLeaseException` |
-| `ConversationNotHeldException` | `SessionNotHeldException` |
-
-*The transcript* — types about message history took transcript vocabulary rather than `Session*`.
-
-| Old | New |
-|-----|-----|
-| `ConversationTranscript` | `SessionTranscript` |
-| `ConversationSnapshot` | `SessionSnapshot` |
-| `ConversationMemory` | `TranscriptBuffer` |
-| `ConversationManager` | `TranscriptManager` |
-| `DefaultConversationManager` | `DefaultTranscriptManager` |
-
-*The node-local handle and multi-node routing*
-
-| Old | New |
-|-----|-----|
-| `AgentSession` | `LiveSession` |
-| `DefaultAgentSession` | `DefaultLiveSession` |
-| `AgentSessionFactory` | `LiveSessionFactory` |
-| `AgentSessionOptions` | `LiveSessionOptions` |
-| `AgentSessionStatus` | `LiveSessionStatus` |
-| `AgentSessionOpener` | `LiveSessionOpener` |
-| `LocalSessionCache` | `LiveSessionCache` |
-| `AgentSessionManager` | `SessionRouter` |
-| `DefaultAgentSessionManager` | `DefaultSessionRouter` |
-| `AgentSessionManagerBuilder` | `SessionRouterBuilder` |
-| `AgentSessionManagerConfig` | `SessionRouterConfig` |
-
-`AgentSessionManager` became `SessionRouter` rather than `LiveSessionManager` because what it manages
-is not the handles — it routes a request for a **session** to whichever node holds it, and the local
-handle cache is one collaborator among several.
-
-*Inbox, signals and leases per backend*
-
-| Old | New |
-|-----|-----|
-| `ConversationInbox` | `SessionInbox` |
-| `InMemoryConversationInbox` / `MongoConversationInbox` / `PostgresConversationInbox` / `RedisConversationInbox` | `InMemorySessionInbox` / `MongoSessionInbox` / `PostgresSessionInbox` / `RedisSessionInbox` |
-| `ConversationInboxException` | `SessionInboxException` |
-| `ConversationSignal` / `ConversationSignalBus` | `SessionSignal` / `SessionSignalBus` |
-| `MongoConversationSignalBus` / `PostgresConversationSignalBus` | `MongoSessionSignalBus` / `PostgresSessionSignalBus` |
-| `ConversationSignalBusException` | `SessionSignalBusException` |
-| `ConversationSignalCodec` / `ConversationSignalRowCodec` | `SessionSignalCodec` / `SessionSignalRowCodec` |
-| `MongoConversationLock` / `PostgresConversationLock` / `RedisConversationLock` | `MongoSessionLeaseStore` / `PostgresSessionLeaseStore` / `RedisSessionLeaseStore` |
-
-*Subagent transcript snapshots*
-
-| Old | New |
-|-----|-----|
-| `ConversationSnapshotStore` | `SessionSnapshotStore` |
-| `InMemoryConversationSnapshotStore` | `InMemorySessionSnapshotStore` |
-| `VfsConversationSnapshotStore` | `VfsSessionSnapshotStore` |
-| `ScopedConversationSnapshotStore` | `ScopedSessionSnapshotStore` |
-| `ConversationSnapshotCodec` | `SessionSnapshotCodec` |
-| `JsonConversationSnapshotCodec` | `JsonSessionSnapshotCodec` |
-| `ConversationCodecException` | `SessionSnapshotCodecException` |
-| `ResumableConversation` | `ResumableSession` |
-
-*Packages (import-breaking)*
-
-| Old | New |
-|-----|-----|
-| `at.aimon.core.agent.conversation` | split into `at.aimon.core.agent.session.store` (record, lease, totals, mailbox) and `at.aimon.core.agent.session.transcript` (transcript, snapshot, buffer, manager) |
-| `at.aimon.core.agent.conversation.store` | `at.aimon.core.agent.session.store` |
-| `at.aimon.core.agent.conversation.exception` | `at.aimon.core.agent.session.exception` |
-| `at.aimon.core.skill.policy.conversation` | `at.aimon.core.skill.policy.session` |
-
-The `agent.conversation` package no longer exists. `SessionId` moved up to
-`at.aimon.core.agent.session` — it is the join key both lifetimes share.
-
-*Accessors and methods*
-
-| Old | New |
-|-----|-----|
-| `getConversationId()` | `getSessionId()` — on every event, envelope, request, context and query that carried it |
-| `getConversationIdValue()` | `getSessionIdValue()` |
-| `getConversationTotals()` / `setConversationTotals(...)` | `getSessionTotals()` / `setSessionTotals(...)` |
-| `ConversationRepository.listConversationIds()` | `SessionRecordStore.listSessionIds()` |
-| `SessionRouter.deleteConversation(...)` / `releaseConversation(...)` / `yieldConversation(...)` | `deleteSession(...)` / `releaseSession(...)` / `yieldSession(...)` |
-| `interrupt(conversationId, [turnId,] reason)` | `interrupt(sessionId, [turnId,] reason)` |
-| `getConversationMemory()` | `getTranscriptBuffer()` |
-| `getConversationManager()` | `getTranscriptManager()` |
-| `CommandExecutionContext.Builder.sessionContext(...)` | `transcriptBuffer(...)` — the setter lied about both the type and the scope |
-| `OrcaAgentExecutionRequest.Builder.previousConversation(...)` / `getPreviousConversation()` | `previousSnapshot(...)` / `getPreviousSnapshot()` |
-| `OrcaAgentExecutionResult.getConversation()` | `getSnapshot()` |
-| `getInvokingConversationId()` / builder `invokingConversationId(...)` | `getInvokingSessionId()` / `invokingSessionId(...)` |
-| `purgeConversationApprovals(...)` | `purgeSessionApprovals(...)` |
-| `getConversationApprovalStore()` / `withConversationApprovalStore(...)` | `getSessionApprovalStore()` / `withSessionApprovalStore(...)` |
-| `getConversationSnapshotStore()` / `withConversationSnapshotStoreFactory(...)` | `getSessionSnapshotStore()` / `withSessionSnapshotStoreFactory(...)` |
-| `maxTrackedConversations(...)` | `maxTrackedSessions(...)` |
-| `ToolContextKeys.CONVERSATION_ID` / `INVOKING_CONVERSATION_ID` | `SESSION_ID` / `INVOKING_SESSION_ID` (key **strings** frozen) |
-
-#### `AgentExecutionContext` → `AgentRuntime`
-
-`AgentExecutionContext` read like a per-execution value. It is the opposite: exactly one instance
-lives per `(Agent, discriminator)`, owns the agent's long-lived machinery (`ToolRegistry`,
-`HookRegistry`, `McpClientManager`, MCP connections), and survives every session running against that
-agent.
-
-| Old | New |
-|-----|-----|
-| `AgentExecutionContext` | `AgentRuntime` |
-| `AgentExecutionContextId` | `AgentRuntimeId` |
-| `AgentExecutionContextRegistry` | `AgentRuntimeRegistry` |
-| `DefaultAgentExecutionContextRegistry` | `DefaultAgentRuntimeRegistry` |
-| `OrcaAgentExecutionContext` | `OrcaAgentRuntime` |
-| `OrcaAgentExecutionContextFactory` | `OrcaAgentRuntimeFactory` |
-| `OrcaAgentExecutionContextManager` | `OrcaAgentRuntimeManager` |
-| `AgentExecutionHookRegistrar` | `AgentRuntimeHookRegistrar` |
-| `RewakeCapableContext` | `RewakeCapableRuntime` |
-| `ContextScoped` | `AgentScoped` |
-
-`AgentRuntimeId` keeps its format and factories: `agent:<name>` / `agent:<name>:<discriminator>`,
-issued via `from(Agent)` / `from(Agent, String)`. There is still no `generate()`.
-
-| Old | New |
-|-----|-----|
-| `getContextId()` / `getExecutionContextId()` / `getAgentExecutionContextId()` | `getAgentRuntimeId()` — on `AgentExecutionEvent`, `BackgroundTask`, `OnSessionStartContext`, `OnSessionEndContext`, `PendingTurn`, `QueuedInput`, `ResumableSession`, `RewakeEnvelope`, `RunQuery`, `SkillInvocationRequest`, `SubagentExecutionContext`, `SubagentExecutionEnvironment`, `TaskQuery`, `ToolContextEnrichmentInfo`, `WorkflowRun` |
-| `ScheduledTask.getBoundContextId()` / `Builder.boundContextId(...)` | `getBoundRuntimeId()` / `Builder.boundRuntimeId(...)` |
-| Builder setters `contextId(...)` / `executionContextId(...)` / `agentExecutionContextId(...)` | `agentRuntimeId(...)` |
-| `OrcaAgentRuntimeManager.getOrCreateContext(...)` / `getContext(...)` / `destroyContext(...)` | `getOrCreateRuntime(...)` / `getRuntime(...)` / `destroyRuntime(...)` |
-| `SchedulingEngineBuilder.contextRegistry(...)` | `agentRuntimeRegistry(...)` |
-| `OrcaAgentRuntimeManager.Builder.contextRegistry(...)` / `contextFactory(...)` | `agentRuntimeRegistry(...)` / `agentRuntimeFactory(...)` |
-| `AgentSetupFactory.Builder.contextRegistry(...)` | `agentRuntimeRegistry(...)` |
-| `TaskQuery.byContext(...)` / `RunQuery.byContext(...)` | `byAgentRuntime(...)` |
-| `PendingTurnRegistry.listByContext(...)` | `listByAgentRuntime(...)` |
-
-Also renamed for the same reason: `SessionContext` → **`AgentEnvironmentSnapshot`**,
-`SessionContextProvider` → `AgentEnvironmentSnapshotProvider`, `DefaultSessionContextProvider` →
-`DefaultAgentEnvironmentSnapshotProvider`, all moved from `at.aimon.core.agent.session` to
-`at.aimon.core.agent`. The type was never session-scoped — it is memoized by `AgentRuntimeId`.
-Likewise `RenderContext.getSessionId()` → `getAgentRuntimeId()` and the skill-body variable
-`${AIMON_SESSION_ID}` → `${AIMON_AGENT_RUNTIME_ID}`; the old accessor and setter remain as
-`@Deprecated` delegates onto the same field. **This value is agent-scoped** — do not use it as a
-per-run discriminator; use `${AIMON_EXECUTION_ID}`.
-
-**`AIMON_AGENT_RUNTIME_ID`** is the env var exported to declarative shell hooks. The old
-`AIMON_AGENT_EXECUTION_CONTEXT_ID` is **still exported alongside it** with the same value; the
-constant is `@Deprecated` and the alias will be dropped in a future release.
-
-Deliberately *not* renamed: the generic `String` scope keys on `TodoRepository`, `KnowledgeScope`,
-`WikiScope` and `ScopeFilter` are not `AgentRuntimeId`s and keep `getContextId()`; `ToolContext`,
-`ToolExecutionContext` and `SubagentExecutionContext` are different concepts.
-
-#### Skill approval stores — the name `SessionApprovalStore` is reused
-
-**Read this table before trusting a memory of that name.** It first belonged to the agent-scoped
-store, was freed by renaming that store to `AgentApprovalStore`, and then taken by the new
-session-scoped one.
-
-| Old | New | Keyed by |
-|-----|-----|----------|
-| `SessionApprovalStore` (`…skill.policy.session`, the *agent-wide* one) | `AgentApprovalStore` (`…skill.policy.agent`) | `AgentRuntimeId` |
-| `InMemorySessionApprovalStore` (likewise) | `InMemoryAgentApprovalStore` | `AgentRuntimeId` |
-| `SessionAwareSkillInvocationPolicy` | `ApprovalCachingSkillInvocationPolicy` | — |
-| `ConversationApprovalStore` | **`SessionApprovalStore`** (`…skill.policy.session`) | `SessionId` |
-| `InMemoryConversationApprovalStore` | `InMemorySessionApprovalStore` | `SessionId` |
-| `ConversationAwareSkillInvocationPolicy` | `SessionScopedSkillInvocationPolicy` | — |
-| `ApprovalScope.CONVERSATION` | `ApprovalScope.SESSION` | — |
-| `InvokingConversationAccess` | `InvokingSessionAccess` | — |
-| `OrcaAgentRuntimeFactory.withSessionApprovalStore(...)` (agent-wide) | `withAgentApprovalStore(...)` | — |
-| `OrcaProviderDependencies.getSessionApprovalStore()` / `sessionApprovalStore(...)` (agent-wide) | `getAgentApprovalStore()` / `agentApprovalStore(...)` | — |
-
-Approval *semantics* did not change: `y` is scoped to the session, `a` (or `--agent`) to the whole
-agent with no TTL and no clearing on `/clear`, `/revoke` clears the narrow scope and `/revoke --agent`
-clears both.
-
-#### The session SPIs moved into `aimon-core`, and the module is now `aimon-session-routing`
-
-`aimon-session-base` held two unrelated things: multi-node routing, and five storage SPIs a
-distributed session needs. Every SPI in the second group is keyed by `SessionId` and names nothing
-routing owns, yet `aimon-session-{redis,postgres,mongodb}` each depended on the routing module purely
-to see them. After the move all three have **zero** references to routing in main sources and demote
-it to `testImplementation`; routing itself loses its last Jackson usage.
-
-| Was | Is |
-|-----|-----|
-| `at.aimon.session.base.spi.SessionRecordCodec` | `at.aimon.core.agent.session.store.SessionRecordCodec` |
-| `at.aimon.session.base.spi.StoredSessionRecord` | `at.aimon.core.agent.session.store.StoredSessionRecord` |
-| `at.aimon.session.base.spi.StoredAgentExecutionResult` | `at.aimon.core.agent.session.store.StoredAgentExecutionResult` |
-| `at.aimon.session.base.spi.SessionInbox` | `at.aimon.core.agent.session.inbox.SessionInbox` |
-| `at.aimon.session.base.inbox.InboundMessage` | `at.aimon.core.agent.session.inbox.InboundMessage` |
-| `at.aimon.session.base.inbox.InboundMessageId` | `at.aimon.core.agent.session.inbox.InboundMessageId` |
-| `at.aimon.session.base.spi.inmemory.InMemorySessionInbox` | `at.aimon.core.agent.session.inbox.InMemorySessionInbox` |
-| `at.aimon.session.base.spi.SessionSignal` | `at.aimon.core.agent.session.signal.SessionSignal` |
-| `at.aimon.session.base.spi.SessionSignalBus` | `at.aimon.core.agent.session.signal.SessionSignalBus` |
-| `at.aimon.session.base.spi.inmemory.InMemorySignalBus` | `at.aimon.core.agent.session.signal.InMemorySignalBus` |
-| `at.aimon.session.base.spi.IdempotencyStore` | `at.aimon.core.agent.session.idempotency.IdempotencyStore` |
-| `at.aimon.session.base.spi.IdempotencyEntry` | `at.aimon.core.agent.session.idempotency.IdempotencyEntry` |
-| `at.aimon.session.base.spi.PutResult` | `at.aimon.core.agent.session.idempotency.PutResult` |
-| `at.aimon.session.base.spi.inmemory.InMemoryIdempotencyStore` | `at.aimon.core.agent.session.idempotency.InMemoryIdempotencyStore` |
-| `at.aimon.session.base.exception.IdempotencyConflictException` | `at.aimon.core.agent.session.exception.IdempotencyConflictException` |
-| `at.aimon.session.base.exception.IdempotencyStoreException` | `at.aimon.core.agent.session.exception.IdempotencyStoreException` |
-| `at.aimon.session.base.exception.SessionInboxException` | `at.aimon.core.agent.session.exception.SessionInboxException` |
-| `at.aimon.session.base.exception.SessionSignalBusException` | `at.aimon.core.agent.session.exception.SessionSignalBusException` |
-
-What remains — `SessionRouter`, `LiveSessionCache`, `LiveSessionOpener`, `SessionRouterBuilder`,
-`SubmitRequest`, `SubmitDisposition`, `ClusterSessionStatus`, `DeploymentMode`, `SessionMetrics` —
-keeps its simple names and moves package `at.aimon.session.base` → **`at.aimon.session.routing`**.
-This is the module's second rename and not a wobble: `aimon-session-web` → `aimon-session-base` said
-only what the module *was not*; `routing` is the first name that describes its contents.
-
----
+A changelog entry is written once and never revisited; that table is consulted long after the release
+that produced it and grows whenever another rename lands. Leaving it here would have buried it under
+a version heading the moment this block shipped.
 
 ### Not changed (deliberately frozen)
 
-Every rename above stops at the Java symbol boundary. **No data migration and no rolling-upgrade
-coordination is needed** — a node running the new jars interoperates with the stored state and the
-live traffic of a node running the old ones.
+Moved out of this file: **[`docs/migration/frozen-names.md`](docs/migration/frozen-names.md)**.
 
-*Names encoding "conversation"*
-
-- `aimon-session-postgres` DDL and SQL — tables `conversation_inbox`, `conversation_lock`,
-  `conversation_lock_fence`, `conversation_signal`, the `conversation_id` columns, and the
-  `LISTEN`/`NOTIFY` channel `conversation_signal_doorbell`.
-- `aimon-session-mongodb` — collections `conversation_locks`, `conversation_inbox`,
-  `conversation_signals`, and the `"conversationId"` / `"Conversation"` document keys (`DocumentKeys`).
-- `aimon-session-redis` — the `"conversationId"` codec fields and the `aimon:conv`, `aimon:inbox`,
-  `aimon:conv:idem` key prefixes. Their inconsistency with each other is frozen too; harmonizing it
-  is a data migration, not a cleanup.
-- `at.aimon.core.tools.ToolContextKeys` — the `"conversationId"` and `"invokingConversationId"` key
-  strings. Out-of-tree tools reading the raw string keep working; only code referencing the Java
-  constant must be updated.
-- `JsonSessionSnapshotCodec` — the snapshot envelope's field names (`FORMAT_VERSION=1`,
-  `FIELD_CONVERSATION_ID`).
-- `StatusSnapshotPayload` — the neutral keys `totals`, `turnCount`, `iterations`.
-- LLM-facing and user-facing text where "conversation" means the message exchange: `/compact`'s
-  output, the summarization prompt, `/clear`'s confirmation, the prompt-too-long recovery text.
-
-*Names encoding "context"*
-
-- `aimon-session-postgres` — the `context_id` column and `background_task_context_idx` index
-  (`V1__init.sql`).
-- `aimon-session-mongodb` — `DocumentKeys.F_CONTEXT_ID` (`"contextId"`).
-- `aimon-session-redis` — `BackgroundTaskCodec`'s `"contextId"` field.
-- `aimon-session-routing` — `AgentExecutionEventPayload.KEY_CONTEXT` (`"ctx"`).
-- `aimon-knowledge-opensearch` — `OpenSearchDocumentMapper.FIELD_CONTEXT_ID` (`"context_id"`), an
-  indexed field; renaming it would require a reindex.
-- `VfsSessionSnapshotStore.FIELD_CONTEXT_ID` (`"contextId"`) — the subagent transcript envelope tag.
-
-**These literals are now pinned by tests.** Each is asserted against a **hard-coded string**, never
-against the constant it guards — an assertion routed through the constant follows the rename and can
-never fail, which is worse than having no test, and a round-trip test structurally cannot catch it
-because encoder and decoder share the constant. `MongoSchemaFreezeTest` (collection names on both the
-Java constants and `db/mongodb/init.js`, plus two index declarations), `PostgresSchemaFreezeTest`
-(DDL identifiers), `ListenDispatcherChannelFreezeTest` (`conversation_signal_doorbell`, the one frozen
-name absent from the DDL) and `RedisKeyPrefixFreezeTest`. Verified by actually running a
-`Conversation` → `Session` rename across string literals and DDL: 24 pins went red while all 31
-round-trip tests stayed green.
-
-Also frozen: **no wire format, stored document or configuration key** is affected by the tool-contract
-work. The schema gate's default (`WARN`) means an existing deployment sees logging, not new failures;
-the permission fail-open closure is the one intended exception.
-
-Frozen too on the filesystem side: **GridFS keeps storing paths as `filename` and nothing else
-changes shape.** Directory markers are the one addition — zero-length documents whose `filename` ends
-in `/`, tagged `metadata.type = "directory"` — and they are additive: a bucket written by an earlier
-version has none, and every directory in it is still discovered from the paths of the files under it.
-The exception to "no configuration key changed" is the GridFS **default** database name, which moved
-from `at/aimon` to `aimon` under [Fixed](#fixed); MongoDB rejects `/` in a database name, so no
-deployment can hold data under the old value.
+Every rename in this release stops at the Java symbol boundary. **No data migration and no
+rolling-upgrade coordination is needed** — a node running the new jars interoperates with the stored
+state and the live traffic of a node running the old ones. The document lists exactly what that
+covers, and it is a standing contract rather than a record of this release.
 
 ### New architecture rules
 
-- **`SessionNamingArchitectureTest`** — one rule per banned name so a regression names the offender.
-- **`SessionRecordSoleWriterArchitectureTest`** (was `ConversationSoleWriterArchitectureTest`) — no
-  production caller outside `agent.session.store` may depend on the mutable `SessionRecord`.
-- **`TurnVocabularyArchitectureTest`** — `Turn` stays out of identifiers under `at.aimon.core.subagent..`,
-  `agent.interrupt..`, `agent.loop..`, `tools.task..` and `tools.workflow..`. It cannot cover
-  `agent.impl.orca`, where turns and iterations are both real.
-- **`BuiltInToolSchemaArchitectureTest`** — every tool in `at.aimon.core.tools` declares
-  `additionalProperties: false` at top level.
-- **`ExternalSchedulerWiringTest`** — performs the documented external-scheduler wiring from a
-  different package, so `executeTask`'s modifier cannot quietly narrow again.
-- `at.aimon.core.config.hook` is isolated from the `hook` / `agent` / `skill` runtime layers.
-- **`YamlParserInstanceArchitectureTest`** — no `Yaml` field, static or instance, anywhere in main
-  sources. Reflection over the field declarations, not a source grep, so it also catches a `Yaml`
-  reached through a wrapper. The rule is per-parse construction; the three parsers it now covers are
-  the three that had the shared instance.
-- **`AimonDocumentedPropertiesTest`** — every `@ConfigurationProperties` key the starter binds appears
-  in `docs/getting-started/embedding-agent-in-application.md`, and no key documented there is
-  unbindable. Declares `inputs.file(...)` on the guide so a doc-only edit re-runs `test` instead of
-  reporting UP-TO-DATE.
-- **`ReleaseGateMatchesCiGateTest`** — `scripts/release.sh` runs the same Gradle task the CI workflow
-  does. The gate had drifted to `build` while CI ran `checkAll`, so formatting and Checkstyle
-  regressions could be released and only fail afterwards on someone else's branch. Declares
-  `inputs.file(...)` on both the script and the workflow for the same UP-TO-DATE reason.
-- **`PublishedModuleApiScopeTest`** — only a facade declares a sibling module on `api`; every other
-  published module uses `implementation`. The rule was already written down twice
-  (`.claude/rules/code-style.md`, `.claude/rules/architecture.md`) and enforced by nothing, which
-  matters because the wrong answer is the one that looks right: every backend puts core types in its
-  own signatures, so read the POM alone and all seventeen look mis-scoped. A second rule fails if a
-  name in `FACADE_MODULES` has stopped being a facade — an exemption nothing uses is one nobody audits.
-- **`PackageDependencyArchitectureTest.noNewTopLevelCorePackageCycles`** — the four existing cycle
-  rules slice *inside* `base`, `llm`, `filesystem` and `agent`; none looked *between* the twenty
-  top-level `at.aimon.core` packages, where thirteen mutually-dependent pairs sit. A baseline rather
-  than a prohibition (the `maxWarnings` shape): a pair outside the list fails as a new cycle, and a
-  listed pair that is no longer cyclic fails too, asking to be deleted. `agent.impl` is excluded
-  because it is the framework's own assembly root — it depends on everything it assembles, as
-  `aimon-bootstrap` does one layer out — and that exclusion is what drops eighteen pairs to thirteen.
+Fifteen rules are now enforced by tests; the complete index is
+**[`docs/overview/architecture.md` §9](docs/overview/architecture.md)**. New in this release:
+`SessionNamingArchitectureTest`, `SessionRecordSoleWriterArchitectureTest`,
+`TurnVocabularyArchitectureTest`, `BuiltInToolSchemaArchitectureTest`, `ExternalSchedulerWiringTest`,
+`YamlParserInstanceArchitectureTest`, `AimonDocumentedPropertiesTest`, `ReleaseGateMatchesCiGateTest`,
+`PublishedModuleApiScopeTest`, the `at.aimon.core.config.hook` isolation rule and
+`PackageDependencyArchitectureTest.noNewTopLevelCorePackageCycles`.
 
 ### Build, CI and the release gate
 
@@ -1708,6 +1395,33 @@ deployment can hold data under the old value.
   have ended.
 
 ### Documentation
+
+- **This file stopped being two things at once.** It was 1,865 lines, and the diagnosis is not the one
+  the size suggests: the three released sections are 23–30 lines each, while `[Unreleased]` alone held
+  1,779. What had accumulated in it was not release history but **lookup tables** — text that is
+  consulted long after the release that produced it and grows whenever another rename lands. A change
+  record is written once and never revisited; the two are on different clocks, which is the same
+  criterion `docs/README.md` already uses to separate `design/` from `plan/`. Left here, the first
+  release to ship would have buried both tables under a version heading and turned the twelve files
+  citing them (eight documents, counting each translation pair once) into "go read the 0.2.0
+  section", getting worse with each release. So:
+  [`docs/migration/rename-maps.md`](docs/migration/rename-maps.md) (the old ↔ new lookup for both
+  refactors) and [`docs/migration/frozen-names.md`](docs/migration/frozen-names.md) (what was
+  deliberately *not* renamed, which is a standing contract rather than news). Every citation was
+  re-aimed, `MAINTAINERS.md` now requires the mapping in the document rather than here, and this file
+  is 1,534 lines with pointer stubs where the tables were.
+- **`docs/overview/architecture.md` §9 — the rules the build enforces.** The changelog's "new
+  architecture rules" list was a release-shaped slice of something that had no home: fifteen ArchUnit
+  and wiring rules exist across three modules and nothing indexed them. Three of the fifteen live
+  outside `aimon-core`, so reading `at.aimon.core.architecture` alone misses them — which is the note
+  the section leads with.
+- **Release bodies stop carrying dead links.** `.github/workflows/release.yml` cuts a Release body
+  out of this file, and a relative link in that body resolves against the release page and 404s. The
+  workflow already knew this for its fallback pointer but not for the body it extracts; two of the
+  three released sections carry such a link and the unreleased block carries ten.
+  `scripts/absolutize-release-links.py` rewrites them at the one point where the text leaves the
+  repository, so the changelog can keep writing links relative — which is what renders on GitHub and
+  what `scripts/check-doc-links.py` can verify.
 
 - `docs/overview/scope-model.md` — four scopes plus execution units, with **Session** (durable) and
   **live session** (node-local) as separate tiers; the naming rules and the deliberate

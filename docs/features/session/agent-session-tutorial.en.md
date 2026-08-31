@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/session/agent-session-tutorial.md
-source_commit: a9821d44
+source_commit: a56317a
 ---
 
 # LiveSession tutorial (for beginners)
@@ -13,7 +13,7 @@ This document starts from a single question.
 
 `LiveSession` is exactly the component that bridges that gap.
 
-> 📌 If you have seen the old names: this type used to be `AgentSession` and the conversation identifier used to be `ConversationId`. They are now `LiveSession` and `SessionId`, and the bare word `AgentSession` is **forbidden** as a type name — ArchUnit blocks it at build time. The old ↔ new mapping table is in [`CHANGELOG.md`](../../../CHANGELOG.md).
+> 📌 If you have seen the old names: this type used to be `AgentSession` and the conversation identifier used to be `ConversationId`. They are now `LiveSession` and `SessionId`, and the bare word `AgentSession` is **forbidden** as a type name — ArchUnit blocks it at build time. The old ↔ new mapping table is in [`rename-maps.md`](../../migration/rename-maps.md).
 
 ## Table of contents
 

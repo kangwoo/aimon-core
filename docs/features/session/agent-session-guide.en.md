@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/session/agent-session-guide.md
-source_commit: b4427fc8
+source_commit: a56317a
 ---
 
 # LiveSession development guide
@@ -18,7 +18,7 @@ IMPORTANT (naming): the old names were `AgentSession` / `DefaultAgentSession` / 
 `AgentSessionFactory`, and the conversation identifier was `ConversationId`. The session-first rework renamed them to `LiveSession*` and
 `SessionId` respectively — the bare word `AgentSession` is now **forbidden as a type name**, and
 `SessionNamingArchitectureTest` blocks it at build time. When searching by an old name, consult
-the mapping table in [`CHANGELOG.md`](../../../CHANGELOG.md).
+the mapping table in [`rename-maps.md`](../../migration/rename-maps.md).
 
 ## Table of contents
 

@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/scope-model.md
-source_commit: a9821d44
+source_commit: a56317a
 ---
 
 # Scope Model
@@ -287,10 +287,10 @@ denoted a lifetime**, and remains where it denotes the exchange of messages with
 (`getConversationHistory()`, "Conversation compacted"). That distinction is the last prohibition
 in §4.
 
-The old ↔ new name mapping table is in the `[Unreleased]` entry of
-[`../../CHANGELOG.md`](../../CHANGELOG.md).
+The old ↔ new name mapping table is in
+[`../migration/rename-maps.md`](../migration/rename-maps.md).
 In both refactors **no wire format, DDL, channel name, key prefix or persistent field changed** —
-the CHANGELOG's "Not changed (deliberately frozen)" list is that boundary. That is why places
+[`../migration/frozen-names.md`](../migration/frozen-names.md) is that boundary. That is why places
 remain where the Java identifier is `Session*` while the stored name is `conversation_*` (§6).
 
 ---

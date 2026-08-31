@@ -302,7 +302,7 @@ private LocalFileSystem createFileSystem() {
 > (`conversation_locks` / `conversation_inbox` / `conversation_signals`), Postgres 테이블·채널
 > (`conversation_*`), 와이어 키(`"conversationId"`, `"invokingConversationId"`), Redis 키 prefix는
 > **의도적으로 동결**되어 있다 — 개명은 자바 식별자에서만 일어났고 이미 배포된 데이터의 마이그레이션을
-> 강요하지 않기 위해서다. 경계는 `CHANGELOG.md`의 "Not changed (deliberately frozen)" 목록이다.
+> 강요하지 않기 위해서다. 경계는 [`../migration/frozen-names.md`](../migration/frozen-names.md) 이다.
 > 여러분의 스토어 구현이 그 이름들을 쓰고 있다면 **그대로 두는 것이 맞다.**
 
 ### 4.4 스킬 정책과 보류 턴 레지스트리 (line 738-767)

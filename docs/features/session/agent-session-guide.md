@@ -13,7 +13,7 @@ IMPORTANT (이름): 예전 이름은 `AgentSession` / `DefaultAgentSession` / `A
 `AgentSessionFactory` 였고, 대화 식별자는 `ConversationId` 였다. 세션 우선 개편에서 각각 `LiveSession*` 과
 `SessionId` 로 개명되었다 — 맨 단어 `AgentSession` 은 이제 **타입 이름으로 금지**되며
 `SessionNamingArchitectureTest` 가 빌드에서 막는다. 옛 이름으로 검색할 때는
-[`CHANGELOG.md`](../../../CHANGELOG.md) 의 매핑 표를 본다.
+[`rename-maps.md`](../../migration/rename-maps.md) 의 매핑 표를 본다.
 
 ## 목차
 
