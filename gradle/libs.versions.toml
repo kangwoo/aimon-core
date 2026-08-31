@@ -67,7 +67,7 @@ jsoup = "1.18.3"
 playwright = "1.58.0"
 
 # Container
-docker-java = "3.4.1"
+docker-java = "3.7.1"
 kubernetes-client = "24.0.0"
 
 # HTTP & Networking
