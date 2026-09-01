@@ -48,6 +48,15 @@ import at.aimon.core.workflow.WorkflowRunState;
 @DisplayName("DefaultWorkflowRunner — background runs, control plane, cancellation")
 class DefaultWorkflowRunnerBackgroundTest {
 
+    /** How long {@link #awaitState} polls for a run to reach a state before failing. */
+    private static final long AWAIT_STATE_BUDGET_MILLIS = 5_000;
+
+    /**
+     * How long a stubbed subagent keeps blocking when nothing cancels it. Deliberately far larger than
+     * {@link #AWAIT_STATE_BUDGET_MILLIS} rather than equal to it; see {@link #stubBlockUntilCancelled()}.
+     */
+    private static final long BLOCKED_SUBAGENT_SAFETY_MILLIS = 60_000;
+
     private final AtomicInteger execCount = new AtomicInteger();
     private SubagentExecutionManager manager;
     private SubagentExecutionEnvironment env;
@@ -72,6 +81,34 @@ class DefaultWorkflowRunnerBackgroundTest {
                 .thenAnswer(invocation -> {
                     execCount.incrementAndGet();
                     return success("ans:" + invocation.getArgument(2, String.class));
+                });
+    }
+
+    /**
+     * Stubs the subagent to block until THIS run's cancellation signal trips, so the run stays observably RUNNING
+     * until something cancels it. Two tests need a run they can catch in flight and each carried a byte-identical
+     * copy of this, which meant the defect below had to be found twice and fixed twice.
+     *
+     * <p>
+     * The wall clock here is a safety valve against a hung build, not a wait any passing run reaches. Its one real
+     * constraint is that it must outlast every {@link #awaitState} budget in the same test — and it used to be the
+     * same 5 seconds as that budget, which made the valve indistinguishable from the behaviour under test. A loaded
+     * machine could spend most of the budget just reaching RUNNING; the stub then released itself, the run settled
+     * COMPLETED on its own, and {@code stop()} arrived at an already-finished run. The failure read
+     * <em>"run run:cancel-proof did not reach KILLED (was COMPLETED)"</em> — a sentence about the assertion rather
+     * than about the cause, on a test that passed on the next run. Widening it by an order of magnitude makes the
+     * ordering structural instead of lucky: for the valve to fire at all, an {@code awaitState} must already have
+     * failed, and that one reports the state it was actually waiting for.
+     */
+    private void stubBlockUntilCancelled() {
+        when(manager.execute(any(SubagentExecutionEnvironment.class), any(Subagent.class), anyString()))
+                .thenAnswer(invocation -> {
+                    final SubagentExecutionEnvironment perRun = invocation.getArgument(0);
+                    final long deadline = System.currentTimeMillis() + BLOCKED_SUBAGENT_SAFETY_MILLIS;
+                    while (!perRun.getCancellationSignal().isCancelled() && System.currentTimeMillis() < deadline) {
+                        Thread.sleep(5);
+                    }
+                    return SubagentExecutionResult.emptyFailure("interrupted", Instant.now());
                 });
     }
 
@@ -117,16 +154,8 @@ class DefaultWorkflowRunnerBackgroundTest {
     @Test
     @DisplayName("stop(runId) trips the per-run signal so an in-flight subagent unwinds and the run settles KILLED")
     void stopCancelsInFlightRun() {
-        // The subagent blocks until THIS run's signal is cancelled (cooperative stop), then returns.
-        when(manager.execute(any(SubagentExecutionEnvironment.class), any(Subagent.class), anyString()))
-                .thenAnswer(invocation -> {
-                    final SubagentExecutionEnvironment perRun = invocation.getArgument(0);
-                    final long deadline = System.currentTimeMillis() + 5000;
-                    while (!perRun.getCancellationSignal().isCancelled() && System.currentTimeMillis() < deadline) {
-                        Thread.sleep(5);
-                    }
-                    return SubagentExecutionResult.emptyFailure("interrupted", Instant.now());
-                });
+        // Cooperative stop: the subagent unwinds only when THIS run's signal is cancelled.
+        stubBlockUntilCancelled();
         final RunId id = RunId.from("longrun");
 
         runner.runInBackground(ctx -> ctx.agent(sub, "g").text(), id);
@@ -207,16 +236,8 @@ class DefaultWorkflowRunnerBackgroundTest {
     @Test
     @DisplayName("handle.future() is a detached view: an external cancel() cannot corrupt the run's tracked state")
     void externalHandleCancelDoesNotCorruptRun() {
-        // The subagent blocks until THIS run's signal is cancelled, so the run stays observably RUNNING.
-        when(manager.execute(any(SubagentExecutionEnvironment.class), any(Subagent.class), anyString()))
-                .thenAnswer(invocation -> {
-                    final SubagentExecutionEnvironment perRun = invocation.getArgument(0);
-                    final long deadline = System.currentTimeMillis() + 5000;
-                    while (!perRun.getCancellationSignal().isCancelled() && System.currentTimeMillis() < deadline) {
-                        Thread.sleep(5);
-                    }
-                    return SubagentExecutionResult.emptyFailure("interrupted", Instant.now());
-                });
+        // The run must stay observably RUNNING until the control plane — not the stub — ends it.
+        stubBlockUntilCancelled();
         final RunId id = RunId.from("cancel-proof");
 
         final RunHandle<String> handle = runner.runInBackground(ctx -> ctx.agent(sub, "g").text(), id);
@@ -374,7 +395,7 @@ class DefaultWorkflowRunnerBackgroundTest {
 
     /** Polls {@code target}'s run store until {@code id} reaches {@code expected}, failing if it does not in time. */
     private void awaitState(DefaultWorkflowRunner target, RunId id, WorkflowRunState expected) {
-        final long deadline = System.currentTimeMillis() + 5000;
+        final long deadline = System.currentTimeMillis() + AWAIT_STATE_BUDGET_MILLIS;
         while (System.currentTimeMillis() < deadline) {
             if (target.status(id).map(WorkflowRun::getState).filter(expected::equals).isPresent()) {
                 return;

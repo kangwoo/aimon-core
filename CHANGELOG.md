@@ -1355,12 +1355,46 @@ Fifteen rules are now enforced by tests; the complete index is
   requires a running Docker daemon**, checked in pre-flight rather than discovered minutes later, and
   as a hard failure — a gate that skips itself when the daemon is absent is the strictest-looking
   setup with the weakest enforcement.
+- **`packagingTest` followed it, on a different argument.** `@Tag("packaging")` is four methods in one
+  class and ran nowhere. Unlike the seven backends above it is not the only verification any module has;
+  it is the only one that can *see a fat jar*. Packaging turns resource lookup into jar-entry enumeration
+  — the code casts a `URLConnection` to `JarURLConnection` — and when that breaks the skill list comes
+  back silently short instead of failing, which is a regression this framework has actually shipped.
+  Every other test in the build runs off a directory class path, where that path does not exist. It is a
+  step in the `build` job rather than a job of its own: a separate job buys a failing check that names the
+  tier and costs a second JDK and a second full compile, which is worth paying for a Testcontainers tier
+  running for minutes and not for one adding **57 seconds** from a cleaned sample build directory (6 warm).
+  The task builds both fat jars itself — Boot's current loader and its classic one — so nothing has to run
+  first. The release gate line becomes `checkAll integrationTest packagingTest`.
+
+  This split an open backlog item in half. It had held `playwrightTest` and `packagingTest` together on
+  the single ground that both were opt-in, but opt-in is a state rather than a property: one needs browser
+  binaries installed and the other needs nothing. The item's own body had written both reasons into one
+  sentence, and its three review triggers were already 1:1:1 across the two tiers — a trigger list that
+  splits cleanly is a sign the item is two. `playwrightTest` stays outside both gates, now as its own
+  item, and its install cost is still unmeasured.
 - **`JavaCompile` workers pin their own heap.** A worker daemon inherits `JAVA_TOOL_OPTIONS` from the
   shell, and Gradle's own smaller `-Xmx` on the command line overrides the inherited `-Xmx` but not
   the inherited `-Xms`; `JAVA_TOOL_OPTIONS=-Xmx4g -Xms1g` therefore killed the worker before javac
   started, with `Initial heap size set to a larger value than the maximum heap size` and nothing wrong
   with the source. The `Test` block already pinned against exactly this; the compile side did not.
   Invisible in CI, which has no such variable — it only ever hit a contributor's machine.
+- **A flaky test in `checkAll`, found by running the gate rather than by reading it.**
+  `DefaultWorkflowRunnerBackgroundTest` stubs a subagent that blocks until its run's cancellation signal
+  trips, with a wall-clock escape hatch so a broken run cannot hang the build. That hatch was **5,000 ms —
+  the same budget the test's own state poller uses**, which made it indistinguishable from the behaviour
+  under test: on a loaded machine most of the budget went on reaching RUNNING, the stub then released
+  itself, and the run settled on its own before the control plane's `stop()` had finished with it. The
+  failure read `run run:cancel-proof did not reach KILLED (was COMPLETED)` — a sentence about the
+  assertion, not about the cause — and the next run was green, so the evidence overwrote itself. It was
+  recovered from the Gradle daemon log.
+
+  The escape hatch is now 60,000 ms and named, so for it to fire at all a state poller must already have
+  failed and reported the state it was waiting for. That ordering is structural rather than lucky, which
+  is the actual fix; a bigger number alone would only have made the window rarer. Confirmed by controlled
+  experiment: with a 6-second stall injected before `stop()`, the test fails at 5,000 and passes at
+  60,000 with nothing else changed. Both tests carrying a byte-identical copy of the stub now share one
+  helper — the defect existed twice and would have had to be found twice.
 - **The build-script-reading guards now declare their inputs.** `PublishedModuleLoggingBindingTest`
   reads every module and shared build script and had no `inputs` declaration, so it could report
   UP-TO-DATE across exactly the edits it exists to catch. Found by suspecting the new
@@ -1378,10 +1412,28 @@ Fifteen rules are now enforced by tests; the complete index is
   Ordering is `mustRunAfter`, not `dependsOn`: producing a report must not start requiring a Docker
   daemon or a fat jar, so `./gradlew test jacocoTestReport` still works with neither and still says
   0.0% for those modules — correctly, since nothing measured them in that invocation. Gradle 9 fails
-  the build if the relationship is left undeclared entirely. Two caveats are in the build script: stale
-  `build/jacoco/*.exec` from an earlier run is folded in too, and CI's two tiers are separate jobs with
-  separate workspaces, so the uploaded report stays `test`-only until exec data is passed between them.
-  That last point is now what blocks a coverage floor, in place of the missing measurement.
+  the build if the relationship is left undeclared entirely. One caveat stays in the build script:
+  stale `build/jacoco/*.exec` from an earlier run is folded in too.
+
+- **CI builds that report in a third job, because no other job can.** `build` and `integration` run in
+  parallel with separate workspaces, so a report generated inside either one sees a single tier — and
+  it was generated inside `build`, the `test`-only tier, so the XML CI uploaded carried exactly the
+  misleading numbers above rather than the merged ones. Each job now archives its own `.exec` and a
+  `coverage` job needing both restores them before running `jacocoTestReport -x test`. The exclusion is
+  what keeps this a tail job rather than a third test run: `dependsOn(test)` exists so that reading
+  `test.exec` is a declared dependency, and dropping it reuses the data the other two jobs already
+  produced, compiling only main classes. A tar rather than the bare glob, because `upload-artifact`
+  roots an artifact at the longest common prefix of what it matched — `modules/` with several modules,
+  but silently `modules/<one>/build/jacoco/` the day only one matches, which would restore the file to
+  the wrong path and lose that module's coverage without failing anything.
+
+  No `if: always()` on the job, deliberately: a coverage number means something only when every tier
+  feeding it actually ran, and the floor this job is meant to carry next would otherwise fail with
+  "coverage dropped" when the real cause was one red integration test — naming the wrong culprit, which
+  is the very thing the two-job split exists to avoid. The price is that a red run produces no coverage
+  XML. This was the last thing blocking that floor
+  ([`docs/backlog/architecture-review-open-items.md`](docs/backlog/architecture-review-open-items.md)
+  R-3), the missing measurement having been settled earlier in this block.
 
 - **Three unused dependencies removed from published POMs** — `org.commonmark:commonmark` from
   `aimon-core` (zero imports anywhere, catalog entry deleted with it), `org.yaml:snakeyaml` from
@@ -1483,7 +1535,7 @@ Fifteen rules are now enforced by tests; the complete index is
   still missing — no Redis/Mongo/Postgres `TaskResultStore`, and an in-memory retention mismatch
   (1000 terminal tasks against 256 results) that can show a task whose result has been evicted.
 - **`docs/backlog/architecture-review-open-items.md`** — the 2026-08-31 review's remaining items
-  (R-1…R-6), and with it the review's plan document is deleted: a progress tracker is removed when the
+  (R-1…R-7), and with it the review's plan document is deleted: a progress tracker is removed when the
   work ends, its reasoning going to `design/` or `project/` and its open items here. What the register
   is actually for is its §0: the plan's "why this was left out" table had **three of six rows wrong**.
   One said no seam existed for injecting an executor (there are seven, just none at the assembly

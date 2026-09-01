@@ -44,11 +44,10 @@ import org.junit.jupiter.api.Test;
  * <p>
  * Task names, not task graphs. If {@code checkAll} itself stops depending on {@code checkStyle}, both files still
  * agree and this test still passes — that hole is closed by the root build script owning one aggregate rather than by
- * a text scan. The tiers it cannot see are the two that run in neither place: {@code packagingTest}
- * ({@code @Tag("packaging")}, which needs {@code bootJar}) and {@code playwrightTest}
- * ({@code @Tag("playwright")}, which needs browser binaries). Nothing here notices when those rot.
- * {@code integrationTest} used to be the third; it is now a CI step and a gate task, so the comparison below
- * holds it to the same rule as every other task.
+ * a text scan. One tier runs in neither place and so cannot be seen here: {@code playwrightTest}
+ * ({@code @Tag("playwright")}, which needs browser binaries installed). Nothing here notices when it rots.
+ * {@code integrationTest} and {@code packagingTest} were both once in that position; each is now a CI step and a
+ * gate task, so the comparison below holds them to the same rule as every other task.
  *
  * <p>
  * Shell and YAML rather than bytecode is why this is plain JUnit and not ArchUnit, following the precedent set by

@@ -107,10 +107,13 @@ tasks.withType<Test>().configureEach {
 // aimon-browser-playwright. Modules with no docker-tagged tests simply run nothing in `integrationTest`.
 //
 // `@Tag("packaging")` is a third tier with the same shape and a different reason. Those tests build a fat jar
-// and launch it in a child JVM, so they cost tens of seconds and depend on `bootJar` having run — neither of
-// which belongs in the loop a developer runs on every save. Excluded from `test` for the same reason `docker`
-// is, and given its own task for the same reason too. Repeated `useJUnitPlatform { }` calls accumulate into one
-// options set, so both exclusions apply.
+// and launch it in a child JVM, so they cost tens of seconds — which does not belong in the loop a developer runs
+// on every save. Excluded from `test` for the same reason `docker` is, and given its own task for the same reason
+// too. Repeated `useJUnitPlatform { }` calls accumulate into one options set, so both exclusions apply.
+//
+// Out of `test` is not the same as out of CI, and only one tier in this build is actually both. `packagingTest`
+// is a step in the `build` job and a task in the release gate, like `integrationTest` before it; the tier that
+// still runs nowhere is `playwrightTest` in aimon-browser-playwright.
 tasks.named<Test>("test") {
     useJUnitPlatform {
         excludeTags("docker")
@@ -163,8 +166,10 @@ tasks.register<Test>("packagingTest") {
 //
 // Two consequences worth knowing. Exec data left over from an earlier run is folded in as well, so a report can
 // describe a tier that did not run in this invocation; delete `build/jacoco/*.exec` when that matters. And in CI
-// the tiers run as separate jobs with separate workspaces, so the uploaded report stays the `test`-only one until
-// someone passes exec data between the jobs.
+// the tiers run as separate jobs with separate workspaces, so no single job can generate this report: `build` and
+// `integration` each archive their own `.exec` and a third `coverage` job restores both before running
+// `jacocoTestReport -x test`. That is what `dependsOn(test)` above buys besides correctness locally — the
+// dependency is declared, so `-x test` can drop it and the report reads exec data no task in that job produced.
 tasks.withType<JacocoReport>().configureEach {
     dependsOn(tasks.named("test"))
     mustRunAfter(tasks.named("integrationTest"), tasks.named("packagingTest"))

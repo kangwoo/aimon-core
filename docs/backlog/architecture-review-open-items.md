@@ -1,4 +1,4 @@
-# 아키텍처 리뷰가 남긴 나머지 항목 — 등록 항목 6건 (열림 4 · 닫힘 2)
+# 아키텍처 리뷰가 남긴 나머지 항목 — 등록 항목 7건 (열림 4 · 닫힘 3)
 
 2026-08-31 의 아키텍처 리뷰가 일곱 단계를 처리하고 남긴 것들이다. 같은 리뷰에서 나온 두 축은 이미
 자기 문서를 가졌고([`multi-instance-readiness.md`](multi-instance-readiness.md) ·
@@ -116,42 +116,94 @@
 
 ## 2. 항목
 
-### R-1 — `playwrightTest` · `packagingTest` 는 어느 게이트에도 없다 · **열림**
+### R-1 — `packagingTest` 가 어느 게이트에도 없다 · **닫힘** *(2026-08-31)*
 
-**무엇** — 두 opt-in 테스트 계층을 CI 에 넣거나, 넣지 않기로 결정하고 그 근거를 적는다.
+**무엇이었나** — 이 항목은 원래 `playwrightTest` 와 `packagingTest` **둘을 한 항목으로** 들고 있었고,
+제목도 그렇게 적혀 있었다. 착수하면서 그 묶음이 먼저 무너졌다.
+
+#### 경계가 틀렸다 — 이번엔 크기가 아니라 **개수**다
+
+§0.3 과 R-5 가 이미 두 번 기록한 모양이지만(415줄 → 1,520줄 → 2,196줄), 그것들은 전부 **한 항목이
+얼마나 큰가**를 잘못 센 것이었다. 여기서 틀린 것은 **항목이 하나인가**다.
+
+두 계층을 묶은 근거는 *"둘 다 opt-in"* 하나뿐이었다. 그런데 opt-in 은 성질이 아니라 **현재 상태**이고,
+같은 상태에 있다는 것이 같은 이유로 거기 있다는 뜻은 아니다. 비용을 실제로 재 보니 자릿수가 다르다.
+
+| 계층 | 실체 | 비용 | 필요한 것 |
+|------|------|------|----------|
+| `@Tag("packaging")` | `FatJarPackagingTest` 메서드 **4개** (`aimon-sample-app`) | **57초** — 샘플 build 디렉토리를 지우고 루트에서 `packagingTest` (warm 은 6초) | **없음.** task 가 fat jar 둘을 자기가 빌드한다 |
+| `@Tag("playwright")` | `PlaywrightLifecycleManagerTest` 메서드 **4개** | 미측정 | 브라우저 바이너리 설치 |
+
+**항목의 본문이 이미 그 갈라짐을 적어 두고 있었다.** *"브라우저 바이너리 설치는 job 하나가 아니고,
+`packagingTest` 는 `bootJar` 에 매달려 있다"* — 한 문장 안에 **서로 다른 두 이유**를 적어 놓고도 둘을
+한 항목으로 두었다. 재검토 트리거도 마찬가지였다: 셋 중 하나는 playwright 전용(브라우저 소비자),
+하나는 packaging 전용(fat jar 가 배포 산출물), 하나만 공통(CI 시간)이었다. **트리거 목록이 1:1:1 로
+갈려 있으면 그것은 이미 항목 하나가 아니다.**
+
+그리고 그 문장의 뒷절은 **틀리기까지 했다.** `packagingTest` 는 `bootJar` 에 "매달려" 있지 않다 —
+`samples/aimon-sample-app/build.gradle.kts` 가 `dependsOn(bootJar, bootJarClassic)` 을 선언하므로 task 가
+자기 선행조건을 스스로 만든다. 먼저 무엇을 돌려 두어야 하는 계층이 아니었고, 그래서 **넣지 않을 이유로
+적혀 있던 것이 사실이 아니었다**(규칙 둘).
+
+#### 한 것
+
+`packagingTest` 를 `build` job 의 스텝과 릴리스 게이트 태스크로 넣었다. 별도 job 이 아닌 이유는
+`integration` 과 대칭이 아니기 때문이다 — 별도 job 은 **실패한 체크가 계층 이름을 말한다**는 이득을 사고
+JDK 설치와 전체 컴파일을 한 번 더 치르는데, Testcontainers 를 몇 분 도는 계층에는 값어치가 있지만 이미
+컴파일이 끝난 job 에 1분을 얹는 계층에는 없다. 스텝 이름이 그 역할을 대신한다.
+
+들어간 근거는 게이트 편입이 7개 백엔드에 대해 쓴 문장과 **다르다**. 그때는 *"그 모듈의 유일한 검증"*
+이었지만 `packagingTest` 는 무엇의 유일한 검증도 아니다. 대신 이쪽은 **fat jar 를 볼 수 있는 유일한
+검증**이다 — 패키징하면 리소스 조회가 jar 엔트리 열거가 되고(그 코드는 `URLConnection` 을
+`JarURLConnection` 으로 캐스팅한다), 깨지는 방식이 예외가 아니라 **조용히 짧아진 스킬 목록**이며,
+그 테스트의 javadoc 이 적듯 *"이 프레임워크가 실제로 한 번 겪은 회귀"* 다. 디렉토리 클래스패스로 도는
+다른 모든 테스트는 그 코드 경로가 아예 존재하지 않는 자리에서 돈다. 검증 대상이 샘플 모듈이라는 것은
+반론이 되지 않는다 — 회귀가 나는 코드는 발행되는 `aimon-core` 쪽이고, 샘플은 그것을 **패키징된 상태로
+세울 수 있는 유일한 자리**다.
+
+**공허 통과가 아님을 확인했다** (규칙 다섯). CI 에만 넣고 릴리스 게이트에서 뺀 상태로 되돌려
+`ReleaseGateMatchesCiGateTest` 를 돌렸더니 의도한 문장 그대로 실패했다 —
+*"CI runs `packagingTest` … but the release gate in scripts/release.sh does not: [checkAll, integrationTest]"*.
+그 다음 되돌려 3건 통과. 두 목록을 붙들고 있는 것이 실제로 붙들고 있다.
+
+**어디** *(2026-08-31)*
+
+- `.github/workflows/build.yml` — `build` job 의 `Fat-jar packaging tests` 스텝. 실패 리포트 업로드의
+  glob 에 `samples/*` 를 더했다(그 계층만 `modules/` 밖에 살아서 아티팩트가 조용히 비어 있었을 것이다)
+- `scripts/release.sh` — 게이트가 `checkAll integrationTest packagingTest` 한 줄이 됐다
+- `ReleaseGateMatchesCiGateTest` 의 "What this cannot see" · `aimon.java-conventions.gradle.kts` 의
+  `packagingTest` 등록 주석 — 둘 다 **"양쪽 게이트 밖"** 이라고 적고 있었으므로 같이 고쳤다(§0.4-b 와
+  같은 파생 서술 문제이며, 이 문서에서 두 번째다)
+
+**남는 것** — 없다. playwright 쪽은 R-7 로 나갔다.
+
+### R-7 — `playwrightTest` 는 여전히 어느 게이트에도 없다 · **열림 · 트리거 대기**
+
+**무엇** — `playwrightTest` 를 CI 에 넣거나, 넣지 않기로 결정하고 그 근거를 적는다. R-1 에서 갈라져
+나온 항목이며, 번호는 재사용하지 않으므로 새 번호를 받았다.
 
 **왜 — 관측 가능한 결과**
 
-`integrationTest` 가 CI job 과 릴리스 게이트에 들어가면서, **어디서도 실행되지 않는 계층은 이 둘만
-남았다**. 규모는 작다(2026-08-31 확인).
+`integrationTest` 에 이어 `packagingTest` 까지 양쪽 게이트에 들어가면서, **어디서도 실행되지 않는
+계층은 이것 하나만 남았다** — `PlaywrightLifecycleManagerTest` 의 메서드 4개다(2026-08-31 확인).
+`@Tag("playwright")` 를 문자열로 세면 5건이 나오지만, 그중 하나는 **그 태그를 왜 붙이지 않았는지 적은
+javadoc 문장**이다(`PlaywrightLifecycleManagerTest:26`) — §0.4-a 가 docker 쪽에서 만난 것과 같은 함정이다.
 
-| 계층 | 실체 | 실행되는 곳 |
-|------|------|------------|
-| `@Tag("playwright")` | `PlaywrightLifecycleManagerTest` 의 메서드 **4개** | 없음 |
-| `@Tag("packaging")` | `FatJarPackagingTest` **1개 클래스** (`aimon-sample-app`) | 없음 |
-
-작다는 것이 안전하다는 뜻은 아니다. `FatJarPackagingTest` 가 검증하는 것은 **fat jar 안에서 스킬
-목록이 온전한가**이고, 그 테스트의 javadoc 이 스스로 적듯 그것이 깨지는 방식은 예외가 아니라 **조용한
-누락**이며 *"이 프레임워크가 실제로 한 번 겪은 회귀"* 다. 디렉토리 클래스패스로 도는 다른 모든 테스트는
-그 자리를 볼 수 없다 — 패키징하면 리소스 조회가 jar 엔트리 열거가 되고, 그 코드는 `URLConnection` 을
-`JarURLConnection` 으로 캐스팅한다. 지금 그 회귀를 잡는 자동화는 없다.
-
-`aimon-browser-playwright` 는 발행 모듈이므로 R-1 은 게이트 편입이 7개 백엔드에 대해 말한 것과
-**같은 문장**이 여덟 번째 모듈에 대해 성립하는지의 문제이기도 하다. 다만 그때와 달리 여기서는 대답이
-자명하지 않다 —
-브라우저 바이너리 설치는 job 하나가 아니고, `packagingTest` 는 `bootJar` 에 매달려 있다.
+`aimon-browser-playwright` 는 발행 모듈이므로, 게이트 편입이 7개 백엔드에 대해 말한 문장이 여덟 번째
+모듈에 대해 성립하는지의 문제다. 다만 대답이 자명하지 않다 — **브라우저 바이너리 설치는 job 하나가
+아니고**, 그 비용은 아직 재지 않았다. R-1 이 실측 한 번으로 갈라졌다는 사실이 여기에도 그대로 적용된다:
+**착수하려면 먼저 재야 한다.**
 
 **어디** *(2026-08-31 확인)*
 
 - `modules/aimon-browser-playwright/build.gradle.kts:29` — `playwrightTest` 등록
-- `buildSrc/src/main/kotlin/aimon.java-conventions.gradle.kts:133` — `packagingTest` 등록(전 모듈)
-- `.github/workflows/build.yml:100` · `scripts/release.sh:153` — 둘 다 "still opt-in" 이라고 적고 있다
-- `ReleaseGateMatchesCiGateTest` — 이 둘을 **보지 못한다**고 자기 javadoc 에 적어 두었다(0.4-b 에서 갱신)
+- `.github/workflows/build.yml` 의 `integration` job 주석 · `scripts/release.sh` 의 게이트 주석 —
+  둘 다 이제 **이 계층 하나만** "still opt-in" 이라고 적는다
+- `ReleaseGateMatchesCiGateTest` — 이것을 **보지 못한다**고 자기 javadoc 에 적어 두었다
 
-**언제 다시 볼까** — 셋 중 하나.
+**언제 다시 볼까** — 둘 중 하나. (원래 셋이었는데 하나는 packaging 쪽 트리거여서 R-1 과 함께 나갔다.)
 - 브라우저 도구가 실제 소비자를 얻을 때. 지금 `playwrightTest` 가 지키는 것은 아직 아무도 쓰지 않는 표면이다
-- fat jar 가 배포 산출물이 될 때 (`aimon-sample-app` 이 샘플이 아니라 참조 배포가 되는 시점)
-- CI 시간이 문제가 아니게 될 때 — 지금 두 계층을 넣지 않는 진짜 이유는 설치 비용이지 테스트 시간이 아니다
+- CI 시간이 문제가 아니게 될 때 — 이 계층을 넣지 않는 진짜 이유는 설치 비용이지 테스트 시간이 아니다
 
 ### R-2 — `aimon-knowledge-opensearch` 의 `jackson-databind` · **닫힘** *(2026-08-31)*
 
@@ -175,7 +227,7 @@
 항목을 새로 열지는 않는다 — OpenSearch 컨테이너를 띄우는 것은 이 항목의 범위가 아니었고, 필요해지는
 시점은 그 모듈에 실제 소비자가 생길 때다. 여기 한 줄로 기록만 남긴다.
 
-### R-3 — 커버리지에 하한선이 없다 · **열림 · CI 배선 대기** *(측정 완료 2026-08-31)*
+### R-3 — 커버리지에 하한선이 없다 · **열림 · 하한선만 남음** *(측정·CI 배선 완료 2026-08-31)*
 
 **무엇** — `jacocoTestCoverageVerification` 규칙을 두어 커버리지 회귀를 실패로 만든다. 그 전에
 지금 수치를 잰다.
@@ -220,23 +272,46 @@ JaCoCo 의 기본값은 `test.exec` 하나만 읽는데, 7개 백엔드 모듈�
 `aimon-cli` 63.7%(비발행), `aimon-llm-openai` 68.3%. 나머지 20개는 line 74.8% 이상이고 `aimon-core` 는
 87.2% 다.
 
-**막고 있는 것이 바뀌었다 — 측정이 아니라 CI 배선이다.** 지금 하한선을 걸면 **CI 에서 그 일곱이 다시
-0~20% 로 측정된다**: `build` job 이 `checkAll` + `jacocoTestReport` 를 돌리고 `integration` job 은
-**다른 워크스페이스**에서 `integrationTest` 만 돌리므로, 리포트를 만드는 job 에는 docker 계층의 exec
-데이터가 없다. 로컬에서 통과하는 규칙이 CI 에서만 깨지는 형태이며, 그 방향의 실패는 규칙을 곧
-`-x` 로 만든다.
+**① CI 배선 — 했다** *(2026-08-31)*. 측정이 끝난 뒤 막고 있던 것은 CI 였다. 그때 하한선을 걸었다면
+**CI 에서 그 일곱이 다시 0~20% 로 측정됐을 것이다**: `build` job 이 `jacocoTestReport` 를 돌리고
+`integration` job 은 **다른 워크스페이스**에서 `integrationTest` 만 돌리므로, 리포트를 만드는 job 에
+docker 계층의 exec 데이터가 없었다. 로컬에서 통과하는 규칙이 CI 에서만 깨지는 형태이며, 그 방향의
+실패는 규칙을 곧 `-x` 로 만든다.
 
-따라서 순서는 **① 두 job 사이로 exec 데이터를 넘기거나 리포트를 통합 job 쪽에서 만든다 → ② 그 다음
-하한선**이다. 하한선의 형태는 이 저장소에 이미 선례가 둘 있다 — checkstyle 의 `maxWarnings` 와
+두 안 중 **exec 데이터를 job 사이로 넘기는 쪽**을 택했다. 리포트를 `integration` job 에서 만드는 안은
+그 job 이 `build` 를 `needs` 해야 하고, 그러면 지금 병렬인 두 job 이 직렬이 되어 **느린 쪽이 빠른 쪽을
+기다린다** — `integration` job 이 별도 job 인 이유를 그대로 되돌리는 셈이다.
+
+한 것 — `build` 와 `integration` 이 각자 자기 `.exec` 를 tar 로 올리고, 둘을 `needs` 하는 세 번째
+**`coverage` job** 이 그것을 풀어 `./gradlew jacocoTestReport -x test` 를 돌린다. 세 가지가 이 모양을
+정했다.
+
+| 결정 | 이유 |
+|------|------|
+| `-x test` | `jacocoTestReport` 의 `dependsOn(test)` 는 **exec 파일을 읽는다는 선언**이라 지울 수 없다(Gradle 9 가 미선언 입력을 거부한다). 그래프에서만 빼면 단위 스위트를 세 번째로 돌리지 않고 다른 두 job 의 데이터를 그대로 쓴다 — main 클래스만 컴파일된다 |
+| glob 이 아니라 tar | `upload-artifact` 는 매치된 경로들의 **최장 공통 접두사**를 아티팩트 루트로 삼는다. 모듈이 여럿이면 `modules/` 지만 **하나만 매치되는 날 조용히** `modules/<하나>/build/jacoco/` 로 바뀌고, 복원이 엉뚱한 경로에 떨어져 **아무것도 실패시키지 않은 채** 그 모듈의 커버리지가 사라진다 |
+| `if: always()` 없음 | 커버리지 숫자는 **먹이는 계층이 전부 실제로 돌았을 때만** 뜻이 있다. 없으면 ②의 하한선이 "커버리지가 떨어졌다" 로 실패하는데 진짜 원인은 빨간 통합 테스트 하나가 된다 — 두 job 을 가른 이유를 정면으로 어기는 오진이다. 대가는 빨간 실행에서 커버리지 XML 이 안 나오는 것이고, 그 숫자는 어차피 읽을 것이 아니었다 |
+
+**남은 것은 ② 하한선뿐이다.** 형태는 이 저장소에 이미 선례가 둘 있다 — checkstyle 의 `maxWarnings` 와
 `BASELINE_TOP_LEVEL_CYCLES`. 임의의 목표치가 아니라 **지금 값을 동결하고 내려가면 실패하는 베이스라인**
-이 같은 모양이고, 임의의 숫자를 박지 말라는 이 항목의 요구를 만족하는 유일한 형태다.
+이 같은 모양이고, 임의의 숫자를 박지 말라는 이 항목의 요구를 만족하는 유일한 형태다. 걸 자리는
+`coverage` job 이다 — 그 job 이 존재하는 이유가 그것이다.
 
-**어디** *(2026-08-31 확인)* — `buildSrc/src/main/kotlin/aimon.java-conventions.gradle.kts` 의
-`JacocoReport` 블록 · `.github/workflows/build.yml` 의 `build` / `integration` 두 job ·
+**공허 통과가 아님을 확인했다** (규칙 다섯). 로컬에서 job 세 개의 셸을 그대로 실행해 왕복시켰다:
+jacoco 디렉토리를 전부 지우고 → 두 tar 를 풀고 → `jacocoTestReport -x test` 를 돌렸더니
+`aimon-session-{redis,postgres,mongodb}` · `aimon-filesystem-s3` · `aimon-knowledge-opensearch` ·
+`aimon-core` 가 위 표의 `test`+`integrationTest` 수치와 **소수점까지 일치**했다. exec 파일이 0개일 때
+tar 가 빈 아카이브를 조용히 만들지 않도록 두 archive 스텝에 가드를 두었고, 그것이 exit 1 로 발화하는
+것도 확인했다.
+
+**어디** *(2026-08-31)* — `.github/workflows/build.yml` 의 `build` / `integration` / **`coverage`** 세 job ·
+`buildSrc/src/main/kotlin/aimon.java-conventions.gradle.kts` 의 `JacocoReport` 블록(주석이 이 배선을
+서술하도록 갱신했다 — §0.4-b 가 말하는 파생 서술 문제다) ·
 `modules/aimon-core/src/test/java/at/aimon/core/architecture/ReleaseGateMatchesCiGateTest.java` 의
-`REPORTING_ONLY_CI_TASKS`(면제 근거가 여전히 참이다 — 검증 규칙은 아직 없다)
+`REPORTING_ONLY_CI_TASKS`(면제 근거가 여전히 참이다 — 검증 규칙은 아직 없다. `-x test` 는 그 테스트의
+토큰 파서가 이미 버리므로 게이트 비교는 그대로다)
 
-**언제 다시 볼까** — CI 의 리포트가 docker 계층을 볼 수 있게 되는 때. 그 전에 하한선을 걸면 안 된다.
+**언제 다시 볼까** — 지금이다. ②를 막고 있던 것이 없다.
 
 ### R-4 — 스레드풀을 **조립 계층에서** 주입할 수 없다 · **열림 · 설계 대기**
 

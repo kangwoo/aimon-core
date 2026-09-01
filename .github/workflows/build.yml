@@ -59,9 +59,18 @@ jobs:
       - name: Format check + checkstyle + tests
         run: ./gradlew --no-daemon checkAll
 
-      - name: JaCoCo coverage reports
-        if: always()
-        run: ./gradlew --no-daemon jacocoTestReport
+      # Its own step rather than its own job, unlike `integration`. That split buys a failing check that names
+      # the tier, and it costs a second JDK plus a second full compile -- worth paying for a tier that runs for
+      # minutes against Testcontainers, not for one that adds under a minute on top of a compile this job has
+      # already done. The step name carries the tier instead.
+      #
+      # What it guards is narrow and nothing else can see it. Packaging turns resource lookup into jar-entry
+      # enumeration, and when that breaks the skill list comes back silently short rather than failing -- a
+      # regression this framework has actually shipped. Every other test in the build runs off a directory class
+      # path, where that code path does not exist. The task builds both fat jars itself (Boot's current loader
+      # and its classic one) and launches each in a child JVM.
+      - name: Fat-jar packaging tests
+        run: ./gradlew --no-daemon packagingTest
 
       # Only on a red run, and that is the whole point of the step. Actions storage is one
       # account-wide quota, so a green run's reports -- which answer no question anyone asked --
@@ -80,27 +89,48 @@ jobs:
           path: |
             modules/*/build/reports/tests/
             modules/*/build/test-results/*/*.xml
+            samples/*/build/reports/tests/
+            samples/*/build/test-results/*/*.xml
           if-no-files-found: ignore
           retention-days: 7
 
-      # XML only -- and unlike the reports above, this one still runs on green, because it is the
-      # artifact someone actually goes looking for. The per-class HTML is 45 MB raw (9.7 MB zipped)
-      # against 0.6 MB for the XML every coverage tool reads, and `./gradlew jacocoTestReport`
-      # regenerates the HTML locally in one command.
-      # `continue-on-error` because this artifact is a convenience, not a gate. Losing it should
-      # never be able to overturn the verdict of the checks above -- which is precisely what went
-      # wrong: a full storage quota failed the upload, the upload failed the job, and a build that
-      # had passed formatting, checkstyle and every test reported as broken. The same applies to
-      # the test reports above; there the job is already red, so it only keeps the cause honest.
-      - name: Upload JaCoCo coverage XML
-        if: always()
+      # Execution data, not a report. This job used to run `jacocoTestReport` and upload the XML, and that
+      # report was wrong for seven published modules -- see the `coverage` job below, which is the only
+      # workspace holding both tiers. What crosses the job boundary now is the raw `.exec`; the report is
+      # built once, downstream, from both halves.
+      #
+      # A tar rather than the bare glob because `upload-artifact` roots an artifact at the longest common
+      # prefix of what it matched. With several modules that prefix is `modules/`, but it silently becomes
+      # `modules/<one>/build/jacoco/` the day only one module matches, and the download would then restore
+      # the file to the wrong path -- losing that module's coverage without failing anything. The tar
+      # carries repository-root-relative paths, so the restore is exact however many files there are.
+      #
+      # No `if: always()`: exec data from a tier that failed part-way measures nothing anyone should read,
+      # and `coverage` is gated on both tiers being green for the same reason.
+      - name: Archive unit-tier coverage data
+        run: |
+          shopt -s nullglob
+          exec_data=(modules/*/build/jacoco/test.exec)
+          if [ ${#exec_data[@]} -eq 0 ]; then
+            echo "::error::The test task produced no JaCoCo execution data; the coverage job would report every module at 0%."
+            exit 1
+          fi
+          tar -cf jacoco-exec-unit.tar "${exec_data[@]}"
+
+      # `continue-on-error` on the same policy as the upload above: a full storage quota must not overturn
+      # the verdict of checks that passed -- which is precisely what went wrong once, turning a build that
+      # had passed formatting, checkstyle and every test red on an upload. The cost of that policy is paid
+      # one job over, where `coverage` goes red on the missing download instead, and that split is the
+      # honest one: `build` says whether the code is good, `coverage` says whether the number could be
+      # computed. One day's retention -- this is a hand-off inside a single run, not an artifact anyone
+      # goes looking for later.
+      - name: Upload unit-tier coverage data
         continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
-          name: jacoco-xml
-          path: modules/*/build/reports/jacoco/*/*.xml
-          if-no-files-found: ignore
-          retention-days: 7
+          name: jacoco-exec-unit
+          path: jacoco-exec-unit.tar
+          retention-days: 1
 
   # Testcontainers-backed tests (@Tag("docker")), which `test` — and therefore `checkAll` and the `build`
   # job above — excludes by design so the unit loop stays fast and needs no Docker daemon.
@@ -116,8 +146,9 @@ jobs:
   # ReleaseGateMatchesCiGateTest holds the two lists together.
   #
   # The ubuntu runner ships a working Docker daemon, so Testcontainers needs no setup step of its own.
-  # `playwrightTest` (@Tag("playwright")) and `packagingTest` (@Tag("packaging")) are still opt-in: the first
-  # needs browser binaries installed, the second depends on `bootJar` having run. Neither is one job.
+  # `packagingTest` (@Tag("packaging")) has since joined the `build` job as a step; the one tier still running
+  # nowhere is `playwrightTest` (@Tag("playwright")), which needs browser binaries installed and guards a
+  # surface no consumer has yet.
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -154,5 +185,108 @@ jobs:
           path: |
             modules/*/build/reports/tests/
             modules/*/build/test-results/*/*.xml
+          if-no-files-found: ignore
+          retention-days: 7
+
+      # The half of the coverage picture this job owns, and for seven published modules the only half there
+      # is -- every test in aimon-filesystem-{gridfs,s3}, aimon-session-{redis,postgres,mongodb} and
+      # aimon-memory-{postgres,mongodb} is @Tag("docker"). Same tar-not-glob reasoning as the `build` job,
+      # and the same reason for carrying no `if: always()`.
+      - name: Archive docker-tier coverage data
+        run: |
+          shopt -s nullglob
+          exec_data=(modules/*/build/jacoco/integrationTest.exec)
+          if [ ${#exec_data[@]} -eq 0 ]; then
+            echo "::error::integrationTest produced no JaCoCo execution data; the coverage job would report the seven docker-backed modules as untested."
+            exit 1
+          fi
+          tar -cf jacoco-exec-integration.tar "${exec_data[@]}"
+
+      - name: Upload docker-tier coverage data
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: jacoco-exec-integration
+          path: jacoco-exec-integration.tar
+          retention-days: 1
+
+  # Where the coverage number is made, and the only workspace in which it can be true.
+  #
+  # `build` and `integration` run in parallel with separate workspaces, so a report generated inside either
+  # sees one tier. Generated inside `build`, as it was until now, that meant aimon-memory-{mongodb,postgres}
+  # measured 0.0% line, aimon-session-postgres 6.2%, gridfs 11.0%, s3 12.9%, session-redis 19.8% and
+  # session-mongodb 28.0% -- seven published modules whose every test is @Tag("docker") and therefore absent
+  # from `test`. That is not low coverage, it is coverage measured with the tests excluded; the same seven
+  # land at 75-85% once the docker tier is folded in. The build-side plugin has read every tier's `.exec`
+  # since aimon.java-conventions grew its fileTree, and said in its own comment that CI would keep reporting
+  # the `test`-only number "until someone passes exec data between the jobs". This job is that.
+  #
+  # `needs` both tiers, and deliberately without `if: always()`. A coverage number means something only when
+  # every tier feeding it actually ran, and the floor this job is meant to carry next
+  # (docs/backlog/architecture-review-open-items.md R-3) would otherwise fail with "coverage dropped" when
+  # the real cause was one red integration test -- naming the wrong culprit, which is the very thing the
+  # two-job split exists to avoid. The price is that a red run produces no coverage XML; the number it would
+  # have carried was not one to publish anyway.
+  #
+  # `-x test` is what keeps this a tail job rather than a third test run. `jacocoTestReport` declares
+  # dependsOn(test) so that reading `test.exec` is a declared dependency -- Gradle 9 fails the build for an
+  # undeclared one -- and excluding it here reuses the data the other two jobs already produced. Only main
+  # classes are compiled, which the report needs regardless to map exec data onto them.
+  coverage:
+    runs-on: ubuntu-latest
+    needs: [build, integration]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          # Read-only unconditionally, unlike the two jobs above: this one compiles main sources and
+          # nothing else, so it has no cache entry worth writing and no reason to race the `build` job
+          # for the write on main.
+          cache-read-only: true
+
+      - name: Download unit-tier coverage data
+        uses: actions/download-artifact@v7
+        with:
+          name: jacoco-exec-unit
+
+      - name: Download docker-tier coverage data
+        uses: actions/download-artifact@v7
+        with:
+          name: jacoco-exec-integration
+
+      # Repository-root-relative paths, so every file lands back under modules/<module>/build/jacoco/ where
+      # the fileTree in aimon.java-conventions looks for it. The two tars can never name the same file: the
+      # `build` job runs only `test`, the `integration` job only `integrationTest`. The listing is the
+      # evidence -- without it, a hand-off that quietly restored nothing would look exactly like a green run.
+      - name: Restore coverage execution data
+        run: |
+          tar -xf jacoco-exec-unit.tar
+          tar -xf jacoco-exec-integration.tar
+          find modules -path '*/build/jacoco/*.exec' | sort
+
+      - name: JaCoCo coverage reports
+        run: ./gradlew --no-daemon jacocoTestReport -x test
+
+      # XML only, and it still runs on green because this is the artifact someone actually goes looking for.
+      # The per-class HTML is 45 MB raw (9.7 MB zipped) against 0.6 MB for the XML every coverage tool reads,
+      # and `./gradlew jacocoTestReport` regenerates the HTML locally in one command. `continue-on-error`
+      # because losing a convenience artifact must not overturn what the run found -- the same policy, and
+      # the same past incident, as the uploads in the two jobs above.
+      - name: Upload JaCoCo coverage XML
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: jacoco-xml
+          path: modules/*/build/reports/jacoco/*/*.xml
           if-no-files-found: ignore
           retention-days: 7
