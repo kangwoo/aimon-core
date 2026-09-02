@@ -48,6 +48,25 @@ import at.aimon.core.llm.token.TokenEstimator;
  */
 class CompactionConcurrencyScenarioHTest {
 
+    /**
+     * How long an assertion waits for work that takes milliseconds once unblocked. Generous on purpose: it exists to
+     * fail a genuinely hung test, not to measure anything, so it costs a passing run nothing. It was 2 seconds, which
+     * a loaded CI runner beat — {@code afterFirstCompactionReleasesLockSecondCallerProceeds} failed with a bare
+     * {@link java.util.concurrent.TimeoutException} at {@code first.get(...)} while every other test passed. This
+     * class forks blocking work onto a cached pool while the rest of the suite runs at
+     * {@code maxParallelForks = cores / 2}, so its waits contend with more than a typical unit test's do.
+     */
+    private static final long ASSERTION_BUDGET_SECONDS = 10;
+
+    /**
+     * How long {@link BlockingEngine} waits to be released before declaring the test broken. It must outlast
+     * {@link #ASSERTION_BUDGET_SECONDS}, and the two used to be the same number — which made the engine's safety
+     * valve able to fire while the test was still mid-assertion, reporting "blocking engine never released" about a
+     * release the test had simply not reached yet. Whichever deadline fires first should be the one that can name
+     * what it was waiting for, and that is the assertion.
+     */
+    private static final long ENGINE_RELEASE_SAFETY_SECONDS = 60;
+
     private ExecutorService executor;
     private HookRegistry hookRegistry;
     private Environment environment;
@@ -78,7 +97,8 @@ class CompactionConcurrencyScenarioHTest {
 
         Future<CompactionDecision> first = executor
                 .submit(() -> guard.maybeCompact(memory, model(), hookRegistry, environment));
-        assertThat(engine.entered.await(2, TimeUnit.SECONDS)).as("engine should be entered by first thread").isTrue();
+        assertThat(engine.entered.await(ASSERTION_BUDGET_SECONDS, TimeUnit.SECONDS))
+                .as("engine should be entered by first thread").isTrue();
 
         // Second concurrent caller on the same session sees the lock held → NONE("concurrent compaction in progress").
         CompactionDecision second = guard.maybeCompact(memory, model(), hookRegistry, environment);
@@ -86,7 +106,7 @@ class CompactionConcurrencyScenarioHTest {
         assertThat(second.getReason()).contains("concurrent compaction in progress");
 
         engine.release.countDown();
-        CompactionDecision firstResult = first.get(2, TimeUnit.SECONDS);
+        CompactionDecision firstResult = first.get(ASSERTION_BUDGET_SECONDS, TimeUnit.SECONDS);
         assertThat(firstResult.getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
         // Engine was invoked exactly once across the race — the lock served its purpose.
         assertThat(engine.callCount.get()).isEqualTo(1);
@@ -105,13 +125,15 @@ class CompactionConcurrencyScenarioHTest {
                 .submit(() -> guard.maybeCompact(memoryB, model(), hookRegistry, environment));
 
         // Both threads must enter the engine before either is released — proves the locks are independent.
-        assertThat(engine.entered.await(2, TimeUnit.SECONDS)).as("both engines should be entered concurrently")
-                .isTrue();
+        assertThat(engine.entered.await(ASSERTION_BUDGET_SECONDS, TimeUnit.SECONDS))
+                .as("both engines should be entered concurrently").isTrue();
 
         engine.release.countDown();
         engine.release.countDown();
-        assertThat(futureA.get(2, TimeUnit.SECONDS).getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
-        assertThat(futureB.get(2, TimeUnit.SECONDS).getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
+        assertThat(futureA.get(ASSERTION_BUDGET_SECONDS, TimeUnit.SECONDS).getAction())
+                .isEqualTo(CompactionDecision.Action.COMPACT);
+        assertThat(futureB.get(ASSERTION_BUDGET_SECONDS, TimeUnit.SECONDS).getAction())
+                .isEqualTo(CompactionDecision.Action.COMPACT);
         assertThat(engine.callCount.get()).isEqualTo(2);
     }
 
@@ -123,9 +145,10 @@ class CompactionConcurrencyScenarioHTest {
 
         Future<CompactionDecision> first = executor
                 .submit(() -> guard.maybeCompact(memory, model(), hookRegistry, environment));
-        assertThat(engine.entered.await(2, TimeUnit.SECONDS)).isTrue();
+        assertThat(engine.entered.await(ASSERTION_BUDGET_SECONDS, TimeUnit.SECONDS)).isTrue();
         engine.release.countDown();
-        assertThat(first.get(2, TimeUnit.SECONDS).getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
+        assertThat(first.get(ASSERTION_BUDGET_SECONDS, TimeUnit.SECONDS).getAction())
+                .isEqualTo(CompactionDecision.Action.COMPACT);
 
         // Lock has been released; second call (after replaceWith) below threshold → NONE without re-running engine.
         CompactionDecision second = guard.maybeCompact(memory, model(), hookRegistry, environment);
@@ -202,7 +225,7 @@ class CompactionConcurrencyScenarioHTest {
             callCount.incrementAndGet();
             entered.countDown();
             try {
-                if (!release.await(2, TimeUnit.SECONDS)) {
+                if (!release.await(ENGINE_RELEASE_SAFETY_SECONDS, TimeUnit.SECONDS)) {
                     throw new IllegalStateException("blocking engine never released");
                 }
             } catch (InterruptedException e) {

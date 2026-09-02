@@ -1379,6 +1379,20 @@ Fifteen rules are now enforced by tests; the complete index is
   started, with `Initial heap size set to a larger value than the maximum heap size` and nothing wrong
   with the source. The `Test` block already pinned against exactly this; the compile side did not.
   Invisible in CI, which has no such variable — it only ever hit a contributor's machine.
+- **A third flaky test, and the pattern the three of them make.**
+  `CompactionConcurrencyScenarioHTest` failed on CI with a bare `TimeoutException` at `first.get(2, SECONDS)`
+  while every other test in the run passed. The number was the problem: two seconds for work that takes
+  milliseconds once unblocked, in a class that forks blocking work onto a cached pool while the rest of the
+  suite runs at `maxParallelForks = cores / 2`. The assertion budget is now 10 seconds — generous on purpose,
+  because it exists to fail a hung test rather than to measure anything, so a passing run pays nothing.
+
+  The same file had the defect the entry above describes, in its second form: `BlockingEngine`'s own release
+  valve was **also** two seconds, so the stub's safety net shared a number with the assertions waiting on it
+  and could fire mid-assertion, reporting "blocking engine never released" about a release the test had not
+  reached yet. It is now 60 seconds. That is the shape all three flakes share — a safety valve indistinguishable
+  from the thing it guards — and it is worth naming, because in each case the failure named the assertion
+  rather than the cause and each was green on the next run.
+
 - **Two races in `DefaultWorkflowRunnerBackgroundTest`, and a wrong diagnosis of the first one.**
   Running the gate — rather than reading it — turned up `run run:cancel-proof did not reach KILLED (was
   COMPLETED)` on a run that was green the next time, its evidence overwritten by the passing re-run and
