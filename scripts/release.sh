@@ -150,10 +150,17 @@ fi
 # `$GRADLE` invocation after this section marker and compares its task list against CI's; a second line
 # would be invisible to it, and the gate would silently stop matching CI.
 #
-# Still opt-in and therefore NOT gated here, same as in CI: `packagingTest` (@Tag("packaging")) and
-# `playwrightTest` (@Tag("playwright")). The first depends on `bootJar`, the second on browser binaries.
-log "Quality gate: checkAll + integrationTest (format + checkstyle + tests + BOM + Testcontainers)"
-$GRADLE checkAll integrationTest
+# `packagingTest` (@Tag("packaging")) joined on a narrower argument than integrationTest's. It is not the
+# only verification any module has; it is the only one that can see a fat jar at all. Packaging turns
+# resource lookup into jar-entry enumeration, and when that breaks the skill list comes back silently short
+# instead of failing — a regression this framework has actually shipped. Every other test here runs off a
+# directory class path, where that code path does not exist. The task builds both fat jars itself and costs
+# under a minute, which is why it is gated on the same line rather than argued about.
+#
+# Still opt-in and therefore NOT gated here, same as in CI: `playwrightTest` (@Tag("playwright")), which
+# needs browser binaries installed and guards a surface no consumer has yet.
+log "Quality gate: checkAll + integrationTest + packagingTest (format + checkstyle + tests + BOM + Testcontainers + fat jar)"
+$GRADLE checkAll integrationTest packagingTest
 ok "Quality gate passed"
 
 if [ "$DRY_RUN" = 1 ]; then
