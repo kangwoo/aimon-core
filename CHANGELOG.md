@@ -1379,20 +1379,6 @@ Fifteen rules are now enforced by tests; the complete index is
   started, with `Initial heap size set to a larger value than the maximum heap size` and nothing wrong
   with the source. The `Test` block already pinned against exactly this; the compile side did not.
   Invisible in CI, which has no such variable — it only ever hit a contributor's machine.
-- **A third flaky test, and the pattern the three of them make.**
-  `CompactionConcurrencyScenarioHTest` failed on CI with a bare `TimeoutException` at `first.get(2, SECONDS)`
-  while every other test in the run passed. The number was the problem: two seconds for work that takes
-  milliseconds once unblocked, in a class that forks blocking work onto a cached pool while the rest of the
-  suite runs at `maxParallelForks = cores / 2`. The assertion budget is now 10 seconds — generous on purpose,
-  because it exists to fail a hung test rather than to measure anything, so a passing run pays nothing.
-
-  The same file had the defect the entry above describes, in its second form: `BlockingEngine`'s own release
-  valve was **also** two seconds, so the stub's safety net shared a number with the assertions waiting on it
-  and could fire mid-assertion, reporting "blocking engine never released" about a release the test had not
-  reached yet. It is now 60 seconds. That is the shape all three flakes share — a safety valve indistinguishable
-  from the thing it guards — and it is worth naming, because in each case the failure named the assertion
-  rather than the cause and each was green on the next run.
-
 - **Two races in `DefaultWorkflowRunnerBackgroundTest`, and a wrong diagnosis of the first one.**
   Running the gate — rather than reading it — turned up `run run:cancel-proof did not reach KILLED (was
   COMPLETED)` on a run that was green the next time, its evidence overwritten by the passing re-run and
@@ -1418,6 +1404,21 @@ Fifteen rules are now enforced by tests; the complete index is
 
   Both tests carried a byte-identical copy of the stub, so each defect existed twice; they now share one
   helper.
+- **A third flaky test, and the pattern the three of them make.**
+  `CompactionConcurrencyScenarioHTest` failed on CI with a bare `TimeoutException` at `first.get(2, SECONDS)`
+  while every other test in the run passed. The number was the problem: two seconds for work that takes
+  milliseconds once unblocked, in a class that forks blocking work onto a cached pool while the rest of the
+  suite runs at `maxParallelForks = cores / 2`. The assertion budget is now 10 seconds — generous on purpose,
+  because it exists to fail a hung test rather than to measure anything, so a passing run pays nothing.
+
+  This file also had the defect the entry above describes — a different file, the same mistake — in its
+  second form: `BlockingEngine`'s own release
+  valve was **also** two seconds, so the stub's safety net shared a number with the assertions waiting on it
+  and could fire mid-assertion, reporting "blocking engine never released" about a release the test had not
+  reached yet. It is now 60 seconds. That is the shape all three flakes share — a safety valve indistinguishable
+  from the thing it guards — and it is worth naming, because in each case the failure named the assertion
+  rather than the cause and each was green on the next run.
+
 - **The build-script-reading guards now declare their inputs.** `PublishedModuleLoggingBindingTest`
   reads every module and shared build script and had no `inputs` declaration, so it could report
   UP-TO-DATE across exactly the edits it exists to catch. Found by suspecting the new
@@ -1437,6 +1438,26 @@ Fifteen rules are now enforced by tests; the complete index is
   0.0% for those modules — correctly, since nothing measured them in that invocation. Gradle 9 fails
   the build if the relationship is left undeclared entirely. One caveat stays in the build script:
   stale `build/jacoco/*.exec` from an earlier run is folded in too.
+
+- **CI builds that report in a third job, because no other job can.** `build` and `integration` run in
+  parallel with separate workspaces, so a report generated inside either one sees a single tier — and
+  it was generated inside `build`, the `test`-only tier, so the XML CI uploaded carried exactly the
+  misleading numbers above rather than the merged ones. Each job now archives its own `.exec` and a
+  `coverage` job needing both restores them before running `jacocoTestReport -x test`. The exclusion is
+  what keeps this a tail job rather than a third test run: `dependsOn(test)` exists so that reading
+  `test.exec` is a declared dependency, and dropping it reuses the data the other two jobs already
+  produced, compiling only main classes. A tar rather than the bare glob, because `upload-artifact`
+  roots an artifact at the longest common prefix of what it matched — `modules/` with several modules,
+  but silently `modules/<one>/build/jacoco/` the day only one matches, which would restore the file to
+  the wrong path and lose that module's coverage without failing anything.
+
+  No `if: always()` on the job, deliberately: a coverage number means something only when every tier
+  feeding it actually ran, and the floor this job is meant to carry next would otherwise fail with
+  "coverage dropped" when the real cause was one red integration test — naming the wrong culprit, which
+  is the very thing the two-job split exists to avoid. The price is that a red run produces no coverage
+  XML. This was the last thing blocking that floor
+  ([`docs/backlog/architecture-review-open-items.md`](docs/backlog/architecture-review-open-items.md)
+  R-3), the missing measurement having been settled earlier in this block.
 
 - **Coverage now has a floor, frozen from what CI measured.** JaCoCo produced reports and nothing else: no
   `jacocoTestCoverageVerification` rule existed anywhere in the build, so coverage could fall and nothing
@@ -1460,26 +1481,6 @@ Fifteen rules are now enforced by tests; the complete index is
   old numbers meaningless; with every tier's data, all 23 modules pass; and raising `aimon-core` from 86 to
   88 fails with *"lines covered ratio is 0.87, but expected minimum is 0.88"*. What JaCoCo's message cannot
   say — that a zero means an unrun tier rather than a collapse — is in the task's `description` instead.
-
-- **CI builds that report in a third job, because no other job can.** `build` and `integration` run in
-  parallel with separate workspaces, so a report generated inside either one sees a single tier — and
-  it was generated inside `build`, the `test`-only tier, so the XML CI uploaded carried exactly the
-  misleading numbers above rather than the merged ones. Each job now archives its own `.exec` and a
-  `coverage` job needing both restores them before running `jacocoTestReport -x test`. The exclusion is
-  what keeps this a tail job rather than a third test run: `dependsOn(test)` exists so that reading
-  `test.exec` is a declared dependency, and dropping it reuses the data the other two jobs already
-  produced, compiling only main classes. A tar rather than the bare glob, because `upload-artifact`
-  roots an artifact at the longest common prefix of what it matched — `modules/` with several modules,
-  but silently `modules/<one>/build/jacoco/` the day only one matches, which would restore the file to
-  the wrong path and lose that module's coverage without failing anything.
-
-  No `if: always()` on the job, deliberately: a coverage number means something only when every tier
-  feeding it actually ran, and the floor this job is meant to carry next would otherwise fail with
-  "coverage dropped" when the real cause was one red integration test — naming the wrong culprit, which
-  is the very thing the two-job split exists to avoid. The price is that a red run produces no coverage
-  XML. This was the last thing blocking that floor
-  ([`docs/backlog/architecture-review-open-items.md`](docs/backlog/architecture-review-open-items.md)
-  R-3), the missing measurement having been settled earlier in this block.
 
 - **Three unused dependencies removed from published POMs** — `org.commonmark:commonmark` from
   `aimon-core` (zero imports anywhere, catalog entry deleted with it), `org.yaml:snakeyaml` from
