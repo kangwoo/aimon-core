@@ -157,10 +157,15 @@ fi
 # directory class path, where that code path does not exist. The task builds both fat jars itself and costs
 # under a minute, which is why it is gated on the same line rather than argued about.
 #
+# `jacocoTestCoverageVerification` is here rather than exempted because it can fail a build, and the rule
+# this script is held to is that a release passes no narrower a gate than a pull request. It costs nothing
+# extra: unlike CI, where the tiers run in separate jobs and a third job reassembles their execution data,
+# everything above already ran in THIS workspace, so the floor is checked against the complete picture.
+#
 # Still opt-in and therefore NOT gated here, same as in CI: `playwrightTest` (@Tag("playwright")), which
 # needs browser binaries installed and guards a surface no consumer has yet.
-log "Quality gate: checkAll + integrationTest + packagingTest (format + checkstyle + tests + BOM + Testcontainers + fat jar)"
-$GRADLE checkAll integrationTest packagingTest
+log "Quality gate: checkAll + integrationTest + packagingTest + coverage floor"
+$GRADLE checkAll integrationTest packagingTest jacocoTestCoverageVerification
 ok "Quality gate passed"
 
 if [ "$DRY_RUN" = 1 ]; then

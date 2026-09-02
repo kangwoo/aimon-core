@@ -71,8 +71,13 @@ class ReleaseGateMatchesCiGateTest {
 
     /**
      * CI tasks that produce artifacts rather than pass/fail a build, and so are not expected in the release gate.
-     * {@code jacocoTestReport} writes coverage HTML; nothing in this build configures a
-     * {@code jacocoTestCoverageVerification} rule, so it cannot fail a PR either.
+     * {@code jacocoTestReport} writes coverage XML and HTML and has no pass/fail opinion of its own.
+     *
+     * <p>
+     * Its sibling {@code jacocoTestCoverageVerification} is deliberately <em>not</em> here. That task does fail a
+     * build — it carries the per-module floors in {@code gradle/coverage-baselines.properties} — so the rule below
+     * applies to it like any other verification task, and the release gate names it. This exemption list is for
+     * tasks that cannot fail, not for coverage as a subject.
      */
     private static final List<String> REPORTING_ONLY_CI_TASKS = List.of("jacocoTestReport");
 

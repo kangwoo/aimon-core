@@ -1379,20 +1379,6 @@ Fifteen rules are now enforced by tests; the complete index is
   started, with `Initial heap size set to a larger value than the maximum heap size` and nothing wrong
   with the source. The `Test` block already pinned against exactly this; the compile side did not.
   Invisible in CI, which has no such variable — it only ever hit a contributor's machine.
-- **A third flaky test, and the pattern the three of them make.**
-  `CompactionConcurrencyScenarioHTest` failed on CI with a bare `TimeoutException` at `first.get(2, SECONDS)`
-  while every other test in the run passed. The number was the problem: two seconds for work that takes
-  milliseconds once unblocked, in a class that forks blocking work onto a cached pool while the rest of the
-  suite runs at `maxParallelForks = cores / 2`. The assertion budget is now 10 seconds — generous on purpose,
-  because it exists to fail a hung test rather than to measure anything, so a passing run pays nothing.
-
-  The same file had the defect the entry above describes, in its second form: `BlockingEngine`'s own release
-  valve was **also** two seconds, so the stub's safety net shared a number with the assertions waiting on it
-  and could fire mid-assertion, reporting "blocking engine never released" about a release the test had not
-  reached yet. It is now 60 seconds. That is the shape all three flakes share — a safety valve indistinguishable
-  from the thing it guards — and it is worth naming, because in each case the failure named the assertion
-  rather than the cause and each was green on the next run.
-
 - **Two races in `DefaultWorkflowRunnerBackgroundTest`, and a wrong diagnosis of the first one.**
   Running the gate — rather than reading it — turned up `run run:cancel-proof did not reach KILLED (was
   COMPLETED)` on a run that was green the next time, its evidence overwritten by the passing re-run and
@@ -1418,6 +1404,21 @@ Fifteen rules are now enforced by tests; the complete index is
 
   Both tests carried a byte-identical copy of the stub, so each defect existed twice; they now share one
   helper.
+- **A third flaky test, and the pattern the three of them make.**
+  `CompactionConcurrencyScenarioHTest` failed on CI with a bare `TimeoutException` at `first.get(2, SECONDS)`
+  while every other test in the run passed. The number was the problem: two seconds for work that takes
+  milliseconds once unblocked, in a class that forks blocking work onto a cached pool while the rest of the
+  suite runs at `maxParallelForks = cores / 2`. The assertion budget is now 10 seconds — generous on purpose,
+  because it exists to fail a hung test rather than to measure anything, so a passing run pays nothing.
+
+  This file also had the defect the entry above describes — a different file, the same mistake — in its
+  second form: `BlockingEngine`'s own release
+  valve was **also** two seconds, so the stub's safety net shared a number with the assertions waiting on it
+  and could fire mid-assertion, reporting "blocking engine never released" about a release the test had not
+  reached yet. It is now 60 seconds. That is the shape all three flakes share — a safety valve indistinguishable
+  from the thing it guards — and it is worth naming, because in each case the failure named the assertion
+  rather than the cause and each was green on the next run.
+
 - **The build-script-reading guards now declare their inputs.** `PublishedModuleLoggingBindingTest`
   reads every module and shared build script and had no `inputs` declaration, so it could report
   UP-TO-DATE across exactly the edits it exists to catch. Found by suspecting the new
@@ -1457,6 +1458,29 @@ Fifteen rules are now enforced by tests; the complete index is
   XML. This was the last thing blocking that floor
   ([`docs/backlog/architecture-review-open-items.md`](docs/backlog/architecture-review-open-items.md)
   R-3), the missing measurement having been settled earlier in this block.
+
+- **Coverage now has a floor, frozen from what CI measured.** JaCoCo produced reports and nothing else: no
+  `jacocoTestCoverageVerification` rule existed anywhere in the build, so coverage could fall and nothing
+  broke. `gradle/coverage-baselines.properties` now carries a per-module line floor — data rather than code,
+  so moving a number is a one-line diff and the whole frozen set is readable on one page. Same shape as
+  checkstyle's error budget and `BASELINE_TOP_LEVEL_CYCLES`: nothing here is a target, and raising a value is
+  a separate decision from not letting it fall. It runs in the `coverage` job after the report (when the
+  floor trips you want the report that explains it, and that upload is `if: always()`), and in the release
+  gate, which is not optional — a task that can fail a build cannot sit in `ReleaseGateMatchesCiGateTest`'s
+  reporting-only exemption without lying. The gate pays nothing extra: every tier already ran in that one
+  workspace.
+
+  **The values are `floor(measured) - 1`, and the -1 came from data rather than caution.** Plain flooring
+  left four modules 0.1pp of headroom and three more 0.2pp — while the same commit measured 81.8% locally
+  and 81.4% on CI for `aimon-session-postgres`. A floor with less room than the noise is a gate that flakes,
+  and a flaking gate gets excluded, which is worse than no gate: exactly what this item was opened to avoid.
+  Headroom is now 1.1-2.0pp.
+
+  Checked in three directions rather than assumed: without the docker tier, `filesystem-gridfs`,
+  `memory-mongodb` and `memory-postgres` fail loudly (0.10 / 0.00 / 0.00) — the very situation that made the
+  old numbers meaningless; with every tier's data, all 23 modules pass; and raising `aimon-core` from 86 to
+  88 fails with *"lines covered ratio is 0.87, but expected minimum is 0.88"*. What JaCoCo's message cannot
+  say — that a zero means an unrun tier rather than a collapse — is in the task's `description` instead.
 
 - **Three unused dependencies removed from published POMs** — `org.commonmark:commonmark` from
   `aimon-core` (zero imports anywhere, catalog entry deleted with it), `org.yaml:snakeyaml` from

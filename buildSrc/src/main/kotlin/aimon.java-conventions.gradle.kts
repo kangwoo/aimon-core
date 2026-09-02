@@ -1,4 +1,8 @@
 import com.diffplug.gradle.spotless.SpotlessExtension
+// Imported rather than fully qualified: inside a .gradle.kts, `java` resolves to the JavaPluginExtension
+// accessor and shadows the package root, so `java.util.Properties` does not compile.
+import java.math.BigDecimal
+import java.util.Properties
 import org.gradle.api.tasks.testing.logging.TestExceptionFormat
 
 plugins {
@@ -170,13 +174,55 @@ tasks.register<Test>("packagingTest") {
 // `integration` each archive their own `.exec` and a third `coverage` job restores both before running
 // `jacocoTestReport -x test`. That is what `dependsOn(test)` above buys besides correctness locally — the
 // dependency is declared, so `-x test` can drop it and the report reads exec data no task in that job produced.
-tasks.withType<JacocoReport>().configureEach {
+// JacocoReportBase, not JacocoReport: the coverage *verification* task is a sibling of the report, not a
+// subtype of it, and it reads execution data the same way. Configuring only the report would have left
+// `jacocoTestCoverageVerification` on the plugin's default of `test.exec` alone — measuring the seven
+// docker-backed modules with their tests excluded, which is the exact number the floor below exists to stop
+// anyone from freezing.
+tasks.withType<JacocoReportBase>().configureEach {
     dependsOn(tasks.named("test"))
     mustRunAfter(tasks.named("integrationTest"), tasks.named("packagingTest"))
     executionData.setFrom(fileTree(layout.buildDirectory.dir("jacoco")).include("*.exec"))
+}
+
+tasks.withType<JacocoReport>().configureEach {
     reports {
         xml.required.set(true)
         html.required.set(true)
+    }
+}
+
+// The coverage floor. Values live in gradle/coverage-baselines.properties — data as data, so that moving a
+// number is a one-line diff a reviewer can read, and so the whole frozen set is visible on one page rather
+// than scattered across twenty-three build files.
+//
+// A module with no entry gets no rule rather than a floor of zero. Zero would be a rule that always passes,
+// which reads as "verified" in the task list and verifies nothing; absence at least tells the truth. The
+// modules legitimately absent are the ones with no coverage report at all — aimon-bom (a java-platform),
+// the two testkits, and the samples.
+val coverageBaselines = Properties().apply {
+    val file = rootProject.file("gradle/coverage-baselines.properties")
+    if (file.exists()) {
+        file.inputStream().use { load(it) }
+    }
+}
+
+coverageBaselines.getProperty(project.name)?.let { floor ->
+    tasks.named<JacocoCoverageVerification>("jacocoTestCoverageVerification") {
+        // Spelled out in the task list because the failure message cannot say it. A module whose tests are all
+        // @Tag("docker") measures near zero when only `test` has run, and JaCoCo reports that as "ratio is 0.00,
+        // but expected minimum is 0.83" — which reads as a collapse rather than as a tier that was never run.
+        description = "Fails if line coverage dropped below gradle/coverage-baselines.properties. Needs every " +
+            "tier's execution data: run `test integrationTest` first, or the docker-backed modules measure zero."
+        violationRules {
+            rule {
+                limit {
+                    counter = "LINE"
+                    value = "COVEREDRATIO"
+                    minimum = BigDecimal(floor.trim()).divide(BigDecimal(100))
+                }
+            }
+        }
     }
 }
 
