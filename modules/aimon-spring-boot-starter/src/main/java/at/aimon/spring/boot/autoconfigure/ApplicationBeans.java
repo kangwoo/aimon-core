@@ -1,5 +1,7 @@
 package at.aimon.spring.boot.autoconfigure;
 
+import java.util.List;
+
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 
@@ -22,10 +24,10 @@ import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
  *
  * <p>
  * This lives in one place rather than in each slice because the belief it corrects is the kind that regrows. It
- * was written down as fact in two slices at once — the approval axis' seam and the Quartz branch's
- * "so the dependency edge that orders destruction is registered" — and the next store resolved through a provider
- * would have inherited it. One helper is what makes "did this get an edge?" answerable by looking at the call
- * rather than at a comment.
+ * was written down as fact in three slices — the approval axis' seam, the Quartz branch's
+ * "so the dependency edge that orders destruction is registered", and the session slice's class javadoc, which
+ * survived the first two corrections — and the next store resolved through a provider would have inherited it.
+ * One helper is what makes "did this get an edge?" answerable by looking at the call rather than at a comment.
  */
 final class ApplicationBeans {
 
@@ -61,19 +63,56 @@ final class ApplicationBeans {
     }
 
     /**
+     * Resolves every contribution of a type in order, giving each one the same edge.
+     *
+     * <p>
+     * The plural counterpart of {@link #resolve}, and it exists so that "does this one need an edge?" has no
+     * remaining per-entry answer. A customizer holds no resource today, which is a fact about today's
+     * implementations rather than about the extension point.
+     *
+     * @param provider
+     *            the provider for the contribution's type
+     * @param type
+     *            the contribution's type
+     * @param beanFactory
+     *            the context's bean factory
+     * @param dependent
+     *            name of the bean being built, which Spring must destroy before the contributions
+     * @param <T>
+     *            the contribution's type
+     * @return the contributed beans in the order the provider gave them, possibly empty
+     */
+    static <T> List<T> resolveAll(ObjectProvider<T> provider, Class<T> type,
+            ConfigurableListableBeanFactory beanFactory, String dependent) {
+        final List<T> beans = provider.orderedStream().toList();
+        for (T bean : beans) {
+            registerDestructionEdge(beanFactory, type, bean, dependent);
+        }
+        return beans;
+    }
+
+    /**
      * Records that {@code dependent} depends on whichever bean produced {@code instance}.
      *
      * <p>
-     * The instance is matched against the singleton cache rather than resolved by name a second time, because by
-     * this point it exists and a second {@code getBean} would only re-derive what the caller already holds. Two
-     * shapes are deliberately left without an edge, and both are correct: a prototype has no container-managed
-     * destruction to order, and a {@code FactoryBean} product is cached under a key this loop does not walk, so it
-     * keeps the reverse-creation-order behaviour rather than getting a wrong edge.
+     * The instance is matched against what each candidate name currently holds rather than resolved by name a
+     * second time, because by this point it exists and a fresh {@code getBean} would only re-derive what the
+     * caller already holds. Matching has to look in two places, which is the part that was wrong at first: a
+     * {@code FactoryBean}'s singleton is the <em>factory</em>, and its product lives in a separate cache. Reading
+     * only the first left the borrowed Quartz {@code Scheduler} — which
+     * {@code spring-boot-starter-quartz} publishes through a {@code SchedulerFactoryBean} — without the edge the
+     * comment at its call site said it was getting.
      *
      * <p>
-     * {@code allowEagerInit=false} for that second reason rather than out of caution: a name this loop could match
-     * is a name whose definition already declares the type, so eager init would widen the candidate list only with
-     * the entries that cannot be matched anyway.
+     * Two shapes are still left without one, and both are correct: a prototype and a non-singleton
+     * {@code FactoryBean} product both hand out an instance the container does not destroy, so there is no
+     * destruction to order. Neither is asked for its product here, which is also why the loop cannot create
+     * anything a caller did not already ask for.
+     *
+     * <p>
+     * {@code allowEagerInit=false} rather than out of caution: a name this loop could match is a name whose
+     * definition already declares the type — the caller is holding the instance, so the bean that produced it has
+     * been created — and eager init would widen the candidate list only with entries that cannot match.
      *
      * @param beanFactory
      *            the context's bean factory
@@ -87,10 +126,34 @@ final class ApplicationBeans {
     static void registerDestructionEdge(ConfigurableListableBeanFactory beanFactory, Class<?> type, Object instance,
             String dependent) {
         for (String name : beanFactory.getBeanNamesForType(type, true, false)) {
-            if (beanFactory.containsSingleton(name) && beanFactory.getSingleton(name) == instance) {
+            if (heldBy(beanFactory, name) == instance) {
                 beanFactory.registerDependentBean(name, dependent);
                 return;
             }
         }
+    }
+
+    /**
+     * Returns what {@code name} currently hands out, without creating anything.
+     *
+     * <p>
+     * {@code getBean} is reached only for a singleton {@code FactoryBean}, where it reads the product cache the
+     * factory filled when the caller resolved it. For everything else the singleton cache is the answer, and a
+     * name with nothing in it is not a candidate at all.
+     *
+     * @param beanFactory
+     *            the context's bean factory
+     * @param name
+     *            the candidate bean name
+     * @return the instance that name holds, or {@code null} when it holds none this method may read
+     */
+    private static Object heldBy(ConfigurableListableBeanFactory beanFactory, String name) {
+        if (!beanFactory.containsSingleton(name)) {
+            return null;
+        }
+        if (!beanFactory.isFactoryBean(name)) {
+            return beanFactory.getSingleton(name);
+        }
+        return beanFactory.isSingleton(name) ? beanFactory.getBean(name) : null;
     }
 }

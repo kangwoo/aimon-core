@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.beans.factory.FactoryBean;
 import org.springframework.beans.factory.NoUniqueBeanDefinitionException;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -18,7 +19,9 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 
+import at.aimon.bootstrap.AimonStack;
 import at.aimon.bootstrap.AimonStackSpec;
+import at.aimon.bootstrap.spec.SessionSpec;
 import at.aimon.core.agent.queue.InMemoryMessageQueueRepository;
 import at.aimon.core.agent.queue.MessageQueueRepository;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
@@ -92,6 +95,43 @@ class AimonApplicationContributionsTest {
                     .contains(AimonSessionAutoConfiguration.SESSION_SPEC_BEAN);
             assertThat(dependentsOf(context, "sliceFileSystem")).as("destruction edge for the filesystem")
                     .contains(AimonFileSystemAutoConfiguration.FILE_SYSTEM_SPEC_BEAN);
+        });
+    }
+
+    @Test
+    @DisplayName("a contribution a FactoryBean produces gets the edge too, which is the Quartz shape")
+    void factoryBeanProducedContributionGetsAnEdge(@TempDir Path workspace) {
+        // The shape the first version silently skipped, and it is the one the scheduling slice singles out as
+        // mattering most: spring-boot-starter-quartz publishes its Scheduler through a SchedulerFactoryBean. A
+        // FactoryBean's singleton is the factory, so matching only the singleton cache found the wrong object and
+        // the edge was never registered — for exactly the contributions most likely to hold a connection.
+        minimal(workspace).withUserConfiguration(FactoryBeanStoreConfiguration.class).run(ctx -> {
+            final ConfigurableApplicationContext context = (ConfigurableApplicationContext) ctx
+                    .getSourceApplicationContext();
+            assertThat(ctx.getBean(SessionSpec.class).getRecordStore()).as("the product still reaches the spec")
+                    .contains(FactoryBeanStoreConfiguration.PRODUCT);
+            assertThat(dependentsOf(context, "factoryBeanStore")).as("destruction edge for the produced store")
+                    .contains(AimonSessionAutoConfiguration.SESSION_SPEC_BEAN);
+        });
+    }
+
+    @Test
+    @DisplayName("a registry only a FactoryBean's instance would reveal diverges from nothing, so it is allowed")
+    void registryInvisibleToTheDefinitionScanDoesNotDiverge(@TempDir Path workspace) {
+        // This shape was written down as a cost the seam accepts and then as something the consistency check
+        // catches, and it is neither. A FactoryBean that never declares its object type is invisible to *every*
+        // by-type view, not only to the definition scan: @ConditionalOnMissingBean leaves the re-export in place,
+        // and the application's own `PendingTurnRegistry` injection point resolves to it — which is the assembled
+        // registry. Nothing reaches the opaque bean except a lookup by name, and that asks for that bean rather
+        // than for the stack's. So the context starts, and what it starts with agrees.
+        minimal(workspace).withUserConfiguration(OpaqueFactoryBeanRegistryConfiguration.class).run(ctx -> {
+            final ConfigurableApplicationContext context = (ConfigurableApplicationContext) ctx
+                    .getSourceApplicationContext();
+            assertThat(context.getBeanFactory().getBeanNamesForType(PendingTurnRegistry.class))
+                    .as("the opaque product is invisible to the by-type view the application would use")
+                    .containsExactly(AimonAutoConfiguration.EnabledConfiguration.PENDING_TURN_REGISTRY_BEAN);
+            assertThat(ctx.getBean(PendingTurnRegistry.class))
+                    .isSameAs(ctx.getBean(AimonStack.class).pendingTurnRegistry());
         });
     }
 
@@ -181,6 +221,51 @@ class AimonApplicationContributionsTest {
             final VirtualFileSystem fileSystem = mock(VirtualFileSystem.class);
             when(fileSystem.getWorkingDirectory()).thenReturn("/");
             return fileSystem;
+        }
+    }
+
+    /** A record store reached only through its factory, the way spring-boot-starter-quartz publishes a Scheduler. */
+    @Configuration(proxyBeanMethods = false)
+    static class FactoryBeanStoreConfiguration {
+
+        static final SessionRecordStore PRODUCT = new InMemorySessionRecordStore();
+
+        @Bean
+        FactoryBean<SessionRecordStore> factoryBeanStore() {
+            return new FactoryBean<>() {
+
+                @Override
+                public SessionRecordStore getObject() {
+                    return PRODUCT;
+                }
+
+                @Override
+                public Class<?> getObjectType() {
+                    return SessionRecordStore.class;
+                }
+            };
+        }
+    }
+
+    /** A registry whose type no definition declares — knowable only by instantiating the factory. */
+    @Configuration(proxyBeanMethods = false)
+    static class OpaqueFactoryBeanRegistryConfiguration {
+
+        @Bean
+        @SuppressWarnings("rawtypes")
+        FactoryBean opaqueRegistry() {
+            return new FactoryBean<PendingTurnRegistry>() {
+
+                @Override
+                public PendingTurnRegistry getObject() {
+                    return new InMemoryPendingTurnRegistry();
+                }
+
+                @Override
+                public Class<?> getObjectType() {
+                    return null;
+                }
+            };
         }
     }
 

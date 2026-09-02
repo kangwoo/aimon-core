@@ -49,11 +49,13 @@ import at.aimon.session.routing.DeploymentMode;
  * <p>
  * <b>Nothing here is closed by AIMON.</b> The four SPIs and the record store are resolved from the application's
  * context and handed to the spec as borrowed references. Two of the three shipped signal buses own a thread, so
- * they do have to be closed — by Spring, as the beans they are. Resolving them inside this {@code @Bean} method
- * is what orders that: {@code getIfAvailable()} registers a dependent-bean edge, so Spring destroys each bus
- * <em>after</em> the {@code SessionSpec}, and therefore after the stack built from it has drained. Adding them to
- * the stack's own teardown plan as well would give one resource two destruction edges, which is the thing
- * {@code scope-model.md} exists to prevent.
+ * they do have to be closed — by Spring, as the beans they are, <em>after</em> the {@code SessionSpec} and
+ * therefore after the stack built from it has drained. Resolving them inside this {@code @Bean} method is not
+ * what orders that, which is what this paragraph used to say: {@code getIfAvailable()} hands over an instance
+ * without telling the factory who asked. {@link ApplicationBeans#resolve} registers the edge that does order it —
+ * see that class for why the reverse creation order it would otherwise fall back to is right only by accident.
+ * Adding them to the stack's own teardown plan as well would give one resource two destruction edges, which is
+ * the thing {@code scope-model.md} exists to prevent.
  */
 @AutoConfiguration
 @ConditionalOnProperty(name = AimonProperties.ENABLED, havingValue = "true", matchIfMissing = true)

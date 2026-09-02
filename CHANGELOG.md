@@ -184,12 +184,17 @@ Old names are searchable in [`docs/migration/rename-maps.md`](docs/migration/ren
   filesystem, the scheduling SPIs and the borrowed Quartz `Scheduler`, knowledge and memory. The
   connection-holding ones were never in the first group, and the Quartz branch had written the mistaken
   reason down independently — the helper is what makes "did this get an edge?" answerable at the call site.
+  It matches a `FactoryBean`'s **product**, not the factory sitting in the singleton cache: the borrowed
+  Quartz `Scheduler` is published by `spring-boot-starter-quartz` through a `SchedulerFactoryBean`, so the
+  one entry named as mattering most was the one the first version silently skipped.
 - **A `PendingTurnRegistry` the stack cannot reach now fails the context** instead of diverging in silence.
   It is the one type this starter both publishes and accepts, and the two halves are resolved by different
   means, which can disagree: a bean the application names `aimonPendingTurnRegistry` is skipped as the
   re-export while `@ConditionalOnMissingBean` withdraws the real one, so the application injects one
-  registry and the stack suspends into another and `/approve` finds nothing. One identity check at the end
-  of refresh, naming both configurations that cause it.
+  registry and the stack suspends into another and `/approve` finds nothing. The check is written against
+  the disagreement rather than against that cause — *what `getBean(PendingTurnRegistry.class)` returns is
+  what the stack suspends into* — so `@Primary` and the refusal to guess stay Spring's answers rather than a
+  second copy of them.
 - **`distributed-approvals` now names only what is still node-local**, and says nothing when all three
   approval-axis stores were supplied. It had been unconditional on `DeploymentMode.DISTRIBUTED`, which
   was always true while there was no way to supply them and becomes a lie the moment there is. The

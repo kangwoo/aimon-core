@@ -228,6 +228,39 @@ edge 를 등록하고, 그 edge 를 단언하는 테스트를 붙였다(`AimonAp
 주입된다. degradation 대신 **이음매의 javadoc 에 제약으로** 적었고, "알리지 않는다" 를 테스트로
 못박았다.
 
+#### 세 번째 리뷰 — 규칙은 맞았고, **규칙이 닿는 범위를 실측하지 않았다**
+
+앞의 두 라운드가 근거를 고쳤다면 이번엔 **적용 범위**가 문제였다. 셋 다 실측으로 잡혔다.
+
+**edge 등록이 `FactoryBean` 의 제품을 못 봤다.** 싱글턴 캐시에 있는 것은 제품이 아니라 팩토리이므로,
+캐시 하나만 대조하던 첫 판은 `FactoryBean` 이 만든 기여를 조용히 건너뛰었다. 그리고 그 모양의 대표가
+하필 **빌려온 Quartz `Scheduler`** 다 — `spring-boot-starter-quartz` 가 `SchedulerFactoryBean` 으로
+내보내기 때문이고, 그래서 *"여기가 거의 어디보다 중요하다"* 고 주석이 지목한 바로 그 항목이 edge 없이
+남아 있었다. 실측: `FactoryBean<SessionRecordStore>` 를 정의하면 spec 에는 정상 반영되는데
+(`getRecordStore()` 가 채워진다) `getDependentBeans` 는 빈 배열이었다. 이제 두 캐시를 다 읽고, edge 가
+없는 채로 남는 것은 프로토타입과 비-싱글턴 `FactoryBean` 제품 둘뿐이다 — 컨테이너가 파괴하지 않는
+것들이라 정렬할 파괴가 없다.
+
+**감수한 두 모양 중 하나는 애초에 실패가 아니었다.** 타입을 인스턴스화해야만 알 수 있는 `FactoryBean` 이
+레지스트리를 만드는 경우를 "증상 없는 어긋남" 으로 적고 검사가 잡는다고 했는데, **둘 다 틀렸다.** 그런
+빈은 정의 스캔에만 안 보이는 것이 아니라 컨테이너의 모든 타입 기반 조회에 안 보이므로,
+`@ConditionalOnMissingBean` 이 재수출을 그대로 두고 애플리케이션의 `@Autowired PendingTurnRegistry` 도
+그 재수출로 — 즉 스택이 쓰는 그 인스턴스로 — 풀린다. **갈라지는 것이 없다.** 실측으로 확인했고
+(`getBeanNamesForType` 에 그 빈이 아예 안 나온다), 검사는 원인 목록 대신 **어긋남 자체**를 겨누도록
+다시 썼다 — 계약이 한 문장이 되었고(*`getBean(PendingTurnRegistry.class)` 가 돌려주는 것이 스택이 턴을
+적재하는 그것이다*) 해소 규칙을 두 번 구현하지 않는다.
+
+**그리고 정정한 그 문장이 세 번째 자리에 그대로 있었다.** `AimonSessionAutoConfiguration` 클래스
+javadoc 이 여전히 *"`getIfAvailable()` registers a dependent-bean edge"* 라고 적고 있었다 — 이번 라운드가
+배선을 바꾼 메서드 **바로 위**에서. "이 오해는 스스로 자란다" 가 앞 라운드의 논거였는데 그 증거가 한 건 더
+있었던 셈이고, 헬퍼로 꺼낸 판단이 옳았다는 뜻이기도 하다.
+
+자잘한 것 둘도 같이. `soleCandidate` 가 *"provider 가 던졌을 예외를 던진다"* 고 적었지만 provider 의
+`@Priority` fallback 은 따라 하지 않는다 — 그것을 읽으려면 후보마다 인스턴스가 있어야 하고, 후보를
+인스턴스화하지 않는 것이 이 조회의 존재 이유이므로 **일부러** 좁게 두고 그 이유를 적었다. 그리고
+`AimonAgentCustomizer` 만 헬퍼를 지나가지 않아 "이 항목에 edge 가 필요한가" 라는 판단이 한 자리 남아
+있었다 — `ApplicationBeans.resolveAll` 로 그 자리도 없앴다.
+
 **남은 것.** 없다. 구현은 M-2 이고 그것은 여전히 트리거 대기다 — 이 항목이 뚫은 것은 **길**이다.
 
 ### M-2 — 승인·보류턴 축의 분산 구현이 없다 · **열림 · 트리거 대기**

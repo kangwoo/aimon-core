@@ -188,7 +188,10 @@ public class AimonAutoConfiguration {
          * own. It belongs here anyway, because from the spec factory's side that is the same question the other
          * five answer: was there one? It gets an edge like everything else — not because a tracer owns a
          * resource to be closed in sequence with anything, but because "does this one need an edge?" is a
-         * question worth not having per entry.
+         * question worth not having per entry. The customizers go through
+         * {@link ApplicationBeans#resolveAll} for exactly that reason: they were the one entry still answering
+         * it, and "a callback holds nothing" is a fact about the implementations that exist rather than about
+         * the extension point.
          *
          * <p>
          * The last four are the approval-axis stores and the mid-turn input queue. They are gathered rather than
@@ -209,7 +212,9 @@ public class AimonAutoConfiguration {
                 ObjectProvider<SessionApprovalStore> sessionApprovalStores,
                 ObjectProvider<MessageQueueRepository> messageQueueRepositories,
                 ConfigurableListableBeanFactory beanFactory) {
-            return new ApplicationContributions(agentCustomizers.orderedStream().toList(),
+            return new ApplicationContributions(
+                    ApplicationBeans.resolveAll(agentCustomizers, AimonAgentCustomizer.class, beanFactory,
+                            CONTRIBUTIONS_BEAN),
                     resolve(credentialStores, CredentialStore.class, beanFactory),
                     resolve(credentialStoreFactories, CredentialStoreFactory.class, beanFactory),
                     resolve(approvalChannels, SkillApprovalChannel.class, beanFactory),
@@ -271,14 +276,18 @@ public class AimonAutoConfiguration {
          * The edge Spring records for the entries above has to be registered by hand here for the same reason
          * it does there — {@code getBean(...)} does not record who asked either — so the chain ends up
          * identical: stack, spec, this, the registry. Ambiguity is handled by hand for the same reason: this
-         * lookup does not inherit the provider's refusal to guess, so it reproduces it, honouring
-         * {@code @Primary} first and failing with the exception a provider would have thrown.
+         * lookup does not inherit the provider's refusal to guess, so it reproduces it — honouring
+         * {@code @Primary} and otherwise throwing the exception a provider would have thrown, though not its
+         * {@code @Priority} fallback, for the reason in {@link #soleCandidate}.
          *
          * <p>
-         * The bound is honest: a registry contributed by a {@code FactoryBean} whose type is only knowable by
-         * instantiating it is not seen here, and falls back to the node-local default. Instantiating to find out
-         * is the cycle this method exists to avoid — so that shape is caught after the fact instead, by
-         * {@link PendingTurnRegistryConsistencyCheck}, at the one point where resolving it is free.
+         * The other bound is narrower than it first reads. A registry contributed by a {@code FactoryBean} whose
+         * type is only knowable by instantiating it is not seen here, and the stack keeps its node-local default
+         * — but that bean is invisible to <em>every</em> by-type view, not only to this scan, so the
+         * application's own {@code PendingTurnRegistry} injection point resolves to the re-export and therefore
+         * to the very registry the stack is using. The two views do not disagree; there is simply a bean AIMON
+         * never sees, reachable only by asking for it by name. Measured, after this was twice written down as a
+         * divergence to catch: see {@link PendingTurnRegistryConsistencyCheck}.
          *
          * @param beanFactory
          *            the context's bean factory
@@ -308,6 +317,14 @@ public class AimonAutoConfiguration {
          * re-export has already backed off, so the application's own injection point throws while the stack
          * quietly suspends turns into whichever one iteration order surfaced first. Half the deployment would
          * then be looking in the wrong registry for a turn that is genuinely there.
+         *
+         * <p>
+         * {@code @Primary} is the whole of it, which is narrower than an {@code ObjectProvider} would be:
+         * autowiring falls back to {@code @Priority} when nothing is primary, and this does not. Reading that
+         * annotation means having an <em>instance</em> of every candidate, and not instantiating candidates is
+         * the entire reason this lookup reads definitions in the first place — honouring it would reopen the
+         * cycle. So the narrower rule is deliberate, and a deployment that wants to choose between two
+         * registries marks one {@code @Primary}.
          *
          * @param candidates
          *            the application's registry bean names, at least two
@@ -723,16 +740,17 @@ public class AimonAutoConfiguration {
          * Refuses a context where the registry turns suspend into is not the one an application can inject.
          *
          * <p>
-         * The two shapes {@link #applicationPendingTurnRegistry(ConfigurableListableBeanFactory)} cannot see
-         * are documented there as accepted costs, and they were — right up to the point of noticing that both
-         * fail with no symptom at all. This bean is what turns them into a startup error; see
-         * {@link PendingTurnRegistryConsistencyCheck} for the two configurations and why the check can only run
-         * once everything exists.
+         * The shape {@link #applicationPendingTurnRegistry(ConfigurableListableBeanFactory)} cannot tell apart —
+         * an application bean wearing the re-export's name — is documented there as an accepted cost, and it was,
+         * right up to the point of noticing it fails with no symptom at all. This bean turns it into a startup
+         * error. It is written against the disagreement rather than against that cause, so a second way of
+         * reaching it needs no prediction; see {@link PendingTurnRegistryConsistencyCheck} for the one-sentence
+         * contract and why the check can only run once everything exists.
          *
          * @param stack
          *            the assembled stack, read for the registry it actually suspends into
          * @param beanFactory
-         *            the context's bean factory, read for every registry bean an application could inject
+         *            the context's bean factory, asked what a by-type injection would receive
          * @return the check, which runs once at the end of refresh
          */
         @Bean

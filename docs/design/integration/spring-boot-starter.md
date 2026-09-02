@@ -613,6 +613,10 @@ SessionCheckpointMailbox mailbox = own(TeardownPhase.CHECKPOINTS, SessionCheckpo
 빼먹고 첫 번째를 집으면 가장 나쁜 결과가 나온다: 재수출은 이미 물러난 뒤라 애플리케이션의 주입점은
 던지는데, 스택은 그 중 하나에 조용히 턴을 적재한다.
 
+다만 provider 의 세 번째 단계인 `@Priority` fallback 은 **일부러 따라 하지 않는다.** 그 애노테이션을 읽으려면
+후보마다 **인스턴스**가 있어야 하는데, 후보를 인스턴스화하지 않는 것이 이 조회가 정의를 읽는 이유 전부다 —
+따라 하면 순환이 다시 열린다. 레지스트리가 둘인 배포는 하나에 `@Primary` 를 붙인다.
+
 **(2) `getIfAvailable()` 은 파괴 순서 edge 를 등록하지 않는다.** 이것은 오래 **믿어졌다가 실측된**
 항목이다. `@Bean` 파라미터는 "이 빈이 저 빈에 의존한다" 를 기록하지만, `ObjectProvider` 는 인스턴스만
 건네고 누가 요청했는지는 팩토리에 알리지 않는다(`autowiredBeanNames` 싱크 없이 resolve 한다). 남는 것은
@@ -623,6 +627,13 @@ SessionCheckpointMailbox mailbox = own(TeardownPhase.CHECKPOINTS, SessionCheckpo
 사슬이 조립 사슬과 같아진다 — stack, spec, contributions, 기여된 빈.
 `AimonApplicationContributionsTest` 가 그 edge 를 단언하며, 배선 한 줄을 되돌리면 깨진다.
 
+**등록은 `FactoryBean` 의 제품까지 본다.** 싱글턴 캐시에 들어 있는 것은 제품이 아니라 **팩토리**이므로,
+캐시 하나만 대조하면 `FactoryBean` 이 만든 기여는 조용히 edge 없이 지나간다. 그리고 그 모양의 대표가 하필
+**빌려온 Quartz `Scheduler`** 다 — `spring-boot-starter-quartz` 가 `SchedulerFactoryBean` 으로 내보내기
+때문이다. 즉 "여기가 가장 중요하다" 고 주석이 지목한 바로 그 항목이 처음엔 빠져 있었다. 두 캐시를 다 읽는
+이유가 이것이고, edge 가 없는 채로 남는 것은 프로토타입과 비-싱글턴 `FactoryBean` 제품 둘뿐이다 — 컨테이너가
+파괴하지 않는 것들이라 정렬할 파괴가 애초에 없다.
+
 IMPORTANT: **이 규칙은 승인 축의 것이 아니라 슬라이스 전부의 것이다.** 처음 고칠 때는
 `aimonApplicationContributions` 안에만 넣었는데, 그것은 규칙을 반만 적용한 것이었다 — 정작 **커넥션을
 쥐고 있을 개연성이 높은 쪽은 다른 슬라이스**다(`store=postgres` 의 `SessionRecordStore`, GridFS·S3 위의
@@ -632,13 +643,26 @@ IMPORTANT: **이 규칙은 승인 축의 것이 아니라 슬라이스 전부의
 포함)·knowledge·memory 슬라이스가 모두 그것을 지나가게 했다. "이 기여에 edge 가 붙었나" 를 주석이 아니라
 **호출 자리**를 보고 답할 수 있게 하는 것이 목적이다.
 
-**(3) 재수출과 입력이 갈라지면 기동을 세운다.** (1) 의 이름 기반 제외가 감수한 두 모양 — 애플리케이션이
-자기 빈에 `aimonPendingTurnRegistry` 라는 이름을 붙인 경우와, 타입을 인스턴스화해야만 알 수 있는
-`FactoryBean` 이 레지스트리를 만드는 경우 — 은 **둘 다 증상이 없다.** `@ConditionalOnMissingBean` 은
+**(3) 재수출과 입력이 갈라지면 기동을 세운다.** (1) 의 이름 기반 제외가 감수한 모양 — 애플리케이션이 자기
+빈에 `aimonPendingTurnRegistry` 라는 이름을 붙인 경우 — 은 **증상이 없다.** `@ConditionalOnMissingBean` 은
 타입으로 보고 재수출을 물리는데 입력 이음매는 이름으로 그 빈을 건너뛰므로, 애플리케이션은 한 레지스트리를
 주입받고 스택은 다른 것에 턴을 적재한다. `/approve` 가 아무것도 못 찾고, 어디를 봐야 하는지 알려 주는
-것도 없다. `PendingTurnRegistryConsistencyCheck` 가 refresh 끝에서 동일성 비교 한 번으로 그것을 기동
-에러로 바꾼다 — 두 관점이 동시에 존재하는 유일한 시점이라 거기서만 할 수 있다.
+것도 없다. `PendingTurnRegistryConsistencyCheck` 가 refresh 끝에서 그것을 기동 에러로 바꾼다 — 두 관점이
+동시에 존재하는 유일한 시점이라 거기서만 할 수 있다.
+
+검사는 **그 원인이 아니라 어긋남 자체**를 겨눈다. 계약이 한 문장이다 —
+*`getBean(PendingTurnRegistry.class)` 가 돌려주는 것이 스택이 턴을 적재하는 그것이다.* 해소 규칙을 다시
+구현하지 않고 컨테이너에게 그대로 물으므로 `@Primary` 도 "둘 중에 못 고르겠다" 도 Spring 의 답이 그대로
+쓰이고, 두 번째 어긋남 경로를 미리 예측할 필요가 없다. 실패로 세지 않는 것이 둘 있다 — 그 타입의 빈이 아예
+없으면 주입될 것이 없어 갈라질 것도 없고, 후보가 여럿이고 고를 수 없으면 애플리케이션 자신의 주입점이 이미
+더 크게 던진다.
+
+IMPORTANT: **`FactoryBean` 모양은 여기 없다.** 한때 감수한 두 번째 모양으로, 그다음엔 이 검사가 잡는 것으로
+적혀 있었는데 **둘 다 틀렸다.** 타입을 인스턴스화해야만 알 수 있는 `FactoryBean` 은 정의 스캔에만 안 보이는
+것이 아니라 컨테이너의 **모든 타입 기반 조회**에 안 보인다 — `@ConditionalOnMissingBean` 이 재수출을 그대로
+두고, 애플리케이션의 `@Autowired PendingTurnRegistry` 도 그 재수출로, 즉 스택이 쓰는 바로 그 인스턴스로
+풀린다. 이름으로 직접 부르지 않는 한 아무것도 그 빈에 닿지 않으므로 **갈라지는 것이 없다.** 스택이 이견을
+가진 레지스트리가 아니라, AIMON 이 본 적 없는 빈이다. 실측으로 확인했고 회귀 테스트가 그 사실을 고정한다.
 
 **중요**: 슬라이스 2~8 이 만드는 것은 `AimonStackSpec` 에 들어갈 **재료**이지 `AimonStack` 의 부품을 직접
 `new` 한 것이 아니다. 실제 조립은 항상 `AimonStackBuilder` 안에서 일어난다. 이 규율이 깨지면 3계층의

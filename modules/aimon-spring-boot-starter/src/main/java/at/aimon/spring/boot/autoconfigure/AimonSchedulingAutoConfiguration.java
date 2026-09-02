@@ -217,6 +217,10 @@ public class AimonSchedulingAutoConfiguration {
             // moment the stack is assembled. Resolving is not what registers the edge destruction is ordered by
             // — this line used to say it was — so ApplicationBeans registers it, which matters more here than
             // almost anywhere: the scheduler is the application's and the jobs running on it are AIMON's.
+            // This is also the entry that proved the registration incomplete: spring-boot-starter-quartz
+            // publishes the Scheduler through a SchedulerFactoryBean, and matching only the singleton cache
+            // found the factory rather than its product, so the one entry named as mattering most was the one
+            // silently left without an edge. ApplicationBeans reads both caches for that reason.
             final Scheduler application = ApplicationBeans.resolve(schedulers, Scheduler.class, beanFactory,
                     QUARTZ_TASK_SCHEDULER_FACTORY_BEAN);
             if (application == null) {
