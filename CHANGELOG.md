@@ -1379,22 +1379,31 @@ Fifteen rules are now enforced by tests; the complete index is
   started, with `Initial heap size set to a larger value than the maximum heap size` and nothing wrong
   with the source. The `Test` block already pinned against exactly this; the compile side did not.
   Invisible in CI, which has no such variable — it only ever hit a contributor's machine.
-- **A flaky test in `checkAll`, found by running the gate rather than by reading it.**
-  `DefaultWorkflowRunnerBackgroundTest` stubs a subagent that blocks until its run's cancellation signal
-  trips, with a wall-clock escape hatch so a broken run cannot hang the build. That hatch was **5,000 ms —
-  the same budget the test's own state poller uses**, which made it indistinguishable from the behaviour
-  under test: on a loaded machine most of the budget went on reaching RUNNING, the stub then released
-  itself, and the run settled on its own before the control plane's `stop()` had finished with it. The
-  failure read `run run:cancel-proof did not reach KILLED (was COMPLETED)` — a sentence about the
-  assertion, not about the cause — and the next run was green, so the evidence overwrote itself. It was
+- **Two races in `DefaultWorkflowRunnerBackgroundTest`, and a wrong diagnosis of the first one.**
+  Running the gate — rather than reading it — turned up `run run:cancel-proof did not reach KILLED (was
+  COMPLETED)` on a run that was green the next time, its evidence overwritten by the passing re-run and
   recovered from the Gradle daemon log.
 
-  The escape hatch is now 60,000 ms and named, so for it to fire at all a state poller must already have
-  failed and reported the state it was waiting for. That ordering is structural rather than lucky, which
-  is the actual fix; a bigger number alone would only have made the window rarer. Confirmed by controlled
-  experiment: with a 6-second stall injected before `stop()`, the test fails at 5,000 and passes at
-  60,000 with nothing else changed. Both tests carrying a byte-identical copy of the stub now share one
-  helper — the defect existed twice and would have had to be found twice.
+  The first fix was aimed at the wrong thing. The stub's wall-clock escape hatch was 5,000 ms, the same
+  budget the test's own state poller uses, so it could fire mid-assertion; that was real, and widening it
+  to 60,000 ms is kept. But it was not this failure. The actual cause is that the stub **returned a value**
+  when it observed cancellation, giving it two exits where a real cancelled subagent has one, and
+  `DefaultWorkflowRunner.finalizeRun` deliberately lets *a normal completion win over a concurrently
+  arriving stop* — the handle observably delivered a result. So whenever the returning exit won the race
+  against the worker's interrupt, a stopped run settled COMPLETED. The runner was never wrong; the stub
+  was. It now unwinds by throwing, which removes the race instead of narrowing it, and an expiring valve
+  throws too rather than impersonating a run that finished on its own. Confirmed by forcing the
+  cooperative exit deterministically: both original messages reproduce verbatim, on both tests.
+
+  Fixing that exposed a second race in the same test, at `assertThat(runner.stop(id)).isFalse()` — about
+  one run in five. `finalizeRun` writes the store's terminal state **before** removing the registry entry,
+  deliberately, so that a re-submit arriving in between sees a terminal run rather than a missing one. The
+  poller reads the store, so a test that has just watched KILLED appear can still be inside that window,
+  where `stop` correctly reports the entry it can still see. What the test means — a finalized run stops
+  being stoppable — is eventual, so it now waits for that and re-checks. Twenty consecutive runs clean.
+
+  Both tests carried a byte-identical copy of the stub, so each defect existed twice; they now share one
+  helper.
 - **The build-script-reading guards now declare their inputs.** `PublishedModuleLoggingBindingTest`
   reads every module and shared build script and had no `inputs` declaration, so it could report
   UP-TO-DATE across exactly the edits it exists to catch. Found by suspecting the new

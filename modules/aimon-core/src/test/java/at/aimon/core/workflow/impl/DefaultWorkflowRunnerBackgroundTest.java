@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -85,30 +86,38 @@ class DefaultWorkflowRunnerBackgroundTest {
     }
 
     /**
-     * Stubs the subagent to block until THIS run's cancellation signal trips, so the run stays observably RUNNING
-     * until something cancels it. Two tests need a run they can catch in flight and each carried a byte-identical
-     * copy of this, which meant the defect below had to be found twice and fixed twice.
+     * Stubs the subagent to block until THIS run's cancellation signal trips, then unwinds by throwing — which is
+     * the whole point, and was the defect. A real subagent that is cancelled mid-flight propagates; it does not
+     * return a value. This stub used to return {@code emptyFailure(...)} on that path, giving it two exits where
+     * the real thing has one, and only one of them satisfied the assertions built on it.
      *
      * <p>
-     * The wall clock here is a safety valve against a hung build, not a wait any passing run reaches. Its one real
-     * constraint is that it must outlast every {@link #awaitState} budget in the same test — and it used to be the
-     * same 5 seconds as that budget, which made the valve indistinguishable from the behaviour under test. A loaded
-     * machine could spend most of the budget just reaching RUNNING; the stub then released itself, the run settled
-     * COMPLETED on its own, and {@code stop()} arrived at an already-finished run. The failure read
-     * <em>"run run:cancel-proof did not reach KILLED (was COMPLETED)"</em> — a sentence about the assertion rather
-     * than about the cause, on a test that passed on the next run. Widening it by an order of magnitude makes the
-     * ordering structural instead of lucky: for the valve to fire at all, an {@code awaitState} must already have
-     * failed, and that one reports the state it was actually waiting for.
+     * That mattered because of a deliberate rule in {@code DefaultWorkflowRunner.finalizeRun}: <em>a normal
+     * completion wins even over a concurrently arriving stop request</em>, since the handle observably delivered a
+     * value. So whenever the returning exit won the race, a stopped run settled COMPLETED and the test failed with
+     * <em>"did not reach KILLED (was COMPLETED)"</em> — a sentence about the assertion rather than the cause, and
+     * green on the next run. The runner was never wrong here; the stub was. Throwing removes the race rather than
+     * narrowing it: the body now always completes exceptionally, and {@code isStopRequested()} decides the state.
+     *
+     * <p>
+     * The wall clock is a safety valve against a hung build, not a wait any passing run reaches, and it must
+     * outlast every {@link #awaitState} budget in the same test — it was once the same 5 seconds as that budget,
+     * which let it fire mid-assertion. It now throws as well, so an expiry says so instead of impersonating a run
+     * that finished on its own.
      */
     private void stubBlockUntilCancelled() {
         when(manager.execute(any(SubagentExecutionEnvironment.class), any(Subagent.class), anyString()))
                 .thenAnswer(invocation -> {
                     final SubagentExecutionEnvironment perRun = invocation.getArgument(0);
                     final long deadline = System.currentTimeMillis() + BLOCKED_SUBAGENT_SAFETY_MILLIS;
-                    while (!perRun.getCancellationSignal().isCancelled() && System.currentTimeMillis() < deadline) {
+                    while (!perRun.getCancellationSignal().isCancelled()) {
+                        if (System.currentTimeMillis() >= deadline) {
+                            throw new IllegalStateException("stub safety valve fired after "
+                                    + BLOCKED_SUBAGENT_SAFETY_MILLIS + "ms: nothing cancelled this run");
+                        }
                         Thread.sleep(5);
                     }
-                    return SubagentExecutionResult.emptyFailure("interrupted", Instant.now());
+                    throw new CancellationException("subagent unwound: run cancelled");
                 });
     }
 
@@ -163,7 +172,7 @@ class DefaultWorkflowRunnerBackgroundTest {
 
         assertThat(runner.stop(id)).isTrue();
         awaitState(id, WorkflowRunState.KILLED);
-        assertThat(runner.stop(id)).isFalse(); // already finalized -> no live run
+        awaitNotStoppable(id); // already finalized -> no live run
     }
 
     @Test
@@ -391,6 +400,35 @@ class DefaultWorkflowRunnerBackgroundTest {
     /** Polls the shared runner's store until {@code id} reaches {@code expected}. */
     private void awaitState(RunId id, WorkflowRunState expected) {
         awaitState(runner, id, expected);
+    }
+
+    /**
+     * Polls until {@code stop} reports no live run, then checks it stays that way.
+     *
+     * <p>
+     * Not an assertion on the spot, because the two facts land in a deliberate order: {@code finalizeRun} writes
+     * the store's terminal state BEFORE removing the registry entry, so that a re-submit arriving in between sees
+     * a terminal run rather than a missing one. {@link #awaitState} reads the store, so a test that has just
+     * watched KILLED appear can still be inside that window, where {@code stop} correctly reports the live entry
+     * it can still see. Asserting immediately raced that removal and failed roughly one run in five with
+     * "Expecting value to be false but was true" — about the assertion, not the cause. What the test means is
+     * that a finalized run stops being stoppable, which is eventual, so it waits for it and then re-checks.
+     */
+    private void awaitNotStoppable(RunId id) {
+        final long deadline = System.currentTimeMillis() + AWAIT_STATE_BUDGET_MILLIS;
+        while (System.currentTimeMillis() < deadline) {
+            if (!runner.stop(id)) {
+                assertThat(runner.stop(id)).isFalse();
+                return;
+            }
+            try {
+                Thread.sleep(10);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                fail("interrupted while awaiting run " + id + " to stop being stoppable");
+            }
+        }
+        fail("run " + id + " was still stoppable well after it finalized");
     }
 
     /** Polls {@code target}'s run store until {@code id} reaches {@code expected}, failing if it does not in time. */
