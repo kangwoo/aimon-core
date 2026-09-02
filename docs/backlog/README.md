@@ -281,7 +281,7 @@ B-6 이 그렇게 어긋나 있었다. §7 은 그 항목을 "MCP 를 실제로 
 | [`interrupt-open-items.md`](interrupt-open-items.md) | `docs/design/agent-execution/interrupt.md` | — | — | — | — |
 | [`multi-instance-readiness.md`](multi-instance-readiness.md) | 아키텍처 리뷰 (2026-08-31) | 3 | 2 | 0 | 1 |
 | [`module-dependency-scope.md`](module-dependency-scope.md) | 아키텍처 리뷰 (2026-08-31) | 1 | 1 | 0 | 0 |
-| [`architecture-review-open-items.md`](architecture-review-open-items.md) | 아키텍처 리뷰 (2026-08-31) | 7 | 4 | 3 | 0 |
+| [`architecture-review-open-items.md`](architecture-review-open-items.md) | 아키텍처 리뷰 (2026-08-31) | 7 | 3 | 4 | 0 |
 
 **출처 칸에 설계 문서가 없는 항목이 생겼다.** 아래 세 문서는 `design/` 이 아니라 리뷰에서 나왔고,
 그래서 규칙 하나("설계 문서의 표는 정본이 아니다")가 적용될 표 자체가 없다. 대신 다른 것이 걸린다 —

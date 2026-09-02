@@ -222,11 +222,10 @@ jobs:
   # the `test`-only number "until someone passes exec data between the jobs". This job is that.
   #
   # `needs` both tiers, and deliberately without `if: always()`. A coverage number means something only when
-  # every tier feeding it actually ran, and the floor this job is meant to carry next
-  # (docs/backlog/architecture-review-open-items.md R-3) would otherwise fail with "coverage dropped" when
-  # the real cause was one red integration test -- naming the wrong culprit, which is the very thing the
-  # two-job split exists to avoid. The price is that a red run produces no coverage XML; the number it would
-  # have carried was not one to publish anyway.
+  # every tier feeding it actually ran -- and this job now carries a floor that fails the build, so without
+  # that gating it would report "coverage dropped" when the real cause was one red integration test, naming
+  # the wrong culprit, which is the very thing the two-job split exists to avoid. The price is that a red run
+  # produces no coverage XML; the number it would have carried was not one to publish anyway.
   #
   # `-x test` is what keeps this a tail job rather than a third test run. `jacocoTestReport` declares
   # dependsOn(test) so that reading `test.exec` is a declared dependency -- Gradle 9 fails the build for an
@@ -275,6 +274,12 @@ jobs:
 
       - name: JaCoCo coverage reports
         run: ./gradlew --no-daemon jacocoTestReport -x test
+
+      # After the report, not instead of it, and as its own step: when the floor trips you want the report that
+      # explains why, and the upload below carries `if: always()` so it still arrives. Values are frozen in
+      # gradle/coverage-baselines.properties.
+      - name: Coverage floor
+        run: ./gradlew --no-daemon jacocoTestCoverageVerification -x test
 
       # XML only, and it still runs on green because this is the artifact someone actually goes looking for.
       # The per-class HTML is 45 MB raw (9.7 MB zipped) against 0.6 MB for the XML every coverage tool reads,

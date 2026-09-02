@@ -1438,6 +1438,29 @@ Fifteen rules are now enforced by tests; the complete index is
   the build if the relationship is left undeclared entirely. One caveat stays in the build script:
   stale `build/jacoco/*.exec` from an earlier run is folded in too.
 
+- **Coverage now has a floor, frozen from what CI measured.** JaCoCo produced reports and nothing else: no
+  `jacocoTestCoverageVerification` rule existed anywhere in the build, so coverage could fall and nothing
+  broke. `gradle/coverage-baselines.properties` now carries a per-module line floor — data rather than code,
+  so moving a number is a one-line diff and the whole frozen set is readable on one page. Same shape as
+  checkstyle's error budget and `BASELINE_TOP_LEVEL_CYCLES`: nothing here is a target, and raising a value is
+  a separate decision from not letting it fall. It runs in the `coverage` job after the report (when the
+  floor trips you want the report that explains it, and that upload is `if: always()`), and in the release
+  gate, which is not optional — a task that can fail a build cannot sit in `ReleaseGateMatchesCiGateTest`'s
+  reporting-only exemption without lying. The gate pays nothing extra: every tier already ran in that one
+  workspace.
+
+  **The values are `floor(measured) - 1`, and the -1 came from data rather than caution.** Plain flooring
+  left four modules 0.1pp of headroom and three more 0.2pp — while the same commit measured 81.8% locally
+  and 81.4% on CI for `aimon-session-postgres`. A floor with less room than the noise is a gate that flakes,
+  and a flaking gate gets excluded, which is worse than no gate: exactly what this item was opened to avoid.
+  Headroom is now 1.1-2.0pp.
+
+  Checked in three directions rather than assumed: without the docker tier, `filesystem-gridfs`,
+  `memory-mongodb` and `memory-postgres` fail loudly (0.10 / 0.00 / 0.00) — the very situation that made the
+  old numbers meaningless; with every tier's data, all 23 modules pass; and raising `aimon-core` from 86 to
+  88 fails with *"lines covered ratio is 0.87, but expected minimum is 0.88"*. What JaCoCo's message cannot
+  say — that a zero means an unrun tier rather than a collapse — is in the task's `description` instead.
+
 - **CI builds that report in a third job, because no other job can.** `build` and `integration` run in
   parallel with separate workspaces, so a report generated inside either one sees a single tier — and
   it was generated inside `build`, the `test`-only tier, so the XML CI uploaded carried exactly the
