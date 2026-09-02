@@ -19,6 +19,7 @@ import at.aimon.bootstrap.spec.SessionSpec;
 import at.aimon.bootstrap.spec.SkillApprovalSpec;
 import at.aimon.bootstrap.spec.ToolSpec;
 import at.aimon.core.agent.budget.ExecutionBudget;
+import at.aimon.core.agent.queue.MessageQueueRepository;
 import at.aimon.core.credential.CredentialStore;
 import at.aimon.core.knowledge.KnowledgeStore;
 import at.aimon.core.skill.parser.SkillParser;
@@ -76,6 +77,7 @@ public final class AimonStackSpec {
     private final KnowledgeStoreFactory knowledgeStoreFactory;
     private final MemorySpec memory;
     private final SkillParser skillParser;
+    private final MessageQueueRepository messageQueueRepository;
 
     private AimonStackSpec(Builder builder) {
         this.workspaceRoot = builder.workspaceRoot;
@@ -96,6 +98,7 @@ public final class AimonStackSpec {
         this.knowledgeStoreFactory = builder.knowledgeStoreFactory;
         this.memory = builder.memory;
         this.skillParser = builder.skillParser;
+        this.messageQueueRepository = builder.messageQueueRepository;
 
         if (this.agents.isEmpty()) {
             throw new IllegalArgumentException(
@@ -304,6 +307,26 @@ public final class AimonStackSpec {
     }
 
     /**
+     * Returns the store the mid-turn input queue is kept in.
+     *
+     * <p>
+     * The queue holds input that arrived while a turn was already running — the thing {@code offerAsync}
+     * reports as {@code QUEUED}. It is not part of {@link #getSession()} because it is not keyed by session:
+     * entries carry an {@code AgentRuntimeId}, and three collaborators read them (the ReAct loop drains it
+     * mid-turn, the live session enqueues into it, the subagent manager reads it for forks).
+     *
+     * <p>
+     * Left empty the stack uses an in-memory repository, so queued input belongs to the node that took it. No
+     * distributed implementation ships; this seam exists so that one an application wrote can reach an
+     * assembled stack instead of only a hand-built object graph.
+     *
+     * @return the repository, or empty to use the stack default (in-memory, this node only)
+     */
+    public Optional<MessageQueueRepository> getMessageQueueRepository() {
+        return Optional.ofNullable(messageQueueRepository);
+    }
+
+    /**
      * Returns the tool spec.
      *
      * @return the tool spec, never null
@@ -357,6 +380,7 @@ public final class AimonStackSpec {
         private KnowledgeStoreFactory knowledgeStoreFactory;
         private MemorySpec memory;
         private SkillParser skillParser;
+        private MessageQueueRepository messageQueueRepository;
 
         private Builder() {
         }
@@ -447,6 +471,22 @@ public final class AimonStackSpec {
          */
         public Builder knowledgeStoreFactory(KnowledgeStoreFactory knowledgeStoreFactory) {
             this.knowledgeStoreFactory = knowledgeStoreFactory;
+            return this;
+        }
+
+        /**
+         * Sets the store the mid-turn input queue is kept in.
+         *
+         * <p>
+         * Supply one only to share the queue outside this process. The default is in-memory, which is correct
+         * for a single node: input queued behind a running turn is drained by the same turn that is running.
+         *
+         * @param messageQueueRepository
+         *            the repository, or {@code null} for the in-memory default
+         * @return this builder
+         */
+        public Builder messageQueueRepository(MessageQueueRepository messageQueueRepository) {
+            this.messageQueueRepository = messageQueueRepository;
             return this;
         }
 

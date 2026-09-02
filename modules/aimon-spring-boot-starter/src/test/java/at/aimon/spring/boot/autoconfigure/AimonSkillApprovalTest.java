@@ -19,8 +19,15 @@ import at.aimon.bootstrap.AimonStack;
 import at.aimon.bootstrap.AimonStackSpec;
 import at.aimon.bootstrap.spec.SkillApprovalChannelFactory;
 import at.aimon.bootstrap.spec.SkillApprovalSpec;
+import at.aimon.core.agent.queue.InMemoryMessageQueueRepository;
+import at.aimon.core.agent.queue.MessageQueueRepository;
+import at.aimon.core.skill.policy.agent.AgentApprovalStore;
+import at.aimon.core.skill.policy.agent.InMemoryAgentApprovalStore;
 import at.aimon.core.skill.policy.approval.SkillApprovalChannel;
+import at.aimon.core.skill.policy.pending.InMemoryPendingTurnRegistry;
 import at.aimon.core.skill.policy.pending.PendingTurnRegistry;
+import at.aimon.core.skill.policy.session.InMemorySessionApprovalStore;
+import at.aimon.core.skill.policy.session.SessionApprovalStore;
 
 /**
  * One case per {@code aimon.skill.approval.mode} value, plus the two keys that cut across all four.
@@ -162,6 +169,91 @@ class AimonSkillApprovalTest {
         // Empty rather than 30 minutes: the default lives in OrcaAgentExecutor, and a starter that repeated it
         // would be a second place to change it.
         minimal(workspace).run(ctx -> assertThat(approvalOf(ctx).getPendingTurnTtl()).isEmpty());
+    }
+
+    @Test
+    @DisplayName("the application's approval-axis stores reach the spec, under a mode that never approves")
+    void applicationStoresReachTheSpec(@TempDir Path workspace) {
+        // Deny, not suspend, for the same reason the TTL case uses it: a store that only survived the mode it is
+        // read by would be a bean that silently stops meaning what it says when a deployment flips the mode.
+        minimal(workspace).withUserConfiguration(ApplicationStoreConfiguration.class).run(ctx -> {
+            final SkillApprovalSpec approval = approvalOf(ctx);
+            assertThat(approval.getAgentApprovalStore()).contains(ApplicationStoreConfiguration.AGENT_STORE);
+            assertThat(approval.getSessionApprovalStore()).contains(ApplicationStoreConfiguration.SESSION_STORE);
+            assertThat(approval.getPendingTurnRegistry()).contains(ApplicationStoreConfiguration.REGISTRY);
+            assertThat(ctx.getBean(AimonStackSpec.class).getMessageQueueRepository())
+                    .contains(ApplicationStoreConfiguration.QUEUE);
+        });
+    }
+
+    @Test
+    @DisplayName("an application registry wins the re-export as well, so both names mean one instance")
+    void applicationRegistryReplacesTheReExport(@TempDir Path workspace) {
+        // The re-export is @ConditionalOnMissingBean, so this is what an application injecting PendingTurnRegistry
+        // gets. If the two ever diverged, an approval endpoint would be reading a registry nothing suspends into.
+        minimal(workspace).withUserConfiguration(ApplicationStoreConfiguration.class).run(ctx -> {
+            assertThat(ctx.getBean(PendingTurnRegistry.class)).isSameAs(ApplicationStoreConfiguration.REGISTRY);
+            assertThat(ctx.getBean(AimonStack.class).pendingTurnRegistry())
+                    .isSameAs(ApplicationStoreConfiguration.REGISTRY);
+        });
+    }
+
+    @Test
+    @DisplayName("with no application registry the context still starts, and the re-export is the stack's own")
+    void reExportedRegistryDoesNotFeedItselfBackIn(@TempDir Path workspace) {
+        // This is the regression: PendingTurnRegistry is both published by this starter and read from it, so
+        // resolving the input through an ObjectProvider makes every application fail to start with
+        // BeanCurrentlyInCreationException — spec, contributions, re-export, stack, spec. The input is resolved
+        // from bean definitions with the re-export excluded by name precisely so this case has nothing to find.
+        minimal(workspace).run(ctx -> {
+            assertThat(approvalOf(ctx).getPendingTurnRegistry()).isEmpty();
+            assertThat(ctx.getBean(PendingTurnRegistry.class))
+                    .isSameAs(ctx.getBean(AimonStack.class).pendingTurnRegistry());
+        });
+    }
+
+    @Test
+    @DisplayName("no store beans means the node-local defaults, left empty rather than filled in")
+    void absentStoresAreLeftEmpty(@TempDir Path workspace) {
+        // Empty, not an explicit in-memory instance: the stack registers its distributed-approvals degradation on
+        // exactly the stores the spec left empty, so filling them in here would announce a distributed deployment
+        // as fully shared while every answer stayed on one node.
+        minimal(workspace).run(ctx -> {
+            final SkillApprovalSpec approval = approvalOf(ctx);
+            assertThat(approval.getAgentApprovalStore()).isEmpty();
+            assertThat(approval.getSessionApprovalStore()).isEmpty();
+            assertThat(ctx.getBean(AimonStackSpec.class).getMessageQueueRepository()).isEmpty();
+        });
+    }
+
+    /** Stands in for the four stores an application backs with shared infrastructure. */
+    @Configuration(proxyBeanMethods = false)
+    static class ApplicationStoreConfiguration {
+
+        static final AgentApprovalStore AGENT_STORE = new InMemoryAgentApprovalStore();
+        static final SessionApprovalStore SESSION_STORE = new InMemorySessionApprovalStore();
+        static final PendingTurnRegistry REGISTRY = new InMemoryPendingTurnRegistry();
+        static final MessageQueueRepository QUEUE = new InMemoryMessageQueueRepository();
+
+        @Bean
+        AgentApprovalStore applicationAgentApprovalStore() {
+            return AGENT_STORE;
+        }
+
+        @Bean
+        SessionApprovalStore applicationSessionApprovalStore() {
+            return SESSION_STORE;
+        }
+
+        @Bean
+        PendingTurnRegistry applicationPendingTurnRegistry() {
+            return REGISTRY;
+        }
+
+        @Bean
+        MessageQueueRepository applicationMessageQueueRepository() {
+            return QUEUE;
+        }
     }
 
     @Configuration(proxyBeanMethods = false)
