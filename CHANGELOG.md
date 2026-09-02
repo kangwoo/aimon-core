@@ -163,6 +163,53 @@ Old names are searchable in [`docs/migration/rename-maps.md`](docs/migration/ren
   machinery that does not exist. No rehydration step is added: under Quartz with a JDBC job store
   there is none to add (`DelegatingJob` stores only the task id and re-reads at fire time), and the
   in-memory scheduler's re-scheduling pass belongs to the scheduler, not to this seam.
+- **The approval axis' four stores can be supplied.** `SkillApprovalSpec.withAgentApprovalStore(...)`
+  / `withSessionApprovalStore(...)` / `withPendingTurnRegistry(...)` and
+  `AimonStackSpec.Builder.messageQueueRepository(...)`, passed through `AimonStackBuilder`, with the
+  starter picking up a bean of each. Same gap `withTaskRepository` closed on the scheduling axis: the
+  SPIs existed and every distributed implementation of them was unreachable from an assembled stack,
+  because the builder constructed the four in-memory ones itself. The queue lands on `AimonStackSpec`
+  rather than beside the three approval stores because it is not keyed by a session — `QueuedInput`
+  carries an `AgentRuntimeId`, and the ReAct loop, the live session and the subagent manager all read
+  it. That is also why sharing the queue is **not** the same move as sharing the three: the drain filters
+  on `AgentRuntimeId` alone and a queued entry carries no `SessionId`, so on a shared repository the next
+  node to run a turn for that agent runtime takes the input — possibly into another session's turn. All
+  four are borrowed: the stack closes none of them.
+- **The starter registers the destruction edge Spring does not.** A `@Bean` parameter records "this bean
+  depends on that one"; an `ObjectProvider`'s `getIfAvailable()` records nothing, and every optional
+  contribution the starter resolves went through the latter. The order was still right — each is created
+  while the bean that gathers it is, therefore before the stack — but right by accident, and a store backed
+  by a connection would have been closable before the stack still writing to it. `ApplicationBeans` now
+  registers the edge on every slice that gathers one: the approval axis, the five session SPIs, the
+  filesystem, the scheduling SPIs and the borrowed Quartz `Scheduler`, knowledge and memory. The
+  connection-holding ones were never in the first group, and the Quartz branch had written the mistaken
+  reason down independently — the helper is what makes "did this get an edge?" answerable at the call site.
+  It matches a `FactoryBean`'s **product**, not the factory sitting in the singleton cache: the borrowed
+  Quartz `Scheduler` is published by `spring-boot-starter-quartz` through a `SchedulerFactoryBean`, so the
+  one entry named as mattering most was the one the first version silently skipped.
+- **A `PendingTurnRegistry` the stack cannot reach now fails the context** instead of diverging in silence.
+  It is the one type this starter both publishes and accepts, and the two halves are resolved by different
+  means, which can disagree: a bean the application names `aimonPendingTurnRegistry` is skipped as the
+  re-export while `@ConditionalOnMissingBean` withdraws the real one, so the application injects one
+  registry and the stack suspends into another and `/approve` finds nothing. The check is written against
+  the disagreement rather than against that cause — *what `getBean(PendingTurnRegistry.class)` returns is
+  what the stack suspends into* — so `@Primary` and the refusal to guess stay Spring's answers rather than a
+  second copy of them. That paid off immediately: there is a second route in, and it is an
+  application-supplied `AimonStackSpec` or `AimonStack` bean (both `@ConditionalOnMissingBean`), where it is
+  no longer this starter's spec factory that applies a published registry. The message asks which shape it
+  is in before naming a cause, because that one arrives with the re-export's name still free and "rename
+  your bean" would be advice about a bean the application does not have. This is the one `@Bean` in the
+  starter without `@ConditionalOnMissingBean`: it asserts an invariant about the beans a host supplied
+  rather than being a collaborator a host replaces.
+- **`distributed-approvals` now names only what is still node-local**, and says nothing when all three
+  approval-axis stores were supplied. It had been unconditional on `DeploymentMode.DISTRIBUTED`, which
+  was always true while there was no way to supply them and becomes a lie the moment there is. The
+  half-configured shapes are named individually because they fail differently: a shared pending-turn
+  registry over node-local approval stores finds a suspended turn from another node and then releases
+  it into a node with no record of the decision. Narrowing it also retired a claim `ToolApprovalStore`'s
+  javadoc had been making — that this degradation reported "the whole category" of approval storage rather
+  than repeating it per store. It never covered that store (nothing assembles one) and now visibly counts
+  three, so the javadoc says what is true and what an assembly that wires it would owe it.
 - **`aimon.agent.runtimes.leased`** — a read-through gauge over the new
   `AgentRuntimeResolver.leasedCount()`, reporting the subset of `trackedCount()` a caller is holding
   right now. The difference between the two is the number of runtimes alive on the idle TTL alone,

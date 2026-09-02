@@ -141,6 +141,10 @@ sessions.submit(sessionId, "ops-agent", req.getInput(),
 - **선택자 프로퍼티, 불리언 아님** — `aimon.llm.provider=anthropic|openai|none` 식.
   N개 불리언은 "이 중 정확히 하나"를 표현하지 못한다(§6 D2).
 - **자동설정은 대체 가능해야 한다** — 모든 빈에 `@ConditionalOnMissingBean`. 호스트가 정의하면 호스트가 이긴다.
+  예외는 하나뿐이고 근거는 §4 의 [규칙 셋](#규칙-셋--애플리케이션-기여를-받는-자리가-지키는-것) (3) 에
+  있다 — `PendingTurnRegistryConsistencyCheck`. 이 규칙이 말하는 것은
+  **협력자**이고, 그것은 협력자가 아니라 호스트가 준 빈들에 대한 **불변식**이다. 끌 수 있는 불변식은
+  불변식이 아니다.
 - **에이전트는 하나라고 가정하지 않는다** — 에이전트(`agentRef`)와 테넌트(`discriminator`)는 **다른 축**이고,
   자원 격리는 전역 빈이 아니라 팩토리로 표현한다(§4.11, §6 D14·D15).
 
@@ -591,7 +595,93 @@ SessionCheckpointMailbox mailbox = own(TeardownPhase.CHECKPOINTS, SessionCheckpo
 **스킬 승인 정책과 에이전트 커스터마이저에는 별도 슬라이스가 없다.** 둘 다 값 하나로 귀결되므로 루트
 슬라이스의 `EnabledConfiguration` 이 `ObjectProvider<AimonAgentCustomizer>` 와 승인 프로퍼티를 직접 읽어
 `AimonStackSpec` 에 싣는다 — 슬라이스를 하나 더 만들면 `@ConditionalOnMissingBean` 의 대상만 늘고 바뀌는
-것이 없다.
+것이 없다. 멀티 인스턴스용 저장소 넷(`AgentApprovalStore` · `SessionApprovalStore` ·
+`PendingTurnRegistry` · `MessageQueueRepository`)이 같은 자리에 얹힌 이유도 같다 — 이들에는 백엔드를
+고르는 프로퍼티가 아예 없어서, 저울에 달 것이 없다.
+
+#### 규칙 셋 — 애플리케이션 기여를 받는 자리가 지키는 것
+
+**(1) 재수출과 입력은 같은 타입일 수 없다.** `PendingTurnRegistry` 는 스택에서 **내보내는** 유일한
+타입이면서 동시에 애플리케이션에서 **받는** 타입이다. 여기에 `ObjectProvider` 입력을 더하면 순환이
+닫힌다 — spec → contributions → 재수출 → stack → spec — 그리고 **애플리케이션이 무엇을 정의했든
+무관하게** 모든 앱이 `BeanCurrentlyInCreationException` 으로 기동 실패한다. 그래서 이 하나만 빈
+**정의** 조회(`allowEagerInit = false`)로 읽고 재수출을 이름으로 제외한다.
+
+이름으로 제외하는 것은 정확성이 아니라 **AOT 때문**이다. "이 정의가 우리가 선언한 것인가" 를 구조로
+묻는 편이 더 정확하지만, AOT 로 생성된 빈 정의에는 팩토리 메서드 메타데이터가 없어서 그 검사가 조용히
+아무것도 제외하지 않게 되고 — 그것이 다시 순환이다. 대가는 하나: 애플리케이션이 자기 빈에
+`aimonPendingTurnRegistry` 라는 이름을 붙이면 재수출로 읽혀 무시된다.
+
+그 조회는 provider 를 거치지 않으므로 **provider 가 공짜로 해 주던 두 가지를 직접 한다** — `@Primary`
+를 존중하고, 후보가 둘인데 primary 가 없으면 `NoUniqueBeanDefinitionException` 으로 거부한다. 앞엣것을
+빼먹고 첫 번째를 집으면 가장 나쁜 결과가 나온다: 재수출은 이미 물러난 뒤라 애플리케이션의 주입점은
+던지는데, 스택은 그 중 하나에 조용히 턴을 적재한다.
+
+다만 provider 의 세 번째 단계인 `@Priority` fallback 은 **일부러 따라 하지 않는다.** 그 애노테이션을 읽으려면
+후보마다 **인스턴스**가 있어야 하는데, 후보를 인스턴스화하지 않는 것이 이 조회가 정의를 읽는 이유 전부다 —
+따라 하면 순환이 다시 열린다. 레지스트리가 둘인 배포는 하나에 `@Primary` 를 붙인다.
+
+**(2) `getIfAvailable()` 은 파괴 순서 edge 를 등록하지 않는다.** 이것은 오래 **믿어졌다가 실측된**
+항목이다. `@Bean` 파라미터는 "이 빈이 저 빈에 의존한다" 를 기록하지만, `ObjectProvider` 는 인스턴스만
+건네고 누가 요청했는지는 팩토리에 알리지 않는다(`autowiredBeanNames` 싱크 없이 resolve 한다). 남는 것은
+역-생성순이고, 여기서는 우연히 맞다 — 이 빈들은 contributions 를 만드는 도중에 생기므로 스택보다 먼저
+생성되고 따라서 나중에 파괴된다.
+
+우연을 유지하지 않는다. `ApplicationBeans.resolve(...)` 가 resolve 직후 edge 를 손으로 등록하므로 파괴
+사슬이 조립 사슬과 같아진다 — stack, spec, contributions, 기여된 빈.
+`AimonApplicationContributionsTest` 가 그 edge 를 단언하며, 배선 한 줄을 되돌리면 깨진다.
+
+**등록은 `FactoryBean` 의 제품까지 본다.** 싱글턴 캐시에 들어 있는 것은 제품이 아니라 **팩토리**이므로,
+캐시 하나만 대조하면 `FactoryBean` 이 만든 기여는 조용히 edge 없이 지나간다. 그리고 그 모양의 대표가 하필
+**빌려온 Quartz `Scheduler`** 다 — `spring-boot-starter-quartz` 가 `SchedulerFactoryBean` 으로 내보내기
+때문이다. 즉 "여기가 가장 중요하다" 고 주석이 지목한 바로 그 항목이 처음엔 빠져 있었다. 두 캐시를 다 읽는
+이유가 이것이고, edge 가 없는 채로 남는 것은 프로토타입과 비-싱글턴 `FactoryBean` 제품 둘뿐이다 — 컨테이너가
+파괴하지 않는 것들이라 정렬할 파괴가 애초에 없다.
+
+IMPORTANT: **이 규칙은 승인 축의 것이 아니라 슬라이스 전부의 것이다.** 처음 고칠 때는
+`aimonApplicationContributions` 안에만 넣었는데, 그것은 규칙을 반만 적용한 것이었다 — 정작 **커넥션을
+쥐고 있을 개연성이 높은 쪽은 다른 슬라이스**다(`store=postgres` 의 `SessionRecordStore`, GridFS·S3 위의
+`VirtualFileSystem`, 애플리케이션이 빌려주는 Quartz `Scheduler`). 게다가 스케줄링 슬라이스의 주석은
+"그래서 파괴 순서를 정하는 의존성 edge 가 등록된다" 라고 **틀린 근거를 이미 적고 있었다** — 같은 오해가
+독립적으로 두 번 자란 셈이다. 그래서 헬퍼를 `ApplicationBeans` 로 꺼내 세션·파일시스템·스케줄링(Quartz
+포함)·knowledge·memory 슬라이스가 모두 그것을 지나가게 했다. "이 기여에 edge 가 붙었나" 를 주석이 아니라
+**호출 자리**를 보고 답할 수 있게 하는 것이 목적이다.
+
+**(3) 재수출과 입력이 갈라지면 기동을 세운다.** (1) 의 이름 기반 제외가 감수한 모양 — 애플리케이션이 자기
+빈에 `aimonPendingTurnRegistry` 라는 이름을 붙인 경우 — 은 **증상이 없다.** `@ConditionalOnMissingBean` 은
+타입으로 보고 재수출을 물리는데 입력 이음매는 이름으로 그 빈을 건너뛰므로, 애플리케이션은 한 레지스트리를
+주입받고 스택은 다른 것에 턴을 적재한다. `/approve` 가 아무것도 못 찾고, 어디를 봐야 하는지 알려 주는
+것도 없다. `PendingTurnRegistryConsistencyCheck` 가 refresh 끝에서 그것을 기동 에러로 바꾼다 — 두 관점이
+동시에 존재하는 유일한 시점이라 거기서만 할 수 있다.
+
+검사는 **그 원인이 아니라 어긋남 자체**를 겨눈다. 계약이 한 문장이다 —
+*`getBean(PendingTurnRegistry.class)` 가 돌려주는 것이 스택이 턴을 적재하는 그것이다.* 해소 규칙을 다시
+구현하지 않고 컨테이너에게 그대로 물으므로 `@Primary` 도 "둘 중에 못 고르겠다" 도 Spring 의 답이 그대로
+쓰이고, 두 번째 어긋남 경로를 미리 예측할 필요가 없다. 실패로 세지 않는 것이 둘 있다 — 그 타입의 빈이 아예
+없으면 주입될 것이 없어 갈라질 것도 없고, 후보가 여럿이고 고를 수 없으면 애플리케이션 자신의 주입점이 이미
+더 크게 던진다.
+
+**그리고 예측할 필요가 없다는 것이 실제로 값을 했다 — 두 번째 경로가 있다.** `AimonStackSpec` 과
+`AimonStack` 은 둘 다 `@ConditionalOnMissingBean` 이므로 애플리케이션이 직접 정의할 수 있는데, 공표된
+레지스트리를 스펙에 얹는 것은 **스타터의 스펙 팩토리**다. 그러니 손으로 만든 스펙은 그 일을 자기가 해야
+하고, 안 하면 같은 어긋남에 도달한다 — 이번에는 재수출의 이름이 **비어 있는 채로**. 그래서 메시지가 원인을
+단정하면 안 된다. 없는 빈의 이름을 바꾸라고 말하는 것은 따를 수 없는 조언이고, 하필 읽을 것이 그것밖에
+없는 자리에서 그렇게 된다. 검사는 그 이름이 실제로 잡혀 있는지를 먼저 묻고 나서야 원인을 부르며, 두
+모양에 각각 다른 한 줄짜리 처방을 준다(이름을 바꾼다 / 그 스펙에
+`SkillApprovalSpec.withPendingTurnRegistry(...)` 를 얹는다).
+
+IMPORTANT: **이 `@Bean` 에만 `@ConditionalOnMissingBean` 이 없다** (§1.4 규칙의 유일한 예외). 그 규칙은
+호스트가 더 잘 아는 **협력자**를 갈아 끼우게 하려는 것이고, 이것은 협력자가 아니라 호스트가 준 빈들에 대한
+불변식이다. 끌 수 있는 불변식은 불변식이 아니다. 그렇게 해도 되는 이유는 이 단정에 취향이 섞이지 않기
+때문이다 — 이것이 거부하는 설정은 전부 `/approve` 가 조용히 아무것도 풀지 않는 설정이고, 두 모양 모두
+처방이 한 줄이다.
+
+IMPORTANT: **`FactoryBean` 모양은 여기 없다.** 한때 감수한 두 번째 모양으로, 그다음엔 이 검사가 잡는 것으로
+적혀 있었는데 **둘 다 틀렸다.** 타입을 인스턴스화해야만 알 수 있는 `FactoryBean` 은 정의 스캔에만 안 보이는
+것이 아니라 컨테이너의 **모든 타입 기반 조회**에 안 보인다 — `@ConditionalOnMissingBean` 이 재수출을 그대로
+두고, 애플리케이션의 `@Autowired PendingTurnRegistry` 도 그 재수출로, 즉 스택이 쓰는 바로 그 인스턴스로
+풀린다. 이름으로 직접 부르지 않는 한 아무것도 그 빈에 닿지 않으므로 **갈라지는 것이 없다.** 스택이 이견을
+가진 레지스트리가 아니라, AIMON 이 본 적 없는 빈이다. 실측으로 확인했고 회귀 테스트가 그 사실을 고정한다.
 
 **중요**: 슬라이스 2~8 이 만드는 것은 `AimonStackSpec` 에 들어갈 **재료**이지 `AimonStack` 의 부품을 직접
 `new` 한 것이 아니다. 실제 조립은 항상 `AimonStackBuilder` 안에서 일어난다. 이 규율이 깨지면 3계층의
@@ -815,7 +905,7 @@ enum 바인딩이 실제로 사는 값은 힌트보다 **relaxed binding**(`IN_M
 | `AutoCloseable 도구` (예: `BashTool`) | Agent | `AimonStack` | **빈으로 노출하지 않음** | 런타임이 닫지 않으므로 스택이 소유 |
 | `RewakeService` | Application | `AimonStack` | `destroyMethod = ""` | 구현만 `close()` 를 가져 추론이 걸린다. 스택이 §5.3 순서대로 닫는다 |
 | `PendingTurnReaper` | Application | `AimonStack` | **빈으로 노출하지 않음** | `start()`+`close()` 를 둘 다 가져 빈으로 만들면 추론 destroy 가 걸린다 (§4.7) |
-| `PendingTurnRegistry` | Application | `AimonStack` | `destroyMethod = ""` | 승인 REST 를 붙일 수 있도록 **조회용으로만** 노출 (§4.7) |
+| `PendingTurnRegistry` | Application | `AimonStack` **또는 애플리케이션** | `destroyMethod = ""` | 승인 REST 를 붙일 수 있도록 노출. 애플리케이션이 정의하면 그것이 이기고, **재수출은 물러난다** — 유일하게 출력이자 입력인 타입이다 (§4.7, 아래 상자) |
 | `SessionStore` | **Node** | `AimonStack` | **싱글턴으로 공유 금지** | 계약상 세션 매니저당 1개 (§4.9) |
 | `DataSource` / `MongoDatabase` / `RedisClient` / `org.quartz.Scheduler` | Application | **호스트 앱** | 주입만 — 절대 닫지 않음 | 빌린 빈 |
 

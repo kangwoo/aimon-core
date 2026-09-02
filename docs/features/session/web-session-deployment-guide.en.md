@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/session/web-session-deployment-guide.md
-source_commit: a9821d44
+source_commit: 61231870
 ---
 
 # Web Session Manager — Deployment & Operations Guide
@@ -73,6 +73,27 @@ asking again when the user comes back is the right behaviour.
 The in-memory implementation is node-local. Because it listens for a peer's `EVICT`, deletion propagates
 across the cluster, but the approvals themselves are not shared across nodes, so a session that moves to
 another node is asked once more.
+
+**On an `AimonStack` you do not hand it to those two places yourself.** Put it on the spec once and the
+same instance reaches both the runtime factory and the router — the mistake of giving the two seats
+different instances becomes unavailable.
+
+```java
+AimonStackSpec.builder()
+    .skillApproval(SkillApprovalSpec.denyAll()
+            .withSessionApprovalStore(sessionApprovalStore)   // the router receives this instance too
+            .withAgentApprovalStore(agentApprovalStore)
+            .withPendingTurnRegistry(pendingTurnRegistry))
+    .build();
+```
+
+Under the Spring Boot starter, defining a `SessionApprovalStore` / `AgentApprovalStore` /
+`PendingTurnRegistry` bean is the whole configuration. All three are **borrowed**: the stack closes none
+of them.
+
+A deployment that shares only some of the three is told which ones are **left** at start-up, through the
+`distributed-approvals` degradation. Sharing the registry alone is the shape worth naming: it finds the
+turn suspended on another node and then releases it into a node with no record of the decision.
 
 Forks need no separate cleanup — they have no approvals of their own to erase in the first place. A
 subagent fork has **no `SessionId` at all** (the tool context carries `EXECUTION_ID` instead of

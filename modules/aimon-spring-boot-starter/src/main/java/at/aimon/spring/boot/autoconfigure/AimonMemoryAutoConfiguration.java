@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Objects;
 
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -76,6 +77,14 @@ import at.aimon.core.memory.redaction.StrictRedactionPolicy;
 public class AimonMemoryAutoConfiguration {
 
     /**
+     * Name of the bean this slice publishes, which the three below are made dependencies of.
+     *
+     * <p>
+     * A constant so the {@code @Bean} and the edges registered against it cannot drift apart.
+     */
+    static final String MEMORY_CONTRIBUTION_BEAN = "aimonMemoryContribution";
+
+    /**
      * Builds the heap-backed representation store under {@code aimon.memory.backend=in-memory}.
      *
      * @return the store, closed by Spring
@@ -123,14 +132,17 @@ public class AimonMemoryAutoConfiguration {
      *            the application's policy, consulted only under {@code redaction=supplied}
      * @return the resolved contribution, empty when memory is off
      */
-    @Bean
+    @Bean(MEMORY_CONTRIBUTION_BEAN)
     @ConditionalOnMissingBean
     MemoryContribution aimonMemoryContribution(AimonProperties properties,
             ObjectProvider<RepresentationStore> representationStores,
-            ObjectProvider<ObservationStore> observationStores, ObjectProvider<RedactionPolicy> redactionPolicies) {
+            ObjectProvider<ObservationStore> observationStores, ObjectProvider<RedactionPolicy> redactionPolicies,
+            ConfigurableListableBeanFactory beanFactory) {
         final AimonProperties.Memory memory = properties.getMemory();
-        final RepresentationStore representations = representationStores.getIfAvailable();
-        final ObservationStore observations = observationStores.getIfAvailable();
+        final RepresentationStore representations = ApplicationBeans.resolve(representationStores,
+                RepresentationStore.class, beanFactory, MEMORY_CONTRIBUTION_BEAN);
+        final ObservationStore observations = ApplicationBeans.resolve(observationStores, ObservationStore.class,
+                beanFactory, MEMORY_CONTRIBUTION_BEAN);
 
         if (memory.getBackend() == MemoryBackend.NONE) {
             refuseOrphanedStores(representations, observations);
@@ -144,7 +156,9 @@ public class AimonMemoryAutoConfiguration {
                 : perCaller(workspace, representations);
         return MemoryContribution.of(builder.representationStore(representations).observationStore(observations)
                 .injectionMode(memory.getInjectionMode()).maxTokens(memory.maxTokensOrDefault())
-                .redactionPolicy(resolveRedaction(memory, redactionPolicies.getIfAvailable())).build());
+                .redactionPolicy(resolveRedaction(memory, ApplicationBeans.resolve(redactionPolicies,
+                        RedactionPolicy.class, beanFactory, MEMORY_CONTRIBUTION_BEAN)))
+                .build());
     }
 
     /**

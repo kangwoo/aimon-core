@@ -6,7 +6,9 @@ import java.util.Map;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.NoUniqueBeanDefinitionException;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -34,12 +36,15 @@ import at.aimon.bootstrap.spec.SkillApprovalSpec;
 import at.aimon.bootstrap.spec.ToolSpec;
 import at.aimon.core.agent.Agent;
 import at.aimon.core.agent.budget.ExecutionBudget;
+import at.aimon.core.agent.queue.MessageQueueRepository;
 import at.aimon.core.credential.CredentialStore;
 import at.aimon.core.credential.InMemoryCredentialStore;
 import at.aimon.core.knowledge.KnowledgeStore;
 import at.aimon.core.llm.LlmClient;
+import at.aimon.core.skill.policy.agent.AgentApprovalStore;
 import at.aimon.core.skill.policy.approval.SkillApprovalChannel;
 import at.aimon.core.skill.policy.pending.PendingTurnRegistry;
+import at.aimon.core.skill.policy.session.SessionApprovalStore;
 import at.aimon.core.tracing.TracePayloadPolicy;
 import at.aimon.core.tracing.Tracer;
 import at.aimon.core.tracing.impl.TracingLlmClient;
@@ -103,6 +108,27 @@ public class AimonAutoConfiguration {
     static class EnabledConfiguration {
 
         /**
+         * Name of the bean that re-exports the stack's pending-turn registry.
+         *
+         * <p>
+         * A constant because three places must agree on it: the {@code @Bean} that publishes it,
+         * {@link #applicationPendingTurnRegistry(ConfigurableListableBeanFactory)}, which excludes it so that
+         * re-exporting an input does not feed the stack back into itself, and
+         * {@link PendingTurnRegistryConsistencyCheck}, which reads it to tell the one shape that exclusion
+         * cannot see apart from the shapes it can.
+         */
+        static final String PENDING_TURN_REGISTRY_BEAN = "aimonPendingTurnRegistry";
+
+        /**
+         * Name of the bean that gathers the application's optional contributions.
+         *
+         * <p>
+         * Needed by name because every dependency edge this class registers points at it — see
+         * {@link ApplicationBeans#registerDestructionEdge(ConfigurableListableBeanFactory, Class, Object, String)}.
+         */
+        static final String CONTRIBUTIONS_BEAN = "aimonApplicationContributions";
+
+        /**
          * Fails by property name when {@code aimon.llm.provider} selected nothing.
          *
          * <p>
@@ -140,35 +166,183 @@ public class AimonAutoConfiguration {
          * Resolves the beans a host application may define, all of which are optional.
          *
          * <p>
-         * Every one of these is an {@code ObjectProvider}, because a required parameter for something most
-         * applications do not define would make the common configuration fail to start. Resolving them here
-         * rather than as parameters of {@link #aimonStackSpec} costs nothing that matters: it is
-         * {@code getIfAvailable()} — not the parameter — that registers the dependency edge Spring destroys
-         * along, and the stack depends on the spec, which depends on this. The edge is the same chain, one
-         * link longer.
+         * Almost every one of these is an {@code ObjectProvider}, because a required parameter for something
+         * most applications do not define would make the common configuration fail to start. Resolving them
+         * here rather than as parameters of {@link #aimonStackSpec} moves them off the edge Spring destroys
+         * along, and that edge is put back by hand — see {@link ApplicationBeans} for why a provider does not
+         * record one, and why the reverse-creation order it falls back to is right by accident rather than by
+         * construction. Every slice of this starter now does the same thing through that class, so the chain
+         * the stack is torn down along is the same one it was built along: stack, spec, this, the contributed
+         * bean. Measured rather than assumed; the assertions in {@code AimonApplicationContributionsTest} are
+         * what keep it measured.
          *
          * <p>
          * That they are gathered rather than listed one by one is what keeps the spec factory readable as the
          * set of extension points grows; each pair below is also two alternatives rather than two settings,
-         * and this is where that pairing is visible.
+         * and this is where that pairing is visible. The parameter count is the job rather than a smell —
+         * gathering is the whole purpose — so the {@code ParameterNumber} check is suppressed here and nowhere
+         * that would hide a method doing several things.
          *
          * <p>
          * The {@link Tracer} is the one entry the starter may itself have filled — the observability slice
          * defines one under {@code aimon.tracing.enabled=true}, and backs off if the application defined its
          * own. It belongs here anyway, because from the spec factory's side that is the same question the other
-         * five answer: was there one? Gathering it costs no ordering, either, since a tracer owns no resource
-         * to be closed in sequence with anything.
+         * five answer: was there one? It gets an edge like everything else — not because a tracer owns a
+         * resource to be closed in sequence with anything, but because "does this one need an edge?" is a
+         * question worth not having per entry. The customizers go through
+         * {@link ApplicationBeans#resolveAll} for exactly that reason: they were the one entry still answering
+         * it, and "a callback holds nothing" is a fact about the implementations that exist rather than about
+         * the extension point.
+         *
+         * <p>
+         * The last four are the approval-axis stores and the mid-turn input queue. They are gathered rather than
+         * given a slice of their own because there is no property to weigh them against: nothing here selects a
+         * backend for them, since none ships. The bean is the whole configuration, and its absence means the
+         * node-local default. Three of them resolve like everything above; the fourth cannot use a provider at
+         * all, and pays for that separately: see
+         * {@link #applicationPendingTurnRegistry(ConfigurableListableBeanFactory)}.
          */
-        @Bean
+        @Bean(CONTRIBUTIONS_BEAN)
+        @SuppressWarnings("checkstyle:ParameterNumber")
         ApplicationContributions aimonApplicationContributions(ObjectProvider<AimonAgentCustomizer> agentCustomizers,
                 ObjectProvider<CredentialStore> credentialStores,
                 ObjectProvider<CredentialStoreFactory> credentialStoreFactories,
                 ObjectProvider<SkillApprovalChannel> approvalChannels,
-                ObjectProvider<SkillApprovalChannelFactory> approvalChannelFactories, ObjectProvider<Tracer> tracers) {
-            return new ApplicationContributions(agentCustomizers.orderedStream().toList(),
-                    credentialStores.getIfAvailable(), credentialStoreFactories.getIfAvailable(),
-                    approvalChannels.getIfAvailable(), approvalChannelFactories.getIfAvailable(),
-                    tracers.getIfAvailable());
+                ObjectProvider<SkillApprovalChannelFactory> approvalChannelFactories, ObjectProvider<Tracer> tracers,
+                ObjectProvider<AgentApprovalStore> agentApprovalStores,
+                ObjectProvider<SessionApprovalStore> sessionApprovalStores,
+                ObjectProvider<MessageQueueRepository> messageQueueRepositories,
+                ConfigurableListableBeanFactory beanFactory) {
+            return new ApplicationContributions(
+                    ApplicationBeans.resolveAll(agentCustomizers, AimonAgentCustomizer.class, beanFactory,
+                            CONTRIBUTIONS_BEAN),
+                    resolve(credentialStores, CredentialStore.class, beanFactory),
+                    resolve(credentialStoreFactories, CredentialStoreFactory.class, beanFactory),
+                    resolve(approvalChannels, SkillApprovalChannel.class, beanFactory),
+                    resolve(approvalChannelFactories, SkillApprovalChannelFactory.class, beanFactory),
+                    resolve(tracers, Tracer.class, beanFactory),
+                    resolve(agentApprovalStores, AgentApprovalStore.class, beanFactory),
+                    resolve(sessionApprovalStores, SessionApprovalStore.class, beanFactory),
+                    applicationPendingTurnRegistry(beanFactory),
+                    resolve(messageQueueRepositories, MessageQueueRepository.class, beanFactory));
+        }
+
+        /**
+         * Shorthand for {@link ApplicationBeans#resolve} with this class's dependent bean.
+         *
+         * @param provider
+         *            the provider for the contribution's type
+         * @param type
+         *            the contribution's type
+         * @param beanFactory
+         *            the context's bean factory
+         * @param <T>
+         *            the contribution's type
+         * @return the contributed bean, or {@code null} when the application defined none
+         */
+        private static <T> T resolve(ObjectProvider<T> provider, Class<T> type,
+                ConfigurableListableBeanFactory beanFactory) {
+            return ApplicationBeans.resolve(provider, type, beanFactory, CONTRIBUTIONS_BEAN);
+        }
+
+        /**
+         * Resolves an application-published {@link PendingTurnRegistry}, ignoring the one this starter
+         * re-exports.
+         *
+         * <p>
+         * The registry is the only entry here that the starter also <em>publishes</em>:
+         * {@link #aimonPendingTurnRegistry(AimonStack)} hands out the stack's own instance so an application can
+         * build an approval endpoint over it. Once the same type is also an input, an {@code ObjectProvider}
+         * closes a cycle — resolving it creates the re-export, which needs the stack, which needs the spec, which
+         * needs this. Every application using the starter would fail to start with
+         * {@code BeanCurrentlyInCreationException}, whether or not it published a registry of its own.
+         *
+         * <p>
+         * So the lookup is by definition rather than by instance: {@code allowEagerInit=false} reads the declared
+         * return types without creating anything, and the re-export is dropped by name. What is left is what the
+         * application declared, which is the only thing this seam ever meant. The exclusion is by the constant the
+         * {@code @Bean} is named with, so the two cannot drift.
+         *
+         * <p>
+         * By name, rather than by asking whether the definition is the one this class declares, because the
+         * structural question has no answer in an AOT-processed context — generated bean definitions carry no
+         * factory-method metadata, and the check would quietly stop excluding anything, which is the cycle
+         * again. The cost is the one shape the name cannot tell apart: an application bean the application
+         * itself named {@value #PENDING_TURN_REGISTRY_BEAN} is read as the re-export and ignored, leaving the
+         * node-local default. Naming a bean after the starter's own is not a thing to support — but it is a
+         * thing to <em>notice</em>, because the stack then suspends into a registry the application cannot
+         * reach and nothing says so. {@link PendingTurnRegistryConsistencyCheck} fails the context for it.
+         *
+         * <p>
+         * The edge Spring records for the entries above has to be registered by hand here for the same reason
+         * it does there — {@code getBean(...)} does not record who asked either — so the chain ends up
+         * identical: stack, spec, this, the registry. Ambiguity is handled by hand for the same reason: this
+         * lookup does not inherit the provider's refusal to guess, so it reproduces it — honouring
+         * {@code @Primary} and otherwise throwing the exception a provider would have thrown, though not its
+         * {@code @Priority} fallback, for the reason in {@link #soleCandidate}.
+         *
+         * <p>
+         * The other bound is narrower than it first reads. A registry contributed by a {@code FactoryBean} whose
+         * type is only knowable by instantiating it is not seen here, and the stack keeps its node-local default
+         * — but that bean is invisible to <em>every</em> by-type view, not only to this scan, so the
+         * application's own {@code PendingTurnRegistry} injection point resolves to the re-export and therefore
+         * to the very registry the stack is using. The two views do not disagree; there is simply a bean AIMON
+         * never sees, reachable only by asking for it by name. Measured, after this was twice written down as a
+         * divergence to catch: see {@link PendingTurnRegistryConsistencyCheck}.
+         *
+         * @param beanFactory
+         *            the context's bean factory
+         * @return the application's registry, or {@code null} when it published none
+         */
+        private static PendingTurnRegistry applicationPendingTurnRegistry(ConfigurableListableBeanFactory beanFactory) {
+            final List<String> candidates = new ArrayList<>();
+            for (String name : beanFactory.getBeanNamesForType(PendingTurnRegistry.class, true, false)) {
+                if (!PENDING_TURN_REGISTRY_BEAN.equals(name)) {
+                    candidates.add(name);
+                }
+            }
+            if (candidates.isEmpty()) {
+                return null;
+            }
+            final String name = candidates.size() == 1 ? candidates.get(0) : soleCandidate(candidates, beanFactory);
+            final PendingTurnRegistry registry = beanFactory.getBean(name, PendingTurnRegistry.class);
+            beanFactory.registerDependentBean(name, CONTRIBUTIONS_BEAN);
+            return registry;
+        }
+
+        /**
+         * Reduces several {@link PendingTurnRegistry} candidates to the {@code @Primary} one, or refuses.
+         *
+         * <p>
+         * Taking the first would be worse than failing in a way that is easy to miss: with two registries the
+         * re-export has already backed off, so the application's own injection point throws while the stack
+         * quietly suspends turns into whichever one iteration order surfaced first. Half the deployment would
+         * then be looking in the wrong registry for a turn that is genuinely there.
+         *
+         * <p>
+         * {@code @Primary} is the whole of it, which is narrower than an {@code ObjectProvider} would be:
+         * autowiring falls back to {@code @Priority} when nothing is primary, and this does not. Reading that
+         * annotation means having an <em>instance</em> of every candidate, and not instantiating candidates is
+         * the entire reason this lookup reads definitions in the first place — honouring it would reopen the
+         * cycle. So the narrower rule is deliberate, and a deployment that wants to choose between two
+         * registries marks one {@code @Primary}.
+         *
+         * @param candidates
+         *            the application's registry bean names, at least two
+         * @param beanFactory
+         *            the context's bean factory
+         * @return the sole primary candidate
+         * @throws NoUniqueBeanDefinitionException
+         *             when none or several are primary
+         */
+        private static String soleCandidate(List<String> candidates, ConfigurableListableBeanFactory beanFactory) {
+            final List<String> primaries = candidates.stream().filter(
+                    name -> beanFactory.containsBeanDefinition(name) && beanFactory.getBeanDefinition(name).isPrimary())
+                    .toList();
+            if (primaries.size() == 1) {
+                return primaries.get(0);
+            }
+            throw new NoUniqueBeanDefinitionException(PendingTurnRegistry.class, candidates);
         }
 
         /**
@@ -242,8 +416,9 @@ public class AimonAutoConfiguration {
                     .agentCustomizers(contributions.getAgentCustomizers())
                     .defaultBudget(toBudget(properties.getBudget()))
                     .tools(ToolSpec.builder().bashEnabled(properties.getTools().getBash().isEnabled()).build())
-                    .skillApproval(toSkillApproval(properties.getSkill().getApproval(),
-                            contributions.getApprovalChannel(), contributions.getApprovalChannelFactory()));
+                    .messageQueueRepository(contributions.getMessageQueueRepository()).skillApproval(
+                            toSkillApproval(properties.getSkill().getApproval(), contributions.getApprovalChannel(),
+                                    contributions.getApprovalChannelFactory(), contributions));
             applyCredentials(builder, toCredentialStore(properties.getCredentials()),
                     contributions.getCredentialStore(), contributions.getCredentialStoreFactory());
             return builder.build();
@@ -259,14 +434,54 @@ public class AimonAutoConfiguration {
          * other modes nothing suspends, so it applies to nothing.
          */
         private static SkillApprovalSpec toSkillApproval(AimonProperties.Skill.Approval approval,
-                SkillApprovalChannel channel, SkillApprovalChannelFactory channelFactory) {
-            final SkillApprovalSpec spec = switch (approval.getMode()) {
+                SkillApprovalChannel channel, SkillApprovalChannelFactory channelFactory,
+                ApplicationContributions contributions) {
+            final SkillApprovalSpec mode = switch (approval.getMode()) {
                 case DENY -> SkillApprovalSpec.denyAll();
                 case ALLOW_LIST -> SkillApprovalSpec.allowList(approval.getAllow());
                 case SUSPEND -> SkillApprovalSpec.suspend();
                 case CHANNEL -> toSuppliedChannel(channel, channelFactory);
             };
-            return approval.getPendingTurnTtl() == null ? spec : spec.withPendingTurnTtl(approval.getPendingTurnTtl());
+            final SkillApprovalSpec withTtl = approval.getPendingTurnTtl() == null
+                    ? mode
+                    : mode.withPendingTurnTtl(approval.getPendingTurnTtl());
+            return withApplicationStores(withTtl, contributions);
+        }
+
+        /**
+         * Applies the approval-axis stores the application published, leaving the rest node-local.
+         *
+         * <p>
+         * Applied under every mode for the same reason the TTL is: a mode is something a deployment flips while
+         * debugging, and a store that silently reverted to in-memory on the way past {@code deny} would be a
+         * bean that stops meaning what it says. Under {@code deny} nothing is ever approved, so the stores hold
+         * nothing — which costs nothing and keeps one less thing conditional.
+         *
+         * <p>
+         * Each is applied only when the bean exists, rather than substituting an explicit in-memory instance for
+         * the absent ones. The stack registers its {@code distributed-approvals} degradation precisely on the
+         * stores the spec left empty, so filling them in here would announce a distributed deployment as fully
+         * shared while every answer stayed on one node.
+         *
+         * @param spec
+         *            the spec built from the approval mode and TTL
+         * @param contributions
+         *            the gathered application beans
+         * @return the spec carrying whichever stores were published
+         */
+        private static SkillApprovalSpec withApplicationStores(SkillApprovalSpec spec,
+                ApplicationContributions contributions) {
+            SkillApprovalSpec result = spec;
+            if (contributions.getAgentApprovalStore() != null) {
+                result = result.withAgentApprovalStore(contributions.getAgentApprovalStore());
+            }
+            if (contributions.getSessionApprovalStore() != null) {
+                result = result.withSessionApprovalStore(contributions.getSessionApprovalStore());
+            }
+            if (contributions.getPendingTurnRegistry() != null) {
+                result = result.withPendingTurnRegistry(contributions.getPendingTurnRegistry());
+            }
+            return result;
         }
 
         /**
@@ -516,10 +731,38 @@ public class AimonAutoConfiguration {
          *            the assembled stack that owns the registry
          * @return the registry
          */
-        @Bean(destroyMethod = "")
+        @Bean(name = PENDING_TURN_REGISTRY_BEAN, destroyMethod = "")
         @ConditionalOnMissingBean
         PendingTurnRegistry aimonPendingTurnRegistry(AimonStack stack) {
             return stack.pendingTurnRegistry();
+        }
+
+        /**
+         * Refuses a context where the registry turns suspend into is not the one an application can inject.
+         *
+         * <p>
+         * The shape {@link #applicationPendingTurnRegistry(ConfigurableListableBeanFactory)} cannot tell apart —
+         * an application bean wearing the re-export's name — is documented there as an accepted cost, and it was,
+         * right up to the point of noticing it fails with no symptom at all. This bean turns it into a startup
+         * error. It is written against the disagreement rather than against that cause, which is what let the
+         * second shape be caught without having been predicted: an application-supplied {@link AimonStackSpec}
+         * or {@link AimonStack} bean — both {@code @ConditionalOnMissingBean} — leaves
+         * {@link #withApplicationStores} out of the path, so a published registry never reaches the stack. That
+         * one is reached with the re-export's name still free, and a message that told it to rename a bean it
+         * does not have would be advice it cannot follow. See {@link PendingTurnRegistryConsistencyCheck} for
+         * the one-sentence contract, why the check can only run once everything exists, and why this is the one
+         * bean here without {@code @ConditionalOnMissingBean}.
+         *
+         * @param stack
+         *            the assembled stack, read for the registry it actually suspends into
+         * @param beanFactory
+         *            the context's bean factory, asked what a by-type injection would receive
+         * @return the check, which runs once at the end of refresh
+         */
+        @Bean
+        PendingTurnRegistryConsistencyCheck aimonPendingTurnRegistryConsistencyCheck(AimonStack stack,
+                ConfigurableListableBeanFactory beanFactory) {
+            return new PendingTurnRegistryConsistencyCheck(stack, beanFactory);
         }
 
         /**
@@ -589,16 +832,27 @@ public class AimonAutoConfiguration {
         private final SkillApprovalChannel approvalChannel;
         private final SkillApprovalChannelFactory approvalChannelFactory;
         private final Tracer tracer;
+        private final AgentApprovalStore agentApprovalStore;
+        private final SessionApprovalStore sessionApprovalStore;
+        private final PendingTurnRegistry pendingTurnRegistry;
+        private final MessageQueueRepository messageQueueRepository;
 
+        @SuppressWarnings("checkstyle:ParameterNumber")
         ApplicationContributions(List<AimonAgentCustomizer> agentCustomizers, CredentialStore credentialStore,
                 CredentialStoreFactory credentialStoreFactory, SkillApprovalChannel approvalChannel,
-                SkillApprovalChannelFactory approvalChannelFactory, Tracer tracer) {
+                SkillApprovalChannelFactory approvalChannelFactory, Tracer tracer,
+                AgentApprovalStore agentApprovalStore, SessionApprovalStore sessionApprovalStore,
+                PendingTurnRegistry pendingTurnRegistry, MessageQueueRepository messageQueueRepository) {
             this.agentCustomizers = List.copyOf(agentCustomizers);
             this.credentialStore = credentialStore;
             this.credentialStoreFactory = credentialStoreFactory;
             this.approvalChannel = approvalChannel;
             this.approvalChannelFactory = approvalChannelFactory;
             this.tracer = tracer;
+            this.agentApprovalStore = agentApprovalStore;
+            this.sessionApprovalStore = sessionApprovalStore;
+            this.pendingTurnRegistry = pendingTurnRegistry;
+            this.messageQueueRepository = messageQueueRepository;
         }
 
         List<AimonAgentCustomizer> getAgentCustomizers() {
@@ -623,6 +877,22 @@ public class AimonAutoConfiguration {
 
         Tracer getTracer() {
             return tracer;
+        }
+
+        AgentApprovalStore getAgentApprovalStore() {
+            return agentApprovalStore;
+        }
+
+        SessionApprovalStore getSessionApprovalStore() {
+            return sessionApprovalStore;
+        }
+
+        PendingTurnRegistry getPendingTurnRegistry() {
+            return pendingTurnRegistry;
+        }
+
+        MessageQueueRepository getMessageQueueRepository() {
+            return messageQueueRepository;
         }
     }
 

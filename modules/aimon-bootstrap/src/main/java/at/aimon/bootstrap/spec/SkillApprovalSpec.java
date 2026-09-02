@@ -8,9 +8,13 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.Consumer;
 
+import at.aimon.core.base.ExternallyManaged;
 import at.aimon.core.skill.policy.SkillInvocationDecision;
+import at.aimon.core.skill.policy.agent.AgentApprovalStore;
 import at.aimon.core.skill.policy.approval.SkillApprovalChannel;
 import at.aimon.core.skill.policy.pending.PendingTurn;
+import at.aimon.core.skill.policy.pending.PendingTurnRegistry;
+import at.aimon.core.skill.policy.session.SessionApprovalStore;
 
 /**
  * Declares how the stack answers "may this skill run?" when no prior approval covers it.
@@ -56,6 +60,29 @@ import at.aimon.core.skill.policy.pending.PendingTurn;
  * {@link #withPendingTurnExpirationListener(Consumer) a listener} is how a front end tells the user that a
  * turn they were asked about has quietly gone away. Without it the turn simply vanishes from {@code /pending}
  * with no explanation, which reads as a bug.
+ *
+ * <h2>Where the answers are kept</h2>
+ *
+ * <p>
+ * Three stores hold what the two sections above produce: an {@link AgentApprovalStore} for "always allow in this
+ * agent", a {@link SessionApprovalStore} for "always allow in this session", and a {@link PendingTurnRegistry}
+ * for the turns that suspended. All three default to the node-local in-memory implementations, which is right
+ * for a single node and wrong the moment a session can be served by a second one: an approval given on node A
+ * is invisible to node B, so the same skill is asked about again, and an {@code /approve} entered on B finds no
+ * turn to release because the turn suspended on A.
+ *
+ * <p>
+ * {@link #withAgentApprovalStore(AgentApprovalStore)}, {@link #withSessionApprovalStore(SessionApprovalStore)}
+ * and {@link #withPendingTurnRegistry(PendingTurnRegistry)} are what a shared implementation arrives through.
+ * None ships — this seam exists so that one an application wrote is reachable at all. Without it the only route
+ * to a written implementation was hand-building the object graph, which means giving up the stack's ordered
+ * teardown; the same gap that {@code SchedulingSpec.withTaskRepository(...)} closed on the scheduling axis.
+ *
+ * <p>
+ * All three are <b>borrowed</b>: they are {@link ExternallyManaged} and the stack closes none of them. Whoever
+ * built the connection underneath closes the thing on top of it. Supplying them also narrows what the stack
+ * announces — the {@code distributed-approvals} degradation names only the stores still left node-local, and
+ * says nothing when all three were supplied.
  */
 public final class SkillApprovalSpec {
 
@@ -92,6 +119,9 @@ public final class SkillApprovalSpec {
     private final Duration pendingTurnTtl;
     private final Duration pendingTurnSweepInterval;
     private final Consumer<List<PendingTurn>> pendingTurnExpirationListener;
+    private final AgentApprovalStore agentApprovalStore;
+    private final SessionApprovalStore sessionApprovalStore;
+    private final PendingTurnRegistry pendingTurnRegistry;
 
     private SkillApprovalSpec(Builder builder) {
         this.defaultDecision = Objects.requireNonNull(builder.defaultDecision, "defaultDecision must not be null");
@@ -104,6 +134,9 @@ public final class SkillApprovalSpec {
                 ? DEFAULT_PENDING_TURN_SWEEP_INTERVAL
                 : builder.pendingTurnSweepInterval;
         this.pendingTurnExpirationListener = builder.pendingTurnExpirationListener;
+        this.agentApprovalStore = builder.agentApprovalStore;
+        this.sessionApprovalStore = builder.sessionApprovalStore;
+        this.pendingTurnRegistry = builder.pendingTurnRegistry;
 
         if (this.pendingTurnSweepInterval.isNegative() || this.pendingTurnSweepInterval.isZero()) {
             throw new IllegalArgumentException(
@@ -346,10 +379,96 @@ public final class SkillApprovalSpec {
         return Optional.ofNullable(pendingTurnExpirationListener);
     }
 
+    /**
+     * Returns a copy of this spec with the store that answers "always allow in this agent".
+     *
+     * <p>
+     * Reads and writes go through the same instance: the policy chain consults it and the approval channel
+     * records into it, so a store supplied here is also the one an {@code a} answer lands in. Decisions kept in
+     * it have no TTL and survive {@code /clear} — only {@code /revoke --agent} removes them — which is what makes
+     * sharing it across nodes worth doing and also what makes a mistake here durable.
+     *
+     * @param store
+     *            the agent-scoped approval store (must not be null)
+     * @return a new spec carrying the store
+     */
+    public SkillApprovalSpec withAgentApprovalStore(@ExternallyManaged AgentApprovalStore store) {
+        Objects.requireNonNull(store, "agentApprovalStore must not be null");
+        return Builder.from(this).agentApprovalStore(store).build();
+    }
+
+    /**
+     * Returns a copy of this spec with the store that answers "always allow in this session".
+     *
+     * <p>
+     * The narrow half of the pair, and the one a distributed deployment feels first: it is consulted before the
+     * agent-scoped store, so a session that moves to another node re-asks every skill it had already been
+     * allowed unless this store is shared. Its reach is the session <i>and the executions that session
+     * delegated</i> — subagent forks carry the id along as {@code invokingSessionId} — so a shared
+     * implementation changes the answer for forks too.
+     *
+     * @param store
+     *            the session-scoped approval store (must not be null)
+     * @return a new spec carrying the store
+     */
+    public SkillApprovalSpec withSessionApprovalStore(@ExternallyManaged SessionApprovalStore store) {
+        Objects.requireNonNull(store, "sessionApprovalStore must not be null");
+        return Builder.from(this).sessionApprovalStore(store).build();
+    }
+
+    /**
+     * Returns a copy of this spec with the registry suspended turns wait in.
+     *
+     * <p>
+     * A {@code PendingTurn} is a snapshot rather than a live continuation, which is why sharing the registry is
+     * enough to make {@code /approve} work from a node other than the one that suspended: the approving node
+     * finds the entry, writes the decision into the approval stores above, and removes it. Sharing this one
+     * without sharing those is the half-configured shape — the turn is found and released into a node that
+     * still has no record of the approval.
+     *
+     * @param registry
+     *            the pending-turn registry (must not be null)
+     * @return a new spec carrying the registry
+     */
+    public SkillApprovalSpec withPendingTurnRegistry(@ExternallyManaged PendingTurnRegistry registry) {
+        Objects.requireNonNull(registry, "pendingTurnRegistry must not be null");
+        return Builder.from(this).pendingTurnRegistry(registry).build();
+    }
+
+    /**
+     * Returns the caller-supplied agent-scoped approval store, when there is one.
+     *
+     * @return the store, or empty to use the stack default (in-memory, this node only)
+     */
+    public Optional<AgentApprovalStore> getAgentApprovalStore() {
+        return Optional.ofNullable(agentApprovalStore);
+    }
+
+    /**
+     * Returns the caller-supplied session-scoped approval store, when there is one.
+     *
+     * @return the store, or empty to use the stack default (in-memory, this node only)
+     */
+    public Optional<SessionApprovalStore> getSessionApprovalStore() {
+        return Optional.ofNullable(sessionApprovalStore);
+    }
+
+    /**
+     * Returns the caller-supplied pending-turn registry, when there is one.
+     *
+     * @return the registry, or empty to use the stack default (in-memory, this node only)
+     */
+    public Optional<PendingTurnRegistry> getPendingTurnRegistry() {
+        return Optional.ofNullable(pendingTurnRegistry);
+    }
+
     @Override
     public String toString() {
         return "SkillApprovalSpec[default=" + defaultDecision + ", channel=" + channelMode
-                + (channelMode == ChannelMode.ALLOW_LIST ? ", allowed=" + allowedSkills : "") + "]";
+                + (channelMode == ChannelMode.ALLOW_LIST ? ", allowed=" + allowedSkills : "")
+                + (agentApprovalStore != null ? ", custom agent approval store" : "")
+                + (sessionApprovalStore != null ? ", custom session approval store" : "")
+                + (pendingTurnRegistry != null ? ", custom pending turn registry" : "") + "]";
     }
 
     /**
@@ -373,6 +492,9 @@ public final class SkillApprovalSpec {
         private Duration pendingTurnTtl;
         private Duration pendingTurnSweepInterval;
         private Consumer<List<PendingTurn>> pendingTurnExpirationListener;
+        private AgentApprovalStore agentApprovalStore;
+        private SessionApprovalStore sessionApprovalStore;
+        private PendingTurnRegistry pendingTurnRegistry;
 
         private static Builder from(SkillApprovalSpec spec) {
             final Builder builder = new Builder();
@@ -384,6 +506,9 @@ public final class SkillApprovalSpec {
             builder.pendingTurnTtl = spec.pendingTurnTtl;
             builder.pendingTurnSweepInterval = spec.pendingTurnSweepInterval;
             builder.pendingTurnExpirationListener = spec.pendingTurnExpirationListener;
+            builder.agentApprovalStore = spec.agentApprovalStore;
+            builder.sessionApprovalStore = spec.sessionApprovalStore;
+            builder.pendingTurnRegistry = spec.pendingTurnRegistry;
             return builder;
         }
 
@@ -424,6 +549,21 @@ public final class SkillApprovalSpec {
 
         private Builder pendingTurnExpirationListener(Consumer<List<PendingTurn>> listener) {
             this.pendingTurnExpirationListener = listener;
+            return this;
+        }
+
+        private Builder agentApprovalStore(AgentApprovalStore store) {
+            this.agentApprovalStore = store;
+            return this;
+        }
+
+        private Builder sessionApprovalStore(SessionApprovalStore store) {
+            this.sessionApprovalStore = store;
+            return this;
+        }
+
+        private Builder pendingTurnRegistry(PendingTurnRegistry registry) {
+            this.pendingTurnRegistry = registry;
             return this;
         }
 

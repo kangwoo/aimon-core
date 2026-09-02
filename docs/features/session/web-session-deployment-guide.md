@@ -67,6 +67,25 @@ SessionRouter.builder()
 인메모리 구현은 노드 로컬이다. 피어의 `EVICT` 를 듣기 때문에 삭제는 클러스터 전체에 전파되지만, 승인 자체는
 노드를 넘어 공유되지 않으므로 세션이 노드를 옮기면 한 번 더 묻는다.
 
+**`AimonStack` 을 쓴다면 위 두 곳에 손으로 넘기지 않는다.** 스펙에 한 번 얹으면 런타임 팩토리와 라우터
+양쪽에 같은 인스턴스가 간다 — 두 자리에 서로 다른 것을 주는 실수가 아예 생기지 않는다.
+
+```java
+AimonStackSpec.builder()
+    .skillApproval(SkillApprovalSpec.denyAll()
+            .withSessionApprovalStore(sessionApprovalStore)   // 라우터에도 이 인스턴스가 간다
+            .withAgentApprovalStore(agentApprovalStore)
+            .withPendingTurnRegistry(pendingTurnRegistry))
+    .build();
+```
+
+Spring Boot 스타터에서는 `SessionApprovalStore` · `AgentApprovalStore` · `PendingTurnRegistry` 빈을
+정의하기만 하면 된다. 셋 다 **빌려온 것**이라 스택은 어느 것도 닫지 않는다.
+
+셋 중 하나만 공유하는 배포는 기동 시 `distributed-approvals` degradation 으로 **남은 것만** 이름이 불린다.
+특히 레지스트리만 공유하고 승인 저장소를 노드 로컬로 두면, 다른 노드에서 중단된 턴을 찾아내서 그 결정을
+모르는 노드로 풀어 준다.
+
 포크는 별도로 정리할 것이 없다 — 지울 자기 몫의 승인이 애초에 없기 때문이다. 서브에이전트 포크는
 `SessionId` 가 **아예 없고**(툴 컨텍스트에 `SESSION_ID` 대신 `EXECUTION_ID` 가 실린다) 승인은 자기를 띄운
 세션의 id (`invokingSessionId` — 와이어 키는 동결되어 `"invokingConversationId"` 그대로다) 로만 조회되므로,

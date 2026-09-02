@@ -267,7 +267,7 @@ public final class SessionSpec {
          *            the store, or null for in-memory
          * @return this builder
          */
-        public Builder recordStore(SessionRecordStore recordStore) {
+        public Builder recordStore(@ExternallyManaged SessionRecordStore recordStore) {
             this.recordStore = recordStore;
             return this;
         }

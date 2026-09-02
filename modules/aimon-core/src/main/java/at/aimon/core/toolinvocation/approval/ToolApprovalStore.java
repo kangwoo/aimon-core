@@ -25,11 +25,21 @@ import java.util.Optional;
  * Implementations must be thread-safe: a parallel tool batch evaluates several tools against one store concurrently.
  *
  * <p>
- * Implementations must be thread-safe. The default implementation is in-memory
- * ({@link InMemoryToolApprovalStore}) and therefore node-local. Because {@link SideEffectApprovalGate} keys by session,
- * the same thing follows here as for the skill-approval stores: a session that moves to another node asks again. It
- * fails closed — a forgotten answer re-prompts, it does not silently allow — and the assembly reports the whole
- * category once at startup as the {@code distributed-approvals} degradation rather than repeating it per store.
+ * The default implementation is in-memory ({@link InMemoryToolApprovalStore}) and therefore node-local. Because
+ * {@link SideEffectApprovalGate} keys by session, the same thing follows here as for the skill-approval stores: a
+ * session that moves to another node asks again. It fails closed — a forgotten answer re-prompts, it does not
+ * silently allow.
+ *
+ * <p>
+ * <b>No assembly announces that, and this paragraph used to say one did.</b> It claimed the
+ * {@code distributed-approvals} degradation reported "the whole category" rather than repeating it per store, which
+ * was never true of this store and is now visibly not: that degradation counts exactly the three skill-approval
+ * stores {@code SkillApprovalSpec} takes, names each by the seam that replaces it, and falls silent once all three
+ * are supplied — a deployment can therefore share every store AIMON knows how to be handed and still be running this
+ * one node-locally, in silence. The gap is not a defect in that message; it is that nothing assembles a
+ * {@code ToolApprovalStore} yet — {@link SideEffectApprovalGate} has no wiring in {@code aimon-bootstrap} or the
+ * Spring Boot starter. Whichever change gives it one owes it both halves the skill stores have: a spec seam to
+ * supply a shared implementation through, and a line in that announcement while it is still node-local.
  *
  * @see SideEffectApprovalGate
  * @see InMemoryToolApprovalStore

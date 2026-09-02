@@ -272,34 +272,33 @@ public final class AimonStackBuilder {
         final TranscriptManager transcriptManager = new DefaultTranscriptManager(sessionRecordStore,
                 sessionCheckpoints);
         final MessageQueueManager messageQueueManager = new DefaultMessageQueueManager(
-                new InMemoryMessageQueueRepository());
+                spec.getMessageQueueRepository().orElseGet(InMemoryMessageQueueRepository::new));
 
         // --- Skill approval -------------------------------------------------------------------------------
         // Both stores are shared by the policy chain (reads) and the approval channel (writes). Same instances,
-        // deliberately: see the class javadoc.
-        final AgentApprovalStore agentApprovalStore = new InMemoryAgentApprovalStore();
-        final SessionApprovalStore sessionApprovalStore = new InMemorySessionApprovalStore();
+        // deliberately: see the class javadoc. Borrowed when supplied — neither is on the teardown plan, because
+        // whoever built the connection underneath closes the thing on top of it.
+        final SkillApprovalSpec approvalSpec = spec.getSkillApproval();
+        final AgentApprovalStore agentApprovalStore = approvalSpec.getAgentApprovalStore()
+                .orElseGet(InMemoryAgentApprovalStore::new);
+        final SessionApprovalStore sessionApprovalStore = approvalSpec.getSessionApprovalStore()
+                .orElseGet(InMemorySessionApprovalStore::new);
         final SkillInvocationPolicy skillInvocationPolicy = new SessionScopedSkillInvocationPolicy(sessionApprovalStore,
                 new ApprovalCachingSkillInvocationPolicy(agentApprovalStore, RuleBasedSkillInvocationPolicy.builder()
-                        .defaultDecision(spec.getSkillApproval().getDefaultDecision()).build()));
-        final SkillApprovalChannel approvalChannel = resolveApprovalChannel(spec.getSkillApproval(),
-                sessionApprovalStore, agentApprovalStore, degradations);
+                        .defaultDecision(approvalSpec.getDefaultDecision()).build()));
+        final SkillApprovalChannel approvalChannel = resolveApprovalChannel(approvalSpec, sessionApprovalStore,
+                agentApprovalStore, degradations);
 
         // --- Pending turns --------------------------------------------------------------------------------
-        final PendingTurnRegistry pendingTurnRegistry = new InMemoryPendingTurnRegistry();
+        final PendingTurnRegistry pendingTurnRegistry = approvalSpec.getPendingTurnRegistry()
+                .orElseGet(InMemoryPendingTurnRegistry::new);
         final PendingTurnReaper.Builder reaperBuilder = PendingTurnReaper.builder().registry(pendingTurnRegistry)
-                .interval(spec.getSkillApproval().getPendingTurnSweepInterval());
-        spec.getSkillApproval().getPendingTurnExpirationListener().ifPresent(reaperBuilder::expirationListener);
+                .interval(approvalSpec.getPendingTurnSweepInterval());
+        approvalSpec.getPendingTurnExpirationListener().ifPresent(reaperBuilder::expirationListener);
         final PendingTurnReaper pendingTurnReaper = teardown.own(TeardownPhase.PENDING_TURNS, "pendingTurnReaper",
                 reaperBuilder.build());
         if (spec.getSession().getMode() == DeploymentMode.DISTRIBUTED) {
-            // Distributing sessions does not distribute everything keyed by one. Both of these fail closed —
-            // an approval is re-asked, a suspended turn expires — so the consequence is friction rather than an
-            // escalation, which is exactly why it would otherwise go unnoticed.
-            degradations.add("distributed-approvals",
-                    "Skill approvals and suspended turns stay on the node that produced them. After a session moves"
-                            + " to another node, a skill approved for that session asks again, and an /approve for a"
-                            + " turn suspended elsewhere finds nothing to release.");
+            announceNodeLocalApprovals(approvalSpec, degradations);
         }
 
         // --- Subagents ------------------------------------------------------------------------------------
@@ -551,6 +550,53 @@ public final class AimonStackBuilder {
                                 + " runtime, so skills outside the policy rules will never run.");
                 return new DenyAllSkillApprovalChannel(sessionApprovalStore, agentApprovalStore);
         }
+    }
+
+    /**
+     * Announces the approval-axis stores that are still node-local under distributed sessions.
+     *
+     * <p>
+     * Distributing sessions does not distribute everything keyed by one. All three fail closed — an approval is
+     * re-asked, a suspended turn expires — so the consequence is friction rather than an escalation, which is
+     * exactly why it would otherwise go unnoticed.
+     *
+     * <p>
+     * Named one by one rather than as a single sentence about "approvals", because the three are supplied
+     * independently and the half-configured shapes are the ones worth reading about. A shared pending-turn
+     * registry over node-local approval stores finds the suspended turn from another node and then releases it
+     * into a node with no record of the decision; shared approval stores under a node-local registry stop the
+     * re-asking but leave {@code /approve} unable to find the turn. Nothing is announced when all three were
+     * supplied — whether those implementations genuinely span nodes is not something the builder can inspect,
+     * and having been handed them it says nothing rather than guessing.
+     *
+     * @param approvalSpec
+     *            the approval spec, read for which stores the caller supplied
+     * @param degradations
+     *            the collector the announcement is added to
+     */
+    private static void announceNodeLocalApprovals(SkillApprovalSpec approvalSpec,
+            RuntimeDegradations.Collector degradations) {
+        final List<String> nodeLocal = new ArrayList<>();
+        if (approvalSpec.getSessionApprovalStore().isEmpty()) {
+            nodeLocal.add("a skill approved for a session asks again once that session moves to another node"
+                    + " (SkillApprovalSpec.withSessionApprovalStore)");
+        }
+        if (approvalSpec.getAgentApprovalStore().isEmpty()) {
+            nodeLocal.add("an 'always allow in this agent' answer is unknown to every other node"
+                    + " (SkillApprovalSpec.withAgentApprovalStore)");
+        }
+        if (approvalSpec.getPendingTurnRegistry().isEmpty()) {
+            nodeLocal.add("an /approve for a turn suspended elsewhere finds nothing to release"
+                    + " (SkillApprovalSpec.withPendingTurnRegistry)");
+        }
+        if (nodeLocal.isEmpty()) {
+            return;
+        }
+        final String quantifier = nodeLocal.size() == 3 ? "all 3 of the" : nodeLocal.size() + " of the 3";
+        degradations.add("distributed-approvals",
+                "Sessions are distributed but " + quantifier + " approval-axis stores "
+                        + (nodeLocal.size() == 1 ? "is" : "are") + " still node-local: " + String.join("; ", nodeLocal)
+                        + ".");
     }
 
     private static SchedulingLifecycle createSchedulingEngine(AimonStackSpec spec,

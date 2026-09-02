@@ -1,6 +1,7 @@
 package at.aimon.spring.boot.autoconfigure;
 
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -41,6 +42,14 @@ import at.aimon.core.knowledge.SimpleDocumentChunker;
 public class AimonKnowledgeAutoConfiguration {
 
     /**
+     * Name of the bean this slice publishes, which the store below is made a dependency of.
+     *
+     * <p>
+     * A constant so the {@code @Bean} and the edge registered against it cannot drift apart.
+     */
+    static final String KNOWLEDGE_CONTRIBUTION_BEAN = "aimonKnowledgeContribution";
+
+    /**
      * Builds the in-memory keyword store under {@code aimon.knowledge.backend=keyword}.
      *
      * <p>
@@ -78,12 +87,13 @@ public class AimonKnowledgeAutoConfiguration {
      *            the store, from the branch above or from the application
      * @return the resolved contribution, empty when knowledge is off
      */
-    @Bean
+    @Bean(KNOWLEDGE_CONTRIBUTION_BEAN)
     @ConditionalOnMissingBean
-    KnowledgeContribution aimonKnowledgeContribution(AimonProperties properties,
-            ObjectProvider<KnowledgeStore> stores) {
+    KnowledgeContribution aimonKnowledgeContribution(AimonProperties properties, ObjectProvider<KnowledgeStore> stores,
+            ConfigurableListableBeanFactory beanFactory) {
         final KnowledgeBackend backend = properties.getKnowledge().getBackend();
-        final KnowledgeStore store = stores.getIfAvailable();
+        final KnowledgeStore store = ApplicationBeans.resolve(stores, KnowledgeStore.class, beanFactory,
+                KNOWLEDGE_CONTRIBUTION_BEAN);
 
         if (backend == KnowledgeBackend.NONE) {
             if (store != null) {
