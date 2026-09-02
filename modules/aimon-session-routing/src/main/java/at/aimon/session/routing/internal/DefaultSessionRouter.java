@@ -1507,6 +1507,45 @@ public final class DefaultSessionRouter implements SessionRouter {
         doorbellPending.remove(sessionId);
     }
 
+    /**
+     * Drop this node's note that a session's inbox has unanswered work, because the session it refers to has just
+     * been released, deleted or evicted out from under it.
+     *
+     * <p>
+     * Both marks promise a message somebody still has to collect, and by the time any of those three has run the
+     * inbox has been purged — here on the local paths, on the originating node for an {@code EVICT} — so the promise
+     * is void. What is left costs an empty drain pass on the next lease return, or — for {@link #doorbellRelayOwed} —
+     * hands a peer a session that no longer exists. Marks also outlive the id itself, so a later session reusing it
+     * would inherit a notice about messages that were never its own.
+     *
+     * <p>
+     * Called after the purge at every call site, which leaves the same narrow window the delete path already accepts:
+     * a message delivered between the purge and this call loses its local notice. Its own {@code MESSAGE_ENQUEUED} is
+     * what rings again — through {@link #onSignal} when a peer sent it — and the session's next submission collects it
+     * either way, because every turn re-collects before it starts.
+     *
+     * @param sessionId
+     *            the session whose doorbell marks are no longer worth keeping
+     */
+    private void forgetDoorbell(SessionId sessionId) {
+        doorbellPending.remove(sessionId);
+        doorbellRelayOwed.remove(sessionId);
+    }
+
+    /**
+     * Whether this node still holds an unanswered doorbell notice for {@code sessionId}. Visible for testing:
+     * once the session a notice refers to is gone, the notice has no behaviour of its own left to observe — an empty
+     * drain pass looks exactly like no pass at all — so {@link #forgetDoorbell} can only be pinned by reading the
+     * marks.
+     *
+     * @param sessionId
+     *            the session to inspect
+     * @return {@code true} when either doorbell mark still names it
+     */
+    boolean hasDoorbellNotice(SessionId sessionId) {
+        return doorbellPending.contains(sessionId) || doorbellRelayOwed.contains(sessionId);
+    }
+
     private void tryDrainOnce(SessionId sessionId) {
         if (!tryBeginTurn(sessionId)) {
             // A turn is running on this node, which is a strictly better drain than this pass would be: its post-turn
@@ -1926,6 +1965,52 @@ public final class DefaultSessionRouter implements SessionRouter {
         if (System.nanoTime() - pending.deadlineNanos >= 0) {
             failForward(pending, new TimeoutException("Forwarded turn " + pending.turnId.value() + " on session "
                     + pending.sessionId.value() + " produced no result within " + idempotencyForwardTtl));
+            return;
+        }
+        // Nobody has answered yet, so ask again — but only while the message is still sitting in the inbox. The
+        // holder it was queued for may be gone: its lease then expires on its own TTL, but a dead node cannot run the
+        // lease-return path that re-rings the doorbell (#republishDoorbell), and every peer that heard the original
+        // MESSAGE_ENQUEUED found the session held and gave up. Without a retry from somewhere, the message waits for
+        // the session's next submission — which may never come — while the caller here waits out
+        // idempotencyForwardTtl for a turn no node is running. The node holding the future is the right one to retry
+        // from: it is by definition not the holder, it is the one being hurt, and its interest ends when the forward
+        // resolves, so the retry stops on its own.
+        //
+        // The inbox check is what keeps this to the case it can actually help. An uncollected message is the one thing
+        // a drain pass can pick up; once some node has collected it the message is out of the at-most-once inbox and
+        // only that node can produce its result, so re-ringing finds nothing and buys a wasted pass — the same as
+        // against a healthy holder mid-turn. (Whether a *collected* message's holder dying is reported at all is a
+        // separate question this path cannot influence: HolderLossSweeper sees a reservation only while it names a
+        // holder, and a forwarded one is deliberately holderless — see forwardToInbox. Design §14 carries that gap.)
+        // The check also keeps this path from resurrecting a session a peer deleted: delete purges the inbox, so the
+        // retry goes quiet even in the window before that peer's EVICT arrives to fail this forward outright.
+        //
+        // A failing inbox read rings anyway. Being unable to see the queue is not evidence the queue is empty, and
+        // the cost of guessing wrong here is one drain pass against a lease its holder is still renewing.
+        //
+        // ringDoorbell rather than tryDrainOnce: this is the scheduler thread, and a drain pass runs whole turns on
+        // the thread that starts it. ringDoorbell hands that to the turn executor and returns.
+        if (!mayHaveQueuedWork(pending.sessionId)) {
+            return;
+        }
+        safeMetric(metrics::onForwardDoorbellRerung, "onForwardDoorbellRerung");
+        ringDoorbell(pending.sessionId);
+    }
+
+    /**
+     * Whether {@code sessionId}'s inbox is worth re-announcing — {@code true} when it holds at least one uncollected
+     * message, and also when the inbox cannot say.
+     *
+     * @param sessionId
+     *            the session whose queue to check
+     * @return {@code false} only on a definite answer of "nothing queued"
+     */
+    private boolean mayHaveQueuedWork(SessionId sessionId) {
+        try {
+            return !inbox.isEmpty(sessionId);
+        } catch (Exception e) {
+            log.warn("Inbox emptiness check failed for session {}, re-ringing anyway: {}", sessionId, e.toString());
+            return true;
         }
     }
 
@@ -2250,9 +2335,11 @@ public final class DefaultSessionRouter implements SessionRouter {
                 purgeSessionApprovals(convId);
                 statusProjection.remove(convId);
                 // The peer that evicted also purged the inbox, so anything this node forwarded there is gone and no
-                // holder will ever run it. Fail those callers here rather than leaving them to their deadlines.
+                // holder will ever run it. Fail those callers here rather than leaving them to their deadlines, and
+                // drop the doorbell notice for the same reason: it announces messages that peer has already removed.
                 failForwardsFor(convId, "session " + convId.value() + " was released or deleted on node "
                         + signal.getOriginNodeId() + " before this turn ran");
+                forgetDoorbell(convId);
                 emitTerminalInterrupt(convId, reason);
                 eventPublisher.complete(convId);
             }
@@ -2331,6 +2418,7 @@ public final class DefaultSessionRouter implements SessionRouter {
         // After the purge, so the messages backing these futures are provably gone rather than racing the purge.
         failForwardsFor(sessionId, "session " + sessionId.value() + " was released before this turn ran");
         purgeSessionApprovals(sessionId);
+        forgetDoorbell(sessionId);
         eventPublisher.complete(sessionId);
         final SessionSignalBus.Subscription sub = subscriptions.remove(sessionId);
         if (sub != null) {
@@ -2427,8 +2515,7 @@ public final class DefaultSessionRouter implements SessionRouter {
                 // asked to delete, possibly after the EVICT below already told its submitter the turn never ran.
                 // Clearing the marks instead keeps a leftover notice from costing an empty pass on whatever session
                 // next reuses this id.
-                doorbellPending.remove(sessionId);
-                doorbellRelayOwed.remove(sessionId);
+                forgetDoorbell(sessionId);
             } else {
                 // The delete did not happen — it timed out waiting for the lease, or the fenced write was refused. The
                 // session and its queued messages are exactly as they were, so the swallowed doorbell is owed an

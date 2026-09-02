@@ -28,6 +28,11 @@ import at.aimon.session.routing.SubmitDisposition;
  * The set of hooks is the §12 hook table: lock acquire latency, cache hit-rate, evict frequency, lease-extend
  * failures, submit outcome, and holder loss. The last two answer the same operational questions ("are nodes piling
  * up in the inbox?", "did we trip a recovery in production?") with the same backend cost.
+ *
+ * <p>
+ * {@link #onForwardDoorbellRerung()} joined them afterwards, for the case the holder-loss hook cannot see: a message
+ * whose holder died while it was still queued was never anybody's in-flight turn, so there is no stale reservation to
+ * recover from — the node waiting on it simply has to ask again until somebody can collect it.
  */
 public interface SessionMetrics {
 
@@ -116,5 +121,18 @@ public interface SessionMetrics {
      * i.e. exactly once per recovered session, on the recovering node.
      */
     default void onHolderLossRecovered() {
+    }
+
+    /**
+     * Called each time a node waiting on a forwarded turn re-announces that session's inbox — once per forward poll
+     * interval, for as long as the forward is unresolved <em>and</em> its message is still uncollected.
+     *
+     * <p>
+     * Counts <em>retries, not recoveries</em>. A message a healthy holder has not reached yet increments this too, so
+     * a low rate is ordinary queueing. What it does say is that somebody is waiting on a message no node has taken out
+     * of the inbox: correlate it with {@link #onLockAcquireSucceeded(Duration)} on the same node to see whether the
+     * retries are finding sessions to take over, which happens only where a holder stopped renewing its lease.
+     */
+    default void onForwardDoorbellRerung() {
     }
 }

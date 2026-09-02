@@ -1134,6 +1134,23 @@ Replacement for a caller that used it to read a result: none is needed at the ca
 - **A forward is failed, never abandoned** — `releaseSession` / `deleteSession` complete the pending
   future exceptionally instead of leaving a caller waiting forever. `submit()` subscribes to the
   signal bus before any I/O.
+- **A forward whose holder died is retried rather than left to its deadline.** A submission that loses
+  the election is queued in the inbox and announced once; every peer that heard that announcement and
+  found the session held gave up, on the understanding that the holder re-rings from its lease-return
+  path. A holder that *crashed* never runs that path — its lease merely lapses on its TTL — and the
+  queued message carries no idempotency holder, so the holder-loss sweeper does not see it either. The
+  message therefore waited for the session's next submission, which may never come, while its caller
+  waited out the whole `idempotencyForwardTtl` (5 min) for a turn no node was running. The forward
+  poll now re-rings the doorbell on every tick where that session's inbox still holds the message,
+  which bounds recovery at one poll interval past the lease expiry (~45 s on defaults) and cannot
+  disturb a live holder — the retry's `acquire` fails against a lease that is still being renewed.
+  An uncollected message is the only thing a drain pass can pick up, which is what the emptiness check
+  is for — once some node has taken the message out of the inbox, only that node can produce its
+  result. Counted by the new `SessionMetrics#onForwardDoorbellRerung()`.
+- **A doorbell notice does not outlive the session it announces.** `releaseSession`, `deleteSession`
+  and a peer's `EVICT` all purge the inbox; the node-local marks that say "somebody still has to
+  collect this" now go with it, instead of buying an empty drain pass on the next lease return and
+  being inherited by a later session that reuses the same `SessionId`.
 - **A permission fail-open is closed (security).** The validator's final branch permitted the call, so
   a tool listed *with* a pattern that produced no subject and had no rule was **allowed** — the
   strictest-looking configuration produced the weakest enforcement. That branch now denies: an empty
