@@ -251,15 +251,17 @@ class RedisIdempotencyStoreIntegrationTest {
                 .hasValue("h-1");
     }
 
+    // Sequential on one thread, and named for what it does — the guard, not the concurrency. Real simultaneity rests
+    // on the backend's own CAS / conditional update, not on an interleaving this test could force.
     @Test
-    @DisplayName("two nodes racing on one reservation produce exactly one holder")
+    @DisplayName("a reservation already taken over is refused to the next caller")
     void acquireHolderProducesOneWinner() {
         store.putIfAbsent("k-acq-race", inFlight("k-acq-race", "h-submitter"), Duration.ofSeconds(30));
         store.releaseHolder("k-acq-race", "h-submitter", Duration.ofMinutes(5));
 
         assertThat(store.acquireHolder("k-acq-race", "h-drainer-A", Duration.ofSeconds(30))).isTrue();
-        // The loser must be told, not allowed to overwrite: the winner is the node actually running the turn, and a
-        // stolen entry would have the sweeper reset the key against a holder that never had it.
+        // The second caller must be told, not allowed to overwrite: the first is the node actually running the turn,
+        // and a stolen entry would have the sweeper reset the key against a holder that never had it.
         assertThat(store.acquireHolder("k-acq-race", "h-drainer-B", Duration.ofSeconds(30))).isFalse();
         assertThat(store.find("k-acq-race").orElseThrow().getHolderId()).hasValue("h-drainer-A");
     }

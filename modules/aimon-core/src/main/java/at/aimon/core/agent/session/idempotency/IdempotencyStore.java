@@ -192,9 +192,12 @@ public interface IdempotencyStore {
      * <p>
      * <strong>Entries with no holder must be excluded.</strong> A holderless {@code IN_FLIGHT} entry is a reservation
      * for a turn queued in a {@link SessionInbox} (see {@link #releaseHolder}); nobody executes it, so nobody
-     * {@link #touch}es it, so it is stale by construction rather than by failure. This costs nothing in coverage
-     * because the exclusion window closes on its own: the node that takes the message out of the inbox names itself
-     * with {@link #acquireHolder} before running it, so an executing turn is always one this scan can see. Returning
+     * {@link #touch}es it, so it is stale by construction rather than by failure. The exclusion normally closes on its
+     * own — the node that takes the message out of the inbox names itself with {@link #acquireHolder} before running
+     * it — but that take-over may be refused or may fail, and such a turn then executes against a holderless entry
+     * that this scan will not report. That is a deliberate trade rather than an invariant: a false holder loss evicts
+     * a healthy turn and makes a client's retry execute twice, whereas a missed one costs the caller its forward
+     * deadline. Implementations must not try to narrow it by guessing which holderless entries are live. Returning
      * one tells the sweeper a
      * healthy session lost its holder, and the session is evicted out from under it. Implementations that page
      * results should apply the filter before the limit, so reservations cannot crowd live turns out of a batch.

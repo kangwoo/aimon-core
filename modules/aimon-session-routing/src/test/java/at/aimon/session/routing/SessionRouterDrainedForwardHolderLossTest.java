@@ -6,8 +6,11 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -27,6 +30,7 @@ import at.aimon.core.agent.session.idempotency.PutResult;
 import at.aimon.core.agent.session.inbox.InMemorySessionInbox;
 import at.aimon.core.agent.session.inbox.SessionInbox;
 import at.aimon.core.agent.session.signal.InMemorySignalBus;
+import at.aimon.core.agent.session.signal.SessionSignal;
 import at.aimon.core.agent.session.signal.SessionSignalBus;
 import at.aimon.core.agent.session.store.InMemorySessionLeaseStore;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
@@ -49,14 +53,30 @@ import at.aimon.session.routing.fixture.TestManagerHarness;
  * answered in seconds.
  *
  * <p>
- * The drain pass now takes the reservation back over before running each message, which is what these two tests pin
- * from both ends: that the entry names the node executing it while the turn runs, and that its going quiet is reported
- * as {@code HOLDER_LOST} to the caller waiting elsewhere.
+ * The drain pass now takes the reservation back over before running each message. That has two halves and both are
+ * pinned here, because the first without the second is a regression rather than a fix: naming the holder is what makes
+ * a <em>dead</em> drainer visible, and keeping that name touched through the lease renewer is what keeps a
+ * <em>live</em> one from being swept. The renewal tick is the only caller of {@code IdempotencyTouchSlot#touch}, so
+ * these tests set {@code lockExtendInterval} short enough for it to actually fire — at the harness default of 10 s
+ * against a 1 s stale window it never does, and a crash simulation then changes nothing about the outcome.
  */
 @DisplayName("SessionRouter holder loss for a collected forward")
 class SessionRouterDrainedForwardHolderLossTest {
 
     private static final String KEY = "k-drained";
+
+    /** Short enough that the renewal tick — and so the idempotency touch — fires many times inside a test. */
+    private static final Duration RENEW_FAST = Duration.ofMillis(200);
+
+    /** The sweeper's staleness window on the observing node, and the cadence it scans at. */
+    private static final Duration STALE_AFTER = Duration.ofSeconds(1);
+    private static final Duration SWEEP_FAST = Duration.ofMillis(200);
+
+    /** Long enough that a node whose touches stopped would have been swept several times over. */
+    private static final Duration LONGER_THAN_STALE = Duration.ofSeconds(3);
+
+    /** Given to a node that must not sweep, so a test observes only the sweeper it means to. */
+    private static final Duration NEVER_SWEEPS = Duration.ofMinutes(5);
 
     private SessionLeaseStore leaseStore;
     private SessionSignalBus bus;
@@ -64,6 +84,7 @@ class SessionRouterDrainedForwardHolderLossTest {
     private SessionRecordStore repository;
 
     private final List<TestManagerHarness> nodes = new ArrayList<>();
+    private final List<SessionSignalBus.Subscription> taps = new ArrayList<>();
 
     @BeforeEach
     void wireSharedBackend() {
@@ -75,6 +96,9 @@ class SessionRouterDrainedForwardHolderLossTest {
 
     @AfterEach
     void closeNodes() {
+        for (SessionSignalBus.Subscription tap : taps) {
+            tap.close();
+        }
         for (int i = nodes.size() - 1; i >= 0; i--) {
             nodes.get(i).close();
         }
@@ -113,9 +137,47 @@ class SessionRouterDrainedForwardHolderLossTest {
         session.completeCurrentTurn(TestLiveSession.ok("second-done"));
         assertThat(forwarded.getFuture().toCompletableFuture().get(5, TimeUnit.SECONDS).getFinalAnswer())
                 .isEqualTo("second-done");
-        // The take-over must not cost the entry its ordinary ending: markDone matches on the key alone, so a settled
-        // turn still leaves a replayable result rather than a reservation named after a node that has moved on.
+        // The take-over must not cost the entry its ordinary ending: a turn this node does hold the reservation for
+        // still caches its result rather than leaving a reservation named after a node that has moved on.
         assertThat(entry(idempotency).getStatus()).isEqualTo(IdempotencyEntry.Status.DONE);
+    }
+
+    @Test
+    @DisplayName("a healthy drainer's turn outlasting the stale window is not swept, because the renewer touches it")
+    void aHealthyDrainersLongTurnIsNotSweptAsALostHolder() throws Exception {
+        final IdempotencyStore idempotency = new InMemoryIdempotencyStore();
+        // node-A renews often enough for the idempotency touch that rides on renewal to actually fire; node-B watches
+        // with a one-second staleness window. Nothing here is crashed: the whole point is that nothing should happen.
+        final TestManagerHarness holder = node("node-A", idempotency,
+                b -> b.lockExtendInterval(RENEW_FAST).holderLossSweepInterval(NEVER_SWEEPS));
+        final TestManagerHarness peer = node("node-B", idempotency,
+                b -> b.holderLossSweepInterval(SWEEP_FAST).idempotencySecondaryTtl(STALE_AFTER));
+        final SessionId id = SessionId.of("c-drained-3");
+
+        holder.manager().submit(RequestFixtures.submit(id, "alpha", "first"));
+        final TestLiveSession session = awaitSession(holder, id);
+        assertThat(session.awaitTurnStarted()).isTrue();
+
+        final SubmitDisposition forwarded = peer.manager().submit(keyed(id, "second"));
+        assertThat(forwarded.getKind()).isEqualTo(SubmitDisposition.Kind.FORWARDED);
+
+        session.completeCurrentTurn(TestLiveSession.ok("first-done"));
+        assertThat(session.awaitTurnCount(2)).as("the queued message has to be out of the inbox and running").isTrue();
+
+        // An ordinary LLM turn runs far longer than the thirty-second default secondary TTL, so this is the common
+        // case rather than an edge one. Taking the reservation over without also keeping it alive would turn every
+        // such turn into a reported holder loss: the peer resets the key, the caller is failed, and its retry finds
+        // the key free and executes the same request a second time while the original turn is still running.
+        assertStaysPending(forwarded.getFuture(), LONGER_THAN_STALE);
+
+        final IdempotencyEntry stillRunning = entry(idempotency);
+        assertThat(stillRunning.getStatus()).as("the reservation has to have survived, not merely the future")
+                .isEqualTo(IdempotencyEntry.Status.IN_FLIGHT);
+        assertThat(stillRunning.getHolderId()).isPresent();
+
+        session.completeCurrentTurn(TestLiveSession.ok("second-done"));
+        assertThat(forwarded.getFuture().toCompletableFuture().get(5, TimeUnit.SECONDS).getFinalAnswer())
+                .isEqualTo("second-done");
     }
 
     @Test
@@ -127,13 +189,16 @@ class SessionRouterDrainedForwardHolderLossTest {
         final AtomicBoolean drainerAlive = new AtomicBoolean(true);
         final IdempotencyStore idempotency = new CrashableIdempotencyStore(new InMemoryIdempotencyStore(),
                 drainerAlive);
-        // Only the surviving node sweeps — a dead one runs no scheduled task of its own, and letting node-A sweep
-        // would let it report a loss it is supposed to be unable to notice.
+        // node-A renews fast, so while it is alive its touches really are what keeps the reservation fresh — without
+        // that the sweep below would fire on its own timer and this test would pass with the "crash" never happening.
+        // Only node-B sweeps: a dead node runs no scheduled task, and letting node-A sweep would let it report a loss
+        // it is supposed to be unable to notice.
         final TestManagerHarness holder = node("node-A", idempotency,
-                b -> b.holderLossSweepInterval(Duration.ofMinutes(5)));
+                b -> b.lockExtendInterval(RENEW_FAST).holderLossSweepInterval(NEVER_SWEEPS));
         final TestManagerHarness peer = node("node-B", idempotency,
-                b -> b.holderLossSweepInterval(Duration.ofMillis(200)).idempotencySecondaryTtl(Duration.ofSeconds(1)));
+                b -> b.holderLossSweepInterval(SWEEP_FAST).idempotencySecondaryTtl(STALE_AFTER));
         final SessionId id = SessionId.of("c-drained-2");
+        final List<Map<String, Object>> announced = tapTurnResults(id);
 
         holder.manager().submit(RequestFixtures.submit(id, "alpha", "first"));
         final TestLiveSession session = awaitSession(holder, id);
@@ -146,16 +211,64 @@ class SessionRouterDrainedForwardHolderLossTest {
         assertThat(session.awaitTurnCount(2)).as("the queued message has to be out of the inbox and running").isTrue();
         assertThat(entry(idempotency).getHolderId()).isPresent();
 
+        // The precondition that makes the crash below load-bearing rather than decorative: while node-A is alive the
+        // sweep must not fire, so whatever fires after the flip fired *because of* the flip.
+        assertStaysPending(forwarded.getFuture(), LONGER_THAN_STALE);
+
         // node-A stops renewing here, with the turn still in flight and the message long gone from the inbox — the
         // one shape the orphaned-forward doorbell retry cannot help with, because there is nothing left to re-announce.
         drainerAlive.set(false);
 
-        assertThat(awaitFailure(forwarded.getFuture())).isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("HOLDER_LOST").hasMessageContaining(KEY);
+        // The announcement is the deterministic half: the sweeper publishes it on every detection. The message the
+        // caller ends up with is not, quite — node-B's own forward poll runs every second, and one landing in the
+        // sub-millisecond window between compareAndReset deleting the entry and announceHolderLost completing the
+        // future would read the key as absent and fail it as "lost its idempotency reservation" instead. Both mean
+        // recovery rather than a five-minute deadline, so the claim that must not flake is made on the announcement.
+        assertThat(awaitHolderLostAnnouncement(announced)).as("the sweeper must announce the loss it detected")
+                .isTrue();
+        assertThat(awaitFailure(forwarded.getFuture())).isInstanceOf(IllegalStateException.class);
 
         // Let the parked turn finish so the harnesses close without waiting out their shutdown grace. Its markDone
         // lands on a key the sweeper already reset, which is a no-op by design rather than an error.
         session.completeCurrentTurn(TestLiveSession.ok("second-done"));
+    }
+
+    @Test
+    @DisplayName("a turn whose take-over was refused does not overwrite the cached answer it was refused for")
+    void aRefusedTakeOverDoesNotOverwriteTheCachedAnswer() throws Exception {
+        final IdempotencyStore idempotency = new InMemoryIdempotencyStore();
+        final TestManagerHarness holder = node("node-A", idempotency, b -> b.holderLossSweepInterval(NEVER_SWEEPS));
+        final TestManagerHarness peer = node("node-B", idempotency,
+                b -> b.holderLossSweepInterval(NEVER_SWEEPS).idempotencySecondaryTtl(STALE_AFTER));
+        final SessionId id = SessionId.of("c-drained-4");
+
+        holder.manager().submit(RequestFixtures.submit(id, "alpha", "first"));
+        final TestLiveSession session = awaitSession(holder, id);
+        assertThat(session.awaitTurnStarted()).isTrue();
+
+        final SubmitDisposition forwarded = peer.manager().submit(keyed(id, "second"));
+        assertThat(forwarded.getKind()).isEqualTo(SubmitDisposition.Kind.FORWARDED);
+
+        // Stands in for the sequence #19 exists because of, compressed: the queued message went uncollected past its
+        // forward deadline, the client retried the key, that retry ran somewhere and cached its answer. Planted
+        // rather than played out because the real version needs a five-minute TTL to lapse — the mechanism under test
+        // is what the drain pass does when it finally reaches a message whose key is already DONE.
+        idempotency.markDone(KEY, TestLiveSession.ok("answer-the-client-got"));
+        assertThat(forwarded.getFuture().toCompletableFuture().get(5, TimeUnit.SECONDS).getFinalAnswer())
+                .as("the waiting caller is answered from the cache, as a replay").isEqualTo("answer-the-client-got");
+
+        // Now the original message is drained. acquireHolder refuses the DONE entry, and the message runs anyway
+        // because it is already out of the at-most-once inbox and no successor could recover it.
+        session.completeCurrentTurn(TestLiveSession.ok("first-done"));
+        assertThat(session.awaitTurnCount(2)).as("a refused take-over must not stop the message from running").isTrue();
+        session.completeCurrentTurn(TestLiveSession.ok("answer-nobody-asked-for"));
+
+        // markDone matches on the key alone in every backend, so nothing but this node declining to call it keeps the
+        // duplicate's answer out of the cache. Letting it land would replace an answer a client has already been
+        // given with one it will never see, and every later replay of the key would return the wrong one.
+        final IdempotencyEntry cached = awaitCachedAnswer(idempotency, "answer-the-client-got");
+        assertThat(cached.getStatus()).isEqualTo(IdempotencyEntry.Status.DONE);
+        assertThat(cached.getResult().orElseThrow().getFinalAnswer()).isEqualTo("answer-the-client-got");
     }
 
     // -------------------------------------------------------------------------------------------------------------
@@ -189,6 +302,60 @@ class SessionRouterDrainedForwardHolderLossTest {
 
     private static IdempotencyEntry entry(IdempotencyStore store) {
         return store.find(KEY).orElseThrow(() -> new AssertionError("the reservation for " + KEY + " is gone"));
+    }
+
+    /**
+     * Fails the moment the forward resolves, and otherwise returns after {@code dwell}. Polling rather than sleeping
+     * so a regression reports at the point it happens instead of at the end of the window.
+     */
+    private static void assertStaysPending(CompletionStage<AgentExecutionResult> stage, Duration dwell)
+            throws InterruptedException {
+        final CompletableFuture<AgentExecutionResult> future = stage.toCompletableFuture();
+        final long deadline = System.currentTimeMillis() + dwell.toMillis();
+        while (System.currentTimeMillis() < deadline) {
+            assertThat(future.isDone())
+                    .as("the forward was resolved while its drainer was healthy and still running the turn").isFalse();
+            Thread.sleep(25L);
+        }
+    }
+
+    private static IdempotencyEntry awaitCachedAnswer(IdempotencyStore store, String expected)
+            throws InterruptedException {
+        final long deadline = System.currentTimeMillis() + TestLiveSession.DEFAULT_AWAIT_MS;
+        while (System.currentTimeMillis() < deadline) {
+            final Optional<IdempotencyEntry> found = store.find(KEY);
+            if (found.isPresent()
+                    && !expected.equals(found.get().getResult().map(r -> r.getFinalAnswer()).orElse(null))) {
+                // Report the overwrite where it happens rather than after the wait.
+                return found.orElseThrow();
+            }
+            Thread.sleep(25L);
+        }
+        return entry(store);
+    }
+
+    private List<Map<String, Object>> tapTurnResults(SessionId id) {
+        final List<Map<String, Object>> seen = new CopyOnWriteArrayList<>();
+        taps.add(bus.subscribe(id, signal -> {
+            if (signal.getKind() == SessionSignal.SignalKind.TURN_RESULT) {
+                seen.add(signal.getPayload());
+            }
+        }));
+        return seen;
+    }
+
+    private static boolean awaitHolderLostAnnouncement(List<Map<String, Object>> announced)
+            throws InterruptedException {
+        final long deadline = System.currentTimeMillis() + TestLiveSession.DEFAULT_AWAIT_MS;
+        while (System.currentTimeMillis() < deadline) {
+            for (Map<String, Object> payload : announced) {
+                if ("HOLDER_LOST".equals(payload.get("outcome")) && KEY.equals(payload.get("idem"))) {
+                    return true;
+                }
+            }
+            Thread.sleep(10L);
+        }
+        return false;
     }
 
     private static Throwable awaitFailure(CompletionStage<AgentExecutionResult> stage) throws Exception {

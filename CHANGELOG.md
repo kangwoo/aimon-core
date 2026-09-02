@@ -1160,13 +1160,25 @@ Replacement for a caller that used it to read a result: none is needed at the ca
   a Lua CAS on Redis, a conditional `findOneAndUpdate` on Mongo, `UPDATE ... WHERE holder_id IS NULL`
   on Postgres, `computeIfPresent` in memory), binds it into the lease's touch slot for the length of
   that turn, and hands it back through `markDone` or a holder-matched reset when the turn ends. A
-  take-over that loses — a `DONE` entry, one another node holds, one whose TTL has lapsed — leaves the
-  message running anyway with only the fast detection lost, because it is already out of the inbox and
-  refusing it would destroy work no successor can recover. No schema change: every backend already had
-  a nullable holder column. `IdempotencyTouchSlot` holds one binding per reservation rather than one
+  take-over can lose four ways — a `DONE` entry, one another node holds, one whose TTL has lapsed, or a
+  store that throws — and the message runs anyway in all of them, because it is already out of the
+  inbox and refusing it would destroy work no successor can recover. What such a turn gives up is
+  stated rather than glossed: the sweeper cannot see its node die, **and its result is not written to
+  the idempotency cache**. That second half is also a fix in its own right. `markDone` matches on the
+  key alone in every backend, so a drained turn used to overwrite whatever entry happened to hold the
+  key — including the `DONE` one the take-over had just declined to disturb, replacing an answer a
+  client had already been given with one it would never see and making every later replay of that key
+  return the wrong one. The caller is still answered over the rail either way; only the durable copy is
+  withheld, which degrades to the pre-existing behaviour of a `markDone` that failed. Enforcing it in
+  the store instead would need a holder-matched `markDone` on the SPI, registered in the design's §14
+  rather than done here. No schema change: every backend already had a nullable holder column. `IdempotencyTouchSlot` holds one binding per reservation rather than one
   in total, because a pass owes refreshes to both the submission that opened it and the queued message
   it is currently running, and a single slot let a sibling LLM turn outlast the secondary TTL and get
-  the other swept as lost.
+  the other swept as lost. One cost is new and named in the design doc rather than left implicit: a
+  forwarded turn's reservation used to need no touching at all, so it could not be swept by a touch
+  failure; now a drainer whose lease renews but whose `touch` fails past the secondary TTL has its live
+  turn swept and its client's retry double-execute. That is the regime local keyed turns already lived
+  in, and the symmetry is the point of the change, but it is not pure gain.
 - **A doorbell notice does not outlive the session it announces.** `releaseSession`, `deleteSession`
   and a peer's `EVICT` all purge the inbox; the node-local marks that say "somebody still has to
   collect this" now go with it, instead of buying an empty drain pass on the next lease return and

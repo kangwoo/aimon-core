@@ -718,11 +718,24 @@ public final class DefaultSessionRouter implements SessionRouter {
      * <p>
      * <b>A message whose take-over fails still runs.</b> It is already out of the at-most-once inbox — no successor
      * will ever collect it — so refusing it here would destroy work that nothing else can recover, which is the same
-     * reasoning that keeps {@link #drain} going after a turn throws. The three ways to lose are all cases where taking
-     * over would be wrong rather than cases where running is: the submission that opened this pass already holds its
-     * own reservation, a {@code DONE} entry is somebody's cached answer, and an absent one is a reservation whose
-     * forward has already given up. Losing costs only the fast detection — the caller falls back to the forward
-     * deadline, which is exactly where it was before this method existed.
+     * reasoning that keeps {@link #drain} going after a turn throws. There are <b>four</b> ways to lose, and none of
+     * them is a reason not to run the message: a {@code DONE} entry is somebody's cached answer, one with a holder is
+     * an attempt executing elsewhere, an absent or lapsed one is a reservation whose forward has already given up,
+     * and the store can simply throw.
+     *
+     * <p>
+     * What losing costs is stated precisely, because two things ride on the take-over rather than one. The turn then
+     * runs against an entry this node is not named on, so <b>the holder-loss sweeper cannot see this node die for it
+     * </b> — the caller falls back to the forward deadline, exactly where every drained message was before this method
+     * existed — and <b>its result is not written to the idempotency cache</b>, because writing over an entry the
+     * take-over just identified as somebody else's is the harm, not the safety (see {@link #announceTurnResult}). The
+     * caller is still answered over the rail either way. So the invariant this method restores holds only where it
+     * wins: a turn may still run holderless, and {@link IdempotencyStore#findStaleInFlight}'s exclusion of holderless
+     * entries does cost coverage for exactly those turns.
+     *
+     * <p>
+     * The opening submission of a pass never reaches here — {@link #drain} skips it, since its entry already names
+     * this node from submit time and the take-over could only refuse it.
      *
      * @param convId
      *            the session being drained, for logging
@@ -1119,7 +1132,8 @@ public final class DefaultSessionRouter implements SessionRouter {
             sortByPriorityThenFifo(initial);
             pendingQueue.addAll(initial);
 
-            final DrainOutcome outcome = drain(convId, requestedAgent, session, pendingQueue, selfMessage, held);
+            final DrainOutcome outcome = drain(convId, requestedAgent, session, pendingQueue, selfMessage,
+                    idem.reserverId, held);
 
             if (outcome.selfFailure != null) {
                 future.completeExceptionally(outcome.selfFailure);
@@ -1209,13 +1223,19 @@ public final class DefaultSessionRouter implements SessionRouter {
      *            messages to run, already priority-sorted; drained in place
      * @param selfMessage
      *            the submission that opened this pass, or {@code null} when draining purely on a peer's behalf
+     * @param selfReserverId
+     *            the identity {@code selfMessage}'s reservation is already held under — minted at submit time and
+     *            bound into the touch slot by {@link #runTurnLoop} — or {@code null} when it carried no key. This pass
+     *            cannot take that reservation over (it is held, so {@link #takeOverReservation} refuses it), so
+     *            without being told, the one message whose result the caller is waiting on is the one this pass would
+     *            decline to cache.
      * @param held
      *            the lease this pass runs under, whose idempotency touch slot each message's reservation is bound into
      *            for as long as that message is executing
      * @return which result (or failure) belongs to {@code selfMessage} (never null)
      */
     private DrainOutcome drain(SessionId convId, String boundAgent, LiveSession session,
-            Deque<InboundMessage> pendingQueue, InboundMessage selfMessage, HeldLease held) {
+            Deque<InboundMessage> pendingQueue, InboundMessage selfMessage, String selfReserverId, HeldLease held) {
         AgentExecutionResult selfResult = null;
         Throwable selfFailure = null;
 
@@ -1249,10 +1269,15 @@ public final class DefaultSessionRouter implements SessionRouter {
             }
 
             // After the agent check and before the turn: from here on this node is the one executing that
-            // reservation, so it is the one whose death has to be visible. Null for a message with no key, for the
-            // submission that opened this pass (its reservation already names this node), and whenever the take-over
-            // lost — see takeOverReservation.
-            final String takenReserverId = takeOverReservation(convId, idempotencyKey, held);
+            // reservation, so it is the one whose death has to be visible. Null for a message with no key and
+            // whenever the take-over lost — see takeOverReservation. Not attempted for the submission that opened
+            // this pass: its entry already names this node, so the take-over could only refuse it.
+            final String takenReserverId = next == selfMessage
+                    ? null
+                    : takeOverReservation(convId, idempotencyKey, held);
+            // Which identity this node holds this message's reservation under, from either source — or null when it
+            // holds none, which is what decides whether the result may be written to the shared cache below.
+            final String heldReserverId = next == selfMessage ? selfReserverId : takenReserverId;
 
             AgentExecutionResult turnResult = null;
             RuntimeException turnFailure = null;
@@ -1266,9 +1291,7 @@ public final class DefaultSessionRouter implements SessionRouter {
                 }
 
                 if (turnResult != null) {
-                    // markDone matches on the key alone in every backend, so it settles the entry whether or not the
-                    // take-over above put this node's name on it.
-                    announceTurnResult(convId, messageTurnId, idempotencyKey, turnResult);
+                    announceTurnResult(convId, messageTurnId, idempotencyKey, heldReserverId, turnResult);
                     if (next == selfMessage && selfResult == null) {
                         selfResult = turnResult;
                     }
@@ -1403,12 +1426,18 @@ public final class DefaultSessionRouter implements SessionRouter {
             // No submission of this pass's own to bind into the lease's idempotency touch slot — every message here
             // is some other node's. drain binds each one's reservation for the length of its own turn, which is what
             // makes a crash mid-pass reach the waiting caller as HOLDER_LOST rather than as a forward-TTL timeout.
-            drain(convId, boundAgent, session, pendingQueue, null, held);
+            drain(convId, boundAgent, session, pendingQueue, null, null, held);
         } catch (RuntimeException e) {
             log.warn("Inbox drain failed for session {}: {}", convId, e.toString());
             failUndrained(convId, pendingQueue, TurnResultPayload.Failure.Code.FAILED,
                     "holder failed before this message could run: " + e);
         } finally {
+            // Symmetric with runTurnLoop, and defence in depth rather than a fix: drain's per-message finally already
+            // unbinds everything a drain-only pass can bind. That is an invariant of code far from here, though, and
+            // the cost of restating it is one call — without it, a binding added outside that finally would leak one
+            // map entry per drained keyed message for the life of the lease, on a doorbell-only workload nothing else
+            // would clear.
+            held.getTouchSlot().clear();
             if (entry != null) {
                 turnSessions.remove(convId, entry.getSession());
                 publishStatusSnapshot(convId, entry.getSession());
@@ -1681,10 +1710,27 @@ public final class DefaultSessionRouter implements SessionRouter {
      * {@code markDone} first, then the broadcast (design §7.1 F6): the store is what a node that misses the broadcast
      * falls back to, so announcing first would advertise a result that a holder crash could still erase. Never throws —
      * a control-plane failure must not abort a drain pass whose remaining messages are already out of the inbox.
+     *
+     * <p>
+     * <b>The cache write is conditional; the delivery is not.</b> {@code markDone} matches on the key alone in every
+     * backend, so a node that does not hold the reservation would silently replace whatever does hold it — and a drain
+     * pass reaches here for messages whose take-over was <em>refused</em>, which is to say for entries the take-over
+     * identified as somebody else's. Overwriting a {@code DONE} entry replaces an answer a client has already been
+     * given with one it will never see, and any later replay of that key then returns the wrong one; overwriting a
+     * live attempt's reservation puts this turn's answer where that attempt's caller will read it. Neither is this
+     * turn's to write, so it does not. The rest of the method still runs: this execution really did happen and its
+     * result is really an answer for that key, so the caller waiting on it — here or on a peer — is answered as
+     * usual, and only the durable, replayable copy is withheld. Losing that copy degrades to the pre-existing
+     * behaviour of a {@code markDone} that failed: the rail delivers, and a later retry re-executes instead of
+     * replaying.
+     *
+     * @param heldReserverId
+     *            the identity this node holds the key's reservation under, or {@code null} when it holds none — which
+     *            includes a take-over that threw, because a caller that cannot read the entry cannot claim it
      */
-    private void announceTurnResult(SessionId convId, TurnId turnId, String idempotencyKey,
+    private void announceTurnResult(SessionId convId, TurnId turnId, String idempotencyKey, String heldReserverId,
             AgentExecutionResult result) {
-        if (idempotencyKey != null) {
+        if (idempotencyKey != null && heldReserverId != null) {
             try {
                 idempotencyStore.markDone(idempotencyKey, result);
             } catch (Exception e) {

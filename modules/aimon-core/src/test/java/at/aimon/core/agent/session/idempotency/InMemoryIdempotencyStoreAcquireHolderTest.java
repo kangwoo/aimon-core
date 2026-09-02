@@ -143,8 +143,11 @@ class InMemoryIdempotencyStoreAcquireHolderTest {
         assertThat(store.acquireHolder("k-never-seen", "drainer", SECONDARY)).isFalse();
     }
 
+    // Sequential on one thread, and named for what it does. It pins the guard rather than the concurrency: real
+    // simultaneity is the backends' job, argued from their CAS / conditional-update mechanisms rather than from a
+    // two-thread test whose interleaving nothing here can force.
     @Test
-    @DisplayName("two nodes racing on one reservation produce exactly one holder")
+    @DisplayName("a reservation already taken over is refused to the next caller")
     void onlyOneAcquirerWins() {
         store.putIfAbsent(KEY, inFlight(KEY, "submitter"), SECONDARY);
         store.releaseHolder(KEY, "submitter", FORWARD);
