@@ -130,7 +130,7 @@ mongodb-driver = { module = "org.mongodb:mongodb-driver-sync", version.ref = "mo
 aws-s3 = { module = "software.amazon.awssdk:s3", version.ref = "aws-sdk" }
 
 # Annotations
-jetbrains-annotations = { module = "org.jetbrains:annotations", version = "26.0.2" }
+jetbrains-annotations = { module = "org.jetbrains:annotations", version = "26.1.0" }
 
 # Code Generation
 lombok = { module = "org.projectlombok:lombok", version.ref = "lombok" }
