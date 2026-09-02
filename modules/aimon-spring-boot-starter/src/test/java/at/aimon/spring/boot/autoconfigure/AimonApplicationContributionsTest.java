@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.FactoryBean;
 import org.springframework.beans.factory.NoUniqueBeanDefinitionException;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -21,7 +22,12 @@ import org.springframework.context.annotation.Primary;
 
 import at.aimon.bootstrap.AimonStack;
 import at.aimon.bootstrap.AimonStackSpec;
+import at.aimon.bootstrap.spec.AgentSpec;
+import at.aimon.bootstrap.spec.LlmSpec;
 import at.aimon.bootstrap.spec.SessionSpec;
+import at.aimon.bootstrap.spec.SkillApprovalSpec;
+import at.aimon.core.agent.DefaultAgent;
+import at.aimon.core.agent.impl.AgentBundle;
 import at.aimon.core.agent.queue.InMemoryMessageQueueRepository;
 import at.aimon.core.agent.queue.MessageQueueRepository;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
@@ -144,7 +150,35 @@ class AimonApplicationContributionsTest {
         minimal(workspace).withUserConfiguration(ShadowingRegistryConfiguration.class)
                 .run(ctx -> assertThat(ctx).hasFailed().getFailure().isInstanceOf(IllegalStateException.class)
                         .hasMessageContaining(AimonAutoConfiguration.EnabledConfiguration.PENDING_TURN_REGISTRY_BEAN)
-                        .hasMessageContaining("find nothing to release"));
+                        .hasMessageContaining("find nothing to release").hasMessageContaining("Rename it"));
+    }
+
+    @Test
+    @DisplayName("a supplied spec that drops the registry is refused too, and is not told to rename anything")
+    void registryUnreachableThroughASuppliedSpecNamesItsOwnCause(@TempDir Path workspace) {
+        // The second way into the disagreement, and the reason the message asks which shape it is in rather than
+        // naming one. AimonStackSpec is @ConditionalOnMissingBean, so an application may build its own — and then
+        // it is that spec, not this starter's factory, that has to apply a published registry. The re-export's
+        // name is free here, so "rename your bean" would be advice about a bean the application does not have.
+        minimal(workspace).withUserConfiguration(SuppliedSpecConfiguration.class)
+                .run(ctx -> assertThat(ctx).hasFailed().getFailure().isInstanceOf(IllegalStateException.class)
+                        .hasMessageContaining("find nothing to release")
+                        .hasMessageContaining("SkillApprovalSpec.withPendingTurnRegistry")
+                        .hasMessageNotContaining("Rename it"));
+    }
+
+    @Test
+    @DisplayName("a supplied spec that carries the registry agrees, and starts")
+    void registryAppliedOnASuppliedSpecAgrees(@TempDir Path workspace) {
+        // The fix the message names, exercised: the same configuration with one line added starts, and the two
+        // views resolve to the one instance. Without this the case above could pass for the wrong reason — a
+        // supplied spec failing the context on its own would look the same.
+        minimal(workspace).withUserConfiguration(SuppliedSpecWithRegistryConfiguration.class).run(ctx -> {
+            assertThat(ctx).hasNotFailed();
+            assertThat(ctx.getBean(PendingTurnRegistry.class)).isSameAs(SuppliedSpecWithRegistryConfiguration.REGISTRY);
+            assertThat(ctx.getBean(AimonStack.class).pendingTurnRegistry())
+                    .isSameAs(SuppliedSpecWithRegistryConfiguration.REGISTRY);
+        });
     }
 
     @Test
@@ -277,6 +311,54 @@ class AimonApplicationContributionsTest {
         PendingTurnRegistry aimonPendingTurnRegistry() {
             return new InMemoryPendingTurnRegistry();
         }
+    }
+
+    /** A registry, and a hand-built spec that never applies it — the other way into the disagreement. */
+    @Configuration(proxyBeanMethods = false)
+    static class SuppliedSpecConfiguration {
+
+        @Bean
+        PendingTurnRegistry unreachableRegistry() {
+            return new InMemoryPendingTurnRegistry();
+        }
+
+        @Bean
+        AimonStackSpec aimonStackSpec(@Value("${aimon.workspace.root}") String workspaceRoot) {
+            return suppliedSpec(workspaceRoot, SkillApprovalSpec.denyAll());
+        }
+    }
+
+    /** The same, with the one line the failure message asks for. */
+    @Configuration(proxyBeanMethods = false)
+    static class SuppliedSpecWithRegistryConfiguration {
+
+        static final PendingTurnRegistry REGISTRY = new InMemoryPendingTurnRegistry();
+
+        @Bean
+        PendingTurnRegistry appliedRegistry() {
+            return REGISTRY;
+        }
+
+        @Bean
+        AimonStackSpec aimonStackSpec(@Value("${aimon.workspace.root}") String workspaceRoot) {
+            return suppliedSpec(workspaceRoot, SkillApprovalSpec.denyAll().withPendingTurnRegistry(REGISTRY));
+        }
+    }
+
+    /**
+     * The minimum an application-built spec has to say, which is what makes it bypass the starter's own factory.
+     *
+     * @param workspaceRoot
+     *            the temporary workspace the runner was pointed at
+     * @param approval
+     *            the approval spec under test — with or without the registry applied
+     * @return the spec
+     */
+    private static AimonStackSpec suppliedSpec(String workspaceRoot, SkillApprovalSpec approval) {
+        return AimonStackSpec.builder().workspaceRoot(workspaceRoot).llm(LlmSpec.of(new StubLlmClient()))
+                .agent(AgentSpec.of(AgentBundle.builder().agent(DefaultAgent.builder().name("test-agent")
+                        .systemPrompt("You are a test agent.").maxIterations(3).build()).build()))
+                .skillApproval(approval).build();
     }
 
     /** Two registries and nothing to choose between them. */

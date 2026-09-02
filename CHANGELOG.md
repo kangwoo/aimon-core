@@ -194,13 +194,22 @@ Old names are searchable in [`docs/migration/rename-maps.md`](docs/migration/ren
   registry and the stack suspends into another and `/approve` finds nothing. The check is written against
   the disagreement rather than against that cause — *what `getBean(PendingTurnRegistry.class)` returns is
   what the stack suspends into* — so `@Primary` and the refusal to guess stay Spring's answers rather than a
-  second copy of them.
+  second copy of them. That paid off immediately: there is a second route in, and it is an
+  application-supplied `AimonStackSpec` or `AimonStack` bean (both `@ConditionalOnMissingBean`), where it is
+  no longer this starter's spec factory that applies a published registry. The message asks which shape it
+  is in before naming a cause, because that one arrives with the re-export's name still free and "rename
+  your bean" would be advice about a bean the application does not have. This is the one `@Bean` in the
+  starter without `@ConditionalOnMissingBean`: it asserts an invariant about the beans a host supplied
+  rather than being a collaborator a host replaces.
 - **`distributed-approvals` now names only what is still node-local**, and says nothing when all three
   approval-axis stores were supplied. It had been unconditional on `DeploymentMode.DISTRIBUTED`, which
   was always true while there was no way to supply them and becomes a lie the moment there is. The
   half-configured shapes are named individually because they fail differently: a shared pending-turn
   registry over node-local approval stores finds a suspended turn from another node and then releases
-  it into a node with no record of the decision.
+  it into a node with no record of the decision. Narrowing it also retired a claim `ToolApprovalStore`'s
+  javadoc had been making — that this degradation reported "the whole category" of approval storage rather
+  than repeating it per store. It never covered that store (nothing assembles one) and now visibly counts
+  three, so the javadoc says what is true and what an assembly that wires it would owe it.
 - **`aimon.agent.runtimes.leased`** — a read-through gauge over the new
   `AgentRuntimeResolver.leasedCount()`, reporting the subset of `trackedCount()` a caller is holding
   right now. The difference between the two is the number of runtimes alive on the idle TTL alone,

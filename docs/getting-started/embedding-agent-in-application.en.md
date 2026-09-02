@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/embedding-agent-in-application.md
-source_commit: 61231870
+source_commit: 1c57e2ca
 ---
 
 # Embedding an AIMON agent in your application
@@ -837,7 +837,9 @@ existence is the whole configuration**; absent one, the node-local default stand
 
 The first three can also be put on directly with `SkillApprovalSpec.with*` (for a hand-assembled
 `AimonStack`), and sharing only some of the three has the `distributed-approvals` degradation name the
-ones **left** at start-up.
+ones **left** at start-up. If you define the `AimonStackSpec` bean yourself, though, these beans do not
+reach the stack — the starter is no longer the one building the spec, so that spec has to apply them with
+`with*` itself. Only the registry says so: a mismatch there fails start-up, and the other three do not.
 
 IMPORTANT: the last row is **not the same decision** as the first three. The drain filters on
 `AgentRuntimeId` and nothing else, and a queued entry carries no `SessionId` at all — so on a shared

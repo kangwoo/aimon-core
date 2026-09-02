@@ -799,8 +799,11 @@ IMPORTANT: 커스터마이저는 **테넌트 런타임을 만들 때도 호출**
 | `PendingTurnRegistry` | 다른 노드에서 중단된 턴에 대한 `/approve` 가 풀 것을 못 찾는다 | 어느 노드에서든 푼다 |
 | `MessageQueueRepository` | 턴 뒤에 쌓인 입력이 받은 노드에 남는다 | **아래를 먼저 읽을 것** |
 
-앞의 셋은 `SkillApprovalSpec.with*` 로도 직접 얹을 수 있고(§`AimonStack` 을 손으로 조립하는 경우),
+앞의 셋은 `SkillApprovalSpec.with*` 로도 직접 얹을 수 있고(`AimonStack` 을 손으로 조립하는 경우),
 셋 중 일부만 공유하면 기동 시 `distributed-approvals` degradation 이 **남은 것만** 이름을 부릅니다.
+단 `AimonStackSpec` 빈을 직접 정의했다면 이 빈들은 스택에 닿지 않습니다 — 스펙을 만드는 것이 스타터가
+아니게 되므로 그 스펙에 `with*` 를 손으로 얹어야 합니다. 레지스트리는 어긋나면 기동이 실패하며 그
+사실을 말해 주지만, 나머지 셋은 그렇지 않습니다.
 
 IMPORTANT: 마지막 줄은 앞의 셋과 **같은 결정이 아닙니다.** 큐의 배출은 `AgentRuntimeId` 하나로만
 거르고 적재된 항목에는 `SessionId` 가 아예 없으므로, 공유 저장소에서는 그 에이전트 런타임의 턴을 다음에

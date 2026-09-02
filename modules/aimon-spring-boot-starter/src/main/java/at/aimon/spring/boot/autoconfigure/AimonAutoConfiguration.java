@@ -111,10 +111,11 @@ public class AimonAutoConfiguration {
          * Name of the bean that re-exports the stack's pending-turn registry.
          *
          * <p>
-         * A constant because two places must agree on it: the {@code @Bean} that publishes it and
+         * A constant because three places must agree on it: the {@code @Bean} that publishes it,
          * {@link #applicationPendingTurnRegistry(ConfigurableListableBeanFactory)}, which excludes it so that
-         * re-exporting
-         * an input does not feed the stack back into itself.
+         * re-exporting an input does not feed the stack back into itself, and
+         * {@link PendingTurnRegistryConsistencyCheck}, which reads it to tell the one shape that exclusion
+         * cannot see apart from the shapes it can.
          */
         static final String PENDING_TURN_REGISTRY_BEAN = "aimonPendingTurnRegistry";
 
@@ -123,7 +124,7 @@ public class AimonAutoConfiguration {
          *
          * <p>
          * Needed by name because every dependency edge this class registers points at it — see
-         * {@link #registerDestructionEdge(ConfigurableListableBeanFactory, Class, Object)}.
+         * {@link ApplicationBeans#registerDestructionEdge(ConfigurableListableBeanFactory, Class, Object, String)}.
          */
         static final String CONTRIBUTIONS_BEAN = "aimonApplicationContributions";
 
@@ -743,9 +744,14 @@ public class AimonAutoConfiguration {
          * The shape {@link #applicationPendingTurnRegistry(ConfigurableListableBeanFactory)} cannot tell apart —
          * an application bean wearing the re-export's name — is documented there as an accepted cost, and it was,
          * right up to the point of noticing it fails with no symptom at all. This bean turns it into a startup
-         * error. It is written against the disagreement rather than against that cause, so a second way of
-         * reaching it needs no prediction; see {@link PendingTurnRegistryConsistencyCheck} for the one-sentence
-         * contract and why the check can only run once everything exists.
+         * error. It is written against the disagreement rather than against that cause, which is what let the
+         * second shape be caught without having been predicted: an application-supplied {@link AimonStackSpec}
+         * or {@link AimonStack} bean — both {@code @ConditionalOnMissingBean} — leaves
+         * {@link #withApplicationStores} out of the path, so a published registry never reaches the stack. That
+         * one is reached with the re-export's name still free, and a message that told it to rename a bean it
+         * does not have would be advice it cannot follow. See {@link PendingTurnRegistryConsistencyCheck} for
+         * the one-sentence contract, why the check can only run once everything exists, and why this is the one
+         * bean here without {@code @ConditionalOnMissingBean}.
          *
          * @param stack
          *            the assembled stack, read for the registry it actually suspends into
