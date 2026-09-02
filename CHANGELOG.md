@@ -171,7 +171,16 @@ Old names are searchable in [`docs/migration/rename-maps.md`](docs/migration/ren
   because the builder constructed the four in-memory ones itself. The queue lands on `AimonStackSpec`
   rather than beside the three approval stores because it is not keyed by a session — `QueuedInput`
   carries an `AgentRuntimeId`, and the ReAct loop, the live session and the subagent manager all read
-  it. All four are borrowed: the stack closes none of them.
+  it. That is also why sharing the queue is **not** the same move as sharing the three: the drain filters
+  on `AgentRuntimeId` alone and a queued entry carries no `SessionId`, so on a shared repository the next
+  node to run a turn for that agent runtime takes the input — possibly into another session's turn. All
+  four are borrowed: the stack closes none of them.
+- **The starter registers the destruction edge Spring does not.** A `@Bean` parameter records "this bean
+  depends on that one"; an `ObjectProvider`'s `getIfAvailable()` records nothing, and every optional
+  contribution the starter resolves went through the latter. The order was still right — these are
+  created while `aimonApplicationContributions` is, therefore before the stack — but right by accident,
+  and a store backed by a connection would have been closable before the stack still writing to it. The
+  edge is now registered explicitly for all of them, and asserted rather than reasoned about.
 - **`distributed-approvals` now names only what is still node-local**, and says nothing when all three
   approval-axis stores were supplied. It had been unconditional on `DeploymentMode.DISTRIBUTED`, which
   was always true while there was no way to supply them and becomes a lie the moment there is. The

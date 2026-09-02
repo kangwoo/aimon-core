@@ -592,8 +592,9 @@ public final class AimonStackBuilder {
         if (nodeLocal.isEmpty()) {
             return;
         }
+        final String quantifier = nodeLocal.size() == 3 ? "all 3 of the" : nodeLocal.size() + " of the 3";
         degradations.add("distributed-approvals",
-                "Sessions are distributed but " + nodeLocal.size() + " of the 3 approval-axis stores "
+                "Sessions are distributed but " + quantifier + " approval-axis stores "
                         + (nodeLocal.size() == 1 ? "is" : "are") + " still node-local: " + String.join("; ", nodeLocal)
                         + ".");
     }

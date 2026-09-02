@@ -186,6 +186,27 @@ turns stay on the node that produced them"* 을 무조건 올리고 있었다. �
 테스트 10개가 전부 그렇게 깨졌다. 그래서 그 하나만 `ObjectProvider` 가 아니라 빈 **정의** 조회
 (`allowEagerInit=false`)로 읽고 재수출을 이름으로 제외한다. 회귀 테스트가 그 자리를 지킨다.
 
+#### 리뷰가 찾아낸 두 개 — 하나는 틀린 근거, 하나는 틀린 조언
+
+**`getIfAvailable()` 이 파괴 순서를 등록한다는 것은 사실이 아니었다.** 위 문단의 결론(레지스트리만
+edge 를 손으로 등록한다)은 맞았지만 근거가 거꾸로였다 — provider 도 edge 를 등록하지 않는다.
+`ObjectProvider` 는 `autowiredBeanNames` 싱크 없이 resolve 하므로 누가 요청했는지가 기록되지 않는다.
+실측이다: 스타터 컨텍스트에서 `getDependentBeans` 가 승인 저장소 · 세션 저장소 · 큐 셋 다 빈 배열을
+돌려주고, 손으로 등록한 레지스트리만 `[aimonApplicationContributions]` 를 돌려줬다.
+
+살아 있는 버그는 아니었다 — 이 빈들은 contributions 를 만드는 도중에 생기므로 스택보다 먼저 생성되고
+역-생성순이 우연히 맞는 답을 준다. 문제는 **그 우연을 근거로 적어 둔 것**이다. 다음 사람이
+"provider 면 순서는 공짜" 로 읽고 다섯 번째 저장소를 얹는다. 그래서 넷이 아니라 **기여 빈 전부**에
+edge 를 등록하고, 그 edge 를 단언하는 테스트를 붙였다(`AimonApplicationContributionsTest`).
+
+**메시지 큐를 degradation 으로 알리자는 제안은 기각했다 — 조언이 틀렸다.** 승인 저장소 셋과 같은 줄에
+세우면 "공유하라" 로 읽히는데, 큐는 공유하면 안 되는 쪽이다. 배출은 `AgentRuntimeId` 하나로만 거르고
+(`OrcaAgentExecutor#injectQueuedMessages`) 적재된 항목에는 `SessionId` 가 **아예 없으므로**
+(`DefaultLiveSession`), 공유 저장소에서는 그 에이전트 런타임의 턴을 다음에 도는 노드가 — 다른 세션의
+턴이더라도 — 그 입력을 가져간다. 한 노드 안에서는 그것이 큐의 용도지만 노드를 넘으면 남의 턴에
+주입된다. degradation 대신 **이음매의 javadoc 에 제약으로** 적었고, "알리지 않는다" 를 테스트로
+못박았다.
+
 **남은 것.** 없다. 구현은 M-2 이고 그것은 여전히 트리거 대기다 — 이 항목이 뚫은 것은 **길**이다.
 
 ### M-2 — 승인·보류턴 축의 분산 구현이 없다 · **열림 · 트리거 대기**

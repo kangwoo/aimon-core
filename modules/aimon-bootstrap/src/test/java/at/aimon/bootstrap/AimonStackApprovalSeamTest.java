@@ -171,9 +171,29 @@ class AimonStackApprovalSeamTest {
     void distributedWithNoStoreSuppliedNamesAllThree(@TempDir Path workspace) {
         try (AimonStack stack = AimonStackBuilder.build(specFor(workspace).session(distributedSession()).build())) {
             assertThat(stack.degradations().has("distributed-approvals")).isTrue();
-            assertThat(stack.degradations().describe()).contains("3 of the 3 approval-axis stores")
+            assertThat(stack.degradations().describe()).contains("all 3 of the approval-axis stores")
                     .contains("withSessionApprovalStore").contains("withAgentApprovalStore")
                     .contains("withPendingTurnRegistry");
+        }
+    }
+
+    @Test
+    @DisplayName("a node-local message queue is not announced, because sharing it is not the fix")
+    void distributedSaysNothingAboutTheMessageQueue(@TempDir Path workspace) {
+        // The queue is the one store of the four whose node-local default is not a degradation to be talked out
+        // of. A drain filters on AgentRuntimeId alone and a queued entry carries no SessionId, so a shared
+        // repository hands a user's follow-up to whichever node next runs a turn for that agent runtime —
+        // possibly into another session's turn. Naming it beside the approval stores would read as advice to
+        // share it, and that advice would be wrong.
+        final SkillApprovalSpec approval = SkillApprovalSpec.denyAll()
+                .withSessionApprovalStore(new InMemorySessionApprovalStore())
+                .withAgentApprovalStore(new InMemoryAgentApprovalStore())
+                .withPendingTurnRegistry(new InMemoryPendingTurnRegistry());
+
+        try (AimonStack stack = AimonStackBuilder
+                .build(specFor(workspace).session(distributedSession()).skillApproval(approval).build())) {
+            assertThat(stack.degradations().describe()).doesNotContain("messageQueueRepository")
+                    .doesNotContain("queued input");
         }
     }
 

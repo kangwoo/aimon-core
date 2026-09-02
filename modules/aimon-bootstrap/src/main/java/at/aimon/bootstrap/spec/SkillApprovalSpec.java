@@ -392,7 +392,7 @@ public final class SkillApprovalSpec {
      *            the agent-scoped approval store (must not be null)
      * @return a new spec carrying the store
      */
-    public SkillApprovalSpec withAgentApprovalStore(AgentApprovalStore store) {
+    public SkillApprovalSpec withAgentApprovalStore(@ExternallyManaged AgentApprovalStore store) {
         Objects.requireNonNull(store, "agentApprovalStore must not be null");
         return Builder.from(this).agentApprovalStore(store).build();
     }
@@ -411,7 +411,7 @@ public final class SkillApprovalSpec {
      *            the session-scoped approval store (must not be null)
      * @return a new spec carrying the store
      */
-    public SkillApprovalSpec withSessionApprovalStore(SessionApprovalStore store) {
+    public SkillApprovalSpec withSessionApprovalStore(@ExternallyManaged SessionApprovalStore store) {
         Objects.requireNonNull(store, "sessionApprovalStore must not be null");
         return Builder.from(this).sessionApprovalStore(store).build();
     }
@@ -430,7 +430,7 @@ public final class SkillApprovalSpec {
      *            the pending-turn registry (must not be null)
      * @return a new spec carrying the registry
      */
-    public SkillApprovalSpec withPendingTurnRegistry(PendingTurnRegistry registry) {
+    public SkillApprovalSpec withPendingTurnRegistry(@ExternallyManaged PendingTurnRegistry registry) {
         Objects.requireNonNull(registry, "pendingTurnRegistry must not be null");
         return Builder.from(this).pendingTurnRegistry(registry).build();
     }

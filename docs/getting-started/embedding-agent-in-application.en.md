@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/embedding-agent-in-application.md
-source_commit: a9821d44
+source_commit: 1d1a4282
 ---
 
 # Embedding an AIMON agent in your application
@@ -772,6 +772,33 @@ could retype but a **secret**, and dropping it shows up not at startup but hours
 `RepresentationStore` · `ObservationStore` · `TaskSchedulerFactory` are all `@ConditionalOnMissingBean`
 too, so **if you define one, you win.** Defining a `*Spec` yourself means skipping the entire property
 tree, which makes it a last resort — what is expressible as properties is better left as properties.
+
+### Four more beans, for when there is a second node
+
+Unlike the four above, these are **not day-one.** On a single node the in-memory defaults are the right
+answer, and only a second node changes it. No property selects a backend for them, so **the bean's
+existence is the whole configuration**; absent one, the node-local default stands.
+
+| Bean | Without it | Shared |
+|------|------------|--------|
+| `SessionApprovalStore` | a session that moves node is asked about its skills again | it is not asked again |
+| `AgentApprovalStore` | an "always allow in this agent" answer is unknown to the other nodes | it applies cluster-wide |
+| `PendingTurnRegistry` | an `/approve` for a turn suspended elsewhere finds nothing to release | any node can release it |
+| `MessageQueueRepository` | input queued behind a turn stays on the node that took it | **read the note below first** |
+
+The first three can also be put on directly with `SkillApprovalSpec.with*` (for a hand-assembled
+`AimonStack`), and sharing only some of the three has the `distributed-approvals` degradation name the
+ones **left** at start-up.
+
+IMPORTANT: the last row is **not the same decision** as the first three. The drain filters on
+`AgentRuntimeId` and nothing else, and a queued entry carries no `SessionId` at all — so on a shared
+repository the next node to run a turn for that agent runtime takes the input, even if that is another
+session's turn. That is why leaving it node-local is not reported as a degradation. Share it only when
+agent runtimes are partitioned across nodes, or when the implementation narrows delivery back to the node
+that accepted the input.
+
+All four are **borrowed**: the stack closes none of them, and being your beans, Spring destroys them after
+the stack.
 
 ```java
 @Component

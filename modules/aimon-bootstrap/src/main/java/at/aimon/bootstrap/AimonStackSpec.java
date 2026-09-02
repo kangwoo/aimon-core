@@ -20,6 +20,7 @@ import at.aimon.bootstrap.spec.SkillApprovalSpec;
 import at.aimon.bootstrap.spec.ToolSpec;
 import at.aimon.core.agent.budget.ExecutionBudget;
 import at.aimon.core.agent.queue.MessageQueueRepository;
+import at.aimon.core.base.ExternallyManaged;
 import at.aimon.core.credential.CredentialStore;
 import at.aimon.core.knowledge.KnowledgeStore;
 import at.aimon.core.skill.parser.SkillParser;
@@ -320,6 +321,16 @@ public final class AimonStackSpec {
      * distributed implementation ships; this seam exists so that one an application wrote can reach an
      * assembled stack instead of only a hand-built object graph.
      *
+     * <p>
+     * <b>Sharing this one across nodes is not the same move as sharing the approval stores</b>, and the stack
+     * does not report a node-local queue as a degradation for that reason. The drain filters on
+     * {@code AgentRuntimeId} and nothing else ({@code OrcaAgentExecutor#injectQueuedMessages}), and a queued
+     * entry carries no {@code SessionId} at all — so on a shared repository the next turn to run for that agent
+     * runtime drains the entry, wherever it is and whichever session it belongs to. Within one node that is
+     * already true and is what the queue is for; across nodes it means a user's follow-up can be injected into
+     * someone else's turn. Share this only when the deployment partitions agent runtimes across nodes, or when
+     * the implementation itself narrows delivery back to the node that accepted the input.
+     *
      * @return the repository, or empty to use the stack default (in-memory, this node only)
      */
     public Optional<MessageQueueRepository> getMessageQueueRepository() {
@@ -480,12 +491,18 @@ public final class AimonStackSpec {
          * <p>
          * Supply one only to share the queue outside this process. The default is in-memory, which is correct
          * for a single node: input queued behind a running turn is drained by the same turn that is running.
+         * Read {@link #getMessageQueueRepository()} before sharing one — the drain key is the agent runtime,
+         * not the session, so a shared repository crosses sessions as well as nodes.
+         *
+         * <p>
+         * <b>Borrowed.</b> The stack closes it under no circumstance; whoever built the connection underneath
+         * closes the thing on top of it.
          *
          * @param messageQueueRepository
          *            the repository, or {@code null} for the in-memory default
          * @return this builder
          */
-        public Builder messageQueueRepository(MessageQueueRepository messageQueueRepository) {
+        public Builder messageQueueRepository(@ExternallyManaged MessageQueueRepository messageQueueRepository) {
             this.messageQueueRepository = messageQueueRepository;
             return this;
         }

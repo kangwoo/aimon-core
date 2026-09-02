@@ -6,6 +6,7 @@ import java.util.Map;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.NoUniqueBeanDefinitionException;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
@@ -121,8 +122,8 @@ public class AimonAutoConfiguration {
          * Name of the bean that gathers the application's optional contributions.
          *
          * <p>
-         * Needed by name for the one dependency edge this class registers by hand — see
-         * {@link #applicationPendingTurnRegistry(ConfigurableListableBeanFactory)}.
+         * Needed by name because every dependency edge this class registers points at it — see
+         * {@link #registerDestructionEdge(ConfigurableListableBeanFactory, Class, Object)}.
          */
         static final String CONTRIBUTIONS_BEAN = "aimonApplicationContributions";
 
@@ -164,12 +165,22 @@ public class AimonAutoConfiguration {
          * Resolves the beans a host application may define, all of which are optional.
          *
          * <p>
-         * Every one of these is an {@code ObjectProvider}, because a required parameter for something most
-         * applications do not define would make the common configuration fail to start. Resolving them here
-         * rather than as parameters of {@link #aimonStackSpec} costs nothing that matters: it is
-         * {@code getIfAvailable()} — not the parameter — that registers the dependency edge Spring destroys
-         * along, and the stack depends on the spec, which depends on this. The edge is the same chain, one
-         * link longer.
+         * Almost every one of these is an {@code ObjectProvider}, because a required parameter for something
+         * most applications do not define would make the common configuration fail to start. Resolving them
+         * here rather than as parameters of {@link #aimonStackSpec} moves them off the edge Spring destroys
+         * along, and that edge is put back by hand: a {@code @Bean} parameter is what records "this bean
+         * depends on that one", and a provider's {@code getIfAvailable()} records nothing — it hands over an
+         * instance without telling the factory who asked. Measured rather than assumed; the assertion in
+         * {@code AimonApplicationContributionsTest} is what keeps it measured. So each resolution below goes
+         * through {@link #applicationBean(ObjectProvider, Class, ConfigurableListableBeanFactory)}, which
+         * resolves and then registers the edge, and the chain the stack is torn down along is the same one it
+         * was built along: stack, spec, this, the contributed bean.
+         *
+         * <p>
+         * Without that the order would fall back to reverse creation order, which is right here — these are
+         * all created while this bean is, therefore before the stack — and right only by accident. The
+         * accident is not one to keep: a store backed by a connection would be closable before the stack that
+         * is still writing to it, and nothing in the failure would point back to this method.
          *
          * <p>
          * That they are gathered rather than listed one by one is what keeps the spec factory readable as the
@@ -189,9 +200,8 @@ public class AimonAutoConfiguration {
          * The last four are the approval-axis stores and the mid-turn input queue. They are gathered rather than
          * given a slice of their own because there is no property to weigh them against: nothing here selects a
          * backend for them, since none ships. The bean is the whole configuration, and its absence means the
-         * node-local default. For three of them ordering comes free the same way it does for the session stores
-         * — a {@code getIfAvailable()} here registers the edge that has Spring destroy the store after the
-         * stack. The fourth cannot use a provider at all, and pays for that separately: see
+         * node-local default. Three of them resolve like everything above; the fourth cannot use a provider at
+         * all, and pays for that separately: see
          * {@link #applicationPendingTurnRegistry(ConfigurableListableBeanFactory)}.
          */
         @Bean(CONTRIBUTIONS_BEAN)
@@ -206,11 +216,78 @@ public class AimonAutoConfiguration {
                 ObjectProvider<MessageQueueRepository> messageQueueRepositories,
                 ConfigurableListableBeanFactory beanFactory) {
             return new ApplicationContributions(agentCustomizers.orderedStream().toList(),
-                    credentialStores.getIfAvailable(), credentialStoreFactories.getIfAvailable(),
-                    approvalChannels.getIfAvailable(), approvalChannelFactories.getIfAvailable(),
-                    tracers.getIfAvailable(), agentApprovalStores.getIfAvailable(),
-                    sessionApprovalStores.getIfAvailable(), applicationPendingTurnRegistry(beanFactory),
-                    messageQueueRepositories.getIfAvailable());
+                    applicationBean(credentialStores, CredentialStore.class, beanFactory),
+                    applicationBean(credentialStoreFactories, CredentialStoreFactory.class, beanFactory),
+                    applicationBean(approvalChannels, SkillApprovalChannel.class, beanFactory),
+                    applicationBean(approvalChannelFactories, SkillApprovalChannelFactory.class, beanFactory),
+                    applicationBean(tracers, Tracer.class, beanFactory),
+                    applicationBean(agentApprovalStores, AgentApprovalStore.class, beanFactory),
+                    applicationBean(sessionApprovalStores, SessionApprovalStore.class, beanFactory),
+                    applicationPendingTurnRegistry(beanFactory),
+                    applicationBean(messageQueueRepositories, MessageQueueRepository.class, beanFactory));
+        }
+
+        /**
+         * Resolves one optional contribution and records the destruction edge the provider does not.
+         *
+         * <p>
+         * Resolution stays with the {@code ObjectProvider}: it is what honours {@code @Primary}, refuses to
+         * guess between two candidates, and sees a bean a {@code FactoryBean} only produces. What it does not
+         * do is tell the factory that this bean now depends on the one it handed back — {@code getIfAvailable()}
+         * resolves without an {@code autowiredBeanNames} sink, so nothing is recorded and the destruction order
+         * silently falls back to reverse creation order.
+         *
+         * @param provider
+         *            the provider for the contribution's type
+         * @param type
+         *            the contribution's type, used to find the resolved instance's bean name
+         * @param beanFactory
+         *            the context's bean factory
+         * @param <T>
+         *            the contribution's type
+         * @return the contributed bean, or {@code null} when the application defined none
+         */
+        private static <T> T applicationBean(ObjectProvider<T> provider, Class<T> type,
+                ConfigurableListableBeanFactory beanFactory) {
+            final T bean = provider.getIfAvailable();
+            if (bean != null) {
+                registerDestructionEdge(beanFactory, type, bean);
+            }
+            return bean;
+        }
+
+        /**
+         * Records that {@link #CONTRIBUTIONS_BEAN} depends on whichever bean produced {@code instance}, so
+         * Spring destroys the contributions — and therefore the spec and the stack above them — first.
+         *
+         * <p>
+         * The instance is matched against the singleton cache rather than resolved by name a second time,
+         * because by this point it exists and a second {@code getBean} would only re-derive what the caller
+         * already holds. Two shapes are deliberately left without an edge, and both are correct: a prototype
+         * has no container-managed destruction to order, and a {@code FactoryBean} product is cached under a
+         * key this loop does not walk, so it keeps the reverse-creation-order behaviour rather than getting a
+         * wrong edge.
+         *
+         * <p>
+         * {@code allowEagerInit=false} for that second reason rather than out of caution: a name this loop
+         * could match is a name whose definition already declares the type, so eager init would widen the
+         * candidate list only with the entries that cannot be matched anyway.
+         *
+         * @param beanFactory
+         *            the context's bean factory
+         * @param type
+         *            the contribution's type
+         * @param instance
+         *            the resolved contribution
+         */
+        private static void registerDestructionEdge(ConfigurableListableBeanFactory beanFactory, Class<?> type,
+                Object instance) {
+            for (String name : beanFactory.getBeanNamesForType(type, true, false)) {
+                if (beanFactory.containsSingleton(name) && beanFactory.getSingleton(name) == instance) {
+                    beanFactory.registerDependentBean(name, CONTRIBUTIONS_BEAN);
+                    return;
+                }
+            }
         }
 
         /**
@@ -232,13 +309,19 @@ public class AimonAutoConfiguration {
          * {@code @Bean} is named with, so the two cannot drift.
          *
          * <p>
-         * What that costs is the destruction edge every other entry here gets for free. A provider's
-         * {@code getIfAvailable()} goes through dependency resolution, which records that this bean depends on
-         * the one it returned; a bare {@code getBean(...)} does not, leaving the order to reverse registration
-         * order — right today, and right only by accident, which is the reasoning this class already applies to
-         * the {@code LlmClient} parameter. A registry backed by a connection would then be closable before the
-         * reaper's last sweep. So the edge is registered by hand, and the chain is the same one the session
-         * stores ride: stack, spec, this, the registry.
+         * By name, rather than by asking whether the definition is the one this class declares, because the
+         * structural question has no answer in an AOT-processed context — generated bean definitions carry no
+         * factory-method metadata, and the check would quietly stop excluding anything, which is the cycle
+         * again. The cost is the one shape the name cannot tell apart: an application bean the application
+         * itself named {@value #PENDING_TURN_REGISTRY_BEAN} is read as the re-export and ignored, leaving the
+         * node-local default. Naming a bean after the starter's own is not a thing to support.
+         *
+         * <p>
+         * The edge Spring records for the entries above has to be registered by hand here for the same reason
+         * it does there — {@code getBean(...)} does not record who asked either — so the chain ends up
+         * identical: stack, spec, this, the registry. Ambiguity is handled by hand for the same reason: this
+         * lookup does not inherit the provider's refusal to guess, so it reproduces it, honouring
+         * {@code @Primary} first and failing with the exception a provider would have thrown.
          *
          * <p>
          * The bound is honest: a registry contributed by a {@code FactoryBean} whose type is only knowable by
@@ -250,14 +333,46 @@ public class AimonAutoConfiguration {
          * @return the application's registry, or {@code null} when it published none
          */
         private static PendingTurnRegistry applicationPendingTurnRegistry(ConfigurableListableBeanFactory beanFactory) {
+            final List<String> candidates = new ArrayList<>();
             for (String name : beanFactory.getBeanNamesForType(PendingTurnRegistry.class, true, false)) {
                 if (!PENDING_TURN_REGISTRY_BEAN.equals(name)) {
-                    final PendingTurnRegistry registry = beanFactory.getBean(name, PendingTurnRegistry.class);
-                    beanFactory.registerDependentBean(name, CONTRIBUTIONS_BEAN);
-                    return registry;
+                    candidates.add(name);
                 }
             }
-            return null;
+            if (candidates.isEmpty()) {
+                return null;
+            }
+            final String name = candidates.size() == 1 ? candidates.get(0) : soleCandidate(candidates, beanFactory);
+            final PendingTurnRegistry registry = beanFactory.getBean(name, PendingTurnRegistry.class);
+            beanFactory.registerDependentBean(name, CONTRIBUTIONS_BEAN);
+            return registry;
+        }
+
+        /**
+         * Reduces several {@link PendingTurnRegistry} candidates to the {@code @Primary} one, or refuses.
+         *
+         * <p>
+         * Taking the first would be worse than failing in a way that is easy to miss: with two registries the
+         * re-export has already backed off, so the application's own injection point throws while the stack
+         * quietly suspends turns into whichever one iteration order surfaced first. Half the deployment would
+         * then be looking in the wrong registry for a turn that is genuinely there.
+         *
+         * @param candidates
+         *            the application's registry bean names, at least two
+         * @param beanFactory
+         *            the context's bean factory
+         * @return the sole primary candidate
+         * @throws NoUniqueBeanDefinitionException
+         *             when none or several are primary
+         */
+        private static String soleCandidate(List<String> candidates, ConfigurableListableBeanFactory beanFactory) {
+            final List<String> primaries = candidates.stream().filter(
+                    name -> beanFactory.containsBeanDefinition(name) && beanFactory.getBeanDefinition(name).isPrimary())
+                    .toList();
+            if (primaries.size() == 1) {
+                return primaries.get(0);
+            }
+            throw new NoUniqueBeanDefinitionException(PendingTurnRegistry.class, candidates);
         }
 
         /**
@@ -351,16 +466,16 @@ public class AimonAutoConfiguration {
         private static SkillApprovalSpec toSkillApproval(AimonProperties.Skill.Approval approval,
                 SkillApprovalChannel channel, SkillApprovalChannelFactory channelFactory,
                 ApplicationContributions contributions) {
-            SkillApprovalSpec spec = switch (approval.getMode()) {
+            final SkillApprovalSpec mode = switch (approval.getMode()) {
                 case DENY -> SkillApprovalSpec.denyAll();
                 case ALLOW_LIST -> SkillApprovalSpec.allowList(approval.getAllow());
                 case SUSPEND -> SkillApprovalSpec.suspend();
                 case CHANNEL -> toSuppliedChannel(channel, channelFactory);
             };
-            if (approval.getPendingTurnTtl() != null) {
-                spec = spec.withPendingTurnTtl(approval.getPendingTurnTtl());
-            }
-            return withApplicationStores(spec, contributions);
+            final SkillApprovalSpec withTtl = approval.getPendingTurnTtl() == null
+                    ? mode
+                    : mode.withPendingTurnTtl(approval.getPendingTurnTtl());
+            return withApplicationStores(withTtl, contributions);
         }
 
         /**
