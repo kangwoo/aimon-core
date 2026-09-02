@@ -5,6 +5,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -46,12 +47,34 @@ import at.aimon.core.filesystem.VirtualFileSystem;
 @EnableConfigurationProperties(AimonProperties.class)
 public class AimonFileSystemAutoConfiguration {
 
-    @Bean
+    /**
+     * Name of the bean this slice publishes, which the two alternatives below are made dependencies of.
+     *
+     * <p>
+     * A constant so the {@code @Bean} and the edges registered against it cannot drift apart.
+     */
+    static final String FILE_SYSTEM_SPEC_BEAN = "aimonFileSystemSpec";
+
+    /**
+     * @param properties
+     *            the bound configuration
+     * @param fileSystems
+     *            the shared filesystem, when the application published one
+     * @param factories
+     *            the per-runtime factory, when the application published one
+     * @param beanFactory
+     *            the context's bean factory, used to register the destruction edges — a GridFS or S3 filesystem
+     *            is a connection, and the stack reads and writes through it during its own teardown
+     * @return the spec
+     */
+    @Bean(FILE_SYSTEM_SPEC_BEAN)
     @ConditionalOnMissingBean(FileSystemSpec.class)
     FileSystemSpec aimonFileSystemSpec(AimonProperties properties, ObjectProvider<VirtualFileSystem> fileSystems,
-            ObjectProvider<VirtualFileSystemFactory> factories) {
-        final VirtualFileSystem supplied = fileSystems.getIfAvailable();
-        final VirtualFileSystemFactory factory = factories.getIfAvailable();
+            ObjectProvider<VirtualFileSystemFactory> factories, ConfigurableListableBeanFactory beanFactory) {
+        final VirtualFileSystem supplied = ApplicationBeans.resolve(fileSystems, VirtualFileSystem.class, beanFactory,
+                FILE_SYSTEM_SPEC_BEAN);
+        final VirtualFileSystemFactory factory = ApplicationBeans.resolve(factories, VirtualFileSystemFactory.class,
+                beanFactory, FILE_SYSTEM_SPEC_BEAN);
         if (supplied != null && factory != null) {
             throw new IllegalStateException("Both a " + VirtualFileSystem.class.getName() + " bean and a "
                     + VirtualFileSystemFactory.class.getName() + " bean are defined, and they are alternatives:"

@@ -177,10 +177,19 @@ Old names are searchable in [`docs/migration/rename-maps.md`](docs/migration/ren
   four are borrowed: the stack closes none of them.
 - **The starter registers the destruction edge Spring does not.** A `@Bean` parameter records "this bean
   depends on that one"; an `ObjectProvider`'s `getIfAvailable()` records nothing, and every optional
-  contribution the starter resolves went through the latter. The order was still right — these are
-  created while `aimonApplicationContributions` is, therefore before the stack — but right by accident,
-  and a store backed by a connection would have been closable before the stack still writing to it. The
-  edge is now registered explicitly for all of them, and asserted rather than reasoned about.
+  contribution the starter resolves went through the latter. The order was still right — each is created
+  while the bean that gathers it is, therefore before the stack — but right by accident, and a store backed
+  by a connection would have been closable before the stack still writing to it. `ApplicationBeans` now
+  registers the edge on every slice that gathers one: the approval axis, the five session SPIs, the
+  filesystem, the scheduling SPIs and the borrowed Quartz `Scheduler`, knowledge and memory. The
+  connection-holding ones were never in the first group, and the Quartz branch had written the mistaken
+  reason down independently — the helper is what makes "did this get an edge?" answerable at the call site.
+- **A `PendingTurnRegistry` the stack cannot reach now fails the context** instead of diverging in silence.
+  It is the one type this starter both publishes and accepts, and the two halves are resolved by different
+  means, which can disagree: a bean the application names `aimonPendingTurnRegistry` is skipped as the
+  re-export while `@ConditionalOnMissingBean` withdraws the real one, so the application injects one
+  registry and the stack suspends into another and `/approve` finds nothing. One identity check at the end
+  of refresh, naming both configurations that cause it.
 - **`distributed-approvals` now names only what is still node-local**, and says nothing when all three
   approval-axis stores were supplied. It had been unconditional on `DeploymentMode.DISTRIBUTED`, which
   was always true while there was no way to supply them and becomes a lie the moment there is. The

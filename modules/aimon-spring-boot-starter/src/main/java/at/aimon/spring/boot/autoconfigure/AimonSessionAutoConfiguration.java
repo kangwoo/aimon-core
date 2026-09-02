@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -59,17 +60,53 @@ import at.aimon.session.routing.DeploymentMode;
 @EnableConfigurationProperties(AimonProperties.class)
 public class AimonSessionAutoConfiguration {
 
-    @Bean
+    /**
+     * Name of the bean this slice publishes, which the five SPIs below are made dependencies of.
+     *
+     * <p>
+     * A constant so the {@code @Bean} and the edges registered against it cannot drift apart.
+     */
+    static final String SESSION_SPEC_BEAN = "aimonSessionSpec";
+
+    /**
+     * Gathers the five session SPIs, each of which the application publishes or does not.
+     *
+     * <p>
+     * All five go through {@link ApplicationBeans#resolve}, which registers the destruction edge an
+     * {@code ObjectProvider} does not. This slice is where that matters most concretely: a
+     * {@link SessionRecordStore} under {@code store=postgres} is a connection, and the stack writes transcripts
+     * into it throughout its own ordered teardown.
+     *
+     * @param properties
+     *            the bound configuration
+     * @param recordStores
+     *            the record store, when the application published one
+     * @param leaseStores
+     *            the lease store, when the application published one
+     * @param signalBuses
+     *            the signal bus, when the application published one
+     * @param inboxes
+     *            the inbox, when the application published one
+     * @param idempotencyStores
+     *            the idempotency store, when the application published one
+     * @param beanFactory
+     *            the context's bean factory, used to register the destruction edges
+     * @return the spec
+     */
+    @Bean(SESSION_SPEC_BEAN)
     @ConditionalOnMissingBean(SessionSpec.class)
+    @SuppressWarnings("checkstyle:ParameterNumber")
     SessionSpec aimonSessionSpec(AimonProperties properties, ObjectProvider<SessionRecordStore> recordStores,
             ObjectProvider<SessionLeaseStore> leaseStores, ObjectProvider<SessionSignalBus> signalBuses,
-            ObjectProvider<SessionInbox> inboxes, ObjectProvider<IdempotencyStore> idempotencyStores) {
+            ObjectProvider<SessionInbox> inboxes, ObjectProvider<IdempotencyStore> idempotencyStores,
+            ConfigurableListableBeanFactory beanFactory) {
         final AimonProperties.SessionProperties session = properties.getSession();
         final SessionSpec.Builder builder = SessionSpec.builder().drainTimeout(session.getShutdownDrainTimeout())
                 .idleTtl(session.getCache().getIdleTtl()).maxCachedSessions(session.getCache().getMaxEntries())
                 .mode(session.getMode()).nodeId(session.getNodeId());
 
-        final SessionRecordStore supplied = recordStores.getIfAvailable();
+        final SessionRecordStore supplied = ApplicationBeans.resolve(recordStores, SessionRecordStore.class,
+                beanFactory, SESSION_SPEC_BEAN);
         if (supplied != null) {
             builder.recordStore(supplied);
         } else if (session.getStore() != SessionStoreType.IN_MEMORY) {
@@ -84,10 +121,14 @@ public class AimonSessionAutoConfiguration {
         // Resolved in every mode, not only DISTRIBUTED: an application that publishes a durable lease store has
         // asked for its leases to be visible outside this process, and dropping the bean because the mode happens
         // to be single-node would answer a question it did not ask. The mode decides what may be defaulted.
-        final SessionLeaseStore leaseStore = leaseStores.getIfAvailable();
-        final SessionSignalBus signalBus = signalBuses.getIfAvailable();
-        final SessionInbox inbox = inboxes.getIfAvailable();
-        final IdempotencyStore idempotencyStore = idempotencyStores.getIfAvailable();
+        final SessionLeaseStore leaseStore = ApplicationBeans.resolve(leaseStores, SessionLeaseStore.class, beanFactory,
+                SESSION_SPEC_BEAN);
+        final SessionSignalBus signalBus = ApplicationBeans.resolve(signalBuses, SessionSignalBus.class, beanFactory,
+                SESSION_SPEC_BEAN);
+        final SessionInbox inbox = ApplicationBeans.resolve(inboxes, SessionInbox.class, beanFactory,
+                SESSION_SPEC_BEAN);
+        final IdempotencyStore idempotencyStore = ApplicationBeans.resolve(idempotencyStores, IdempotencyStore.class,
+                beanFactory, SESSION_SPEC_BEAN);
         builder.leaseStore(leaseStore).signalBus(signalBus).inbox(inbox).idempotencyStore(idempotencyStore);
 
         if (session.getMode() == DeploymentMode.DISTRIBUTED) {

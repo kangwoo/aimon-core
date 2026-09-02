@@ -1,6 +1,8 @@
 package at.aimon.spring.boot.autoconfigure;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import java.nio.file.Path;
 
@@ -19,6 +21,9 @@ import org.springframework.context.annotation.Primary;
 import at.aimon.bootstrap.AimonStackSpec;
 import at.aimon.core.agent.queue.InMemoryMessageQueueRepository;
 import at.aimon.core.agent.queue.MessageQueueRepository;
+import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
+import at.aimon.core.agent.session.store.SessionRecordStore;
+import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.skill.policy.agent.AgentApprovalStore;
 import at.aimon.core.skill.policy.agent.InMemoryAgentApprovalStore;
 import at.aimon.core.skill.policy.pending.InMemoryPendingTurnRegistry;
@@ -71,6 +76,35 @@ class AimonApplicationContributionsTest {
                         .contains(AimonAutoConfiguration.EnabledConfiguration.CONTRIBUTIONS_BEAN);
             }
         });
+    }
+
+    @Test
+    @DisplayName("the sibling slices register the same edge, for the beans that actually hold connections")
+    void siblingSlicesRegisterTheSameEdge(@TempDir Path workspace) {
+        // The rule is not the approval axis' — it belongs to every provider-resolved contribution, and the ones
+        // most likely to be a live connection are here rather than there: a SessionRecordStore under
+        // store=postgres, a VirtualFileSystem over GridFS or S3. Each edge points at the bean that gathered it,
+        // and the stack hangs off all of them through the spec.
+        minimal(workspace).withUserConfiguration(SliceConfiguration.class).run(ctx -> {
+            final ConfigurableApplicationContext context = (ConfigurableApplicationContext) ctx
+                    .getSourceApplicationContext();
+            assertThat(dependentsOf(context, "sliceRecordStore")).as("destruction edge for the record store")
+                    .contains(AimonSessionAutoConfiguration.SESSION_SPEC_BEAN);
+            assertThat(dependentsOf(context, "sliceFileSystem")).as("destruction edge for the filesystem")
+                    .contains(AimonFileSystemAutoConfiguration.FILE_SYSTEM_SPEC_BEAN);
+        });
+    }
+
+    @Test
+    @DisplayName("a registry the application names after the re-export fails the context instead of diverging")
+    void registryNamedAfterTheReExportIsRefused(@TempDir Path workspace) {
+        // The one shape the name-based exclusion cannot tell apart, and it is silent on its own: the condition
+        // withdraws the re-export by type while the input seam skips the bean by name, so the application injects
+        // one registry and the stack suspends into another. /approve then finds nothing, with nothing to read.
+        minimal(workspace).withUserConfiguration(ShadowingRegistryConfiguration.class)
+                .run(ctx -> assertThat(ctx).hasFailed().getFailure().isInstanceOf(IllegalStateException.class)
+                        .hasMessageContaining(AimonAutoConfiguration.EnabledConfiguration.PENDING_TURN_REGISTRY_BEAN)
+                        .hasMessageContaining("find nothing to release"));
     }
 
     @Test
@@ -128,6 +162,35 @@ class AimonApplicationContributionsTest {
         @Bean
         MessageQueueRepository queue() {
             return new InMemoryMessageQueueRepository();
+        }
+    }
+
+    /** Two of the contributions that other slices gather, both of the kind that is really a connection. */
+    @Configuration(proxyBeanMethods = false)
+    static class SliceConfiguration {
+
+        @Bean
+        SessionRecordStore sliceRecordStore() {
+            return new InMemorySessionRecordStore();
+        }
+
+        @Bean
+        VirtualFileSystem sliceFileSystem() {
+            // Stubbed rather than bare: assembly reads the working directory, and a mock's null fails the stack
+            // before any edge could be asserted.
+            final VirtualFileSystem fileSystem = mock(VirtualFileSystem.class);
+            when(fileSystem.getWorkingDirectory()).thenReturn("/");
+            return fileSystem;
+        }
+    }
+
+    /** An application registry wearing the name this starter re-exports its own under. */
+    @Configuration(proxyBeanMethods = false)
+    static class ShadowingRegistryConfiguration {
+
+        @Bean
+        PendingTurnRegistry aimonPendingTurnRegistry() {
+            return new InMemoryPendingTurnRegistry();
         }
     }
 

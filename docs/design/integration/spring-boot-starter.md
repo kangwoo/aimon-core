@@ -619,9 +619,26 @@ SessionCheckpointMailbox mailbox = own(TeardownPhase.CHECKPOINTS, SessionCheckpo
 역-생성순이고, 여기서는 우연히 맞다 — 이 빈들은 contributions 를 만드는 도중에 생기므로 스택보다 먼저
 생성되고 따라서 나중에 파괴된다.
 
-우연을 유지하지 않는다. `applicationBean(...)` 이 resolve 직후 edge 를 손으로 등록하므로 파괴 사슬이
-조립 사슬과 같아진다 — stack, spec, contributions, 기여된 빈. `AimonApplicationContributionsTest` 가
-그 edge 를 단언하며, 배선 한 줄을 되돌리면 깨진다.
+우연을 유지하지 않는다. `ApplicationBeans.resolve(...)` 가 resolve 직후 edge 를 손으로 등록하므로 파괴
+사슬이 조립 사슬과 같아진다 — stack, spec, contributions, 기여된 빈.
+`AimonApplicationContributionsTest` 가 그 edge 를 단언하며, 배선 한 줄을 되돌리면 깨진다.
+
+IMPORTANT: **이 규칙은 승인 축의 것이 아니라 슬라이스 전부의 것이다.** 처음 고칠 때는
+`aimonApplicationContributions` 안에만 넣었는데, 그것은 규칙을 반만 적용한 것이었다 — 정작 **커넥션을
+쥐고 있을 개연성이 높은 쪽은 다른 슬라이스**다(`store=postgres` 의 `SessionRecordStore`, GridFS·S3 위의
+`VirtualFileSystem`, 애플리케이션이 빌려주는 Quartz `Scheduler`). 게다가 스케줄링 슬라이스의 주석은
+"그래서 파괴 순서를 정하는 의존성 edge 가 등록된다" 라고 **틀린 근거를 이미 적고 있었다** — 같은 오해가
+독립적으로 두 번 자란 셈이다. 그래서 헬퍼를 `ApplicationBeans` 로 꺼내 세션·파일시스템·스케줄링(Quartz
+포함)·knowledge·memory 슬라이스가 모두 그것을 지나가게 했다. "이 기여에 edge 가 붙었나" 를 주석이 아니라
+**호출 자리**를 보고 답할 수 있게 하는 것이 목적이다.
+
+**(3) 재수출과 입력이 갈라지면 기동을 세운다.** (1) 의 이름 기반 제외가 감수한 두 모양 — 애플리케이션이
+자기 빈에 `aimonPendingTurnRegistry` 라는 이름을 붙인 경우와, 타입을 인스턴스화해야만 알 수 있는
+`FactoryBean` 이 레지스트리를 만드는 경우 — 은 **둘 다 증상이 없다.** `@ConditionalOnMissingBean` 은
+타입으로 보고 재수출을 물리는데 입력 이음매는 이름으로 그 빈을 건너뛰므로, 애플리케이션은 한 레지스트리를
+주입받고 스택은 다른 것에 턴을 적재한다. `/approve` 가 아무것도 못 찾고, 어디를 봐야 하는지 알려 주는
+것도 없다. `PendingTurnRegistryConsistencyCheck` 가 refresh 끝에서 동일성 비교 한 번으로 그것을 기동
+에러로 바꾼다 — 두 관점이 동시에 존재하는 유일한 시점이라 거기서만 할 수 있다.
 
 **중요**: 슬라이스 2~8 이 만드는 것은 `AimonStackSpec` 에 들어갈 **재료**이지 `AimonStack` 의 부품을 직접
 `new` 한 것이 아니다. 실제 조립은 항상 `AimonStackBuilder` 안에서 일어난다. 이 규율이 깨지면 3계층의

@@ -199,6 +199,27 @@ edge 를 손으로 등록한다)은 맞았지만 근거가 거꾸로였다 — p
 "provider 면 순서는 공짜" 로 읽고 다섯 번째 저장소를 얹는다. 그래서 넷이 아니라 **기여 빈 전부**에
 edge 를 등록하고, 그 edge 를 단언하는 테스트를 붙였다(`AimonApplicationContributionsTest`).
 
+#### 두 번째 리뷰 — "기여 빈 전부" 가 한 메서드 안에서만 전부였다
+
+위 문단의 "전부" 는 `aimonApplicationContributions` 안의 전부였고, 그 밖에 같은 모양으로 resolve 하는
+자리가 다섯 군데 더 있었다 — 세션 슬라이스의 SPI 5개, 파일시스템 2개, 스케줄링 4개와 빌려온 Quartz
+`Scheduler`, knowledge 1개, memory 3개. **커넥션을 쥐고 있을 개연성은 오히려 그쪽이 높다**
+(`store=postgres` 의 `SessionRecordStore`, GridFS·S3 위의 `VirtualFileSystem`). 규칙을 적어 놓고 그
+규칙이 가장 필요한 자리를 비워 둔 셈이다.
+
+같은 오해가 독립적으로 두 번 자랐다는 증거도 나왔다 — 스케줄링 슬라이스의 주석이 이미
+*"그래서 파괴 순서를 정하는 의존성 edge 가 등록된다"* 라고 적고 있었고, 그것은 승인 축에서 정정한 것과
+정확히 같은 틀린 문장이다. 그래서 헬퍼를 `ApplicationBeans` 로 꺼내 여섯 슬라이스가 모두 그것을
+지나가게 했다. 주석이 아니라 **호출 자리**를 보고 "이 기여에 edge 가 붙었나" 를 답할 수 있는 것이
+목적이다.
+
+**그리고 이름 기반 제외가 감수한 두 모양은 증상이 없었다.** 애플리케이션이 자기 빈에
+`aimonPendingTurnRegistry` 라는 이름을 붙이면 `@ConditionalOnMissingBean` 은 타입으로 보고 재수출을
+물리는데 입력 이음매는 이름으로 그 빈을 건너뛴다 — 애플리케이션은 한 레지스트리를 주입받고 스택은 다른
+것에 턴을 적재하며, `/approve` 는 아무것도 못 찾는다. **이 이음매가 없애려던 바로 그 실패**가 아무 신호
+없이 남는 것이다. `PendingTurnRegistryConsistencyCheck` 가 refresh 끝에서 동일성 비교 한 번으로 기동
+에러로 바꾼다.
+
 **메시지 큐를 degradation 으로 알리자는 제안은 기각했다 — 조언이 틀렸다.** 승인 저장소 셋과 같은 줄에
 세우면 "공유하라" 로 읽히는데, 큐는 공유하면 안 되는 쪽이다. 배출은 `AgentRuntimeId` 하나로만 거르고
 (`OrcaAgentExecutor#injectQueuedMessages`) 적재된 항목에는 `SessionId` 가 **아예 없으므로**

@@ -6,6 +6,7 @@ import static at.aimon.spring.boot.autoconfigure.AimonProperties.SCHEDULING_QUAR
 
 import org.quartz.Scheduler;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -80,6 +81,17 @@ import at.aimon.scheduling.quartz.QuartzTaskSchedulerBuilder;
 public class AimonSchedulingAutoConfiguration {
 
     /**
+     * Names of the two beans this slice publishes, which the SPIs they gather are made dependencies of.
+     *
+     * <p>
+     * Constants so the {@code @Bean}s and the edges registered against them cannot drift apart.
+     */
+    static final String SCHEDULING_SPEC_BEAN = "aimonSchedulingSpec";
+
+    /** @see #SCHEDULING_SPEC_BEAN */
+    static final String QUARTZ_TASK_SCHEDULER_FACTORY_BEAN = "aimonQuartzTaskSchedulerFactory";
+
+    /**
      * Turns {@code aimon.scheduling.backend} into the spec the stack builds its engine from.
      *
      * <p>
@@ -112,19 +124,26 @@ public class AimonSchedulingAutoConfiguration {
      *            the cross-node interrupt bus, when the application published one
      * @param executionGuards
      *            the distributed execution guard, when the application published one
+     * @param beanFactory
+     *            the context's bean factory, used to register the destruction edges
      * @return the spec
      */
-    @Bean
+    @Bean(SCHEDULING_SPEC_BEAN)
     @ConditionalOnMissingBean(SchedulingSpec.class)
+    @SuppressWarnings("checkstyle:ParameterNumber")
     SchedulingSpec aimonSchedulingSpec(AimonProperties properties, ObjectProvider<TaskSchedulerFactory> factories,
             ObjectProvider<ScheduledTaskRepository> repositories,
             ObjectProvider<ScheduledTaskInterruptBus> interruptBuses,
-            ObjectProvider<ScheduledExecutionGuard> executionGuards) {
+            ObjectProvider<ScheduledExecutionGuard> executionGuards, ConfigurableListableBeanFactory beanFactory) {
         final SchedulingBackend backend = properties.getScheduling().getBackend();
-        final TaskSchedulerFactory factory = factories.getIfAvailable();
-        final ScheduledTaskRepository repository = repositories.getIfAvailable();
-        final ScheduledTaskInterruptBus interruptBus = interruptBuses.getIfAvailable();
-        final ScheduledExecutionGuard executionGuard = executionGuards.getIfAvailable();
+        final TaskSchedulerFactory factory = ApplicationBeans.resolve(factories, TaskSchedulerFactory.class,
+                beanFactory, SCHEDULING_SPEC_BEAN);
+        final ScheduledTaskRepository repository = ApplicationBeans.resolve(repositories, ScheduledTaskRepository.class,
+                beanFactory, SCHEDULING_SPEC_BEAN);
+        final ScheduledTaskInterruptBus interruptBus = ApplicationBeans.resolve(interruptBuses,
+                ScheduledTaskInterruptBus.class, beanFactory, SCHEDULING_SPEC_BEAN);
+        final ScheduledExecutionGuard executionGuard = ApplicationBeans.resolve(executionGuards,
+                ScheduledExecutionGuard.class, beanFactory, SCHEDULING_SPEC_BEAN);
 
         if (backend == SchedulingBackend.QUARTZ) {
             if (factory == null) {
@@ -186,17 +205,20 @@ public class AimonSchedulingAutoConfiguration {
     @ConditionalOnProperty(name = SCHEDULING_BACKEND, havingValue = SCHEDULING_BACKEND_QUARTZ)
     static class QuartzConfiguration {
 
-        @Bean
+        @Bean(QUARTZ_TASK_SCHEDULER_FACTORY_BEAN)
         @ConditionalOnMissingBean(TaskSchedulerFactory.class)
         TaskSchedulerFactory aimonQuartzTaskSchedulerFactory(AimonProperties properties,
-                ObjectProvider<Scheduler> schedulers) {
+                ObjectProvider<Scheduler> schedulers, ConfigurableListableBeanFactory beanFactory) {
             final AimonProperties.Quartz quartz = properties.getScheduling().getQuartz();
             if (!quartz.usesApplicationScheduler()) {
                 return executor -> buildScheduler(quartz, executor);
             }
             // Resolved now rather than inside the lambda, so a missing bean fails at startup rather than at the
-            // moment the stack is assembled — and so the dependency edge that orders destruction is registered.
-            final Scheduler application = schedulers.getIfAvailable();
+            // moment the stack is assembled. Resolving is not what registers the edge destruction is ordered by
+            // — this line used to say it was — so ApplicationBeans registers it, which matters more here than
+            // almost anywhere: the scheduler is the application's and the jobs running on it are AIMON's.
+            final Scheduler application = ApplicationBeans.resolve(schedulers, Scheduler.class, beanFactory,
+                    QUARTZ_TASK_SCHEDULER_FACTORY_BEAN);
             if (application == null) {
                 throw new IllegalStateException(SCHEDULING_QUARTZ_USE_APPLICATION_SCHEDULER + "=true but no "
                         + Scheduler.class.getName() + " bean is defined. That bean comes from"

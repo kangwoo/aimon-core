@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/session/web-session-deployment-guide.md
-source_commit: 1d1a4282
+source_commit: 61231870
 ---
 
 # Web Session Manager — Deployment & Operations Guide
