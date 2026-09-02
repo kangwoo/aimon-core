@@ -23,7 +23,9 @@ import at.aimon.core.agent.session.SessionId;
  * <li>{@link Status#IN_FLIGHT} with a null {@code holderId} means <b>reserved, but nobody is executing it</b> — the
  * turn is sitting in a {@code SessionInbox} waiting for whichever node holds the session lock to drain it
  * (see {@link IdempotencyStore#releaseHolder}). Nobody is expected to touch such an entry, and the sweeper skips it;
- * treating it as holder loss would evict a perfectly healthy session.
+ * treating it as holder loss would evict a perfectly healthy session. The window with no holder is exactly the window
+ * with nobody running the turn: the node that collects the message writes its own name back with
+ * {@link IdempotencyStore#acquireHolder} before executing it, which returns the entry to the first case above.
  * <li>{@link Status#DONE} entries may carry a null {@code holderId} once cleanup releases it.
  * </ul>
  */

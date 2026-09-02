@@ -63,6 +63,15 @@ public final class RedisIdempotencyStore implements IdempotencyStore {
             + "   string.find(v, '\"holderId\":\"' .. ARGV[1] .. '\"', 1, true) then "
             + "  redis.call('DEL', KEYS[1]); " + "  return 1; " + "end; " + "return 0;";
 
+    // The inverse of REPLACE_IF_HELD_SCRIPT: that one replaces an entry a named holder owns, this one an entry
+    // nobody owns. Matching on the literal '"holderId":null' rather than on the field's absence is what the codec
+    // makes possible — it always emits the key, as an explicit null when there is no holder.
+    private static final String ACQUIRE_IF_UNHELD_SCRIPT = "local v = redis.call('GET', KEYS[1]); "
+            + "if not v then return 0 end; " + "if string.find(v, '\"status\":\"IN_FLIGHT\"', 1, true) and "
+            + "   string.find(v, '\"holderId\":null', 1, true) then "
+            + "  redis.call('SET', KEYS[1], ARGV[1], 'PX', tonumber(ARGV[2])); " + "  return 1; " + "end; "
+            + "return 0;";
+
     // The mirror image of COMPARE_AND_RESET_SCRIPT: that one deletes an entry held by a named holder, this one deletes
     // an entry held by nobody. The codec writes a holderless reservation as an explicit null rather than omitting the
     // field, so the absence of a holder is something the script can match on rather than something it has to infer.
@@ -211,6 +220,39 @@ public final class RedisIdempotencyStore implements IdempotencyStore {
             return applied != null && applied == 1L;
         } catch (RedisException e) {
             throw new IllegalStateException("Redis error during releaseHolder for key " + key, e);
+        }
+    }
+
+    @Override
+    public boolean acquireHolder(String key, String holderId, Duration ttl) {
+        Objects.requireNonNull(key, "key must not be null");
+        Objects.requireNonNull(holderId, "holderId must not be null");
+        Objects.requireNonNull(ttl, "ttl must not be null");
+        if (holderId.indexOf('"') >= 0 || holderId.indexOf('\\') >= 0) {
+            throw new IllegalArgumentException("holderId must not contain '\"' or '\\\\': " + holderId);
+        }
+        final String fullKey = entryKey(key);
+        try {
+            final String existing = commands.get(fullKey);
+            if (existing == null) {
+                return false;
+            }
+            final IdempotencyEntry prev = codec.decode(existing);
+            if (prev.getStatus() != IdempotencyEntry.Status.IN_FLIGHT || prev.getHolderId().isPresent()) {
+                return false;
+            }
+            // Same entry, now named: the reservation becomes a live turn again, on the short clock the caller's lease
+            // renewer touches rather than the long inbox-wait TTL it was sitting under.
+            final IdempotencyEntry claimed = IdempotencyEntry.builder().key(prev.getKey())
+                    .sessionId(prev.getSessionId()).inputHash(prev.getInputHash())
+                    .status(IdempotencyEntry.Status.IN_FLIGHT).holderId(holderId).createdAt(prev.getCreatedAt())
+                    .lastTouchedAt(clock.instant()).build();
+            final String json = codec.encode(claimed, ttl);
+            final Long applied = commands.eval(ACQUIRE_IF_UNHELD_SCRIPT, io.lettuce.core.ScriptOutputType.INTEGER,
+                    new String[]{fullKey}, json, String.valueOf(ttl.toMillis()));
+            return applied != null && applied == 1L;
+        } catch (RedisException e) {
+            throw new IllegalStateException("Redis error during acquireHolder for key " + key, e);
         }
     }
 

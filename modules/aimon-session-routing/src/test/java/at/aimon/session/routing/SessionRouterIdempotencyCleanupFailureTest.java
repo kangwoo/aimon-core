@@ -127,6 +127,11 @@ class SessionRouterIdempotencyCleanupFailureTest {
         }
 
         @Override
+        public boolean acquireHolder(String key, String holderId, Duration ttl) {
+            return delegate.acquireHolder(key, holderId, ttl);
+        }
+
+        @Override
         public boolean discardReservation(String key) {
             return delegate.discardReservation(key);
         }

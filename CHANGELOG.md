@@ -1147,6 +1147,26 @@ Replacement for a caller that used it to read a result: none is needed at the ca
   An uncollected message is the only thing a drain pass can pick up, which is what the emptiness check
   is for — once some node has taken the message out of the inbox, only that node can produce its
   result. Counted by the new `SessionMetrics#onForwardDoorbellRerung()`.
+- **A forwarded turn whose holder dies *after* collecting it is reported as `HOLDER_LOST`.** This is
+  the other half of the entry above, and the half a doorbell cannot reach: once a node has taken the
+  message out of the at-most-once inbox there is nothing left to re-announce, so recovery had to come
+  from the sweeper — which never saw it. `forwardToInbox` clears the reservation's holder so a message
+  waiting in the inbox is not mistaken for a live turn, and nothing put a name back on it, while
+  `findStaleInFlight` reports only entries that *have* a holder. A node that crashed mid-turn on a
+  drained message therefore died anonymously, and its caller was answered by nothing faster than the
+  `idempotencyForwardTtl` (5 min) timeout — where the same crash on a locally submitted turn was
+  reported in ~45 s. The drain pass now takes the reservation over before running each message
+  (`IdempotencyStore#acquireHolder`, new on the SPI and implemented atomically by all four backends:
+  a Lua CAS on Redis, a conditional `findOneAndUpdate` on Mongo, `UPDATE ... WHERE holder_id IS NULL`
+  on Postgres, `computeIfPresent` in memory), binds it into the lease's touch slot for the length of
+  that turn, and hands it back through `markDone` or a holder-matched reset when the turn ends. A
+  take-over that loses — a `DONE` entry, one another node holds, one whose TTL has lapsed — leaves the
+  message running anyway with only the fast detection lost, because it is already out of the inbox and
+  refusing it would destroy work no successor can recover. No schema change: every backend already had
+  a nullable holder column. `IdempotencyTouchSlot` holds one binding per reservation rather than one
+  in total, because a pass owes refreshes to both the submission that opened it and the queued message
+  it is currently running, and a single slot let a sibling LLM turn outlast the secondary TTL and get
+  the other swept as lost.
 - **A doorbell notice does not outlive the session it announces.** `releaseSession`, `deleteSession`
   and a peer's `EVICT` all purge the inbox; the node-local marks that say "somebody still has to
   collect this" now go with it, instead of buying an empty drain pass on the next lease return and

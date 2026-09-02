@@ -701,6 +701,60 @@ public final class DefaultSessionRouter implements SessionRouter {
         }
     }
 
+    /**
+     * {@link #safeReleaseHolder}'s counterpart on the receiving side: put this node's name on the reservation of a
+     * message it has collected and is about to run, and bind it into {@code held}'s touch slot so the lease renewer
+     * keeps it alive.
+     *
+     * <p>
+     * Without this a forwarded turn is the one kind that dies unannounced. {@code forwardToInbox} clears the holder so
+     * the message can wait in the inbox without the holder-loss sweeper mistaking a healthy queued turn for a lost one
+     * — but that also means nothing names the node that eventually runs it, and {@code findStaleInFlight} only reports
+     * entries that name someone. So a node that crashed mid-turn on a <em>drained</em> message produced no
+     * {@code HOLDER_LOST}, and its caller waited out the whole {@code idempotencyForwardTtl} for an answer nobody was
+     * going to give. Re-arming the entry on the secondary TTL here is what makes that death look like any other: the
+     * touches stop, the sweeper sees it, and the caller is failed in seconds rather than minutes.
+     *
+     * <p>
+     * <b>A message whose take-over fails still runs.</b> It is already out of the at-most-once inbox — no successor
+     * will ever collect it — so refusing it here would destroy work that nothing else can recover, which is the same
+     * reasoning that keeps {@link #drain} going after a turn throws. The three ways to lose are all cases where taking
+     * over would be wrong rather than cases where running is: the submission that opened this pass already holds its
+     * own reservation, a {@code DONE} entry is somebody's cached answer, and an absent one is a reservation whose
+     * forward has already given up. Losing costs only the fast detection — the caller falls back to the forward
+     * deadline, which is exactly where it was before this method existed.
+     *
+     * @param convId
+     *            the session being drained, for logging
+     * @param key
+     *            the message's idempotency key, or {@code null} when it has none
+     * @param held
+     *            the lease whose touch slot the reservation is bound into on success
+     * @return the reserver id now recorded on the entry, or {@code null} when this node did not take it over
+     */
+    private String takeOverReservation(SessionId convId, String key, HeldLease held) {
+        if (key == null) {
+            return null;
+        }
+        // Same shape as submit's, and per-attempt for the same reason: it is the identity the renewer touches with and
+        // the sweeper resets against, so two attempts at one key must never share one.
+        final String reserverId = nodeId + "/" + Thread.currentThread().getName() + "/" + turnSeq.incrementAndGet();
+        final boolean taken;
+        try {
+            taken = idempotencyStore.acquireHolder(key, reserverId, idempotencySecondaryTtl);
+        } catch (Exception e) {
+            // Best-effort like every other idempotency call on this path: a store outage must cost the turn its fast
+            // failure detection, not cost it its execution.
+            log.warn("idempotencyStore.acquireHolder threw for key {} on session {}: {}", key, convId, e.toString());
+            return null;
+        }
+        if (!taken) {
+            return null;
+        }
+        held.getTouchSlot().bind(key, reserverId);
+        return reserverId;
+    }
+
     // ---------------------------------------------------------------------------------------------------------------
     // Session-lifetime lease and the turn gate (design §7.4)
     // ---------------------------------------------------------------------------------------------------------------
@@ -1065,7 +1119,7 @@ public final class DefaultSessionRouter implements SessionRouter {
             sortByPriorityThenFifo(initial);
             pendingQueue.addAll(initial);
 
-            final DrainOutcome outcome = drain(convId, requestedAgent, session, pendingQueue, selfMessage);
+            final DrainOutcome outcome = drain(convId, requestedAgent, session, pendingQueue, selfMessage, held);
 
             if (outcome.selfFailure != null) {
                 future.completeExceptionally(outcome.selfFailure);
@@ -1155,10 +1209,13 @@ public final class DefaultSessionRouter implements SessionRouter {
      *            messages to run, already priority-sorted; drained in place
      * @param selfMessage
      *            the submission that opened this pass, or {@code null} when draining purely on a peer's behalf
+     * @param held
+     *            the lease this pass runs under, whose idempotency touch slot each message's reservation is bound into
+     *            for as long as that message is executing
      * @return which result (or failure) belongs to {@code selfMessage} (never null)
      */
     private DrainOutcome drain(SessionId convId, String boundAgent, LiveSession session,
-            Deque<InboundMessage> pendingQueue, InboundMessage selfMessage) {
+            Deque<InboundMessage> pendingQueue, InboundMessage selfMessage, HeldLease held) {
         AgentExecutionResult selfResult = null;
         Throwable selfFailure = null;
 
@@ -1191,27 +1248,53 @@ public final class DefaultSessionRouter implements SessionRouter {
                 continue;
             }
 
+            // After the agent check and before the turn: from here on this node is the one executing that
+            // reservation, so it is the one whose death has to be visible. Null for a message with no key, for the
+            // submission that opened this pass (its reservation already names this node), and whenever the take-over
+            // lost — see takeOverReservation.
+            final String takenReserverId = takeOverReservation(convId, idempotencyKey, held);
+
             AgentExecutionResult turnResult = null;
             RuntimeException turnFailure = null;
-            try (SessionEventRelay relay = new SessionEventRelay(convId, messageTurnId, eventPublisher, signalBus,
-                    nodeId, relayDispatcher)) {
-                turnResult = session.submitAsync(messageTurnId, next.getUserInput(), next.getSubmitOptions(), relay)
-                        .toCompletableFuture().join();
-            } catch (RuntimeException e) {
-                turnFailure = e;
-            }
-
-            if (turnResult != null) {
-                announceTurnResult(convId, messageTurnId, idempotencyKey, turnResult);
-                if (next == selfMessage && selfResult == null) {
-                    selfResult = turnResult;
+            try {
+                try (SessionEventRelay relay = new SessionEventRelay(convId, messageTurnId, eventPublisher, signalBus,
+                        nodeId, relayDispatcher)) {
+                    turnResult = session.submitAsync(messageTurnId, next.getUserInput(), next.getSubmitOptions(), relay)
+                            .toCompletableFuture().join();
+                } catch (RuntimeException e) {
+                    turnFailure = e;
                 }
-            } else {
-                log.warn("Turn {} on session {} failed: {}", messageTurnId, convId, turnFailure.toString());
-                announceTurnFailure(convId, messageTurnId, idempotencyKey, TurnResultPayload.Failure.Code.FAILED,
-                        String.valueOf(turnFailure));
-                if (next == selfMessage && selfFailure == null) {
-                    selfFailure = turnFailure;
+
+                if (turnResult != null) {
+                    // markDone matches on the key alone in every backend, so it settles the entry whether or not the
+                    // take-over above put this node's name on it.
+                    announceTurnResult(convId, messageTurnId, idempotencyKey, turnResult);
+                    if (next == selfMessage && selfResult == null) {
+                        selfResult = turnResult;
+                    }
+                } else {
+                    log.warn("Turn {} on session {} failed: {}", messageTurnId, convId, turnFailure.toString());
+                    if (takenReserverId != null) {
+                        // announceTurnFailure frees the key with discardReservation, which by contract refuses an
+                        // entry that has a holder — and the take-over is what gave this one a holder. Same outcome,
+                        // matched on the identity actually recorded: the entry goes, so the client's retry re-executes
+                        // instead of collapsing onto a dead attempt. Before the announcement for the reason stated
+                        // there — a retry that arrives the instant it is failed must find the key already free.
+                        safeCompareAndReset(idempotencyKey, takenReserverId);
+                    }
+                    announceTurnFailure(convId, messageTurnId, idempotencyKey, TurnResultPayload.Failure.Code.FAILED,
+                            String.valueOf(turnFailure));
+                    if (next == selfMessage && selfFailure == null) {
+                        selfFailure = turnFailure;
+                    }
+                }
+            } finally {
+                // After the announcement, not before: until markDone or the reset above lands, the entry is still an
+                // IN_FLIGHT one naming this node, and an unbound one of those is what the sweeper reads as a lost
+                // holder. Unbinding only this key leaves the opening submission's own binding — which must survive the
+                // whole pass — in place.
+                if (takenReserverId != null) {
+                    held.getTouchSlot().unbind(idempotencyKey);
                 }
             }
 
@@ -1317,10 +1400,10 @@ public final class DefaultSessionRouter implements SessionRouter {
             // turn and needs the same reachability after a mid-pass eviction. See runTurnLoop.
             turnSessions.put(convId, session);
 
-            // Nothing bound into the lease's idempotency touch slot: this pass has no submission of its own, and the
-            // keys of the messages it runs belong to other nodes' reservations. Their liveness is bounded by
-            // idempotencyForwardTtl instead — see pollForward.
-            drain(convId, boundAgent, session, pendingQueue, null);
+            // No submission of this pass's own to bind into the lease's idempotency touch slot — every message here
+            // is some other node's. drain binds each one's reservation for the length of its own turn, which is what
+            // makes a crash mid-pass reach the waiting caller as HOLDER_LOST rather than as a forward-TTL timeout.
+            drain(convId, boundAgent, session, pendingQueue, null, held);
         } catch (RuntimeException e) {
             log.warn("Inbox drain failed for session {}: {}", convId, e.toString());
             failUndrained(convId, pendingQueue, TurnResultPayload.Failure.Code.FAILED,
@@ -1979,9 +2062,10 @@ public final class DefaultSessionRouter implements SessionRouter {
         // The inbox check is what keeps this to the case it can actually help. An uncollected message is the one thing
         // a drain pass can pick up; once some node has collected it the message is out of the at-most-once inbox and
         // only that node can produce its result, so re-ringing finds nothing and buys a wasted pass — the same as
-        // against a healthy holder mid-turn. (Whether a *collected* message's holder dying is reported at all is a
-        // separate question this path cannot influence: HolderLossSweeper sees a reservation only while it names a
-        // holder, and a forwarded one is deliberately holderless — see forwardToInbox. Design §14 carries that gap.)
+        // against a healthy holder mid-turn. (A collected message whose holder then dies is not this path's to
+        // recover either, but it is no longer unrecovered: the pass that collected it names itself on the reservation
+        // before running it — see takeOverReservation — so the sweeper reports that death as HOLDER_LOST instead of
+        // leaving the caller here to its deadline.)
         // The check also keeps this path from resurrecting a session a peer deleted: delete purges the inbox, so the
         // retry goes quiet even in the window before that peer's EVICT arrives to fail this forward outright.
         //
