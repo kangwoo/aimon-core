@@ -271,6 +271,74 @@ class SessionRouterDrainedForwardHolderLossTest {
         assertThat(cached.getResult().orElseThrow().getFinalAnswer()).isEqualTo("answer-the-client-got");
     }
 
+    @Test
+    @DisplayName("a doorbell drain takes the reservation over too, not just the holder's post-turn re-collect")
+    void aDoorbellDrainAlsoTakesOverTheReservation() throws Exception {
+        final IdempotencyStore idempotency = new InMemoryIdempotencyStore();
+        // The forward poll is what re-rings the doorbell, and its interval is derived from the secondary TTL.
+        final TestManagerHarness node = node("node-A", idempotency,
+                b -> b.holderLossSweepInterval(NEVER_SWEEPS).idempotencySecondaryTtl(STALE_AFTER));
+        final SessionId id = SessionId.of("c-drained-6");
+
+        // A lease held by a node that is gone. Nothing releases it — it lapses on its own TTL — so no holder will ever
+        // re-collect this message and the pass that finally runs it is runDrainOnly, whose take-over travels a
+        // different argument list from runTurnLoop's and is therefore separately breakable.
+        leaseStore.tryAcquire(id, "dead-node", Duration.ofMillis(400));
+
+        final SubmitDisposition forwarded = node.manager().submit(keyed(id, "queued"));
+        assertThat(forwarded.getKind()).isEqualTo(SubmitDisposition.Kind.FORWARDED);
+        assertThat(entry(idempotency).getHolderId()).isEmpty();
+
+        final TestLiveSession session = awaitSession(node, id);
+        assertThat(session.awaitTurnStarted()).isTrue();
+        assertThat(entry(idempotency).getHolderId())
+                .as("a doorbell pass runs a real turn, so it owes the same visibility as a submitted one").isPresent();
+        assertThat(entry(idempotency).getHolderId().orElseThrow()).startsWith("node-A/");
+
+        session.completeCurrentTurn(TestLiveSession.ok("queued-done"));
+        assertThat(forwarded.getFuture().toCompletableFuture().get(5, TimeUnit.SECONDS).getFinalAnswer())
+                .isEqualTo("queued-done");
+        assertThat(awaitStatus(idempotency, IdempotencyEntry.Status.DONE).getStatus())
+                .isEqualTo(IdempotencyEntry.Status.DONE);
+    }
+
+    @Test
+    @DisplayName("a take-over that could not read the store still caches its result — nothing said the entry was not ours")
+    void aTakeOverThatCouldNotReadTheStoreStillCachesItsResult() throws Exception {
+        // One connection reset, landing on acquireHolder and nowhere else. By the time the turn ends the store is
+        // healthy again, so markDone would succeed — the question is only whether it is attempted.
+        final AtomicBoolean blipArmed = new AtomicBoolean(true);
+        final IdempotencyStore idempotency = new BlipOnAcquireIdempotencyStore(new InMemoryIdempotencyStore(),
+                blipArmed);
+        final TestManagerHarness holder = node("node-A", idempotency, b -> b.holderLossSweepInterval(NEVER_SWEEPS));
+        final TestManagerHarness peer = node("node-B", idempotency, b -> b.holderLossSweepInterval(NEVER_SWEEPS));
+        final SessionId id = SessionId.of("c-drained-5");
+
+        holder.manager().submit(RequestFixtures.submit(id, "alpha", "first"));
+        final TestLiveSession session = awaitSession(holder, id);
+        assertThat(session.awaitTurnStarted()).isTrue();
+
+        final SubmitDisposition forwarded = peer.manager().submit(keyed(id, "second"));
+        assertThat(forwarded.getKind()).isEqualTo(SubmitDisposition.Kind.FORWARDED);
+
+        session.completeCurrentTurn(TestLiveSession.ok("first-done"));
+        assertThat(session.awaitTurnCount(2)).isTrue();
+        assertThat(blipArmed.get()).as("the blip must actually have been spent on the take-over").isFalse();
+        session.completeCurrentTurn(TestLiveSession.ok("second-done"));
+
+        assertThat(forwarded.getFuture().toCompletableFuture().get(5, TimeUnit.SECONDS).getFinalAnswer())
+                .isEqualTo("second-done");
+
+        // Withholding the cache write is safe only where the store *said* the entry belongs to someone else. A store
+        // that threw said nothing, and treating silence as refusal leaves a turn that succeeded looking unfinished:
+        // the entry stays holderless IN_FLIGHT for the whole forward TTL, invisible to the sweeper because it names
+        // nobody, so a node that missed the rail polls it for five minutes and then times out on a turn that
+        // succeeded four minutes earlier — while every retry in that window attaches to the dead reservation.
+        final IdempotencyEntry cached = awaitStatus(idempotency, IdempotencyEntry.Status.DONE);
+        assertThat(cached.getStatus()).isEqualTo(IdempotencyEntry.Status.DONE);
+        assertThat(cached.getResult().orElseThrow().getFinalAnswer()).isEqualTo("second-done");
+    }
+
     // -------------------------------------------------------------------------------------------------------------
     // Fixture
     // -------------------------------------------------------------------------------------------------------------
@@ -317,6 +385,19 @@ class SessionRouterDrainedForwardHolderLossTest {
                     .as("the forward was resolved while its drainer was healthy and still running the turn").isFalse();
             Thread.sleep(25L);
         }
+    }
+
+    private static IdempotencyEntry awaitStatus(IdempotencyStore store, IdempotencyEntry.Status expected)
+            throws InterruptedException {
+        final long deadline = System.currentTimeMillis() + TestLiveSession.DEFAULT_AWAIT_MS;
+        while (System.currentTimeMillis() < deadline) {
+            final Optional<IdempotencyEntry> found = store.find(KEY);
+            if (found.isPresent() && found.get().getStatus() == expected) {
+                return found.orElseThrow();
+            }
+            Thread.sleep(25L);
+        }
+        return entry(store);
     }
 
     private static IdempotencyEntry awaitCachedAnswer(IdempotencyStore store, String expected)
@@ -367,20 +448,13 @@ class SessionRouterDrainedForwardHolderLossTest {
         throw new AssertionError("Expected the forwarded future to fail, but it completed");
     }
 
-    /** Delegates everything, but stops applying {@code touch} once the node holding the turn is declared dead. */
-    private static final class CrashableIdempotencyStore implements IdempotencyStore {
+    /** Forwards every operation to a delegate, so a subclass overrides only the one it means to disturb. */
+    private abstract static class DelegatingIdempotencyStore implements IdempotencyStore {
 
         private final IdempotencyStore delegate;
-        private final AtomicBoolean alive;
 
-        CrashableIdempotencyStore(IdempotencyStore delegate, AtomicBoolean alive) {
+        DelegatingIdempotencyStore(IdempotencyStore delegate) {
             this.delegate = delegate;
-            this.alive = alive;
-        }
-
-        @Override
-        public boolean touch(String key, String holderId) {
-            return alive.get() && delegate.touch(key, holderId);
         }
 
         @Override
@@ -396,6 +470,11 @@ class SessionRouterDrainedForwardHolderLossTest {
         @Override
         public Optional<IdempotencyEntry> find(String key) {
             return delegate.find(key);
+        }
+
+        @Override
+        public boolean touch(String key, String holderId) {
+            return delegate.touch(key, holderId);
         }
 
         @Override
@@ -423,4 +502,40 @@ class SessionRouterDrainedForwardHolderLossTest {
             return delegate.findStaleInFlight(cutoff);
         }
     }
+
+    /** Stops applying {@code touch} once the node holding the turn is declared dead. */
+    private static final class CrashableIdempotencyStore extends DelegatingIdempotencyStore {
+
+        private final AtomicBoolean alive;
+
+        CrashableIdempotencyStore(IdempotencyStore delegate, AtomicBoolean alive) {
+            super(delegate);
+            this.alive = alive;
+        }
+
+        @Override
+        public boolean touch(String key, String holderId) {
+            return alive.get() && super.touch(key, holderId);
+        }
+    }
+
+    /** Fails the first {@code acquireHolder} — one connection reset, precisely placed. */
+    private static final class BlipOnAcquireIdempotencyStore extends DelegatingIdempotencyStore {
+
+        private final AtomicBoolean armed;
+
+        BlipOnAcquireIdempotencyStore(IdempotencyStore delegate, AtomicBoolean armed) {
+            super(delegate);
+            this.armed = armed;
+        }
+
+        @Override
+        public boolean acquireHolder(String key, String holderId, Duration ttl) {
+            if (armed.getAndSet(false)) {
+                throw new IllegalStateException("simulated transient idempotency backend blip");
+            }
+            return super.acquireHolder(key, holderId, ttl);
+        }
+    }
+
 }

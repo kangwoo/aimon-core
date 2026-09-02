@@ -117,7 +117,10 @@ public interface IdempotencyStore {
      *
      * <ul>
      * <li>no entry, or one whose TTL has lapsed as far as {@link #find} is concerned — {@code false}. Nothing is
-     * reserved, so there is nothing to take over.
+     * reserved, so there is nothing to take over. "As far as {@code find} is concerned" is deliberate and does make
+     * backends differ: one that expires entries lazily on read refuses a lapsed reservation here, while one that
+     * leaves expiry to a background reaper may take one over until that reaper runs. Each stays self-consistent with
+     * its own {@code find}, which is the property callers can rely on; identical cross-backend timing is not.
      * <li>{@code DONE} — {@code false}. Some node already produced a result under this key, and putting a cached
      * answer back into an executing state would make it look unfinished to every later reader.
      * <li>{@code IN_FLIGHT} with a holder — {@code false}, including when that holder equals {@code holderId}. A named
@@ -197,10 +200,10 @@ public interface IdempotencyStore {
      * it — but that take-over may be refused or may fail, and such a turn then executes against a holderless entry
      * that this scan will not report. That is a deliberate trade rather than an invariant: a false holder loss evicts
      * a healthy turn and makes a client's retry execute twice, whereas a missed one costs the caller its forward
-     * deadline. Implementations must not try to narrow it by guessing which holderless entries are live. Returning
-     * one tells the sweeper a
-     * healthy session lost its holder, and the session is evicted out from under it. Implementations that page
-     * results should apply the filter before the limit, so reservations cannot crowd live turns out of a batch.
+     * deadline. Implementations must not try to narrow it by guessing which holderless entries are live: returning one
+     * tells the sweeper a healthy session lost its holder, and the session is evicted out from under it.
+     * Implementations that page results should apply the filter before the limit, so reservations cannot crowd live
+     * turns out of a batch.
      *
      * @param cutoff
      *            entries with {@code lastTouchedAt < cutoff} are returned (must not be null)

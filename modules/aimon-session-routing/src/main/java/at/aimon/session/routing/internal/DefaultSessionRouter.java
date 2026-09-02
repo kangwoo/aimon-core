@@ -724,14 +724,21 @@ public final class DefaultSessionRouter implements SessionRouter {
      * and the store can simply throw.
      *
      * <p>
+     * <b>Those four are not one outcome.</b> The first three are the store <em>answering</em>, and the answer is that
+     * the entry is not this caller's — {@link Takeover#refused()}. The fourth is the store saying nothing at all, and
+     * treating silence as a refusal is what {@link Takeover#unknown()} exists to prevent: a caller that could not read
+     * the entry has learned nothing about who owns it, so it keeps doing what it did before this method existed
+     * (see {@link #announceTurnResult}, which is where the distinction is spent).
+     *
+     * <p>
      * What losing costs is stated precisely, because two things ride on the take-over rather than one. The turn then
      * runs against an entry this node is not named on, so <b>the holder-loss sweeper cannot see this node die for it
      * </b> — the caller falls back to the forward deadline, exactly where every drained message was before this method
-     * existed — and <b>its result is not written to the idempotency cache</b>, because writing over an entry the
-     * take-over just identified as somebody else's is the harm, not the safety (see {@link #announceTurnResult}). The
-     * caller is still answered over the rail either way. So the invariant this method restores holds only where it
-     * wins: a turn may still run holderless, and {@link IdempotencyStore#findStaleInFlight}'s exclusion of holderless
-     * entries does cost coverage for exactly those turns.
+     * existed. And <b>on a refusal only</b>, its result is withheld from the idempotency cache, because writing over
+     * an entry the store has just identified as somebody else's is the harm rather than the safety. The caller is
+     * still answered over the rail in every case. So the invariant this method restores holds only where it wins: a
+     * turn may still run holderless, and {@link IdempotencyStore#findStaleInFlight}'s exclusion of holderless entries
+     * does cost coverage for exactly those turns.
      *
      * <p>
      * The opening submission of a pass never reaches here — {@link #drain} skips it, since its entry already names
@@ -743,11 +750,11 @@ public final class DefaultSessionRouter implements SessionRouter {
      *            the message's idempotency key, or {@code null} when it has none
      * @param held
      *            the lease whose touch slot the reservation is bound into on success
-     * @return the reserver id now recorded on the entry, or {@code null} when this node did not take it over
+     * @return what this attempt learned (never null)
      */
-    private String takeOverReservation(SessionId convId, String key, HeldLease held) {
+    private Takeover takeOverReservation(SessionId convId, String key, HeldLease held) {
         if (key == null) {
-            return null;
+            return Takeover.notAttempted();
         }
         // Same shape as submit's, and per-attempt for the same reason: it is the identity the renewer touches with and
         // the sweeper resets against, so two attempts at one key must never share one.
@@ -757,15 +764,16 @@ public final class DefaultSessionRouter implements SessionRouter {
             taken = idempotencyStore.acquireHolder(key, reserverId, idempotencySecondaryTtl);
         } catch (Exception e) {
             // Best-effort like every other idempotency call on this path: a store outage must cost the turn its fast
-            // failure detection, not cost it its execution.
+            // failure detection, not cost it its execution — and not cost it its cached result either, which is why
+            // this is unknown() rather than refused().
             log.warn("idempotencyStore.acquireHolder threw for key {} on session {}: {}", key, convId, e.toString());
-            return null;
+            return Takeover.unknown();
         }
         if (!taken) {
-            return null;
+            return Takeover.refused();
         }
         held.getTouchSlot().bind(key, reserverId);
-        return reserverId;
+        return Takeover.won(reserverId);
     }
 
     // ---------------------------------------------------------------------------------------------------------------
@@ -1272,12 +1280,12 @@ public final class DefaultSessionRouter implements SessionRouter {
             // reservation, so it is the one whose death has to be visible. Null for a message with no key and
             // whenever the take-over lost — see takeOverReservation. Not attempted for the submission that opened
             // this pass: its entry already names this node, so the take-over could only refuse it.
-            final String takenReserverId = next == selfMessage
-                    ? null
+            final Takeover takeover = next == selfMessage
+                    ? Takeover.alreadyHeldBySubmit(selfReserverId)
                     : takeOverReservation(convId, idempotencyKey, held);
-            // Which identity this node holds this message's reservation under, from either source — or null when it
-            // holds none, which is what decides whether the result may be written to the shared cache below.
-            final String heldReserverId = next == selfMessage ? selfReserverId : takenReserverId;
+            // Non-null only when this pass won the take-over: the binding to undo and the reservation to reset are
+            // this loop's, whereas the opening submission's belong to runTurnLoop for the length of the whole pass.
+            final String takenReserverId = takeover.takenReserverId();
 
             AgentExecutionResult turnResult = null;
             RuntimeException turnFailure = null;
@@ -1291,7 +1299,7 @@ public final class DefaultSessionRouter implements SessionRouter {
                 }
 
                 if (turnResult != null) {
-                    announceTurnResult(convId, messageTurnId, idempotencyKey, heldReserverId, turnResult);
+                    announceTurnResult(convId, messageTurnId, idempotencyKey, takeover.mayCacheResult(), turnResult);
                     if (next == selfMessage && selfResult == null) {
                         selfResult = turnResult;
                     }
@@ -1714,23 +1722,32 @@ public final class DefaultSessionRouter implements SessionRouter {
      * <p>
      * <b>The cache write is conditional; the delivery is not.</b> {@code markDone} matches on the key alone in every
      * backend, so a node that does not hold the reservation would silently replace whatever does hold it — and a drain
-     * pass reaches here for messages whose take-over was <em>refused</em>, which is to say for entries the take-over
+     * pass reaches here for messages whose take-over was <em>refused</em>, which is to say for entries the store
      * identified as somebody else's. Overwriting a {@code DONE} entry replaces an answer a client has already been
      * given with one it will never see, and any later replay of that key then returns the wrong one; overwriting a
      * live attempt's reservation puts this turn's answer where that attempt's caller will read it. Neither is this
      * turn's to write, so it does not. The rest of the method still runs: this execution really did happen and its
      * result is really an answer for that key, so the caller waiting on it — here or on a peer — is answered as
-     * usual, and only the durable, replayable copy is withheld. Losing that copy degrades to the pre-existing
-     * behaviour of a {@code markDone} that failed: the rail delivers, and a later retry re-executes instead of
-     * replaying.
+     * usual, and only the durable, replayable copy is withheld. A retry then re-executes instead of replaying, which
+     * is the correct outcome when the answer on file belongs to somebody else.
      *
-     * @param heldReserverId
-     *            the identity this node holds the key's reservation under, or {@code null} when it holds none — which
-     *            includes a take-over that threw, because a caller that cannot read the entry cannot claim it
+     * <p>
+     * <b>Only a refusal withholds it.</b> A take-over that could not read the store learned nothing about who owns
+     * the entry, and silence is not a refusal, so that path writes exactly as it did before the take-over existed. The
+     * difference is not cosmetic: an unwritten entry left by a successful turn stays {@code IN_FLIGHT} with no holder
+     * for the whole {@code idempotencyForwardTtl} — invisible to the holder-loss sweeper, which by contract skips
+     * holderless entries — so a node that missed the rail polls it for five minutes and then times out over a turn
+     * that succeeded minutes earlier, while every retry in that window attaches to a reservation nobody is running.
+     * That is strictly worse than a {@code markDone} that is attempted and fails, which leaves the same entry but
+     * costs nothing extra to try.
+     *
+     * @param mayCacheResult
+     *            {@code false} only when the store answered that this key's entry belongs to another attempt; see
+     *            {@link Takeover}
      */
-    private void announceTurnResult(SessionId convId, TurnId turnId, String idempotencyKey, String heldReserverId,
+    private void announceTurnResult(SessionId convId, TurnId turnId, String idempotencyKey, boolean mayCacheResult,
             AgentExecutionResult result) {
-        if (idempotencyKey != null && heldReserverId != null) {
+        if (idempotencyKey != null && mayCacheResult) {
             try {
                 idempotencyStore.markDone(idempotencyKey, result);
             } catch (Exception e) {
@@ -3001,6 +3018,75 @@ public final class DefaultSessionRouter implements SessionRouter {
             t.setDaemon(true);
             return t;
         };
+    }
+
+    /**
+     * What one {@link #takeOverReservation} attempt learned about a message's reservation.
+     *
+     * <p>
+     * Three outcomes and two behaviours, which is the whole reason this is not a nullable {@code String}. Only
+     * {@link #won(String)} yields a reserver id — the identity to unbind and, on failure, to reset. Only
+     * {@link #refused()} withholds the cache write, because it is the only one where the store <em>said</em> the
+     * entry belongs to somebody else. {@link #unknown()} is the store failing to answer, and {@link #notAttempted()}
+     * covers a message with no key and the submission that opened the pass; neither learned anything that would
+     * justify withholding, so both keep the pre-take-over behaviour.
+     *
+     * <p>
+     * Collapsing {@code unknown} into {@code refused} is the bug this type exists to make hard to reintroduce: a
+     * single transient failure on {@code acquireHolder} would otherwise leave a successful turn's result uncached and
+     * its key holderless for the forward TTL.
+     */
+    private static final class Takeover {
+
+        private final String reserverId;
+        private final boolean mayCacheResult;
+
+        private Takeover(String reserverId, boolean mayCacheResult) {
+            this.reserverId = reserverId;
+            this.mayCacheResult = mayCacheResult;
+        }
+
+        /** This pass named itself on the reservation and bound it into the touch slot. */
+        static Takeover won(String reserverId) {
+            return new Takeover(Objects.requireNonNull(reserverId, "reserverId must not be null"), true);
+        }
+
+        /** The store answered: the entry is {@code DONE}, held by another attempt, or gone. */
+        static Takeover refused() {
+            return new Takeover(null, false);
+        }
+
+        /** The store could not be read, so nothing is known about the entry either way. */
+        static Takeover unknown() {
+            return new Takeover(null, true);
+        }
+
+        /** No key to take over. */
+        static Takeover notAttempted() {
+            return new Takeover(null, true);
+        }
+
+        /**
+         * The opening submission of a drain pass, whose reservation this node has held since submit time — so there
+         * is nothing to take over and nothing that could refuse it.
+         *
+         * @param selfReserverId
+         *            the identity {@code runTurnLoop} reserved and bound, or {@code null} when the submission carried
+         *            no key
+         */
+        static Takeover alreadyHeldBySubmit(String selfReserverId) {
+            // Not won(): the binding and the failure-path reset belong to runTurnLoop, which owns them for the whole
+            // pass, so this must not hand the drain loop an id to undo them with.
+            return new Takeover(null, selfReserverId != null);
+        }
+
+        String takenReserverId() {
+            return reserverId;
+        }
+
+        boolean mayCacheResult() {
+            return mayCacheResult;
+        }
     }
 
     /**

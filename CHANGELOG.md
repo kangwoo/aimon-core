@@ -692,6 +692,16 @@ instead.
 | `at.aimon.core.skill.hook.declarative.ToolMatcher` | `ToolInputPredicate` |
 | `SkillPreflightScanner.scan(List, AgentRuntimeId, Principal)` | `scan(List, AgentRuntimeId, SessionId, Principal)`, passing `null` where there genuinely is no session |
 
+**`IdempotencyStore` gains an abstract method**
+
+`boolean acquireHolder(String key, String holderId, Duration ttl)` is added without a `default`, so an
+implementation outside this repository **stops compiling** until it supplies one. That is deliberate: a
+`default` returning `false` would compile everywhere and silently opt every such backend out of
+holder-loss detection for forwarded turns, which is the defect the method exists to close — a silent
+wrong answer where a compile error is available. What to implement is in the method's javadoc; the four
+in-tree backends are worked examples, and the contract is one conditional write (name a holder on a
+holderless `IN_FLIGHT` entry, atomically, refusing everything else). See [Fixed](#fixed) for why.
+
 Three of these deserve more than a row.
 
 One further removal was never `@Deprecated` and is listed here because it breaks the same published
@@ -1169,9 +1179,16 @@ Replacement for a caller that used it to read a result: none is needed at the ca
   key — including the `DONE` one the take-over had just declined to disturb, replacing an answer a
   client had already been given with one it would never see and making every later replay of that key
   return the wrong one. The caller is still answered over the rail either way; only the durable copy is
-  withheld, which degrades to the pre-existing behaviour of a `markDone` that failed. Enforcing it in
-  the store instead would need a holder-matched `markDone` on the SPI, registered in the design's §14
-  rather than done here. No schema change: every backend already had a nullable holder column. `IdempotencyTouchSlot` holds one binding per reservation rather than one
+  withheld, and a retry then re-executes rather than replaying an answer that belongs to somebody else.
+  **Only a refusal withholds it**: a take-over that could not read the store learned nothing about who
+  owns the entry, so that path writes exactly as it did before — treating silence as a refusal would
+  leave a successful turn's entry `IN_FLIGHT` with no holder for the whole forward TTL, invisible to
+  the sweeper, so a node that missed the rail would time out five minutes after that turn succeeded.
+  Enforcing any of this in the store instead would need a holder-matched `markDone` on the SPI,
+  registered in the design's §14 rather than done here.
+
+  No schema change: every backend already had a nullable holder column. `IdempotencyTouchSlot` holds
+  one binding per reservation rather than one
   in total, because a pass owes refreshes to both the submission that opened it and the queued message
   it is currently running, and a single slot let a sibling LLM turn outlast the secondary TTL and get
   the other swept as lost. One cost is new and named in the design doc rather than left implicit: a

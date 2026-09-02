@@ -62,6 +62,11 @@ public final class IdempotencyTouchSlot {
      *            the per-attempt holder recorded on that entry, or {@code null} to bind nothing. This is <em>not</em>
      *            the lease holder id — the two identities came apart in Stage 3b.
      */
+    // A null half binds nothing rather than clearing, which is a change from the single-reference version: there,
+    // bind(null, null) — what runTurnLoop passes for a submission with no key — emptied the slot, and that doubled as
+    // a defence against a previous turn's binding surviving into this one. Clearing here instead would drop the
+    // bindings of messages this same pass is running, so the defence moved to the exits: runTurnLoop and runDrainOnly
+    // both clear() in their finally, drain unbinds each message in its own, and HeldLease clears on lease loss.
     public void bind(String key, String reserverId) {
         if (key == null || reserverId == null) {
             return;
