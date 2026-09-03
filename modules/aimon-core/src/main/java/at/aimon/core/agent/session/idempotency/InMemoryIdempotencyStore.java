@@ -133,6 +133,32 @@ public final class InMemoryIdempotencyStore implements IdempotencyStore {
     }
 
     @Override
+    public boolean acquireHolder(String key, String holderId, Duration ttl) {
+        Objects.requireNonNull(key, "key must not be null");
+        Objects.requireNonNull(holderId, "holderId must not be null");
+        Objects.requireNonNull(ttl, "ttl must not be null");
+        final Instant now = clock.instant();
+        // Before the take-over, so a lapsed reservation reads as absent here exactly as it does from find(). Without
+        // it a drain pass could revive a key whose submitter's forward has long since given up on it.
+        evictExpired(key, now);
+        final boolean[] applied = {false};
+        entries.computeIfPresent(key, (k, prev) -> {
+            // Holderless IN_FLIGHT only: an entry with a holder is a turn executing somewhere else, and a DONE one is
+            // a result that must stay replayable.
+            if (prev.entry.getStatus() != IdempotencyEntry.Status.IN_FLIGHT || prev.entry.getHolderId().isPresent()) {
+                return prev;
+            }
+            applied[0] = true;
+            final IdempotencyEntry claimed = IdempotencyEntry.builder().key(prev.entry.getKey())
+                    .sessionId(prev.entry.getSessionId()).inputHash(prev.entry.getInputHash())
+                    .status(IdempotencyEntry.Status.IN_FLIGHT).holderId(holderId).createdAt(prev.entry.getCreatedAt())
+                    .lastTouchedAt(now).build();
+            return new Stored(claimed, now.plus(ttl));
+        });
+        return applied[0];
+    }
+
+    @Override
     public boolean discardReservation(String key) {
         Objects.requireNonNull(key, "key must not be null");
         final boolean[] discarded = {false};

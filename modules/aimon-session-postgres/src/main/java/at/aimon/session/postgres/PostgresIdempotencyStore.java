@@ -89,6 +89,15 @@ public final class PostgresIdempotencyStore implements IdempotencyStore {
     private static final String SQL_COMPARE_AND_RESET = "DELETE FROM idempotency_entry "
             + "WHERE key = ? AND holder_id = ? AND status = 'IN_FLIGHT'";
 
+    // The inverse of SQL_RELEASE_HOLDER: that one gives a reservation up, this one takes one. The extra
+    // expires_at > ? has no counterpart in the two DELETEs above and is not an oversight — deleting a lapsed row is
+    // the same as it not being there, but *reviving* one is not. Postgres expires nothing on its own, so without the
+    // predicate a drain pass could name itself holder of a reservation whose submitter's forward timed out hours ago
+    // and which SQL_FIND_LIVE has been reporting as absent ever since.
+    private static final String SQL_ACQUIRE_HOLDER = "UPDATE idempotency_entry SET "
+            + "holder_id = ?, last_touched_at = ?, expires_at = ? "
+            + "WHERE key = ? AND holder_id IS NULL AND status = 'IN_FLIGHT' AND expires_at > ?";
+
     // holder_id IS NULL is what SQL_COMPARE_AND_RESET's holder_id = ? can never match: the reservation left behind by
     // SQL_RELEASE_HOLDER, whose turn has since failed for good.
     private static final String SQL_DISCARD_RESERVATION = "DELETE FROM idempotency_entry "
@@ -217,6 +226,24 @@ public final class PostgresIdempotencyStore implements IdempotencyStore {
             return ps.executeUpdate() == 1;
         } catch (SQLException e) {
             throw new IdempotencyStoreException("Postgres error during releaseHolder for key " + key, e);
+        }
+    }
+
+    @Override
+    public boolean acquireHolder(String key, String holderId, Duration ttl) {
+        Objects.requireNonNull(key, "key must not be null");
+        Objects.requireNonNull(holderId, "holderId must not be null");
+        Objects.requireNonNull(ttl, "ttl must not be null");
+        final Instant now = clock.instant();
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(SQL_ACQUIRE_HOLDER)) {
+            ps.setString(1, holderId);
+            ps.setTimestamp(2, Timestamp.from(now));
+            ps.setTimestamp(3, Timestamp.from(now.plus(ttl)));
+            ps.setString(4, key);
+            ps.setTimestamp(5, Timestamp.from(now));
+            return ps.executeUpdate() == 1;
+        } catch (SQLException e) {
+            throw new IdempotencyStoreException("Postgres error during acquireHolder for key " + key, e);
         }
     }
 

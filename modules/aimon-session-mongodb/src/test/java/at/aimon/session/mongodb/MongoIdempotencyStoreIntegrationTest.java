@@ -196,6 +196,81 @@ class MongoIdempotencyStoreIntegrationTest {
         assertThat(store.touch("k-disc-held", "h-1")).isTrue();
     }
 
+    @Test
+    @DisplayName("acquireHolder takes over a queued reservation and puts it back on the sweeper's clock")
+    void acquireHolderTakesOverAQueuedReservation() {
+        store.putIfAbsent("k-acq", inFlight("k-acq", "h-submitter"), Duration.ofSeconds(30));
+        // The state the take-over exists for: the submitter reserved the key, lost the election, and handed the turn
+        // to the inbox. Whoever collects that message is the one now running it, and has to say so.
+        store.releaseHolder("k-acq", "h-submitter", Duration.ofMinutes(5));
+
+        assertThat(store.acquireHolder("k-acq", "h-drainer", Duration.ofSeconds(30))).isTrue();
+
+        final Optional<IdempotencyEntry> found = store.find("k-acq");
+        assertThat(found).isPresent();
+        assertThat(found.orElseThrow().getStatus()).isEqualTo(IdempotencyEntry.Status.IN_FLIGHT);
+        assertThat(found.orElseThrow().getHolderId()).hasValue("h-drainer");
+        // Naming a holder is only half of it — the new holder's lease renewer has to be able to keep it alive.
+        assertThat(store.touch("k-acq", "h-drainer")).isTrue();
+    }
+
+    @Test
+    @DisplayName("acquireHolder is what lets findStaleInFlight see the draining node die")
+    void acquireHolderMakesTheEntryVisibleToTheSweeper() {
+        final Instant now = Instant.now();
+        // Pin the clock so lastTouchedAt is the store's own "now" regardless of container time.
+        final MongoIdempotencyStore pinned = new MongoIdempotencyStore(MongoTestSupport.sharedDatabase(),
+                DocumentKeys.COLL_IDEMPOTENCY, Duration.ofHours(24), Clock.fixed(now, ZoneOffset.UTC));
+
+        pinned.putIfAbsent("k-acq-stale", inFlightAt("k-acq-stale", "h-submitter", now), Duration.ofMinutes(5));
+        pinned.releaseHolder("k-acq-stale", "h-submitter", Duration.ofMinutes(5));
+        assertThat(pinned.findStaleInFlight(now.plusSeconds(600)))
+                .as("a message still waiting in the inbox is executed by nobody and must stay invisible").isEmpty();
+
+        pinned.acquireHolder("k-acq-stale", "h-drainer", Duration.ofMinutes(5));
+
+        assertThat(pinned.findStaleInFlight(now.plusSeconds(600))).singleElement()
+                .satisfies(entry -> assertThat(entry.getHolderId()).hasValue("h-drainer"));
+        // And the reset the sweeper follows its scan with matches on the name the take-over wrote.
+        assertThat(pinned.compareAndReset("k-acq-stale", "h-drainer")).isTrue();
+    }
+
+    @Test
+    @DisplayName("acquireHolder spares a cached result, an entry someone else holds, and a key that does not exist")
+    void acquireHolderSparesEverythingElse() {
+        store.putIfAbsent("k-acq-done", inFlight("k-acq-done", "h-1"), Duration.ofSeconds(30));
+        store.markDone("k-acq-done", StoredAgentExecutionResult.builder().success(true).finalAnswer("cached")
+                .completionReason(CompletionReason.COMPLETED).build());
+        store.putIfAbsent("k-acq-held", inFlight("k-acq-held", "h-1"), Duration.ofSeconds(30));
+
+        assertThat(store.acquireHolder("k-acq-done", "h-drainer", Duration.ofSeconds(30))).isFalse();
+        assertThat(store.acquireHolder("k-acq-held", "h-drainer", Duration.ofSeconds(30))).isFalse();
+        assertThat(store.acquireHolder("k-acq-absent", "h-drainer", Duration.ofSeconds(30))).isFalse();
+
+        // markDone clears the holder too, so a DONE entry looks holderless exactly like a reservation — only the
+        // status match keeps a cached answer from being dragged back into an executing state.
+        final Optional<IdempotencyEntry> done = store.find("k-acq-done");
+        assertThat(done.orElseThrow().getStatus()).isEqualTo(IdempotencyEntry.Status.DONE);
+        assertThat(done.orElseThrow().getResult().orElseThrow().getFinalAnswer()).isEqualTo("cached");
+        assertThat(store.find("k-acq-held").orElseThrow().getHolderId()).as("a turn is executing on h-1 right now")
+                .hasValue("h-1");
+    }
+
+    // Sequential on one thread, and named for what it does — the guard, not the concurrency. Real simultaneity rests
+    // on the backend's own CAS / conditional update, not on an interleaving this test could force.
+    @Test
+    @DisplayName("a reservation already taken over is refused to the next caller")
+    void acquireHolderProducesOneWinner() {
+        store.putIfAbsent("k-acq-race", inFlight("k-acq-race", "h-submitter"), Duration.ofSeconds(30));
+        store.releaseHolder("k-acq-race", "h-submitter", Duration.ofMinutes(5));
+
+        assertThat(store.acquireHolder("k-acq-race", "h-drainer-A", Duration.ofSeconds(30))).isTrue();
+        // The second caller must be told, not allowed to overwrite: the first is the node actually running the turn,
+        // and a stolen entry would have the sweeper reset the key against a holder that never had it.
+        assertThat(store.acquireHolder("k-acq-race", "h-drainer-B", Duration.ofSeconds(30))).isFalse();
+        assertThat(store.find("k-acq-race").orElseThrow().getHolderId()).hasValue("h-drainer-A");
+    }
+
     private static IdempotencyEntry inFlight(String key, String holderId) {
         return inFlightAt(key, holderId, Instant.now());
     }

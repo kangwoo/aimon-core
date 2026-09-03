@@ -138,4 +138,29 @@ public interface SessionMetrics {
      */
     default void onForwardDoorbellRerung() {
     }
+
+    /**
+     * Called when a drain pass runs a collected message whose reservation the store <em>refused</em> to hand over —
+     * once per such message, on the node running it.
+     *
+     * <p>
+     * <b>Should read zero.</b> A refusal means the store answered that the key belongs to something else: a
+     * {@code DONE} entry is an answer some node already produced, and a held one is an attempt executing elsewhere.
+     * The message runs anyway — it is already out of the at-most-once inbox, so refusing it would destroy work no
+     * successor can recover — which makes this the count of requests this cluster executed a second time. (The third
+     * cause, an absent or lapsed reservation, means the forward waiting on it had already given up.)
+     *
+     * <p>
+     * It is metered because nothing else shows it. The turn's result is deliberately withheld from the idempotency
+     * cache rather than overwriting somebody else's, its caller is answered over the rail exactly as usual, and no
+     * announcement distinguishes it — so without this counter a double execution leaves no trace outside the log. A
+     * nonzero rate is the shape to alert on, in the way {@link #onHolderLossRecovered()} is: not an error the router
+     * can act on, but a fact the operator of the application whose side effects ran twice needs to know.
+     *
+     * <p>
+     * A store that <em>threw</em> does not count here. It said nothing about who owns the entry, so nothing was
+     * learned about duplication either — see {@code DefaultSessionRouter.Takeover}.
+     */
+    default void onReservationTakeOverRefused() {
+    }
 }

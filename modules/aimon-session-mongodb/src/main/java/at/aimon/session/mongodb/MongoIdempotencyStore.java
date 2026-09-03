@@ -188,6 +188,31 @@ public final class MongoIdempotencyStore implements IdempotencyStore {
     }
 
     @Override
+    public boolean acquireHolder(String key, String holderId, Duration ttl) {
+        Objects.requireNonNull(key, "key must not be null");
+        Objects.requireNonNull(holderId, "holderId must not be null");
+        Objects.requireNonNull(ttl, "ttl must not be null");
+        try {
+            final Instant now = clock.instant();
+            // eq(field, null) is Mongo's "null or missing", and that is what makes this reach both shapes a holderless
+            // entry can take here: releaseHolder $unsets the field, while markDone and the codec write an explicit
+            // null. An exists(false) filter — the one discardReservation uses — would see only the first of those.
+            final Document update = new Document("$set",
+                    new Document().append(DocumentKeys.F_HOLDER_ID, holderId)
+                            .append(DocumentKeys.F_LAST_TOUCHED_AT, Date.from(now))
+                            .append(DocumentKeys.F_EXPIRES_AT, Date.from(now.plus(ttl))));
+            final Document claimed = collection.findOneAndUpdate(
+                    Filters.and(Filters.eq(DocumentKeys.F_ID, key),
+                            Filters.eq(DocumentKeys.F_STATUS, IdempotencyEntry.Status.IN_FLIGHT.name()),
+                            Filters.eq(DocumentKeys.F_HOLDER_ID, null)),
+                    update, new FindOneAndUpdateOptions().returnDocument(ReturnDocument.AFTER));
+            return claimed != null;
+        } catch (MongoException e) {
+            throw new IdempotencyStoreException("Mongo error during acquireHolder for key " + key, e);
+        }
+    }
+
+    @Override
     public boolean discardReservation(String key) {
         Objects.requireNonNull(key, "key must not be null");
         try {

@@ -14,8 +14,10 @@ import at.aimon.core.agent.session.inbox.SessionInbox;
  * <p>
  * Tracks {@link IdempotencyEntry}s keyed by client-supplied idempotency key. Provides atomic
  * {@link #putIfAbsent(String, IdempotencyEntry, Duration) putIfAbsent} for first-arrival detection,
- * {@link #markDone(String, AgentExecutionResult) markDone} for caching the final result, and a small set of operations
- * needed by the holder-loss sweeper ({@link #touch}, {@link #compareAndReset}, {@link #findStaleInFlight}).
+ * {@link #markDone(String, AgentExecutionResult) markDone} for caching the final result, a pair that hands an entry's
+ * holder between nodes as a turn is forwarded and then picked up ({@link #releaseHolder}, {@link #acquireHolder}), and
+ * a small set of operations needed by the holder-loss sweeper ({@link #touch}, {@link #compareAndReset},
+ * {@link #findStaleInFlight}).
  */
 public interface IdempotencyStore {
 
@@ -96,6 +98,53 @@ public interface IdempotencyStore {
     boolean releaseHolder(String key, String expectedHolderId, Duration ttl);
 
     /**
+     * Take a reservation nobody is executing: the holderless {@code IN_FLIGHT} entry {@link #releaseHolder} left for a
+     * message queued in a {@link SessionInbox}, claimed by the node that has just collected that message and is about
+     * to run it. On success the entry names {@code holderId} and its TTL is re-armed to {@code ttl}.
+     *
+     * <p>
+     * This is {@link #releaseHolder}'s inverse, and it exists so that a forwarded turn is covered by the same
+     * holder-loss detection as a locally executed one. A holderless reservation is invisible to
+     * {@link #findStaleInFlight} by design — nobody touches it while it waits, so it is stale by construction — and
+     * that is right up until some node takes the message out of the inbox and starts running it. From that moment the
+     * turn is exactly as mortal as a local one, but with nothing naming the node running it its death was reported by
+     * no sweeper, and the caller waiting on the forward only learned of it when its own deadline lapsed minutes later.
+     * Naming a holder here is what puts the entry back in the sweeper's view for as long as it is being executed.
+     *
+     * <p>
+     * The take-over must be atomic: two nodes racing on the same reservation must produce exactly one winner. It
+     * applies to an {@code IN_FLIGHT} entry with no holder and to nothing else —
+     *
+     * <ul>
+     * <li>no entry, or one whose TTL has lapsed as far as {@link #find} is concerned — {@code false}. Nothing is
+     * reserved, so there is nothing to take over. "As far as {@code find} is concerned" is deliberate and does make
+     * backends differ: one that expires entries lazily on read refuses a lapsed reservation here, while one that
+     * leaves expiry to a background reaper may take one over until that reaper runs. Each stays self-consistent with
+     * its own {@code find}, which is the property callers can rely on; identical cross-backend timing is not.
+     * <li>{@code DONE} — {@code false}. Some node already produced a result under this key, and putting a cached
+     * answer back into an executing state would make it look unfinished to every later reader.
+     * <li>{@code IN_FLIGHT} with a holder — {@code false}, including when that holder equals {@code holderId}. A named
+     * holder means a turn is executing somewhere and this caller is not it. (Reserver ids are minted per attempt, so a
+     * caller meeting its own is not a case that arises.)
+     * </ul>
+     *
+     * <p>
+     * {@code ttl} is the secondary TTL rather than the long one the entry was carrying: from here on the caller's
+     * lease renewer {@link #touch}es it, so it belongs on the same short clock as any other executing turn. That is
+     * what makes the entry go quiet — and the sweeper notice — when the caller dies.
+     *
+     * @param key
+     *            the idempotency key (must not be null)
+     * @param holderId
+     *            the holder to record: the per-attempt reserver id this caller will {@link #touch} with (must not be
+     *            null)
+     * @param ttl
+     *            the secondary TTL to re-arm the entry with (must not be null)
+     * @return {@code true} when this caller took the reservation over
+     */
+    boolean acquireHolder(String key, String holderId, Duration ttl);
+
+    /**
      * Drop a reservation that no longer has a turn behind it: the holderless {@code IN_FLIGHT} entry
      * {@link #releaseHolder} left for a message queued in a {@link SessionInbox}, whose turn has since failed
      * terminally.
@@ -146,9 +195,15 @@ public interface IdempotencyStore {
      * <p>
      * <strong>Entries with no holder must be excluded.</strong> A holderless {@code IN_FLIGHT} entry is a reservation
      * for a turn queued in a {@link SessionInbox} (see {@link #releaseHolder}); nobody executes it, so nobody
-     * {@link #touch}es it, so it is stale by construction rather than by failure. Returning one tells the sweeper a
-     * healthy session lost its holder, and the session is evicted out from under it. Implementations that page
-     * results should apply the filter before the limit, so reservations cannot crowd live turns out of a batch.
+     * {@link #touch}es it, so it is stale by construction rather than by failure. The exclusion normally closes on its
+     * own — the node that takes the message out of the inbox names itself with {@link #acquireHolder} before running
+     * it — but that take-over may be refused or may fail, and such a turn then executes against a holderless entry
+     * that this scan will not report. That is a deliberate trade rather than an invariant: a false holder loss evicts
+     * a healthy turn and makes a client's retry execute twice, whereas a missed one costs the caller its forward
+     * deadline. Implementations must not try to narrow it by guessing which holderless entries are live: returning one
+     * tells the sweeper a healthy session lost its holder, and the session is evicted out from under it.
+     * Implementations that page results should apply the filter before the limit, so reservations cannot crowd live
+     * turns out of a batch.
      *
      * @param cutoff
      *            entries with {@code lastTouchedAt < cutoff} are returned (must not be null)

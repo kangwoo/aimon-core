@@ -692,6 +692,16 @@ instead.
 | `at.aimon.core.skill.hook.declarative.ToolMatcher` | `ToolInputPredicate` |
 | `SkillPreflightScanner.scan(List, AgentRuntimeId, Principal)` | `scan(List, AgentRuntimeId, SessionId, Principal)`, passing `null` where there genuinely is no session |
 
+**`IdempotencyStore` gains an abstract method**
+
+`boolean acquireHolder(String key, String holderId, Duration ttl)` is added without a `default`, so an
+implementation outside this repository **stops compiling** until it supplies one. That is deliberate: a
+`default` returning `false` would compile everywhere and silently opt every such backend out of
+holder-loss detection for forwarded turns, which is the defect the method exists to close — a silent
+wrong answer where a compile error is available. What to implement is in the method's javadoc; the four
+in-tree backends are worked examples, and the contract is one conditional write (name a holder on a
+holderless `IN_FLIGHT` entry, atomically, refusing everything else). See [Fixed](#fixed) for why.
+
 Three of these deserve more than a row.
 
 One further removal was never `@Deprecated` and is listed here because it breaks the same published
@@ -1147,6 +1157,58 @@ Replacement for a caller that used it to read a result: none is needed at the ca
   An uncollected message is the only thing a drain pass can pick up, which is what the emptiness check
   is for — once some node has taken the message out of the inbox, only that node can produce its
   result. Counted by the new `SessionMetrics#onForwardDoorbellRerung()`.
+- **A forwarded turn whose holder dies *after* collecting it is reported as `HOLDER_LOST`.** This is
+  the other half of the entry above, and the half a doorbell cannot reach: once a node has taken the
+  message out of the at-most-once inbox there is nothing left to re-announce, so recovery had to come
+  from the sweeper — which never saw it. `forwardToInbox` clears the reservation's holder so a message
+  waiting in the inbox is not mistaken for a live turn, and nothing put a name back on it, while
+  `findStaleInFlight` reports only entries that *have* a holder. A node that crashed mid-turn on a
+  drained message therefore died anonymously, and its caller was answered by nothing faster than the
+  `idempotencyForwardTtl` (5 min) timeout — where the same crash on a locally submitted turn was
+  reported in ~45 s. The drain pass now takes the reservation over before running each message
+  (`IdempotencyStore#acquireHolder`, new on the SPI and implemented atomically by all four backends:
+  a Lua CAS on Redis, a conditional `findOneAndUpdate` on Mongo, `UPDATE ... WHERE holder_id IS NULL`
+  on Postgres, `computeIfPresent` in memory), binds it into the lease's touch slot for the length of
+  that turn, and hands it back through `markDone` or a holder-matched reset when the turn ends. A
+  take-over can lose four ways — a `DONE` entry, one another node holds, one whose TTL has lapsed, or a
+  store that throws — and the message runs anyway in all of them, because it is already out of the
+  inbox and refusing it would destroy work no successor can recover. What such a turn gives up is
+  stated rather than glossed: the sweeper cannot see its node die, **and its result is not written to
+  the idempotency cache**. That second half is also a fix in its own right. `markDone` matches on the
+  key alone in every backend, so a drained turn used to overwrite whatever entry happened to hold the
+  key — including the `DONE` one the take-over had just declined to disturb, replacing an answer a
+  client had already been given with one it would never see and making every later replay of that key
+  return the wrong one. The caller is still answered over the rail either way; only the durable copy is
+  withheld, and a retry then re-executes rather than replaying an answer that belongs to somebody else.
+  **Only a refusal withholds it**: a take-over that could not read the store learned nothing about who
+  owns the entry, so that path writes exactly as it did before — treating silence as a refusal would
+  leave a successful turn's entry `IN_FLIGHT` with no holder for the whole forward TTL, invisible to
+  the sweeper, so a node that missed the rail would time out five minutes after that turn succeeded.
+  And silence is not the same as *no write*: the ordinary way a remote store throws is with the
+  write applied and only the response lost, which leaves the entry naming this node with nothing
+  refreshing it — the exact shape the sweeper reads as a death, so a peer declared a live turn's
+  holder lost and the client's retry ran the same request a second time. That path therefore binds
+  the reservation as well, and binding it when the write did not land costs nothing, because `touch`
+  and `compareAndReset` both match on the holder and reserver ids are minted per attempt. Enforcing
+  any of this in the store instead would need a holder-matched `markDone` on the SPI, registered in
+  the design's §14 rather than done here.
+
+  A refusal is now counted by the new `SessionMetrics#onReservationTakeOverRefused()`, which should
+  read zero: it means the store answered that the key belongs to something else, so the message this
+  node went on to run is a request the cluster executed twice. Nothing else shows it — the result is
+  deliberately withheld, the caller is answered over the rail as usual, and no announcement
+  distinguishes it. Like every method on that interface it has a no-op default, so existing
+  implementations are unaffected.
+
+  No schema change: every backend already had a nullable holder column. `IdempotencyTouchSlot` holds
+  one binding per reservation rather than one in total, because a pass owes refreshes to both the
+  submission that opened it and the queued message it is currently running, and a single slot let a
+  sibling LLM turn outlast the secondary TTL and get the other swept as lost. One cost is new and
+  named in the design doc rather than left implicit: a forwarded turn's reservation used to need no
+  touching at all, so it could not be swept by a touch failure; now a drainer whose lease renews but
+  whose `touch` fails past the secondary TTL has its live turn swept and its client's retry
+  double-execute. That is the regime local keyed turns already lived in, and the symmetry is the
+  point of the change, but it is not pure gain.
 - **A doorbell notice does not outlive the session it announces.** `releaseSession`, `deleteSession`
   and a peer's `EVICT` all purge the inbox; the node-local marks that say "somebody still has to
   collect this" now go with it, instead of buying an empty drain pass on the next lease return and
