@@ -12,8 +12,12 @@
 **Peer / Representation / Dialectic / Dreamer** 패턴을 AIMON 코어에 네이티브 모듈로 내재화하여, IT 운영 자동화 에이전트가 **운영자·시스템·서비스에 대한 지속적이고 진화하는 메모리** 를 보유하도록 한다. 본 문서는 그 사양을 정의한다.
 
 본 통합의 비목표(Non-Goals):
-- 외부 메모리 서버를 호출하는 원격 클라이언트 통합 (MCP 경로는 별도 트랙)
-- 외부 SDK / 스키마 호환
+- ~~외부 메모리 서버를 호출하는 원격 클라이언트 통합~~ — **철회됨.**
+  [교체 가능한 메모리 백엔드](pluggable-memory-backend.md) §0.1 이 이 줄을 거둬들이고, 서비스 고도의
+  다섯 티어 SPI 위에 원격 어댑터가 서게 한다. 괄호 안의 단서는 유지된다 — **MCP 경로는 여전히 별도
+  트랙**이며, 그 문서 §14 A2 가 프롬프트 자동 주입이 MCP 로는 불가능한 이유를 적는다
+- 외부 SDK / 스키마 호환 — **유지된다.** AIMON 은 원격 서버의 와이어 포맷을 흉내 내지 않고 그 SDK 를
+  재수출하지도 않는다
 
 ---
 
@@ -183,28 +187,34 @@ public final class Observation {
     private final PeerView subject;                   // 누구에 대한 사실인가
     private final PeerView observer;                  // 누가 관찰했는가 (= subject 자기 자신 가능)
     private final String content;                     // 자연어 사실
-    private final ObservationType type;               // EXPLICIT, DEDUCTIVE
+    private final ObservationType type;               // EXPLICIT, DEDUCTIVE, INDUCTIVE, CONTRADICTION
     private final List<String> sourceMessageIds;
     private final Instant createdAt;
     private final double confidence;                  // 정의는 본 절 아래 "confidence 의 정의" 참조
     private final Map<String, String> metadata;
 }
 
-public enum ObservationType { EXPLICIT, DEDUCTIVE }
+public enum ObservationType { EXPLICIT, DEDUCTIVE, INDUCTIVE, CONTRADICTION }
 ```
+
+> **넓혀짐** — 원래는 `{EXPLICIT, DEDUCTIVE}` 두 값이었다. 두 값으로는 메모리 백엔드가 구별하는 것의
+> 절반이 `DEDUCTIVE` 로 뭉개졌으므로(패턴에서의 귀납과 기록된 충돌이 똑같이 "메시지에서 추론됨" 이 된다)
+> 네 값으로 넓혔다. 근거와 다운그레이드 비용은
+> [교체 가능한 메모리 백엔드](pluggable-memory-backend.md) §2.2 · §11.3 에 있다. 트리의 Deriver 는
+> 여전히 앞의 두 값만 만든다 — 새 두 값은 자기 분류가 더 촘촘한 백엔드를 위한 자리다.
 
 #### `confidence` 의 정의
 
 ```
 confidence = clamp(0, 1,
-    base_score(type)                  // EXPLICIT=0.9, DEDUCTIVE=0.6
+    base_score(type)                  // EXPLICIT=0.9, DEDUCTIVE=0.6, INDUCTIVE=0.4, CONTRADICTION=0.3
   + reinforcement_bonus(corroborations) // 다른 메시지에서 같은 사실 재확인 시 +0.05/회 (cap 0.2)
   - contradiction_penalty               // Reconciler가 충돌 발견 시 -0.3
 )
 ```
 계산은 `LlmDeriver`가 수행한다 (LLM 자기보고가 아님 — LLM의 self-report는 신뢰성 부족). LLM은 *type 분류*까지만 한다.
 
-> **구현됨** — `LlmDeriver` + `DeriverObservationCreateTool` 에서 위 식을 그대로 적용한다. base score 는 `ObservationType.baseConfidence()` (EXPLICIT=0.9, DEDUCTIVE=0.6) 에 산다. corroboration 마다 +0.05(cap 0.2), Reconciler 가 충돌하는 prior 를 탐지하면 −0.3. LLM 은 type 분류만 하고 confidence 를 self-report 하지 않는다.
+> **구현됨** — `LlmDeriver` + `DeriverObservationCreateTool` 에서 위 식을 그대로 적용한다. base score 는 `ObservationType.baseConfidence()` (EXPLICIT=0.9, DEDUCTIVE=0.6, INDUCTIVE=0.4, CONTRADICTION=0.3) 에 산다. 뒤의 두 값은 위 넓힘과 함께 정해졌다 — 귀납은 다음 사례가 깨뜨릴 수 있으므로 연역보다 약하고, 충돌 기록은 넷 중 그것을 근거로 행동하기에 가장 위험하므로 가장 낮다. corroboration 마다 +0.05(cap 0.2), Reconciler 가 충돌하는 prior 를 탐지하면 −0.3. LLM 은 type 분류만 하고 confidence 를 self-report 하지 않는다.
 
 #### 임베딩과 벡터 검색
 
@@ -773,26 +783,37 @@ aimon-cli  ── 둘 중 하나를 조립 선택
 
 `at.aimon.cli.config.MemoryConfig`:
 
+IMPORTANT: **CLI 의 키는 camelCase 다.** 이 절은 한때 kebab-case 로 적혀 있었고 그것은 **부팅을
+실패시키는 오류**였다 — `MemoryConfig` 의 `@JsonProperty` 가 전부 camelCase 이고 네이밍 전략 설정이
+없으며, `CliConfigLoader:36` 이 `FAIL_ON_UNKNOWN_PROPERTIES` 를 끄지 않으므로 `workspace-id` 는
+무시되는 것이 아니라 `UnrecognizedPropertyException` → `ConfigurationException` 이 된다. kebab-case 는
+**스타터 프로퍼티**(`aimon.memory.workspace-id`, §10.4)의 규약이며 두 표면은 섞이지 않는다.
+
 ```yaml
 memory:
-  workspace-id: ops
-  peer-id: alice
-  peer-name: Alice
-  storage-path: ~/.aimon/memory
+  workspaceId: ops
+  peerId: alice
+  peerName: Alice
+  storagePath: ~/.aimon/memory
   backend: file             # file (기본) | in-memory
-  reconciler-enabled: true
+  reconcilerEnabled: true
   dreamer:
     enabled: true
     cron: "*/30 * * * *"
-    surprisal-threshold: 0.25
-    walk-seed-count: 8
-    neighbor-top-k: 8
+    surprisalThreshold: 0.25
+    walkSeedCount: 8
+    neighborTopK: 8
     scorer:
       type: llm             # llm (기본) | embedding
 ```
 
-`backend` 는 `file` 이 기본이며 `file` / `in-memory` 두 값만 배선된다. 모르는 값은 시작 경고와 함께
-`file` 로 떨어진다. PostgreSQL·OpenSearch 백엔드는 모듈로는 존재하지만 CLI 에 배선되어 있지 않다.
+`backend` 는 `file` 이 기본이며 `file` / `in-memory` 두 값만 배선된다. 모르는 값은 `file` 로 떨어지되
+**경고는 절반만 나온다** — `createObservationStore:967-970` 은 관찰 스토어에 대해
+`"unknown backend '...', falling back to file for observations"` 를 내지만
+`createRepresentationStore:929-943` 은 `in-memory` 가 아니면 **말없이** `FileRepresentationStore` 로
+간다. 양쪽을 맞추는 것은
+[교체 가능한 메모리 백엔드](pluggable-memory-backend.md) §9.2 의 항목이다.
+PostgreSQL·OpenSearch 백엔드는 모듈로는 존재하지만 CLI 에 배선되어 있지 않다.
 
 ### 10.4 스타터 — `aimon.memory.*`
 
@@ -884,8 +905,13 @@ override 하면 조용히 감사 추적을 잃는다 — javadoc 이 "둘을 함
 - **store 메서드에 `String` id 를 단독 파라미터로 받지 말 것.** `Workspace` 또는 workspace-bound 값
   객체를 받는다. `MemoryArchitectureTest` 가 빌드에서 막으며, 이것이 멀티테넌시 격리의 유일한
   컴파일 타임 강제다.
-- **레닥션 게이트를 우회하는 큐 경로를 만들지 말 것.** 새 `DerivationQueueManager` 구현은
-  `MessageRedactor` 를 반드시 경유한다. 게이트가 하나이기 때문에 §12 의 보장이 성립한다.
+- **레닥션 게이트를 우회하는 큐 경로나 티어 호출 경로를 만들지 말 것.** 새 `DerivationQueueManager`
+  구현은 `MessageRedactor` 를 반드시 경유한다. 티어 쪽도 같다 — `MemoryIngestor` · `ObservationRecorder`
+  · `MemorySearcher` · `DialecticEngine` 은 조립이 씌우는 `RedactingPeerMemory` 를 지나야 하며,
+  감싸지 않은 `PeerMemory` 를 스택에 넘기는 경로를 만들면 안 된다. 게이트가 하나이기 때문에 §12 의
+  보장이 성립하고, 새 SPI 가 공개 접근자를 열었으므로 그 하나를 **구현 안**에 두는 것이 유일한 방법이다
+  ([교체 가능한 메모리 백엔드](pluggable-memory-backend.md) §6.2).
+  `MemorySnapshotReader` 만 예외인데, 그 티어의 입력에는 호출자가 쓴 자유 텍스트가 없기 때문이다.
 - **`softDelete` 만 override 하고 `purgeSoftDeletedBefore` 를 두지 말 것.** 감사 윈도가 무한이 되어
   soft-delete 가 영구 누적으로 바뀐다 (D7).
 - **Memory 가 세션 메시지 사본을 갖게 하지 말 것.** `sourceMessageIds` 참조만 든다 (D4).

@@ -23,6 +23,7 @@ import at.aimon.core.agent.session.transcript.DefaultTranscriptManager;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.session.transcript.TranscriptManager;
 import at.aimon.core.llm.Message;
+import at.aimon.core.memory.MemoryIngestMode;
 import at.aimon.core.memory.deriver.DerivationContext;
 import at.aimon.core.memory.deriver.DerivationQueueManager;
 import at.aimon.core.memory.deriver.DerivationResult;
@@ -77,8 +78,8 @@ class AgentSetupFactoryQueueTest {
     void disabledWhenWiringMissing() {
         queue = factory.buildDerivationQueue(deriver);
 
-        final Runnable runnable = factory.buildMemoryFinalDerivation(MemoryWiring.disabled(), queue,
-                mock(OrcaAgentExecutor.class), SESSION_ID, outputFormatter);
+        final Runnable runnable = factory.buildMemoryFinalDerivation(MemoryIngestMode.SESSION_END,
+                MemoryWiring.disabled(), queue, mock(OrcaAgentExecutor.class), SESSION_ID, outputFormatter);
 
         assertThat(runnable).isNull();
     }
@@ -88,8 +89,9 @@ class AgentSetupFactoryQueueTest {
     void disabledWhenQueueMissing() {
         final MemoryConfig memoryConfig = enabledMemoryConfig();
 
-        final Runnable runnable = factory.buildMemoryFinalDerivation(factory.buildMemoryWiring(memoryConfig), null,
-                mock(OrcaAgentExecutor.class), SESSION_ID, outputFormatter);
+        final Runnable runnable = factory.buildMemoryFinalDerivation(MemoryIngestMode.SESSION_END,
+                factory.buildMemoryWiring(memoryConfig), null, mock(OrcaAgentExecutor.class), SESSION_ID,
+                outputFormatter);
 
         assertThat(runnable).isNull();
     }
@@ -108,8 +110,8 @@ class AgentSetupFactoryQueueTest {
         when(executor.getTranscriptManager()).thenReturn(transcriptManager);
 
         queue = factory.buildDerivationQueue(deriver);
-        final Runnable runnable = factory.buildMemoryFinalDerivation(factory.buildMemoryWiring(enabledMemoryConfig()),
-                queue, executor, SESSION_ID, outputFormatter);
+        final Runnable runnable = factory.buildMemoryFinalDerivation(MemoryIngestMode.SESSION_END,
+                factory.buildMemoryWiring(enabledMemoryConfig()), queue, executor, SESSION_ID, outputFormatter);
         assertThat(runnable).isNotNull();
 
         runnable.run();
@@ -132,8 +134,8 @@ class AgentSetupFactoryQueueTest {
         when(executor.getTranscriptManager()).thenReturn(transcriptManager);
 
         queue = factory.buildDerivationQueue(deriver);
-        final Runnable runnable = factory.buildMemoryFinalDerivation(factory.buildMemoryWiring(enabledMemoryConfig()),
-                queue, executor, SESSION_ID, outputFormatter);
+        final Runnable runnable = factory.buildMemoryFinalDerivation(MemoryIngestMode.SESSION_END,
+                factory.buildMemoryWiring(enabledMemoryConfig()), queue, executor, SESSION_ID, outputFormatter);
 
         runnable.run();
 

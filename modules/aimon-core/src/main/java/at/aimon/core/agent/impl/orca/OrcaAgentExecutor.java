@@ -129,6 +129,8 @@ import at.aimon.core.llm.streaming.LlmStreamChunk;
 import at.aimon.core.llm.streaming.LlmStreamSink;
 import at.aimon.core.llm.streaming.LlmStreamTarget;
 import at.aimon.core.llm.streaming.LlmStreamingOptions;
+import at.aimon.core.memory.ExecutionMemorySink;
+import at.aimon.core.memory.ExecutionMemoryUpdate;
 import at.aimon.core.memory.MemoryContextProvider;
 import at.aimon.core.memory.MemoryContextRequest;
 import at.aimon.core.skill.execution.SkillToolDispatcher;
@@ -276,6 +278,9 @@ public class OrcaAgentExecutor
 
     /** Renders the dynamic system prompt (agent content + environment + memory + assembled SYSTEM blocks). */
     private final SystemPromptRenderer systemPromptRenderer;
+
+    /** Where each execution's new messages are offered to memory, or null when nothing writes memory here. */
+    private final ExecutionMemorySink executionMemorySink;
 
     /**
      * Optional dependency: when configured, a synthetic {@code <system-reminder>}-wrapped user-context message is
@@ -534,6 +539,7 @@ public class OrcaAgentExecutor
             throw new IllegalArgumentException("pendingTurnTtl must be positive: " + this.pendingTurnTtl);
         }
         this.systemPromptRenderer = new SystemPromptRenderer(new AgentContentRenderer(), builder.memoryContextProvider);
+        this.executionMemorySink = builder.executionMemorySink;
         // Fold in the post-build collaborator overrides so construction is atomic. Each field carries a non-null
         // default from its declaration; only a builder-supplied override replaces it.
         if (builder.parallelToolDispatcher != null) {
@@ -618,6 +624,7 @@ public class OrcaAgentExecutor
         private PendingTurnRegistry pendingTurnRegistry;
         private Duration pendingTurnTtl;
         private MemoryContextProvider memoryContextProvider;
+        private ExecutionMemorySink executionMemorySink;
         private ParallelToolDispatcher parallelToolDispatcher;
         private Tracer tracer;
         private TracePayloadPolicy tracePayloadPolicy;
@@ -717,6 +724,11 @@ public class OrcaAgentExecutor
          */
         public Builder pendingTurnTtl(Duration pendingTurnTtl) {
             this.pendingTurnTtl = pendingTurnTtl;
+            return this;
+        }
+
+        public Builder executionMemorySink(ExecutionMemorySink executionMemorySink) {
+            this.executionMemorySink = executionMemorySink;
             return this;
         }
 
@@ -1030,6 +1042,8 @@ public class OrcaAgentExecutor
         // because a turn is also who submitted it and under what context — replaying the words alone would run the
         // same request as a different caller.
         transcriptBuffer.beginTurn(executionRequest.getUserInput(), executionRequest.getSubmitOptions());
+        // Same position, same fragility: a replaceWith between here and the finally invalidates both marks together.
+        transcriptBuffer.markIngestPoint();
         maybeInjectUserContextMessage(agentRuntime, executionRequest, transcriptBuffer);
         // Inject the assembled USER_PREPEND / ATTACHMENT blocks (if any) as a synthetic <system-reminder> user
         // message, after the legacy user-context block and before the real user message. No-op when the assembler
@@ -1119,18 +1133,7 @@ public class OrcaAgentExecutor
                 transcriptBuffer.endTurn();
             }
             transcriptManager.saveSilently(transcriptBuffer);
-            // The flag is only SWALLOWED when the turn already reported the cancellation as
-            // CompletionReason.INTERRUPTED — the result carries that news, so a poisoned thread would add nothing and
-            // an embedder driving turns from a reused worker would just see its next blocking call fail. On every
-            // other outcome the caller asked this thread to stop and nothing else recorded the request, so eating it
-            // would silently break their cancellation protocol: re-arm it. Doing so after saveSilently keeps the
-            // persist protected either way.
-            if (scope.interruptConsumed && !finalisedAsInterrupted(turnResult)) {
-                log.debug("Re-arming the caller's interrupt: turn {} finalised as {}, not INTERRUPTED",
-                        transcriptBuffer.getSessionId().value(),
-                        turnResult == null ? "an exception" : turnResult.getCompletionReason());
-                Thread.currentThread().interrupt();
-            }
+            feedMemoryThenRearmInterrupt(scope, turnResult);
         }
     }
 
@@ -1159,6 +1162,92 @@ public class OrcaAgentExecutor
         log.debug("Cleared a lingering thread interrupt at {} for session {}", where,
                 scope.transcriptBuffer.getSessionId().value());
         return true;
+    }
+
+    /**
+     * Feeds the memory seam and then hands the caller's interrupt back, in that order and whatever the feed does.
+     *
+     * <p>
+     * The order is {@link #feedExecutionMemory}'s contract: the feed must see a swept thread. The {@code finally} is
+     * what keeps that ordering from costing anything. The feed's own guard catches {@link RuntimeException}, so an
+     * {@link Error} out of a sink — a {@link LinkageError} from an optional backend jar, an {@link AssertionError}
+     * from a sink written with {@code assert} — would otherwise escape {@code execute()}'s finally without ever
+     * reaching the re-arm, and a cancellation the caller was owed would be lost to a failure that has nothing to do
+     * with it. Widening the feed's catch to {@code Error} was the alternative and is worse: it would swallow the ones
+     * that must propagate.
+     *
+     * @param scope
+     *            the execution being finalised
+     * @param turnResult
+     *            the turn's result, or {@code null} when it exited by throwing
+     */
+    private void feedMemoryThenRearmInterrupt(ExecutionScope scope, OrcaAgentExecutionResult turnResult) {
+        try {
+            feedExecutionMemory(scope);
+        } finally {
+            // The flag is only SWALLOWED when the turn already reported the cancellation as
+            // CompletionReason.INTERRUPTED — the result carries that news, so a poisoned thread would add nothing
+            // and an embedder driving turns from a reused worker would just see its next blocking call fail. On
+            // every other outcome the caller asked this thread to stop and nothing else recorded the request, so
+            // eating it would silently break their cancellation protocol: re-arm it.
+            if (scope.interruptConsumed && !finalisedAsInterrupted(turnResult)) {
+                log.debug("Re-arming the caller's interrupt: turn {} finalised as {}, not INTERRUPTED",
+                        scope.transcriptBuffer.getSessionId().value(),
+                        turnResult == null ? "an exception" : turnResult.getCompletionReason());
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    /**
+     * Offers this execution's own messages to the memory write seam, if one is wired.
+     *
+     * <p>
+     * Called from {@code execute()}'s finally, after the transcript has been persisted: memory is an enrichment and
+     * must not be able to delay or disturb the save of the turn it describes.
+     *
+     * <p>
+     * An interrupted or failed execution feeds too, and that is deliberate — what was said still happened, and a
+     * backend that only ever saw the executions that finished cleanly would hold a version of the conversation nobody
+     * had.
+     *
+     * <p>
+     * <b>That promise is what fixes where the call sits.</b> It runs in the same window the persist runs in — after
+     * the sweep, before the caller's interrupt is re-armed. A sink is contracted to be quick and to swallow its own
+     * failures; it is not contracted to be uninterruptible, and the remote backends this seam exists for reach a
+     * network. Called after the re-arm, an interruptible call inside such a sink would throw on entry for precisely
+     * the interrupted turns this method promises to feed — and a sink that caught the {@link InterruptedException}
+     * without restoring the flag would erase a cancellation the caller was owed.
+     *
+     * <p>
+     * "The same window as the persist" is the exact claim, and it is weaker than "on a swept thread": the persist
+     * sits between the sweep and this call, and a {@code SessionRecordStore} that catches an
+     * {@link InterruptedException} and restores the flag would re-arm it before the sink is reached. That hole is the
+     * persist's, not this seam's — it is the reason the sweep is where it is — and nothing else in the gap can set
+     * the flag.
+     *
+     * <p>
+     * The delta comes from the mark set at the top of {@code execute()}, and is empty when the history was rewritten
+     * underneath the execution — see {@link TranscriptBuffer#messagesSinceIngestMark()} for why that execution is
+     * skipped rather than re-sent. The sink is contracted to swallow its own failures; the catch here is for a sink
+     * that is wrong about that, because nothing in memory is worth throwing out of a finally block that has already
+     * saved the transcript.
+     */
+    private void feedExecutionMemory(ExecutionScope scope) {
+        if (executionMemorySink == null) {
+            return;
+        }
+        try {
+            final List<Message> added = scope.transcriptBuffer.messagesSinceIngestMark();
+            if (added.isEmpty()) {
+                return;
+            }
+            executionMemorySink
+                    .afterExecution(ExecutionMemoryUpdate.builder().sessionId(scope.transcriptBuffer.getSessionId())
+                            .principal(scope.executionRequest.getPrincipal().orElse(null)).messages(added).build());
+        } catch (RuntimeException e) {
+            log.warn("Memory sink threw at execution end; the execution is unaffected: {}", e.getMessage());
+        }
     }
 
     /**

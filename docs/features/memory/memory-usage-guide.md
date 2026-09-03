@@ -54,7 +54,11 @@ Workspace            테넌트 격리 단위 (멀티테넌트의 루트)
 - **`Workspace`** — `Workspace.builder().id("default").build()`
 - **`PeerView`** — `PeerView.of(workspace, Principal.user("ops-bot", "Ops Bot"))`
   - `subject` = 사실의 *대상* / `observer` = *관찰한 주체*. CLI 기본 배선에서는 `subject == observer`(에이전트 자신).
-- **`Observation`** — `ObservationType` 은 `EXPLICIT`(직접 진술) 또는 `DEDUCTIVE`(추론). `confidence` 는 `[0,1]`.
+- **`Observation`** — `ObservationType` 은 **네 값**(`EXPLICIT` 직접 진술 / `DEDUCTIVE` 추론 /
+  `INDUCTIVE` 반복된 근거에서의 일반화 / `CONTRADICTION` 충돌 기록). `confidence` 는 `[0,1]`.
+  **트리 안의 생산자 셋(`Observe` 도구 · deriver 도구 · `LlmDeriver`)은 앞의 둘만 만든다** — 뒤의 두 값은
+  자기 분류가 더 촘촘한 백엔드를 위한 자리이고, 세 생산자는 광고하지 않은 값을 거절한다.
+  **읽는 쪽은 다르다**: 저장소는 네 값을 전부 받아야 한다(아래 §11.3).
 - **`Representation`** — `isGlobal()`(observer==null, 세션 무관) / `isLocal()`(observer·session 바인딩) 으로 범위가 갈립니다.
 
 > 모든 ID 기반 store API 는 `Workspace` 또는 workspace-bound 값 객체(`ObservationId`)를 받습니다 — 멀티테넌트 격리를 컴파일 타임에 강제합니다(ArchUnit).
@@ -84,7 +88,7 @@ memory:
 - **`backend: in-memory`** — `InMemoryRepresentationStore` + `InMemoryObservationStore` (재시작 시 소실, dev/test).
 - 사용자 노출 도구 4종 등록(MemorySearch / Observe / MemoryChat / MemoryRecall)
 - `MemoryToolContextEnricher` — 매 도구 호출에 workspace/observer/subject/sessionId 주입
-- `RepresentationMemoryContextProvider` — 매 턴 system prompt 에 통찰 요약 주입(`SUMMARY_ONLY`)
+- `SnapshotMemoryContextProvider` — 매 턴 system prompt 에 통찰 요약 주입(`SUMMARY_ONLY`)
 - 세션 종료 시 1회 도는 **final derivation**(대화 → observation)
 - (`dreamer.enabled=true` 일 때) 전용 Quartz 스케줄러로 백그라운드 통합 잡
 
@@ -109,7 +113,7 @@ memory:
                      │
                      └──▶ Representation 요약 생성 ──▶ RepresentationStore.save
                                                               │
-다음 대화 시작 ◀── RepresentationMemoryContextProvider.provide() (system prompt 주입)
+다음 대화 시작 ◀── SnapshotMemoryContextProvider.provide() (system prompt 주입)
 
 (백그라운드) Dreamer cron ──▶ RandomWalk 통합 ──▶ SurprisalScorer ──▶ ObservationStore.merge
 ```
@@ -124,6 +128,17 @@ memory:
 ## 5. 노출 도구 4종
 
 모두 `at.aimon.core.tools.memory` 패키지의 `AbstractTool` 구현이며, 실패 시 예외 대신 `ToolResult.error()` 를 반환합니다.
+
+IMPORTANT: **어떤 도구가 등록되는지는 백엔드가 무엇을 할 수 있는지가 정한다.** 조립 계층이
+`MemoryCapabilities.of(peerMemory)` — 백엔드가 선언하는 것이 아니라 티어 접근자에서 **계산되는** 집합 — 을 보고
+`MemoryRecall`(SNAPSHOT) · `MemorySearch`(SEARCH) · `Observe`(OBSERVE) · `MemoryChat`(CHAT) 을 하나씩 등록합니다.
+못 하는 능력의 도구는 **아예 등록하지 않습니다** — 등록해 놓고 "지원하지 않음"을 돌려주면 모델이 매 실행마다 다시
+시도하며 iteration 과 프롬프트 예산을 태우기 때문입니다. 빠진 능력마다 시작 시 degradation 이 한 줄씩 올라옵니다
+(`memory-snapshot` · `memory-search` · `memory-chat` · `memory-observe` · `memory-ingest`).
+
+`MemoryChat` 은 이 규칙이 생기기 전까지 **CLI 에서만** 등록되었습니다 — `MemorySpec` 에 `DialecticEngine` 을 담을
+자리가 없어서, 스타터로 부팅한 배포는 백엔드가 무엇이든 그 도구를 쓸 수 없었습니다. 지금은 CHAT 티어가 있으면
+등록되고, 없으면 `memory-chat` degradation 이 대신 오릅니다.
 네 도구 모두 다음 **ToolContext 키**를 공유합니다(`MemoryToolContextKeys`) — 보통 `MemoryToolContextEnricher` 가 채웁니다:
 
 | 키 상수 | 키 이름 | 타입 | 비고 |
@@ -181,11 +196,16 @@ deriver 를 우회해 사실 1건을 명시 등록(관리자/시스템 플로우
 ## 6. 자동 컨텍스트 주입
 
 `MemoryContextProvider` 는 에이전트가 system prompt 를 조립할 때 호출되어 memory 기반 `SystemPromptPart` 를 기여합니다.
-기본 구현 `RepresentationMemoryContextProvider` 의 해석 순서:
+기본 구현 `SnapshotMemoryContextProvider` 는 백엔드의 **SNAPSHOT 티어**(`MemorySnapshotReader`) 위에 서며,
+해석 순서는 이렇습니다:
 
-1. `(subject, observer, sessionId)` 의 최신 **LOCAL** representation
-2. 없으면 `subject` 의 최신 **GLOBAL** representation (GLOBAL 은 Dreamer 가 생산 — Dreamer 가 1회 돈 뒤에야 존재, §4 참조)
+1. `(subject, observer, sessionId)` 의 최신 **LOCAL** 스냅샷
+2. 없으면 `subject` 의 최신 **GLOBAL** 스냅샷 (GLOBAL 은 Dreamer 가 생산 — Dreamer 가 1회 돈 뒤에야 존재, §4 참조)
 3. 그래도 없으면 `Optional.empty()` → 실행기가 해당 part 를 생략(프롬프트 형태 불변)
+
+기본 백엔드에서 그 스냅샷은 `RepresentationStore` 의 `Representation` 이지만, 티어 위에 서 있으므로
+표현을 저장하지 않고 읽을 때 계산하는 백엔드도 같은 provider 로 동작합니다.
+`SnapshotMemoryContextProvider.readerOver(representationStore)` 가 스토어 위에 그 티어를 세웁니다.
 
 렌더 방식은 `MemoryInjectionMode` 로 결정:
 
@@ -207,8 +227,23 @@ executor 에는 `OrcaAgentExecutorFactory.withMemoryContextProvider(...)` 로 �
 | `peerName` | string | | 표시명 (기본 = `peerId`) |
 | `storagePath` | string | ✅ | JSONL 로그 경로 (representations.jsonl; `observations.jsonl` 이 형제로 생성됨) |
 | `backend` | string | | `file`(기본, 영속) \| `in-memory`(비영속, dev/test). 알 수 없는 값은 file 로 폴백(+경고) |
+| `ingest` | string | | 대화가 메모리로 흘러 들어가는 시점: `off` \| `session-end`(기본) \| `execution-end`. 알 수 없는 값은 `session-end` 로 폴백(+경고) |
 | `reconcilerEnabled` | bool | | 세션종료 deriver 의 LLM-as-judge reconciler opt-in (기본 false) |
 | `dreamer` | object | | 백그라운드 통합 (아래) |
+
+#### `ingest` — 세 값이 무엇을 바꾸는가
+
+| 값 | 언제 보내나 | 대가 |
+|----|------------|------|
+| `off` | 보내지 않는다 | 메모리는 `Observe` 호출이나 다른 프로세스로만 찬다 |
+| `session-end` (기본) | REPL 이 끝날 때 전사 전체를 한 번 | 기존 동작 그대로. 델타를 쓰지 않으므로 같은 메시지가 두 번 갈 수 없다. 대신 세션이 도는 동안 배운 것은 그 세션이 쓰지 못한다 |
+| `execution-end` | 실행이 끝날 때 그 실행이 추가한 메시지만 | 실행마다 디라이버가 돈다(LLM 호출이 늘어난다). 대신 메모리가 세션 안에서 즉시 쓰인다 |
+
+IMPORTANT: `execution-end` 에는 손실이 하나 있고 그것은 의도된 것이다. 델타의 기준점은 **메시지 개수**이며
+(`Message` 에 안정적인 id 가 없다), compaction 이나 프롬프트 크기 복구가 이력을 통째로 갈아 끼우면 그 기준점은
+무의미해진다. 그 실행은 **아무것도 보내지 않고** 다음 실행이 다시 기준점을 잡는다 — 요약을 대화인 척 보내거나
+이미 수집된 메시지를 다시 보내는 것보다 싸기 때문이다. 근거는
+[교체 가능한 메모리 백엔드](../../design/memory/pluggable-memory-backend.md) §7.2 에 있다.
 
 ### 7.2 `memory.dreamer` 블록 (`MemoryDreamerConfig`)
 
@@ -526,15 +561,16 @@ queue.start();
 DialecticEngine dialectic = new LlmDialecticEngine(llmClient, observationStore, modelName);
 
 // 6) 도구 등록 (ToolRegistry)
-registry.register(new MemorySearchTool(observationStore, redaction));
-registry.register(new ObserveTool(observationStore, redaction));
+registry.register(MemorySearchTool.overStore(observationStore, redaction));
+registry.register(ObserveTool.overStore(observationStore, redaction));
 registry.register(new MemoryChatTool(dialectic));
-registry.register(new MemoryRecallTool(representationStore));
+registry.register(MemoryRecallTool.overStore(representationStore));
 
 // 7) ToolContext 자동 채움 + system prompt 자동 주입
 ToolContextEnricher enricher = new MemoryToolContextEnricher(workspace, observer);   // executor factory 에 전달
-MemoryContextProvider memoryContext = new RepresentationMemoryContextProvider(
-        representationStore, observer, observer, conversationId,
+MemoryContextProvider memoryContext = new SnapshotMemoryContextProvider(
+        SnapshotMemoryContextProvider.readerOver(representationStore), workspace,
+        MemoryPeerResolver.fixed(observer.getPrincipal()),
         MemoryInjectionMode.SUMMARY_ONLY, 0);                                        // withMemoryContextProvider(...)
 ```
 
@@ -581,7 +617,10 @@ DynamoDB, Cassandra 등 새 백엔드를 추가하는 것은 **리팩토링이 �
 - `delete(Workspace)` — observation/representation cascade 정리는 호출자 또는 별도 잡 책임(또는 DB FK CASCADE).
 
 **`ObservationStore`** (`save`, `findById`, `findBySubject(limit)`, `count`, `semanticSearch`, `findByConfidenceBelow`, `findSubjects`, `delete`, `merge`)
-- `confidence` 는 `[0,1]` 범위, `type` 은 `EXPLICIT|DEDUCTIVE` — 저장 시 검증(체크 제약 권장).
+- `confidence` 는 `[0,1]` 범위 — 저장 시 검증(체크 제약 권장).
+- `type` 은 **`ObservationType` 의 네 값을 전부 받아야 한다** (`EXPLICIT` · `DEDUCTIVE` · `INDUCTIVE` ·
+  `CONTRADICTION`). 트리의 생산자가 앞의 둘만 만든다고 해서 **두 값짜리 체크 제약을 걸지 말 것** —
+  자기 분류가 더 촘촘한 백엔드가 넣은 행을 읽지 못하게 된다. 저장소는 생산자가 아니라 **판독자**다.
 - `findBySubject` 는 최신순, `findByConfidenceBelow` 는 confidence 오름차순(dreamer 가 통합 후보를 찾는 데 사용). `limit >= 1`.
 - `findSubjects(workspace, limit)` 는 dreamer 가 워크스페이스의 모든 peer 를 1회 순회하는 데 사용 — 순서 무보장, `limit` 으로 상한.
 - `merge(winner, loser, merged)` — `merged.id == winner` 여야 함. 영속 백엔드는 loser 를 **soft-delete 하고 30일 audit 보관**(인메모리는 즉시 폐기). PostgreSQL 은 `soft_deleted_at` 컬럼으로 구현.

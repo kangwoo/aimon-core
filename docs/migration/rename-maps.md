@@ -259,6 +259,34 @@ only what the module *was not*; `routing` is the first name that describes its c
 
 ---
 
+## Memory moves to a service-tier backend seam
+
+The mistake being corrected is a name that described the one backend that happened to exist rather
+than the thing being named. The seam is now `PeerMemory` and its five capability tiers; the storage
+interfaces keep every signature and become the default backend's materials. Design:
+[`pluggable-memory-backend.md`](../design/memory/pluggable-memory-backend.md).
+
+| Old | New | Value |
+|-----|-----|-------|
+| `RepresentationMemoryContextProvider` (`aimon-core`) | `SnapshotMemoryContextProvider` | — |
+| `MemoryAssembly.CAPABILITY_WRITE_PATH` (`aimon-bootstrap`) | `MemoryAssembly.CAPABILITY_INGEST` | `"memory-write-path"` → `"memory-ingest"` |
+
+`Representation` is a type only the store-backed backend has — a backend that computes its snapshot
+on read never materializes one — so a class named after it was named after an implementation detail
+of one backend. The constructor now takes a `MemorySnapshotReader`;
+`SnapshotMemoryContextProvider.readerOver(representationStore)` builds one for callers assembling
+the default backend by hand.
+
+The degradation key changed **value** as well as name, because "write path" named a direction while
+the thing that is missing is a capability — `INGEST` — that now has four siblings with keys of their
+own (`memory-snapshot`, `memory-search`, `memory-chat`, `memory-observe`). It counts as public API
+because a deployment reads it back with `stack.degradations().has(...)`; in-tree every reference went
+through the constant, so nothing here broke, and what breaks is external code that hard-codes the
+literal. Degradation keys are **not** in [`frozen-names.md`](frozen-names.md): they live only as long
+as the process and are never stored.
+
+---
+
 ## Related documents
 
 - [`frozen-names.md`](frozen-names.md) -- what was **not** renamed, and why that is a contract

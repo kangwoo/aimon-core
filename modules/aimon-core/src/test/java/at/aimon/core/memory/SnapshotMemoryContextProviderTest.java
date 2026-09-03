@@ -17,8 +17,8 @@ import at.aimon.core.agent.prompt.SystemPromptPart;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.base.Principal;
 
-@DisplayName("RepresentationMemoryContextProvider")
-class RepresentationMemoryContextProviderTest {
+@DisplayName("SnapshotMemoryContextProvider")
+class SnapshotMemoryContextProviderTest {
 
     private static final Instant T0 = Instant.parse("2024-01-15T10:00:00Z");
     private static final String SESSION_ID = "sess-1";
@@ -59,15 +59,19 @@ class RepresentationMemoryContextProviderTest {
                 .type(ObservationType.EXPLICIT).confidence(confidence).createdAt(T0).build();
     }
 
+    private MemorySnapshotReader reader() {
+        return SnapshotMemoryContextProvider.readerOver(store);
+    }
+
     /** A single-peer provider, as a CLI process wires it. */
-    private RepresentationMemoryContextProvider provider(MemoryInjectionMode mode, int maxTokens) {
-        return new RepresentationMemoryContextProvider(store, ws, MemoryPeerResolver.fixed(alicePrincipal), mode,
+    private SnapshotMemoryContextProvider provider(MemoryInjectionMode mode, int maxTokens) {
+        return new SnapshotMemoryContextProvider(reader(), ws, MemoryPeerResolver.fixed(alicePrincipal), mode,
                 maxTokens);
     }
 
     /** A multi-caller provider, as a server wires it. */
-    private RepresentationMemoryContextProvider callerProvider() {
-        return new RepresentationMemoryContextProvider(store, ws, MemoryPeerResolver.caller(),
+    private SnapshotMemoryContextProvider callerProvider() {
+        return new SnapshotMemoryContextProvider(reader(), ws, MemoryPeerResolver.caller(),
                 MemoryInjectionMode.SUMMARY_ONLY, 0);
     }
 
@@ -84,24 +88,27 @@ class RepresentationMemoryContextProviderTest {
     class Construction {
 
         @Test
-        @DisplayName("rejects null store, workspace, resolver, mode")
+        @DisplayName("rejects null reader, workspace, resolver, mode")
         void rejectsNullCoreArgs() {
             final MemoryPeerResolver resolver = MemoryPeerResolver.fixed(alicePrincipal);
-            assertThatThrownBy(() -> new RepresentationMemoryContextProvider(null, ws, resolver,
-                    MemoryInjectionMode.SUMMARY_ONLY, 0)).isInstanceOf(NullPointerException.class);
-            assertThatThrownBy(() -> new RepresentationMemoryContextProvider(store, null, resolver,
-                    MemoryInjectionMode.SUMMARY_ONLY, 0)).isInstanceOf(NullPointerException.class);
             assertThatThrownBy(
-                    () -> new RepresentationMemoryContextProvider(store, ws, null, MemoryInjectionMode.SUMMARY_ONLY, 0))
+                    () -> new SnapshotMemoryContextProvider(null, ws, resolver, MemoryInjectionMode.SUMMARY_ONLY, 0))
                     .isInstanceOf(NullPointerException.class);
-            assertThatThrownBy(() -> new RepresentationMemoryContextProvider(store, ws, resolver, null, 0))
+            assertThatThrownBy(() -> new SnapshotMemoryContextProvider(reader(), null, resolver,
+                    MemoryInjectionMode.SUMMARY_ONLY, 0)).isInstanceOf(NullPointerException.class);
+            assertThatThrownBy(() -> SnapshotMemoryContextProvider.readerOver(null))
+                    .isInstanceOf(NullPointerException.class);
+            assertThatThrownBy(
+                    () -> new SnapshotMemoryContextProvider(reader(), ws, null, MemoryInjectionMode.SUMMARY_ONLY, 0))
+                    .isInstanceOf(NullPointerException.class);
+            assertThatThrownBy(() -> new SnapshotMemoryContextProvider(reader(), ws, resolver, null, 0))
                     .isInstanceOf(NullPointerException.class);
         }
 
         @Test
         @DisplayName("rejects negative maxTokens")
         void rejectsNegativeMaxTokens() {
-            assertThatThrownBy(() -> new RepresentationMemoryContextProvider(store, ws,
+            assertThatThrownBy(() -> new SnapshotMemoryContextProvider(reader(), ws,
                     MemoryPeerResolver.fixed(alicePrincipal), MemoryInjectionMode.SUMMARY_ONLY, -1))
                     .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("maxTokens");
         }
@@ -119,7 +126,7 @@ class RepresentationMemoryContextProviderTest {
             store.save(localRep(alice, "sess-A", "what happened in A", List.of(), 5));
             store.save(localRep(alice, "sess-B", "what happened in B", List.of(), 5));
 
-            final RepresentationMemoryContextProvider shared = provider(MemoryInjectionMode.SUMMARY_ONLY, 0);
+            final SnapshotMemoryContextProvider shared = provider(MemoryInjectionMode.SUMMARY_ONLY, 0);
 
             assertThat(shared.provide(inSession("sess-A"))).hasValueSatisfying(
                     part -> assertThat(part.getContent()).contains("what happened in A").doesNotContain("in B"));
@@ -135,7 +142,7 @@ class RepresentationMemoryContextProviderTest {
             store.save(Representation.builder().subject(alice).summary("alice is a DBA").generatedAt(T0).build());
             store.save(Representation.builder().subject(bob).summary("bob is on call").generatedAt(T0).build());
 
-            final RepresentationMemoryContextProvider shared = callerProvider();
+            final SnapshotMemoryContextProvider shared = callerProvider();
 
             assertThat(shared.provide(from(alicePrincipal, "sess-1"))).hasValueSatisfying(
                     part -> assertThat(part.getContent()).contains("alice is a DBA").doesNotContain("bob"));

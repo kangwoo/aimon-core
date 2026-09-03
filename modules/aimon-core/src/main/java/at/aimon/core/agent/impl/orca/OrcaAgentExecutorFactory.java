@@ -30,6 +30,7 @@ import at.aimon.core.llm.invoke.LlmCallGateway;
 import at.aimon.core.llm.retry.LlmFallbackPolicy;
 import at.aimon.core.llm.retry.LlmRetryPolicy;
 import at.aimon.core.llm.streaming.LlmStreamingOptions;
+import at.aimon.core.memory.ExecutionMemorySink;
 import at.aimon.core.memory.MemoryContextProvider;
 import at.aimon.core.skill.policy.SkillPreflightScanner;
 import at.aimon.core.skill.policy.pending.PendingTurnRegistry;
@@ -117,6 +118,7 @@ public class OrcaAgentExecutorFactory {
     private PendingTurnRegistry pendingTurnRegistry;
     private Duration pendingTurnTtl;
     private MemoryContextProvider memoryContextProvider;
+    private ExecutionMemorySink executionMemorySink;
     private RewakeService rewakeService;
     private ToolConcurrencyConfig toolConcurrencyConfig;
     private SideEffectLevel maxSideEffectLevel;
@@ -328,6 +330,25 @@ public class OrcaAgentExecutorFactory {
      */
     public OrcaAgentExecutorFactory withMemoryContextProvider(MemoryContextProvider memoryContextProvider) {
         this.memoryContextProvider = memoryContextProvider;
+        return this;
+    }
+
+    /**
+     * Configures the optional {@link ExecutionMemorySink} that is fed what each execution added to the conversation —
+     * the write counterpart of {@link #withMemoryContextProvider(MemoryContextProvider)}.
+     *
+     * <p>
+     * Without one, nothing flows from a conversation into memory except an explicit {@code Observe} call, and a memory
+     * backend built around a message stream reads an empty memory for the life of the process. With one, the delta an
+     * execution added is offered when it ends, after the transcript has been persisted, and any failure to accept it
+     * is swallowed rather than failing the execution.
+     *
+     * @param executionMemorySink
+     *            the sink (may be {@code null} to clear the override, which is also the default)
+     * @return this factory (for chaining)
+     */
+    public OrcaAgentExecutorFactory withExecutionMemorySink(ExecutionMemorySink executionMemorySink) {
+        this.executionMemorySink = executionMemorySink;
         return this;
     }
 
@@ -638,7 +659,8 @@ public class OrcaAgentExecutorFactory {
                 .agentEnvironmentSnapshotProvider(agentEnvironmentSnapshotProvider).useStreaming(useStreaming)
                 .streamingOptions(streamingOptions).skillPreflightScanner(skillPreflightScanner)
                 .pendingTurnRegistry(pendingTurnRegistry).pendingTurnTtl(pendingTurnTtl)
-                .memoryContextProvider(memoryContextProvider).approvalGate(approvalGate).build();
+                .memoryContextProvider(memoryContextProvider).executionMemorySink(executionMemorySink)
+                .approvalGate(approvalGate).build();
         return applyExecutorOverrides(executor);
     }
 
@@ -682,7 +704,8 @@ public class OrcaAgentExecutorFactory {
                 .agentEnvironmentSnapshotProvider(agentEnvironmentSnapshotProvider).useStreaming(useStreaming)
                 .streamingOptions(streamingOptions).skillPreflightScanner(skillPreflightScanner)
                 .pendingTurnRegistry(pendingTurnRegistry).pendingTurnTtl(pendingTurnTtl)
-                .memoryContextProvider(memoryContextProvider).approvalGate(approvalGate).build();
+                .memoryContextProvider(memoryContextProvider).executionMemorySink(executionMemorySink)
+                .approvalGate(approvalGate).build();
         return applyExecutorOverrides(executor);
     }
 

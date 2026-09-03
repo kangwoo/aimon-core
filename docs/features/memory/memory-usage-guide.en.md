@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/memory/memory-usage-guide.md
-source_commit: a9821d44
+source_commit: 85a7061
 ---
 
 # Memory (Peer Memory) Usage Guide
@@ -59,7 +59,11 @@ Workspace            the tenant-isolation unit (the root of multi-tenancy)
 - **`Workspace`** — `Workspace.builder().id("default").build()`
 - **`PeerView`** — `PeerView.of(workspace, Principal.user("ops-bot", "Ops Bot"))`
   - `subject` = the fact's *target* / `observer` = the *one who observed it*. In the CLI's default wiring, `subject == observer` (the agent itself).
-- **`Observation`** — `ObservationType` is either `EXPLICIT` (directly stated) or `DEDUCTIVE` (inferred). `confidence` lies in `[0,1]`.
+- **`Observation`** — `ObservationType` has **four** values (`EXPLICIT` directly stated / `DEDUCTIVE` inferred /
+  `INDUCTIVE` generalised from repeated evidence / `CONTRADICTION` a recorded conflict). `confidence` lies in `[0,1]`.
+  **The three in-tree producers (the `Observe` tool, the deriver tool and `LlmDeriver`) emit only the first two** —
+  the other two exist for backends whose own classification is finer, and all three producers refuse a value they did
+  not advertise. **Readers are the other way round**: a store must accept all four (see §11.3 below).
 - **`Representation`** — its scope is split by `isGlobal()` (observer==null, session-independent) and `isLocal()` (bound to an observer and a session).
 
 > Every id-based store API takes a `Workspace` or a workspace-bound value object (`ObservationId`) — multi-tenant isolation is enforced at compile time (ArchUnit).
@@ -89,7 +93,7 @@ Once the config is active, `AgentSetupFactory` wires the following automatically
 - **`backend: in-memory`** — `InMemoryRepresentationStore` + `InMemoryObservationStore` (lost on restart; dev/test).
 - Registration of the four user-facing tools (MemorySearch / Observe / MemoryChat / MemoryRecall)
 - `MemoryToolContextEnricher` — injects workspace/observer/subject/sessionId into every tool call
-- `RepresentationMemoryContextProvider` — injects the insight summary into the system prompt on every turn (`SUMMARY_ONLY`)
+- `SnapshotMemoryContextProvider` — injects the insight summary into the system prompt on every turn (`SUMMARY_ONLY`)
 - The **final derivation** that runs once at session end (conversation → observations)
 - (when `dreamer.enabled=true`) the background consolidation job on its own dedicated Quartz scheduler
 
@@ -114,7 +118,7 @@ conversation proceeds ──▶ (session ends) the final derivation is enqueued
                      │
                      └──▶ Representation summary built ──▶ RepresentationStore.save
                                                                   │
-the next conversation starts ◀── RepresentationMemoryContextProvider.provide() (injected into the system prompt)
+the next conversation starts ◀── SnapshotMemoryContextProvider.provide() (injected into the system prompt)
 
 (background) Dreamer cron ──▶ RandomWalk consolidation ──▶ SurprisalScorer ──▶ ObservationStore.merge
 ```
@@ -129,6 +133,18 @@ the next conversation starts ◀── RepresentationMemoryContextProvider.provi
 ## 5. The four exposed tools
 
 All four are `AbstractTool` implementations in the `at.aimon.core.tools.memory` package, and they return `ToolResult.error()` rather than throwing on failure.
+
+IMPORTANT: **which tools are registered follows from what the backend can do.** The assembly reads
+`MemoryCapabilities.of(peerMemory)` — a set *computed* from the tier accessors rather than declared by the backend —
+and registers `MemoryRecall` (SNAPSHOT), `MemorySearch` (SEARCH), `Observe` (OBSERVE) and `MemoryChat` (CHAT) one at a
+time. A tool the backend cannot serve is **not registered at all**: registering it and answering "not supported" would
+put it in front of the model on every execution, and the model would keep calling it, spending iterations and prompt
+budget on a failure that was decidable at assembly. Each missing capability raises one startup degradation
+(`memory-snapshot`, `memory-search`, `memory-chat`, `memory-observe`, `memory-ingest`).
+
+`MemoryChat` was registered **only by the CLI** until this rule existed — `MemorySpec` had nowhere to put a
+`DialecticEngine`, so a deployment assembled through the starter could not use that tool whatever its backend was.
+Now it appears wherever the CHAT tier does, and `memory-chat` is raised where it does not.
 All four share the following **ToolContext keys** (`MemoryToolContextKeys`) — normally filled in by `MemoryToolContextEnricher`:
 
 | Key constant | Key name | Type | Notes |
@@ -186,11 +202,17 @@ Registers a single fact explicitly, bypassing the deriver (admin/system flows, d
 ## 6. Automatic context injection
 
 `MemoryContextProvider` is called while the agent assembles its system prompt, and contributes a memory-derived `SystemPromptPart`.
-The default implementation, `RepresentationMemoryContextProvider`, resolves in this order:
+The default implementation, `SnapshotMemoryContextProvider`, stands on the backend's **SNAPSHOT tier**
+(`MemorySnapshotReader`) and resolves in this order:
 
-1. The latest **LOCAL** representation for `(subject, observer, sessionId)`
-2. Failing that, the latest **GLOBAL** representation for `subject` (GLOBAL is produced by the Dreamer — it only exists after the Dreamer has run once; see §4)
+1. The latest **LOCAL** snapshot for `(subject, observer, sessionId)`
+2. Failing that, the latest **GLOBAL** snapshot for `subject` (GLOBAL is produced by the Dreamer — it only exists after the Dreamer has run once; see §4)
 3. Failing that, `Optional.empty()` → the executor omits the part (the prompt's shape is unchanged)
+
+On the default backend that snapshot is a `Representation` out of `RepresentationStore`, but because the
+provider stands on the tier, a backend that computes its snapshot on read instead of storing one works
+through the same provider. `SnapshotMemoryContextProvider.readerOver(representationStore)` builds that tier
+over a store.
 
 How it renders is decided by `MemoryInjectionMode`:
 
@@ -212,8 +234,23 @@ It is injected into the executor with `OrcaAgentExecutorFactory.withMemoryContex
 | `peerName` | string | | Display name (defaults to `peerId`) |
 | `storagePath` | string | ✅ | The JSONL log path (representations.jsonl; `observations.jsonl` is created alongside it) |
 | `backend` | string | | `file` (default, persistent) \| `in-memory` (volatile, dev/test). An unknown value falls back to file (with a warning) |
+| `ingest` | string | | When conversation flows into memory: `off` \| `session-end` (default) \| `execution-end`. An unknown value falls back to `session-end` (with a warning) |
 | `reconcilerEnabled` | bool | | Opt in to the LLM-as-judge reconciler in the session-end deriver (default false) |
 | `dreamer` | object | | Background consolidation (below) |
+
+#### `ingest` — what the three values change
+
+| Value | When it sends | What it costs |
+|----|------------|------|
+| `off` | Never | Memory fills only through `Observe` calls or another process |
+| `session-end` (default) | The whole transcript, once, when the REPL exits | Today's behaviour. It uses no delta, so the same message cannot go twice. In exchange, what a session learns is not available to that session |
+| `execution-end` | The messages an execution added, as it ends | The deriver runs per execution (more LLM calls). In exchange, memory is usable inside the session that is producing it |
+
+IMPORTANT: `execution-end` has one loss and it is deliberate. The delta is anchored on a **message count**
+(`Message` has no stable id), so a compaction or a prompt-size recovery that replaces the history wholesale leaves
+that anchor pointing nowhere. That execution then sends **nothing**, and the next one anchors afresh — cheaper than
+sending a summary as if it were conversation, and cheaper than re-sending messages already ingested. The reasoning is
+in [Pluggable memory backend](../../design/memory/pluggable-memory-backend.md) §7.2.
 
 ### 7.2 The `memory.dreamer` block (`MemoryDreamerConfig`)
 
@@ -532,15 +569,16 @@ queue.start();
 DialecticEngine dialectic = new LlmDialecticEngine(llmClient, observationStore, modelName);
 
 // 6) registering the tools (ToolRegistry)
-registry.register(new MemorySearchTool(observationStore, redaction));
-registry.register(new ObserveTool(observationStore, redaction));
+registry.register(MemorySearchTool.overStore(observationStore, redaction));
+registry.register(ObserveTool.overStore(observationStore, redaction));
 registry.register(new MemoryChatTool(dialectic));
-registry.register(new MemoryRecallTool(representationStore));
+registry.register(MemoryRecallTool.overStore(representationStore));
 
 // 7) automatic ToolContext filling + automatic system-prompt injection
 ToolContextEnricher enricher = new MemoryToolContextEnricher(workspace, observer);   // pass to the executor factory
-MemoryContextProvider memoryContext = new RepresentationMemoryContextProvider(
-        representationStore, observer, observer, conversationId,
+MemoryContextProvider memoryContext = new SnapshotMemoryContextProvider(
+        SnapshotMemoryContextProvider.readerOver(representationStore), workspace,
+        MemoryPeerResolver.fixed(observer.getPrincipal()),
         MemoryInjectionMode.SUMMARY_ONLY, 0);                                        // withMemoryContextProvider(...)
 ```
 
@@ -587,7 +625,11 @@ For most new backends, **the three stores + (optionally) an ObservationIndex** a
 - `delete(Workspace)` — cascading cleanup of observations/representations is the caller's or a separate job's responsibility (or a DB FK CASCADE).
 
 **`ObservationStore`** (`save`, `findById`, `findBySubject(limit)`, `count`, `semanticSearch`, `findByConfidenceBelow`, `findSubjects`, `delete`, `merge`)
-- `confidence` lies in `[0,1]` and `type` is `EXPLICIT|DEDUCTIVE` — validate on write (a check constraint is recommended).
+- `confidence` lies in `[0,1]` — validate on write (a check constraint is recommended).
+- `type` **must accept all four `ObservationType` values** (`EXPLICIT`, `DEDUCTIVE`, `INDUCTIVE`,
+  `CONTRADICTION`). That the in-tree producers emit only the first two is no reason for a two-value check
+  constraint — it would reject rows written by a backend that classifies more finely. A store is a **reader**, not a
+  producer.
 - `findBySubject` is newest-first and `findByConfidenceBelow` is ascending by confidence (the dreamer uses it to find consolidation candidates). `limit >= 1`.
 - `findSubjects(workspace, limit)` is what the dreamer uses to walk every peer in a workspace once — order is not guaranteed, and `limit` caps it.
 - `merge(winner, loser, merged)` — `merged.id` must equal `winner`. A persistent backend **soft-deletes the loser and keeps it for a 30-day audit** (the in-memory one discards it immediately). PostgreSQL implements this with a `soft_deleted_at` column.

@@ -93,7 +93,7 @@ class MemorySpecTest {
         // the enricher that puts it there binds one fixed peer — so an observation store is the one thing this
         // mode has no use for. Left alone it wires nothing whatsoever.
         assertThatThrownBy(() -> MemorySpec.perCaller(WORKSPACE).observationStore(mock(ObservationStore.class)).build())
-                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("representation store")
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("SNAPSHOT capability")
                 .hasMessageContaining("MemorySpec.forPeer");
     }
 

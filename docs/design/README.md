@@ -86,6 +86,7 @@
 |------|------------|
 | [`filesystem/backend-contract.md`](filesystem/backend-contract.md) | `VirtualFileSystem` 계약 — 디렉토리 시맨틱, 최대 파일 크기, 백엔드가 갈리는 자리, 공유 계약 테스트 |
 | [`memory/peer-memory.md`](memory/peer-memory.md) | Peer Memory — observation · derivation · Dreamer 사이클, 백엔드별 보장 |
+| [`memory/pluggable-memory-backend.md`](memory/pluggable-memory-backend.md) | 메모리 백엔드 교체 — 서비스 고도의 다섯 티어 SPI 와 능력 협상, 없는 수집 이음매, Honcho·Dyad 대조 |
 | [`knowledge/knowledge-and-rag.md`](knowledge/knowledge-and-rag.md) | `KnowledgeStore` SPI, 키워드 검색, OpenSearch 벡터/RAG |
 | [`scheduling/llm-scheduling-agent.md`](scheduling/llm-scheduling-agent.md) | 자연어를 cron + routine 으로 굳혀 세션 없이 다시 돌리는 경로 |
 | [`observability/tracing.md`](observability/tracing.md) | 실행 트레이싱 — 계측 지점, payload 캡처, 레닥션 |

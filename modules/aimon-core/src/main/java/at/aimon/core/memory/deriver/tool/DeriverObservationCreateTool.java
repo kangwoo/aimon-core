@@ -74,6 +74,16 @@ public class DeriverObservationCreateTool extends AbstractTool {
     private static final String META_KEY_SOURCE = "source";
     private static final String META_VALUE_SOURCE = "DeriverObservationCreateTool";
 
+    /**
+     * The observation kinds this tool advertises and accepts — the <b>single</b> source for both.
+     *
+     * <p>
+     * {@link ObservationType} has four values; the two omitted here are for backends whose own classification is
+     * finer, and the in-tree deriver is meant to keep producing only these two.
+     */
+    private static final List<ObservationType> ACCEPTED_TYPES = List.of(ObservationType.EXPLICIT,
+            ObservationType.DEDUCTIVE);
+
     private static final Logger log = LoggerFactory.getLogger(DeriverObservationCreateTool.class);
 
     private final ObservationStore observationStore;
@@ -105,7 +115,7 @@ public class DeriverObservationCreateTool extends AbstractTool {
                         Map.of("type", "string", "description",
                                 "Observation kind: EXPLICIT (stated directly) or DEDUCTIVE (inferred). "
                                         + "Defaults to DEDUCTIVE. The system derives confidence from this.",
-                                "enum", List.of("EXPLICIT", "DEDUCTIVE")),
+                                "enum", acceptedTypeNames()),
                         "source_message_ids",
                         Map.of("type", "array", "description",
                                 "Identifiers of source messages this observation was derived from.", "items",
@@ -152,9 +162,10 @@ public class DeriverObservationCreateTool extends AbstractTool {
                 return ToolResult.error("content became blank after redaction; nothing recorded");
             }
 
-            ObservationDraft draft = ObservationDraft.builder().content(storedContent).type(type).confidence(confidence)
-                    .sourceMessageIds(sourceMessageIds).build();
-            Observation saved = observationStore.save(buildObservation(workspace, subject, observer, draft, redaction));
+            ObservationPayload payload = ObservationPayload.builder().content(storedContent).type(type)
+                    .confidence(confidence).sourceMessageIds(sourceMessageIds).build();
+            Observation saved = observationStore
+                    .save(buildObservation(workspace, subject, observer, payload, redaction));
             log.debug("DeriverObservationCreate recorded {} for subject={}", saved.getId(), subject.key());
             return ToolResult.success(render(saved, redaction));
 
@@ -179,7 +190,7 @@ public class DeriverObservationCreateTool extends AbstractTool {
     }
 
     private static Observation buildObservation(Workspace workspace, PeerView subject, PeerView observer,
-            ObservationDraft draft, RedactionResult redaction) {
+            ObservationPayload payload, RedactionResult redaction) {
         Map<String, String> metadata = new HashMap<>();
         metadata.put(META_KEY_SOURCE, META_VALUE_SOURCE);
         if (redaction.isModified()) {
@@ -187,24 +198,32 @@ public class DeriverObservationCreateTool extends AbstractTool {
             metadata.put(META_KEY_REDACTION_CATEGORIES, String.join(",", redaction.getCategories()));
         }
         ObservationId id = ObservationId.of(workspace, UUID.randomUUID().toString());
-        return Observation.builder().id(id).subject(subject).observer(observer).content(draft.getContent())
-                .type(draft.getType()).confidence(draft.getConfidence()).sourceMessageIds(draft.getSourceMessageIds())
-                .createdAt(Instant.now()).metadata(Map.copyOf(metadata)).build();
+        return Observation.builder().id(id).subject(subject).observer(observer).content(payload.getContent())
+                .type(payload.getType()).confidence(payload.getConfidence())
+                .sourceMessageIds(payload.getSourceMessageIds()).createdAt(Instant.now()).metadata(Map.copyOf(metadata))
+                .build();
     }
 
     /**
      * Immutable holder grouping the cohesive observation payload fields
      * (content, type, confidence, source message ids) passed to
      * {@link #buildObservation}.
+     *
+     * <p>
+     * Named for what it holds rather than for what it is a draft of, because
+     * {@link at.aimon.core.memory.ObservationDraft} is now a public type in the parent package: the request object of
+     * the OBSERVE tier. The two are the same idea at different altitudes — this one's four fields are a proper subset
+     * of that one's eight — and the simple name belongs to the public one. A repository that maintains an ArchUnit
+     * rule against two lifetimes sharing the word "Session" should not leave two observation drafts sharing theirs.
      */
-    private static final class ObservationDraft {
+    private static final class ObservationPayload {
 
         private final String content;
         private final ObservationType type;
         private final double confidence;
         private final List<String> sourceMessageIds;
 
-        private ObservationDraft(Builder builder) {
+        private ObservationPayload(Builder builder) {
             this.content = Objects.requireNonNull(builder.content, "content cannot be null");
             this.type = Objects.requireNonNull(builder.type, "type cannot be null");
             this.confidence = builder.confidence;
@@ -259,8 +278,8 @@ public class DeriverObservationCreateTool extends AbstractTool {
                 return this;
             }
 
-            ObservationDraft build() {
-                return new ObservationDraft(this);
+            ObservationPayload build() {
+                return new ObservationPayload(this);
             }
         }
     }
@@ -279,15 +298,32 @@ public class DeriverObservationCreateTool extends AbstractTool {
         return sb.toString();
     }
 
+    private static List<String> acceptedTypeNames() {
+        return ACCEPTED_TYPES.stream().map(Enum::name).toList();
+    }
+
+    /**
+     * Parses the {@code type} parameter, accepting only what the schema advertises.
+     *
+     * <p>
+     * The reason matters more here than on the user-facing {@code Observe} tool: {@code ReActLlmDeriver} calls
+     * {@code tool.execute(...)} directly rather than through {@code DefaultToolExecutor}, so this tool never meets
+     * the schema-validation gate at all. There is no {@code WARN} line to find afterwards — an unadvertised value
+     * would simply be persisted. The schema is the only statement of what is allowed, so the parser reads it from
+     * the same list.
+     */
     private static ObservationType parseType(String raw) {
         if (raw == null || raw.isBlank()) {
             return ObservationType.DEDUCTIVE;
         }
-        try {
-            return ObservationType.valueOf(raw.trim().toUpperCase(Locale.ROOT));
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("unknown observation type: '" + raw + "'");
+        final String normalized = raw.trim().toUpperCase(Locale.ROOT);
+        for (ObservationType accepted : ACCEPTED_TYPES) {
+            if (accepted.name().equals(normalized)) {
+                return accepted;
+            }
         }
+        throw new IllegalArgumentException(
+                "unknown observation type: '" + raw + "' (expected one of " + acceptedTypeNames() + ")");
     }
 
     private static List<String> parseSourceMessageIds(ToolInput input) {

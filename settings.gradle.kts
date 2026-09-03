@@ -30,6 +30,10 @@ include(
     "aimon-session-redis",
     "aimon-session-postgres",
     "aimon-session-mongodb",
+    // The shared five-tier PeerMemory contract suite, the same idea as `aimon-filesystem-testkit` above and not
+    // published for the same reasons. Its subjects are backends, not stores — the three modules below implement
+    // stores and do not take part.
+    "aimon-memory-testkit",
     "aimon-memory-postgres",
     "aimon-memory-file",
     "aimon-memory-mongodb",
@@ -66,6 +70,7 @@ project(":aimon-session-testkit").projectDir = file("modules/aimon-session-testk
 project(":aimon-session-redis").projectDir = file("modules/aimon-session-redis")
 project(":aimon-session-postgres").projectDir = file("modules/aimon-session-postgres")
 project(":aimon-session-mongodb").projectDir = file("modules/aimon-session-mongodb")
+project(":aimon-memory-testkit").projectDir = file("modules/aimon-memory-testkit")
 project(":aimon-memory-postgres").projectDir = file("modules/aimon-memory-postgres")
 project(":aimon-memory-file").projectDir = file("modules/aimon-memory-file")
 project(":aimon-memory-mongodb").projectDir = file("modules/aimon-memory-mongodb")

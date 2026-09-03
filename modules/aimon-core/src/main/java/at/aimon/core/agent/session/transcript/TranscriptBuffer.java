@@ -97,6 +97,28 @@ public class TranscriptBuffer {
     private SessionRewindPoint rewindPoint;
 
     /**
+     * How many messages this buffer held when the current execution started, or {@code -1} when there is no usable
+     * mark.
+     *
+     * <p>
+     * The counterpart of {@link #rewindPoint} for the memory ingest path, and it is a count for the same reason:
+     * {@code Message} carries no stable id, so "which messages are new" can only be a position. That makes it
+     * vulnerable to the same thing — {@link #replaceWith(List)} rewrites the history under it, and an index into a
+     * history that no longer exists is worse than no index at all. So the mark is dropped there, exactly as the
+     * rewind point is, and {@link #messagesSinceIngestMark()} answers empty rather than guessing.
+     *
+     * <p>
+     * Node-local and not persisted. It is set and read within one execution, in one process, so there is nothing for a
+     * restart to restore: a resumed session marks again on its next execution. Persisting it would mean widening the
+     * session record's wire format for a value whose whole life is shorter than one save.
+     *
+     * <p>
+     * Like the rewind point, it neither bumps {@link #getVersion()} nor notifies the dirty listener — it says nothing
+     * about the LLM-visible history.
+     */
+    private int ingestMark = -1;
+
+    /**
      * Creates an empty buffer without a system prompt.
      *
      * @param sessionId
@@ -292,6 +314,10 @@ public class TranscriptBuffer {
         // into saveSilently, which swallows it, and the whole turn's history would be dropped in silence. Losing the
         // ability to retry this one turn is the honest price.
         rewindPoint = null;
+        // Same reasoning, different consequence: the ingest mark counted messages that are gone, so a delta taken
+        // against it would re-send the compaction summary as if it were new conversation, or send a slice of it. The
+        // execution that was rewritten forgoes its ingest and the next one marks afresh.
+        ingestMark = -1;
         markDirty();
     }
 
@@ -347,6 +373,7 @@ public class TranscriptBuffer {
     public synchronized void clear() {
         systemPrompt = null;
         rewindPoint = null;
+        ingestMark = -1;
         messages.clear();
         messageTimestamps.clear();
         markDirty();
@@ -520,6 +547,45 @@ public class TranscriptBuffer {
      */
     public synchronized void endTurn() {
         rewindPoint = null;
+    }
+
+    /**
+     * Marks the current end of the history as the point an execution's own messages start after.
+     *
+     * <p>
+     * Called at the top of an execution, before it adds anything. Bookkeeping only: no version bump, no dirty
+     * notification.
+     */
+    public synchronized void markIngestPoint() {
+        ingestMark = messages.size();
+    }
+
+    /**
+     * Returns the messages added since {@link #markIngestPoint()}, or empty when there is no usable mark.
+     *
+     * <p>
+     * Empty means one of three things, and the caller treats them the same way — send nothing:
+     *
+     * <ul>
+     * <li>no mark was set (this buffer is not being driven by an execution that marks);
+     * <li>the history was rewritten by {@link #replaceWith(List)} — compaction, or a prompt-size recovery — so the
+     * mark no longer points anywhere;
+     * <li>the execution added nothing.
+     * </ul>
+     *
+     * <p>
+     * Skipping the middle case is deliberate and costs one execution's messages. Sending everything instead would
+     * re-send what was already ingested, and a memory backend that de-duplicates on write has still paid for the
+     * extraction by then; sending the compaction summary would feed a paraphrase in as if it were conversation. The
+     * next execution marks again and the stream resumes.
+     *
+     * @return the new messages in order, or an empty list (never null)
+     */
+    public synchronized List<Message> messagesSinceIngestMark() {
+        if (ingestMark < 0 || ingestMark > messages.size()) {
+            return List.of();
+        }
+        return List.copyOf(messages.subList(ingestMark, messages.size()));
     }
 
     /**

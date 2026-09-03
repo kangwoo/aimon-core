@@ -71,13 +71,16 @@ import at.aimon.core.subagent.DefaultSubagentRegistry;
  * Both loop checkpoints now route through {@code CancellationSignals#isCancelledOrInterrupted}, which consumes the
  * flag and promotes it into the turn's {@code CancellationSignal}. Two finalisation points sweep whatever is left:
  * {@code invokeOnStop} (so the OnStop hooks are not fail-opened by the executor's timed {@code get}) and
- * {@code execute()}'s {@code finally} (so the end-of-turn persist runs on a clean thread).
+ * {@code execute()}'s {@code finally} (so the end-of-turn persist runs on a clean thread — and, since the memory
+ * write seam was added, so does the {@code ExecutionMemorySink} fed just after it; that half is pinned in
+ * {@code OrcaAgentExecutorMemoryIngestTest}, not here).
  *
  * <p>
  * Swallowing the flag is only lossless when the turn <em>reported</em> the cancellation as
  * {@link CompletionReason#INTERRUPTED}. On any other outcome nothing else recorded the caller's request, so the flag
- * is re-armed after the persist. These tests pin every consequence: the PreTool block is enforced regardless of the
- * ambient flag, a turn that saw the flag ends as {@code INTERRUPTED} instead of drifting on, nothing escapes onto the
+ * is re-armed last of all — after the persist and after the memory feed, both of which are owed a swept thread.
+ * These tests pin every consequence: the PreTool block is enforced regardless of the ambient flag, a turn that saw the
+ * flag ends as {@code INTERRUPTED} instead of drifting on, nothing escapes onto the
  * caller's thread on that path, the OnStop hooks still run to completion on an error exit, and an interrupt the turn
  * never reported is handed back rather than eaten.
  */

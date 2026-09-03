@@ -4,8 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import java.util.List;
-
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -50,7 +48,7 @@ class AgentSetupFactoryGraalJsTest {
         settings.setEnableWorkflowJs(true);
         final GraalJsEngineHolder engines = mock(GraalJsEngineHolder.class);
 
-        final ToolSpec spec = factory.buildToolSpec(config, fileSystem, List.of(), engines);
+        final ToolSpec spec = factory.buildToolSpec(config, fileSystem, engines);
 
         assertThat(spec.resolveProviders()).anyMatch(GraalJsWorkflowToolProvider.class::isInstance);
     }
@@ -60,7 +58,7 @@ class AgentSetupFactoryGraalJsTest {
     void enablesRunnerWithoutBuiltInWorkflowTool() {
         settings.setEnableWorkflowJs(true);
 
-        final ToolSpec spec = factory.buildToolSpec(config, fileSystem, List.of(), mock(GraalJsEngineHolder.class));
+        final ToolSpec spec = factory.buildToolSpec(config, fileSystem, mock(GraalJsEngineHolder.class));
 
         assertThat(spec.isWorkflowRunnerEnabled()).isTrue();
         assertThat(spec.isWorkflowToolEnabled()).isFalse();
@@ -69,7 +67,7 @@ class AgentSetupFactoryGraalJsTest {
     @Test
     @DisplayName("omits the WorkflowJs provider when no GraalJS engine holder is wired")
     void omitsWorkflowJsProviderWhenEnginesNull() {
-        final ToolSpec spec = factory.buildToolSpec(config, fileSystem, List.of(), null);
+        final ToolSpec spec = factory.buildToolSpec(config, fileSystem, null);
 
         assertThat(spec.resolveProviders()).noneMatch(GraalJsWorkflowToolProvider.class::isInstance);
         assertThat(spec.isWorkflowRunnerEnabled()).isFalse();

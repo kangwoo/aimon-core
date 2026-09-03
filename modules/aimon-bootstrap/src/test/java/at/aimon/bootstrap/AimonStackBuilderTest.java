@@ -9,6 +9,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -26,6 +27,8 @@ import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.DefaultAgent;
 import at.aimon.core.agent.impl.AgentBundle;
 import at.aimon.core.agent.interrupt.InterruptReason;
+import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.base.Principal;
 import at.aimon.core.filesystem.VirtualFileSystem;
@@ -441,6 +444,57 @@ class AimonStackBuilderTest {
         }
     }
 
+    /**
+     * The memory block moved from the front of shutdown to after {@link TeardownPhase#CHECKPOINTS}, and the risk that
+     * move carries is exactly one thing: the final derivation reads the transcript, and it now reads it after the
+     * sessions have drained and the checkpoint mailbox has closed. The design recorded that as unmeasured. This
+     * measures it.
+     *
+     * <p>
+     * It holds because the record store behind the transcript manager is application-scoped —
+     * {@link TeardownPhase#SESSIONS} releases leases, it does not close the store — so a phase after it reads the
+     * same, and by then completely written, history.
+     */
+    @Test
+    @DisplayName("a MEMORY_FINAL_DERIVATION entry still reads the transcript after SESSIONS and CHECKPOINTS have run")
+    void memoryFinalDerivationStillReadsTheTranscriptAfterTheMove(@TempDir Path workspace) {
+        final SessionId sessionId = SessionId.of("teardown-order");
+        final AtomicInteger messagesSeenAtTeardown = new AtomicInteger(-1);
+
+        final AimonStack stack = AimonStackBuilder.build(specFor(workspace, "ops").build());
+        // A transcript the way a finished session leaves one behind.
+        final TranscriptBuffer live = stack.agentExecutor().getTranscriptManager().initialize(sessionId, "system");
+        live.addUserMessage("what is the deploy window");
+        live.addAssistantMessage("Fridays, 14:00 UTC");
+        stack.agentExecutor().getTranscriptManager().save(live);
+
+        stack.own(TeardownPhase.MEMORY_FINAL_DERIVATION, "readsTranscript", () -> messagesSeenAtTeardown
+                .set(stack.agentExecutor().getTranscriptManager().initialize(sessionId, null).size()));
+        final List<String> plan = stack.teardownPlan();
+        stack.close();
+
+        // The phases that precede it now — sessions drained, mailbox closed — left the history intact.
+        assertThat(messagesSeenAtTeardown).hasValue(2);
+        // And it really did run after them, rather than the read having succeeded because it ran first.
+        assertThat(indexOfPhase(plan, TeardownPhase.MEMORY_FINAL_DERIVATION)).as("plan was %s", plan)
+                .isGreaterThan(indexOfPhase(plan, TeardownPhase.SESSIONS));
+    }
+
+    @Test
+    @DisplayName("the memory block runs after the session block, so a session-end write finds a live backend")
+    void memoryBlockFollowsTheSessionBlock() {
+        // Ordering is the whole contract of this enum, and the two ingest modes fire while sessions drain: a memory
+        // block ahead of them would hand the last write a closed backend and a stopped queue.
+        assertThat(TeardownPhase.SESSIONS.ordinal()).isLessThan(TeardownPhase.CHECKPOINTS.ordinal());
+        assertThat(TeardownPhase.CHECKPOINTS.ordinal()).isLessThan(TeardownPhase.MEMORY_FINAL_DERIVATION.ordinal());
+        assertThat(TeardownPhase.MEMORY_FINAL_DERIVATION.ordinal()).isLessThan(TeardownPhase.MEMORY_QUEUE.ordinal());
+        assertThat(TeardownPhase.MEMORY_QUEUE.ordinal()).isLessThan(TeardownPhase.DREAMER.ordinal());
+        assertThat(TeardownPhase.DREAMER.ordinal()).isLessThan(TeardownPhase.MEMORY_MAINTENANCE.ordinal());
+        // The backend last of the block: the four above all write through it.
+        assertThat(TeardownPhase.MEMORY_MAINTENANCE.ordinal()).isLessThan(TeardownPhase.MEMORY_BACKEND.ordinal());
+        assertThat(TeardownPhase.MEMORY_BACKEND.ordinal()).isLessThan(TeardownPhase.SESSION_TRANSPORT.ordinal());
+    }
+
     private static int indexOfPhase(List<String> plan, TeardownPhase phase) {
         for (int i = 0; i < plan.size(); i++) {
             if (plan.get(i).contains(phase.name())) {
@@ -655,7 +709,7 @@ class AimonStackBuilderTest {
                 assertThat(tools.findByName(MemorySearchTool.TOOL_NAME)).isPresent();
                 assertThat(tools.findByName(ObserveTool.TOOL_NAME)).isPresent();
             }
-            assertThat(stack.degradations().has(MemoryAssembly.CAPABILITY_WRITE_PATH)).isTrue();
+            assertThat(stack.degradations().has(MemoryAssembly.CAPABILITY_INGEST)).isTrue();
         }
     }
 
@@ -682,7 +736,7 @@ class AimonStackBuilderTest {
         try (AimonStack stack = AimonStackBuilder.build(specFor(workspace, "ops").build())) {
             assertThat(stack.runtime(stack.primaryRuntimeId()).orElseThrow().getToolRegistry()
                     .findByName(MemoryRecallTool.TOOL_NAME)).isEmpty();
-            assertThat(stack.degradations().has(MemoryAssembly.CAPABILITY_WRITE_PATH)).isFalse();
+            assertThat(stack.degradations().has(MemoryAssembly.CAPABILITY_INGEST)).isFalse();
             assertThat(stack.degradations().has(MemoryAssembly.CAPABILITY_TOOLS)).isFalse();
         }
     }

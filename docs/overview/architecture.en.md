@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/architecture.md
-source_commit: a56317a
+source_commit: 4edca08
 ---
 
 # Architecture
@@ -659,7 +659,7 @@ the code and these tests are not.
 | `PackageDependencyArchitectureTest` | Layer dependency direction, the isolation of `at.aimon.core.config.hook`, and a **cycle baseline** between top-level packages — a new pair outside the list fails, and so does a listed pair that is no longer cyclic |
 | `BuiltInToolSchemaArchitectureTest` | Every tool in `at.aimon.core.tools` declares `additionalProperties: false` at top level |
 | `ToolExecutionGateArchitectureTest` | `Tool#execute` is reachable only through the schema-validation gate |
-| `MemoryArchitectureTest` | Multi-tenant isolation in `at.aimon.core.memory` |
+| `MemoryArchitectureTest` | Four — multi-tenant isolation in `at.aimon.core.memory` (neither a store nor a service tier takes a bare `String` id), no tier SPI signature names a `*Store` (where replaceability is checked as reference direction), the four new tiers take a query as one request object, and `PeerMemory` cannot declare its own capability set (it is computed) |
 | `TurnVocabularyArchitectureTest` | `Turn` stays out of identifiers in five package trees. It cannot cover `agent.impl.orca`, where turns and iterations are both real |
 | `YamlParserInstanceArchitectureTest` | No `Yaml` field anywhere in main sources (one per parse call). Reflection over field declarations rather than a source grep, so it also catches one reached through a wrapper |
 | `PublishedModuleApiScopeTest` | Only a facade declares a sibling module on `api`; every other published module uses `implementation` |

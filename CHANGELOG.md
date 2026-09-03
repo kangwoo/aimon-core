@@ -56,6 +56,19 @@ Old names are searchable in [`docs/migration/rename-maps.md`](docs/migration/ren
   implementation("at.aimon.core:aimon-spring-boot-starter")
   ```
 
+- **`aimon-memory-testkit`** — the shared five-tier `PeerMemory` contract suite, in a module of its own
+  so every backend runs the same one. Not published, the same way `aimon-filesystem-testkit` and
+  `aimon-session-testkit` are not, and by the same mechanism: no `aimon.publishable`, so `aimon-bom`
+  leaves it out automatically. It depends on none of `aimon-memory-{file,mongodb,postgres}` — those
+  implement stores, and stores are the default backend's materials rather than the seam.
+
+  Three of its cases are about the capability model rather than any tier: a tier that is offered must
+  answer (not throw `UnsupportedOperationException`), search results are ordered by relevance whether
+  or not the backend can score, and a backend that cannot score must reject a positive `minScore`
+  rather than ignore it. The first is the loophole the tier boundary cannot close by itself — hand
+  the default backend a metadata-only observation store and its SEARCH tier exists and fails on every
+  call — which is exactly why it is written down and executed rather than assumed.
+
 - **`aimon-bootstrap`** (`at.aimon.bootstrap`, no Spring) — `AimonStack.from(spec)` replaces copying
   the CLI's 216-line `AgentSetupFactory.create()`. Input is one immutable `AimonStackSpec`
   (`LlmSpec`, `AgentSpec`, `FileSystemSpec`, `SessionSpec`, `SkillApprovalSpec`, `ToolSpec`,
@@ -592,6 +605,99 @@ Old names are searchable in [`docs/migration/rename-maps.md`](docs/migration/ren
   manager through the builder, where each defaults to its single-node answer. The existing
   constructors are unchanged and now delegate to it.
 
+#### Memory — a backend seam at service altitude
+
+- **`PeerMemory` and five capability tiers** (`at.aimon.core.memory`) — `MemorySnapshotReader`
+  (SNAPSHOT), `MemorySearcher` (SEARCH), the existing `DialecticEngine` (CHAT, adopted unchanged),
+  `ObservationRecorder` (OBSERVE) and `MemoryIngestor` (INGEST), each with a request value object.
+  This is now the seam a memory backend is replaced at. The storage SPI is **unchanged and still
+  supported** — `ObservationStore` / `RepresentationStore` / `WorkspaceStore` keep every signature —
+  but it is demoted to the *materials* the default backend is built from, which `StoreBackedPeerMemory`
+  does. The demotion is checkable rather than asserted: an ArchUnit rule forbids any tier signature
+  from naming a store, so a backend with no store at all is expressible.
+
+  Which capabilities a backend has is **computed** from its tier accessors by
+  `MemoryCapabilities.of(...)`, a static utility. `PeerMemory` deliberately has no `capabilities()`
+  method and a rule keeps it that way: a declared set is a second source of truth, and the two
+  disagree not at assembly but at the first call, after a tool has been registered and offered to
+  the model.
+
+  Losses *inside* a tier are separate and each says so on its own —
+  `MemorySnapshot.observationsAvailable` / `confidenceAvailable`, `MemoryHit.confidenceAvailable`,
+  `MemorySearcher.ranksByScore()`, `MemorySearcher.narrowsBySession()`,
+  `ObservationRecorder.storesConfidence()`. The last two of those govern the query's two narrowing
+  axes: a backend that cannot score **rejects** a positive `MemorySearchQuery.minScore`, and one that
+  cannot confine a search to a session rejects a `MemorySearchQuery.sessionId`, rather than either
+  being ignored — a filter that silently did not run reads as one that did.
+  `MemorySearchQuery.observer` is deliberately not in that family: it names who is asking rather than
+  promising a smaller result, so a backend that does not read it has not failed to keep a promise.
+
+- **`ObservationType` gains `INDUCTIVE` and `CONTRADICTION`**, with base confidences `0.4` and `0.3`.
+  Two values collapsed distinctions a memory backend can express — an inference from a pattern and a
+  recorded conflict both filed as `DEDUCTIVE`. Nothing in the tree switches exhaustively over this
+  enum, so existing code is unaffected.
+
+  **The in-tree producers still emit only the original two, and that is now enforced rather than
+  incidental.** All three of them — `ObserveTool`, `DeriverObservationCreateTool` and `LlmDeriver` —
+  offer exactly `EXPLICIT` and `DEDUCTIVE` (two in a schema `enum`, one in the extraction prompt) and
+  used to read the answer back with `ObservationType.valueOf`. That agreed with the advertisement only
+  because the other two names did not exist; widening the enum turned all three into parsers that
+  accept what they never offered. The schema gate does not cover it — its default mode is `WARN`,
+  which logs the mismatch and runs the tool anyway, and `ReActLlmDeriver` calls its tool directly
+  without passing the gate at all. Each parser now reads the accepted set from the same list its
+  advertisement is built from, so the two cannot drift again. Refusing a name the tool never offered
+  is the same rule that makes built-in schemas declare `additionalProperties: false`.
+
+  **This breaks downgrade.** Once an `INDUCTIVE` or `CONTRADICTION` observation has been written to
+  file, Mongo or Postgres, an older jar reading it back throws from `valueOf`. That can only happen
+  through a backend that classifies more finely than this tree does — no in-tree producer can put one
+  there. Neither mitigation is worth taking: folding the new values down on write gives up the
+  distinction the widening exists for, and a lenient `valueOf` would have to be added to the jar that
+  is already released.
+
+- **`MemorySpec.peerMemory(...)`** — names the backend directly instead of the stores it would be
+  built from. Mutually exclusive with the store setters, which stay and are folded into a
+  `StoreBackedPeerMemory` by the assembly, so every existing program-assembled spec is unaffected.
+  Two of the spec's invariants widened to cover both paths: "needs at least one store" became "needs
+  a `PeerMemory` or at least one store", and "per-caller needs a representation store" became
+  "per-caller requires the SNAPSHOT capability" — the same rule, said in the vocabulary that now has
+  two ways of naming a memory.
+
+- **`MemoryChatTool` is finally registered by the assembly.** It was previously wired only by the
+  CLI's hand-written code and `MemorySpec` had nowhere to put a `DialecticEngine`, so no
+  stack-assembled deployment could use it however its memory was configured. Registration by
+  capability closes that: wherever the CHAT tier exists, the tool appears; where it does not, a
+  `memory-chat` degradation says so. The starter's `in-memory` backend declares no `DialecticEngine`
+  bean, so that path takes the degradation rather than the tool.
+
+- **`ExecutionMemorySink`** (`at.aimon.core.memory`) and
+  `OrcaAgentExecutorFactory.withExecutionMemorySink(...)` — the write counterpart of
+  `MemoryContextProvider`. Until now nothing fed a conversation into memory except the CLI's shutdown
+  hook, so a memory backend built around a message stream read an empty memory for the life of the
+  process. The seam is fed after the transcript is persisted, is fire-and-forget, and passes the same
+  `(sessionId, principal)` identity the read seam gets, resolved through the same
+  `MemoryPeerResolver` so the two cannot answer for different peers.
+
+  When it fires is `MemorySpec.ingestMode(...)`: `OFF` (the default, and what every stack-assembled
+  deployment does today), `SESSION_END` (the whole transcript once at close — the CLI's existing
+  behaviour, and its default via `memory.ingest` in the yaml) or `EXECUTION_END`.
+
+  `EXECUTION_END` needs a delta, and a delta needs a watermark, and `Message` has no stable id — so
+  the watermark is a message count, held in `TranscriptBuffer` beside the rewind point and dropped by
+  `replaceWith` exactly as that is. An execution whose history was rewritten under it (compaction,
+  prompt-size recovery) therefore **sends nothing**: sending the summary would feed a paraphrase in as
+  conversation, and sending everything would re-run an extraction the backend has already paid for.
+
+- **`RedactingPeerMemory`** — the assembly wraps every backend in it whenever a `RedactionPolicy` is
+  configured, and hands on only the wrapper. Redaction used to be guaranteed by an implementation
+  (`InMemoryDerivationQueueManager` masks inside `enqueue`, so no caller could route around it); a
+  public `MemoryIngestor` would have downgraded that to a documented precondition an application can
+  ignore. It masks the four tiers that carry caller-written text outwards — INGEST, OBSERVE, SEARCH
+  and **CHAT**, the last of which had no gate anywhere before this — and deliberately leaves SNAPSHOT
+  alone, whose query carries peers, a session, a mode and a budget and no text at all. Adapters
+  therefore never implement redaction, which is the property that matters once there is more than one
+  of them.
+
 #### Other
 
 - **`TaskResultStore`** (`at.aimon.core.subagent.task`) — the background-task surface's missing half.
@@ -887,6 +993,63 @@ Replacement for a caller that used it to read a result: none is needed at the ca
   - `getMetadata(dir)` and `exists(dir)` answer for directories instead of reporting them missing.
   A deployment written against the old answers keeps compiling and starts getting better ones; a
   deployment that *relied* on directories being invisible is the case to check.
+
+**Memory**
+
+- **`RepresentationMemoryContextProvider` is `SnapshotMemoryContextProvider`**, and it takes a
+  `MemorySnapshotReader` rather than a `RepresentationStore`. The old name said it read
+  `Representation`s; a backend that computes its snapshot on read has no such type, so the name was
+  wrong for every backend but one. `SnapshotMemoryContextProvider.readerOver(store)` builds the tier
+  over a store for callers assembling the default backend by hand — a second *constructor* was
+  rejected because it would be ambiguous for a `null` argument and would have implied the store and
+  the tier are interchangeable, which is what the rename denies. Behaviour is unchanged.
+- **`ObserveTool`'s input schema now depends on the backend.** When
+  `ObservationRecorder.storesConfidence()` is `false`, the `confidence` parameter is removed from the
+  schema and omitted from the rendered result, because echoing back a number the backend discarded
+  tells the model its value was kept. The default backend stores confidence, so a deployment running
+  today sees the schema it saw before.
+- **`MemoryAssembly.CAPABILITY_WRITE_PATH` is `CAPABILITY_INGEST`, and its value is `"memory-ingest"`
+  rather than `"memory-write-path"`.** The old key named a direction; what is actually missing is a
+  capability, and it now has four siblings — `memory-snapshot`, `memory-search`, `memory-chat`,
+  `memory-observe` — one per tier the backend does not serve, each with a sentence saying what the
+  deployment loses. `memory-tools` and `memory-redaction` keep their names and values. Degradation
+  keys are public API because a deployment reads them back with `stack.degradations().has(...)`;
+  they are not frozen names, because nothing persists them.
+- **`OrcaMemoryToolProvider` takes a `PeerMemory`** and registers by capability. Its store-taking
+  constructor is gone rather than kept as a convenience: the class is in an internal package
+  (`at.aimon.core.agent.impl.orca.tool`), so it is not part of the published surface and there is no
+  out-of-tree source for a compatibility constructor to keep compiling. A caller holding stores writes
+  `StoreBackedPeerMemory.builder()`.
+- **The three memory tools take a store through a named factory, not a second constructor:**
+  `MemoryRecallTool.overStore(representationStore)`, `MemorySearchTool.overStore(observationStore[,
+  redaction])` and `ObserveTool.overStore(observationStore[, redaction])` replace the store-taking
+  constructors. A store no longer appears in any constructor signature: every constructor left on the
+  three takes a tier. Two of them keep their with-and-without-`RedactionPolicy` pair, which was never
+  the ambiguous axis. `MemoryChatTool` is untouched — it takes a `DialecticEngine` and never had a
+  store constructor to lose, so this is three tools, not the four the memory tool set has.
+
+  Keeping both as constructors would have made a store and a tier overloads of each other: ambiguous
+  for any caller passing a literal `null`, and — the part that matters more — reading as a claim that
+  the two are interchangeable, which is the one thing this whole seam exists to deny.
+  `SnapshotMemoryContextProvider.readerOver(...)` had already made that call for the same reason; the
+  tools now follow it instead of contradicting it.
+- **`TeardownPhase` moves the memory block from the front of shutdown to after `CHECKPOINTS`, and adds
+  `MEMORY_BACKEND` at the end of it.** Declaration order *is* the shutdown order, so this is a behaviour
+  change rather than a rename, and it is listed here for a deployment that depends on the old sequence.
+
+  The old placement fitted the only writer that existed: a CLI hook that dumped the whole transcript
+  into the derivation queue as the process exited. It does not fit a memory fed as executions end —
+  both ingest modes fire while sessions are draining, so a memory block that had already run would
+  hand the last of them a closed backend and a stopped queue. The observable change is that session
+  drain and checkpoint flush now finish *before* the final derivation, which also makes that
+  derivation read a completely written transcript. It can read it at all because the record store is
+  application-scoped and `SESSIONS` does not close it — measured in `AimonStackBuilderTest` rather
+  than assumed, because the design had it as an unverified premise.
+
+- **`AimonStackSpec` rejects `MemorySpec` + `ExecutorSpec.memoryContextProvider` on the wider test.**
+  The guard used to ask whether the spec named a representation store; it now asks whether the spec
+  can produce a snapshot at all, which is the question it meant. A spec naming a `PeerMemory` that
+  serves SNAPSHOT used to slip past it and end up with two injection providers, one silently dropped.
 
 #### Non-breaking
 

@@ -3,7 +3,12 @@ package at.aimon.cli.config;
 import java.util.Locale;
 import java.util.Objects;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.fasterxml.jackson.annotation.JsonProperty;
+
+import at.aimon.core.memory.MemoryIngestMode;
 
 /**
  * CLI-side configuration for the Honcho-analogue peer memory subsystem.
@@ -33,6 +38,8 @@ import com.fasterxml.jackson.annotation.JsonProperty;
  */
 public class MemoryConfig {
 
+    private static final Logger log = LoggerFactory.getLogger(MemoryConfig.class);
+
     /** Durable single-node backend: file-backed JSONL stores ({@code aimon-memory-file}). Default. */
     public static final String BACKEND_FILE = "file";
 
@@ -59,6 +66,18 @@ public class MemoryConfig {
      */
     @JsonProperty("backend")
     private String backend;
+
+    /**
+     * When conversation is fed into memory: {@code off}, {@code session-end} (default) or {@code execution-end}.
+     *
+     * <p>
+     * The default is the CLI's existing behaviour — the whole transcript goes in once, when the REPL exits — so an
+     * upgrade does not quietly multiply anyone's LLM bill. {@code execution-end} feeds each execution's own messages
+     * as it finishes, which is what a memory backend built around a message stream wants and what makes memory
+     * available to the session that is producing it. Unknown values fall back to {@code session-end} with a warning.
+     */
+    @JsonProperty("ingest")
+    private String ingest;
 
     /**
      * Opt-in toggle for the LLM-as-judge {@link at.aimon.core.memory.reconciler.Reconciler}: when true, the
@@ -126,6 +145,43 @@ public class MemoryConfig {
      */
     public String resolvedBackend() {
         return (backend == null || backend.isBlank()) ? BACKEND_FILE : backend.trim().toLowerCase(Locale.ROOT);
+    }
+
+    public String getIngest() {
+        return ingest;
+    }
+
+    public void setIngest(String ingest) {
+        this.ingest = ingest;
+    }
+
+    /**
+     * Returns the ingest mode, defaulting to {@link MemoryIngestMode#SESSION_END} when unset or unrecognized.
+     *
+     * <p>
+     * An unrecognized value falls back rather than failing the boot, and says so — the same shape as the backend
+     * selector. Falling back to the existing behaviour is the conservative half of that choice: a typo cannot turn
+     * ingest off, and it cannot turn on a mode that costs an LLM call per execution either.
+     *
+     * @return the resolved mode, never null
+     */
+    public MemoryIngestMode resolvedIngest() {
+        if (ingest == null || ingest.isBlank()) {
+            return MemoryIngestMode.SESSION_END;
+        }
+        final String normalized = ingest.trim().toLowerCase(Locale.ROOT);
+        switch (normalized) {
+            case "off" :
+                return MemoryIngestMode.OFF;
+            case "session-end" :
+                return MemoryIngestMode.SESSION_END;
+            case "execution-end" :
+                return MemoryIngestMode.EXECUTION_END;
+            default :
+                log.warn("Peer memory: unknown ingest mode '{}', falling back to session-end"
+                        + " (expected off | session-end | execution-end)", ingest);
+                return MemoryIngestMode.SESSION_END;
+        }
     }
 
     public boolean isReconcilerEnabled() {
