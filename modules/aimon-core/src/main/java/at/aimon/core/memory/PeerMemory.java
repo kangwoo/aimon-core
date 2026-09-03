@@ -34,6 +34,27 @@ import at.aimon.core.memory.dialectic.DialecticEngine;
  * because it was handed materials it cannot compute with — is a contract violation, not a representable state; see
  * {@link StoreBackedPeerMemory.Builder#observationStore(ObservationStore)}.
  *
+ * <h2>What the accessors and the signals cost</h2>
+ *
+ * <p>
+ * Every method on this interface, and every capability signal on the tiers it returns
+ * ({@link MemorySearcher#ranksByScore()}, {@link MemorySearcher#narrowsBySession()},
+ * {@link ObservationRecorder#storesConfidence()}), must be <b>cheap, free of side effects, and constant for the life
+ * of the instance</b>. They describe the backend; they do not consult it.
+ *
+ * <p>
+ * That is a requirement rather than an observation, because callers treat it as one and there are more of them than
+ * an adapter author would guess. {@link MemoryCapabilities#of(PeerMemory)} calls all five accessors on every
+ * invocation, and it is called from assembly, from validation, and from two {@code toString()} implementations — so a
+ * single log line asking what a backend is costs five accessor calls. {@code ObserveTool}'s constructor reads
+ * {@code storesConfidence()} three times, because a value needed by two {@code super(...)} arguments cannot be
+ * hoisted above them.
+ *
+ * <p>
+ * An adapter that answered these by asking its server would turn each of those into network traffic, and would do it
+ * on paths whose authors reasonably assumed a field read. The testkit already pins the constant half
+ * ("the accessors are stable"); this paragraph is the other half, which no test can observe.
+ *
  * <h2>Lifecycle</h2>
  *
  * <p>

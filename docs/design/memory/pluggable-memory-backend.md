@@ -1604,6 +1604,14 @@ Step 7 을 8 보다 먼저 두는 이유: Dyad 는 우리가 소스를 갖고 �
    탄다.** 매 실행마다 붙는 지연이며, 실측하지 않았다. 완화책(짧은 TTL 캐시, 비동기 프리페치)은
    **Step 7**(첫 원격 어댑터)에서 수치를 본 뒤 정한다 — 지금 넣으면 최적화할 대상 없이 캐시 무효화
    문제만 산다
+3′. **수집 지연.** §15-3 의 대칭 자리이며 같은 이유로 미실측이다 —
+   `OrcaAgentExecutor.feedExecutionMemory` 는 `execute()` 의 finally 에서 **동기로**
+   `ExecutionMemorySink.afterExecution` 을 부르고, `IngestingExecutionMemorySink` 가 곧바로
+   `MemoryIngestor.ingest` 를 부른다. 원격 어댑터라면 대화 델타 전체를 실은 HTTP POST 가 **실행 스레드
+   위에서** 일어난다(`waitForDerivation=false` 여도 왕복은 남는다). 기본 백엔드에서는 무해하다 —
+   `QueueIngestor` 가 큐에 넣고 즉시 돌아온다. 완화책(비동기 오프로드, 배치)은 §15-3 과 마찬가지로
+   **Step 7 에서 수치를 본 뒤** 정한다. 지금 넣으면 최적화할 대상 없이 순서 보장만 잃는다
+
 4. **`MemoryInjectionMode` 의 원격 매핑 품질.** `FULL` 을 Honcho 의 `max_conclusions` 로, Dyad 의
    `tokens` 로 옮기는 것이 실제로 비슷한 양을 내놓는지는 픽스처로 비교해야 안다 — Step 7·8 의 인수
    조건에 붙일 것

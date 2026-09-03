@@ -217,12 +217,16 @@ public final class ObservationDraft {
         /**
          * Sets the session the fact was recorded in.
          *
+         * <p>
+         * A blank string is folded to absent. "" is not a session, and the two spellings of "none" behaving
+         * differently is how a caller ends up reading '' back out of an error message.
+         *
          * @param sessionId
          *            the session id, or {@code null}
          * @return this builder
          */
         public Builder sessionId(String sessionId) {
-            this.sessionId = sessionId;
+            this.sessionId = (sessionId == null || sessionId.isBlank()) ? null : sessionId;
             return this;
         }
 

@@ -134,6 +134,31 @@ class MemoryTierValueObjectTest {
     }
 
     @Nested
+    @DisplayName("optional session ids")
+    class OptionalSessionIds {
+
+        @Test
+        @DisplayName("a blank session id is folded to absent, so \"\" and null cannot behave differently")
+        void blankFoldsToAbsent() {
+            // Not cosmetic since the searcher started rejecting a named session: left as-is, sessionId("") would
+            // reach that rejection and put a pair of empty quotes in the message.
+            assertThat(MemorySearchQuery.builder().subject(peer(WS, "alice")).query("tea").sessionId("  ").build()
+                    .getSessionId()).isEmpty();
+            assertThat(MemorySnapshotQuery.builder().subject(peer(WS, "alice")).sessionId("").build().getSessionId())
+                    .isEmpty();
+            assertThat(ObservationDraft.builder().subject(peer(WS, "alice")).observer(peer(WS, "bob")).content("x")
+                    .sessionId("").build().getSessionId()).isEmpty();
+        }
+
+        @Test
+        @DisplayName("a real session id is kept exactly")
+        void realSessionIdSurvives() {
+            assertThat(MemorySearchQuery.builder().subject(peer(WS, "alice")).query("tea").sessionId("s-1").build()
+                    .getSessionId()).contains("s-1");
+        }
+    }
+
+    @Nested
     @DisplayName("MemoryHit")
     class Hit {
 
