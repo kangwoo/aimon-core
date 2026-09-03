@@ -28,6 +28,7 @@ import at.aimon.core.agent.session.store.SessionLease;
 import at.aimon.core.agent.session.store.SessionLeaseStore;
 import at.aimon.core.agent.session.store.SessionRecordStore;
 import at.aimon.core.base.Principal;
+import at.aimon.session.routing.fixture.RequestFixtures;
 import at.aimon.session.routing.fixture.TestLiveSession;
 import at.aimon.session.routing.fixture.TestManagerHarness;
 
@@ -121,6 +122,40 @@ class SessionRouterDoorbellCleanupTest {
         }
     }
 
+    @Test
+    @DisplayName("the relay debt goes with the notice, not just the pending mark")
+    void forgettingDropsTheRelayDebtToo() throws Exception {
+        final TestManagerHarness node = node("node-A");
+        final TestManagerHarness releasing = node("node-B");
+        final DefaultSessionRouter router = (DefaultSessionRouter) node.manager();
+        final SessionId id = SessionId.of("c-doorbell-3");
+
+        // The doorbell has to land while this node is the holder *and* busy. Holding is what records the debt to
+        // relay it — only the node that was the holder may pass a doorbell on — and the turn gate is what stops the
+        // drain pass that would otherwise answer it and clear both marks on the spot. Without both, only the pending
+        // mark is ever set here, and half of forgetDoorbell goes unobserved.
+        node.manager().submit(RequestFixtures.submit(id, "alpha", "first"));
+        final TestLiveSession session = awaitSession(node, id);
+        assertThat(session.awaitTurnStarted()).isTrue();
+
+        inbox.deliver(queued(id, "alpha", "hello"));
+        ringDoorbellAsPeer(id);
+        assertThat(awaitNotice(router, id)).isTrue();
+
+        // node-B holds nothing: its release purges the shared inbox and announces EVICT. node-A's turn is still
+        // running, so its entry stays pinned and nothing on node-A re-rings — what the assertion reads is
+        // forgetDoorbell and nothing else.
+        releasing.manager().releaseSession(id);
+
+        assertThat(awaitNoNotice(router, id)).as("a standing relay debt hands a peer a session that was just released")
+                .isTrue();
+
+        // Only after the assertion: ending the turn re-collects, and a re-collect clears both marks by itself —
+        // doing it earlier would hide whichever one forgetDoorbell failed to drop. It also lets the teardown finish
+        // without waiting out the shutdown grace window.
+        session.completeCurrentTurn(TestLiveSession.ok("first-done"));
+    }
+
     // -------------------------------------------------------------------------------------------------------------
     // Fixture
     // -------------------------------------------------------------------------------------------------------------
@@ -142,6 +177,13 @@ class SessionRouterDoorbellCleanupTest {
     private void ringDoorbellAsPeer(SessionId id) {
         bus.publish(SessionSignal.builder().sessionId(id).kind(SessionSignal.SignalKind.MESSAGE_ENQUEUED)
                 .originNodeId("node-Z").build());
+    }
+
+    private static TestLiveSession awaitSession(TestManagerHarness harness, SessionId id) throws InterruptedException {
+        await(() -> harness.session(id) != null);
+        final TestLiveSession session = harness.session(id);
+        assertThat(session).as("a session for %s should have been opened", id).isNotNull();
+        return session;
     }
 
     /** The doorbell is answered on a worker, so the mark it leaves appears a moment after the signal. */

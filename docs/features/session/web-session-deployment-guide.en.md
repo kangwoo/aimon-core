@@ -150,6 +150,7 @@ All defaults live in `SessionRouterBuilder`. The recommended starting points:
 | `onLeaseExtendSucceeded` / `onLeaseExtendFailed` | `LeaseRenewer` per tick | A non-zero `Failed` rate means lease tuning is wrong, or peers are too aggressive |
 | `onSubmitOutcome(SubmitDisposition.Kind)` | After every `submit()` | `EXECUTED_LOCALLY` vs. `FORWARDED` ratio per session hot-spot |
 | `onHolderLossRecovered` | Holder-loss sweeper after winning the CAS | Counts cluster-wide crashes recovered. **Should be near zero in steady state.** |
+| `onForwardDoorbellRerung` | Forward poll, on every tick where the awaited message is still uncollected | Somebody is waiting on a message no node has taken out of the inbox. **Retries, not recoveries** — ordinary queueing raises it too, and a successful takeover is what makes it stop, so alert on a rate that does not fall. |
 
 ### Micrometer adapter recipe
 

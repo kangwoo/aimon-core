@@ -1641,8 +1641,10 @@ public final class DefaultSessionRouter implements SessionRouter {
      * <p>
      * Called after the purge at every call site, which leaves the same narrow window the delete path already accepts:
      * a message delivered between the purge and this call loses its local notice. Its own {@code MESSAGE_ENQUEUED} is
-     * what rings again — through {@link #onSignal} when a peer sent it — and the session's next submission collects it
-     * either way, because every turn re-collects before it starts.
+     * a one-shot and is already spent by then — it is what set the mark — so what rings again is the forward whose
+     * node is still waiting on that message: {@link #pollForward} re-rings once per interval until somebody collects
+     * it. Only a message nobody is waiting on falls through to the session's next submission, which is the gap design
+     * §14 records.
      *
      * @param sessionId
      *            the session whose doorbell marks are no longer worth keeping
@@ -2129,8 +2131,13 @@ public final class DefaultSessionRouter implements SessionRouter {
         // recover either, but it is no longer unrecovered: the pass that collected it names itself on the reservation
         // before running it — see takeOverReservation — so the sweeper reports that death as HOLDER_LOST instead of
         // leaving the caller here to its deadline.)
-        // The check also keeps this path from resurrecting a session a peer deleted: delete purges the inbox, so the
-        // retry goes quiet even in the window before that peer's EVICT arrives to fail this forward outright.
+        // The check also keeps this path away from a session a peer deleted — for every message that delete's purge
+        // removed, the inbox reads empty and the retry goes quiet before the peer's EVICT even arrives to fail this
+        // forward outright. It is not a guarantee against resurrection: a message delivered between that purge and the
+        // record delete is still queued, and a drain pass provisions the record back (see deleteSession's finally).
+        // What closes that window is the EVICT, which fails this forward well inside one poll interval, and the retry
+        // inherits the window rather than widening it — any peer hearing that message's own MESSAGE_ENQUEUED drains it
+        // exactly the same way.
         //
         // A failing inbox read rings anyway. Being unable to see the queue is not evidence the queue is empty, and
         // the cost of guessing wrong here is one drain pass against a lease its holder is still renewing.

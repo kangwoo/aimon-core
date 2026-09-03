@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -16,10 +17,14 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import at.aimon.core.agent.queue.QueuedInputPriority;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.exception.SessionInboxException;
 import at.aimon.core.agent.session.idempotency.IdempotencyStore;
 import at.aimon.core.agent.session.idempotency.InMemoryIdempotencyStore;
 import at.aimon.core.agent.session.inbox.InMemorySessionInbox;
+import at.aimon.core.agent.session.inbox.InboundMessage;
+import at.aimon.core.agent.session.inbox.InboundMessageId;
 import at.aimon.core.agent.session.inbox.SessionInbox;
 import at.aimon.core.agent.session.signal.InMemorySignalBus;
 import at.aimon.core.agent.session.signal.SessionSignalBus;
@@ -191,6 +196,27 @@ class SessionRouterOrphanedForwardTest {
         }
     }
 
+    @Test
+    @DisplayName("an inbox that cannot say whether it is empty is re-rung anyway")
+    void anUnreadableInboxIsRungAnyway() throws Exception {
+        // Replaced before the node is built, so the manager sees only the blinded inbox.
+        inbox = new BlindInbox(inbox);
+        final RecordingSessionMetrics metrics = new RecordingSessionMetrics();
+        final TestManagerHarness node = node("node-A",
+                b -> b.metrics(metrics).idempotencySecondaryTtl(Duration.ofSeconds(1)));
+        final SessionId id = SessionId.of("c-orphan-5");
+
+        final SessionLease outsider = leaseStore.tryAcquire(id, "outsider", Duration.ofSeconds(30)).orElseThrow();
+        try {
+            final SubmitDisposition forwarded = node.manager().submit(RequestFixtures.submit(id, "alpha", "queued"));
+            assertThat(forwarded.getKind()).isEqualTo(SubmitDisposition.Kind.FORWARDED);
+            assertThat(awaitRetries(metrics, 1))
+                    .as("being unable to see the queue is not evidence that the queue is empty").isTrue();
+        } finally {
+            leaseStore.release(outsider);
+        }
+    }
+
     // -------------------------------------------------------------------------------------------------------------
     // Fixture
     // -------------------------------------------------------------------------------------------------------------
@@ -233,6 +259,39 @@ class SessionRouterOrphanedForwardTest {
             return e.getCause();
         } catch (TimeoutException e) {
             throw new AssertionError("the stage was never settled", e);
+        }
+    }
+
+    /**
+     * An inbox that delivers and collects normally but cannot answer {@code isEmpty} — the shape of a backend blip
+     * against the one check that decides whether the retry fires.
+     */
+    private static final class BlindInbox implements SessionInbox {
+
+        private final SessionInbox delegate;
+
+        BlindInbox(SessionInbox delegate) {
+            this.delegate = Objects.requireNonNull(delegate, "delegate must not be null");
+        }
+
+        @Override
+        public InboundMessageId deliver(InboundMessage message) {
+            return delegate.deliver(message);
+        }
+
+        @Override
+        public List<InboundMessage> collect(SessionId id, QueuedInputPriority maxPriority) {
+            return delegate.collect(id, maxPriority);
+        }
+
+        @Override
+        public boolean isEmpty(SessionId id) {
+            throw new SessionInboxException("inbox backend is unreachable");
+        }
+
+        @Override
+        public void purge(SessionId id) {
+            delegate.purge(id);
         }
     }
 }
