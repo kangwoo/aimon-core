@@ -218,9 +218,14 @@ public final class MemoryAssembly {
                     "Per-caller memory injects a memory part into the prompt but registers no memory tools: they read"
                             + " their observer from the tool context, and the enricher that supplies it binds one"
                             + " fixed peer. The model can be told what memory says and cannot query or add to it.");
-        } else if (toolProvider != null && spec.getRedactionPolicy().isEmpty()
-                && (capabilities.contains(MemoryCapability.OBSERVE)
-                        || capabilities.contains(MemoryCapability.INGEST))) {
+        }
+        // Its own condition, not an else-branch of the one above: whether the tools were registered has nothing to do
+        // with whether text reaches the backend unmasked. Chained to it, a backend serving INGEST and no tool
+        // capability fell through both — the tools branch wants SNAPSHOT and this one wanted a tool provider — and a
+        // whole conversation flowed out verbatim with nothing said about it. §5.2's condition is the capability
+        // alone.
+        if (spec.getRedactionPolicy().isEmpty() && (capabilities.contains(MemoryCapability.OBSERVE)
+                || capabilities.contains(MemoryCapability.INGEST))) {
             degradations.add(CAPABILITY_REDACTION,
                     "The '" + backend.backendId() + "' memory backend runs without a redaction policy, so whatever the"
                             + " model is told to observe — and whatever conversation is fed in — is persisted"

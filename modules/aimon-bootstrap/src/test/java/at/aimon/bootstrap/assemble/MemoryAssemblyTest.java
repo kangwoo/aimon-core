@@ -155,6 +155,21 @@ class MemoryAssemblyTest {
     }
 
     @Test
+    @DisplayName("an INGEST-only backend with no policy is recorded too — the loudest case used to be the silent one")
+    void unredactedIngestOnlyBackendIsDegraded() {
+        // It serves no tool capability, so no tool provider is built. While this shared an else-branch with the
+        // memory-tools degradation, that made both conditions false and a whole conversation left the process
+        // unmasked with nothing said about it — the one combination where the warning matters most.
+        final MemorySpec spec = MemorySpec.forPeer(WORKSPACE, PEER).peerMemory(new IngestOnlyBackend())
+                .ingestMode(MemoryIngestMode.EXECUTION_END).build();
+
+        final MemoryAssembly assembly = MemoryAssembly.from(spec, degradations);
+
+        assertThat(assembly.getToolProvider()).isEmpty();
+        assertThat(degradations.build().has(MemoryAssembly.CAPABILITY_REDACTION)).isTrue();
+    }
+
+    @Test
     @DisplayName("no redaction degradation when there is nothing to write")
     void noRedactionDegradationWithoutAWritePath() {
         final MemorySpec spec = MemorySpec.forPeer(WORKSPACE, PEER).representationStore(mock(RepresentationStore.class))
@@ -272,6 +287,40 @@ class MemoryAssemblyTest {
                 .redactionPolicy(mock(RedactionPolicy.class)).build();
 
         assertThat(MemoryAssembly.from(spec, degradations).getIngestor()).isPresent();
+    }
+
+    /** Serves INGEST and nothing else — a write path with no tool capability anywhere near it. */
+    private static final class IngestOnlyBackend implements PeerMemory {
+
+        @Override
+        public String backendId() {
+            return "ingest-only";
+        }
+
+        @Override
+        public Optional<MemorySnapshotReader> snapshotReader() {
+            return Optional.empty();
+        }
+
+        @Override
+        public Optional<MemorySearcher> searcher() {
+            return Optional.empty();
+        }
+
+        @Override
+        public Optional<DialecticEngine> dialecticEngine() {
+            return Optional.empty();
+        }
+
+        @Override
+        public Optional<ObservationRecorder> observationRecorder() {
+            return Optional.empty();
+        }
+
+        @Override
+        public Optional<MemoryIngestor> ingestor() {
+            return Optional.of(request -> MemoryIngestReceipt.builder().accepted(request.getMessages().size()).build());
+        }
     }
 
     /** Serves CHAT and nothing else — the shape that used to have no way to register a tool. */
