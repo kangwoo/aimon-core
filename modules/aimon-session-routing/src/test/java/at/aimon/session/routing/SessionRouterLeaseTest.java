@@ -47,7 +47,7 @@ class SessionRouterLeaseTest {
         assertThat(session.awaitTurnStarted()).isTrue();
 
         // Wait for several extend ticks to demonstrate ongoing renewal.
-        final long deadline = System.currentTimeMillis() + 1_000L;
+        final long deadline = System.currentTimeMillis() + TestLiveSession.DEFAULT_AWAIT_MS;
         while (scriptableLock.extendCalls() < 3 && System.currentTimeMillis() < deadline) {
             Thread.sleep(20);
         }
@@ -66,11 +66,11 @@ class SessionRouterLeaseTest {
 
         // Let the manager's turn loop unwind.
         session.completeCurrentTurn(TestLiveSession.ok("done"));
-        outcome.getFuture().toCompletableFuture().get(2, TimeUnit.SECONDS);
+        outcome.getFuture().toCompletableFuture().get(TestLiveSession.DEFAULT_AWAIT_MS, TimeUnit.MILLISECONDS);
     }
 
     private TestLiveSession waitForSession(SessionId id) throws InterruptedException {
-        final long deadline = System.currentTimeMillis() + 1_000L;
+        final long deadline = System.currentTimeMillis() + TestLiveSession.DEFAULT_AWAIT_MS;
         while (harness.session(id) == null && System.currentTimeMillis() < deadline) {
             Thread.sleep(10);
         }

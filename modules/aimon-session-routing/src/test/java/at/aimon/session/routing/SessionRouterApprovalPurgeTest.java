@@ -138,7 +138,8 @@ class SessionRouterApprovalPurgeTest {
                 .originNodeId("node-B").payload(Map.of("reason", InterruptReason.SESSION_RELEASED.name())).build());
 
         // The handler purges before it completes the publisher, so onComplete means the purge has already run.
-        assertThat(terminated.await(2, TimeUnit.SECONDS)).as("EVICT must reach the handler").isTrue();
+        assertThat(terminated.await(TestLiveSession.DEFAULT_AWAIT_MS, TimeUnit.MILLISECONDS))
+                .as("EVICT must reach the handler").isTrue();
         assertThat(approvals.get(id, SKILL)).isEmpty();
     }
 
