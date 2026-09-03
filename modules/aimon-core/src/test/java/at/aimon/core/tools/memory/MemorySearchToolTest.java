@@ -37,7 +37,7 @@ class MemorySearchToolTest {
     @BeforeEach
     void setUp() {
         store = new InMemoryObservationStore();
-        tool = new MemorySearchTool(store);
+        tool = MemorySearchTool.overStore(store);
     }
 
     @Test
@@ -137,7 +137,7 @@ class MemorySearchToolTest {
                 return List.of();
             }
         };
-        MemorySearchTool secured = new MemorySearchTool(spy, new DefaultRedactionPolicy());
+        MemorySearchTool secured = MemorySearchTool.overStore(spy, new DefaultRedactionPolicy());
 
         ToolResult result = secured
                 .execute(ToolInput.of(Map.of("query", "look up token AKIAIOSFODNN7EXAMPLE for alice")), context(ALICE));

@@ -20,6 +20,13 @@ public enum MemoryIngestMode {
      * <p>
      * No delta is computed, so nothing can be sent twice — the transcript goes across exactly once. The cost is
      * latency: nothing a session learns is available to it while it is running.
+     *
+     * <p>
+     * IMPORTANT: <b>this mode is an obligation on the caller, not a seam the stack installs.</b> Session close is not
+     * something the executor sees, so the assembly wires nothing for it: whoever assembles the stack must take the
+     * backend's {@link MemoryIngestor} and hand it the transcript itself when a session ends, as the CLI's
+     * shutdown-phase runnable does. Choosing this mode and wiring no such path is a memory that reports every
+     * capability present and never fills. {@link #EXECUTION_END} is the mode where the stack does the feeding.
      */
     SESSION_END,
 

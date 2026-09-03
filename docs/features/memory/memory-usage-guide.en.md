@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/memory/memory-usage-guide.md
-source_commit: 454a51b
+source_commit: 85a7061
 ---
 
 # Memory (Peer Memory) Usage Guide
@@ -569,10 +569,10 @@ queue.start();
 DialecticEngine dialectic = new LlmDialecticEngine(llmClient, observationStore, modelName);
 
 // 6) registering the tools (ToolRegistry)
-registry.register(new MemorySearchTool(observationStore, redaction));
-registry.register(new ObserveTool(observationStore, redaction));
+registry.register(MemorySearchTool.overStore(observationStore, redaction));
+registry.register(ObserveTool.overStore(observationStore, redaction));
 registry.register(new MemoryChatTool(dialectic));
-registry.register(new MemoryRecallTool(representationStore));
+registry.register(MemoryRecallTool.overStore(representationStore));
 
 // 7) automatic ToolContext filling + automatic system-prompt injection
 ToolContextEnricher enricher = new MemoryToolContextEnricher(workspace, observer);   // pass to the executor factory

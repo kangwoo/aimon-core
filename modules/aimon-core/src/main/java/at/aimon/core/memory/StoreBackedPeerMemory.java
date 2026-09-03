@@ -74,8 +74,12 @@ public final class StoreBackedPeerMemory implements PeerMemory {
                 : new StoreObservationRecorder(builder.observationStore);
         this.ingestor = builder.derivationQueue == null ? null : new QueueIngestor(builder.derivationQueue);
 
+        // All five tiers, not the four that happen to be distinguishable today: OBSERVE and SEARCH both come from the
+        // observation store, so leaving the recorder out of this test is currently equivalent and would stop being so
+        // the moment OBSERVE gains a material of its own. The check is written to the question it is asking — "does
+        // this backend serve anything at all" — rather than to the shape of today's materials.
         if (this.snapshotReader == null && this.searcher == null && this.dialecticEngine == null
-                && this.ingestor == null) {
+                && this.observationRecorder == null && this.ingestor == null) {
             throw new IllegalArgumentException("A store-backed memory needs at least one material — with none it"
                     + " serves no capability at all and is indistinguishable from having no memory configured");
         }

@@ -573,10 +573,17 @@ public class AgentSetupFactory {
         try {
             stack = AimonStackBuilder.build(spec);
         } catch (RuntimeException e) {
-            // These two predate the stack, so they are on nobody's teardown plan yet; everything the builder itself
-            // created is released by its own failure path.
+            // These three predate the stack, so they are on nobody's teardown plan yet; everything the builder itself
+            // created is released by its own failure path. The queue joined the list when it became a material of the
+            // memory backend and had to be built ahead of MemorySpec: buildDerivationQueue starts its worker pool, so
+            // a boot that fails here would otherwise leave one running for the life of the process.
             closeSuppressing(graalJsEngines, e);
             closeSuppressing(skillHookShell, e);
+            if (memoryQueue != null) {
+                // Guarded rather than left to closeSuppressing's null check, for the reason enrollMemorySubsystem
+                // gives: a method reference on a null receiver throws before the call is ever made.
+                closeSuppressing(memoryQueue::stop, e);
+            }
             throw e;
         }
         return decorate(config, stack, agentBundle, fileSystem, skillHookShell, graalJsEngines,

@@ -338,6 +338,14 @@ public final class MemorySpec {
         /**
          * Sets when conversation is fed into the backend. Defaults to {@link MemoryIngestMode#OFF}.
          *
+         * <p>
+         * Only {@link MemoryIngestMode#EXECUTION_END} makes the stack feed anything. Under
+         * {@link MemoryIngestMode#SESSION_END} the assembly installs no seam — session close is not an event the
+         * executor sees — and the caller must drive it, taking the tier from
+         * {@code MemoryAssembly.getIngestor()} and handing it the transcript when a session ends. Choosing
+         * {@code SESSION_END} without wiring that is a memory that reports no missing capability and never fills; the
+         * assembly cannot detect it, which is why it is said here, where the choice is made.
+         *
          * @param ingestMode
          *            the mode, or {@code null} for the default
          * @return this builder

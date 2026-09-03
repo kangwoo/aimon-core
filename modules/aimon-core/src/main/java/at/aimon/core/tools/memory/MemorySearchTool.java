@@ -72,25 +72,64 @@ public final class MemorySearchTool extends AbstractTool {
     static final int DEFAULT_TOP_K = 10;
     static final int MAX_TOP_K = 50;
 
+    /**
+     * What the model is told this tool returns.
+     *
+     * <p>
+     * It used to promise "raw observation snippets (with confidence scores)" flatly. Confidence is a per-hit signal
+     * ({@link MemoryHit#isConfidenceAvailable()}), so a backend that does not store one produces a render with no
+     * confidence in it at all — and the model had been told otherwise before it ever called. The sentence is written
+     * to the width of the weakest backend instead, which is the same rule {@code ObserveTool} follows when it drops
+     * the parameter a backend cannot store.
+     *
+     * <p>
+     * Unlike there, the wording cannot vary by backend: no tier-level question answers "will hits carry confidence",
+     * and inventing one would put a second source of truth beside the per-hit flag — the thing this SPI exists to
+     * avoid.
+     */
+    private static final String DESCRIPTION = "Search a peer's stored observations by keyword or semantic similarity. "
+            + "Use this when you need raw observation snippets rather than a synthesized answer. Returns up to top_k "
+            + "matching observations, most relevant first, each with its kind and — where the memory backend stores "
+            + "one — its confidence.";
+
     private static final Logger log = LoggerFactory.getLogger(MemorySearchTool.class);
 
     private final MemorySearcher searcher;
     private final RedactionPolicy redactionPolicy;
 
-    public MemorySearchTool(ObservationStore observationStore) {
-        this(observationStore, null);
+    /**
+     * Creates a search tool over an {@link ObservationStore}, for callers assembling the default backend by hand.
+     *
+     * @param observationStore
+     *            backing store (must not be null)
+     * @return a search tool on the SEARCH tier that store provides
+     * @throws NullPointerException
+     *             if {@code observationStore} is null
+     */
+    public static MemorySearchTool overStore(ObservationStore observationStore) {
+        return overStore(observationStore, null);
     }
 
     /**
-     * Creates a search tool on an {@link ObservationStore}, for callers assembling the default backend by hand.
+     * Creates a search tool over an {@link ObservationStore}, for callers assembling the default backend by hand.
+     *
+     * <p>
+     * Named factories rather than a second pair of constructors: see {@link MemoryRecallTool#overStore} for why the
+     * store and the tier must not become overloads of each other.
      *
      * @param observationStore
      *            backing store (must not be null)
      * @param redactionPolicy
      *            optional policy applied to the query before searching; {@code null} to disable
+     * @return a search tool on the SEARCH tier that store provides
+     * @throws NullPointerException
+     *             if {@code observationStore} is null
      */
-    public MemorySearchTool(ObservationStore observationStore, RedactionPolicy redactionPolicy) {
-        this(searcherFor(observationStore), redactionPolicy);
+    public static MemorySearchTool overStore(ObservationStore observationStore, RedactionPolicy redactionPolicy) {
+        Objects.requireNonNull(observationStore, "observationStore cannot be null");
+        return new MemorySearchTool(
+                StoreBackedPeerMemory.builder().observationStore(observationStore).build().searcher().orElseThrow(),
+                redactionPolicy);
     }
 
     /**
@@ -112,18 +151,9 @@ public final class MemorySearchTool extends AbstractTool {
      *            optional policy applied to the query before searching; {@code null} to disable
      */
     public MemorySearchTool(MemorySearcher searcher, RedactionPolicy redactionPolicy) {
-        super(TOOL_NAME,
-                "Search a peer's stored observations by keyword or semantic similarity. "
-                        + "Use this when you need raw observation snippets (with confidence scores) "
-                        + "rather than a synthesized answer. Returns up to top_k matching observations.",
-                createInputSchema());
+        super(TOOL_NAME, DESCRIPTION, createInputSchema());
         this.searcher = Objects.requireNonNull(searcher, "searcher cannot be null");
         this.redactionPolicy = redactionPolicy;
-    }
-
-    private static MemorySearcher searcherFor(ObservationStore observationStore) {
-        Objects.requireNonNull(observationStore, "observationStore cannot be null");
-        return StoreBackedPeerMemory.builder().observationStore(observationStore).build().searcher().orElseThrow();
     }
 
     private static Map<String, Object> createInputSchema() {

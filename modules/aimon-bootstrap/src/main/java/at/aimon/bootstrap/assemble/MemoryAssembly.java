@@ -289,7 +289,13 @@ public final class MemoryAssembly {
     }
 
     /**
-     * Returns the tier conversation is fed into at the end of an execution.
+     * Returns the tier conversation is fed into.
+     *
+     * <p>
+     * This is the hook a front end running {@link MemoryIngestMode#SESSION_END} drives itself: the assembly installs
+     * no seam for session close, because closing a session is not an event the executor sees. Under
+     * {@link MemoryIngestMode#EXECUTION_END} the stack feeds this same tier through
+     * {@link #getExecutionMemorySink()} and a caller has nothing to do.
      *
      * @return the ingestor, or empty when the backend cannot ingest
      */

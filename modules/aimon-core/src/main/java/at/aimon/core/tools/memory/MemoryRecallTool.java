@@ -79,6 +79,21 @@ public final class MemoryRecallTool extends AbstractTool {
     /** Optional session id correlating this recall to a specific session. */
     public static final ToolContextKey<String> SESSION_ID_KEY = MemoryToolContextKeys.SESSION_ID;
 
+    /**
+     * What the model is told this tool returns.
+     *
+     * <p>
+     * "Returns the summary plus the observations the snapshot was built from" was true of the store-backed backend
+     * and of no other: a backend that computes its snapshot on read has no individual observations to hand over, and
+     * says so through {@link MemorySnapshot#isObservationsAvailable()}. The render already reports that case in a
+     * line of its own; the description is widened to match it so the two do not disagree before the first call.
+     */
+    private static final String DESCRIPTION = "Recall the latest insight snapshot about a peer so it can be injected "
+            + "into the reasoning context. Use this when you need a quick portrait of who the peer is, what they "
+            + "prefer, and what has been observed about them across sessions. Returns the summary and, where the "
+            + "memory backend exposes them, the observations behind it; honours an optional max_tokens budget by "
+            + "dropping observations when the snapshot is too large.";
+
     private static final Logger log = LoggerFactory.getLogger(MemoryRecallTool.class);
 
     private final MemorySnapshotReader snapshotReader;
@@ -90,30 +105,30 @@ public final class MemoryRecallTool extends AbstractTool {
      *            the tier snapshots are read from (must not be null)
      */
     public MemoryRecallTool(MemorySnapshotReader snapshotReader) {
-        super(TOOL_NAME,
-                "Recall the latest insight snapshot about a peer so it can be injected "
-                        + "into the reasoning context. Use this when you need a quick portrait of who the peer is, "
-                        + "what they prefer, and what has been observed about them across sessions. "
-                        + "Returns the summary plus the observations the snapshot was built from; honours an "
-                        + "optional max_tokens budget by dropping observations when the snapshot is too large.",
-                createInputSchema());
+        super(TOOL_NAME, DESCRIPTION, createInputSchema());
         this.snapshotReader = Objects.requireNonNull(snapshotReader, "snapshotReader cannot be null");
     }
 
     /**
-     * Creates a recall tool on a {@link RepresentationStore}, for callers assembling the default backend by hand.
+     * Creates a recall tool over a {@link RepresentationStore}, for callers assembling the default backend by hand.
+     *
+     * <p>
+     * A named factory rather than a second constructor, for the reason
+     * {@link at.aimon.core.memory.SnapshotMemoryContextProvider#readerOver} gives: two constructors taking unrelated
+     * interfaces are ambiguous for any caller passing a {@code null}, and — worse than the compile error — they read
+     * as saying a store and a tier are interchangeable, which is the one thing the tier SPI exists to deny. The
+     * altitude is in the name instead.
      *
      * @param representationStore
      *            backing store (must not be null)
+     * @return a recall tool on the SNAPSHOT tier that store provides
+     * @throws NullPointerException
+     *             if {@code representationStore} is null
      */
-    public MemoryRecallTool(RepresentationStore representationStore) {
-        this(readerFor(representationStore));
-    }
-
-    private static MemorySnapshotReader readerFor(RepresentationStore representationStore) {
+    public static MemoryRecallTool overStore(RepresentationStore representationStore) {
         Objects.requireNonNull(representationStore, "representationStore cannot be null");
-        return StoreBackedPeerMemory.builder().representationStore(representationStore).build().snapshotReader()
-                .orElseThrow();
+        return new MemoryRecallTool(StoreBackedPeerMemory.builder().representationStore(representationStore).build()
+                .snapshotReader().orElseThrow());
     }
 
     private static Map<String, Object> createInputSchema() {

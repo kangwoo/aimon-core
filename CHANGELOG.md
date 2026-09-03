@@ -1009,8 +1009,17 @@ Replacement for a caller that used it to read a result: none is needed at the ca
   constructor is gone rather than kept as a convenience: the class is in an internal package
   (`at.aimon.core.agent.impl.orca.tool`), so it is not part of the published surface and there is no
   out-of-tree source for a compatibility constructor to keep compiling. A caller holding stores writes
-  `StoreBackedPeerMemory.builder()`. The three memory *tools* do keep their store-taking constructors —
-  those are public API and §11.2 says so.
+  `StoreBackedPeerMemory.builder()`.
+- **The three memory tools take a store through a named factory, not a second constructor:**
+  `MemoryRecallTool.overStore(representationStore)`, `MemorySearchTool.overStore(observationStore[,
+  redaction])` and `ObserveTool.overStore(observationStore[, redaction])` replace the store-taking
+  constructors. Each tool now has exactly one constructor, and it takes the tier.
+
+  Keeping both as constructors would have made a store and a tier overloads of each other: ambiguous
+  for any caller passing a literal `null`, and — the part that matters more — reading as a claim that
+  the two are interchangeable, which is the one thing this whole seam exists to deny.
+  `SnapshotMemoryContextProvider.readerOver(...)` had already made that call for the same reason; the
+  tools now follow it instead of contradicting it.
 - **`TeardownPhase` moves the memory block from the front of shutdown to after `CHECKPOINTS`, and adds
   `MEMORY_BACKEND` at the end of it.** Declaration order *is* the shutdown order, so this is a behaviour
   change rather than a rename, and it is listed here for a deployment that depends on the old sequence.

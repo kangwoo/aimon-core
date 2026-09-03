@@ -1133,20 +1133,21 @@ public class OrcaAgentExecutor
                 transcriptBuffer.endTurn();
             }
             transcriptManager.saveSilently(transcriptBuffer);
+            // After the persist and on the consumed side of the re-arm below, for the same reason the persist is —
+            // see feedExecutionMemory, which owes an interrupted turn a feed a live flag would deny it.
+            feedExecutionMemory(scope);
             // The flag is only SWALLOWED when the turn already reported the cancellation as
             // CompletionReason.INTERRUPTED — the result carries that news, so a poisoned thread would add nothing and
             // an embedder driving turns from a reused worker would just see its next blocking call fail. On every
             // other outcome the caller asked this thread to stop and nothing else recorded the request, so eating it
-            // would silently break their cancellation protocol: re-arm it. Doing so after saveSilently keeps the
-            // persist protected either way.
+            // would silently break their cancellation protocol: re-arm it. Last of all, so neither the persist nor
+            // the memory feed runs under a flag the caller is owed rather than one either of them set.
             if (scope.interruptConsumed && !finalisedAsInterrupted(turnResult)) {
                 log.debug("Re-arming the caller's interrupt: turn {} finalised as {}, not INTERRUPTED",
                         transcriptBuffer.getSessionId().value(),
                         turnResult == null ? "an exception" : turnResult.getCompletionReason());
                 Thread.currentThread().interrupt();
             }
-            // Last, and after the persist — see feedExecutionMemory for why an interrupted turn still feeds.
-            feedExecutionMemory(scope);
         }
     }
 
@@ -1188,6 +1189,14 @@ public class OrcaAgentExecutor
      * An interrupted or failed execution feeds too, and that is deliberate — what was said still happened, and a
      * backend that only ever saw the executions that finished cleanly would hold a version of the conversation nobody
      * had.
+     *
+     * <p>
+     * <b>That promise is what fixes where the call sits.</b> It runs while the interrupt flag is still consumed, in
+     * the same window the persist runs in, and before the caller's interrupt is re-armed. A sink is contracted to be
+     * quick and to swallow its own failures; it is not contracted to be uninterruptible, and the remote backends this
+     * seam exists for reach a network. Called after the re-arm, an interruptible call inside such a sink would throw
+     * on entry for precisely the interrupted turns this method promises to feed — and a sink that caught the
+     * {@link InterruptedException} without restoring the flag would erase a cancellation the caller was owed.
      *
      * <p>
      * The delta comes from the mark set at the top of {@code execute()}, and is empty when the history was rewritten

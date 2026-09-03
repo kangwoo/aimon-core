@@ -35,7 +35,7 @@ class ObserveToolTest {
     @BeforeEach
     void setUp() {
         store = new InMemoryObservationStore();
-        tool = new ObserveTool(store);
+        tool = ObserveTool.overStore(store);
     }
 
     @Test
@@ -277,7 +277,7 @@ class ObserveToolTest {
     @Test
     @DisplayName("redaction policy rewrites content and stamps metadata")
     void redactionRewritesContent() {
-        ObserveTool secured = new ObserveTool(store, new DefaultRedactionPolicy());
+        ObserveTool secured = ObserveTool.overStore(store, new DefaultRedactionPolicy());
 
         ToolResult result = secured.execute(ToolInput.of(Map.of("content", "alice token is AKIAIOSFODNN7EXAMPLE")),
                 context());

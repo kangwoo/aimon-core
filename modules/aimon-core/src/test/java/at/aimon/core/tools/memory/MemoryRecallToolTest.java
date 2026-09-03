@@ -36,7 +36,7 @@ class MemoryRecallToolTest {
     @BeforeEach
     void setUp() {
         store = new InMemoryRepresentationStore();
-        tool = new MemoryRecallTool(store);
+        tool = MemoryRecallTool.overStore(store);
     }
 
     @Test

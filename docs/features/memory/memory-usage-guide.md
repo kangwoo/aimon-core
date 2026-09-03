@@ -561,10 +561,10 @@ queue.start();
 DialecticEngine dialectic = new LlmDialecticEngine(llmClient, observationStore, modelName);
 
 // 6) 도구 등록 (ToolRegistry)
-registry.register(new MemorySearchTool(observationStore, redaction));
-registry.register(new ObserveTool(observationStore, redaction));
+registry.register(MemorySearchTool.overStore(observationStore, redaction));
+registry.register(ObserveTool.overStore(observationStore, redaction));
 registry.register(new MemoryChatTool(dialectic));
-registry.register(new MemoryRecallTool(representationStore));
+registry.register(MemoryRecallTool.overStore(representationStore));
 
 // 7) ToolContext 자동 채움 + system prompt 자동 주입
 ToolContextEnricher enricher = new MemoryToolContextEnricher(workspace, observer);   // executor factory 에 전달

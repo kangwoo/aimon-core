@@ -119,25 +119,37 @@ public final class ObserveTool extends AbstractTool {
     private final boolean storesConfidence;
 
     /**
-     * Creates an observe tool on an {@link ObservationStore}, for callers assembling the default backend by hand.
+     * Creates an observe tool over an {@link ObservationStore}, for callers assembling the default backend by hand.
      *
      * @param observationStore
      *            backing store (must not be null)
+     * @return an observe tool on the OBSERVE tier that store provides
+     * @throws NullPointerException
+     *             if {@code observationStore} is null
      */
-    public ObserveTool(ObservationStore observationStore) {
-        this(observationStore, null);
+    public static ObserveTool overStore(ObservationStore observationStore) {
+        return overStore(observationStore, null);
     }
 
     /**
-     * Creates an observe tool on an {@link ObservationStore}, for callers assembling the default backend by hand.
+     * Creates an observe tool over an {@link ObservationStore}, for callers assembling the default backend by hand.
+     *
+     * <p>
+     * Named factories rather than a second pair of constructors: see {@link MemoryRecallTool#overStore} for why the
+     * store and the tier must not become overloads of each other.
      *
      * @param observationStore
      *            backing store (must not be null)
      * @param redactionPolicy
      *            optional policy applied to {@code content} before persistence; {@code null} to disable
+     * @return an observe tool on the OBSERVE tier that store provides
+     * @throws NullPointerException
+     *             if {@code observationStore} is null
      */
-    public ObserveTool(ObservationStore observationStore, RedactionPolicy redactionPolicy) {
-        this(recorderFor(observationStore), redactionPolicy);
+    public static ObserveTool overStore(ObservationStore observationStore, RedactionPolicy redactionPolicy) {
+        Objects.requireNonNull(observationStore, "observationStore cannot be null");
+        return new ObserveTool(StoreBackedPeerMemory.builder().observationStore(observationStore).build()
+                .observationRecorder().orElseThrow(), redactionPolicy);
     }
 
     /**
@@ -163,12 +175,6 @@ public final class ObserveTool extends AbstractTool {
         this.recorder = recorder;
         this.redactionPolicy = redactionPolicy;
         this.storesConfidence = recorder.storesConfidence();
-    }
-
-    private static ObservationRecorder recorderFor(ObservationStore observationStore) {
-        Objects.requireNonNull(observationStore, "observationStore cannot be null");
-        return StoreBackedPeerMemory.builder().observationStore(observationStore).build().observationRecorder()
-                .orElseThrow();
     }
 
     private static boolean storesConfidence(ObservationRecorder recorder) {
