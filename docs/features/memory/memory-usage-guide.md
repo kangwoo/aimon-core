@@ -54,7 +54,11 @@ Workspace            테넌트 격리 단위 (멀티테넌트의 루트)
 - **`Workspace`** — `Workspace.builder().id("default").build()`
 - **`PeerView`** — `PeerView.of(workspace, Principal.user("ops-bot", "Ops Bot"))`
   - `subject` = 사실의 *대상* / `observer` = *관찰한 주체*. CLI 기본 배선에서는 `subject == observer`(에이전트 자신).
-- **`Observation`** — `ObservationType` 은 `EXPLICIT`(직접 진술) 또는 `DEDUCTIVE`(추론). `confidence` 는 `[0,1]`.
+- **`Observation`** — `ObservationType` 은 **네 값**(`EXPLICIT` 직접 진술 / `DEDUCTIVE` 추론 /
+  `INDUCTIVE` 반복된 근거에서의 일반화 / `CONTRADICTION` 충돌 기록). `confidence` 는 `[0,1]`.
+  **트리 안의 생산자 셋(`Observe` 도구 · deriver 도구 · `LlmDeriver`)은 앞의 둘만 만든다** — 뒤의 두 값은
+  자기 분류가 더 촘촘한 백엔드를 위한 자리이고, 세 생산자는 광고하지 않은 값을 거절한다.
+  **읽는 쪽은 다르다**: 저장소는 네 값을 전부 받아야 한다(아래 §11.3).
 - **`Representation`** — `isGlobal()`(observer==null, 세션 무관) / `isLocal()`(observer·session 바인딩) 으로 범위가 갈립니다.
 
 > 모든 ID 기반 store API 는 `Workspace` 또는 workspace-bound 값 객체(`ObservationId`)를 받습니다 — 멀티테넌트 격리를 컴파일 타임에 강제합니다(ArchUnit).
@@ -613,7 +617,10 @@ DynamoDB, Cassandra 등 새 백엔드를 추가하는 것은 **리팩토링이 �
 - `delete(Workspace)` — observation/representation cascade 정리는 호출자 또는 별도 잡 책임(또는 DB FK CASCADE).
 
 **`ObservationStore`** (`save`, `findById`, `findBySubject(limit)`, `count`, `semanticSearch`, `findByConfidenceBelow`, `findSubjects`, `delete`, `merge`)
-- `confidence` 는 `[0,1]` 범위, `type` 은 `EXPLICIT|DEDUCTIVE` — 저장 시 검증(체크 제약 권장).
+- `confidence` 는 `[0,1]` 범위 — 저장 시 검증(체크 제약 권장).
+- `type` 은 **`ObservationType` 의 네 값을 전부 받아야 한다** (`EXPLICIT` · `DEDUCTIVE` · `INDUCTIVE` ·
+  `CONTRADICTION`). 트리의 생산자가 앞의 둘만 만든다고 해서 **두 값짜리 체크 제약을 걸지 말 것** —
+  자기 분류가 더 촘촘한 백엔드가 넣은 행을 읽지 못하게 된다. 저장소는 생산자가 아니라 **판독자**다.
 - `findBySubject` 는 최신순, `findByConfidenceBelow` 는 confidence 오름차순(dreamer 가 통합 후보를 찾는 데 사용). `limit >= 1`.
 - `findSubjects(workspace, limit)` 는 dreamer 가 워크스페이스의 모든 peer 를 1회 순회하는 데 사용 — 순서 무보장, `limit` 으로 상한.
 - `merge(winner, loser, merged)` — `merged.id == winner` 여야 함. 영속 백엔드는 loser 를 **soft-delete 하고 30일 audit 보관**(인메모리는 즉시 폐기). PostgreSQL 은 `soft_deleted_at` 컬럼으로 구현.

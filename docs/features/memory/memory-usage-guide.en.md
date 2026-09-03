@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/memory/memory-usage-guide.md
-source_commit: 71979ac
+source_commit: 454a51b
 ---
 
 # Memory (Peer Memory) Usage Guide
@@ -59,7 +59,11 @@ Workspace            the tenant-isolation unit (the root of multi-tenancy)
 - **`Workspace`** — `Workspace.builder().id("default").build()`
 - **`PeerView`** — `PeerView.of(workspace, Principal.user("ops-bot", "Ops Bot"))`
   - `subject` = the fact's *target* / `observer` = the *one who observed it*. In the CLI's default wiring, `subject == observer` (the agent itself).
-- **`Observation`** — `ObservationType` is either `EXPLICIT` (directly stated) or `DEDUCTIVE` (inferred). `confidence` lies in `[0,1]`.
+- **`Observation`** — `ObservationType` has **four** values (`EXPLICIT` directly stated / `DEDUCTIVE` inferred /
+  `INDUCTIVE` generalised from repeated evidence / `CONTRADICTION` a recorded conflict). `confidence` lies in `[0,1]`.
+  **The three in-tree producers (the `Observe` tool, the deriver tool and `LlmDeriver`) emit only the first two** —
+  the other two exist for backends whose own classification is finer, and all three producers refuse a value they did
+  not advertise. **Readers are the other way round**: a store must accept all four (see §11.3 below).
 - **`Representation`** — its scope is split by `isGlobal()` (observer==null, session-independent) and `isLocal()` (bound to an observer and a session).
 
 > Every id-based store API takes a `Workspace` or a workspace-bound value object (`ObservationId`) — multi-tenant isolation is enforced at compile time (ArchUnit).
@@ -621,7 +625,11 @@ For most new backends, **the three stores + (optionally) an ObservationIndex** a
 - `delete(Workspace)` — cascading cleanup of observations/representations is the caller's or a separate job's responsibility (or a DB FK CASCADE).
 
 **`ObservationStore`** (`save`, `findById`, `findBySubject(limit)`, `count`, `semanticSearch`, `findByConfidenceBelow`, `findSubjects`, `delete`, `merge`)
-- `confidence` lies in `[0,1]` and `type` is `EXPLICIT|DEDUCTIVE` — validate on write (a check constraint is recommended).
+- `confidence` lies in `[0,1]` — validate on write (a check constraint is recommended).
+- `type` **must accept all four `ObservationType` values** (`EXPLICIT`, `DEDUCTIVE`, `INDUCTIVE`,
+  `CONTRADICTION`). That the in-tree producers emit only the first two is no reason for a two-value check
+  constraint — it would reject rows written by a backend that classifies more finely. A store is a **reader**, not a
+  producer.
 - `findBySubject` is newest-first and `findByConfidenceBelow` is ascending by confidence (the dreamer uses it to find consolidation candidates). `limit >= 1`.
 - `findSubjects(workspace, limit)` is what the dreamer uses to walk every peer in a workspace once — order is not guaranteed, and `limit` caps it.
 - `merge(winner, loser, merged)` — `merged.id` must equal `winner`. A persistent backend **soft-deletes the loser and keeps it for a 30-day audit** (the in-memory one discards it immediately). PostgreSQL implements this with a `soft_deleted_at` column.
