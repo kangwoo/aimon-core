@@ -73,7 +73,9 @@ import at.aimon.core.memory.dialectic.DialecticResponse;
  *
  * <p>
  * A backend subclasses this and returns a fresh, empty instance from {@link #newBackend()}; this class closes it when
- * it is {@link AutoCloseable}. Every case guards on the capability it needs, so a backend serving three tiers reports
+ * it is {@link AutoCloseable}, or whatever {@link #resourceOwner()} names when the backend is a decorator over the
+ * thing that holds the resources. Every case guards on the capability it needs, so a backend serving three tiers
+ * reports
  * the other two as skipped rather than as passing — "this backend does not do CHAT" stays something a backend says
  * out loud.
  *
@@ -520,27 +522,36 @@ public abstract class AbstractPeerMemoryContractTest {
         }
 
         @Test
-        @DisplayName("a receipt says how much was taken and whether derivation actually happened")
-        void receiptReportsWhatHappened() {
-            final MemoryIngestReceipt receipt = backend().ingestor().orElseThrow()
-                    .ingest(MemoryIngestRequest.builder().observer(OBSERVER).sessionId(SESSION_ID).messages(
-                            List.of(Message.user("what is the deploy window"), Message.assistant("Fridays, 14:00 UTC")))
-                            .build());
+        @DisplayName("a receipt accounts for the messages offered and never claims more than it was given")
+        void receiptAccountsForWhatWasOffered() {
+            final List<Message> offered = List.of(Message.user("what is the deploy window"),
+                    Message.assistant("Fridays, 14:00 UTC"));
+
+            final MemoryIngestReceipt receipt = backend().ingestor().orElseThrow().ingest(
+                    MemoryIngestRequest.builder().observer(OBSERVER).sessionId(SESSION_ID).messages(offered).build());
 
             assertThat(receipt).isNotNull();
-            assertThat(receipt.getAccepted()).isNotNegative();
+            // The upper bound is the assertion. `>= 0` was the old one and the builder already rejects a negative,
+            // so it could not fail; a backend reporting that it took more messages than it was handed can, and that
+            // number is what a caller would use to decide whether anything was dropped.
+            assertThat(receipt.getAccepted()).isBetween(0, offered.size());
         }
 
         @Test
-        @DisplayName("asking to wait for derivation is a request, and the receipt says whether it was granted")
-        void waitForDerivationIsReportedNotAssumed() {
+        @DisplayName("a receipt that claims derivation finished must have taken something to derive from")
+        void derivedImpliesSomethingWasAccepted() {
             final MemoryIngestReceipt receipt = backend().ingestor().orElseThrow()
                     .ingest(MemoryIngestRequest.builder().observer(OBSERVER).sessionId(SESSION_ID)
                             .messages(List.of(Message.user("hello"))).waitForDerivation(true).build());
 
-            // Either answer is contractual. What is not contractual is a backend that cannot synchronise reporting
-            // that it did — the caller would read stale memory believing it fresh.
-            assertThat(receipt.isDerived()).isIn(true, false);
+            // The VALUE of isDerived() is deliberately not asserted, and no assertion is written that pretends to.
+            // Both answers are contractual: waitForDerivation is a request, and a queue-backed backend that cannot
+            // honour it must say false rather than report a success it did not achieve. What is checkable is that
+            // the two halves of the receipt agree — nothing can have finished deriving from messages it did not take.
+            if (receipt.isDerived()) {
+                assertThat(receipt.getAccepted())
+                        .as("derived=true alongside accepted=0 claims a derivation from nothing").isPositive();
+            }
         }
     }
 }
