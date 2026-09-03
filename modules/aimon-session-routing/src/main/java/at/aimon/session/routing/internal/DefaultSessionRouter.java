@@ -726,19 +726,28 @@ public final class DefaultSessionRouter implements SessionRouter {
      * <p>
      * <b>Those four are not one outcome.</b> The first three are the store <em>answering</em>, and the answer is that
      * the entry is not this caller's — {@link Takeover#refused()}. The fourth is the store saying nothing at all, and
-     * treating silence as a refusal is what {@link Takeover#unknown()} exists to prevent: a caller that could not read
-     * the entry has learned nothing about who owns it, so it keeps doing what it did before this method existed
-     * (see {@link #announceTurnResult}, which is where the distinction is spent).
+     * treating silence as a refusal is what {@link Takeover#unknown(String)} exists to prevent: a caller that could
+     * not read the entry has learned nothing about who owns it, so it keeps doing what it did before this method
+     * existed (see {@link #announceTurnResult}, which is where the distinction is spent).
      *
      * <p>
-     * What losing costs is stated precisely, because two things ride on the take-over rather than one. The turn then
-     * runs against an entry this node is not named on, so <b>the holder-loss sweeper cannot see this node die for it
-     * </b> — the caller falls back to the forward deadline, exactly where every drained message was before this method
-     * existed. And <b>on a refusal only</b>, its result is withheld from the idempotency cache, because writing over
-     * an entry the store has just identified as somebody else's is the harm rather than the safety. The caller is
-     * still answered over the rail in every case. So the invariant this method restores holds only where it wins: a
-     * turn may still run holderless, and {@link IdempotencyStore#findStaleInFlight}'s exclusion of holderless entries
-     * does cost coverage for exactly those turns.
+     * <b>Silence is not the same as no write, either.</b> The everyday way a remote store throws is that the write was
+     * applied and the response was lost, which leaves the entry naming this node with nothing refreshing it — the
+     * exact shape {@link IdempotencyStore#findStaleInFlight} reports as a death. So the throwing path binds the
+     * reservation too, and the binding is safe when the write did <em>not</em> land: both
+     * {@link IdempotencyStore#touch} and {@link IdempotencyStore#compareAndReset} match on the holder, and this id is
+     * minted per attempt. Only one of the two possibilities needs an action, and only one of them can consume it.
+     *
+     * <p>
+     * What losing costs is stated precisely, because two things ride on the take-over rather than one. On a refusal
+     * the turn runs against an entry this node is not named on, so <b>the holder-loss sweeper cannot see this node die
+     * for it</b> — the caller falls back to the forward deadline, exactly where every drained message was before this
+     * method existed — and its result is withheld from the idempotency cache, because writing over an entry the store
+     * has just identified as somebody else's is the harm rather than the safety. A store that threw costs neither:
+     * the entry is bound, so a landed write is watched like any other, and the result is still cached. The caller is
+     * answered over the rail in every case. So the invariant this method restores holds wherever the entry ends up
+     * naming this node: a refused turn may still run holderless, and {@link IdempotencyStore#findStaleInFlight}'s
+     * exclusion of holderless entries does cost coverage for exactly those turns.
      *
      * <p>
      * The opening submission of a pass never reaches here — {@link #drain} skips it, since its entry already names
@@ -764,12 +773,23 @@ public final class DefaultSessionRouter implements SessionRouter {
             taken = idempotencyStore.acquireHolder(key, reserverId, idempotencySecondaryTtl);
         } catch (Exception e) {
             // Best-effort like every other idempotency call on this path: a store outage must cost the turn its fast
-            // failure detection, not cost it its execution — and not cost it its cached result either, which is why
-            // this is unknown() rather than refused().
+            // failure detection, not cost it its execution — and neither its cached result nor its binding, which is
+            // why this is unknown(reserverId) rather than refused().
             log.warn("idempotencyStore.acquireHolder threw for key {} on session {}: {}", key, convId, e.toString());
-            return Takeover.unknown();
+            // Bound even though nothing confirmed the write, because the standard partial failure of a remote store
+            // is that the write landed and only the answer was lost. The entry then names this node, and a named
+            // holder nothing refreshes is exactly what the sweeper reads as a death — so skipping this bind declares
+            // a live turn lost and lets the client's retry run the same request a second time. Binding when the write
+            // did not land costs nothing: touch and compareAndReset both match on the holder, and this id is minted
+            // per attempt, so both are no-ops against an entry that does not name it. The uncertainty is one-sided,
+            // and so is the remedy.
+            held.getTouchSlot().bind(key, reserverId);
+            return Takeover.unknown(reserverId);
         }
         if (!taken) {
+            // The one place this pass learns it is duplicating work, and the only place that can report it: the turn
+            // runs regardless and is answered over the rail like any other, so nothing downstream can tell.
+            safeMetric(metrics::onReservationTakeOverRefused, "onReservationTakeOverRefused");
             return Takeover.refused();
         }
         held.getTouchSlot().bind(key, reserverId);
@@ -1283,9 +1303,10 @@ public final class DefaultSessionRouter implements SessionRouter {
             final Takeover takeover = next == selfMessage
                     ? Takeover.alreadyHeldBySubmit(selfReserverId)
                     : takeOverReservation(convId, idempotencyKey, held);
-            // Non-null only when this pass won the take-over: the binding to undo and the reservation to reset are
-            // this loop's, whereas the opening submission's belong to runTurnLoop for the length of the whole pass.
-            final String takenReserverId = takeover.takenReserverId();
+            // Non-null exactly when this loop put a binding in the touch slot, which is both times it may have
+            // written the entry — the take-over it won, and the one whose answer was lost. The opening submission's
+            // binding is runTurnLoop's for the length of the whole pass and is not this loop's to undo.
+            final String boundReserverId = takeover.boundReserverId();
 
             AgentExecutionResult turnResult = null;
             RuntimeException turnFailure = null;
@@ -1305,13 +1326,13 @@ public final class DefaultSessionRouter implements SessionRouter {
                     }
                 } else {
                     log.warn("Turn {} on session {} failed: {}", messageTurnId, convId, turnFailure.toString());
-                    if (takenReserverId != null) {
+                    if (boundReserverId != null) {
                         // announceTurnFailure frees the key with discardReservation, which by contract refuses an
                         // entry that has a holder — and the take-over is what gave this one a holder. Same outcome,
                         // matched on the identity actually recorded: the entry goes, so the client's retry re-executes
                         // instead of collapsing onto a dead attempt. Before the announcement for the reason stated
                         // there — a retry that arrives the instant it is failed must find the key already free.
-                        safeCompareAndReset(idempotencyKey, takenReserverId);
+                        safeCompareAndReset(idempotencyKey, boundReserverId);
                     }
                     announceTurnFailure(convId, messageTurnId, idempotencyKey, TurnResultPayload.Failure.Code.FAILED,
                             String.valueOf(turnFailure));
@@ -1324,7 +1345,7 @@ public final class DefaultSessionRouter implements SessionRouter {
                 // IN_FLIGHT one naming this node, and an unbound one of those is what the sweeper reads as a lost
                 // holder. Unbinding only this key leaves the opening submission's own binding — which must survive the
                 // whole pass — in place.
-                if (takenReserverId != null) {
+                if (boundReserverId != null) {
                     held.getTouchSlot().unbind(idempotencyKey);
                 }
             }
@@ -2128,9 +2149,12 @@ public final class DefaultSessionRouter implements SessionRouter {
         // a drain pass can pick up; once some node has collected it the message is out of the at-most-once inbox and
         // only that node can produce its result, so re-ringing finds nothing and buys a wasted pass — the same as
         // against a healthy holder mid-turn. (A collected message whose holder then dies is not this path's to
-        // recover either, but it is no longer unrecovered: the pass that collected it names itself on the reservation
-        // before running it — see takeOverReservation — so the sweeper reports that death as HOLDER_LOST instead of
-        // leaving the caller here to its deadline.)
+        // recover either, and mostly no longer goes unrecovered: the pass that collected it names itself on the
+        // reservation before running it — see takeOverReservation — so the sweeper reports that death as HOLDER_LOST
+        // instead of leaving the caller here to its deadline. Mostly, not always: a take-over the store refuses runs
+        // the turn anyway and runs it unnamed, and that caller is back to waiting out its deadline. The gap is
+        // narrow but it is a gap, so this is not a path anyone may treat as covered.)
+        //
         // The check also keeps this path away from a session a peer deleted — for every message that delete's purge
         // removed, the inbox reads empty and the retry goes quiet before the peer's EVICT even arrives to fail this
         // forward outright. It is not a guarantee against resurrection: a message delivered between that purge and the
@@ -3055,8 +3079,8 @@ public final class DefaultSessionRouter implements SessionRouter {
      * <td>{@code acquireHolder} returned false</td>
      * </tr>
      * <tr>
-     * <td>{@link #unknown()}</td>
-     * <td>null</td>
+     * <td>{@link #unknown(String)}</td>
+     * <td>the id</td>
      * <td>true</td>
      * <td>{@code acquireHolder} threw</td>
      * </tr>
@@ -3070,16 +3094,20 @@ public final class DefaultSessionRouter implements SessionRouter {
      * <td>{@link #alreadyHeldBySubmit(String)}</td>
      * <td>null</td>
      * <td>its argument is non-null</td>
-     * <td>the
-     * submission that opened the pass</td>
+     * <td>the submission that opened the pass</td>
      * </tr>
      * </table>
      *
      * <p>
-     * <b>An id means this loop may undo something</b>, and only {@code won} yields one: it is the identity to unbind
-     * from the touch slot and, on failure, to reset. The opening submission's reservation is held by this node too,
-     * but by {@code runTurnLoop} rather than by this loop, which is why it has a factory of its own rather than
-     * reusing {@code won} — see {@link #alreadyHeldBySubmit(String)}.
+     * <b>An id means this loop bound something and so may have to undo it</b>: it is the identity to unbind from the
+     * touch slot and, on failure, to reset. That is a narrower claim than "the take-over succeeded", and deliberately
+     * — {@code won} and {@code unknown} yield structurally identical values because both may leave this node's name on
+     * the entry, and an entry named after a node that nothing refreshes is read as a death whether or not the caller
+     * ever heard back. The two stay separate factories because the table above is about which situations are
+     * reachable, not about how many distinct values they produce. {@code refused} yields none because the store said
+     * it wrote nothing here; {@code notAttempted} because there was no key. The opening submission's reservation is
+     * held by this node too, but bound by {@code runTurnLoop} rather than by this loop, which is why it has a factory
+     * of its own rather than reusing {@code won} — see {@link #alreadyHeldBySubmit(String)}.
      *
      * <p>
      * <b>Withholding the cache write needs the store to have said so</b>, which is {@code refused} and nothing else
@@ -3088,9 +3116,12 @@ public final class DefaultSessionRouter implements SessionRouter {
      * ever consulting this bit — so the two cases where the bit is false are not two cases in practice.
      *
      * <p>
-     * Collapsing {@code unknown} into {@code refused} is the bug this type exists to make hard to reintroduce: a
-     * single transient failure on {@code acquireHolder} would otherwise leave a successful turn's result uncached and
-     * its key holderless for the forward TTL.
+     * Collapsing {@code unknown} into {@code refused} is the bug this type exists to make hard to reintroduce, and it
+     * has two halves that were fixed one at a time. Inheriting the refusal's cache decision leaves a successful turn's
+     * result uncached and its key holderless for the forward TTL. Inheriting its <em>null id</em> was worse and lasted
+     * longer: it left a landed write unbound, so a peer's sweeper declared a live turn's holder lost and the client's
+     * retry executed the same request twice. Both come from reading "the store did not answer" as "the store did
+     * nothing", which is the one thing a timeout never tells you.
      */
     private static final class Takeover {
 
@@ -3112,9 +3143,13 @@ public final class DefaultSessionRouter implements SessionRouter {
             return new Takeover(null, false);
         }
 
-        /** The store could not be read, so nothing is known about the entry either way. */
-        static Takeover unknown() {
-            return new Takeover(null, true);
+        /**
+         * The store could not be read, so nothing is known about the entry either way — including whether the write
+         * this call made landed. It yields the same id as {@link #won(String)} because the id is what this loop bound
+         * and must therefore undo, not a claim that the take-over succeeded.
+         */
+        static Takeover unknown(String reserverId) {
+            return new Takeover(Objects.requireNonNull(reserverId, "reserverId must not be null"), true);
         }
 
         /** No key to take over. */
@@ -3151,7 +3186,7 @@ public final class DefaultSessionRouter implements SessionRouter {
             return new Takeover(null, selfReserverId != null);
         }
 
-        String takenReserverId() {
+        String boundReserverId() {
             return reserverId;
         }
 

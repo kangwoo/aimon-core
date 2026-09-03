@@ -1184,18 +1184,31 @@ Replacement for a caller that used it to read a result: none is needed at the ca
   owns the entry, so that path writes exactly as it did before — treating silence as a refusal would
   leave a successful turn's entry `IN_FLIGHT` with no holder for the whole forward TTL, invisible to
   the sweeper, so a node that missed the rail would time out five minutes after that turn succeeded.
-  Enforcing any of this in the store instead would need a holder-matched `markDone` on the SPI,
-  registered in the design's §14 rather than done here.
+  And silence is not the same as *no write*: the ordinary way a remote store throws is with the
+  write applied and only the response lost, which leaves the entry naming this node with nothing
+  refreshing it — the exact shape the sweeper reads as a death, so a peer declared a live turn's
+  holder lost and the client's retry ran the same request a second time. That path therefore binds
+  the reservation as well, and binding it when the write did not land costs nothing, because `touch`
+  and `compareAndReset` both match on the holder and reserver ids are minted per attempt. Enforcing
+  any of this in the store instead would need a holder-matched `markDone` on the SPI, registered in
+  the design's §14 rather than done here.
+
+  A refusal is now counted by the new `SessionMetrics#onReservationTakeOverRefused()`, which should
+  read zero: it means the store answered that the key belongs to something else, so the message this
+  node went on to run is a request the cluster executed twice. Nothing else shows it — the result is
+  deliberately withheld, the caller is answered over the rail as usual, and no announcement
+  distinguishes it. Like every method on that interface it has a no-op default, so existing
+  implementations are unaffected.
 
   No schema change: every backend already had a nullable holder column. `IdempotencyTouchSlot` holds
-  one binding per reservation rather than one
-  in total, because a pass owes refreshes to both the submission that opened it and the queued message
-  it is currently running, and a single slot let a sibling LLM turn outlast the secondary TTL and get
-  the other swept as lost. One cost is new and named in the design doc rather than left implicit: a
-  forwarded turn's reservation used to need no touching at all, so it could not be swept by a touch
-  failure; now a drainer whose lease renews but whose `touch` fails past the secondary TTL has its live
-  turn swept and its client's retry double-execute. That is the regime local keyed turns already lived
-  in, and the symmetry is the point of the change, but it is not pure gain.
+  one binding per reservation rather than one in total, because a pass owes refreshes to both the
+  submission that opened it and the queued message it is currently running, and a single slot let a
+  sibling LLM turn outlast the secondary TTL and get the other swept as lost. One cost is new and
+  named in the design doc rather than left implicit: a forwarded turn's reservation used to need no
+  touching at all, so it could not be swept by a touch failure; now a drainer whose lease renews but
+  whose `touch` fails past the secondary TTL has its live turn swept and its client's retry
+  double-execute. That is the regime local keyed turns already lived in, and the symmetry is the
+  point of the change, but it is not pure gain.
 - **A doorbell notice does not outlive the session it announces.** `releaseSession`, `deleteSession`
   and a peer's `EVICT` all purge the inbox; the node-local marks that say "somebody still has to
   collect this" now go with it, instead of buying an empty drain pass on the next lease return and

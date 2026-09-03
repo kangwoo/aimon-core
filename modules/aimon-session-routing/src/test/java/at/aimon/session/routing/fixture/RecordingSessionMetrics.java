@@ -26,6 +26,7 @@ public final class RecordingSessionMetrics implements SessionMetrics {
             SubmitDisposition.Kind.class);
     public final AtomicInteger holderLossRecovered = new AtomicInteger();
     public final AtomicInteger forwardDoorbellRerung = new AtomicInteger();
+    public final AtomicInteger reservationTakeOverRefused = new AtomicInteger();
 
     public final AtomicReference<Duration> lastLockAcquireLatency = new AtomicReference<>();
 
@@ -88,5 +89,10 @@ public final class RecordingSessionMetrics implements SessionMetrics {
     @Override
     public void onForwardDoorbellRerung() {
         forwardDoorbellRerung.incrementAndGet();
+    }
+
+    @Override
+    public void onReservationTakeOverRefused() {
+        reservationTakeOverRefused.incrementAndGet();
     }
 }

@@ -37,6 +37,7 @@ import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.store.SessionLeaseStore;
 import at.aimon.core.agent.session.store.SessionRecordStore;
 import at.aimon.core.base.Principal;
+import at.aimon.session.routing.fixture.RecordingSessionMetrics;
 import at.aimon.session.routing.fixture.RequestFixtures;
 import at.aimon.session.routing.fixture.TestLiveSession;
 import at.aimon.session.routing.fixture.TestManagerHarness;
@@ -64,6 +65,9 @@ import at.aimon.session.routing.fixture.TestManagerHarness;
 class SessionRouterDrainedForwardHolderLossTest {
 
     private static final String KEY = "k-drained";
+
+    /** A second key, so one drain pass owes refreshes to two reservations at the same time. */
+    private static final String SIBLING_KEY = "k-sibling";
 
     /** Short enough that the renewal tick — and so the idempotency touch — fires many times inside a test. */
     private static final Duration RENEW_FAST = Duration.ofMillis(200);
@@ -237,7 +241,9 @@ class SessionRouterDrainedForwardHolderLossTest {
     @DisplayName("a turn whose take-over was refused does not overwrite the cached answer it was refused for")
     void aRefusedTakeOverDoesNotOverwriteTheCachedAnswer() throws Exception {
         final IdempotencyStore idempotency = new InMemoryIdempotencyStore();
-        final TestManagerHarness holder = node("node-A", idempotency, b -> b.holderLossSweepInterval(NEVER_SWEEPS));
+        final RecordingSessionMetrics drainerMetrics = new RecordingSessionMetrics();
+        final TestManagerHarness holder = node("node-A", idempotency,
+                b -> b.holderLossSweepInterval(NEVER_SWEEPS).metrics(drainerMetrics));
         final TestManagerHarness peer = node("node-B", idempotency,
                 b -> b.holderLossSweepInterval(NEVER_SWEEPS).idempotencySecondaryTtl(STALE_AFTER));
         final SessionId id = SessionId.of("c-drained-4");
@@ -269,6 +275,12 @@ class SessionRouterDrainedForwardHolderLossTest {
         final IdempotencyEntry cached = awaitCachedAnswer(idempotency, "answer-the-client-got");
         assertThat(cached.getStatus()).isEqualTo(IdempotencyEntry.Status.DONE);
         assertThat(cached.getResult().orElseThrow().getFinalAnswer()).isEqualTo("answer-the-client-got");
+
+        // Withholding the write is what keeps that answer correct, and it is also what makes this run invisible: the
+        // caller was answered from the cache, the turn was announced like any other, and nothing distinguishes the
+        // second execution. The counter is the only trace it leaves.
+        assertThat(drainerMetrics.reservationTakeOverRefused.get())
+                .as("a request this cluster executed twice has to be countable").isEqualTo(1);
     }
 
     @Test
@@ -383,6 +395,136 @@ class SessionRouterDrainedForwardHolderLossTest {
         assertThat(cached.getResult().orElseThrow().getFinalAnswer()).isEqualTo("second-done");
     }
 
+    @Test
+    @DisplayName("a take-over whose write landed before the store threw still keeps that holder refreshed")
+    void aTakeOverWhoseWriteLandedBeforeTheStoreThrewIsStillTouched() throws Exception {
+        // The other half of a store that throws, and the more common half: a remote call that times out after the
+        // server applied it. The entry now names this node, so the sweeper can see it — but only a bound reservation
+        // is touched, and an unbound one that names a live node is exactly what a lost holder looks like.
+        final AtomicBoolean armed = new AtomicBoolean(true);
+        final IdempotencyStore idempotency = new LostAcknowledgementOnAcquireIdempotencyStore(
+                new InMemoryIdempotencyStore(), armed);
+        final TestManagerHarness holder = node("node-A", idempotency,
+                b -> b.lockExtendInterval(RENEW_FAST).holderLossSweepInterval(NEVER_SWEEPS));
+        final TestManagerHarness peer = node("node-B", idempotency,
+                b -> b.holderLossSweepInterval(SWEEP_FAST).idempotencySecondaryTtl(STALE_AFTER));
+        final SessionId id = SessionId.of("c-drained-8");
+        final List<Map<String, Object>> announced = tapTurnResults(id);
+
+        holder.manager().submit(RequestFixtures.submit(id, "alpha", "first"));
+        final TestLiveSession session = awaitSession(holder, id);
+        assertThat(session.awaitTurnStarted()).isTrue();
+
+        final SubmitDisposition forwarded = peer.manager().submit(keyed(id, "second"));
+        assertThat(forwarded.getKind()).isEqualTo(SubmitDisposition.Kind.FORWARDED);
+
+        session.completeCurrentTurn(TestLiveSession.ok("first-done"));
+        assertThat(session.awaitTurnCount(2)).as("the queued message has to be out of the inbox and running").isTrue();
+        assertThat(armed.get()).as("the lost acknowledgement must actually have been spent on the take-over").isFalse();
+
+        final IdempotencyEntry running = entry(idempotency);
+        assertThat(running.getHolderId()).as("the write landed, so the entry names this node whatever the caller saw")
+                .isPresent();
+        assertThat(running.getHolderId().orElseThrow()).startsWith("node-A/");
+
+        // node-A is healthy and its turn is still running. Nothing may declare it lost.
+        assertNoHolderLostAnnouncement(announced, LONGER_THAN_STALE);
+        assertThat(forwarded.getFuture().toCompletableFuture().isDone())
+                .as("a live turn's caller must not be failed by a sweep of its own holder").isFalse();
+        assertThat(entry(idempotency).getStatus()).isEqualTo(IdempotencyEntry.Status.IN_FLIGHT);
+
+        session.completeCurrentTurn(TestLiveSession.ok("second-done"));
+        assertThat(forwarded.getFuture().toCompletableFuture().get(5, TimeUnit.SECONDS).getFinalAnswer())
+                .isEqualTo("second-done");
+    }
+
+    @Test
+    @DisplayName("a failed turn whose take-over write landed frees its key, instead of leaving a holder behind")
+    void aFailedTurnWhoseTakeOverWriteLandedStillFreesItsKey() throws Exception {
+        // The same lost acknowledgement, spent on the other exit. Freeing the key here rests entirely on the
+        // compareAndReset that runs only when the take-over yielded an id: announceTurnFailure's discardReservation
+        // refuses an entry that has a holder, by contract, and a landed write gave this one exactly that.
+        final AtomicBoolean armed = new AtomicBoolean(true);
+        final IdempotencyStore idempotency = new LostAcknowledgementOnAcquireIdempotencyStore(
+                new InMemoryIdempotencyStore(), armed);
+        // Nothing sweeps: the key has to be freed by the failure itself, not by a peer noticing the leftover later.
+        final TestManagerHarness holder = node("node-A", idempotency,
+                b -> b.lockExtendInterval(RENEW_FAST).holderLossSweepInterval(NEVER_SWEEPS));
+        final TestManagerHarness peer = node("node-B", idempotency,
+                b -> b.holderLossSweepInterval(NEVER_SWEEPS).idempotencySecondaryTtl(STALE_AFTER));
+        final SessionId id = SessionId.of("c-drained-9");
+
+        holder.manager().submit(RequestFixtures.submit(id, "alpha", "first"));
+        final TestLiveSession session = awaitSession(holder, id);
+        assertThat(session.awaitTurnStarted()).isTrue();
+
+        final SubmitDisposition forwarded = peer.manager().submit(keyed(id, "second"));
+        assertThat(forwarded.getKind()).isEqualTo(SubmitDisposition.Kind.FORWARDED);
+
+        session.completeCurrentTurn(TestLiveSession.ok("first-done"));
+        assertThat(session.awaitTurnCount(2)).as("the queued message has to be out of the inbox and running").isTrue();
+        assertThat(armed.get()).as("the lost acknowledgement must actually have been spent on the take-over").isFalse();
+        assertThat(entry(idempotency).getHolderId()).as("the write landed, so the entry names this node").isPresent();
+
+        session.failCurrentTurn(new IllegalStateException("the drained turn blew up"));
+        assertThat(awaitFailure(forwarded.getFuture())).isInstanceOf(IllegalStateException.class);
+
+        // A failed attempt has to stay replayable, and it is not replayable while its reservation stands: the retry
+        // is told to collapse onto the attempt it was just told died, and then waits out the forward TTL for an
+        // answer nobody will send. Left behind, the entry is also announced HOLDER_LOST later for a turn already
+        // reported FAILED.
+        assertThat(awaitKeyReleased(idempotency))
+                .as("the failure must free the key it may have put this node's name on").isTrue();
+    }
+
+    @Test
+    @DisplayName("a pass running two keyed messages keeps both reservations refreshed, not just the later one")
+    void twoKeyedMessagesInOnePassAreBothKeptRefreshed() throws Exception {
+        // The end-to-end half of what IdempotencyTouchSlotTest pins directly. Every other test here has at most one
+        // live reservation per pass — the queued message is keyed and the opening submission is not, or the other way
+        // round — so a touch slot that held one binding instead of a map would pass all of them while quietly
+        // evicting whichever reservation was bound first.
+        //
+        // markDone failing is what keeps the first binding worth having: normally the submission's entry is DONE the
+        // moment its turn ends and touching a DONE entry changes nothing, so nobody can tell whether it was still
+        // bound. When the write fails the entry stays IN_FLIGHT under this node's name for the rest of the pass, and
+        // an eviction then shows up as a peer declaring that holder lost.
+        final IdempotencyStore idempotency = new FailingMarkDoneIdempotencyStore(new InMemoryIdempotencyStore());
+        final TestManagerHarness holder = node("node-A", idempotency,
+                b -> b.lockExtendInterval(RENEW_FAST).holderLossSweepInterval(NEVER_SWEEPS));
+        final TestManagerHarness peer = node("node-B", idempotency,
+                b -> b.holderLossSweepInterval(SWEEP_FAST).idempotencySecondaryTtl(STALE_AFTER));
+        final SessionId id = SessionId.of("c-drained-10");
+        final List<Map<String, Object>> announced = tapTurnResults(id);
+
+        final SubmitDisposition own = holder.manager().submit(keyed(id, "own"));
+        assertThat(own.getKind()).isEqualTo(SubmitDisposition.Kind.EXECUTED_LOCALLY);
+        final TestLiveSession session = awaitSession(holder, id);
+        assertThat(session.awaitTurnStarted()).isTrue();
+
+        // A different key, so the two reservations are two entries the pass owes two separate refreshes to.
+        final SubmitDisposition sibling = peer.manager().submit(keyed(id, "sibling", SIBLING_KEY));
+        assertThat(sibling.getKind()).isEqualTo(SubmitDisposition.Kind.FORWARDED);
+
+        session.completeCurrentTurn(TestLiveSession.ok("own-done"));
+        assertThat(session.awaitTurnCount(2)).as("the pass has to still be running the sibling").isTrue();
+
+        assertThat(idempotency.find(KEY).orElseThrow().getHolderId())
+                .as("the failed write leaves the submission's own entry in flight under this node").isPresent();
+        assertThat(idempotency.find(SIBLING_KEY).orElseThrow().getHolderId())
+                .as("and the take-over names this node on the sibling's").isPresent();
+
+        // Neither may be swept. One slot would evict the submission's binding when the sibling's was bound, and the
+        // sibling easily outlasts the secondary TTL — which is the ordinary length of an LLM turn, not an edge case.
+        assertNoHolderLostAnnouncement(announced, LONGER_THAN_STALE, KEY, SIBLING_KEY);
+
+        session.completeCurrentTurn(TestLiveSession.ok("sibling-done"));
+        assertThat(own.getFuture().toCompletableFuture().get(5, TimeUnit.SECONDS).getFinalAnswer())
+                .isEqualTo("own-done");
+        assertThat(sibling.getFuture().toCompletableFuture().get(5, TimeUnit.SECONDS).getFinalAnswer())
+                .isEqualTo("sibling-done");
+    }
+
     // -------------------------------------------------------------------------------------------------------------
     // Fixture
     // -------------------------------------------------------------------------------------------------------------
@@ -408,8 +550,24 @@ class SessionRouterDrainedForwardHolderLossTest {
     }
 
     private static SubmitRequest keyed(SessionId id, String input) {
+        return keyed(id, input, KEY);
+    }
+
+    private static SubmitRequest keyed(SessionId id, String input, String key) {
         return SubmitRequest.builder().sessionId(id).agentRef("alpha").userInput(input)
-                .initiator(Principal.user("tester")).idempotencyKey(KEY).build();
+                .initiator(Principal.user("tester")).idempotencyKey(key).build();
+    }
+
+    /** Polls for the reservation being gone, so a regression reports as a leftover entry rather than a timeout. */
+    private static boolean awaitKeyReleased(IdempotencyStore store) throws InterruptedException {
+        final long deadline = System.currentTimeMillis() + TestLiveSession.DEFAULT_AWAIT_MS;
+        while (System.currentTimeMillis() < deadline) {
+            if (store.find(KEY).isEmpty()) {
+                return true;
+            }
+            Thread.sleep(10L);
+        }
+        return false;
     }
 
     private static IdempotencyEntry entry(IdempotencyStore store) {
@@ -475,17 +633,28 @@ class SessionRouterDrainedForwardHolderLossTest {
      */
     private static void assertNoHolderLostAnnouncement(List<Map<String, Object>> announced, Duration dwell)
             throws InterruptedException {
+        assertNoHolderLostAnnouncement(announced, dwell, KEY);
+    }
+
+    private static void assertNoHolderLostAnnouncement(List<Map<String, Object>> announced, Duration dwell,
+            String... keys) throws InterruptedException {
         final long deadline = System.currentTimeMillis() + dwell.toMillis();
         while (System.currentTimeMillis() < deadline) {
-            assertThat(hasHolderLost(announced))
-                    .as("a turn that already succeeded must not be announced as a lost holder").isFalse();
+            for (String key : keys) {
+                assertThat(hasHolderLost(announced, key))
+                        .as("a turn that already succeeded must not be announced as a lost holder (%s)", key).isFalse();
+            }
             Thread.sleep(25L);
         }
     }
 
     private static boolean hasHolderLost(List<Map<String, Object>> announced) {
+        return hasHolderLost(announced, KEY);
+    }
+
+    private static boolean hasHolderLost(List<Map<String, Object>> announced, String key) {
         for (Map<String, Object> payload : announced) {
-            if ("HOLDER_LOST".equals(payload.get("outcome")) && KEY.equals(payload.get("idem"))) {
+            if ("HOLDER_LOST".equals(payload.get("outcome")) && key.equals(payload.get("idem"))) {
                 return true;
             }
         }
@@ -613,6 +782,26 @@ class SessionRouterDrainedForwardHolderLossTest {
                 throw new IllegalStateException("simulated transient idempotency backend blip");
             }
             return super.acquireHolder(key, holderId, ttl);
+        }
+    }
+
+    /** Applies {@code acquireHolder} and then throws: the write landed, the answer did not come back. */
+    private static final class LostAcknowledgementOnAcquireIdempotencyStore extends DelegatingIdempotencyStore {
+
+        private final AtomicBoolean armed;
+
+        LostAcknowledgementOnAcquireIdempotencyStore(IdempotencyStore delegate, AtomicBoolean armed) {
+            super(delegate);
+            this.armed = armed;
+        }
+
+        @Override
+        public boolean acquireHolder(String key, String holderId, Duration ttl) {
+            final boolean taken = super.acquireHolder(key, holderId, ttl);
+            if (armed.getAndSet(false)) {
+                throw new IllegalStateException("simulated idempotency backend timeout after the write landed");
+            }
+            return taken;
         }
     }
 

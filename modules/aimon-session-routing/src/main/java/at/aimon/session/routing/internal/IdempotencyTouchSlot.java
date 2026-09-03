@@ -66,7 +66,9 @@ public final class IdempotencyTouchSlot {
     // bind(null, null) — what runTurnLoop passes for a submission with no key — emptied the slot, and that doubled as
     // a defence against a previous turn's binding surviving into this one. Clearing here instead would drop the
     // bindings of messages this same pass is running, so the defence moved to the exits: runTurnLoop and runDrainOnly
-    // both clear() in their finally, drain unbinds each message in its own, and HeldLease clears on lease loss.
+    // both clear() in their finally, drain unbinds each message in its own, and HeldLease cancels renewal when the
+    // lease is lost and clears on return. Losing the lease leaves the bindings standing, which is harmless only
+    // because the cancelled schedule is the sole caller of touch().
     public void bind(String key, String reserverId) {
         if (key == null || reserverId == null) {
             return;
