@@ -66,14 +66,14 @@ class AgentSetupFactoryMemorySpecTest {
     }
 
     private MemorySpec specFor(MemoryConfig config, DerivationQueueManager queue) {
-        return factory.buildMemorySpec(factory.buildMemoryWiring(config), new InMemoryRepresentationStore(),
+        return factory.buildMemorySpec(config, factory.buildMemoryWiring(config), new InMemoryRepresentationStore(),
                 new InMemoryObservationStore(), new StubEngine(), queue);
     }
 
     @Test
     @DisplayName("memory off produces no spec at all, rather than one that wires nothing")
     void disabledMemoryProducesNoSpec() {
-        assertThat(factory.buildMemorySpec(MemoryWiring.disabled(), null, null, null, null)).isNull();
+        assertThat(factory.buildMemorySpec(null, MemoryWiring.disabled(), null, null, null, null)).isNull();
     }
 
     @Test

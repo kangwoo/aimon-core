@@ -129,6 +129,8 @@ import at.aimon.core.llm.streaming.LlmStreamChunk;
 import at.aimon.core.llm.streaming.LlmStreamSink;
 import at.aimon.core.llm.streaming.LlmStreamTarget;
 import at.aimon.core.llm.streaming.LlmStreamingOptions;
+import at.aimon.core.memory.ExecutionMemorySink;
+import at.aimon.core.memory.ExecutionMemoryUpdate;
 import at.aimon.core.memory.MemoryContextProvider;
 import at.aimon.core.memory.MemoryContextRequest;
 import at.aimon.core.skill.execution.SkillToolDispatcher;
@@ -276,6 +278,9 @@ public class OrcaAgentExecutor
 
     /** Renders the dynamic system prompt (agent content + environment + memory + assembled SYSTEM blocks). */
     private final SystemPromptRenderer systemPromptRenderer;
+
+    /** Where each execution's new messages are offered to memory, or null when nothing writes memory here. */
+    private final ExecutionMemorySink executionMemorySink;
 
     /**
      * Optional dependency: when configured, a synthetic {@code <system-reminder>}-wrapped user-context message is
@@ -534,6 +539,7 @@ public class OrcaAgentExecutor
             throw new IllegalArgumentException("pendingTurnTtl must be positive: " + this.pendingTurnTtl);
         }
         this.systemPromptRenderer = new SystemPromptRenderer(new AgentContentRenderer(), builder.memoryContextProvider);
+        this.executionMemorySink = builder.executionMemorySink;
         // Fold in the post-build collaborator overrides so construction is atomic. Each field carries a non-null
         // default from its declaration; only a builder-supplied override replaces it.
         if (builder.parallelToolDispatcher != null) {
@@ -618,6 +624,7 @@ public class OrcaAgentExecutor
         private PendingTurnRegistry pendingTurnRegistry;
         private Duration pendingTurnTtl;
         private MemoryContextProvider memoryContextProvider;
+        private ExecutionMemorySink executionMemorySink;
         private ParallelToolDispatcher parallelToolDispatcher;
         private Tracer tracer;
         private TracePayloadPolicy tracePayloadPolicy;
@@ -717,6 +724,11 @@ public class OrcaAgentExecutor
          */
         public Builder pendingTurnTtl(Duration pendingTurnTtl) {
             this.pendingTurnTtl = pendingTurnTtl;
+            return this;
+        }
+
+        public Builder executionMemorySink(ExecutionMemorySink executionMemorySink) {
+            this.executionMemorySink = executionMemorySink;
             return this;
         }
 
@@ -1030,6 +1042,8 @@ public class OrcaAgentExecutor
         // because a turn is also who submitted it and under what context — replaying the words alone would run the
         // same request as a different caller.
         transcriptBuffer.beginTurn(executionRequest.getUserInput(), executionRequest.getSubmitOptions());
+        // Same position, same fragility: a replaceWith between here and the finally invalidates both marks together.
+        transcriptBuffer.markIngestPoint();
         maybeInjectUserContextMessage(agentRuntime, executionRequest, transcriptBuffer);
         // Inject the assembled USER_PREPEND / ATTACHMENT blocks (if any) as a synthetic <system-reminder> user
         // message, after the legacy user-context block and before the real user message. No-op when the assembler
@@ -1131,6 +1145,8 @@ public class OrcaAgentExecutor
                         turnResult == null ? "an exception" : turnResult.getCompletionReason());
                 Thread.currentThread().interrupt();
             }
+            // Last, and after the persist — see feedExecutionMemory for why an interrupted turn still feeds.
+            feedExecutionMemory(scope);
         }
     }
 
@@ -1159,6 +1175,41 @@ public class OrcaAgentExecutor
         log.debug("Cleared a lingering thread interrupt at {} for session {}", where,
                 scope.transcriptBuffer.getSessionId().value());
         return true;
+    }
+
+    /**
+     * Offers this execution's own messages to the memory write seam, if one is wired.
+     *
+     * <p>
+     * Called from {@code execute()}'s finally, after the transcript has been persisted: memory is an enrichment and
+     * must not be able to delay or disturb the save of the turn it describes.
+     *
+     * <p>
+     * An interrupted or failed execution feeds too, and that is deliberate — what was said still happened, and a
+     * backend that only ever saw the turns that finished cleanly would hold a version of the conversation nobody had.
+     *
+     * <p>
+     * The delta comes from the mark set at the top of {@code execute()}, and is empty when the history was rewritten
+     * underneath the execution — see {@link TranscriptBuffer#messagesSinceIngestMark()} for why that execution is
+     * skipped rather than re-sent. The sink is contracted to swallow its own failures; the catch here is for a sink
+     * that is wrong about that, because nothing in memory is worth throwing out of a finally block that has already
+     * saved the transcript.
+     */
+    private void feedExecutionMemory(ExecutionScope scope) {
+        if (executionMemorySink == null) {
+            return;
+        }
+        try {
+            final List<Message> added = scope.transcriptBuffer.messagesSinceIngestMark();
+            if (added.isEmpty()) {
+                return;
+            }
+            executionMemorySink
+                    .afterExecution(ExecutionMemoryUpdate.builder().sessionId(scope.transcriptBuffer.getSessionId())
+                            .principal(scope.executionRequest.getPrincipal().orElse(null)).messages(added).build());
+        } catch (RuntimeException e) {
+            log.warn("Memory sink threw at execution end; the turn is unaffected: {}", e.getMessage());
+        }
     }
 
     /**

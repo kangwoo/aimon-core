@@ -338,6 +338,12 @@ public final class AimonStackBuilder {
         // runtime factory because the runtimes take its enricher and tool provider. What it leaves out — always
         // the write path, and the tools in per-caller mode — it records as a degradation rather than as silence.
         final MemoryAssembly memory = MemoryAssembly.from(spec.getMemory().orElse(null), degradations);
+        // Closing the backend is the last of the memory phases, because everything above writes through it. The
+        // delegate is what gets enrolled, not the assembly's redaction wrapper — the wrapper owns nothing, so testing
+        // it would answer "not closeable" for an adapter holding an HTTP client. Nothing is enrolled for the in-tree
+        // backend, whose materials belong to whoever supplied them.
+        memory.getPeerMemoryDelegate().filter(AutoCloseable.class::isInstance).map(AutoCloseable.class::cast)
+                .ifPresent(closeable -> teardown.own(TeardownPhase.MEMORY_BACKEND, "peerMemory", closeable));
 
         // --- Executor -------------------------------------------------------------------------------------
         final ExecutorSpec executorSpec = spec.getExecutor();
@@ -353,6 +359,9 @@ public final class AimonStackBuilder {
         // that a supplied provider keeps working if the rejection is ever relaxed.
         executorSpec.getMemoryContextProvider().or(memory::getContextProvider)
                 .ifPresent(executorFactory::withMemoryContextProvider);
+        // The write half of the same seam. Present only when the backend can ingest and the spec asked for
+        // execution-end ingest; session-end feeds the transcript from the front end's own shutdown path instead.
+        memory.getExecutionMemorySink().ifPresent(executorFactory::withExecutionMemorySink);
         if (executorSpec.getTracer().isEmpty() && executorSpec.getTracePayloadPolicy().isPresent()) {
             degradations.add("tracing",
                     "A trace payload policy is configured but no tracer is, so nothing records spans and the policy"

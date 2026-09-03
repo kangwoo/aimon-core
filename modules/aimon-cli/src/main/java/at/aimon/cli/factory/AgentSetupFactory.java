@@ -79,6 +79,7 @@ import at.aimon.core.mcp.DefaultMcpClientFactory;
 import at.aimon.core.memory.InMemoryObservationStore;
 import at.aimon.core.memory.InMemoryRepresentationStore;
 import at.aimon.core.memory.InMemoryWorkspaceStore;
+import at.aimon.core.memory.MemoryIngestMode;
 import at.aimon.core.memory.MemoryInjectionMode;
 import at.aimon.core.memory.ObservationStore;
 import at.aimon.core.memory.PeerMemory;
@@ -528,8 +529,8 @@ public class AgentSetupFactory {
         final Deriver memoryDeriver = buildMemoryDeriver(memoryWiring, representationStore, observationStore, llmClient,
                 config.getLlmConfig().getModel(), config.getMemoryConfig(), outputFormatter);
         final DerivationQueueManager memoryQueue = buildDerivationQueue(memoryDeriver);
-        final MemorySpec memorySpec = buildMemorySpec(memoryWiring, representationStore, observationStore,
-                dialecticEngine, memoryQueue);
+        final MemorySpec memorySpec = buildMemorySpec(config.getMemoryConfig(), memoryWiring, representationStore,
+                observationStore, dialecticEngine, memoryQueue);
         // The app-scoped shared GraalVM engine + watchdog schedulers, built once when cli.enableWorkflowJs
         // is on and reused by every session's WorkflowJs tool.
         final GraalJsEngineHolder graalJsEngines = config.getCliSettings().isEnableWorkflowJs()
@@ -632,7 +633,10 @@ public class AgentSetupFactory {
      */
     private void enrollMemorySubsystem(AimonStack stack, CliConfig config, CliDecorations cli) {
         final DerivationQueueManager memoryQueue = cli.memoryQueue;
-        final Runnable memoryFinalDerivation = buildMemoryFinalDerivation(cli.memoryWiring, memoryQueue,
+        final MemoryIngestMode ingestMode = config.getMemoryConfig() == null
+                ? MemoryIngestMode.SESSION_END
+                : config.getMemoryConfig().resolvedIngest();
+        final Runnable memoryFinalDerivation = buildMemoryFinalDerivation(ingestMode, cli.memoryWiring, memoryQueue,
                 stack.agentExecutor(), DEFAULT_SESSION_ID, cli.outputFormatter);
         if (memoryFinalDerivation != null) {
             stack.own(TeardownPhase.MEMORY_FINAL_DERIVATION, "memoryFinalDerivation", memoryFinalDerivation::run);
@@ -936,8 +940,8 @@ public class AgentSetupFactory {
      * they are the default backend's background work, and a deployment that swapped the backend would want them gone
      * rather than re-pointed.
      */
-    MemorySpec buildMemorySpec(MemoryWiring memoryWiring, RepresentationStore representationStore,
-            ObservationStore observationStore, DialecticEngine dialecticEngine,
+    MemorySpec buildMemorySpec(MemoryConfig memoryConfig, MemoryWiring memoryWiring,
+            RepresentationStore representationStore, ObservationStore observationStore, DialecticEngine dialecticEngine,
             DerivationQueueManager derivationQueue) {
         if (!memoryWiring.isEnabled()) {
             return null;
@@ -947,6 +951,7 @@ public class AgentSetupFactory {
                 .build();
         return MemorySpec.forPeer(memoryWiring.getWorkspace(), memoryWiring.getObserver().getPrincipal())
                 .peerMemory(backend).injectionMode(MemoryInjectionMode.SUMMARY_ONLY).maxTokens(0)
+                .ingestMode(memoryConfig == null ? MemoryIngestMode.SESSION_END : memoryConfig.resolvedIngest())
                 .redactionPolicy(new DefaultRedactionPolicy()).build();
     }
 
@@ -1081,9 +1086,13 @@ public class AgentSetupFactory {
      * The runnable does not block on the derive call itself — actual derivation runs on a queue worker. The drain is
      * performed by {@link AgentSetup#close()} when it stops the queue, which waits for the in-flight task to complete.
      */
-    Runnable buildMemoryFinalDerivation(MemoryWiring memoryWiring, DerivationQueueManager queue,
-            OrcaAgentExecutor agentExecutor, SessionId sessionId, OutputFormatter outputFormatter) {
-        if (!memoryWiring.isEnabled() || queue == null) {
+    Runnable buildMemoryFinalDerivation(MemoryIngestMode ingestMode, MemoryWiring memoryWiring,
+            DerivationQueueManager queue, OrcaAgentExecutor agentExecutor, SessionId sessionId,
+            OutputFormatter outputFormatter) {
+        // This runnable *is* session-end ingest. Under execution-end the executor seam has already fed every
+        // execution's messages, so running this too would send the whole transcript a second time — the duplicate the
+        // delta exists to avoid, and an LLM extraction bill for it. Under off, neither runs.
+        if (ingestMode != MemoryIngestMode.SESSION_END || !memoryWiring.isEnabled() || queue == null) {
             return null;
         }
         final Workspace workspace = memoryWiring.workspace;

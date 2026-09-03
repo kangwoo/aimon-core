@@ -1049,8 +1049,16 @@ IMPORTANT: `turn` 이 아니라 **`execution`** 이다. 이 이음매는 세션�
 
 ```
 OrcaAgentExecutorFactory.withMemoryContextProvider(...)   ← 이미 있다 (읽기)
-OrcaAgentExecutorFactory.withMemoryIngestor(...)          ← 추가 (쓰기)
+OrcaAgentExecutorFactory.withExecutionMemorySink(...)     ← 추가 (쓰기)
 ```
+
+이름이 `withMemoryIngestor` 가 아닌 이유: 실행기는 peer 를 모른다. `MemoryIngestor` 를 그대로 받으면
+실행기가 `PeerView` 를 만들어야 하고, 그것은 `MemoryPeerResolver` 가 이미 하는 일을 읽기 쪽과 쓰기 쪽에서
+따로 하게 만든다. 그래서 실행기는 `ExecutionMemorySink` 를 받고, 기본 구현
+(`IngestingExecutionMemorySink`)이 **읽기와 같은 resolver 로** peer 를 풀어 `MemoryIngestor` 를 부른다 —
+두 이음매가 서로 다른 peer 를 답하는 상태가 생기지 않는다. 실행기가 넘기는 값
+(`ExecutionMemoryUpdate`)은 `MemoryContextRequest` 와 같은 모양(sessionId + principal)에 메시지가 붙은
+것이다.
 
 계약:
 
@@ -1085,10 +1093,35 @@ point that survived that would index into a history that no longer exists"*. 그
 | (a) `SessionRewindPoint` 와 **같은 기계** — 수집 워터마크를 전사 안에 두고 `replaceWith` 가 함께 버린다 | 이미 있는 패턴을 재사용. 구현이 작다 | compaction 이 일어난 실행은 델타를 못 낸다. 그때 무엇을 보낼지(아무것도 / 컴팩션 요약 / 전체)를 정해야 한다 |
 | (b) **메시지 단위 id 워터마크** — 마지막으로 보낸 메시지 id 를 백엔드별로 기억한다 | rewrite 에 견딘다 | `Message` 에 안정적 id 가 필요하고, 컴팩션이 메시지를 합치면 그 id 가 사라진다 |
 
-**이 문서는 어느 쪽도 확정하지 않는다.** 확정하지 못한 것은 §15 에 올리는 것이 이 문서의 규율이므로
-거기에 항목으로 넣었고(§15-8), Step 5 의 인수 조건 ①("같은 메시지가 두 번 안 간다")은 **해법이 아니라
-그 문제의 재진술**이라는 사실도 함께 적는다. 원격 백엔드는 같은 메시지를 다시 받으면 중복 제거로
-저장은 막지만 **추출 LLM 호출 비용은 이미 발생한** 뒤다 — 실패가 조용하고 비싸다.
+#### 확정: **(a)** — 전사 안의 워터마크. (b) 는 오늘 만들 수 없다
+
+**Step 5 가 (a) 를 골랐다.** 고른 이유는 취향이 아니라 (b) 가 성립하지 않기 때문이다 —
+`at.aimon.core.llm.Message` 에는 **안정적인 id 가 없다**(`grep -n "getId" Message.java` 는
+`ToolUse.getId()` 한 건만 반환한다). (b) 를 하려면 `Message` 에 id 를 더해야 하고, 그 타입은
+전사에 영속되므로 세션 레코드의 와이어 포맷이 함께 넓어진다 — 메모리 설계가 건드리기로 한 범위가
+아니고, [`frozen-names.md`](../../migration/frozen-names.md) 가 지키는 경계 바로 옆이다.
+
+구현은 트리의 선례를 그대로 복제한다. `TranscriptBuffer.markIngestPoint()` / `messagesSinceIngestMark()`
+가 `beginTurn` / `rewindPoint` 와 **같은 자리에서 세워지고 같은 자리에서 버려진다** —
+`replaceWith` 가 둘을 함께 버리고, `clear()` 도 그렇다. 워터마크는 **영속하지 않는다**: 한 실행 안에서
+세워지고 한 실행 안에서 읽히므로 재시작이 복원할 것이 없고, 수명이 저장 한 번보다 짧은 값을 위해
+와이어 포맷을 넓히는 것은 남는 장사가 아니다.
+
+**compaction 이 일어난 실행에서는 아무것도 보내지 않는다.** 세 선택지의 대가를 나란히 놓으면 이것이
+가장 싸다.
+
+| 그때 보낼 것 | 대가 |
+|---|---|
+| **아무것도** (채택) | 그 실행의 메시지가 메모리에 안 들어간다. 다음 실행이 다시 마크하고 스트림은 이어진다. compaction 은 세션당 드물게 일어나므로 손실은 실행 하나 |
+| 컴팩션 요약 | 요약을 대화인 척 먹인다. 디라이버가 **패러프레이즈의 패러프레이즈**에서 사실을 뽑는다 |
+| 전사 전체 | 이미 수집된 메시지를 다시 보낸다. 원격 백엔드가 중복 제거로 저장은 막아도 **추출 LLM 호출 비용은 이미 발생한** 뒤다 — 실패가 조용하고 비싸다 |
+
+이 손실은 `session-end` 모드에는 **적용되지 않는다**. 그 모드는 델타를 쓰지 않고 세션이 닫힐 때 전사를
+통째로 한 번 넘기므로, 델타 문제 자체가 없다. 그리고 그것이 CLI 의 기본값이다 — 델타의 대가를 지는 것은
+`execution-end` 를 명시적으로 고른 배포뿐이다.
+
+Step 5 의 인수 조건 ①("같은 메시지가 두 번 안 간다")은 이제 검증 가능한 문장이다: 마크는 실행마다
+전진하고(연속한 두 실행의 델타가 겹치지 않는다), rewrite 된 실행은 빈 델타를 낸다.
 
 #### workspace 와 observer 는 어디서 오는가 — per-caller 에서는 오지 않는다
 
@@ -1564,9 +1597,10 @@ Step 7 을 8 보다 먼저 두는 이유: Dyad 는 우리가 소스를 갖고 �
    엔드포인트에 걸리는지는 스펙에 없다. `MemorySearchQuery` 는 `subject`/`observer` 를
    요구하므로, 좁힐 수 없으면 그 티어가 **워크스페이스 전역 결과를 subject 의 것처럼** 돌려준다 —
    §5.2 가 없애려는 실패 모드다. Step 8 착수 시 첫 번째로 확인할 것
-8. **수집 델타를 어떻게 잡을지 정하지 않았다.** §7.2 의 두 방안((a) 전사 내 워터마크 /
-   (b) 메시지 id 워터마크) 중 어느 것도 확정하지 않았고, (a) 를 고를 경우 compaction 이 일어난 실행에서
-   무엇을 보낼지도 미정이다. §0 이 수집을 "가장 큰 미해결 항목" 이라 부른 이유가 SPI 가 아니라 여기다
+8. ~~**수집 델타를 어떻게 잡을지 정하지 않았다.**~~ — **해소됨 (Step 5).** (a) 전사 내 워터마크를
+   골랐다. (b) 는 선택지가 아니었다 — `Message` 에 안정적인 id 가 없고, 더하는 것은 세션 레코드의 와이어
+   포맷을 넓히는 일이다. compaction 이 일어난 실행은 **아무것도 보내지 않는다**. 근거와 세 선택지의
+   대가 비교는 §7.2 의 *"확정: (a)"* 절에 있다. 남은 미확정은 없다
 9. **`ObservationDraft.type` 의 왕복 손실 처리.** confidence 는 §2.2 에서 신호 + 스키마 축소로
    정했지만, Dyad 가 직접 주입을 `EXPLICIT` 로 고정하는 것(`ConclusionController:108-110`) 때문에
    모델이 고른 `DEDUCTIVE` 도 버려진다. 같은 기계를 `type` 까지 넓힐지는 정하지 않았다

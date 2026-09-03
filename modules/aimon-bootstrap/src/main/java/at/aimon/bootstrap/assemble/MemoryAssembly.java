@@ -12,9 +12,12 @@ import at.aimon.core.agent.impl.orca.tool.OrcaMemoryToolProvider;
 import at.aimon.core.agent.orca.tool.OrcaToolProvider;
 import at.aimon.core.agent.tool.ToolContextEnricher;
 import at.aimon.core.base.Principal;
+import at.aimon.core.memory.ExecutionMemorySink;
+import at.aimon.core.memory.IngestingExecutionMemorySink;
 import at.aimon.core.memory.MemoryCapabilities;
 import at.aimon.core.memory.MemoryCapability;
 import at.aimon.core.memory.MemoryContextProvider;
+import at.aimon.core.memory.MemoryIngestMode;
 import at.aimon.core.memory.MemoryIngestor;
 import at.aimon.core.memory.MemoryPeerResolver;
 import at.aimon.core.memory.PeerMemory;
@@ -88,17 +91,20 @@ public final class MemoryAssembly {
     /** Degradation key: the memory write path runs without a redaction policy. */
     public static final String CAPABILITY_REDACTION = "memory-redaction";
 
-    private static final MemoryAssembly DISABLED = new MemoryAssembly(null, null, null, null);
+    private static final MemoryAssembly DISABLED = new MemoryAssembly(null, null, null, null, null);
 
     private final PeerMemory peerMemory;
     private final MemoryContextProvider contextProvider;
+    private final ExecutionMemorySink executionMemorySink;
     private final ToolContextEnricher contextEnricher;
     private final OrcaToolProvider toolProvider;
 
     private MemoryAssembly(PeerMemory peerMemory, MemoryContextProvider contextProvider,
-            ToolContextEnricher contextEnricher, OrcaToolProvider toolProvider) {
+            ExecutionMemorySink executionMemorySink, ToolContextEnricher contextEnricher,
+            OrcaToolProvider toolProvider) {
         this.peerMemory = peerMemory;
         this.contextProvider = contextProvider;
+        this.executionMemorySink = executionMemorySink;
         this.contextEnricher = contextEnricher;
         this.toolProvider = toolProvider;
     }
@@ -143,6 +149,15 @@ public final class MemoryAssembly {
                         peerResolver, spec.getInjectionMode(), spec.getMaxTokens()))
                 .orElse(null);
 
+        // The write seam, and only in EXECUTION_END mode. SESSION_END is not assembled here at all: it is the front
+        // end feeding the whole transcript once at close, which needs no delta and no executor seam.
+        final ExecutionMemorySink executionMemorySink = spec.getIngestMode() == MemoryIngestMode.EXECUTION_END
+                ? backend.ingestor()
+                        .map(ingestor -> (ExecutionMemorySink) new IngestingExecutionMemorySink(ingestor,
+                                spec.getWorkspace(), peerResolver))
+                        .orElse(null)
+                : null;
+
         // One observer for the whole runtime, so it exists only in fixed-peer mode. The enrichment info a
         // ToolContextEnricher receives carries a session and an execution but no principal, so there is nothing to
         // resolve a per-call observer from — this is the seam that would have to widen before the memory tools can
@@ -157,7 +172,7 @@ public final class MemoryAssembly {
                 : new OrcaMemoryToolProvider(backend, spec.getRedactionPolicy().orElse(null));
 
         recordDegradations(spec, backend, capabilities, toolProvider, degradations);
-        return new MemoryAssembly(backend, contextProvider, contextEnricher, toolProvider);
+        return new MemoryAssembly(backend, contextProvider, executionMemorySink, contextEnricher, toolProvider);
     }
 
     /** A supplied backend is used as given; stores are folded into the default one. */
@@ -184,7 +199,12 @@ public final class MemoryAssembly {
         for (MemoryCapability missing : MemoryCapabilities.missingFrom(backend)) {
             degradations.add(keys.get(missing), consequence(missing, backend.backendId()));
         }
-        if (capabilities.contains(MemoryCapability.INGEST) && spec.isPerCaller()) {
+        if (capabilities.contains(MemoryCapability.INGEST) && spec.getIngestMode() == MemoryIngestMode.OFF) {
+            degradations.add(keys.get(MemoryCapability.INGEST),
+                    "The '" + backend.backendId() + "' memory backend can ingest conversation, but ingest is off, so"
+                            + " nothing is fed in. Memory fills only through explicit Observe calls or another"
+                            + " process against the same backend.");
+        } else if (capabilities.contains(MemoryCapability.INGEST) && spec.isPerCaller()) {
             // The backend can ingest and the assembly still cannot: the execution-end seam has no principal to resolve
             // an observer from, exactly as the tool context enricher has none. Saying so here is what keeps "memory is
             // configured and nothing ever accumulates" diagnosable.
@@ -266,6 +286,16 @@ public final class MemoryAssembly {
      */
     public Optional<MemoryIngestor> getIngestor() {
         return getPeerMemory().flatMap(PeerMemory::ingestor);
+    }
+
+    /**
+     * Returns the seam each execution's new messages are offered to.
+     *
+     * @return the sink, or empty unless the backend can ingest and the spec asked for
+     *         {@link MemoryIngestMode#EXECUTION_END}
+     */
+    public Optional<ExecutionMemorySink> getExecutionMemorySink() {
+        return Optional.ofNullable(executionMemorySink);
     }
 
     /**

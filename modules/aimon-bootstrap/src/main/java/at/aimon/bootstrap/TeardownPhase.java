@@ -34,16 +34,57 @@ package at.aimon.bootstrap;
  *
  * <p>
  * Phases with no registered entry are skipped, so a stack that never wires peer memory simply passes through
- * the first four constants.
+ * the five memory constants.
+ *
+ * <h2>Why the memory block sits after {@link #CHECKPOINTS}</h2>
+ *
+ * <p>
+ * It used to come first, which fitted the only writer that existed: a CLI hook that dumped the whole transcript into
+ * the derivation queue as the process exited. It does not fit a memory that is fed as executions end. Both of those
+ * modes fire while sessions are draining, so a memory block that had already run would hand the last of them a closed
+ * backend and a stopped queue — the block was placed to protect exactly the thing it would have dropped.
+ *
+ * <p>
+ * After {@link #CHECKPOINTS} rather than between it and {@link #SESSIONS}, because closing a session performs its
+ * final end-of-turn save through the checkpoint mailbox and those two belong together. Running after both means the
+ * last derivation reads a transcript that is completely written, which is also the more accurate answer. It reads it
+ * at all because the record store behind it is application-scoped and {@link #SESSIONS} does not close it.
+ *
+ * <p>
+ * This is a change in observable shutdown behaviour, not a rename — see {@code CHANGELOG.md}.
  */
 public enum TeardownPhase {
+
+    /**
+     * Gracefully drains the {@code SessionRouter}: stops accepting submits, lets in-flight turns finish
+     * within the configured drain timeout, then releases every held session lease.
+     *
+     * <p>
+     * This is the <b>substitution</b> against the CLI order, which closed a single {@code LiveSession} here.
+     *
+     * <p>
+     * It must precede {@link #CHECKPOINTS} because closing a session performs the final end-of-turn save
+     * through the checkpoint mailbox — draining the mailbox first would leave that save with nowhere to go.
+     * It must precede {@link #AGENT_RUNTIMES} because a turn still draining holds tools owned by the runtime.
+     */
+    SESSIONS,
+
+    /**
+     * Drains and closes the {@code SessionCheckpointMailbox}.
+     *
+     * <p>
+     * Immediately after {@link #SESSIONS} so the end-of-turn saves emitted by session close are written
+     * before the mailbox's writer thread exits. Everything after this point may no longer persist transcript
+     * state.
+     */
+    CHECKPOINTS,
 
     /**
      * Runs the final peer-memory derivation for the closing sessions.
      *
      * <p>
-     * First because it is the only phase that <i>produces</i> work for later phases: it enqueues derivation
-     * tasks that {@link #MEMORY_QUEUE} must still drain. Running it after the queue stopped would silently
+     * First of the memory phases because it is the only one that <i>produces</i> work for later phases: it enqueues
+     * derivation tasks that {@link #MEMORY_QUEUE} must still drain. Running it after the queue stopped would silently
      * discard the last session's observations.
      */
     MEMORY_FINAL_DERIVATION,
@@ -70,35 +111,23 @@ public enum TeardownPhase {
      * Stops the file-backend maintenance scheduler (retention purge + append-log compaction).
      *
      * <p>
-     * Last of the memory phases: compaction rewrites the very files the three phases above read, so it must
-     * see a quiesced store. Before {@link #SESSIONS} only because nothing in the session path touches it —
-     * the pair is genuinely independent and the order is arbitrary but fixed.
+     * Last of the four phases that touch the stores: compaction rewrites the very files the three above read, so it
+     * must see a quiesced store. {@link #MEMORY_BACKEND} still follows, because those three write <em>through</em>
+     * the backend.
      */
     MEMORY_MAINTENANCE,
 
     /**
-     * Gracefully drains the {@code SessionRouter}: stops accepting submits, lets in-flight turns finish
-     * within the configured drain timeout, then releases every held session lease.
+     * Closes the memory backend itself — the last thing in the memory block, because the four phases above all write
+     * through it.
      *
      * <p>
-     * This is the <b>substitution</b> against the CLI order, which closed a single {@code LiveSession} here.
-     *
-     * <p>
-     * It must precede {@link #CHECKPOINTS} because closing a session performs the final end-of-turn save
-     * through the checkpoint mailbox — draining the mailbox first would leave that save with nowhere to go.
-     * It must precede {@link #AGENT_RUNTIMES} because a turn still draining holds tools owned by the runtime.
+     * Empty for the in-tree backend, which owns nothing beyond the stores its caller supplied. It exists for a
+     * backend that holds a connection or an HTTP client, and the object to enrol is the one that <em>owns</em> that
+     * resource: a redaction wrapper is not it, and an {@code instanceof AutoCloseable} test against the wrapper would
+     * answer {@code false} for a backend that very much is one.
      */
-    SESSIONS,
-
-    /**
-     * Drains and closes the {@code SessionCheckpointMailbox}.
-     *
-     * <p>
-     * Immediately after {@link #SESSIONS} so the end-of-turn saves emitted by session close are written
-     * before the mailbox's writer thread exits. Everything after this point may no longer persist transcript
-     * state.
-     */
-    CHECKPOINTS,
+    MEMORY_BACKEND,
 
     /**
      * Closes the distributed session transport — signal bus, inbox, idempotency store — in deployments that

@@ -640,6 +640,24 @@ Old names are searchable in [`docs/migration/rename-maps.md`](docs/migration/ren
   `memory-chat` degradation says so. The starter's `in-memory` backend declares no `DialecticEngine`
   bean, so that path takes the degradation rather than the tool.
 
+- **`ExecutionMemorySink`** (`at.aimon.core.memory`) and
+  `OrcaAgentExecutorFactory.withExecutionMemorySink(...)` — the write counterpart of
+  `MemoryContextProvider`. Until now nothing fed a conversation into memory except the CLI's shutdown
+  hook, so a memory backend built around a message stream read an empty memory for the life of the
+  process. The seam is fed after the transcript is persisted, is fire-and-forget, and passes the same
+  `(sessionId, principal)` identity the read seam gets, resolved through the same
+  `MemoryPeerResolver` so the two cannot answer for different peers.
+
+  When it fires is `MemorySpec.ingestMode(...)`: `OFF` (the default, and what every stack-assembled
+  deployment does today), `SESSION_END` (the whole transcript once at close — the CLI's existing
+  behaviour, and its default via `memory.ingest` in the yaml) or `EXECUTION_END`.
+
+  `EXECUTION_END` needs a delta, and a delta needs a watermark, and `Message` has no stable id — so
+  the watermark is a message count, held in `TranscriptBuffer` beside the rewind point and dropped by
+  `replaceWith` exactly as that is. An execution whose history was rewritten under it (compaction,
+  prompt-size recovery) therefore **sends nothing**: sending the summary would feed a paraphrase in as
+  conversation, and sending everything would re-run an extraction the backend has already paid for.
+
 - **`RedactingPeerMemory`** — the assembly wraps every backend in it whenever a `RedactionPolicy` is
   configured, and hands on only the wrapper. Redaction used to be guaranteed by an implementation
   (`InMemoryDerivationQueueManager` masks inside `enqueue`, so no caller could route around it); a
@@ -960,6 +978,19 @@ Replacement for a caller that used it to read a result: none is needed at the ca
 - **`OrcaMemoryToolProvider` takes a `PeerMemory`** and registers by capability. Internal package
   (`at.aimon.core.agent.impl.orca.tool`), so not part of the published surface; the store-taking
   constructor remains for callers who were reaching into it anyway.
+- **`TeardownPhase` moves the memory block from the front of shutdown to after `CHECKPOINTS`, and adds
+  `MEMORY_BACKEND` at the end of it.** Declaration order *is* the shutdown order, so this is a behaviour
+  change rather than a rename, and it is listed here for a deployment that depends on the old sequence.
+
+  The old placement fitted the only writer that existed: a CLI hook that dumped the whole transcript
+  into the derivation queue as the process exited. It does not fit a memory fed as executions end —
+  both ingest modes fire while sessions are draining, so a memory block that had already run would
+  hand the last of them a closed backend and a stopped queue. The observable change is that session
+  drain and checkpoint flush now finish *before* the final derivation, which also makes that
+  derivation read a completely written transcript. It can read it at all because the record store is
+  application-scoped and `SESSIONS` does not close it — measured in `AimonStackBuilderTest` rather
+  than assumed, because the design had it as an unverified premise.
+
 - **`AimonStackSpec` rejects `MemorySpec` + `ExecutorSpec.memoryContextProvider` on the wider test.**
   The guard used to ask whether the spec named a representation store; it now asks whether the spec
   can produce a snapshot at all, which is the question it meant. A spec naming a `PeerMemory` that

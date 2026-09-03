@@ -6,6 +6,7 @@ import java.util.Optional;
 import at.aimon.core.base.Principal;
 import at.aimon.core.memory.MemoryCapabilities;
 import at.aimon.core.memory.MemoryCapability;
+import at.aimon.core.memory.MemoryIngestMode;
 import at.aimon.core.memory.MemoryInjectionMode;
 import at.aimon.core.memory.ObservationStore;
 import at.aimon.core.memory.PeerMemory;
@@ -78,6 +79,7 @@ public final class MemorySpec {
     private final RepresentationStore representationStore;
     private final ObservationStore observationStore;
     private final MemoryInjectionMode injectionMode;
+    private final MemoryIngestMode ingestMode;
     private final int maxTokens;
     private final RedactionPolicy redactionPolicy;
 
@@ -88,6 +90,7 @@ public final class MemorySpec {
         this.representationStore = builder.representationStore;
         this.observationStore = builder.observationStore;
         this.injectionMode = Objects.requireNonNullElse(builder.injectionMode, MemoryInjectionMode.SUMMARY_ONLY);
+        this.ingestMode = Objects.requireNonNullElse(builder.ingestMode, MemoryIngestMode.OFF);
         this.maxTokens = builder.maxTokens;
         this.redactionPolicy = builder.redactionPolicy;
 
@@ -221,6 +224,20 @@ public final class MemorySpec {
     }
 
     /**
+     * Returns when conversation is fed into the backend.
+     *
+     * <p>
+     * Defaults to {@link MemoryIngestMode#OFF}, which is what every stack-assembled deployment does today: nothing
+     * has ever written memory from a conversation through this path, so anything else would be a bill nobody asked
+     * for. A front end whose users expect memory to fill — the CLI does — sets it explicitly.
+     *
+     * @return the mode, never null
+     */
+    public MemoryIngestMode getIngestMode() {
+        return ingestMode;
+    }
+
+    /**
      * Returns the cap on the injected part's estimated token count.
      *
      * @return the cap, or {@code 0} for no cap
@@ -244,7 +261,7 @@ public final class MemorySpec {
                 + (fixedPeer == null ? "per-caller" : fixedPeer.getId()) + ", backend="
                 + (peerMemory == null ? "stores" : peerMemory.backendId()) + ", representations="
                 + (representationStore != null) + ", observations=" + (observationStore != null) + ", injection="
-                + injectionMode + "]";
+                + injectionMode + ", ingest=" + ingestMode + "]";
     }
 
     /** Builder for {@link MemorySpec}. */
@@ -256,6 +273,7 @@ public final class MemorySpec {
         private RepresentationStore representationStore;
         private ObservationStore observationStore;
         private MemoryInjectionMode injectionMode;
+        private MemoryIngestMode ingestMode;
         private int maxTokens;
         private RedactionPolicy redactionPolicy;
 
@@ -314,6 +332,18 @@ public final class MemorySpec {
          */
         public Builder injectionMode(MemoryInjectionMode injectionMode) {
             this.injectionMode = injectionMode;
+            return this;
+        }
+
+        /**
+         * Sets when conversation is fed into the backend. Defaults to {@link MemoryIngestMode#OFF}.
+         *
+         * @param ingestMode
+         *            the mode, or {@code null} for the default
+         * @return this builder
+         */
+        public Builder ingestMode(MemoryIngestMode ingestMode) {
+            this.ingestMode = ingestMode;
             return this;
         }
 

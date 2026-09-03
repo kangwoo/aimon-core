@@ -13,6 +13,7 @@ import at.aimon.bootstrap.RuntimeDegradations;
 import at.aimon.bootstrap.spec.MemorySpec;
 import at.aimon.core.base.Principal;
 import at.aimon.core.memory.MemoryHit;
+import at.aimon.core.memory.MemoryIngestMode;
 import at.aimon.core.memory.MemoryIngestReceipt;
 import at.aimon.core.memory.MemoryIngestor;
 import at.aimon.core.memory.MemorySearchQuery;
@@ -220,17 +221,48 @@ class MemoryAssemblyTest {
     }
 
     @Test
-    @DisplayName("per-caller turns ingest off even when the backend can do it, and says why")
+    @DisplayName("per-caller turns ingest off even when the backend can do it and the mode asks for it, and says why")
     void perCallerCannotIngest() {
         // The execution-end seam has no principal to resolve an observer from, exactly as the tool context
         // enricher has none. Without this line, "memory is configured and nothing accumulates" has no explanation.
-        final MemorySpec spec = MemorySpec.perCaller(WORKSPACE).peerMemory(new FullBackend()).build();
+        final MemorySpec spec = MemorySpec.perCaller(WORKSPACE).peerMemory(new FullBackend())
+                .ingestMode(MemoryIngestMode.EXECUTION_END).build();
 
         MemoryAssembly.from(spec, degradations);
 
         final RuntimeDegradations recorded = degradations.build();
         assertThat(recorded.has(MemoryAssembly.CAPABILITY_INGEST)).isTrue();
         assertThat(recorded.describe()).contains("no fixed observer to attribute it to");
+    }
+
+    @Test
+    @DisplayName("a backend that can ingest but is configured off is recorded too — the capability is not the answer")
+    void ingestOffIsRecorded() {
+        // The default. A capable backend with ingest off looks identical to an incapable one from the outside, so
+        // the two get different sentences rather than the same silence.
+        final MemorySpec spec = MemorySpec.forPeer(WORKSPACE, PEER).peerMemory(new FullBackend()).build();
+
+        MemoryAssembly.from(spec, degradations);
+
+        final RuntimeDegradations recorded = degradations.build();
+        assertThat(recorded.has(MemoryAssembly.CAPABILITY_INGEST)).isTrue();
+        assertThat(recorded.describe()).contains("ingest is off");
+    }
+
+    @Test
+    @DisplayName("the execution write seam exists only in execution-end mode")
+    void writeSeamFollowsTheMode() {
+        assertThat(MemoryAssembly
+                .from(MemorySpec.forPeer(WORKSPACE, PEER).peerMemory(new FullBackend()).build(), degradations)
+                .getExecutionMemorySink()).isEmpty();
+        assertThat(MemoryAssembly
+                .from(MemorySpec.forPeer(WORKSPACE, PEER).peerMemory(new FullBackend())
+                        .ingestMode(MemoryIngestMode.SESSION_END).build(), RuntimeDegradations.collector())
+                .getExecutionMemorySink()).isEmpty();
+        assertThat(MemoryAssembly
+                .from(MemorySpec.forPeer(WORKSPACE, PEER).peerMemory(new FullBackend())
+                        .ingestMode(MemoryIngestMode.EXECUTION_END).build(), RuntimeDegradations.collector())
+                .getExecutionMemorySink()).isPresent();
     }
 
     @Test
