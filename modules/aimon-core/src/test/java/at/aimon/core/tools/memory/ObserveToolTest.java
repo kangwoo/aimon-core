@@ -3,6 +3,7 @@ package at.aimon.core.tools.memory;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -15,6 +16,7 @@ import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.base.Principal;
 import at.aimon.core.memory.InMemoryObservationStore;
 import at.aimon.core.memory.Observation;
+import at.aimon.core.memory.ObservationRecorder;
 import at.aimon.core.memory.ObservationType;
 import at.aimon.core.memory.PeerView;
 import at.aimon.core.memory.Workspace;
@@ -202,6 +204,74 @@ class ObserveToolTest {
 
         assertThat(result.isError()).isTrue();
         assertThat(result.getContent()).contains("Invalid parameter");
+    }
+
+    /**
+     * The values the enum has but the schema does not offer. Before the enum was widened these were rejected by
+     * {@code ObservationType.valueOf} without anyone writing a check; afterwards they were accepted, and the schema
+     * gate's default {@code WARN} mode logs a mismatch and runs the tool anyway — so an invented kind reached the
+     * store. The advertisement is the contract, and this pins it.
+     */
+    @Test
+    @DisplayName("an observation type the schema does not advertise is refused, even though the enum has it")
+    void unadvertisedEnumValueIsRefused() {
+        for (String unadvertised : new String[]{"INDUCTIVE", "CONTRADICTION", "inductive"}) {
+            Map<String, Object> args = new HashMap<>();
+            args.put("content", "x");
+            args.put("type", unadvertised);
+
+            ToolResult result = tool.execute(ToolInput.of(args), context());
+
+            assertThat(result.isError()).as("type=%s", unadvertised).isTrue();
+            assertThat(result.getContent()).contains("Invalid parameter", "EXPLICIT", "DEDUCTIVE");
+            assertThat(store.findSubjects(WS, 10)).as("nothing was written for type=%s", unadvertised).isEmpty();
+        }
+    }
+
+    @Test
+    @DisplayName("the two advertised types still pass, in either case, and the schema still offers exactly them")
+    void advertisedTypesStillPass() {
+        for (String advertised : new String[]{"EXPLICIT", "DEDUCTIVE", "explicit"}) {
+            Map<String, Object> args = new HashMap<>();
+            args.put("content", "x");
+            args.put("type", advertised);
+
+            assertThat(tool.execute(ToolInput.of(args), context()).isSuccess()).as("type=%s", advertised).isTrue();
+        }
+        assertThat(typeEnum(tool)).containsExactly("EXPLICIT", "DEDUCTIVE");
+    }
+
+    /**
+     * The narrowing must not disturb the other schema decision this tool makes — dropping {@code confidence} when the
+     * backend does not store it.
+     */
+    @Test
+    @DisplayName("a backend that drops confidence still gets the narrowed type enum and no confidence parameter")
+    void confidenceNarrowingIsUnaffected() {
+        ObserveTool dropping = new ObserveTool(new ObservationRecorder() {
+            @Override
+            public Observation observe(at.aimon.core.memory.ObservationDraft draft) {
+                throw new UnsupportedOperationException("not exercised here");
+            }
+
+            @Override
+            public boolean storesConfidence() {
+                return false;
+            }
+        });
+
+        assertThat(typeEnum(dropping)).containsExactly("EXPLICIT", "DEDUCTIVE");
+        assertThat(properties(dropping)).containsKeys("content", "type").doesNotContainKey("confidence");
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> properties(ObserveTool tool) {
+        return (Map<String, Object>) tool.getDefinition().getInputSchema().get("properties");
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<String> typeEnum(ObserveTool tool) {
+        return (List<String>) ((Map<String, Object>) properties(tool).get("type")).get("enum");
     }
 
     @Test

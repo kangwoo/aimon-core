@@ -75,6 +75,28 @@ class LlmDeriverTest {
         assertThat(store.count(OBSERVER)).isEqualTo(2);
     }
 
+    /**
+     * The extraction prompt offers exactly EXPLICIT and DEDUCTIVE. Once the enum grew to four, a model naming one of
+     * the other two would have had it accepted verbatim — the deriver would have produced a value the design says it
+     * does not produce, and persisted it where an older jar cannot read it back. An unoffered kind is now handled
+     * the way an unrecognised one always was, rather than being promoted to a real classification.
+     */
+    @Test
+    @DisplayName("a type the extraction prompt does not offer is read as DEDUCTIVE, not taken at face value")
+    void unofferedTypeFallsBackToDeductive() {
+        llm.respondWith("""
+                [
+                  {"content": "Alice deploys on Fridays", "type": "INDUCTIVE", "confidence": 0.9},
+                  {"content": "Alice contradicts herself", "type": "CONTRADICTION", "confidence": 0.9}
+                ]
+                """, TokenUsage.of(10, 10, 20));
+
+        DerivationResult result = deriver.derive(ctx());
+
+        assertThat(result.getCreated()).hasSize(2);
+        assertThat(result.getCreated()).extracting(Observation::getType).containsOnly(ObservationType.DEDUCTIVE);
+    }
+
     @Test
     @DisplayName("strips markdown code fences before parsing")
     void stripsCodeFences() {

@@ -86,6 +86,13 @@ public final class LlmDeriver implements Deriver {
 
     // Confidence computation per design doc §4.3. The deriver — NOT the LLM — computes confidence:
     // base_score(type) + reinforcement(corroborations) - contradiction_penalty, clamped to [0,1].
+    /**
+     * The observation kinds the extraction prompt offers, and therefore the only ones read back out of its JSON.
+     * Kept beside the prompt so the two cannot drift.
+     */
+    private static final List<ObservationType> ACCEPTED_TYPES = List.of(ObservationType.EXPLICIT,
+            ObservationType.DEDUCTIVE);
+
     // Base scores live on ObservationType#baseConfidence().
     private static final double REINFORCEMENT_PER_CORROBORATION = 0.05d;
     private static final double REINFORCEMENT_CAP = 0.2d;
@@ -371,13 +378,26 @@ public final class LlmDeriver implements Deriver {
                 .createdAt(o.getCreatedAt()).confidence(confidence).metadata(o.getMetadata()).build();
     }
 
+    /**
+     * Parses the {@code type} field, accepting only the two kinds the extraction prompt offers.
+     *
+     * <p>
+     * Not {@code ObservationType.valueOf} on the raw text: the enum has four values and the prompt names two, so
+     * {@code valueOf} would accept an {@code INDUCTIVE} the model invented and persist it. Widening the enum turned a
+     * check that had held by accident — the two extra names simply did not exist — into one that had to be written
+     * down. An unoffered kind is treated exactly as an unrecognised one always was: logged, and read as
+     * {@code DEDUCTIVE}, because this parser sits inside a batch that must not fail over one field.
+     */
     private static ObservationType parseType(JsonNode typeNode) {
         if (typeNode != null && typeNode.isTextual()) {
-            try {
-                return ObservationType.valueOf(typeNode.asText().toUpperCase(Locale.ROOT));
-            } catch (IllegalArgumentException e) {
-                log.debug("Unknown observation type '{}'; defaulting to DEDUCTIVE", typeNode.asText());
+            final String normalized = typeNode.asText().toUpperCase(Locale.ROOT);
+            for (ObservationType accepted : ACCEPTED_TYPES) {
+                if (accepted.name().equals(normalized)) {
+                    return accepted;
+                }
             }
+            log.debug("Observation type '{}' is not one the extraction prompt offers; defaulting to DEDUCTIVE",
+                    typeNode.asText());
         }
         return ObservationType.DEDUCTIVE;
     }

@@ -87,6 +87,19 @@ public final class ObserveTool extends AbstractTool {
 
     static final double DEFAULT_CONFIDENCE = ObservationDraft.DEFAULT_CONFIDENCE;
 
+    /**
+     * The observation kinds this tool advertises and accepts — the <b>single</b> source for both.
+     *
+     * <p>
+     * {@link ObservationType} has four values; the two omitted here exist for backends whose own classification is
+     * finer, and nothing in this tree produces them. Deriving the schema's {@code enum} from this list and checking
+     * against the same list is what keeps "what the model is offered" and "what the tool takes" from drifting apart —
+     * the drift is not hypothetical, since widening the enum turned a parser that had rejected the extra names by
+     * accident into one that accepts them.
+     */
+    private static final List<ObservationType> ACCEPTED_TYPES = List.of(ObservationType.EXPLICIT,
+            ObservationType.DEDUCTIVE);
+
     private static final String META_KEY_REDACTED = "redacted";
     private static final String META_KEY_REDACTION_CATEGORIES = "redaction.categories";
     private static final String META_KEY_SOURCE = "source";
@@ -173,7 +186,7 @@ public final class ObserveTool extends AbstractTool {
                 Map.of("type", "string", "description", "The factual sentence to record about the subject."));
         properties.put("type", Map.of("type", "string", "description",
                 "Observation kind: EXPLICIT (stated directly) or DEDUCTIVE (inferred). " + "Defaults to DEDUCTIVE.",
-                "enum", List.of("EXPLICIT", "DEDUCTIVE")));
+                "enum", acceptedTypeNames()));
         if (storesConfidence) {
             properties.put("confidence", Map.of("type", "number", "description",
                     "Confidence in [0, 1]. Defaults to " + DEFAULT_CONFIDENCE + "."));
@@ -274,15 +287,32 @@ public final class ObserveTool extends AbstractTool {
         return sb.toString();
     }
 
+    private static List<String> acceptedTypeNames() {
+        return ACCEPTED_TYPES.stream().map(Enum::name).toList();
+    }
+
+    /**
+     * Parses the {@code type} parameter, accepting only what the schema advertises.
+     *
+     * <p>
+     * Not {@code ObservationType.valueOf} on the raw string: that would take {@code INDUCTIVE} and
+     * {@code CONTRADICTION} too, which this tool never offered. The schema gate would log the mismatch and — under
+     * its default {@code WARN} mode — run the tool anyway, so a value the model invented would be persisted. The
+     * reason built-in schemas are made to declare {@code additionalProperties: false} is the same one: a name the
+     * tool never advertised should not be quietly honoured.
+     */
     private static ObservationType parseType(String raw) {
         if (raw == null || raw.isBlank()) {
             return ObservationType.DEDUCTIVE;
         }
-        try {
-            return ObservationType.valueOf(raw.trim().toUpperCase(Locale.ROOT));
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("unknown observation type: '" + raw + "'");
+        final String normalized = raw.trim().toUpperCase(Locale.ROOT);
+        for (ObservationType accepted : ACCEPTED_TYPES) {
+            if (accepted.name().equals(normalized)) {
+                return accepted;
+            }
         }
+        throw new IllegalArgumentException(
+                "unknown observation type: '" + raw + "' (expected one of " + acceptedTypeNames() + ")");
     }
 
     private static double parseConfidence(ToolInput input) {

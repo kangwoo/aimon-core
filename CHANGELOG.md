@@ -635,12 +635,25 @@ Old names are searchable in [`docs/migration/rename-maps.md`](docs/migration/ren
 - **`ObservationType` gains `INDUCTIVE` and `CONTRADICTION`**, with base confidences `0.4` and `0.3`.
   Two values collapsed distinctions a memory backend can express — an inference from a pattern and a
   recorded conflict both filed as `DEDUCTIVE`. Nothing in the tree switches exhaustively over this
-  enum, so existing code is unaffected, and the in-tree Deriver still produces only the original two.
+  enum, so existing code is unaffected.
+
+  **The in-tree producers still emit only the original two, and that is now enforced rather than
+  incidental.** All three of them — `ObserveTool`, `DeriverObservationCreateTool` and `LlmDeriver` —
+  offer exactly `EXPLICIT` and `DEDUCTIVE` (two in a schema `enum`, one in the extraction prompt) and
+  used to read the answer back with `ObservationType.valueOf`. That agreed with the advertisement only
+  because the other two names did not exist; widening the enum turned all three into parsers that
+  accept what they never offered. The schema gate does not cover it — its default mode is `WARN`,
+  which logs the mismatch and runs the tool anyway, and `ReActLlmDeriver` calls its tool directly
+  without passing the gate at all. Each parser now reads the accepted set from the same list its
+  advertisement is built from, so the two cannot drift again. Refusing a name the tool never offered
+  is the same rule that makes built-in schemas declare `additionalProperties: false`.
 
   **This breaks downgrade.** Once an `INDUCTIVE` or `CONTRADICTION` observation has been written to
-  file, Mongo or Postgres, an older jar reading it back throws from `valueOf`. Neither mitigation is
-  worth taking: folding the new values down on write gives up the distinction the widening exists
-  for, and a lenient `valueOf` would have to be added to the jar that is already released.
+  file, Mongo or Postgres, an older jar reading it back throws from `valueOf`. That can only happen
+  through a backend that classifies more finely than this tree does — no in-tree producer can put one
+  there. Neither mitigation is worth taking: folding the new values down on write gives up the
+  distinction the widening exists for, and a lenient `valueOf` would have to be added to the jar that
+  is already released.
 
 - **`MemorySpec.peerMemory(...)`** — names the backend directly instead of the stores it would be
   built from. Mutually exclusive with the store setters, which stay and are folded into a

@@ -52,6 +52,25 @@ class DeriverObservationCreateToolTest {
         assertThat(saved.getMetadata()).containsEntry("source", "DeriverObservationCreateTool");
     }
 
+    /**
+     * This tool is reached by {@code ReActLlmDeriver} calling {@code tool.execute(...)} directly, so it never meets
+     * the schema-validation gate — not even in its permissive {@code WARN} default. The schema's {@code enum} is the
+     * only statement of what is allowed, and before the enum was widened the parser happened to agree with it.
+     */
+    @Test
+    @DisplayName("an observation type the schema does not advertise is refused, and nothing is written")
+    void unadvertisedEnumValueIsRefused() {
+        Map<String, Object> args = new HashMap<>();
+        args.put("content", "alice deploys on Fridays");
+        args.put("type", "INDUCTIVE");
+
+        ToolResult result = tool.execute(ToolInput.of(args), context());
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).contains("Invalid parameter", "EXPLICIT", "DEDUCTIVE");
+        assertThat(store.findBySubject(ALICE, 10)).isEmpty();
+    }
+
     @Test
     @DisplayName("EXPLICIT type yields §4.3 base-score confidence 0.9")
     void explicitTypeBaseScore() {

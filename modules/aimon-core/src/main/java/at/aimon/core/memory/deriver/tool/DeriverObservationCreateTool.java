@@ -74,6 +74,16 @@ public class DeriverObservationCreateTool extends AbstractTool {
     private static final String META_KEY_SOURCE = "source";
     private static final String META_VALUE_SOURCE = "DeriverObservationCreateTool";
 
+    /**
+     * The observation kinds this tool advertises and accepts — the <b>single</b> source for both.
+     *
+     * <p>
+     * {@link ObservationType} has four values; the two omitted here are for backends whose own classification is
+     * finer, and the in-tree deriver is meant to keep producing only these two.
+     */
+    private static final List<ObservationType> ACCEPTED_TYPES = List.of(ObservationType.EXPLICIT,
+            ObservationType.DEDUCTIVE);
+
     private static final Logger log = LoggerFactory.getLogger(DeriverObservationCreateTool.class);
 
     private final ObservationStore observationStore;
@@ -105,7 +115,7 @@ public class DeriverObservationCreateTool extends AbstractTool {
                         Map.of("type", "string", "description",
                                 "Observation kind: EXPLICIT (stated directly) or DEDUCTIVE (inferred). "
                                         + "Defaults to DEDUCTIVE. The system derives confidence from this.",
-                                "enum", List.of("EXPLICIT", "DEDUCTIVE")),
+                                "enum", acceptedTypeNames()),
                         "source_message_ids",
                         Map.of("type", "array", "description",
                                 "Identifiers of source messages this observation was derived from.", "items",
@@ -288,15 +298,32 @@ public class DeriverObservationCreateTool extends AbstractTool {
         return sb.toString();
     }
 
+    private static List<String> acceptedTypeNames() {
+        return ACCEPTED_TYPES.stream().map(Enum::name).toList();
+    }
+
+    /**
+     * Parses the {@code type} parameter, accepting only what the schema advertises.
+     *
+     * <p>
+     * The reason matters more here than on the user-facing {@code Observe} tool: {@code ReActLlmDeriver} calls
+     * {@code tool.execute(...)} directly rather than through {@code DefaultToolExecutor}, so this tool never meets
+     * the schema-validation gate at all. There is no {@code WARN} line to find afterwards — an unadvertised value
+     * would simply be persisted. The schema is the only statement of what is allowed, so the parser reads it from
+     * the same list.
+     */
     private static ObservationType parseType(String raw) {
         if (raw == null || raw.isBlank()) {
             return ObservationType.DEDUCTIVE;
         }
-        try {
-            return ObservationType.valueOf(raw.trim().toUpperCase(Locale.ROOT));
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("unknown observation type: '" + raw + "'");
+        final String normalized = raw.trim().toUpperCase(Locale.ROOT);
+        for (ObservationType accepted : ACCEPTED_TYPES) {
+            if (accepted.name().equals(normalized)) {
+                return accepted;
+            }
         }
+        throw new IllegalArgumentException(
+                "unknown observation type: '" + raw + "' (expected one of " + acceptedTypeNames() + ")");
     }
 
     private static List<String> parseSourceMessageIds(ToolInput input) {
