@@ -124,6 +124,17 @@ memory:
 ## 5. 노출 도구 4종
 
 모두 `at.aimon.core.tools.memory` 패키지의 `AbstractTool` 구현이며, 실패 시 예외 대신 `ToolResult.error()` 를 반환합니다.
+
+IMPORTANT: **어떤 도구가 등록되는지는 백엔드가 무엇을 할 수 있는지가 정한다.** 조립 계층이
+`MemoryCapabilities.of(peerMemory)` — 백엔드가 선언하는 것이 아니라 티어 접근자에서 **계산되는** 집합 — 을 보고
+`MemoryRecall`(SNAPSHOT) · `MemorySearch`(SEARCH) · `Observe`(OBSERVE) · `MemoryChat`(CHAT) 을 하나씩 등록합니다.
+못 하는 능력의 도구는 **아예 등록하지 않습니다** — 등록해 놓고 "지원하지 않음"을 돌려주면 모델이 매 실행마다 다시
+시도하며 iteration 과 프롬프트 예산을 태우기 때문입니다. 빠진 능력마다 시작 시 degradation 이 한 줄씩 올라옵니다
+(`memory-snapshot` · `memory-search` · `memory-chat` · `memory-observe` · `memory-ingest`).
+
+`MemoryChat` 은 이 규칙이 생기기 전까지 **CLI 에서만** 등록되었습니다 — `MemorySpec` 에 `DialecticEngine` 을 담을
+자리가 없어서, 스타터로 부팅한 배포는 백엔드가 무엇이든 그 도구를 쓸 수 없었습니다. 지금은 CHAT 티어가 있으면
+등록되고, 없으면 `memory-chat` degradation 이 대신 오릅니다.
 네 도구 모두 다음 **ToolContext 키**를 공유합니다(`MemoryToolContextKeys`) — 보통 `MemoryToolContextEnricher` 가 채웁니다:
 
 | 키 상수 | 키 이름 | 타입 | 비고 |
@@ -212,8 +223,23 @@ executor 에는 `OrcaAgentExecutorFactory.withMemoryContextProvider(...)` 로 �
 | `peerName` | string | | 표시명 (기본 = `peerId`) |
 | `storagePath` | string | ✅ | JSONL 로그 경로 (representations.jsonl; `observations.jsonl` 이 형제로 생성됨) |
 | `backend` | string | | `file`(기본, 영속) \| `in-memory`(비영속, dev/test). 알 수 없는 값은 file 로 폴백(+경고) |
+| `ingest` | string | | 대화가 메모리로 흘러 들어가는 시점: `off` \| `session-end`(기본) \| `execution-end`. 알 수 없는 값은 `session-end` 로 폴백(+경고) |
 | `reconcilerEnabled` | bool | | 세션종료 deriver 의 LLM-as-judge reconciler opt-in (기본 false) |
 | `dreamer` | object | | 백그라운드 통합 (아래) |
+
+#### `ingest` — 세 값이 무엇을 바꾸는가
+
+| 값 | 언제 보내나 | 대가 |
+|----|------------|------|
+| `off` | 보내지 않는다 | 메모리는 `Observe` 호출이나 다른 프로세스로만 찬다 |
+| `session-end` (기본) | REPL 이 끝날 때 전사 전체를 한 번 | 기존 동작 그대로. 델타를 쓰지 않으므로 같은 메시지가 두 번 갈 수 없다. 대신 세션이 도는 동안 배운 것은 그 세션이 쓰지 못한다 |
+| `execution-end` | 실행이 끝날 때 그 실행이 추가한 메시지만 | 실행마다 디라이버가 돈다(LLM 호출이 늘어난다). 대신 메모리가 세션 안에서 즉시 쓰인다 |
+
+IMPORTANT: `execution-end` 에는 손실이 하나 있고 그것은 의도된 것이다. 델타의 기준점은 **메시지 개수**이며
+(`Message` 에 안정적인 id 가 없다), compaction 이나 프롬프트 크기 복구가 이력을 통째로 갈아 끼우면 그 기준점은
+무의미해진다. 그 실행은 **아무것도 보내지 않고** 다음 실행이 다시 기준점을 잡는다 — 요약을 대화인 척 보내거나
+이미 수집된 메시지를 다시 보내는 것보다 싸기 때문이다. 근거는
+[교체 가능한 메모리 백엔드](../../design/memory/pluggable-memory-backend.md) §7.2 에 있다.
 
 ### 7.2 `memory.dreamer` 블록 (`MemoryDreamerConfig`)
 

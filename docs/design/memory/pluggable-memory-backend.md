@@ -1,6 +1,11 @@
 # 교체 가능한 메모리 백엔드 (Pluggable Memory Backend)
 
-> Status: **PROPOSED** — 코드 없음. 현재 구현(`at.aimon.core.memory` + `aimon-memory-{file,mongodb,postgres}`)의
+> Status: **PARTIALLY IMPLEMENTED** — §12 의 **Step 1~6 구현됨**. 다섯 티어 SPI · `PeerMemory` ·
+> `StoreBackedPeerMemory` · 능력 기반 도구 등록 · `RedactingPeerMemory` · CLI 이주 · 수집 이음매 ·
+> `aimon-memory-testkit` 이 트리에 있다. **Step 7~9(Dyad·Honcho 어댑터와 원격 설정 표면)는 미구현**이며
+> §15 의 1·2번(두 서버를 띄워 확인하지 않았다)이 그대로 열려 있는 것이 그 이유다.
+> §7.2 의 수집 델타는 **(a) 로 확정**되었고 §15-8 은 해소되었다.
+> 현재 구현(`at.aimon.core.memory` + `aimon-memory-{file,mongodb,postgres}`)의
 > 설계 사양은 [`peer-memory.md`](peer-memory.md) 이며, 본 문서는 그 사양의 **대부분을 유지하되 그 문서의
 > 비목표 한 줄을 철회한다** — 아래 §0.1. 사용자 노출 표면은
 > [메모리 사용 가이드](../../features/memory/memory-usage-guide.md) 참조.

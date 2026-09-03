@@ -38,6 +38,11 @@ dependencies {
     // depends on aimon-core, which is not a cycle: `aimon-core:test` -> `aimon-filesystem-testkit:main` ->
     // `aimon-core:main`. Only main-source dependencies would have to be acyclic.
     testImplementation(project(":aimon-filesystem-testkit"))
+
+    // The shared five-tier PeerMemory contract suite, for the same reason and by the same (non-)cycle: the default
+    // backend is the one every other backend will be compared against, so it is the first thing the suite has to
+    // hold.
+    testImplementation(project(":aimon-memory-testkit"))
 }
 
 // Checkstyle baseline: locks the existing warning count so new violations fail the build.

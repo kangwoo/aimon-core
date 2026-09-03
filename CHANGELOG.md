@@ -56,6 +56,19 @@ Old names are searchable in [`docs/migration/rename-maps.md`](docs/migration/ren
   implementation("at.aimon.core:aimon-spring-boot-starter")
   ```
 
+- **`aimon-memory-testkit`** — the shared five-tier `PeerMemory` contract suite, in a module of its own
+  so every backend runs the same one. Not published, the same way `aimon-filesystem-testkit` and
+  `aimon-session-testkit` are not, and by the same mechanism: no `aimon.publishable`, so `aimon-bom`
+  leaves it out automatically. It depends on none of `aimon-memory-{file,mongodb,postgres}` — those
+  implement stores, and stores are the default backend's materials rather than the seam.
+
+  Three of its cases are about the capability model rather than any tier: a tier that is offered must
+  answer (not throw `UnsupportedOperationException`), search results are ordered by relevance whether
+  or not the backend can score, and a backend that cannot score must reject a positive `minScore`
+  rather than ignore it. The first is the loophole the tier boundary cannot close by itself — hand
+  the default backend a metadata-only observation store and its SEARCH tier exists and fails on every
+  call — which is exactly why it is written down and executed rather than assumed.
+
 - **`aimon-bootstrap`** (`at.aimon.bootstrap`, no Spring) — `AimonStack.from(spec)` replaces copying
   the CLI's 216-line `AgentSetupFactory.create()`. Input is one immutable `AimonStackSpec`
   (`LlmSpec`, `AgentSpec`, `FileSystemSpec`, `SessionSpec`, `SkillApprovalSpec`, `ToolSpec`,

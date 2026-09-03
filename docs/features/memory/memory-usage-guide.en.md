@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/memory/memory-usage-guide.md
-source_commit: eec9ccd
+source_commit: c9ea46d
 ---
 
 # Memory (Peer Memory) Usage Guide
@@ -129,6 +129,18 @@ the next conversation starts ◀── SnapshotMemoryContextProvider.provide() (
 ## 5. The four exposed tools
 
 All four are `AbstractTool` implementations in the `at.aimon.core.tools.memory` package, and they return `ToolResult.error()` rather than throwing on failure.
+
+IMPORTANT: **which tools are registered follows from what the backend can do.** The assembly reads
+`MemoryCapabilities.of(peerMemory)` — a set *computed* from the tier accessors rather than declared by the backend —
+and registers `MemoryRecall` (SNAPSHOT), `MemorySearch` (SEARCH), `Observe` (OBSERVE) and `MemoryChat` (CHAT) one at a
+time. A tool the backend cannot serve is **not registered at all**: registering it and answering "not supported" would
+put it in front of the model on every execution, and the model would keep calling it, spending iterations and prompt
+budget on a failure that was decidable at assembly. Each missing capability raises one startup degradation
+(`memory-snapshot`, `memory-search`, `memory-chat`, `memory-observe`, `memory-ingest`).
+
+`MemoryChat` was registered **only by the CLI** until this rule existed — `MemorySpec` had nowhere to put a
+`DialecticEngine`, so a deployment assembled through the starter could not use that tool whatever its backend was.
+Now it appears wherever the CHAT tier does, and `memory-chat` is raised where it does not.
 All four share the following **ToolContext keys** (`MemoryToolContextKeys`) — normally filled in by `MemoryToolContextEnricher`:
 
 | Key constant | Key name | Type | Notes |
@@ -218,8 +230,23 @@ It is injected into the executor with `OrcaAgentExecutorFactory.withMemoryContex
 | `peerName` | string | | Display name (defaults to `peerId`) |
 | `storagePath` | string | ✅ | The JSONL log path (representations.jsonl; `observations.jsonl` is created alongside it) |
 | `backend` | string | | `file` (default, persistent) \| `in-memory` (volatile, dev/test). An unknown value falls back to file (with a warning) |
+| `ingest` | string | | When conversation flows into memory: `off` \| `session-end` (default) \| `execution-end`. An unknown value falls back to `session-end` (with a warning) |
 | `reconcilerEnabled` | bool | | Opt in to the LLM-as-judge reconciler in the session-end deriver (default false) |
 | `dreamer` | object | | Background consolidation (below) |
+
+#### `ingest` — what the three values change
+
+| Value | When it sends | What it costs |
+|----|------------|------|
+| `off` | Never | Memory fills only through `Observe` calls or another process |
+| `session-end` (default) | The whole transcript, once, when the REPL exits | Today's behaviour. It uses no delta, so the same message cannot go twice. In exchange, what a session learns is not available to that session |
+| `execution-end` | The messages an execution added, as it ends | The deriver runs per execution (more LLM calls). In exchange, memory is usable inside the session that is producing it |
+
+IMPORTANT: `execution-end` has one loss and it is deliberate. The delta is anchored on a **message count**
+(`Message` has no stable id), so a compaction or a prompt-size recovery that replaces the history wholesale leaves
+that anchor pointing nowhere. That execution then sends **nothing**, and the next one anchors afresh — cheaper than
+sending a summary as if it were conversation, and cheaper than re-sending messages already ingested. The reasoning is
+in [Pluggable memory backend](../../design/memory/pluggable-memory-backend.md) §7.2.
 
 ### 7.2 The `memory.dreamer` block (`MemoryDreamerConfig`)
 
