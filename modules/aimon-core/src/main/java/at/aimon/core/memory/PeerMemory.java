@@ -26,10 +26,12 @@ import at.aimon.core.memory.dialectic.DialecticEngine;
  *
  * <p>
  * The invariant is true <b>at the tier boundary only</b>. It answers "does this backend do SEARCH", not "does its
- * search return scores" or "does its snapshot carry individual observations" — those losses live inside a tier and are
- * signalled explicitly ({@link MemorySearcher#ranksByScore()}, {@link MemorySnapshot#isObservationsAvailable()},
- * {@link ObservationRecorder#storesConfidence()}). A third case — a tier that is present but throws because it was
- * handed materials it cannot compute with — is a contract violation, not a representable state; see
+ * search return scores", "can it confine one to a session" or "does its snapshot carry individual observations" —
+ * those losses live inside a tier and are signalled explicitly ({@link MemorySearcher#ranksByScore()},
+ * {@link MemorySearcher#narrowsBySession()}, {@link MemorySnapshot#isObservationsAvailable()},
+ * {@link ObservationRecorder#storesConfidence()}). That list is open: a backend that loses something the tiers cannot
+ * already express gains a signal rather than staying quiet about it. A third case — a tier that is present but throws
+ * because it was handed materials it cannot compute with — is a contract violation, not a representable state; see
  * {@link StoreBackedPeerMemory.Builder#observationStore(ObservationStore)}.
  *
  * <h2>Lifecycle</h2>

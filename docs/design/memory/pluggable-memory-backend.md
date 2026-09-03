@@ -440,6 +440,9 @@ public interface MemorySearcher {
 
     /** 이 백엔드가 순위를 <b>수치</b>로도 낼 수 있는가. 기본 백엔드는 false — 아래 참조. */
     boolean ranksByScore();
+
+    /** 이 백엔드가 검색을 한 세션으로 좁힐 수 있는가. 기본 백엔드는 false — 아래 처분표 참조. */
+    boolean narrowsBySession();
 }
 
 public final class MemorySearchQuery {     // builder
@@ -968,10 +971,11 @@ IMPORTANT: **원격 백엔드에서 레닥션은 선택이 아니다.** 다만 �
 > 단계가 ①② 둘이었다. 구현은 **하나만 만들었다** — 그리고 그것이 맞다. 이 절의 논지 자체가
 > *"②가 새로 추가되는 것이고, 이것이 강제의 자리다"* 이기 때문이다. 실행기에 게이트를 하나 더 두면
 > 멱등이라 해롭지는 않지만, 실행기가 쓰지도 않는 `RedactionPolicy` 를 받아야 하고, 무엇보다 **게이트가
-> 둘이 되어 "하나뿐이므로 우회 경로가 없다" 는 보장의 문장이 약해진다.** 아래 "①과 ②의 이중 적용" 항목도
-> 그에 맞춰 고쳤다.
+> 둘이 되어 "하나뿐이므로 우회 경로가 없다" 는 보장의 문장이 약해진다.** 아래 "이중 적용은 안전하다"
+> 항목도 그에 맞춰 고쳤고, 첫 불릿의 "②" 도 다이어그램의 `★` 를 가리키도록 바꿨다 — 없는 기호를
+> 가리키는 문장은 이 정정이 없애려던 바로 그 종류의 잔여물이다.
 
-- **②가 새로 추가되는 것이고, 이것이 강제의 자리다.** `MemoryAssembly` 는 `RedactionPolicy` 가 있는 한
+- **★ 데코레이터가 새로 추가되는 것이고, 이것이 강제의 자리다.** `MemoryAssembly` 는 `RedactionPolicy` 가 있는 한
   `PeerMemory` 를 `RedactingPeerMemory` 로 **감싸서만** 스택에 넘긴다. 감싸지 않은 백엔드가 스택에
   들어가는 경로가 없으므로 게이트는 다시 하나다
 - **CHAT 도 감싼다.** `DialecticEngine` 은 기존 인터페이스이므로 데코레이터를 별도 타입
@@ -1187,13 +1191,16 @@ HTTP 클라이언트는 JDK 의 `java.net.http.HttpClient` 를 쓴다 — 코어
 `aimon-memory-testkit` 은 `aimon-filesystem-testkit` / `aimon-session-testkit` 의 선례를 그대로
 따른다. **이것이 "두 백엔드가 같은 답을 한다" 를 확인할 수 있는 유일한 장치**다 — 다섯 티어의 계약
 (빈 결과 vs 예외, 예산 초과 시 truncated, 세션 없는 질의의 의미, 레닥션 통과 전제)을 한 곳에 적고 세
-구현이 그것을 돈다. 그중 셋은 **능력 협상 자체의 계약**이다.
+구현이 그것을 돈다. 그중 넷은 **능력 협상 자체의 계약**이다.
 
 1. *"내놓은 티어는 답한다 — `UnsupportedOperationException` 을 던지지 않는다."* §4.1 이
    `semanticSearch` 를 못 하는 스토어에 대해 적은 계약이 여기서 강제된다
 2. *"SEARCH 결과는 언제나 관련도 내림차순이다"* — 점수를 못 내는 백엔드도 이것은 지킨다(§3.3)
 3. *"`ranksByScore()=false` 인 백엔드는 `minScore>0` 을 **조용히 무시하지 않는다**"* — 거절하거나,
    `storesConfidence()` 처럼 호출 전에 읽혀야 한다
+4. *"`narrowsBySession()=false` 인 백엔드는 세션 id 를 **조용히 무시하지 않는다**"* — 3번과 같은 규칙을
+   질의의 다른 좁힘 축에 적용한 것이다. 둘을 한 항으로 합치지 않고 나눠 적는 이유는 testkit 이 각각에
+   케이스를 갖고, 백엔드가 한쪽만 지키는 것이 실제로 가능하기 때문이다
 
 `aimon-memory-{file,mongodb,postgres}` 는 여기에 참여하지 않는다 — 그들은 티어가 아니라 저장소를
 구현하기 때문이다.
@@ -1506,7 +1513,7 @@ IMPORTANT: 다음을 하면 경계가 깨진다.
 | **3** | `MemorySpec.peerMemory(...)` + `MemoryAssembly` 의 능력 기반 등록 + degradation 키 재편 + **`RedactingPeerMemory`**(§6.2) | 스타터의 `supplied` + `PeerMemory` 빈 경로에서 `MemoryChat` 이 **처음으로** 등록된다. `in-memory` 는 `DialecticEngine` 빈이 없으므로 `memory-chat` degradation 이 오른다 (§5.3) | ① degradation 문구가 백엔드 id 를 포함 ② 기존 조립 경로 동작 불변 ③ `MemorySpec` 의 두 불변식을 `PeerMemory` 경로까지 넓힌다(§9.1) ④ `CAPABILITY_WRITE_PATH` → `CAPABILITY_INGEST` 를 `rename-maps.md` 에(§11.1) ⑤ **감싸지 않은 `PeerMemory` 가 스택에 들어가는 경로가 없고, 감싸는 대상은 INGEST·OBSERVE·SEARCH·CHAT 넷이다**(SNAPSHOT 제외 — 나가는 자유 텍스트가 없다, §6.2. Step 1 ③ 의 "신규 네 티어" 와는 **다른 넷**이다 — 그쪽은 `DialecticEngine` 을 뺀 집합이다) ⑥ [`peer-memory.md`](peer-memory.md) §14.2 의 레닥션 금지 항목을 넓힌다(§6.2) ⑦ **`AimonStackSpec:122-130` 의 상호 배타 가드를 SNAPSHOT 능력까지 넓힌다**(§9.1 표의 세 번째 행) — 넓히지 않으면 `peerMemory` + `ExecutorSpec.memoryContextProvider` 조합에서 주입 provider 가 둘이 되고 하나가 조용히 버려진다 |
 | **4** | **CLI 이주** — `AgentSetupFactory` 의 메모리 배선 아홉 개를 `MemorySpec`/`MemoryAssembly` 경로로 옮긴다 (§5.0) | CLI 관찰 동작 **불변** (아직 `file`/`in-memory` 뿐) | ① `grep MemorySpec modules/aimon-cli/src/main` 이 0건이 아니게 된다 ② `registerCliTools` 에 `ConsoleOutputTool` 만 남는다 ③ `AimonStackSpec:122-130` 상호 배타 규칙을 **CLI 측에서는 고치지 않고** 통과한다 (가드 자체를 넓히는 것은 Step 3 이다 — §9.1) ④ dreamer·maintenance 는 CLI 소유로 남는다 |
 | **5** | `MemoryIngestor` 실행기 이음매 + `ingest` 설정 + **`TeardownPhase` 메모리 블록 이동**(§3.6) | CLI 기본은 `session-end` = 기존 동작 | ① **§7.2 의 델타 방안 (a)/(b) 중 하나를 먼저 확정한다**(§15-8) — 이것 없이는 "같은 메시지가 두 번 안 간다" 가 검증 불가다 ② 실행기 이음매가 받는 `MemoryIngestor` 는 **Step 3 의 데코레이터를 지난 것**이다 (감싸지 않은 것을 직접 꺼내 쓰는 경로가 없다) ③ **phase 이동 전후로 CLI 최종 derivation 이 같은 수의 관찰을 만든다** ④ per-caller 에서 INGEST 가 꺼지고 degradation 이 오른다(§7.2) |
-| **6** | `aimon-memory-testkit` — 다섯 티어 계약 스위트. 기본 백엔드를 통과시킨다 | **없음** (테스트 전용) | 계약이 문서가 아니라 코드로 존재. 특히 **능력 협상 3계약**(§8.1) — ① 내놓은 티어는 `UnsupportedOperationException` 을 던지지 않는다 ② SEARCH 결과는 언제나 관련도 내림차순이다 ③ `ranksByScore()=false` 가 `minScore>0` 을 조용히 무시하지 않는다 |
+| **6** | `aimon-memory-testkit` — 다섯 티어 계약 스위트. 기본 백엔드를 통과시킨다 | **없음** (테스트 전용) | 계약이 문서가 아니라 코드로 존재. 특히 **능력 협상 4계약**(§8.1) — ① 내놓은 티어는 `UnsupportedOperationException` 을 던지지 않는다 ② SEARCH 결과는 언제나 관련도 내림차순이다 ③ `ranksByScore()=false` 가 `minScore>0` 을 조용히 무시하지 않는다 ④ `narrowsBySession()=false` 가 세션 id 를 조용히 무시하지 않는다 |
 | **7** | `aimon-memory-dyad` | `backend: dyad` 가 동작 | testkit 통과 · `?wait=derive` 경로 검증 |
 | **8** | `aimon-memory-honcho` | `backend: honcho` 가 동작 | testkit 통과 · `package-info` 에 §10 요약 |
 | **9** | CLI/스타터 설정 표면 + 문서 갱신 | yaml/프로퍼티로 원격 선택 가능 | ① §9 의 거절 규칙 전부 테스트 ② 원격 백엔드에서 `storagePath` 를 요구하지 않도록 `MemoryConfig.isEnabled()` 를 가른다(§9.2) ③ 미지 backend 경고를 표상·관찰 양쪽에서 낸다(§9.2) ④ **[`memory-usage-guide.md`](../../features/memory/memory-usage-guide.md) 와 `memory-usage-guide.en.md` 를 같은 커밋에서 갱신하고 `source_commit` 을 맞춘다** ⑤ **`CLAUDE.md` 의 Module Structure 목록에 두 모듈(`aimon-memory-honcho` · `-dyad`) 추가** — testkit 은 넣지 않는다. 그 목록은 기존 두 testkit(`aimon-filesystem-testkit` · `aimon-session-testkit`)도 싣지 않으며(`grep testkit CLAUDE.md` → 0건) 여기서 관례를 깨지 않는다 |

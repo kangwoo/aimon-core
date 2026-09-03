@@ -624,9 +624,13 @@ Old names are searchable in [`docs/migration/rename-maps.md`](docs/migration/ren
 
   Losses *inside* a tier are separate and each says so on its own —
   `MemorySnapshot.observationsAvailable` / `confidenceAvailable`, `MemoryHit.confidenceAvailable`,
-  `MemorySearcher.ranksByScore()`, `ObservationRecorder.storesConfidence()`. `ranksByScore()` is why
-  `MemorySearchQuery.minScore` is **rejected** rather than ignored by a backend that cannot score:
-  a filter that silently did not run reads as one that did.
+  `MemorySearcher.ranksByScore()`, `MemorySearcher.narrowsBySession()`,
+  `ObservationRecorder.storesConfidence()`. The last two of those govern the query's two narrowing
+  axes: a backend that cannot score **rejects** a positive `MemorySearchQuery.minScore`, and one that
+  cannot confine a search to a session rejects a `MemorySearchQuery.sessionId`, rather than either
+  being ignored — a filter that silently did not run reads as one that did.
+  `MemorySearchQuery.observer` is deliberately not in that family: it names who is asking rather than
+  promising a smaller result, so a backend that does not read it has not failed to keep a promise.
 
 - **`ObservationType` gains `INDUCTIVE` and `CONTRADICTION`**, with base confidences `0.4` and `0.3`.
   Two values collapsed distinctions a memory backend can express — an inference from a pattern and a
