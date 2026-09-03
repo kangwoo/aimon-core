@@ -28,8 +28,8 @@ import at.aimon.core.agent.stream.AgentExecutionEvent;
  *
  * <p>
  * The session is single-turn at a time — {@link #submitAsync(String, Consumer)} returns an incomplete future. Tests
- * call {@link #completeCurrentTurn()} (or {@link #failCurrentTurn(Throwable)}) to release it. The interrupt latch and
- * the close flag let assertions verify the manager's lifecycle behavior.
+ * call {@link #completeCurrentTurn(AgentExecutionResult)} (or {@link #failCurrentTurn(Throwable)}) to release it. The
+ * interrupt latch and the close flag let assertions verify the manager's lifecycle behavior.
  *
  * <p>
  * Turn addressing mirrors {@code DefaultLiveSession} rather than inheriting the interface defaults: the double records

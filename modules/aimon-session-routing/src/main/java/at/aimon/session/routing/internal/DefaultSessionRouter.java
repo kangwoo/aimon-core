@@ -734,20 +734,22 @@ public final class DefaultSessionRouter implements SessionRouter {
      * <b>Silence is not the same as no write, either.</b> The everyday way a remote store throws is that the write was
      * applied and the response was lost, which leaves the entry naming this node with nothing refreshing it — the
      * exact shape {@link IdempotencyStore#findStaleInFlight} reports as a death. So the throwing path binds the
-     * reservation too, and the binding is safe when the write did <em>not</em> land: both
-     * {@link IdempotencyStore#touch} and {@link IdempotencyStore#compareAndReset} match on the holder, and this id is
-     * minted per attempt. Only one of the two possibilities needs an action, and only one of them can consume it.
+     * reservation too. When the write did <em>not</em> land that binding is both harmless and inert: both
+     * {@link IdempotencyStore#touch} and {@link IdempotencyStore#compareAndReset} match on the holder and this id is
+     * minted per attempt, so they no-op against an entry that does not carry it — and by the same token nothing is
+     * watching that turn, because the entry names nobody. Only one of the two possibilities needs an action, and only
+     * one of them can consume it.
      *
      * <p>
-     * What losing costs is stated precisely, because two things ride on the take-over rather than one. On a refusal
-     * the turn runs against an entry this node is not named on, so <b>the holder-loss sweeper cannot see this node die
-     * for it</b> — the caller falls back to the forward deadline, exactly where every drained message was before this
-     * method existed — and its result is withheld from the idempotency cache, because writing over an entry the store
-     * has just identified as somebody else's is the harm rather than the safety. A store that threw costs neither:
-     * the entry is bound, so a landed write is watched like any other, and the result is still cached. The caller is
-     * answered over the rail in every case. So the invariant this method restores holds wherever the entry ends up
-     * naming this node: a refused turn may still run holderless, and {@link IdempotencyStore#findStaleInFlight}'s
-     * exclusion of holderless entries does cost coverage for exactly those turns.
+     * What losing costs is stated precisely, because two things ride on the take-over rather than one — and they are
+     * <b>not lost together</b>. The <b>cache write</b> is withheld on a refusal and nowhere else: overwriting an entry
+     * the store has just identified as somebody else's is the harm rather than the safety, whereas a store that threw
+     * identified nothing, so that path writes as it did before this method existed. The <b>sweeper's view</b> is lost
+     * wherever the entry does not end up naming this node, which is a refusal <em>and equally</em> a throw whose write
+     * never landed; only a throw whose write did land keeps it. A turn that ends up holderless still runs and its
+     * caller is still answered over the rail — what it falls back to is the forward deadline, exactly where every
+     * drained message was before this method existed, and {@link IdempotencyStore#findStaleInFlight}'s exclusion of
+     * holderless entries is what costs it that coverage.
      *
      * <p>
      * The opening submission of a pass never reaches here — {@link #drain} skips it, since its entry already names
@@ -1790,8 +1792,8 @@ public final class DefaultSessionRouter implements SessionRouter {
      * key inherit it.
      *
      * <p>
-     * Staying replayable takes an active step, though, which is the {@link #discardReservation} below. The key is not
-     * free merely because no failure was cached — it is still carrying the holderless reservation
+     * Staying replayable takes an active step, though, which is the {@link #safeDiscardReservation} below. The key is
+     * not free merely because no failure was cached — it is still carrying the holderless reservation
      * {@code safeReleaseHolder} left when the submission was forwarded, and {@link #checkIdempotency} answers
      * {@code alreadyInFlight} to any entry that is not {@code DONE}. Left standing, that reservation makes the
      * client's retry collapse onto the very attempt this method is announcing dead and then wait out
@@ -2151,9 +2153,11 @@ public final class DefaultSessionRouter implements SessionRouter {
         // against a healthy holder mid-turn. (A collected message whose holder then dies is not this path's to
         // recover either, and mostly no longer goes unrecovered: the pass that collected it names itself on the
         // reservation before running it — see takeOverReservation — so the sweeper reports that death as HOLDER_LOST
-        // instead of leaving the caller here to its deadline. Mostly, not always: a take-over the store refuses runs
-        // the turn anyway and runs it unnamed, and that caller is back to waiting out its deadline. The gap is
-        // narrow but it is a gap, so this is not a path anyone may treat as covered.)
+        // instead of leaving the caller here to its deadline. Mostly, not always, and it is two cases rather than
+        // one: a take-over the store refuses runs the turn anyway and runs it unnamed, and so does one where the
+        // store threw before applying its write — the entry names nobody either way, so the sweeper skips it and
+        // that caller is back to waiting out its deadline. The gap is narrow but it is a gap, so this is not a path
+        // anyone may treat as covered.)
         //
         // The check also keeps this path away from a session a peer deleted — for every message that delete's purge
         // removed, the inbox reads empty and the retry goes quiet before the peer's EVICT even arrives to fail this
@@ -3062,7 +3066,7 @@ public final class DefaultSessionRouter implements SessionRouter {
      * <caption>What each factory produces</caption>
      * <tr>
      * <th>Factory</th>
-     * <th>{@link #takenReserverId()}</th>
+     * <th>{@link #boundReserverId()}</th>
      * <th>{@link #mayCacheResult()}</th>
      * <th>Reached when</th>
      * </tr>
