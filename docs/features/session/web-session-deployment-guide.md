@@ -141,6 +141,7 @@ All defaults live in `SessionRouterBuilder`. The recommended starting points:
 | `onSubmitOutcome(SubmitDisposition.Kind)` | After every `submit()` | `EXECUTED_LOCALLY` vs. `FORWARDED` ratio per session hot-spot |
 | `onHolderLossRecovered` | Holder-loss sweeper after winning the CAS | Counts cluster-wide crashes recovered. **Should be near zero in steady state.** |
 | `onForwardDoorbellRerung` | Forward poll, on every tick where the awaited message is still uncollected | Somebody is waiting on a message no node has taken out of the inbox. **Retries, not recoveries** — ordinary queueing raises it too, and a successful takeover is what makes it stop, so alert on a rate that does not fall. |
+| `onReservationTakeOverRefused` | Drain pass, when `acquireHolder` answers that a collected message's key is not this node's | A request the cluster executed twice: the store said the key is `DONE` or held elsewhere, and the message runs anyway because it is already out of the at-most-once inbox. **Should be zero.** Nothing else reports it — the result is deliberately withheld from the cache, the caller is answered over the rail as usual, and no announcement distinguishes it. A store that *threw* is not counted; it said nothing about ownership. |
 
 ### Micrometer adapter recipe
 
