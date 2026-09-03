@@ -48,10 +48,10 @@ import at.aimon.core.memory.dialectic.DialecticResponse;
  * {@code UnsupportedOperationException} from {@code semanticSearch} as a documented design choice while a caller two
  * layers up had no way to find out.
  *
- * <h2>The three capability-negotiation contracts</h2>
+ * <h2>The four capability-negotiation contracts</h2>
  *
  * <p>
- * Most of what follows is per-tier behaviour. Three cases are about the capability model itself, and they are the ones
+ * Most of what follows is per-tier behaviour. Four cases are about the capability model itself, and they are the ones
  * that make {@link MemoryCapabilities#of(PeerMemory)} worth trusting:
  *
  * <ol>
@@ -63,6 +63,10 @@ import at.aimon.core.memory.dialectic.DialecticResponse;
  * owes it.
  * <li><b>{@code ranksByScore() == false} does not silently ignore {@code minScore}.</b> A filter that did not run
  * must not read as one that did.
+ * <li><b>{@code narrowsBySession() == false} does not silently ignore a session id.</b> The same rule on the query's
+ * other narrowing axis. It is a separate contract rather than a clause of the one above because a backend can honour
+ * one axis and not the other — a remote memory with a session concept but no relevance score is the ordinary case —
+ * and because each has its own case below.
  * </ol>
  *
  * <h2>Joining</h2>

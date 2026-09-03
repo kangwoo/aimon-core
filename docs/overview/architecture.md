@@ -629,7 +629,7 @@ Orca는 도구를 도메인별 프로바이더로 조립한다. 외부 모듈은
 | `PackageDependencyArchitectureTest` | 계층 의존 방향, `at.aimon.core.config.hook` 격리, 그리고 최상위 패키지 간 **사이클 베이스라인** — 목록 밖의 새 사이클도, 더 이상 사이클이 아닌 항목도 실패시킨다 |
 | `BuiltInToolSchemaArchitectureTest` | `at.aimon.core.tools` 의 모든 도구가 최상위에 `additionalProperties: false` 를 선언한다 |
 | `ToolExecutionGateArchitectureTest` | `Tool#execute` 는 스키마 검증 게이트를 통해서만 닿는다 |
-| `MemoryArchitectureTest` | `at.aimon.core.memory` 의 멀티테넌트 격리 |
+| `MemoryArchitectureTest` | 넷 — `at.aimon.core.memory` 의 멀티테넌트 격리(스토어와 서비스 티어 둘 다 맨 `String` id 를 받지 않는다), 티어 SPI 시그니처가 `*Store` 를 언급하지 않는다(교체 가능성이 참조 방향으로 검사되는 자리), 신규 네 티어의 질의는 요청 객체 하나로 받는다, `PeerMemory` 는 자기 능력 집합을 선언하지 못한다(계산되는 것이므로) |
 | `TurnVocabularyArchitectureTest` | `Turn` 이 다섯 패키지 트리의 식별자에 나타나지 않는다. `agent.impl.orca` 는 턴과 iteration 이 둘 다 실재하므로 덮지 못한다 |
 | `YamlParserInstanceArchitectureTest` | main 소스 어디에도 `Yaml` 필드가 없다 (파스마다 새로 만든다). 소스 grep 이 아니라 필드 선언 리플렉션이라 래퍼를 거친 것도 잡는다 |
 | `PublishedModuleApiScopeTest` | 형제 모듈을 `api` 로 선언하는 것은 파사드뿐, 나머지 published 모듈은 `implementation` |

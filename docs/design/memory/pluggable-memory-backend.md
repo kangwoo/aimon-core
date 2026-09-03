@@ -4,7 +4,8 @@
 > `StoreBackedPeerMemory` · 능력 기반 도구 등록 · `RedactingPeerMemory` · CLI 이주 · 수집 이음매 ·
 > `aimon-memory-testkit` 이 트리에 있다. **Step 7~9(Dyad·Honcho 어댑터와 원격 설정 표면)는 미구현**이며
 > §15 의 1·2번(두 서버를 띄워 확인하지 않았다)이 그대로 열려 있는 것이 그 이유다.
-> §7.2 의 수집 델타는 **(a) 로 확정**되었고 §15-8 은 해소되었다.
+> §7.2 의 수집 델타는 **(a) 로 확정**되었고 §15 의 6·8번(teardown 이동 안전성, 수집 델타)은
+> 해소되었다.
 > 현재 구현(`at.aimon.core.memory` + `aimon-memory-{file,mongodb,postgres}`)의
 > 설계 사양은 [`peer-memory.md`](peer-memory.md) 이며, 본 문서는 그 사양의 **대부분을 유지하되 그 문서의
 > 비목표 한 줄을 철회한다** — 아래 §0.1. 사용자 노출 표면은
@@ -1618,9 +1619,14 @@ Step 7 을 8 보다 먼저 두는 이유: Dyad 는 우리가 소스를 갖고 �
 5. **`ObservationType` 확장의 소비자 영향.** 트리 안에 exhaustive `switch` 가 없다는 것은 확인했으나,
    프롬프트 문구(`LlmDeriver` 의 type 분류 지시)가 4값을 어떻게 다룰지는 정하지 않았다 — 기본 백엔드의
    Deriver 는 계속 2값만 만들게 두는 것이 §12 Step 2 의 전제다
-6. **`TeardownPhase` 블록 이동의 안전성.** §3.6 은 `MEMORY_FINAL_DERIVATION` 이 `SESSIONS` 뒤에서도
-   전사를 읽을 수 있다고 보는데, 근거는 `SessionRecordStore` 가 application-scoped 라 `SESSIONS` 가
-   닫지 않는다는 것뿐이다. **돌려 보지 않았다** — Step 5 의 인수 조건 ③ 이 그 실측이다
+6. ~~**`TeardownPhase` 블록 이동의 안전성.**~~ — **해소됨 (Step 5).** §3.6 이 근거로 든 것
+   (`SessionRecordStore` 가 application-scoped 라 `SESSIONS` 가 닫지 않는다)은 그대로 맞고, 이제
+   추론이 아니라 측정이다 — `AimonStackBuilderTest` 의
+   `memoryFinalDerivationStillReadsTheTranscriptAfterTheMove` 가 `SESSIONS`·`CHECKPOINTS` 뒤에 등록된
+   `MEMORY_FINAL_DERIVATION` 항목이 전사에서 메시지 2건을 읽는 것을 세고, 그 항목이 정말 두 phase
+   **뒤에** 돌았다는 것도 teardown plan 인덱스로 확인한다. 옛 순서는 트리에 남아 있지 않으므로
+   "이동 전후 관찰 개수 비교" 라는 문자 그대로의 형태는 불가능하고, 이동이 위협한 유일한 것(전사를
+   못 읽게 되는 것)을 직접 재는 것이 그 자리를 대신한다
 7. **Honcho `conclusions/query` 를 peer 쌍으로 좁힐 수 있는가.** §2.1 은 그 티어를 `✓` 로 놓았지만,
    `honcho-java-spec.md:343` 이 기술하는 파라미터는 `query` · `top_k` · `distance` 셋뿐이고
    **observer/observed 로 좁히는 방법이 명시되어 있지 않다.** `honcho-java-spec.md` 의
