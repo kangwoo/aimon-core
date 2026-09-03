@@ -223,6 +223,11 @@ class MemoryToolBackendSignalTest {
         public boolean ranksByScore() {
             return false;
         }
+
+        @Override
+        public boolean narrowsBySession() {
+            return false;
+        }
     }
 
     /** Records the draft verbatim, keeping or dropping the confidence as configured. */

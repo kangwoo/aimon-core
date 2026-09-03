@@ -136,6 +136,11 @@ class MemoryCapabilitiesTest {
         public boolean ranksByScore() {
             return false;
         }
+
+        @Override
+        public boolean narrowsBySession() {
+            return false;
+        }
     }
 
     private static final class SilentEngine implements DialecticEngine {

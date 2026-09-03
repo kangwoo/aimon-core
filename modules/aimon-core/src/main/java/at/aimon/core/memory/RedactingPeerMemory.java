@@ -185,6 +185,11 @@ public final class RedactingPeerMemory implements PeerMemory {
         public boolean ranksByScore() {
             return inner.ranksByScore();
         }
+
+        @Override
+        public boolean narrowsBySession() {
+            return inner.narrowsBySession();
+        }
     }
 
     /** Masks the fact before it is written, and records that it happened. */

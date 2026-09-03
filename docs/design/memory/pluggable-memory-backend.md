@@ -479,6 +479,8 @@ IMPORTANT: **순위의 정본은 `score` 가 아니라 리스트 순서다.** �
 | 순서 | **모든 백엔드가 보장한다.** 티어 계약이며, 기본 백엔드의 인덱스가 이미 그렇게 약속한다 |
 | `score` | `ranksByScore()=true` 인 백엔드만 채운다. false 면 `0` 이다 — **순위에서 역산한 가짜 점수를 지어내지 않는다** |
 | `minScore` | `ranksByScore()=false` 인데 양수를 주면 **거절한다**(`IllegalArgumentException`). 조용히 무시하면 호출자는 필터가 걸린 줄 알고 안 걸린 결과를 받는다 |
+| `sessionId` | 같은 처분. `narrowsBySession()=false` 인데 세션 id 를 주면 **거절한다** — 기본 백엔드의 `ObservationStore.semanticSearch(subject, query, topK)` 에는 좁힐 세션 축이 아예 없다. 이것이 `ranksByScore()` · `storesConfidence()` 에 이은 **세 번째 신호**다 |
+| `observer` | **거절하지 않는다.** 이 축은 "누가 묻는가" 이지 결과를 좁히는 약속이 아니다 — peer 쌍으로 스코프하는 원격 백엔드가 두 짝을 다 필요로 하기 때문에 질의에 있고, 기본 백엔드는 `subject` 에서 전부 파생시킨다. 좁혀 준다고 약속하지 않았으므로 안 좁혀도 거짓말이 아니다 |
 
 `storesConfidence()` 가 `ObserveTool` 의 스키마를 좁히는 것과 같은 모양이다 — 못 하는 것을 **말하고**,
 호출자가 그것을 보고 요청을 바꾸게 한다. 모델은 이 축에 노출되지 않는다(`MemorySearchTool` 의 입력

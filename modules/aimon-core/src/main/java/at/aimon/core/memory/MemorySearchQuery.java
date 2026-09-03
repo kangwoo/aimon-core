@@ -65,9 +65,16 @@ public final class MemorySearchQuery {
     }
 
     /**
-     * Returns the peer running the search.
+     * Returns the peer running the search — who is asking, not a narrowing of what comes back.
      *
-     * @return the observer, or empty when the search is not scoped to one
+     * <p>
+     * It is here because a backend that scopes conclusions by peer <em>pair</em> needs both halves to answer at all.
+     * The store-backed default derives everything from {@link #getSubject()} and does not read this, which costs
+     * nothing: an observation is filed as being about a subject, so a search about that subject is the same search
+     * whoever runs it. Deliberately not one of the two axes {@link MemorySearcher} rejects when it cannot apply them
+     * — those promise a smaller result, and this does not promise anything.
+     *
+     * @return the observer, or empty when the caller has none to name
      */
     public Optional<PeerView> getObserver() {
         return Optional.ofNullable(observer);
@@ -107,6 +114,13 @@ public final class MemorySearchQuery {
 
     /**
      * Returns the session the search is confined to.
+     *
+     * <p>
+     * Only meaningful against a backend whose {@link MemorySearcher#narrowsBySession()} is {@code true}; one that
+     * cannot narrow must reject it rather than search every session, for the same reason
+     * {@link #getMinScore()} is rejected rather than dropped — a caller who asked for a narrower result and was not
+     * told it could not be given one reads the wider result as the narrow one. The store-backed default cannot
+     * narrow, because the store method underneath it has no session axis.
      *
      * @return the session id, or empty for a cross-session search
      */

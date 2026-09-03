@@ -390,6 +390,30 @@ public abstract class AbstractPeerMemoryContractTest {
                     .search(MemorySearchQuery.builder().subject(SUBJECT).query("tea").minScore(0.0d).build()))
                     .doesNotThrowAnyException();
         }
+
+        /**
+         * The same contract as {@code minScore}, on the query's other narrowing axis. Both promise a smaller result;
+         * a backend that answers across every session while the caller named one has widened the answer silently.
+         */
+        @Test
+        @DisplayName("a backend that cannot narrow by session rejects a session id rather than searching all of them")
+        void sessionIdIsRejectedRatherThanIgnored() {
+            final MemorySearchQuery narrowed = MemorySearchQuery.builder().subject(SUBJECT).query("tea")
+                    .sessionId(SESSION_ID).build();
+
+            if (searcher().narrowsBySession()) {
+                assertThatCode(() -> searcher().search(narrowed)).doesNotThrowAnyException();
+            } else {
+                assertThatThrownBy(() -> searcher().search(narrowed)).isInstanceOf(IllegalArgumentException.class);
+            }
+        }
+
+        @Test
+        @DisplayName("no session id is no narrowing at all and is always accepted")
+        void noSessionIdIsNotAFilter() {
+            assertThatCode(() -> searcher().search(MemorySearchQuery.builder().subject(SUBJECT).query("tea").build()))
+                    .doesNotThrowAnyException();
+        }
     }
 
     @Nested

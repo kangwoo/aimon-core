@@ -215,6 +215,16 @@ class StoreBackedPeerMemoryTest {
         }
 
         @Test
+        @DisplayName("rejects a session id rather than answering across every session — the same reasoning as"
+                + " minScore, on the query's other narrowing axis")
+        void sessionIdRejected() {
+            assertThat(searcher().narrowsBySession()).isFalse();
+            assertThatThrownBy(() -> searcher()
+                    .search(MemorySearchQuery.builder().subject(peer("alice")).query("tea").sessionId("s-1").build()))
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("narrowsBySession");
+        }
+
+        @Test
         @DisplayName("a minScore of zero means no floor and is accepted")
         void zeroMinScoreAccepted() {
             assertThat(searcher()

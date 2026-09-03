@@ -190,6 +190,12 @@ public final class StoreBackedPeerMemory implements PeerMemory {
                         + " a minScore of " + query.getMinScore() + " cannot be applied. Rejecting rather than"
                         + " ignoring it: a silently unapplied filter reads as an applied one.");
             }
+            if (query.getSessionId().isPresent()) {
+                throw new IllegalArgumentException("This backend does not narrow by session (narrowsBySession() =="
+                        + " false), so a search cannot be confined to session '" + query.getSessionId().orElseThrow()
+                        + "'. Rejecting for the same reason as minScore: answering across every session would hand"
+                        + " back a wider result the caller would read as the narrower one they asked for.");
+            }
             final List<Observation> matches = observationStore.semanticSearch(query.getSubject(), query.getQuery(),
                     query.getTopK());
             final List<MemoryHit> hits = new ArrayList<>(matches.size());
@@ -203,6 +209,13 @@ public final class StoreBackedPeerMemory implements PeerMemory {
         public boolean ranksByScore() {
             // The index underneath promises "ordered from most to least relevant" and nothing more. Deriving a score
             // from the rank would put a number the model reads as measured next to one that is not.
+            return false;
+        }
+
+        @Override
+        public boolean narrowsBySession() {
+            // ObservationStore.semanticSearch(subject, query, topK) has no session axis, so there is nothing to
+            // narrow on. Saying so is what lets search() reject a session id instead of quietly widening the answer.
             return false;
         }
     }

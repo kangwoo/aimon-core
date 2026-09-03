@@ -190,6 +190,11 @@ class RedactingPeerMemoryTest {
                 public boolean ranksByScore() {
                     return false;
                 }
+
+                @Override
+                public boolean narrowsBySession() {
+                    return false;
+                }
             });
         }
 
