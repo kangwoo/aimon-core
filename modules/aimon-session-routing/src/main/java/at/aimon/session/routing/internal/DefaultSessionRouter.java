@@ -1277,9 +1277,9 @@ public final class DefaultSessionRouter implements SessionRouter {
             }
 
             // After the agent check and before the turn: from here on this node is the one executing that
-            // reservation, so it is the one whose death has to be visible. Null for a message with no key and
-            // whenever the take-over lost — see takeOverReservation. Not attempted for the submission that opened
-            // this pass: its entry already names this node, so the take-over could only refuse it.
+            // reservation, so it is the one whose death has to be visible. Not attempted for the submission that
+            // opened this pass — its entry already names this node, so the take-over could only refuse it — and see
+            // takeOverReservation for the three verdicts the attempt itself can come back with.
             final Takeover takeover = next == selfMessage
                     ? Takeover.alreadyHeldBySubmit(selfReserverId)
                     : takeOverReservation(convId, idempotencyKey, held);
@@ -3021,15 +3021,64 @@ public final class DefaultSessionRouter implements SessionRouter {
     }
 
     /**
-     * What one {@link #takeOverReservation} attempt learned about a message's reservation.
+     * Why {@link #drain} is or is not this message's reservation-holder — either what one
+     * {@link #takeOverReservation} attempt learned, or the fact that no attempt was made.
      *
      * <p>
-     * Three outcomes and two behaviours, which is the whole reason this is not a nullable {@code String}. Only
-     * {@link #won(String)} yields a reserver id — the identity to unbind and, on failure, to reset. Only
-     * {@link #refused()} withholds the cache write, because it is the only one where the store <em>said</em> the
-     * entry belongs to somebody else. {@link #unknown()} is the store failing to answer, and {@link #notAttempted()}
-     * covers a message with no key and the submission that opened the pass; neither learned anything that would
-     * justify withholding, so both keep the pre-take-over behaviour.
+     * Five factories, two bits:
+     *
+     * <table border="1">
+     * <caption>What each factory produces</caption>
+     * <tr>
+     * <th>Factory</th>
+     * <th>{@link #takenReserverId()}</th>
+     * <th>{@link #mayCacheResult()}</th>
+     * <th>Reached when</th>
+     * </tr>
+     * <tr>
+     * <td>{@link #won(String)}</td>
+     * <td>the id</td>
+     * <td>true</td>
+     * <td>{@code acquireHolder} returned true</td>
+     * </tr>
+     * <tr>
+     * <td>{@link #refused()}</td>
+     * <td>null</td>
+     * <td><b>false</b></td>
+     * <td>{@code acquireHolder} returned false</td>
+     * </tr>
+     * <tr>
+     * <td>{@link #unknown()}</td>
+     * <td>null</td>
+     * <td>true</td>
+     * <td>{@code acquireHolder} threw</td>
+     * </tr>
+     * <tr>
+     * <td>{@link #notAttempted()}</td>
+     * <td>null</td>
+     * <td>true</td>
+     * <td>a non-self message with no key</td>
+     * </tr>
+     * <tr>
+     * <td>{@link #alreadyHeldBySubmit(String)}</td>
+     * <td>null</td>
+     * <td>its argument is non-null</td>
+     * <td>the
+     * submission that opened the pass</td>
+     * </tr>
+     * </table>
+     *
+     * <p>
+     * <b>An id means this loop may undo something</b>, and only {@code won} yields one: it is the identity to unbind
+     * from the touch slot and, on failure, to reset. The opening submission's reservation is held by this node too,
+     * but by {@code runTurnLoop} rather than by this loop, which is why it has a factory of its own rather than
+     * reusing {@code won} — see {@link #alreadyHeldBySubmit(String)}.
+     *
+     * <p>
+     * <b>Withholding the cache write needs the store to have said so</b>, which is {@code refused} and nothing else
+     * that can be observed. {@code alreadyHeldBySubmit(null)} also reads false, but that argument is null only for a
+     * submission with no idempotency key at all, and {@code announceTurnResult} short-circuits on the null key before
+     * ever consulting this bit — so the two cases where the bit is false are not two cases in practice.
      *
      * <p>
      * Collapsing {@code unknown} into {@code refused} is the bug this type exists to make hard to reintroduce: a
@@ -3070,13 +3119,28 @@ public final class DefaultSessionRouter implements SessionRouter {
          * The opening submission of a drain pass, whose reservation this node has held since submit time — so there
          * is nothing to take over and nothing that could refuse it.
          *
+         * <p>
+         * <b>Why not {@code won(selfReserverId)}.</b> One reason, not the two originally claimed here. Yielding an id
+         * would have {@link #drain}'s per-message {@code finally} unbind that reservation when the submission's own
+         * turn ends — but {@code runTurnLoop} keeps it bound for the whole pass, and deliberately: if
+         * {@code markDone} fails, the entry is still {@code IN_FLIGHT} under this node's name after a turn that
+         * succeeded, and something has to go on saying this node is alive while the pass runs the rest of its queue.
+         * Unbinding early leaves it unrefreshed, and a peer's sweeper then reports a lost holder for a turn that
+         * finished. {@code theOpeningSubmissionsBindingOutlivesItsOwnTurn} is the guard on exactly that.
+         *
+         * <p>
+         * The failure-path reset is <em>not</em> a second reason, and claiming it was overstated the case. Yielding
+         * an id would also make the drain loop {@code compareAndReset} this key before announcing the failure, which
+         * is the order {@link #announceTurnFailure} asks for and strictly better than what happens now —
+         * {@code runTurnLoop} frees it only after the whole pass, so a retry arriving in between is told to collapse
+         * onto the attempt it was just told died. That window predates this branch and is registered in the design's
+         * §14; keeping the reset where it is, is a scope decision rather than a correctness one.
+         *
          * @param selfReserverId
          *            the identity {@code runTurnLoop} reserved and bound, or {@code null} when the submission carried
          *            no key
          */
         static Takeover alreadyHeldBySubmit(String selfReserverId) {
-            // Not won(): the binding and the failure-path reset belong to runTurnLoop, which owns them for the whole
-            // pass, so this must not hand the drain loop an id to undo them with.
             return new Takeover(null, selfReserverId != null);
         }
 

@@ -272,6 +272,50 @@ class SessionRouterDrainedForwardHolderLossTest {
     }
 
     @Test
+    @DisplayName("the opening submission's reservation stays refreshed for the whole pass, not just its own turn")
+    void theOpeningSubmissionsBindingOutlivesItsOwnTurn() throws Exception {
+        // markDone failing is what makes ownership of the binding observable at all. Normally the submission's entry
+        // is DONE the moment its turn ends, and touching a DONE entry is a silent no-op, so it makes no difference
+        // who stops refreshing it. When the write fails the entry stays IN_FLIGHT under this node's name, and from
+        // then until the pass ends something has to keep saying this node is alive.
+        final IdempotencyStore idempotency = new FailingMarkDoneIdempotencyStore(new InMemoryIdempotencyStore());
+        final TestManagerHarness holder = node("node-A", idempotency,
+                b -> b.lockExtendInterval(RENEW_FAST).holderLossSweepInterval(NEVER_SWEEPS));
+        final TestManagerHarness peer = node("node-B", idempotency,
+                b -> b.holderLossSweepInterval(SWEEP_FAST).idempotencySecondaryTtl(STALE_AFTER));
+        final SessionId id = SessionId.of("c-drained-7");
+        final List<Map<String, Object>> announced = tapTurnResults(id);
+
+        final SubmitDisposition own = holder.manager().submit(keyed(id, "own"));
+        assertThat(own.getKind()).isEqualTo(SubmitDisposition.Kind.EXECUTED_LOCALLY);
+        final TestLiveSession session = awaitSession(holder, id);
+        assertThat(session.awaitTurnStarted()).isTrue();
+
+        // Delivered mid-turn so the pass carries on after the submission's own turn is finished — which is the only
+        // arrangement in which "for its own turn" and "for the whole pass" differ.
+        final SubmitDisposition sibling = peer.manager().submit(RequestFixtures.submit(id, "alpha", "sibling"));
+        assertThat(sibling.getKind()).isEqualTo(SubmitDisposition.Kind.FORWARDED);
+
+        session.completeCurrentTurn(TestLiveSession.ok("own-done"));
+        assertThat(session.awaitTurnCount(2)).as("the pass has to still be running the sibling").isTrue();
+
+        final IdempotencyEntry stranded = entry(idempotency);
+        assertThat(stranded.getStatus()).as("the failed write is what leaves this entry in flight")
+                .isEqualTo(IdempotencyEntry.Status.IN_FLIGHT);
+        assertThat(stranded.getHolderId()).isPresent();
+
+        // runTurnLoop owns this binding for the length of the pass and clears it in its own finally, so the renewer
+        // goes on refreshing it while the sibling runs. Handing the drain loop a reserver id for the opening
+        // submission — folding alreadyHeldBySubmit into won — would have it unbind here instead, and the peer would
+        // then report a lost holder for a turn that had already succeeded.
+        assertNoHolderLostAnnouncement(announced, LONGER_THAN_STALE);
+
+        session.completeCurrentTurn(TestLiveSession.ok("sibling-done"));
+        assertThat(own.getFuture().toCompletableFuture().get(5, TimeUnit.SECONDS).getFinalAnswer())
+                .isEqualTo("own-done");
+    }
+
+    @Test
     @DisplayName("a doorbell drain takes the reservation over too, not just the holder's post-turn re-collect")
     void aDoorbellDrainAlsoTakesOverTheReservation() throws Exception {
         final IdempotencyStore idempotency = new InMemoryIdempotencyStore();
@@ -425,14 +469,35 @@ class SessionRouterDrainedForwardHolderLossTest {
         return seen;
     }
 
+    /**
+     * Fails the moment a {@code HOLDER_LOST} announcement for {@link #KEY} appears, and otherwise returns after
+     * {@code dwell}. Polling rather than sleeping so a regression reports where it happens.
+     */
+    private static void assertNoHolderLostAnnouncement(List<Map<String, Object>> announced, Duration dwell)
+            throws InterruptedException {
+        final long deadline = System.currentTimeMillis() + dwell.toMillis();
+        while (System.currentTimeMillis() < deadline) {
+            assertThat(hasHolderLost(announced))
+                    .as("a turn that already succeeded must not be announced as a lost holder").isFalse();
+            Thread.sleep(25L);
+        }
+    }
+
+    private static boolean hasHolderLost(List<Map<String, Object>> announced) {
+        for (Map<String, Object> payload : announced) {
+            if ("HOLDER_LOST".equals(payload.get("outcome")) && KEY.equals(payload.get("idem"))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean awaitHolderLostAnnouncement(List<Map<String, Object>> announced)
             throws InterruptedException {
         final long deadline = System.currentTimeMillis() + TestLiveSession.DEFAULT_AWAIT_MS;
         while (System.currentTimeMillis() < deadline) {
-            for (Map<String, Object> payload : announced) {
-                if ("HOLDER_LOST".equals(payload.get("outcome")) && KEY.equals(payload.get("idem"))) {
-                    return true;
-                }
+            if (hasHolderLost(announced)) {
+                return true;
             }
             Thread.sleep(10L);
         }
@@ -500,6 +565,19 @@ class SessionRouterDrainedForwardHolderLossTest {
         @Override
         public List<IdempotencyEntry> findStaleInFlight(Instant cutoff) {
             return delegate.findStaleInFlight(cutoff);
+        }
+    }
+
+    /** Fails every {@code markDone}, so a turn that succeeded leaves its entry in flight under this node's name. */
+    private static final class FailingMarkDoneIdempotencyStore extends DelegatingIdempotencyStore {
+
+        FailingMarkDoneIdempotencyStore(IdempotencyStore delegate) {
+            super(delegate);
+        }
+
+        @Override
+        public void markDone(String key, AgentExecutionResult result) {
+            throw new IllegalStateException("simulated idempotency backend failure on markDone");
         }
     }
 
