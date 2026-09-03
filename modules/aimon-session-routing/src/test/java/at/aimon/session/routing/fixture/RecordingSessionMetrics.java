@@ -25,6 +25,7 @@ public final class RecordingSessionMetrics implements SessionMetrics {
     public final Map<SubmitDisposition.Kind, AtomicInteger> submitOutcomes = new EnumMap<>(
             SubmitDisposition.Kind.class);
     public final AtomicInteger holderLossRecovered = new AtomicInteger();
+    public final AtomicInteger forwardDoorbellRerung = new AtomicInteger();
 
     public final AtomicReference<Duration> lastLockAcquireLatency = new AtomicReference<>();
 
@@ -82,5 +83,10 @@ public final class RecordingSessionMetrics implements SessionMetrics {
     @Override
     public void onHolderLossRecovered() {
         holderLossRecovered.incrementAndGet();
+    }
+
+    @Override
+    public void onForwardDoorbellRerung() {
+        forwardDoorbellRerung.incrementAndGet();
     }
 }
