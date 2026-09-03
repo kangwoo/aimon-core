@@ -259,6 +259,25 @@ only what the module *was not*; `routing` is the first name that describes its c
 
 ---
 
+## Memory moves to a service-tier backend seam
+
+The mistake being corrected is a name that described the one backend that happened to exist rather
+than the thing being named. The seam is now `PeerMemory` and its five capability tiers; the storage
+interfaces keep every signature and become the default backend's materials. Design:
+[`pluggable-memory-backend.md`](../design/memory/pluggable-memory-backend.md).
+
+| Old | New |
+|-----|-----|
+| `RepresentationMemoryContextProvider` (`aimon-core`) | `SnapshotMemoryContextProvider` |
+
+`Representation` is a type only the store-backed backend has — a backend that computes its snapshot
+on read never materializes one — so a class named after it was named after an implementation detail
+of one backend. The constructor now takes a `MemorySnapshotReader`;
+`SnapshotMemoryContextProvider.readerOver(representationStore)` builds one for callers assembling
+the default backend by hand.
+
+---
+
 ## Related documents
 
 - [`frozen-names.md`](frozen-names.md) -- what was **not** renamed, and why that is a contract

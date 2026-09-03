@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/memory/memory-usage-guide.md
-source_commit: a9821d44
+source_commit: eec9ccd
 ---
 
 # Memory (Peer Memory) Usage Guide
@@ -89,7 +89,7 @@ Once the config is active, `AgentSetupFactory` wires the following automatically
 - **`backend: in-memory`** — `InMemoryRepresentationStore` + `InMemoryObservationStore` (lost on restart; dev/test).
 - Registration of the four user-facing tools (MemorySearch / Observe / MemoryChat / MemoryRecall)
 - `MemoryToolContextEnricher` — injects workspace/observer/subject/sessionId into every tool call
-- `RepresentationMemoryContextProvider` — injects the insight summary into the system prompt on every turn (`SUMMARY_ONLY`)
+- `SnapshotMemoryContextProvider` — injects the insight summary into the system prompt on every turn (`SUMMARY_ONLY`)
 - The **final derivation** that runs once at session end (conversation → observations)
 - (when `dreamer.enabled=true`) the background consolidation job on its own dedicated Quartz scheduler
 
@@ -114,7 +114,7 @@ conversation proceeds ──▶ (session ends) the final derivation is enqueued
                      │
                      └──▶ Representation summary built ──▶ RepresentationStore.save
                                                                   │
-the next conversation starts ◀── RepresentationMemoryContextProvider.provide() (injected into the system prompt)
+the next conversation starts ◀── SnapshotMemoryContextProvider.provide() (injected into the system prompt)
 
 (background) Dreamer cron ──▶ RandomWalk consolidation ──▶ SurprisalScorer ──▶ ObservationStore.merge
 ```
@@ -186,11 +186,17 @@ Registers a single fact explicitly, bypassing the deriver (admin/system flows, d
 ## 6. Automatic context injection
 
 `MemoryContextProvider` is called while the agent assembles its system prompt, and contributes a memory-derived `SystemPromptPart`.
-The default implementation, `RepresentationMemoryContextProvider`, resolves in this order:
+The default implementation, `SnapshotMemoryContextProvider`, stands on the backend's **SNAPSHOT tier**
+(`MemorySnapshotReader`) and resolves in this order:
 
-1. The latest **LOCAL** representation for `(subject, observer, sessionId)`
-2. Failing that, the latest **GLOBAL** representation for `subject` (GLOBAL is produced by the Dreamer — it only exists after the Dreamer has run once; see §4)
+1. The latest **LOCAL** snapshot for `(subject, observer, sessionId)`
+2. Failing that, the latest **GLOBAL** snapshot for `subject` (GLOBAL is produced by the Dreamer — it only exists after the Dreamer has run once; see §4)
 3. Failing that, `Optional.empty()` → the executor omits the part (the prompt's shape is unchanged)
+
+On the default backend that snapshot is a `Representation` out of `RepresentationStore`, but because the
+provider stands on the tier, a backend that computes its snapshot on read instead of storing one works
+through the same provider. `SnapshotMemoryContextProvider.readerOver(representationStore)` builds that tier
+over a store.
 
 How it renders is decided by `MemoryInjectionMode`:
 
@@ -539,8 +545,9 @@ registry.register(new MemoryRecallTool(representationStore));
 
 // 7) automatic ToolContext filling + automatic system-prompt injection
 ToolContextEnricher enricher = new MemoryToolContextEnricher(workspace, observer);   // pass to the executor factory
-MemoryContextProvider memoryContext = new RepresentationMemoryContextProvider(
-        representationStore, observer, observer, conversationId,
+MemoryContextProvider memoryContext = new SnapshotMemoryContextProvider(
+        SnapshotMemoryContextProvider.readerOver(representationStore), workspace,
+        MemoryPeerResolver.fixed(observer.getPrincipal()),
         MemoryInjectionMode.SUMMARY_ONLY, 0);                                        // withMemoryContextProvider(...)
 ```
 

@@ -84,7 +84,7 @@ memory:
 - **`backend: in-memory`** — `InMemoryRepresentationStore` + `InMemoryObservationStore` (재시작 시 소실, dev/test).
 - 사용자 노출 도구 4종 등록(MemorySearch / Observe / MemoryChat / MemoryRecall)
 - `MemoryToolContextEnricher` — 매 도구 호출에 workspace/observer/subject/sessionId 주입
-- `RepresentationMemoryContextProvider` — 매 턴 system prompt 에 통찰 요약 주입(`SUMMARY_ONLY`)
+- `SnapshotMemoryContextProvider` — 매 턴 system prompt 에 통찰 요약 주입(`SUMMARY_ONLY`)
 - 세션 종료 시 1회 도는 **final derivation**(대화 → observation)
 - (`dreamer.enabled=true` 일 때) 전용 Quartz 스케줄러로 백그라운드 통합 잡
 
@@ -109,7 +109,7 @@ memory:
                      │
                      └──▶ Representation 요약 생성 ──▶ RepresentationStore.save
                                                               │
-다음 대화 시작 ◀── RepresentationMemoryContextProvider.provide() (system prompt 주입)
+다음 대화 시작 ◀── SnapshotMemoryContextProvider.provide() (system prompt 주입)
 
 (백그라운드) Dreamer cron ──▶ RandomWalk 통합 ──▶ SurprisalScorer ──▶ ObservationStore.merge
 ```
@@ -181,11 +181,16 @@ deriver 를 우회해 사실 1건을 명시 등록(관리자/시스템 플로우
 ## 6. 자동 컨텍스트 주입
 
 `MemoryContextProvider` 는 에이전트가 system prompt 를 조립할 때 호출되어 memory 기반 `SystemPromptPart` 를 기여합니다.
-기본 구현 `RepresentationMemoryContextProvider` 의 해석 순서:
+기본 구현 `SnapshotMemoryContextProvider` 는 백엔드의 **SNAPSHOT 티어**(`MemorySnapshotReader`) 위에 서며,
+해석 순서는 이렇습니다:
 
-1. `(subject, observer, sessionId)` 의 최신 **LOCAL** representation
-2. 없으면 `subject` 의 최신 **GLOBAL** representation (GLOBAL 은 Dreamer 가 생산 — Dreamer 가 1회 돈 뒤에야 존재, §4 참조)
+1. `(subject, observer, sessionId)` 의 최신 **LOCAL** 스냅샷
+2. 없으면 `subject` 의 최신 **GLOBAL** 스냅샷 (GLOBAL 은 Dreamer 가 생산 — Dreamer 가 1회 돈 뒤에야 존재, §4 참조)
 3. 그래도 없으면 `Optional.empty()` → 실행기가 해당 part 를 생략(프롬프트 형태 불변)
+
+기본 백엔드에서 그 스냅샷은 `RepresentationStore` 의 `Representation` 이지만, 티어 위에 서 있으므로
+표현을 저장하지 않고 읽을 때 계산하는 백엔드도 같은 provider 로 동작합니다.
+`SnapshotMemoryContextProvider.readerOver(representationStore)` 가 스토어 위에 그 티어를 세웁니다.
 
 렌더 방식은 `MemoryInjectionMode` 로 결정:
 
@@ -533,8 +538,9 @@ registry.register(new MemoryRecallTool(representationStore));
 
 // 7) ToolContext 자동 채움 + system prompt 자동 주입
 ToolContextEnricher enricher = new MemoryToolContextEnricher(workspace, observer);   // executor factory 에 전달
-MemoryContextProvider memoryContext = new RepresentationMemoryContextProvider(
-        representationStore, observer, observer, conversationId,
+MemoryContextProvider memoryContext = new SnapshotMemoryContextProvider(
+        SnapshotMemoryContextProvider.readerOver(representationStore), workspace,
+        MemoryPeerResolver.fixed(observer.getPrincipal()),
         MemoryInjectionMode.SUMMARY_ONLY, 0);                                        // withMemoryContextProvider(...)
 ```
 

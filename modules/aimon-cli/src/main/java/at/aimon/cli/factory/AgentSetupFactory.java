@@ -84,8 +84,8 @@ import at.aimon.core.memory.MemoryInjectionMode;
 import at.aimon.core.memory.MemoryPeerResolver;
 import at.aimon.core.memory.ObservationStore;
 import at.aimon.core.memory.PeerView;
-import at.aimon.core.memory.RepresentationMemoryContextProvider;
 import at.aimon.core.memory.RepresentationStore;
+import at.aimon.core.memory.SnapshotMemoryContextProvider;
 import at.aimon.core.memory.Workspace;
 import at.aimon.core.memory.WorkspaceStore;
 import at.aimon.core.memory.deriver.DerivationQueueManager;
@@ -1010,8 +1010,9 @@ public class AgentSetupFactory {
         if (!memoryWiring.isEnabled() || representationStore == null) {
             return null;
         }
-        return new RepresentationMemoryContextProvider(representationStore, memoryWiring.workspace,
-                MemoryPeerResolver.fixed(memoryWiring.observer.getPrincipal()), MemoryInjectionMode.SUMMARY_ONLY, 0);
+        return new SnapshotMemoryContextProvider(SnapshotMemoryContextProvider.readerOver(representationStore),
+                memoryWiring.workspace, MemoryPeerResolver.fixed(memoryWiring.observer.getPrincipal()),
+                MemoryInjectionMode.SUMMARY_ONLY, 0);
     }
 
     /**

@@ -26,7 +26,7 @@ import at.aimon.core.memory.Workspace;
  * When a {@link RepresentationStore} is wired, the engine also refreshes each
  * subject's cross-session <em>global</em> {@link Representation} from its current
  * observations after consolidation — this is the producer for the
- * {@code findLatestGlobal} path that {@code RepresentationMemoryContextProvider}
+ * {@code findLatestGlobal} path that {@code SnapshotMemoryContextProvider}
  * and {@code MemoryRecallTool} (GLOBAL mode) read. The summary is built
  * deterministically from the highest-confidence observations so the background
  * job adds no extra LLM cost.

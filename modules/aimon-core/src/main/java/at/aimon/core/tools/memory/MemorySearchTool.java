@@ -14,9 +14,13 @@ import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolContextKey;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.memory.MemoryHit;
+import at.aimon.core.memory.MemorySearchQuery;
+import at.aimon.core.memory.MemorySearcher;
 import at.aimon.core.memory.Observation;
 import at.aimon.core.memory.ObservationStore;
 import at.aimon.core.memory.PeerView;
+import at.aimon.core.memory.StoreBackedPeerMemory;
 import at.aimon.core.memory.Workspace;
 import at.aimon.core.memory.redaction.RedactionPolicy;
 import at.aimon.core.memory.redaction.RedactionResult;
@@ -41,8 +45,16 @@ import at.aimon.core.memory.redaction.RedactionResult;
  *
  * <p>
  * When a {@link RedactionPolicy} is configured, the query is redacted before
- * being passed to {@link ObservationStore#semanticSearch} so secrets typed by a
- * caller never reach the embedding backend (design doc §6.5).
+ * being passed to the searcher so secrets typed by a caller never reach the
+ * embedding backend (design doc §6.5).
+ *
+ * <p>
+ * The tool stands on the SEARCH tier rather than on a store. Two things follow.
+ * Hits are rendered <b>in the order the tier returned them</b>, because that
+ * order is the ranking — a backend that cannot score leaves every score at zero,
+ * and printing those zeroes would read as "nothing is relevant". And a
+ * confidence the backend did not store is not printed at all, for the same
+ * reason a fabricated one would be worse than a missing one.
  */
 public final class MemorySearchTool extends AbstractTool {
 
@@ -62,7 +74,7 @@ public final class MemorySearchTool extends AbstractTool {
 
     private static final Logger log = LoggerFactory.getLogger(MemorySearchTool.class);
 
-    private final ObservationStore observationStore;
+    private final MemorySearcher searcher;
     private final RedactionPolicy redactionPolicy;
 
     public MemorySearchTool(ObservationStore observationStore) {
@@ -70,7 +82,7 @@ public final class MemorySearchTool extends AbstractTool {
     }
 
     /**
-     * Creates a new {@code MemorySearchTool}.
+     * Creates a search tool on an {@link ObservationStore}, for callers assembling the default backend by hand.
      *
      * @param observationStore
      *            backing store (must not be null)
@@ -78,13 +90,40 @@ public final class MemorySearchTool extends AbstractTool {
      *            optional policy applied to the query before searching; {@code null} to disable
      */
     public MemorySearchTool(ObservationStore observationStore, RedactionPolicy redactionPolicy) {
+        this(searcherFor(observationStore), redactionPolicy);
+    }
+
+    /**
+     * Creates a search tool on the SEARCH tier.
+     *
+     * @param searcher
+     *            the tier searches run against (must not be null)
+     */
+    public MemorySearchTool(MemorySearcher searcher) {
+        this(searcher, null);
+    }
+
+    /**
+     * Creates a search tool on the SEARCH tier.
+     *
+     * @param searcher
+     *            the tier searches run against (must not be null)
+     * @param redactionPolicy
+     *            optional policy applied to the query before searching; {@code null} to disable
+     */
+    public MemorySearchTool(MemorySearcher searcher, RedactionPolicy redactionPolicy) {
         super(TOOL_NAME,
                 "Search a peer's stored observations by keyword or semantic similarity. "
                         + "Use this when you need raw observation snippets (with confidence scores) "
                         + "rather than a synthesized answer. Returns up to top_k matching observations.",
                 createInputSchema());
-        this.observationStore = Objects.requireNonNull(observationStore, "observationStore cannot be null");
+        this.searcher = Objects.requireNonNull(searcher, "searcher cannot be null");
         this.redactionPolicy = redactionPolicy;
+    }
+
+    private static MemorySearcher searcherFor(ObservationStore observationStore) {
+        Objects.requireNonNull(observationStore, "observationStore cannot be null");
+        return StoreBackedPeerMemory.builder().observationStore(observationStore).build().searcher().orElseThrow();
     }
 
     private static Map<String, Object> createInputSchema() {
@@ -138,7 +177,8 @@ public final class MemorySearchTool extends AbstractTool {
             }
 
             String effectiveQuery = applyRedaction(query);
-            List<Observation> hits = observationStore.semanticSearch(subject, effectiveQuery, topK);
+            List<MemoryHit> hits = searcher.search(MemorySearchQuery.builder().subject(subject).observer(observer)
+                    .query(effectiveQuery).topK(topK).build());
             log.debug("MemorySearch subject={} query='{}' hits={}", subject.key(), effectiveQuery, hits.size());
             return ToolResult.success(render(subject, effectiveQuery, hits));
 
@@ -162,7 +202,7 @@ public final class MemorySearchTool extends AbstractTool {
         return result.getRedactedContent();
     }
 
-    private static String render(PeerView subject, String query, List<Observation> hits) {
+    private static String render(PeerView subject, String query, List<MemoryHit> hits) {
         StringBuilder sb = new StringBuilder(256);
         sb.append("MemorySearch results for ").append(subject.key()).append('\n');
         sb.append("query: ").append(query).append('\n');
@@ -174,10 +214,14 @@ public final class MemorySearchTool extends AbstractTool {
         }
 
         sb.append('\n');
-        for (Observation obs : hits) {
+        for (MemoryHit hit : hits) {
+            Observation obs = hit.getObservation();
             sb.append("- [").append(obs.getId().getLocalId()).append("] ").append(obs.getContent()).append(" (type=")
-                    .append(obs.getType()).append(", confidence=")
-                    .append(String.format(Locale.ROOT, "%.2f", obs.getConfidence())).append(")\n");
+                    .append(obs.getType());
+            if (hit.isConfidenceAvailable()) {
+                sb.append(", confidence=").append(String.format(Locale.ROOT, "%.2f", obs.getConfidence()));
+            }
+            sb.append(")\n");
         }
         return sb.toString();
     }

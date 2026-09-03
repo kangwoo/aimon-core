@@ -12,7 +12,7 @@ import at.aimon.core.base.Principal;
 import at.aimon.core.memory.MemoryContextProvider;
 import at.aimon.core.memory.MemoryPeerResolver;
 import at.aimon.core.memory.PeerView;
-import at.aimon.core.memory.RepresentationMemoryContextProvider;
+import at.aimon.core.memory.SnapshotMemoryContextProvider;
 import at.aimon.core.tools.memory.MemoryToolContextEnricher;
 
 /**
@@ -87,8 +87,9 @@ public final class MemoryAssembly {
                 .orElseGet(MemoryPeerResolver::caller);
 
         final MemoryContextProvider contextProvider = spec.getRepresentationStore()
-                .map(store -> (MemoryContextProvider) new RepresentationMemoryContextProvider(store,
-                        spec.getWorkspace(), peerResolver, spec.getInjectionMode(), spec.getMaxTokens()))
+                .map(store -> (MemoryContextProvider) new SnapshotMemoryContextProvider(
+                        SnapshotMemoryContextProvider.readerOver(store), spec.getWorkspace(), peerResolver,
+                        spec.getInjectionMode(), spec.getMaxTokens()))
                 .orElse(null);
 
         // One observer for the whole runtime, so it exists only in fixed-peer mode. The enrichment info a

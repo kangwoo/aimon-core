@@ -592,6 +592,39 @@ Old names are searchable in [`docs/migration/rename-maps.md`](docs/migration/ren
   manager through the builder, where each defaults to its single-node answer. The existing
   constructors are unchanged and now delegate to it.
 
+#### Memory — a backend seam at service altitude
+
+- **`PeerMemory` and five capability tiers** (`at.aimon.core.memory`) — `MemorySnapshotReader`
+  (SNAPSHOT), `MemorySearcher` (SEARCH), the existing `DialecticEngine` (CHAT, adopted unchanged),
+  `ObservationRecorder` (OBSERVE) and `MemoryIngestor` (INGEST), each with a request value object.
+  This is now the seam a memory backend is replaced at. The storage SPI is **unchanged and still
+  supported** — `ObservationStore` / `RepresentationStore` / `WorkspaceStore` keep every signature —
+  but it is demoted to the *materials* the default backend is built from, which `StoreBackedPeerMemory`
+  does. The demotion is checkable rather than asserted: an ArchUnit rule forbids any tier signature
+  from naming a store, so a backend with no store at all is expressible.
+
+  Which capabilities a backend has is **computed** from its tier accessors by
+  `MemoryCapabilities.of(...)`, a static utility. `PeerMemory` deliberately has no `capabilities()`
+  method and a rule keeps it that way: a declared set is a second source of truth, and the two
+  disagree not at assembly but at the first call, after a tool has been registered and offered to
+  the model.
+
+  Losses *inside* a tier are separate and each says so on its own —
+  `MemorySnapshot.observationsAvailable` / `confidenceAvailable`, `MemoryHit.confidenceAvailable`,
+  `MemorySearcher.ranksByScore()`, `ObservationRecorder.storesConfidence()`. `ranksByScore()` is why
+  `MemorySearchQuery.minScore` is **rejected** rather than ignored by a backend that cannot score:
+  a filter that silently did not run reads as one that did.
+
+- **`ObservationType` gains `INDUCTIVE` and `CONTRADICTION`**, with base confidences `0.4` and `0.3`.
+  Two values collapsed distinctions a memory backend can express — an inference from a pattern and a
+  recorded conflict both filed as `DEDUCTIVE`. Nothing in the tree switches exhaustively over this
+  enum, so existing code is unaffected, and the in-tree Deriver still produces only the original two.
+
+  **This breaks downgrade.** Once an `INDUCTIVE` or `CONTRADICTION` observation has been written to
+  file, Mongo or Postgres, an older jar reading it back throws from `valueOf`. Neither mitigation is
+  worth taking: folding the new values down on write gives up the distinction the widening exists
+  for, and a lenient `valueOf` would have to be added to the jar that is already released.
+
 #### Other
 
 - **`TaskResultStore`** (`at.aimon.core.subagent.task`) — the background-task surface's missing half.
@@ -877,6 +910,21 @@ Replacement for a caller that used it to read a result: none is needed at the ca
   - `getMetadata(dir)` and `exists(dir)` answer for directories instead of reporting them missing.
   A deployment written against the old answers keeps compiling and starts getting better ones; a
   deployment that *relied* on directories being invisible is the case to check.
+
+**Memory**
+
+- **`RepresentationMemoryContextProvider` is `SnapshotMemoryContextProvider`**, and it takes a
+  `MemorySnapshotReader` rather than a `RepresentationStore`. The old name said it read
+  `Representation`s; a backend that computes its snapshot on read has no such type, so the name was
+  wrong for every backend but one. `SnapshotMemoryContextProvider.readerOver(store)` builds the tier
+  over a store for callers assembling the default backend by hand — a second *constructor* was
+  rejected because it would be ambiguous for a `null` argument and would have implied the store and
+  the tier are interchangeable, which is what the rename denies. Behaviour is unchanged.
+- **`ObserveTool`'s input schema now depends on the backend.** When
+  `ObservationRecorder.storesConfidence()` is `false`, the `confidence` parameter is removed from the
+  schema and omitted from the rendered result, because echoing back a number the backend discarded
+  tells the model its value was kept. The default backend stores confidence, so a deployment running
+  today sees the schema it saw before.
 
 #### Non-breaking
 
