@@ -1186,7 +1186,8 @@ public class OrcaAgentExecutor
      *
      * <p>
      * An interrupted or failed execution feeds too, and that is deliberate — what was said still happened, and a
-     * backend that only ever saw the turns that finished cleanly would hold a version of the conversation nobody had.
+     * backend that only ever saw the executions that finished cleanly would hold a version of the conversation nobody
+     * had.
      *
      * <p>
      * The delta comes from the mark set at the top of {@code execute()}, and is empty when the history was rewritten
@@ -1208,7 +1209,7 @@ public class OrcaAgentExecutor
                     .afterExecution(ExecutionMemoryUpdate.builder().sessionId(scope.transcriptBuffer.getSessionId())
                             .principal(scope.executionRequest.getPrincipal().orElse(null)).messages(added).build());
         } catch (RuntimeException e) {
-            log.warn("Memory sink threw at execution end; the turn is unaffected: {}", e.getMessage());
+            log.warn("Memory sink threw at execution end; the execution is unaffected: {}", e.getMessage());
         }
     }
 

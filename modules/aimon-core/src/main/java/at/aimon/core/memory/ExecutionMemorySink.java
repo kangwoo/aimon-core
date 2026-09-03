@@ -16,7 +16,9 @@ package at.aimon.core.memory;
  * agent's answer to be lost.
  *
  * <p>
- * Implementations must be thread-safe: one instance is agent-scoped and is called concurrently by every session.
+ * Implementations must be thread-safe: one instance is application-scoped — the assembly builds it once and hands it
+ * to the executor every agent shares — so every session in the process calls it concurrently. Not agent-scoped and
+ * certainly not per-execution: what arrives per execution is the {@link ExecutionMemoryUpdate}, not the sink.
  */
 @FunctionalInterface
 public interface ExecutionMemorySink {

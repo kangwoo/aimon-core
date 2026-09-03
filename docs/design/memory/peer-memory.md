@@ -187,28 +187,34 @@ public final class Observation {
     private final PeerView subject;                   // 누구에 대한 사실인가
     private final PeerView observer;                  // 누가 관찰했는가 (= subject 자기 자신 가능)
     private final String content;                     // 자연어 사실
-    private final ObservationType type;               // EXPLICIT, DEDUCTIVE
+    private final ObservationType type;               // EXPLICIT, DEDUCTIVE, INDUCTIVE, CONTRADICTION
     private final List<String> sourceMessageIds;
     private final Instant createdAt;
     private final double confidence;                  // 정의는 본 절 아래 "confidence 의 정의" 참조
     private final Map<String, String> metadata;
 }
 
-public enum ObservationType { EXPLICIT, DEDUCTIVE }
+public enum ObservationType { EXPLICIT, DEDUCTIVE, INDUCTIVE, CONTRADICTION }
 ```
+
+> **넓혀짐** — 원래는 `{EXPLICIT, DEDUCTIVE}` 두 값이었다. 두 값으로는 메모리 백엔드가 구별하는 것의
+> 절반이 `DEDUCTIVE` 로 뭉개졌으므로(패턴에서의 귀납과 기록된 충돌이 똑같이 "메시지에서 추론됨" 이 된다)
+> 네 값으로 넓혔다. 근거와 다운그레이드 비용은
+> [교체 가능한 메모리 백엔드](pluggable-memory-backend.md) §2.2 · §11.3 에 있다. 트리의 Deriver 는
+> 여전히 앞의 두 값만 만든다 — 새 두 값은 자기 분류가 더 촘촘한 백엔드를 위한 자리다.
 
 #### `confidence` 의 정의
 
 ```
 confidence = clamp(0, 1,
-    base_score(type)                  // EXPLICIT=0.9, DEDUCTIVE=0.6
+    base_score(type)                  // EXPLICIT=0.9, DEDUCTIVE=0.6, INDUCTIVE=0.4, CONTRADICTION=0.3
   + reinforcement_bonus(corroborations) // 다른 메시지에서 같은 사실 재확인 시 +0.05/회 (cap 0.2)
   - contradiction_penalty               // Reconciler가 충돌 발견 시 -0.3
 )
 ```
 계산은 `LlmDeriver`가 수행한다 (LLM 자기보고가 아님 — LLM의 self-report는 신뢰성 부족). LLM은 *type 분류*까지만 한다.
 
-> **구현됨** — `LlmDeriver` + `DeriverObservationCreateTool` 에서 위 식을 그대로 적용한다. base score 는 `ObservationType.baseConfidence()` (EXPLICIT=0.9, DEDUCTIVE=0.6) 에 산다. corroboration 마다 +0.05(cap 0.2), Reconciler 가 충돌하는 prior 를 탐지하면 −0.3. LLM 은 type 분류만 하고 confidence 를 self-report 하지 않는다.
+> **구현됨** — `LlmDeriver` + `DeriverObservationCreateTool` 에서 위 식을 그대로 적용한다. base score 는 `ObservationType.baseConfidence()` (EXPLICIT=0.9, DEDUCTIVE=0.6, INDUCTIVE=0.4, CONTRADICTION=0.3) 에 산다. 뒤의 두 값은 위 넓힘과 함께 정해졌다 — 귀납은 다음 사례가 깨뜨릴 수 있으므로 연역보다 약하고, 충돌 기록은 넷 중 그것을 근거로 행동하기에 가장 위험하므로 가장 낮다. corroboration 마다 +0.05(cap 0.2), Reconciler 가 충돌하는 prior 를 탐지하면 −0.3. LLM 은 type 분류만 하고 confidence 를 self-report 하지 않는다.
 
 #### 임베딩과 벡터 검색
 

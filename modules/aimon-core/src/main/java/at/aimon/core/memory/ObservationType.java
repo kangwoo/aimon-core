@@ -65,9 +65,13 @@ public enum ObservationType {
     }
 
     /**
-     * The design doc §4.3 base confidence score for this type ({@code EXPLICIT=0.9},
-     * {@code DEDUCTIVE=0.6}, {@code INDUCTIVE=0.4}, {@code CONTRADICTION=0.3}). The Deriver computes an observation's
-     * confidence from this base plus reinforcement/contradiction adjustments — it is never self-reported by the LLM.
+     * The base confidence score for this type. {@code EXPLICIT=0.9} and {@code DEDUCTIVE=0.6} come from
+     * {@code peer-memory.md} §4.3; {@code INDUCTIVE=0.4} and {@code CONTRADICTION=0.3} were set by the widening that
+     * introduced them, since §4.3 predates both values.
+     *
+     * <p>
+     * The Deriver computes an observation's confidence from this base plus reinforcement/contradiction adjustments —
+     * it is never self-reported by the LLM.
      *
      * @return the base score in {@code [0, 1]}
      */

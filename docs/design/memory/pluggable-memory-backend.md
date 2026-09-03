@@ -953,16 +953,23 @@ IMPORTANT: **원격 백엔드에서 레닥션은 선택이 아니다.** 다만 �
 #### 그러므로 계약을 뒤집는다 — 게이트는 구현 안으로 들어간다
 
 ```
-실행 종료 ─▶ MessageRedactor.redactAll(messages)      ← ① 코어 실행기 이음매
+실행 종료 ─▶ ExecutionMemorySink (마스킹하지 않는다)
                     │
                     ▼
-       RedactingPeerMemory(delegate, redactionPolicy)  ← ② 조립이 반드시 씌우는 데코레이터
-                    │   ingest · observe · search · chat 네 티어의
+       RedactingPeerMemory(delegate, redactionPolicy)  ← ★ 조립이 반드시 씌우는 데코레이터.
+                    │   ingest · observe · search · chat 네 티어의    유일한 게이트다
                     │   바깥으로 나가는 텍스트를 전부 마스킹
                     ▼
        MemoryIngestor / ObservationRecorder /
        MemorySearcher / DialecticEngine                ← 여기서부터가 어댑터
 ```
+
+> **정정 (Step 5 구현 시점).** 이 그림의 초안에는 실행기 이음매에도 `MessageRedactor.redactAll` 이 있었고
+> 단계가 ①② 둘이었다. 구현은 **하나만 만들었다** — 그리고 그것이 맞다. 이 절의 논지 자체가
+> *"②가 새로 추가되는 것이고, 이것이 강제의 자리다"* 이기 때문이다. 실행기에 게이트를 하나 더 두면
+> 멱등이라 해롭지는 않지만, 실행기가 쓰지도 않는 `RedactionPolicy` 를 받아야 하고, 무엇보다 **게이트가
+> 둘이 되어 "하나뿐이므로 우회 경로가 없다" 는 보장의 문장이 약해진다.** 아래 "①과 ②의 이중 적용" 항목도
+> 그에 맞춰 고쳤다.
 
 - **②가 새로 추가되는 것이고, 이것이 강제의 자리다.** `MemoryAssembly` 는 `RedactionPolicy` 가 있는 한
   `PeerMemory` 를 `RedactingPeerMemory` 로 **감싸서만** 스택에 넘긴다. 감싸지 않은 백엔드가 스택에
@@ -974,8 +981,10 @@ IMPORTANT: **원격 백엔드에서 레닥션은 선택이 아니다.** 다만 �
   백엔드에서는 그 조합 자체를 **거절**한다(§9.3)
 - 어댑터는 레닥션을 **모른다.** 어댑터마다 게이트를 두면 새 어댑터가 하나 빠뜨리는 순간 보장이 무너지고,
   그 누락은 시크릿이 나간 뒤에야 보인다
-- ①과 ②의 이중 적용은 안전하다 — `RedactionPolicy.redact` 는 계약상 idempotent 다. 기본 백엔드는
-  `DerivationQueueManager.enqueue` 안에서 세 번째로 적용하는데 역시 같은 이유로 안전하다
+- **이중 적용은 안전하다** — `RedactionPolicy.redact` 는 계약상 idempotent 다. 도구가 이미 마스킹한
+  텍스트(`ObserveTool` · `MemorySearchTool`)가 데코레이터를 다시 지나고, 기본 백엔드에서는
+  `DerivationQueueManager.enqueue` 안에서 세 번째로 적용되는데 전부 같은 이유로 안전하다. 안전하다는
+  것이 **더 두라는 뜻은 아니다** — 강제의 자리는 하나여야 그 하나를 지켰는지 확인할 수 있다
 
 #### 마스킹 대상은 넷이다 — 기준은 "밖으로 나가는 텍스트" 다
 

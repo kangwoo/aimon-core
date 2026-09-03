@@ -178,8 +178,8 @@ public final class MemoryRecallTool extends AbstractTool {
             Optional<MemorySnapshot> latest = snapshotReader.read(query.build());
             if (latest.isEmpty()) {
                 log.debug("MemoryRecall miss: subject={} mode={}", subject.key(), mode);
-                return ToolResult.success("No " + mode.name().toLowerCase(Locale.ROOT)
-                        + " representation available for " + subject.key() + " yet.");
+                return ToolResult.success("No " + mode.name().toLowerCase(Locale.ROOT) + " snapshot available for "
+                        + subject.key() + " yet.");
             }
 
             String rendered = render(subject, latest.get(), maxTokens);
@@ -198,7 +198,7 @@ public final class MemoryRecallTool extends AbstractTool {
 
     private static String render(PeerView subject, MemorySnapshot snapshot, int maxTokens) {
         StringBuilder out = new StringBuilder(256);
-        out.append("Representation for ").append(subject.key()).append('\n');
+        out.append("Snapshot for ").append(subject.key()).append('\n');
         out.append("scope: ").append(snapshot.getResolvedScope() == MemorySnapshotScope.GLOBAL ? "global" : "local")
                 .append('\n');
         out.append("generatedAt: ").append(snapshot.getGeneratedAt()).append('\n');

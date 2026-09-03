@@ -47,7 +47,7 @@ class MemoryRecallToolTest {
         ToolResult result = tool.execute(ToolInput.of(), contextWith(ALICE));
 
         assertThat(result.isSuccess()).isTrue();
-        assertThat(result.getContent()).contains("Representation for", "scope: global", "tokenCount: 12",
+        assertThat(result.getContent()).contains("Snapshot for", "scope: global", "tokenCount: 12",
                 "Alice prefers tea.");
     }
 
@@ -57,7 +57,7 @@ class MemoryRecallToolTest {
         ToolResult result = tool.execute(ToolInput.of(), contextWith(ALICE));
 
         assertThat(result.isSuccess()).isTrue();
-        assertThat(result.getContent()).contains("No global representation");
+        assertThat(result.getContent()).contains("No global snapshot");
     }
 
     @Test
