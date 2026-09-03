@@ -24,6 +24,7 @@ import at.aimon.bootstrap.spec.AgentSpec;
 import at.aimon.bootstrap.spec.ExecutorSpec;
 import at.aimon.bootstrap.spec.FileSystemSpec;
 import at.aimon.bootstrap.spec.LlmSpec;
+import at.aimon.bootstrap.spec.MemorySpec;
 import at.aimon.bootstrap.spec.SchedulingSpec;
 import at.aimon.bootstrap.spec.SessionSpec;
 import at.aimon.bootstrap.spec.SkillApprovalSpec;
@@ -58,7 +59,6 @@ import at.aimon.core.agent.session.LiveSession;
 import at.aimon.core.agent.session.LiveSessionOptions;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
-import at.aimon.core.agent.tool.ToolContextEnricher;
 import at.aimon.core.base.Principal;
 import at.aimon.core.config.hook.HookHotReloadBootstrap;
 import at.aimon.core.config.hook.ReloadInvoker;
@@ -79,13 +79,12 @@ import at.aimon.core.mcp.DefaultMcpClientFactory;
 import at.aimon.core.memory.InMemoryObservationStore;
 import at.aimon.core.memory.InMemoryRepresentationStore;
 import at.aimon.core.memory.InMemoryWorkspaceStore;
-import at.aimon.core.memory.MemoryContextProvider;
 import at.aimon.core.memory.MemoryInjectionMode;
-import at.aimon.core.memory.MemoryPeerResolver;
 import at.aimon.core.memory.ObservationStore;
+import at.aimon.core.memory.PeerMemory;
 import at.aimon.core.memory.PeerView;
 import at.aimon.core.memory.RepresentationStore;
-import at.aimon.core.memory.SnapshotMemoryContextProvider;
+import at.aimon.core.memory.StoreBackedPeerMemory;
 import at.aimon.core.memory.Workspace;
 import at.aimon.core.memory.WorkspaceStore;
 import at.aimon.core.memory.deriver.DerivationQueueManager;
@@ -118,11 +117,6 @@ import at.aimon.core.skill.policy.pending.PendingTurn;
 import at.aimon.core.skill.policy.pending.PendingTurnRegistry;
 import at.aimon.core.skill.render.ShellArgumentTokenizer;
 import at.aimon.core.tools.console.ConsoleOutputTool;
-import at.aimon.core.tools.memory.MemoryChatTool;
-import at.aimon.core.tools.memory.MemoryRecallTool;
-import at.aimon.core.tools.memory.MemorySearchTool;
-import at.aimon.core.tools.memory.MemoryToolContextEnricher;
-import at.aimon.core.tools.memory.ObserveTool;
 import at.aimon.core.tracing.SpanExporter;
 import at.aimon.core.tracing.SpanRedactor;
 import at.aimon.core.tracing.TracePayloadPolicy;
@@ -527,6 +521,15 @@ public class AgentSetupFactory {
         final DialecticEngine dialecticEngine = (observationStore == null)
                 ? null
                 : new LlmDialecticEngine(llmClient, observationStore, config.getLlmConfig().getModel());
+        // The deriver and its queue used to be built after the stack, with the rest of the memory subsystem. They
+        // move ahead of it because the queue is now a *material* of the memory backend — it is what makes the INGEST
+        // tier exist — and MemorySpec is a stack input. Only the final-derivation runnable still has to wait, since
+        // it needs the executor the stack publishes.
+        final Deriver memoryDeriver = buildMemoryDeriver(memoryWiring, representationStore, observationStore, llmClient,
+                config.getLlmConfig().getModel(), config.getMemoryConfig(), outputFormatter);
+        final DerivationQueueManager memoryQueue = buildDerivationQueue(memoryDeriver);
+        final MemorySpec memorySpec = buildMemorySpec(memoryWiring, representationStore, observationStore,
+                dialecticEngine, memoryQueue);
         // The app-scoped shared GraalVM engine + watchdog schedulers, built once when cli.enableWorkflowJs
         // is on and reused by every session's WorkflowJs tool.
         final GraalJsEngineHolder graalJsEngines = config.getCliSettings().isEnableWorkflowJs()
@@ -552,16 +555,14 @@ public class AgentSetupFactory {
                 .fileSystem(FileSystemSpec.supplied(fileSystem)).skillParser(skillParser)
                 .agent(AgentSpec.builder().bundle(agentBundle)
                         .addCustomizer(runtime -> configureHooks(runtime, outputFormatter))
-                        .addCustomizer(runtime -> registerCliTools(runtime, outputFormatter, representationStore,
-                                observationStore, dialecticEngine, new DefaultRedactionPolicy()))
-                        .build())
+                        .addCustomizer(runtime -> registerCliTools(runtime, outputFormatter)).build())
                 .session(SessionSpec.builder().recordStore(new InMemorySessionRecordStore()).build())
-                .skillApproval(approvalSpec)
+                .skillApproval(approvalSpec).memory(memorySpec)
+                // No memoryContextProvider here any more: MemoryAssembly builds the injection provider from the spec
+                // above, and AimonStackSpec rejects having both. The CLI supplies neither instead of both.
                 .executor(ExecutorSpec.builder().streaming(config.getCliSettings().isStreaming()).tracer(tracer)
-                        .tracePayloadPolicy(tracePayloadPolicy)
-                        .memoryContextProvider(buildMemoryContextProvider(memoryWiring, representationStore)).build())
-                .tools(buildToolSpec(config, fileSystem, memoryWiring.enrichers, graalJsEngines))
-                .scheduling(SchedulingSpec.enabled())
+                        .tracePayloadPolicy(tracePayloadPolicy).build())
+                .tools(buildToolSpec(config, fileSystem, graalJsEngines)).scheduling(SchedulingSpec.enabled())
                 // A factory rather than an instance: the wiki locator resolves each scope's VFS through the runtime
                 // registry, which only exists once the builder has created it. The raw llmClient is deliberate —
                 // wiki generation is background work and carries no turn span context.
@@ -578,8 +579,8 @@ public class AgentSetupFactory {
             throw e;
         }
         return decorate(config, stack, agentBundle, fileSystem, skillHookShell, graalJsEngines,
-                new CliDecorations(outputFormatter, approvalChannel.get(), traceSpanStore, llmClient, memoryWiring,
-                        representationStore, observationStore));
+                new CliDecorations(outputFormatter, approvalChannel.get(), traceSpanStore, llmClient,
+                        new CliMemoryDecorations(memoryWiring, representationStore, observationStore, memoryQueue)));
     }
 
     /**
@@ -630,10 +631,7 @@ public class AgentSetupFactory {
      * receiver throws before {@code own} is ever reached.
      */
     private void enrollMemorySubsystem(AimonStack stack, CliConfig config, CliDecorations cli) {
-        final Deriver memoryDeriver = buildMemoryDeriver(cli.memoryWiring, cli.representationStore,
-                cli.observationStore, cli.llmClient, config.getLlmConfig().getModel(), config.getMemoryConfig(),
-                cli.outputFormatter);
-        final DerivationQueueManager memoryQueue = buildDerivationQueue(memoryDeriver);
+        final DerivationQueueManager memoryQueue = cli.memoryQueue;
         final Runnable memoryFinalDerivation = buildMemoryFinalDerivation(cli.memoryWiring, memoryQueue,
                 stack.agentExecutor(), DEFAULT_SESSION_ID, cli.outputFormatter);
         if (memoryFinalDerivation != null) {
@@ -666,20 +664,18 @@ public class AgentSetupFactory {
      *            the CLI configuration
      * @param fileSystem
      *            the workspace file system the WorkflowJs worktree factory branches from
-     * @param toolContextEnrichers
-     *            enrichers contributed by the peer-memory wiring (empty when memory is off)
      * @param graalJsEngines
      *            the shared GraalJS engine holder, or {@code null} when {@code cli.enableWorkflowJs} is off
      * @return the spec
      */
     // Package-private (not private) so AgentSetupFactoryGraalJsTest can exercise the cli.enableWorkflowJs wiring
     // branch directly, mirroring the sibling buildDerivationQueue/buildMemoryMaintenance test seams.
-    ToolSpec buildToolSpec(CliConfig config, LocalFileSystem fileSystem, List<ToolContextEnricher> toolContextEnrichers,
-            GraalJsEngineHolder graalJsEngines) {
+    ToolSpec buildToolSpec(CliConfig config, LocalFileSystem fileSystem, GraalJsEngineHolder graalJsEngines) {
         final CliSettings settings = config.getCliSettings();
+        // No memory enricher here any more: MemoryAssembly contributes it, so the memory-shaped half of the tool
+        // context and the memory tools that read it are decided in one place instead of two.
         final ToolSpec.Builder builder = ToolSpec.builder().workflowToolEnabled(settings.isEnableWorkflow())
-                .workflowRunnerEnabled(settings.isEnableWorkflow() || settings.isEnableWorkflowJs())
-                .addContextEnrichers(toolContextEnrichers);
+                .workflowRunnerEnabled(settings.isEnableWorkflow() || settings.isEnableWorkflowJs());
         if (graalJsEngines != null) {
             // Core cannot register this tool itself (it must not depend on the aimon-workflow-graaljs impl module),
             // so the assembly layer adds it. The worktree factory is built here — the sanctioned assembler may touch
@@ -747,17 +743,42 @@ public class AgentSetupFactory {
         private final MemoryWiring memoryWiring;
         private final RepresentationStore representationStore;
         private final ObservationStore observationStore;
+        private final DerivationQueueManager memoryQueue;
 
         private CliDecorations(OutputFormatter outputFormatter, InteractiveSkillApprovalChannel skillApprovalChannel,
-                TraceSpanStore traceSpanStore, LlmClient llmClient, MemoryWiring memoryWiring,
-                RepresentationStore representationStore, ObservationStore observationStore) {
+                TraceSpanStore traceSpanStore, LlmClient llmClient, CliMemoryDecorations memory) {
             this.outputFormatter = outputFormatter;
             this.skillApprovalChannel = skillApprovalChannel;
             this.traceSpanStore = traceSpanStore;
             this.llmClient = llmClient;
+            this.memoryWiring = memory.memoryWiring;
+            this.representationStore = memory.representationStore;
+            this.observationStore = memory.observationStore;
+            this.memoryQueue = memory.memoryQueue;
+        }
+    }
+
+    /**
+     * The memory pieces the CLI keeps for itself after the stack is built — the dreamer's stores, the queue whose
+     * drain is on the teardown plan, and the workspace/observer pair the final-derivation runnable attributes to.
+     *
+     * <p>
+     * They travel as one value because they are one subsystem, and because the alternative is a constructor with
+     * eight parameters in which two adjacent stores can be swapped without the compiler noticing.
+     */
+    private static final class CliMemoryDecorations {
+
+        private final MemoryWiring memoryWiring;
+        private final RepresentationStore representationStore;
+        private final ObservationStore observationStore;
+        private final DerivationQueueManager memoryQueue;
+
+        private CliMemoryDecorations(MemoryWiring memoryWiring, RepresentationStore representationStore,
+                ObservationStore observationStore, DerivationQueueManager memoryQueue) {
             this.memoryWiring = memoryWiring;
             this.representationStore = representationStore;
             this.observationStore = observationStore;
+            this.memoryQueue = memoryQueue;
         }
     }
 
@@ -882,36 +903,51 @@ public class AgentSetupFactory {
     }
 
     /**
-     * Registers CLI-specific tools to the agent runtime.
+     * Registers the one tool that is genuinely CLI-specific: console output.
      *
      * <p>
-     * Memory-related tool registrations are guarded by the per-store presence so the wiring degrades cleanly when
-     * memory
-     * is disabled:
-     * <ul>
-     * <li>{@link RepresentationStore} present → {@link MemoryRecallTool} (representation snapshot recall).</li>
-     * <li>{@link ObservationStore} present → {@link MemorySearchTool} and {@link ObserveTool} (observation read/write
-     * with redaction at the tool boundary, per design doc §6.5).</li>
-     * <li>{@link DialecticEngine} present → {@link MemoryChatTool} (natural-language Q&amp;A over the peer's
-     * observations).</li>
-     * </ul>
+     * The four memory tools used to be registered here, each guarded by the presence of a store. They are now
+     * registered by {@code MemoryAssembly} from {@link #buildMemorySpec}, driven by the backend's capabilities rather
+     * than by a list of stores — the same four tools appear for the CLI's backend, and a backend that cannot serve one
+     * of them no longer gets it registered and failing.
      */
-    private void registerCliTools(OrcaAgentRuntime agentRuntime, OutputFormatter outputFormatter,
-            RepresentationStore representationStore, ObservationStore observationStore, DialecticEngine dialecticEngine,
-            RedactionPolicy redactionPolicy) {
-        final ConsoleOutputTool consoleOutputTool = new ConsoleOutputTool(outputFormatter::displayInfo,
-                outputFormatter::displayError);
-        agentRuntime.getToolRegistry().register(consoleOutputTool);
-        if (representationStore != null) {
-            agentRuntime.getToolRegistry().register(new MemoryRecallTool(representationStore));
+    private void registerCliTools(OrcaAgentRuntime agentRuntime, OutputFormatter outputFormatter) {
+        agentRuntime.getToolRegistry()
+                .register(new ConsoleOutputTool(outputFormatter::displayInfo, outputFormatter::displayError));
+    }
+
+    /**
+     * Builds the {@link MemorySpec} the stack assembles memory from, or {@code null} when memory is off.
+     *
+     * <p>
+     * Everything the CLI used to wire by hand — the injection provider, the tool-context enricher and the four memory
+     * tools — is produced by {@code MemoryAssembly} from this one value, and produced from the backend's
+     * <em>capabilities</em> rather than from a list of stores. The CLI's job shrinks to naming the materials.
+     *
+     * <p>
+     * The four tiers come from what the CLI has always built: the representation store answers SNAPSHOT, the
+     * observation store answers SEARCH and OBSERVE, the dialectic engine answers CHAT, and the derivation queue
+     * answers INGEST. All five capabilities are present, so no memory degradation is recorded — which is a truthful
+     * change rather than a quiet one: the CLI has had a write path all along, and it simply never passed through the
+     * place that reports on one.
+     *
+     * <p>
+     * The dreamer, the maintenance scheduler and the final-derivation runnable stay with the CLI. They are not tiers;
+     * they are the default backend's background work, and a deployment that swapped the backend would want them gone
+     * rather than re-pointed.
+     */
+    MemorySpec buildMemorySpec(MemoryWiring memoryWiring, RepresentationStore representationStore,
+            ObservationStore observationStore, DialecticEngine dialecticEngine,
+            DerivationQueueManager derivationQueue) {
+        if (!memoryWiring.isEnabled()) {
+            return null;
         }
-        if (observationStore != null) {
-            agentRuntime.getToolRegistry().register(new MemorySearchTool(observationStore, redactionPolicy));
-            agentRuntime.getToolRegistry().register(new ObserveTool(observationStore, redactionPolicy));
-        }
-        if (dialecticEngine != null) {
-            agentRuntime.getToolRegistry().register(new MemoryChatTool(dialecticEngine));
-        }
+        final PeerMemory backend = StoreBackedPeerMemory.builder().representationStore(representationStore)
+                .observationStore(observationStore).dialecticEngine(dialecticEngine).derivationQueue(derivationQueue)
+                .build();
+        return MemorySpec.forPeer(memoryWiring.getWorkspace(), memoryWiring.getObserver().getPrincipal())
+                .peerMemory(backend).injectionMode(MemoryInjectionMode.SUMMARY_ONLY).maxTokens(0)
+                .redactionPolicy(new DefaultRedactionPolicy()).build();
     }
 
     /**
@@ -986,33 +1022,7 @@ public class AgentSetupFactory {
                 ? memoryConfig.getPeerName()
                 : memoryConfig.getPeerId();
         final PeerView observer = PeerView.of(workspace, Principal.user(memoryConfig.getPeerId(), peerName));
-        return new MemoryWiring(workspace, observer, List.of(new MemoryToolContextEnricher(workspace, observer)));
-    }
-
-    /**
-     * Builds the auto-injection {@link MemoryContextProvider} that contributes a memory-derived system prompt part on
-     * every turn. Returns {@code null} when memory is disabled or no representation store is wired — the executor
-     * factory treats null as "no memory part" and the prompt shape stays unchanged.
-     *
-     * <p>
-     * {@link MemoryPeerResolver#fixed} rather than {@link MemoryPeerResolver#caller()}: a CLI process has exactly one
-     * configured peer, the deriver writes every representation under it ({@link #buildMemoryFinalDerivation}), and the
-     * REPL attaches no principal to a turn. Reading under the caller here would find nothing, every time. The session
-     * is no longer baked in — it arrives with each execution, so the same provider serves a session-less fork without
-     * handing it the REPL session's local representation.
-     *
-     * <p>
-     * {@link MemoryInjectionMode#SUMMARY_ONLY} keeps the per-turn token cost predictable; explicit recall via
-     * {@code MemoryRecallTool} remains the path for full observation listings.
-     */
-    private MemoryContextProvider buildMemoryContextProvider(MemoryWiring memoryWiring,
-            RepresentationStore representationStore) {
-        if (!memoryWiring.isEnabled() || representationStore == null) {
-            return null;
-        }
-        return new SnapshotMemoryContextProvider(SnapshotMemoryContextProvider.readerOver(representationStore),
-                memoryWiring.workspace, MemoryPeerResolver.fixed(memoryWiring.observer.getPrincipal()),
-                MemoryInjectionMode.SUMMARY_ONLY, 0);
+        return new MemoryWiring(workspace, observer);
     }
 
     /**
@@ -1256,16 +1266,14 @@ public class AgentSetupFactory {
     static final class MemoryWiring {
         private final Workspace workspace;
         private final PeerView observer;
-        private final List<ToolContextEnricher> enrichers;
 
-        MemoryWiring(Workspace workspace, PeerView observer, List<ToolContextEnricher> enrichers) {
+        MemoryWiring(Workspace workspace, PeerView observer) {
             this.workspace = workspace;
             this.observer = observer;
-            this.enrichers = enrichers;
         }
 
         static MemoryWiring disabled() {
-            return new MemoryWiring(null, null, List.of());
+            return new MemoryWiring(null, null);
         }
 
         boolean isEnabled() {
