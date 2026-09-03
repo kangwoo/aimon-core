@@ -7,10 +7,7 @@ import at.aimon.core.agent.orca.tool.OrcaToolProviderContext;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.memory.MemoryCapabilities;
 import at.aimon.core.memory.MemoryCapability;
-import at.aimon.core.memory.ObservationStore;
 import at.aimon.core.memory.PeerMemory;
-import at.aimon.core.memory.RepresentationStore;
-import at.aimon.core.memory.StoreBackedPeerMemory;
 import at.aimon.core.memory.redaction.RedactionPolicy;
 import at.aimon.core.tools.memory.MemoryChatTool;
 import at.aimon.core.tools.memory.MemoryRecallTool;
@@ -41,6 +38,13 @@ import at.aimon.core.tools.memory.ObserveTool;
  * {@link MemoryChatTool} appears here for the first time. It used to be registered only by the CLI's hand-written
  * wiring, so a deployment assembled through the stack could not use it however its backend was configured; a
  * capability-driven loop registers it wherever the CHAT tier exists.
+ *
+ * <p>
+ * <b>Only a backend, never stores.</b> There used to be a constructor taking a {@code RepresentationStore} and an
+ * {@code ObservationStore}, folding them into the default backend. It was left as a convenience and then had no
+ * caller: this class lives in an internal package, so there is nobody outside the tree whose source it could be
+ * keeping compatible, and inside the tree {@code MemoryAssembly} builds the backend and hands it over. A caller with
+ * stores in hand writes {@code StoreBackedPeerMemory.builder()} — one line, and it names what it is doing.
  *
  * <p>
  * <b>What is <i>not</i> here.</b> The workspace and the observer peer the memory tools read out of the
@@ -77,34 +81,6 @@ public class OrcaMemoryToolProvider implements OrcaToolProvider {
                     + " SNAPSHOT, SEARCH, CHAT or OBSERVE — a memory tool provider over it registers no tools and"
                     + " looks configured");
         }
-    }
-
-    /**
-     * Creates a provider over the stores a deployment actually has, folding them into the default backend.
-     *
-     * @param representationStore
-     *            the store the recall tool reads, or {@code null} to omit that tool
-     * @param observationStore
-     *            the store the search and observe tools use, or {@code null} to omit those tools
-     * @param redactionPolicy
-     *            applied at the tool boundary, or {@code null} to pass through unredacted
-     * @throws IllegalArgumentException
-     *             if both stores are {@code null}, which would register nothing at all
-     */
-    public OrcaMemoryToolProvider(RepresentationStore representationStore, ObservationStore observationStore,
-            RedactionPolicy redactionPolicy) {
-        this(defaultBackend(representationStore, observationStore), redactionPolicy);
-    }
-
-    private static PeerMemory defaultBackend(RepresentationStore representationStore,
-            ObservationStore observationStore) {
-        if (representationStore == null && observationStore == null) {
-            throw new IllegalArgumentException(
-                    "At least one of representationStore or observationStore is required — a memory tool provider"
-                            + " with neither registers no tools and looks configured");
-        }
-        return StoreBackedPeerMemory.builder().representationStore(representationStore)
-                .observationStore(observationStore).build();
     }
 
     private static boolean hasTool(MemoryCapability capability) {

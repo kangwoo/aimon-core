@@ -988,9 +988,12 @@ Replacement for a caller that used it to read a result: none is needed at the ca
   deployment loses. `memory-tools` and `memory-redaction` keep their names and values. Degradation
   keys are public API because a deployment reads them back with `stack.degradations().has(...)`;
   they are not frozen names, because nothing persists them.
-- **`OrcaMemoryToolProvider` takes a `PeerMemory`** and registers by capability. Internal package
-  (`at.aimon.core.agent.impl.orca.tool`), so not part of the published surface; the store-taking
-  constructor remains for callers who were reaching into it anyway.
+- **`OrcaMemoryToolProvider` takes a `PeerMemory`** and registers by capability. Its store-taking
+  constructor is gone rather than kept as a convenience: the class is in an internal package
+  (`at.aimon.core.agent.impl.orca.tool`), so it is not part of the published surface and there is no
+  out-of-tree source for a compatibility constructor to keep compiling. A caller holding stores writes
+  `StoreBackedPeerMemory.builder()`. The three memory *tools* do keep their store-taking constructors —
+  those are public API and §11.2 says so.
 - **`TeardownPhase` moves the memory block from the front of shutdown to after `CHECKPOINTS`, and adds
   `MEMORY_BACKEND` at the end of it.** Declaration order *is* the shutdown order, so this is a behaviour
   change rather than a rename, and it is listed here for a deployment that depends on the old sequence.
