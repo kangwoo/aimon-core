@@ -15,6 +15,7 @@ import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
 import at.aimon.core.agent.stream.AssistantTextDelta;
+import at.aimon.session.routing.fixture.TestLiveSession;
 
 /**
  * WS-02-B9: a slow subscriber must NEVER block the producer (design §5.5.1 invariant).
@@ -54,7 +55,7 @@ class InProcessEventPublisherBackpressureTest {
                 public void onComplete() {
                 }
             });
-            assertThat(subscribed.await(1, TimeUnit.SECONDS)).isTrue();
+            assertThat(subscribed.await(TestLiveSession.DEFAULT_AWAIT_MS, TimeUnit.MILLISECONDS)).isTrue();
 
             final long start = System.nanoTime();
             for (int i = 0; i < 10_000; i++) {

@@ -46,7 +46,7 @@ class SessionRouterGracefulShutdownTest {
 
             final boolean drained = harness.manager().closeGracefully(Duration.ofSeconds(2));
             assertThat(drained).as("turn must drain inside the timeout").isTrue();
-            outcome.getFuture().toCompletableFuture().get(2, TimeUnit.SECONDS);
+            outcome.getFuture().toCompletableFuture().get(TestLiveSession.DEFAULT_AWAIT_MS, TimeUnit.MILLISECONDS);
         } finally {
             // closeGracefully is idempotent — calling close() again must be safe.
             harness.close();
@@ -76,7 +76,7 @@ class SessionRouterGracefulShutdownTest {
             // Allow the in-flight turn to finish so the shutdown thread can complete cleanly.
             session.completeCurrentTurn(TestLiveSession.ok("done"));
             shutdownThread.join(2_000L);
-            outcome.getFuture().toCompletableFuture().get(2, TimeUnit.SECONDS);
+            outcome.getFuture().toCompletableFuture().get(TestLiveSession.DEFAULT_AWAIT_MS, TimeUnit.MILLISECONDS);
         } finally {
             harness.close();
         }
@@ -113,7 +113,7 @@ class SessionRouterGracefulShutdownTest {
     }
 
     private TestLiveSession waitForSession(TestManagerHarness harness, SessionId id) throws InterruptedException {
-        final long deadline = System.currentTimeMillis() + 1_000L;
+        final long deadline = System.currentTimeMillis() + TestLiveSession.DEFAULT_AWAIT_MS;
         while (harness.session(id) == null && System.currentTimeMillis() < deadline) {
             Thread.sleep(10);
         }

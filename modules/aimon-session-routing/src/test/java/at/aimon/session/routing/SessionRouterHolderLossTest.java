@@ -163,12 +163,22 @@ class SessionRouterHolderLossTest {
         assertThat(forwarded.getKind()).isEqualTo(SubmitDisposition.Kind.FORWARDED);
         assertThat(awaitFailure(forwarded.getFuture())).hasMessageContaining("HOLDER_LOST");
 
+        // Polled, not read once. The frame and the future are two deliveries, not one: the sweeper emits the frame
+        // through InProcessEventPublisher — a SubmissionPublisher with no executor, so subscribers are fed from
+        // ForkJoinPool.commonPool() — and then announces the failure, which completes the future on the sweeper's own
+        // thread. awaitFailure therefore returns while the frame may still be queued behind whatever else is using
+        // that pool, which on a small loaded runner is everything. The sibling tests here can read their lists
+        // directly because they gate on an onComplete latch first, and onNext precedes onComplete for one subscriber;
+        // this test has no such latch by construction, because the property it pins is that the stream never ends.
+        assertThat(awaitHolderLostFrame(subscriber)).as("subscribers still learn why the turn stopped producing")
+                .isTrue();
+
         // The sweeper used to complete this stream and broadcast an EVICT so every peer did the same. A successor can
         // already hold the lease and be running the next turn, so that ended a session over a turn that died
-        // elsewhere.
+        // elsewhere. Asserted after the frame has arrived rather than before: the emit and the termination would
+        // travel the same publisher in that order, so an empty list checked earlier proves only that nothing had been
+        // delivered yet.
         assertThat(subscriber.terminated).as("one dead attempt is not the end of the conversation").isEmpty();
-        assertThat(hasHolderLostFrame(subscriber)).as("subscribers still learn why the turn stopped producing")
-                .isTrue();
     }
 
     @Test

@@ -73,7 +73,7 @@ class SessionRouterForwardedIdempotencyTest {
         assertThat(session.awaitTurnCount(2)).as("the queued turn must be drained by the holder").isTrue();
         assertThat(session.submittedInputs()).containsExactly("hello", "queue me");
         session.completeCurrentTurn(TestLiveSession.ok("done-2"));
-        first.getFuture().toCompletableFuture().get(2, TimeUnit.SECONDS);
+        first.getFuture().toCompletableFuture().get(TestLiveSession.DEFAULT_AWAIT_MS, TimeUnit.MILLISECONDS);
 
         final IdempotencyEntry done = awaitDone();
         assertThat(done.getResult()).as("the forwarded turn's result must be cached").isPresent();
@@ -82,7 +82,8 @@ class SessionRouterForwardedIdempotencyTest {
         // ...and a late retry replays that cached result instead of running the input a second time.
         final SubmitDisposition replay = harness.manager().submit(keyed(id, "queue me"));
         assertThat(replay.getKind()).isEqualTo(SubmitDisposition.Kind.EXECUTED_LOCALLY);
-        final AgentExecutionResult replayed = replay.getFuture().toCompletableFuture().get(2, TimeUnit.SECONDS);
+        final AgentExecutionResult replayed = replay.getFuture().toCompletableFuture()
+                .get(TestLiveSession.DEFAULT_AWAIT_MS, TimeUnit.MILLISECONDS);
         assertThat(replayed.getFinalAnswer()).isEqualTo("done-2");
         assertThat(session.submittedInputs()).as("a replayed key must not reach the session again").hasSize(2);
     }
@@ -106,7 +107,7 @@ class SessionRouterForwardedIdempotencyTest {
     }
 
     private TestLiveSession waitForSession(SessionId id) throws InterruptedException {
-        final long deadline = System.currentTimeMillis() + 1_000L;
+        final long deadline = System.currentTimeMillis() + TestLiveSession.DEFAULT_AWAIT_MS;
         while (harness.session(id) == null && System.currentTimeMillis() < deadline) {
             Thread.sleep(10);
         }

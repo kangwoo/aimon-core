@@ -54,7 +54,7 @@ class SessionRouterTurnIdTest {
         assertThat(session.currentTurnId()).contains(disposition.getTurnId());
 
         session.completeCurrentTurn(TestLiveSession.ok("done"));
-        disposition.getFuture().toCompletableFuture().get(2, TimeUnit.SECONDS);
+        disposition.getFuture().toCompletableFuture().get(TestLiveSession.DEFAULT_AWAIT_MS, TimeUnit.MILLISECONDS);
     }
 
     @Test
@@ -78,7 +78,7 @@ class SessionRouterTurnIdTest {
         assertThat(session.submittedTurnIds()).containsExactly(first.getTurnId(), second.getTurnId());
 
         session.completeCurrentTurn(TestLiveSession.ok("second-done"));
-        first.getFuture().toCompletableFuture().get(2, TimeUnit.SECONDS);
+        first.getFuture().toCompletableFuture().get(TestLiveSession.DEFAULT_AWAIT_MS, TimeUnit.MILLISECONDS);
     }
 
     @Test
@@ -100,7 +100,7 @@ class SessionRouterTurnIdTest {
         assertThat(session.recordedInterrupts()).containsExactly(InterruptReason.USER_SIGINT);
 
         session.completeCurrentTurn(TestLiveSession.ok("done"));
-        disposition.getFuture().toCompletableFuture().get(2, TimeUnit.SECONDS);
+        disposition.getFuture().toCompletableFuture().get(TestLiveSession.DEFAULT_AWAIT_MS, TimeUnit.MILLISECONDS);
     }
 
     @Test
@@ -120,11 +120,11 @@ class SessionRouterTurnIdTest {
         assertThat(session.recordedInterrupts()).containsExactly(InterruptReason.SYSTEM_SHUTDOWN);
 
         session.completeCurrentTurn(TestLiveSession.ok("done"));
-        disposition.getFuture().toCompletableFuture().get(2, TimeUnit.SECONDS);
+        disposition.getFuture().toCompletableFuture().get(TestLiveSession.DEFAULT_AWAIT_MS, TimeUnit.MILLISECONDS);
     }
 
     private TestLiveSession waitForSession(SessionId id) throws InterruptedException {
-        final long deadline = System.currentTimeMillis() + 1_000L;
+        final long deadline = System.currentTimeMillis() + TestLiveSession.DEFAULT_AWAIT_MS;
         while (harness.session(id) == null && System.currentTimeMillis() < deadline) {
             Thread.sleep(10);
         }

@@ -84,7 +84,8 @@ class SessionRouterDeleteSessionTest {
         harness.manager().deleteSession(id);
 
         assertThat(harness.repository().exists(id)).as("repository must be purged").isFalse();
-        assertThat(terminated.await(2, TimeUnit.SECONDS)).as("subscriber must onComplete").isTrue();
+        assertThat(terminated.await(TestLiveSession.DEFAULT_AWAIT_MS, TimeUnit.MILLISECONDS))
+                .as("subscriber must onComplete").isTrue();
         assertThat(received).as("subscriber must observe terminal InterruptedAt before onComplete").hasSize(1);
         assertThat(((InterruptedAt) received.get(0)).getReason()).isEqualTo(InterruptReason.SESSION_RELEASED);
         assertThat(evictSignals).as("manager must broadcast EVICT for cluster fan-out").hasSize(1);
@@ -113,7 +114,7 @@ class SessionRouterDeleteSessionTest {
             // Yield the lease by completing the turn — the delete loop should pick it up on the next retry.
             session.completeCurrentTurn(TestLiveSession.ok("yielded"));
 
-            deleteFuture.get(3, TimeUnit.SECONDS);
+            deleteFuture.get(TestLiveSession.DEFAULT_AWAIT_MS, TimeUnit.MILLISECONDS);
         } finally {
             deleter.shutdownNow();
         }
@@ -167,7 +168,7 @@ class SessionRouterDeleteSessionTest {
     }
 
     private TestLiveSession waitForSession(SessionId id) throws InterruptedException {
-        final long deadline = System.currentTimeMillis() + 1_000L;
+        final long deadline = System.currentTimeMillis() + TestLiveSession.DEFAULT_AWAIT_MS;
         while (harness.session(id) == null && System.currentTimeMillis() < deadline) {
             Thread.sleep(10);
         }
