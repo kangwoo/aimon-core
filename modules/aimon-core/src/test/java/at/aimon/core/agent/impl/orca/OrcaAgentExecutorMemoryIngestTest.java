@@ -1,6 +1,7 @@
 package at.aimon.core.agent.impl.orca;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -144,6 +145,27 @@ class OrcaAgentExecutorMemoryIngestTest {
 
         assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.COMPLETED);
         assertThat(result.getFinalAnswer()).isEqualTo("hello back");
+    }
+
+    @Test
+    @DisplayName("a sink that throws an Error still does not cost the caller their interrupt")
+    void aSinkThrowingAnErrorStillRearmsTheInterrupt() {
+        final ScriptedLlmClient llmClient = new ScriptedLlmClient();
+        llmClient.failWith(() -> {
+            Thread.currentThread().interrupt();
+            return new IllegalStateException("provider unavailable");
+        });
+        // feedExecutionMemory guards with catch (RuntimeException), so an Error goes straight through it: a
+        // LinkageError from an optional backend jar, or an AssertionError from a sink written with `assert`. Since
+        // the feed now precedes the re-arm, that Error must not be able to carry the re-arm away with it.
+        final ExecutionMemorySink erroring = update -> {
+            throw new LinkageError("memory adapter jar is missing a class");
+        };
+
+        assertThatThrownBy(() -> run(llmClient, erroring, SessionId.generate(), "hi")).isInstanceOf(LinkageError.class);
+
+        assertThat(Thread.interrupted()).as("the re-arm runs in a finally, so an Error cannot swallow the caller's"
+                + " cancellation on its way out").isTrue();
     }
 
     @Test

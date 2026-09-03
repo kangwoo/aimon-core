@@ -23,10 +23,16 @@ public enum MemoryIngestMode {
      *
      * <p>
      * IMPORTANT: <b>this mode is an obligation on the caller, not a seam the stack installs.</b> Session close is not
-     * something the executor sees, so the assembly wires nothing for it: whoever assembles the stack must take the
-     * backend's {@link MemoryIngestor} and hand it the transcript itself when a session ends, as the CLI's
-     * shutdown-phase runnable does. Choosing this mode and wiring no such path is a memory that reports every
-     * capability present and never fills. {@link #EXECUTION_END} is the mode where the stack does the feeding.
+     * something the executor sees, so the assembly wires nothing for it: whoever assembles the stack must feed the
+     * transcript itself when a session ends, from a reference it kept — the CLI's shutdown-phase runnable enqueues on
+     * the derivation queue it built. Choosing this mode and wiring no such path is a memory that reports every
+     * capability present and never fills, and no assembly can detect that. {@link #EXECUTION_END} is the mode where
+     * the stack does the feeding.
+     *
+     * <p>
+     * A caller taking this on inherits the redaction gate with it. The assembly wraps the backend and does not
+     * publish the wrapper, so a self-driven feed reaches whatever the caller kept — for the CLI that is a queue which
+     * redacts inside {@code enqueue}, and for anyone holding the raw backend it is nothing at all.
      */
     SESSION_END,
 

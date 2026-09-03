@@ -289,13 +289,16 @@ public final class MemoryAssembly {
     }
 
     /**
-     * Returns the tier conversation is fed into.
+     * Returns the tier conversation is fed into — already wrapped for redaction, unlike the backend the caller
+     * supplied.
      *
      * <p>
-     * This is the hook a front end running {@link MemoryIngestMode#SESSION_END} drives itself: the assembly installs
-     * no seam for session close, because closing a session is not an event the executor sees. Under
-     * {@link MemoryIngestMode#EXECUTION_END} the stack feeds this same tier through
-     * {@link #getExecutionMemorySink()} and a caller has nothing to do.
+     * Reachable only to whoever holds this assembly, which the stack does not hand out: {@code AimonStack} publishes
+     * no memory accessor, and {@code AimonStackBuilder} keeps its assembly as a local. So this serves a caller
+     * running {@link MemoryAssembly#from} itself, not a front end holding an assembled stack — that one drives
+     * {@link MemoryIngestMode#SESSION_END} from materials it kept, and owes its own redaction for doing so
+     * ({@code MemorySpec.Builder#ingestMode}). Under {@link MemoryIngestMode#EXECUTION_END} nobody needs this at
+     * all: the stack feeds the same tier through {@link #getExecutionMemorySink()}.
      *
      * @return the ingestor, or empty when the backend cannot ingest
      */

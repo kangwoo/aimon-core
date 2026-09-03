@@ -341,10 +341,17 @@ public final class MemorySpec {
          * <p>
          * Only {@link MemoryIngestMode#EXECUTION_END} makes the stack feed anything. Under
          * {@link MemoryIngestMode#SESSION_END} the assembly installs no seam — session close is not an event the
-         * executor sees — and the caller must drive it, taking the tier from
-         * {@code MemoryAssembly.getIngestor()} and handing it the transcript when a session ends. Choosing
-         * {@code SESSION_END} without wiring that is a memory that reports no missing capability and never fills; the
-         * assembly cannot detect it, which is why it is said here, where the choice is made.
+         * executor sees — and the caller must drive it from materials it already holds: the backend it passed to
+         * {@link #peerMemory(PeerMemory)}, or, as the CLI does, the derivation queue behind the stores. The
+         * assembled stack is no help here — {@code AimonStack} publishes no memory accessor, so the wrapped backend
+         * it built is not reachable afterwards.
+         *
+         * <p>
+         * IMPORTANT: that wrapper is a redaction gate. A caller feeding the backend reference it kept is feeding the
+         * <em>unwrapped</em> one and skipping that gate, so it must redact on its own path — the CLI's queue does,
+         * inside {@code enqueue}. Choosing {@code SESSION_END} and wiring no path at all is a memory that reports no
+         * missing capability and never fills; the assembly cannot detect either mistake, which is why both are said
+         * here, where the choice is made.
          *
          * @param ingestMode
          *            the mode, or {@code null} for the default

@@ -1133,21 +1133,7 @@ public class OrcaAgentExecutor
                 transcriptBuffer.endTurn();
             }
             transcriptManager.saveSilently(transcriptBuffer);
-            // After the persist and on the consumed side of the re-arm below, for the same reason the persist is —
-            // see feedExecutionMemory, which owes an interrupted turn a feed a live flag would deny it.
-            feedExecutionMemory(scope);
-            // The flag is only SWALLOWED when the turn already reported the cancellation as
-            // CompletionReason.INTERRUPTED — the result carries that news, so a poisoned thread would add nothing and
-            // an embedder driving turns from a reused worker would just see its next blocking call fail. On every
-            // other outcome the caller asked this thread to stop and nothing else recorded the request, so eating it
-            // would silently break their cancellation protocol: re-arm it. Last of all, so neither the persist nor
-            // the memory feed runs under a flag the caller is owed rather than one either of them set.
-            if (scope.interruptConsumed && !finalisedAsInterrupted(turnResult)) {
-                log.debug("Re-arming the caller's interrupt: turn {} finalised as {}, not INTERRUPTED",
-                        transcriptBuffer.getSessionId().value(),
-                        turnResult == null ? "an exception" : turnResult.getCompletionReason());
-                Thread.currentThread().interrupt();
-            }
+            feedMemoryThenRearmInterrupt(scope, turnResult);
         }
     }
 
@@ -1176,6 +1162,41 @@ public class OrcaAgentExecutor
         log.debug("Cleared a lingering thread interrupt at {} for session {}", where,
                 scope.transcriptBuffer.getSessionId().value());
         return true;
+    }
+
+    /**
+     * Feeds the memory seam and then hands the caller's interrupt back, in that order and whatever the feed does.
+     *
+     * <p>
+     * The order is {@link #feedExecutionMemory}'s contract: the feed must see a swept thread. The {@code finally} is
+     * what keeps that ordering from costing anything. The feed's own guard catches {@link RuntimeException}, so an
+     * {@link Error} out of a sink — a {@link LinkageError} from an optional backend jar, an {@link AssertionError}
+     * from a sink written with {@code assert} — would otherwise escape {@code execute()}'s finally without ever
+     * reaching the re-arm, and a cancellation the caller was owed would be lost to a failure that has nothing to do
+     * with it. Widening the feed's catch to {@code Error} was the alternative and is worse: it would swallow the ones
+     * that must propagate.
+     *
+     * @param scope
+     *            the execution being finalised
+     * @param turnResult
+     *            the turn's result, or {@code null} when it exited by throwing
+     */
+    private void feedMemoryThenRearmInterrupt(ExecutionScope scope, OrcaAgentExecutionResult turnResult) {
+        try {
+            feedExecutionMemory(scope);
+        } finally {
+            // The flag is only SWALLOWED when the turn already reported the cancellation as
+            // CompletionReason.INTERRUPTED — the result carries that news, so a poisoned thread would add nothing
+            // and an embedder driving turns from a reused worker would just see its next blocking call fail. On
+            // every other outcome the caller asked this thread to stop and nothing else recorded the request, so
+            // eating it would silently break their cancellation protocol: re-arm it.
+            if (scope.interruptConsumed && !finalisedAsInterrupted(turnResult)) {
+                log.debug("Re-arming the caller's interrupt: turn {} finalised as {}, not INTERRUPTED",
+                        scope.transcriptBuffer.getSessionId().value(),
+                        turnResult == null ? "an exception" : turnResult.getCompletionReason());
+                Thread.currentThread().interrupt();
+            }
+        }
     }
 
     /**

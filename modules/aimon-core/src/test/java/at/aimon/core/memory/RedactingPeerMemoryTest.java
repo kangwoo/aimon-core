@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -148,6 +149,59 @@ class RedactingPeerMemoryTest {
 
         assertThat(backend.observed).hasSize(1);
         assertThat(backend.observed.get(0).getContent()).doesNotContain("AKIAIOSFODNN7EXAMPLE");
+    }
+
+    @Test
+    @DisplayName("SEARCH: every axis of the query survives the rebuild, not only the phrase that was masked")
+    void searchRebuildKeepsEveryAxis() {
+        redacting.searcher().orElseThrow().search(MemorySearchQuery.builder().subject(peer("alice"))
+                .observer(peer("agent")).query(SECRET).topK(7).minScore(0.25d).sessionId("s-9").build());
+
+        final MemorySearchQuery seen = backend.searched.get(0);
+        assertThat(seen.getQuery()).doesNotContain("AKIAIOSFODNN7EXAMPLE");
+        assertThat(seen.getSubject()).isEqualTo(peer("alice"));
+        assertThat(seen.getObserver()).contains(peer("agent"));
+        assertThat(seen.getTopK()).isEqualTo(7);
+        // The two narrowing axes matter most. A backend that cannot apply them is contracted to REJECT them
+        // (MemorySearcher#search), so a rebuild that dropped either would not merely lose a filter — it would turn a
+        // rejection into a silent full-width answer, which is the exact failure the signals exist to prevent.
+        assertThat(seen.getMinScore()).isEqualTo(0.25d);
+        assertThat(seen.getSessionId()).contains("s-9");
+    }
+
+    @Test
+    @DisplayName("OBSERVE: the rewritten draft keeps every field the caller set, and adds only the redaction marks")
+    void observeRebuildKeepsEveryField() {
+        redacting.observationRecorder().orElseThrow()
+                .observe(ObservationDraft.builder().subject(peer("alice")).observer(peer("agent")).sessionId("s-9")
+                        .content(SECRET).type(ObservationType.EXPLICIT).confidence(0.42d)
+                        .sourceMessageIds(List.of("m-1", "m-2")).metadata(Map.of("source", "test")).build());
+
+        final ObservationDraft seen = backend.observed.get(0);
+        assertThat(seen.getContent()).doesNotContain("AKIAIOSFODNN7EXAMPLE");
+        assertThat(seen.getSubject()).isEqualTo(peer("alice"));
+        assertThat(seen.getObserver()).isEqualTo(peer("agent"));
+        assertThat(seen.getSessionId()).contains("s-9");
+        assertThat(seen.getType()).isEqualTo(ObservationType.EXPLICIT);
+        assertThat(seen.getConfidence()).isEqualTo(0.42d);
+        assertThat(seen.getSourceMessageIds()).containsExactly("m-1", "m-2");
+        // The caller's own metadata is kept alongside the two entries the decorator adds, not replaced by them.
+        assertThat(seen.getMetadata()).containsEntry("source", "test").containsEntry("redacted", "true")
+                .containsKey("redaction.categories");
+    }
+
+    @Test
+    @DisplayName("INGEST: the rewritten request keeps its observer, session and derivation flag")
+    void ingestRebuildKeepsEveryField() {
+        redacting.ingestor().orElseThrow().ingest(MemoryIngestRequest.builder().observer(peer("agent")).sessionId("s-9")
+                .messages(List.of(Message.user(SECRET), Message.assistant("noted"))).waitForDerivation(true).build());
+
+        final MemoryIngestRequest seen = backend.ingested.get(0);
+        assertThat(rendered(seen.getMessages())).doesNotContain("AKIAIOSFODNN7EXAMPLE");
+        assertThat(seen.getObserver()).isEqualTo(peer("agent"));
+        assertThat(seen.getSessionId()).isEqualTo("s-9");
+        assertThat(seen.getMessages()).hasSize(2);
+        assertThat(seen.isWaitForDerivation()).isTrue();
     }
 
     private static String rendered(List<Message> messages) {
