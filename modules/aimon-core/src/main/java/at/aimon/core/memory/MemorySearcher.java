@@ -68,9 +68,10 @@ public interface MemorySearcher {
      * caller asked for a narrower result and would otherwise read a wider one as narrow.
      *
      * <p>
-     * The store-backed default answers {@code false}, and not by omission —
-     * {@link ObservationStore#semanticSearch(PeerView, String, int)} has no session axis to narrow on. A backend
-     * whose server does have one answers {@code true}.
+     * The default backend answers {@code false}, and not by omission: what it searches is filed per subject with no
+     * session axis to narrow on. A backend whose store or server does have one answers {@code true}. The concrete
+     * reason belongs with the implementation, not here — a tier is meant to be implementable by someone who has
+     * never heard of AIMON's stores.
      *
      * @return {@code true} when {@link MemorySearchQuery#getSessionId()} is honoured
      */

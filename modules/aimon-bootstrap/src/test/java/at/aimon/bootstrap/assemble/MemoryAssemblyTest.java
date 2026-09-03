@@ -170,6 +170,25 @@ class MemoryAssemblyTest {
     }
 
     @Test
+    @DisplayName("the redaction warning is about the backend, not about the model — per-caller registers no Observe"
+            + " and still needs the warning")
+    void redactionWarningIsAStatementAboutTheBackend() {
+        // Per-caller: no fixed observer, so no tool provider and no ObserveTool; ingest is off for the same reason.
+        // The warning still belongs — PeerMemory's tier accessors are public, which is why §6.2 wraps them — but a
+        // sentence claiming the model's observations are persisted verbatim would be false here.
+        final MemorySpec spec = MemorySpec.perCaller(WORKSPACE).representationStore(mock(RepresentationStore.class))
+                .observationStore(mock(ObservationStore.class)).build();
+
+        final MemoryAssembly assembly = MemoryAssembly.from(spec, degradations);
+
+        assertThat(assembly.getToolProvider()).isEmpty();
+        final RuntimeDegradations recorded = degradations.build();
+        assertThat(recorded.has(MemoryAssembly.CAPABILITY_REDACTION)).isTrue();
+        assertThat(recorded.describe()).contains("Nothing masks what is written to")
+                .doesNotContain("whatever the model is told to observe");
+    }
+
+    @Test
     @DisplayName("no redaction degradation when there is nothing to write")
     void noRedactionDegradationWithoutAWritePath() {
         final MemorySpec spec = MemorySpec.forPeer(WORKSPACE, PEER).representationStore(mock(RepresentationStore.class))

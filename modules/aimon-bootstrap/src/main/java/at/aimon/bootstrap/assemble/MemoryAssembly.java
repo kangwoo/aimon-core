@@ -220,16 +220,20 @@ public final class MemoryAssembly {
                             + " fixed peer. The model can be told what memory says and cannot query or add to it.");
         }
         // Its own condition, not an else-branch of the one above: whether the tools were registered has nothing to do
-        // with whether text reaches the backend unmasked. Chained to it, a backend serving INGEST and no tool
+        // with whether text can reach the backend unmasked. Chained to it, a backend serving INGEST and no tool
         // capability fell through both — the tools branch wants SNAPSHOT and this one wanted a tool provider — and a
-        // whole conversation flowed out verbatim with nothing said about it. §5.2's condition is the capability
-        // alone.
+        // whole conversation could flow out verbatim with nothing said about it. §5.2's condition is the capability
+        // alone, and the sentence below is written to the same width: it reports that nothing masks these tiers, not
+        // that any particular caller is using them. Naming the tools would be wrong wherever they are not registered
+        // and the tiers are still reachable through PeerMemory's public accessors, which is the case §6.2 wraps
+        // SEARCH and CHAT for.
         if (spec.getRedactionPolicy().isEmpty() && (capabilities.contains(MemoryCapability.OBSERVE)
                 || capabilities.contains(MemoryCapability.INGEST))) {
             degradations.add(CAPABILITY_REDACTION,
-                    "The '" + backend.backendId() + "' memory backend runs without a redaction policy, so whatever the"
-                            + " model is told to observe — and whatever conversation is fed in — is persisted"
-                            + " verbatim, including anything secret that reached the conversation.");
+                    "Nothing masks what is written to the '" + backend.backendId() + "' memory backend: it serves a"
+                            + " write tier and no redaction policy is configured, so any text reaching it — through"
+                            + " the memory tools where they are registered, or through the tier accessors directly —"
+                            + " is persisted as it arrived, including anything secret that reached the conversation.");
         }
     }
 

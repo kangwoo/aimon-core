@@ -879,7 +879,7 @@ for (MemoryCapability missing : complementOf(caps)) {
 | `memory-observe` | `OBSERVE` 없음 | `Observe` 미등록 — 모델이 사실을 남길 방법이 없다 |
 | `memory-ingest` | `INGEST` 없음 **또는** per-caller 모드 | **오늘의 `memory-write-path` 를 대체한다**(§11.1). 대화가 메모리로 흐르지 않으므로 다른 것이 채우지 않는 한 영원히 빈다. per-caller 에서도 오르는 이유는 §7.2 |
 | `memory-tools` | 고정 observer 가 없음 (per-caller 모드) | 지금과 동일. 능력이 아니라 **조립 모양**의 문제다 |
-| `memory-redaction` | 레닥션 정책 없이 `OBSERVE`/`INGEST` 가 켜짐 | 지금과 동일. 원격 백엔드에서는 **더 심각**하다 (§6.2) |
+| `memory-redaction` | 레닥션 정책 없이 `OBSERVE`/`INGEST` 가 켜짐 | **능력에 대한 진술이어야 한다** — "모델이 관찰하는 것이 그대로 영속된다" 가 아니라 "이 백엔드에 쓰이는 것을 마스킹하는 것이 아무것도 없다" 다. 조건이 능력 하나이므로 문장도 그 폭이어야 한다: per-caller 처럼 도구가 등록되지 않는 조합에서도 티어 접근자(§3.2)는 공개이므로 경고는 여전히 참이지만, 도구를 이름으로 부르면 거짓이 된다. 원격 백엔드에서는 **더 심각**하다 (§6.2) |
 
 IMPORTANT: 백엔드가 못 하는 능력의 도구를 **등록하지 않는 것**이 이 설계의 요구사항이다. 등록해 놓고
 `ToolResult.error("not supported")` 를 돌려주면 모델은 매 실행마다 그 도구를 다시 시도하고, 실패는
