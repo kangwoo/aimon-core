@@ -46,7 +46,7 @@ class SessionMetricsTest {
         final TestLiveSession session = waitForSession(id);
         assertThat(session.awaitTurnStarted()).isTrue();
         session.completeCurrentTurn(TestLiveSession.ok("done"));
-        outcome.getFuture().toCompletableFuture().get(2, TimeUnit.SECONDS);
+        outcome.getFuture().toCompletableFuture().get(TestLiveSession.DEFAULT_AWAIT_MS, TimeUnit.MILLISECONDS);
 
         assertThat(metrics.lockAcquireSucceeded.get()).isEqualTo(1);
         assertThat(metrics.lockAcquireRejected.get()).isZero();
@@ -78,12 +78,12 @@ class SessionMetricsTest {
 
         // Drain so the manager can shut down cleanly.
         session.completeCurrentTurn(TestLiveSession.ok("first-done"));
-        final long deadline = System.currentTimeMillis() + 1_000L;
+        final long deadline = System.currentTimeMillis() + TestLiveSession.DEFAULT_AWAIT_MS;
         while (session.submittedInputs().size() < 2 && System.currentTimeMillis() < deadline) {
             Thread.sleep(20);
         }
         session.completeCurrentTurn(TestLiveSession.ok("second-done"));
-        first.getFuture().toCompletableFuture().get(2, TimeUnit.SECONDS);
+        first.getFuture().toCompletableFuture().get(TestLiveSession.DEFAULT_AWAIT_MS, TimeUnit.MILLISECONDS);
     }
 
     @Test
@@ -104,7 +104,7 @@ class SessionMetricsTest {
         } catch (IllegalStateException ignored) {
             // race with manager release path
         }
-        outcome.getFuture().toCompletableFuture().get(2, TimeUnit.SECONDS);
+        outcome.getFuture().toCompletableFuture().get(TestLiveSession.DEFAULT_AWAIT_MS, TimeUnit.MILLISECONDS);
 
         assertThat(metrics.cacheEvictions.get(CacheEvictionReason.EXPLICIT_RELEASE).get()).isGreaterThanOrEqualTo(1);
     }
@@ -123,7 +123,7 @@ class SessionMetricsTest {
         final TestLiveSession session = waitForSession(id);
         assertThat(session.awaitTurnStarted()).isTrue();
 
-        final long deadline = System.currentTimeMillis() + 1_000L;
+        final long deadline = System.currentTimeMillis() + TestLiveSession.DEFAULT_AWAIT_MS;
         while (metrics.leaseExtendSucceeded.get() < 3 && System.currentTimeMillis() < deadline) {
             Thread.sleep(20);
         }
@@ -137,7 +137,7 @@ class SessionMetricsTest {
         assertThat(metrics.leaseExtendFailed.get()).as("one extend failure recorded").isEqualTo(1);
 
         session.completeCurrentTurn(TestLiveSession.ok("done"));
-        outcome.getFuture().toCompletableFuture().get(2, TimeUnit.SECONDS);
+        outcome.getFuture().toCompletableFuture().get(TestLiveSession.DEFAULT_AWAIT_MS, TimeUnit.MILLISECONDS);
     }
 
     @Test
@@ -160,7 +160,7 @@ class SessionMetricsTest {
             Thread.sleep(20);
         }
         session.completeCurrentTurn(TestLiveSession.ok("second-done"));
-        first.getFuture().toCompletableFuture().get(2, TimeUnit.SECONDS);
+        first.getFuture().toCompletableFuture().get(TestLiveSession.DEFAULT_AWAIT_MS, TimeUnit.MILLISECONDS);
 
         // The second turn reuses the same ensureOpen call from inside the still-running turn loop, so we expect
         // exactly one miss (initial open) and zero or more hits depending on the manager's reuse path. The strict
@@ -169,7 +169,7 @@ class SessionMetricsTest {
     }
 
     private TestLiveSession waitForSession(SessionId id) throws InterruptedException {
-        final long deadline = System.currentTimeMillis() + 1_000L;
+        final long deadline = System.currentTimeMillis() + TestLiveSession.DEFAULT_AWAIT_MS;
         while (harness.session(id) == null && System.currentTimeMillis() < deadline) {
             Thread.sleep(10);
         }

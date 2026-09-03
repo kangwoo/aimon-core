@@ -78,7 +78,7 @@ class SessionRouterOpenAttributesTest {
         assertThat(capturedAttrs.get().getString("ops.ouId")).hasValue("ou-7");
 
         session.completeCurrentTurn(TestLiveSession.ok("done"));
-        outcome.getFuture().toCompletableFuture().get(2, TimeUnit.SECONDS);
+        outcome.getFuture().toCompletableFuture().get(TestLiveSession.DEFAULT_AWAIT_MS, TimeUnit.MILLISECONDS);
     }
 
     @Test
@@ -107,7 +107,7 @@ class SessionRouterOpenAttributesTest {
         assertThat(capturedAttrs.get().isEmpty()).isTrue();
 
         session.completeCurrentTurn(TestLiveSession.ok("done"));
-        outcome.getFuture().toCompletableFuture().get(2, TimeUnit.SECONDS);
+        outcome.getFuture().toCompletableFuture().get(TestLiveSession.DEFAULT_AWAIT_MS, TimeUnit.MILLISECONDS);
     }
 
     @Test
@@ -136,7 +136,7 @@ class SessionRouterOpenAttributesTest {
         final TestLiveSession session = waitForSession(sessions, id);
         assertThat(session.awaitTurnStarted()).isTrue();
         session.completeCurrentTurn(TestLiveSession.ok("done"));
-        firstOutcome.getFuture().toCompletableFuture().get(2, TimeUnit.SECONDS);
+        firstOutcome.getFuture().toCompletableFuture().get(TestLiveSession.DEFAULT_AWAIT_MS, TimeUnit.MILLISECONDS);
 
         assertThat(openerCalls.get()).isEqualTo(1);
         assertThat(capturedAttrs.get().getString("ops.agentId")).hasValue("agt-1");
@@ -153,7 +153,7 @@ class SessionRouterOpenAttributesTest {
                 .hasValue("agt-1");
 
         session.completeCurrentTurn(TestLiveSession.ok("done2"));
-        secondOutcome.getFuture().toCompletableFuture().get(2, TimeUnit.SECONDS);
+        secondOutcome.getFuture().toCompletableFuture().get(TestLiveSession.DEFAULT_AWAIT_MS, TimeUnit.MILLISECONDS);
     }
 
     @Test
@@ -183,7 +183,7 @@ class SessionRouterOpenAttributesTest {
         assertThat(capturedRuntimeId.get().discriminator()).hasValue("tenant-a");
 
         session.completeCurrentTurn(TestLiveSession.ok("done"));
-        outcome.getFuture().toCompletableFuture().get(2, TimeUnit.SECONDS);
+        outcome.getFuture().toCompletableFuture().get(TestLiveSession.DEFAULT_AWAIT_MS, TimeUnit.MILLISECONDS);
     }
 
     @Test
@@ -212,12 +212,12 @@ class SessionRouterOpenAttributesTest {
         assertThat(capturedRuntimeId.get().discriminator()).isEmpty();
 
         session.completeCurrentTurn(TestLiveSession.ok("done"));
-        outcome.getFuture().toCompletableFuture().get(2, TimeUnit.SECONDS);
+        outcome.getFuture().toCompletableFuture().get(TestLiveSession.DEFAULT_AWAIT_MS, TimeUnit.MILLISECONDS);
     }
 
     private static TestLiveSession waitForSession(ConcurrentMap<SessionId, TestLiveSession> sessions, SessionId id)
             throws InterruptedException {
-        final long deadline = System.currentTimeMillis() + 1_000L;
+        final long deadline = System.currentTimeMillis() + TestLiveSession.DEFAULT_AWAIT_MS;
         while (System.currentTimeMillis() < deadline) {
             final TestLiveSession s = sessions.get(id);
             if (s != null) {

@@ -59,7 +59,7 @@ class SessionRouterSubmitOptionsTest {
         assertThat(session.submittedOptions().get(0)).isEqualTo(options);
 
         session.completeCurrentTurn(TestLiveSession.ok("done"));
-        outcome.getFuture().toCompletableFuture().get(2, TimeUnit.SECONDS);
+        outcome.getFuture().toCompletableFuture().get(TestLiveSession.DEFAULT_AWAIT_MS, TimeUnit.MILLISECONDS);
     }
 
     @Test
@@ -98,11 +98,11 @@ class SessionRouterSubmitOptionsTest {
         assertThat(session.submittedOptions().get(1)).isEqualTo(secondOptions);
 
         session.completeCurrentTurn(TestLiveSession.ok("second-done"));
-        first.getFuture().toCompletableFuture().get(2, TimeUnit.SECONDS);
+        first.getFuture().toCompletableFuture().get(TestLiveSession.DEFAULT_AWAIT_MS, TimeUnit.MILLISECONDS);
     }
 
     private TestLiveSession waitForSession(SessionId id) throws InterruptedException {
-        final long deadline = System.currentTimeMillis() + 1_000L;
+        final long deadline = System.currentTimeMillis() + TestLiveSession.DEFAULT_AWAIT_MS;
         while (harness.session(id) == null && System.currentTimeMillis() < deadline) {
             Thread.sleep(10);
         }

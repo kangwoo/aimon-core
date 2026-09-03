@@ -58,13 +58,14 @@ class SessionRouterSubmitTest {
 
         // Drain both turns so the manager's executor unwinds cleanly.
         session.completeCurrentTurn(TestLiveSession.ok("done-1"));
-        final long deadline = System.currentTimeMillis() + 1_000L;
+        final long deadline = System.currentTimeMillis() + TestLiveSession.DEFAULT_AWAIT_MS;
         while (session.submittedInputs().size() < 2 && System.currentTimeMillis() < deadline) {
             Thread.sleep(20);
         }
         session.completeCurrentTurn(TestLiveSession.ok("done-2"));
-        first.getFuture().toCompletableFuture().get(2, TimeUnit.SECONDS);
-        final AgentExecutionResult forwarded = second.getFuture().toCompletableFuture().get(2, TimeUnit.SECONDS);
+        first.getFuture().toCompletableFuture().get(TestLiveSession.DEFAULT_AWAIT_MS, TimeUnit.MILLISECONDS);
+        final AgentExecutionResult forwarded = second.getFuture().toCompletableFuture()
+                .get(TestLiveSession.DEFAULT_AWAIT_MS, TimeUnit.MILLISECONDS);
         assertThat(forwarded.getFinalAnswer()).as("the holder's drain must close the forwarded future")
                 .isEqualTo("done-2");
     }
@@ -95,7 +96,7 @@ class SessionRouterSubmitTest {
         assertThat(session.recordedInterrupts()).contains(InterruptReason.USER_SIGINT);
 
         session.completeCurrentTurn(TestLiveSession.ok("done"));
-        outcome.getFuture().toCompletableFuture().get(2, TimeUnit.SECONDS);
+        outcome.getFuture().toCompletableFuture().get(TestLiveSession.DEFAULT_AWAIT_MS, TimeUnit.MILLISECONDS);
     }
 
     @Test
@@ -145,10 +146,12 @@ class SessionRouterSubmitTest {
             // race with the manager's release path — turn may have already been swept.
         }
 
-        final AgentExecutionResult result = outcome.getFuture().toCompletableFuture().get(2, TimeUnit.SECONDS);
+        final AgentExecutionResult result = outcome.getFuture().toCompletableFuture()
+                .get(TestLiveSession.DEFAULT_AWAIT_MS, TimeUnit.MILLISECONDS);
         assertThat(result).isNotNull();
 
-        assertThat(completed.await(2, TimeUnit.SECONDS)).as("events() must signal onComplete after release").isTrue();
+        assertThat(completed.await(TestLiveSession.DEFAULT_AWAIT_MS, TimeUnit.MILLISECONDS))
+                .as("events() must signal onComplete after release").isTrue();
         assertThat(errorRef.get()).isNull();
         assertThat(session.awaitClosed()).as("session must be closed by the cache eviction listener").isTrue();
     }
@@ -180,11 +183,11 @@ class SessionRouterSubmitTest {
 
         session.completeCurrentTurn(TestLiveSession.ok("second-done"));
 
-        first.getFuture().toCompletableFuture().get(2, TimeUnit.SECONDS);
+        first.getFuture().toCompletableFuture().get(TestLiveSession.DEFAULT_AWAIT_MS, TimeUnit.MILLISECONDS);
     }
 
     private TestLiveSession waitForSession(SessionId id) throws InterruptedException {
-        final long deadline = System.currentTimeMillis() + 1_000L;
+        final long deadline = System.currentTimeMillis() + TestLiveSession.DEFAULT_AWAIT_MS;
         while (harness.session(id) == null && System.currentTimeMillis() < deadline) {
             Thread.sleep(10);
         }

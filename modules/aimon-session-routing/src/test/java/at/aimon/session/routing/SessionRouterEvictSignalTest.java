@@ -77,7 +77,8 @@ class SessionRouterEvictSignalTest {
         harness.signalBus().publish(SessionSignal.builder().sessionId(id).kind(SessionSignal.SignalKind.EVICT)
                 .originNodeId("node-B").payload(Map.of("reason", InterruptReason.SESSION_RELEASED.name())).build());
 
-        assertThat(terminated.await(1, TimeUnit.SECONDS)).as("subscriber must receive onComplete after EVICT").isTrue();
+        assertThat(terminated.await(TestLiveSession.DEFAULT_AWAIT_MS, TimeUnit.MILLISECONDS))
+                .as("subscriber must receive onComplete after EVICT").isTrue();
         assertThat(received).as("subscriber must observe the synthesized terminal InterruptedAt").hasSize(1);
         assertThat(received.get(0)).isInstanceOf(InterruptedAt.class);
         assertThat(((InterruptedAt) received.get(0)).getReason()).isEqualTo(InterruptReason.SESSION_RELEASED);
@@ -117,7 +118,7 @@ class SessionRouterEvictSignalTest {
         harness.signalBus().publish(SessionSignal.builder().sessionId(id).kind(SessionSignal.SignalKind.EVICT)
                 .originNodeId("node-B").payload(Map.of("reason", "not_a_real_reason")).build());
 
-        assertThat(terminated.await(1, TimeUnit.SECONDS)).isTrue();
+        assertThat(terminated.await(TestLiveSession.DEFAULT_AWAIT_MS, TimeUnit.MILLISECONDS)).isTrue();
         assertThat(received).hasSize(1);
         assertThat(((InterruptedAt) received.get(0)).getReason()).isEqualTo(InterruptReason.USER_SIGINT);
     }
@@ -179,10 +180,22 @@ class SessionRouterEvictSignalTest {
 
         // The binding no longer exists anywhere, so a fresh agentRef must be accepted. A surviving cache entry would
         // reject it with ConflictingAgentException and leave the id permanently unusable on this node.
-        assertThatCode(() -> {
-            assertThat(harness.manager().submit(RequestFixtures.submit(id, "beta", "hi")).getKind())
-                    .isEqualTo(SubmitDisposition.Kind.EXECUTED_LOCALLY);
-        }).doesNotThrowAnyException();
+        //
+        // Acceptance is the property, and the disposition is not part of it. precheckAgentBinding is the only thing
+        // that can reject this submission and it runs at the very top of submit(), before the turn gate and before
+        // any forward decision — so "was it accepted" is answered identically on every path out. Which path it then
+        // takes is scheduling: the first submit's deliverToInbox rang this node's own doorbell, and the drain task
+        // that answers it takes the node-local turn gate for the length of an empty pass. Land that pass here and the
+        // gate is busy, which submit() reports as FORWARDED without ever reconsidering the binding. Asserting
+        // EXECUTED_LOCALLY therefore asserted that a background task had already finished, which on a loaded runner
+        // it has not.
+        //
+        // Nothing is given up by dropping it, because the turn below runs either way: a forwarded submission is
+        // drained by the very doorbell its own delivery rings, and runDrainOnly provisions the record under the new
+        // agentRef and opens the session. So the end-to-end claim — the fresh binding is taken and its turn runs —
+        // is still made, and now without depending on which of this node's two paths got there first.
+        assertThatCode(() -> harness.manager().submit(RequestFixtures.submit(id, "beta", "hi")))
+                .doesNotThrowAnyException();
 
         final TestLiveSession session = waitForSession(id);
         assertThat(session.awaitTurnStarted()).isTrue();
@@ -190,7 +203,7 @@ class SessionRouterEvictSignalTest {
     }
 
     private TestLiveSession waitForSession(SessionId id) throws InterruptedException {
-        final long deadline = System.currentTimeMillis() + 1_000L;
+        final long deadline = System.currentTimeMillis() + TestLiveSession.DEFAULT_AWAIT_MS;
         while (harness.session(id) == null && System.currentTimeMillis() < deadline) {
             Thread.sleep(10);
         }
