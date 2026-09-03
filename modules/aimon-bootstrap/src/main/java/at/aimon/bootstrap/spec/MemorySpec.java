@@ -4,8 +4,11 @@ import java.util.Objects;
 import java.util.Optional;
 
 import at.aimon.core.base.Principal;
+import at.aimon.core.memory.MemoryCapabilities;
+import at.aimon.core.memory.MemoryCapability;
 import at.aimon.core.memory.MemoryInjectionMode;
 import at.aimon.core.memory.ObservationStore;
+import at.aimon.core.memory.PeerMemory;
 import at.aimon.core.memory.RepresentationStore;
 import at.aimon.core.memory.Workspace;
 import at.aimon.core.memory.redaction.RedactionPolicy;
@@ -14,9 +17,18 @@ import at.aimon.core.memory.redaction.RedactionPolicy;
  * Declares the peer memory the stack reads from — the workspace, the stores, and whose memory a turn gets.
  *
  * <p>
- * This spec carries <b>materials</b>, not objects: the stores and the peer decision. The context provider, the tool
- * context enricher and the tool provider built from them are assembled by the stack builder, which is where every
- * other slice's assembly happens too.
+ * This spec carries <b>materials</b>, not objects: a backend (or the stores one is built from) and the peer decision.
+ * The context provider, the tool context enricher and the tool provider built from them are assembled by the stack
+ * builder, which is where every other slice's assembly happens too.
+ *
+ * <h2>Two ways to say which memory</h2>
+ *
+ * <p>
+ * {@link Builder#peerMemory(PeerMemory)} names the backend directly, and is the way to reach anything that is not
+ * built out of AIMON's stores. {@link Builder#representationStore(RepresentationStore)} and
+ * {@link Builder#observationStore(ObservationStore)} name the default backend's materials and are folded into a
+ * {@code StoreBackedPeerMemory} by the assembly. The two are <b>mutually exclusive</b>: given both, the stores would
+ * describe a backend that is not the one being used.
  *
  * <h2>Whose memory — the one decision that has to be made explicitly</h2>
  *
@@ -45,9 +57,10 @@ import at.aimon.core.memory.redaction.RedactionPolicy;
  * their workspace and observer from the {@code ToolContext} and the enricher that puts them there
  * ({@link at.aimon.core.tools.memory.MemoryToolContextEnricher}) is bound to one fixed observer — the enrichment info
  * it is handed carries a session and an execution, but no principal. Registering them anyway would give the model
- * three tools that answer "no workspace in context" to every call. So per-caller mode requires a
- * {@link RepresentationStore}: with only an observation store it would wire nothing whatsoever while looking
- * configured, and {@link Builder#build()} rejects it.
+ * three tools that answer "no workspace in context" to every call. So per-caller mode requires the
+ * {@link MemoryCapability#SNAPSHOT} capability — a {@link RepresentationStore}, or a backend that serves that tier:
+ * with only an observation store it would wire nothing whatsoever while looking configured, and
+ * {@link Builder#build()} rejects it.
  *
  * <h2>Read path only</h2>
  *
@@ -61,6 +74,7 @@ public final class MemorySpec {
 
     private final Workspace workspace;
     private final Principal fixedPeer;
+    private final PeerMemory peerMemory;
     private final RepresentationStore representationStore;
     private final ObservationStore observationStore;
     private final MemoryInjectionMode injectionMode;
@@ -70,22 +84,31 @@ public final class MemorySpec {
     private MemorySpec(Builder builder) {
         this.workspace = builder.workspace;
         this.fixedPeer = builder.fixedPeer;
+        this.peerMemory = builder.peerMemory;
         this.representationStore = builder.representationStore;
         this.observationStore = builder.observationStore;
         this.injectionMode = Objects.requireNonNullElse(builder.injectionMode, MemoryInjectionMode.SUMMARY_ONLY);
         this.maxTokens = builder.maxTokens;
         this.redactionPolicy = builder.redactionPolicy;
 
-        if (this.representationStore == null && this.observationStore == null) {
+        if (this.peerMemory != null && (this.representationStore != null || this.observationStore != null)) {
             throw new IllegalArgumentException(
-                    "A memory spec needs at least one store — with neither, memory is configured, reported as"
-                            + " present, and does nothing");
+                    "Set either peerMemory or the stores, not both — the stores describe how to build the default"
+                            + " backend, and supplying them alongside a backend describes one that is not in use");
         }
-        if (this.fixedPeer == null && this.representationStore == null) {
+        if (this.peerMemory == null && this.representationStore == null && this.observationStore == null) {
             throw new IllegalArgumentException(
-                    "Per-caller memory needs a representation store: the memory tools cannot be registered without a"
-                            + " fixed observer, so an observation store alone would wire nothing. Use"
-                            + " MemorySpec.forPeer(workspace, peer) if the tools are what you wanted.");
+                    "A memory spec needs a PeerMemory or at least one store — with neither, memory is configured,"
+                            + " reported as present, and does nothing");
+        }
+        if (this.fixedPeer == null && !providesSnapshot()) {
+            // Same rule as before, said in the vocabulary that now covers both paths: per-caller mode wires the
+            // injected prompt part and nothing else, so a spec that cannot produce a snapshot wires nothing at all.
+            throw new IllegalArgumentException(
+                    "Per-caller memory requires the SNAPSHOT capability: the memory tools cannot be registered without"
+                            + " a fixed observer, so a backend that cannot answer for the injected prompt part would"
+                            + " wire nothing. Use MemorySpec.forPeer(workspace, peer) if the tools are what you"
+                            + " wanted.");
         }
         if (this.maxTokens < 0) {
             throw new IllegalArgumentException("maxTokens must be >= 0 (0 means no cap), got: " + this.maxTokens);
@@ -146,6 +169,31 @@ public final class MemorySpec {
     }
 
     /**
+     * Returns whether this spec can produce the injected memory prompt part.
+     *
+     * <p>
+     * True for a representation store, and for a backend whose computed capabilities include
+     * {@link MemoryCapability#SNAPSHOT}. The two are the same question asked of the two ways of naming a memory.
+     *
+     * @return {@code true} when a snapshot can be read
+     */
+    public boolean providesSnapshot() {
+        if (representationStore != null) {
+            return true;
+        }
+        return peerMemory != null && MemoryCapabilities.of(peerMemory).contains(MemoryCapability.SNAPSHOT);
+    }
+
+    /**
+     * Returns the backend this stack reads and writes memory through.
+     *
+     * @return the backend, or empty when the spec names stores instead
+     */
+    public Optional<PeerMemory> getPeerMemory() {
+        return Optional.ofNullable(peerMemory);
+    }
+
+    /**
      * Returns the store holding derived peer snapshots — what the injected memory prompt part is read from.
      *
      * @return the store, or empty when no snapshot is injected or recalled
@@ -193,7 +241,8 @@ public final class MemorySpec {
     @Override
     public String toString() {
         return "MemorySpec[workspace=" + workspace.getId() + ", peer="
-                + (fixedPeer == null ? "per-caller" : fixedPeer.getId()) + ", representations="
+                + (fixedPeer == null ? "per-caller" : fixedPeer.getId()) + ", backend="
+                + (peerMemory == null ? "stores" : peerMemory.backendId()) + ", representations="
                 + (representationStore != null) + ", observations=" + (observationStore != null) + ", injection="
                 + injectionMode + "]";
     }
@@ -203,6 +252,7 @@ public final class MemorySpec {
 
         private final Workspace workspace;
         private final Principal fixedPeer;
+        private PeerMemory peerMemory;
         private RepresentationStore representationStore;
         private ObservationStore observationStore;
         private MemoryInjectionMode injectionMode;
@@ -212,6 +262,22 @@ public final class MemorySpec {
         private Builder(Workspace workspace, Principal fixedPeer) {
             this.workspace = workspace;
             this.fixedPeer = fixedPeer;
+        }
+
+        /**
+         * Sets the backend the stack reads and writes memory through.
+         *
+         * <p>
+         * Mutually exclusive with {@link #representationStore(RepresentationStore)} and
+         * {@link #observationStore(ObservationStore)}, which name the default backend's materials instead.
+         *
+         * @param peerMemory
+         *            the backend, or {@code null} to name stores instead
+         * @return this builder
+         */
+        public Builder peerMemory(PeerMemory peerMemory) {
+            this.peerMemory = peerMemory;
+            return this;
         }
 
         /**
@@ -280,7 +346,8 @@ public final class MemorySpec {
          *
          * @return the immutable spec
          * @throws IllegalArgumentException
-         *             if the spec would wire nothing, or would wire a memory the tools cannot reach
+         *             if the spec would wire nothing, if it names both a backend and stores, or if per-caller mode
+         *             was chosen for a memory that cannot produce a snapshot
          */
         public MemorySpec build() {
             return new MemorySpec(this);

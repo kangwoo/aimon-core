@@ -899,8 +899,13 @@ override 하면 조용히 감사 추적을 잃는다 — javadoc 이 "둘을 함
 - **store 메서드에 `String` id 를 단독 파라미터로 받지 말 것.** `Workspace` 또는 workspace-bound 값
   객체를 받는다. `MemoryArchitectureTest` 가 빌드에서 막으며, 이것이 멀티테넌시 격리의 유일한
   컴파일 타임 강제다.
-- **레닥션 게이트를 우회하는 큐 경로를 만들지 말 것.** 새 `DerivationQueueManager` 구현은
-  `MessageRedactor` 를 반드시 경유한다. 게이트가 하나이기 때문에 §12 의 보장이 성립한다.
+- **레닥션 게이트를 우회하는 큐 경로나 티어 호출 경로를 만들지 말 것.** 새 `DerivationQueueManager`
+  구현은 `MessageRedactor` 를 반드시 경유한다. 티어 쪽도 같다 — `MemoryIngestor` · `ObservationRecorder`
+  · `MemorySearcher` · `DialecticEngine` 은 조립이 씌우는 `RedactingPeerMemory` 를 지나야 하며,
+  감싸지 않은 `PeerMemory` 를 스택에 넘기는 경로를 만들면 안 된다. 게이트가 하나이기 때문에 §12 의
+  보장이 성립하고, 새 SPI 가 공개 접근자를 열었으므로 그 하나를 **구현 안**에 두는 것이 유일한 방법이다
+  ([교체 가능한 메모리 백엔드](pluggable-memory-backend.md) §6.2).
+  `MemorySnapshotReader` 만 예외인데, 그 티어의 입력에는 호출자가 쓴 자유 텍스트가 없기 때문이다.
 - **`softDelete` 만 override 하고 `purgeSoftDeletedBefore` 를 두지 말 것.** 감사 윈도가 무한이 되어
   soft-delete 가 영구 누적으로 바뀐다 (D7).
 - **Memory 가 세션 메시지 사본을 갖게 하지 말 것.** `sourceMessageIds` 참조만 든다 (D4).

@@ -655,7 +655,7 @@ class AimonStackBuilderTest {
                 assertThat(tools.findByName(MemorySearchTool.TOOL_NAME)).isPresent();
                 assertThat(tools.findByName(ObserveTool.TOOL_NAME)).isPresent();
             }
-            assertThat(stack.degradations().has(MemoryAssembly.CAPABILITY_WRITE_PATH)).isTrue();
+            assertThat(stack.degradations().has(MemoryAssembly.CAPABILITY_INGEST)).isTrue();
         }
     }
 
@@ -682,7 +682,7 @@ class AimonStackBuilderTest {
         try (AimonStack stack = AimonStackBuilder.build(specFor(workspace, "ops").build())) {
             assertThat(stack.runtime(stack.primaryRuntimeId()).orElseThrow().getToolRegistry()
                     .findByName(MemoryRecallTool.TOOL_NAME)).isEmpty();
-            assertThat(stack.degradations().has(MemoryAssembly.CAPABILITY_WRITE_PATH)).isFalse();
+            assertThat(stack.degradations().has(MemoryAssembly.CAPABILITY_INGEST)).isFalse();
             assertThat(stack.degradations().has(MemoryAssembly.CAPABILITY_TOOLS)).isFalse();
         }
     }

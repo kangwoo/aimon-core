@@ -119,14 +119,19 @@ public final class AimonStackSpec {
                     "Set either credentialStore or credentialStoreFactory, not both — the factory answers for the"
                             + " no-tenant runtimes too, by being passed a null discriminator");
         }
-        if (this.memory != null && this.memory.getRepresentationStore().isPresent()
+        if (this.memory != null && this.memory.providesSnapshot()
                 && this.executor.getMemoryContextProvider().isPresent()) {
             // The executor takes exactly one provider, so one of these two would be dropped — and the symptom is a
-            // memory part that is present, plausible, and read from the store the caller did not mean. Either the
+            // memory part that is present, plausible, and read from the memory the caller did not mean. Either the
             // stack builds the provider from this spec or the caller supplies its own; not both.
+            //
+            // The test is "can this spec build a provider", not "does it name a representation store": a spec that
+            // names a PeerMemory serving the SNAPSHOT tier builds one too, and asking the narrower question would let
+            // exactly that combination through to fail silently.
             throw new IllegalArgumentException(
-                    "Set either a MemorySpec with a representation store or ExecutorSpec.memoryContextProvider, not"
-                            + " both — they install the same collaborator and only one of them would survive");
+                    "Set either a MemorySpec that can produce a snapshot (a representation store, or a PeerMemory"
+                            + " serving the SNAPSHOT capability) or ExecutorSpec.memoryContextProvider, not both —"
+                            + " they install the same collaborator and only one of them would survive");
         }
         if (builder.fileSystem != null) {
             this.fileSystem = builder.fileSystem;

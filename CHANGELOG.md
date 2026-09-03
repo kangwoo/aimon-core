@@ -625,6 +625,31 @@ Old names are searchable in [`docs/migration/rename-maps.md`](docs/migration/ren
   worth taking: folding the new values down on write gives up the distinction the widening exists
   for, and a lenient `valueOf` would have to be added to the jar that is already released.
 
+- **`MemorySpec.peerMemory(...)`** — names the backend directly instead of the stores it would be
+  built from. Mutually exclusive with the store setters, which stay and are folded into a
+  `StoreBackedPeerMemory` by the assembly, so every existing program-assembled spec is unaffected.
+  Two of the spec's invariants widened to cover both paths: "needs at least one store" became "needs
+  a `PeerMemory` or at least one store", and "per-caller needs a representation store" became
+  "per-caller requires the SNAPSHOT capability" — the same rule, said in the vocabulary that now has
+  two ways of naming a memory.
+
+- **`MemoryChatTool` is finally registered by the assembly.** It was previously wired only by the
+  CLI's hand-written code and `MemorySpec` had nowhere to put a `DialecticEngine`, so no
+  stack-assembled deployment could use it however its memory was configured. Registration by
+  capability closes that: wherever the CHAT tier exists, the tool appears; where it does not, a
+  `memory-chat` degradation says so. The starter's `in-memory` backend declares no `DialecticEngine`
+  bean, so that path takes the degradation rather than the tool.
+
+- **`RedactingPeerMemory`** — the assembly wraps every backend in it whenever a `RedactionPolicy` is
+  configured, and hands on only the wrapper. Redaction used to be guaranteed by an implementation
+  (`InMemoryDerivationQueueManager` masks inside `enqueue`, so no caller could route around it); a
+  public `MemoryIngestor` would have downgraded that to a documented precondition an application can
+  ignore. It masks the four tiers that carry caller-written text outwards — INGEST, OBSERVE, SEARCH
+  and **CHAT**, the last of which had no gate anywhere before this — and deliberately leaves SNAPSHOT
+  alone, whose query carries peers, a session, a mode and a budget and no text at all. Adapters
+  therefore never implement redaction, which is the property that matters once there is more than one
+  of them.
+
 #### Other
 
 - **`TaskResultStore`** (`at.aimon.core.subagent.task`) — the background-task surface's missing half.
@@ -925,6 +950,20 @@ Replacement for a caller that used it to read a result: none is needed at the ca
   schema and omitted from the rendered result, because echoing back a number the backend discarded
   tells the model its value was kept. The default backend stores confidence, so a deployment running
   today sees the schema it saw before.
+- **`MemoryAssembly.CAPABILITY_WRITE_PATH` is `CAPABILITY_INGEST`, and its value is `"memory-ingest"`
+  rather than `"memory-write-path"`.** The old key named a direction; what is actually missing is a
+  capability, and it now has four siblings — `memory-snapshot`, `memory-search`, `memory-chat`,
+  `memory-observe` — one per tier the backend does not serve, each with a sentence saying what the
+  deployment loses. `memory-tools` and `memory-redaction` keep their names and values. Degradation
+  keys are public API because a deployment reads them back with `stack.degradations().has(...)`;
+  they are not frozen names, because nothing persists them.
+- **`OrcaMemoryToolProvider` takes a `PeerMemory`** and registers by capability. Internal package
+  (`at.aimon.core.agent.impl.orca.tool`), so not part of the published surface; the store-taking
+  constructor remains for callers who were reaching into it anyway.
+- **`AimonStackSpec` rejects `MemorySpec` + `ExecutorSpec.memoryContextProvider` on the wider test.**
+  The guard used to ask whether the spec named a representation store; it now asks whether the spec
+  can produce a snapshot at all, which is the question it meant. A spec naming a `PeerMemory` that
+  serves SNAPSHOT used to slip past it and end up with two injection providers, one silently dropped.
 
 #### Non-breaking
 
