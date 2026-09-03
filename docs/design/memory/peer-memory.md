@@ -12,8 +12,12 @@
 **Peer / Representation / Dialectic / Dreamer** 패턴을 AIMON 코어에 네이티브 모듈로 내재화하여, IT 운영 자동화 에이전트가 **운영자·시스템·서비스에 대한 지속적이고 진화하는 메모리** 를 보유하도록 한다. 본 문서는 그 사양을 정의한다.
 
 본 통합의 비목표(Non-Goals):
-- 외부 메모리 서버를 호출하는 원격 클라이언트 통합 (MCP 경로는 별도 트랙)
-- 외부 SDK / 스키마 호환
+- ~~외부 메모리 서버를 호출하는 원격 클라이언트 통합~~ — **철회됨.**
+  [교체 가능한 메모리 백엔드](pluggable-memory-backend.md) §0.1 이 이 줄을 거둬들이고, 서비스 고도의
+  다섯 티어 SPI 위에 원격 어댑터가 서게 한다. 괄호 안의 단서는 유지된다 — **MCP 경로는 여전히 별도
+  트랙**이며, 그 문서 §14 A2 가 프롬프트 자동 주입이 MCP 로는 불가능한 이유를 적는다
+- 외부 SDK / 스키마 호환 — **유지된다.** AIMON 은 원격 서버의 와이어 포맷을 흉내 내지 않고 그 SDK 를
+  재수출하지도 않는다
 
 ---
 
@@ -773,26 +777,37 @@ aimon-cli  ── 둘 중 하나를 조립 선택
 
 `at.aimon.cli.config.MemoryConfig`:
 
+IMPORTANT: **CLI 의 키는 camelCase 다.** 이 절은 한때 kebab-case 로 적혀 있었고 그것은 **부팅을
+실패시키는 오류**였다 — `MemoryConfig` 의 `@JsonProperty` 가 전부 camelCase 이고 네이밍 전략 설정이
+없으며, `CliConfigLoader:36` 이 `FAIL_ON_UNKNOWN_PROPERTIES` 를 끄지 않으므로 `workspace-id` 는
+무시되는 것이 아니라 `UnrecognizedPropertyException` → `ConfigurationException` 이 된다. kebab-case 는
+**스타터 프로퍼티**(`aimon.memory.workspace-id`, §10.4)의 규약이며 두 표면은 섞이지 않는다.
+
 ```yaml
 memory:
-  workspace-id: ops
-  peer-id: alice
-  peer-name: Alice
-  storage-path: ~/.aimon/memory
+  workspaceId: ops
+  peerId: alice
+  peerName: Alice
+  storagePath: ~/.aimon/memory
   backend: file             # file (기본) | in-memory
-  reconciler-enabled: true
+  reconcilerEnabled: true
   dreamer:
     enabled: true
     cron: "*/30 * * * *"
-    surprisal-threshold: 0.25
-    walk-seed-count: 8
-    neighbor-top-k: 8
+    surprisalThreshold: 0.25
+    walkSeedCount: 8
+    neighborTopK: 8
     scorer:
       type: llm             # llm (기본) | embedding
 ```
 
-`backend` 는 `file` 이 기본이며 `file` / `in-memory` 두 값만 배선된다. 모르는 값은 시작 경고와 함께
-`file` 로 떨어진다. PostgreSQL·OpenSearch 백엔드는 모듈로는 존재하지만 CLI 에 배선되어 있지 않다.
+`backend` 는 `file` 이 기본이며 `file` / `in-memory` 두 값만 배선된다. 모르는 값은 `file` 로 떨어지되
+**경고는 절반만 나온다** — `createObservationStore:967-970` 은 관찰 스토어에 대해
+`"unknown backend '...', falling back to file for observations"` 를 내지만
+`createRepresentationStore:929-943` 은 `in-memory` 가 아니면 **말없이** `FileRepresentationStore` 로
+간다. 양쪽을 맞추는 것은
+[교체 가능한 메모리 백엔드](pluggable-memory-backend.md) §9.2 의 항목이다.
+PostgreSQL·OpenSearch 백엔드는 모듈로는 존재하지만 CLI 에 배선되어 있지 않다.
 
 ### 10.4 스타터 — `aimon.memory.*`
 
