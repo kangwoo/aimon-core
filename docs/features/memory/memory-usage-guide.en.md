@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/memory/memory-usage-guide.md
-source_commit: c9ea46d
+source_commit: 71979ac
 ---
 
 # Memory (Peer Memory) Usage Guide
