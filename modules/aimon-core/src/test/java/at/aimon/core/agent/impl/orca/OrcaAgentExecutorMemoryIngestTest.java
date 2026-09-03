@@ -82,7 +82,9 @@ class OrcaAgentExecutorMemoryIngestTest {
         final ExecutionMemoryUpdate update = sink.updates.get(0);
         assertThat(update.getSessionId()).contains(sessionId);
         assertThat(update.getPrincipal()).contains(CALLER);
-        assertThat(update.getMessages()).extracting(Message::getContent).contains("hi", "hello back");
+        // containsExactly, not contains: the display name says "exactly what it added", and a regression that fed
+        // the whole transcript instead of the delta would satisfy a containment check.
+        assertThat(update.getMessages()).extracting(Message::getContent).containsExactly("hi", "hello back");
     }
 
     @Test
@@ -208,11 +210,19 @@ class OrcaAgentExecutorMemoryIngestTest {
                 .environment(Environment.createDefault()).build();
     }
 
-    /** Captures every offer, and the interrupt state of the thread that made it. */
+    /**
+     * Captures every offer, and the interrupt state of the thread that made it.
+     *
+     * <p>
+     * Deliberately not thread-safe. {@code execute()} is synchronous and the sink runs in its {@code finally}, so
+     * every call is on the test's own thread. Marking the flag {@code volatile} beside a plain {@code ArrayList}
+     * would claim two different things about one call — and be wrong twice over if it were ever true, since a
+     * non-atomic {@code |=} loses updates and the list corrupts.
+     */
     private static final class RecordingSink implements ExecutionMemorySink {
 
         private final List<ExecutionMemoryUpdate> updates = new ArrayList<>();
-        private volatile boolean interruptedWhenCalled;
+        private boolean interruptedWhenCalled;
 
         @Override
         public void afterExecution(ExecutionMemoryUpdate update) {

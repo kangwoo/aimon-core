@@ -87,12 +87,19 @@ public final class MemoryRecallTool extends AbstractTool {
      * and of no other: a backend that computes its snapshot on read has no individual observations to hand over, and
      * says so through {@link MemorySnapshot#isObservationsAvailable()}. The render already reports that case in a
      * line of its own; the description is widened to match it so the two do not disagree before the first call.
+     *
+     * <p>
+     * The budget clause is hedged for the same reason and it is the same sentence: {@code max_tokens} goes onto
+     * {@link MemorySnapshotQuery}, and {@link MemorySnapshotQuery#getMaxTokens()} is honoured exactly by the default
+     * backend and treated as a hint by a remote one. A backend that ignores it returns an over-budget snapshot with
+     * {@link MemorySnapshot#isTruncated()} false, the render prints no over-budget note, and a flat promise would
+     * have been made to the model before its first call.
      */
     private static final String DESCRIPTION = "Recall the latest insight snapshot about a peer so it can be injected "
             + "into the reasoning context. Use this when you need a quick portrait of who the peer is, what they "
             + "prefer, and what has been observed about them across sessions. Returns the summary and, where the "
-            + "memory backend exposes them, the observations behind it; honours an optional max_tokens budget by "
-            + "dropping observations when the snapshot is too large.";
+            + "memory backend exposes them, the observations behind it. An optional max_tokens budget is passed to "
+            + "the backend, which drops observations to fit it where it can; the result says whether it did.";
 
     private static final Logger log = LoggerFactory.getLogger(MemoryRecallTool.class);
 

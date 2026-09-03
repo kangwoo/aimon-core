@@ -1212,12 +1212,19 @@ public class OrcaAgentExecutor
      * had.
      *
      * <p>
-     * <b>That promise is what fixes where the call sits.</b> It runs while the interrupt flag is still consumed, in
-     * the same window the persist runs in, and before the caller's interrupt is re-armed. A sink is contracted to be
-     * quick and to swallow its own failures; it is not contracted to be uninterruptible, and the remote backends this
-     * seam exists for reach a network. Called after the re-arm, an interruptible call inside such a sink would throw
-     * on entry for precisely the interrupted turns this method promises to feed — and a sink that caught the
-     * {@link InterruptedException} without restoring the flag would erase a cancellation the caller was owed.
+     * <b>That promise is what fixes where the call sits.</b> It runs in the same window the persist runs in — after
+     * the sweep, before the caller's interrupt is re-armed. A sink is contracted to be quick and to swallow its own
+     * failures; it is not contracted to be uninterruptible, and the remote backends this seam exists for reach a
+     * network. Called after the re-arm, an interruptible call inside such a sink would throw on entry for precisely
+     * the interrupted turns this method promises to feed — and a sink that caught the {@link InterruptedException}
+     * without restoring the flag would erase a cancellation the caller was owed.
+     *
+     * <p>
+     * "The same window as the persist" is the exact claim, and it is weaker than "on a swept thread": the persist
+     * sits between the sweep and this call, and a {@code SessionRecordStore} that catches an
+     * {@link InterruptedException} and restores the flag would re-arm it before the sink is reached. That hole is the
+     * persist's, not this seam's — it is the reason the sweep is where it is — and nothing else in the gap can set
+     * the flag.
      *
      * <p>
      * The delta comes from the mark set at the top of {@code execute()}, and is empty when the history was rewritten

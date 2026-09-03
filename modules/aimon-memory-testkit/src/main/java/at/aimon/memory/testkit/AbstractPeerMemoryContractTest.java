@@ -184,9 +184,25 @@ public abstract class AbstractPeerMemoryContractTest {
         capabilities = MemoryCapabilities.of(backend);
     }
 
+    /**
+     * Returns the object that actually owns {@link #backend()}'s native resources, for the harness to close.
+     *
+     * <p>
+     * Override when {@link #newBackend()} returns a <em>decorator</em>. The default answer is the backend itself,
+     * which is right for a plain one and wrong for a wrapper: a wrapper owns nothing, so the harness's
+     * {@code instanceof AutoCloseable} test answers {@code false} for a delegate that very much is one, and an
+     * adapter's HTTP client leaks once per case. {@code RedactingPeerMemory} states the same rule for assemblies and
+     * exposes {@code getDelegate()} for exactly this.
+     *
+     * @return the resource owner, or {@code null} for none; defaults to the backend under test
+     */
+    protected PeerMemory resourceOwner() {
+        return backend;
+    }
+
     @AfterEach
     final void closeBackend() throws Exception {
-        if (backend instanceof AutoCloseable closeable) {
+        if (resourceOwner() instanceof AutoCloseable closeable) {
             closeable.close();
         }
         backend = null;

@@ -54,6 +54,17 @@ class RedactingPeerMemoryContractTest extends StoreBackedPeerMemoryContractTest 
         return new RedactingPeerMemory(super.newBackend(), new DefaultRedactionPolicy());
     }
 
+    /**
+     * The wrapper owns nothing, so the harness must be pointed at what does — the rule {@link RedactingPeerMemory}
+     * states for assemblies, kept here so a decorating subclass is not the thing that silently disables teardown.
+     * Inert for this backend, which holds only in-memory stores; the hook exists because the suite is published for
+     * out-of-tree backends that do hold a connection.
+     */
+    @Override
+    protected PeerMemory resourceOwner() {
+        return ((RedactingPeerMemory) backend()).getDelegate();
+    }
+
     @Test
     @DisplayName("a rebuilt query still carries minScore, so a backend that cannot score still rejects it")
     void rebuiltQueryStillCarriesMinScore() {

@@ -1013,7 +1013,10 @@ Replacement for a caller that used it to read a result: none is needed at the ca
 - **The three memory tools take a store through a named factory, not a second constructor:**
   `MemoryRecallTool.overStore(representationStore)`, `MemorySearchTool.overStore(observationStore[,
   redaction])` and `ObserveTool.overStore(observationStore[, redaction])` replace the store-taking
-  constructors. Each tool now has exactly one constructor, and it takes the tier.
+  constructors. A store no longer appears in any constructor signature: every constructor left on the
+  three takes a tier. Two of them keep their with-and-without-`RedactionPolicy` pair, which was never
+  the ambiguous axis. `MemoryChatTool` is untouched — it takes a `DialecticEngine` and never had a
+  store constructor to lose, so this is three tools, not the four the memory tool set has.
 
   Keeping both as constructors would have made a store and a tier overloads of each other: ambiguous
   for any caller passing a literal `null`, and — the part that matters more — reading as a claim that

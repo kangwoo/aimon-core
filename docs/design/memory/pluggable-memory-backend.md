@@ -1467,7 +1467,7 @@ IMPORTANT: 다음을 하면 경계가 깨진다.
 | `DialecticEngine` / `DialecticQuery` / `DialecticResponse` | **불변** |
 | 도구 4종의 `TOOL_NAME` · `ToolContext` 키 | **불변** |
 | 도구 4종의 **입력 스키마** | **기존 사용자에게는 불변.** 단 한 자리가 백엔드에 따라 달라진다 — `ObserveTool` 의 `confidence` 파라미터는 백엔드가 `storesConfidence()=false` 일 때 스키마에서 빠진다(§2.2). 기본 백엔드는 `true` 이므로 오늘 도는 배포의 스키마는 그대로다 |
-| 도구 4종의 **생성자** | **바뀐다.** 생성자는 티어를 받는 하나만 남고, 스토어 경로는 이름 있는 팩토리(`MemoryRecallTool.overStore(...)` 등)가 된다 — 아래 참조 |
+| 도구 **3종**의 **생성자** | **바뀐다.** 스토어를 받는 생성자가 사라지고 남는 생성자는 전부 티어를 받는다. 스토어 경로는 이름 있는 팩토리(`MemoryRecallTool.overStore(...)` 등)다. `RedactionPolicy` 유무 오버로드는 그대로 — 모호했던 축이 아니다. `MemoryChatTool` 은 `DialecticEngine` 을 받으므로 애초에 잃을 스토어 생성자가 없다 — 아래 참조 |
 | `OrcaMemoryToolProvider` 생성자 | 바뀐다. **내부 패키지**(`agent.impl.orca.tool`)이므로 공개 API 가 아니다 (§2 of api-stability) |
 | `MemorySpec` | 순수 추가 |
 
@@ -1475,8 +1475,8 @@ IMPORTANT: 다음을 하면 경계가 깨진다.
 되는데, 이것은 두 가지를 뜻한다. 첫째로 `null` 리터럴을 넘기는 호출자에게 컴파일이 모호해진다. 둘째가
 더 중요하다 — 오버로드는 "이 둘은 바꿔 넣을 수 있는 것" 이라고 읽히고, 그것이 정확히 이 이음매가
 부정하려는 명제다. `SnapshotMemoryContextProvider.readerOver(...)` 는 같은 이유로 이미 이름 있는
-팩토리를 골랐으므로(§11.1), 도구 넷만 반대 선택을 하면 한 PR 안에서 규칙이 갈린다. 고도는 오버로드
-해석이 아니라 **이름**이 말한다.
+팩토리를 골랐으므로(§11.1), 스토어 생성자를 가진 도구 셋만 반대 선택을 하면 한 PR 안에서 규칙이
+갈린다. 고도는 오버로드 해석이 아니라 **이름**이 말한다.
 
 ### 11.3 이름이 아니라 **동작**이 바뀌는 것
 
