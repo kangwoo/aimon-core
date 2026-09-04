@@ -7,7 +7,26 @@ Central is versioned independently).
 
 ## [Unreleased]
 
-Nothing yet.
+### Build, CI and the release gate
+
+- **The `/release` skill's description of the gate is now checked against the gate.**
+  `ReleaseGateMatchesCiGateTest` held `scripts/release.sh` and `.github/workflows/build.yml` to each
+  other while a third hand-maintained copy of the same list sat unread in
+  `.claude/skills/release/SKILL.md` — telling whoever was about to publish that the gate was
+  `checkAll` alone, and that `integrationTest` and `packagingTest` stayed out of it "in both places".
+  Both had been inside both gates since the release that moved them there. That release corrected the
+  test's own javadoc and missed the skill, so this is precisely the failure that javadoc names — a
+  stale comment outliving the condition it described because no check read it — recurring in the one
+  file the check did not read. A fourth case parses the skill's `Quality gate = …` claim and fails
+  when it and the script name different tasks in either direction, and when the sentence is deleted
+  rather than corrected.
+
+- **The skill gained the steps cutting 0.2.4 actually needed**: promoting `[Unreleased]` to
+  `[X.Y.Z]` before the release rather than after (the script only warns, and a step nobody wrote down
+  is a step that gets walked past), the ordering constraint that makes that edit a separate pushed
+  commit — `release.sh` wants a clean, in-sync `main` and stages only `gradle.properties` — the
+  Docker daemon the gate now requires, and verifying the GitHub Release the tag push triggers, which
+  runs after the Central publish and so fails without endangering anything or telling anyone.
 
 ---
 
