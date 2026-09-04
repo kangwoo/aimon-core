@@ -98,6 +98,14 @@ jobs:
           python3 scripts/absolutize-release-links.py release-notes.md \
             "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" "$RAW_TAG"
 
+          # GitHub rejects a release body over 125,000 characters with a 422, and that fails the
+          # whole `gh release create` call -- so an over-long section publishes nothing at all, not
+          # even the pointer the missing-section branch above falls back to. A section that
+          # consolidates several releases reaches this easily: `[0.2.4]` extracted to 156,902.
+          # Runs after absolutization, which only ever grows the text.
+          python3 scripts/cap-release-notes.py release-notes.md 125000 \
+            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/$RAW_TAG/CHANGELOG.md"
+
           cat release-notes.md
 
       - name: Create release

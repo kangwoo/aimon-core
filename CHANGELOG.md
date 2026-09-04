@@ -7,6 +7,15 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+Nothing yet.
+
+---
+
+## [0.2.4] - 2026-09-04
+
+This section covers everything since `[0.1.11]` — the 0.2.x releases in between shipped without
+sections of their own.
+
 Six themes:
 
 1. **The session-first restructure (Stages 0–6)** — the durable aggregate is now `SessionRecord`
@@ -1811,6 +1820,15 @@ Fifteen rules are now enforced by tests; the complete index is
   repository, so the changelog can keep writing links relative — which is what renders on GitHub and
   what `scripts/check-doc-links.py` can verify.
 
+- **An over-long section stops publishing nothing at all.** GitHub rejects a release body over
+  125,000 characters with a 422, which fails the whole `gh release create` call — a worse outcome
+  than the *missing* section the workflow already handles, since that one at least falls back to a
+  pointer. This section is the case that found it: consolidating everything since `[0.1.11]` (0.2.0
+  through 0.2.3 shipped without sections of their own) extracted to 156,902 characters, 32k over.
+  `scripts/cap-release-notes.py` truncates on a line boundary, closes a code fence the cut landed
+  inside, and appends a pointer to the full section. It runs *after*
+  `absolutize-release-links.py`, never before — absolutization only ever grows the text.
+
 - `docs/overview/scope-model.md` — four scopes plus execution units, with **Session** (durable) and
   **live session** (node-local) as separate tiers; the naming rules and the deliberate
   `Session*` / `LiveSession*` asymmetry; the reused `SessionApprovalStore` name; both renames and why.
@@ -1895,7 +1913,7 @@ model intent (multiple `tool_use`s) plus a framework safety check; results and `
 stay in input order. Off by default.
 
 - `Tool#getConcurrencyPolicy()` default method (`SEQUENTIAL`); `Read` / `Grep` / `WebFetch` declare
-  `CONCURRENT_SAFE`. *(Renamed to `getConcurrencyBehavior()` in `[Unreleased]`.)*
+  `CONCURRENT_SAFE`. *(Renamed to `getConcurrencyBehavior()` in `[0.2.4]`.)*
 - `ParallelToolDispatcher` / `DefaultParallelToolDispatcher` (bounded, lazily created daemon pool) +
   `ToolConcurrencyConfig` (disabled by default, `maxConcurrency` 4).
 - Wired into `OrcaAgentExecutor` (`OrcaAgentExecutorFactory.withToolConcurrencyConfig`) and
@@ -1951,7 +1969,7 @@ the existing `compactionFailureCount` / `agentRef`. Design:
   preserved by `mergeFromSnapshot`, updated via atomic primitives.
 - **`SessionStatePersistence` SPI** (+ `PersistedSessionState`, adapter, `NOOP`) through which the
   live session hydrates on open and writes through totals (end of turn) and the budget override
-  (`setOptions`), best-effort. *(Deleted in `[Unreleased]`; the session now holds the record store
+  (`setOptions`), best-effort. *(Deleted in `[0.2.4]`; the session now holds the record store
   directly.)*
 - **`clearBudgetOverride()`** — explicit "revert to opener default" that erases the persisted
   override; **`AgentSessionOptions.withBudget(ExecutionBudget)`** budget-only copy helper.
