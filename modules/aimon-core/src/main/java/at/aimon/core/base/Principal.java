@@ -201,6 +201,31 @@ public final class Principal {
         return type == Type.SERVICE;
     }
 
+    /**
+     * Identity is {@code type} + {@code id}. {@link #getDisplayName() displayName} is deliberately excluded.
+     *
+     * <p>
+     * It used to be included, which made a rename produce a different principal. That is not what any caller
+     * wants from this type: {@code ScheduledTaskManager} compares a task's owner against the caller to decide
+     * whether the caller may touch it, so a user whose display name changed lost access to their own tasks.
+     * Usage keys that embed a principal ({@code LlmUsageKey}) split one person's metering across their old and
+     * new name for the same reason.
+     *
+     * <p>
+     * It also put a burden on anything that has to rebuild a principal from the wire. A remote memory backend
+     * stores the peer id and has no column for a display name, so the principal it reconstructs could never
+     * equal the one it was handed — the contract suite caught exactly that, and the two strings printed
+     * identically because {@code toString()} omits the field that differed.
+     *
+     * <p>
+     * {@link at.aimon.core.memory.Workspace#equals(Object)} next door already compared ids alone. The two
+     * halves of a {@code PeerView} therefore disagreed about what equality meant, and the composite inherited
+     * the stricter one. This makes them agree.
+     *
+     * <p>
+     * <b>Do not regenerate this method.</b> An IDE's "generate equals and hashCode" includes every field and
+     * would silently reintroduce all of the above; that is how the display name got in.
+     */
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -210,12 +235,13 @@ public final class Principal {
             return false;
         }
         Principal that = (Principal) o;
-        return type == that.type && id.equals(that.id) && displayName.equals(that.displayName);
+        return type == that.type && id.equals(that.id);
     }
 
+    /** Hashes the same two fields {@link #equals(Object)} compares — see there for why the third is absent. */
     @Override
     public int hashCode() {
-        return Objects.hash(type, id, displayName);
+        return Objects.hash(type, id);
     }
 
     @Override
