@@ -140,8 +140,10 @@ jobs:
   # infrastructure tier rather than "build", which is the first thing a reader needs to know.
   #
   # This is not an optional extra. For aimon-filesystem-{gridfs,s3} and aimon-session-{redis,postgres,mongodb}
-  # these are the ONLY tests there are — every one of those modules is published to Maven Central, so leaving
-  # the tier ungated meant shipping five artifacts whose sole verification had never run. It was seven until
+  # these are the only tests that reach the backend at all. Those modules do keep one to six classes out of the
+  # tier — codec round-trips and frozen-name assertions — but none of them opens a connection, so no driver,
+  # schema or query is covered by anything else. Every one is published to Maven Central, so leaving the tier
+  # ungated meant shipping five artifacts whose behaviour against a real server had never run. It was seven until
   # aimon-memory-{postgres,mongodb} were removed; the distributed memory backends are a separate service now
   # (see CHANGELOG). `scripts/release.sh` gates on the same task for the same reason, and
   # ReleaseGateMatchesCiGateTest holds the two lists together.
@@ -216,7 +218,9 @@ jobs:
   # `build` and `integration` run in parallel with separate workspaces, so a report generated inside either
   # sees one tier. Generated inside `build`, as it was until now, that meant aimon-session-postgres measured
   # 6.2% line, gridfs 11.0%, s3 12.9%, session-redis 19.8% and session-mongodb 28.0% -- five published
-  # modules whose every test is @Tag("docker") and therefore absent from `test`. (It was seven, with
+  # modules whose backend tests are all @Tag("docker") and therefore absent from `test`. The spread across
+  # those five numbers is the shape of what stayed behind: session-mongodb keeps six codec and freeze classes
+  # and reaches 28.0%, session-postgres keeps two and reaches 6.2%. (It was seven, with
   # aimon-memory-{mongodb,postgres} at 0.0%, until those two modules were removed.) That is not low coverage,
   # it is coverage measured with the tests excluded; the same five land at 75-85% once the docker tier is
   # folded in. The build-side plugin has read every tier's `.exec`

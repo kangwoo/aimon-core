@@ -27,10 +27,23 @@ mongodb = "4.11.1"
 aws-sdk = "2.54.6"
 
 # Testing
-# JUnit carries no version here on purpose. Every module gets spring-boot-starter-test
-# (aimon.java-conventions), which brings org.junit:junit-bom transitively, and the BOM wins over
-# whatever this catalog asks for. A number here would be a dead letter that reads like the truth:
-# the effective version is governed by the `spring-boot` key above.
+# JUnit carried no version here on purpose until aimon-memory-testkit was published. The reasoning still
+# holds for the fourteen modules it was written about: they get spring-boot-starter-test
+# (aimon.java-conventions), which brings org.junit:junit-bom transitively, that BOM wins over whatever this
+# catalog asks for, and a number would be a dead letter reading like the truth.
+#
+# It does not hold for a module on Central. aimon-memory-testkit compiles against JUnit in *main* sources, so
+# the starter — test-scoped — never reaches it, and it publishes `junit-jupiter` as a versionless coordinate
+# that something has to govern. Governing it with `spring-boot-dependencies` worked and cost the consumer
+# Spring Boot's whole dependency management (~1,400 coordinates, sixteen of them moving for a consumer on
+# 3.4.0). Governing it with junit-bom costs the consumer JUnit's coordinates, which is what a JUnit contract
+# suite may fairly ask for.
+#
+# So the number below is not the effective version for this build's tests — the starter's BOM still decides
+# that. It is the constraint aimon-memory-testkit publishes. Keep it equal to the JUnit that `spring-boot`
+# above resolves to (today 5.12.2, checked 2026-09-05); if Spring Boot moves ahead the published constraint
+# merely lags, and a consumer's own newer JUnit wins over it by normal conflict resolution.
+junit = "5.12.2"
 assertj = "3.27.7"
 mockito = "5.23.0"
 testcontainers = "1.21.4"
@@ -139,6 +152,9 @@ mapstruct-processor = { module = "org.mapstruct:mapstruct-processor", version.re
 
 # Testing
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
+# Declared for aimon-memory-testkit alone — the one published module that needs a JUnit version on a *main*
+# source set. Every other module gets JUnit through spring-boot-starter-test and must not use this.
+junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
 junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
 assertj-core = { module = "org.assertj:assertj-core", version.ref = "assertj" }
 mockito-core = { module = "org.mockito:mockito-core", version.ref = "mockito" }
