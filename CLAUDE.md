@@ -208,7 +208,8 @@ IMPORTANT: **문서를 고칠 때는 번역본이 있는지 먼저 확인한다.
 미리 알 수 없다), 체커는 정본과 번역본을 함께 건드린 커밋을 건너뛰므로 이 한 커밋의 지연은 낡음이
 아니다.
 
-번역 규칙 전문은 @docs/project/translation-glossary.md 와 @docs/README.md 에 있다. 자주 어기는 것만:
+번역 규칙 전문은 @docs/project/translation-glossary.md 와 @docs/project/documentation-guide.md 에
+있다. 자주 어기는 것만:
 
 - **구조를 정확히 맞춘다** — 제목 개수, 표의 행 수, 코드 블록 개수가 같아야 한다
 - **제목을 번역하면 앵커가 바뀐다** — 문서 안 `#링크` 를 다시 겨누고 `python3 scripts/check-doc-links.py` 로 검증

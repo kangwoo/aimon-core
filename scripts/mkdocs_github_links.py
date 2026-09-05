@@ -12,6 +12,13 @@ render time. Links that stay inside ``docs/`` are left completely alone, which
 keeps MkDocs' own link resolution -- and the ``.en.md`` translation mapping --
 in charge of everything it should be in charge of.
 
+There is a second, smaller class with the same shape: a link that stays inside
+``docs/`` but points at a directory ``exclude_docs`` keeps off the site
+(``backlog/``, ``plan/``). Those files exist on GitHub and not in the build, so
+they get the same treatment. The list is read from ``exclude_docs`` rather than
+repeated here -- excluding one more directory is then a one-line change in
+``mkdocs.yml``, and this hook cannot fall out of step with it.
+
 Registered from ``mkdocs.yml`` under ``hooks:``. No plugin dependency.
 """
 
@@ -46,6 +53,7 @@ def on_page_markdown(markdown, page, config, files, **kwargs):
 
     docs_dir = Path(config["docs_dir"]).resolve()
     page_dir = posixpath.dirname(page.file.src_uri)
+    excluded = _excluder(config, docs_dir)
 
     out, fenced = [], False
     for line in markdown.splitlines():
@@ -53,12 +61,34 @@ def on_page_markdown(markdown, page, config, files, **kwargs):
             fenced = not fenced
             out.append(line)
             continue
-        out.append(line if fenced else _rewrite(line, docs_dir, page_dir, repo_url))
+        out.append(line if fenced else _rewrite(line, docs_dir, page_dir, repo_url, excluded))
 
     return "\n".join(out)
 
 
-def _rewrite(line, docs_dir, page_dir, repo_url):
+def _excluder(config, docs_dir):
+    """Return ``path_inside_docs -> repo-relative path``, or None when it stays."""
+    spec = config.get("exclude_docs")
+    try:
+        docs_prefix = docs_dir.relative_to(_repo_root).as_posix()
+    except ValueError:
+        docs_prefix = None
+    if spec is None or docs_prefix is None:
+        return lambda _: None
+
+    def excluded(relative):
+        # A gitignore pattern written as ``backlog/`` only matches a path the
+        # matcher can see is a directory, which it decides from the trailing
+        # slash -- so a bare ``backlog`` has to be offered both ways.
+        candidates = [relative] if relative.endswith("/") else [relative, relative + "/"]
+        if not any(spec.match_file(candidate) for candidate in candidates):
+            return None
+        return f"{docs_prefix}/{relative.rstrip('/')}"
+
+    return excluded
+
+
+def _rewrite(line, docs_dir, page_dir, repo_url, excluded):
     # Inline code is skipped by *position*, not by slicing the line up: link text
     # is very often backticked here (``[`ReadTool`](...)``), and cutting the line
     # at the code span would tear that link in half and leave it unrewritten.
@@ -78,7 +108,13 @@ def _rewrite(line, docs_dir, page_dir, repo_url):
         resolved = Path(posixpath.normpath(posixpath.join(page_dir, path_part)))
         # normpath keeps leading '..' when the path climbs out of docs_dir.
         if not str(resolved).startswith(".."):
-            return match.group(0)
+            # Inside docs/: the only ones that need help are the ones that are
+            # not built. Everything else stays relative and MkDocs resolves it.
+            inside = excluded(resolved.as_posix())
+            if inside is None:
+                return match.group(0)
+            url = _github_url(repo_url, inside)
+            return f"{prefix}{url}{'#' + anchor if anchor else ''}{suffix}"
 
         outside = (docs_dir / resolved).resolve()
         try:

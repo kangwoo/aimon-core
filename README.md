@@ -355,8 +355,9 @@ Quality tooling:
 
 ## Documentation
 
-Start at [`docs/README.md`](docs/README.md) for the documentation index. Docs are organized by
-**feature**, not by reader role.
+The documentation site is at **<https://kangwoo.github.io/aimon-core/>**. Start at
+[`docs/README.md`](docs/README.md) — what AIMON is, how to run it, how a turn loops, and where to go
+next. Docs are organized by **feature**, not by reader role.
 
 - [`docs/overview/features.md`](docs/overview/features.md) — **feature catalog**: what `aimon-core` can do, where each entry point lives, and whether it is built in or a separate module
 - [`docs/overview/`](docs/overview/) — architecture reference, glossary, scope/lifetime model
@@ -365,9 +366,11 @@ Start at [`docs/README.md`](docs/README.md) for the documentation index. Docs ar
 - [`docs/references/`](docs/references/) — Hooks specification, AgentSkills specification
 - [`docs/design/`](docs/design/) — design documents and rationale
 - [`docs/migration/`](docs/migration/) — version migration guides
-- [`docs/project/`](docs/project/) — SOLID principles, publishing, coverage priorities
+- [`docs/project/`](docs/project/) — roadmap, API stability, SOLID principles, [documentation rules](docs/project/documentation-guide.md), publishing
 
-Note: most documents under `docs/` are written in Korean, matching the project's house style.
+Note: under `docs/` **Korean is canonical** and English translations are `*.en.md`, served under
+`/en/` on the site. A page without a translation yet falls back to the Korean original rather than
+404ing, so the site is always whole.
 
 ## Project Status
 

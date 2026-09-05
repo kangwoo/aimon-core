@@ -83,6 +83,36 @@ Central is versioned independently).
   Docker daemon the gate now requires, and verifying the GitHub Release the tag push triggers, which
   runs after the Central publish and so fails without endangering anything or telling anyone.
 
+### Documentation: the site's front page is now written for a first-time reader
+
+- **`docs/README.md` is a landing page rather than a catalogue.** It was the index *and* the first
+  screen of the published site, and the two jobs pulled in opposite directions: someone arriving at
+  <https://kangwoo.github.io/aimon-core/> to find out what AIMON is met "checkboxes go in `plan/` only"
+  and a table distinguishing `backlog/` from `design/backlog/`. The page now answers, in order, what
+  AIMON is (next to what you would otherwise build yourself), how to run it — CLI in four commands,
+  or three Spring properties and one injected `AimonSessions` — how a turn actually loops, what the
+  seven names worth knowing mean, which modules exist, and where to go next. `docs/README.en.md`
+  follows it.
+
+- **The documentation rules moved to
+  [`docs/project/documentation-guide.md`](docs/project/documentation-guide.md)** — where a new document
+  goes, what separates `design/` from `plan/` from `backlog/`, the link rules, and the whole translation
+  convention. Nothing was dropped in the move; the audience was. `CONTRIBUTING.md` (and its Korean
+  translation), `CLAUDE.md` and `docs/design/README.md` now point there for those rules.
+
+- **`backlog/` and `plan/` are no longer published to the docs site.** They were top-level entries in
+  the site navigation, which offered a reader looking for "what can I use" a list of what is not done
+  and a tracker that gets deleted when its work lands. `mkdocs.yml` excludes them through
+  `exclude_docs`, and this is an exclusion rather than a deletion: both directories stay in the
+  repository and stay readable on GitHub, and `scripts/mkdocs_github_links.py` now reads that same
+  `exclude_docs` list — rather than repeating it — to rewrite links pointing into them into GitHub URLs
+  at render time, exactly as it already did for links escaping `docs/`. Sources keep writing relative
+  paths and `mkdocs build --strict` still passes.
+
+  The patterns are anchored (`/backlog/`, `/plan/`). Written bare, gitignore semantics would match at
+  any depth and take `design/backlog/` with them — deferred *design* rationale, which belongs with the
+  rest of `design/` and is still published.
+
 ---
 
 ## [0.2.4] - 2026-09-04

@@ -120,7 +120,7 @@
 
 | 넣지 않는 것 | 어디에 속하나 |
 |-------------|--------------|
-| 체크박스 · WI/WU 표 · Phase 로그 | `docs/plan/` — 진행 중인 계획이 있을 때만 존재하고 끝나면 지운다 ([`../README.md`](../README.md) 참조) |
+| 체크박스 · WI/WU 표 · Phase 로그 | `docs/plan/` — 진행 중인 계획이 있을 때만 존재하고 끝나면 지운다 ([`../project/documentation-guide.md`](../project/documentation-guide.md) 참조) |
 | "착수 전 기록" · rev.1/rev.2 정정 이력 | 어디에도. 정정은 본문에 반영하고 흔적은 지운다 |
 | 사용법 · 설정 예시 · 트러블슈팅 | [`../features/`](../features/) |
 | 구현 순서 · 테스트 전략 · 기술 스택 | 계획 산출물. 결정만 남기고 뺀다 |
@@ -194,6 +194,7 @@
 ## 관련 문서
 
 - [`../README.md`](../README.md) — 문서 전체 지도
+- [`../project/documentation-guide.md`](../project/documentation-guide.md) — 문서를 쓰고 옮기고 번역하는 규칙
 - [`../overview/architecture.md`](../overview/architecture.md) — 이 디렉토리의 구성 축이 따르는 서브시스템 구분
 - [`../overview/glossary.md`](../overview/glossary.md) — 용어와 수명 사전
 - [`../overview/scope-model.md`](../overview/scope-model.md) — 수명·소유권·소멸 책임 규칙
