@@ -57,16 +57,22 @@ import at.aimon.core.subagent.task.codec.UserInputCodec;
  * text entry is the document the previous build wrote. The compatibility reasoning is the same in all three backends
  * and is spelled out on the Redis codec; the short form is that an inbox holds work not yet done, so an entry written
  * by either build has to be readable by the other, and an older node reading a multimodal entry finds a rendering it
- * can run rather than an empty string or an undecodable document.
+ * can run rather than an empty string or an undecodable document. The reverse direction — this build reading an
+ * encoding a newer node wrote — degrades to that same rendering through
+ * {@link UserInputCodec#decodeOrText(String, String)} rather than throwing, because {@code findOneAndDelete} has
+ * already removed the document by the time this codec runs.
  *
  * <p>
  * <b>Unlike {@code submitOptions}, this subtree is not a second representation.</b> The argument that keeps
  * {@code submitOptions} hand-mapped here — BSON types inside a heterogeneous {@code Map<String, Object>}, where a
  * {@code Date} is a BSON value rather than a string — does not apply to an input: every leaf of that shape is a
- * {@code String}, so there is no BSON type for a conversion to lose. It is stored as the codec's own JSON text rather
- * than parsed into a subdocument because a subdocument would buy queryability this collection does not use (its
- * indexed fields are the top-level {@code conversationId}, {@code priority} and {@code deliveredAt}) at the price of
- * exactly the second hand-written mapping that {@code UserInputCodec} exists to prevent.
+ * {@code String}, so there is no BSON type for a conversion to lose. A subdocument would in fact cost no hand-written
+ * mapping at all: {@code Document.parse(UserInputCodec.encodeToString(input))} and {@code subdoc.toJson()} would do
+ * it. What it would buy is queryability this collection does not use — its indexed fields are the top-level
+ * {@code conversationId}, {@code priority} and {@code deliveredAt}, and nothing reads into the payload — and what it
+ * would cost is a round trip through BSON and back out through extended JSON, whose fidelity here rests on the
+ * subtree happening to be all strings. Storing the text keeps the bytes this codec writes identical to the bytes the
+ * shared codec produced.
  */
 public final class InboundMessageCodec {
 
@@ -154,15 +160,13 @@ public final class InboundMessageCodec {
     }
 
     /**
-     * The envelope's input: the {@code userInputEncoded} text when it is there, otherwise the {@code userInput}
-     * string wrapped as text. See the class javadoc for why the two keys coexist.
+     * The envelope's input: the {@code userInputEncoded} text when it is there and readable, otherwise the
+     * {@code userInput} string wrapped as text. See the class javadoc for why the two keys coexist, and
+     * {@link UserInputCodec#decodeOrText(String, String)} for why an unreadable encoding degrades here rather than
+     * refusing the document — {@code findOneAndDelete} has already removed it by the time this runs.
      */
     private static UserInput decodeUserInput(Document payload) {
-        final String encoded = payload.getString("userInputEncoded");
-        if (encoded != null) {
-            return UserInputCodec.decodeFromString(encoded);
-        }
-        return TextInput.of(payload.getString("userInput"));
+        return UserInputCodec.decodeOrText(payload.getString("userInputEncoded"), payload.getString("userInput"));
     }
 
     private static Document encodePrincipal(Principal principal) {

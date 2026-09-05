@@ -227,6 +227,24 @@ class InboundMessageCodecTest {
         assertThat(codec.decode(stored).getUserInput()).isEqualTo(TextInput.of("hello"));
     }
 
+    @Test
+    @DisplayName("a sidecar this build cannot read degrades to the text beside it, rather than losing the entry")
+    void unreadableSidecarDegradesToText() {
+        // findOneAndDelete removes the document before this codec sees it, so a throw here loses that turn
+        // permanently. The old key holds a usable string; run that instead.
+        final Document stored = new Document("_id", new ObjectId()).append("conversationId", "conv-42")
+                .append("priority", 1).append("deliveredAt", Date.from(Instant.parse("2026-04-27T10:00:00Z")))
+                .append("payload", new Document("agentRef", "agent-x").append("userInput", "what is in this?")
+                        .append("userInputEncoded", "{\"type\":\"video\",\"mimeType\":\"video/mp4\"}")
+                        .append("deliveredAt", Date.from(Instant.parse("2026-04-27T10:00:00Z"))).append("initiator",
+                                new Document("type", "USER").append("id", "u-1").append("displayName", "alice")));
+
+        final InboundMessage decoded = codec.decode(stored);
+
+        assertThat(decoded.getUserInput()).isEqualTo(TextInput.of("what is in this?"));
+        assertThat(decoded.getSessionId()).isEqualTo(SessionId.of("conv-42"));
+    }
+
     private InboundMessage.Builder baseMessage() {
         return InboundMessage.builder().id(InboundMessageId.of(new ObjectId().toHexString()))
                 .sessionId(SessionId.of("c-1")).agentRef("agent-x").userInput("hello")

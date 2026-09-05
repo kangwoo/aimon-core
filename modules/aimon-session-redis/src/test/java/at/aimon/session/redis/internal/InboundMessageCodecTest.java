@@ -273,6 +273,27 @@ class InboundMessageCodecTest {
         assertThat(decoded.getUserInput()).isEqualTo(TextInput.of("hello"));
     }
 
+    @Test
+    @DisplayName("a sidecar this build cannot read degrades to the text beside it, rather than losing the batch")
+    void unreadableSidecarDegradesToText() {
+        // The mirror of the compatibility direction the rest of this file guards, and the one this branch created:
+        // a *newer* node writes an entry whose userInputEncoded names an input type this build does not have.
+        // collectTier decodes AFTER the Lua script has already XDEL'd the whole batch, so a throw here does not
+        // reject one entry -- it loses every entry collected in that call, permanently. The old key has a usable
+        // string right beside it, which is exactly what an older node would have run.
+        final String stored = "{\"conversationId\":\"c-9\",\"agentRef\":\"agent-x\","
+                + "\"userInput\":\"what is in this?\","
+                + "\"userInputEncoded\":{\"type\":\"video\",\"mimeType\":\"video/mp4\",\"data\":\"AQID\"},"
+                + "\"priority\":\"NEXT\","
+                + "\"initiator\":{\"type\":\"USER\",\"id\":\"u-1\",\"displayName\":\"alice\"},"
+                + "\"deliveredAt\":\"2026-04-27T10:00:00Z\"}";
+
+        final InboundMessage decoded = codec.decode(stored, "1700000000000-0");
+
+        assertThat(decoded.getUserInput()).isEqualTo(TextInput.of("what is in this?"));
+        assertThat(decoded.getSessionId()).isEqualTo(SessionId.of("c-9"));
+    }
+
     private InboundMessage.Builder baseMessage() {
         return InboundMessage.builder().id(InboundMessageId.of("1700000000000-0")).sessionId(SessionId.of("c-1"))
                 .agentRef("agent-x").userInput("hello").priority(QueuedInputPriority.NEXT)

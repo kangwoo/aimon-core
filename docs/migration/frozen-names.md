@@ -78,6 +78,18 @@ yet**, so at every upgrade the stream, the table and the collection still contai
 build wrote, in both directions. The asymmetric shape is what lets a node on either build read a
 document written by a node on the other.
 
+The forward direction has a rule of its own, for a reason specific to an inbox. All three backends
+remove an entry from storage *before* the codec sees it — Redis's collect script `XDEL`s inside Lua,
+Postgres commits its `DELETE … RETURNING`, MongoDB uses `findOneAndDelete` — so refusing a document
+does not reject one message, it destroys every message that call collected. A `userInputEncoded` this
+build cannot read (a sixth `InputType` written by a node one release ahead) therefore **degrades to
+the string beside it and logs at `WARN`** rather than throwing;
+`UserInputCodec.decodeOrText` is the one place that decides it, and its javadoc carries the
+comparison with `JsonSessionSnapshotCodec`, which refuses the same exception because a rewind point
+has no such string and no such cost. The degradation is deliberately confined to that one field:
+a malformed `initiator` or an unknown `priority` still throws, because those mean a corrupt document
+rather than a newer one.
+
 `InboundMessageCodecTest` (Redis, MongoDB) and `InboundMessageRowCodecTest` (Postgres) pin both
 halves against hard-coded literals, and `UserInputCodecTest` pins the subtree's shapes the same way.
 As everywhere else on this page, the assertions are on literals rather than on the constants —

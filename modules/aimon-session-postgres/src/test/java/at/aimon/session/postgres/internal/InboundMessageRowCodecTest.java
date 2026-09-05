@@ -229,6 +229,23 @@ class InboundMessageRowCodecTest {
         assertThat(codec.decode(stored, "7").getUserInput()).isEqualTo(TextInput.of("hello"));
     }
 
+    @Test
+    @DisplayName("a sidecar this build cannot read degrades to the text beside it, rather than losing the batch")
+    void unreadableSidecarDegradesToText() {
+        // collect() commits the DELETE ... RETURNING before it decodes, so a throw here loses every row that batch
+        // took out of conversation_inbox, permanently. The old key holds a usable string; run that instead.
+        final String stored = "{\"conversationId\":\"c-42\",\"agentRef\":\"agent-x\","
+                + "\"userInput\":\"what is in this?\","
+                + "\"userInputEncoded\":{\"type\":\"video\",\"mimeType\":\"video/mp4\",\"data\":\"AQID\"},"
+                + "\"priority\":\"NEXT\",\"initiator\":{\"type\":\"USER\",\"id\":\"u-1\",\"displayName\":\"alice\"},"
+                + "\"deliveredAt\":\"2026-04-27T10:00:00Z\"}";
+
+        final InboundMessage decoded = codec.decode(stored, "7");
+
+        assertThat(decoded.getUserInput()).isEqualTo(TextInput.of("what is in this?"));
+        assertThat(decoded.getSessionId()).isEqualTo(SessionId.of("c-42"));
+    }
+
     private InboundMessage.Builder baseMessage() {
         return InboundMessage.builder().id(InboundMessageId.of("42")).sessionId(SessionId.of("c-1")).agentRef("agent-x")
                 .userInput("hello").priority(QueuedInputPriority.NEXT)

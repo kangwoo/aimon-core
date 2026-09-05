@@ -8,9 +8,13 @@ import java.util.Arrays;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import at.aimon.core.agent.input.AudioInput;
@@ -20,6 +24,10 @@ import at.aimon.core.agent.input.InputType;
 import at.aimon.core.agent.input.MultimodalInput;
 import at.aimon.core.agent.input.TextInput;
 import at.aimon.core.agent.input.UserInput;
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 
 /**
  * Pins the encoding a rewind point stores and a routed submission now travels in.
@@ -33,6 +41,23 @@ import at.aimon.core.agent.input.UserInput;
  */
 @DisplayName("UserInputCodec")
 class UserInputCodecTest {
+
+    private Logger codecLogger;
+    private ListAppender<ILoggingEvent> logAppender;
+
+    @BeforeEach
+    void captureLog() {
+        codecLogger = (Logger) LoggerFactory.getLogger(UserInputCodec.class);
+        logAppender = new ListAppender<>();
+        logAppender.start();
+        codecLogger.addAppender(logAppender);
+    }
+
+    @AfterEach
+    void releaseLog() {
+        codecLogger.detachAppender(logAppender);
+        logAppender.stop();
+    }
 
     private static final byte[] BYTES = {1, 2, 3, 4};
     /** {@code AQIDBA==} — pinned rather than computed, for the same reason the field names are. */
@@ -162,6 +187,46 @@ class UserInputCodecTest {
         assertThatThrownBy(() -> UserInputCodec.decodeFromString("\"hello\""))
                 .isInstanceOf(SessionSnapshotCodecException.class).hasMessageContaining("not a JSON object");
         assertThatThrownBy(() -> UserInputCodec.decode(null)).isInstanceOf(SessionSnapshotCodecException.class);
+    }
+
+    @Test
+    @DisplayName("decodeOrText prefers the encoding, and takes the text when there is none")
+    void decodeOrTextPrefersTheEncoding() {
+        final UserInput image = ImageInput.of(BYTES, "image/png");
+
+        assertThat(UserInputCodec.decodeOrText(UserInputCodec.encode(image), image.asText())).isEqualTo(image);
+        assertThat(UserInputCodec.decodeOrText((JsonNode) null, "hello")).isEqualTo(TextInput.of("hello"));
+        assertThat(UserInputCodec.decodeOrText((String) null, "hello")).isEqualTo(TextInput.of("hello"));
+        assertThat(UserInputCodec.decodeOrText(UserInputCodec.encodeToString(image), image.asText())).isEqualTo(image);
+        assertThat(logAppender.list).as("nothing degraded, so nothing to warn about").isEmpty();
+    }
+
+    @Test
+    @DisplayName("an encoding this build cannot read degrades to the text, and says so at WARN")
+    void unreadableEncodingDegradesAudibly() {
+        // The failure mode this pair exists for: a node one release ahead writes a sixth InputType. Both halves are
+        // asserted because either alone reproduces something bad — refusing loses an inbox entry that has already
+        // been deleted from its backend, and degrading in silence is the quiet capability loss the structured
+        // encoding was added to remove.
+        final String sixthType = "{\"type\":\"video\",\"mimeType\":\"video/mp4\",\"data\":\"AQID\"}";
+
+        assertThat(UserInputCodec.decodeOrText(sixthType, "[Video: video/mp4, 3 bytes]"))
+                .isEqualTo(TextInput.of("[Video: video/mp4, 3 bytes]"));
+
+        assertThat(logAppender.list).singleElement()
+                .satisfies(event -> assertThat(event.getLevel()).isEqualTo(Level.WARN));
+        assertThat(logAppender.list.get(0).getFormattedMessage()).contains("Unknown user input type: video")
+                .contains("falling back");
+    }
+
+    @Test
+    @DisplayName("decodeOrText degrades, decode refuses — the two callers pay different prices")
+    void strictDecodeStillRefuses() {
+        // Guards the asymmetry rather than assuming it: JsonSessionSnapshotCodec relies on decode() throwing so it
+        // can drop an unreplayable rewind point, and turning that into a silent text fallback would replay a
+        // description of the turn instead of the turn.
+        assertThatThrownBy(() -> UserInputCodec.decodeFromString("{\"type\":\"video\"}"))
+                .isInstanceOf(SessionSnapshotCodecException.class);
     }
 
     /** {@code depth} levels of {@code multimodal} wrapping one text leaf. */

@@ -6,6 +6,9 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -33,7 +36,14 @@ import at.aimon.core.agent.input.UserInput;
  *
  * <p>
  * It lives beside {@link JsonSessionSnapshotCodec} for the same reason {@link SubmitOptionsCodec} does: that is
- * where it came from, and the package name records a first consumer rather than a constraint on later ones.
+ * where it came from, and the package name records a first consumer rather than a constraint on later ones. It
+ * refuses with that class's {@link SessionSnapshotCodecException} for the same reason, and the objection that the
+ * name then appears in an inbox log — where nothing is a session snapshot — is fair but not new: the Redis and
+ * Postgres inboxes have surfaced it from {@link SubmitOptionsCodec} since they converged on it. Nor does this class
+ * add to it, because the inbox never lets that exception out — {@link #decodeOrText(JsonNode, String)} is what the
+ * three inbox codecs call, and it degrades instead of throwing. A neutral exception type would be a new published
+ * type earning one better log line; it is not worth that here, and if it ever is, the change belongs to
+ * {@code SubmitOptionsCodec} first.
  *
  * <p>
  * <b>The input, not the message built from it.</b> The type tags are this codec's own — {@code file} and
@@ -85,6 +95,8 @@ public final class UserInputCodec {
 
     /** Every {@code type} tag this codec writes — one per {@link at.aimon.core.agent.input.InputType}. */
     public static final Set<String> TYPE_TAGS = Set.of(TYPE_TEXT, TYPE_IMAGE, TYPE_AUDIO, TYPE_FILE, TYPE_MULTIMODAL);
+
+    private static final Logger log = LoggerFactory.getLogger(UserInputCodec.class);
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -155,6 +167,75 @@ public final class UserInputCodec {
     }
 
     /**
+     * Decodes an encoded input, or falls back to the plain text stored beside it.
+     *
+     * <p>
+     * <b>For a wire that carries both.</b> The session inbox writes the {@code asText()} rendering under the key it
+     * has always used and adds this encoding only for a non-text input, so every entry that has an encoding also has
+     * a usable string. This method is the reader for that pair: when the encoding cannot be read, the string is what
+     * an older node would have run, and running it beats losing the entry.
+     *
+     * <p>
+     * <b>Why degrade here and refuse in {@link #decode(JsonNode)}.</b> The two callers face different costs. A
+     * {@code SessionRewindPoint} that cannot be read loses a retry the user can simply re-issue, and it has no text
+     * alternative to fall back to — {@link JsonSessionSnapshotCodec} therefore catches the refusal and drops the
+     * point. An inbox entry has no such second chance: all three backends remove the entry from storage
+     * <em>before</em> this codec sees it (Redis's collect script {@code XDEL}s inside Lua, Postgres commits its
+     * {@code DELETE … RETURNING}, MongoDB uses {@code findOneAndDelete}), so a refusal does not reject one message —
+     * it destroys every message that call collected, and the submitter's turn never runs.
+     *
+     * <p>
+     * <b>The expected cause is an upgrade, not corruption.</b> A node one release ahead writing a sixth
+     * {@link at.aimon.core.agent.input.InputType} produces exactly this: a well-formed document with a tag this build
+     * does not know. That is the mirror of the direction the wire format was shaped to survive, so it degrades the
+     * same way — to the rendering, which is all an older reader ever had.
+     *
+     * <p>
+     * <b>It is not silent.</b> A capability was lost for that turn, and something has to say so or this is the
+     * failure the structured encoding exists to remove. The fallback logs at {@code WARN}; the message names the
+     * codec's own reason and does not include the payload.
+     *
+     * @param encoded
+     *            the encoded subtree, or null when the entry carries none
+     * @param text
+     *            the plain-text rendering stored beside it (must not be null)
+     * @return the decoded input, or {@code TextInput.of(text)} when {@code encoded} is absent or unreadable
+     */
+    public static UserInput decodeOrText(JsonNode encoded, String text) {
+        Objects.requireNonNull(text, "text cannot be null");
+        if (encoded == null || encoded.isNull()) {
+            return TextInput.of(text);
+        }
+        try {
+            return decode(encoded);
+        } catch (SessionSnapshotCodecException e) {
+            return degrade(text, e);
+        }
+    }
+
+    /**
+     * The {@link #encodeToString(UserInput)} counterpart of {@link #decodeOrText(JsonNode, String)}, for a wire whose
+     * currency is not a Jackson tree.
+     *
+     * @param encodedJson
+     *            the encoded text, or null when the entry carries none
+     * @param text
+     *            the plain-text rendering stored beside it (must not be null)
+     * @return the decoded input, or {@code TextInput.of(text)} when {@code encodedJson} is absent or unreadable
+     */
+    public static UserInput decodeOrText(String encodedJson, String text) {
+        Objects.requireNonNull(text, "text cannot be null");
+        if (encodedJson == null) {
+            return TextInput.of(text);
+        }
+        try {
+            return decodeFromString(encodedJson);
+        } catch (SessionSnapshotCodecException e) {
+            return degrade(text, e);
+        }
+    }
+
+    /**
      * Encodes one input as standalone JSON text.
      *
      * <p>
@@ -193,6 +274,13 @@ public final class UserInputCodec {
         } catch (JsonProcessingException e) {
             throw new SessionSnapshotCodecException("Cannot parse the encoded user input: " + e.getMessage(), e);
         }
+    }
+
+    private static UserInput degrade(String text, SessionSnapshotCodecException cause) {
+        log.warn("An encoded user input cannot be read by this build ({}); falling back to the plain-text rendering"
+                + " stored beside it, so the turn runs as text instead of the entry being lost. A node one release"
+                + " ahead writing an input type this one does not know is the expected cause.", cause.getMessage());
+        return TextInput.of(text);
     }
 
     private static UserInput decodeAt(JsonNode node, int depth) {
