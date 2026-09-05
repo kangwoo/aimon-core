@@ -341,6 +341,14 @@ claim(sessionId, agentRef, nodeId, lease)
 
 `collect` 는 원자 배치다. 시그널이 at-least-once 여도 collect 가 배치라서 순서와 정합성이 모두 보존된다.
 
+**`userInput` 은 `UserInput` 이고, 와이어는 키를 하나 더 갖는다.** 설계 시점에는 `String` 이었고 그래서
+멀티모달이 노드 경계에서 조용히 사라졌다 — 그 항목과 닫은 내역은
+[`backlog/interrupt-open-items.md` §2](../../backlog/interrupt-open-items.md). 와이어 쪽 결론만 옮기면:
+`userInput` 키는 **철자도 타입도 그대로**(이제 `asText()`)이고, 비텍스트 입력만
+`at.aimon.core.subagent.task.codec.UserInputCodec` 의 인코딩을 `userInputEncoded` 에 더한다. 인박스는
+**아직 안 된 일**을 담으므로 업그레이드 시점에 양쪽 빌드가 쓴 항목이 섞여 있고, 이 비대칭이 그것을 서로
+읽게 만든다. 근거는 [`migration/frozen-names.md`](../../migration/frozen-names.md).
+
 ---
 
 ## 6. 라이프사이클
@@ -824,7 +832,7 @@ systemPrompt)` 를 호출하고, 그 계약이 *"세션이 있으면 읽고 없�
 | `sessionId` | (필수) | |
 | `agentRef` | (필수) | §3.6 — 첫 턴 이후에는 비교만 |
 | `contextDiscriminator` | 없음 | 공백과 `':'` 를 거부한다 — `AgentRuntimeId` 형식이 `:` 로 갈리기 때문 |
-| `userInput` | (필수) | |
+| `userInput` | (필수) | `UserInput` — 텍스트·이미지·문서·조합. 빌더는 `String` 오버로드를 유지한다(=`TextInput.of`) |
 | `options` | `LiveSessionOptions.defaults()` | 열 때만 쓰인다 |
 | `submitOptions` | `SubmitOptions.empty()` | 턴 단위 메타데이터 |
 | `openAttributes` | `OpenAttributes.empty()` | 캐시 미스 시에만 opener 로 간다 |

@@ -51,6 +51,39 @@ interoperates with the stored state and the live traffic of a node running the o
   indexed field; renaming it would require a reindex.
 - `VfsSessionSnapshotStore.FIELD_CONTEXT_ID` (`"contextId"`) — the subagent transcript envelope tag.
 
+## The inbox's `userInput`, whose *type* is frozen and not only its spelling
+
+The session inbox envelope carries a `userInput` key in all four backends. It used to hold the
+submission's text because the submission *was* text; `SubmitRequest` and `InboundMessage` now carry a
+`UserInput`, and the obvious tidy — making the key hold the structured value — is the one thing that
+may not happen.
+
+- **`userInput` stays a string**, now holding `UserInput.asText()`. `aimon-session-redis` and
+  `aimon-session-postgres` read it with `JsonNode.asText()`, which answers `""` for an object rather
+  than failing; `aimon-session-mongodb` reads it with `Document.getString`, which throws. So a node on
+  an older build meeting a restructured key either runs an empty turn without saying so or cannot
+  decode the entry at all.
+- **`userInputEncoded` is the addition**, carrying the
+  `at.aimon.core.subagent.task.codec.UserInputCodec` subtree (a JSON object in Redis and Postgres, the
+  same JSON as text in MongoDB), and it is written **only when the input is not plain text**. A text
+  submission is therefore byte-for-byte the document the previous build wrote, and an older reader
+  meeting a multimodal one still finds a rendering it can run under the key it knows.
+- **`UserInputCodec`'s own field names and type tags** — `type`, `text`, `mimeType`, `fileName`,
+  `data`, `inputs`, and the tags `text` / `image` / `audio` / `file` / `multimodal` — are frozen for
+  the same reason plus one more: the same encoding is what `JsonSessionSnapshotCodec` has always
+  written into stored subagent transcripts, so a rename would strand those too.
+
+Why this is a freeze and not just a compatible default: an inbox holds work that has **not been done
+yet**, so at every upgrade the stream, the table and the collection still contain entries the other
+build wrote, in both directions. The asymmetric shape is what lets a node on either build read a
+document written by a node on the other.
+
+`InboundMessageCodecTest` (Redis, MongoDB) and `InboundMessageRowCodecTest` (Postgres) pin both
+halves against hard-coded literals, and `UserInputCodecTest` pins the subtree's shapes the same way.
+As everywhere else on this page, the assertions are on literals rather than on the constants —
+encoder and decoder share a constant, so a round-trip through them cannot see a rename, and here it
+cannot see a change of type either.
+
 ## The freeze is pinned by tests
 
 **These literals are now pinned by tests.** Each is asserted against a **hard-coded string**, never

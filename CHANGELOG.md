@@ -7,6 +7,69 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Sessions: a routed submission carries the input, not a rendering of it
+
+- **`SubmitRequest.getUserInput()` and `InboundMessage.getUserInput()` return `UserInput` instead of
+  `String`.** This is a **breaking change** to two published surfaces
+  (`at.aimon.session.routing`, `at.aimon.core.agent.session.inbox`), and it closes a gap that was
+  silent by construction: `LiveSession` has taken a `UserInput` for some time, so an image or a
+  document worked on whichever host held the handle, while a submission that went through
+  `SessionRouter` was a `String`. The same application therefore lost multimodal the moment it
+  scaled out, and nothing said so — every hop still had something plausible to forward.
+
+  It is not a rename, so there is no row in
+  [`rename-maps.md`](docs/migration/rename-maps.md): the name resolves exactly as before, with a
+  different type. It is also the shape the rest of the codebase already had —
+  `AgentExecutionRequest`, `SessionRewindPoint` and `RewoundTurn` all spell `getUserInput()` that
+  way, and these two were the odd ones out.
+
+  | Was | Is |
+  |---|---|
+  | `String s = request.getUserInput();` | `String s = request.getUserInput().asText();` |
+  | `builder.userInput("hello")` | unchanged — the `String` overload stays, as sugar for `TextInput.of` |
+  | — | `builder.userInput(image)` is new |
+
+  No producer call site changes; the break falls on consumers, which is where the loss was.
+
+- **The inbox wire gained a key rather than changing one.** `userInput` keeps its spelling *and its
+  type*, now holding `asText()`; a non-text input additionally writes its encoding under
+  `userInputEncoded`, and a plain-text one writes no sidecar at all — so a text submission is
+  byte-for-byte the document the previous build wrote. Decode prefers the sidecar and falls back to
+  wrapping the string. **No data migration and no rolling-upgrade coordination is needed**, in either
+  direction; [`frozen-names.md`](docs/migration/frozen-names.md) records why the obvious tidy (making
+  `userInput` hold the structured value) is the one thing that may not happen — an older node reading
+  such an entry gets `""` from `JsonNode.asText()` and runs an empty turn, or, in MongoDB, cannot
+  decode it at all.
+
+  What an older node *does* get from a multimodal entry is the `asText()` rendering: a turn that says
+  an image was attached rather than one that pretends nothing was. It cannot run the image either
+  way, and the alternative — an entry it cannot decode — is a turn nobody runs.
+
+- **`IdempotencyEntry.inputHash` keeps `sha256(text)` for text turns.** That digest is written to the
+  shared store and recomputed by whichever node a retry lands on, which during a rolling upgrade is
+  as likely to be one that predates this change. Hashing the encoded form for text would have turned
+  every legitimate cross-version retry into `IdempotencyConflictException` — "key reused with
+  different input" — for as long as the two builds coexisted. Non-text turns hash over the encoding,
+  where there is no earlier value to match.
+
+- **`UserInputCodec` is new** (`at.aimon.core.subagent.task.codec`), lifted unchanged out of
+  `JsonSessionSnapshotCodec`'s private methods so the inbox reuses the encoding rather than
+  hand-mapping the five shapes a second time — the situation `SubmitOptionsCodec` was extracted to
+  stop, one layer up. Stored snapshots are unaffected: same field names, same type tags, same
+  32-level nesting bound. Unlike its neighbour it takes no `ObjectMapper` (every leaf is a `String`,
+  so no mapper configuration can reach the wire) and it offers a text form as well as a node form,
+  which is what keeps the MongoDB inbox from acquiring a second representation the way it has one of
+  `submitOptions`.
+
+- **`AimonSessions.newRequest(SessionId, UserInput)` is new** — additive. The starter is the
+  scale-out shape, so it is where this most needed a route that is not `newRequest(id, "")` followed
+  by `.userInput(image)`, which works and submits a turn whose text part is an empty string.
+
+- The multi-node contract suite gained the scenario, so it runs over Redis, Postgres and MongoDB:
+  what an image has to survive is each backend's own serialization, and no in-memory test can see
+  that. Closes the second open item in
+  [`interrupt-open-items.md`](docs/backlog/interrupt-open-items.md).
+
 ### Memory: the distributed backends leave, the SPI stays
 
 - **`aimon-memory-postgres` and `aimon-memory-mongodb` are removed.** This is a **removal, not a

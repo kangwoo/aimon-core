@@ -8,7 +8,9 @@
 
 ---
 
-## 0. 착수하며 정정한 것 — 1번의 처방은 "순수 삭제"가 아니었다
+## 0. 착수하며 정정한 것
+
+### 0.1 1번의 처방은 "순수 삭제"가 아니었다
 
 [`README.md`](README.md) 규칙 다섯의 사례가 하나 더 나왔다. 1번은 근거도 자리도 정확했고
 (Redis·Postgres 의 사본은 정말 자구까지 같았다), 무엇이 합쳐지고 무엇이 안 합쳐지는지도 표로
@@ -38,6 +40,29 @@
 테스트를 한 쌍 놓았다 — 코어 쪽은 세 타입의 선언된 필드와 공개된 이름 집합을 대조하고(속성이 늘면
 여기서 먼저 깨진다), Mongo 쪽은 자기 BSON 키 집합을 **자기 리터럴이 아니라 그 같은 상수**와 대조한다
 (공유 코덱에만 반영하면 여기서 깨진다). 둘이 맞물려야 닫힌다.
+
+### 0.2 2번의 *"인코딩 자체는 이미 있다"* 는 참이지만 재사용 가능하다는 뜻은 아니었다
+
+규칙 둘의 사례이되 조금 다른 종류다. 2번의 근거는 **전부 참이었다** — 인용한 줄도, 그 줄이 말하는
+동작도, 심각도도. `SubmitRequest:81` 은 정말 `String` 을 돌려주고 있었고, `LiveSession` 은 정말
+`UserInput` 을 받고 있었고, `JsonSessionSnapshotCodec` 은 정말 5개 타입과 32단계 상한을 갖고 있었다.
+규칙 여섯도 통과한다 — `SubmitRequest` 는 스타터의 `DefaultAimonSessions.newRequest` 가 main 소스에서
+만들고, `InboundMessage` 는 `DefaultSessionRouter` 가 두 곳에서 만든다. 테스트 전용 타입이 아니다.
+
+틀린 것은 **"얹기만 하면 되고"** 라는 크기 추정이다. 그 인코딩은 `JsonSessionSnapshotCodec` 의
+**private 메서드 넷**이었다. 인박스 코덱 셋에서 부를 수 있는 것이 아니므로, 실제 순서는 "얹는다" 가
+아니라 **꺼내고 → 얹는다** 였다. 그것이 별도 커밋 하나(`UserInputCodec` 추출)가 된 이유이고, 안 꺼냈다면
+같은 매핑의 사본이 넷이 되어 **1번이 방금 지운 상황**이 그대로 재현됐을 것이다.
+
+| 항목 | 문서가 적은 것 | 실측 |
+|------|---------------|------|
+| **2** | 인코딩은 이미 있으니 *"인박스 와이어 포맷에 얹기만 하면"* 된다 | 인코딩은 **`private`** 이었다. 얹기 전에 꺼내야 했고, 안 꺼내면 인박스 코덱 셋이 각자 사본을 갖게 되어 1번이 방금 없앤 상태로 돌아간다 |
+
+그리고 항목이 **적지 않은 것**이 하나 있었는데, 그것이 이 작업에서 제일 조심스러운 부분이었다 —
+`IdempotencyEntry.inputHash`. 항목은 "와이어 포맷" 만 말하지만 `DefaultSessionRouter` 는 제출 입력의
+sha256 을 **공유 멱등 저장소에 쓴다**. 그것도 노드 간 계약이고, 텍스트 턴의 해시를 바꾸면 롤링 업그레이드
+중의 정상 재시도가 전부 `IdempotencyConflictException` 이 된다. 항목의 "어디" 칸이 짚은 두 자리
+(`SubmitRequest` · 인박스 코덱) 밖에 있었고, `getUserInput()` 호출자를 세어야 나온다.
 
 ---
 
@@ -73,30 +98,85 @@ principal 을 잃는 식으로, 조용히.
 | `SubmitOptionsCodecTest` — 선언된 필드 ↔ 공개 이름 집합 | `SubmitOptions` 에 속성이 늘었는데 코덱이 모른다 | `TOP_LEVEL_FIELDS` 에서 `FIELD_EXECUTION_ATTRIBUTES` 제거 | FAILED |
 | `SubmitOptionsCodecTest` — 완전 채운 인스턴스가 쓰는 키 집합 | 이름은 등록됐는데 인코더가 안 쓴다 | 같음 | FAILED |
 | Mongo `InboundMessageCodecTest` — BSON 키 집합 ↔ 같은 상수 | 공유 코덱에만 반영되고 Mongo 가 빠진다 | `TOP_LEVEL_FIELDS` 에 이름 하나 추가 | FAILED — **같은 클래스의 라운드트립 테스트는 PASSED** |
-| Redis `InboundMessageCodecTest` — 주입 mapper 가 subtree 까지 도달하는지 | §0 의 그 함정, 즉 무인자 오버로드로 수렴 | `encode(options, mapper)` → `encode(options)` | FAILED — 나머지 9건 전부 PASSED |
+| Redis `InboundMessageCodecTest` — 주입 mapper 가 subtree 까지 도달하는지 | §0.1 의 그 함정, 즉 무인자 오버로드로 수렴 | `encode(options, mapper)` → `encode(options)` | FAILED — 나머지 9건 전부 PASSED |
 
 셋째 줄이 이 쌍을 만든 이유 그 자체다. 공유 코덱의 모양이 한 칸 늘었을 때 Mongo 의 라운드트립은
 **초록인 채로 남는다** — 자기가 모르는 필드는 넣지도 빼지도 않으므로 픽스처와 여전히 같기 때문이다.
 빨개지는 것은 자기 리터럴이 아니라 남의 상수와 대조하는 그 한 건뿐이다.
 
-**정정** — 처방의 "순수 삭제" 부분이 틀렸다. §0 참조.
+**정정** — 처방의 "순수 삭제" 부분이 틀렸다. §0.1 참조.
 
 ---
 
-## 2. 크로스 노드 제출은 아직 텍스트다 — **열림 (소비자 대기)**
+## 2. 크로스 노드 제출은 아직 텍스트다 — **닫힘** *(2026-09-05)*
 
-**무엇** — `SubmitRequest` 가 `UserInput` 을 나르게 하고, 인박스 와이어 포맷에 입력 인코딩을 얹는다.
+**무엇이었나** — `SubmitRequest` 가 `UserInput` 을 나르게 하고, 인박스 와이어 포맷에 입력 인코딩을
+얹는다.
 
 **왜** — `LiveSession` 은 이제 이미지·문서·멀티모달 턴을 받지만, 라우터를 거쳐 다른 노드로 가는 제출은
-`String` 이다. 즉 **멀티모달은 핸들을 직접 쥔 호스트만의 것**이고, 같은 애플리케이션이 스케일아웃하는
-순간 그 기능이 조용히 사라진다. 라우터는 재시도를 노출하지도 않는다.
+`String` 이었다. 즉 **멀티모달은 핸들을 직접 쥔 호스트만의 것**이고, 같은 애플리케이션이 스케일아웃하는
+순간 그 기능이 조용히 사라졌다.
 
-**어디** *(2026-08-28 확인)* — `aimon-session-routing/.../SubmitRequest.java:81` (`getUserInput()` 이
-`String`). 인코딩 자체는 이미 있다 — `JsonSessionSnapshotCodec` 의 `userInput` (5개 타입 + 중첩
-multimodal, 32단계 상한).
+**항목의 마지막 문장은 이 항목이 아니다** — *"라우터는 재시도를 노출하지도 않는다"* 는 여전히 참이고
+(`SessionRouter` 에 `retryLastTurn` 대응물이 없다) 여기서 손대지 않았다. 두 문장이 한 항목에 있었던
+것은 둘 다 "핸들을 직접 쥔 호스트만의 것" 이라는 같은 관찰에서 나왔기 때문이지, 같은 변경이어서가
+아니다. 재시도는 `RewoundTurn` 을 크로스 노드로 나르는 것이 아니라 **어느 노드가 되감을 자격이 있는지**
+를 정하는 문제이고(되감기는 홀더의 전사를 고쳐 쓴다), 그 판단은 리스와 얽힌다. 별개 항목으로 등록할
+만하지만, 아직 등록하지 않는다 — 이 작업 중에 그 설계를 실제로 해 보지 않았으므로 규칙 다섯이 요구하는
+처방을 적을 수 없고, 검증되지 않은 처방을 적어 두는 것이 그 규칙이 막으려는 것이다.
 
-**언제 다시 볼까** — 멀티 노드 배포에서 멀티모달 제출을 요구하는 소비자가 나타날 때. 그 전까지는
-§12.7 분산 버스와 같은 근거로 만들지 않는다.
+**소비자를 기다리지 않고 닫은 이유** — 재검토 트리거가 *"멀티 노드 배포에서 멀티모달 제출을 요구하는
+소비자가 나타날 때"* 였는데, 그 트리거는 **이 자리를 지나가지 않는다**([`README.md`](README.md) 규칙 일곱의
+마지막 문단). 소비자는 자기가 무엇을 잃었는지 알 수 없기 때문이다 — 요청은 성공하고, 턴은 돌고, 모델은
+`[Image: image/png, 41231 bytes]` 라는 텍스트를 받는다. 예외도 로그도 저하 신호도 없다. 그러니 이 항목을
+깨우는 사건은 "소비자가 요구한다" 가 아니라 "누군가 왜 답이 이상한지 오래 조사한 끝에 여기까지 온다" 이고,
+그때는 이미 대가를 치른 뒤다. 3번(크로스 노드 스케줄 취소)의 트리거는 이 성질이 없어서 그대로 둔다 —
+그쪽은 **취소가 안 듣는 것**이 곧바로 보인다.
+
+**한 것**
+
+| 자리 | 결과 |
+|------|------|
+| `at.aimon.core.subagent.task.codec.UserInputCodec` | `JsonSessionSnapshotCodec` 의 private 메서드 넷을 **그대로** 꺼냈다. 필드 이름·타입 태그·32단계 상한 동일 — 저장된 스냅샷의 해석은 바뀌지 않는다. 노드 형태(`ObjectNode`)와 텍스트 형태(`String`)를 둘 다 낸다 |
+| `SubmitRequest` · `InboundMessage` | `getUserInput()` 이 `UserInput` 을 돌려준다. 빌더는 `userInput(String)` 을 **유지**하므로(=`TextInput.of` 설탕) 생산자 호출부는 한 곳도 안 바뀐다 |
+| `DefaultSessionRouter` | 두 이음매(`runTurnLoop` 의 self-message, `deliverToInbox`)가 입력을 그대로 넘긴다. 드레인은 `submitAsync(TurnId, UserInput, …)` 로 붙는다 |
+| Redis · Postgres · Mongo 인박스 코덱 | `userInput` 은 **키도 타입도 그대로**(이제 `asText()`), 비텍스트만 `userInputEncoded` 사이드카를 더한다. 디코드는 사이드카 우선, 없으면 문자열을 텍스트로 감싼다 |
+| `AimonSessions.newRequest(SessionId, UserInput)` | 추가. 스타터가 스케일아웃 형태이므로, 이 기능이 닿는 문이 `newRequest(id, "")` + `.userInput(image)` 여서는 안 된다 |
+| `AbstractMultiNodeSessionContractTest` | 멀티모달 forward 시나리오 추가 — 이미지가 견뎌야 하는 것은 **각 백엔드의 직렬화**이므로 in-memory 테스트로는 볼 수 없다 |
+
+**와이어는 양방향으로 읽힌다.** 인박스는 **아직 안 된 일**을 담으므로 업그레이드 시점에 스트림·테이블·
+컬렉션에 상대 빌드가 쓴 항목이 남아 있고, 그것이 이 모양을 정했다.
+
+| 읽는 쪽 | 결과 |
+|---|---|
+| 새 빌드가 옛 항목을 | 사이드카 없음 = 텍스트. 원래 그랬던 그대로 |
+| 옛 빌드가 새 빌드의 **텍스트** 항목을 | 한 바이트도 안 바뀌었다 |
+| 옛 빌드가 새 빌드의 **멀티모달** 항목을 | 옛 키에서 `asText()` 렌더를 읽는다. 이미지를 돌릴 방법은 어차피 없고, 대안은 더 나쁘다 — 키를 객체로 바꾸면 `JsonNode.asText()` 가 `""` 를 주고 **조용히 빈 턴**이 돌며(Mongo 는 `getString` 이라 던진다), 키를 빼면 항목이 디코드 불가가 되어 **아무도 안 돌린다** |
+
+근거는 [`frozen-names.md`](../migration/frozen-names.md) 에 적었다.
+
+**항목이 적지 않았던 세 번째 계약** — `IdempotencyEntry.inputHash` 도 노드 간 계약이다. §0.2 참조.
+텍스트 턴은 여전히 `sha256(bare text)` 로 해싱한다.
+
+**남긴 가드, 그리고 각각이 실제로 빨개지는 것을 본 뮤테이션** — 넷 다 통과하는 것만으로는 아무것도
+증명되지 않으므로(규칙 다섯), 하나씩 겨눈 결함을 넣어 보고 **그 하나만** 빨개지는 것을 확인했다.
+
+| 가드 | 겨눈 것 | 넣어 본 결함 | 결과 |
+|------|---------|-------------|------|
+| `SessionRouterMultimodalSubmitTest` — 로컬·forward 두 홉 | 라우터가 입력을 평탄화한다 | `.userInput(request.getUserInput().asText())` | 둘 다 FAILED |
+| 같은 클래스 — 텍스트 멱등 해시 | 해시 규칙이 버전 경계를 깬다 | 항상 인코딩으로 해싱 | FAILED |
+| Redis `InboundMessageCodecTest` — 텍스트가 옛 모양으로 써지는가 | 텍스트에도 사이드카가 붙는다 | 조건 제거 | FAILED — **같은 클래스의 라운드트립은 PASSED** |
+| 같은 클래스 — 옛 키가 읽히는가 | `userInput` 이 객체가 된다 | `put` → `set(…, encode(…))` | FAILED — 라운드트립은 여전히 PASSED |
+| `UserInputCodecTest` — 저장 포맷 리터럴 | 필드 이름이 드리프트한다 | `FIELD_TEXT` → `"txt"` | FAILED — 라운드트립은 PASSED |
+
+마지막 세 줄이 왜 리터럴로 적었는지 그 자체다. 인코더와 디코더가 상수를 공유하므로 **한 코덱 안의
+라운드트립은 호환성 파괴를 구조적으로 볼 수 없다** — 1번이 Mongo 키 집합에서 배운 것과 같은 성질이,
+이번에는 이름이 아니라 **타입**에 대해 나타난 것이다.
+
+**검증** — `./gradlew checkAll` 초록. `integrationTest` 는 Docker 로 216건 전부 통과했고, 멀티모달
+forward 시나리오가 Redis·Postgres·MongoDB **셋 다에서** 실제로 돌았다.
+
+**정정** — *"인코딩 자체는 이미 있다"* 는 참이지만 재사용 가능하다는 뜻은 아니었다. §0.2 참조.
 
 ---
 

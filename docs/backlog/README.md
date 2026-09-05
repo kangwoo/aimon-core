@@ -278,10 +278,16 @@ B-6 이 그렇게 어긋나 있었다. §7 은 그 항목을 "MCP 를 실제로 
 | 문서 | 출처 | 항목 수 | 열림 | 닫힘 | 해소 |
 |------|------|--------|------|------|------|
 | [`spring-boot-starter-open-items.md`](spring-boot-starter-open-items.md) | `docs/design/integration/spring-boot-starter.md` (SBS-00 ~ SBS-12) | 34 | 4 | 25 | 5 |
-| [`interrupt-open-items.md`](interrupt-open-items.md) | `docs/design/agent-execution/interrupt.md` | — | — | — | — |
+| [`interrupt-open-items.md`](interrupt-open-items.md) | `docs/design/agent-execution/interrupt.md` | 4 | 2 | 2 | 0 |
 | [`multi-instance-readiness.md`](multi-instance-readiness.md) | 아키텍처 리뷰 (2026-08-31) | 3 | 1 | 1 | 1 |
 | [`module-dependency-scope.md`](module-dependency-scope.md) | 아키텍처 리뷰 (2026-08-31) | 1 | 1 | 0 | 0 |
 | [`architecture-review-open-items.md`](architecture-review-open-items.md) | 아키텍처 리뷰 (2026-08-31) | 7 | 3 | 4 | 0 |
+
+**그 문서의 칸이 `—` 였던 것은 세지 않아서가 아니라 세는 규칙이 없어서였다.** 등록 시점에 항목이 넷이었고
+지금 둘이 닫혔으므로 이제 다른 줄과 같은 모양으로 적는다. 남은 둘 중 하나(3번, 크로스 노드 스케줄 취소)는
+트리거 대기이고 그 트리거는 이 자리를 실제로 지나간다 — 취소가 안 듣는 것은 곧바로 보인다. 방금 닫힌
+2번의 트리거는 그렇지 않았고, 그것이 소비자를 기다리지 않고 닫은 이유다(규칙 일곱의 마지막 문단, 그
+항목의 "소비자를 기다리지 않고 닫은 이유" 절).
 
 **출처 칸에 설계 문서가 없는 항목이 생겼다.** 아키텍처 리뷰에서 나온 세 문서는 `design/` 이 아니라 리뷰에서 나왔고,
 그래서 규칙 하나("설계 문서의 표는 정본이 아니다")가 적용될 표 자체가 없다. 대신 다른 것이 걸린다 —
