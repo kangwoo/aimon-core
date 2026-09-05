@@ -24,8 +24,8 @@ import at.aimon.core.memory.ObservationStore;
 import at.aimon.core.memory.ObservationType;
 import at.aimon.core.memory.PeerView;
 import at.aimon.core.memory.Workspace;
-import at.aimon.memory.file.FileObservationStore;
-import at.aimon.memory.file.FileRepresentationStore;
+import at.aimon.core.memory.file.FileObservationStore;
+import at.aimon.core.memory.file.FileRepresentationStore;
 
 @DisplayName("AgentSetupFactory store-backend selection")
 class AgentSetupFactoryStoreBackendTest {

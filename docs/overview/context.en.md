@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/context.md
-source_commit: a56317a
+source_commit: ab8fe3e
 ---
 
 # Context & Scope
@@ -53,7 +53,7 @@ flowchart TB
     browser["🖥 Browser<br/>Playwright"]
 
     sessiondb[("Session stores<br/>Redis · PostgreSQL · MongoDB")]
-    memorydb[("Memory stores<br/>file · PostgreSQL · MongoDB")]
+    memorydb[("Memory<br/>core file backend · remote service")]
     knowledge[("Knowledge store<br/>OpenSearch")]
     filestore[("File storage<br/>GridFS · S3 · local disk")]
     quartzdb[("Scheduler store<br/>Quartz JDBC")]
@@ -89,7 +89,7 @@ the process starts with every other row missing.
 |---|---|---|---|---|
 | **LLM provider** | Every iteration of the ReAct loop | outbound (HTTPS) | `aimon-llm-openai` · `aimon-llm-anthropic` | **The loop does not run.** The core ships no `LlmClient` implementation |
 | **Session store** | Records, leases, inbox, signals, idempotency | both ways | `aimon-session-{redis,postgres,mongodb}` | The in-memory defaults — single-node only, conversation lost on restart |
-| **Memory store** | Accumulating observations, promoting long-term memory | both ways | `aimon-memory-{file,postgres,mongodb}` | The memory feature is off |
+| **Memory** | Accumulating observations, promoting long-term memory | both ways | Built into the core (in-memory, `at.aimon.core.memory.file`); multiple instances need a remote `PeerMemory` backend — [aimon-memory](https://github.com/kangwoo/aimon-memory) | The memory feature is off |
 | **Knowledge store** | RAG search, wiki | both ways | `aimon-knowledge-opensearch` | `KeywordKnowledgeStore` (core) gives keyword search only |
 | **File storage** | The file world the agent sees | both ways | `aimon-filesystem-gridfs` · `aimon-filesystem-s3` | Local disk (`filesystem.impl.local`) |
 | **Sandbox runtime** | Isolated command execution | outbound | `aimon-sandbox-docker` · `aimon-sandbox-kubernetes` | `LocalShell` — commands run with the host process's own privileges |

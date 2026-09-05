@@ -592,7 +592,7 @@ Orca는 도구를 도메인별 프로바이더로 조립한다. 외부 모듈은
 | 명령 | `Command` | 구현 후 `CommandRegistry` 등록 |
 | 세션 저장소 | `SessionRecordStore` / `SessionLeaseStore` | 구현 (Mongo/Postgres/Redis 참조) |
 | 지식 저장소 | `KnowledgeStore` | 구현 (OpenSearch 참조) |
-| 메모리 저장소 | `ObservationStore` / `RepresentationStore` | 구현 (file/Postgres/Mongo 참조) |
+| 메모리 저장소 | `ObservationStore` / `RepresentationStore` | 구현 (`at.aimon.core.memory.file` 참조) |
 | 스케줄러 | `scheduling.scheduler` SPI | 구현 (Quartz 참조) |
 | 실행 인터셉터 | `AgentExecutionInterceptor` | 체인에 추가 |
 | 트레이스 내보내기 | `SpanExporter` / `TraceSpanStore` | 구현 |

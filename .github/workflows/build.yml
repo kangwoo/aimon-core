@@ -95,7 +95,7 @@ jobs:
           retention-days: 7
 
       # Execution data, not a report. This job used to run `jacocoTestReport` and upload the XML, and that
-      # report was wrong for seven published modules -- see the `coverage` job below, which is the only
+      # report was wrong for five published modules -- see the `coverage` job below, which is the only
       # workspace holding both tiers. What crosses the job boundary now is the raw `.exec`; the report is
       # built once, downstream, from both halves.
       #
@@ -139,10 +139,11 @@ jobs:
   # not push out the fast feedback everyone actually waits on; and when it fails, the failing check names the
   # infrastructure tier rather than "build", which is the first thing a reader needs to know.
   #
-  # This is not an optional extra. For aimon-filesystem-{gridfs,s3}, aimon-session-{redis,postgres,mongodb}
-  # and aimon-memory-{postgres,mongodb} these are the ONLY tests there are — every one of those modules is
-  # published to Maven Central, so leaving the tier ungated meant shipping seven artifacts whose sole
-  # verification had never run. `scripts/release.sh` gates on the same task for the same reason, and
+  # This is not an optional extra. For aimon-filesystem-{gridfs,s3} and aimon-session-{redis,postgres,mongodb}
+  # these are the ONLY tests there are — every one of those modules is published to Maven Central, so leaving
+  # the tier ungated meant shipping five artifacts whose sole verification had never run. It was seven until
+  # aimon-memory-{postgres,mongodb} were removed; the distributed memory backends are a separate service now
+  # (see CHANGELOG). `scripts/release.sh` gates on the same task for the same reason, and
   # ReleaseGateMatchesCiGateTest holds the two lists together.
   #
   # The ubuntu runner ships a working Docker daemon, so Testcontainers needs no setup step of its own.
@@ -188,16 +189,16 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      # The half of the coverage picture this job owns, and for seven published modules the only half there
-      # is -- every test in aimon-filesystem-{gridfs,s3}, aimon-session-{redis,postgres,mongodb} and
-      # aimon-memory-{postgres,mongodb} is @Tag("docker"). Same tar-not-glob reasoning as the `build` job,
-      # and the same reason for carrying no `if: always()`.
+      # The half of the coverage picture this job owns, and for five published modules the only half there
+      # is -- every test in aimon-filesystem-{gridfs,s3} and aimon-session-{redis,postgres,mongodb} is
+      # @Tag("docker"). Same tar-not-glob reasoning as the `build` job, and the same reason for carrying no
+      # `if: always()`.
       - name: Archive docker-tier coverage data
         run: |
           shopt -s nullglob
           exec_data=(modules/*/build/jacoco/integrationTest.exec)
           if [ ${#exec_data[@]} -eq 0 ]; then
-            echo "::error::integrationTest produced no JaCoCo execution data; the coverage job would report the seven docker-backed modules as untested."
+            echo "::error::integrationTest produced no JaCoCo execution data; the coverage job would report the five docker-backed modules as untested."
             exit 1
           fi
           tar -cf jacoco-exec-integration.tar "${exec_data[@]}"
@@ -213,11 +214,12 @@ jobs:
   # Where the coverage number is made, and the only workspace in which it can be true.
   #
   # `build` and `integration` run in parallel with separate workspaces, so a report generated inside either
-  # sees one tier. Generated inside `build`, as it was until now, that meant aimon-memory-{mongodb,postgres}
-  # measured 0.0% line, aimon-session-postgres 6.2%, gridfs 11.0%, s3 12.9%, session-redis 19.8% and
-  # session-mongodb 28.0% -- seven published modules whose every test is @Tag("docker") and therefore absent
-  # from `test`. That is not low coverage, it is coverage measured with the tests excluded; the same seven
-  # land at 75-85% once the docker tier is folded in. The build-side plugin has read every tier's `.exec`
+  # sees one tier. Generated inside `build`, as it was until now, that meant aimon-session-postgres measured
+  # 6.2% line, gridfs 11.0%, s3 12.9%, session-redis 19.8% and session-mongodb 28.0% -- five published
+  # modules whose every test is @Tag("docker") and therefore absent from `test`. (It was seven, with
+  # aimon-memory-{mongodb,postgres} at 0.0%, until those two modules were removed.) That is not low coverage,
+  # it is coverage measured with the tests excluded; the same five land at 75-85% once the docker tier is
+  # folded in. The build-side plugin has read every tier's `.exec`
   # since aimon.java-conventions grew its fileTree, and said in its own comment that CI would keep reporting
   # the `test`-only number "until someone passes exec data between the jobs". This job is that.
   #

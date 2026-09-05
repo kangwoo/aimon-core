@@ -140,11 +140,12 @@ fi
 # @Tag("docker") convention, which already keeps Testcontainers tests out of `test`.
 #
 # `integrationTest` (@Tag("docker")) joined the gate because "opt-in" had a cost nobody had priced. For
-# aimon-filesystem-{gridfs,s3}, aimon-session-{redis,postgres,mongodb} and aimon-memory-{postgres,mongodb}
-# those ARE the tests — leaving them opt-in meant this script published seven artifacts whose only
-# verification had never run, and a Maven Central publish cannot be taken back. THIS MEANS A RELEASE NOW
-# NEEDS A RUNNING DOCKER DAEMON. That is the price, and it is the right way round: the machine that
-# publishes should be the machine that can prove what it publishes.
+# aimon-filesystem-{gridfs,s3} and aimon-session-{redis,postgres,mongodb} those ARE the tests — leaving
+# them opt-in meant this script published five artifacts whose only verification had never run, and a
+# Maven Central publish cannot be taken back. (It was seven until aimon-memory-{postgres,mongodb}
+# were removed.) THIS MEANS A RELEASE NOW NEEDS A RUNNING DOCKER DAEMON. That is the price, and it is
+# the right way round: the machine that publishes should be the machine that can prove what it
+# publishes.
 #
 # Both tasks stay on ONE `$GRADLE` line on purpose. ReleaseGateMatchesCiGateTest reads the first
 # `$GRADLE` invocation after this section marker and compares its task list against CI's; a second line

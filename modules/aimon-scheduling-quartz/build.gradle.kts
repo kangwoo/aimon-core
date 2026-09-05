@@ -11,8 +11,8 @@ dependencies {
 
     // Connection pool for the JDBC job store. Quartz 2.5 moved c3p0 and HikariCP to `provided`, so
     // a pool no longer arrives with the scheduler -- whoever configures a JDBC job store supplies
-    // one. HikariCP because it is already this repository's pool (aimon-memory-postgres,
-    // aimon-session-postgres); c3p0, which 2.3.2 happened to drag in, appears nowhere else here.
+    // one. HikariCP because it is already this repository's pool (aimon-session-postgres); c3p0,
+    // which 2.3.2 happened to drag in, appears nowhere else here.
     implementation(libs.hikari)
 
     // Logging

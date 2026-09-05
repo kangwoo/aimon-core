@@ -8,6 +8,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -16,12 +18,19 @@ import org.junit.jupiter.api.Test;
  * A release must not pass a quality gate narrower than the one every pull request already clears.
  *
  * <p>
- * CI and {@code scripts/release.sh} are two hand-maintained lists of Gradle tasks that are supposed to say the same
- * thing, and nothing made them agree. They drifted once already: the release gate ran {@code test spotlessCheck} while
- * CI ran {@code checkAll}, so checkstyle — and the BOM's own {@code verifyBom} — never gated a publish. The
- * justification carried in the script was that checkstyle had "pre-existing warnings", which was never true of this
- * build: checkstyle here is {@code severity=error} with {@code maxErrors=0} and an empty suppressions file, so it has
- * no warning tier to accumulate. A stale comment outlived the condition it described because no check read it.
+ * CI, {@code scripts/release.sh} and the {@code /release} skill are three hand-maintained statements of one list of
+ * Gradle tasks, and nothing made them agree. They drifted once already: the release gate ran
+ * {@code test spotlessCheck} while CI ran {@code checkAll}, so checkstyle — and the BOM's own {@code verifyBom} —
+ * never gated a publish. The justification carried in the script was that checkstyle had "pre-existing warnings",
+ * which was never true of this build: checkstyle here is {@code severity=error} with {@code maxErrors=0} and an empty
+ * suppressions file, so it has no warning tier to accumulate. A stale comment outlived the condition it described
+ * because no check read it.
+ *
+ * <p>
+ * Then it happened a second time, in prose. When {@code integrationTest} and {@code packagingTest} moved inside both
+ * gates, the skill's Notes went on saying the gate was {@code checkAll} alone and that those two tiers stayed out of
+ * it "in both places" — the exact inverse of what the script ran. The first drift was caught by adding a check; this
+ * one survived that check because the check only read the two files it already knew about.
  *
  * <p>
  * The asymmetry is what makes the drift dangerous in one direction only. A publish to Maven Central is permanent, so
@@ -36,7 +45,10 @@ import org.junit.jupiter.api.Test;
  * the release script fails here;
  * <li>the gate carries no {@code -x} exclusion. The old gate excluded {@code :aimon-filesystem-gridfs:test} and
  * {@code :aimon-filesystem-s3:test}, which predate the {@code @Tag("docker")} convention that already keeps
- * Testcontainers tests out of {@code test}. This pins that half of the fix so it cannot creep back.
+ * Testcontainers tests out of {@code test}. This pins that half of the fix so it cannot creep back;
+ * <li>the {@code /release} skill's Notes name that same task list. A document is not a gate, but this one is read by
+ * whoever is about to publish, and a wrong description of what a release is checked against is worth failing a build
+ * over.
  * </ul>
  *
  * <h2>What this cannot see</h2>
@@ -60,6 +72,8 @@ class ReleaseGateMatchesCiGateTest {
 
     private static final String CI_WORKFLOW = ".github/workflows/build.yml";
 
+    private static final String RELEASE_SKILL = ".claude/skills/release/SKILL.md";
+
     /** The aggregate that both paths are supposed to run. */
     private static final String AGGREGATE_TASK = "checkAll";
 
@@ -80,6 +94,13 @@ class ReleaseGateMatchesCiGateTest {
      * tasks that cannot fail, not for coverage as a subject.
      */
     private static final List<String> REPORTING_ONLY_CI_TASKS = List.of("jacocoTestReport");
+
+    /**
+     * The skill's claim about what a release is gated on, as a backticked list of task names. Matching a fixed phrase
+     * rather than scanning loose prose is deliberate: a reworded sentence must fail loudly here, because the whole
+     * point is that nobody notices when this sentence quietly stops being true.
+     */
+    private static final Pattern SKILL_GATE_DECLARATION = Pattern.compile("Quality gate = `([^`]+)`");
 
     private static final Path REPOSITORY_ROOT = locateRepositoryRoot();
 
@@ -136,6 +157,21 @@ class ReleaseGateMatchesCiGateTest {
                 RELEASE_SCRIPT, gate).doesNotContain(" -x ");
     }
 
+    @Test
+    @DisplayName("the release skill describes the gate the release script actually runs")
+    void releaseSkillDescribesTheRealGate() throws IOException {
+        assumeTrue(REPOSITORY_ROOT != null, "repository root not found from the working directory — nothing to scan");
+
+        final List<String> gateTasks = gradleTasksIn(releaseGateInvocation());
+        final List<String> declaredTasks = skillDeclaredGateTasks();
+
+        assertThat(declaredTasks).withFailMessage(
+                "%s tells the release operator the gate is `%s`, but %s runs `%s`.%n"
+                        + "Whoever is about to publish reads that sentence to decide what has been checked, so it "
+                        + "must name the same tasks. Update the skill's Notes to match the script.",
+                RELEASE_SKILL, declaredTasks, RELEASE_SCRIPT, gateTasks).containsExactlyInAnyOrderElementsOf(gateTasks);
+    }
+
     /**
      * The Gradle invocation under the release script's quality-gate section. Fails rather than returns empty if the
      * section or the invocation cannot be found — a renamed section must break this test, not silently empty it.
@@ -160,6 +196,25 @@ class ReleaseGateMatchesCiGateTest {
         throw new AssertionError("no `$GRADLE` invocation found after the '" + GATE_SECTION_MARKER + "' section in "
                 + RELEASE_SCRIPT + " — the section marker or the gate moved, so this test can no longer see what a "
                 + "release is gated on");
+    }
+
+    /**
+     * Task names the {@code /release} skill tells the operator the gate runs. Fails rather than returns empty when the
+     * phrase is gone: a skill that no longer states its gate is the condition this test exists to catch, not a reason
+     * to pass quietly.
+     */
+    private static List<String> skillDeclaredGateTasks() throws IOException {
+        final Path skill = REPOSITORY_ROOT.resolve(RELEASE_SKILL);
+        assertThat(skill).withFailMessage("%s not found — this test is pointed at the wrong path", RELEASE_SKILL)
+                .isRegularFile();
+
+        final Matcher matcher = SKILL_GATE_DECLARATION.matcher(Files.readString(skill));
+        if (!matcher.find()) {
+            throw new AssertionError("no `" + SKILL_GATE_DECLARATION.pattern() + "` match in " + RELEASE_SKILL
+                    + " — the skill stopped stating which tasks gate a release, or the sentence was reworded. Restore "
+                    + "the phrase or repoint this test; do not delete the claim and leave the operator guessing.");
+        }
+        return List.of(matcher.group(1).strip().split("\\s+"));
     }
 
     /** Task names from every {@code run: ./gradlew …} step in the CI workflow. */

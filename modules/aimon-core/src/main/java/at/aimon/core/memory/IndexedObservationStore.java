@@ -18,20 +18,30 @@ import at.aimon.core.memory.index.ObservationIndex;
  * This is the reusable realization of the design doc §5.2 store/index split: an
  * {@code ObservationStore} keeps the metadata side (relations, confidence,
  * audit) while an {@link ObservationIndex} keeps only what is needed to answer
- * {@code topK} lookups. Some metadata stores — notably
- * {@code PostgresObservationStore} — deliberately do <em>not</em> implement
- * {@link #semanticSearch} and throw {@link UnsupportedOperationException}
- * instead. Wrapping such a store here restores search without dragging vector
- * concerns into the metadata layer:
+ * {@code topK} lookups. Some metadata stores deliberately do <em>not</em>
+ * implement {@link #semanticSearch} and throw
+ * {@link UnsupportedOperationException} instead. Wrapping such a store here
+ * restores search without dragging vector concerns into the metadata layer:
  *
  * <pre>
  * {@code
- * ObservationStore metadata = new PostgresObservationStore(dataSource, mapper);
+ * ObservationStore metadata = ...;   // a store whose semanticSearch throws
  * ObservationIndex index = new KnowledgeStoreObservationIndex(knowledgeStore);
  * ObservationStore store = new IndexedObservationStore(metadata, index);
- * // store.semanticSearch(...) now works; metadata still persists in Postgres.
+ * // store.semanticSearch(...) now works; metadata still persists where it did.
  * }
  * </pre>
+ *
+ * <p>
+ * There is no such store in this repository today. The two that were —
+ * {@code PostgresObservationStore} and {@code MongoObservationStore}, which
+ * this javadoc used to name — were removed with their modules when distributed
+ * memory became a separate service consumed through
+ * {@link PeerMemory}. The decorator stays because the shape it serves does not
+ * depend on those two: it is what an assembly reaches for whenever the store it
+ * has and the index it wants are different things, and the contract it upholds
+ * — a tier that is offered answers — is asserted by the shared backend contract
+ * suite rather than by any one backend.
  *
  * <h2>Write-through indexing</h2>
  *
@@ -42,16 +52,13 @@ import at.aimon.core.memory.index.ObservationIndex;
  * the same two collaborators internally.
  *
  * <p>
- * <strong>Outbox interaction.</strong> Write-through is synchronous and is the
- * alternative to the asynchronous outbox path. If the wrapped metadata store
- * already feeds the same backing index out-of-band (e.g.
- * {@code PostgresObservationStore} enqueues {@code mem_outbox} rows that a
- * {@code KnowledgeStoreOutboxRelay} drains into the very same
- * {@code KnowledgeStore}), do <em>not</em> also point this decorator's index at
- * that store — pick one strategy per index to avoid double indexing. The
- * outbox path is transactionally consistent; this decorator is simpler but a
- * remote-index failure after a successful metadata write leaves the two briefly
- * out of sync.
+ * <strong>One writer per index.</strong> Write-through is synchronous. If the
+ * wrapped metadata store already feeds the same backing index out of band, do
+ * <em>not</em> also point this decorator's index at it — pick one strategy per
+ * index, or every observation is indexed twice. An out-of-band path can be
+ * transactionally consistent with the metadata write; this decorator is
+ * simpler, and the price is that an index failure after a successful metadata
+ * write leaves the two briefly out of sync.
  *
  * <p>
  * Thread-safety follows the wrapped collaborators: this class adds no mutable
@@ -70,8 +77,8 @@ public final class IndexedObservationStore implements ObservationStore {
      * and search to {@code index}.
      *
      * @param delegate
-     *            metadata store (must not be null); typically a persistent,
-     *            search-less implementation such as {@code PostgresObservationStore}
+     *            metadata store (must not be null); typically a persistent
+     *            implementation whose {@link #semanticSearch} throws
      * @param index
      *            search index kept in sync on every write (must not be null)
      * @throws NullPointerException

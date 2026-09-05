@@ -206,8 +206,9 @@ sessions.submit(sessionId, "ops-agent", req.getInput(),
   `GraalJsEngineHolder`. **전부 데몬 스레드이므로 JVM 종료는 막지 않지만**, 컨텍스트가 반복 생성되는
   환경(devtools restart, 여러 테스트 컨텍스트)에서 풀이 누적된다. 스타터가 이들을 자기 빈으로 따로
   소유해야 한다.
-- **`AutoCloseable` 조차 아닌 것들**: `InMemoryDerivationQueueManager` 와
-  `PostgresDerivationQueueManager` 는 `stop()` 만 있으므로 `destroyMethod = "stop"` 을 명시해야 한다.
+- **`AutoCloseable` 조차 아닌 것들**: `InMemoryDerivationQueueManager` 는 `stop()` 만 있으므로
+  `destroyMethod = "stop"` 을 명시해야 한다. (작성 시점에는 `PostgresDerivationQueueManager` 도
+  같은 처지였다. 그 모듈은 이후 제거되었으므로 지금 이 지시의 대상은 하나뿐이다.)
 - **닫을 방법 자체가 없는 것**: `DefaultHookExecutor` 는 무인자 생성자에서 캐시 스레드풀
   (`hook-executor`, 데몬)을 만들지만 `close()` 도 `shutdown()` 도 없고 `HookExecutor` 인터페이스에도
   없다. 인스턴스마다 풀이 영구히 샌다(§9).

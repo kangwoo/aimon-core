@@ -1,9 +1,18 @@
 # AIMON Memory Layer — Peer Memory 통합 설계
 
-> Status: **IMPLEMENTED** — `at.aimon.core.memory`(main 65 / test 37) + `at.aimon.core.tools.memory`(6) +
-> 영속 백엔드 셋: `aimon-memory-file`(9/4) · `aimon-memory-postgres`(11/7) · `aimon-memory-mongodb`(6/4).
-> **멀티 인스턴스를 보장하는 백엔드는 Postgres 하나뿐이다**(§11). 남은 것은 §14.
-> 사용·통합 방법은 [Memory(Peer Memory) 사용 가이드](../../features/memory/memory-usage-guide.md) 참조 (본 문서는 설계 사양).
+> Status: **IMPLEMENTED — 단, 백엔드 배치는 이 문서 이후에 바뀌었다.**
+> `at.aimon.core.memory`(main 65 / test 37) + `at.aimon.core.tools.memory`(6) 은 그대로다.
+>
+> IMPORTANT: **아래 본문이 "영속 백엔드 셋" 이라고 부르는 `aimon-memory-{file,postgres,mongodb}` 는 더 이상
+> 그 형태로 존재하지 않는다.** `-postgres` 와 `-mongodb` 는 **제거되었고**(이전이 아니라 제거 — 데이터가
+> 옮겨가지 않는다), `-file` 은 `aimon-core` 의 `at.aimon.core.memory.file` 로 병합되었다. 멀티 인스턴스
+> 메모리는 이제 저장소 백엔드가 아니라 **`PeerMemory` 백엔드 전체**를 바꾸는 것이며, 그 자리는 별도
+> 저장소의 서비스([aimon-memory](https://github.com/kangwoo/aimon-memory))가 맡는다. 근거와 대응표는
+> [`pluggable-memory-backend.md`](pluggable-memory-backend.md) §4.3.
+>
+> 이 문서는 **그 변경 이전의 설계 사양**으로 남긴다 — 도메인 모델·티어·도구·아키텍처 규칙은 전부 유효하고,
+> 낡은 것은 저장소 모듈의 이름과 배치뿐이다. 아래에서 그 이름들이 보이면 위 문단으로 환산해 읽는다.
+> 사용·통합 방법은 [Memory(Peer Memory) 사용 가이드](../../features/memory/memory-usage-guide.md) 참조.
 
 ---
 
@@ -353,7 +362,7 @@ public interface RepresentationStore {
 > ⚠️ **운영 사용 금지**. 1만 개 이상 observation 시 OOM·검색 지연이 시작된다.
 > CLI 에서 `memory.backend = "in-memory"` 로 부팅하면 비영속 스토어가 배선된다 — CLI 의 기본값은 `file` 이다(§10).
 
-### 5.5 영속 구현 (`aimon-memory-postgres`)
+### 5.5 영속 구현 (`aimon-memory-postgres` — **모듈 제거됨**, 첫머리 배너 참조)
 
 | 테이블 | 역할 |
 |--------|------|
@@ -934,8 +943,8 @@ override 하면 조용히 감사 추적을 잃는다 — javadoc 이 "둘을 함
 | `at/aimon/core/memory/dialectic/` | `LlmDialecticEngine` — 질의 응답과 스트리밍 |
 | `at/aimon/core/memory/index/` | `ObservationIndex` 와 `KnowledgeStoreObservationIndex` 위임 (D2) |
 | `at/aimon/core/tools/memory/` | 사용자에게 노출되는 도구 4종 |
-| `modules/aimon-memory-postgres/` | 멀티 인스턴스를 실제로 보장하는 유일한 백엔드 — row-lock 큐 + 하트비트 + Flyway |
-| `modules/aimon-memory-file/`, `modules/aimon-memory-mongodb/` | 영속하지만 단일 JVM 한정인 두 백엔드 |
+| ~~`modules/aimon-memory-postgres/`~~ | 제거됨 — 멀티 인스턴스는 원격 `PeerMemory` 백엔드가 맡는다 (문서 첫머리) |
+| `at/aimon/core/memory/file/` (옛 `modules/aimon-memory-file/`) | 영속하지만 단일 JVM 한정인 백엔드. `-mongodb` 는 함께 제거됨 |
 | `at/aimon/core/architecture/MemoryArchitectureTest.java` | 시그니처 규칙이 실제로 강제되는 지점 (§12) |
 
 ## 관련 문서

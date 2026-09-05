@@ -287,6 +287,55 @@ as the process and are never stored.
 
 ---
 
+## The file memory backend moves into `aimon-core`
+
+`aimon-memory-file` stopped being a module. Its classes are unchanged -- same names, same signatures, same
+JSONL on disk -- and they now live in `aimon-core` under `at.aimon.core.memory.file`, beside the
+`InMemory*Store`s they are the durable counterpart to.
+
+This is a package move, not a redesign, and it happened for a subtractive reason: the two distributed memory
+backends (`aimon-memory-mongodb`, `aimon-memory-postgres`) were **removed** rather than moved, leaving one
+node-local store implementation alone in a module of its own. Distributed memory is now a separate service
+consumed through `PeerMemory` ([aimon-memory](https://github.com/kangwoo/aimon-memory)); see
+[`../design/memory/pluggable-memory-backend.md`](../design/memory/pluggable-memory-backend.md) §4.3.
+
+| Old | New |
+|-----|-----|
+| `at.aimon.memory.file.FileObservationStore` | `at.aimon.core.memory.file.FileObservationStore` |
+| `at.aimon.memory.file.FileRepresentationStore` | `at.aimon.core.memory.file.FileRepresentationStore` |
+| `at.aimon.memory.file.FileWorkspaceStore` | `at.aimon.core.memory.file.FileWorkspaceStore` |
+| `at.aimon.memory.file.FileMemoryMaintenanceScheduler` | `at.aimon.core.memory.file.FileMemoryMaintenanceScheduler` |
+| `at.aimon.memory.file.Compactable` | `at.aimon.core.memory.file.Compactable` |
+| `at.aimon.memory.file.internal.*` | `at.aimon.core.memory.file.internal.*` |
+| dependency `at.aimon.core:aimon-memory-file` | none -- it is in `at.aimon.core:aimon-core` |
+
+Not `at.aimon.core.memory.impl.file`, and that is a decision rather than an oversight -- the memory domain has
+no `.impl` split at all today (`InMemory*Store` and `StoreBackedPeerMemory` sit in `at.aimon.core.memory`),
+`aimon-cli` still assembles these classes by name, and an `.impl` package with no ArchUnit rule behind it is a
+label rather than a boundary. The reasoning, and the fact that this package **joins** the eventual `.impl` move
+rather than pre-empting it, is in that design document's §4.2.
+
+**Nothing on disk changed.** A log written by `aimon-memory-file` is read by this package without conversion:
+the JSON Lines format, the field names inside each record, the sidecar `<log>.lock`, and the compaction
+temp-file swap are all identical. That is the usual rule here -- see
+[`frozen-names.md`](frozen-names.md) -- applied to a file format instead of a DDL.
+
+## Two memory backend modules were removed, not renamed
+
+Searching for these will find nothing, and that is the answer rather than a missing row:
+
+| Gone | What took its place |
+|-----|-----|
+| `aimon-memory-postgres` (`at.aimon.memory.postgres.*`) | [aimon-memory](https://github.com/kangwoo/aimon-memory): `aimon-memory-store` for the tables, `aimon-memory-worker` for `PostgresDerivationQueueManager`'s queue, pgvector for `KnowledgeStoreOutboxRelay`'s index |
+| `aimon-memory-mongodb` (`at.aimon.memory.mongodb.*`) | the same service |
+
+IMPORTANT: this is **removal, not migration**. Every other table on this page is a rename that left the stored
+data alone; this one leaves no stored data to read. The service's schema is a different design keyed on
+`(workspace, observer, observed)`, and nothing migrates `mem_*` into it. A deployment on either module keeps
+running on the last release that contained it, or starts empty on the service.
+
+---
+
 ## Related documents
 
 - [`frozen-names.md`](frozen-names.md) -- what was **not** renamed, and why that is a contract

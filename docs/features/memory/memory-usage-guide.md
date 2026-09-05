@@ -334,7 +334,7 @@ memory:
 다음은 코어/모듈에서 **프로그래밍 방식 조립(§10/§11)으로만** 선택 가능하며, 아직 CLI yaml 설정 표면으로 노출되지 않았습니다(향후 CLI config surface 로 확장 예정 — 결함이 아니라 미노출):
 
 - **Redaction 정책 선택(`default`|`strict`|`none`|`custom`)** — CLI 는 항상 `DefaultRedactionPolicy` 를 씁니다.
-- **PostgreSQL 백엔드(`aimon-memory-postgres`)** — CLI 는 `file`/`in-memory` 만 배선합니다(§9.2 는 직접 조립 경로).
+- **원격 `PeerMemory` 백엔드** — CLI 는 `file`/`in-memory` 만 배선합니다(§9.2).
 - **`ReActLlmDeriver`** — CLI 는 single-shot `LlmDeriver` 를 씁니다.
 
 CLI 가 현재 사용하는 조합은: `DefaultRedactionPolicy` + `LlmDeriver` + 설정된 `file`/`in-memory` 백엔드.
@@ -365,21 +365,14 @@ IT 운영 메시지에는 토큰·비밀번호·API 키·사설 IP 가 일상적
 | 백엔드 | 모듈 | 구현체 | 용도 |
 |--------|------|--------|------|
 | In-memory | `aimon-core` | `InMemory*Store` | 개발/테스트 전용 (재시작 시 소실, 1만 건↑ OOM) |
-| File | `aimon-memory-file` | `File*Store` (JSONL 어펜드 로그 + compaction + 파일락) | 단일 노드 영속 (§9.1) |
-| PostgreSQL | `aimon-memory-postgres` | `Postgres*Store` + `PostgresDerivationQueueManager` + `KnowledgeStoreOutboxRelay` | 멀티인스턴스 운영 (row-lock 큐, outbox→KnowledgeStore) |
-| MongoDB | `aimon-memory-mongodb` | `Mongo*Store` | 멀티인스턴스 운영 (컬렉션이 SSOT, soft-delete/retention) (§9.3) |
+| File | `aimon-core` (`at.aimon.core.memory.file`) | `File*Store` (JSONL 어펜드 로그 + compaction + 파일락) | 단일 노드 영속 (§9.1) |
 
-- 벡터 검색은 별도 RAG 스택을 두지 않고 `KnowledgeStore`(예: `aimon-knowledge-opensearch`)에 `KnowledgeScope("memory.observation")` 로 위임합니다. `Postgres*`/`Mongo*` 의 `ObservationStore` 는 메타데이터 전용이라 `semanticSearch` 가 `UnsupportedOperationException` 을 던지며, 검색은 `IndexedObservationStore` 데코레이터로 복원합니다(§9.2(3)).
-- `aimon-memory-postgres` 와 `aimon-session-postgres` 를 함께 쓸 때는 동일 인스턴스라도 **별도 DataSource** 권장(스키마 prefix `mem_*` vs `session_*`). MongoDB 도 동일하게 별도 DB 권장(컬렉션 prefix `mem_*`).
+- **여기 있는 둘은 전부 단일 JVM 한정입니다.** 멀티 인스턴스는 store 를 바꾸는 것이 아니라 백엔드 전체를 바꾸는 것이며, 그 경로는 §9.2 입니다.
+- 벡터 검색은 별도 RAG 스택을 두지 않고 `KnowledgeStore`(예: `aimon-knowledge-opensearch`)에 `KnowledgeScope("memory.observation")` 로 위임합니다. 메타데이터 전용 `ObservationStore` 를 쓰는 배포에서는 `semanticSearch` 가 `UnsupportedOperationException` 을 던질 수 있고, 검색은 `IndexedObservationStore` 데코레이터로 복원합니다.
 
-### 9.1 File 백엔드 (`aimon-memory-file`)
+### 9.1 File 백엔드 (`at.aimon.core.memory.file`)
 
-단일 노드에서 PostgreSQL 도입 전에 쓰는 **JSON-line 어펜드 로그** 기반 영속입니다. 세 store 가 각각 자기 로그 파일을 가집니다.
-
-```gradle
-// build.gradle.kts
-implementation(project(":aimon-memory-file"))
-```
+단일 노드용 **JSON-line 어펜드 로그** 기반 영속입니다 — 원격 메모리 서비스를 붙이기 전(또는 붙일 필요가 없을 때)의 선택지입니다(§9.2). 세 store 가 각각 자기 로그 파일을 가집니다.
 
 ```java
 WorkspaceStore workspaceStore = new FileWorkspaceStore(Paths.get(".aimon/memory/workspaces.jsonl"));
@@ -400,7 +393,7 @@ ObservationStore observationStore = new FileObservationStore(Paths.get(".aimon/m
   ObservationStore store = new FileObservationStore(path, index, /* fsyncOnAppend */ true);
   ```
 - **Compaction (로그 무한증가 방지)** — `save`/`delete`/`merge`/`softDelete` 가 어펜드만 하므로 로그가 단조 증가합니다. 세 store 는 `Compactable.compact()`(현재 live + audit 상태의 최소 라인 집합으로 원자적 재작성: temp → fsync → `ATOMIC_MOVE`)를 제공하며, 저널이 `max(10_000, live×3)` 라인을 넘으면 **자동 compaction**, 그리고 **기동 시** replay 가 bloated 로그를 발견하면 1회 압축합니다 → 디스크/재시작 비용이 전체 이력이 아니라 live 상태에 비례.
-- **단일 프로세스 강제 (OS 파일락)** — 생성자가 sidecar `<log>.lock` 에 배타 `FileLock` 을 잡습니다. 같은 로그를 두 번째로 열면(타 프로세스/동일 JVM) `AimonException` 으로 **즉시 실패**(조용한 손상 대신). store 는 `AutoCloseable` 이라 `close()`(또는 JVM 종료) 시 락을 해제합니다. 멀티 인스턴스/스케일아웃은 §9.2(PostgreSQL) 또는 §9.3(MongoDB).
+- **단일 프로세스 강제 (OS 파일락)** — 생성자가 sidecar `<log>.lock` 에 배타 `FileLock` 을 잡습니다. 같은 로그를 두 번째로 열면(타 프로세스/동일 JVM) `AimonException` 으로 **즉시 실패**(조용한 손상 대신). store 는 `AutoCloseable` 이라 `close()`(또는 JVM 종료) 시 락을 해제합니다. 멀티 인스턴스/스케일아웃은 §9.2.
 - **soft-delete + audit retention** — `merge` 의 loser 와 `softDelete(id)` 대상은 즉시 폐기되지 않고 audit 윈도로 soft-delete 되어 replay 후에도 유지됩니다. `purgeSoftDeletedBefore(ws, cutoff)` 가 윈도를 강제합니다.
 - **Dreamer-무관 retention/compaction 스케줄러** — `FileMemoryMaintenanceScheduler` 가 주기적으로(기본 6시간) 워크스페이스별 `purgeSoftDeletedBefore`(기본 30일) + `RepresentationStore.deleteOlderThan`(기본 90일) 후 전 store `compact()` 를 실행합니다. Dreamer 가 꺼져 있어도 retention/디스크가 보장됩니다. CLI 는 `backend: file` 일 때 이를 자동 기동하고 `AgentSetup.close()` 에서 정지합니다.
   ```java
@@ -412,124 +405,30 @@ ObservationStore observationStore = new FileObservationStore(Paths.get(".aimon/m
 - **`findAll` 접근 제어** — `FileWorkspaceStore.findAll(Principal)` 은 `WorkspaceAccessPolicy`(기본 `DefaultWorkspaceAccessPolicy`: SYSTEM/SERVICE 전체, USER/GROUP 은 unowned 또는 `acl.owner`/`acl.members` 메타데이터 일치)로 필터합니다. 생성자에 policy 를 주입해 교체할 수 있습니다.
 - CLI 의 `memory.storagePath` 는 `FileRepresentationStore` 의 로그 경로이자, 그 형제 파일 `observations.jsonl` 의 기준 경로이기도 합니다. **`backend: file`(CLI 기본)에서는 `createObservationStore` 가 `FileObservationStore` 를 함께 배선하여 observation 도 `observations.jsonl` 에 파일 영속**합니다. observation 을 휘발시키려면 `backend: in-memory` 를 명시하세요.
 
-### 9.2 PostgreSQL 백엔드 (`aimon-memory-postgres`)
+### 9.2 멀티 인스턴스 — 별도 메모리 서비스
 
-멀티 인스턴스 운영용 백엔드입니다. 메타데이터는 PostgreSQL 에, **벡터는 `KnowledgeStore` 에** 두고 둘 사이를 outbox 로 잇습니다(설계 §5.2).
+> **`aimon-memory-postgres` 와 `aimon-memory-mongodb` 는 제거되었습니다.** 이 절에 있던 두 백엔드
+> 조립 절차 — Flyway/`V1__init.sql`, `mem_outbox` 릴레이, `init.js`, row-lock 파생 큐 — 는 더 이상
+> 이 저장소에 없습니다.
 
-```gradle
-// build.gradle.kts
-implementation(project(":aimon-memory-postgres"))
-```
+멀티 인스턴스 메모리는 이제 **저장소 백엔드가 아니라 백엔드 전체를 바꾸는 것**입니다. 교체 지점은 세
+store 인터페이스가 아니라 `at.aimon.core.memory.PeerMemory` 의 다섯 티어이며, 그 자리를 채우는 구현이
+별도 저장소의 서비스입니다 — [aimon-memory](https://github.com/kangwoo/aimon-memory) (Postgres +
+pgvector, 자체 파생 워커, HTTP API). 그 저장소의 `aimon-memory-client` 가 `RemotePeerMemory` 로
+`PeerMemory` 를 구현하므로, 애플리케이션은 조립하는 `PeerMemory` 를 바꾸기만 하면 됩니다.
 
-**(1) 스키마 적용 — operator-applied.** 런타임은 절대 DDL 을 실행하지 않습니다. 환경마다 한 번 직접 적용하세요:
+| 없어진 것 | 그 자리를 맡은 것 |
+|---|---|
+| `PostgresDerivationQueueManager` (row-lock 파생 큐) | `aimon-memory-worker` 의 `WorkerLoop` + Representation/Summary/Dream/Deletion 컨슈머 |
+| `KnowledgeStoreOutboxRelay` (outbox → 임베딩 색인) | pgvector 네이티브 (`Vectors`, `EmbeddingDimensionCheck`, `aimon-memory-embed`) |
+| `Postgres`/`Mongo` `{Observation,Representation,Workspace}Store` | `aimon-memory-store` — Flyway + JDBC repository 12종 |
 
-```bash
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
-  -f modules/aimon-memory-postgres/src/main/resources/db/postgres/V1__init.sql
-```
+IMPORTANT: **이전(migration)이 아니라 제거입니다.** 서비스의 스키마는 `(workspace, observer, observed)`
+복합 키 위에 선 다른 설계이고, 옛 `mem_*` 테이블·컬렉션의 데이터는 **그리로 옮겨가지 않습니다.**
+두 백엔드에 데이터를 쌓아 둔 배포는 `0.2.4` 에 머무르거나, 서비스에서 빈 상태로 시작합니다.
 
-생성되는 테이블: `mem_workspace`, `mem_observation`, `mem_representation`, `mem_active_work_unit`(work-unit row-lock 클레임), `mem_outbox`(KnowledgeStore 임베딩 동기화 큐).
-
-**(2) DataSource 준비.** 모든 store 는 `DataSource` + Jackson `ObjectMapper` 를 주입받습니다. Hikari 풀 예시:
-
-```java
-HikariConfig cfg = new HikariConfig();
-cfg.setJdbcUrl(System.getenv("DATABASE_URL"));   // jdbc:postgresql://host:5432/aimon
-cfg.setUsername(System.getenv("DB_USER"));
-cfg.setPassword(System.getenv("DB_PASSWORD"));
-cfg.setMaximumPoolSize(16);
-DataSource dataSource = new HikariDataSource(cfg);
-
-ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();   // JavaTimeModule 등
-```
-
-**(3) 스토어 조립.**
-
-```java
-WorkspaceStore      workspaceStore      = new PostgresWorkspaceStore(dataSource, mapper);
-RepresentationStore representationStore = new PostgresRepresentationStore(dataSource, mapper);
-ObservationStore    metadataStore       = new PostgresObservationStore(dataSource, mapper);
-```
-
-> ⚠️ **`PostgresObservationStore.semanticSearch()` 는 `UnsupportedOperationException` 을 던집니다.** 이 store 는 *메타데이터 전용*(C3 split)입니다. 의미 검색은 코어의 `IndexedObservationStore` 데코레이터로 메타데이터 store + 검색 인덱스를 결합해 복원합니다:
->
-> ```java
-> ObservationIndex index = new KnowledgeStoreObservationIndex(knowledgeStore);
-> ObservationStore observationStore = new IndexedObservationStore(metadataStore, index);
-> // 이제 observationStore.semanticSearch(...) 가 동작하고, 메타데이터는 여전히 PostgreSQL 에 영속된다.
-> ```
->
-> `IndexedObservationStore` 는 **write-through** 입니다 — `save`/`delete`/`merge` 마다 인덱스를 동기화하고 `search` 결과 id 를 메타데이터로 hydrate 합니다. 이는 **동기 직접 인덱싱** 경로이므로 §9.2(4) 의 **outbox relay 와 택일** 하세요(같은 `KnowledgeStore` 인덱스를 둘 다 가리키면 중복 인덱싱). outbox 는 트랜잭션 일관성이, 데코레이터는 단순함이 장점입니다.
-
-**(4) 임베딩 동기화 outbox 펌프.** `ObservationStore.save` 는 `mem_observation` 과 동일 트랜잭션에서 `mem_outbox` 에 pending 임베딩을 넣습니다. 별도 워커가 이를 비워 `KnowledgeStore` 로 upsert/delete 합니다(eventual consistency).
-
-```java
-KnowledgeStoreOutboxRelay relay = new KnowledgeStoreOutboxRelay(dataSource, knowledgeStore);
-relay.start();                 // 데몬 폴러 기동 (idempotent)
-// ... 또는 테스트/배치에서 한 번만: DrainResult r = relay.drainOnce();
-// 종료 시: relay.close();
-```
-
-튜닝은 `RelayOptions`(폴 배치 크기, claim 임대 시간, 폴 간격, 최대 재시도, nodeId)와 `KnowledgeScope` agent name 을 받는 풀 생성자로:
-
-```java
-RelayOptions options = RelayOptions.builder().pollBatchSize(100).pollIntervalMillis(1000)
-        .claimDurationSeconds(30).maxAttempts(5).nodeId("relay-1").build();
-KnowledgeStoreOutboxRelay relay =
-        new KnowledgeStoreOutboxRelay(dataSource, knowledgeStore, "memory.observation", options);
-```
-
-**(5) 멀티 인스턴스 derivation 큐.** in-memory 큐 대신 row-lock 기반 큐로 교체하면 여러 노드가 안전하게 같은 work-unit 을 직렬화합니다(`SELECT … FOR UPDATE SKIP LOCKED`).
-
-```java
-DerivationQueueManager queue = new PostgresDerivationQueueManager(
-        dataSource, deriver, redactionPolicy, DeriverProperties.defaults());
-queue.start();
-```
-
-> 인스턴스마다 `holderId`(UUID)가 발급되어 `mem_active_work_unit` 의 클레임 소유권을 구분합니다. 만료된 claim 은 다른 노드가 steal 합니다.
-
-### 9.3 MongoDB 백엔드 (`aimon-memory-mongodb`)
-
-이미 MongoDB 를 운영(`aimon-session-mongodb`/`aimon-filesystem-gridfs`)하는 환경에서 단일 데이터스토어로 메모리까지 두고 싶을 때 사용하는 **멀티 인스턴스** 백엔드입니다. 컬렉션이 단일 진실 원천(인메모리 미러 없음)이라 여러 노드가 한 DB 를 공유합니다.
-
-```gradle
-// build.gradle.kts
-implementation(project(":aimon-memory-mongodb"))
-```
-
-**(1) 스키마 적용 — operator-applied.** 런타임은 DDL 을 실행하지 않습니다(PostgreSQL 백엔드와 동일 정책). 클러스터마다 한 번 적용하세요:
-
-```bash
-mongosh "$MONGODB_URI" modules/aimon-memory-mongodb/src/main/resources/db/mongodb/init.js
-```
-
-생성되는 컬렉션: `mem_workspace`, `mem_observation`, `mem_representation` (+ 조회 패턴에 맞는 인덱스, observation 의 `(workspaceId, localId)` 는 unique).
-
-**(2) 스토어 조립.** 모든 store 는 `MongoDatabase` 를 주입받습니다.
-
-```java
-MongoDatabase db = mongoClient.getDatabase("aimon_memory");
-WorkspaceStore      workspaceStore      = new MongoWorkspaceStore(db);              // findAll 은 WorkspaceAccessPolicy 적용
-RepresentationStore representationStore = new MongoRepresentationStore(db);
-ObservationStore    metadataStore       = new MongoObservationStore(db);
-```
-
-**(3) 검색 — 메타데이터 전용(C3 split).** `MongoObservationStore.semanticSearch()` 는 `UnsupportedOperationException` 을 던집니다. PostgreSQL 과 동일하게 `IndexedObservationStore` 데코레이터로 검색을 복원하세요:
-
-```java
-ObservationIndex index = new KnowledgeStoreObservationIndex(knowledgeStore);
-ObservationStore observationStore = new IndexedObservationStore(metadataStore, index);
-```
-
-**동작 특성**
-
-- **soft-delete + retention** — observation 에 `softDeletedAt` 필드가 있어, `merge`/`softDelete` 가 이를 설정하고 모든 조회가 이를 제외하며 `purgeSoftDeletedBefore(ws, cutoff)` 가 윈도를 강제합니다(PostgreSQL 과 동일 계약).
-- **멀티테넌트 격리** — 모든 쿼리가 `workspaceId` 로 스코프되고, `findAll` 은 `WorkspaceAccessPolicy` 로 필터합니다.
-- **`create` 원자성** — `_id` unique 로 중복을 감지해 `IllegalStateException` 으로 거부합니다(동시 생성 race-safe).
-- **derivation 큐 미포함** — 단일 노드는 인메모리 큐를 재사용하고, 완전한 멀티 인스턴스 derivation 직렬화가 필요하면 `aimon-memory-postgres` 의 row-lock 큐를 사용합니다.
-
-> MongoDB ↔ Java 의 시각 타입은 밀리초 정밀도(BSON date)이며, observation/representation 의 `Instant` 는 밀리초로 절단되어 저장됩니다(PostgreSQL `Timestamp` 와 동일 수준).
+설계 근거는 [`pluggable-memory-backend.md`](../../design/memory/pluggable-memory-backend.md) §4.3,
+호환성 경계는 [`api-stability.md`](../../project/api-stability.md) §4.1 에 있습니다.
 
 ---
 
@@ -542,7 +441,7 @@ CLI 없이 애플리케이션에 직접 통합할 때의 최소 골격입니다 
 Workspace workspace = Workspace.builder().id("default").build();
 PeerView observer = PeerView.of(workspace, Principal.user("agent-default", "Aimon Agent"));
 
-// 2) 저장소 (운영은 File*/Postgres* 로 교체)
+// 2) 저장소 (운영은 File* 또는 원격 PeerMemory 백엔드로 교체)
 ObservationStore observationStore = new InMemoryObservationStore();
 RepresentationStore representationStore =
         new FileRepresentationStore(Paths.get(".aimon/memory/representations.jsonl"));
@@ -586,7 +485,7 @@ MemoryContextProvider memoryContext = new SnapshotMemoryContextProvider(
 DynamoDB, Cassandra 등 새 백엔드를 추가하는 것은 **리팩토링이 아니라 구현체 추가**입니다
 ([multi-instance-design](../../../.claude/rules/multi-instance-design.md)). `at.aimon.core.memory` 의 인터페이스만 구현하면 됩니다.
 
-> 아래 스켈레톤(§11.5)은 MongoDB 를 예로 들지만, **MongoDB 백엔드는 이미 `aimon-memory-mongodb` 로 구현되어 있습니다**(§9.3). 실제 구현 — soft-delete/retention, `findAll` ACL, operator-applied `init.js`, Testcontainers 통합 테스트 — 을 참조 구현으로 보세요. 아래 스펙은 또 다른 백엔드(예: DynamoDB)를 만들 때의 가이드입니다.
+> 아래 스켈레톤(§11.5)은 MongoDB 를 예로 듭니다. 참조 구현으로 볼 것은 `at.aimon.core.memory.file` 입니다 — soft-delete/retention, `findAll` ACL, 어펜드 로그 + compaction 이 거기 다 있습니다. **다만 store 를 새로 구현하기 전에 §9.2 를 먼저 읽으세요**: 멀티 인스턴스가 목적이라면 필요한 것은 새 store 가 아니라 새 `PeerMemory` 백엔드입니다.
 
 ### 11.1 구현 대상 인터페이스
 
@@ -596,7 +495,7 @@ DynamoDB, Cassandra 등 새 백엔드를 추가하는 것은 **리팩토링이 �
 | `ObservationStore` | ✅ | observation 메타데이터·관계·confidence | `InMemoryObservationStore` |
 | `RepresentationStore` | ✅ | representation 스냅샷 (append-only) | `InMemoryRepresentationStore` |
 | `ObservationIndex` | 선택 | 검색 인덱스 (의미/키워드). 메타데이터 store 와 분리 | `InMemoryObservationIndex`, `KnowledgeStoreObservationIndex` |
-| `DerivationQueueManager` | 선택 | 멀티 인스턴스 derivation 큐 | `InMemoryDerivationQueueManager`, `PostgresDerivationQueueManager` |
+| `DerivationQueueManager` | 선택 | 멀티 인스턴스 derivation 큐 | `InMemoryDerivationQueueManager` |
 
 대부분의 새 백엔드는 **3개 store + (선택) ObservationIndex** 만 구현하면 충분합니다. 큐는 단일 노드면 인메모리 큐를 재사용해도 됩니다.
 
@@ -640,7 +539,7 @@ DynamoDB, Cassandra 등 새 백엔드를 추가하는 것은 **리팩토링이 �
 
 ### 11.4 모듈 생성 절차
 
-1. `modules/aimon-memory-mongodb/build.gradle.kts` 생성 — `implementation(project(":aimon-core"))` + 드라이버 의존성.
+1. `modules/aimon-memory-dynamodb/build.gradle.kts` 생성 — `implementation(project(":aimon-core"))` + 드라이버 의존성.
 
    ```gradle
    plugins {
@@ -654,11 +553,14 @@ DynamoDB, Cassandra 등 새 백엔드를 추가하는 것은 **리팩토링이 �
        implementation(libs.slf4j.api)
    }
    ```
-2. `settings.gradle.kts` 에 `include("modules:aimon-memory-mongodb")` 추가.
-3. 패키지 네임스페이스 `at.aimon.memory.mongodb` (외부 모듈은 자체 네임스페이스). `at.aimon.core.<domain>.impl` 직접 import 금지 — 코어 인터페이스에만 의존.
+2. `settings.gradle.kts` 에 `include("modules:aimon-memory-dynamodb")` 추가.
+3. 패키지 네임스페이스 `at.aimon.memory.dynamodb` (외부 모듈은 자체 네임스페이스 — 모듈 이름과 맞춘다). `at.aimon.core.<domain>.impl` 직접 import 금지 — 코어 인터페이스에만 의존.
 4. 게시 대상이면 루트 `build.gradle.kts` 의 publishable 목록에 추가.
 
 ### 11.5 스켈레톤 예시 (`WorkspaceStore` / MongoDB)
+
+> §11.4 가 `dynamodb` 를 예로 든 것과 달리 아래는 **MongoDB 를 예로 든 별개의 스켈레톤**입니다 —
+> 그래서 패키지 이름도 다릅니다. 둘을 이어 붙인 하나의 예제가 아닙니다.
 
 ```java
 package at.aimon.memory.mongodb;
@@ -732,8 +634,8 @@ public final class MongoWorkspaceStore implements WorkspaceStore {
 ### 11.6 테스트 기대치
 
 - 단위 ≥80% 커버리지. 인터페이스 계약(멀티테넌트 격리, confidence 범위, merge 의미, latest 조회)을 회귀 테스트로 검증.
-- 실DB 통합은 Testcontainers 사용(`@Tag("docker")`). PostgreSQL 모듈의 `PostgresTestSupport`/`*IntegrationTest` 를 패턴으로 참고하세요.
-- 멀티 인스턴스 큐를 구현했다면 동시 클레임·만료 steal·work-unit 직렬화 시나리오를 검증(`PostgresDerivationQueueManager` 테스트 참고).
+- 실DB 통합은 Testcontainers 사용(`@Tag("docker")`). `aimon-session-postgres` 의 `*IntegrationTest` 가 같은 패턴을 그대로 갖고 있으니 그쪽을 참고하세요.
+- 멀티 인스턴스 큐를 구현했다면 동시 클레임·만료 steal·work-unit 직렬화 시나리오를 검증.
 
 ---
 
@@ -744,7 +646,7 @@ public final class MongoWorkspaceStore implements WorkspaceStore {
 - **Recall 이 빈 결과예요** → deriver 는 CLI 에서 **세션 종료 시** 돕니다. 첫 종료 전에는 representation 이 없을 수 있습니다.
 - **dreamer 가 안 돌아요** → 시작 로그의 `Peer memory dreamer disabled: <reason>` 확인. embedding scorer 는 `apiKey` 누락 시 fail-soft.
 - **시크릿이 저장됐어요** → `redaction.policy = none` 은 운영 금지(시작 ERROR). `default`/`strict` 사용.
-- **멀티인스턴스** → 인메모리/파일 백엔드는 단일 JVM 한정. 스케일아웃은 `aimon-memory-postgres`(row-lock 큐 + outbox)로.
+- **멀티인스턴스** → 인메모리/파일 백엔드는 단일 JVM 한정. 스케일아웃은 원격 `PeerMemory` 백엔드로(§9.2).
 
 ---
 
@@ -755,11 +657,11 @@ public final class MongoWorkspaceStore implements WorkspaceStore {
   (`deriver/`, `dialectic/`, `dreamer/`, `reconciler/`, `redaction/`, `index/`)
 - 메타데이터 store + 검색 인덱스 결합 데코레이터: `at.aimon.core.memory.IndexedObservationStore`
 - 노출 도구: `modules/aimon-core/src/main/java/at/aimon/core/tools/memory/`
-- 영속 모듈: `modules/aimon-memory-file/`, `modules/aimon-memory-postgres/`, `modules/aimon-memory-mongodb/`
-- 단일 노드 유지보수(파일락 + compaction + retention): `at.aimon.memory.file.FileMemoryMaintenanceScheduler`, `Compactable`
+- 파일 백엔드: `modules/aimon-core/src/main/java/at/aimon/core/memory/file/`
+- 단일 노드 유지보수(파일락 + compaction + retention): `at.aimon.core.memory.file.FileMemoryMaintenanceScheduler`, `Compactable`
 - 워크스페이스 접근 정책: `at.aimon.core.memory.WorkspaceAccessPolicy` · `DefaultWorkspaceAccessPolicy`
-- PostgreSQL 스키마(operator-applied): `modules/aimon-memory-postgres/src/main/resources/db/postgres/V1__init.sql`
-- MongoDB 스키마(operator-applied): `modules/aimon-memory-mongodb/src/main/resources/db/mongodb/init.js`
+- 원격 백엔드(멀티 인스턴스): [aimon-memory](https://github.com/kangwoo/aimon-memory) — 서비스와 `RemotePeerMemory` 어댑터
+- 백엔드 계약 스위트: `modules/aimon-memory-testkit/` (`AbstractPeerMemoryContractTest`)
 - 멀티인스턴스/저장소 분리 규칙: [`multi-instance-design.md`](../../../.claude/rules/multi-instance-design.md)
 - CLI 배선: `modules/aimon-cli/src/main/java/at/aimon/cli/factory/AgentSetupFactory.java`,
   설정 클래스 `modules/aimon-cli/src/main/java/at/aimon/cli/config/MemoryConfig.java` · `MemoryDreamerConfig.java`

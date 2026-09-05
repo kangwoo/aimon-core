@@ -44,9 +44,10 @@ import at.aimon.session.mongodb.internal.DocumentKeys;
 class MongoSchemaFreezeTest {
 
     /**
-     * Note that {@code aimon-memory-mongodb} ships an unrelated script at this same resource path. The two modules do
-     * not depend on each other, so this test resolves its own; if a future assembly ever puts both on one classpath,
-     * give one of them a distinct name rather than trusting the resolution order.
+     * {@code aimon-memory-mongodb} used to ship an unrelated script at this same resource path, and that module has
+     * since been removed — so nothing collides today. The advice it prompted still stands for whoever adds the next
+     * one: a second module claiming this path would be resolved by classpath order, so give it a distinct name
+     * rather than trusting that order.
      */
     private static final String RESOURCE = "/db/mongodb/init.js";
 

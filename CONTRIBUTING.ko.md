@@ -1,6 +1,6 @@
 ---
 translated_from: CONTRIBUTING.md
-source_commit: eba8ab49
+source_commit: eec9ccd
 ---
 
 # AIMON Core 기여 가이드
@@ -153,13 +153,12 @@ modules/
 ├── aimon-sandbox-kubernetes     # Kubernetes 백엔드
 │
 ├── aimon-session-routing        # 멀티 노드 세션 라우팅 (SPI 는 aimon-core 에)
+├── aimon-session-testkit        # 공유 멀티 노드 세션 계약 테스트
 ├── aimon-session-redis          # Redis 세션 저장소
 ├── aimon-session-postgres       # PostgreSQL 세션 저장소
 ├── aimon-session-mongodb        # MongoDB 세션 저장소
 │
-├── aimon-memory-file            # 파일 기반 에이전트 메모리 저장소
-├── aimon-memory-mongodb         # MongoDB 기반 에이전트 메모리 저장소
-├── aimon-memory-postgres        # PostgreSQL 기반 에이전트 메모리 저장소
+├── aimon-memory-testkit         # 공유 다섯 티어 PeerMemory 계약 스위트 (배포됨)
 │
 ├── aimon-knowledge-opensearch   # OpenSearch 지식 저장소
 ├── aimon-scheduling-quartz      # 분산 cron 스케줄러

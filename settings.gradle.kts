@@ -30,13 +30,10 @@ include(
     "aimon-session-redis",
     "aimon-session-postgres",
     "aimon-session-mongodb",
-    // The shared five-tier PeerMemory contract suite, the same idea as `aimon-filesystem-testkit` above and not
-    // published for the same reasons. Its subjects are backends, not stores — the three modules below implement
-    // stores and do not take part.
+    // The shared five-tier PeerMemory contract suite. Published, unlike the two testkits above: its subjects are
+    // `PeerMemory` backends, and the backend that most needs holding to the contract — `RemotePeerMemory` in the
+    // aimon-memory service — lives in another repository and can only run the suite if it can depend on it.
     "aimon-memory-testkit",
-    "aimon-memory-postgres",
-    "aimon-memory-file",
-    "aimon-memory-mongodb",
     "aimon-workflow-graaljs",
     // Samples. Not published and not part of the framework — they are the only place in this build where an
     // *application* exists, and therefore the only place a claim about fat-jar packaging can be tested. They are
@@ -71,9 +68,6 @@ project(":aimon-session-redis").projectDir = file("modules/aimon-session-redis")
 project(":aimon-session-postgres").projectDir = file("modules/aimon-session-postgres")
 project(":aimon-session-mongodb").projectDir = file("modules/aimon-session-mongodb")
 project(":aimon-memory-testkit").projectDir = file("modules/aimon-memory-testkit")
-project(":aimon-memory-postgres").projectDir = file("modules/aimon-memory-postgres")
-project(":aimon-memory-file").projectDir = file("modules/aimon-memory-file")
-project(":aimon-memory-mongodb").projectDir = file("modules/aimon-memory-mongodb")
 project(":aimon-workflow-graaljs").projectDir = file("modules/aimon-workflow-graaljs")
 
 project(":aimon-sample-app").projectDir = file("samples/aimon-sample-app")
