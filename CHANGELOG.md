@@ -103,11 +103,21 @@ Central is versioned independently).
   module's floor moves **82 → 87**, which makes the wiring self-enforcing: the module cannot reach 87
   on the unit tier alone, so quietly dropping the tier out of CI fails the floor instead of passing.
 
-- **No tier in this build is opt-in any more**, and three pieces of prose that said otherwise were
-  corrected in the same commit rather than left to rot — the `integration` job's comment,
-  `aimon.java-conventions`' tier note, and `ReleaseGateMatchesCiGateTest`'s "What this cannot see",
-  which no longer carves out any tier because there is none left to carve. That is the fourth
-  recurrence of the derived-description problem that javadoc itself names.
+- **No tier in this build is opt-in any more**, and **five** pieces of prose said otherwise: the
+  `integration` job's comment, `aimon.java-conventions`' tier note, `ReleaseGateMatchesCiGateTest`'s
+  "What this cannot see" (which no longer carves out any tier, because there is none left to carve),
+  `PlaywrightLifecycleManagerTest`'s javadoc, and `.claude/skills/release/SKILL.md:83`. **The last was
+  missed and caught in review** — three lines below the gate declaration this change had just edited,
+  in the one file a release operator reads to decide what has been verified, and
+  `releaseSkillDescribesTheRealGate` stayed green throughout because its pattern reads the backticked
+  task list and nothing else. So the fix is not only the sentence: a second, narrow check now fails
+  when any line of that file calls a gated task opt-in. The `SKILL_GATE_DECLARATION` pattern itself was
+  deliberately **not** widened — its javadoc records why it matches a fixed phrase rather than scanning
+  loose prose, and that reasoning still holds.
+
+- **`SKILL.md` now states the browser precondition** alongside the Docker one. The gate downloads
+  ~280 MB of Chromium on a machine with no cache, which the script's own comment said loudly and the
+  skill did not say at all.
 
 - **The `/release` skill's description of the gate is now checked against the gate.**
   `ReleaseGateMatchesCiGateTest` held `scripts/release.sh` and `.github/workflows/build.yml` to each
