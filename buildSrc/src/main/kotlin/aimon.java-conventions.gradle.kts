@@ -106,7 +106,7 @@ tasks.withType<Test>().configureEach {
 }
 
 // Docker/Testcontainers-backed tests are annotated `@Tag("docker")`. The default `test` task — run by
-// `build` / `check` — excludes them so unit tests stay fast and need no Docker daemon; the opt-in
+// `build` / `check` — excludes them so unit tests stay fast and need no Docker daemon; the separate
 // `integrationTest` task runs exactly those. Mirrors the `@Tag("playwright")` convention in
 // aimon-browser-playwright. Modules with no docker-tagged tests simply run nothing in `integrationTest`.
 //
@@ -161,7 +161,7 @@ tasks.register<Test>("packagingTest") {
 // that low reads as "untested" when the truth is "measured with the tests excluded", and it is the number any
 // coverage floor would have been set against.
 //
-// Deliberately `mustRunAfter` and not `dependsOn` for the opt-in tiers: generating a report must not start
+// Deliberately `mustRunAfter` and not `dependsOn` for the tiers outside `test`: generating a report must not start
 // requiring a Docker daemon or a fat jar. Ordering-only means `./gradlew test jacocoTestReport` still works with
 // neither, and still reports 0.0% for those modules — correctly, because nothing measured them in that invocation
 // — while `./gradlew test integrationTest jacocoTestReport` reports what the docker tier actually covers. Gradle 9

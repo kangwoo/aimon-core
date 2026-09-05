@@ -56,7 +56,9 @@ val installPlaywrightBrowsers = tasks.register<JavaExec>("installPlaywrightBrows
     args("install", "chromium")
 }
 
-// Opt-in task for running the playwright-tagged integration tests.
+// The playwright-tagged tests. Out of the default `test` task, and — since 2026-09-05 — in both gates: a step
+// in CI's `build` job and a task in scripts/release.sh. "Out of `test`" and "opt-in" stopped meaning the
+// same thing that day, and this comment said the second for a while after it became false.
 //
 // `testClassesDirs` and `classpath` are not optional here, and their absence is why this task ran nothing at all
 // from the initial commit until 2026-09-05. A bare `register<Test>` inherits neither from the `test` task, so the
