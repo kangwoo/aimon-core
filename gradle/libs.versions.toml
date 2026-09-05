@@ -112,7 +112,15 @@ jacoco = "0.8.11"
 spotless = "6.25.0"
 
 # Publishing
-maven-publish = "0.30.0"
+# 0.32.0 rather than 0.30.0 because 0.30.0 refuses to publish a snapshot at all when the host is the Central
+# Portal — `SonatypeRepositoryBuildService.publishingUrl()` had a bare `require(!host.isCentralPortal)` with the
+# message "Snapshots are not supported when publishing through the central portal". That is a client-side check,
+# so enabling snapshots on the Portal account does nothing for it; the version is the only lever. 0.32.0 replaced
+# the refusal with the Portal's own snapshot path (`<root>/repository/maven-snapshots/`).
+#
+# The smallest version that has it, deliberately. Releases go through this same plugin, and 0.2.4 shipped on
+# 0.30.0, so the release path moves as little as possible while the snapshot path starts working.
+maven-publish = "0.32.0"
 
 [libraries]
 # Spring Boot
