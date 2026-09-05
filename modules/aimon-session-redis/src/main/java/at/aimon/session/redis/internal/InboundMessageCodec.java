@@ -172,7 +172,10 @@ public final class InboundMessageCodec {
      * refusing the entry.
      */
     private static UserInput decodeUserInput(JsonNode root) {
-        return UserInputCodec.decodeOrText(root.get("userInputEncoded"), root.get("userInput").asText());
+        // The session id goes with it: a warning nobody can attribute to a session is one nobody can act on, and
+        // this is the last point that still holds one.
+        return UserInputCodec.decodeOrText(root.get("userInputEncoded"), root.get("userInput").asText(),
+                root.get("conversationId").asText());
     }
 
     private ObjectNode encodePrincipal(Principal principal) {

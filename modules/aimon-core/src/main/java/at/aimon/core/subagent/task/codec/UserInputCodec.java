@@ -39,11 +39,11 @@ import at.aimon.core.agent.input.UserInput;
  * where it came from, and the package name records a first consumer rather than a constraint on later ones. It
  * refuses with that class's {@link SessionSnapshotCodecException} for the same reason, and the objection that the
  * name then appears in an inbox log — where nothing is a session snapshot — is fair but not new: the Redis and
- * Postgres inboxes have surfaced it from {@link SubmitOptionsCodec} since they converged on it. Nor does this class
- * add to it, because the inbox never lets that exception out — {@link #decodeOrText(JsonNode, String)} is what the
- * three inbox codecs call, and it degrades instead of throwing. A neutral exception type would be a new published
+ * Postgres inboxes have surfaced it from {@link SubmitOptionsCodec} since they converged on it, and they still do.
+ * What this class does not do is add to it: {@link #decodeOrText(JsonNode, String, String)} is what the three inbox
+ * codecs call for the input, and it degrades instead of throwing. A neutral exception type would be a new published
  * type earning one better log line; it is not worth that here, and if it ever is, the change belongs to
- * {@code SubmitOptionsCodec} first.
+ * {@code SubmitOptionsCodec} first, since that is where the name actually reaches an inbox log.
  *
  * <p>
  * <b>The input, not the message built from it.</b> The type tags are this codec's own — {@code file} and
@@ -185,53 +185,79 @@ public final class UserInputCodec {
      * it destroys every message that call collected, and the submitter's turn never runs.
      *
      * <p>
-     * <b>The expected cause is an upgrade, not corruption.</b> A node one release ahead writing a sixth
-     * {@link at.aimon.core.agent.input.InputType} produces exactly this: a well-formed document with a tag this build
-     * does not know. That is the mirror of the direction the wire format was shaped to survive, so it degrades the
-     * same way — to the rendering, which is all an older reader ever had.
+     * <b>The boundary is the field, not the kind of failure.</b> The expected cause is an upgrade — a node one
+     * release ahead writing a sixth {@link at.aimon.core.agent.input.InputType}, which is the mirror of the
+     * direction the wire format was shaped to survive — but a decoder cannot actually tell that from a damaged
+     * document: {@code {"type":"video"}} reads identically either way. So the rule this draws is the one it can
+     * enforce. <b>Anything thrown while reading this one field degrades</b>, whatever its type; the rest of the
+     * envelope is decoded by the caller and still refuses, because a broken {@code initiator} or an unparsable
+     * {@code deliveredAt} says the document is damaged rather than newer, and the text beside <em>those</em> is not
+     * a stand-in for them.
+     *
+     * <p>
+     * The catch is deliberately wider than {@link #decode(JsonNode)}'s declared exception, and that is not
+     * belt-and-braces. Drawing it at the exception type is what let a {@code mimeType} of {@code video/mp4} under
+     * {@code "type":"image"} through: {@link at.aimon.core.agent.input.ImageInput} refuses that with a plain
+     * {@code IllegalArgumentException}, which sailed past a {@code catch} written for this codec's own type and out
+     * through {@code collect}, destroying the batch. {@link #decodeAt} now normalizes what the value objects declare
+     * so the contract is honest, and this stays wide anyway.
+     *
+     * <p>
+     * <b>Nothing reaches the wide half today, and that is the point of it.</b> With the normalization in place every
+     * failure inside the subtree already arrives as this codec's own exception, so narrowing this {@code catch} back
+     * leaves every test green — verified by doing it. It is here because the thing that went wrong was not a missing
+     * {@code catch} but a rule stated in terms of exception types, and the next input value object to grow a
+     * validation rule will not be written by someone reading this file. The cost of being wrong is a batch of turns;
+     * the cost of being right and never exercised is one line.
      *
      * <p>
      * <b>It is not silent.</b> A capability was lost for that turn, and something has to say so or this is the
-     * failure the structured encoding exists to remove. The fallback logs at {@code WARN}; the message names the
-     * codec's own reason and does not include the payload.
+     * failure the structured encoding exists to remove. The fallback logs at {@code WARN} with the reason and with
+     * {@code where} — the payload itself is never logged, but an operator who cannot name the affected session
+     * cannot tell anyone that their attachment did not arrive.
      *
      * @param encoded
      *            the encoded subtree, or null when the entry carries none
      * @param text
      *            the plain-text rendering stored beside it (must not be null)
+     * @param where
+     *            what to name in the warning so the degraded turn can be found — the three inbox codecs pass the
+     *            entry's session id, which they already hold. May be null when the caller has no such handle
      * @return the decoded input, or {@code TextInput.of(text)} when {@code encoded} is absent or unreadable
      */
-    public static UserInput decodeOrText(JsonNode encoded, String text) {
+    public static UserInput decodeOrText(JsonNode encoded, String text, String where) {
         Objects.requireNonNull(text, "text cannot be null");
         if (encoded == null || encoded.isNull()) {
             return TextInput.of(text);
         }
         try {
             return decode(encoded);
-        } catch (SessionSnapshotCodecException e) {
-            return degrade(text, e);
+        } catch (RuntimeException e) {
+            return degrade(text, where, e);
         }
     }
 
     /**
-     * The {@link #encodeToString(UserInput)} counterpart of {@link #decodeOrText(JsonNode, String)}, for a wire whose
-     * currency is not a Jackson tree.
+     * The {@link #encodeToString(UserInput)} counterpart of {@link #decodeOrText(JsonNode, String, String)}, for a
+     * wire whose currency is not a Jackson tree.
      *
      * @param encodedJson
      *            the encoded text, or null when the entry carries none
      * @param text
      *            the plain-text rendering stored beside it (must not be null)
+     * @param where
+     *            what to name in the warning — see {@link #decodeOrText(JsonNode, String, String)}
      * @return the decoded input, or {@code TextInput.of(text)} when {@code encodedJson} is absent or unreadable
      */
-    public static UserInput decodeOrText(String encodedJson, String text) {
+    public static UserInput decodeOrText(String encodedJson, String text, String where) {
         Objects.requireNonNull(text, "text cannot be null");
         if (encodedJson == null) {
             return TextInput.of(text);
         }
         try {
             return decodeFromString(encodedJson);
-        } catch (SessionSnapshotCodecException e) {
-            return degrade(text, e);
+        } catch (RuntimeException e) {
+            return degrade(text, where, e);
         }
     }
 
@@ -240,9 +266,13 @@ public final class UserInputCodec {
      *
      * <p>
      * For a wire whose currency is not a Jackson tree. The MongoDB inbox is the one in this repository: its documents
-     * are BSON, and although this all-string subtree would convert to a {@code org.bson.Document} without loss,
-     * parsing it into one would buy queryability the inbox does not use — its indexed fields are top-level columns —
-     * at the price of a second hand-written representation of this shape, which is what this class exists to avoid.
+     * are BSON, and this all-string subtree would in fact convert to a {@code org.bson.Document} without loss and
+     * without a line of hand-written mapping — {@code Document.parse(encodeToString(input))} one way,
+     * {@code subdoc.toJson()} the other. What a subdocument would buy is queryability that collection does not use
+     * (its indexed fields are top-level columns and nothing reads into the payload), and what it would cost is a
+     * round trip through BSON and back out through extended JSON whose fidelity rests on the subtree happening to
+     * be all strings. Storing the text keeps the bytes this class produced. The same reasoning, from the other end,
+     * is on that codec.
      *
      * @param input
      *            the input to encode (must not be null)
@@ -276,10 +306,11 @@ public final class UserInputCodec {
         }
     }
 
-    private static UserInput degrade(String text, SessionSnapshotCodecException cause) {
-        log.warn("An encoded user input cannot be read by this build ({}); falling back to the plain-text rendering"
-                + " stored beside it, so the turn runs as text instead of the entry being lost. A node one release"
-                + " ahead writing an input type this one does not know is the expected cause.", cause.getMessage());
+    private static UserInput degrade(String text, String where, RuntimeException cause) {
+        log.warn("An encoded user input cannot be read by this build [{}] ({}); falling back to the plain-text"
+                + " rendering stored beside it, so the turn runs as text instead of the entry being lost. A node one"
+                + " release ahead writing an input type this one does not know is the expected cause.",
+                where == null ? "unattributed" : where, cause.getMessage());
         return TextInput.of(text);
     }
 
@@ -292,6 +323,23 @@ public final class UserInputCodec {
                     "User input nests deeper than " + MAX_NESTING + " levels; refusing to decode it");
         }
         final String type = requiredText(node, FIELD_TYPE);
+        try {
+            return rebuild(node, type, depth);
+        } catch (SessionSnapshotCodecException e) {
+            // Already this codec's, and already precise about which field and which nesting level. Re-wrapping per
+            // level would bury that under a chain of identical prefixes.
+            throw e;
+        } catch (IllegalArgumentException | NullPointerException e) {
+            // What the input value objects declare when they refuse a reconstruction: ImageInput and AudioInput
+            // enforce a MIME prefix, every factory rejects a null. decodeBase64 has always normalized its own
+            // IllegalArgumentException for exactly this reason, and leaving the other axis raw made the exception
+            // type an unreliable proxy for "this codec could not read it" — which is the only thing
+            // decodeOrText has to go on. See that method for what it cost.
+            throw new SessionSnapshotCodecException("Cannot reconstruct the " + type + " input: " + e.getMessage(), e);
+        }
+    }
+
+    private static UserInput rebuild(JsonNode node, String type, int depth) {
         return switch (type) {
             case TYPE_TEXT -> TextInput.of(requiredText(node, FIELD_TEXT));
             case TYPE_IMAGE ->

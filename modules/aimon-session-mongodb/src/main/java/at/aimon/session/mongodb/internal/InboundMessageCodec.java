@@ -126,10 +126,11 @@ public final class InboundMessageCodec {
         if (payload == null) {
             throw new IllegalStateException("Missing payload subtree on inbox document " + id);
         }
+        final String sessionId = doc.getString(DocumentKeys.F_CONVERSATION_ID);
         final InboundMessage.Builder b = InboundMessage.builder().id(InboundMessageId.of(id.toHexString()))
-                .sessionId(SessionId.of(doc.getString(DocumentKeys.F_CONVERSATION_ID)))
+                .sessionId(SessionId.of(sessionId))
                 .priority(QueuedInputPriority.values()[doc.getInteger(DocumentKeys.F_PRIORITY)])
-                .agentRef(payload.getString("agentRef")).userInput(decodeUserInput(payload))
+                .agentRef(payload.getString("agentRef")).userInput(decodeUserInput(payload, sessionId))
                 .initiator(decodePrincipal(payload.get("initiator", Document.class)))
                 .deliveredAt(toInstant(payload.get("deliveredAt")));
         final String turnId = payload.getString("turnId");
@@ -165,8 +166,11 @@ public final class InboundMessageCodec {
      * {@link UserInputCodec#decodeOrText(String, String)} for why an unreadable encoding degrades here rather than
      * refusing the document — {@code findOneAndDelete} has already removed it by the time this runs.
      */
-    private static UserInput decodeUserInput(Document payload) {
-        return UserInputCodec.decodeOrText(payload.getString("userInputEncoded"), payload.getString("userInput"));
+    private static UserInput decodeUserInput(Document payload, String sessionId) {
+        // The session id goes with it: a warning nobody can attribute to a session is one nobody can act on. It is
+        // a top-level field here rather than a payload one, so the caller passes it down.
+        return UserInputCodec.decodeOrText(payload.getString("userInputEncoded"), payload.getString("userInput"),
+                sessionId);
     }
 
     private static Document encodePrincipal(Principal principal) {

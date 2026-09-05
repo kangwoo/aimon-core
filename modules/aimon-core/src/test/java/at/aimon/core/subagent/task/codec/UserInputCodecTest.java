@@ -194,10 +194,11 @@ class UserInputCodecTest {
     void decodeOrTextPrefersTheEncoding() {
         final UserInput image = ImageInput.of(BYTES, "image/png");
 
-        assertThat(UserInputCodec.decodeOrText(UserInputCodec.encode(image), image.asText())).isEqualTo(image);
-        assertThat(UserInputCodec.decodeOrText((JsonNode) null, "hello")).isEqualTo(TextInput.of("hello"));
-        assertThat(UserInputCodec.decodeOrText((String) null, "hello")).isEqualTo(TextInput.of("hello"));
-        assertThat(UserInputCodec.decodeOrText(UserInputCodec.encodeToString(image), image.asText())).isEqualTo(image);
+        assertThat(UserInputCodec.decodeOrText(UserInputCodec.encode(image), image.asText(), "c-1")).isEqualTo(image);
+        assertThat(UserInputCodec.decodeOrText((JsonNode) null, "hello", "c-1")).isEqualTo(TextInput.of("hello"));
+        assertThat(UserInputCodec.decodeOrText((String) null, "hello", "c-1")).isEqualTo(TextInput.of("hello"));
+        assertThat(UserInputCodec.decodeOrText(UserInputCodec.encodeToString(image), image.asText(), "c-1"))
+                .isEqualTo(image);
         assertThat(logAppender.list).as("nothing degraded, so nothing to warn about").isEmpty();
     }
 
@@ -210,13 +211,45 @@ class UserInputCodecTest {
         // encoding was added to remove.
         final String sixthType = "{\"type\":\"video\",\"mimeType\":\"video/mp4\",\"data\":\"AQID\"}";
 
-        assertThat(UserInputCodec.decodeOrText(sixthType, "[Video: video/mp4, 3 bytes]"))
+        assertThat(UserInputCodec.decodeOrText(sixthType, "[Video: video/mp4, 3 bytes]", "c-degraded"))
                 .isEqualTo(TextInput.of("[Video: video/mp4, 3 bytes]"));
 
         assertThat(logAppender.list).singleElement()
                 .satisfies(event -> assertThat(event.getLevel()).isEqualTo(Level.WARN));
         assertThat(logAppender.list.get(0).getFormattedMessage()).contains("Unknown user input type: video")
-                .contains("falling back");
+                .contains("falling back")
+                // Without something to name, an operator cannot tell the affected user their attachment did not
+                // arrive, and "observable" would mean only "a line exists somewhere".
+                .contains("c-degraded");
+    }
+
+    @Test
+    @DisplayName("a well-formed encoding whose value object refuses it degrades too, not only an unknown tag")
+    void valueObjectRefusalDegradesAsWell() {
+        // The gate is the field, not the exception type. ImageInput.of and AudioInput.of enforce a MIME prefix and
+        // signal with IllegalArgumentException rather than this codec's own exception, so a subtree naming
+        // {"type":"image","mimeType":"video/mp4"} used to sail past the catch and out through collect() — by which
+        // time all three backends have already removed the batch from storage. A decoder cannot tell a document
+        // from a newer build from a damaged one anyway; what it can tell is which field it was reading.
+        final String badMime = "{\"type\":\"image\",\"mimeType\":\"video/mp4\",\"data\":\"AQID\"}";
+
+        assertThat(UserInputCodec.decodeOrText(badMime, "[Image: video/mp4, 3 bytes]", "c-badmime"))
+                .isEqualTo(TextInput.of("[Image: video/mp4, 3 bytes]"));
+        assertThat(logAppender.list).singleElement()
+                .satisfies(event -> assertThat(event.getLevel()).isEqualTo(Level.WARN));
+    }
+
+    @Test
+    @DisplayName("strict decode reports a value object's refusal as a codec failure, not as a raw JDK exception")
+    void valueObjectRefusalIsNormalized() {
+        // Same rule decodeBase64 already followed, applied to the other axis a value object can refuse on. It is
+        // what makes the exception type a faithful proxy for "this codec could not read it", which is the whole
+        // basis on which decodeOrText decides to degrade — and it also keeps a rewind point that names an
+        // unreadable input from failing the entire snapshot decode around it.
+        assertThatThrownBy(() -> UserInputCodec
+                .decodeFromString("{\"type\":\"audio\",\"mimeType\":\"image/png\",\"data\":\"AQID\"}"))
+                .isInstanceOf(SessionSnapshotCodecException.class).hasMessageContaining("audio")
+                .hasMessageContaining("must start with 'audio/'");
     }
 
     @Test
