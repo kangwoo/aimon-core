@@ -103,10 +103,12 @@ Central is versioned independently).
   module's floor moves **82 → 87**, which makes the wiring self-enforcing: the module cannot reach 87
   on the unit tier alone, so quietly dropping the tier out of CI fails the floor instead of passing.
 
-- **No tier in this build is opt-in any more**, and **five** pieces of prose said otherwise: the
+- **No tier in this build is opt-in any more**, and **six** pieces of prose said otherwise: the
   `integration` job's comment, `aimon.java-conventions`' tier note, `ReleaseGateMatchesCiGateTest`'s
   "What this cannot see" (which no longer carves out any tier, because there is none left to carve),
-  `PlaywrightLifecycleManagerTest`'s javadoc, and `.claude/skills/release/SKILL.md:83`. **The last was
+  `scripts/release.sh`'s gate comment, `PlaywrightLifecycleManagerTest`'s javadoc, and
+  `.claude/skills/release/SKILL.md:83`. That count was written as "three", then "five", before being
+  counted with the scope stated — the enumeration is in the backlog item. **The last was
   missed and caught in review** — three lines below the gate declaration this change had just edited,
   in the one file a release operator reads to decide what has been verified, and
   `releaseSkillDescribesTheRealGate` stayed green throughout because its pattern reads the backticked
