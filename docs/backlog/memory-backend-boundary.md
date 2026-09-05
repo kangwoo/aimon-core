@@ -1,4 +1,4 @@
-# 메모리 백엔드 경계 — 등록 항목 6건 (열림 6)
+# 메모리 백엔드 경계 — 등록 항목 7건 (열림 5 · 닫힘 2)
 
 `aimon-memory-{postgres,mongodb}` 를 제거하고 `aimon-memory-file` 을 코어로 병합하면서,
 분산 메모리의 자리를 별도 저장소 `aimon-memory`(Postgres+pgvector 서비스)로 넘겼다.
@@ -12,10 +12,9 @@
 
 ---
 
-## 0. 먼저 — 이 항목들의 순서는 강제되어 있다
+## 0. 먼저 — 강제되어 있던 순서를 로컬 스냅샷이 끊었다
 
-M-3(코어 릴리스) → M-2(배선) 이고, M-2 에 착수하면 M-1 이 즉시 빨간불로 드러난다.
-따라서 M-1 을 M-2 의 하위 작업으로 여기지 말 것 — **어댑터 소스 변경이고 정책 뒤집기**다.
+**등록 시점(2026-09-05 오전)의 판단은 이랬다.**
 
 ```
 M-3  aimon-core 0.3.0 릴리스
@@ -23,11 +22,23 @@ M-3  aimon-core 0.3.0 릴리스
       └→ M-1  RemoteSearcher 가 세션 id 를 거절하도록 고친다  ← 여기서 터진다
 ```
 
+**그 화살표는 참이었지만 릴리스가 유일한 경로라는 전제가 거짓이었다.**
+`publishToMavenLocal -PVERSION_NAME=0.3.0-SNAPSHOT` + 소비자 쪽 `mavenLocal()` 이면
+좌표가 풀린다. `-P` 로 덮으므로 `gradle.properties` 는 건드리지 않는다 — 이 저장소는
+그 실행 동안 **파일 하나도 바뀌지 않았다**(`git status --porcelain` 빈 출력로 확인).
+
+그래서 M-1 과 M-2 는 릴리스를 기다리지 않고 **먼저 닫혔다**(§1). M-3 은 여전히 열려 있고,
+이제 **비계 회수**라는 의무가 하나 붙었다.
+
+이 항목이 남기는 교훈은 순서가 아니라 그 아래다 — **"A 없이는 B 를 못 한다" 는 문장을 만나면
+A 가 정말 유일한 경로인지 먼저 묻는다.** 여기서는 아니었고, 확인 비용은 한 번의
+`publishToMavenLocal` 이었다.
+
 ---
 
-## 1. 열린 항목
+## 1. 항목
 
-### M-1 — `RemotePeerMemory` 가 계약을 지키지 않으며, 지금은 그 사실이 아무도 깨뜨리지 않는다 · **열림**
+### M-1 — `RemotePeerMemory` 가 계약을 지키지 않으며, 지금은 그 사실이 아무도 깨뜨리지 않는다 · **닫힘 (2026-09-05)**
 
 **무엇** — `aimon-memory` 의 `RemoteSearcher.search()` 가 세션 id 실린 질의를 거절하도록 고치고,
 그것을 정당화하던 tier javadoc 의 입장을 뒤집는다.
@@ -61,9 +72,33 @@ this flag is how the caller finds that out"*. 스위트는 정확히 그 입장�
 
 **언제 다시 볼까** — M-2 에 착수하는 순간. 그때 이 항목은 선택이 아니라 전제가 된다.
 
+**닫으며 (2026-09-05)** — 근거가 실측으로 확인된 드문 경우다. 배선만 하고 소스는 손대지 않은
+상태에서 `sessionIdIsRejectedRatherThanIgnored` 가 위에 적힌 그대로 실패했다
+(*"Expecting code to raise a throwable"*). `RemoteSearcher.search()` 에 거절 분기를 넣고,
+현재 동작을 정책으로 옹호하던 javadoc 두 곳(tier 항목과 클래스 javadoc)의 입장을 뒤집었다.
+
+**그런데 같은 실행에서 예상에 없던 두 번째 실패가 나왔다** — 그것이 이 항목의 진짜 소득이다.
+
+`recordingAssignsAnIdentity` 가 실패하면서 남긴 두 문자열이 **똑같아 보이는데 달랐다**.
+`PeerView.toString()` 은 `workspaceId:TYPE:principalId` 만 찍지만 `equals()` 는 `Principal` 전체를
+보고, `Principal.equals()` 는 **displayName 까지** 본다. 스위트는 `Principal.user("alice", "Alice")`
+를 넘기는데 어댑터는 응답의 peer id 로부터 `Principal.user("alice")` 를 재구성해 돌려주고 있었다 —
+**호출자가 준 subject 와 같지 않은 subject 를 돌려주면서 같아 보이게** 하고 있었다. M-1 과 정확히
+같은 종류의 결함이고, 어댑터가 잃어버린 정보를 이미 손에 쥔 채 버리고 있었다는 점만 다르다.
+
+수정은 좁게 했다 — `toObservation` 에 호출자의 뷰를 받는 오버로드를 더하고 **돌아온 peer id 가
+일치할 때만** 그것을 쓴다(서버가 다른 peer 를 답했다면 그건 보고할 사실이므로 덮지 않는다).
+읽기 경로(SEARCH·SNAPSHOT)는 응답이 유일한 출처이므로 그대로다.
+
+**이 결함은 정적 분석으로는 나오지 않았다.** 세 회차 리뷰도, 이 백로그의 등록도 놓쳤다.
+계약 스위트를 *읽는 것*과 *돌리는 것*의 차이가 이 한 건이며, M-2 가 존재한 이유가 그것이다.
+
+이후 21개 전부 통과, **skip 0**(다섯 티어가 모두 실제로 실행됨). 기존
+`RemotePeerMemoryWireTest` 19개도 초록이므로 티어 신호는 바뀌지 않았다.
+
 ---
 
-### M-2 — `RemotePeerMemory` 가 다섯 티어 계약 스위트에 걸려 있지 않다 · **열림 · M-3 대기**
+### M-2 — `RemotePeerMemory` 가 다섯 티어 계약 스위트에 걸려 있지 않다 · **닫힘 (2026-09-05)**
 
 **무엇** — `aimon-memory` 가 `at.aimon.core:aimon-memory-testkit` 을 `testImplementation` 으로 당기고
 `AbstractPeerMemoryContractTest` 를 상속해 `newBackend()` 를 구현한다.
@@ -86,6 +121,22 @@ this flag is how the caller finds that out"*. 스위트는 정확히 그 입장�
 - 선례로 쓸 하네스: `aimon-memory` `RemotePeerMemoryWireTest`
 
 **언제 다시 볼까** — M-3 이 닫히는 즉시. 그 전에는 좌표가 해석되지 않는다.
+
+**닫으며 (2026-09-05) — "언제 다시 볼까" 가 틀렸다.** 이 항목은 M-3 을 기다릴 필요가 없었다.
+로컬 스냅샷(§0)으로 좌표가 풀렸고, `RemotePeerMemoryContractTest` 가
+`AbstractPeerMemoryContractTest` 를 상속해 ephemeral 포트 스텁 서버를 향하는 `newBackend()` 를
+구현한다. 동명 프로젝트 함정은 카탈로그 GAV 항목으로 피했다.
+
+**등록 시점에 이 항목이 스스로 적어 둔 재검토 트리거가 그것을 영원히 막을 뻔했다** —
+`backlog/README.md` 규칙 둘이 말하는 그 실패 모양이다. 트리거를 쓸 때는 "무엇이 끝나야 하는가"
+보다 **"지금 막고 있는 것이 정확히 무엇인가"** 를 적는 편이 낫다. 여기서 막고 있던 것은
+릴리스가 아니라 *해석 가능한 좌표* 였고, 그건 릴리스 말고도 얻는 길이 있었다.
+
+계약 스위트가 붙자마자 값을 냈다 — M-1 이 실측으로 확인되었고, **아무도 예상하지 못한
+`PeerView` 신원 왕복 결함**이 같은 실행에서 드러났다(M-1 의 "닫으며" 참조).
+
+**남은 것 하나** — 이 배선은 임시 비계 위에 서 있다(`mavenLocal()` 두 곳,
+`aimonCore = "0.3.0-SNAPSHOT"`). 회수 의무는 M-3 이 진다.
 
 ---
 
@@ -113,6 +164,23 @@ this flag is how the caller finds that out"*. 스위트는 정확히 그 입장�
 - 일괄 배포: `scripts/release.sh`
 
 **언제 다시 볼까** — 이 브랜치가 main 에 들어간 뒤 첫 릴리스 시점.
+PR #24 는 `c246ac4` 로 머지되었으므로 **지금이 그 시점이다.**
+
+**추가된 의무 (2026-09-05) — 릴리스는 비계 회수를 동반한다.**
+
+M-1·M-2 가 로컬 스냅샷 위에서 닫혔으므로(§0) `aimon-memory` 에 되돌릴 것이 셋 있다.
+
+| 파일 | 지금 | 릴리스 후 |
+|---|---|---|
+| `settings.gradle.kts` | `mavenLocal()` + `TEMPORARY` 주석 | 삭제 |
+| `build.gradle.kts` | `mavenLocal()` + `TEMPORARY` 주석 | 삭제 |
+| `gradle/libs.versions.toml` | `aimonCore = "0.3.0-SNAPSHOT"` | `= "0.3.0"` |
+
+**잊어도 조용히 지나가지는 않는다.** `verifyCoreIsReleased` 에 `-SNAPSHOT` 거절 절이 추가되어
+있어서, 되돌리지 않은 채 `aimon-memory-client` 를 publish 하려 하면 빌드가 실패하며 위 세 줄을
+그대로 알려 준다. 비계가 스스로를 신고한다.
+
+**그리고 릴리스 직전에 M-5 를 한 번 본다** — 아래 항목이 그때 필요한 숫자를 이미 갖고 있다.
 
 ---
 
@@ -166,6 +234,47 @@ Jackson·Logback·Netty·Testcontainers 버전이 조용히 정렬된다. 배포
 
 **언제 다시 볼까** — M-3 의 태그 직전 마지막 판단. 또는 소비자가 실제로 버전 충돌을 겪었을 때.
 
+**측정됨 (2026-09-05) — 결정은 아직 열려 있다.** M-2 로 소비자가 생겼으므로 이 항목이 "조용히
+정렬된다" 고만 적어 두었던 것을 실제로 잴 수 있게 되었다. 방법은 init script 프로브 —
+`:aimon-memory-client:testCompileClasspath` 를 testkit 있음/없음 두 상태로 해석해 diff 했고,
+**빌드 파일은 한 줄도 바꾸지 않았다.**
+
+**이 소비자(`aimon-memory`)가 치르는 비용: 0.**
+
+```
+with testkit: 54 modules · without: 52
+ADDED:   at.aimon.core:aimon-memory-testkit, org.springframework.boot:spring-boot-dependencies (플랫폼 노드)
+REMOVED: 없음
+VERSION CHANGES: 없음
+```
+
+`aimon.java-conventions` 가 이미 `spring-boot-dependencies:3.5.16` 을 import 하므로 정렬할 것이
+없다. 부수 관찰 하나 — testkit POM 은 `assertj-core:3.27.7` 을 선언하는데 이 저장소는 `3.27.6` 으로
+해석한다. **정렬 방향이 오히려 반대**이고, 여기서 플랫폼 export 는 아무 힘도 쓰지 못한다.
+
+**그러나 "영향 없음" 은 이 소비자의 성질이지 플랫폼의 성질이 아니다.** 같은 프로브를 Spring Boot
+**3.4.0** 을 쓰는 소비자에 대해 돌리면 16개 좌표가 움직인다.
+
+```
+spring-boot-dependencies : 3.4.0        → 3.5.16     ← 소비자가 직접 선언한 플랫폼 버전
+jackson-databind/core    : 2.18.1       → 2.21.4
+jackson-annotations      : 2.18.1       → 2.21
+logback-classic/core     : 1.5.12       → 1.5.34
+netty-common             : 4.1.115.Final→ 4.1.135.Final
+byte-buddy               : 1.15.10      → 1.18.3
+assertj-core             : 3.26.3       → 3.27.7
+junit-jupiter(+api,params,bom) : 5.11.3 → 5.12.2
+junit-platform-commons   : 1.11.3       → 1.12.2
+slf4j-api                : 2.0.16       → 2.0.18
+```
+
+첫 줄이 핵심이다 — **소비자가 자기 빌드에 못 박은 플랫폼 버전 자체가 끌어올려진다.** Gradle 이
+플랫폼 모듈에도 최고 버전 충돌 해결을 적용하기 때문이고, testkit 을 *테스트* 의존성으로 더했다는
+이유만으로 그 소비자의 Spring Boot 관리 전체가 바뀐다.
+
+**이 숫자는 "무엇을 잠그는가" 에 대한 답이지 "잠글 것인가" 에 대한 답이 아니다.** 결정은
+M-3 의 태그 직전에 한 번, 사람이 한다.
+
 ---
 
 ### M-6 — 도커 티어를 서술하는 문장이 문자 그대로는 참이 아니다 · **열림 · 기존 부정확성**
@@ -193,11 +302,51 @@ Jackson·Logback·Netty·Testcontainers 버전이 조용히 정렬된다. 배포
 
 ---
 
-## 2. 닫힌 것은 여기 없다
+### M-7 — 계약 스위트가 `PeerView` **전체 동등성**을 요구해 원격 백엔드에 부담을 지운다 · **열림 · 스위트 저자 결정**
 
-이 작업이 남긴 항목은 위 여섯이 전부다. 작업 중 나온 리뷰 지적 23건(1차 10 · 2차 8 · 3차 5)은
-22건이 반영되었고 1건(M-6)이 위로 올라왔다. 반영 내역은 PR 과 커밋 히스토리에 있으며,
-**이 문서는 그것을 되풀이하지 않는다** — 여기 있는 것은 열린 것뿐이다.
+**무엇** — `recordingAssignsAnIdentity` 가 물으려는 것이 "같은 peer 인가" 인지 "같은 `PeerView`
+객체인가" 인지 정하고, 전자라면 단언을 좁힌다.
+
+**왜 — 관측 가능한 결과**
+
+M-1 을 닫는 과정에서 이 요구가 어댑터를 한 번 넘어뜨렸다(M-1 의 "닫으며"). 단언은
+`assertThat(stored.getSubject()).isEqualTo(SUBJECT)` 이고, `Principal.equals()` 가
+**displayName 까지** 비교한다. 그런데 `PeerView.toString()` 은 `workspaceId:TYPE:principalId` 만
+찍으므로 실패 메시지의 두 문자열이 **글자 그대로 동일**하다. 진단이 어렵다는 것 자체가 비용이다.
+
+부담은 이 어댑터 하나에 그치지 않는다. **peer id 만 왕복시키는 모든 원격 백엔드**가 같은 자리에서
+같은 방식으로 넘어진다 — 응답에서 `PeerView` 를 재구성하는 한 displayName 은 복원할 수 없기
+때문이다. `aimon-memory` 는 호출자가 준 뷰를 되쓰는 방식으로 피했지만, 그것은 *쓰기* 경로에서만
+가능한 회피다. 읽기 경로에서 같은 단언을 요구하는 계약이 나중에 추가되면 회피할 방법이 없다.
+
+**계약 위반은 아니다.** 스위트가 그렇게 쓰여 있고 기본 백엔드는 통과한다. 물어야 할 것은
+**그 단언이 재고자 한 것이 무엇이었는가** 이며, 그 답은 스위트를 쓴 쪽이 갖고 있다.
+
+**어디** (2026-09-05)
+- 단언: `modules/aimon-memory-testkit/.../AbstractPeerMemoryContractTest.java:463`
+  (`recordingAssignsAnIdentity`, `:456`)
+- 동등성: `modules/aimon-core/.../base/Principal.java:205` (`equals`)
+- `toString` 이 감추는 자리: `modules/aimon-core/.../memory/PeerView.java:69`
+- 실제로 넘어진 사례: `aimon-memory` `RemotePeerMemory` 의 `toObservation` 오버로드
+
+**언제 다시 볼까** — 두 번째 원격 백엔드가 스위트에 붙을 때. 그때도 같은 자리에서 넘어지면
+그것은 어댑터의 문제가 아니라 계약의 문제다.
+
+---
+
+## 2. 이 문서가 담지 않는 것
+
+작업 중 나온 리뷰 지적 23건(1차 10 · 2차 8 · 3차 5)은 22건이 반영되었고 1건(M-6)이 위로 올라왔다.
+반영 내역은 PR 과 커밋 히스토리에 있으며 **이 문서는 그것을 되풀이하지 않는다.**
+
+닫힌 항목(M-1 · M-2)은 지우지 않고 "닫으며" 를 붙여 남긴다 — `README.md` 규칙 둘이 요구하는
+형식이다. 둘 다 **착수해 보니 등록 시점의 판단과 달랐던 것**이 있었고, 그 어긋남이 다음 사람에게
+쓸모 있는 부분이다:
+
+- **M-1** — 근거는 맞았다(드문 경우). 대신 같은 실행에서 **아무도 예상하지 못한 두 번째 결함**이
+  나왔다. 정적 분석과 실행의 차이가 그 한 건이다
+- **M-2** — 근거는 맞았지만 **재검토 트리거가 틀렸다.** "M-3 이 닫히면" 이라고 적었는데 실제로
+  막고 있던 것은 릴리스가 아니라 해석 가능한 좌표였고, 그건 다른 길로도 얻어진다
 
 ---
 
