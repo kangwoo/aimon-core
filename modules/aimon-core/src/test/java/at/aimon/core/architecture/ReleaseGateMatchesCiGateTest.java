@@ -9,8 +9,12 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -110,6 +114,20 @@ class ReleaseGateMatchesCiGateTest {
      * point is that nobody notices when this sentence quietly stops being true.
      */
     private static final Pattern SKILL_GATE_DECLARATION = Pattern.compile("Quality gate = `([^`]+)`");
+
+    /**
+     * Every JUnit tag this build keeps out of {@code test}, mapped to the task that runs it. Both halves matter: a
+     * new tag with no entry fails here, and an entry whose task is missing from either gate fails too.
+     */
+    private static final Map<String, String> TAG_TO_GATE_TASK = Map.of("docker", "integrationTest", "packaging",
+            "packagingTest", "playwright", "playwrightTest");
+
+    /**
+     * {@code @Tag("...")} as an annotation, not as a mention inside javadoc — the distinction §0.4-a of the backlog
+     * item paid for twice. The optional qualifier is not decoration: the first draft matched only a bare
+     * {@code @Tag(}, and a probe that wrote {@code @org.junit.jupiter.api.Tag("smoke")} walked straight past it.
+     */
+    private static final Pattern TEST_TAG_ANNOTATION = Pattern.compile("^\\s*@(?:[\\w.]+\\.)?Tag\\(\"([^\"]+)\"\\)");
 
     /**
      * Words the skill uses to say a tier is <em>not</em> gated. A line carrying one of these must not also name a task
@@ -234,6 +252,70 @@ class ReleaseGateMatchesCiGateTest {
                         + "about to publish reads this file to decide what has been checked, and a bullet that both "
                         + "names a tier in the gate and calls it opt-in leaves them with two answers.",
                 RELEASE_SKILL, String.join(System.lineSeparator() + "  ", offenders), gateTasks).isEmpty();
+    }
+
+    /**
+     * Three files now tell a reader that nothing in this build is opt-in — {@code scripts/release.sh}, the tier note
+     * in {@code aimon.java-conventions}, and {@link #RELEASE_SKILL}. All three are prose, and a fourth
+     * {@code @Tag} added to any test would falsify all three at once without failing anything. That is the shape
+     * every finding in this area has had, so the sentence gets an invariant instead of a promise.
+     *
+     * <p>
+     * A frozen set rather than a rule that derives the mapping, on the precedent of this repo's other baselines
+     * (checkstyle's error budget, {@code BASELINE_TOP_LEVEL_CYCLES}, the coverage floors): a tag name and a task
+     * name are not derivable from one another — {@code docker} runs as {@code integrationTest} — so the link has to
+     * be written down, and writing it down is only worth anything if adding a tag without touching it fails.
+     */
+    @Test
+    @DisplayName("every test tag excluded from `test` is a task both gates run")
+    void everyTestTagIsGated() throws IOException {
+        assumeTrue(REPOSITORY_ROOT != null, "repository root not found from the working directory — nothing to scan");
+
+        final Set<String> tags = testTagsInRepository();
+        assertThat(tags)
+                .withFailMessage("the tags used by this build's tests are %s, but %s maps %s.%n"
+                        + "A tag with no entry here is a tier nothing gates, and three files say in prose that no "
+                        + "such tier exists. Add the tag to TAG_TO_GATE_TASK together with the task that runs it, "
+                        + "put that task in CI and the release gate — or, if it is genuinely meant to stay out, "
+                        + "reword those three files first.", tags, "TAG_TO_GATE_TASK", TAG_TO_GATE_TASK.keySet())
+                .isEqualTo(TAG_TO_GATE_TASK.keySet());
+
+        final List<String> gateTasks = gradleTasksIn(releaseGateInvocation());
+        final List<String> ciTasks = ciGradleTasks();
+        for (final String task : TAG_TO_GATE_TASK.values()) {
+            assertThat(ciTasks).withFailMessage("`%s` runs a tagged tier but %s has no step for it", task, CI_WORKFLOW)
+                    .contains(task);
+            assertThat(gateTasks)
+                    .withFailMessage("`%s` runs a tagged tier but %s does not gate on it", task, RELEASE_SCRIPT)
+                    .contains(task);
+        }
+    }
+
+    /** Distinct {@code @Tag} values annotated on tests anywhere under {@code modules/} and {@code samples/}. */
+    private static Set<String> testTagsInRepository() throws IOException {
+        final Set<String> tags = new TreeSet<>();
+        for (final String root : List.of("modules", "samples")) {
+            final Path dir = REPOSITORY_ROOT.resolve(root);
+            if (!Files.isDirectory(dir)) {
+                continue;
+            }
+            try (Stream<Path> files = Files.walk(dir)) {
+                for (final Path file : files.filter(p -> p.toString().endsWith(".java"))
+                        .filter(p -> p.toString().contains("/src/test/")).toList()) {
+                    for (final String line : Files.readAllLines(file)) {
+                        final Matcher matcher = TEST_TAG_ANNOTATION.matcher(line);
+                        if (matcher.find()) {
+                            tags.add(matcher.group(1));
+                        }
+                    }
+                }
+            }
+        }
+        assertThat(tags)
+                .withFailMessage(
+                        "found no @Tag annotations under modules/ or samples/ — the scan is broken, " + "not clean")
+                .isNotEmpty();
+        return tags;
     }
 
     /**
