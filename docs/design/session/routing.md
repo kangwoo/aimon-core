@@ -341,8 +341,9 @@ claim(sessionId, agentRef, nodeId, lease)
 
 `collect` 는 원자 배치다. 시그널이 at-least-once 여도 collect 가 배치라서 순서와 정합성이 모두 보존된다.
 
-**`userInput` 은 `UserInput` 이고, 와이어는 키를 하나 더 갖는다.** 설계 시점에는 `String` 이었고 그래서
-멀티모달이 노드 경계에서 조용히 사라졌다 — 그 항목과 닫은 내역은
+**`userInput` 은 `UserInput` 이고, 와이어는 키를 하나 더 갖는다.** 설계 시점에는 `String` 이었고, 그래서
+멀티모달은 노드 경계를 **넘지 못했다** — 조용히 잘린 것이 아니라 빌더가 텍스트만 받아 아예 컴파일되지
+않았다. 그 항목과 닫은 내역은
 [`backlog/interrupt-open-items.md` §2](../../backlog/interrupt-open-items.md). 와이어 쪽 결론만 옮기면:
 `userInput` 키는 **철자도 타입도 그대로**(이제 `asText()`)이고, 비텍스트 입력만
 `at.aimon.core.subagent.task.codec.UserInputCodec` 의 인코딩을 `userInputEncoded` 에 더한다. 인박스는

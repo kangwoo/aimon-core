@@ -38,9 +38,9 @@ import at.aimon.session.routing.fixture.TestManagerHarness;
  *
  * <p>
  * A {@code LiveSession} has taken a {@code UserInput} for some time, so an image or a document worked on whichever
- * host held the handle. A submission that went through the router did not: {@code SubmitRequest} carried a
- * {@code String}, so the same application lost multimodal the moment it scaled out — and lost it silently, because
- * every hop still had something plausible to forward.
+ * host held the handle. A submission that went through the router could not carry one at all — {@code SubmitRequest}
+ * took only text — so scaling the same application out meant giving multimodal up, at compile time rather than
+ * quietly. These tests are about the capability now that it exists, and about the two hops it has to survive.
  *
  * <p>
  * The two hops are tested separately because they fail differently. The local hop is pure object plumbing —

@@ -11,11 +11,13 @@ Central is versioned independently).
 
 - **`SubmitRequest.getUserInput()` and `InboundMessage.getUserInput()` return `UserInput` instead of
   `String`.** This is a **breaking change** to two published surfaces
-  (`at.aimon.session.routing`, `at.aimon.core.agent.session.inbox`), and it closes a gap that was
-  silent by construction: `LiveSession` has taken a `UserInput` for some time, so an image or a
-  document worked on whichever host held the handle, while a submission that went through
-  `SessionRouter` was a `String`. The same application therefore lost multimodal the moment it
-  scaled out, and nothing said so — every hop still had something plausible to forward.
+  (`at.aimon.session.routing`, `at.aimon.core.agent.session.inbox`), and it closes a **capability**
+  gap rather than a runtime one. `LiveSession` has taken a `UserInput` for some time, so an image or
+  a document worked on whichever host held the handle; a submission routed through `SessionRouter`
+  could not carry one at all, because the builder took only text. **Nothing was being dropped at
+  runtime** — an application that scaled out found the call it had been making no longer compiled,
+  which is a wall rather than a leak. What this adds is the ability to route such a turn, not the
+  recovery of a value the framework used to discard.
 
   It is not a rename, so there is no row in
   [`rename-maps.md`](docs/migration/rename-maps.md): the name resolves exactly as before, with a
@@ -45,6 +47,20 @@ Central is versioned independently).
   an image was attached rather than one that pretends nothing was. It cannot run the image either
   way, and the alternative — an entry it cannot decode — is a turn nobody runs.
 
+- **An encoding this build cannot read degrades to the text beside it rather than refusing the
+  entry.** The wire's forward direction — this build reading what a node one release ahead wrote,
+  with a sixth `InputType` in it — costs far more than a refusal usually does, because all three
+  backends remove an entry from storage *before* the codec runs (Redis `XDEL`s inside its collect
+  script, Postgres commits its `DELETE … RETURNING`, MongoDB uses `findOneAndDelete`). A throw there
+  does not reject one message; it destroys every message that call collected. `UserInputCodec`
+  therefore exposes `decodeOrText`, which the three inbox codecs call: it falls back to the
+  `asText()` rendering stored beside the encoding — the same thing an older node would run — and
+  logs at `WARN`, because a silent fallback would be the very failure the structured encoding was
+  added to remove. `JsonSessionSnapshotCodec` still refuses the same exception, and the asymmetry is
+  documented where the decision is made: a rewind point has no string to fall back to and loses only
+  a retry the user can re-issue. Only the input field degrades — a malformed `initiator` or an
+  unknown `priority` still throws, because those mean a corrupt document rather than a newer one.
+
 - **`IdempotencyEntry.inputHash` keeps `sha256(text)` for text turns.** That digest is written to the
   shared store and recomputed by whichever node a retry lands on, which during a rolling upgrade is
   as likely to be one that predates this change. Hashing the encoded form for text would have turned
@@ -61,9 +77,16 @@ Central is versioned independently).
   which is what keeps the MongoDB inbox from acquiring a second representation the way it has one of
   `submitOptions`.
 
-- **`AimonSessions.newRequest(SessionId, UserInput)` is new** — additive. The starter is the
-  scale-out shape, so it is where this most needed a route that is not `newRequest(id, "")` followed
-  by `.userInput(image)`, which works and submits a turn whose text part is an empty string.
+- **`AimonSessions.newRequest(SessionId, UserInput)` is new.** The starter is the scale-out shape,
+  so it is where this most needed a route that is not `newRequest(id, "")` followed by
+  `.userInput(image)`, which works and submits a turn whose text part is an empty string.
+
+  Additive **for callers, not for implementors**: `AimonSessions` is a published interface and this
+  is an abstract method with no `default`, so an application with its own implementation of the
+  facade stops compiling until it adds one. That is allowed in a `0.x` minor and is named here rather
+  than hidden behind the word "additive". No `default` was given deliberately — a default could only
+  throw or flatten the input, and both are worse than a compiler error for a facade whose entire job
+  is to fill in the fields a raw `SubmitRequest` leaves dangerous.
 
 - The multi-node contract suite gained the scenario, so it runs over Redis, Postgres and MongoDB:
   what an image has to survive is each backend's own serialization, and no in-memory test can see

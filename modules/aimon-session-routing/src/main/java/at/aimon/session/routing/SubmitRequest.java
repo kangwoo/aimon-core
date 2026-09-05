@@ -84,11 +84,16 @@ public final class SubmitRequest {
      * The input this turn was submitted with — text, an image, a document, or a combination.
      *
      * <p>
-     * <b>This was a {@code String}.</b> {@link at.aimon.core.agent.session.LiveSession} has taken a
-     * {@link UserInput} for some time, so a multimodal turn worked on whichever host held the handle and was lost
-     * the moment the same application scaled out and the submission crossed a node boundary — silently, because the
-     * router had nothing but text to forward. A caller that wants the old value has {@code getUserInput().asText()},
-     * which is what the inbox wire still carries for a reader that predates this change.
+     * <b>This was a {@code String}, and the loss it caused was a wall rather than a leak.</b>
+     * {@link at.aimon.core.agent.session.LiveSession} has taken a {@link UserInput} for some time, so a multimodal
+     * turn worked on whichever host held the handle. A submission routed through {@link SessionRouter} could not
+     * carry one at all: the builder took only text, so an application that scaled out could not compile the call it
+     * had been making — nothing degraded at runtime, because there was no way to hand the router an image in the
+     * first place. What the widening buys is the capability, not the recovery of a value that used to be dropped.
+     *
+     * <p>
+     * A caller that wants the old value has {@code getUserInput().asText()}, which is what the inbox wire still
+     * carries for a reader that predates this change.
      *
      * @return the input, never null
      */

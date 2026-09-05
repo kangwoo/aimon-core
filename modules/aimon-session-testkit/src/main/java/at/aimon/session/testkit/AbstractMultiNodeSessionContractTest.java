@@ -438,10 +438,10 @@ public abstract class AbstractMultiNodeSessionContractTest {
     @DisplayName("multimodal forward: an image submitted on B is the same image when A drains and runs it")
     void multimodalSubmissionSurvivesTheForward() throws Exception {
         // The one thing about a routed submission no single-node test can see. A LiveSession has taken a UserInput
-        // for some time, so an image worked on whichever host held the handle; a submission that crossed a node
-        // boundary was a String, and the loss was silent. That makes this a backend scenario rather than a router
-        // one: what the image has to survive is this backend's serialization, and each backend spells that
-        // differently — a JSON string field in Redis, JSONB in Postgres, a BSON subdocument in MongoDB.
+        // for some time, so an image worked on whichever host held the handle; a submission crossing a node boundary
+        // could not carry one at all until the envelope widened. That makes this a backend scenario rather than a
+        // router one: what the image has to survive is this backend's serialization, and each backend spells that
+        // differently — a JSON string field in Redis, JSONB in Postgres, BSON in MongoDB.
         final TwoNodeSessionHarness nodes = newHarness(Duration.ofSeconds(30), Duration.ofSeconds(10));
         final SessionId id = SessionId.of("c-multi-mm-1");
         final UserInput image = MultimodalInput.of(TextInput.of("what is in this?"),

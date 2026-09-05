@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/embedding-agent-in-application.md
-source_commit: 0abfd05
+source_commit: 1bc4109
 ---
 
 # Embedding an AIMON agent in your application
@@ -523,9 +523,11 @@ sessions.submitAsync(sessions.newRequest(sessionId, input).build());
 
 **Whether that turn runs on this node or is forwarded to the node holding the session makes no
 difference to what the agent receives.** The inbox carries the input itself, not a rendering of it.
-It did not always: a cross-node submission used to be a `String`, so the same application lost
-multimodal the moment it scaled out — the request succeeded, the turn ran, and all the model got was
-the text `[Image: image/png, 41231 bytes]`.
+
+This overload did not exist before. A cross-node submission was a `String` only, so a deployment that
+scaled out **could not send** multimodal — not quietly truncated, but not compiled. The one way to get
+an image to the router was for the caller to flatten it with `image.asText()`, and then all the model
+got was the text `[Image: image/png, 41231 bytes]`. That is no longer necessary.
 
 ### 6.3 Reading `SubmitDisposition`
 

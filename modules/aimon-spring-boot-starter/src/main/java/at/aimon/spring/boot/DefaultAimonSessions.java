@@ -87,6 +87,10 @@ public class DefaultAimonSessions implements AimonSessions {
 
     @Override
     public SubmitRequest.Builder newRequest(SessionId sessionId, String input) {
+        // Session id first, as it was before this overload delegated: newRequest(null, null) has always answered
+        // "Session id cannot be null", and a message that moves because a delegation was added is a change nobody
+        // asked for.
+        Objects.requireNonNull(sessionId, "Session id cannot be null");
         Objects.requireNonNull(input, "Input cannot be null");
         return newRequest(sessionId, TextInput.of(input));
     }
