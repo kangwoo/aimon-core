@@ -10,7 +10,26 @@ docs_dir: docs
 
 # No `nav:`. The site navigation is generated from the directory tree, so the
 # curated index lives in exactly one place -- docs/README.md -- instead of being
-# maintained twice and drifting. See docs/README.md 의 "문서 배치 규칙".
+# maintained twice and drifting. The rules behind that layout are in
+# docs/project/documentation-guide.md.
+
+# Two directories are in the repository but not on the site. `backlog/` is our
+# own list of what is still open and `plan/` tracks work in progress and is
+# deleted when that work lands -- neither is what a reader arriving at the site
+# is looking for, and publishing `plan/` would leave ghost pages behind.
+#
+# They are excluded, not deleted: both stay readable on GitHub, and
+# scripts/mkdocs_github_links.py reads THIS list to rewrite links pointing into
+# them into GitHub URLs at render time, so relative links in the sources keep
+# working on both surfaces. Adding a directory here is therefore the whole
+# change -- the hook follows. See docs/project/documentation-guide.md §2.
+#
+# The leading slash is load-bearing: a bare `backlog/` is a gitignore pattern
+# that matches at any depth, which would also swallow `design/backlog/` --
+# deferred *design* rationale, which belongs with the rest of `design/`.
+exclude_docs: |
+  /backlog/
+  /plan/
 
 theme:
   name: material

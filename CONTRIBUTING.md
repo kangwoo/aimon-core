@@ -113,7 +113,8 @@ Two things about that site are worth knowing before you edit a link.
 Korean is the site's default language and builds at the root; English translations are
 `*.en.md` files served under `/en/`. A page with no translation yet is *not* a 404 — the
 Korean original is served in its place, so the site stays whole while translation
-proceeds. See [`docs/README.md`](docs/README.md) for the translation conventions.
+proceeds. See [`docs/project/documentation-guide.md`](docs/project/documentation-guide.md)
+for the translation conventions, and for which directories are published to the site at all.
 
 Links that point outside `docs/` — at a source file, at `CHANGELOG.md` — stay **relative**
 in the source, because that is what works when the file is read on GitHub. A build hook
@@ -335,7 +336,9 @@ When writing a translation:
 
 [`docs/project/translation-glossary.md`](docs/project/translation-glossary.md) is the
 binding reference for recurring terms, and settles the ones that have bitten us before
-(`turn` / `iteration` / `execution` in particular).
+(`turn` / `iteration` / `execution` in particular). The full set of documentation rules —
+where a new document goes, how `design/` differs from `plan/`, which directories the site
+publishes — is [`docs/project/documentation-guide.md`](docs/project/documentation-guide.md).
 
 ## Commit Messages
 

@@ -1,6 +1,6 @@
 ---
 translated_from: CONTRIBUTING.md
-source_commit: eec9ccd
+source_commit: 0ecb5ce
 ---
 
 # AIMON Core 기여 가이드
@@ -116,8 +116,8 @@ mkdocs build --strict   # CI 가 돌리는 것. 경고가 곧 실패다
 
 한국어가 사이트의 기본 언어이고 루트에 빌드됩니다. 영어 번역은 `*.en.md` 파일이며 `/en/` 아래로
 서빙됩니다. 아직 번역이 없는 페이지는 404 가 *아닙니다* — 그 자리에 한국어 정본이 서빙되므로,
-번역이 진행되는 동안에도 사이트는 늘 온전합니다. 번역 규약은
-[`docs/README.md`](docs/README.md) 를 보세요.
+번역이 진행되는 동안에도 사이트는 늘 온전합니다. 번역 규약과 어느 디렉토리가 사이트에 게시되는지는
+[`docs/project/documentation-guide.md`](docs/project/documentation-guide.md) 를 보세요.
 
 `docs/` 바깥을 가리키는 링크 — 소스 파일이나 `CHANGELOG.md` — 는 소스에서 **상대 경로**로 둡니다.
 GitHub 에서 그 파일을 읽을 때 동작하는 형태가 그것이기 때문입니다. 사이트를 빌드할 때 빌드 훅
@@ -332,7 +332,9 @@ source_commit: 4bb8ace0
 
 되풀이되는 용어는 [`docs/project/translation-glossary.md`](docs/project/translation-glossary.md)
 가 구속력 있는 기준이며, 특히 전에 문제를 일으켰던 `turn` / `iteration` / `execution` 을 정리해
-두었습니다.
+두었습니다. 문서 규칙 전체 — 새 문서를 어디에 둘지, `design/` 과 `plan/` 이 어떻게 다른지, 어느
+디렉토리가 사이트에 게시되는지 — 는 [`docs/project/documentation-guide.md`](docs/project/documentation-guide.md)
+에 있습니다.
 
 ## 커밋 메시지
 
