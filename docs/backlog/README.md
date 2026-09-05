@@ -282,6 +282,7 @@ B-6 이 그렇게 어긋나 있었다. §7 은 그 항목을 "MCP 를 실제로 
 | [`multi-instance-readiness.md`](multi-instance-readiness.md) | 아키텍처 리뷰 (2026-08-31) | 3 | 1 | 1 | 1 |
 | [`module-dependency-scope.md`](module-dependency-scope.md) | 아키텍처 리뷰 (2026-08-31) | 1 | 1 | 0 | 0 |
 | [`architecture-review-open-items.md`](architecture-review-open-items.md) | 아키텍처 리뷰 (2026-08-31) | 7 | 3 | 4 | 0 |
+| [`translation-tooling-open-items.md`](translation-tooling-open-items.md) | 번역 낡음 가드 작업 (2026-09-06) | 1 | 1 | 0 | 0 |
 
 **출처 칸에 설계 문서가 없는 항목이 생겼다.** 아키텍처 리뷰에서 나온 세 문서는 `design/` 이 아니라 리뷰에서 나왔고,
 그래서 규칙 하나("설계 문서의 표는 정본이 아니다")가 적용될 표 자체가 없다. 대신 다른 것이 걸린다 —
@@ -294,6 +295,14 @@ degradation 으로 이미 보고되고 있었다), 하나는 진단이 **이 저
 그 두 번째가 규칙 다섯에 자리를 하나 더한다. *"값이 지금 왜 그 값인지 설명이 있는지 먼저 찾는다"* 의
 "어디를 찾나" 에 **`.claude/rules/`** 가 빠져 있었다 — 이 건의 설명은 코드 주석에도 `docs/` 에도
 없고 거기 있었다.
+
+**네 번째 문서(`translation-tooling-open-items.md`)는 설계 문서도 리뷰도 아닌 세 번째 종류의 출처다** —
+끝난 **작업**이 남긴 것이다. 그래서 규칙 하나가 적용될 표가 없는 것은 리뷰 세 문서와 같지만, 규칙 다섯이
+정반대 방향으로 작동했다: 착수 지시가 "조용한 실패" 라고 부른 exit 0 은 찾아보니 스크립트 헤더에
+적힌 **결정**이었고, 반박할 것은 코드가 아니라 그 설명이었다. 그리고 반박은 결정을 뒤집는 것이 아니라
+**그 설명이 덮는 범위가 값의 범위보다 좁다**는 것으로 끝났다(그 문서 §0). 규칙 다섯이 "설명이 있으면
+결함이 아니라 결정" 이라고 적을 때 빠져 있던 경우다 — 설명은 있는데 **그것이 값의 절반만 정당화**할
+수도 있다.
 
 **열린 항목은 GitHub Issues 에도 열려 있다** ([#49](https://github.com/kangwoo/aimon-core/issues/49) ·
 [#50](https://github.com/kangwoo/aimon-core/issues/50) · [#51](https://github.com/kangwoo/aimon-core/issues/51)).
