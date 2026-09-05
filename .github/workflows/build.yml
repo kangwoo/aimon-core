@@ -72,6 +72,40 @@ jobs:
       - name: Fat-jar packaging tests
         run: ./gradlew --no-daemon packagingTest
 
+      # Keyed on the Playwright version alone, not on a hash of the whole version catalogue: the browsers only
+      # rotate when that one line moves, and keying on the catalogue would throw away a 229 MB cache every time an
+      # unrelated dependency was bumped. `restore-keys` still takes an older entry on a miss -- `installPlaywrightBrowsers`
+      # then tops it up with just the new revision instead of fetching all of it.
+      - name: Resolve Playwright version
+        id: playwright
+        run: echo "version=$(sed -n 's/^playwright = "\(.*\)"/\1/p' gradle/libs.versions.toml)" >> "$GITHUB_OUTPUT"
+
+      # ~/.cache/ms-playwright is the driver's default registry directory on Linux. Chromium alone: 280 MB over the
+      # wire, 520 MB unpacked, 229 MB as a zstd cache entry (measured 2026-09-05). The default browser set would be
+      # 479 MB / 1.0 GB, and nothing here launches firefox or webkit.
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-browsers-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+          restore-keys: playwright-browsers-${{ runner.os }}-
+
+      # A step in this job rather than a job of its own, on the same rule as `Fat-jar packaging tests` above: a
+      # separate job buys a failing check that names the tier and costs a second JDK plus a second full compile,
+      # which is worth paying for a tier that runs for minutes against Testcontainers and is not for one that adds
+      # about twenty seconds on a warm cache.
+      #
+      # aimon-browser-playwright is published to Maven Central and these are the only tests in it that start a real
+      # browser. Without them PlaywrightLifecycleManager -- the class that owns the browser process, the daemon
+      # worker thread and the shutdown ordering -- measures 9% line; with them, 57%. That is the same sentence that
+      # put integrationTest in this workflow, applied to the eighth published module.
+      #
+      # The task installs Chromium itself before running, so a cold cache is slow rather than broken. It used to be
+      # broken: Playwright.create() downloads browsers inline and PlaywrightLifecycleManager wraps that call in a
+      # 30-second timeout, so on a cold cache every test failed. See the module's build.gradle.kts.
+      - name: Playwright browser tests
+        run: ./gradlew --no-daemon playwrightTest
+
       # Only on a red run, and that is the whole point of the step. Actions storage is one
       # account-wide quota, so a green run's reports -- which answer no question anyone asked --
       # were what filled it, and a full quota does not fail quietly: the upload itself errors out
@@ -107,10 +141,15 @@ jobs:
       #
       # No `if: always()`: exec data from a tier that failed part-way measures nothing anyone should read,
       # and `coverage` is gated on both tiers being green for the same reason.
+      #
+      # `playwrightTest.exec` rides along with `test.exec` because this job now runs both. Leaving it behind would
+      # measure aimon-browser-playwright with its browser tests excluded -- 83.7% line instead of 88.2% -- which is
+      # the same "coverage measured with the tests excluded" mistake the `coverage` job below exists to correct for
+      # the docker tier. The module's floor is set from the complete picture, so it would also fail.
       - name: Archive unit-tier coverage data
         run: |
           shopt -s nullglob
-          exec_data=(modules/*/build/jacoco/test.exec)
+          exec_data=(modules/*/build/jacoco/test.exec modules/*/build/jacoco/playwrightTest.exec)
           if [ ${#exec_data[@]} -eq 0 ]; then
             echo "::error::The test task produced no JaCoCo execution data; the coverage job would report every module at 0%."
             exit 1
@@ -149,9 +188,9 @@ jobs:
   # ReleaseGateMatchesCiGateTest holds the two lists together.
   #
   # The ubuntu runner ships a working Docker daemon, so Testcontainers needs no setup step of its own.
-  # `packagingTest` (@Tag("packaging")) has since joined the `build` job as a step; the one tier still running
-  # nowhere is `playwrightTest` (@Tag("playwright")), which needs browser binaries installed and guards a
-  # surface no consumer has yet.
+  # `packagingTest` (@Tag("packaging")) and `playwrightTest` (@Tag("playwright")) have both since joined the
+  # `build` job as steps, so no tier in this build runs nowhere any more and ReleaseGateMatchesCiGateTest holds
+  # every one of them to the same rule.
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 45

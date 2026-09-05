@@ -77,7 +77,7 @@ Map the argument to `<bump>` (`patch` | `minor` | `major`, default `patch`).
   verifies these before any mutation).
 - **Docker must be running.** The gate includes `integrationTest` (Testcontainers), so the script
   fails fast on a missing daemon rather than discovering it minutes in.
-- Quality gate = `checkAll integrationTest packagingTest jacocoTestCoverageVerification` — the same
+- Quality gate = `checkAll integrationTest packagingTest playwrightTest jacocoTestCoverageVerification` — the same
   set `.github/workflows/build.yml` runs, so a release never passes a narrower gate than a PR.
   `ReleaseGateMatchesCiGateTest` enforces the match, because the two lists drifted once already.
   `playwrightTest` is the only opt-in tier outside both.

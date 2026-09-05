@@ -115,9 +115,9 @@ tasks.withType<Test>().configureEach {
 // on every save. Excluded from `test` for the same reason `docker` is, and given its own task for the same reason
 // too. Repeated `useJUnitPlatform { }` calls accumulate into one options set, so both exclusions apply.
 //
-// Out of `test` is not the same as out of CI, and only one tier in this build is actually both. `packagingTest`
-// is a step in the `build` job and a task in the release gate, like `integrationTest` before it; the tier that
-// still runs nowhere is `playwrightTest` in aimon-browser-playwright.
+// Out of `test` is not the same as out of CI, and no tier in this build is out of both any more. `integrationTest`,
+// `packagingTest` and aimon-browser-playwright's own `playwrightTest` are each a step in the `build` or
+// `integration` job and a task in the release gate, and ReleaseGateMatchesCiGateTest holds the two lists together.
 tasks.named<Test>("test") {
     useJUnitPlatform {
         excludeTags("docker")

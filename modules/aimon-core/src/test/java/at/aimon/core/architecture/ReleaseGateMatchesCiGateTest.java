@@ -56,10 +56,18 @@ import org.junit.jupiter.api.Test;
  * <p>
  * Task names, not task graphs. If {@code checkAll} itself stops depending on {@code checkStyle}, both files still
  * agree and this test still passes — that hole is closed by the root build script owning one aggregate rather than by
- * a text scan. One tier runs in neither place and so cannot be seen here: {@code playwrightTest}
- * ({@code @Tag("playwright")}, which needs browser binaries installed). Nothing here notices when it rots.
- * {@code integrationTest} and {@code packagingTest} were both once in that position; each is now a CI step and a
- * gate task, so the comparison below holds them to the same rule as every other task.
+ * a text scan.
+ *
+ * <p>
+ * This paragraph used to carve out a tier that ran in neither place and so could not be seen here. There is none
+ * left: {@code integrationTest}, {@code packagingTest} and {@code playwrightTest} were each in that position in turn
+ * and each is now a CI step and a gate task, so the comparison below holds every tier in the build to the same rule.
+ * The carve-out is worth remembering rather than deleting, because it described a real blind spot and the shape of
+ * it recurs: what this test compares is two <em>lists</em>, so a tier absent from both is invisible to it however
+ * badly it rots. {@code playwrightTest} spent that time not merely ungated but inert — its Gradle task was
+ * registered without {@code testClassesDirs} or {@code classpath}, so it matched no test class, reported
+ * {@code NO-SOURCE} and went green in 650ms. A tier nothing runs is a tier nothing can tell apart from a passing
+ * one.
  *
  * <p>
  * Shell and YAML rather than bytecode is why this is plain JUnit and not ArchUnit, following the precedent set by
