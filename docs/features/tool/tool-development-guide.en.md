@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/tool/tool-development-guide.md
-source_commit: c976edc7
+source_commit: eec9ccd
 ---
 
 # Tool Development Guide

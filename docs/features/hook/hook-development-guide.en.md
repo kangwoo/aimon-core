@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-development-guide.md
-source_commit: d57e3e45
+source_commit: eec9ccd
 ---
 
 # Hook Development Guide
