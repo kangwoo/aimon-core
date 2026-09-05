@@ -97,6 +97,12 @@ jobs:
       # ~/.cache/ms-playwright is the driver's default registry directory on Linux. Chromium alone: 280 MB over the
       # wire, 520 MB unpacked, 229 MB as a zstd cache entry (measured 2026-09-05). The default browser set would be
       # 479 MB / 1.0 GB, and nothing here launches firefox or webkit.
+      #
+      # On a version bump this entry grows rather than rotates: `install chromium` adds the new revision and the
+      # driver only garbage-collects revisions nothing references, so a `restore-keys` hit carries the old build
+      # along until that sweep drops it -- roughly +229 MB per bump in the worst case, against GitHub's 10 GB
+      # repository-wide budget with its own LRU eviction. Left alone deliberately: bumps are rare, eviction is
+      # already someone's job, and the alternative (never falling back) pays the full 280 MB download every time.
       - name: Cache Playwright browsers
         uses: actions/cache@v4
         with:
@@ -168,15 +174,28 @@ jobs:
       # measure aimon-browser-playwright with its browser tests excluded -- 83.7% line instead of 88.2% -- which is
       # the same "coverage measured with the tests excluded" mistake the `coverage` job below exists to correct for
       # the docker tier. The module's floor is set from the complete picture, so it would also fail.
+      #
+      # The two globs are checked SEPARATELY, and that is the whole point of the extra lines. Collecting them into
+      # one array and testing it for emptiness only fires when BOTH are empty -- and they are wildly asymmetric:
+      # twenty-odd modules produce `test.exec` and exactly one produces `playwrightTest.exec`. Every unit-tier file
+      # could vanish and the single browser one would still carry the array past the guard, tarring one file. The
+      # `coverage` job would then compute 0% for every other module and fail on the floor, blaming a coverage drop
+      # for a hand-off that lost the data -- naming the wrong culprit, which is precisely what the comment on that
+      # job says the two-job split exists to avoid.
       - name: Archive unit-tier coverage data
         run: |
           shopt -s nullglob
-          exec_data=(modules/*/build/jacoco/test.exec modules/*/build/jacoco/playwrightTest.exec)
-          if [ ${#exec_data[@]} -eq 0 ]; then
+          unit_exec=(modules/*/build/jacoco/test.exec)
+          browser_exec=(modules/*/build/jacoco/playwrightTest.exec)
+          if [ ${#unit_exec[@]} -eq 0 ]; then
             echo "::error::The test task produced no JaCoCo execution data; the coverage job would report every module at 0%."
             exit 1
           fi
-          tar -cf jacoco-exec-unit.tar "${exec_data[@]}"
+          if [ ${#browser_exec[@]} -eq 0 ]; then
+            echo "::error::playwrightTest produced no JaCoCo execution data; the coverage job would measure aimon-browser-playwright at 83.7% and fail its 87 floor."
+            exit 1
+          fi
+          tar -cf jacoco-exec-unit.tar "${unit_exec[@]}" "${browser_exec[@]}"
 
       # `continue-on-error` on the same policy as the upload above: a full storage quota must not overturn
       # the verdict of checks that passed -- which is precisely what went wrong once, turning a build that
@@ -330,9 +349,13 @@ jobs:
           name: jacoco-exec-integration
 
       # Repository-root-relative paths, so every file lands back under modules/<module>/build/jacoco/ where
-      # the fileTree in aimon.java-conventions looks for it. The two tars can never name the same file: the
-      # `build` job runs only `test`, the `integration` job only `integrationTest`. The listing is the
-      # evidence -- without it, a hand-off that quietly restored nothing would look exactly like a green run.
+      # the fileTree in aimon.java-conventions looks for it. The two tars can never name the same file, though not
+      # for the reason this comment used to give -- it said the `build` job "runs only `test`", which was already
+      # loose (that job also runs `packagingTest`) and is now plainly wrong (it runs `playwrightTest` too). What
+      # actually holds is narrower and survives another tier being added: each job archives exec files named after
+      # tasks the other job never runs, and a Test task writes its own `<taskName>.exec` whether or not any test
+      # matched. The listing is the evidence -- without it, a hand-off that quietly restored nothing would look
+      # exactly like a green run.
       - name: Restore coverage execution data
         run: |
           tar -xf jacoco-exec-unit.tar
