@@ -15,7 +15,7 @@ import at.aimon.core.memory.MemoryIngestMode;
  *
  * <p>
  * When present in {@code aimon.yaml}, the {@link at.aimon.cli.factory.AgentSetupFactory}
- * builds a {@link at.aimon.memory.file.FileRepresentationStore} backed by
+ * builds a {@link at.aimon.core.memory.file.FileRepresentationStore} backed by
  * {@code storagePath}, registers {@link at.aimon.core.tools.memory.MemoryRecallTool},
  * and installs a {@link at.aimon.core.tools.memory.MemoryToolContextEnricher} so
  * the tool resolves the workspace + observer for every tool call.
@@ -40,7 +40,7 @@ public class MemoryConfig {
 
     private static final Logger log = LoggerFactory.getLogger(MemoryConfig.class);
 
-    /** Durable single-node backend: file-backed JSONL stores ({@code aimon-memory-file}). Default. */
+    /** Durable single-node backend: file-backed JSONL stores ({@code at.aimon.core.memory.file}). Default. */
     public static final String BACKEND_FILE = "file";
 
     /** Non-durable backend: in-memory stores. Lost on restart; dev/test only. */

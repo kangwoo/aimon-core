@@ -88,11 +88,74 @@ Semantic Versioning 은 `0.x` 를 "아직 안정을 약속하지 않은 구간"�
 | 툴 컨텍스트의 와이어 키 (`"conversationId"` 등) | **동결** |
 | Redis 키 prefix, Postgres DDL | **동결** |
 
-`aimon-session-*` / `aimon-memory-*` 백엔드로 이미 데이터를 쌓아 둔 쪽에게는, 자바 API 보다 이쪽이
+`aimon-session-*` 백엔드로 이미 데이터를 쌓아 둔 쪽에게는, 자바 API 보다 이쪽이
 중요하다. 그래서 자바 이름이 `Session*` 로 바뀐 뒤에도 저장된 이름은 `conversation_*` 로 남아 있다 —
 **어긋나 보이는 것이 정상이고, 그것이 약속의 증거다.**
 
 깨야 할 일이 생기면 마이그레이션 경로 없이는 하지 않는다.
+
+### 4.1 표면이 **없어지는** 것은 그 약속을 깨는 것이 아니다
+
+이 절은 한때 `aimon-memory-*` 백엔드의 DDL 과 컬렉션 이름도 이름으로 지목해 동결했다. 그
+`aimon-memory-{mongodb,postgres}` 두 모듈은 **제거되었다** — 아직 릴리스되지 않았고
+[`CHANGELOG`](../../CHANGELOG.md) 의 `[Unreleased]` 에 있다. 위 문장과 모순처럼 보이므로 경계를
+여기서 못박는다.
+
+번호를 여기 박지 않는 것은 게으름이 아니다. **§1 이 그 번호를 이미 정하고 있다** — 이것은 아래에서
+스스로 "깨지는 변경" 이라고 부르는 것이므로 `0.2.x` 패치로는 나갈 수 없고, `0.x` 에서 그런 변경이
+타는 자리는 마이너 올림이다. 실제 번호는 릴리스가 정하며, 그때까지 이 문서가 존재하지 않는 버전을
+가리키고 있으면 **이 문서의 존재 이유 — 어느 올림이 무엇을 깨는가 —** 가 첫 예시부터 틀린다.
+
+동결은 **살아 있는 표면**에 대한 약속이다. *"같은 데이터를 계속 읽으면서 이름만 바꾸지 않는다"*
+— 그것이 지금까지 `conversation_*` 를 지켜 온 규칙이다. 모듈이 없어지는 것은 다른 사건이다: 새 코드가
+옛 이름으로 옛 데이터를 잘못 읽는 일이 일어날 수 없다. **읽는 코드가 없기 때문**이다.
+
+| 사건 | 동결 약속의 적용 |
+|---|---|
+| 자바 타입을 개명한다 | **적용된다.** 저장된 이름은 따라 바뀌지 않는다 ([`rename-maps.md`](../migration/rename-maps.md)) |
+| 컬럼/컬렉션 이름을 고친다 | **적용된다.** 마이그레이션 경로 없이는 하지 않는다 |
+| 모듈을 제거한다 | **적용되지 않는다.** 지킬 대상이 남지 않는다 — 대신 아래 두 가지를 진다 |
+
+제거가 공짜라는 뜻은 아니다. 두 가지를 대신 진다.
+
+1. **`0.x` 의 제거 규칙을 그대로 따른다** — §3·§5 의 절차이며, 그 백엔드로 데이터를 쌓아 둔 쪽에게는
+   **깨지는 변경**이다. `CHANGELOG` 의 `[Unreleased]` 가 그렇게 적고 있다
+2. **"이전(migration)이 아니라 제거"임을 말한다.** 분산 메모리는 이제 별도 저장소의 서비스
+   ([aimon-memory](https://github.com/kangwoo/aimon-memory))가 맡지만, **그 서비스의 스키마는 다른
+   물건이고 옛 `mem_*` 데이터가 그리로 옮겨가지 않는다.** 이름이 비슷해서 이전으로 읽히는 것이 가장
+   비싼 오해이므로 문서마다 같은 문장으로 적는다
+
+`aimon-memory-file` 은 제거가 아니라 **흡수**였고, 따라서 동결이 그대로 적용된다 — JSONL 저장 포맷과
+파일 레이아웃은 한 글자도 바뀌지 않았다. 바뀐 것은 좌표(`aimon-core` 안으로)와 자바 패키지
+(`at.aimon.memory.file` → `at.aimon.core.memory.file`)뿐이며, 그것은 §3 의 개명이므로
+[`rename-maps.md`](../migration/rename-maps.md) 에 표가 있다.
+
+### 4.2 역방향 결합 — core 의 `PeerMemory` 는 이제 다른 저장소의 빌드를 깬다
+
+위 절들은 전부 **이 저장소가 소비자에게 지는 의무**를 말한다. `PeerMemory` 하나는 방향이 반대인 결합을
+새로 만들었으므로 따로 적는다.
+
+[aimon-memory](https://github.com/kangwoo/aimon-memory) 의 `aimon-memory-client` 는
+`at.aimon.core.memory.PeerMemory` 와 그 다섯 티어 인터페이스에 **컴파일된다**. 릴리스된 좌표
+(`at.aimon.core:aimon-core:0.2.4` 이상)에 대해서만 그렇게 하도록 그쪽 빌드에 가드가 있다 —
+`verifyCoreIsReleased` 는 aimon-core 가 프로젝트로 치환되었거나 그 jar 에 `PeerMemory` 가 없으면
+publish 를 거절한다.
+
+결과는 이렇다.
+
+- **`PeerMemory` 와 다섯 티어 인터페이스(`MemorySnapshotReader` · `MemorySearcher` ·
+  `DialecticEngine` · `ObservationRecorder` · `MemoryIngestor`)와 그 요청·결과 값 객체는, 이 저장소의
+  기준으로 공개 API 일 뿐 아니라 다른 저장소의 컴파일 대상이다.** 여기서 시그니처를 바꾸면 그쪽 빌드가
+  깨지고, 그 사실은 **다음 릴리스가 나가고 그쪽이 좌표를 올릴 때** 드러난다 — 이 빌드는 초록인 채로
+- **그러므로 순서가 있다.** 티어 SPI 를 바꿀 때는 (1) 여기서 `@Deprecated` 로 한 릴리스 겹치게 두고
+  (§5), (2) 릴리스한 뒤, (3) 그쪽이 새 좌표로 올라오게 한다. 반대 순서는 그쪽을 컴파일 불가 상태로
+  세워 둔다
+- **`aimon-memory-testkit` 이 배포되는 이유가 이것이기도 하다.** 그 스위트가 계약의 코드 표현이므로,
+  그쪽은 시그니처가 아니라 **행동**이 어긋난 것도 자기 빌드에서 잡을 수 있다
+
+`aimon-memory-testkit` 자체도 배포되는 순간 같은 성격의 표면이 된다 —
+`AbstractPeerMemoryContractTest` 의 protected 확장점(`newBackend()` 등)은 그쪽 테스트가 override 하는
+것이므로 §2 의 공개 API 규칙이 적용된다.
 
 ---
 

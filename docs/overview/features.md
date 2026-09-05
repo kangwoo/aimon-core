@@ -345,9 +345,9 @@ IMPORTANT (알려진 오칭): `OnSessionStartHook` / `OnSessionEndHook` 은 세�
 | 정합화 · 변증 · 드리머 | `memory.reconciler`, `memory.dialectic`, `memory.dreamer` | core |
 | 색인 / 레닥션 | `memory.index`, `memory.redaction` | core |
 | 조회 도구 | `MemoryRecall`, `MemorySearch`, `MemoryChat` | core |
-| 파일 백엔드 | — | `aimon-memory-file` |
-| PostgreSQL 백엔드 | — | `aimon-memory-postgres` |
-| MongoDB 백엔드 | — | `aimon-memory-mongodb` |
+| 파일 백엔드 | `memory.file` | core |
+| 원격 백엔드 (멀티 인스턴스) | `PeerMemory` 구현 | 별도 저장소 — [aimon-memory](https://github.com/kangwoo/aimon-memory) |
+| 백엔드 계약 스위트 | `AbstractPeerMemoryContractTest` | `aimon-memory-testkit` |
 
 **관련 문서**
 - [메모리 사용 가이드](../features/memory/memory-usage-guide.md)

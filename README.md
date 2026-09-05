@@ -58,9 +58,13 @@ This is a multi-module Gradle project. The framework core is in `aimon-core`; ev
 | Module | Purpose |
 |---|---|
 | `aimon-knowledge-opensearch` | OpenSearch-backed knowledge store / retrieval |
-| `aimon-memory-file` | File-backed agent memory store |
-| `aimon-memory-postgres` | PostgreSQL-backed agent memory store |
-| `aimon-memory-mongodb` | MongoDB-backed agent memory store |
+| `aimon-memory-testkit` | The five-tier `PeerMemory` contract suite every memory backend runs |
+
+Agent memory itself is in `aimon-core`: the `PeerMemory` SPI, the store-backed default backend, and its
+node-local stores (in-memory and file-backed JSONL, `at.aimon.core.memory.file`). A distributed memory
+backend is a separate service consumed through `PeerMemory` — see
+[aimon-memory](https://github.com/kangwoo/aimon-memory), whose `aimon-memory-client` implements that SPI
+over HTTP.
 
 ### Workflow
 

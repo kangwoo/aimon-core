@@ -169,8 +169,10 @@ class IndexedObservationStoreTest {
 
     /**
      * Minimal in-memory {@link ObservationStore} stand-in that records writes and
-     * throws from {@link #semanticSearch} just like {@code PostgresObservationStore},
-     * so the test proves the decorator (not the delegate) answers searches.
+     * throws from {@link #semanticSearch}, so the test proves the decorator (not
+     * the delegate) answers searches. It stands in for a metadata-only store —
+     * a shape this repository no longer ships one of, since the two that had it
+     * left with the distributed memory backends.
      */
     private static final class RecordingStore implements ObservationStore {
         final Map<ObservationId, Observation> storage = new LinkedHashMap<>();

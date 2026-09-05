@@ -194,12 +194,13 @@ tasks.withType<JacocoReport>().configureEach {
 
 // The coverage floor. Values live in gradle/coverage-baselines.properties — data as data, so that moving a
 // number is a one-line diff a reviewer can read, and so the whole frozen set is visible on one page rather
-// than scattered across twenty-three build files.
+// than scattered across the twenty build files that carry a floor.
 //
 // A module with no entry gets no rule rather than a floor of zero. Zero would be a rule that always passes,
 // which reads as "verified" in the task list and verifies nothing; absence at least tells the truth. The
 // modules legitimately absent are the ones with no coverage report at all — aimon-bom (a java-platform),
-// the two testkits, and the samples.
+// the three testkits (filesystem, session, memory — all main sources and no tests of their own; publishing
+// the memory one did not change that), and the samples.
 val coverageBaselines = Properties().apply {
     val file = rootProject.file("gradle/coverage-baselines.properties")
     if (file.exists()) {

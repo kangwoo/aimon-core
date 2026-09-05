@@ -149,13 +149,12 @@ modules/
 ├── aimon-sandbox-kubernetes     # Kubernetes backend
 │
 ├── aimon-session-routing        # Multi-node session routing (SPIs live in aimon-core)
+├── aimon-session-testkit        # Shared multi-node session contract tests
 ├── aimon-session-redis          # Redis session store
 ├── aimon-session-postgres       # PostgreSQL session store
 ├── aimon-session-mongodb        # MongoDB session store
 │
-├── aimon-memory-file            # File-backed agent memory store
-├── aimon-memory-mongodb         # MongoDB-backed agent memory store
-├── aimon-memory-postgres        # PostgreSQL-backed agent memory store
+├── aimon-memory-testkit         # Shared five-tier PeerMemory contract suite (published)
 │
 ├── aimon-knowledge-opensearch   # OpenSearch knowledge store
 ├── aimon-scheduling-quartz      # Distributed cron scheduler

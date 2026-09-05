@@ -44,7 +44,7 @@ flowchart TB
     browser["🖥 브라우저<br/>Playwright"]
 
     sessiondb[("세션 저장소<br/>Redis · PostgreSQL · MongoDB")]
-    memorydb[("메모리 저장소<br/>파일 · PostgreSQL · MongoDB")]
+    memorydb[("메모리<br/>코어 파일 백엔드 · 원격 서비스")]
     knowledge[("지식 저장소<br/>OpenSearch")]
     filestore[("파일 스토리지<br/>GridFS · S3 · 로컬 디스크")]
     quartzdb[("스케줄러 저장소<br/>Quartz JDBC")]
@@ -79,7 +79,7 @@ flowchart TB
 |---|---|---|---|---|
 | **LLM 프로바이더** | ReAct 루프의 매 iteration | 나감 (HTTPS) | `aimon-llm-openai` · `aimon-llm-anthropic` | **루프가 돌지 않는다.** 코어에는 `LlmClient` 구현이 없다 |
 | **세션 저장소** | 레코드·리스·인박스·시그널·idempotency | 양방향 | `aimon-session-{redis,postgres,mongodb}` | in-memory 기본 구현 — 단일 노드 전용, 재시작 시 대화 소실 |
-| **메모리 저장소** | 관찰 축적과 장기 기억 승격 | 양방향 | `aimon-memory-{file,postgres,mongodb}` | 메모리 기능이 꺼진다 |
+| **메모리** | 관찰 축적과 장기 기억 승격 | 양방향 | 코어 내장(in-memory · `at.aimon.core.memory.file`), 멀티 인스턴스는 원격 `PeerMemory` 백엔드 — [aimon-memory](https://github.com/kangwoo/aimon-memory) | 메모리 기능이 꺼진다 |
 | **지식 저장소** | RAG 검색, 위키 | 양방향 | `aimon-knowledge-opensearch` | `KeywordKnowledgeStore` (코어) 로 키워드 검색만 |
 | **파일 스토리지** | 에이전트가 보는 파일 세계 | 양방향 | `aimon-filesystem-gridfs` · `aimon-filesystem-s3` | 로컬 디스크 (`filesystem.impl.local`) |
 | **샌드박스 런타임** | 격리된 명령 실행 | 나감 | `aimon-sandbox-docker` · `aimon-sandbox-kubernetes` | `LocalShell` — 호스트 프로세스 권한으로 그대로 실행된다 |

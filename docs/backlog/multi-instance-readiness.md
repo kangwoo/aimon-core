@@ -76,18 +76,27 @@ fail-closed 라는 것과, 그래서 결과가 권한 상승이 아니라 마찰
 
 ## 1. 축별 준비도 — 무엇이 실제로 분산 가능한가
 
-2026-08-31 기준. "분산 구현" 은 이 저장소 안의 out-of-process 백엔드를 뜻한다.
+2026-08-31 기준(메모리 행은 2026-09-05 갱신 — 아래). "분산 구현" 은 이 저장소 안의 out-of-process
+백엔드를 뜻한다.
 
 | 축 | SPI | 분산 구현 | 스택에 꽂는 길 |
 |----|-----|----------|---------------|
 | 세션 레코드·리스·인박스·신호·멱등 | `SessionRecordStore` · `SessionLeaseStore` · `SessionInbox` · `SessionSignalBus` · `IdempotencyStore` | **Redis · Postgres · Mongo** | `SessionSpec` |
 | 배경 작업 | `BackgroundTaskStore` | **Redis · Postgres · Mongo** | `SessionSpec` |
-| 메모리 | `ObservationStore` · `RepresentationStore` · `WorkspaceStore` · `DerivationQueueManager` | **File · Postgres · Mongo** | `MemorySpec` |
+| 메모리 | `PeerMemory` (다섯 티어). 저장소 SPI 셋은 기본 백엔드의 재료로 격하됨 | **없음** — `aimon-memory-{postgres,mongodb}` 제거됨. 분산 메모리는 이 저장소 밖의 원격 `PeerMemory` 백엔드다 | `MemorySpec` |
 | 지식 | `KnowledgeStore` | **OpenSearch** | `AimonStackSpec.getKnowledgeStore` |
 | 자격증명 | `CredentialStore` | 없음 | `AimonStackSpec.getCredentialStore` |
 | 스케줄 저장소·가드 | `ScheduledTaskRepository` · `ScheduledExecutionGuard` · `ScheduledTaskInterruptBus` | 없음 — **B-7** | `SchedulingSpec` (B-34 가 뚫었다) |
 | 서브에이전트 산출물 | `TaskOutputStore` · `TaskResultStore` · `SessionSnapshotStore` | **VFS 경유** (GridFS · S3) | 런타임 팩토리 |
 | **승인 · 보류턴 · 메시지 큐** | `AgentApprovalStore` · `SessionApprovalStore` · `PendingTurnRegistry` · `MessageQueueRepository` | 없음 — **M-2** | `SkillApprovalSpec` · `AimonStackSpec` (M-1 이 뚫었다) |
+
+메모리 행은 이번에 값이 뒤집힌 유일한 칸이다. 표의 정의가 **이 저장소 안의** out-of-process 백엔드
+이므로, `aimon-memory-{postgres,mongodb}` 가 제거된 지금 참값은 "없음" 이다. 이것은 후퇴가 아니라
+교체 지점이 옮겨간 것이다 — 멀티 인스턴스 메모리는 세 저장소 인터페이스를 구현해서가 아니라
+`PeerMemory` 백엔드 전체를 바꿔서 얻고, 그 구현은 별도 저장소의 서비스
+([aimon-memory](https://github.com/kangwoo/aimon-memory))다. 근거는
+[`pluggable-memory-backend.md`](../design/memory/pluggable-memory-backend.md) §4.3.
+따라서 이 칸의 "없음" 은 아래 세 줄의 "없음"(구현할 사람이 없었다)과 성격이 다르며, 여는 항목이 아니다.
 
 마지막 줄만 두 칸이 다 비어 있었다. 그리고 **두 칸이 빈 이유가 서로 달랐다** — 구현이 없는 것은
 소비자가 없어서이고(B-7 과 같은 트리거 대기), 길이 없는 것은 아무도 그 자리를 만들지 않아서다.

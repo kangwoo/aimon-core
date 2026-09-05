@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/features.md
-source_commit: 5a7e80ff
+source_commit: eec9ccd
 ---
 
 # Feature Catalog
@@ -361,9 +361,9 @@ long-term memory. Unlike a session transcript it survives **across sessions**.
 | reconciliation · dialectic · dreamer | `memory.reconciler`, `memory.dialectic`, `memory.dreamer` | core |
 | indexing / redaction | `memory.index`, `memory.redaction` | core |
 | the retrieval tools | `MemoryRecall`, `MemorySearch`, `MemoryChat` | core |
-| file backend | — | `aimon-memory-file` |
-| PostgreSQL backend | — | `aimon-memory-postgres` |
-| MongoDB backend | — | `aimon-memory-mongodb` |
+| file backend | `memory.file` | core |
+| remote backend (multiple instances) | a `PeerMemory` implementation | a separate repository — [aimon-memory](https://github.com/kangwoo/aimon-memory) |
+| backend contract suite | `AbstractPeerMemoryContractTest` | `aimon-memory-testkit` |
 
 **Related documents**
 - [memory usage guide](../features/memory/memory-usage-guide.en.md)

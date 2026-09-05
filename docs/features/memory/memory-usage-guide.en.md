@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/memory/memory-usage-guide.md
-source_commit: 85a7061
+source_commit: 7ad65b7
 ---
 
 # Memory (Peer Memory) Usage Guide
@@ -342,7 +342,7 @@ There is no model-name entry — the deriver already carries its own model from 
 The following can currently be chosen **only by assembling programmatically (§10/§11)** in the core and its modules; they are not yet exposed on the CLI's yaml configuration surface (a future CLI config surface is planned — this is un-exposed, not broken):
 
 - **Choosing the redaction policy (`default`|`strict`|`none`|`custom`)** — the CLI always uses `DefaultRedactionPolicy`.
-- **The PostgreSQL backend (`aimon-memory-postgres`)** — the CLI wires only `file`/`in-memory` (§9.2 is the hand-assembly path).
+- **A remote `PeerMemory` backend** — the CLI wires only `file`/`in-memory` (§9.2).
 - **`ReActLlmDeriver`** — the CLI uses the single-shot `LlmDeriver`.
 
 The combination the CLI currently uses is: `DefaultRedactionPolicy` + `LlmDeriver` + the configured `file`/`in-memory` backend.
@@ -373,21 +373,14 @@ All three kinds of store (`WorkspaceStore`, `ObservationStore`, `RepresentationS
 | Backend | Module | Implementations | Use |
 |--------|------|--------|------|
 | In-memory | `aimon-core` | `InMemory*Store` | Development/testing only (lost on restart, OOM past ~10k entries) |
-| File | `aimon-memory-file` | `File*Store` (JSONL append log + compaction + a file lock) | Single-node persistence (§9.1) |
-| PostgreSQL | `aimon-memory-postgres` | `Postgres*Store` + `PostgresDerivationQueueManager` + `KnowledgeStoreOutboxRelay` | Multi-instance production (row-lock queue, outbox→KnowledgeStore) |
-| MongoDB | `aimon-memory-mongodb` | `Mongo*Store` | Multi-instance production (the collections are the SSOT, soft-delete/retention) (§9.3) |
+| File | `aimon-core` (`at.aimon.core.memory.file`) | `File*Store` (JSONL append log + compaction + a file lock) | Single-node persistence (§9.1) |
 
-- Vector search does not get its own RAG stack; it is delegated to a `KnowledgeStore` (e.g. `aimon-knowledge-opensearch`) under `KnowledgeScope("memory.observation")`. The `ObservationStore`s of `Postgres*`/`Mongo*` are metadata-only, so their `semanticSearch` throws `UnsupportedOperationException`, and search is restored with the `IndexedObservationStore` decorator (§9.2(3)).
-- When using `aimon-memory-postgres` together with `aimon-session-postgres`, a **separate DataSource** is recommended even on the same instance (schema prefixes `mem_*` vs `session_*`). The same goes for MongoDB — a separate DB is recommended (collection prefix `mem_*`).
+- **Both of these are limited to a single JVM.** Running several instances is not a matter of swapping the stores but of replacing the backend, and that path is §9.2.
+- Vector search does not get its own RAG stack; it is delegated to a `KnowledgeStore` (e.g. `aimon-knowledge-opensearch`) under `KnowledgeScope("memory.observation")`. A deployment on a metadata-only `ObservationStore` may see `semanticSearch` throw `UnsupportedOperationException`, and search is restored with the `IndexedObservationStore` decorator.
 
-### 9.1 The file backend (`aimon-memory-file`)
+### 9.1 The file backend (`at.aimon.core.memory.file`)
 
-Persistence built on a **JSON-line append log**, for a single node before PostgreSQL comes in. Each of the three stores has its own log file.
-
-```gradle
-// build.gradle.kts
-implementation(project(":aimon-memory-file"))
-```
+Persistence built on a **JSON-line append log**, for a single node — the option before a remote memory service is wired in, or when none is needed (§9.2). Each of the three stores has its own log file.
 
 ```java
 WorkspaceStore workspaceStore = new FileWorkspaceStore(Paths.get(".aimon/memory/workspaces.jsonl"));
@@ -408,7 +401,7 @@ How it behaves:
   ObservationStore store = new FileObservationStore(path, index, /* fsyncOnAppend */ true);
   ```
 - **Compaction (keeping the log from growing forever)** — since `save`/`delete`/`merge`/`softDelete` only append, the log grows monotonically. All three stores offer `Compactable.compact()` (an atomic rewrite down to the minimal set of lines for the current live + audit state: temp → fsync → `ATOMIC_MOVE`); when the journal passes `max(10_000, live×3)` lines it **compacts automatically**, and **at startup** a replay that finds a bloated log compacts it once → disk and restart cost become proportional to the live state rather than to the whole history.
-- **A single process, enforced (an OS file lock)** — the constructor takes an exclusive `FileLock` on a sidecar `<log>.lock`. Opening the same log a second time (from another process or the same JVM) **fails immediately** with an `AimonException` — instead of corrupting silently. The stores are `AutoCloseable`, so the lock is released on `close()` (or on JVM exit). For multiple instances / scale-out, see §9.2 (PostgreSQL) or §9.3 (MongoDB).
+- **A single process, enforced (an OS file lock)** — the constructor takes an exclusive `FileLock` on a sidecar `<log>.lock`. Opening the same log a second time (from another process or the same JVM) **fails immediately** with an `AimonException` — instead of corrupting silently. The stores are `AutoCloseable`, so the lock is released on `close()` (or on JVM exit). For multiple instances / scale-out, see §9.2.
 - **Soft-delete + audit retention** — the loser of a `merge` and the target of `softDelete(id)` are not discarded immediately; they are soft-deleted into an audit window and survive replay. `purgeSoftDeletedBefore(ws, cutoff)` enforces that window.
 - **A retention/compaction scheduler independent of the Dreamer** — `FileMemoryMaintenanceScheduler` periodically (every 6 hours by default) runs `purgeSoftDeletedBefore` per workspace (30 days by default) plus `RepresentationStore.deleteOlderThan` (90 days by default), then `compact()` on every store. Retention and disk are guaranteed even with the Dreamer switched off. The CLI starts it automatically under `backend: file` and stops it in `AgentSetup.close()`.
   ```java
@@ -420,124 +413,32 @@ How it behaves:
 - **`findAll` access control** — `FileWorkspaceStore.findAll(Principal)` filters through a `WorkspaceAccessPolicy` (by default `DefaultWorkspaceAccessPolicy`: everything for SYSTEM/SERVICE; for USER/GROUP, whatever is unowned or matches the `acl.owner`/`acl.members` metadata). Inject a policy into the constructor to replace it.
 - The CLI's `memory.storagePath` is both the log path for `FileRepresentationStore` and the reference point for its sibling file `observations.jsonl`. **Under `backend: file` (the CLI default), `createObservationStore` also wires a `FileObservationStore`, so observations are persisted to `observations.jsonl` too.** To make observations volatile, write `backend: in-memory` explicitly.
 
-### 9.2 The PostgreSQL backend (`aimon-memory-postgres`)
+### 9.2 Multiple instances — a separate memory service
 
-The backend for multi-instance production. The metadata lives in PostgreSQL, **the vectors in a `KnowledgeStore`**, and an outbox joins the two (design §5.2).
+> **`aimon-memory-postgres` and `aimon-memory-mongodb` have been removed.** The two backend assembly
+> procedures this section used to carry — Flyway / `V1__init.sql`, the `mem_outbox` relay, `init.js`,
+> the row-locked derivation queue — are no longer in this repository.
 
-```gradle
-// build.gradle.kts
-implementation(project(":aimon-memory-postgres"))
-```
+Multi-instance memory is now a matter of **replacing the whole backend, not the storage behind it**. The
+replacement point is not the three store interfaces but the five tiers of
+`at.aimon.core.memory.PeerMemory`, and what fills them is a service in a repository of its own —
+[aimon-memory](https://github.com/kangwoo/aimon-memory) (Postgres + pgvector, its own derivation worker,
+an HTTP API). That repository's `aimon-memory-client` implements `PeerMemory` as `RemotePeerMemory`, so an
+application changes which `PeerMemory` it assembles and nothing else.
 
-**(1) Applying the schema — operator-applied.** The runtime never executes DDL. Apply it by hand, once per environment:
+| Gone | What took its place |
+|---|---|
+| `PostgresDerivationQueueManager` (the row-locked derivation queue) | `aimon-memory-worker`'s `WorkerLoop` and its Representation / Summary / Dream / Deletion consumers |
+| `KnowledgeStoreOutboxRelay` (outbox → embedding index) | pgvector natively (`Vectors`, `EmbeddingDimensionCheck`, `aimon-memory-embed`) |
+| `Postgres`/`Mongo` `{Observation,Representation,Workspace}Store` | `aimon-memory-store` — Flyway plus twelve JDBC repositories |
 
-```bash
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
-  -f modules/aimon-memory-postgres/src/main/resources/db/postgres/V1__init.sql
-```
+IMPORTANT: **this is removal, not migration.** The service's schema is a different design keyed on
+`(workspace, observer, observed)`, and the data in the old `mem_*` tables and collections **does not move
+into it**. A deployment holding data in either backend stays on `0.2.4`, or starts empty on the service.
 
-The tables it creates: `mem_workspace`, `mem_observation`, `mem_representation`, `mem_active_work_unit` (the row-lock claim on a work unit) and `mem_outbox` (the queue that syncs embeddings to the KnowledgeStore).
-
-**(2) Preparing the DataSource.** Every store takes a `DataSource` plus a Jackson `ObjectMapper`. A Hikari pool, for example:
-
-```java
-HikariConfig cfg = new HikariConfig();
-cfg.setJdbcUrl(System.getenv("DATABASE_URL"));   // jdbc:postgresql://host:5432/aimon
-cfg.setUsername(System.getenv("DB_USER"));
-cfg.setPassword(System.getenv("DB_PASSWORD"));
-cfg.setMaximumPoolSize(16);
-DataSource dataSource = new HikariDataSource(cfg);
-
-ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();   // JavaTimeModule and friends
-```
-
-**(3) Assembling the stores.**
-
-```java
-WorkspaceStore      workspaceStore      = new PostgresWorkspaceStore(dataSource, mapper);
-RepresentationStore representationStore = new PostgresRepresentationStore(dataSource, mapper);
-ObservationStore    metadataStore       = new PostgresObservationStore(dataSource, mapper);
-```
-
-> ⚠️ **`PostgresObservationStore.semanticSearch()` throws `UnsupportedOperationException`.** This store is *metadata-only* (the C3 split). Semantic search is restored by combining the metadata store with a search index through the core's `IndexedObservationStore` decorator:
->
-> ```java
-> ObservationIndex index = new KnowledgeStoreObservationIndex(knowledgeStore);
-> ObservationStore observationStore = new IndexedObservationStore(metadataStore, index);
-> // observationStore.semanticSearch(...) now works, and the metadata is still persisted in PostgreSQL.
-> ```
->
-> `IndexedObservationStore` is **write-through** — it syncs the index on every `save`/`delete`/`merge` and hydrates the ids a `search` returns into metadata. That is the **synchronous, direct-indexing** path, so **pick it or the outbox relay of §9.2(4), not both** (pointing both at the same `KnowledgeStore` index indexes everything twice). The outbox's advantage is transactional consistency; the decorator's is simplicity.
-
-**(4) The embedding-sync outbox pump.** `ObservationStore.save` inserts a pending embedding into `mem_outbox` in the same transaction as `mem_observation`. A separate worker drains it and upserts/deletes into the `KnowledgeStore` (eventual consistency).
-
-```java
-KnowledgeStoreOutboxRelay relay = new KnowledgeStoreOutboxRelay(dataSource, knowledgeStore);
-relay.start();                 // starts the daemon poller (idempotent)
-// ... or, in a test or batch job, just once: DrainResult r = relay.drainOnce();
-// on shutdown: relay.close();
-```
-
-Tuning goes through the full constructor, which takes `RelayOptions` (poll batch size, claim lease duration, poll interval, max attempts, nodeId) and the `KnowledgeScope` agent name:
-
-```java
-RelayOptions options = RelayOptions.builder().pollBatchSize(100).pollIntervalMillis(1000)
-        .claimDurationSeconds(30).maxAttempts(5).nodeId("relay-1").build();
-KnowledgeStoreOutboxRelay relay =
-        new KnowledgeStoreOutboxRelay(dataSource, knowledgeStore, "memory.observation", options);
-```
-
-**(5) The multi-instance derivation queue.** Swap the in-memory queue for the row-lock-based one and several nodes serialise safely on the same work unit (`SELECT … FOR UPDATE SKIP LOCKED`).
-
-```java
-DerivationQueueManager queue = new PostgresDerivationQueueManager(
-        dataSource, deriver, redactionPolicy, DeriverProperties.defaults());
-queue.start();
-```
-
-> Each instance is issued a `holderId` (a UUID) that distinguishes claim ownership in `mem_active_work_unit`. An expired claim is stolen by another node.
-
-### 9.3 The MongoDB backend (`aimon-memory-mongodb`)
-
-The **multi-instance** backend for when you already run MongoDB (`aimon-session-mongodb` / `aimon-filesystem-gridfs`) and want memory in that single datastore too. The collections are the single source of truth (there is no in-memory mirror), so several nodes can share one DB.
-
-```gradle
-// build.gradle.kts
-implementation(project(":aimon-memory-mongodb"))
-```
-
-**(1) Applying the schema — operator-applied.** The runtime does not execute DDL (the same policy as the PostgreSQL backend). Apply it once per cluster:
-
-```bash
-mongosh "$MONGODB_URI" modules/aimon-memory-mongodb/src/main/resources/db/mongodb/init.js
-```
-
-The collections it creates: `mem_workspace`, `mem_observation`, `mem_representation` (plus indexes matching the query patterns; observation's `(workspaceId, localId)` is unique).
-
-**(2) Assembling the stores.** Every store takes a `MongoDatabase`.
-
-```java
-MongoDatabase db = mongoClient.getDatabase("aimon_memory");
-WorkspaceStore      workspaceStore      = new MongoWorkspaceStore(db);              // findAll applies the WorkspaceAccessPolicy
-RepresentationStore representationStore = new MongoRepresentationStore(db);
-ObservationStore    metadataStore       = new MongoObservationStore(db);
-```
-
-**(3) Search — metadata-only (the C3 split).** `MongoObservationStore.semanticSearch()` throws `UnsupportedOperationException`. Restore search with the `IndexedObservationStore` decorator, exactly as with PostgreSQL:
-
-```java
-ObservationIndex index = new KnowledgeStoreObservationIndex(knowledgeStore);
-ObservationStore observationStore = new IndexedObservationStore(metadataStore, index);
-```
-
-**How it behaves**
-
-- **Soft-delete + retention** — observations carry a `softDeletedAt` field; `merge`/`softDelete` set it, every query excludes it, and `purgeSoftDeletedBefore(ws, cutoff)` enforces the window (the same contract as PostgreSQL).
-- **Multi-tenant isolation** — every query is scoped by `workspaceId`, and `findAll` filters through the `WorkspaceAccessPolicy`.
-- **Atomic `create`** — a unique `_id` detects a duplicate and refuses it with `IllegalStateException` (race-safe against concurrent creation).
-- **No derivation queue** — a single node reuses the in-memory queue; when you need full multi-instance derivation serialisation, use the row-lock queue in `aimon-memory-postgres`.
-
-> MongoDB's ↔ Java time type is millisecond-precision (a BSON date), so the `Instant`s on observations and representations are truncated to milliseconds when stored (the same level as PostgreSQL's `Timestamp`).
+The design reasoning is in
+[`pluggable-memory-backend.md`](../../design/memory/pluggable-memory-backend.md) §4.3, and the
+compatibility boundary in [`api-stability.md`](../../project/api-stability.md) §4.1.
 
 ---
 
@@ -550,7 +451,7 @@ The minimal skeleton for integrating directly into an application without the CL
 Workspace workspace = Workspace.builder().id("default").build();
 PeerView observer = PeerView.of(workspace, Principal.user("agent-default", "Aimon Agent"));
 
-// 2) stores (swap for File*/Postgres* in production)
+// 2) stores (swap for File* or a remote PeerMemory backend in production)
 ObservationStore observationStore = new InMemoryObservationStore();
 RepresentationStore representationStore =
         new FileRepresentationStore(Paths.get(".aimon/memory/representations.jsonl"));
@@ -594,7 +495,7 @@ Drain the in-flight derivations with `queue.stop()` on shutdown. The memory comp
 Adding a new backend such as DynamoDB or Cassandra is **not a refactor, it is one more implementation**
 ([multi-instance-design](../../../.claude/rules/multi-instance-design.md)). All you implement are the interfaces in `at.aimon.core.memory`.
 
-> The skeleton below (§11.5) uses MongoDB as its example, but **the MongoDB backend already exists as `aimon-memory-mongodb`** (§9.3). Look at the real implementation — soft-delete/retention, the `findAll` ACL, the operator-applied `init.js`, the Testcontainers integration tests — as the reference. The spec below is the guide for building yet another backend (DynamoDB, say).
+> The skeleton below (§11.5) uses MongoDB as its example. The reference implementation to read is `at.aimon.core.memory.file` — soft-delete/retention, the `findAll` ACL, and the append log with compaction are all there. **Read §9.2 before implementing a store at all, though**: if the goal is multiple instances, what is needed is not a new store but a new `PeerMemory` backend.
 
 ### 11.1 The interfaces to implement
 
@@ -604,7 +505,7 @@ Adding a new backend such as DynamoDB or Cassandra is **not a refactor, it is on
 | `ObservationStore` | ✅ | Observation metadata, relations, confidence | `InMemoryObservationStore` |
 | `RepresentationStore` | ✅ | Representation snapshots (append-only) | `InMemoryRepresentationStore` |
 | `ObservationIndex` | optional | The search index (semantic/keyword). Separate from the metadata store | `InMemoryObservationIndex`, `KnowledgeStoreObservationIndex` |
-| `DerivationQueueManager` | optional | The multi-instance derivation queue | `InMemoryDerivationQueueManager`, `PostgresDerivationQueueManager` |
+| `DerivationQueueManager` | optional | The multi-instance derivation queue | `InMemoryDerivationQueueManager` |
 
 For most new backends, **the three stores + (optionally) an ObservationIndex** are enough. On a single node you may keep reusing the in-memory queue.
 
@@ -649,7 +550,7 @@ For most new backends, **the three stores + (optionally) an ObservationIndex** a
 
 ### 11.4 Creating the module
 
-1. Create `modules/aimon-memory-mongodb/build.gradle.kts` — `implementation(project(":aimon-core"))` plus the driver dependency.
+1. Create `modules/aimon-memory-dynamodb/build.gradle.kts` — `implementation(project(":aimon-core"))` plus the driver dependency.
 
    ```gradle
    plugins {
@@ -663,11 +564,14 @@ For most new backends, **the three stores + (optionally) an ObservationIndex** a
        implementation(libs.slf4j.api)
    }
    ```
-2. Add `include("modules:aimon-memory-mongodb")` to `settings.gradle.kts`.
-3. Use the package namespace `at.aimon.memory.mongodb` (an external module gets its own namespace). Never import `at.aimon.core.<domain>.impl` directly — depend only on the core interfaces.
+2. Add `include("modules:aimon-memory-dynamodb")` to `settings.gradle.kts`.
+3. Use the package namespace `at.aimon.memory.dynamodb` (an external module gets its own namespace — match it to the module name). Never import `at.aimon.core.<domain>.impl` directly — depend only on the core interfaces.
 4. If it is to be published, add it to the publishable list in the root `build.gradle.kts`.
 
 ### 11.5 A skeleton example (`WorkspaceStore` / MongoDB)
+
+> §11.4 used `dynamodb` for its example; the skeleton below is **a separate one written against
+> MongoDB**, which is why the package name differs. The two are not one example continued.
 
 ```java
 package at.aimon.memory.mongodb;
@@ -741,8 +645,8 @@ public final class MongoWorkspaceStore implements WorkspaceStore {
 ### 11.6 What is expected of the tests
 
 - ≥80% unit coverage. Cover the interface contract (multi-tenant isolation, the confidence range, merge semantics, the latest-lookups) with regression tests.
-- Use Testcontainers for real-DB integration (`@Tag("docker")`). Take `PostgresTestSupport` / `*IntegrationTest` in the PostgreSQL module as the pattern.
-- If you implemented a multi-instance queue, cover concurrent claims, expired-claim stealing and work-unit serialisation (see the `PostgresDerivationQueueManager` tests).
+- Use Testcontainers for real-DB integration (`@Tag("docker")`). The `*IntegrationTest`s in `aimon-session-postgres` carry the same pattern — take those as the reference.
+- If you implemented a multi-instance queue, cover concurrent claims, expired-claim stealing and work-unit serialisation.
 
 ---
 
@@ -753,7 +657,7 @@ public final class MongoWorkspaceStore implements WorkspaceStore {
 - **Recall comes back empty** → in the CLI the deriver runs **at session end**. Before the first exit there may be no representation at all.
 - **The dreamer isn't running** → look for `Peer memory dreamer disabled: <reason>` in the startup log. The embedding scorer is fail-soft when `apiKey` is missing.
 - **A secret got stored** → `redaction.policy = none` is forbidden in production (ERROR at startup). Use `default` or `strict`.
-- **Multiple instances** → the in-memory and file backends are limited to a single JVM. Scale out with `aimon-memory-postgres` (row-lock queue + outbox).
+- **Multiple instances** → the in-memory and file backends are limited to a single JVM. Scale out with a remote `PeerMemory` backend (§9.2).
 
 ---
 
@@ -764,11 +668,11 @@ public final class MongoWorkspaceStore implements WorkspaceStore {
   (`deriver/`, `dialectic/`, `dreamer/`, `reconciler/`, `redaction/`, `index/`)
 - The decorator combining a metadata store with a search index: `at.aimon.core.memory.IndexedObservationStore`
 - The exposed tools: `modules/aimon-core/src/main/java/at/aimon/core/tools/memory/`
-- The persistence modules: `modules/aimon-memory-file/`, `modules/aimon-memory-postgres/`, `modules/aimon-memory-mongodb/`
-- Single-node maintenance (file lock + compaction + retention): `at.aimon.memory.file.FileMemoryMaintenanceScheduler`, `Compactable`
+- The file backend: `modules/aimon-core/src/main/java/at/aimon/core/memory/file/`
+- Single-node maintenance (file lock + compaction + retention): `at.aimon.core.memory.file.FileMemoryMaintenanceScheduler`, `Compactable`
 - The workspace access policy: `at.aimon.core.memory.WorkspaceAccessPolicy` · `DefaultWorkspaceAccessPolicy`
-- The PostgreSQL schema (operator-applied): `modules/aimon-memory-postgres/src/main/resources/db/postgres/V1__init.sql`
-- The MongoDB schema (operator-applied): `modules/aimon-memory-mongodb/src/main/resources/db/mongodb/init.js`
+- The remote backend (multiple instances): [aimon-memory](https://github.com/kangwoo/aimon-memory) — the service and its `RemotePeerMemory` adapter
+- The backend contract suite: `modules/aimon-memory-testkit/` (`AbstractPeerMemoryContractTest`)
 - The multi-instance / store-separation rules: [`multi-instance-design.md`](../../../.claude/rules/multi-instance-design.md)
 - The CLI wiring: `modules/aimon-cli/src/main/java/at/aimon/cli/factory/AgentSetupFactory.java`,
   with the config classes `modules/aimon-cli/src/main/java/at/aimon/cli/config/MemoryConfig.java` and `MemoryDreamerConfig.java`

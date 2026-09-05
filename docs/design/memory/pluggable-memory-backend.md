@@ -1,12 +1,22 @@
 # 교체 가능한 메모리 백엔드 (Pluggable Memory Backend)
 
-> Status: **PARTIALLY IMPLEMENTED** — §12 의 **Step 1~6 구현됨**. 다섯 티어 SPI · `PeerMemory` ·
-> `StoreBackedPeerMemory` · 능력 기반 도구 등록 · `RedactingPeerMemory` · CLI 이주 · 수집 이음매 ·
-> `aimon-memory-testkit` 이 트리에 있다. **Step 7~9(Dyad·Honcho 어댑터와 원격 설정 표면)는 미구현**이며
-> §15 의 1·2번(두 서버를 띄워 확인하지 않았다)이 그대로 열려 있는 것이 그 이유다.
-> §7.2 의 수집 델타는 **(a) 로 확정**되었고 §15 의 6·8번(teardown 이동 안전성, 수집 델타)은
-> 해소되었다.
-> 현재 구현(`at.aimon.core.memory` + `aimon-memory-{file,mongodb,postgres}`)의
+> Status: **IMPLEMENTED, 그리고 한 대목은 이 문서가 예상한 것과 다르게 실현되었다.**
+> §12 의 **Step 1~6 은 트리에 있다** — 다섯 티어 SPI · `PeerMemory` · `StoreBackedPeerMemory` ·
+> 능력 기반 도구 등록 · `RedactingPeerMemory` · CLI 이주 · 수집 이음매 · `aimon-memory-testkit`.
+> §7.2 의 수집 델타는 **(a) 로 확정**되었고 §15 의 6·8번(teardown 이동 안전성, 수집 델타)은 해소되었다.
+>
+> **Step 7~9 은 이 저장소에서 하지 않았다.** 원격 백엔드는 별도 저장소의 서비스
+> [aimon-memory](https://github.com/kangwoo/aimon-memory) 로 실현되었고 — Postgres + pgvector,
+> 자체 파생 워커, HTTP API — 그 저장소의 `aimon-memory-client` 가 `at.aimon.core.memory.PeerMemory` 를
+> `RemotePeerMemory` 로 구현한다. 즉 **다섯 티어 SPI 라는 이 문서의 본체는 그대로 맞았고, 그 SPI 를
+> 채우는 것이 이 빌드 안의 어댑터 모듈 둘(`aimon-memory-honcho` · `-dyad`)이 아니라 저장소 하나였다.**
+> §8.1 · §12 · §15 의 어댑터 관련 서술은 그에 맞게 정정되어 있다.
+>
+> 그 결과 **§4.3 의 판단 하나가 뒤집혔다** — 저장소 백엔드 셋은 "그대로 살지" 않았다.
+> `aimon-memory-{mongodb,postgres}` 는 제거되었고 `aimon-memory-file` 은 `aimon-core` 안으로
+> 들어왔다. 근거와 대체 관계는 §4.3 에 적혀 있다.
+>
+> 현재 구현(`at.aimon.core.memory` — SPI · 기본 백엔드 · `at.aimon.core.memory.file`)의
 > 설계 사양은 [`peer-memory.md`](peer-memory.md) 이며, 본 문서는 그 사양의 **대부분을 유지하되 그 문서의
 > 비목표 한 줄을 철회한다** — 아래 §0.1. 사용자 노출 표면은
 > [메모리 사용 가이드](../../features/memory/memory-usage-guide.md) 참조.
@@ -54,7 +64,7 @@ IMPORTANT: 이 설계는 기존 정본과 **조용히 모순되지 않기 위해
 
 | `peer-memory.md` §1 의 비목표 | 이 문서의 처분 |
 |---|---|
-| "외부 메모리 서버를 호출하는 **원격 클라이언트 통합** (MCP 경로는 별도 트랙)" | **철회한다.** `aimon-memory-honcho` / `aimon-memory-dyad` 가 정확히 그것이다(§8.1). 괄호 안의 단서 — MCP 는 별도 트랙 — 는 유지된다(§14 A2) |
+| "외부 메모리 서버를 호출하는 **원격 클라이언트 통합** (MCP 경로는 별도 트랙)" | **철회한다.** 초안은 그 자리를 `aimon-memory-honcho` / `aimon-memory-dyad` 로 채울 생각이었고, 실제로 채운 것은 [aimon-memory](https://github.com/kangwoo/aimon-memory) 의 `RemotePeerMemory` 다(§8.1). 철회의 내용은 같다. 괄호 안의 단서 — MCP 는 별도 트랙 — 는 유지된다(§14 A2) |
 | "외부 SDK / 스키마 호환" | **유지한다.** AIMON 은 Honcho 의 와이어 포맷을 흉내 내지 않고 그 SDK 를 재수출하지도 않는다(§13). §2.2 의 `ObservationType` 4값 확장은 호환이 아니라 **어휘 손실을 없애기 위한 자체 도메인 확장**이다 — 값 이름이 겹치는 것은 두 시스템이 같은 개념을 부르는 이름이 같기 때문이지 스키마를 맞추기 위해서가 아니다 |
 
 철회는 문장으로만 하지 않는다. **`peer-memory.md` §1 의 그 줄을 §12 Step 1 과 같은 커밋에서 고치고**,
@@ -114,8 +124,10 @@ MemorySpec(observationStore, representationStore)
                                   redactionPolicy)                       ← 도구 3종
 ```
 
-그러므로 "메모리를 다른 구현으로 바꾼다" 는 현재 **세 저장소 인터페이스를 구현한다**는 뜻이다. 실제로
-`aimon-memory-file` / `-mongodb` / `-postgres` 셋이 정확히 그것을 한다.
+그러므로 "메모리를 다른 구현으로 바꾼다" 는 (이 문서가 쓰이던 시점에) **세 저장소 인터페이스를
+구현한다**는 뜻이었다. `aimon-memory-file` / `-mongodb` / `-postgres` 셋이 정확히 그것을 하고 있었고,
+이 절이 진단하는 문제는 그 셋이 잘못 만들어졌다는 것이 아니라 **그 고도가 교체 지점이 될 수 없다**는
+것이다. 진단이 맞았으므로 셋은 살아남지 못했다 — 무엇이 어떻게 되었는지는 §4.3.
 
 ### 1.2 바꿔치기 대상은 저장소가 아니다
 
@@ -165,10 +177,11 @@ IMPORTANT: 위 표의 `✗` 는 "구현하기 어렵다" 가 아니라 **"구현
 그리고 여기서 논거를 정확히 골라야 한다 — **"`UnsupportedOperationException` 을 던지면 안 된다" 는 이
 인터페이스에 대해서는 참이 아니다.** `MongoObservationStore:126-136` 과 `PostgresObservationStore:229-244`
 는 `semanticSearch` 자리에서 **항상** 그 예외를 던지고, 그것은 실수가 아니라 설계다 —
-`IndexedObservationStore` 의 클래스 javadoc(`:14-33`)이 *"Some metadata stores — notably
-`PostgresObservationStore` — deliberately do not implement `semanticSearch` and throw
-`UnsupportedOperationException` instead. Wrapping such a store here restores search"* 라고 그 패턴을
-명시한다. 즉 이 인터페이스에는 **예외를 두고 데코레이터로 복원하는 규범이 이미 있다.**
+`IndexedObservationStore` 의 클래스 javadoc 이 *"Some metadata stores deliberately do not implement
+`semanticSearch` and throw `UnsupportedOperationException` instead. Wrapping such a store here restores
+search"* 라고 그 패턴을 명시한다. 즉 이 인터페이스에는 **예외를 두고 데코레이터로 복원하는 규범이 이미
+있다.** (두 스토어는 이후 제거되었고 그 javadoc 도 두 이름을 빼도록 고쳐졌다 — 인용은 현재 문장이며,
+규범을 세운 사례가 무엇이었는지는 위 두 줄이 기록한다.)
 
 차이는 **복원 가능성**이다.
 
@@ -724,11 +737,13 @@ application-scoped 이므로 **한 프로세스가 여러 워크스페이스를 
 **호출과 함께 온다**. (원격 어댑터에서는 워크스페이스가 URL 경로 세그먼트가 되므로 질의마다 달라도
 비용이 없다.)
 
-IMPORTANT: **재료는 있는데 그 연산을 못 하는 경우가 따로 있다.** `MongoObservationStore:126-136` 과
-`PostgresObservationStore:229-244` 는 `semanticSearch` 에서 **항상** `UnsupportedOperationException` 을
-던지므로(§1.3 이 인용한 사실), 그 스토어를 그대로 넘기면 `StoreBackedPeerMemory` 는 `SEARCH` 티어를
-**있는 것으로 내놓고** 매 호출이 `ToolResult.error` 로 떨어진다 — §5.2 의 IMPORTANT("백엔드가 못 하는
-능력의 도구를 등록하지 않는다")의 정반례다. 그래서 계약을 하나 적는다.
+IMPORTANT: **재료는 있는데 그 연산을 못 하는 경우가 따로 있다.** `MongoObservationStore` 와
+`PostgresObservationStore` 는 `semanticSearch` 에서 **항상** `UnsupportedOperationException` 을
+던졌으므로(§1.3 이 인용한 사실 — **두 스토어는 이후 모듈과 함께 제거되었다.** 아래 계약은 그
+사례에서 도출되었을 뿐 그것에 의존하지 않으며, 지금도 그대로 살아 있다), 그런 스토어를 그대로
+넘기면 `StoreBackedPeerMemory` 는 `SEARCH` 티어를 **있는 것으로 내놓고** 매 호출이
+`ToolResult.error` 로 떨어진다 — §5.2 의 IMPORTANT("백엔드가 못 하는 능력의 도구를 등록하지
+않는다")의 정반례다. 그래서 계약을 하나 적는다.
 
 > `.observationStore(...)` 에 넘기는 것은 `semanticSearch` 를 **실제로 답하는** 스토어여야 한다.
 > 메타데이터 전용 스토어는 조립이 `IndexedObservationStore` 로 감싸서 넘긴다.
@@ -765,9 +780,9 @@ IMPORTANT: **재료는 있는데 그 연산을 못 하는 경우가 따로 있�
 
 | 옮기면 깨지는 것 | 무엇을 import 하고 있나 |
 |---|---|
-| `aimon-memory-file` | `File*Store implements ObservationStore/RepresentationStore/WorkspaceStore` |
-| `aimon-memory-mongodb` | 같음 |
-| `aimon-memory-postgres` | 같음 + `PostgresDerivationQueueManager implements DerivationQueueManager` |
+| ~~`aimon-memory-file`~~ → `at.aimon.core.memory.file` | `File*Store implements ObservationStore/RepresentationStore/WorkspaceStore` |
+| ~~`aimon-memory-mongodb`~~ (제거됨) | 같음 |
+| ~~`aimon-memory-postgres`~~ (제거됨) | 같음 + `PostgresDerivationQueueManager implements DerivationQueueManager` |
 | `aimon-cli` | `LlmDeriver`, `DefaultDreamerEngine`, `RandomWalkDreamer`, `EmbeddingSurprisalScorer`, `LlmJudgeSurprisalScorer`, `DefaultReconciler`, `InMemory*Store`, `LlmDialecticEngine` — **구체 클래스 13종을 직접 import 해 조립한다** |
 | `aimon-spring-boot-starter` | `InMemoryObservationStore`, `InMemoryRepresentationStore`, `DefaultRedactionPolicy`, `StrictRedactionPolicy` |
 
@@ -775,14 +790,66 @@ IMPORTANT: **재료는 있는데 그 연산을 못 하는 경우가 따로 있�
 작업**이다. §12 에 후속 단계로 남기고 전제조건을 적는다. 옮기기로 한다면 그때 **memory 용 `.impl`
 ArchUnit 규칙을 함께 쓴다** — 규칙 없는 `.impl` 패키지는 표식일 뿐이다.
 
-### 4.3 `aimon-memory-{file,mongodb,postgres}` 는 그대로 산다
+#### 그래서 파일 백엔드가 코어로 들어올 때도 `.impl` 을 쓰지 않았다
 
-세 모듈은 **한 줄도 바뀌지 않는다.** 그들이 구현하는 인터페이스도, 시그니처도, DDL 도, 컬렉션 이름도
-그대로다 — [`api-stability.md` §4](../../project/api-stability.md) 의 동결 약속이 여기에 걸려 있다.
+`aimon-memory-file` 이 모듈에서 패키지로 바뀌면서(§4.3) 위 표의 첫 줄은 사라졌다 — 그 코드는 이제
+코어 안에 있으므로 "배포된 형제 모듈이 내부 패키지를 import 한다" 는 문제를 더는 만들지 않는다.
+그러면 이참에 `at.aimon.core.memory.impl.file` 로 넣을 수 있었을 텐데, **넣지 않았다.** 자리는
+`at.aimon.core.memory.file` 이다. 이유는 셋이다.
 
-`WorkspaceStore` 는 티어가 **되지 않는다.** 원격 백엔드는 워크스페이스 CRUD 와 테넌시를 자기가 소유하고
-(Honcho·Dyad 둘 다 get-or-create + JWT 스코프), AIMON 쪽은 설정으로 받은 워크스페이스 이름을 경로에
-실어 보내기만 한다. `WorkspaceAccessPolicy` 도 마찬가지로 기본 백엔드 전용이다.
+1. **`aimon-cli` 가 아직 이 클래스들을 직접 import 한다.** `AgentSetupFactory` 는
+   `FileObservationStore` · `FileRepresentationStore` · `FileMemoryMaintenanceScheduler` · `Compactable`
+   넷을 이름으로 조립한다. `.impl` 에 넣는 순간 위 표의 네 번째 줄이 그대로 되살아난다 — 옮긴 이유가
+   "형제 모듈이 내부 패키지를 보게 하지 않는다" 였는데, 애플리케이션이 보게 만들면 규약 위반의 주체만
+   바뀐다
+2. **오늘의 memory 도메인에는 `.impl` 분리가 아예 없다.** `InMemoryObservationStore` ·
+   `InMemoryRepresentationStore` · `InMemoryWorkspaceStore` 와 `StoreBackedPeerMemory` 가 모두
+   `at.aimon.core.memory` 에 그대로 산다. 파일 백엔드만 `.impl` 로 내리면 **같은 성격의 기본 백엔드
+   재료가 두 고도에 나뉘어** 다음 사람이 어느 쪽이 관례인지 판단해야 한다
+3. **`.impl` 은 규칙이 있을 때만 뜻이 있다.** 위에 적힌 대로 `PackageDependencyArchitectureTest` 에는
+   memory 용 규칙이 없다. 규칙 없이 이름만 `.impl` 로 바꾸는 것은 표식이지 경계가 아니다
+
+따라서 이 이동은 **`.impl` 이동 대상 목록을 줄이지 않는다. 늘린다.** 언젠가 memory 도메인에 `.impl`
+경계를 긋는다면 옮길 것은 이제 넷이다 — `InMemory*Store` 셋, `deriver`/`dreamer`/`reconciler` 의 구체
+클래스들, `StoreBackedPeerMemory`, 그리고 **`at.aimon.core.memory.file` 의 다섯 클래스**. 전제조건도
+그대로다(§12 후속 표): CLI 가 직접 조립하는 구체 클래스를 코어 안의 팩토리 뒤로 먼저 옮겨야 하고,
+그때 memory 용 `.impl` ArchUnit 규칙을 함께 쓴다.
+
+### 4.3 `aimon-memory-{file,mongodb,postgres}` — 초안의 판단은 틀렸다
+
+> 이 절은 원래 **"세 모듈은 한 줄도 바뀌지 않는다"** 라고 적혀 있었다. 그 예측은 빗나갔고, 빗나간 이유는
+> 이 문서가 옳았기 때문이다 — 다섯 티어 SPI 가 서면서 **저장소 셋이 채우던 자리가 없어졌다.**
+> 아래는 실제로 일어난 일이다. 남은 것은 §4.1 의 격하(저장소는 기본 백엔드의 내부 재료)뿐이며,
+> 그 부분은 그대로 유효하다.
+
+`ObservationStore` / `RepresentationStore` / `WorkspaceStore` **인터페이스는 그대로다.** 시그니처도,
+`StoreBackedPeerMemory` 가 그것들을 쓰는 방식도 바뀌지 않았다. 바뀐 것은 **그 인터페이스를 구현하는
+모듈이 어디에 있는가**다.
+
+| 없어진 것 (aimon-core) | 그 자리를 맡은 것 |
+|---|---|
+| `aimon-memory-postgres` 의 `PostgresDerivationQueueManager` (row-lock 파생 큐) | [aimon-memory](https://github.com/kangwoo/aimon-memory) 의 `aimon-memory-worker` — `WorkerLoop` + Representation/Summary/Dream/Deletion 컨슈머 |
+| `aimon-memory-postgres` 의 `KnowledgeStoreOutboxRelay` (outbox → 임베딩 색인) | 같은 저장소의 pgvector 네이티브 경로 (`Vectors`, `EmbeddingDimensionCheck`, `aimon-memory-embed`) |
+| `Postgres/Mongo {Observation,Representation,Workspace}Store` | 같은 저장소의 `aimon-memory-store` — Flyway + JDBC repository 12종 |
+| `aimon-memory-file` (모듈) | **`aimon-core` 의 `at.aimon.core.memory.file` 패키지** — 코드는 그대로, 모듈만 없어졌다 |
+
+IMPORTANT: **이것은 이전(migration)이 아니라 제거다.** 서비스의 스키마는 `(workspace, observer, observed)`
+복합 키 위에 선 다른 물건이고, 옛 `mem_*` 테이블·컬렉션의 데이터가 그리로 옮겨가지 않는다. 백엔드를
+바꾸면 새 백엔드는 **빈 상태에서 시작한다** — §11.4 가 애초에 그렇게 적어 둔 것이 그대로 적용된다.
+[`api-stability.md` §4](../../project/api-stability.md) 의 동결 약속과의 관계도 그 문서에 정리되어 있다:
+동결은 **살아 있는 표면**에 대한 약속이고, 표면 자체가 없어지는 것은 그 약속의 위반이 아니라 그 약속이
+적용될 대상이 사라지는 것이다.
+
+남는 그림은 두 줄이다.
+
+- **`aimon-core`** — `PeerMemory` SPI + 노드 로컬 기본 백엔드(`InMemory*Store`, `at.aimon.core.memory.file`)
+- **분산 메모리** — 별도 저장소의 서비스, `RemotePeerMemory` 로 소비
+
+`WorkspaceStore` 는 여전히 티어가 **되지 않는다** — 이 판단은 바뀌지 않았고, 오히려 확인되었다. 원격
+백엔드는 워크스페이스 CRUD 와 테넌시를 자기가 소유한다. aimon-memory 서비스에서 그 자리를 맡는 것은
+`aimon-memory-store` 의 `WorkspaceRepository` 와 `WorkspaceSettingsService` 이고, AIMON 쪽은 설정으로
+받은 워크스페이스 이름을 경로에 실어 보내기만 한다. `WorkspaceAccessPolicy` 도 마찬가지로 기본 백엔드
+전용이다.
 
 ---
 
@@ -1175,22 +1242,35 @@ session-end`), 기본은 기존 동작인 `session-end` 다 — 기존 사용자
 
 ## 8. 모듈 배치
 
-### 8.1 새 모듈 셋
+### 8.1 새 모듈 셋 — 실현된 것은 하나뿐이다
 
-| 모듈 | 성격 | 배포 | 의존 |
-|---|---|---|---|
-| `aimon-memory-honcho` | Honcho v3 HTTP 어댑터 | Maven Central | `aimon-core`, `java.net.http`(JDK), Jackson |
-| `aimon-memory-dyad` | Dyad v1 HTTP 어댑터 | Maven Central | 같음 |
-| `aimon-memory-testkit` | 다섯 티어의 **공유 계약 테스트** | **미배포** | `aimon-core`, JUnit |
+> 이 절이 예상한 어댑터 모듈 둘은 **이 저장소에 만들어지지 않았다.** 원격 백엔드는 모듈이 아니라
+> **저장소 하나**로 실현되었다 — [aimon-memory](https://github.com/kangwoo/aimon-memory) 서비스와
+> 그 안의 `aimon-memory-client`(`RemotePeerMemory`). 아래 표는 계획과 실제를 나란히 둔 것이다.
 
-HTTP 클라이언트는 JDK 의 `java.net.http.HttpClient` 를 쓴다 — 코어에 이미 선례가 있고
-(`skill.hook.declarative.HttpActionExecutor`), OkHttp 를 끌어오면 어댑터 하나 때문에 배포 의존성이
-늘어난다. 스트리밍(SSE)은 `HttpResponse.BodyHandlers.ofLines()` 로 처리해
-`at.aimon.core.llm.streaming.LlmStreamSink` 에 흘린다 — 새 reactive 스택은 도입하지 않는다
-([`peer-memory.md` §6.2](peer-memory.md) 의 금지 사항).
+| 계획한 모듈 | 성격 | 실제 |
+|---|---|---|
+| `aimon-memory-honcho` | Honcho v3 HTTP 어댑터 | **만들지 않았다.** 원격 대상이 Honcho 가 아니라 자체 서비스가 되었다 |
+| `aimon-memory-dyad` | Dyad v1 HTTP 어댑터 | **만들지 않았다.** 같은 이유 |
+| `aimon-memory-testkit` | 다섯 티어의 **공유 계약 테스트** | 있다. 다만 **배포된다** — 아래 |
 
-`aimon-memory-testkit` 은 `aimon-filesystem-testkit` / `aimon-session-testkit` 의 선례를 그대로
-따른다. **이것이 "두 백엔드가 같은 답을 한다" 를 확인할 수 있는 유일한 장치**다 — 다섯 티어의 계약
+바뀐 것은 어댑터의 **소재지**이지 이 문서의 본체가 아니다. 다섯 티어 SPI 는 그대로 원격 백엔드가 채우는
+자리로 쓰였고, `RemotePeerMemory` 는 다섯 개를 전부 구현한다. 세 능력 신호가 `false` 인 것
+(`narrowsBySession` · `storesConfidence` · 수신 확인의 `derived`)도 §3.3 이 그 자리를 만들어 둔 이유
+그대로다 — 손실을 조용히 삼키는 대신 호출 전에 읽히게 한 것이다.
+
+HTTP 클라이언트에 관한 아래 판단은 그 저장소에서도 유효하지만, 이제 이 빌드의 결정이 아니다 — 코어에
+이미 선례가 있고(`skill.hook.declarative.HttpActionExecutor`), OkHttp 를 끌어오면 어댑터 하나 때문에
+배포 의존성이 늘어난다. 스트리밍(SSE)에 새 reactive 스택을 도입하지 않는다는 금지
+([`peer-memory.md` §6.2](peer-memory.md))도 그대로다.
+
+**`aimon-memory-testkit` 은 배포된다 — 여기서 선례가 갈렸다.** 원래는 `aimon-filesystem-testkit` /
+`aimon-session-testkit` 을 그대로 따라 미배포였다. 그 셋의 처지가 달라진 이유는 하나다: 앞의 둘은
+**모든 구현이 이 저장소 안에 있는** 계약을 기술하므로 미배포 모듈이 전부에 닿지만, 이 스위트의 대상은
+`PeerMemory` 백엔드이고 **계약이 가장 필요한 구현이 다른 저장소에 있다.** 미배포로 두면 계약이 쓰인
+바로 그 백엔드가 그것을 돌릴 수 없는 유일한 백엔드가 된다 — 스위트가 막으려던 실패 모드 그 자체다.
+
+이 스위트가 **"두 백엔드가 같은 답을 한다" 를 확인할 수 있는 유일한 장치**다 — 다섯 티어의 계약
 (빈 결과 vs 예외, 예산 초과 시 truncated, 세션 없는 질의의 의미, 레닥션 통과 전제)을 한 곳에 적고 세
 구현이 그것을 돈다. 그중 넷은 **능력 협상 자체의 계약**이다.
 
@@ -1203,10 +1283,14 @@ HTTP 클라이언트는 JDK 의 `java.net.http.HttpClient` 를 쓴다 — 코어
    질의의 다른 좁힘 축에 적용한 것이다. 둘을 한 항으로 합치지 않고 나눠 적는 이유는 testkit 이 각각에
    케이스를 갖고, 백엔드가 한쪽만 지키는 것이 실제로 가능하기 때문이다
 
-`aimon-memory-{file,mongodb,postgres}` 는 여기에 참여하지 않는다 — 그들은 티어가 아니라 저장소를
-구현하기 때문이다.
+`at.aimon.core.memory.file` 과 `InMemory*Store` 는 여기에 참여하지 않는다 — 그들은 티어가 아니라
+저장소를 구현하기 때문이다. 그것들이 계약을 도는 것은 `StoreBackedPeerMemory` 를 통해서다.
 
 ### 8.2 `settings.gradle.kts` 와 BOM
+
+> 실제로는 줄이 늘지 않고 **줄었다** — 세 모듈이 빠지고 testkit 만 남았다. 아래 BOM 에 관한 설명은
+> 방향과 무관하게 그대로 맞았고, testkit 이 `aimon.publishable` 을 적용하자 손대지 않은 BOM 이
+> 자동으로 그것을 관리하기 시작했다.
 
 - `settings.gradle.kts` 의 `include(...)` 와 `project(...).projectDir` 양쪽에 세 줄씩 추가한다
 - **BOM 은 손대지 않는다.** `aimon-bom` 은 `com.vanniktech.maven.publish` 플러그인을 적용한
@@ -1223,18 +1307,24 @@ HTTP 클라이언트는 JDK 의 `java.net.http.HttpClient` 를 쓴다 — 코어
 ### 8.3 의존성 방향
 
 ```
-                     aimon-core
-              (at.aimon.core.memory — 다섯 티어 SPI + StoreBackedPeerMemory)
-                          ▲
-    ┌─────────────────────┼─────────────────────┬──────────────────┐
-    │                     │                     │                  │
-aimon-memory-file   aimon-memory-postgres  aimon-memory-honcho  aimon-memory-dyad
-aimon-memory-mongodb                       (PeerMemory 구현)    (PeerMemory 구현)
-(저장소 구현 — 티어를 구현하지 않는다)
+                          aimon-core
+   (at.aimon.core.memory — 다섯 티어 SPI + StoreBackedPeerMemory
+    + InMemory*Store + at.aimon.core.memory.file : 저장소 구현)
+                              ▲
+                              │  at.aimon.core.memory.PeerMemory
+                              │
+                    ┌─────────┴──────────┐
+                    │ aimon-memory-client │   RemotePeerMemory (다섯 티어 구현)
+                    └─────────┬──────────┘
+                              │  HTTP
+                    ┌─────────┴──────────┐
+                    │  aimon-memory 서비스 │   store · worker · engine · api
+                    └────────────────────┘
 ```
 
-왼쪽 셋과 오른쪽 둘은 **서로 다른 것을 구현하며 서로를 모른다.** 이것이 §4.1 의 격하가 그림으로 보이는
-자리다.
+저장소 구현(왼쪽에서 코어 안으로 들어왔다)과 원격 백엔드는 **서로 다른 것을 구현하며 서로를 모른다.**
+이것이 §4.1 의 격하가 그림으로 보이는 자리이고, 화살표가 하나뿐인 것이 §3 의 "seam 은 `PeerMemory`
+하나" 라는 주장이다.
 
 ---
 
@@ -1383,12 +1473,19 @@ memory:
 | `MemorySpec` 프로그램 조립 | **그대로 돈다.** 스토어 setter 유지 |
 | `at.aimon.core.memory` 를 직접 쓰는 코드 | **한 곳 깨진다** — `RepresentationMemoryContextProvider` 개명 (§11.1) |
 | `at.aimon.bootstrap.assemble` 을 직접 쓰는 코드 | **한 곳 깨진다** — `MemoryAssembly.CAPABILITY_WRITE_PATH` 상수 (§11.1) |
-| `aimon-memory-{file,mongodb,postgres}` 사용자 | **그대로 돈다.** 저장 포맷·DDL·컬렉션 이름 전부 불변 |
+| `aimon-memory-file` 사용자 | **그대로 돈다.** JSONL 저장 포맷과 파일 레이아웃은 불변이고, 바뀐 것은 좌표(`aimon-core` 에 흡수)와 패키지 이름뿐이다 (§4.3) |
+| `aimon-memory-{mongodb,postgres}` 사용자 | **깨진다 — 이전이 아니라 제거다.** 두 모듈은 더 없고, 쌓인 데이터는 아무 데로도 옮겨가지 않는다 (§4.3, §11.4) |
 | **종료 순서에 의존하는 배포** | **바뀐다** — `TeardownPhase` 의 메모리 블록이 `SESSIONS` 뒤로 옮겨진다 (§3.6, §11.3) |
 
 ---
 
 ## 10. 라이선스 경계
+
+> 이 절은 **가정법으로 읽는다.** Honcho 어댑터는 만들어지지 않았고(§8.1), 원격 백엔드는 우리가 쓴
+> 저장소다 — 그쪽에는 AGPL 원본이 아예 없다(그 저장소의 `docs/adr/0005-agpl-boundary.md`).
+> 아래 경계는 언젠가 AGPL 서버용 어댑터를 쓸 때 다시 적용될 규칙으로 남긴다. 마지막 문단의
+> "`aimon-memory-honcho` 의 `package-info.java` 에 요약한다" 는 **적용 대상이 없으므로 지금 할 일이
+> 아니다.**
 
 | 대상 | 라이선스 | 이 설계에서의 취급 |
 |---|---|---|
@@ -1522,9 +1619,9 @@ IMPORTANT: 다음을 하면 경계가 깨진다.
 | **4** | **CLI 이주** — `AgentSetupFactory` 의 메모리 배선 아홉 개를 `MemorySpec`/`MemoryAssembly` 경로로 옮긴다 (§5.0) | CLI 관찰 동작 **불변** (아직 `file`/`in-memory` 뿐) | ① `grep MemorySpec modules/aimon-cli/src/main` 이 0건이 아니게 된다 ② `registerCliTools` 에 `ConsoleOutputTool` 만 남는다 ③ `AimonStackSpec:122-130` 상호 배타 규칙을 **CLI 측에서는 고치지 않고** 통과한다 (가드 자체를 넓히는 것은 Step 3 이다 — §9.1) ④ dreamer·maintenance 는 CLI 소유로 남는다 |
 | **5** | `MemoryIngestor` 실행기 이음매 + `ingest` 설정 + **`TeardownPhase` 메모리 블록 이동**(§3.6) | CLI 기본은 `session-end` = 기존 동작 | ① **§7.2 의 델타 방안 (a)/(b) 중 하나를 먼저 확정한다**(§15-8) — 이것 없이는 "같은 메시지가 두 번 안 간다" 가 검증 불가다 ② 실행기 이음매가 받는 `MemoryIngestor` 는 **Step 3 의 데코레이터를 지난 것**이다 (감싸지 않은 것을 직접 꺼내 쓰는 경로가 없다) ③ **phase 이동 전후로 CLI 최종 derivation 이 같은 수의 관찰을 만든다** ④ per-caller 에서 INGEST 가 꺼지고 degradation 이 오른다(§7.2) |
 | **6** | `aimon-memory-testkit` — 다섯 티어 계약 스위트. 기본 백엔드를 통과시킨다 | **없음** (테스트 전용) | 계약이 문서가 아니라 코드로 존재. 특히 **능력 협상 4계약**(§8.1) — ① 내놓은 티어는 `UnsupportedOperationException` 을 던지지 않는다 ② SEARCH 결과는 언제나 관련도 내림차순이다 ③ `ranksByScore()=false` 가 `minScore>0` 을 조용히 무시하지 않는다 ④ `narrowsBySession()=false` 가 세션 id 를 조용히 무시하지 않는다 |
-| **7** | `aimon-memory-dyad` | `backend: dyad` 가 동작 | testkit 통과 · `?wait=derive` 경로 검증 |
-| **8** | `aimon-memory-honcho` | `backend: honcho` 가 동작 | testkit 통과 · `package-info` 에 §10 요약 |
-| **9** | CLI/스타터 설정 표면 + 문서 갱신 | yaml/프로퍼티로 원격 선택 가능 | ① §9 의 거절 규칙 전부 테스트 ② 원격 백엔드에서 `storagePath` 를 요구하지 않도록 `MemoryConfig.isEnabled()` 를 가른다(§9.2) ③ 미지 backend 경고를 표상·관찰 양쪽에서 낸다(§9.2) ④ **[`memory-usage-guide.md`](../../features/memory/memory-usage-guide.md) 와 `memory-usage-guide.en.md` 를 같은 커밋에서 갱신하고 `source_commit` 을 맞춘다** ⑤ **`CLAUDE.md` 의 Module Structure 목록에 두 모듈(`aimon-memory-honcho` · `-dyad`) 추가** — testkit 은 넣지 않는다. 그 목록은 기존 두 testkit(`aimon-filesystem-testkit` · `aimon-session-testkit`)도 싣지 않으며(`grep testkit CLAUDE.md` → 0건) 여기서 관례를 깨지 않는다 |
+| ~~**7**~~ | ~~`aimon-memory-dyad`~~ | — | **하지 않았다.** 원격 백엔드는 이 빌드의 어댑터 모듈이 아니라 별도 저장소의 서비스로 실현되었다 — [aimon-memory](https://github.com/kangwoo/aimon-memory) 의 `aimon-memory-client`(`RemotePeerMemory`)가 다섯 티어를 채운다. `?wait=derive` 는 그 서비스의 수집 엔드포인트에 그대로 있다 |
+| ~~**8**~~ | ~~`aimon-memory-honcho`~~ | — | **하지 않았다.** 같은 이유. Honcho 는 소비 대상이 아니라 §2 의 비교 대상으로만 남았다 |
+| **9** | CLI/스타터 설정 표면 + 문서 갱신 | yaml/프로퍼티로 원격 선택 가능 | ① §9 의 거절 규칙 전부 테스트 ② 원격 백엔드에서 `storagePath` 를 요구하지 않도록 `MemoryConfig.isEnabled()` 를 가른다(§9.2) ③ 미지 backend 경고를 표상·관찰 양쪽에서 낸다(§9.2) ④ **[`memory-usage-guide.md`](../../features/memory/memory-usage-guide.md) 와 `memory-usage-guide.en.md` 를 같은 커밋에서 갱신하고 `source_commit` 을 맞춘다** ⑤ ~~`CLAUDE.md` 의 Module Structure 목록에 두 모듈(`aimon-memory-honcho` · `-dyad`) 추가~~ — **반대로 되었다.** 그 목록에서 `aimon-memory-{file,mongodb,postgres}` 세 줄이 빠지고 `aimon-memory-testkit` 한 줄이 들어갔다. testkit 을 싣지 않는다던 관례는 여기서 깨지는데, 이유가 있다: 다른 두 testkit 과 달리 이것은 **배포되는 모듈**이고, 목록이 답하는 질문("이 빌드가 무엇을 내놓는가")에 대해 이제 답의 일부다 |
 
 Step 4(CLI 이주)를 Step 5(수집) 앞에 두는 이유: 수집 이음매는 `MemoryIngestor` 를 스택에 꽂아야 하는데,
 CLI 가 `MemorySpec` 을 지나지 않는 동안에는 **꽂을 자리가 CLI 에 없다.** 순서를 뒤집으면 Step 5 가
@@ -1537,8 +1634,11 @@ CLI 전용 배선을 한 번 만들고 Step 4 에서 다시 지우게 된다.
 채운다" 를 근거로 쓸 수 없다. 데코레이터는 `PeerMemory` 와 `RedactionPolicy` 외에 의존이 없으므로
 당기는 데 비용도 없다.
 
-Step 7 을 8 보다 먼저 두는 이유: Dyad 는 우리가 소스를 갖고 있어 계약이 어긋났을 때 **어느 쪽이 틀렸는지
-확인할 수 있다.** Honcho 는 그럴 수 없으므로 testkit 이 안정된 뒤에 붙이는 편이 싸다.
+Step 7 을 8 보다 먼저 둔 이유는 이랬다: Dyad 는 우리가 소스를 갖고 있어 계약이 어긋났을 때 **어느 쪽이
+틀렸는지 확인할 수 있다.** Honcho 는 그럴 수 없으므로 testkit 이 안정된 뒤에 붙이는 편이 싸다. 그
+논증은 실현된 경로에서 더 강하게 성립했다 — 원격 백엔드의 소스를 갖고 있는 정도가 아니라 **같은 사람이
+쓴 저장소**이므로, 계약이 어긋나면 어느 쪽이든 고칠 수 있다. 그래서 Step 9 의 인수 조건 중 남은 것은
+설정 표면 쪽이지 어댑터 쪽이 아니다.
 
 **문서 갱신은 Step 9 에만 있는 것이 아니다.** `peer-memory.md` 는 세 곳이 고쳐진다 — Step 1 에서 두 곳
 (§1 비목표 철회, §10.3 의 kebab yaml 과 "경고와 함께 폴백" 정정), Step 3 에서 한 곳(§14.2 레닥션 금지
@@ -1587,7 +1687,7 @@ Step 7 을 8 보다 먼저 두는 이유: Dyad 는 우리가 소스를 갖고 �
 
 | # | 대안 | 왜 기각했나 |
 |---|---|---|
-| **A1** | **`ObservationStore` / `RepresentationStore` 를 HTTP 로 구현한다** (가장 뻔한 길) | §1.3 의 표가 답이며, 기각 사유는 LSP 일반론이 **아니다** — 이 인터페이스는 `semanticSearch` 자리에서 이미 `UnsupportedOperationException` 을 규범으로 허용한다(`MongoObservationStore:126-136`, `PostgresObservationStore:229-244`). 차이는 **복원 가능성**이다: 그 예외는 `IndexedObservationStore` 가 흡수하지만, `merge` · `findByConfidenceBelow` · `purgeSoftDeletedBefore` · `RepresentationStore.save` 는 **복원할 대상이 원격에 없어서** 데코레이터로도 되살아나지 않고 Dreamer·Reconciler 의 호출 지점에서 터진다. 게다가 `Representation`(구조화 애그리게이트)을 만들려면 원격이 준 **렌더 문자열을 되파싱**해야 한다 |
+| **A1** | **`ObservationStore` / `RepresentationStore` 를 HTTP 로 구현한다** (가장 뻔한 길) | §1.3 의 표가 답이며, 기각 사유는 LSP 일반론이 **아니다** — 이 인터페이스는 `semanticSearch` 자리에서 이미 `UnsupportedOperationException` 을 규범으로 허용한다(당시 사례: `MongoObservationStore`, `PostgresObservationStore` — **둘 다 이후 제거되었고**, 규범은 `IndexedObservationStore` 의 javadoc 에 남아 있다). 차이는 **복원 가능성**이다: 그 예외는 `IndexedObservationStore` 가 흡수하지만, `merge` · `findByConfidenceBelow` · `purgeSoftDeletedBefore` · `RepresentationStore.save` 는 **복원할 대상이 원격에 없어서** 데코레이터로도 되살아나지 않고 Dreamer·Reconciler 의 호출 지점에서 터진다. 게다가 `Representation`(구조화 애그리게이트)을 만들려면 원격이 준 **렌더 문자열을 되파싱**해야 한다 |
 | **A2** | **MCP 서버로 붙인다** — Honcho/Dyad 를 MCP 도구로 노출 | 프롬프트 **자동 주입**이 불가능하다. 주입은 모델이 부를지 말지 정하는 것이 아니라 실행기가 매 실행마다 무조건 하는 것이고, 그게 `MemoryContextProvider` 가 존재하는 이유다. 또 능력 협상이 없고(도구는 있거나 없거나뿐), 레닥션 게이트가 MCP 경계 밖에 남는다. **CHAT 티어에 한해서는 유효한 보완 경로**이며 배제하지 않는다 |
 | **A3** | **뚱뚱한 인터페이스 하나 + `default` 메서드가 `UnsupportedOperationException`** | A1 과 같은 이유로 "예외 자체가 금지" 라고는 말하지 않는다. 기각 사유는 **판단 시점**이다 — 능력을 예외로만 표현하면 도구 등록 결정이 조립 시점에서 **런타임 실패로** 밀리고, 모델은 매 실행마다 없는 도구를 다시 부르며 실패에 iteration 과 프롬프트 예산을 태운다. `Optional` 접근자는 그 결정을 조립 시점으로 되돌린다. `semanticSearch` 의 선례가 성립한 것은 그 예외를 **데코레이터가 조립 시점에 흡수**했기 때문이지, 예외가 좋은 표현이어서가 아니다 |
 | **A4** | **백엔드가 `Set<MemoryCapability>` 를 선언한다** | 진실 원천이 둘이 된다. 선언과 실제 구현이 어긋난 백엔드가 만들어질 수 있고, 그 어긋남은 조립이 아니라 첫 호출에서 드러난다. 티어 접근자에서 **계산**하면 그 상태가 표현 불가능해진다 — 단 그것이 참이려면 계산이 `PeerMemory` **밖**에 있어야 한다. 인터페이스의 `default` 메서드로 두면 재정의로 이 기각이 무효화되므로 `MemoryCapabilities.of(...)` 정적 유틸이다(§3.2) |
@@ -1604,10 +1704,12 @@ Step 7 을 8 보다 먼저 두는 이유: Dyad 는 우리가 소스를 갖고 �
 
 1. **Honcho 서버를 실제로 띄워 응답을 확인하지 않았다.** §2 의 Honcho 칸은
    `honcho-java-spec.md`(v3.1.0 기준 리버스 스펙)와 그것이 인용한 OpenAPI 를 근거로 한다.
-   `/peers/{p}/context` 가 세션 없이 정말로 응답하는지, `conclusions/query` 의 `distance` 가 어떤
-   범위인지는 **Step 8**(Honcho 어댑터) 착수 시점에 확인해야 한다
-2. **Dyad 서버를 띄워 응답을 확인하지 않았다.** 소스는 읽었고 컨트롤러 시그니처는 정확하지만, 실제 응답
-   본문과 인증 흐름(`POST /v1/tokens` 의 스코프 조합)은 **Step 7**(Dyad 어댑터)에서 확인한다
+   **이 항목은 이제 닫히지 않고 무의미해졌다** — Step 8 이 취소되었으므로 확인할 시점이 없다. §2 의
+   Honcho 칸은 SPI 의 고도를 정할 때 쓴 비교 자료로 남는다
+2. **Dyad 서버를 띄워 응답을 확인하지 않았다.** 1번과 같다. 다만 그 자리가 비어 있지는 않다 —
+   실제 원격 백엔드([aimon-memory](https://github.com/kangwoo/aimon-memory))는 응답 본문과 인증 흐름을
+   자기 저장소에서 실서버 테스트로 확인한다(`RemotePeerMemoryWireTest` 가 임시 포트에 실제 서버를 띄워
+   다섯 티어의 바디와 세 능력 신호를 검사한다)
 3. **주입 지연.** 원격 백엔드에서는 `MemoryContextProvider.provide` 가 **프롬프트 조립 경로에서 HTTP 를
    탄다.** 매 실행마다 붙는 지연이며, 실측하지 않았다. 완화책(짧은 TTL 캐시, 비동기 프리페치)은
    **Step 7**(첫 원격 어댑터)에서 수치를 본 뒤 정한다 — 지금 넣으면 최적화할 대상 없이 캐시 무효화

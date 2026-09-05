@@ -180,8 +180,10 @@ regex 도 같은 이유로 접미사 화이트리스트를 썼다.
   memory·session 은 있는데 filesystem 은 없다"는 더 나쁜 규칙이 남는다.
 - **믹스매치를 표현할 수 없다.** Postgres 세션 + Mongo 메모리는 있을 법한 구성인데, 통합 후엔 각각이
   반대쪽 절반을 함께 끌고 온다.
-- **결합이 늘어난다.** `aimon-memory-mongodb` 는 지금 core 에만 의존한다. 통합하면 메모리만 쓰는 소비자가
-  inbox / idempotency / signal-bus 계약을 함께 받는다.
+- **결합이 늘어난다.** 당시 `aimon-memory-mongodb` 는 core 에만 의존했다. 통합했다면 메모리만 쓰는
+  소비자가 inbox / idempotency / signal-bus 계약을 함께 받았을 것이다. (그 모듈은 이후 제거되었고 —
+  분산 메모리는 별도 서비스다 — 그래서 이 논증은 **결론 쪽에서 더 강해졌다**: 합쳐 두었더라면 메모리
+  백엔드를 들어내는 일이 세션 SPI 를 건드리는 일이 되었을 것이다.)
 - **합칠 중복이 실제로 없다.** 두 postgres 모듈의 Java 소스에 `CREATE TABLE` 0건, 두 mongo 모듈의
   `internal/DocumentKeys` 는 서로 다른 컬렉션의 키 집합으로 **이름이 겹치는 것이 0건**이다. 실제 공유는
   build 파일의 드라이버 선언 1줄뿐이다.

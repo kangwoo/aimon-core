@@ -15,7 +15,6 @@ dependencies {
     implementation(project(":aimon-bootstrap"))
     implementation(project(":aimon-llm-anthropic"))
     implementation(project(":aimon-llm-openai"))
-    implementation(project(":aimon-memory-file"))
     implementation(project(":aimon-scheduling-quartz"))
     // Phase 5 GraalJS workflow frontend (opt-in via cli.enableWorkflowJs). Isolates the org.graalvm deps behind
     // this module; the CLI is the assembly layer that registers its WorkflowJs tool.

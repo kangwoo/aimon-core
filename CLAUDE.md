@@ -80,9 +80,7 @@ modules/
 ├── aimon-session-redis              # Redis-backed session store
 ├── aimon-session-routing            # Multi-node session routing (the SPIs it runs on live in aimon-core)
 │
-├── aimon-memory-file                # File-backed agent memory store
-├── aimon-memory-mongodb             # MongoDB-backed agent memory store
-├── aimon-memory-postgres            # PostgreSQL-backed agent memory store
+├── aimon-memory-testkit             # Shared five-tier PeerMemory contract suite (published)
 │
 ├── aimon-knowledge-opensearch       # OpenSearch knowledge store
 ├── aimon-scheduling-quartz          # Quartz-based task scheduler (clustered/distributed)
@@ -100,6 +98,14 @@ longer depend on this module — they keep it at `testImplementation` scope only
 multi-node tests drive a real `SessionRouter`. Only routing (`SessionRouter`, `LiveSessionCache`,
 `LiveSessionOpener`) is left here. The Java package moved with it: `at.aimon.session.base` →
 `at.aimon.session.routing`.
+
+NOTE: 메모리는 이제 **코어 + 원격 서비스** 두 조각이다. `aimon-memory-mongodb` 와
+`aimon-memory-postgres` 는 **제거되었고**(이전이 아니라 제거 — 데이터가 옮겨가지 않는다),
+`aimon-memory-file` 은 `aimon-core` 의 `at.aimon.core.memory.file` 로 **병합**되었다. 남은 그림은
+두 줄이다 — `aimon-core` 가 `PeerMemory` SPI 와 노드 로컬 기본 백엔드(in-memory + file)를 갖고,
+분산 메모리는 별도 저장소의 [aimon-memory](https://github.com/kangwoo/aimon-memory) 서비스가
+`RemotePeerMemory` 로 그 SPI 를 구현한다. `aimon-memory-testkit` 은 그 계약을 두 저장소가 공유하기
+위해 **배포 대상이 되었다**. 근거는 @docs/design/memory/pluggable-memory-backend.md §4.2·§4.3.
 
 ## Package Conventions
 

@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/architecture.md
-source_commit: 4edca08
+source_commit: 8a6c6ec
 ---
 
 # Architecture
@@ -621,7 +621,7 @@ budget is per **execution unit** rather than per session becomes visible.
 | a command | `Command` | implement, then register with `CommandRegistry` |
 | a session store | `SessionRecordStore` / `SessionLeaseStore` | implement (see Mongo/Postgres/Redis) |
 | a knowledge store | `KnowledgeStore` | implement (see OpenSearch) |
-| a memory store | `ObservationStore` / `RepresentationStore` | implement (see file/Postgres/Mongo) |
+| a memory store | `ObservationStore` / `RepresentationStore` | implement (see `at.aimon.core.memory.file`) |
 | a scheduler | the `scheduling.scheduler` SPI | implement (see Quartz) |
 | an execution interceptor | `AgentExecutionInterceptor` | add it to the chain |
 | a trace exporter | `SpanExporter` / `TraceSpanStore` | implement |

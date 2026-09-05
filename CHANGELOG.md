@@ -7,6 +7,61 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Memory: the distributed backends leave, the SPI stays
+
+- **`aimon-memory-postgres` and `aimon-memory-mongodb` are removed.** This is a **removal, not a
+  migration**, and the distinction is the whole entry: distributed memory now lives in a separate
+  service ([aimon-memory](https://github.com/kangwoo/aimon-memory)) whose schema is a different
+  design keyed on `(workspace, observer, observed)`. **Nothing migrates the old `mem_*` tables or
+  collections into it.** A deployment with data in either backend keeps running on `0.2.4`, or starts
+  empty on the service — there is no path that carries the rows across, and the similar module names
+  must not be read as one. What each removed piece was replaced *by*, rather than migrated *to*:
+
+  | Removed | Replaced by |
+  |---|---|
+  | `PostgresDerivationQueueManager` (row-locked derivation queue) | `aimon-memory-worker`'s `WorkerLoop` and its Representation / Summary / Dream / Deletion consumers |
+  | `KnowledgeStoreOutboxRelay` (outbox → embedding index) | pgvector natively — `Vectors`, `EmbeddingDimensionCheck`, `aimon-memory-embed` |
+  | `Postgres`/`Mongo` `{Observation,Representation,Workspace}Store` | `aimon-memory-store` — Flyway plus twelve JDBC repositories |
+
+  [`docs/project/api-stability.md`](docs/project/api-stability.md) §4.1 covers how this squares with
+  the DDL freeze that section used to name these modules in: the freeze is a promise about a *live*
+  surface — that stored names do not drift out from under stored data — and a surface that is gone
+  has no data left to read out from under.
+
+- **`aimon-memory-file` is merged into `aimon-core`** as `at.aimon.core.memory.file`, beside the
+  `InMemory*Store`s it is the durable counterpart to. The classes keep their names and signatures, and
+  **the JSONL format, the field names, the sidecar `<log>.lock` and the compaction temp-file swap are
+  unchanged** — an existing log is read without conversion. Applications drop
+  `implementation("at.aimon.core:aimon-memory-file")` and change the import prefix; the table is in
+  [`docs/migration/rename-maps.md`](docs/migration/rename-maps.md). Not `at.aimon.core.memory.impl.file`:
+  the memory domain has no `.impl` split today, `aimon-cli` still assembles these classes by name, and an
+  `.impl` package with no ArchUnit rule behind it is a label rather than a boundary
+  ([`pluggable-memory-backend.md`](docs/design/memory/pluggable-memory-backend.md) §4.2).
+
+  One internal detail changed and nothing observable followed it: `MemoryJsonCodec` no longer registers
+  Jackson's `JavaTimeModule`. It never used it — every timestamp is mapped by hand through
+  `Instant.toString()` / `Instant.parse` and the mapper only ever handles `JsonNode` trees — and keeping
+  it would have made `jackson-datatype-jsr310` a published dependency of `aimon-core` for nothing.
+
+- **`aimon-memory-testkit` is now published** (`at.aimon.core:aimon-memory-testkit`), and joins the BOM
+  automatically. The five-tier `PeerMemory` contract suite was deliberately unpublished, following
+  `aimon-filesystem-testkit` and `aimon-session-testkit`. Those two describe contracts whose every
+  implementation is in this repository, so an unpublished module reaches all of them. This one's
+  subjects are `PeerMemory` backends, and after the removals above the implementation that most needs
+  holding to the contract — `RemotePeerMemory`, in another repository — was the one implementation that
+  could not run it. The other two testkits are unchanged.
+
+- **The `PeerMemory` SPI now has an out-of-repository compile consumer**, which is a new obligation
+  rather than a change: `aimon-memory-client` compiles against `at.aimon.core.memory.PeerMemory` and the
+  five tier interfaces, so changing those signatures breaks a build this repository's own gate cannot
+  see. [`api-stability.md`](docs/project/api-stability.md) §4.2 records the ordering that follows.
+
+- Documentation: [`pluggable-memory-backend.md`](docs/design/memory/pluggable-memory-backend.md) is
+  corrected where it predicted otherwise — §4.3 said the three backend modules would not change by a
+  single line, and §8.1/§12 expected two in-tree adapter modules (`aimon-memory-honcho`,
+  `aimon-memory-dyad`) that were never built. The design's actual claim — that the replacement seam is
+  the five service tiers, not the store interfaces — is what the outcome confirms.
+
 ### Build, CI and the release gate
 
 - **The `/release` skill's description of the gate is now checked against the gate.**
