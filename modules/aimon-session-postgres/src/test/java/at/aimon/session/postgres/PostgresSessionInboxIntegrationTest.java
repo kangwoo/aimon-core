@@ -47,7 +47,7 @@ class PostgresSessionInboxIntegrationTest {
         assertThat(collected).hasSize(1);
         final InboundMessage got = collected.get(0);
         assertThat(got.getId()).hasValue(returnedId);
-        assertThat(got.getUserInput()).isEqualTo("hello");
+        assertThat(got.getUserInput().asText()).isEqualTo("hello");
         assertThat(got.getAgentRef()).isEqualTo("agent-x");
         assertThat(got.getPriority()).isEqualTo(QueuedInputPriority.NEXT);
         assertThat(got.getInitiator().getId()).isEqualTo("u-1");
