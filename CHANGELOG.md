@@ -55,11 +55,21 @@ Central is versioned independently).
   does not reject one message; it destroys every message that call collected. `UserInputCodec`
   therefore exposes `decodeOrText`, which the three inbox codecs call: it falls back to the
   `asText()` rendering stored beside the encoding — the same thing an older node would run — and
-  logs at `WARN`, because a silent fallback would be the very failure the structured encoding was
-  added to remove. `JsonSessionSnapshotCodec` still refuses the same exception, and the asymmetry is
-  documented where the decision is made: a rewind point has no string to fall back to and loses only
-  a retry the user can re-issue. Only the input field degrades — a malformed `initiator` or an
-  unknown `priority` still throws, because those mean a corrupt document rather than a newer one.
+  logs at `WARN` **naming the session**, because a silent fallback would be the very failure the
+  structured encoding was added to remove, and a warning nobody can attribute to a session is one
+  nobody can act on. `JsonSessionSnapshotCodec` still refuses the same exception, and the asymmetry
+  is documented where the decision is made: a rewind point has no string to fall back to and loses
+  only a retry the user can re-issue.
+
+  **The boundary is the field, not the kind of failure.** A decoder cannot distinguish a document
+  from a newer build from a damaged one, so the rule is the one it can enforce: everything thrown
+  while reading that one field degrades, and the rest of the envelope still refuses — a malformed
+  `initiator` or an unknown `priority` says *damaged*, and the text beside them stands in for
+  nothing. `UserInputCodec` also normalizes what the input value objects declare
+  (`ImageInput`/`AudioInput` enforce a MIME prefix and signal with `IllegalArgumentException`) into
+  its own exception, the way it always did for invalid base64, so the declared contract of `decode`
+  is true for its strict caller as well — which incidentally stops one unreadable rewind point from
+  failing the whole snapshot around it.
 
 - **`IdempotencyEntry.inputHash` keeps `sha256(text)` for text turns.** That digest is written to the
   shared store and recomputed by whichever node a retry lands on, which during a rolling upgrade is

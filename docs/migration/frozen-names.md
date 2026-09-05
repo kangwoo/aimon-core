@@ -83,12 +83,20 @@ remove an entry from storage *before* the codec sees it — Redis's collect scri
 Postgres commits its `DELETE … RETURNING`, MongoDB uses `findOneAndDelete` — so refusing a document
 does not reject one message, it destroys every message that call collected. A `userInputEncoded` this
 build cannot read (a sixth `InputType` written by a node one release ahead) therefore **degrades to
-the string beside it and logs at `WARN`** rather than throwing;
+the string beside it and logs at `WARN`, naming the session** rather than throwing.
 `UserInputCodec.decodeOrText` is the one place that decides it, and its javadoc carries the
 comparison with `JsonSessionSnapshotCodec`, which refuses the same exception because a rewind point
-has no such string and no such cost. The degradation is deliberately confined to that one field:
-a malformed `initiator` or an unknown `priority` still throws, because those mean a corrupt document
-rather than a newer one.
+has no such string and no such cost.
+
+**The line is the field, not the kind of failure.** A decoder cannot tell a newer document from a
+damaged one — `{"type":"video"}` reads identically either way — so the rule is the one it can
+enforce: anything thrown while reading `userInputEncoded` degrades, whatever its type, and the rest
+of the envelope still refuses. A malformed `initiator` or an unknown `priority` throws, because those
+say the document is damaged rather than newer and the string beside them stands in for nothing.
+Drawing that line at the exception type instead is a mistake this format already made once: a
+`mimeType` of `video/mp4` under `"type":"image"` is refused by `ImageInput` with a plain
+`IllegalArgumentException`, which sailed past a `catch` written for the codec's own type and
+destroyed the batch anyway.
 
 `InboundMessageCodecTest` (Redis, MongoDB) and `InboundMessageRowCodecTest` (Postgres) pin both
 halves against hard-coded literals, and `UserInputCodecTest` pins the subtree's shapes the same way.

@@ -1,4 +1,4 @@
-# 중단·재시도가 남긴 열린 항목 — 등록 항목 4건 (열림 2 · 닫힘 2)
+# 중단·재시도가 남긴 열린 항목 — 등록 항목 5건 (열림 3 · 닫힘 2)
 
 [`design/agent-execution/interrupt.md`](../design/agent-execution/interrupt.md) 가 `IMPLEMENTED` 로
 닫힌 뒤에도 남은 항목들이다. **열림/닫힘의 정본은 이 문서다** — 설계 문서 §14 는 왜 미뤘는지의 근거를
@@ -104,9 +104,16 @@ nobody can decode is a turn nobody runs"* 를 적었다. 그런데 **거울상**
 
 | 백엔드 | 지우는 시점 | 디코드 실패의 결과 |
 |---|---|---|
-| Redis | collect 스크립트가 Lua 안에서 `XDEL` 을 끝낸 뒤 반환 | 그 호출이 수집한 **배치 전부** 소실 |
+| Redis | collect 스크립트가 Lua 안에서 배치 전체를 `XDEL` 한 뒤 반환 | 못 읽은 것 **앞뒤 가릴 것 없이 그 배치 전부** 소실 |
 | Postgres | `DELETE … RETURNING` 을 `commit()` 한 뒤 디코드 루프 | 같음 |
-| MongoDB | `findOneAndDelete` | 그 항목 소실 |
+| MongoDB | `findOneAndDelete` 를 배치 크기만큼 **반복**하며 `out` 에 모은다 | 못 읽은 것 **과 그 앞에 이미 지워진 정상 항목 전부** 소실. 아직 안 닿은 것은 저장소에 남는다 |
+
+**이 표의 Mongo 행은 처음에 "그 항목 소실" 로 적혀 있었고 그것은 과소평가였다.** `MongoSessionInbox.collect`
+는 `findOneAndDelete` 를 루프로 돌면서 결과를 `out` 에 쌓으므로, 가운데에서 던지면 앞서 지워진 정상 항목이
+`out` 과 함께 버려진다 — 2차 리뷰가 실컨테이너에서 3건 중 가운데를 깨뜨려 재현했다(`docs-left=1`,
+생존자는 뒤쪽 하나, 앞쪽 정상 항목은 **저장소에서도 사라지고 아무에게도 전달되지 않음**). 같은 브랜치의
+`decodeOrText` javadoc 과 `frozen-names.md` 는 처음부터 *"every message that call collected"* 로 정확히
+적고 있었으므로, 틀린 것은 이 표 하나였다 — 같은 사실에 대한 세 서술 중 하나만 어긋난, 규칙 일곱의 모양.
 
 인박스 코덱의 `catch` 는 `IOException` 뿐이고 `SessionSnapshotCodecException` 은 `RuntimeException` 이라
 그대로 빠져나간다. 게다가 **바로 옆 옛 키에 멀쩡한 문자열이 있다** — 옛 노드가 돌렸을 바로 그 렌더다.
@@ -124,7 +131,51 @@ nobody can decode is a turn nobody runs"* 를 적었다. 그런데 **거울상**
 **선재 여부**: 배치 소실 자체는 이 브랜치가 만든 것이 아니다. `main` 에서도 깨진 `initiator` 나 알 수 없는
 `priority` 가 같은 자리에서 던진다. 이 브랜치가 더한 것은 **정상 업그레이드에서 예상되는** 트리거다 —
 앞의 것들은 손상된 문서를 뜻하지만, 알 수 없는 입력 타입은 **더 새로운 빌드가 쓴 멀쩡한 문서**를 뜻한다.
-그래서 `catch` 를 넓히지 않고 **사이드카 디코드 한 자리만** 저하시킨다: 손상 신호는 그대로 던져야 한다.
+그래서 `catch` 를 넓히지 않고 **입력 필드 한 자리만** 저하시킨다: 손상 신호는 그대로 던져야 한다.
+남아 있는 선재 동작은 5번으로 등록했다.
+
+### 0.5 §0.4 의 저하 게이트를 **예외 타입**으로 그었더니 절반이 새어 나갔다
+
+[`README.md`](README.md) 의 *"방금 고친 것의 옆자리"* 항목(B-33)과 같은 모양이다 — 새 결함이 아니라
+**방금 쓴 처방의 경계가 잘못 그어진 것**이고, 2차 리뷰가 실컨테이너로 잡았다.
+
+§0.4 의 `decodeOrText` 는 `SessionSnapshotCodecException` **만** 잡았다. 그런데 `decodeAt` 은 값 객체
+팩토리를 직접 부르고 `ImageInput.of`·`AudioInput.of` 는 MIME 접두어가 안 맞으면 **`IllegalArgumentException`**
+을 던진다. 그 예외는 `catch` 를 그냥 통과해 `collect` 밖으로 나갔다 — 즉 §0.4 가 없앴다고 적은 배치 소실이
+**한 축에서는 그대로 살아 있었다.**
+
+| 문서·처방이 약속한 경계 | 코드가 실제로 그은 경계 |
+|---|---|
+| "더 새로운 문서인가 vs 손상된 문서인가" | "이 코덱의 예외 타입인가 vs 아닌가" |
+
+2차 리뷰의 실측(Redis 컨테이너, 정상 2 + `{"type":"image","mimeType":"video/mp4"}` 1):
+알 수 없는 태그는 `collected=3` 으로 **살아났고**(설계대로), 나쁜 MIME 은
+`IllegalArgumentException` 이 나가고 `entries-left-in-stream=0` — **3건 전부 소실**.
+
+**틀렸다는 증거가 같은 파일 안에 있었다.** `decodeBase64` 는 JDK 의 `IllegalArgumentException` 을 잡아
+코덱 예외로 정규화하고 있었고, 그 테스트 이름이 이유까지 적고 있었다 — *"invalid base64 is refused as a
+codec failure, not as an IllegalArgumentException from the JDK"*. 같은 규칙을 MIME 축에 적용하지 않았을
+뿐이다.
+
+**그리고 약속했던 경계 자체가 구현 불가능했다.** 디코더는 *더 새로운 문서*와 *손상된 문서*를 구별할 수
+없다 — `{"type":"video"}` 는 양쪽으로 똑같이 읽힌다. 그래서 그을 수 있는 경계로 바꿔 적었다:
+**입력 필드를 읽다 나온 것은 전부 저하하고, 봉투의 나머지는 그대로 거절한다.** 필드가 경계다.
+
+| 자리 | 무엇을 했나 |
+|---|---|
+| `UserInputCodec.decodeAt` | 값 객체가 선언한 실패(`IllegalArgumentException`·`NullPointerException`)를 코덱 예외로 정규화 — `decodeBase64` 가 이미 하던 것. `decode()` 의 계약이 참이 되고, 덤으로 되감기 지점 하나가 스냅샷 **전체**를 못 읽게 만들던 선재 경로도 닫힌다 |
+| `UserInputCodec.decodeOrText` | `catch` 를 `RuntimeException` 으로 넓힘. 정규화가 있으면 오늘은 도달하지 않는다 — 그 사실을 javadoc 에 적었다 |
+| 세 인박스 코덱 | 저하 경고에 **세션 id** 를 함께 넘긴다. 어느 세션의 턴이 텍스트로 떨어졌는지 못 말하면 "관측 가능" 이 "어딘가 줄이 하나 있다" 가 된다 |
+
+| 가드 | 넣어 본 결함 | 결과 |
+|------|-------------|------|
+| `valueObjectRefusalIsNormalized` · `valueObjectRefusalDegradesAsWell` | 정규화 제거(넓은 catch 유지) | 앞의 것만 FAILED — 넓은 catch 가 뒤를 받아 낸다 |
+| 같은 둘 | catch 를 다시 좁힘(정규화 유지) | **둘 다 PASSED** — 넓은 catch 는 오늘 도달 불가 |
+| 같은 둘 | 둘 다 제거 | **둘 다 FAILED** |
+| `unreadableEncodingDegradesAudibly` | — | 경고에 세션 id 가 들어가는지까지 검사 |
+
+가운데 줄을 그대로 적어 두는 이유는 [`README.md`](README.md) 규칙 다섯의 마지막 문단이다 — 오늘 도달하지
+않는 방어는 **왜 거기 있는지 적혀 있을 때만** 결함이 아니라 결정이다.
 
 ---
 
@@ -295,3 +346,36 @@ forward 시나리오가 Redis·Postgres·MongoDB **셋 다에서** 실제로 돌
 
 **언제 다시 볼까** — `isParallelizableInterrupt` 가 허용하는 `InterruptBehavior` 집합이 넓어질 때.
 그 메서드 javadoc 이 전제를 적어 두고 있으므로, 고치는 사람이 읽게 되어 있다.
+
+---
+
+## 5. 한 항목을 못 읽으면 같은 `collect` 의 정상 항목까지 사라진다 — **열림**
+
+2번을 닫으면서 나온 것이고, **선재 동작**이다([`README.md`](README.md) — *"항목은 착수하지 않아도 모양이
+바뀐다"*). 2번이 좁힌 것은 입력 필드 하나이고, 아래는 그 옆에 그대로 남아 있다.
+
+**무엇** — 인박스의 `collect` 가 한 항목의 디코드 실패로 배치 전체를 버리지 않게 한다. 어떤 모양이어야
+하는지는 **정하지 않는다** — 아래 참조.
+
+**왜** — 세 백엔드 전부 **디코드하기 전에** 저장소에서 지운다(§0.4 의 표). 그래서 손상된 항목 하나가
+그 호출이 이미 지운 **정상 항목들까지** 데려간다 — 저장소에도 없고 아무에게도 전달되지 않는다. 제출자
+입장에서는 약속받은 턴이 조용히 사라진 것이고, 재시도할 근거도 남지 않는다. 2차 리뷰가 MongoDB
+실컨테이너에서 3건 중 가운데의 `initiator.type` 을 깨뜨려 재현했다 — `docs-left-in-storage=1`,
+생존자는 뒤쪽 하나, 앞쪽 정상 항목은 소실.
+
+트리거는 손상된 문서이므로 흔하지 않다. 다만 **2번이 그 확률을 낮췄지 없애지는 않았다** — 입력 필드는
+이제 저하하지만 `initiator` · `priority` · `deliveredAt` 은 계속 던지고, 그것이 맞다(그 값들에는 옆에
+놓인 대체물이 없다).
+
+**어디** *(2026-09-05 확인)* — `RedisSessionInbox.collectTier` (Lua 가 배치 전체를 `XDEL` 한 뒤 디코드) ·
+`PostgresSessionInbox.collect` (`commit()` 뒤 디코드 루프) · `MongoSessionInbox.collect`
+(`findOneAndDelete` 를 반복하며 `out` 에 축적). 세 곳 다 `catch` 는 백엔드 예외(`RedisException` /
+`SQLException` / `MongoException`)뿐이고 코덱의 `RuntimeException` 은 통과한다.
+
+**처방을 적지 않는 이유** — 후보가 최소 셋이고 어느 것도 검증하지 않았다: (a) 항목 단위로 감싸 못 읽은
+것만 버리고 로그를 남긴다, (b) 지우기 전에 디코드한다(Redis 의 Lua 원자성과 Postgres 의 트랜잭션 모양이
+바뀐다), (c) 못 읽은 항목을 dead-letter 로 옮긴다(새 저장 표면). 규칙 다섯이 막는 것이 정확히
+**검증되지 않은 처방을 적어 두는 것**이므로, 진단만 남긴다.
+
+**언제 다시 볼까** — 두 가지 중 먼저 오는 것. 운영에서 인박스 디코드 실패가 실제로 관측될 때, 또는
+인박스 봉투에 필드를 하나 더 더할 때 — 후자는 새 디코드 실패 지점을 만드는 일이므로 이 항목을 함께 연다.
