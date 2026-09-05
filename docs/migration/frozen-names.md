@@ -85,8 +85,8 @@ does not reject one message, it destroys every message that call collected. A `u
 build cannot read (a sixth `InputType` written by a node one release ahead) therefore **degrades to
 the string beside it and logs at `WARN`, naming the session** rather than throwing.
 `UserInputCodec.decodeOrText` is the one place that decides it, and its javadoc carries the
-comparison with `JsonSessionSnapshotCodec`, which refuses the same exception because a rewind point
-has no such string and no such cost.
+comparison with `JsonSessionSnapshotCodec`, which refuses the same failure — and refuses a narrower
+set of them than the inbox catches — because a rewind point has no such string and no such cost.
 
 **The line is the field, not the kind of failure.** A decoder cannot tell a newer document from a
 damaged one — `{"type":"video"}` reads identically either way — so the rule is the one it can

@@ -57,9 +57,9 @@ Central is versioned independently).
   `asText()` rendering stored beside the encoding — the same thing an older node would run — and
   logs at `WARN` **naming the session**, because a silent fallback would be the very failure the
   structured encoding was added to remove, and a warning nobody can attribute to a session is one
-  nobody can act on. `JsonSessionSnapshotCodec` still refuses the same exception, and the asymmetry
-  is documented where the decision is made: a rewind point has no string to fall back to and loses
-  only a retry the user can re-issue.
+  nobody can act on. `JsonSessionSnapshotCodec` still refuses the same failure — and refuses a
+  narrower set of them than the inbox catches — and the asymmetry is documented where the decision is
+  made: a rewind point has no string to fall back to and loses only a retry the user can re-issue.
 
   **The boundary is the field, not the kind of failure.** A decoder cannot distinguish a document
   from a newer build from a damaged one, so the rule is the one it can enforce: everything thrown

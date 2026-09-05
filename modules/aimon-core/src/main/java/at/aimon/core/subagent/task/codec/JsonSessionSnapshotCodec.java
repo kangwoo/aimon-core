@@ -219,8 +219,9 @@ public final class JsonSessionSnapshotCodec implements SessionSnapshotCodec {
                     SubmitOptionsCodec.decode(node.get(FIELD_SUBMIT_OPTIONS)));
         } catch (SessionSnapshotCodecException e) {
             // Refusing rather than degrading is the right trade here and the opposite of what the session inbox
-            // does with the same exception: a point has no text rendering to fall back to, and a lost retry is one
-            // the user can re-issue. UserInputCodec.decodeOrText carries the full comparison.
+            // does with the same failure — and the inbox catches a wider set than this, because there the cost of
+            // being surprised is a destroyed batch. Here a point has no text rendering to fall back to, and a lost
+            // retry is one the user can re-issue. UserInputCodec.decodeOrText carries the full comparison.
             log.debug("Rewind point holds a user input this build cannot replay ({}); treating the turn as not"
                     + " retryable", e.getMessage());
             return null;

@@ -59,8 +59,8 @@ import at.aimon.core.subagent.task.codec.UserInputCodec;
  * by either build has to be readable by the other, and an older node reading a multimodal entry finds a rendering it
  * can run rather than an empty string or an undecodable document. The reverse direction — this build reading an
  * encoding a newer node wrote — degrades to that same rendering through
- * {@link UserInputCodec#decodeOrText(String, String)} rather than throwing, because {@code findOneAndDelete} has
- * already removed the document by the time this codec runs.
+ * {@link UserInputCodec#decodeOrText(String, String, String)} rather than throwing, because
+ * {@code findOneAndDelete} has already removed the document by the time this codec runs.
  *
  * <p>
  * <b>Unlike {@code submitOptions}, this subtree is not a second representation.</b> The argument that keeps
@@ -163,8 +163,8 @@ public final class InboundMessageCodec {
     /**
      * The envelope's input: the {@code userInputEncoded} text when it is there and readable, otherwise the
      * {@code userInput} string wrapped as text. See the class javadoc for why the two keys coexist, and
-     * {@link UserInputCodec#decodeOrText(String, String)} for why an unreadable encoding degrades here rather than
-     * refusing the document — {@code findOneAndDelete} has already removed it by the time this runs.
+     * {@link UserInputCodec#decodeOrText(String, String, String)} for why an unreadable encoding degrades here
+     * rather than refusing the document — {@code findOneAndDelete} has already removed it by the time this runs.
      */
     private static UserInput decodeUserInput(Document payload, String sessionId) {
         // The session id goes with it: a warning nobody can attribute to a session is one nobody can act on. It is

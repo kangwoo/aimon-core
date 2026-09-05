@@ -60,7 +60,8 @@ import at.aimon.core.subagent.task.codec.UserInputCodec;
  * <li><b>This build reading a newer entry</b> — the mirror of the case above, and the one this format created: a
  * node one release ahead can write a sixth {@code InputType}. Decoding goes through
  * {@link at.aimon.core.subagent.task.codec.UserInputCodec#decodeOrText(com.fasterxml.jackson.databind.JsonNode,
- * String)}, which falls back to the same {@code asText()} rendering and logs at {@code WARN}. Refusing would not
+ * String, String)}, which falls back to the same {@code asText()} rendering and logs at {@code WARN} naming this
+ * session. Refusing would not
  * reject one entry: {@code collect} removes entries from the backend <em>before</em> this codec runs, so a throw
  * destroys everything that call collected.
  * </ul>
@@ -147,8 +148,8 @@ public final class InboundMessageRowCodec {
     /**
      * The envelope's input: the {@code userInputEncoded} subtree when it is there and readable, otherwise the
      * {@code userInput} string wrapped as text. See the class javadoc for why the two keys coexist, and
-     * {@link UserInputCodec#decodeOrText(JsonNode, String)} for why an unreadable encoding degrades here rather than
-     * refusing the entry.
+     * {@link UserInputCodec#decodeOrText(JsonNode, String, String)} for why an unreadable encoding degrades here
+     * rather than refusing the entry.
      */
     private static UserInput decodeUserInput(JsonNode root) {
         // The session id goes with it: a warning nobody can attribute to a session is one nobody can act on, and
