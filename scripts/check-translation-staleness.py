@@ -18,6 +18,18 @@ exits 0. A translation backlog that blocks edits to the canonical makes the
 canonical go stale instead, which is the worse of the two failure modes. Pass
 --strict to make staleness an error anyway.
 
+--strict has no caller in this repository and that is deliberate, so before
+wiring it into scripts/release.sh: release.sh already refuses to run unless the
+tree is clean, on main, and level with origin/main, and every commit that
+reaches main was checked by this job on that exact tree -- so a release gate
+would add nothing on the unresolvable axis, which now fails everywhere anyway.
+What it would add is a gate on staleness at the one moment the argument above
+bites hardest. A translation a week behind would block a release, and the
+release is not the thing that is wrong; the pressure at that moment does not
+produce a translation, it produces a deleted check. Run it by hand before a
+release if you want to know. Do not make it the thing standing between a fix
+and the people waiting for it.
+
 UNRESOLVABLE -- the guard has no answer at all: the front matter is missing, the
 canonical it names is gone, or the source_commit is not a commit in this
 history. This exits 1. The reasoning that keeps STALE at 0 does not reach here:
