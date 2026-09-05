@@ -1,4 +1,4 @@
-# 아키텍처 리뷰가 남긴 나머지 항목 — 등록 항목 7건 (열림 3 · 닫힘 4)
+# 아키텍처 리뷰가 남긴 나머지 항목 — 등록 항목 7건 (열림 2 · 닫힘 5)
 
 2026-08-31 의 아키텍처 리뷰가 일곱 단계를 처리하고 남긴 것들이다. 같은 리뷰에서 나온 두 축은 이미
 자기 문서를 가졌고([`multi-instance-readiness.md`](multi-instance-readiness.md) ·
@@ -132,7 +132,7 @@
 | 계층 | 실체 | 비용 | 필요한 것 |
 |------|------|------|----------|
 | `@Tag("packaging")` | `FatJarPackagingTest` 메서드 **4개** (`aimon-sample-app`) | **57초** — 샘플 build 디렉토리를 지우고 루트에서 `packagingTest` (warm 은 6초) | **없음.** task 가 fat jar 둘을 자기가 빌드한다 |
-| `@Tag("playwright")` | `PlaywrightLifecycleManagerTest` 메서드 **4개** | 미측정 | 브라우저 바이너리 설치 |
+| `@Tag("playwright")` | `PlaywrightLifecycleManagerTest` 메서드 **4개** | ~~미측정~~ → **cold 94초 / warm 14~28초** (R-7, 2026-09-05) | 브라우저 바이너리 설치 |
 
 **항목의 본문이 이미 그 갈라짐을 적어 두고 있었다.** *"브라우저 바이너리 설치는 job 하나가 아니고,
 `packagingTest` 는 `bootJar` 에 매달려 있다"* — 한 문장 안에 **서로 다른 두 이유**를 적어 놓고도 둘을
@@ -175,35 +175,138 @@ JDK 설치와 전체 컴파일을 한 번 더 치르는데, Testcontainers 를 �
   `packagingTest` 등록 주석 — 둘 다 **"양쪽 게이트 밖"** 이라고 적고 있었으므로 같이 고쳤다(§0.4-b 와
   같은 파생 서술 문제이며, 이 문서에서 두 번째다)
 
-**남는 것** — 없다. playwright 쪽은 R-7 로 나갔다.
+**남는 것** — 없다. playwright 쪽은 R-7 로 나갔고, **거기서 이 항목의 판단이 확인되었다** — 자릿수가
+다르다는 예측은 맞았지만 방향이 반대였다: 재 보니 playwright 쪽도 warm 14~28초로 packaging 과 같은
+자릿수였고, 실제로 갈라져 있던 것은 비용이 아니라 **cold 경로의 성격**(느림 ↔ 빨감)이었다. 위 표의
+"미측정" 칸이 그때 감추고 있던 것이 그것이다.
 
-### R-7 — `playwrightTest` 는 여전히 어느 게이트에도 없다 · **열림 · 트리거 대기**
+### R-7 — `playwrightTest` 는 어느 게이트에도 없었다 · **닫힘** *(2026-09-05)*
 
-**무엇** — `playwrightTest` 를 CI 에 넣거나, 넣지 않기로 결정하고 그 근거를 적는다. R-1 에서 갈라져
-나온 항목이며, 번호는 재사용하지 않으므로 새 번호를 받았다.
+**무엇이었나** — `playwrightTest` 를 CI 에 넣거나, 넣지 않기로 결정하고 그 근거를 적는다. R-1 에서
+갈라져 나온 항목이며, 항목 스스로 *"착수하려면 먼저 재야 한다"* 고 적어 두었다. 재 보니 답이 정해졌다 —
+**넣었다.** 그리고 재는 과정에서 항목의 전제가 실제보다 약하다는 것이 먼저 드러났다.
 
-**왜 — 관측 가능한 결과**
+#### 근거가 약했다 — "게이트에 없다" 가 아니라 **"아무 데서도 돌지 않는다"** 였다
 
-`integrationTest` 에 이어 `packagingTest` 까지 양쪽 게이트에 들어가면서, **어디서도 실행되지 않는
-계층은 이것 하나만 남았다** — `PlaywrightLifecycleManagerTest` 의 메서드 4개다(2026-08-31 확인).
-`@Tag("playwright")` 를 문자열로 세면 5건이 나오지만, 그중 하나는 **그 태그를 왜 붙이지 않았는지 적은
-javadoc 문장**이다(`PlaywrightLifecycleManagerTest:26`) — §0.4-a 가 docker 쪽에서 만난 것과 같은 함정이다.
+항목은 이 계층을 *"어디서도 실행되지 않는"* 계층으로 적었고, 그 문장이 뜻한 것은 **CI 와 릴리스
+게이트 밖에 있다**는 것이었다. 즉 손으로 `./gradlew playwrightTest` 를 치면 돈다는 전제였다. 돌지
+않았다.
 
-`aimon-browser-playwright` 는 발행 모듈이므로, 게이트 편입이 7개 백엔드에 대해 말한 문장이 여덟 번째
-모듈에 대해 성립하는지의 문제다. 다만 대답이 자명하지 않다 — **브라우저 바이너리 설치는 job 하나가
-아니고**, 그 비용은 아직 재지 않았다. R-1 이 실측 한 번으로 갈라졌다는 사실이 여기에도 그대로 적용된다:
-**착수하려면 먼저 재야 한다.**
+`modules/aimon-browser-playwright/build.gradle.kts` 의 `tasks.register<Test>("playwrightTest")` 에는
+`testClassesDirs` 도 `classpath` 도 없었다. 맨 `register<Test>` 는 그 둘을 `test` 태스크에서 물려받지
+않으므로 이 태스크는 **후보 테스트 클래스가 0개**였고, `NO-SOURCE` 로 건너뛰어졌고, **650ms 만에
+초록으로 끝났다.** 통과한 실행과 글자 하나 다르지 않다. 그 상태는 **초기 커밋 이래로** 유지되었으므로
+`PlaywrightLifecycleManagerTest` 의 태그된 메서드 넷은 **한 번도 실행된 적이 없다.**
 
-**어디** *(2026-08-31 확인)*
+이것은 [`README.md`](README.md) 규칙 셋의 사례다 — 근거(*"어느 게이트에도 없다"*)는 참이었고 틀린 것은
+**심각도**였다. 그리고 그 차이는 읽어서는 나오지 않았다: `build.gradle.kts:29` 를 몇 번을 다시 읽어도
+없는 두 줄은 보이지 않는다. **태스크를 한 번 돌리자 첫 줄에 나왔다.**
 
-- `modules/aimon-browser-playwright/build.gradle.kts:29` — `playwrightTest` 등록
-- `.github/workflows/build.yml` 의 `integration` job 주석 · `scripts/release.sh` 의 게이트 주석 —
-  둘 다 이제 **이 계층 하나만** "still opt-in" 이라고 적는다
-- `ReleaseGateMatchesCiGateTest` — 이것을 **보지 못한다**고 자기 javadoc 에 적어 두었다
+같은 이유로 `ReleaseGateMatchesCiGateTest` 도 이것을 잡을 수 없었다. 그 테스트가 비교하는 것은 **두
+목록**이고, 양쪽에 없는 계층은 아무리 썩어도 목록 비교에 나타나지 않는다. 자기 javadoc 이 *"Nothing
+here notices when it rots"* 라고 적어 둔 그대로인데, **썩는 방식이 예상보다 한 단계 아래**였다.
 
-**언제 다시 볼까** — 둘 중 하나. (원래 셋이었는데 하나는 packaging 쪽 트리거여서 R-1 과 함께 나갔다.)
-- 브라우저 도구가 실제 소비자를 얻을 때. 지금 `playwrightTest` 가 지키는 것은 아직 아무도 쓰지 않는 표면이다
-- CI 시간이 문제가 아니게 될 때 — 이 계층을 넣지 않는 진짜 이유는 설치 비용이지 테스트 시간이 아니다
+#### 인구조사 — 문자열 6, 애노테이션 4, 클래스 1 *(2026-09-05)*
+
+§0.4-a 의 함정이 그대로 있고, **숫자가 하나 늘었다.**
+
+| 세는 법 | 2026-08-31 | 2026-09-05 |
+|---|---|---|
+| `Tag("playwright")` 문자열 | 5 | **6** |
+| 그중 애노테이션 | 4 | 4 |
+| 애노테이션이 있는 클래스 | 1 | 1 |
+
+늘어난 한 건은 코드가 아니라 **R-1 이 §0.4-b 에서 고친 javadoc**
+(`ReleaseGateMatchesCiGateTest:60`)이다. 즉 **낡은 산문을 고치는 행위가 그 산문을 세는 grep 의 결과를
+바꿨다.** 규칙 여섯이 말하는 *"N건도 도구가 만들어 낸 숫자"* 의 한 판본이며, 이 항목에서는 결론을
+바꾸지 않지만 다음 사람이 5를 기대하고 6을 보면 멈추게 된다.
+
+#### 실측 — 항목이 요구한 것 *(2026-09-05, macOS arm64, 가정용 회선)*
+
+| 무엇 | 값 |
+|---|---|
+| cold 설치, 기본 브라우저 전체 (`install`) | **158초 · 디스크 1.0 GB** |
+| cold 설치, chromium 만 (`install chromium`) | **94초 · 디스크 520 MB** |
+| warm 설치 확인 | **1초 미만** |
+| Linux x64 다운로드 바이트, 기본 전체 | **479.2 MiB** (chromium 167.3 / headless-shell 110.9 / firefox 99.5 / webkit 99.2 / ffmpeg 2.3) |
+| Linux x64 다운로드 바이트, chromium 만 | **280.5 MiB** |
+| `actions/cache` 항목 크기 (chromium, zstd) | **229 MB** |
+| `driver-bundle` jar | **201 MB — 이미 `testRuntimeClasspath` 에 있다.** 새 Maven 다운로드는 0 |
+| warm `playwrightTest` | **14~28초** |
+
+**설치는 자동이다** — 별도 `playwright install` 스텝이 이 저장소에 있는 것이 아니라
+`Playwright.create()` 안에서 일어난다. 근거는 바이트코드다: `DriverJar.installBrowsers()` 가 번들
+드라이버를 **인자 없는 `install`** 로 부르므로 `browsers.json` 의 `installByDefault: true` **전부**
+(chromium · chromium-headless-shell · firefox · webkit · ffmpeg)를 받는다. 끄는 것은
+`PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD` 와 `SELENIUM_REMOTE_URL` 둘뿐이다.
+
+#### 실측이 답을 정하기 전에, 실측이 **두 번째 결함**을 먼저 냈다
+
+cold 캐시에서 이 계층은 **느린 것이 아니라 빨간 것**이었다. `PlaywrightLifecycleManager:98` 이
+`Playwright.create()` 를 `future.get(30, TimeUnit.SECONDS)` 로 감싸는데, 그 안에서 158초짜리
+다운로드가 일어나므로 타임아웃이 먼저 터진다. **두 번 재현했다 — 2분21초와 2분27초, 둘 다 4/4 실패.**
+
+절반만 찬 캐시는 더 나쁘다. chromium 만 있고 firefox 가 없는 상태로 돌리면 **넷 중 둘이 실패하고 둘이
+통과했다** — 느린 게이트가 아니라 **flaky 게이트**다. R-3 이 하한선에 대해 경고한 것과 같은 모양이며,
+이 저장소가 "가장 엄격해 보이는 설정이 가장 약한 강제를 만든다" 로 부르는 것이다.
+
+그래서 처방이 "CI 에 한 줄 더한다" 로 끝나지 않는다. 다운로드를 **타임아웃 밖으로 끌어내고** 이 테스트가
+실제로 띄우는 것(chromium)으로 좁혔다 — `installPlaywrightBrowsers` JavaExec 태스크 + 테스트 태스크의
+`PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`. 빈 `PLAYWRIGHT_BROWSERS_PATH` 에서 **1분48초에 4/4 통과**로
+확인했다.
+
+#### 결정 — 넣는다. 근거는 `packagingTest` 가 아니라 `integrationTest` 쪽이다
+
+막고 있던 미지수(설치 비용)가 재어 보니 **비교 대상보다 작다** — 컨테이너 다섯을 몇 분 띄우는
+`integrationTest` 보다 싸고, warm 에서는 `packagingTest` 와 같은 자릿수다. 그리고 편입 근거는 R-1 이
+`packagingTest` 에 쓴 좁은 것("fat jar 를 볼 수 있는 유일한 검증")이 아니라 게이트 편입이 백엔드들에
+쓴 것과 **같은 문장**이다.
+
+| | `test` 만 | `test` + `playwrightTest` |
+|---|---|---|
+| 모듈 line | 83.70% | **88.15%** |
+| `PlaywrightLifecycleManager` line | **8.96%** (6/67) | **56.72%** (38/67) |
+
+`aimon-browser-playwright` 는 Maven Central 발행 모듈이고, 브라우저 프로세스·데몬 워커 스레드·종료
+순서를 소유하는 클래스가 **9%** 로 나가고 있었다. "소비자가 아직 없다" 는 반론이 되지 않는다 — 발행된
+순간부터 소비자는 저장소 밖에 있을 수 있고, R-2 가 `aimon-knowledge-opensearch` 를 그대로 둔 이유
+(*테스트가 0건이다*)는 여기에 적용되지 않는다. 여기서는 **테스트가 있는데 빌드 버그가 건너뛰고 있었다.**
+
+#### 한 것
+
+- `installPlaywrightBrowsers` + `playwrightTest` 의 `testClassesDirs`/`classpath`/skip 플래그
+- `.github/workflows/build.yml` — `build` job 의 스텝(별도 job 이 아닌 이유는 R-1 이 `packagingTest`
+  에 쓴 규칙 그대로), `actions/cache` 로 `~/.cache/ms-playwright` 캐시. **키는 Playwright 버전
+  하나**이지 버전 카탈로그 해시가 아니다 — 무관한 의존성 범프마다 229 MB 를 버리게 된다.
+  `restore-keys` 가 옛 항목을 집으면 설치 태스크가 새 리비전만 채운다
+- `scripts/release.sh` — 게이트가 `checkAll integrationTest packagingTest playwrightTest
+  jacocoTestCoverageVerification` 가 됐다. `.claude/skills/release/SKILL.md` 의 선언도 같이
+- `playwrightTest.exec` 를 커버리지 hand-off 에 실었고, 모듈 하한선을 **82 → 87** 로 다시 동결했다
+  (R-3 의 `floor(측정값) − 1`). 이것이 배선을 **자기강제**로 만든다 — 단위 계층만으로는 87 에 닿지
+  못하므로, 나중에 이 계층을 CI 에서 조용히 빼면 커버리지 하한선이 실패한다
+
+**공허 통과가 아님을 두 방향으로 확인했다** (규칙 다섯).
+
+| 조건 | 결과 |
+|---|---|
+| 릴리스 게이트에서만 `playwrightTest` 를 뺀다 | `ReleaseGateMatchesCiGateTest` 가 **실패** — *"CI runs `playwrightTest` … but the release gate in scripts/release.sh does not"* |
+| 단위 계층만으로 하한선을 돌린다 | **실패** — *"lines covered ratio is 0.83, but expected minimum is 0.87"* |
+
+**어디** *(2026-09-05)*
+
+- `modules/aimon-browser-playwright/build.gradle.kts` — `installPlaywrightBrowsers` 와 고쳐진
+  `playwrightTest`
+- `.github/workflows/build.yml` — `build` job 의 세 스텝 · 커버리지 아카이브 glob ·
+  `integration` job 주석
+- `scripts/release.sh` · `.claude/skills/release/SKILL.md` · `gradle/coverage-baselines.properties`
+- 낡아 있던 산문 셋: `ReleaseGateMatchesCiGateTest` 의 "What this cannot see" ·
+  `aimon.java-conventions.gradle.kts` 의 계층 주석 · `PlaywrightLifecycleManagerTest:26` 의 javadoc
+  (*"태그가 붙으면 CI 가 회귀를 잡지 못한다"* — 이제 CI 가 잡고, 그때도 그 문장은 실제보다 약했다)
+
+**남는 것** — 없다. 그리고 이 항목이 닫히면서 **§0.4-b 가 서술한 카빙 자체가 사라졌다**:
+`ReleaseGateMatchesCiGateTest` 가 "양쪽 게이트 밖이라 보지 못한다" 고 적을 계층이 이제 하나도 없다.
+그 문단은 지우지 않고 **왜 있었는지와 무엇이 그것을 무력화했는지**로 다시 썼다 — 사각지대의 모양
+(*양쪽에 없는 것은 목록 비교에 나타나지 않는다*)은 다음 계층이 생기면 그대로 되돌아오기 때문이다.
 
 ### R-2 — `aimon-knowledge-opensearch` 의 `jackson-databind` · **닫힘** *(2026-08-31)*
 
