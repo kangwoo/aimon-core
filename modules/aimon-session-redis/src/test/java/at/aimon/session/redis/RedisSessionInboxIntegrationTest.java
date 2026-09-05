@@ -73,7 +73,7 @@ class RedisSessionInboxIntegrationTest {
         inbox.deliver(message(id, QueuedInputPriority.NEXT, "next-2"));
 
         final List<InboundMessage> collected = inbox.collect(id, QueuedInputPriority.LATER);
-        assertThat(collected).extracting(InboundMessage::getUserInput).containsExactly("now-1", "now-2", "next-1",
+        assertThat(collected).extracting(m -> m.getUserInput().asText()).containsExactly("now-1", "now-2", "next-1",
                 "next-2", "later-1");
     }
 
@@ -86,10 +86,10 @@ class RedisSessionInboxIntegrationTest {
         inbox.deliver(message(id, QueuedInputPriority.LATER, "later-1"));
 
         final List<InboundMessage> nowOnly = inbox.collect(id, QueuedInputPriority.NOW);
-        assertThat(nowOnly).extracting(InboundMessage::getUserInput).containsExactly("now-1");
+        assertThat(nowOnly).extracting(m -> m.getUserInput().asText()).containsExactly("now-1");
 
         final List<InboundMessage> rest = inbox.collect(id, QueuedInputPriority.LATER);
-        assertThat(rest).extracting(InboundMessage::getUserInput).containsExactly("next-1", "later-1");
+        assertThat(rest).extracting(m -> m.getUserInput().asText()).containsExactly("next-1", "later-1");
     }
 
     @Test

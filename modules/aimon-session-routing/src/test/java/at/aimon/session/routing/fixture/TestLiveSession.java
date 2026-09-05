@@ -16,6 +16,8 @@ import at.aimon.core.agent.AgentExecutionResult;
 import at.aimon.core.agent.SubmitOptions;
 import at.aimon.core.agent.artifact.FileArtifact;
 import at.aimon.core.agent.budget.CompletionReason;
+import at.aimon.core.agent.input.TextInput;
+import at.aimon.core.agent.input.UserInput;
 import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.session.LiveSession;
 import at.aimon.core.agent.session.SessionId;
@@ -37,13 +39,20 @@ import at.aimon.core.agent.stream.AgentExecutionEvent;
  * addressed {@link #interrupt(TurnId, InterruptReason)} that names a turn other than the active one. Without that, a
  * manager-level test could not tell a correctly-addressed interrupt from one the manager broadened into a session-wide
  * stop.
+ *
+ * <p>
+ * Input handling mirrors it too, and for a related reason: the {@code UserInput} overload is the one every other
+ * lands on, so a non-text turn is <em>recorded</em> rather than met with the interface default's
+ * {@code UnsupportedOperationException}. A double that only implemented the {@code String} form would make every
+ * assertion about a routed image fail on the double instead of on the router. {@link #submittedInputs()} still
+ * returns text, which is what the existing scenarios assert on.
  */
 public final class TestLiveSession implements LiveSession {
 
     private final SessionId sessionId;
     private final AtomicReference<CompletableFuture<AgentExecutionResult>> current = new AtomicReference<>();
     private final AtomicReference<Consumer<AgentExecutionEvent>> currentListener = new AtomicReference<>();
-    private final ConcurrentLinkedQueue<String> submittedInputs = new ConcurrentLinkedQueue<>();
+    private final ConcurrentLinkedQueue<UserInput> submittedInputs = new ConcurrentLinkedQueue<>();
     private final ConcurrentLinkedQueue<SubmitOptions> submittedOptions = new ConcurrentLinkedQueue<>();
     private final ConcurrentLinkedQueue<TurnId> submittedTurnIds = new ConcurrentLinkedQueue<>();
     private final ConcurrentLinkedQueue<InterruptReason> interrupts = new ConcurrentLinkedQueue<>();
@@ -74,6 +83,13 @@ public final class TestLiveSession implements LiveSession {
     public CompletionStage<AgentExecutionResult> submitAsync(String input, SubmitOptions submitOptions,
             Consumer<AgentExecutionEvent> listener) {
         Objects.requireNonNull(input, "input must not be null");
+        return submitAsync(TextInput.of(input), submitOptions, listener);
+    }
+
+    @Override
+    public CompletionStage<AgentExecutionResult> submitAsync(UserInput input, SubmitOptions submitOptions,
+            Consumer<AgentExecutionEvent> listener) {
+        Objects.requireNonNull(input, "input must not be null");
         Objects.requireNonNull(submitOptions, "submitOptions must not be null");
         Objects.requireNonNull(listener, "listener must not be null");
         if (closed.get()) {
@@ -102,6 +118,13 @@ public final class TestLiveSession implements LiveSession {
     @Override
     public CompletionStage<AgentExecutionResult> submitAsync(TurnId turnId, String input, SubmitOptions submitOptions,
             Consumer<AgentExecutionEvent> listener) {
+        Objects.requireNonNull(input, "input must not be null");
+        return submitAsync(turnId, TextInput.of(input), submitOptions, listener);
+    }
+
+    @Override
+    public CompletionStage<AgentExecutionResult> submitAsync(TurnId turnId, UserInput input,
+            SubmitOptions submitOptions, Consumer<AgentExecutionEvent> listener) {
         Objects.requireNonNull(turnId, "turnId must not be null");
         submittedTurnIds.add(turnId);
         activeTurnId.set(turnId);
@@ -330,7 +353,13 @@ public final class TestLiveSession implements LiveSession {
         return awaitTurnCount(target, DEFAULT_AWAIT_MS);
     }
 
+    /** The text rendering of every turn submitted, in order. */
     public List<String> submittedInputs() {
+        return submittedInputs.stream().map(UserInput::asText).toList();
+    }
+
+    /** Every turn submitted, in order, as the input it was actually submitted with. */
+    public List<UserInput> submittedUserInputs() {
         return List.copyOf(submittedInputs);
     }
 

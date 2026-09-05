@@ -11,6 +11,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+import at.aimon.core.agent.input.TextInput;
+import at.aimon.core.agent.input.UserInput;
 import at.aimon.core.agent.queue.QueuedInputPriority;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.TurnId;
@@ -18,6 +20,7 @@ import at.aimon.core.agent.session.inbox.InboundMessage;
 import at.aimon.core.agent.session.inbox.InboundMessageId;
 import at.aimon.core.base.Principal;
 import at.aimon.core.subagent.task.codec.SubmitOptionsCodec;
+import at.aimon.core.subagent.task.codec.UserInputCodec;
 
 /**
  * Jackson codec for the {@link InboundMessage} envelope persisted to {@code conversation_inbox.payload} (JSONB).
@@ -32,6 +35,29 @@ import at.aimon.core.subagent.task.codec.SubmitOptionsCodec;
  * {@link at.aimon.core.subagent.task.codec.SubmitOptionsCodec}, which this hands its own mapper so the subtree keeps
  * following the same rules as the document around it. This codec used to carry a hand-written copy of that mapping,
  * identical to the one in the Redis inbox and to the shared one — three copies that agreed by coincidence.
+ *
+ * <p>
+ * <b>{@code userInput} leads with text, and {@code userInputEncoded} carries the rest.</b> The envelope's input
+ * used to be a {@code String} and this key held it directly. It now holds
+ * {@link at.aimon.core.agent.input.UserInput#asText()}, and a non-text input additionally writes its
+ * {@link at.aimon.core.subagent.task.codec.UserInputCodec} subtree under {@code userInputEncoded}; a
+ * {@link at.aimon.core.agent.input.TextInput} writes no sidecar at all, so a text submission is byte-for-byte the
+ * document the previous build wrote. Decode prefers the sidecar and falls back to wrapping the string.
+ *
+ * <p>
+ * That asymmetry is the compatibility contract, and the reason for it is that an inbox holds work that has
+ * <i>not been done yet</i>. Three readers have to be considered, not one:
+ *
+ * <ul>
+ * <li><b>This build reading an older entry</b> — no sidecar, so the string is the input, which is exactly what it
+ * was.
+ * <li><b>An older build reading this build's text entry</b> — unchanged in every byte.
+ * <li><b>An older build reading this build's multimodal entry</b> — it cannot run the image whatever we write, so
+ * the question is only what it does instead. Under the old key it finds the {@code asText()} rendering and runs a
+ * turn that says an image was attached. Turning {@code userInput} into an object would give it {@code ""} from
+ * {@code JsonNode.asText()} and an empty turn, silently; omitting the key would strand the entry undecodable, and
+ * an inbox entry nobody can decode is a turn nobody runs.
+ * </ul>
  */
 public final class InboundMessageRowCodec {
 
@@ -47,7 +73,10 @@ public final class InboundMessageRowCodec {
             final ObjectNode root = mapper.createObjectNode();
             root.put("conversationId", message.getSessionId().value());
             root.put("agentRef", message.getAgentRef());
-            root.put("userInput", message.getUserInput());
+            root.put("userInput", message.getUserInput().asText());
+            if (!(message.getUserInput() instanceof TextInput)) {
+                root.set("userInputEncoded", UserInputCodec.encode(message.getUserInput()));
+            }
             root.put("priority", message.getPriority().name());
             message.getTurnId().ifPresent(t -> root.put("turnId", t.value()));
             message.getContextDiscriminator().ifPresent(d -> root.put("contextDiscriminator", d));
@@ -76,7 +105,7 @@ public final class InboundMessageRowCodec {
             final JsonNode root = mapper.readTree(json);
             final InboundMessage.Builder b = InboundMessage.builder().id(InboundMessageId.of(rowId))
                     .sessionId(SessionId.of(root.get("conversationId").asText()))
-                    .agentRef(root.get("agentRef").asText()).userInput(root.get("userInput").asText())
+                    .agentRef(root.get("agentRef").asText()).userInput(decodeUserInput(root))
                     .priority(QueuedInputPriority.valueOf(root.get("priority").asText()))
                     .initiator(decodePrincipal(root.get("initiator")))
                     .deliveredAt(Instant.parse(root.get("deliveredAt").asText()));
@@ -107,6 +136,18 @@ public final class InboundMessageRowCodec {
         } catch (IOException e) {
             throw new IllegalStateException("Failed to decode InboundMessage", e);
         }
+    }
+
+    /**
+     * The envelope's input: the {@code userInputEncoded} subtree when it is there, otherwise the {@code userInput}
+     * string wrapped as text. See the class javadoc for why the two keys coexist.
+     */
+    private static UserInput decodeUserInput(JsonNode root) {
+        final JsonNode encoded = root.get("userInputEncoded");
+        if (encoded != null && !encoded.isNull()) {
+            return UserInputCodec.decode(encoded);
+        }
+        return TextInput.of(root.get("userInput").asText());
     }
 
     private ObjectNode encodePrincipal(Principal principal) {

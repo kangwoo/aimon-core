@@ -10,6 +10,8 @@ import org.bson.Document;
 import org.bson.types.ObjectId;
 
 import at.aimon.core.agent.SubmitOptions;
+import at.aimon.core.agent.input.TextInput;
+import at.aimon.core.agent.input.UserInput;
 import at.aimon.core.agent.queue.QueuedInputPriority;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.TurnId;
@@ -18,6 +20,7 @@ import at.aimon.core.agent.session.inbox.InboundMessageId;
 import at.aimon.core.base.Principal;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.subagent.task.codec.SubmitOptionsCodec;
+import at.aimon.core.subagent.task.codec.UserInputCodec;
 
 /**
  * Codec between the {@link InboundMessage} envelope and the BSON {@link Document} stored in MongoDB.
@@ -45,6 +48,25 @@ import at.aimon.core.subagent.task.codec.SubmitOptionsCodec;
  * representations. An <i>added</i> field does not — it has to be handled here too, and what says so is
  * {@code InboundMessageCodecTest}, which asserts this codec's key sets against
  * {@code SubmitOptionsCodec.TOP_LEVEL_FIELDS} and its two nested siblings rather than against literals of its own.
+ *
+ * <p>
+ * <b>{@code userInput} leads with text, {@code userInputEncoded} carries the rest — and here it is a string.</b> The
+ * envelope's input used to be a {@code String} and that key held it directly; it now holds
+ * {@link at.aimon.core.agent.input.UserInput#asText()}, and a non-text input additionally writes
+ * {@link UserInputCodec#encodeToString} under {@code userInputEncoded}. A {@link TextInput} writes no sidecar, so a
+ * text entry is the document the previous build wrote. The compatibility reasoning is the same in all three backends
+ * and is spelled out on the Redis codec; the short form is that an inbox holds work not yet done, so an entry written
+ * by either build has to be readable by the other, and an older node reading a multimodal entry finds a rendering it
+ * can run rather than an empty string or an undecodable document.
+ *
+ * <p>
+ * <b>Unlike {@code submitOptions}, this subtree is not a second representation.</b> The argument that keeps
+ * {@code submitOptions} hand-mapped here — BSON types inside a heterogeneous {@code Map<String, Object>}, where a
+ * {@code Date} is a BSON value rather than a string — does not apply to an input: every leaf of that shape is a
+ * {@code String}, so there is no BSON type for a conversion to lose. It is stored as the codec's own JSON text rather
+ * than parsed into a subdocument because a subdocument would buy queryability this collection does not use (its
+ * indexed fields are the top-level {@code conversationId}, {@code priority} and {@code deliveredAt}) at the price of
+ * exactly the second hand-written mapping that {@code UserInputCodec} exists to prevent.
  */
 public final class InboundMessageCodec {
 
@@ -64,7 +86,10 @@ public final class InboundMessageCodec {
         final Document payload = new Document();
         payload.append("agentRef", message.getAgentRef());
         payload.append("contextDiscriminator", message.getContextDiscriminator().orElse(null));
-        payload.append("userInput", message.getUserInput());
+        payload.append("userInput", message.getUserInput().asText());
+        if (!(message.getUserInput() instanceof TextInput)) {
+            payload.append("userInputEncoded", UserInputCodec.encodeToString(message.getUserInput()));
+        }
         payload.append("turnId", message.getTurnId().map(TurnId::value).orElse(null));
         payload.append("idempotencyKey", message.getIdempotencyKey().orElse(null));
         payload.append("initiator", encodePrincipal(message.getInitiator()));
@@ -98,7 +123,7 @@ public final class InboundMessageCodec {
         final InboundMessage.Builder b = InboundMessage.builder().id(InboundMessageId.of(id.toHexString()))
                 .sessionId(SessionId.of(doc.getString(DocumentKeys.F_CONVERSATION_ID)))
                 .priority(QueuedInputPriority.values()[doc.getInteger(DocumentKeys.F_PRIORITY)])
-                .agentRef(payload.getString("agentRef")).userInput(payload.getString("userInput"))
+                .agentRef(payload.getString("agentRef")).userInput(decodeUserInput(payload))
                 .initiator(decodePrincipal(payload.get("initiator", Document.class)))
                 .deliveredAt(toInstant(payload.get("deliveredAt")));
         final String turnId = payload.getString("turnId");
@@ -126,6 +151,18 @@ public final class InboundMessageCodec {
             b.submitOptions(submitOptions);
         }
         return b.build();
+    }
+
+    /**
+     * The envelope's input: the {@code userInputEncoded} text when it is there, otherwise the {@code userInput}
+     * string wrapped as text. See the class javadoc for why the two keys coexist.
+     */
+    private static UserInput decodeUserInput(Document payload) {
+        final String encoded = payload.getString("userInputEncoded");
+        if (encoded != null) {
+            return UserInputCodec.decodeFromString(encoded);
+        }
+        return TextInput.of(payload.getString("userInput"));
     }
 
     private static Document encodePrincipal(Principal principal) {

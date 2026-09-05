@@ -6,6 +6,8 @@ import java.util.Objects;
 import java.util.Optional;
 
 import at.aimon.core.agent.SubmitOptions;
+import at.aimon.core.agent.input.TextInput;
+import at.aimon.core.agent.input.UserInput;
 import at.aimon.core.agent.queue.QueuedInputPriority;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.TurnId;
@@ -18,7 +20,7 @@ import at.aimon.core.base.Principal;
  * An {@code InboundMessage} carries everything the holder node needs to start (or inject mid-turn) a turn for a
  * session it did not originally receive: target {@link SessionId}, the {@code agentRef} the requester
  * targeted (validated against the session's binding per design §3.6), the optional {@code contextDiscriminator}
- * naming which runtime of that agent to open, the raw user input, priority tier, optional idempotency key, the
+ * naming which runtime of that agent to open, the {@link UserInput}, priority tier, optional idempotency key, the
  * {@link Principal} that initiated the input, and arbitrary string metadata.
  *
  * <p>
@@ -38,7 +40,7 @@ public final class InboundMessage {
     private final SessionId sessionId;
     private final String agentRef;
     private final String contextDiscriminator;
-    private final String userInput;
+    private final UserInput userInput;
     private final QueuedInputPriority priority;
     private final String idempotencyKey;
     private final Principal initiator;
@@ -144,7 +146,25 @@ public final class InboundMessage {
         return Optional.ofNullable(contextDiscriminator);
     }
 
-    public String getUserInput() {
+    /**
+     * The input the turn is to be run with — text, an image, a document, or a combination.
+     *
+     * <p>
+     * <b>This was a {@code String}, and the wire still leads with one.</b> Every backend writes the
+     * {@code asText()} rendering under the {@code userInput} key it always used, and adds a
+     * {@code userInputEncoded} subtree only when the input is not plain text. A node running an older build
+     * therefore reads what it always read, and a node running this one prefers the encoded form when it is there.
+     * The full reasoning, including why a degraded read is preferred to an undecodable envelope, is on each
+     * backend's inbox codec and in {@code docs/migration/frozen-names.md}.
+     *
+     * <p>
+     * <b>Codec note:</b> all four built-in inbox codecs (in-memory, Redis, Postgres, MongoDB) round-trip every
+     * {@link at.aimon.core.agent.input.InputType}, through
+     * {@link at.aimon.core.subagent.task.codec.UserInputCodec}.
+     *
+     * @return the input, never null
+     */
+    public UserInput getUserInput() {
         return userInput;
     }
 
@@ -193,7 +213,7 @@ public final class InboundMessage {
         private SessionId sessionId;
         private String agentRef;
         private String contextDiscriminator;
-        private String userInput;
+        private UserInput userInput;
         private QueuedInputPriority priority;
         private String idempotencyKey;
         private Principal initiator;
@@ -233,8 +253,28 @@ public final class InboundMessage {
             return this;
         }
 
-        public Builder userInput(String v) {
+        /**
+         * Sets the input for this turn.
+         *
+         * @param v
+         *            the input (must be non-null by {@code build()} time)
+         * @return this builder
+         */
+        public Builder userInput(UserInput v) {
             this.userInput = v;
+            return this;
+        }
+
+        /**
+         * Sets a text input, equivalent to {@code userInput(TextInput.of(v))}. A {@code null} is carried through so
+         * {@code build()} still rejects it with the same message.
+         *
+         * @param v
+         *            the text (must be non-null by {@code build()} time)
+         * @return this builder
+         */
+        public Builder userInput(String v) {
+            this.userInput = v == null ? null : TextInput.of(v);
             return this;
         }
 

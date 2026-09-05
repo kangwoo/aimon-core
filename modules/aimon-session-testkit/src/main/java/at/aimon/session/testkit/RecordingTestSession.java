@@ -15,10 +15,13 @@ import at.aimon.core.agent.AgentExecutionResult;
 import at.aimon.core.agent.SubmitOptions;
 import at.aimon.core.agent.artifact.FileArtifact;
 import at.aimon.core.agent.budget.CompletionReason;
+import at.aimon.core.agent.input.TextInput;
+import at.aimon.core.agent.input.UserInput;
 import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.session.LiveSession;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.SubmitOutcome;
+import at.aimon.core.agent.session.TurnId;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
 
 /**
@@ -31,6 +34,13 @@ import at.aimon.core.agent.stream.AgentExecutionEvent;
  * can serve every backend.
  *
  * <p>
+ * <b>It records the {@link UserInput}, not the text.</b> The interface default for the {@code UserInput} overload
+ * unwraps a {@link TextInput} and refuses everything else, so a double that only implemented the {@code String} form
+ * would answer "this session accepts text only" — and a contract scenario asserting that a multimodal turn crossed a
+ * node boundary would fail on the double rather than on the backend it is testing. {@link #submittedInputs()} still
+ * returns the text, which is what every existing scenario asserts on.
+ *
+ * <p>
  * There were three copies of this class, one per backend module, identical but for the sentence in each javadoc
  * saying it mirrored the others.
  */
@@ -39,7 +49,7 @@ public final class RecordingTestSession implements LiveSession {
     private final SessionId sessionId;
     private final AtomicReference<CompletableFuture<AgentExecutionResult>> current = new AtomicReference<>();
     private final AtomicReference<Consumer<AgentExecutionEvent>> currentListener = new AtomicReference<>();
-    private final ConcurrentLinkedQueue<String> submittedInputs = new ConcurrentLinkedQueue<>();
+    private final ConcurrentLinkedQueue<UserInput> submittedInputs = new ConcurrentLinkedQueue<>();
     private final ConcurrentLinkedQueue<InterruptReason> interrupts = new ConcurrentLinkedQueue<>();
     private final AtomicBoolean closed = new AtomicBoolean(false);
     private final CountDownLatch turnStarted = new CountDownLatch(1);
@@ -63,6 +73,15 @@ public final class RecordingTestSession implements LiveSession {
     @Override
     public CompletionStage<AgentExecutionResult> submitAsync(String input, SubmitOptions submitOptions,
             Consumer<AgentExecutionEvent> listener) {
+        Objects.requireNonNull(input, "input must not be null");
+        return submitAsync(TurnId.generate(), TextInput.of(input), submitOptions, listener);
+    }
+
+    /** The overload every other one lands on, so a non-text turn is recorded rather than refused. */
+    @Override
+    public CompletionStage<AgentExecutionResult> submitAsync(TurnId turnId, UserInput input,
+            SubmitOptions submitOptions, Consumer<AgentExecutionEvent> listener) {
+        Objects.requireNonNull(turnId, "turnId must not be null");
         Objects.requireNonNull(input, "input must not be null");
         Objects.requireNonNull(submitOptions, "submitOptions must not be null");
         if (closed.get()) {
@@ -177,7 +196,13 @@ public final class RecordingTestSession implements LiveSession {
         return interrupted.await(millis, TimeUnit.MILLISECONDS);
     }
 
+    /** The text rendering of every turn submitted, in order. */
     public List<String> submittedInputs() {
+        return submittedInputs.stream().map(UserInput::asText).toList();
+    }
+
+    /** Every turn submitted, in order, as the input it was actually submitted with. */
+    public List<UserInput> submittedUserInputs() {
         return List.copyOf(submittedInputs);
     }
 
