@@ -282,8 +282,9 @@ B-6 이 그렇게 어긋나 있었다. §7 은 그 항목을 "MCP 를 실제로 
 | [`multi-instance-readiness.md`](multi-instance-readiness.md) | 아키텍처 리뷰 (2026-08-31) | 3 | 1 | 1 | 1 |
 | [`module-dependency-scope.md`](module-dependency-scope.md) | 아키텍처 리뷰 (2026-08-31) | 1 | 1 | 0 | 0 |
 | [`architecture-review-open-items.md`](architecture-review-open-items.md) | 아키텍처 리뷰 (2026-08-31) | 7 | 3 | 4 | 0 |
+| [`memory-backend-boundary.md`](memory-backend-boundary.md) | 메모리 백엔드 경계 정리 + 3회차 리뷰 (2026-09-05) | 6 | 6 | 0 | 0 |
 
-**출처 칸에 설계 문서가 없는 항목이 생겼다.** 아래 세 문서는 `design/` 이 아니라 리뷰에서 나왔고,
+**출처 칸에 설계 문서가 없는 항목이 생겼다.** 아키텍처 리뷰에서 나온 세 문서는 `design/` 이 아니라 리뷰에서 나왔고,
 그래서 규칙 하나("설계 문서의 표는 정본이 아니다")가 적용될 표 자체가 없다. 대신 다른 것이 걸린다 —
 **리뷰의 진단도 그 자리를 처음 본 사람의 것**이므로 규칙 둘·다섯이 그대로, 오히려 더 세게 적용된다.
 실제로 세 문서 모두 §0 이 정정으로 시작한다: 하나는 "기록이 없다" 는 전제가 거짓이었고(기동 시
