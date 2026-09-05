@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -110,6 +111,12 @@ class ReleaseGateMatchesCiGateTest {
      */
     private static final Pattern SKILL_GATE_DECLARATION = Pattern.compile("Quality gate = `([^`]+)`");
 
+    /**
+     * Words the skill uses to say a tier is <em>not</em> gated. A line carrying one of these must not also name a task
+     * the gate runs — see {@link #releaseSkillDoesNotCallAGatedTierUngated()} for why one assertion is not enough.
+     */
+    private static final List<String> UNGATED_CLAIM_MARKERS = List.of("opt-in", "outside both", "outside the gate");
+
     private static final Path REPOSITORY_ROOT = locateRepositoryRoot();
 
     @Test
@@ -178,6 +185,55 @@ class ReleaseGateMatchesCiGateTest {
                         + "Whoever is about to publish reads that sentence to decide what has been checked, so it "
                         + "must name the same tasks. Update the skill's Notes to match the script.",
                 RELEASE_SKILL, declaredTasks, RELEASE_SCRIPT, gateTasks).containsExactlyInAnyOrderElementsOf(gateTasks);
+    }
+
+    /**
+     * The sentence above is not the only sentence in that file about what is gated, and checking one of them is what
+     * let the third drift through. When {@code playwrightTest} joined both gates, the declaration on one line was
+     * updated and the prose three lines below it — "{@code playwrightTest} is the only opt-in tier outside both" —
+     * was not. {@link #releaseSkillDescribesTheRealGate()} passed the whole time, because
+     * {@link #SKILL_GATE_DECLARATION} reads the backticked list and nothing else, and the operator was left reading
+     * both claims inside one bullet.
+     *
+     * <p>
+     * So this does not widen that pattern. The note on it — that matching a fixed phrase beats scanning loose prose —
+     * is a decision about how to <em>locate the declaration</em>, and loosening it would trade a loud failure on a
+     * reworded sentence for a quiet one. What is added instead is a second, narrow invariant that needs no parsing:
+     * <b>no line that calls something ungated may name a task the gate runs.</b> It is deliberately blunt about
+     * false positives — a line legitimately describing a tier as opt-in simply must not name a gated task, which
+     * costs a rewording and buys a check that does not depend on anyone noticing.
+     */
+    @Test
+    @DisplayName("the release skill does not call a gated tier opt-in")
+    void releaseSkillDoesNotCallAGatedTierUngated() throws IOException {
+        assumeTrue(REPOSITORY_ROOT != null, "repository root not found from the working directory — nothing to scan");
+
+        final List<String> gateTasks = gradleTasksIn(releaseGateInvocation());
+        final Path skill = REPOSITORY_ROOT.resolve(RELEASE_SKILL);
+        assertThat(skill).withFailMessage("%s not found — this test is pointed at the wrong path", RELEASE_SKILL)
+                .isRegularFile();
+
+        final List<String> offenders = new ArrayList<>();
+        int lineNumber = 0;
+        for (final String line : Files.readAllLines(skill)) {
+            lineNumber++;
+            final String lowered = line.toLowerCase(Locale.ROOT);
+            if (UNGATED_CLAIM_MARKERS.stream().noneMatch(lowered::contains)) {
+                continue;
+            }
+            for (final String task : gateTasks) {
+                if (line.contains(task)) {
+                    offenders.add(RELEASE_SKILL + ":" + lineNumber + " — " + line.strip());
+                    break;
+                }
+            }
+        }
+
+        assertThat(offenders).withFailMessage(
+                "%s describes a task the release gate actually runs as ungated:%n  %s%nThe gate is %s. Whoever is "
+                        + "about to publish reads this file to decide what has been checked, and a bullet that both "
+                        + "names a tier in the gate and calls it opt-in leaves them with two answers.",
+                RELEASE_SKILL, String.join(System.lineSeparator() + "  ", offenders), gateTasks).isEmpty();
     }
 
     /**
