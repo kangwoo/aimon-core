@@ -76,9 +76,23 @@ jobs:
       # rotate when that one line moves, and keying on the catalogue would throw away a 229 MB cache every time an
       # unrelated dependency was bumped. `restore-keys` still takes an older entry on a miss -- `installPlaywrightBrowsers`
       # then tops it up with just the new revision instead of fetching all of it.
+      #
+      # The guard is the point of the two extra lines. `sed -n .../p` exits 0 when it matches nothing, so a renamed
+      # or reformatted catalogue entry would hand the next step an empty version -- making the key
+      # `playwright-browsers-Linux-`, byte-identical to `restore-keys`. Every run would then be an exact hit on the
+      # primary key, `actions/cache` would never save in post, and the cache would be pinned to whatever revision
+      # happened to be in it first: correctness still held by the install task, but every run after a version bump
+      # silently re-downloading. Same shape as the two `::error::` guards on the archive steps below -- a step that
+      # can produce nothing useful must say so rather than pass.
       - name: Resolve Playwright version
         id: playwright
-        run: echo "version=$(sed -n 's/^playwright = "\(.*\)"/\1/p' gradle/libs.versions.toml)" >> "$GITHUB_OUTPUT"
+        run: |
+          version=$(sed -n 's/^playwright = "\(.*\)"/\1/p' gradle/libs.versions.toml)
+          if [ -z "$version" ]; then
+            echo "::error::Could not read the playwright version from gradle/libs.versions.toml; the browser cache key would collapse onto its own restore-keys prefix and never save."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       # ~/.cache/ms-playwright is the driver's default registry directory on Linux. Chromium alone: 280 MB over the
       # wire, 520 MB unpacked, 229 MB as a zstd cache entry (measured 2026-09-05). The default browser set would be
@@ -103,6 +117,14 @@ jobs:
       # The task installs Chromium itself before running, so a cold cache is slow rather than broken. It used to be
       # broken: Playwright.create() downloads browsers inline and PlaywrightLifecycleManager wraps that call in a
       # 30-second timeout, so on a cold cache every test failed. See the module's build.gradle.kts.
+      #
+      # One thing here is decided by the first run of this job rather than by anything checkable beforehand: the
+      # install fetches the browser binary and not the system shared libraries it links against (`--with-deps`).
+      # The ubuntu runner image ships Chrome, so those libraries are normally already present, and `--with-deps`
+      # was not added because it shells out to apt on every run -- for a dependency that is usually satisfied, and
+      # in a Gradle task a developer also runs on their own machine, where sudo apt is plainly wrong. If this step
+      # fails on a missing `.so`, the fix is a `sudo npx playwright install-deps chromium` step here, in the
+      # workflow, and not in the shared task. Nothing measured on macOS can settle it.
       - name: Playwright browser tests
         run: ./gradlew --no-daemon playwrightTest
 

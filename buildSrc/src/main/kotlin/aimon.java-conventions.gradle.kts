@@ -213,8 +213,14 @@ coverageBaselines.getProperty(project.name)?.let { floor ->
         // Spelled out in the task list because the failure message cannot say it. A module whose tests are all
         // @Tag("docker") measures near zero when only `test` has run, and JaCoCo reports that as "ratio is 0.00,
         // but expected minimum is 0.83" — which reads as a collapse rather than as a tier that was never run.
+        //
+        // It named only `test integrationTest` until aimon-browser-playwright's floor started depending on
+        // `playwrightTest` too. Following it literally then left that one module failing at 0.83 with the advice
+        // already taken — the same class of wrong-because-derived instruction this file's tier comment above hit,
+        // and worse here because it is the sentence handed to the person the failure just stopped.
         description = "Fails if line coverage dropped below gradle/coverage-baselines.properties. Needs every " +
-            "tier's execution data: run `test integrationTest` first, or the docker-backed modules measure zero."
+            "tier's execution data: run `test integrationTest playwrightTest` first, or the docker-backed modules " +
+            "measure zero and aimon-browser-playwright measures 0.83."
         violationRules {
             rule {
                 limit {
