@@ -124,13 +124,20 @@ jobs:
       # broken: Playwright.create() downloads browsers inline and PlaywrightLifecycleManager wraps that call in a
       # 30-second timeout, so on a cold cache every test failed. See the module's build.gradle.kts.
       #
-      # One thing here is decided by the first run of this job rather than by anything checkable beforehand: the
-      # install fetches the browser binary and not the system shared libraries it links against (`--with-deps`).
-      # The ubuntu runner image ships Chrome, so those libraries are normally already present, and `--with-deps`
-      # was not added because it shells out to apt on every run -- for a dependency that is usually satisfied, and
-      # in a Gradle task a developer also runs on their own machine, where sudo apt is plainly wrong. If this step
-      # fails on a missing `.so`, the fix is a `sudo npx playwright install-deps chromium` step here, in the
-      # workflow, and not in the shared task. Nothing measured on macOS can settle it.
+      # The install fetches the browser binary and not the system shared libraries it links against
+      # (`--with-deps`), which nothing measurable off a Linux runner could settle -- so it was left open until the
+      # first run of this job answered it. Run 33998782676 (2026-09-06): green, with no `error while loading shared
+      # libraries` anywhere in the log. The ubuntu image's own Chrome brings enough, and `--with-deps` stays out
+      # because it shells out to apt on every run, for a dependency that is satisfied, from a Gradle task a
+      # developer also runs on their own machine where sudo apt is plainly wrong.
+      #
+      # Kept rather than deleted, because the answer belongs to an image and not to this build: if a future runner
+      # image drops those libraries this step fails on a missing `.so`, and the fix is a
+      # `sudo npx playwright install-deps chromium` step HERE, in the workflow, never in the shared task.
+      #
+      # That first run also priced the tier properly. The 94s Chromium download this repository had measured on a
+      # laptop took about six seconds on the runner, and the three steps together cost 32s cold -- so the numbers
+      # the decision to gate this tier was made on were roughly three times its real cost, in the safe direction.
       - name: Playwright browser tests
         run: ./gradlew --no-daemon playwrightTest
 

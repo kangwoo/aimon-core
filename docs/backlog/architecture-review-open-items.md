@@ -1,4 +1,4 @@
-# 아키텍처 리뷰가 남긴 나머지 항목 — 등록 항목 8건 (열림 3 · 닫힘 5)
+# 아키텍처 리뷰가 남긴 나머지 항목 — 등록 항목 8건 (열림 2 · 닫힘 6)
 
 2026-08-31 의 아키텍처 리뷰가 일곱 단계를 처리하고 남긴 것들이다. 같은 리뷰에서 나온 두 축은 이미
 자기 문서를 가졌고([`multi-instance-readiness.md`](multi-instance-readiness.md) ·
@@ -440,45 +440,74 @@ cold 캐시에서 이 계층은 **느린 것이 아니라 빨간 것**이었다.
 그 문단은 지우지 않고 **왜 있었는지와 무엇이 그것을 무력화했는지**로 다시 썼다 — 사각지대의 모양
 (*양쪽에 없는 것은 목록 비교에 나타나지 않는다*)은 다음 계층이 생기면 그대로 되돌아오기 때문이다.
 
-### R-8 — playwright 계층이 **ubuntu 에서 실제로 도는 것을 아직 아무도 못 봤다** · **열림 · 트리거 대기**
+### R-8 — playwright 계층이 ubuntu 에서 실제로 도는 것을 아무도 못 봤었다 · **닫힘** *(2026-09-06)*
 
-**무엇** — 첫 ubuntu CI 실행의 결과를 보고 둘을 정산한다. R-7 에서 갈라져 나왔고, 번호는 재사용하지
-않으므로 새 번호를 받았다.
+**무엇이었나** — R-7 이 전부 **macOS arm64 에서** 쟀고, 두 가지가 그 기계에서 결정될 수 없는 채로
+게이트에 들어갔다. 트리거는 *"이 브랜치가 처음 ubuntu 에서 도는 순간"* 하나였다. **발화했다** —
+PR [#32](https://github.com/kangwoo/aimon-core/pull/32), run
+[`33998782676`](https://github.com/kangwoo/aimon-core/actions/runs/33998782676) (`b7945cb`).
+5개 job 전부 success 이고 둘 다 정산됐다.
 
-**왜 — 관측 가능한 결과**
+#### 미정 ① `--with-deps` — **필요 없었다**
 
-R-7 은 전부 **macOS arm64 에서** 쟀다. 두 가지가 그 기계에서 결정될 수 없는 채로 게이트에 들어갔다.
+`build` job 의 세 스텝이 전부 success 이고, 로그 전체(24,863줄)에서
+`error while loading shared libraries` · `cannot open shared object` · `Host system is missing dependencies`
+가 **0건**이다. ubuntu 러너의 시스템 라이브러리만으로 chromium 이 뜬다.
 
-| # | 미정 | 지금 무엇을 알고 있나 |
-|---|------|---------------------|
-| 1 | `install chromium` 이 ubuntu 러너에서 **공유 라이브러리 없이** 뜨는가 | `--with-deps` 를 쓰지 않는다(브라우저 바이너리만 받는다). 러너 이미지가 Chrome 을 미리 깔아 두어 대개 충분하지만 Playwright 문서는 CI 에 `--with-deps` 를 권한다. **macOS 에서 좁힐 방법이 없다** |
-| 2 | 이 모듈의 **CI 커버리지가 로컬과 같은가** | 하한선 87 이 **로컬 88.15%** 에서 동결됐다. `coverage-baselines.properties` 가 다른 모든 값에 대해 세운 규칙(*"Measured on CI … Do not re-derive these from a laptop"*)의 **유일한 예외**이고, 파일이 스스로 그렇게 적는다. 여유는 **9줄**(714/810, 0.87 에 705 필요) |
+같은 로그가 **두 가지를 덤으로 확인해 주었다.**
 
-2번의 위험이 낮다는 근거는 있다 — 이 모듈 main 소스에 플랫폼 분기가 **0건**이다
-(`os.name`·`osName`·`isWindows`·`isMac`·`File.separator`·`System.getenv`·`System.getProperty` 전부 0).
-그러나 0 은 아니다: 1번이 부분적으로 어긋나면(예: 일부 코드경로만 실패) 커버리지가 9줄 안에서 움직일 수
-있고, 그때 실패하는 것은 하한선이며 **원인은 하한선이 아니다** — R-3 이 커버리지 게이트에 대해 경계한
-오진 그대로다.
+| 확인된 것 | 증거 |
+|---|---|
+| `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` 이 실제로 듣는다 | 받은 것이 chromium · chromium-headless-shell · ffmpeg **셋뿐**이다. firefox·webkit 0건 — 설계대로 |
+| 캐시 키와 경로가 맞다 | 첫 실행 `Cache not found for input keys: playwright-browsers-Linux-1.58.0`, post 스텝 `Cache saved with key: playwright-browsers-Linux-1.58.0`. 내려받은 곳도 `/home/runner/.cache/ms-playwright` 로 워크플로의 `path` 와 일치 |
 
-**하지 않은 것과 그 근거** — `--with-deps` 를 넣지 않았다. 캐시 히트든 미스든 **매 실행 apt 를 치고**,
-그 설치가 들어갈 자리인 `installPlaywrightBrowsers` 는 개발자 노트북과 릴리스 기계에서도 도는 Gradle
-태스크다. **빌드 태스크가 `sudo apt-get` 을 치는 것은 틀렸다.** 고칠 자리는 공유 태스크가 아니라
-워크플로 스텝이며, 그 사실을 `build.yml` 주석에 적어 두었다.
+#### 미정 ② 하한선 87 — **CI 가 로컬과 소수점까지 같다**
 
-**어디** *(2026-09-05 확인)*
+`coverage` job 이 세 exec 를 전부 복원했고(`test` · `integrationTest` · `playwrightTest`),
+`jacocoTestCoverageVerification` 이 통과했다. 업로드된 `jacoco-xml` 아티팩트에서 실제 수치를 꺼내 로컬과
+대조했다.
 
-- `.github/workflows/build.yml` — `Playwright browser tests` 스텝의 주석(`--with-deps` 미정과 고칠 자리)
-- `gradle/coverage-baselines.properties` — `aimon-browser-playwright=87` 과 그 위의 예외 문단
-- `modules/aimon-browser-playwright/build.gradle.kts` — `installPlaywrightBrowsers`
+| | 로컬 (2026-09-05) | **CI (run 33998782676)** |
+|---|---|---|
+| LINE | 714 / 810 = **0.8815** | 714 / 810 = **0.8815** |
+| INSTRUCTION | 3362 / 3782 = 0.8889 | 3362 / 3782 = 0.8889 |
+| BRANCH | 202 / 254 = 0.7953 | 202 / 254 = 0.7953 |
+| `PlaywrightLifecycleManager` LINE | 38 / 67 = 0.5672 | 38 / 67 = 0.5672 |
 
-**언제 다시 볼까** — **이 브랜치가 처음 ubuntu 에서 도는 순간.** 트리거가 하나이고, R-7 과 달리
-"언젠가 소비자가 생기면" 류의 열린 조건이 아니다. 그때 할 일은 둘이다.
+**한 줄도 다르지 않다.** `coverage-baselines.properties` 헤더의 *"Do not re-derive these from a laptop"*
+가 이 모듈에 대해서는 **적용되지 않는다**는 뜻이고, 그 금지의 명시된 이유(docker 계층을 안 돌리면 0~28%
+로 측정된다)가 이 모듈에 없기 때문이라는 R-8 의 예상이 맞았다. 값은 87 그대로 두고 — `floor(88.15) − 1`
+이 CI 수치에서도 같은 값이다 — **예외 문단을 없앴다.** 그 파일은 다시 한 규칙만 갖는다.
 
-1. 초록이면 `--with-deps` 미정을 닫고 주석의 그 문단을 지운다. 빨간색이고 원인이 `.so` 누락이면
-   워크플로에 `sudo npx playwright install-deps chromium` 스텝을 더한다
-2. `coverage` job 이 낸 이 모듈의 실측치를 보고 87 을 **CI 값에서 다시 동결**한다. 그러면
-   `coverage-baselines.properties` 의 예외가 사라지고 파일이 다시 한 규칙만 갖는다
+#### 착수해서 알게 된 것 — **비용 판단이 보수적이었다. 그것도 크게**
 
+R-7 은 자기 숫자가 macOS 값이라는 한계를 적어 두었다. 그 한계가 **어느 방향으로** 틀렸는지가 이 항목이
+실제로 남기는 값이다.
+
+| | macOS arm64 (가정용 회선) | **ubuntu-latest 러너** | 비 |
+|---|---|---|---|
+| chromium 내려받기 | **94초** | **약 6초** (`23:38:49.6` → `23:38:55.5`) | **~15배** |
+| 계층 전체, cold | 1분48초 | **32초** (세 스텝 `23:38:35` → `23:39:07`) | ~3.4배 |
+| └ 그중 테스트 스텝 | — | 27초 (컴파일 + 설치 + 4 테스트) | |
+| └ 캐시 저장 (post) | — | 3초 | |
+
+즉 **R-7 이 결정을 내릴 때 근거로 삼은 숫자는 실제 CI 비용의 3배**였고, 다운로드만 보면 15배였다.
+결정이 그 방향으로 틀렸다면 되돌려야 했겠지만 여기서는 **"넣는다" 를 더 강하게 만들 뿐**이다 —
+비싸다고 본 것이 실제로는 더 쌌다.
+
+여기서 규칙에 붙는 것은 한 줄이다. 규칙 셋이 *"심각도는 돌려 봐야 나온다"* 라고 말하는데, 이 건은
+**어디서 돌리느냐가 그 숫자를 3~15배 바꿨다.** 실측을 근거로 결정할 때는 잰 값만이 아니라 **잰 환경이
+결정이 적용될 환경인가**를 함께 적어야 하고, 아니라면 그것이 곧 미정 항목이다. R-7 이 그 한계를 적어
+두었기 때문에 이 항목이 존재할 수 있었다.
+
+**어디** *(2026-09-06)*
+
+- `.github/workflows/build.yml` — `Playwright browser tests` 스텝의 주석(미정 → 정산된 사실로. 지우지
+  않았다 — 러너 이미지가 바뀌면 다시 볼 자리다)
+- `gradle/coverage-baselines.properties` — 예외 문단 제거, `aimon-browser-playwright=87` 은 그대로
+
+**남는 것** — 없다. 다음에 이 자리를 다시 열 것은 **러너 이미지 변경**이며, 그때의 증상은 이 항목이
+적어 둔 그대로다(`.so` 누락). 고칠 자리도 그대로다 — 공유 Gradle 태스크가 아니라 워크플로 스텝.
 
 
 ### R-2 — `aimon-knowledge-opensearch` 의 `jackson-databind` · **닫힘** *(2026-08-31)*

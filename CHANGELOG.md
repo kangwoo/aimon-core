@@ -94,6 +94,21 @@ Central is versioned independently).
   Chromium once on a machine with no browser cache** (280 MB, 94s) — a smaller demand than the Docker
   daemon the gate already makes, and a safe one now that a cold machine is slow rather than red.
 
+- **The first ubuntu run settled the two things macOS could not** (run
+  [`33998782676`](https://github.com/kangwoo/aimon-core/actions/runs/33998782676), all five jobs green).
+  `--with-deps` is not needed — the runner image's own libraries are enough, and the log carries no
+  `error while loading shared libraries` anywhere; the comment explaining the question stays, because
+  the answer belongs to a runner image rather than to this build. The coverage floor also holds:
+  CI measured this module at **714/810 line, identical to the laptop figure it was frozen from**,
+  down to the per-class numbers, so the one exception to "measure on CI" in
+  `coverage-baselines.properties` is gone rather than excused.
+
+- **The cost this decision was made on was about three times the real one.** The Chromium download
+  measured at 94s on a home connection took roughly **six seconds** on the runner, and the whole tier
+  cost **32s cold** against the 1m48s measured locally. The decision does not change — it was wrong in
+  the direction that makes gating easier to justify — but it is worth writing down that measuring a CI
+  cost off a laptop was out by that much.
+
 - **The browser cache is keyed on the Playwright version alone**, not on a hash of the version
   catalogue: the browsers rotate only when that line moves, and hashing the catalogue would discard a
   229 MB entry on every unrelated dependency bump. `restore-keys` takes an older entry on a miss and
