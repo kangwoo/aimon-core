@@ -10,11 +10,32 @@ from:
     ---
 
 This script compares that commit against the canonical's current history and
-lists the ones that have moved on. It is deliberately a *report*, not a gate:
-it exits 0 even when translations are stale, because a translation backlog that
-blocks edits to the canonical makes the canonical go stale instead -- the worse
-of the two failure modes. Pass --strict to make staleness an error anyway
-(useful before cutting a release).
+sorts each translation into one of two findings, which are NOT the same thing
+and do not exit the same way.
+
+STALE -- the guard worked and the answer is bad: the canonical moved on. This
+exits 0. A translation backlog that blocks edits to the canonical makes the
+canonical go stale instead, which is the worse of the two failure modes. Pass
+--strict to make staleness an error anyway.
+
+UNRESOLVABLE -- the guard has no answer at all: the front matter is missing, the
+canonical it names is gone, or the source_commit is not a commit in this
+history. This exits 1. The reasoning that keeps STALE at 0 does not reach here:
+failing on unresolvable does not pressure anyone to skip a translation, it asks
+for a resolvable SHA, which is one line and belongs to whoever wrote the file.
+Left at 0 it is worse than either -- a stale translation says the guard is
+unhappy, an unresolvable one says nothing while looking like nothing is wrong.
+
+That distinction was not free. The open-source history squash retired every
+pre-squash SHA at once and 19 of 32 translations went unresolvable. Every run
+after it stayed green, because both findings shared an exit code -- and of the
+19 annotations emitted, the check-runs API returns 10, so the job's console
+output was the only complete account of it and a green job gives nobody a
+reason to open that.
+
+The one exception is a shallow clone, where every source_commit looks absent and
+the fix is the clone rather than the documents. That is reported and exits 0;
+CI passes fetch-depth: 0 for this reason.
 
 The direction is not assumed. `translated_from` names the canonical whichever
 language it is in, so this handles both docs/**/*.en.md (Korean canonical) and
@@ -75,6 +96,11 @@ def main():
     if git("rev-parse", "--is-inside-work-tree") is None:
         print("not a git repository -- nothing to compare against")
         return 0
+
+    # A shallow clone has no history to compare against, so every source_commit
+    # would be reported absent. That is the clone's fault, not the documents',
+    # and it must not be indistinguishable from a real one.
+    shallow = git("rev-parse", "--is-shallow-repository") == "true"
 
     stale, broken, fresh = [], [], 0
 
@@ -161,12 +187,31 @@ def main():
         print(f"UNRESOLVABLE  {rel}")
         print(f"              {why}")
         if github:
-            print(f"::warning file={rel}::{why}")
+            # An error annotation, not a warning, because this now fails the
+            # job -- and because GitHub truncates the annotation list, so the
+            # two findings competing for the same display budget is how 19
+            # unresolvable translations hid every stale one behind them.
+            level = "warning" if shallow else "error"
+            print(f"::{level} file={rel}::{why}")
 
     if not stale and not broken:
         print("every translation is level with its canonical")
 
-    if strict and (stale or broken):
+    if broken and shallow:
+        print()
+        print(f"{len(broken)} translation(s) unresolvable in a shallow clone -- "
+              "not treated as an error. Fetch the full history "
+              "(git fetch --unshallow, or fetch-depth: 0 in Actions) to check them.")
+        return 1 if strict and stale else 0
+
+    if broken:
+        print()
+        print(f"{len(broken)} translation(s) unresolvable: the check cannot say "
+              "whether they are current. Fix the front matter -- see "
+              "CONTRIBUTING.md, \"Documentation and translations\".")
+        return 1
+
+    if strict and stale:
         return 1
     return 0
 

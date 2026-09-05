@@ -317,6 +317,16 @@ translation: a translation lagging a week is a smaller problem than documentatio
 is wrong in both languages. CI reports stale translations as warnings for exactly this
 reason, and never fails on them.
 
+**A `source_commit` CI cannot resolve does fail the build, though.** That is a different
+finding: a stale translation means the check ran and did not like the answer, while an
+unresolvable one means it has no answer — it cannot tell you whether that file is current
+or a year behind. Nothing about failing on it pressures you to skip a translation; it
+asks for a SHA that exists, which is one line. If a rewritten history retires the SHA you
+recorded (a squash, a rebase), point `source_commit` at the oldest commit that still
+contains the canonical in the state you translated — and check that it really is that
+state before you write it, because a resolvable SHA on a translation that no longer
+matches is worse than an unresolvable one: it reports green.
+
 When writing a translation:
 
 - **Match the structure exactly.** Same heading count, same table rows, same code
