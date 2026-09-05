@@ -124,10 +124,23 @@ class ReleaseGateMatchesCiGateTest {
 
     /**
      * {@code @Tag("...")} as an annotation, not as a mention inside javadoc — the distinction §0.4-a of the backlog
-     * item paid for twice. The optional qualifier is not decoration: the first draft matched only a bare
-     * {@code @Tag(}, and a probe that wrote {@code @org.junit.jupiter.api.Tag("smoke")} walked straight past it.
+     * item paid for twice.
+     *
+     * <p>
+     * Both optional groups were added because a probe walked past the pattern, not because they looked prudent. The
+     * first draft matched a bare {@code @Tag(} and missed {@code @org.junit.jupiter.api.Tag("smoke")}; the second
+     * missed {@code @Tag(value = "smoke")}. Neither form appears in the tree today — every {@code @Tag} here is
+     * unqualified and unnamed — so each was a gap in a new safety net rather than a regression, and each was found
+     * the same way: by writing the form and watching the check stay green.
+     *
+     * <p>
+     * The anchor is what keeps it honest in the other direction. Requiring the annotation to open the line rejects a
+     * javadoc mention, a commented-out {@code // @Tag("x")} and a string literal containing one — all three probed,
+     * all three still passing. A same-line {@code @Test @Tag("x")} would slip past that anchor but cannot survive
+     * {@code spotlessJavaCheck}, which puts annotations on their own lines.
      */
-    private static final Pattern TEST_TAG_ANNOTATION = Pattern.compile("^\\s*@(?:[\\w.]+\\.)?Tag\\(\"([^\"]+)\"\\)");
+    private static final Pattern TEST_TAG_ANNOTATION = Pattern
+            .compile("^\\s*@(?:[\\w.]+\\.)?Tag\\((?:value\\s*=\\s*)?\"([^\"]+)\"\\)");
 
     /**
      * Words the skill uses to say a tier is <em>not</em> gated. A line carrying one of these must not also name a task
