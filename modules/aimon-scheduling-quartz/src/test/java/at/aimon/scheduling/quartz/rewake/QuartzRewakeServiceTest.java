@@ -142,11 +142,21 @@ class QuartzRewakeServiceTest {
      * is one minute, so the once-per-second cron this used to ride on no longer exists — but {@code triggerJob} runs
      * the same {@code RewakeJob.execute} path (deliver → advance attempt → evict at the cap), which is what the cap
      * lives in. Quartz's own scheduling of the next tick is not what is under test here.
+     *
+     * <p>
+     * Saying that is not enough to stop it, which is why the trigger is paused below. {@code setUp} calls
+     * {@code scheduler.start()}, so the once-a-minute cron stays live and adds a third delivery whenever the body
+     * crosses a minute boundary — and then {@code hasSize(2)} fails on the clock instead of on the cap. That is not
+     * hypothetical: it is what this test did, rarely on a developer machine and more often on a loaded CI runner, and
+     * it was written off as flakiness twice before anyone read the expression. Pausing is the narrow fix because
+     * {@code triggerJob} runs the job through its own one-shot trigger and is unaffected; moving the cron out to a
+     * date far away is not, because the envelope's end time makes Quartz reject a trigger that would never fire.
      */
     @Test
     void cronTriggerStopsAtMaxAttemptsCap() throws Exception {
         service.schedule(envelopeWith("env-cron-cap", new RewakeTriggerCron("* * * * *", ZoneId.of("UTC"))).toBuilder()
                 .maxAttempts(2).build());
+        scheduler.pauseTrigger(TriggerKey.triggerKey("rewake:env-cron-cap", QuartzRewakeService.TRIGGER_GROUP));
         final JobKey job = JobKey.jobKey("rewake:env-cron-cap", QuartzRewakeService.JOB_GROUP);
 
         scheduler.triggerJob(job);
