@@ -26,22 +26,23 @@ dependencies {
     // aimon-core type is a re-exported API surface in the sense that rule carves out.
     api(project(":aimon-core"))
 
-    // Kept on `api`, and this is the one place in the build where that decision is published rather than internal:
-    // `aimon-filesystem-testkit` and `aimon-session-testkit` write the same line and neither is on Central. What
-    // travels is Spring Boot 3.5.16's whole dependency management, into the `testImplementation` configuration of
-    // every consumer — Jackson, Logback, Netty, Testcontainers and the rest quietly align to it.
+    // The narrowest platform that supplies what this module publishes without a version, and the reason it is not
+    // `spring-boot-dependencies` like the other two testkits.
     //
-    // It stays because dropping it breaks resolution rather than narrowing it. `junit-jupiter` is published from
-    // here with NO version: the catalog entry deliberately carries none, because this build's single source for
-    // that version is the Spring Boot platform, and the testkit's main sources compile against JUnit. Move the
-    // platform to `compileOnly` and consumers get a versionless coordinate nothing can resolve; pin a version in
-    // the catalog instead and this repository grows a second JUnit version that can drift from the one every other
-    // module tests on. Exporting the platform is the narrower mistake, and its blast radius is a test classpath
-    // belonging to someone who already had to bring a JUnit runner.
+    // Those two are not on Central, so what they re-export never leaves this build. This one is, and `api` puts a
+    // platform into both `apiElements` and `runtimeElements` of the published metadata. Exporting Spring Boot's
+    // platform would hand every consumer its entire dependency management — measured against a consumer on Spring
+    // Boot 3.4.0, sixteen coordinates move, including `spring-boot-dependencies` itself, because Gradle applies
+    // highest-version conflict resolution to platform modules too. A JUnit contract suite has no business
+    // relocating someone's Jackson, Logback and Netty.
     //
-    // Recorded rather than assumed because `api-stability.md` §5 makes it a one-way door: after the first release
-    // this cannot be taken back before the next minor.
-    api(platform(libs.spring.boot.dependencies))
+    // And it never needed to. The only thing this module publishes without a version is `junit-jupiter`; AssertJ
+    // carries its own from the catalog. Spring Boot's platform was reaching ~1,400 managed coordinates to settle
+    // one of them.
+    //
+    // The catalog comment next to `junit` explains why a number now exists there after deliberately not existing:
+    // in short, the tradeoff it described was priced for an unpublished module and publication reversed it.
+    api(platform(libs.junit.bom))
 
     // The two the source actually uses, named individually rather than through `libs.bundles.testing`. That bundle
     // also carries mockito-core and mockito-junit-jupiter, which this module references nowhere — while it was
