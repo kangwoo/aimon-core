@@ -140,9 +140,11 @@ fi
 # @Tag("docker") convention, which already keeps Testcontainers tests out of `test`.
 #
 # `integrationTest` (@Tag("docker")) joined the gate because "opt-in" had a cost nobody had priced. For
-# aimon-filesystem-{gridfs,s3} and aimon-session-{redis,postgres,mongodb} those ARE the tests — leaving
-# them opt-in meant this script published five artifacts whose only verification had never run, and a
-# Maven Central publish cannot be taken back. (It was seven until aimon-memory-{postgres,mongodb}
+# aimon-filesystem-{gridfs,s3} and aimon-session-{redis,postgres,mongodb} those are the only tests that
+# reach the backend — the one to six classes each keeps in `test` are codec round-trips and frozen-name
+# assertions that never open a connection. Leaving the tier opt-in meant this script published five
+# artifacts whose behaviour against a real server had never run, and a Maven Central publish cannot be
+# taken back. (It was seven until aimon-memory-{postgres,mongodb}
 # were removed.) THIS MEANS A RELEASE NOW NEEDS A RUNNING DOCKER DAEMON. That is the price, and it is
 # the right way round: the machine that publishes should be the machine that can prove what it
 # publishes.
