@@ -330,6 +330,50 @@ Central is versioned independently).
   The flag still has no caller here, and [`scripts/check-translation-staleness.py`](scripts/check-translation-staleness.py)
   records why it is deliberately not in the release gate.
 
+### Docs CI: translations are now checked for shape, not only for age
+
+- **New check `scripts/check-translation-structure.py`, wired as a second step of the CI job that
+  was `translation-staleness` and is now `translations`.** The two checks answer different questions
+  of the same 32 pairs -- is the translation *current*, and is it *complete* -- and a translation
+  that sits at the same commit as its canonical while missing a section used to pass both of them
+  green. `CLAUDE.md` and `CONTRIBUTING.md` have always required matching structure; until now the
+  only thing enforcing it was a person.
+
+  It compares six things that survive re-wrapping: headings and their level sequence, fences and
+  their language sequence, table rows per table, list items and their nesting depth, quote *blocks*,
+  and (advisory only) `#` comment lines inside fences. Line counts are used for nothing: Korean
+  carries more per column, so all 32 pairs disagree on raw line count and one by 16%.
+
+- **The job renamed from `translation-staleness` to `translations`.** `main` carries no branch
+  protection and no rulesets, so no required-check name had to move with it.
+
+- **A structure mismatch fails the build only when the pair is level with its canonical.** When the
+  canonical has moved on, the mismatch is reported and the run still exits 0 -- failing there would
+  hand a red build to whoever edited the canonical over a translation backlog, which is the pressure
+  `check-translation-staleness.py` documents itself as existing to avoid. Doing it from a second
+  script would have overturned that decision through a side door.
+
+- **Translations may declare a per-axis exemption** with `structure_exempt` and
+  `structure_exempt_reason` in their front matter. Both keys are required and both shapes are
+  enforced, because mkdocs reads the same block with a YAML parser while the scripts read it with a
+  line regex: a YAML list silently loses its second entry through one of them, and an unquoted
+  reason containing a colon or a backtick makes mkdocs drop the metadata and publish it as page
+  text with `mkdocs build --strict` still exiting 0. An exemption also expires -- once its axis
+  matches again the check asks for the line to be deleted.
+
+- **`scripts/docs_tree.py` gained `translations()`, `frontmatter()`, `canonical_of()` and
+  `pair_state()`**, and `check-translation-staleness.py` now sits on them; its output and exit codes
+  are unchanged on every branch. That module now runs git, which it did not before -- the cost is
+  paid so that two checks cannot compute "is this pair current" differently, which is exactly the
+  drift it was created to prevent.
+
+- **`check-translation-structure.py --self-test`** runs in CI ahead of the check itself. It varies
+  the *reading* while holding the corpus still: each wrong reading must still split at least one pair
+  that the specified reading is happy with. On a corpus with nothing to catch, that is the only thing
+  separating a check that measured and found nothing from one that quietly stopped measuring -- and
+  because it counts the *difference* between two readings rather than an absolute, a pair that is
+  behind its canonical or carries a legitimate exemption cancels out instead of failing the step.
+
 ### Documentation: the site's front page is now written for a first-time reader
 
 - **`docs/README.md` is a landing page rather than a catalogue.** It was the index *and* the first

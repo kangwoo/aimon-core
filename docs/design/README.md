@@ -100,6 +100,15 @@
 | [`sandbox.md`](integration/sandbox.md) | 격리 실행 환경을 identifier 로 재사용하는 추상화와 Docker·Kubernetes 구현 |
 | [`mcp-tool.md`](integration/mcp-tool.md) | MCP 서버의 도구를 로컬 도구와 구분되지 않게 만드는 어댑터 |
 
+### documentation — 문서 자체를 지키는 장치
+
+이 축은 제품 서브시스템이 아니라 **저장소 문서의 도구**다. §1 의 도메인 축에서 벗어나는 유일한
+자리이며, 그 이유는 문서 자신의 첫 절에 적혀 있다.
+
+| 문서 | 무엇이 있나 |
+|------|------------|
+| [`documentation/translation-structure-check.md`](documentation/translation-structure-check.md) | 정본과 번역본의 구조 일치를 강제하는 검사 — 여섯 축의 처분, 실패/경고를 가르는 쌍의 상태, 예외 표현, 공허 통과가 아님을 보이는 프로브 |
+
 ### backlog — 아직 결정하지 않은 것
 
 | 문서 | 무엇이 있나 |

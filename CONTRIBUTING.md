@@ -84,18 +84,25 @@ modules/<module>/build/reports/jacoco/                # Coverage
 
 CI (GitHub Actions) runs `./gradlew checkAll` on every PR — broken builds will be flagged automatically. See `.github/workflows/build.yml`.
 
-Documentation has its own gate, which `checkAll` does not cover:
+Documentation has its own gates, which `checkAll` does not cover:
 
 ```bash
-python3 scripts/check-doc-links.py   # every relative markdown link, target and anchor
+python3 scripts/check-doc-links.py             # every relative markdown link, target and anchor
+python3 scripts/check-translation-staleness.py # is each translation current with its canonical
+python3 scripts/check-translation-structure.py # does each translation still have the same shape
 ```
 
-It walks every `*.md` in the repository and fails on two things: a link to a path that
-does not exist, and a `#fragment` that matches no heading in the file it points at. The
-second one matters more than it sounds — a wrong anchor still loads the page, so the
+The first walks every `*.md` in the repository and fails on two things: a link to a path
+that does not exist, and a `#fragment` that matches no heading in the file it points at.
+The second one matters more than it sounds — a wrong anchor still loads the page, so the
 reader lands at the top and never learns they were sent to the wrong section. External
 URLs are deliberately not checked; a gate that goes red because someone else's host is
 down stops being read. CI runs this as the `docs-links` job.
+
+The other two are about translations and run together as the `translations` job; what
+each fails on, and why one of them mostly does not, is under
+[Translations](#translations). Both need the full git history, so on a shallow clone they
+report rather than fail and say so.
 
 ### Previewing the documentation site
 
@@ -315,7 +322,24 @@ you can't — you don't speak the other language well enough, or the change is l
 say so in the PR and open an issue. Do not hold the canonical edit hostage to the
 translation: a translation lagging a week is a smaller problem than documentation that
 is wrong in both languages. CI reports stale translations as warnings for exactly this
-reason, and never fails on them.
+reason, and never fails on them. The structure check follows it: a mismatch fails the
+build only when the pair is level, because that is the case where someone is being asked
+to finish a translation rather than to start one.
+
+If a translation legitimately cannot match on some axis, declare it on that file rather
+than arguing with the checker:
+
+```yaml
+structure_exempt: list-items
+structure_exempt_reason: "the canonical's 3-item list is idiomatically 2 in English"
+```
+
+Both lines are required and both shapes are enforced. The comma-separated string and the
+quotes are not style: mkdocs reads this same front matter with a YAML parser and the
+scripts read it with a line regex, and a YAML list or an unquoted reason containing a
+colon or a backtick makes the two disagree — in the worst case mkdocs drops the metadata
+silently and publishes it as page text. The exemption also expires: once the axis matches
+again, the check asks you to delete it.
 
 **A `source_commit` CI cannot resolve does fail the build, though.** That is a different
 finding: a stale translation means the check ran and did not like the answer, while an
@@ -330,7 +354,12 @@ matches is worse than an unresolvable one: it reports green.
 When writing a translation:
 
 - **Match the structure exactly.** Same heading count, same table rows, same code
-  blocks. The two files should diff cleanly on shape even when no word matches
+  blocks. The two files should diff cleanly on shape even when no word matches.
+  `scripts/check-translation-structure.py` checks this one, and it counts what
+  survives re-wrapping: headings and their levels, fences and their languages, table
+  rows per table, list items and their nesting, and quote *blocks*. Line counts are
+  not comparable in either direction — Korean carries more per column, so the same
+  paragraph wraps to more lines in English
 - **Translating a heading changes its anchor.** Retarget the in-page `#links` and run
   `scripts/check-doc-links.py`
 - **Leave identifiers alone** — type and package names, file paths, config keys, CLI

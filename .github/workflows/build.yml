@@ -21,26 +21,45 @@ jobs:
       - name: Check relative markdown links and anchors
         run: python3 scripts/check-doc-links.py
 
-  # Two findings, two severities. A translation that has fallen *behind* its
-  # canonical is reported and does not fail the job: a translation backlog that
-  # blocks edits to the canonical would make the canonical go stale instead,
-  # which is the worse failure of the two. A translation the check cannot
-  # resolve at all -- absent front matter, a source_commit that is not a commit
-  # here -- does fail it, because that is not a backlog, it is the guard having
-  # no opinion, and it hides behind a green job indefinitely. Both surface as
-  # PR annotations via --github, as warnings and errors respectively.
-  translation-staleness:
+  # Two checks, asking different questions of the same 32 pairs: is the
+  # translation current, and is it complete. They share a job because they share
+  # a checkout, the pair enumeration and the front matter -- and because a second
+  # runner is not worth a few seconds of python.
+  #
+  # Staleness has two findings and two severities. A translation that has fallen
+  # *behind* its canonical is reported and does not fail the job: a translation
+  # backlog that blocks edits to the canonical would make the canonical go stale
+  # instead, which is the worse failure of the two. A translation the check
+  # cannot resolve at all -- absent front matter, a source_commit that is not a
+  # commit here -- does fail it, because that is not a backlog, it is the guard
+  # having no opinion, and it hides behind a green job indefinitely.
+  #
+  # Structure applies the same reasoning to its own finding: a mismatch fails
+  # only on a pair that is level with its canonical, because that is the one
+  # where nobody is being asked to start a translation they had not started.
+  translations:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
         with:
-          # The check compares each translation's source_commit against the
-          # canonical's history, so the default shallow clone is not enough.
+          # Both checks compare each translation's source_commit against the
+          # canonical's history, so the default shallow clone is not enough. The
+          # structure check degrades to reporting rather than failing without it.
           fetch-depth: 0
 
       - name: Report stale translations, fail on unresolvable ones
         run: python3 scripts/check-translation-staleness.py --github
+
+      # Two commands, because they answer different questions and only one of
+      # them can go quiet without anyone noticing. The first varies the reading
+      # and holds the corpus still: it is the only thing that would catch the
+      # axes silently ceasing to measure, which on a corpus with nothing to
+      # catch looks exactly like a green run.
+      - name: Compare structure, fail on a mismatch in a current translation
+        run: |
+          python3 scripts/check-translation-structure.py --self-test
+          python3 scripts/check-translation-structure.py --github
 
   build:
     runs-on: ubuntu-latest
