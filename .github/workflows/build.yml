@@ -73,7 +73,7 @@ jobs:
         run: ./gradlew --no-daemon packagingTest
 
       # Keyed on the Playwright version alone, not on a hash of the whole version catalogue: the browsers only
-      # rotate when that one line moves, and keying on the catalogue would throw away a 229 MB cache every time an
+      # rotate when that one line moves, and keying on the catalogue would throw away a 249 MiB cache every time an
       # unrelated dependency was bumped. `restore-keys` still takes an older entry on a miss -- `installPlaywrightBrowsers`
       # then tops it up with just the new revision instead of fetching all of it.
       #
@@ -94,13 +94,21 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      # ~/.cache/ms-playwright is the driver's default registry directory on Linux. Chromium alone: 280 MB over the
-      # wire, 520 MB unpacked, 229 MB as a zstd cache entry (measured 2026-09-05). The default browser set would be
-      # 479 MB / 1.0 GB, and nothing here launches firefox or webkit.
+      # ~/.cache/ms-playwright is the driver's default registry directory on Linux. Chromium alone is 280 MiB over
+      # the wire (from the CDN's own content-range) and the entry this workflow actually stores is
+      # 261,229,767 bytes -- 249 MiB -- read off `gh cache list` for run 33998782676. The default browser set would
+      # be 479 MiB on the wire, and nothing here launches firefox or webkit.
+      #
+      # The entry figure used to say 229 MiB, which was a tar+zstd of the same browsers on an arm64 laptop. It is
+      # the last size in this file that came from the wrong machine: the time figures were corrected when the first
+      # ubuntu run priced them (see the test step below), and this one was left because a compressed archive felt
+      # platform-independent. It is not -- different binaries compress differently -- and R-8 had already written
+      # the rule this broke: record whether the environment you measured in is the environment the number describes.
+      # 520 MiB unpacked is still a laptop reading, kept because nothing in CI reports it.
       #
       # On a version bump this entry grows rather than rotates: `install chromium` adds the new revision and the
       # driver only garbage-collects revisions nothing references, so a `restore-keys` hit carries the old build
-      # along until that sweep drops it -- roughly +229 MB per bump in the worst case, against GitHub's 10 GB
+      # along until that sweep drops it -- roughly +249 MiB per bump in the worst case, against GitHub's 10 GB
       # repository-wide budget with its own LRU eviction. Left alone deliberately: bumps are rare, eviction is
       # already someone's job, and the alternative (never falling back) pays the full 280 MB download every time.
       #

@@ -229,8 +229,9 @@ IMPORTANT: 이 문단의 첫 판본은 정반대로 적혀 있었다 — *"자�
 `PlaywrightLifecycleManagerTest` 의 태그된 메서드 넷은 **한 번도 실행된 적이 없다.**
 
 이것은 [`README.md`](README.md) 규칙 셋의 사례다 — 근거(*"어느 게이트에도 없다"*)는 참이었고 틀린 것은
-**심각도**였다. 그리고 그 차이는 읽어서는 나오지 않았다: `build.gradle.kts:29` 를 몇 번을 다시 읽어도
-없는 두 줄은 보이지 않는다. **태스크를 한 번 돌리자 첫 줄에 나왔다.**
+**심각도**였다. 그리고 그 차이는 읽어서는 나오지 않았다: 위 `tasks.register<Test>("playwrightTest")`
+(`53649d0` 기준 `modules/aimon-browser-playwright/build.gradle.kts:29`)를 몇 번을 다시 읽어도 없는 두
+줄은 보이지 않는다. **태스크를 한 번 돌리자 첫 줄에 나왔다.**
 
 같은 이유로 `ReleaseGateMatchesCiGateTest` 도 이것을 잡을 수 없었다. 그 테스트가 비교하는 것은 **두
 목록**이고, 양쪽에 없는 계층은 아무리 썩어도 목록 비교에 나타나지 않는다. 자기 javadoc 이 *"Nothing
@@ -287,7 +288,7 @@ IMPORTANT: 규칙 여섯은 *"N건도 도구가 만들어 낸 숫자"* 라고 �
 | warm 설치 확인 | **1초 미만** |
 | Linux x64 다운로드 바이트, 기본 전체 | **479.2 MiB** (chromium 167.3 / headless-shell 110.9 / firefox 99.5 / webkit 99.2 / ffmpeg 2.3) |
 | Linux x64 다운로드 바이트, chromium 만 | **280.5 MiB** |
-| `actions/cache` 항목 크기 (chromium, zstd) | **229 MB** |
+| `actions/cache` 항목 크기 (chromium, zstd) | **229 MiB** — 랩탑에서 tar+zstd 로 근사한 값이다. 실제 CI 항목은 **249 MiB**(261,229,767 B)로 더 컸다. R-8 참조 |
 | `driver-bundle` jar | **201 MB — 이미 `testRuntimeClasspath` 에 있다.** 새 Maven 다운로드는 0 |
 | warm `playwrightTest` | **14~28초** |
 
@@ -334,7 +335,7 @@ cold 캐시에서 이 계층은 **느린 것이 아니라 빨간 것**이었다.
 - `installPlaywrightBrowsers` + `playwrightTest` 의 `testClassesDirs`/`classpath`/skip 플래그
 - `.github/workflows/build.yml` — `build` job 의 스텝(별도 job 이 아닌 이유는 R-1 이 `packagingTest`
   에 쓴 규칙 그대로), `actions/cache` 로 `~/.cache/ms-playwright` 캐시. **키는 Playwright 버전
-  하나**이지 버전 카탈로그 해시가 아니다 — 무관한 의존성 범프마다 229 MB 를 버리게 된다.
+  하나**이지 버전 카탈로그 해시가 아니다 — 무관한 의존성 범프마다 249 MiB 를 버리게 된다.
   `restore-keys` 가 옛 항목을 집으면 설치 태스크가 새 리비전만 채운다
 - `scripts/release.sh` — 게이트가 `checkAll integrationTest packagingTest playwrightTest
   jacocoTestCoverageVerification` 가 됐다. `.claude/skills/release/SKILL.md` 의 선언도 같이
@@ -402,7 +403,13 @@ cold 캐시에서 이 계층은 **느린 것이 아니라 빨간 것**이었다.
   |---|---|
   | `architecture-review-open-items.md` §0.4-b (`:90`) | 옛 javadoc 을 **인용부호 안에 과거형으로** 적은 날짜 붙은 기록이다. 서술 대상이 아니라 서술 자체 |
   | [`spring-boot-starter-open-items.md`](spring-boot-starter-open-items.md) B-5 | 다른 문서의 **닫힌 항목**이 2026-08 시점 근거를 인용한 것이다. 문장은 이제 낡았지만 그 항목이 주장하는 것(데몬 스레드)은 그대로 참이라 손대지 않았다 |
-  | [`../../CHANGELOG.md`](../../CHANGELOG.md) `## [0.2.4]` (`53649d0:1776`, 현재 `:1833`) | *"`playwrightTest` stays outside both gates"* — **동결된 릴리스 이력**이다. 그 릴리스 시점에 참이었고, 발행된 이력을 소급해 고치는 것은 이 저장소가 하지 않는 일이다 |
+  | [`../../CHANGELOG.md`](../../CHANGELOG.md) 의 `## [0.2.4]` 절 (`53649d0:1776`) | *"`playwrightTest` stays outside both gates"* — **동결된 릴리스 이력**이다. 그 릴리스 시점에 참이었고, 발행된 이력을 소급해 고치는 것은 이 저장소가 하지 않는 일이다 |
+
+  이 행의 좌표는 한 번 고쳤다. 처음에는 `53649d0:1776` 옆에 *"현재 `:1833`"* 을 함께 적었는데, 그 값은
+  적는 순간 이미 **1832** 였고 두 커밋 뒤 CHANGELOG 에 R-8 불릿이 들어가며 **1847** 로 밀렸다 — 즉
+  **이 PR 이 자기 안에서 만든 드리프트**이고, `:1833` 은 지금 인용문과 무관한 문장을 가리킨다. 그때의
+  판단(*"줄 번호가 드리프트하므로 섹션이 안정적인 좌표"*)은 맞았으므로 그 판단을 끝까지 적용해 **죽는
+  쪽을 지웠다**: 동결된 리비전의 줄 번호는 영원히 참이고 "현재" 줄 번호는 다음 커밋에 거짓이 된다.
 
   세는 도구도 한 번 더 걸린다. 위 여섯을 뽑는 줄 단위 grep 은 **1번을 놓친다** — main 의 그 주장이
   *"the one tier still running / nowhere is `playwrightTest`"* 로 **두 줄에 걸쳐** 있어서 어느 한 줄도
@@ -495,8 +502,13 @@ R-7 은 자기 숫자가 macOS 값이라는 한계를 적어 두었다. 그 한�
 |---|---|---|---|
 | chromium 내려받기 | **94초** | **약 6초** (`23:38:49.6` → `23:38:55.5`) | **~15배** |
 | 계층 전체, cold | 1분48초 | **32초** (세 스텝 `23:38:35` → `23:39:07`) | ~3.4배 |
+| `actions/cache` 항목 크기 | 229 MiB (랩탑 tar+zstd 근사) | **249 MiB** = 261,229,767 B (`gh cache list`) | 1.09배 |
 | └ 그중 테스트 스텝 | — | 27초 (컴파일 + 설치 + 4 테스트) | |
 | └ 캐시 저장 (post) | — | 3초 | |
+
+마지막 행은 방향이 반대이고 폭도 작지만 같은 교훈에 속한다 — 압축된 아카이브 크기는 플랫폼과 무관해
+보이지만 아니다(바이너리가 다르면 압축률도 다르다). 그 한 줄은 2026-09-06 의 PR 리뷰가 잡을 때까지
+`build.yml` 에 랩탑 값으로 남아 있었다: **시간 숫자는 이 항목이 고쳤고 크기 숫자만 놓쳤다.**
 
 즉 **R-7 이 결정을 내릴 때 근거로 삼은 숫자는 실제 CI 비용의 3배**였고, 다운로드만 보면 15배였다.
 결정이 그 방향으로 틀렸다면 되돌려야 했겠지만 여기서는 **"넣는다" 를 더 강하게 만들 뿐**이다 —

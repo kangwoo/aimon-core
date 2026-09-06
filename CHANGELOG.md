@@ -111,7 +111,7 @@ Central is versioned independently).
 
 - **The browser cache is keyed on the Playwright version alone**, not on a hash of the version
   catalogue: the browsers rotate only when that line moves, and hashing the catalogue would discard a
-  229 MB entry on every unrelated dependency bump. `restore-keys` takes an older entry on a miss and
+  249 MiB entry on every unrelated dependency bump. `restore-keys` takes an older entry on a miss and
   the install task tops it up with just the new revision. `playwrightTest.exec` now travels with
   `test.exec` into the coverage hand-off — leaving it behind would measure the module with its browser
   tests excluded, the same mistake the `coverage` job exists to correct for the docker tier — and the
