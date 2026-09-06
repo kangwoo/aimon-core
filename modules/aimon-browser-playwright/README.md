@@ -243,7 +243,7 @@ at.aimon.browser.playwright/
 # 단위 테스트 (Playwright 불필요)
 ./gradlew :aimon-browser-playwright:test
 
-# 통합 테스트 (Playwright + Chromium 필요)
+# 통합 테스트 (Chromium 을 태스크가 알아서 설치한다 — 캐시가 없으면 첫 실행만 ~95초/280MB)
 ./gradlew :aimon-browser-playwright:playwrightTest
 
 # 포맷팅
@@ -253,7 +253,8 @@ at.aimon.browser.playwright/
 ./gradlew checkAll
 ```
 
-통합 테스트는 `@Tag("playwright")`로 분리되어 있어 일반 테스트 실행 시 제외된다.
+통합 테스트는 `@Tag("playwright")`로 분리되어 있어 일반 테스트 실행 시 제외된다. 다만 **CI 와 릴리스
+게이트는 이 계층을 돈다** — `playwrightTest` 는 기본 `test` 밖일 뿐 opt-in 이 아니다.
 
 ## 의존성
 

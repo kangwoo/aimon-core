@@ -77,10 +77,15 @@ Map the argument to `<bump>` (`patch` | `minor` | `major`, default `patch`).
   verifies these before any mutation).
 - **Docker must be running.** The gate includes `integrationTest` (Testcontainers), so the script
   fails fast on a missing daemon rather than discovering it minutes in.
-- Quality gate = `checkAll integrationTest packagingTest jacocoTestCoverageVerification` — the same
+- **A browser cache, or network to fetch one.** The gate includes `playwrightTest`, whose Gradle task
+  installs Chromium first. On a machine that already has it the step costs seconds; on one that does
+  not it downloads ~280 MB (~95s) into `~/.cache/ms-playwright` (`~/Library/Caches/ms-playwright` on
+  macOS) before the tests run. Unlike Docker this cannot be checked up front, so it shows up as a slow
+  first gate rather than a fast failure.
+- Quality gate = `checkAll integrationTest packagingTest playwrightTest jacocoTestCoverageVerification` — the same
   set `.github/workflows/build.yml` runs, so a release never passes a narrower gate than a PR.
   `ReleaseGateMatchesCiGateTest` enforces the match, because the two lists drifted once already.
-  `playwrightTest` is the only opt-in tier outside both.
+  No tier in this build is opt-in any more: every `@Tag` is a CI step and a gate task.
 - **Release bodies are capped at 125,000 characters.** GitHub rejects a longer body with a 422 that
   fails the whole `gh release create` call — publishing *nothing*, not even the missing-section
   pointer. `scripts/cap-release-notes.py` truncates on a line boundary and links to the full section,

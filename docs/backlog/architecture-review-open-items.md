@@ -1,4 +1,4 @@
-# 아키텍처 리뷰가 남긴 나머지 항목 — 등록 항목 7건 (열림 3 · 닫힘 4)
+# 아키텍처 리뷰가 남긴 나머지 항목 — 등록 항목 8건 (열림 2 · 닫힘 6)
 
 2026-08-31 의 아키텍처 리뷰가 일곱 단계를 처리하고 남긴 것들이다. 같은 리뷰에서 나온 두 축은 이미
 자기 문서를 가졌고([`multi-instance-readiness.md`](multi-instance-readiness.md) ·
@@ -86,6 +86,12 @@
 4개**다. 결론은 어느 쪽으로도 바뀌지 않지만(7개 모듈에게 그것이 유일한 테스트라는 사실), 숫자를 다시
 인용할 사람을 위해 적어 둔다. CHANGELOG 의 숫자는 이 확인에 맞춰 고쳤다.
 
+> **정정** *(2026-09-05, R-7)*: 이 문단의 **"5건" 은 범위를 적지 않은 숫자**다. playwright 모듈의
+> `.java` 로 한정하면 5 가 맞고, 같은 문단이 docker 에 쓴 것과 같은 저장소 전역 범위로 세면 **6** 이다
+> (`ReleaseGateMatchesCiGateTest` 의 javadoc 이 여섯 번째이며 초기 커밋부터 있었다). 즉 한 문단이 두
+> 범위를 섞었고, R-7 이 그 5 를 검증 없이 물려받아 표를 두 번 더 틀리게 만들었다. 애노테이션 4 · 클래스
+> 1 이라는 이 문단의 결론은 그대로 참이다. 계열과 명령은 R-7 의 인구조사 절에 있다.
+
 **(b) 게이트를 지키는 테스트의 javadoc 이 게이트보다 낡아 있었다.** `ReleaseGateMatchesCiGateTest`
 의 "What this cannot see" 절이 *"opt-in 계층(`integrationTest` · `packagingTest` · `playwrightTest`)은
 양쪽 게이트 밖에 있으므로 보지 못한다"* 라고 적고 있었는데, 같은 리뷰가 `integrationTest` 를 양쪽에 넣었으므로
@@ -128,11 +134,12 @@
 
 두 계층을 묶은 근거는 *"둘 다 opt-in"* 하나뿐이었다. 그런데 opt-in 은 성질이 아니라 **현재 상태**이고,
 같은 상태에 있다는 것이 같은 이유로 거기 있다는 뜻은 아니다. 비용을 실제로 재 보니 자릿수가 다르다.
+(**이 마지막 문장은 R-7 이 양쪽을 다 재면서 반증되었다** — 아래 `남는 것`. 분리는 옳았고 근거가 틀렸다.)
 
 | 계층 | 실체 | 비용 | 필요한 것 |
 |------|------|------|----------|
 | `@Tag("packaging")` | `FatJarPackagingTest` 메서드 **4개** (`aimon-sample-app`) | **57초** — 샘플 build 디렉토리를 지우고 루트에서 `packagingTest` (warm 은 6초) | **없음.** task 가 fat jar 둘을 자기가 빌드한다 |
-| `@Tag("playwright")` | `PlaywrightLifecycleManagerTest` 메서드 **4개** | 미측정 | 브라우저 바이너리 설치 |
+| `@Tag("playwright")` | `PlaywrightLifecycleManagerTest` 메서드 **4개** | ~~미측정~~ → **cold 94초 / warm 14~28초** (R-7, 2026-09-05) | 브라우저 바이너리 설치 |
 
 **항목의 본문이 이미 그 갈라짐을 적어 두고 있었다.** *"브라우저 바이너리 설치는 job 하나가 아니고,
 `packagingTest` 는 `bootJar` 에 매달려 있다"* — 한 문장 안에 **서로 다른 두 이유**를 적어 놓고도 둘을
@@ -175,35 +182,352 @@ JDK 설치와 전체 컴파일을 한 번 더 치르는데, Testcontainers 를 �
   `packagingTest` 등록 주석 — 둘 다 **"양쪽 게이트 밖"** 이라고 적고 있었으므로 같이 고쳤다(§0.4-b 와
   같은 파생 서술 문제이며, 이 문서에서 두 번째다)
 
-**남는 것** — 없다. playwright 쪽은 R-7 로 나갔다.
+**남는 것** — 없다. playwright 쪽은 R-7 로 나갔고, **거기서 이 항목이 분리 근거로 적은 문장이
+반증되었다.**
 
-### R-7 — `playwrightTest` 는 여전히 어느 게이트에도 없다 · **열림 · 트리거 대기**
+이 절은 *"비용을 실제로 재 보니 자릿수가 다르다"* 로 두 계층을 갈랐다. 그런데 그때 실제로 잰 것은
+**한 쪽뿐**이었다 — 표의 playwright 행은 `미측정` 이었다. 둘 다 재고 나니 자릿수는 **같다.**
 
-**무엇** — `playwrightTest` 를 CI 에 넣거나, 넣지 않기로 결정하고 그 근거를 적는다. R-1 에서 갈라져
-나온 항목이며, 번호는 재사용하지 않으므로 새 번호를 받았다.
+**두 칸이 같은 것을 재게 맞춘다.** 첫 판본의 cold 행은 packaging 에 **태스크 전체**(57초)를, playwright
+에 **설치만**(94초)을 실어 서로 다른 것을 비교하고 있었다.
 
-**왜 — 관측 가능한 결과**
+| | `packaging` | `playwright` |
+|---|---|---|
+| cold, 태스크 전체 | 57초 | **1분48초** |
+| ├ 그중 선행 산출물 만들기 | fat jar 둘 (태스크가 자기가 빌드) | Chromium 내려받기 **94초** |
+| warm, 태스크 전체 | 6초 | 14~28초 (`--rerun-tasks`, 컴파일 포함. 스위트 자체는 3초 미만) |
 
-`integrationTest` 에 이어 `packagingTest` 까지 양쪽 게이트에 들어가면서, **어디서도 실행되지 않는
-계층은 이것 하나만 남았다** — `PlaywrightLifecycleManagerTest` 의 메서드 4개다(2026-08-31 확인).
-`@Tag("playwright")` 를 문자열로 세면 5건이 나오지만, 그중 하나는 **그 태그를 왜 붙이지 않았는지 적은
-javadoc 문장**이다(`PlaywrightLifecycleManagerTest:26`) — §0.4-a 가 docker 쪽에서 만난 것과 같은 함정이다.
+어느 행도 한 자리 배수 안이다. 그러므로 **분리의 근거를 갈아 끼운다** — 비용이 아니라 같은 표의
+**`필요한 것` 칸**이다. `packagingTest` 는 **없음**(태스크가 fat jar 를 자기가 빌드한다)이고
+`playwrightTest` 는 **브라우저 바이너리 설치**, 즉 네트워크로 받아 캐시해야 하는 빌드 밖의 산출물이다.
+그 차이는 양이 아니라 **종류**이고, R-7 이 실제로 부딪힌 것도 전부 그 칸에서 나왔다(30초 타임아웃,
+절반 찬 캐시의 flakiness, CI 캐시 키). 분리는 옳았고 근거만 틀렸다.
 
-`aimon-browser-playwright` 는 발행 모듈이므로, 게이트 편입이 7개 백엔드에 대해 말한 문장이 여덟 번째
-모듈에 대해 성립하는지의 문제다. 다만 대답이 자명하지 않다 — **브라우저 바이너리 설치는 job 하나가
-아니고**, 그 비용은 아직 재지 않았다. R-1 이 실측 한 번으로 갈라졌다는 사실이 여기에도 그대로 적용된다:
-**착수하려면 먼저 재야 한다.**
+IMPORTANT: 이 문단의 첫 판본은 정반대로 적혀 있었다 — *"자릿수가 다르다는 예측은 맞았지만 방향이
+반대였다"*. 한 문장이 "자릿수가 다르다" 와 "같은 자릿수였다" 를 동시에 말했고, "방향" 은 가리킬 대상이
+없었다(이 항목은 방향을 예측한 적이 없고, 실측은 cold·warm 양쪽에서 playwright 가 더 비싸다 — 브라우저
+설치가 필요하다는 사실에서 누구나 예상할 방향이다). [`README.md`](README.md) 규칙 둘이 *"근거가
+달랐으면 달랐다고 적으라"* 고 요구하는 이유가 다음 사람을 막는 것인데, 반증된 예측을 **"판단이
+확인되었다"** 로 적으면 그 장치가 반대로 작동한다.
 
-**어디** *(2026-08-31 확인)*
+### R-7 — `playwrightTest` 는 어느 게이트에도 없었다 · **닫힘** *(2026-09-05)*
 
-- `modules/aimon-browser-playwright/build.gradle.kts:29` — `playwrightTest` 등록
-- `.github/workflows/build.yml` 의 `integration` job 주석 · `scripts/release.sh` 의 게이트 주석 —
-  둘 다 이제 **이 계층 하나만** "still opt-in" 이라고 적는다
-- `ReleaseGateMatchesCiGateTest` — 이것을 **보지 못한다**고 자기 javadoc 에 적어 두었다
+**무엇이었나** — `playwrightTest` 를 CI 에 넣거나, 넣지 않기로 결정하고 그 근거를 적는다. R-1 에서
+갈라져 나온 항목이며, 항목 스스로 *"착수하려면 먼저 재야 한다"* 고 적어 두었다. 재 보니 답이 정해졌다 —
+**넣었다.** 그리고 재는 과정에서 항목의 전제가 실제보다 약하다는 것이 먼저 드러났다.
 
-**언제 다시 볼까** — 둘 중 하나. (원래 셋이었는데 하나는 packaging 쪽 트리거여서 R-1 과 함께 나갔다.)
-- 브라우저 도구가 실제 소비자를 얻을 때. 지금 `playwrightTest` 가 지키는 것은 아직 아무도 쓰지 않는 표면이다
-- CI 시간이 문제가 아니게 될 때 — 이 계층을 넣지 않는 진짜 이유는 설치 비용이지 테스트 시간이 아니다
+#### 근거가 약했다 — "게이트에 없다" 가 아니라 **"아무 데서도 돌지 않는다"** 였다
+
+항목은 이 계층을 *"어디서도 실행되지 않는"* 계층으로 적었고, 그 문장이 뜻한 것은 **CI 와 릴리스
+게이트 밖에 있다**는 것이었다. 즉 손으로 `./gradlew playwrightTest` 를 치면 돈다는 전제였다. 돌지
+않았다.
+
+`modules/aimon-browser-playwright/build.gradle.kts` 의 `tasks.register<Test>("playwrightTest")` 에는
+`testClassesDirs` 도 `classpath` 도 없었다. 맨 `register<Test>` 는 그 둘을 `test` 태스크에서 물려받지
+않으므로 이 태스크는 **후보 테스트 클래스가 0개**였고, `NO-SOURCE` 로 건너뛰어졌고, **650ms 만에
+초록으로 끝났다.** 통과한 실행과 글자 하나 다르지 않다. 그 상태는 **초기 커밋 이래로** 유지되었으므로
+`PlaywrightLifecycleManagerTest` 의 태그된 메서드 넷은 **한 번도 실행된 적이 없다.**
+
+이것은 [`README.md`](README.md) 규칙 셋의 사례다 — 근거(*"어느 게이트에도 없다"*)는 참이었고 틀린 것은
+**심각도**였다. 그리고 그 차이는 읽어서는 나오지 않았다: 위 `tasks.register<Test>("playwrightTest")`
+(`53649d0` 기준 `modules/aimon-browser-playwright/build.gradle.kts:29`)를 몇 번을 다시 읽어도 없는 두
+줄은 보이지 않는다. **태스크를 한 번 돌리자 첫 줄에 나왔다.**
+
+같은 이유로 `ReleaseGateMatchesCiGateTest` 도 이것을 잡을 수 없었다. 그 테스트가 비교하는 것은 **두
+목록**이고, 양쪽에 없는 계층은 아무리 썩어도 목록 비교에 나타나지 않는다. 자기 javadoc 이 *"Nothing
+here notices when it rots"* 라고 적어 둔 그대로인데, **썩는 방식이 예상보다 한 단계 아래**였다.
+
+#### 인구조사 — 이 표는 **세 번 틀렸다.** 세 번 다 원인이 같다
+
+세 판본을 그대로 남긴다. 고친 것보다 **왜 계속 틀렸는지**가 이 항목에서 더 쓸모 있다.
+
+| 판본 | 뭐라고 적었나 | 무엇이 틀렸나 |
+|---|---|---|
+| 1 (§0.4-a, 08-31) | *"문자열 5건, 실제로는 메서드 4개"* | **세는 범위를 안 적었다.** 5 는 playwright 모듈의 `.java` 에 한정한 값이고, 같은 문단의 docker 숫자(71/68)는 **저장소 전역**이었다. 한 문단이 두 범위를 섞었다 |
+| 2 (R-7 초판) | *"2026-09-05 기준 6"* | 6 은 **착수 직전**의 값이고, 같은 커밋이 5로 되돌린 뒤였다. 날짜만으로는 커밋 앞뒤를 가릴 수 없다 |
+| 3 (R-7 2판) | *"5 → 6 → 5"* | **5 → 6 이라는 사건은 일어난 적이 없다.** 첫 칸의 5 를 §0.4-a 에서 검증 없이 물려받았다 |
+
+**실제 계열이다.** 명령을 그대로 적는다 — 이 표가 세 번 틀린 이유가 결국 "명령을 안 적었다" 이기 때문이다.
+
+```
+git grep -o 'Tag("playwright")' <rev> -- 'modules/*.java' | wc -l
+```
+
+| rev | 날짜 | 값 |
+|---|---|---|
+| `eec9ccd` (초기 커밋) | 08-31 | **6** |
+| `4edca08` · `d3a9f70` · `8bb7071` · `3649b84` · `d4608ba` · `53649d0` | 08-31 ~ 09-05 | **6** (한 번도 안 움직였다) |
+| `HEAD` (이 작업) | 09-05 | **5** |
+
+**이 숫자는 딱 한 번 움직였고, 움직인 것이 이 작업이다.** 그 문자열은 `ReleaseGateMatchesCiGateTest`
+javadoc 에 **초기 커밋부터 있었고**, `d3a9f70`(R-1)은 그 줄을 **다시 썼을 뿐**이다 — diff 의 삭제줄과
+추가줄 양쪽에 문자열이 있어 순증이 0 이다. 2판의 *"R-1 이 그 문자열을 새로 적었다"* 는 그래서 거짓이다.
+
+**그리고 범위를 바꾸면 값이 또 바뀐다.** 이것이 세 판본을 관통하는 유일한 원인이다.
+
+| 범위 | `53649d0` | `HEAD` |
+|---|---|---|
+| playwright 모듈의 `.java` | 5 | 5 |
+| `modules/**/*.java` | 6 | 5 |
+| `modules/**` (모든 파일) | **7** | **6** |
+
+마지막 줄이 아무 판본에도 없던 것을 하나 드러낸다 — `modules/aimon-browser-playwright/README.md:256`
+에도 그 문자열이 있고, **세 판본 어느 것도 그것을 센 적이 없다.** 애노테이션 4 · 클래스 1 은 여덟 개
+리비전 전부에서 한 번도 움직이지 않았다.
+
+IMPORTANT: 규칙 여섯은 *"N건도 도구가 만들어 낸 숫자"* 라고 적는데, 세 번 겪고 나서 보이는 것은 그보다
+한 칸 좁다 — 틀린 것은 매번 **도구**가 아니라 **범위와 시점**이었다. grep 은 세 번 다 정확했다. 그러므로
+이 종류의 숫자를 인용할 때 함께 적어야 하는 것은 결과가 아니라 **결과를 재현하는 명령과 그것을 돌린
+리비전**이다. 위 표가 그 형식이고, 그것이 없으면 다음 판본이 네 번째로 틀린다.
+#### 실측 — 항목이 요구한 것 *(2026-09-05, macOS arm64, 가정용 회선)*
+
+| 무엇 | 값 |
+|---|---|
+| cold 설치, 기본 브라우저 전체 (`install`) | **158초 · 디스크 1.0 GB** |
+| cold 설치, chromium 만 (`install chromium`) | **94초 · 디스크 520 MB** |
+| warm 설치 확인 | **1초 미만** |
+| Linux x64 다운로드 바이트, 기본 전체 | **479.2 MiB** (chromium 167.3 / headless-shell 110.9 / firefox 99.5 / webkit 99.2 / ffmpeg 2.3) |
+| Linux x64 다운로드 바이트, chromium 만 | **280.5 MiB** |
+| `actions/cache` 항목 크기 (chromium, zstd) | **229 MiB** — 랩탑에서 tar+zstd 로 근사한 값이다. 실제 CI 항목은 **249 MiB**(261,229,767 B)로 더 컸다. R-8 참조 |
+| `driver-bundle` jar | **201 MB — 이미 `testRuntimeClasspath` 에 있다.** 새 Maven 다운로드는 0 |
+| warm `playwrightTest` | **14~28초** |
+
+**설치는 자동이다** — 별도 `playwright install` 스텝이 이 저장소에 있는 것이 아니라
+`Playwright.create()` 안에서 일어난다. 근거는 바이트코드다: `DriverJar.installBrowsers()` 가 번들
+드라이버를 **인자 없는 `install`** 로 부르므로 `browsers.json` 의 `installByDefault: true` **전부**
+(chromium · chromium-headless-shell · firefox · webkit · ffmpeg)를 받는다. 끄는 것은
+`PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD` 와 `SELENIUM_REMOTE_URL` 둘뿐이다.
+
+#### 실측이 답을 정하기 전에, 실측이 **두 번째 결함**을 먼저 냈다
+
+cold 캐시에서 이 계층은 **느린 것이 아니라 빨간 것**이었다. `PlaywrightLifecycleManager:98` 이
+`Playwright.create()` 를 `future.get(30, TimeUnit.SECONDS)` 로 감싸는데, 그 안에서 158초짜리
+다운로드가 일어나므로 타임아웃이 먼저 터진다. **두 번 재현했다 — 2분21초와 2분27초, 둘 다 4/4 실패.**
+
+절반만 찬 캐시는 더 나쁘다. chromium 만 있고 firefox 가 없는 상태로 돌리면 **넷 중 둘이 실패하고 둘이
+통과했다** — 느린 게이트가 아니라 **flaky 게이트**다. R-3 이 하한선에 대해 경고한 것과 같은 모양이며,
+이 저장소가 "가장 엄격해 보이는 설정이 가장 약한 강제를 만든다" 로 부르는 것이다.
+
+그래서 처방이 "CI 에 한 줄 더한다" 로 끝나지 않는다. 다운로드를 **타임아웃 밖으로 끌어내고** 이 테스트가
+실제로 띄우는 것(chromium)으로 좁혔다 — `installPlaywrightBrowsers` JavaExec 태스크 + 테스트 태스크의
+`PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`. 빈 `PLAYWRIGHT_BROWSERS_PATH` 에서 **1분48초에 4/4 통과**로
+확인했다.
+
+#### 결정 — 넣는다. 근거는 `packagingTest` 가 아니라 `integrationTest` 쪽이다
+
+막고 있던 미지수(설치 비용)가 재어 보니 **비교 대상보다 작다** — 컨테이너 다섯을 몇 분 띄우는
+`integrationTest` 보다 싸고, warm 에서는 `packagingTest` 와 같은 자릿수다. 그리고 편입 근거는 R-1 이
+`packagingTest` 에 쓴 좁은 것("fat jar 를 볼 수 있는 유일한 검증")이 아니라 게이트 편입이 백엔드들에
+쓴 것과 **같은 문장**이다.
+
+| | `test` 만 | `test` + `playwrightTest` |
+|---|---|---|
+| 모듈 line | 83.70% | **88.15%** |
+| `PlaywrightLifecycleManager` line | **8.96%** (6/67) | **56.72%** (38/67) |
+
+`aimon-browser-playwright` 는 Maven Central 발행 모듈이고, 브라우저 프로세스·데몬 워커 스레드·종료
+순서를 소유하는 클래스가 **9%** 로 나가고 있었다. "소비자가 아직 없다" 는 반론이 되지 않는다 — 발행된
+순간부터 소비자는 저장소 밖에 있을 수 있고, R-2 가 `aimon-knowledge-opensearch` 를 그대로 둔 이유
+(*테스트가 0건이다*)는 여기에 적용되지 않는다. 여기서는 **테스트가 있는데 빌드 버그가 건너뛰고 있었다.**
+
+#### 한 것
+
+- `installPlaywrightBrowsers` + `playwrightTest` 의 `testClassesDirs`/`classpath`/skip 플래그
+- `.github/workflows/build.yml` — `build` job 의 스텝(별도 job 이 아닌 이유는 R-1 이 `packagingTest`
+  에 쓴 규칙 그대로), `actions/cache` 로 `~/.cache/ms-playwright` 캐시. **키는 Playwright 버전
+  하나**이지 버전 카탈로그 해시가 아니다 — 무관한 의존성 범프마다 249 MiB 를 버리게 된다.
+  `restore-keys` 가 옛 항목을 집으면 설치 태스크가 새 리비전만 채운다
+- `scripts/release.sh` — 게이트가 `checkAll integrationTest packagingTest playwrightTest
+  jacocoTestCoverageVerification` 가 됐다. `.claude/skills/release/SKILL.md` 의 선언도 같이
+- `playwrightTest.exec` 를 커버리지 hand-off 에 실었고, 모듈 하한선을 **82 → 87** 로 다시 동결했다
+  (R-3 의 `floor(측정값) − 1`). 이것이 배선을 **자기강제**로 만든다 — 단위 계층만으로는 87 에 닿지
+  못하므로, 나중에 이 계층을 CI 에서 조용히 빼면 커버리지 하한선이 실패한다
+- `ReleaseGateMatchesCiGateTest` 에 검사 **둘**. 둘 다 리뷰가 낳았고 둘 다 **산문을 불변식으로 바꾼다**.
+  기존 `SKILL_GATE_DECLARATION` 정규식은 넓히지 **않았다** — 그것이 느슨한 산문을 훑지 않는 것은
+  javadoc 이 이유를 적어 둔 결정이므로(규칙 다섯), 넓히는 대신 파싱이 필요 없는 좁은 불변식을 옆에 세웠다.
+
+  | 검사 | 무엇을 막나 | 공허 통과가 아님을 어떻게 봤나 |
+  |---|---|---|
+  | `releaseSkillDoesNotCallAGatedTierUngated` | 게이트가 도는 태스크를 릴리스 스킬이 opt-in 이라고 부르는 것 | 고치기 전 `SKILL.md` 에 대고 돌려 `:83` 을 지목하며 실패 |
+  | `everyTestTagIsGated` | **네 번째 `@Tag` 가 게이트 없이 생기는 것** — 세 파일이 산문으로 "opt-in 계층은 없다" 고 주장하는데 아무것도 그것을 지키지 않았다 | 프로브 여덟 개(아래 표) |
+
+  두 번째 검사의 정규식은 **두 번 넓혔고 두 번 다 프로브가 시켰다.** 읽어서는 한 번도 안 나왔다.
+
+  | 프로브 | 기대 | 1차 초안 | 2차 초안 | 현재 |
+  |---|---|---|---|---|
+  | `@Tag("smoke")` | 실패 | 실패 | 실패 | 실패 |
+  | `@org.junit.jupiter.api.Tag("smoke")` | 실패 | **통과** ✗ | 실패 | 실패 |
+  | `@Tag(value = "smoke")` | 실패 | 통과 ✗ | **통과** ✗ | 실패 |
+  | `@Tag(value="smoke")` (공백 없음) | 실패 | — | — | 실패 |
+  | javadoc `{@code @Tag("smoke")}` | 통과 | 통과 | 통과 | 통과 |
+  | javadoc `{@code @Tag(value = "smoke")}` | 통과 | — | — | 통과 |
+  | 주석 `// @Tag("smoke")` | 통과 | 통과 | 통과 | 통과 |
+  | 문자열 리터럴 | 통과 | 통과 | 통과 | 통과 |
+
+  아래 네 행이 위 네 행만큼 중요하다 — **넓히면 오탐이 늘 수 있으므로** 넓힐 때마다 오탐 프로브도 다시
+  돌렸다. 줄 첫머리 앵커가 그 넷을 막는다. 같은 줄에 쓴 `@Test @Tag("x")` 는 그 앵커를 지나가지만
+  `spotlessJavaCheck` 가 애노테이션을 자기 줄로 분리하므로 트리에 존재할 수 없다(확인함).
+
+**공허 통과가 아님을 두 방향으로 확인했다** (규칙 다섯).
+
+| 조건 | 결과 |
+|---|---|
+| 릴리스 게이트에서만 `playwrightTest` 를 뺀다 | `ReleaseGateMatchesCiGateTest` 가 **실패** — *"CI runs `playwrightTest` … but the release gate in scripts/release.sh does not"* |
+| 단위 계층만으로 하한선을 돌린다 | **실패** — *"lines covered ratio is 0.83, but expected minimum is 0.87"* |
+| 새 스킬 검사를 고치기 **전의** `SKILL.md` 에 대고 돌린다 | **실패** — *"SKILL.md:83 — `playwrightTest` is the only opt-in tier outside both"*. 고친 뒤 5/5 통과 |
+
+**어디** *(2026-09-05)*
+
+- `modules/aimon-browser-playwright/build.gradle.kts` — `installPlaywrightBrowsers` 와 고쳐진
+  `playwrightTest`
+- `.github/workflows/build.yml` — `build` job 의 세 스텝 · 커버리지 아카이브 glob ·
+  `integration` job 주석
+- `scripts/release.sh` · `.claude/skills/release/SKILL.md` · `gradle/coverage-baselines.properties`
+- **낡아 있던 산문 일곱** — "셋" → "다섯" → "여섯" → 일곱. **네 번 다 적게 셌다.** 네 번째로
+  세면서는 세는 법을 먼저 적는다(위 인구조사 절이 같은 이유로 세 번 틀렸다). 범위는 `53649d0` 전체이고,
+  거른 것은 *"playwrightTest 는 게이트 밖 / opt-in / 아무 데서도 안 돈다"* 를 **현재형으로 주장하는 줄**이다.
+
+  | # | 자리 | 무엇이라고 적고 있었나 | 고친 커밋 |
+  |---|------|----------------------|----------|
+  | 1 | `.github/workflows/build.yml` `integration` job 주석 | *"the one tier still running nowhere is `playwrightTest`"* | `5801997` |
+  | 2 | `aimon.java-conventions.gradle.kts:120` | *"the tier that still runs nowhere is `playwrightTest`"* | `5801997` |
+  | 3 | `ReleaseGateMatchesCiGateTest:59` | *"One tier runs in neither place"* | `5801997` |
+  | 4 | **`scripts/release.sh:168`** | *"Still opt-in and therefore NOT gated here"* | `5801997` — **"다섯" 목록에서 빠져 있었다** |
+  | 5 | `PlaywrightLifecycleManagerTest:28` | *"그러면 CI 가 회귀를 잡지 못한다"* | `bf6911d` |
+  | 6 | `.claude/skills/release/SKILL.md:83` | *"the only opt-in tier outside both"* | `0982aa5` — **1차 리뷰가 잡았다** |
+  | 7 | **`modules/aimon-browser-playwright/build.gradle.kts:28`** | *"Opt-in task for running the playwright-tagged integration tests"* | **3차에서 직접 훑다 찾았다** — 이 작업이 다시 쓴 바로 그 파일에서, 리뷰 셋이 전부 지나갔다 |
+
+  세지 **않은** 것 둘도 적는다. 안 세면 다음 사람이 다시 세게 된다.
+
+  | 자리 | 왜 안 세나 |
+  |---|---|
+  | `architecture-review-open-items.md` §0.4-b (`:90`) | 옛 javadoc 을 **인용부호 안에 과거형으로** 적은 날짜 붙은 기록이다. 서술 대상이 아니라 서술 자체 |
+  | [`spring-boot-starter-open-items.md`](spring-boot-starter-open-items.md) B-5 | 다른 문서의 **닫힌 항목**이 2026-08 시점 근거를 인용한 것이다. 문장은 이제 낡았지만 그 항목이 주장하는 것(데몬 스레드)은 그대로 참이라 손대지 않았다 |
+  | [`../../CHANGELOG.md`](../../CHANGELOG.md) 의 `## [0.2.4]` 절 (`53649d0:1776`) | *"`playwrightTest` stays outside both gates"* — **동결된 릴리스 이력**이다. 그 릴리스 시점에 참이었고, 발행된 이력을 소급해 고치는 것은 이 저장소가 하지 않는 일이다 |
+
+  이 행의 좌표는 한 번 고쳤다. 처음에는 `53649d0:1776` 옆에 *"현재 `:1833`"* 을 함께 적었는데, 그 값은
+  적는 순간 이미 **1832** 였고 두 커밋 뒤 CHANGELOG 에 R-8 불릿이 들어가며 **1847** 로 밀렸다 — 즉
+  **이 PR 이 자기 안에서 만든 드리프트**이고, `:1833` 은 지금 인용문과 무관한 문장을 가리킨다. 그때의
+  판단(*"줄 번호가 드리프트하므로 섹션이 안정적인 좌표"*)은 맞았으므로 그 판단을 끝까지 적용해 **죽는
+  쪽을 지웠다**: 동결된 리비전의 줄 번호는 영원히 참이고 "현재" 줄 번호는 다음 커밋에 거짓이 된다.
+
+  세는 도구도 한 번 더 걸린다. 위 여섯을 뽑는 줄 단위 grep 은 **1번을 놓친다** — main 의 그 주장이
+  *"the one tier still running / nowhere is `playwrightTest`"* 로 **두 줄에 걸쳐** 있어서 어느 한 줄도
+  전체 문장을 담지 않기 때문이다. 그래서 위 표는 grep 결과가 아니라 **파일을 열어 확인한 목록**이다.
+
+  IMPORTANT: 네 번의 오차가 전부 **같은 방향**이다 — 매번 **적게** 셌다. "셋" 은 커밋 하나가 고친 자리의
+  수였고, "다섯" 은 **이 작업이 직접 고친 파일은 뺀다**는 무의식적 기준이 만든 수였다(그 기준은 성립하지
+  않는다: 1·4·6·7번 모두 이 작업이 직접 고친 파일이다). "여섯" 은 기준을 처음 글로 적고 센 값인데,
+  그 기준대로 훑는 일을 **grep 에 맡겨서** 또 하나를 놓쳤다.
+
+  7번이 그중 가장 뼈아프다. **이 작업이 다시 쓴 파일 안에 있었고**, 리뷰 세 차례가 전부 지나갔고, 세는
+  기준을 명시한 표 바로 옆에서 살아남았다. 찾은 방법은 표가 시킨 것을 실제로 한 것뿐이다 —
+  `opt-in|outside both|neither place|runs nowhere` 를 저장소 전체에 훑은 뒤 **hit 를 한 줄씩 열어**
+  현재형 주장인지 기록인지 판정했다. 같은 훑기가 세 자리를 더 냈는데(루트 `build.gradle.kts` 와
+  `aimon.java-conventions` 의 두 줄) 그것들은 playwright 가 아니라 `integrationTest` 를 opt-in 이라고
+  부르고 있었다 — 그 계층은 리뷰 전부터 게이트 안이므로 **이 작업보다 오래된 낡음**이다. 같이 고쳤다.
+
+  그러므로 이 표가 남기는 문장은 개수가 아니다: **"전수" 라고 적은 목록은 그 말을 적은 순간부터 검증
+  대상이고, grep 결과를 전수로 쓰면 안 된다.** 위 표는 hit 를 하나씩 열어 만든 것이며, 다음 사람이 다시
+  셀 때 쓸 명령과 판정 기준을 함께 남긴 이유가 그것이다.
+
+  그중 6번이 가장 값진 자리다. **같은 파일의 세 줄 위(`:80`)를 이 작업이 직접 고쳤고**, 그 선언을
+  지키라고 있는 테스트(`releaseSkillDescribesTheRealGate`)가 **그동안 초록이었다** —
+  `SKILL_GATE_DECLARATION` 정규식이 백틱 안 태스크 목록만 읽으므로 옆줄 산문은 사정거리 밖이기 때문이다.
+  그래서 고치는 것으로 끝내지 않고 검사를 둘 세웠다(위 `한 것`).
+
+**남는 것** — **있다. R-8 로 나갔다.** 이 절은 두 판본 동안 *"없다"* 라고 적혀 있었는데, 같은 커밋이
+워크플로 주석에 *"the first run of this job"* 이 정한다고 적어 두었으므로 **문서가 자기 안에서
+모순했다.** 미정 둘(ubuntu 러너의 공유 라이브러리, 이 모듈 하한선의 CI 실측)은 트리거가 **하나로 같고
+명시적**이므로 항목의 모양을 갖췄다 — [`README.md`](README.md) 가 *"착수 중에 나온 것은 별도 번호로
+등록하고 원래 항목에 몰래 끼워 넣지 않는다"* 고 요구하는 그대로 R-8 이다.
+
+그리고 이 항목이 닫히면서 **§0.4-b 가 서술한 카빙 자체가 사라졌다**:
+`ReleaseGateMatchesCiGateTest` 가 "양쪽 게이트 밖이라 보지 못한다" 고 적을 계층이 이제 하나도 없다.
+그 문단은 지우지 않고 **왜 있었는지와 무엇이 그것을 무력화했는지**로 다시 썼다 — 사각지대의 모양
+(*양쪽에 없는 것은 목록 비교에 나타나지 않는다*)은 다음 계층이 생기면 그대로 되돌아오기 때문이다.
+
+### R-8 — playwright 계층이 ubuntu 에서 실제로 도는 것을 아무도 못 봤었다 · **닫힘** *(2026-09-06)*
+
+**무엇이었나** — R-7 이 전부 **macOS arm64 에서** 쟀고, 두 가지가 그 기계에서 결정될 수 없는 채로
+게이트에 들어갔다. 트리거는 *"이 브랜치가 처음 ubuntu 에서 도는 순간"* 하나였다. **발화했다** —
+PR [#32](https://github.com/kangwoo/aimon-core/pull/32), run
+[`33998782676`](https://github.com/kangwoo/aimon-core/actions/runs/33998782676) (`b7945cb`).
+5개 job 전부 success 이고 둘 다 정산됐다.
+
+#### 미정 ① `--with-deps` — **필요 없었다**
+
+`build` job 의 세 스텝이 전부 success 이고, 로그 전체(24,863줄)에서
+`error while loading shared libraries` · `cannot open shared object` · `Host system is missing dependencies`
+가 **0건**이다. ubuntu 러너의 시스템 라이브러리만으로 chromium 이 뜬다.
+
+같은 로그가 **두 가지를 덤으로 확인해 주었다.**
+
+| 확인된 것 | 증거 |
+|---|---|
+| `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` 이 실제로 듣는다 | 받은 것이 chromium · chromium-headless-shell · ffmpeg **셋뿐**이다. firefox·webkit 0건 — 설계대로 |
+| 캐시 키와 경로가 맞다 | 첫 실행 `Cache not found for input keys: playwright-browsers-Linux-1.58.0`, post 스텝 `Cache saved with key: playwright-browsers-Linux-1.58.0`. 내려받은 곳도 `/home/runner/.cache/ms-playwright` 로 워크플로의 `path` 와 일치 |
+
+**항목을 다시 열지 않는 기록 한 줄** *(2026-09-06)*: 위 표의 캐시 행은 miss → save 까지만 본 것이다.
+다음 실행 [`33999629221`](https://github.com/kangwoo/aimon-core/actions/runs/33999629221) 이 나머지 반을
+채웠다 — 그 키로 **복원**했고, `Downloading Chrome` 이 **0건**이었고, post 가
+*"Cache hit occurred on the primary key …, not saving cache"* 로 재저장을 건너뛰었다. 계층 비용도 warm
+**20초**(cold 32초)다. 이것은 이 항목의 미정 둘이 아니라 곁가지였고 판단을 바꾸지 않으므로 항목은 닫힌
+채로 둔다 — R-2 가 자기 범위 밖 사실을 *"여기 한 줄로 기록만 남긴다"* 로 처리한 것과 같은 자리다.
+
+#### 미정 ② 하한선 87 — **CI 가 로컬과 소수점까지 같다**
+
+`coverage` job 이 세 exec 를 전부 복원했고(`test` · `integrationTest` · `playwrightTest`),
+`jacocoTestCoverageVerification` 이 통과했다. 업로드된 `jacoco-xml` 아티팩트에서 실제 수치를 꺼내 로컬과
+대조했다.
+
+| | 로컬 (2026-09-05) | **CI (run 33998782676)** |
+|---|---|---|
+| LINE | 714 / 810 = **0.8815** | 714 / 810 = **0.8815** |
+| INSTRUCTION | 3362 / 3782 = 0.8889 | 3362 / 3782 = 0.8889 |
+| BRANCH | 202 / 254 = 0.7953 | 202 / 254 = 0.7953 |
+| `PlaywrightLifecycleManager` LINE | 38 / 67 = 0.5672 | 38 / 67 = 0.5672 |
+
+**한 줄도 다르지 않다.** `coverage-baselines.properties` 헤더의 *"Do not re-derive these from a laptop"*
+가 이 모듈에 대해서는 **적용되지 않는다**는 뜻이고, 그 금지의 명시된 이유(docker 계층을 안 돌리면 0~28%
+로 측정된다)가 이 모듈에 없기 때문이라는 R-8 의 예상이 맞았다. 값은 87 그대로 두고 — `floor(88.15) − 1`
+이 CI 수치에서도 같은 값이다 — **예외 문단을 없앴다.** 그 파일은 다시 한 규칙만 갖는다.
+
+#### 착수해서 알게 된 것 — **비용 판단이 보수적이었다. 그것도 크게**
+
+R-7 은 자기 숫자가 macOS 값이라는 한계를 적어 두었다. 그 한계가 **어느 방향으로** 틀렸는지가 이 항목이
+실제로 남기는 값이다.
+
+| | macOS arm64 (가정용 회선) | **ubuntu-latest 러너** | 비 |
+|---|---|---|---|
+| chromium 내려받기 | **94초** | **약 6초** (`23:38:49.6` → `23:38:55.5`) | **~15배** |
+| 계층 전체, cold | 1분48초 | **32초** (세 스텝 `23:38:35` → `23:39:07`) | ~3.4배 |
+| `actions/cache` 항목 크기 | 229 MiB (랩탑 tar+zstd 근사) | **249 MiB** = 261,229,767 B (`gh cache list`) | 1.09배 |
+| └ 그중 테스트 스텝 | — | 27초 (컴파일 + 설치 + 4 테스트) | |
+| └ 캐시 저장 (post) | — | 3초 | |
+
+마지막 행은 방향이 반대이고 폭도 작지만 같은 교훈에 속한다 — 압축된 아카이브 크기는 플랫폼과 무관해
+보이지만 아니다(바이너리가 다르면 압축률도 다르다). 그 한 줄은 2026-09-06 의 PR 리뷰가 잡을 때까지
+`build.yml` 에 랩탑 값으로 남아 있었다: **시간 숫자는 이 항목이 고쳤고 크기 숫자만 놓쳤다.**
+
+즉 **R-7 이 결정을 내릴 때 근거로 삼은 숫자는 실제 CI 비용의 3배**였고, 다운로드만 보면 15배였다.
+결정이 그 방향으로 틀렸다면 되돌려야 했겠지만 여기서는 **"넣는다" 를 더 강하게 만들 뿐**이다 —
+비싸다고 본 것이 실제로는 더 쌌다.
+
+여기서 규칙에 붙는 것은 한 줄이다. 규칙 셋이 *"심각도는 돌려 봐야 나온다"* 라고 말하는데, 이 건은
+**어디서 돌리느냐가 그 숫자를 3~15배 바꿨다.** 실측을 근거로 결정할 때는 잰 값만이 아니라 **잰 환경이
+결정이 적용될 환경인가**를 함께 적어야 하고, 아니라면 그것이 곧 미정 항목이다. R-7 이 그 한계를 적어
+두었기 때문에 이 항목이 존재할 수 있었다.
+
+**어디** *(2026-09-06)*
+
+- `.github/workflows/build.yml` — `Playwright browser tests` 스텝의 주석(미정 → 정산된 사실로. 지우지
+  않았다 — 러너 이미지가 바뀌면 다시 볼 자리다)
+- `gradle/coverage-baselines.properties` — 예외 문단 제거, `aimon-browser-playwright=87` 은 그대로
+
+**남는 것** — 없다. 다음에 이 자리를 다시 열 것은 **러너 이미지 변경**이며, 그때의 증상은 이 항목이
+적어 둔 그대로다(`.so` 누락). 고칠 자리도 그대로다 — 공유 Gradle 태스크가 아니라 워크플로 스텝.
+
 
 ### R-2 — `aimon-knowledge-opensearch` 의 `jackson-databind` · **닫힘** *(2026-08-31)*
 

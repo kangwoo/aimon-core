@@ -168,6 +168,77 @@ Central is versioned independently).
 
 ### Build, CI and the release gate
 
+- **`playwrightTest` ran nothing, and now it runs in both gates.** The task was registered without
+  `testClassesDirs` or `classpath` — which a bare `register<Test>` does not inherit from `test` — so it
+  matched no test class, reported `NO-SOURCE` and finished green in 650ms. It had been in that state
+  since the initial commit, so the four `@Tag("playwright")` tests in `PlaywrightLifecycleManagerTest`
+  had never executed anywhere, including for anyone who ran the opt-in task deliberately. **A tier
+  nothing runs is a tier nothing can tell apart from a passing one**, and the two lists
+  `ReleaseGateMatchesCiGateTest` compares could not see it precisely because it was absent from both.
+
+- **Browser binaries are installed by the build, not by the first test.** Playwright's Java bindings
+  download from inside `Playwright.create()` — `DriverJar.installBrowsers()` shells out to the bundled
+  driver with a bare `install`, fetching every browser marked `installByDefault` (chromium,
+  chromium-headless-shell, firefox, webkit, ffmpeg): **158s and 1.0 GB** cold.
+  `PlaywrightLifecycleManager` wraps that call in `future.get(30, SECONDS)`, so a cold cache did not
+  make the tier slow, it made it **red** — reproduced twice, 2m21s and 2m27s, all four tests failing.
+  A half-populated cache was worse: with chromium present and firefox missing, two tests failed and
+  two passed in the same run. A new `installPlaywrightBrowsers` task hoists the download out of the
+  timeout and narrows it to chromium, which is all these tests launch — **94s and 520 MB** — and
+  `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD` stops the run-time call reaching for the rest. From an empty
+  cache the tier is now green in 1m48s; warm, 14-28s.
+
+- **The tier joined CI and the release gate on `integrationTest`'s argument, not `packagingTest`'s.**
+  `aimon-browser-playwright` is published to Maven Central and these are the only tests in the build
+  that start a real browser: `PlaywrightLifecycleManager` — which owns the browser process, the daemon
+  worker thread and the shutdown ordering — measures **9% line without them and 57% with them**, and
+  the module goes 83.7% → 88.2%. What had blocked the decision was that the install cost had never
+  been measured; measured, it is smaller than the tier it was being weighed against. A step in the
+  `build` job rather than a job of its own, on the rule `packagingTest` set. **A release now downloads
+  Chromium once on a machine with no browser cache** (280 MB, 94s) — a smaller demand than the Docker
+  daemon the gate already makes, and a safe one now that a cold machine is slow rather than red.
+
+- **The first ubuntu run settled the two things macOS could not** (run
+  [`33998782676`](https://github.com/kangwoo/aimon-core/actions/runs/33998782676), all five jobs green).
+  `--with-deps` is not needed — the runner image's own libraries are enough, and the log carries no
+  `error while loading shared libraries` anywhere; the comment explaining the question stays, because
+  the answer belongs to a runner image rather than to this build. The coverage floor also holds:
+  CI measured this module at **714/810 line, identical to the laptop figure it was frozen from**,
+  down to the per-class numbers, so the one exception to "measure on CI" in
+  `coverage-baselines.properties` is gone rather than excused.
+
+- **The cost this decision was made on was about three times the real one.** The Chromium download
+  measured at 94s on a home connection took roughly **six seconds** on the runner, and the whole tier
+  cost **32s cold** against the 1m48s measured locally. The decision does not change — it was wrong in
+  the direction that makes gating easier to justify — but it is worth writing down that measuring a CI
+  cost off a laptop was out by that much.
+
+- **The browser cache is keyed on the Playwright version alone**, not on a hash of the version
+  catalogue: the browsers rotate only when that line moves, and hashing the catalogue would discard a
+  249 MiB entry on every unrelated dependency bump. `restore-keys` takes an older entry on a miss and
+  the install task tops it up with just the new revision. `playwrightTest.exec` now travels with
+  `test.exec` into the coverage hand-off — leaving it behind would measure the module with its browser
+  tests excluded, the same mistake the `coverage` job exists to correct for the docker tier — and the
+  module's floor moves **82 → 87**, which makes the wiring self-enforcing: the module cannot reach 87
+  on the unit tier alone, so quietly dropping the tier out of CI fails the floor instead of passing.
+
+- **No tier in this build is opt-in any more**, and **seven** pieces of prose said otherwise, including
+  the module's own `build.gradle.kts` header calling it an "Opt-in task". The count was written as
+  "three", then "five", then "six" — each time too low, and the last two after the counting rule had
+  been written down; the enumeration and what each said are in the backlog item. Three further comments
+  called `integrationTest` opt-in, which had been loose since before this work and is corrected with
+  them. **One of the seven was missed and caught in review** — three lines below the gate declaration this change had just edited,
+  in the one file a release operator reads to decide what has been verified, and
+  `releaseSkillDescribesTheRealGate` stayed green throughout because its pattern reads the backticked
+  task list and nothing else. So the fix is not only the sentence: a second, narrow check now fails
+  when any line of that file calls a gated task opt-in. The `SKILL_GATE_DECLARATION` pattern itself was
+  deliberately **not** widened — its javadoc records why it matches a fixed phrase rather than scanning
+  loose prose, and that reasoning still holds.
+
+- **`SKILL.md` now states the browser precondition** alongside the Docker one. The gate downloads
+  ~280 MB of Chromium on a machine with no cache, which the script's own comment said loudly and the
+  skill did not say at all.
+
 - **The `/release` skill's description of the gate is now checked against the gate.**
   `ReleaseGateMatchesCiGateTest` held `scripts/release.sh` and `.github/workflows/build.yml` to each
   other while a third hand-maintained copy of the same list sat unread in

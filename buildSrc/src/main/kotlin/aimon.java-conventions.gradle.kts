@@ -106,7 +106,7 @@ tasks.withType<Test>().configureEach {
 }
 
 // Docker/Testcontainers-backed tests are annotated `@Tag("docker")`. The default `test` task — run by
-// `build` / `check` — excludes them so unit tests stay fast and need no Docker daemon; the opt-in
+// `build` / `check` — excludes them so unit tests stay fast and need no Docker daemon; the separate
 // `integrationTest` task runs exactly those. Mirrors the `@Tag("playwright")` convention in
 // aimon-browser-playwright. Modules with no docker-tagged tests simply run nothing in `integrationTest`.
 //
@@ -115,9 +115,9 @@ tasks.withType<Test>().configureEach {
 // on every save. Excluded from `test` for the same reason `docker` is, and given its own task for the same reason
 // too. Repeated `useJUnitPlatform { }` calls accumulate into one options set, so both exclusions apply.
 //
-// Out of `test` is not the same as out of CI, and only one tier in this build is actually both. `packagingTest`
-// is a step in the `build` job and a task in the release gate, like `integrationTest` before it; the tier that
-// still runs nowhere is `playwrightTest` in aimon-browser-playwright.
+// Out of `test` is not the same as out of CI, and no tier in this build is out of both any more. `integrationTest`,
+// `packagingTest` and aimon-browser-playwright's own `playwrightTest` are each a step in the `build` or
+// `integration` job and a task in the release gate, and ReleaseGateMatchesCiGateTest holds the two lists together.
 tasks.named<Test>("test") {
     useJUnitPlatform {
         excludeTags("docker")
@@ -161,7 +161,7 @@ tasks.register<Test>("packagingTest") {
 // that low reads as "untested" when the truth is "measured with the tests excluded", and it is the number any
 // coverage floor would have been set against.
 //
-// Deliberately `mustRunAfter` and not `dependsOn` for the opt-in tiers: generating a report must not start
+// Deliberately `mustRunAfter` and not `dependsOn` for the tiers outside `test`: generating a report must not start
 // requiring a Docker daemon or a fat jar. Ordering-only means `./gradlew test jacocoTestReport` still works with
 // neither, and still reports 0.0% for those modules — correctly, because nothing measured them in that invocation
 // — while `./gradlew test integrationTest jacocoTestReport` reports what the docker tier actually covers. Gradle 9
@@ -213,8 +213,14 @@ coverageBaselines.getProperty(project.name)?.let { floor ->
         // Spelled out in the task list because the failure message cannot say it. A module whose tests are all
         // @Tag("docker") measures near zero when only `test` has run, and JaCoCo reports that as "ratio is 0.00,
         // but expected minimum is 0.83" — which reads as a collapse rather than as a tier that was never run.
+        //
+        // It named only `test integrationTest` until aimon-browser-playwright's floor started depending on
+        // `playwrightTest` too. Following it literally then left that one module failing at 0.83 with the advice
+        // already taken — the same class of wrong-because-derived instruction this file's tier comment above hit,
+        // and worse here because it is the sentence handed to the person the failure just stopped.
         description = "Fails if line coverage dropped below gradle/coverage-baselines.properties. Needs every " +
-            "tier's execution data: run `test integrationTest` first, or the docker-backed modules measure zero."
+            "tier's execution data: run `test integrationTest playwrightTest` first, or the docker-backed modules " +
+            "measure zero and aimon-browser-playwright measures 0.83."
         violationRules {
             rule {
                 limit {

@@ -75,6 +75,91 @@ jobs:
       - name: Fat-jar packaging tests
         run: ./gradlew --no-daemon packagingTest
 
+      # Keyed on the Playwright version alone, not on a hash of the whole version catalogue: the browsers only
+      # rotate when that one line moves, and keying on the catalogue would throw away a 249 MiB cache every time an
+      # unrelated dependency was bumped. `restore-keys` still takes an older entry on a miss -- `installPlaywrightBrowsers`
+      # then tops it up with just the new revision instead of fetching all of it.
+      #
+      # The guard is the point of the two extra lines. `sed -n .../p` exits 0 when it matches nothing, so a renamed
+      # or reformatted catalogue entry would hand the next step an empty version -- making the key
+      # `playwright-browsers-Linux-`, byte-identical to `restore-keys`. Every run would then be an exact hit on the
+      # primary key, `actions/cache` would never save in post, and the cache would be pinned to whatever revision
+      # happened to be in it first: correctness still held by the install task, but every run after a version bump
+      # silently re-downloading. Same shape as the two `::error::` guards on the archive steps below -- a step that
+      # can produce nothing useful must say so rather than pass.
+      - name: Resolve Playwright version
+        id: playwright
+        run: |
+          version=$(sed -n 's/^playwright = "\(.*\)"/\1/p' gradle/libs.versions.toml)
+          if [ -z "$version" ]; then
+            echo "::error::Could not read the playwright version from gradle/libs.versions.toml; the browser cache key would collapse onto its own restore-keys prefix and never save."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # ~/.cache/ms-playwright is the driver's default registry directory on Linux. Chromium alone is 280 MiB over
+      # the wire (from the CDN's own content-range) and the entry this workflow actually stores is
+      # 261,229,767 bytes -- 249 MiB -- read off `gh cache list` for run 33998782676. The default browser set would
+      # be 479 MiB on the wire, and nothing here launches firefox or webkit.
+      #
+      # The entry figure used to say 229 MiB, which was a tar+zstd of the same browsers on an arm64 laptop. It is
+      # the last size in this file that came from the wrong machine: the time figures were corrected when the first
+      # ubuntu run priced them (see the test step below), and this one was left because a compressed archive felt
+      # platform-independent. It is not -- different binaries compress differently -- and R-8 had already written
+      # the rule this broke: record whether the environment you measured in is the environment the number describes.
+      # 520 MiB unpacked is still a laptop reading, kept because nothing in CI reports it.
+      #
+      # On a version bump this entry grows rather than rotates: `install chromium` adds the new revision and the
+      # driver only garbage-collects revisions nothing references, so a `restore-keys` hit carries the old build
+      # along until that sweep drops it -- roughly +249 MiB per bump in the worst case, against GitHub's 10 GB
+      # repository-wide budget with its own LRU eviction. Left alone deliberately: bumps are rare, eviction is
+      # already someone's job, and the alternative (never falling back) pays the full 280 MB download every time.
+      #
+      # The cycle has been watched all the way round rather than reasoned about. Run 33998782676 missed
+      # (`Cache not found for input keys: playwright-browsers-Linux-1.58.0`) and saved under that key in post; run
+      # 33999629221 restored from it, downloaded no browser at all, and its post step declined to write the entry
+      # back (`Cache hit occurred on the primary key ..., not saving cache`). Key, path and restore behaviour are
+      # therefore observed, not assumed -- which matters here because the failure mode this key design guards
+      # against is a silent one: a key that never saves looks exactly like a key that never misses.
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-browsers-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+          restore-keys: playwright-browsers-${{ runner.os }}-
+
+      # A step in this job rather than a job of its own, on the same rule as `Fat-jar packaging tests` above: a
+      # separate job buys a failing check that names the tier and costs a second JDK plus a second full compile,
+      # which is worth paying for a tier that runs for minutes against Testcontainers and is not for one that adds
+      # twenty seconds on a warm cache. That figure was an estimate when this step was written, with no warm CI run
+      # to check it against; run 33999629221 measured the three steps at 23:56:09 -> 23:56:29, twenty seconds.
+      #
+      # aimon-browser-playwright is published to Maven Central and these are the only tests in it that start a real
+      # browser. Without them PlaywrightLifecycleManager -- the class that owns the browser process, the daemon
+      # worker thread and the shutdown ordering -- measures 9% line; with them, 57%. That is the same sentence that
+      # put integrationTest in this workflow, applied to the eighth published module.
+      #
+      # The task installs Chromium itself before running, so a cold cache is slow rather than broken. It used to be
+      # broken: Playwright.create() downloads browsers inline and PlaywrightLifecycleManager wraps that call in a
+      # 30-second timeout, so on a cold cache every test failed. See the module's build.gradle.kts.
+      #
+      # The install fetches the browser binary and not the system shared libraries it links against
+      # (`--with-deps`), which nothing measurable off a Linux runner could settle -- so it was left open until the
+      # first run of this job answered it. Run 33998782676 (2026-09-06): green, with no `error while loading shared
+      # libraries` anywhere in the log. The ubuntu image's own Chrome brings enough, and `--with-deps` stays out
+      # because it shells out to apt on every run, for a dependency that is satisfied, from a Gradle task a
+      # developer also runs on their own machine where sudo apt is plainly wrong.
+      #
+      # Kept rather than deleted, because the answer belongs to an image and not to this build: if a future runner
+      # image drops those libraries this step fails on a missing `.so`, and the fix is a
+      # `sudo npx playwright install-deps chromium` step HERE, in the workflow, never in the shared task.
+      #
+      # That first run also priced the tier properly. The 94s Chromium download this repository had measured on a
+      # laptop took about six seconds on the runner, and the three steps together cost 32s cold -- so the numbers
+      # the decision to gate this tier was made on were roughly three times its real cost, in the safe direction.
+      - name: Playwright browser tests
+        run: ./gradlew --no-daemon playwrightTest
+
       # Only on a red run, and that is the whole point of the step. Actions storage is one
       # account-wide quota, so a green run's reports -- which answer no question anyone asked --
       # were what filled it, and a full quota does not fail quietly: the upload itself errors out
@@ -110,15 +195,33 @@ jobs:
       #
       # No `if: always()`: exec data from a tier that failed part-way measures nothing anyone should read,
       # and `coverage` is gated on both tiers being green for the same reason.
+      #
+      # `playwrightTest.exec` rides along with `test.exec` because this job now runs both. Leaving it behind would
+      # measure aimon-browser-playwright with its browser tests excluded -- 83.7% line instead of 88.2% -- which is
+      # the same "coverage measured with the tests excluded" mistake the `coverage` job below exists to correct for
+      # the docker tier. The module's floor is set from the complete picture, so it would also fail.
+      #
+      # The two globs are checked SEPARATELY, and that is the whole point of the extra lines. Collecting them into
+      # one array and testing it for emptiness only fires when BOTH are empty -- and they are wildly asymmetric:
+      # twenty-odd modules produce `test.exec` and exactly one produces `playwrightTest.exec`. Every unit-tier file
+      # could vanish and the single browser one would still carry the array past the guard, tarring one file. The
+      # `coverage` job would then compute 0% for every other module and fail on the floor, blaming a coverage drop
+      # for a hand-off that lost the data -- naming the wrong culprit, which is precisely what the comment on that
+      # job says the two-job split exists to avoid.
       - name: Archive unit-tier coverage data
         run: |
           shopt -s nullglob
-          exec_data=(modules/*/build/jacoco/test.exec)
-          if [ ${#exec_data[@]} -eq 0 ]; then
+          unit_exec=(modules/*/build/jacoco/test.exec)
+          browser_exec=(modules/*/build/jacoco/playwrightTest.exec)
+          if [ ${#unit_exec[@]} -eq 0 ]; then
             echo "::error::The test task produced no JaCoCo execution data; the coverage job would report every module at 0%."
             exit 1
           fi
-          tar -cf jacoco-exec-unit.tar "${exec_data[@]}"
+          if [ ${#browser_exec[@]} -eq 0 ]; then
+            echo "::error::playwrightTest produced no JaCoCo execution data; the coverage job would measure aimon-browser-playwright at 83.7% and fail its 87 floor."
+            exit 1
+          fi
+          tar -cf jacoco-exec-unit.tar "${unit_exec[@]}" "${browser_exec[@]}"
 
       # `continue-on-error` on the same policy as the upload above: a full storage quota must not overturn
       # the verdict of checks that passed -- which is precisely what went wrong once, turning a build that
@@ -152,9 +255,9 @@ jobs:
   # ReleaseGateMatchesCiGateTest holds the two lists together.
   #
   # The ubuntu runner ships a working Docker daemon, so Testcontainers needs no setup step of its own.
-  # `packagingTest` (@Tag("packaging")) has since joined the `build` job as a step; the one tier still running
-  # nowhere is `playwrightTest` (@Tag("playwright")), which needs browser binaries installed and guards a
-  # surface no consumer has yet.
+  # `packagingTest` (@Tag("packaging")) and `playwrightTest` (@Tag("playwright")) have both since joined the
+  # `build` job as steps, so no tier in this build runs nowhere any more and ReleaseGateMatchesCiGateTest holds
+  # every one of them to the same rule.
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -272,9 +375,13 @@ jobs:
           name: jacoco-exec-integration
 
       # Repository-root-relative paths, so every file lands back under modules/<module>/build/jacoco/ where
-      # the fileTree in aimon.java-conventions looks for it. The two tars can never name the same file: the
-      # `build` job runs only `test`, the `integration` job only `integrationTest`. The listing is the
-      # evidence -- without it, a hand-off that quietly restored nothing would look exactly like a green run.
+      # the fileTree in aimon.java-conventions looks for it. The two tars can never name the same file, though not
+      # for the reason this comment used to give -- it said the `build` job "runs only `test`", which was already
+      # loose (that job also runs `packagingTest`) and is now plainly wrong (it runs `playwrightTest` too). What
+      # actually holds is narrower and survives another tier being added: each job archives exec files named after
+      # tasks the other job never runs, and a Test task writes its own `<taskName>.exec` whether or not any test
+      # matched. The listing is the evidence -- without it, a hand-off that quietly restored nothing would look
+      # exactly like a green run.
       - name: Restore coverage execution data
         run: |
           tar -xf jacoco-exec-unit.tar
