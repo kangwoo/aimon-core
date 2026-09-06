@@ -26,13 +26,22 @@ import at.aimon.core.agent.input.UserInput;
  * The JSON shape of a {@link UserInput}, for every wire that has to carry one.
  *
  * <p>
- * <b>Why this is a class and not four private methods.</b> It was four private methods, on
- * {@link JsonSessionSnapshotCodec}, written so a {@code SessionRewindPoint} could replay the input its turn was
+ * <b>Why this is a class and not three private methods.</b> Three is what it was —
+ * {@code encodeUserInput}, {@code decodeUserInput} and {@code decodeMultimodalInput} on
+ * {@link JsonSessionSnapshotCodec} — written so a {@code SessionRewindPoint} could replay the input its turn was
  * submitted with. The second consumer is the session inbox: a submission forwarded to another node used to be a
  * {@code String}, so an image or a document survived only as long as the turn stayed on the host that received it.
  * Rather than hand-map the five shapes a second time — the situation {@link SubmitOptionsCodec} exists to prevent one
  * layer up, and the one this repository has already paid for once — the encoding moved here unchanged and the
  * snapshot codec became its first caller.
+ *
+ * <p>
+ * <b>What made it a class was that the three were private, not that there were several of them.</b> An inbox codec
+ * in another module cannot call a private method however few there are, so "put the encoding on the wire" was
+ * always "extract it, then put it on the wire". Three small helpers did <em>not</em> come along —
+ * {@code requiredText}, {@code encodeBase64} and {@code decodeBase64} exist in both classes, because the message
+ * and content-block half of that codec still needs them. Duplicating a three-line JDK wrapper is not the thing
+ * {@link SubmitOptionsCodec} was extracted to stop; duplicating a mapping is.
  *
  * <p>
  * It lives beside {@link JsonSessionSnapshotCodec} for the same reason {@link SubmitOptionsCodec} does: that is

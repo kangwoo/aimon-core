@@ -78,13 +78,21 @@ Central is versioned independently).
   different input" — for as long as the two builds coexisted. Non-text turns hash over the encoding,
   where there is no earlier value to match.
 
-- **`UserInputCodec` is new** (`at.aimon.core.subagent.task.codec`), lifted unchanged out of
-  `JsonSessionSnapshotCodec`'s private methods so the inbox reuses the encoding rather than
+- **`UserInputCodec` is new** (`at.aimon.core.subagent.task.codec`), lifted unchanged out of three
+  private methods on `JsonSessionSnapshotCodec` so the inbox reuses the encoding rather than
   hand-mapping the five shapes a second time — the situation `SubmitOptionsCodec` was extracted to
-  stop, one layer up. Stored snapshots are unaffected: same field names, same type tags, same
-  32-level nesting bound. Unlike its neighbour it takes no `ObjectMapper` (every leaf is a `String`,
-  so no mapper configuration can reach the wire) and it offers a text form as well as a node form,
-  which is what keeps the MongoDB inbox from acquiring a second representation the way it has one of
+  stop, one layer up. What made it a class is that those three were private, so no other module
+  could call them at all.
+
+  **The stored format is unchanged** — same field names, same type tags, same 32-level nesting
+  bound — so every existing snapshot encodes and decodes as before. One thing about *reading* an old
+  document did change, and it is the improvement described two bullets down rather than a
+  regression: a rewind point whose input a value object refuses (an `image` carrying a `video/mp4`
+  MIME type) used to take the whole snapshot down with it, and now drops only the point.
+
+  Unlike its neighbour it takes no `ObjectMapper` (every leaf is a `String`, so no mapper
+  configuration can reach the wire) and it offers a text form as well as a node form, which is what
+  keeps the MongoDB inbox from acquiring a second representation the way it has one of
   `submitOptions`.
 
 - **`AimonSessions.newRequest(SessionId, UserInput)` is new.** The starter is the scale-out shape,

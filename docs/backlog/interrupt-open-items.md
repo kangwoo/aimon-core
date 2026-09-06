@@ -53,9 +53,20 @@
 바로 그 문장이었다 — §0.3 이 그 정정이다.)
 
 틀린 것은 **"얹기만 하면 되고"** 라는 크기 추정이다. 그 인코딩은 `JsonSessionSnapshotCodec` 의
-**private 메서드 넷**이었다. 인박스 코덱 셋에서 부를 수 있는 것이 아니므로, 실제 순서는 "얹는다" 가
-아니라 **꺼내고 → 얹는다** 였다. 그것이 별도 커밋 하나(`UserInputCodec` 추출)가 된 이유이고, 안 꺼냈다면
-같은 매핑의 사본이 넷이 되어 **1번이 방금 지운 상황**이 그대로 재현됐을 것이다.
+**private 메서드 셋**(`encodeUserInput` · `decodeUserInput` · `decodeMultimodalInput`)이었다. 인박스 코덱
+셋에서 부를 수 있는 것이 아니므로, 실제 순서는 "얹는다" 가 아니라 **꺼내고 → 얹는다** 였다. 그것이 별도
+커밋 하나(`UserInputCodec` 추출)가 된 이유이고, 안 꺼냈다면 같은 매핑의 사본이 넷이 되어 **1번이 방금
+지운 상황**이 그대로 재현됐을 것이다.
+
+IMPORTANT: 이 절의 초판은 그것을 **"넷"** 이라고 적었고, 같은 수가 `UserInputCodec` 의 공개 javadoc 과
+아래 §2 의 표에도 복제되어 있었다 — PR 리뷰가 세어서 잡았다. **셋이 맞고, 어떻게 묶어도 넷이 되는 집합은
+없다**(`git show 341b0d9` 의 삭제분이 정확히 그 셋이다). 함께 옮겨간 것처럼 보이는 `requiredText` ·
+`encodeBase64` · `decodeBase64` 는 **이동이 아니라 복제**이며 메시지·콘텐츠 블록 코덱이 아직 쓰므로 지금도
+양쪽에 있다. 그리고 이 정정은 논거를 **더 정확하게** 만든다 — 클래스가 된 이유는 개수가 아니라
+**private 이라 다른 모듈에서 부를 수 없다는 것**이고, 그것이 이 절이 처음부터 하려던 말이다.
+숫자가 틀린 경위는 이웃 `SubmitOptionsCodec` 의 같은 문장("not four private methods")을 그대로 본뜨면서
+자기 것을 세지 않은 것이다 — 이 문서가 §0.3 에서 *"돌려 볼 필요조차 없었다 — 세어 보기만 하면 됐다"* 고
+적은 것과 같은 종류다.
 
 | 항목 | 문서가 적은 것 | 실측 |
 |------|---------------|------|
@@ -181,6 +192,15 @@ codec failure, not as an IllegalArgumentException from the JDK"*. 같은 규칙�
 가운데 줄을 그대로 적어 두는 이유는 [`README.md`](README.md) 규칙 다섯의 마지막 문단이다 — 오늘 도달하지
 않는 방어는 **왜 거기 있는지 적혀 있을 때만** 결함이 아니라 결정이다.
 
+**이 정규화는 저장된 스냅샷을 읽는 동작도 바꾼다 — 그리고 §2 의 표는 한동안 "안 바뀐다" 고 적고 있었다.**
+`{"type":"image","mimeType":"video/mp4"}` 를 든 되감기 지점이 이미 저장되어 있으면, `main` 에서는 그
+`IllegalArgumentException` 이 `decodeRewindPoint` 의 좁은 catch 를 지나 `decode` 의 blanket handler 에
+잡혀 **스냅샷 전체**가 실패한다. 지금은 지점만 드롭되고 전사는 살아 나온다 — 개선이지만 "안 바뀐다" 로
+적으면 그 개선을 아무도 모른다. PR 리뷰가 `main` 의 코덱을 따로 얹어 실측했고, 트리 안에서는
+`JsonSessionSnapshotCodecTest.aRewindPointWithAnUnreadableInputDropsThePointRatherThanTheSnapshot` 이
+그것을 고정한다 — 정규화를 되돌리면 그 테스트가 `main` 과 똑같은 문구
+(`Failed to decode session snapshot: MIME type must start with 'image/', …`)로 빨개진다.
+
 ---
 
 ## 1. `SubmitOptions` 매핑이 네 곳에 흩어져 있다 — **닫힘** *(2026-08-28)*
@@ -266,7 +286,7 @@ IMPORTANT: **원래 항목은 여기에 "조용히 사라진다" 고 적었고 �
 
 | 자리 | 결과 |
 |------|------|
-| `at.aimon.core.subagent.task.codec.UserInputCodec` | `JsonSessionSnapshotCodec` 의 private 메서드 넷을 **그대로** 꺼냈다. 필드 이름·타입 태그·32단계 상한 동일 — 저장된 스냅샷의 해석은 바뀌지 않는다. 노드 형태(`ObjectNode`)와 텍스트 형태(`String`)를 둘 다 낸다 |
+| `at.aimon.core.subagent.task.codec.UserInputCodec` | `JsonSessionSnapshotCodec` 의 private 메서드 **셋**(§0.2)을 **그대로** 꺼냈다. **저장 포맷**은 그대로다 — 필드 이름·타입 태그·32단계 상한 동일. 다만 *읽는 동작*은 뒤에 한 번 바뀐다(§0.5): 값 객체가 거절하는 되감기 지점이 스냅샷 **전체**를 실패시키던 것이 이제 그 지점만 드롭한다. 노드 형태(`ObjectNode`)와 텍스트 형태(`String`)를 둘 다 낸다 |
 | `SubmitRequest` · `InboundMessage` | `getUserInput()` 이 `UserInput` 을 돌려준다. 빌더는 `userInput(String)` 을 **유지**하므로(=`TextInput.of` 설탕) 생산자 호출부는 한 곳도 안 바뀐다 |
 | `DefaultSessionRouter` | 두 이음매(`runTurnLoop` 의 self-message, `deliverToInbox`)가 입력을 그대로 넘긴다. 드레인은 `submitAsync(TurnId, UserInput, …)` 로 붙는다 |
 | Redis · Postgres · Mongo 인박스 코덱 | `userInput` 은 **키도 타입도 그대로**(이제 `asText()`), 비텍스트만 `userInputEncoded` 사이드카를 더한다. 디코드는 셋 다 `UserInputCodec.decodeOrText` 하나를 지난다 — 사이드카 우선, 없거나 **읽을 수 없으면** 옆의 문자열로 저하하고 세션 id 를 실은 WARN 을 남긴다(§0.4·§0.5) |
