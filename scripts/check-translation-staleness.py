@@ -18,6 +18,13 @@ exits 0. A translation backlog that blocks edits to the canonical makes the
 canonical go stale instead, which is the worse of the two failure modes. Pass
 --strict to make staleness an error anyway.
 
+--strict covers staleness and nothing else. It used to fail on any finding,
+which meant a clean shallow clone -- where the whole report is the clone's depth
+talking -- failed under it; now the excused findings below are excused there
+too, and --strict on that clone exits 0 like the plain run. Excusing a finding
+under one flag and not the other would make the flag, rather than the finding,
+decide whether depth counts as a defect.
+
 --strict has no caller in this repository and that is deliberate, so before
 wiring it into scripts/release.sh: release.sh already refuses to run unless the
 tree is clean, on main, and level with origin/main, and every commit that
