@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/tool/browser-tool-guide.md
-source_commit: 5246ba48
+source_commit: eec9ccd
 ---
 
 # Browser Tool Guide

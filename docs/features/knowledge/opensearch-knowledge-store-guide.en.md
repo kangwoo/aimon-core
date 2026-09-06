@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/knowledge/opensearch-knowledge-store-guide.md
-source_commit: a9821d44
+source_commit: eec9ccd
 ---
 
 # OpenSearch Knowledge Store Guide

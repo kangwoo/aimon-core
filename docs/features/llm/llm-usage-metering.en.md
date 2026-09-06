@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/llm/llm-usage-metering.md
-source_commit: 8830d022
+source_commit: eec9ccd
 ---
 
 # LLM Usage Metering Guide

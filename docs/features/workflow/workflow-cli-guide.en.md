@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/workflow/workflow-cli-guide.md
-source_commit: 8830d022
+source_commit: eec9ccd
 ---
 
 # Workflow CLI Guide (the aimon-cli view)

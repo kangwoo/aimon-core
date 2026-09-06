@@ -3,6 +3,7 @@ package at.aimon.spring.boot;
 import java.util.concurrent.Flow;
 
 import at.aimon.core.agent.AgentExecutionResult;
+import at.aimon.core.agent.input.UserInput;
 import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.session.LiveSessionOptions;
 import at.aimon.core.agent.session.SessionId;
@@ -109,6 +110,27 @@ public interface AimonSessions {
      * @return a builder that is already valid to {@code build()}
      */
     SubmitRequest.Builder newRequest(SessionId sessionId, String input);
+
+    /**
+     * The same builder for a turn that is not made of text — an image, a document, or a combination.
+     *
+     * <p>
+     * Text keeps the {@code String} overload because it is what an HTTP body carries and what almost every turn is.
+     * This one exists because the alternative was {@code newRequest(id, "").userInput(image)}, which submits a turn
+     * whose text part is an empty string rather than absent, and because a capability reachable only through a
+     * workaround is one nobody finds.
+     *
+     * <p>
+     * Whether the turn then runs on this node or is forwarded to the node holding the session makes no difference to
+     * what the agent receives: the inbox carries the input itself, not a rendering of it.
+     *
+     * @param sessionId
+     *            the session to continue (must not be null)
+     * @param input
+     *            the user input for this turn (must not be null)
+     * @return a builder that is already valid to {@code build()}
+     */
+    SubmitRequest.Builder newRequest(SessionId sessionId, UserInput input);
 
     /**
      * Streams progress events for a session — assistant text, tool calls, budget updates, terminal frames.

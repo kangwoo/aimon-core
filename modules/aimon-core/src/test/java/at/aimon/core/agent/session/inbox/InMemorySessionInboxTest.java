@@ -10,6 +10,10 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.SubmitOptions;
+import at.aimon.core.agent.input.ImageInput;
+import at.aimon.core.agent.input.MultimodalInput;
+import at.aimon.core.agent.input.TextInput;
+import at.aimon.core.agent.input.UserInput;
 import at.aimon.core.agent.queue.QueuedInputPriority;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.TurnId;
@@ -61,7 +65,7 @@ class InMemorySessionInboxTest {
 
         final InboundMessage collected = inbox.collect(CONV, QueuedInputPriority.NEXT).get(0);
 
-        assertThat(collected.getUserInput()).isEqualTo("hello");
+        assertThat(collected.getUserInput()).isEqualTo(TextInput.of("hello"));
         assertThat(collected.getAgentRef()).isEqualTo("agent-x");
         assertThat(collected.getPriority()).isEqualTo(QueuedInputPriority.NEXT);
         assertThat(collected.getInitiator().getId()).isEqualTo("u-1");
@@ -80,6 +84,19 @@ class InMemorySessionInboxTest {
         inbox.deliver(baseMessage().build());
 
         assertThat(inbox.collect(CONV, QueuedInputPriority.NEXT).get(0).getContextDiscriminator()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a multimodal input is the same object on the way out — this inbox does not serialize")
+    void multimodalSurvivesTheRebuild() {
+        // The in-memory inbox is the one of the four that never encodes anything, so what it has to get right is the
+        // rebuild that stamps the inbox-assigned id: a builder copy that dropped to text would lose the image here
+        // and nowhere else, on the deployment least likely to notice.
+        final UserInput input = MultimodalInput.of(TextInput.of("what is in this?"),
+                ImageInput.of(new byte[]{1, 2, 3, 4}, "image/png"));
+        inbox.deliver(baseMessage().userInput(input).build());
+
+        assertThat(inbox.collect(CONV, QueuedInputPriority.NEXT).get(0).getUserInput()).isEqualTo(input);
     }
 
     private InboundMessage.Builder baseMessage() {

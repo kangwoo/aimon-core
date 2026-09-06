@@ -18,6 +18,10 @@ import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.AgentExecutionResult;
 import at.aimon.core.agent.AgentRuntimeId;
+import at.aimon.core.agent.input.ImageInput;
+import at.aimon.core.agent.input.MultimodalInput;
+import at.aimon.core.agent.input.TextInput;
+import at.aimon.core.agent.input.UserInput;
 import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.queue.QueuedInputPriority;
 import at.aimon.core.agent.session.SessionId;
@@ -265,7 +269,7 @@ public abstract class AbstractMultiNodeSessionContractTest {
         // shared backend rather than in the sender's memory.
         final SessionInbox observer = backend().createInbox(extraCloseables::add);
         final List<InboundMessage> seen = observer.collect(id, QueuedInputPriority.LATER);
-        assertThat(seen).extracting(InboundMessage::getUserInput).contains("second");
+        assertThat(seen).extracting(m -> m.getUserInput().asText()).contains("second");
 
         sessionA.completeCurrentTurn(RecordingTestSession.ok("done"));
     }
@@ -428,6 +432,41 @@ public abstract class AbstractMultiNodeSessionContractTest {
         assertThat(bEvents).anyMatch(e -> e instanceof IterationStarted);
 
         sessionA.completeCurrentTurn(RecordingTestSession.ok("done"));
+    }
+
+    @Test
+    @DisplayName("multimodal forward: an image submitted on B is the same image when A drains and runs it")
+    void multimodalSubmissionSurvivesTheForward() throws Exception {
+        // The one thing about a routed submission no single-node test can see. A LiveSession has taken a UserInput
+        // for some time, so an image worked on whichever host held the handle; a submission crossing a node boundary
+        // could not carry one at all until the envelope widened. That makes this a backend scenario rather than a
+        // router one: what the image has to survive is this backend's serialization, and each backend spells that
+        // differently — a JSON string field in Redis, JSONB in Postgres, BSON in MongoDB.
+        final TwoNodeSessionHarness nodes = newHarness(Duration.ofSeconds(30), Duration.ofSeconds(10));
+        final SessionId id = SessionId.of("c-multi-mm-1");
+        final UserInput image = MultimodalInput.of(TextInput.of("what is in this?"),
+                ImageInput.of(new byte[]{1, 2, 3, 4}, "image/png"));
+
+        final SubmitDisposition a = nodes.nodeA().manager().submit(submit(id, "first"));
+        assertThat(a.getKind()).isEqualTo(SubmitDisposition.Kind.EXECUTED_LOCALLY);
+        final RecordingTestSession sessionA = awaitSession(nodes.nodeA(), id, 2_000L);
+        assertThat(sessionA).as("node A opened its session").isNotNull();
+        assertThat(sessionA.awaitTurnStarted(2_000L)).isTrue();
+
+        // B holds no lease, so this goes through the shared inbox and comes back out on A.
+        final SubmitDisposition b = nodes.nodeB().manager().submit(SubmitRequest.builder().sessionId(id)
+                .agentRef("alpha").userInput(image).initiator(Principal.user("tester")).build());
+        assertThat(b.getKind()).isEqualTo(SubmitDisposition.Kind.FORWARDED);
+
+        sessionA.completeWhenReady(RecordingTestSession.ok("first-done"), 2_000L);
+        assertThat(sessionA.awaitSubmittedInputs(2, 5_000L)).as("A must drain B's message as its next turn").isTrue();
+
+        assertThat(sessionA.submittedUserInputs().get(1))
+                .as("the image B submitted is the image A runs, bytes and MIME type intact").isEqualTo(image);
+
+        sessionA.completeWhenReady(RecordingTestSession.ok("second-done"), 2_000L);
+        assertThat(b.getFuture().toCompletableFuture().get(10, TimeUnit.SECONDS).getFinalAnswer())
+                .isEqualTo("second-done");
     }
 
     private static boolean awaitRemoteProjection(SessionRouter manager, SessionId id, long millis)

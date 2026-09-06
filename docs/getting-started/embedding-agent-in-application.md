@@ -452,6 +452,7 @@ SubmitDisposition submitAsync(SubmitRequest request);
 
 // 한 필드만 바꾸고 싶을 때
 SubmitRequest.Builder newRequest(SessionId sessionId, String input);
+SubmitRequest.Builder newRequest(SessionId sessionId, UserInput input);   // 이미지·문서·조합
 
 Flow.Publisher<AgentExecutionEvent> events(SessionId sessionId);
 void interrupt(SessionId sessionId, TurnId turnId, InterruptReason reason);
@@ -484,6 +485,26 @@ SubmitDisposition disposition = sessions.submitAsync(
 
 `submitAsync(SubmitRequest)` 는 완성된 요청을 그대로 받으며, 다른 모든 submit 메서드가 위임하는
 **단 하나의 primitive** 입니다.
+
+### 6.2.1 텍스트가 아닌 턴
+
+이미지·문서·조합은 `UserInput` 을 받는 `newRequest` 오버로드로 보냅니다.
+
+```java
+UserInput input = MultimodalInput.of(
+        TextInput.of("이 스크린샷에서 뭐가 잘못됐나요?"),
+        ImageInput.of(screenshotBytes, "image/png"));
+
+sessions.submitAsync(sessions.newRequest(sessionId, input).build());
+```
+
+**이 턴이 이 노드에서 도는지 세션을 쥔 다른 노드로 넘어가는지는 에이전트가 받는 것에 영향을 주지
+않습니다.** 인박스가 나르는 것은 입력의 렌더가 아니라 입력 자체입니다.
+
+이 오버로드는 예전에 없었습니다. 크로스 노드 제출은 `String` 뿐이어서 스케일아웃한 배포는 멀티모달을
+**보낼 수가 없었습니다** — 조용히 잘린 것이 아니라 컴파일되지 않았습니다. 그때 이미지를 라우터로 보내는
+유일한 방법은 호출자가 직접 `image.asText()` 로 납작하게 만드는 것이었고, 그러면 모델이 받는 것은
+`[Image: image/png, 41231 bytes]` 라는 텍스트뿐이었습니다. 지금은 그럴 필요가 없습니다.
 
 ### 6.3 `SubmitDisposition` 읽기
 

@@ -14,6 +14,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import at.aimon.core.agent.SubmitOptions;
+import at.aimon.core.agent.input.ImageInput;
+import at.aimon.core.agent.input.MultimodalInput;
+import at.aimon.core.agent.input.TextInput;
+import at.aimon.core.agent.input.UserInput;
 import at.aimon.core.agent.queue.QueuedInputPriority;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.TurnId;
@@ -138,7 +142,7 @@ class InboundMessageRowCodecTest {
         final InboundMessage decoded = codec.decode(stored, "7");
 
         assertThat(decoded.getTurnId()).isEmpty();
-        assertThat(decoded.getUserInput()).isEqualTo("hello");
+        assertThat(decoded.getUserInput()).isEqualTo(TextInput.of("hello"));
     }
 
     @Test
@@ -169,6 +173,76 @@ class InboundMessageRowCodecTest {
 
         final InboundMessage decoded = codec.decode(stored, "7");
 
+        assertThat(decoded.getSessionId()).isEqualTo(SessionId.of("c-42"));
+    }
+
+    @Test
+    @DisplayName("a multimodal submission survives the wire, image bytes and all")
+    void multimodalSurvivesTheWire() {
+        final UserInput input = MultimodalInput.of(TextInput.of("what is in this?"),
+                ImageInput.of(new byte[]{1, 2, 3, 4}, "image/png"));
+        final InboundMessage message = baseMessage().userInput(input).build();
+
+        assertThat(codec.decode(codec.encode(message), "42").getUserInput()).isEqualTo(input);
+    }
+
+    @Test
+    @DisplayName("plain text is written exactly as it was before the envelope widened")
+    void textIsWrittenInTheOldShape() throws IOException {
+        // The half of the compatibility contract that faces backwards. A node on the previous build reads
+        // root.get("userInput").asText(); if this key ever became an object, that reader would get "" from Jackson and
+        // run an empty turn -- silently, which is the worst shape this change could take. So text stays a string and
+        // gains no sidecar at all: byte-for-byte the row the previous build wrote.
+        final JsonNode root = mapper.readTree(codec.encode(baseMessage().build()));
+
+        assertThat(root.get("userInput").isTextual()).isTrue();
+        assertThat(root.get("userInput").asText()).isEqualTo("hello");
+        assertThat(root.has("userInputEncoded")).isFalse();
+    }
+
+    @Test
+    @DisplayName("a multimodal row still leaves a reader that predates it something to run")
+    void multimodalLeavesTheOldKeyReadable() throws IOException {
+        // The other half: this build's row has to stay decodable by the previous one. It cannot run the image either
+        // way, so what it gets under the old key is the asText() rendering -- a turn that says an image was attached
+        // rather than one that pretends nothing was. Omitting or restructuring the key strands the row undecodable,
+        // and an inbox row nobody can decode is a turn the submitter was promised and never gets.
+        final UserInput input = MultimodalInput.of(TextInput.of("what is in this?"),
+                ImageInput.of(new byte[]{1, 2, 3, 4}, "image/png"));
+
+        final JsonNode root = mapper.readTree(codec.encode(baseMessage().userInput(input).build()));
+
+        assertThat(root.get("userInput").isTextual()).isTrue();
+        assertThat(root.get("userInput").asText()).isEqualTo(input.asText());
+        assertThat(root.get("userInputEncoded").get("type").asText()).isEqualTo("multimodal");
+    }
+
+    @Test
+    @DisplayName("a row written before the encoding existed decodes as the text it carries")
+    void preEncodingRowDecodesAsText() {
+        // Rolling upgrade, forwards this time: rows undelivered at deploy time carry only the string. Absent sidecar
+        // means the row is text, which is exactly what it was.
+        final String stored = "{\"conversationId\":\"c-42\",\"agentRef\":\"agent-x\",\"userInput\":\"hello\","
+                + "\"priority\":\"NEXT\",\"initiator\":{\"type\":\"USER\",\"id\":\"u-1\",\"displayName\":\"alice\"},"
+                + "\"deliveredAt\":\"2026-04-27T10:00:00Z\"}";
+
+        assertThat(codec.decode(stored, "7").getUserInput()).isEqualTo(TextInput.of("hello"));
+    }
+
+    @Test
+    @DisplayName("a sidecar this build cannot read degrades to the text beside it, rather than losing the batch")
+    void unreadableSidecarDegradesToText() {
+        // collect() commits the DELETE ... RETURNING before it decodes, so a throw here loses every row that batch
+        // took out of conversation_inbox, permanently. The old key holds a usable string; run that instead.
+        final String stored = "{\"conversationId\":\"c-42\",\"agentRef\":\"agent-x\","
+                + "\"userInput\":\"what is in this?\","
+                + "\"userInputEncoded\":{\"type\":\"video\",\"mimeType\":\"video/mp4\",\"data\":\"AQID\"},"
+                + "\"priority\":\"NEXT\",\"initiator\":{\"type\":\"USER\",\"id\":\"u-1\",\"displayName\":\"alice\"},"
+                + "\"deliveredAt\":\"2026-04-27T10:00:00Z\"}";
+
+        final InboundMessage decoded = codec.decode(stored, "7");
+
+        assertThat(decoded.getUserInput()).isEqualTo(TextInput.of("what is in this?"));
         assertThat(decoded.getSessionId()).isEqualTo(SessionId.of("c-42"));
     }
 

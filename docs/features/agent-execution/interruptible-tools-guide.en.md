@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/agent-execution/interruptible-tools-guide.md
-source_commit: b4427fc8
+source_commit: eec9ccd
 ---
 
 # Interruptible Tools Guide

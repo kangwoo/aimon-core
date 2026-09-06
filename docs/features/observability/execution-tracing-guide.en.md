@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/observability/execution-tracing-guide.md
-source_commit: a9821d44
+source_commit: eec9ccd
 ---
 
 # Execution Tracing Guide

@@ -206,7 +206,8 @@ IMPORTANT: **문서를 고칠 때는 번역본이 있는지 먼저 확인한다.
 번역 때문에 정본 수정을 미루지는 않는다(더 나쁜 실패 모드다). `python3 scripts/check-translation-staleness.py`
 가 뒤처진 번역을 보고한다. `source_commit` 은 **이번 수정 직전**의 정본 커밋이며(자기 커밋 SHA 는
 미리 알 수 없다), 체커는 정본과 번역본을 함께 건드린 커밋을 건너뛰므로 이 한 커밋의 지연은 낡음이
-아니다.
+아니다. **낡음(stale)은 빌드를 실패시키지 않지만 해석 불가(unresolvable)한 `source_commit` 은
+실패시킨다** — 전자는 검사가 낸 나쁜 답이고 후자는 답이 없는 것이다.
 
 번역 규칙 전문은 @docs/project/translation-glossary.md 와 @docs/project/documentation-guide.md 에
 있다. 자주 어기는 것만:

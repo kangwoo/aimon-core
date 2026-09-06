@@ -21,11 +21,14 @@ jobs:
       - name: Check relative markdown links and anchors
         run: python3 scripts/check-doc-links.py
 
-  # Reports translations that have fallen behind their canonical, and is
-  # deliberately not a gate -- the script exits 0 even when it finds some. A
-  # translation backlog that blocks edits to the canonical would make the
-  # canonical go stale instead, which is the worse failure of the two. The
-  # findings surface as PR annotations via --github.
+  # Two findings, two severities. A translation that has fallen *behind* its
+  # canonical is reported and does not fail the job: a translation backlog that
+  # blocks edits to the canonical would make the canonical go stale instead,
+  # which is the worse failure of the two. A translation the check cannot
+  # resolve at all -- absent front matter, a source_commit that is not a commit
+  # here -- does fail it, because that is not a backlog, it is the guard having
+  # no opinion, and it hides behind a green job indefinitely. Both surface as
+  # PR annotations via --github, as warnings and errors respectively.
   translation-staleness:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -36,7 +39,7 @@ jobs:
           # canonical's history, so the default shallow clone is not enough.
           fetch-depth: 0
 
-      - name: Report stale translations
+      - name: Report stale translations, fail on unresolvable ones
         run: python3 scripts/check-translation-staleness.py --github
 
   build:

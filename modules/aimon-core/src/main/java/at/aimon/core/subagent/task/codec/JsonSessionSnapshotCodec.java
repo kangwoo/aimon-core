@@ -16,12 +16,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
-import at.aimon.core.agent.input.AudioInput;
-import at.aimon.core.agent.input.FileInput;
-import at.aimon.core.agent.input.ImageInput;
-import at.aimon.core.agent.input.MultimodalInput;
-import at.aimon.core.agent.input.TextInput;
-import at.aimon.core.agent.input.UserInput;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionRewindPoint;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
@@ -49,13 +43,10 @@ import at.aimon.core.llm.content.TextContentBlock;
  * <p>
  * <p>
  * A {@link SessionRewindPoint} is written with the {@link at.aimon.core.agent.input.UserInput} the turn was submitted
- * with — plus, when it had any, the {@link at.aimon.core.agent.SubmitOptions} it was submitted under, delegated to
- * {@link SubmitOptionsCodec} rather than hand-mapped a fourth time. The input uses its own set of type tags:
- * {@code file} and {@code multimodal} have no content-block counterpart, and
- * {@code image} means an inline-bytes {@link at.aimon.core.agent.input.ImageInput} rather than the two-source content
- * block. That is one more shape to hand-map than encoding the message would be, and it buys the only thing that makes
- * a retry faithful — the message is a lossy rendering of the request (an image reads back as a text placeholder), so
- * a point carrying one could only ever replay a description of what was asked.
+ * with — plus, when it had any, the {@link at.aimon.core.agent.SubmitOptions} it was submitted under. Neither is
+ * hand-mapped here: the options go to {@link SubmitOptionsCodec} and the input to {@link UserInputCodec}, which is
+ * where the reasoning behind the input's own set of type tags now lives. Both used to be private methods of this
+ * class, and both moved out when a second wire needed the same shape — the inbox, in the input's case.
  *
  * <p>
  * Per the {@link SessionSnapshotCodec} contract, {@link ToolUseResult#getRenderPayload()} is intentionally not
@@ -78,15 +69,6 @@ public final class JsonSessionSnapshotCodec implements SessionSnapshotCodec {
     /** Current serialization format version. */
     public static final int FORMAT_VERSION = 1;
 
-    /**
-     * How deeply a {@code multimodal} input may nest before the document is treated as unreadable.
-     *
-     * <p>
-     * The decode is recursive, and this codec's other refusals are exceptions rather than stack overflows. A real
-     * request nests once or twice; anything near this bound is a corrupt or hostile document, not a user's.
-     */
-    private static final int MAX_INPUT_NESTING = 32;
-
     private static final Logger log = LoggerFactory.getLogger(JsonSessionSnapshotCodec.class);
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -100,7 +82,6 @@ public final class JsonSessionSnapshotCodec implements SessionSnapshotCodec {
     private static final String FIELD_REWIND_POINT = "rewindPoint";
     private static final String FIELD_MESSAGE_COUNT = "messageCount";
     private static final String FIELD_USER_INPUT = "userInput";
-    private static final String FIELD_INPUTS = "inputs";
     private static final String FIELD_SUBMIT_OPTIONS = "submitOptions";
 
     private static final String FIELD_ROLE = "role";
@@ -132,11 +113,6 @@ public final class JsonSessionSnapshotCodec implements SessionSnapshotCodec {
     private static final String TYPE_IMAGE = "image";
     private static final String TYPE_DOCUMENT = "document";
 
-    private static final String INPUT_TYPE_TEXT = "text";
-    private static final String INPUT_TYPE_IMAGE = "image";
-    private static final String INPUT_TYPE_AUDIO = "audio";
-    private static final String INPUT_TYPE_FILE = "file";
-    private static final String INPUT_TYPE_MULTIMODAL = "multimodal";
     private static final String SOURCE_BASE64 = "base64";
     private static final String SOURCE_URL = "url";
 
@@ -163,7 +139,7 @@ public final class JsonSessionSnapshotCodec implements SessionSnapshotCodec {
                 final SessionRewindPoint point = snapshot.getRewindPoint().get();
                 final ObjectNode node = root.putObject(FIELD_REWIND_POINT);
                 node.put(FIELD_MESSAGE_COUNT, point.getMessageCount());
-                node.set(FIELD_USER_INPUT, encodeUserInput(point.getUserInput()));
+                node.set(FIELD_USER_INPUT, UserInputCodec.encode(point.getUserInput()));
                 // Written only when the turn carried options, so a turn submitted without any — every turn the CLI
                 // submits — encodes exactly as it did before they were remembered.
                 final ObjectNode options = SubmitOptionsCodec.encode(point.getSubmitOptions());
@@ -239,87 +215,17 @@ public final class JsonSessionSnapshotCodec implements SessionSnapshotCodec {
             return null;
         }
         try {
-            return SessionRewindPoint.of(keep, decodeUserInput(userInput, 0),
+            return SessionRewindPoint.of(keep, UserInputCodec.decode(userInput),
                     SubmitOptionsCodec.decode(node.get(FIELD_SUBMIT_OPTIONS)));
         } catch (SessionSnapshotCodecException e) {
+            // Refusing rather than degrading is the right trade here and the opposite of what the session inbox
+            // does with the same failure — and the inbox catches a wider set than this, because there the cost of
+            // being surprised is a destroyed batch. Here a point has no text rendering to fall back to, and a lost
+            // retry is one the user can re-issue. UserInputCodec.decodeOrText carries the full comparison.
             log.debug("Rewind point holds a user input this build cannot replay ({}); treating the turn as not"
                     + " retryable", e.getMessage());
             return null;
         }
-    }
-
-    /**
-     * Encodes the input a turn was submitted with, for a rewind point to replay.
-     *
-     * <p>
-     * Written as the input rather than as the message the executor built from it, because the two are not the same
-     * for anything but plain text and only the input can be submitted again. The type tags are this method's own —
-     * {@code file} and {@code multimodal} have no content-block counterpart, and {@code image} means an
-     * {@link ImageInput}, which is always inline bytes and so carries no {@code source} discriminator.
-     */
-    private ObjectNode encodeUserInput(UserInput userInput) {
-        final ObjectNode node = MAPPER.createObjectNode();
-        if (userInput instanceof TextInput text) {
-            node.put(FIELD_TYPE, INPUT_TYPE_TEXT);
-            node.put(FIELD_TEXT, text.getText());
-        } else if (userInput instanceof ImageInput image) {
-            node.put(FIELD_TYPE, INPUT_TYPE_IMAGE);
-            node.put(FIELD_MIME_TYPE, image.getMimeType());
-            node.put(FIELD_DATA, encodeBase64(image.getData()));
-        } else if (userInput instanceof AudioInput audio) {
-            node.put(FIELD_TYPE, INPUT_TYPE_AUDIO);
-            node.put(FIELD_MIME_TYPE, audio.getMimeType());
-            node.put(FIELD_DATA, encodeBase64(audio.getData()));
-        } else if (userInput instanceof FileInput file) {
-            node.put(FIELD_TYPE, INPUT_TYPE_FILE);
-            node.put(FIELD_MIME_TYPE, file.getMimeType());
-            node.put(FIELD_FILE_NAME, file.getFileName());
-            node.put(FIELD_DATA, encodeBase64(file.getData()));
-        } else if (userInput instanceof MultimodalInput multimodal) {
-            node.put(FIELD_TYPE, INPUT_TYPE_MULTIMODAL);
-            final ArrayNode inputs = node.putArray(FIELD_INPUTS);
-            for (UserInput nested : multimodal.getInputs()) {
-                inputs.add(encodeUserInput(nested));
-            }
-        } else {
-            throw new SessionSnapshotCodecException(
-                    "Unsupported user input type for encoding: " + userInput.getClass().getName());
-        }
-        return node;
-    }
-
-    private UserInput decodeUserInput(JsonNode node, int depth) {
-        if (node == null || !node.isObject()) {
-            throw new SessionSnapshotCodecException("User input entry is not a JSON object");
-        }
-        if (depth > MAX_INPUT_NESTING) {
-            throw new SessionSnapshotCodecException(
-                    "User input nests deeper than " + MAX_INPUT_NESTING + " levels; refusing to decode it");
-        }
-        final String type = requiredText(node, FIELD_TYPE);
-        return switch (type) {
-            case INPUT_TYPE_TEXT -> TextInput.of(requiredText(node, FIELD_TEXT));
-            case INPUT_TYPE_IMAGE ->
-                ImageInput.of(decodeBase64(requiredText(node, FIELD_DATA)), requiredText(node, FIELD_MIME_TYPE));
-            case INPUT_TYPE_AUDIO ->
-                AudioInput.of(decodeBase64(requiredText(node, FIELD_DATA)), requiredText(node, FIELD_MIME_TYPE));
-            case INPUT_TYPE_FILE -> FileInput.of(decodeBase64(requiredText(node, FIELD_DATA)),
-                    requiredText(node, FIELD_MIME_TYPE), requiredText(node, FIELD_FILE_NAME));
-            case INPUT_TYPE_MULTIMODAL -> decodeMultimodalInput(node, depth);
-            default -> throw new SessionSnapshotCodecException("Unknown user input type: " + type);
-        };
-    }
-
-    private UserInput decodeMultimodalInput(JsonNode node, int depth) {
-        final JsonNode inputsNode = node.get(FIELD_INPUTS);
-        if (inputsNode == null || !inputsNode.isArray() || inputsNode.isEmpty()) {
-            throw new SessionSnapshotCodecException("Multimodal user input carries no inputs");
-        }
-        final List<UserInput> inputs = new ArrayList<>();
-        for (JsonNode nested : inputsNode) {
-            inputs.add(decodeUserInput(nested, depth + 1));
-        }
-        return MultimodalInput.of(inputs);
     }
 
     private ObjectNode encodeMessage(Message message) {

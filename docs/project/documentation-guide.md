@@ -162,6 +162,10 @@ docs/features/tool/tool-development-guide.en.md   ← 영어 번역
 경계를 옮기고 싶으면 **이 표를 먼저 고친다.** 표에 없는 디렉토리를 번역하면 다음 사람이
 "여기는 왜 번역이 있고 저기는 없나" 를 매번 다시 판단하게 된다.
 
+그리고 **승격은 열린 백로그 항목 하나를 깨운다** —
+[`../backlog/translation-tooling-open-items.md`](../backlog/translation-tooling-open-items.md) 의 T-1
+(번역 구조 일치 규칙에 강제 장치가 없다). 쌍이 늘면 손으로 맞추는 비용도 함께 늘기 때문이다.
+
 ### 5.2 리포지토리 루트는 방향이 반대다
 
 `docs/` 아래의 정본은 한국어지만, 루트의 `README.md` · `CONTRIBUTING.md` · `SECURITY.md` ·
@@ -179,7 +183,7 @@ docs/features/tool/tool-development-guide.en.md   ← 영어 번역
 ```yaml
 ---
 translated_from: docs/features/tool/tool-development-guide.md
-source_commit: 4d1779d3
+source_commit: eec9ccd
 ---
 ```
 
@@ -196,6 +200,17 @@ source_commit: 4d1779d3
 `source_commit` 에 적을 것은 **이번 수정 직전**의 정본 커밋이다 (자기 커밋 SHA 는 미리 알 수 없다).
 `python3 scripts/check-translation-staleness.py` 가 뒤처진 번역을 보고하며, 정본과 번역을 함께 건드린
 커밋은 건너뛰므로 이 한 커밋의 지연은 낡음으로 세지 않는다.
+
+**그 SHA 가 해석되지 않으면 CI 가 실패한다.** 낡음(stale)과 해석 불가(unresolvable)는 다른 것이다 —
+전자는 검사가 답을 냈고 그 답이 나쁜 것이고, 후자는 **답이 없는 것**이다. 낡음이 빌드를 실패시키지
+않는 이유(번역 지연이 정본 수정을 막으면 안 된다)는 해석 불가에는 적용되지 않는다. 그쪽에서 요구하는
+것은 번역이 아니라 존재하는 SHA 한 줄이고, 실패시키지 않으면 초록 빌드 뒤에 무기한 남는다 —
+실제로 오픈소스 전환 스쿼시가 32건 중 19건의 SHA 를 한 번에 없앴고, 두 발견이 exit code 를 공유한
+탓에 그 상태로 계속 초록이었다.
+
+히스토리 재작성으로 적어 둔 SHA 가 사라졌다면, 정본이 **번역한 그 상태로** 담겨 있는 가장 오래된
+커밋을 겨눈다. 그리고 겨누기 전에 정말 그 상태인지 확인한다 — 어긋난 번역에 붙은 해석 가능한 SHA 는
+해석 불가보다 나쁘다. 침묵은 모른다고 말하지만 그것은 안다고 거짓말한다.
 
 ### 5.4 번역본 안의 상대 링크는 **번역이 있는 것만** 접미사로 가리킨다
 
