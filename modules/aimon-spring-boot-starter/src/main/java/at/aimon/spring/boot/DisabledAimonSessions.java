@@ -3,6 +3,7 @@ package at.aimon.spring.boot;
 import java.util.concurrent.Flow;
 
 import at.aimon.core.agent.AgentExecutionResult;
+import at.aimon.core.agent.input.UserInput;
 import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.session.LiveSessionOptions;
 import at.aimon.core.agent.session.SessionId;
@@ -51,6 +52,11 @@ public class DisabledAimonSessions implements AimonSessions {
 
     @Override
     public SubmitRequest.Builder newRequest(SessionId sessionId, String input) {
+        throw new AimonDisabledException(MESSAGE);
+    }
+
+    @Override
+    public SubmitRequest.Builder newRequest(SessionId sessionId, UserInput input) {
         throw new AimonDisabledException(MESSAGE);
     }
 

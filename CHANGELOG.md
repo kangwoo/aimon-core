@@ -7,6 +7,110 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Sessions: a routed submission carries the input, not a rendering of it
+
+- **`SubmitRequest.getUserInput()` and `InboundMessage.getUserInput()` return `UserInput` instead of
+  `String`.** This is a **breaking change** to two published surfaces
+  (`at.aimon.session.routing`, `at.aimon.core.agent.session.inbox`), and it closes a **capability**
+  gap rather than a runtime one. `LiveSession` has taken a `UserInput` for some time, so an image or
+  a document worked on whichever host held the handle; a submission routed through `SessionRouter`
+  could not carry one at all, because the builder took only text. **Nothing was being dropped at
+  runtime** — an application that scaled out found the call it had been making no longer compiled,
+  which is a wall rather than a leak. What this adds is the ability to route such a turn, not the
+  recovery of a value the framework used to discard.
+
+  It is not a rename, so there is no row in
+  [`rename-maps.md`](docs/migration/rename-maps.md): the name resolves exactly as before, with a
+  different type. It is also the shape the rest of the codebase already had —
+  `AgentExecutionRequest`, `SessionRewindPoint` and `RewoundTurn` all spell `getUserInput()` that
+  way, and these two were the odd ones out.
+
+  | Was | Is |
+  |---|---|
+  | `String s = request.getUserInput();` | `String s = request.getUserInput().asText();` |
+  | `builder.userInput("hello")` | unchanged — the `String` overload stays, as sugar for `TextInput.of` |
+  | — | `builder.userInput(image)` is new |
+
+  No producer call site changes; the break falls on consumers, which is where the loss was.
+
+- **The inbox wire gained a key rather than changing one.** `userInput` keeps its spelling *and its
+  type*, now holding `asText()`; a non-text input additionally writes its encoding under
+  `userInputEncoded`, and a plain-text one writes no sidecar at all — so a text submission is
+  byte-for-byte the document the previous build wrote. Decode prefers the sidecar and falls back to
+  wrapping the string. **No data migration and no rolling-upgrade coordination is needed**, in either
+  direction; [`frozen-names.md`](docs/migration/frozen-names.md) records why the obvious tidy (making
+  `userInput` hold the structured value) is the one thing that may not happen — an older node reading
+  such an entry gets `""` from `JsonNode.asText()` and runs an empty turn, or, in MongoDB, cannot
+  decode it at all.
+
+  What an older node *does* get from a multimodal entry is the `asText()` rendering: a turn that says
+  an image was attached rather than one that pretends nothing was. It cannot run the image either
+  way, and the alternative — an entry it cannot decode — is a turn nobody runs.
+
+- **An encoding this build cannot read degrades to the text beside it rather than refusing the
+  entry.** The wire's forward direction — this build reading what a node one release ahead wrote,
+  with a sixth `InputType` in it — costs far more than a refusal usually does, because all three
+  backends remove an entry from storage *before* the codec runs (Redis `XDEL`s inside its collect
+  script, Postgres commits its `DELETE … RETURNING`, MongoDB uses `findOneAndDelete`). A throw there
+  does not reject one message; it destroys every message that call collected. `UserInputCodec`
+  therefore exposes `decodeOrText`, which the three inbox codecs call: it falls back to the
+  `asText()` rendering stored beside the encoding — the same thing an older node would run — and
+  logs at `WARN` **naming the session**, because a silent fallback would be the very failure the
+  structured encoding was added to remove, and a warning nobody can attribute to a session is one
+  nobody can act on. `JsonSessionSnapshotCodec` still refuses the same failure — and refuses a
+  narrower set of them than the inbox catches — and the asymmetry is documented where the decision is
+  made: a rewind point has no string to fall back to and loses only a retry the user can re-issue.
+
+  **The boundary is the field, not the kind of failure.** A decoder cannot distinguish a document
+  from a newer build from a damaged one, so the rule is the one it can enforce: everything thrown
+  while reading that one field degrades, and the rest of the envelope still refuses — a malformed
+  `initiator` or an unknown `priority` says *damaged*, and the text beside them stands in for
+  nothing. `UserInputCodec` also normalizes what the input value objects declare
+  (`ImageInput`/`AudioInput` enforce a MIME prefix and signal with `IllegalArgumentException`) into
+  its own exception, the way it always did for invalid base64, so the declared contract of `decode`
+  is true for its strict caller as well — which incidentally stops one unreadable rewind point from
+  failing the whole snapshot around it.
+
+- **`IdempotencyEntry.inputHash` keeps `sha256(text)` for text turns.** That digest is written to the
+  shared store and recomputed by whichever node a retry lands on, which during a rolling upgrade is
+  as likely to be one that predates this change. Hashing the encoded form for text would have turned
+  every legitimate cross-version retry into `IdempotencyConflictException` — "key reused with
+  different input" — for as long as the two builds coexisted. Non-text turns hash over the encoding,
+  where there is no earlier value to match.
+
+- **`UserInputCodec` is new** (`at.aimon.core.subagent.task.codec`), lifted unchanged out of three
+  private methods on `JsonSessionSnapshotCodec` so the inbox reuses the encoding rather than
+  hand-mapping the five shapes a second time — the situation `SubmitOptionsCodec` was extracted to
+  stop, one layer up. What made it a class is that those three were private, so no other module
+  could call them at all.
+
+  **The stored format is unchanged** — same field names, same type tags, same 32-level nesting
+  bound — so every existing snapshot encodes and decodes as before. One thing about *reading* an old
+  document did change, and it is the improvement described two bullets down rather than a
+  regression: a rewind point whose input a value object refuses (an `image` carrying a `video/mp4`
+  MIME type) used to take the whole snapshot down with it, and now drops only the point.
+
+  Unlike its neighbour it takes no `ObjectMapper` (every leaf is a `String`, so no mapper
+  configuration can reach the wire) and it offers a text form as well as a node form, which is what
+  keeps the MongoDB inbox from acquiring a second representation the way it has one of
+  `submitOptions`.
+
+- **`AimonSessions.newRequest(SessionId, UserInput)` is new.** The starter is the scale-out shape,
+  so it is where this most needed a route that is not `newRequest(id, "")` followed by
+  `.userInput(image)`, which works and submits a turn whose text part is an empty string.
+
+  Additive **for callers, not for implementors**: `AimonSessions` is a published interface and this
+  is an abstract method with no `default`, so an application with its own implementation of the
+  facade stops compiling until it adds one. That is allowed in a `0.x` minor and is named here rather
+  than hidden behind the word "additive". No `default` was given deliberately — a default could only
+  throw or flatten the input, and both are worse than a compiler error for a facade whose entire job
+  is to fill in the fields a raw `SubmitRequest` leaves dangerous.
+
+- The multi-node contract suite gained the scenario, so it runs over Redis, Postgres and MongoDB:
+  what an image has to survive is each backend's own serialization, and no in-memory test can see
+  that. Closes the second open item in
+  [`interrupt-open-items.md`](docs/backlog/interrupt-open-items.md).
+
 ### Memory: the distributed backends leave, the SPI stays
 
 - **`aimon-memory-postgres` and `aimon-memory-mongodb` are removed.** This is a **removal, not a

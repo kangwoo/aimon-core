@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/embedding-agent-in-application.md
-source_commit: 1c57e2ca
+source_commit: 1bc4109
 ---
 
 # Embedding an AIMON agent in your application
@@ -474,6 +474,7 @@ SubmitDisposition submitAsync(SubmitRequest request);
 
 // When you want to change exactly one field
 SubmitRequest.Builder newRequest(SessionId sessionId, String input);
+SubmitRequest.Builder newRequest(SessionId sessionId, UserInput input);   // image, document, combination
 
 Flow.Publisher<AgentExecutionEvent> events(SessionId sessionId);
 void interrupt(SessionId sessionId, TurnId turnId, InterruptReason reason);
@@ -507,6 +508,26 @@ SubmitDisposition disposition = sessions.submitAsync(
 
 `submitAsync(SubmitRequest)` takes a finished request as-is, and it is the **single primitive** every
 other submit method delegates to.
+
+### 6.2.1 Turns that are not text
+
+Images, documents and combinations go through the `newRequest` overload that takes a `UserInput`.
+
+```java
+UserInput input = MultimodalInput.of(
+        TextInput.of("What is wrong in this screenshot?"),
+        ImageInput.of(screenshotBytes, "image/png"));
+
+sessions.submitAsync(sessions.newRequest(sessionId, input).build());
+```
+
+**Whether that turn runs on this node or is forwarded to the node holding the session makes no
+difference to what the agent receives.** The inbox carries the input itself, not a rendering of it.
+
+This overload did not exist before. A cross-node submission was a `String` only, so a deployment that
+scaled out **could not send** multimodal — not quietly truncated, but not compiled. The one way to get
+an image to the router was for the caller to flatten it with `image.asText()`, and then all the model
+got was the text `[Image: image/png, 41231 bytes]`. That is no longer necessary.
 
 ### 6.3 Reading `SubmitDisposition`
 

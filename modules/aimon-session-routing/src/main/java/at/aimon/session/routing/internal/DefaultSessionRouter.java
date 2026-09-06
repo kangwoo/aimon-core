@@ -40,6 +40,8 @@ import com.github.benmanes.caffeine.cache.Ticker;
 
 import at.aimon.core.agent.AgentExecutionResult;
 import at.aimon.core.agent.AgentRuntimeId;
+import at.aimon.core.agent.input.TextInput;
+import at.aimon.core.agent.input.UserInput;
 import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.queue.QueuedInputPriority;
 import at.aimon.core.agent.session.LiveSession;
@@ -65,6 +67,7 @@ import at.aimon.core.agent.session.store.SessionRecordView;
 import at.aimon.core.agent.session.store.SessionStore;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
 import at.aimon.core.skill.policy.session.SessionApprovalStore;
+import at.aimon.core.subagent.task.codec.UserInputCodec;
 import at.aimon.session.routing.ClusterSessionStatus;
 import at.aimon.session.routing.LiveSessionCache;
 import at.aimon.session.routing.LiveSessionCache.SessionEntry;
@@ -2319,7 +2322,7 @@ public final class DefaultSessionRouter implements SessionRouter {
             return IdempotencyDecision.empty();
         }
         final String key = keyOpt.get();
-        final String inputHash = sha256(request.getUserInput());
+        final String inputHash = inputHash(request.getUserInput());
         final Instant now = Instant.now();
         final IdempotencyEntry candidate = IdempotencyEntry.builder().key(key).sessionId(request.getSessionId())
                 .inputHash(inputHash).status(IdempotencyEntry.Status.IN_FLIGHT).holderId(reserverId).createdAt(now)
@@ -3029,6 +3032,28 @@ public final class DefaultSessionRouter implements SessionRouter {
     private static void sortByPriorityThenFifo(List<InboundMessage> list) {
         list.sort(Comparator.<InboundMessage, Integer>comparing(m -> m.getPriority().ordinal())
                 .thenComparing(InboundMessage::getDeliveredAt));
+    }
+
+    /**
+     * The digest an idempotency entry records for a submission, so a retry of the same key can be told from a reuse
+     * of it with different content.
+     *
+     * <p>
+     * <b>Text hashes over its bare text, and must keep doing so.</b> This value is written to the shared
+     * {@link IdempotencyStore} and read back by whichever node the retry lands on — which, during a rolling upgrade,
+     * is as likely to be a node that predates {@code SubmitRequest} carrying a {@link UserInput} as one that does
+     * not. That node computes {@code sha256(text)}. Hashing the encoded form instead would make every legitimate
+     * text retry across the version boundary look like
+     * {@link at.aimon.core.agent.session.exception.IdempotencyConflictException} — "key reused with different input"
+     * — for as long as the two builds coexist.
+     *
+     * <p>
+     * Anything else hashes over {@link UserInputCodec}'s canonical JSON. An older node could not have submitted a
+     * non-text turn at all, so there is no earlier digest for one to match. The encoding is part of this digest, so
+     * a change to that encoding changes these hashes — the same constraint the wire format is already under.
+     */
+    private static String inputHash(UserInput input) {
+        return sha256(input instanceof TextInput text ? text.getText() : UserInputCodec.encodeToString(input));
     }
 
     private static String sha256(String input) {

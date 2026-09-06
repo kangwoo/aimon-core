@@ -44,7 +44,7 @@ class MongoSessionInboxIntegrationTest {
         assertThat(collected).hasSize(1);
         final InboundMessage got = collected.get(0);
         assertThat(got.getId()).hasValue(returnedId);
-        assertThat(got.getUserInput()).isEqualTo("hello");
+        assertThat(got.getUserInput().asText()).isEqualTo("hello");
         assertThat(got.getAgentRef()).isEqualTo("agent-x");
         assertThat(got.getPriority()).isEqualTo(QueuedInputPriority.NEXT);
         assertThat(got.getInitiator().getId()).isEqualTo("u-1");
@@ -69,7 +69,7 @@ class MongoSessionInboxIntegrationTest {
         inbox.deliver(message(id, QueuedInputPriority.NEXT, "next-2"));
 
         final List<InboundMessage> collected = inbox.collect(id, QueuedInputPriority.LATER);
-        assertThat(collected).extracting(InboundMessage::getUserInput).containsExactly("now-1", "now-2", "next-1",
+        assertThat(collected).extracting(m -> m.getUserInput().asText()).containsExactly("now-1", "now-2", "next-1",
                 "next-2", "later-1");
     }
 
@@ -82,10 +82,10 @@ class MongoSessionInboxIntegrationTest {
         inbox.deliver(message(id, QueuedInputPriority.LATER, "later-1"));
 
         final List<InboundMessage> nowOnly = inbox.collect(id, QueuedInputPriority.NOW);
-        assertThat(nowOnly).extracting(InboundMessage::getUserInput).containsExactly("now-1");
+        assertThat(nowOnly).extracting(m -> m.getUserInput().asText()).containsExactly("now-1");
 
         final List<InboundMessage> rest = inbox.collect(id, QueuedInputPriority.LATER);
-        assertThat(rest).extracting(InboundMessage::getUserInput).containsExactly("next-1", "later-1");
+        assertThat(rest).extracting(m -> m.getUserInput().asText()).containsExactly("next-1", "later-1");
     }
 
     @Test

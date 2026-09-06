@@ -307,6 +307,32 @@ class JsonSessionSnapshotCodecTest {
         assertThat(codec.decode(codec.encode(snapshot)).getRewindPoint()).isEmpty();
     }
 
+    /**
+     * The stored-format claim this branch makes is that the encoding did not change — not that nothing about
+     * reading an old document did. One thing did, and it is an improvement worth pinning rather than leaving to be
+     * rediscovered.
+     *
+     * <p>
+     * A rewind point whose input a value object refuses — here an {@code image} carrying a {@code video/mp4} MIME
+     * type, which {@link ImageInput} rejects — used to lose the <b>whole snapshot</b>: the plain
+     * {@code IllegalArgumentException} escaped this codec's rewind-point handler, which catches only
+     * {@link SessionSnapshotCodecException}, and landed in {@code decode}'s blanket handler. Since
+     * {@code UserInputCodec} started normalizing what the input value objects declare, it arrives as the codec's
+     * own exception and the point is dropped — which is what the handler was written to do.
+     */
+    @Test
+    void aRewindPointWithAnUnreadableInputDropsThePointRatherThanTheSnapshot() {
+        final String json = "{\"version\":1,\"conversationId\":\"c\","
+                + "\"messages\":[{\"role\":\"USER\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]}],"
+                + "\"rewindPoint\":{\"messageCount\":1,\"userInput\":"
+                + "{\"type\":\"image\",\"mimeType\":\"video/mp4\",\"data\":\"AQID\"}}}";
+
+        final SessionSnapshot decoded = codec.decode(json);
+
+        assertThat(decoded.getConversationHistory()).hasSize(1);
+        assertThat(decoded.getRewindPoint()).as("the point is unreplayable; the transcript around it is not").isEmpty();
+    }
+
     /** A document written before the field existed decodes to "nothing to retry", which is the truth about it. */
     @Test
     void aDocumentWithoutTheFieldDecodesAsNotRetryable() {

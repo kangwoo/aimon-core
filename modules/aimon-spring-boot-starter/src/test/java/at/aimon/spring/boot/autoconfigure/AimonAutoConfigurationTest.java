@@ -33,6 +33,10 @@ import at.aimon.bootstrap.spec.AimonAgentCustomizer;
 import at.aimon.bootstrap.spec.CredentialStoreFactory;
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.impl.orca.OrcaAgentRuntime;
+import at.aimon.core.agent.input.ImageInput;
+import at.aimon.core.agent.input.MultimodalInput;
+import at.aimon.core.agent.input.TextInput;
+import at.aimon.core.agent.input.UserInput;
 import at.aimon.core.agent.orca.tool.OrcaToolProvider;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.tool.AbstractTool;
@@ -227,6 +231,26 @@ class AimonAutoConfigurationTest {
                     .build();
             assertThat(request.getOptions().getBudget().isUnlimited()).isFalse();
             assertThat(request.getOptions().getBudget().getMaxIterations()).contains(20);
+            assertThat(request.getAgentRef()).isEqualTo(AGENT);
+            assertThat(request.getInitiator()).isNotNull();
+        });
+    }
+
+    @Test
+    @DisplayName("a multimodal request carries the same defaults the text one does")
+    void multimodalRequestKeepsTheConfiguredDefaults(@TempDir Path workspace) {
+        // The starter is the scale-out shape, so it is where a multimodal turn most needs a route that is not a
+        // workaround. newRequest(id, "") followed by .userInput(image) would have worked and would have submitted a
+        // turn whose text part is an empty string; this overload is the reason nobody has to discover that.
+        minimal(workspace).run(ctx -> {
+            final UserInput input = MultimodalInput.of(TextInput.of("what is in this?"),
+                    ImageInput.of(new byte[]{1, 2, 3, 4}, "image/png"));
+
+            final SubmitRequest request = ctx.getBean(AimonSessions.class).newRequest(SessionId.generate(), input)
+                    .build();
+
+            assertThat(request.getUserInput()).isEqualTo(input);
+            assertThat(request.getOptions().getBudget().isUnlimited()).isFalse();
             assertThat(request.getAgentRef()).isEqualTo(AGENT);
             assertThat(request.getInitiator()).isNotNull();
         });

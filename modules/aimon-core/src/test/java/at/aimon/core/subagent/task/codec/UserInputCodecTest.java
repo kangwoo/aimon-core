@@ -1,0 +1,281 @@
+package at.aimon.core.subagent.task.codec;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
+import at.aimon.core.agent.input.AudioInput;
+import at.aimon.core.agent.input.FileInput;
+import at.aimon.core.agent.input.ImageInput;
+import at.aimon.core.agent.input.InputType;
+import at.aimon.core.agent.input.MultimodalInput;
+import at.aimon.core.agent.input.TextInput;
+import at.aimon.core.agent.input.UserInput;
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+
+/**
+ * Pins the encoding a rewind point stores and a routed submission now travels in.
+ *
+ * <p>
+ * A round-trip through this one class cannot say whether the stored shape drifted — encoder and decoder share the
+ * constants, so a renamed field agrees with itself. So the shapes are also asserted against <b>hard-coded
+ * literals</b>, which is what an existing snapshot file or an already-queued inbox entry actually contains. That is
+ * the same reason the frozen-name pins exist, applied to a format this repository writes to three backends and a
+ * virtual filesystem.
+ */
+@DisplayName("UserInputCodec")
+class UserInputCodecTest {
+
+    private Logger codecLogger;
+    private ListAppender<ILoggingEvent> logAppender;
+
+    @BeforeEach
+    void captureLog() {
+        codecLogger = (Logger) LoggerFactory.getLogger(UserInputCodec.class);
+        logAppender = new ListAppender<>();
+        logAppender.start();
+        codecLogger.addAppender(logAppender);
+    }
+
+    @AfterEach
+    void releaseLog() {
+        codecLogger.detachAppender(logAppender);
+        logAppender.stop();
+    }
+
+    private static final byte[] BYTES = {1, 2, 3, 4};
+    /** {@code AQIDBA==} — pinned rather than computed, for the same reason the field names are. */
+    private static final String BYTES_BASE64 = "AQIDBA==";
+
+    @Test
+    @DisplayName("text encodes to {type:text, text:…} and nothing else")
+    void textShapeIsPinned() {
+        final ObjectNode node = UserInputCodec.encode(TextInput.of("what is this?"));
+
+        assertThat(fieldNames(node)).containsExactlyInAnyOrder("type", "text");
+        assertThat(node.get("type").asText()).isEqualTo("text");
+        assertThat(node.get("text").asText()).isEqualTo("what is this?");
+    }
+
+    @Test
+    @DisplayName("image encodes to {type:image, mimeType, data} with the bytes as plain base64")
+    void imageShapeIsPinned() {
+        final ObjectNode node = UserInputCodec.encode(ImageInput.of(BYTES, "image/png"));
+
+        assertThat(fieldNames(node)).containsExactlyInAnyOrder("type", "mimeType", "data");
+        assertThat(node.get("type").asText()).isEqualTo("image");
+        assertThat(node.get("mimeType").asText()).isEqualTo("image/png");
+        assertThat(node.get("data").asText()).isEqualTo(BYTES_BASE64);
+    }
+
+    @Test
+    @DisplayName("audio encodes to {type:audio, mimeType, data}")
+    void audioShapeIsPinned() {
+        final ObjectNode node = UserInputCodec.encode(AudioInput.of(BYTES, "audio/mp3"));
+
+        assertThat(fieldNames(node)).containsExactlyInAnyOrder("type", "mimeType", "data");
+        assertThat(node.get("type").asText()).isEqualTo("audio");
+        assertThat(node.get("mimeType").asText()).isEqualTo("audio/mp3");
+        assertThat(node.get("data").asText()).isEqualTo(BYTES_BASE64);
+    }
+
+    @Test
+    @DisplayName("file encodes to {type:file, mimeType, fileName, data} — the name is what distinguishes it")
+    void fileShapeIsPinned() {
+        final ObjectNode node = UserInputCodec.encode(FileInput.of(BYTES, "application/pdf", "report.pdf"));
+
+        assertThat(fieldNames(node)).containsExactlyInAnyOrder("type", "mimeType", "fileName", "data");
+        assertThat(node.get("type").asText()).isEqualTo("file");
+        assertThat(node.get("fileName").asText()).isEqualTo("report.pdf");
+    }
+
+    @Test
+    @DisplayName("multimodal encodes to {type:multimodal, inputs:[…]} with each part in the same shape")
+    void multimodalShapeIsPinned() {
+        final ObjectNode node = UserInputCodec
+                .encode(MultimodalInput.of(TextInput.of("describe"), ImageInput.of(BYTES, "image/png")));
+
+        assertThat(fieldNames(node)).containsExactlyInAnyOrder("type", "inputs");
+        assertThat(node.get("type").asText()).isEqualTo("multimodal");
+        assertThat(node.get("inputs")).hasSize(2);
+        assertThat(node.get("inputs").get(0).get("type").asText()).isEqualTo("text");
+        assertThat(node.get("inputs").get(1).get("data").asText()).isEqualTo(BYTES_BASE64);
+    }
+
+    @Test
+    @DisplayName("every input type round-trips to an equal value")
+    void everyTypeRoundTrips() {
+        final UserInput text = TextInput.of("hello");
+        final UserInput image = ImageInput.of(BYTES, "image/png");
+        final UserInput audio = AudioInput.of(BYTES, "audio/wav");
+        final UserInput file = FileInput.of("k: v".getBytes(StandardCharsets.UTF_8), "text/plain", "config.yaml");
+        final UserInput multimodal = MultimodalInput.of(text, image, audio, file);
+
+        for (UserInput input : new UserInput[]{text, image, audio, file, multimodal}) {
+            assertThat(UserInputCodec.decode(UserInputCodec.encode(input))).isEqualTo(input);
+            assertThat(UserInputCodec.decodeFromString(UserInputCodec.encodeToString(input))).isEqualTo(input);
+        }
+    }
+
+    @Test
+    @DisplayName("the published type tags cover every InputType, so no shape can be added without one")
+    void typeTagsCoverEveryInputType() {
+        assertThat(UserInputCodec.TYPE_TAGS).hasSize(InputType.values().length);
+        assertThat(UserInputCodec.TYPE_TAGS).containsExactlyInAnyOrder(Arrays.stream(InputType.values())
+                .map(t -> t.name().toLowerCase(java.util.Locale.ROOT)).toArray(String[]::new));
+    }
+
+    @Test
+    @DisplayName("nesting within the bound decodes; past it the document is refused rather than overflowing")
+    void nestingIsBounded() {
+        // One below the bound, built by hand so the assertion is about the decode rather than about what an encode
+        // happens to produce.
+        assertThat(UserInputCodec.decodeFromString(nested(UserInputCodec.MAX_NESTING))).isNotNull();
+
+        assertThatThrownBy(() -> UserInputCodec.decodeFromString(nested(UserInputCodec.MAX_NESTING + 1)))
+                .isInstanceOf(SessionSnapshotCodecException.class).hasMessageContaining("nests deeper than");
+    }
+
+    @Test
+    @DisplayName("an unknown type tag is refused, not silently dropped")
+    void unknownTypeIsRefused() {
+        assertThatThrownBy(() -> UserInputCodec.decodeFromString("{\"type\":\"video\"}"))
+                .isInstanceOf(SessionSnapshotCodecException.class).hasMessageContaining("Unknown user input type");
+    }
+
+    @Test
+    @DisplayName("a missing required field is refused, naming the field")
+    void missingFieldIsRefused() {
+        assertThatThrownBy(() -> UserInputCodec.decodeFromString("{\"type\":\"image\",\"mimeType\":\"image/png\"}"))
+                .isInstanceOf(SessionSnapshotCodecException.class).hasMessageContaining("'data'");
+    }
+
+    @Test
+    @DisplayName("an empty multimodal is refused — MultimodalInput cannot hold zero parts")
+    void emptyMultimodalIsRefused() {
+        assertThatThrownBy(() -> UserInputCodec.decodeFromString("{\"type\":\"multimodal\",\"inputs\":[]}"))
+                .isInstanceOf(SessionSnapshotCodecException.class).hasMessageContaining("carries no inputs");
+    }
+
+    @Test
+    @DisplayName("invalid base64 is refused as a codec failure, not as an IllegalArgumentException from the JDK")
+    void invalidBase64IsRefused() {
+        assertThatThrownBy(() -> UserInputCodec
+                .decodeFromString("{\"type\":\"image\",\"mimeType\":\"image/png\",\"data\":\"not base64!\"}"))
+                .isInstanceOf(SessionSnapshotCodecException.class).hasMessageContaining("Invalid base64");
+    }
+
+    @Test
+    @DisplayName("a non-object subtree is refused rather than yielding an empty input")
+    void nonObjectIsRefused() {
+        assertThatThrownBy(() -> UserInputCodec.decodeFromString("\"hello\""))
+                .isInstanceOf(SessionSnapshotCodecException.class).hasMessageContaining("not a JSON object");
+        assertThatThrownBy(() -> UserInputCodec.decode(null)).isInstanceOf(SessionSnapshotCodecException.class);
+    }
+
+    @Test
+    @DisplayName("decodeOrText prefers the encoding, and takes the text when there is none")
+    void decodeOrTextPrefersTheEncoding() {
+        final UserInput image = ImageInput.of(BYTES, "image/png");
+
+        assertThat(UserInputCodec.decodeOrText(UserInputCodec.encode(image), image.asText(), "c-1")).isEqualTo(image);
+        assertThat(UserInputCodec.decodeOrText((JsonNode) null, "hello", "c-1")).isEqualTo(TextInput.of("hello"));
+        assertThat(UserInputCodec.decodeOrText((String) null, "hello", "c-1")).isEqualTo(TextInput.of("hello"));
+        assertThat(UserInputCodec.decodeOrText(UserInputCodec.encodeToString(image), image.asText(), "c-1"))
+                .isEqualTo(image);
+        assertThat(logAppender.list).as("nothing degraded, so nothing to warn about").isEmpty();
+    }
+
+    @Test
+    @DisplayName("an encoding this build cannot read degrades to the text, and says so at WARN")
+    void unreadableEncodingDegradesAudibly() {
+        // The failure mode this pair exists for: a node one release ahead writes a sixth InputType. Both halves are
+        // asserted because either alone reproduces something bad — refusing loses an inbox entry that has already
+        // been deleted from its backend, and degrading in silence is the quiet capability loss the structured
+        // encoding was added to remove.
+        final String sixthType = "{\"type\":\"video\",\"mimeType\":\"video/mp4\",\"data\":\"AQID\"}";
+
+        assertThat(UserInputCodec.decodeOrText(sixthType, "[Video: video/mp4, 3 bytes]", "c-degraded"))
+                .isEqualTo(TextInput.of("[Video: video/mp4, 3 bytes]"));
+
+        assertThat(logAppender.list).singleElement()
+                .satisfies(event -> assertThat(event.getLevel()).isEqualTo(Level.WARN));
+        assertThat(logAppender.list.get(0).getFormattedMessage()).contains("Unknown user input type: video")
+                .contains("falling back")
+                // Without something to name, an operator cannot tell the affected user their attachment did not
+                // arrive, and "observable" would mean only "a line exists somewhere".
+                .contains("c-degraded");
+    }
+
+    @Test
+    @DisplayName("a well-formed encoding whose value object refuses it degrades too, not only an unknown tag")
+    void valueObjectRefusalDegradesAsWell() {
+        // The gate is the field, not the exception type. ImageInput.of and AudioInput.of enforce a MIME prefix and
+        // signal with IllegalArgumentException rather than this codec's own exception, so a subtree naming
+        // {"type":"image","mimeType":"video/mp4"} used to sail past the catch and out through collect() — by which
+        // time all three backends have already removed the batch from storage. A decoder cannot tell a document
+        // from a newer build from a damaged one anyway; what it can tell is which field it was reading.
+        final String badMime = "{\"type\":\"image\",\"mimeType\":\"video/mp4\",\"data\":\"AQID\"}";
+
+        assertThat(UserInputCodec.decodeOrText(badMime, "[Image: video/mp4, 3 bytes]", "c-badmime"))
+                .isEqualTo(TextInput.of("[Image: video/mp4, 3 bytes]"));
+        assertThat(logAppender.list).singleElement()
+                .satisfies(event -> assertThat(event.getLevel()).isEqualTo(Level.WARN));
+    }
+
+    @Test
+    @DisplayName("strict decode reports a value object's refusal as a codec failure, not as a raw JDK exception")
+    void valueObjectRefusalIsNormalized() {
+        // Same rule decodeBase64 already followed, applied to the other axis a value object can refuse on. It is
+        // what makes the exception type a faithful proxy for "this codec could not read it", which is the whole
+        // basis on which decodeOrText decides to degrade — and it also keeps a rewind point that names an
+        // unreadable input from failing the entire snapshot decode around it.
+        assertThatThrownBy(() -> UserInputCodec
+                .decodeFromString("{\"type\":\"audio\",\"mimeType\":\"image/png\",\"data\":\"AQID\"}"))
+                .isInstanceOf(SessionSnapshotCodecException.class).hasMessageContaining("audio")
+                .hasMessageContaining("must start with 'audio/'");
+    }
+
+    @Test
+    @DisplayName("decodeOrText degrades, decode refuses — the two callers pay different prices")
+    void strictDecodeStillRefuses() {
+        // Guards the asymmetry rather than assuming it: JsonSessionSnapshotCodec relies on decode() throwing so it
+        // can drop an unreplayable rewind point, and turning that into a silent text fallback would replay a
+        // description of the turn instead of the turn.
+        assertThatThrownBy(() -> UserInputCodec.decodeFromString("{\"type\":\"video\"}"))
+                .isInstanceOf(SessionSnapshotCodecException.class);
+    }
+
+    /** {@code depth} levels of {@code multimodal} wrapping one text leaf. */
+    private static String nested(int depth) {
+        final StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < depth; i++) {
+            sb.append("{\"type\":\"multimodal\",\"inputs\":[");
+        }
+        sb.append("{\"type\":\"text\",\"text\":\"leaf\"}");
+        for (int i = 0; i < depth; i++) {
+            sb.append("]}");
+        }
+        return sb.toString();
+    }
+
+    private static Set<String> fieldNames(ObjectNode node) {
+        return node.propertyStream().map(java.util.Map.Entry::getKey).collect(Collectors.toSet());
+    }
+}
