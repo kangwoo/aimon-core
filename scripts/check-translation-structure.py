@@ -31,7 +31,7 @@ not, and each cost a wrong measurement first:
     that opens with `**bold**` is a list item (a `*` marker followed by `*`),
     and because the two languages open paragraphs in bold at different rates
     that single missing `\\s` turns 17 of 32 pairs red. There are 328 such lines
-    in the corpus. tests/test_translation_structure.py pins this.
+    in the corpus. `--self-test`, below, pins this and the other two.
   * quotes are counted as RUNS. Counting `>` lines instead reproduces the fold
     problem and fails 10 of 32 pairs.
   * front matter is stripped before anything is counted. It is not, and the
@@ -91,7 +91,7 @@ Usage:
 import re
 import sys
 
-from docs_tree import (FRESH, ROOT, canonical_of, frontmatter, git,
+from docs_tree import (FRESH, FRONT_MATTER, ROOT, canonical_of, frontmatter, git,
                        is_shallow_clone, pair_state, translations)
 
 # --- the axes ---------------------------------------------------------------
@@ -102,7 +102,6 @@ TABLE_ROW = re.compile(r"^\s*\|")
 LIST_ITEM = re.compile(r"^(\s*)(?:[-*+]|\d+[.)])\s")
 QUOTE = re.compile(r"^\s*>")
 FENCE_HASH = re.compile(r"^\s*#")
-FRONT_MATTER = re.compile(r"\A---\r?\n.*?\r?\n---\r?\n", re.DOTALL)
 
 HARD_AXES = ("headings", "fences", "table-rows", "list-items", "quote-blocks")
 ADVISORY_AXES = ("fence-hash-lines",)
@@ -372,42 +371,39 @@ def _outside(path, strip_front=True):
 
 
 def self_test():
-    """Vary the reading, hold the corpus still. Every case must still break."""
+    """Swap one reading at a time and hold the corpus still.
+
+    Each case asks a narrow question: does this wrong reading part company with
+    the specified one on at least one pair the specified reading is happy with?
+
+    Counting that DELTA rather than an absolute is what keeps the case honest
+    when the corpus is not. A pair whose canonical has been edited ahead of its
+    translation differs under both readings, and so does a pair carrying a
+    legitimate `structure_exempt`; both cancel. An earlier version asserted
+    instead that the specified reading finds zero differences corpus-wide, which
+    sounds like the same claim and is not: that number moves for reasons that
+    have nothing to do with the patterns, and it turned the two states this
+    check exists to FORGIVE -- a canonical edited first, the first exemption --
+    into a red build on the step before the check that forgives them. The main
+    check owns that assertion, with the pair state and the exemptions in hand.
+
+    The delta framing also makes each case guard its own pattern directly. Widen
+    the production pattern into the wrong one and the two readings agree, the
+    delta collapses to zero, and the case fails.
+    """
     pairs = list(_pairs())
-    cases = []
 
-    def count(fn):
-        return sum(1 for c, t in pairs if fn(c) != fn(t))
-
-    cases.append((
-        "the six axes as specified", "0 pairs differ", 0,
-        sum(1 for c, t in pairs
-            if any(x != y for _, _, x, y in comparisons(scan(c), scan(t), True))),
-        lambda n: n == 0))
-
-    cases.append((
-        "list-items without the whitespace after the marker",
-        "17 of 32 pairs differ", 17,
-        count(lambda p: sum(1 for l in _outside(p)[0] if LOOSE_LIST_ITEM.match(l))),
-        lambda n: n > 0))
-
-    cases.append((
-        "quote blocks counted as '>' lines instead of runs",
-        "10 of 32 pairs differ", 10,
-        count(lambda p: sum(1 for l in _outside(p)[0] if QUOTE.match(l))),
-        lambda n: n > 0))
-
-    cases.append((
-        "fence comments widened from '#' to '//' and '/*'",
-        "3 of 32 pairs differ", 3,
-        count(lambda p: sum(1 for l in _outside(p)[1] if WIDE_FENCE_COMMENT.match(l))),
-        lambda n: n > 0))
+    def delta(specified, wrong):
+        """Pairs the wrong reading splits that the specified reading does not."""
+        return sum(1 for c, t in pairs
+                   if wrong(c) != wrong(t) and specified(c) == specified(t))
 
     # Front matter is invisible to the ATX pattern -- `---` is not a heading to
-    # it -- so this case has to use the reading that DOES see it to show why the
-    # strip is load-bearing. Only translations carry front matter (32 of 32,
-    # against 0 canonicals), so the moment anything reads its closing `---` as a
-    # setext h2 the two sides part company everywhere at once.
+    # it -- so this case has to use a reading that DOES see it to show why the
+    # strip is load-bearing. That makes it a statement about the corpus (only
+    # translations carry front matter, 32 against 0) rather than a guard on the
+    # strip itself; the production patterns are indifferent to it today, which
+    # is exactly why nothing else here would notice its absence.
     def setext_aware(path):
         lines = _outside(path, strip_front=False)[0]
         n = 0
@@ -418,29 +414,55 @@ def self_test():
                 n += 1
         return n
 
-    cases.append((
-        "front matter left in place, read by anything that sees setext headings",
-        "all 32 pairs differ -- only translations have front matter", 32,
-        count(setext_aware),
-        lambda n: n > 0))
+    cases = [
+        ("list-items without the whitespace after the marker",
+         "17 of 32 pairs", 17,
+         delta(lambda p: scan(p).list_items,
+               lambda p: sum(1 for l in _outside(p)[0] if LOOSE_LIST_ITEM.match(l)))),
+        ("quote blocks counted as '>' lines instead of runs",
+         "10 of 32 pairs", 10,
+         delta(lambda p: scan(p).quote_blocks,
+               lambda p: sum(1 for l in _outside(p)[0] if QUOTE.match(l)))),
+        ("fence comments widened from '#' to '//' and '/*'",
+         "3 of 32 pairs", 3,
+         delta(lambda p: scan(p).fence_hash_lines,
+               lambda p: sum(1 for l in _outside(p)[1] if WIDE_FENCE_COMMENT.match(l)))),
+        ("front matter left in place, read by anything that sees setext headings",
+         "all 32 pairs -- only translations have front matter", 32,
+         delta(lambda p: tuple(scan(p).headings), setext_aware)),
+    ]
 
     print(f"pattern regression over {len(pairs)} pair(s)")
     failed = 0
-    for name, recorded, expected, measured, ok in cases:
-        good = ok(measured)
+    for name, recorded, expected, measured in cases:
+        good = measured > 0
         failed += not good
         drift = "" if measured == expected else f"  (design recorded {expected})"
         print(f"  {'ok  ' if good else 'FAIL'} {name}")
-        print(f"         measured {measured}; design recorded: {recorded}{drift}")
+        print(f"         breaks {measured} pair(s) the specified reading does not; "
+              f"design recorded {recorded}{drift}")
+
+    # Reported, never failed. How many pairs the specified reading itself splits
+    # is a property of the corpus on the day it runs -- it is 1 the moment a
+    # canonical is edited ahead of its translation, and 1 again for the first
+    # legitimate exemption. Gating on it here would fail the run for exactly the
+    # two states the design spends section 3.4 and section 4 forgiving.
+    live = sum(1 for c, t in pairs
+               if any(x != y for _, _, x, y in comparisons(scan(c), scan(t), True)))
+    print()
+    print(f"for context, the specified reading splits {live} pair(s) right now "
+          "(exemptions and pair state not applied) -- whether that matters is the "
+          "check's own verdict, not this one's")
+
     if failed:
         print()
-        print(f"{failed} case(s) failed: a reading this check is supposed to reject has "
-              "stopped being rejected. The patterns in the module docstring are the "
-              "specification -- see docs/design/documentation/"
+        print(f"{failed} case(s) failed: a wrong reading no longer parts company with the "
+              "specified one, which means the specified one has become it. The patterns in "
+              "the module docstring are the specification -- see docs/design/documentation/"
               "translation-structure-check.md \u00a71.1.")
         return 1
     print()
-    print("every wrong reading still breaks something -- the axes are not vacuous")
+    print("every wrong reading still breaks something the specified reading does not")
     return 0
 
 
@@ -465,9 +487,11 @@ def main():
         meta = frontmatter(translation)
         canonical = canonical_of(meta)
 
+        # A declaration defect is a finding about this pair, so it is collected
+        # with the rest of them. Counting it separately printed "0 with findings"
+        # one line above a MISMATCH and an exit 1.
         exempt, defects = read_exemptions(meta)
-        for defect in defects:
-            findings.append(Finding(rel, "hard", defect))
+        pair_findings = [Finding(rel, "hard", d) for d in defects]
         if exempt:
             exempt_axes_total += len(exempt)
             exempt_files += 1
@@ -477,6 +501,7 @@ def main():
             # one that is not there. That is the staleness check's finding, and
             # it already fails the job on it.
             skipped.append(rel)
+            findings.extend(pair_findings)
             continue
 
         verdict = pair_state(translation, meta) if in_repo else None
@@ -493,7 +518,6 @@ def main():
                        if axis == "headings")
         positional = heads_ok and "headings" not in exempt
 
-        pair_findings = []
         for axis, what, x, y in comparisons(a, b, positional):
             if axis in exempt:
                 continue
@@ -594,8 +618,9 @@ def report(findings, matching, mismatched_pairs, skipped, exempt_axes_total,
                 print(f"::error file={rel}::{f.text}")
 
     for rel in skipped:
-        print()
-        print(rel)
+        if rel not in by_file:
+            print()
+            print(rel)
         print("  skipped   no canonical to compare against "
               "-- check-translation-staleness.py reports this one")
 
@@ -618,10 +643,11 @@ def report(findings, matching, mismatched_pairs, skipped, exempt_axes_total,
               "structure finding above is reported rather than failed")
     elif shallow:
         print()
-        print("this is a shallow clone -- source_commit cannot be resolved, so no pair "
-              "reads as current and every structure finding above is reported rather "
-              "than failed. Fetch the full history (git fetch --unshallow, or "
-              "fetch-depth: 0 in Actions) to gate them.")
+        excused = (" and every structure finding above is reported rather than failed"
+                   if soft else "")
+        print(f"this is a shallow clone -- source_commit cannot be resolved, so no pair "
+              f"reads as current{excused}. Fetch the full history (git fetch --unshallow, "
+              "or fetch-depth: 0 in Actions) to gate them.")
     elif unknown_state:
         print()
         print(f"{unknown_state} pair(s) are not level with their canonical, so their "

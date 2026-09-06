@@ -45,9 +45,11 @@ Central is versioned independently).
   drift it was created to prevent.
 
 - **`check-translation-structure.py --self-test`** runs in CI ahead of the check itself. It varies
-  the *reading* while holding the corpus still, and every wrong reading must still break something.
-  On a corpus with nothing to catch, that is the only thing separating a check that measured and
-  found nothing from one that quietly stopped measuring.
+  the *reading* while holding the corpus still: each wrong reading must still split at least one pair
+  that the specified reading is happy with. On a corpus with nothing to catch, that is the only thing
+  separating a check that measured and found nothing from one that quietly stopped measuring -- and
+  because it counts the *difference* between two readings rather than an absolute, a pair that is
+  behind its canonical or carries a legitimate exemption cancels out instead of failing the step.
 
 ### Sessions: a routed submission carries the input, not a rendering of it
 
