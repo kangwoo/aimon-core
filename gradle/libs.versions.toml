@@ -85,7 +85,7 @@ kubernetes-client = "24.0.0"
 
 # HTTP & Networking
 okhttp = "5.5.0"
-javalin = "6.3.0"
+javalin = "7.2.3"
 
 # AI & LLM
 openai = "4.52.0"

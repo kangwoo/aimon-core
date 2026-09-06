@@ -81,7 +81,10 @@ public final class RewakeWebhookServer implements AutoCloseable {
         this.resolver = Objects.requireNonNull(resolver, "resolver cannot be null");
         this.verifier = new HmacSignatureVerifier();
         this.idempotencyCache = new WebhookIdempotencyCache(config.getIdempotencyWindow());
-        this.app = Javalin.create(c -> c.showJavalinBanner = false).post(config.getPath(), this::handle);
+        this.app = Javalin.create(c -> {
+            c.startup.showJavalinBanner = false;
+            c.routes.post(config.getPath(), this::handle);
+        });
     }
 
     /**
