@@ -461,6 +461,13 @@ PR [#32](https://github.com/kangwoo/aimon-core/pull/32), run
 | `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` 이 실제로 듣는다 | 받은 것이 chromium · chromium-headless-shell · ffmpeg **셋뿐**이다. firefox·webkit 0건 — 설계대로 |
 | 캐시 키와 경로가 맞다 | 첫 실행 `Cache not found for input keys: playwright-browsers-Linux-1.58.0`, post 스텝 `Cache saved with key: playwright-browsers-Linux-1.58.0`. 내려받은 곳도 `/home/runner/.cache/ms-playwright` 로 워크플로의 `path` 와 일치 |
 
+**항목을 다시 열지 않는 기록 한 줄** *(2026-09-06)*: 위 표의 캐시 행은 miss → save 까지만 본 것이다.
+다음 실행 [`33999629221`](https://github.com/kangwoo/aimon-core/actions/runs/33999629221) 이 나머지 반을
+채웠다 — 그 키로 **복원**했고, `Downloading Chrome` 이 **0건**이었고, post 가
+*"Cache hit occurred on the primary key …, not saving cache"* 로 재저장을 건너뛰었다. 계층 비용도 warm
+**20초**(cold 32초)다. 이것은 이 항목의 미정 둘이 아니라 곁가지였고 판단을 바꾸지 않으므로 항목은 닫힌
+채로 둔다 — R-2 가 자기 범위 밖 사실을 *"여기 한 줄로 기록만 남긴다"* 로 처리한 것과 같은 자리다.
+
 #### 미정 ② 하한선 87 — **CI 가 로컬과 소수점까지 같다**
 
 `coverage` job 이 세 exec 를 전부 복원했고(`test` · `integrationTest` · `playwrightTest`),
