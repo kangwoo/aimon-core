@@ -18,6 +18,7 @@ import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.TurnId;
 import at.aimon.core.agent.session.inbox.InboundMessage;
 import at.aimon.core.agent.session.inbox.InboundMessageId;
+import at.aimon.core.agent.session.inbox.UnreadableEntry;
 import at.aimon.core.base.Principal;
 import at.aimon.core.subagent.task.codec.SubmitOptionsCodec;
 import at.aimon.core.subagent.task.codec.UserInputCodec;
@@ -143,6 +144,71 @@ public final class InboundMessageRowCodec {
         } catch (IOException e) {
             throw new IllegalStateException("Failed to decode InboundMessage", e);
         }
+    }
+
+    /**
+     * Best-effort address recovery for an entry {@link #decode} could not rebuild.
+     *
+     * <p>
+     * <b>This method never throws</b>, and that is its whole contract. It runs inside the per-entry guard of
+     * {@code collect}, on a payload that has already proved itself unreadable, so a second failure here would either
+     * re-create the batch loss the guard exists to prevent or leave the drop unreported. Anything it cannot read
+     * comes back as an absent address, which the router already has a branch for.
+     *
+     * <p>
+     * The two addresses ride as raw strings rather than as {@code TurnId} — rebuilding a validating value object
+     * from this input is exactly the move that broke here in the first place. The conversion happens where a
+     * {@code null} means something.
+     *
+     * @param json
+     *            the payload as stored (may be null)
+     * @param entryId
+     *            the backend's id for the entry (null or empty is reported as {@code unknown} rather than refused)
+     * @param cause
+     *            what {@link #decode} threw (must not be null)
+     * @return the entry, with whatever address survived
+     */
+    public UnreadableEntry recoverAddress(String json, String entryId, RuntimeException cause) {
+        Objects.requireNonNull(cause, "cause must not be null");
+        // toString rather than getMessage: the message is null for plenty of runtime exceptions, and the type is
+        // half of what tells an operator a newer document apart from a damaged one. Neither appends the payload,
+        // though the JDK's own message can quote the single envelope value that failed — see UnreadableEntry.
+        // The id is the one field there is always some answer for — the backend handed this entry back, so if its
+        // own id will not wrap, name it unknown rather than lose the report to a second exception. Nothing reaches
+        // that fallback today (a stream entry id and a row id are neither null nor empty); it is here because a
+        // throw from this method lands exactly where the per-entry guard was put to stop one, and the caller has no
+        // way to tell that a "never throws" contract only held on one axis.
+        final UnreadableEntry.Builder recovered = UnreadableEntry.builder()
+                .id(InboundMessageId.of(entryId == null || entryId.isEmpty() ? "unknown" : entryId))
+                .reason(cause.toString());
+        if (json == null) {
+            return recovered.build();
+        }
+        try {
+            final JsonNode root = mapper.readTree(json);
+            recovered.turnId(rawText(root, "turnId")).idempotencyKey(rawText(root, "idempotencyKey"));
+        } catch (IOException | RuntimeException ignored) {
+            // Nothing legible in there. The entry is still reported — unaddressably, which the caller can tell.
+        }
+        return recovered.build();
+    }
+
+    /**
+     * One address field, as text, or null when the document does not usefully carry it.
+     *
+     * <p>
+     * Blank folds to absent, and that is not tidiness. {@code asText()} answers {@code ""} for an object or an array
+     * node, so a document holding {@code "idempotencyKey": {}} would otherwise recover an empty key, report itself
+     * as addressable, and send the router announcing a turn under an address nobody registered. Absent is the
+     * truthful answer, and it is the one the caller already has a branch for.
+     */
+    private static String rawText(JsonNode root, String field) {
+        final JsonNode node = root == null ? null : root.get(field);
+        if (node == null || node.isNull()) {
+            return null;
+        }
+        final String text = node.asText();
+        return text == null || text.isBlank() ? null : text;
     }
 
     /**

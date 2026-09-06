@@ -1,7 +1,5 @@
 package at.aimon.core.agent.session.inbox;
 
-import java.util.List;
-
 import at.aimon.core.agent.queue.QueuedInputPriority;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.exception.SessionInboxException;
@@ -19,6 +17,12 @@ import at.aimon.core.agent.session.idempotency.IdempotencyStore;
  * Implementations must preserve priority-then-FIFO ordering inside {@code collect} and remove returned entries
  * atomically. Idempotency / dedup is delegated to {@link IdempotencyStore} — this SPI never deduplicates by message
  * content.
+ *
+ * <p>
+ * <b>Removed is not the same as returned.</b> Every implementation deletes an entry from its backend before the
+ * codec rebuilds it, so an entry this build cannot decode is already gone by the time anyone knows. Such an entry
+ * must not take the rest of the batch with it: it is reported through {@link CollectedBatch#getUnreadable()} and
+ * the atomic-removal promise above still holds for everything the call touched.
  */
 public interface SessionInbox {
 
@@ -35,18 +39,25 @@ public interface SessionInbox {
     InboundMessageId deliver(InboundMessage message);
 
     /**
-     * Atomically removes and returns up to all messages with priority &le; {@code maxPriority} for {@code id}, in
-     * priority-then-FIFO order.
+     * Atomically removes every message with priority &le; {@code maxPriority} for {@code id}, and returns those it
+     * could rebuild in priority-then-FIFO order alongside those it could not.
+     *
+     * <p>
+     * A single entry this build cannot decode must not cost the rest of the batch. Implementations guard the decode
+     * <b>per entry</b> and catch {@link RuntimeException} there — the boundary is the entry, not the exception type,
+     * because the value objects an envelope rebuilds ({@link at.aimon.core.base.Principal.Type}, {@code Instant})
+     * signal a refusal with exceptions of their own. A failed entry is reported as an {@link UnreadableEntry} and
+     * logged at {@code WARN} naming the session; it is never re-thrown out of this method.
      *
      * @param id
      *            the session (must not be null)
      * @param maxPriority
      *            inclusive ceiling — {@code NOW} returns only NOW, {@code LATER} returns all tiers
-     * @return collected messages (never null; may be empty)
+     * @return what the call removed, split into decoded and undecodable (never null; may be empty)
      * @throws SessionInboxException
-     *             on backend failure
+     *             on backend failure — a decode failure is not one
      */
-    List<InboundMessage> collect(SessionId id, QueuedInputPriority maxPriority);
+    CollectedBatch collect(SessionId id, QueuedInputPriority maxPriority);
 
     /**
      * Quick check without dequeuing.

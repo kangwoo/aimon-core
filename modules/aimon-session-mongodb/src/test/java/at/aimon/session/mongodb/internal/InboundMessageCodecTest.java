@@ -1,6 +1,7 @@
 package at.aimon.session.mongodb.internal;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Instant;
 import java.util.Date;
@@ -22,6 +23,7 @@ import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.TurnId;
 import at.aimon.core.agent.session.inbox.InboundMessage;
 import at.aimon.core.agent.session.inbox.InboundMessageId;
+import at.aimon.core.agent.session.inbox.UnreadableEntry;
 import at.aimon.core.base.Principal;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.subagent.task.codec.SubmitOptionsCodec;
@@ -243,6 +245,54 @@ class InboundMessageCodecTest {
 
         assertThat(decoded.getUserInput()).isEqualTo(TextInput.of("what is in this?"));
         assertThat(decoded.getSessionId()).isEqualTo(SessionId.of("conv-42"));
+    }
+
+    @Test
+    @DisplayName("a broken envelope field still throws — the drop policy is the caller's, not this codec's")
+    void aBrokenEnvelopeFieldStillRefuses() {
+        // The design corrects what happens *after* the throw, not whether there is one. Widening the user-input
+        // degradation to the envelope would run a damaged document as if it were sound: `initiator`, `priority` and
+        // `deliveredAt` have no plain-text stand-in sitting beside them the way the input does.
+        final Document damaged = new Document("_id", new ObjectId()).append("conversationId", "conv-42")
+                .append("priority", 1).append("deliveredAt", Date.from(Instant.parse("2026-04-27T10:00:00Z")))
+                .append("payload", new Document("agentRef", "agent-x").append("userInput", "hello")
+                        .append("deliveredAt", Date.from(Instant.parse("2026-04-27T10:00:00Z"))).append("initiator",
+                                new Document("type", "ROBOT").append("id", "u-1").append("displayName", "alice")));
+
+        assertThatThrownBy(() -> codec.decode(damaged)).isInstanceOf(RuntimeException.class);
+    }
+
+    @Test
+    @DisplayName("address recovery reads the two ids out of the very document that failed")
+    void addressRecoveryReadsWhatSurvived() {
+        final ObjectId id = new ObjectId();
+        final Document damaged = new Document("_id", id).append("conversationId", "conv-42").append("priority", 1)
+                .append("deliveredAt", Date.from(Instant.parse("2026-04-27T10:00:00Z"))).append("payload",
+                        new Document("agentRef", "agent-x").append("userInput", "hello").append("turnId", "turn-abc")
+                                .append("idempotencyKey", "key-abc")
+                                .append("initiator", new Document("type", "ROBOT")));
+
+        final UnreadableEntry entry = codec.recoverAddress(damaged, new IllegalArgumentException("boom"));
+
+        assertThat(entry.getId().value()).isEqualTo(id.toHexString());
+        assertThat(entry.getTurnId()).hasValue("turn-abc");
+        assertThat(entry.getIdempotencyKey()).hasValue("key-abc");
+        assertThat(entry.getReason()).contains("boom");
+    }
+
+    @Test
+    @DisplayName("address recovery never throws, whatever it is handed")
+    void addressRecoveryIsTotal() {
+        // It runs inside the per-entry guard, on input that has already proved unreadable. A throw here would put
+        // the batch loss back exactly where the guard removed it.
+        final IllegalStateException cause = new IllegalStateException();
+
+        assertThat(codec.recoverAddress(null, cause).isAddressable()).isFalse();
+        assertThat(codec.recoverAddress(new Document(), cause).isAddressable()).isFalse();
+        // A document whose own _id will not read still produces a report rather than a second exception.
+        assertThat(codec.recoverAddress(new Document("_id", "not-an-object-id"), cause).getId()).isNotNull();
+        // getMessage() is null on that exception; the reason must still be usable.
+        assertThat(codec.recoverAddress(null, cause).getReason()).isNotBlank();
     }
 
     private InboundMessage.Builder baseMessage() {

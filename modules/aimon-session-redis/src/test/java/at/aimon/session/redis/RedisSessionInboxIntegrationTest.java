@@ -50,7 +50,7 @@ class RedisSessionInboxIntegrationTest {
         final InboundMessageId returnedId = inbox.deliver(message(id, QueuedInputPriority.NEXT, "hello"));
         assertThat(returnedId.value()).contains("-").as("Stream entry id should be in Redis 'ms-seq' format");
 
-        final List<InboundMessage> collected = inbox.collect(id, QueuedInputPriority.LATER);
+        final List<InboundMessage> collected = inbox.collect(id, QueuedInputPriority.LATER).getMessages();
         assertThat(collected).hasSize(1);
         final InboundMessage got = collected.get(0);
         assertThat(got.getId()).hasValue(returnedId);
@@ -72,7 +72,7 @@ class RedisSessionInboxIntegrationTest {
         inbox.deliver(message(id, QueuedInputPriority.NOW, "now-2"));
         inbox.deliver(message(id, QueuedInputPriority.NEXT, "next-2"));
 
-        final List<InboundMessage> collected = inbox.collect(id, QueuedInputPriority.LATER);
+        final List<InboundMessage> collected = inbox.collect(id, QueuedInputPriority.LATER).getMessages();
         assertThat(collected).extracting(m -> m.getUserInput().asText()).containsExactly("now-1", "now-2", "next-1",
                 "next-2", "later-1");
     }
@@ -85,10 +85,10 @@ class RedisSessionInboxIntegrationTest {
         inbox.deliver(message(id, QueuedInputPriority.NEXT, "next-1"));
         inbox.deliver(message(id, QueuedInputPriority.LATER, "later-1"));
 
-        final List<InboundMessage> nowOnly = inbox.collect(id, QueuedInputPriority.NOW);
+        final List<InboundMessage> nowOnly = inbox.collect(id, QueuedInputPriority.NOW).getMessages();
         assertThat(nowOnly).extracting(m -> m.getUserInput().asText()).containsExactly("now-1");
 
-        final List<InboundMessage> rest = inbox.collect(id, QueuedInputPriority.LATER);
+        final List<InboundMessage> rest = inbox.collect(id, QueuedInputPriority.LATER).getMessages();
         assertThat(rest).extracting(m -> m.getUserInput().asText()).containsExactly("next-1", "later-1");
     }
 
@@ -99,8 +99,8 @@ class RedisSessionInboxIntegrationTest {
         inbox.deliver(message(id, QueuedInputPriority.NEXT, "x"));
         inbox.deliver(message(id, QueuedInputPriority.NEXT, "y"));
 
-        assertThat(inbox.collect(id, QueuedInputPriority.LATER)).hasSize(2);
-        assertThat(inbox.collect(id, QueuedInputPriority.LATER)).isEmpty();
+        assertThat(inbox.collect(id, QueuedInputPriority.LATER).getMessages()).hasSize(2);
+        assertThat(inbox.collect(id, QueuedInputPriority.LATER).getMessages()).isEmpty();
         assertThat(inbox.isEmpty(id)).isTrue();
     }
 
@@ -124,7 +124,7 @@ class RedisSessionInboxIntegrationTest {
 
         inbox.purge(id);
         assertThat(inbox.isEmpty(id)).isTrue();
-        assertThat(inbox.collect(id, QueuedInputPriority.LATER)).isEmpty();
+        assertThat(inbox.collect(id, QueuedInputPriority.LATER).getMessages()).isEmpty();
     }
 
     private static InboundMessage message(SessionId id, QueuedInputPriority priority, String text) {
