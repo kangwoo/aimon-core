@@ -4,6 +4,8 @@ import java.util.Objects;
 import java.util.Optional;
 
 import at.aimon.core.agent.SubmitOptions;
+import at.aimon.core.agent.input.TextInput;
+import at.aimon.core.agent.input.UserInput;
 import at.aimon.core.agent.queue.QueuedInputPriority;
 import at.aimon.core.agent.session.LiveSessionOptions;
 import at.aimon.core.agent.session.OpenAttributes;
@@ -15,7 +17,7 @@ import at.aimon.core.base.Principal;
  *
  * <p>
  * Carries the target {@link SessionId}, the {@code agentRef} the caller intends to bind to the session, the
- * raw user input, optional session options, optional idempotency key, priority tier (defaults to {@link
+ * {@link UserInput}, optional session options, optional idempotency key, priority tier (defaults to {@link
  * QueuedInputPriority#NEXT}), and the {@link Principal} that initiated the input.
  *
  * <p>
@@ -34,7 +36,7 @@ public final class SubmitRequest {
     private final SessionId sessionId;
     private final String agentRef;
     private final String contextDiscriminator;
-    private final String userInput;
+    private final UserInput userInput;
     private final LiveSessionOptions options;
     private final SubmitOptions submitOptions;
     private final OpenAttributes openAttributes;
@@ -78,7 +80,24 @@ public final class SubmitRequest {
         return Optional.ofNullable(contextDiscriminator);
     }
 
-    public String getUserInput() {
+    /**
+     * The input this turn was submitted with — text, an image, a document, or a combination.
+     *
+     * <p>
+     * <b>This was a {@code String}, and the loss it caused was a wall rather than a leak.</b>
+     * {@link at.aimon.core.agent.session.LiveSession} has taken a {@link UserInput} for some time, so a multimodal
+     * turn worked on whichever host held the handle. A submission routed through {@link SessionRouter} could not
+     * carry one at all: the builder took only text, so an application that scaled out could not compile the call it
+     * had been making — nothing degraded at runtime, because there was no way to hand the router an image in the
+     * first place. What the widening buys is the capability, not the recovery of a value that used to be dropped.
+     *
+     * <p>
+     * A caller that wants the old value has {@code getUserInput().asText()}, which is what the inbox wire still
+     * carries for a reader that predates this change.
+     *
+     * @return the input, never null
+     */
+    public UserInput getUserInput() {
         return userInput;
     }
 
@@ -123,7 +142,7 @@ public final class SubmitRequest {
         private SessionId sessionId;
         private String agentRef;
         private String contextDiscriminator;
-        private String userInput;
+        private UserInput userInput;
         private LiveSessionOptions options;
         private SubmitOptions submitOptions;
         private OpenAttributes openAttributes;
@@ -170,8 +189,32 @@ public final class SubmitRequest {
             return this;
         }
 
-        public Builder userInput(String v) {
+        /**
+         * Sets the input for this turn.
+         *
+         * @param v
+         *            the input (must be non-null by {@code build()} time)
+         * @return this builder
+         */
+        public Builder userInput(UserInput v) {
             this.userInput = v;
+            return this;
+        }
+
+        /**
+         * Sets a text input, equivalent to {@code userInput(TextInput.of(v))}.
+         *
+         * <p>
+         * Kept because text is what an HTTP body or a REPL prompt carries and because it is what every existing
+         * caller passes — the widening cost producers nothing. A {@code null} is carried through as {@code null} so
+         * {@code build()} still rejects it with the same message rather than failing earlier and differently.
+         *
+         * @param v
+         *            the text (must be non-null by {@code build()} time)
+         * @return this builder
+         */
+        public Builder userInput(String v) {
+            this.userInput = v == null ? null : TextInput.of(v);
             return this;
         }
 

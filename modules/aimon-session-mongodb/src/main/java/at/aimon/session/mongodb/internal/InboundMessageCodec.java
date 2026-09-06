@@ -10,6 +10,8 @@ import org.bson.Document;
 import org.bson.types.ObjectId;
 
 import at.aimon.core.agent.SubmitOptions;
+import at.aimon.core.agent.input.TextInput;
+import at.aimon.core.agent.input.UserInput;
 import at.aimon.core.agent.queue.QueuedInputPriority;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.TurnId;
@@ -18,6 +20,7 @@ import at.aimon.core.agent.session.inbox.InboundMessageId;
 import at.aimon.core.base.Principal;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.subagent.task.codec.SubmitOptionsCodec;
+import at.aimon.core.subagent.task.codec.UserInputCodec;
 
 /**
  * Codec between the {@link InboundMessage} envelope and the BSON {@link Document} stored in MongoDB.
@@ -45,6 +48,31 @@ import at.aimon.core.subagent.task.codec.SubmitOptionsCodec;
  * representations. An <i>added</i> field does not — it has to be handled here too, and what says so is
  * {@code InboundMessageCodecTest}, which asserts this codec's key sets against
  * {@code SubmitOptionsCodec.TOP_LEVEL_FIELDS} and its two nested siblings rather than against literals of its own.
+ *
+ * <p>
+ * <b>{@code userInput} leads with text, {@code userInputEncoded} carries the rest — and here it is a string.</b> The
+ * envelope's input used to be a {@code String} and that key held it directly; it now holds
+ * {@link at.aimon.core.agent.input.UserInput#asText()}, and a non-text input additionally writes
+ * {@link UserInputCodec#encodeToString} under {@code userInputEncoded}. A {@link TextInput} writes no sidecar, so a
+ * text entry is the document the previous build wrote. The compatibility reasoning is the same in all three backends
+ * and is spelled out on the Redis codec; the short form is that an inbox holds work not yet done, so an entry written
+ * by either build has to be readable by the other, and an older node reading a multimodal entry finds a rendering it
+ * can run rather than an empty string or an undecodable document. The reverse direction — this build reading an
+ * encoding a newer node wrote — degrades to that same rendering through
+ * {@link UserInputCodec#decodeOrText(String, String, String)} rather than throwing, because
+ * {@code findOneAndDelete} has already removed the document by the time this codec runs.
+ *
+ * <p>
+ * <b>Unlike {@code submitOptions}, this subtree is not a second representation.</b> The argument that keeps
+ * {@code submitOptions} hand-mapped here — BSON types inside a heterogeneous {@code Map<String, Object>}, where a
+ * {@code Date} is a BSON value rather than a string — does not apply to an input: every leaf of that shape is a
+ * {@code String}, so there is no BSON type for a conversion to lose. A subdocument would in fact cost no hand-written
+ * mapping at all: {@code Document.parse(UserInputCodec.encodeToString(input))} and {@code subdoc.toJson()} would do
+ * it. What it would buy is queryability this collection does not use — its indexed fields are the top-level
+ * {@code conversationId}, {@code priority} and {@code deliveredAt}, and nothing reads into the payload — and what it
+ * would cost is a round trip through BSON and back out through extended JSON, whose fidelity here rests on the
+ * subtree happening to be all strings. Storing the text keeps the bytes this codec writes identical to the bytes the
+ * shared codec produced.
  */
 public final class InboundMessageCodec {
 
@@ -64,7 +92,10 @@ public final class InboundMessageCodec {
         final Document payload = new Document();
         payload.append("agentRef", message.getAgentRef());
         payload.append("contextDiscriminator", message.getContextDiscriminator().orElse(null));
-        payload.append("userInput", message.getUserInput());
+        payload.append("userInput", message.getUserInput().asText());
+        if (!(message.getUserInput() instanceof TextInput)) {
+            payload.append("userInputEncoded", UserInputCodec.encodeToString(message.getUserInput()));
+        }
         payload.append("turnId", message.getTurnId().map(TurnId::value).orElse(null));
         payload.append("idempotencyKey", message.getIdempotencyKey().orElse(null));
         payload.append("initiator", encodePrincipal(message.getInitiator()));
@@ -95,10 +126,11 @@ public final class InboundMessageCodec {
         if (payload == null) {
             throw new IllegalStateException("Missing payload subtree on inbox document " + id);
         }
+        final String sessionId = doc.getString(DocumentKeys.F_CONVERSATION_ID);
         final InboundMessage.Builder b = InboundMessage.builder().id(InboundMessageId.of(id.toHexString()))
-                .sessionId(SessionId.of(doc.getString(DocumentKeys.F_CONVERSATION_ID)))
+                .sessionId(SessionId.of(sessionId))
                 .priority(QueuedInputPriority.values()[doc.getInteger(DocumentKeys.F_PRIORITY)])
-                .agentRef(payload.getString("agentRef")).userInput(payload.getString("userInput"))
+                .agentRef(payload.getString("agentRef")).userInput(decodeUserInput(payload, sessionId))
                 .initiator(decodePrincipal(payload.get("initiator", Document.class)))
                 .deliveredAt(toInstant(payload.get("deliveredAt")));
         final String turnId = payload.getString("turnId");
@@ -126,6 +158,19 @@ public final class InboundMessageCodec {
             b.submitOptions(submitOptions);
         }
         return b.build();
+    }
+
+    /**
+     * The envelope's input: the {@code userInputEncoded} text when it is there and readable, otherwise the
+     * {@code userInput} string wrapped as text. See the class javadoc for why the two keys coexist, and
+     * {@link UserInputCodec#decodeOrText(String, String, String)} for why an unreadable encoding degrades here
+     * rather than refusing the document — {@code findOneAndDelete} has already removed it by the time this runs.
+     */
+    private static UserInput decodeUserInput(Document payload, String sessionId) {
+        // The session id goes with it: a warning nobody can attribute to a session is one nobody can act on. It is
+        // a top-level field here rather than a payload one, so the caller passes it down.
+        return UserInputCodec.decodeOrText(payload.getString("userInputEncoded"), payload.getString("userInput"),
+                sessionId);
     }
 
     private static Document encodePrincipal(Principal principal) {
