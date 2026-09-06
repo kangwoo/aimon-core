@@ -396,8 +396,16 @@ forward 시나리오가 Redis·Postgres·MongoDB **셋 다에서** 실제로 돌
 생존자는 뒤쪽 하나, 앞쪽 정상 항목은 소실.
 
 트리거는 손상된 문서이므로 흔하지 않다. 다만 **2번이 그 확률을 낮췄지 없애지는 않았다** — 입력 필드는
-이제 저하하지만 `initiator` · `priority` · `deliveredAt` 은 계속 던지고, 그것이 맞다(그 값들에는 옆에
-놓인 대체물이 없다).
+이제 저하하지만 `initiator` · ~~`priority`~~ · `deliveredAt` 은 계속 던지고, 그것이 맞다(그 값들에는
+옆에 놓인 대체물이 없다).
+
+IMPORTANT: **`priority` 는 여기 있으면 안 된다** *(2026-09-06 정정)*. 코덱이 던지는 것은 맞지만
+**세 백엔드가 디코드 전에 우선순위로 거르므로 어휘 밖의 값이 그 호출까지 도달하지 못한다** — Redis 는
+티어가 곧 키이고, Postgres 는 `WHERE priority <= ?`, Mongo 는 `Filters.lte`. Mongo 에 `priority: 9`
+문서를 심어 측정했다(`returned 2` · `docs-left-in-storage=1` — 디코드되지 않고 남았다). 그러므로 새
+우선순위 티어가 만드는 것은 이 항목의 배치 소실이 아니라 **"옛 노드가 그 항목을 영원히 수집하지
+않는다"** 는 별개의 조용한 고장이고, 아래 설계 문서 §9 가 범위 밖으로 내보낸다. 이 줄을 지우지 않고
+취소선으로 두는 이유는 [`README.md`](README.md) 규칙 둘이다.
 
 **어디** *(2026-09-05 확인)* — `RedisSessionInbox.collectTier` (Lua 가 배치 전체를 `XDEL` 한 뒤 디코드) ·
 `PostgresSessionInbox.collect` (`commit()` 뒤 디코드 루프) · `MongoSessionInbox.collect`
