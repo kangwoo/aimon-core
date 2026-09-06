@@ -6,15 +6,61 @@ from:
 
     ---
     translated_from: docs/features/tool/tool-development-guide.md
-    source_commit: c976edc7
+    source_commit: eec9ccd
     ---
 
 This script compares that commit against the canonical's current history and
-lists the ones that have moved on. It is deliberately a *report*, not a gate:
-it exits 0 even when translations are stale, because a translation backlog that
-blocks edits to the canonical makes the canonical go stale instead -- the worse
-of the two failure modes. Pass --strict to make staleness an error anyway
-(useful before cutting a release).
+sorts each translation into one of two findings, which are NOT the same thing
+and do not exit the same way.
+
+STALE -- the guard worked and the answer is bad: the canonical moved on. This
+exits 0. A translation backlog that blocks edits to the canonical makes the
+canonical go stale instead, which is the worse of the two failure modes. Pass
+--strict to make staleness an error anyway.
+
+--strict covers staleness and nothing else. It used to fail on any finding,
+which meant a clean shallow clone -- where the whole report is the clone's depth
+talking -- failed under it; now the excused findings below are excused there
+too, and --strict on that clone exits 0 like the plain run. Excusing a finding
+under one flag and not the other would make the flag, rather than the finding,
+decide whether depth counts as a defect.
+
+--strict has no caller in this repository and that is deliberate, so before
+wiring it into scripts/release.sh: release.sh already refuses to run unless the
+tree is clean, on main, and level with origin/main, and every commit that
+reaches main is run through this job on that exact tree -- release.sh does not
+check that the run passed, but a red main is visible, so a release gate would
+add nothing on the unresolvable axis, which now fails everywhere anyway.
+What it would add is a gate on staleness at the one moment the argument above
+bites hardest. A translation a week behind would block a release, and the
+release is not the thing that is wrong; the pressure at that moment does not
+produce a translation, it produces a deleted check. Run it by hand before a
+release if you want to know. Do not make it the thing standing between a fix
+and the people waiting for it.
+
+UNRESOLVABLE -- the guard has no answer at all: the front matter is missing, the
+canonical it names is gone, or the source_commit is not a commit in this
+history. This exits 1. The reasoning that keeps STALE at 0 does not reach here:
+failing on unresolvable does not pressure anyone to skip a translation, it asks
+for a resolvable SHA, which is one line and belongs to whoever wrote the file.
+Left at 0 it is worse than either -- a stale translation says the guard is
+unhappy, an unresolvable one says nothing while looking like nothing is wrong.
+
+That distinction was not free. The open-source history squash retired every
+pre-squash SHA at once and 19 of 32 translations went unresolvable. Every run
+after it stayed green, because both findings shared an exit code -- and of the
+19 annotations emitted, the check-runs API returns 10, so the job's console
+output was the only complete account of it and a green job gives nobody a
+reason to open that.
+
+The one exception is a shallow clone, and it reaches exactly as far as its own
+reason. Truncated history is why a source_commit can look absent or unrelated to
+HEAD, so those two findings -- and only those two -- are reported and not
+counted; CI passes fetch-depth: 0 for this reason. Everything else fails at any
+depth, the catch-all "could not diff" included: depth cannot delete front
+matter, move a canonical, or point translated_from outside the repository. An
+exemption wider than the reason for it is the same green-that-means-nothing this
+file exists to remove, just in a narrower window.
 
 The direction is not assumed. `translated_from` names the canonical whichever
 language it is in, so this handles both docs/**/*.en.md (Korean canonical) and
@@ -76,6 +122,18 @@ def main():
         print("not a git repository -- nothing to compare against")
         return 0
 
+    # A shallow clone has no history to compare against, so a source_commit that
+    # is really there looks absent. That is the clone's fault, not the
+    # documents', and it must not be indistinguishable from a real finding.
+    shallow = git("rev-parse", "--is-shallow-repository") == "true"
+
+    # Which is why every finding says whether depth could have produced it.
+    # HISTORY findings are answers to a question about the commit graph, and a
+    # truncated graph can get them wrong. DOCUMENT findings are about the file
+    # in front of you -- no clone depth deletes front matter or moves a
+    # canonical -- so they hold at any depth and are never excused.
+    HISTORY, DOCUMENT = "history", "document"
+
     stale, broken, fresh = [], [], 0
 
     for path in translations():
@@ -85,18 +143,18 @@ def main():
         commit = meta.get("source_commit")
 
         if not canonical or not commit:
-            broken.append((rel, "no translated_from / source_commit front matter"))
+            broken.append((rel, "no translated_from / source_commit front matter", DOCUMENT))
             continue
 
         canonical_path = ROOT / canonical
         if not canonical_path.exists():
-            broken.append((rel, f"canonical does not exist: {canonical}"))
+            broken.append((rel, f"canonical does not exist: {canonical}", DOCUMENT))
             continue
 
         # An unknown commit means history was rewritten (squash, rebase, a
         # shallow clone). Say so rather than silently reporting "fresh".
         if git("cat-file", "-e", f"{commit}^{{commit}}") is None:
-            broken.append((rel, f"source_commit {commit} is not in this history"))
+            broken.append((rel, f"source_commit {commit} is not in this history", HISTORY))
             continue
 
         # Reachable is not enough: a commit recorded on a squash-merged branch
@@ -106,12 +164,18 @@ def main():
         # Route that to unresolvable instead of reporting false staleness.
         if git("merge-base", "--is-ancestor", commit, "HEAD") is None:
             broken.append((rel, f"source_commit {commit} is not an ancestor of HEAD "
-                                "(recorded on an unmerged or squash-merged branch?)"))
+                          "(recorded on an unmerged or squash-merged branch?)", HISTORY))
             continue
 
         behind = git("log", "--format=%h %s", f"{commit}..HEAD", "--", canonical)
         if behind is None:
-            broken.append((rel, f"could not diff {commit}..HEAD for {canonical}"))
+            # DOCUMENT, not HISTORY, even though it is the catch-all: by here
+            # the commit resolves and is an ancestor, so the range is
+            # computable at any depth, and what is left to fail is the path.
+            # A translated_from of "../elsewhere.md" that exists on disk gets
+            # past the existence check above and makes git refuse the pathspec
+            # as outside the repository -- the file's problem, not the clone's.
+            broken.append((rel, f"could not diff {commit}..HEAD for {canonical}", DOCUMENT))
             continue
 
         # A commit that edited the canonical *and* this translation is not
@@ -156,17 +220,43 @@ def main():
             print(f"::warning file={rel}::translation is behind {canonical} "
                   f"by {len(commits)} commit(s) since {commit}")
 
-    for rel, why in broken:
+    # Split before printing: whether a finding is excused decides both what it
+    # is annotated as and whether it fails the run, and those two must not be
+    # able to disagree.
+    excused = [b for b in broken if shallow and b[2] == HISTORY]
+    fatal = [b for b in broken if not (shallow and b[2] == HISTORY)]
+
+    for rel, why, kind in broken:
         print()
         print(f"UNRESOLVABLE  {rel}")
         print(f"              {why}")
         if github:
-            print(f"::warning file={rel}::{why}")
+            # An error annotation, not a warning, because this fails the job --
+            # unless the clone's depth is what produced it, which fails nothing.
+            # It also puts the two findings in different display buckets, which
+            # matters because GitHub truncates the list: 19 unresolvable would
+            # otherwise have a stale one's warning to crowd out. None existed
+            # when that happened here, so this is a mechanism, not a post-mortem.
+            level = "warning" if (shallow and kind == HISTORY) else "error"
+            print(f"::{level} file={rel}::{why}")
 
     if not stale and not broken:
         print("every translation is level with its canonical")
 
-    if strict and (stale or broken):
+    if excused:
+        print()
+        print(f"{len(excused)} translation(s) unresolvable only because this is a "
+              "shallow clone -- not counted as an error. Fetch the full history "
+              "(git fetch --unshallow, or fetch-depth: 0 in Actions) to check them.")
+
+    if fatal:
+        print()
+        print(f"{len(fatal)} translation(s) unresolvable: the check cannot say "
+              "whether they are current. Fix the front matter -- see "
+              "CONTRIBUTING.md, \"Translations\".")
+        return 1
+
+    if strict and stale:
         return 1
     return 0
 

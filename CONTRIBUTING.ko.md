@@ -1,6 +1,6 @@
 ---
 translated_from: CONTRIBUTING.md
-source_commit: 0ecb5ce
+source_commit: ae4509e
 ---
 
 # AIMON Core 기여 가이드
@@ -302,7 +302,7 @@ class ExampleToolTest {
 ```yaml
 ---
 translated_from: docs/features/hook/hook-config-guide.md
-source_commit: 4bb8ace0
+source_commit: eec9ccd
 ---
 ```
 
@@ -314,6 +314,14 @@ source_commit: 4bb8ace0
 변경이 크다면 — PR 에 그렇게 적고 이슈를 남기세요. 번역 때문에 정본 수정을 붙잡아 두면 안 됩니다.
 번역이 일주일 뒤처지는 것은 문서가 양쪽 언어 모두에서 틀린 것보다 작은 문제입니다. CI 가 낡은 번역을
 경고로만 보고하고 절대 실패시키지 않는 이유가 바로 이것입니다.
+
+**다만 CI 가 해석하지 못하는 `source_commit` 은 빌드를 실패시킵니다.** 이것은 다른 종류의 발견입니다.
+낡음은 검사가 돌았고 그 답이 나쁘다는 뜻이지만, 해석 불가는 **답이 없다**는 뜻입니다 — 그 파일이 최신인지
+1년 뒤처졌는지 말해 주지 못합니다. 여기서 실패시키는 것은 번역을 건너뛰라는 압력이 되지 않습니다.
+존재하는 SHA 를 적으라는 것이고, 그것은 한 줄입니다. 히스토리 재작성(스쿼시·리베이스)으로 적어 둔 SHA 가
+사라졌다면, 정본이 **번역한 그 상태로** 담겨 있는 가장 오래된 커밋을 `source_commit` 으로 겨눕니다 —
+그리고 적기 전에 정말 그 상태인지 확인합니다. 내용이 어긋난 번역에 붙은 해석 가능한 SHA 는 해석
+불가보다 나쁩니다. 그것은 초록으로 보고합니다.
 
 번역을 쓸 때는 이렇게 합니다.
 

@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/skill/builtin-agent-skill-guide.md
-source_commit: 8830d022
+source_commit: eec9ccd
 ---
 
 # Built-in Agent/Skill Guide

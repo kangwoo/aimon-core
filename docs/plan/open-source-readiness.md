@@ -366,9 +366,14 @@ API 안정성 정책 / 메인테이너·거버넌스 문서 / 로드맵 / 링크
       이력을 비교해 뒤처진 번역을 목록화. **계획의 `.sh` 대신 `.py`** 로 갔다 — git plumbing
       호출과 frontmatter 파싱이 필요했고, 옆에 이미 `scripts/check-doc-links.py` 가 있어서
       기여자가 익힐 도구가 늘지 않는 쪽을 택했다
-- [x] CI 에 **경고로만** 연결한다(실패시키지 않는다). 번역 지연이 정본 수정 PR 을 막으면
+- [x] ~~CI 에 **경고로만** 연결한다(실패시키지 않는다).~~ 번역 지연이 정본 수정 PR 을 막으면
       정본이 낡기 시작한다 — 더 나쁜 실패 모드다. `build.yml` 의 `translation-staleness` 잡이며
       스크립트 자체가 stale 을 찾아도 0 으로 끝난다(`--strict` 는 릴리스 직전용 opt-in)
+      — **취소선 부분은 2026-09-06 이후 거짓이다.** 그 잡은 이제 `stale` 에서만 경고로 끝나고
+      **`unresolvable` 에서는 실패한다.** 나머지 두 절은 지금도 참이다. 근거는
+      [`../backlog/translation-tooling-open-items.md`](../backlog/translation-tooling-open-items.md) §0
+      — 여기 인용된 "더 나쁜 실패 모드" 논거는 번역 밀림에 관한 것이고, `unresolvable` 은
+      번역 밀림이 아니라 가드의 부재다
 - [x] `CONTRIBUTING.md` 에 절 추가: 정본을 고쳤을 때 번역을 어떻게 처리하는가
       (같이 고치거나, 못 고치면 stale 로 두고 이슈를 남긴다)
 - [x] `CLAUDE.md` 에 번역 규칙 반영 — 에이전트가 문서를 고칠 때 양쪽을 인지하게 한다

@@ -187,6 +187,39 @@ Central is versioned independently).
   Docker daemon the gate now requires, and verifying the GitHub Release the tag push triggers, which
   runs after the Central publish and so fails without endangering anything or telling anyone.
 
+- **`translation-staleness` now fails the build on a `source_commit` it cannot resolve.** The job had
+  two findings sharing one exit code, and only one of them had an argument for it. A *stale*
+  translation — the canonical moved on — is still reported and still passes, for the reason the script
+  has always given: a translation backlog that blocks edits to the canonical makes the canonical go
+  stale instead, which is the worse failure. That reasoning is about a backlog, and an *unresolvable*
+  finding is not one. It is the guard having no opinion at all: absent front matter, a
+  `translated_from` naming a canonical that is not there, or a `source_commit` that is not a commit in
+  this history. Failing on it pressures nobody to skip a translation; it asks for a SHA that exists,
+  which is one line and belongs to whoever wrote the file.
+
+  Left sharing an exit code it hid the thing it was built to catch. The open-source history squash
+  retired every pre-squash SHA at once and **19 of 32 translations went unresolvable** — 59% of the
+  guard's subjects — and every run after it stayed green. Of the 19 annotations emitted, the
+  check-runs API returns 10, and they hang off files no pull request touches, so the job's console was
+  the only complete account and a green job gives nobody a reason to open it. Those 19 now carry
+  `eec9ccd`, checked pair by pair against the canonical rather than rewritten on faith: a resolvable
+  SHA on a translation that no longer matches reports green, which is worse than the silence it
+  replaces. **A fork carrying translations with pre-squash SHAs will see this job go red**; point
+  `source_commit` at the oldest commit that still holds the canonical in the state you translated.
+  Unresolvable findings annotate as `::error` rather than `::warning`, matching the new severity.
+  [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`CLAUDE.md`](CLAUDE.md) carry the contributor-facing half.
+
+- **The shallow-clone exemption reaches exactly as far as its own reason, and `--strict` changed with
+  it.** A shallow clone makes every `source_commit` look absent, so those findings are reported
+  without failing — CI passes `fetch-depth: 0` and never takes that path. The exemption is decided per
+  finding rather than by one global flag: depth cannot delete front matter, move a canonical, or point
+  `translated_from` outside the repository, so those fail at any depth. **`--strict` no longer fails on
+  a clean shallow clone** (it did before, when it failed on any finding). It now covers staleness and
+  nothing else — excusing a finding under one flag but not the other would make the flag, rather than
+  the finding, decide whether depth counts as a defect. Unresolvable findings fail with or without it.
+  The flag still has no caller here, and [`scripts/check-translation-staleness.py`](scripts/check-translation-staleness.py)
+  records why it is deliberately not in the release gate.
+
 ### Documentation: the site's front page is now written for a first-time reader
 
 - **`docs/README.md` is a landing page rather than a catalogue.** It was the index *and* the first
