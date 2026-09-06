@@ -35,6 +35,7 @@ import at.aimon.core.agent.session.store.SessionLeaseStore;
 import at.aimon.core.agent.session.store.SessionRecordStore;
 import at.aimon.core.base.Principal;
 import at.aimon.session.routing.fixture.RequestFixtures;
+import at.aimon.session.routing.fixture.TestLiveSession;
 import at.aimon.session.routing.fixture.TestManagerHarness;
 
 /**
@@ -117,14 +118,20 @@ class SessionRouterUnreadableEntryTest {
         final SubmitDisposition forwarded = node.manager().submit(RequestFixtures.submit(id, "alpha", "hello"));
         assertThat(forwarded.getKind()).isEqualTo(SubmitDisposition.Kind.FORWARDED);
 
-        // No turn id, no key: nothing on the rail can find a caller. The router must still not throw out of the
-        // drain pass, which is the only reason the rest of a mixed batch survives.
-        inbox.makeNextCollectUnreadable(null);
+        // The mixed batch, which is the one the title is about: one message the codec rebuilt, and beside it an
+        // entry with no turn id and no key, so nothing on the rail can find its caller. The pass has to run the
+        // first and stay silent about the second — the earlier version of this test reported zero readable
+        // messages, which made "the readable ones" a claim nothing checked.
+        inbox.addUnaddressableEntryToNextCollect();
 
-        Thread.sleep(2_000L);
-        assertThat(forwarded.getFuture().toCompletableFuture())
-                .as("unaddressable means nobody can be told — the forward waits out its deadline, as before")
-                .isNotDone();
+        final TestLiveSession session = awaitSession(node, id);
+        assertThat(session.awaitTurnStarted()).isTrue();
+        assertThat(session.submittedInputs()).containsExactly("hello");
+        session.completeCurrentTurn(TestLiveSession.ok("done"));
+
+        assertThat(forwarded.getFuture().toCompletableFuture().get(10, TimeUnit.SECONDS).getFinalAnswer())
+                .as("the readable message ran, and its caller got that answer rather than an UNREADABLE failure")
+                .isEqualTo("done");
     }
 
     @Test
@@ -156,6 +163,16 @@ class SessionRouterUnreadableEntryTest {
         return harness;
     }
 
+    private static TestLiveSession awaitSession(TestManagerHarness harness, SessionId id) throws InterruptedException {
+        final long deadline = System.currentTimeMillis() + TestLiveSession.DEFAULT_AWAIT_MS;
+        while (harness.session(id) == null && System.currentTimeMillis() < deadline) {
+            Thread.sleep(10L);
+        }
+        final TestLiveSession session = harness.session(id);
+        assertThat(session).as("a session for %s should have been opened", id).isNotNull();
+        return session;
+    }
+
     private static Throwable failureOf(CompletionStage<?> stage) throws InterruptedException {
         try {
             stage.toCompletableFuture().get(10, TimeUnit.SECONDS);
@@ -178,6 +195,7 @@ class SessionRouterUnreadableEntryTest {
         private volatile boolean armed;
         private volatile String turnId;
         private volatile String idempotencyKey;
+        private volatile boolean keepReadable;
 
         UnreadableOnCollectInbox(SessionInbox delegate) {
             this.delegate = Objects.requireNonNull(delegate, "delegate must not be null");
@@ -193,6 +211,17 @@ class SessionRouterUnreadableEntryTest {
             this.armed = true;
         }
 
+        /**
+         * Report an unaddressable entry <em>beside</em> whatever is readable, rather than in place of it — the
+         * mixed batch a backend produces when only some of what it removed failed to decode.
+         */
+        void addUnaddressableEntryToNextCollect() {
+            this.keepReadable = true;
+            this.turnId = null;
+            this.idempotencyKey = null;
+            this.armed = true;
+        }
+
         @Override
         public InboundMessageId deliver(InboundMessage message) {
             return delegate.deliver(message);
@@ -204,11 +233,16 @@ class SessionRouterUnreadableEntryTest {
             if (!armed || batch.getMessages().isEmpty()) {
                 return batch;
             }
+            final UnreadableEntry entry = UnreadableEntry.builder()
+                    .id(batch.getMessages().get(0).getId().orElse(InboundMessageId.of("entry-1"))).turnId(turnId)
+                    .idempotencyKey(idempotencyKey)
+                    .reason("java.lang.IllegalArgumentException: No enum constant Principal.Type.ROBOT").build();
+            if (keepReadable) {
+                return CollectedBatch.of(batch.getMessages(), List.of(entry));
+            }
             final List<UnreadableEntry> unreadable = new ArrayList<>();
-            for (InboundMessage message : batch.getMessages()) {
-                unreadable.add(UnreadableEntry.builder().id(message.getId().orElse(InboundMessageId.of("entry-1")))
-                        .turnId(turnId).idempotencyKey(idempotencyKey)
-                        .reason("java.lang.IllegalArgumentException: No enum constant Principal.Type.ROBOT").build());
+            for (int i = 0; i < batch.getMessages().size(); i++) {
+                unreadable.add(entry);
             }
             return CollectedBatch.of(List.of(), unreadable);
         }

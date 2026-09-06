@@ -22,8 +22,21 @@ import java.util.Optional;
  * conversion happens at the point that needs it, where a {@code null} has a branch of its own.
  *
  * <p>
- * <b>{@link #getReason()} never carries the payload.</b> It is the failure's own message, which is what an operator
- * needs to tell an upgrade apart from a corruption; the entry's content is not logged anywhere on this path.
+ * <b>{@link #getReason()} is the failure's own message, never the stored payload.</b> Nothing on this path appends
+ * the entry's text to it, and the user's input cannot reach here at all — an encoding this build cannot read
+ * degrades to the plain-text rendering beside it long before the envelope is rebuilt
+ * ({@link at.aimon.core.subagent.task.codec.UserInputCodec#decodeOrText}), so a decode failure that gets this far
+ * is a failure about the envelope.
+ *
+ * <p>
+ * <b>What that message can quote is the one envelope value that caused it</b>, because the JDK's own exceptions do:
+ * {@code Instant.parse} reports {@code Text 'not-a-date' could not be parsed at index 0} and an enum's
+ * {@code valueOf} reports {@code No enum constant …Principal.Type.ROBOT}. That is deliberate rather than tolerated —
+ * without the offending value an operator cannot tell a newer build's document from a damaged one, which is the
+ * question this whole path exists to answer — and it is the same width the tree already accepts one field over,
+ * where {@code UserInputCodec}'s degradation logs its cause's message for the same reason. It is not a licence to
+ * widen: an implementation must not add the payload, and the fields that can appear are the envelope's own
+ * ({@code deliveredAt}, {@code initiator.type}, {@code priority}), never the message a user wrote.
  *
  * <p>
  * Immutable value object; construct through {@link #builder()}.

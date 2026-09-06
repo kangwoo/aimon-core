@@ -163,18 +163,23 @@ public final class InboundMessageRowCodec {
      * @param json
      *            the payload as stored (may be null)
      * @param entryId
-     *            the backend's id for the entry (must not be null)
+     *            the backend's id for the entry (null or empty is reported as {@code unknown} rather than refused)
      * @param cause
      *            what {@link #decode} threw (must not be null)
      * @return the entry, with whatever address survived
      */
     public UnreadableEntry recoverAddress(String json, String entryId, RuntimeException cause) {
-        Objects.requireNonNull(entryId, "entryId must not be null");
         Objects.requireNonNull(cause, "cause must not be null");
         // toString rather than getMessage: the message is null for plenty of runtime exceptions, and the type is
-        // half of what tells an operator a newer document apart from a damaged one. Neither carries the payload —
-        // Jackson redacts the source snippet from its own parse errors.
-        final UnreadableEntry.Builder recovered = UnreadableEntry.builder().id(InboundMessageId.of(entryId))
+        // half of what tells an operator a newer document apart from a damaged one. Neither appends the payload,
+        // though the JDK's own message can quote the single envelope value that failed — see UnreadableEntry.
+        // The id is the one field there is always some answer for — the backend handed this entry back, so if its
+        // own id will not wrap, name it unknown rather than lose the report to a second exception. Nothing reaches
+        // that fallback today (a stream entry id and a row id are neither null nor empty); it is here because a
+        // throw from this method lands exactly where the per-entry guard was put to stop one, and the caller has no
+        // way to tell that a "never throws" contract only held on one axis.
+        final UnreadableEntry.Builder recovered = UnreadableEntry.builder()
+                .id(InboundMessageId.of(entryId == null || entryId.isEmpty() ? "unknown" : entryId))
                 .reason(cause.toString());
         if (json == null) {
             return recovered.build();
@@ -188,9 +193,22 @@ public final class InboundMessageRowCodec {
         return recovered.build();
     }
 
+    /**
+     * One address field, as text, or null when the document does not usefully carry it.
+     *
+     * <p>
+     * Blank folds to absent, and that is not tidiness. {@code asText()} answers {@code ""} for an object or an array
+     * node, so a document holding {@code "idempotencyKey": {}} would otherwise recover an empty key, report itself
+     * as addressable, and send the router announcing a turn under an address nobody registered. Absent is the
+     * truthful answer, and it is the one the caller already has a branch for.
+     */
     private static String rawText(JsonNode root, String field) {
         final JsonNode node = root == null ? null : root.get(field);
-        return node == null || node.isNull() ? null : node.asText();
+        if (node == null || node.isNull()) {
+            return null;
+        }
+        final String text = node.asText();
+        return text == null || text.isBlank() ? null : text;
     }
 
     /**

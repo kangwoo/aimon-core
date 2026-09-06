@@ -135,7 +135,8 @@ public final class InboundMessageCodec {
     public UnreadableEntry recoverAddress(Document doc, RuntimeException cause) {
         Objects.requireNonNull(cause, "cause must not be null");
         // toString rather than getMessage: the message is null for plenty of runtime exceptions, and the type is
-        // half of what tells an operator a newer document apart from a damaged one. Neither carries the payload.
+        // half of what tells an operator a newer document apart from a damaged one. Neither appends the payload,
+        // though the JDK's own message can quote the single envelope value that failed — see UnreadableEntry.
         final UnreadableEntry.Builder recovered = UnreadableEntry.builder().reason(cause.toString());
         String entryId = null;
         try {

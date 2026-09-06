@@ -293,15 +293,56 @@ class InboundMessageRowCodecTest {
         assertThat(codec.recoverAddress(null, ENTRY_ID, cause).isAddressable()).isFalse();
         // getMessage() is null on that exception; the reason must still be usable.
         assertThat(codec.recoverAddress(null, ENTRY_ID, cause).getReason()).isNotBlank();
+        // The entry-id axis too: InboundMessageId refuses an empty value, and that refusal would land inside the
+        // per-entry guard as a second throw — exactly what this method exists not to do.
+        assertThat(codec.recoverAddress(null, null, cause).getId().value()).isEqualTo("unknown");
+        assertThat(codec.recoverAddress(null, "", cause).getId().value()).isEqualTo("unknown");
     }
 
     @Test
-    @DisplayName("address recovery does not put the payload in the reason")
-    void addressRecoveryNeverEchoesThePayload() {
-        final UnreadableEntry entry = codec.recoverAddress("{\"secret\":\"POISON-SECRET-TEXT\"", ENTRY_ID,
-                new IllegalStateException("Unexpected end-of-input"));
+    @DisplayName("the reason names the field that failed, and never the payload around it")
+    void theReasonNamesTheFailingFieldAndNotThePayload() {
+        // Driven by a real decode failure rather than an exception the test invents, because the claim is about what
+        // the codec's own failures carry. An unparsable deliveredAt is the shape that reaches here: the user input
+        // degrades long before this point, so what is left is the envelope.
+        final String damaged = "{\"conversationId\":\"c-9\",\"agentRef\":\"agent-x\","
+                + "\"userInput\":\"POISON-SECRET-TEXT\",\"priority\":\"NEXT\","
+                + "\"initiator\":{\"type\":\"USER\",\"id\":\"u-1\",\"displayName\":\"alice\"},"
+                + "\"deliveredAt\":\"not-a-timestamp\"}";
 
+        final RuntimeException cause = catchRuntimeException(() -> codec.decode(damaged, ENTRY_ID));
+        final UnreadableEntry entry = codec.recoverAddress(damaged, ENTRY_ID, cause);
+
+        // The value that failed IS named — without it an operator cannot tell a newer build's document from a
+        // damaged one, which is the question this path exists to answer.
+        assertThat(entry.getReason()).contains("not-a-timestamp");
+        // The rest of the document is not. Nothing appends the payload, and the input a user wrote cannot reach a
+        // failure here at all.
         assertThat(entry.getReason()).doesNotContain("POISON-SECRET-TEXT");
+    }
+
+    @Test
+    @DisplayName("an address that is present but not text does not count as an address")
+    void aNonTextAddressIsNotAnAddress() {
+        // asText() answers "" for an object or an array node, so without folding blank to absent this document
+        // would recover an empty key, call itself addressable, and have the router announce a turn under an
+        // address nobody registered.
+        final String damaged = "{\"conversationId\":\"c-9\",\"turnId\":{},\"idempotencyKey\":[]}";
+
+        final UnreadableEntry entry = codec.recoverAddress(damaged, ENTRY_ID, new IllegalStateException("boom"));
+
+        assertThat(entry.getTurnId()).isEmpty();
+        assertThat(entry.getIdempotencyKey()).isEmpty();
+        assertThat(entry.isAddressable()).isFalse();
+    }
+
+    private static RuntimeException catchRuntimeException(Runnable body) {
+        try {
+            body.run();
+        } catch (RuntimeException e) {
+            return e;
+        }
+        throw new AssertionError("expected the decode to fail");
     }
 
     private InboundMessage.Builder baseMessage() {

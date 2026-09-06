@@ -1505,7 +1505,18 @@ public final class DefaultSessionRouter implements SessionRouter {
         doorbellRelayOwed.remove(sessionId);
         final CollectedBatch batch = inbox.collect(sessionId, QueuedInputPriority.LATER);
         for (UnreadableEntry entry : batch.getUnreadable()) {
-            announceUnreadableEntry(sessionId, entry);
+            try {
+                announceUnreadableEntry(sessionId, entry);
+            } catch (RuntimeException e) {
+                // The same invariant the backends enforce per entry, enforced again one layer up: a single entry
+                // must not cost the messages that came back with it. Nothing reaches this today — every step of
+                // announceTurnFailure is either guarded (safeDiscardReservation, publishTurnOutcome) or a map
+                // operation, and toFailurePayload's one throw is excluded before the call — and that is why it is
+                // written down rather than left to hold by coincidence. Without it, the guarantee this whole seam
+                // exists for would depend on a method three call levels away never growing a throw.
+                log.warn("Could not announce an unreadable inbox entry for session {} ({}); the readable messages"
+                        + " from that collect still run", sessionId, e.toString());
+            }
         }
         return batch.getMessages();
     }

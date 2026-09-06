@@ -2,8 +2,6 @@ package at.aimon.session.testkit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.util.List;
-
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -15,7 +13,6 @@ import at.aimon.core.agent.session.inbox.CollectedBatch;
 import at.aimon.core.agent.session.inbox.InboundMessage;
 import at.aimon.core.agent.session.inbox.InboundMessageId;
 import at.aimon.core.agent.session.inbox.SessionInbox;
-import at.aimon.core.agent.session.inbox.UnreadableEntry;
 import at.aimon.core.base.Principal;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
@@ -224,14 +221,5 @@ public abstract class AbstractSessionInboxDurabilityContractTest {
                 .priority(QueuedInputPriority.NEXT)
                 .initiator(Principal.builder().type(Principal.Type.USER).id("u-1").displayName("alice").build())
                 .deliveredAt(java.time.Instant.parse("2026-04-27T10:00:00Z")).build();
-    }
-
-    /**
-     * @param batch
-     *            a collected batch
-     * @return its unreadable entries, for a subclass that wants to assert something backend-specific
-     */
-    protected final List<UnreadableEntry> unreadableOf(CollectedBatch batch) {
-        return batch.getUnreadable();
     }
 }

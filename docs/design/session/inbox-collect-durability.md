@@ -175,7 +175,7 @@ public final class CollectedBatch {          // final class + 정적 팩토리 (
 public final class UnreadableEntry {         // final class + builder (선택 필드가 둘)
     InboundMessageId id();                   // 백엔드 항목 id — 스트림 id / row id / _id
     Optional<String> turnId();               // ★ 가공하지 않은 문자열. TurnId 가 아니다 — 아래
-    Optional<String> idempotencyKey();       // 가공하지 않은 문자열
+    Optional<String> idempotencyKey();       // 같음. 빈 문자열은 '없음' 으로 접는다 — 아래
     String reason();                         // 예외 메시지. 페이로드는 절대 담지 않는다
 }
 ```
@@ -197,6 +197,11 @@ IMPORTANT: **두 주소는 값 객체가 아니라 문자열로 싣고, 회수�
 않는다.** 그리고 실을 것은 검증하지 않는 `String` 이다 — 초판의 스니펫은 그 자리에서 이미 비대칭이었다
 (`idempotencyKey()` 만 검증 없는 `Optional<String>` 이었다). `TurnId` 로의 변환은 그것을 필요로 하는
 `announceTurnFailure` 쪽에서 하고, 거기서 실패하면 `null` 이 된다.
+
+**빈 값은 주소가 아니다.** Jackson 의 `asText()` 는 객체·배열 노드에 `""` 를 돌려주므로
+`{"idempotencyKey": {}}` 를 그대로 실으면 그 항목이 **주소가 있다고 보고**하고 라우터가 아무도
+등록하지 않은 주소로 통보를 낸다. 회수는 공백을 **없음**으로 접는다 — 그것이 참인 답이고, 호출자는
+그 답에 대한 분기를 이미 갖고 있다.
 
 IMPORTANT: **`null` 이 곧 "알리지 않는다" 는 아니다.** `announceTurnFailure:1821` 의
 *"Unaddressable rather than corrupt"* 분기는 `turnId` **와** `idempotencyKey` 가 **둘 다** null 일 때만
@@ -221,7 +226,7 @@ UnreadableEntry recoverAddress(Document doc, RuntimeException cause);
 |---|---|
 | 이름을 아는 쪽 | `turnId` · `idempotencyKey` 는 코덱이 쓰는 키다. 세 백엔드에서 **철자가 같다**(Redis `:101,103` · Postgres `:88,90` · Mongo `:99,100`)지만, 그 사실을 아는 것은 코덱이지 인박스가 아니다 |
 | mapper 를 가진 쪽 | 인박스에 mapper 를 들리면 파싱 지식이 두 곳이 된다. 페이로드를 두 번 파싱하는 안도 같은 이유로 안 고른다 |
-| **전역이어야 하는 쪽** | 이 메서드는 **던지지 않는다.** 자기 파싱을 자기가 감싸고, 아무것도 못 읽으면 두 주소가 빈 `UnreadableEntry` 를 돌려준다. 위 IMPORTANT 의 규칙("회수가 실패해도 항목 밖으로 나가지 않는다")을 **세 인박스가 아니라 한 자리**에서 지키게 하는 방법이다 |
+| **전역이어야 하는 쪽** | 이 메서드는 **던지지 않는다.** 자기 파싱을 자기가 감싸고, 아무것도 못 읽으면 두 주소가 빈 `UnreadableEntry` 를 돌려준다. 위 IMPORTANT 의 규칙("회수가 실패해도 항목 밖으로 나가지 않는다")을 **세 인박스가 아니라 한 자리**에서 지키게 하는 방법이다. 전역은 **페이로드 축만이 아니라 항목 id 축에도** 적용된다 — 읽을 수 없는 id 는 `unknown` 으로 보고하고 거절하지 않는다. 오늘 그 폴백에 닿는 입력은 없지만, 그 자리의 throw 는 per-entry 가드가 막으려던 배치 소실 그 자체이고 "던지지 않는다" 가 한 축에서만 참인 것을 호출자는 알 방법이 없다 |
 
 IMPORTANT: **네 번째 선택지 — 코덱이 주소를 실은 풍부한 예외를 던지게 하는 것 — 은 §1 의 규칙이 이미
 닫았다.** 경계를 예외 타입으로 긋지 않기로 했으므로 그 예외가 온다는 보장이 없다. 실제로 §1 이 실측한
@@ -288,6 +293,13 @@ IMPORTANT: **그 처분이 도는 자리는 `collectPending:1499` 안이다.** �
 `runDrainOnly:1408` 에서 `return` 하고 `unreadable()` 은 아무에게도 전달되지 않는다. 제출자는
 `UNREADABLE` 을 못 받고 5분 뒤 `TimeoutException` 으로 떨어지며, `discardReservation` 도 안 불려 그
 5분 동안 재시도가 죽은 예약에 collapse 한다 — 바로 아래 ①이 없애겠다고 선언한 결과 그대로다.
+
+**그 처분 루프 자신도 항목 단위로 가드된다.** 이 설계의 명제("항목 하나가 배치를 데려가면 안 된다")는
+백엔드에서만 참이면 안 된다 — 통보가 던지면 `return batch.getMessages()` 에 닿지 못해 **읽힌 메시지가
+통째로 사라지고**, 한 층 위에서 같은 결함이 재현된다. 오늘 던지는 경로는 없다(`announceTurnFailure` 의
+각 단계가 이미 가드되어 있거나 맵 연산뿐이다). 그래도 두는 이유는 백로그 §0.5 마지막 문단의 규칙이다 —
+**도달하지 않는 방어는 왜 거기 있는지 적혀 있을 때만 결함이 아니라 결정**이고, 여기서 그것이 없으면
+이 설계의 보장이 세 단계 떨어진 메서드가 앞으로도 던지지 않는다는 데 기대게 된다.
 
 그러므로 **못 읽은 항목의 처분은 `messages()` 의 크기와 무관하게 `collectPending` 안에서 끝난다.**
 그 메서드는 세 지점이 공유하는 유일한 자리이고, 이미 `doorbellPending`/`doorbellRelayOwed` 를 지우는
@@ -458,7 +470,7 @@ dead-letter 를 읽는 소비자가 실제로 생길 때. 그때 (c) 는 (a) 위
 | 레벨 | **WARN** |
 | 개수 | 드롭된 **항목마다 한 줄** (배치 요약 줄은 두지 않는다 — 세는 것은 줄 수로 되고, 같은 사건에 두 줄은 소음이다) |
 | 담는 것 | 세션 id, 백엔드 항목 id(스트림 id / row id / `_id`), 예외 메시지 |
-| 담지 않는 것 | **페이로드.** 이 저장소의 규칙이며 `decodeOrText` 가 *"the payload itself is never logged"* 로 적어 두었다 |
+| 담지 않는 것 | **페이로드.** 이 저장소의 규칙이며 `decodeOrText` 가 *"the payload itself is never logged"* 로 적어 두었다. 다만 아래 IMPORTANT 가 그 문장의 사정거리를 정확히 긋는다 |
 
 **WARN 인 이유**: [`error-handling.md`](../../../.claude/rules/error-handling.md) 의 표에서 WARN 은
 "예상되는 에러"다. 그리고 이 트리의 형제 사례가 전부 WARN 이다 — 신호 디코드 실패
@@ -479,6 +491,20 @@ IMPORTANT: **`k of n` 은 싣지 않는다.** 초판은 배치 안 위치를 요
 
 **세션 id 가 필수인 이유**는 §0.5 가 이미 적었다 — *"어느 세션의 턴이 텍스트로 떨어졌는지 못 말하면
 '관측 가능' 이 '어딘가 줄이 하나 있다' 가 된다."* 같은 문장이 여기에 그대로 적용된다.
+
+IMPORTANT: **"페이로드를 안 싣는다" 는 "어떤 값도 안 싣는다" 가 아니다.** 저장된 텍스트를 이어 붙이는
+코드는 없고 사용자가 쓴 입력은 애초에 이 경로에 오지 않는다(`decodeOrText` 가 그 앞에서 저하시킨다).
+그러나 실패 예외의 **자기 메시지**는 실패한 그 값 하나를 인용한다 — `Instant.parse` 는
+`Text 'not-a-date' could not be parsed at index 0`, enum 의 `valueOf` 는
+`No enum constant …Principal.Type.ROBOT` 이다(둘 다 실측). **그것은 감수하는 것이 아니라 필요한
+것**이다: 그 값이 없으면 운영자는 "더 새로운 빌드가 쓴 문서" 와 "손상된 문서" 를 가를 수 없고, 그것이
+이 경로가 답하려는 질문 자체다. 폭도 새로 넓히는 것이 아니다 — 바로 옆 `UserInputCodec.degrade:318`
+이 같은 이유로 `cause.getMessage()` 를 그대로 싣는다.
+
+경계는 이렇게 긋는다: 나타날 수 있는 것은 **봉투 자신의 필드 값**(`deliveredAt` · `initiator.type` ·
+`priority`)뿐이고, 페이로드를 덧붙이거나 사용자가 쓴 메시지를 싣는 것은 허용되지 않는다.
+`UnreadableEntry` 의 javadoc 이 그 한정을 갖고, 코덱 테스트가 실제 디코드 실패로 만든 예외를 넣어
+**실패한 값은 들어 있고 그 옆 페이로드는 없다**를 함께 고정한다.
 
 IMPORTANT: **그런데 그 형제 사례들과 이 자리는 성질이 다르고, 그래서 로그만으로는 부족하다.** 저널
 리플레이와 스냅샷 로드가 건너뛴 것은 **저장소에 그대로 남고**, 신호는 애초에 at-least-once 라 다시
@@ -605,14 +631,22 @@ multinode 계약 스위트는 **손대지 않는다**(반환 타입 변경으로
 이 항목에서는 그것이 값싸다 — **오늘의 트리가 이미 빨간 상태**이고 §1 이 세 백엔드에서 그것을
 실측했다. 위 케이스 1~4 를 먼저 넣으면 세 백엔드가 전부 FAILED 로 시작한다.
 
-변이 검사(처방을 되돌려 보는 것)도 정해 둔다.
+변이 검사(처방을 되돌려 보는 것)도 정해 둔다. **번호는 이 표의 것**이고 다른 데서 인용할 때도 이 표를
+가리킨다 — 초판은 본문에서 "6번" 을 인용했는데 그 시점의 표에는 네 행뿐이라 저장소 안에서 해석되지
+않았다. 구현이 실제로 돌린 여섯이 아래다.
 
-| 되돌리는 것 | 기대 |
-|---|---|
-| 세 백엔드의 항목별 `catch` 제거 | 케이스 2·3 이 셋 다 FAILED |
-| `catch` 를 `SessionInboxException` 으로 좁힘 | §1 의 `IllegalArgumentException` 이 다시 새어 나가 셋 다 FAILED — 경계가 타입이 아니라 항목이라는 것이 여기서 고정된다 |
-| WARN 에서 세션 id 만 제거 | 케이스 4 만 FAILED (드롭 격리는 여전히 통과) |
-| A2 의 주소 살리기 제거 | 케이스 5·6 만 FAILED |
+| # | 되돌리는 것 | 기대 | 실측 |
+|---|---|---|---|
+| **M1** | 항목 단위 `catch` 를 `SessionInboxException` 으로 좁힘 | §1 의 `IllegalArgumentException` 이 다시 새어 나가 전멸 — 경계가 타입이 아니라 항목이라는 것이 여기서 고정된다 | 15/15 FAILED |
+| **M2** | WARN 만 제거 (가드는 유지) | 케이스 4 만 | 백엔드당 1 FAILED |
+| **M3** | WARN 은 두되 **세션 id 만** 제거 | 케이스 4 만 | 백엔드당 1 FAILED |
+| **M4** | 주소 회수 제거 (드롭 보고는 유지) | 케이스 5 만 | 백엔드당 1 FAILED |
+| **M5** | 라우터 처분을 `collectPending` 밖 — `runDrainOnly` 의 **비어 있음 가드 뒤**로 (§4 A2 의 IMPORTANT 가 막는 것) | 라우터 1건 | 1 FAILED |
+| **M6** | `turnIdOrNull` 을 `catch { return; }` 로 (§4 A2 의 두 번째 IMPORTANT 가 막는 것) | 라우터 1건 | 1 FAILED |
+
+M5 는 **처음 심었을 때 초록으로 통과했다** — 처분을 `isEmpty` 가드 *앞*에 두면 여전히 발화하기
+때문이다. 실제 오류 모양(가드 *뒤*)으로 다시 심고서야 빨개졌다. 변이가 공허할 수 있다는 것 자체가
+이 표가 "무엇을 되돌리는가" 를 문장으로 적어야 하는 이유다.
 
 ---
 
@@ -652,7 +686,7 @@ multinode 계약 스위트는 **손대지 않는다**(반환 타입 변경으로
 |---|---|
 | 1. 처방을 돌려 보지 않았다 | **닫힘.** 세 백엔드 × 5 케이스가 초록이고, 예측했던 수치가 그대로 나온다 — 가운데에 심으면 `[first, third]` 가 순서대로 돌아오고 저장소는 0 이 된다 |
 | 2. A2 를 두 노드로 돌려 보지 않았다 | **부분적으로 닫힘.** 라우터의 처분은 `SessionRouterUnreadableEntryTest` 가 실제 `SessionRouter` 와 대기 중인 forward 로 검사한다(가짜 인박스, 컨테이너 없음). 두 **컨테이너** 노드로는 여전히 안 돌렸다 |
-| 3. 5분 `TimeoutException` 문구 | **여전히 읽기다.** 그 경로는 이제 A2 가 덮으므로 재현하려면 A2 를 꺼야 한다 — 결함 주입 6번이 정확히 그것이고, 그때 테스트가 *"the caller was not answered"* 로 떨어진다 |
+| 3. 5분 `TimeoutException` 문구 | **여전히 읽기다.** 그 경로는 이제 A2 가 덮으므로 재현하려면 A2 를 꺼야 한다 — §7.3 의 변이 **M5** 가 정확히 그것이고, 그때 테스트가 *"the caller was not answered"* 로 떨어진다 |
 | 4. 항목별 `try` 의 지연 영향 | **여전히 안 쟀다.** 예외 경로가 아니면 비용이 없다는 것은 계속 추론이다 |
 | 8. 주소 회수의 성공률 | **닫히지 않았고 닫을 필요가 없어졌다.** 회수가 실패해도 항목 밖으로 안 나간다는 것을 코덱 단위 테스트가 `{not json at all}` · `[]` · `null` 로 고정한다(`addressRecoveryIsTotal`) |
 
