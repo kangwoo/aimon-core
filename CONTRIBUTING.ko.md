@@ -1,6 +1,6 @@
 ---
 translated_from: CONTRIBUTING.md
-source_commit: 53649d0
+source_commit: ae4509e
 ---
 
 # AIMON Core 기여 가이드
@@ -302,7 +302,7 @@ class ExampleToolTest {
 ```yaml
 ---
 translated_from: docs/features/hook/hook-config-guide.md
-source_commit: 4bb8ace0
+source_commit: eec9ccd
 ---
 ```
 

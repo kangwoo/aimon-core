@@ -162,6 +162,10 @@ docs/features/tool/tool-development-guide.en.md   ← 영어 번역
 경계를 옮기고 싶으면 **이 표를 먼저 고친다.** 표에 없는 디렉토리를 번역하면 다음 사람이
 "여기는 왜 번역이 있고 저기는 없나" 를 매번 다시 판단하게 된다.
 
+그리고 **승격은 열린 백로그 항목 하나를 깨운다** —
+[`../backlog/translation-tooling-open-items.md`](../backlog/translation-tooling-open-items.md) 의 T-1
+(번역 구조 일치 규칙에 강제 장치가 없다). 쌍이 늘면 손으로 맞추는 비용도 함께 늘기 때문이다.
+
 ### 5.2 리포지토리 루트는 방향이 반대다
 
 `docs/` 아래의 정본은 한국어지만, 루트의 `README.md` · `CONTRIBUTING.md` · `SECURITY.md` ·
@@ -179,7 +183,7 @@ docs/features/tool/tool-development-guide.en.md   ← 영어 번역
 ```yaml
 ---
 translated_from: docs/features/tool/tool-development-guide.md
-source_commit: 4d1779d3
+source_commit: eec9ccd
 ---
 ```
 
