@@ -48,11 +48,12 @@ reason to open that.
 
 The one exception is a shallow clone, and it reaches exactly as far as its own
 reason. Truncated history is why a source_commit can look absent or unrelated to
-HEAD, so those two findings are reported and not counted; CI passes
-fetch-depth: 0 for this reason. Depth cannot delete front matter or move a
-canonical, so those findings fail at any depth. An exemption wider than the
-reason for it is the same green-that-means-nothing this file exists to remove,
-just in a narrower window.
+HEAD, so those two findings -- and only those two -- are reported and not
+counted; CI passes fetch-depth: 0 for this reason. Everything else fails at any
+depth, the catch-all "could not diff" included: depth cannot delete front
+matter, move a canonical, or point translated_from outside the repository. An
+exemption wider than the reason for it is the same green-that-means-nothing this
+file exists to remove, just in a narrower window.
 
 The direction is not assumed. `translated_from` names the canonical whichever
 language it is in, so this handles both docs/**/*.en.md (Korean canonical) and
@@ -161,7 +162,13 @@ def main():
 
         behind = git("log", "--format=%h %s", f"{commit}..HEAD", "--", canonical)
         if behind is None:
-            broken.append((rel, f"could not diff {commit}..HEAD for {canonical}", HISTORY))
+            # DOCUMENT, not HISTORY, even though it is the catch-all: by here
+            # the commit resolves and is an ancestor, so the range is
+            # computable at any depth, and what is left to fail is the path.
+            # A translated_from of "../elsewhere.md" that exists on disk gets
+            # past the existence check above and makes git refuse the pathspec
+            # as outside the repository -- the file's problem, not the clone's.
+            broken.append((rel, f"could not diff {commit}..HEAD for {canonical}", DOCUMENT))
             continue
 
         # A commit that edited the canonical *and* this translation is not
