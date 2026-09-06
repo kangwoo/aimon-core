@@ -308,7 +308,7 @@ B-6 이 그렇게 어긋나 있었다. §7 은 그 항목을 "MCP 를 실제로 
 | [`multi-instance-readiness.md`](multi-instance-readiness.md) | 아키텍처 리뷰 (2026-08-31) | 3 | 1 | 1 | 1 |
 | [`module-dependency-scope.md`](module-dependency-scope.md) | 아키텍처 리뷰 (2026-08-31) | 1 | 1 | 0 | 0 |
 | [`architecture-review-open-items.md`](architecture-review-open-items.md) | 아키텍처 리뷰 (2026-08-31) | 8 | 2 | 6 | 0 |
-| [`translation-tooling-open-items.md`](translation-tooling-open-items.md) | 번역 낡음 가드 작업 (2026-09-06) | 1 | 1 | 0 | 0 |
+| [`translation-tooling-open-items.md`](translation-tooling-open-items.md) | 번역 낡음 가드 작업 (2026-09-06) | 4 | 3 | 1 | 0 |
 
 **그 문서의 칸이 `—` 였던 것은 규칙이 없어서가 아니라 그냥 채워지지 않아서였다** — 형식은 나머지 다섯
 문서가 제목과 표 양쪽에서 이미 쓰고 있었다. 등록 시점에 항목이 넷이었고 지금 둘이 닫혔으므로 표와

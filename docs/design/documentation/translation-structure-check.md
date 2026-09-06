@@ -1,12 +1,13 @@
 # 번역 구조 일치 검사 — 무엇을 재고, 무엇을 실패시키는가
 
-> Status: **DESIGNED, 구현 없음** — 이 문서는 축·강제 등급·예외·배선을 정하고, 구현은 하지 않는다.
-> 출처: [`../../backlog/translation-tooling-open-items.md`](../../backlog/translation-tooling-open-items.md)
-> 의 **T-1** (열림).
+> Status: **IMPLEMENTED** — `scripts/check-translation-structure.py`,
+> `scripts/docs_tree.py` 의 공유 함수 넷(스테일 검사는 그 위로 이관되었다),
+> `.github/workflows/build.yml` 의 `translations` 잡(개명 완료) 두 번째 스텝.
+> 출처였던 [T-1](../../backlog/translation-tooling-open-items.md) 은 닫혔다.
 >
-> 산출물 예정: `scripts/check-translation-structure.py`,
-> `scripts/docs_tree.py` 의 공유 함수 넷, `.github/workflows/build.yml` 의
-> `translation-staleness` 잡에 붙는 두 번째 스텝.
+> 구현하면서 **빈칸 하나가 드러나 여기서 메웠다** — §4.1 의 "고아 이유"(`structure_exempt` 없이
+> `structure_exempt_reason` 만 있는 줄). 그 밖에 설계와 구현이 갈린 곳은 없고, 프로브 29개 + 새
+> 프로브 하나가 전부 기대대로 돌았다(§6).
 >
 > 측정 기준일: **2026-09-06**, 32쌍 전부. 이 문서의 모든 수치는 그날 워크트리에서 직접 잰 것이고,
 > 재지 않은 것은 §8 에 재지 않았다고 적었다.
@@ -331,9 +332,10 @@ IMPORTANT: **위치 벡터는 §1.1 의 축을 그대로 쓴다.** 세는 것도
   1단계 표의 3번(펜스 안 주석은 번역 대상)이 **유일하게 남긴 관측 지점**이라 지우면 그 지시가 구조에
   미치는 영향을 보는 창이 하나도 없어진다. 남기는 값이 0 에 가깝고 비용도 0 이므로 판단이지 논증이
   아니며, 다음 사람이 지우기로 해도 이 문단이 다시 세지 않게 해 준다
-- **"번역되지 않는 것" 대조** — 기본 출력에 넣지 않는다. `--drift` 플래그로만 돈다. 14/32 쌍에서
-  정당한 잡음을 매번 뱉는 출력은 **읽히지 않는 출력**이고, 읽히지 않는 출력은 T-1 §0 이 진단한
-  "초록 잡의 콘솔" 과 같은 물건이다. 손으로 번역 감사를 할 때 켜는 도구로 둔다
+- **"번역되지 않는 것" 대조** — 기본 출력에 넣지 않는다. 14/32 쌍에서 정당한 잡음을 매번 뱉는
+  출력은 **읽히지 않는 출력**이고, 읽히지 않는 출력은 T-1 §0 이 진단한 "초록 잡의 콘솔" 과 같은
+  물건이다. 손으로 번역 감사를 할 때 켜는 `--drift` 모드로 두기로 했으나 **구현하지 않았다** —
+  출력 형태를 정하지 못했고(§8-8), 게이트가 아니므로 CI 스텝에도 없다. 열린 항목으로 등록되어 있다
 
 ---
 
@@ -510,6 +512,16 @@ structure_exempt_reason: "표 제목: 영어에서는 두 행으로 갈린다"
   깨뜨리는 유일한 문자이기 때문이다(실측)
 - **이유가 아예 없어도 exit 1.** 스테일 검사가 `unresolvable` 에 대해 쓴 것과 같은 형태의 요구다 —
   번역 노동이 아니라 **그 파일의 한 줄**이고, 그 줄은 예외를 단 사람의 손 안에 있다
+- **반대 방향도 exit 1** — `structure_exempt` 없이 `structure_exempt_reason` 만 있는 줄
+  (**구현 시점에 메운 빈칸**. 초안은 한 방향만 정했다). 이것은 **무해하다** — 아무것도 면제되지
+  않으므로 다섯 축이 전부 돌고 검사는 더 엄격해질 뿐이다. 그래도 실패시키는 이유는 셋이다.
+  - 그것이 바로 위 불릿이 조언 축 면제를 거절한 그 모양이다 — **아무것도 끄지 않으면서 껐다고 읽히는
+    줄.** 한 방향을 그 근거로 막고 반대 방향을 통과시키면 근거가 반쪽만 적용된다
+  - 그 상태가 만들어지는 경로는 대개 둘인데 **둘 다 나쁘다**: `structure_exempt` 를 지우면서 이유를
+    남긴 것(다음 사람은 면제가 살아 있다고 믿는다), 또는 키 이름을 잘못 적은 것(면제가 걸린 줄 알지만
+    안 걸렸다)
+  - §4.5 의 기준을 그대로 적용하면 **선언의 결함**이다. 정본을 고쳐서 만들 수도 없앨 수도 없으므로
+    쌍의 상태를 보지 않는다
 - **모양이 맞아도 어휘가 틀리면 exit 1.** 위 정규식은 모양만 보므로 `list-item`(오타)이나
   `fence-hash-lines`(§2.2 가 조언으로 둔 축)도 통과한다. **둘 다 실패시킨다.**
   - 오타를 **조용히 무시하면** 예외를 단 사람은 축이 꺼진 줄 알고, 다음 실패는 설명 없이 온다
@@ -605,6 +617,7 @@ nobody shrinks is a baseline nobody reads.**"* 그 테스트는 새 순환뿐 �
 |---|---|---|---|
 | `structure_exempt` 표기가 틀림 (§4.1) | **frontmatter 를 쓴 사람뿐.** 정본을 고쳐서 만들 수 없다 | **아니다** | 항상 **exit 1** |
 | `structure_exempt_reason` 이 없거나 표기가 틀림 (§4.1) | 같음 | **아니다** | 항상 **exit 1** |
+| `structure_exempt_reason` 만 있고 `structure_exempt` 가 없음 (§4.1) | 같음 | **아니다** | 항상 **exit 1** |
 | 예외가 무효가 됨 — 축이 다시 일치 (§4.3) | **정본만 고쳐도 만들어진다** | **본다** | FRESH → exit 1, STALE → 보고 |
 | 구조 불일치 자체 (§3.3) | 정본만 고쳐도 만들어진다 | **본다** | 표 그대로 |
 
@@ -671,7 +684,7 @@ tree … each needs the same **three** answers"* 라고 못 박고 있는데, �
 둘이 일치한다** — 그러나 일치는 검증이 아니라 복제이고(백로그 규칙 일곱), 선언된 쪽이 스테일 검사가
 이미 신뢰하는 값이다.
 
-### 5.3 CI — `translation-staleness` 잡의 두 번째 스텝
+### 5.3 CI — `translations` 잡(옛 `translation-staleness`)의 두 번째 스텝
 
 새 잡을 만들지 않는다.
 
@@ -688,11 +701,17 @@ tree … each needs the same **three** answers"* 라고 못 박고 있는데, �
 
 ```yaml
       - name: Compare structure, fail on a mismatch in a current translation
-        run: python3 scripts/check-translation-structure.py --github
+        run: |
+          python3 scripts/check-translation-structure.py --self-test
+          python3 scripts/check-translation-structure.py --github
 ```
 
 *"in a current translation"* 이 §3.3 의 게이트를 이름에 싣는다 — 실패가 **FRESH 쌍에서만** 온다는
 것이 잡 목록에서 읽혀야, 정본만 고친 사람이 이 스텝을 보고 자기 차례라고 오해하지 않는다.
+
+줄이 둘인 것은 구현이 더한 것이고 이유가 있다. 두 번째 줄은 **코퍼스를 검사**하고 첫 번째 줄은
+**검사를 검사**한다(§6.2 의 마지막 문단). 오늘 잡을 결함이 0건인 검사에서 후자가 없으면, 축이 조용히
+측정을 멈춘 상태와 측정하고 아무것도 못 찾은 상태가 **출력에서 구분되지 않는다.**
 
 **잡 이름은 `translations` 로 바꾼다.** `translation-staleness` 라는 이름은 그 잡이 하는 일의 절반만
 말하게 된다. 대가는 **0 이다** — 확인했다: `gh api repos/kangwoo/aimon-core/branches/main/protection`
@@ -729,10 +748,14 @@ T-1 이 IMPORTANT 로 적어 둔 대로 **오늘 잡을 결함은 0건**이다. 
 `architecture-review-open-items.md` 가 `everyTestTagIsGated` 에 쓴 것을 따른다 — **양성 프로브와
 오탐 프로브를 함께** 돌리고, 넓힐 때마다 아래쪽 절반을 다시 돌린다.
 
-### 6.1 축 프로브 — **14개를 실제로 돌렸다**
+### 6.1 축 프로브 — **14개를 실제로 돌렸다** (그리고 구현 뒤 다시 돌렸다)
 
 축 정의를 구현한 측정 스크립트에 변조본을 먹여 확인했다. 기준 쌍은
 `tool-development-guide` (`#` 축 프로브만 그 축에 데이터가 있는 세 쌍에서).
+
+**구현이 생긴 뒤 같은 열넷을 `scripts/check-translation-structure.py` 자체에 다시 먹였고, 결과가
+줄 하나까지 같았다** — 임시 저장소에 그 쌍을 넣고 변조본으로 검사를 돌리는 방식이라, 아래 "발화한 축"
+은 이제 설계 시점의 측정이 아니라 **검사가 실제로 출력한 축 이름**이다.
 
 | # | 프로브 | 기대 | 결과 | 발화한 축 |
 |---|---|---|---|---|
@@ -764,28 +787,31 @@ T-1 이 IMPORTANT 로 적어 둔 대로 **오늘 잡을 결함은 0건**이다. 
 돌려야 발화했다. **즉 이 축은 32쌍 중 29쌍에서 프로브조차 할 수 없다.** §2.2 가 그것을 조언으로
 둔 근거가 프로브에서 한 번 더 나온 셈이다.
 
-### 6.2 게이트 프로브 — 구현이 있어야 돌린다
+### 6.2 게이트 프로브 — **구현과 함께 전부 돌렸다**
 
-축이 아니라 §3.3 의 등급 결정과 §4 의 예외를 겨눈다. **아직 돌리지 않았다** — 검사가 없으므로 돌릴
-대상이 없다. §6.1 의 14개와 달리 이쪽은 **기대만 적힌 것**이고, 구현할 때 이 표를 채운다.
+축이 아니라 §3.3 의 등급 결정과 §4 의 예외를 겨눈다. 초안에서는 기대만 적혀 있었고, 구현 시점에
+**열다섯 줄 전부**를 돌렸다(서브케이스를 펼치면 실행 18회 + 사이트 프로브 2회). 커밋을 만들어야 하는
+것들(G2·G3·G4·G6′)은 임시 저장소에 쌍 하나를 만들어 실제 커밋으로 STALE 을 만들었고, G9 는 그
+저장소를 `--depth 1` 로 클론해서 돌렸다.
 
-| # | 프로브 | 기대 | 무엇을 지키나 |
-|---|---|---|---|
-| G1 | FRESH 쌍의 번역본에서 표 행 하나 삭제 | **exit 1** | §3.3 — T-1 이 겨눈 상태 |
-| G2 | 정본에만 행을 더한다 (쌍이 STALE 이 된다) | **exit 0** + 보고 | §3.4 — `stale` 결정이 옆문으로 뒤집히지 않는다 |
-| G3 | G2 상태에서 번역본의 `source_commit` 만 올린다 (번역 없이) | **exit 1** | 스쿼시 시나리오. FRESH 로 돌아오는 순간 하드가 걸린다 |
-| G4 | 정본과 번역본을 **한 커밋에서** 함께 올바르게 고친다 | **exit 0** | 정상 갱신이 막히지 않는다 |
-| G5 | **FRESH** 쌍에 이유 없이 `structure_exempt` 선언 | **exit 1** | §4.1 |
-| G5′ | **STALE** 쌍에 같은 것 | **exit 1** (같다) | §4.5 — 선언의 결함은 쌍의 상태를 보지 않는다 |
-| G5″ | `structure_exempt: [a, b]` (flow) · 블록 목록 · 따옴표 없는 이유 | **exit 1** (셋 다) | §4.1 인코딩 강제 |
-| G5‴ | `structure_exempt: list-item` (오타) · `structure_exempt: fence-hash-lines` (조언 축) | **exit 1** (둘 다) | §4.1 어휘 강제 — 모양은 맞고 이름이 틀린 자리 |
-| G6 | **FRESH** 쌍에서 축이 다시 일치하는데 예외가 남아 있다 | **exit 1** | §4.3 자기무효화 |
-| G6′ | **STALE** 쌍에서 같은 것 | **exit 0** + 보고 | §4.5 — 정본만 고쳐도 만들어지는 상태다 |
-| G7 | `list-items` 를 면제한 파일에서 표 행 하나 삭제 | **exit 1** | 축 단위 면제가 나머지를 끄지 않는다 |
-| G8 | `headings` 면제 파일에서 표 A→B 행 이동 | **exit 0** + 위치 축이 꺼졌다는 출력 | §4.4 |
-| G9 | 얕은 클론에서 전체를 돌린다 | **exit 0** + 그 사유 명시 | §3.3 다섯째 행 |
-| G10 | `source_commit` 을 이 이력에 없는 SHA 로 바꾸고 **전체 클론에서** 돌린다 | **exit 0** + 보고 | §3.3 **넷째 행** — 이 저장소가 실제로 있던 상태 |
-| G11 | 예외를 단 파일을 `mkdocs build --strict` 로 렌더하고 발행된 페이지에 frontmatter 가 안 보이는지 본다 | frontmatter 노출 **없음** | §4.1 (b) — 검사만 초록이고 사이트가 깨지는 것을 막는다 |
+| # | 프로브 | 기대 | 결과 | 무엇을 지키나 |
+|---|---|---|---|---|
+| G1 | FRESH 쌍의 번역본에서 표 행 하나 삭제 | **exit 1** | **exit 1** | §3.3 — T-1 이 겨눈 상태 |
+| G2 | 정본에만 행을 더한다 (쌍이 STALE 이 된다) | **exit 0** + 보고 | **exit 0**, `behind` 로 보고 | §3.4 — `stale` 결정이 옆문으로 뒤집히지 않는다 |
+| G3 | G2 상태에서 번역본의 `source_commit` 만 올린다 (번역 없이) | **exit 1** | **exit 1** | 스쿼시 시나리오. FRESH 로 돌아오는 순간 하드가 걸린다 |
+| G4 | 정본과 번역본을 **한 커밋에서** 함께 올바르게 고친다 | **exit 0** | **exit 0** | 정상 갱신이 막히지 않는다 |
+| G5 | **FRESH** 쌍에 이유 없이 `structure_exempt` 선언 | **exit 1** | **exit 1** | §4.1 |
+| G5′ | **STALE** 쌍에 같은 것 | **exit 1** (같다) | **exit 1** | §4.5 — 선언의 결함은 쌍의 상태를 보지 않는다 |
+| G5″ | `structure_exempt: [a, b]` (flow) · 블록 목록 · 따옴표 없는 이유 | **exit 1** (셋 다) | **exit 1** ×3 | §4.1 인코딩 강제 |
+| G5‴ | `structure_exempt: list-item` (오타) · `structure_exempt: fence-hash-lines` (조언 축) | **exit 1** (둘 다) | **exit 1** ×2 | §4.1 어휘 강제 — 모양은 맞고 이름이 틀린 자리 |
+| G6 | **FRESH** 쌍에서 축이 다시 일치하는데 예외가 남아 있다 | **exit 1** | **exit 1** | §4.3 자기무효화 |
+| G6′ | **STALE** 쌍에서 같은 것 | **exit 0** + 보고 | **exit 0**, 보고됨 | §4.5 — 정본만 고쳐도 만들어지는 상태다 |
+| G7 | `list-items` 를 면제한 파일에서 표 행 하나 삭제 | **exit 1** | **exit 1**, `table-rows` 가 발화 | 축 단위 면제가 나머지를 끄지 않는다 |
+| G8 | `headings` 면제 파일에서 표 A→B 행 이동 | **exit 0** + 위치 축이 꺼졌다는 출력 | **exit 0** + 그 문장 | §4.4 |
+| G9 | 얕은 클론에서 전체를 돌린다 | **exit 0** + 그 사유 명시 | **exit 0** + 그 문장 | §3.3 다섯째 행 |
+| G10 | `source_commit` 을 이 이력에 없는 SHA 로 바꾸고 **전체 클론에서** 돌린다 | **exit 0** + 보고 | **exit 0**, 보고됨 | §3.3 **넷째 행** — 이 저장소가 실제로 있던 상태 |
+| G11 | 예외를 단 파일을 `mkdocs build --strict` 로 렌더하고 발행된 페이지에 frontmatter 가 안 보이는지 본다 | frontmatter 노출 **없음** | **노출 없음.** 그리고 금지된 형태(따옴표 없는 이유)로 다시 렌더하니 **노출됨 — `--strict` 는 여전히 exit 0** | §4.1 (b) — 검사만 초록이고 사이트가 깨지는 것을 막는다 |
+| **G12** | `structure_exempt_reason` 만 있고 `structure_exempt` 가 없다 (**구현 시점에 추가**) | **exit 1** | **exit 1** | §4.1 의 고아 이유 — 아무것도 끄지 않으면서 껐다고 읽히는 줄 |
 
 **쌍으로 묶인 것들이 서로를 지킨다.** G2/G3 은 게이트가 어느 쪽으로 무너져도 잡고(둘 중 하나만
 보면 못 본다), G5/G5′ 와 G6/G6′ 은 §4.5 의 갈림이 실제로 갈리는지를 보고, G5″/G5‴ 는 §4.1 의 두
@@ -793,10 +819,19 @@ T-1 이 IMPORTANT 로 적어 둔 대로 **오늘 잡을 결함은 0건**이다. 
 처분에 이르는 것을 확인한다. G11 만 성격이 다르다 — 검사가 아니라 **사이트**를 보는 유일한
 프로브이고, §4.1 (b) 의 실패가 검사만으로는 안 보이기 때문이다.
 
-**축 프로브 쪽에도 하나가 빠져 있다.** §6.1 의 14개는 전부 §1.1 의 패턴을 **이미 고른 뒤**의 변조를
-겨눈다 — 패턴 **자체**가 틀린 경우는 프로브가 아니라 §1.1 의 16가지 읽기 측정이 잡았다.
-구현할 때 그 측정을 **회귀 테스트로 굳히는 것**이 가장 싼 보험이다: 리스트 패턴에서 끝의 `\s` 를
-지우면 17/32 가 깨지는 것을 고정 기대값으로 박아 두면, 그 한 글자가 다시 사라질 수 없다.
+**축 프로브 쪽에도 하나가 빠져 있었다.** §6.1 의 14개는 전부 §1.1 의 패턴을 **이미 고른 뒤**의
+변조를 겨눈다 — 패턴 **자체**가 틀린 경우는 프로브가 아니라 §1.1 의 16가지 읽기 측정이 잡았다.
+그 측정이 이제 `check-translation-structure.py --self-test` 로 굳어 있고 CI 스텝의 첫 줄에서 돈다.
+다섯 가지 틀린 읽기를 코퍼스에 대고 돌려 **전부 여전히 무언가를 깨뜨리는지** 본다 — 리스트 패턴의
+`\s` 제거, 인용을 줄로 세기, 펜스 주석을 `//` 까지 넓히기, frontmatter 를 안 벗기기, 그리고 반대
+방향으로 **지정된 패턴이 0쌍을 깨뜨리는지**.
+
+**다만 "고정 기대값" 은 고르지 않았다.** 초안은 17/32 를 못박으라고 적었는데, 그러면 **번역 쌍이
+하나 늘 때마다 그 숫자가 움직여** 일어나지도 않은 회귀를 이름으로 지목하며 실패한다.
+`gradle/coverage-baselines.properties` 가 자기 여유값을 정하며 적어 둔 문장이 그 대가다 —
+*"a rule that flakes gets excluded, and an excluded rule is worse than none."* 그래서 강제하는 것은
+**"틀린 읽기가 여전히 무언가를 깨뜨린다"** 이고, 실제 측정치는 설계가 기록한 값 옆에 **찍어서**
+드리프트가 실패 없이 보이게 한다. 오늘 다섯 줄 전부 기록값과 같다(0 · 17 · 10 · 3 · 32).
 
 ---
 
@@ -834,17 +869,17 @@ T-1 이 IMPORTANT 로 적어 둔 대로 **오늘 잡을 결함은 0건**이다. 
 
 **실측하지 않은 것은 실측하지 않았다고 적는다.**
 
-1. **게이트 프로브 15개(G1~G11, 프라임 넷)를 돌리지 않았다.** §6.2 가 그 목록이고, 구현이 있어야 돌아간다.
-   §6.1 의 14개와 달리 이쪽은 **기대만 적힌 것**이다. 다만 그중 **G5″ 와 G11 이 겨누는 사실은
-   이미 쟀다** — §4.1 의 두 실측 표가 그것이고, 프로브가 확인할 것은 검사가 그 사실에 맞게 행동하는지다
+1. ~~**게이트 프로브 15개(G1~G11, 프라임 넷)를 돌리지 않았다.**~~ — **해소됨.** 구현과 함께
+   열여섯 줄(G12 포함) 전부를 돌렸고 전부 기대대로였다. 표는 §6.2 에 채워져 있다
 2. ~~**`translation-staleness` 가 브랜치 보호의 required check 인지 확인하지 못했다.**~~ —
    **해소됨.** 워크트리에서 안 보인다는 것은 사실이었지만 `gh` 로는 한 번의 호출이었다:
    branch protection 은 `404 Branch not protected`, rulesets 는 `[]`. 개명 비용 0(§5.3).
    *"워크트리에서 안 보인다"* 를 미확인의 근거로 쓴 것이 틀렸다 — 이 저장소는 릴리스 스크립트부터
    `gh` 를 쓴다
-3. **`docs_tree.py` 에 `subprocess` 를 들이는 대가를 실측하지 않았다.** 두 스크립트가 각각 32쌍에
-   대해 git 을 부르는 것과 한 번 부르는 것의 실행 시간 차이를 재지 않았다. 5초짜리 잡이므로 무시할
-   만하다고 **가정**했을 뿐이다
+3. ~~**`docs_tree.py` 에 `subprocess` 를 들이는 대가를 실측하지 않았다.**~~ — **쟀다.**
+   두 검사가 각각 **약 4초**이고(32쌍 × git 4회가 거의 전부다) 잡 전체가 8초대다. `--self-test` 는
+   git 을 안 부르므로 0.4초다. "무시할 만하다" 는 가정이 맞았고, **공유하지 않았다면 같은 8초가
+   들면서 두 계산이 갈릴 수 있었다**는 것이 §5.2 의 논거였다
 4. **setext 제목을 지원하지 않기로 했는데, 그 결정의 대가는 코퍼스가 0건이라는 사실에만 기대고 있다.**
    누군가 setext 제목을 쓰면 그 제목은 `headings` 축에 세어지지 않고, 정본에만 있으면 **조용히 통과한다.**
    막는 장치를 두지 않았다 — 두려면 "setext 제목이 발견되면 실패" 라는 별개 검사가 필요하고, 그것은
@@ -874,13 +909,14 @@ T-1 이 IMPORTANT 로 적어 둔 대로 **오늘 잡을 결함은 0건**이다. 
 | 옆 검사와 그 exit 결정문 | `scripts/check-translation-staleness.py` (헤더 docstring) |
 | 링크·앵커 검사 | `scripts/check-doc-links.py` |
 | 세 스크립트가 공유하는 답 | `scripts/docs_tree.py` |
-| CI 잡 둘 | `.github/workflows/build.yml` (`docs-links`, `translation-staleness`) |
+| CI 잡 둘 | `.github/workflows/build.yml` (`docs-links`, `translations`) |
+| 이 설계의 구현 | `scripts/check-translation-structure.py` (모듈 docstring 이 축·게이트·예외를 요약한다), `scripts/docs_tree.py` 의 공유 함수 넷 |
 | 번역 규칙 정본 | `docs/project/documentation-guide.md` §5, `docs/project/translation-glossary.md`, `CLAUDE.md`, `CONTRIBUTING.md` |
 | 베이스라인 선례 (열거형·자기무효화) | `modules/aimon-core/src/test/java/at/aimon/core/architecture/PackageDependencyArchitectureTest.java` |
 | 베이스라인 선례 (수치·데이터 파일) | `gradle/coverage-baselines.properties`, `buildSrc/src/main/kotlin/aimon.java-conventions.gradle.kts` |
 | 프로브 표의 형식 선례 | `docs/backlog/architecture-review-open-items.md` |
 | 사이트 쪽 frontmatter 파서 (§4.1 의 두 실측) | `mkdocs.utils.meta.get_data()` — `yaml.load` + `except Exception: pass` |
-| 두 문서 잡이 `pip install` 을 하지 않는다는 사실 | `.github/workflows/build.yml` (`docs-links` · `translation-staleness` 의 steps) |
+| 두 문서 잡이 `pip install` 을 하지 않는다는 사실 | `.github/workflows/build.yml` (`docs-links` · `translations` 의 steps) |
 
 ---
 

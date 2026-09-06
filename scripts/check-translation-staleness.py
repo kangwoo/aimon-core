@@ -69,49 +69,10 @@ CONTRIBUTING.ko.md (English canonical) with the same code.
 Usage:
     python3 scripts/check-translation-staleness.py [--strict] [--github]
 """
-import re
-import subprocess
 import sys
-import pathlib
 
-from docs_tree import SKIP_DIRS, translation_suffix
-
-ROOT = pathlib.Path(__file__).resolve().parent.parent
-FRONT = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n", re.DOTALL)
-KEY = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*):\s*(.*?)\s*$", re.MULTILINE)
-
-
-def git(*args):
-    """Run a git command in the repo, returning stdout (stripped) or None."""
-    try:
-        out = subprocess.run(
-            ["git", "-C", str(ROOT), *args],
-            capture_output=True, text=True, check=True,
-        )
-    except subprocess.CalledProcessError:
-        return None
-    return out.stdout.strip()
-
-
-def frontmatter(path):
-    text = path.read_text(encoding="utf-8", errors="replace")
-    m = FRONT.match(text)
-    if not m:
-        return {}
-    return {k: v for k, v in KEY.findall(m.group(1))}
-
-
-def translations():
-    """Every *.<lang>.md in the repo, sorted, build outputs excluded."""
-    found = []
-    for p in ROOT.rglob("*.md"):
-        if any(part in SKIP_DIRS for part in p.relative_to(ROOT).parts):
-            continue
-        # foo.en.md / foo.ko.md -- the suffixes docs_tree declares, so this
-        # walker and upgrade-translation-links.py agree on what a translation is
-        if translation_suffix(p) is not None:
-            found.append(p)
-    return sorted(found)
+from docs_tree import (KIND_HISTORY, ROOT, STALE, frontmatter, git,
+                       is_shallow_clone, pair_state, translations)
 
 
 def main():
@@ -125,81 +86,33 @@ def main():
     # A shallow clone has no history to compare against, so a source_commit that
     # is really there looks absent. That is the clone's fault, not the
     # documents', and it must not be indistinguishable from a real finding.
-    shallow = git("rev-parse", "--is-shallow-repository") == "true"
+    #
+    # Asked once, here, rather than inside the per-pair verdict: it is a
+    # property of the clone and not of any pair.
+    shallow = is_shallow_clone()
 
     # Which is why every finding says whether depth could have produced it.
     # HISTORY findings are answers to a question about the commit graph, and a
     # truncated graph can get them wrong. DOCUMENT findings are about the file
     # in front of you -- no clone depth deletes front matter or moves a
     # canonical -- so they hold at any depth and are never excused.
-    HISTORY, DOCUMENT = "history", "document"
-
+    # docs_tree.pair_state() makes that split, so this report and
+    # check-translation-structure.py cannot disagree about which findings a
+    # shallow clone excuses.
     stale, broken, fresh = [], [], 0
 
     for path in translations():
         rel = path.relative_to(ROOT).as_posix()
         meta = frontmatter(path)
-        canonical = meta.get("translated_from")
-        commit = meta.get("source_commit")
+        verdict = pair_state(path, meta)
 
-        if not canonical or not commit:
-            broken.append((rel, "no translated_from / source_commit front matter", DOCUMENT))
-            continue
-
-        canonical_path = ROOT / canonical
-        if not canonical_path.exists():
-            broken.append((rel, f"canonical does not exist: {canonical}", DOCUMENT))
-            continue
-
-        # An unknown commit means history was rewritten (squash, rebase, a
-        # shallow clone). Say so rather than silently reporting "fresh".
-        if git("cat-file", "-e", f"{commit}^{{commit}}") is None:
-            broken.append((rel, f"source_commit {commit} is not in this history", HISTORY))
-            continue
-
-        # Reachable is not enough: a commit recorded on a squash-merged branch
-        # exists in the repository but is not an ancestor of HEAD, and
-        # `{commit}..HEAD` would then count every commit back to the merge
-        # base as "behind" -- commits the translation was actually made from.
-        # Route that to unresolvable instead of reporting false staleness.
-        if git("merge-base", "--is-ancestor", commit, "HEAD") is None:
-            broken.append((rel, f"source_commit {commit} is not an ancestor of HEAD "
-                          "(recorded on an unmerged or squash-merged branch?)", HISTORY))
-            continue
-
-        behind = git("log", "--format=%h %s", f"{commit}..HEAD", "--", canonical)
-        if behind is None:
-            # DOCUMENT, not HISTORY, even though it is the catch-all: by here
-            # the commit resolves and is an ancestor, so the range is
-            # computable at any depth, and what is left to fail is the path.
-            # A translated_from of "../elsewhere.md" that exists on disk gets
-            # past the existence check above and makes git refuse the pathspec
-            # as outside the repository -- the file's problem, not the clone's.
-            broken.append((rel, f"could not diff {commit}..HEAD for {canonical}", DOCUMENT))
-            continue
-
-        # A commit that edited the canonical *and* this translation is not
-        # staleness -- the translator saw the change. This happens on every
-        # normal update, because source_commit can only name a commit that
-        # already exists, so it always trails the commit making the edit by
-        # one. Filtering these keeps the report worth reading. One `git log`
-        # over the translation's own path answers it for the whole range --
-        # no per-commit subprocess, and no parsing of path lists that would
-        # misread a path containing whitespace.
-        translated_in = set(
-            (git("log", "--format=%h", f"{commit}..HEAD", "--", rel) or "").splitlines())
-        commits = []
-        for line in behind.splitlines():
-            if not line.strip():
-                continue
-            sha = line.split(None, 1)[0]
-            if sha in translated_in:
-                continue
-            commits.append(line)
-
-        if commits:
+        if verdict.unresolvable:
+            broken.append((rel, verdict.why, verdict.kind))
+        elif verdict.state == STALE:
+            canonical = meta.get("translated_from")
+            commit = meta.get("source_commit")
             stat = git("diff", "--shortstat", commit, "HEAD", "--", canonical) or ""
-            stale.append((rel, canonical, commit, commits, stat))
+            stale.append((rel, canonical, commit, verdict.commits, stat))
         else:
             fresh += 1
 
@@ -223,8 +136,8 @@ def main():
     # Split before printing: whether a finding is excused decides both what it
     # is annotated as and whether it fails the run, and those two must not be
     # able to disagree.
-    excused = [b for b in broken if shallow and b[2] == HISTORY]
-    fatal = [b for b in broken if not (shallow and b[2] == HISTORY)]
+    excused = [b for b in broken if shallow and b[2] == KIND_HISTORY]
+    fatal = [b for b in broken if not (shallow and b[2] == KIND_HISTORY)]
 
     for rel, why, kind in broken:
         print()
@@ -237,7 +150,7 @@ def main():
             # matters because GitHub truncates the list: 19 unresolvable would
             # otherwise have a stale one's warning to crowd out. None existed
             # when that happened here, so this is a mechanism, not a post-mortem.
-            level = "warning" if (shallow and kind == HISTORY) else "error"
+            level = "warning" if (shallow and kind == KIND_HISTORY) else "error"
             print(f"::{level} file={rel}::{why}")
 
     if not stale and not broken:

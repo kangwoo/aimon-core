@@ -212,6 +212,30 @@ source_commit: eec9ccd
 커밋을 겨눈다. 그리고 겨누기 전에 정말 그 상태인지 확인한다 — 어긋난 번역에 붙은 해석 가능한 SHA 는
 해석 불가보다 나쁘다. 침묵은 모른다고 말하지만 그것은 안다고 거짓말한다.
 
+**그 마지막 문장이 더 이상 전부 참은 아니다** — `check-translation-structure.py` 가 그중 일부를 잡기
+때문이다. 쌍이 같은 시점이라고 주장하는데 구조가 어긋나 있으면 그 검사가 실패시킨다. 그래서
+`source_commit` 을 아무 커밋에나 겨누는 것은 이제 초록으로 통과하지 않는다 — 다만 그 검사가 보는 것은
+**모양**이므로, 모양만 맞고 내용이 다른 번역은 여전히 사람만 잡을 수 있다.
+
+### 5.3.1 구조를 맞출 수 없을 때 — 축 단위 예외
+
+축 하나가 정당하게 어긋난다면 그 번역본 frontmatter 에 선언한다.
+
+```yaml
+structure_exempt: list-items
+structure_exempt_reason: "정본의 3항 목록이 영어에서는 관용적으로 2항이 된다"
+```
+
+- 값은 **쉼표로 구분한 축 id 문자열**이다(`headings` · `fences` · `table-rows` · `list-items` ·
+  `quote-blocks`). YAML 목록으로 적으면 안 된다 — mkdocs 는 리스트로 읽고 스크립트는 문자열로 읽어
+  **둘째 항목이 조용히 사라진다**
+- 이유는 **큰따옴표로 감싼다.** 감싸지 않고 콜론·백틱·대괄호를 쓰면 mkdocs 가 frontmatter 를 통째로
+  버리고 그것을 본문으로 발행하는데, `mkdocs build --strict` 는 그때도 초록이다
+- **이유 없는 예외도, 예외 없는 이유도 실패한다.** 둘 다 아무것도 끄지 않으면서 껐다고 읽히는 줄이다
+- **예외는 만료된다.** 축이 다시 일치하면 검사가 그 줄을 지우라고 한다
+- 같은 축에 예외가 셋 이상 쌓이면 틀린 것은 그 파일들이 아니라 **그 축**이다 —
+  [`../design/documentation/translation-structure-check.md`](../design/documentation/translation-structure-check.md) §4.3
+
 ### 5.4 번역본 안의 상대 링크는 **번역이 있는 것만** 접미사로 가리킨다
 
 번역본이 `foo.md` 를 가리킬지 `foo.en.md` 를 가리킬지는 사이트에서 **차이가 없다** — i18n 플러그인이
@@ -247,7 +271,11 @@ mkdocs build --strict   # CI 가 돌리는 것과 같다 — 링크 경고가 �
 
 python3 scripts/check-doc-links.py             # 경로 + 앵커
 python3 scripts/check-translation-staleness.py # 뒤처진 번역
+python3 scripts/check-translation-structure.py # 정본과 어긋난 구조
 ```
+
+뒤의 둘은 CI 의 `translations` 잡에서 함께 돈다. 둘 다 전체 이력을 필요로 하므로(얕은 클론에서는
+실패시키는 대신 보고한다) 그 잡만 `fetch-depth: 0` 으로 체크아웃한다.
 
 ---
 

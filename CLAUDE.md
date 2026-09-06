@@ -212,7 +212,11 @@ IMPORTANT: **문서를 고칠 때는 번역본이 있는지 먼저 확인한다.
 번역 규칙 전문은 @docs/project/translation-glossary.md 와 @docs/project/documentation-guide.md 에
 있다. 자주 어기는 것만:
 
-- **구조를 정확히 맞춘다** — 제목 개수, 표의 행 수, 코드 블록 개수가 같아야 한다
+- **구조를 정확히 맞춘다** — 제목 개수, 표의 행 수, 코드 블록 개수가 같아야 한다.
+  `python3 scripts/check-translation-structure.py` 가 강제한다 — 접힘에 견디는 여섯 축
+  (제목+레벨 · 펜스+언어 · 표별 행 · 리스트 항목+중첩 · 인용 **블록** · 펜스 안 `#`)을 비교하고,
+  **쌍이 정본과 같은 시점일 때만** 실패시킨다. 줄 수는 어느 축에도 쓰지 않는다(한글이 영어보다
+  적게 접힌다). 정당하게 어긋나면 번역본 frontmatter 에 `structure_exempt` + `structure_exempt_reason`
 - **제목을 번역하면 앵커가 바뀐다** — 문서 안 `#링크` 를 다시 겨누고 `python3 scripts/check-doc-links.py` 로 검증
 - **식별자는 번역하지 않는다** — 타입·패키지 이름, 파일 경로, 설정 키, CLI 플래그, 애노테이션,
   enum 상수, 동결된 와이어 이름(`conversationId`, `conversation_locks`). 코드 블록 **안의 주석**은 번역한다
