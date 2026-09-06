@@ -17,6 +17,7 @@ import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.TurnId;
 import at.aimon.core.agent.session.inbox.InboundMessage;
 import at.aimon.core.agent.session.inbox.InboundMessageId;
+import at.aimon.core.agent.session.inbox.UnreadableEntry;
 import at.aimon.core.base.Principal;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.subagent.task.codec.SubmitOptionsCodec;
@@ -110,6 +111,46 @@ public final class InboundMessageCodec {
             payload.append("submitOptions", submitOptions);
         }
         return payload;
+    }
+
+    /**
+     * Best-effort address recovery for a document {@link #decode(Document)} could not rebuild.
+     *
+     * <p>
+     * <b>This method never throws</b>, and that is its whole contract. It runs inside the per-entry guard of
+     * {@code collect}, on a document that has already proved itself unreadable, so a second failure here would
+     * either re-create the batch loss the guard exists to prevent or leave the drop unreported. Anything it cannot
+     * read comes back as an absent address, which the router already has a branch for.
+     *
+     * <p>
+     * The two addresses ride as raw strings rather than as {@code TurnId} — rebuilding a validating value object
+     * from this input is exactly the move that broke here in the first place.
+     *
+     * @param doc
+     *            the document as stored (may be null)
+     * @param cause
+     *            what {@link #decode(Document)} threw (must not be null)
+     * @return the entry, with whatever address survived
+     */
+    public UnreadableEntry recoverAddress(Document doc, RuntimeException cause) {
+        Objects.requireNonNull(cause, "cause must not be null");
+        // toString rather than getMessage: the message is null for plenty of runtime exceptions, and the type is
+        // half of what tells an operator a newer document apart from a damaged one. Neither carries the payload.
+        final UnreadableEntry.Builder recovered = UnreadableEntry.builder().reason(cause.toString());
+        String entryId = null;
+        try {
+            final ObjectId id = doc == null ? null : doc.getObjectId(DocumentKeys.F_ID);
+            entryId = id == null ? null : id.toHexString();
+            final Document payload = doc == null ? null : doc.get(DocumentKeys.F_PAYLOAD, Document.class);
+            if (payload != null) {
+                recovered.turnId(payload.getString("turnId")).idempotencyKey(payload.getString("idempotencyKey"));
+            }
+        } catch (RuntimeException ignored) {
+            // Nothing legible in there. The entry is still reported — unaddressably, which the caller can tell.
+        }
+        // The id is the one field a caller always has some answer for: the driver handed this document back, so if
+        // its own _id will not read, name the collection rather than lose the report to a NullPointerException.
+        return recovered.id(InboundMessageId.of(entryId == null ? "unknown" : entryId)).build();
     }
 
     /**

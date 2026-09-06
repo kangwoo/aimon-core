@@ -7,6 +7,45 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Sessions: one unreadable inbox entry no longer costs the whole batch
+
+- **`SessionInbox.collect` returns `CollectedBatch` instead of `List<InboundMessage>`.** A
+  **breaking change** to a published SPI (`at.aimon.core.agent.session.inbox`), and — like the
+  `getUserInput()` change below — not a rename, so there is no row in
+  [`rename-maps.md`](docs/migration/rename-maps.md): the method resolves exactly as before with a
+  different return type. Every implementation and call site is a compile error, which is the whole
+  point; there is nothing that breaks quietly.
+
+  | Was | Is |
+  |---|---|
+  | `List<InboundMessage> m = inbox.collect(id, LATER);` | `inbox.collect(id, LATER).getMessages()` |
+  | — | `.getUnreadable()` is new: entries removed from the backend that this build could not decode |
+
+  A `default` method keeping the old signature was considered and rejected: an implementation that
+  was never updated would then report "nothing unreadable" without anyone having decided that.
+
+- **What it fixes.** All three backends delete an entry from storage *before* the codec rebuilds it
+  — Redis's collect script `XDEL`s inside Lua, Postgres commits its `DELETE … RETURNING`, MongoDB
+  uses `findOneAndDelete`. One entry this build could not decode therefore took **every message that
+  call collected** with it: gone from storage, delivered to nobody, and the submitters left waiting
+  on turns no node would ever run. Reproduced on all three with real containers (a damaged
+  `initiator.type` between two sound messages left 0 entries on Redis and Postgres and 1 on MongoDB,
+  with the message *ahead* of the poison lost as well). The decode is now guarded **per entry**,
+  catching `RuntimeException` — the boundary is the entry, not the exception type, because the value
+  objects an envelope rebuilds signal a refusal with exceptions of their own.
+
+- **A dropped entry is not silent.** It is logged at `WARN` naming the session and the backend's
+  entry id (never the payload), and whatever remained legible of its address — `turnId`,
+  `idempotencyKey`, as raw strings — rides back on the batch so `SessionRouter` fails the waiting
+  submitter through the rail it already uses for a message it refused. Without that the caller
+  learned nothing until the five-minute forward deadline. A new `TURN_RESULT` outcome `UNREADABLE`
+  distinguishes "never attempted" from `FAILED`'s "attempted and threw"; a node one release behind
+  reads it as `FAILED` rather than dropping the signal.
+
+- **Not covered:** the dropped entry's bytes are gone. A dead-letter surface was considered and
+  deferred — the reasoning, and the trigger that would reopen it, are in
+  [`inbox-collect-durability.md`](docs/design/session/inbox-collect-durability.md).
+
 ### Sessions: a routed submission carries the input, not a rendering of it
 
 - **`SubmitRequest.getUserInput()` and `InboundMessage.getUserInput()` return `UserInput` instead of

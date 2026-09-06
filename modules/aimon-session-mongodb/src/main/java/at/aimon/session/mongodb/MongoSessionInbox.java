@@ -22,9 +22,11 @@ import com.mongodb.client.model.Sorts;
 import at.aimon.core.agent.queue.QueuedInputPriority;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.exception.SessionInboxException;
+import at.aimon.core.agent.session.inbox.CollectedBatch;
 import at.aimon.core.agent.session.inbox.InboundMessage;
 import at.aimon.core.agent.session.inbox.InboundMessageId;
 import at.aimon.core.agent.session.inbox.SessionInbox;
+import at.aimon.core.agent.session.inbox.UnreadableEntry;
 import at.aimon.session.mongodb.internal.DocumentKeys;
 import at.aimon.session.mongodb.internal.InboundMessageCodec;
 
@@ -86,11 +88,12 @@ public final class MongoSessionInbox implements SessionInbox {
     }
 
     @Override
-    public List<InboundMessage> collect(SessionId id, QueuedInputPriority maxPriority) {
+    public CollectedBatch collect(SessionId id, QueuedInputPriority maxPriority) {
         Objects.requireNonNull(id, "id must not be null");
         Objects.requireNonNull(maxPriority, "maxPriority must not be null");
         try {
             final List<InboundMessage> out = new ArrayList<>();
+            final List<UnreadableEntry> unreadable = new ArrayList<>();
             final FindOneAndDeleteOptions options = new FindOneAndDeleteOptions()
                     .sort(Sorts.ascending(DocumentKeys.F_PRIORITY, DocumentKeys.F_DELIVERED_AT));
             for (int i = 0; i < MAX_BATCH_SIZE; i++) {
@@ -100,9 +103,23 @@ public final class MongoSessionInbox implements SessionInbox {
                 if (doc == null) {
                     break;
                 }
-                out.add(codec.decode(doc));
+                try {
+                    out.add(codec.decode(doc));
+                } catch (RuntimeException e) {
+                    // The boundary is the entry, not the exception type. This loop deletes before it decodes and
+                    // accumulates into `out`, so letting one document's failure out of here loses the good entries
+                    // already taken ahead of it as well — and the type it arrives as is not this codec's to predict:
+                    // Principal.Type.valueOf throws a plain IllegalArgumentException, and the next value object to
+                    // grow a rule will throw something else again.
+                    final UnreadableEntry entry = codec.recoverAddress(doc, e);
+                    unreadable.add(entry);
+                    log.warn(
+                            "Dropping an inbox entry this build cannot decode [session={}, entryId={}]: {}."
+                                    + " It is already out of the inbox, so its turn will not run anywhere.",
+                            id, entry.getId(), e.toString());
+                }
             }
-            return out;
+            return CollectedBatch.of(out, unreadable);
         } catch (MongoException e) {
             throw new SessionInboxException("Mongo error collecting from " + id, e);
         }

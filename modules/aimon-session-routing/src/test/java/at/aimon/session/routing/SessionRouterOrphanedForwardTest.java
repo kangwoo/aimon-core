@@ -22,6 +22,7 @@ import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.exception.SessionInboxException;
 import at.aimon.core.agent.session.idempotency.IdempotencyStore;
 import at.aimon.core.agent.session.idempotency.InMemoryIdempotencyStore;
+import at.aimon.core.agent.session.inbox.CollectedBatch;
 import at.aimon.core.agent.session.inbox.InMemorySessionInbox;
 import at.aimon.core.agent.session.inbox.InboundMessage;
 import at.aimon.core.agent.session.inbox.InboundMessageId;
@@ -280,7 +281,7 @@ class SessionRouterOrphanedForwardTest {
         }
 
         @Override
-        public List<InboundMessage> collect(SessionId id, QueuedInputPriority maxPriority) {
+        public CollectedBatch collect(SessionId id, QueuedInputPriority maxPriority) {
             return delegate.collect(id, maxPriority);
         }
 

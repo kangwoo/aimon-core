@@ -1,10 +1,15 @@
 # 인박스 `collect` 의 내구성 — 한 항목이 배치를 데려가지 않게
 
-> Status: **DESIGNED, 미구현** — 이 문서는
-> [`backlog/interrupt-open-items.md` §5](../../backlog/interrupt-open-items.md) 가 **일부러 비워 둔
-> 처방 칸**을 채운다. 코드는 아직 한 줄도 바뀌지 않았다. 실측한 것은 진단(§1)과 트리거 인구조사(§2)이고,
-> 기각 두 건의 근거는 소스와 SPI 계약 문구다(§5). **고른 처방 자체는 아직 테스트로 검증되지 않았다** —
-> 무엇이 검증되지 않았는지는 §8 에 전부 적혀 있다.
+> Status: **IMPLEMENTED** — (a) 항목 단위 격리가 A1·A2 둘 다 들어갔다. 세 백엔드의 디코드는 항목 단위
+> `catch (RuntimeException)` 로 감싸이고, 못 읽은 항목은 `CollectedBatch.getUnreadable()` 로 돌아와
+> `collectPending` 이 `announceTurnFailure(… UNREADABLE …)` 로 제출자에게 알린다. 계약 스위트는
+> `aimon-session-testkit` 의 `AbstractSessionInboxDurabilityContractTest` 이고 세 백엔드가 상속한다.
+>
+> 이 문서는 사양이므로 구현이 바꾼 것을 함께 적었다 — §7.1 의 준비도 결정 셋(logback · 로거 · 심는 위치),
+> §4 의 회수 자리와 파일 발자국, §6.1 의 `k of n` 제거. **§8 은 그대로 둔다** — 설계 시점에 무엇을
+> 재지 않았는지가 지금은 무엇을 재게 되었는지의 기준이고, §8 끝의 "구현이 확인한 것" 이 그 대조다.
+>
+> 진단(§1)과 트리거 인구조사(§2)는 실측이며 2차 리뷰가 세 백엔드에서 독립 재현했다.
 >
 > 적용 대상: `aimon-core` — `at.aimon.core.agent.session.inbox` ·
 > `aimon-session-{redis,postgres,mongodb}` — `*SessionInbox.collect` ·
@@ -191,8 +196,59 @@ IMPORTANT: **두 주소는 값 객체가 아니라 문자열로 싣고, 회수�
 그러므로 규칙은 하나다: **회수는 그 항목의 가드 안에서 돌고, 회수가 실패해도 그 항목 밖으로 나가지
 않는다.** 그리고 실을 것은 검증하지 않는 `String` 이다 — 초판의 스니펫은 그 자리에서 이미 비대칭이었다
 (`idempotencyKey()` 만 검증 없는 `Optional<String>` 이었다). `TurnId` 로의 변환은 그것을 필요로 하는
-`announceTurnFailure` 쪽에서 하고, 거기서 실패하면 `null` 이 되어 **이미 있는**
-*"Unaddressable rather than corrupt"* 분기로 떨어진다(`:1821-1827`).
+`announceTurnFailure` 쪽에서 하고, 거기서 실패하면 `null` 이 된다.
+
+IMPORTANT: **`null` 이 곧 "알리지 않는다" 는 아니다.** `announceTurnFailure:1821` 의
+*"Unaddressable rather than corrupt"* 분기는 `turnId` **와** `idempotencyKey` 가 **둘 다** null 일 때만
+발화한다. 키가 살아 있으면 키 하나로 정상 통보된다 — 그리고 그것이 옳은 동작이다. 그러므로 변환은
+`catch { return; }` 가 아니라 **`null` 을 돌려주는 전역 헬퍼**여야 하고, 호출은 두 주소를 **항상 함께**
+넘긴다. 이 한 줄을 문자 그대로 읽으면 키로 알릴 수 있었던 제출자를 5분 타임아웃으로 보낸다.
+
+#### 회수 코드는 **코덱**에 산다
+
+세 코덱은 `ObjectMapper` 를 `private` 으로 들고 파싱을 `decode` **안**에서 하며, 인박스 클래스는 mapper 를
+갖고 있지 않다. Mongo 는 아예 결이 달라 `doc.get(F_PAYLOAD, Document.class).getString("turnId")` 다.
+그래서 회수는 각 코덱의 **전역(total) 메서드**로 둔다.
+
+```java
+// redis / postgres — 페이로드가 문자열이다
+UnreadableEntry recoverAddress(String payload, String entryId, RuntimeException cause);
+// mongodb — 페이로드가 BSON 하위 문서다
+UnreadableEntry recoverAddress(Document doc, RuntimeException cause);
+```
+
+| 왜 코덱인가 | |
+|---|---|
+| 이름을 아는 쪽 | `turnId` · `idempotencyKey` 는 코덱이 쓰는 키다. 세 백엔드에서 **철자가 같다**(Redis `:101,103` · Postgres `:88,90` · Mongo `:99,100`)지만, 그 사실을 아는 것은 코덱이지 인박스가 아니다 |
+| mapper 를 가진 쪽 | 인박스에 mapper 를 들리면 파싱 지식이 두 곳이 된다. 페이로드를 두 번 파싱하는 안도 같은 이유로 안 고른다 |
+| **전역이어야 하는 쪽** | 이 메서드는 **던지지 않는다.** 자기 파싱을 자기가 감싸고, 아무것도 못 읽으면 두 주소가 빈 `UnreadableEntry` 를 돌려준다. 위 IMPORTANT 의 규칙("회수가 실패해도 항목 밖으로 나가지 않는다")을 **세 인박스가 아니라 한 자리**에서 지키게 하는 방법이다 |
+
+IMPORTANT: **네 번째 선택지 — 코덱이 주소를 실은 풍부한 예외를 던지게 하는 것 — 은 §1 의 규칙이 이미
+닫았다.** 경계를 예외 타입으로 긋지 않기로 했으므로 그 예외가 온다는 보장이 없다. 실제로 §1 이 실측한
+실패는 `Principal.Type.valueOf` 가 던지는 평범한 `IllegalArgumentException` 이고, 그것은 코덱이 만든
+것이 아니다.
+
+#### 파일 발자국
+
+반환 타입 변경은 **전부 컴파일 브레이크**라 컴파일러가 찾아 준다 — Mockito 로 `collect` 를 스텁하는
+자리가 0건이므로 조용히 깨지는 곳이 없다 *(2026-09-06 확인)*.
+
+| 갈래 | 파일 |
+|---|---|
+| SPI | `SessionInbox` |
+| 구현 (main) | `InMemorySessionInbox` · `RedisSessionInbox` · `PostgresSessionInbox` · `MongoSessionInbox` |
+| 구현 (test) | `SessionRouterOrphanedForwardTest$BlindInbox` |
+| main 호출자 | `DefaultSessionRouter:1504` |
+| testkit | `AbstractMultiNodeSessionContractTest` |
+| 테스트 호출 | `InMemorySessionInboxTest` · 세 백엔드의 `*SessionInboxIntegrationTest` |
+| **기존 합** | **12** |
+| 신규 | `CollectedBatch` · `UnreadableEntry` |
+| 별건 | `TurnResultPayload` (`UNREADABLE` 값 추가) |
+
+둘은 따로 적어 둔다. **`InMemorySessionInbox` 도 시그니처는 바뀐다** — §7.2 의 *"참여하지 않는다"* 는
+계약 스위트 이야기이지 SPI 이야기가 아니다(객체를 그대로 담으므로 `unreadable()` 은 언제나 비어 있다).
+그리고 **`collectPending` 자신의 반환은 `List<InboundMessage>` 로 남는다** — 처분이 그 안에서 끝나므로
+라우터 쪽 변경은 `:1504` 한 줄이다.
 
 **주소가 실제로 살아남는다는 것은 확인했다.** §1 의 Redis 재현에서 같은 손상 페이로드를 평범한
 `readTree` 로 읽으면 `conversationId=c-repro-2 turnId=turn-abc idempotencyKey=key-abc` 가 그대로
@@ -401,7 +457,7 @@ dead-letter 를 읽는 소비자가 실제로 생길 때. 그때 (c) 는 (a) 위
 |---|---|
 | 레벨 | **WARN** |
 | 개수 | 드롭된 **항목마다 한 줄** (배치 요약 줄은 두지 않는다 — 세는 것은 줄 수로 되고, 같은 사건에 두 줄은 소음이다) |
-| 담는 것 | 세션 id, 백엔드 항목 id(스트림 id / row id / `_id`), 예외 메시지, 배치 안 위치(`k of n`) |
+| 담는 것 | 세션 id, 백엔드 항목 id(스트림 id / row id / `_id`), 예외 메시지 |
 | 담지 않는 것 | **페이로드.** 이 저장소의 규칙이며 `decodeOrText` 가 *"the payload itself is never logged"* 로 적어 두었다 |
 
 **WARN 인 이유**: [`error-handling.md`](../../../.claude/rules/error-handling.md) 의 표에서 WARN 은
@@ -409,6 +465,17 @@ dead-letter 를 읽는 소비자가 실제로 생길 때. 그때 (c) 는 (a) 위
 (`RedisPubSubSignalBus:176` · `MongoSessionSignalBus:260` · `ListenDispatcher:230`), 메모리 저널
 리플레이(`FileObservationStore:149` · `FileWorkspaceStore:121`), `UserInputCodec.degrade:318`.
 ERROR 는 과하다 — 나머지 배치는 정상적으로 계속된다.
+
+IMPORTANT: **`k of n` 은 싣지 않는다.** 초판은 배치 안 위치를 요구했는데 **Mongo 는 로그 시점에 `n` 을
+모른다** — `collect:96-104` 는 `findOneAndDelete` 가 `null` 을 줄 때까지 도는 루프라 총 건수가 루프가
+끝나야 정해진다. Redis(`raw.size()/2`)와 Postgres(`rows.size()`)는 안다. 선택지는 셋이었고 —
+로그를 루프 뒤로 미루기 / `n` 을 빼기 / 그 백엔드만 형식을 달리하기 — **`n` 을 뺀다.**
+
+세 백엔드가 **같은 문장**을 내는 것이 §7 이 공유 계약 스위트를 세우는 전제이고, 형식을 하나만 달리하면
+그 스위트가 케이스 4 에서 백엔드별 분기를 갖게 된다. 로그를 뒤로 미루는 안은 드롭 시점과 로그 시점을
+갈라 놓아 "항목마다 한 줄" 의 뜻을 흐린다. 그리고 **배치 규모는 로그의 일이 아니다** — 그 수는
+`unreadable().size()` 로 라우터에 도달하며(§4 A2), 그것이 §6.2 의 카운터가 앉을 자리다. 로그는
+**무엇이 사라졌는지**를 말하고, 배치 크기는 반환값이 말한다.
 
 **세션 id 가 필수인 이유**는 §0.5 가 이미 적었다 — *"어느 세션의 턴이 텍스트로 떨어졌는지 못 말하면
 '관측 가능' 이 '어딘가 줄이 하나 있다' 가 된다."* 같은 문장이 여기에 그대로 적용된다.
@@ -461,7 +528,7 @@ main 소스에 `aimon.session.inbox` 리터럴이 0건이며, Micrometer 는 스
 | 백로그 §2 작업이 범위 밖에 둔 이유 | *"픽스처가 백엔드마다 다르다."* 그것은 이 자리를 피할 이유가 아니라 **추상 메서드가 필요한 이유**다 — 다른 것은 픽스처뿐이고 단언은 하나다 |
 | `SessionBackend` 에 넣지 않는 이유 | 그 타입은 네 SPI 만 노출하고 하네스는 *"never looks inside again"* 이다. 심는 데 필요한 것은 원시 핸들(Lettuce 커넥션 / `DataSource` / `MongoDatabase`)이므로, 이미 그것을 들고 있는 **백엔드 쪽 테스트 클래스**가 구현하는 추상 메서드가 맞다 |
 
-서브클래스가 구현할 것은 셋이다.
+서브클래스가 구현할 것은 **셋이다** — 착수 시점에 넷이 될 뻔했고, 그러지 않아도 되는 이유가 아래 있다.
 
 ```java
 protected abstract SessionInbox inbox();
@@ -469,6 +536,52 @@ protected abstract InboundMessageId plantUnreadableEntry(SessionId id, QueuedInp
         String turnId, String idempotencyKey);   // 손상 문서를 그 백엔드의 원시 API 로 심는다
 protected abstract long countStored(SessionId id);
 ```
+
+#### 스위트가 로그를 보려면 두 가지가 필요하다 (케이스 4)
+
+**① logback 이 testkit 의 compile classpath 에 있어야 한다.** 스위트는 testkit 의 `src/main/java` 에서
+컴파일되는데(형제인 `AbstractMultiNodeSessionContractTest` 가 거기 있다) 그 모듈의 compile classpath 에
+logback 이 **없다** — 실측: `:aimon-session-testkit:dependencies --configuration compileClasspath` 에
+`logback` **0건**, `:aimon-session-mongodb:… testCompileClasspath` 는 4건 *(2026-09-06)*. 백엔드 쪽이
+되는 것은 서브클래스의 클래스패스이지 스위트의 것이 아니다.
+
+이 트리는 같은 함정을 이미 만나 주석으로 남겨 두었다 — `aimon-core/build.gradle.kts` 의
+*"testImplementation rather than testRuntimeOnly because two tests compile against logback's
+ListAppender to assert on log output."* 그러므로 **testkit 에 `implementation(libs.logback.classic)` 을
+더한다.** 이 모듈은 발행되지 않으므로(build 파일이 *"deliberately NOT published"*) POM 비용이 없고,
+`api` 가 아닌 이유는 서브클래스가 그것에 대고 컴파일하지 않기 때문이다.
+
+**② 어느 로거에 붙일지 정해야 한다.** WARN 을 내는 것은 백엔드 클래스인데 스위트는 그 타입을 모른다.
+ROOT 에 붙이면 드라이버·Testcontainers 소음까지 받고, 네 번째 추상 메서드는 위 목록을 넷으로 만든다.
+**둘 다 하지 않는다** — 세 백엔드의 로거가 전부 `LoggerFactory.getLogger(<그 인박스 클래스>.class)` 이므로
+(`RedisSessionInbox:57` · `PostgresSessionInbox:45` · `MongoSessionInbox:47`), 스위트는 이미 가진
+`inbox()` 로 `LoggerFactory.getLogger(inbox().getClass())` 를 부르면 정확히 그 로거를 얻는다.
+**추상 메서드는 셋으로 남는다.**
+
+#### 심는 위치는 시그니처가 아니라 서버 시각이 정한다 (케이스 1)
+
+케이스 1 은 *"정상 2건 **사이에**"* 를 요구하는데 위 시그니처에는 위치를 실을 자리가 없다.
+Redis(스트림 id)와 Postgres(시퀀스 id)는 `deliver → plant → deliver` 순서만 지키면 자연히 사이에
+들어가지만, **Mongo 의 정렬 축은 `deliveredAt` 이고 그 값은 `deliver` 가 `$$NOW` 로 서버에서 찍는다**
+(`MongoSessionInbox.deliver`). 심는 쪽이 클라이언트 `Date` 를 쓰면 시계 스큐로 앞뒤가 뒤집힐 수 있다.
+
+**시그니처를 넓히지 않는다.** 대신 둘을 지킨다.
+
+1. **Mongo 의 `plantUnreadableEntry` 도 같은 `$$NOW` 파이프라인으로 찍는다.** 심은 문서와 배달된 문서가
+   같은 시계를 쓰면 순서는 호출 순서가 된다.
+2. **호출 사이에 2ms 를 넣는다.** 이 트리가 이미 쓰는 답이다 — `MongoSessionInboxIntegrationTest` 의
+   *"Mongo's Date precision is only milliseconds so back-to-back inserts can collide"* 와 그 아래
+   `Thread.sleep(2)`. 스위트가 공유하므로 Redis·Postgres 도 4ms 를 함께 낸다. 그 값에 기대는 단언은
+   케이스 2 의 **반환 순서**(`[first, third]`)이며, 그것이 "가운데였다" 를 증명한다.
+
+#### 케이스 6 은 백엔드가 필요하지 않다
+
+초판은 케이스 6(라우터가 `UNREADABLE` 을 알린다)을 `AbstractMultiNodeSessionContractTest` 로 보내면서
+그 클래스에 심기용 메서드가 하나 더 필요하다고 적었다. **필요 없다.** 그 케이스가 검사하는 것은
+라우터의 처분이지 백엔드의 디코드가 아니므로, 못 읽은 항목을 **돌려주는 가짜 인박스**면 충분하다.
+`aimon-session-routing` 의 테스트에는 이미 그 모양의 선례(`SessionRouterOrphanedForwardTest$BlindInbox`)와
+두 노드 하네스(`TestManagerHarness`)가 있다. 그래서 케이스 6 은 그 모듈의 테스트로 내려가고,
+multinode 계약 스위트는 **손대지 않는다**(반환 타입 변경으로 호출 한 줄만 바뀐다).
 
 ### 7.2 케이스
 
@@ -479,16 +592,7 @@ protected abstract long countStored(SessionId id);
 | 3 | 그 세션의 저장소가 **0** 이 된다 — 드롭된 것도 지워졌다. 재시도 루프도 poison 도 생기지 않는다는 것이 여기서 고정된다 |
 | 4 | 드롭마다 WARN 이 하나, **세션 id 를 담아서** 남는다 (`ListAppender`, `UserInputCodecTest` 의 선례) |
 | 5 | **A2** — 심은 문서의 `turnId`/`idempotencyKey` 가 `unreadable()` 로 되돌아온다. 그 둘을 빼고 심으면 빈 `Optional` 이 되고 예외가 나지 않는다 |
-| 6 | **A2** — 주소가 있는 드롭에 대해 라우터가 `UNREADABLE` 을 알린다. 두 노드 하네스가 필요하므로 `AbstractMultiNodeSessionContractTest` 쪽 케이스다 — 다만 **그 클래스에는 심을 손이 없다**(아래) |
-
-IMPORTANT: **케이스 6 은 §7.1 의 세 추상 메서드를 쓸 수 없다.** 그 셋은 새로 만드는
-`AbstractSessionInboxDurabilityContractTest` 의 것이고, 케이스 6 이 가는
-`AbstractMultiNodeSessionContractTest` 의 확장점은 `protected abstract SessionBackendFactory backend()`
-**하나뿐**이며 원시 핸들 접근이 없다(§7.1 이 인용한 *"never looks inside again"* 이 그 이유다). 그래서
-그 클래스에도 심기용 추상 메서드가 **하나 더** 필요하고, 그 시그니처는 `SessionId` 를 받아 손상 항목을
-심는 §7.1 의 `plantUnreadableEntry` 와 같은 모양이면 된다. 세 백엔드의 multinode 테스트가 이미 자기
-컨테이너 핸들을 들고 있으므로 구현은 §7.1 것과 같은 코드다 — **공유할 자리를 정하는 것이 구현 시점의
-판단**이며, 이 설계는 "두 클래스가 각자 하나씩 필요하다" 까지만 정한다.
+| 6 | **A2** — 주소가 있는 드롭에 대해 라우터가 `UNREADABLE` 로 **즉시** 통보하고 예약을 푼다. 백엔드가 필요 없으므로 `aimon-session-routing` 의 테스트다(§7.1 마지막) |
 
 `InMemorySessionInbox` 는 **참여하지 않는다.** 객체를 그대로 담고 디코드가 없어 이 성질을 만들 수
 없다 — 계약을 못 도는 것이 아니라 **계약이 말하는 것이 그 구현에는 없다.**
@@ -541,6 +645,20 @@ IMPORTANT: **케이스 6 은 §7.1 의 세 추상 메서드를 쓸 수 없다.**
 9. **F-1 이 반증한 뒤에도 남은 인접 질문 하나: Redis·Postgres 에서 (b) 가 만드는 정체의 정확한 모양을
    재지 않았다.** (b) 가 구현되지 않았으므로 잴 것이 없고, §5 의 두 칸은 소스 읽기로 세운 추론이다.
    Mongo 칸만 **오늘의 동작**을 실측으로 못박았다(§5 MongoDB IMPORTANT).
+
+### 구현이 확인한 것 — 위 목록 중 넷이 닫혔다
+
+| §8 항목 | 지금 |
+|---|---|
+| 1. 처방을 돌려 보지 않았다 | **닫힘.** 세 백엔드 × 5 케이스가 초록이고, 예측했던 수치가 그대로 나온다 — 가운데에 심으면 `[first, third]` 가 순서대로 돌아오고 저장소는 0 이 된다 |
+| 2. A2 를 두 노드로 돌려 보지 않았다 | **부분적으로 닫힘.** 라우터의 처분은 `SessionRouterUnreadableEntryTest` 가 실제 `SessionRouter` 와 대기 중인 forward 로 검사한다(가짜 인박스, 컨테이너 없음). 두 **컨테이너** 노드로는 여전히 안 돌렸다 |
+| 3. 5분 `TimeoutException` 문구 | **여전히 읽기다.** 그 경로는 이제 A2 가 덮으므로 재현하려면 A2 를 꺼야 한다 — 결함 주입 6번이 정확히 그것이고, 그때 테스트가 *"the caller was not answered"* 로 떨어진다 |
+| 4. 항목별 `try` 의 지연 영향 | **여전히 안 쟀다.** 예외 경로가 아니면 비용이 없다는 것은 계속 추론이다 |
+| 8. 주소 회수의 성공률 | **닫히지 않았고 닫을 필요가 없어졌다.** 회수가 실패해도 항목 밖으로 안 나간다는 것을 코덱 단위 테스트가 `{not json at all}` · `[]` · `null` 로 고정한다(`addressRecoveryIsTotal`) |
+
+그리고 구현이 **새로 알려 준 것**이 하나 있다. 계약 스위트의 로그 캡처를 `@BeforeEach` 에 두면 안 된다 —
+JUnit 은 상위 클래스의 `@BeforeEach` 를 먼저 돌리므로 그 시점에 서브클래스는 아직 컨테이너를 배선하지
+않았고 `inbox()` 가 null 이다. 캡처는 그것을 쓰는 시나리오 안에서 시작한다.
 
 ### 리뷰가 잰 것 — §1 은 독립 재현되었다
 

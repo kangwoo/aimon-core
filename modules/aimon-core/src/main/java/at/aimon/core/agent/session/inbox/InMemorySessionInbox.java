@@ -38,13 +38,21 @@ public final class InMemorySessionInbox implements SessionInbox {
         return issuedId;
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>
+     * The unreadable list is always empty here, and structurally so: this implementation stores the envelopes
+     * themselves rather than an encoding of them, so there is no decode step to fail. That is also why it sits out
+     * the shared durability contract suite — it cannot produce the state that contract is about.
+     */
     @Override
-    public List<InboundMessage> collect(SessionId id, QueuedInputPriority maxPriority) {
+    public CollectedBatch collect(SessionId id, QueuedInputPriority maxPriority) {
         Objects.requireNonNull(id, "id must not be null");
         Objects.requireNonNull(maxPriority, "maxPriority must not be null");
         final List<Stored> bucket = inboxes.get(id);
         if (bucket == null) {
-            return List.of();
+            return CollectedBatch.empty();
         }
         final List<InboundMessage> collected = new ArrayList<>();
         synchronized (bucket) {
@@ -65,7 +73,7 @@ public final class InMemorySessionInbox implements SessionInbox {
             bucket.clear();
             bucket.addAll(kept);
         }
-        return collected;
+        return CollectedBatch.ofMessages(collected);
     }
 
     @Override

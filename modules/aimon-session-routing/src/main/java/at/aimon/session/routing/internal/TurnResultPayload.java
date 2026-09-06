@@ -269,7 +269,23 @@ final class TurnResultPayload {
              * is handed over instead of failed — announcing this for one would invite a retry alongside the turn a peer
              * then runs.
              */
-            NOT_HOLDER;
+            NOT_HOLDER,
+            /**
+             * The holder removed this message from the inbox and could not decode it, so no node will ever run it.
+             *
+             * <p>
+             * Distinct from {@link #FAILED} for the reason that code's neighbour states: this input was never
+             * attempted, and a caller told "attempted and threw" learns the wrong thing about whether to resubmit.
+             * Distinct from {@link #NOT_HOLDER}, which reads the same from a distance but is reserved for a
+             * departing node's shutdown — an operator seeing it concludes a node went down, which here it did not.
+             *
+             * <p>
+             * A node one release behind decodes this through {@link Code#parse}, which reports an unknown outcome as
+             * {@code FAILED} rather than throwing. That lands on the wrong side of the distinction above, and it is
+             * still the right trade: nothing branches on the code (only the message text differs), the caller is
+             * woken either way, and the alternative for that node is no answer at all until the forward deadline.
+             */
+            UNREADABLE;
 
             static Code parse(String raw) {
                 for (Code code : values()) {

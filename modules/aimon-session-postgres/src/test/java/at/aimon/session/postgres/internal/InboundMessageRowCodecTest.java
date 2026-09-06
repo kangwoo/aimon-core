@@ -1,6 +1,7 @@
 package at.aimon.session.postgres.internal;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
 import java.time.Instant;
@@ -23,6 +24,7 @@ import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.TurnId;
 import at.aimon.core.agent.session.inbox.InboundMessage;
 import at.aimon.core.agent.session.inbox.InboundMessageId;
+import at.aimon.core.agent.session.inbox.UnreadableEntry;
 import at.aimon.core.base.Principal;
 import at.aimon.core.llm.LlmCallMetadata;
 
@@ -33,6 +35,8 @@ import at.aimon.core.llm.LlmCallMetadata;
  */
 @DisplayName("InboundMessageRowCodec submitOptions round-trip, and the frozen key round-trips cannot see")
 class InboundMessageRowCodecTest {
+
+    private static final String ENTRY_ID = "42";
 
     private final ObjectMapper mapper = new ObjectMapper();
 
@@ -244,6 +248,60 @@ class InboundMessageRowCodecTest {
 
         assertThat(decoded.getUserInput()).isEqualTo(TextInput.of("what is in this?"));
         assertThat(decoded.getSessionId()).isEqualTo(SessionId.of("c-42"));
+    }
+
+    @Test
+    @DisplayName("a broken envelope field still throws — the drop policy is the caller's, not this codec's")
+    void aBrokenEnvelopeFieldStillRefuses() {
+        // The design corrects what happens *after* the throw, not whether there is one. Widening the user-input
+        // degradation to the envelope would run a damaged document as if it were sound: `initiator`, `priority` and
+        // `deliveredAt` have no plain-text stand-in sitting beside them the way the input does.
+        final String damaged = "{\"conversationId\":\"c-9\",\"agentRef\":\"agent-x\","
+                + "\"userInput\":\"hello\",\"priority\":\"NEXT\","
+                + "\"initiator\":{\"type\":\"ROBOT\",\"id\":\"u-1\",\"displayName\":\"alice\"},"
+                + "\"deliveredAt\":\"2026-04-27T10:00:00Z\"}";
+
+        assertThatThrownBy(() -> codec.decode(damaged, ENTRY_ID)).isInstanceOf(RuntimeException.class);
+    }
+
+    @Test
+    @DisplayName("address recovery reads the two ids out of the very payload that failed")
+    void addressRecoveryReadsWhatSurvived() {
+        final String damaged = "{\"conversationId\":\"c-9\",\"agentRef\":\"agent-x\","
+                + "\"userInput\":\"hello\",\"priority\":\"NEXT\","
+                + "\"turnId\":\"turn-abc\",\"idempotencyKey\":\"key-abc\","
+                + "\"initiator\":{\"type\":\"ROBOT\",\"id\":\"u-1\",\"displayName\":\"alice\"},"
+                + "\"deliveredAt\":\"2026-04-27T10:00:00Z\"}";
+
+        final UnreadableEntry entry = codec.recoverAddress(damaged, ENTRY_ID, new IllegalArgumentException("boom"));
+
+        assertThat(entry.getTurnId()).hasValue("turn-abc");
+        assertThat(entry.getIdempotencyKey()).hasValue("key-abc");
+        assertThat(entry.isAddressable()).isTrue();
+        assertThat(entry.getReason()).contains("boom");
+    }
+
+    @Test
+    @DisplayName("address recovery never throws, whatever it is handed")
+    void addressRecoveryIsTotal() {
+        // It runs inside the per-entry guard, on input that has already proved unreadable. A throw here would put
+        // the batch loss back exactly where the guard removed it.
+        final IllegalStateException cause = new IllegalStateException();
+
+        assertThat(codec.recoverAddress("{not json at all", ENTRY_ID, cause).isAddressable()).isFalse();
+        assertThat(codec.recoverAddress("[]", ENTRY_ID, cause).isAddressable()).isFalse();
+        assertThat(codec.recoverAddress(null, ENTRY_ID, cause).isAddressable()).isFalse();
+        // getMessage() is null on that exception; the reason must still be usable.
+        assertThat(codec.recoverAddress(null, ENTRY_ID, cause).getReason()).isNotBlank();
+    }
+
+    @Test
+    @DisplayName("address recovery does not put the payload in the reason")
+    void addressRecoveryNeverEchoesThePayload() {
+        final UnreadableEntry entry = codec.recoverAddress("{\"secret\":\"POISON-SECRET-TEXT\"", ENTRY_ID,
+                new IllegalStateException("Unexpected end-of-input"));
+
+        assertThat(entry.getReason()).doesNotContain("POISON-SECRET-TEXT");
     }
 
     private InboundMessage.Builder baseMessage() {

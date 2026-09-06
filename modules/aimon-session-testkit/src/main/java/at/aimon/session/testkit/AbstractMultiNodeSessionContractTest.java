@@ -268,7 +268,7 @@ public abstract class AbstractMultiNodeSessionContractTest {
         // Drain the inbox through a connection neither node owns, to confirm the message really materialized in the
         // shared backend rather than in the sender's memory.
         final SessionInbox observer = backend().createInbox(extraCloseables::add);
-        final List<InboundMessage> seen = observer.collect(id, QueuedInputPriority.LATER);
+        final List<InboundMessage> seen = observer.collect(id, QueuedInputPriority.LATER).getMessages();
         assertThat(seen).extracting(m -> m.getUserInput().asText()).contains("second");
 
         sessionA.completeCurrentTurn(RecordingTestSession.ok("done"));

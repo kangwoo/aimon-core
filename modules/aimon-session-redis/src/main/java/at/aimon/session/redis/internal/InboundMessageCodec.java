@@ -18,6 +18,7 @@ import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.TurnId;
 import at.aimon.core.agent.session.inbox.InboundMessage;
 import at.aimon.core.agent.session.inbox.InboundMessageId;
+import at.aimon.core.agent.session.inbox.UnreadableEntry;
 import at.aimon.core.base.Principal;
 import at.aimon.core.subagent.task.codec.SubmitOptionsCodec;
 import at.aimon.core.subagent.task.codec.UserInputCodec;
@@ -164,6 +165,53 @@ public final class InboundMessageCodec {
         } catch (IOException e) {
             throw new IllegalStateException("Failed to decode InboundMessage", e);
         }
+    }
+
+    /**
+     * Best-effort address recovery for an entry {@link #decode} could not rebuild.
+     *
+     * <p>
+     * <b>This method never throws</b>, and that is its whole contract. It runs inside the per-entry guard of
+     * {@code collect}, on a payload that has already proved itself unreadable, so a second failure here would either
+     * re-create the batch loss the guard exists to prevent or leave the drop unreported. Anything it cannot read
+     * comes back as an absent address, which the router already has a branch for.
+     *
+     * <p>
+     * The two addresses ride as raw strings rather than as {@code TurnId} — rebuilding a validating value object
+     * from this input is exactly the move that broke here in the first place. The conversion happens where a
+     * {@code null} means something.
+     *
+     * @param json
+     *            the payload as stored (may be null)
+     * @param entryId
+     *            the backend's id for the entry (must not be null)
+     * @param cause
+     *            what {@link #decode} threw (must not be null)
+     * @return the entry, with whatever address survived
+     */
+    public UnreadableEntry recoverAddress(String json, String entryId, RuntimeException cause) {
+        Objects.requireNonNull(entryId, "entryId must not be null");
+        Objects.requireNonNull(cause, "cause must not be null");
+        // toString rather than getMessage: the message is null for plenty of runtime exceptions, and the type is
+        // half of what tells an operator a newer document apart from a damaged one. Neither carries the payload —
+        // Jackson redacts the source snippet from its own parse errors.
+        final UnreadableEntry.Builder recovered = UnreadableEntry.builder().id(InboundMessageId.of(entryId))
+                .reason(cause.toString());
+        if (json == null) {
+            return recovered.build();
+        }
+        try {
+            final JsonNode root = mapper.readTree(json);
+            recovered.turnId(rawText(root, "turnId")).idempotencyKey(rawText(root, "idempotencyKey"));
+        } catch (IOException | RuntimeException ignored) {
+            // Nothing legible in there. The entry is still reported — unaddressably, which the caller can tell.
+        }
+        return recovered.build();
+    }
+
+    private static String rawText(JsonNode root, String field) {
+        final JsonNode node = root == null ? null : root.get(field);
+        return node == null || node.isNull() ? null : node.asText();
     }
 
     /**

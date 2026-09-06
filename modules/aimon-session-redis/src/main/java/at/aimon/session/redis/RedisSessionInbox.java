@@ -14,9 +14,11 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import at.aimon.core.agent.queue.QueuedInputPriority;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.exception.SessionInboxException;
+import at.aimon.core.agent.session.inbox.CollectedBatch;
 import at.aimon.core.agent.session.inbox.InboundMessage;
 import at.aimon.core.agent.session.inbox.InboundMessageId;
 import at.aimon.core.agent.session.inbox.SessionInbox;
+import at.aimon.core.agent.session.inbox.UnreadableEntry;
 import at.aimon.session.redis.internal.InboundMessageCodec;
 import io.lettuce.core.RedisException;
 import io.lettuce.core.ScriptOutputType;
@@ -94,18 +96,19 @@ public final class RedisSessionInbox implements SessionInbox {
     }
 
     @Override
-    public List<InboundMessage> collect(SessionId id, QueuedInputPriority maxPriority) {
+    public CollectedBatch collect(SessionId id, QueuedInputPriority maxPriority) {
         Objects.requireNonNull(id, "id must not be null");
         Objects.requireNonNull(maxPriority, "maxPriority must not be null");
         try {
             final List<InboundMessage> all = new ArrayList<>();
+            final List<UnreadableEntry> unreadable = new ArrayList<>();
             for (QueuedInputPriority tier : QueuedInputPriority.values()) {
                 if (tier.ordinal() > maxPriority.ordinal()) {
                     break;
                 }
-                all.addAll(collectTier(id, tier));
+                collectTier(id, tier, all, unreadable);
             }
-            return all;
+            return CollectedBatch.of(all, unreadable);
         } catch (RedisException e) {
             throw new SessionInboxException("Redis error collecting from " + id, e);
         }
@@ -138,19 +141,30 @@ public final class RedisSessionInbox implements SessionInbox {
         }
     }
 
-    private List<InboundMessage> collectTier(SessionId id, QueuedInputPriority tier) {
+    private void collectTier(SessionId id, QueuedInputPriority tier, List<InboundMessage> out,
+            List<UnreadableEntry> unreadable) {
         final String key = streamKey(id, tier);
         final List<Object> raw = commands.eval(COLLECT_SCRIPT, ScriptOutputType.MULTI, key);
         if (raw == null || raw.isEmpty()) {
-            return List.of();
+            return;
         }
-        final List<InboundMessage> out = new ArrayList<>(raw.size() / 2);
         for (int i = 0; i + 1 < raw.size(); i += 2) {
             final String entryId = String.valueOf(raw.get(i));
             final String payload = String.valueOf(raw.get(i + 1));
-            out.add(codec.decode(payload, entryId));
+            try {
+                out.add(codec.decode(payload, entryId));
+            } catch (RuntimeException e) {
+                // The boundary is the entry, not the exception type. The Lua above has already XDELed this batch, so
+                // letting one entry's failure out of here destroys every message the call collected — and the type it
+                // arrives as is not this codec's to predict: Principal.Type.valueOf throws a plain
+                // IllegalArgumentException, and the next value object to grow a rule will throw something else again.
+                unreadable.add(codec.recoverAddress(payload, entryId, e));
+                log.warn(
+                        "Dropping an inbox entry this build cannot decode [session={}, entryId={}]: {}."
+                                + " It is already out of the inbox, so its turn will not run anywhere.",
+                        id, entryId, e.toString());
+            }
         }
-        return out;
     }
 
     private String streamKey(SessionId id, QueuedInputPriority tier) {
