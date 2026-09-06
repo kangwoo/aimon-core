@@ -330,6 +330,21 @@ Central is versioned independently).
   The flag still has no caller here, and [`scripts/check-translation-staleness.py`](scripts/check-translation-staleness.py)
   records why it is deliberately not in the release gate.
 
+- **Javalin 6.3.0 → 7.2.3, which is a code change and not only a version line.** Dependabot's bump
+  ([#11](https://github.com/kangwoo/aimon-core/pull/11)) moved one line in
+  `gradle/libs.versions.toml` and failed both gate jobs on the same compile error, because Javalin 7
+  moved two things `RewakeWebhookServer` was using: `JavalinConfig.showJavalinBanner` is now
+  `config.startup.showJavalinBanner`, and the HTTP verb methods are gone from `Javalin` itself —
+  routing is declared through `config.routes` (`JavalinDefaultRoutingApi`) at create time rather than
+  chained onto the instance afterwards. Three lines at the one call site; the module's 18 tests,
+  including the two that start a real server, pass unchanged.
+
+- **The blast radius is one module, and that was checked rather than assumed.** `aimon-rewake-webhook`
+  is the only module that depends on Javalin and **nothing depends on it**, so the Jetty it drags in
+  (12.1.12, `ee10-servlet`) meets no other pin in the build — there is no `jetty` entry in the version
+  catalog at all. Javalin 7.2.3 is Java 17 bytecode, matching the toolchain. 7.2.1 is the release
+  upstream marked unusable over a Jetty bug; this is the fix for it, not that.
+
 ### Docs CI: translations are now checked for shape, not only for age
 
 - **New check `scripts/check-translation-structure.py`, wired as a second step of the CI job that
