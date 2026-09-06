@@ -7,49 +7,44 @@ Central is versioned independently).
 
 ## [Unreleased]
 
-### Docs CI: translations are now checked for shape, not only for age
+### Sessions: one unreadable inbox entry no longer costs the whole batch
 
-- **New check `scripts/check-translation-structure.py`, wired as a second step of the CI job that
-  was `translation-staleness` and is now `translations`.** The two checks answer different questions
-  of the same 32 pairs -- is the translation *current*, and is it *complete* -- and a translation
-  that sits at the same commit as its canonical while missing a section used to pass both of them
-  green. `CLAUDE.md` and `CONTRIBUTING.md` have always required matching structure; until now the
-  only thing enforcing it was a person.
+- **`SessionInbox.collect` returns `CollectedBatch` instead of `List<InboundMessage>`.** A
+  **breaking change** to a published SPI (`at.aimon.core.agent.session.inbox`), and — like the
+  `getUserInput()` change below — not a rename, so there is no row in
+  [`rename-maps.md`](docs/migration/rename-maps.md): the method resolves exactly as before with a
+  different return type. Every implementation and call site is a compile error, which is the whole
+  point; there is nothing that breaks quietly.
 
-  It compares six things that survive re-wrapping: headings and their level sequence, fences and
-  their language sequence, table rows per table, list items and their nesting depth, quote *blocks*,
-  and (advisory only) `#` comment lines inside fences. Line counts are used for nothing: Korean
-  carries more per column, so all 32 pairs disagree on raw line count and one by 16%.
+  | Was | Is |
+  |---|---|
+  | `List<InboundMessage> m = inbox.collect(id, LATER);` | `inbox.collect(id, LATER).getMessages()` |
+  | — | `.getUnreadable()` is new: entries removed from the backend that this build could not decode |
 
-- **The job renamed from `translation-staleness` to `translations`.** `main` carries no branch
-  protection and no rulesets, so no required-check name had to move with it.
+  A `default` method keeping the old signature was considered and rejected: an implementation that
+  was never updated would then report "nothing unreadable" without anyone having decided that.
 
-- **A structure mismatch fails the build only when the pair is level with its canonical.** When the
-  canonical has moved on, the mismatch is reported and the run still exits 0 -- failing there would
-  hand a red build to whoever edited the canonical over a translation backlog, which is the pressure
-  `check-translation-staleness.py` documents itself as existing to avoid. Doing it from a second
-  script would have overturned that decision through a side door.
+- **What it fixes.** All three backends delete an entry from storage *before* the codec rebuilds it
+  — Redis's collect script `XDEL`s inside Lua, Postgres commits its `DELETE … RETURNING`, MongoDB
+  uses `findOneAndDelete`. One entry this build could not decode therefore took **every message that
+  call collected** with it: gone from storage, delivered to nobody, and the submitters left waiting
+  on turns no node would ever run. Reproduced on all three with real containers (a damaged
+  `initiator.type` between two sound messages left 0 entries on Redis and Postgres and 1 on MongoDB,
+  with the message *ahead* of the poison lost as well). The decode is now guarded **per entry**,
+  catching `RuntimeException` — the boundary is the entry, not the exception type, because the value
+  objects an envelope rebuilds signal a refusal with exceptions of their own.
 
-- **Translations may declare a per-axis exemption** with `structure_exempt` and
-  `structure_exempt_reason` in their front matter. Both keys are required and both shapes are
-  enforced, because mkdocs reads the same block with a YAML parser while the scripts read it with a
-  line regex: a YAML list silently loses its second entry through one of them, and an unquoted
-  reason containing a colon or a backtick makes mkdocs drop the metadata and publish it as page
-  text with `mkdocs build --strict` still exiting 0. An exemption also expires -- once its axis
-  matches again the check asks for the line to be deleted.
+- **A dropped entry is not silent.** It is logged at `WARN` naming the session and the backend's
+  entry id (never the payload), and whatever remained legible of its address — `turnId`,
+  `idempotencyKey`, as raw strings — rides back on the batch so `SessionRouter` fails the waiting
+  submitter through the rail it already uses for a message it refused. Without that the caller
+  learned nothing until the five-minute forward deadline. A new `TURN_RESULT` outcome `UNREADABLE`
+  distinguishes "never attempted" from `FAILED`'s "attempted and threw"; a node one release behind
+  reads it as `FAILED` rather than dropping the signal.
 
-- **`scripts/docs_tree.py` gained `translations()`, `frontmatter()`, `canonical_of()` and
-  `pair_state()`**, and `check-translation-staleness.py` now sits on them; its output and exit codes
-  are unchanged on every branch. That module now runs git, which it did not before -- the cost is
-  paid so that two checks cannot compute "is this pair current" differently, which is exactly the
-  drift it was created to prevent.
-
-- **`check-translation-structure.py --self-test`** runs in CI ahead of the check itself. It varies
-  the *reading* while holding the corpus still: each wrong reading must still split at least one pair
-  that the specified reading is happy with. On a corpus with nothing to catch, that is the only thing
-  separating a check that measured and found nothing from one that quietly stopped measuring -- and
-  because it counts the *difference* between two readings rather than an absolute, a pair that is
-  behind its canonical or carries a legitimate exemption cancels out instead of failing the step.
+- **Not covered:** the dropped entry's bytes are gone. A dead-letter surface was considered and
+  deferred — the reasoning, and the trigger that would reopen it, are in
+  [`inbox-collect-durability.md`](docs/design/session/inbox-collect-durability.md).
 
 ### Sessions: a routed submission carries the input, not a rendering of it
 
@@ -334,6 +329,50 @@ Central is versioned independently).
   the finding, decide whether depth counts as a defect. Unresolvable findings fail with or without it.
   The flag still has no caller here, and [`scripts/check-translation-staleness.py`](scripts/check-translation-staleness.py)
   records why it is deliberately not in the release gate.
+
+### Docs CI: translations are now checked for shape, not only for age
+
+- **New check `scripts/check-translation-structure.py`, wired as a second step of the CI job that
+  was `translation-staleness` and is now `translations`.** The two checks answer different questions
+  of the same 32 pairs -- is the translation *current*, and is it *complete* -- and a translation
+  that sits at the same commit as its canonical while missing a section used to pass both of them
+  green. `CLAUDE.md` and `CONTRIBUTING.md` have always required matching structure; until now the
+  only thing enforcing it was a person.
+
+  It compares six things that survive re-wrapping: headings and their level sequence, fences and
+  their language sequence, table rows per table, list items and their nesting depth, quote *blocks*,
+  and (advisory only) `#` comment lines inside fences. Line counts are used for nothing: Korean
+  carries more per column, so all 32 pairs disagree on raw line count and one by 16%.
+
+- **The job renamed from `translation-staleness` to `translations`.** `main` carries no branch
+  protection and no rulesets, so no required-check name had to move with it.
+
+- **A structure mismatch fails the build only when the pair is level with its canonical.** When the
+  canonical has moved on, the mismatch is reported and the run still exits 0 -- failing there would
+  hand a red build to whoever edited the canonical over a translation backlog, which is the pressure
+  `check-translation-staleness.py` documents itself as existing to avoid. Doing it from a second
+  script would have overturned that decision through a side door.
+
+- **Translations may declare a per-axis exemption** with `structure_exempt` and
+  `structure_exempt_reason` in their front matter. Both keys are required and both shapes are
+  enforced, because mkdocs reads the same block with a YAML parser while the scripts read it with a
+  line regex: a YAML list silently loses its second entry through one of them, and an unquoted
+  reason containing a colon or a backtick makes mkdocs drop the metadata and publish it as page
+  text with `mkdocs build --strict` still exiting 0. An exemption also expires -- once its axis
+  matches again the check asks for the line to be deleted.
+
+- **`scripts/docs_tree.py` gained `translations()`, `frontmatter()`, `canonical_of()` and
+  `pair_state()`**, and `check-translation-staleness.py` now sits on them; its output and exit codes
+  are unchanged on every branch. That module now runs git, which it did not before -- the cost is
+  paid so that two checks cannot compute "is this pair current" differently, which is exactly the
+  drift it was created to prevent.
+
+- **`check-translation-structure.py --self-test`** runs in CI ahead of the check itself. It varies
+  the *reading* while holding the corpus still: each wrong reading must still split at least one pair
+  that the specified reading is happy with. On a corpus with nothing to catch, that is the only thing
+  separating a check that measured and found nothing from one that quietly stopped measuring -- and
+  because it counts the *difference* between two readings rather than an absolute, a pair that is
+  behind its canonical or carries a legitimate exemption cancels out instead of failing the step.
 
 ### Documentation: the site's front page is now written for a first-time reader
 

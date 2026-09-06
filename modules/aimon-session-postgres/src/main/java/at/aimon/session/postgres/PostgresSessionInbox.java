@@ -20,9 +20,11 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import at.aimon.core.agent.queue.QueuedInputPriority;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.exception.SessionInboxException;
+import at.aimon.core.agent.session.inbox.CollectedBatch;
 import at.aimon.core.agent.session.inbox.InboundMessage;
 import at.aimon.core.agent.session.inbox.InboundMessageId;
 import at.aimon.core.agent.session.inbox.SessionInbox;
+import at.aimon.core.agent.session.inbox.UnreadableEntry;
 import at.aimon.session.postgres.internal.InboundMessageRowCodec;
 
 /**
@@ -98,7 +100,7 @@ public final class PostgresSessionInbox implements SessionInbox {
     }
 
     @Override
-    public List<InboundMessage> collect(SessionId id, QueuedInputPriority maxPriority) {
+    public CollectedBatch collect(SessionId id, QueuedInputPriority maxPriority) {
         Objects.requireNonNull(id, "id must not be null");
         Objects.requireNonNull(maxPriority, "maxPriority must not be null");
         final List<RowAndPriority> rows = new ArrayList<>();
@@ -129,10 +131,24 @@ public final class PostgresSessionInbox implements SessionInbox {
             return p != 0 ? p : Long.compare(a.id, b.id);
         });
         final List<InboundMessage> out = new ArrayList<>(rows.size());
+        final List<UnreadableEntry> unreadable = new ArrayList<>();
         for (RowAndPriority r : rows) {
-            out.add(codec.decode(r.payload, Long.toString(r.id)));
+            final String rowId = Long.toString(r.id);
+            try {
+                out.add(codec.decode(r.payload, rowId));
+            } catch (RuntimeException e) {
+                // The boundary is the entry, not the exception type. The DELETE ... RETURNING above is already
+                // committed, so letting one row's failure out of here destroys every message the call collected —
+                // and the type it arrives as is not this codec's to predict: Principal.Type.valueOf throws a plain
+                // IllegalArgumentException, and the next value object to grow a rule will throw something else again.
+                unreadable.add(codec.recoverAddress(r.payload, rowId, e));
+                log.warn(
+                        "Dropping an inbox entry this build cannot decode [session={}, entryId={}]: {}."
+                                + " It is already out of the inbox, so its turn will not run anywhere.",
+                        id, rowId, e.toString());
+            }
         }
-        return out;
+        return CollectedBatch.of(out, unreadable);
     }
 
     @Override

@@ -49,6 +49,7 @@
 | [`spi-extraction.md`](session/spi-extraction.md) | 세션 SPI 를 `aimon-core` 로 내리고 라우팅만 밖에 남긴 이관 |
 | [`routing.md`](session/routing.md) | sticky 라우팅 없이 세션당 턴을 직렬화하는 멀티 노드 계층 |
 | [`backends.md`](session/backends.md) | PostgreSQL · MongoDB · Redis 세 백엔드의 스키마와 보장 차이 |
+| [`inbox-collect-durability.md`](session/inbox-collect-durability.md) | 인박스 `collect` 가 한 항목의 디코드 실패로 배치를 잃지 않게 — 후보 셋의 백엔드별 비용과 기각 사유 |
 
 ### tool — 도구 계약
 

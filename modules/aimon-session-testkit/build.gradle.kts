@@ -22,4 +22,12 @@ dependencies {
     // the platform comes in here rather than relying on the one the conventions plugin puts on test configurations.
     api(platform(libs.spring.boot.dependencies))
     api(libs.bundles.testing)
+
+    // `implementation`, and on the *main* source set, because AbstractSessionInboxDurabilityContractTest compiles
+    // against logback's ListAppender to assert that a dropped inbox entry says so at WARN. The same reasoning is
+    // already written down in aimon-core's build script: a ListAppender assertion is a compile-time dependency, not a
+    // runtime one, so testRuntimeOnly — which is what the three backend modules declare — does not reach it from here.
+    // `implementation` rather than `api` because subclasses do not compile against it, and no POM is at stake: this
+    // module is deliberately not published.
+    implementation(libs.logback.classic)
 }

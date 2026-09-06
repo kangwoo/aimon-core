@@ -304,7 +304,7 @@ B-6 이 그렇게 어긋나 있었다. §7 은 그 항목을 "MCP 를 실제로 
 | 문서 | 출처 | 항목 수 | 열림 | 닫힘 | 해소 |
 |------|------|--------|------|------|------|
 | [`spring-boot-starter-open-items.md`](spring-boot-starter-open-items.md) | `docs/design/integration/spring-boot-starter.md` (SBS-00 ~ SBS-12) | 34 | 4 | 25 | 5 |
-| [`interrupt-open-items.md`](interrupt-open-items.md) | `docs/design/agent-execution/interrupt.md` | 5 | 3 | 2 | 0 |
+| [`interrupt-open-items.md`](interrupt-open-items.md) | `docs/design/agent-execution/interrupt.md` | 5 | 2 | 3 | 0 |
 | [`multi-instance-readiness.md`](multi-instance-readiness.md) | 아키텍처 리뷰 (2026-08-31) | 3 | 1 | 1 | 1 |
 | [`module-dependency-scope.md`](module-dependency-scope.md) | 아키텍처 리뷰 (2026-08-31) | 1 | 1 | 0 | 0 |
 | [`architecture-review-open-items.md`](architecture-review-open-items.md) | 아키텍처 리뷰 (2026-08-31) | 8 | 2 | 6 | 0 |
@@ -314,7 +314,8 @@ B-6 이 그렇게 어긋나 있었다. §7 은 그 항목을 "MCP 를 실제로 
 문서가 제목과 표 양쪽에서 이미 쓰고 있었다. 등록 시점에 항목이 넷이었고 지금 둘이 닫혔으므로 표와
 제목을 함께 채운다(제목 쪽도 그 넷과 같은 모양이 되었다). 그 뒤 2번을 닫는 과정에서 5번이 새로 열려
 **넷이 아니라 다섯**이다 — 읽는 것만으로 목록이 자라는 그 자리이며, 이번에는 두 번의 리뷰가 자라게 했다.
-남은 셋 중 3번(크로스 노드 스케줄 취소)은 트리거 대기이고 그 트리거는 이 자리를 실제로 지나간다 —
+그 5번은 이후 설계와 구현을 거쳐 닫혔고(2026-09-06), 남은 **둘**은 3번(크로스 노드 스케줄 취소)과
+4번(인터럽트 승격 규칙)이다. 3번은 트리거 대기이고 그 트리거는 이 자리를 실제로 지나간다 —
 취소가 안 듣는 것은 곧바로 보인다.
 
 **이 자리에 방금 닫힌 2번에 대한 반대 서술이 있었고, 그것이 규칙 일곱의 사례를 하나 더 만들었다.** 처음

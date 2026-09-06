@@ -56,9 +56,11 @@ import at.aimon.core.agent.session.exception.IdempotencyConflictException;
 import at.aimon.core.agent.session.idempotency.IdempotencyEntry;
 import at.aimon.core.agent.session.idempotency.IdempotencyStore;
 import at.aimon.core.agent.session.idempotency.PutResult;
+import at.aimon.core.agent.session.inbox.CollectedBatch;
 import at.aimon.core.agent.session.inbox.InboundMessage;
 import at.aimon.core.agent.session.inbox.InboundMessageId;
 import at.aimon.core.agent.session.inbox.SessionInbox;
+import at.aimon.core.agent.session.inbox.UnreadableEntry;
 import at.aimon.core.agent.session.signal.SessionSignal;
 import at.aimon.core.agent.session.signal.SessionSignalBus;
 import at.aimon.core.agent.session.store.ClaimResult;
@@ -1501,7 +1503,68 @@ public final class DefaultSessionRouter implements SessionRouter {
         // Answering the doorbell discharges any debt to relay it: whatever this collect returns is now this node's to
         // run or to fail, and what it does not return is not in the inbox for a peer to find either.
         doorbellRelayOwed.remove(sessionId);
-        return inbox.collect(sessionId, QueuedInputPriority.LATER);
+        final CollectedBatch batch = inbox.collect(sessionId, QueuedInputPriority.LATER);
+        for (UnreadableEntry entry : batch.getUnreadable()) {
+            try {
+                announceUnreadableEntry(sessionId, entry);
+            } catch (RuntimeException e) {
+                // The same invariant the backends enforce per entry, enforced again one layer up: a single entry
+                // must not cost the messages that came back with it. Nothing reaches this today — every step of
+                // announceTurnFailure is either guarded (safeDiscardReservation, publishTurnOutcome) or a map
+                // operation, and toFailurePayload's one throw is excluded before the call — and that is why it is
+                // written down rather than left to hold by coincidence. Without it, the guarantee this whole seam
+                // exists for would depend on a method three call levels away never growing a throw.
+                log.warn("Could not announce an unreadable inbox entry for session {} ({}); the readable messages"
+                        + " from that collect still run", sessionId, e.toString());
+            }
+        }
+        return batch.getMessages();
+    }
+
+    /**
+     * Tell whoever is waiting on an entry the inbox removed and could not decode.
+     *
+     * <p>
+     * <b>This runs here rather than at a call site, and the difference is the commonest case.</b> Of the three
+     * places that call {@link #collectPending}, {@code drain} proceeds only {@code if (!extra.isEmpty())} and
+     * {@code runDrainOnly} returns outright on an empty list — so a batch that carries nothing readable and one
+     * unreadable entry, which is exactly what one undecodable queued message produces, would be dropped by two of
+     * the three. Inside this method the disposal does not depend on how many messages came back.
+     *
+     * <p>
+     * The entry is already out of the at-most-once inbox and no node will run it, which is the precondition
+     * {@link at.aimon.core.agent.session.idempotency.IdempotencyStore#discardReservation} states for itself — so
+     * this is a new entry point to an existing state rather than a new one.
+     */
+    private void announceUnreadableEntry(SessionId convId, UnreadableEntry entry) {
+        // Both addresses, always. announceTurnFailure only goes quiet when *both* are absent; a turn id that will
+        // not rebuild must not take a perfectly good idempotency key down with it, because the key alone reaches
+        // the caller.
+        announceTurnFailure(convId, turnIdOrNull(entry.getTurnId().orElse(null)),
+                entry.getIdempotencyKey().orElse(null), TurnResultPayload.Failure.Code.UNREADABLE,
+                "the holder removed this message from the inbox and could not decode it: " + entry.getReason());
+    }
+
+    /**
+     * Rebuild a turn id that came out of a payload this build could not read, or answer {@code null}.
+     *
+     * <p>
+     * {@link TurnId} validates, and this input is by definition the least trustworthy in the system — it is what an
+     * entry that already failed to decode had in its turn-id field. A throw here would come out of a drain pass and
+     * cost the readable half of the same batch, which is the failure the per-entry guards in the backends exist to
+     * remove; catching and returning is what keeps this addition from re-opening it one layer up.
+     */
+    private static TurnId turnIdOrNull(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        try {
+            return TurnId.of(raw);
+        } catch (RuntimeException e) {
+            log.debug("An unreadable inbox entry carried a turn id this build cannot use ({}); falling back to its"
+                    + " idempotency key, if it has one", e.toString());
+            return null;
+        }
     }
 
     /**

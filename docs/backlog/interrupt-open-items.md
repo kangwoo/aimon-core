@@ -1,4 +1,4 @@
-# 중단·재시도가 남긴 열린 항목 — 등록 항목 5건 (열림 3 · 닫힘 2)
+# 중단·재시도가 남긴 열린 항목 — 등록 항목 5건 (열림 2 · 닫힘 3)
 
 [`design/agent-execution/interrupt.md`](../design/agent-execution/interrupt.md) 가 `IMPLEMENTED` 로
 닫힌 뒤에도 남은 항목들이다. **열림/닫힘의 정본은 이 문서다** — 설계 문서 §14 는 왜 미뤘는지의 근거를
@@ -381,7 +381,7 @@ forward 시나리오가 Redis·Postgres·MongoDB **셋 다에서** 실제로 돌
 
 ---
 
-## 5. 한 항목을 못 읽으면 같은 `collect` 의 정상 항목까지 사라진다 — **열림**
+## 5. 한 항목을 못 읽으면 같은 `collect` 의 정상 항목까지 사라진다 — **닫힘** *(2026-09-06)*
 
 2번을 닫으면서 나온 것이고, **선재 동작**이다([`README.md`](README.md) — *"항목은 착수하지 않아도 모양이
 바뀐다"*). 2번이 좁힌 것은 입력 필드 하나이고, 아래는 그 옆에 그대로 남아 있다.
@@ -396,18 +396,54 @@ forward 시나리오가 Redis·Postgres·MongoDB **셋 다에서** 실제로 돌
 생존자는 뒤쪽 하나, 앞쪽 정상 항목은 소실.
 
 트리거는 손상된 문서이므로 흔하지 않다. 다만 **2번이 그 확률을 낮췄지 없애지는 않았다** — 입력 필드는
-이제 저하하지만 `initiator` · `priority` · `deliveredAt` 은 계속 던지고, 그것이 맞다(그 값들에는 옆에
-놓인 대체물이 없다).
+이제 저하하지만 `initiator` · ~~`priority`~~ · `deliveredAt` 은 계속 던지고, 그것이 맞다(그 값들에는
+옆에 놓인 대체물이 없다).
+
+IMPORTANT: **`priority` 는 여기 있으면 안 된다** *(2026-09-06 정정)*. 코덱이 던지는 것은 맞지만
+**세 백엔드가 디코드 전에 우선순위로 거르므로 어휘 밖의 값이 그 호출까지 도달하지 못한다** — Redis 는
+티어가 곧 키이고, Postgres 는 `WHERE priority <= ?`, Mongo 는 `Filters.lte`. Mongo 에 `priority: 9`
+문서를 심어 측정했다(`returned 2` · `docs-left-in-storage=1` — 디코드되지 않고 남았다). 그러므로 새
+우선순위 티어가 만드는 것은 이 항목의 배치 소실이 아니라 **"옛 노드가 그 항목을 영원히 수집하지
+않는다"** 는 별개의 조용한 고장이고, 아래 설계 문서 §9 가 범위 밖으로 내보낸다. 이 줄을 지우지 않고
+취소선으로 두는 이유는 [`README.md`](README.md) 규칙 둘이다.
 
 **어디** *(2026-09-05 확인)* — `RedisSessionInbox.collectTier` (Lua 가 배치 전체를 `XDEL` 한 뒤 디코드) ·
 `PostgresSessionInbox.collect` (`commit()` 뒤 디코드 루프) · `MongoSessionInbox.collect`
 (`findOneAndDelete` 를 반복하며 `out` 에 축적). 세 곳 다 `catch` 는 백엔드 예외(`RedisException` /
 `SQLException` / `MongoException`)뿐이고 코덱의 `RuntimeException` 은 통과한다.
 
-**처방을 적지 않는 이유** — 후보가 최소 셋이고 어느 것도 검증하지 않았다: (a) 항목 단위로 감싸 못 읽은
-것만 버리고 로그를 남긴다, (b) 지우기 전에 디코드한다(Redis 의 Lua 원자성과 Postgres 의 트랜잭션 모양이
-바뀐다), (c) 못 읽은 항목을 dead-letter 로 옮긴다(새 저장 표면). 규칙 다섯이 막는 것이 정확히
-**검증되지 않은 처방을 적어 두는 것**이므로, 진단만 남긴다.
+~~**처방을 적지 않는 이유**~~ — **처방이 정해졌고 들어갔다** *(2026-09-06)*.
+[`design/session/inbox-collect-durability.md`](../design/session/inbox-collect-durability.md) 가 후보
+셋을 백엔드 셋에 각각 대고 평가해 **(a) 항목 단위 격리**를 골랐고, (b)·(c) 의 기각 사유를 적었다.
+남은 처방 하나(dead-letter)는 기각이 아니라 **보류**이고 재검토 트리거는 그 문서 §9 에 있다.
 
-**언제 다시 볼까** — 두 가지 중 먼저 오는 것. 운영에서 인박스 디코드 실패가 실제로 관측될 때, 또는
-인박스 봉투에 필드를 하나 더 더할 때 — 후자는 새 디코드 실패 지점을 만드는 일이므로 이 항목을 함께 연다.
+**무엇이 들어갔나** — 세 백엔드의 디코드가 항목 단위 `catch (RuntimeException)` 로 감싸이고, 못 읽은
+항목은 `CollectedBatch.getUnreadable()` 로 돌아와 `DefaultSessionRouter.collectPending` 이
+`announceTurnFailure(… UNREADABLE …)` 로 제출자에게 알린다. 드롭은 세션 id 를 실은 WARN 을 남긴다.
+계약은 `aimon-session-testkit` 의 `AbstractSessionInboxDurabilityContractTest`(세 백엔드 × 5 케이스)와
+`SessionRouterUnreadableEntryTest`(3 케이스)가 갖는다. `SessionInbox.collect` 의 반환 타입 변경은
+공개 SPI 의 깨지는 변경이라 `CHANGELOG.md` 에 있다(`rename-maps.md` 가 아니다 — 이름은 계속 resolve
+된다).
+
+### 착수해서 알게 된 것 — 규칙 둘·셋
+
+**① 진단은 옳았고 오히려 좁아졌다.** 이 항목이 "세 필드가 계속 던진다" 로 적은 셋 중 `priority` 는
+**디코드에 닿지 않는다** — 세 백엔드가 디코드 **전에** 우선순위로 거른다. 위 취소선이 그 정정이고,
+새 티어가 만드는 것은 배치 소실이 아니라 "옛 노드가 영원히 수집하지 않는" 별개의 조용한 고장이다.
+
+**② 심각도는 이 항목이 적은 것보다 한 겹 깊었다.** 항목은 "제출자에게 전달되지 않는다" 까지 적었는데,
+착수해 보니 **라우터에는 알릴 레일이 이미 있었고 못 쓴 이유는 봉투가 `collect` 안에서 파괴되기
+때문**이었다(`runDrainOnly` 의 `failUndrained` 가 빈 덱을 돈다). 그래서 처방이 두 조각이 되었다 —
+격리만으로는 그 레일이 여전히 비어 있다.
+
+**③ 설계 문서 자신이 두 번 틀렸고 둘 다 측정으로 잡혔다.** 초판은 Mongo 에 "영구 head-of-line 차단" 이
+있다고 적었지만 `findOneAndDelete` 가 디코드보다 앞이라 그런 차단은 없었다(그래서 (b) 기각 근거가
+반대 부호로 적혀 있었다). 그리고 A2 의 주소를 검증하는 `TurnId` 로 실으려 했는데, 그것은 이 설계가
+§1 에서 세운 규칙("경계는 예외 타입이 아니라 항목")을 스스로 어기는 것이었다. 둘 다 설계 문서에
+정정과 함께 남아 있다.
+
+**④ 구현이 새로 알려 준 함정 하나.** 공유 계약 스위트에서 로그 캡처를 `@BeforeEach` 에 두면 안 된다 —
+JUnit 이 상위 클래스의 것을 먼저 돌리므로 그 시점에 서브클래스는 컨테이너를 아직 배선하지 않았다.
+
+**남은 것** — 못 읽은 항목의 **바이트**는 복구되지 않는다. 그것이 (c) 이고 보류다. 재검토 트리거:
+운영에서 인박스 디코드 실패가 **반복** 관측될 때, 또는 dead-letter 를 읽는 소비자가 실제로 생길 때.

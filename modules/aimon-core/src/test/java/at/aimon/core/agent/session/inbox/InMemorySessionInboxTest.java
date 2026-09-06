@@ -40,7 +40,7 @@ class InMemorySessionInboxTest {
     void turnIdSurvivesDelivery() {
         inbox.deliver(baseMessage().turnId(TurnId.of("turn-42")).build());
 
-        final List<InboundMessage> collected = inbox.collect(CONV, QueuedInputPriority.NEXT);
+        final List<InboundMessage> collected = inbox.collect(CONV, QueuedInputPriority.NEXT).getMessages();
 
         assertThat(collected).hasSize(1);
         assertThat(collected.get(0).getTurnId()).contains(TurnId.of("turn-42"));
@@ -53,7 +53,7 @@ class InMemorySessionInboxTest {
     void absentTurnIdStaysAbsent() {
         inbox.deliver(baseMessage().build());
 
-        assertThat(inbox.collect(CONV, QueuedInputPriority.NEXT).get(0).getTurnId()).isEmpty();
+        assertThat(inbox.collect(CONV, QueuedInputPriority.NEXT).getMessages().get(0).getTurnId()).isEmpty();
     }
 
     @Test
@@ -63,7 +63,7 @@ class InMemorySessionInboxTest {
         inbox.deliver(baseMessage().turnId(TurnId.of("turn-7")).idempotencyKey("idem-1").submitOptions(options)
                 .contextDiscriminator("tenant-a").metadata(Map.of("origin", "node-b")).build());
 
-        final InboundMessage collected = inbox.collect(CONV, QueuedInputPriority.NEXT).get(0);
+        final InboundMessage collected = inbox.collect(CONV, QueuedInputPriority.NEXT).getMessages().get(0);
 
         assertThat(collected.getUserInput()).isEqualTo(TextInput.of("hello"));
         assertThat(collected.getAgentRef()).isEqualTo("agent-x");
@@ -83,7 +83,8 @@ class InMemorySessionInboxTest {
         // Dropping a present discriminator opens the wrong runtime; inventing an absent one opens no runtime at all.
         inbox.deliver(baseMessage().build());
 
-        assertThat(inbox.collect(CONV, QueuedInputPriority.NEXT).get(0).getContextDiscriminator()).isEmpty();
+        assertThat(inbox.collect(CONV, QueuedInputPriority.NEXT).getMessages().get(0).getContextDiscriminator())
+                .isEmpty();
     }
 
     @Test
@@ -96,7 +97,7 @@ class InMemorySessionInboxTest {
                 ImageInput.of(new byte[]{1, 2, 3, 4}, "image/png"));
         inbox.deliver(baseMessage().userInput(input).build());
 
-        assertThat(inbox.collect(CONV, QueuedInputPriority.NEXT).get(0).getUserInput()).isEqualTo(input);
+        assertThat(inbox.collect(CONV, QueuedInputPriority.NEXT).getMessages().get(0).getUserInput()).isEqualTo(input);
     }
 
     private InboundMessage.Builder baseMessage() {
