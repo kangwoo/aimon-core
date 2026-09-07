@@ -24,7 +24,7 @@ hikari = "5.1.0"
 mongodb = "4.11.1"
 
 # Cloud & Storage
-aws-sdk = "2.54.6"
+aws-sdk = "2.54.12"
 
 # Testing
 # JUnit carried no version here on purpose until aimon-memory-testkit was published. The reasoning still
