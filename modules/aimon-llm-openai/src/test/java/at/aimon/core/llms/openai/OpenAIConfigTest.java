@@ -8,6 +8,10 @@ import java.time.Duration;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import at.aimon.core.llm.ReasoningEffort;
+import at.aimon.core.llm.capability.ModelCapabilities;
+import at.aimon.core.llm.capability.ModelCapabilityRegistry;
+
 @DisplayName("OpenAIConfig - Configuration Builder Tests")
 class OpenAIConfigTest {
 
@@ -23,7 +27,9 @@ class OpenAIConfigTest {
         // Then: Should use defaults for other fields
         assertThat(config.getApiKey()).isEqualTo(apiKey);
         assertThat(config.getModel()).isEqualTo("gpt-4");
-        assertThat(config.getTemperature()).isEqualTo(0.0);
+        // Unset, not 0.0: the client applies DEFAULT_TEMPERATURE when the target model accepts sampling, and the
+        // distinction is what lets it tell "somebody asked for 0.0" from "nobody asked".
+        assertThat(config.getTemperature()).isEmpty();
         assertThat(config.getMaxTokens()).isEqualTo(4096);
         assertThat(config.getTimeout()).isEqualTo(Duration.ofSeconds(60));
         assertThat(config.getBaseUrl()).isNull();
@@ -47,7 +53,7 @@ class OpenAIConfigTest {
         // Then: All fields should match
         assertThat(config.getApiKey()).isEqualTo(apiKey);
         assertThat(config.getModel()).isEqualTo(model);
-        assertThat(config.getTemperature()).isEqualTo(temperature);
+        assertThat(config.getTemperature()).contains(temperature);
         assertThat(config.getMaxTokens()).isEqualTo(maxTokens);
         assertThat(config.getTimeout()).isEqualTo(timeout);
         assertThat(config.getBaseUrl()).isEqualTo(baseUrl);
@@ -103,10 +109,10 @@ class OpenAIConfigTest {
 
         // When/Then: 0.0 and 2.0 should be valid
         OpenAIConfig config1 = OpenAIConfig.builder().apiKey(apiKey).temperature(0.0).build();
-        assertThat(config1.getTemperature()).isEqualTo(0.0);
+        assertThat(config1.getTemperature()).contains(0.0);
 
         OpenAIConfig config2 = OpenAIConfig.builder().apiKey(apiKey).temperature(2.0).build();
-        assertThat(config2.getTemperature()).isEqualTo(2.0);
+        assertThat(config2.getTemperature()).contains(2.0);
     }
 
     @Test
@@ -150,7 +156,7 @@ class OpenAIConfigTest {
         assertThat(config).isNotNull();
         assertThat(config.getApiKey()).isEqualTo("test");
         assertThat(config.getModel()).isEqualTo("gpt-3.5-turbo");
-        assertThat(config.getTemperature()).isEqualTo(0.5);
+        assertThat(config.getTemperature()).contains(0.5);
         assertThat(config.getMaxTokens()).isEqualTo(1024);
         assertThat(config.getTimeout()).isEqualTo(Duration.ofSeconds(45));
         assertThat(config.getBaseUrl()).isEqualTo("https://custom.api.com");
@@ -190,5 +196,68 @@ class OpenAIConfigTest {
         // When/Then: Empty API key should fail
         assertThatThrownBy(() -> OpenAIConfig.builder().apiKey("").build()).isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("API key cannot be blank");
+    }
+
+    @Test
+    @DisplayName("Should leave every optional sampling parameter and the reasoning effort unset by default")
+    void shouldLeaveOptionalParametersUnsetByDefault() {
+        // The whole point of the nullable shape: a model that rejects these by presence must receive nothing, and
+        // "nothing" has to be representable before the client can send it.
+        OpenAIConfig config = OpenAIConfig.builder().apiKey("test").build();
+
+        assertThat(config.getTemperature()).isEmpty();
+        assertThat(config.getTopP()).isEmpty();
+        assertThat(config.getPresencePenalty()).isEmpty();
+        assertThat(config.getFrequencyPenalty()).isEmpty();
+        assertThat(config.getReasoningEffort()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Should round-trip the new sampling parameters and the reasoning effort")
+    void shouldRoundTripNewParameters() {
+        OpenAIConfig config = OpenAIConfig.builder().apiKey("test").topP(0.9).presencePenalty(1.5)
+                .frequencyPenalty(-1.5).reasoningEffort(ReasoningEffort.HIGH).build();
+
+        assertThat(config.getTopP()).contains(0.9);
+        assertThat(config.getPresencePenalty()).contains(1.5);
+        assertThat(config.getFrequencyPenalty()).contains(-1.5);
+        assertThat(config.getReasoningEffort()).contains(ReasoningEffort.HIGH);
+    }
+
+    @Test
+    @DisplayName("Should validate the new sampling parameters only when they are present")
+    void shouldValidateNewParametersWhenPresent() {
+        assertThatThrownBy(() -> OpenAIConfig.builder().apiKey("test").topP(1.1).build())
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Top P must be between 0.0 and 1.0");
+        assertThatThrownBy(() -> OpenAIConfig.builder().apiKey("test").presencePenalty(2.1).build())
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Presence penalty must be between -2.0 and 2.0");
+        assertThatThrownBy(() -> OpenAIConfig.builder().apiKey("test").frequencyPenalty(-2.1).build())
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Frequency penalty must be between -2.0 and 2.0");
+    }
+
+    @Test
+    @DisplayName("Should default the capability registry to the built-in table, not to an empty one")
+    void shouldDefaultToTheBuiltInCapabilityTable() {
+        // Asserting non-null would not be enough: ModelCapabilityRegistry.EMPTY is non-null too, and wiring that as
+        // the default would leave the gpt-5 bug unfixed for every stock deployment.
+        OpenAIConfig config = OpenAIConfig.builder().apiKey("test").build();
+
+        assertThat(config.getModelCapabilityRegistry()).isNotNull();
+        assertThat(config.getModelCapabilityRegistry().resolve("gpt-5.6-terra").supportsSamplingParameters()).isFalse();
+        assertThat(config.getModelCapabilityRegistry().resolve("gpt-4o")).isEqualTo(ModelCapabilities.unknown());
+    }
+
+    @Test
+    @DisplayName("Should accept a caller-supplied capability registry and reject a null one")
+    void shouldAcceptCallerSuppliedRegistry() {
+        OpenAIConfig config = OpenAIConfig.builder().apiKey("test")
+                .modelCapabilityRegistry(ModelCapabilityRegistry.EMPTY).build();
+
+        assertThat(config.getModelCapabilityRegistry()).isSameAs(ModelCapabilityRegistry.EMPTY);
+        assertThatThrownBy(() -> OpenAIConfig.builder().apiKey("test").modelCapabilityRegistry(null))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("Model capability registry cannot be null");
     }
 }

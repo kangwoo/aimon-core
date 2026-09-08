@@ -120,6 +120,7 @@ public final class AgentDefinitionVersion {
         lines.add("model.topP=" + render(model.getTopP()));
         lines.add("model.presencePenalty=" + render(model.getPresencePenalty()));
         lines.add("model.frequencyPenalty=" + render(model.getFrequencyPenalty()));
+        lines.add("model.reasoningEffort=" + render(model.getReasoningEffort()));
         lines.add("model.requestTimeout=" + render(model.getRequestTimeout()));
         lines.add("tags=" + String.join(",", new TreeSet<>(metadata.getTags())));
         for (Map.Entry<String, Object> variable : new TreeMap<>(content.getVariables()).entrySet()) {

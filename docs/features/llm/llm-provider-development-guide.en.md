@@ -384,10 +384,33 @@ LlmModel modelConfig = LlmModel.builder()
     .frequencyPenalty(0.1)        // frequency penalty (optional)
     .build();
 
-// merging: modelConfig wins over the base config
+// merging: modelConfig wins over the base config, and the provider's fallback constant comes last
 String model = modelConfig.getName().orElse(config.getModel());
-double temp = modelConfig.getTemperature().orElse(config.getTemperature());
+Optional<Double> temp = modelConfig.getTemperature().or(config::getTemperature);
 ```
+
+### Check the capabilities before setting a parameter
+
+IMPORTANT: **Do not set the sampling parameters unconditionally.** Some models reject a parameter by
+its **presence** rather than its value — `"temperature": null` earns the same 400 as
+`"temperature": 0.0`. Omission therefore has to mean **"do not call the setter"**, never "pass null",
+and what to call is answered by the `ModelCapabilityRegistry` rather than by a model-name branch.
+
+```java
+final String modelName = modelConfig.getName().orElse(config.getModel());
+final ModelCapabilities capabilities = config.getModelCapabilityRegistry().resolve(modelName);
+
+if (capabilities.supportsSamplingParameters()) {
+    requestBuilder.temperature(temp.orElse(MyConfig.DEFAULT_TEMPERATURE));
+}
+// else: never call the setter at all
+```
+
+`resolve` is total and **fails open** — a model nobody has described comes back as
+`ModelCapabilities.unknown()`, which is the request shape this framework produced before the type
+existed. When a value is dropped, say so at a level an operator sees, per the rule in
+[`LlmModel`](../../../modules/aimon-core/src/main/java/at/aimon/core/llm/LlmModel.java)
+(`AnthropicLlmClient#reportDivergence`, `OpenAILlmClient#reportDivergence`).
 
 ---
 
@@ -476,12 +499,13 @@ public class OpenAILlmClient implements LlmClient {
             // 1. build the messages (system prompt + conversation history)
             List<ChatCompletionMessageParam> chatMessages = buildChatMessages(systemPrompt, messages);
 
-            // 2. build the request (merging the settings)
+            // 2. build the request (merge the settings, then check capabilities)
             ChatCompletionCreateParams.Builder requestBuilder = ChatCompletionCreateParams.builder()
                 .model(modelConfig.getName().orElse(config.getModel()))
                 .messages(chatMessages)
-                .temperature(modelConfig.getTemperature().orElse(config.getTemperature()))
                 .maxCompletionTokens((long) modelConfig.getMaxTokens().orElse(config.getMaxTokens()));
+
+            applySamplingParameters(requestBuilder, modelConfig);
 
             // 3. add the tools
             if (!tools.isEmpty()) {

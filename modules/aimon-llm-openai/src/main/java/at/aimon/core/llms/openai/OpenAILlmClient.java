@@ -4,6 +4,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,9 +32,11 @@ import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.Message;
+import at.aimon.core.llm.ReasoningEffort;
 import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.llm.ToolUse;
+import at.aimon.core.llm.capability.ModelCapabilities;
 import at.aimon.core.llm.exception.LlmCallCancelledException;
 import at.aimon.core.llm.exception.LlmClientException;
 import at.aimon.core.llm.exception.LlmInvalidRequestException;
@@ -75,9 +80,33 @@ import at.aimon.core.llm.streaming.LlmStreamingOptions;
 public class OpenAILlmClient implements LlmClient {
     private static final Logger log = LoggerFactory.getLogger(OpenAILlmClient.class);
 
+    /**
+     * Ceiling on how many distinct request divergences {@link #reportedDivergences} remembers.
+     *
+     * <p>
+     * Distinct values come from configuration — an agent definition's frontmatter, a starter property — so in any real
+     * deployment the count is the number of agents, not the number of requests. The cap exists because this client
+     * outlives every request that passes through it, and a caller that generates model configs programmatically would
+     * otherwise grow the set without bound. Past the cap the client stops reporting rather than stops remembering: by
+     * then it has already emitted 32 warnings, and a deployment that diverges in 32 distinct ways has a configuration
+     * problem that a log line is the wrong instrument for.
+     */
+    private static final int MAX_REPORTED_DIVERGENCES = 32;
+
     private final OpenAIConfig config;
     private final OpenAIClient client;
     private final OpenAIMessageConverter converter;
+
+    /**
+     * Request divergences already reported, so a value dropped on every request is said once instead of once per ReAct
+     * iteration.
+     *
+     * <p>
+     * Keyed by parameter, value <em>and model</em>, not by parameter alone. One client is shared by every agent bound
+     * to this provider and a deployment can address more than one model, so keying more narrowly would report whichever
+     * combination went first and leave the others silent — which is the failure this reporting exists to remove.
+     */
+    private final Set<String> reportedDivergences = ConcurrentHashMap.newKeySet();
 
     /**
      * Creates a new OpenAILlmClient.
@@ -264,14 +293,17 @@ public class OpenAILlmClient implements LlmClient {
             List<ToolDefinition> tools, LlmModel modelConfig, LlmStreamingOptions streamingOptions) {
         List<ChatCompletionMessageParam> chatMessages = buildChatMessages(systemPrompt, messages);
 
-        ChatCompletionCreateParams.Builder requestBuilder = ChatCompletionCreateParams.builder()
-                .model(modelConfig.getName().orElse(config.getModel())).messages(chatMessages)
-                .temperature(modelConfig.getTemperature().orElse(config.getTemperature()))
+        // The model name is resolved once and is the only thing this method knows about the model. Everything that
+        // varies per model comes back through the capability registry, so there is no model-name branching here.
+        final String modelName = modelConfig.getName().orElse(config.getModel());
+        final ModelCapabilities capabilities = capabilitiesFor(modelName);
+
+        ChatCompletionCreateParams.Builder requestBuilder = ChatCompletionCreateParams.builder().model(modelName)
+                .messages(chatMessages)
                 .maxCompletionTokens((long) modelConfig.getMaxTokens().orElse(config.getMaxTokens()));
 
-        modelConfig.getTopP().ifPresent(requestBuilder::topP);
-        modelConfig.getPresencePenalty().ifPresent(requestBuilder::presencePenalty);
-        modelConfig.getFrequencyPenalty().ifPresent(requestBuilder::frequencyPenalty);
+        applySamplingParameters(requestBuilder, modelConfig, capabilities, modelName);
+        applyReasoningEffort(requestBuilder, modelConfig, capabilities, modelName, tools);
 
         if (!tools.isEmpty()) {
             List<ChatCompletionTool> openaiTools = converter.convertTools(tools);
@@ -284,6 +316,145 @@ public class OpenAILlmClient implements LlmClient {
         }
 
         return requestBuilder.build();
+    }
+
+    /**
+     * Sets {@code temperature} / {@code top_p} / the two penalties, or sets none of them.
+     *
+     * <p>
+     * "Sets none of them" means the setters are never called. It cannot be expressed as passing {@code null} or an
+     * empty {@link Optional}: both SDK overloads route through {@code JsonField.ofNullable}, which turns null into
+     * {@code JsonNull} and puts {@code "temperature": null} on the wire — and a model that rejects the parameter
+     * rejects it by <em>presence</em>, so the null form fails exactly like the value form. That is why the capability
+     * check branches before the builder call rather than computing a nullable effective value.
+     *
+     * <p>
+     * When sampling is accepted the resolution order is unchanged from every previous release: the request's
+     * {@link LlmModel}, then this client's {@link OpenAIConfig}, then {@link OpenAIConfig#DEFAULT_TEMPERATURE}.
+     */
+    private void applySamplingParameters(ChatCompletionCreateParams.Builder requestBuilder, LlmModel modelConfig,
+            ModelCapabilities capabilities, String modelName) {
+        final Optional<Double> temperature = modelConfig.getTemperature().or(config::getTemperature);
+        final Optional<Double> topP = modelConfig.getTopP().or(config::getTopP);
+        final Optional<Double> presencePenalty = modelConfig.getPresencePenalty().or(config::getPresencePenalty);
+        final Optional<Double> frequencyPenalty = modelConfig.getFrequencyPenalty().or(config::getFrequencyPenalty);
+
+        if (!capabilities.supportsSamplingParameters()) {
+            // Report only values somebody put there. The DEFAULT_TEMPERATURE fallback is this client's own, so warning
+            // about it would put a line in every log on every gpt-5 deployment saying nothing an operator can act on.
+            reportSuppressedSamplingParameter("temperature", temperature, modelName);
+            reportSuppressedSamplingParameter("topP", topP, modelName);
+            reportSuppressedSamplingParameter("presencePenalty", presencePenalty, modelName);
+            reportSuppressedSamplingParameter("frequencyPenalty", frequencyPenalty, modelName);
+            return;
+        }
+
+        requestBuilder.temperature(temperature.orElse(OpenAIConfig.DEFAULT_TEMPERATURE));
+        topP.ifPresent(requestBuilder::topP);
+        presencePenalty.ifPresent(requestBuilder::presencePenalty);
+        frequencyPenalty.ifPresent(requestBuilder::frequencyPenalty);
+    }
+
+    /**
+     * Sets {@code reasoning_effort}, or leaves it off.
+     *
+     * <p>
+     * Three cases, and the middle one is the whole point of this method. A model that takes no reasoning effort gets
+     * nothing, which is what every release before this one sent to every model. A model that takes one but cannot
+     * combine it with tools gets {@link ReasoningEffort#NONE} <em>explicitly</em> whenever tools are present:
+     * <em>omitting</em> the parameter is not equivalent, because the server's own default for these models is
+     * {@code medium} and the request fails on that. Otherwise the configured effort goes through as asked, or nothing
+     * does when none was configured.
+     */
+    private void applyReasoningEffort(ChatCompletionCreateParams.Builder requestBuilder, LlmModel modelConfig,
+            ModelCapabilities capabilities, String modelName, List<ToolDefinition> tools) {
+        final Optional<ReasoningEffort> requested = modelConfig.getReasoningEffort().or(config::getReasoningEffort);
+
+        if (!capabilities.supportsReasoningEffort()) {
+            requested.ifPresent(effort -> reportDivergence("reasoningEffort=" + effort + "@" + modelName,
+                    "reasoningEffort {} is set on this request but {} takes no reasoning-effort parameter; it is "
+                            + "being omitted and the call will succeed without it.",
+                    effort, modelName));
+            return;
+        }
+
+        if (!tools.isEmpty() && !capabilities.supportsToolsWithReasoning()) {
+            requested.filter(effort -> effort != ReasoningEffort.NONE)
+                    .ifPresent(effort -> reportDivergence("reasoningEffortClamped=" + effort + "@" + modelName,
+                            "reasoningEffort {} is set on this request but {} does not accept tools together with "
+                                    + "reasoning; it is being sent as NONE for this call.",
+                            effort, modelName));
+            requestBuilder.reasoningEffort(OpenAiReasoningEfforts.toWire(ReasoningEffort.NONE));
+            return;
+        }
+
+        requested.ifPresent(effort -> requestBuilder.reasoningEffort(OpenAiReasoningEfforts.toWire(effort)));
+    }
+
+    /**
+     * Resolves the model's capabilities, degrading to {@link ModelCapabilities#unknown()} if the registry misbehaves.
+     *
+     * <p>
+     * The registry is caller-supplied, and {@link #buildRequest} runs <em>outside</em> the streaming path's
+     * try-with-resources: an exception escaping here would bypass both the exception mapper and the cancellation
+     * classification. Swallowing it applies this SPI's own fail-open rule to the SPI itself, so a third-party bug
+     * costs a warning rather than the request.
+     */
+    private ModelCapabilities capabilitiesFor(String modelName) {
+        try {
+            return config.getModelCapabilityRegistry().resolve(modelName);
+        } catch (RuntimeException e) {
+            reportDivergence("capabilityLookupFailed@" + modelName,
+                    "Model capability lookup for {} failed ({}); treating the model as unknown, so the request keeps "
+                            + "its default shape.",
+                    modelName, e.toString());
+            return ModelCapabilities.unknown();
+        }
+    }
+
+    /**
+     * Reports one sampling parameter that somebody configured and that the target model does not accept.
+     *
+     * <p>
+     * The wording deliberately says only that the value <em>is set on this request</em>. It cannot say who set it: a
+     * subagent turn carries a temperature from {@code SubagentLlmDefaults}, not from an operator, and nothing at this
+     * point distinguishes the two.
+     */
+    private void reportSuppressedSamplingParameter(String name, Optional<Double> value, String modelName) {
+        value.ifPresent(v -> reportDivergence(name + "=" + v + "@" + modelName,
+                "{} {} is set on this request but {} does not accept sampling parameters; it is being omitted and the "
+                        + "call will succeed without it.",
+                name, v, modelName));
+    }
+
+    /**
+     * Reports, at most once per distinct signature, that this provider is not sending a configured value as given.
+     *
+     * <p>
+     * {@code WARN} rather than {@code DEBUG} because the observable outcome is a request that <em>succeeds</em> with
+     * settings other than the ones configured: there is no error, no status code, and nothing else in the system that
+     * would tell an operator the two differ. At {@code DEBUG} the divergence exists but nobody sees it, which is
+     * indistinguishable from it not happening.
+     *
+     * <p>
+     * Once per signature rather than once per call because this runs inside {@link #buildRequest}, which runs on every
+     * ReAct iteration: a value set once in an agent definition would otherwise warn for the lifetime of the process.
+     *
+     * @param signature
+     *            parameter, value and model, the key that decides whether this has already been said
+     * @param message
+     *            SLF4J-formatted message
+     * @param args
+     *            values for the message placeholders
+     */
+    private void reportDivergence(String signature, String message, Object... args) {
+        // size() before add() can let a burst of concurrent first-time divergences overshoot the cap by the number of
+        // threads in flight. That is a bounded, harmless overshoot, and paying for exactness here would mean locking
+        // on a path that runs once per LLM call.
+        if (reportedDivergences.size() >= MAX_REPORTED_DIVERGENCES || !reportedDivergences.add(signature)) {
+            return;
+        }
+        log.warn(message, args);
     }
 
     /**

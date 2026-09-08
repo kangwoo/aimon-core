@@ -321,6 +321,7 @@ IMPORTANT (알려진 오칭): `OnSessionStartHook` / `OnSessionEndHook` 은 세�
 | 토큰 계측 | `TokenUsage`, `llm.token`, `llm.usage` | core |
 | 비용 계산 | `Money`, `ModelPriceTable`, `CostSummary` | core |
 | 컨텍스트 윈도우 레지스트리 | `ModelContextWindowRegistry` | core |
+| 모델 능력 레지스트리 | `ModelCapabilities`, `ModelCapabilityRegistry` | core |
 | 호출 메타데이터 태깅 | `LlmCallMetadata`, `BoundMetadataLlmClient` | core |
 | OpenAI 구현 | — | `aimon-llm-openai` |
 | Anthropic 구현 | — | `aimon-llm-anthropic` |

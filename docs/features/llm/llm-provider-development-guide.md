@@ -378,10 +378,32 @@ LlmModel modelConfig = LlmModel.builder()
     .frequencyPenalty(0.1)        // Frequency Penalty (Optional)
     .build();
 
-// 설정 병합: modelConfig가 기본 config보다 우선
+// 설정 병합: modelConfig가 기본 config보다 우선, 그다음이 프로바이더의 fallback 상수
 String model = modelConfig.getName().orElse(config.getModel());
-double temp = modelConfig.getTemperature().orElse(config.getTemperature());
+Optional<Double> temp = modelConfig.getTemperature().or(config::getTemperature);
 ```
+
+### 파라미터를 설정하기 전에 능력을 확인한다
+
+IMPORTANT: **샘플링 파라미터를 무조건 설정하지 말 것.** 어떤 모델은 값이 아니라 파라미터의 **존재**로
+거절한다 — `"temperature": null` 도 `"temperature": 0.0` 과 똑같이 400 을 받는다. 그래서 생략은
+"null 을 넘긴다" 가 아니라 **"세터를 부르지 않는다"** 여야 하고, 무엇을 부를지는 모델 이름 분기가 아니라
+`ModelCapabilityRegistry` 가 답한다.
+
+```java
+final String modelName = modelConfig.getName().orElse(config.getModel());
+final ModelCapabilities capabilities = config.getModelCapabilityRegistry().resolve(modelName);
+
+if (capabilities.supportsSamplingParameters()) {
+    requestBuilder.temperature(temp.orElse(MyConfig.DEFAULT_TEMPERATURE));
+}
+// else: 세터를 아예 부르지 않는다
+```
+
+`resolve` 는 총함수이며 **fail-open** 이다 — 아무도 설명하지 않은 모델은 `ModelCapabilities.unknown()`,
+즉 이 프레임워크가 그 타입이 생기기 전에 보내던 요청 모양 그대로다. 값을 떨어뜨렸다면 그 사실을
+[`LlmModel`](../../../modules/aimon-core/src/main/java/at/aimon/core/llm/LlmModel.java) 의 규칙대로
+운영자가 보는 수준으로 보고한다(`AnthropicLlmClient#reportDivergence`, `OpenAILlmClient#reportDivergence`).
 
 ---
 
@@ -470,12 +492,13 @@ public class OpenAILlmClient implements LlmClient {
             // 1. 메시지 빌드 (시스템 프롬프트 + 대화 이력)
             List<ChatCompletionMessageParam> chatMessages = buildChatMessages(systemPrompt, messages);
 
-            // 2. 요청 빌드 (설정 병합)
+            // 2. 요청 빌드 (설정 병합 + 능력 확인)
             ChatCompletionCreateParams.Builder requestBuilder = ChatCompletionCreateParams.builder()
                 .model(modelConfig.getName().orElse(config.getModel()))
                 .messages(chatMessages)
-                .temperature(modelConfig.getTemperature().orElse(config.getTemperature()))
                 .maxCompletionTokens((long) modelConfig.getMaxTokens().orElse(config.getMaxTokens()));
+
+            applySamplingParameters(requestBuilder, modelConfig);
 
             // 3. Tool 추가
             if (!tools.isEmpty()) {

@@ -33,6 +33,7 @@ public final class LlmModel {
     private final Double topP;
     private final Double presencePenalty;
     private final Double frequencyPenalty;
+    private final ReasoningEffort reasoningEffort;
     private final Duration requestTimeout;
 
     private LlmModel(Builder builder) {
@@ -42,6 +43,7 @@ public final class LlmModel {
         topP = builder.topP;
         presencePenalty = builder.presencePenalty;
         frequencyPenalty = builder.frequencyPenalty;
+        reasoningEffort = builder.reasoningEffort;
         requestTimeout = builder.requestTimeout;
 
         // Validate ranges.
@@ -138,6 +140,20 @@ public final class LlmModel {
     }
 
     /**
+     * Gets the requested reasoning effort.
+     *
+     * <p>
+     * Whether the target model takes this parameter at all is a capability, not a request value: a provider consults
+     * {@link at.aimon.core.llm.capability.ModelCapabilities} and drops or clamps the value when the model's request
+     * surface cannot carry it, reporting the divergence rather than failing the call.
+     *
+     * @return Optional containing the reasoning effort, or empty if not set
+     */
+    public Optional<ReasoningEffort> getReasoningEffort() {
+        return Optional.ofNullable(reasoningEffort);
+    }
+
+    /**
      * Gets the per-request worst-case timeout ceiling (safety net).
      *
      * <p>
@@ -163,20 +179,21 @@ public final class LlmModel {
         return Objects.equals(name, that.name) && Objects.equals(temperature, that.temperature)
                 && Objects.equals(maxTokens, that.maxTokens) && Objects.equals(topP, that.topP)
                 && Objects.equals(presencePenalty, that.presencePenalty)
-                && Objects.equals(frequencyPenalty, that.frequencyPenalty)
+                && Objects.equals(frequencyPenalty, that.frequencyPenalty) && reasoningEffort == that.reasoningEffort
                 && Objects.equals(requestTimeout, that.requestTimeout);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(name, temperature, maxTokens, topP, presencePenalty, frequencyPenalty, requestTimeout);
+        return Objects.hash(name, temperature, maxTokens, topP, presencePenalty, frequencyPenalty, reasoningEffort,
+                requestTimeout);
     }
 
     @Override
     public String toString() {
         return "LlmModel{" + "model='" + name + '\'' + ", temperature=" + temperature + ", maxTokens=" + maxTokens
                 + ", topP=" + topP + ", presencePenalty=" + presencePenalty + ", frequencyPenalty=" + frequencyPenalty
-                + ", requestTimeout=" + requestTimeout + '}';
+                + ", reasoningEffort=" + reasoningEffort + ", requestTimeout=" + requestTimeout + '}';
     }
 
     /**
@@ -203,6 +220,7 @@ public final class LlmModel {
         private Double topP;
         private Double presencePenalty;
         private Double frequencyPenalty;
+        private ReasoningEffort reasoningEffort;
         private Duration requestTimeout;
 
         private Builder() {
@@ -306,6 +324,24 @@ public final class LlmModel {
          */
         public Builder frequencyPenalty(double frequencyPenalty) {
             this.frequencyPenalty = frequencyPenalty;
+            return this;
+        }
+
+        /**
+         * Sets the requested reasoning effort.
+         *
+         * <p>
+         * Reasoning models spend a variable amount of hidden deliberation before answering; this is the neutral
+         * vocabulary for that knob. Not every model has it, and on some endpoints an effort other than
+         * {@link ReasoningEffort#NONE} cannot be combined with tools — a provider resolves both questions through the
+         * model's capabilities and says so when it drops or clamps the value.
+         *
+         * @param reasoningEffort
+         *            The reasoning effort; {@code null} leaves it unset
+         * @return This builder
+         */
+        public Builder reasoningEffort(ReasoningEffort reasoningEffort) {
+            this.reasoningEffort = reasoningEffort;
             return this;
         }
 

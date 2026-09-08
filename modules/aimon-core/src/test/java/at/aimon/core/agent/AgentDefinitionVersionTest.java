@@ -11,6 +11,7 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.llm.LlmModel;
+import at.aimon.core.llm.ReasoningEffort;
 
 class AgentDefinitionVersionTest {
 
@@ -49,6 +50,22 @@ class AgentDefinitionVersionTest {
                 .model(LlmModel.builder().name("m").temperature(0.9).build()).build();
 
         assertThat(AgentDefinitionVersion.from(cool)).isNotEqualTo(AgentDefinitionVersion.from(warm));
+    }
+
+    @Test
+    void changedReasoningEffortChangesVersion() {
+        // canonicalForm enumerates every LlmModel field, one line each: a field left out of it makes two definitions
+        // that differ only in that field digest identically, i.e. the change detector reports "unchanged" about a
+        // definition that changed.
+        final Agent low = DefaultAgent.builder().name("a").systemPrompt("p")
+                .model(LlmModel.builder().name("m").reasoningEffort(ReasoningEffort.LOW).build()).build();
+        final Agent high = DefaultAgent.builder().name("a").systemPrompt("p")
+                .model(LlmModel.builder().name("m").reasoningEffort(ReasoningEffort.HIGH).build()).build();
+        final Agent unset = DefaultAgent.builder().name("a").systemPrompt("p")
+                .model(LlmModel.builder().name("m").build()).build();
+
+        assertThat(AgentDefinitionVersion.from(low)).isNotEqualTo(AgentDefinitionVersion.from(high));
+        assertThat(AgentDefinitionVersion.from(low)).isNotEqualTo(AgentDefinitionVersion.from(unset));
     }
 
     @Test

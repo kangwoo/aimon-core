@@ -7,6 +7,86 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### LLM: what a model accepts is now a fact the framework can look up, and gpt-5.x tool calling works
+
+- **New provider-neutral SPI `at.aimon.core.llm.capability`** — `ModelCapabilities` (three flags:
+  `supportsSamplingParameters`, `supportsReasoningEffort`, `supportsToolsWithReasoning`),
+  `ModelCapabilityRegistry` and `InMemoryModelCapabilityRegistry`. Purely additive. It sits **beside**
+  `ModelContextWindowRegistry` and `ModelPriceTable` rather than folding into either: three per-model
+  facts, three reasons to change, and each consumer depends on exactly its own.
+
+- **What it fixes.** Every `gpt-5.x` tool-calling turn — which is every agent turn — failed with HTTP
+  400. Two independent causes, and fixing one surfaced the other. The client always called
+  `.temperature(...)` because `OpenAIConfig.getTemperature()` defaulted to `0.0` and had no way to say
+  "unset", and `gpt-5.x` rejects `temperature` / `top_p` by the **presence** of the parameter. And the
+  documented `reasoning_effort: "none"` workaround was unreachable, because omitting the parameter is
+  not equivalent — the server default for those models is `medium`, so the request fails anyway. Both
+  decisions now come from the descriptor. There is no `model.startsWith("gpt-5")` anywhere in the
+  request builder.
+
+- **Fail open, and that has a consequence worth knowing.** A model no registry describes resolves to
+  `ModelCapabilities.unknown()`, which is not "everything permitted" but "the request this framework
+  produced before the descriptor existed" — sampling sent, no reasoning effort. So an unknown model is
+  byte-identical to previous releases. The flip side: a deployment behind a gateway or Azure endpoint
+  that **renames** its gpt-5 model (`model: prod-assistant`) is unknown to the built-in table and keeps
+  hitting the 400. One line closes it, and it is programmatic:
+
+  ```java
+  OpenAIConfig.builder().apiKey(key).model("prod-assistant")
+          .modelCapabilityRegistry(InMemoryModelCapabilityRegistry.builderWithDefaults()
+                  .register("prod-assistant", ModelCapabilities.builder()
+                          .supportsSamplingParameters(false).supportsReasoningEffort(true)
+                          .supportsToolsWithReasoning(false).build())
+                  .build())
+          .build();
+  ```
+
+  A **CLI** deployment in that state has no yaml key for this yet; that is a config-surface decision
+  left to its own issue rather than ridden in on a bug fix.
+
+- **The built-in table is deliberately two rows** — `gpt-5-chat` (unchanged behaviour) then `gpt-5`
+  (sampling suppressed, reasoning effort sent). The o-series is **not** in it. Those models are
+  believed to reject `temperature` too, but the belief is unverified against a live API, and the harms
+  are asymmetric: a wrong row is a *silent* sampling change for o-series users, while no row leaves
+  them exactly where they are. A test pins `o3` as behaving like an unknown model, so adding the row
+  has to change a test that says why.
+
+- **Breaking: `OpenAIConfig.getTemperature()` returns `Optional<Double>`, not `double`.** A published
+  module (`at.aimon.core.llms.openai`), and — like the entries below — not a rename, so there is no row
+  in [`rename-maps.md`](docs/migration/rename-maps.md). Per
+  [`api-stability.md`](docs/project/api-stability.md) §1 a breaking change cannot ship as a `0.2.x`
+  patch: **this forces the next release to be a minor bump.** The break is a compile error, which is
+  the point — nothing changes quietly.
+
+  | Was | Is |
+  |---|---|
+  | `double t = config.getTemperature();` | `config.getTemperature().orElse(OpenAIConfig.DEFAULT_TEMPERATURE)` |
+  | `private static final double DEFAULT_TEMPERATURE` | `public static final double OpenAIConfig.DEFAULT_TEMPERATURE` |
+
+  The nullable shape is not cosmetic: it is what lets the client tell "somebody asked for `0.0`" from
+  "nobody asked", which is what decides whether suppressing a value deserves a `WARN`. Keeping `0.0` as
+  the builder seed makes those two states the same one. `OpenAIConfig` also gains unset-by-default
+  `topP` / `presencePenalty` / `frequencyPenalty` / `reasoningEffort` and a `modelCapabilityRegistry`.
+
+- **Additive: `LlmModel.getReasoningEffort()`** and the neutral `at.aimon.core.llm.ReasoningEffort`
+  (`NONE`/`MINIMAL`/`LOW`/`MEDIUM`/`HIGH` — the common subset that survives translation to a second
+  provider, not one vendor's ladder). Not yet readable from agent frontmatter or CLI yaml, on purpose:
+  in this phase a non-`NONE` effort is clamped on every tool-calling turn anyway, so a key for it would
+  look like a knob that does nothing. `AnthropicLlmClient` currently ignores the field silently.
+
+- **Suppression is reported, not silent.** A value that somebody set and that the model will not take
+  is logged once per distinct parameter/value/model at `WARN`, bounded at 32 entries, the same shape
+  `AnthropicLlmClient` already uses for the penalties it drops. The built-in `DEFAULT_TEMPERATURE`
+  fallback is suppressed **silently** — nobody configured it. Note the wording says only that a value
+  "is set on this request": a subagent turn carries a temperature from `SubagentLlmDefaults` rather
+  than from an operator, and nothing at that point can tell the two apart.
+
+- **One log-only side effect of the upgrade.** `AgentDefinitionVersion.canonicalForm` enumerates every
+  `LlmModel` field, so it gained a `model.reasoningEffort` line — which changes **every** agent's
+  digest once. A cron task scheduled before the upgrade logs "definition changed" the first time it
+  fires afterwards. `AgentDefinitionVersion` is a change detector and not a gate; nothing refuses to
+  run on a mismatch.
+
 ### Sessions: one unreadable inbox entry no longer costs the whole batch
 
 - **`SessionInbox.collect` returns `CollectedBatch` instead of `List<InboundMessage>`.** A
