@@ -45,10 +45,25 @@ class LlmClientFactoryTest {
             LlmProviderConfig config = new LlmProviderConfig();
             config.setProvider("openai");
             config.setApiKey("test-openai-api-key");
+            config.setModel("gpt-4o");
 
             LlmClient client = factory.create(config);
 
             assertThat(client).isNotNull().isInstanceOf(OpenAILlmClient.class);
+        }
+
+        @Test
+        @DisplayName("Should reject an openai provider with no model, naming the yaml key")
+        void cliRejectsAnOpenAiProviderWithNoModel() {
+            // OpenAIConfig.build() would reject it too, but its message names a builder argument. What the operator
+            // has to change is the yaml key, so the message has to name that.
+            LlmProviderConfig config = new LlmProviderConfig();
+            config.setProvider("openai");
+            config.setApiKey("test-openai-api-key");
+
+            assertThatThrownBy(() -> factory.create(config)).isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("Model is required for the openai provider")
+                    .hasMessageContaining("model: gpt-4o");
         }
 
         @Test
@@ -57,6 +72,7 @@ class LlmClientFactoryTest {
             LlmProviderConfig upperConfig = new LlmProviderConfig();
             upperConfig.setProvider("OpenAI");
             upperConfig.setApiKey("test-api-key");
+            upperConfig.setModel("gpt-4o");
 
             LlmClient upperClient = factory.create(upperConfig);
 

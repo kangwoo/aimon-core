@@ -12,11 +12,12 @@ import java.util.Objects;
  * fatal as sending {@code "temperature": 0.0}.
  *
  * <p>
- * <strong>Fail open.</strong> {@link #unknown()} is not "everything is allowed" — it is <em>today's behaviour</em>,
- * which is a different boolean per flag: the framework has always sent sampling parameters and has never sent a
- * reasoning effort. A model nobody has described therefore produces exactly the request it produced before this type
- * existed. The builder is seeded with the same values, so a partially specified entry stays permissive by omission and
- * fail-open is a property of the type rather than a rule each registry author has to re-derive.
+ * <strong>Fail open.</strong> {@link #unknown()} is not "everything is allowed". It is the two-sided rule
+ * <em>nothing the caller asked for is withheld, and nothing the caller did not ask for is invented</em>, which comes
+ * out as a different boolean per flag: a value somebody set is sent, and a parameter nobody has ever sent is not
+ * conjured up for a model nobody has described. The builder is seeded with the same values, so a partially specified
+ * entry stays permissive by omission and fail-open is a property of the type rather than a rule each registry author
+ * has to re-derive.
  *
  * <p>
  * Thread-safe and immutable.
@@ -46,13 +47,15 @@ public final class ModelCapabilities {
     }
 
     /**
-     * The capabilities of a model nothing is known about: exactly the request shape the framework produced before this
-     * type existed.
+     * The capabilities of a model nothing is known about: nothing the caller asked for is withheld, and nothing the
+     * caller did not ask for is invented.
      *
      * <p>
-     * Sampling parameters are sent, no reasoning effort is sent, and tools are not treated as conflicting with
-     * reasoning. Changing any of these silently changes the wire for every deployment running a model no registry
-     * describes, which is why a test asserts each one individually.
+     * Each flag falls out of that one rule. Sampling parameters a caller set are sent, because withholding them from a
+     * model nobody has described would be fail-<em>closed</em>. No reasoning effort is sent, because that is a
+     * parameter the framework would have to invent. Tools are not treated as conflicting with reasoning, because
+     * clamping without evidence is a restriction nobody asked for. Changing any of these silently changes the wire for
+     * every deployment running a model no registry describes, which is why a test asserts each one individually.
      *
      * @return the fail-open descriptor (never null)
      */
@@ -141,7 +144,7 @@ public final class ModelCapabilities {
      *
      * <p>
      * Seeded with {@link ModelCapabilities#unknown()}'s values, so an entry that specifies only the flag it cares about
-     * leaves the rest at today's behaviour rather than at {@code false}.
+     * leaves the rest fail-open rather than at {@code false}.
      */
     public static final class Builder {
         private boolean supportsSamplingParameters = DEFAULT_SUPPORTS_SAMPLING_PARAMETERS;

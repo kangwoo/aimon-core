@@ -15,6 +15,8 @@
 
 provider 구현체(`OpenAILlmClient`, `AnthropicLlmClient`) 는 metering 을 알 필요가 없다. 데코레이터로 감싸기만 하면 된다.
 
+`provider` 는 벤더 이름(`"OpenAI"`, `"Anthropic"`)이고 `model` 은 그 호출이 **실제로 사용한** 모델이다 — 요청의 `LlmModel` 이 지정한 이름, 지정하지 않았으면 클라이언트의 기본 모델(`LlmClient.getDefaultModelName()`).
+
 ## 2. 빠른 시작
 
 ### 2.1 Wiring

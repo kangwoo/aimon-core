@@ -17,14 +17,14 @@ import at.aimon.core.llm.capability.ModelCapabilityRegistry;
  *
  * <p>
  * The sampling parameters ({@code temperature}, {@code topP}, and the two penalties) and {@code reasoningEffort} are
- * all <em>unset</em> by default rather than defaulted to a value. That distinction is load-bearing: several models
- * reject a sampling parameter by its <em>presence</em>, so the client has to be able to omit one — and it has to be
- * able to tell "the operator asked for 0.0" from "nobody asked" in order to decide whether omitting it is worth a
- * warning. When a value is unset and the target model does accept sampling, the client applies
- * {@link #DEFAULT_TEMPERATURE}, which is what keeps the request byte-identical to previous releases.
+ * all <em>unset</em> by default rather than defaulted to a value, and unset means the parameter is not sent at all.
+ * That distinction is load-bearing twice over: several models reject a sampling parameter by its <em>presence</em>, so
+ * the client has to be able to omit one; and it has to be able to tell "the operator asked for 0.0" from "nobody
+ * asked" in order to decide whether omitting it is worth a warning. Nothing in this class or the client manufactures a
+ * sampling value on the caller's behalf — a request carries one only when somebody put it there.
  *
  * <p>
- * Thread-safe and immutable.
+ * {@code model} has no default and is required. Thread-safe and immutable.
  *
  * <p>
  * Example usage:
@@ -32,24 +32,13 @@ import at.aimon.core.llm.capability.ModelCapabilityRegistry;
  * <pre>
  * {
  *     &#64;code
- *     OpenAIConfig config = OpenAIConfig.builder().apiKey(System.getenv("OPENAI_API_KEY")).model("gpt-4")
+ *     OpenAIConfig config = OpenAIConfig.builder().apiKey(System.getenv("OPENAI_API_KEY")).model("gpt-4o")
  *             .temperature(0.7).timeout(Duration.ofSeconds(30)).build();
  * }
  * </pre>
  */
 public final class OpenAIConfig {
-    /**
-     * Temperature the client sends when neither the request's {@code LlmModel} nor this config set one, <em>and</em>
-     * the target model accepts sampling parameters.
-     *
-     * <p>
-     * Public because it is the documented fallback rather than an internal detail: a caller comparing what is on the
-     * wire against what was configured needs the same constant the client uses. A model whose
-     * {@link ModelCapabilities#supportsSamplingParameters()} is {@code false} never receives it.
-     */
-    public static final double DEFAULT_TEMPERATURE = 0.0;
 
-    private static final String DEFAULT_MODEL = "gpt-4";
     private static final int DEFAULT_MAX_TOKENS = 4096;
     private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(60);
 
@@ -80,6 +69,14 @@ public final class OpenAIConfig {
 
         if (apiKey.isBlank()) {
             throw new IllegalArgumentException("API key cannot be blank");
+        }
+        // Checked here rather than at the field assignment above so that a config missing both fields still reports
+        // the API key first -- the order callers already depend on.
+        Objects.requireNonNull(model,
+                "Model is required -- OpenAIConfig has no default; call OpenAIConfig.builder().model(\"gpt-4o\")");
+        if (model.isBlank()) {
+            throw new IllegalArgumentException(
+                    "Model cannot be blank -- call OpenAIConfig.builder().model(\"gpt-4o\")");
         }
         // Range checks run only when a value is present -- "unset" is not out of range. Bounds match LlmModel's, so a
         // value legal on one is legal on the other.
@@ -211,7 +208,7 @@ public final class OpenAIConfig {
     /** Builder for OpenAIConfig. */
     public static final class Builder {
         private String apiKey;
-        private String model = DEFAULT_MODEL;
+        private String model;
         private Double temperature;
         private Double topP;
         private Double presencePenalty;
@@ -238,10 +235,10 @@ public final class OpenAIConfig {
         }
 
         /**
-         * Sets the model name.
+         * Sets the model name. Required — this config has no default model.
          *
          * @param model
-         *            The model name (e.g., "gpt-4", "gpt-3.5-turbo")
+         *            The model name (e.g., "gpt-4o", "gpt-5.6-terra")
          * @return This builder
          * @throws NullPointerException
          *             if model is null
@@ -255,8 +252,9 @@ public final class OpenAIConfig {
          * Sets the temperature (sampling randomness).
          *
          * <p>
-         * Leaving it unset is not the same as setting {@link #DEFAULT_TEMPERATURE}: the client applies that fallback
-         * either way, but only a value set here is reported when the target model turns out not to accept it.
+         * Leaving it unset means the parameter is not sent at all — this client does not substitute a value of its
+         * own, so the server's default applies. Setting {@code 0.0} explicitly is therefore a different request from
+         * setting nothing, and only a value set here is reported when the target model turns out not to accept it.
          *
          * @param temperature
          *            The temperature (0.0 to 2.0)
@@ -384,7 +382,7 @@ public final class OpenAIConfig {
          *
          * @return A new OpenAIConfig instance
          * @throws NullPointerException
-         *             if apiKey is null
+         *             if apiKey or model is null
          * @throws IllegalArgumentException
          *             if any parameter is invalid
          */

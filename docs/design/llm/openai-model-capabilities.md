@@ -5,8 +5,18 @@
 > listed in §8.1). **§8 is written after the fact** and records where the implementation departed
 > from this document. Read §8 before trusting a detail in §3 or §6.
 >
-> Scope: **#44 in full, #43 phase 1 only.** #43 phase 2 (the Responses API path) and #45 are not
-> here and were not stubbed. Branch: `fix/openai-model-capabilities`. Gate: `./gradlew checkAll`.
+> Scope: **#44 in full, #43 phase 1 only.** #43 phase 2 (the Responses API path) is still not here.
+> Branch: `fix/openai-model-capabilities`. Gate: `./gradlew checkAll`.
+
+> **Round 2 — one decision here was overruled, and #45 landed.** The maintainer ruled that issue
+> #43's *"sampling parameters are sent only when the caller explicitly set them"* beats the
+> `TASK.md` acceptance criterion this document chose over it, so **A6 and O-1 are reversed**: the
+> `DEFAULT_TEMPERATURE` fallback is gone and an unset sampling parameter is now absent from the
+> wire. `#45` was implemented in the same round (`OpenAIConfig` has no default model;
+> `getProviderName()` is the vendor alone). **§9 is authoritative wherever it disagrees with §2.4,
+> §2.5, §3.3, §4.1, §4.3, §6.3, A6 or O-1**, each of which carries an inline reversal marker. §§1-7
+> are kept as the design *as approved* rather than rewritten, because the record of a decision that
+> was made, reviewed twice and then overruled is the most useful thing in this document.
 
 > **Revision 2 — what review round 1 changed.** One blocking finding, and it was correct: the
 > absence assertions this document nominated (`params.temperature().isEmpty()`) cannot see the very
@@ -149,6 +159,11 @@ fallback moves to request-build time behind the capability check:
 effective temperature = LlmModel.temperature → OpenAIConfig.temperature → OpenAIConfig.DEFAULT_TEMPERATURE
 ```
 
+**Reversed (round 2 — maintainer ruling):** the third step of that chain is gone. The
+> resolution is now `LlmModel.temperature → OpenAIConfig.temperature → (nothing)`, and an unset
+> temperature is **omitted**, so the server default applies instead of `0.0`. The byte-identical
+> claim below no longer holds for an unconfigured request. §9.1.
+
 applied **only when `capabilities.supportsSamplingParameters()`**. For every model in use today this
 produces a byte-identical request (`modelConfig.orElse(config)` with config defaulting to `0.0` is
 the same value as `modelConfig.or(config).orElse(0.0)`), which is what satisfies acceptance criterion
@@ -213,6 +228,11 @@ explaining why `WARN` and why once. `OpenAILlmClient` gets the same private help
 - a non-`NONE` reasoning effort being clamped to `NONE` because tools are present;
 - a reasoning effort set for a model whose capabilities say it takes none.
 
+**Reversed (round 2 — maintainer ruling):** there is no fallback left to suppress, so
+> this paragraph describes a state that can no longer occur. The property it protected survives for
+> a simpler reason: every suppressible value is now one somebody set, so an unconfigured request is
+> silent by construction rather than by a special case. §9.1.
+
 It stays **silent** when only the built-in `DEFAULT_TEMPERATURE` fallback is suppressed — nobody
 configured that, so warning about it would be noise on every gpt-5 deployment. This is precisely why
 `OpenAIConfig.temperature` must become genuinely unset-by-default rather than keeping `0.0` as the
@@ -269,7 +289,7 @@ both shapes and my recommendation so the next person does not re-derive them.
 | A3 | **Single total `ModelCapabilities resolve(String)`, no `Optional`** | Fewer methods, but it moves the fail-open obligation onto every third-party implementer, where getting it wrong is silent and turns fail-open into fail-closed. §2.2. |
 | A4 | **`Optional` only, no total `resolve` — every caller writes `.orElse(...)`** | Puts the fail-open constant at each call site, where the next one can write `.orElse(restrictive())`. The rule must live in one testable place. |
 | A5 | **Capabilities carried on `LlmModel` (a field per flag)** | `LlmModel` is built at agent-definition load time from user frontmatter; capabilities are facts about the vendor's API, not user configuration. It would also mean every construction site of `LlmModel` (17 in main sources) has to know them. |
-| A6 | **Drop the sampling fallback entirely** (issue #43's literal "sent only when the caller explicitly set them") | Contradicts acceptance criterion 2: an unknown model would stop sending `temperature: 0.0` and silently move to the server default of `1.0`, changing agent determinism for every existing deployment. That is a much larger, unrelated behaviour change than the bug being fixed. The intent is still reachable on demand — an operator who wants no sampling parameters registers a capability entry saying so, which is the override mechanism doing its job rather than a second knob. **This is a deliberate deviation from the issue's prose; §7 O-1 flags it.** |
+| A6 | **Drop the sampling fallback entirely** (issue #43's literal "sent only when the caller explicitly set them") — **REVERSED in round 2: this is what the code now does.** The maintainer ruled for #43's reading over the acceptance criterion; the paragraph below is the superseded argument, kept as the record of what was decided and why it was overturned. §9. | Contradicts acceptance criterion 2: an unknown model would stop sending `temperature: 0.0` and silently move to the server default of `1.0`, changing agent determinism for every existing deployment. That is a much larger, unrelated behaviour change than the bug being fixed. The intent is still reachable on demand — an operator who wants no sampling parameters registers a capability entry saying so, which is the override mechanism doing its job rather than a second knob. **This is a deliberate deviation from the issue's prose; §7 O-1 flags it.** |
 | A7 | **A boolean `omitSamplingParameters` knob on `OpenAIConfig`** | A second lever that answers the same question as the descriptor, so the two can disagree. The descriptor is the single lever. |
 | A8 | **`ModelCapabilities.defaultReasoningEffort()` — always send an explicit effort** | Makes "the server default is medium" a per-model policy in the table, muddying a capability descriptor with a policy default, for a case (reasoning model, no tools, no configured effort) where omission works fine today. §7 O-3 keeps it open. |
 | A9 | **Extract `reportDivergence` into a shared `at.aimon.core.llm` helper** | Right in the abstract, but it edits `AnthropicLlmClient`, which this branch has no other reason to touch, and the two clients arguably *should* have independent bounded report sets. Duplicating ten lines is the smaller blast radius. Follow-up, not now. |
@@ -354,7 +374,7 @@ Deliberately **not** modified: `MarkdownAgentDefinitionParser.extractModel` (§7
 
 | File | Change |
 |---|---|
-| `OpenAIConfig.java` | `temperature` becomes `Double` (nullable), builder seed `null`, getter `Optional<Double> getTemperature()`. `DEFAULT_TEMPERATURE` promoted from `private` to `public static final double` with javadoc naming where it is applied (precedent: `ModelContextLimits.DEFAULT_CONTEXT_WINDOW`). **New** nullable `topP` / `presencePenalty` / `frequencyPenalty` with `Optional<Double>` getters and builder setters, all unset by default. **New** `reasoningEffort` (`Optional<ReasoningEffort>`, unset). **New** `modelCapabilityRegistry` (`ModelCapabilityRegistry`, default `InMemoryModelCapabilityRegistry.withDefaults()`, `Objects.requireNonNull` in the setter). Range validation runs only when a value is present, using the same bounds as `LlmModel` (`temperature` 0-2, `topP` 0-1, penalties -2..2). |
+| `OpenAIConfig.java` | **Reversed (round 2 — maintainer ruling):** `DEFAULT_TEMPERATURE` is not promoted; it is **deleted**, and `DEFAULT_MODEL` with it (#45), so `build()` now rejects a config with no model. §9.3. — `temperature` becomes `Double` (nullable), builder seed `null`, getter `Optional<Double> getTemperature()`. ~~`DEFAULT_TEMPERATURE` promoted from `private` to `public static final double` with javadoc naming where it is applied (precedent: `ModelContextLimits.DEFAULT_CONTEXT_WINDOW`).~~ **New** nullable `topP` / `presencePenalty` / `frequencyPenalty` with `Optional<Double>` getters and builder setters, all unset by default. **New** `reasoningEffort` (`Optional<ReasoningEffort>`, unset). **New** `modelCapabilityRegistry` (`ModelCapabilityRegistry`, default `InMemoryModelCapabilityRegistry.withDefaults()`, `Objects.requireNonNull` in the setter). Range validation runs only when a value is present, using the same bounds as `LlmModel` (`temperature` 0-2, `topP` 0-1, penalties -2..2). |
 | `OpenAILlmClient.java` | `buildRequest` resolves the effective model name **once**, resolves capabilities from it, and delegates to two new private methods `applySamplingParameters(...)` and `applyReasoningEffort(...)`. New private `capabilitiesFor(String)` (fail-open wrapper, §5). New private `reportDivergence(String signature, String message, Object... args)` + `MAX_REPORTED_DIVERGENCES = 32` + `Set<String> reportedDivergences`, copied in shape and javadoc rationale from `AnthropicLlmClient:378-386`. Nothing outside `buildRequest` and these helpers is touched. |
 | `OpenAiReasoningEfforts.java` **(new)** | Package-private `final class`, private ctor, `static com.openai.models.ReasoningEffort toWire(at.aimon.core.llm.ReasoningEffort)` with an exhaustive `switch`. Mirrors `OpenAiStopReasons` exactly, and is the single place the vocabulary is translated — so `OpenAILlmClient` never names the SDK enum and the two same-named types never collide in one import list. |
 
@@ -423,7 +443,8 @@ applyReasoningEffort(requestBuilder, modelConfig, capabilities, tools);
 | Was | Is |
 |---|---|
 | `double getTemperature()` — always a value, default `0.0` | `Optional<Double> getTemperature()` — empty means "not configured" |
-| `private static final double DEFAULT_TEMPERATURE = 0.0` | `public static final double DEFAULT_TEMPERATURE = 0.0`, documented as the fallback the client applies when the target model accepts sampling parameters |
+| `private static final double DEFAULT_TEMPERATURE = 0.0` | **Reversed (round 2):** deleted outright, not promoted — nothing applies a fallback any more. §9.1 |
+| `private static final String DEFAULT_MODEL = "gpt-4"` | **Round 2 (#45):** deleted; a model is required and `build()` says so. §9.3 |
 | — | `Optional<Double> getTopP() / getPresencePenalty() / getFrequencyPenalty()`, unset by default |
 | — | `Optional<ReasoningEffort> getReasoningEffort()`, unset by default |
 | — | `ModelCapabilityRegistry getModelCapabilityRegistry()`, never null |
@@ -441,14 +462,16 @@ into `equals`/`hashCode`/`toString`.
 
 | Model / registry state | `temperature` | `top_p` etc. | `reasoning_effort` |
 |---|---|---|---|
-| Any model, `EMPTY` or unknown | `0.0` (or configured) — **as today** | as today | absent — **as today** |
-| `gpt-4o` (unknown to the table) | as today | as today | absent |
+| Any model, `EMPTY` or unknown, caller set a value | the value | the values | absent |
+| Any model, `EMPTY` or unknown, caller set nothing | **absent** — *(round 2: was `0.0`)* | absent | absent |
+| `gpt-4o` (unknown to the table), caller set nothing | **absent** — *(round 2: was `0.0`)* | absent | absent |
 | `gpt-5.6-terra`, tools present | **absent** | **absent** | **`none`** |
 | `gpt-5.6-terra`, no tools, no configured effort | absent | absent | absent (server default) |
 | `gpt-5.6-terra`, no tools, effort `HIGH` | absent | absent | `high` |
-| `o3` **with the shipped table** (no entry — see O-2) | as today | as today | absent — **as today** |
+| `o3` **with the shipped table** (no entry — see O-2) | the value, or **absent** if unset — *(round 2)* | likewise | absent |
 | `o3` with a *caller-registered* entry, tools present, effort `HIGH` | absent | absent | `high` (not clamped — the entry sets `toolsWithReasoning = true`) |
-| `gpt-5-chat-latest` | as today | as today | absent |
+| `gpt-5-chat-latest` | the value, or **absent** if unset — *(round 2)* | likewise | absent |
+| registry `resolve()` throws **or returns null** — *(round 2)* | the value | the values | absent (+ one `WARN`) |
 
 ---
 
@@ -457,7 +480,7 @@ into `equals`/`hashCode`/`toString`.
 | Failure | Handling |
 |---|---|
 | **A caller-supplied registry throws** from `capabilitiesOf`/`resolve`. In the streaming path `buildRequest` runs *outside* the try-with-resources, so a raw exception would escape unmapped and bypass the cancellation classification. | `capabilitiesFor(...)` catches `RuntimeException`, reports once via `reportDivergence`, and returns `ModelCapabilities.unknown()`. This is fail-open applied to the registry itself, and it is what keeps a third-party bug from reaching the four preserved behaviours. |
-| **A registry returns `null`** from `capabilitiesOf`. | `default resolve` treats `null` as unknown (§2.2). |
+| **A registry returns `null`** from `capabilitiesOf`. | `default resolve` treats `null` as unknown (§2.2). **Round 2 added the other half:** an implementation that overrides `resolve` itself and returns `null` used to NPE inside `buildRequest`; `capabilitiesFor` now null-checks and reports it. §9.3. |
 | **A model name the table does not match** — the common Azure/gateway case: a deployment called `prod-assistant` that is really `gpt-5.6`. | Resolves to `unknown()`, so it behaves exactly as today — meaning **the gpt-5 bug is still present for that deployment until an entry is registered**. This is the accepted cost of fail-open and the single most important operational consequence of this design; it goes in the CHANGELOG entry and the package javadoc, with `builderWithDefaults()` as the one-line remedy. That remedy is programmatic, so a **CLI** deployment in this state has no way out in phase 1 — §2.6 and O-8 say so plainly rather than leaving it to be discovered. |
 | **A gateway that renames a model and *does* accept sampling** but whose name matches a built-in prefix. | Parameters are suppressed and the call still succeeds with different sampling. Reported at `WARN` when anyone configured a value; overridable by registering an entry. |
 | **`temperature(null)` / `temperature(Optional.empty())` on the SDK builder** sends `"temperature": null`, which gpt-5.x counts as present — the single most likely way this branch regresses, since computing a nullable effective value and passing it is the natural way to write `applySamplingParameters`. | Two things, and the second is the one that matters. (1) Omission is implemented as "do not call the setter" — the capability check branches *before* the builder call. (2) The test asserts `params._temperature()` is `JsonMissing`, **not** `params.temperature().isEmpty()`: the latter is `Optional.empty()` for `JsonNull` too (`Values.kt:187-190`, reproduced against 4.52.0), so it would stay green on exactly this regression. §2.4 and §6.1. |
@@ -534,7 +557,7 @@ the `OpenAIArchitectureTest` whitelist, and that rule excludes tests anyway).
 
 | Test | Asserts |
 |---|---|
-| `ModelCapabilitiesTest` | `unknown()` pins each flag to today's behaviour — `sampling = true`, `reasoningEffort = false`, `toolsWithReasoning = true` — with a comment naming the fail-open contract, so a future edit has to argue with the test. Builder round-trip; builder defaults equal `unknown()`; `equals`/`hashCode`. |
+| `ModelCapabilitiesTest` | `unknown()` pins each flag — `sampling = true`, `reasoningEffort = false`, `toolsWithReasoning = true` — with a comment naming the fail-open contract, so a future edit has to argue with the test. **Round 2 re-grounded that comment** (the values are unchanged): "today's behaviour" → "nothing withheld, nothing invented". §9.1. Builder round-trip; builder defaults equal `unknown()`; `equals`/`hashCode`. |
 | `ModelCapabilityRegistryTest` | `resolve` is total and fail-open for: `EMPTY`; a registry returning `Optional.empty()`; a registry returning `null`; a registry that *does* know the model. |
 | `InMemoryModelCapabilityRegistryTest` | exact beats prefix; prefix first-match-wins in registration order; case-insensitivity; `null`/empty name → empty; `gpt-5-chat-latest` resolves to the chat entry and **not** the `gpt-5` entry; `gpt-5.6-terra` resolves to the reasoning entry; `gpt-4o` and `o3` are unknown; `builderWithDefaults()` lets a caller override a built-in prefix. |
 | `LlmModelTest` (extend) | `reasoningEffort` empty by default, round-trips, participates in `equals`/`hashCode`/`toString`. |
@@ -546,7 +569,7 @@ Params captured on both the blocking and streaming paths.
 
 | Test | Acceptance criterion |
 |---|---|
-| unknown model → `temperature()` **contains** `0.0`; `_topP()`/`_presencePenalty()`/`_frequencyPenalty()`/`_reasoningEffort()` are `JsonMissing` | **2 (fail open)** |
+| ~~unknown model → `temperature()` **contains** `0.0`~~ **Reversed (round 2):** an unknown model is now sent everything the caller set and nothing they did not, so this became **two** tests — values pass through, and an unset temperature is `JsonMissing`. §9.1 | **2 (fail open)** |
 | model registered `supportsSamplingParameters = false`, with `LlmModel` setting all four → all four raw accessors are `JsonMissing` | **2 (suppression)** |
 | **the trap test**: same as above, asserted specifically as "`_temperature()` is `JsonMissing`, and is *not* `JsonNull`" with a comment naming §2.4 | the guard that a null-writing implementation fails, which revision 1's assertion would not have caught |
 | same, reasoning model + non-empty tools + `toolsWithReasoning = false` → `reasoningEffort()` **contains** the SDK `NONE` | **3** |
@@ -579,7 +602,11 @@ the import order from CLAUDE.md (java, javax, jakarta, org, com, blank line, pro
 
 ## 7. Open questions — what I could not settle from the task statement
 
-**O-1 — the sampling fallback contradicts the issue's prose, and I chose the acceptance criteria.**
+**O-1 — CLOSED IN ROUND 2, AGAINST THE CHOICE MADE HERE.** The maintainer ruled for #43. The
+fallback is gone; an unset sampling parameter is omitted. The paragraph below is the superseded
+reasoning, kept because it names the trade-off that was accepted when the ruling landed. §9.1.
+
+**O-1 (as written) — the sampling fallback contradicts the issue's prose, and I chose the acceptance criteria.**
 Issue #43's *Expected* says "sampling parameters are sent only when the caller explicitly set them",
 which would mean dropping `DEFAULT_TEMPERATURE` entirely. TASK.md acceptance criterion 2 says an
 unknown model must send "exactly what it sends today", which requires keeping it. These cannot both
@@ -745,10 +772,154 @@ would be guarding, measured rather than argued.
 ### 8.4 What stayed open
 
 Every open question in §7 is still open, and none of them grew. O-1 (the fallback kept, deviating
-from #43's prose), O-2 (the o-series rows deferred until someone runs them against the real API — a
+from #43's prose — **since closed the other way; see §9**), O-2 (the o-series rows deferred until someone runs them against the real API — a
 test pins `o3` as behaving like an unknown model, so re-adding them has to change a test that says
 why), O-3, O-4 (no yaml key for reasoning effort), O-5 (`AnthropicLlmClient` ignores the new field
 silently), O-6 (`supportsToolsWithReasoning` is endpoint-flavoured and is where the phase-2 seam will
 have to open) and O-8 (no CLI override for a renamed gateway deployment) are unchanged. O-7 was
 answered by doing it: the `features` and `architecture` rows are in, in both languages, plus the
 provider guide.
+
+---
+
+## 9. Round 2 — the reversal, and what else landed with it
+
+Written after round 2's code landed, on the same terms as §8: where this section disagrees with
+§§1-7, this section is what the code does. Round 2's own design document is
+`design2/design.md` in the task state directory; this is its record inside the repository.
+
+### 9.1 A6 and O-1 are reversed — the fallback is gone
+
+**The ruling.** §7's O-1 named a real contradiction and picked a side: issue #43 says *"sampling
+parameters are sent only when the caller explicitly set them"*, `TASK.md`'s acceptance criterion 2
+said an unknown model must send *"exactly what it sends today"*, and today an unset temperature
+still sent `0.0`. Round 1 kept the fallback (A6) and two independent reviews passed that as
+defensible. The maintainer has since overruled it: **#43's reading wins.**
+
+**The rule that replaces it.** A sampling parameter reaches the wire if and only if somebody put a
+value on the request — the request's `LlmModel` first, then the client's `OpenAIConfig`, and
+nothing else. `applySamplingParameters` lost its one special case, so all four parameters now
+resolve and apply identically; the change is the deletion of an asymmetry rather than the addition
+of a branch.
+
+**Who is affected, and what they do.** A request loses its `temperature: 0.0` when neither the
+`LlmModel` nor the `OpenAIConfig` carries one — which is main-agent turns of agents that never
+named a temperature, i.e. the common case. OpenAI's server default (`1.0`) applies instead, so
+output is less deterministic. Subagent turns are unaffected (`SubagentLlmDefaults` always sets
+one), and so is any agent whose frontmatter names `model.temperature`. The remedy is
+`.temperature(0.0)` on `OpenAIConfig` for an application that assembles its own config, and
+`model: { temperature: 0.0 }` in the agent's frontmatter for a CLI or starter deployment — neither
+of those two configuration surfaces has a temperature key, which is why stating only the
+programmatic remedy would have been useless to most affected operators. Both are in the CHANGELOG.
+
+**`ModelCapabilities.unknown()` did not change, and that was the round's other live decision.** The
+three flags are still `(sampling = true, reasoningEffort = false, toolsWithReasoning = true)`. What
+changed is the sentence justifying them, which round 1 had grounded in *"today's behaviour"* /
+*"byte-identical to previous releases"* — false for the sampling row once the fallback went. The
+replacement is two-sided and does not rot:
+
+> **Fail open means: nothing the caller asked for is withheld, and nothing the caller did not ask
+> for is invented.**
+
+All three values re-derive from it, which is what makes this a re-grounding rather than a
+coincidence: a value the caller set is not withheld from a model nobody has described; a parameter
+the framework has never sent is not invented for one; and clamping without evidence is a
+restriction nobody asked for. Flipping `supportsSamplingParameters` to `false` was considered and
+rejected — that is fail-**closed**, it would suppress a value the caller explicitly set, and on a
+provider-neutral descriptor it would read to a second implementer as "this model rejects sampling".
+The flag is a permission, not an instruction; the client's defaulting policy belongs in the client.
+
+**In tests.** `assertTodaysDefaultShape` could not survive: with no fallback it would have become
+identical to `assertSamplingOmitted`, leaving its five callers passing equally well under a
+fail-closed `unknown()` and proving nothing. So the *inputs* changed too — those tests now send all
+four sampling values and assert they arrive (`assertSamplingPassedThrough`), and a new test asserts
+that an unset temperature is `JsonMissing` and not `JsonNull`. The pair is what binds both halves of
+the rule; neither test alone does. Every rewritten test carries a comment naming the reversal and
+who made it, and none was deleted.
+
+### 9.2 The corrected wire-effect table
+
+| Model / registry state | caller set a sampling value? | `temperature` | `top_p` etc. | `reasoning_effort` |
+|---|---|---|---|---|
+| unknown / `EMPTY` | **yes** | **the value** | the values | absent |
+| unknown / `EMPTY` | **no** | **absent** *(round 2: was `0.0`)* | absent | absent |
+| `gpt-4o` (not in the table) | no | **absent** *(round 2: was `0.0`)* | absent | absent |
+| `o3` on shipped defaults | no | **absent** *(round 2: was `0.0`)* | absent | absent |
+| `gpt-5-chat-latest` | yes | the value | the values | absent |
+| `gpt-5.6-terra`, tools present | either | absent | absent | `none` |
+| `gpt-5.6-terra`, no tools, effort `HIGH` | either | absent | absent | `high` |
+| registry `resolve()` throws **or returns null** | yes | the value | the values | absent (+ one `WARN`) |
+
+### 9.3 The null registry, and #45's required model
+
+**The null registry.** Round 1's build review found that `capabilitiesFor` guarded a registry that
+*throws* but not one that overrides the `default resolve()` and returns `null` — a lambda cannot do
+that, a class can. It NPE'd at the first flag read inside `buildRequest`, which on the streaming
+path runs *before* the try-with-resources, i.e. exactly the escape the surrounding catch exists to
+prevent. `capabilitiesFor` now null-checks inside the same `try` and reports it under its own
+signature rather than absorbing it silently, because the adjacent branch reports and a silent
+degradation beside a reported one teaches an operator that capability lookups never fail. The
+`resolve` javadoc now states the never-null contract that check guards.
+
+**#45 item 1 — no default model.** `OpenAIConfig.DEFAULT_MODEL` was `"gpt-4"`, long superseded.
+It is deleted rather than refreshed, and `build()` rejects a config with no model. The check runs
+*after* the existing `apiKey` validation, and that ordering is load-bearing: a config missing both
+fields must still report the API key first, which is what an existing test asserts. Because
+`build()` is the wrong place for an operator to meet this, both assembly paths validate first and
+name the key they own — `LlmClientFactory` throws a `ConfigurationException` naming the yaml
+`model:`, and the starter mirrors `requireApiKey` with a `requireModel` naming `aimon.llm.model`.
+`AnthropicConfig` keeps its default model: `claude-sonnet-4-20250514` is current, #45 names OpenAI
+only, and breaking a second module for symmetry has no defect behind it. The resulting asymmetry is
+real and is recorded as an open item below.
+
+### 9.4 #45 item 2 — the provider name is the vendor, the model gets its own accessor
+
+**Option one was unreachable, and that is a fact about the interface.** `LlmClient.getProviderName()`
+takes no arguments and is called both from places that hold a request and from two that do not
+(`ReplSession`, `OrcaAgentExecutor.toString()`). Making it reflect the per-request model would need
+either an overload — a second meaning for one method name, forced on every implementer — or
+per-request state on a client documented as thread-safe.
+
+But option two is more than a javadoc edit, because the defect is two-sided. Every observability
+site already keeps provider and model in separate fields, and the model field was *empty* for any
+request that did not override: `LoggingLlmClient` logged `""`, `MeteringLlmClient` passed `null`
+into `LlmUsageKey.model`. So a log line read `provider=OpenAI (gpt-4o) model=gpt-4o-mini` — two
+models on one line, which is #45's complaint verbatim. Documenting the name as client-scoped would
+have fixed neither half.
+
+The shape: `LlmClient` gains `default Optional<String> getDefaultModelName()` (a `default` method
+because 69 test classes implement this interface, and because that is how this interface has
+evolved six times before); `getProviderName()` returns the vendor alone; the five decorators
+forward the new method, bound by a forwarding test in the shape of the existing cancellation one;
+the three observability sites resolve the effective model as
+`modelConfig.getName().or(delegate::getDefaultModelName)`, each keeping its own terminal fallback
+because those legitimately differ. `AnthropicLlmClient` gets the identical treatment, which #45
+asks for by name. `ReplSession` recomposes the two so the user-visible line is unchanged.
+
+This changes an observed value, so it is in the CHANGELOG under Breaking: an out-of-tree
+`LlmUsageRecorder` sees its `provider` label lose the model and its `model` label start being
+populated, and trace spans become `llm:<model>` rather than `llm:<provider> (<model>)`.
+
+### 9.5 What closed, and what is newly open
+
+**Closed.** O-1, by the ruling above.
+
+**Still open, unchanged.** O-2 (o-series rows), O-3, O-4, O-5, O-6, O-8.
+
+**New after round 2.**
+
+- **The two provider configs now answer the same questions differently.** `OpenAIConfig` requires a
+  model and omits an unset temperature; `AnthropicConfig` defaults its model and still sends
+  `temperature: 0.0` from a primitive field. A starter user meets this as `provider=anthropic`
+  booting without a model while `provider=openai` does not. Symmetry was judged the wrong reason to
+  break a second published module for a defect nobody has reported, but the asymmetry is real and
+  compounds O-5. One follow-up issue should carry all three.
+- **Neither configuration surface has a temperature key**, which makes half the documented remedy
+  reachable only through per-agent frontmatter. Adding `aimon.llm.temperature` (and the other three
+  parameters, and the Anthropic question) is the natural follow-up; it was kept out because a new
+  user-facing config surface should not arrive as a rider on a bug fix.
+- **`SubagentLlmDefaults.DEFAULT_MODEL_NAME` is still `"gpt-4"`.** A second stale default, found by
+  the same sweep, but in `aimon-core` and provider-neutral: changing it changes which model every
+  subagent falls back to on every provider. Outside #45's scope, and it should have its own issue.
+- **Nothing here was verified against a live endpoint.** The `0.0` → server-default consequence is
+  reasoned from OpenAI's documented default of `1.0`, not measured.

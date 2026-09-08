@@ -62,6 +62,18 @@ class MeteringLlmClientTest {
     }
 
     @Test
+    @DisplayName("요청이 모델을 지정하지 않으면 클라이언트의 기본 모델이 기록되어야 한다")
+    void effectiveModelFallsBackToTheClientDefault() {
+        // Issue #45's other half. The provider label no longer carries a model, so if this field stayed null a
+        // request that did not override would be recorded against no model at all -- which is most requests.
+        metering.sendMessage("sys", List.of(), List.of(), LlmModel.builder().build(), LlmCallMetadata.empty());
+
+        assertThat(recorder.events).hasSize(1);
+        assertThat(recorder.events.get(0).provider).isEqualTo("StubProvider");
+        assertThat(recorder.events.get(0).model).isEqualTo("stub-default-model");
+    }
+
+    @Test
     @DisplayName("provider 이름은 delegate 에 위임되어야 한다")
     void delegatesProviderMetadata() {
         assertThat(metering.getProviderName()).isEqualTo("StubProvider");
@@ -118,6 +130,11 @@ class MeteringLlmClientTest {
         @Override
         public String getProviderName() {
             return "StubProvider";
+        }
+
+        @Override
+        public Optional<String> getDefaultModelName() {
+            return Optional.of("stub-default-model");
         }
 
     }

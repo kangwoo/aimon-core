@@ -4,7 +4,7 @@ OpenAI Chat Completion API를 사용하는 `LlmClient` 구현체입니다. Tool 
 
 ## 특징
 
-- **GPT 모델 지원**: GPT-4, GPT-4o, GPT-3.5-turbo 등 모든 Chat Completion 모델 사용 가능
+- **GPT 모델 지원**: GPT-4o, GPT-5.x 등 모든 Chat Completion 모델 사용 가능
 - **Tool Calling**: OpenAI function calling을 통한 도구 실행 지원
 - **멀티모달 콘텐츠**: 텍스트, 이미지(Base64/URL), 문서(텍스트) 지원
 - **동적 모델 설정**: `LlmModel`을 통한 요청별 모델 파라미터 오버라이드
@@ -52,7 +52,7 @@ dependencies {
 // 1. 설정
 OpenAIConfig config = OpenAIConfig.builder()
     .apiKey(System.getenv("OPENAI_API_KEY"))
-    .model("gpt-4")
+    .model("gpt-4o")
     .build();
 
 // 2. 클라이언트 생성
@@ -134,11 +134,19 @@ OpenAIConfig config = OpenAIConfig.builder()
 | 파라미터 | 타입 | 기본값 | 범위 | 설명 |
 |---------|------|-------|------|------|
 | `apiKey` | String | (필수) | - | OpenAI API 키 |
-| `model` | String | `gpt-4` | - | 사용할 모델 |
-| `temperature` | double | `0.0` | 0.0 ~ 2.0 | 샘플링 온도 |
+| `model` | String | (필수) | - | 사용할 모델 — 기본값이 없다 |
+| `temperature` | Double | 미설정 — 보내지 않음 | 0.0 ~ 2.0 | 샘플링 온도 |
+| `topP` | Double | 미설정 — 보내지 않음 | 0.0 ~ 1.0 | 누클리어스 샘플링 |
+| `presencePenalty` | Double | 미설정 — 보내지 않음 | -2.0 ~ 2.0 | 등장 페널티 |
+| `frequencyPenalty` | Double | 미설정 — 보내지 않음 | -2.0 ~ 2.0 | 빈도 페널티 |
+| `reasoningEffort` | ReasoningEffort | 미설정 — 보내지 않음 | - | 추론 강도 (모델이 받는 경우에만) |
 | `maxTokens` | int | `4096` | > 0 | 최대 생성 토큰 수 |
 | `timeout` | Duration | 60초 | - | 요청 타임아웃 |
 | `baseUrl` | String | null | - | 커스텀 API 엔드포인트 (선택) |
+| `modelCapabilityRegistry` | ModelCapabilityRegistry | 내장 테이블 | - | 모델별 요청 형태 조회 (게이트웨이·Azure 배포에서 교체) |
+
+샘플링 파라미터는 **누군가 값을 넣었을 때만** 요청에 실린다. 미설정은 `0.0` 이 아니라 **아예 보내지 않는 것**이고,
+그때는 서버 기본값이 적용된다. 예전 동작(`temperature: 0.0`)을 유지하려면 `.temperature(0.0)` 을 명시한다.
 
 ## 예외 계층
 

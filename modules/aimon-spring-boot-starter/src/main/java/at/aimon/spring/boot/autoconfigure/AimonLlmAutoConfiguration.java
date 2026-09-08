@@ -1,6 +1,7 @@
 package at.aimon.spring.boot.autoconfigure;
 
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_API_KEY;
+import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_MODEL;
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_PROVIDER;
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.PROVIDER_ANTHROPIC;
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.PROVIDER_OPENAI;
@@ -71,6 +72,28 @@ public class AimonLlmAutoConfiguration {
         }
     }
 
+    /**
+     * Rejects a missing model by name, for a provider whose config has no default one.
+     *
+     * <p>
+     * Same reasoning as {@link #requireApiKey}: {@code OpenAIConfig.build()} rejects it too, but its message names a
+     * builder argument, and the operator needs the property. Only the OpenAI branch calls this —
+     * {@code AnthropicConfig} still carries a current default model, so demanding one there would turn a working
+     * configuration into a startup failure.
+     *
+     * @param llm
+     *            the bound LLM properties
+     * @param provider
+     *            the provider value that selected this branch
+     */
+    private static void requireModel(AimonProperties.Llm llm, String provider) {
+        if (llm.getModel() == null || llm.getModel().isBlank()) {
+            throw new IllegalStateException(LLM_MODEL + " must be set for " + LLM_PROVIDER + "=" + provider
+                    + ". That provider has no default model; name the one this deployment talks to"
+                    + " (e.g. gpt-4o).");
+        }
+    }
+
     /** Anthropic branch — also the branch taken when {@code aimon.llm.provider} is absent. */
     @Configuration(proxyBeanMethods = false)
     @ConditionalOnClass(AnthropicLlmClient.class)
@@ -107,10 +130,8 @@ public class AimonLlmAutoConfiguration {
         LlmClient aimonOpenAiLlmClient(AimonProperties properties) {
             final AimonProperties.Llm llm = properties.getLlm();
             requireApiKey(llm, PROVIDER_OPENAI);
-            final OpenAIConfig.Builder config = OpenAIConfig.builder().apiKey(llm.getApiKey());
-            if (llm.getModel() != null) {
-                config.model(llm.getModel());
-            }
+            requireModel(llm, PROVIDER_OPENAI);
+            final OpenAIConfig.Builder config = OpenAIConfig.builder().apiKey(llm.getApiKey()).model(llm.getModel());
             if (llm.getBaseUrl() != null) {
                 config.baseUrl(llm.getBaseUrl());
             }

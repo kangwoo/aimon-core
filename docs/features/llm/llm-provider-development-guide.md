@@ -76,9 +76,16 @@ public interface LlmClient {
                            List<ToolDefinition> tools, LlmModel modelConfig);
 
     /**
-     * Provider 이름을 반환합니다.
+     * Provider 이름을 반환합니다. 인자가 없으므로 요청별 모델을 볼 수 없다 — 벤더 이름만 담는다.
      */
     String getProviderName();
+
+    /**
+     * 요청이 모델을 지정하지 않았을 때 이 클라이언트가 쓰는 모델. 관측이 읽는 곳이다.
+     */
+    default Optional<String> getDefaultModelName() {
+        return Optional.empty();
+    }
 }
 ```
 
@@ -114,7 +121,7 @@ public class CustomLlmConfig {
     private final String apiKey;
     private final String model;
     private final String baseUrl;
-    private final double temperature;
+    private final Double temperature;   // nullable — 미설정과 0.0 은 다른 상태다
     private final int maxTokens;
     private final Duration timeout;
 
@@ -123,7 +130,8 @@ public class CustomLlmConfig {
         if (apiKey.isBlank()) {
             throw new IllegalArgumentException("API key cannot be blank");
         }
-        this.model = builder.model != null ? builder.model : "default-model";
+        // 기본 모델을 지어내지 않는다 — 필수로 받는다 (OpenAIConfig 가 gpt-4 기본값을 버린 이유와 같다)
+        this.model = Objects.requireNonNull(builder.model, "Model is required - there is no default");
         this.baseUrl = builder.baseUrl;
         this.temperature = builder.temperature;
         this.maxTokens = builder.maxTokens;
@@ -140,7 +148,7 @@ public class CustomLlmConfig {
         private String apiKey;
         private String model;
         private String baseUrl;
-        private double temperature = 0.7;
+        private Double temperature;     // 시드 없음 — 아무도 넣지 않았으면 보내지 않는다
         private int maxTokens = 4096;
         private Duration timeout;
 
@@ -205,7 +213,12 @@ public class CustomLlmClient implements LlmClient {
 
     @Override
     public String getProviderName() {
-        return "Custom Provider (" + config.getModel() + ")";
+        return "Custom Provider";   // 벤더만. 모델을 넣으면 요청별 오버라이드를 덮어 쓴 이름이 로그에 남는다
+    }
+
+    @Override
+    public Optional<String> getDefaultModelName() {
+        return Optional.of(config.getModel());
     }
 
     // Private helper methods...
@@ -378,7 +391,7 @@ LlmModel modelConfig = LlmModel.builder()
     .frequencyPenalty(0.1)        // Frequency Penalty (Optional)
     .build();
 
-// 설정 병합: modelConfig가 기본 config보다 우선, 그다음이 프로바이더의 fallback 상수
+// 설정 병합: modelConfig가 기본 config보다 우선. 체인은 config 에서 끝난다 — 프로바이더의 fallback 상수는 없다
 String model = modelConfig.getName().orElse(config.getModel());
 Optional<Double> temp = modelConfig.getTemperature().or(config::getTemperature);
 ```
@@ -395,13 +408,17 @@ final String modelName = modelConfig.getName().orElse(config.getModel());
 final ModelCapabilities capabilities = config.getModelCapabilityRegistry().resolve(modelName);
 
 if (capabilities.supportsSamplingParameters()) {
-    requestBuilder.temperature(temp.orElse(MyConfig.DEFAULT_TEMPERATURE));
+    temp.ifPresent(requestBuilder::temperature);   // 아무도 넣지 않았으면 이것도 세터를 부르지 않는다
 }
 // else: 세터를 아예 부르지 않는다
 ```
 
+IMPORTANT: **프로바이더는 값을 지어내지 않는다.** `orElse(DEFAULT_TEMPERATURE)` 처럼 미설정을 자기
+상수로 채우면, 아무도 요청하지 않은 샘플링 값이 매 요청에 실리고 서버 기본값이 영영 적용되지 않는다.
+미설정은 **보내지 않는 것**이고, 그때 무엇이 적용될지는 서버가 정한다.
+
 `resolve` 는 총함수이며 **fail-open** 이다 — 아무도 설명하지 않은 모델은 `ModelCapabilities.unknown()`,
-즉 이 프레임워크가 그 타입이 생기기 전에 보내던 요청 모양 그대로다. 값을 떨어뜨렸다면 그 사실을
+즉 **호출자가 요청한 것은 하나도 빼지 않고, 요청하지 않은 것은 하나도 지어내지 않는다**. 값을 떨어뜨렸다면 그 사실을
 [`LlmModel`](../../../modules/aimon-core/src/main/java/at/aimon/core/llm/LlmModel.java) 의 규칙대로
 운영자가 보는 수준으로 보고한다(`AnthropicLlmClient#reportDivergence`, `OpenAILlmClient#reportDivergence`).
 
@@ -542,7 +559,12 @@ public class OpenAILlmClient implements LlmClient {
 
     @Override
     public String getProviderName() {
-        return "OpenAI (" + config.getModel() + ")";
+        return "OpenAI";
+    }
+
+    @Override
+    public Optional<String> getDefaultModelName() {
+        return Optional.of(config.getModel());
     }
 }
 ```
@@ -560,6 +582,7 @@ public class OpenAILlmClient implements LlmClient {
 - [ ] 모든 에러를 `LlmClientException`으로 래핑
 - [ ] Thread-safe 구현
 - [ ] Tool calling 지원
+- [ ] `getProviderName()` 은 벤더만 반환하고, 기본 모델은 `getDefaultModelName()` 으로 노출
 
 ### 메시지 변환
 

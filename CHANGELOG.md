@@ -25,9 +25,9 @@ Central is versioned independently).
   request builder.
 
 - **Fail open, and that has a consequence worth knowing.** A model no registry describes resolves to
-  `ModelCapabilities.unknown()`, which is not "everything permitted" but "the request this framework
-  produced before the descriptor existed" — sampling sent, no reasoning effort. So an unknown model is
-  byte-identical to previous releases. The flip side: a deployment behind a gateway or Azure endpoint
+  `ModelCapabilities.unknown()`, which is not "everything permitted" but **nothing the caller asked
+  for is withheld, and nothing the caller did not ask for is invented** — a sampling value somebody
+  set is sent, no reasoning effort is conjured up. The flip side: a deployment behind a gateway or Azure endpoint
   that **renames** its gpt-5 model (`model: prod-assistant`) is unknown to the built-in table and keeps
   hitting the 400. One line closes it, and it is programmatic:
 
@@ -60,12 +60,12 @@ Central is versioned independently).
 
   | Was | Is |
   |---|---|
-  | `double t = config.getTemperature();` | `config.getTemperature().orElse(OpenAIConfig.DEFAULT_TEMPERATURE)` |
-  | `private static final double DEFAULT_TEMPERATURE` | `public static final double OpenAIConfig.DEFAULT_TEMPERATURE` |
+  | `double t = config.getTemperature();` | `config.getTemperature().orElse(0.0)` |
 
   The nullable shape is not cosmetic: it is what lets the client tell "somebody asked for `0.0`" from
-  "nobody asked", which is what decides whether suppressing a value deserves a `WARN`. Keeping `0.0` as
-  the builder seed makes those two states the same one. `OpenAIConfig` also gains unset-by-default
+  "nobody asked" — which decides both whether the parameter is sent at all (see the entry below) and
+  whether suppressing it deserves a `WARN`. Keeping `0.0` as the builder seed makes those two states
+  the same one. `OpenAIConfig` also gains unset-by-default
   `topP` / `presencePenalty` / `frequencyPenalty` / `reasoningEffort` and a `modelCapabilityRegistry`.
 
 - **Additive: `LlmModel.getReasoningEffort()`** and the neutral `at.aimon.core.llm.ReasoningEffort`
@@ -76,10 +76,53 @@ Central is versioned independently).
 
 - **Suppression is reported, not silent.** A value that somebody set and that the model will not take
   is logged once per distinct parameter/value/model at `WARN`, bounded at 32 entries, the same shape
-  `AnthropicLlmClient` already uses for the penalties it drops. The built-in `DEFAULT_TEMPERATURE`
-  fallback is suppressed **silently** — nobody configured it. Note the wording says only that a value
+  `AnthropicLlmClient` already uses for the penalties it drops. Every suppressible value is now one
+  somebody set, so an unconfigured request is silent by construction rather than by a special case.
+  Note the wording says only that a value
   "is set on this request": a subagent turn carries a temperature from `SubagentLlmDefaults` rather
   than from an operator, and nothing at that point can tell the two apart.
+
+- **Breaking: an unset sampling parameter is no longer sent at all.** Issue
+  [#43](https://github.com/kangwoo/aimon/issues/43)'s rule — *sampling parameters are sent only when
+  the caller explicitly set them* — now holds without exception. **Before:** a default-configured
+  `gpt-4o` put `temperature: 0.0` on every request, because the client substituted a fallback nobody
+  had asked for. **After:** nothing is sent and OpenAI's server default (`1.0`) applies, so agent
+  output is **less deterministic**. **Affected:** anyone who never set a temperature explicitly — in
+  practice, main-agent turns of agents whose frontmatter has no `model.temperature`. Subagent turns
+  are unaffected (`SubagentLlmDefaults` always sets one), and so is any agent that names one.
+  **Remedy, one line:** set the old value explicitly — `OpenAIConfig.builder()...temperature(0.0)`
+  for an application that assembles its own config, or `model: { temperature: 0.0 }` in the agent's
+  frontmatter for a CLI or Spring-starter deployment, since neither of those configuration surfaces
+  has a temperature key of its own. `OpenAIConfig.DEFAULT_TEMPERATURE` is gone rather than kept as a
+  constant nobody applies.
+
+- **Breaking: `OpenAIConfig` has no default model.** Issue
+  [#45](https://github.com/kangwoo/aimon/issues/45). **Before:** `DEFAULT_MODEL = "gpt-4"`, so a
+  config that named no model silently talked to a long-superseded one. **After:** `build()` rejects a
+  config with no model, and both assembly paths fail at startup naming the key they own — the CLI
+  with a `ConfigurationException` naming the yaml `model:`, the starter naming `aimon.llm.model`.
+  **Affected:** anyone relying on the default. **Remedy:** name the model. `AnthropicConfig` keeps
+  its default (`claude-sonnet-4-20250514` is current, and #45 names OpenAI only).
+
+- **Breaking: `getProviderName()` is the vendor alone; the effective model has its own accessor.**
+  Issue [#45](https://github.com/kangwoo/aimon/issues/45). The method takes no arguments, so it could
+  never see the per-request model an `LlmModel` names — and per-agent model selection makes that
+  override the normal case, so logs, traces and metering reported a model that was never called.
+  **Before:** `"OpenAI (gpt-4o)"` / `"Anthropic (claude-…)"`. **After:** `"OpenAI"` /
+  `"Anthropic"`, plus a new additive `default Optional<String> LlmClient.getDefaultModelName()`
+  (existing implementations and test doubles need no change; the five decorators forward it).
+  **Affected:** anything keyed on the old string. Three observable consequences — an out-of-tree
+  `LlmUsageRecorder` sees its `provider` label lose the model **and** its `model` label start being
+  populated where it was `null`; trace spans are named `llm:<model>` rather than
+  `llm:<provider> (<model>)`; the REPL's "LLM Provider:" line is unchanged, because it now composes
+  the two. **Remedy:** read the model from the request's `LlmModel`, falling back to
+  `getDefaultModelName()`.
+
+- **A capability registry that returns `null` no longer takes the request down with it.** An
+  implementation overriding the `default resolve()` to return `null` broke its own never-null
+  contract and NPE'd inside the request builder — which on the streaming path runs *before* the
+  try-with-resources, so it escaped both the exception mapper and the cancellation classification.
+  It now degrades to `unknown()` and is reported once, beside the existing throwing-registry case.
 
 - **One log-only side effect of the upgrade.** `AgentDefinitionVersion.canonicalForm` enumerates every
   `LlmModel` field, so it gained a `model.reasoningEffort` line — which changes **every** agent's

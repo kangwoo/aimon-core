@@ -139,12 +139,26 @@ class OpenAILlmClientModelCapabilityTest {
         assertThat(params._frequencyPenalty()).isInstanceOf(JsonMissing.class);
     }
 
-    /** The request shape every release before the capability registry produced. */
-    private static void assertTodaysDefaultShape(ChatCompletionCreateParams params) {
-        assertThat(params.temperature()).contains(0.0);
-        assertThat(params._topP()).isInstanceOf(JsonMissing.class);
-        assertThat(params._presencePenalty()).isInstanceOf(JsonMissing.class);
-        assertThat(params._frequencyPenalty()).isInstanceOf(JsonMissing.class);
+    /** An LlmModel carrying all four sampling values, so a fail-open test can assert they arrive. */
+    private static LlmModel modelWithAllSamplingValues() {
+        return LlmModel.builder().temperature(0.3).topP(0.9).presencePenalty(1.0).frequencyPenalty(-1.0).build();
+    }
+
+    /**
+     * Fail open, first half: every value the caller set arrived, and no reasoning effort was invented.
+     *
+     * <p>
+     * This replaces round 1's {@code assertTodaysDefaultShape}, which asserted an <em>unset</em> temperature arrived
+     * as {@code 0.0}. After round 2 removed that fallback, an unset temperature is absent — which would have made
+     * that helper identical to {@link #assertSamplingOmitted} and left its five callers passing just as well under a
+     * fail-<em>closed</em> {@code unknown()}, i.e. proving nothing about the property they exist for. So the inputs
+     * changed too: these tests now send values and assert they survive.
+     */
+    private static void assertSamplingPassedThrough(ChatCompletionCreateParams params) {
+        assertThat(params.temperature()).contains(0.3);
+        assertThat(params.topP()).contains(0.9);
+        assertThat(params.presencePenalty()).contains(1.0);
+        assertThat(params.frequencyPenalty()).contains(-1.0);
         assertThat(params._reasoningEffort()).isInstanceOf(JsonMissing.class);
     }
 
@@ -171,12 +185,35 @@ class OpenAILlmClientModelCapabilityTest {
     // ------------------------------------------------------------------------------------------------------------
 
     @Test
-    @DisplayName("a model no registry knows keeps exactly today's request shape")
-    void unknownModelKeepsTodaysShape() {
+    @DisplayName("a model no registry knows is sent everything the caller asked for")
+    void unknownModelSendsWhatTheCallerAskedFor() {
+        // Round 2 reversal, by maintainer ruling: this test used to send an EMPTY LlmModel and assert the request
+        // still carried temperature=0.0, from OpenAIConfig.DEFAULT_TEMPERATURE. That fallback was removed
+        // deliberately -- issue #43's "sampling parameters are sent only when the caller explicitly set them" beats
+        // round 1's "an unknown model sends exactly what it sends today", which round 1 had recorded as design
+        // O-1/A6. See docs/design/llm/openai-model-capabilities.md section 9.
         final ChatCompletionCreateParams params = capture(configWith("gpt-4o", ModelCapabilityRegistry.EMPTY),
-                LlmModel.builder().build(), List.of(A_TOOL));
+                modelWithAllSamplingValues(), List.of(A_TOOL));
 
-        assertTodaysDefaultShape(params);
+        assertSamplingPassedThrough(params);
+    }
+
+    @Test
+    @DisplayName("a sampling parameter nobody set is absent even on a model no registry knows")
+    void unsetTemperatureIsAbsentEvenOnAnUnknownModel() {
+        // The other direction of fail open, and the pair is what makes it binding: the test above fails if unknown()
+        // were flipped to fail-closed, this one fails if the DEFAULT_TEMPERATURE fallback came back. Neither alone
+        // pins both halves of "nothing withheld, nothing invented".
+        //
+        // Asserted on the raw field: params.temperature() is Optional.empty() for a missing field AND for an
+        // explicit JsonNull, and gpt-5.x rejects "temperature": null as present -- so the weak accessor cannot fail
+        // on the bug this guards.
+        final ChatCompletionCreateParams params = capture(config("gpt-4o").build(), LlmModel.builder().build(),
+                List.of(A_TOOL));
+
+        assertThat(params._temperature()).isInstanceOf(JsonMissing.class).isNotInstanceOf(JsonNull.class);
+        assertThat(params._temperature()).isSameAs(JsonMissing.of());
+        assertSamplingOmitted(params);
     }
 
     @Test
@@ -185,19 +222,29 @@ class OpenAILlmClientModelCapabilityTest {
         // Pins the decision to cut the o-series rows from the built-in table: those models are believed to reject
         // sampling, but the belief is unverified and a wrong entry would be a *silent* sampling change, while leaving
         // them out leaves them exactly where they are. Re-adding the rows has to change this test.
-        final ChatCompletionCreateParams params = capture(config("o3").build(), LlmModel.builder().build(),
+        // Round 2 reversal, by maintainer ruling: this test used to send an EMPTY LlmModel and assert the request
+        // still carried temperature=0.0, from OpenAIConfig.DEFAULT_TEMPERATURE. That fallback was removed
+        // deliberately -- issue #43's "sampling parameters are sent only when the caller explicitly set them" beats
+        // round 1's "an unknown model sends exactly what it sends today", which round 1 had recorded as design
+        // O-1/A6. See docs/design/llm/openai-model-capabilities.md section 9.
+        final ChatCompletionCreateParams params = capture(config("o3").build(), modelWithAllSamplingValues(),
                 List.of(A_TOOL));
 
-        assertTodaysDefaultShape(params);
+        assertSamplingPassedThrough(params);
     }
 
     @Test
     @DisplayName("gpt-5-chat-latest keeps its sampling parameters")
     void gpt5ChatKeepsSampling() {
+        // Round 2 reversal, by maintainer ruling: this test used to send an EMPTY LlmModel and assert the request
+        // still carried temperature=0.0, from OpenAIConfig.DEFAULT_TEMPERATURE. That fallback was removed
+        // deliberately -- issue #43's "sampling parameters are sent only when the caller explicitly set them" beats
+        // round 1's "an unknown model sends exactly what it sends today", which round 1 had recorded as design
+        // O-1/A6. See docs/design/llm/openai-model-capabilities.md section 9.
         final ChatCompletionCreateParams params = capture(config("gpt-5-chat-latest").build(),
-                LlmModel.builder().build(), List.of(A_TOOL));
+                modelWithAllSamplingValues(), List.of(A_TOOL));
 
-        assertTodaysDefaultShape(params);
+        assertSamplingPassedThrough(params);
     }
 
     @Test
@@ -209,10 +256,28 @@ class OpenAILlmClientModelCapabilityTest {
             throw new IllegalStateException("registry is broken");
         };
 
+        // Round 2 reversal, by maintainer ruling: this test used to send an EMPTY LlmModel and assert the request
+        // still carried temperature=0.0, from OpenAIConfig.DEFAULT_TEMPERATURE. That fallback was removed
+        // deliberately -- issue #43's "sampling parameters are sent only when the caller explicitly set them" beats
+        // round 1's "an unknown model sends exactly what it sends today", which round 1 had recorded as design
+        // O-1/A6. See docs/design/llm/openai-model-capabilities.md section 9.
         final ChatCompletionCreateParams params = capture(configWith("gpt-5.6-terra", exploding),
-                LlmModel.builder().build(), List.of(A_TOOL));
+                modelWithAllSamplingValues(), List.of(A_TOOL));
 
-        assertTodaysDefaultShape(params);
+        assertSamplingPassedThrough(params);
+    }
+
+    @Test
+    @DisplayName("a registry whose resolve() returns null is treated as knowing nothing")
+    void nullReturningRegistryFailsOpen() {
+        // A lambda cannot produce this state -- resolve() is a default method over the functional capabilitiesOf --
+        // so the double has to be a named class that overrides resolve() itself. Without the null check in
+        // capabilitiesFor this NPEs inside buildRequest, which on the streaming path runs before the
+        // try-with-resources: the escape the surrounding catch exists to prevent.
+        final ChatCompletionCreateParams params = capture(configWith("gpt-5.6-terra", new NullResolvingRegistry()),
+                modelWithAllSamplingValues(), List.of(A_TOOL));
+
+        assertSamplingPassedThrough(params);
     }
 
     // ------------------------------------------------------------------------------------------------------------
@@ -334,10 +399,36 @@ class OpenAILlmClientModelCapabilityTest {
     void clientHoldsNoModelNameKnowledge() {
         // Acceptance criterion 4: there is no `model.startsWith("gpt-5")` anywhere in buildRequest. If there were,
         // this request would be suppressed despite the registry knowing nothing.
+        // Round 2 reversal, by maintainer ruling: this test used to send an EMPTY LlmModel and assert the request
+        // still carried temperature=0.0, from OpenAIConfig.DEFAULT_TEMPERATURE. That fallback was removed
+        // deliberately -- issue #43's "sampling parameters are sent only when the caller explicitly set them" beats
+        // round 1's "an unknown model sends exactly what it sends today", which round 1 had recorded as design
+        // O-1/A6. See docs/design/llm/openai-model-capabilities.md section 9.
         final ChatCompletionCreateParams params = capture(configWith("gpt-5.6-terra", ModelCapabilityRegistry.EMPTY),
-                LlmModel.builder().reasoningEffort(ReasoningEffort.HIGH).build(), List.of(A_TOOL));
+                LlmModel.builder().temperature(0.3).topP(0.9).presencePenalty(1.0).frequencyPenalty(-1.0)
+                        .reasoningEffort(ReasoningEffort.HIGH).build(),
+                List.of(A_TOOL));
 
-        assertTodaysDefaultShape(params);
+        assertSamplingPassedThrough(params);
+    }
+
+    /**
+     * A registry that overrides {@code resolve()} to break its own never-null contract.
+     *
+     * <p>
+     * A named class rather than a lambda because {@code resolve} is a {@code default} method: a lambda can only
+     * supply {@code capabilitiesOf}, whose null the default implementation already absorbs.
+     */
+    private static final class NullResolvingRegistry implements ModelCapabilityRegistry {
+        @Override
+        public Optional<ModelCapabilities> capabilitiesOf(String modelName) {
+            return Optional.empty();
+        }
+
+        @Override
+        public ModelCapabilities resolve(String modelName) {
+            return null;
+        }
     }
 
     @Test

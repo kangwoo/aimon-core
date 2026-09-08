@@ -14,8 +14,8 @@
  * <ul>
  * <li><strong>Fail open.</strong> A model no registry describes resolves to
  * {@link at.aimon.core.llm.capability.ModelCapabilities#unknown()}, which is not "all permissions granted" but
- * "the request shape this framework produced before the descriptor existed". An unknown model is never refused and
- * never has a parameter withheld.
+ * "nothing the caller asked for is withheld, and nothing the caller did not ask for is invented". An unknown model is
+ * never refused and never has a parameter withheld — nor does it receive one nobody set.
  * <li><strong>Overridable.</strong> The built-in table
  * ({@link at.aimon.core.llm.capability.InMemoryModelCapabilityRegistry#withDefaults()}) knows models by their real
  * names. Azure deployments and OpenAI-compatible gateways rename models freely, so an operator on one of those must be

@@ -302,9 +302,12 @@ class AnthropicLlmClientIntegrationTest {
     class ClientStatusTests {
 
         @Test
-        @DisplayName("Should return correct provider name")
+        @DisplayName("Should return correct provider name and default model")
         void shouldReturnCorrectProviderName() {
-            assertThat(client.getProviderName()).isEqualTo("Anthropic (claude-haiku-4-5-20251001)");
+            // This class runs only with ANTHROPIC_KEY set, so checkAll compiles it but never executes it -- a stale
+            // assertion here ships silently. Updated by hand when getProviderName() became the vendor alone (#45).
+            assertThat(client.getProviderName()).isEqualTo("Anthropic");
+            assertThat(client.getDefaultModelName()).contains("claude-haiku-4-5-20251001");
         }
     }
 

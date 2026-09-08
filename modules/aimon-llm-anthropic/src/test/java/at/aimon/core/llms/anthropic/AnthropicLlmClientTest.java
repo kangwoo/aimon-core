@@ -64,21 +64,33 @@ class AnthropicLlmClientTest {
 
             // Then: Client should be created successfully
             assertThat(client).isNotNull();
-            assertThat(client.getProviderName()).contains("Anthropic").contains("claude-sonnet-4-20250514");
+            assertThat(client.getProviderName()).isEqualTo("Anthropic");
+            assertThat(client.getDefaultModelName()).contains("claude-sonnet-4-20250514");
         }
 
         @Test
-        @DisplayName("Should return correct provider name")
-        void shouldReturnCorrectProviderName() {
-            // Given: Config with specific model
+        @DisplayName("The provider name is the vendor alone")
+        void providerNameIsTheVendorAlone() {
+            // Issue #45, applied to both providers: getProviderName() takes no arguments, so it cannot see the
+            // per-request model an LlmModel may name. A name that baked in the client-wide model reported a model
+            // that was never called.
             AnthropicConfig config = AnthropicConfig.builder().apiKey("test-key").model("claude-opus-4-20250514")
                     .build();
 
-            // When: Creating client
             AnthropicLlmClient client = new AnthropicLlmClient(config);
 
-            // Then: Provider name should include model
-            assertThat(client.getProviderName()).isEqualTo("Anthropic (claude-opus-4-20250514)");
+            assertThat(client.getProviderName()).isEqualTo("Anthropic").doesNotContain("claude-opus-4-20250514");
+        }
+
+        @Test
+        @DisplayName("The effective default model has its own accessor")
+        void defaultModelNameIsTheConfiguredModel() {
+            AnthropicConfig config = AnthropicConfig.builder().apiKey("test-key").model("claude-opus-4-20250514")
+                    .build();
+
+            AnthropicLlmClient client = new AnthropicLlmClient(config);
+
+            assertThat(client.getDefaultModelName()).contains("claude-opus-4-20250514");
         }
 
         @Test
@@ -119,7 +131,7 @@ class AnthropicLlmClientTest {
                 AnthropicConfig config = AnthropicConfig.builder().apiKey("test-key").model(model).build();
                 AnthropicLlmClient client = new AnthropicLlmClient(config);
 
-                assertThat(client.getProviderName()).contains(model);
+                assertThat(client.getDefaultModelName()).contains(model);
             }
         }
     }

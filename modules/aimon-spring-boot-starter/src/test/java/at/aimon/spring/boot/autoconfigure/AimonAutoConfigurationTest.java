@@ -129,8 +129,18 @@ class AimonAutoConfigurationTest {
     @Test
     @DisplayName("the provider selector picks OpenAI")
     void providerSelectorPicksOpenAi(@TempDir Path workspace) {
-        minimal(workspace).withPropertyValues("aimon.llm.provider=openai")
+        minimal(workspace).withPropertyValues("aimon.llm.provider=openai", "aimon.llm.model=gpt-4o")
                 .run(ctx -> assertThat(ctx).getBean(LlmClient.class).isInstanceOf(OpenAILlmClient.class));
+    }
+
+    @Test
+    @DisplayName("an OpenAI deployment with no model is rejected by property name")
+    void starterRejectsOpenAiWithNoModel(@TempDir Path workspace) {
+        // OpenAIConfig has no default model any more (#45), and a stack trace saying "Model is required" without
+        // naming the property would be a worse failure than the stale default it replaces.
+        minimal(workspace).withPropertyValues("aimon.llm.provider=openai")
+                .run(ctx -> assertThat(ctx).hasFailed().getFailure().hasStackTraceContaining(AimonProperties.LLM_MODEL)
+                        .hasStackTraceContaining(AimonProperties.LLM_PROVIDER));
     }
 
     @Test

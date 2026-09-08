@@ -4,20 +4,25 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.verify;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.LoggerFactory;
 
 import com.openai.client.OpenAIClient;
+import com.openai.core.JsonMissing;
+import com.openai.core.JsonNull;
 import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import com.openai.services.blocking.ChatService;
 import com.openai.services.blocking.chat.ChatCompletionService;
@@ -26,6 +31,8 @@ import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.ReasoningEffort;
 import at.aimon.core.llm.ToolDefinition;
+import at.aimon.core.llm.capability.ModelCapabilities;
+import at.aimon.core.llm.capability.ModelCapabilityRegistry;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
@@ -88,6 +95,16 @@ class OpenAILlmClientParameterDivergenceTest {
                 .hasRootCause(SENTINEL);
     }
 
+    /** {@link #send} plus the params the SDK was handed — this class's own helper returns nothing. */
+    private ChatCompletionCreateParams sendAndCapture(OpenAILlmClient client, LlmModel model,
+            List<ToolDefinition> tools) {
+        send(client, model, tools);
+        final ArgumentCaptor<ChatCompletionCreateParams> captor = ArgumentCaptor
+                .forClass(ChatCompletionCreateParams.class);
+        verify(mockChatCompletionService).create(captor.capture());
+        return captor.getValue();
+    }
+
     private List<String> warnings() {
         return logAppender.list.stream().filter(event -> event.getLevel() == Level.WARN)
                 .map(ILoggingEvent::getFormattedMessage).toList();
@@ -123,15 +140,55 @@ class OpenAILlmClientParameterDivergenceTest {
     }
 
     @Test
-    @DisplayName("a suppressed DEFAULT_TEMPERATURE fallback is not reported at all")
-    void suppressedFallbackIsSilent() {
-        // Nobody asked for it, so warning would put a line in every log on every gpt-5 deployment saying nothing an
-        // operator can act on. This is why OpenAIConfig.temperature had to become genuinely unset-by-default.
+    @DisplayName("a temperature nobody configured is neither sent nor reported")
+    void unconfiguredTemperatureIsNeitherSentNorReported() {
+        // Round 2 reversal, by maintainer ruling: this test was `suppressedFallbackIsSilent`, and it asserted only
+        // that suppressing OpenAIConfig.DEFAULT_TEMPERATURE stayed quiet. That fallback was removed deliberately --
+        // issue #43's "sampling parameters are sent only when the caller explicitly set them" beats round 1's "an
+        // unknown model sends exactly what it sends today", which round 1 had recorded as design O-1/A6. See
+        // docs/design/llm/openai-model-capabilities.md section 9.
+        //
+        // With no fallback the old assertion would be vacuous, so this asserts both halves: still no log noise on
+        // every gpt-5 deployment, AND nothing on the wire. Absence is read off the raw field because
+        // params.temperature() is empty for a missing field and for an explicit JsonNull alike.
         final OpenAILlmClient client = client(OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra").build());
 
-        send(client, LlmModel.builder().build(), List.of(A_TOOL));
+        final ChatCompletionCreateParams params = sendAndCapture(client, LlmModel.builder().build(), List.of(A_TOOL));
 
         assertThat(warnings()).isEmpty();
+        assertThat(params._temperature()).isInstanceOf(JsonMissing.class).isNotInstanceOf(JsonNull.class);
+    }
+
+    @Test
+    @DisplayName("a registry whose resolve() returns null is reported once and the request keeps its shape")
+    void nullReturningRegistryIsReportedOnce() {
+        // The adjacent throwing branch reports; a silent degradation beside a reported one would teach an operator
+        // that capability lookups never fail.
+        final OpenAIConfig config = OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra")
+                .modelCapabilityRegistry(new NullResolvingRegistry()).build();
+        final OpenAILlmClient client = client(config);
+
+        send(client, LlmModel.builder().build(), List.of());
+        send(client, LlmModel.builder().build(), List.of());
+
+        assertThat(warnings()).hasSize(1);
+        assertThat(warnings().get(0)).contains("Model capability lookup for gpt-5.6-terra returned null")
+                .contains("treating the model as unknown");
+    }
+
+    /**
+     * Overrides {@code resolve()} to break its never-null contract; a lambda can only supply {@code capabilitiesOf}.
+     */
+    private static final class NullResolvingRegistry implements ModelCapabilityRegistry {
+        @Override
+        public Optional<ModelCapabilities> capabilitiesOf(String modelName) {
+            return Optional.empty();
+        }
+
+        @Override
+        public ModelCapabilities resolve(String modelName) {
+            return null;
+        }
     }
 
     @Test

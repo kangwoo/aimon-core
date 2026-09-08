@@ -39,8 +39,8 @@ class ModelCapabilityRegistryTest {
     @Test
     @DisplayName("a null return resolves to unknown() rather than throwing")
     void nullReturnResolvesToUnknown() {
-        // A misbehaving third-party registry must degrade to today's behaviour, not NPE inside a provider's request
-        // builder -- which on the streaming path runs outside the try-with-resources that maps exceptions.
+        // A misbehaving third-party registry must degrade to the fail-open descriptor, not NPE inside a provider's
+        // request builder -- which on the streaming path runs outside the try-with-resources that maps exceptions.
         final ModelCapabilityRegistry registry = modelName -> null;
 
         assertThat(registry.resolve("anything")).isEqualTo(ModelCapabilities.unknown());

@@ -9,12 +9,18 @@ import org.junit.jupiter.api.Test;
 class ModelCapabilitiesTest {
 
     @Test
-    @DisplayName("unknown() is today's request shape, flag by flag")
-    void unknownIsTodaysRequestShape() {
+    @DisplayName("unknown() withholds nothing and invents nothing, flag by flag")
+    void unknownWithholdsNothingAndInventsNothing() {
         // This is the fail-open contract, and it is asserted one flag at a time on purpose: "fail open" is not "all
-        // true", it is "the request this framework produced before capabilities existed" -- which sends sampling
-        // parameters, never sends a reasoning effort, and does not treat tools as conflicting with reasoning.
-        // Changing any of these silently changes the wire for every deployment whose model no registry describes.
+        // true", it is "nothing the caller asked for is withheld, and nothing the caller did not ask for is
+        // invented" -- which permits sampling parameters somebody set, never invents a reasoning effort, and does
+        // not clamp tools against reasoning without evidence. Changing any of these silently changes the wire for
+        // every deployment whose model no registry describes.
+        //
+        // Round 2 re-grounded this sentence: it used to say "the request this framework produced before
+        // capabilities existed", which stopped being true when the client's DEFAULT_TEMPERATURE fallback was
+        // removed by maintainer ruling (issue #43). The three values did not change, and the new grounding
+        // re-derives all three -- see docs/design/llm/openai-model-capabilities.md section 9.1.
         final ModelCapabilities unknown = ModelCapabilities.unknown();
 
         assertThat(unknown.supportsSamplingParameters()).isTrue();

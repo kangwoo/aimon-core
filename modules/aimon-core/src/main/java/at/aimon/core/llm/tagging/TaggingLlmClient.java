@@ -2,6 +2,7 @@ package at.aimon.core.llm.tagging;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 import at.aimon.core.agent.prompt.SystemPromptParts;
 import at.aimon.core.llm.LlmCallMetadata;
@@ -107,6 +108,11 @@ public final class TaggingLlmClient implements LlmClient {
     @Override
     public String getProviderName() {
         return delegate.getProviderName();
+    }
+
+    @Override
+    public Optional<String> getDefaultModelName() {
+        return delegate.getDefaultModelName();
     }
 
     private static LlmCallMetadata ambient() {

@@ -55,7 +55,7 @@ import at.aimon.core.llm.streaming.LlmStreamingOptions;
  *
  * <ul>
  * <li>Uses OpenAI tool calling for tool execution
- * <li>Supports GPT-4, GPT-3.5-turbo, and other chat models
+ * <li>Supports GPT-4o, GPT-5.x, and other chat models
  * </ul>
  *
  * <p>
@@ -67,7 +67,8 @@ import at.aimon.core.llm.streaming.LlmStreamingOptions;
  * <pre>
  * {
  *     &#64;code
- *     OpenAIConfig config = OpenAIConfig.builder().apiKey(System.getenv("OPENAI_API_KEY")).model("gpt-4").build();
+ *     OpenAIConfig config = OpenAIConfig.builder().apiKey(System.getenv("OPENAI_API_KEY")).model("gpt-4o")
+ *             .build();
  *
  *     LlmClient client = new OpenAILlmClient(config);
  *
@@ -329,8 +330,10 @@ public class OpenAILlmClient implements LlmClient {
      * check branches before the builder call rather than computing a nullable effective value.
      *
      * <p>
-     * When sampling is accepted the resolution order is unchanged from every previous release: the request's
-     * {@link LlmModel}, then this client's {@link OpenAIConfig}, then {@link OpenAIConfig#DEFAULT_TEMPERATURE}.
+     * When sampling is accepted, a parameter is set if and only if somebody put a value on the request: the request's
+     * {@link LlmModel} first, then this client's {@link OpenAIConfig}. There is no third step — this client does not
+     * manufacture a sampling value nobody asked for, so an unconfigured request leaves the server's own default in
+     * force. All four parameters resolve and apply identically.
      */
     private void applySamplingParameters(ChatCompletionCreateParams.Builder requestBuilder, LlmModel modelConfig,
             ModelCapabilities capabilities, String modelName) {
@@ -340,8 +343,8 @@ public class OpenAILlmClient implements LlmClient {
         final Optional<Double> frequencyPenalty = modelConfig.getFrequencyPenalty().or(config::getFrequencyPenalty);
 
         if (!capabilities.supportsSamplingParameters()) {
-            // Report only values somebody put there. The DEFAULT_TEMPERATURE fallback is this client's own, so warning
-            // about it would put a line in every log on every gpt-5 deployment saying nothing an operator can act on.
+            // Every suppressible value is one somebody set, so every suppression is worth reporting and an
+            // unconfigured request stays silent by construction rather than by a special case.
             reportSuppressedSamplingParameter("temperature", temperature, modelName);
             reportSuppressedSamplingParameter("topP", topP, modelName);
             reportSuppressedSamplingParameter("presencePenalty", presencePenalty, modelName);
@@ -349,7 +352,7 @@ public class OpenAILlmClient implements LlmClient {
             return;
         }
 
-        requestBuilder.temperature(temperature.orElse(OpenAIConfig.DEFAULT_TEMPERATURE));
+        temperature.ifPresent(requestBuilder::temperature);
         topP.ifPresent(requestBuilder::topP);
         presencePenalty.ifPresent(requestBuilder::presencePenalty);
         frequencyPenalty.ifPresent(requestBuilder::frequencyPenalty);
@@ -402,7 +405,18 @@ public class OpenAILlmClient implements LlmClient {
      */
     private ModelCapabilities capabilitiesFor(String modelName) {
         try {
-            return config.getModelCapabilityRegistry().resolve(modelName);
+            final ModelCapabilities resolved = config.getModelCapabilityRegistry().resolve(modelName);
+            if (resolved == null) {
+                // resolve() is documented as total, but an implementation may override the default method and break
+                // that. Reported rather than absorbed: the throwing branch below warns, and a silent degradation
+                // sitting beside a reported one teaches an operator that capability lookups never fail.
+                reportDivergence("capabilityLookupReturnedNull@" + modelName,
+                        "Model capability lookup for {} returned null, which its contract forbids; treating the "
+                                + "model as unknown, so the request keeps its default shape.",
+                        modelName);
+                return ModelCapabilities.unknown();
+            }
+            return resolved;
         } catch (RuntimeException e) {
             reportDivergence("capabilityLookupFailed@" + modelName,
                     "Model capability lookup for {} failed ({}); treating the model as unknown, so the request keeps "
@@ -474,7 +488,12 @@ public class OpenAILlmClient implements LlmClient {
 
     @Override
     public String getProviderName() {
-        return "OpenAI (" + config.getModel() + ")";
+        return "OpenAI";
+    }
+
+    @Override
+    public Optional<String> getDefaultModelName() {
+        return Optional.of(config.getModel());
     }
 
     /**

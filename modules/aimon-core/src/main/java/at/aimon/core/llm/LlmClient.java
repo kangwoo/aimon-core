@@ -313,7 +313,32 @@ public interface LlmClient {
     /**
      * Gets the name of this LLM provider.
      *
-     * @return The provider name (e.g., "Anthropic Claude", "OpenAI GPT-4")
+     * <p>
+     * <strong>Client-scoped, and the vendor only.</strong> This method takes no arguments, so it cannot see the
+     * per-request model an {@link LlmModel} may name — which makes it the wrong place to put one. An implementation
+     * that encoded its configured model here would report that model for every request that overrode it, and
+     * per-agent model selection makes the override the normal case rather than the exception. For the model, read the
+     * request's {@link LlmModel#getName()} first and fall back to {@link #getDefaultModelName()}.
+     *
+     * @return The provider name (e.g., "Anthropic", "OpenAI")
      */
     String getProviderName();
+
+    /**
+     * Gets the model this client uses when a request's {@link LlmModel} names none.
+     *
+     * <p>
+     * The other half of {@link #getProviderName()}: observability keeps provider and model in separate fields, and
+     * without this accessor the model field is empty for every request that did not override it. A decorator must
+     * forward this to its delegate, or everything outside it sees an empty answer.
+     *
+     * <p>
+     * {@code default} so existing providers, decorators and test doubles require no changes; a client with no notion
+     * of a default model — a router, a recorded fixture — correctly answers empty.
+     *
+     * @return the client-wide default model name, or empty when this client has none (never null)
+     */
+    default Optional<String> getDefaultModelName() {
+        return Optional.empty();
+    }
 }

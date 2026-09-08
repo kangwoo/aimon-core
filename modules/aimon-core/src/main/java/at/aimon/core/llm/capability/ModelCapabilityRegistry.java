@@ -50,7 +50,12 @@ public interface ModelCapabilityRegistry {
      *
      * <p>
      * A {@code null} return from {@link #capabilitiesOf} is treated as a miss, so a misbehaving implementation
-     * degrades to today's behaviour instead of an NPE inside a provider's request builder.
+     * degrades to the fail-open descriptor instead of an NPE inside a provider's request builder.
+     *
+     * <p>
+     * An implementation that overrides this method <strong>must never return {@code null}</strong>: callers treat the
+     * result as total. A provider is entitled to defend itself against a broken implementation, but that defence is a
+     * degradation it has to report, not the contract.
      *
      * @param modelName
      *            the model identifier (may be null or empty)

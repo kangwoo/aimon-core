@@ -119,6 +119,9 @@ public class AimonProperties implements InitializingBean {
     /** Credential for the selected LLM vendor. */
     public static final String LLM_API_KEY = PREFIX + ".llm.api-key";
 
+    /** Property name: {@code aimon.llm.model}. */
+    public static final String LLM_MODEL = PREFIX + ".llm.model";
+
     /** Backing store for session records. */
     public static final String SESSION_STORE = PREFIX + ".session.store";
 

@@ -50,28 +50,43 @@ class OpenAILlmClientTest {
         @Test
         @DisplayName("Should create client with valid config")
         void shouldCreateClient_WithValidConfig() {
-            OpenAIConfig config = OpenAIConfig.builder().apiKey("test-key").model("gpt-4").build();
+            OpenAIConfig config = OpenAIConfig.builder().apiKey("test-key").model("gpt-4o").build();
 
             OpenAILlmClient client = new OpenAILlmClient(config);
 
             assertThat(client).isNotNull();
-            assertThat(client.getProviderName()).contains("OpenAI").contains("gpt-4");
+            assertThat(client.getProviderName()).isEqualTo("OpenAI");
+            assertThat(client.getDefaultModelName()).contains("gpt-4o");
         }
 
         @Test
-        @DisplayName("Should return correct provider name")
-        void shouldReturnCorrectProviderName() {
-            OpenAIConfig config = OpenAIConfig.builder().apiKey("test-key").model("gpt-3.5-turbo").build();
+        @DisplayName("The provider name is the vendor alone")
+        void providerNameIsTheVendorAlone() {
+            // Issue #45: getProviderName() takes no arguments, so it cannot see the per-request model an LlmModel
+            // may name -- and per-agent model selection makes that override the normal case. A name that baked in
+            // the client-wide model reported a model that was never called.
+            OpenAIConfig config = OpenAIConfig.builder().apiKey("test-key").model("gpt-4o-mini").build();
 
             OpenAILlmClient client = new OpenAILlmClient(config);
 
-            assertThat(client.getProviderName()).isEqualTo("OpenAI (gpt-3.5-turbo)");
+            assertThat(client.getProviderName()).isEqualTo("OpenAI").doesNotContain("gpt-4o-mini");
+        }
+
+        @Test
+        @DisplayName("The effective default model has its own accessor")
+        void defaultModelNameIsTheConfiguredModel() {
+            OpenAIConfig config = OpenAIConfig.builder().apiKey("test-key").model("gpt-4o-mini").build();
+
+            OpenAILlmClient client = new OpenAILlmClient(config);
+
+            assertThat(client.getDefaultModelName()).contains("gpt-4o-mini");
         }
 
         @Test
         @DisplayName("Should handle custom base URL")
         void shouldHandleCustomBaseUrl() {
-            OpenAIConfig config = OpenAIConfig.builder().apiKey("test-key").baseUrl("https://api.custom.com").build();
+            OpenAIConfig config = OpenAIConfig.builder().apiKey("test-key").model("gpt-4o")
+                    .baseUrl("https://api.custom.com").build();
 
             OpenAILlmClient client = new OpenAILlmClient(config);
 
@@ -81,7 +96,8 @@ class OpenAILlmClientTest {
         @Test
         @DisplayName("Should create client with custom timeout")
         void shouldCreateClient_WithCustomTimeout() {
-            OpenAIConfig config = OpenAIConfig.builder().apiKey("test-key").timeout(Duration.ofSeconds(120)).build();
+            OpenAIConfig config = OpenAIConfig.builder().apiKey("test-key").model("gpt-4o")
+                    .timeout(Duration.ofSeconds(120)).build();
 
             OpenAILlmClient client = new OpenAILlmClient(config);
 
@@ -97,7 +113,7 @@ class OpenAILlmClientTest {
                 OpenAIConfig config = OpenAIConfig.builder().apiKey("test-key").model(model).build();
                 OpenAILlmClient client = new OpenAILlmClient(config);
 
-                assertThat(client.getProviderName()).contains(model);
+                assertThat(client.getDefaultModelName()).contains(model);
             }
         }
     }
@@ -109,7 +125,7 @@ class OpenAILlmClientTest {
         @Test
         @DisplayName("Should throw exception when system prompt is null")
         void shouldThrowException_WhenSystemPromptIsNull() {
-            OpenAIConfig config = OpenAIConfig.builder().apiKey("test-key").build();
+            OpenAIConfig config = OpenAIConfig.builder().apiKey("test-key").model("gpt-4o").build();
             OpenAILlmClient client = new OpenAILlmClient(config);
 
             assertThatThrownBy(() -> client.sendMessage(null, List.of(Message.user("test")), Collections.emptyList(),
@@ -120,7 +136,7 @@ class OpenAILlmClientTest {
         @Test
         @DisplayName("Should throw exception when messages are null")
         void shouldThrowException_WhenMessagesAreNull() {
-            OpenAIConfig config = OpenAIConfig.builder().apiKey("test-key").build();
+            OpenAIConfig config = OpenAIConfig.builder().apiKey("test-key").model("gpt-4o").build();
             OpenAILlmClient client = new OpenAILlmClient(config);
 
             assertThatThrownBy(() -> client.sendMessage("system prompt", null, Collections.emptyList(),
@@ -131,7 +147,7 @@ class OpenAILlmClientTest {
         @Test
         @DisplayName("Should throw exception when tools are null")
         void shouldThrowException_WhenToolsAreNull() {
-            OpenAIConfig config = OpenAIConfig.builder().apiKey("test-key").build();
+            OpenAIConfig config = OpenAIConfig.builder().apiKey("test-key").model("gpt-4o").build();
             OpenAILlmClient client = new OpenAILlmClient(config);
 
             assertThatThrownBy(() -> client.sendMessage("system prompt", List.of(Message.user("test")), null,
@@ -142,7 +158,7 @@ class OpenAILlmClientTest {
         @Test
         @DisplayName("Should throw exception when model config is null")
         void shouldThrowException_WhenModelConfigIsNull() {
-            OpenAIConfig config = OpenAIConfig.builder().apiKey("test-key").build();
+            OpenAIConfig config = OpenAIConfig.builder().apiKey("test-key").model("gpt-4o").build();
             OpenAILlmClient client = new OpenAILlmClient(config);
 
             assertThatThrownBy(() -> client.sendMessage("system prompt", List.of(Message.user("test")),

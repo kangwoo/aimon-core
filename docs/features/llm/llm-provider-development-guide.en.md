@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/llm/llm-provider-development-guide.md
-source_commit: eec9ccd
+source_commit: 53d14a1
 ---
 
 # LLM Provider Development Guide
@@ -81,9 +81,16 @@ public interface LlmClient {
                            List<ToolDefinition> tools, LlmModel modelConfig);
 
     /**
-     * Returns the provider name.
+     * Returns the provider name. It takes no arguments, so it cannot see a per-request model — vendor only.
      */
     String getProviderName();
+
+    /**
+     * The model this client uses when a request names none. This is what observability reads.
+     */
+    default Optional<String> getDefaultModelName() {
+        return Optional.empty();
+    }
 }
 ```
 
@@ -119,7 +126,7 @@ public class CustomLlmConfig {
     private final String apiKey;
     private final String model;
     private final String baseUrl;
-    private final double temperature;
+    private final Double temperature;   // nullable — unset and 0.0 are different states
     private final int maxTokens;
     private final Duration timeout;
 
@@ -128,7 +135,8 @@ public class CustomLlmConfig {
         if (apiKey.isBlank()) {
             throw new IllegalArgumentException("API key cannot be blank");
         }
-        this.model = builder.model != null ? builder.model : "default-model";
+        // Do not invent a default model — require one (the same reason OpenAIConfig dropped its gpt-4 default)
+        this.model = Objects.requireNonNull(builder.model, "Model is required - there is no default");
         this.baseUrl = builder.baseUrl;
         this.temperature = builder.temperature;
         this.maxTokens = builder.maxTokens;
@@ -145,7 +153,7 @@ public class CustomLlmConfig {
         private String apiKey;
         private String model;
         private String baseUrl;
-        private double temperature = 0.7;
+        private Double temperature;     // no seed — if nobody set one, nothing is sent
         private int maxTokens = 4096;
         private Duration timeout;
 
@@ -211,7 +219,12 @@ public class CustomLlmClient implements LlmClient {
 
     @Override
     public String getProviderName() {
-        return "Custom Provider (" + config.getModel() + ")";
+        return "Custom Provider";   // vendor only. A model here is logged even for requests that overrode it
+    }
+
+    @Override
+    public Optional<String> getDefaultModelName() {
+        return Optional.of(config.getModel());
     }
 
     // Private helper methods...
@@ -384,7 +397,7 @@ LlmModel modelConfig = LlmModel.builder()
     .frequencyPenalty(0.1)        // frequency penalty (optional)
     .build();
 
-// merging: modelConfig wins over the base config, and the provider's fallback constant comes last
+// merging: modelConfig wins over the base config. The chain ends at the config — there is no provider fallback
 String model = modelConfig.getName().orElse(config.getModel());
 Optional<Double> temp = modelConfig.getTemperature().or(config::getTemperature);
 ```
@@ -401,14 +414,19 @@ final String modelName = modelConfig.getName().orElse(config.getModel());
 final ModelCapabilities capabilities = config.getModelCapabilityRegistry().resolve(modelName);
 
 if (capabilities.supportsSamplingParameters()) {
-    requestBuilder.temperature(temp.orElse(MyConfig.DEFAULT_TEMPERATURE));
+    temp.ifPresent(requestBuilder::temperature);   // if nobody set one, this does not call the setter either
 }
 // else: never call the setter at all
 ```
 
+IMPORTANT: **A provider does not invent a value.** Filling an unset parameter from a constant of
+your own — `orElse(DEFAULT_TEMPERATURE)` — puts a sampling value nobody asked for on every request
+and means the server's own default never applies. Unset means **not sent**, and what applies then is
+the server's business.
+
 `resolve` is total and **fails open** — a model nobody has described comes back as
-`ModelCapabilities.unknown()`, which is the request shape this framework produced before the type
-existed. When a value is dropped, say so at a level an operator sees, per the rule in
+`ModelCapabilities.unknown()`, which means **nothing the caller asked for is withheld, and nothing
+the caller did not ask for is invented**. When a value is dropped, say so at a level an operator sees, per the rule in
 [`LlmModel`](../../../modules/aimon-core/src/main/java/at/aimon/core/llm/LlmModel.java)
 (`AnthropicLlmClient#reportDivergence`, `OpenAILlmClient#reportDivergence`).
 
@@ -549,7 +567,12 @@ public class OpenAILlmClient implements LlmClient {
 
     @Override
     public String getProviderName() {
-        return "OpenAI (" + config.getModel() + ")";
+        return "OpenAI";
+    }
+
+    @Override
+    public Optional<String> getDefaultModelName() {
+        return Optional.of(config.getModel());
     }
 }
 ```
@@ -567,6 +590,7 @@ Check these off when developing a new LLM provider:
 - [ ] Every error is wrapped in `LlmClientException`
 - [ ] The implementation is thread-safe
 - [ ] Tool calling is supported
+- [ ] `getProviderName()` returns the vendor alone, and the default model is exposed via `getDefaultModelName()`
 
 ### Message conversion
 

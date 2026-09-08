@@ -20,6 +20,8 @@ Two components exist so that the token usage an `LlmClient` produces can be attr
 
 The provider implementations (`OpenAILlmClient`, `AnthropicLlmClient`) do not need to know that metering exists. Wrapping them in the decorator is enough.
 
+`provider` is the vendor name (`"OpenAI"`, `"Anthropic"`) and `model` is the model the call **actually used** — the name the request's `LlmModel` gave, or the client's default (`LlmClient.getDefaultModelName()`) when it gave none.
+
 ## 2. Getting started
 
 ### 2.1 Wiring
