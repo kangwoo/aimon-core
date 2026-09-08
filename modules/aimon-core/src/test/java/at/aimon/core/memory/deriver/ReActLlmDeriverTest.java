@@ -20,6 +20,8 @@ import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.Message;
+import at.aimon.core.llm.ReasoningTrace;
+import at.aimon.core.llm.Role;
 import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.llm.ToolUse;
@@ -233,6 +235,26 @@ class ReActLlmDeriverTest {
     }
 
     /** Minimal LlmClient stub that returns scripted responses (or throws) in order. */
+
+    @Test
+    @DisplayName("a tool-calling turn's reasoning traces reach the next iteration's conversation")
+    void tracesReachTheNextIteration() {
+        // Site 8. This loop rebuilds the conversation list itself rather than using a TranscriptBuffer, so the
+        // attachment has to be at the Message.assistant(...) call rather than somewhere shared.
+        final ReasoningTrace trace = ReasoningTrace.builder().providerName("Stub").payload("RS-1").toolUseId("call-1")
+                .build();
+        llm.enqueue(LlmResponse
+                .of("", List.of(ToolUse.of("call-1", DeriverMemorySearchTool.TOOL_NAME, Map.of("query", "tea"))),
+                        TokenUsage.empty())
+                .withReasoningTraces(List.of(trace)));
+        llm.enqueue(LlmResponse.of("done", List.of(), TokenUsage.empty()));
+
+        deriver.derive(ctx());
+
+        assertThat(llm.recordedMessagesOnCall(2)).filteredOn(m -> m.getRole() == Role.ASSISTANT)
+                .anySatisfy(m -> assertThat(m.getReasoningTraces()).containsExactly(trace));
+    }
+
     private static final class StubLlmClient implements LlmClient {
 
         private final Deque<ScriptEntry> scripted = new ArrayDeque<>();

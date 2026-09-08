@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/llm/llm-provider-development-guide.md
-source_commit: 53d14a1
+source_commit: 2d33f19
 ---
 
 # LLM Provider Development Guide
@@ -98,9 +98,10 @@ public interface LlmClient {
 
 ```java
 public class LlmResponse {
-    private final String textContent;      // the text response
-    private final List<ToolUse> toolUses;  // tool invocation requests
-    private final TokenUsage tokenUsage;   // token usage
+    private final String textContent;                    // the text response
+    private final List<ToolUse> toolUses;                // tool invocation requests
+    private final TokenUsage tokenUsage;                 // token usage (reasoningTokens included)
+    private final List<ReasoningTrace> reasoningTraces;  // the provider's opaque reasoning payloads
 }
 ```
 
@@ -108,10 +109,11 @@ public class LlmResponse {
 
 ```java
 public class Message {
-    private final Role role;                      // USER, ASSISTANT, TOOL
-    private final String content;                 // the text content
-    private final List<ToolUse> toolUses;         // tool invocations (ASSISTANT)
-    private final List<ToolUseResult> toolUseResults; // tool results (TOOL)
+    private final Role role;                            // USER, ASSISTANT, TOOL
+    private final String content;                       // the text content
+    private final List<ToolUse> toolUses;               // tool invocations (ASSISTANT)
+    private final List<ToolUseResult> toolUseResults;   // tool results (TOOL)
+    private final List<ReasoningTrace> reasoningTraces; // reasoning payloads (ASSISTANT) — see below
 }
 ```
 
@@ -429,6 +431,40 @@ the server's business.
 the caller did not ask for is invented**. When a value is dropped, say so at a level an operator sees, per the rule in
 [`LlmModel`](../../../modules/aimon-core/src/main/java/at/aimon/core/llm/LlmModel.java)
 (`AnthropicLlmClient#reportDivergence`, `OpenAILlmClient#reportDivergence`).
+
+### Fill the reasoning payload and replay it, but never look inside it
+
+A reasoning model returns one opaque item alongside its tool calls — OpenAI's `reasoning` item
+carrying `encrypted_content`, Anthropic's signature-bearing `thinking` block. A client that does not
+replay it on the next request makes the model rebuild its chain of thought from scratch on every
+ReAct iteration: worse answers, and reasoning tokens billed again each time. `ReasoningTrace` is
+where that item lives between turns.
+
+A provider does four things.
+
+1. **Fills it** — pull the item out of the response and attach it with
+   `LlmResponse.withReasoningTraces(...)`. On the streaming path,
+   `ChunkAggregator.addReasoningTrace(...)` is the same seam
+2. **Tags it** — `providerName` is `getProviderName()` verbatim. A transcript outlives a client
+   (`LlmFallbackPolicy`, a changed provider setting, a replayed subagent snapshot), so someone
+   else's payload can arrive. Drop what is not yours, and warn once
+3. **Anchors it** — `toolUseId` means *this trace comes immediately before that tool call*.
+   `Message` keeps text and tool calls in separate lists, so it cannot express that order on its own
+4. **Replays it** — write the ordering rule once per provider. The slot can express either order,
+   and neither provider inherits the other's
+
+IMPORTANT: **do not parse, re-serialise or normalise the `payload`.** The one operation
+`aimon-core` performs on it is copy, and a provider should do the same — OpenAI's
+`encrypted_content` is ciphertext and Anthropic's `signature` is a signature, so a single changed
+byte makes the server reject the replay. When serialising an SDK model, use that SDK's own mapper
+(for OpenAI, `com.openai.core.ObjectMappers.jsonMapper()`): a fresh `ObjectMapper` reads the same
+bytes and emits them with fields that were never there.
+
+The cost is not hidden — **`Message.mapText` does not reach this payload, so redaction does not
+either.** That is not fixable (fixing it breaks the replay), and a deployment that cannot accept it
+has an off switch (for OpenAI, `OpenAIConfig.responsesApiEnabled(false)`).
+
+The full design is in [the OpenAI Responses path](../../design/llm/openai-responses-path.md).
 
 ---
 

@@ -106,4 +106,16 @@ class ModelPriceTest {
             assertThat(ModelPrice.perMillionUsd(3.00, 15.00)).isNotEqualTo(ModelPrice.perMillionUsd(3.00, 16.00));
         }
     }
+
+    @Test
+    @DisplayName("reasoning tokens are not priced again -- they are already inside the completion tokens")
+    void reasoningTokensAreNotDoubleCounted() {
+        // OpenAI reports reasoning_tokens INSIDE output_tokens_details: 30 of the 50 output tokens were reasoning,
+        // and total = input + output still holds. Adding them to costOf would bill them twice. This is the assertion
+        // that goes red if someone later "fixes" costOf to include the field.
+        final ModelPrice price = ModelPrice.perMillionUsd(3.00, 15.00);
+
+        assertThat(price.costOf(TokenUsage.of(100, 50, 150, 30))).isEqualTo(price.costOf(TokenUsage.of(100, 50, 150)));
+    }
+
 }

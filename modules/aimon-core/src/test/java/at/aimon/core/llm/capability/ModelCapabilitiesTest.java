@@ -64,7 +64,7 @@ class ModelCapabilitiesTest {
     }
 
     @Test
-    @DisplayName("equals and hashCode cover all three flags")
+    @DisplayName("equals and hashCode cover all four flags")
     void equalsAndHashCode() {
         final ModelCapabilities a = ModelCapabilities.builder().supportsSamplingParameters(false)
                 .supportsReasoningEffort(true).supportsToolsWithReasoning(false).build();
@@ -78,6 +78,9 @@ class ModelCapabilitiesTest {
                 .supportsReasoningEffort(false).supportsToolsWithReasoning(false).build());
         assertThat(a).isNotEqualTo(ModelCapabilities.builder().supportsSamplingParameters(false)
                 .supportsReasoningEffort(true).supportsToolsWithReasoning(true).build());
+        assertThat(a).isNotEqualTo(
+                ModelCapabilities.builder().supportsSamplingParameters(false).supportsReasoningEffort(true)
+                        .supportsToolsWithReasoning(false).supportsReasoningTraceRoundTrip(true).build());
         assertThat(a).isNotEqualTo(null).isNotEqualTo("not a descriptor");
     }
 
@@ -85,6 +88,16 @@ class ModelCapabilitiesTest {
     @DisplayName("toString names every flag")
     void toStringNamesEveryFlag() {
         assertThat(ModelCapabilities.unknown().toString()).contains("supportsSamplingParameters=true")
-                .contains("supportsReasoningEffort=false").contains("supportsToolsWithReasoning=true");
+                .contains("supportsReasoningEffort=false").contains("supportsToolsWithReasoning=true")
+                .contains("supportsReasoningTraceRoundTrip=false");
+    }
+
+    @Test
+    @DisplayName("an unknown model does not round-trip reasoning traces")
+    void unknownDoesNotRoundTripReasoningTraces() {
+        // Fail open, stated per flag as the other three are. False here is not a restriction: replaying an opaque
+        // provider payload is something the framework would have to START doing to a model nobody has described, and
+        // it is what routes such a model to the request surface it is on today.
+        assertThat(ModelCapabilities.unknown().supportsReasoningTraceRoundTrip()).isFalse();
     }
 }

@@ -25,6 +25,7 @@ import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.base.Principal;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.MessageArtifact;
+import at.aimon.core.llm.ReasoningTrace;
 import at.aimon.core.llm.Role;
 import at.aimon.core.llm.ToolUse;
 import at.aimon.core.llm.ToolUseResult;
@@ -406,4 +407,69 @@ class JsonSessionSnapshotCodecTest {
 
         assertThat(codec.decode(json).getRewindPoint()).isEmpty();
     }
+
+    // ----------------------------------------------------------------------------------------------------------
+    // Reasoning traces -- the field that lands in the persisted transcript, in both directions
+    // ----------------------------------------------------------------------------------------------------------
+
+    @Test
+    void roundTripsAnAssistantMessageCarryingReasoningTraces() {
+        final ReasoningTrace anchored = ReasoningTrace.builder().providerName("OpenAI")
+                .payload("{\"type\":\"reasoning\",\"id\":\"rs_1\",\"encrypted_content\":\"ZZZ\"}").toolUseId("call_1")
+                .build();
+        final ReasoningTrace unanchored = ReasoningTrace.builder().providerName("OpenAI")
+                .payload("{\"type\":\"reasoning\",\"id\":\"rs_2\"}").build();
+        final Message assistant = Message
+                .assistant("thinking", List.of(ToolUse.of("call_1", "Bash", Map.of("command", "ls"))))
+                .withReasoningTraces(List.of(anchored, unanchored));
+        final SessionSnapshot snapshot = SessionSnapshot.of(SessionId.of("c-reasoning"), "sys", List.of(assistant));
+
+        final SessionSnapshot decoded = codec.decode(codec.encode(snapshot));
+
+        // decode(encode(s)).equals(s) is the codec's contract, and Message.equals now covers the traces -- so this
+        // one assertion fails if the array is dropped, reordered, or written without its anchor.
+        assertThat(decoded).isEqualTo(snapshot);
+        assertThat(decoded.getConversationHistory().get(0).getReasoningTraces()).containsExactly(anchored, unanchored);
+    }
+
+    @Test
+    void anOldDocumentWithNoReasoningKeyDecodesToNoTraces() {
+        // Hand-written, exactly as a build before this field would have produced it: an assistant message with a tool
+        // use and no "reasoning" array anywhere.
+        final String oldFormat = "{\"version\":1,\"conversationId\":\"c\",\"systemPrompt\":\"sys\","
+                + "\"messages\":[{\"role\":\"ASSISTANT\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}],"
+                + "\"toolUses\":[{\"id\":\"call_1\",\"name\":\"Bash\",\"input\":{}}]}]}";
+
+        final SessionSnapshot decoded = codec.decode(oldFormat);
+
+        assertThat(decoded.getConversationHistory()).hasSize(1);
+        assertThat(decoded.getConversationHistory().get(0).getReasoningTraces()).isEmpty();
+        assertThat(decoded.getConversationHistory().get(0).getToolUses()).hasSize(1);
+    }
+
+    @Test
+    void aReasoningArrayBesideAnUnknownSiblingFieldStillDecodes() {
+        // The forward-tolerance direction, from the other side: a newer build writes a field this one has never heard
+        // of, next to one it has. The unknown sibling is skipped and the reasoning array still arrives.
+        final String withUnknownSibling = "{\"version\":1,\"conversationId\":\"c\",\"messages\":["
+                + "{\"role\":\"ASSISTANT\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}],"
+                + "\"reasoning\":[{\"provider\":\"OpenAI\",\"payload\":\"{}\",\"toolUseId\":\"call_9\"}],"
+                + "\"somethingFromTheFuture\":{\"x\":1}}]}";
+
+        final Message decoded = codec.decode(withUnknownSibling).getConversationHistory().get(0);
+
+        assertThat(decoded.getReasoningTraces()).hasSize(1);
+        assertThat(decoded.getReasoningTraces().get(0).getProviderName()).isEqualTo("OpenAI");
+        assertThat(decoded.getReasoningTraces().get(0).getToolUseId()).contains("call_9");
+    }
+
+    @Test
+    void aMessageWithoutTracesIsEncodedByteIdenticallyToBefore() {
+        // The array is written only when non-empty, mirroring toolUses/artifacts -- so every stored document produced
+        // before this field existed is still exactly what this build produces, and no golden fixture moves.
+        final SessionSnapshot snapshot = SessionSnapshot.of(SessionId.of("c"), "sys", List.of(Message.assistant("hi")));
+
+        assertThat(codec.encode(snapshot)).doesNotContain("reasoning");
+    }
+
 }

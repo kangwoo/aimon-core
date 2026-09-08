@@ -90,11 +90,15 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
                 // registers gpt-4o-mini before gpt-4o.
                 .registerPrefix("gpt-5-chat",
                         ModelCapabilities.builder().supportsSamplingParameters(true).supportsReasoningEffort(false)
-                                .supportsToolsWithReasoning(true).build())
+                                .supportsToolsWithReasoning(true).supportsReasoningTraceRoundTrip(false).build())
                 // gpt-5.x on /v1/chat/completions rejects temperature and top_p by the *presence* of the parameter,
-                // and rejects tools together with any reasoning effort other than "none".
-                .registerPrefix("gpt-5", ModelCapabilities.builder().supportsSamplingParameters(false)
-                        .supportsReasoningEffort(true).supportsToolsWithReasoning(false).build());
+                // and rejects tools together with any reasoning effort other than "none". It also returns reasoning
+                // items a client must replay for the reasoning to survive a tool call -- which is what
+                // supportsReasoningTraceRoundTrip says, and what sends an OpenAI client to a request surface where
+                // supportsToolsWithReasoning's conflict does not arise.
+                .registerPrefix("gpt-5",
+                        ModelCapabilities.builder().supportsSamplingParameters(false).supportsReasoningEffort(true)
+                                .supportsToolsWithReasoning(false).supportsReasoningTraceRoundTrip(true).build());
     }
 
     /**

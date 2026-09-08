@@ -29,6 +29,8 @@ import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.Message;
+import at.aimon.core.llm.ReasoningTrace;
+import at.aimon.core.llm.Role;
 import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.llm.ToolUse;
 import at.aimon.core.llm.ToolUseResult;
@@ -477,11 +479,31 @@ class LlmSkillExecutorTest {
                 .content(SkillContent.of(body)).build();
     }
 
+    @Test
+    @DisplayName("Should carry a tool-calling turn's reasoning traces into the next iteration")
+    void tracesReachTheNextIteration() {
+        // Site 6: the tool-use branch of this executor's own ReAct loop. The buffer is re-sent on the next call, so
+        // dropping here makes the model re-derive its reasoning every iteration of a skill's tool loop.
+        final ReasoningTrace trace = ReasoningTrace.builder().providerName("Mock LLM").payload("RS-1").toolUseId("t1")
+                .build();
+        mockLlmClient.setResponses(
+                List.of(LlmResponse.of("thinking", List.of(ToolUse.of("t1", "Bash", Map.of("command", "echo hi"))))
+                        .withReasoningTraces(List.of(trace)), LlmResponse.text("done")));
+
+        executeSkill(createSimpleSkill("Task"), "");
+
+        assertThat(mockLlmClient.seen).hasSizeGreaterThanOrEqualTo(2);
+        assertThat(mockLlmClient.seen.get(1)).filteredOn(m -> m.getRole() == Role.ASSISTANT)
+                .anySatisfy(m -> assertThat(m.getReasoningTraces()).containsExactly(trace));
+    }
+
     private static class MockLlmClient implements LlmClient {
         private final java.util.Queue<LlmResponse> responses = new java.util.LinkedList<>();
         private Exception error;
         private List<ToolDefinition> lastCalledTools;
         private List<Message> lastCalledMessages;
+        /** The message list of every call, so a test can read what the NEXT request was actually handed. */
+        private final List<List<Message>> seen = new java.util.ArrayList<>();
 
         void setResponse(LlmResponse response) {
             responses.clear();
@@ -516,6 +538,7 @@ class LlmSkillExecutorTest {
                 LlmModel modelConfig) {
             this.lastCalledTools = tools;
             this.lastCalledMessages = messages;
+            this.seen.add(List.copyOf(messages));
             if (error != null) {
                 throw new RuntimeException(error);
             }

@@ -53,6 +53,7 @@ public final class OpenAIConfig {
     private final int maxTokens;
     private final Duration timeout;
     private final ModelCapabilityRegistry modelCapabilityRegistry;
+    private final boolean responsesApiEnabled;
 
     private OpenAIConfig(Builder builder) {
         this.baseUrl = builder.baseUrl;
@@ -66,6 +67,7 @@ public final class OpenAIConfig {
         this.maxTokens = builder.maxTokens;
         this.timeout = builder.timeout;
         this.modelCapabilityRegistry = builder.modelCapabilityRegistry;
+        this.responsesApiEnabled = builder.responsesApiEnabled;
 
         if (apiKey.isBlank()) {
             throw new IllegalArgumentException("API key cannot be blank");
@@ -205,6 +207,27 @@ public final class OpenAIConfig {
         return modelCapabilityRegistry;
     }
 
+    /**
+     * Whether this deployment's endpoint offers {@code /v1/responses}.
+     *
+     * <p>
+     * A different question from anything in the capability registry, and the difference is load-bearing. The registry
+     * answers <em>what does this model do</em> — a vendor fact. This answers <em>what does this deployment's endpoint
+     * offer</em> — an operational one. Many OpenAI-compatible gateways implement {@code /v1/chat/completions} and
+     * nothing else while passing the real model name straight through; such a deployment resolves {@code gpt-5.6-...}
+     * to the built-in row, is sent to {@code /v1/responses}, and gets a 404 it did not get before. This switch turns
+     * that off without lying about the model, so a corrected registry entry still reaches that operator.
+     *
+     * <p>
+     * Note the asymmetry with a <em>renamed</em> gateway model: that resolves to unknown capabilities and is
+     * unaffected. Only the pass-through gateway is exposed.
+     *
+     * @return {@code true} (the default) when a reasoning model may be routed to the Responses API
+     */
+    public boolean isResponsesApiEnabled() {
+        return responsesApiEnabled;
+    }
+
     /** Builder for OpenAIConfig. */
     public static final class Builder {
         private String apiKey;
@@ -218,6 +241,7 @@ public final class OpenAIConfig {
         private Duration timeout = DEFAULT_TIMEOUT;
         private String baseUrl;
         private ModelCapabilityRegistry modelCapabilityRegistry = InMemoryModelCapabilityRegistry.withDefaults();
+        private boolean responsesApiEnabled = true;
 
         private Builder() {
         }
@@ -374,6 +398,25 @@ public final class OpenAIConfig {
         public Builder modelCapabilityRegistry(ModelCapabilityRegistry modelCapabilityRegistry) {
             this.modelCapabilityRegistry = Objects.requireNonNull(modelCapabilityRegistry,
                     "Model capability registry cannot be null");
+            return this;
+        }
+
+        /**
+         * Turns the Responses API path on or off for this deployment.
+         *
+         * <p>
+         * Defaults to {@code true}. Set it to {@code false} for an OpenAI-compatible gateway that implements only
+         * {@code /v1/chat/completions} while passing real model names through — otherwise a reasoning model resolves
+         * to its built-in capability row, is routed to {@code /v1/responses}, and gets a 404 on a deployment that
+         * works today. Turning it off restores phase 1's behaviour for such a model: Chat Completions, with the
+         * reasoning effort clamped to {@code NONE} when tools are present.
+         *
+         * @param responsesApiEnabled
+         *            {@code false} when this endpoint has no {@code /v1/responses}
+         * @return This builder
+         */
+        public Builder responsesApiEnabled(boolean responsesApiEnabled) {
+            this.responsesApiEnabled = responsesApiEnabled;
             return this;
         }
 

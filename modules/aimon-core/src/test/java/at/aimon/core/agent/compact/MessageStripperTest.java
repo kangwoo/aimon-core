@@ -10,6 +10,7 @@ import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.llm.Message;
+import at.aimon.core.llm.ReasoningTrace;
 import at.aimon.core.llm.ToolUse;
 import at.aimon.core.llm.ToolUseResult;
 import at.aimon.core.llm.content.ContentBlock;
@@ -211,4 +212,24 @@ class MessageStripperTest {
 
         assertThat(stripped.getContent()).isEqualTo("custom-[REDACTED:SECRET]-data");
     }
+
+    @Test
+    void strippingDropsReasoningTracesButKeepsToolUses() {
+        // Deliberate, not incidental, and the asymmetry is the point. A stripped message keeps its tool uses, so
+        // dropping the traces can never leave a provider with a reasoning item whose following call is gone -- the
+        // shape OpenAI is documented to reject. The reverse (keeping traces while dropping calls) could, so removing
+        // this behaviour has to change a test that says why.
+        final ReasoningTrace trace = ReasoningTrace.builder().providerName("OpenAI").payload("{}").toolUseId("call_1")
+                .build();
+        final Message original = Message
+                .assistant("thinking", List.of(ToolUse.of("call_1", "Bash", Map.of("command", "ls"))))
+                .withReasoningTraces(List.of(trace));
+        final MessageStripper stripper = new MessageStripper();
+
+        final Message stripped = stripper.stripNonTextBlocks(List.of(original)).get(0);
+
+        assertThat(stripped.getReasoningTraces()).isEmpty();
+        assertThat(stripped.getToolUses()).hasSize(1);
+    }
+
 }

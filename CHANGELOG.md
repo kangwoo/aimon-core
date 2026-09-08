@@ -136,6 +136,118 @@ Central is versioned independently).
   fires afterwards. `AgentDefinitionVersion` is a change detector and not a gate; nothing refuses to
   run on a mismatch.
 
+### LLM: a reasoning model's chain of thought now survives a tool call (OpenAI Responses API)
+
+- **What it fixes, and why the phase-1 fix was not enough.** Phase 1 made `gpt-5.x` usable with tools
+  by sending `reasoning_effort: none` — a working request bought by turning off the thing the model
+  was chosen for. It also left a quieter cost: Chat Completions never returns reasoning items, so
+  nothing carried across a tool call and the model re-derived its chain of thought on every ReAct
+  iteration. Worse answers, and reasoning tokens billed again each time, on exactly the multi-turn
+  tool loops AIMON exists to run. A model whose capabilities say its reasoning traces round-trip now
+  goes to `/v1/responses`, where tools and reasoning coexist and the items can be replayed.
+
+- **How the endpoint is chosen: per request, never by name.** `ModelCapabilities` gains a fourth
+  flag, `supportsReasoningTraceRoundTrip()` — *does this model return reasoning traces a client
+  should send back next turn* — defaulting to `false` in `unknown()`, so every model no registry
+  describes keeps the request surface it has today. The built-in table sets it on the `gpt-5` prefix
+  and leaves the non-reasoning `gpt-5-chat` variant alone. The decision is made from the
+  **per-request** model name (`LlmModel.name(...)` overriding the config's), because a `gpt-4o`
+  compaction call inside a `gpt-5.x` session is the ordinary case: that call goes to Chat while its
+  session goes to Responses. There is still no `model.startsWith("gpt-5")` anywhere.
+
+  The flag is deliberately not called `usesResponsesApi`: that would name one vendor's endpoint
+  inside a provider-neutral type. Anthropic will read the same flag to mean "send the thinking
+  blocks back", with no endpoint change at all.
+
+- **New `at.aimon.core.llm.ReasoningTrace`, and `Message` gains an eighth field.** A trace carries
+  three things: an opaque provider `payload`, the `providerName` that authored it, and an optional
+  `toolUseId` anchoring it to the tool call it precedes. `aimon-core` performs exactly one operation
+  on the payload — copy. `MessageArtifact` was examined first and rejected: its `path` and
+  `fileName` are both required and would be lies for this content, and it is already consumed as a
+  file reference, so a reasoning blob in that list would be offered to a user as a downloadable file.
+
+- **It lands in the persisted transcript, additively in both directions.** `JsonSessionSnapshotCodec`
+  writes a `reasoning` array **only when non-empty**, so every document produced before this field
+  existed is byte-identical to one produced now; a reader that has never heard of the key skips it,
+  exactly as it already skips anything else it does not know. `FORMAT_VERSION` stays at **1** — the
+  codec's existing argument applies unchanged, since bumping it would make every stored snapshot
+  undecodable to buy nothing. The three `SessionRecordCodec` backends need no change: they store the
+  transcript as an opaque string and cannot see the field.
+
+- **`TokenUsage` gains a fourth field, `reasoningTokens`. Not source-breaking; visible in `equals`.**
+  `of(int,int,int)` is retained and yields `0`; a four-argument overload is added; the constructor is
+  private, so no caller constructs one directly. **But it participates in `equals`, `hashCode` and
+  `toString`** — a usage carrying reasoning tokens is no longer equal to one without, which can
+  matter to a test that compares usages built two different ways. **It is deliberately not priced:**
+  reasoning tokens are a *subset* of the completion tokens rather than an addition to them (OpenAI
+  reports them inside `output_tokens_details`), so `ModelPrice.costOf` has already billed them and
+  adding them again would bill them twice. Recorders receive the whole object, so the field reaches
+  every metering and tracing sink for free.
+
+- **The cross-node wire carries it, and tolerates a node that does not.** `StatusSnapshotPayload`
+  and `AgentExecutionEventPayload` write a new `reasoning` key and read it through a new
+  `PayloadValues.asIntOrZero`. The other three token keys keep the strict accessor, because their
+  absence really is a malformed payload; this one is read tolerantly because during a rolling
+  upgrade a map written by an old node has no such key at all — and both decoders turn any exception
+  into a dropped signal, so the strict accessor would discard the whole status update rather than
+  report one counter as zero.
+
+- **A gateway that implements only `/v1/chat/completions` can turn the new path off**, with
+  `OpenAIConfig.responsesApiEnabled(false)`. **Say the asymmetry plainly:** the situation that needs
+  the switch is fully yaml-creatable — `baseUrl` is a CLI key and a starter property, and any real
+  `gpt-5*` name hits the built-in table — while the remedy is **Java-only**. That makes it different
+  in kind from the other two programmatic-only knobs, which override things that already work; this
+  is the one case in this change where a working yaml-configured deployment can break with no
+  yaml-reachable fix. Setting it restores phase 1's behaviour exactly.
+
+- **Redaction does not reach a reasoning payload, and that cannot be fixed.**
+  `Message.mapText` is the documented single entry point for whole-message text rewriting, and the
+  payload deliberately bypasses it: OpenAI's carrier is `encrypted_content` and Anthropic's is a
+  `signature`, so rewriting one byte invalidates it and the provider rejects the replay. What is on
+  offer is disclosure — stated on `mapText`, in the design doc and here — plus the off switch above.
+  A deployment with a hard redaction requirement on everything leaving the process should set
+  `responsesApiEnabled(false)` and accept phase 1's behaviour.
+
+- **Transcripts grow.** An `encrypted_content` blob is far larger than the text of the turn, and
+  every assistant turn in a reasoning session carries one. Capping or truncating it would break the
+  round trip, which is the whole feature. Compaction sheds them — `MessageStripper` now drops traces
+  unconditionally while keeping tool uses, so it can never leave a reasoning item whose following
+  call is gone — and the switch removes them entirely. Nobody has measured what a 40-turn `gpt-5`
+  tool loop does to a session row.
+
+- **Token *estimation* under-counts on this path, deliberately.** `HeuristicTokenEstimator` and
+  `TikTokenEstimator` count `0` for reasoning traces while `DefaultCompactionGuard` drives every
+  threshold from the estimator rather than from provider usage, so the guard under-counts by roughly
+  `reasoning_tokens`. The obvious fix is wrong: counting the base64 blob as text would over-count by
+  an order of magnitude and force premature compaction, destroying the traces it was protecting. The
+  blast radius is bounded — compaction drops the traces so the error resets, the context limits
+  already reserve headroom, and the same estimator already omits tool *definitions*.
+
+- **Also on this path:** Responses stop reasons (`status` + `incomplete_details.reason`, plus whether
+  the output carried a tool call) map to real `StopReason` values instead of degrading to `UNKNOWN`;
+  `call_id` is what `ToolUse.getId()` holds, because that is the id a `function_call_output` must
+  match, and the item's own `id` is never invented on a replay; tool definitions are sent with
+  `strict: false`, which is what the field's absence already means on Chat, because strict mode
+  rejects schemas this repo explicitly exempts from its own strictness rule (every MCP tool, for one).
+
+- **A provider error on this endpoint arrives as data, not as an SDK exception.** The SSE decoder
+  throws only on a top-level `"error"` key, which neither `response.error` nor `response.failed` has,
+  and a blocking 200 carrying `status: "failed"` is an ordinary return value. Left alone, the same
+  server condition that yields a retryable exception on the Chat path would yield none here. The new
+  code builds the exception the mapper would have produced and throws it from inside the client's
+  existing cascade, so classification and the retry budget match the blocking path.
+
+- **Chat Completions is unchanged**, and structurally so rather than by promise:
+  `OpenAIMessageConverter` is not opened, and a message carrying reasoning traces produces a
+  byte-identical Chat request to the same message without them.
+
+- **Not started, by design: the Anthropic half.** `AnthropicLlmClient` still ignores
+  `ThinkingBlock`/`RedactedThinkingBlock`, and `AnthropicStreamingMapper` still does not surface
+  thinking deltas. The slot is designed to fit them — signature-carrying blocks round-trip byte-exact
+  precisely because nothing in core reads the payload — and the work is recorded as a follow-up
+  rather than half-built. Design:
+  [`docs/design/llm/openai-responses-path.md`](docs/design/llm/openai-responses-path.md).
+
 ### Sessions: one unreadable inbox entry no longer costs the whole batch
 
 - **`SessionInbox.collect` returns `CollectedBatch` instead of `List<InboundMessage>`.** A

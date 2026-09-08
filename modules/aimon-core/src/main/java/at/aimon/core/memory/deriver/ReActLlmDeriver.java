@@ -209,7 +209,8 @@ public final class ReActLlmDeriver implements Deriver {
                 break;
             }
 
-            conversation.add(Message.assistant(response.getTextContent(), response.getToolUses()));
+            conversation.add(Message.assistant(response.getTextContent(), response.getToolUses())
+                    .withReasoningTraces(response.getReasoningTraces()));
             List<ToolUseResult> results = new ArrayList<>(response.getToolUses().size());
             for (ToolUse toolUse : response.getToolUses()) {
                 ToolUseResult result = invokeTool(toolUse, toolContext, createdIds);

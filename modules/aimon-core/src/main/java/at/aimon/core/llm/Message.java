@@ -64,6 +64,7 @@ public final class Message {
     private final List<ToolUse> toolUses;
     private final List<ToolUseResult> toolUseResults;
     private final List<MessageArtifact> artifacts;
+    private final List<ReasoningTrace> reasoningTraces;
 
     /**
      * Creates a new Message.
@@ -102,11 +103,35 @@ public final class Message {
      */
     private Message(Role role, List<ContentBlock> contentBlocks, List<ToolUse> toolUses,
             List<ToolUseResult> toolUseResults, List<MessageArtifact> artifacts) {
+        this(role, contentBlocks, toolUses, toolUseResults, artifacts, null);
+    }
+
+    /**
+     * Creates a new Message with artifacts and reasoning traces.
+     *
+     * @param role
+     *            The message role (must not be null)
+     * @param contentBlocks
+     *            The content blocks (must not be null, elements must not be null)
+     * @param toolUses
+     *            The tool uses (can be null or empty)
+     * @param toolUseResults
+     *            The tool results (can be null or empty)
+     * @param artifacts
+     *            The file artifacts produced by tool execution (can be null or empty)
+     * @param reasoningTraces
+     *            The provider-authored reasoning payloads this turn produced (can be null or empty)
+     * @throws NullPointerException
+     *             if role or contentBlocks is null, or if any element is null
+     */
+    private Message(Role role, List<ContentBlock> contentBlocks, List<ToolUse> toolUses,
+            List<ToolUseResult> toolUseResults, List<MessageArtifact> artifacts, List<ReasoningTrace> reasoningTraces) {
         this.role = Objects.requireNonNull(role, "Role cannot be null");
         this.contentBlocks = List.copyOf(Objects.requireNonNull(contentBlocks, "Content blocks cannot be null"));
         this.toolUses = toolUses == null ? List.of() : List.copyOf(toolUses);
         this.toolUseResults = toolUseResults == null ? List.of() : List.copyOf(toolUseResults);
         this.artifacts = artifacts == null ? List.of() : List.copyOf(artifacts);
+        this.reasoningTraces = reasoningTraces == null ? List.of() : List.copyOf(reasoningTraces);
 
         // Pre-compute derived text content and non-text flag from immutable content blocks
         this.textContent = this.contentBlocks.stream().filter(block -> block instanceof TextContentBlock)
@@ -248,7 +273,28 @@ public final class Message {
      */
     public Message withArtifacts(List<MessageArtifact> artifacts) {
         Objects.requireNonNull(artifacts, "Artifacts cannot be null");
-        return new Message(this.role, this.contentBlocks, this.toolUses, this.toolUseResults, artifacts);
+        return new Message(this.role, this.contentBlocks, this.toolUses, this.toolUseResults, artifacts,
+                this.reasoningTraces);
+    }
+
+    /**
+     * Returns a new Message with the specified reasoning traces attached.
+     *
+     * <p>
+     * Mirrors {@link #withArtifacts(List)}. Callers that turn an {@link LlmResponse} into an assistant message attach
+     * the response's traces here so that the next request can replay them; every such site does it, with no per-site
+     * judgement about whether the message will be read back.
+     *
+     * @param reasoningTraces
+     *            The provider-authored reasoning payloads to attach (must not be null)
+     * @return A new Message with the same role, content, tool uses, tool results and artifacts, plus the given traces
+     * @throws NullPointerException
+     *             if reasoningTraces is null
+     */
+    public Message withReasoningTraces(List<ReasoningTrace> reasoningTraces) {
+        Objects.requireNonNull(reasoningTraces, "Reasoning traces cannot be null");
+        return new Message(this.role, this.contentBlocks, this.toolUses, this.toolUseResults, this.artifacts,
+                reasoningTraces);
     }
 
     /**
@@ -265,6 +311,15 @@ public final class Message {
      * automation agent an assistant tool call routinely embeds credentials in its arguments (e.g.
      * {@code mysql -pSECRET}, {@code curl -u user:pass}, {@code --token=...}); leaving them out
      * would let secrets bypass the redaction gate.
+     *
+     * <p>
+     * <strong>{@link ReasoningTrace} payloads are deliberately outside this gate</strong>, and are carried through
+     * byte-identical. They are not skipped by oversight: a provider's reasoning payload is ciphertext (OpenAI's
+     * {@code encrypted_content}) or signed text (Anthropic's {@code signature}), so rewriting a single byte
+     * invalidates it and the provider rejects the replay — which is the entire reason the payload exists. The
+     * consequence is that redaction does not reach a reasoning payload. A deployment that cannot accept that should
+     * turn the reasoning round trip off at the provider (for OpenAI, {@code OpenAIConfig.responsesApiEnabled(false)})
+     * rather than expect this method to cover it.
      *
      * @param transform
      *            applied to each text fragment (must not be null; must not return null)
@@ -298,7 +353,7 @@ public final class Message {
                     : ToolUseResult.success(result.getToolUseId(), transformed);
             newResults.add(rebuilt.withRenderPayload(result.getRenderPayload()));
         }
-        return new Message(this.role, newBlocks, newToolUses, newResults, this.artifacts);
+        return new Message(this.role, newBlocks, newToolUses, newResults, this.artifacts, this.reasoningTraces);
     }
 
     /**
@@ -385,9 +440,39 @@ public final class Message {
      */
     public static Message restore(Role role, List<ContentBlock> contentBlocks, List<ToolUse> toolUses,
             List<ToolUseResult> toolUseResults, List<MessageArtifact> artifacts) {
+        return restore(role, contentBlocks, toolUses, toolUseResults, artifacts, null);
+    }
+
+    /**
+     * Reconstructs a message from its fully decomposed parts, including its reasoning traces.
+     *
+     * <p>
+     * The five-argument overload is retained and delegates here with no traces, because it is a published static on a
+     * published type and the codec seam: widening it in place would be a gratuitous source break for anyone with their
+     * own codec, and a stored document written before this field existed decodes through exactly that path.
+     *
+     * @param role
+     *            the message role (must not be null)
+     * @param contentBlocks
+     *            the content blocks (must not be null, elements must not be null; may be empty for a {@code TOOL}
+     *            message)
+     * @param toolUses
+     *            the tool uses (may be null or empty)
+     * @param toolUseResults
+     *            the tool results (may be null or empty)
+     * @param artifacts
+     *            the file artifacts (may be null or empty)
+     * @param reasoningTraces
+     *            the provider-authored reasoning payloads (may be null or empty)
+     * @return a reconstructed message equal to the original it was serialized from
+     * @throws NullPointerException
+     *             if role or contentBlocks is null, or if any content block element is null
+     */
+    public static Message restore(Role role, List<ContentBlock> contentBlocks, List<ToolUse> toolUses,
+            List<ToolUseResult> toolUseResults, List<MessageArtifact> artifacts, List<ReasoningTrace> reasoningTraces) {
         Objects.requireNonNull(contentBlocks, "Content blocks cannot be null");
         validateNoNullElements(contentBlocks, "Content blocks must not contain null elements");
-        return new Message(role, contentBlocks, toolUses, toolUseResults, artifacts);
+        return new Message(role, contentBlocks, toolUses, toolUseResults, artifacts, reasoningTraces);
     }
 
     /**
@@ -497,6 +582,29 @@ public final class Message {
         return !artifacts.isEmpty();
     }
 
+    /**
+     * Gets the provider-authored reasoning payloads this turn produced.
+     *
+     * <p>
+     * Only an {@code ASSISTANT} message carries these. They are opaque to {@code aimon-core} and are replayed on the
+     * next request by the provider that authored them; a provider that meets a foreign trace drops it. Each trace's
+     * {@link ReasoningTrace#getToolUseId()} anchors it to the tool use it immediately precedes.
+     *
+     * @return An immutable list of reasoning traces, in the provider's own output order (never null, may be empty)
+     */
+    public List<ReasoningTrace> getReasoningTraces() {
+        return reasoningTraces;
+    }
+
+    /**
+     * Checks if this message carries reasoning traces.
+     *
+     * @return true if there are reasoning traces, false otherwise
+     */
+    public boolean hasReasoningTraces() {
+        return !reasoningTraces.isEmpty();
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -507,12 +615,13 @@ public final class Message {
         }
         final Message message = (Message) o;
         return role == message.role && contentBlocks.equals(message.contentBlocks) && toolUses.equals(message.toolUses)
-                && toolUseResults.equals(message.toolUseResults) && artifacts.equals(message.artifacts);
+                && toolUseResults.equals(message.toolUseResults) && artifacts.equals(message.artifacts)
+                && reasoningTraces.equals(message.reasoningTraces);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(role, contentBlocks, toolUses, toolUseResults, artifacts);
+        return Objects.hash(role, contentBlocks, toolUses, toolUseResults, artifacts, reasoningTraces);
     }
 
     @Override
@@ -522,7 +631,7 @@ public final class Message {
                 : textContent.substring(0, CONTENT_PREVIEW_MAX_LENGTH) + "...";
         return "Message{role=" + role + ", content='" + preview + "'" + ", contentBlocks=" + contentBlocks.size()
                 + ", toolUses=" + toolUses.size() + ", toolUseResults=" + toolUseResults.size() + ", artifacts="
-                + artifacts.size() + '}';
+                + artifacts.size() + ", reasoningTraces=" + reasoningTraces.size() + '}';
     }
 
     private static <T> void validateNoNullElements(List<T> list, String message) {

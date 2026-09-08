@@ -93,9 +93,10 @@ public interface LlmClient {
 
 ```java
 public class LlmResponse {
-    private final String textContent;      // 텍스트 응답
-    private final List<ToolUse> toolUses;  // Tool 호출 요청
-    private final TokenUsage tokenUsage;   // 토큰 사용량
+    private final String textContent;                    // 텍스트 응답
+    private final List<ToolUse> toolUses;                // Tool 호출 요청
+    private final TokenUsage tokenUsage;                 // 토큰 사용량 (reasoningTokens 포함)
+    private final List<ReasoningTrace> reasoningTraces;  // provider 가 만든 불투명 추론 페이로드
 }
 ```
 
@@ -103,10 +104,11 @@ public class LlmResponse {
 
 ```java
 public class Message {
-    private final Role role;                      // USER, ASSISTANT, TOOL
-    private final String content;                 // 텍스트 내용
-    private final List<ToolUse> toolUses;         // Tool 호출 (ASSISTANT)
-    private final List<ToolUseResult> toolUseResults; // Tool 결과 (TOOL)
+    private final Role role;                            // USER, ASSISTANT, TOOL
+    private final String content;                       // 텍스트 내용
+    private final List<ToolUse> toolUses;               // Tool 호출 (ASSISTANT)
+    private final List<ToolUseResult> toolUseResults;   // Tool 결과 (TOOL)
+    private final List<ReasoningTrace> reasoningTraces; // 추론 페이로드 (ASSISTANT) — 아래 참조
 }
 ```
 
@@ -421,6 +423,37 @@ IMPORTANT: **프로바이더는 값을 지어내지 않는다.** `orElse(DEFAULT
 즉 **호출자가 요청한 것은 하나도 빼지 않고, 요청하지 않은 것은 하나도 지어내지 않는다**. 값을 떨어뜨렸다면 그 사실을
 [`LlmModel`](../../../modules/aimon-core/src/main/java/at/aimon/core/llm/LlmModel.java) 의 규칙대로
 운영자가 보는 수준으로 보고한다(`AnthropicLlmClient#reportDivergence`, `OpenAILlmClient#reportDivergence`).
+
+### 추론 페이로드는 채우고 되읽되, 절대 들여다보지 않는다
+
+추론 모델은 도구 호출과 함께 불투명한 항목 하나를 돌려준다 — OpenAI 의 `encrypted_content` 를 실은
+`reasoning` 항목, Anthropic 의 서명이 붙은 `thinking` 블록. 그것을 다음 요청에 되싣지 않으면 모델은 ReAct
+이터레이션마다 사고 과정을 처음부터 다시 만든다. 답이 나빠지고 추론 토큰이 매번 다시 청구된다.
+`ReasoningTrace` 가 그 항목이 턴 사이에 머무는 자리다.
+
+프로바이더가 할 일은 넷이다.
+
+1. **채운다** — 응답에서 항목을 뽑아 `LlmResponse.withReasoningTraces(...)` 로 붙인다. 스트리밍이면
+   `ChunkAggregator.addReasoningTrace(...)` 가 같은 자리다
+2. **태그한다** — `providerName` 은 `getProviderName()` 그대로다. 전사는 클라이언트보다 오래 살아서
+   (`LlmFallbackPolicy`, provider 설정 변경, 서브에이전트 스냅샷 재생) 남의 페이로드가 도착할 수 있다.
+   자기 것이 아니면 버리고 한 번 경고한다
+3. **닻을 내린다** — `toolUseId` 는 *이 trace 가 그 도구 호출 바로 앞에 온다* 는 뜻이다. `Message` 는
+   텍스트와 도구 호출을 서로 다른 리스트에 담으므로 순서를 그것만으로 표현할 수 없다
+4. **되읽는다** — 순서 규칙은 프로바이더마다 하나씩 적는다. 슬롯은 두 순서를 다 표현할 수 있고, 어느
+   프로바이더도 남의 규칙을 물려받지 않는다
+
+IMPORTANT: **`payload` 를 파싱하거나 다시 직렬화하거나 정규화하지 말 것.** `aimon-core` 가 그것에 하는
+연산은 복사 하나뿐이고, 프로바이더도 그래야 한다 — OpenAI 의 `encrypted_content` 는 암호문이고 Anthropic 의
+`signature` 는 서명이라, 한 바이트만 달라져도 서버가 되읽기를 거절한다. SDK 모델을 직렬화한다면 그 SDK 자신의
+매퍼를 쓴다(OpenAI 는 `com.openai.core.ObjectMappers.jsonMapper()`): 새 `ObjectMapper` 는 같은 바이트를
+읽고 없던 필드를 붙여 내보낸다.
+
+그 대가는 숨기지 않는다 — **`Message.mapText` 는 이 페이로드에 닿지 않으므로 레닥션도 닿지 않는다.**
+고칠 수 있는 성질의 것이 아니고(고치면 되읽기가 깨진다), 받아들일 수 없는 배포에는 끄는 스위치가 있다
+(OpenAI 는 `OpenAIConfig.responsesApiEnabled(false)`).
+
+설계 전문은 [OpenAI Responses 경로](../../design/llm/openai-responses-path.md) 참조.
 
 ---
 

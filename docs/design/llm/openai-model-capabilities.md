@@ -707,9 +707,10 @@ bean past `@ConditionalOnMissingBean(LlmClient.class)` and inject whatever regis
 
 ## 8. What the implementation changed
 
-Written after the code landed. The seam, the type shapes, the fail-open rule, the built-in table and
-every row of the §4.3 wire-effect table are as approved; nothing load-bearing moved. What follows is
-the complete list of differences.
+Written after the code landed. The seam, the type shapes, the fail-open rule and the built-in table
+are as approved. **§4.3's wire-effect table was as approved when this section was written, and no
+longer is:** round 2 removed the sampling fallback (§9.1), so **§9.2's corrected table supersedes
+it**. What follows is the complete list of differences round 1 produced.
 
 ### 8.1 Seven claims in this document were wrong, and are corrected above
 
@@ -771,10 +772,11 @@ would be guarding, measured rather than argued.
 
 ### 8.4 What stayed open
 
-**All but one** of §7's open questions are still open, and none of the ones that stayed open grew.
-The exception is **O-1** (the fallback kept, deviating from #43's prose), which round 2 closed the
-other way on a maintainer ruling — §9.1 is that record, and the correction reached this paragraph
-one round late.
+**All but two** of §7's open questions are still open, and none of the ones that stayed open grew.
+The two exceptions are **O-1** (the fallback kept, deviating from #43's prose), which round 2 closed
+the other way on a maintainer ruling — §9.1 is that record, and the correction reached this
+paragraph one round late — and **O-7**, closed by doing it, as the paragraph below already says.
+Six of eight remain, which is what §9.5 lists.
 
 O-2 (the o-series rows deferred until someone runs them against the real API — a test pins `o3` as
 behaving like an unknown model, so re-adding them has to change a test that says why), O-3, O-4 (no
@@ -914,6 +916,10 @@ populated, and trace spans become `llm:<model>` rather than `llm:<provider> (<mo
 
 **Still open, unchanged.** O-2 (o-series rows), O-3, O-4, O-5, O-6, O-8.
 
+**§10 is the current status past round 2.** O-6 closed there — round 4 opened the phase-2 seam this
+document said it would have to — and O-5 grew by one item. Read §10 before treating the line above
+as current.
+
 **New after round 2.**
 
 - **The two provider configs now answer the same questions differently.** `OpenAIConfig` requires a
@@ -931,3 +937,45 @@ populated, and trace spans become `llm:<model>` rather than `llm:<provider> (<mo
   subagent falls back to on every provider. Outside #45's scope, and it should have its own issue.
 - **Nothing here was verified against a live endpoint.** The `0.0` → server-default consequence is
   reasoned from OpenAI's documented default of `1.0`, not measured.
+
+---
+
+## 10. Round 4 — the Responses path
+
+Recorded here rather than edited into §8.4, which declares itself unmaintained past round 1 and
+delegates to §9.5. This section is the current status of this document's open questions.
+
+**O-6 closes.** `supportsToolsWithReasoning` was described as "endpoint-flavoured … where the
+phase-2 seam will have to open". Round 4 opened it. The flag keeps its name and its `false` for
+`gpt-5`, and its javadoc now says outright which surface it describes — OpenAI's Chat Completions —
+rather than leaving that to be inferred. It becomes unreachable for `gpt-5` in the shipped default
+configuration, because a fourth flag now routes that model to a surface where tools and reasoning
+coexist, and it stays reachable the moment `OpenAIConfig.responsesApiEnabled(false)` is set, which
+is precisely the situation it was written for.
+
+**The fourth flag.** `ModelCapabilities.supportsReasoningTraceRoundTrip()` — *does this model return
+reasoning traces a client should send back on the next turn* — defaulting to `false` in
+`unknown()`, so every model no registry describes keeps the request surface it has today. It is
+deliberately not called `usesResponsesApi`: that would name one vendor's endpoint inside a
+provider-neutral type. The inference from the neutral fact to an OpenAI endpoint is made in
+`aimon-llm-openai`, where an OpenAI endpoint is a legal thing to know about; Anthropic will read the
+same flag to mean "send the thinking blocks back", with no endpoint change at all.
+
+**O-5 grows.** `AnthropicLlmClient` ignored the reasoning-effort field silently; it now also ignores
+`ReasoningTrace`. The Anthropic half is designed for and deliberately not started — the slot's fit
+for signature-carrying thinking blocks is demonstrated in
+[the round-4 design](openai-responses-path.md) §2.1.5 — so the same follow-up issue carries one more
+item.
+
+**O-14 is new and is the third of its kind.** `responsesApiEnabled` is programmatic only, exactly
+like round 1's registry override (O-8) and round 2's missing temperature key. Three things an
+operator can now reach only by assembling `OpenAIConfig` in Java. The follow-up issue §9.5 already
+asks for should carry this one too, and it carries an asymmetry the other two do not: the situation
+that *needs* the switch is fully yaml-creatable (`baseUrl` is a CLI key and a starter property, and
+any real `gpt-5*` name hits the built-in row), while the remedy is Java-only.
+
+**The two round-1 gaps stay open and untouched.** No yaml key for the capability registry; no
+o-series rows, still blocked on live-API verification nobody has done. Both are still pinned by
+tests that explain why.
+
+Full design: [`openai-responses-path.md`](openai-responses-path.md).

@@ -10,6 +10,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.llm.LlmResponse;
+import at.aimon.core.llm.ReasoningTrace;
 import at.aimon.core.llm.StopReason;
 import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.llm.ToolUse;
@@ -297,4 +298,31 @@ class ChunkAggregatorTest {
         assertThatIllegalStateException().isThrownBy(
                 () -> agg.accept(LlmStreamChunk.toolUseReady(1, ToolUse.of("call_1", "search", java.util.Map.of()))));
     }
+
+    @Test
+    void reasoningTracesAddedBeforeStreamEndReachTheResponse() {
+        final ReasoningTrace first = ReasoningTrace.builder().providerName("OpenAI").payload("{\"id\":\"rs_1\"}")
+                .toolUseId("call_1").build();
+        final ReasoningTrace second = ReasoningTrace.builder().providerName("OpenAI").payload("{\"id\":\"rs_2\"}")
+                .build();
+        final ChunkAggregator agg = new ChunkAggregator();
+
+        agg.addReasoningTrace(first);
+        agg.addReasoningTrace(second);
+        agg.accept(LlmStreamChunk.streamEnd(0, null, Optional.empty()));
+
+        // Order matters: a reasoning item has to be replayed in front of the call it produced, and the aggregator is
+        // where the streamed response's order is decided.
+        assertThat(agg.toLlmResponse().getReasoningTraces()).containsExactly(first, second);
+    }
+
+    @Test
+    void addReasoningTraceAfterCloseThrows() {
+        final ChunkAggregator agg = new ChunkAggregator();
+        agg.accept(LlmStreamChunk.streamEnd(0, null, Optional.empty()));
+
+        assertThatIllegalStateException().isThrownBy(
+                () -> agg.addReasoningTrace(ReasoningTrace.builder().providerName("OpenAI").payload("{}").build()));
+    }
+
 }

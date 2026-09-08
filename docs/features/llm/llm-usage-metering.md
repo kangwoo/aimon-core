@@ -15,6 +15,11 @@
 
 provider 구현체(`OpenAILlmClient`, `AnthropicLlmClient`) 는 metering 을 알 필요가 없다. 데코레이터로 감싸기만 하면 된다.
 
+IMPORTANT: `TokenUsage.getReasoningTokens()` 는 **기록되지만 값이 매겨지지 않는다.** 추론 토큰은
+completion 토큰에 더해지는 것이 아니라 그 **부분집합**이므로(OpenAI 는 `output_tokens_details` 안에
+넣어 보낸다) `ModelPrice.costOf` 의 completion 항목이 이미 값을 매긴 뒤다 — 여기서 또 더하면 두 번
+청구하는 것이 된다. recorder 는 `TokenUsage` 를 통째로 받으므로 이 필드는 그냥 도착한다.
+
 `provider` 는 벤더 이름(`"OpenAI"`, `"Anthropic"`)이고 `model` 은 그 호출이 **실제로 사용한** 모델이다 — 요청의 `LlmModel` 이 지정한 이름, 지정하지 않았으면 클라이언트의 기본 모델(`LlmClient.getDefaultModelName()`).
 
 ## 2. 빠른 시작

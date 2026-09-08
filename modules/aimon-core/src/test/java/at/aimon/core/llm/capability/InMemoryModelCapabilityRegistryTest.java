@@ -126,4 +126,19 @@ class InMemoryModelCapabilityRegistryTest {
         // specific gpt-5-chat and swallow it.
         assertThat(registry.resolve("gpt-5-chat-latest")).isEqualTo(ModelCapabilities.unknown());
     }
+
+    @Test
+    @DisplayName("only the reasoning gpt-5 family round-trips reasoning traces")
+    void reasoningTraceRoundTripIsSetOnlyWhereItIsTrue() {
+        final InMemoryModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.withDefaults();
+
+        assertThat(registry.resolve("gpt-5.6-terra").supportsReasoningTraceRoundTrip()).isTrue();
+        // gpt-5-chat is the non-reasoning variant, and this false is what keeps the existing assertion that it
+        // resolves equal to unknown() green -- i.e. it is the line that fails if the chat variant is ever routed to
+        // the Responses API.
+        assertThat(registry.resolve("gpt-5-chat-latest").supportsReasoningTraceRoundTrip()).isFalse();
+        assertThat(registry.resolve("gpt-4o").supportsReasoningTraceRoundTrip()).isFalse();
+        assertThat(registry.resolve("o3").supportsReasoningTraceRoundTrip()).isFalse();
+    }
+
 }

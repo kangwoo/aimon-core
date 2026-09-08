@@ -273,4 +273,17 @@ class OpenAIConfigTest {
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("Model capability registry cannot be null");
     }
+
+    @Test
+    @DisplayName("the Responses API is enabled by default and can be turned off")
+    void responsesApiEnabledDefaultsToTrue() {
+        // Default true, because the whole point of the round is that a reasoning model reaches /v1/responses without
+        // anyone configuring anything. False is the escape hatch for a gateway that implements only
+        // /v1/chat/completions while passing real model names through -- a deployment that works today and that this
+        // branch would otherwise 404.
+        assertThat(OpenAIConfig.builder().apiKey("k").model("gpt-4o").build().isResponsesApiEnabled()).isTrue();
+        assertThat(OpenAIConfig.builder().apiKey("k").model("gpt-4o").responsesApiEnabled(false).build()
+                .isResponsesApiEnabled()).isFalse();
+    }
+
 }

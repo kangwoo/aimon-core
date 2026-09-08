@@ -43,6 +43,14 @@ import ch.qos.logback.core.read.ListAppender;
  * The call <em>succeeds</em> with settings other than the ones configured — no error, no status code — so the log line
  * is the only thing standing between the operator and a silent behaviour change. Mirrors
  * {@code AnthropicLlmClientParameterDivergenceTest}, which reports the same class of divergence for the same reason.
+ *
+ * <p>
+ * Six of the nine tests set {@code responsesApiEnabled(false)}, because they assert the Chat Completions divergences
+ * and {@code gpt-5.6-terra} now routes to {@code /v1/responses} on a stock config. The other three are already on
+ * Chat without saying so and are left alone: two override the registry so the lookup degrades to
+ * {@code ModelCapabilities.unknown()} (whose {@code supportsReasoningTraceRoundTrip()} is false — an unresolvable
+ * model is never routed to the new endpoint), and one names {@code gpt-4o}. That the same reporting still happens on
+ * the Responses path is bound separately, by {@code OpenAIResponsesParameterDivergenceTest}.
  */
 @DisplayName("OpenAILlmClient - request parameter divergence reporting")
 @ExtendWith(MockitoExtension.class)
@@ -110,7 +118,8 @@ class OpenAILlmClientParameterDivergenceTest {
     @Test
     @DisplayName("a temperature suppressed by capabilities is reported once at WARN")
     void suppressedTemperatureIsReportedOnce() {
-        final OpenAILlmClient client = client(OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra").build());
+        final OpenAILlmClient client = client(
+                OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra").responsesApiEnabled(false).build());
         final LlmModel model = LlmModel.builder().temperature(0.7).build();
 
         send(client, model, List.of());
@@ -128,7 +137,8 @@ class OpenAILlmClientParameterDivergenceTest {
     void messageDoesNotAssertOperatorIntent() {
         // A subagent turn carries a temperature from SubagentLlmDefaults, not from a human, and nothing here can tell
         // the two apart -- so the wording says only that the value is set on the request.
-        final OpenAILlmClient client = client(OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra").build());
+        final OpenAILlmClient client = client(
+                OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra").responsesApiEnabled(false).build());
 
         send(client, LlmModel.builder().temperature(0.7).build(), List.of());
 
@@ -157,7 +167,8 @@ class OpenAILlmClientParameterDivergenceTest {
         // issue #43's "sampling parameters are sent only when the caller explicitly set them" beats round 1's "an
         // unknown model sends exactly what it sends today", which round 1 had recorded as design O-1/A6. See
         // docs/design/llm/openai-model-capabilities.md section 9.
-        final OpenAILlmClient client = client(OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra").build());
+        final OpenAILlmClient client = client(
+                OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra").responsesApiEnabled(false).build());
 
         final ChatCompletionCreateParams params = sendAndCapture(client, LlmModel.builder().build(), List.of(A_TOOL));
 
@@ -187,7 +198,8 @@ class OpenAILlmClientParameterDivergenceTest {
     @Test
     @DisplayName("each distinct suppressed parameter is reported separately")
     void eachParameterIsReportedSeparately() {
-        final OpenAILlmClient client = client(OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra").build());
+        final OpenAILlmClient client = client(
+                OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra").responsesApiEnabled(false).build());
 
         send(client, LlmModel.builder().temperature(0.7).topP(0.9).presencePenalty(1.0).frequencyPenalty(-1.0).build(),
                 List.of());
@@ -200,7 +212,8 @@ class OpenAILlmClientParameterDivergenceTest {
     @Test
     @DisplayName("a reasoning effort clamped to NONE because tools are present is reported")
     void clampedReasoningEffortIsReported() {
-        final OpenAILlmClient client = client(OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra").build());
+        final OpenAILlmClient client = client(
+                OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra").responsesApiEnabled(false).build());
 
         send(client, LlmModel.builder().reasoningEffort(ReasoningEffort.HIGH).build(), List.of(A_TOOL));
 
@@ -211,7 +224,8 @@ class OpenAILlmClientParameterDivergenceTest {
     @Test
     @DisplayName("clamping to NONE is silent when NONE is what was asked for")
     void clampToTheRequestedValueIsSilent() {
-        final OpenAILlmClient client = client(OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra").build());
+        final OpenAILlmClient client = client(
+                OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra").responsesApiEnabled(false).build());
 
         send(client, LlmModel.builder().reasoningEffort(ReasoningEffort.NONE).build(), List.of(A_TOOL));
 

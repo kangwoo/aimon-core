@@ -80,6 +80,7 @@ public final class SessionRecordCodec {
     private static final String FIELD_PROMPT_TOKENS = "promptTokens";
     private static final String FIELD_COMPLETION_TOKENS = "completionTokens";
     private static final String FIELD_TOTAL_TOKENS = "totalTokens";
+    private static final String FIELD_REASONING_TOKENS = "reasoningTokens";
 
     private static final String FIELD_MAX_ITERATIONS = "maxIterations";
     private static final String FIELD_MAX_TOKENS = "maxTokens";
@@ -167,6 +168,7 @@ public final class SessionRecordCodec {
         node.put(FIELD_PROMPT_TOKENS, usage.getPromptTokens());
         node.put(FIELD_COMPLETION_TOKENS, usage.getCompletionTokens());
         node.put(FIELD_TOTAL_TOKENS, usage.getTotalTokens());
+        node.put(FIELD_REASONING_TOKENS, usage.getReasoningTokens());
         return node.toString();
     }
 
@@ -188,8 +190,11 @@ public final class SessionRecordCodec {
             return SessionTotals.empty();
         }
         final JsonNode node = read(encoded, "session totals");
+        // asInt() on a missing path is 0, so a totals document written before reasoning tokens existed decodes with
+        // the field at zero and needs no special case here.
         final TokenUsage usage = TokenUsage.of(node.path(FIELD_PROMPT_TOKENS).asInt(),
-                node.path(FIELD_COMPLETION_TOKENS).asInt(), node.path(FIELD_TOTAL_TOKENS).asInt());
+                node.path(FIELD_COMPLETION_TOKENS).asInt(), node.path(FIELD_TOTAL_TOKENS).asInt(),
+                node.path(FIELD_REASONING_TOKENS).asInt());
         return SessionTotals.of(node.path(FIELD_TURN_COUNT).asInt(), node.path(FIELD_ITERATIONS).asInt(), usage);
     }
 

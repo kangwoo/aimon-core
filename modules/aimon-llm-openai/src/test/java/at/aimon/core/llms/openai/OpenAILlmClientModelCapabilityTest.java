@@ -52,6 +52,15 @@ import at.aimon.core.llm.streaming.LlmStreamingOptions;
  * {@code requestBuilder.temperature(null)} would put {@code "temperature": null} on the wire, earn exactly the HTTP
  * 400 this branch exists to remove, and still pass an {@code isEmpty()} assertion. The raw accessor is the only one
  * that can fail on that bug.
+ *
+ * <p>
+ * <strong>Every test here is about the Chat Completions request shape</strong>, which is why the eight that name a
+ * {@code gpt-5.x} model on a stock registry now set {@code responsesApiEnabled(false)}. That flag is a fixture line,
+ * not an assertion change: the model name stays in the fixture, so what each test is <em>about</em> is unchanged, and
+ * two of them ({@code toolsClampReasoningEffortToNone}, and {@code clampedReasoningEffortIsReported} in the
+ * divergence sibling) test a clamp that is a Chat Completions rule outright and belongs nowhere else. The endpoint
+ * choice itself is bound by {@link OpenAILlmClientEndpointSelectionTest}, and the Responses request shape by
+ * {@code OpenAIResponsesRequestFactoryTest}.
  */
 @DisplayName("OpenAILlmClient - per-model capabilities")
 @ExtendWith(MockitoExtension.class)
@@ -167,14 +176,22 @@ class OpenAILlmClientModelCapabilityTest {
     // ------------------------------------------------------------------------------------------------------------
 
     @Test
-    @DisplayName("a STOCK config on gpt-5.6-terra with a tool omits sampling and sends reasoning_effort=none")
-    void stockConfigFixesTheReportedFourHundred() {
-        // The reported bug, end to end, with nothing overridden: no registry passed, no temperature configured, one
-        // tool in the request. This is the only test in the suite that fails if OpenAIConfig's default registry is
-        // wired to ModelCapabilityRegistry.EMPTY instead of InMemoryModelCapabilityRegistry.withDefaults() -- every
-        // other suppression test here builds its registry by hand and would stay green while the 400 shipped.
-        final ChatCompletionCreateParams params = capture(config("gpt-5.6-terra").build(), LlmModel.builder().build(),
-                List.of(A_TOOL));
+    @DisplayName("gpt-5.6-terra on the Chat path with a tool omits sampling and sends reasoning_effort=none")
+    void chatPathFixesTheReportedFourHundred() {
+        // The reported bug, end to end, with nothing overridden except the endpoint: no registry passed, no
+        // temperature configured, one tool in the request. This is the only test in the suite that fails if
+        // OpenAIConfig's default registry is wired to ModelCapabilityRegistry.EMPTY instead of
+        // InMemoryModelCapabilityRegistry.withDefaults() -- every other suppression test here builds its registry by
+        // hand and would stay green while the 400 shipped.
+        //
+        // responsesApiEnabled(false) is what keeps this on Chat Completions now that the built-in gpt-5 row also says
+        // its reasoning traces round-trip. The test is still about the Chat request shape, and the NONE clamp it
+        // asserts is a Chat rule outright -- but it is no longer the STOCK-config binding, because a stock config
+        // now routes this model to /v1/responses. That binding moved to
+        // OpenAILlmClientEndpointSelectionTest.stockConfigOnAReasoningModelUsesResponses, which is where a reader
+        // looking for "what does the shipped default do" should go.
+        final ChatCompletionCreateParams params = capture(config("gpt-5.6-terra").responsesApiEnabled(false).build(),
+                LlmModel.builder().build(), List.of(A_TOOL));
 
         assertThat(params._temperature()).isInstanceOf(JsonMissing.class);
         assertThat(params.reasoningEffort()).contains(com.openai.models.ReasoningEffort.NONE);
@@ -320,8 +337,8 @@ class OpenAILlmClientModelCapabilityTest {
     @Test
     @DisplayName("a temperature configured on OpenAIConfig is suppressed too")
     void configLevelTemperatureSuppressed() {
-        final OpenAIConfig config = config("gpt-5.6-terra").temperature(0.7).topP(0.5).presencePenalty(0.5)
-                .frequencyPenalty(0.5).build();
+        final OpenAIConfig config = config("gpt-5.6-terra").responsesApiEnabled(false).temperature(0.7).topP(0.5)
+                .presencePenalty(0.5).frequencyPenalty(0.5).build();
 
         assertSamplingOmitted(capture(config, LlmModel.builder().build(), List.of()));
     }
@@ -329,8 +346,9 @@ class OpenAILlmClientModelCapabilityTest {
     @Test
     @DisplayName("the streaming path suppresses exactly as the blocking path does")
     void streamingPathSuppressesToo() {
-        final ChatCompletionCreateParams params = captureStreaming(config("gpt-5.6-terra").temperature(0.7).build(),
-                LlmModel.builder().build(), List.of(A_TOOL));
+        final ChatCompletionCreateParams params = captureStreaming(
+                config("gpt-5.6-terra").responsesApiEnabled(false).temperature(0.7).build(), LlmModel.builder().build(),
+                List.of(A_TOOL));
 
         assertSamplingOmitted(params);
         assertThat(params.reasoningEffort()).contains(com.openai.models.ReasoningEffort.NONE);
@@ -345,7 +363,7 @@ class OpenAILlmClientModelCapabilityTest {
     void toolsClampReasoningEffortToNone() {
         // Explicit rather than omitted: the server default for these models is "medium", so leaving the parameter out
         // fails the same way sending "medium" would.
-        final ChatCompletionCreateParams params = capture(config("gpt-5.6-terra").build(),
+        final ChatCompletionCreateParams params = capture(config("gpt-5.6-terra").responsesApiEnabled(false).build(),
                 LlmModel.builder().reasoningEffort(ReasoningEffort.HIGH).build(), List.of(A_TOOL));
 
         assertThat(params.reasoningEffort()).contains(com.openai.models.ReasoningEffort.NONE);
@@ -356,8 +374,8 @@ class OpenAILlmClientModelCapabilityTest {
     void noToolsNoEffortSendsNothing() {
         // The compaction / summarization path calls sendMessage(..., List.of(), ...), so a reasoning model can still
         // reason there; phase 1 does not disable reasoning further than the endpoint already forces.
-        final ChatCompletionCreateParams params = capture(config("gpt-5.6-terra").build(), LlmModel.builder().build(),
-                List.of());
+        final ChatCompletionCreateParams params = capture(config("gpt-5.6-terra").responsesApiEnabled(false).build(),
+                LlmModel.builder().build(), List.of());
 
         assertThat(params._reasoningEffort()).isInstanceOf(JsonMissing.class);
     }
@@ -365,7 +383,7 @@ class OpenAILlmClientModelCapabilityTest {
     @Test
     @DisplayName("a reasoning model with no tools sends the configured effort as asked")
     void noToolsSendsTheConfiguredEffort() {
-        final ChatCompletionCreateParams params = capture(config("gpt-5.6-terra").build(),
+        final ChatCompletionCreateParams params = capture(config("gpt-5.6-terra").responsesApiEnabled(false).build(),
                 LlmModel.builder().reasoningEffort(ReasoningEffort.HIGH).build(), List.of());
 
         assertThat(params.reasoningEffort()).contains(com.openai.models.ReasoningEffort.HIGH);
@@ -390,8 +408,8 @@ class OpenAILlmClientModelCapabilityTest {
     @DisplayName("an effort configured on OpenAIConfig reaches the model when LlmModel sets none")
     void configLevelReasoningEffortIsUsed() {
         final ChatCompletionCreateParams params = capture(
-                config("gpt-5.6-terra").reasoningEffort(ReasoningEffort.LOW).build(), LlmModel.builder().build(),
-                List.of());
+                config("gpt-5.6-terra").responsesApiEnabled(false).reasoningEffort(ReasoningEffort.LOW).build(),
+                LlmModel.builder().build(), List.of());
 
         assertThat(params.reasoningEffort()).contains(com.openai.models.ReasoningEffort.LOW);
     }
@@ -421,8 +439,12 @@ class OpenAILlmClientModelCapabilityTest {
     @Test
     @DisplayName("the per-request model name, not the config's, selects the capabilities")
     void perRequestModelNameSelectsCapabilities() {
+        // Still the binding for "the per-request name drives the CAPABILITY lookup", on the Chat path. The endpoint
+        // half of the same property is bound separately, by OpenAILlmClientEndpointSelectionTest cases 5 and 6 --
+        // neither implies the other, which is exactly why both exist.
         final ChatCompletionCreateParams params = capture(
-                config("gpt-4o").modelCapabilityRegistry(InMemoryModelCapabilityRegistry.withDefaults()).build(),
+                config("gpt-4o").responsesApiEnabled(false)
+                        .modelCapabilityRegistry(InMemoryModelCapabilityRegistry.withDefaults()).build(),
                 LlmModel.builder().name("gpt-5.6-terra").build(), List.of(A_TOOL));
 
         assertSamplingOmitted(params);

@@ -2,7 +2,6 @@ package at.aimon.core.llms.openai;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -14,13 +13,8 @@ import org.slf4j.LoggerFactory;
 import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
 import com.openai.core.RequestOptions;
-import com.openai.core.http.StreamResponse;
-import com.openai.models.chat.completions.ChatCompletion;
-import com.openai.models.chat.completions.ChatCompletionChunk;
 import com.openai.models.chat.completions.ChatCompletionCreateParams;
-import com.openai.models.chat.completions.ChatCompletionMessageFunctionToolCall;
 import com.openai.models.chat.completions.ChatCompletionMessageParam;
-import com.openai.models.chat.completions.ChatCompletionMessageToolCall;
 import com.openai.models.chat.completions.ChatCompletionStreamOptions;
 import com.openai.models.chat.completions.ChatCompletionSystemMessageParam;
 import com.openai.models.chat.completions.ChatCompletionTool;
@@ -33,13 +27,10 @@ import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.ReasoningEffort;
-import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.llm.ToolDefinition;
-import at.aimon.core.llm.ToolUse;
 import at.aimon.core.llm.capability.ModelCapabilities;
 import at.aimon.core.llm.exception.LlmCallCancelledException;
 import at.aimon.core.llm.exception.LlmClientException;
-import at.aimon.core.llm.exception.LlmInvalidRequestException;
 import at.aimon.core.llm.streaming.ChunkAggregator;
 import at.aimon.core.llm.streaming.LlmStreamSink;
 import at.aimon.core.llm.streaming.LlmStreamingOptions;
@@ -48,7 +39,12 @@ import at.aimon.core.llm.streaming.LlmStreamingOptions;
  * OpenAI implementation of {@link LlmClient}.
  *
  * <p>
- * Supports OpenAI's Chat Completion API with tool calling.
+ * Supports both of OpenAI's request surfaces with tool calling, and picks between them <em>per request</em> rather
+ * than per client: a model whose {@link ModelCapabilities#supportsReasoningTraceRoundTrip()} is true goes to
+ * {@code /v1/responses}, where its reasoning items can be replayed on the next turn so the reasoning survives a tool
+ * call; everything else goes to {@code /v1/chat/completions} exactly as before. Everything that differs between the
+ * two lives behind {@link OpenAIEndpointExchange}; everything they share — the cancellation fast path, the abort
+ * lever, the catch cascade and the per-request timeout — stays here, once.
  *
  * <p>
  * Key features:
@@ -56,6 +52,7 @@ import at.aimon.core.llm.streaming.LlmStreamingOptions;
  * <ul>
  * <li>Uses OpenAI tool calling for tool execution
  * <li>Supports GPT-4o, GPT-5.x, and other chat models
+ * <li>Carries reasoning traces across tool calls for models that return them
  * </ul>
  *
  * <p>
@@ -97,6 +94,8 @@ public class OpenAILlmClient implements LlmClient {
     private final OpenAIConfig config;
     private final OpenAIClient client;
     private final OpenAIMessageConverter converter;
+    private final OpenAIResponsesMessageConverter responsesConverter;
+    private final OpenAIResponsesRequestFactory responsesRequestFactory;
 
     /**
      * Request divergences already reported, so a value dropped on every request is said once instead of once per ReAct
@@ -121,6 +120,9 @@ public class OpenAILlmClient implements LlmClient {
         this.config = Objects.requireNonNull(config, "Config cannot be null");
         this.client = createOpenAIClient(config);
         this.converter = new OpenAIMessageConverter();
+        this.responsesConverter = new OpenAIResponsesMessageConverter();
+        this.responsesRequestFactory = new OpenAIResponsesRequestFactory(this.responsesConverter, this.config,
+                getProviderName(), this::reportDivergence);
     }
 
     /**
@@ -154,6 +156,9 @@ public class OpenAILlmClient implements LlmClient {
         this.config = Objects.requireNonNull(config, "Config cannot be null");
         this.client = Objects.requireNonNull(client, "Client cannot be null");
         this.converter = new OpenAIMessageConverter();
+        this.responsesConverter = new OpenAIResponsesMessageConverter();
+        this.responsesRequestFactory = new OpenAIResponsesRequestFactory(this.responsesConverter, this.config,
+                getProviderName(), this::reportDivergence);
     }
 
     @Override
@@ -164,19 +169,15 @@ public class OpenAILlmClient implements LlmClient {
         Objects.requireNonNull(tools, "Tools cannot be null");
         Objects.requireNonNull(modelConfig, "Model config cannot be null");
 
-        ChatCompletionCreateParams request = buildRequest(systemPrompt, messages, tools, modelConfig, null);
+        // Built before the try, exactly where buildRequest used to run: a failure while building the request escapes
+        // unmapped, as it does today, rather than being accidentally improved or worsened by the refactor.
+        final OpenAIEndpointExchange exchange = exchangeFor(systemPrompt, messages, tools, modelConfig, null);
 
         try {
             // Call OpenAI API. When the caller set a per-request timeout, pass it through as a
             // RequestOptions override; otherwise keep the single-argument overload so the client-wide default timeout
             // applies unchanged (zero behaviour change for the common case).
-            final RequestOptions requestOptions = perRequestOptions(modelConfig);
-            ChatCompletion result = requestOptions == null
-                    ? client.chat().completions().create(request)
-                    : client.chat().completions().create(request, requestOptions);
-
-            // Convert response
-            return convertResponse(result);
+            return exchange.callBlocking(perRequestOptions(modelConfig));
 
         } catch (LlmClientException e) {
             // Do not double-wrap framework exceptions propagated from response conversion.
@@ -247,22 +248,19 @@ public class OpenAILlmClient implements LlmClient {
             throw new LlmCallCancelledException("OpenAI streaming call cancelled before start");
         }
 
-        final ChatCompletionCreateParams request = buildRequest(systemPromptParts.concatenated(), messages, tools,
+        final OpenAIEndpointExchange exchange = exchangeFor(systemPromptParts.concatenated(), messages, tools,
                 modelConfig, options);
         final ChunkAggregator aggregator = new ChunkAggregator();
-        final OpenAIStreamingMapper mapper = new OpenAIStreamingMapper(sink, aggregator);
 
         // A per-request timeout, when set, also bounds the streaming call (worst-case ceiling incl. no-progress
         // stalls); when unset, keep the single-argument overload so the client-wide default applies unchanged.
         final RequestOptions requestOptions = perRequestOptions(modelConfig);
-        try (StreamResponse<ChatCompletionChunk> streamResponse = requestOptions == null
-                ? client.chat().completions().createStreaming(request)
-                : client.chat().completions().createStreaming(request, requestOptions)) {
-            // Register the abort lever: StreamResponse.close() cancels the underlying OkHttp call — thread-safe and
-            // idempotent. If cancellation already fired, onCancel invokes close() synchronously now, so the stream
-            // read below unwinds through the catch blocks as a cancellation.
-            cancellation.onCancel(streamResponse::close);
-            mapper.consume(streamResponse.stream());
+        try (OpenAIStreamHandle handle = exchange.openStream(requestOptions, sink, aggregator)) {
+            // Register the abort lever: the handle's close() delegates to StreamResponse.close(), which cancels the
+            // underlying OkHttp call — thread-safe and idempotent. If cancellation already fired, onCancel invokes
+            // close() synchronously now, so the stream read below unwinds through the catch blocks as a cancellation.
+            cancellation.onCancel(handle::close);
+            handle.consume();
         } catch (LlmCallCancelledException e) {
             throw e;
         } catch (LlmClientException e) {
@@ -284,20 +282,53 @@ public class OpenAILlmClient implements LlmClient {
     }
 
     /**
+     * Picks the endpoint for this request and builds its parameters.
+     *
+     * <p>
+     * The model name is resolved once — the request's {@link LlmModel} overrides this client's configured model — and
+     * everything that varies per model comes back through the capability registry, so there is still no model-name
+     * string anywhere in this decision. That the name comes from the <em>request</em> is what makes the choice
+     * per-request rather than per-client: a {@code gpt-4o} compaction call inside a {@code gpt-5.x} session is the
+     * ordinary case, not an exotic one, and it must reach Chat Completions while its session reaches Responses.
+     *
+     * <p>
+     * Two conditions, answering two different questions. {@link ModelCapabilities#supportsReasoningTraceRoundTrip()}
+     * says what the <em>model</em> does; {@link OpenAIConfig#isResponsesApiEnabled()} says what this
+     * <em>deployment's endpoint</em> offers. A model whose capabilities could not be resolved degrades to
+     * {@link ModelCapabilities#unknown()}, whose answer is {@code false}, so an unresolvable model is never routed to
+     * the new endpoint.
+     *
+     * @param streamingOptions
+     *            when non-null, enables {@code stream_options.include_usage} per the caller's preference on the Chat
+     *            path; when null the request is built for the synchronous path. The Responses API has no counterpart
+     *            — its {@code stream_options} carries only {@code include_obfuscation} — because usage is not opt-in
+     *            there.
+     */
+    private OpenAIEndpointExchange exchangeFor(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
+            LlmModel modelConfig, LlmStreamingOptions streamingOptions) {
+        final String modelName = modelConfig.getName().orElse(config.getModel());
+        final ModelCapabilities capabilities = capabilitiesFor(modelName);
+
+        if (capabilities.supportsReasoningTraceRoundTrip() && config.isResponsesApiEnabled()) {
+            return new OpenAIResponsesExchange(client, responsesConverter,
+                    responsesRequestFactory.build(systemPrompt, messages, tools, modelConfig, capabilities, modelName),
+                    getProviderName(), this::reportDivergence);
+        }
+        return new OpenAIChatCompletionsExchange(client, converter, buildChatRequest(systemPrompt, messages, tools,
+                modelConfig, streamingOptions, capabilities, modelName));
+    }
+
+    /**
      * Builds a {@link ChatCompletionCreateParams} request shared by both the synchronous and streaming entry points.
      *
      * @param streamingOptions
      *            when non-null, enables {@code stream_options.include_usage} per the caller's preference; when null
      *            the request is built for the synchronous path.
      */
-    private ChatCompletionCreateParams buildRequest(String systemPrompt, List<Message> messages,
-            List<ToolDefinition> tools, LlmModel modelConfig, LlmStreamingOptions streamingOptions) {
+    private ChatCompletionCreateParams buildChatRequest(String systemPrompt, List<Message> messages,
+            List<ToolDefinition> tools, LlmModel modelConfig, LlmStreamingOptions streamingOptions,
+            ModelCapabilities capabilities, String modelName) {
         List<ChatCompletionMessageParam> chatMessages = buildChatMessages(systemPrompt, messages);
-
-        // The model name is resolved once and is the only thing this method knows about the model. Everything that
-        // varies per model comes back through the capability registry, so there is no model-name branching here.
-        final String modelName = modelConfig.getName().orElse(config.getModel());
-        final ModelCapabilities capabilities = capabilitiesFor(modelName);
 
         ChatCompletionCreateParams.Builder requestBuilder = ChatCompletionCreateParams.builder().model(modelName)
                 .messages(chatMessages)
@@ -337,25 +368,41 @@ public class OpenAILlmClient implements LlmClient {
      */
     private void applySamplingParameters(ChatCompletionCreateParams.Builder requestBuilder, LlmModel modelConfig,
             ModelCapabilities capabilities, String modelName) {
-        final Optional<Double> temperature = modelConfig.getTemperature().or(config::getTemperature);
-        final Optional<Double> topP = modelConfig.getTopP().or(config::getTopP);
-        final Optional<Double> presencePenalty = modelConfig.getPresencePenalty().or(config::getPresencePenalty);
-        final Optional<Double> frequencyPenalty = modelConfig.getFrequencyPenalty().or(config::getFrequencyPenalty);
+        // The rule itself lives in OpenAiRequestParameters, because it is the same rule on both endpoints and a
+        // second copy would drift silently. The reporter is this client's own method so that the WARN keeps this
+        // class's logger and its single once-per-signature set no matter which endpoint the request took.
+        OpenAiRequestParameters.applySampling(modelConfig, config, capabilities, modelName,
+                new ChatSamplingSink(requestBuilder), this::reportDivergence);
+    }
 
-        if (!capabilities.supportsSamplingParameters()) {
-            // Every suppressible value is one somebody set, so every suppression is worth reporting and an
-            // unconfigured request stays silent by construction rather than by a special case.
-            reportSuppressedSamplingParameter("temperature", temperature, modelName);
-            reportSuppressedSamplingParameter("topP", topP, modelName);
-            reportSuppressedSamplingParameter("presencePenalty", presencePenalty, modelName);
-            reportSuppressedSamplingParameter("frequencyPenalty", frequencyPenalty, modelName);
-            return;
+    /** Applies accepted sampling values to a Chat Completions request; all four parameters exist on this endpoint. */
+    private static final class ChatSamplingSink implements OpenAiRequestParameters.SamplingSink {
+
+        private final ChatCompletionCreateParams.Builder builder;
+
+        private ChatSamplingSink(ChatCompletionCreateParams.Builder builder) {
+            this.builder = builder;
         }
 
-        temperature.ifPresent(requestBuilder::temperature);
-        topP.ifPresent(requestBuilder::topP);
-        presencePenalty.ifPresent(requestBuilder::presencePenalty);
-        frequencyPenalty.ifPresent(requestBuilder::frequencyPenalty);
+        @Override
+        public void temperature(double value) {
+            builder.temperature(value);
+        }
+
+        @Override
+        public void topP(double value) {
+            builder.topP(value);
+        }
+
+        @Override
+        public void presencePenalty(double value) {
+            builder.presencePenalty(value);
+        }
+
+        @Override
+        public void frequencyPenalty(double value) {
+            builder.frequencyPenalty(value);
+        }
     }
 
     /**
@@ -371,13 +418,11 @@ public class OpenAILlmClient implements LlmClient {
      */
     private void applyReasoningEffort(ChatCompletionCreateParams.Builder requestBuilder, LlmModel modelConfig,
             ModelCapabilities capabilities, String modelName, List<ToolDefinition> tools) {
-        final Optional<ReasoningEffort> requested = modelConfig.getReasoningEffort().or(config::getReasoningEffort);
+        final Optional<ReasoningEffort> requested = OpenAiRequestParameters.requestedEffort(modelConfig, config);
 
         if (!capabilities.supportsReasoningEffort()) {
-            requested.ifPresent(effort -> reportDivergence("reasoningEffort=" + effort + "@" + modelName,
-                    "reasoningEffort {} is set on this request but {} takes no reasoning-effort parameter; it is "
-                            + "being omitted and the call will succeed without it.",
-                    effort, modelName));
+            requested.ifPresent(effort -> OpenAiRequestParameters.reportUnsupportedEffort(effort, modelName,
+                    this::reportDivergence));
             return;
         }
 
@@ -424,21 +469,6 @@ public class OpenAILlmClient implements LlmClient {
                     modelName, e.toString());
             return ModelCapabilities.unknown();
         }
-    }
-
-    /**
-     * Reports one sampling parameter that somebody configured and that the target model does not accept.
-     *
-     * <p>
-     * The wording deliberately says only that the value <em>is set on this request</em>. It cannot say who set it: a
-     * subagent turn carries a temperature from {@code SubagentLlmDefaults}, not from an operator, and nothing at this
-     * point distinguishes the two.
-     */
-    private void reportSuppressedSamplingParameter(String name, Optional<Double> value, String modelName) {
-        value.ifPresent(v -> reportDivergence(name + "=" + v + "@" + modelName,
-                "{} {} is set on this request but {} does not accept sampling parameters; it is being omitted and the "
-                        + "call will succeed without it.",
-                name, v, modelName));
     }
 
     /**
@@ -516,66 +546,5 @@ public class OpenAILlmClient implements LlmClient {
         chatMessages.addAll(converter.convertMessages(messages));
 
         return chatMessages;
-    }
-
-    /**
-     * Converts OpenAI response to aimon LlmResponse.
-     *
-     * @param result
-     *            The OpenAI chat completion result
-     * @return The aimon LlmResponse
-     */
-    private LlmResponse convertResponse(ChatCompletion result) {
-        if (result.choices() == null || result.choices().isEmpty()) {
-            throw new LlmInvalidRequestException("No choices in OpenAI response");
-        }
-
-        var choice = result.choices().get(0);
-        var message = choice.message();
-
-        // Log warning if response was truncated, and map the finish reason to the provider-neutral enum so
-        // aimon-core can detect truncation (length) without knowing OpenAI's raw vocabulary.
-        var finishReason = choice.finishReason();
-        final String finishReasonWire = finishReason == null ? null : finishReason.toString();
-        if ("length".equals(finishReasonWire)) {
-            log.warn("OpenAI response was truncated due to max_tokens limit");
-        }
-        final at.aimon.core.llm.StopReason neutralStopReason = OpenAiStopReasons.fromWire(finishReasonWire);
-
-        String textContent = message.content().orElse("");
-        List<ToolUse> toolUses = new ArrayList<>();
-
-        // Convert tool calls to tool uses
-        if (message.toolCalls().isPresent() && !message.toolCalls().get().isEmpty()) {
-            for (ChatCompletionMessageToolCall toolCall : message.toolCalls().get()) {
-                if (toolCall.function().isPresent()) {
-                    ChatCompletionMessageFunctionToolCall functionCall = toolCall.function().get();
-                    Map<String, Object> input = converter.parseJsonToMap(functionCall.function().arguments());
-
-                    ToolUse toolUse = ToolUse.of(functionCall.id(), functionCall.function().name(), input);
-                    toolUses.add(toolUse);
-                }
-            }
-        }
-
-        TokenUsage tokenUsage = extractTokenUsage(result);
-        return LlmResponse.of(textContent, toolUses, tokenUsage, neutralStopReason);
-    }
-
-    /**
-     * Extracts token usage from OpenAI response.
-     *
-     * @param result
-     *            The OpenAI chat completion result
-     * @return The token usage (never null)
-     */
-    private TokenUsage extractTokenUsage(ChatCompletion result) {
-        if (result.usage().isEmpty()) {
-            return TokenUsage.empty();
-        }
-
-        var usage = result.usage().get();
-        return TokenUsage.of(Math.toIntExact(usage.promptTokens()), Math.toIntExact(usage.completionTokens()),
-                Math.toIntExact(usage.totalTokens()));
     }
 }

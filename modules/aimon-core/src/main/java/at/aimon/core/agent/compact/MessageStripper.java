@@ -73,7 +73,13 @@ public final class MessageStripper {
 
     private Message stripMessage(Message original) {
         // Tool messages have no content blocks but still carry tool_result text that may need redaction.
-        if (!original.hasNonTextContentBlocks() && !needsTextRewrite(original)) {
+        //
+        // hasReasoningTraces() is in the guard so that shedding a reasoning payload is unconditional rather than a
+        // side effect of some other rewrite. Without it, a text-only assistant turn would take this identity fast
+        // path and carry its provider payloads -- far larger than the text of the turn -- into the summarization
+        // call, and the "compaction bounds a long reasoning session" claim would be true only for messages that
+        // happened to need stripping for another reason.
+        if (!original.hasNonTextContentBlocks() && !original.hasReasoningTraces() && !needsTextRewrite(original)) {
             return original;
         }
         final List<ContentBlock> stripped = new ArrayList<>(original.getContentBlocks().size());
@@ -103,6 +109,18 @@ public final class MessageStripper {
         return TextContentBlock.of(redactor.isNoop() ? text : redactor.redact(text));
     }
 
+    /**
+     * Rebuilds one message from its stripped blocks.
+     *
+     * <p>
+     * An assistant message's {@link at.aimon.core.llm.ReasoningTrace}s are <em>deliberately dropped</em> here, and
+     * that is a choice rather than an omission: this method reconstructs through {@code Message.assistant(...)},
+     * which yields none. A stripped message keeps its tool uses, so dropping the traces can never leave a provider
+     * with a reasoning item whose following call is gone — the shape OpenAI is documented to reject. The reverse
+     * (keeping traces while dropping calls) could, which is why the asymmetry is written down instead of being
+     * inferred from the code. It also bounds transcript growth: a long reasoning session sheds its payloads at
+     * compaction.
+     */
     private Message rebuild(Message original, List<ContentBlock> strippedBlocks) {
         return switch (original.getRole()) {
             case USER -> Message.user(strippedBlocks);

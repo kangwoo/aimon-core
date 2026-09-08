@@ -1743,14 +1743,16 @@ public class OrcaAgentExecutor
                             if (truncated) {
                                 final String flaggedAnswer = response.getTextContent() + TRUNCATION_MARKER;
                                 scope.transcriptBuffer
-                                        .addMessage(Message.assistant(flaggedAnswer, response.getToolUses()));
+                                        .addMessage(Message.assistant(flaggedAnswer, response.getToolUses())
+                                                .withReasoningTraces(response.getReasoningTraces()));
                                 scope.eventDispatcher.emitIterationCompleted(iterationCount, false);
                                 scope.eventDispatcher.emitExecutionCompleted(iterationCount,
                                         CompletionReason.TRUNCATED);
                                 return createTruncatedResult(scope, flaggedAnswer, iterationCount, accumulatedTokens);
                             }
                             scope.transcriptBuffer
-                                    .addMessage(Message.assistant(response.getTextContent(), response.getToolUses()));
+                                    .addMessage(Message.assistant(response.getTextContent(), response.getToolUses())
+                                            .withReasoningTraces(response.getReasoningTraces()));
                             // STREAM-03: iteration-complete + execution-complete(COMPLETED) for the terminal-success
                             // path.
                             scope.eventDispatcher.emitIterationCompleted(iterationCount, false);
@@ -1773,8 +1775,9 @@ public class OrcaAgentExecutor
                                 .sliceFrom(artifactCountBefore).stream().map(FileArtifact::toMessageArtifact).toList();
 
                         // Add assistant response with artifacts to conversation
-                        scope.transcriptBuffer.addMessage(Message.assistant(response.getTextContent(),
-                                response.getToolUses(), iterationArtifacts));
+                        scope.transcriptBuffer.addMessage(
+                                Message.assistant(response.getTextContent(), response.getToolUses(), iterationArtifacts)
+                                        .withReasoningTraces(response.getReasoningTraces()));
 
                         if (!toolUseResults.isEmpty()) {
                             scope.transcriptBuffer.addMessage(Message.toolUseResults(toolUseResults));

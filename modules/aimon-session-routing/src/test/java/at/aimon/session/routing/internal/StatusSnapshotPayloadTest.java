@@ -177,4 +177,52 @@ class StatusSnapshotPayloadTest {
         }
         return value;
     }
+
+    @Test
+    @DisplayName("reasoning tokens round-trip on both the totals and the turn-progress maps")
+    void reasoningTokensRoundTrip() {
+        final TurnProgress turn = TurnProgress.of(2, TokenUsage.of(10, 5, 15, 4), Duration.ofMillis(250),
+                ExecutionBudget.unlimited());
+        final LiveSessionStatus original = LiveSessionStatus.builder().sessionId(CONV).phase(Phase.RUNNING)
+                .interruptible(true).queueDepth(0).turnProgress(turn)
+                .sessionTotals(SessionTotals.of(4, 9, TokenUsage.of(100, 50, 150, 30))).build();
+
+        final Decoded decoded = StatusSnapshotPayload
+                .fromPayload(CONV, StatusSnapshotPayload.toPayload(original, 1L, Instant.ofEpochMilli(1L)))
+                .orElseThrow();
+
+        assertThat(decoded.status().getSessionTotals().getTokenUsage().getReasoningTokens()).isEqualTo(30);
+        assertThat(decoded.status().getTurnProgress().orElseThrow().getTokenUsage().getReasoningTokens()).isEqualTo(4);
+    }
+
+    @Test
+    @DisplayName("a payload from an older node, with no reasoning key, decodes to zero instead of being dropped")
+    void aPayloadWithoutTheReasoningKeyDecodesToZero() {
+        // The rolling-upgrade trap. PayloadValues.asInt is
+        // ((Number) Objects.requireNonNull(value, ...)).intValue(), so reading the new key with it would NPE on a map
+        // an old node wrote -- and fromPayload catches RuntimeException and returns empty, so the whole status signal
+        // would be silently discarded rather than one counter reading zero.
+        final Map<String, Object> payload = new java.util.LinkedHashMap<>(
+                StatusSnapshotPayload.toPayload(runningStatus(), 1L, Instant.ofEpochMilli(1L)));
+        stripReasoningKey(payload, StatusSnapshotPayload.KEY_TOTALS);
+        stripReasoningKey(payload, StatusSnapshotPayload.KEY_TURN);
+
+        final Optional<Decoded> decoded = StatusSnapshotPayload.fromPayload(CONV, payload);
+
+        assertThat(decoded).as("an old node's payload is decoded, not dropped").isPresent();
+        assertThat(decoded.orElseThrow().status().getSessionTotals().getTokenUsage().getReasoningTokens()).isZero();
+        assertThat(decoded.orElseThrow().status().getTurnProgress().orElseThrow().getTokenUsage().getReasoningTokens())
+                .isZero();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void stripReasoningKey(Map<String, Object> payload, String outerKey) {
+        final Object nested = payload.get(outerKey);
+        if (nested instanceof Map<?, ?> map) {
+            final Map<String, Object> copy = new java.util.LinkedHashMap<>((Map<String, Object>) map);
+            copy.remove(StatusSnapshotPayload.KEY_REASONING_TOKENS);
+            payload.put(outerKey, copy);
+        }
+    }
+
 }

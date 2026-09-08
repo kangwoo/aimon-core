@@ -33,17 +33,20 @@ public final class ModelCapabilities {
     private static final boolean DEFAULT_SUPPORTS_SAMPLING_PARAMETERS = true;
     private static final boolean DEFAULT_SUPPORTS_REASONING_EFFORT = false;
     private static final boolean DEFAULT_SUPPORTS_TOOLS_WITH_REASONING = true;
+    private static final boolean DEFAULT_SUPPORTS_REASONING_TRACE_ROUND_TRIP = false;
 
     private static final ModelCapabilities UNKNOWN = builder().build();
 
     private final boolean supportsSamplingParameters;
     private final boolean supportsReasoningEffort;
     private final boolean supportsToolsWithReasoning;
+    private final boolean supportsReasoningTraceRoundTrip;
 
     private ModelCapabilities(Builder builder) {
         this.supportsSamplingParameters = builder.supportsSamplingParameters;
         this.supportsReasoningEffort = builder.supportsReasoningEffort;
         this.supportsToolsWithReasoning = builder.supportsToolsWithReasoning;
+        this.supportsReasoningTraceRoundTrip = builder.supportsReasoningTraceRoundTrip;
     }
 
     /**
@@ -103,14 +106,35 @@ public final class ModelCapabilities {
      *
      * <p>
      * This one is endpoint-flavoured: it means "on the request surface the resolving client uses". The framework's
-     * built-in table describes OpenAI's Chat Completions endpoint because that is the only surface
-     * {@code aimon-llm-openai} has. A model whose answer is {@code false} still reasons on a tool-less call — a
-     * provider clamps to {@link at.aimon.core.llm.ReasoningEffort#NONE} only when tools are actually present.
+     * built-in table describes OpenAI's <em>Chat Completions</em> endpoint, and that is now stated rather than
+     * implied: {@code aimon-llm-openai} reads this flag only on that path. A model whose answer is {@code false}
+     * still reasons on a tool-less call — a provider clamps to {@link at.aimon.core.llm.ReasoningEffort#NONE} only
+     * when tools are actually present — and on an endpoint where tools and reasoning coexist the flag is not read at
+     * all. {@code gpt-5} is exactly that case: it answers {@code false} here, and in the shipped default
+     * configuration it no longer reaches this path because {@link #supportsReasoningTraceRoundTrip()} routes it to a
+     * surface with no such conflict. The flag stays reachable, and stays correct, the moment that route is turned off.
      *
      * @return {@code true} when tools and reasoning may be combined
      */
     public boolean supportsToolsWithReasoning() {
         return supportsToolsWithReasoning;
+    }
+
+    /**
+     * Whether the model returns reasoning traces that a client may send back on the next turn, and whether doing so is
+     * what keeps the reasoning alive across a tool call.
+     *
+     * <p>
+     * This is the provider-neutral fact, not an endpoint: OpenAI's answer to it is "use {@code /v1/responses} and
+     * replay the reasoning items", Anthropic's is "send the thinking blocks back", and neither vocabulary belongs in
+     * this type. A client that reads {@code true} is expected to capture
+     * {@link at.aimon.core.llm.ReasoningTrace}s from the response and replay its own on the next request; a client
+     * that reads {@code false} behaves exactly as it did before this flag existed.
+     *
+     * @return {@code true} when reasoning traces round-trip for this model
+     */
+    public boolean supportsReasoningTraceRoundTrip() {
+        return supportsReasoningTraceRoundTrip;
     }
 
     @Override
@@ -124,19 +148,22 @@ public final class ModelCapabilities {
         final ModelCapabilities that = (ModelCapabilities) o;
         return supportsSamplingParameters == that.supportsSamplingParameters
                 && supportsReasoningEffort == that.supportsReasoningEffort
-                && supportsToolsWithReasoning == that.supportsToolsWithReasoning;
+                && supportsToolsWithReasoning == that.supportsToolsWithReasoning
+                && supportsReasoningTraceRoundTrip == that.supportsReasoningTraceRoundTrip;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(supportsSamplingParameters, supportsReasoningEffort, supportsToolsWithReasoning);
+        return Objects.hash(supportsSamplingParameters, supportsReasoningEffort, supportsToolsWithReasoning,
+                supportsReasoningTraceRoundTrip);
     }
 
     @Override
     public String toString() {
         return "ModelCapabilities{" + "supportsSamplingParameters=" + supportsSamplingParameters
                 + ", supportsReasoningEffort=" + supportsReasoningEffort + ", supportsToolsWithReasoning="
-                + supportsToolsWithReasoning + '}';
+                + supportsToolsWithReasoning + ", supportsReasoningTraceRoundTrip=" + supportsReasoningTraceRoundTrip
+                + '}';
     }
 
     /**
@@ -150,6 +177,7 @@ public final class ModelCapabilities {
         private boolean supportsSamplingParameters = DEFAULT_SUPPORTS_SAMPLING_PARAMETERS;
         private boolean supportsReasoningEffort = DEFAULT_SUPPORTS_REASONING_EFFORT;
         private boolean supportsToolsWithReasoning = DEFAULT_SUPPORTS_TOOLS_WITH_REASONING;
+        private boolean supportsReasoningTraceRoundTrip = DEFAULT_SUPPORTS_REASONING_TRACE_ROUND_TRIP;
 
         private Builder() {
         }
@@ -181,6 +209,16 @@ public final class ModelCapabilities {
          */
         public Builder supportsToolsWithReasoning(boolean supportsToolsWithReasoning) {
             this.supportsToolsWithReasoning = supportsToolsWithReasoning;
+            return this;
+        }
+
+        /**
+         * @param supportsReasoningTraceRoundTrip
+         *            {@code true} when the model returns reasoning traces a client should replay on the next turn
+         * @return This builder
+         */
+        public Builder supportsReasoningTraceRoundTrip(boolean supportsReasoningTraceRoundTrip) {
+            this.supportsReasoningTraceRoundTrip = supportsReasoningTraceRoundTrip;
             return this;
         }
 
