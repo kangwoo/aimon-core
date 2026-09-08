@@ -29,7 +29,8 @@ import at.aimon.core.llm.streaming.LlmStreamSink;
  * Mirrors {@link OpenAIStreamingMapper}'s shape — per-event dispatch, then exactly one {@code STREAM_END} after the
  * stream is drained. Draining before closing matters beyond symmetry: {@link ChunkAggregator#toLlmResponse()} throws
  * if it is reached unclosed, and the client calls it <em>outside</em> its try, so an unclosed aggregator would escape
- * unmapped. The two throwing events below unwind before the drain finishes, which is exactly what they are for.
+ * unmapped. The three throwing arms below — {@code response.failed}, {@code response.error}, and a terminal event
+ * whose nested status is itself a failure — unwind before the drain finishes, which is exactly what they are for.
  *
  * <p>
  * <strong>Reasoning items are taken from {@code response.output_item.done}, not from the terminal response.</strong>
@@ -146,7 +147,25 @@ final class OpenAIResponsesStreamingMapper {
         aggregator.finalizeToolCall(slot).ifPresent(toolUse -> sink.accept(LlmStreamChunk.toolUseReady(slot, toolUse)));
     }
 
+    /**
+     * Records the terminal event's usage and status — or fails, when that status says the turn did not produce an
+     * answer.
+     *
+     * <p>
+     * The check mirrors {@code OpenAIResponsesExchange.convertResponse}, and it is here for the same reason it is
+     * there: without it a {@code response.completed} whose nested {@code response.status} is {@code failed} or
+     * {@code cancelled} would close the aggregator normally and yield a successful {@link at.aimon.core.llm.LlmResponse
+     * LlmResponse} with {@link StopReason#UNKNOWN} — the silent success the executor accepts as the assistant's final
+     * answer, which is precisely what {@link OpenAiResponseErrors} exists to prevent. A conforming provider sends
+     * {@code response.failed} for that condition and never reaches here; a gateway that does not, must not be able to
+     * turn a failure into an empty answer by picking the wrong event type. The throw happens inside
+     * {@code consume(...)}, so it lands in the client's cascade exactly as the two throwing event arms above do.
+     */
     private void captureTerminal(Response response) {
+        if (OpenAiResponseErrors.isFailureStatus(response)) {
+            throw OpenAiResponseErrors.fromResponse(response, "OpenAI streaming call failed");
+        }
+
         this.lastUsage = OpenAiResponseUsages.toTokenUsage(response.usage());
         this.lastStatus = response.status().map(status -> status._value().asString().orElse(null)).orElse(null);
         this.lastIncompleteReason = response.incompleteDetails().flatMap(Response.IncompleteDetails::reason)
@@ -154,7 +173,8 @@ final class OpenAIResponsesStreamingMapper {
     }
 
     private void emitStreamEnd() {
-        final OpenAIResponsesMessageConverter.Output output = converter.convertOutput(completedItems, providerName);
+        final OpenAIResponsesMessageConverter.Output output = converter.convertStreamedOutput(completedItems,
+                providerName);
         for (ReasoningTrace trace : output.getReasoningTraces()) {
             aggregator.addReasoningTrace(trace);
         }

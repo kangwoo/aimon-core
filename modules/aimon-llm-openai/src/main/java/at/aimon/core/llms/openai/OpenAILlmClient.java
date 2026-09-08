@@ -443,9 +443,10 @@ public class OpenAILlmClient implements LlmClient {
      * Resolves the model's capabilities, degrading to {@link ModelCapabilities#unknown()} if the registry misbehaves.
      *
      * <p>
-     * The registry is caller-supplied, and {@link #buildRequest} runs <em>outside</em> the streaming path's
-     * try-with-resources: an exception escaping here would bypass both the exception mapper and the cancellation
-     * classification. Swallowing it applies this SPI's own fail-open rule to the SPI itself, so a third-party bug
+     * The registry is caller-supplied, and {@link #exchangeFor} — this method's only caller — runs <em>outside</em>
+     * the streaming path's try-with-resources: an exception escaping here would bypass both the exception mapper and
+     * the cancellation classification. Swallowing it applies this SPI's own fail-open rule to the SPI itself, so a
+     * third-party bug
      * costs a warning rather than the request.
      */
     private ModelCapabilities capabilitiesFor(String modelName) {
@@ -481,8 +482,9 @@ public class OpenAILlmClient implements LlmClient {
      * indistinguishable from it not happening.
      *
      * <p>
-     * Once per signature rather than once per call because this runs inside {@link #buildRequest}, which runs on every
-     * ReAct iteration: a value set once in an agent definition would otherwise warn for the lifetime of the process.
+     * Once per signature rather than once per call because its callers — {@link #exchangeFor} and everything it
+     * builds a request through, plus the converters and the stream mapper — all run on every ReAct iteration: a value
+     * set once in an agent definition would otherwise warn for the lifetime of the process.
      *
      * @param signature
      *            parameter, value and model, the key that decides whether this has already been said

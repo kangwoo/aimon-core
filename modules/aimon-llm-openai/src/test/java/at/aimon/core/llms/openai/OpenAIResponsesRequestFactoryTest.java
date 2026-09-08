@@ -20,7 +20,9 @@ import com.openai.models.responses.ResponseCreateParams;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.ReasoningEffort;
+import at.aimon.core.llm.ReasoningTrace;
 import at.aimon.core.llm.ToolDefinition;
+import at.aimon.core.llm.ToolUse;
 import at.aimon.core.llm.capability.InMemoryModelCapabilityRegistry;
 import at.aimon.core.llm.capability.ModelCapabilities;
 import at.aimon.core.llms.openai.exception.ToolConversionException;
@@ -163,6 +165,44 @@ class OpenAIResponsesRequestFactoryTest {
                 "custom-reasoner");
 
         assertThat(reported).containsExactlyInAnyOrder("presencePenalty", "frequencyPenalty");
+    }
+
+    @Test
+    @DisplayName("a trace anchored to a call this message does not carry is reported rather than silently dropped")
+    void anOrphanedTraceIsReported() {
+        // The emit rule sends unanchored traces first and each anchored trace in front of its own call, so a trace
+        // whose anchor names a call that is not here is sent by neither loop. Dropping it stays right -- there is no
+        // item to put it in front of -- but the module reports its other two drop reasons (a foreign author, an
+        // unparseable payload), and an omission nobody announces is one nobody can diagnose from the outside.
+        //
+        // Not reachable through in-tree callers today; a caller assembling a Message by hand can reach it.
+        final ReasoningTrace orphan = ReasoningTrace.builder().providerName("OpenAI")
+                .payload("{\"type\":\"reasoning\",\"id\":\"rs_1\",\"summary\":[]}").toolUseId("call_gone").build();
+        final Message assistant = Message.assistant("", List.of(ToolUse.of("call_here", "Bash", Map.of())))
+                .withReasoningTraces(List.of(orphan));
+        final List<String> reported = new java.util.ArrayList<>();
+
+        factoryFor(config(), (signature, message, args) -> reported.add(signature)).build("sys", List.of(assistant),
+                List.of(), LlmModel.builder().build(), GPT5, "gpt-5.6-terra");
+
+        assertThat(reported).containsExactly("orphanedReasoningTrace@OpenAI");
+    }
+
+    @Test
+    @DisplayName("a trace anchored to a call the message does carry is not reported")
+    void anAnchoredTraceIsNotReported() {
+        // The arm that keeps the one above honest: reporting every anchored trace would be just as wrong as
+        // reporting none, and would train an operator to ignore the signal.
+        final ReasoningTrace anchored = ReasoningTrace.builder().providerName("OpenAI")
+                .payload("{\"type\":\"reasoning\",\"id\":\"rs_1\",\"summary\":[]}").toolUseId("call_here").build();
+        final Message assistant = Message.assistant("", List.of(ToolUse.of("call_here", "Bash", Map.of())))
+                .withReasoningTraces(List.of(anchored));
+        final List<String> reported = new java.util.ArrayList<>();
+
+        factoryFor(config(), (signature, message, args) -> reported.add(signature)).build("sys", List.of(assistant),
+                List.of(), LlmModel.builder().build(), GPT5, "gpt-5.6-terra");
+
+        assertThat(reported).isEmpty();
     }
 
     private static ToolDefinition aTool() {

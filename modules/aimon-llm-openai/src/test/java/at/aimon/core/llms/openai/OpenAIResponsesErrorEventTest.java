@@ -72,6 +72,17 @@ class OpenAIResponsesErrorEventTest {
                 + "\"sequence_number\":1}";
     }
 
+    /**
+     * A terminal event carrying a nested failure status — the shape a conforming provider never sends, because it
+     * sends {@code response.failed} instead.
+     */
+    private static String completedEventWithStatus(String status, String code, String message) {
+        return "{\"type\":\"response.completed\",\"sequence_number\":1,\"response\":{\"id\":\"r\","
+                + "\"created_at\":1,\"model\":\"m\",\"object\":\"response\",\"parallel_tool_calls\":true,"
+                + "\"tool_choice\":\"auto\",\"tools\":[],\"status\":\"" + status + "\",\"output\":[],"
+                + "\"error\":{\"code\":\"" + code + "\",\"message\":\"" + message + "\"}}}";
+    }
+
     private static String failedEvent(String code, String message) {
         return "{\"type\":\"response.failed\",\"sequence_number\":1,\"response\":{\"id\":\"r\",\"created_at\":1,"
                 + "\"model\":\"m\",\"object\":\"response\",\"parallel_tool_calls\":true,\"tool_choice\":\"auto\","
@@ -167,6 +178,39 @@ class OpenAIResponsesErrorEventTest {
         assertThatThrownBy(() -> client.sendMessage("sys", List.of(Message.user("hi")), Collections.emptyList(),
                 LlmModel.builder().build())).isInstanceOf(LlmClientException.class)
                         .hasMessageContaining("cancelled");
+    }
+
+    @Test
+    @DisplayName("a terminal event whose nested status is failed is an exception, not an empty success")
+    void terminalEventCarryingAFailureStatusIsAnException() {
+        // The streaming half of what the blocking path checks in convertResponse. Without the same isFailureStatus
+        // guard in captureTerminal, this stream closes the aggregator normally and hands the executor a successful
+        // LlmResponse with empty text and StopReason.UNKNOWN -- the silent success this whole area exists to prevent,
+        // and the one shape where "the provider failed" and "the assistant had nothing to say" are indistinguishable.
+        final Throwable thrown = streamThrowing(completedEventWithStatus("failed", "server_error", "boom"));
+
+        assertThat(thrown).isInstanceOf(LlmOverloadedException.class).hasMessageContaining("boom");
+    }
+
+    @Test
+    @DisplayName("a terminal event whose nested status is cancelled fails the same way")
+    void terminalEventCarryingACancelledStatusIsAnException() {
+        // isFailureStatus covers four statuses, not one. Asserting a second of them keeps a fix narrowed to
+        // "failed" from passing.
+        final Throwable thrown = streamThrowing(completedEventWithStatus("cancelled", "server_error", "stopped"));
+
+        assertThat(thrown).isInstanceOf(LlmClientException.class).hasMessageContaining("stopped");
+    }
+
+    @Test
+    @DisplayName("a terminal event whose nested status is completed is still an ordinary success")
+    void terminalEventCarryingACompletedStatusStillSucceeds() {
+        // The guard must not turn every terminal event into a failure. This is the arm that keeps the two above
+        // honest.
+        assertThat(streamThrowing("{\"type\":\"response.completed\",\"sequence_number\":1,\"response\":"
+                + "{\"id\":\"r\",\"created_at\":1,\"model\":\"m\",\"object\":\"response\","
+                + "\"parallel_tool_calls\":true,\"tool_choice\":\"auto\",\"tools\":[],"
+                + "\"status\":\"completed\",\"output\":[]}}")).as("a healthy terminal event must not throw").isNull();
     }
 
     @Test

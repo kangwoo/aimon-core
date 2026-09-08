@@ -241,6 +241,15 @@ Central is versioned independently).
   `OpenAIMessageConverter` is not opened, and a message carrying reasoning traces produces a
   byte-identical Chat request to the same message without them.
 
+- **Two follow-ups to the above, applied.** A tool call whose `arguments` are not JSON now raises the
+  same `MessageConversionException` on the Responses blocking path that Chat Completions has always
+  raised for the same bytes, instead of running the tool with an empty input map — user-visible, and
+  the reason is that an empty map is a *different* answer, not a smaller one. Streaming is unchanged
+  and still degrades, because there `ChunkAggregator` owns those bytes for every provider. Separately,
+  a streamed `response.completed` whose nested `status` is `failed` or `cancelled` now fails the call
+  as the blocking path already did, instead of returning an empty success; no conforming provider
+  sends that shape, so nobody in-tree can hit it.
+
 - **Not started, by design: the Anthropic half.** `AnthropicLlmClient` still ignores
   `ThinkingBlock`/`RedactedThinkingBlock`, and `AnthropicStreamingMapper` still does not surface
   thinking deltas. The slot is designed to fit them — signature-carrying blocks round-trip byte-exact

@@ -4,9 +4,11 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,8 +50,9 @@ import at.aimon.core.llms.openai.exception.ToolConversionException;
  * converter already does rather than against the Responses API in isolation: the same {@code "Error: "} prefix on a
  * failed tool result, the same {@code data:} URL for a base64 image, the same {@code [File: …]} header (and the same
  * absence of it when the document has no file name), the same {@code MessageConversionException} for a non-text
- * document and for an unknown block type, the same {@code IllegalArgumentException} for an unsupported role, and the
- * same per-tool {@link ToolConversionException} wrapping with the same message.
+ * document and for an unknown block type, the same {@code IllegalArgumentException} for an unsupported role, the same
+ * per-tool {@link ToolConversionException} wrapping with the same message, and — on the read side — the same
+ * {@code MessageConversionException} for a tool call whose {@code arguments} are not JSON ({@link #parseArguments}).
  *
  * <p>
  * {@link OpenAIMessageConverter} is deliberately <em>not</em> opened or reused: it returns Chat Completions types
@@ -179,6 +182,39 @@ final class OpenAIResponsesMessageConverter {
                 }
             }
             out.add(ResponseInputItem.ofFunctionCall(toFunctionCall(toolUse)));
+        }
+
+        // 4. anything left over. A trace anchored to a call this message does not carry is emitted by neither loop
+        // above, and dropping it is still the right thing for the wire -- there is no item to put it in front of.
+        // Saying so is what the other two drop reasons already do; a silent omission is the one shape an operator
+        // cannot diagnose from the outside.
+        reportOrphanedTraces(traces, message.getToolUses(), providerName, reporter);
+    }
+
+    /**
+     * Reports traces anchored to a tool call that is not in this message.
+     *
+     * <p>
+     * Not reachable through in-tree code today — {@code MessageStripper} drops traces rather than calls,
+     * {@code DefaultCompactionEngine} carries survivors whole, and the emit rule preserves both lists — so this is the
+     * module's house style applied to a branch that only a caller assembling a {@link Message} by hand can reach,
+     * rather than a fix for an observed fault.
+     */
+    private void reportOrphanedTraces(List<ReasoningTrace> traces, List<ToolUse> toolUses, String providerName,
+            OpenAIDivergenceReporter reporter) {
+        if (traces.isEmpty()) {
+            return;
+        }
+        final Set<String> present = new HashSet<>();
+        for (ToolUse toolUse : toolUses) {
+            present.add(toolUse.getId());
+        }
+        for (ReasoningTrace trace : traces) {
+            trace.getToolUseId().filter(id -> !present.contains(id))
+                    .ifPresent(id -> reporter.report("orphanedReasoningTrace@" + providerName,
+                            "A stored {} reasoning trace is anchored to tool call {}, which this message does not "
+                                    + "carry; it is being dropped and the model will re-derive that reasoning.",
+                            providerName, id));
         }
     }
 
@@ -322,6 +358,11 @@ final class OpenAIResponsesMessageConverter {
      * follows it</em>, or to nothing when none does. So {@code [r1, call_1, r2, call_2]} round-trips exactly, and both
      * {@code [r1, msg]} and {@code [r1, r2, call_1]} degenerate correctly.
      *
+     * <p>
+     * This is the <strong>blocking</strong> path's read, and it is the only one that reads a tool call's content:
+     * {@link #parseArguments} throws on malformed JSON, exactly as the Chat converter does for the same bytes. The
+     * streaming path takes {@link #convertStreamedOutput} instead — see the note there for why the two differ.
+     *
      * @param items
      *            the output items in the provider's own order (must not be null)
      * @param providerName
@@ -329,6 +370,47 @@ final class OpenAIResponsesMessageConverter {
      * @return the split output
      */
     Output convertOutput(List<ResponseOutputItem> items, String providerName) {
+        return scanOutput(items, providerName, true);
+    }
+
+    /**
+     * The streaming path's read of the same items: reasoning traces with their anchors, and whether the turn made tool
+     * calls at all.
+     *
+     * <p>
+     * <strong>It deliberately does not read a tool call's text or its arguments</strong>, because on that path the
+     * {@link at.aimon.core.llm.streaming.ChunkAggregator ChunkAggregator} is the authority for both — it accumulates
+     * the argument deltas and parses them itself, and the text buffer is fed by {@code response.output_text.delta}.
+     * Building either here produced a value the caller discarded, and once {@link #parseArguments} throws (the
+     * blocking path's parity with Chat) that discarded work would have become a way for a malformed
+     * {@code arguments} string to kill a stream whose tool call the aggregator had already handled by degrading it.
+     * Narrowing the read is what keeps that from happening.
+     *
+     * <p>
+     * The anchor scan is shared with {@link #convertOutput} rather than duplicated, so the ordering rule this class
+     * exists to enforce has exactly one implementation.
+     *
+     * @param items
+     *            the completed output items in the provider's own order (must not be null)
+     * @param providerName
+     *            this client's provider name (must not be null)
+     * @return the split output, with an empty text buffer and an empty tool-use list
+     */
+    Output convertStreamedOutput(List<ResponseOutputItem> items, String providerName) {
+        return scanOutput(items, providerName, false);
+    }
+
+    /**
+     * The one implementation of the capture rule.
+     *
+     * @param readContent
+     *            whether to read what the items <em>say</em> — the assistant text and each {@code function_call}'s
+     *            name and arguments. {@code false} still visits every item, because the anchor rule and
+     *            {@link Output#hasToolCalls()} depend on the structure rather than on the content; it just leaves the
+     *            text buffer and the tool-use list empty. The streaming path passes {@code false} because
+     *            {@link at.aimon.core.llm.streaming.ChunkAggregator ChunkAggregator} owns both of those there.
+     */
+    private Output scanOutput(List<ResponseOutputItem> items, String providerName, boolean readContent) {
         Objects.requireNonNull(items, "items cannot be null");
         Objects.requireNonNull(providerName, "providerName cannot be null");
 
@@ -338,6 +420,7 @@ final class OpenAIResponsesMessageConverter {
         final List<ResponseReasoningItem> pending = new ArrayList<>();
         boolean sawReasoning = false;
         boolean sawEncryptedContent = false;
+        boolean sawToolCall = false;
 
         for (ResponseOutputItem item : items) {
             if (item.isReasoning()) {
@@ -354,8 +437,11 @@ final class OpenAIResponsesMessageConverter {
                     traces.add(OpenAiReasoningTraces.toTrace(reasoning, providerName, callId));
                 }
                 pending.clear();
-                toolUses.add(ToolUse.of(callId, call.name(), parseArguments(call.arguments())));
-            } else if (item.isMessage()) {
+                sawToolCall = true;
+                if (readContent) {
+                    toolUses.add(ToolUse.of(callId, call.name(), parseArguments(call.arguments())));
+                }
+            } else if (item.isMessage() && readContent) {
                 appendMessageText(item.asMessage(), text);
             }
         }
@@ -364,7 +450,8 @@ final class OpenAIResponsesMessageConverter {
         }
 
         return Output.builder().text(text.toString()).toolUses(toolUses).reasoningTraces(traces)
-                .reasoningItemsSeen(sawReasoning).encryptedContentSeen(sawEncryptedContent).build();
+                .toolCallsSeen(sawToolCall).reasoningItemsSeen(sawReasoning).encryptedContentSeen(sawEncryptedContent)
+                .build();
     }
 
     private static void appendMessageText(ResponseOutputMessage message, StringBuilder text) {
@@ -375,6 +462,26 @@ final class OpenAIResponsesMessageConverter {
         }
     }
 
+    /**
+     * Parses a tool call's {@code arguments} into the {@link ToolUse} input map.
+     *
+     * <p>
+     * <strong>Malformed JSON throws</strong>, with the same exception type and the same message as
+     * {@link OpenAIMessageConverter}'s {@code parseJsonToMap} for the same bytes. Degrading to an empty map instead
+     * was the alternative, and it was rejected on two grounds: it would make the endpoint a caller can switch with one
+     * config flag report a different outcome for identical provider output, which is the one thing this class exists
+     * to prevent; and an empty map is not a smaller answer but a <em>different</em> one — a tool whose parameters are
+     * all optional would then run with its defaults, having been told the model asked for nothing, when in fact what
+     * the model asked for could not be read. Refusing to invent input is the same rule {@link #toFunctionCall} states
+     * about the item id.
+     *
+     * <p>
+     * The streaming path is not held to this and is not meant to be: there the argument bytes arrive as deltas and
+     * {@link at.aimon.core.llm.streaming.ChunkAggregator ChunkAggregator} parses them, degrading to an empty map with
+     * a warning, for every provider AIMON has. That blocking/streaming split predates this endpoint and is shared
+     * with Chat Completions and Anthropic; {@link #convertStreamedOutput} exists so that this method is not reached
+     * on that path at all.
+     */
     private static Map<String, Object> parseArguments(String json) {
         if (json == null || json.isEmpty() || "{}".equals(json)) {
             return Map.of();
@@ -385,8 +492,8 @@ final class OpenAIResponsesMessageConverter {
                     });
             return parsed == null ? Map.of() : Map.copyOf(parsed);
         } catch (JsonProcessingException e) {
-            log.warn("Failed to parse tool call arguments; treating them as empty: {}", e.getMessage());
-            return Map.of();
+            log.error("Failed to parse JSON: {}", json, e);
+            throw new MessageConversionException("Failed to parse JSON: " + json, e);
         }
     }
 
@@ -411,6 +518,7 @@ final class OpenAIResponsesMessageConverter {
         private final String text;
         private final List<ToolUse> toolUses;
         private final List<ReasoningTrace> reasoningTraces;
+        private final boolean toolCallsSeen;
         private final boolean reasoningItemsSeen;
         private final boolean encryptedContentSeen;
 
@@ -419,6 +527,7 @@ final class OpenAIResponsesMessageConverter {
             this.toolUses = List.copyOf(Objects.requireNonNullElse(builder.toolUses, List.<ToolUse>of()));
             this.reasoningTraces = List
                     .copyOf(Objects.requireNonNullElse(builder.reasoningTraces, List.<ReasoningTrace>of()));
+            this.toolCallsSeen = builder.toolCallsSeen;
             this.reasoningItemsSeen = builder.reasoningItemsSeen;
             this.encryptedContentSeen = builder.encryptedContentSeen;
         }
@@ -439,8 +548,14 @@ final class OpenAIResponsesMessageConverter {
             return reasoningTraces;
         }
 
+        /**
+         * @return whether the turn made at least one tool call — the input {@link OpenAiResponseStopReasons} needs.
+         *         Counted while walking the items rather than read back off {@link #getToolUses()}, because
+         *         {@link OpenAIResponsesMessageConverter#convertStreamedOutput} answers this question without
+         *         building that list
+         */
         boolean hasToolCalls() {
-            return !toolUses.isEmpty();
+            return toolCallsSeen;
         }
 
         /**
@@ -457,6 +572,7 @@ final class OpenAIResponsesMessageConverter {
             private String text;
             private List<ToolUse> toolUses;
             private List<ReasoningTrace> reasoningTraces;
+            private boolean toolCallsSeen;
             private boolean reasoningItemsSeen;
             private boolean encryptedContentSeen;
 
@@ -475,6 +591,11 @@ final class OpenAIResponsesMessageConverter {
 
             Builder reasoningTraces(List<ReasoningTrace> reasoningTraces) {
                 this.reasoningTraces = reasoningTraces;
+                return this;
+            }
+
+            Builder toolCallsSeen(boolean toolCallsSeen) {
+                this.toolCallsSeen = toolCallsSeen;
                 return this;
             }
 
