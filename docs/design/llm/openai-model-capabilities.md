@@ -771,14 +771,22 @@ would be guarding, measured rather than argued.
 
 ### 8.4 What stayed open
 
-Every open question in §7 is still open, and none of them grew. O-1 (the fallback kept, deviating
-from #43's prose — **since closed the other way; see §9**), O-2 (the o-series rows deferred until someone runs them against the real API — a
-test pins `o3` as behaving like an unknown model, so re-adding them has to change a test that says
-why), O-3, O-4 (no yaml key for reasoning effort), O-5 (`AnthropicLlmClient` ignores the new field
-silently), O-6 (`supportsToolsWithReasoning` is endpoint-flavoured and is where the phase-2 seam will
-have to open) and O-8 (no CLI override for a renamed gateway deployment) are unchanged. O-7 was
-answered by doing it: the `features` and `architecture` rows are in, in both languages, plus the
-provider guide.
+**All but one** of §7's open questions are still open, and none of the ones that stayed open grew.
+The exception is **O-1** (the fallback kept, deviating from #43's prose), which round 2 closed the
+other way on a maintainer ruling — §9.1 is that record, and the correction reached this paragraph
+one round late.
+
+O-2 (the o-series rows deferred until someone runs them against the real API — a test pins `o3` as
+behaving like an unknown model, so re-adding them has to change a test that says why), O-3, O-4 (no
+yaml key for reasoning effort), O-5 (`AnthropicLlmClient` ignores the new field silently — still
+true after round 2, which edited that class for #45 without touching this), O-6
+(`supportsToolsWithReasoning` is endpoint-flavoured and is where the phase-2 seam will have to open)
+and O-8 (no CLI override for a renamed gateway deployment) are unchanged. O-7 was answered by doing
+it: the `features` and `architecture` rows are in, in both languages, plus the provider guide.
+
+This paragraph records where round 1 left things and is not maintained past it; **§9.5 is the
+current status** — it repeats the O-1 closure and adds what round 2 opened, including one item that
+compounds O-5.
 
 ---
 

@@ -3072,7 +3072,12 @@ public class OrcaAgentExecutor
 
     @Override
     public String toString() {
-        return "OrcaAgentExecutor{" + "provider='" + gateway.getClient().getProviderName() + '\'' + '}';
+        // getProviderName() is the vendor alone since #45, so the model has to be recomposed here or someone at a
+        // debugger sees only "OpenAI". The segment is dropped rather than filled with a placeholder when the client
+        // reports no default model: a router or a recorded fixture legitimately has none.
+        final LlmClient client = gateway.getClient();
+        return "OrcaAgentExecutor{" + "provider='" + client.getProviderName() + '\''
+                + client.getDefaultModelName().map(model -> ", model='" + model + '\'').orElse("") + '}';
     }
 
     /**

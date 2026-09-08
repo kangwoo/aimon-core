@@ -8,7 +8,6 @@ import static org.mockito.Mockito.verify;
 
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -31,8 +30,6 @@ import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.ReasoningEffort;
 import at.aimon.core.llm.ToolDefinition;
-import at.aimon.core.llm.capability.ModelCapabilities;
-import at.aimon.core.llm.capability.ModelCapabilityRegistry;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
@@ -140,22 +137,33 @@ class OpenAILlmClientParameterDivergenceTest {
     }
 
     @Test
-    @DisplayName("a temperature nobody configured is neither sent nor reported")
-    void unconfiguredTemperatureIsNeitherSentNorReported() {
+    @DisplayName("the suppression path says nothing about a temperature nobody set")
+    void suppressionIsSilentForATemperatureNobodySet() {
+        // What this binds, precisely: gpt-5.6-terra does not accept sampling, so applySamplingParameters takes the
+        // suppression branch, and that branch reports each of the four parameters. It must report *none* of them when
+        // nothing was configured -- otherwise every gpt-5 deployment logs four WARNs on every ReAct iteration about
+        // values nobody set. That assertion only means something on a model with sampling off, which is why this test
+        // keeps this model.
+        //
+        // What it does NOT bind: the no-fallback rule. The branch returns before the setter, so the _temperature()
+        // assertion below is satisfied by suppression -- it would still pass with OpenAIConfig.DEFAULT_TEMPERATURE
+        // restored. Round 2's review measured that: neither temperature mutation made this test fail. Acceptance
+        // criterion 2 is bound by OpenAILlmClientModelCapabilityTest.unsetTemperatureIsAbsentEvenOnAnUnknownModel,
+        // which runs the same empty LlmModel through a model that *does* accept sampling. Renamed here from
+        // `unconfiguredTemperatureIsNeitherSentNorReported`, whose name claimed the half it cannot fail on.
+        //
         // Round 2 reversal, by maintainer ruling: this test was `suppressedFallbackIsSilent`, and it asserted only
         // that suppressing OpenAIConfig.DEFAULT_TEMPERATURE stayed quiet. That fallback was removed deliberately --
         // issue #43's "sampling parameters are sent only when the caller explicitly set them" beats round 1's "an
         // unknown model sends exactly what it sends today", which round 1 had recorded as design O-1/A6. See
         // docs/design/llm/openai-model-capabilities.md section 9.
-        //
-        // With no fallback the old assertion would be vacuous, so this asserts both halves: still no log noise on
-        // every gpt-5 deployment, AND nothing on the wire. Absence is read off the raw field because
-        // params.temperature() is empty for a missing field and for an explicit JsonNull alike.
         final OpenAILlmClient client = client(OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra").build());
 
         final ChatCompletionCreateParams params = sendAndCapture(client, LlmModel.builder().build(), List.of(A_TOOL));
 
         assertThat(warnings()).isEmpty();
+        // Suppression leaves the field missing rather than JSON null; params.temperature() is empty for both, so the
+        // raw accessor is the only one that can tell them apart.
         assertThat(params._temperature()).isInstanceOf(JsonMissing.class).isNotInstanceOf(JsonNull.class);
     }
 
@@ -174,21 +182,6 @@ class OpenAILlmClientParameterDivergenceTest {
         assertThat(warnings()).hasSize(1);
         assertThat(warnings().get(0)).contains("Model capability lookup for gpt-5.6-terra returned null")
                 .contains("treating the model as unknown");
-    }
-
-    /**
-     * Overrides {@code resolve()} to break its never-null contract; a lambda can only supply {@code capabilitiesOf}.
-     */
-    private static final class NullResolvingRegistry implements ModelCapabilityRegistry {
-        @Override
-        public Optional<ModelCapabilities> capabilitiesOf(String modelName) {
-            return Optional.empty();
-        }
-
-        @Override
-        public ModelCapabilities resolve(String modelName) {
-            return null;
-        }
     }
 
     @Test

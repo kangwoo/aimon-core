@@ -205,6 +205,12 @@ class OpenAILlmClientModelCapabilityTest {
         // were flipped to fail-closed, this one fails if the DEFAULT_TEMPERATURE fallback came back. Neither alone
         // pins both halves of "nothing withheld, nothing invented".
         //
+        // DO NOT DELETE THIS AS A DUPLICATE. It is the whole binding for acceptance criterion 2 -- an unset sampling
+        // parameter is omitted rather than defaulted. Its near-namesake in OpenAILlmClientParameterDivergenceTest,
+        // suppressionIsSilentForATemperatureNobodySet, runs on gpt-5.6-terra, where applySamplingParameters returns
+        // at the suppression guard before the setter: round 2's review measured that neither temperature mutation
+        // made that test fail. gpt-4o reaches the setter, so only this test does.
+        //
         // Asserted on the raw field: params.temperature() is Optional.empty() for a missing field AND for an
         // explicit JsonNull, and gpt-5.x rejects "temperature": null as present -- so the weak accessor cannot fail
         // on the bug this guards.
@@ -410,25 +416,6 @@ class OpenAILlmClientModelCapabilityTest {
                 List.of(A_TOOL));
 
         assertSamplingPassedThrough(params);
-    }
-
-    /**
-     * A registry that overrides {@code resolve()} to break its own never-null contract.
-     *
-     * <p>
-     * A named class rather than a lambda because {@code resolve} is a {@code default} method: a lambda can only
-     * supply {@code capabilitiesOf}, whose null the default implementation already absorbs.
-     */
-    private static final class NullResolvingRegistry implements ModelCapabilityRegistry {
-        @Override
-        public Optional<ModelCapabilities> capabilitiesOf(String modelName) {
-            return Optional.empty();
-        }
-
-        @Override
-        public ModelCapabilities resolve(String modelName) {
-            return null;
-        }
     }
 
     @Test

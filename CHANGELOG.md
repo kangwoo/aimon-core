@@ -118,6 +118,12 @@ Central is versioned independently).
   the two. **Remedy:** read the model from the request's `LlmModel`, falling back to
   `getDefaultModelName()`.
 
+- **Fixed: `OrcaAgentExecutor.toString()` names the model again.** Debug output only, and the one
+  call site where the vendor-only provider name is strictly less useful than the composite it
+  replaced: it read `OrcaAgentExecutor{provider='OpenAI'}`, and now reads
+  `OrcaAgentExecutor{provider='OpenAI', model='gpt-4o'}`, composed from `getDefaultModelName()`. The
+  `model` segment is omitted rather than filled in when a client reports no default.
+
 - **A capability registry that returns `null` no longer takes the request down with it.** An
   implementation overriding the `default resolve()` to return `null` broke its own never-null
   contract and NPE'd inside the request builder — which on the streaming path runs *before* the
