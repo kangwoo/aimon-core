@@ -135,10 +135,13 @@ final class OpenAiRequestParameters {
      *
      * <p>
      * Called by <em>both</em> endpoints, because the answer is a property of the model rather than of the request
-     * surface: OpenAI has no {@code none} rung anywhere, and its o-series starts at {@code low}. Measured 2026-09-09
-     * — {@code gpt-5-nano} answers <em>Supported values are: 'minimal', 'low', 'medium', and 'high'</em>, and
-     * {@code o4-mini} <em>Supported values are: 'low', 'medium', 'high', and 'xhigh'</em>. Sending a rung below the
-     * floor is a 400, so it is omitted.
+     * surface: no OpenAI model measured to date except {@code gpt-5.6-terra} has a {@code none} rung, and the
+     * o-series starts at {@code low}. Measured 2026-09-09 — on {@code /v1/chat/completions} {@code gpt-5-nano}
+     * answers <em>Supported values are: 'minimal', 'low', 'medium', and 'high'</em>, and on {@code /v1/responses}
+     * {@code o4-mini} answers <em>Unsupported value: 'minimal' is not supported with the 'o4-mini' model. Supported
+     * values are: 'low', 'medium', and 'high'.</em> An enumeration means nothing without the endpoint it came from —
+     * the same model enumerates different sets on the two surfaces — but the floor is {@code low} on both. Sending a
+     * rung below it is a 400, so it is omitted.
      *
      * <p>
      * <strong>Omitted, never raised.</strong> Clamping {@code NONE} up to {@code minimal} would put a request on the

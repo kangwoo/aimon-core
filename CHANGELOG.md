@@ -60,20 +60,22 @@ Central is versioned independently).
   `o4`. The o-series rows were **withheld in the first cut and added on 2026-09-09 once measured**: the
   belief that they reject `temperature` was unverified, and a wrong row is a *silent* sampling change
   while no row leaves those users exactly where they are. The probes settled it — `o3-mini` and
-  `o4-mini` reject `0.0`, accept `1.0`, accept tools with no effort, and reject effort `none`. They are
-  **not** routed to `/v1/responses`: reasoning-item replay was not measured for them, and asserting a
-  round trip nobody has seen is how the `gpt-5` row came out wrong the first time. The same probes
-  fixed their `lowestReasoningEffort` at `LOW` — the o-series answers *"Supported values are: 'low',
-  'medium', 'high', and 'xhigh'"*, so the neutral `MINIMAL` has no wire value there either.
+  `o4-mini` reject `0.0`, accept `1.0`, accept tools with no effort, and reject effort `none`. They were
+  **not** routed to `/v1/responses` in that cut, because reasoning-item replay had not been measured for
+  them, and asserting a round trip nobody has seen is how the `gpt-5` row came out wrong the first time
+  — see the round-8 entry below, which measured it and flipped the flag for eight names. The same probes
+  fixed their `lowestReasoningEffort` at `LOW` — `o4-mini` rejects `minimal`, so the neutral `MINIMAL`
+  has no wire value there either.
 
 - **`ModelCapabilities.lowestReasoningEffort()` — which rungs, as opposed to whether the knob exists.**
   `supportsReasoningEffort()` says the model takes a reasoning-effort parameter; this says where its
-  ladder starts, because the two OpenAI families disagree (`gpt-5.x`: `minimal`…`high`; o-series:
-  `low`…`xhigh`). A requested rung below the floor is **omitted and reported**, never raised to meet it
+  ladder starts, because the two OpenAI families disagree (`gpt-5.x` starts at `minimal`, the o-series
+  at `low`). A requested rung below the floor is **omitted and reported**, never raised to meet it
   — a clamp upward is a request the operator did not make, and it would arrive silently. The default
   and `unknown()` value is `MINIMAL`, so the only rung ever withheld from a model no registry describes
-  is `NONE`, which no OpenAI ladder has at all. The rule lives in one place and both endpoints ask it;
-  the *tools* clamp stays Chat-only, because that one really is a property of the request surface.
+  is `NONE`, which no OpenAI ladder measured to date except `gpt-5.6-terra`'s has at all. The rule lives
+  in one place and both endpoints ask it; the *tools* clamp stays Chat-only, because that one really is
+  a property of the request surface.
 
 - **Breaking: `OpenAIConfig.getTemperature()` returns `Optional<Double>`, not `double`.** A published
   module (`at.aimon.core.llms.openai`), and — like the entries below — not a rename, so there is no row
@@ -163,6 +165,35 @@ Central is versioned independently).
   digest once. A cron task scheduled before the upgrade logs "definition changed" the first time it
   fires afterwards. `AgentDefinitionVersion` is a change detector and not a gate; nothing refuses to
   run on a mismatch.
+
+- **Behaviour change: eight o-series model names now use `/v1/responses`, so their reasoning survives a
+  tool call.** Measured on 2026-09-09, which is the whole point — the `false` those rows carried was
+  never a measurement, it was the placeholder for *nobody has looked*. `o4-mini`, `o3-mini`, `o3` and
+  `o1` each accept a replayed reasoning item (HTTP 200, turn completed), and a control that corrupts the
+  encrypted payload earns a 400, so the server **consumes** the item rather than tolerating it. Affected
+  names, alias and served snapshot alike: `o1`, `o1-2024-12-17`, `o3`, `o3-2025-04-16`, `o3-mini`,
+  `o3-mini-2025-01-31`, `o4-mini`, `o4-mini-2025-04-16`.
+
+  **The flag flipped per measured name, not per prefix.** `o1-pro` and `o4-mini-deep-research` sit under
+  the same prefix rows and were never called, so they keep `false`, keep going to Chat Completions, and
+  are byte-identical to before; so is any future `o1*` / `o3*` / `o4*` name. The table under-delivers a
+  capability until somebody measures the name, rather than asserting a wire change nobody has seen.
+  **One trap comes with that shape:** `builderWithDefaults().registerPrefix("o1", …)` no longer reaches
+  `o1` or `o1-2024-12-17`, because a built-in exact row beats every prefix; override those names with
+  `register("o1", …)` instead. Reverting per deployment is `responsesApiEnabled(false)`; per name it is
+  a `register(...)` row with the flag off.
+
+  Landing with it: the first **live streaming** probe of `/v1/responses` (all five names stream cleanly
+  and `OpenAIResponsesStreamingMapper` needed no change); two **corrected reasons** that were false
+  rather than merely stale — an effort-ladder enumeration is endpoint-scoped as well as model-scoped, so
+  the `xhigh` quote above was a Chat reply read as a model's ladder, and `NONE` is *not* a rung no OpenAI
+  ladder has, because `gpt-5.6-terra` accepts it on both endpoints. Neither correction moves a default or
+  an assertion. And one **known defect, recorded and deliberately unfixed**: terra rejects `minimal`
+  while the `gpt-5` row it resolves to declares that as its floor, so a programmatically configured
+  `MINIMAL` on that model is a 400 — unreachable from configuration today, unfixable in the current table
+  without breaking the `gpt-5` prefix override the class documents, and tracked as L-1 in
+  [`openai-model-capabilities-open-items.md`](docs/backlog/openai-model-capabilities-open-items.md).
+  Full measurement, controls and decision: [`openai-model-capabilities.md`](docs/design/llm/openai-model-capabilities.md) §13.
 
 ### LLM: a reasoning model's chain of thought now survives a tool call (OpenAI Responses API)
 

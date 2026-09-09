@@ -29,9 +29,12 @@ class ModelCapabilitiesTest {
         assertThat(unknown.supportsSamplingParameters()).isTrue();
         assertThat(unknown.supportsReasoningEffort()).isFalse();
         assertThat(unknown.supportsToolsWithReasoning()).isTrue();
-        // MINIMAL rather than NONE: NONE is the one rung no OpenAI ladder starts at, so treating it as acceptable
-        // for a model nobody has described would invent a wire value the vendor rejects. Every other rung a caller
-        // can name stays sendable, which is the fail-open half.
+        // MINIMAL rather than NONE: NONE is the rung most likely to be absent -- every OpenAI o-series name probed
+        // on 2026-09-09 rejects it, and gpt-5-nano rejected it in round 6 -- so treating it as acceptable for a
+        // model nobody has described would usually invent a wire value the vendor rejects. Round 8 narrowed
+        // "always" to "usually": gpt-5.6-terra accepts it. The default stands on the asymmetry of the two mistakes
+        // rather than on absence -- withholding a rung a model has costs a reported omission, sending one it lacks
+        // costs a 400. Every other rung a caller can name stays sendable, which is the fail-open half.
         assertThat(unknown.lowestReasoningEffort()).isEqualTo(ReasoningEffort.MINIMAL);
     }
 

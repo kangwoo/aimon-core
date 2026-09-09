@@ -28,8 +28,15 @@ import at.aimon.core.llm.Message;
 import at.aimon.core.llm.capability.ModelCapabilityRegistry;
 
 /**
- * Binds which endpoint a request goes to, and — for the last two cases — that the decision follows the
+ * Binds which endpoint a request goes to, and — for cases 5 and 6 — that the decision follows the
  * <strong>per-request</strong> model name rather than the client's configured one.
+ *
+ * <p>
+ * <strong>Cases 7 and 8 are a pair and neither stands alone.</strong> Round 8 measured reasoning-item replay for
+ * eight o-series names and flipped only those, so the o-series is the first family the built-in table splits: 7 pins
+ * that a measured name reaches {@code /v1/responses}, 8 that a prefix sibling nobody was allowed to call does not.
+ * A later change that "simplifies" the eight exact rows into three prefix flips passes 7 and fails 8, which is the
+ * whole reason 8 exists.
  *
  * <p>
  * <strong>Why the per-request cases exist.</strong> {@code OpenAILlmClientModelCapabilityTest}'s
@@ -169,6 +176,30 @@ class OpenAILlmClientEndpointSelectionTest {
         send(config("gpt-5.6-terra").build(), LlmModel.builder().name("gpt-4o").build());
 
         Assertions.assertThat(assertWentToChat().model().asString()).isEqualTo("gpt-4o");
+    }
+
+    @Test
+    @DisplayName("7: a STOCK config on a MEASURED o-series name uses the Responses API")
+    void stockConfigOnAMeasuredOSeriesNameUsesResponses() {
+        // The behaviour change round 8 shipped, at the wire. o4-mini's reasoning-item replay was measured on
+        // 2026-09-09 (200, turn completed, corrupted payload 400s), so its exact row carries
+        // supportsReasoningTraceRoundTrip=true and a stock config now reaches the endpoint where reasoning survives
+        // a tool call. Fails if the eight exact rows are removed or their flag reverted.
+        send(config("o4-mini").build(), LlmModel.builder().build());
+
+        Assertions.assertThat(assertWentToResponses().model().orElseThrow().asString()).isEqualTo("o4-mini");
+    }
+
+    @Test
+    @DisplayName("8: a STOCK config on an UNMEASURED prefix sibling stays on Chat Completions")
+    void stockConfigOnAnUnmeasuredOSeriesSiblingStaysOnChat() {
+        // The boundary of case 7, and the reason the table has eight exact rows rather than three prefix flips.
+        // o1-pro shares the o1 prefix with a measured model and was never called -- the probe's cost rules forbade
+        // it -- so it falls to the prefix row, keeps false, and its behaviour is byte-identical to before round 8.
+        // This is the case that goes red if somebody later flips the prefix rows instead.
+        send(config("o1-pro").build(), LlmModel.builder().build());
+
+        Assertions.assertThat(assertWentToChat().model().asString()).isEqualTo("o1-pro");
     }
 
     @Test

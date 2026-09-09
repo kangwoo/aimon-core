@@ -63,10 +63,15 @@ public final class ModelCapabilities {
      * model nobody has described would be fail-<em>closed</em>. No reasoning effort is sent, because that is a
      * parameter the framework would have to invent. Tools are not treated as conflicting with reasoning, because
      * clamping without evidence is a restriction nobody asked for. The lowest reasoning rung is
-     * {@link ReasoningEffort#MINIMAL}, which withholds only {@link ReasoningEffort#NONE} — a level no OpenAI model
-     * has, and the one rung a caller can ask for that no vendor ladder starts at. Changing any of these silently
-     * changes the wire for every deployment running a model no registry describes, which is why a test asserts each
-     * one individually.
+     * {@link ReasoningEffort#MINIMAL}, which withholds only {@link ReasoningEffort#NONE} — the rung most likely to be
+     * absent, though measurement has stopped short of calling it universally absent: every OpenAI o-series name
+     * probed on 2026-09-09 rejects it with a message naming the model, and {@code gpt-5-nano} rejected it too, but
+     * {@code gpt-5.6-terra} <em>accepts</em> it. So this default is a trade rather than a free choice, and it is made
+     * on the asymmetry of the two mistakes: withholding a rung a model does have costs a reported omission and
+     * leaves the server's own default in force, while sending a rung it does not have costs a 400 that fails the
+     * turn. A model that really does start at {@code NONE} is describable — register a row with
+     * {@code lowestReasoningEffort(NONE)}. Changing any of these silently changes the wire for every deployment
+     * running a model no registry describes, which is why a test asserts each one individually.
      *
      * @return the fail-open descriptor (never null)
      */
@@ -151,8 +156,10 @@ public final class ModelCapabilities {
      * <p>
      * {@link #supportsReasoningEffort()} answers <em>whether the parameter exists</em>; this answers <em>which values
      * it takes</em>, and the two are independent facts that vendors get to disagree about per family. OpenAI's
-     * {@code gpt-5.x} accepts {@code minimal}…{@code high} while its o-series accepts {@code low}…{@code xhigh}, so
-     * one table of neutral constants cannot be translated for both without knowing where each ladder starts.
+     * {@code gpt-5.x} starts at {@code minimal} while its o-series starts at {@code low}, so one table of neutral
+     * constants cannot be translated for both without knowing where each ladder starts. Only the floor is modelled
+     * here: a family's ceiling turned out to differ between OpenAI's two endpoints for the same model, and naming it
+     * was always beside this field's meaning.
      *
      * <p>
      * A requested effort below this rung is <strong>omitted and reported</strong>, never raised to meet it: a clamp

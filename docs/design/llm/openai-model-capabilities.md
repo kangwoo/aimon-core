@@ -1022,12 +1022,30 @@ The issue's cause 1 does not reproduce on any model this account can see. It quo
 `gpt-5.6-terra`, which this account does not have; whatever that model does, the family prefix the
 table actually matches does not do it.
 
+> **Round 8 closed the speculation in that last clause.** A different key on 2026-09-09 does see
+> `gpt-5.6-terra`, and it was measured: it resolves to the `gpt-5` prefix row and does not reproduce
+> cause 1 either. What it *does* have is a ladder that skips `minimal`, which the row gets wrong —
+> §13.4.
+
 ### 11.3 `reasoning_effort: 'none'` — rejected
 
 ```
-gpt-5-nano: Supported values are: 'minimal', 'low', 'medium', and 'high'
-o4-mini:    Supported values are: 'low', 'medium', 'high', and 'xhigh'
+/v1/chat/completions, round 6 — reply to reasoning_effort: "none"
+  gpt-5-nano: Supported values are: 'minimal', 'low', 'medium', and 'high'
+  o4-mini:    Supported values are: 'low', 'medium', 'high', and 'xhigh'
+
+/v1/responses, round 8 — 'xhigh' sent individually
+  o4-mini:    Unsupported value: 'xhigh' is not supported with the 'o4-mini' model.
+              Supported values are: 'low', 'medium', and 'high'.
 ```
+
+> **Corrected in round 8: an enumeration is endpoint-scoped as well as model-scoped, and the round-6
+> lines were recorded without their endpoint** and then read as the model's ladder. They are the
+> **Chat** surface's answer. `xhigh` is rejected by `o4-mini` **on `/v1/responses`**, where it was
+> sent individually; it was never sent on Chat, and that surface still lists it. Neither reading moves
+> `lowestReasoningEffort`, which is about the floor — `low` on both surfaces — and is still `LOW`.
+> The section's own conclusion below is untouched: `none` is rejected, omission is the remedy, and the
+> `gpt-5` row's flag is `true`. §13.3.
 
 **This was a live bug in shipped code, not just a wrong document.** `supportsToolsWithReasoning=false`
 made the client send `none` whenever tools were present, and the API rejects it. The path was narrow —
@@ -1055,27 +1073,60 @@ No round-4 code changed as a result.
 
 ### 11.5 What is still not measured
 
+> Three of these four were answered by round 8, with a different key, on the same day. Each bullet
+> keeps round 6's statement and carries its disposition, because overwriting them would misrecord what
+> round 6 knew.
+
 - **Reasoning-item replay for the o-series.** Their rows therefore set
   `supportsReasoningTraceRoundTrip=false` and they stay on Chat Completions. Claiming a round trip
   nobody has seen is precisely how the `gpt-5` row came out wrong.
+  **→ Closed by measurement, and replaced by a narrower statement (§13).** Replay is measured and
+  accepted for `o4-mini`, `o3-mini`, `o3` and `o1` (and `gpt-5.6-terra`), with a corruption control
+  proving the item is consumed rather than tolerated. The blanket family statement gives way to an
+  asymmetry: **replay is now known per name, not per family.** `o1-pro` / `o1-pro-2025-03-19` and
+  `o4-mini-deep-research` / `-2025-06-26` sit under the same prefix rows and were **not called** (cost
+  rule), so those names keep `false` through their prefix row and keep going to Chat Completions. Of
+  the three prefixes only `o3` has all of its currently-visible members measured, and it is still
+  expressed as exact rows — §13.2 says why.
 - **`gpt-5.6-terra`**, the model the issue reported against. Not available to this account.
+  **→ Scoped, then extended.** It was not visible to the key *round 6* used; it **is** visible to the
+  key round 8 used (`GET /v1/models` → 200, 127 models) and it was measured: replay accepted,
+  corruption control 400s, streams cleanly, ladder `none` / `low` / `medium` / `high` / `xhigh` /
+  `max` with **`minimal` rejected**, and it emits a reasoning item **on demand rather than per turn**
+  (a trivial tool prompt at every rung produced a bare `function_call` and nothing to replay). It
+  matches the built-in `gpt-5` prefix row, whose round-trip flag is now confirmed rather than
+  inferred — and whose **floor is wrong for it**, recorded as a measured, deliberately unfixed defect
+  (§13.4).
 - **Streaming** was not probed; only blocking calls were made.
+  **→ Closed (§13.5).** Round 8 is the first live streaming probe of `/v1/responses`. All five names
+  return 200 and a complete SSE stream with an identical event sequence.
+  `OpenAIResponsesStreamingMapper` handles every event that arrives, and nothing arrives that it must
+  handle and does not — a **confirmation of existing behaviour, not a change**.
 - `gpt-5-chat-latest` returns **404 — deprecated**. The `gpt-5-chat` prefix row stays: it is a prefix,
   not that one name.
+  **→ Still true; unchanged; not re-measured.** Round 8 did not call it. One clause so nobody
+  "corrects" this in the wrong direction: `gpt-5-chat-latest` **is** in round 8's model list, which
+  neither confirms nor contradicts a 404 on completion — being listed is not being callable.
+- *(added by round 8)* **What round 8 itself leaves unmeasured** is §13.7, and it is longer than this
+  list: at minimum `o1-pro` and `o4-mini-deep-research`, an o-series request with no `reasoning`
+  object at all, and `xhigh` on Chat.
 
 ---
 
 ## 12. Round 7 — one ladder question, asked by both endpoints
 
-Round 6 established that OpenAI has no `none` rung (§11.3) and put a guard in the Chat client. Round 4
-had already routed `gpt-5.x` to `/v1/responses`. **Nobody put the guard on the endpoint the model
+Round 6 established that the models it probed have no `none` rung (§11.3) and put a guard in the Chat
+client. Round 4 had already routed `gpt-5.x` to `/v1/responses`. **Nobody put the guard on the endpoint the model
 actually reaches**, so a configured `ReasoningEffort.NONE` on a stock `gpt-5*` config produced
 `{"reasoning":{"effort":"none"}}` — the 400 §11.3 measured, on the default path, guarded only on the
 path that config no longer takes.
 
-The same probe recorded a second rung nobody acted on: `o4-mini` answers *"Supported values are:
-'low', 'medium', 'high', and 'xhigh'"*, so the neutral `MINIMAL` has no wire value for that family
-either, and the o-series rows sent it.
+The same probe recorded a second rung nobody acted on: `o4-mini` rejects `minimal`, so the neutral
+`MINIMAL` has no wire value for that family either, and the o-series rows sent it. (Round 6 quoted
+that model's Chat reply — *"Supported values are: 'low', 'medium', 'high', and 'xhigh'"* — without
+recording which endpoint it came from; round 8 sent the rung individually on `/v1/responses` and got
+a reply that names the model. The floor is `low` either way, which is what this section turns on.
+§11.3, §13.3.)
 
 ### 12.1 Why a capability rather than two special cases
 
@@ -1084,10 +1135,18 @@ family, which is what a capability is for. A `NONE`-shaped special case would ha
 a `MINIMAL`-shaped one, in two request builders, with nothing tying them together.
 
 `ModelCapabilities.lowestReasoningEffort()` is the fifth field. Default and `unknown()` value
-`MINIMAL`: the only rung it withholds from a model no registry describes is `NONE`, which is the one
-rung no vendor ladder starts at, so fail-open is preserved in the sense §2.3 defines it — nothing that
-was ever sent stops being sent. `ReasoningEffort`'s constants ascend, so the comparison is `compareTo`;
-that ordering is now load-bearing and its javadoc says so.
+`MINIMAL`: the only rung it withholds from a model no registry describes is `NONE`. That is a
+**deliberate trade rather than a free one**, and round 8 is what makes the difference visible. `NONE`
+is the rung most likely to be absent — every o-series name measured rejects it on `/v1/responses` with
+a message that names the model, and `gpt-5-nano` rejected it on Chat in round 6 — but it is **not**
+universally absent, since `gpt-5.6-terra` accepts it on both endpoints and the `/v1/responses` reply
+echoes `"effort":"none"` back rather than dropping it. The default is chosen on the asymmetry of the
+two mistakes: withholding a rung a model *does* have costs a reported omission and leaves the server's
+own default in force, while sending a rung it does *not* have costs a 400 that fails the turn. A model
+that really does start at `NONE` is describable — register a row with `lowestReasoningEffort(NONE)` —
+and the reason this build does not do that for terra is §13.4, not a gap in the mechanism.
+`ReasoningEffort`'s constants ascend, so the comparison is `compareTo`; that ordering is now
+load-bearing and its javadoc says so.
 
 `OpenAiRequestParameters.maySendEffort(...)` is the one implementation, and **both** endpoints call
 it. What deliberately did *not* move is the tools clamp: "may tools and reasoning share a request" is
@@ -1108,6 +1167,13 @@ force — a state the warning can describe truthfully.
 | `o4-mini` | `MINIMAL` | *(nothing)* | yes |
 | `o4-mini` | `LOW` | `low` | no |
 | unknown model | `NONE` | *(nothing)* | yes |
+| `gpt-5.6-terra` | `NONE` | *(nothing)* | yes — **and the model would have accepted it** (§13.4) |
+| `gpt-5.6-terra` | `MINIMAL` | **`minimal`** | no — **and it 400s** (§13.4) |
+
+The last two rows are round 8's addition and they are the defect made visible in the table that exists
+to show exactly this. Terra resolves to the `gpt-5` prefix row, whose floor is `MINIMAL`; its actual
+ladder starts at `NONE` and **skips** `minimal`. Both mistakes are in one direction each, and the
+second one fails the turn.
 
 ### 12.3 Three other defects found in the same pass
 
@@ -1125,3 +1191,336 @@ force — a state the warning can describe truthfully.
 - **The registry's exact map was case-sensitive while its prefix map was not.** An operator
   registering the deployment name their portal shows (`Prod-Assistant`) missed, resolved to
   `unknown()`, and kept hitting whatever the registration was meant to fix. Both halves fold case now.
+
+---
+
+## 13. Round 8 — the o-series is measured, and the flag flips per name
+
+Round 6 closed §11.5 with *"reasoning-item replay for the o-series"* in the not-measured list, and the
+rows carried `supportsReasoningTraceRoundTrip=false` for that reason and no other. That `false` was the
+honest placeholder for **nobody has looked** — which meant a whole model family kept paying the cost
+#43 phase 2 removed for `gpt-5.x`: reasoning thrown away between tool calls.
+
+On **2026-09-09**, with a different key from round 6's, somebody looked.
+
+**Probed:** `o4-mini` (served `o4-mini-2025-04-16`), `o3-mini` (`o3-mini-2025-01-31`), `o3`
+(`o3-2025-04-16`), `o1` (`o1-2024-12-17`), `gpt-5.6-terra`. **Endpoint:** `POST /v1/responses`, with a
+`/v1/chat/completions` control where the two surfaces are compared. **Not probed, on cost grounds:**
+`o1-pro`, `o4-mini-deep-research`, and every `*-pro` / `*-deep-research` name — §13.7, which is longer
+than this line and is the point of it.
+
+### 13.1 The §11.4 questions, one row set per model name
+
+Same six questions round 6 asked of `gpt-5-nano`. Turn 1 is `instructions` + one user message + one
+function tool + `store: false` + `include: ["reasoning.encrypted_content"]` + `reasoning.effort: low`;
+turn 2 replays the returned reasoning item ahead of the function call and its output.
+
+| claim | `o4-mini` | `o3-mini` | `o3` | `o1` | `gpt-5.6-terra` |
+|---|---|---|---|---|---|
+| `/v1/responses` accepts tools + reasoning | 200 | 200 | 200 | 200 | 200 |
+| `encrypted_content` with `store: false` | yes, 1356 | yes, 780 | yes, 1252 | yes, 780 | yes, 1400 — but only when an item is emitted at all (§13.4) |
+| `call_id` differs from `id` | yes | yes | yes | yes | yes |
+| `reasoning_tokens` non-zero and real | 384 at `high` | 1088 at `high` | 576 at `high` | 64 on turn 2 | 61 on a reasoning-heavy prompt |
+| a reasoning item **replayed** on the next turn is accepted | **yes** | **yes** | **yes** | **yes** | **yes** |
+| `status` / `incomplete_details` | `completed` / `null`; `incomplete` / `{"reason":"max_output_tokens"}` under a 16-token cap | `completed` / `null` | `completed` / `null` | `completed` / `null` | `completed` / `null` |
+
+> On that fourth row: **`reasoning_tokens: 0` on a trivial prompt is not evidence that a model does not
+> reason.** It is what a trivial prompt produces. Every name here reported non-zero reasoning tokens
+> once given a prompt that needed them, and the cell records the turn where that happened. `o1` is the
+> one name where a non-zero count fell out of the ordinary two-turn probe rather than needing a harder
+> prompt.
+
+**Two controls, because a 200 on turn 2 is consistent with a server that consumes the item and with one
+that ignores unknown input items** — and only the first is worth changing an endpoint for.
+
+- **Corruption.** The same turn-2 request with the first 40 characters of `encrypted_content`
+  overwritten → **HTTP 400**, *"The encrypted content for item `rs_…` could not be verified. Reason:
+  Encrypted content could not be decrypted or parsed."* So the server decrypts and verifies, and the
+  200 on the intact replay is acceptance, not tolerance. **Run on `o4-mini` and `gpt-5.6-terra` only**;
+  the check reads as a platform-level envelope check rather than a per-model behaviour, and that
+  reading is an inference, labelled as one here and in §13.7.
+- **Omission.** Dropping the reasoning item from turn 2 entirely (function call + output only) → **200**.
+  The item is an improvement to the turn, not a precondition for it. That is what makes the rollout
+  safe in one direction: turning the flag on cannot make a previously-working turn fail for want of an
+  item.
+
+### 13.2 The decision — exact names, not prefixes
+
+The measurement licenses a flag flip. It does not say *for which names*, and that is the whole of the
+remaining problem: `o1-pro` and `o4-mini-deep-research` sit under the same prefix rows as measured
+models and were **never called**. A prefix-level flip would route two never-called models to a different
+endpoint on the strength of a sibling that shares a name prefix — the precise inference #48 exists to
+delete, and worse here than in the `gpt-5` row it would be modelled on, because the probe deliberately
+did not call them.
+
+Which names each prefix row actually matches on round 8's key, set against which were measured:
+
+| prefix row | names it matches | measured | unmeasured |
+|---|---|---|---|
+| `o1` | `o1`, `o1-2024-12-17`, `o1-pro`, `o1-pro-2025-03-19` | 2 of 4 | **`o1-pro`, `o1-pro-2025-03-19`** |
+| `o3` | `o3`, `o3-2025-04-16`, `o3-mini`, `o3-mini-2025-01-31` | **4 of 4** | — |
+| `o4` | `o4-mini`, `o4-mini-2025-04-16`, `o4-mini-deep-research`, `o4-mini-deep-research-2025-06-26` | 2 of 4 | **`o4-mini-deep-research`, `-2025-06-26`** |
+
+**Decision: register the eight measured names exactly with `supportsReasoningTraceRoundTrip=true`, and
+leave the three prefix rows exactly as they are, `false` included.** `InMemoryModelCapabilityRegistry`
+consults the exact map first and returns on a hit, so an exact entry beats every prefix regardless of
+registration order — the shape *"these eight names round-trip; everything else under the same prefix
+keeps today's behaviour"* is expressible with no change to the registry type.
+
+The dated snapshots are in because they are what **answered**: `o1--r2.json` carries
+`"model": "o1-2024-12-17"` on the response whose replayed item was accepted. The alias `o1` is a pointer
+that resolved to it on 2026-09-09. Both rows go in, and they do not carry identical risk:
+
+- `o1-2024-12-17` — the server itself names this as the model that produced and re-consumed the item.
+  One gap, stated rather than laundered: **the dated name was never sent as a request parameter**, so
+  "requesting the snapshot routes to the snapshot" is assumed.
+- `o1` — correct only while the alias points where it pointed. Aliases move; when one does, that row
+  silently becomes an assertion about an unmeasured model. Not new and not specific to this change —
+  the shipped `gpt-5` prefix row carries a much larger version of it — and recording it is the point.
+
+Consequences, so nobody has to derive them:
+
+- `o1-pro`, `o1-pro-2025-03-19`, `o4-mini-deep-research`, `o4-mini-deep-research-2025-06-26` fall to
+  their prefix row and keep going to Chat Completions. Byte-identical to before.
+- A future name under a measured prefix — `o3-2026-xx-xx`, `o3-pro`, anything — also falls to the prefix
+  row. **The table under-delivers a capability until someone measures the name; it never asserts a wire
+  change nobody has seen.** That is the intended failure direction.
+- **One behaviour regression.** `builderWithDefaults().registerPrefix("o1", X)` used to reach every
+  `o1*` name. It now reaches `o1-pro` and any future `o1*` name but **not** `o1` or `o1-2024-12-17`,
+  because built-in exact rows shadow it. The escape hatch is `register("o1", X)` — exact beats exact,
+  last write wins. Said at the point of registration in the class javadoc, and pinned by a test that
+  asserts both halves.
+- **No `gpt-5*` name resolves differently than it did.** No `gpt-5*` exact row is added, deliberately —
+  §13.4.
+
+Alternatives, and why not:
+
+| # | Alternative | Why rejected |
+|---|---|---|
+| **A1** | Flip all three prefix rows. One line, reads cleanly. | Routes `o1-pro` and `o4-mini-deep-research` on the strength of a sibling. `*-deep-research` in particular is a different product shape, so "same prefix" carries even less than usual. |
+| **A2** | Hybrid — flip the `o3` prefix (4 of 4 measured), exact rows for the other two. | "Fully covered" is a statement about the 127 names visible to one key on one day, not about the prefix: `o3` matches every future `o3*` name, so the flip is a standing bet that merely cannot be collected yet. And it makes one family read by two mechanisms — a cost paid on every future read to save four lines once. |
+| **A3** | Narrower prefixes: `registerPrefix("o1-pro", false)` before `registerPrefix("o1", true)`. | Expressible, and it protects the two *known* unmeasured names. But it still routes every future `o1-*` name — A1 with a smaller blast radius rather than a different decision. A prefix cannot say "exactly these names"; that is what the exact map is for. |
+| **A4** | Alias rows only, leaving `o3-2025-04-16` on the prefix. | Splits behaviour between two names for the same weights. Pinning a dated snapshot is ordinary practice, so this ships a trap to save four lines. |
+| **A5** | Record the measurement and change nothing. | The measurement *passed*, with a control. Declining to act on it would leave a whole family paying a cost that was removed for `gpt-5.x`, for no recorded reason. |
+
+### 13.3 A rejection message is endpoint-scoped as well as model-scoped
+
+§11.3 quoted two ladders without recording which endpoint answered, and §12 then read one of them as
+`o4-mini`'s ladder. Round 8 sent every rung individually and found two different things being conflated:
+
+- **On `/v1/responses`**, all five models answer a value the endpoint has never heard of (`"banana"`)
+  with the identical unioned enum, and a schema-valid but unavailable rung produces a message that
+  **names the model** — `Unsupported value: 'xhigh' is not supported with the 'o4-mini' model.`
+- **On `/v1/chat/completions`**, both replies say *"with this model"* **without naming it**, and the
+  enumerated set already **differs per model** (round 6: `gpt-5-nano` got `'minimal', 'low', 'medium',
+  'high'`, `o4-mini` got `'low', 'medium', 'high', 'xhigh'`). So the Chat reply is model-scoped too; it
+  is not an endpoint union.
+
+And the two surfaces **disagree about the same model**: for `o4-mini`, Chat enumerates `low, medium,
+high, xhigh` while Responses enumerates `low, medium, high`. Two consequences the rest of this section
+is written against — **a quoted enumeration means nothing without the endpoint it came from**, and
+**the only rungs actually known are the rungs actually sent.**
+
+Per-model ladders, each rung sent individually on `/v1/responses`:
+
+| model | `none` | `minimal` | `low` | `medium` | `high` | `xhigh` | `max` |
+|---|---|---|---|---|---|---|---|
+| `o1` | reject | reject | **accept** | *(stated)* | *(stated)* | reject | reject |
+| `o3` | reject | reject | **accept** | *(stated)* | *(stated)* | reject | reject |
+| `o3-mini` | reject | reject | **accept** | *(stated)* | *(stated)* | reject | reject |
+| `o4-mini` | reject | reject | **accept** | *(stated)* | *(stated)* | reject | reject |
+| `gpt-5.6-terra` | **accept** | reject | **accept** | **accept** | **accept** | **accept** | **accept** |
+
+*(stated)* means the rung appears in the server's own `Supported values are:` enumeration for that model
+but was **not sent individually**, to save money — the server describing a rung rather than the rung
+being exercised. `gpt-5.6-terra` has no such cell: all seven rungs were sent to it, which makes its the
+one fully exercised ladder here. (`high` *was* separately exercised on `o3`, `o3-mini` and `o4-mini` by
+the reasoning-token probes; not on `o1`.)
+
+**None of this moves `lowestReasoningEffort` for any row.** The o-series floor is `low` on both
+surfaces and stays `LOW`; only the evidence recorded for it changes, and it changes from an unqualified
+Chat quote to a Responses message that names the model. `xhigh`'s absence from `o4-mini`'s ladder is a
+measured fact **on `/v1/responses`** and an open question on Chat, where it was never sent.
+
+### 13.4 `gpt-5.6-terra` — a row confirmed, a floor found wrong, and a fix deferred
+
+Round 6 recorded terra as *"not available to this account"*. Round 8's key sees it (`GET /v1/models` →
+200, 127 models, terra among them, alongside `gpt-5.6-luna` and `gpt-5.6-sol` which were **not**
+probed). It is the model #43 was originally reported against, so the row it lands on has been carrying
+an inference since round 4.
+
+**Which row: the `gpt-5` prefix row.** `"gpt-5.6-terra".startsWith("gpt-5-chat")` is false,
+`startsWith("gpt-5")` is true. This is not a deduction from the string — terra is this repo's canonical
+stand-in for that row, in both modules: `InMemoryModelCapabilityRegistryTest` resolves it to assert the
+row's flags, its floor and its override recipe; `OpenAIResponsesRequestFactoryTest` defines its `GPT5`
+fixture *as* `resolve("gpt-5.6-terra")`; and most of `OpenAILlmClientEndpointSelectionTest`'s cases name
+it. **So no new row is needed for the round trip**, and round 8's contribution there is to *confirm a
+shipped row against the live model*: replay accepted, corruption control 400s, streams cleanly.
+
+Two things it does **not** share with the o-series:
+
+- **It emits a reasoning item on demand, not per turn.** On the trivial weather prompt terra emitted no
+  reasoning item at all — at `low`, `medium`, `high`, and with no effort field. Output was a bare
+  `function_call` with nothing to replay. On a prompt that actually requires reasoning it emitted one
+  with 1400 chars of `encrypted_content`, and that item replayed cleanly. This bears on shipped code and
+  the answer is that the code is already right: `OpenAIResponsesStreamingMapper.emitStreamEnd` raises
+  `reasoningWithoutEncryptedContent` when a turn produced reasoning items **none of which** carried
+  content; terra's trivial turn produces no items at all, so the warning correctly stays silent.
+- **Its ladder is `none`, `low`, `medium`, `high`, `xhigh`, `max` — it rejects `minimal`,** with a
+  message that names it. The row it resolves to declares `lowestReasoningEffort = MINIMAL`.
+
+**That last line is a defect in shipped behaviour, and this round records it without fixing it.** A
+deployment that configures `ReasoningEffort.MINIMAL` on terra passes `maySendEffort`, puts
+`"effort":"minimal"` on the wire, and takes a 400 (§12.2's last two rows).
+
+Why no table entry is the right instrument. `builderWithDefaults()`'s own javadoc holds up **overriding
+the `gpt-5` prefix** as *the* worked example of the supported, position-safe override, and
+`builderWithDefaultsOverridesAPrefixInPlace` is the test that pins that promise. Any built-in entry
+making terra resolve differently from the `gpt-5` prefix row makes that documented recipe stop working
+for the very name the tests demonstrate it with — and that is inherent, not a consequence of picking
+`register` over `registerPrefix`:
+
+| shape | does a later `registerPrefix("gpt-5", X)` still reach terra? |
+|---|---|
+| `register("gpt-5.6-terra", …)` — exact | **no** — exact beats every prefix |
+| `registerPrefix("gpt-5.6-terra", …)` **before** `gpt-5` | **no** — a later `registerPrefix("gpt-5", X)` re-puts *in place*, so the terra prefix still matches first. That in-place behaviour is the very thing the javadoc paragraph exists to promise |
+| `registerPrefix("gpt-5.6-terra", …)` **after** `gpt-5` | unreachable — `gpt-5` matches first |
+
+There is **no shape in today's registry** that fixes terra's floor without disabling the family's
+documented override for that name. That inverts the trade: the row would buy one configuration
+(`MINIMAL` on terra) turning a 400 into a reported omission, and cost the class's own escape hatch. Two
+further facts settle it — the defect is **pre-existing** (round 7's floor, wrong for a model round 7
+could not see), and it is **not reachable from configuration today**: there is no yaml or property key
+for reasoning effort on either the starter or the CLI, so `MINIMAL` on terra can only be requested
+programmatically.
+
+**The shape of the eventual fix**, recorded so the follow-up does not restart from scratch:
+`lowestReasoningEffort` models a **floor**, and terra's ladder has a **hole** — its true floor is `NONE`
+and the rung above it is missing. No single floor value describes that: `NONE` sends `minimal` and 400s,
+`MINIMAL` 400s *and* mis-describes, `LOW` avoids the 400 but still mis-describes and shadows the family
+override. So the fix is a rung **set** rather than a floor, landed together with an answer for the
+exact-row-shadows-prefix interaction, because any per-name entry hits the second problem. It belongs
+beside the configuration-surface work, which is what would make the 400 reachable from yaml.
+
+Tracked as **L-1** in [`../../backlog/openai-model-capabilities-open-items.md`](../../backlog/openai-model-capabilities-open-items.md) — this table is a
+design-time record and the backlog is the canonical list of what is open.
+
+Also recorded and **not** modelled: terra's response echoes `{"context":"all_turns","effort":"…",
+"mode":"standard","summary":null}` where the o-series echoes `"context":"current_turn"`. It does not
+break parsing (SDK 4.52.0's `com.openai.models.Reasoning` declares both fields plus an
+`additionalProperties` map, verified against the resolved jar), and this repo never reads the response's
+`reasoning` object anyway. **Presence measured, semantics not.**
+
+### 13.5 Streaming — the first live probe, and it confirms the mapper
+
+Every probe before round 8 was blocking, which §11.5 recorded. This is the first live streaming
+measurement, and it matters because the ReAct loop's primary path is streaming: routing this family to
+`/v1/responses` would be worth little if it stranded that path.
+
+All five names return **200** and a complete SSE stream with the identical event sequence:
+
+```
+response.created → response.in_progress
+response.output_item.added / .done          (reasoning item)
+response.output_item.added                  (function_call)
+response.function_call_arguments.delta xN → .done
+response.output_item.done                   (function_call)
+response.completed
+```
+
+A text-producing turn adds `response.content_part.added`, `response.output_text.delta` xN,
+`response.output_text.done`, `response.content_part.done`.
+
+`OpenAIResponsesStreamingMapper` dispatches on every event that arrives, and nothing arrives that it
+must handle and does not — `output_item.added` opens a tool-call slot keyed by `output_index` (present),
+`output_item.done` is where the reasoning item is read, `response.completed` captures the terminal, and
+the rest are correctly ignored (`output_text.done` in particular **must** stay ignored or text would
+double-count). **This is a confirmation of existing behaviour. No mapper code changed.**
+
+One measured subtlety worth keeping, because it changes the *stated reason* for a choice the class
+already makes correctly. The two `output_item` events carry **different** `encrypted_content`:
+
+| where | length, one `o4-mini` turn |
+|---|---|
+| `response.output_item.added` | 1188 |
+| `response.output_item.done` | **1380** |
+| terminal `response.completed` | 1380 |
+
+Both payloads were POSTed back as turn 2 and **both were accepted (200)**. So `.added` is a valid,
+decryptable envelope that simply encrypts *less* reasoning — the state at the moment the item opened.
+The consequence is narrower than "reading `.added` would break": it would not throw and would not 400,
+it would silently replay a **shorter** trace. The class's choice of `output_item.done` is therefore
+correct on **content-completeness** grounds rather than on acceptance grounds.
+
+### 13.6 What changed in the tree
+
+| | change |
+|---|---|
+| `InMemoryModelCapabilityRegistry` | eight exact rows (round-trip `true`); the three prefix rows keep every flag they had; two stale javadoc paragraphs corrected — the class javadoc said the o-series was *"deliberately not in the built-in table"* while `builderWithDefaults()` had registered it since round 6, and `withDefaults()` said the o-series *"resolves to `ModelCapabilities.unknown()`"* |
+| `ModelCapabilities`, `OpenAiRequestParameters`, `OpenAIResponsesRequestFactory`, `OpenAILlmClient` | **javadoc and comments only** — the falsified *"no OpenAI ladder starts at `NONE`"* premise (§12.1) and the unqualified `xhigh` enum (§13.3). No constant, default or code path moved. |
+| tests | the endpoint flip pinned both ways (a measured name reaches Responses, an unmeasured prefix sibling does not); the exact-row-shadows-prefix trap and its escape hatch; three Chat-shape tests that named an o-series model gained `responsesApiEnabled(false)`, which is a fixture line rather than an assertion change |
+| **not changed** | the streaming mapper, the message converters, the trace helpers, `ReasoningEffort` (still no `XHIGH` / `MAX`), and every `lowestReasoningEffort` value including terra's wrong one |
+
+### 13.7 What round 8 leaves unmeasured
+
+The discipline this section is written under: 실측하지 않은 것은 실측하지 않았다고 적는다. These are empty
+cells, not inferences from a neighbour.
+
+- **`o1-pro`, `o1-pro-2025-03-19`, `o4-mini-deep-research`, `o4-mini-deep-research-2025-06-26`** — never
+  called, on cost grounds. Nothing is known about their replay, ladder, streaming shape or sampling
+  surface. **`o1` passing says nothing about `o1-pro`**: they are different models that happen to share
+  a name prefix.
+- **An o-series `/v1/responses` request with no `reasoning` object at all.** Every probe request carried
+  `reasoning.effort`, while `OpenAIConfig.reasoningEffort` defaults to unset — so this is the request
+  shape most deployments will actually send. What is *not* novel: `gpt-5.x` already ships that shape
+  through the same factory and a test pins it, so "is such a request well-formed" is answered. What is
+  open: **whether the o-series still returns a reasoning item carrying `encrypted_content` when no
+  effort is requested.** If it does not, the feature is inert for that deployment — the state it is in
+  today on Chat.
+- **A second request-shape delta, smaller.** Every probe tool carried `"strict": true`, while
+  `OpenAIResponsesMessageConverter` ships `.strict(false)` deliberately (responses-path F-4). The
+  direction is safe — the shipped shape asks the server for *less* validation — but it is the same class
+  of gap as the bullet above.
+- **The `medium` rung on any model, and `high` on `o1`.** Quoted only from the server's own enumeration.
+- **`xhigh` and `max` on `/v1/chat/completions`, for any model.** Sent individually on `/v1/responses`
+  only; Chat still enumerates `xhigh` for `o4-mini` and nobody has tested that claim (§13.3).
+- **The corruption control on `o3`, `o3-mini`, `o1`** — run on `o4-mini` and `gpt-5.6-terra` only. That
+  the check is platform-level rather than per-model is an **inference**.
+- **Streamed *text* output beyond `o4-mini`**, and the `.added`-vs-`.done` replay comparison beyond
+  `o4-mini`. Blocking text output is measured on all four o-series names.
+- **`gpt-5.6-luna`, `gpt-5.6-sol`** — visible on this key, not probed. Whether they share terra's
+  `minimal` hole is unknown, which is exactly why they get no row.
+- **`gpt-5-nano`'s ladder from a rung sent individually** — round 6 sent only `none`, on Chat, so its
+  enumeration is left as round 6 recorded it.
+- **`gpt-5.6-terra`'s sampling surface** — it resolves to `supportsSamplingParameters=false` through the
+  `gpt-5` prefix row and always has; the probe never tested it.
+- **`store: true` / `previous_response_id`** — deliberately not probed. The repo chose `store: false`
+  and records why; probing the alternative would not inform this flag.
+- **Azure and gateway deployments** — only `api.openai.com` was called.
+
+**And the key that produced all of the above was rotated at the end of the round.** Nothing here can be
+re-measured without a new one, which is why the empty cells are written down instead of being filled in
+from their neighbours.
+
+### 13.8 Where the implementation departed from the approved design
+
+Three, all small, all shape rather than decision. Recorded here for the same reason §8 exists: the
+approved document is kept as approved, and the differences are written down rather than back-fitted.
+
+- **The o-series rows are built from two shared constants, not eleven inline builder chains.** The
+  design said to append eight `register(...)` rows *"with the other four flags copied from the family
+  prefix row"*. Copying is exactly what the source now avoids: one `oSeries(boolean)` factory produces
+  both variants, the three prefix rows take the `false` one and a `forEach` over an eight-name list
+  takes the `true` one. **The resolved capability values are identical** — what changed is that "the
+  exact rows are the prefix rows plus one measured bit" became a fact of the source instead of a fact
+  about eleven copies staying in step. `builderWithDefaults()` assigns to a local and returns it rather
+  than being one chained expression, which is the cost.
+- **`CHANGELOG.md` corrects one clause more than the design listed.** The design named three lines
+  carrying the two false claims. The bullet immediately above them also said the o-series rows are
+  *"not routed to `/v1/responses`"* — in the **same `[Unreleased]` section** as the new entry that
+  routes eight of those names there. Left alone it would have been one release note contradicting
+  another two paragraphs later. Edited in place, as a superseded record with a pointer forward.
+- **§13.4 names the classes rather than counting them.** The design said terra is the `gpt-5` stand-in
+  *"in five test classes"*; the tree has eighteen test files mentioning the name, and the five the
+  design meant are five *tests* inside one class. The claim is unaffected and the number is gone.
+

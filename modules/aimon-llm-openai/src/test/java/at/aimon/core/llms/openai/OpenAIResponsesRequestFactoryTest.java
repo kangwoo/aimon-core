@@ -106,11 +106,16 @@ class OpenAIResponsesRequestFactoryTest {
     }
 
     @Test
-    @DisplayName("a rung below the model's ladder is omitted, not sent -- NONE has no wire value anywhere on OpenAI")
+    @DisplayName("a rung below the model's ladder is omitted, not sent -- NONE is off this model's ladder")
     void effortBelowTheLadderIsOmitted() {
-        // The endpoint gpt-5.x is routed to by default, so this is where a configured NONE actually lands. OpenAI has
-        // no 'none' rung on either surface (measured 2026-09-09: "Supported values are: 'minimal', 'low', 'medium',
-        // and 'high'"), so sending it is a 400 -- and the Chat path guarded it while this one did not.
+        // The endpoint gpt-5.x is routed to by default, so this is where a configured NONE actually lands. The rung
+        // is off this row's ladder on either surface (measured 2026-09-09: "Supported values are: 'minimal', 'low',
+        // 'medium', and 'high'"), so sending it is a 400 -- and the Chat path guarded it while this one did not.
+        //
+        // Round 8 narrowed the claim this test used to make in its own name: 'none' is not absent everywhere on
+        // OpenAI. gpt-5.6-terra accepts it, on both endpoints, and echoes it back. What is asserted here is
+        // unchanged -- the capability row this factory is handed says the floor is MINIMAL, and a rung below the
+        // floor is omitted whatever the vendor's other models do.
         final List<String> reported = new ArrayList<>();
         final ResponseCreateParams params = build(config(),
                 LlmModel.builder().reasoningEffort(ReasoningEffort.NONE).build(), List.of(aTool()), GPT5,
@@ -124,9 +129,18 @@ class OpenAIResponsesRequestFactoryTest {
     @Test
     @DisplayName("MINIMAL is below the o-series ladder and is omitted there, while gpt-5.x still takes it")
     void minimalIsOnGpt5sLadderButNotTheOSeriesOne() {
-        // Same rule, second rung. The o-series answers "Supported values are: 'low', 'medium', 'high', and 'xhigh'",
-        // so the neutral MINIMAL has no wire value there either -- and it is omitted rather than raised to 'low',
-        // because a raised rung is a request the operator did not make.
+        // Same rule, second rung. The o-series rejects 'minimal' -- measured on this endpoint on 2026-09-09:
+        // "Unsupported value: 'minimal' is not supported with the 'o4-mini' model. Supported values are: 'low',
+        // 'medium', and 'high'." -- so the neutral MINIMAL has no wire value there either, and it is omitted rather
+        // than raised to 'low', because a raised rung is a request the operator did not make. Since round 8 this is
+        // also the endpoint o4-mini actually reaches, so the o-series half is no longer hypothetical.
+        //
+        // The gpt-5.x half asserts that 'minimal' DOES reach the wire for the gpt-5 row, and that assertion is
+        // deliberately kept even though the name GPT5 resolves through -- gpt-5.6-terra -- rejects 'minimal' at the
+        // live API (round 8). What this line pins is the factory honouring the capability row it is handed; the row
+        // being wrong for that one model is a separate, recorded defect, deliberately not fixed here. See section 13
+        // of docs/design/llm/openai-model-capabilities.md and docs/backlog/openai-model-capabilities-open-items.md
+        // item L-1.
         final ModelCapabilities oSeries = InMemoryModelCapabilityRegistry.withDefaults().resolve("o4-mini");
         final List<String> reported = new ArrayList<>();
 

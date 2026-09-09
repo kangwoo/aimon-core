@@ -49,12 +49,12 @@ import ch.qos.logback.core.read.ListAppender;
  *
  * <p>
  * Most tests here set {@code responsesApiEnabled(false)}, because they assert the Chat Completions divergences and
- * {@code gpt-5.6-terra} now routes to {@code /v1/responses} on a stock config. The rest are already on Chat without
- * saying so and are left alone: some override the registry so the lookup degrades to
+ * the models they name route to {@code /v1/responses} on a stock config — {@code gpt-5.6-terra} since round 4, and
+ * the two {@code o4-mini} rows since round 8 measured that name's reasoning-item replay. The rest are already on
+ * Chat without saying so and are left alone: some override the registry so the lookup degrades to
  * {@code ModelCapabilities.unknown()} (whose {@code supportsReasoningTraceRoundTrip()} is false — an unresolvable
- * model is never routed to the new endpoint), one names {@code gpt-4o}, and the {@code o4-mini} rows are on Chat by
- * their own capability entry. That the same reporting still happens on the Responses path is bound separately, by
- * {@code OpenAIResponsesParameterDivergenceTest}.
+ * model is never routed to the new endpoint), and one names {@code gpt-4o}. That the same reporting still happens on
+ * the Responses path is bound separately, by {@code OpenAIResponsesParameterDivergenceTest}.
  */
 @DisplayName("OpenAILlmClient - request parameter divergence reporting")
 @ExtendWith(MockitoExtension.class)
@@ -253,9 +253,11 @@ class OpenAILlmClientParameterDivergenceTest {
     @DisplayName("asking for a rung below the model's ladder is reported AND omitted from the request")
     void requestedNoneIsReportedAndOmitted() {
         // Round 6 reversal, measured 2026-09-09. This used to assert SILENCE, on the reasoning that asking for NONE
-        // and getting NONE is not a divergence. But OpenAI has no 'none' level -- gpt-5.x accepts 'minimal'..'high',
-        // the o-series 'low'..'xhigh' -- so sending it is a 400, and omitting it leaves the model reasoning at its
-        // own default, which is the opposite of what NONE asked for. That is a divergence and the operator is told.
+        // and getting NONE is not a divergence. But 'none' is off this model's ladder -- gpt-5.x starts at
+        // 'minimal', the o-series at 'low' -- so sending it is a 400, and omitting it leaves the model reasoning at
+        // its own default, which is the opposite of what NONE asked for. That is a divergence and the operator is
+        // told. (Round 8 narrowed the family claim this comment used to make: 'none' is not absent everywhere on
+        // OpenAI, because gpt-5.6-terra accepts it. What is asserted below is per-row and unaffected.)
         //
         // The body assertion is the half this test's own name claimed and did not check: warning and sending are not
         // mutually exclusive, so asserting only the warning left "report it, then send it anyway" -- the 400 this
@@ -275,9 +277,14 @@ class OpenAILlmClientParameterDivergenceTest {
     @DisplayName("MINIMAL is below the o-series ladder and comes off the Chat request too")
     void minimalIsOmittedForTheOSeries() {
         // The second rung the same rule covers, and the reason it is a capability rather than a NONE special case:
-        // o4-mini answers "Supported values are: 'low', 'medium', 'high', and 'xhigh'", so the neutral MINIMAL has no
-        // wire value there. The o-series stays on Chat Completions, so this is the endpoint it is actually sent to.
-        final OpenAILlmClient client = client(OpenAIConfig.builder().apiKey("test-key").model("o4-mini").build());
+        // o4-mini rejects 'minimal', so the neutral MINIMAL has no wire value there. Measured on /v1/responses on
+        // 2026-09-09 -- "Unsupported value: 'minimal' is not supported with the 'o4-mini' model. Supported values
+        // are: 'low', 'medium', and 'high'." -- and on /v1/chat/completions round 6 recorded the same floor with a
+        // different ceiling. This test is about the Chat request, and since round 8 a stock config on this name
+        // goes to /v1/responses, so responsesApiEnabled(false) is the fixture line that keeps it here. The rule
+        // itself is shared: OpenAiRequestParameters.maySendEffort is called by both endpoints.
+        final OpenAILlmClient client = client(
+                OpenAIConfig.builder().apiKey("test-key").model("o4-mini").responsesApiEnabled(false).build());
 
         final ChatCompletionCreateParams params = sendAndCapture(client,
                 LlmModel.builder().reasoningEffort(ReasoningEffort.MINIMAL).build(), List.of(A_TOOL));
@@ -293,7 +300,9 @@ class OpenAILlmClientParameterDivergenceTest {
     void lowIsStillSentForTheOSeries() {
         // The other side of the same row: raising the floor must not turn the whole family's reasoning off. Without
         // this, setting lowestReasoningEffort to something absurd would pass every other assertion in this class.
-        final OpenAILlmClient client = client(OpenAIConfig.builder().apiKey("test-key").model("o4-mini").build());
+        // responsesApiEnabled(false) for the reason given on the test above -- this is the Chat request shape.
+        final OpenAILlmClient client = client(
+                OpenAIConfig.builder().apiKey("test-key").model("o4-mini").responsesApiEnabled(false).build());
 
         final ChatCompletionCreateParams params = sendAndCapture(client,
                 LlmModel.builder().reasoningEffort(ReasoningEffort.LOW).build(), List.of(A_TOOL));

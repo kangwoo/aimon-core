@@ -1,6 +1,7 @@
 package at.aimon.core.llm.capability;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
@@ -42,22 +43,55 @@ import at.aimon.core.llm.ReasoningEffort;
  * </pre>
  *
  * <p>
- * The o-series ({@code o1} / {@code o3} / {@code o4-mini}) is deliberately <em>not</em> in the built-in table: those
- * models take a reasoning effort but reject the value {@code none}, so an entry for them must keep
- * {@link ModelCapabilities#supportsToolsWithReasoning()} at {@code true}:
+ * <strong>The o-series is in the table</strong>, measured 2026-09-09: three prefix rows ({@code o1} / {@code o3} /
+ * {@code o4}) <em>and</em> eight exact rows. Both shapes are needed because reasoning-item replay is known per
+ * <em>name</em>, not per family — {@code o1-pro} and {@code o4-mini-deep-research} share a prefix with a measured
+ * model and were never called, so the prefix rows keep
+ * {@link ModelCapabilities#supportsReasoningTraceRoundTrip()} at {@code false} and only the exact rows carry the
+ * {@code true}.
+ *
+ * <p>
+ * That costs callers one thing, and the first paragraph above is why:
+ * {@code builderWithDefaults().registerPrefix("o1", ...)} still reaches {@code o1-pro} and every future
+ * {@code o1*} name but <strong>no longer reaches {@code o1} or {@code o1-2024-12-17}</strong>, because the built-in
+ * exact rows shadow it. Override a measured name with {@code register(...)}, which displaces the built-in exact row.
+ * It is also why there is no exact row for any {@code gpt-5*} name: one would disable the
+ * {@code registerPrefix("gpt-5", ...)} override {@link #builderWithDefaults()} documents, for the very name that
+ * override is demonstrated with.
+ *
+ * <p>
+ * Whichever shape an entry for these models takes, {@link ModelCapabilities#supportsToolsWithReasoning()}
+ * <strong>must stay {@code true}</strong>: they reject the effort value {@code none}, so a {@code false} there makes
+ * the client send a value the API refuses.
  *
  * <pre>
  * {@code
  * InMemoryModelCapabilityRegistry.builderWithDefaults()
- *         .registerPrefix("o3", ModelCapabilities.builder().supportsSamplingParameters(false)
+ *         .register("o3", ModelCapabilities.builder().supportsSamplingParameters(false)
  *                 .supportsReasoningEffort(true)
  *                 .supportsToolsWithReasoning(true) // MUST stay true: the o-series rejects effort "none"
- *                 .build())
+ *                 .supportsReasoningTraceRoundTrip(false) // sends this one name back to Chat Completions
+ *                 .lowestReasoningEffort(ReasoningEffort.LOW).build())
  *         .build();
  * }
  * </pre>
  */
 public final class InMemoryModelCapabilityRegistry implements ModelCapabilityRegistry {
+
+    // The o-series request surface, in the two variants that differ by exactly one bit. Both are stated once rather
+    // than eleven times so that "the exact rows are the prefix rows plus a measured round trip" is a fact of the
+    // source rather than of eleven copies staying in step.
+    private static final ModelCapabilities O_SERIES_REPLAY_UNMEASURED = oSeries(false);
+    private static final ModelCapabilities O_SERIES_REPLAY_MEASURED = oSeries(true);
+
+    /**
+     * The o-series names whose reasoning-item replay was measured on 2026-09-09, alias and served snapshot alike. The
+     * dated names were never <em>sent</em> — they were returned, as the {@code model} of the response whose replayed
+     * item was accepted — so registering them is the honest reading of what answered, with one assumption stated in
+     * section 13 of {@code docs/design/llm/openai-model-capabilities.md}: that requesting a snapshot reaches it.
+     */
+    private static final List<String> MEASURED_O_SERIES_NAMES = List.of("o1", "o1-2024-12-17", "o3", "o3-2025-04-16",
+            "o3-mini", "o3-mini-2025-01-31", "o4-mini", "o4-mini-2025-04-16");
 
     private final Map<String, ModelCapabilities> exactEntries;
     private final Map<String, ModelCapabilities> prefixEntries;
@@ -86,7 +120,7 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
      * @return a builder carrying the {@link #withDefaults()} entries
      */
     public static Builder builderWithDefaults() {
-        return builder()
+        final Builder builder = builder()
                 // Order matters: gpt-5-chat is the non-reasoning variant of the family and must be matched before the
                 // family prefix, or it would inherit the family's suppression. Same reason InMemoryModelPriceTable
                 // registers gpt-4o-mini before gpt-4o.
@@ -110,6 +144,13 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
                 // false used to trigger -- sending effort "none" -- is itself rejected, since "none" is not among the
                 // accepted values ('minimal', 'low', 'medium', 'high'). See section 11 of
                 // docs/design/llm/openai-model-capabilities.md for the probe table.
+                //
+                // Round 8 measured one member this floor gets wrong: gpt-5.6-terra resolves here and REJECTS
+                // 'minimal' (its ladder is none/low/medium/high/xhigh/max), so a programmatically configured MINIMAL
+                // on that name is a 400. Known and deliberately unfixed -- no per-name row fixes it without
+                // shadowing this prefix for the one name the override recipe above is demonstrated with. See
+                // section 13 of docs/design/llm/openai-model-capabilities.md and
+                // docs/backlog/openai-model-capabilities-open-items.md item L-1.
                 .registerPrefix("gpt-5",
                         ModelCapabilities.builder().supportsSamplingParameters(false).supportsReasoningEffort(true)
                                 .supportsToolsWithReasoning(true).supportsReasoningTraceRoundTrip(true).build())
@@ -117,26 +158,46 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
                 // that they reject sampling was unverified and a wrong row is a *silent* change; the probes closed
                 // that. o3-mini and o4-mini reject temperature 0.0 and accept 1.0, accept tools with no effort, and
                 // reject effort "none" -- so supportsToolsWithReasoning MUST stay true here, exactly as this class's
-                // own javadoc example has warned all along. They are not routed to /v1/responses: this build has not
-                // measured reasoning-item replay for them, and asserting a round trip we have not seen is how round 1
-                // got the gpt-5 row wrong.
+                // own javadoc example has warned all along.
+                //
+                // These three keep supportsReasoningTraceRoundTrip=false and they are the rows every UNMEASURED name
+                // under them lands on -- o1-pro, o4-mini-deep-research and any future o1*/o3*/o4* name. Round 8's
+                // cost rules forbade calling the first two, so nothing is known about them, and a prefix flip would
+                // assert a wire change on the strength of a sibling that merely shares a name prefix. The measured
+                // names are registered exactly, below.
                 //
                 // lowestReasoningEffort is LOW rather than the default MINIMAL, and that is the second half of the
-                // same probe: this family answers "Supported values are: 'low', 'medium', 'high', and 'xhigh'", so
-                // MINIMAL is off its ladder exactly as NONE is. Without the row the neutral MINIMAL would translate
-                // to the wire value 'minimal' and 400.
-                .registerPrefix("o1",
-                        ModelCapabilities.builder().supportsSamplingParameters(false).supportsReasoningEffort(true)
-                                .supportsToolsWithReasoning(true).supportsReasoningTraceRoundTrip(false)
-                                .lowestReasoningEffort(ReasoningEffort.LOW).build())
-                .registerPrefix("o3",
-                        ModelCapabilities.builder().supportsSamplingParameters(false).supportsReasoningEffort(true)
-                                .supportsToolsWithReasoning(true).supportsReasoningTraceRoundTrip(false)
-                                .lowestReasoningEffort(ReasoningEffort.LOW).build())
-                .registerPrefix("o4",
-                        ModelCapabilities.builder().supportsSamplingParameters(false).supportsReasoningEffort(true)
-                                .supportsToolsWithReasoning(true).supportsReasoningTraceRoundTrip(false)
-                                .lowestReasoningEffort(ReasoningEffort.LOW).build());
+                // same probe. Round 8 replaced the evidence for it: round 6 quoted a Chat Completions reply without
+                // saying so, and on /v1/responses -- the endpoint the measured names now reach -- the same model
+                // answers "Unsupported value: 'minimal' is not supported with the 'o4-mini' model. Supported values
+                // are: 'low', 'medium', and 'high'." The floor is 'low' on both surfaces; only the ceiling differed,
+                // and this field is about the floor. Without the row the neutral MINIMAL would translate to the wire
+                // value 'minimal' and 400.
+                .registerPrefix("o1", O_SERIES_REPLAY_UNMEASURED).registerPrefix("o3", O_SERIES_REPLAY_UNMEASURED)
+                .registerPrefix("o4", O_SERIES_REPLAY_UNMEASURED);
+        // Round 8, measured 2026-09-09: these eight names accept a replayed reasoning item on /v1/responses (HTTP
+        // 200, turn completed). A 200 alone would only mean "tolerated", so a control corrupted 40 characters of the
+        // encrypted payload and got a 400 -- the server decrypts and consumes the item. That control was run on
+        // o4-mini (and on gpt-5.6-terra), not on all four; the check reads as platform-level, and that reading is an
+        // inference. It is what routes these names to the Responses path, where reasoning survives a tool call
+        // instead of being thrown away between turns.
+        //
+        // Unlike the prefix block above, registration order is NOT load-bearing here: an exact entry beats every
+        // prefix whatever position it was registered in. That is also the property that makes an exact row a poor
+        // instrument for the gpt-5 family -- it would shadow the documented registerPrefix("gpt-5", ...) override --
+        // which is why no gpt-5* name has one.
+        MEASURED_O_SERIES_NAMES.forEach(name -> builder.register(name, O_SERIES_REPLAY_MEASURED));
+        return builder;
+    }
+
+    /**
+     * The o-series row, in the one variant that differs: whether this build has seen the model replay a reasoning
+     * item. Everything else about the row is the same measurement and is shared by construction.
+     */
+    private static ModelCapabilities oSeries(boolean reasoningTraceRoundTrip) {
+        return ModelCapabilities.builder().supportsSamplingParameters(false).supportsReasoningEffort(true)
+                .supportsToolsWithReasoning(true).supportsReasoningTraceRoundTrip(reasoningTraceRoundTrip)
+                .lowestReasoningEffort(ReasoningEffort.LOW).build();
     }
 
     /**
@@ -144,8 +205,8 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
      *
      * <p>
      * The table is kept as small as the problem: it describes only the families whose request surface is known to
-     * differ from the historical default. Everything else — including the o-series — resolves to
-     * {@link ModelCapabilities#unknown()} and keeps behaving exactly as it does today.
+     * differ from the historical default — {@code gpt-5-chat}, {@code gpt-5}, and the o-series. Everything else
+     * resolves to {@link ModelCapabilities#unknown()}.
      *
      * @return a registry with framework-default capability entries
      */

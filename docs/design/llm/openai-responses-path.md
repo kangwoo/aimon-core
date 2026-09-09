@@ -340,9 +340,11 @@ phase 2 — so the configured effort goes as asked and an unconfigured request g
 default, which is now the desirable one.
 
 What does **not** go away is `OpenAiRequestParameters.maySendEffort`: which rungs a model accepts is a
-fact about the model, not about the endpoint, and OpenAI has no `none` rung on either surface. Dropping
-that check along with the clamp is how `reasoning.effort: "none"` reached this endpoint as a 400 — see
-[`openai-model-capabilities.md`](openai-model-capabilities.md) §12.
+fact about the model, not about the endpoint, and no OpenAI model measured to date except
+`gpt-5.6-terra` has a `none` rung on either surface. Dropping that check along with the clamp is how
+`reasoning.effort: "none"` reached this endpoint as a 400 — see
+[`openai-model-capabilities.md`](openai-model-capabilities.md) §12, and §13.3 for the one model that
+does have the rung.
 
 ### 4.2 Message conversion is parity with the Chat converter, case for case
 
@@ -554,7 +556,7 @@ result as an opaque string and cannot see the field.
 | **F-3** | Native `input_file` for non-text documents on this path. | Taking it would make the same `Message` mean different things on the two endpoints and claim an unverified capability. |
 | **F-4** | **`strict: true` for tool schemas.** Strict mode improves tool-call accuracy and the field is already being written. | Turning it on rejects every schema that is not strict-compliant, and §4.3 shows that population is large and partly not ours. Needs its own gate, an audit, and its own CHANGELOG entry. |
 | **F-5** | Reasoning *summary* deltas forwarded to the sink. | A user-facing "thinking" stream is a separate feature; this round carries the item across turns rather than showing it. |
-| **F-6** | The o-series rows in the built-in table. | Round 1's open gap, still blocked on live-API verification. Untouched, and still pinned by a test that says why. |
+| ~~**F-6**~~ | ~~The o-series rows in the built-in table.~~ **Done — round 8.** | Was *"blocked on live-API verification"*. That verification happened on 2026-09-09: four o-series names accept a replayed reasoning item on `/v1/responses`, with a corruption control proving the item is consumed, so the flag flipped for the eight measured names and they now reach this path. It did **not** flip per prefix — `o1-pro` and `o4-mini-deep-research` were never called and keep the old behaviour through their prefix rows. [`openai-model-capabilities.md`](openai-model-capabilities.md) §13. |
 
 ---
 
@@ -574,11 +576,15 @@ result as an opaque string and cannot see the field.
 - **U-3 — the terminal/transient split is reasoned from enum names**, not from observed responses.
   The default arm is deliberately the parity arm, so the failure mode of being wrong is bounded: a
   retryable code mis-listed as terminal loses its retries, and only for codes actually named.
-- **U-4 — "`response.completed` carries usage without being asked" is a server claim.**
-  `Response.usage()` is `Optional` in the SDK, and the tests supply usage in their own fixtures, so
-  no test here can fail if the server omits it. It is the one assertion propping up preserved
-  behaviour 2's "usage still requested" half. If it is false, the reassembled response carries empty
-  usage — cost under-reports and the call still succeeds.
+- ~~**U-4 — "`response.completed` carries usage without being asked" is a server claim.**~~
+  **Measured — round 8, 2026-09-09, on `o4-mini`.** The terminal event of a streamed `/v1/responses`
+  turn does carry a full `usage` object, with no `stream_options` equivalent having been sent. That is
+  the one name whose terminal payload was captured; the other four were recorded as event sequences
+  only, so the claim is closed for `o4-mini` and unmeasured for them. The rest of the entry stood as
+  written: `Response.usage()` is `Optional` in the SDK and the tests supply usage in their own
+  fixtures, so no test here would have failed if the server omitted it; what changes is that the claim
+  is no longer only a claim, for one name.
+  [`openai-model-capabilities.md`](openai-model-capabilities.md) §13.5.
 - **U-5 — transcript growth is stated, not budgeted.** Nobody has measured what a 40-turn `gpt-5`
   tool loop does to a session row. The mitigations exist; the number does not.
 - **U-6 — the docker-backed backend round trip has never been run in this task.** §6 says what the

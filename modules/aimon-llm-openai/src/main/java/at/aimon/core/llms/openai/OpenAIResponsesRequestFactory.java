@@ -35,8 +35,9 @@ import at.aimon.core.llm.capability.ModelCapabilities;
  * is a Chat Completions rule — on this endpoint tools and reasoning coexist, which is the entire point of phase 2, so
  * the configured effort goes as asked and an unconfigured request gets the server's default. What does <em>not</em>
  * go away is {@link OpenAiRequestParameters#maySendEffort}: which rungs a model accepts is a fact about the model,
- * not about the endpoint, and OpenAI has no {@code none} rung on either surface. Dropping that check along with the
- * clamp is how {@code reasoning.effort: "none"} reached this endpoint as a 400.
+ * not about the endpoint, and no OpenAI model measured to date except {@code gpt-5.6-terra} has a {@code none} rung
+ * on either surface. Dropping that check along with the clamp is how {@code reasoning.effort: "none"} reached this
+ * endpoint as a 400.
  * <li><strong>{@code store} is {@code false} and {@code reasoning.encrypted_content} is asked for.</strong> With
  * {@code store: true} the server retains the exchange and offers {@code previous_response_id} as an alternative to
  * replaying items — a second source of truth that no {@code SessionRecord} knows about, in a system that resumes

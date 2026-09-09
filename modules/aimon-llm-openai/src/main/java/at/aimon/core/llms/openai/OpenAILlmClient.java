@@ -453,8 +453,8 @@ public class OpenAILlmClient implements LlmClient {
             return;
         }
 
-        // Model rule, shared with the Responses path: NONE is off every OpenAI ladder, and MINIMAL is off the
-        // o-series one.
+        // Model rule, shared with the Responses path: NONE is off every OpenAI ladder measured to date except
+        // gpt-5.6-terra's, and MINIMAL is off the o-series one.
         if (requested.isPresent() && !OpenAiRequestParameters.maySendEffort(requested.get(), capabilities, modelName,
                 this::reportDivergence)) {
             return;

@@ -54,9 +54,10 @@ import at.aimon.core.llm.streaming.LlmStreamingOptions;
  * that can fail on that bug.
  *
  * <p>
- * <strong>Every test here is about the Chat Completions request shape</strong>, which is why the eight that name a
- * {@code gpt-5.x} model on a stock registry now set {@code responsesApiEnabled(false)}. That flag is a fixture line,
- * not an assertion change: the model name stays in the fixture, so what each test is <em>about</em> is unchanged, and
+ * <strong>Every test here is about the Chat Completions request shape</strong>, which is why the nine that name a
+ * model the built-in table routes to {@code /v1/responses} — eight {@code gpt-5.x} and, since round 8 measured its
+ * reasoning-item replay, one {@code o3} — set {@code responsesApiEnabled(false)}. That flag is a fixture line, not
+ * an assertion change: the model name stays in the fixture, so what each test is <em>about</em> is unchanged, and
  * two of them ({@code toolsClampReasoningEffortToNone}, and {@code clampedReasoningEffortIsReported} in the
  * divergence sibling) test a clamp that is a Chat Completions rule outright and belongs nowhere else. The endpoint
  * choice itself is bound by {@link OpenAILlmClientEndpointSelectionTest}, and the Responses request shape by
@@ -252,15 +253,22 @@ class OpenAILlmClientModelCapabilityTest {
         // to 1.0, accept tools with no effort, and reject effort "none". So the rows are in, and this test says the
         // opposite of what it used to -- deliberately. See docs/design/llm/openai-model-capabilities.md section 11.
         //
-        // supportsReasoningTraceRoundTrip stays FALSE for these: replay was never measured for the o-series, and
-        // asserting a round trip nobody has seen is how the gpt-5 row came out wrong the first time.
+        // Round 8, measured 2026-09-09: o3's reasoning-item replay is now measured, its exact row says
+        // supportsReasoningTraceRoundTrip=true, and a stock config on this name reaches /v1/responses. So
+        // responsesApiEnabled(false) is a fixture line here for exactly the reason it is one on the gpt-5.x tests
+        // above -- this test is still about the CHAT request shape, and the stock-config binding for this name has
+        // moved to OpenAILlmClientEndpointSelectionTest.stockConfigOnAMeasuredOSeriesNameUsesResponses. It is
+        // deliberately not re-pointed at an unmeasured sibling such as o1-pro: that would couple a sampling
+        // assertion to the unmeasured-name decision, and it would keep passing for the wrong reason if the o1
+        // prefix were ever flipped.
+        //
         // Round 2 reversal, by maintainer ruling: this test used to send an EMPTY LlmModel and assert the request
         // still carried temperature=0.0, from OpenAIConfig.DEFAULT_TEMPERATURE. That fallback was removed
         // deliberately -- issue #43's "sampling parameters are sent only when the caller explicitly set them" beats
         // round 1's "an unknown model sends exactly what it sends today", which round 1 had recorded as design
         // O-1/A6. See docs/design/llm/openai-model-capabilities.md section 9.
-        final ChatCompletionCreateParams params = capture(config("o3").build(), modelWithAllSamplingValues(),
-                List.of(A_TOOL));
+        final ChatCompletionCreateParams params = capture(config("o3").responsesApiEnabled(false).build(),
+                modelWithAllSamplingValues(), List.of(A_TOOL));
 
         assertSamplingOmitted(params);
         assertThat(params._reasoningEffort()).isInstanceOf(JsonMissing.class);
