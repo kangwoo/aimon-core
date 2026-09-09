@@ -141,7 +141,7 @@ jobs:
       # therefore observed, not assumed -- which matters here because the failure mode this key design guards
       # against is a silent one: a key that never saves looks exactly like a key that never misses.
       - name: Cache Playwright browsers
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-browsers-${{ runner.os }}-${{ steps.playwright.outputs.version }}
@@ -384,12 +384,12 @@ jobs:
           cache-read-only: true
 
       - name: Download unit-tier coverage data
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: jacoco-exec-unit
 
       - name: Download docker-tier coverage data
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: jacoco-exec-integration
 
