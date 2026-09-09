@@ -810,6 +810,7 @@ different claims:
 | Flush streamed traces after `emitStreamEnd` instead of before | `AnthropicStreamingReasoningTest` (an `IllegalStateException` escaping the mapper) |
 | Add `thinkingTokens` into `totalTokens` | `AnthropicUsageTest` |
 | Send `thinking` when `thinkingMode = OFF` | `AnthropicThinkingRequestTest`'s byte-identical body case |
+| Make `toBlockParam` always return empty (a silent-drop replay regression) | `AnthropicThinkingLiveTest.mutatedSignatureIsRejected` — **and notably not** its positive sibling, which stays green. That asymmetry is the whole reason the negative control exists, and it was run rather than argued. |
 
 ### 10.3 What is not covered, and why that is part of the claim
 
