@@ -363,8 +363,8 @@ aimon:
   `prod-assistant` 로), 내장 capability 표는 모델을 실제 이름으로 알기 때문에 그 이름은 fail-open 경로로
   떨어져 `temperature` 를 받지 않는 모델에 그것이 실려 HTTP 400 이 됩니다. **이 블록은 두 분기가 모두
   읽습니다** — 내장 표도 두 벤더를 서술합니다(`gpt-*` · `o*` 행과, 샘플링 파라미터를 거절하는 `claude-*`
-  행 — 실측한 여섯 개에 문서 기반인 `claude-mythos` 계열이 더해집니다). 그래서 아래 예제의 `provider` 는
-  `anthropic` 이어도 됩니다.
+  행 — 실측한 모델 이름 여섯 개에 문서 기반인 `claude-mythos` 계열이 더해집니다). 그래서 아래 예제의
+  `provider` 는 `anthropic` 이어도 됩니다.
 
   ```yaml
   aimon:

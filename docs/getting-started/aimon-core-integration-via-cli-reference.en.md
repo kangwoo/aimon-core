@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/aimon-core-integration-via-cli-reference.md
-source_commit: e254b8c
+source_commit: 87acc1d
 ---
 
 # aimon-core integration guide — following aimon-cli as the reference

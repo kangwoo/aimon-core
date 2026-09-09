@@ -50,11 +50,12 @@ import at.aimon.core.llm.ReasoningEffort;
  *
  * <p>
  * <strong>The table describes two vendors</strong>, and one instance of it is read by both clients. The
- * {@code claude-*} rows say only that six models refuse the sampling parameters, and the {@code gpt-*} / {@code o*}
- * rows cannot match a {@code claude-*} name or the other way round — so the two blocks do not interfere. What they do
- * share is the look-up: a {@code claude-*} name reaching {@code OpenAILlmClient} through an OpenAI-compatible gateway
- * resolves to the Anthropic rows and has its sampling suppressed too. That is the right answer arriving from an
- * unexpected direction, and it is stated here because it is invisible from either client's source.
+ * {@code claude-*} rows state a single flag — the names they match refuse the sampling parameters — and the
+ * {@code gpt-*} / {@code o*} rows cannot match a {@code claude-*} name or the other way round, so the two blocks do
+ * not interfere. What they do share is the look-up: a {@code claude-*} name reaching {@code OpenAILlmClient} through
+ * an OpenAI-compatible gateway resolves to the Anthropic rows and has its sampling suppressed too. That is the
+ * right answer arriving from an unexpected direction, and it is stated here because it is invisible from either
+ * client's source.
  *
  * <p>
  * <strong>The o-series is in the table</strong>, measured 2026-09-09: three prefix rows ({@code o1} / {@code o3} /

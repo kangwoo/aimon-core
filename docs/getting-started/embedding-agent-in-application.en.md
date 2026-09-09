@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/embedding-agent-in-application.md
-source_commit: e254b8c
+source_commit: 87acc1d
 ---
 
 # Embedding an AIMON agent in your application
