@@ -1,9 +1,12 @@
 package at.aimon.core.llm.capability;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+
+import at.aimon.core.llm.ReasoningEffort;
 
 @DisplayName("ModelCapabilities - the fail-open descriptor")
 class ModelCapabilitiesTest {
@@ -26,6 +29,10 @@ class ModelCapabilitiesTest {
         assertThat(unknown.supportsSamplingParameters()).isTrue();
         assertThat(unknown.supportsReasoningEffort()).isFalse();
         assertThat(unknown.supportsToolsWithReasoning()).isTrue();
+        // MINIMAL rather than NONE: NONE is the one rung no OpenAI ladder starts at, so treating it as acceptable
+        // for a model nobody has described would invent a wire value the vendor rejects. Every other rung a caller
+        // can name stays sendable, which is the fail-open half.
+        assertThat(unknown.lowestReasoningEffort()).isEqualTo(ReasoningEffort.MINIMAL);
     }
 
     @Test
@@ -50,21 +57,31 @@ class ModelCapabilitiesTest {
         assertThat(partial.supportsReasoningEffort()).isTrue();
         assertThat(partial.supportsSamplingParameters()).isTrue();
         assertThat(partial.supportsToolsWithReasoning()).isTrue();
+        assertThat(partial.lowestReasoningEffort()).isEqualTo(ReasoningEffort.MINIMAL);
     }
 
     @Test
     @DisplayName("every flag round-trips through the builder")
     void flagsRoundTrip() {
         final ModelCapabilities capabilities = ModelCapabilities.builder().supportsSamplingParameters(false)
-                .supportsReasoningEffort(true).supportsToolsWithReasoning(false).build();
+                .supportsReasoningEffort(true).supportsToolsWithReasoning(false)
+                .lowestReasoningEffort(ReasoningEffort.LOW).build();
 
         assertThat(capabilities.supportsSamplingParameters()).isFalse();
         assertThat(capabilities.supportsReasoningEffort()).isTrue();
         assertThat(capabilities.supportsToolsWithReasoning()).isFalse();
+        assertThat(capabilities.lowestReasoningEffort()).isEqualTo(ReasoningEffort.LOW);
     }
 
     @Test
-    @DisplayName("equals and hashCode cover all four flags")
+    @DisplayName("a null lowest reasoning effort is rejected rather than silently reopening the ladder")
+    void nullLowestReasoningEffortRejected() {
+        assertThatThrownBy(() -> ModelCapabilities.builder().lowestReasoningEffort(null))
+                .isInstanceOf(NullPointerException.class).hasMessageContaining("lowestReasoningEffort");
+    }
+
+    @Test
+    @DisplayName("equals and hashCode cover all five fields")
     void equalsAndHashCode() {
         final ModelCapabilities a = ModelCapabilities.builder().supportsSamplingParameters(false)
                 .supportsReasoningEffort(true).supportsToolsWithReasoning(false).build();
@@ -81,15 +98,18 @@ class ModelCapabilitiesTest {
         assertThat(a).isNotEqualTo(
                 ModelCapabilities.builder().supportsSamplingParameters(false).supportsReasoningEffort(true)
                         .supportsToolsWithReasoning(false).supportsReasoningTraceRoundTrip(true).build());
+        assertThat(a).isNotEqualTo(
+                ModelCapabilities.builder().supportsSamplingParameters(false).supportsReasoningEffort(true)
+                        .supportsToolsWithReasoning(false).lowestReasoningEffort(ReasoningEffort.LOW).build());
         assertThat(a).isNotEqualTo(null).isNotEqualTo("not a descriptor");
     }
 
     @Test
-    @DisplayName("toString names every flag")
+    @DisplayName("toString names every field")
     void toStringNamesEveryFlag() {
         assertThat(ModelCapabilities.unknown().toString()).contains("supportsSamplingParameters=true")
                 .contains("supportsReasoningEffort=false").contains("supportsToolsWithReasoning=true")
-                .contains("supportsReasoningTraceRoundTrip=false");
+                .contains("supportsReasoningTraceRoundTrip=false").contains("lowestReasoningEffort=MINIMAL");
     }
 
     @Test

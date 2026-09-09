@@ -3,6 +3,7 @@ package at.aimon.core.llms.openai;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -47,12 +48,17 @@ class OpenAIResponsesRequestFactoryTest {
     };
 
     private static OpenAIResponsesRequestFactory factoryFor(OpenAIConfig config, OpenAIDivergenceReporter reporter) {
-        return new OpenAIResponsesRequestFactory(new OpenAIResponsesMessageConverter(), config, "OpenAI", reporter);
+        return new OpenAIResponsesRequestFactory(new OpenAIResponsesMessageConverter(), config, reporter);
     }
 
     private ResponseCreateParams build(OpenAIConfig config, LlmModel model, List<ToolDefinition> tools) {
-        return factoryFor(config, SILENT).build("You are helpful", List.of(Message.user("hi")), tools, model, GPT5,
-                "gpt-5.6-terra");
+        return build(config, model, tools, GPT5, SILENT);
+    }
+
+    private ResponseCreateParams build(OpenAIConfig config, LlmModel model, List<ToolDefinition> tools,
+            ModelCapabilities capabilities, OpenAIDivergenceReporter reporter) {
+        return factoryFor(config, reporter).build("You are helpful", List.of(Message.user("hi")), tools, model,
+                capabilities, "gpt-5.6-terra", "OpenAI");
     }
 
     private static OpenAIConfig config() {
@@ -97,6 +103,42 @@ class OpenAIResponsesRequestFactoryTest {
                 LlmModel.builder().reasoningEffort(ReasoningEffort.HIGH).build(), List.of(aTool()));
 
         assertThat(ResponsesFixtures.bodyTreeOf(params).get("reasoning").get("effort").asText()).isEqualTo("high");
+    }
+
+    @Test
+    @DisplayName("a rung below the model's ladder is omitted, not sent -- NONE has no wire value anywhere on OpenAI")
+    void effortBelowTheLadderIsOmitted() {
+        // The endpoint gpt-5.x is routed to by default, so this is where a configured NONE actually lands. OpenAI has
+        // no 'none' rung on either surface (measured 2026-09-09: "Supported values are: 'minimal', 'low', 'medium',
+        // and 'high'"), so sending it is a 400 -- and the Chat path guarded it while this one did not.
+        final List<String> reported = new ArrayList<>();
+        final ResponseCreateParams params = build(config(),
+                LlmModel.builder().reasoningEffort(ReasoningEffort.NONE).build(), List.of(aTool()), GPT5,
+                (signature, message, args) -> reported.add(signature));
+
+        assertThat(params._reasoning()).isInstanceOf(JsonMissing.class);
+        assertThat(ResponsesFixtures.bodyOf(params)).doesNotContain("\"effort\"");
+        assertThat(reported).containsExactly("reasoningEffortBelowLadder=NONE@gpt-5.6-terra");
+    }
+
+    @Test
+    @DisplayName("MINIMAL is below the o-series ladder and is omitted there, while gpt-5.x still takes it")
+    void minimalIsOnGpt5sLadderButNotTheOSeriesOne() {
+        // Same rule, second rung. The o-series answers "Supported values are: 'low', 'medium', 'high', and 'xhigh'",
+        // so the neutral MINIMAL has no wire value there either -- and it is omitted rather than raised to 'low',
+        // because a raised rung is a request the operator did not make.
+        final ModelCapabilities oSeries = InMemoryModelCapabilityRegistry.withDefaults().resolve("o4-mini");
+        final List<String> reported = new ArrayList<>();
+
+        final ResponseCreateParams onGpt5 = build(config(),
+                LlmModel.builder().reasoningEffort(ReasoningEffort.MINIMAL).build(), List.of(), GPT5, SILENT);
+        final ResponseCreateParams onOSeries = build(config(),
+                LlmModel.builder().reasoningEffort(ReasoningEffort.MINIMAL).build(), List.of(), oSeries,
+                (signature, message, args) -> reported.add(signature));
+
+        assertThat(ResponsesFixtures.bodyTreeOf(onGpt5).get("reasoning").get("effort").asText()).isEqualTo("minimal");
+        assertThat(onOSeries._reasoning()).isInstanceOf(JsonMissing.class);
+        assertThat(reported).containsExactly("reasoningEffortBelowLadder=MINIMAL@gpt-5.6-terra");
     }
 
     @Test
@@ -162,7 +204,7 @@ class OpenAIResponsesRequestFactoryTest {
         factoryFor(config(), (signature, message, args) -> reported.add(String.valueOf(args[0]))).build("sys",
                 List.of(Message.user("hi")), List.of(),
                 LlmModel.builder().temperature(0.7).presencePenalty(1.0).frequencyPenalty(-1.0).build(), samplingOk,
-                "custom-reasoner");
+                "custom-reasoner", "OpenAI");
 
         assertThat(reported).containsExactlyInAnyOrder("presencePenalty", "frequencyPenalty");
     }
@@ -183,7 +225,7 @@ class OpenAIResponsesRequestFactoryTest {
         final List<String> reported = new java.util.ArrayList<>();
 
         factoryFor(config(), (signature, message, args) -> reported.add(signature)).build("sys", List.of(assistant),
-                List.of(), LlmModel.builder().build(), GPT5, "gpt-5.6-terra");
+                List.of(), LlmModel.builder().build(), GPT5, "gpt-5.6-terra", "OpenAI");
 
         assertThat(reported).containsExactly("orphanedReasoningTrace@OpenAI");
     }
@@ -200,7 +242,7 @@ class OpenAIResponsesRequestFactoryTest {
         final List<String> reported = new java.util.ArrayList<>();
 
         factoryFor(config(), (signature, message, args) -> reported.add(signature)).build("sys", List.of(assistant),
-                List.of(), LlmModel.builder().build(), GPT5, "gpt-5.6-terra");
+                List.of(), LlmModel.builder().build(), GPT5, "gpt-5.6-terra", "OpenAI");
 
         assertThat(reported).isEmpty();
     }

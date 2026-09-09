@@ -28,6 +28,7 @@ import com.openai.models.responses.ResponseOutputMessage;
 import com.openai.models.responses.ResponseReasoningItem;
 import com.openai.models.responses.Tool;
 
+import at.aimon.core.base.NullSafeMaps;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.ReasoningTrace;
 import at.aimon.core.llm.Role;
@@ -481,6 +482,14 @@ final class OpenAIResponsesMessageConverter {
      * a warning, for every provider AIMON has. That blocking/streaming split predates this endpoint and is shared
      * with Chat Completions and Anthropic; {@link #convertStreamedOutput} exists so that this method is not reached
      * on that path at all.
+     *
+     * <p>
+     * <strong>A JSON {@code null} value is an absent parameter, not malformed input</strong>, so the copy goes
+     * through {@link NullSafeMaps#withoutNullValues} rather than {@link Map#copyOf(Map)} — which rejects a null
+     * value outright, and would fail the whole turn over an optional parameter a model filled with {@code null}
+     * instead of omitting. That is the exact fault {@code NullSafeMaps} exists to prevent, and it is the same answer
+     * the Chat converter's {@code parseJsonToMap} reaches by handing the nulls on to {@link ToolUse}, which drops
+     * them. Dropping here rather than there also keeps insertion order, which a {@code Map.copyOf} copy does not.
      */
     private static Map<String, Object> parseArguments(String json) {
         if (json == null || json.isEmpty() || "{}".equals(json)) {
@@ -490,7 +499,7 @@ final class OpenAIResponsesMessageConverter {
             final Map<String, Object> parsed = OBJECT_MAPPER.readValue(json,
                     new com.fasterxml.jackson.core.type.TypeReference<HashMap<String, Object>>() {
                     });
-            return parsed == null ? Map.of() : Map.copyOf(parsed);
+            return parsed == null ? Map.of() : NullSafeMaps.withoutNullValues(parsed);
         } catch (JsonProcessingException e) {
             log.error("Failed to parse JSON: {}", json, e);
             throw new MessageConversionException("Failed to parse JSON: " + json, e);

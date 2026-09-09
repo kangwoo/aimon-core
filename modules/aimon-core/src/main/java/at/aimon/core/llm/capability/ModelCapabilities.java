@@ -2,6 +2,8 @@ package at.aimon.core.llm.capability;
 
 import java.util.Objects;
 
+import at.aimon.core.llm.ReasoningEffort;
+
 /**
  * What a client may <em>do</em> when it builds a request for one model.
  *
@@ -34,6 +36,7 @@ public final class ModelCapabilities {
     private static final boolean DEFAULT_SUPPORTS_REASONING_EFFORT = false;
     private static final boolean DEFAULT_SUPPORTS_TOOLS_WITH_REASONING = true;
     private static final boolean DEFAULT_SUPPORTS_REASONING_TRACE_ROUND_TRIP = false;
+    private static final ReasoningEffort DEFAULT_LOWEST_REASONING_EFFORT = ReasoningEffort.MINIMAL;
 
     private static final ModelCapabilities UNKNOWN = builder().build();
 
@@ -41,12 +44,14 @@ public final class ModelCapabilities {
     private final boolean supportsReasoningEffort;
     private final boolean supportsToolsWithReasoning;
     private final boolean supportsReasoningTraceRoundTrip;
+    private final ReasoningEffort lowestReasoningEffort;
 
     private ModelCapabilities(Builder builder) {
         this.supportsSamplingParameters = builder.supportsSamplingParameters;
         this.supportsReasoningEffort = builder.supportsReasoningEffort;
         this.supportsToolsWithReasoning = builder.supportsToolsWithReasoning;
         this.supportsReasoningTraceRoundTrip = builder.supportsReasoningTraceRoundTrip;
+        this.lowestReasoningEffort = builder.lowestReasoningEffort;
     }
 
     /**
@@ -57,8 +62,11 @@ public final class ModelCapabilities {
      * Each flag falls out of that one rule. Sampling parameters a caller set are sent, because withholding them from a
      * model nobody has described would be fail-<em>closed</em>. No reasoning effort is sent, because that is a
      * parameter the framework would have to invent. Tools are not treated as conflicting with reasoning, because
-     * clamping without evidence is a restriction nobody asked for. Changing any of these silently changes the wire for
-     * every deployment running a model no registry describes, which is why a test asserts each one individually.
+     * clamping without evidence is a restriction nobody asked for. The lowest reasoning rung is
+     * {@link ReasoningEffort#MINIMAL}, which withholds only {@link ReasoningEffort#NONE} — a level no OpenAI model
+     * has, and the one rung a caller can ask for that no vendor ladder starts at. Changing any of these silently
+     * changes the wire for every deployment running a model no registry describes, which is why a test asserts each
+     * one individually.
      *
      * @return the fail-open descriptor (never null)
      */
@@ -137,6 +145,29 @@ public final class ModelCapabilities {
         return supportsReasoningTraceRoundTrip;
     }
 
+    /**
+     * The lowest rung on this model's reasoning ladder — the least effort it will accept as a value.
+     *
+     * <p>
+     * {@link #supportsReasoningEffort()} answers <em>whether the parameter exists</em>; this answers <em>which values
+     * it takes</em>, and the two are independent facts that vendors get to disagree about per family. OpenAI's
+     * {@code gpt-5.x} accepts {@code minimal}…{@code high} while its o-series accepts {@code low}…{@code xhigh}, so
+     * one table of neutral constants cannot be translated for both without knowing where each ladder starts.
+     *
+     * <p>
+     * A requested effort below this rung is <strong>omitted and reported</strong>, never raised to meet it: a clamp
+     * upward is a request the operator did not make, and it would arrive silently. Omission at least leaves the
+     * server's own default in force, which is a state the divergence warning can describe honestly.
+     *
+     * <p>
+     * The rungs compare by declaration order — see {@link ReasoningEffort}, whose constants ascend.
+     *
+     * @return the lowest acceptable effort (never null; {@link ReasoningEffort#MINIMAL} when nothing is known)
+     */
+    public ReasoningEffort lowestReasoningEffort() {
+        return lowestReasoningEffort;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -149,13 +180,14 @@ public final class ModelCapabilities {
         return supportsSamplingParameters == that.supportsSamplingParameters
                 && supportsReasoningEffort == that.supportsReasoningEffort
                 && supportsToolsWithReasoning == that.supportsToolsWithReasoning
-                && supportsReasoningTraceRoundTrip == that.supportsReasoningTraceRoundTrip;
+                && supportsReasoningTraceRoundTrip == that.supportsReasoningTraceRoundTrip
+                && lowestReasoningEffort == that.lowestReasoningEffort;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(supportsSamplingParameters, supportsReasoningEffort, supportsToolsWithReasoning,
-                supportsReasoningTraceRoundTrip);
+                supportsReasoningTraceRoundTrip, lowestReasoningEffort);
     }
 
     @Override
@@ -163,7 +195,7 @@ public final class ModelCapabilities {
         return "ModelCapabilities{" + "supportsSamplingParameters=" + supportsSamplingParameters
                 + ", supportsReasoningEffort=" + supportsReasoningEffort + ", supportsToolsWithReasoning="
                 + supportsToolsWithReasoning + ", supportsReasoningTraceRoundTrip=" + supportsReasoningTraceRoundTrip
-                + '}';
+                + ", lowestReasoningEffort=" + lowestReasoningEffort + '}';
     }
 
     /**
@@ -178,6 +210,7 @@ public final class ModelCapabilities {
         private boolean supportsReasoningEffort = DEFAULT_SUPPORTS_REASONING_EFFORT;
         private boolean supportsToolsWithReasoning = DEFAULT_SUPPORTS_TOOLS_WITH_REASONING;
         private boolean supportsReasoningTraceRoundTrip = DEFAULT_SUPPORTS_REASONING_TRACE_ROUND_TRIP;
+        private ReasoningEffort lowestReasoningEffort = DEFAULT_LOWEST_REASONING_EFFORT;
 
         private Builder() {
         }
@@ -219,6 +252,21 @@ public final class ModelCapabilities {
          */
         public Builder supportsReasoningTraceRoundTrip(boolean supportsReasoningTraceRoundTrip) {
             this.supportsReasoningTraceRoundTrip = supportsReasoningTraceRoundTrip;
+            return this;
+        }
+
+        /**
+         * Sets the lowest rung on this model's reasoning ladder.
+         *
+         * @param lowestReasoningEffort
+         *            the least effort this model accepts as a value (must not be null)
+         * @return This builder
+         * @throws NullPointerException
+         *             if lowestReasoningEffort is null
+         */
+        public Builder lowestReasoningEffort(ReasoningEffort lowestReasoningEffort) {
+            this.lowestReasoningEffort = Objects.requireNonNull(lowestReasoningEffort,
+                    "lowestReasoningEffort cannot be null");
             return this;
         }
 

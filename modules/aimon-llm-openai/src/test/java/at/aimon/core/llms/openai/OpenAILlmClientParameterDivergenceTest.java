@@ -48,12 +48,13 @@ import ch.qos.logback.core.read.ListAppender;
  * {@code AnthropicLlmClientParameterDivergenceTest}, which reports the same class of divergence for the same reason.
  *
  * <p>
- * Six of the nine tests set {@code responsesApiEnabled(false)}, because they assert the Chat Completions divergences
- * and {@code gpt-5.6-terra} now routes to {@code /v1/responses} on a stock config. The other three are already on
- * Chat without saying so and are left alone: two override the registry so the lookup degrades to
+ * Most tests here set {@code responsesApiEnabled(false)}, because they assert the Chat Completions divergences and
+ * {@code gpt-5.6-terra} now routes to {@code /v1/responses} on a stock config. The rest are already on Chat without
+ * saying so and are left alone: some override the registry so the lookup degrades to
  * {@code ModelCapabilities.unknown()} (whose {@code supportsReasoningTraceRoundTrip()} is false — an unresolvable
- * model is never routed to the new endpoint), and one names {@code gpt-4o}. That the same reporting still happens on
- * the Responses path is bound separately, by {@code OpenAIResponsesParameterDivergenceTest}.
+ * model is never routed to the new endpoint), one names {@code gpt-4o}, and the {@code o4-mini} rows are on Chat by
+ * their own capability entry. That the same reporting still happens on the Responses path is bound separately, by
+ * {@code OpenAIResponsesParameterDivergenceTest}.
  */
 @DisplayName("OpenAILlmClient - request parameter divergence reporting")
 @ExtendWith(MockitoExtension.class)
@@ -111,6 +112,23 @@ class OpenAILlmClientParameterDivergenceTest {
                 .forClass(ChatCompletionCreateParams.class);
         verify(mockChatCompletionService).create(captor.capture());
         return captor.getValue();
+    }
+
+    /**
+     * The request body as it would be serialised onto the wire.
+     *
+     * <p>
+     * {@code _body().toString()} is the SDK's Kotlin {@code toString}, which prints camelCase field names and prints
+     * an unset field as {@code name=} rather than omitting it — so a {@code doesNotContain("reasoning_effort")}
+     * assertion against it passes whether or not the parameter was set. Serialising through the SDK's own mapper is
+     * the only form of that assertion that can fail.
+     */
+    private static String wireBodyOf(ChatCompletionCreateParams params) {
+        try {
+            return com.openai.core.ObjectMappers.jsonMapper().writeValueAsString(params._body());
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new IllegalStateException("Failed to serialise ChatCompletionCreateParams body", e);
+        }
     }
 
     private List<String> warnings() {
@@ -232,18 +250,56 @@ class OpenAILlmClientParameterDivergenceTest {
     }
 
     @Test
-    @DisplayName("asking for NONE on a model with no 'none' level is reported, not silently sent")
+    @DisplayName("asking for a rung below the model's ladder is reported AND omitted from the request")
     void requestedNoneIsReportedAndOmitted() {
         // Round 6 reversal, measured 2026-09-09. This used to assert SILENCE, on the reasoning that asking for NONE
         // and getting NONE is not a divergence. But OpenAI has no 'none' level -- gpt-5.x accepts 'minimal'..'high',
         // the o-series 'low'..'xhigh' -- so sending it is a 400, and omitting it leaves the model reasoning at its
         // own default, which is the opposite of what NONE asked for. That is a divergence and the operator is told.
+        //
+        // The body assertion is the half this test's own name claimed and did not check: warning and sending are not
+        // mutually exclusive, so asserting only the warning left "report it, then send it anyway" -- the 400 this
+        // branch exists to prevent -- indistinguishable from correct behaviour.
         final OpenAILlmClient client = client(
                 OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra").responsesApiEnabled(false).build());
 
-        send(client, LlmModel.builder().reasoningEffort(ReasoningEffort.NONE).build(), List.of(A_TOOL));
+        final ChatCompletionCreateParams params = sendAndCapture(client,
+                LlmModel.builder().reasoningEffort(ReasoningEffort.NONE).build(), List.of(A_TOOL));
 
-        assertThat(warnings()).anyMatch(w -> w.contains("no 'none' level"));
+        assertThat(warnings()).anyMatch(w -> w.contains("has no rung below MINIMAL"));
+        assertThat(params._reasoningEffort()).isInstanceOf(JsonMissing.class);
+        assertThat(wireBodyOf(params)).doesNotContain("reasoning_effort");
+    }
+
+    @Test
+    @DisplayName("MINIMAL is below the o-series ladder and comes off the Chat request too")
+    void minimalIsOmittedForTheOSeries() {
+        // The second rung the same rule covers, and the reason it is a capability rather than a NONE special case:
+        // o4-mini answers "Supported values are: 'low', 'medium', 'high', and 'xhigh'", so the neutral MINIMAL has no
+        // wire value there. The o-series stays on Chat Completions, so this is the endpoint it is actually sent to.
+        final OpenAILlmClient client = client(OpenAIConfig.builder().apiKey("test-key").model("o4-mini").build());
+
+        final ChatCompletionCreateParams params = sendAndCapture(client,
+                LlmModel.builder().reasoningEffort(ReasoningEffort.MINIMAL).build(), List.of(A_TOOL));
+
+        assertThat(warnings()).anyMatch(w -> w.contains("reasoningEffort MINIMAL") && w.contains("o4-mini")
+                && w.contains("has no rung below LOW"));
+        assertThat(params._reasoningEffort()).isInstanceOf(JsonMissing.class);
+        assertThat(wireBodyOf(params)).doesNotContain("reasoning_effort");
+    }
+
+    @Test
+    @DisplayName("LOW is on the o-series ladder and still reaches the wire")
+    void lowIsStillSentForTheOSeries() {
+        // The other side of the same row: raising the floor must not turn the whole family's reasoning off. Without
+        // this, setting lowestReasoningEffort to something absurd would pass every other assertion in this class.
+        final OpenAILlmClient client = client(OpenAIConfig.builder().apiKey("test-key").model("o4-mini").build());
+
+        final ChatCompletionCreateParams params = sendAndCapture(client,
+                LlmModel.builder().reasoningEffort(ReasoningEffort.LOW).build(), List.of(A_TOOL));
+
+        assertThat(wireBodyOf(params)).contains("\"reasoning_effort\":\"low\"");
+        assertThat(warnings()).noneMatch(w -> w.contains("rung below"));
     }
 
     @Test

@@ -6,6 +6,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import at.aimon.core.llm.ReasoningEffort;
+
 @DisplayName("InMemoryModelCapabilityRegistry - lookup and the built-in table")
 class InMemoryModelCapabilityRegistryTest {
 
@@ -41,6 +43,37 @@ class InMemoryModelCapabilityRegistryTest {
 
         assertThat(registry.capabilitiesOf("gpt-5.6-terra")).contains(SAMPLING_REJECTED);
         assertThat(registry.capabilitiesOf("GPT-5.6-TERRA")).contains(SAMPLING_REJECTED);
+    }
+
+    @Test
+    @DisplayName("exact matching is case-insensitive too, so a portal-cased deployment name resolves")
+    void exactMatchingIsCaseInsensitive() {
+        // The whole point of the exact map is that an operator can name a deployment their gateway renamed, and the
+        // name they have is the one their portal shows. While this half was case-sensitive, registering
+        // "prod-assistant" for a deployment configured as "Prod-Assistant" missed, no prefix caught it, the model
+        // resolved to unknown() -- and the one line that closes the fail-open gap did nothing, silently.
+        final InMemoryModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.builder()
+                .register("prod-assistant", SAMPLING_REJECTED).register("OTHER-Deployment", EVERYTHING_ALLOWED).build();
+
+        assertThat(registry.capabilitiesOf("Prod-Assistant")).contains(SAMPLING_REJECTED);
+        assertThat(registry.capabilitiesOf("prod-assistant")).contains(SAMPLING_REJECTED);
+        assertThat(registry.capabilitiesOf("other-deployment")).contains(EVERYTHING_ALLOWED);
+    }
+
+    @Test
+    @DisplayName("the o-series rows start their reasoning ladder at LOW, and gpt-5.x keeps the default MINIMAL")
+    void oSeriesLadderStartsAtLow() {
+        // Measured 2026-09-09: o4-mini answers "Supported values are: 'low', 'medium', 'high', and 'xhigh'" while
+        // gpt-5-nano answers "'minimal', 'low', 'medium', and 'high'". Without the row, the neutral MINIMAL would
+        // translate to the wire value 'minimal' for the o-series and earn a 400.
+        final InMemoryModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.withDefaults();
+
+        assertThat(registry.resolve("o4-mini").lowestReasoningEffort()).isEqualTo(ReasoningEffort.LOW);
+        assertThat(registry.resolve("o3-mini").lowestReasoningEffort()).isEqualTo(ReasoningEffort.LOW);
+        assertThat(registry.resolve("o1").lowestReasoningEffort()).isEqualTo(ReasoningEffort.LOW);
+        assertThat(registry.resolve("gpt-5.6-terra").lowestReasoningEffort()).isEqualTo(ReasoningEffort.MINIMAL);
+        // A model nobody describes keeps the fail-open floor, so nothing it was ever sent starts being withheld.
+        assertThat(registry.resolve("gpt-4o").lowestReasoningEffort()).isEqualTo(ReasoningEffort.MINIMAL);
     }
 
     @Test

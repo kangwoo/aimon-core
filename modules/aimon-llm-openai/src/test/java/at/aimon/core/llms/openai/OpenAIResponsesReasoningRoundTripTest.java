@@ -284,4 +284,51 @@ class OpenAIResponsesReasoningRoundTripTest {
         node.fieldNames().forEachRemaining(names::add);
         return names;
     }
+
+    @Test
+    @DisplayName("a subclass that renames the provider still replays its own traces")
+    void aSubclassProviderNameSurvivesTheRoundTrip() {
+        // getProviderName() is overridable on a non-final public class, and the two halves of the round trip used to
+        // read it at different times: the request factory froze it in the constructor while the exchange read it per
+        // call. A subclass then TAGGED its traces "AzureOpenAI" and MATCHED them against "OpenAI", so every one was
+        // dropped as foreign -- the feature silently doing nothing, which is the exact failure it exists to remove.
+        lenient().when(mockOpenAIClient.responses()).thenReturn(mockResponseService);
+        final OpenAILlmClient client = new RenamedProviderClient(
+                OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra").build(), mockOpenAIClient);
+        when(mockResponseService.create(any(ResponseCreateParams.class)))
+                .thenReturn(responseWithOutput(reasoningItem("rs_1", ENCRYPTED), functionCall("call_1", "Bash")));
+
+        final LlmResponse first = client.sendMessage("sys", List.of(Message.user("go")), List.of(),
+                LlmModel.builder().build());
+        assertThat(first.getReasoningTraces()).singleElement()
+                .satisfies(trace -> assertThat(trace.getProviderName()).isEqualTo("AzureOpenAI"));
+
+        when(mockResponseService.create(any(ResponseCreateParams.class))).thenReturn(responseWithOutput());
+        client.sendMessage("sys",
+                List.of(Message.user("go"),
+                        Message.assistant(first.getTextContent(), first.getToolUses())
+                                .withReasoningTraces(first.getReasoningTraces()),
+                        Message.toolUseResults(List.of(ToolUseResult.success("call_1", "a.txt")))),
+                List.of(), LlmModel.builder().build());
+
+        final ArgumentCaptor<ResponseCreateParams> captor = ArgumentCaptor.forClass(ResponseCreateParams.class);
+        verify(mockResponseService, org.mockito.Mockito.times(2)).create(captor.capture());
+        final JsonNode input = ResponsesFixtures.bodyTreeOf(captor.getAllValues().get(1)).get("input");
+
+        assertThat(itemTypes(input)).containsExactly("role:user", "reasoning", "function_call", "function_call_output");
+        assertThat(input.get(1).get("encrypted_content").asText()).isEqualTo(ENCRYPTED);
+    }
+
+    /** A client that reports a different vendor label, the way an Azure-flavoured subclass would. */
+    private static final class RenamedProviderClient extends OpenAILlmClient {
+
+        private RenamedProviderClient(OpenAIConfig config, OpenAIClient client) {
+            super(config, client);
+        }
+
+        @Override
+        public String getProviderName() {
+            return "AzureOpenAI";
+        }
+    }
 }

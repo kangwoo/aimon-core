@@ -16,10 +16,12 @@ import at.aimon.core.llm.capability.ModelCapabilities;
  * a request that succeeds with settings other than the configured ones.
  *
  * <p>
- * What is <em>not</em> shared is the reasoning-effort clamp. Omitting the effort because tools are present is a Chat
- * Completions rule; on {@code /v1/responses} tools and reasoning coexist, which is the entire point
- * of routing there. Only the "this model takes no reasoning-effort parameter at all" report is shared, so that both
- * endpoints say the same sentence about the same fact.
+ * The reasoning-effort rules split along the same seam, and the split is the point. <strong>Which rungs a model
+ * accepts is a model fact</strong> — {@code gpt-5.x} has no {@code none}, the o-series has neither {@code none} nor
+ * {@code minimal} — so {@link #maySendEffort} lives here and both endpoints ask it. <strong>Whether tools and
+ * reasoning may share a request is an endpoint fact</strong>, so that clamp stays in the Chat client and
+ * {@code /v1/responses}, where the two coexist, never applies it. Mixing the two up is how a value that is a 400 on
+ * both endpoints came to be guarded on only one.
  */
 final class OpenAiRequestParameters {
 
@@ -28,6 +30,9 @@ final class OpenAiRequestParameters {
 
     private static final String EFFORT_UNSUPPORTED_MESSAGE = "reasoningEffort {} is set on this request but {} takes "
             + "no reasoning-effort parameter; it is being omitted and the call will succeed without it.";
+
+    private static final String EFFORT_BELOW_LADDER_MESSAGE = "reasoningEffort {} is set on this request but {} has "
+            + "no rung below {}; the parameter is being omitted and the model will reason at its own default.";
 
     private OpenAiRequestParameters() {
     }
@@ -123,6 +128,43 @@ final class OpenAiRequestParameters {
      */
     static void reportUnsupportedEffort(ReasoningEffort effort, String modelName, OpenAIDivergenceReporter reporter) {
         reporter.report("reasoningEffort=" + effort + "@" + modelName, EFFORT_UNSUPPORTED_MESSAGE, effort, modelName);
+    }
+
+    /**
+     * Whether a configured effort is a rung the target model actually has, reporting the divergence when it is not.
+     *
+     * <p>
+     * Called by <em>both</em> endpoints, because the answer is a property of the model rather than of the request
+     * surface: OpenAI has no {@code none} rung anywhere, and its o-series starts at {@code low}. Measured 2026-09-09
+     * — {@code gpt-5-nano} answers <em>Supported values are: 'minimal', 'low', 'medium', and 'high'</em>, and
+     * {@code o4-mini} <em>Supported values are: 'low', 'medium', 'high', and 'xhigh'</em>. Sending a rung below the
+     * floor is a 400, so it is omitted.
+     *
+     * <p>
+     * <strong>Omitted, never raised.</strong> Clamping {@code NONE} up to {@code minimal} would put a request on the
+     * wire that nobody made, and it would do it silently; omission leaves the server's own default in force, which is
+     * a state the warning below can describe truthfully. It is the same treatment
+     * {@link #reportUnsupportedEffort} gives a parameter the model does not have at all, for the same reason.
+     *
+     * @param effort
+     *            the configured effort (must not be null)
+     * @param capabilities
+     *            the resolved capabilities, which name the lowest rung (must not be null)
+     * @param modelName
+     *            the resolved model name, for the warning text (must not be null)
+     * @param reporter
+     *            where the divergence is reported (must not be null)
+     * @return {@code true} when the caller may set the parameter; {@code false} when it must omit it
+     */
+    static boolean maySendEffort(ReasoningEffort effort, ModelCapabilities capabilities, String modelName,
+            OpenAIDivergenceReporter reporter) {
+        final ReasoningEffort lowest = capabilities.lowestReasoningEffort();
+        if (effort.compareTo(lowest) >= 0) {
+            return true;
+        }
+        reporter.report("reasoningEffortBelowLadder=" + effort + "@" + modelName, EFFORT_BELOW_LADDER_MESSAGE, effort,
+                modelName, lowest);
+        return false;
     }
 
     /**

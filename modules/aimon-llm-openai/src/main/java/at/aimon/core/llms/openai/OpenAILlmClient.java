@@ -122,7 +122,7 @@ public class OpenAILlmClient implements LlmClient {
         this.converter = new OpenAIMessageConverter();
         this.responsesConverter = new OpenAIResponsesMessageConverter();
         this.responsesRequestFactory = new OpenAIResponsesRequestFactory(this.responsesConverter, this.config,
-                getProviderName(), this::reportDivergence);
+                this::reportDivergence);
     }
 
     /**
@@ -158,7 +158,7 @@ public class OpenAILlmClient implements LlmClient {
         this.converter = new OpenAIMessageConverter();
         this.responsesConverter = new OpenAIResponsesMessageConverter();
         this.responsesRequestFactory = new OpenAIResponsesRequestFactory(this.responsesConverter, this.config,
-                getProviderName(), this::reportDivergence);
+                this::reportDivergence);
     }
 
     @Override
@@ -292,6 +292,10 @@ public class OpenAILlmClient implements LlmClient {
      * ordinary case, not an exotic one, and it must reach Chat Completions while its session reaches Responses.
      *
      * <p>
+     * The provider name is resolved here for the same reason and at the same moment, then handed to both halves of
+     * the reasoning round trip, so the name a trace is tagged with is the name it is later matched against.
+     *
+     * <p>
      * Two conditions, answering two different questions. {@link ModelCapabilities#supportsReasoningTraceRoundTrip()}
      * says what the <em>model</em> does; {@link OpenAIConfig#isResponsesApiEnabled()} says what this
      * <em>deployment's endpoint</em> offers. A model whose capabilities could not be resolved degrades to
@@ -310,9 +314,13 @@ public class OpenAILlmClient implements LlmClient {
         final ModelCapabilities capabilities = capabilitiesFor(modelName);
 
         if (capabilities.supportsReasoningTraceRoundTrip() && config.isResponsesApiEnabled()) {
-            return new OpenAIResponsesExchange(client, responsesConverter,
-                    responsesRequestFactory.build(systemPrompt, messages, tools, modelConfig, capabilities, modelName),
-                    getProviderName(), this::reportDivergence);
+            // Read once, and used on both sides of the round trip: the request factory decides which stored traces
+            // are ours, the exchange tags the ones that come back. getProviderName() is overridable, so resolving it
+            // in two places at two times is how a subclass ends up tagging traces it then drops as foreign.
+            final String providerName = getProviderName();
+            return new OpenAIResponsesExchange(client, responsesConverter, responsesRequestFactory.build(systemPrompt,
+                    messages, tools, modelConfig, capabilities, modelName, providerName), providerName,
+                    this::reportDivergence);
         }
         return new OpenAIChatCompletionsExchange(client, converter, buildChatRequest(systemPrompt, messages, tools,
                 modelConfig, streamingOptions, capabilities, modelName));
@@ -409,16 +417,19 @@ public class OpenAILlmClient implements LlmClient {
      * Sets {@code reasoning_effort}, or leaves it off.
      *
      * <p>
-     * Three cases, and the middle one is the whole point of this method. A model that takes no reasoning effort gets
-     * nothing, which is what every release before this one sent to every model. A model that takes one but cannot
-     * combine it with tools has the effort <em>omitted</em> whenever tools are present. Otherwise the configured
-     * effort goes through as asked, or nothing does when none was configured.
+     * Three ways it comes off, and only the second is a Chat Completions rule. A model that takes no reasoning effort
+     * gets nothing, which is what every release before this one sent to every model. A model that takes one but
+     * cannot combine it with tools has the effort <em>omitted</em> whenever tools are present — that middle case is
+     * the endpoint's, and {@code /v1/responses} deliberately has no counterpart to it. A rung the model's ladder does
+     * not have is omitted by {@link OpenAiRequestParameters#maySendEffort}, which is <em>shared</em> with the other
+     * endpoint precisely because it is a fact about the model rather than about this request surface. Otherwise the
+     * configured effort goes through as asked, or nothing does when none was configured.
      *
      * <p>
      * The middle case used to send {@link ReasoningEffort#NONE} explicitly, on the theory that omission would leave
      * the server's own default of {@code medium} in force and fail. Measured against the live API on 2026-09-09, both
      * halves of that were wrong: {@code none} is not an accepted value for these models ({@code gpt-5-nano} answers
-     * <em>"Supported values are: 'minimal', 'low', 'medium', and 'high'"}), while a tools request that simply omits
+     * <em>Supported values are: 'minimal', 'low', 'medium', and 'high'</em>), while a tools request that simply omits
      * the parameter returns 200. So the remedy is omission, and sending {@code NONE} was itself the bug. The probe
      * table is in section 11 of {@code docs/design/llm/openai-model-capabilities.md}.
      */
@@ -432,6 +443,8 @@ public class OpenAILlmClient implements LlmClient {
             return;
         }
 
+        // Endpoint rule, and the only one of the three that is: it exists because Chat Completions is where tools and
+        // reasoning were believed to conflict. It stays here rather than in OpenAiRequestParameters for that reason.
         if (!tools.isEmpty() && !capabilities.supportsToolsWithReasoning()) {
             requested.ifPresent(effort -> reportDivergence("reasoningEffortOmitted=" + effort + "@" + modelName,
                     "reasoningEffort {} is set on this request but {} does not accept tools together with reasoning; "
@@ -440,15 +453,10 @@ public class OpenAILlmClient implements LlmClient {
             return;
         }
 
-        if (requested.isPresent() && requested.get() == ReasoningEffort.NONE) {
-            // OpenAI has no "none": gpt-5.x accepts 'minimal'..'high' and the o-series 'low'..'xhigh', both measured
-            // 2026-09-09. AIMON's NONE means "do not reason", which these models cannot be asked to do, so the
-            // parameter is omitted and the operator is told -- omission leaves the server default in force, which is
-            // not what NONE asked for. Sending it through would be a 400.
-            reportDivergence("reasoningEffortNoneUnsupported=" + modelName,
-                    "reasoningEffort NONE is set on this request but {} has no 'none' level; the parameter is being "
-                            + "omitted and the model will reason at its own default.",
-                    modelName);
+        // Model rule, shared with the Responses path: NONE is off every OpenAI ladder, and MINIMAL is off the
+        // o-series one.
+        if (requested.isPresent() && !OpenAiRequestParameters.maySendEffort(requested.get(), capabilities, modelName,
+                this::reportDivergence)) {
             return;
         }
 

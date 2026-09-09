@@ -7,9 +7,11 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
+import at.aimon.core.llm.ReasoningEffort;
+
 /**
- * Default {@link ModelCapabilityRegistry} backed by an in-memory map of exact entries plus case-insensitive prefix
- * patterns.
+ * Default {@link ModelCapabilityRegistry} backed by an in-memory map of exact entries plus prefix patterns, both
+ * matched ignoring case.
  *
  * <p>
  * Built via {@link Builder}. Look-ups first consult the exact entries, then the registered <em>prefix patterns</em> in
@@ -100,6 +102,9 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
                 // every non-default value a 400. It also returns reasoning items a client must replay for the
                 // reasoning to survive a tool call -- which is what supportsReasoningTraceRoundTrip says.
                 //
+                // The default lowestReasoningEffort (MINIMAL) is right for this family and is left unset: it answers
+                // "Supported values are: 'minimal', 'low', 'medium', and 'high'", so only NONE is off its ladder.
+                //
                 // supportsToolsWithReasoning is TRUE, and that reverses round 1. Measured 2026-09-09: gpt-5-nano with
                 // tools and no reasoning_effort returns 200, so there is no conflict to work around; and the remedy
                 // false used to trigger -- sending effort "none" -- is itself rejected, since "none" is not among the
@@ -115,15 +120,23 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
                 // own javadoc example has warned all along. They are not routed to /v1/responses: this build has not
                 // measured reasoning-item replay for them, and asserting a round trip we have not seen is how round 1
                 // got the gpt-5 row wrong.
+                //
+                // lowestReasoningEffort is LOW rather than the default MINIMAL, and that is the second half of the
+                // same probe: this family answers "Supported values are: 'low', 'medium', 'high', and 'xhigh'", so
+                // MINIMAL is off its ladder exactly as NONE is. Without the row the neutral MINIMAL would translate
+                // to the wire value 'minimal' and 400.
                 .registerPrefix("o1",
                         ModelCapabilities.builder().supportsSamplingParameters(false).supportsReasoningEffort(true)
-                                .supportsToolsWithReasoning(true).supportsReasoningTraceRoundTrip(false).build())
+                                .supportsToolsWithReasoning(true).supportsReasoningTraceRoundTrip(false)
+                                .lowestReasoningEffort(ReasoningEffort.LOW).build())
                 .registerPrefix("o3",
                         ModelCapabilities.builder().supportsSamplingParameters(false).supportsReasoningEffort(true)
-                                .supportsToolsWithReasoning(true).supportsReasoningTraceRoundTrip(false).build())
+                                .supportsToolsWithReasoning(true).supportsReasoningTraceRoundTrip(false)
+                                .lowestReasoningEffort(ReasoningEffort.LOW).build())
                 .registerPrefix("o4",
                         ModelCapabilities.builder().supportsSamplingParameters(false).supportsReasoningEffort(true)
-                                .supportsToolsWithReasoning(true).supportsReasoningTraceRoundTrip(false).build());
+                                .supportsToolsWithReasoning(true).supportsReasoningTraceRoundTrip(false)
+                                .lowestReasoningEffort(ReasoningEffort.LOW).build());
     }
 
     /**
@@ -145,11 +158,14 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
         if (modelName == null || modelName.isEmpty()) {
             return Optional.empty();
         }
-        final ModelCapabilities exact = exactEntries.get(modelName);
+        // Both halves fold case, and they have to agree: an operator registering the name their Azure portal shows
+        // ("Prod-Assistant") and a config carrying that same name must meet, or the one line that closes the
+        // fail-open gap silently does not.
+        final String lower = modelName.toLowerCase(Locale.ROOT);
+        final ModelCapabilities exact = exactEntries.get(lower);
         if (exact != null) {
             return Optional.of(exact);
         }
-        final String lower = modelName.toLowerCase(Locale.ROOT);
         for (Map.Entry<String, ModelCapabilities> entry : prefixEntries.entrySet()) {
             if (lower.startsWith(entry.getKey())) {
                 return Optional.of(entry.getValue());
@@ -169,8 +185,13 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
         /**
          * Registers an exact model-name to capabilities mapping. Exact entries beat every prefix.
          *
+         * <p>
+         * The match is <strong>case-insensitive</strong>, like {@link #registerPrefix}: a deployment name is
+         * something an operator copies out of a portal, and having one half of this table fold case while the other
+         * did not made a correct registration miss for a reason nothing reported.
+         *
          * @param modelName
-         *            the exact model identifier (must not be null)
+         *            the exact model identifier, matched ignoring case (must not be null)
          * @param capabilities
          *            the capabilities (must not be null)
          * @return this builder
@@ -178,7 +199,7 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
         public Builder register(String modelName, ModelCapabilities capabilities) {
             Objects.requireNonNull(modelName, "modelName cannot be null");
             Objects.requireNonNull(capabilities, "capabilities cannot be null");
-            exactEntries.put(modelName, capabilities);
+            exactEntries.put(modelName.toLowerCase(Locale.ROOT), capabilities);
             return this;
         }
 

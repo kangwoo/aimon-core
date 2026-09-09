@@ -31,10 +31,12 @@ import at.aimon.core.llm.capability.ModelCapabilities;
  * Two differences from Chat are deliberate:
  *
  * <ul>
- * <li><strong>The reasoning-effort clamp is gone.</strong> Sending {@link ReasoningEffort#NONE} because tools are
- * present is a Chat Completions rule. On this endpoint tools and reasoning coexist — that is the entire point of
- * phase 2 — so the configured effort goes as asked and an unconfigured request gets the server's default, which is now
- * the desirable one.
+ * <li><strong>The tools clamp is gone; the ladder check is not.</strong> Omitting the effort because tools are present
+ * is a Chat Completions rule — on this endpoint tools and reasoning coexist, which is the entire point of phase 2, so
+ * the configured effort goes as asked and an unconfigured request gets the server's default. What does <em>not</em>
+ * go away is {@link OpenAiRequestParameters#maySendEffort}: which rungs a model accepts is a fact about the model,
+ * not about the endpoint, and OpenAI has no {@code none} rung on either surface. Dropping that check along with the
+ * clamp is how {@code reasoning.effort: "none"} reached this endpoint as a 400.
  * <li><strong>{@code store} is {@code false} and {@code reasoning.encrypted_content} is asked for.</strong> With
  * {@code store: true} the server retains the exchange and offers {@code previous_response_id} as an alternative to
  * replaying items — a second source of truth that no {@code SessionRecord} knows about, in a system that resumes
@@ -50,7 +52,6 @@ final class OpenAIResponsesRequestFactory {
 
     private final OpenAIResponsesMessageConverter converter;
     private final OpenAIConfig config;
-    private final String providerName;
     private final OpenAIDivergenceReporter reporter;
 
     /**
@@ -58,22 +59,26 @@ final class OpenAIResponsesRequestFactory {
      *            the Responses converter (must not be null)
      * @param config
      *            the client config — per client, not per request (must not be null)
-     * @param providerName
-     *            this client's provider name — likewise (must not be null)
      * @param reporter
      *            where divergences are reported; the client's own method, so the WARN keeps its logger and its
      *            once-per-signature dedup set (must not be null)
      */
-    OpenAIResponsesRequestFactory(OpenAIResponsesMessageConverter converter, OpenAIConfig config, String providerName,
+    OpenAIResponsesRequestFactory(OpenAIResponsesMessageConverter converter, OpenAIConfig config,
             OpenAIDivergenceReporter reporter) {
         this.converter = Objects.requireNonNull(converter, "converter");
         this.config = Objects.requireNonNull(config, "config");
-        this.providerName = Objects.requireNonNull(providerName, "providerName");
         this.reporter = Objects.requireNonNull(reporter, "reporter");
     }
 
     /**
      * Builds the request.
+     *
+     * <p>
+     * {@code providerName} arrives per request rather than being held as a field, for the same reason
+     * {@code modelName} does: it is read from an overridable method on a non-final client, and the response side
+     * reads it live. A frozen copy here would tag a subclass's traces with one name and then drop every one of them
+     * as foreign on the next turn — the round trip silently doing nothing, which is the failure this whole path
+     * exists to remove.
      *
      * @param systemPrompt
      *            the concatenated system prompt, which becomes {@code instructions} (must not be null)
@@ -87,10 +92,12 @@ final class OpenAIResponsesRequestFactory {
      *            the resolved capabilities (must not be null)
      * @param modelName
      *            the resolved model name (must not be null)
+     * @param providerName
+     *            the client's provider name, as it reports it for this request (must not be null)
      * @return the built params
      */
     ResponseCreateParams build(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
-            LlmModel modelConfig, ModelCapabilities capabilities, String modelName) {
+            LlmModel modelConfig, ModelCapabilities capabilities, String modelName, String providerName) {
         final List<ResponseInputItem> input = converter.convertMessages(messages, providerName, reporter);
 
         final ResponseCreateParams.Builder builder = ResponseCreateParams.builder().model(modelName)
@@ -111,7 +118,7 @@ final class OpenAIResponsesRequestFactory {
     }
 
     /**
-     * Sets {@code reasoning.effort}, or leaves it off. No clamp — see the class javadoc.
+     * Sets {@code reasoning.effort}, or leaves it off. No tools clamp — see the class javadoc.
      */
     private void applyReasoningEffort(ResponseCreateParams.Builder builder, LlmModel modelConfig,
             ModelCapabilities capabilities, String modelName) {
@@ -119,6 +126,13 @@ final class OpenAIResponsesRequestFactory {
 
         if (!capabilities.supportsReasoningEffort()) {
             requested.ifPresent(effort -> OpenAiRequestParameters.reportUnsupportedEffort(effort, modelName, reporter));
+            return;
+        }
+
+        // Model rule, shared with the Chat path: a rung this model's ladder does not have is omitted and reported,
+        // never raised to meet the floor.
+        if (requested.isPresent()
+                && !OpenAiRequestParameters.maySendEffort(requested.get(), capabilities, modelName, reporter)) {
             return;
         }
 
