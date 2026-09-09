@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.cli.exception.ConfigurationException;
+import at.aimon.core.llm.ReasoningEffort;
 
 @DisplayName("CliConfigLoader Tests")
 class CliConfigLoaderTest {
@@ -475,6 +476,205 @@ class CliConfigLoaderTest {
             assertThat(config.getCliSettings().isColorOutput()).isFalse();
             assertThat(config.getCliSettings().isShowIterations()).isFalse();
             assertThat(config.getCliSettings().isShowToolCalls()).isFalse();
+        }
+    }
+
+    @Nested
+    @DisplayName("Model Capability Declarations")
+    class ModelCapabilityDeclarations {
+
+        private Path write(String body) throws IOException {
+            final Path configFile = tempDir.resolve("capabilities.yaml");
+            Files.writeString(configFile, body);
+            return configFile;
+        }
+
+        @Test
+        @DisplayName("Should bind a full declaration under its model name")
+        void bindsAFullDeclaration() throws IOException {
+            Path configFile = write("""
+                    llm:
+                      provider: "openai"
+                      apiKey: "test-api-key"
+                      model: "prod-assistant"
+                      modelCapabilities:
+                        prod-assistant:
+                          supportsSamplingParameters: false
+                          supportsReasoningEffort: true
+                          supportsToolsWithReasoning: true
+                          supportsReasoningTraceRoundTrip: false
+                          lowestReasoningEffort: minimal
+                    """);
+
+            ModelCapabilityConfig declared = loader.load(configFile.toString()).getLlmConfig().getModelCapabilities()
+                    .get("prod-assistant");
+
+            assertThat(declared).isNotNull();
+            assertThat(declared.getSupportsSamplingParameters()).isFalse();
+            assertThat(declared.getSupportsReasoningEffort()).isTrue();
+            assertThat(declared.getSupportsToolsWithReasoning()).isTrue();
+            assertThat(declared.getSupportsReasoningTraceRoundTrip()).isFalse();
+            assertThat(declared.getLowestReasoningEffort()).isEqualTo(ReasoningEffort.MINIMAL);
+        }
+
+        @Test
+        @DisplayName("Should leave an omitted flag null rather than false")
+        void anOmittedFlagIsNull() throws IOException {
+            // The difference between "not declared" and "declared false" is the whole reason these fields are boxed:
+            // a one-line entry has to change one thing.
+            Path configFile = write("""
+                    llm:
+                      provider: "openai"
+                      apiKey: "test-api-key"
+                      model: "prod-assistant"
+                      modelCapabilities:
+                        prod-assistant:
+                          supportsSamplingParameters: false
+                    """);
+
+            ModelCapabilityConfig declared = loader.load(configFile.toString()).getLlmConfig().getModelCapabilities()
+                    .get("prod-assistant");
+
+            assertThat(declared.getSupportsSamplingParameters()).isFalse();
+            assertThat(declared.getSupportsReasoningEffort()).isNull();
+            assertThat(declared.getSupportsToolsWithReasoning()).isNull();
+            assertThat(declared.getSupportsReasoningTraceRoundTrip()).isNull();
+            assertThat(declared.getLowestReasoningEffort()).isNull();
+        }
+
+        @Test
+        @DisplayName("Should accept a reasoning effort in either case")
+        void reasoningEffortIsCaseInsensitive() throws IOException {
+            // The only key the mapper's ACCEPT_CASE_INSENSITIVE_ENUMS reaches, and the only reason it is on: nothing
+            // else in at.aimon.cli.config binds to an enum. Both spellings pass so that this surface feels like the
+            // starter's, whose relaxed binding already accepts them.
+            for (String written : new String[]{"low", "LOW", "Low"}) {
+                Path configFile = write("""
+                        llm:
+                          provider: "openai"
+                          apiKey: "test-api-key"
+                          model: "prod-assistant"
+                          modelCapabilities:
+                            prod-assistant:
+                              lowestReasoningEffort: %s
+                        """.formatted(written));
+
+                assertThat(loader.load(configFile.toString()).getLlmConfig().getModelCapabilities()
+                        .get("prod-assistant").getLowestReasoningEffort()).isEqualTo(ReasoningEffort.LOW);
+            }
+        }
+
+        @Test
+        @DisplayName("Should reject an unusable reasoning effort value")
+        void rejectsAnUnusableReasoningEffort() throws IOException {
+            Path configFile = write("""
+                    llm:
+                      provider: "openai"
+                      apiKey: "test-api-key"
+                      model: "prod-assistant"
+                      modelCapabilities:
+                        prod-assistant:
+                          lowestReasoningEffort: lowish
+                    """);
+
+            assertThatThrownBy(() -> loader.load(configFile.toString())).isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("Invalid configuration structure");
+        }
+
+        @Test
+        @DisplayName("Should reject a misspelled flag name rather than ignoring it")
+        void rejectsAMisspelledFlag() throws IOException {
+            // FAIL_ON_UNKNOWN_PROPERTIES is on for this mapper, so the CLI gets this for free. The starter cannot --
+            // Boot ignores an unknown property, and that asymmetry is documented rather than papered over.
+            Path configFile = write("""
+                    llm:
+                      provider: "openai"
+                      apiKey: "test-api-key"
+                      model: "prod-assistant"
+                      modelCapabilities:
+                        prod-assistant:
+                          supportsSamplingParameter: false
+                    """);
+
+            assertThatThrownBy(() -> loader.load(configFile.toString())).isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("Invalid configuration structure");
+        }
+
+        @Test
+        @DisplayName("Should resolve environment variables in the model name key")
+        void resolvesEnvironmentVariablesInTheKey() throws IOException {
+            // `model` is already resolved, so a deployment writing `model: ${MODEL}` would otherwise have no way to
+            // describe its own model -- and that failure is the original 400.
+            Path configFile = write("""
+                    llm:
+                      provider: "openai"
+                      apiKey: "test-api-key"
+                      model: "${DEPLOYMENT}"
+                      modelCapabilities:
+                        ${DEPLOYMENT}:
+                          supportsSamplingParameters: false
+                    """);
+
+            CliConfig config = loader.load(configFile.toString());
+
+            assertThat(config.getLlmConfig().getModel()).isEqualTo("stub-DEPLOYMENT");
+            assertThat(config.getLlmConfig().getModelCapabilities()).containsOnlyKeys("stub-DEPLOYMENT");
+        }
+
+        @Test
+        @DisplayName("Should refuse two keys that expand to the same model name")
+        void refusesTwoKeysThatExpandToTheSameName() throws IOException {
+            // The one duplicate shape nothing downstream can see. yaml refuses a repeated key and the registry
+            // refuses two names differing only in case, but two *different* keys expanding to one name collide in
+            // the map this loader rebuilds -- before either of those guards is reached -- and the later entry would
+            // simply replace the earlier one. Silence there is the failure mode this whole key exists to remove.
+            CliConfigLoader envLoader = new CliConfigLoader(name -> "prod-assistant");
+            Path configFile = write("""
+                    llm:
+                      provider: "openai"
+                      apiKey: "test-api-key"
+                      model: "prod-assistant"
+                      modelCapabilities:
+                        ${PRIMARY}:
+                          supportsSamplingParameters: false
+                        ${SECONDARY}:
+                          supportsReasoningEffort: true
+                    """);
+
+            assertThatThrownBy(() -> envLoader.load(configFile.toString())).isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("${PRIMARY}").hasMessageContaining("${SECONDARY}")
+                    .hasMessageContaining("prod-assistant").hasMessageContaining("llm.modelCapabilities");
+        }
+
+        @Test
+        @DisplayName("Should keep an entry with an empty body rather than dropping it")
+        void anEntryWithNoBodyBindsToNull() throws IOException {
+            // Jackson keeps the key and stores null. Recorded here because it is what makes the core factory's null
+            // guard load-bearing: without it the translation loop would throw an NPE, which is noisy and says nothing.
+            Path configFile = write("""
+                    llm:
+                      provider: "openai"
+                      apiKey: "test-api-key"
+                      model: "prod-assistant"
+                      modelCapabilities:
+                        prod-assistant:
+                    """);
+
+            assertThat(loader.load(configFile.toString()).getLlmConfig().getModelCapabilities())
+                    .containsOnlyKeys("prod-assistant").containsEntry("prod-assistant", null);
+        }
+
+        @Test
+        @DisplayName("Should default to an empty map when nothing is declared")
+        void noDeclarationsIsAnEmptyMap() throws IOException {
+            Path configFile = write("""
+                    llm:
+                      provider: "openai"
+                      apiKey: "test-api-key"
+                      model: "gpt-4o"
+                    """);
+
+            assertThat(loader.load(configFile.toString()).getLlmConfig().getModelCapabilities()).isEmpty();
         }
     }
 }

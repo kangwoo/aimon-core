@@ -463,7 +463,13 @@ class AnthropicLlmClientTest {
             // Given: Converter throws MessageConversionException
             AnthropicConfig config = AnthropicConfig.builder().apiKey("test-key").build();
             AnthropicMessageConverter converter = mock(AnthropicMessageConverter.class);
-            when(converter.convertMessages(any())).thenThrow(new MessageConversionException("Bad format"));
+            // The three-argument overload, because that is the one buildRequest calls: the one-argument overload
+            // cannot replay a thinking block, having no provider name to match one against. Stubbing the old
+            // signature here would leave the mock returning null on the path actually taken, and the resulting NPE
+            // would surface as a plain LlmClientException instead of this exception — a green build that no longer
+            // tests what it names.
+            when(converter.convertMessages(any(), any(), any()))
+                    .thenThrow(new MessageConversionException("Bad format"));
 
             AnthropicLlmClient client = new AnthropicLlmClient(config, mockAnthropicClient, converter);
 

@@ -424,6 +424,11 @@ IMPORTANT: **프로바이더는 값을 지어내지 않는다.** `orElse(DEFAULT
 [`LlmModel`](../../../modules/aimon-core/src/main/java/at/aimon/core/llm/LlmModel.java) 의 규칙대로
 운영자가 보는 수준으로 보고한다(`AnthropicLlmClient#reportDivergence`, `OpenAILlmClient#reportDivergence`).
 
+이 registry 는 **설정에서도 확장된다** — CLI 의 `llm.modelCapabilities.<model>`, 스타터의
+`aimon.llm.model-capabilities.<model>`. 프로바이더 쪽에서 달라지는 것은 없다(`resolve` 를 그대로 부른다)
+지만, 게이트웨이가 개명한 모델을 그 자리에서 설명할 수 있으므로 **한 번도 본 적 없는 이름이 fail-open 이
+아닌 답을 낼 수 있다.** `startsWith` 분기로 그것을 흉내 내지 말아야 하는 이유가 하나 더 늘어난 셈이다.
+
 ### 추론 페이로드는 채우고 되읽되, 절대 들여다보지 않는다
 
 추론 모델은 도구 호출과 함께 불투명한 항목 하나를 돌려준다 — OpenAI 의 `encrypted_content` 를 실은

@@ -37,7 +37,8 @@ Central is versioned independently).
   for is withheld, and nothing the caller did not ask for is invented** — a sampling value somebody
   set is sent, no reasoning effort is conjured up. The flip side: a deployment behind a gateway or Azure endpoint
   that **renames** its gpt-5 model (`model: prod-assistant`) is unknown to the built-in table and keeps
-  hitting the 400. One line closes it, and it is programmatic:
+  hitting the 400. One line closes it programmatically — and, since #46, from configuration too (the
+  entry after this one):
 
   ```java
   OpenAIConfig.builder().apiKey(key).model("prod-assistant")
@@ -53,8 +54,60 @@ Central is versioned independently).
   operator has is the one their portal shows: registering `prod-assistant` for a deployment configured
   as `Prod-Assistant` has to meet, or the one line that closes this gap silently does nothing.
 
-  A **CLI** deployment in that state has no yaml key for this yet; that is a config-surface decision
-  left to its own issue rather than ridden in on a bug fix.
+- **The same escape hatch from configuration** (#46) — a **CLI** deployment in that state used to have no
+  yaml key for this, which is why the entry above was programmatic-only; that was a config-surface
+  decision left to its own issue rather than ridden in on a bug fix. It is decided: the CLI has the key,
+  and so does the Spring Boot starter. The two surfaces keep their own spellings and do not mix:
+
+  ```yaml
+  # CLI (aimon.yaml) -- camelCase, like every other key in this file
+  llm:
+    provider: openai
+    baseUrl: https://gateway.internal/v1
+    model: prod-assistant
+    modelCapabilities:
+      prod-assistant:
+        supportsSamplingParameters: false
+  ```
+
+  ```yaml
+  # Spring Boot starter -- kebab-case, like every other aimon.* property
+  aimon:
+    llm:
+      provider: openai
+      model: prod-assistant
+      model-capabilities:
+        prod-assistant:
+          supports-sampling-parameters: false
+  ```
+
+  Five flags are available under a model and **every one of them is optional**: what you leave out keeps
+  `ModelCapabilities.unknown()`'s value, so the one-line form above is a complete answer to the 400 and
+  does not quietly route the deployment anywhere new. The field names are the descriptor's own, spelled
+  out — there is no second vocabulary for the same five facts, and the invariant that every built-in row
+  can be transcribed into this surface is held by a test. Declarations **extend** the built-in table
+  rather than replacing it, registered as exact entries, so the existing "exact beats every prefix" rule
+  is what makes an operator's name win — for that one name: declaring `gpt-5` overrides that exact
+  string and leaves `gpt-5-mini` on the built-in `gpt-5` prefix. There is deliberately no way to declare
+  a prefix from configuration, because prefix precedence is registration order and a yaml file's line
+  order is not a place to keep that. Values are case-insensitive on both surfaces, in the key as well as
+  in `lowestReasoningEffort`.
+
+  What is refused rather than ignored: an entry that declares nothing, a blank or space-padded name, two
+  names differing only in case, two CLI keys that `${VAR}`-expand to the same name, an unusable
+  `lowestReasoningEffort`, and a declaration under a provider that does not read it. An application that
+  brings its own `LlmClient` bean reaches neither starter branch, so its declaration is neither refused
+  nor read — it consumes it itself through the public
+  `AimonProperties.modelCapabilityRegistry(properties.getLlm())`. One asymmetry is worth knowing before
+  you rely on it — a **misspelled flag
+  name** fails loudly on the CLI, whose mapper rejects unknown properties, and is **silent in the
+  starter**, where Spring Boot ignores unknown properties by default; turning that off is a change to
+  the whole `aimon.*` tree and not something this fix rides in on. A dotted model name needs bracket
+  notation in the starter (`aimon.llm.model-capabilities[gpt-5.7-x]...`); without brackets the entry does
+  not arrive at all.
+
+  The other two knobs on this path — `responsesApiEnabled` and the sampling parameters themselves — are
+  still programmatic only.
 
 - **The built-in table is five rows** — `gpt-5-chat` (unchanged behaviour), `gpt-5`, then `o1` / `o3` /
   `o4`. The o-series rows were **withheld in the first cut and added on 2026-09-09 once measured**: the
@@ -194,6 +247,153 @@ Central is versioned independently).
   without breaking the `gpt-5` prefix override the class documents, and tracked as L-1 in
   [`openai-model-capabilities-open-items.md`](docs/backlog/openai-model-capabilities-open-items.md).
   Full measurement, controls and decision: [`openai-model-capabilities.md`](docs/design/llm/openai-model-capabilities.md) §13.
+
+### LLM: Anthropic's thinking blocks now survive a tool call too
+
+- **What it fixes.** `AnthropicLlmClient` dropped every `thinking` and `redacted_thinking` block it
+  received (`convertResponse`, the line whose comment said "ignore other block types") and never sent one
+  back, so the model re-derived its chain of thought on every ReAct iteration — worse answers, and
+  thinking tokens billed again each turn, on exactly the multi-turn tool loops AIMON exists to run.
+  `at.aimon.core.llm.ReasoningTrace` was built for this in the entry below and is already persisted end to
+  end, so no core type changes shape: this provider now fills the list the OpenAI one fills.
+
+- **Capture and replay are unconditional; only the request parameter is configured.** On Opus 5, Sonnet 5
+  and the Fable/Mythos family thinking is **on by default**, so a client that gated its read path on a
+  config flag would do nothing on the models the feature matters most for while every test stayed green.
+  So blocks are read into traces always, stored traces are replayed unless you say otherwise, and only the
+  `thinking` request parameter is a setting.
+
+  **A thinking-off deployment is unchanged, structurally rather than by promise.** A model that is not
+  thinking returns no blocks, so capture appends nothing; a transcript written before this change carries
+  no Anthropic traces, so replay emits nothing; and with the default `thinkingMode = OFF` the request body
+  is byte-identical to yesterday's, `temperature` included. A test asserts the serialised body, not the
+  absence of a setter call.
+
+- **Three new `AnthropicConfig` setters, programmatic only.**
+
+  ```java
+  AnthropicConfig.builder().apiKey(key).model("claude-sonnet-4-5")
+          .thinkingMode(AnthropicThinkingMode.EXTENDED)   // default OFF; also ADAPTIVE
+          .thinkingBudgetTokens(10_000)                   // optional, EXTENDED only, >= 1024
+          .replayThinkingBlocks(true)                     // default true
+          .maxTokens(16_000)
+          .build();
+  ```
+
+  **There is no yaml or starter property for these yet**, deliberately and following the same precedent as
+  the entry below: a config surface is its own issue rather than a rider on a behaviour fix. The
+  consequence, stated rather than left implicit: **a CLI or starter deployment cannot turn thinking on
+  until that lands** — though it still gets capture and replay for free on the always-on models, because
+  that half is not configured.
+
+- **Why the mode is three-valued and not a boolean.** Anthropic has two mutually exclusive thinking
+  dialects, availability is per-model, and the wrong one is a 400 rather than a degraded response.
+  `{"type":"enabled","budget_tokens":N}` is rejected by Opus 4.7/4.8/5, Sonnet 5 and the Fable/Mythos
+  family; `{"type":"adaptive"}` is rejected by Sonnet 4.5, Opus 4.5, Haiku 4.5 and every earlier Claude 4 —
+  including `AnthropicConfig`'s own default model. A boolean would have to guess which. The operator names
+  the dialect instead, and **nothing in the request builder branches on a model name**, preserving the rule
+  the entry below established. Deriving it from a per-model capability table would be better and is a
+  separate round: `ModelCapabilities`'s five fields have nowhere to carry a two-valued mutually exclusive
+  dialect axis, so "extend the registry" is a design round wearing a small name. The cost is honest — name
+  the wrong mode and you get a 400 — and it is mitigated by the failure being non-retryable and therefore
+  loud, by the default being `OFF`, and by both exact server messages being quoted in
+  `AnthropicThinkingMode`'s javadoc so the error text leads to the one-line fix.
+
+- **`ReasoningEffort` maps onto a token budget, and two of the four numbers are made up.** Extended mode
+  takes a budget, not a rung, so the mapping is a choice: `MINIMAL 1024 / LOW 2048 / MEDIUM 4096 /
+  HIGH 16000`, with `NONE` meaning "send no `thinking` parameter at all". **`MINIMAL` and `HIGH` are the
+  vendor's own published numbers** — the documented floor and the documented complex-task starting point;
+  **`LOW` and `MEDIUM` are arbitrary**, chosen as doublings of the floor, and the design says so rather than
+  dressing them up. What is not arbitrary and is pinned by tests: monotonicity, the 1024 floor, the
+  `maxTokens - 1` clamp, and a loud give-up when no legal budget exists. **The clamp bites out of the box** —
+  the default `maxTokens` is 4096, so `HIGH` clamps to 4095 and says so at WARN. In adaptive mode it is a
+  ladder-to-ladder map onto `output_config.effort`, where the only loss is `MINIMAL` and `LOW` collapsing
+  onto `low`.
+
+- **`temperature` is omitted when thinking is on, never substituted.** Verified from the vendor docs rather
+  than guessed, because the SDK javadoc says nothing about it: on thinking-capable models `temperature` and
+  `top_k` are incompatible with thinking and `top_p` is accepted only between 0.95 and 1. So a request that
+  carries a `thinking` parameter does not call the temperature setter at all — omission means never calling
+  it, since a key left present with a null value is rejected the same way a value is — and `top_p` is sent
+  only inside that window. Every omission goes through the existing `reportDivergence` at WARN, once per
+  distinct value, because the observable outcome is a request that **succeeds with settings other than the
+  ones configured**: no status code, and nothing else that would tell an operator.
+
+  **A pre-existing, unrelated breakage this surfaces but does not fix.** The same vendor paragraph says that
+  on Sonnet 5, Opus 5, Opus 4.7/4.8 and the Fable/Mythos family *any* non-default `temperature` returns 400
+  on **every** request, thinking or not — so this client's unconditional `.temperature(0.0)` already blocks
+  those models today. That is a model fact needing a per-model source of truth, i.e. the capability work
+  above, and it is neither caused nor repaired by this change. Said plainly here so nobody infers that
+  thinking support means those models now work.
+
+- **`redacted_thinking` gets no special case, on purpose.** Same slot, same anchor, same replay rule, no
+  core-level discriminator: each block's own JSON carries its `type` and the SDK's union deserializer
+  dispatches on it. Filtering capture on `block.type == "thinking"` alone is the vendor-documented way to
+  break the multi-turn protocol, so the predicate is both kinds and a dedicated test pins the redacted case
+  on the blocking and the streaming path.
+
+- **Ordering is captured, not guessed — and the rule is not OpenAI's.** Anthropic puts text *between* the
+  thinking block and the tool call on the ordinary `[thinking, text, tool_use]` shape, so OpenAI's "anchor
+  to the first following tool call" rule would replay it as `[text, thinking, tool_use]`: a turn that no
+  longer begins with a thinking block, which extended mode requires, and a rearranged consecutive sequence,
+  which the API rejects. The rule here is *anchor to the first `tool_use` that follows, unless a `text`
+  block intervenes first*. Both the blocking converter and the streaming mapper run the same function, which
+  is the seam where the OpenAI round trip was nearly lost.
+
+- **Streaming surfaces thinking and signature deltas.** `AnthropicStreamingMapper` reassembles the block
+  from `thinking_delta` and `signature_delta` and hands the traces to the aggregator **before** the terminal
+  chunk closes it. A block that streams no `thinking_delta` still yields a trace — on newer models the text
+  is omitted by default and the signature is the load-bearing half — while a block that never receives a
+  `signature_delta` is dropped with one warning rather than replayed unsigned, which would be a guaranteed
+  rejection. Thinking text is **not** forwarded to the sink: showing a live thinking stream to a user is a
+  different feature and needs a chunk kind `aimon-core` does not have.
+
+- **`TokenUsage.reasoningTokens` is filled from `usage.output_tokens_details.thinking_tokens`.** SDK 2.13.0
+  models neither `Usage` nor `MessageDeltaUsage` with that field, so it is read untyped from
+  `_additionalProperties()` in one place, degrading to `0` for anything unrecognised and never throwing. It
+  is reported and **not** priced and **not** added to `totalTokens`, because thinking tokens are billed as
+  output tokens and are therefore already contained in `output_tokens`. The field name comes from the
+  vendor docs and **has not been seen on a live response**; if it is wrong the counter reads zero and
+  nothing else changes.
+
+- **`AnthropicMessageConverter.convertMessages(List<Message>)` is deprecated**, delegating to a new
+  three-argument overload that takes the provider name and a divergence reporter. The old one has no
+  provider name to match a stored trace against, so it cannot tell one this client authored from one it must
+  not send, and therefore replays none of them. It still compiles and still behaves exactly as it did.
+
+- **`replayThinkingBlocks(false)` alongside `EXTENDED` is warned about at startup of the first request.**
+  The two are documented as incompatible: extended mode requires the final assistant turn of a
+  thinking-enabled request to begin with a thinking block, and that setting strips exactly that block, so a
+  tool loop is expected to be rejected on its second iteration. The warning names `thinkingMode(OFF)` as the
+  remedy rather than "turn replay back on" — the switch exists because replay can itself fail, so undoing it
+  walks back into the other failure. It is a warning and **not** a constructor refusal, which is what the same
+  config class does for a budget set outside `EXTENDED`, because the rule is read from documentation and
+  another documented sentence (mid-turn conflicts *"degrade gracefully… the API doesn't error"*) contradicts
+  it. A live call settles it; until then an unverified rule is not made un-overridable.
+
+- **Two divergence registers, because "say it once" is right for a setting and wrong for the traffic.** The
+  existing once-per-signature rule is justified by the thing it describes having been set once, in an agent
+  definition. Four of the conditions this entry adds are not like that — a stream that loses its
+  `signature_delta`, a stored payload this build cannot parse, a trace anchored to a tool use that is gone, a
+  trace authored by another provider. Those are properties of the traffic, they can start midway through a
+  process, and their signatures are constant, so once-only would have described the first occurrence and then
+  gone quiet while every following turn lost its reasoning too. They are counted instead and reported on the
+  **1st, 10th, 100th …** occurrence with the count in the line: one warning still means it happened once, and
+  a line reading *occurrence 100* means the feature is off. Sampling and budget divergences are unchanged.
+
+- **The omitted `temperature` is described differently depending on whose value it was.** `LlmModel` knows
+  whether a call set one; `AnthropicConfig` cannot know whether anyone typed its own, and its default is
+  `0.0`. Telling an operator who never touched sampling that *"temperature 0.0 is incompatible"* is a
+  complaint about a configuration they did not write, so when no per-call temperature is present the message
+  says that first. Two signatures, deduplicated separately.
+
+- **What is not verified, and it is the thing the feature rests on.** This work was done with **no
+  Anthropic API key**; every test is a fixture test and the suite runs without network. So nothing here
+  shows that Anthropic's verifier accepts a replayed signature — only that this client does not change it:
+  the decoded `signature` that leaves equals the one that arrived, and the surrounding object gains and
+  loses no field, asserted as a parsed tree rather than by substring. The full list of what fixtures cannot
+  establish, including the preserved-thinking prefix check that `replayThinkingBlocks(false)` exists to
+  escape, is in `docs/design/llm/anthropic-thinking-traces.md` §9.
 
 ### LLM: a reasoning model's chain of thought now survives a tool call (OpenAI Responses API)
 

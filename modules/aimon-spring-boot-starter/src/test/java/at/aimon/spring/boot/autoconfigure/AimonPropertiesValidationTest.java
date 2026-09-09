@@ -13,6 +13,9 @@ import org.springframework.core.env.MapPropertySource;
 
 import at.aimon.bootstrap.runtime.AgentRuntimeEviction;
 import at.aimon.core.knowledge.SimpleDocumentChunker;
+import at.aimon.core.llm.ReasoningEffort;
+import at.aimon.core.llm.capability.InMemoryModelCapabilityRegistry;
+import at.aimon.core.llm.capability.ModelCapabilityRegistry;
 import at.aimon.session.routing.DeploymentMode;
 
 /**
@@ -584,6 +587,133 @@ class AimonPropertiesValidationTest {
                 .addFirst(new MapPropertySource("empty-profile", Map.of("aimon.credentials.jira", Map.of()))))
                 .run(ctx -> assertThat(ctx).hasFailed().getFailure()
                         .hasStackTraceContaining(AimonProperties.CREDENTIALS + ".jira"));
+    }
+
+    // ----------------------------------------------------------------------------------------------------------
+    // aimon.llm.model-capabilities
+    // ----------------------------------------------------------------------------------------------------------
+
+    @Test
+    @DisplayName("a model capability declaration binds and extends the built-in table")
+    void modelCapabilitiesBindAndExtendTheBuiltInTable() {
+        runner.withPropertyValues("aimon.llm.model-capabilities.prod-assistant.supports-sampling-parameters=false",
+                "aimon.llm.model-capabilities.prod-assistant.lowest-reasoning-effort=low").run(ctx -> {
+                    assertThat(ctx).hasNotFailed();
+                    final AimonProperties.Llm llm = ctx.getBean(AimonProperties.class).getLlm();
+                    assertThat(llm.getModelCapabilities()).containsOnlyKeys("prod-assistant");
+
+                    final ModelCapabilityRegistry registry = AimonProperties.modelCapabilityRegistry(llm);
+                    assertThat(registry.resolve("prod-assistant").supportsSamplingParameters()).isFalse();
+                    assertThat(registry.resolve("prod-assistant").lowestReasoningEffort())
+                            .isEqualTo(ReasoningEffort.LOW);
+                    // The three flags the entry did not name stay fail-open rather than falling to false, and the
+                    // built-in rows are still there.
+                    assertThat(registry.resolve("prod-assistant").supportsReasoningTraceRoundTrip()).isFalse();
+                    assertThat(registry.resolve("prod-assistant").supportsToolsWithReasoning()).isTrue();
+                    assertThat(registry.resolve("gpt-5.6-terra"))
+                            .isEqualTo(InMemoryModelCapabilityRegistry.withDefaults().resolve("gpt-5.6-terra"));
+                });
+    }
+
+    @Test
+    @DisplayName("a model whose name contains a dot needs bracket notation, and gets it")
+    void aDottedModelNameNeedsBracketNotation() {
+        // Boot reads an unbracketed dot as a segment separator. Measured here rather than assumed, because the shape
+        // of this surface depended on it: if brackets did not preserve the name, the map key could not have been the
+        // model name and the entry would have needed a `model:` field of its own.
+        runner.withPropertyValues("aimon.llm.model-capabilities[gpt-5.7-x].supports-sampling-parameters=false")
+                .run(ctx -> {
+                    assertThat(ctx).hasNotFailed();
+                    final AimonProperties.Llm llm = ctx.getBean(AimonProperties.class).getLlm();
+                    assertThat(llm.getModelCapabilities()).containsOnlyKeys("gpt-5.7-x");
+                    assertThat(AimonProperties.modelCapabilityRegistry(llm).resolve("gpt-5.7-x")
+                            .supportsSamplingParameters()).isFalse();
+                });
+
+        // And the other half, which is why the documentation says brackets rather than suggesting them: without them
+        // the entry does not arrive at all. Nothing reports that -- so this assertion is the report.
+        runner.withPropertyValues("aimon.llm.model-capabilities.gpt-5.7-x.supports-sampling-parameters=false")
+                .run(ctx -> assertThat(ctx.getBean(AimonProperties.class).getLlm().getModelCapabilities()).isEmpty());
+    }
+
+    @Test
+    @DisplayName("a map key keeps its case, and the registry is what folds it")
+    void mapKeyCaseIsPreservedAndTheRegistryFoldsIt() {
+        // Boot rebuilds a map key from the property name's original form, so the case an operator copied out of an
+        // Azure portal survives binding -- the same property as aimon.credentials.<profile>. That makes this the
+        // starter's half of "case-insensitivity holds on the configuration path": the name arrives upper-case and the
+        // registry finds it lower-case, so the fold being tested is genuinely the registry's.
+        runner.withPropertyValues("aimon.llm.model-capabilities.Prod-Assistant.supports-sampling-parameters=false")
+                .run(ctx -> {
+                    final AimonProperties.Llm llm = ctx.getBean(AimonProperties.class).getLlm();
+                    assertThat(llm.getModelCapabilities()).containsOnlyKeys("Prod-Assistant");
+                    final ModelCapabilityRegistry registry = AimonProperties.modelCapabilityRegistry(llm);
+                    assertThat(registry.resolve("prod-assistant").supportsSamplingParameters()).isFalse();
+                    assertThat(registry.resolve("PROD-ASSISTANT").supportsSamplingParameters()).isFalse();
+                });
+    }
+
+    @Test
+    @DisplayName("a declaration that states nothing is refused by name")
+    void anEmptyModelCapabilityDeclarationIsRefused() {
+        // The whole reason this surface exists is that a silent no-op produced an HTTP 400, so it does not ship one of
+        // its own: an entry that declares nothing registers the capabilities the model already had. The property
+        // source is built by hand because the input is `prod-assistant: {}` in YAML, which withPropertyValues can
+        // only spell as text.
+        runner.withInitializer(context -> context.getEnvironment().getPropertySources()
+                .addFirst(new MapPropertySource("empty-declaration",
+                        Map.of("aimon.llm.model-capabilities.prod-assistant", Map.of()))))
+                .run(ctx -> assertThat(ctx).hasFailed().getFailure()
+                        .hasStackTraceContaining(AimonProperties.LLM_MODEL_CAPABILITIES));
+    }
+
+    @Test
+    @DisplayName("a misspelled flag is silent here, and that limit is measured rather than assumed")
+    void aMisspelledFlagIsSilentInTheStarter() {
+        // @ConfigurationProperties ignores unknown fields by default, and Boot's JavaBeanBinder does not instantiate
+        // a value whose every leaf failed to bind -- so an entry whose only flag is misspelled does not arrive as an
+        // empty declaration the check above would catch. It does not arrive at all.
+        //
+        // This is asserted rather than left implicit because it is the one acceptance criterion this feature does not
+        // fully meet on this surface: "invalid configuration does not pass silently" holds for values and for meaning,
+        // and not for a misspelled field name. Closing it means either turning off ignoreUnknownFields for the whole
+        // aimon.* tree or binding these entries as raw string maps, and both were weighed and declined -- see the
+        // design note. The CLI half is noisy for free, because its mapper fails on an unknown property.
+        //
+        // If someone does close it, this test goes red, which is the correct outcome: it is a limitation record, not
+        // a guarantee.
+        runner.withPropertyValues("aimon.llm.model-capabilities.prod-assistant.supports-sampling-parameter=false")
+                .run(ctx -> {
+                    assertThat(ctx).hasNotFailed();
+                    assertThat(ctx.getBean(AimonProperties.class).getLlm().getModelCapabilities()).isEmpty();
+                });
+    }
+
+    @Test
+    @DisplayName("an unusable reasoning-effort value fails at binding with the accepted values")
+    void anInvalidReasoningEffortFailsAtBinding() {
+        runner.withPropertyValues("aimon.llm.model-capabilities.prod-assistant.lowest-reasoning-effort=lowish")
+                .run(ctx -> assertThat(ctx).hasFailed().getFailure()
+                        .hasStackTraceContaining("aimon.llm.model-capabilities"));
+    }
+
+    @Test
+    @DisplayName("a reasoning-effort value is not case-sensitive")
+    void reasoningEffortIsRelaxed() {
+        runner.withPropertyValues("aimon.llm.model-capabilities.prod-assistant.lowest-reasoning-effort=LOW")
+                .run(ctx -> assertThat(ctx.getBean(AimonProperties.class).getLlm().getModelCapabilities()
+                        .get("prod-assistant").getLowestReasoningEffort()).isEqualTo(ReasoningEffort.LOW));
+    }
+
+    @Test
+    @DisplayName("two names differing only in case are refused")
+    void namesDifferingOnlyInCaseAreRefused() {
+        // Both bind, and look-ups fold case, so one of them would answer for the other with nothing to say which.
+        // Reachable without brackets because Boot preserves the key's case.
+        runner.withPropertyValues("aimon.llm.model-capabilities.Prod.supports-sampling-parameters=false",
+                "aimon.llm.model-capabilities.prod.supports-sampling-parameters=true")
+                .run(ctx -> assertThat(ctx).hasFailed().getFailure()
+                        .hasStackTraceContaining(AimonProperties.LLM_MODEL_CAPABILITIES));
     }
 
     @Test

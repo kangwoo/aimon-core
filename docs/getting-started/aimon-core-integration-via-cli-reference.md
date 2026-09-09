@@ -208,7 +208,57 @@ return switch (provider) {
 };
 ```
 
-각 빌더는 SDK별 설정 객체(`AnthropicConfig`, `OpenAIConfig`)를 만들어 `apiKey`, `model`, `timeout`, `baseUrl`을 주입한다.
+각 빌더는 SDK별 설정 객체(`AnthropicConfig`, `OpenAIConfig`)를 만들어 `apiKey`, `model`, `timeout`, `baseUrl` 을
+주입한다. openai 쪽은 여기에 하나가 더 붙는다 — `llm.modelCapabilities` 가 있으면 그것으로 모델 capability
+registry 를 만들어 `modelCapabilityRegistry(...)` 로 넘긴다 (`openAiConfig(...)`).
+
+#### 게이트웨이가 모델 이름을 바꿔 부를 때 — `llm.modelCapabilities`
+
+`baseUrl` 을 Azure 배포나 OpenAI 호환 게이트웨이로 돌리면 그 게이트웨이가 모델을 **자기 이름으로** 노출할 수
+있다(`gpt-5-mini` 를 `prod-assistant` 로). 내장 capability 표는 모델을 실제 이름으로 알고 있으므로 그 이름은
+표에 걸리지 않고 fail-open 경로로 떨어지며, 그 결과 `temperature` 를 받지 않는 모델에 그것이 실려 나가
+HTTP 400 을 맞는다. 그 이름에 대해 "이 모델은 무엇을 받는가" 를 적는 자리가 이 블록이다.
+
+```yaml
+llm:
+  provider: openai
+  baseUrl: https://gateway.internal/v1
+  apiKey: "${OPENAI_KEY}"
+  model: prod-assistant
+  modelCapabilities:
+    prod-assistant:
+      supportsSamplingParameters: false
+```
+
+맵 키는 **`model` 이 부르는 그 이름**이고, 대소문자를 가리지 않는다(`Prod-Assistant` 로 적고
+`prod-assistant` 로 조회해도 맞는다). `${VAR}` 도 풀리므로 `model: ${DEPLOYMENT}` 을 쓰는 배포가 자기 모델을
+서술할 수 있다.
+
+다섯 플래그가 있고 **전부 선택**이다. 적지 않은 것은 `ModelCapabilities.unknown()` 의 값, 즉 **오늘의 동작**을
+그대로 유지한다 — 그래서 위의 한 줄이 400 에 대한 완전한 답이다. 다섯 개를 다 요구하지 않는 이유는 게이트웨이
+운영자가 "temperature 가 400 을 낸다" 는 알아도 "이 모델이 reasoning trace 를 되싣는가" 는 모르기 때문이며,
+그 칸을 억지로 채우면 `/v1/responses` 가 없는 게이트웨이에서 400 이 404 로 바뀐다.
+
+| 키 | 뜻 | 적지 않으면 |
+|---|---|---|
+| `supportsSamplingParameters` | `temperature` · `top_p` · 두 penalty 를 실을 수 있는가 | `true` — 호출자가 설정한 값은 그대로 나간다 |
+| `supportsReasoningEffort` | reasoning-effort 파라미터가 이 모델의 요청 표면에 있는가 | `false` — 프레임워크가 만들어 내지 않는다 |
+| `supportsToolsWithReasoning` | 도구와 non-`NONE` effort 를 한 요청에 함께 실을 수 있는가 | `true` — 근거 없이 좁히지 않는다 |
+| `supportsReasoningTraceRoundTrip` | reasoning trace 를 다음 턴에 되실어야 추론이 이어지는가 | `false` — Chat Completions 경로를 유지한다 |
+| `lowestReasoningEffort` | 이 모델의 effort 사다리가 어디서 시작하는가 (`none`…`high`) | `minimal` |
+
+이 선언은 내장 표를 **대체하지 않고 확장한다.** exact 항목으로 등록되므로 기존 `exact > prefix` 규칙이 그대로
+"사용자가 이긴다" 를 뜻하고, 그 승리는 **이름 하나만큼**이다 — `gpt-5` 를 선언하면 정확히 그 이름만 바뀌고
+`gpt-5-mini` 는 여전히 내장 `gpt-5` prefix 가 답한다. 설정에서 prefix 를 선언하는 방법은 없다: prefix 우선순위는
+등록 순서이고, yaml 의 줄 순서가 그것을 정하게 만들 자리가 아니다.
+
+조용히 무시되지 않는 것들 — 모르는 플래그 이름, 잘못된 `lowestReasoningEffort` 값, 아무것도 선언하지 않은 항목,
+빈/공백이 붙은 이름, 대소문자만 다른 두 이름, **같은 이름으로 풀리는 두 `${VAR}` 키**, 그리고
+`provider: anthropic` 아래의 선언(그 클라이언트는 이 registry 를 읽지 않는다). 전부 `ConfigurationException`
+이고 메시지가 고쳐야 할 yaml 키를 부른다.
+
+같은 축의 스타터 프로퍼티는 [`embedding-agent-in-application.md`](embedding-agent-in-application.md) 에 있다.
+표기는 섞이지 않는다 — CLI 는 camelCase, 스타터는 kebab-case 다.
 
 `cli.tracing`이 켜져 있으면 그 위에 한 겹이 더 붙는다 (line 697-712) — `TracingLlmClient`가 원본 클라이언트를
 감싸고, 같은 `Tracer`가 실행기 팩토리에도 주입되어 턴/이터레이션/도구 span까지 한 트리에 모인다. 감싸는 대상은

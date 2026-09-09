@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/llm/llm-provider-development-guide.md
-source_commit: 2d33f19
+source_commit: fddc917
 ---
 
 # LLM Provider Development Guide
@@ -431,6 +431,12 @@ the server's business.
 the caller did not ask for is invented**. When a value is dropped, say so at a level an operator sees, per the rule in
 [`LlmModel`](../../../modules/aimon-core/src/main/java/at/aimon/core/llm/LlmModel.java)
 (`AnthropicLlmClient#reportDivergence`, `OpenAILlmClient#reportDivergence`).
+
+This registry **is also extended from configuration** — `llm.modelCapabilities.<model>` in the CLI,
+`aimon.llm.model-capabilities.<model>` in the starter. Nothing changes on the provider side (you still just
+call `resolve`), but because a gateway's renamed model can now be described there, **a name you have never
+seen can come back with an answer other than fail-open.** That is one more reason not to imitate any of this
+with a `startsWith` branch.
 
 ### Fill the reasoning payload and replay it, but never look inside it
 

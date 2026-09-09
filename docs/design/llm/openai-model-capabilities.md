@@ -289,6 +289,14 @@ schema, and there are two credible shapes (full capability entries per model, ve
 decision that deserves its own issue and its own review, not a rider on a bug fix. §7 O-8 records
 both shapes and my recommendation so the next person does not re-derive them.
 
+> **That row is now yes — closed by #46, in a later change.** Both the CLI
+> (`llm.modelCapabilities.<model>`) and the starter (`aimon.llm.model-capabilities.<model>`) carry the
+> declaration to `modelCapabilityRegistry(...)`. The reasoning above stands as the record of why phase 1
+> stopped where it did; what it predicted about the follow-up came out one way and not the other — the
+> chosen shape is **full capability entries**, not the alias this document recommended. Why the
+> recommendation was overturned is in
+> [`model-capability-config-key.md`](model-capability-config-key.md) §3 R1.
+
 ### 2.7 Alternatives rejected
 
 | # | Alternative | Why rejected |
@@ -692,6 +700,15 @@ bumps into the change. If the human would rather keep the diff to code + `CHANGE
 reasonable trim — but it should be a stated decision, not an omission.
 
 **O-8 — no CLI override for a renamed gateway deployment, and I chose not to invent one here.**
+**Closed by #46**, whose design is [`model-capability-config-key.md`](model-capability-config-key.md).
+Of the two shapes tabled below it took the second — **full capability entries**, a map keyed by model
+name — and therefore reversed this document's recommendation. The short reason is that an alias can
+only name a model the built-in table already knows, so a deployment running something the table has
+never measured stays on the fail-open path; and the "don't copy vendor facts into operator yaml"
+argument, which was the good half of the recommendation, holds only for models that *are* in the table.
+The long reason, including why the trade-off reads differently now that round 6 reversed two rows of
+that table by measurement, is in that document's §3.
+
 §2.6 states the gap: `LlmClientFactory.createOpenAIClient` has no seam, so a CLI deployment whose
 gpt-5 model is renamed (`model: prod-assistant` behind a gateway `baseUrl`) stays on the fail-open
 path and keeps hitting the 400. Raised as non-blocking in review round 1, and I am keeping the
@@ -986,6 +1003,13 @@ any real `gpt-5*` name hits the built-in row), while the remedy is Java-only.
 **The two round-1 gaps stay open and untouched.** No yaml key for the capability registry; no
 o-series rows, still blocked on live-API verification nobody has done. Both are still pinned by
 tests that explain why.
+
+> **One of the two is closed, and the other was closed by round 6.** The capability registry has a yaml
+> key and a starter property as of #46 — see §2.6 and §7 O-8. The o-series rows went in during round 6
+> once measured (§11), so this sentence is now historical on both counts. What #46 did *not* close is
+> O-14's own subject: `responsesApiEnabled` is still programmatic only, and so are the sampling
+> parameters. Of the three "programmatic only" knobs this paragraph's neighbours count, exactly one is
+> gone.
 
 Full design: [`openai-responses-path.md`](openai-responses-path.md).
 
