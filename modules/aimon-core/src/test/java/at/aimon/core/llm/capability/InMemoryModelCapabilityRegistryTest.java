@@ -66,9 +66,13 @@ class InMemoryModelCapabilityRegistryTest {
     @Test
     @DisplayName("the o-series rows start their reasoning ladder at LOW, and gpt-5.x keeps the default MINIMAL")
     void oSeriesLadderStartsAtLow() {
-        // Measured 2026-09-09: o4-mini answers "Supported values are: 'low', 'medium', 'high', and 'xhigh'" while
-        // gpt-5-nano answers "'minimal', 'low', 'medium', and 'high'". Without the row, the neutral MINIMAL would
-        // translate to the wire value 'minimal' for the o-series and earn a 400.
+        // Measured 2026-09-09. Round 8 replaced the evidence for this row without moving it: round 6 quoted
+        // "Supported values are: 'low', 'medium', 'high', and 'xhigh'" for o4-mini without recording that it came
+        // from /v1/chat/completions, and on /v1/responses the same model answers "Unsupported value: 'minimal' is
+        // not supported with the 'o4-mini' model. Supported values are: 'low', 'medium', and 'high'." The two
+        // surfaces enumerate different sets; the FLOOR is 'low' on both, which is all this field is about.
+        // gpt-5-nano answers "'minimal', 'low', 'medium', and 'high'" on Chat. Without the row, the neutral MINIMAL
+        // would translate to the wire value 'minimal' for the o-series and earn a 400.
         final InMemoryModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.withDefaults();
 
         assertThat(registry.resolve("o4-mini").lowestReasoningEffort()).isEqualTo(ReasoningEffort.LOW);
@@ -138,27 +142,84 @@ class InMemoryModelCapabilityRegistryTest {
     }
 
     @Test
-    @DisplayName("the o-series is in the table, suppresses sampling, and stays off the Responses path")
-    void oSeriesRowsAreMeasuredAndPresent() {
-        // Reversal, measured 2026-09-09. This test used to assert the OPPOSITE -- that o1/o3/o4 stayed unknown --
-        // because the belief that they reject sampling was unverified and a wrong row is a *silent* sampling change
-        // while no row leaves those users exactly where they are. Live probes closed that: o3-mini and o4-mini answer
-        // 400 to temperature 0.0 and 200 to 1.0, accept tools with no reasoning_effort, and reject effort "none".
+    @DisplayName("the o-series names whose replay was measured round-trip, and nothing else about their row moved")
+    void measuredOSeriesNamesRoundTrip() {
+        // Reversal, measured 2026-09-09. The rows themselves are round 6's: they went in because live probes showed
+        // o3-mini and o4-mini answer 400 to temperature 0.0 and 200 to 1.0, accept tools with no reasoning_effort,
+        // and reject effort "none". supportsToolsWithReasoning MUST stay true -- false makes the client omit an
+        // effort it need not omit, and it is what the class javadoc's own example has warned about all along.
         //
-        // supportsToolsWithReasoning MUST stay true -- false makes the client omit an effort it need not omit, and it
-        // is what the class javadoc's own example has warned about all along. supportsReasoningTraceRoundTrip stays
-        // false because reasoning-item replay was never measured for these models, and asserting a round trip nobody
-        // has seen is how the gpt-5 row came out wrong the first time.
-        // See docs/design/llm/openai-model-capabilities.md section 11.
+        // Round 8 flipped the fourth flag for these eight names ONLY, after measuring what round 6 could not: each
+        // accepts a replayed reasoning item on /v1/responses, and a corrupted payload 400s, so the item is consumed
+        // rather than tolerated. The other four flags are asserted here as well, because a copy-paste that also
+        // moved sampling would otherwise ship silently -- the failure mode the o-series rows were withheld for in
+        // the first place. See docs/design/llm/openai-model-capabilities.md section 13.
         final InMemoryModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.withDefaults();
 
-        for (String model : new String[]{"o1", "o1-pro", "o3", "o3-mini", "o4-mini"}) {
+        for (String model : new String[]{"o1", "o1-2024-12-17", "o3", "o3-2025-04-16", "o3-mini", "o3-mini-2025-01-31",
+                "o4-mini", "o4-mini-2025-04-16"}) {
             final ModelCapabilities caps = registry.resolve(model);
+            assertThat(caps.supportsReasoningTraceRoundTrip()).as("%s replay", model).isTrue();
             assertThat(caps.supportsSamplingParameters()).as("%s sampling", model).isFalse();
             assertThat(caps.supportsReasoningEffort()).as("%s effort", model).isTrue();
             assertThat(caps.supportsToolsWithReasoning()).as("%s tools+reasoning", model).isTrue();
-            assertThat(caps.supportsReasoningTraceRoundTrip()).as("%s replay", model).isFalse();
+            assertThat(caps.lowestReasoningEffort()).as("%s floor", model).isEqualTo(ReasoningEffort.LOW);
         }
+    }
+
+    @Test
+    @DisplayName("a prefix sibling nobody was allowed to call keeps the prefix row and stays off the Responses path")
+    void unmeasuredPrefixMembersDoNotRoundTrip() {
+        // This is the test that goes red if someone later "simplifies" eight exact rows into three prefix flips.
+        // o1-pro and o4-mini-deep-research sit under prefixes whose other members were measured, and the 2026-09-09
+        // probe was forbidden from calling them on cost grounds -- so nothing at all is known about their
+        // reasoning-item replay. o1 passing says nothing about o1-pro: they are different models that happen to
+        // share a name prefix, and treating one as evidence for the other is the inference issue #48 exists to
+        // delete. The other four flags stay exactly as round 6 set them, which is the half this test also pins.
+        final InMemoryModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.withDefaults();
+
+        for (String model : new String[]{"o1-pro", "o1-pro-2025-03-19", "o4-mini-deep-research",
+                "o4-mini-deep-research-2025-06-26"}) {
+            final ModelCapabilities caps = registry.resolve(model);
+            assertThat(caps.supportsReasoningTraceRoundTrip()).as("%s replay", model).isFalse();
+            assertThat(caps.supportsSamplingParameters()).as("%s sampling", model).isFalse();
+            assertThat(caps.supportsReasoningEffort()).as("%s effort", model).isTrue();
+            assertThat(caps.supportsToolsWithReasoning()).as("%s tools+reasoning", model).isTrue();
+            assertThat(caps.lowestReasoningEffort()).as("%s floor", model).isEqualTo(ReasoningEffort.LOW);
+        }
+    }
+
+    @Test
+    @DisplayName("a future name under a measured prefix keeps today's behaviour until somebody measures it")
+    void anUnmeasuredNameUnderAMeasuredPrefixStaysOffTheResponsesPath() {
+        // A prefix is not a promise about names nobody has measured, and this says so as an assertion rather than as
+        // a comment. The intended failure direction: the table under-delivers a capability until the name is probed,
+        // and never asserts a wire change nobody has seen.
+        final InMemoryModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.withDefaults();
+
+        assertThat(registry.resolve("o3-2099-01-01").supportsReasoningTraceRoundTrip()).isFalse();
+        assertThat(registry.resolve("o3-pro").supportsReasoningTraceRoundTrip()).isFalse();
+    }
+
+    @Test
+    @DisplayName("a built-in exact row shadows a caller's prefix override, and register(...) displaces it")
+    void anExactRowShadowsACallerPrefixOverride() {
+        // The one behaviour regression the exact-row shape introduces, and its escape hatch, pinned together. A
+        // caller who overrode registerPrefix("o1", ...) before round 8 reached every o1* name; now the built-in
+        // exact rows win for the two measured ones whatever position the override was registered in. The remedy is
+        // register(...) -- exact beats exact, last write wins -- and it has to keep working, or the table has a trap
+        // with no way out.
+        final InMemoryModelCapabilityRegistry viaPrefix = InMemoryModelCapabilityRegistry.builderWithDefaults()
+                .registerPrefix("o1", EVERYTHING_ALLOWED).build();
+
+        assertThat(viaPrefix.resolve("o1").supportsReasoningTraceRoundTrip()).isTrue();
+        assertThat(viaPrefix.resolve("o1-2024-12-17").supportsReasoningTraceRoundTrip()).isTrue();
+        assertThat(viaPrefix.resolve("o1-pro")).isEqualTo(EVERYTHING_ALLOWED);
+
+        final InMemoryModelCapabilityRegistry viaExact = InMemoryModelCapabilityRegistry.builderWithDefaults()
+                .register("o1", EVERYTHING_ALLOWED).build();
+
+        assertThat(viaExact.resolve("o1")).isEqualTo(EVERYTHING_ALLOWED);
     }
 
     @Test
@@ -188,7 +249,7 @@ class InMemoryModelCapabilityRegistryTest {
     }
 
     @Test
-    @DisplayName("only the reasoning gpt-5 family round-trips reasoning traces")
+    @DisplayName("reasoning traces round-trip for the gpt-5 family and for the measured o-series names only")
     void reasoningTraceRoundTripIsSetOnlyWhereItIsTrue() {
         final InMemoryModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.withDefaults();
 
@@ -198,7 +259,10 @@ class InMemoryModelCapabilityRegistryTest {
         // the Responses API.
         assertThat(registry.resolve("gpt-5-chat-latest").supportsReasoningTraceRoundTrip()).isFalse();
         assertThat(registry.resolve("gpt-4o").supportsReasoningTraceRoundTrip()).isFalse();
-        assertThat(registry.resolve("o3").supportsReasoningTraceRoundTrip()).isFalse();
+        // Round 8: measured, so true. Its prefix sibling was never called, so false. The pair in one place is the
+        // shortest statement of what the o-series table actually claims.
+        assertThat(registry.resolve("o3").supportsReasoningTraceRoundTrip()).isTrue();
+        assertThat(registry.resolve("o1-pro").supportsReasoningTraceRoundTrip()).isFalse();
     }
 
     // ---------------------------------------------------------------------------------------------------------
@@ -216,11 +280,15 @@ class InMemoryModelCapabilityRegistryTest {
         final InMemoryModelCapabilityRegistry stock = InMemoryModelCapabilityRegistry.withDefaults();
 
         assertThat(extended.resolve("prod-assistant").supportsSamplingParameters()).isFalse();
-        // One name per built-in row. This is the acceptance criterion "the built-in five survive" stated as five
-        // assertions rather than as a count, so that a row silently changing value also fails.
+        // One name per built-in row, stated as assertions rather than as a count so that a row silently changing
+        // value also fails. The list grew when round 8 added eight exact o-series rows beside the three prefix ones:
+        // o3-mini and o4-mini now land on exact rows, so o3-x and o4-x are here to keep sampling the prefix rows
+        // they used to stand for. Dropping either pair would leave a built-in row this test no longer watches.
         assertThat(extended.resolve("gpt-5-chat-latest")).isEqualTo(stock.resolve("gpt-5-chat-latest"));
         assertThat(extended.resolve("gpt-5.6-terra")).isEqualTo(stock.resolve("gpt-5.6-terra"));
         assertThat(extended.resolve("o1-x")).isEqualTo(stock.resolve("o1-x"));
+        assertThat(extended.resolve("o3-x")).isEqualTo(stock.resolve("o3-x"));
+        assertThat(extended.resolve("o4-x")).isEqualTo(stock.resolve("o4-x"));
         assertThat(extended.resolve("o3-mini")).isEqualTo(stock.resolve("o3-mini"));
         assertThat(extended.resolve("o4-mini")).isEqualTo(stock.resolve("o4-mini"));
     }

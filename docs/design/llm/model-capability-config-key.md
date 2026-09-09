@@ -411,6 +411,10 @@ public static InMemoryModelCapabilityRegistry withDefaultsExtendedBy(
 > built-in table"* 은 지금 틀려 있다(`:128-136` 이 `o1`/`o3`/`o4` 를 등록한다). TASK.md 가 이 런에서
 > 고치지 말라고 했다(#48 스윕과 충돌). **건드리지 않고 `HANDOFF.md` 에만 남긴다.**
 
+> **넘긴 대로 #48 이 고쳤다 (병합 시점 정정).** 그 문단은 이제 *"The o-series is in the table"* 로 시작하고
+> prefix 세 행과 exact 여덟 행을 함께 기술한다. 두 런을 충돌시키지 않으려던 판단이 그대로 맞았고, 위
+> 문단은 그 판단의 기록으로 남는다 — **지금 트리에 대한 서술로 읽으면 안 된다.**
+
 ### 4.2 `aimon-cli`
 
 | 파일 | 변경 |
@@ -726,8 +730,11 @@ TASK.md 가 요구한 것은 아니다. 잘라도 기능은 성립한다(단 `mo
    deliberately **not** in the built-in table"* 인데 같은 파일 `:128-136` 이 `o1`/`o3`/`o4` 를
    등록한다. 2026-09-09 측정으로 행이 들어가면서 예시 문단만 안 따라온 것으로 보인다. TASK.md 의 지시대로
    **건드리지 않는다** — #48 의 스윕에 속하고 지금 만지면 두 런이 충돌한다.
+   **→ #48 이 고쳤다** (두 브랜치를 합치는 시점에 확인). 넘긴 것이 실제로 받아졌다는 기록으로 남긴다.
 2. **`openai-model-capabilities.md` §11.5 · §9.5 의 "두 round-1 gaps" 중 하나가 이 작업으로 닫힌다** —
-   나머지 하나(o-시리즈 실측)는 #48 이다.
+   나머지 하나(o-시리즈 실측)는 #48 이다. **→ 그쪽도 닫혔다**: #48 이 여덟 개 이름을 실측해
+   `supportsReasoningTraceRoundTrip` 을 이름 단위로 뒤집었고, 미측정 이름(`o1-pro` ·
+   `o4-mini-deep-research`)은 prefix 행에 남겨 `false` 를 유지한다.
 3. **[`openai-responses-path.md`](openai-responses-path.md) F-2 의 "한 config 이슈" 는 이 런으로 3분의 1만 닫힌다** (O-B).
 4. **`CliConfigLoader` 는 `${VAR}` 를 손으로 나열한 필드에서만 푼다.** `mcp` 와 `llm` 의 세 필드뿐이고
    `memory` 블록은 전혀 풀지 않는다(`memory.dreamer.scorer.embedding.apiKey` 는 `${OPENAI_KEY}` 를
