@@ -2,7 +2,6 @@ package at.aimon.spring.boot.autoconfigure;
 
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_API_KEY;
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_MODEL;
-import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_MODEL_CAPABILITIES;
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_PROVIDER;
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.PROVIDER_ANTHROPIC;
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.PROVIDER_OPENAI;
@@ -95,35 +94,6 @@ public class AimonLlmAutoConfiguration {
         }
     }
 
-    /**
-     * Rejects a capability declaration the selected branch cannot read.
-     *
-     * <p>
-     * {@code aimon.llm.model-capabilities} lives under the shared {@code aimon.llm.*} namespace because the question
-     * it answers is provider-neutral, and only the OpenAI client consults the registry today. Refusing it in the
-     * branch that cannot read it is what keeps the shared namespace honest — a property that binds and reaches nothing
-     * reads as if it had taken effect.
-     *
-     * <p>
-     * Checked here rather than in {@code AimonProperties} for {@link #requireApiKey}'s reason: the answer depends on
-     * a bean. An application that defines its own {@link LlmClient} reaches neither branch, and a declaration it
-     * carries for its own client is not this starter's to refuse — it is that application's to consume, through the
-     * public {@link AimonProperties#modelCapabilityRegistry(AimonProperties.Llm)}.
-     *
-     * @param llm
-     *            the bound LLM properties
-     * @param provider
-     *            the provider value that selected this branch
-     */
-    private static void refuseModelCapabilities(AimonProperties.Llm llm, String provider) {
-        if (!llm.getModelCapabilities().isEmpty()) {
-            throw new IllegalStateException(LLM_MODEL_CAPABILITIES + " is declared, but " + LLM_PROVIDER + "="
-                    + provider + " builds a client that does not consult the model capability registry — only the"
-                    + " OpenAI client does. Remove the declarations, or set " + LLM_PROVIDER + "=" + PROVIDER_OPENAI
-                    + ".");
-        }
-    }
-
     /** Anthropic branch — also the branch taken when {@code aimon.llm.provider} is absent. */
     @Configuration(proxyBeanMethods = false)
     @ConditionalOnClass(AnthropicLlmClient.class)
@@ -134,8 +104,25 @@ public class AimonLlmAutoConfiguration {
         @ConditionalOnMissingBean(LlmClient.class)
         LlmClient aimonAnthropicLlmClient(AimonProperties properties) {
             final AimonProperties.Llm llm = properties.getLlm();
+            return new AnthropicLlmClient(anthropicConfig(llm));
+        }
+
+        /**
+         * Builds the vendor config from the bound properties.
+         *
+         * <p>
+         * Package-private and declared <em>inside this nested class</em> for the reason
+         * {@link OpenAiConfiguration#openAiConfig(AimonProperties.Llm)} spells out: {@code AnthropicConfig} appears in
+         * this method's descriptor, and Spring calls {@code getDeclaredMethods()} on a configuration class while
+         * post-processing it. On the enclosing class that would ask the classloader for a type a deployment carrying
+         * only the OpenAI module does not have.
+         *
+         * @param llm
+         *            the bound LLM properties
+         * @return the assembled Anthropic config
+         */
+        static AnthropicConfig anthropicConfig(AimonProperties.Llm llm) {
             requireApiKey(llm, PROVIDER_ANTHROPIC);
-            refuseModelCapabilities(llm, PROVIDER_ANTHROPIC);
             final AnthropicConfig.Builder config = AnthropicConfig.builder().apiKey(llm.getApiKey());
             if (llm.getModel() != null) {
                 config.model(llm.getModel());
@@ -146,7 +133,10 @@ public class AimonLlmAutoConfiguration {
             if (llm.getTimeout() != null) {
                 config.timeout(llm.getTimeout());
             }
-            return new AnthropicLlmClient(config.build());
+            if (!llm.getModelCapabilities().isEmpty()) {
+                config.modelCapabilityRegistry(AimonProperties.modelCapabilityRegistry(llm));
+            }
+            return config.build();
         }
     }
 

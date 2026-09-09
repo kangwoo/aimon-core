@@ -207,17 +207,31 @@ class AimonAutoConfigurationTest {
     }
 
     @Test
-    @DisplayName("a capability declaration under the Anthropic branch is refused by name")
-    void anthropicBranchRefusesCapabilityDeclarations(@TempDir Path workspace) {
-        // aimon.llm.model-capabilities sits in the shared namespace because the question it answers is
-        // provider-neutral, and only the OpenAI client reads the registry today. What keeps that honest is refusing
-        // it in the branch that cannot read it -- at the moment that branch runs, so an application with its own
-        // LlmClient bean is not caught by it.
-        minimal(workspace)
-                .withPropertyValues("aimon.llm.model-capabilities.prod-assistant.supports-sampling-parameters=false")
-                .run(ctx -> assertThat(ctx).hasFailed().getFailure()
-                        .hasStackTraceContaining(AimonProperties.LLM_MODEL_CAPABILITIES)
-                        .hasStackTraceContaining(AimonProperties.LLM_PROVIDER));
+    @DisplayName("a capability declaration reaches the Anthropic client and keeps the built-in rows")
+    void modelCapabilityDeclarationsReachTheAnthropicClient(@TempDir Path workspace) {
+        // This branch used to refuse the block by name, because only the OpenAI client read the registry. Both read
+        // it now, so what keeps the shared aimon.llm.* namespace honest is that both branches consume it -- and the
+        // refusal is deleted rather than reworded, because it named a state that no longer exists.
+        minimal(workspace).withPropertyValues("aimon.llm.model=prod-assistant",
+                "aimon.llm.model-capabilities.prod-assistant.supports-sampling-parameters=false").run(ctx -> {
+                    assertThat(ctx).hasNotFailed();
+                    final ModelCapabilityRegistry registry = AimonLlmAutoConfiguration.AnthropicConfiguration
+                            .anthropicConfig(ctx.getBean(AimonProperties.class).getLlm()).getModelCapabilityRegistry();
+                    assertThat(registry.resolve("prod-assistant").supportsSamplingParameters()).isFalse();
+                    assertThat(registry.resolve("claude-opus-5"))
+                            .isEqualTo(InMemoryModelCapabilityRegistry.withDefaults().resolve("claude-opus-5"));
+                });
+    }
+
+    @Test
+    @DisplayName("no declaration leaves the Anthropic config on the shipped default registry")
+    void noDeclarationLeavesTheAnthropicDefaultRegistry(@TempDir Path workspace) {
+        minimal(workspace).run(ctx -> {
+            final ModelCapabilityRegistry registry = AimonLlmAutoConfiguration.AnthropicConfiguration
+                    .anthropicConfig(ctx.getBean(AimonProperties.class).getLlm()).getModelCapabilityRegistry();
+            assertThat(registry.resolve("claude-opus-5"))
+                    .isEqualTo(InMemoryModelCapabilityRegistry.withDefaults().resolve("claude-opus-5"));
+        });
     }
 
     @Test

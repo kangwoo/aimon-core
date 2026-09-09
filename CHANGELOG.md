@@ -270,12 +270,12 @@ Central is versioned independently).
   instead of predicting a failure, and it fires for **both** dialects rather than only `EXTENDED`, since
   the cost does not pick one. Nothing about the round trip itself changed.
 
-  **A correction to the sampling note below:** the rejection on Sonnet 5 / Opus 5 / Opus 4.7 / 4.8 /
-  Fable / Mythos is ``  `temperature` is deprecated for this model. `` — the parameter is refused outright
-  rather than compared against a default, so `temperature: 0.0` is rejected like any other value. That
-  makes the consequence stated there firmer, not weaker. `AnthropicThinkingMode.ADAPTIVE` is the one
-  configuration that reaches those models today, because asking for thinking is what suppresses the
-  parameter.
+  **The verbatim rejection on Sonnet 5 / Opus 5 / Opus 4.7 / 4.8 / Fable / Mythos** is
+  ``  `temperature` is deprecated for this model. `` So `temperature: 0.0` is rejected, and the sampling
+  note below is right that any non-default value is — the word "deprecated" is about the value, not the
+  key, which a later round measured by sending `1.0` and getting 200. `AnthropicThinkingMode.ADAPTIVE`
+  was the one configuration that reached those models before the entry below fixed it, because asking for
+  thinking is what suppressed the parameter.
 
   The live assertions are `AnthropicThinkingLiveTest`, gated on `ANTHROPIC_KEY` like the existing
   integration test, so a keyless build still skips rather than fails.
@@ -354,7 +354,9 @@ Central is versioned independently).
   on **every** request, thinking or not — so this client's unconditional `.temperature(0.0)` already blocks
   those models today. That is a model fact needing a per-model source of truth, i.e. the capability work
   above, and it is neither caused nor repaired by this change. Said plainly here so nobody infers that
-  thinking support means those models now work.
+  thinking support means those models now work. **The "non-default" qualifier in that sentence is right, and
+  it was briefly overturned before being measured back** — see the Anthropic sampling entry below, which
+  also fixes the breakage.
 
 - **`redacted_thinking` gets no special case, on purpose.** Same slot, same anchor, same replay rule, no
   core-level discriminator: each block's own JSON carries its `type` and the SDK's union deserializer
@@ -424,6 +426,70 @@ Central is versioned independently).
   loses no field, asserted as a parsed tree rather than by substring. The full list of what fixtures cannot
   establish, including the preserved-thinking prefix check that `replayThinkingBlocks(false)` exists to
   escape, is in `docs/design/llm/anthropic-thinking-traces.md` §9.
+
+### LLM: `AnthropicLlmClient` can talk to the current Claude generation again
+
+- **What it fixes.** `buildRequest` called `.temperature(...)` on every non-thinking request, filling it
+  from `AnthropicConfig.getTemperature()` — a primitive `double` seeded at `0.0`, so "nobody configured a
+  temperature" and "somebody configured 0.0" were the same state. Six of the eleven models this account
+  can reach reject `temperature: 0.0`, and the default thinking mode is `OFF`, so **in its default
+  configuration this client could not reach the current Claude generation at all** — Fable 5.1, Fable 5,
+  Opus 5, Opus 4.8, Opus 4.7 and Sonnet 5, plus the Mythos family it cannot see. Both halves are fixed:
+  the model fact comes from the capability registry, and the config stops inventing a value. There is no
+  `model.startsWith("claude-")` anywhere in the request builder.
+
+- **The registry is reused, not duplicated.** `at.aimon.core.llm.capability` was already vendor-neutral
+  and already had the field this needed (`supportsSamplingParameters`), and the two sibling per-model
+  registries in the same area already carry `claude-*` rows beside `gpt-*` ones. `withDefaults()` grows by
+  six prefixes — `claude-fable-5` (which also covers `claude-fable-5-1`), `claude-opus-5`,
+  `claude-opus-4-7`, `claude-opus-4-8`, `claude-sonnet-5`, and `claude-mythos`. No new type, no new field.
+  `AnthropicConfig` takes a `modelCapabilityRegistry(...)` exactly as `OpenAIConfig` does.
+
+  **One consequence of one table with two consumers:** a `claude-*` model name routed through an
+  OpenAI-compatible gateway by `OpenAILlmClient` now resolves to these rows and has its sampling
+  suppressed too. That is correct — the underlying model does refuse — but it arrives from a direction
+  neither client's source shows, so the registry says so beside the rows.
+
+- **Measured against the live API on 2026-09-09**, 58 calls with three controls, and **it corrects the
+  Anthropic thinking entry above.** Rejection is by **value** for `temperature` — `1.0` returns 200 on all
+  six, so the earlier "refused outright rather than compared against a default" is wrong and the original
+  "any non-default value" reading was right — and by **presence** for `top_p`, where even `1.0` is a 400.
+  No prior design distinguished the two. The negative control matters as much as the table: the identical
+  body with no sampling parameter returns 200 on all six, so **omission cannot 400**, which is what makes
+  suppression safe and fail-open the right posture for a model nothing describes. `"temperature": null` is
+  a 400 on an accepting model too, so omission means never calling the setter — now measured rather than
+  asserted. The five reachable models that **accept** all three are deliberately absent from the table;
+  a `claude-opus-4` family prefix would have caught two of them and is what one test exists to prevent.
+
+- **Breaking:** `AnthropicConfig.getTemperature()` returns `Optional<Double>` instead of `double`, and
+  `DEFAULT_TEMPERATURE` is gone. The same change `OpenAIConfig` made in #43/#44, for the same reason —
+  the provider guide forbids a provider inventing a sampling value, and of the values available to invent
+  `0.0` was the measurably worst one. **A deployment that never configured a temperature changes on the
+  wire**: it sent `0.0` and now sends nothing, so Anthropic's own default (`1.0`) applies and output is
+  less deterministic. On the six refusing models that is moot — those deployments did not work. On the
+  five accepting ones it is real, and the remedy is one line: set the temperature you want.
+
+- **Suppression is reported, never silent.** Each dropped value goes through the existing
+  `reportDivergence` at WARN, once per distinct value **and model**, naming both. A request nobody put a
+  sampling value on says nothing, by construction rather than by a special case. The capability gate sits
+  *outside* the older thinking rules, so a `top_p` inside the `[0.95, 1.0]` window that thinking allows is
+  still dropped on a model that refuses `top_p` — the one live 400 a temperature-only fix would have left.
+
+- **Unknown models still fail open**, and that is inherited from `ModelCapabilities.unknown()` rather than
+  decided here: a model no registry describes keeps today's request shape. A gateway that renames a
+  refusing model therefore still hits the 400 until somebody names it — which is what the config surface
+  below is for.
+
+- **Both configuration surfaces now reach the Anthropic branch.** `llm.modelCapabilities.<model>` (CLI,
+  camelCase) and `aimon.llm.model-capabilities.<model>` (starter, kebab-case) are unchanged in spelling,
+  keys and translation; what changes is that the two guards which **refused** them under
+  `provider: anthropic` are deleted, because the sentence they carried ("only the OpenAI client consults
+  the model capability registry") stopped being true. A configuration that failed fast now boots and
+  works. That is what #46 kept the key in the shared `aimon.llm.*` namespace for.
+
+- Design: `docs/design/llm/anthropic-sampling-capabilities.md`, whose §2 carries the probe table and §11
+  the rows that were **not** measured — above all `claude-mythos`, which no account here can see and which
+  ships as documentation-derived, labelled in the source beside it.
 
 ### LLM: a reasoning model's chain of thought now survives a tool call (OpenAI Responses API)
 

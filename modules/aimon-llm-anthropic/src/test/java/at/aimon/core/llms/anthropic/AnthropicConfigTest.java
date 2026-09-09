@@ -8,6 +8,9 @@ import java.time.Duration;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import at.aimon.core.llm.capability.ModelCapabilities;
+import at.aimon.core.llm.capability.ModelCapabilityRegistry;
+
 @DisplayName("AnthropicConfig - Configuration Builder Tests")
 class AnthropicConfigTest {
 
@@ -23,7 +26,9 @@ class AnthropicConfigTest {
         // Then: Should use defaults for other fields
         assertThat(config.getApiKey()).isEqualTo(apiKey);
         assertThat(config.getModel()).isEqualTo("claude-sonnet-4-20250514");
-        assertThat(config.getTemperature()).isEqualTo(0.0);
+        // Unset, not 0.0. A manufactured default would be sent on every request, and 0.0 is the one value the
+        // current Claude generation refuses -- see docs/design/llm/anthropic-sampling-capabilities.md section 2.6.
+        assertThat(config.getTemperature()).isEmpty();
         assertThat(config.getMaxTokens()).isEqualTo(4096);
         assertThat(config.getTimeout()).isEqualTo(Duration.ofSeconds(60));
         assertThat(config.getBaseUrl()).isNull();
@@ -47,7 +52,7 @@ class AnthropicConfigTest {
         // Then: All fields should match
         assertThat(config.getApiKey()).isEqualTo(apiKey);
         assertThat(config.getModel()).isEqualTo(model);
-        assertThat(config.getTemperature()).isEqualTo(temperature);
+        assertThat(config.getTemperature()).contains(temperature);
         assertThat(config.getMaxTokens()).isEqualTo(maxTokens);
         assertThat(config.getTimeout()).isEqualTo(timeout);
         assertThat(config.getBaseUrl()).isEqualTo(baseUrl);
@@ -119,10 +124,10 @@ class AnthropicConfigTest {
 
         // When/Then: 0.0 and 1.0 should be valid
         AnthropicConfig config1 = AnthropicConfig.builder().apiKey(apiKey).temperature(0.0).build();
-        assertThat(config1.getTemperature()).isEqualTo(0.0);
+        assertThat(config1.getTemperature()).contains(0.0);
 
         AnthropicConfig config2 = AnthropicConfig.builder().apiKey(apiKey).temperature(1.0).build();
-        assertThat(config2.getTemperature()).isEqualTo(1.0);
+        assertThat(config2.getTemperature()).contains(1.0);
     }
 
     @Test
@@ -167,7 +172,7 @@ class AnthropicConfigTest {
         assertThat(config).isNotNull();
         assertThat(config.getApiKey()).isEqualTo("test");
         assertThat(config.getModel()).isEqualTo("claude-opus-4-20250514");
-        assertThat(config.getTemperature()).isEqualTo(0.5);
+        assertThat(config.getTemperature()).contains(0.5);
         assertThat(config.getMaxTokens()).isEqualTo(1024);
         assertThat(config.getTimeout()).isEqualTo(Duration.ofSeconds(45));
         assertThat(config.getBaseUrl()).isEqualTo("https://custom.api.com");
@@ -323,5 +328,39 @@ class AnthropicConfigTest {
 
         assertThat(config.toString()).contains("thinkingMode=EXTENDED").contains("thinkingBudgetTokens=2048")
                 .contains("replayThinkingBlocks=true").doesNotContain("sk-ant-super-secret-key");
+    }
+
+    @Test
+    @DisplayName("the default capability registry is the shipped table, and a supplied one replaces it")
+    void modelCapabilityRegistryDefaultsToTheShippedTable() {
+        AnthropicConfig shipped = AnthropicConfig.builder().apiKey("test-key").build();
+
+        assertThat(shipped.getModelCapabilityRegistry().resolve("claude-opus-5").supportsSamplingParameters())
+                .isFalse();
+
+        AnthropicConfig supplied = AnthropicConfig.builder().apiKey("test-key")
+                .modelCapabilityRegistry(ModelCapabilityRegistry.EMPTY).build();
+
+        assertThat(supplied.getModelCapabilityRegistry().resolve("claude-opus-5"))
+                .isEqualTo(ModelCapabilities.unknown());
+    }
+
+    @Test
+    @DisplayName("a null capability registry is refused rather than turning the look-up off silently")
+    void aNullCapabilityRegistryIsRefused() {
+        assertThatThrownBy(() -> AnthropicConfig.builder().apiKey("test-key").modelCapabilityRegistry(null))
+                .isInstanceOf(NullPointerException.class).hasMessageContaining("Model capability registry");
+    }
+
+    @Test
+    @DisplayName("two configs carrying different registry instances are still equal")
+    void theRegistryDoesNotParticipateInEquality() {
+        // Every build() makes its own InMemoryModelCapabilityRegistry and no registry defines equals, so counting the
+        // collaborator would make two configs that agree on every value an operator can write unequal.
+        AnthropicConfig one = AnthropicConfig.builder().apiKey("test-key").build();
+        AnthropicConfig two = AnthropicConfig.builder().apiKey("test-key").build();
+
+        assertThat(one.getModelCapabilityRegistry()).isNotSameAs(two.getModelCapabilityRegistry());
+        assertThat(one).isEqualTo(two).hasSameHashCodeAs(two);
     }
 }

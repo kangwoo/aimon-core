@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/aimon-core-integration-via-cli-reference.md
-source_commit: 6a07573
+source_commit: 87acc1d
 ---
 
 # aimon-core integration guide — following aimon-cli as the reference
@@ -215,17 +215,21 @@ return switch (provider) {
 ```
 
 Each builder constructs the SDK-specific configuration object (`AnthropicConfig`, `OpenAIConfig`) and injects
-`apiKey`, `model`, `timeout` and `baseUrl`. The openai side adds one more — when `llm.modelCapabilities` is
-present it builds a model capability registry from it and passes that to `modelCapabilityRegistry(...)`
-(`openAiConfig(...)`).
+`apiKey`, `model`, `timeout` and `baseUrl`. **Both** sides add one more — when `llm.modelCapabilities` is
+present they build a model capability registry from it and pass that to `modelCapabilityRegistry(...)`
+(`anthropicConfig(...)` · `openAiConfig(...)`).
 
 #### When a gateway calls the model something else — `llm.modelCapabilities`
 
-Point `baseUrl` at an Azure deployment or an OpenAI-compatible gateway and that gateway may expose a model
+Point `baseUrl` at an Azure deployment or a vendor-compatible gateway and that gateway may expose a model
 under **a name of its own** (`gpt-5-mini` as `prod-assistant`). The built-in capability table knows models by
 their real names, so that name does not match it and falls through to the fail-open path — which means
 `temperature` is sent to a model that does not take it, and the request answers HTTP 400. This block is where
 you say what that name actually accepts.
+
+**Both providers read this block**, and the built-in table describes both vendors — the `gpt-*` / `o*` rows
+and the `claude-*` models that refuse the sampling parameters (six measured, plus the documentation-derived
+`claude-mythos` family). So `provider` in the example below may just as well be `anthropic`.
 
 ```yaml
 llm:
@@ -263,9 +267,9 @@ prefix. There is no way to declare a prefix from configuration: prefix precedenc
 yaml file's line order is not the place to keep that.
 
 What is not silently ignored — an unknown flag name, an unusable `lowestReasoningEffort` value, an entry that
-declares nothing, a blank or space-padded name, two names differing only in case, **two `${VAR}` keys that
-expand to the same name**, and a declaration under `provider: anthropic` (that client does not read this
-registry). All of them are a `ConfigurationException` whose message names the yaml key to fix.
+declares nothing, a blank or space-padded name, two names differing only in case, and **two `${VAR}` keys that
+expand to the same name**. All of them are a `ConfigurationException` whose message names the yaml key to fix.
+A declaration under `provider: anthropic` is **no longer refused** — that branch reads this registry too.
 
 The starter property on the same axis is in
 [`embedding-agent-in-application.en.md`](embedding-agent-in-application.en.md). The two spellings do not mix —

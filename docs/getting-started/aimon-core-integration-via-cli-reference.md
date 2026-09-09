@@ -209,15 +209,19 @@ return switch (provider) {
 ```
 
 각 빌더는 SDK별 설정 객체(`AnthropicConfig`, `OpenAIConfig`)를 만들어 `apiKey`, `model`, `timeout`, `baseUrl` 을
-주입한다. openai 쪽은 여기에 하나가 더 붙는다 — `llm.modelCapabilities` 가 있으면 그것으로 모델 capability
-registry 를 만들어 `modelCapabilityRegistry(...)` 로 넘긴다 (`openAiConfig(...)`).
+주입한다. 여기에 **양쪽 모두** 하나가 더 붙는다 — `llm.modelCapabilities` 가 있으면 그것으로 모델 capability
+registry 를 만들어 `modelCapabilityRegistry(...)` 로 넘긴다 (`anthropicConfig(...)` · `openAiConfig(...)`).
 
 #### 게이트웨이가 모델 이름을 바꿔 부를 때 — `llm.modelCapabilities`
 
-`baseUrl` 을 Azure 배포나 OpenAI 호환 게이트웨이로 돌리면 그 게이트웨이가 모델을 **자기 이름으로** 노출할 수
+`baseUrl` 을 Azure 배포나 벤더 호환 게이트웨이로 돌리면 그 게이트웨이가 모델을 **자기 이름으로** 노출할 수
 있다(`gpt-5-mini` 를 `prod-assistant` 로). 내장 capability 표는 모델을 실제 이름으로 알고 있으므로 그 이름은
 표에 걸리지 않고 fail-open 경로로 떨어지며, 그 결과 `temperature` 를 받지 않는 모델에 그것이 실려 나가
 HTTP 400 을 맞는다. 그 이름에 대해 "이 모델은 무엇을 받는가" 를 적는 자리가 이 블록이다.
+
+이 블록은 **두 프로바이더 모두** 읽는다. 내장 표도 두 벤더를 서술한다 — `gpt-*` · `o*` 행과, 샘플링
+파라미터를 거절하는 `claude-*` 행이다(실측한 모델 이름 여섯 개에 문서 기반인 `claude-mythos` 계열이
+더해진다). 그래서 아래 예제의 `provider` 는 `anthropic` 이어도 된다.
 
 ```yaml
 llm:
@@ -253,9 +257,9 @@ llm:
 등록 순서이고, yaml 의 줄 순서가 그것을 정하게 만들 자리가 아니다.
 
 조용히 무시되지 않는 것들 — 모르는 플래그 이름, 잘못된 `lowestReasoningEffort` 값, 아무것도 선언하지 않은 항목,
-빈/공백이 붙은 이름, 대소문자만 다른 두 이름, **같은 이름으로 풀리는 두 `${VAR}` 키**, 그리고
-`provider: anthropic` 아래의 선언(그 클라이언트는 이 registry 를 읽지 않는다). 전부 `ConfigurationException`
-이고 메시지가 고쳐야 할 yaml 키를 부른다.
+빈/공백이 붙은 이름, 대소문자만 다른 두 이름, 그리고 **같은 이름으로 풀리는 두 `${VAR}` 키**. 전부
+`ConfigurationException` 이고 메시지가 고쳐야 할 yaml 키를 부른다. `provider: anthropic` 아래의 선언은
+**더 이상 거절되지 않는다** — 그 분기도 이 registry 를 읽기 때문이다.
 
 같은 축의 스타터 프로퍼티는 [`embedding-agent-in-application.md`](embedding-agent-in-application.md) 에 있다.
 표기는 섞이지 않는다 — CLI 는 camelCase, 스타터는 kebab-case 다.

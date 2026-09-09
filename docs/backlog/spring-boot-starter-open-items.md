@@ -2438,6 +2438,14 @@ AgentSession session = sessionFactory.open(conversationId, agentName, options);
 이 결정문을 인용한다. 근거 전문은
 [`../design/llm/model-capability-config-key.md`](../design/llm/model-capability-config-key.md) §2.7.
 
+> **2026-09-09 — 예정되어 있던 두 번째 소비자가 도착했다. 다시 열지 않는다.** #52 가 Anthropic
+> 클라이언트에 `model-capabilities` 를 읽혔으므로, 위 결정이 공통 네임스페이스를 지킨 근거
+> (*"두 번째 소비자도 예정되어 있다 … 지금 내리면 그날 깨는 키 이동이 필요해진다"*)는 예측에서 사실이
+> 되었다. 결정도 답도 그대로다. 한 대목만 그날의 코드에 대한 관측이라 만료됐다 — 공통 네임스페이스가
+> 거짓말하지 않게 하던 것이 *"읽지 않는 분기가 이름으로 거절한다"* 였는데, 이제 **두 분기가 모두 읽으므로**
+> 거절할 분기가 없다. 두 거절 가드는 삭제됐다. 근거:
+> [`../design/llm/anthropic-sampling-capabilities.md`](../design/llm/anthropic-sampling-capabilities.md) §7.
+
 **B-13 도 결정 항목이었다 — 2026-08-05 에 결정되고 같은 날 닫혔다.** §7 이 그렇게 분류했고
 (“패치가 아니라 결정이다”) 본문은 §3 에 있다. 택일은 `isConfigured()` 계약을 없앨지,
 "설정 검증은 생성 시점에 끝난다" 를 계약으로 못박을지였고 — **없애는 쪽으로 정했다.** 어떤 구현도

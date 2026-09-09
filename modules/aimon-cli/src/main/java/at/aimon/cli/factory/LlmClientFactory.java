@@ -43,8 +43,19 @@ public class LlmClientFactory {
     }
 
     private LlmClient createAnthropicClient(LlmProviderConfig config) {
+        return new AnthropicLlmClient(anthropicConfig(config));
+    }
+
+    /**
+     * yaml 을 {@code AnthropicConfig} 로 옮긴다. package-private 인 이유는 {@link #openAiConfig} 와 같다 —
+     * {@code AnthropicLlmClient} 는 자기 config 를 공개하지 않고, 테스트 편의로 그것을 공개하는 것은 배포 모듈의 표면을 넓히는 일이다.
+     *
+     * @param config
+     *            yaml 의 {@code llm} 블록
+     * @return 조립된 Anthropic 설정
+     */
+    AnthropicConfig anthropicConfig(LlmProviderConfig config) {
         final String apiKey = validateApiKey(config.getApiKey());
-        refuseModelCapabilitiesForAnthropic(config);
         final AnthropicConfig.Builder builder = AnthropicConfig.builder().apiKey(apiKey);
 
         if (config.getModel() != null) {
@@ -59,7 +70,12 @@ public class LlmClientFactory {
             builder.baseUrl(config.getBaseUrl());
         }
 
-        return new AnthropicLlmClient(builder.build());
+        final Map<String, ModelCapabilityDeclaration> declarations = declarationsOf(config);
+        if (!declarations.isEmpty()) {
+            builder.modelCapabilityRegistry(registryFor(declarations));
+        }
+
+        return builder.build();
     }
 
     private LlmClient createOpenAIClient(LlmProviderConfig config) {
@@ -136,18 +152,6 @@ public class LlmClientFactory {
         } catch (IllegalArgumentException e) {
             throw new ConfigurationException(
                     "Invalid `" + MODEL_CAPABILITIES_KEY + "." + name + "` in the LLM config: " + e.getMessage(), e);
-        }
-    }
-
-    /**
-     * capability 선언은 openai 분기만 읽는다. 설정했는데 안 읽히는 것이 가장 나쁘므로, 그 분기가 실제로 도는 순간 거절한다.
-     */
-    private void refuseModelCapabilitiesForAnthropic(LlmProviderConfig config) {
-        final Map<String, ModelCapabilityConfig> declared = config.getModelCapabilities();
-        if (declared != null && !declared.isEmpty()) {
-            throw new ConfigurationException("`" + MODEL_CAPABILITIES_KEY + "` is declared but the anthropic provider"
-                    + " does not read it - only the openai client consults the model capability registry today."
-                    + " Remove the block, or set `provider: openai`.");
         }
     }
 

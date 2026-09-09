@@ -115,7 +115,7 @@ the 1,024-token minimum… For complex tasks, start with a larger budget of 16,0
 > used. On older models, the restriction applies only while thinking is on: `temperature` and `top_k`
 > are incompatible with thinking, and `top_p` is allowed at values between 0.95 and 1.
 >
-> **Corrected by measurement — see §9 U-2.** The server's own wording is `` `temperature` is deprecated for this model. ``, so the parameter is refused outright rather than compared against a default and `temperature: 0.0` is rejected too. The consequence stated below is unchanged, and firmer.
+> **Corrected by measurement, twice — see §9 U-2.** The server's own wording is `` `temperature` is deprecated for this model. ``. The first correction read that as *the parameter is refused outright*; a second round (58 live calls, 2026-09-09) sent `temperature: 1.0` to all six and got **200 on every one**, so the parameter is judged against a default exactly the way OpenAI's is. `temperature: 0.0` is indeed rejected — because `0.0` is not `1.0`, not because the key is forbidden. The quotation above ("non-default") was right before it was "corrected". `top_p` really is refused by **presence**: `top_p: 1.0` is a 400. See [`anthropic-sampling-capabilities.md`](anthropic-sampling-capabilities.md) §2.5. The consequence stated below is unchanged.
 
 The **SDK javadoc says none of this** — `MessageCreateParams.temperature`'s doc is the generic
 *"Amount of randomness injected into the response. Defaults to `1.0`. Ranges from `0.0` to `1.0`"*, and
@@ -127,10 +127,11 @@ Two consequences, and they are different in kind:
 1. **Turning thinking on with today's `buildRequest` is a guaranteed 400.** `:325` calls
    `.temperature(temperature)` unconditionally, defaulting to `0.0`.
 2. **A pre-existing, unrelated breakage is now visible.** On Sonnet 5 / Opus 5 / Opus 4.7 / 4.8 and the
-   Fable/Mythos family, *any* temperature at all 400s on every request — thinking or not (the wording
-   "non-default" here was measured wrong; see §9 U-2) — so
-   `AnthropicLlmClient` cannot talk to those models today at all. That is a model fact, not a thinking
-   fact; §8 F-2 records it as a follow-up rather than smuggling a second fix into this one.
+   Fable/Mythos family, any *non-default* temperature 400s on every request — thinking or not — so
+   `AnthropicLlmClient` cannot talk to those models today at all, since the value it invents is `0.0`.
+   That is a model fact, not a thinking fact; §8 F-2 records it as a follow-up rather than smuggling a
+   second fix into this one. **F-2 is now done** —
+   [`anthropic-sampling-capabilities.md`](anthropic-sampling-capabilities.md).
 
 ### 2.4 The round-trip contract
 
@@ -336,7 +337,9 @@ Each omission goes through the existing `reportDivergence(...)` (`:379`), at WAR
 signature, because the observable outcome is a request that **succeeds with settings other than the ones
 configured** — no status code, nothing else in the system that would tell an operator. That method
 exists for exactly this and the task named it. The existing clamp for `temperature > 1.0` stays as it is
-on the non-thinking path.
+on the non-thinking path **when the model accepts sampling at all** — F-2 put a per-model gate outside
+this one, so on a model the capability table describes as refusing, nothing reaches the clamp
+([`anthropic-sampling-capabilities.md`](anthropic-sampling-capabilities.md) §4.1).
 
 **The temperature omission is worded twice, because it is two different pieces of news.** `LlmModel`
 knows whether the call set a temperature; `AnthropicConfig` does not know whether its own was ever
@@ -630,14 +633,14 @@ Existing behaviour-visible note from #43 applies unchanged: a usage carrying rea
 
 | # | Item | Why not now |
 |---|---|---|
-| **F-1** | **A per-model capability source for Anthropic** — which thinking dialect, whether sampling is accepted at all. | A1. It needs a sixth `ModelCapabilities` field with a fail-open story and an Anthropic table; #48 is in that package concurrently. |
-| **F-2** | **The always-400 sampling regime on Sonnet 5 / Opus 5 / Opus 4.7 / 4.8 / Fable / Mythos** (§2.3 consequence 2) — `AnthropicLlmClient` cannot reach those models today, thinking or not. | Blocked on F-1: suppressing `temperature` for those and only those needs the model fact. Not caused by this change and not fixed by it; the CHANGELOG says so plainly rather than letting a reader infer that thinking support implies those models now work. |
+| **F-1** | **A per-model capability source for Anthropic** — which thinking dialect. | A1, **half done**. The "whether sampling is accepted" half went to F-2 (#52), which put `claude-*` rows in the shared table, so "there is no Anthropic table" is no longer an obstacle. The dialect half stands for A1's surviving reason: `ModelCapabilities` has no field whose fail-open value is safe for a two-valued mutually exclusive axis. |
+| ~~**F-2**~~ | ~~**The always-400 sampling regime on Sonnet 5 / Opus 5 / Opus 4.7 / 4.8 / Fable / Mythos**~~ | **DONE** — [`anthropic-sampling-capabilities.md`](anthropic-sampling-capabilities.md) (#52). It turned out **not** to be blocked on F-1: F-1 is about the *dialect* axis, where both values 400 and there is no fail-open value, and sampling is not that shape — omission is universally safe, and `ModelCapabilities.supportsSamplingParameters` already expressed the fact. The registry now carries six `claude-*` rows and both config surfaces reach the Anthropic branch. |
 | **F-3** | **`interleaved-thinking-2025-05-14`** for extended-mode models. | A10. Its own per-model matrix and its own `budget_tokens`/`max_tokens` interaction. |
 | **F-4** | **Forwarding thinking text to `LlmStreamSink`** as a user-visible "thinking" stream. | A9. Needs a new `LlmStreamChunk.Kind` in `aimon-core`, and it is a different feature from carrying the item across turns — the exact split that made reasoning summaries F-5 on the OpenAI side. |
 | **F-5** | **`thinking-binding-controls-2026-08-01`** with `prefix_mismatch_behavior: "drop_block"`. | The principled answer to row 7: it makes an invalidated prefix drop a block instead of failing a request, and reports what was dropped in `input_transformations`. A beta header plus a new config axis; it needs its own round. |
 | **F-6** | **A yaml / starter property surface** for `thinkingMode`, `thinkingBudgetTokens` and `replayThinkingBlocks`. | Decision 1 below. Programmatic only this round, following #43's F-2 precedent — and #46 is editing `aimon-cli` and `aimon-spring-boot-starter` right now. |
 | **F-7** | **`display: "summarized"` / `"updates"`.** | A11. Costs tokens for text nothing renders yet; pairs naturally with F-4. |
-| **F-8** | **A fourth test tier for live, paid, key-gated tests.** `AnthropicThinkingLiveTest` and `AnthropicLlmClientIntegrationTest` both run inside `./gradlew test` whenever `ANTHROPIC_KEY` is exported, so a key-holder's `checkAll` — and the release gate — makes real billed calls. | Blocked on a policy decision rather than on code. The three existing tiers (`docker`, `packaging`, `playwright`) are each excluded from `test` but included in CI, and `ReleaseGateMatchesCiGateTest` enforces that no tier is outside both. A live tier would be outside both, because CI has no key. Amending that invariant belongs in its own change; the interim mitigation is that the live assertions no longer depend on model prose. |
+| **F-8** | **A fourth test tier for live, paid, key-gated tests.** `AnthropicThinkingLiveTest` and `AnthropicLlmClientIntegrationTest` both run inside `./gradlew test` whenever `ANTHROPIC_KEY` is exported, so a key-holder's `checkAll` — and the release gate — makes real billed calls. **F-2 (#52) widened this**: two more live calls in the same class, one of which generates. | Blocked on a policy decision rather than on code. The three existing tiers (`docker`, `packaging`, `playwright`) are each excluded from `test` but included in CI, and `ReleaseGateMatchesCiGateTest` enforces that no tier is outside both. A live tier would be outside both, because CI has no key. Amending that invariant belongs in its own change; the interim mitigation is that the live assertions no longer depend on model prose. |
 
 ---
 
@@ -671,10 +674,16 @@ the form `openai-model-capabilities.md` §11/§15 and `openai-responses-path.md`
   **CLOSED.** Both dialect rejections were provoked, and both server messages are **verbatim** what
   `AnthropicThinkingMode`'s javadoc quotes. Both surface as `LlmInvalidRequestException`, so row 4's
   non-retryable claim holds too, and §2.1's model/mode matrix matches the live `/v1/models` listing.
-  **One correction.** §2.3 paraphrased the sampling rule as *any non-default `temperature` returns 400*.
-  The real message is ``  `temperature` is deprecated for this model. `` — the parameter is refused
-  outright rather than judged against a default, so `temperature: 0.0` is rejected like any other value.
-  That makes §2.3 and F-2 firmer rather than weaker: with thinking off, this client cannot reach those
+  **One correction, and it was itself corrected.** §2.3 paraphrased the sampling rule as *any
+  non-default `temperature` returns 400*. This round read the real message —
+  ``  `temperature` is deprecated for this model. `` — as meaning the parameter is refused *outright*.
+  **That reading is wrong**, and a later round measured it: `temperature: 1.0` returns 200 on all six
+  refusers, so the original paraphrase was right and only `0.0` (and every other non-default value)
+  fails. The lesson is the one the o-series rounds kept learning — an error message is a sentence about
+  what the server wants to tell you, not a specification. `top_p` is the parameter that really is
+  refused by presence. Full table and controls:
+  [`anthropic-sampling-capabilities.md`](anthropic-sampling-capabilities.md) §2. The conclusion §2.3 and
+  F-2 draw is unaffected: with thinking off and a manufactured `0.0`, this client could not reach those
   models at all.
 - **U-3 — the capture rule's "text intervenes" clause is reasoned from documented ordering, not
   observed, and §3.2's table covers the documented shapes rather than all shapes.** It is built from
@@ -811,6 +820,10 @@ different claims:
 | Add `thinkingTokens` into `totalTokens` | `AnthropicUsageTest` |
 | Send `thinking` when `thinkingMode = OFF` | `AnthropicThinkingRequestTest`'s byte-identical body case |
 | Make `toBlockParam` always return empty (a silent-drop replay regression) | `AnthropicThinkingLiveTest.mutatedSignatureIsRejected` — **and notably not** its positive sibling, which stays green. That asymmetry is the whole reason the negative control exists, and it was run rather than argued. |
+| *(F-2)* Drop the per-model capability check and always set `temperature` | `AnthropicLlmClientSamplingCapabilityTest`'s refusing-model body assertions |
+| *(F-2)* Suppress unconditionally, ignoring the flag | the accepting-model and unknown-model cases — the fail-open pair |
+| *(F-2)* Gate `top_p` on the `[0.95, 1.0]` window before the capability check | `capabilityGateBeatsTheThinkingWindow` |
+| *(F-2)* Restore `DEFAULT_TEMPERATURE = 0.0` in `AnthropicConfig` | the byte-identical body case above, whose literal no longer carries `"temperature":0.0` |
 
 ### 10.3 What is not covered, and why that is part of the claim
 
@@ -872,11 +885,12 @@ parameter, `temperature`'s setter is **not called** and `top_p` is sent only ins
 omission goes through **`reportDivergence`** (`AnthropicLlmClient.java:317`/`:379`) — nothing is silently
 substituted, exactly as the task required. `top_k` needs no handling: `LlmModel` has no such field.
 Separately and importantly: the same paragraph shows that on Sonnet 5, Opus 5, Opus 4.7/4.8 and the
-Fable/Mythos family, *any* temperature at all 400s on **every** request (the "non-default" qualifier was
-measured wrong — §9 U-2) — so today's unconditional
+Fable/Mythos family, any *non-default* temperature 400s on **every** request (this round overturned the
+"non-default" qualifier and a later one restored it — §9 U-2) — so today's unconditional
 `.temperature(0.0)` at `:325` already blocks those models. That is a pre-existing bug this design
 **surfaces but does not fix** (F-2), and the CHANGELOG will say so rather than let a reader infer
-otherwise.
+otherwise. **F-2 is now done** —
+[`anthropic-sampling-capabilities.md`](anthropic-sampling-capabilities.md).
 
 **4. Which models think?**
 **`ModelCapabilityRegistry` is not extended** (A1). The operator names the mode; nothing in the request

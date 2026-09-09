@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/llm/llm-provider-development-guide.md
-source_commit: fddc917
+source_commit: 6a07573
 ---
 
 # LLM Provider Development Guide
@@ -425,6 +425,12 @@ IMPORTANT: **A provider does not invent a value.** Filling an unset parameter fr
 your own — `orElse(DEFAULT_TEMPERATURE)` — puts a sampling value nobody asked for on every request
 and means the server's own default never applies. Unset means **not sent**, and what applies then is
 the server's business.
+
+This rule spent a long time with **one conforming implementation**. `OpenAIConfig` and `AnthropicConfig`
+both have this shape now, and how the second one got there is what the rule is worth — the value that
+class invented was `0.0`, which is **precisely the value** six models of the current Claude generation
+refuse, so in its default configuration it could not talk to them at all
+([`anthropic-sampling-capabilities.md`](../../design/llm/anthropic-sampling-capabilities.md) §2.6).
 
 `resolve` is total and **fails open** — a model nobody has described comes back as
 `ModelCapabilities.unknown()`, which means **nothing the caller asked for is withheld, and nothing
