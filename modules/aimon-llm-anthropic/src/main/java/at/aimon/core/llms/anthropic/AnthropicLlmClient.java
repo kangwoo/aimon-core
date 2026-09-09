@@ -45,6 +45,7 @@ import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.llm.ToolUse;
 import at.aimon.core.llm.capability.ModelCapabilities;
+import at.aimon.core.llm.capability.ThinkingDialect;
 import at.aimon.core.llm.exception.LlmCallCancelledException;
 import at.aimon.core.llm.exception.LlmClientException;
 import at.aimon.core.llm.streaming.ChunkAggregator;
@@ -361,22 +362,27 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
     private MessageCreateParams buildRequest(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
             LlmModel modelConfig, String providerName) {
         final int maxTokens = modelConfig.getMaxTokens().orElse(config.getMaxTokens());
-        final Optional<ThinkingConfigParam> thinking = resolveThinking(modelConfig, maxTokens);
-        // Resolved once and used twice: the name that goes on the wire is the name whose capabilities are looked up,
-        // and a LlmModel override is what makes that a per-request question rather than a per-client one.
+        // Resolved once and used three times: the name that goes on the wire is the name whose capabilities are
+        // looked up, and a LlmModel override is what makes that a per-request question rather than a per-client one.
         final String modelName = modelConfig.getName().orElse(config.getModel());
+        // One descriptor for both decisions it governs -- which sampling parameters may be set, and which thinking
+        // dialect this model speaks. Two look-ups could not disagree today, but they would be two places to change.
+        final ModelCapabilities capabilities = capabilitiesFor(modelName);
+        final Optional<ThinkingConfigParam> thinking = resolveThinking(modelConfig, maxTokens, capabilities, modelName);
 
         MessageCreateParams.Builder requestBuilder = MessageCreateParams.builder().model(modelName)
                 .maxTokens((long) maxTokens);
 
         thinking.ifPresent(requestBuilder::thinking);
-        if (thinking.isPresent() && config.getThinkingMode() == AnthropicThinkingMode.ADAPTIVE) {
-            AnthropicThinkingBudgets.effortFor(modelConfig.getReasoningEffort().orElse(null))
+        // The parameter's own shape decides whether an effort accompanies it, rather than the configured mode: a mode
+        // the model contradicts has already been translated by resolveThinking, and output_config belongs to the
+        // dialect that actually reached the request.
+        if (thinking.filter(ThinkingConfigParam::isAdaptive).isPresent()) {
+            AnthropicThinkingBudgets.effortFor(intendedEffort(modelConfig))
                     .ifPresent(effort -> requestBuilder.outputConfig(OutputConfig.builder().effort(effort).build()));
         }
 
-        applySamplingParameters(requestBuilder, modelConfig, modelName, capabilitiesFor(modelName),
-                thinking.isPresent());
+        applySamplingParameters(requestBuilder, modelConfig, modelName, capabilities, thinking.isPresent());
 
         // Set system prompt via dedicated parameter (Anthropic-specific)
         requestBuilder.system(systemPrompt);
@@ -396,7 +402,7 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
 
         // Convert and add messages. Stripping the traces up front rather than passing a flag down keeps the converter
         // with one rule: it replays what it is given.
-        reportIfReplayIsOffWhileThinking(thinking.isPresent());
+        reportIfReplayIsOffWhileThinking(thinking);
         final List<Message> outbound = config.isReplayThinkingBlocks()
                 ? messages
                 : AnthropicMessageConverter.withoutReasoningTraces(messages);
@@ -456,8 +462,8 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
      * preserved-thinking prefix check, and an operator who set it deliberately should read this as confirmation
      * rather than as a correction.
      */
-    private void reportIfReplayIsOffWhileThinking(boolean thinkingRequested) {
-        if (!thinkingRequested || config.isReplayThinkingBlocks()) {
+    private void reportIfReplayIsOffWhileThinking(Optional<ThinkingConfigParam> thinking) {
+        if (thinking.isEmpty() || config.isReplayThinkingBlocks()) {
             return;
         }
         final String shared = "This request asks for {} thinking and replayThinkingBlocks(false) discards the blocks "
@@ -465,13 +471,18 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
                 + "again each time. The request is not rejected — thinking simply does not survive a tool call. If "
                 + "that is deliberate (it is the documented escape from the preserved-thinking prefix check) nothing "
                 + "needs doing";
-        if (config.getThinkingMode() == AnthropicThinkingMode.EXTENDED) {
-            reportDivergence("replayOffWhileThinking@EXTENDED",
-                    shared + "; if the tokens are not wanted either, set thinkingMode({}).",
-                    AnthropicThinkingMode.EXTENDED, AnthropicThinkingMode.OFF);
+        // Keyed and branched on the dialect that reached the request rather than on the configured mode, because the
+        // remedy is a property of the dialect and the two can now differ: a mode the model contradicts is translated
+        // before it gets here, and an EXTENDED-mode request that came out adaptive needs the adaptive caveat. The
+        // mode is still what the message names, since that is the setting an operator would go and change.
+        final AnthropicThinkingMode mode = config.getThinkingMode();
+        if (!thinking.get().isAdaptive()) {
+            reportDivergence("replayOffWhileThinking@" + ThinkingDialect.BUDGETED,
+                    shared + "; if the tokens are not wanted either, set thinkingMode({}).", mode,
+                    AnthropicThinkingMode.OFF);
             return;
         }
-        reportDivergence("replayOffWhileThinking@" + config.getThinkingMode(),
+        reportDivergence("replayOffWhileThinking@" + ThinkingDialect.ADAPTIVE,
                 shared + ". Note one caveat before reaching for thinkingMode(OFF) on this dialect: adaptive-only "
                         + "models refuse a non-default temperature, and with thinking off it is the capability "
                         + "registry that decides whether this client omits it. For a model no registry names — a "
@@ -480,7 +491,7 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
                         + "subagent turn, which always carries one; with nothing configured the parameter is not "
                         + "sent and the request succeeds. Declaring the deployment's real name in the capability "
                         + "registry removes the caveat.",
-                config.getThinkingMode());
+                mode);
     }
 
     /**
@@ -491,8 +502,16 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
      * uniformly across both dialects. The alternative for the second — {@code thinking: {"type": "disabled"}} — is
      * itself rejected by several models, and omission cannot 400. The cost, stated rather than hidden: on a model
      * where thinking is on by default, {@code NONE} does not turn it off.
+     *
+     * <p>
+     * <strong>Both of those are decided before the dialect is, and the order is load-bearing.</strong> Neither state
+     * puts a {@code thinking} parameter on the wire, so neither can earn the 400 the dialect look-up exists to
+     * prevent, and asking the table about a request that carries no thinking would produce a warning about a
+     * question nobody needed answered — including under {@link AnthropicThinkingMode#AUTO}, where a caller who set
+     * {@code NONE} has already said what they want.
      */
-    private Optional<ThinkingConfigParam> resolveThinking(LlmModel modelConfig, int maxTokens) {
+    private Optional<ThinkingConfigParam> resolveThinking(LlmModel modelConfig, int maxTokens,
+            ModelCapabilities capabilities, String modelName) {
         final AnthropicThinkingMode mode = config.getThinkingMode();
         if (mode == AnthropicThinkingMode.OFF) {
             return Optional.empty();
@@ -501,10 +520,132 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
         if (effort == ReasoningEffort.NONE) {
             return Optional.empty();
         }
-        if (mode == AnthropicThinkingMode.ADAPTIVE) {
+        final Optional<ThinkingDialect> dialect = resolveDialect(mode, capabilities.thinkingDialect(), modelName);
+        if (dialect.isEmpty()) {
+            return Optional.empty();
+        }
+        if (dialect.get() == ThinkingDialect.ADAPTIVE) {
             return Optional.of(ThinkingConfigParam.ofAdaptive(ThinkingConfigAdaptive.builder().build()));
         }
         return resolveExtendedThinking(effort, maxTokens);
+    }
+
+    /**
+     * Which dialect this request actually speaks, or empty when it carries no {@code thinking} parameter at all.
+     *
+     * <p>
+     * The whole of the mode × dialect table. Most of it needs no explanation — an operator's named mode against a
+     * model that agrees, or against a model nothing describes, is what this client has always done, and the second of
+     * those is what keeps a model outside the table byte-identical to yesterday. The two cases that are new:
+     *
+     * <ul>
+     * <li><strong>The mode contradicts a known dialect.</strong> Honouring it is a <em>certain</em> HTTP 400 — both
+     * shapes are rejected by the model that speaks the other — and omitting the parameter throws away the thinking
+     * that was asked for. So the request is translated to the dialect the model speaks and the substitution is
+     * reported. The intent survives because both dialects are spellings of the same neutral
+     * {@link ReasoningEffort}, which {@link AnthropicThinkingBudgets} maps in either direction.
+     * <li><strong>{@link AnthropicThinkingMode#AUTO} against a model nothing describes.</strong> Nothing is sent,
+     * because there is no dialect to guess and a guess is a 400 half the time. Reported, unlike every other silent
+     * case here, because {@code AUTO} is the one mode that asked the table a question rather than answering it.
+     * </ul>
+     *
+     * <p>
+     * This does not violate {@link ModelCapabilities#lowestReasoningEffort()}'s standing rule — <em>omitted and
+     * reported, never raised to meet it</em>. There, omitting leaves the server's own default in force and the call
+     * succeeds; here, honouring the operator literally is a failed turn, so the two situations do not compare.
+     *
+     * @param mode
+     *            the operator's configured mode
+     * @param known
+     *            the dialect the capability registry resolved, possibly {@link ThinkingDialect#UNKNOWN}
+     * @param modelName
+     *            the resolved model name, for the warning text and its signature
+     */
+    private Optional<ThinkingDialect> resolveDialect(AnthropicThinkingMode mode, ThinkingDialect known,
+            String modelName) {
+        return switch (mode) {
+            // OFF never reaches here -- resolveThinking answers it before asking -- but the switch is total, and this
+            // is the same answer that early return gives.
+            case OFF -> Optional.empty();
+            case AUTO -> resolveAutoDialect(known, modelName);
+            case EXTENDED -> resolveNamedDialect(mode, ThinkingDialect.BUDGETED, known, modelName);
+            case ADAPTIVE -> resolveNamedDialect(mode, ThinkingDialect.ADAPTIVE, known, modelName);
+        };
+    }
+
+    private Optional<ThinkingDialect> resolveAutoDialect(ThinkingDialect known, String modelName) {
+        if (known != ThinkingDialect.UNKNOWN) {
+            return Optional.of(known);
+        }
+        // Failure mode 3 of the design, and the wording is the whole mitigation: an operator reading "no thinking
+        // parameter" as "the model is not thinking" would be wrong on exactly the models this matters most for, since
+        // several of the current generation think by default and their blocks are captured either way.
+        reportDivergence("thinkingDialectUnknown@" + modelName,
+                "thinkingMode {} asks the capability registry which thinking dialect {} speaks and no row describes "
+                        + "that name, so no thinking parameter is being sent and this request is the one "
+                        + "thinkingMode({}) would have produced. That is a statement about the parameter, not about "
+                        + "the model: one whose thinking is on by default still thinks, and its blocks are still "
+                        + "captured and replayed. Register the deployment's real name in the capability registry to "
+                        + "make {} answerable for it.",
+                AnthropicThinkingMode.AUTO, modelName, AnthropicThinkingMode.OFF, AnthropicThinkingMode.AUTO);
+        return Optional.empty();
+    }
+
+    private Optional<ThinkingDialect> resolveNamedDialect(AnthropicThinkingMode mode, ThinkingDialect named,
+            ThinkingDialect known, String modelName) {
+        if (known == ThinkingDialect.UNKNOWN || known == named) {
+            return Optional.of(named);
+        }
+        // One signature shape for both directions of the translation, carrying the model name for the same reason
+        // the sampling signatures do: one client has one mode, but LlmModel can override the name, so the same mode
+        // against two models is two pieces of news rather than one repeated.
+        final String signature = "thinkingDialectTranslated=" + mode + "->" + known + "@" + modelName;
+        final String shared = "thinkingMode {} asks for the {} thinking dialect and {} speaks {}, which rejects the "
+                + "other one with HTTP 400; the request is being translated to {} so the turn succeeds instead of "
+                + "failing";
+        final Integer configuredBudget = config.getThinkingBudgetTokens();
+        if (configuredBudget == null) {
+            reportDivergence(signature,
+                    shared + ", carrying the same reasoning intent. Set thinkingMode({}) to have the dialect decided "
+                            + "per model rather than reported, or correct the capability row if this model really "
+                            + "speaks {}.",
+                    mode, named, modelName, known, known, AnthropicThinkingMode.AUTO, named);
+            return Optional.of(known);
+        }
+        // The lossiest corner in the whole change, and it gets one warning naming both numbers rather than a silent
+        // substitution: a token count has no counterpart in a dialect where the model manages its own budget.
+        reportDivergence(signature,
+                shared + ". The configured thinking budget of {} tokens has no counterpart there — the model manages "
+                        + "its own budget in that dialect — so the intent is carried as the nearest effort rung, {}. "
+                        + "Set thinkingMode({}) to have the dialect decided per model rather than reported.",
+                mode, named, modelName, known, known, configuredBudget,
+                AnthropicThinkingBudgets.nearestEffort(configuredBudget), AnthropicThinkingMode.AUTO);
+        return Optional.of(known);
+    }
+
+    /**
+     * The neutral rung this request's thinking intent spells, or {@code null} when nobody stated one.
+     *
+     * <p>
+     * Usually just the call's {@link ReasoningEffort}. It differs in exactly one shape, and
+     * {@link AnthropicConfig} is what makes that true: an explicit {@code thinkingBudgetTokens} is accepted only
+     * under {@link AnthropicThinkingMode#EXTENDED}, so a configured budget can reach an <em>adaptive</em> request
+     * only by having been translated there — and at that point the number cannot go on the wire and the rung nearest
+     * it is what carries the intent. Everywhere else this reads a {@code null} budget and returns the call's effort
+     * unchanged, which is what keeps an untranslated request byte-identical.
+     *
+     * <p>
+     * The precedence matches the budget dialect's own — an operator who named a number meant that number, so it wins
+     * over a rung set on the call. It is reported in both dialects, by different sentences:
+     * {@link #resolveExtendedThinking}'s own warning when the number is sent, and the translation warning naming both
+     * the number and the rung when it is not.
+     */
+    private ReasoningEffort intendedEffort(LlmModel modelConfig) {
+        final Integer configuredBudget = config.getThinkingBudgetTokens();
+        if (configuredBudget != null) {
+            return AnthropicThinkingBudgets.nearestEffort(configuredBudget);
+        }
+        return modelConfig.getReasoningEffort().orElse(null);
     }
 
     private Optional<ThinkingConfigParam> resolveExtendedThinking(ReasoningEffort effort, int maxTokens) {

@@ -38,6 +38,8 @@ class ModelCapabilityDeclarationTest {
                 .isEqualTo(ModelCapabilities.unknown().supportsReasoningTraceRoundTrip());
         assertThat(declaration.capabilities().lowestReasoningEffort())
                 .isEqualTo(ModelCapabilities.unknown().lowestReasoningEffort());
+        assertThat(declaration.capabilities().thinkingDialect())
+                .isEqualTo(ModelCapabilities.unknown().thinkingDialect());
     }
 
     @Test
@@ -51,20 +53,36 @@ class ModelCapabilityDeclarationTest {
     }
 
     @Test
-    @DisplayName("each of the five flags round-trips")
+    @DisplayName("each of the six flags round-trips")
     void everyFlagRoundTrips() {
         final ModelCapabilityDeclaration declaration = ModelCapabilityDeclaration.builder()
                 .supportsSamplingParameters(false).supportsReasoningEffort(true).supportsToolsWithReasoning(false)
-                .supportsReasoningTraceRoundTrip(true).lowestReasoningEffort(ReasoningEffort.LOW).build();
+                .supportsReasoningTraceRoundTrip(true).lowestReasoningEffort(ReasoningEffort.LOW)
+                .thinkingDialect(ThinkingDialect.ADAPTIVE).build();
 
         assertThat(declaration.supportsSamplingParameters()).contains(false);
         assertThat(declaration.supportsReasoningEffort()).contains(true);
         assertThat(declaration.supportsToolsWithReasoning()).contains(false);
         assertThat(declaration.supportsReasoningTraceRoundTrip()).contains(true);
         assertThat(declaration.lowestReasoningEffort()).contains(ReasoningEffort.LOW);
+        assertThat(declaration.thinkingDialect()).contains(ThinkingDialect.ADAPTIVE);
         assertThat(declaration.capabilities()).isEqualTo(ModelCapabilities.builder().supportsSamplingParameters(false)
                 .supportsReasoningEffort(true).supportsToolsWithReasoning(false).supportsReasoningTraceRoundTrip(true)
-                .lowestReasoningEffort(ReasoningEffort.LOW).build());
+                .lowestReasoningEffort(ReasoningEffort.LOW).thinkingDialect(ThinkingDialect.ADAPTIVE).build());
+    }
+
+    @Test
+    @DisplayName("declaring the dialect alone is a whole declaration, and declaring UNKNOWN is a real statement")
+    void theDialectIsDeclarableOnItsOwn() {
+        // The one flag whose declared value can equal the fail-open one and still mean something: an operator whose
+        // gateway serves a budgeted model behind a claude-* name that the built-in table calls adaptive needs a way
+        // to say "do not act on that row". UNKNOWN is that, and it is not the same as omitting the flag -- omission
+        // would leave a built-in prefix row in force, since a declaration is registered as an exact entry.
+        final ModelCapabilityDeclaration declaration = ModelCapabilityDeclaration.builder()
+                .thinkingDialect(ThinkingDialect.UNKNOWN).build();
+
+        assertThat(declaration.thinkingDialect()).contains(ThinkingDialect.UNKNOWN);
+        assertThat(declaration.capabilities()).isEqualTo(ModelCapabilities.unknown());
     }
 
     @Test
@@ -75,6 +93,7 @@ class ModelCapabilityDeclarationTest {
 
         assertThat(declaration.supportsSamplingParameters()).isEmpty();
         assertThat(declaration.lowestReasoningEffort()).isEmpty();
+        assertThat(declaration.thinkingDialect()).isEmpty();
         assertThat(declaration.supportsReasoningEffort()).contains(true);
     }
 
@@ -86,7 +105,8 @@ class ModelCapabilityDeclarationTest {
         // no-op produced an HTTP 400.
         assertThatThrownBy(() -> ModelCapabilityDeclaration.builder().build())
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("at least one")
-                .hasMessageContaining("supportsSamplingParameters").hasMessageContaining("check the spelling");
+                .hasMessageContaining("supportsSamplingParameters").hasMessageContaining("thinkingDialect")
+                .hasMessageContaining("check the spelling");
     }
 
     @Test

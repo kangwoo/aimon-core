@@ -106,4 +106,41 @@ class AnthropicThinkingBudgetsTest {
         assertThat(AnthropicThinkingBudgets.effortFor(ReasoningEffort.NONE)).isEmpty();
         assertThat(AnthropicThinkingBudgets.effortFor(null)).isEmpty();
     }
+
+    @Test
+    @DisplayName("the inverse lands each rung's own budget back on that rung")
+    void nearestEffortIsAnInverseOnTheLadderItself() {
+        // The property that matters is round-tripping: a budget the ladder itself produced must come back as the rung
+        // that produced it, or a translated request would ask for a different amount of thinking than an untranslated
+        // one carrying the same effort.
+        for (ReasoningEffort rung : new ReasoningEffort[]{ReasoningEffort.MINIMAL, ReasoningEffort.LOW,
+                ReasoningEffort.MEDIUM, ReasoningEffort.HIGH}) {
+            final int budget = AnthropicThinkingBudgets.requestedBudget(rung, null);
+            assertThat(AnthropicThinkingBudgets.nearestEffort(budget)).as("round trip of %s", rung).isEqualTo(rung);
+        }
+    }
+
+    @Test
+    @DisplayName("a budget between two rungs takes the nearer one, and a tie takes the lower")
+    void nearestEffortPicksTheNearerRung() {
+        assertThat(AnthropicThinkingBudgets.nearestEffort(1100)).isEqualTo(ReasoningEffort.MINIMAL);
+        assertThat(AnthropicThinkingBudgets.nearestEffort(1900)).isEqualTo(ReasoningEffort.LOW);
+        assertThat(AnthropicThinkingBudgets.nearestEffort(5000)).isEqualTo(ReasoningEffort.MEDIUM);
+        assertThat(AnthropicThinkingBudgets.nearestEffort(12_000)).isEqualTo(ReasoningEffort.HIGH);
+        // Exactly halfway between LOW (2048) and MEDIUM (4096). Asking for less thinking than an ambiguous number
+        // might have meant is the cheaper of the two mistakes, so the tie resolves downwards.
+        assertThat(AnthropicThinkingBudgets.nearestEffort(3072)).isEqualTo(ReasoningEffort.LOW);
+    }
+
+    @Test
+    @DisplayName("budgets off both ends of the ladder clamp to its ends, and NONE is never the answer")
+    void nearestEffortClampsAtBothEnds() {
+        // Below the floor is unreachable through AnthropicConfig, which refuses a budget under 1024, but the function
+        // is total and the answer has to be an amount of thinking rather than the absence of it: NONE means "send no
+        // thinking parameter", which is not what an operator who wrote a budget asked for.
+        assertThat(AnthropicThinkingBudgets.nearestEffort(0)).isEqualTo(ReasoningEffort.MINIMAL);
+        assertThat(AnthropicThinkingBudgets.nearestEffort(1024)).isEqualTo(ReasoningEffort.MINIMAL);
+        assertThat(AnthropicThinkingBudgets.nearestEffort(1_000_000)).isEqualTo(ReasoningEffort.HIGH);
+        assertThat(AnthropicThinkingBudgets.nearestEffort(Integer.MAX_VALUE)).isEqualTo(ReasoningEffort.HIGH);
+    }
 }

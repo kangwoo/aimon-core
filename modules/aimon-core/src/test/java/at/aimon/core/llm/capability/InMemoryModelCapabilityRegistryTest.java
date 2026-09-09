@@ -168,7 +168,7 @@ class InMemoryModelCapabilityRegistryTest {
     }
 
     @Test
-    @DisplayName("the six Anthropic models that refuse sampling resolve to a row that says so, and only that")
+    @DisplayName("the six Anthropic models that refuse sampling resolve to a row that says so, and their dialect")
     void defaultsDescribeTheAnthropicRefusers() {
         // Measured 2026-09-09 against the account's own /v1/models listing: each of these answers 400 to a
         // non-default temperature and to top_p / top_k at any value. Five prefixes cover six names because
@@ -179,13 +179,39 @@ class InMemoryModelCapabilityRegistryTest {
                 "claude-opus-4-7", "claude-sonnet-5"}) {
             final ModelCapabilities caps = registry.resolve(model);
             assertThat(caps.supportsSamplingParameters()).as("%s sampling", model).isFalse();
-            // One measured fact, one flag. The Anthropic client replays thinking blocks unconditionally and takes its
-            // effort from thinkingMode, so anything else here would be an assertion nothing consumes -- and nothing
-            // measured. A copy-paste from the o-series rows that also moved these would ship silently otherwise.
+            // Two facts, two flags. The dialect is documentation rather than measurement -- the vendor's per-model
+            // thinking table quoted in docs/design/llm/anthropic-thinking-traces.md section 2.1 lists every one of
+            // these as adaptive-only, rejecting thinking.type=enabled with a 400.
+            assertThat(caps.thinkingDialect()).as("%s dialect", model).isEqualTo(ThinkingDialect.ADAPTIVE);
+            // The other three stay fail-open. The Anthropic client replays thinking blocks unconditionally and takes
+            // no reasoning-effort parameter of the OpenAI shape, so anything else here would be an assertion nothing
+            // consumes -- and nothing measured. A copy-paste from the o-series rows that also moved these would ship
+            // silently otherwise.
             assertThat(caps.supportsReasoningEffort()).as("%s effort", model).isFalse();
             assertThat(caps.supportsToolsWithReasoning()).as("%s tools+reasoning", model).isTrue();
             assertThat(caps.supportsReasoningTraceRoundTrip()).as("%s replay", model).isFalse();
             assertThat(caps.lowestReasoningEffort()).as("%s floor", model).isEqualTo(ReasoningEffort.MINIMAL);
+        }
+    }
+
+    @Test
+    @DisplayName("no row states the budgeted dialect, and no row anywhere else states a dialect at all")
+    void noBuiltInRowStatesTheBudgetedDialect() {
+        // Two claims in one, and both are about what the table does NOT say. The extended-only Claude models
+        // (Opus 4.5, Haiku 4.5, Sonnet 4.5 and the Claude 4 generation) genuinely speak the budgeted dialect, but
+        // they accept the sampling parameters, so nothing in the built-in table needs a row for them -- and a row
+        // added only to carry a dialect would suppress nothing while asserting an identifier shape. They stay
+        // UNKNOWN, which is exactly the state that keeps their requests as they are today.
+        //
+        // The OpenAI rows say nothing about the dialect for a different reason: no OpenAI path reads it, and this
+        // one table is shared, so a value there would be an assertion with no consumer.
+        final InMemoryModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.withDefaults();
+
+        for (String model : new String[]{"claude-opus-4-5-20251101", "claude-sonnet-4-5-20250929",
+                "claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-6", "claude-sonnet-4-20250514",
+                "gpt-5", "gpt-5-chat-latest", "o3", "o4-mini", "prod-assistant"}) {
+            assertThat(registry.resolve(model).thinkingDialect()).as("%s dialect", model)
+                    .isEqualTo(ThinkingDialect.UNKNOWN);
         }
     }
 
@@ -211,6 +237,7 @@ class InMemoryModelCapabilityRegistryTest {
 
         assertThat(registry.resolve("claude-opus-5-20260101").supportsSamplingParameters()).isFalse();
         assertThat(registry.resolve("Claude-Opus-5").supportsSamplingParameters()).isFalse();
+        assertThat(registry.resolve("claude-opus-5-20260101").thinkingDialect()).isEqualTo(ThinkingDialect.ADAPTIVE);
     }
 
     @Test
@@ -223,6 +250,11 @@ class InMemoryModelCapabilityRegistryTest {
 
         assertThat(registry.resolve("claude-mythos-5-1").supportsSamplingParameters()).isFalse();
         assertThat(registry.resolve("claude-mythos-preview").supportsSamplingParameters()).isFalse();
+        // Preview is the one name the vendor table lists as accepting both dialects. It gets ADAPTIVE like its
+        // siblings, because ADAPTIVE is a dialect it does speak -- the row has to name one, and naming the one the
+        // whole family shares is what keeps a single prefix honest.
+        assertThat(registry.resolve("claude-mythos-5-1").thinkingDialect()).isEqualTo(ThinkingDialect.ADAPTIVE);
+        assertThat(registry.resolve("claude-mythos-preview").thinkingDialect()).isEqualTo(ThinkingDialect.ADAPTIVE);
     }
 
     @Test

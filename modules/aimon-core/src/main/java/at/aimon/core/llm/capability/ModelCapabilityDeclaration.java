@@ -48,6 +48,7 @@ public final class ModelCapabilityDeclaration {
     private final Boolean supportsToolsWithReasoning;
     private final Boolean supportsReasoningTraceRoundTrip;
     private final ReasoningEffort lowestReasoningEffort;
+    private final ThinkingDialect thinkingDialect;
     private final ModelCapabilities capabilities;
 
     private ModelCapabilityDeclaration(Builder builder) {
@@ -56,6 +57,7 @@ public final class ModelCapabilityDeclaration {
         this.supportsToolsWithReasoning = builder.supportsToolsWithReasoning;
         this.supportsReasoningTraceRoundTrip = builder.supportsReasoningTraceRoundTrip;
         this.lowestReasoningEffort = builder.lowestReasoningEffort;
+        this.thinkingDialect = builder.thinkingDialect;
         this.capabilities = resolve(builder);
     }
 
@@ -75,6 +77,9 @@ public final class ModelCapabilityDeclaration {
         }
         if (builder.lowestReasoningEffort != null) {
             resolved.lowestReasoningEffort(builder.lowestReasoningEffort);
+        }
+        if (builder.thinkingDialect != null) {
+            resolved.thinkingDialect(builder.thinkingDialect);
         }
         return resolved.build();
     }
@@ -123,6 +128,13 @@ public final class ModelCapabilityDeclaration {
     }
 
     /**
+     * @return whether the declaration states {@link ModelCapabilities#thinkingDialect()}, and what it says
+     */
+    public Optional<ThinkingDialect> thinkingDialect() {
+        return Optional.ofNullable(thinkingDialect);
+    }
+
+    /**
      * The descriptor this declaration stands for: the flags it states, with every flag it does not state left at
      * {@link ModelCapabilities#unknown()}'s value.
      *
@@ -149,13 +161,13 @@ public final class ModelCapabilityDeclaration {
                 && Objects.equals(supportsReasoningEffort, that.supportsReasoningEffort)
                 && Objects.equals(supportsToolsWithReasoning, that.supportsToolsWithReasoning)
                 && Objects.equals(supportsReasoningTraceRoundTrip, that.supportsReasoningTraceRoundTrip)
-                && lowestReasoningEffort == that.lowestReasoningEffort;
+                && lowestReasoningEffort == that.lowestReasoningEffort && thinkingDialect == that.thinkingDialect;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(supportsSamplingParameters, supportsReasoningEffort, supportsToolsWithReasoning,
-                supportsReasoningTraceRoundTrip, lowestReasoningEffort);
+                supportsReasoningTraceRoundTrip, lowestReasoningEffort, thinkingDialect);
     }
 
     @Override
@@ -163,7 +175,7 @@ public final class ModelCapabilityDeclaration {
         return "ModelCapabilityDeclaration{" + "supportsSamplingParameters=" + supportsSamplingParameters
                 + ", supportsReasoningEffort=" + supportsReasoningEffort + ", supportsToolsWithReasoning="
                 + supportsToolsWithReasoning + ", supportsReasoningTraceRoundTrip=" + supportsReasoningTraceRoundTrip
-                + ", lowestReasoningEffort=" + lowestReasoningEffort + '}';
+                + ", lowestReasoningEffort=" + lowestReasoningEffort + ", thinkingDialect=" + thinkingDialect + '}';
     }
 
     /**
@@ -179,6 +191,7 @@ public final class ModelCapabilityDeclaration {
         private Boolean supportsToolsWithReasoning;
         private Boolean supportsReasoningTraceRoundTrip;
         private ReasoningEffort lowestReasoningEffort;
+        private ThinkingDialect thinkingDialect;
 
         private Builder() {
         }
@@ -238,18 +251,30 @@ public final class ModelCapabilityDeclaration {
         }
 
         /**
-         * @return whether any of the five flags has been declared
+         * @param value
+         *            which shape this model's thinking-request parameter takes; {@code null} to leave the flag
+         *            undeclared. {@link ThinkingDialect#UNKNOWN} is <em>not</em> the same as {@code null} here —
+         *            declaring it is a way of saying "do not act on any built-in row for this name"
+         * @return This builder
+         */
+        public Builder thinkingDialect(ThinkingDialect value) {
+            this.thinkingDialect = value;
+            return this;
+        }
+
+        /**
+         * @return whether any of the six flags has been declared
          */
         boolean declaresAnything() {
             return supportsSamplingParameters != null || supportsReasoningEffort != null
                     || supportsToolsWithReasoning != null || supportsReasoningTraceRoundTrip != null
-                    || lowestReasoningEffort != null;
+                    || lowestReasoningEffort != null || thinkingDialect != null;
         }
 
         /**
          * @return A new {@link ModelCapabilityDeclaration}
          * @throws IllegalArgumentException
-         *             if none of the five flags was declared. Such an entry would register
+         *             if none of the six flags was declared. Such an entry would register
          *             {@link ModelCapabilities#unknown()}, which is indistinguishable from not writing the entry at
          *             all — while the operator who wrote it believes it does something. This whole surface exists
          *             because a silent no-op produced an HTTP 400, so it does not ship one of its own.
@@ -258,9 +283,10 @@ public final class ModelCapabilityDeclaration {
             if (!declaresAnything()) {
                 throw new IllegalArgumentException("A model capability declaration must state at least one of"
                         + " supportsSamplingParameters, supportsReasoningEffort, supportsToolsWithReasoning,"
-                        + " supportsReasoningTraceRoundTrip, lowestReasoningEffort. An entry that states none of them"
-                        + " registers the same fail-open capabilities the model already had, so it would bind and do"
-                        + " nothing; if you meant to set a flag, check the spelling of its keys.");
+                        + " supportsReasoningTraceRoundTrip, lowestReasoningEffort, thinkingDialect. An entry that"
+                        + " states none of them registers the same fail-open capabilities the model already had, so"
+                        + " it would bind and do nothing; if you meant to set a flag, check the spelling of its"
+                        + " keys.");
             }
             return new ModelCapabilityDeclaration(this);
         }
