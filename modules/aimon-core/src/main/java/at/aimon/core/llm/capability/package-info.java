@@ -9,10 +9,11 @@
  * wrong for every gateway that renames a model.
  *
  * <p>
- * The built-in table describes <strong>two vendors</strong> — several {@code gpt-*} / {@code o*} families and the six
- * {@code claude-*} models that refuse {@code temperature}, {@code top_p} and {@code top_k} — and one instance of it is
- * consulted by both provider clients. That is what the neutral name was for: the question "what does this model's
- * request surface accept" has the same meaning whoever is asking it.
+ * The built-in table describes <strong>two vendors</strong> — several {@code gpt-*} / {@code o*} families and the
+ * {@code claude-*} models that refuse {@code temperature}, {@code top_p} and {@code top_k} (six of them measured, plus
+ * the documentation-derived {@code claude-mythos} family) — and one instance of it is consulted by both provider
+ * clients. That is what the neutral name was for: the question "what does this model's request surface accept" has the
+ * same meaning whoever is asking it.
  *
  * <p>
  * Two rules govern everything here.

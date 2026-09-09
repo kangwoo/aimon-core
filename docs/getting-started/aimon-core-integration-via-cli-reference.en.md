@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/aimon-core-integration-via-cli-reference.md
-source_commit: 47e762a
+source_commit: e254b8c
 ---
 
 # aimon-core integration guide — following aimon-cli as the reference
@@ -228,8 +228,8 @@ their real names, so that name does not match it and falls through to the fail-o
 you say what that name actually accepts.
 
 **Both providers read this block**, and the built-in table describes both vendors — the `gpt-*` / `o*` rows
-and the six `claude-*` models that refuse the sampling parameters. So `provider` in the example below may
-just as well be `anthropic`.
+and the `claude-*` models that refuse the sampling parameters (six measured, plus the documentation-derived
+`claude-mythos` family). So `provider` in the example below may just as well be `anthropic`.
 
 ```yaml
 llm:

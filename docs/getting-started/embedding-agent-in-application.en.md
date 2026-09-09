@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/embedding-agent-in-application.md
-source_commit: 47e762a
+source_commit: e254b8c
 ---
 
 # Embedding an AIMON agent in your application
@@ -382,8 +382,9 @@ aimon:
   its own (`gpt-5-mini` as `prod-assistant`); the built-in capability table knows models by their real names,
   so that name falls through to the fail-open path, `temperature` is sent to a model that does not take it,
   and the request answers HTTP 400. **Both branches read this block** — and the built-in table describes both
-  vendors (the `gpt-*` / `o*` rows, and the six `claude-*` models that refuse the sampling parameters). So
-  `provider` in the example below may just as well be `anthropic`.
+  vendors (the `gpt-*` / `o*` rows, and the `claude-*` models that refuse the sampling parameters — six
+  measured, plus the documentation-derived `claude-mythos` family). So `provider` in the example below may
+  just as well be `anthropic`.
 
   ```yaml
   aimon:

@@ -220,7 +220,8 @@ registry 를 만들어 `modelCapabilityRegistry(...)` 로 넘긴다 (`anthropicC
 HTTP 400 을 맞는다. 그 이름에 대해 "이 모델은 무엇을 받는가" 를 적는 자리가 이 블록이다.
 
 이 블록은 **두 프로바이더 모두** 읽는다. 내장 표도 두 벤더를 서술한다 — `gpt-*` · `o*` 행과, 샘플링
-파라미터를 거절하는 여섯 개의 `claude-*` 행이다. 그래서 아래 예제의 `provider` 는 `anthropic` 이어도 된다.
+파라미터를 거절하는 `claude-*` 행이다(실측한 여섯 개에 문서 기반인 `claude-mythos` 계열이 더해진다).
+그래서 아래 예제의 `provider` 는 `anthropic` 이어도 된다.
 
 ```yaml
 llm:

@@ -362,8 +362,9 @@ aimon:
   Azure 배포나 벤더 호환 게이트웨이로 돌리면 그쪽이 모델을 자기 이름으로 노출할 수 있고(`gpt-5-mini` 를
   `prod-assistant` 로), 내장 capability 표는 모델을 실제 이름으로 알기 때문에 그 이름은 fail-open 경로로
   떨어져 `temperature` 를 받지 않는 모델에 그것이 실려 HTTP 400 이 됩니다. **이 블록은 두 분기가 모두
-  읽습니다** — 내장 표도 두 벤더를 서술합니다(`gpt-*` · `o*` 행과, 샘플링 파라미터를 거절하는 여섯 개의
-  `claude-*` 행). 그래서 아래 예제의 `provider` 는 `anthropic` 이어도 됩니다.
+  읽습니다** — 내장 표도 두 벤더를 서술합니다(`gpt-*` · `o*` 행과, 샘플링 파라미터를 거절하는 `claude-*`
+  행 — 실측한 여섯 개에 문서 기반인 `claude-mythos` 계열이 더해집니다). 그래서 아래 예제의 `provider` 는
+  `anthropic` 이어도 됩니다.
 
   ```yaml
   aimon:

@@ -261,8 +261,9 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
      *
      * <p>
      * The table is kept as small as the problem: it describes only the families whose request surface is known to
-     * differ from the historical default — {@code gpt-5-chat}, {@code gpt-5}, the o-series, and the six Anthropic
-     * models that refuse sampling parameters. Everything else resolves to {@link ModelCapabilities#unknown()}.
+     * differ from the historical default — {@code gpt-5-chat}, {@code gpt-5}, the o-series, and the Anthropic models
+     * that refuse sampling parameters: six measured, plus the documentation-derived {@code claude-mythos} family.
+     * Everything else resolves to {@link ModelCapabilities#unknown()}.
      *
      * @return a registry with framework-default capability entries
      */

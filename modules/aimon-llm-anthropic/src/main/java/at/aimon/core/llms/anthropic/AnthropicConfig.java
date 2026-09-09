@@ -15,10 +15,10 @@ import at.aimon.core.llm.capability.ModelCapabilityRegistry;
  *
  * <p>
  * {@code temperature} is <em>unset</em> by default rather than defaulted to a value, and unset means the parameter is
- * not sent at all. Six of the current Claude models reject any non-default {@code temperature} outright, so the client
- * has to be able to omit one; and it has to be able to tell "the operator asked for 0.0" from "nobody asked" to decide
- * whether the omission is worth a warning. Nothing in this class or the client manufactures a sampling value on the
- * caller's behalf — a request carries one only when somebody put it there.
+ * not sent at all. Six of the current Claude models reject any non-default {@code temperature}, so the client has to be
+ * able to omit one; and it has to be able to tell "the operator asked for 0.0" from "nobody asked" to decide whether
+ * the omission is worth a warning. Nothing in this class or the client manufactures a sampling value on the caller's
+ * behalf — a request carries one only when somebody put it there.
  *
  * <p>
  * Thread-safe and immutable.
