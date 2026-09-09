@@ -49,9 +49,11 @@ import at.aimon.core.llm.streaming.LlmStreamSink;
  * <li>{@code content_block_start(thinking | redacted_thinking | text)} — remember the block's kind and index too. The
  * kinds matter even for blocks that carry nothing we forward, because the anchor rule reads the block <em>order</em>:
  * a text block between a thinking block and a tool use is what makes that thinking block unanchored.</li>
- * <li>{@code content_block_delta(thinking | signature)} — accumulate into the thinking slot. Neither is emitted to
- * the sink: carrying the block across turns and showing it to a user are different features, and the second needs a
- * chunk kind {@code aimon-core} does not have.</li>
+ * <li>{@code content_block_delta(thinking | signature)} — accumulate into the thinking slot. The thinking text is
+ * <em>additionally</em> emitted as a REASONING_DELTA when this deployment asked to see it ({@code thinkingDisplay});
+ * with the gate closed neither is forwarded and the round trip is exactly what it was. The signature never is: it is
+ * not text a person watches. Carrying a block across turns and showing it to a user remain two features — the trace
+ * path below is untouched by the gate, in either position.</li>
  * <li>{@code content_block_delta(text)} — emit one TEXT_DELTA per non-empty chunk.</li>
  * <li>{@code content_block_delta(input_json)} — append the partial JSON fragment to the slot via
  * {@link ChunkAggregator#appendToolCallDelta(int, String, String, String)}. Parsed once at STREAM_END.</li>
@@ -76,6 +78,14 @@ final class AnthropicStreamingMapper {
     private final ChunkAggregator aggregator;
     private final String providerName;
     private final AnthropicDivergenceReporter reporter;
+
+    /**
+     * Whether thinking text reaches the sink as REASONING_DELTA chunks. Gated on the deployment's configuration
+     * rather than on the arrival of the deltas: on the budgeted dialect they already arrive today, so "forward
+     * whatever arrives" would turn a user-visible reasoning stream on for every existing {@code thinkingMode:
+     * extended} deployment without it asking.
+     */
+    private final boolean forwardReasoning;
 
     private int nextChunkIndex;
     private Optional<String> lastFinishReason = Optional.empty();
@@ -109,11 +119,12 @@ final class AnthropicStreamingMapper {
     private final List<AnthropicOutputBlocks.Block> orderedBlocks = new ArrayList<>();
 
     AnthropicStreamingMapper(LlmStreamSink sink, ChunkAggregator aggregator, String providerName,
-            AnthropicDivergenceReporter reporter) {
+            AnthropicDivergenceReporter reporter, boolean forwardReasoning) {
         this.sink = Objects.requireNonNull(sink, "sink");
         this.aggregator = Objects.requireNonNull(aggregator, "aggregator");
         this.providerName = Objects.requireNonNull(providerName, "providerName");
         this.reporter = Objects.requireNonNull(reporter, "reporter");
+        this.forwardReasoning = forwardReasoning;
     }
 
     /**
@@ -193,13 +204,20 @@ final class AnthropicStreamingMapper {
             }
             aggregator.appendToolCallDelta(Math.toIntExact(blockIndex), slot.id, slot.name, jsonDelta.partialJson());
         } else if (delta.isThinking()) {
-            withThinkingSlot(event.index(), "thinking", slot -> slot.thinking.append(delta.asThinking().thinking()));
+            final String thinking = delta.asThinking().thinking();
+            withThinkingSlot(event.index(), "thinking", slot -> slot.thinking.append(thinking));
+            // Two consumers of one delta, in this order. The first is the trace round trip and runs unconditionally;
+            // the second is the live view and runs only when the deployment asked for it. They are still different
+            // features -- replaying a signed block on the next request is not showing text to a person -- but they
+            // are no longer mutually exclusive now that a REASONING_DELTA chunk kind exists to carry the second.
+            if (forwardReasoning && thinking != null && !thinking.isEmpty()) {
+                emitReasoningDelta(thinking);
+            }
         } else if (delta.isSignature()) {
             withThinkingSlot(event.index(), "signature", slot -> slot.signature = delta.asSignature().signature());
         }
-        // Thinking and signature deltas feed the trace payload above and are deliberately *not* forwarded to the
-        // sink: replaying the block on the next request and rendering it live to a user are different features, and
-        // the second needs a chunk kind aimon-core does not have. Citation deltas are still not modelled.
+        // A signature delta is never forwarded: it is an opaque credential the next request replays, not text a
+        // person watches. Citation deltas are still not modelled.
     }
 
     private void withThinkingSlot(long blockIndex, String deltaKind, Consumer<ThinkingSlot> work) {
@@ -287,6 +305,22 @@ final class AnthropicStreamingMapper {
 
     private void emitTextDelta(String text) {
         final LlmStreamChunk chunk = LlmStreamChunk.textDelta(nextChunkIndex++, text);
+        aggregator.accept(chunk);
+        sink.accept(chunk);
+    }
+
+    /**
+     * Emits one reasoning delta, sharing the stream's single chunk ordinal with the text deltas — that field means
+     * "the n-th chunk of this stream", and TOOL_USE_READY already departs from strict ordinality by carrying a block
+     * index instead.
+     *
+     * <p>
+     * Does <b>not</b> touch the thinking slot or the ordered-block list: the trace this stream replays next turn is
+     * the signed block, assembled in {@code closeThinkingBlock}, and a chunk emitted here is a copy for a watcher.
+     * The aggregator keeps it out of the response text on its side.
+     */
+    private void emitReasoningDelta(String reasoning) {
+        final LlmStreamChunk chunk = LlmStreamChunk.reasoningDelta(nextChunkIndex++, reasoning);
         aggregator.accept(chunk);
         sink.accept(chunk);
     }

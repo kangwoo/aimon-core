@@ -50,6 +50,7 @@ public final class OpenAIConfig {
     private final Double presencePenalty;
     private final Double frequencyPenalty;
     private final ReasoningEffort reasoningEffort;
+    private final OpenAiReasoningSummary reasoningSummary;
     private final int maxTokens;
     private final Duration timeout;
     private final ModelCapabilityRegistry modelCapabilityRegistry;
@@ -64,6 +65,7 @@ public final class OpenAIConfig {
         this.presencePenalty = builder.presencePenalty;
         this.frequencyPenalty = builder.frequencyPenalty;
         this.reasoningEffort = builder.reasoningEffort;
+        this.reasoningSummary = builder.reasoningSummary;
         this.maxTokens = builder.maxTokens;
         this.timeout = builder.timeout;
         this.modelCapabilityRegistry = builder.modelCapabilityRegistry;
@@ -181,6 +183,28 @@ public final class OpenAIConfig {
     }
 
     /**
+     * Gets the reasoning summary this deployment asks for, and the switch that lets reasoning text reach the stream
+     * sink at all.
+     *
+     * <p>
+     * Two effects from one key, both on the Responses path: {@code reasoning.summary} goes on the request, without
+     * which no summary is produced; and the mapper forwards the resulting deltas as reasoning chunks. The forwarding
+     * is gated separately rather than assumed from the ask because an OpenAI-compatible gateway behind
+     * {@code baseUrl} may emit summary events unasked, and a deployment that set nothing must see no change.
+     *
+     * <p>
+     * <b>The Chat Completions path has no counterpart.</b> A deployment whose model routes there — because the model
+     * does not support the reasoning round trip, or because {@link #isResponsesApiEnabled()} is off — gets no ask and
+     * no channel, and the client says so once.
+     *
+     * @return Optional containing the configured summary level, or empty when none was configured — in which case no
+     *         {@code reasoning.summary} is sent and no reasoning text reaches the sink
+     */
+    public Optional<OpenAiReasoningSummary> getReasoningSummary() {
+        return Optional.ofNullable(reasoningSummary);
+    }
+
+    /**
      * Gets the maximum tokens.
      *
      * @return The maximum tokens
@@ -237,6 +261,7 @@ public final class OpenAIConfig {
         private Double presencePenalty;
         private Double frequencyPenalty;
         private ReasoningEffort reasoningEffort;
+        private OpenAiReasoningSummary reasoningSummary;
         private int maxTokens = DEFAULT_MAX_TOKENS;
         private Duration timeout = DEFAULT_TIMEOUT;
         private String baseUrl;
@@ -338,6 +363,24 @@ public final class OpenAIConfig {
          */
         public Builder reasoningEffort(ReasoningEffort reasoningEffort) {
             this.reasoningEffort = reasoningEffort;
+            return this;
+        }
+
+        /**
+         * Asks the Responses API for a reasoning summary, and lets it reach the stream sink.
+         *
+         * <p>
+         * Unset by default, and unset means no {@code reasoning.summary} on the wire and no reasoning delta forwarded
+         * — a deployment that does not call this setter sends the same bytes and sees the same events as before this
+         * key existed. It costs output tokens on every request that carries it, including the non-streaming ones that
+         * have nothing to render them, which is why it is opt-in.
+         *
+         * @param reasoningSummary
+         *            The summary level to ask for; {@code null} leaves it unset
+         * @return This builder
+         */
+        public Builder reasoningSummary(OpenAiReasoningSummary reasoningSummary) {
+            this.reasoningSummary = reasoningSummary;
             return this;
         }
 

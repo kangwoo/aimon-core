@@ -9,16 +9,19 @@ import com.fasterxml.jackson.databind.DeserializationContext;
 import com.fasterxml.jackson.databind.JsonDeserializer;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 
+import at.aimon.core.llms.anthropic.AnthropicThinkingDisplay;
 import at.aimon.core.llms.anthropic.AnthropicThinkingMode;
 
 /**
- * yaml 로 적은 Anthropic 전용 설정 — {@code llm.anthropic} 아래의 세 키.
+ * yaml 로 적은 Anthropic 전용 설정 — {@code llm.anthropic} 아래의 네 키.
  *
  * <p>
- * 세 키 모두 <b>이름이 Anthropic 개념을 담고 있어서</b> 공통 {@code llm.*} 이 아니라 벤더 네임스페이스로 내려왔다 —
+ * 네 키 모두 <b>이름이 Anthropic 개념을 담고 있어서</b> 공통 {@code llm.*} 이 아니라 벤더 네임스페이스로 내려왔다 —
  * "thinking" 은 이 현상에 대한 Anthropic 의 단어이고(이 저장소의 중립 명사는 {@code ReasoningEffort} ·
  * {@code ReasoningTrace} 다), {@code budget_tokens} 는 Anthropic 요청 본문의 필드 이름 그대로이며,
- * "thinking block" 은 서명이 붙은 {@code thinking} 콘텐츠 블록이라는 와이어 명사다. 기준은
+ * "thinking block" 은 서명이 붙은 {@code thinking} 콘텐츠 블록이라는 와이어 명사다. 네 번째인
+ * {@code thinkingDisplay} 는 그 기준에 두 번 걸린다 — "thinking" 이 벤더의 단어인 데다 {@code display} 는
+ * 그 {@code thinking} 객체 안의 필드 이름이다. 기준은
  * {@code docs/design/llm/model-capability-config-key.md} §2.7 이고, 그 기준이 처음으로 "쪼갠다" 를 낸 자리다.
  *
  * <p>
@@ -48,6 +51,7 @@ public class AnthropicProviderConfig {
     @JsonDeserialize(using = ThinkingModeDeserializer.class)
     private AnthropicThinkingMode thinkingMode;
     private Integer thinkingBudgetTokens;
+    private AnthropicThinkingDisplay thinkingDisplay;
     private Boolean replayThinkingBlocks;
 
     /** AnthropicProviderConfig를 생성한다. */
@@ -82,6 +86,28 @@ public class AnthropicProviderConfig {
     }
 
     /**
+     * 모델의 thinking 텍스트를 사용자에게 흘려보낼 것인가 — 그리고 adaptive 방언에서는 그 텍스트를 애초에 받을 것인가.
+     *
+     * <p>
+     * 한 키가 두 일을 하고, 어느 쪽이 무는지는 방언이 정한다. {@code adaptive} 에서는 요청에 {@code thinking.display}
+     * 를 쓰고(그것이 없으면 이 세대의 모델은 thinking 텍스트를 아예 주지 않는다) 동시에 전달 게이트를 연다.
+     * {@code extended} 에서는 델타가 이미 오고 있으므로 게이트만 열고 {@code display} 는 보내지 않는다 —
+     * 클라이언트가 그 사실을 한 번 경고한다. {@code off} 아래에서는 아무것도 닿지 않으며 역시 한 번 경고한다.
+     *
+     * <p>
+     * 적지 않으면 요청도 이벤트도 이 키가 없던 때와 글자 하나 다르지 않다.
+     *
+     * @return {@code summarized} 또는 {@code updates}, 또는 적지 않았으면 null (thinking 텍스트는 흐르지 않는다)
+     */
+    public AnthropicThinkingDisplay getThinkingDisplay() {
+        return thinkingDisplay;
+    }
+
+    public void setThinkingDisplay(AnthropicThinkingDisplay thinkingDisplay) {
+        this.thinkingDisplay = thinkingDisplay;
+    }
+
+    /**
      * 저장된 thinking 블록을 다음 요청에 되싣는가. 기본은 되싣는 것이다.
      *
      * @return {@code false} 면 되싣지 않는다, 또는 적지 않았으면 null ({@code true} 가 선다)
@@ -101,10 +127,11 @@ public class AnthropicProviderConfig {
      * {@code anthropic:} 이라고만 적고 아무 자식도 두지 않은 블록과, 블록 자체가 없는 설정을 같은 것으로 만든다 —
      * 그래야 "읽지 않는 분기가 이 블록을 거절한다" 가 빈 블록에 대해 발화하지 않는다.
      *
-     * @return 세 키가 모두 비어 있으면 true
+     * @return 네 키가 모두 비어 있으면 true
      */
     public boolean isEmpty() {
-        return thinkingMode == null && thinkingBudgetTokens == null && replayThinkingBlocks == null;
+        return thinkingMode == null && thinkingBudgetTokens == null && thinkingDisplay == null
+                && replayThinkingBlocks == null;
     }
 
     @Override
@@ -117,18 +144,20 @@ public class AnthropicProviderConfig {
         }
         final AnthropicProviderConfig that = (AnthropicProviderConfig) o;
         return thinkingMode == that.thinkingMode && Objects.equals(thinkingBudgetTokens, that.thinkingBudgetTokens)
+                && thinkingDisplay == that.thinkingDisplay
                 && Objects.equals(replayThinkingBlocks, that.replayThinkingBlocks);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(thinkingMode, thinkingBudgetTokens, replayThinkingBlocks);
+        return Objects.hash(thinkingMode, thinkingBudgetTokens, thinkingDisplay, replayThinkingBlocks);
     }
 
     @Override
     public String toString() {
         return "AnthropicProviderConfig{" + "thinkingMode=" + thinkingMode + ", thinkingBudgetTokens="
-                + thinkingBudgetTokens + ", replayThinkingBlocks=" + replayThinkingBlocks + '}';
+                + thinkingBudgetTokens + ", thinkingDisplay=" + thinkingDisplay + ", replayThinkingBlocks="
+                + replayThinkingBlocks + '}';
     }
 
     /**

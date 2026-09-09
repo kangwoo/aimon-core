@@ -10,6 +10,7 @@ import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
 import at.aimon.core.agent.stream.AssistantMessageReceived;
+import at.aimon.core.agent.stream.AssistantReasoningDelta;
 import at.aimon.core.agent.stream.AssistantTextDelta;
 import at.aimon.core.agent.stream.AssistantTextStreamCompleted;
 import at.aimon.core.agent.stream.AssistantTextStreamReset;
@@ -198,6 +199,18 @@ final class AgentEventDispatcher {
             return;
         }
         dispatch(AssistantTextDelta.builder().timestamp(Instant.now()).agentRuntimeId(agentRuntimeId)
+                .iteration(iteration).delta(delta).chunkIndex(chunkIndex).build());
+    }
+
+    /**
+     * Emits an {@link AssistantReasoningDelta} event for one streaming reasoning chunk. Listener-gated exactly as the
+     * text sibling is; the chunk index is that channel's own sequence, not a share of the text one.
+     */
+    void emitAssistantReasoningDelta(int iteration, String delta, int chunkIndex) {
+        if (hasNoListeners()) {
+            return;
+        }
+        dispatch(AssistantReasoningDelta.builder().timestamp(Instant.now()).agentRuntimeId(agentRuntimeId)
                 .iteration(iteration).delta(delta).chunkIndex(chunkIndex).build());
     }
 

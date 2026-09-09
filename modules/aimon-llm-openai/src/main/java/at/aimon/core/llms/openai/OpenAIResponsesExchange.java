@@ -34,14 +34,22 @@ final class OpenAIResponsesExchange implements OpenAIEndpointExchange {
     private final ResponseCreateParams params;
     private final String providerName;
     private final OpenAIDivergenceReporter reporter;
+    private final boolean forwardReasoning;
 
+    /**
+     * @param forwardReasoning
+     *            whether the mapper forwards reasoning deltas to the sink. Gated on this deployment's configuration
+     *            rather than on the arrival of the events, because an OpenAI-compatible gateway behind
+     *            {@code baseUrl} may emit summary events unasked and a deployment that set nothing must see no change
+     */
     OpenAIResponsesExchange(OpenAIClient client, OpenAIResponsesMessageConverter converter, ResponseCreateParams params,
-            String providerName, OpenAIDivergenceReporter reporter) {
+            String providerName, OpenAIDivergenceReporter reporter, boolean forwardReasoning) {
         this.client = Objects.requireNonNull(client, "client");
         this.converter = Objects.requireNonNull(converter, "converter");
         this.params = Objects.requireNonNull(params, "params");
         this.providerName = Objects.requireNonNull(providerName, "providerName");
         this.reporter = Objects.requireNonNull(reporter, "reporter");
+        this.forwardReasoning = forwardReasoning;
     }
 
     @Override
@@ -58,7 +66,7 @@ final class OpenAIResponsesExchange implements OpenAIEndpointExchange {
                 ? client.responses().createStreaming(params)
                 : client.responses().createStreaming(params, options);
         final OpenAIResponsesStreamingMapper mapper = new OpenAIResponsesStreamingMapper(sink, aggregator, converter,
-                providerName, reporter);
+                providerName, reporter, forwardReasoning);
         return OpenAIStreamHandle.of(streamResponse, mapper::consume);
     }
 

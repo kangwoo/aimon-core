@@ -241,4 +241,63 @@ class OpenAIResponsesParameterDivergenceTest {
         verify(mockResponseService).create(captor.capture());
         assertThat(ResponsesFixtures.bodyTreeOf(captor.getValue()).get("temperature").asDouble()).isEqualTo(0.7);
     }
+
+    // ---- reasoningSummary reaching the endpoint that has no such parameter ----
+
+    @Test
+    @DisplayName("a reasoning summary on a model routed to Chat Completions is reported, not silently inert")
+    void reasoningSummaryOnAChatOnlyModelIsReported() {
+        // The OpenAI counterpart of the Anthropic "set under OFF" warning, and the case the Responses path cannot
+        // see: reasoning.summary is a Responses parameter, so a model that does not do the reasoning round trip goes
+        // to Chat Completions and the key reaches nothing at all -- no ask, no channel, and without this line no
+        // signal either. Distinct from a model that received the ask and ignored it, which is honestly quiet.
+        lenient().when(mockOpenAIClient.chat()).thenReturn(mockChatService);
+        lenient().when(mockChatService.completions()).thenReturn(mockChatCompletionService);
+        lenient()
+                .when(mockChatCompletionService
+                        .create(any(com.openai.models.chat.completions.ChatCompletionCreateParams.class)))
+                .thenThrow(new RuntimeException("create-invoked"));
+        final OpenAILlmClient client = new OpenAILlmClient(OpenAIConfig.builder().apiKey("test-key").model("gpt-4o")
+                .reasoningSummary(OpenAiReasoningSummary.DETAILED).build(), mockOpenAIClient);
+
+        assertThatThrownBy(() -> send(client, LlmModel.builder().build(), List.of()))
+                .hasRootCauseMessage("create-invoked");
+
+        assertThat(warnings()).anyMatch(
+                warning -> warning.contains("reasoningSummary") && warning.contains("not routed to the Responses API"));
+    }
+
+    @Test
+    @DisplayName("the same key with the Responses API switched off names that switch instead of the model")
+    void reasoningSummaryWithResponsesDisabledNamesTheSwitch() {
+        // The remedies differ, so the two conditions get different sentences: this one is a switch the operator set,
+        // the other needs a different model.
+        lenient().when(mockOpenAIClient.chat()).thenReturn(mockChatService);
+        lenient().when(mockChatService.completions()).thenReturn(mockChatCompletionService);
+        lenient()
+                .when(mockChatCompletionService
+                        .create(any(com.openai.models.chat.completions.ChatCompletionCreateParams.class)))
+                .thenThrow(new RuntimeException("create-invoked"));
+        final OpenAILlmClient client = new OpenAILlmClient(
+                config().responsesApiEnabled(false).reasoningSummary(OpenAiReasoningSummary.AUTO).build(),
+                mockOpenAIClient);
+
+        assertThatThrownBy(() -> send(client, LlmModel.builder().build(), List.of()))
+                .hasRootCauseMessage("create-invoked");
+        // Said once, however many iterations run: a property of the configuration, not of the traffic.
+        assertThatThrownBy(() -> send(client, LlmModel.builder().build(), List.of()))
+                .hasRootCauseMessage("create-invoked");
+
+        assertThat(warnings()).filteredOn(warning -> warning.contains("Responses API is disabled")).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("no reasoning summary configured means no such warning, on either branch")
+    void noSummaryConfiguredIsSilent() {
+        final OpenAILlmClient client = client(config().build());
+
+        send(client, LlmModel.builder().build(), List.of());
+
+        assertThat(warnings()).noneMatch(warning -> warning.contains("reasoningSummary"));
+    }
 }

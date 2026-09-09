@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/aimon-core-integration-via-cli-reference.md
-source_commit: 320fbbc
+source_commit: 3dd56df
 ---
 
 # aimon-core integration guide — following aimon-cli as the reference
@@ -333,6 +333,7 @@ llm:
 |---|---|---|
 | `thinkingMode` | Which thinking request shape to send (the four values below) | `off` — no thinking parameter is sent |
 | `thinkingBudgetTokens` | An explicit `budget_tokens` for the `extended` dialect | Derived from the call's reasoning effort |
+| `thinkingDisplay` | Whether to ask for the model's thinking text and stream it (`summarized` \| `updates`) | Neither is asked for and nothing is streamed |
 | `replayThinkingBlocks` | Whether stored thinking blocks are replayed on the next request | `true` — they are replayed |
 
 The four values of `thinkingMode`. Case does not matter.
@@ -364,8 +365,18 @@ The value itself has a floor and a ceiling.
   `thinkingBudgetTokens: 8000` goes out as 4095.** There is no key here for raising that ceiling — it is the
   agent definition's `model.maxTokens`, a third configuration surface.
 
-Under `auto` and `adaptive`, how much thinking to do comes from the call's `ReasoningEffort`, and **there is no
-configuration key for that yet.** Today the value arrives on the agent's `LlmModel`.
+Under `auto` and `adaptive`, how much thinking to do comes from the call's `ReasoningEffort`, and the key that
+writes it per deployment is the shared `llm.reasoningEffort` above.
+
+**`thinkingDisplay` is one key doing two things, and which one bites depends on the dialect.** Under `adaptive`
+it writes `thinking.display` on the request — without which this model generation omits the text **entirely** —
+and at the same time opens the gate that streams that text to the user. Under `extended` the deltas already
+arrive, so it only opens the gate and no `display` is sent; the client says so once at WARN. Under the default
+`off` nothing reaches it, and it says so once there too.
+
+The REPL prints that text dimmed and distinct from the answer, opened by a `[thinking]` marker. **Leave it out
+and the request and the screen are what they were before this key existed** — it spends output tokens on every
+request, which is why it is opt-in.
 
 `replayThinkingBlocks: false` is an escape hatch for one named failure — *"Invalid `signature` in `thinking`
 block. The block is bound to a different conversation."* A signature stays valid only while the system prompt,
@@ -381,6 +392,32 @@ placeholders before binding.
 The starter properties on this axis are in
 [`embedding-agent-in-application.en.md`](embedding-agent-in-application.en.md). The spellings do not mix here
 either — `thinkingMode` on the CLI, `thinking-mode` in the starter.
+
+#### The OpenAI-only block — `llm.openai`
+
+The counterpart of `llm.anthropic`, following the same rule. **The openai branch alone reads it**, so this
+block written under `provider: anthropic` fails startup rather than being ignored. Today it has one key.
+
+```yaml
+llm:
+  provider: openai
+  apiKey: "${OPENAI_API_KEY}"
+  model: gpt-5.1
+  openai:
+    reasoningSummary: auto
+```
+
+| Key | Meaning | If omitted |
+|---|---|---|
+| `reasoningSummary` | Whether to ask for a summary of the model's reasoning and stream it (`auto` \| `concise` \| `detailed`) | Neither is asked for and nothing is streamed |
+
+On this vendor the reasoning itself is `encrypted_content` — ciphertext by design — so **a summary is the only
+human-readable surrogate there is.** That is why this key has a different name from Anthropic's
+`thinkingDisplay`.
+
+**Responses API only.** If the model does not support the reasoning trace round trip, or that endpoint is
+switched off, the request goes to Chat Completions, which has no such parameter — and in that case the client
+says so once at WARN (rather than doing nothing in silence).
 
 If `cli.tracing` is on, one more layer goes on top (line 697-712) — `TracingLlmClient` wraps the original
 client, and the same `Tracer` is injected into the executor factory as well, so turn/iteration/tool spans

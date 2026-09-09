@@ -170,10 +170,11 @@ public class AimonProperties implements InitializingBean {
      * tree in {@code docs/design/integration/spring-boot-starter.md} §9.3 reserved before anything occupied it.
      * The rule that put it here is the one {@link #LLM_MODEL_CAPABILITIES} states and fails: a key goes to
      * {@code aimon.llm.<provider>.*} when its <em>name</em> carries a vendor concept or when the same key would
-     * mean different things per vendor. All three keys below fail the first test — "thinking" is Anthropic's word
+     * mean different things per vendor. All four keys below fail the first test — "thinking" is Anthropic's word
      * for the phenomenon this codebase otherwise calls {@code ReasoningEffort} / {@code ReasoningTrace},
-     * {@code budget_tokens} is a literal field of the Anthropic request body, and a "thinking block" is a signed
-     * {@code thinking} content block on that vendor's wire.
+     * {@code budget_tokens} is a literal field of the Anthropic request body, a "thinking block" is a signed
+     * {@code thinking} content block on that vendor's wire, and {@code display} is a field inside that vendor's
+     * {@code thinking} object.
      *
      * <p>
      * A block written under another provider is refused by name rather than ignored, from inside the branch that
@@ -184,6 +185,9 @@ public class AimonProperties implements InitializingBean {
     /** Which thinking dialect Anthropic requests speak. */
     public static final String LLM_ANTHROPIC_THINKING_MODE = LLM_ANTHROPIC + ".thinking-mode";
 
+    /** Whether Anthropic requests ask for readable thinking text, and stream it. */
+    public static final String LLM_ANTHROPIC_THINKING_DISPLAY = LLM_ANTHROPIC + ".thinking-display";
+
     /**
      * Explicit {@code budget_tokens} for the {@code extended} dialect.
      *
@@ -192,6 +196,31 @@ public class AimonProperties implements InitializingBean {
      * refusable and no message ever has to name it. These constants exist to be spoken, not to enumerate.
      */
     public static final String LLM_ANTHROPIC_THINKING_BUDGET_TOKENS = LLM_ANTHROPIC + ".thinking-budget-tokens";
+
+    /**
+     * OpenAI-only settings — {@code aimon.llm.openai.*}.
+     *
+     * <p>
+     * The second non-shared subtree under {@code aimon.llm}, opened by the same rule that put
+     * {@link #LLM_ANTHROPIC} where it is and failing the same first test: {@code reasoning.summary} is the literal
+     * path in the OpenAI request body and {@code auto} / {@code concise} / {@code detailed} is that vendor's value
+     * vocabulary, meaningless to the other one. Behind the name is that vendor's model of the world — here the
+     * reasoning itself is {@code encrypted_content}, so a <em>summary</em> is the only readable surrogate that
+     * exists; Anthropic has no summary and gates the model's own thinking text with {@code display} instead.
+     *
+     * <p>
+     * The property tree in {@code docs/design/integration/spring-boot-starter.md} §9.3 has held this slot open since
+     * before anything occupied it, and {@code docs/backlog/llm-config-surface-open-items.md} {@code L-2} names
+     * {@code responsesApiEnabled} as an eventual second key here. This one arrived first.
+     *
+     * <p>
+     * A block written under another provider is refused by name rather than ignored, from inside the branch that
+     * actually runs — see {@code AimonLlmAutoConfiguration}. That refusal is now symmetric in both directions.
+     */
+    public static final String LLM_OPENAI = PREFIX + ".llm.openai";
+
+    /** How detailed a reasoning summary OpenAI requests ask for. */
+    public static final String LLM_OPENAI_REASONING_SUMMARY = LLM_OPENAI + ".reasoning-summary";
 
     /** Backing store for session records. */
     public static final String SESSION_STORE = PREFIX + ".session.store";
@@ -1269,6 +1298,12 @@ public class AimonProperties implements InitializingBean {
          */
         private final Anthropic anthropic = new Anthropic();
 
+        /**
+         * OpenAI-only settings. The mirror of {@link #anthropic} beside it and read by one branch — the reason is on
+         * {@link AimonProperties#LLM_OPENAI}.
+         */
+        private final OpenAi openai = new OpenAi();
+
         public String getProvider() {
             return provider;
         }
@@ -1329,9 +1364,61 @@ public class AimonProperties implements InitializingBean {
             return anthropic;
         }
 
+        public OpenAi getOpenai() {
+            return openai;
+        }
+
         /**
-         * The {@code aimon.llm.anthropic.*} block — which thinking dialect requests speak, how much of it, and
-         * whether stored thinking blocks are replayed.
+         * The {@code aimon.llm.openai.*} block.
+         *
+         * <p>
+         * Nested inside {@code AimonProperties} for the reason {@link ModelCapabilityProperties} states, and its one
+         * property is a {@code String} for the reason {@link Anthropic}'s is: {@code aimon-llm-openai} is
+         * {@code compileOnly} here, so a vendor-typed accessor on a bean Spring binds throws
+         * {@code NoClassDefFoundError} on a deployment carrying only the other vendor's module. The fold onto
+         * {@code OpenAiReasoningSummary} happens inside the {@code @ConditionalOnClass}-guarded slice, over
+         * {@code values()} so the two configuration surfaces cannot come to accept different spellings.
+         */
+        public static class OpenAi {
+
+            /**
+             * How detailed a summary of its reasoning to ask OpenAI for, and — the same key's other half — whether
+             * that text is streamed to subscribers as it is produced: {@code auto}, {@code concise} or
+             * {@code detailed}. Case-insensitive. Unset by default, and unset means the request is byte-for-byte
+             * what it was and no reasoning text streams.
+             *
+             * <p>
+             * Responses API only. A model that does not support the reasoning trace round trip is routed to Chat
+             * Completions, which has no such parameter; the client warns once rather than leaving the key silently
+             * inert.
+             */
+            private String reasoningSummary;
+
+            public String getReasoningSummary() {
+                return reasoningSummary;
+            }
+
+            public void setReasoningSummary(String reasoningSummary) {
+                this.reasoningSummary = reasoningSummary;
+            }
+
+            /**
+             * Whether nothing under this block was written.
+             *
+             * <p>
+             * Reads one field for null and loads no vendor class, which is what lets the refusal in
+             * {@code AimonLlmAutoConfiguration} sit on the enclosing class rather than inside a guarded slice.
+             *
+             * @return true when the key is absent
+             */
+            public boolean isEmpty() {
+                return reasoningSummary == null;
+            }
+        }
+
+        /**
+         * The {@code aimon.llm.anthropic.*} block — which thinking dialect requests speak, how much of it, whether
+         * its text is shown, and whether stored thinking blocks are replayed.
          *
          * <p>
          * Nested inside {@code AimonProperties} for the reason {@link ModelCapabilityProperties} states: the
@@ -1355,9 +1442,9 @@ public class AimonProperties implements InitializingBean {
          *
          * <p>
          * Every field is boxed, and null means "not written": that is what lets an absent block leave
-         * {@code AnthropicConfig}'s own defaults (mode {@code OFF}, no budget, replay {@code true}) standing, and
-         * what lets {@link #isEmpty()} tell an unwritten block from one that says {@code replay-thinking-blocks:
-         * true}.
+         * {@code AnthropicConfig}'s own defaults (mode {@code OFF}, no budget, no display, replay {@code true})
+         * standing, and what lets {@link #isEmpty()} tell an unwritten block from one that says
+         * {@code replay-thinking-blocks: true}.
          */
         public static class Anthropic {
 
@@ -1374,6 +1461,20 @@ public class AimonProperties implements InitializingBean {
              * fails rather than dropping it silently. It is clamped below the request's {@code max_tokens}.
              */
             private Integer thinkingBudgetTokens;
+
+            /**
+             * Whether to ask the adaptive dialect for readable thinking text — {@code summarized} or
+             * {@code updates} — and, the same key's other half, whether that text is streamed to subscribers as it
+             * is produced. Case-insensitive. Unset by default, and unset means the request is byte-for-byte what it
+             * was and no thinking text streams.
+             *
+             * <p>
+             * On {@code thinking-mode: adaptive} it writes {@code thinking.display}, without which this model
+             * generation omits the text entirely. On {@code extended} the deltas already arrive, so it only opens
+             * the forwarding gate and no {@code display} is written; under {@code off} nothing reaches it. Both of
+             * those latter cases produce one WARN rather than passing in silence.
+             */
+            private String thinkingDisplay;
 
             /**
              * Whether stored thinking blocks are replayed on the next request. Defaults to replaying them;
@@ -1398,6 +1499,14 @@ public class AimonProperties implements InitializingBean {
                 this.thinkingBudgetTokens = thinkingBudgetTokens;
             }
 
+            public String getThinkingDisplay() {
+                return thinkingDisplay;
+            }
+
+            public void setThinkingDisplay(String thinkingDisplay) {
+                this.thinkingDisplay = thinkingDisplay;
+            }
+
             public Boolean getReplayThinkingBlocks() {
                 return replayThinkingBlocks;
             }
@@ -1410,13 +1519,14 @@ public class AimonProperties implements InitializingBean {
              * Whether nothing under this block was written.
              *
              * <p>
-             * Reads three fields for null and loads no vendor class, which is what lets the refusal in
+             * Reads four fields for null and loads no vendor class, which is what lets the refusal in
              * {@code AimonLlmAutoConfiguration} sit on the enclosing class rather than inside a guarded slice.
              *
-             * @return true when all three keys are absent
+             * @return true when all four keys are absent
              */
             public boolean isEmpty() {
-                return thinkingMode == null && thinkingBudgetTokens == null && replayThinkingBlocks == null;
+                return thinkingMode == null && thinkingBudgetTokens == null && thinkingDisplay == null
+                        && replayThinkingBlocks == null;
             }
         }
     }

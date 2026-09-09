@@ -7,6 +7,116 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### LLM: a reasoning model's thinking is something a person can watch, and nothing else changes
+
+- **A reasoning model can deliberate for tens of seconds before it emits a visible token, and AIMON
+  showed nothing while it did** (#62) — a silence indistinguishable from a hang, on exactly the turns
+  where the user most wants to know something is happening. Two independent gaps produced it and
+  closing either alone would have left the feature inert, so both close here: the transport had no way
+  to say "this text is deliberation, not answer", and nothing asked the provider for the text in the
+  first place.
+
+- **`LlmStreamChunk.Kind.REASONING_DELTA`**, with its own factory, its own `reasoningDelta` field and
+  its own accessor. Not a reuse of `textDelta`: every existing caller that reads `getTextDelta()`
+  without checking the kind would otherwise start reading deliberation, and the constructor now
+  refuses a chunk carrying both, from either side.
+
+- **`AssistantReasoningDelta` beside `AssistantTextDelta`**, carrying `delta` and `chunkIndex` on
+  **its own** monotone sequence — sharing the text counter would punch holes in that event's
+  documented ordering contract. It crosses a node boundary like its sibling, so a web UI on another
+  node — precisely who wants to watch thinking — sees it too.
+
+- **BREAKING, and source-breaking for any out-of-tree exhaustive consumer:
+  `AgentExecutionEvent` is a `sealed` hierarchy and this is its sixteenth subtype.** A `switch` or an
+  `instanceof` chain over the fifteen that compiled before will no longer compile, or will fall
+  through to whatever it does with an unrecognized subtype. `docs/project/api-stability.md` §5 permits
+  this at `0.x`; taken in one go rather than through an adapter or a deprecation window, which is this
+  repository's stated habit there. In-tree the compiler caught the `permits` clause and one `switch`
+  **expression**; a third catcher, `AgentExecutionEventTest`'s subtype count, went red on purpose.
+
+- **The deliberation never becomes the answer, and that is a privacy invariant rather than a rendering
+  one.** `ChunkAggregator` accumulates reasoning into a **second buffer** that `toLlmResponse()` does
+  not read, because `peekText()` — the first one — is what the executor commits to the transcript as
+  the assistant's message when an execution is cancelled mid-stream. Folding the two would have
+  persisted the model's private reasoning as its public answer, and a transcript is not recoverable.
+  Both mid-stream cancel arms are pinned by a test asserting the deliberation is nowhere in the
+  session history, not merely absent from one message.
+
+- **Under buffer pressure the relay now sacrifices thinking before answer text.**
+  `SessionEventRelay`'s overflow policy grows from two ranks to three — reasoning, then text, then
+  everything structural — and the rank of the *incoming* frame counts as well as that of the buffered
+  one, so an incoming reasoning delta is dropped rather than displacing buffered answer text. Every
+  row that existed before behaves exactly as it did. **A behaviour change worth knowing** for anyone
+  reading `getDroppedEventCount()` or a remote event stream.
+
+- **Both providers ask for the text, opt-in and off by default on both**, because forwarding without
+  asking ships a channel that is always empty:
+
+  ```yaml
+  # aimon-cli — camelCase          # Spring Boot starter — kebab-case
+  llm:                             aimon:
+    anthropic:                       llm:
+      thinkingDisplay: summarized      anthropic:
+    openai:                              thinking-display: summarized
+      reasoningSummary: auto           openai:
+                                         reasoning-summary: auto
+  ```
+
+  (Two blocks side by side, not one: a deployment picks one provider, so it writes one of the two
+  vendor sub-blocks.)
+
+  Both go to a **vendor** namespace, by `model-capability-config-key.md` §2.7's first test, and the
+  two asks are genuinely different things rather than one thing spelled twice: on OpenAI the reasoning
+  itself is `encrypted_content` — ciphertext by design — so a *summary* is the only readable surrogate
+  that exists, while Anthropic has no summary and gates the model's own thinking text with `display`.
+  A neutral `llm.streamReasoning` umbrella would be **shared** by the same criterion and is
+  deliberately not shipped; the reasoning and the trigger that would change it are `RD-4` in
+  `docs/backlog/reasoning-delta-stream-open-items.md`.
+
+- **`aimon.llm.openai.*` / CLI `llm.openai` is a new namespace**, the slot `L-2` and
+  `spring-boot-starter.md` §9.3 have held open since before #46. Its arrival makes the block refusals
+  symmetric: the OpenAI branch refuses a populated `llm.anthropic` as it always did, and the Anthropic
+  branch now refuses a populated `llm.openai`. An empty block of either kind still refuses nothing.
+
+- **A deployment that writes neither key is unchanged, byte for byte** — verified on the serialised
+  request params on both providers rather than asserted, plus at the event-stream altitude, plus by a
+  whole-tree `checkAll` (10632 tests) in which the only failure was the subtype count above. **Three
+  deliberate exceptions, all of them one WARN saying a key reached nothing:** `thinkingDisplay` under
+  the shipped default `thinkingMode: off`; `thinkingDisplay` under `extended`, where the forwarding
+  works but the word itself is not sent (the budgeted shape is not given a `display` sibling —
+  unmeasured, and the deltas already arrive there); and `reasoningSummary` on a model routed to Chat
+  Completions, which has no such parameter. Each is said once per process, because each is a property
+  of the configuration rather than of the traffic. `thinkingDisplay` together with
+  `reasoningEffort: none` is a fourth inert pair and is deliberately **not** warned about, for the
+  reason `reasoningEffort: none` under `thinkingMode: off` is not: the operator asked for no
+  reasoning, so there is none to display, and telling them to turn reasoning on would be advice in
+  the wrong direction.
+
+- **Anthropic's forwarding is gated on configuration, not on the arrival of the deltas**, and the
+  distinction is not academic: on the budgeted dialect `thinking_delta` events arrive **today** and are
+  swallowed, so "forward whatever arrives" would have turned a user-visible reasoning stream on for
+  every existing `thinkingMode: extended` deployment without it asking. The trace round trip is
+  untouched in either position — a thinking block still feeds its signed payload whether or not a
+  person is watching.
+
+- **On OpenAI both delta families are forwarded**, `response.reasoning_summary_text.delta` and
+  `response.reasoning_text.delta`, under the one gate. Forwarding only the first would leave a model
+  that emits raw reasoning text showing nothing to a deployment that asked to see reasoning. Neither
+  becomes a `ReasoningTrace`: that payload is the `encrypted_content` the next request replays, and a
+  summary is not a substitute for it.
+
+- **The REPL prints it dim and marked.** A `[thinking]` marker opens each run — colour alone
+  distinguishes nothing on a monochrome terminal, which is a supported mode — and the text streams
+  inline like answer text does. Collapsing, toggling and a `/thinking` command stay out of scope.
+
+  **Not measured:** no billed call was made on either provider, so the two `display` wire values ride
+  an opted-in request unverified (`RD-1`), and whether `reasoning.summary` needs an `include` entry is
+  inferred from an absent SDK enum constant rather than measured (`RD-2`).
+
+  Design: [`reasoning-delta-stream.md`](docs/design/llm/reasoning-delta-stream.md).
+  Closes `anthropic-thinking-traces.md` §8 **F-4** and **F-7**, and `openai-responses-path.md` §7
+  **F-5**. Open items: `docs/backlog/reasoning-delta-stream-open-items.md`.
+
 ### LLM: what a model accepts is now a fact the framework can look up, and gpt-5.x tool calling works
 
 - **New provider-neutral SPI `at.aimon.core.llm.capability`** — `ModelCapabilities`,

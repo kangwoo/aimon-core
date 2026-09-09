@@ -398,6 +398,83 @@ class AnthropicThinkingRequestTest {
                 .noneMatch(w -> w.startsWith("temperature 0.4 is incompatible"));
     }
 
+    // ---- thinkingDisplay: the ask, and where it does not go ----
+
+    @Test
+    @DisplayName("thinkingDisplay unset leaves the adaptive body byte-identical to what it was")
+    void displayUnsetLeavesTheAdaptiveBodyUnchanged() {
+        // Criterion 6's Anthropic half, asserted on the serialised params rather than on a getter. A whole-body
+        // comparison for the same reason offSendsTodaysBodyUnchanged uses one: naming the key this change added
+        // cannot notice a second one it did not mean to add.
+        final String body = AnthropicFixtures.bodyOf(sendCapturingParams(
+                client(config().thinkingMode(AnthropicThinkingMode.ADAPTIVE).build()), LlmModel.builder().build()));
+
+        assertThat(body).isEqualTo("{\"max_tokens\":4096,\"messages\":[{\"content\":\"hi\",\"role\":\"user\"}],"
+                + "\"model\":\"claude-sonnet-4-5\",\"system\":\"You are helpful\",\"thinking\":{\"type\":\"adaptive\"}}");
+        assertThat(warnings()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("thinkingDisplay under ADAPTIVE writes display with the configured wire value")
+    void displayUnderAdaptiveReachesTheRequest() {
+        final JsonNode body = send(client(config().thinkingMode(AnthropicThinkingMode.ADAPTIVE)
+                .thinkingDisplay(AnthropicThinkingDisplay.SUMMARIZED).build()), LlmModel.builder().build());
+
+        assertThat(body.get("thinking").get("type").asText()).isEqualTo("adaptive");
+        assertThat(body.get("thinking").get("display").asText()).isEqualTo("summarized");
+        assertThat(warnings()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("the other constant reaches the wire under its own spelling")
+    void theUpdatesConstantReachesTheRequest() {
+        final JsonNode body = send(client(config().thinkingMode(AnthropicThinkingMode.ADAPTIVE)
+                .thinkingDisplay(AnthropicThinkingDisplay.UPDATES).build()), LlmModel.builder().build());
+
+        assertThat(body.get("thinking").get("display").asText()).isEqualTo("updates");
+    }
+
+    @Test
+    @DisplayName("thinkingDisplay under EXTENDED leaves the body untouched and says so once")
+    void displayUnderExtendedIsInertOnTheWireAndReported() {
+        // The budgeted shape is not given a display sibling (unmeasured, and the deltas already arrive there), so
+        // the word reaches nothing while the forwarding still works. Silence would let working output read as proof
+        // the field went out.
+        final JsonNode body = send(
+                client(config().thinkingMode(AnthropicThinkingMode.EXTENDED)
+                        .thinkingDisplay(AnthropicThinkingDisplay.SUMMARIZED).build()),
+                LlmModel.builder().reasoningEffort(ReasoningEffort.LOW).build());
+
+        assertThat(body.get("thinking").get("type").asText()).isEqualTo("enabled");
+        assertThat(body.get("thinking").has("display")).isFalse();
+        assertThat(warnings()).anyMatch(w -> w.contains("is not given a `display` field"));
+    }
+
+    @Test
+    @DisplayName("thinkingDisplay under the shipped default OFF reaches nothing, and says so once")
+    void displayUnderOffIsInertAndReported() {
+        final String body = AnthropicFixtures.bodyOf(
+                sendCapturingParams(client(config().thinkingDisplay(AnthropicThinkingDisplay.SUMMARIZED).build()),
+                        LlmModel.builder().build()));
+
+        assertThat(body).doesNotContain("thinking");
+        assertThat(warnings()).anyMatch(w -> w.contains("no display reaches the server"));
+    }
+
+    @Test
+    @DisplayName("the two inert-display warnings are each said once, however many requests are sent")
+    void inertDisplayIsReportedOncePerProcess() {
+        // A property of the configuration, not of the traffic: the condition is constant for the life of the client,
+        // so reportDivergence's once-per-signature rule is the right one and reportRecurringDivergence's 1/10/100
+        // cadence would repeat a sentence nothing changed about.
+        final AnthropicLlmClient client = client(config().thinkingDisplay(AnthropicThinkingDisplay.UPDATES).build());
+        send(client, LlmModel.builder().build());
+        send(client, LlmModel.builder().build());
+        send(client, LlmModel.builder().build());
+
+        assertThat(warnings()).filteredOn(w -> w.contains("no display reaches the server")).hasSize(1);
+    }
+
     @Test
     @DisplayName("nobody set a temperature, so nothing is omitted and nothing is said")
     void noTemperatureAnywhereIsSilent() {

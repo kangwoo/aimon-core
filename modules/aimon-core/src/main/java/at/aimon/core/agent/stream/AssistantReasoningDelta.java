@@ -6,43 +6,44 @@ import java.util.Objects;
 import at.aimon.core.agent.AgentRuntimeId;
 
 /**
- * Signals that a partial text fragment was received from the LLM as part of a streaming assistant response.
+ * Signals that a fragment of the model's <em>deliberation</em> was received during a streaming assistant response.
  *
  * <p>
- * <b>Use when:</b> the executor is operating in streaming mode and the provider emitted a new text-delta chunk.
- * Subscribers (notably REPL / UI renderers) append {@link #getDelta()} to their accumulator to show text to the user
- * progressively, yielding a Time-To-First-Token benefit over the non-streaming path.
+ * <b>This is not the assistant's answer, and it must never be treated as one.</b> It carries the model's reasoning
+ * summary (OpenAI) or thinking text (Anthropic) so a watcher can see that something is happening on an execution that
+ * would otherwise be silent for tens of seconds. It is never appended to the assistant message, never persisted to a
+ * transcript, and never summarised by {@link AssistantMessageReceived}. A subscriber that appends this and
+ * {@link AssistantTextDelta} to one accumulator reproduces, one layer out, exactly the failure this separate type
+ * exists to prevent — see {@link at.aimon.core.llm.streaming.ChunkAggregator} for the same invariant one layer in.
+ *
+ * <p>
+ * <b>Use when:</b> the executor is operating in streaming mode, the deployment opted in to a reasoning stream on its
+ * provider, and the provider emitted a reasoning delta. Renderers show it distinctly from answer text — the CLI paints
+ * it dim under a {@code [thinking]} marker.
  *
  * <p>
  * Extra fields:
  *
  * <ul>
- * <li>{@link #getDelta()} — the newly added text fragment; guaranteed non-empty
- * <li>{@link #getChunkIndex()} — provider chunk ordinal (0-based) within the current streaming attempt
+ * <li>{@link #getDelta()} — the newly added deliberation fragment; guaranteed non-empty
+ * <li>{@link #getChunkIndex()} — reasoning chunk ordinal (0-based) within the current streaming attempt
  * </ul>
  *
  * <p>
- * This is the assistant's <em>answer</em>. Its sibling {@link AssistantReasoningDelta} carries the model's
- * deliberation on the same stream, on a separate channel and a separate chunk-index sequence, and the two must not be
- * accumulated together — only this one becomes the assistant message.
- *
- * <p>
- * This event carries only the <i>incremental</i> text for the current chunk. No cumulative metadata (e.g.,
- * {@code cumulativeLength}) is attached — subscribers maintain their own accumulator and can derive totals themselves.
- *
- * <p>
  * Ordering contract: within a single streaming attempt, {@code chunkIndex} values are strictly monotonically
- * increasing starting at 0. An {@link AssistantTextStreamReset} event resets the ordering for the next attempt.
+ * increasing starting at 0. This is <em>its own</em> sequence, separate from {@link AssistantTextDelta}'s — sharing one
+ * counter would punch holes in the text-delta sequence and break that event's identical contract for a consumer using
+ * it to detect loss. An {@link AssistantTextStreamReset} event resets both for the next attempt.
  *
  * <p>
  * Immutable value object.
  */
-public final class AssistantTextDelta extends AgentExecutionEvent {
+public final class AssistantReasoningDelta extends AgentExecutionEvent {
 
     private final String delta;
     private final int chunkIndex;
 
-    private AssistantTextDelta(Builder builder) {
+    private AssistantReasoningDelta(Builder builder) {
         super(Objects.requireNonNull(builder.timestamp, "Timestamp cannot be null"),
                 Objects.requireNonNull(builder.agentRuntimeId, "AgentRuntimeId cannot be null"), builder.iteration);
         this.delta = Objects.requireNonNull(builder.delta, "delta cannot be null");
@@ -65,7 +66,7 @@ public final class AssistantTextDelta extends AgentExecutionEvent {
     }
 
     /**
-     * Returns the incremental text fragment carried by this chunk.
+     * Returns the incremental deliberation fragment carried by this chunk.
      *
      * @return the delta string (never null, never empty)
      */
@@ -74,7 +75,7 @@ public final class AssistantTextDelta extends AgentExecutionEvent {
     }
 
     /**
-     * Returns the provider-assigned chunk ordinal (0-based) within the current streaming attempt.
+     * Returns the reasoning chunk ordinal (0-based) within the current streaming attempt.
      *
      * @return the chunk index (always {@code >= 0})
      */
@@ -84,7 +85,7 @@ public final class AssistantTextDelta extends AgentExecutionEvent {
 
     @Override
     protected String eventName() {
-        return "AssistantTextDelta";
+        return "AssistantReasoningDelta";
     }
 
     @Override
@@ -100,7 +101,7 @@ public final class AssistantTextDelta extends AgentExecutionEvent {
         if (o == null || getClass() != o.getClass()) {
             return false;
         }
-        AssistantTextDelta that = (AssistantTextDelta) o;
+        AssistantReasoningDelta that = (AssistantReasoningDelta) o;
         return getIteration() == that.getIteration() && chunkIndex == that.chunkIndex
                 && getTimestamp().equals(that.getTimestamp()) && getAgentRuntimeId().equals(that.getAgentRuntimeId())
                 && delta.equals(that.delta);
@@ -111,7 +112,7 @@ public final class AssistantTextDelta extends AgentExecutionEvent {
         return Objects.hash(getTimestamp(), getAgentRuntimeId(), getIteration(), delta, chunkIndex);
     }
 
-    /** Builder for {@link AssistantTextDelta}. */
+    /** Builder for {@link AssistantReasoningDelta}. */
     public static final class Builder {
         private Instant timestamp;
         private AgentRuntimeId agentRuntimeId;
@@ -159,10 +160,10 @@ public final class AssistantTextDelta extends AgentExecutionEvent {
         }
 
         /**
-         * Sets the incremental text fragment.
+         * Sets the incremental deliberation fragment.
          *
          * @param delta
-         *            the text fragment (must not be null or empty)
+         *            the reasoning fragment (must not be null or empty)
          * @return this builder
          */
         public Builder delta(String delta) {
@@ -171,7 +172,7 @@ public final class AssistantTextDelta extends AgentExecutionEvent {
         }
 
         /**
-         * Sets the provider chunk ordinal (0-based).
+         * Sets the reasoning chunk ordinal (0-based).
          *
          * @param chunkIndex
          *            the chunk index (must be {@code >= 0})
@@ -183,16 +184,16 @@ public final class AssistantTextDelta extends AgentExecutionEvent {
         }
 
         /**
-         * Builds the {@link AssistantTextDelta} event.
+         * Builds the {@link AssistantReasoningDelta} event.
          *
-         * @return a new {@link AssistantTextDelta}
+         * @return a new {@link AssistantReasoningDelta}
          * @throws NullPointerException
          *             if {@code timestamp}, {@code agentRuntimeId}, or {@code delta} is null
          * @throws IllegalArgumentException
          *             if {@code iteration} or {@code chunkIndex} is negative, or {@code delta} is empty
          */
-        public AssistantTextDelta build() {
-            return new AssistantTextDelta(this);
+        public AssistantReasoningDelta build() {
+            return new AssistantReasoningDelta(this);
         }
     }
 }

@@ -320,6 +320,7 @@ llm:
 |---|---|---|
 | `thinkingMode` | 어느 thinking 요청 모양을 보낼 것인가 (아래 네 값) | `off` — thinking 파라미터를 보내지 않는다 |
 | `thinkingBudgetTokens` | `extended` 방언의 명시적 `budget_tokens` | 호출의 reasoning effort 에서 파생된다 |
+| `thinkingDisplay` | 모델의 thinking 텍스트를 요청하고 흘려보낼 것인가 (`summarized` \| `updates`) | 아무것도 요청하지 않고 아무것도 흘리지 않는다 |
 | `replayThinkingBlocks` | 저장된 thinking 블록을 다음 요청에 되실을 것인가 | `true` — 되싣는다 |
 
 `thinkingMode` 의 네 값이다. 대소문자를 가리지 않는다.
@@ -350,8 +351,17 @@ llm:
   아무것도 손대지 않은 배포에서 `thinkingBudgetTokens: 8000` 은 실제로 4095 로 나간다.** 천장을 올리는
   키는 여기 없다 — 그것은 에이전트 정의의 `model.maxTokens` 이고, 세 번째 설정 표면이다.
 
-`auto` · `adaptive` 아래에서 "얼마나 생각할까" 를 정하는 것은 호출의 `ReasoningEffort` 이고, **그것을
-설정으로 적는 키는 아직 없다.** 오늘 그 값은 에이전트의 `LlmModel` 이 들고 온다.
+`auto` · `adaptive` 아래에서 "얼마나 생각할까" 를 정하는 것은 호출의 `ReasoningEffort` 이고, 그것을
+배포 단위로 적는 키가 위의 공통 `llm.reasoningEffort` 다.
+
+**`thinkingDisplay` 는 한 키가 두 일을 하고, 어느 쪽이 무는지는 방언이 정한다.** `adaptive` 에서는 요청에
+`thinking.display` 를 쓰고 — 그것이 없으면 이 세대의 모델은 thinking 텍스트를 **아예 주지 않는다** —
+동시에 그 텍스트를 사용자에게 흘려보내는 게이트를 연다. `extended` 에서는 델타가 이미 오고 있으므로
+게이트만 열고 `display` 는 보내지 않으며, 클라이언트가 그 사실을 한 번 WARN 으로 말한다. 기본값 `off`
+아래에서는 아무것도 닿지 않고, 역시 한 번 말한다.
+
+REPL 은 그 텍스트를 답변과 구별되게 흐린 색으로, `[thinking]` 표시를 앞세워 인쇄한다. **적지 않으면
+요청도 화면도 이 키가 없던 때와 같다** — 매 요청 출력 토큰을 쓰는 값이므로 opt-in 이다.
 
 `replayThinkingBlocks: false` 는 이름 있는 실패 하나를 위한 비상구다 — *"Invalid `signature` in `thinking`
 block. The block is bound to a different conversation."* 서명은 시스템 프롬프트·도구·앞선 메시지가 그대로일
@@ -366,6 +376,31 @@ block. The block is bound to a different conversation."* 서명은 시스템 프
 
 같은 축의 스타터 프로퍼티는 [`embedding-agent-in-application.md`](embedding-agent-in-application.md) 에
 있다. 여기서도 표기는 섞이지 않는다 — CLI 는 `thinkingMode`, 스타터는 `thinking-mode` 다.
+
+#### OpenAI 전용 블록 — `llm.openai`
+
+`llm.anthropic` 의 짝이고 같은 규칙을 따른다. **openai 분기만 읽으므로** `provider: anthropic` 아래에
+적힌 이 블록은 무시되지 않고 기동을 실패시킨다. 오늘 키는 하나다.
+
+```yaml
+llm:
+  provider: openai
+  apiKey: "${OPENAI_API_KEY}"
+  model: gpt-5.1
+  openai:
+    reasoningSummary: auto
+```
+
+| 키 | 뜻 | 적지 않으면 |
+|---|---|---|
+| `reasoningSummary` | 모델의 추론 요약을 요청하고 흘려보낼 것인가 (`auto` \| `concise` \| `detailed`) | 아무것도 요청하지 않고 아무것도 흘리지 않는다 |
+
+이 벤더에서 추론 자체는 `encrypted_content` — 설계상 암호문 — 이므로 **요약이 사람이 읽을 수 있는 유일한
+대리물**이다. 그것이 이 키가 Anthropic 쪽의 `thinkingDisplay` 와 다른 이름을 가진 이유다.
+
+**Responses API 전용이다.** 모델이 추론 트레이스 왕복을 지원하지 않거나 그 엔드포인트가 꺼져 있으면
+요청은 Chat Completions 로 가는데 거기에는 이 파라미터가 없다 — 그 경우 클라이언트가 한 번 WARN 으로
+말한다(조용히 아무것도 하지 않는 대신).
 
 `cli.tracing`이 켜져 있으면 그 위에 한 겹이 더 붙는다 (line 697-712) — `TracingLlmClient`가 원본 클라이언트를
 감싸고, 같은 `Tracer`가 실행기 팩토리에도 주입되어 턴/이터레이션/도구 span까지 한 트리에 모인다. 감싸는 대상은

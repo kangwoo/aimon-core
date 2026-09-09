@@ -15,6 +15,7 @@ import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.impl.orca.OrcaAgentExecutionResult;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
 import at.aimon.core.agent.stream.AssistantMessageReceived;
+import at.aimon.core.agent.stream.AssistantReasoningDelta;
 import at.aimon.core.agent.stream.AssistantTextDelta;
 import at.aimon.core.agent.stream.AssistantTextStreamCompleted;
 import at.aimon.core.agent.stream.AssistantTextStreamReset;
@@ -31,7 +32,21 @@ import at.aimon.core.skill.policy.pending.PendingSkillRequest;
 import at.aimon.core.tools.task.TaskTool;
 
 public class OutputFormatter {
+    /** Marker opening a run of reasoning output, so the channel is distinguishable without colour. */
+    private static final String THINKING_MARKER = "[thinking] ";
+
     private final CliSettings settings;
+
+    /**
+     * Whether a reasoning run is currently open on the terminal line — cursor position, essentially.
+     *
+     * <p>
+     * This makes the formatter stateful for the first time, and it is rendering state rather than session state, so
+     * it belongs here rather than on {@link ReplSession} (whose one field is documented as living there to keep the
+     * rendering layer pure — the opposite direction). Written only from the event-consumer path,
+     * {@code ReplSession.captureAndDispatchEvent}, one turn at a time; hence not {@code volatile}.
+     */
+    private boolean reasoningLineOpen;
 
     /** OutputFormatter를 생성한다. */
     public OutputFormatter(CliSettings settings) {
@@ -305,6 +320,8 @@ public class OutputFormatter {
             displayAssistantMessageReceived(assistant);
         } else if (event instanceof AssistantTextDelta delta) {
             displayAssistantTextDelta(delta);
+        } else if (event instanceof AssistantReasoningDelta reasoning) {
+            displayAssistantReasoningDelta(reasoning);
         } else if (event instanceof AssistantTextStreamReset reset) {
             displayAssistantTextStreamReset(reset);
         } else if (event instanceof AssistantTextStreamCompleted streamCompleted) {
@@ -369,6 +386,13 @@ public class OutputFormatter {
      */
     public void displayAssistantTextDelta(AssistantTextDelta event) {
         Objects.requireNonNull(event, "event cannot be null");
+        // Answer text after deliberation: close the reasoning line first, or the two run together on one line. Of
+        // the three transitions off the reasoning channel this is the only one that prints the newline itself --
+        // the stream-reset banner and the stream-completed handler each already emit one of their own.
+        if (reasoningLineOpen) {
+            System.out.println();
+            reasoningLineOpen = false;
+        }
         final String delta = event.getDelta();
         if (settings.isColorOutput()) {
             System.out.print(ansi().fgGreen().a(delta).reset());
@@ -376,6 +400,48 @@ public class OutputFormatter {
             System.out.print(delta);
         }
         System.out.flush();
+    }
+
+    /**
+     * Renders one fragment of the model's deliberation, dimmed and marked, as it is produced.
+     *
+     * <p>
+     * The channel exists because a reasoning model can think for tens of seconds before it emits a visible token, and
+     * a silence that long is indistinguishable from a hang. It is <b>not</b> the assistant's answer: nothing here is
+     * accumulated into one, and {@link AssistantReasoningDelta} says why at the type.
+     *
+     * <p>
+     * Distinguished two ways rather than one. Dim ({@code fgBrightBlack}, this file's colour for de-emphasised
+     * output) against the answer's green, and a one-off {@code [thinking]} marker opening the run — because
+     * {@code settings.isColorOutput() == false} is a supported mode here, and on a monochrome terminal colour alone
+     * distinguishes nothing.
+     *
+     * <p>
+     * Collapsing it, toggling it, or giving it a scrollback region of its own is out of scope by design
+     * ({@code docs/design/llm/reasoning-model-enablement.md} §11 G-6): the channel ships, and what a terminal does
+     * with it beyond dimmed, distinct text is a separate decision.
+     */
+    public void displayAssistantReasoningDelta(AssistantReasoningDelta event) {
+        Objects.requireNonNull(event, "event cannot be null");
+        final String delta = event.getDelta();
+        if (!reasoningLineOpen) {
+            // Leading newline for the same reason the retry banner has one: lift the run off whatever line is in
+            // progress. The marker is printed once per run, not once per delta.
+            System.out.println();
+            printDim(THINKING_MARKER);
+            reasoningLineOpen = true;
+        }
+        printDim(delta);
+        System.out.flush();
+    }
+
+    /** Writes {@code text} inline, dimmed when colour is on. No newline — reasoning streams like text does. */
+    private void printDim(String text) {
+        if (settings.isColorOutput()) {
+            System.out.print(ansi().fgBrightBlack().a(text).reset());
+        } else {
+            System.out.print(text);
+        }
     }
 
     /**
@@ -387,6 +453,10 @@ public class OutputFormatter {
      */
     public void displayAssistantTextStreamReset(AssistantTextStreamReset event) {
         Objects.requireNonNull(event, "event cannot be null");
+        // The attempt is gone, reasoning included -- this event bounds the attempt, not the text channel. Clear the
+        // flag WITHOUT printing: the banner's own leading \n below already closes whatever line was open, and a
+        // second one would put a blank gap in front of it.
+        reasoningLineOpen = false;
         // Leading \n lifts the banner off any in-progress delta line; colorPrintln supplies the single trailing
         // newline via println, so do NOT append another \n here (would yield a blank gap before the next attempt).
         String banner = "\n[Retrying stream: " + event.getReason() + "]";
@@ -401,6 +471,10 @@ public class OutputFormatter {
      */
     public void displayAssistantTextStreamCompleted(AssistantTextStreamCompleted event) {
         Objects.requireNonNull(event, "event cannot be null");
+        // Same as the reset above: clear without printing. The unconditional println below is the terminating
+        // newline for either channel, and adding one for the reasoning line would leave a stray blank line behind a
+        // stream that ended mid-thought.
+        reasoningLineOpen = false;
         System.out.println();
         System.out.flush();
     }

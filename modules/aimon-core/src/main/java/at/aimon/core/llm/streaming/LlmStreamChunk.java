@@ -12,10 +12,14 @@ import at.aimon.core.llm.ToolUse;
  * Provider-neutral representation of a single streaming chunk.
  *
  * <p>
- * A chunk is one of two kinds:
+ * A chunk is one of four kinds:
  * <ul>
  * <li>{@link Kind#TEXT_DELTA} — carries a non-empty {@code textDelta} string added by the assistant to the running
  * response text. Empty deltas are filtered out by the provider mapper.</li>
+ * <li>{@link Kind#REASONING_DELTA} — carries a non-empty {@code reasoningDelta} string: the model's deliberation,
+ * never its answer. It is opt-in per provider and off by default, and it is kept out of the response text at every
+ * layer — see the constant's own javadoc.</li>
+ * <li>{@link Kind#TOOL_USE_READY} — a completed tool_use block, surfaced early (see below).</li>
  * <li>{@link Kind#STREAM_END} — terminal marker emitted exactly once per sink lifecycle. May carry the cumulative
  * {@link TokenUsage} and the provider finish reason when available.</li>
  * </ul>
@@ -44,6 +48,23 @@ public final class LlmStreamChunk {
         /** Non-empty text delta to be appended to the running text. */
         TEXT_DELTA,
         /**
+         * Non-empty delta of the model's <em>deliberation</em> — its reasoning summary or thinking text, not its
+         * answer.
+         *
+         * <p>
+         * Carried in its own field ({@link #getReasoningDelta()}) rather than in {@code textDelta}, and never
+         * accumulated into {@link ChunkAggregator#peekText()} or {@link ChunkAggregator#toLlmResponse()}. That
+         * separation is a privacy invariant, not a rendering nicety: {@code peekText()} is what the executor commits
+         * to the transcript as the assistant's message when an execution is cancelled mid-stream, so folding
+         * deliberation into it would persist the model's private reasoning as its public answer — and a transcript is
+         * not recoverable.
+         *
+         * <p>
+         * Emitted only when the deployment asked for it: both providers gate the ask <em>and</em> the forwarding on
+         * an opt-in configuration key that is off by default.
+         */
+        REASONING_DELTA,
+        /**
          * A single tool_use block has finished streaming and its arguments are fully parsed. Carries the completed
          * {@link ToolUse}. Advisory / overlap-only (design §4.1) — the final response's tool uses are still those
          * built by {@link ChunkAggregator#toLlmResponse()}. Not emitted by every provider.
@@ -68,6 +89,28 @@ public final class LlmStreamChunk {
             throw new IllegalArgumentException("textDelta must not be empty; provider mapper must filter empty deltas");
         }
         return new Builder().kind(Kind.TEXT_DELTA).index(index).textDelta(textDelta).timestamp(Instant.now()).build();
+    }
+
+    /**
+     * Creates a reasoning-delta chunk. The text is the model's deliberation, never its answer —
+     * {@link ChunkAggregator} keeps it out of {@link ChunkAggregator#peekText()} and
+     * {@link ChunkAggregator#toLlmResponse()}.
+     *
+     * @param index
+     *            zero-based chunk ordinal; must be non-negative
+     * @param reasoningDelta
+     *            the added deliberation text; must be non-null and non-empty (empty deltas must be filtered by the
+     *            provider mapper)
+     * @return a new {@code REASONING_DELTA} chunk
+     */
+    public static LlmStreamChunk reasoningDelta(int index, String reasoningDelta) {
+        Objects.requireNonNull(reasoningDelta, "reasoningDelta");
+        if (reasoningDelta.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "reasoningDelta must not be empty; provider mapper must filter empty deltas");
+        }
+        return new Builder().kind(Kind.REASONING_DELTA).index(index).reasoningDelta(reasoningDelta)
+                .timestamp(Instant.now()).build();
     }
 
     /**
@@ -135,6 +178,7 @@ public final class LlmStreamChunk {
 
     private final Kind kind;
     private final String textDelta;
+    private final String reasoningDelta;
     private final ToolUse toolUse;
     private final TokenUsage tokenUsage;
     private final Optional<String> finishReason;
@@ -153,6 +197,7 @@ public final class LlmStreamChunk {
         this.stopReason = builder.stopReason == null ? StopReason.UNKNOWN : builder.stopReason;
         this.tokenUsage = builder.tokenUsage;
         this.textDelta = builder.textDelta;
+        this.reasoningDelta = builder.reasoningDelta;
         this.toolUse = builder.toolUse;
 
         switch (this.kind) {
@@ -160,8 +205,22 @@ public final class LlmStreamChunk {
                 if (this.textDelta == null || this.textDelta.isEmpty()) {
                     throw new IllegalArgumentException("TEXT_DELTA chunk requires non-empty textDelta");
                 }
+                if (this.reasoningDelta != null) {
+                    throw new IllegalArgumentException("TEXT_DELTA chunk must not carry reasoningDelta");
+                }
                 if (this.toolUse != null) {
                     throw new IllegalArgumentException("TEXT_DELTA chunk must not carry a toolUse");
+                }
+            }
+            case REASONING_DELTA -> {
+                if (this.reasoningDelta == null || this.reasoningDelta.isEmpty()) {
+                    throw new IllegalArgumentException("REASONING_DELTA chunk requires non-empty reasoningDelta");
+                }
+                if (this.textDelta != null) {
+                    throw new IllegalArgumentException("REASONING_DELTA chunk must not carry textDelta");
+                }
+                if (this.toolUse != null) {
+                    throw new IllegalArgumentException("REASONING_DELTA chunk must not carry a toolUse");
                 }
             }
             case TOOL_USE_READY -> {
@@ -171,10 +230,16 @@ public final class LlmStreamChunk {
                 if (this.textDelta != null) {
                     throw new IllegalArgumentException("TOOL_USE_READY chunk must not carry textDelta");
                 }
+                if (this.reasoningDelta != null) {
+                    throw new IllegalArgumentException("TOOL_USE_READY chunk must not carry reasoningDelta");
+                }
             }
             case STREAM_END -> {
                 if (this.textDelta != null) {
                     throw new IllegalArgumentException("STREAM_END chunk must not carry textDelta");
+                }
+                if (this.reasoningDelta != null) {
+                    throw new IllegalArgumentException("STREAM_END chunk must not carry reasoningDelta");
                 }
                 if (this.toolUse != null) {
                     throw new IllegalArgumentException("STREAM_END chunk must not carry a toolUse");
@@ -201,6 +266,15 @@ public final class LlmStreamChunk {
      */
     public Optional<String> getTextDelta() {
         return Optional.ofNullable(textDelta);
+    }
+
+    /**
+     * @return the deliberation delta for {@link Kind#REASONING_DELTA} chunks; empty for the other kinds. Never mix
+     *         this with {@link #getTextDelta()}: the two answer different questions and only the second is the
+     *         assistant's answer.
+     */
+    public Optional<String> getReasoningDelta() {
+        return Optional.ofNullable(reasoningDelta);
     }
 
     /**
@@ -236,6 +310,8 @@ public final class LlmStreamChunk {
     public String toString() {
         return switch (kind) {
             case TEXT_DELTA -> "LlmStreamChunk{TEXT_DELTA, index=" + index + ", len=" + textDelta.length() + '}';
+            case REASONING_DELTA ->
+                "LlmStreamChunk{REASONING_DELTA, index=" + index + ", len=" + reasoningDelta.length() + '}';
             case TOOL_USE_READY -> "LlmStreamChunk{TOOL_USE_READY, index=" + index + ", tool=" + toolUse.getName()
                     + ", id=" + toolUse.getId() + '}';
             case STREAM_END -> "LlmStreamChunk{STREAM_END, index=" + index + ", finish=" + finishReason.orElse("-")
@@ -249,6 +325,7 @@ public final class LlmStreamChunk {
     public static final class Builder {
         private Kind kind;
         private String textDelta;
+        private String reasoningDelta;
         private ToolUse toolUse;
         private TokenUsage tokenUsage;
         private Optional<String> finishReason;
@@ -266,6 +343,11 @@ public final class LlmStreamChunk {
 
         public Builder textDelta(String textDelta) {
             this.textDelta = textDelta;
+            return this;
+        }
+
+        public Builder reasoningDelta(String reasoningDelta) {
+            this.reasoningDelta = reasoningDelta;
             return this;
         }
 

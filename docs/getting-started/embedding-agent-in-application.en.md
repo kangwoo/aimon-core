@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/embedding-agent-in-application.md
-source_commit: 320fbbc
+source_commit: 3dd56df
 ---
 
 # Embedding an AIMON agent in your application
@@ -715,12 +715,15 @@ public SseEmitter stream(@RequestParam String threadId, @RequestParam String inp
 - The publisher from `events(...)` can be **subscribed to by several observers at once**.
 - Subscribers are a **side channel** — an exception thrown there does not cancel the turn. Design so that
   an observability failure does not break the user's answer.
-- There are **15** event types in `at.aimon.core.agent.stream` (it is sealed, so this is all of them) —
+- There are **16** event types in `at.aimon.core.agent.stream` (it is sealed, so this is all of them) —
   `IterationStarted` / `IterationCompleted` / `AssistantMessageReceived` / `AssistantTextDelta` /
-  `AssistantTextStreamReset` / `AssistantTextStreamCompleted` / `ToolUseStarted` / `ToolResultReady` /
-  `SubagentTaskCompleted` / `SkillTurnSuspendedEvent` / `CompactBoundary` / `InterruptedAt` / `RejectedAt` /
-  `ExecutionCompleted` / `ExecutionError`. `getIteration()` is a `final` method on the sealed base class,
-  so it can be read from every subtype.
+  `AssistantReasoningDelta` / `AssistantTextStreamReset` / `AssistantTextStreamCompleted` / `ToolUseStarted` /
+  `ToolResultReady` / `SubagentTaskCompleted` / `SkillTurnSuspendedEvent` / `CompactBoundary` / `InterruptedAt` /
+  `RejectedAt` / `ExecutionCompleted` / `ExecutionError`. `getIteration()` is a `final` method on the sealed
+  base class, so it can be read from every subtype.
+- `AssistantReasoningDelta` carries the model's **deliberation**, not its answer. Appending both channels to
+  one accumulator mixes the model's thinking into the answer the user sees — which is why it is a separate
+  type. The channel is opt-in per provider and off by default.
 
 ### 7.1 The honest story about the queue
 

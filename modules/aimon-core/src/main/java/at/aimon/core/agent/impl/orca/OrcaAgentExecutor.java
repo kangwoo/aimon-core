@@ -71,6 +71,7 @@ import at.aimon.core.agent.queue.QueuedInputPriority;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.session.transcript.TranscriptManager;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
+import at.aimon.core.agent.stream.AssistantReasoningDelta;
 import at.aimon.core.agent.stream.AssistantTextDelta;
 import at.aimon.core.agent.stream.AssistantTextStreamCompleted;
 import at.aimon.core.agent.stream.AssistantTextStreamReset;
@@ -3085,9 +3086,16 @@ public class OrcaAgentExecutor
 
     /**
      * PSTREAM-09: per-iteration streaming sink. Bridges {@link LlmStreamChunk}s delivered by the gateway into
-     * {@link AssistantTextDelta} / {@link AssistantTextStreamCompleted} / {@link AssistantTextStreamReset} events,
-     * while mirroring the text into a {@link ChunkAggregator} so {@link #peekText()} exposes the prefix already shown
-     * to the user in the event of a mid-stream cancel.
+     * {@link AssistantTextDelta} / {@link AssistantReasoningDelta} / {@link AssistantTextStreamCompleted} /
+     * {@link AssistantTextStreamReset} events, while mirroring the text into a {@link ChunkAggregator} so
+     * {@link #peekText()} exposes the prefix already shown to the user in the event of a mid-stream cancel.
+     *
+     * <p>
+     * The reasoning channel is deliberately absent from {@link #peekText()}: the aggregator keeps it in a second
+     * buffer, so a mid-stream cancel commits the assistant's answer to the transcript and never its deliberation.
+     * The two channels carry <em>separate</em> chunk-index sequences, both reset together on
+     * {@link #onRetry(int, int, String)} — sharing one would leave holes in the text sequence and break the ordering
+     * contract {@link AssistantTextDelta#getChunkIndex()} documents.
      *
      * <p>
      * Lifecycle:
@@ -3109,6 +3117,7 @@ public class OrcaAgentExecutor
         private final StreamingToolScheduler streamingToolScheduler;
         private ChunkAggregator aggregator;
         private int nextChunkIndex;
+        private int nextReasoningChunkIndex;
         private boolean completionEmitted;
 
         StreamingEventSink(ExecutionScope scope, int iteration, CancellationSignal cancellationSignal,
@@ -3121,6 +3130,7 @@ public class OrcaAgentExecutor
             this.streamingToolScheduler = streamingToolScheduler;
             this.aggregator = new ChunkAggregator();
             this.nextChunkIndex = 0;
+            this.nextReasoningChunkIndex = 0;
             this.completionEmitted = false;
         }
 
@@ -3135,6 +3145,20 @@ public class OrcaAgentExecutor
                     // Honour a trip landed during streaming. Throws CancelledExecutionException out of the
                     // provider's stream loop; invokeGateway catches it, preserves the partial prefix, and rethrows.
                     cancellationSignal.checkpoint();
+                }
+                case REASONING_DELTA -> {
+                    // Deliberation, not answer. Emitted on its own event and its own index sequence, and never fed
+                    // into the text buffer peekText() reads — see the aggregator.
+                    //
+                    // No cancellation checkpoint here, deliberately, and the reason has to be the abort lever rather
+                    // than the next chunk: a long deliberation is exactly the case this channel exists for, so "the
+                    // next text delta follows closely" is the one thing it does not promise. What does hold is that
+                    // both providers register cancellation.onCancel(<stream>::close) before consuming
+                    // (AnthropicLlmClient, OpenAILlmClient), so a trip during a reasoning-only window closes the HTTP
+                    // stream from the interrupting thread and the call unwinds as LlmCallCancelledException — the
+                    // same preserve-the-prefix arm a checkpoint here would have reached, one exception later.
+                    final String delta = chunk.getReasoningDelta().orElseThrow();
+                    scope.eventDispatcher.emitAssistantReasoningDelta(iteration, delta, nextReasoningChunkIndex++);
                 }
                 case TOOL_USE_READY -> {
                     // Streaming-tool overlap: a tool_use block finished streaming. Hand it to the scheduler so a
@@ -3174,6 +3198,7 @@ public class OrcaAgentExecutor
                     reason);
             this.aggregator = new ChunkAggregator();
             this.nextChunkIndex = 0;
+            this.nextReasoningChunkIndex = 0;
             this.completionEmitted = false;
         }
 

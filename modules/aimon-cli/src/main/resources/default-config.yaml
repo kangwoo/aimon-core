@@ -39,9 +39,9 @@ llm:
 #                                               #   `lowestReasoningEffort` -- writing both fails startup
 
 # Anthropic-only settings. Unlike `modelCapabilities` above, this block is read by the anthropic
-# provider alone -- all three key names carry Anthropic's own vocabulary -- so writing it under
+# provider alone -- all four key names carry Anthropic's own vocabulary -- so writing it under
 # `provider: openai` fails at startup rather than being ignored. Leave it out and the request is
-# byte-for-byte what it was: mode OFF, no budget, replay on.
+# byte-for-byte what it was: mode OFF, no budget, no display, replay on.
 #  anthropic:
 #    thinkingMode: extended            # off (default) | extended | adaptive | auto -- case-insensitive
 #                                      #   off      send no thinking parameter (the model may still think)
@@ -57,9 +57,31 @@ llm:
 #                                      #   is clamped below the request's max_tokens (4096 by default, so a
 #                                      #   larger number is sent as max_tokens - 1 with a WARN). Raising that
 #                                      #   ceiling is the agent definition's `model.maxTokens`, not a key here.
+#    thinkingDisplay: summarized       # unset by default. summarized | updates -- ASK for the model's thinking
+#                                      #   text and show it live, dimmed, as it is produced.
+#                                      #   Two effects from one key, and which one bites depends on the mode:
+#                                      #     adaptive  writes thinking.display (without which this model
+#                                      #               generation omits the text entirely) AND forwards it
+#                                      #     extended  forwards only -- that dialect emits the deltas already
+#                                      #               and takes no display field; a WARN says so once
+#                                      #     off       nothing reaches it; a WARN says so once
+#                                      #   It costs output tokens on every request, including the blocking
+#                                      #   ones with nothing to render them, which is why it is opt-in.
 #    replayThinkingBlocks: true        # default true. false strips stored thinking blocks from the history
 #                                      #   -- the remedy for "Invalid signature in thinking block. The block
 #                                      #   is bound to a different conversation."
+
+# OpenAI-only settings. The mirror of the block above and read by the openai provider alone, so writing
+# it under `provider: anthropic` fails at startup rather than being ignored. Leave it out and the request
+# is byte-for-byte what it was.
+#  openai:
+#    reasoningSummary: auto            # unset by default. auto | concise | detailed -- ASK for a summary of
+#                                      #   the model's reasoning and show it live, dimmed, as it is produced.
+#                                      #   On this endpoint the reasoning itself is encrypted_content, so a
+#                                      #   summary is the only readable form of it that exists.
+#                                      #   Responses API ONLY: a model that does not do the reasoning trace
+#                                      #   round trip goes to Chat Completions, which has no such parameter,
+#                                      #   and a WARN says so once. Costs output tokens, hence opt-in.
 
 # Agent Configuration
 agent:

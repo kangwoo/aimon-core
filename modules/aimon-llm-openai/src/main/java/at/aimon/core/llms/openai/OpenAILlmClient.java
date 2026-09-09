@@ -318,12 +318,49 @@ public class OpenAILlmClient implements LlmClient {
             // are ours, the exchange tags the ones that come back. getProviderName() is overridable, so resolving it
             // in two places at two times is how a subclass ends up tagging traces it then drops as foreign.
             final String providerName = getProviderName();
-            return new OpenAIResponsesExchange(client, responsesConverter, responsesRequestFactory.build(systemPrompt,
-                    messages, tools, modelConfig, capabilities, modelName, providerName), providerName,
-                    this::reportDivergence);
+            return new OpenAIResponsesExchange(client, responsesConverter,
+                    responsesRequestFactory.build(systemPrompt, messages, tools, modelConfig, capabilities, modelName,
+                            providerName),
+                    providerName, this::reportDivergence, config.getReasoningSummary().isPresent());
         }
+        reportInertReasoningSummary(capabilities, modelName);
         return new OpenAIChatCompletionsExchange(client, converter, buildChatRequest(systemPrompt, messages, tools,
                 modelConfig, streamingOptions, capabilities, modelName));
+    }
+
+    /**
+     * Says once that {@code reasoningSummary} reaches nothing because this request went to Chat Completions.
+     *
+     * <p>
+     * {@code reasoning.summary} is a Responses parameter and Chat Completions has no counterpart — no ask goes out, no
+     * summary events come back, and nothing else in the system would tell an operator that the key they set is inert.
+     * That is the "configured and never read" state this client reports everywhere else, and it is a different thing
+     * from a model that received the ask and ignored it: that one is quiet because the model produced no summary,
+     * which is honest, while this one is quiet because nobody asked.
+     *
+     * <p>
+     * The message names which of the two conditions routed the request, because the remedies differ: a model that
+     * does not do the reasoning round trip needs a different model, while
+     * {@code responsesApiEnabled=false} is a switch the operator set. Once per signature rather than per call, for
+     * {@link #reportDivergence}'s stated reason — both are properties of the configuration.
+     */
+    private void reportInertReasoningSummary(ModelCapabilities capabilities, String modelName) {
+        if (config.getReasoningSummary().isEmpty()) {
+            return;
+        }
+        if (!capabilities.supportsReasoningTraceRoundTrip()) {
+            reportDivergence("reasoningSummaryOffResponsesPath@" + modelName,
+                    "reasoningSummary {} is configured but {} is not routed to the Responses API (it does not "
+                            + "support the reasoning trace round trip), and Chat Completions has no reasoning.summary "
+                            + "parameter. Nothing is asked for and no reasoning text streams.",
+                    config.getReasoningSummary().get(), modelName);
+            return;
+        }
+        reportDivergence("reasoningSummaryWithResponsesDisabled@" + modelName,
+                "reasoningSummary {} is configured but the Responses API is disabled for this client, so {} goes to "
+                        + "Chat Completions, which has no reasoning.summary parameter. Nothing is asked for and no "
+                        + "reasoning text streams. Enable the Responses API to act on it.",
+                config.getReasoningSummary().get(), modelName);
     }
 
     /**

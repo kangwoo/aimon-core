@@ -26,6 +26,7 @@ import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.session.TurnId;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
 import at.aimon.core.agent.stream.AssistantMessageReceived;
+import at.aimon.core.agent.stream.AssistantReasoningDelta;
 import at.aimon.core.agent.stream.AssistantTextDelta;
 import at.aimon.core.agent.stream.AssistantTextStreamCompleted;
 import at.aimon.core.agent.stream.AssistantTextStreamReset;
@@ -149,6 +150,12 @@ final class AgentExecutionEventPayload {
             e.getTokenUsage().ifPresent(tokens -> map.put("tokens", tokensToMap(tokens)));
         } else if (event instanceof AssistantTextDelta e) {
             map.put(KEY_TYPE, "AssistantTextDelta");
+            map.put("delta", e.getDelta());
+            map.put("chunk", e.getChunkIndex());
+        } else if (event instanceof AssistantReasoningDelta e) {
+            // Same two keys as the text frame, under a different type name: a receiver that confused the two would
+            // render deliberation as the answer, which is the whole reason the two are separate types.
+            map.put(KEY_TYPE, "AssistantReasoningDelta");
             map.put("delta", e.getDelta());
             map.put("chunk", e.getChunkIndex());
         } else if (event instanceof AssistantTextStreamReset e) {
@@ -299,6 +306,9 @@ final class AgentExecutionEventPayload {
             }
             case "AssistantTextDelta" ->
                 AssistantTextDelta.builder().timestamp(timestamp).agentRuntimeId(context).iteration(iteration)
+                        .delta(asString(payload.get("delta"))).chunkIndex(asInt(payload.get("chunk"))).build();
+            case "AssistantReasoningDelta" ->
+                AssistantReasoningDelta.builder().timestamp(timestamp).agentRuntimeId(context).iteration(iteration)
                         .delta(asString(payload.get("delta"))).chunkIndex(asInt(payload.get("chunk"))).build();
             case "AssistantTextStreamReset" -> AssistantTextStreamReset.builder().timestamp(timestamp)
                     .agentRuntimeId(context).iteration(iteration).previousAttemptIndex(asInt(payload.get("prev")))

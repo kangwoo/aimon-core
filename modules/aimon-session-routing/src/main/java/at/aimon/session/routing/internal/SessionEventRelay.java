@@ -18,6 +18,7 @@ import at.aimon.core.agent.session.TurnId;
 import at.aimon.core.agent.session.signal.SessionSignal;
 import at.aimon.core.agent.session.signal.SessionSignalBus;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
+import at.aimon.core.agent.stream.AssistantReasoningDelta;
 import at.aimon.core.agent.stream.AssistantTextDelta;
 
 /**
@@ -39,19 +40,42 @@ import at.aimon.core.agent.stream.AssistantTextDelta;
  *
  * <p>
  * <b>Overflow policy</b> (design §5.5: relay_remote_buffer_drop_total). The remote channel is best-effort, but not all
- * frames are equally droppable. {@link AssistantTextDelta} is high-volume and individually low-value, whereas the
- * terminal frames — {@link at.aimon.core.agent.stream.ExecutionCompleted ExecutionCompleted},
+ * frames are equally droppable, and there are <b>three</b> ranks rather than two:
+ *
+ * <ol>
+ * <li>{@link AssistantReasoningDelta} — sacrificed first. Higher-volume still than answer text, and nothing
+ * downstream needs it at all: no transcript, no summary, no result field.</li>
+ * <li>{@link AssistantTextDelta} — high-volume and individually low-value, but it builds the assistant message, which
+ * {@link at.aimon.core.agent.stream.AssistantMessageReceived AssistantMessageReceived} summarises again at the end of
+ * the iteration.</li>
+ * <li>Everything else — structural. The terminal frames
+ * ({@link at.aimon.core.agent.stream.ExecutionCompleted ExecutionCompleted},
  * {@link at.aimon.core.agent.stream.ExecutionError ExecutionError},
- * {@link at.aimon.core.agent.stream.InterruptedAt InterruptedAt} and
- * {@link at.aimon.core.agent.stream.RejectedAt RejectedAt} — are what tells a remote subscriber the turn is over. A
- * subscriber that loses a terminal frame never completes, so on overflow this relay discards the oldest buffered text
- * delta first and only sacrifices a structural frame when the buffer holds nothing else. Drops are counted
+ * {@link at.aimon.core.agent.stream.InterruptedAt InterruptedAt},
+ * {@link at.aimon.core.agent.stream.RejectedAt RejectedAt}) are what tells a remote subscriber the turn is over, and a
+ * subscriber that loses one never completes.</li>
+ * </ol>
+ *
+ * <p>
+ * On overflow the relay evicts the oldest buffered frame that ranks no higher than the incoming one and is not
+ * structural, scanning by rank ascending — so under pressure thinking is sacrificed before answer text, and an
+ * incoming reasoning delta is itself dropped rather than displacing buffered text. Only when nothing droppable is
+ * buffered <em>and</em> the incoming frame is structural is a structural frame sacrificed. Drops are counted
  * ({@link #getDroppedEventCount()}) and reported at {@link #close()} so a gap is never silent.
  */
 public final class SessionEventRelay implements Consumer<AgentExecutionEvent>, AutoCloseable {
 
     /** Bounded queue capacity per relay — design §5.5 recommended size. */
     public static final int RELAY_QUEUE_CAPACITY = 1024;
+
+    /** Sacrificed first: nothing downstream needs a reasoning delta once it has been rendered. */
+    private static final int RANK_REASONING = 0;
+
+    /** Sacrificed after reasoning: a text delta builds the assistant message. */
+    private static final int RANK_TEXT = 1;
+
+    /** Never sacrificed while anything droppable is buffered: this is how a subscriber learns the turn ended. */
+    private static final int RANK_STRUCTURAL = 2;
 
     private static final Logger log = LoggerFactory.getLogger(SessionEventRelay.class);
 
@@ -113,11 +137,17 @@ public final class SessionEventRelay implements Consumer<AgentExecutionEvent>, A
     }
 
     /**
-     * Makes room for {@code incoming} by discarding the least valuable frame available, preferring a buffered text
-     * delta over any structural frame. Never blocks; runs on the turn execution thread.
+     * Makes room for {@code incoming} by discarding the least valuable frame available: the oldest buffered frame
+     * whose rank is no higher than the incoming frame's and below {@link #RANK_STRUCTURAL}. Never blocks; runs on the
+     * turn execution thread.
+     *
+     * <p>
+     * The "no higher than the incoming frame's" half is what makes the ranks an ordering rather than a wider boolean.
+     * Without it an incoming reasoning delta would evict buffered answer text, which is the opposite of the intent —
+     * under pressure the choice is between dropping thinking and dropping the answer, and it is not close.
      */
     private void handleOverflow(AgentExecutionEvent incoming) {
-        final boolean freedSlot = discardOldestDelta();
+        final boolean freedSlot = discardOldestDroppable(evictionRank(incoming));
         if (freedSlot || !isDroppable(incoming)) {
             if (!freedSlot) {
                 // The buffer holds only structural frames and so does the incoming event. Sacrifice the oldest one:
@@ -126,7 +156,8 @@ public final class SessionEventRelay implements Consumer<AgentExecutionEvent>, A
             }
             remoteBuffer.offer(incoming);
         }
-        // Otherwise the buffer is all structural frames and the incoming event is a text delta — drop the delta.
+        // Otherwise nothing at or below the incoming frame's rank is buffered and the incoming frame is itself
+        // droppable — drop it.
         final long dropped = droppedEvents.incrementAndGet();
         if (dropped == 1) {
             log.warn("Relay remote buffer overflow for session {} — remote event stream now has a gap", sessionId);
@@ -136,27 +167,50 @@ public final class SessionEventRelay implements Consumer<AgentExecutionEvent>, A
     }
 
     /**
-     * Removes the oldest buffered {@link AssistantTextDelta}, if any.
+     * Removes the oldest buffered frame that is droppable and ranks no higher than {@code incomingRank}, scanning the
+     * ranks in ascending order so a reasoning delta is always sacrificed before a text delta.
      *
-     * @return {@code true} when a delta was removed and a slot is now free
+     * <p>
+     * Two passes rather than one because the buffer is in arrival order, not rank order: a single pass would remove
+     * whichever droppable frame is oldest, which for a mixed buffer is the wrong one about half the time.
+     *
+     * @param incomingRank
+     *            the rank of the frame asking for room; nothing above it is sacrificed for it
+     * @return {@code true} when a frame was removed and a slot is now free
      */
-    private boolean discardOldestDelta() {
-        for (Iterator<AgentExecutionEvent> it = remoteBuffer.iterator(); it.hasNext();) {
-            if (isDroppable(it.next())) {
-                it.remove();
-                return true;
+    private boolean discardOldestDroppable(int incomingRank) {
+        for (int rank = RANK_REASONING; rank <= Math.min(incomingRank, RANK_STRUCTURAL - 1); rank++) {
+            for (Iterator<AgentExecutionEvent> it = remoteBuffer.iterator(); it.hasNext();) {
+                if (evictionRank(it.next()) == rank) {
+                    it.remove();
+                    return true;
+                }
             }
         }
         return false;
     }
 
     /**
-     * Text deltas are the only frames safe to lose: they are high-volume, and the assistant message they build is
-     * summarised again by {@code AssistantMessageReceived} at the end of the iteration. Every other frame is either
-     * structural or terminal.
+     * Whether a frame may be sacrificed while a structural one is buffered. Kept as a name of its own because it is
+     * the vocabulary the design and the drop-policy documentation use; the ordering among droppable frames is
+     * {@link #evictionRank}'s.
      */
     private static boolean isDroppable(AgentExecutionEvent event) {
-        return event instanceof AssistantTextDelta;
+        return evictionRank(event) < RANK_STRUCTURAL;
+    }
+
+    /**
+     * What a frame is worth when the buffer is full — lower is sacrificed first. See the class javadoc for the three
+     * ranks and why reasoning ranks below answer text.
+     */
+    private static int evictionRank(AgentExecutionEvent event) {
+        if (event instanceof AssistantReasoningDelta) {
+            return RANK_REASONING;
+        }
+        if (event instanceof AssistantTextDelta) {
+            return RANK_TEXT;
+        }
+        return RANK_STRUCTURAL;
     }
 
     /**
