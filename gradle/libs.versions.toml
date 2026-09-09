@@ -81,7 +81,7 @@ playwright = "1.58.0"
 
 # Container
 docker-java = "3.7.1"
-kubernetes-client = "24.0.0"
+kubernetes-client = "27.0.0"
 
 # HTTP & Networking
 okhttp = "5.5.0"
