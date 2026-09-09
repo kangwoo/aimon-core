@@ -4,6 +4,7 @@ import java.time.Duration;
 import java.util.Objects;
 import java.util.Optional;
 
+import at.aimon.core.llm.ReasoningEffort;
 import at.aimon.core.llm.capability.InMemoryModelCapabilityRegistry;
 import at.aimon.core.llm.capability.ModelCapabilityRegistry;
 
@@ -48,6 +49,7 @@ public final class AnthropicConfig {
     private final Double temperature;
     private final int maxTokens;
     private final Duration timeout;
+    private final ReasoningEffort reasoningEffort;
     private final AnthropicThinkingMode thinkingMode;
     private final Integer thinkingBudgetTokens;
     private final boolean replayThinkingBlocks;
@@ -60,6 +62,7 @@ public final class AnthropicConfig {
         this.temperature = builder.temperature;
         this.maxTokens = builder.maxTokens;
         this.timeout = builder.timeout;
+        this.reasoningEffort = builder.reasoningEffort;
         this.thinkingMode = Objects.requireNonNull(builder.thinkingMode, "Thinking mode cannot be null");
         this.thinkingBudgetTokens = builder.thinkingBudgetTokens;
         this.replayThinkingBlocks = builder.replayThinkingBlocks;
@@ -154,6 +157,28 @@ public final class AnthropicConfig {
     }
 
     /**
+     * Gets the deployment-wide reasoning effort.
+     *
+     * <p>
+     * The Anthropic half of the shared {@code reasoningEffort} configuration key. A per-request {@link
+     * at.aimon.core.llm.LlmModel} value wins over this one, which is the precedence
+     * {@code OpenAIConfig.getReasoningEffort()} has on the other provider — the key means the same thing on both, so
+     * it resolves the same way on both.
+     *
+     * <p>
+     * There is no validation, and none of the five values is refusable here: this provider expresses effort as a
+     * token budget rather than as a rung, so what a rung is worth is
+     * {@link AnthropicThinkingBudgets}' translation to make and the client's to report. It also does nothing at all
+     * under the shipped default {@link AnthropicThinkingMode#OFF} — the client warns once about that rather than
+     * refusing here, because the remedy is a second key.
+     *
+     * @return Optional containing the reasoning effort, or empty when none was configured
+     */
+    public Optional<ReasoningEffort> getReasoningEffort() {
+        return Optional.ofNullable(reasoningEffort);
+    }
+
+    /**
      * Gets the thinking dialect this deployment's model speaks.
      *
      * @return The thinking mode (never null; {@link AnthropicThinkingMode#OFF} by default)
@@ -212,23 +237,23 @@ public final class AnthropicConfig {
         // that names the model whose value was dropped, or in its absence.
         return Objects.equals(temperature, that.temperature) && maxTokens == that.maxTokens
                 && Objects.equals(baseUrl, that.baseUrl) && apiKey.equals(that.apiKey) && model.equals(that.model)
-                && timeout.equals(that.timeout) && thinkingMode == that.thinkingMode
-                && Objects.equals(thinkingBudgetTokens, that.thinkingBudgetTokens)
+                && timeout.equals(that.timeout) && reasoningEffort == that.reasoningEffort
+                && thinkingMode == that.thinkingMode && Objects.equals(thinkingBudgetTokens, that.thinkingBudgetTokens)
                 && replayThinkingBlocks == that.replayThinkingBlocks;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(baseUrl, apiKey, model, temperature, maxTokens, timeout, thinkingMode, thinkingBudgetTokens,
-                replayThinkingBlocks);
+        return Objects.hash(baseUrl, apiKey, model, temperature, maxTokens, timeout, reasoningEffort, thinkingMode,
+                thinkingBudgetTokens, replayThinkingBlocks);
     }
 
     @Override
     public String toString() {
         return "AnthropicConfig{" + "baseUrl='" + baseUrl + '\'' + ", model='" + model + '\'' + ", temperature="
-                + temperature + ", maxTokens=" + maxTokens + ", timeout=" + timeout + ", thinkingMode=" + thinkingMode
-                + ", thinkingBudgetTokens=" + thinkingBudgetTokens + ", replayThinkingBlocks=" + replayThinkingBlocks
-                + '}';
+                + temperature + ", maxTokens=" + maxTokens + ", timeout=" + timeout + ", reasoningEffort="
+                + reasoningEffort + ", thinkingMode=" + thinkingMode + ", thinkingBudgetTokens=" + thinkingBudgetTokens
+                + ", replayThinkingBlocks=" + replayThinkingBlocks + '}';
     }
 
     /** Builder for AnthropicConfig. */
@@ -240,6 +265,7 @@ public final class AnthropicConfig {
         private int maxTokens = DEFAULT_MAX_TOKENS;
         private Duration timeout = DEFAULT_TIMEOUT;
         private String baseUrl;
+        private ReasoningEffort reasoningEffort;
         private AnthropicThinkingMode thinkingMode = DEFAULT_THINKING_MODE;
         private Integer thinkingBudgetTokens;
         private boolean replayThinkingBlocks = DEFAULT_REPLAY_THINKING_BLOCKS;
@@ -321,6 +347,24 @@ public final class AnthropicConfig {
          */
         public Builder baseUrl(String baseUrl) {
             this.baseUrl = baseUrl;
+            return this;
+        }
+
+        /**
+         * Sets the deployment-wide reasoning effort.
+         *
+         * <p>
+         * A per-request {@link at.aimon.core.llm.LlmModel} value wins over this one. Whether either reaches the model
+         * at all depends on {@link #thinkingMode(AnthropicThinkingMode)}: under the default
+         * {@link AnthropicThinkingMode#OFF} the request carries no thinking parameter, so the effort reaches nothing
+         * and the client says so once.
+         *
+         * @param reasoningEffort
+         *            The reasoning effort; {@code null} leaves it unset
+         * @return This builder
+         */
+        public Builder reasoningEffort(ReasoningEffort reasoningEffort) {
+            this.reasoningEffort = reasoningEffort;
             return this;
         }
 

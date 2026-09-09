@@ -75,6 +75,23 @@ N-1 을 여기 적는 이유는 그것이 답이라고 보아서가 아니라 **
 > R14 의 계산도 N-1 의 계산도 바뀌지 않으므로 **이 항목의 처분은 그대로**다. 재도출하게 두는 것보다
 > 적어 두는 편이 싸다.
 
+> **2026-09-10 — 다시 닫히지 않았고, 키 하나만큼 더 넓어졌다.** #61 이 `aimon.llm.reasoning-effort`
+> 를 더했고(공통 네임스페이스 — 이름이 중립 SPI 타입 자신의 것이고 뜻이 벤더마다 다르지 않다),
+> 같은 침묵 아래 있다. 같은 라운드가 `…model-capabilities.<model>.accepted-reasoning-efforts` 도 더했는데,
+> 그쪽은 **이미 세고 있던 서브트리 안의 여섯 번째 리프**이므로 새로 세지 않는다.
+> **성질은 세 번째로 그대로다** — 원인도, CLI 가 같은 오타에 던진다는 것도, 닫는 길 셋의 저울도.
+> 침묵은 세 번째 테스트로 기록했다 — `AimonPropertiesValidationTest.aMisspelledReasoningEffortIsSilentInTheStarter`.
+>
+> **그 셋째 테스트가 앞의 둘과 다른 것을 고정한다는 것만 적어 둔다.** `aMisspelledFlagIsSilentInTheStarter`
+> 는 **맵-of-객체의 리프**를, `aMisspelledAnthropicKeyIsSilentInTheStarter` 는 **중첩 객체의 리프**를
+> 고정한다. 새것은 **이 키가 없어도 바인딩되는 빈 위의 스칼라 리프**다 — 그래서 여기서는 Boot 의
+> `JavaBeanBinder` 가 값 인스턴스를 만들지 않는 경로조차 지나가지 않고, 오타 난 필드가 그냥 null 로
+> 남는다. 세 모양이 전부 침묵한다는 것이 R12·R14·N-1 의 저울을 바꾸지는 않지만, 누가 N-1 을 재 볼 때
+> **재야 할 모양이 셋**이라는 것은 바뀐다.
+>
+> **트리거 2 는 이번에도 발화하지 않는다.** `aimon.llm.reasoning-effort` 는 맵이 아니라 스칼라 리프
+> 하나다. 처분은 그대로.
+
 > 인수 조건과의 관계를 정직하게 적어 둔다. #46 의 인수 조건은
 > *"잘못된 설정이 조용히 통과하지 않는다 — 양쪽 표면 모두"* 였고, **값 오류와 의미 오류에 대해서는 양쪽
 > 다 충족되었지만 모르는 필드 이름에 대해서는 스타터에서 충족되지 않았다.** 설계가 O-C 로 공표하고
@@ -115,6 +132,20 @@ N-1 을 여기 적는 이유는 그것이 답이라고 보아서가 아니라 **
 **언제 다시 볼까.** Chat-only 게이트웨이 배포가 실제로 404 를 보고할 때, 또는 샘플링 값을 설정으로
 요구하는 사람이 나올 때. 둘 중 앞엣것이 먼저 올 가능성이 높고, 그때는 `responsesApiEnabled` **하나만**
 내려도 된다 — 두 키가 한 이슈일 이유는 없다.
+
+> **2026-09-10 — 그 스위치를 내리는 사람이 함께 재야 할 칸이 하나 생겼다 (#61).** 라운드 9 가
+> `gpt-5.6-terra` 에 exact 행을 주면서 그 사다리를 `{none, low, medium, high}` 로 적었는데, **그 사다리는
+> `/v1/responses` 에서만 실측되었다**([`../design/llm/openai-model-capabilities.md`](../design/llm/openai-model-capabilities.md)
+> §13.3, 그리고 그 문서가 §13.3 첫머리에서 *"인용된 열거는 그것이 나온 엔드포인트 없이는 아무 뜻이
+> 없다"* 고 경고하는 바로 그 자리다). 판정 지점인 `OpenAiRequestParameters.maySendEffort` 는 **두
+> 엔드포인트가 함께 부르므로**, `responsesApiEnabled(false)` 로 터라를 Chat Completions 에 강제한 배포는
+> 이제 재어진 적 없는 칸에 `reasoning_effort: none` 을 보낸다 — 오늘의 "보고된 누락" 이 400 이 될 수 있다.
+>
+> **오늘은 물리지 않는다.** 그 스위치는 자바로만 켤 수 있고, 그것을 바꾸는 것이 이 항목이다. 그러니 이
+> 칸은 **이 항목을 착수하는 사람의 것**이다: `responsesApiEnabled` 에 설정 표면을 주는 순간 위 조합이
+> 운영자 경로로 내려오므로, 그때 터라의 `none` 을 Chat 에서 한 번 재거나(키가 있으면), 재지 않기로 하고
+> 그 사실을 적어야 한다. 행 자체는 여전히 옳다 — 대안은 `minimal` 에 대한 **실측된** 400 이다.
+> 근거: [`../design/llm/reasoning-effort-config-surface.md`](../design/llm/reasoning-effort-config-surface.md) §17.4.
 
 ---
 

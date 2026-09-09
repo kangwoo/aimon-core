@@ -1,6 +1,9 @@
 package at.aimon.core.llm.capability;
 
+import java.util.Collections;
+import java.util.EnumSet;
 import java.util.Objects;
+import java.util.Set;
 
 import at.aimon.core.llm.ReasoningEffort;
 
@@ -36,7 +39,10 @@ public final class ModelCapabilities {
     private static final boolean DEFAULT_SUPPORTS_REASONING_EFFORT = false;
     private static final boolean DEFAULT_SUPPORTS_TOOLS_WITH_REASONING = true;
     private static final boolean DEFAULT_SUPPORTS_REASONING_TRACE_ROUND_TRIP = false;
-    private static final ReasoningEffort DEFAULT_LOWEST_REASONING_EFFORT = ReasoningEffort.MINIMAL;
+    // The same fact the removed DEFAULT_LOWEST_REASONING_EFFORT = MINIMAL stated, written as the set it always
+    // meant: everything from MINIMAL up. Only NONE is withheld from a model nobody has described.
+    private static final Set<ReasoningEffort> DEFAULT_ACCEPTED_REASONING_EFFORTS = unmodifiableLadder(
+            EnumSet.range(ReasoningEffort.MINIMAL, ReasoningEffort.HIGH));
     private static final ThinkingDialect DEFAULT_THINKING_DIALECT = ThinkingDialect.UNKNOWN;
 
     private static final ModelCapabilities UNKNOWN = builder().build();
@@ -45,7 +51,7 @@ public final class ModelCapabilities {
     private final boolean supportsReasoningEffort;
     private final boolean supportsToolsWithReasoning;
     private final boolean supportsReasoningTraceRoundTrip;
-    private final ReasoningEffort lowestReasoningEffort;
+    private final Set<ReasoningEffort> acceptedReasoningEfforts;
     private final ThinkingDialect thinkingDialect;
 
     private ModelCapabilities(Builder builder) {
@@ -53,8 +59,20 @@ public final class ModelCapabilities {
         this.supportsReasoningEffort = builder.supportsReasoningEffort;
         this.supportsToolsWithReasoning = builder.supportsToolsWithReasoning;
         this.supportsReasoningTraceRoundTrip = builder.supportsReasoningTraceRoundTrip;
-        this.lowestReasoningEffort = builder.lowestReasoningEffort;
+        this.acceptedReasoningEfforts = builder.acceptedReasoningEfforts;
         this.thinkingDialect = builder.thinkingDialect;
+    }
+
+    /**
+     * Copies a caller's rungs into an unmodifiable {@link EnumSet} view.
+     *
+     * <p>
+     * The copy is what keeps the descriptor immutable when a caller mutates the set it passed in, and the
+     * {@code EnumSet} is what makes iteration follow {@link ReasoningEffort}'s declaration order — which is the
+     * ladder's order, and is what lets a warning that prints the set read as a ladder rather than as a bag.
+     */
+    private static Set<ReasoningEffort> unmodifiableLadder(Set<ReasoningEffort> rungs) {
+        return Collections.unmodifiableSet(EnumSet.copyOf(rungs));
     }
 
     /**
@@ -65,15 +83,17 @@ public final class ModelCapabilities {
      * Each flag falls out of that one rule. Sampling parameters a caller set are sent, because withholding them from a
      * model nobody has described would be fail-<em>closed</em>. No reasoning effort is sent, because that is a
      * parameter the framework would have to invent. Tools are not treated as conflicting with reasoning, because
-     * clamping without evidence is a restriction nobody asked for. The lowest reasoning rung is
-     * {@link ReasoningEffort#MINIMAL}, which withholds only {@link ReasoningEffort#NONE} — the rung most likely to be
-     * absent, though measurement has stopped short of calling it universally absent: every OpenAI o-series name
-     * probed on 2026-09-09 rejects it with a message naming the model, and {@code gpt-5-nano} rejected it too, but
-     * {@code gpt-5.6-terra} <em>accepts</em> it. So this default is a trade rather than a free choice, and it is made
-     * on the asymmetry of the two mistakes: withholding a rung a model does have costs a reported omission and
-     * leaves the server's own default in force, while sending a rung it does not have costs a 400 that fails the
-     * turn. A model that really does start at {@code NONE} is describable — register a row with
-     * {@code lowestReasoningEffort(NONE)}. The thinking dialect is {@link ThinkingDialect#UNKNOWN}, which is the only
+     * clamping without evidence is a restriction nobody asked for. The accepted reasoning rungs are
+     * {@code MINIMAL} through {@link ReasoningEffort#HIGH}, which withholds only {@link ReasoningEffort#NONE} — the
+     * rung most likely to be absent, though measurement has stopped short of calling it universally absent: every
+     * OpenAI o-series name probed on 2026-09-09 rejects it with a message naming the model, and {@code gpt-5-nano}
+     * rejected it too, while {@code gpt-5.6-terra} <em>accepts</em> it and now states so in a row of its own. So this
+     * default is a trade rather than a free choice, and it is made on the asymmetry of the two mistakes: withholding
+     * a rung a model does have costs a reported omission and leaves the server's own default in force, while sending
+     * a rung it does not have costs a 400 that fails the turn. A model that really does start at {@code NONE} is
+     * describable — register a row with {@code lowestReasoningEffort(NONE)}, or with
+     * {@code acceptedReasoningEfforts(...)} when the ladder has a gap in it rather than a floor. The thinking dialect
+     * is {@link ThinkingDialect#UNKNOWN}, which is the only
      * one of the six that is not a permission at all: both real dialects are a 400 on the model that speaks the
      * other, so the fail-open value here has to be the <em>absence</em> of the fact rather than one of its values.
      * Changing any of these silently changes the wire for every deployment
@@ -157,28 +177,36 @@ public final class ModelCapabilities {
     }
 
     /**
-     * The lowest rung on this model's reasoning ladder — the least effort it will accept as a value.
+     * The rungs this model accepts as a value for its reasoning-effort parameter.
      *
      * <p>
      * {@link #supportsReasoningEffort()} answers <em>whether the parameter exists</em>; this answers <em>which values
      * it takes</em>, and the two are independent facts that vendors get to disagree about per family. OpenAI's
-     * {@code gpt-5.x} starts at {@code minimal} while its o-series starts at {@code low}, so one table of neutral
-     * constants cannot be translated for both without knowing where each ladder starts. Only the floor is modelled
-     * here: a family's ceiling turned out to differ between OpenAI's two endpoints for the same model, and naming it
-     * was always beside this field's meaning.
+     * {@code gpt-5.x} starts at {@code minimal} while its o-series starts at {@code low}.
      *
      * <p>
-     * A requested effort below this rung is <strong>omitted and reported</strong>, never raised to meet it: a clamp
-     * upward is a request the operator did not make, and it would arrive silently. Omission at least leaves the
-     * server's own default in force, which is a state the divergence warning can describe honestly.
+     * <strong>A set rather than a floor, and the difference is measured.</strong> This field named the lowest rung
+     * until {@code gpt-5.6-terra} turned up with a ladder that has a hole in the middle of it — it rejects
+     * {@code minimal} and accepts {@code none} — and no single boundary describes that. Writing one that produced the
+     * right behaviour ({@code LOW}) would have meant writing down something untrue about the model, which is how the
+     * next reader learns a wrong fact. A floor is still a fine way to <em>write</em> a ladder with no holes:
+     * {@link Builder#lowestReasoningEffort(ReasoningEffort)} is shorthand for exactly that, and every built-in row
+     * that has no hole still uses it.
      *
      * <p>
-     * The rungs compare by declaration order — see {@link ReasoningEffort}, whose constants ascend.
+     * A requested effort that is not in this set is <strong>omitted and reported</strong>, never raised to the
+     * nearest one: a clamp is a request the operator did not make, and it would arrive silently. Omission at least
+     * leaves the server's own default in force, which is a state the divergence warning can describe honestly.
      *
-     * @return the lowest acceptable effort (never null; {@link ReasoningEffort#MINIMAL} when nothing is known)
+     * <p>
+     * Iteration follows {@link ReasoningEffort}'s declaration order, whose constants ascend — so a message that
+     * prints this set prints a ladder.
+     *
+     * @return the accepted rungs (never null, never empty, unmodifiable; {@code MINIMAL} through {@code HIGH} when
+     *         nothing is known)
      */
-    public ReasoningEffort lowestReasoningEffort() {
-        return lowestReasoningEffort;
+    public Set<ReasoningEffort> acceptedReasoningEfforts() {
+        return acceptedReasoningEfforts;
     }
 
     /**
@@ -215,13 +243,14 @@ public final class ModelCapabilities {
                 && supportsReasoningEffort == that.supportsReasoningEffort
                 && supportsToolsWithReasoning == that.supportsToolsWithReasoning
                 && supportsReasoningTraceRoundTrip == that.supportsReasoningTraceRoundTrip
-                && lowestReasoningEffort == that.lowestReasoningEffort && thinkingDialect == that.thinkingDialect;
+                && acceptedReasoningEfforts.equals(that.acceptedReasoningEfforts)
+                && thinkingDialect == that.thinkingDialect;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(supportsSamplingParameters, supportsReasoningEffort, supportsToolsWithReasoning,
-                supportsReasoningTraceRoundTrip, lowestReasoningEffort, thinkingDialect);
+                supportsReasoningTraceRoundTrip, acceptedReasoningEfforts, thinkingDialect);
     }
 
     @Override
@@ -229,7 +258,8 @@ public final class ModelCapabilities {
         return "ModelCapabilities{" + "supportsSamplingParameters=" + supportsSamplingParameters
                 + ", supportsReasoningEffort=" + supportsReasoningEffort + ", supportsToolsWithReasoning="
                 + supportsToolsWithReasoning + ", supportsReasoningTraceRoundTrip=" + supportsReasoningTraceRoundTrip
-                + ", lowestReasoningEffort=" + lowestReasoningEffort + ", thinkingDialect=" + thinkingDialect + '}';
+                + ", acceptedReasoningEfforts=" + acceptedReasoningEfforts + ", thinkingDialect=" + thinkingDialect
+                + '}';
     }
 
     /**
@@ -244,7 +274,7 @@ public final class ModelCapabilities {
         private boolean supportsReasoningEffort = DEFAULT_SUPPORTS_REASONING_EFFORT;
         private boolean supportsToolsWithReasoning = DEFAULT_SUPPORTS_TOOLS_WITH_REASONING;
         private boolean supportsReasoningTraceRoundTrip = DEFAULT_SUPPORTS_REASONING_TRACE_ROUND_TRIP;
-        private ReasoningEffort lowestReasoningEffort = DEFAULT_LOWEST_REASONING_EFFORT;
+        private Set<ReasoningEffort> acceptedReasoningEfforts = DEFAULT_ACCEPTED_REASONING_EFFORTS;
         private ThinkingDialect thinkingDialect = DEFAULT_THINKING_DIALECT;
 
         private Builder() {
@@ -291,18 +321,55 @@ public final class ModelCapabilities {
         }
 
         /**
-         * Sets the lowest rung on this model's reasoning ladder.
+         * Sets the rungs this model accepts as a value.
          *
-         * @param lowestReasoningEffort
+         * <p>
+         * The general form. {@link #lowestReasoningEffort(ReasoningEffort)} is the shorthand for the common case, and
+         * both write this one field — so the last call wins, as it does for every other setter here.
+         *
+         * @param acceptedReasoningEfforts
+         *            the rungs this model accepts (must not be null, must not be empty, must contain no null element)
+         * @return This builder
+         * @throws NullPointerException
+         *             if the set or any element is null
+         * @throws IllegalArgumentException
+         *             if the set is empty. "This model takes the reasoning-effort parameter but accepts no value for
+         *             it" is not a state a request surface can be in; the thing being described there is
+         *             {@link #supportsReasoningEffort(boolean)} {@code false}
+         */
+        public Builder acceptedReasoningEfforts(Set<ReasoningEffort> acceptedReasoningEfforts) {
+            Objects.requireNonNull(acceptedReasoningEfforts, "acceptedReasoningEfforts cannot be null");
+            if (acceptedReasoningEfforts.isEmpty()) {
+                throw new IllegalArgumentException("acceptedReasoningEfforts cannot be empty — a model that accepts no"
+                        + " rung at all is one that takes no reasoning-effort parameter, which is"
+                        + " supportsReasoningEffort(false) rather than an empty ladder.");
+            }
+            // EnumSet.copyOf would throw a NullPointerException of its own here, but not one that names the field.
+            for (ReasoningEffort rung : acceptedReasoningEfforts) {
+                Objects.requireNonNull(rung, "acceptedReasoningEfforts cannot contain a null rung");
+            }
+            this.acceptedReasoningEfforts = unmodifiableLadder(acceptedReasoningEfforts);
+            return this;
+        }
+
+        /**
+         * Sets the rungs this model accepts, as a floor: {@code lowest} and everything above it.
+         *
+         * <p>
+         * Shorthand for {@link #acceptedReasoningEfforts(Set)} with {@code EnumSet.range(lowest, HIGH)}, kept because
+         * it is what most rows want to say — a ladder that starts somewhere and runs to the top has no hole to
+         * describe, and spelling the set out would be longer and no truer. A row whose ladder <em>does</em> have a
+         * hole cannot use this form; that is the whole reason the field is a set.
+         *
+         * @param lowest
          *            the least effort this model accepts as a value (must not be null)
          * @return This builder
          * @throws NullPointerException
-         *             if lowestReasoningEffort is null
+         *             if lowest is null
          */
-        public Builder lowestReasoningEffort(ReasoningEffort lowestReasoningEffort) {
-            this.lowestReasoningEffort = Objects.requireNonNull(lowestReasoningEffort,
-                    "lowestReasoningEffort cannot be null");
-            return this;
+        public Builder lowestReasoningEffort(ReasoningEffort lowest) {
+            Objects.requireNonNull(lowest, "lowestReasoningEffort cannot be null");
+            return acceptedReasoningEfforts(EnumSet.range(lowest, ReasoningEffort.HIGH));
         }
 
         /**

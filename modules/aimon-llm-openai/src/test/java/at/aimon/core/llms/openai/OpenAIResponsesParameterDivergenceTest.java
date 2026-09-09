@@ -53,6 +53,12 @@ import ch.qos.logback.core.read.ListAppender;
 @DisplayName("OpenAI Responses - request parameter divergence reporting")
 @ExtendWith(MockitoExtension.class)
 class OpenAIResponsesParameterDivergenceTest {
+    /**
+     * A gpt-5-family reasoning model, meaning nothing more than that. It was {@code gpt-5.6-terra} until that name
+     * got a built-in row of its own for its measured ladder; a name with its own row would keep every assertion here
+     * green while quietly testing a different row from the one they are about.
+     */
+    private static final String A_REASONING_MODEL = "gpt-5-mini";
 
     private static final ToolDefinition A_TOOL = ToolDefinition.of("Read", "Reads a file",
             Map.of("type", "object", "properties", Map.of()));
@@ -99,7 +105,7 @@ class OpenAIResponsesParameterDivergenceTest {
     }
 
     private static OpenAIConfig.Builder config() {
-        return OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra");
+        return OpenAIConfig.builder().apiKey("test-key").model(A_REASONING_MODEL);
     }
 
     private void send(OpenAILlmClient client, LlmModel model, List<ToolDefinition> tools) {
@@ -119,7 +125,7 @@ class OpenAIResponsesParameterDivergenceTest {
 
         send(client, model, List.of());
         assertThat(warnings()).hasSize(1);
-        assertThat(warnings().get(0)).contains("temperature").contains("0.7").contains("gpt-5.6-terra")
+        assertThat(warnings().get(0)).contains("temperature").contains("0.7").contains(A_REASONING_MODEL)
                 .contains("does not accept sampling parameters");
 
         // Same value again: the request is built on every ReAct iteration, so this must not repeat.

@@ -45,6 +45,12 @@ import at.aimon.core.llm.TokenUsage;
 @DisplayName("OpenAI Responses - token usage")
 @ExtendWith(MockitoExtension.class)
 class OpenAIResponsesUsageTest {
+    /**
+     * A gpt-5-family reasoning model, meaning nothing more than that. It was {@code gpt-5.6-terra} until that name
+     * got a built-in row of its own for its measured ladder; a name with its own row would keep every assertion here
+     * green while quietly testing a different row from the one they are about.
+     */
+    private static final String A_REASONING_MODEL = "gpt-5-mini";
 
     @Mock
     private OpenAIClient mockOpenAIClient;
@@ -61,7 +67,7 @@ class OpenAIResponsesUsageTest {
                         + "\"status\":\"completed\",\"output\":[]" + usagePart + "}"));
 
         final OpenAILlmClient client = new OpenAILlmClient(
-                OpenAIConfig.builder().apiKey("k").model("gpt-5.6-terra").build(), mockOpenAIClient);
+                OpenAIConfig.builder().apiKey("k").model(A_REASONING_MODEL).build(), mockOpenAIClient);
         final LlmResponse response = client.sendMessage("sys", List.of(Message.user("hi")), List.of(),
                 LlmModel.builder().build());
         return response.getTokenUsage();

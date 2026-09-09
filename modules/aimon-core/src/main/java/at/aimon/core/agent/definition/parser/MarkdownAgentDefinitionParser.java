@@ -3,6 +3,7 @@ package at.aimon.core.agent.definition.parser;
 import java.io.InputStream;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -15,6 +16,7 @@ import at.aimon.core.agent.Version;
 import at.aimon.core.agent.definition.AgentDefinition;
 import at.aimon.core.agent.definition.exception.AgentDefinitionParseException;
 import at.aimon.core.llm.LlmModel;
+import at.aimon.core.llm.ReasoningEffort;
 
 /**
  * Parses agent loader files with YAML frontmatter.
@@ -32,6 +34,7 @@ import at.aimon.core.llm.LlmModel;
  * model:
  *   name: gpt5.1
  *   temperature: 0.7
+ *   reasoningEffort: high
  * tags:
  *   - coding
  *   - java
@@ -161,8 +164,48 @@ public final class MarkdownAgentDefinitionParser implements AgentDefinitionParse
         if (configMap.containsKey("topP")) {
             builder.topP(extractDouble(configMap, "topP", 1.0));
         }
+        if (configMap.containsKey("reasoningEffort")) {
+            builder.reasoningEffort(extractReasoningEffort(configMap));
+        }
 
         return builder.build();
+    }
+
+    /**
+     * Reads {@code model.reasoningEffort} onto the neutral enum, ignoring case.
+     *
+     * <p>
+     * Deliberately <em>not</em> shaped like {@link #extractInt} and {@link #extractDouble} beside it. Those two
+     * substitute their default when the value has the wrong type, so {@code temperature: "hot"} silently becomes
+     * {@code 1.0} and nobody hears about it. This one throws, because a rung nobody recognises would otherwise reach
+     * the provider as "no effort configured" and the operator would read the absence as their setting being honoured.
+     * (The two neighbours are a pre-existing defect, recorded rather than fixed here — changing them changes the
+     * failure behaviour of three keys this round has no reason to touch.)
+     *
+     * <p>
+     * The case tolerance is the one {@code CliConfigLoader} already applies to the same enum on the yaml surface, for
+     * the same reason: an operator writes {@code high}, not {@code HIGH}.
+     *
+     * @param configMap
+     *            the {@code model} block
+     * @return the matching constant
+     * @throws AgentDefinitionParseException
+     *             naming the key and every accepted spelling when nothing matches
+     */
+    private ReasoningEffort extractReasoningEffort(Map<String, Object> configMap) {
+        final Object value = configMap.get("reasoningEffort");
+        final String written = value == null ? "" : value.toString().trim();
+        for (ReasoningEffort candidate : ReasoningEffort.values()) {
+            if (candidate.name().equalsIgnoreCase(written)) {
+                return candidate;
+            }
+        }
+        final StringBuilder accepted = new StringBuilder();
+        for (ReasoningEffort candidate : ReasoningEffort.values()) {
+            accepted.append(accepted.length() == 0 ? "" : ", ").append(candidate.name().toLowerCase(Locale.ROOT));
+        }
+        throw new AgentDefinitionParseException(
+                "Invalid model.reasoningEffort: " + value + ". Accepted values: " + accepted + ".");
     }
 
     /**

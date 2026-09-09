@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/aimon-core-integration-via-cli-reference.md
-source_commit: 31e1c71
+source_commit: 320fbbc
 ---
 
 # aimon-core integration guide — following aimon-cli as the reference
@@ -215,9 +215,33 @@ return switch (provider) {
 ```
 
 Each builder constructs the SDK-specific configuration object (`AnthropicConfig`, `OpenAIConfig`) and injects
-`apiKey`, `model`, `timeout` and `baseUrl`. **Both** sides add one more — when `llm.modelCapabilities` is
-present they build a model capability registry from it and pass that to `modelCapabilityRegistry(...)`
+`apiKey`, `model`, `timeout` and `baseUrl`. **Both** sides add two more — when `llm.modelCapabilities` is
+present they build a model capability registry from it and pass that to `modelCapabilityRegistry(...)`, and
+when `llm.reasoningEffort` is present they pass it straight through
 (`anthropicConfig(...)` · `openAiConfig(...)`).
+
+#### How hard the model should think — `llm.reasoningEffort`
+
+```yaml
+llm:
+  provider: openai
+  model: gpt-5.1
+  reasoningEffort: medium      # none | minimal | low | medium | high -- case-insensitive
+```
+
+Unlike the `llm.anthropic` block, **both providers read this one.** The name is the neutral SPI type's own
+(`at.aimon.core.llm.ReasoningEffort`), and "how much deliberation should this call spend" does not mean
+something different per vendor. What each *does* with the answer differs — OpenAI sends a rung parameter,
+Anthropic translates it to a token budget — and that translation is what a neutral enum is for.
+
+An agent definition's `model.reasoningEffort` wins over this one. A rung that is not on this model's ladder is
+**omitted and reported**, never raised to the nearest one it has: a clamp is a request the operator did not
+make, and it would arrive silently.
+
+**On Anthropic it needs `llm.anthropic.thinkingMode` to be something other than the default `off`.** Under
+`off` the request carries no thinking parameter at all, so the effort reaches nothing — and the client says so
+once per process. `reasoningEffort: none` is the exception: it and `off` mean the same thing, so nothing is
+said.
 
 #### When a gateway calls the model something else — `llm.modelCapabilities`
 
@@ -246,9 +270,9 @@ The map key is **the same name `model` carries**, and it is matched ignoring cas
 a look-up for `prod-assistant` still finds it). `${VAR}` is resolved in it too, so a deployment writing
 `model: ${DEPLOYMENT}` can describe its own model.
 
-There are five flags and **every one is optional**. What you leave out keeps `ModelCapabilities.unknown()`'s
+There are six flags and **every one is optional**. What you leave out keeps `ModelCapabilities.unknown()`'s
 value, which is **today's behaviour** — which is why the single line above is a complete answer to the 400.
-All five are not required because a gateway operator who knows that `temperature` earns a 400 does not know
+They are not all required because a gateway operator who knows that `temperature` earns a 400 does not know
 whether the model replays reasoning traces, and filling that box in anyway turns the 400 into a 404 on a
 gateway that has no `/v1/responses`.
 
@@ -258,7 +282,8 @@ gateway that has no `/v1/responses`.
 | `supportsReasoningEffort` | whether a reasoning-effort parameter is on this model's request surface | `false` — the framework does not invent one |
 | `supportsToolsWithReasoning` | whether tools and a non-`NONE` effort may share one request | `true` — nothing is narrowed without evidence |
 | `supportsReasoningTraceRoundTrip` | whether reasoning traces must be replayed for the reasoning to survive | `false` — stays on the Chat Completions path |
-| `lowestReasoningEffort` | where this model's effort ladder starts (`none`…`high`) | `minimal` |
+| `lowestReasoningEffort` | where this model's effort ladder starts (`none`…`high`) — meaning it takes that rung and every one above it | `minimal` through `high` |
+| `acceptedReasoningEfforts` | **every** rung it takes, as a list — the general form, for a ladder with a gap in it (`[none, low, medium, high]`) | same as the row above |
 
 A declaration **extends the built-in table rather than replacing it.** It is registered as an exact entry, so
 the existing `exact > prefix` rule is what makes the operator's entry win — and the win is **one name wide**:
@@ -266,7 +291,13 @@ declaring `gpt-5` changes exactly that name, while `gpt-5-mini` is still answere
 prefix. There is no way to declare a prefix from configuration: prefix precedence is registration order, and a
 yaml file's line order is not the place to keep that.
 
-What is not silently ignored — an unknown flag name, an unusable `lowestReasoningEffort` value, an entry that
+The two ladder keys are **mutually exclusive**. `lowestReasoningEffort` is shorthand for the common case —
+"it starts here and runs to the top" — while `acceptedReasoningEfforts` is for a ladder with a gap in the
+middle, which the built-in `gpt-5.6-terra` row is the measured instance of (it takes `none` and rejects
+`minimal`). Writing both fails at startup, because there is no way to answer which one was meant.
+
+What is not silently ignored — an unknown flag name, an unusable `lowestReasoningEffort` value, an entry
+stating both ladder keys, an empty `acceptedReasoningEfforts` list, an entry that
 declares nothing, a blank or space-padded name, two names differing only in case, and **two `${VAR}` keys that
 expand to the same name**. All of them are a `ConfigurationException` whose message names the yaml key to fix.
 A declaration under `provider: anthropic` is **no longer refused** — that branch reads this registry too.

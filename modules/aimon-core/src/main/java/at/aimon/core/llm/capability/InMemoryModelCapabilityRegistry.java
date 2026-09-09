@@ -1,5 +1,6 @@
 package at.aimon.core.llm.capability;
 
+import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -74,9 +75,13 @@ import at.aimon.core.llm.ReasoningEffort;
  * — and so does a configured declaration for that name, which reaches the same call through
  * {@link #withDefaultsExtendedBy(Map)}, so an operator who has measured one of these names on their own deployment
  * can still state it.
- * It is also why there is no exact row for any {@code gpt-5*} name: one would disable the
- * {@code registerPrefix("gpt-5", ...)} override {@link #builderWithDefaults()} documents, for the very name that
- * override is demonstrated with.
+ * The {@code gpt-5} family pays the same price for one name, and it is stated the same way:
+ * {@code builderWithDefaults().registerPrefix("gpt-5", ...)} reaches {@code gpt-5-mini}, {@code gpt-5-nano} and every
+ * future {@code gpt-5*} name, but <strong>not {@code gpt-5.6-terra}</strong>, whose measured ladder earned it an
+ * exact row of its own. The remedy is the o-series one: {@code register("gpt-5.6-terra", ...)}, or a configured
+ * declaration for that name, displaces the built-in row. That promise used to be the stronger "every {@code gpt-5*}
+ * name, always", which is the promise the exact row broke — it was worth keeping only while nothing measured
+ * contradicted it, and round 8 measured a contradiction that costs a shipped HTTP 400.
  *
  * <p>
  * Whichever shape an entry for these models takes, {@link ModelCapabilities#supportsToolsWithReasoning()}
@@ -169,7 +174,7 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
                 // every non-default value a 400. It also returns reasoning items a client must replay for the
                 // reasoning to survive a tool call -- which is what supportsReasoningTraceRoundTrip says.
                 //
-                // The default lowestReasoningEffort (MINIMAL) is right for this family and is left unset: it answers
+                // The default accepted ladder (MINIMAL..HIGH) is right for this family and is left unset: it answers
                 // "Supported values are: 'minimal', 'low', 'medium', and 'high'", so only NONE is off its ladder.
                 //
                 // supportsToolsWithReasoning is TRUE, and that reverses round 1. Measured 2026-09-09: gpt-5-nano with
@@ -178,15 +183,13 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
                 // accepted values ('minimal', 'low', 'medium', 'high'). See section 11 of
                 // docs/design/llm/openai-model-capabilities.md for the probe table.
                 //
-                // Round 8 measured one member this floor gets wrong: gpt-5.6-terra resolves here and REJECTS
-                // 'minimal' (its ladder is none/low/medium/high/xhigh/max), so a programmatically configured MINIMAL
-                // on that name is a 400. Known and deliberately unfixed -- no per-name row fixes it without
-                // shadowing this prefix for the one name the override recipe above is demonstrated with. See
-                // section 13 of docs/design/llm/openai-model-capabilities.md and
-                // docs/backlog/openai-model-capabilities-open-items.md item L-1.
-                .registerPrefix("gpt-5",
-                        ModelCapabilities.builder().supportsSamplingParameters(false).supportsReasoningEffort(true)
-                                .supportsToolsWithReasoning(true).supportsReasoningTraceRoundTrip(true).build())
+                // Round 8 measured one member this ladder gets wrong: gpt-5.6-terra resolves here and REJECTS
+                // 'minimal' (its ladder is none/low/medium/high/xhigh/max), so a MINIMAL configured on that name was
+                // a 400. Round 9 gave that name an exact row -- below, beside the o-series ones -- which shadows
+                // this prefix for it alone; see this class's javadoc for what that costs an override, and
+                // docs/design/llm/reasoning-effort-config-surface.md for why the promise was narrowed rather than
+                // the registry reshaped.
+                .registerPrefix("gpt-5", gpt5Family().build())
                 // The o-series, measured 2026-09-09 and no longer inferred. Round 1 cut these rows because the belief
                 // that they reject sampling was unverified and a wrong row is a *silent* change; the probes closed
                 // that. o3-mini and o4-mini reject temperature 0.0 and accept 1.0, accept tools with no effort, and
@@ -256,11 +259,48 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
         // instead of being thrown away between turns.
         //
         // Unlike the prefix block above, registration order is NOT load-bearing here: an exact entry beats every
-        // prefix whatever position it was registered in. That is also the property that makes an exact row a poor
-        // instrument for the gpt-5 family -- it would shadow the documented registerPrefix("gpt-5", ...) override --
-        // which is why no gpt-5* name has one.
+        // prefix whatever position it was registered in. That is also what an exact row costs: it shadows the
+        // documented registerPrefix("gpt-5", ...) / registerPrefix("o1", ...) overrides for its own name, and both
+        // blocks below accept that cost for the same reason -- a measured fact about one name beats a tidier
+        // override recipe. The remedy is in this class's javadoc and is the same for both.
         MEASURED_O_SERIES_NAMES.forEach(name -> builder.register(name, O_SERIES_REPLAY_MEASURED));
+        // Round 8, measured 2026-09-09 (docs/design/llm/openai-model-capabilities.md section 13.3): all seven rungs
+        // were sent to gpt-5.6-terra individually and it answered 'none', 'low', 'medium', 'high', 'xhigh' and
+        // 'max' -- and REJECTED 'minimal', which is the one value the family prefix's ladder asserts it takes. A
+        // floor cannot describe a ladder with a hole in the middle, which is why this field is a set.
+        //
+        // Two rungs are missing from the row on purpose: 'xhigh' and 'max' have no ReasoningEffort constant, since
+        // that enum is deliberately the subset that survives translation to a second vendor. The set states the
+        // four rungs the neutral vocabulary has.
+        //
+        // Exact rather than a prefix. Round 8 measured this NAME; gpt-5.6-luna and gpt-5.6-sol were seen in the
+        // model listing and deliberately not called, so nothing is known about them, and nothing has seen a dated
+        // terra snapshot at all. A gpt-5.6-terra-<date> name, if one ever appears, lands on the gpt-5 prefix and
+        // inherits the ladder this row exists to correct, until somebody measures or declares it.
+        //
+        // The ladder is the ONLY thing that differs from the family row, and gpt5Family() is what keeps that true
+        // rather than leaving two copies of four flags to drift. supportsReasoningTraceRoundTrip in particular has
+        // to stay true here: false would quietly route this name off /v1/responses.
+        builder.register("gpt-5.6-terra", gpt5Family().acceptedReasoningEfforts(
+                EnumSet.of(ReasoningEffort.NONE, ReasoningEffort.LOW, ReasoningEffort.MEDIUM, ReasoningEffort.HIGH))
+                .build());
         return builder;
+    }
+
+    /**
+     * The {@code gpt-5} family row's four flags, as a builder the caller finishes.
+     *
+     * <p>
+     * A builder rather than a finished descriptor, and that is the whole point: the family prefix calls
+     * {@code build()} straight away and so leaves the ladder at its fail-open value — which is what the prefix
+     * comment argues for and what measurement still supports for {@code gpt-5} / {@code gpt-5-mini} /
+     * {@code gpt-5-nano} — while {@code gpt-5.6-terra} states its own before building. So "terra is the family row
+     * with a different ladder" is a fact of this source rather than of two copies of four flags staying in step, and
+     * the prefix row still says nothing it has not measured.
+     */
+    private static ModelCapabilities.Builder gpt5Family() {
+        return ModelCapabilities.builder().supportsSamplingParameters(false).supportsReasoningEffort(true)
+                .supportsToolsWithReasoning(true).supportsReasoningTraceRoundTrip(true);
     }
 
     /**
@@ -278,7 +318,8 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
      *
      * <p>
      * The table is kept as small as the problem: it describes only the families whose request surface is known to
-     * differ from the historical default — {@code gpt-5-chat}, {@code gpt-5}, the o-series, and the Anthropic models
+     * differ from the historical default — {@code gpt-5-chat}, {@code gpt-5}, {@code gpt-5.6-terra} (the family row
+     * with the one measured ladder that has a gap in it), the o-series, and the Anthropic models
      * that refuse sampling parameters and speak the adaptive thinking dialect — six whose <em>sampling</em> refusal
      * was measured, plus the documentation-derived {@code claude-mythos} family, with the dialect on all seven read
      * off the vendor's published per-model table rather than called. Everything else resolves to

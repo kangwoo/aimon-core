@@ -1,7 +1,10 @@
 package at.aimon.core.llm.capability;
 
+import java.util.Collections;
+import java.util.EnumSet;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 import at.aimon.core.llm.ReasoningEffort;
 
@@ -48,6 +51,7 @@ public final class ModelCapabilityDeclaration {
     private final Boolean supportsToolsWithReasoning;
     private final Boolean supportsReasoningTraceRoundTrip;
     private final ReasoningEffort lowestReasoningEffort;
+    private final Set<ReasoningEffort> acceptedReasoningEfforts;
     private final ThinkingDialect thinkingDialect;
     private final ModelCapabilities capabilities;
 
@@ -58,7 +62,13 @@ public final class ModelCapabilityDeclaration {
         this.supportsReasoningTraceRoundTrip = builder.supportsReasoningTraceRoundTrip;
         this.lowestReasoningEffort = builder.lowestReasoningEffort;
         this.thinkingDialect = builder.thinkingDialect;
+        // Resolved before the defensive copy below, and the order matters: resolve() is where an empty or
+        // null-bearing ladder is refused by name, while EnumSet.copyOf would beat it to the exception with a
+        // message about a collection.
         this.capabilities = resolve(builder);
+        this.acceptedReasoningEfforts = builder.acceptedReasoningEfforts == null
+                ? null
+                : Collections.unmodifiableSet(EnumSet.copyOf(builder.acceptedReasoningEfforts));
     }
 
     private static ModelCapabilities resolve(Builder builder) {
@@ -75,8 +85,13 @@ public final class ModelCapabilityDeclaration {
         if (builder.supportsReasoningTraceRoundTrip != null) {
             resolved.supportsReasoningTraceRoundTrip(builder.supportsReasoningTraceRoundTrip);
         }
+        // Only one of the two can be set -- build() refuses the pair -- so the order of these branches is not a
+        // precedence rule, and neither is a fallback for the other.
         if (builder.lowestReasoningEffort != null) {
             resolved.lowestReasoningEffort(builder.lowestReasoningEffort);
+        }
+        if (builder.acceptedReasoningEfforts != null) {
+            resolved.acceptedReasoningEfforts(builder.acceptedReasoningEfforts);
         }
         if (builder.thinkingDialect != null) {
             resolved.thinkingDialect(builder.thinkingDialect);
@@ -121,10 +136,22 @@ public final class ModelCapabilityDeclaration {
     }
 
     /**
-     * @return whether the declaration states {@link ModelCapabilities#lowestReasoningEffort()}, and what it says
+     * @return whether the declaration states this model's reasoning ladder <em>as a floor</em>, and where it starts.
+     *         The sibling {@link #acceptedReasoningEfforts()} is the general form; a declaration states at most one
+     *         of the two
      */
     public Optional<ReasoningEffort> lowestReasoningEffort() {
         return Optional.ofNullable(lowestReasoningEffort);
+    }
+
+    /**
+     * @return whether the declaration states {@link ModelCapabilities#acceptedReasoningEfforts()} in full, and what it
+     *         says. Empty when the declaration used the {@link #lowestReasoningEffort()} shorthand instead, or stated
+     *         no ladder at all — this getter reports what was <em>written</em>, and
+     *         {@link #capabilities()} is where the two spellings meet
+     */
+    public Optional<Set<ReasoningEffort>> acceptedReasoningEfforts() {
+        return Optional.ofNullable(acceptedReasoningEfforts);
     }
 
     /**
@@ -161,13 +188,15 @@ public final class ModelCapabilityDeclaration {
                 && Objects.equals(supportsReasoningEffort, that.supportsReasoningEffort)
                 && Objects.equals(supportsToolsWithReasoning, that.supportsToolsWithReasoning)
                 && Objects.equals(supportsReasoningTraceRoundTrip, that.supportsReasoningTraceRoundTrip)
-                && lowestReasoningEffort == that.lowestReasoningEffort && thinkingDialect == that.thinkingDialect;
+                && lowestReasoningEffort == that.lowestReasoningEffort
+                && Objects.equals(acceptedReasoningEfforts, that.acceptedReasoningEfforts)
+                && thinkingDialect == that.thinkingDialect;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(supportsSamplingParameters, supportsReasoningEffort, supportsToolsWithReasoning,
-                supportsReasoningTraceRoundTrip, lowestReasoningEffort, thinkingDialect);
+                supportsReasoningTraceRoundTrip, lowestReasoningEffort, acceptedReasoningEfforts, thinkingDialect);
     }
 
     @Override
@@ -175,7 +204,8 @@ public final class ModelCapabilityDeclaration {
         return "ModelCapabilityDeclaration{" + "supportsSamplingParameters=" + supportsSamplingParameters
                 + ", supportsReasoningEffort=" + supportsReasoningEffort + ", supportsToolsWithReasoning="
                 + supportsToolsWithReasoning + ", supportsReasoningTraceRoundTrip=" + supportsReasoningTraceRoundTrip
-                + ", lowestReasoningEffort=" + lowestReasoningEffort + ", thinkingDialect=" + thinkingDialect + '}';
+                + ", lowestReasoningEffort=" + lowestReasoningEffort + ", acceptedReasoningEfforts="
+                + acceptedReasoningEfforts + ", thinkingDialect=" + thinkingDialect + '}';
     }
 
     /**
@@ -191,6 +221,7 @@ public final class ModelCapabilityDeclaration {
         private Boolean supportsToolsWithReasoning;
         private Boolean supportsReasoningTraceRoundTrip;
         private ReasoningEffort lowestReasoningEffort;
+        private Set<ReasoningEffort> acceptedReasoningEfforts;
         private ThinkingDialect thinkingDialect;
 
         private Builder() {
@@ -242,11 +273,25 @@ public final class ModelCapabilityDeclaration {
 
         /**
          * @param value
-         *            the least effort this model accepts as a value; {@code null} to leave the flag undeclared
+         *            the least effort this model accepts as a value, with every rung above it accepted too;
+         *            {@code null} to leave the flag undeclared. Mutually exclusive with
+         *            {@link #acceptedReasoningEfforts(Set)} — see {@link #build()}
          * @return This builder
          */
         public Builder lowestReasoningEffort(ReasoningEffort value) {
             this.lowestReasoningEffort = value;
+            return this;
+        }
+
+        /**
+         * @param value
+         *            every rung this model accepts, for a ladder that cannot be written as a floor because it has a
+         *            gap in it; {@code null} to leave the flag undeclared. Mutually exclusive with
+         *            {@link #lowestReasoningEffort(ReasoningEffort)} — see {@link #build()}
+         * @return This builder
+         */
+        public Builder acceptedReasoningEfforts(Set<ReasoningEffort> value) {
+            this.acceptedReasoningEfforts = value;
             return this;
         }
 
@@ -263,30 +308,43 @@ public final class ModelCapabilityDeclaration {
         }
 
         /**
-         * @return whether any of the six flags has been declared
+         * @return whether any of the seven flags has been declared
          */
         boolean declaresAnything() {
             return supportsSamplingParameters != null || supportsReasoningEffort != null
                     || supportsToolsWithReasoning != null || supportsReasoningTraceRoundTrip != null
-                    || lowestReasoningEffort != null || thinkingDialect != null;
+                    || lowestReasoningEffort != null || acceptedReasoningEfforts != null || thinkingDialect != null;
         }
 
         /**
          * @return A new {@link ModelCapabilityDeclaration}
          * @throws IllegalArgumentException
-         *             if none of the six flags was declared. Such an entry would register
+         *             if none of the seven flags was declared — such an entry would register
          *             {@link ModelCapabilities#unknown()}, which is indistinguishable from not writing the entry at
-         *             all — while the operator who wrote it believes it does something. This whole surface exists
-         *             because a silent no-op produced an HTTP 400, so it does not ship one of its own.
+         *             all, while the operator who wrote it believes it does something; or if both ladder keys were
+         *             declared, because they describe the same fact two ways and an entry stating both leaves no
+         *             answer to which one the operator meant. This whole surface exists because a silent no-op
+         *             produced an HTTP 400, so it does not ship one of its own.
          */
         public ModelCapabilityDeclaration build() {
             if (!declaresAnything()) {
                 throw new IllegalArgumentException("A model capability declaration must state at least one of"
                         + " supportsSamplingParameters, supportsReasoningEffort, supportsToolsWithReasoning,"
-                        + " supportsReasoningTraceRoundTrip, lowestReasoningEffort, thinkingDialect. An entry that"
-                        + " states none of them registers the same fail-open capabilities the model already had, so"
-                        + " it would bind and do nothing; if you meant to set a flag, check the spelling of its"
-                        + " keys.");
+                        + " supportsReasoningTraceRoundTrip, lowestReasoningEffort, acceptedReasoningEfforts,"
+                        + " thinkingDialect. An entry that states none of them registers the same fail-open"
+                        + " capabilities the model already had, so it would bind and do nothing; if you meant to set"
+                        + " a flag, check the spelling of its keys.");
+            }
+            // Refused here rather than resolved by a precedence rule. A Java caller writes a sequence, where "the
+            // last statement wins" is an unambiguous answer and is what ModelCapabilities.Builder does; a
+            // configuration file presents both keys at once with no order at all, so any winner this type picked
+            // would be one the operator could not have predicted.
+            if (lowestReasoningEffort != null && acceptedReasoningEfforts != null) {
+                throw new IllegalArgumentException("A model capability declaration states both lowestReasoningEffort"
+                        + " and acceptedReasoningEfforts, and they describe the same fact two ways. Keep"
+                        + " acceptedReasoningEfforts if this model's ladder has a gap in it (e.g."
+                        + " [none, low, medium, high]); keep lowestReasoningEffort if it starts at one rung and runs"
+                        + " to the top.");
             }
             return new ModelCapabilityDeclaration(this);
         }

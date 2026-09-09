@@ -513,10 +513,11 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
     private Optional<ThinkingConfigParam> resolveThinking(LlmModel modelConfig, int maxTokens,
             ModelCapabilities capabilities, String modelName) {
         final AnthropicThinkingMode mode = config.getThinkingMode();
+        final ReasoningEffort effort = requestedEffort(modelConfig).orElse(null);
         if (mode == AnthropicThinkingMode.OFF) {
+            reportInertEffort(effort);
             return Optional.empty();
         }
-        final ReasoningEffort effort = modelConfig.getReasoningEffort().orElse(null);
         if (effort == ReasoningEffort.NONE) {
             return Optional.empty();
         }
@@ -550,7 +551,7 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
      * </ul>
      *
      * <p>
-     * This does not violate {@link ModelCapabilities#lowestReasoningEffort()}'s standing rule — <em>omitted and
+     * This does not violate {@link ModelCapabilities#acceptedReasoningEfforts()}'s standing rule — <em>omitted and
      * reported, never raised to meet it</em>. There, omitting leaves the server's own default in force and the call
      * succeeds; here, honouring the operator literally is a failed turn, so the two situations do not compare.
      *
@@ -645,7 +646,52 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
         if (configuredBudget != null) {
             return AnthropicThinkingBudgets.nearestEffort(configuredBudget);
         }
-        return modelConfig.getReasoningEffort().orElse(null);
+        return requestedEffort(modelConfig).orElse(null);
+    }
+
+    /**
+     * The effort somebody configured for this request: the call's {@link LlmModel} first, then the client config.
+     *
+     * <p>
+     * One helper because there are two readers — {@link #resolveThinking} decides whether the request carries
+     * thinking at all, {@link #intendedEffort} supplies the rung a translation warning names — and a precedence
+     * applied in one of them and not the other is a gate and a warning disagreeing about the same request. It is the
+     * shape {@code OpenAiRequestParameters.requestedEffort(modelConfig, config)} has on the other provider, and it
+     * has it for the same reason: {@code reasoningEffort} is one shared configuration key, so it resolves the same
+     * way whichever client reads it. The two are deliberately not shared code — two lines over two unrelated config
+     * types in two modules — and what keeps them in step is a test on each provider asserting the same precedence.
+     */
+    private Optional<ReasoningEffort> requestedEffort(LlmModel modelConfig) {
+        return modelConfig.getReasoningEffort().or(config::getReasoningEffort);
+    }
+
+    /**
+     * Says once that a configured effort reaches nothing, because this client sends no thinking parameter at all.
+     *
+     * <p>
+     * {@code reasoningEffort} is settable deployment-wide from both configuration surfaces, and
+     * {@link AnthropicThinkingMode#OFF} is the shipped default — so "make it think harder" is a reasonable thing to
+     * write and, on its own, does nothing here. That is the <em>configured and never read</em> state this repository
+     * refuses to leave silent, and a divergence report is the instrument this client already owns for it. Not a
+     * refusal: the remedy is a <em>second</em> key, and failing the boot of a deployment for a combination whose fix
+     * is another setting turns valid configuration into a startup failure.
+     *
+     * <p>
+     * {@link ReasoningEffort#NONE} is excluded, and that exclusion is the whole of the condition's correctness.
+     * {@code NONE} under {@code OFF} is not an inconsistency — both mean "send no thinking parameter", and
+     * {@link #resolveThinking} would answer the same way for either — so telling that operator to turn thinking on
+     * would be advice in the wrong direction.
+     */
+    private void reportInertEffort(ReasoningEffort effort) {
+        if (effort == null || effort == ReasoningEffort.NONE) {
+            return;
+        }
+        reportDivergence("reasoningEffortWithThinkingOff=" + effort,
+                "reasoningEffort {} is configured but thinkingMode is {}, so this request carries no thinking "
+                        + "parameter and the effort reaches nothing. Set the thinking mode ({}, {} or {}) to act on "
+                        + "it — note that a model whose thinking is on by default still thinks regardless.",
+                effort, AnthropicThinkingMode.OFF, AnthropicThinkingMode.AUTO, AnthropicThinkingMode.ADAPTIVE,
+                AnthropicThinkingMode.EXTENDED);
     }
 
     private Optional<ThinkingConfigParam> resolveExtendedThinking(ReasoningEffort effort, int maxTokens) {

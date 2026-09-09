@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/embedding-agent-in-application.md
-source_commit: 31e1c71
+source_commit: 320fbbc
 ---
 
 # Embedding an AIMON agent in your application
@@ -400,14 +400,22 @@ aimon:
           supports-sampling-parameters: false
   ```
 
-  There are five flags
+  There are six flags
   (`supports-sampling-parameters` · `supports-reasoning-effort` · `supports-tools-with-reasoning` ·
-  `supports-reasoning-trace-round-trip` · `lowest-reasoning-effort`) and **every one is optional**; what you
-  leave out keeps today's behaviour, which is why the single line above is a complete answer to the 400. A
+  `supports-reasoning-trace-round-trip` · `lowest-reasoning-effort` · `accepted-reasoning-efforts`) and
+  **every one is optional**; what you
+  leave out keeps today's behaviour, which is why the single line above is a complete answer to the 400. The
+  last two are **mutually exclusive** ways of stating one fact: `lowest-reasoning-effort` is shorthand for
+  "it starts here and runs to the top", while `accepted-reasoning-efforts=none,low,medium,high` is the
+  general form for a ladder with a gap in the middle (the built-in `gpt-5.6-terra` row is the measured
+  instance — it takes `none` and rejects `minimal`).
+  A
   declaration **extends** the built-in table (registered as an exact entry, so it wins for that one name), the
   name is matched ignoring case, and a name containing a dot has to be wrapped in **brackets** —
   `model-capabilities[gpt-5.7-x]` — because without them the entry does not arrive at all. An entry that
-  declares nothing, two names differing only in case, and an unusable `lowest-reasoning-effort` value all
+  declares nothing, an entry stating both ladder keys, an empty
+  `accepted-reasoning-efforts` list, two names differing only in case, and an unusable
+  `lowest-reasoning-effort` value all
   fail startup with the property named. A declaration under `provider: anthropic` is **no longer refused** —
   that branch reads this registry too. **A misspelled flag name,
   however, is silent** — Boot ignores unknown properties, and turning that off is a behaviour change for the
@@ -417,6 +425,17 @@ aimon:
   The CLI key on the same axis is camelCase and
   lives in
   [`aimon-core-integration-via-cli-reference.en.md`](aimon-core-integration-via-cli-reference.en.md).
+- `aimon.llm.reasoning-effort` says **how hard the model should think** — one of `none` · `minimal` · `low` ·
+  `medium` · `high`, with relaxed binding folding the case. Unlike the `anthropic` block just below it,
+  **both branches read it**: the name is the neutral SPI type's own (`at.aimon.core.llm.ReasoningEffort`),
+  and "how much deliberation should this call spend" does not mean something different per vendor. What each
+  *does* with the answer differs — OpenAI sends a rung parameter, Anthropic translates it to a token budget.
+  An agent definition's `model.reasoningEffort` wins over it. **On Anthropic it needs
+  `aimon.llm.anthropic.thinking-mode` to be something other than the default `off`** — under `off` the
+  request carries no thinking parameter, so the effort reaches nothing, and the client says so once per
+  process (`reasoning-effort: none` is the exception: it and `off` mean the same thing). A bad value fails
+  startup with the property named, but **a misspelled key name is silent**, for the reason the paragraph
+  above gives.
 - `aimon.llm.anthropic.*` **tunes Anthropic's thinking** — and unlike the block above, **it is read by the
   anthropic branch alone.** All three key names carry that vendor's vocabulary ("thinking" is its word for
   what this repository elsewhere calls `ReasoningEffort` / `ReasoningTrace`, `budget_tokens` is a field of

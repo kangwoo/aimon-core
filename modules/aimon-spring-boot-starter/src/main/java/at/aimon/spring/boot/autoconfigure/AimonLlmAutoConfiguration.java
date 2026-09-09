@@ -172,6 +172,11 @@ public class AimonLlmAutoConfiguration {
             if (!llm.getModelCapabilities().isEmpty()) {
                 config.modelCapabilityRegistry(AimonProperties.modelCapabilityRegistry(llm));
             }
+            // The shared key, applied in both branches. That it is applied twice from one property, rather than once
+            // from a vendor block, is what aimon.llm.reasoning-effort being in the shared namespace means.
+            if (llm.getReasoningEffort() != null) {
+                config.reasoningEffort(llm.getReasoningEffort());
+            }
             applyThinking(config, llm.getAnthropic());
             try {
                 return config.build();
@@ -306,6 +311,9 @@ public class AimonLlmAutoConfiguration {
             }
             if (!llm.getModelCapabilities().isEmpty()) {
                 config.modelCapabilityRegistry(AimonProperties.modelCapabilityRegistry(llm));
+            }
+            if (llm.getReasoningEffort() != null) {
+                config.reasoningEffort(llm.getReasoningEffort());
             }
             return config.build();
         }

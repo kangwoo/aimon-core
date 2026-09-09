@@ -71,6 +71,11 @@ class AimonConfigurationMetadataTest {
         // this module would notice a constant being added or renamed there.
         assertThat(valueCandidates(AimonProperties.MEMORY_INJECTION_MODE)).containsExactlyInAnyOrder("summary-only",
                 "full");
+        // The second selector whose enum this module does not declare, and it is here for the reason the comment
+        // above gives rather than despite it: ReasoningEffort is a core type, so nothing in this module would notice
+        // a rung being added or renamed on the ladder. That is precisely why it is worth an entry.
+        assertThat(valueCandidates(AimonProperties.LLM_REASONING_EFFORT)).containsExactlyInAnyOrder("none", "minimal",
+                "low", "medium", "high");
         assertThat(valueCandidates(AimonProperties.LLM_PROVIDER)).containsExactlyInAnyOrder("anthropic", "openai",
                 "none");
         // The second hand-written hint block, and it exists for the same reason as the first: the property is a

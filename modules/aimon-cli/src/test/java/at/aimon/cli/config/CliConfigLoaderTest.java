@@ -481,6 +481,76 @@ class CliConfigLoaderTest {
     }
 
     @Nested
+    @DisplayName("llm.reasoningEffort")
+    class SharedReasoningEffort {
+
+        private Path write(String body) throws IOException {
+            final Path configFile = tempDir.resolve("effort.yaml");
+            Files.writeString(configFile, body);
+            return configFile;
+        }
+
+        private String withEffort(String written) {
+            return """
+                    llm:
+                      provider: "openai"
+                      apiKey: "test-api-key"
+                      model: "gpt-5.1"
+                      reasoningEffort: %s
+                    """.formatted(written);
+        }
+
+        @Test
+        @DisplayName("Should bind onto the neutral enum, in either case")
+        void bindsAndFoldsCase() throws IOException {
+            // No custom deserializer, unlike llm.anthropic.thinkingMode. That exception was forced by `off` being a
+            // YAML 1.1 boolean; none of these five spellings collides with YAML's boolean or null resolvers, so the
+            // mapper's ACCEPT_CASE_INSENSITIVE_ENUMS is the whole of the tolerance.
+            for (String written : new String[]{"medium", "MEDIUM", "Medium"}) {
+                assertThat(loader.load(write(withEffort(written)).toString()).getLlmConfig().getReasoningEffort())
+                        .as("written as %s", written).isEqualTo(ReasoningEffort.MEDIUM);
+            }
+        }
+
+        @Test
+        @DisplayName("Should leave the key null when it is not written")
+        void anAbsentKeyIsNull() throws IOException {
+            Path configFile = write("""
+                    llm:
+                      provider: "openai"
+                      apiKey: "test-api-key"
+                      model: "gpt-5.1"
+                    """);
+
+            assertThat(loader.load(configFile.toString()).getLlmConfig().getReasoningEffort()).isNull();
+        }
+
+        @Test
+        @DisplayName("Should reject an unusable value rather than falling back")
+        void rejectsAnUnusableValue() throws IOException {
+            assertThatThrownBy(() -> loader.load(write(withEffort("mediumish")).toString()))
+                    .isInstanceOf(ConfigurationException.class).hasMessageContaining("Invalid configuration structure");
+        }
+
+        @Test
+        @DisplayName("Should reject a misspelled key name rather than ignoring it")
+        void rejectsAMisspelledKey() throws IOException {
+            // FAIL_ON_UNKNOWN_PROPERTIES is on for this mapper, so the CLI gets this for free. The starter cannot --
+            // it is the fourth key on the record in docs/backlog/llm-config-surface-open-items.md item L-1.
+            Path configFile = write("""
+                    llm:
+                      provider: "openai"
+                      apiKey: "test-api-key"
+                      model: "gpt-5.1"
+                      reasoningEffor: medium
+                    """);
+
+            assertThatThrownBy(() -> loader.load(configFile.toString())).isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("Invalid configuration structure");
+        }
+    }
+
+    @Nested
     @DisplayName("Model Capability Declarations")
     class ModelCapabilityDeclarations {
 
@@ -519,6 +589,29 @@ class CliConfigLoaderTest {
         }
 
         @Test
+        @DisplayName("Should bind the ladder written as a set, for a model whose ladder has a gap")
+        void bindsTheLadderAsASet() throws IOException {
+            // The general form. gpt-5.6-terra is the shipped row that needs it -- it takes `none` and rejects
+            // `minimal` -- and an operator whose gateway renames that model needs to be able to say the same thing.
+            Path configFile = write("""
+                    llm:
+                      provider: "openai"
+                      apiKey: "test-api-key"
+                      model: "prod-assistant"
+                      modelCapabilities:
+                        prod-assistant:
+                          acceptedReasoningEfforts: [none, low, medium, high]
+                    """);
+
+            ModelCapabilityConfig declared = loader.load(configFile.toString()).getLlmConfig().getModelCapabilities()
+                    .get("prod-assistant");
+
+            assertThat(declared.getAcceptedReasoningEfforts()).containsExactly(ReasoningEffort.NONE,
+                    ReasoningEffort.LOW, ReasoningEffort.MEDIUM, ReasoningEffort.HIGH);
+            assertThat(declared.getLowestReasoningEffort()).isNull();
+        }
+
+        @Test
         @DisplayName("Should leave an omitted flag null rather than false")
         void anOmittedFlagIsNull() throws IOException {
             // The difference between "not declared" and "declared false" is the whole reason these fields are boxed:
@@ -541,12 +634,14 @@ class CliConfigLoaderTest {
             assertThat(declared.getSupportsToolsWithReasoning()).isNull();
             assertThat(declared.getSupportsReasoningTraceRoundTrip()).isNull();
             assertThat(declared.getLowestReasoningEffort()).isNull();
+            assertThat(declared.getAcceptedReasoningEfforts()).isNull();
         }
 
         @Test
         @DisplayName("Should accept a reasoning effort in either case")
         void reasoningEffortIsCaseInsensitive() throws IOException {
-            // The one key the mapper's ACCEPT_CASE_INSENSITIVE_ENUMS reaches. `llm.anthropic.thinkingMode` binds
+            // One of the four keys the mapper's ACCEPT_CASE_INSENSITIVE_ENUMS reaches -- all four bind the same
+            // enum. `llm.anthropic.thinkingMode` binds
             // an enum too and does not inherit this -- its @JsonDeserialize replaces the EnumDeserializer the
             // feature acts on, so that field folds case itself. Both spellings pass here so that this surface
             // feels like the starter's, whose relaxed binding already accepts them.

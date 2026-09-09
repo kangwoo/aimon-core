@@ -1,14 +1,18 @@
 package at.aimon.cli.factory;
 
 import java.time.Duration;
+import java.util.EnumSet;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import at.aimon.cli.config.AnthropicProviderConfig;
 import at.aimon.cli.config.LlmProviderConfig;
 import at.aimon.cli.config.ModelCapabilityConfig;
 import at.aimon.cli.exception.ConfigurationException;
 import at.aimon.core.llm.LlmClient;
+import at.aimon.core.llm.ReasoningEffort;
 import at.aimon.core.llm.capability.InMemoryModelCapabilityRegistry;
 import at.aimon.core.llm.capability.ModelCapabilityDeclaration;
 import at.aimon.core.llms.anthropic.AnthropicConfig;
@@ -82,6 +86,12 @@ public class LlmClientFactory {
             builder.modelCapabilityRegistry(registryFor(declarations));
         }
 
+        // 공통 키. openAiConfig 의 같은 줄과 짝이며, 그 둘이 짝인 것이 `llm.reasoningEffort` 가 vendor 블록이 아니라
+        // 여기 있는 이유다 — 두 provider 가 같은 뜻으로 읽는다.
+        if (config.getReasoningEffort() != null) {
+            builder.reasoningEffort(config.getReasoningEffort());
+        }
+
         applyThinking(builder, config.getAnthropic());
 
         try {
@@ -151,6 +161,10 @@ public class LlmClientFactory {
             builder.modelCapabilityRegistry(registryFor(declarations));
         }
 
+        if (config.getReasoningEffort() != null) {
+            builder.reasoningEffort(config.getReasoningEffort());
+        }
+
         return builder.build();
     }
 
@@ -184,7 +198,7 @@ public class LlmClientFactory {
     }
 
     /**
-     * yaml 의 다섯 키를 중립 선언 타입으로 옮긴다. 적히지 않은 키는 {@code null} 로 남아 "선언되지 않음" 이 되고,
+     * yaml 의 여섯 키를 중립 선언 타입으로 옮긴다. 적히지 않은 키는 {@code null} 로 남아 "선언되지 않음" 이 되고,
      * 그것을 fail-open 값으로 푸는 것은 {@link ModelCapabilityDeclaration} 의 일이다.
      */
     private Map<String, ModelCapabilityDeclaration> declarationsOf(LlmProviderConfig config) {
@@ -208,11 +222,33 @@ public class LlmClientFactory {
                     .supportsReasoningEffort(capabilities.getSupportsReasoningEffort())
                     .supportsToolsWithReasoning(capabilities.getSupportsToolsWithReasoning())
                     .supportsReasoningTraceRoundTrip(capabilities.getSupportsReasoningTraceRoundTrip())
-                    .lowestReasoningEffort(capabilities.getLowestReasoningEffort()).build();
+                    .lowestReasoningEffort(capabilities.getLowestReasoningEffort())
+                    .acceptedReasoningEfforts(rungSetOf(capabilities.getAcceptedReasoningEfforts())).build();
         } catch (IllegalArgumentException e) {
             throw new ConfigurationException(
                     "Invalid `" + MODEL_CAPABILITIES_KEY + "." + name + "` in the LLM config: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * yaml 의 rung 목록을 집합으로 옮긴다. 적히지 않았으면 {@code null} — 그것이 "선언되지 않음" 이다.
+     *
+     * <p>
+     * <b>빈 목록은 여기서 빈 집합이 되고 코어가 거절한다.</b> 조용히 "선언되지 않음" 으로 접으면 운영자가 적은 것이
+     * 아무 일도 하지 않게 되는데, 이 표면 전체가 그런 무언의 no-op 하나 때문에 생겼다.
+     */
+    private Set<ReasoningEffort> rungSetOf(List<ReasoningEffort> rungs) {
+        if (rungs == null) {
+            return null;
+        }
+        // yaml 은 시퀀스를 List 로 준다. 중복된 rung 은 뜻이 하나뿐이므로 접히고, EnumSet 이라 순서는 사다리 순이다.
+        final Set<ReasoningEffort> set = EnumSet.noneOf(ReasoningEffort.class);
+        for (ReasoningEffort rung : rungs) {
+            if (rung != null) {
+                set.add(rung);
+            }
+        }
+        return set;
     }
 
     /**

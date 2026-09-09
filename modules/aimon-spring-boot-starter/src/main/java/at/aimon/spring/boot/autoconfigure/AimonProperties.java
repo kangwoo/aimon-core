@@ -2,10 +2,12 @@ package at.aimon.spring.boot.autoconfigure;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -124,6 +126,22 @@ public class AimonProperties implements InitializingBean {
 
     /** Property name: {@code aimon.llm.model}. */
     public static final String LLM_MODEL = PREFIX + ".llm.model";
+
+    /**
+     * How hard the model should think — {@code aimon.llm.reasoning-effort}.
+     *
+     * <p>
+     * Shared rather than {@code aimon.llm.<provider>.*}, and by the same rule that sent
+     * {@link #LLM_ANTHROPIC}'s three keys the other way. Both of that rule's tests answer "no" here: the
+     * <em>name</em> is the neutral SPI type's own ({@code at.aimon.core.llm.ReasoningEffort}), carrying no vendor
+     * concept, and the question it answers — how much deliberation should this call spend — means the same thing of
+     * either vendor. What each does with the answer differs (OpenAI has a rung parameter, Anthropic a token budget),
+     * and translating that is what a neutral enum is for.
+     *
+     * <p>
+     * Both branches read it, which is what makes the shared namespace honest rather than merely defensible.
+     */
+    public static final String LLM_REASONING_EFFORT = PREFIX + ".llm.reasoning-effort";
 
     /**
      * Map of model name to its capability declaration — {@code aimon.llm.model-capabilities.<model>.<flag>}.
@@ -714,8 +732,8 @@ public class AimonProperties implements InitializingBean {
      *            the bound LLM properties
      * @return the built-in table extended by every declared entry
      * @throws IllegalStateException
-     *             if an entry names nothing, is blank, is padded, collides with another once case is folded, or
-     *             declares none of the five flags
+     *             if an entry names nothing, is blank, is padded, collides with another once case is folded,
+     *             declares none of the six flags, or states both ladder keys at once
      */
     public static InMemoryModelCapabilityRegistry modelCapabilityRegistry(Llm llm) {
         final Map<String, ModelCapabilityDeclaration> declarations = new LinkedHashMap<>();
@@ -730,7 +748,7 @@ public class AimonProperties implements InitializingBean {
     private static ModelCapabilityDeclaration declarationOf(String model, ModelCapabilityProperties entry) {
         if (entry == null) {
             // withDefaultsExtendedBy refuses this with the message an empty entry deserves, and it does so whichever
-            // of the two shapes the binder produced for one -- a null value, or an object with five null fields.
+            // of the two shapes the binder produced for one -- a null value, or an object with six null fields.
             return null;
         }
         try {
@@ -1216,6 +1234,24 @@ public class AimonProperties implements InitializingBean {
         private Duration timeout = Duration.ofSeconds(60);
 
         /**
+         * How hard the model should think. Null leaves whatever the vendor decides on its own in place.
+         *
+         * <p>
+         * The framework's own enum rather than a {@code String}, which is the opposite of what {@code thinkingMode}
+         * beside it had to do. That one folds a String by hand because {@code AnthropicThinkingMode} lives in a
+         * {@code compileOnly} module and naming it in a signature here would be a {@code NoClassDefFoundError} on an
+         * OpenAI-only classpath. {@code ReasoningEffort} is an {@code aimon-core} type — a hard dependency of this
+         * module — so the enum costs nothing and buys two things: relaxed binding folds case for free, and the
+         * configuration processor records the type, so an IDE offers the five constants with no hand-written
+         * metadata hint.
+         *
+         * <p>
+         * A per-request {@code LlmModel} value, including an agent definition's {@code model.reasoningEffort}, wins
+         * over this one on both providers.
+         */
+        private ReasoningEffort reasoningEffort;
+
+        /**
          * Per-model capability declarations, keyed by the name this deployment calls the model by.
          *
          * <p>
@@ -1271,6 +1307,14 @@ public class AimonProperties implements InitializingBean {
 
         public void setTimeout(Duration timeout) {
             this.timeout = timeout;
+        }
+
+        public ReasoningEffort getReasoningEffort() {
+            return reasoningEffort;
+        }
+
+        public void setReasoningEffort(ReasoningEffort reasoningEffort) {
+            this.reasoningEffort = reasoningEffort;
         }
 
         public Map<String, ModelCapabilityProperties> getModelCapabilities() {
@@ -1383,10 +1427,11 @@ public class AimonProperties implements InitializingBean {
      * <p>
      * Every flag is boxed so that "not declared" and "declared false" are different things: an omitted flag keeps
      * {@code ModelCapabilities.unknown()}'s fail-open value, so an entry naming one flag changes that one flag and
-     * nothing else. Requiring all five would make an operator answer questions they cannot — a gateway operator knows
+     * nothing else. Requiring all six would make an operator answer questions they cannot — a gateway operator knows
      * {@code temperature} earns a 400 and does not know whether the model replays reasoning traces — and inventing
      * {@code supports-reasoning-trace-round-trip=true} routes the deployment at an endpoint a Chat-only gateway does
-     * not have. An entry that declares <em>nothing</em> is refused instead, in {@link AimonProperties#validateLlm()}.
+     * not have. An entry that declares <em>nothing</em> is refused instead, in {@link AimonProperties#validateLlm()};
+     * so is one that states <em>both</em> ladder keys, which describe the same fact two ways.
      *
      * <p>
      * Nested inside {@code AimonProperties} rather than beside it because
@@ -1422,6 +1467,19 @@ public class AimonProperties implements InitializingBean {
          * offers the constants and this starter needs no hand-written metadata hint for them.
          */
         private ReasoningEffort lowestReasoningEffort;
+
+        /**
+         * Every rung this model accepts — the general form, for a ladder that cannot be written as a floor because
+         * it has a gap in it. The built-in {@code gpt-5.6-terra} row is one: measured, it takes {@code none} and
+         * rejects {@code minimal}.
+         *
+         * <p>
+         * A {@code List} because that is what relaxed binding produces for both spellings an operator can write
+         * ({@code a,b,c} and an indexed list); the core turns it into a set, where a repeated rung folds because no
+         * reading of it differs from the single one. Mutually exclusive with {@link #lowestReasoningEffort} — an
+         * entry stating both fails the context rather than picking a winner the operator could not have predicted.
+         */
+        private List<ReasoningEffort> acceptedReasoningEfforts;
 
         public Boolean getSupportsSamplingParameters() {
             return supportsSamplingParameters;
@@ -1463,6 +1521,14 @@ public class AimonProperties implements InitializingBean {
             this.lowestReasoningEffort = lowestReasoningEffort;
         }
 
+        public List<ReasoningEffort> getAcceptedReasoningEfforts() {
+            return acceptedReasoningEfforts;
+        }
+
+        public void setAcceptedReasoningEfforts(List<ReasoningEffort> acceptedReasoningEfforts) {
+            this.acceptedReasoningEfforts = acceptedReasoningEfforts;
+        }
+
         /**
          * Translates this entry into the framework's neutral declaration type.
          *
@@ -1473,14 +1539,35 @@ public class AimonProperties implements InitializingBean {
          *
          * @return the declaration this entry stands for
          * @throws IllegalArgumentException
-         *             if the entry declares none of the five flags
+         *             if the entry declares none of the flags, or if it declares both ladder keys
          */
         ModelCapabilityDeclaration toDeclaration() {
             return ModelCapabilityDeclaration.builder().supportsSamplingParameters(supportsSamplingParameters)
                     .supportsReasoningEffort(supportsReasoningEffort)
                     .supportsToolsWithReasoning(supportsToolsWithReasoning)
                     .supportsReasoningTraceRoundTrip(supportsReasoningTraceRoundTrip)
-                    .lowestReasoningEffort(lowestReasoningEffort).build();
+                    .lowestReasoningEffort(lowestReasoningEffort).acceptedReasoningEfforts(rungSet()).build();
+        }
+
+        /**
+         * The declared rungs as a set, or {@code null} when the key was not written.
+         *
+         * <p>
+         * An <em>empty</em> list is deliberately not folded into {@code null}: it becomes an empty set and the core
+         * refuses it by name. Treating it as "not declared" would make something the operator wrote do nothing, and
+         * a silent no-op is the failure this whole surface exists to remove.
+         */
+        private Set<ReasoningEffort> rungSet() {
+            if (acceptedReasoningEfforts == null) {
+                return null;
+            }
+            final Set<ReasoningEffort> rungs = EnumSet.noneOf(ReasoningEffort.class);
+            for (ReasoningEffort rung : acceptedReasoningEfforts) {
+                if (rung != null) {
+                    rungs.add(rung);
+                }
+            }
+            return rungs;
         }
     }
 

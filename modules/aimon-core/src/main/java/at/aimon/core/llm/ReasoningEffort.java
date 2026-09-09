@@ -18,15 +18,17 @@ package at.aimon.core.llm;
  *
  * <p>
  * <strong>The constants are declared in ascending order of effort</strong>, so the natural
- * {@link Enum#compareTo(Enum) ordering} compares rungs and a provider can ask "is the requested rung below the lowest
- * one this model has?" without a second table. That ordering is load-bearing rather than cosmetic — a constant
- * inserted later must go in its place on the ladder, not at the end.
+ * {@link Enum#compareTo(Enum) ordering} compares rungs without a second table: a model's ladder can be written as a
+ * range from its lowest rung, and an {@link java.util.EnumSet} of rungs iterates in ladder order, so a message that
+ * prints one reads as a ladder. That ordering is load-bearing rather than cosmetic — a constant inserted later must go
+ * in its place on the ladder, not at the end.
  *
  * <p>
  * Whether a model takes this parameter at all is a capability, not a request value: see
  * {@link at.aimon.core.llm.capability.ModelCapabilities#supportsReasoningEffort()}. Which of these rungs it actually
  * accepts is a second capability: see
- * {@link at.aimon.core.llm.capability.ModelCapabilities#lowestReasoningEffort()}.
+ * {@link at.aimon.core.llm.capability.ModelCapabilities#acceptedReasoningEfforts()}, which is a set rather than a
+ * floor because at least one model's ladder has a gap in the middle of it.
  */
 public enum ReasoningEffort {
 

@@ -4,12 +4,15 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 
+import at.aimon.core.llm.ReasoningEffort;
+
 public class LlmProviderConfig {
     private String provider;
     private String apiKey;
     private String model;
     private Integer timeout;
     private String baseUrl;
+    private ReasoningEffort reasoningEffort;
     private Map<String, ModelCapabilityConfig> modelCapabilities = new LinkedHashMap<>();
     private AnthropicProviderConfig anthropic = new AnthropicProviderConfig();
 
@@ -58,6 +61,27 @@ public class LlmProviderConfig {
     }
 
     /**
+     * 이 배포가 모델에게 요구하는 추론 강도 — {@code llm.reasoningEffort}.
+     *
+     * <p>
+     * 옆의 {@code anthropic} 블록과 달리 <b>공통 네임스페이스에 있고 두 provider 가 모두 읽는다</b>. 이름이
+     * 중립 SPI 타입({@link ReasoningEffort}) 자신의 이름이고, "이 모델이 얼마나 생각해야 하는가" 라는 물음이
+     * 벤더마다 다른 것을 뜻하지도 않기 때문이다 — 두 기준 모두 "아니오" 이므로 vendor 블록으로 내려가지 않는다.
+     *
+     * <p>
+     * 값은 대소문자를 가리지 않는다({@code high} · {@code HIGH} 둘 다). 요청의 {@code LlmModel} 이 이것을 이긴다.
+     *
+     * @return 설정된 추론 강도 (적지 않았으면 null)
+     */
+    public ReasoningEffort getReasoningEffort() {
+        return reasoningEffort;
+    }
+
+    public void setReasoningEffort(ReasoningEffort reasoningEffort) {
+        this.reasoningEffort = reasoningEffort;
+    }
+
+    /**
      * 모델 이름별 capability 선언. 키는 이 배포가 모델을 부르는 이름이며 {@code model} 이 부르는 그 이름이다.
      *
      * <p>
@@ -101,20 +125,21 @@ public class LlmProviderConfig {
         final LlmProviderConfig that = (LlmProviderConfig) o;
         return Objects.equals(provider, that.provider) && Objects.equals(apiKey, that.apiKey)
                 && Objects.equals(model, that.model) && Objects.equals(timeout, that.timeout)
-                && Objects.equals(baseUrl, that.baseUrl) && Objects.equals(modelCapabilities, that.modelCapabilities)
+                && Objects.equals(baseUrl, that.baseUrl) && reasoningEffort == that.reasoningEffort
+                && Objects.equals(modelCapabilities, that.modelCapabilities)
                 && Objects.equals(anthropic, that.anthropic);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(provider, apiKey, model, timeout, baseUrl, modelCapabilities, anthropic);
+        return Objects.hash(provider, apiKey, model, timeout, baseUrl, reasoningEffort, modelCapabilities, anthropic);
     }
 
     @Override
     public String toString() {
         // apiKey 는 뺀다 (비밀). 나머지 두 블록은 싣는다 — 비밀이 아니고, 그것이 읽혔는지가 진단의 핵심이다.
         return "LlmProviderConfig{" + "provider='" + provider + '\'' + ", model='" + model + '\'' + ", timeout="
-                + timeout + ", baseUrl='" + baseUrl + '\'' + ", modelCapabilities=" + modelCapabilities + ", anthropic="
-                + anthropic + '}';
+                + timeout + ", baseUrl='" + baseUrl + '\'' + ", reasoningEffort=" + reasoningEffort
+                + ", modelCapabilities=" + modelCapabilities + ", anthropic=" + anthropic + '}';
     }
 }

@@ -259,7 +259,7 @@ class OpenAIConfigTest {
         OpenAIConfig config = OpenAIConfig.builder().model("gpt-4o").apiKey("test").build();
 
         assertThat(config.getModelCapabilityRegistry()).isNotNull();
-        assertThat(config.getModelCapabilityRegistry().resolve("gpt-5.6-terra").supportsSamplingParameters()).isFalse();
+        assertThat(config.getModelCapabilityRegistry().resolve("gpt-5-mini").supportsSamplingParameters()).isFalse();
         assertThat(config.getModelCapabilityRegistry().resolve("gpt-4o")).isEqualTo(ModelCapabilities.unknown());
     }
 

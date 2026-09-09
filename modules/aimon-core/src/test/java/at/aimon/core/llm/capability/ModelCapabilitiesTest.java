@@ -3,6 +3,11 @@ package at.aimon.core.llm.capability;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.EnumSet;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -29,13 +34,15 @@ class ModelCapabilitiesTest {
         assertThat(unknown.supportsSamplingParameters()).isTrue();
         assertThat(unknown.supportsReasoningEffort()).isFalse();
         assertThat(unknown.supportsToolsWithReasoning()).isTrue();
-        // MINIMAL rather than NONE: NONE is the rung most likely to be absent -- every OpenAI o-series name probed
-        // on 2026-09-09 rejects it, and gpt-5-nano rejected it in round 6 -- so treating it as acceptable for a
-        // model nobody has described would usually invent a wire value the vendor rejects. Round 8 narrowed
-        // "always" to "usually": gpt-5.6-terra accepts it. The default stands on the asymmetry of the two mistakes
-        // rather than on absence -- withholding a rung a model has costs a reported omission, sending one it lacks
-        // costs a 400. Every other rung a caller can name stays sendable, which is the fail-open half.
-        assertThat(unknown.lowestReasoningEffort()).isEqualTo(ReasoningEffort.MINIMAL);
+        // MINIMAL upwards rather than every rung: NONE is the one most likely to be absent -- every OpenAI o-series
+        // name probed on 2026-09-09 rejects it, and gpt-5-nano rejected it in round 6 -- so treating it as
+        // acceptable for a model nobody has described would usually invent a wire value the vendor rejects. Round 8
+        // narrowed "always" to "usually": gpt-5.6-terra accepts it, and since round 9 says so in a row of its own.
+        // The default stands on the asymmetry of the two mistakes rather than on absence -- withholding a rung a
+        // model has costs a reported omission, sending one it lacks costs a 400. Every other rung a caller can name
+        // stays sendable, which is the fail-open half.
+        assertThat(unknown.acceptedReasoningEfforts()).containsExactly(ReasoningEffort.MINIMAL, ReasoningEffort.LOW,
+                ReasoningEffort.MEDIUM, ReasoningEffort.HIGH);
         // The sixth field is the only one whose fail-open value is not a permission. Both real dialects are a 400 on
         // the model that speaks the other, so there is no safe two-valued default and UNKNOWN is the absence of the
         // fact -- which is what makes a client leave the request exactly as the caller configured it.
@@ -64,7 +71,8 @@ class ModelCapabilitiesTest {
         assertThat(partial.supportsReasoningEffort()).isTrue();
         assertThat(partial.supportsSamplingParameters()).isTrue();
         assertThat(partial.supportsToolsWithReasoning()).isTrue();
-        assertThat(partial.lowestReasoningEffort()).isEqualTo(ReasoningEffort.MINIMAL);
+        assertThat(partial.acceptedReasoningEfforts()).containsExactly(ReasoningEffort.MINIMAL, ReasoningEffort.LOW,
+                ReasoningEffort.MEDIUM, ReasoningEffort.HIGH);
         assertThat(partial.thinkingDialect()).isEqualTo(ThinkingDialect.UNKNOWN);
     }
 
@@ -78,7 +86,8 @@ class ModelCapabilitiesTest {
         assertThat(capabilities.supportsSamplingParameters()).isFalse();
         assertThat(capabilities.supportsReasoningEffort()).isTrue();
         assertThat(capabilities.supportsToolsWithReasoning()).isFalse();
-        assertThat(capabilities.lowestReasoningEffort()).isEqualTo(ReasoningEffort.LOW);
+        assertThat(capabilities.acceptedReasoningEfforts()).containsExactly(ReasoningEffort.LOW, ReasoningEffort.MEDIUM,
+                ReasoningEffort.HIGH);
         assertThat(capabilities.thinkingDialect()).isEqualTo(ThinkingDialect.BUDGETED);
     }
 
@@ -99,7 +108,68 @@ class ModelCapabilitiesTest {
     }
 
     @Test
-    @DisplayName("equals and hashCode cover all six fields")
+    @DisplayName("lowestReasoningEffort(X) and the range from X build equal descriptors")
+    void theFloorIsShorthandForTheRange() {
+        // What makes "shorthand" a fact rather than a comment. Both setters write one field, so a row that says
+        // where its ladder starts and a row that spells the same ladder out are the same row -- which is why every
+        // built-in row without a hole in it can keep the shorter form.
+        assertThat(ModelCapabilities.builder().lowestReasoningEffort(ReasoningEffort.LOW).build())
+                .isEqualTo(ModelCapabilities.builder()
+                        .acceptedReasoningEfforts(EnumSet.range(ReasoningEffort.LOW, ReasoningEffort.HIGH)).build());
+        // ...and the last call wins, as it does for every other setter on this builder.
+        assertThat(ModelCapabilities.builder().acceptedReasoningEfforts(EnumSet.of(ReasoningEffort.NONE))
+                .lowestReasoningEffort(ReasoningEffort.HIGH).build().acceptedReasoningEfforts())
+                .containsExactly(ReasoningEffort.HIGH);
+    }
+
+    @Test
+    @DisplayName("an empty ladder is refused — that state is supportsReasoningEffort(false)")
+    void emptyLadderRejected() {
+        assertThatThrownBy(() -> ModelCapabilities.builder().acceptedReasoningEfforts(Set.of()))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("acceptedReasoningEfforts")
+                .hasMessageContaining("supportsReasoningEffort(false)");
+    }
+
+    @Test
+    @DisplayName("a null ladder, or a null rung inside one, is rejected by name")
+    void nullLadderRejected() {
+        assertThatThrownBy(() -> ModelCapabilities.builder().acceptedReasoningEfforts(null))
+                .isInstanceOf(NullPointerException.class).hasMessageContaining("acceptedReasoningEfforts");
+
+        final Set<ReasoningEffort> withNull = new LinkedHashSet<>();
+        withNull.add(ReasoningEffort.LOW);
+        withNull.add(null);
+        assertThatThrownBy(() -> ModelCapabilities.builder().acceptedReasoningEfforts(withNull))
+                .isInstanceOf(NullPointerException.class).hasMessageContaining("null rung");
+    }
+
+    @Test
+    @DisplayName("the ladder is copied on the way in and unmodifiable on the way out")
+    void theLadderIsDefensivelyCopied() {
+        final Set<ReasoningEffort> mine = new LinkedHashSet<>(List.of(ReasoningEffort.LOW, ReasoningEffort.HIGH));
+        final ModelCapabilities capabilities = ModelCapabilities.builder().acceptedReasoningEfforts(mine).build();
+
+        mine.add(ReasoningEffort.NONE);
+
+        assertThat(capabilities.acceptedReasoningEfforts()).containsExactly(ReasoningEffort.LOW, ReasoningEffort.HIGH);
+        assertThatThrownBy(() -> capabilities.acceptedReasoningEfforts().add(ReasoningEffort.NONE))
+                .isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test
+    @DisplayName("the ladder iterates in rung order whatever order it was written in")
+    void theLadderIteratesInRungOrder() {
+        // What lets a warning that prints this set read as a ladder rather than as a bag. The terra row is written
+        // as EnumSet.of(NONE, LOW, MEDIUM, HIGH) and an operator may write theirs in any order at all.
+        final Set<ReasoningEffort> shuffled = new LinkedHashSet<>(
+                List.of(ReasoningEffort.HIGH, ReasoningEffort.NONE, ReasoningEffort.MEDIUM));
+
+        assertThat(ModelCapabilities.builder().acceptedReasoningEfforts(shuffled).build().acceptedReasoningEfforts())
+                .containsExactly(ReasoningEffort.NONE, ReasoningEffort.MEDIUM, ReasoningEffort.HIGH);
+    }
+
+    @Test
+    @DisplayName("equals and hashCode cover all six fields, the ladder among them")
     void equalsAndHashCode() {
         final ModelCapabilities a = ModelCapabilities.builder().supportsSamplingParameters(false)
                 .supportsReasoningEffort(true).supportsToolsWithReasoning(false).build();
@@ -119,6 +189,9 @@ class ModelCapabilitiesTest {
         assertThat(a).isNotEqualTo(
                 ModelCapabilities.builder().supportsSamplingParameters(false).supportsReasoningEffort(true)
                         .supportsToolsWithReasoning(false).lowestReasoningEffort(ReasoningEffort.LOW).build());
+        assertThat(a).isNotEqualTo(ModelCapabilities.builder().supportsSamplingParameters(false)
+                .supportsReasoningEffort(true).supportsToolsWithReasoning(false)
+                .acceptedReasoningEfforts(EnumSet.of(ReasoningEffort.NONE, ReasoningEffort.LOW)).build());
         assertThat(a).isNotEqualTo(
                 ModelCapabilities.builder().supportsSamplingParameters(false).supportsReasoningEffort(true)
                         .supportsToolsWithReasoning(false).thinkingDialect(ThinkingDialect.ADAPTIVE).build());
@@ -130,8 +203,8 @@ class ModelCapabilitiesTest {
     void toStringNamesEveryFlag() {
         assertThat(ModelCapabilities.unknown().toString()).contains("supportsSamplingParameters=true")
                 .contains("supportsReasoningEffort=false").contains("supportsToolsWithReasoning=true")
-                .contains("supportsReasoningTraceRoundTrip=false").contains("lowestReasoningEffort=MINIMAL")
-                .contains("thinkingDialect=UNKNOWN");
+                .contains("supportsReasoningTraceRoundTrip=false")
+                .contains("acceptedReasoningEfforts=[MINIMAL, LOW, MEDIUM, HIGH]").contains("thinkingDialect=UNKNOWN");
     }
 
     @Test

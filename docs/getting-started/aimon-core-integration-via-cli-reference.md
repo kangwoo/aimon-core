@@ -209,8 +209,31 @@ return switch (provider) {
 ```
 
 각 빌더는 SDK별 설정 객체(`AnthropicConfig`, `OpenAIConfig`)를 만들어 `apiKey`, `model`, `timeout`, `baseUrl` 을
-주입한다. 여기에 **양쪽 모두** 하나가 더 붙는다 — `llm.modelCapabilities` 가 있으면 그것으로 모델 capability
-registry 를 만들어 `modelCapabilityRegistry(...)` 로 넘긴다 (`anthropicConfig(...)` · `openAiConfig(...)`).
+주입한다. 여기에 **양쪽 모두** 둘이 더 붙는다 — `llm.modelCapabilities` 가 있으면 그것으로 모델 capability
+registry 를 만들어 `modelCapabilityRegistry(...)` 로 넘기고, `llm.reasoningEffort` 가 있으면 그대로 넘긴다
+(`anthropicConfig(...)` · `openAiConfig(...)`).
+
+#### 모델이 얼마나 생각할지 — `llm.reasoningEffort`
+
+```yaml
+llm:
+  provider: openai
+  model: gpt-5.1
+  reasoningEffort: medium      # none | minimal | low | medium | high -- 대소문자 무관
+```
+
+`llm.anthropic` 블록과 달리 **두 프로바이더가 모두 읽는다.** 이름이 중립 SPI 타입
+(`at.aimon.core.llm.ReasoningEffort`) 자신의 것이고, "이 호출이 얼마나 숙고해야 하는가" 라는 물음이 벤더마다
+다른 것을 뜻하지도 않기 때문이다. 답으로 하는 일은 다르다 — OpenAI 는 rung 파라미터를 보내고 Anthropic 은
+토큰 예산으로 옮긴다 — 그리고 그 번역이 중립 enum 이 있는 이유다.
+
+에이전트 정의의 `model.reasoningEffort` 가 이것을 이긴다. 값이 이 모델의 사다리에 없으면 파라미터는
+**빠지고 보고된다** — 올려서 맞추지 않는다. 운영자가 하지 않은 요청이 조용히 나가는 것보다 낫기 때문이다.
+
+**Anthropic 에서는 `llm.anthropic.thinkingMode` 가 기본값 `off` 가 아니어야 뜻이 있다.** `off` 아래에서는
+요청에 thinking 파라미터가 아예 실리지 않으므로 effort 가 닿을 곳이 없고, 클라이언트가 그 사실을 프로세스당
+한 번 WARN 으로 말한다. `reasoningEffort: none` 은 예외다 — 그것과 `off` 는 같은 것을 뜻하므로 아무 말도
+하지 않는다.
 
 #### 게이트웨이가 모델 이름을 바꿔 부를 때 — `llm.modelCapabilities`
 
@@ -238,8 +261,8 @@ llm:
 `prod-assistant` 로 조회해도 맞는다). `${VAR}` 도 풀리므로 `model: ${DEPLOYMENT}` 을 쓰는 배포가 자기 모델을
 서술할 수 있다.
 
-다섯 플래그가 있고 **전부 선택**이다. 적지 않은 것은 `ModelCapabilities.unknown()` 의 값, 즉 **오늘의 동작**을
-그대로 유지한다 — 그래서 위의 한 줄이 400 에 대한 완전한 답이다. 다섯 개를 다 요구하지 않는 이유는 게이트웨이
+여섯 플래그가 있고 **전부 선택**이다. 적지 않은 것은 `ModelCapabilities.unknown()` 의 값, 즉 **오늘의 동작**을
+그대로 유지한다 — 그래서 위의 한 줄이 400 에 대한 완전한 답이다. 다 요구하지 않는 이유는 게이트웨이
 운영자가 "temperature 가 400 을 낸다" 는 알아도 "이 모델이 reasoning trace 를 되싣는가" 는 모르기 때문이며,
 그 칸을 억지로 채우면 `/v1/responses` 가 없는 게이트웨이에서 400 이 404 로 바뀐다.
 
@@ -249,14 +272,21 @@ llm:
 | `supportsReasoningEffort` | reasoning-effort 파라미터가 이 모델의 요청 표면에 있는가 | `false` — 프레임워크가 만들어 내지 않는다 |
 | `supportsToolsWithReasoning` | 도구와 non-`NONE` effort 를 한 요청에 함께 실을 수 있는가 | `true` — 근거 없이 좁히지 않는다 |
 | `supportsReasoningTraceRoundTrip` | reasoning trace 를 다음 턴에 되실어야 추론이 이어지는가 | `false` — Chat Completions 경로를 유지한다 |
-| `lowestReasoningEffort` | 이 모델의 effort 사다리가 어디서 시작하는가 (`none`…`high`) | `minimal` |
+| `lowestReasoningEffort` | 이 모델의 effort 사다리가 어디서 시작하는가 (`none`…`high`). 거기서 위로 전부 받는다는 뜻이다 | `minimal` 부터 `high` 까지 |
+| `acceptedReasoningEfforts` | 받는 rung **전부**, 목록으로 — 사다리 중간에 구멍이 있을 때 쓰는 일반형 (`[none, low, medium, high]`) | 위 칸과 같다 |
 
 이 선언은 내장 표를 **대체하지 않고 확장한다.** exact 항목으로 등록되므로 기존 `exact > prefix` 규칙이 그대로
 "사용자가 이긴다" 를 뜻하고, 그 승리는 **이름 하나만큼**이다 — `gpt-5` 를 선언하면 정확히 그 이름만 바뀌고
 `gpt-5-mini` 는 여전히 내장 `gpt-5` prefix 가 답한다. 설정에서 prefix 를 선언하는 방법은 없다: prefix 우선순위는
 등록 순서이고, yaml 의 줄 순서가 그것을 정하게 만들 자리가 아니다.
 
-조용히 무시되지 않는 것들 — 모르는 플래그 이름, 잘못된 `lowestReasoningEffort` 값, 아무것도 선언하지 않은 항목,
+사다리를 적는 두 키는 **서로 배타적**이다. `lowestReasoningEffort` 는 "여기서 시작해서 끝까지" 라는 흔한
+경우의 축약이고, `acceptedReasoningEfforts` 는 중간이 비어 있는 사다리를 위한 것이다 — 내장 표의
+`gpt-5.6-terra` 행이 실측된 그 경우다(`none` 을 받고 `minimal` 을 거절한다). 둘을 같이 적으면 기동이
+실패한다: 둘 중 어느 쪽을 뜻했는지 답할 방법이 없기 때문이다.
+
+조용히 무시되지 않는 것들 — 모르는 플래그 이름, 잘못된 `lowestReasoningEffort` 값, 두 사다리 키를 함께
+적은 항목, 빈 `acceptedReasoningEfforts` 목록, 아무것도 선언하지 않은 항목,
 빈/공백이 붙은 이름, 대소문자만 다른 두 이름, 그리고 **같은 이름으로 풀리는 두 `${VAR}` 키**. 전부
 `ConfigurationException` 이고 메시지가 고쳐야 할 yaml 키를 부른다. `provider: anthropic` 아래의 선언은
 **더 이상 거절되지 않는다** — 그 분기도 이 registry 를 읽기 때문이다.

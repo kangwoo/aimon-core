@@ -49,8 +49,8 @@ import ch.qos.logback.core.read.ListAppender;
  *
  * <p>
  * Most tests here set {@code responsesApiEnabled(false)}, because they assert the Chat Completions divergences and
- * the models they name route to {@code /v1/responses} on a stock config — {@code gpt-5.6-terra} since round 4, and
- * the two {@code o4-mini} rows since round 8 measured that name's reasoning-item replay. The rest are already on
+ * the models they name route to {@code /v1/responses} on a stock config — the {@code gpt-5} family since round 4,
+ * and the two {@code o4-mini} rows since round 8 measured that name's reasoning-item replay. The rest are already on
  * Chat without saying so and are left alone: some override the registry so the lookup degrades to
  * {@code ModelCapabilities.unknown()} (whose {@code supportsReasoningTraceRoundTrip()} is false — an unresolvable
  * model is never routed to the new endpoint), and one names {@code gpt-4o}. That the same reporting still happens on
@@ -59,6 +59,15 @@ import ch.qos.logback.core.read.ListAppender;
 @DisplayName("OpenAILlmClient - request parameter divergence reporting")
 @ExtendWith(MockitoExtension.class)
 class OpenAILlmClientParameterDivergenceTest {
+
+    /**
+     * A gpt-5-family reasoning model, meaning nothing more than that. It was {@code gpt-5.6-terra} until that name
+     * got a built-in row of its own for its measured ladder; a name with its own row would keep every assertion here
+     * green while quietly testing a different row from the one they are about — and in
+     * {@link #requestedNoneIsReportedAndOmitted()} it would not have stayed green at all, because terra accepts the
+     * rung that test asserts is withheld.
+     */
+    private static final String A_REASONING_MODEL = "gpt-5-mini";
 
     /** Aborts the SDK call after buildRequest has run, so no valid SDK ChatCompletion has to be constructed. */
     private static final RuntimeException SENTINEL = new RuntimeException("create-invoked");
@@ -140,12 +149,12 @@ class OpenAILlmClientParameterDivergenceTest {
     @DisplayName("a temperature suppressed by capabilities is reported once at WARN")
     void suppressedTemperatureIsReportedOnce() {
         final OpenAILlmClient client = client(
-                OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra").responsesApiEnabled(false).build());
+                OpenAIConfig.builder().apiKey("test-key").model(A_REASONING_MODEL).responsesApiEnabled(false).build());
         final LlmModel model = LlmModel.builder().temperature(0.7).build();
 
         send(client, model, List.of());
         assertThat(warnings()).hasSize(1);
-        assertThat(warnings().get(0)).contains("temperature").contains("0.7").contains("gpt-5.6-terra")
+        assertThat(warnings().get(0)).contains("temperature").contains("0.7").contains(A_REASONING_MODEL)
                 .contains("does not accept sampling parameters");
 
         // Same value again: buildRequest runs on every ReAct iteration, so this must not repeat.
@@ -159,7 +168,7 @@ class OpenAILlmClientParameterDivergenceTest {
         // A subagent turn carries a temperature from SubagentLlmDefaults, not from a human, and nothing here can tell
         // the two apart -- so the wording says only that the value is set on the request.
         final OpenAILlmClient client = client(
-                OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra").responsesApiEnabled(false).build());
+                OpenAIConfig.builder().apiKey("test-key").model(A_REASONING_MODEL).responsesApiEnabled(false).build());
 
         send(client, LlmModel.builder().temperature(0.7).build(), List.of());
 
@@ -189,7 +198,7 @@ class OpenAILlmClientParameterDivergenceTest {
         // unknown model sends exactly what it sends today", which round 1 had recorded as design O-1/A6. See
         // docs/design/llm/openai-model-capabilities.md section 9.
         final OpenAILlmClient client = client(
-                OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra").responsesApiEnabled(false).build());
+                OpenAIConfig.builder().apiKey("test-key").model(A_REASONING_MODEL).responsesApiEnabled(false).build());
 
         final ChatCompletionCreateParams params = sendAndCapture(client, LlmModel.builder().build(), List.of(A_TOOL));
 
@@ -204,7 +213,7 @@ class OpenAILlmClientParameterDivergenceTest {
     void nullReturningRegistryIsReportedOnce() {
         // The adjacent throwing branch reports; a silent degradation beside a reported one would teach an operator
         // that capability lookups never fail.
-        final OpenAIConfig config = OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra")
+        final OpenAIConfig config = OpenAIConfig.builder().apiKey("test-key").model(A_REASONING_MODEL)
                 .modelCapabilityRegistry(new NullResolvingRegistry()).build();
         final OpenAILlmClient client = client(config);
 
@@ -212,7 +221,7 @@ class OpenAILlmClientParameterDivergenceTest {
         send(client, LlmModel.builder().build(), List.of());
 
         assertThat(warnings()).hasSize(1);
-        assertThat(warnings().get(0)).contains("Model capability lookup for gpt-5.6-terra returned null")
+        assertThat(warnings().get(0)).contains("Model capability lookup for " + A_REASONING_MODEL + " returned null")
                 .contains("treating the model as unknown");
     }
 
@@ -220,7 +229,7 @@ class OpenAILlmClientParameterDivergenceTest {
     @DisplayName("each distinct suppressed parameter is reported separately")
     void eachParameterIsReportedSeparately() {
         final OpenAILlmClient client = client(
-                OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra").responsesApiEnabled(false).build());
+                OpenAIConfig.builder().apiKey("test-key").model(A_REASONING_MODEL).responsesApiEnabled(false).build());
 
         send(client, LlmModel.builder().temperature(0.7).topP(0.9).presencePenalty(1.0).frequencyPenalty(-1.0).build(),
                 List.of());
@@ -256,19 +265,21 @@ class OpenAILlmClientParameterDivergenceTest {
         // and getting NONE is not a divergence. But 'none' is off this model's ladder -- gpt-5.x starts at
         // 'minimal', the o-series at 'low' -- so sending it is a 400, and omitting it leaves the model reasoning at
         // its own default, which is the opposite of what NONE asked for. That is a divergence and the operator is
-        // told. (Round 8 narrowed the family claim this comment used to make: 'none' is not absent everywhere on
-        // OpenAI, because gpt-5.6-terra accepts it. What is asserted below is per-row and unaffected.)
+        // told. (Round 8 narrowed the family claim: 'none' is not absent everywhere on OpenAI, because
+        // gpt-5.6-terra accepts it. Round 9 gave that name a row saying so, which is why the fixture here is a
+        // family name -- on terra's row this test would assert an omission that no longer happens.)
         //
         // The body assertion is the half this test's own name claimed and did not check: warning and sending are not
         // mutually exclusive, so asserting only the warning left "report it, then send it anyway" -- the 400 this
         // branch exists to prevent -- indistinguishable from correct behaviour.
         final OpenAILlmClient client = client(
-                OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra").responsesApiEnabled(false).build());
+                OpenAIConfig.builder().apiKey("test-key").model(A_REASONING_MODEL).responsesApiEnabled(false).build());
 
         final ChatCompletionCreateParams params = sendAndCapture(client,
                 LlmModel.builder().reasoningEffort(ReasoningEffort.NONE).build(), List.of(A_TOOL));
 
-        assertThat(warnings()).anyMatch(w -> w.contains("has no rung below MINIMAL"));
+        assertThat(warnings())
+                .anyMatch(w -> w.contains("does not accept that rung") && w.contains("[MINIMAL, LOW, MEDIUM, HIGH]"));
         assertThat(params._reasoningEffort()).isInstanceOf(JsonMissing.class);
         assertThat(wireBodyOf(params)).doesNotContain("reasoning_effort");
     }
@@ -290,7 +301,7 @@ class OpenAILlmClientParameterDivergenceTest {
                 LlmModel.builder().reasoningEffort(ReasoningEffort.MINIMAL).build(), List.of(A_TOOL));
 
         assertThat(warnings()).anyMatch(w -> w.contains("reasoningEffort MINIMAL") && w.contains("o4-mini")
-                && w.contains("has no rung below LOW"));
+                && w.contains("does not accept that rung") && w.contains("[LOW, MEDIUM, HIGH]"));
         assertThat(params._reasoningEffort()).isInstanceOf(JsonMissing.class);
         assertThat(wireBodyOf(params)).doesNotContain("reasoning_effort");
     }
@@ -298,8 +309,8 @@ class OpenAILlmClientParameterDivergenceTest {
     @Test
     @DisplayName("LOW is on the o-series ladder and still reaches the wire")
     void lowIsStillSentForTheOSeries() {
-        // The other side of the same row: raising the floor must not turn the whole family's reasoning off. Without
-        // this, setting lowestReasoningEffort to something absurd would pass every other assertion in this class.
+        // The other side of the same row: narrowing the ladder must not turn the whole family's reasoning off.
+        // Without this, an absurd acceptedReasoningEfforts would pass every other assertion in this class.
         // responsesApiEnabled(false) for the reason given on the test above -- this is the Chat request shape.
         final OpenAILlmClient client = client(
                 OpenAIConfig.builder().apiKey("test-key").model("o4-mini").responsesApiEnabled(false).build());
@@ -308,7 +319,7 @@ class OpenAILlmClientParameterDivergenceTest {
                 LlmModel.builder().reasoningEffort(ReasoningEffort.LOW).build(), List.of(A_TOOL));
 
         assertThat(wireBodyOf(params)).contains("\"reasoning_effort\":\"low\"");
-        assertThat(warnings()).noneMatch(w -> w.contains("rung below"));
+        assertThat(warnings()).noneMatch(w -> w.contains("does not accept that rung"));
     }
 
     @Test
@@ -326,7 +337,7 @@ class OpenAILlmClientParameterDivergenceTest {
     @Test
     @DisplayName("a registry that throws is reported once and the request keeps its default shape")
     void brokenRegistryIsReported() {
-        final OpenAIConfig config = OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra")
+        final OpenAIConfig config = OpenAIConfig.builder().apiKey("test-key").model(A_REASONING_MODEL)
                 .modelCapabilityRegistry(modelName -> {
                     throw new IllegalStateException("registry is broken");
                 }).build();
@@ -336,7 +347,7 @@ class OpenAILlmClientParameterDivergenceTest {
         send(client, LlmModel.builder().build(), List.of());
 
         assertThat(warnings()).hasSize(1);
-        assertThat(warnings().get(0)).contains("Model capability lookup for gpt-5.6-terra failed")
+        assertThat(warnings().get(0)).contains("Model capability lookup for " + A_REASONING_MODEL + " failed")
                 .contains("treating the model as unknown");
     }
 }

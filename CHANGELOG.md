@@ -309,12 +309,93 @@ Central is versioned independently).
 
 - **Declarable, and programmatically only for now.** `ModelCapabilityDeclaration` carries the sixth
   flag, so a registry row can be overridden by name — including back to `UNKNOWN`, which is a real
-  statement here meaning *do not act on any built-in row for this name*. The CLI's
-  `llm.modelCapabilities` and the starter's `aimon.llm.model-capabilities` still expose five keys; a
-  configuration surface for the dialect is not part of this change.
+  statement here meaning *do not act on any built-in row for this name*. Neither the CLI's
+  `llm.modelCapabilities` nor the starter's `aimon.llm.model-capabilities` gains a key for it; a
+  configuration surface for the dialect is not part of this change. (Those two surfaces expose six keys
+  after the entry above, which added the second way of writing a model's reasoning ladder — the dialect
+  is still not among them.)
 
   Design and the full mode × dialect table, one test per row:
   [`reasoning-model-enablement.md`](docs/design/llm/reasoning-model-enablement.md) §3.
+
+### LLM: how hard a model should think is reachable from configuration, and one model's ladder has a hole in it
+
+- **One key on all three surfaces** (#61). `ReasoningEffort` was settable only from Java, so a
+  deployment assembled from configuration could not ask a reasoning model to think harder or less.
+  Unlike the three keys in the entry below it goes to the **shared** namespace, and by the same
+  criterion (`model-capability-config-key.md` §2.7): the name is the neutral SPI type's own
+  (`at.aimon.core.llm.ReasoningEffort`) and "how much deliberation should this call spend" means the
+  same thing of either vendor, so both of that criterion's tests answer "no". Both provider branches
+  read it, which is what makes a shared key honest rather than merely defensible.
+
+  ```yaml
+  # aimon-cli — camelCase       # starter — kebab-case          # agent definition frontmatter
+  llm:                          aimon:                          model:
+    reasoningEffort: medium       llm:                            name: gpt-5.1
+                                    reasoning-effort: medium      reasoningEffort: high
+  ```
+
+  All three accept any casing. A bad value fails loudly on all three — the CLI with a
+  `ConfigurationException`, the starter with a bind failure naming the property, the frontmatter with
+  an `AgentDefinitionParseException` naming the key and every accepted spelling. A misspelled *key
+  name* is loud on the CLI and in the frontmatter's own block and **silent in the starter**, which is
+  `L-1` in `docs/backlog/llm-config-surface-open-items.md`, widened by one key and closed by none of
+  this.
+
+- **`AnthropicConfig` gains `reasoningEffort`, with the `LlmModel`-first precedence OpenAI already
+  had.** Without it the shared key would have reached one provider and been dropped by the other —
+  a key that means the same thing on both had to resolve the same way on both. The precedence is
+  pinned by a test on each provider, written alike so the pair reads as one claim.
+
+- **A deployment that writes none of these is unchanged, byte for byte** — every setter is called
+  only when its key was written. **One deliberate exception:** a deployment that already sets an
+  effort while Anthropic's `thinkingMode` is at its shipped default `OFF` now gets a WARN, once per
+  process, saying the effort reaches nothing and naming the mode that would act on it. That state is
+  "configured and never read", which this repository refuses to leave silent. `reasoningEffort: none`
+  under `OFF` is **not** warned about — both mean "send no thinking parameter", so that pair is
+  consistent rather than inert.
+
+- **Breaking, in a published `0.x` SPI: `ModelCapabilities.lowestReasoningEffort()` is gone**,
+  replaced by `Set<ReasoningEffort> acceptedReasoningEfforts()`. Taken in one go rather than through
+  a deprecated adapter, which is `docs/project/api-stability.md` §5's stated habit for `0.x`. An
+  out-of-tree caller reading the floor **fails to compile**, and that is the outcome to want: the
+  expression a floor invites — `effort.compareTo(floor) >= 0` — is exactly the one that put
+  `"effort":"minimal"` on `gpt-5.6-terra`'s wire.
+
+  The **input** side is unchanged. `Builder.lowestReasoningEffort(X)` stays as shorthand for "the
+  ladder starts at X and runs to the top", every built-in row without a hole still uses it, and both
+  configuration keys keep their names — renaming `lowest-reasoning-effort` would have made every
+  deployment that declared it lose the declaration in silence, which is the failure mode of the
+  backlog item above.
+
+- **Why a set.** `gpt-5.6-terra` resolves to the `gpt-5` prefix row, whose ladder starts at `minimal`
+  — and terra **rejects** `minimal` while **accepting** `none` (measured 2026-09-09). No floor
+  describes a ladder with a gap in the middle: `NONE` sends `minimal` and 400s, `MINIMAL` 400s and
+  misdescribes, `LOW` avoids the 400 by writing down something untrue about the model. So terra gets
+  an exact row of its own, `{none, low, medium, high}` — the four rungs the neutral vocabulary has;
+  the model also takes `xhigh` and `max`, which `ReasoningEffort` deliberately does not carry.
+
+- **That exact row narrows a promise, and the narrowing is the interesting part.**
+  `builderWithDefaults().registerPrefix("gpt-5", …)` now reaches `gpt-5-mini`, `gpt-5-nano` and every
+  future `gpt-5*` name **but not `gpt-5.6-terra`** — the same shadowing the eight built-in o-series
+  exact rows already produce for `o1` and `o1-2024-12-17`, with the same remedy:
+  `register("gpt-5.6-terra", …)`, or a configured declaration for that name, displaces the built-in
+  row. The stronger promise ("every `gpt-5*` name, always") existed only to keep one javadoc example
+  tidy, and it was costing a shipped HTTP 400.
+
+- **A configuration surface for the gap.** `acceptedReasoningEfforts` joins `lowestReasoningEffort`
+  on both `modelCapabilities` surfaces — `[none, low, medium, high]` in the CLI's yaml,
+  `accepted-reasoning-efforts=none,low,medium,high` in the starter — because an operator whose
+  gateway renames terra needs to be able to say what this table says. Writing both keys for one model
+  fails at startup naming both and which to keep; an empty list is refused rather than treated as
+  undeclared.
+
+- **The divergence signature changed**, since "below" is provably not the reason any more:
+  `reasoningEffortBelowLadder=` → `reasoningEffortOffLadder=`, and the message now prints the rungs
+  the model does accept instead of the one it starts at. It is internal apart from the log text.
+
+  Design: [`reasoning-effort-config-surface.md`](docs/design/llm/reasoning-effort-config-surface.md).
+  Closes `L-1` in `docs/backlog/openai-model-capabilities-open-items.md`.
 
 ### LLM: Anthropic's thinking settings are reachable from configuration, under a vendor namespace
 
