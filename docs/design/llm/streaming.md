@@ -271,8 +271,12 @@ CLI 플래그는 picocli `negatable = true` 로 필드 하나가 `--streaming` /
   거쳐 다음 턴 요청에 되실린다 — 도구 호출을 건너뛰어도 모델이 사고 과정을 다시 파생하지 않게 하는
   것이 그 목적이다. **아직 안 된 것 둘.** ① reasoning *summary* 델타
   (`response.reasoning_summary_text.delta`)는 sink 로 전달하지 않는다. 사용자에게 보여줄 사고 요약
-  스트림은 별개 작업이다. ② Anthropic 은 그대로 열려 있다 (`AnthropicStreamingMapper:145`).
-  설계는 [openai-responses-path.md](openai-responses-path.md) 참조
+  스트림은 별개 작업이다. ② Anthropic 도 **같은 절반까지 왔다** — `AnthropicStreamingMapper` 가
+  `thinking_delta` 와 `signature_delta` 를 모아 블록을 재조립하고 `ChunkAggregator.addReasoningTrace(...)`
+  로 넣지만, thinking *텍스트* 를 sink 로 흘려보내지는 않는다(그러려면 `LlmStreamChunk.Kind` 가 하나 더
+  필요하고 그것은 `aimon-core` 변경이다). citation 델타는 여전히 모델링되지 않는다.
+  설계는 [openai-responses-path.md](openai-responses-path.md) 와
+  [anthropic-thinking-traces.md](anthropic-thinking-traces.md) 참조
 - **`LlmStreamingOptions.isIncludeUsage()` 는 Responses 경로에서 무효다** — 그 엔드포인트의
   `stream_options` 는 `include_obfuscation` 만 나르고 usage 토글이 없다. usage 가 opt-in 이 아니기
   때문이며, `includeUsage(false)` 로 토큰을 아끼려던 호출자는 그 경로에서 usage 를 그냥 받는다

@@ -29,6 +29,8 @@ public final class AnthropicConfig {
     private static final double DEFAULT_TEMPERATURE = 0.0;
     private static final int DEFAULT_MAX_TOKENS = 4096;
     private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(60);
+    private static final AnthropicThinkingMode DEFAULT_THINKING_MODE = AnthropicThinkingMode.OFF;
+    private static final boolean DEFAULT_REPLAY_THINKING_BLOCKS = true;
 
     private final String baseUrl;
     private final String apiKey;
@@ -36,6 +38,9 @@ public final class AnthropicConfig {
     private final double temperature;
     private final int maxTokens;
     private final Duration timeout;
+    private final AnthropicThinkingMode thinkingMode;
+    private final Integer thinkingBudgetTokens;
+    private final boolean replayThinkingBlocks;
 
     private AnthropicConfig(Builder builder) {
         this.baseUrl = builder.baseUrl;
@@ -44,6 +49,9 @@ public final class AnthropicConfig {
         this.temperature = builder.temperature;
         this.maxTokens = builder.maxTokens;
         this.timeout = builder.timeout;
+        this.thinkingMode = Objects.requireNonNull(builder.thinkingMode, "Thinking mode cannot be null");
+        this.thinkingBudgetTokens = builder.thinkingBudgetTokens;
+        this.replayThinkingBlocks = builder.replayThinkingBlocks;
 
         if (apiKey.isBlank()) {
             throw new IllegalArgumentException("API key cannot be blank");
@@ -53,6 +61,19 @@ public final class AnthropicConfig {
         }
         if (maxTokens <= 0) {
             throw new IllegalArgumentException("Max tokens must be positive");
+        }
+        if (thinkingBudgetTokens != null) {
+            // The API rejects a budget below 1024 on every request, so failing here beats failing on all of them.
+            if (thinkingBudgetTokens < AnthropicThinkingBudgets.MINIMUM_BUDGET_TOKENS) {
+                throw new IllegalArgumentException("Thinking budget must be at least "
+                        + AnthropicThinkingBudgets.MINIMUM_BUDGET_TOKENS + " tokens, got: " + thinkingBudgetTokens);
+            }
+            // Adaptive mode has no budget field and OFF sends no thinking parameter at all, so a budget set alongside
+            // either would be silently ignored. Refusing at construction is strictly better than a warning per call.
+            if (thinkingMode != AnthropicThinkingMode.EXTENDED) {
+                throw new IllegalArgumentException("Thinking budget applies only to " + AnthropicThinkingMode.EXTENDED
+                        + " thinking mode, but " + "the configured mode is " + thinkingMode);
+            }
         }
     }
 
@@ -119,6 +140,36 @@ public final class AnthropicConfig {
         return timeout;
     }
 
+    /**
+     * Gets the thinking dialect this deployment's model speaks.
+     *
+     * @return The thinking mode (never null; {@link AnthropicThinkingMode#OFF} by default)
+     */
+    public AnthropicThinkingMode getThinkingMode() {
+        return thinkingMode;
+    }
+
+    /**
+     * Gets the explicit {@code budget_tokens} override for {@link AnthropicThinkingMode#EXTENDED}.
+     *
+     * <p>
+     * When absent the budget comes from the call's {@link at.aimon.core.llm.ReasoningEffort} instead.
+     *
+     * @return The configured budget, or null to derive it from the call's reasoning effort
+     */
+    public Integer getThinkingBudgetTokens() {
+        return thinkingBudgetTokens;
+    }
+
+    /**
+     * Whether stored thinking blocks are replayed on the next request.
+     *
+     * @return {@code true} (the default) to replay them
+     */
+    public boolean isReplayThinkingBlocks() {
+        return replayThinkingBlocks;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -130,18 +181,23 @@ public final class AnthropicConfig {
         AnthropicConfig that = (AnthropicConfig) o;
         return Double.compare(that.temperature, temperature) == 0 && maxTokens == that.maxTokens
                 && Objects.equals(baseUrl, that.baseUrl) && apiKey.equals(that.apiKey) && model.equals(that.model)
-                && timeout.equals(that.timeout);
+                && timeout.equals(that.timeout) && thinkingMode == that.thinkingMode
+                && Objects.equals(thinkingBudgetTokens, that.thinkingBudgetTokens)
+                && replayThinkingBlocks == that.replayThinkingBlocks;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(baseUrl, apiKey, model, temperature, maxTokens, timeout);
+        return Objects.hash(baseUrl, apiKey, model, temperature, maxTokens, timeout, thinkingMode, thinkingBudgetTokens,
+                replayThinkingBlocks);
     }
 
     @Override
     public String toString() {
         return "AnthropicConfig{" + "baseUrl='" + baseUrl + '\'' + ", model='" + model + '\'' + ", temperature="
-                + temperature + ", maxTokens=" + maxTokens + ", timeout=" + timeout + '}';
+                + temperature + ", maxTokens=" + maxTokens + ", timeout=" + timeout + ", thinkingMode=" + thinkingMode
+                + ", thinkingBudgetTokens=" + thinkingBudgetTokens + ", replayThinkingBlocks=" + replayThinkingBlocks
+                + '}';
     }
 
     /** Builder for AnthropicConfig. */
@@ -153,6 +209,9 @@ public final class AnthropicConfig {
         private int maxTokens = DEFAULT_MAX_TOKENS;
         private Duration timeout = DEFAULT_TIMEOUT;
         private String baseUrl;
+        private AnthropicThinkingMode thinkingMode = DEFAULT_THINKING_MODE;
+        private Integer thinkingBudgetTokens;
+        private boolean replayThinkingBlocks = DEFAULT_REPLAY_THINKING_BLOCKS;
 
         private Builder() {
         }
@@ -230,6 +289,68 @@ public final class AnthropicConfig {
          */
         public Builder baseUrl(String baseUrl) {
             this.baseUrl = baseUrl;
+            return this;
+        }
+
+        /**
+         * Sets which thinking dialect this deployment's model speaks.
+         *
+         * <p>
+         * The two dialects are mutually exclusive per model and picking the wrong one is an HTTP 400 — see
+         * {@link AnthropicThinkingMode}, whose javadoc carries the per-model split and both server messages. The
+         * default is {@link AnthropicThinkingMode#OFF}, which sends no {@code thinking} parameter and leaves the
+         * request body exactly as it was before thinking support existed.
+         *
+         * <p>
+         * This setting gates the <em>request</em> only. Thinking blocks that arrive anyway — and on the newest models
+         * they do, because thinking is on there by default — are captured and replayed regardless.
+         *
+         * @param thinkingMode
+         *            The thinking mode (must not be null)
+         * @return This builder
+         * @throws NullPointerException
+         *             if thinkingMode is null
+         */
+        public Builder thinkingMode(AnthropicThinkingMode thinkingMode) {
+            this.thinkingMode = Objects.requireNonNull(thinkingMode, "Thinking mode cannot be null");
+            return this;
+        }
+
+        /**
+         * Sets an explicit {@code budget_tokens} for {@link AnthropicThinkingMode#EXTENDED}, overriding the call's
+         * {@link at.aimon.core.llm.ReasoningEffort}.
+         *
+         * <p>
+         * Must be at least 1024 — the API rejects less — and applies only in {@code EXTENDED} mode; {@code build()}
+         * refuses both mistakes rather than letting a silently ignored value reach the wire. The value is still
+         * clamped below the request's {@code max_tokens}, since thinking tokens count against it.
+         *
+         * @param thinkingBudgetTokens
+         *            The budget, or null to derive it from the call's reasoning effort
+         * @return This builder
+         */
+        public Builder thinkingBudgetTokens(Integer thinkingBudgetTokens) {
+            this.thinkingBudgetTokens = thinkingBudgetTokens;
+            return this;
+        }
+
+        /**
+         * Sets whether stored thinking blocks are replayed on the next request. Defaults to {@code true}.
+         *
+         * <p>
+         * The escape hatch, and it exists for one named failure. From Claude Fable 5.1 a thinking block stays valid
+         * only while the system prompt, the tools and the messages before it are unchanged; AIMON re-renders its
+         * system prompt every iteration and compacts client-side, both of which are prefix edits. The resulting error
+         * is <em>"Invalid {@code signature} in {@code thinking} block. The block is bound to a different
+         * conversation."</em>, and the vendor's own remedy is to strip every thinking block from the history — which
+         * is what {@code false} does. The cost is the feature: the model re-derives its reasoning each turn.
+         *
+         * @param replayThinkingBlocks
+         *            {@code false} to strip stored thinking blocks instead of replaying them
+         * @return This builder
+         */
+        public Builder replayThinkingBlocks(boolean replayThinkingBlocks) {
+            this.replayThinkingBlocks = replayThinkingBlocks;
             return this;
         }
 
