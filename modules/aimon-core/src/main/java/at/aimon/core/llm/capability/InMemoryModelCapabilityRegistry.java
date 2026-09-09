@@ -42,6 +42,12 @@ import at.aimon.core.llm.ReasoningEffort;
  * </pre>
  *
  * <p>
+ * That is the programmatic path. The same extension is reachable from configuration —
+ * {@code llm.modelCapabilities.<model>} in the CLI's yaml, {@code aimon.llm.model-capabilities.<model>} in the Spring
+ * Boot starter — and both surfaces arrive here through
+ * {@link #withDefaultsExtendedBy(Map)}, which is where the rules governing a declared entry live.
+ *
+ * <p>
  * The o-series ({@code o1} / {@code o3} / {@code o4-mini}) is deliberately <em>not</em> in the built-in table: those
  * models take a reasoning effort but reject the value {@code none}, so an entry for them must keep
  * {@link ModelCapabilities#supportsToolsWithReasoning()} at {@code true}:
@@ -151,6 +157,81 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
      */
     public static InMemoryModelCapabilityRegistry withDefaults() {
         return builderWithDefaults().build();
+    }
+
+    /**
+     * Returns a registry with the framework-default entries plus one exact entry per declaration.
+     *
+     * <p>
+     * This is the one implementation of what a <em>configured</em> capability entry means, called by both
+     * configuration surfaces. Three rules are decided here and nowhere else.
+     *
+     * <ul>
+     * <li><strong>It extends, it does not replace.</strong> The starting point is {@link #builderWithDefaults()}, so an
+     * operator who names one deployment keeps the other rows.
+     * <li><strong>Declarations are exact entries.</strong> Which means the existing precedence rule already answers
+     * "who wins": an exact entry beats every prefix. It also means a declaration names <em>one model</em> — declaring
+     * {@code gpt-5} overrides that exact name and leaves {@code gpt-5-mini} on the built-in {@code gpt-5} prefix.
+     * There is deliberately no way to declare a prefix from configuration: prefix precedence is registration order,
+     * and an order that a yaml file's line order decided would be a rule this table does not have.
+     * <li><strong>An omitted flag stays fail-open</strong>, by way of
+     * {@link ModelCapabilityDeclaration#capabilities()}.
+     * </ul>
+     *
+     * <p>
+     * Names are rejected rather than repaired. Each rejected shape is one whose failure would otherwise be silent: a
+     * blank or padded name never matches anything, two names differing only in case leave one of them quietly beaten
+     * by the other, and an entry that declares nothing registers the capabilities the model already had. Callers wrap
+     * the {@link IllegalArgumentException} in whatever names their own key path — a CLI yaml key, a Spring property —
+     * and none of them re-implement the judgement.
+     *
+     * @param declarations
+     *            model name to declaration; {@code null} or empty yields plain {@link #withDefaults()}
+     * @return a registry carrying the built-in entries plus the declarations
+     * @throws IllegalArgumentException
+     *             if a name is blank, is padded with whitespace, collides with another name once case is folded, or
+     *             its declaration is null
+     */
+    public static InMemoryModelCapabilityRegistry withDefaultsExtendedBy(
+            Map<String, ModelCapabilityDeclaration> declarations) {
+        final Builder builder = builderWithDefaults();
+        if (declarations == null || declarations.isEmpty()) {
+            return builder.build();
+        }
+        final Map<String, String> seen = new LinkedHashMap<>();
+        for (Map.Entry<String, ModelCapabilityDeclaration> entry : declarations.entrySet()) {
+            final String name = requireUsableName(entry.getKey());
+            final String previous = seen.putIfAbsent(name.toLowerCase(Locale.ROOT), name);
+            if (previous != null) {
+                throw new IllegalArgumentException("Model capability declarations '" + previous + "' and '" + name
+                        + "' differ only in case, and model names are matched ignoring case — one of them would"
+                        + " silently win. Keep one.");
+            }
+            // A null declaration is what an entry with an empty body binds to, at least under Jackson, which keeps the
+            // key and stores null. Caught here rather than on each surface so that the outcome does not depend on
+            // which binder produced it, and reported as the same thing the operator did: they declared nothing.
+            if (entry.getValue() == null) {
+                throw new IllegalArgumentException("Model capability declaration '" + name + "' is empty. Such an"
+                        + " entry registers the same fail-open capabilities the model already had, so it would bind"
+                        + " and do nothing; state at least one flag, or remove it.");
+            }
+            builder.register(name, entry.getValue().capabilities());
+        }
+        return builder.build();
+    }
+
+    private static String requireUsableName(String modelName) {
+        if (modelName == null || modelName.isBlank()) {
+            throw new IllegalArgumentException("A model capability declaration needs a model name, and one of them is"
+                    + " blank. The name is the one this deployment calls the model by — the same value the LLM"
+                    + " configuration's model setting carries.");
+        }
+        if (!modelName.equals(modelName.trim())) {
+            throw new IllegalArgumentException("Model capability declaration '" + modelName + "' is padded with"
+                    + " whitespace. Names are matched literally apart from case, so this entry would never match"
+                    + " anything — a no-op nothing would report. Remove the surrounding spaces.");
+        }
+        return modelName;
     }
 
     @Override

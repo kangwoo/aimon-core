@@ -11,7 +11,9 @@ import java.util.regex.Pattern;
 
 import com.fasterxml.jackson.core.JsonParseException;
 import com.fasterxml.jackson.databind.JsonMappingException;
+import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 
 import at.aimon.cli.exception.ConfigurationException;
@@ -33,7 +35,12 @@ public class CliConfigLoader {
      *            환경 변수 이름을 값으로 변환하는 함수 (값이 없으면 null 반환)
      */
     CliConfigLoader(Function<String, String> envVarResolver) {
-        this.yamlMapper = new ObjectMapper(new YAMLFactory());
+        // ACCEPT_CASE_INSENSITIVE_ENUMS so that `lowestReasoningEffort: low` works as well as `LOW`, matching what the
+        // starter's relaxed binding already accepts. Today it widens exactly one key: no other field in
+        // at.aimon.cli.config binds to an enum -- McpServerEntry.transportType is a String parsed by hand, which a
+        // MapperFeature cannot reach.
+        this.yamlMapper = JsonMapper.builder(new YAMLFactory()).enable(MapperFeature.ACCEPT_CASE_INSENSITIVE_ENUMS)
+                .build();
         this.envVarResolver = envVarResolver;
     }
 
@@ -105,6 +112,7 @@ public class CliConfigLoader {
             if (llmConfig.getModel() != null) {
                 llmConfig.setModel(resolveEnvVars(llmConfig.getModel()));
             }
+            resolveModelCapabilityKeys(llmConfig);
         }
 
         if (config.getMcpConfig() != null && config.getMcpConfig().hasServers()) {
@@ -112,6 +120,20 @@ public class CliConfigLoader {
                 resolveMcpServerEnvVars(entry);
             }
         }
+    }
+
+    /**
+     * capability 선언의 <b>맵 키</b>에서도 {@code ${VAR}} 를 푼다. {@code model} 이 이미 풀리므로, 여기서 풀지 않으면
+     * {@code model: ${MODEL}} 을 쓰는 배포는 자기 모델을 서술할 방법이 없고 그 실패가 원래의 400 이다.
+     */
+    private void resolveModelCapabilityKeys(LlmProviderConfig llmConfig) {
+        final Map<String, ModelCapabilityConfig> declared = llmConfig.getModelCapabilities();
+        if (declared == null || declared.isEmpty()) {
+            return;
+        }
+        final Map<String, ModelCapabilityConfig> resolved = new LinkedHashMap<>();
+        declared.forEach((name, capabilities) -> resolved.put(resolveEnvVars(name), capabilities));
+        llmConfig.setModelCapabilities(resolved);
     }
 
     private void resolveMcpServerEnvVars(McpServerEntry entry) {

@@ -82,6 +82,7 @@
 | [`multimodal-content.md`](llm/multimodal-content.md) | 이미지·문서를 메시지에 싣는 콘텐츠 모델 |
 | [`openai-model-capabilities.md`](llm/openai-model-capabilities.md) | 모델별로 요청에 실을 수 있는 파라미터 — 교체 가능하고 fail-open 인 능력 레지스트리, 그리고 gpt-5.x 도구 호출 |
 | [`openai-responses-path.md`](llm/openai-responses-path.md) | `/v1/responses` 경로 — 턴을 넘어 살아남는 추론 페이로드 슬롯, 엔드포인트를 모델별로 고르는 seam, 네 번째 토큰 카운터 |
+| [`model-capability-config-key.md`](llm/model-capability-config-key.md) | 그 능력 표를 **설정에서** 확장하는 키 — CLI yaml 과 스타터 프로퍼티, 부분 선언의 기본값, 게이트웨이가 개명한 모델 |
 
 ### 상태를 갖는 서브시스템
 

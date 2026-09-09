@@ -3,6 +3,9 @@ package at.aimon.core.llm.capability;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -198,4 +201,147 @@ class InMemoryModelCapabilityRegistryTest {
         assertThat(registry.resolve("o3").supportsReasoningTraceRoundTrip()).isFalse();
     }
 
+    // ---------------------------------------------------------------------------------------------------------
+    // withDefaultsExtendedBy -- the configuration surfaces' entry point
+    // ---------------------------------------------------------------------------------------------------------
+
+    private static final ModelCapabilityDeclaration SAMPLING_REJECTED_DECLARATION = ModelCapabilityDeclaration.builder()
+            .supportsSamplingParameters(false).build();
+
+    @Test
+    @DisplayName("a declared entry is added and the built-in rows are all still there")
+    void declarationsExtendRatherThanReplace() {
+        final InMemoryModelCapabilityRegistry extended = InMemoryModelCapabilityRegistry
+                .withDefaultsExtendedBy(Map.of("prod-assistant", SAMPLING_REJECTED_DECLARATION));
+        final InMemoryModelCapabilityRegistry stock = InMemoryModelCapabilityRegistry.withDefaults();
+
+        assertThat(extended.resolve("prod-assistant").supportsSamplingParameters()).isFalse();
+        // One name per built-in row. This is the acceptance criterion "the built-in five survive" stated as five
+        // assertions rather than as a count, so that a row silently changing value also fails.
+        assertThat(extended.resolve("gpt-5-chat-latest")).isEqualTo(stock.resolve("gpt-5-chat-latest"));
+        assertThat(extended.resolve("gpt-5.6-terra")).isEqualTo(stock.resolve("gpt-5.6-terra"));
+        assertThat(extended.resolve("o1-x")).isEqualTo(stock.resolve("o1-x"));
+        assertThat(extended.resolve("o3-mini")).isEqualTo(stock.resolve("o3-mini"));
+        assertThat(extended.resolve("o4-mini")).isEqualTo(stock.resolve("o4-mini"));
+    }
+
+    @Test
+    @DisplayName("no declarations is the plain built-in table")
+    void noDeclarationsIsTheDefaultTable() {
+        assertThat(InMemoryModelCapabilityRegistry.withDefaultsExtendedBy(Map.of()).resolve("gpt-5.6-terra"))
+                .isEqualTo(InMemoryModelCapabilityRegistry.withDefaults().resolve("gpt-5.6-terra"));
+        assertThat(InMemoryModelCapabilityRegistry.withDefaultsExtendedBy(null).resolve("o3-mini"))
+                .isEqualTo(InMemoryModelCapabilityRegistry.withDefaults().resolve("o3-mini"));
+    }
+
+    @Test
+    @DisplayName("a declaration wins over a built-in prefix for that one name, and only that one")
+    void aDeclarationNamesOneModelRatherThanAFamily() {
+        // The consequence of registering declarations as exact entries, and the reason configuration has no prefix
+        // form: exact beats every prefix, so no new precedence rule was invented -- but the win is one name wide.
+        final InMemoryModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry
+                .withDefaultsExtendedBy(Map.of("gpt-5-nano", EVERYTHING_ALLOWED_DECLARATION));
+
+        assertThat(registry.resolve("gpt-5-nano")).isEqualTo(EVERYTHING_ALLOWED_DECLARATION.capabilities());
+        assertThat(registry.resolve("gpt-5-mini"))
+                .isEqualTo(InMemoryModelCapabilityRegistry.withDefaults().resolve("gpt-5-mini"));
+    }
+
+    private static final ModelCapabilityDeclaration EVERYTHING_ALLOWED_DECLARATION = ModelCapabilityDeclaration
+            .builder().supportsSamplingParameters(true).supportsReasoningEffort(true).supportsToolsWithReasoning(true)
+            .build();
+
+    @Test
+    @DisplayName("every built-in row can be written as a declaration")
+    void theConfigurationSurfaceCanExpressEveryBuiltInRow() {
+        // The invariant behind exposing all five flags rather than the two an operator usually needs: if a row of the
+        // shipped table could not be transcribed, the surface would be unable to describe a deployment that renamed
+        // that family -- which is the entire problem. The o-series row is the one that needs lowestReasoningEffort.
+        final InMemoryModelCapabilityRegistry stock = InMemoryModelCapabilityRegistry.withDefaults();
+
+        assertThat(transcribe(stock.resolve("gpt-5-chat-latest")).capabilities())
+                .isEqualTo(stock.resolve("gpt-5-chat-latest"));
+        assertThat(transcribe(stock.resolve("gpt-5.6-terra")).capabilities()).isEqualTo(stock.resolve("gpt-5.6-terra"));
+        assertThat(transcribe(stock.resolve("o1-x")).capabilities()).isEqualTo(stock.resolve("o1-x"));
+        assertThat(transcribe(stock.resolve("o3-mini")).capabilities()).isEqualTo(stock.resolve("o3-mini"));
+        assertThat(transcribe(stock.resolve("o4-mini")).capabilities()).isEqualTo(stock.resolve("o4-mini"));
+    }
+
+    /** Writes a resolved row out as a declaration would state it -- all five flags, explicitly. */
+    private static ModelCapabilityDeclaration transcribe(ModelCapabilities capabilities) {
+        return ModelCapabilityDeclaration.builder()
+                .supportsSamplingParameters(capabilities.supportsSamplingParameters())
+                .supportsReasoningEffort(capabilities.supportsReasoningEffort())
+                .supportsToolsWithReasoning(capabilities.supportsToolsWithReasoning())
+                .supportsReasoningTraceRoundTrip(capabilities.supportsReasoningTraceRoundTrip())
+                .lowestReasoningEffort(capabilities.lowestReasoningEffort()).build();
+    }
+
+    @Test
+    @DisplayName("a declared name is matched ignoring case, in both directions")
+    void declaredNamesFoldCase() {
+        // The name is something an operator copies out of a portal. Both halves of the table fold case, so the
+        // configuration path has to as well -- otherwise the one line that closes the fail-open gap silently does not.
+        final InMemoryModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry
+                .withDefaultsExtendedBy(Map.of("Prod-Assistant", SAMPLING_REJECTED_DECLARATION));
+
+        assertThat(registry.resolve("prod-assistant").supportsSamplingParameters()).isFalse();
+        assertThat(registry.resolve("PROD-ASSISTANT").supportsSamplingParameters()).isFalse();
+        assertThat(registry.resolve("Prod-Assistant").supportsSamplingParameters()).isFalse();
+    }
+
+    @Test
+    @DisplayName("a blank name is refused")
+    void aBlankNameIsRefused() {
+        final Map<String, ModelCapabilityDeclaration> blank = new LinkedHashMap<>();
+        blank.put("  ", SAMPLING_REJECTED_DECLARATION);
+
+        assertThatThrownBy(() -> InMemoryModelCapabilityRegistry.withDefaultsExtendedBy(blank))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("model name");
+    }
+
+    @Test
+    @DisplayName("a padded name is refused, because it would never match anything")
+    void aPaddedNameIsRefused() {
+        assertThatThrownBy(() -> InMemoryModelCapabilityRegistry
+                .withDefaultsExtendedBy(Map.of(" prod-assistant", SAMPLING_REJECTED_DECLARATION)))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("prod-assistant")
+                .hasMessageContaining("whitespace");
+    }
+
+    @Test
+    @DisplayName("two names differing only in case are refused rather than letting one win")
+    void twoNamesDifferingOnlyInCaseAreRefused() {
+        final Map<String, ModelCapabilityDeclaration> clashing = new LinkedHashMap<>();
+        clashing.put("Prod-Assistant", SAMPLING_REJECTED_DECLARATION);
+        clashing.put("prod-assistant", EVERYTHING_ALLOWED_DECLARATION);
+
+        assertThatThrownBy(() -> InMemoryModelCapabilityRegistry.withDefaultsExtendedBy(clashing))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Prod-Assistant")
+                .hasMessageContaining("prod-assistant").hasMessageContaining("differ only in case");
+    }
+
+    @Test
+    @DisplayName("a null declaration is refused as an empty entry, not as a NullPointerException")
+    void aNullDeclarationIsRefusedAsAnEmptyEntry() {
+        // What an entry with no body binds to, at least under Jackson. Caught here rather than on each surface so the
+        // outcome does not depend on which binder produced it, and reported as what the operator actually did.
+        final Map<String, ModelCapabilityDeclaration> withNull = new LinkedHashMap<>();
+        withNull.put("prod-assistant", null);
+
+        assertThatThrownBy(() -> InMemoryModelCapabilityRegistry.withDefaultsExtendedBy(withNull))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("prod-assistant")
+                .hasMessageContaining("empty");
+    }
+
+    @Test
+    @DisplayName("nothing is registered when one entry is refused")
+    void aRefusedEntryLeavesNoHalfAppliedTable() {
+        final Map<String, ModelCapabilityDeclaration> mixed = new LinkedHashMap<>();
+        mixed.put("prod-assistant", SAMPLING_REJECTED_DECLARATION);
+        mixed.put(" padded", SAMPLING_REJECTED_DECLARATION);
+
+        assertThatThrownBy(() -> InMemoryModelCapabilityRegistry.withDefaultsExtendedBy(mixed))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
 }

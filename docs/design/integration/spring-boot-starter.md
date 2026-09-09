@@ -752,6 +752,8 @@ aimon:
     model:
     base-url:
     timeout: 120s
+    model-capabilities:               # <model>.<flag> — 게이트웨이가 개명한 모델의 요청 표면 (§9.3)
+      prod-assistant: { supports-sampling-parameters: false }
     anthropic: { … }                  # 프로바이더 전용 키는 여기 (§9)
     openai: { … }
   budget:                             # 전역 기저값 — 미설정 시 unlimited 가 되는 것을 막는다
@@ -1854,6 +1856,21 @@ main 소스에 있고(`at.aimon.core.credential.InMemoryCredentialStore`), 스�
 - **프로바이더별 파라미터 의미 차이** — temperature 유효범위, presence/frequency penalty 무시 등으로
   공통 `aimon.llm.*` 키의 의미가 프로바이더마다 다르다. 공통 키는 최소 교집합만 두고 프로바이더 전용
   키는 `aimon.llm.<provider>.*` 로 분리하는 방향.
+
+  **처음으로 그 판단을 실제로 해야 하는 키가 생겼고**(`model-capabilities`, #46), 그 결과로 기준이
+  두 갈래로 정리되었다 — **키가 벤더 개념을 이름에 담고 있거나, 같은 키가 벤더마다 다른 것을 뜻하거나.**
+  둘 중 하나에 걸리면 `aimon.llm.<provider>.*` 로 내리고, 아니면 공통 네임스페이스에 남는다. 위 문단의
+  원래 동기(의미 발산)는 그중 **둘째 갈래**다. 소비자가 오늘 하나뿐이라는 사실은 쪼개는 이유가 **아니다.**
+
+  `model-capabilities` 는 둘 다 아니라서 `aimon.llm.*` 에 남았다 — 이름이 provider-neutral SPI
+  (`at.aimon.core.llm.capability`)의 것이고, "이 모델의 요청 표면이 무엇을 받는가" 는 벤더가 바뀌어도 같은
+  물음이다. 두 번째 소비자도 예정되어 있다(Anthropic thinking 블록, #47). 대신 공유 네임스페이스가 거짓말하지
+  않도록 **읽지 않는 분기가 그것을 이름으로 거절**한다. 반례 둘은 반대로 나온다: `responsesApiEnabled` 는
+  이름이 OpenAI 엔드포인트이므로 `aimon.llm.openai.*` 로, 샘플링 파라미터는 뜻이 벤더마다 다르므로
+  `aimon.llm.<provider>.*` 로 — 즉 위 트리가 비워 둔 그 자리로 간다. 이 키는 손으로 쓴 메타데이터 힌트를
+  **필요로 하지 않는다**: `lowest-reasoning-effort` 가 코어 enum 이라 프로세서가 `type` 에 클래스를 적고 IDE 가
+  상수를 읽는다. 근거 전문은
+  [`../llm/model-capability-config-key.md`](../llm/model-capability-config-key.md) §2.7 에 있다.
 - **예약 작업의 정의 버전** — cron 이 발화하는 시점에 에이전트 정의가 예약 당시와 달라져 있을 수 있다
   (`invalidate` 후 재생성). 의도된 동작이지만 사용자에게는 놀라움이다. 정의 버전을 `ScheduledTask` 에
   남겨 실행 로그에 표시할지 결정한다 — **스냅샷 고정은 하지 않는다**(옛 프롬프트로 도는 것이 더 나쁘다).

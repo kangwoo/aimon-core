@@ -2,6 +2,7 @@ package at.aimon.spring.boot.autoconfigure;
 
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_API_KEY;
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_MODEL;
+import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_MODEL_CAPABILITIES;
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_PROVIDER;
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.PROVIDER_ANTHROPIC;
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.PROVIDER_OPENAI;
@@ -94,6 +95,34 @@ public class AimonLlmAutoConfiguration {
         }
     }
 
+    /**
+     * Rejects a capability declaration the selected branch cannot read.
+     *
+     * <p>
+     * {@code aimon.llm.model-capabilities} lives under the shared {@code aimon.llm.*} namespace because the question
+     * it answers is provider-neutral, and only the OpenAI client consults the registry today. Refusing it in the
+     * branch that cannot read it is what keeps the shared namespace honest — a property that binds and reaches nothing
+     * reads as if it had taken effect.
+     *
+     * <p>
+     * Checked here rather than in {@code AimonProperties} for {@link #requireApiKey}'s reason: the answer depends on
+     * a bean. An application that defines its own {@link LlmClient} reaches neither branch, and a declaration it
+     * carries for its own client is not this starter's to refuse.
+     *
+     * @param llm
+     *            the bound LLM properties
+     * @param provider
+     *            the provider value that selected this branch
+     */
+    private static void refuseModelCapabilities(AimonProperties.Llm llm, String provider) {
+        if (!llm.getModelCapabilities().isEmpty()) {
+            throw new IllegalStateException(LLM_MODEL_CAPABILITIES + " is declared, but " + LLM_PROVIDER + "="
+                    + provider + " builds a client that does not consult the model capability registry — only the"
+                    + " OpenAI client does. Remove the declarations, or set " + LLM_PROVIDER + "=" + PROVIDER_OPENAI
+                    + ".");
+        }
+    }
+
     /** Anthropic branch — also the branch taken when {@code aimon.llm.provider} is absent. */
     @Configuration(proxyBeanMethods = false)
     @ConditionalOnClass(AnthropicLlmClient.class)
@@ -105,6 +134,7 @@ public class AimonLlmAutoConfiguration {
         LlmClient aimonAnthropicLlmClient(AimonProperties properties) {
             final AimonProperties.Llm llm = properties.getLlm();
             requireApiKey(llm, PROVIDER_ANTHROPIC);
+            refuseModelCapabilities(llm, PROVIDER_ANTHROPIC);
             final AnthropicConfig.Builder config = AnthropicConfig.builder().apiKey(llm.getApiKey());
             if (llm.getModel() != null) {
                 config.model(llm.getModel());
@@ -128,7 +158,27 @@ public class AimonLlmAutoConfiguration {
         @Bean
         @ConditionalOnMissingBean(LlmClient.class)
         LlmClient aimonOpenAiLlmClient(AimonProperties properties) {
-            final AimonProperties.Llm llm = properties.getLlm();
+            return new OpenAILlmClient(openAiConfig(properties.getLlm()));
+        }
+
+        /**
+         * Builds the vendor config from the bound properties.
+         *
+         * <p>
+         * Package-private so a unit test can inspect the config without {@code OpenAILlmClient} having to publish it,
+         * and declared <em>inside this nested class</em> rather than on the enclosing one. That placement is
+         * load-bearing: {@code OpenAIConfig} appears in this method's descriptor, and Spring calls
+         * {@code getDeclaredMethods()} on a configuration class while post-processing it — which loads every declared
+         * method's return type, private ones included. On the enclosing class that would ask the classloader for
+         * {@code OpenAIConfig} in a deployment that carries only the Anthropic module, which is exactly the
+         * {@code NoClassDefFoundError} the {@code @ConditionalOnClass} arrangement described in this file's javadoc
+         * exists to prevent. Here the class itself is behind that condition, so it is never inspected at all.
+         *
+         * @param llm
+         *            the bound LLM properties
+         * @return the assembled OpenAI config
+         */
+        static OpenAIConfig openAiConfig(AimonProperties.Llm llm) {
             requireApiKey(llm, PROVIDER_OPENAI);
             requireModel(llm, PROVIDER_OPENAI);
             final OpenAIConfig.Builder config = OpenAIConfig.builder().apiKey(llm.getApiKey()).model(llm.getModel());
@@ -138,7 +188,10 @@ public class AimonLlmAutoConfiguration {
             if (llm.getTimeout() != null) {
                 config.timeout(llm.getTimeout());
             }
-            return new OpenAILlmClient(config.build());
+            if (!llm.getModelCapabilities().isEmpty()) {
+                config.modelCapabilityRegistry(AimonProperties.modelCapabilityRegistry(llm));
+            }
+            return config.build();
         }
     }
 }
