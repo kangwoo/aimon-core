@@ -30,6 +30,10 @@ concurrency:
 
 jobs:
   build:
+    # Named so the check run does not collide with build.yml's `build` job: the branch
+    # ruleset requires that one by name, and two checks sharing a name make the
+    # requirement resolve to whichever reported last.
+    name: docs site
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
