@@ -391,7 +391,7 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
 
         // Convert and add messages. Stripping the traces up front rather than passing a flag down keeps the converter
         // with one rule: it replays what it is given.
-        reportIfReplayIsOffUnderExtendedThinking(thinking.isPresent());
+        reportIfReplayIsOffWhileThinking(thinking.isPresent());
         final List<Message> outbound = config.isReplayThinkingBlocks()
                 ? messages
                 : AnthropicMessageConverter.withoutReasoningTraces(messages);
@@ -407,41 +407,58 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
     }
 
     /**
-     * Warns that {@code replayThinkingBlocks(false)} and {@link AnthropicThinkingMode#EXTENDED} are very likely not a
-     * usable pair.
+     * Warns that this request asks for thinking and then throws the result away.
      *
      * <p>
-     * The two vendor rules in question, both quoted in the design's §2.4: passing every thinking block back is
-     * <em>required within a tool-use turn</em>, and <em>the final assistant turn of a thinking-enabled request must
-     * begin with a thinking block</em> — a requirement adaptive mode drops and extended mode does not. Stripping the
-     * traces therefore removes the one block extended mode insists on, and the second ReAct iteration of any tool loop
-     * is expected to be rejected.
+     * <strong>This method previously predicted a rejection, and that was wrong.</strong> It was written from two
+     * documented sentences — passing the blocks back is <em>required within a tool-use turn</em>, and <em>the final
+     * assistant turn of a thinking-enabled request must begin with a thinking block</em> — which together say that
+     * stripping them must 400 under {@link AnthropicThinkingMode#EXTENDED}. A live call says otherwise: the request
+     * is accepted, and the following turn still thinks. The vendor's third sentence, the one about mid-turn conflicts
+     * degrading gracefully rather than erroring, is the one that governs. {@code AnthropicThinkingLiveTest} pins it,
+     * and the design's §9 U-10 records the measurement.
      *
      * <p>
-     * <strong>Why this warns instead of {@code AnthropicConfig} refusing the pair at construction</strong>, which is
-     * what that class does for a budget set outside {@code EXTENDED}. Because the two facts above are read from
-     * documentation and have not been measured, and a third documented sentence pulls the other way — mid-turn
-     * conflicts <em>"degrade gracefully… the API doesn't error. Instead, it silently disables thinking for that
-     * request"</em>. Refusing at construction would make an unverified rule un-overridable; warning names the risk and
-     * leaves the operator able to try it. If a live call shows the rejection, this becomes a constructor check and
-     * the design's §9 U-10 closes.
+     * So the warning stays but says something different, and applies to <strong>both</strong> dialects rather than
+     * only to {@code EXTENDED} — the reason is now a cost rather than a rule, and the cost does not care which
+     * dialect asked. What this configuration buys is thinking <em>within</em> a turn; what it gives up is thinking
+     * that survives one, which is the entire point of the feature this class implements. The tokens are billed
+     * either way.
      *
      * <p>
-     * The remedy is not to turn replay back on — the pair exists because replay can itself fail — it is
-     * {@link AnthropicThinkingMode#OFF}, which asks for no thinking and so is bound by neither rule.
+     * <strong>The remedy is mode-dependent, and that is not a stylistic split.</strong> Under {@code EXTENDED},
+     * {@link AnthropicThinkingMode#OFF} is a real escape: the models that speak that dialect accept the
+     * {@code temperature} this client then sends. Under {@code ADAPTIVE} it is not. Every adaptive-only model rejects
+     * {@code temperature} outright (§2.3, and {@code AnthropicThinkingLiveTest} asserts it), and turning thinking off
+     * is exactly what makes this client send it — so advising {@code OFF} there would hand the operator a guaranteed
+     * 400 in place of a cost. Naming one remedy for both modes is the mistake this split exists to avoid.
+     *
+     * <p>
+     * It is still worth saying, because nothing else in the system would: no status code, no error, and a transcript
+     * that looks exactly like a working one. It is not, however, a mistake — it is the documented escape from the
+     * preserved-thinking prefix check, and an operator who set it deliberately should read this as confirmation
+     * rather than as a correction.
      */
-    private void reportIfReplayIsOffUnderExtendedThinking(boolean thinkingRequested) {
-        if (!thinkingRequested || config.isReplayThinkingBlocks()
-                || config.getThinkingMode() != AnthropicThinkingMode.EXTENDED) {
+    private void reportIfReplayIsOffWhileThinking(boolean thinkingRequested) {
+        if (!thinkingRequested || config.isReplayThinkingBlocks()) {
             return;
         }
-        reportDivergence("replayOffUnderExtendedThinking",
-                "replayThinkingBlocks(false) is set alongside {} thinking, and the two are documented as "
-                        + "incompatible: extended mode requires the final assistant turn to begin with a thinking "
-                        + "block, and this configuration strips exactly that block, so a tool loop is expected to be "
-                        + "rejected on its second iteration. If the intent was to stop replaying blocks, set "
-                        + "thinkingMode({}) instead — that asks for no thinking and is bound by neither rule.",
-                AnthropicThinkingMode.EXTENDED, AnthropicThinkingMode.OFF);
+        final String shared = "This request asks for {} thinking and replayThinkingBlocks(false) discards the blocks "
+                + "it returns, so the model re-derives its reasoning every turn and the thinking tokens are billed "
+                + "again each time. The request is not rejected — thinking simply does not survive a tool call. If "
+                + "that is deliberate (it is the documented escape from the preserved-thinking prefix check) nothing "
+                + "needs doing";
+        if (config.getThinkingMode() == AnthropicThinkingMode.EXTENDED) {
+            reportDivergence("replayOffWhileThinking@EXTENDED",
+                    shared + "; if the tokens are not wanted either, set thinkingMode({}).",
+                    AnthropicThinkingMode.EXTENDED, AnthropicThinkingMode.OFF);
+            return;
+        }
+        reportDivergence("replayOffWhileThinking@" + config.getThinkingMode(),
+                shared + ". Note that thinkingMode(OFF) is not an escape on this dialect: the models that accept "
+                        + "adaptive thinking reject the temperature this client sends when thinking is off, so "
+                        + "turning it off makes every request fail instead of merely costing tokens.",
+                config.getThinkingMode());
     }
 
     /**

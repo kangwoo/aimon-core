@@ -251,16 +251,28 @@ class AnthropicThinkingRequestTest {
     }
 
     @Test
-    @DisplayName("replayThinkingBlocks(false) under EXTENDED is reported as the incompatible pair it is")
-    void replayOffUnderExtendedThinkingIsReported() {
+    @DisplayName("replayThinkingBlocks(false) while thinking is asked for names the cost, not a rejection")
+    void replayOffWhileThinkingIsReported() {
         send(client(config().thinkingMode(AnthropicThinkingMode.EXTENDED).replayThinkingBlocks(false).build()),
                 LlmModel.builder().build());
 
-        // Extended mode requires the final assistant turn to begin with a thinking block, and this configuration
-        // strips exactly that block. The remedy named is OFF, not replay(true): the switch exists because replay can
-        // itself fail, so telling the operator to undo it would be telling them to walk back into the other failure.
-        assertThat(warnings()).anyMatch(w -> w.contains("documented as incompatible"))
-                .anyMatch(w -> w.contains("thinkingMode(OFF)"));
+        // An earlier revision predicted a 400 here. AnthropicThinkingLiveTest measured the opposite, so what is left
+        // to warn about is the cost: tokens spent on reasoning that is thrown away before the next turn. The message
+        // says so explicitly, because a warning that names a failure the server does not produce teaches the operator
+        // to distrust the next one.
+        assertThat(warnings()).anyMatch(w -> w.contains("re-derives its reasoning every turn"))
+                .anyMatch(w -> w.contains("is not rejected"));
+    }
+
+    @Test
+    @DisplayName("replayThinkingBlocks(false) is reported under ADAPTIVE too — the cost does not pick a dialect")
+    void replayOffUnderAdaptiveIsAlsoReported() {
+        send(client(config().thinkingMode(AnthropicThinkingMode.ADAPTIVE).replayThinkingBlocks(false).build()),
+                LlmModel.builder().build());
+
+        // The old gate was EXTENDED-only because the rule it was built on was EXTENDED-only. The reason is now a
+        // cost, and an adaptive request discards exactly as much.
+        assertThat(warnings()).anyMatch(w -> w.contains("re-derives its reasoning every turn"));
     }
 
     @Test
@@ -268,18 +280,8 @@ class AnthropicThinkingRequestTest {
     void replayOffWithoutThinkingIsSilent() {
         send(client(config().replayThinkingBlocks(false).build()), LlmModel.builder().build());
 
-        // OFF asks for no thinking, so neither vendor rule binds and there is nothing to warn about. This is the
-        // configuration the EXTENDED warning points at.
+        // Nothing was asked for, so nothing is discarded and there is no cost to name.
         assertThat(warnings()).isEmpty();
-    }
-
-    @Test
-    @DisplayName("replayThinkingBlocks(false) is not reported under ADAPTIVE, which drops the requirement")
-    void replayOffUnderAdaptiveIsSilent() {
-        send(client(config().thinkingMode(AnthropicThinkingMode.ADAPTIVE).replayThinkingBlocks(false).build()),
-                LlmModel.builder().build());
-
-        assertThat(warnings()).noneMatch(w -> w.contains("documented as incompatible"));
     }
 
     @Test
