@@ -84,6 +84,7 @@
 | [`model-capability-config-key.md`](llm/model-capability-config-key.md) | 그 능력 표를 **설정에서** 확장하는 키 — CLI yaml 과 스타터 프로퍼티, 부분 선언의 기본값, 게이트웨이가 개명한 모델 |
 | [`openai-responses-path.md`](llm/openai-responses-path.md) | `/v1/responses` 경로 — 턴을 넘어 살아남는 추론 페이로드 슬롯, 엔드포인트를 모델별로 고르는 seam, 네 번째 토큰 카운터 |
 | [`anthropic-thinking-traces.md`](llm/anthropic-thinking-traces.md) | Anthropic 의 `thinking` / `redacted_thinking` 블록이 그 슬롯을 채우는 경로 — 두 갈래 thinking 요청 방언, effort→budget 사다리, thinking 과 충돌하는 샘플링 파라미터 |
+| [`anthropic-sampling-capabilities.md`](llm/anthropic-sampling-capabilities.md) | 그 샘플링 파라미터를 **모델별로** 끄는 경로 — 능력 표가 두 벤더를 서술하게 되는 자리, 지어낸 `temperature` 의 폐기, 두 설정 표면의 Anthropic 분기 |
 
 ### 상태를 갖는 서브시스템
 

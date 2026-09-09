@@ -138,8 +138,9 @@ public class AimonProperties implements InitializingBean {
      * The key stays under the shared {@code aimon.llm.*} namespace rather than moving to {@code aimon.llm.openai.*}
      * because neither test for a provider-specific key applies: the name carries no vendor concept — it names a
      * provider-neutral SPI — and the question it answers ("what does this model's request surface accept?") means the
-     * same thing for every vendor. What keeps the shared namespace honest is that the branch which cannot read it
-     * refuses it by name.
+     * same thing for every vendor. That was decided while only one branch read it, on the prediction that a second
+     * consumer was coming; the Anthropic branch now reads it too, so the shared namespace is honest because both
+     * branches consume it rather than because one of them refuses it by name.
      */
     public static final String LLM_MODEL_CAPABILITIES = PREFIX + ".llm.model-capabilities";
 

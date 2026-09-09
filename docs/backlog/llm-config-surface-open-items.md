@@ -114,8 +114,16 @@ N-1 을 여기 적는 이유는 그것이 답이라고 보아서가 아니라 **
 읽힌다" 이고, 이 저장소가 `refuseIneffective` · `validateScheduling` 로 반복해서 금지해 온 그 상태다.
 
 **어디.** `AimonLlmAutoConfiguration.refuseModelCapabilities`(2026-09-09)는 Anthropic 분기 **안**에서
-불린다. 그것이 의도다 — 같은 파일의 `requireApiKey` javadoc 이 세운 규칙(*"the answer depends on a
+불렸다. 그것이 의도였다 — 같은 파일의 `requireApiKey` javadoc 이 세운 규칙(*"the answer depends on a
 bean"*)을 따른 것이고, 빈이 있는 배포에 무언가를 요구하면 **유효한 설정을 기동 실패로 만든다.**
+
+> **이 항목의 예시가 없어졌다. 항목은 그대로 열려 있다.** #52 가 Anthropic 클라이언트에도 registry 를
+> 읽히면서 `refuseModelCapabilities` 는 **삭제되었고**(CLI 쪽 `refuseModelCapabilitiesForAnthropic` 도
+> 함께), 그래서 위 문단이 가리키던 메서드는 트리에 더 없다. 없어진 것은 **두 규칙의 충돌을 보여 주던
+> 자리**이지 이 항목의 두 갈래가 아니다 — `provider=none` 도, 자기 `LlmClient` 빈을 정의한 앱도 여전히
+> 어느 벤더 분기에도 닿지 않고, 그 배포의 선언은 여전히 조용히 아무것도 하지 않는다. 착수하는 사람이
+> 정할 것도 그대로다. 근거:
+> [`../design/llm/anthropic-sampling-capabilities.md`](../design/llm/anthropic-sampling-capabilities.md) §7.1.
 
 **즉 이것은 결함이 아니라 두 규칙의 충돌이다.**
 

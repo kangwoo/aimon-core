@@ -419,6 +419,11 @@ IMPORTANT: **프로바이더는 값을 지어내지 않는다.** `orElse(DEFAULT
 상수로 채우면, 아무도 요청하지 않은 샘플링 값이 매 요청에 실리고 서버 기본값이 영영 적용되지 않는다.
 미설정은 **보내지 않는 것**이고, 그때 무엇이 적용될지는 서버가 정한다.
 
+이 규칙은 오래 **구현이 하나뿐인 규칙**이었다. 이제 `OpenAIConfig` 와 `AnthropicConfig` 둘 다 이 모양이며,
+후자가 이 모양이 된 경위가 규칙의 값을 보여 준다 — 그 클래스가 지어내던 값은 `0.0` 이었고, 그것은 현행
+Claude 세대 여섯 모델이 **거절하는 바로 그 값**이라 기본 설정으로는 그 모델들에 말을 걸 수조차 없었다
+([`anthropic-sampling-capabilities.md`](../../design/llm/anthropic-sampling-capabilities.md) §2.6).
+
 `resolve` 는 총함수이며 **fail-open** 이다 — 아무도 설명하지 않은 모델은 `ModelCapabilities.unknown()`,
 즉 **호출자가 요청한 것은 하나도 빼지 않고, 요청하지 않은 것은 하나도 지어내지 않는다**. 값을 떨어뜨렸다면 그 사실을
 [`LlmModel`](../../../modules/aimon-core/src/main/java/at/aimon/core/llm/LlmModel.java) 의 규칙대로

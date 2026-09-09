@@ -168,6 +168,77 @@ class InMemoryModelCapabilityRegistryTest {
     }
 
     @Test
+    @DisplayName("the six Anthropic models that refuse sampling resolve to a row that says so, and only that")
+    void defaultsDescribeTheAnthropicRefusers() {
+        // Measured 2026-09-09 against the account's own /v1/models listing: each of these answers 400 to a
+        // non-default temperature and to top_p / top_k at any value. Five prefixes cover six names because
+        // claude-fable-5 also matches claude-fable-5-1.
+        final InMemoryModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.withDefaults();
+
+        for (String model : new String[]{"claude-fable-5-1", "claude-fable-5", "claude-opus-5", "claude-opus-4-8",
+                "claude-opus-4-7", "claude-sonnet-5"}) {
+            final ModelCapabilities caps = registry.resolve(model);
+            assertThat(caps.supportsSamplingParameters()).as("%s sampling", model).isFalse();
+            // One measured fact, one flag. The Anthropic client replays thinking blocks unconditionally and takes its
+            // effort from thinkingMode, so anything else here would be an assertion nothing consumes -- and nothing
+            // measured. A copy-paste from the o-series rows that also moved these would ship silently otherwise.
+            assertThat(caps.supportsReasoningEffort()).as("%s effort", model).isFalse();
+            assertThat(caps.supportsToolsWithReasoning()).as("%s tools+reasoning", model).isTrue();
+            assertThat(caps.supportsReasoningTraceRoundTrip()).as("%s replay", model).isFalse();
+            assertThat(caps.lowestReasoningEffort()).as("%s floor", model).isEqualTo(ReasoningEffort.MINIMAL);
+        }
+    }
+
+    @Test
+    @DisplayName("the Claude models that accept sampling are not caught by any row - the prefix trap")
+    void defaultsLeaveTheAcceptingClaudeModelsUnknown() {
+        // This is the test that goes red if someone registers "claude-opus-4" as a family prefix. All five accept
+        // temperature, top_p and top_k with thinking off (measured 2026-09-09), and a family prefix would suppress a
+        // parameter they take -- a silent wire change, which is the failure the o-series rows were withheld for.
+        final InMemoryModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.withDefaults();
+
+        for (String model : new String[]{"claude-opus-4-5-20251101", "claude-sonnet-4-5-20250929",
+                "claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-6"}) {
+            assertThat(registry.capabilitiesOf(model)).as("%s is described", model).isEmpty();
+            assertThat(registry.resolve(model)).as("%s row", model).isEqualTo(ModelCapabilities.unknown());
+        }
+    }
+
+    @Test
+    @DisplayName("a dated snapshot of a refuser inherits its prefix, and case is folded")
+    void anthropicPrefixesCoverSnapshotsAndCasing() {
+        final InMemoryModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.withDefaults();
+
+        assertThat(registry.resolve("claude-opus-5-20260101").supportsSamplingParameters()).isFalse();
+        assertThat(registry.resolve("Claude-Opus-5").supportsSamplingParameters()).isFalse();
+    }
+
+    @Test
+    @DisplayName("the Mythos row ships as one family prefix, and it is the documentation-derived one")
+    void theMythosRowIsAFamilyPrefix() {
+        // No Mythos model is visible to the account the probes ran on, so this row is the vendor's enumeration rather
+        // than a measurement -- carried because all six reachable names that sentence lists matched it exactly. A
+        // family prefix asserts only the fact; a guessed "claude-mythos-5-1" would also assert an identifier.
+        final InMemoryModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.withDefaults();
+
+        assertThat(registry.resolve("claude-mythos-5-1").supportsSamplingParameters()).isFalse();
+        assertThat(registry.resolve("claude-mythos-preview").supportsSamplingParameters()).isFalse();
+    }
+
+    @Test
+    @DisplayName("a declaration beats a built-in Anthropic prefix, exactly as it does an OpenAI one")
+    void aDeclarationBeatsAnAnthropicPrefix() {
+        // The exact > prefix rule is not per-vendor, and one Anthropic row here is what shows it is shared. A gateway
+        // that renamed claude-opus-5 to something the table cannot see is the case this exists for, arriving from the
+        // other direction: an operator who measured their own deployment can state that it does accept sampling.
+        final InMemoryModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.withDefaultsExtendedBy(
+                Map.of("claude-opus-5", ModelCapabilityDeclaration.builder().supportsSamplingParameters(true).build()));
+
+        assertThat(registry.resolve("claude-opus-5").supportsSamplingParameters()).isTrue();
+        assertThat(registry.resolve("claude-opus-5-20260101").supportsSamplingParameters()).isFalse();
+    }
+
+    @Test
     @DisplayName("a prefix sibling nobody was allowed to call keeps the prefix row and stays off the Responses path")
     void unmeasuredPrefixMembersDoNotRoundTrip() {
         // This is the test that goes red if someone later "simplifies" eight exact rows into three prefix flips.

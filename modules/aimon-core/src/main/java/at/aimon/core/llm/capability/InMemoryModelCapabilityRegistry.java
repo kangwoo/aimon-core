@@ -49,6 +49,14 @@ import at.aimon.core.llm.ReasoningEffort;
  * {@link #withDefaultsExtendedBy(Map)}, which is where the rules governing a declared entry live.
  *
  * <p>
+ * <strong>The table describes two vendors</strong>, and one instance of it is read by both clients. The
+ * {@code claude-*} rows say only that six models refuse the sampling parameters, and the {@code gpt-*} / {@code o*}
+ * rows cannot match a {@code claude-*} name or the other way round — so the two blocks do not interfere. What they do
+ * share is the look-up: a {@code claude-*} name reaching {@code OpenAILlmClient} through an OpenAI-compatible gateway
+ * resolves to the Anthropic rows and has its sampling suppressed too. That is the right answer arriving from an
+ * unexpected direction, and it is stated here because it is invisible from either client's source.
+ *
+ * <p>
  * <strong>The o-series is in the table</strong>, measured 2026-09-09: three prefix rows ({@code o1} / {@code o3} /
  * {@code o4}) <em>and</em> eight exact rows. Both shapes are needed because reasoning-item replay is known per
  * <em>name</em>, not per family — {@code o1-pro} and {@code o4-mini-deep-research} share a prefix with a measured
@@ -92,6 +100,13 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
     // source rather than of eleven copies staying in step.
     private static final ModelCapabilities O_SERIES_REPLAY_UNMEASURED = oSeries(false);
     private static final ModelCapabilities O_SERIES_REPLAY_MEASURED = oSeries(true);
+
+    /**
+     * The Anthropic rows' one measured fact, stated once so the six prefixes that carry it cannot drift apart. Every
+     * other flag stays fail-open — see the comment beside the registrations for why that is the whole row.
+     */
+    private static final ModelCapabilities SAMPLING_REFUSED = ModelCapabilities.builder()
+            .supportsSamplingParameters(false).build();
 
     /**
      * The o-series names whose reasoning-item replay was measured on 2026-09-09, alias and served snapshot alike. The
@@ -183,7 +198,39 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
                 // and this field is about the floor. Without the row the neutral MINIMAL would translate to the wire
                 // value 'minimal' and 400.
                 .registerPrefix("o1", O_SERIES_REPLAY_UNMEASURED).registerPrefix("o3", O_SERIES_REPLAY_UNMEASURED)
-                .registerPrefix("o4", O_SERIES_REPLAY_UNMEASURED);
+                .registerPrefix("o4", O_SERIES_REPLAY_UNMEASURED)
+                // Anthropic, measured 2026-09-09 against the account's own /v1/models listing. On these six the
+                // server refuses temperature at any non-default value, and top_p / top_k at ANY value including
+                // their defaults -- see docs/design/llm/anthropic-sampling-capabilities.md section 2. Suppression
+                // loses nothing: omitting temperature yields 1.0, which is the one value they accept. That is the
+                // same argument the registerPrefix("gpt-5", ...) comment above makes, arriving from another vendor.
+                //
+                // Prefixes rather than exact names so that a dated snapshot (claude-opus-5-2026...) inherits the
+                // row. Deliberately NOT "claude-opus-4": claude-opus-4-5 and claude-opus-4-6 accept all three
+                // (measured), and a family prefix would suppress a parameter they take. Five prefixes cover six
+                // measured names because claude-fable-5 also matches claude-fable-5-1.
+                //
+                // Registration order is free here: no claude-* prefix can collide with a gpt-*/o[134] one, and none
+                // of these five is a prefix of another (-4-7 and -4-8 are siblings, not nested).
+                //
+                // This table is read by BOTH clients. A claude-* name reaching OpenAILlmClient through an
+                // OpenAI-compatible gateway resolves to these rows and gets the same suppression -- correct, since
+                // the underlying model does refuse, but it is a consequence of one shared table rather than of
+                // anything either client says. Weigh it when editing a row: the blast radius is both providers.
+                //
+                // Only supportsSamplingParameters is stated. The other four stay fail-open on purpose: the
+                // Anthropic client captures and replays thinking blocks unconditionally and decides effort from
+                // thinkingMode, so it never reads them -- a value there would be an assertion nothing consumes and
+                // nothing measured.
+                .registerPrefix("claude-fable-5", SAMPLING_REFUSED).registerPrefix("claude-opus-5", SAMPLING_REFUSED)
+                .registerPrefix("claude-opus-4-7", SAMPLING_REFUSED).registerPrefix("claude-opus-4-8", SAMPLING_REFUSED)
+                .registerPrefix("claude-sonnet-5", SAMPLING_REFUSED)
+                // Documentation-derived, not measured: no Mythos model is visible to the account the probes ran on,
+                // so neither the fact nor the identifier shape was called. It ships because the vendor sentence
+                // enumerates nine names and all six reachable ones matched it exactly -- evidence about that
+                // sentence rather than about a sibling's name prefix. One family prefix asserts only the fact; a
+                // guessed "claude-mythos-5-1" would also assert an identifier nobody has seen.
+                .registerPrefix("claude-mythos", SAMPLING_REFUSED);
         // Round 8, measured 2026-09-09: these eight names accept a replayed reasoning item on /v1/responses (HTTP
         // 200, turn completed). A 200 alone would only mean "tolerated", so a control corrupted 40 characters of the
         // encrypted payload and got a 400 -- the server decrypts and consumes the item. That control was run on
@@ -214,8 +261,8 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
      *
      * <p>
      * The table is kept as small as the problem: it describes only the families whose request surface is known to
-     * differ from the historical default — {@code gpt-5-chat}, {@code gpt-5}, and the o-series. Everything else
-     * resolves to {@link ModelCapabilities#unknown()}.
+     * differ from the historical default — {@code gpt-5-chat}, {@code gpt-5}, the o-series, and the six Anthropic
+     * models that refuse sampling parameters. Everything else resolves to {@link ModelCapabilities#unknown()}.
      *
      * @return a registry with framework-default capability entries
      */

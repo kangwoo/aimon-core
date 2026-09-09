@@ -2,12 +2,23 @@ package at.aimon.core.llms.anthropic;
 
 import java.time.Duration;
 import java.util.Objects;
+import java.util.Optional;
+
+import at.aimon.core.llm.capability.InMemoryModelCapabilityRegistry;
+import at.aimon.core.llm.capability.ModelCapabilityRegistry;
 
 /**
  * Configuration for Anthropic API client.
  *
  * <p>
  * Contains API key, model selection, and client settings.
+ *
+ * <p>
+ * {@code temperature} is <em>unset</em> by default rather than defaulted to a value, and unset means the parameter is
+ * not sent at all. Six of the current Claude models reject any non-default {@code temperature} outright, so the client
+ * has to be able to omit one; and it has to be able to tell "the operator asked for 0.0" from "nobody asked" to decide
+ * whether the omission is worth a warning. Nothing in this class or the client manufactures a sampling value on the
+ * caller's behalf — a request carries one only when somebody put it there.
  *
  * <p>
  * Thread-safe and immutable.
@@ -26,7 +37,6 @@ import java.util.Objects;
 public final class AnthropicConfig {
 
     private static final String DEFAULT_MODEL = "claude-sonnet-4-20250514";
-    private static final double DEFAULT_TEMPERATURE = 0.0;
     private static final int DEFAULT_MAX_TOKENS = 4096;
     private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(60);
     private static final AnthropicThinkingMode DEFAULT_THINKING_MODE = AnthropicThinkingMode.OFF;
@@ -35,12 +45,13 @@ public final class AnthropicConfig {
     private final String baseUrl;
     private final String apiKey;
     private final String model;
-    private final double temperature;
+    private final Double temperature;
     private final int maxTokens;
     private final Duration timeout;
     private final AnthropicThinkingMode thinkingMode;
     private final Integer thinkingBudgetTokens;
     private final boolean replayThinkingBlocks;
+    private final ModelCapabilityRegistry modelCapabilityRegistry;
 
     private AnthropicConfig(Builder builder) {
         this.baseUrl = builder.baseUrl;
@@ -52,11 +63,13 @@ public final class AnthropicConfig {
         this.thinkingMode = Objects.requireNonNull(builder.thinkingMode, "Thinking mode cannot be null");
         this.thinkingBudgetTokens = builder.thinkingBudgetTokens;
         this.replayThinkingBlocks = builder.replayThinkingBlocks;
+        this.modelCapabilityRegistry = builder.modelCapabilityRegistry;
 
         if (apiKey.isBlank()) {
             throw new IllegalArgumentException("API key cannot be blank");
         }
-        if (temperature < 0.0 || temperature > 1.0) {
+        // Range check only when a value is present -- "unset" is not out of range.
+        if (temperature != null && (temperature < 0.0 || temperature > 1.0)) {
             throw new IllegalArgumentException("Temperature must be between 0.0 and 1.0");
         }
         if (maxTokens <= 0) {
@@ -114,12 +127,12 @@ public final class AnthropicConfig {
     }
 
     /**
-     * Gets the temperature setting.
+     * Gets the configured temperature.
      *
-     * @return The temperature (0.0 to 1.0)
+     * @return Optional containing the temperature (0.0 to 1.0), or empty when none was configured
      */
-    public double getTemperature() {
-        return temperature;
+    public Optional<Double> getTemperature() {
+        return Optional.ofNullable(temperature);
     }
 
     /**
@@ -170,6 +183,15 @@ public final class AnthropicConfig {
         return replayThinkingBlocks;
     }
 
+    /**
+     * Gets the registry the client consults to decide which parameters this deployment's model accepts.
+     *
+     * @return The capability registry (never null)
+     */
+    public ModelCapabilityRegistry getModelCapabilityRegistry() {
+        return modelCapabilityRegistry;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -179,7 +201,16 @@ public final class AnthropicConfig {
             return false;
         }
         AnthropicConfig that = (AnthropicConfig) o;
-        return Double.compare(that.temperature, temperature) == 0 && maxTokens == that.maxTokens
+        // modelCapabilityRegistry is deliberately absent from all three of equality, the hash and toString. It is a
+        // caller-supplied collaborator with identity semantics -- no implementation defines equals, and the default
+        // is a fresh InMemoryModelCapabilityRegistry per build() -- so including it here would make two configs that
+        // agree on every value an operator can write unequal to each other.
+        //
+        // toString is left out for a weaker reason and it costs something: no registry defines toString either, so
+        // the line would carry an identity hash and no information. The cost is that an operator asking "why is my
+        // capability declaration not taking effect" gets no hint from a logged config -- the answer is in the WARN
+        // that names the model whose value was dropped, or in its absence.
+        return Objects.equals(temperature, that.temperature) && maxTokens == that.maxTokens
                 && Objects.equals(baseUrl, that.baseUrl) && apiKey.equals(that.apiKey) && model.equals(that.model)
                 && timeout.equals(that.timeout) && thinkingMode == that.thinkingMode
                 && Objects.equals(thinkingBudgetTokens, that.thinkingBudgetTokens)
@@ -205,13 +236,14 @@ public final class AnthropicConfig {
 
         private String apiKey;
         private String model = DEFAULT_MODEL;
-        private double temperature = DEFAULT_TEMPERATURE;
+        private Double temperature;
         private int maxTokens = DEFAULT_MAX_TOKENS;
         private Duration timeout = DEFAULT_TIMEOUT;
         private String baseUrl;
         private AnthropicThinkingMode thinkingMode = DEFAULT_THINKING_MODE;
         private Integer thinkingBudgetTokens;
         private boolean replayThinkingBlocks = DEFAULT_REPLAY_THINKING_BLOCKS;
+        private ModelCapabilityRegistry modelCapabilityRegistry = InMemoryModelCapabilityRegistry.withDefaults();
 
         private Builder() {
         }
@@ -351,6 +383,28 @@ public final class AnthropicConfig {
          */
         public Builder replayThinkingBlocks(boolean replayThinkingBlocks) {
             this.replayThinkingBlocks = replayThinkingBlocks;
+            return this;
+        }
+
+        /**
+         * Sets the registry the client consults for per-model request-shape decisions.
+         *
+         * <p>
+         * Defaults to {@link InMemoryModelCapabilityRegistry#withDefaults()}, which knows models by their real names.
+         * A deployment behind {@link #baseUrl(String)} — a proxy, an Anthropic-compatible gateway — is free to rename
+         * models, and only its operator knows what a renamed model really is; that is what this setter is for. Start
+         * from {@link InMemoryModelCapabilityRegistry#builderWithDefaults()} to add a name rather than replace the
+         * table.
+         *
+         * @param modelCapabilityRegistry
+         *            The registry (must not be null; use {@link ModelCapabilityRegistry#EMPTY} to know nothing)
+         * @return This builder
+         * @throws NullPointerException
+         *             if modelCapabilityRegistry is null
+         */
+        public Builder modelCapabilityRegistry(ModelCapabilityRegistry modelCapabilityRegistry) {
+            this.modelCapabilityRegistry = Objects.requireNonNull(modelCapabilityRegistry,
+                    "Model capability registry cannot be null");
             return this;
         }
 

@@ -33,7 +33,7 @@ TASK.md 가 "설계 단계의 본체" 로 지목한 다섯 가지에 대한 답�
 
 여기에 TASK.md 가 "다시 본다" 고 한 백로그 항목 하나에 대한 답이 붙는다.
 
-| B-21 | 공통 `aimon.llm.*` 을 provider 별로 쪼갤 것인가 | **이 키는 쪼개지 않는다 — 단, 종전의 "나눌 것이 없다" 는 해소 사유가 더 이상 참이 아니다.** 그리고 분할 자체는 기각된 적이 없다: 설계 기록의 프로퍼티 트리가 `llm.anthropic: { … }` / `llm.openai: { … }` 자리를 **이미 비워 두고 있다.** 정할 것은 무엇이 그리로 가는가이고, 기준은 두 갈래다 — **이름이 벤더 개념을 담거나, 뜻이 벤더마다 다르거나.** `model-capabilities` 는 둘 다 아니므로 `aimon.llm.*` 에 남고, "읽히지 않는 provider 아래 선언되면 거절" 이 그 공유 네임스페이스를 정직하게 만든다 (§2.7) |
+| B-21 | 공통 `aimon.llm.*` 을 provider 별로 쪼갤 것인가 | **이 키는 쪼개지 않는다 — 단, 종전의 "나눌 것이 없다" 는 해소 사유가 더 이상 참이 아니다.** 그리고 분할 자체는 기각된 적이 없다: 설계 기록의 프로퍼티 트리가 `llm.anthropic: { … }` / `llm.openai: { … }` 자리를 **이미 비워 두고 있다.** 정할 것은 무엇이 그리로 가는가이고, 기준은 두 갈래다 — **이름이 벤더 개념을 담거나, 뜻이 벤더마다 다르거나.** `model-capabilities` 는 둘 다 아니므로 `aimon.llm.*` 에 남고, "읽히지 않는 provider 아래 선언되면 거절" 이 그 공유 네임스페이스를 정직하게 만든다 (§2.7). **#52 에서 정정됨:** 그 거절은 삭제되었다 — Anthropic 클라이언트도 이 registry 를 읽게 되어 읽지 않는 분기가 없어졌고, 이제 정직하게 만드는 것은 **두 분기가 모두 읽는다**는 사실이다. 결정("쪼개지 않는다")은 그대로이며, 근거였던 "두 번째 소비자가 예정되어 있다" 가 사실이 되었다 (§2.7 의 정정 블록) |
 
 ---
 
@@ -329,6 +329,19 @@ penalty 무시 등으로 공통 `aimon.llm.*` 키의 **의미가 프로바이더
 (*"설정했는데 안 읽히는 것이 가장 나쁘다"*, `validateScheduling` 의 *"bound and act on nothing"*)의
 적용이다. 이 거절이 있어야 "중립 이름이니 공유 네임스페이스에 둔다" 가 **오늘도** 참이 된다 — 두 번째
 소비자는 아직 없기 때문이다.
+
+> **#52 에서 정정됨 — 위 문단의 마지막 두 문장이 더 이상 참이 아니다.** 두 번째 소비자가 도착했다:
+> `AnthropicLlmClient` 가 `ModelCapabilityRegistry` 를 읽고, CLI 의 `anthropicConfig(...)` 와 스타터의
+> `AnthropicConfiguration.anthropicConfig(...)` 가 같은 번역기로 선언을 그 클라이언트에 넘긴다.
+> 그래서 **두 거절 가드는 삭제되었다**(`refuseModelCapabilitiesForAnthropic`,
+> `AimonLlmAutoConfiguration.refuseModelCapabilities`) — 읽지 않는 분기가 없으므로 거절할 자리가 없다.
+>
+> **결정은 그대로다.** 오히려 이 문단이 그 결정의 근거로 든 것("두 번째 소비자가 예정되어 있다 …
+> 지금 내리면 그날 깨는 키 이동이 필요해진다", 바로 위 불릿)이 예측에서 사실이 되었다. 바뀐 것은
+> 공유 네임스페이스를 정직하게 만드는 **수단**뿐이다 — 거절이 아니라 **두 분기가 모두 읽는다**는 사실이
+> 그 일을 한다. 근거:
+> [`anthropic-sampling-capabilities.md`](anthropic-sampling-capabilities.md) §7, 백로그는
+> [`../../backlog/spring-boot-starter-open-items.md`](../../backlog/spring-boot-starter-open-items.md) B-21.
 
 반례 둘이 같은 기준으로 답이 나오고, 둘 다 §9.3 이 비워 둔 그 자리로 간다.
 

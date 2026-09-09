@@ -100,25 +100,31 @@ class AnthropicThinkingRequestTest {
     }
 
     @Test
-    @DisplayName("thinkingMode OFF sends a body byte-identical to the pre-thinking one")
+    @DisplayName("thinkingMode OFF sends exactly what the caller asked for, and no manufactured temperature")
     void offSendsTodaysBodyUnchanged() {
         final String body = AnthropicFixtures
                 .bodyOf(sendCapturingParams(client(config().build()), LlmModel.builder().build()));
 
         // A golden body, not a handful of key assertions. The claim being defended is that a thinking-off deployment
-        // does not change by one character, and only a whole-body comparison can defend it: naming the three keys
+        // sends nothing it was not asked for, and only a whole-body comparison can defend it: naming the three keys
         // this change might have touched cannot notice a fourth that it did. Brittleness is the point — this test is
         // supposed to go red for any request-shape change at all, so that the change has to be looked at.
+        //
+        // This literal used to end in `"temperature":0.0`, and its removal is the whole of what stopping the config
+        // from manufacturing a value does on the wire. Restoring a DEFAULT_TEMPERATURE in AnthropicConfig turns this
+        // test red, which is the point of writing the body out in full.
         assertThat(body).isEqualTo("{\"max_tokens\":4096,\"messages\":[{\"content\":\"hi\",\"role\":\"user\"}],"
-                + "\"model\":\"claude-sonnet-4-5\",\"system\":\"You are helpful\",\"temperature\":0.0}");
+                + "\"model\":\"claude-sonnet-4-5\",\"system\":\"You are helpful\"}");
         assertThat(warnings()).isEmpty();
     }
 
     @Test
     @DisplayName("EXTENDED sends thinking.type=enabled with the clamped budget and no temperature key at all")
     void extendedSendsEnabledAndOmitsTemperature() {
+        // A temperature is set on the call so that "omitted" is a claim about a value that existed. With nothing set
+        // anywhere there is no longer anything to omit, and the assertion would pass vacuously.
         final JsonNode body = send(client(config().thinkingMode(AnthropicThinkingMode.EXTENDED).build()),
-                LlmModel.builder().reasoningEffort(ReasoningEffort.HIGH).build());
+                LlmModel.builder().reasoningEffort(ReasoningEffort.HIGH).temperature(0.7).build());
 
         assertThat(body.get("thinking").get("type").asText()).isEqualTo("enabled");
         // The default maxTokens of 4096 clamps HIGH's 16000 down to maxTokens - 1.
@@ -155,12 +161,12 @@ class AnthropicThinkingRequestTest {
     @DisplayName("reasoningEffort NONE suppresses the thinking parameter in both modes")
     void noneSuppressesThinkingInBothModes() {
         final JsonNode extended = send(client(config().thinkingMode(AnthropicThinkingMode.EXTENDED).build()),
-                LlmModel.builder().reasoningEffort(ReasoningEffort.NONE).build());
+                LlmModel.builder().reasoningEffort(ReasoningEffort.NONE).temperature(0.7).build());
         assertThat(extended.has("thinking")).isFalse();
-        // The consequence stated in the design rather than hidden: with no thinking parameter the sampling omission
-        // does not fire either, so temperature is still on the wire — and on an adaptive-capable model that is itself
-        // a rejection. Naming it here is what keeps it a known cost rather than a surprise.
-        assertThat(extended.has("temperature")).isTrue();
+        // The consequence stated in the design rather than hidden: with no thinking parameter the thinking-side
+        // omission does not fire, so a configured temperature is still on the wire. What decides whether that is a
+        // rejection is now the capability row — claude-sonnet-4-5 is not in the table, so this is the fail-open path.
+        assertThat(extended.get("temperature").asDouble()).isEqualTo(0.7);
 
         final JsonNode adaptive = send(client(config().thinkingMode(AnthropicThinkingMode.ADAPTIVE).build()),
                 LlmModel.builder().reasoningEffort(ReasoningEffort.NONE).build());
@@ -192,13 +198,13 @@ class AnthropicThinkingRequestTest {
     @DisplayName("no legal budget fits: the thinking parameter is omitted and the operator is told")
     void impossibleBudgetOmitsThinkingLoudly() {
         final JsonNode body = send(client(config().thinkingMode(AnthropicThinkingMode.EXTENDED).maxTokens(512).build()),
-                LlmModel.builder().reasoningEffort(ReasoningEffort.HIGH).build());
+                LlmModel.builder().reasoningEffort(ReasoningEffort.HIGH).temperature(0.7).build());
 
         assertThat(body.has("thinking")).isFalse();
         // Sending a request the server is certain to reject would be worse than not asking for thinking, but doing it
         // silently would be worse still.
         assertThat(warnings()).anyMatch(w -> w.contains("leaves no room"));
-        assertThat(body.has("temperature")).isTrue();
+        assertThat(body.get("temperature").asDouble()).isEqualTo(0.7);
     }
 
     @Test
@@ -228,7 +234,7 @@ class AnthropicThinkingRequestTest {
     @DisplayName("each divergence is reported exactly once across two sends")
     void divergenceIsReportedOncePerSignature() {
         final AnthropicLlmClient client = client(config().thinkingMode(AnthropicThinkingMode.EXTENDED).build());
-        final LlmModel model = LlmModel.builder().reasoningEffort(ReasoningEffort.HIGH).build();
+        final LlmModel model = LlmModel.builder().reasoningEffort(ReasoningEffort.HIGH).temperature(0.7).build();
 
         assertThatThrownBy(() -> client.sendMessage("s", List.of(Message.user("hi")), List.of(), model))
                 .hasRootCause(SENTINEL);
@@ -285,19 +291,32 @@ class AnthropicThinkingRequestTest {
     }
 
     @Test
-    @DisplayName("the omitted temperature is described differently when the call set it and when it did not")
+    @DisplayName("the omitted temperature is described differently when the call set it and when the client did")
     void temperatureOmissionNamesWhoseValueItWas() {
         send(client(config().thinkingMode(AnthropicThinkingMode.ADAPTIVE).build()),
                 LlmModel.builder().temperature(0.7).build());
         assertThat(warnings()).anyMatch(w -> w.startsWith("temperature 0.7 is incompatible"));
 
         logAppender.list.clear();
-        send(client(config().thinkingMode(AnthropicThinkingMode.ADAPTIVE).build()), LlmModel.builder().build());
+        send(client(config().thinkingMode(AnthropicThinkingMode.ADAPTIVE).temperature(0.4).build()),
+                LlmModel.builder().build());
 
-        // Nobody set a temperature here: 0.0 is AnthropicConfig's default. Saying "temperature 0.0 is incompatible"
-        // reads as a complaint about a configuration the operator never wrote, which is the one thing a divergence
-        // warning must not do — it is supposed to tell them something they can act on.
+        // The value came from the client config, not from this call. Naming it "temperature 0.4" would send an
+        // operator looking for it on a request that never carried one, so the sentence says where it came from.
         assertThat(warnings()).anyMatch(w -> w.startsWith("No temperature was set on this call"))
-                .noneMatch(w -> w.startsWith("temperature 0.0 is incompatible"));
+                .noneMatch(w -> w.startsWith("temperature 0.4 is incompatible"));
+    }
+
+    @Test
+    @DisplayName("nobody set a temperature, so nothing is omitted and nothing is said")
+    void noTemperatureAnywhereIsSilent() {
+        // This used to be the second half of the test above, and it used to produce a warning naming the config's
+        // manufactured 0.0. There is no manufactured value now, so there is nothing to omit and nothing to report —
+        // silence by construction rather than by a special case.
+        final JsonNode body = send(client(config().thinkingMode(AnthropicThinkingMode.ADAPTIVE).build()),
+                LlmModel.builder().build());
+
+        assertThat(body.has("temperature")).isFalse();
+        assertThat(warnings()).noneMatch(w -> w.contains("temperature"));
     }
 }

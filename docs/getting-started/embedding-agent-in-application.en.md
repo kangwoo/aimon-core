@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/embedding-agent-in-application.md
-source_commit: 6a07573
+source_commit: 47e762a
 ---
 
 # Embedding an AIMON agent in your application
@@ -378,12 +378,12 @@ aimon:
   what Boot's word list catches is `credentials`, and since the rule looks at the whole key, one prefix
   covers **any leaf name** underneath it.
 - `aimon.llm.model-capabilities.<model>` states **what that model's request surface accepts.** Point
-  `base-url` at an Azure deployment or an OpenAI-compatible gateway and it may expose a model under a name of
+  `base-url` at an Azure deployment or a vendor-compatible gateway and it may expose a model under a name of
   its own (`gpt-5-mini` as `prod-assistant`); the built-in capability table knows models by their real names,
   so that name falls through to the fail-open path, `temperature` is sent to a model that does not take it,
-  and the request answers HTTP 400. **This block is read only under `provider: openai`**, which is why it is
-  not in §4's example above (`provider: anthropic`) — declaring it on the Anthropic branch fails startup with
-  the property named.
+  and the request answers HTTP 400. **Both branches read this block** — and the built-in table describes both
+  vendors (the `gpt-*` / `o*` rows, and the six `claude-*` models that refuse the sampling parameters). So
+  `provider` in the example below may just as well be `anthropic`.
 
   ```yaml
   aimon:
@@ -403,8 +403,9 @@ aimon:
   declaration **extends** the built-in table (registered as an exact entry, so it wins for that one name), the
   name is matched ignoring case, and a name containing a dot has to be wrapped in **brackets** —
   `model-capabilities[gpt-5.7-x]` — because without them the entry does not arrive at all. An entry that
-  declares nothing, two names differing only in case, an unusable `lowest-reasoning-effort` value, and a
-  declaration under `provider: anthropic` all fail startup with the property named. **A misspelled flag name,
+  declares nothing, two names differing only in case, and an unusable `lowest-reasoning-effort` value all
+  fail startup with the property named. A declaration under `provider: anthropic` is **no longer refused** —
+  that branch reads this registry too. **A misspelled flag name,
   however, is silent** — Boot ignores unknown properties, and turning that off is a behaviour change for the
   whole `aimon.*` tree, so it was not ridden in on this key. An application that declares its own `LlmClient`
   bean reaches neither branch, so its declaration is neither refused nor read — that application consumes it

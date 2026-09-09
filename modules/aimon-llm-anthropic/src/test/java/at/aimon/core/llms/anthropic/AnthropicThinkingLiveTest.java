@@ -12,6 +12,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
+import org.slf4j.LoggerFactory;
 
 import com.anthropic.core.ObjectMappers;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -23,7 +24,12 @@ import at.aimon.core.llm.ReasoningEffort;
 import at.aimon.core.llm.ReasoningTrace;
 import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.llm.ToolUseResult;
+import at.aimon.core.llm.capability.ModelCapabilityRegistry;
 import at.aimon.core.llm.exception.LlmInvalidRequestException;
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 
 /**
  * The live half of the thinking round trip: the assertions that only a real Anthropic call can make.
@@ -43,8 +49,9 @@ import at.aimon.core.llm.exception.LlmInvalidRequestException;
  *
  * <p>
  * <strong>Cost and determinism.</strong> One tool-calling turn is captured once and reused by every assertion that
- * needs one, so the class makes roughly five billable calls rather than one per test — a rejected request is not
- * billed for output. Where a claim depends on the model <em>choosing</em> to call a tool, which is a property of the
+ * needs one, so the class makes roughly seven billable calls rather than one per test — a rejected request is not
+ * billed for output, which is why the two negative controls here (a mutated signature, a removed capability row) cost
+ * nothing. Where a claim depends on the model <em>choosing</em> to call a tool, which is a property of the
  * model rather than of this client, the test aborts through {@code assumeTrue} instead of failing. The line is drawn
  * deliberately: no tool call is the environment declining to set the test up, while a tool call that produced no
  * reasoning trace is this client's bug and must be red.
@@ -67,7 +74,11 @@ class AnthropicThinkingLiveTest {
     /** Extended-only, and the cheapest model that speaks that dialect. */
     private static final String EXTENDED_MODEL = "claude-haiku-4-5-20251001";
 
-    /** Adaptive-only. Also one of the models that rejects {@code temperature}, which is what blocks {@code OFF}. */
+    /**
+     * Adaptive-only, and one of the six models that reject a non-default {@code temperature}. That second property is
+     * what {@link AdaptiveReachability} is about: it used to make {@code OFF} unreachable, and the capability row is
+     * what makes it reachable now.
+     */
     private static final String ADAPTIVE_MODEL = "claude-sonnet-5";
 
     private static final String SYSTEM = "You are a helpful assistant. Answer in one or two sentences.";
@@ -230,16 +241,61 @@ class AnthropicThinkingLiveTest {
         }
 
         @Test
-        @DisplayName("OFF does not reach it — the pre-existing sampling defect, pinned to its real message")
-        void offCannotReachAnAlwaysOnModel() throws Exception {
+        @DisplayName("OFF reaches it now — the defect this test used to pin, inverted into its regression guard")
+        void offReachesAnAlwaysOnModel() throws Exception {
             try (AnthropicLlmClient client = new AnthropicLlmClient(config(ADAPTIVE_MODEL).build())) {
 
-                // Pinned rather than fixed: a model fact needing a per-model source of truth. The exact sentence
-                // matters — the design paraphrased this as "any non-default temperature", while the server refuses
-                // the parameter outright, which is why 0.0 fails too. A bare "temperature" substring would also pass
-                // on a range-validation error and so would not notice that correction being undone.
+                // This assertion used to be its own opposite. It read:
+                //
+                // .isInstanceOf(LlmInvalidRequestException.class)
+                // .hasMessageContaining("`temperature` is deprecated for this model")
+                //
+                // which was true because the config manufactured temperature 0.0 and this model refuses any
+                // non-default value. Two changes remove it: the config no longer invents a value, and the capability
+                // row would suppress one that had been set. The old sentence is kept here because it is why the test
+                // exists — inverting it turns the record of the defect into the guard against its return.
+                assertThatCode(() -> client.sendMessage(SYSTEM, List.of(Message.user("What is 2 + 3?")), List.of(),
+                        LlmModel.builder().build())).doesNotThrowAnyException();
+            }
+        }
+
+        @Test
+        @DisplayName("an explicitly set temperature is suppressed, the call succeeds, and the operator is told")
+        void anExplicitTemperatureIsSuppressedAndReported() throws Exception {
+            final Logger clientLogger = (Logger) LoggerFactory.getLogger(AnthropicLlmClient.class);
+            final ListAppender<ILoggingEvent> appender = new ListAppender<>();
+            appender.start();
+            clientLogger.addAppender(appender);
+            try (AnthropicLlmClient client = new AnthropicLlmClient(config(ADAPTIVE_MODEL).build())) {
+
+                // The live half of "suppression is reported, not silent". Everything else about that claim is
+                // asserted against a serialised body; this is the only place the real server agrees.
+                assertThatCode(() -> client.sendMessage(SYSTEM, List.of(Message.user("What is 2 + 3?")), List.of(),
+                        LlmModel.builder().temperature(0.7).build())).doesNotThrowAnyException();
+
+                assertThat(appender.list.stream().filter(event -> event.getLevel() == Level.WARN)
+                        .map(ILoggingEvent::getFormattedMessage))
+                        .anyMatch(message -> message.contains("does not accept sampling parameters")
+                                && message.contains(ADAPTIVE_MODEL));
+            } finally {
+                clientLogger.detachAppender(appender);
+                appender.stop();
+            }
+        }
+
+        @Test
+        @DisplayName("the negative control: with the row removed, the same call is the 400 it always was")
+        void withoutTheCapabilityRowTheSameCallIsRejected() throws Exception {
+            try (AnthropicLlmClient client = new AnthropicLlmClient(
+                    config(ADAPTIVE_MODEL).modelCapabilityRegistry(ModelCapabilityRegistry.EMPTY).build())) {
+
+                // Without this, "the call succeeded" above is equally satisfied by a client that sends nothing for
+                // unrelated reasons — the same asymmetry mutatedSignatureIsRejected exists to close. The exact
+                // sentence matters: a bare "temperature" substring would also pass on a range-validation error.
+                //
+                // This half is rejected at parameter validation, before generation, so it bills nothing.
                 assertThatThrownBy(() -> client.sendMessage(SYSTEM, List.of(Message.user("hi")), List.of(),
-                        LlmModel.builder().build())).isInstanceOf(LlmInvalidRequestException.class)
+                        LlmModel.builder().temperature(0.7).build())).isInstanceOf(LlmInvalidRequestException.class)
                         .hasMessageContaining("`temperature` is deprecated for this model");
             }
         }

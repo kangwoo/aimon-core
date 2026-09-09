@@ -44,6 +44,7 @@ import at.aimon.core.llm.ReasoningTrace;
 import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.llm.ToolUse;
+import at.aimon.core.llm.capability.ModelCapabilities;
 import at.aimon.core.llm.exception.LlmCallCancelledException;
 import at.aimon.core.llm.exception.LlmClientException;
 import at.aimon.core.llm.streaming.ChunkAggregator;
@@ -361,9 +362,12 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
             LlmModel modelConfig, String providerName) {
         final int maxTokens = modelConfig.getMaxTokens().orElse(config.getMaxTokens());
         final Optional<ThinkingConfigParam> thinking = resolveThinking(modelConfig, maxTokens);
+        // Resolved once and used twice: the name that goes on the wire is the name whose capabilities are looked up,
+        // and a LlmModel override is what makes that a per-request question rather than a per-client one.
+        final String modelName = modelConfig.getName().orElse(config.getModel());
 
-        MessageCreateParams.Builder requestBuilder = MessageCreateParams.builder()
-                .model(modelConfig.getName().orElse(config.getModel())).maxTokens((long) maxTokens);
+        MessageCreateParams.Builder requestBuilder = MessageCreateParams.builder().model(modelName)
+                .maxTokens((long) maxTokens);
 
         thinking.ifPresent(requestBuilder::thinking);
         if (thinking.isPresent() && config.getThinkingMode() == AnthropicThinkingMode.ADAPTIVE) {
@@ -371,7 +375,8 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
                     .ifPresent(effort -> requestBuilder.outputConfig(OutputConfig.builder().effort(effort).build()));
         }
 
-        applySamplingParameters(requestBuilder, modelConfig, thinking.isPresent());
+        applySamplingParameters(requestBuilder, modelConfig, modelName, capabilitiesFor(modelName),
+                thinking.isPresent());
 
         // Set system prompt via dedicated parameter (Anthropic-specific)
         requestBuilder.system(systemPrompt);
@@ -428,10 +433,22 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
      * <p>
      * <strong>The remedy is mode-dependent, and that is not a stylistic split.</strong> Under {@code EXTENDED},
      * {@link AnthropicThinkingMode#OFF} is a real escape: the models that speak that dialect accept the
-     * {@code temperature} this client then sends. Under {@code ADAPTIVE} it is not. Every adaptive-only model rejects
-     * {@code temperature} outright (§2.3, and {@code AnthropicThinkingLiveTest} asserts it), and turning thinking off
-     * is exactly what makes this client send it — so advising {@code OFF} there would hand the operator a guaranteed
-     * 400 in place of a cost. Naming one remedy for both modes is the mistake this split exists to avoid.
+     * {@code temperature} this client then sends. Under {@code ADAPTIVE} it is an escape in every case but one, and
+     * naming that case exactly is what this sentence is for. Every adaptive-only model rejects a non-default
+     * {@code temperature}, and turning thinking off moves that decision from the thinking gate to
+     * {@link ModelCapabilities#supportsSamplingParameters()} — which answers correctly for the built-in rows and
+     * fail-open for a name nothing describes. Fail-open only costs something when there is a value to send: this
+     * client manufactures none, so a renamed deployment with nothing configured omits the parameter anyway and
+     * succeeds. The 400 needs <em>both</em> halves — an undescribed model <em>and</em> somebody having set a
+     * temperature, which is either an operator's setting or a subagent turn, since
+     * {@code SubagentLlmDefaults.resolveModel} always puts one on the request.
+     *
+     * <p>
+     * This is the message's third wording. The first predicted a rejection the server does not produce; the second
+     * survived D-3 unchanged and so over-claimed the opposite way, telling an operator that turning thinking off
+     * "makes every request fail" on a renamed deployment where in the common case it simply works. A warning that
+     * names a failure the caller will not see teaches them to distrust the next one, which is the fault the whole
+     * paragraph above exists to avoid.
      *
      * <p>
      * It is still worth saying, because nothing else in the system would: no status code, no error, and a transcript
@@ -455,9 +472,14 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
             return;
         }
         reportDivergence("replayOffWhileThinking@" + config.getThinkingMode(),
-                shared + ". Note that thinkingMode(OFF) is not an escape on this dialect: the models that accept "
-                        + "adaptive thinking reject the temperature this client sends when thinking is off, so "
-                        + "turning it off makes every request fail instead of merely costing tokens.",
+                shared + ". Note one caveat before reaching for thinkingMode(OFF) on this dialect: adaptive-only "
+                        + "models refuse a non-default temperature, and with thinking off it is the capability "
+                        + "registry that decides whether this client omits it. For a model no registry names — a "
+                        + "renamed gateway deployment — that check falls open, so any request carrying a temperature "
+                        + "fails outright instead of merely costing tokens. That means a set temperature or a "
+                        + "subagent turn, which always carries one; with nothing configured the parameter is not "
+                        + "sent and the request succeeds. Declaring the deployment's real name in the capability "
+                        + "registry removes the caveat.",
                 config.getThinkingMode());
     }
 
@@ -523,64 +545,144 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
     }
 
     /**
-     * Applies {@code temperature} and {@code top_p}, or omits them because thinking is on.
+     * Applies {@code temperature} and {@code top_p}, or omits them — because the model refuses them, or because
+     * thinking is on.
      *
      * <p>
-     * The vendor's rule, on every model that has thinking: {@code temperature} and {@code top_k} are incompatible with
-     * it, and {@code top_p} is accepted only between 0.95 and 1. So when this request carries a {@code thinking}
-     * parameter the temperature setter is <strong>not called</strong> — omission means never calling it, because a
-     * key left present with a null value is rejected the same way the value would be — and {@code top_p} is sent only
-     * inside that window.
+     * <strong>Two gates, nested in this order and not the other one.</strong> The outer gate is a model fact:
+     * {@link ModelCapabilities#supportsSamplingParameters()} is {@code false} for the Claude models that answer 400 to
+     * {@code temperature} at any non-default value and to {@code top_p} at <em>any</em> value including {@code 1.0},
+     * so for them neither setter is called at all. The inner gate is the older thinking rule, which governs the models
+     * that do accept sampling: {@code temperature} and {@code top_k} are incompatible with thinking, and {@code top_p}
+     * is accepted only between 0.95 and 1. Reversing the two would send {@code top_p: 0.98} to an always-thinking
+     * model that refuses it, which is a measured 400.
      *
      * <p>
-     * Both omissions are reported at WARN, because the observable outcome is a request that <em>succeeds with
-     * settings other than the ones configured</em>: no status code, and nothing else in the system that would tell an
-     * operator. Nothing is silently substituted with a "safe" value. {@code top_k} needs no handling — {@link LlmModel}
-     * has no such field.
+     * Nothing here branches on the model <em>name</em>; the name is carried only so a warning can say which model
+     * dropped the value. The one thing that decides is the descriptor the registry resolved.
+     *
+     * <p>
+     * Omission means the setter is <strong>never called</strong>. It cannot be expressed as passing null: measured
+     * 2026-09-09, {@code "temperature": null} is a 400 (<em>"Input should be a valid number"</em>) on a model that
+     * accepts {@code temperature: 0.5} as readily as on one that refuses it — a schema rule, not a capability one.
+     *
+     * <p>
+     * Every omission is reported at WARN, because the observable outcome is a request that <em>succeeds with settings
+     * other than the ones configured</em>: no status code, and nothing else in the system that would tell an operator.
+     * Nothing is silently substituted with a "safe" value, and a request nobody put a value on stays silent by
+     * construction rather than by a special case. {@code top_k} needs no handling — {@link LlmModel} has no such
+     * field.
      */
     private void applySamplingParameters(MessageCreateParams.Builder requestBuilder, LlmModel modelConfig,
-            boolean thinkingRequested) {
-        final boolean setOnThisCall = modelConfig.getTemperature().isPresent();
-        final double requested = modelConfig.getTemperature().orElse(config.getTemperature());
-        if (thinkingRequested) {
-            // Two wordings, because the two cases are different news. "temperature 0.7" names something the caller
-            // chose; the client's own configured value names something they may never have touched — this config's
-            // default is 0.0, and saying "temperature 0.0 is incompatible" to someone who never set a temperature
-            // reads as a complaint about their configuration rather than as a statement about this provider.
-            if (setOnThisCall) {
-                reportDivergence("temperatureOmittedForThinking=" + requested,
-                        "temperature {} is incompatible with Anthropic thinking and is being omitted; the call will "
-                                + "succeed with the provider's default sampling.",
-                        requested);
-            } else {
-                reportDivergence("clientTemperatureOmittedForThinking=" + requested,
-                        "No temperature was set on this call, so this client's configured {} would have applied; it "
-                                + "is incompatible with Anthropic thinking and is being omitted, and the call will "
-                                + "succeed with the provider's default sampling.",
-                        requested);
-            }
-        } else {
-            double temperature = requested;
-            if (temperature < 0.0 || temperature > 1.0) {
-                temperature = Math.max(0.0, Math.min(1.0, temperature));
-                reportDivergence("temperature=" + requested,
-                        "Temperature {} is outside Anthropic's range [0.0, 1.0]; sending {} instead. "
-                                + "The call will succeed with different sampling than was configured.",
-                        requested, temperature);
-            }
-            requestBuilder.temperature(temperature);
+            String modelName, ModelCapabilities capabilities, boolean thinkingRequested) {
+        final Optional<Double> callTemperature = modelConfig.getTemperature();
+        final Optional<Double> temperature = callTemperature.or(config::getTemperature);
+        final Optional<Double> topP = modelConfig.getTopP();
+
+        if (!capabilities.supportsSamplingParameters()) {
+            // Suppression beats the thinking wording even when thinking is on: both statements are true there, and
+            // this one is the useful half, because turning thinking off would not make the model take the value.
+            reportSuppressedSampling("temperature", temperature, modelName);
+            reportSuppressedSampling("topP", topP, modelName);
+            return;
         }
 
-        modelConfig.getTopP().ifPresent(topP -> {
-            if (thinkingRequested && (topP < MIN_TOP_P_WITH_THINKING || topP > 1.0)) {
-                reportDivergence("topPOmittedForThinking=" + topP,
+        if (thinkingRequested) {
+            // Two wordings, because the two cases are different news. "temperature 0.7" names something the caller
+            // chose on this call; the client's own configured value names something set once for every agent bound to
+            // this provider, and an operator reading the first sentence would go looking for it on the wrong request.
+            temperature.ifPresent(requested -> {
+                if (callTemperature.isPresent()) {
+                    reportDivergence("temperatureOmittedForThinking=" + requested,
+                            "temperature {} is incompatible with Anthropic thinking and is being omitted; the call "
+                                    + "will succeed with the provider's default sampling.",
+                            requested);
+                } else {
+                    reportDivergence("clientTemperatureOmittedForThinking=" + requested,
+                            "No temperature was set on this call, so this client's configured {} would have applied; "
+                                    + "it is incompatible with Anthropic thinking and is being omitted, and the call "
+                                    + "will succeed with the provider's default sampling.",
+                            requested);
+                }
+            });
+        } else {
+            temperature.ifPresent(requested -> {
+                double clamped = requested;
+                if (clamped < 0.0 || clamped > 1.0) {
+                    clamped = Math.max(0.0, Math.min(1.0, clamped));
+                    reportDivergence("temperature=" + requested,
+                            "Temperature {} is outside Anthropic's range [0.0, 1.0]; sending {} instead. "
+                                    + "The call will succeed with different sampling than was configured.",
+                            requested, clamped);
+                }
+                requestBuilder.temperature(clamped);
+            });
+        }
+
+        topP.ifPresent(value -> {
+            if (thinkingRequested && (value < MIN_TOP_P_WITH_THINKING || value > 1.0)) {
+                reportDivergence("topPOmittedForThinking=" + value,
                         "topP {} is outside the [{}, 1.0] window Anthropic accepts alongside extended thinking and is "
                                 + "being omitted; the call will succeed without it.",
-                        topP, MIN_TOP_P_WITH_THINKING);
+                        value, MIN_TOP_P_WITH_THINKING);
                 return;
             }
-            requestBuilder.topP(topP);
+            requestBuilder.topP(value);
         });
+    }
+
+    /**
+     * Reports one sampling value dropped because the resolved model does not accept sampling parameters.
+     *
+     * <p>
+     * The signature carries the model name as well as the value, matching the OpenAI client's convention: one client
+     * has one config but {@link LlmModel} can override the name, so the same value against two models is two pieces of
+     * news rather than one repeated.
+     *
+     * @param name
+     *            the parameter as the caller spells it
+     * @param value
+     *            the configured value, or empty when nobody set one — in which case nothing is said
+     * @param modelName
+     *            the resolved model name, for the warning text
+     */
+    private void reportSuppressedSampling(String name, Optional<Double> value, String modelName) {
+        value.ifPresent(v -> reportDivergence(name + "=" + v + "@" + modelName,
+                "{} {} is set on this request but {} does not accept sampling parameters; it is being omitted and the "
+                        + "call will succeed without it.",
+                name, v, modelName));
+    }
+
+    /**
+     * Resolves the model's capabilities, degrading to {@link ModelCapabilities#unknown()} if the registry misbehaves.
+     *
+     * <p>
+     * The registry is caller-supplied, and {@link #buildRequest} — this method's only caller — runs <em>outside</em>
+     * the streaming path's try-with-resources: an exception escaping here would bypass both the exception mapper and
+     * the cancellation classification. Swallowing it applies this SPI's own fail-open rule to the SPI itself, so a
+     * third-party bug costs a warning rather than the request.
+     */
+    private ModelCapabilities capabilitiesFor(String modelName) {
+        try {
+            final ModelCapabilities resolved = config.getModelCapabilityRegistry().resolve(modelName);
+            if (resolved == null) {
+                // resolve() is documented as total, but an implementation may override the default method and break
+                // that. Reported rather than absorbed: the throwing branch below warns, and a silent degradation
+                // sitting beside a reported one teaches an operator that capability lookups never fail.
+                reportDivergence("capabilityLookupReturnedNull@" + modelName,
+                        "Model capability lookup for {} returned null, which its contract forbids; treating the "
+                                + "model as unknown, so the request keeps its default shape.",
+                        modelName);
+                return ModelCapabilities.unknown();
+            }
+            return resolved;
+        } catch (RuntimeException e) {
+            reportDivergence("capabilityLookupFailed@" + modelName,
+                    "Model capability lookup for {} failed ({}); treating the model as unknown, so the request keeps "
+                            + "its default shape.",
+                    modelName, e.toString());
+            return ModelCapabilities.unknown();
+        }
     }
 
     /**

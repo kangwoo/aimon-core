@@ -291,19 +291,49 @@ class LlmClientFactoryTest {
                     .hasMessageContaining("llm.modelCapabilities").hasMessageContaining("whitespace");
         }
 
-        @Test
-        @DisplayName("Should refuse a declaration under the anthropic provider, naming the yaml key")
-        void refusesADeclarationUnderAnthropic() {
-            // The key sits in the shared `llm` block because the question it answers is provider-neutral, and only the
-            // OpenAI client reads the registry today. Refusing it in the branch that cannot read it is what keeps the
-            // shared block honest -- a setting that binds and reaches nothing reads as if it had taken effect.
+        private LlmProviderConfig anthropic(String model) {
             LlmProviderConfig config = new LlmProviderConfig();
             config.setProvider("anthropic");
             config.setApiKey("test-anthropic-api-key");
+            config.setModel(model);
+            return config;
+        }
+
+        @Test
+        @DisplayName("Should carry a declaration through to the anthropic client's registry")
+        void aDeclarationReachesTheAnthropicRegistry() {
+            // This branch used to refuse the block by name, because only the OpenAI client read the registry. Both
+            // read it now, so what keeps the shared `llm` block honest is that both branches consume it. The refusal
+            // test that stood here is deleted rather than inverted: it asserted a message that no longer exists.
+            LlmProviderConfig config = anthropic("prod-assistant");
             config.setModelCapabilities(Map.of("prod-assistant", samplingRejected()));
 
+            ModelCapabilityRegistry registry = factory.anthropicConfig(config).getModelCapabilityRegistry();
+
+            assertThat(registry.resolve("prod-assistant").supportsSamplingParameters()).isFalse();
+            assertThat(registry.resolve("claude-opus-5").supportsSamplingParameters()).isFalse();
+        }
+
+        @Test
+        @DisplayName("Should leave the anthropic client on the shipped registry when nothing is declared")
+        void noDeclarationsKeepsTheDefaultAnthropicRegistry() {
+            ModelCapabilityRegistry registry = factory.anthropicConfig(anthropic("claude-sonnet-5"))
+                    .getModelCapabilityRegistry();
+
+            assertThat(registry.resolve("claude-sonnet-5"))
+                    .isEqualTo(InMemoryModelCapabilityRegistry.withDefaults().resolve("claude-sonnet-5"));
+        }
+
+        @Test
+        @DisplayName("Should reject a bad declaration under anthropic with the same yaml-key message as under openai")
+        void rejectsABadDeclarationUnderAnthropic() {
+            // The judgement is the core's and is stated once; both branches only rename the exception after the yaml
+            // key. A second message here would be a second thing to keep in step.
+            LlmProviderConfig config = anthropic("prod-assistant");
+            config.setModelCapabilities(Map.of(" prod-assistant", samplingRejected()));
+
             assertThatThrownBy(() -> factory.create(config)).isInstanceOf(ConfigurationException.class)
-                    .hasMessageContaining("llm.modelCapabilities").hasMessageContaining("openai");
+                    .hasMessageContaining("llm.modelCapabilities").hasMessageContaining("whitespace");
         }
     }
 }
