@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/aimon-core-integration-via-cli-reference.md
-source_commit: a56317a
+source_commit: 6a07573
 ---
 
 # aimon-core integration guide — following aimon-cli as the reference
@@ -214,7 +214,62 @@ return switch (provider) {
 };
 ```
 
-Each builder constructs the SDK-specific configuration object (`AnthropicConfig`, `OpenAIConfig`) and injects `apiKey`, `model`, `timeout` and `baseUrl`.
+Each builder constructs the SDK-specific configuration object (`AnthropicConfig`, `OpenAIConfig`) and injects
+`apiKey`, `model`, `timeout` and `baseUrl`. The openai side adds one more — when `llm.modelCapabilities` is
+present it builds a model capability registry from it and passes that to `modelCapabilityRegistry(...)`
+(`openAiConfig(...)`).
+
+#### When a gateway calls the model something else — `llm.modelCapabilities`
+
+Point `baseUrl` at an Azure deployment or an OpenAI-compatible gateway and that gateway may expose a model
+under **a name of its own** (`gpt-5-mini` as `prod-assistant`). The built-in capability table knows models by
+their real names, so that name does not match it and falls through to the fail-open path — which means
+`temperature` is sent to a model that does not take it, and the request answers HTTP 400. This block is where
+you say what that name actually accepts.
+
+```yaml
+llm:
+  provider: openai
+  baseUrl: https://gateway.internal/v1
+  apiKey: "${OPENAI_KEY}"
+  model: prod-assistant
+  modelCapabilities:
+    prod-assistant:
+      supportsSamplingParameters: false
+```
+
+The map key is **the same name `model` carries**, and it is matched ignoring case (write `Prod-Assistant` and
+a look-up for `prod-assistant` still finds it). `${VAR}` is resolved in it too, so a deployment writing
+`model: ${DEPLOYMENT}` can describe its own model.
+
+There are five flags and **every one is optional**. What you leave out keeps `ModelCapabilities.unknown()`'s
+value, which is **today's behaviour** — which is why the single line above is a complete answer to the 400.
+All five are not required because a gateway operator who knows that `temperature` earns a 400 does not know
+whether the model replays reasoning traces, and filling that box in anyway turns the 400 into a 404 on a
+gateway that has no `/v1/responses`.
+
+| Key | What it says | Left out |
+|---|---|---|
+| `supportsSamplingParameters` | whether `temperature` / `top_p` / the two penalties may be set | `true` — a value the caller set is sent |
+| `supportsReasoningEffort` | whether a reasoning-effort parameter is on this model's request surface | `false` — the framework does not invent one |
+| `supportsToolsWithReasoning` | whether tools and a non-`NONE` effort may share one request | `true` — nothing is narrowed without evidence |
+| `supportsReasoningTraceRoundTrip` | whether reasoning traces must be replayed for the reasoning to survive | `false` — stays on the Chat Completions path |
+| `lowestReasoningEffort` | where this model's effort ladder starts (`none`…`high`) | `minimal` |
+
+A declaration **extends the built-in table rather than replacing it.** It is registered as an exact entry, so
+the existing `exact > prefix` rule is what makes the operator's entry win — and the win is **one name wide**:
+declaring `gpt-5` changes exactly that name, while `gpt-5-mini` is still answered by the built-in `gpt-5`
+prefix. There is no way to declare a prefix from configuration: prefix precedence is registration order, and a
+yaml file's line order is not the place to keep that.
+
+What is not silently ignored — an unknown flag name, an unusable `lowestReasoningEffort` value, an entry that
+declares nothing, a blank or space-padded name, two names differing only in case, **two `${VAR}` keys that
+expand to the same name**, and a declaration under `provider: anthropic` (that client does not read this
+registry). All of them are a `ConfigurationException` whose message names the yaml key to fix.
+
+The starter property on the same axis is in
+[`embedding-agent-in-application.en.md`](embedding-agent-in-application.en.md). The two spellings do not mix —
+camelCase for the CLI, kebab-case for the starter.
 
 If `cli.tracing` is on, one more layer goes on top (line 697-712) — `TracingLlmClient` wraps the original
 client, and the same `Tracer` is injected into the executor factory as well, so turn/iteration/tool spans

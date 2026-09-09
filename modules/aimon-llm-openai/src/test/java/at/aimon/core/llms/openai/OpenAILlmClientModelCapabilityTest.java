@@ -38,6 +38,7 @@ import at.aimon.core.llm.ReasoningEffort;
 import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.llm.capability.InMemoryModelCapabilityRegistry;
 import at.aimon.core.llm.capability.ModelCapabilities;
+import at.aimon.core.llm.capability.ModelCapabilityDeclaration;
 import at.aimon.core.llm.capability.ModelCapabilityRegistry;
 import at.aimon.core.llm.streaming.LlmStreamingOptions;
 
@@ -475,5 +476,64 @@ class OpenAILlmClientModelCapabilityTest {
         assertSamplingOmitted(params);
         assertThat(params._reasoningEffort()).isInstanceOf(JsonMissing.class);
         assertThat(params.model().asString()).isEqualTo("gpt-5.6-terra");
+    }
+
+    // ------------------------------------------------------------------------------------------------------------
+    // Issue #46: a renamed gateway deployment, described from configuration
+    // ------------------------------------------------------------------------------------------------------------
+
+    @Test
+    @DisplayName("a gateway deployment named in configuration gets the same suppression a real name would")
+    void aConfiguredDeploymentNameSuppressesSampling() {
+        // Issue #46's reproduction, and the second half of a chain that cannot live in one test. The CLI and starter
+        // tests carry "yaml/properties -> Map<String, ModelCapabilityDeclaration> -> OpenAIConfig"; they cannot make
+        // this assertion because JsonMissing comes from an SDK that is an implementation dependency of this module and
+        // is absent from their compile classpaths. So the seam between the halves is the translator itself --
+        // withDefaultsExtendedBy, called here with what those tests hand it -- rather than a hand-built
+        // ModelCapabilities, which would leave both halves green if the translator's defaulting were wrong.
+        //
+        // Asserted on the raw field. params.temperature() collapses a missing field and an explicit JsonNull to
+        // Optional.empty(), and "temperature": null is exactly as fatal as a value -- so the weak accessor cannot fail
+        // on the bug this closes.
+        final ChatCompletionCreateParams params = capture(
+                configWith("prod-assistant",
+                        InMemoryModelCapabilityRegistry.withDefaultsExtendedBy(Map.of("prod-assistant",
+                                ModelCapabilityDeclaration.builder().supportsSamplingParameters(false).build()))),
+                modelWithAllSamplingValues(), List.of(A_TOOL));
+
+        assertThat(params._temperature()).isSameAs(JsonMissing.of()).isNotInstanceOf(JsonNull.class);
+        assertSamplingOmitted(params);
+    }
+
+    @Test
+    @DisplayName("declaring one deployment does not disturb the built-in rows")
+    void aConfiguredDeploymentLeavesTheBuiltInRowsAlone() {
+        // The extension is one name wide. gpt-5-mini is not declared, so it must still resolve through the built-in
+        // gpt-5 prefix -- which on the Chat path means sampling is suppressed for it too, for the table's reason
+        // rather than the declaration's.
+        final ChatCompletionCreateParams params = capture(config("gpt-5-mini").responsesApiEnabled(false)
+                .modelCapabilityRegistry(InMemoryModelCapabilityRegistry.withDefaultsExtendedBy(Map.of("prod-assistant",
+                        ModelCapabilityDeclaration.builder().supportsSamplingParameters(true).build())))
+                .build(), modelWithAllSamplingValues(), List.of(A_TOOL));
+
+        assertSamplingOmitted(params);
+    }
+
+    @Test
+    @DisplayName("the minimal declaration keeps the deployment on Chat Completions")
+    void theMinimalDeclarationStaysOnChatCompletions() {
+        // Why all five flags are not required: what an operator omits keeps today's behaviour. A declaration naming
+        // only supportsSamplingParameters leaves supportsReasoningTraceRoundTrip false, so the deployment is not
+        // routed at /v1/responses -- which on a Chat-only gateway would turn the 400 into a 404. responsesApiEnabled
+        // is left at its default here on purpose: the point is that the declaration, not a second switch, is what
+        // keeps this request on the Chat path.
+        final ChatCompletionCreateParams params = capture(
+                configWith("prod-assistant",
+                        InMemoryModelCapabilityRegistry.withDefaultsExtendedBy(Map.of("prod-assistant",
+                                ModelCapabilityDeclaration.builder().supportsSamplingParameters(false).build()))),
+                LlmModel.builder().build(), List.of(A_TOOL));
+
+        assertSamplingOmitted(params);
+        assertThat(params.model().asString()).isEqualTo("prod-assistant");
     }
 }

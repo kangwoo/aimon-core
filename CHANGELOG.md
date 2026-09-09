@@ -37,7 +37,8 @@ Central is versioned independently).
   for is withheld, and nothing the caller did not ask for is invented** — a sampling value somebody
   set is sent, no reasoning effort is conjured up. The flip side: a deployment behind a gateway or Azure endpoint
   that **renames** its gpt-5 model (`model: prod-assistant`) is unknown to the built-in table and keeps
-  hitting the 400. One line closes it, and it is programmatic:
+  hitting the 400. One line closes it programmatically — and, since #46, from configuration too (the
+  entry after this one):
 
   ```java
   OpenAIConfig.builder().apiKey(key).model("prod-assistant")
@@ -53,8 +54,60 @@ Central is versioned independently).
   operator has is the one their portal shows: registering `prod-assistant` for a deployment configured
   as `Prod-Assistant` has to meet, or the one line that closes this gap silently does nothing.
 
-  A **CLI** deployment in that state has no yaml key for this yet; that is a config-surface decision
-  left to its own issue rather than ridden in on a bug fix.
+- **The same escape hatch from configuration** (#46) — a **CLI** deployment in that state used to have no
+  yaml key for this, which is why the entry above was programmatic-only; that was a config-surface
+  decision left to its own issue rather than ridden in on a bug fix. It is decided: the CLI has the key,
+  and so does the Spring Boot starter. The two surfaces keep their own spellings and do not mix:
+
+  ```yaml
+  # CLI (aimon.yaml) -- camelCase, like every other key in this file
+  llm:
+    provider: openai
+    baseUrl: https://gateway.internal/v1
+    model: prod-assistant
+    modelCapabilities:
+      prod-assistant:
+        supportsSamplingParameters: false
+  ```
+
+  ```yaml
+  # Spring Boot starter -- kebab-case, like every other aimon.* property
+  aimon:
+    llm:
+      provider: openai
+      model: prod-assistant
+      model-capabilities:
+        prod-assistant:
+          supports-sampling-parameters: false
+  ```
+
+  Five flags are available under a model and **every one of them is optional**: what you leave out keeps
+  `ModelCapabilities.unknown()`'s value, so the one-line form above is a complete answer to the 400 and
+  does not quietly route the deployment anywhere new. The field names are the descriptor's own, spelled
+  out — there is no second vocabulary for the same five facts, and the invariant that every built-in row
+  can be transcribed into this surface is held by a test. Declarations **extend** the built-in table
+  rather than replacing it, registered as exact entries, so the existing "exact beats every prefix" rule
+  is what makes an operator's name win — for that one name: declaring `gpt-5` overrides that exact
+  string and leaves `gpt-5-mini` on the built-in `gpt-5` prefix. There is deliberately no way to declare
+  a prefix from configuration, because prefix precedence is registration order and a yaml file's line
+  order is not a place to keep that. Values are case-insensitive on both surfaces, in the key as well as
+  in `lowestReasoningEffort`.
+
+  What is refused rather than ignored: an entry that declares nothing, a blank or space-padded name, two
+  names differing only in case, two CLI keys that `${VAR}`-expand to the same name, an unusable
+  `lowestReasoningEffort`, and a declaration under a provider that does not read it. An application that
+  brings its own `LlmClient` bean reaches neither starter branch, so its declaration is neither refused
+  nor read — it consumes it itself through the public
+  `AimonProperties.modelCapabilityRegistry(properties.getLlm())`. One asymmetry is worth knowing before
+  you rely on it — a **misspelled flag
+  name** fails loudly on the CLI, whose mapper rejects unknown properties, and is **silent in the
+  starter**, where Spring Boot ignores unknown properties by default; turning that off is a change to
+  the whole `aimon.*` tree and not something this fix rides in on. A dotted model name needs bracket
+  notation in the starter (`aimon.llm.model-capabilities[gpt-5.7-x]...`); without brackets the entry does
+  not arrive at all.
+
+  The other two knobs on this path — `responsesApiEnabled` and the sampling parameters themselves — are
+  still programmatic only.
 
 - **The built-in table is five rows** — `gpt-5-chat` (unchanged behaviour), `gpt-5`, then `o1` / `o3` /
   `o4`. The o-series rows were **withheld in the first cut and added on 2026-09-09 once measured**: the

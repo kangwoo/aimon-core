@@ -1,16 +1,24 @@
 package at.aimon.cli.factory;
 
 import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 import at.aimon.cli.config.LlmProviderConfig;
+import at.aimon.cli.config.ModelCapabilityConfig;
 import at.aimon.cli.exception.ConfigurationException;
 import at.aimon.core.llm.LlmClient;
+import at.aimon.core.llm.capability.InMemoryModelCapabilityRegistry;
+import at.aimon.core.llm.capability.ModelCapabilityDeclaration;
 import at.aimon.core.llms.anthropic.AnthropicConfig;
 import at.aimon.core.llms.anthropic.AnthropicLlmClient;
 import at.aimon.core.llms.openai.OpenAIConfig;
 import at.aimon.core.llms.openai.OpenAILlmClient;
 
 public class LlmClientFactory {
+
+    /** capability 선언 블록의 yaml 키 경로. 거절 메시지가 사용자가 고쳐야 하는 자리를 이 이름으로 부른다. */
+    private static final String MODEL_CAPABILITIES_KEY = "llm.modelCapabilities";
 
     /** 설정에 따라 LLM 클라이언트를 생성한다. */
     public LlmClient create(LlmProviderConfig config) {
@@ -36,6 +44,7 @@ public class LlmClientFactory {
 
     private LlmClient createAnthropicClient(LlmProviderConfig config) {
         final String apiKey = validateApiKey(config.getApiKey());
+        refuseModelCapabilitiesForAnthropic(config);
         final AnthropicConfig.Builder builder = AnthropicConfig.builder().apiKey(apiKey);
 
         if (config.getModel() != null) {
@@ -54,6 +63,18 @@ public class LlmClientFactory {
     }
 
     private LlmClient createOpenAIClient(LlmProviderConfig config) {
+        return new OpenAILlmClient(openAiConfig(config));
+    }
+
+    /**
+     * yaml 을 {@code OpenAIConfig} 로 옮긴다. package-private 인 것은 테스트가 만들어진 config 를 잡을 수 있게 하기 위해서다 —
+     * {@code OpenAILlmClient} 는 자기 config 를 공개하지 않고, 그것을 테스트 편의로 공개하는 것은 배포 모듈의 표면을 넓히는 일이다.
+     *
+     * @param config
+     *            yaml 의 {@code llm} 블록
+     * @return 조립된 OpenAI 설정
+     */
+    OpenAIConfig openAiConfig(LlmProviderConfig config) {
         final String apiKey = validateApiKey(config.getApiKey());
         final OpenAIConfig.Builder builder = OpenAIConfig.builder().apiKey(apiKey).model(validateModel(config));
 
@@ -65,7 +86,69 @@ public class LlmClientFactory {
             builder.baseUrl(config.getBaseUrl());
         }
 
-        return new OpenAILlmClient(builder.build());
+        final Map<String, ModelCapabilityDeclaration> declarations = declarationsOf(config);
+        if (!declarations.isEmpty()) {
+            builder.modelCapabilityRegistry(registryFor(declarations));
+        }
+
+        return builder.build();
+    }
+
+    /**
+     * 내장 표를 선언으로 확장한 registry. 판정은 코어가 하고, 여기서는 그 예외를 <b>yaml 키를 부르는</b> 메시지로 다시 던진다 —
+     * {@link #validateModel} 이 세운 것과 같은 규칙이다(사용자가 고쳐야 하는 것은 자바 필드가 아니라 yaml 키다).
+     */
+    private InMemoryModelCapabilityRegistry registryFor(Map<String, ModelCapabilityDeclaration> declarations) {
+        try {
+            return InMemoryModelCapabilityRegistry.withDefaultsExtendedBy(declarations);
+        } catch (IllegalArgumentException e) {
+            throw new ConfigurationException(
+                    "Invalid `" + MODEL_CAPABILITIES_KEY + "` in the LLM config: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * yaml 의 다섯 키를 중립 선언 타입으로 옮긴다. 적히지 않은 키는 {@code null} 로 남아 "선언되지 않음" 이 되고,
+     * 그것을 fail-open 값으로 푸는 것은 {@link ModelCapabilityDeclaration} 의 일이다.
+     */
+    private Map<String, ModelCapabilityDeclaration> declarationsOf(LlmProviderConfig config) {
+        final Map<String, ModelCapabilityConfig> declared = config.getModelCapabilities();
+        final Map<String, ModelCapabilityDeclaration> translated = new LinkedHashMap<>();
+        if (declared == null || declared.isEmpty()) {
+            return translated;
+        }
+        declared.forEach((name, capabilities) -> translated.put(name, declarationOf(name, capabilities)));
+        return translated;
+    }
+
+    private ModelCapabilityDeclaration declarationOf(String name, ModelCapabilityConfig capabilities) {
+        if (capabilities == null) {
+            // 본문이 빈 항목. 코어가 이 null 을 F4 와 같은 문장으로 거절하므로 여기서 두 번째 메시지를 만들지 않는다.
+            return null;
+        }
+        try {
+            return ModelCapabilityDeclaration.builder()
+                    .supportsSamplingParameters(capabilities.getSupportsSamplingParameters())
+                    .supportsReasoningEffort(capabilities.getSupportsReasoningEffort())
+                    .supportsToolsWithReasoning(capabilities.getSupportsToolsWithReasoning())
+                    .supportsReasoningTraceRoundTrip(capabilities.getSupportsReasoningTraceRoundTrip())
+                    .lowestReasoningEffort(capabilities.getLowestReasoningEffort()).build();
+        } catch (IllegalArgumentException e) {
+            throw new ConfigurationException(
+                    "Invalid `" + MODEL_CAPABILITIES_KEY + "." + name + "` in the LLM config: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * capability 선언은 openai 분기만 읽는다. 설정했는데 안 읽히는 것이 가장 나쁘므로, 그 분기가 실제로 도는 순간 거절한다.
+     */
+    private void refuseModelCapabilitiesForAnthropic(LlmProviderConfig config) {
+        final Map<String, ModelCapabilityConfig> declared = config.getModelCapabilities();
+        if (declared != null && !declared.isEmpty()) {
+            throw new ConfigurationException("`" + MODEL_CAPABILITIES_KEY + "` is declared but the anthropic provider"
+                    + " does not read it - only the openai client consults the model capability registry today."
+                    + " Remove the block, or set `provider: openai`.");
+        }
     }
 
     /**

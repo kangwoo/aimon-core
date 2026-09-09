@@ -46,6 +46,8 @@ import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.credential.CredentialStore;
 import at.aimon.core.credential.InMemoryCredentialStore;
 import at.aimon.core.llm.LlmClient;
+import at.aimon.core.llm.capability.InMemoryModelCapabilityRegistry;
+import at.aimon.core.llm.capability.ModelCapabilityRegistry;
 import at.aimon.core.llms.anthropic.AnthropicLlmClient;
 import at.aimon.core.llms.openai.OpenAILlmClient;
 import at.aimon.session.routing.SubmitRequest;
@@ -154,6 +156,68 @@ class AimonAutoConfigurationTest {
                     .hasStackTraceContaining("aimon-llm-anthropic");
             assertThat(stackTraceOf(ctx.getStartupFailure())).doesNotContain("NoClassDefFoundError");
         });
+    }
+
+    @Test
+    @DisplayName("a missing OpenAI module backs its branch off too, without loading OpenAIConfig")
+    void missingOpenAiModuleBacksOff(@TempDir Path workspace) {
+        // The mirror of the test above, and it exists for a reason the Anthropic side does not cover: the OpenAI
+        // branch now declares a method whose return type is OpenAIConfig. Spring calls getDeclaredMethods() on a
+        // configuration class while post-processing it, which loads every declared method's return type -- so the
+        // same method on the enclosing AimonLlmAutoConfiguration would ask the classloader for a vendor type in a
+        // deployment that carries only the other vendor. Inside the @ConditionalOnClass-guarded nested class it is
+        // never inspected. Without this case that regression is invisible: the existing back-off test hides the
+        // opposite vendor.
+        minimal(workspace).withPropertyValues("aimon.llm.provider=anthropic")
+                .withClassLoader(new FilteredClassLoader(OpenAILlmClient.class)).run(ctx -> {
+                    assertThat(ctx).hasNotFailed();
+                    assertThat(ctx).getBean(LlmClient.class).isInstanceOf(AnthropicLlmClient.class);
+                });
+    }
+
+    @Test
+    @DisplayName("a capability declaration reaches the OpenAI client and keeps the built-in rows")
+    void modelCapabilityDeclarationsReachTheOpenAiClient(@TempDir Path workspace) {
+        // The starter half of the seam. The raw-request assertion this chain exists for cannot run here -- the SDK
+        // that owns JsonMissing is an implementation dependency of aimon-llm-openai and is not on this module's
+        // compile classpath -- so what is bound here is "the declaration arrives in the config the client is built
+        // from", and OpenAILlmClientModelCapabilityTest carries it the rest of the way from the same translator.
+        minimal(workspace).withPropertyValues("aimon.llm.provider=openai", "aimon.llm.model=prod-assistant",
+                "aimon.llm.model-capabilities.prod-assistant.supports-sampling-parameters=false").run(ctx -> {
+                    assertThat(ctx).hasNotFailed();
+                    final ModelCapabilityRegistry registry = AimonLlmAutoConfiguration.OpenAiConfiguration
+                            .openAiConfig(ctx.getBean(AimonProperties.class).getLlm()).getModelCapabilityRegistry();
+                    assertThat(registry.resolve("prod-assistant").supportsSamplingParameters()).isFalse();
+                    assertThat(registry.resolve("gpt-5.6-terra"))
+                            .isEqualTo(InMemoryModelCapabilityRegistry.withDefaults().resolve("gpt-5.6-terra"));
+                    assertThat(registry.resolve("o3-mini"))
+                            .isEqualTo(InMemoryModelCapabilityRegistry.withDefaults().resolve("o3-mini"));
+                });
+    }
+
+    @Test
+    @DisplayName("no declaration leaves the config on the shipped default registry")
+    void noDeclarationLeavesTheDefaultRegistry(@TempDir Path workspace) {
+        minimal(workspace).withPropertyValues("aimon.llm.provider=openai", "aimon.llm.model=gpt-4o").run(ctx -> {
+            final ModelCapabilityRegistry registry = AimonLlmAutoConfiguration.OpenAiConfiguration
+                    .openAiConfig(ctx.getBean(AimonProperties.class).getLlm()).getModelCapabilityRegistry();
+            assertThat(registry.resolve("gpt-5.6-terra"))
+                    .isEqualTo(InMemoryModelCapabilityRegistry.withDefaults().resolve("gpt-5.6-terra"));
+        });
+    }
+
+    @Test
+    @DisplayName("a capability declaration under the Anthropic branch is refused by name")
+    void anthropicBranchRefusesCapabilityDeclarations(@TempDir Path workspace) {
+        // aimon.llm.model-capabilities sits in the shared namespace because the question it answers is
+        // provider-neutral, and only the OpenAI client reads the registry today. What keeps that honest is refusing
+        // it in the branch that cannot read it -- at the moment that branch runs, so an application with its own
+        // LlmClient bean is not caught by it.
+        minimal(workspace)
+                .withPropertyValues("aimon.llm.model-capabilities.prod-assistant.supports-sampling-parameters=false")
+                .run(ctx -> assertThat(ctx).hasFailed().getFailure()
+                        .hasStackTraceContaining(AimonProperties.LLM_MODEL_CAPABILITIES)
+                        .hasStackTraceContaining(AimonProperties.LLM_PROVIDER));
     }
 
     @Test

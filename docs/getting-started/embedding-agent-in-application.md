@@ -358,6 +358,38 @@ aimon:
   마스킹됩니다(§13.5). 복수형 `credentials` 인 것은 문법이 아니라 그 마스킹 때문입니다 — Boot 의 단어 목록이
   잡는 것이 `credentials` 이고, 규칙이 키 전체를 보므로 프리픽스 하나로 그 아래 **임의의 리프 이름**까지
   가려집니다.
+- `aimon.llm.model-capabilities.<모델>` 은 **그 모델의 요청 표면이 무엇을 받는가**를 적습니다. `base-url` 을
+  Azure 배포나 OpenAI 호환 게이트웨이로 돌리면 그쪽이 모델을 자기 이름으로 노출할 수 있고(`gpt-5-mini` 를
+  `prod-assistant` 로), 내장 capability 표는 모델을 실제 이름으로 알기 때문에 그 이름은 fail-open 경로로
+  떨어져 `temperature` 를 받지 않는 모델에 그것이 실려 HTTP 400 이 됩니다. **이 블록은 `provider: openai`
+  아래에서만 읽히므로** 위 §4 의 예제(`provider: anthropic`)에는 넣지 않았습니다 — anthropic 분기에 선언하면
+  프로퍼티 이름을 대며 기동이 실패합니다.
+
+  ```yaml
+  aimon:
+    llm:
+      provider: openai
+      base-url: https://gateway.internal/v1
+      model: prod-assistant
+      model-capabilities:
+        prod-assistant:
+          supports-sampling-parameters: false
+  ```
+
+  다섯 플래그
+  (`supports-sampling-parameters` · `supports-reasoning-effort` · `supports-tools-with-reasoning` ·
+  `supports-reasoning-trace-round-trip` · `lowest-reasoning-effort`)가 있고 **전부 선택**이며, 적지 않은 것은
+  오늘의 동작을 그대로 유지합니다 — 그래서 위의 한 줄이 400 에 대한 완전한 답입니다. 선언은 내장 표를
+  **확장**하고(exact 항목으로 등록되므로 그 이름 하나만 이깁니다), 이름은 대소문자를 가리지 않으며, 점이 든
+  이름은 `model-capabilities[gpt-5.7-x]` 처럼 **대괄호**로 감싸야 합니다(감싸지 않으면 항목이 아예 도착하지
+  않습니다). 아무것도 선언하지 않은 항목·대소문자만 다른 두 이름·잘못된 `lowest-reasoning-effort` 값·
+  `provider: anthropic` 아래의 선언은 프로퍼티 이름을 대며 기동을 실패시킵니다. **다만 플래그 이름의 오타는
+  조용합니다** — Boot 가 모르는 프로퍼티를 무시하기 때문이며, 그것을 끄는 것은 `aimon.*` 트리 전체의 동작
+  변경이라 이 키에 얹지 않았습니다. 자기 `LlmClient` 빈을 선언한 앱은 두 분기 어느 쪽에도 닿지 않으므로 이
+  선언이 거절되지도 읽히지도 않습니다 — 그 앱이 직접 씁니다:
+  `AimonProperties.modelCapabilityRegistry(properties.getLlm())` 가 그 자리를 위해 public 입니다.
+  CLI 쪽 같은 축의 키는 camelCase 이고
+  [`aimon-core-integration-via-cli-reference.md`](aimon-core-integration-via-cli-reference.md) 에 있습니다.
 - `knowledge` / `memory` 의 `supplied` 는 "**여러분이 그 빈을 선언하고 스타터는 도구만 거기에 연결한다**"는
   뜻입니다. Spring 이 만들었으니 Spring 이 닫고, 스택은 빌려 쓸 뿐입니다. `knowledge.backend` 에
   **OpenSearch 값이 일부러 없는** 것도 같은 이유입니다 — `aimon-knowledge-opensearch` 는 존재하고 동작하지만
