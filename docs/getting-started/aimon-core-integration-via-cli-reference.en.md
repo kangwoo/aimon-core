@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/aimon-core-integration-via-cli-reference.md
-source_commit: 54936a4
+source_commit: 6a07573
 ---
 
 # aimon-core integration guide — following aimon-cli as the reference
@@ -263,9 +263,9 @@ prefix. There is no way to declare a prefix from configuration: prefix precedenc
 yaml file's line order is not the place to keep that.
 
 What is not silently ignored — an unknown flag name, an unusable `lowestReasoningEffort` value, an entry that
-declares nothing, a blank or space-padded name, two names differing only in case, and a declaration under
-`provider: anthropic` (that client does not read this registry). All of them are a `ConfigurationException`
-whose message names the yaml key to fix.
+declares nothing, a blank or space-padded name, two names differing only in case, **two `${VAR}` keys that
+expand to the same name**, and a declaration under `provider: anthropic` (that client does not read this
+registry). All of them are a `ConfigurationException` whose message names the yaml key to fix.
 
 The starter property on the same axis is in
 [`embedding-agent-in-application.en.md`](embedding-agent-in-application.en.md). The two spellings do not mix —

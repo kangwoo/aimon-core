@@ -107,7 +107,8 @@ public class AimonLlmAutoConfiguration {
      * <p>
      * Checked here rather than in {@code AimonProperties} for {@link #requireApiKey}'s reason: the answer depends on
      * a bean. An application that defines its own {@link LlmClient} reaches neither branch, and a declaration it
-     * carries for its own client is not this starter's to refuse.
+     * carries for its own client is not this starter's to refuse — it is that application's to consume, through the
+     * public {@link AimonProperties#modelCapabilityRegistry(AimonProperties.Llm)}.
      *
      * @param llm
      *            the bound LLM properties

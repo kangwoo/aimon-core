@@ -285,9 +285,6 @@ aimon:
     provider: anthropic             # anthropic(기본) | openai | none
     api-key: ${ANTHROPIC_API_KEY}
     timeout: 60s
-    model-capabilities:             # 선택 — provider: openai 일 때만. 게이트웨이가 모델 이름을 바꿔 부를 때 (아래)
-      prod-assistant:
-        supports-sampling-parameters: false
 
   credentials:                      # 선택 — 도구가 'profile.field' 로 부르는 값 (§10)
     jira:
@@ -364,7 +361,22 @@ aimon:
 - `aimon.llm.model-capabilities.<모델>` 은 **그 모델의 요청 표면이 무엇을 받는가**를 적습니다. `base-url` 을
   Azure 배포나 OpenAI 호환 게이트웨이로 돌리면 그쪽이 모델을 자기 이름으로 노출할 수 있고(`gpt-5-mini` 를
   `prod-assistant` 로), 내장 capability 표는 모델을 실제 이름으로 알기 때문에 그 이름은 fail-open 경로로
-  떨어져 `temperature` 를 받지 않는 모델에 그것이 실려 HTTP 400 이 됩니다. 다섯 플래그
+  떨어져 `temperature` 를 받지 않는 모델에 그것이 실려 HTTP 400 이 됩니다. **이 블록은 `provider: openai`
+  아래에서만 읽히므로** 위 §4 의 예제(`provider: anthropic`)에는 넣지 않았습니다 — anthropic 분기에 선언하면
+  프로퍼티 이름을 대며 기동이 실패합니다.
+
+  ```yaml
+  aimon:
+    llm:
+      provider: openai
+      base-url: https://gateway.internal/v1
+      model: prod-assistant
+      model-capabilities:
+        prod-assistant:
+          supports-sampling-parameters: false
+  ```
+
+  다섯 플래그
   (`supports-sampling-parameters` · `supports-reasoning-effort` · `supports-tools-with-reasoning` ·
   `supports-reasoning-trace-round-trip` · `lowest-reasoning-effort`)가 있고 **전부 선택**이며, 적지 않은 것은
   오늘의 동작을 그대로 유지합니다 — 그래서 위의 한 줄이 400 에 대한 완전한 답입니다. 선언은 내장 표를
@@ -373,7 +385,10 @@ aimon:
   않습니다). 아무것도 선언하지 않은 항목·대소문자만 다른 두 이름·잘못된 `lowest-reasoning-effort` 값·
   `provider: anthropic` 아래의 선언은 프로퍼티 이름을 대며 기동을 실패시킵니다. **다만 플래그 이름의 오타는
   조용합니다** — Boot 가 모르는 프로퍼티를 무시하기 때문이며, 그것을 끄는 것은 `aimon.*` 트리 전체의 동작
-  변경이라 이 키에 얹지 않았습니다. CLI 쪽 같은 축의 키는 camelCase 이고
+  변경이라 이 키에 얹지 않았습니다. 자기 `LlmClient` 빈을 선언한 앱은 두 분기 어느 쪽에도 닿지 않으므로 이
+  선언이 거절되지도 읽히지도 않습니다 — 그 앱이 직접 씁니다:
+  `AimonProperties.modelCapabilityRegistry(properties.getLlm())` 가 그 자리를 위해 public 입니다.
+  CLI 쪽 같은 축의 키는 camelCase 이고
   [`aimon-core-integration-via-cli-reference.md`](aimon-core-integration-via-cli-reference.md) 에 있습니다.
 - `knowledge` / `memory` 의 `supplied` 는 "**여러분이 그 빈을 선언하고 스타터는 도구만 거기에 연결한다**"는
   뜻입니다. Spring 이 만들었으니 Spring 이 닫고, 스택은 빌려 쓸 뿐입니다. `knowledge.backend` 에

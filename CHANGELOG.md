@@ -94,8 +94,12 @@ Central is versioned independently).
   in `lowestReasoningEffort`.
 
   What is refused rather than ignored: an entry that declares nothing, a blank or space-padded name, two
-  names differing only in case, an unusable `lowestReasoningEffort`, and a declaration under a provider
-  that does not read it. One asymmetry is worth knowing before you rely on it — a **misspelled flag
+  names differing only in case, two CLI keys that `${VAR}`-expand to the same name, an unusable
+  `lowestReasoningEffort`, and a declaration under a provider that does not read it. An application that
+  brings its own `LlmClient` bean reaches neither starter branch, so its declaration is neither refused
+  nor read — it consumes it itself through the public
+  `AimonProperties.modelCapabilityRegistry(properties.getLlm())`. One asymmetry is worth knowing before
+  you rely on it — a **misspelled flag
   name** fails loudly on the CLI, whose mapper rejects unknown properties, and is **silent in the
   starter**, where Spring Boot ignores unknown properties by default; turning that off is a change to
   the whole `aimon.*` tree and not something this fix rides in on. A dotted model name needs bracket

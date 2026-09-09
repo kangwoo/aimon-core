@@ -37,8 +37,9 @@ public class CliConfigLoader {
     CliConfigLoader(Function<String, String> envVarResolver) {
         // ACCEPT_CASE_INSENSITIVE_ENUMS so that `lowestReasoningEffort: low` works as well as `LOW`, matching what the
         // starter's relaxed binding already accepts. Today it widens exactly one key: no other field in
-        // at.aimon.cli.config binds to an enum -- McpServerEntry.transportType is a String parsed by hand, which a
-        // MapperFeature cannot reach.
+        // at.aimon.cli.config binds to an enum. The two that look like they might do not --
+        // MemoryDreamerConfig.ScorerConfig.type is a String routed through ScorerType.fromString (which already folds
+        // case itself), and McpServerEntry.transportType is a String parsed by hand; a MapperFeature reaches neither.
         this.yamlMapper = JsonMapper.builder(new YAMLFactory()).enable(MapperFeature.ACCEPT_CASE_INSENSITIVE_ENUMS)
                 .build();
         this.envVarResolver = envVarResolver;
@@ -125,6 +126,11 @@ public class CliConfigLoader {
     /**
      * capability 선언의 <b>맵 키</b>에서도 {@code ${VAR}} 를 푼다. {@code model} 이 이미 풀리므로, 여기서 풀지 않으면
      * {@code model: ${MODEL}} 을 쓰는 배포는 자기 모델을 서술할 방법이 없고 그 실패가 원래의 400 이다.
+     *
+     * <p>
+     * 확장 결과가 겹치면 거절한다. yaml 은 같은 키를 두 번 적는 것을 막지만 {@code ${A}} 와 {@code ${B}} 가 같은 값으로
+     * 풀리는 것은 막지 못하고, 그때 뒤엣것이 앞엣것을 덮으면 그 사실을 아무도 보고하지 않는다 — 레지스트리의
+     * 대소문자 중복 검사도 이것만은 볼 수 없다. 충돌이 맵에 들어가기 <b>전에</b> 일어나기 때문이다.
      */
     private void resolveModelCapabilityKeys(LlmProviderConfig llmConfig) {
         final Map<String, ModelCapabilityConfig> declared = llmConfig.getModelCapabilities();
@@ -132,7 +138,17 @@ public class CliConfigLoader {
             return;
         }
         final Map<String, ModelCapabilityConfig> resolved = new LinkedHashMap<>();
-        declared.forEach((name, capabilities) -> resolved.put(resolveEnvVars(name), capabilities));
+        final Map<String, String> sources = new LinkedHashMap<>();
+        declared.forEach((name, capabilities) -> {
+            final String expanded = resolveEnvVars(name);
+            final String previous = sources.putIfAbsent(expanded, name);
+            if (previous != null) {
+                throw new ConfigurationException("Model capability declarations `" + previous + "` and `" + name
+                        + "` both expand to `" + expanded + "`, so one would silently replace the other."
+                        + " Keep one of them under `llm.modelCapabilities`.");
+            }
+            resolved.put(expanded, capabilities);
+        });
         llmConfig.setModelCapabilities(resolved);
     }
 

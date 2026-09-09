@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/embedding-agent-in-application.md
-source_commit: 0d198b2
+source_commit: 6a07573
 ---
 
 # Embedding an AIMON agent in your application
@@ -301,9 +301,6 @@ aimon:
     provider: anthropic             # anthropic (default) | openai | none
     api-key: ${ANTHROPIC_API_KEY}
     timeout: 60s
-    model-capabilities:             # optional -- only under provider: openai. When a gateway renames a model (below)
-      prod-assistant:
-        supports-sampling-parameters: false
 
   credentials:                      # optional — values a tool asks for as 'profile.field' (§10)
     jira:
@@ -384,7 +381,22 @@ aimon:
   `base-url` at an Azure deployment or an OpenAI-compatible gateway and it may expose a model under a name of
   its own (`gpt-5-mini` as `prod-assistant`); the built-in capability table knows models by their real names,
   so that name falls through to the fail-open path, `temperature` is sent to a model that does not take it,
-  and the request answers HTTP 400. There are five flags
+  and the request answers HTTP 400. **This block is read only under `provider: openai`**, which is why it is
+  not in §4's example above (`provider: anthropic`) — declaring it on the Anthropic branch fails startup with
+  the property named.
+
+  ```yaml
+  aimon:
+    llm:
+      provider: openai
+      base-url: https://gateway.internal/v1
+      model: prod-assistant
+      model-capabilities:
+        prod-assistant:
+          supports-sampling-parameters: false
+  ```
+
+  There are five flags
   (`supports-sampling-parameters` · `supports-reasoning-effort` · `supports-tools-with-reasoning` ·
   `supports-reasoning-trace-round-trip` · `lowest-reasoning-effort`) and **every one is optional**; what you
   leave out keeps today's behaviour, which is why the single line above is a complete answer to the 400. A
@@ -394,7 +406,10 @@ aimon:
   declares nothing, two names differing only in case, an unusable `lowest-reasoning-effort` value, and a
   declaration under `provider: anthropic` all fail startup with the property named. **A misspelled flag name,
   however, is silent** — Boot ignores unknown properties, and turning that off is a behaviour change for the
-  whole `aimon.*` tree, so it was not ridden in on this key. The CLI key on the same axis is camelCase and
+  whole `aimon.*` tree, so it was not ridden in on this key. An application that declares its own `LlmClient`
+  bean reaches neither branch, so its declaration is neither refused nor read — that application consumes it
+  itself, which is what `AimonProperties.modelCapabilityRegistry(properties.getLlm())` is public for.
+  The CLI key on the same axis is camelCase and
   lives in
   [`aimon-core-integration-via-cli-reference.en.md`](aimon-core-integration-via-cli-reference.en.md).
 - `supplied` under `knowledge` / `memory` means "**you declare that bean and the starter only connects the

@@ -662,6 +662,22 @@ public class AimonProperties implements InitializingBean {
      * what the client uses" cannot be two different answers. Returns the plain built-in table when nothing is
      * declared.
      *
+     * <p>
+     * Public because of the one deployment shape neither branch of {@code AimonLlmAutoConfiguration} covers: an
+     * application that defines its own {@link at.aimon.core.llm.LlmClient} bean reaches no branch, so a declaration
+     * it wrote is neither refused nor read — it is that application's to consume. Saying so while keeping the only
+     * way to consume it package-private would leave that application re-implementing this translation, which is the
+     * second copy of the rules this whole seam exists to prevent. From such an application's own bean method:
+     *
+     * <pre>
+     * {@code
+     * LlmClient myGatewayClient(AimonProperties properties) {
+     *     return new OpenAILlmClient(OpenAIConfig.builder().apiKey(key).model("prod-assistant")
+     *             .modelCapabilityRegistry(AimonProperties.modelCapabilityRegistry(properties.getLlm())).build());
+     * }
+     * }
+     * </pre>
+     *
      * @param llm
      *            the bound LLM properties
      * @return the built-in table extended by every declared entry
@@ -669,7 +685,7 @@ public class AimonProperties implements InitializingBean {
      *             if an entry names nothing, is blank, is padded, collides with another once case is folded, or
      *             declares none of the five flags
      */
-    static InMemoryModelCapabilityRegistry modelCapabilityRegistry(Llm llm) {
+    public static InMemoryModelCapabilityRegistry modelCapabilityRegistry(Llm llm) {
         final Map<String, ModelCapabilityDeclaration> declarations = new LinkedHashMap<>();
         llm.getModelCapabilities().forEach((model, entry) -> declarations.put(model, declarationOf(model, entry)));
         try {

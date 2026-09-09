@@ -253,8 +253,9 @@ llm:
 등록 순서이고, yaml 의 줄 순서가 그것을 정하게 만들 자리가 아니다.
 
 조용히 무시되지 않는 것들 — 모르는 플래그 이름, 잘못된 `lowestReasoningEffort` 값, 아무것도 선언하지 않은 항목,
-빈/공백이 붙은 이름, 대소문자만 다른 두 이름, 그리고 `provider: anthropic` 아래의 선언(그 클라이언트는 이
-registry 를 읽지 않는다). 전부 `ConfigurationException` 이고 메시지가 고쳐야 할 yaml 키를 부른다.
+빈/공백이 붙은 이름, 대소문자만 다른 두 이름, **같은 이름으로 풀리는 두 `${VAR}` 키**, 그리고
+`provider: anthropic` 아래의 선언(그 클라이언트는 이 registry 를 읽지 않는다). 전부 `ConfigurationException`
+이고 메시지가 고쳐야 할 yaml 키를 부른다.
 
 같은 축의 스타터 프로퍼티는 [`embedding-agent-in-application.md`](embedding-agent-in-application.md) 에 있다.
 표기는 섞이지 않는다 — CLI 는 camelCase, 스타터는 kebab-case 다.

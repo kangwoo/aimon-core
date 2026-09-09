@@ -622,6 +622,31 @@ class CliConfigLoaderTest {
         }
 
         @Test
+        @DisplayName("Should refuse two keys that expand to the same model name")
+        void refusesTwoKeysThatExpandToTheSameName() throws IOException {
+            // The one duplicate shape nothing downstream can see. yaml refuses a repeated key and the registry
+            // refuses two names differing only in case, but two *different* keys expanding to one name collide in
+            // the map this loader rebuilds -- before either of those guards is reached -- and the later entry would
+            // simply replace the earlier one. Silence there is the failure mode this whole key exists to remove.
+            CliConfigLoader envLoader = new CliConfigLoader(name -> "prod-assistant");
+            Path configFile = write("""
+                    llm:
+                      provider: "openai"
+                      apiKey: "test-api-key"
+                      model: "prod-assistant"
+                      modelCapabilities:
+                        ${PRIMARY}:
+                          supportsSamplingParameters: false
+                        ${SECONDARY}:
+                          supportsReasoningEffort: true
+                    """);
+
+            assertThatThrownBy(() -> envLoader.load(configFile.toString())).isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("${PRIMARY}").hasMessageContaining("${SECONDARY}")
+                    .hasMessageContaining("prod-assistant").hasMessageContaining("llm.modelCapabilities");
+        }
+
+        @Test
         @DisplayName("Should keep an entry with an empty body rather than dropping it")
         void anEntryWithNoBodyBindsToNull() throws IOException {
             // Jackson keeps the key and stores null. Recorded here because it is what makes the core factory's null
