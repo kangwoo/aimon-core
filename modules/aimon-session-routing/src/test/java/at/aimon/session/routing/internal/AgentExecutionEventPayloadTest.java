@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -172,6 +173,41 @@ class AgentExecutionEventPayloadTest {
         blank.put(AgentExecutionEventPayload.KEY_TURN, "   ");
 
         assertThat(AgentExecutionEventPayload.turnIdOf(blank)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("reasoning tokens round-trip on the events that carry a token usage")
+    void reasoningTokensRoundTrip() {
+        final AssistantMessageReceived original = AssistantMessageReceived.builder().timestamp(TS).agentRuntimeId(CTX)
+                .iteration(1).messageSummary("thinking").tokenUsage(TokenUsage.of(120, 30, 150, 22)).build();
+
+        final AssistantMessageReceived decoded = (AssistantMessageReceived) AgentExecutionEventPayload
+                .fromPayload(AgentExecutionEventPayload.toPayload(original, TURN)).orElseThrow();
+
+        assertThat(decoded.getTokenUsage().orElseThrow().getReasoningTokens()).isEqualTo(22);
+    }
+
+    @Test
+    @DisplayName("a token map from an older node, with no reasoning key, decodes to zero instead of dropping the event")
+    void aTokenMapWithoutTheReasoningKeyDecodesToZero() {
+        // The rolling-upgrade trap: PayloadValues.asInt NPEs on a missing key, and fromPayload turns any
+        // RuntimeException into Optional.empty() -- so reading the new key with it would silently discard the whole
+        // event rather than report one counter as zero. The other three keys keep asInt, because their absence really
+        // is a malformed payload.
+        final AssistantMessageReceived original = AssistantMessageReceived.builder().timestamp(TS).agentRuntimeId(CTX)
+                .iteration(1).messageSummary("thinking").tokenUsage(TokenUsage.of(120, 30, 150, 22)).build();
+        final Map<String, Object> payload = new LinkedHashMap<>(AgentExecutionEventPayload.toPayload(original, TURN));
+        @SuppressWarnings("unchecked")
+        final Map<String, Object> tokens = new LinkedHashMap<>((Map<String, Object>) payload.get("tokens"));
+        tokens.remove("reasoning");
+        payload.put("tokens", tokens);
+
+        final Optional<AgentExecutionEvent> decoded = AgentExecutionEventPayload.fromPayload(payload);
+
+        assertThat(decoded).as("an old node's payload is decoded, not dropped").isPresent();
+        assertThat(
+                ((AssistantMessageReceived) decoded.orElseThrow()).getTokenUsage().orElseThrow().getReasoningTokens())
+                .isZero();
     }
 
     private static List<AgentExecutionEvent> samples() {

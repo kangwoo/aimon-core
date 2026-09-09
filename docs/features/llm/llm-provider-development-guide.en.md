@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/llm/llm-provider-development-guide.md
-source_commit: eec9ccd
+source_commit: 2d33f19
 ---
 
 # LLM Provider Development Guide
@@ -81,9 +81,16 @@ public interface LlmClient {
                            List<ToolDefinition> tools, LlmModel modelConfig);
 
     /**
-     * Returns the provider name.
+     * Returns the provider name. It takes no arguments, so it cannot see a per-request model — vendor only.
      */
     String getProviderName();
+
+    /**
+     * The model this client uses when a request names none. This is what observability reads.
+     */
+    default Optional<String> getDefaultModelName() {
+        return Optional.empty();
+    }
 }
 ```
 
@@ -91,9 +98,10 @@ public interface LlmClient {
 
 ```java
 public class LlmResponse {
-    private final String textContent;      // the text response
-    private final List<ToolUse> toolUses;  // tool invocation requests
-    private final TokenUsage tokenUsage;   // token usage
+    private final String textContent;                    // the text response
+    private final List<ToolUse> toolUses;                // tool invocation requests
+    private final TokenUsage tokenUsage;                 // token usage (reasoningTokens included)
+    private final List<ReasoningTrace> reasoningTraces;  // the provider's opaque reasoning payloads
 }
 ```
 
@@ -101,10 +109,11 @@ public class LlmResponse {
 
 ```java
 public class Message {
-    private final Role role;                      // USER, ASSISTANT, TOOL
-    private final String content;                 // the text content
-    private final List<ToolUse> toolUses;         // tool invocations (ASSISTANT)
-    private final List<ToolUseResult> toolUseResults; // tool results (TOOL)
+    private final Role role;                            // USER, ASSISTANT, TOOL
+    private final String content;                       // the text content
+    private final List<ToolUse> toolUses;               // tool invocations (ASSISTANT)
+    private final List<ToolUseResult> toolUseResults;   // tool results (TOOL)
+    private final List<ReasoningTrace> reasoningTraces; // reasoning payloads (ASSISTANT) — see below
 }
 ```
 
@@ -119,7 +128,7 @@ public class CustomLlmConfig {
     private final String apiKey;
     private final String model;
     private final String baseUrl;
-    private final double temperature;
+    private final Double temperature;   // nullable — unset and 0.0 are different states
     private final int maxTokens;
     private final Duration timeout;
 
@@ -128,7 +137,8 @@ public class CustomLlmConfig {
         if (apiKey.isBlank()) {
             throw new IllegalArgumentException("API key cannot be blank");
         }
-        this.model = builder.model != null ? builder.model : "default-model";
+        // Do not invent a default model — require one (the same reason OpenAIConfig dropped its gpt-4 default)
+        this.model = Objects.requireNonNull(builder.model, "Model is required - there is no default");
         this.baseUrl = builder.baseUrl;
         this.temperature = builder.temperature;
         this.maxTokens = builder.maxTokens;
@@ -145,7 +155,7 @@ public class CustomLlmConfig {
         private String apiKey;
         private String model;
         private String baseUrl;
-        private double temperature = 0.7;
+        private Double temperature;     // no seed — if nobody set one, nothing is sent
         private int maxTokens = 4096;
         private Duration timeout;
 
@@ -211,7 +221,12 @@ public class CustomLlmClient implements LlmClient {
 
     @Override
     public String getProviderName() {
-        return "Custom Provider (" + config.getModel() + ")";
+        return "Custom Provider";   // vendor only. A model here is logged even for requests that overrode it
+    }
+
+    @Override
+    public Optional<String> getDefaultModelName() {
+        return Optional.of(config.getModel());
     }
 
     // Private helper methods...
@@ -384,10 +399,72 @@ LlmModel modelConfig = LlmModel.builder()
     .frequencyPenalty(0.1)        // frequency penalty (optional)
     .build();
 
-// merging: modelConfig wins over the base config
+// merging: modelConfig wins over the base config. The chain ends at the config — there is no provider fallback
 String model = modelConfig.getName().orElse(config.getModel());
-double temp = modelConfig.getTemperature().orElse(config.getTemperature());
+Optional<Double> temp = modelConfig.getTemperature().or(config::getTemperature);
 ```
+
+### Check the capabilities before setting a parameter
+
+IMPORTANT: **Do not set the sampling parameters unconditionally.** Some models reject a parameter by
+its **presence** rather than its value — `"temperature": null` earns the same 400 as
+`"temperature": 0.0`. Omission therefore has to mean **"do not call the setter"**, never "pass null",
+and what to call is answered by the `ModelCapabilityRegistry` rather than by a model-name branch.
+
+```java
+final String modelName = modelConfig.getName().orElse(config.getModel());
+final ModelCapabilities capabilities = config.getModelCapabilityRegistry().resolve(modelName);
+
+if (capabilities.supportsSamplingParameters()) {
+    temp.ifPresent(requestBuilder::temperature);   // if nobody set one, this does not call the setter either
+}
+// else: never call the setter at all
+```
+
+IMPORTANT: **A provider does not invent a value.** Filling an unset parameter from a constant of
+your own — `orElse(DEFAULT_TEMPERATURE)` — puts a sampling value nobody asked for on every request
+and means the server's own default never applies. Unset means **not sent**, and what applies then is
+the server's business.
+
+`resolve` is total and **fails open** — a model nobody has described comes back as
+`ModelCapabilities.unknown()`, which means **nothing the caller asked for is withheld, and nothing
+the caller did not ask for is invented**. When a value is dropped, say so at a level an operator sees, per the rule in
+[`LlmModel`](../../../modules/aimon-core/src/main/java/at/aimon/core/llm/LlmModel.java)
+(`AnthropicLlmClient#reportDivergence`, `OpenAILlmClient#reportDivergence`).
+
+### Fill the reasoning payload and replay it, but never look inside it
+
+A reasoning model returns one opaque item alongside its tool calls — OpenAI's `reasoning` item
+carrying `encrypted_content`, Anthropic's signature-bearing `thinking` block. A client that does not
+replay it on the next request makes the model rebuild its chain of thought from scratch on every
+ReAct iteration: worse answers, and reasoning tokens billed again each time. `ReasoningTrace` is
+where that item lives between turns.
+
+A provider does four things.
+
+1. **Fills it** — pull the item out of the response and attach it with
+   `LlmResponse.withReasoningTraces(...)`. On the streaming path,
+   `ChunkAggregator.addReasoningTrace(...)` is the same seam
+2. **Tags it** — `providerName` is `getProviderName()` verbatim. A transcript outlives a client
+   (`LlmFallbackPolicy`, a changed provider setting, a replayed subagent snapshot), so someone
+   else's payload can arrive. Drop what is not yours, and warn once
+3. **Anchors it** — `toolUseId` means *this trace comes immediately before that tool call*.
+   `Message` keeps text and tool calls in separate lists, so it cannot express that order on its own
+4. **Replays it** — write the ordering rule once per provider. The slot can express either order,
+   and neither provider inherits the other's
+
+IMPORTANT: **do not parse, re-serialise or normalise the `payload`.** The one operation
+`aimon-core` performs on it is copy, and a provider should do the same — OpenAI's
+`encrypted_content` is ciphertext and Anthropic's `signature` is a signature, so a single changed
+byte makes the server reject the replay. When serialising an SDK model, use that SDK's own mapper
+(for OpenAI, `com.openai.core.ObjectMappers.jsonMapper()`): a fresh `ObjectMapper` reads the same
+bytes and emits them with fields that were never there.
+
+The cost is not hidden — **`Message.mapText` does not reach this payload, so redaction does not
+either.** That is not fixable (fixing it breaks the replay), and a deployment that cannot accept it
+has an off switch (for OpenAI, `OpenAIConfig.responsesApiEnabled(false)`).
+
+The full design is in [the OpenAI Responses path](../../design/llm/openai-responses-path.md).
 
 ---
 
@@ -476,12 +553,13 @@ public class OpenAILlmClient implements LlmClient {
             // 1. build the messages (system prompt + conversation history)
             List<ChatCompletionMessageParam> chatMessages = buildChatMessages(systemPrompt, messages);
 
-            // 2. build the request (merging the settings)
+            // 2. build the request (merge the settings, then check capabilities)
             ChatCompletionCreateParams.Builder requestBuilder = ChatCompletionCreateParams.builder()
                 .model(modelConfig.getName().orElse(config.getModel()))
                 .messages(chatMessages)
-                .temperature(modelConfig.getTemperature().orElse(config.getTemperature()))
                 .maxCompletionTokens((long) modelConfig.getMaxTokens().orElse(config.getMaxTokens()));
+
+            applySamplingParameters(requestBuilder, modelConfig);
 
             // 3. add the tools
             if (!tools.isEmpty()) {
@@ -525,7 +603,12 @@ public class OpenAILlmClient implements LlmClient {
 
     @Override
     public String getProviderName() {
-        return "OpenAI (" + config.getModel() + ")";
+        return "OpenAI";
+    }
+
+    @Override
+    public Optional<String> getDefaultModelName() {
+        return Optional.of(config.getModel());
     }
 }
 ```
@@ -543,6 +626,7 @@ Check these off when developing a new LLM provider:
 - [ ] Every error is wrapped in `LlmClientException`
 - [ ] The implementation is thread-safe
 - [ ] Tool calling is supported
+- [ ] `getProviderName()` returns the vendor alone, and the default model is exposed via `getDefaultModelName()`
 
 ### Message conversion
 

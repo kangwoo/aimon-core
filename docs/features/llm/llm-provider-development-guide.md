@@ -76,9 +76,16 @@ public interface LlmClient {
                            List<ToolDefinition> tools, LlmModel modelConfig);
 
     /**
-     * Provider 이름을 반환합니다.
+     * Provider 이름을 반환합니다. 인자가 없으므로 요청별 모델을 볼 수 없다 — 벤더 이름만 담는다.
      */
     String getProviderName();
+
+    /**
+     * 요청이 모델을 지정하지 않았을 때 이 클라이언트가 쓰는 모델. 관측이 읽는 곳이다.
+     */
+    default Optional<String> getDefaultModelName() {
+        return Optional.empty();
+    }
 }
 ```
 
@@ -86,9 +93,10 @@ public interface LlmClient {
 
 ```java
 public class LlmResponse {
-    private final String textContent;      // 텍스트 응답
-    private final List<ToolUse> toolUses;  // Tool 호출 요청
-    private final TokenUsage tokenUsage;   // 토큰 사용량
+    private final String textContent;                    // 텍스트 응답
+    private final List<ToolUse> toolUses;                // Tool 호출 요청
+    private final TokenUsage tokenUsage;                 // 토큰 사용량 (reasoningTokens 포함)
+    private final List<ReasoningTrace> reasoningTraces;  // provider 가 만든 불투명 추론 페이로드
 }
 ```
 
@@ -96,10 +104,11 @@ public class LlmResponse {
 
 ```java
 public class Message {
-    private final Role role;                      // USER, ASSISTANT, TOOL
-    private final String content;                 // 텍스트 내용
-    private final List<ToolUse> toolUses;         // Tool 호출 (ASSISTANT)
-    private final List<ToolUseResult> toolUseResults; // Tool 결과 (TOOL)
+    private final Role role;                            // USER, ASSISTANT, TOOL
+    private final String content;                       // 텍스트 내용
+    private final List<ToolUse> toolUses;               // Tool 호출 (ASSISTANT)
+    private final List<ToolUseResult> toolUseResults;   // Tool 결과 (TOOL)
+    private final List<ReasoningTrace> reasoningTraces; // 추론 페이로드 (ASSISTANT) — 아래 참조
 }
 ```
 
@@ -114,7 +123,7 @@ public class CustomLlmConfig {
     private final String apiKey;
     private final String model;
     private final String baseUrl;
-    private final double temperature;
+    private final Double temperature;   // nullable — 미설정과 0.0 은 다른 상태다
     private final int maxTokens;
     private final Duration timeout;
 
@@ -123,7 +132,8 @@ public class CustomLlmConfig {
         if (apiKey.isBlank()) {
             throw new IllegalArgumentException("API key cannot be blank");
         }
-        this.model = builder.model != null ? builder.model : "default-model";
+        // 기본 모델을 지어내지 않는다 — 필수로 받는다 (OpenAIConfig 가 gpt-4 기본값을 버린 이유와 같다)
+        this.model = Objects.requireNonNull(builder.model, "Model is required - there is no default");
         this.baseUrl = builder.baseUrl;
         this.temperature = builder.temperature;
         this.maxTokens = builder.maxTokens;
@@ -140,7 +150,7 @@ public class CustomLlmConfig {
         private String apiKey;
         private String model;
         private String baseUrl;
-        private double temperature = 0.7;
+        private Double temperature;     // 시드 없음 — 아무도 넣지 않았으면 보내지 않는다
         private int maxTokens = 4096;
         private Duration timeout;
 
@@ -205,7 +215,12 @@ public class CustomLlmClient implements LlmClient {
 
     @Override
     public String getProviderName() {
-        return "Custom Provider (" + config.getModel() + ")";
+        return "Custom Provider";   // 벤더만. 모델을 넣으면 요청별 오버라이드를 덮어 쓴 이름이 로그에 남는다
+    }
+
+    @Override
+    public Optional<String> getDefaultModelName() {
+        return Optional.of(config.getModel());
     }
 
     // Private helper methods...
@@ -378,10 +393,67 @@ LlmModel modelConfig = LlmModel.builder()
     .frequencyPenalty(0.1)        // Frequency Penalty (Optional)
     .build();
 
-// 설정 병합: modelConfig가 기본 config보다 우선
+// 설정 병합: modelConfig가 기본 config보다 우선. 체인은 config 에서 끝난다 — 프로바이더의 fallback 상수는 없다
 String model = modelConfig.getName().orElse(config.getModel());
-double temp = modelConfig.getTemperature().orElse(config.getTemperature());
+Optional<Double> temp = modelConfig.getTemperature().or(config::getTemperature);
 ```
+
+### 파라미터를 설정하기 전에 능력을 확인한다
+
+IMPORTANT: **샘플링 파라미터를 무조건 설정하지 말 것.** 어떤 모델은 값이 아니라 파라미터의 **존재**로
+거절한다 — `"temperature": null` 도 `"temperature": 0.0` 과 똑같이 400 을 받는다. 그래서 생략은
+"null 을 넘긴다" 가 아니라 **"세터를 부르지 않는다"** 여야 하고, 무엇을 부를지는 모델 이름 분기가 아니라
+`ModelCapabilityRegistry` 가 답한다.
+
+```java
+final String modelName = modelConfig.getName().orElse(config.getModel());
+final ModelCapabilities capabilities = config.getModelCapabilityRegistry().resolve(modelName);
+
+if (capabilities.supportsSamplingParameters()) {
+    temp.ifPresent(requestBuilder::temperature);   // 아무도 넣지 않았으면 이것도 세터를 부르지 않는다
+}
+// else: 세터를 아예 부르지 않는다
+```
+
+IMPORTANT: **프로바이더는 값을 지어내지 않는다.** `orElse(DEFAULT_TEMPERATURE)` 처럼 미설정을 자기
+상수로 채우면, 아무도 요청하지 않은 샘플링 값이 매 요청에 실리고 서버 기본값이 영영 적용되지 않는다.
+미설정은 **보내지 않는 것**이고, 그때 무엇이 적용될지는 서버가 정한다.
+
+`resolve` 는 총함수이며 **fail-open** 이다 — 아무도 설명하지 않은 모델은 `ModelCapabilities.unknown()`,
+즉 **호출자가 요청한 것은 하나도 빼지 않고, 요청하지 않은 것은 하나도 지어내지 않는다**. 값을 떨어뜨렸다면 그 사실을
+[`LlmModel`](../../../modules/aimon-core/src/main/java/at/aimon/core/llm/LlmModel.java) 의 규칙대로
+운영자가 보는 수준으로 보고한다(`AnthropicLlmClient#reportDivergence`, `OpenAILlmClient#reportDivergence`).
+
+### 추론 페이로드는 채우고 되읽되, 절대 들여다보지 않는다
+
+추론 모델은 도구 호출과 함께 불투명한 항목 하나를 돌려준다 — OpenAI 의 `encrypted_content` 를 실은
+`reasoning` 항목, Anthropic 의 서명이 붙은 `thinking` 블록. 그것을 다음 요청에 되싣지 않으면 모델은 ReAct
+이터레이션마다 사고 과정을 처음부터 다시 만든다. 답이 나빠지고 추론 토큰이 매번 다시 청구된다.
+`ReasoningTrace` 가 그 항목이 턴 사이에 머무는 자리다.
+
+프로바이더가 할 일은 넷이다.
+
+1. **채운다** — 응답에서 항목을 뽑아 `LlmResponse.withReasoningTraces(...)` 로 붙인다. 스트리밍이면
+   `ChunkAggregator.addReasoningTrace(...)` 가 같은 자리다
+2. **태그한다** — `providerName` 은 `getProviderName()` 그대로다. 전사는 클라이언트보다 오래 살아서
+   (`LlmFallbackPolicy`, provider 설정 변경, 서브에이전트 스냅샷 재생) 남의 페이로드가 도착할 수 있다.
+   자기 것이 아니면 버리고 한 번 경고한다
+3. **닻을 내린다** — `toolUseId` 는 *이 trace 가 그 도구 호출 바로 앞에 온다* 는 뜻이다. `Message` 는
+   텍스트와 도구 호출을 서로 다른 리스트에 담으므로 순서를 그것만으로 표현할 수 없다
+4. **되읽는다** — 순서 규칙은 프로바이더마다 하나씩 적는다. 슬롯은 두 순서를 다 표현할 수 있고, 어느
+   프로바이더도 남의 규칙을 물려받지 않는다
+
+IMPORTANT: **`payload` 를 파싱하거나 다시 직렬화하거나 정규화하지 말 것.** `aimon-core` 가 그것에 하는
+연산은 복사 하나뿐이고, 프로바이더도 그래야 한다 — OpenAI 의 `encrypted_content` 는 암호문이고 Anthropic 의
+`signature` 는 서명이라, 한 바이트만 달라져도 서버가 되읽기를 거절한다. SDK 모델을 직렬화한다면 그 SDK 자신의
+매퍼를 쓴다(OpenAI 는 `com.openai.core.ObjectMappers.jsonMapper()`): 새 `ObjectMapper` 는 같은 바이트를
+읽고 없던 필드를 붙여 내보낸다.
+
+그 대가는 숨기지 않는다 — **`Message.mapText` 는 이 페이로드에 닿지 않으므로 레닥션도 닿지 않는다.**
+고칠 수 있는 성질의 것이 아니고(고치면 되읽기가 깨진다), 받아들일 수 없는 배포에는 끄는 스위치가 있다
+(OpenAI 는 `OpenAIConfig.responsesApiEnabled(false)`).
+
+설계 전문은 [OpenAI Responses 경로](../../design/llm/openai-responses-path.md) 참조.
 
 ---
 
@@ -470,12 +542,13 @@ public class OpenAILlmClient implements LlmClient {
             // 1. 메시지 빌드 (시스템 프롬프트 + 대화 이력)
             List<ChatCompletionMessageParam> chatMessages = buildChatMessages(systemPrompt, messages);
 
-            // 2. 요청 빌드 (설정 병합)
+            // 2. 요청 빌드 (설정 병합 + 능력 확인)
             ChatCompletionCreateParams.Builder requestBuilder = ChatCompletionCreateParams.builder()
                 .model(modelConfig.getName().orElse(config.getModel()))
                 .messages(chatMessages)
-                .temperature(modelConfig.getTemperature().orElse(config.getTemperature()))
                 .maxCompletionTokens((long) modelConfig.getMaxTokens().orElse(config.getMaxTokens()));
+
+            applySamplingParameters(requestBuilder, modelConfig);
 
             // 3. Tool 추가
             if (!tools.isEmpty()) {
@@ -519,7 +592,12 @@ public class OpenAILlmClient implements LlmClient {
 
     @Override
     public String getProviderName() {
-        return "OpenAI (" + config.getModel() + ")";
+        return "OpenAI";
+    }
+
+    @Override
+    public Optional<String> getDefaultModelName() {
+        return Optional.of(config.getModel());
     }
 }
 ```
@@ -537,6 +615,7 @@ public class OpenAILlmClient implements LlmClient {
 - [ ] 모든 에러를 `LlmClientException`으로 래핑
 - [ ] Thread-safe 구현
 - [ ] Tool calling 지원
+- [ ] `getProviderName()` 은 벤더만 반환하고, 기본 모델은 `getDefaultModelName()` 으로 노출
 
 ### 메시지 변환
 

@@ -7,6 +7,295 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### LLM: what a model accepts is now a fact the framework can look up, and gpt-5.x tool calling works
+
+- **New provider-neutral SPI `at.aimon.core.llm.capability`** — `ModelCapabilities`,
+  `ModelCapabilityRegistry` and `InMemoryModelCapabilityRegistry`. Five fields in all, three of them
+  introduced here (`supportsSamplingParameters`, `supportsReasoningEffort`,
+  `supportsToolsWithReasoning`) and two by the Responses entry below
+  (`supportsReasoningTraceRoundTrip`, `lowestReasoningEffort`). Purely additive. It sits **beside**
+  `ModelContextWindowRegistry` and `ModelPriceTable` rather than folding into either: three per-model
+  facts, three reasons to change, and each consumer depends on exactly its own.
+
+- **What it fixes.** Every `gpt-5.x` tool-calling turn — which is every agent turn — failed with HTTP
+  400. Two independent causes, and fixing one surfaced the other. The client always called
+  `.temperature(...)` because `OpenAIConfig.getTemperature()` defaulted to `0.0` and had no way to say
+  "unset", and `gpt-5.x` rejects that value. Both decisions now come from the descriptor. There is no
+  `model.startsWith("gpt-5")` anywhere in the request builder.
+
+  **Corrected against the live API on 2026-09-09** (the first release to test rather than infer): two
+  of the premises above, taken from the issue report, are wrong. Rejection is by **value**, not by
+  presence — `temperature: 1.0` returns 200 on `gpt-5-nano` and `o4-mini`, only non-default values 400.
+  And tools on Chat Completions work fine for these models with the effort simply omitted; the
+  `reasoning_effort: "none"` workaround is not merely unreachable but **invalid**, since `none` is not
+  an accepted value. Suppression stays — omitting yields the default anyway and spares every other
+  value a 400 — but the remedy that used to send `none` now omits. See the probe table in
+  `docs/design/llm/openai-model-capabilities.md` §11.
+
+- **Fail open, and that has a consequence worth knowing.** A model no registry describes resolves to
+  `ModelCapabilities.unknown()`, which is not "everything permitted" but **nothing the caller asked
+  for is withheld, and nothing the caller did not ask for is invented** — a sampling value somebody
+  set is sent, no reasoning effort is conjured up. The flip side: a deployment behind a gateway or Azure endpoint
+  that **renames** its gpt-5 model (`model: prod-assistant`) is unknown to the built-in table and keeps
+  hitting the 400. One line closes it, and it is programmatic:
+
+  ```java
+  OpenAIConfig.builder().apiKey(key).model("prod-assistant")
+          .modelCapabilityRegistry(InMemoryModelCapabilityRegistry.builderWithDefaults()
+                  .register("prod-assistant", ModelCapabilities.builder()
+                          .supportsSamplingParameters(false).supportsReasoningEffort(true)
+                          .supportsToolsWithReasoning(false).build())
+                  .build())
+          .build();
+  ```
+
+  Both halves of that table — exact names and prefixes — match **ignoring case**, because the name an
+  operator has is the one their portal shows: registering `prod-assistant` for a deployment configured
+  as `Prod-Assistant` has to meet, or the one line that closes this gap silently does nothing.
+
+  A **CLI** deployment in that state has no yaml key for this yet; that is a config-surface decision
+  left to its own issue rather than ridden in on a bug fix.
+
+- **The built-in table is five rows** — `gpt-5-chat` (unchanged behaviour), `gpt-5`, then `o1` / `o3` /
+  `o4`. The o-series rows were **withheld in the first cut and added on 2026-09-09 once measured**: the
+  belief that they reject `temperature` was unverified, and a wrong row is a *silent* sampling change
+  while no row leaves those users exactly where they are. The probes settled it — `o3-mini` and
+  `o4-mini` reject `0.0`, accept `1.0`, accept tools with no effort, and reject effort `none`. They are
+  **not** routed to `/v1/responses`: reasoning-item replay was not measured for them, and asserting a
+  round trip nobody has seen is how the `gpt-5` row came out wrong the first time. The same probes
+  fixed their `lowestReasoningEffort` at `LOW` — the o-series answers *"Supported values are: 'low',
+  'medium', 'high', and 'xhigh'"*, so the neutral `MINIMAL` has no wire value there either.
+
+- **`ModelCapabilities.lowestReasoningEffort()` — which rungs, as opposed to whether the knob exists.**
+  `supportsReasoningEffort()` says the model takes a reasoning-effort parameter; this says where its
+  ladder starts, because the two OpenAI families disagree (`gpt-5.x`: `minimal`…`high`; o-series:
+  `low`…`xhigh`). A requested rung below the floor is **omitted and reported**, never raised to meet it
+  — a clamp upward is a request the operator did not make, and it would arrive silently. The default
+  and `unknown()` value is `MINIMAL`, so the only rung ever withheld from a model no registry describes
+  is `NONE`, which no OpenAI ladder has at all. The rule lives in one place and both endpoints ask it;
+  the *tools* clamp stays Chat-only, because that one really is a property of the request surface.
+
+- **Breaking: `OpenAIConfig.getTemperature()` returns `Optional<Double>`, not `double`.** A published
+  module (`at.aimon.core.llms.openai`), and — like the entries below — not a rename, so there is no row
+  in [`rename-maps.md`](docs/migration/rename-maps.md). Per
+  [`api-stability.md`](docs/project/api-stability.md) §1 a breaking change cannot ship as a `0.2.x`
+  patch: **this forces the next release to be a minor bump.** The break is a compile error, which is
+  the point — nothing changes quietly.
+
+  | Was | Is |
+  |---|---|
+  | `double t = config.getTemperature();` | `config.getTemperature().orElse(0.0)` |
+
+  The nullable shape is not cosmetic: it is what lets the client tell "somebody asked for `0.0`" from
+  "nobody asked" — which decides both whether the parameter is sent at all (see the entry below) and
+  whether suppressing it deserves a `WARN`. Keeping `0.0` as the builder seed makes those two states
+  the same one. `OpenAIConfig` also gains unset-by-default
+  `topP` / `presencePenalty` / `frequencyPenalty` / `reasoningEffort` and a `modelCapabilityRegistry`.
+
+- **Additive: `LlmModel.getReasoningEffort()`** and the neutral `at.aimon.core.llm.ReasoningEffort`
+  (`NONE`/`MINIMAL`/`LOW`/`MEDIUM`/`HIGH` — the common subset that survives translation to a second
+  provider, not one vendor's ladder; the constants are declared in ascending order, and that ordering
+  is now load-bearing because `lowestReasoningEffort` compares against it). Not yet readable from agent
+  frontmatter or CLI yaml, on purpose: `AnthropicLlmClient` still ignores the field silently, so a key
+  for it would do nothing on one of the two shipped providers. Note that the earlier justification for
+  withholding the key — *"a non-`NONE` effort is clamped on every tool-calling turn anyway"* — stopped
+  being true when the 2026-09-09 probes set `supportsToolsWithReasoning` to `true` on every shipped
+  row; nothing is clamped now.
+
+- **Suppression is reported, not silent.** A value that somebody set and that the model will not take
+  is logged once per distinct parameter/value/model at `WARN`, bounded at 32 entries, the same shape
+  `AnthropicLlmClient` already uses for the penalties it drops. Every suppressible value is now one
+  somebody set, so an unconfigured request is silent by construction rather than by a special case.
+  Note the wording says only that a value
+  "is set on this request": a subagent turn carries a temperature from `SubagentLlmDefaults` rather
+  than from an operator, and nothing at that point can tell the two apart.
+
+- **Breaking: an unset sampling parameter is no longer sent at all.** Issue
+  [#43](https://github.com/kangwoo/aimon/issues/43)'s rule — *sampling parameters are sent only when
+  the caller explicitly set them* — now holds without exception. **Before:** a default-configured
+  `gpt-4o` put `temperature: 0.0` on every request, because the client substituted a fallback nobody
+  had asked for. **After:** nothing is sent and OpenAI's server default (`1.0`) applies, so agent
+  output is **less deterministic**. **Affected:** anyone who never set a temperature explicitly — in
+  practice, main-agent turns of agents whose frontmatter has no `model.temperature`. Subagent turns
+  are unaffected (`SubagentLlmDefaults` always sets one), and so is any agent that names one.
+  **Remedy, one line:** set the old value explicitly — `OpenAIConfig.builder()...temperature(0.0)`
+  for an application that assembles its own config, or `model: { temperature: 0.0 }` in the agent's
+  frontmatter for a CLI or Spring-starter deployment, since neither of those configuration surfaces
+  has a temperature key of its own. `OpenAIConfig.DEFAULT_TEMPERATURE` is gone rather than kept as a
+  constant nobody applies.
+
+- **Breaking: `OpenAIConfig` has no default model.** Issue
+  [#45](https://github.com/kangwoo/aimon/issues/45). **Before:** `DEFAULT_MODEL = "gpt-4"`, so a
+  config that named no model silently talked to a long-superseded one. **After:** `build()` rejects a
+  config with no model, and both assembly paths fail at startup naming the key they own — the CLI
+  with a `ConfigurationException` naming the yaml `model:`, the starter naming `aimon.llm.model`.
+  **Affected:** anyone relying on the default. **Remedy:** name the model. `AnthropicConfig` keeps
+  its default (`claude-sonnet-4-20250514` is current, and #45 names OpenAI only).
+
+- **Breaking: `getProviderName()` is the vendor alone; the effective model has its own accessor.**
+  Issue [#45](https://github.com/kangwoo/aimon/issues/45). The method takes no arguments, so it could
+  never see the per-request model an `LlmModel` names — and per-agent model selection makes that
+  override the normal case, so logs, traces and metering reported a model that was never called.
+  **Before:** `"OpenAI (gpt-4o)"` / `"Anthropic (claude-…)"`. **After:** `"OpenAI"` /
+  `"Anthropic"`, plus a new additive `default Optional<String> LlmClient.getDefaultModelName()`
+  (existing implementations and test doubles need no change; the five decorators forward it).
+  **Affected:** anything keyed on the old string. Three observable consequences — an out-of-tree
+  `LlmUsageRecorder` sees its `provider` label lose the model **and** its `model` label start being
+  populated where it was `null`; trace spans are named `llm:<model>` rather than
+  `llm:<provider> (<model>)`; the REPL's "LLM Provider:" line is unchanged, because it now composes
+  the two. **Remedy:** read the model from the request's `LlmModel`, falling back to
+  `getDefaultModelName()`.
+
+- **Fixed: `OrcaAgentExecutor.toString()` names the model again.** Debug output only, and the one
+  call site where the vendor-only provider name is strictly less useful than the composite it
+  replaced: it read `OrcaAgentExecutor{provider='OpenAI'}`, and now reads
+  `OrcaAgentExecutor{provider='OpenAI', model='gpt-4o'}`, composed from `getDefaultModelName()`. The
+  `model` segment is omitted rather than filled in when a client reports no default.
+
+- **A capability registry that returns `null` no longer takes the request down with it.** An
+  implementation overriding the `default resolve()` to return `null` broke its own never-null
+  contract and NPE'd inside the request builder — which on the streaming path runs *before* the
+  try-with-resources, so it escaped both the exception mapper and the cancellation classification.
+  It now degrades to `unknown()` and is reported once, beside the existing throwing-registry case.
+
+- **One log-only side effect of the upgrade.** `AgentDefinitionVersion.canonicalForm` enumerates every
+  `LlmModel` field, so it gained a `model.reasoningEffort` line — which changes **every** agent's
+  digest once. A cron task scheduled before the upgrade logs "definition changed" the first time it
+  fires afterwards. `AgentDefinitionVersion` is a change detector and not a gate; nothing refuses to
+  run on a mismatch.
+
+### LLM: a reasoning model's chain of thought now survives a tool call (OpenAI Responses API)
+
+- **What it fixes, and why the phase-1 fix was not enough.** Phase 1 tried to make `gpt-5.x` usable
+  with tools by sending `reasoning_effort: none` — a working request bought by turning off the thing
+  the model was chosen for, and, as the 2026-09-09 probes later showed, not even a working one, since
+  `none` is not an accepted value. That remedy is gone; the effort is now omitted instead. It also left a quieter cost: Chat Completions never returns reasoning items, so
+  nothing carried across a tool call and the model re-derived its chain of thought on every ReAct
+  iteration. Worse answers, and reasoning tokens billed again each time, on exactly the multi-turn
+  tool loops AIMON exists to run. A model whose capabilities say its reasoning traces round-trip now
+  goes to `/v1/responses`, where tools and reasoning coexist and the items can be replayed.
+
+- **How the endpoint is chosen: per request, never by name.** `ModelCapabilities` gains a fourth
+  flag, `supportsReasoningTraceRoundTrip()` — *does this model return reasoning traces a client
+  should send back next turn* — defaulting to `false` in `unknown()`, so every model no registry
+  describes keeps the request surface it has today. The built-in table sets it on the `gpt-5` prefix
+  and leaves the non-reasoning `gpt-5-chat` variant alone. The decision is made from the
+  **per-request** model name (`LlmModel.name(...)` overriding the config's), because a `gpt-4o`
+  compaction call inside a `gpt-5.x` session is the ordinary case: that call goes to Chat while its
+  session goes to Responses. There is still no `model.startsWith("gpt-5")` anywhere.
+
+  The flag is deliberately not called `usesResponsesApi`: that would name one vendor's endpoint
+  inside a provider-neutral type. Anthropic will read the same flag to mean "send the thinking
+  blocks back", with no endpoint change at all.
+
+- **New `at.aimon.core.llm.ReasoningTrace`, and `Message` gains an eighth field.** A trace carries
+  three things: an opaque provider `payload`, the `providerName` that authored it, and an optional
+  `toolUseId` anchoring it to the tool call it precedes. `aimon-core` performs exactly one operation
+  on the payload — copy. `MessageArtifact` was examined first and rejected: its `path` and
+  `fileName` are both required and would be lies for this content, and it is already consumed as a
+  file reference, so a reasoning blob in that list would be offered to a user as a downloadable file.
+  **The new field participates in `Message.equals`/`hashCode`/`toString`, and so does
+  `LlmResponse`'s** — the same caveat the `TokenUsage` entry below carries, and for the same reason: a
+  message or response carrying traces is no longer equal to one without, which can matter to a test
+  that builds the expected value by hand (`Message.assistant(text, toolUses)`) and compares it against
+  one an executor built from a Responses turn.
+
+- **It lands in the persisted transcript, additively in both directions.** `JsonSessionSnapshotCodec`
+  writes a `reasoning` array **only when non-empty**, so every document produced before this field
+  existed is byte-identical to one produced now; a reader that has never heard of the key skips it,
+  exactly as it already skips anything else it does not know. `FORMAT_VERSION` stays at **1** — the
+  codec's existing argument applies unchanged, since bumping it would make every stored snapshot
+  undecodable to buy nothing. The three `SessionRecordCodec` backends need no change: they store the
+  transcript as an opaque string and cannot see the field.
+
+- **`TokenUsage` gains a fourth field, `reasoningTokens`. Not source-breaking; visible in `equals`.**
+  `of(int,int,int)` is retained and yields `0`; a four-argument overload is added; the constructor is
+  private, so no caller constructs one directly. **But it participates in `equals`, `hashCode` and
+  `toString`** — a usage carrying reasoning tokens is no longer equal to one without, which can
+  matter to a test that compares usages built two different ways. **It is deliberately not priced:**
+  reasoning tokens are a *subset* of the completion tokens rather than an addition to them (OpenAI
+  reports them inside `output_tokens_details`), so `ModelPrice.costOf` has already billed them and
+  adding them again would bill them twice. Recorders receive the whole object, so the field reaches
+  every metering and tracing sink for free.
+
+- **The cross-node wire carries it, and tolerates a node that does not.** `StatusSnapshotPayload`
+  and `AgentExecutionEventPayload` write a new `reasoning` key and read it through a new
+  `PayloadValues.asIntOrZero`. The other three token keys keep the strict accessor, because their
+  absence really is a malformed payload; this one is read tolerantly because during a rolling
+  upgrade a map written by an old node has no such key at all — and both decoders turn any exception
+  into a dropped signal, so the strict accessor would discard the whole status update rather than
+  report one counter as zero.
+
+- **A gateway that implements only `/v1/chat/completions` can turn the new path off**, with
+  `OpenAIConfig.responsesApiEnabled(false)`. **Say the asymmetry plainly:** the situation that needs
+  the switch is fully yaml-creatable — `baseUrl` is a CLI key and a starter property, and any real
+  `gpt-5*` name hits the built-in table — while the remedy is **Java-only**. That makes it different
+  in kind from the other two programmatic-only knobs, which override things that already work; this
+  is the one case in this change where a working yaml-configured deployment can break with no
+  yaml-reachable fix. Setting it restores phase 1's behaviour exactly.
+
+- **Redaction does not reach a reasoning payload, and that cannot be fixed.**
+  `Message.mapText` is the documented single entry point for whole-message text rewriting, and the
+  payload deliberately bypasses it: OpenAI's carrier is `encrypted_content` and Anthropic's is a
+  `signature`, so rewriting one byte invalidates it and the provider rejects the replay. What is on
+  offer is disclosure — stated on `mapText`, in the design doc and here — plus the off switch above.
+  A deployment with a hard redaction requirement on everything leaving the process should set
+  `responsesApiEnabled(false)` and accept phase 1's behaviour.
+
+- **Transcripts grow.** An `encrypted_content` blob is far larger than the text of the turn, and
+  every assistant turn in a reasoning session carries one. Capping or truncating it would break the
+  round trip, which is the whole feature. Compaction sheds them — `MessageStripper` now drops traces
+  unconditionally while keeping tool uses, so it can never leave a reasoning item whose following
+  call is gone — and the switch removes them entirely. Nobody has measured what a 40-turn `gpt-5`
+  tool loop does to a session row.
+
+- **Token *estimation* under-counts on this path, deliberately.** `HeuristicTokenEstimator` and
+  `TikTokenEstimator` count `0` for reasoning traces while `DefaultCompactionGuard` drives every
+  threshold from the estimator rather than from provider usage, so the guard under-counts by roughly
+  `reasoning_tokens`. The obvious fix is wrong: counting the base64 blob as text would over-count by
+  an order of magnitude and force premature compaction, destroying the traces it was protecting. The
+  blast radius is bounded — compaction drops the traces so the error resets, the context limits
+  already reserve headroom, and the same estimator already omits tool *definitions*.
+
+- **Also on this path:** Responses stop reasons (`status` + `incomplete_details.reason`, plus whether
+  the output carried a tool call) map to real `StopReason` values instead of degrading to `UNKNOWN`;
+  `call_id` is what `ToolUse.getId()` holds, because that is the id a `function_call_output` must
+  match, and the item's own `id` is never invented on a replay; tool definitions are sent with
+  `strict: false`, which is what the field's absence already means on Chat, because strict mode
+  rejects schemas this repo explicitly exempts from its own strictness rule (every MCP tool, for one).
+
+- **A provider error on this endpoint arrives as data, not as an SDK exception.** The SSE decoder
+  throws only on a top-level `"error"` key, which neither `response.error` nor `response.failed` has,
+  and a blocking 200 carrying `status: "failed"` is an ordinary return value. Left alone, the same
+  server condition that yields a retryable exception on the Chat path would yield none here. The new
+  code builds the exception the mapper would have produced and throws it from inside the client's
+  existing cascade, so classification and the retry budget match the blocking path.
+
+- **Chat Completions is unchanged**, and structurally so rather than by promise:
+  `OpenAIMessageConverter` is not opened, and a message carrying reasoning traces produces a
+  byte-identical Chat request to the same message without them.
+
+- **Two follow-ups to the above, applied.** A tool call whose `arguments` are not JSON now raises the
+  same `MessageConversionException` on the Responses blocking path that Chat Completions has always
+  raised for the same bytes, instead of running the tool with an empty input map — user-visible, and
+  the reason is that an empty map is a *different* answer, not a smaller one. A JSON **`null`** value
+  is on the other side of that line and is not malformed at all: it means *absent*, so the key is
+  dropped through `NullSafeMaps` and the turn completes, exactly as it does on Chat Completions. (It
+  briefly did not: reading the arguments through `Map.copyOf`, which rejects a null value, failed the
+  whole turn over an optional parameter a model had filled with `null` instead of omitting.) Streaming
+  is unchanged and still degrades, because there `ChunkAggregator` owns those bytes for every provider.
+  Separately,
+  a streamed `response.completed` whose nested `status` is `failed` or `cancelled` now fails the call
+  as the blocking path already did, instead of returning an empty success; no conforming provider
+  sends that shape, so nobody in-tree can hit it.
+
+- **Not started, by design: the Anthropic half.** `AnthropicLlmClient` still ignores
+  `ThinkingBlock`/`RedactedThinkingBlock`, and `AnthropicStreamingMapper` still does not surface
+  thinking deltas. The slot is designed to fit them — signature-carrying blocks round-trip byte-exact
+  precisely because nothing in core reads the payload — and the work is recorded as a follow-up
+  rather than half-built. Design:
+  [`docs/design/llm/openai-responses-path.md`](docs/design/llm/openai-responses-path.md).
+
 ### Sessions: one unreadable inbox entry no longer costs the whole batch
 
 - **`SessionInbox.collect` returns `CollectedBatch` instead of `List<InboundMessage>`.** A

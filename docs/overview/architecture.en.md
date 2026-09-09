@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/architecture.md
-source_commit: 8a6c6ec
+source_commit: d4608ba
 ---
 
 # Architecture
@@ -295,6 +295,7 @@ provider only has to implement the one above.
 | `LlmCallMetadata`, `BoundMetadataLlmClient` | call tagging |
 | `LlmCancellation` | cancellation |
 | `ModelContextWindowRegistry` | per-model context windows |
+| `ModelCapabilities`, `ModelCapabilityRegistry` | which parameters a request may carry, per model |
 
 Implementations: `aimon-llm-openai`, `aimon-llm-anthropic`.
 For a new provider see the [LLM Provider development guide](../features/llm/llm-provider-development-guide.en.md).

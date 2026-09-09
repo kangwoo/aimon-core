@@ -265,7 +265,22 @@ CLI 플래그는 picocli `negatable = true` 로 필드 하나가 `--streaming` /
 
 - **tool_use 인자 partial 노출** — 지금은 `STREAM_END` 시 1회 파싱. 긴 인자를 가진 도구의 미리보기 UX 는
   별도 설계가 필요하다
-- **reasoning/thinking trace 스트리밍** — provider 지원 시
+- **reasoning/thinking trace 스트리밍** — OpenAI 쪽은 **구현되었다**. `/v1/responses` 경로에서
+  `OpenAIResponsesStreamingMapper` 가 `response.output_item.done` 이벤트로 도착한 reasoning item 을
+  모아 `ChunkAggregator.addReasoningTrace(...)` 로 넣고, 그것이 `LlmResponse.getReasoningTraces()` 를
+  거쳐 다음 턴 요청에 되실린다 — 도구 호출을 건너뛰어도 모델이 사고 과정을 다시 파생하지 않게 하는
+  것이 그 목적이다. **아직 안 된 것 둘.** ① reasoning *summary* 델타
+  (`response.reasoning_summary_text.delta`)는 sink 로 전달하지 않는다. 사용자에게 보여줄 사고 요약
+  스트림은 별개 작업이다. ② Anthropic 은 그대로 열려 있다 (`AnthropicStreamingMapper:145`).
+  설계는 [openai-responses-path.md](openai-responses-path.md) 참조
+- **`LlmStreamingOptions.isIncludeUsage()` 는 Responses 경로에서 무효다** — 그 엔드포인트의
+  `stream_options` 는 `include_obfuscation` 만 나르고 usage 토글이 없다. usage 가 opt-in 이 아니기
+  때문이며, `includeUsage(false)` 로 토큰을 아끼려던 호출자는 그 경로에서 usage 를 그냥 받는다
+- **Responses 경로의 provider 오류는 SDK 예외가 아니라 스트림 *이벤트* 로 온다** — SSE 디코더는 디코드된
+  페이로드의 **최상위** `"error"` 키에서만 던지는데, `response.error` 도 `response.failed` 도 그 모양이
+  아니다. 그래서 `OpenAiResponseErrors` 가 매퍼가 만들었을 예외를 대신 만들어 클라이언트의 try **안**에서
+  던진다. 이것을 하지 않으면 같은 서버 조건이 blocking/Chat 경로에서는 재시도 가능한 예외가 되고 이 경로에서는
+  아무 예외도 되지 않는다
 - **backpressure** — 지금은 좁은 콜백. slow consumer 가 실제로 문제가 되면 `Flow.Publisher` 로 옮긴다
   (인터페이스를 좁게 유지한 이유가 이 여지다)
 - **부분 텍스트 secret redaction** — 화면 출력 단계의 필터 훅. 스트리밍 고유 문제는 아니지만 노출

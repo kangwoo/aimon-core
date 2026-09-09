@@ -21,6 +21,7 @@ import at.aimon.core.agent.session.transcript.SessionRewindPoint;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.MessageArtifact;
+import at.aimon.core.llm.ReasoningTrace;
 import at.aimon.core.llm.Role;
 import at.aimon.core.llm.ToolUse;
 import at.aimon.core.llm.ToolUseResult;
@@ -47,6 +48,13 @@ import at.aimon.core.llm.content.TextContentBlock;
  * hand-mapped here: the options go to {@link SubmitOptionsCodec} and the input to {@link UserInputCodec}, which is
  * where the reasoning behind the input's own set of type tags now lives. Both used to be private methods of this
  * class, and both moved out when a second wire needed the same shape — the inbox, in the input's case.
+ *
+ * <p>
+ * A message's {@link at.aimon.core.llm.ReasoningTrace}s are written as a {@code reasoning} array, and only when the
+ * message has any — so a document produced before that field existed is byte-identical to one produced now. The
+ * reverse direction is covered by the same forward tolerance the class already relies on: an old build reads five
+ * field names and ignores everything else, so a {@code reasoning} array it has never heard of is skipped. That is why
+ * {@link #FORMAT_VERSION} stays at 1; the argument is the {@code compactionFailureCount} one, below.
  *
  * <p>
  * Per the {@link SessionSnapshotCodec} contract, {@link ToolUseResult#getRenderPayload()} is intentionally not
@@ -89,6 +97,9 @@ public final class JsonSessionSnapshotCodec implements SessionSnapshotCodec {
     private static final String FIELD_TOOL_USES = "toolUses";
     private static final String FIELD_TOOL_RESULTS = "toolResults";
     private static final String FIELD_ARTIFACTS = "artifacts";
+    private static final String FIELD_REASONING = "reasoning";
+    private static final String FIELD_PROVIDER = "provider";
+    private static final String FIELD_PAYLOAD = "payload";
 
     private static final String FIELD_TYPE = "type";
     private static final String FIELD_TEXT = "text";
@@ -253,6 +264,12 @@ public final class JsonSessionSnapshotCodec implements SessionSnapshotCodec {
                 artifacts.add(encodeArtifact(artifact));
             }
         }
+        if (message.hasReasoningTraces()) {
+            final ArrayNode traces = node.putArray(FIELD_REASONING);
+            for (ReasoningTrace trace : message.getReasoningTraces()) {
+                traces.add(encodeReasoningTrace(trace));
+            }
+        }
         return node;
     }
 
@@ -312,6 +329,26 @@ public final class JsonSessionSnapshotCodec implements SessionSnapshotCodec {
         return node;
     }
 
+    private ObjectNode encodeReasoningTrace(ReasoningTrace trace) {
+        final ObjectNode node = MAPPER.createObjectNode();
+        node.put(FIELD_PROVIDER, trace.getProviderName());
+        node.put(FIELD_PAYLOAD, trace.getPayload());
+        trace.getToolUseId().ifPresent(value -> node.put(FIELD_TOOL_USE_ID, value));
+        return node;
+    }
+
+    private ReasoningTrace decodeReasoningTrace(JsonNode node) {
+        if (node == null || !node.isObject()) {
+            throw new SessionSnapshotCodecException("Reasoning trace entry is not a JSON object");
+        }
+        final ReasoningTrace.Builder builder = ReasoningTrace.builder().providerName(requiredText(node, FIELD_PROVIDER))
+                .payload(requiredText(node, FIELD_PAYLOAD));
+        if (node.hasNonNull(FIELD_TOOL_USE_ID)) {
+            builder.toolUseId(node.get(FIELD_TOOL_USE_ID).asText());
+        }
+        return builder.build();
+    }
+
     private Message decodeMessage(JsonNode node) {
         if (node == null || !node.isObject()) {
             throw new SessionSnapshotCodecException("Message entry is not a JSON object");
@@ -346,7 +383,16 @@ public final class JsonSessionSnapshotCodec implements SessionSnapshotCodec {
                 artifacts.add(decodeArtifact(artifactNode));
             }
         }
-        return Message.restore(role, content, toolUses, results, artifacts);
+        // Absent for every document written before reasoning traces existed, which is exactly the five-argument
+        // restore's behaviour: an empty list.
+        final List<ReasoningTrace> reasoningTraces = new ArrayList<>();
+        final JsonNode reasoningNode = node.get(FIELD_REASONING);
+        if (reasoningNode != null && reasoningNode.isArray()) {
+            for (JsonNode traceNode : reasoningNode) {
+                reasoningTraces.add(decodeReasoningTrace(traceNode));
+            }
+        }
+        return Message.restore(role, content, toolUses, results, artifacts, reasoningTraces);
     }
 
     private ContentBlock decodeContentBlock(JsonNode node) {

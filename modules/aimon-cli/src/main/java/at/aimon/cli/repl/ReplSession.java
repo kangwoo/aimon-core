@@ -253,7 +253,10 @@ public class ReplSession {
 
     private void displayAgentInfo() {
         formatter.displayInfo("Working Directory: " + agentRuntime.getEnvironment().getWorkingDirectory());
-        formatter.displayInfo("LLM Provider: " + agentExecutor.getLlmClient().getProviderName());
+        // getProviderName() is the vendor alone, so the model is recomposed here rather than read out of it.
+        final var llmClient = agentExecutor.getLlmClient();
+        formatter.displayInfo("LLM Provider: " + llmClient.getProviderName()
+                + llmClient.getDefaultModelName().map(model -> " (" + model + ")").orElse(""));
         formatter.displayInfo("Available tools: " + agentRuntime.getToolRegistry().size() + " tools(s)");
         formatter.displayInfo(
                 "Available commands: " + agentRuntime.getCommandRegistry().getAllCommands().size() + " command(s)");

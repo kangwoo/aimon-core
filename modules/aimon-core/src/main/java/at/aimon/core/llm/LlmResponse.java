@@ -132,6 +132,7 @@ public final class LlmResponse {
     private final List<ToolUse> toolUses;
     private final TokenUsage tokenUsage;
     private final StopReason stopReason;
+    private final List<ReasoningTrace> reasoningTraces;
 
     /**
      * Creates a new LlmResponse.
@@ -148,10 +149,64 @@ public final class LlmResponse {
      *             if toolUses or stopReason is null
      */
     private LlmResponse(String textContent, List<ToolUse> toolUses, TokenUsage tokenUsage, StopReason stopReason) {
+        this(textContent, toolUses, tokenUsage, stopReason, List.of());
+    }
+
+    /**
+     * Creates a new LlmResponse carrying reasoning traces.
+     *
+     * @param textContent
+     *            The text content (can be null or empty)
+     * @param toolUses
+     *            The tool uses (must not be null, can be empty)
+     * @param tokenUsage
+     *            The token usage (can be null, defaults to empty)
+     * @param stopReason
+     *            The provider-neutral stop reason (must not be null; {@link StopReason#UNKNOWN} when absent)
+     * @param reasoningTraces
+     *            The provider-authored reasoning payloads (must not be null, can be empty)
+     * @throws NullPointerException
+     *             if toolUses, stopReason or reasoningTraces is null
+     */
+    private LlmResponse(String textContent, List<ToolUse> toolUses, TokenUsage tokenUsage, StopReason stopReason,
+            List<ReasoningTrace> reasoningTraces) {
         this.textContent = textContent == null ? "" : textContent;
         this.toolUses = List.copyOf(Objects.requireNonNull(toolUses, "Tool uses cannot be null"));
         this.tokenUsage = Objects.requireNonNullElse(tokenUsage, TokenUsage.empty());
         this.stopReason = Objects.requireNonNull(stopReason, "Stop reason cannot be null");
+        this.reasoningTraces = List.copyOf(Objects.requireNonNull(reasoningTraces, "Reasoning traces cannot be null"));
+    }
+
+    /**
+     * Returns a copy of this response carrying the given reasoning traces.
+     *
+     * <p>
+     * A wither rather than a fifth factory argument: there are already three {@code of(...)} overloads and the field
+     * is produced by exactly two places — a provider's blocking response conversion and
+     * {@link at.aimon.core.llm.streaming.ChunkAggregator#toLlmResponse()}.
+     *
+     * @param reasoningTraces
+     *            The provider-authored reasoning payloads, in the provider's own output order (must not be null)
+     * @return A new LlmResponse with the same text, tool uses, usage and stop reason, plus the given traces
+     * @throws NullPointerException
+     *             if reasoningTraces is null
+     */
+    public LlmResponse withReasoningTraces(List<ReasoningTrace> reasoningTraces) {
+        Objects.requireNonNull(reasoningTraces, "Reasoning traces cannot be null");
+        return new LlmResponse(textContent, toolUses, tokenUsage, stopReason, reasoningTraces);
+    }
+
+    /**
+     * Gets the provider-authored reasoning payloads this response carried.
+     *
+     * <p>
+     * Opaque to {@code aimon-core}: callers attach them to the assistant {@link Message} they build from this
+     * response, and the same provider replays them on the next request. See {@link ReasoningTrace}.
+     *
+     * @return An immutable list of reasoning traces, in the provider's output order (never null, may be empty)
+     */
+    public List<ReasoningTrace> getReasoningTraces() {
+        return reasoningTraces;
     }
 
     /**
@@ -233,17 +288,19 @@ public final class LlmResponse {
         }
         final LlmResponse that = (LlmResponse) o;
         return textContent.equals(that.textContent) && toolUses.equals(that.toolUses)
-                && tokenUsage.equals(that.tokenUsage) && stopReason == that.stopReason;
+                && tokenUsage.equals(that.tokenUsage) && stopReason == that.stopReason
+                && reasoningTraces.equals(that.reasoningTraces);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(textContent, toolUses, tokenUsage, stopReason);
+        return Objects.hash(textContent, toolUses, tokenUsage, stopReason, reasoningTraces);
     }
 
     @Override
     public String toString() {
         return "LlmResponse{" + "textContent='" + textContent + "', " + "toolUses=" + toolUses.size() + " tool(s), "
-                + "tokens=" + tokenUsage.getTotalTokens() + ", stopReason=" + stopReason + '}';
+                + "tokens=" + tokenUsage.getTotalTokens() + ", stopReason=" + stopReason + ", reasoningTraces="
+                + reasoningTraces.size() + '}';
     }
 }

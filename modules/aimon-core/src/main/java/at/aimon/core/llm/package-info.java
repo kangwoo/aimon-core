@@ -90,7 +90,7 @@
  * <pre>
  * {
  *     &#64;code
- *     OpenAIConfig config = OpenAIConfig.builder().apiKey(apiKey).model("gpt-4").build();
+ *     OpenAIConfig config = OpenAIConfig.builder().apiKey(apiKey).model("gpt-4o").build();
  *     LlmClient client = new OpenAILlmClient(config);
  *
  *     List<Message> messages = List.of(Message.user("What is the capital of France?"));

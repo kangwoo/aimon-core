@@ -2,6 +2,7 @@ package at.aimon.core.llm.usage;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -73,8 +74,7 @@ public final class MeteringLlmClient implements LlmClient {
         // same attribution. Raw provider implementations ignore the extra argument via the default-method fallback.
         final LlmResponse response = delegate.sendMessage(systemPrompt, messages, tools, modelConfig, metadata);
         try {
-            final String model = modelConfig != null ? modelConfig.getName().orElse(null) : null;
-            recorder.record(delegate.getProviderName(), model, response.getTokenUsage(), metadata);
+            recorder.record(delegate.getProviderName(), modelName(modelConfig), response.getTokenUsage(), metadata);
         } catch (RuntimeException e) {
             log.warn("Failed to record LLM usage: {}", e.getMessage(), e);
         }
@@ -91,8 +91,7 @@ public final class MeteringLlmClient implements LlmClient {
         final LlmResponse response = delegate.sendMessage(systemPromptParts, messages, tools, modelConfig, metadata,
                 cancellation);
         try {
-            final String model = modelConfig != null ? modelConfig.getName().orElse(null) : null;
-            recorder.record(delegate.getProviderName(), model, response.getTokenUsage(), metadata);
+            recorder.record(delegate.getProviderName(), modelName(modelConfig), response.getTokenUsage(), metadata);
         } catch (RuntimeException e) {
             log.warn("Failed to record LLM usage: {}", e.getMessage(), e);
         }
@@ -110,8 +109,7 @@ public final class MeteringLlmClient implements LlmClient {
         final LlmResponse response = delegate.sendMessageStreaming(systemPromptParts, messages, tools, modelConfig,
                 metadata, options, sink);
         try {
-            final String model = modelConfig != null ? modelConfig.getName().orElse(null) : null;
-            recorder.record(delegate.getProviderName(), model, response.getTokenUsage(), metadata);
+            recorder.record(delegate.getProviderName(), modelName(modelConfig), response.getTokenUsage(), metadata);
         } catch (RuntimeException e) {
             log.warn("Failed to record LLM usage: {}", e.getMessage(), e);
         }
@@ -128,8 +126,7 @@ public final class MeteringLlmClient implements LlmClient {
         final LlmResponse response = delegate.sendMessageStreaming(systemPromptParts, messages, tools, modelConfig,
                 metadata, options, sink, cancellation);
         try {
-            final String model = modelConfig != null ? modelConfig.getName().orElse(null) : null;
-            recorder.record(delegate.getProviderName(), model, response.getTokenUsage(), metadata);
+            recorder.record(delegate.getProviderName(), modelName(modelConfig), response.getTokenUsage(), metadata);
         } catch (RuntimeException e) {
             log.warn("Failed to record LLM usage: {}", e.getMessage(), e);
         }
@@ -141,4 +138,22 @@ public final class MeteringLlmClient implements LlmClient {
         return delegate.getProviderName();
     }
 
+    @Override
+    public Optional<String> getDefaultModelName() {
+        return delegate.getDefaultModelName();
+    }
+
+    /**
+     * The model this call actually ran against: the request's override, else the client's own default.
+     *
+     * <p>
+     * The delegate's default is consulted because {@code getProviderName()} no longer carries a model, so the
+     * usage key's {@code model} field would otherwise be null for every request that did not override — and the
+     * provider label no longer makes up for it. {@code null} stays the terminal value: {@link LlmUsageKey} accepts
+     * a null model, and a client with no default genuinely has nothing to report.
+     */
+    private String modelName(LlmModel modelConfig) {
+        final Optional<String> requested = modelConfig == null ? Optional.empty() : modelConfig.getName();
+        return requested.or(delegate::getDefaultModelName).orElse(null);
+    }
 }

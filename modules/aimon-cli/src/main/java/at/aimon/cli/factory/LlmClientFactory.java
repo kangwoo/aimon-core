@@ -55,11 +55,7 @@ public class LlmClientFactory {
 
     private LlmClient createOpenAIClient(LlmProviderConfig config) {
         final String apiKey = validateApiKey(config.getApiKey());
-        final OpenAIConfig.Builder builder = OpenAIConfig.builder().apiKey(apiKey);
-
-        if (config.getModel() != null) {
-            builder.model(config.getModel());
-        }
+        final OpenAIConfig.Builder builder = OpenAIConfig.builder().apiKey(apiKey).model(validateModel(config));
 
         if (config.getTimeout() != null) {
             builder.timeout(Duration.ofSeconds(config.getTimeout()));
@@ -70,6 +66,19 @@ public class LlmClientFactory {
         }
 
         return new OpenAILlmClient(builder.build());
+    }
+
+    /**
+     * OpenAI 는 기본 모델이 없으므로 여기서 먼저 막는다. {@code OpenAIConfig.build()} 도 거절하지만 그 메시지는 자바
+     * 필드를 가리키고, 사용자가 고쳐야 하는 것은 yaml 키다.
+     */
+    private String validateModel(LlmProviderConfig config) {
+        final String model = config.getModel();
+        if (model == null || model.isBlank()) {
+            throw new ConfigurationException(
+                    "Model is required for the openai provider - set `model` in the LLM config (e.g. model: gpt-4o)");
+        }
+        return model;
     }
 
     private String validateApiKey(String apiKey) {

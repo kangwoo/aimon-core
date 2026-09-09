@@ -1743,14 +1743,16 @@ public class OrcaAgentExecutor
                             if (truncated) {
                                 final String flaggedAnswer = response.getTextContent() + TRUNCATION_MARKER;
                                 scope.transcriptBuffer
-                                        .addMessage(Message.assistant(flaggedAnswer, response.getToolUses()));
+                                        .addMessage(Message.assistant(flaggedAnswer, response.getToolUses())
+                                                .withReasoningTraces(response.getReasoningTraces()));
                                 scope.eventDispatcher.emitIterationCompleted(iterationCount, false);
                                 scope.eventDispatcher.emitExecutionCompleted(iterationCount,
                                         CompletionReason.TRUNCATED);
                                 return createTruncatedResult(scope, flaggedAnswer, iterationCount, accumulatedTokens);
                             }
                             scope.transcriptBuffer
-                                    .addMessage(Message.assistant(response.getTextContent(), response.getToolUses()));
+                                    .addMessage(Message.assistant(response.getTextContent(), response.getToolUses())
+                                            .withReasoningTraces(response.getReasoningTraces()));
                             // STREAM-03: iteration-complete + execution-complete(COMPLETED) for the terminal-success
                             // path.
                             scope.eventDispatcher.emitIterationCompleted(iterationCount, false);
@@ -1773,8 +1775,9 @@ public class OrcaAgentExecutor
                                 .sliceFrom(artifactCountBefore).stream().map(FileArtifact::toMessageArtifact).toList();
 
                         // Add assistant response with artifacts to conversation
-                        scope.transcriptBuffer.addMessage(Message.assistant(response.getTextContent(),
-                                response.getToolUses(), iterationArtifacts));
+                        scope.transcriptBuffer.addMessage(
+                                Message.assistant(response.getTextContent(), response.getToolUses(), iterationArtifacts)
+                                        .withReasoningTraces(response.getReasoningTraces()));
 
                         if (!toolUseResults.isEmpty()) {
                             scope.transcriptBuffer.addMessage(Message.toolUseResults(toolUseResults));
@@ -3072,7 +3075,12 @@ public class OrcaAgentExecutor
 
     @Override
     public String toString() {
-        return "OrcaAgentExecutor{" + "provider='" + gateway.getClient().getProviderName() + '\'' + '}';
+        // getProviderName() is the vendor alone since #45, so the model has to be recomposed here or someone at a
+        // debugger sees only "OpenAI". The segment is dropped rather than filled with a placeholder when the client
+        // reports no default model: a router or a recorded fixture legitimately has none.
+        final LlmClient client = gateway.getClient();
+        return "OrcaAgentExecutor{" + "provider='" + client.getProviderName() + '\''
+                + client.getDefaultModelName().map(model -> ", model='" + model + '\'').orElse("") + '}';
     }
 
     /**

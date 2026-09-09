@@ -16,6 +16,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import at.aimon.core.llm.LlmResponse;
+import at.aimon.core.llm.ReasoningTrace;
 import at.aimon.core.llm.StopReason;
 import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.llm.ToolUse;
@@ -44,6 +45,7 @@ public final class ChunkAggregator {
     private final Object lock = new Object();
     private final StringBuilder textBuffer = new StringBuilder();
     private final Map<Integer, ToolCallAccumulator> toolCalls = new LinkedHashMap<>();
+    private final List<ReasoningTrace> reasoningTraces = new ArrayList<>();
 
     private TokenUsage tokenUsage;
     private Optional<String> finishReason = Optional.empty();
@@ -126,6 +128,29 @@ public final class ChunkAggregator {
     }
 
     /**
+     * Records one provider-authored reasoning trace produced during this stream.
+     *
+     * <p>
+     * Traces accumulate in call order and are attached to the response {@link #toLlmResponse()} builds. This lives in
+     * the aggregator rather than in a provider mapper because the aggregator is already the single authority for the
+     * streamed response, and because every provider that returns reasoning payloads needs the identical seam.
+     *
+     * @param trace
+     *            the trace to record (must not be null)
+     * @throws IllegalStateException
+     *             if the stream has already ended
+     */
+    public void addReasoningTrace(ReasoningTrace trace) {
+        Objects.requireNonNull(trace, "trace");
+        synchronized (lock) {
+            if (closed) {
+                throw new IllegalStateException("Aggregator is already closed");
+            }
+            reasoningTraces.add(trace);
+        }
+    }
+
+    /**
      * @return a snapshot of the currently accumulated assistant text. Safe to call at any time.
      */
     public String peekText() {
@@ -173,6 +198,7 @@ public final class ChunkAggregator {
         final TokenUsage usage;
         final StopReason reason;
         final List<ToolCallAccumulator> slots;
+        final List<ReasoningTrace> traces;
         synchronized (lock) {
             if (!closed) {
                 throw new IllegalStateException("Aggregator has not received STREAM_END yet");
@@ -181,6 +207,7 @@ public final class ChunkAggregator {
             usage = tokenUsage == null ? TokenUsage.empty() : tokenUsage;
             reason = stopReason;
             slots = new ArrayList<>(toolCalls.values());
+            traces = List.copyOf(reasoningTraces);
         }
         final List<ToolUse> toolUses = new ArrayList<>(slots.size());
         for (ToolCallAccumulator slot : slots) {
@@ -190,7 +217,7 @@ public final class ChunkAggregator {
             }
             toolUses.add(ToolUse.of(slot.id, slot.name, parseArguments(slot.arguments.toString())));
         }
-        return LlmResponse.of(text, Collections.unmodifiableList(toolUses), usage, reason);
+        return LlmResponse.of(text, Collections.unmodifiableList(toolUses), usage, reason).withReasoningTraces(traces);
     }
 
     /**

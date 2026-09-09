@@ -71,6 +71,12 @@ public final class ModelPrice {
      * rounded to {@link Money#COST_SCALE} decimal places. The {@code totalTokens} field of the usage is intentionally
      * ignored: only the prompt/completion split carries a price.
      *
+     * <p>
+     * {@link TokenUsage#getReasoningTokens()} is ignored for a different reason, and one worth stating so that a
+     * reader does not take it for an oversight: reasoning tokens are a <em>subset</em> of the completion tokens, not
+     * an addition to them (OpenAI reports them inside {@code output_tokens_details}), so they are already priced by
+     * the {@code outputPrice * completionTokens} term. Adding them here would bill them twice.
+     *
      * @param usage
      *            the token usage to price (must not be null)
      * @return the cost in this price's currency (never null)

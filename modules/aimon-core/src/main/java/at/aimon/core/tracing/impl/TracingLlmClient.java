@@ -125,6 +125,11 @@ public final class TracingLlmClient implements LlmClient {
         return delegate.getProviderName();
     }
 
+    @Override
+    public Optional<String> getDefaultModelName() {
+        return delegate.getDefaultModelName();
+    }
+
     private LlmResponse traced(List<Message> messages, List<ToolDefinition> tools, LlmModel modelConfig,
             LlmCallMetadata metadata, Supplier<LlmResponse> call) {
         final Optional<SpanContext> parent = SpanContext.readFrom(metadata);
@@ -132,7 +137,10 @@ public final class TracingLlmClient implements LlmClient {
             // Not enriched by the executor — delegate without producing an orphan span.
             return call.get();
         }
-        final String model = modelConfig.getName().orElseGet(delegate::getProviderName);
+        // The client's own default before the provider name: the provider name no longer carries a model, so
+        // falling straight through to it would name every unoverridden span after the vendor alone.
+        final String model = modelConfig.getName().or(delegate::getDefaultModelName)
+                .orElseGet(delegate::getProviderName);
         final Tracer.Span span = tracer.startChild(parent.get(), SpanType.LLM, "llm:" + model,
                 inputsSummary(messages, tools, model));
         try {

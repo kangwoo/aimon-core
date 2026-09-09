@@ -439,12 +439,14 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
 
                 // If no tool uses, we have the final answer
                 if (!response.hasToolUses()) {
-                    lc.transcriptBuffer.addMessage(Message.assistant(response.getTextContent()));
+                    lc.transcriptBuffer.addMessage(Message.assistant(response.getTextContent())
+                            .withReasoningTraces(response.getReasoningTraces()));
                     return createSuccessResult(lc, response.getTextContent(), iterationCount, accumulatedTokens);
                 }
 
                 // Add assistant response with tool uses to context
-                lc.transcriptBuffer.addMessage(Message.assistant(response.getTextContent(), response.getToolUses()));
+                lc.transcriptBuffer.addMessage(Message.assistant(response.getTextContent(), response.getToolUses())
+                        .withReasoningTraces(response.getReasoningTraces()));
 
                 // Stream the assistant's reasoning preamble (the text accompanying tool calls) for progress visibility.
                 final String preamble = response.getTextContent();

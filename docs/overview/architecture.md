@@ -281,6 +281,7 @@ public interface LlmClient {
 | `LlmCallMetadata`, `BoundMetadataLlmClient` | 호출 태깅 |
 | `LlmCancellation` | 취소 |
 | `ModelContextWindowRegistry` | 모델별 컨텍스트 윈도우 |
+| `ModelCapabilities`, `ModelCapabilityRegistry` | 모델별로 요청에 실을 수 있는 파라미터 |
 
 구현: `aimon-llm-openai`, `aimon-llm-anthropic`.
 새 프로바이더는 [LLM Provider 개발 가이드](../features/llm/llm-provider-development-guide.md).

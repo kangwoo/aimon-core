@@ -90,6 +90,14 @@ class LoggingLlmClientTest {
     }
 
     @Test
+    @DisplayName("기본 모델 이름은 delegate 에 위임되어야 한다")
+    void delegatesDefaultModelName() {
+        // Issue #45's other half: the provider label no longer carries a model, so the log line's model field has to
+        // be able to fall back to the client's own default instead of printing empty for every unoverridden request.
+        assertThat(logging.getDefaultModelName()).contains("stub-default-model");
+    }
+
+    @Test
     @DisplayName("LlmLoggingOptions.defaults 는 body logging 비활성, 200자 preview 여야 한다")
     void defaultsAreSafe() {
         final LlmLoggingOptions defaults = LlmLoggingOptions.defaults();
@@ -142,6 +150,11 @@ class LoggingLlmClientTest {
         @Override
         public String getProviderName() {
             return "StubProvider";
+        }
+
+        @Override
+        public Optional<String> getDefaultModelName() {
+            return Optional.of("stub-default-model");
         }
 
     }

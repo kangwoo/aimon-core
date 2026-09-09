@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 import java.util.Map;
@@ -43,6 +44,8 @@ import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.Message;
+import at.aimon.core.llm.ReasoningTrace;
+import at.aimon.core.llm.Role;
 import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.llm.ToolUse;
 import at.aimon.core.llm.cost.Money;
@@ -339,6 +342,51 @@ class DefaultSubagentExecutorTest {
 
     // ── helpers ─────────────────────────────────────────────────────────────────
 
+    @Test
+    @DisplayName("a tool-calling turn's reasoning traces reach the next iteration's request")
+    void tracesReachTheNextIteration() {
+        // The Task-tool subagent runs its own multi-turn ReAct loop against the same LlmClient gateway and the same
+        // modelConfig as the main executor, so a Responses-routed model here drops its reasoning items every
+        // iteration if this site is missed -- the exact cost the round trip exists to remove, in the loop that runs
+        // most often unattended.
+        final ReasoningTrace trace = ReasoningTrace.builder().providerName("Stub").payload("RS-1").toolUseId("p1")
+                .build();
+        final ProbeTool probe = new ProbeTool();
+        final DefaultToolRegistry registry = new DefaultToolRegistry();
+        registry.register(probe);
+
+        final StubLlmClient llm = new StubLlmClient();
+        llm.responses.add(LlmResponse.of("thinking", List.of(ToolUse.of("p1", "Probe", Map.of())))
+                .withReasoningTraces(List.of(trace)));
+        llm.responses.add(LlmResponse.text("done"));
+
+        final SubagentExecutionContext context = createContext("explorer", NoopCancellationSignal.INSTANCE, registry,
+                5);
+        newExecutor(llm).execute(context, request("go"));
+
+        assertThat(llm.seen).hasSizeGreaterThanOrEqualTo(2);
+        assertThat(llm.seen.get(1)).filteredOn(m -> m.getRole() == Role.ASSISTANT)
+                .anySatisfy(m -> assertThat(m.getReasoningTraces()).containsExactly(trace));
+    }
+
+    @Test
+    @DisplayName("the terminal turn's reasoning traces survive into the result snapshot")
+    void terminalTracesSurviveIntoTheResultSnapshot() {
+        // The other exit of the same loop, and not covered by the test above: createSuccessResult returns the
+        // transcript snapshot, and a resumed fork rebuilds from it, so dropping here costs the reasoning across a
+        // resume rather than across an iteration.
+        final ReasoningTrace trace = ReasoningTrace.builder().providerName("Stub").payload("RS-2").build();
+        final StubLlmClient llm = new StubLlmClient();
+        llm.responses.add(LlmResponse.text("done").withReasoningTraces(List.of(trace)));
+
+        final SubagentExecutionContext context = createContext("explorer", NoopCancellationSignal.INSTANCE,
+                new DefaultToolRegistry(), 5);
+        final SubagentExecutionResult result = newExecutor(llm).execute(context, request("go"));
+
+        assertThat(result.getConversationHistory()).filteredOn(m -> m.getRole() == Role.ASSISTANT).last()
+                .satisfies(m -> assertThat(m.getReasoningTraces()).containsExactly(trace));
+    }
+
     private SubagentExecutionContext createContext(String subagentName, CancellationSignal parentSignal,
             ToolRegistry toolRegistry, int maxIterations) {
         return SubagentExecutionContext.builder().agentRuntimeId(AgentRuntimeId.of("agent:test-1"))
@@ -439,6 +487,8 @@ class DefaultSubagentExecutorTest {
     /** Minimal scriptable LLM client: returns queued responses, then a terminal text (or a tool use). */
     private static final class StubLlmClient implements LlmClient {
         private final Deque<LlmResponse> responses = new ArrayDeque<>();
+        /** The message list of every call, so a test can read what the NEXT request was actually handed. */
+        private final List<List<Message>> seen = new ArrayList<>();
         private int calls;
         private boolean alwaysToolUse;
 
@@ -452,6 +502,7 @@ class DefaultSubagentExecutorTest {
         public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
                 LlmModel modelConfig, LlmCallMetadata metadata) {
             calls++;
+            seen.add(List.copyOf(messages));
             if (!responses.isEmpty()) {
                 return responses.poll();
             }

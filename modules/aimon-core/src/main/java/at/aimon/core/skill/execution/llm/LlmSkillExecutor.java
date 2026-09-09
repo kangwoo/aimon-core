@@ -195,8 +195,9 @@ public class LlmSkillExecutor implements SkillExecutor {
                     return SkillExecutionResult.failure(errorMsg, new IllegalStateException(errorMsg), metadata);
                 }
 
-                final Message assistantMessage = Message.assistant(currentResponse.getTextContent(),
-                        currentResponse.getToolUses());
+                final Message assistantMessage = Message
+                        .assistant(currentResponse.getTextContent(), currentResponse.getToolUses())
+                        .withReasoningTraces(currentResponse.getReasoningTraces());
                 transcriptBuffer.addMessage(assistantMessage);
 
                 final ToolRegistry toolRegistry = context.getToolRegistry();
@@ -215,7 +216,12 @@ public class LlmSkillExecutor implements SkillExecutor {
                 iterationCount++;
             }
 
-            transcriptBuffer.addAssistantMessage(currentResponse.getTextContent());
+            // addAssistantMessage(String) cannot carry traces, and this buffer is discarded at the return below, so
+            // attaching here is inert today. It is done anyway: the rule is that every site building an assistant
+            // message out of an LlmResponse attaches that response's traces, with no per-site judgement about whether
+            // the message will be read back. A rule with an exception is a rule nobody can check with one grep.
+            transcriptBuffer.addMessage(Message.assistant(currentResponse.getTextContent())
+                    .withReasoningTraces(currentResponse.getReasoningTraces()));
 
             final SkillExecutionMetadata metadata = buildMetadata(iterationCount, accumulatedTokens, startTime);
             return SkillExecutionResult.success(currentResponse.getTextContent(), metadata);

@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/features.md
-source_commit: eec9ccd
+source_commit: d4608ba
 ---
 
 # Feature Catalog
@@ -337,6 +337,7 @@ The point of it is being able to swap providers. The core holds only the `LlmCli
 | token measurement | `TokenUsage`, `llm.token`, `llm.usage` | core |
 | cost calculation | `Money`, `ModelPriceTable`, `CostSummary` | core |
 | the context-window registry | `ModelContextWindowRegistry` | core |
+| the model-capability registry | `ModelCapabilities`, `ModelCapabilityRegistry` | core |
 | tagging call metadata | `LlmCallMetadata`, `BoundMetadataLlmClient` | core |
 | the OpenAI implementation | — | `aimon-llm-openai` |
 | the Anthropic implementation | — | `aimon-llm-anthropic` |

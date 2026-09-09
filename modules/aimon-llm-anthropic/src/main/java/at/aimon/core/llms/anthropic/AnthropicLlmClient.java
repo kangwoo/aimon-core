@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -402,7 +403,12 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
 
     @Override
     public String getProviderName() {
-        return "Anthropic (" + config.getModel() + ")";
+        return "Anthropic";
+    }
+
+    @Override
+    public Optional<String> getDefaultModelName() {
+        return Optional.of(config.getModel());
     }
 
     @Override

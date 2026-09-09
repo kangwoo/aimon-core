@@ -33,6 +33,26 @@ final class PayloadValues {
         return ((Number) Objects.requireNonNull(value, "missing numeric field")).intValue();
     }
 
+    /**
+     * Reads a numeric field that a payload written by an <em>older</em> node may not carry at all, treating its
+     * absence as zero.
+     *
+     * <p>
+     * Deliberately narrow: {@link #asInt(Object)} stays the accessor for every field whose absence really is a
+     * malformed payload, and only a field added after a released wire format uses this one. During a rolling upgrade
+     * a new node decodes a map an old node wrote; without this, the new field's absence would raise
+     * {@link NullPointerException} and the whole signal would be dropped rather than one counter reading zero. The
+     * asymmetry with {@code SessionRecordCodec} — whose {@code node.path(...).asInt()} already defaults to 0 — is
+     * real: one wire is tolerant by construction and this one is not.
+     *
+     * @param value
+     *            the raw payload value (may be null)
+     * @return the value as an int, or 0 when absent
+     */
+    static int asIntOrZero(Object value) {
+        return value == null ? 0 : ((Number) value).intValue();
+    }
+
     static long asLong(Object value) {
         return ((Number) Objects.requireNonNull(value, "missing numeric field")).longValue();
     }

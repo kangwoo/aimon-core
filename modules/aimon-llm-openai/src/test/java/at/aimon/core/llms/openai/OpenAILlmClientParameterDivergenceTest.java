@@ -1,0 +1,333 @@
+package at.aimon.core.llms.openai;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.verify;
+
+import java.util.List;
+import java.util.Map;
+
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
+
+import com.openai.client.OpenAIClient;
+import com.openai.core.JsonMissing;
+import com.openai.core.JsonNull;
+import com.openai.models.chat.completions.ChatCompletionCreateParams;
+import com.openai.services.blocking.ChatService;
+import com.openai.services.blocking.chat.ChatCompletionService;
+
+import at.aimon.core.llm.LlmModel;
+import at.aimon.core.llm.Message;
+import at.aimon.core.llm.ReasoningEffort;
+import at.aimon.core.llm.ToolDefinition;
+import at.aimon.core.llm.capability.InMemoryModelCapabilityRegistry;
+import at.aimon.core.llm.capability.ModelCapabilities;
+import at.aimon.core.llm.capability.ModelCapabilityRegistry;
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+
+/**
+ * Tests that a value this provider cannot put on the wire as given is reported at a level an operator sees, exactly
+ * once per distinct value.
+ *
+ * <p>
+ * The call <em>succeeds</em> with settings other than the ones configured — no error, no status code — so the log line
+ * is the only thing standing between the operator and a silent behaviour change. Mirrors
+ * {@code AnthropicLlmClientParameterDivergenceTest}, which reports the same class of divergence for the same reason.
+ *
+ * <p>
+ * Most tests here set {@code responsesApiEnabled(false)}, because they assert the Chat Completions divergences and
+ * {@code gpt-5.6-terra} now routes to {@code /v1/responses} on a stock config. The rest are already on Chat without
+ * saying so and are left alone: some override the registry so the lookup degrades to
+ * {@code ModelCapabilities.unknown()} (whose {@code supportsReasoningTraceRoundTrip()} is false — an unresolvable
+ * model is never routed to the new endpoint), one names {@code gpt-4o}, and the {@code o4-mini} rows are on Chat by
+ * their own capability entry. That the same reporting still happens on the Responses path is bound separately, by
+ * {@code OpenAIResponsesParameterDivergenceTest}.
+ */
+@DisplayName("OpenAILlmClient - request parameter divergence reporting")
+@ExtendWith(MockitoExtension.class)
+class OpenAILlmClientParameterDivergenceTest {
+
+    /** Aborts the SDK call after buildRequest has run, so no valid SDK ChatCompletion has to be constructed. */
+    private static final RuntimeException SENTINEL = new RuntimeException("create-invoked");
+
+    private static final ToolDefinition A_TOOL = ToolDefinition.of("Read", "Reads a file",
+            Map.of("type", "object", "properties", Map.of()));
+
+    @Mock
+    private OpenAIClient mockOpenAIClient;
+
+    @Mock
+    private ChatService mockChatService;
+
+    @Mock
+    private ChatCompletionService mockChatCompletionService;
+
+    private Logger clientLogger;
+    private ListAppender<ILoggingEvent> logAppender;
+
+    @BeforeEach
+    void setUp() {
+        clientLogger = (Logger) LoggerFactory.getLogger(OpenAILlmClient.class);
+        logAppender = new ListAppender<>();
+        logAppender.start();
+        clientLogger.addAppender(logAppender);
+    }
+
+    @AfterEach
+    void tearDown() {
+        clientLogger.detachAppender(logAppender);
+        logAppender.stop();
+    }
+
+    private OpenAILlmClient client(OpenAIConfig config) {
+        lenient().when(mockOpenAIClient.chat()).thenReturn(mockChatService);
+        lenient().when(mockChatService.completions()).thenReturn(mockChatCompletionService);
+        lenient().when(mockChatCompletionService.create(any(ChatCompletionCreateParams.class))).thenThrow(SENTINEL);
+        return new OpenAILlmClient(config, mockOpenAIClient);
+    }
+
+    private void send(OpenAILlmClient client, LlmModel model, List<ToolDefinition> tools) {
+        assertThatThrownBy(() -> client.sendMessage("You are helpful", List.of(Message.user("hi")), tools, model))
+                .hasRootCause(SENTINEL);
+    }
+
+    /** {@link #send} plus the params the SDK was handed — this class's own helper returns nothing. */
+    private ChatCompletionCreateParams sendAndCapture(OpenAILlmClient client, LlmModel model,
+            List<ToolDefinition> tools) {
+        send(client, model, tools);
+        final ArgumentCaptor<ChatCompletionCreateParams> captor = ArgumentCaptor
+                .forClass(ChatCompletionCreateParams.class);
+        verify(mockChatCompletionService).create(captor.capture());
+        return captor.getValue();
+    }
+
+    /**
+     * The request body as it would be serialised onto the wire.
+     *
+     * <p>
+     * {@code _body().toString()} is the SDK's Kotlin {@code toString}, which prints camelCase field names and prints
+     * an unset field as {@code name=} rather than omitting it — so a {@code doesNotContain("reasoning_effort")}
+     * assertion against it passes whether or not the parameter was set. Serialising through the SDK's own mapper is
+     * the only form of that assertion that can fail.
+     */
+    private static String wireBodyOf(ChatCompletionCreateParams params) {
+        try {
+            return com.openai.core.ObjectMappers.jsonMapper().writeValueAsString(params._body());
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new IllegalStateException("Failed to serialise ChatCompletionCreateParams body", e);
+        }
+    }
+
+    private List<String> warnings() {
+        return logAppender.list.stream().filter(event -> event.getLevel() == Level.WARN)
+                .map(ILoggingEvent::getFormattedMessage).toList();
+    }
+
+    @Test
+    @DisplayName("a temperature suppressed by capabilities is reported once at WARN")
+    void suppressedTemperatureIsReportedOnce() {
+        final OpenAILlmClient client = client(
+                OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra").responsesApiEnabled(false).build());
+        final LlmModel model = LlmModel.builder().temperature(0.7).build();
+
+        send(client, model, List.of());
+        assertThat(warnings()).hasSize(1);
+        assertThat(warnings().get(0)).contains("temperature").contains("0.7").contains("gpt-5.6-terra")
+                .contains("does not accept sampling parameters");
+
+        // Same value again: buildRequest runs on every ReAct iteration, so this must not repeat.
+        send(client, model, List.of());
+        assertThat(warnings()).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("the message does not claim an operator set the value")
+    void messageDoesNotAssertOperatorIntent() {
+        // A subagent turn carries a temperature from SubagentLlmDefaults, not from a human, and nothing here can tell
+        // the two apart -- so the wording says only that the value is set on the request.
+        final OpenAILlmClient client = client(
+                OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra").responsesApiEnabled(false).build());
+
+        send(client, LlmModel.builder().temperature(0.7).build(), List.of());
+
+        assertThat(warnings().get(0)).contains("is set on this request").doesNotContain("configured")
+                .doesNotContain("you ");
+    }
+
+    @Test
+    @DisplayName("the suppression path says nothing about a temperature nobody set")
+    void suppressionIsSilentForATemperatureNobodySet() {
+        // What this binds, precisely: gpt-5.6-terra does not accept sampling, so applySamplingParameters takes the
+        // suppression branch, and that branch reports each of the four parameters. It must report *none* of them when
+        // nothing was configured -- otherwise every gpt-5 deployment logs four WARNs on every ReAct iteration about
+        // values nobody set. That assertion only means something on a model with sampling off, which is why this test
+        // keeps this model.
+        //
+        // What it does NOT bind: the no-fallback rule. The branch returns before the setter, so the _temperature()
+        // assertion below is satisfied by suppression -- it would still pass with OpenAIConfig.DEFAULT_TEMPERATURE
+        // restored. Round 2's review measured that: neither temperature mutation made this test fail. Acceptance
+        // criterion 2 is bound by OpenAILlmClientModelCapabilityTest.unsetTemperatureIsAbsentEvenOnAnUnknownModel,
+        // which runs the same empty LlmModel through a model that *does* accept sampling. Renamed here from
+        // `unconfiguredTemperatureIsNeitherSentNorReported`, whose name claimed the half it cannot fail on.
+        //
+        // Round 2 reversal, by maintainer ruling: this test was `suppressedFallbackIsSilent`, and it asserted only
+        // that suppressing OpenAIConfig.DEFAULT_TEMPERATURE stayed quiet. That fallback was removed deliberately --
+        // issue #43's "sampling parameters are sent only when the caller explicitly set them" beats round 1's "an
+        // unknown model sends exactly what it sends today", which round 1 had recorded as design O-1/A6. See
+        // docs/design/llm/openai-model-capabilities.md section 9.
+        final OpenAILlmClient client = client(
+                OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra").responsesApiEnabled(false).build());
+
+        final ChatCompletionCreateParams params = sendAndCapture(client, LlmModel.builder().build(), List.of(A_TOOL));
+
+        assertThat(warnings()).isEmpty();
+        // Suppression leaves the field missing rather than JSON null; params.temperature() is empty for both, so the
+        // raw accessor is the only one that can tell them apart.
+        assertThat(params._temperature()).isInstanceOf(JsonMissing.class).isNotInstanceOf(JsonNull.class);
+    }
+
+    @Test
+    @DisplayName("a registry whose resolve() returns null is reported once and the request keeps its shape")
+    void nullReturningRegistryIsReportedOnce() {
+        // The adjacent throwing branch reports; a silent degradation beside a reported one would teach an operator
+        // that capability lookups never fail.
+        final OpenAIConfig config = OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra")
+                .modelCapabilityRegistry(new NullResolvingRegistry()).build();
+        final OpenAILlmClient client = client(config);
+
+        send(client, LlmModel.builder().build(), List.of());
+        send(client, LlmModel.builder().build(), List.of());
+
+        assertThat(warnings()).hasSize(1);
+        assertThat(warnings().get(0)).contains("Model capability lookup for gpt-5.6-terra returned null")
+                .contains("treating the model as unknown");
+    }
+
+    @Test
+    @DisplayName("each distinct suppressed parameter is reported separately")
+    void eachParameterIsReportedSeparately() {
+        final OpenAILlmClient client = client(
+                OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra").responsesApiEnabled(false).build());
+
+        send(client, LlmModel.builder().temperature(0.7).topP(0.9).presencePenalty(1.0).frequencyPenalty(-1.0).build(),
+                List.of());
+
+        assertThat(warnings()).hasSize(4);
+        assertThat(warnings()).anyMatch(w -> w.startsWith("topP")).anyMatch(w -> w.startsWith("presencePenalty"))
+                .anyMatch(w -> w.startsWith("frequencyPenalty"));
+    }
+
+    @Test
+    @DisplayName("a reasoning effort omitted because tools are present is reported")
+    void omittedReasoningEffortIsReported() {
+        // Round 6, measured 2026-09-09: the remedy is omission, not an explicit NONE, and the shipped gpt-5 row no
+        // longer reaches this branch at all (supportsToolsWithReasoning is true because tools on Chat work fine).
+        // The branch still exists for a caller who registers a model needing it, so the flag is set by hand here.
+        final ModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.builder()
+                .register("no-tools-with-reasoning", ModelCapabilities.builder().supportsSamplingParameters(true)
+                        .supportsReasoningEffort(true).supportsToolsWithReasoning(false).build())
+                .build();
+        final OpenAILlmClient client = client(OpenAIConfig.builder().apiKey("test-key").model("no-tools-with-reasoning")
+                .responsesApiEnabled(false).modelCapabilityRegistry(registry).build());
+
+        send(client, LlmModel.builder().reasoningEffort(ReasoningEffort.HIGH).build(), List.of(A_TOOL));
+
+        assertThat(warnings()).anyMatch(
+                w -> w.contains("reasoningEffort HIGH") && w.contains("does not accept tools together with reasoning"));
+    }
+
+    @Test
+    @DisplayName("asking for a rung below the model's ladder is reported AND omitted from the request")
+    void requestedNoneIsReportedAndOmitted() {
+        // Round 6 reversal, measured 2026-09-09. This used to assert SILENCE, on the reasoning that asking for NONE
+        // and getting NONE is not a divergence. But OpenAI has no 'none' level -- gpt-5.x accepts 'minimal'..'high',
+        // the o-series 'low'..'xhigh' -- so sending it is a 400, and omitting it leaves the model reasoning at its
+        // own default, which is the opposite of what NONE asked for. That is a divergence and the operator is told.
+        //
+        // The body assertion is the half this test's own name claimed and did not check: warning and sending are not
+        // mutually exclusive, so asserting only the warning left "report it, then send it anyway" -- the 400 this
+        // branch exists to prevent -- indistinguishable from correct behaviour.
+        final OpenAILlmClient client = client(
+                OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra").responsesApiEnabled(false).build());
+
+        final ChatCompletionCreateParams params = sendAndCapture(client,
+                LlmModel.builder().reasoningEffort(ReasoningEffort.NONE).build(), List.of(A_TOOL));
+
+        assertThat(warnings()).anyMatch(w -> w.contains("has no rung below MINIMAL"));
+        assertThat(params._reasoningEffort()).isInstanceOf(JsonMissing.class);
+        assertThat(wireBodyOf(params)).doesNotContain("reasoning_effort");
+    }
+
+    @Test
+    @DisplayName("MINIMAL is below the o-series ladder and comes off the Chat request too")
+    void minimalIsOmittedForTheOSeries() {
+        // The second rung the same rule covers, and the reason it is a capability rather than a NONE special case:
+        // o4-mini answers "Supported values are: 'low', 'medium', 'high', and 'xhigh'", so the neutral MINIMAL has no
+        // wire value there. The o-series stays on Chat Completions, so this is the endpoint it is actually sent to.
+        final OpenAILlmClient client = client(OpenAIConfig.builder().apiKey("test-key").model("o4-mini").build());
+
+        final ChatCompletionCreateParams params = sendAndCapture(client,
+                LlmModel.builder().reasoningEffort(ReasoningEffort.MINIMAL).build(), List.of(A_TOOL));
+
+        assertThat(warnings()).anyMatch(w -> w.contains("reasoningEffort MINIMAL") && w.contains("o4-mini")
+                && w.contains("has no rung below LOW"));
+        assertThat(params._reasoningEffort()).isInstanceOf(JsonMissing.class);
+        assertThat(wireBodyOf(params)).doesNotContain("reasoning_effort");
+    }
+
+    @Test
+    @DisplayName("LOW is on the o-series ladder and still reaches the wire")
+    void lowIsStillSentForTheOSeries() {
+        // The other side of the same row: raising the floor must not turn the whole family's reasoning off. Without
+        // this, setting lowestReasoningEffort to something absurd would pass every other assertion in this class.
+        final OpenAILlmClient client = client(OpenAIConfig.builder().apiKey("test-key").model("o4-mini").build());
+
+        final ChatCompletionCreateParams params = sendAndCapture(client,
+                LlmModel.builder().reasoningEffort(ReasoningEffort.LOW).build(), List.of(A_TOOL));
+
+        assertThat(wireBodyOf(params)).contains("\"reasoning_effort\":\"low\"");
+        assertThat(warnings()).noneMatch(w -> w.contains("rung below"));
+    }
+
+    @Test
+    @DisplayName("a reasoning effort set for a model that takes none is reported")
+    void effortForANonReasoningModelIsReported() {
+        final OpenAILlmClient client = client(OpenAIConfig.builder().apiKey("test-key").model("gpt-4o").build());
+
+        send(client, LlmModel.builder().reasoningEffort(ReasoningEffort.HIGH).build(), List.of());
+
+        assertThat(warnings()).hasSize(1);
+        assertThat(warnings().get(0)).contains("reasoningEffort HIGH").contains("gpt-4o")
+                .contains("takes no reasoning-effort parameter");
+    }
+
+    @Test
+    @DisplayName("a registry that throws is reported once and the request keeps its default shape")
+    void brokenRegistryIsReported() {
+        final OpenAIConfig config = OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra")
+                .modelCapabilityRegistry(modelName -> {
+                    throw new IllegalStateException("registry is broken");
+                }).build();
+        final OpenAILlmClient client = client(config);
+
+        send(client, LlmModel.builder().build(), List.of());
+        send(client, LlmModel.builder().build(), List.of());
+
+        assertThat(warnings()).hasSize(1);
+        assertThat(warnings().get(0)).contains("Model capability lookup for gpt-5.6-terra failed")
+                .contains("treating the model as unknown");
+    }
+}

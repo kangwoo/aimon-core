@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/llm/llm-usage-metering.md
-source_commit: eec9ccd
+source_commit: 2d33f19
 ---
 
 # LLM Usage Metering Guide
@@ -19,6 +19,14 @@ Two components exist so that the token usage an `LlmClient` produces can be attr
 | `InMemoryLlmUsageRecorder` | The default in-memory implementation, following the multi-instance-ready principle |
 
 The provider implementations (`OpenAILlmClient`, `AnthropicLlmClient`) do not need to know that metering exists. Wrapping them in the decorator is enough.
+
+IMPORTANT: `TokenUsage.getReasoningTokens()` is **recorded and deliberately not priced.** Reasoning
+tokens are a *subset* of the completion tokens rather than an addition to them (OpenAI reports them
+inside `output_tokens_details`), so `ModelPrice.costOf`'s completion term has already priced them —
+adding them again here would bill them twice. A recorder receives the whole `TokenUsage`, so the
+field simply arrives.
+
+`provider` is the vendor name (`"OpenAI"`, `"Anthropic"`) and `model` is the model the call **actually used** — the name the request's `LlmModel` gave, or the client's default (`LlmClient.getDefaultModelName()`) when it gave none.
 
 ## 2. Getting started
 

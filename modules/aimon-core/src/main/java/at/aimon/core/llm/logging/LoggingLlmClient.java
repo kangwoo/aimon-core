@@ -2,6 +2,7 @@ package at.aimon.core.llm.logging;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -183,6 +184,11 @@ public final class LoggingLlmClient implements LlmClient {
         return delegate.getProviderName();
     }
 
+    @Override
+    public Optional<String> getDefaultModelName() {
+        return delegate.getDefaultModelName();
+    }
+
     private void logRequest(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
             LlmModel modelConfig, boolean streaming) {
         log.info("[LLM->] provider={} model={} messages={} tools={} streaming={}", delegate.getProviderName(),
@@ -221,7 +227,17 @@ public final class LoggingLlmClient implements LlmClient {
         return text.substring(0, max) + "...(+" + (text.length() - max) + " chars)";
     }
 
-    private static String modelName(LlmModel modelConfig) {
-        return modelConfig == null ? "" : modelConfig.getName().orElse("");
+    /**
+     * The model this call actually ran against: the request's override, else the client's own default.
+     *
+     * <p>
+     * The delegate's default is consulted because {@code getProviderName()} no longer carries a model, so without it
+     * this field would be empty for every request that did not override — which is most of them. The {@code null}
+     * guard is defensive: the contract forbids a null model config, but this runs before the delegate's own
+     * {@code requireNonNull}, and an NPE thrown inside a logging decorator is a worse diagnostic than the provider's.
+     */
+    private String modelName(LlmModel modelConfig) {
+        final Optional<String> requested = modelConfig == null ? Optional.empty() : modelConfig.getName();
+        return requested.or(delegate::getDefaultModelName).orElse("");
     }
 }

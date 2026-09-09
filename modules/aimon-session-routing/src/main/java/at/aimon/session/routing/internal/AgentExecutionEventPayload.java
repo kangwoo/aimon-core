@@ -2,6 +2,7 @@ package at.aimon.session.routing.internal;
 
 import static at.aimon.session.routing.internal.PayloadValues.asBoolean;
 import static at.aimon.session.routing.internal.PayloadValues.asInt;
+import static at.aimon.session.routing.internal.PayloadValues.asIntOrZero;
 import static at.aimon.session.routing.internal.PayloadValues.asList;
 import static at.aimon.session.routing.internal.PayloadValues.asLong;
 import static at.aimon.session.routing.internal.PayloadValues.asMap;
@@ -392,11 +393,15 @@ final class AgentExecutionEventPayload {
         map.put("prompt", tokens.getPromptTokens());
         map.put("completion", tokens.getCompletionTokens());
         map.put("total", tokens.getTotalTokens());
+        map.put("reasoning", tokens.getReasoningTokens());
         return map;
     }
 
     private static TokenUsage tokensFromMap(Map<String, Object> map) {
-        return TokenUsage.of(asInt(map.get("prompt")), asInt(map.get("completion")), asInt(map.get("total")));
+        // "reasoning" is newer than the other three, so it is read tolerantly: during a rolling upgrade a map written
+        // by an old node has no such key, and asInt would NPE on it and drop the whole signal.
+        return TokenUsage.of(asInt(map.get("prompt")), asInt(map.get("completion")), asInt(map.get("total")),
+                asIntOrZero(map.get("reasoning")));
     }
 
     /**

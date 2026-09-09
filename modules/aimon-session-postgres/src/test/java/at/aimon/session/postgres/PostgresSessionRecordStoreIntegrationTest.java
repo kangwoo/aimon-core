@@ -26,6 +26,7 @@ import at.aimon.core.agent.session.store.SessionRecordView;
 import at.aimon.core.agent.session.store.SessionTotals;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.llm.Message;
+import at.aimon.core.llm.ReasoningTrace;
 import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.llm.ToolUse;
 
@@ -89,22 +90,30 @@ class PostgresSessionRecordStoreIntegrationTest {
     void transcriptRoundTripLeavesSideFieldsAlone() {
         final SessionId id = SessionId.of("rec-transcript");
         store.provision(id, "agent-A");
-        store.setTotalsAndBudgetOverride(id, SessionTotals.of(2, 5, TokenUsage.of(10, 20, 30)),
+        store.setTotalsAndBudgetOverride(id, SessionTotals.of(2, 5, TokenUsage.of(10, 20, 30, 7)),
                 ExecutionBudget.builder().maxIterations(9).build());
         store.incrementCompactionFailureCount(id);
 
-        store.mergeFromSnapshot(
-                SessionSnapshot.of(id, "You are a helper.", List.of(Message.user("hi"), Message.assistant("hello"))));
+        // The assistant message carries a reasoning trace: an opaque provider payload that lands in the persisted
+        // transcript. The backend stores the transcript as an opaque string and cannot see the field, which is the
+        // argument -- this test is what turns that argument into an observation on a real database.
+        final ReasoningTrace trace = ReasoningTrace.builder().providerName("OpenAI")
+                .payload("{\"type\":\"reasoning\",\"id\":\"rs_1\",\"encrypted_content\":\"gAAAAA==\"}")
+                .toolUseId("call_1").build();
+        store.mergeFromSnapshot(SessionSnapshot.of(id, "You are a helper.",
+                List.of(Message.user("hi"), Message.assistant("hello").withReasoningTraces(List.of(trace)))));
 
         final SessionRecordView view = store.load(id).orElseThrow();
         assertThat(view.getSystemPrompt()).isEqualTo("You are a helper.");
         assertThat(view.getMessages()).hasSize(2);
+        assertThat(view.getMessages().get(1).getReasoningTraces()).containsExactly(trace);
         // The merge names the transcript column and nothing else, so the four columns it cannot carry survive by not
         // appearing in the SET list. A load-mutate-store implementation would pass this only until two writers
         // overlapped.
         assertThat(view.getAgentRef()).contains("agent-A");
         assertThat(view.getCompactionFailureCount()).isEqualTo(1);
         assertThat(view.getSessionTotals().getTurnCount()).isEqualTo(2);
+        assertThat(view.getSessionTotals().getTokenUsage().getReasoningTokens()).isEqualTo(7);
         assertThat(view.getBudgetOverride().orElseThrow().getMaxIterations()).contains(9);
     }
 
