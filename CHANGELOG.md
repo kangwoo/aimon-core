@@ -18,11 +18,17 @@ Central is versioned independently).
 - **What it fixes.** Every `gpt-5.x` tool-calling turn — which is every agent turn — failed with HTTP
   400. Two independent causes, and fixing one surfaced the other. The client always called
   `.temperature(...)` because `OpenAIConfig.getTemperature()` defaulted to `0.0` and had no way to say
-  "unset", and `gpt-5.x` rejects `temperature` / `top_p` by the **presence** of the parameter. And the
-  documented `reasoning_effort: "none"` workaround was unreachable, because omitting the parameter is
-  not equivalent — the server default for those models is `medium`, so the request fails anyway. Both
-  decisions now come from the descriptor. There is no `model.startsWith("gpt-5")` anywhere in the
-  request builder.
+  "unset", and `gpt-5.x` rejects that value. Both decisions now come from the descriptor. There is no
+  `model.startsWith("gpt-5")` anywhere in the request builder.
+
+  **Corrected against the live API on 2026-09-09** (the first release to test rather than infer): two
+  of the premises above, taken from the issue report, are wrong. Rejection is by **value**, not by
+  presence — `temperature: 1.0` returns 200 on `gpt-5-nano` and `o4-mini`, only non-default values 400.
+  And tools on Chat Completions work fine for these models with the effort simply omitted; the
+  `reasoning_effort: "none"` workaround is not merely unreachable but **invalid**, since `none` is not
+  an accepted value. Suppression stays — omitting yields the default anyway and spares every other
+  value a 400 — but the remedy that used to send `none` now omits. See the probe table in
+  `docs/design/llm/openai-model-capabilities.md` §11.
 
 - **Fail open, and that has a consequence worth knowing.** A model no registry describes resolves to
   `ModelCapabilities.unknown()`, which is not "everything permitted" but **nothing the caller asked
@@ -44,12 +50,13 @@ Central is versioned independently).
   A **CLI** deployment in that state has no yaml key for this yet; that is a config-surface decision
   left to its own issue rather than ridden in on a bug fix.
 
-- **The built-in table is deliberately two rows** — `gpt-5-chat` (unchanged behaviour) then `gpt-5`
-  (sampling suppressed, reasoning effort sent). The o-series is **not** in it. Those models are
-  believed to reject `temperature` too, but the belief is unverified against a live API, and the harms
-  are asymmetric: a wrong row is a *silent* sampling change for o-series users, while no row leaves
-  them exactly where they are. A test pins `o3` as behaving like an unknown model, so adding the row
-  has to change a test that says why.
+- **The built-in table is five rows** — `gpt-5-chat` (unchanged behaviour), `gpt-5`, then `o1` / `o3` /
+  `o4`. The o-series rows were **withheld in the first cut and added on 2026-09-09 once measured**: the
+  belief that they reject `temperature` was unverified, and a wrong row is a *silent* sampling change
+  while no row leaves those users exactly where they are. The probes settled it — `o3-mini` and
+  `o4-mini` reject `0.0`, accept `1.0`, accept tools with no effort, and reject effort `none`. They are
+  **not** routed to `/v1/responses`: reasoning-item replay was not measured for them, and asserting a
+  round trip nobody has seen is how the `gpt-5` row came out wrong the first time.
 
 - **Breaking: `OpenAIConfig.getTemperature()` returns `Optional<Double>`, not `double`.** A published
   module (`at.aimon.core.llms.openai`), and — like the entries below — not a rename, so there is no row
@@ -138,9 +145,10 @@ Central is versioned independently).
 
 ### LLM: a reasoning model's chain of thought now survives a tool call (OpenAI Responses API)
 
-- **What it fixes, and why the phase-1 fix was not enough.** Phase 1 made `gpt-5.x` usable with tools
-  by sending `reasoning_effort: none` — a working request bought by turning off the thing the model
-  was chosen for. It also left a quieter cost: Chat Completions never returns reasoning items, so
+- **What it fixes, and why the phase-1 fix was not enough.** Phase 1 tried to make `gpt-5.x` usable
+  with tools by sending `reasoning_effort: none` — a working request bought by turning off the thing
+  the model was chosen for, and, as the 2026-09-09 probes later showed, not even a working one, since
+  `none` is not an accepted value. That remedy is gone; the effort is now omitted instead. It also left a quieter cost: Chat Completions never returns reasoning items, so
   nothing carried across a tool call and the model re-derived its chain of thought on every ReAct
   iteration. Worse answers, and reasoning tokens billed again each time, on exactly the multi-turn
   tool loops AIMON exists to run. A model whose capabilities say its reasoning traces round-trip now

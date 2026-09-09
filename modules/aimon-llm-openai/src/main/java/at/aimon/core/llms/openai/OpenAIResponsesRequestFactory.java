@@ -22,7 +22,8 @@ import at.aimon.core.llm.capability.ModelCapabilities;
  * <p>
  * Same sampling rule as the Chat path, for the same SDK reason: {@code temperature(Optional.empty())} and
  * {@code topP((Double) null)} both route through {@code JsonField.ofNullable} and put {@code "temperature": null} on
- * the wire, which a model that rejects the parameter by presence rejects exactly like a value. So omission is "never
+ * the wire, and {@code null} is not the one value these models accept, so it fails like any other. So omission is
+ * "never
  * call the setter", and it is implemented through the shared {@link OpenAiRequestParameters#applySampling} so the two
  * endpoints cannot drift.
  *

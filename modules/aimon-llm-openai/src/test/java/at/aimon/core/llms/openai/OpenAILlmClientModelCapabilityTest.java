@@ -176,7 +176,7 @@ class OpenAILlmClientModelCapabilityTest {
     // ------------------------------------------------------------------------------------------------------------
 
     @Test
-    @DisplayName("gpt-5.6-terra on the Chat path with a tool omits sampling and sends reasoning_effort=none")
+    @DisplayName("gpt-5.6-terra on the Chat path with a tool omits sampling and omits reasoning_effort")
     void chatPathFixesTheReportedFourHundred() {
         // The reported bug, end to end, with nothing overridden except the endpoint: no registry passed, no
         // temperature configured, one tool in the request. This is the only test in the suite that fails if
@@ -194,7 +194,11 @@ class OpenAILlmClientModelCapabilityTest {
                 LlmModel.builder().build(), List.of(A_TOOL));
 
         assertThat(params._temperature()).isInstanceOf(JsonMissing.class);
-        assertThat(params.reasoningEffort()).contains(com.openai.models.ReasoningEffort.NONE);
+        // Round 6, measured 2026-09-09: this used to assert an explicit NONE. The API rejects that value outright
+        // ("Supported values are: 'minimal', 'low', 'medium', and 'high'"), while a tools request that omits the
+        // parameter returns 200 -- so the shipped gpt-5 row now says supportsToolsWithReasoning=true and nothing is
+        // sent. See docs/design/llm/openai-model-capabilities.md section 11.
+        assertThat(params._reasoningEffort()).isInstanceOf(JsonMissing.class);
     }
 
     // ------------------------------------------------------------------------------------------------------------
@@ -241,10 +245,15 @@ class OpenAILlmClientModelCapabilityTest {
 
     @Test
     @DisplayName("o3 on the shipped defaults behaves exactly like an unknown model")
-    void oSeriesBehavesAsUnknownOnShippedDefaults() {
-        // Pins the decision to cut the o-series rows from the built-in table: those models are believed to reject
-        // sampling, but the belief is unverified and a wrong entry would be a *silent* sampling change, while leaving
-        // them out leaves them exactly where they are. Re-adding the rows has to change this test.
+    void oSeriesSuppressesSamplingOnShippedDefaults() {
+        // Round 6 reversal, measured 2026-09-09. Round 1 cut the o-series rows because the belief that they reject
+        // sampling was unverified and a wrong row is a *silent* sampling change, while no row left those users
+        // exactly where they were. The probes closed that: o3-mini and o4-mini answer 400 to temperature 0.0 and 200
+        // to 1.0, accept tools with no effort, and reject effort "none". So the rows are in, and this test says the
+        // opposite of what it used to -- deliberately. See docs/design/llm/openai-model-capabilities.md section 11.
+        //
+        // supportsReasoningTraceRoundTrip stays FALSE for these: replay was never measured for the o-series, and
+        // asserting a round trip nobody has seen is how the gpt-5 row came out wrong the first time.
         // Round 2 reversal, by maintainer ruling: this test used to send an EMPTY LlmModel and assert the request
         // still carried temperature=0.0, from OpenAIConfig.DEFAULT_TEMPERATURE. That fallback was removed
         // deliberately -- issue #43's "sampling parameters are sent only when the caller explicitly set them" beats
@@ -253,7 +262,8 @@ class OpenAILlmClientModelCapabilityTest {
         final ChatCompletionCreateParams params = capture(config("o3").build(), modelWithAllSamplingValues(),
                 List.of(A_TOOL));
 
-        assertSamplingPassedThrough(params);
+        assertSamplingOmitted(params);
+        assertThat(params._reasoningEffort()).isInstanceOf(JsonMissing.class);
     }
 
     @Test
@@ -351,7 +361,7 @@ class OpenAILlmClientModelCapabilityTest {
                 List.of(A_TOOL));
 
         assertSamplingOmitted(params);
-        assertThat(params.reasoningEffort()).contains(com.openai.models.ReasoningEffort.NONE);
+        assertThat(params._reasoningEffort()).isInstanceOf(JsonMissing.class);
     }
 
     // ------------------------------------------------------------------------------------------------------------
@@ -359,14 +369,25 @@ class OpenAILlmClientModelCapabilityTest {
     // ------------------------------------------------------------------------------------------------------------
 
     @Test
-    @DisplayName("a reasoning model that cannot combine tools with reasoning gets an EXPLICIT none")
-    void toolsClampReasoningEffortToNone() {
-        // Explicit rather than omitted: the server default for these models is "medium", so leaving the parameter out
-        // fails the same way sending "medium" would.
-        final ChatCompletionCreateParams params = capture(config("gpt-5.6-terra").responsesApiEnabled(false).build(),
+    @DisplayName("a model that cannot combine tools with reasoning has the effort OMITTED, never sent as none")
+    void toolsOmitReasoningEffort() {
+        // Round 6 reversal, measured 2026-09-09. This used to assert an explicit NONE on the shipped gpt-5 row, on
+        // the theory that omission would leave the server default of "medium" in force. Both halves were false:
+        // "none" is not an accepted value for these models, and a tools request that omits the parameter returns 200.
+        // Sending NONE was the bug, not the fix.
+        //
+        // The shipped gpt-5 row therefore says supportsToolsWithReasoning=true and no longer reaches this branch, so
+        // the flag is driven from a hand-built row here -- the branch still exists for a caller who registers one.
+        final ModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.builder()
+                .register("no-tools-with-reasoning", ModelCapabilities.builder().supportsSamplingParameters(true)
+                        .supportsReasoningEffort(true).supportsToolsWithReasoning(false).build())
+                .build();
+
+        final ChatCompletionCreateParams params = capture(
+                config("no-tools-with-reasoning").responsesApiEnabled(false).modelCapabilityRegistry(registry).build(),
                 LlmModel.builder().reasoningEffort(ReasoningEffort.HIGH).build(), List.of(A_TOOL));
 
-        assertThat(params.reasoningEffort()).contains(com.openai.models.ReasoningEffort.NONE);
+        assertThat(params._reasoningEffort()).isInstanceOf(JsonMissing.class);
     }
 
     @Test
@@ -447,8 +468,12 @@ class OpenAILlmClientModelCapabilityTest {
                         .modelCapabilityRegistry(InMemoryModelCapabilityRegistry.withDefaults()).build(),
                 LlmModel.builder().name("gpt-5.6-terra").build(), List.of(A_TOOL));
 
+        // The binding is assertSamplingOmitted plus the model name: gpt-4o would pass sampling through, gpt-5.6-terra
+        // suppresses it, so suppression here proves the lookup used the PER-REQUEST name. Round 6 dropped a second
+        // signal from this test -- an explicit reasoning_effort=NONE -- because the API rejects that value and the
+        // shipped gpt-5 row no longer produces it. The property this test exists for is untouched.
         assertSamplingOmitted(params);
-        assertThat(params.reasoningEffort()).contains(com.openai.models.ReasoningEffort.NONE);
+        assertThat(params._reasoningEffort()).isInstanceOf(JsonMissing.class);
         assertThat(params.model().asString()).isEqualTo("gpt-5.6-terra");
     }
 }

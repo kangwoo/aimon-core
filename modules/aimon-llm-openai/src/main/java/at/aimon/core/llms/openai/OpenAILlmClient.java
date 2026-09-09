@@ -411,10 +411,16 @@ public class OpenAILlmClient implements LlmClient {
      * <p>
      * Three cases, and the middle one is the whole point of this method. A model that takes no reasoning effort gets
      * nothing, which is what every release before this one sent to every model. A model that takes one but cannot
-     * combine it with tools gets {@link ReasoningEffort#NONE} <em>explicitly</em> whenever tools are present:
-     * <em>omitting</em> the parameter is not equivalent, because the server's own default for these models is
-     * {@code medium} and the request fails on that. Otherwise the configured effort goes through as asked, or nothing
-     * does when none was configured.
+     * combine it with tools has the effort <em>omitted</em> whenever tools are present. Otherwise the configured
+     * effort goes through as asked, or nothing does when none was configured.
+     *
+     * <p>
+     * The middle case used to send {@link ReasoningEffort#NONE} explicitly, on the theory that omission would leave
+     * the server's own default of {@code medium} in force and fail. Measured against the live API on 2026-09-09, both
+     * halves of that were wrong: {@code none} is not an accepted value for these models ({@code gpt-5-nano} answers
+     * <em>"Supported values are: 'minimal', 'low', 'medium', and 'high'"}), while a tools request that simply omits
+     * the parameter returns 200. So the remedy is omission, and sending {@code NONE} was itself the bug. The probe
+     * table is in section 11 of {@code docs/design/llm/openai-model-capabilities.md}.
      */
     private void applyReasoningEffort(ChatCompletionCreateParams.Builder requestBuilder, LlmModel modelConfig,
             ModelCapabilities capabilities, String modelName, List<ToolDefinition> tools) {
@@ -427,12 +433,22 @@ public class OpenAILlmClient implements LlmClient {
         }
 
         if (!tools.isEmpty() && !capabilities.supportsToolsWithReasoning()) {
-            requested.filter(effort -> effort != ReasoningEffort.NONE)
-                    .ifPresent(effort -> reportDivergence("reasoningEffortClamped=" + effort + "@" + modelName,
-                            "reasoningEffort {} is set on this request but {} does not accept tools together with "
-                                    + "reasoning; it is being sent as NONE for this call.",
-                            effort, modelName));
-            requestBuilder.reasoningEffort(OpenAiReasoningEfforts.toWire(ReasoningEffort.NONE));
+            requested.ifPresent(effort -> reportDivergence("reasoningEffortOmitted=" + effort + "@" + modelName,
+                    "reasoningEffort {} is set on this request but {} does not accept tools together with reasoning; "
+                            + "it is being omitted for this call.",
+                    effort, modelName));
+            return;
+        }
+
+        if (requested.isPresent() && requested.get() == ReasoningEffort.NONE) {
+            // OpenAI has no "none": gpt-5.x accepts 'minimal'..'high' and the o-series 'low'..'xhigh', both measured
+            // 2026-09-09. AIMON's NONE means "do not reason", which these models cannot be asked to do, so the
+            // parameter is omitted and the operator is told -- omission leaves the server default in force, which is
+            // not what NONE asked for. Sending it through would be a 400.
+            reportDivergence("reasoningEffortNoneUnsupported=" + modelName,
+                    "reasoningEffort NONE is set on this request but {} has no 'none' level; the parameter is being "
+                            + "omitted and the model will reason at its own default.",
+                    modelName);
             return;
         }
 

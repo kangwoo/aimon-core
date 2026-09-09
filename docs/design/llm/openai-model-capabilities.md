@@ -38,10 +38,13 @@ Nothing in AIMON can answer "what does this model accept?", so `OpenAILlmClient.
 `.temperature(...)` because `LlmModel.getTemperature()` falls back to `OpenAIConfig.getTemperature()`
 whose default is `0.0` (`OpenAIConfig.java:28,125`) and which has no way to express "unset", and it
 never sends `reasoning_effort` at all (`grep reasoningEffort` over the tree returns nothing). The
-`gpt-5.x` family rejects `temperature`/`top_p` by the **presence** of the parameter and rejects
-`tools` together with a non-`none` reasoning effort on `/v1/chat/completions`, where the server
-default is `medium` — so every tool-calling turn, which is every agent turn, fails with HTTP 400 and
-the documented `reasoning_effort: 'none'` workaround is unreachable from this client. Fixing that
+`gpt-5.x` family rejects the `temperature`/`top_p` values this client sends — so every tool-calling
+turn, which is every agent turn, fails with HTTP 400.
+
+> **Corrected in §11.** As written, this paragraph followed the issue report in saying rejection was
+> by the *presence* of the parameter and that `tools` could not be combined with a non-`none` effort.
+> Both were measured false on 2026-09-09. The conclusion — every tool-calling turn 400s — held; two of
+> the three reasons did not. Fixing that
 with `if (model.startsWith("gpt-5"))` inside `buildRequest()` would put model knowledge in a place
 the Anthropic client cannot reach, would be wrong for the Azure deployments and OpenAI-compatible
 gateways that `OpenAIConfig.baseUrl` exists to support (they rename models freely), and would need a
@@ -979,3 +982,77 @@ o-series rows, still blocked on live-API verification nobody has done. Both are 
 tests that explain why.
 
 Full design: [`openai-responses-path.md`](openai-responses-path.md).
+
+---
+
+## 11. Round 6 — the live API, and three premises that did not survive it
+
+Every round before this one closed with the same admission: *no live API call was made; everything
+about what the server accepts comes from the issue body and the SDK.* On **2026-09-09** a key was
+supplied and the probes were run against `api.openai.com`. This section is the measurement. It is
+here so nobody re-derives it, and so the next person can tell what is measured from what is inferred.
+
+### 11.1 `temperature` — rejected by VALUE, not by presence
+
+| model | omitted | `1.0` | `0.0` |
+|---|---|---|---|
+| `gpt-5-nano` | 200 | **200** | 400 |
+| `o4-mini` | 200 | **200** | 400 |
+| `o3-mini` | — | **200** | 400 |
+| `gpt-4o-mini` | 200 | 200 | 200 |
+
+> `Unsupported value: 'temperature' does not support 0.0 with this model. Only the default (1) value is supported.`
+
+**Consequence.** Suppression stays, its stated reason changes. Omitting yields the same value the
+model would accept, and it spares every other value a 400. The residual cost is a false alarm: a
+caller who explicitly sets `1.0` gets a divergence warning for a call the API would have taken.
+Modelling "only the default is accepted" precisely would need a new capability shape and was judged
+not worth it — but it is a real, if small, inaccuracy and is recorded here rather than hidden.
+
+### 11.2 Tools on Chat Completions — they work
+
+`gpt-5-nano` + tools with no `reasoning_effort` → **200**. `o4-mini` + tools, no effort → **200**.
+The issue's cause 1 does not reproduce on any model this account can see. It quoted an error naming
+`gpt-5.6-terra`, which this account does not have; whatever that model does, the family prefix the
+table actually matches does not do it.
+
+### 11.3 `reasoning_effort: 'none'` — rejected
+
+```
+gpt-5-nano: Supported values are: 'minimal', 'low', 'medium', and 'high'
+o4-mini:    Supported values are: 'low', 'medium', 'high', and 'xhigh'
+```
+
+**This was a live bug in shipped code, not just a wrong document.** `supportsToolsWithReasoning=false`
+made the client send `none` whenever tools were present, and the API rejects it. The path was narrow —
+`responsesApiEnabled(false)` plus `gpt-5` plus tools, i.e. the documented Chat fallback — but it was
+the fix, not the bug, producing the 400. The remedy is now **omission**, which §11.2 shows works, and
+the `gpt-5` row's flag is `true`.
+
+The irony worth recording: `InMemoryModelCapabilityRegistry`'s own javadoc example already carried
+`// MUST stay true: the o-series rejects effort "none"`. The example was right before the table was.
+
+### 11.4 Phase 2 — every premise confirmed
+
+Round 4's design was built on inference and the inference was sound. Measured:
+
+| claim | result |
+|---|---|
+| `/v1/responses` accepts tools + reasoning | 200 |
+| `encrypted_content` present with `store: false` | yes, 1420 chars |
+| `call_id` differs from `id` | yes — `call_2p8p…` vs `fc_0c4f…` |
+| `reasoning_tokens` is non-zero and real | 128, then 256 |
+| a reasoning item **replayed** on the next turn is accepted | **yes**, turn completed |
+| `status` / `incomplete_details` shape | `completed` / `null` |
+
+No round-4 code changed as a result.
+
+### 11.5 What is still not measured
+
+- **Reasoning-item replay for the o-series.** Their rows therefore set
+  `supportsReasoningTraceRoundTrip=false` and they stay on Chat Completions. Claiming a round trip
+  nobody has seen is precisely how the `gpt-5` row came out wrong.
+- **`gpt-5.6-terra`**, the model the issue reported against. Not available to this account.
+- **Streaming** was not probed; only blocking calls were made.
+- `gpt-5-chat-latest` returns **404 — deprecated**. The `gpt-5-chat` prefix row stays: it is a prefix,
+  not that one name.

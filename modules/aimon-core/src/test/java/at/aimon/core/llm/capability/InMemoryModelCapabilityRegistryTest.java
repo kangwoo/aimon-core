@@ -72,7 +72,11 @@ class InMemoryModelCapabilityRegistryTest {
 
         assertThat(gpt5.supportsSamplingParameters()).isFalse();
         assertThat(gpt5.supportsReasoningEffort()).isTrue();
-        assertThat(gpt5.supportsToolsWithReasoning()).isFalse();
+        // Reversal, measured 2026-09-09: this asserted isFalse() until live probes showed gpt-5-nano answers 200 to
+        // tools with no reasoning_effort, and rejects the "none" that false made the client send. Do not flip it back
+        // without a probe -- false is not the cautious choice here, it is the one that produces a 400.
+        assertThat(gpt5.supportsToolsWithReasoning()).isTrue();
+        assertThat(gpt5.supportsReasoningTraceRoundTrip()).isTrue();
     }
 
     @Test
@@ -88,17 +92,37 @@ class InMemoryModelCapabilityRegistryTest {
     }
 
     @Test
-    @DisplayName("models the table does not name stay unknown - gpt-4o and the o-series included")
+    @DisplayName("models the table does not name stay unknown - gpt-4o and gpt-4-turbo")
     void defaultsLeaveEverythingElseUnknown() {
-        // The o-series is deliberately absent: it takes a reasoning effort but rejects the value "none", so a wrong
-        // entry would be a silent sampling change for its users. Re-adding it has to change this test.
         final InMemoryModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.withDefaults();
 
         assertThat(registry.capabilitiesOf("gpt-4o")).isEmpty();
         assertThat(registry.capabilitiesOf("gpt-4-turbo")).isEmpty();
-        assertThat(registry.capabilitiesOf("o3")).isEmpty();
-        assertThat(registry.capabilitiesOf("o1-mini")).isEmpty();
-        assertThat(registry.resolve("o3")).isEqualTo(ModelCapabilities.unknown());
+        assertThat(registry.resolve("gpt-4o")).isEqualTo(ModelCapabilities.unknown());
+    }
+
+    @Test
+    @DisplayName("the o-series is in the table, suppresses sampling, and stays off the Responses path")
+    void oSeriesRowsAreMeasuredAndPresent() {
+        // Reversal, measured 2026-09-09. This test used to assert the OPPOSITE -- that o1/o3/o4 stayed unknown --
+        // because the belief that they reject sampling was unverified and a wrong row is a *silent* sampling change
+        // while no row leaves those users exactly where they are. Live probes closed that: o3-mini and o4-mini answer
+        // 400 to temperature 0.0 and 200 to 1.0, accept tools with no reasoning_effort, and reject effort "none".
+        //
+        // supportsToolsWithReasoning MUST stay true -- false makes the client omit an effort it need not omit, and it
+        // is what the class javadoc's own example has warned about all along. supportsReasoningTraceRoundTrip stays
+        // false because reasoning-item replay was never measured for these models, and asserting a round trip nobody
+        // has seen is how the gpt-5 row came out wrong the first time.
+        // See docs/design/llm/openai-model-capabilities.md section 11.
+        final InMemoryModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.withDefaults();
+
+        for (String model : new String[]{"o1", "o1-pro", "o3", "o3-mini", "o4-mini"}) {
+            final ModelCapabilities caps = registry.resolve(model);
+            assertThat(caps.supportsSamplingParameters()).as("%s sampling", model).isFalse();
+            assertThat(caps.supportsReasoningEffort()).as("%s effort", model).isTrue();
+            assertThat(caps.supportsToolsWithReasoning()).as("%s tools+reasoning", model).isTrue();
+            assertThat(caps.supportsReasoningTraceRoundTrip()).as("%s replay", model).isFalse();
+        }
     }
 
     @Test

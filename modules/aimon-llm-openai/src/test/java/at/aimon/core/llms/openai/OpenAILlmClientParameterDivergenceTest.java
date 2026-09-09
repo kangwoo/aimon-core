@@ -30,6 +30,9 @@ import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.ReasoningEffort;
 import at.aimon.core.llm.ToolDefinition;
+import at.aimon.core.llm.capability.InMemoryModelCapabilityRegistry;
+import at.aimon.core.llm.capability.ModelCapabilities;
+import at.aimon.core.llm.capability.ModelCapabilityRegistry;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
@@ -210,10 +213,17 @@ class OpenAILlmClientParameterDivergenceTest {
     }
 
     @Test
-    @DisplayName("a reasoning effort clamped to NONE because tools are present is reported")
-    void clampedReasoningEffortIsReported() {
-        final OpenAILlmClient client = client(
-                OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra").responsesApiEnabled(false).build());
+    @DisplayName("a reasoning effort omitted because tools are present is reported")
+    void omittedReasoningEffortIsReported() {
+        // Round 6, measured 2026-09-09: the remedy is omission, not an explicit NONE, and the shipped gpt-5 row no
+        // longer reaches this branch at all (supportsToolsWithReasoning is true because tools on Chat work fine).
+        // The branch still exists for a caller who registers a model needing it, so the flag is set by hand here.
+        final ModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.builder()
+                .register("no-tools-with-reasoning", ModelCapabilities.builder().supportsSamplingParameters(true)
+                        .supportsReasoningEffort(true).supportsToolsWithReasoning(false).build())
+                .build();
+        final OpenAILlmClient client = client(OpenAIConfig.builder().apiKey("test-key").model("no-tools-with-reasoning")
+                .responsesApiEnabled(false).modelCapabilityRegistry(registry).build());
 
         send(client, LlmModel.builder().reasoningEffort(ReasoningEffort.HIGH).build(), List.of(A_TOOL));
 
@@ -222,14 +232,18 @@ class OpenAILlmClientParameterDivergenceTest {
     }
 
     @Test
-    @DisplayName("clamping to NONE is silent when NONE is what was asked for")
-    void clampToTheRequestedValueIsSilent() {
+    @DisplayName("asking for NONE on a model with no 'none' level is reported, not silently sent")
+    void requestedNoneIsReportedAndOmitted() {
+        // Round 6 reversal, measured 2026-09-09. This used to assert SILENCE, on the reasoning that asking for NONE
+        // and getting NONE is not a divergence. But OpenAI has no 'none' level -- gpt-5.x accepts 'minimal'..'high',
+        // the o-series 'low'..'xhigh' -- so sending it is a 400, and omitting it leaves the model reasoning at its
+        // own default, which is the opposite of what NONE asked for. That is a divergence and the operator is told.
         final OpenAILlmClient client = client(
                 OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra").responsesApiEnabled(false).build());
 
         send(client, LlmModel.builder().reasoningEffort(ReasoningEffort.NONE).build(), List.of(A_TOOL));
 
-        assertThat(warnings()).isEmpty();
+        assertThat(warnings()).anyMatch(w -> w.contains("no 'none' level"));
     }
 
     @Test

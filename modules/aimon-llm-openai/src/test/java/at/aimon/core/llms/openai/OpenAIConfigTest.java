@@ -214,8 +214,9 @@ class OpenAIConfigTest {
     @Test
     @DisplayName("Should leave every optional sampling parameter and the reasoning effort unset by default")
     void shouldLeaveOptionalParametersUnsetByDefault() {
-        // The whole point of the nullable shape: a model that rejects these by presence must receive nothing, and
-        // "nothing" has to be representable before the client can send it.
+        // The whole point of the nullable shape: a model that accepts only its default must receive nothing, and
+        // "nothing" has to be representable before the client can send it. (Measured 2026-09-09: rejection is by
+        // value, not by presence -- "temperature": null fails like any other non-default.)
         OpenAIConfig config = OpenAIConfig.builder().model("gpt-4o").apiKey("test").build();
 
         assertThat(config.getTemperature()).isEmpty();

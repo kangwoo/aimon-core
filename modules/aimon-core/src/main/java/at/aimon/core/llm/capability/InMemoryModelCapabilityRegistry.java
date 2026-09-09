@@ -88,17 +88,42 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
                 // Order matters: gpt-5-chat is the non-reasoning variant of the family and must be matched before the
                 // family prefix, or it would inherit the family's suppression. Same reason InMemoryModelPriceTable
                 // registers gpt-4o-mini before gpt-4o.
+                //
+                // gpt-5-chat-latest itself is deprecated (404 as of 2026-09-09), but the prefix stays: it is a prefix,
+                // not that one name, and a deployment may still route other gpt-5-chat-* names through it.
                 .registerPrefix("gpt-5-chat",
                         ModelCapabilities.builder().supportsSamplingParameters(true).supportsReasoningEffort(false)
                                 .supportsToolsWithReasoning(true).supportsReasoningTraceRoundTrip(false).build())
-                // gpt-5.x on /v1/chat/completions rejects temperature and top_p by the *presence* of the parameter,
-                // and rejects tools together with any reasoning effort other than "none". It also returns reasoning
-                // items a client must replay for the reasoning to survive a tool call -- which is what
-                // supportsReasoningTraceRoundTrip says, and what sends an OpenAI client to a request surface where
-                // supportsToolsWithReasoning's conflict does not arise.
+                // gpt-5.x on /v1/chat/completions accepts temperature only at its default of 1; every other value is
+                // rejected ("does not support 0.0 with this model. Only the default (1) value is supported"). Since
+                // omitting the parameter yields that same default, suppression loses nothing on the wire and spares
+                // every non-default value a 400. It also returns reasoning items a client must replay for the
+                // reasoning to survive a tool call -- which is what supportsReasoningTraceRoundTrip says.
+                //
+                // supportsToolsWithReasoning is TRUE, and that reverses round 1. Measured 2026-09-09: gpt-5-nano with
+                // tools and no reasoning_effort returns 200, so there is no conflict to work around; and the remedy
+                // false used to trigger -- sending effort "none" -- is itself rejected, since "none" is not among the
+                // accepted values ('minimal', 'low', 'medium', 'high'). See section 11 of
+                // docs/design/llm/openai-model-capabilities.md for the probe table.
                 .registerPrefix("gpt-5",
                         ModelCapabilities.builder().supportsSamplingParameters(false).supportsReasoningEffort(true)
-                                .supportsToolsWithReasoning(false).supportsReasoningTraceRoundTrip(true).build());
+                                .supportsToolsWithReasoning(true).supportsReasoningTraceRoundTrip(true).build())
+                // The o-series, measured 2026-09-09 and no longer inferred. Round 1 cut these rows because the belief
+                // that they reject sampling was unverified and a wrong row is a *silent* change; the probes closed
+                // that. o3-mini and o4-mini reject temperature 0.0 and accept 1.0, accept tools with no effort, and
+                // reject effort "none" -- so supportsToolsWithReasoning MUST stay true here, exactly as this class's
+                // own javadoc example has warned all along. They are not routed to /v1/responses: this build has not
+                // measured reasoning-item replay for them, and asserting a round trip we have not seen is how round 1
+                // got the gpt-5 row wrong.
+                .registerPrefix("o1",
+                        ModelCapabilities.builder().supportsSamplingParameters(false).supportsReasoningEffort(true)
+                                .supportsToolsWithReasoning(true).supportsReasoningTraceRoundTrip(false).build())
+                .registerPrefix("o3",
+                        ModelCapabilities.builder().supportsSamplingParameters(false).supportsReasoningEffort(true)
+                                .supportsToolsWithReasoning(true).supportsReasoningTraceRoundTrip(false).build())
+                .registerPrefix("o4",
+                        ModelCapabilities.builder().supportsSamplingParameters(false).supportsReasoningEffort(true)
+                                .supportsToolsWithReasoning(true).supportsReasoningTraceRoundTrip(false).build());
     }
 
     /**
