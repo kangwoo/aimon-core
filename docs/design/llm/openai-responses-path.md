@@ -334,10 +334,15 @@ and offers `previous_response_id` as an alternative to replaying items — a sec
 change nobody asked for arriving as a rider on a bug fix. `include(REASONING_ENCRYPTED_CONTENT)` is
 requested explicitly because `store: false` is the case the SDK's javadoc singles out for it.
 
-**The reasoning-effort clamp is gone on this path.** Sending `NONE` because tools are present is a
-Chat Completions rule. Here tools and reasoning coexist — that is the entire point of phase 2 — so
-the configured effort goes as asked and an unconfigured request gets the server's default, which is
-now the desirable one.
+**The tools clamp is gone on this path; the ladder check is not.** Omitting the effort because tools
+are present is a Chat Completions rule. Here tools and reasoning coexist — that is the entire point of
+phase 2 — so the configured effort goes as asked and an unconfigured request gets the server's
+default, which is now the desirable one.
+
+What does **not** go away is `OpenAiRequestParameters.maySendEffort`: which rungs a model accepts is a
+fact about the model, not about the endpoint, and OpenAI has no `none` rung on either surface. Dropping
+that check along with the clamp is how `reasoning.effort: "none"` reached this endpoint as a 400 — see
+[`openai-model-capabilities.md`](openai-model-capabilities.md) §12.
 
 ### 4.2 Message conversion is parity with the Chat converter, case for case
 
@@ -402,7 +407,7 @@ classified as a value the data determines or a choice somebody has to argue:
 | Type constructed | `checkRequired` | Determined or a choice |
 |---|---|---|
 | `ResponseCreateParams` | **none** — neither its builder nor `Body`'s calls `checkRequired`, and `model()` returns `Optional` | the model is supplied regardless, and two endpoint-selection tests bind it |
-| `Reasoning` | none | effort is optional and passes through unclamped |
+| `Reasoning` | none | effort is optional; no *tools* clamp, but a rung below the model's `lowestReasoningEffort` is omitted |
 | **`FunctionTool`** | `name`, `parameters`, **`strict`** | name and parameters determined; **`strict` is a choice — §4.3** |
 | `FunctionTool.Parameters` | none (a `@JsonValue` map) | determined — the same key-by-key copy Chat does |
 | `ResponseInputItem.Message` (user) | `content`, `role` | determined |

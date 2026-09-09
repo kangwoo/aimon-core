@@ -408,8 +408,11 @@ public final class OpenAIConfig {
          * Defaults to {@code true}. Set it to {@code false} for an OpenAI-compatible gateway that implements only
          * {@code /v1/chat/completions} while passing real model names through — otherwise a reasoning model resolves
          * to its built-in capability row, is routed to {@code /v1/responses}, and gets a 404 on a deployment that
-         * works today. Turning it off restores phase 1's behaviour for such a model: Chat Completions, with the
-         * reasoning effort clamped to {@code NONE} when tools are present.
+         * works today. Turning it off puts such a model back on Chat Completions, where a configured reasoning effort
+         * is <em>omitted</em> whenever tools are present and the model's capability row says the two cannot be
+         * combined. Nothing is substituted for it: {@code none} is not a value any OpenAI model accepts, and sending
+         * it was itself a 400 — a request that asks for {@link ReasoningEffort#NONE} is likewise reported and
+         * omitted, on either endpoint.
          *
          * @param responsesApiEnabled
          *            {@code false} when this endpoint has no {@code /v1/responses}

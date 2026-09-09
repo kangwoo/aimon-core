@@ -130,6 +130,12 @@ public final class ModelCapabilities {          // immutable class + builder, pe
 Three flags, the same three the issue sketched, with names sharpened from "what the model *is*" to
 "what a client may *do*" (`isReasoningModel` → `supportsReasoningEffort`).
 
+> **The descriptor grew to five.** Round 4 added `supportsReasoningTraceRoundTrip()` (§10) and round 7
+> added `lowestReasoningEffort()` (§12). Both are additive and both keep `unknown()`'s answer at
+> today's behaviour. The sketch above is left as the round-1 shape rather than rewritten, because the
+> reasoning under it — what each flag is *for*, and why fail-open is a different boolean per flag — is
+> what the later two were derived from.
+
 `ModelCapabilities.unknown()` is `(sampling = true, reasoningEffort = false, toolsWithReasoning =
 true)`. Note that fail-open is **not** "all true" — it is "today's behaviour", which is a different
 boolean per flag: today the client always sends sampling parameters and never sends
@@ -1056,3 +1062,66 @@ No round-4 code changed as a result.
 - **Streaming** was not probed; only blocking calls were made.
 - `gpt-5-chat-latest` returns **404 — deprecated**. The `gpt-5-chat` prefix row stays: it is a prefix,
   not that one name.
+
+---
+
+## 12. Round 7 — one ladder question, asked by both endpoints
+
+Round 6 established that OpenAI has no `none` rung (§11.3) and put a guard in the Chat client. Round 4
+had already routed `gpt-5.x` to `/v1/responses`. **Nobody put the guard on the endpoint the model
+actually reaches**, so a configured `ReasoningEffort.NONE` on a stock `gpt-5*` config produced
+`{"reasoning":{"effort":"none"}}` — the 400 §11.3 measured, on the default path, guarded only on the
+path that config no longer takes.
+
+The same probe recorded a second rung nobody acted on: `o4-mini` answers *"Supported values are:
+'low', 'medium', 'high', and 'xhigh'"*, so the neutral `MINIMAL` has no wire value for that family
+either, and the o-series rows sent it.
+
+### 12.1 Why a capability rather than two special cases
+
+Both are the same question — *is this rung on this model's ladder?* — and the answer differs per model
+family, which is what a capability is for. A `NONE`-shaped special case would have had to be joined by
+a `MINIMAL`-shaped one, in two request builders, with nothing tying them together.
+
+`ModelCapabilities.lowestReasoningEffort()` is the fifth field. Default and `unknown()` value
+`MINIMAL`: the only rung it withholds from a model no registry describes is `NONE`, which is the one
+rung no vendor ladder starts at, so fail-open is preserved in the sense §2.3 defines it — nothing that
+was ever sent stops being sent. `ReasoningEffort`'s constants ascend, so the comparison is `compareTo`;
+that ordering is now load-bearing and its javadoc says so.
+
+`OpenAiRequestParameters.maySendEffort(...)` is the one implementation, and **both** endpoints call
+it. What deliberately did *not* move is the tools clamp: "may tools and reasoning share a request" is
+a property of the request surface, and `/v1/responses` — where they coexist — must not inherit it.
+That is the distinction round 4 got right and round 6's `NONE` guard blurred by sitting next to it.
+
+### 12.2 Omitted, never raised
+
+A rung below the floor is dropped and reported. Clamping `NONE` up to `minimal` was rejected: it puts
+a request on the wire nobody made, and does it silently, which is the exact failure the whole
+divergence-reporting apparatus (§2.5) exists to remove. Omission leaves the server's own default in
+force — a state the warning can describe truthfully.
+
+| model | requested | sent | reported |
+|---|---|---|---|
+| `gpt-5*` | `NONE` | *(nothing)* | yes |
+| `gpt-5*` | `MINIMAL` | `minimal` | no |
+| `o4-mini` | `MINIMAL` | *(nothing)* | yes |
+| `o4-mini` | `LOW` | `low` | no |
+| unknown model | `NONE` | *(nothing)* | yes |
+
+### 12.3 Three other defects found in the same pass
+
+- **A JSON `null` argument value failed the whole turn on the Responses blocking read.**
+  `parseArguments` copied through `Map.copyOf`, which rejects null *values*; the Chat converter hands
+  them to `ToolUse`, which drops them. A model filling an optional parameter with `null` rather than
+  omitting it is ordinary — it is the premise `at.aimon.core.base.NullSafeMaps` was written for, and
+  the copy goes through that now.
+- **The provider name was frozen at construction on one side of the reasoning round trip.** The
+  request factory took `getProviderName()` in the client's constructor while the exchange read it per
+  call. Identical for the base class; for a subclass overriding it, traces were tagged with one name
+  and matched against the other, so every one was dropped as foreign and the feature silently did
+  nothing. It is now resolved once per request and handed to both halves, the way the model name
+  already was.
+- **The registry's exact map was case-sensitive while its prefix map was not.** An operator
+  registering the deployment name their portal shows (`Prod-Assistant`) missed, resolved to
+  `unknown()`, and kept hitting whatever the registration was meant to fix. Both halves fold case now.

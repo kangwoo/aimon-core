@@ -9,9 +9,11 @@ Central is versioned independently).
 
 ### LLM: what a model accepts is now a fact the framework can look up, and gpt-5.x tool calling works
 
-- **New provider-neutral SPI `at.aimon.core.llm.capability`** — `ModelCapabilities` (three flags:
-  `supportsSamplingParameters`, `supportsReasoningEffort`, `supportsToolsWithReasoning`),
-  `ModelCapabilityRegistry` and `InMemoryModelCapabilityRegistry`. Purely additive. It sits **beside**
+- **New provider-neutral SPI `at.aimon.core.llm.capability`** — `ModelCapabilities`,
+  `ModelCapabilityRegistry` and `InMemoryModelCapabilityRegistry`. Five fields in all, three of them
+  introduced here (`supportsSamplingParameters`, `supportsReasoningEffort`,
+  `supportsToolsWithReasoning`) and two by the Responses entry below
+  (`supportsReasoningTraceRoundTrip`, `lowestReasoningEffort`). Purely additive. It sits **beside**
   `ModelContextWindowRegistry` and `ModelPriceTable` rather than folding into either: three per-model
   facts, three reasons to change, and each consumer depends on exactly its own.
 
@@ -47,6 +49,10 @@ Central is versioned independently).
           .build();
   ```
 
+  Both halves of that table — exact names and prefixes — match **ignoring case**, because the name an
+  operator has is the one their portal shows: registering `prod-assistant` for a deployment configured
+  as `Prod-Assistant` has to meet, or the one line that closes this gap silently does nothing.
+
   A **CLI** deployment in that state has no yaml key for this yet; that is a config-surface decision
   left to its own issue rather than ridden in on a bug fix.
 
@@ -56,7 +62,18 @@ Central is versioned independently).
   while no row leaves those users exactly where they are. The probes settled it — `o3-mini` and
   `o4-mini` reject `0.0`, accept `1.0`, accept tools with no effort, and reject effort `none`. They are
   **not** routed to `/v1/responses`: reasoning-item replay was not measured for them, and asserting a
-  round trip nobody has seen is how the `gpt-5` row came out wrong the first time.
+  round trip nobody has seen is how the `gpt-5` row came out wrong the first time. The same probes
+  fixed their `lowestReasoningEffort` at `LOW` — the o-series answers *"Supported values are: 'low',
+  'medium', 'high', and 'xhigh'"*, so the neutral `MINIMAL` has no wire value there either.
+
+- **`ModelCapabilities.lowestReasoningEffort()` — which rungs, as opposed to whether the knob exists.**
+  `supportsReasoningEffort()` says the model takes a reasoning-effort parameter; this says where its
+  ladder starts, because the two OpenAI families disagree (`gpt-5.x`: `minimal`…`high`; o-series:
+  `low`…`xhigh`). A requested rung below the floor is **omitted and reported**, never raised to meet it
+  — a clamp upward is a request the operator did not make, and it would arrive silently. The default
+  and `unknown()` value is `MINIMAL`, so the only rung ever withheld from a model no registry describes
+  is `NONE`, which no OpenAI ladder has at all. The rule lives in one place and both endpoints ask it;
+  the *tools* clamp stays Chat-only, because that one really is a property of the request surface.
 
 - **Breaking: `OpenAIConfig.getTemperature()` returns `Optional<Double>`, not `double`.** A published
   module (`at.aimon.core.llms.openai`), and — like the entries below — not a rename, so there is no row
@@ -77,9 +94,13 @@ Central is versioned independently).
 
 - **Additive: `LlmModel.getReasoningEffort()`** and the neutral `at.aimon.core.llm.ReasoningEffort`
   (`NONE`/`MINIMAL`/`LOW`/`MEDIUM`/`HIGH` — the common subset that survives translation to a second
-  provider, not one vendor's ladder). Not yet readable from agent frontmatter or CLI yaml, on purpose:
-  in this phase a non-`NONE` effort is clamped on every tool-calling turn anyway, so a key for it would
-  look like a knob that does nothing. `AnthropicLlmClient` currently ignores the field silently.
+  provider, not one vendor's ladder; the constants are declared in ascending order, and that ordering
+  is now load-bearing because `lowestReasoningEffort` compares against it). Not yet readable from agent
+  frontmatter or CLI yaml, on purpose: `AnthropicLlmClient` still ignores the field silently, so a key
+  for it would do nothing on one of the two shipped providers. Note that the earlier justification for
+  withholding the key — *"a non-`NONE` effort is clamped on every tool-calling turn anyway"* — stopped
+  being true when the 2026-09-09 probes set `supportsToolsWithReasoning` to `true` on every shipped
+  row; nothing is clamped now.
 
 - **Suppression is reported, not silent.** A value that somebody set and that the model will not take
   is logged once per distinct parameter/value/model at `WARN`, bounded at 32 entries, the same shape
@@ -173,6 +194,11 @@ Central is versioned independently).
   on the payload — copy. `MessageArtifact` was examined first and rejected: its `path` and
   `fileName` are both required and would be lies for this content, and it is already consumed as a
   file reference, so a reasoning blob in that list would be offered to a user as a downloadable file.
+  **The new field participates in `Message.equals`/`hashCode`/`toString`, and so does
+  `LlmResponse`'s** — the same caveat the `TokenUsage` entry below carries, and for the same reason: a
+  message or response carrying traces is no longer equal to one without, which can matter to a test
+  that builds the expected value by hand (`Message.assistant(text, toolUses)`) and compares it against
+  one an executor built from a Responses turn.
 
 - **It lands in the persisted transcript, additively in both directions.** `JsonSessionSnapshotCodec`
   writes a `reasoning` array **only when non-empty**, so every document produced before this field
@@ -252,8 +278,13 @@ Central is versioned independently).
 - **Two follow-ups to the above, applied.** A tool call whose `arguments` are not JSON now raises the
   same `MessageConversionException` on the Responses blocking path that Chat Completions has always
   raised for the same bytes, instead of running the tool with an empty input map — user-visible, and
-  the reason is that an empty map is a *different* answer, not a smaller one. Streaming is unchanged
-  and still degrades, because there `ChunkAggregator` owns those bytes for every provider. Separately,
+  the reason is that an empty map is a *different* answer, not a smaller one. A JSON **`null`** value
+  is on the other side of that line and is not malformed at all: it means *absent*, so the key is
+  dropped through `NullSafeMaps` and the turn completes, exactly as it does on Chat Completions. (It
+  briefly did not: reading the arguments through `Map.copyOf`, which rejects a null value, failed the
+  whole turn over an optional parameter a model had filled with `null` instead of omitting.) Streaming
+  is unchanged and still degrades, because there `ChunkAggregator` owns those bytes for every provider.
+  Separately,
   a streamed `response.completed` whose nested `status` is `failed` or `cancelled` now fails the call
   as the blocking path already did, instead of returning an empty success; no conforming provider
   sends that shape, so nobody in-tree can hit it.
