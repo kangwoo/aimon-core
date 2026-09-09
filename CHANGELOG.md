@@ -223,7 +223,11 @@ Central is versioned independently).
   key, so its design carried a list of what fixtures could not establish. Those calls have now been made.
   **The load-bearing one holds: a `signature` this client parses and re-serialises through the SDK mapper
   is accepted by Anthropic's verifier** — which is the single property the whole round trip rests on, and
-  the reason `AnthropicReasoningTraces` insists on the SDK's own mapper. `output_tokens_details.thinking_tokens`
+  the reason `AnthropicReasoningTraces` insists on the SDK's own mapper. That is established by a *pair* of
+  live assertions, not by acceptance alone: a stripped turn is also accepted, so "the replay succeeded"
+  would equally describe a client that silently dropped the block. The negative control is what settles it
+  — a signature with **one character changed** is rejected with ``Invalid `signature` in `thinking` block``,
+  so the verifier demonstrably reads it. `output_tokens_details.thinking_tokens`
   is real under exactly that name, both dialect rejections are word for word what `AnthropicThinkingMode`'s
   javadoc quotes, and the model/mode matrix matches the live model listing.
 

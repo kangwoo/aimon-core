@@ -426,6 +426,14 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
      * either way.
      *
      * <p>
+     * <strong>The remedy is mode-dependent, and that is not a stylistic split.</strong> Under {@code EXTENDED},
+     * {@link AnthropicThinkingMode#OFF} is a real escape: the models that speak that dialect accept the
+     * {@code temperature} this client then sends. Under {@code ADAPTIVE} it is not. Every adaptive-only model rejects
+     * {@code temperature} outright (§2.3, and {@code AnthropicThinkingLiveTest} asserts it), and turning thinking off
+     * is exactly what makes this client send it — so advising {@code OFF} there would hand the operator a guaranteed
+     * 400 in place of a cost. Naming one remedy for both modes is the mistake this split exists to avoid.
+     *
+     * <p>
      * It is still worth saying, because nothing else in the system would: no status code, no error, and a transcript
      * that looks exactly like a working one. It is not, however, a mistake — it is the documented escape from the
      * preserved-thinking prefix check, and an operator who set it deliberately should read this as confirmation
@@ -435,13 +443,22 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
         if (!thinkingRequested || config.isReplayThinkingBlocks()) {
             return;
         }
-        reportDivergence("replayOffWhileThinking",
-                "This request asks for {} thinking and replayThinkingBlocks(false) discards the blocks it returns, so "
-                        + "the model re-derives its reasoning every turn and the thinking tokens are billed again "
-                        + "each time. The request is not rejected — thinking simply does not survive a tool call. If "
-                        + "that is deliberate (it is the documented escape from the preserved-thinking prefix check) "
-                        + "nothing needs doing; if the tokens are not wanted either, set thinkingMode({}).",
-                config.getThinkingMode(), AnthropicThinkingMode.OFF);
+        final String shared = "This request asks for {} thinking and replayThinkingBlocks(false) discards the blocks "
+                + "it returns, so the model re-derives its reasoning every turn and the thinking tokens are billed "
+                + "again each time. The request is not rejected — thinking simply does not survive a tool call. If "
+                + "that is deliberate (it is the documented escape from the preserved-thinking prefix check) nothing "
+                + "needs doing";
+        if (config.getThinkingMode() == AnthropicThinkingMode.EXTENDED) {
+            reportDivergence("replayOffWhileThinking@EXTENDED",
+                    shared + "; if the tokens are not wanted either, set thinkingMode({}).",
+                    AnthropicThinkingMode.EXTENDED, AnthropicThinkingMode.OFF);
+            return;
+        }
+        reportDivergence("replayOffWhileThinking@" + config.getThinkingMode(),
+                shared + ". Note that thinkingMode(OFF) is not an escape on this dialect: the models that accept "
+                        + "adaptive thinking reject the temperature this client sends when thinking is off, so "
+                        + "turning it off makes every request fail instead of merely costing tokens.",
+                config.getThinkingMode());
     }
 
     /**
