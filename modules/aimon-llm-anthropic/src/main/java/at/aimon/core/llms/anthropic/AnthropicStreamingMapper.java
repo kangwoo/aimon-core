@@ -223,7 +223,10 @@ final class AnthropicStreamingMapper {
      */
     private void onContentBlockStop(RawContentBlockStopEvent event) {
         final long blockIndex = event.index();
-        final ToolUseSlot toolUseSlot = toolUseByBlockIndex.get(blockIndex);
+        // remove, not get: every other slot map below is drained here too, and a block that has stopped has no
+        // further deltas to route. Keeping one map filled while draining the other three reads as an oversight even
+        // though the mapper is per-stream and nothing would notice.
+        final ToolUseSlot toolUseSlot = toolUseByBlockIndex.remove(blockIndex);
         if (toolUseSlot != null) {
             orderedBlocks.add(AnthropicOutputBlocks.Block.toolUse(toolUseSlot.id));
             final int index = Math.toIntExact(blockIndex);

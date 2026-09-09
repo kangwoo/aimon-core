@@ -125,7 +125,7 @@ class AnthropicThinkingRequestTest {
         assertThat(body.get("thinking").get("budget_tokens").asInt()).isEqualTo(4095);
         // Not "temperature is null" — the key is absent. A null would be rejected the same way a value is.
         assertThat(body.has("temperature")).isFalse();
-        assertThat(warnings()).anyMatch(w -> w.contains("incompatible with Anthropic extended thinking"))
+        assertThat(warnings()).anyMatch(w -> w.contains("incompatible with Anthropic thinking"))
                 .anyMatch(w -> w.contains("does not fit under maxTokens"));
     }
 
@@ -235,7 +235,7 @@ class AnthropicThinkingRequestTest {
         assertThatThrownBy(() -> client.sendMessage("s", List.of(Message.user("hi")), List.of(), model))
                 .hasRootCause(SENTINEL);
 
-        assertThat(warnings()).filteredOn(w -> w.contains("incompatible with Anthropic extended thinking")).hasSize(1);
+        assertThat(warnings()).filteredOn(w -> w.contains("incompatible with Anthropic thinking")).hasSize(1);
         assertThat(warnings()).filteredOn(w -> w.contains("does not fit under maxTokens")).hasSize(1);
     }
 
@@ -248,5 +248,54 @@ class AnthropicThinkingRequestTest {
                 LlmModel.builder().build());
 
         assertThat(replaying).isEqualTo(notReplaying);
+    }
+
+    @Test
+    @DisplayName("replayThinkingBlocks(false) under EXTENDED is reported as the incompatible pair it is")
+    void replayOffUnderExtendedThinkingIsReported() {
+        send(client(config().thinkingMode(AnthropicThinkingMode.EXTENDED).replayThinkingBlocks(false).build()),
+                LlmModel.builder().build());
+
+        // Extended mode requires the final assistant turn to begin with a thinking block, and this configuration
+        // strips exactly that block. The remedy named is OFF, not replay(true): the switch exists because replay can
+        // itself fail, so telling the operator to undo it would be telling them to walk back into the other failure.
+        assertThat(warnings()).anyMatch(w -> w.contains("documented as incompatible"))
+                .anyMatch(w -> w.contains("thinkingMode(OFF)"));
+    }
+
+    @Test
+    @DisplayName("replayThinkingBlocks(false) is not reported when no thinking is requested")
+    void replayOffWithoutThinkingIsSilent() {
+        send(client(config().replayThinkingBlocks(false).build()), LlmModel.builder().build());
+
+        // OFF asks for no thinking, so neither vendor rule binds and there is nothing to warn about. This is the
+        // configuration the EXTENDED warning points at.
+        assertThat(warnings()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("replayThinkingBlocks(false) is not reported under ADAPTIVE, which drops the requirement")
+    void replayOffUnderAdaptiveIsSilent() {
+        send(client(config().thinkingMode(AnthropicThinkingMode.ADAPTIVE).replayThinkingBlocks(false).build()),
+                LlmModel.builder().build());
+
+        assertThat(warnings()).noneMatch(w -> w.contains("documented as incompatible"));
+    }
+
+    @Test
+    @DisplayName("the omitted temperature is described differently when the call set it and when it did not")
+    void temperatureOmissionNamesWhoseValueItWas() {
+        send(client(config().thinkingMode(AnthropicThinkingMode.ADAPTIVE).build()),
+                LlmModel.builder().temperature(0.7).build());
+        assertThat(warnings()).anyMatch(w -> w.startsWith("temperature 0.7 is incompatible"));
+
+        logAppender.list.clear();
+        send(client(config().thinkingMode(AnthropicThinkingMode.ADAPTIVE).build()), LlmModel.builder().build());
+
+        // Nobody set a temperature here: 0.0 is AnthropicConfig's default. Saying "temperature 0.0 is incompatible"
+        // reads as a complaint about a configuration the operator never wrote, which is the one thing a divergence
+        // warning must not do — it is supposed to tell them something they can act on.
+        assertThat(warnings()).anyMatch(w -> w.startsWith("No temperature was set on this call"))
+                .noneMatch(w -> w.startsWith("temperature 0.0 is incompatible"));
     }
 }

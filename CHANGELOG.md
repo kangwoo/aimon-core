@@ -277,6 +277,32 @@ Central is versioned independently).
   provider name to match a stored trace against, so it cannot tell one this client authored from one it must
   not send, and therefore replays none of them. It still compiles and still behaves exactly as it did.
 
+- **`replayThinkingBlocks(false)` alongside `EXTENDED` is warned about at startup of the first request.**
+  The two are documented as incompatible: extended mode requires the final assistant turn of a
+  thinking-enabled request to begin with a thinking block, and that setting strips exactly that block, so a
+  tool loop is expected to be rejected on its second iteration. The warning names `thinkingMode(OFF)` as the
+  remedy rather than "turn replay back on" — the switch exists because replay can itself fail, so undoing it
+  walks back into the other failure. It is a warning and **not** a constructor refusal, which is what the same
+  config class does for a budget set outside `EXTENDED`, because the rule is read from documentation and
+  another documented sentence (mid-turn conflicts *"degrade gracefully… the API doesn't error"*) contradicts
+  it. A live call settles it; until then an unverified rule is not made un-overridable.
+
+- **Two divergence registers, because "say it once" is right for a setting and wrong for the traffic.** The
+  existing once-per-signature rule is justified by the thing it describes having been set once, in an agent
+  definition. Four of the conditions this entry adds are not like that — a stream that loses its
+  `signature_delta`, a stored payload this build cannot parse, a trace anchored to a tool use that is gone, a
+  trace authored by another provider. Those are properties of the traffic, they can start midway through a
+  process, and their signatures are constant, so once-only would have described the first occurrence and then
+  gone quiet while every following turn lost its reasoning too. They are counted instead and reported on the
+  **1st, 10th, 100th …** occurrence with the count in the line: one warning still means it happened once, and
+  a line reading *occurrence 100* means the feature is off. Sampling and budget divergences are unchanged.
+
+- **The omitted `temperature` is described differently depending on whose value it was.** `LlmModel` knows
+  whether a call set one; `AnthropicConfig` cannot know whether anyone typed its own, and its default is
+  `0.0`. Telling an operator who never touched sampling that *"temperature 0.0 is incompatible"* is a
+  complaint about a configuration they did not write, so when no per-call temperature is present the message
+  says that first. Two signatures, deduplicated separately.
+
 - **What is not verified, and it is the thing the feature rests on.** This work was done with **no
   Anthropic API key**; every test is a fixture test and the suite runs without network. So nothing here
   shows that Anthropic's verifier accepts a replayed signature — only that this client does not change it:

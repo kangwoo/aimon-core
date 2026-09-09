@@ -241,8 +241,7 @@ emit, for one ASSISTANT message:
   3. for each tool use in order: its anchored traces (stored order), then the tool_use block
 ```
 
-The pair reproduces the provider's own order exactly for every single-text-block shape (two shapes are
-reordered, both because `Message` carries one concatenated text — U-3):
+The pair reproduces the provider's own order exactly for every single-text-block shape:
 
 | Response content | Anchors | Emitted |
 |---|---|---|
@@ -252,11 +251,25 @@ reordered, both because `Message` carries one concatenated text — U-3):
 | `[think1, tu1, think2, tu2]` (interleaved / progress updates) | t1→tu1, t2→tu2 | `[think1, tu1, think2, tu2]` ✅ |
 | `[think, text, tu1, think2, tu2]` | t1→none, t2→tu2 | `[think, text, tu1, think2, tu2]` ✅ |
 | `[think, text]` (no tools) | think → none | `[think, text]` ✅ |
+| `[text, think, tool_use]` (progress update first) | think → tu | `[text, think, tool_use]` ✅ |
 
-The two it would reorder — text *after* a tool_use, and thinking interleaved with **more than one** text
-block — are both shapes AIMON cannot represent in the first place: `Message` concatenates all text into
-one `getContent()` string, and the existing converter (`:143-155`) already emits
-text-then-all-tool-uses. The loss predates this change and is not widened by it. U-3 has both.
+**Three shapes are reordered, not two.** The first two are shapes AIMON cannot represent in the first
+place — text *after* a tool_use, and thinking interleaved with **more than one** text block: `Message`
+concatenates all text into one `getContent()` string, and the existing converter (`:143-155`) already
+emits text-then-all-tool-uses. The loss predates this change and is not widened by it.
+
+The third belongs to this rule rather than to `Message`, and it is the point where *unanchored* turns out
+to be two things wearing one value:
+
+| Response content | Anchors | Emitted |
+|---|---|---|
+| `[text, think]` (no tools) | think → none | `[think, text]` ❌ |
+
+An empty `toolUseId` means both *leads the turn* and *ends the turn*, and the emit rule's step 1 can only
+place it at the head. Separating them needs a second anchor value on `at.aimon.core.llm.ReasoningTrace`,
+i.e. an `aimon-core` change, for a shape no documented Anthropic turn produces — thinking precedes the
+answer, it does not follow it. Recorded rather than fixed, in this section, in `AnthropicOutputBlocks`'s
+own table, and in U-3.
 
 **Both paths run the same resolution function.** A new package-private `AnthropicOutputBlocks` takes an
 ordered list of `(kind, payload | toolUseId)` records and returns `List<ReasoningTrace>`; the blocking
@@ -321,6 +334,34 @@ signature, because the observable outcome is a request that **succeeds with sett
 configured** — no status code, nothing else in the system that would tell an operator. That method
 exists for exactly this and the task named it. The existing clamp for `temperature > 1.0` stays as it is
 on the non-thinking path.
+
+**The temperature omission is worded twice, because it is two different pieces of news.** `LlmModel`
+knows whether the call set a temperature; `AnthropicConfig` does not know whether its own was ever
+typed by anyone, and its default is `0.0`. So a deployment that turns thinking on and has never touched
+sampling would read *"temperature 0.0 is incompatible…"* — a sentence about a configuration it did not
+write, which is the one thing a divergence warning must not produce, since its whole job is to name
+something the operator can act on. When `LlmModel.getTemperature()` is present the message names the
+value plainly; when it is absent it says so first (*"No temperature was set on this call, so this
+client's configured 0.0 would have applied…"*). Two signatures, so the two are also deduplicated
+separately.
+
+### 3.5.1 Two registers, because "once" is right for a setting and wrong for the traffic
+
+`reportDivergence`'s once-per-signature rule rests on an argument its own javadoc makes: the thing being
+described was set once, in an agent definition, so repeating it every ReAct iteration is noise. That
+argument does not carry to four of the conditions this round adds — a stream that loses a
+`signature_delta`, a stored payload this build cannot parse, a trace anchored to a tool use that is
+gone, a trace authored by another provider. Those are properties of the **traffic**: they can begin
+halfway through a process, and their signatures are constant, so once-per-signature would describe the
+first occurrence and then be silent while the condition ran for the rest of the run — the same silence
+§3.5 exists to remove, reintroduced one layer down.
+
+So there is a second register. `reportRecurringDivergence(...)` counts per signature and logs on the
+**1st, 10th, 100th …** occurrence, appending the count past the first. One line still means it happened
+once; a line saying *occurrence 100* means the feature is off. The split is by call site rather than by
+a flag — `AnthropicMessageConverter` and `AnthropicStreamingMapper` are handed the recurring reporter,
+the client's own sampling and budget reports keep the once-only one — so `AnthropicDivergenceReporter`
+does not change shape and neither collaborator has to know which register it is writing to.
 
 ### 3.6 The token counter, read untyped
 
@@ -577,6 +618,8 @@ Existing behaviour-visible note from #43 applies unchanged: a usage carrying rea
 | 13 | **Token estimation under-counts by roughly the thinking tokens.** `HeuristicTokenEstimator` and `TikTokenEstimator` count `0` for reasoning traces while `DefaultCompactionGuard` drives every threshold from the estimator. | **Deliberately not fixed**, identically to the OpenAI side, and for the same reason: counting the blob as text would over-count against the true input cost and force premature compaction, which destroys the traces. Blast radius is bounded — compaction drops the traces so the error resets. Recorded so the next person reading a context-length 400 has the sentence. |
 | 14 | **Mid-turn thinking toggle** — an operator changes the config between a tool call and its result. | The API *"doesn't error… it silently disables thinking for that request"* and may strip blocks that would create an invalid turn structure. Nothing to do; noted so a reviewer does not build a guard against a case the server already handles. |
 | 15 | **Extended-only models produce thinking before the first tool call but not between calls**, because the interleaved beta header is not sent. | Correct but incomplete, by choice (A10). The blocks that do arrive round-trip properly. §8 F-3. |
+| 16 | **`replayThinkingBlocks(false)` set alongside `EXTENDED`.** §2.4 says passing the blocks back is *required within a tool-use turn* and that *the final assistant turn of a thinking-enabled request must begin with a thinking block* — a rule adaptive mode drops and extended mode does not. Stripping the traces removes exactly that block, so the second ReAct iteration of any tool loop is expected to be rejected. | Reported once by `reportIfReplayIsOffUnderExtendedThinking`, naming `thinkingMode(OFF)` as the remedy rather than "turn replay back on" — the switch exists because replay can itself fail (row 7), so undoing it walks back into the other failure. **Not** refused at construction the way a budget outside `EXTENDED` is, because that rule is documented and unmeasured and row 14 pulls the other way; making an unverified rule un-overridable is worse than warning about it. Promoted to a constructor check when §9 U-10 closes. |
+| 17 | **A block the SDK cannot serialise on the way in.** `AnthropicReasoningTraces.payloadOf` throws `IllegalStateException`, which reaches `sendMessage`'s catch-all and costs the turn — the one place this module inverts its own "a lost trace is cheaper than a lost turn" rule. | **Left as it is, and recorded rather than repaired.** The three candidate behaviours are: throw (loses one turn, loudly); drop the one block (produces the partial thinking sequence row 8 exists to prevent, i.e. a 400 on the *next* turn); drop the whole turn's traces (correct, all-or-nothing). The third is right in principle, but the trigger is Jackson failing to serialise an SDK model through the SDK's own mapper — there is no seam to inject that, so the branch would ship untested, and an untested catch-all on an unreachable path is how a real bug later gets swallowed. The asymmetry is the honest cost of not writing code we cannot exercise. |
 
 ---
 
@@ -617,8 +660,8 @@ what fixtures and unit tests cannot establish, kept in the form
 - **U-3 — the capture rule's "text intervenes" clause is reasoned from documented ordering, not
   observed, and §3.2's table covers the documented shapes rather than all shapes.** It is built from
   what the vendor documents (thinking-then-text-then-tool_use; progress updates sitting *"immediately
-  before the `tool_use` block"*). **Two shapes are reordered by the emit rule**, and both are losses
-  `Message` makes unavoidable rather than ones this rule introduces:
+  before the `tool_use` block"*). **Three shapes are reordered by the emit rule.** The first two are
+  losses `Message` makes unavoidable rather than ones this rule introduces:
   - `[think1, text1, think2, text2, tool_use]` — thinking interleaved with **more than one** text block,
     which adaptive-mode progress updates can produce. Both thinking blocks go unanchored and lead the
     message ahead of the single concatenated text, so two blocks the model emitted non-consecutively are
@@ -629,6 +672,12 @@ what fixtures and unit tests cannot establish, kept in the form
   Neither is fixable at this layer: `Message` concatenates all text into one `getContent()` string, so
   **no** emit rule could reproduce a multi-text turn. The loss predates this change and is not widened
   by it; carrying text position through `Message` would be a core change of its own.
+
+  The third is this rule's own and is new in this round's accounting — `[text, think]`, a trailing
+  thinking block with no tool use after it, replays as `[think, text]` because an empty `toolUseId`
+  carries both *leads the turn* and *ends the turn* and step 1 of the emit rule realises only the first.
+  It needs a second anchor value on `ReasoningTrace`, i.e. an `aimon-core` change, for a shape nothing
+  documented produces. §3.2 has the table row.
 - **U-4 — `redacted_thinking` streaming has not been observed.** The design assumes the block arrives
   whole on `content_block_start`, since there is no redacted-thinking delta variant in
   `RawContentBlockDelta` (`text`, `input_json`, `citations`, `thinking`, `signature`). That is strong
@@ -650,6 +699,13 @@ what fixtures and unit tests cannot establish, kept in the form
   name comes from the docs; the SDK does not model it (§2.6). The tests assert the untyped read against a
   hand-written JSON fixture, which proves the parser and not the field name. If the name is wrong the
   counter reads 0 and nothing else changes.
+- **U-10 — whether `EXTENDED` + `replayThinkingBlocks(false)` actually 400s has not been observed.**
+  §2.4 carries two documented sentences that together say it must (*"required within a tool-use turn"*,
+  *"the final assistant turn of a thinking-enabled request must begin with a thinking block"*), and §7
+  row 14 carries a third that says mid-turn conflicts *"degrade gracefully… the API doesn't error"*.
+  Those cannot all three be load-bearing here and only a live call settles which. Until then the pair
+  is **warned about, not refused** — failure mode 16. If the rejection is observed, the warning becomes
+  an `AnthropicConfig` constructor check alongside the budget/mode one and this item closes.
 - **U-9 — no docker-backed session-store round trip was run.** As on the OpenAI side, the encoding is
   decided in `JsonSessionSnapshotCodec` and `SessionRecordCodec` — both in the gate — and the backends
   store the result as an opaque string, so they cannot see the field. Unchanged by this work, since the
@@ -919,8 +975,11 @@ returning a pair or reporting from inside a class this document specifies as pur
   `AnthropicMessageConverterTest` into on-by-default build warnings.
 - **`AnthropicOutputBlocks.Block` uses named factories rather than a builder.** It is a three-variant
   discriminated union, and a builder would permit a `THINKING` block carrying a tool use id — a state the rule
-  has no meaning for. Immutable final class, final fields, private constructor, per
-  `.claude/rules/immutability-pattern.md`.
+  has no meaning for. Immutable final class, final fields, private constructor. This is a real departure from
+  `.claude/rules/immutability-pattern.md`, whose only written exemption covers deserialization targets, and it
+  is recorded in the class javadoc rather than added to that file as a new clause: amending a repository-wide
+  rule from inside a provider change is the scope creep A1 and A12 were rejected for. If a second union turns
+  up, that is when the rule should grow the clause.
 - **A redacted block is parked at `content_block_start` and appended at `content_block_stop`,** like every other
   kind, even though §5.5 correctly notes it is complete on arrival. One place appends to the ordered list, so
   block order cannot depend on which kinds a stream happens to contain.
@@ -928,10 +987,35 @@ returning a pair or reporting from inside a class this document specifies as pur
   a raw subtype of `JsonField`, so `asObject()` and `asNumber()` return raw `Optional`s; a cast would be
   unchecked and the pattern match performs the same test honestly. The behaviour is §3.6's.
 
+### 13.7 A second divergence register for conditions that are not configuration
+
+Specified in §3.5.1 above, which was written after review rather than before implementation, so it is
+recorded here too. The design assumed one reporting rule because the OpenAI round it inherits from only
+ever reported configuration facts. This round added four reports about traffic, and once-per-process is
+the wrong dedup for those. `AnthropicLlmClient` now carries `reportedDivergences` (a `Set`, unchanged)
+and `recurringDivergences` (a `Map<String, AtomicLong>`), both bounded by the same
+`MAX_REPORTED_DIVERGENCES`. `AnthropicReasoningRoundTripTest` pins both halves: twelve dropped traces
+produce two lines (the 1st and the 10th, the second carrying its count), and twelve identical
+`presencePenalty` divergences still produce one.
+
+### 13.8 `EXTENDED` + `replayThinkingBlocks(false)` is warned about rather than refused
+
+Neither the design nor the first implementation connected the escape hatch to §2.4's extended-mode
+requirement, and the pair is very probably unusable — failure mode 16 has the reasoning.
+`reportIfReplayIsOffUnderExtendedThinking` reports it once per client, and names `thinkingMode(OFF)` as
+the remedy rather than "turn replay back on", because the hatch exists precisely because replay can fail
+(failure mode 7) and undoing it walks back into that. It is a warning and not an `AnthropicConfig`
+constructor check — which is what the same class does for a budget set outside `EXTENDED` — because the
+rule is documented and unmeasured, and §7 row 14 documents graceful degradation that would contradict
+it. §9 U-10 is the item that closes this either way.
+
 ### 13.6 What the gate actually reported
 
-`./gradlew format` then `./gradlew checkAll`, offline. `aimon-llm-anthropic`: **208 tests, 0 failures, 13
-skipped** — the 13 are `AnthropicLlmClientIntegrationTest`, which is gated on `ANTHROPIC_KEY` and did not run.
+`./gradlew format` then `./gradlew checkAll`, offline. `aimon-llm-anthropic`: **217 tests, 0 failures, 13
+skipped**, counted from the JUnit XML rather than from the build's wording — the 13 are
+`AnthropicLlmClientIntegrationTest`, which is gated on `ANTHROPIC_KEY` and did not run. (An earlier revision of
+this line said 208; that count was taken from a results directory that had not been fully rewritten, and six of
+the difference are the cases §13.7 and §13.8 added.)
 Seven test classes are new (`AnthropicOutputBlocksTest`, `AnthropicThinkingBudgetsTest`,
 `AnthropicReasoningTracesTest`, `AnthropicReasoningRoundTripTest`, `AnthropicThinkingRequestTest`,
 `AnthropicStreamingReasoningTest`, `AnthropicUsageTest`); `AnthropicConfigTest` gained seven cases; and exactly

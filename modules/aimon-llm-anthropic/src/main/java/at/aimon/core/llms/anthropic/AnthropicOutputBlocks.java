@@ -61,13 +61,27 @@ import at.aimon.core.llm.ReasoningTrace;
  * <td>think → none</td>
  * <td>{@code [think, text]}</td>
  * </tr>
+ * <tr>
+ * <td>{@code [text, think, tool_use]}</td>
+ * <td>think → tu</td>
+ * <td>{@code [text, think, tool_use]}</td>
+ * </tr>
  * </table>
  *
  * <p>
- * Two shapes are reordered, and both are losses {@code Message} makes unavoidable rather than ones this rule
- * introduces: thinking interleaved with <em>more than one</em> text block (adaptive-mode progress updates can produce
- * it), and text <em>after</em> a tool use. {@code Message} concatenates all text into one {@code getContent()} string,
- * so no emit rule could reproduce a multi-text turn.
+ * <strong>Three shapes are reordered</strong>, and the first two are losses {@code Message} makes unavoidable rather
+ * than ones this rule introduces: thinking interleaved with <em>more than one</em> text block (adaptive-mode progress
+ * updates can produce it), and text <em>after</em> a tool use. {@code Message} concatenates all text into one
+ * {@code getContent()} string, so no emit rule could reproduce a multi-text turn.
+ *
+ * <p>
+ * The third is this rule's own, and it is the one place where <em>unanchored</em> is not precise enough:
+ * {@code [text, think]} — a trailing thinking block with no tool use after it — replays as {@code [think, text]},
+ * because an empty {@code toolUseId} means both <em>leads the turn</em> and <em>ends the turn</em> and the emit rule
+ * can only place it at the head. Distinguishing the two would need a second anchor value in
+ * {@code at.aimon.core.llm.ReasoningTrace}, i.e. a core change, for a shape no documented Anthropic turn produces —
+ * thinking precedes the answer, it does not follow it. Recorded rather than fixed, on the same footing as the blind
+ * spot below.
  *
  * <p>
  * <strong>{@link Kind} is a projection of an output turn, not an inventory of it, and it has a known blind
@@ -119,7 +133,8 @@ final class AnthropicOutputBlocks {
                 default -> throw new IllegalStateException("Unhandled block kind: " + block.kind);
             }
         }
-        // Trailing thinking with no tool use after it precedes the end of the turn.
+        // Trailing thinking with no tool use after it has nothing to anchor to. Note that the emit rule then puts it
+        // at the *head* of the message rather than where it was observed — see the third reordered shape above.
         flush(pending, null, providerName, traces);
         return List.copyOf(traces);
     }
@@ -149,7 +164,13 @@ final class AnthropicOutputBlocks {
      * <p>
      * Named factories rather than a builder: this is a three-variant discriminated union, and a builder would let a
      * caller assemble a {@code THINKING} carrying a tool use id — a state the rule has no meaning for. Immutability is
-     * unchanged.
+     * unchanged — final class, final fields, no setters.
+     *
+     * <p>
+     * That is a deliberate departure from {@code .claude/rules/immutability-pattern.md}, whose only written exemption
+     * is for deserialization targets. It is recorded here rather than added to that file as a new exemption, because
+     * amending a repository-wide rule from inside a provider change is the kind of scope creep this module's design
+     * document declines elsewhere; if a second union turns up, that is when the rule should grow a clause.
      */
     static final class Block {
 

@@ -309,7 +309,7 @@ class AnthropicReasoningRoundTripTest {
     // ── drops ───────────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("a trace authored by another provider is dropped, with exactly one warning")
+    @DisplayName("a trace authored by another provider is dropped, and two occurrences produce one warning")
     void foreignTraceIsDroppedAndReportedOnce() {
         lenient().when(mockAnthropicClient.messages()).thenReturn(mockMessageService);
         when(mockMessageService.create(any(MessageCreateParams.class))).thenThrow(SENTINEL);
@@ -334,6 +334,48 @@ class AnthropicReasoningRoundTripTest {
         assertThat(blocks).hasSize(1);
         assertThat(blocks.get(0).get("type").asText()).isEqualTo("tool_use");
         assertThat(warnings()).filteredOn(w -> w.contains("authored by OpenAI")).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("a drop that keeps happening says so again at the tenth occurrence, with the count")
+    void recurringDropIsReportedAgainWithItsCount() {
+        lenient().when(mockAnthropicClient.messages()).thenReturn(mockMessageService);
+        when(mockMessageService.create(any(MessageCreateParams.class))).thenThrow(SENTINEL);
+
+        final AnthropicLlmClient client = new AnthropicLlmClient(config(), mockAnthropicClient);
+        final Message assistant = Message.assistant("", List.of(ToolUse.of("toolu_1", "Ls", java.util.Map.of())))
+                .withReasoningTraces(List.of(ReasoningTrace.builder().providerName("OpenAI")
+                        .payload("{\"type\":\"reasoning\",\"id\":\"rs_1\"}").toolUseId("toolu_1").build()));
+
+        for (int i = 0; i < 12; i++) {
+            assertThatThrownBy(() -> client.sendMessage("system",
+                    List.of(Message.user("hi"), assistant,
+                            Message.toolUseResults(List.of(ToolUseResult.success("toolu_1", "ok")))),
+                    List.of(), LlmModel.builder().build())).hasRootCause(SENTINEL);
+        }
+
+        // A dropped trace is a property of the traffic, not of a config file, so once-per-process would describe the
+        // first turn and then stay silent while every following turn lost its reasoning too — the same silence this
+        // reporting exists to remove. Twelve occurrences, two lines: the 1st and the 10th.
+        final List<String> foreign = warnings().stream().filter(w -> w.contains("authored by OpenAI")).toList();
+        assertThat(foreign).hasSize(2);
+        assertThat(foreign.get(0)).doesNotContain("occurrence");
+        assertThat(foreign.get(1)).contains("occurrence 10");
+    }
+
+    @Test
+    @DisplayName("a sampling divergence stays once-only — it describes a config value, not the traffic")
+    void configurationDivergenceIsStillReportedOnlyOnce() {
+        lenient().when(mockAnthropicClient.messages()).thenReturn(mockMessageService);
+        when(mockMessageService.create(any(MessageCreateParams.class))).thenThrow(SENTINEL);
+
+        final AnthropicLlmClient client = new AnthropicLlmClient(config(), mockAnthropicClient);
+        for (int i = 0; i < 12; i++) {
+            assertThatThrownBy(() -> client.sendMessage("system", List.of(Message.user("hi")), List.of(),
+                    LlmModel.builder().presencePenalty(0.5).build())).hasRootCause(SENTINEL);
+        }
+
+        assertThat(warnings()).filteredOn(w -> w.contains("presencePenalty")).hasSize(1);
     }
 
     @Test

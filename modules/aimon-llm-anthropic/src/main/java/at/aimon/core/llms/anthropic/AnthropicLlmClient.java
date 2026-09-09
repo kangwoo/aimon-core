@@ -1,6 +1,7 @@
 package at.aimon.core.llms.anthropic;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -8,6 +9,7 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -90,15 +92,19 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(AnthropicLlmClient.class);
 
     /**
-     * Ceiling on how many distinct sampling divergences {@link #reportedDivergences} remembers.
+     * Ceiling on how many distinct divergences either register remembers.
      *
      * <p>
-     * Distinct values come from configuration — an agent definition's frontmatter, a starter property — so in any real
-     * deployment the count is the number of agents, not the number of requests. The cap exists because this client
-     * outlives every request that passes through it, and a caller that generates model configs programmatically would
-     * otherwise grow the set without bound. Past the cap the client stops reporting rather than stops remembering: by
-     * then it has already emitted 32 warnings, and a deployment that diverges in 32 distinct ways has a configuration
-     * problem that a log line is the wrong instrument for.
+     * For {@link #reportedDivergences} the distinct values come from configuration — an agent definition's
+     * frontmatter, a starter property — so in any real deployment the count is the number of agents, not the number of
+     * requests. The cap exists because this client outlives every request that passes through it, and a caller that
+     * generates model configs programmatically would otherwise grow the set without bound. Past the cap the client
+     * stops reporting rather than stops remembering: by then it has already emitted 32 warnings, and a deployment that
+     * diverges in 32 distinct ways has a configuration problem that a log line is the wrong instrument for.
+     *
+     * <p>
+     * {@link #recurringDivergences} is bounded by the same number for the same reason, and its keys are narrower
+     * still — they name a <em>condition</em> rather than a value, so the realistic count is single digits.
      */
     private static final int MAX_REPORTED_DIVERGENCES = 32;
 
@@ -122,6 +128,24 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
      * and leave the other silent — which is the failure this reporting exists to remove.
      */
     private final Set<String> reportedDivergences = ConcurrentHashMap.newKeySet();
+
+    /**
+     * Occurrence counts for divergences that are <strong>not</strong> configuration facts.
+     *
+     * <p>
+     * {@link #reportDivergence} says a thing once because what it describes was set once, in a config file, and
+     * repeating it every ReAct iteration would be noise. Four of the conditions this client reports are not like
+     * that: a stream that loses a {@code signature_delta}, a stored payload this build cannot parse, a trace anchored
+     * to a tool use that is gone, a trace authored by another provider. Those are properties of the traffic, they can
+     * start happening halfway through a process, and their signatures are constant — so once-per-signature would
+     * report the first occurrence and then be silent for every one after it, which is the same silence this reporting
+     * exists to remove.
+     *
+     * <p>
+     * So they are counted instead and reported on the 1st, 10th, 100th … occurrence, with the count in the message.
+     * A single warning still means "this happened once"; a run where every block is being dropped says so.
+     */
+    private final Map<String, AtomicLong> recurringDivergences = new ConcurrentHashMap<>();
 
     /**
      * Creates a new AnthropicLlmClient.
@@ -290,7 +314,7 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
                 providerName);
         final ChunkAggregator aggregator = new ChunkAggregator();
         final AnthropicStreamingMapper mapper = new AnthropicStreamingMapper(sink, aggregator, providerName,
-                this::reportDivergence);
+                this::reportRecurringDivergence);
 
         // A per-request timeout, when set, also bounds the streaming call (worst-case ceiling incl. no-progress
         // stalls); when unset, keep the single-argument overload so the client-wide default applies unchanged.
@@ -367,10 +391,11 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
 
         // Convert and add messages. Stripping the traces up front rather than passing a flag down keeps the converter
         // with one rule: it replays what it is given.
+        reportIfReplayIsOffUnderExtendedThinking(thinking.isPresent());
         final List<Message> outbound = config.isReplayThinkingBlocks()
                 ? messages
                 : AnthropicMessageConverter.withoutReasoningTraces(messages);
-        requestBuilder.messages(converter.convertMessages(outbound, providerName, this::reportDivergence));
+        requestBuilder.messages(converter.convertMessages(outbound, providerName, this::reportRecurringDivergence));
 
         // Add tools if provided
         if (!tools.isEmpty()) {
@@ -379,6 +404,44 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
         }
 
         return requestBuilder.build();
+    }
+
+    /**
+     * Warns that {@code replayThinkingBlocks(false)} and {@link AnthropicThinkingMode#EXTENDED} are very likely not a
+     * usable pair.
+     *
+     * <p>
+     * The two vendor rules in question, both quoted in the design's §2.4: passing every thinking block back is
+     * <em>required within a tool-use turn</em>, and <em>the final assistant turn of a thinking-enabled request must
+     * begin with a thinking block</em> — a requirement adaptive mode drops and extended mode does not. Stripping the
+     * traces therefore removes the one block extended mode insists on, and the second ReAct iteration of any tool loop
+     * is expected to be rejected.
+     *
+     * <p>
+     * <strong>Why this warns instead of {@code AnthropicConfig} refusing the pair at construction</strong>, which is
+     * what that class does for a budget set outside {@code EXTENDED}. Because the two facts above are read from
+     * documentation and have not been measured, and a third documented sentence pulls the other way — mid-turn
+     * conflicts <em>"degrade gracefully… the API doesn't error. Instead, it silently disables thinking for that
+     * request"</em>. Refusing at construction would make an unverified rule un-overridable; warning names the risk and
+     * leaves the operator able to try it. If a live call shows the rejection, this becomes a constructor check and
+     * the design's §9 U-10 closes.
+     *
+     * <p>
+     * The remedy is not to turn replay back on — the pair exists because replay can itself fail — it is
+     * {@link AnthropicThinkingMode#OFF}, which asks for no thinking and so is bound by neither rule.
+     */
+    private void reportIfReplayIsOffUnderExtendedThinking(boolean thinkingRequested) {
+        if (!thinkingRequested || config.isReplayThinkingBlocks()
+                || config.getThinkingMode() != AnthropicThinkingMode.EXTENDED) {
+            return;
+        }
+        reportDivergence("replayOffUnderExtendedThinking",
+                "replayThinkingBlocks(false) is set alongside {} thinking, and the two are documented as "
+                        + "incompatible: extended mode requires the final assistant turn to begin with a thinking "
+                        + "block, and this configuration strips exactly that block, so a tool loop is expected to be "
+                        + "rejected on its second iteration. If the intent was to stop replaying blocks, set "
+                        + "thinkingMode({}) instead — that asks for no thinking and is bound by neither rule.",
+                AnthropicThinkingMode.EXTENDED, AnthropicThinkingMode.OFF);
     }
 
     /**
@@ -460,12 +523,25 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
      */
     private void applySamplingParameters(MessageCreateParams.Builder requestBuilder, LlmModel modelConfig,
             boolean thinkingRequested) {
+        final boolean setOnThisCall = modelConfig.getTemperature().isPresent();
         final double requested = modelConfig.getTemperature().orElse(config.getTemperature());
         if (thinkingRequested) {
-            reportDivergence("temperatureOmittedForThinking=" + requested,
-                    "temperature {} is incompatible with Anthropic extended thinking and is being omitted; the call "
-                            + "will succeed with the provider's default sampling.",
-                    requested);
+            // Two wordings, because the two cases are different news. "temperature 0.7" names something the caller
+            // chose; the client's own configured value names something they may never have touched — this config's
+            // default is 0.0, and saying "temperature 0.0 is incompatible" to someone who never set a temperature
+            // reads as a complaint about their configuration rather than as a statement about this provider.
+            if (setOnThisCall) {
+                reportDivergence("temperatureOmittedForThinking=" + requested,
+                        "temperature {} is incompatible with Anthropic thinking and is being omitted; the call will "
+                                + "succeed with the provider's default sampling.",
+                        requested);
+            } else {
+                reportDivergence("clientTemperatureOmittedForThinking=" + requested,
+                        "No temperature was set on this call, so this client's configured {} would have applied; it "
+                                + "is incompatible with Anthropic thinking and is being omitted, and the call will "
+                                + "succeed with the provider's default sampling.",
+                        requested);
+            }
         } else {
             double temperature = requested;
             if (temperature < 0.0 || temperature > 1.0) {
@@ -519,6 +595,60 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
             return;
         }
         log.warn(message, args);
+    }
+
+    /**
+     * Reports a divergence that is a property of the <em>traffic</em> rather than of the configuration, on the 1st,
+     * 10th, 100th … occurrence.
+     *
+     * <p>
+     * {@link #reportDivergence}'s once-per-signature rule is right for a value someone typed into an agent definition
+     * and wrong for a dropped thinking block: those signatures are constant, so once-only would describe the first
+     * occurrence and then say nothing while the condition ran for the rest of the process. The count in the message is
+     * the point — one line means it happened once, and a line saying "occurrence 100" means the feature is off.
+     *
+     * @param signature
+     *            the condition, the key that decides whether this has already been said
+     * @param message
+     *            SLF4J-formatted message; one extra {@code {}} placeholder is appended for the count past the first
+     * @param args
+     *            values for the message placeholders
+     */
+    private void reportRecurringDivergence(String signature, String message, Object... args) {
+        final AtomicLong counter = recurringDivergences.get(signature);
+        if (counter == null && recurringDivergences.size() >= MAX_REPORTED_DIVERGENCES) {
+            return;
+        }
+        final long count = recurringDivergences.computeIfAbsent(signature, key -> new AtomicLong()).incrementAndGet();
+        if (!isReportableOccurrence(count)) {
+            return;
+        }
+        if (count == 1) {
+            log.warn(message, args);
+            return;
+        }
+        final Object[] withCount = Arrays.copyOf(args, args.length + 1);
+        withCount[args.length] = count;
+        log.warn(message + " (occurrence {}; this condition is reported at 1, 10, 100 … so the gaps are silent)",
+                withCount);
+    }
+
+    /**
+     * Whether this occurrence is one of the ones that gets a line: 1, 10, 100, 1000 …
+     *
+     * <p>
+     * Computed by dividing rather than by multiplying up to the count, because {@code threshold *= 10} overflows to a
+     * negative on a long-lived process and a loop guarded on {@code <= count} would then never end.
+     */
+    private static boolean isReportableOccurrence(long count) {
+        if (count <= 0) {
+            return false;
+        }
+        long remaining = count;
+        while (remaining % 10 == 0) {
+            remaining /= 10;
+        }
+        return remaining == 1;
     }
 
     /**
