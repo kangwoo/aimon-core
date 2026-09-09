@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -18,8 +19,12 @@ import com.anthropic.core.RequestOptions;
 import com.anthropic.core.http.StreamResponse;
 import com.anthropic.models.messages.ContentBlock;
 import com.anthropic.models.messages.MessageCreateParams;
+import com.anthropic.models.messages.OutputConfig;
 import com.anthropic.models.messages.RawMessageStreamEvent;
 import com.anthropic.models.messages.StopReason;
+import com.anthropic.models.messages.ThinkingConfigAdaptive;
+import com.anthropic.models.messages.ThinkingConfigEnabled;
+import com.anthropic.models.messages.ThinkingConfigParam;
 import com.anthropic.models.messages.ToolUnion;
 import com.anthropic.models.messages.ToolUseBlock;
 import com.anthropic.models.messages.Usage;
@@ -32,6 +37,8 @@ import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.Message;
+import at.aimon.core.llm.ReasoningEffort;
+import at.aimon.core.llm.ReasoningTrace;
 import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.llm.ToolUse;
@@ -94,6 +101,12 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
      * problem that a log line is the wrong instrument for.
      */
     private static final int MAX_REPORTED_DIVERGENCES = 32;
+
+    /**
+     * The bottom of the {@code top_p} window Anthropic accepts alongside thinking. Outside {@code [0.95, 1.0]} the
+     * parameter is rejected rather than clamped, so it is omitted instead.
+     */
+    private static final double MIN_TOP_P_WITH_THINKING = 0.95;
 
     private final AnthropicConfig config;
     private final AnthropicClient client;
@@ -180,7 +193,12 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
         Objects.requireNonNull(modelConfig, "Model config cannot be null");
 
         try {
-            MessageCreateParams request = buildRequest(systemPrompt, messages, tools, modelConfig);
+            // Resolved once and threaded into both halves of the reasoning round trip. Reading it separately in the
+            // request factory and in the response converter is how a subclass that overrides getProviderName() ends
+            // up tagging a trace with one name and matching it against another, dropping every trace as foreign and
+            // leaving the feature silently doing nothing. The model name is already resolved this way.
+            final String providerName = getProviderName();
+            MessageCreateParams request = buildRequest(systemPrompt, messages, tools, modelConfig, providerName);
 
             // Call Anthropic API. When the caller set a per-request timeout, pass it through as a
             // RequestOptions override; otherwise keep the single-argument overload so the client-wide default timeout
@@ -191,7 +209,7 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
                     : client.messages().create(request, requestOptions);
 
             // Convert response
-            return convertResponse(result);
+            return convertResponse(result, providerName);
 
         } catch (MessageConversionException | ToolConversionException e) {
             // Already LlmClientException subtypes — propagate as-is
@@ -266,10 +284,13 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
             throw new LlmCallCancelledException("Anthropic streaming call cancelled before start");
         }
 
-        final MessageCreateParams request = buildRequest(systemPromptParts.concatenated(), messages, tools,
-                modelConfig);
+        // Resolved once, for the same reason as the blocking path above.
+        final String providerName = getProviderName();
+        final MessageCreateParams request = buildRequest(systemPromptParts.concatenated(), messages, tools, modelConfig,
+                providerName);
         final ChunkAggregator aggregator = new ChunkAggregator();
-        final AnthropicStreamingMapper mapper = new AnthropicStreamingMapper(sink, aggregator);
+        final AnthropicStreamingMapper mapper = new AnthropicStreamingMapper(sink, aggregator, providerName,
+                this::reportDivergence);
 
         // A per-request timeout, when set, also bounds the streaming call (worst-case ceiling incl. no-progress
         // stalls); when unset, keep the single-argument overload so the client-wide default applies unchanged.
@@ -307,28 +328,29 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
 
     /**
      * Builds a {@link MessageCreateParams} request shared by both the synchronous and streaming entry points.
+     *
+     * @param providerName
+     *            this client's provider name, resolved once by the caller so that the trace-replay half and the
+     *            trace-capture half agree even in a subclass that overrides {@link #getProviderName()}
      */
     private MessageCreateParams buildRequest(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
-            LlmModel modelConfig) {
-        final double requested = modelConfig.getTemperature().orElse(config.getTemperature());
-        double temperature = requested;
-        if (temperature < 0.0 || temperature > 1.0) {
-            temperature = Math.max(0.0, Math.min(1.0, temperature));
-            reportDivergence("temperature=" + requested,
-                    "Temperature {} is outside Anthropic's range [0.0, 1.0]; sending {} instead. "
-                            + "The call will succeed with different sampling than was configured.",
-                    requested, temperature);
-        }
+            LlmModel modelConfig, String providerName) {
+        final int maxTokens = modelConfig.getMaxTokens().orElse(config.getMaxTokens());
+        final Optional<ThinkingConfigParam> thinking = resolveThinking(modelConfig, maxTokens);
 
         MessageCreateParams.Builder requestBuilder = MessageCreateParams.builder()
-                .model(modelConfig.getName().orElse(config.getModel()))
-                .maxTokens((long) modelConfig.getMaxTokens().orElse(config.getMaxTokens())).temperature(temperature);
+                .model(modelConfig.getName().orElse(config.getModel())).maxTokens((long) maxTokens);
+
+        thinking.ifPresent(requestBuilder::thinking);
+        if (thinking.isPresent() && config.getThinkingMode() == AnthropicThinkingMode.ADAPTIVE) {
+            AnthropicThinkingBudgets.effortFor(modelConfig.getReasoningEffort().orElse(null))
+                    .ifPresent(effort -> requestBuilder.outputConfig(OutputConfig.builder().effort(effort).build()));
+        }
+
+        applySamplingParameters(requestBuilder, modelConfig, thinking.isPresent());
 
         // Set system prompt via dedicated parameter (Anthropic-specific)
         requestBuilder.system(systemPrompt);
-
-        // Add optional parameters
-        modelConfig.getTopP().ifPresent(requestBuilder::topP);
 
         // Anthropic has no counterpart to either penalty, so both are dropped. Dropping them is correct; doing it
         // quietly is not — the caller set a value that has no effect here and the call still succeeds.
@@ -343,8 +365,12 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
                                 + "without it.",
                         p));
 
-        // Convert and add messages
-        requestBuilder.messages(converter.convertMessages(messages));
+        // Convert and add messages. Stripping the traces up front rather than passing a flag down keeps the converter
+        // with one rule: it replays what it is given.
+        final List<Message> outbound = config.isReplayThinkingBlocks()
+                ? messages
+                : AnthropicMessageConverter.withoutReasoningTraces(messages);
+        requestBuilder.messages(converter.convertMessages(outbound, providerName, this::reportDivergence));
 
         // Add tools if provided
         if (!tools.isEmpty()) {
@@ -353,6 +379,115 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
         }
 
         return requestBuilder.build();
+    }
+
+    /**
+     * Resolves the {@code thinking} parameter this request carries, or empty for none.
+     *
+     * <p>
+     * {@link AnthropicThinkingMode#OFF} and {@link at.aimon.core.llm.ReasoningEffort#NONE} both mean "send nothing",
+     * uniformly across both dialects. The alternative for the second — {@code thinking: {"type": "disabled"}} — is
+     * itself rejected by several models, and omission cannot 400. The cost, stated rather than hidden: on a model
+     * where thinking is on by default, {@code NONE} does not turn it off.
+     */
+    private Optional<ThinkingConfigParam> resolveThinking(LlmModel modelConfig, int maxTokens) {
+        final AnthropicThinkingMode mode = config.getThinkingMode();
+        if (mode == AnthropicThinkingMode.OFF) {
+            return Optional.empty();
+        }
+        final ReasoningEffort effort = modelConfig.getReasoningEffort().orElse(null);
+        if (effort == ReasoningEffort.NONE) {
+            return Optional.empty();
+        }
+        if (mode == AnthropicThinkingMode.ADAPTIVE) {
+            return Optional.of(ThinkingConfigParam.ofAdaptive(ThinkingConfigAdaptive.builder().build()));
+        }
+        return resolveExtendedThinking(effort, maxTokens);
+    }
+
+    private Optional<ThinkingConfigParam> resolveExtendedThinking(ReasoningEffort effort, int maxTokens) {
+        final Integer configuredBudget = config.getThinkingBudgetTokens();
+        if (configuredBudget != null && effort != null) {
+            reportDivergence("thinkingBudgetOverridesEffort=" + configuredBudget + "@" + effort,
+                    "Both a thinking budget ({} tokens) and a reasoning effort ({}) are set; the explicit budget wins "
+                            + "and the effort is ignored on this provider.",
+                    configuredBudget, effort);
+        }
+
+        final OptionalInt budget = AnthropicThinkingBudgets.budgetFor(effort, configuredBudget, maxTokens);
+        if (budget.isEmpty()) {
+            // Thinking tokens count against max_tokens, so below ~1024 there is no legal budget at all. Sending a
+            // request the server is certain to reject is worse than not asking for thinking.
+            reportDivergence("thinkingBudgetImpossible=" + maxTokens,
+                    "maxTokens is {}, which leaves no room for the {}-token minimum thinking budget; the thinking "
+                            + "parameter is being omitted and the call will succeed without extended thinking.",
+                    maxTokens, AnthropicThinkingBudgets.MINIMUM_BUDGET_TOKENS);
+            return Optional.empty();
+        }
+
+        final int requested = AnthropicThinkingBudgets.requestedBudget(effort, configuredBudget);
+        final int resolved = budget.getAsInt();
+        if (resolved != requested) {
+            // What is lost here is the *answer*, not the thinking. Thinking tokens count against max_tokens, so a
+            // budget clamped to maxTokens - 1 leaves one token for visible output and the turn ends on
+            // stop_reason: max_tokens. Naming the reduced budget instead would point the operator at the harmless
+            // half of the change.
+            reportDivergence("thinkingBudgetClamped=" + requested + "->" + resolved,
+                    "A thinking budget of {} tokens does not fit under maxTokens {}; sending {} instead, which leaves "
+                            + "only {} tokens for the visible answer. Raise maxTokens: thinking tokens are counted "
+                            + "against it, so the reply is what this squeezes out, not the reasoning.",
+                    requested, maxTokens, resolved, maxTokens - resolved);
+        }
+        return Optional
+                .of(ThinkingConfigParam.ofEnabled(ThinkingConfigEnabled.builder().budgetTokens(resolved).build()));
+    }
+
+    /**
+     * Applies {@code temperature} and {@code top_p}, or omits them because thinking is on.
+     *
+     * <p>
+     * The vendor's rule, on every model that has thinking: {@code temperature} and {@code top_k} are incompatible with
+     * it, and {@code top_p} is accepted only between 0.95 and 1. So when this request carries a {@code thinking}
+     * parameter the temperature setter is <strong>not called</strong> — omission means never calling it, because a
+     * key left present with a null value is rejected the same way the value would be — and {@code top_p} is sent only
+     * inside that window.
+     *
+     * <p>
+     * Both omissions are reported at WARN, because the observable outcome is a request that <em>succeeds with
+     * settings other than the ones configured</em>: no status code, and nothing else in the system that would tell an
+     * operator. Nothing is silently substituted with a "safe" value. {@code top_k} needs no handling — {@link LlmModel}
+     * has no such field.
+     */
+    private void applySamplingParameters(MessageCreateParams.Builder requestBuilder, LlmModel modelConfig,
+            boolean thinkingRequested) {
+        final double requested = modelConfig.getTemperature().orElse(config.getTemperature());
+        if (thinkingRequested) {
+            reportDivergence("temperatureOmittedForThinking=" + requested,
+                    "temperature {} is incompatible with Anthropic extended thinking and is being omitted; the call "
+                            + "will succeed with the provider's default sampling.",
+                    requested);
+        } else {
+            double temperature = requested;
+            if (temperature < 0.0 || temperature > 1.0) {
+                temperature = Math.max(0.0, Math.min(1.0, temperature));
+                reportDivergence("temperature=" + requested,
+                        "Temperature {} is outside Anthropic's range [0.0, 1.0]; sending {} instead. "
+                                + "The call will succeed with different sampling than was configured.",
+                        requested, temperature);
+            }
+            requestBuilder.temperature(temperature);
+        }
+
+        modelConfig.getTopP().ifPresent(topP -> {
+            if (thinkingRequested && (topP < MIN_TOP_P_WITH_THINKING || topP > 1.0)) {
+                reportDivergence("topPOmittedForThinking=" + topP,
+                        "topP {} is outside the [{}, 1.0] window Anthropic accepts alongside extended thinking and is "
+                                + "being omitted; the call will succeed without it.",
+                        topP, MIN_TOP_P_WITH_THINKING);
+                return;
+            }
+            requestBuilder.topP(topP);
+        });
     }
 
     /**
@@ -423,9 +558,11 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
      *
      * @param result
      *            The Anthropic message result
+     * @param providerName
+     *            this client's provider name, resolved once by the caller and stamped onto every captured trace
      * @return The aimon LlmResponse
      */
-    private LlmResponse convertResponse(com.anthropic.models.messages.Message result) {
+    private LlmResponse convertResponse(com.anthropic.models.messages.Message result, String providerName) {
         // Check stop reason for potential issues
         result.stopReason().ifPresent(stopReason -> {
             if (StopReason.MAX_TOKENS.equals(stopReason)) {
@@ -442,16 +579,29 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
 
         StringBuilder textContent = new StringBuilder();
         List<ToolUse> toolUses = new ArrayList<>();
+        // The block sequence as the provider emitted it, which is what decides each thinking block's anchor. Both the
+        // capture predicate and the ordering rule live in AnthropicOutputBlocks, shared with the streaming path.
+        List<AnthropicOutputBlocks.Block> orderedBlocks = new ArrayList<>();
 
         for (ContentBlock block : contentBlocks) {
             if (block.isText()) {
                 textContent.append(block.asText().text());
+                orderedBlocks.add(AnthropicOutputBlocks.Block.text());
             } else if (block.isToolUse()) {
                 ToolUseBlock toolUseBlock = block.asToolUse();
                 Map<String, Object> input = extractToolInput(toolUseBlock);
                 toolUses.add(ToolUse.of(toolUseBlock.id(), toolUseBlock.name(), input));
+                orderedBlocks.add(AnthropicOutputBlocks.Block.toolUse(toolUseBlock.id()));
+            } else if (block.isThinking()) {
+                orderedBlocks.add(
+                        AnthropicOutputBlocks.Block.thinking(AnthropicReasoningTraces.payloadOf(block.asThinking())));
+            } else if (block.isRedactedThinking()) {
+                // Not a variant of "some other block type we can skip": filtering on the thinking type alone is the
+                // vendor-documented way to break the multi-turn protocol, because a partially dropped thinking
+                // sequence is rejected outright.
+                orderedBlocks.add(AnthropicOutputBlocks.Block
+                        .thinking(AnthropicReasoningTraces.payloadOf(block.asRedactedThinking())));
             }
-            // Ignore other block types (ThinkingBlock, RedactedThinkingBlock, etc.)
         }
 
         // Extract token usage
@@ -463,7 +613,9 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
                 .map(reason -> AnthropicStopReasons.fromWire(reason.asString()))
                 .orElse(at.aimon.core.llm.StopReason.UNKNOWN);
 
-        return LlmResponse.of(textContent.toString(), toolUses, tokenUsage, neutralStopReason);
+        final List<ReasoningTrace> traces = AnthropicOutputBlocks.resolve(orderedBlocks, providerName);
+        return LlmResponse.of(textContent.toString(), toolUses, tokenUsage, neutralStopReason)
+                .withReasoningTraces(traces);
     }
 
     /**
@@ -499,7 +651,9 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
             int inputTokens = (int) usage.inputTokens();
             int outputTokens = (int) usage.outputTokens();
             int totalTokens = inputTokens + outputTokens;
-            return TokenUsage.of(inputTokens, outputTokens, totalTokens);
+            // Thinking tokens are billed as output tokens, so they are contained in outputTokens rather than added
+            // to it — the fourth counter reports the breakdown and changes no total.
+            return TokenUsage.of(inputTokens, outputTokens, totalTokens, AnthropicUsages.thinkingTokens(usage));
         } catch (Exception e) {
             log.debug("Could not extract token usage: {}", e.getMessage());
             return TokenUsage.empty();

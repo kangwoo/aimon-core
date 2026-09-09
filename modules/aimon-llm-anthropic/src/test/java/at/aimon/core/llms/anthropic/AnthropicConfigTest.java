@@ -250,4 +250,78 @@ class AnthropicConfigTest {
         String result = config.toString();
         assertThat(result).doesNotContain("sk-ant-super-secret-key");
     }
+
+    @Test
+    @DisplayName("Thinking is off by default, and stored blocks are replayed by default")
+    void thinkingDefaults() {
+        // OFF keeps the request body exactly as it was before thinking support existed; replay defaults to true
+        // because on the always-on models the blocks arrive whether or not the operator asked for them.
+        AnthropicConfig config = AnthropicConfig.builder().apiKey("test-key").build();
+
+        assertThat(config.getThinkingMode()).isEqualTo(AnthropicThinkingMode.OFF);
+        assertThat(config.getThinkingBudgetTokens()).isNull();
+        assertThat(config.isReplayThinkingBlocks()).isTrue();
+    }
+
+    @Test
+    @DisplayName("Should accept all three thinking settings")
+    void shouldAcceptThinkingSettings() {
+        AnthropicConfig config = AnthropicConfig.builder().apiKey("test-key")
+                .thinkingMode(AnthropicThinkingMode.EXTENDED).thinkingBudgetTokens(8000).maxTokens(16_000)
+                .replayThinkingBlocks(false).build();
+
+        assertThat(config.getThinkingMode()).isEqualTo(AnthropicThinkingMode.EXTENDED);
+        assertThat(config.getThinkingBudgetTokens()).isEqualTo(8000);
+        assertThat(config.isReplayThinkingBlocks()).isFalse();
+    }
+
+    @Test
+    @DisplayName("Should throw exception when thinking mode is null")
+    void shouldThrowWhenThinkingModeIsNull() {
+        assertThatThrownBy(() -> AnthropicConfig.builder().apiKey("test-key").thinkingMode(null))
+                .isInstanceOf(NullPointerException.class).hasMessageContaining("Thinking mode cannot be null");
+    }
+
+    @Test
+    @DisplayName("Should throw exception when the thinking budget is below the API floor")
+    void shouldThrowWhenThinkingBudgetIsBelowTheFloor() {
+        // The API rejects anything under 1024 on every request, so failing here beats failing on all of them.
+        assertThatThrownBy(() -> AnthropicConfig.builder().apiKey("test-key")
+                .thinkingMode(AnthropicThinkingMode.EXTENDED).thinkingBudgetTokens(1023).build())
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("at least 1024");
+    }
+
+    @Test
+    @DisplayName("Should throw exception when a thinking budget is set outside EXTENDED mode")
+    void shouldThrowWhenBudgetIsSetOutsideExtendedMode() {
+        // Adaptive has no budget field and OFF sends no thinking parameter, so the value would be silently ignored.
+        assertThatThrownBy(() -> AnthropicConfig.builder().apiKey("test-key")
+                .thinkingMode(AnthropicThinkingMode.ADAPTIVE).thinkingBudgetTokens(4096).build())
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("applies only to EXTENDED");
+        assertThatThrownBy(() -> AnthropicConfig.builder().apiKey("test-key").thinkingBudgetTokens(4096).build())
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("applies only to EXTENDED");
+    }
+
+    @Test
+    @DisplayName("Two configs differing only in a thinking setting are not equal")
+    void thinkingSettingsParticipateInEquality() {
+        AnthropicConfig off = AnthropicConfig.builder().apiKey("test-key").build();
+        AnthropicConfig adaptive = AnthropicConfig.builder().apiKey("test-key")
+                .thinkingMode(AnthropicThinkingMode.ADAPTIVE).build();
+        AnthropicConfig noReplay = AnthropicConfig.builder().apiKey("test-key").replayThinkingBlocks(false).build();
+
+        assertThat(off).isNotEqualTo(adaptive).isNotEqualTo(noReplay);
+        assertThat(off).isEqualTo(AnthropicConfig.builder().apiKey("test-key").build());
+        assertThat(off).hasSameHashCodeAs(AnthropicConfig.builder().apiKey("test-key").build());
+    }
+
+    @Test
+    @DisplayName("toString reports the thinking settings and still hides the API key")
+    void toStringReportsThinkingSettings() {
+        AnthropicConfig config = AnthropicConfig.builder().apiKey("sk-ant-super-secret-key")
+                .thinkingMode(AnthropicThinkingMode.EXTENDED).thinkingBudgetTokens(2048).maxTokens(8000).build();
+
+        assertThat(config.toString()).contains("thinkingMode=EXTENDED").contains("thinkingBudgetTokens=2048")
+                .contains("replayThinkingBlocks=true").doesNotContain("sk-ant-super-secret-key");
+    }
 }
