@@ -144,6 +144,37 @@ public class AimonProperties implements InitializingBean {
      */
     public static final String LLM_MODEL_CAPABILITIES = PREFIX + ".llm.model-capabilities";
 
+    /**
+     * Anthropic-only settings — {@code aimon.llm.anthropic.*}.
+     *
+     * <p>
+     * The first subtree under {@code aimon.llm} that is <em>not</em> shared, and it fills the slot the property
+     * tree in {@code docs/design/integration/spring-boot-starter.md} §9.3 reserved before anything occupied it.
+     * The rule that put it here is the one {@link #LLM_MODEL_CAPABILITIES} states and fails: a key goes to
+     * {@code aimon.llm.<provider>.*} when its <em>name</em> carries a vendor concept or when the same key would
+     * mean different things per vendor. All three keys below fail the first test — "thinking" is Anthropic's word
+     * for the phenomenon this codebase otherwise calls {@code ReasoningEffort} / {@code ReasoningTrace},
+     * {@code budget_tokens} is a literal field of the Anthropic request body, and a "thinking block" is a signed
+     * {@code thinking} content block on that vendor's wire.
+     *
+     * <p>
+     * A block written under another provider is refused by name rather than ignored, from inside the branch that
+     * actually runs — see {@code AimonLlmAutoConfiguration}.
+     */
+    public static final String LLM_ANTHROPIC = PREFIX + ".llm.anthropic";
+
+    /** Which thinking dialect Anthropic requests speak. */
+    public static final String LLM_ANTHROPIC_THINKING_MODE = LLM_ANTHROPIC + ".thinking-mode";
+
+    /**
+     * Explicit {@code budget_tokens} for the {@code extended} dialect.
+     *
+     * <p>
+     * There is no sibling constant for {@code replay-thinking-blocks}: it is a boolean, so no value of it is
+     * refusable and no message ever has to name it. These constants exist to be spoken, not to enumerate.
+     */
+    public static final String LLM_ANTHROPIC_THINKING_BUDGET_TOKENS = LLM_ANTHROPIC + ".thinking-budget-tokens";
+
     /** Backing store for session records. */
     public static final String SESSION_STORE = PREFIX + ".session.store";
 
@@ -1196,6 +1227,12 @@ public class AimonProperties implements InitializingBean {
          */
         private Map<String, ModelCapabilityProperties> modelCapabilities = new LinkedHashMap<>();
 
+        /**
+         * Anthropic-only settings. Unlike the shared keys beside it, this block is read by one branch — the reason
+         * is on {@link AimonProperties#LLM_ANTHROPIC}.
+         */
+        private final Anthropic anthropic = new Anthropic();
+
         public String getProvider() {
             return provider;
         }
@@ -1242,6 +1279,101 @@ public class AimonProperties implements InitializingBean {
 
         public void setModelCapabilities(Map<String, ModelCapabilityProperties> modelCapabilities) {
             this.modelCapabilities = modelCapabilities == null ? new LinkedHashMap<>() : modelCapabilities;
+        }
+
+        public Anthropic getAnthropic() {
+            return anthropic;
+        }
+
+        /**
+         * The {@code aimon.llm.anthropic.*} block — which thinking dialect requests speak, how much of it, and
+         * whether stored thinking blocks are replayed.
+         *
+         * <p>
+         * Nested inside {@code AimonProperties} for the reason {@link ModelCapabilityProperties} states: the
+         * documentation guard's walker only descends into types whose name starts with {@code AimonProperties$},
+         * so a top-level class would put this whole subtree outside it.
+         *
+         * <p>
+         * <b>{@code thinkingMode} is a {@code String} here and an {@code AnthropicThinkingMode} on the CLI, and
+         * that asymmetry is load-bearing rather than an oversight.</b> {@code aimon-llm-anthropic} is
+         * {@code compileOnly} in this module, so a deployment that carries only the OpenAI module has no
+         * {@code AnthropicThinkingMode} at runtime — and Spring's {@code JavaBeanBinder} calls
+         * {@code Class.getDeclaredMethods()} on every bean it binds, which resolves the signatures of the methods
+         * it finds. Measured: with the vendor class absent, reading a vendor-typed <em>field</em> for a null check
+         * costs nothing, but {@code getDeclaredMethods()} on a class declaring a vendor-typed accessor throws
+         * {@code NoClassDefFoundError} — an {@code Error}, which Boot's {@code BindException} wrapping does not
+         * catch. The binder short-circuits before that point while nothing under this prefix is set
+         * ({@code Binder.containsNoDescendantOf}), so the failure would arrive exactly when somebody first writes
+         * {@code aimon.llm.anthropic.*} — most likely by copying the yaml out of the guide and forgetting the
+         * dependency. The string is folded onto the enum inside the {@code @ConditionalOnClass}-guarded slice,
+         * over {@code AnthropicThinkingMode.values()} so the two surfaces cannot accept different spellings.
+         *
+         * <p>
+         * Every field is boxed, and null means "not written": that is what lets an absent block leave
+         * {@code AnthropicConfig}'s own defaults (mode {@code OFF}, no budget, replay {@code true}) standing, and
+         * what lets {@link #isEmpty()} tell an unwritten block from one that says {@code replay-thinking-blocks:
+         * true}.
+         */
+        public static class Anthropic {
+
+            /**
+             * Which of Anthropic's two mutually exclusive thinking request shapes to send:
+             * {@code off} (the default — send none), {@code extended}, {@code adaptive}, or {@code auto} to send
+             * whichever one the capability table says this model speaks. Case-insensitive.
+             */
+            private String thinkingMode;
+
+            /**
+             * Explicit {@code budget_tokens}, at least 1024. Legal <em>only</em> together with
+             * {@code thinking-mode: extended} — under any other mode the number would reach nothing, and startup
+             * fails rather than dropping it silently. It is clamped below the request's {@code max_tokens}.
+             */
+            private Integer thinkingBudgetTokens;
+
+            /**
+             * Whether stored thinking blocks are replayed on the next request. Defaults to replaying them;
+             * {@code false} strips them, which is the vendor's own remedy for <em>"Invalid {@code signature} in
+             * {@code thinking} block. The block is bound to a different conversation."</em>
+             */
+            private Boolean replayThinkingBlocks;
+
+            public String getThinkingMode() {
+                return thinkingMode;
+            }
+
+            public void setThinkingMode(String thinkingMode) {
+                this.thinkingMode = thinkingMode;
+            }
+
+            public Integer getThinkingBudgetTokens() {
+                return thinkingBudgetTokens;
+            }
+
+            public void setThinkingBudgetTokens(Integer thinkingBudgetTokens) {
+                this.thinkingBudgetTokens = thinkingBudgetTokens;
+            }
+
+            public Boolean getReplayThinkingBlocks() {
+                return replayThinkingBlocks;
+            }
+
+            public void setReplayThinkingBlocks(Boolean replayThinkingBlocks) {
+                this.replayThinkingBlocks = replayThinkingBlocks;
+            }
+
+            /**
+             * Whether nothing under this block was written.
+             *
+             * <p>
+             * Reads three fields for null and loads no vendor class, which is what lets the refusal in
+             * {@code AimonLlmAutoConfiguration} sit on the enclosing class rather than inside a guarded slice.
+             *
+             * @return true when all three keys are absent
+             */
+            public boolean isEmpty() {
+                return thinkingMode == null && thinkingBudgetTokens == null && replayThinkingBlocks == null;
+            }
         }
     }
 

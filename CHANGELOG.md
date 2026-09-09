@@ -316,6 +316,67 @@ Central is versioned independently).
   Design and the full mode × dialect table, one test per row:
   [`reasoning-model-enablement.md`](docs/design/llm/reasoning-model-enablement.md) §3.
 
+### LLM: Anthropic's thinking settings are reachable from configuration, under a vendor namespace
+
+- **Three keys on both surfaces** (#54). `AnthropicConfig`'s `thinkingMode`, `thinkingBudgetTokens`
+  and `replayThinkingBlocks` were programmatic-only, so a deployment assembled from configuration
+  could not choose a dialect, set a budget, or turn replay off. Each surface keeps its own notation
+  and the two do not mix:
+
+  ```yaml
+  # aimon-cli — camelCase                    # aimon-spring-boot-starter — kebab-case
+  llm:                                       aimon:
+    provider: anthropic                        llm:
+    anthropic:                                   anthropic:
+      thinkingMode: extended                       thinking-mode: extended
+      thinkingBudgetTokens: 4000                   thinking-budget-tokens: 4000
+      replayThinkingBlocks: true                   replay-thinking-blocks: true
+  ```
+
+- **A deployment that sets nothing is unchanged, byte for byte.** Every setter is called only when
+  its key was written, so the vendor defaults — mode `OFF`, no budget, replay on — stand untouched.
+  Capture and replay were already unconditional, so an always-on thinking model keeps the benefit of
+  the previous entry with nothing configured; what these keys add is *tuning*.
+
+- **They went to `aimon.llm.anthropic.*` / `llm.anthropic.*`, not beside the shared keys — which
+  contradicts what #54's own body proposed.** The issue drafted `llm.thinkingMode` /
+  `aimon.llm.thinking-mode` and then, two paragraphs later, called `thinkingMode` *"the first key
+  whose name carries a vendor concept"* and named itself the trigger for the criterion that decides
+  this. The criterion (`model-capability-config-key.md` §2.7) sends a key to a vendor namespace when
+  its **name** carries a vendor concept or its **meaning** differs per vendor, and all three fail the
+  first test: "thinking" is Anthropic's word for what this codebase calls `ReasoningEffort` /
+  `ReasoningTrace`, `budget_tokens` is a literal request-body field, and a "thinking block" is a
+  signed content block on that wire. Implementing the draft would have put the first vendor-named key
+  into the shared namespace on the first occasion the criterion applied, which makes the criterion
+  unfalsifiable. This is its second application and its first split; `B-21` in
+  `docs/backlog/spring-boot-starter-open-items.md` records both.
+
+- **A budget is `extended`'s, not an independent knob.** Written with `auto`, `adaptive` or the
+  default `off` it fails at startup naming the block, rather than being silently dropped — the rule is
+  `AnthropicConfig`'s and the surfaces only add the key path. The likeliest mistake is writing a
+  budget with no mode at all, where the mode is `off` and the number would reach nothing. A budget is
+  still floored at 1024 and clamped below `max_tokens`, whose default is 4096 — so on an untouched
+  deployment `thinkingBudgetTokens: 8000` goes out as 4095 with a WARN, and raising that ceiling is
+  the agent definition's `model.maxTokens`.
+
+- **An anthropic block under another provider fails at startup**, from inside the branch that runs.
+  A subtree named after one vendor leaves no ambiguity about whose it is. Deployments where no branch
+  runs — `provider=none`, or an application supplying its own `LlmClient` — are untouched, for the
+  reason `requireApiKey` gives: outside a running branch a check turns valid configuration into a
+  boot failure. Backlog `L-3` counts three keys more; `L-1` (a misspelled starter key is silent, while
+  the CLI's mapper throws) is widened by three keys and closed by none of this.
+
+- **`thinkingMode` binds the vendor enum on the CLI and a `String` in the starter**, and that
+  asymmetry is load-bearing rather than an oversight: `aimon-llm-anthropic` is `compileOnly` in the
+  starter, and Spring's binder calls `getDeclaredMethods()` on every bean it binds, so a vendor-typed
+  accessor would be a raw `NoClassDefFoundError` the first time somebody wrote one of these keys on an
+  OpenAI-only classpath. The starter folds the string over `AnthropicThinkingMode.values()` inside the
+  guarded slice, so the two surfaces cannot come to accept different spellings. Both accept all four
+  values in any case. **In the starter, quote `off`** — YAML reads it unquoted as a boolean, and the
+  failure message says so.
+
+  Design: [`anthropic-thinking-config-surface.md`](docs/design/llm/anthropic-thinking-config-surface.md).
+
 ### LLM: Anthropic's thinking blocks now survive a tool call too
 
 - **Verified against the real API, and one shipped claim was wrong.** The feature was built without a

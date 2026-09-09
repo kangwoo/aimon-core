@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 
 import at.aimon.cli.exception.ConfigurationException;
 import at.aimon.core.llm.ReasoningEffort;
+import at.aimon.core.llms.anthropic.AnthropicThinkingMode;
 
 @DisplayName("CliConfigLoader Tests")
 class CliConfigLoaderTest {
@@ -545,9 +546,10 @@ class CliConfigLoaderTest {
         @Test
         @DisplayName("Should accept a reasoning effort in either case")
         void reasoningEffortIsCaseInsensitive() throws IOException {
-            // The only key the mapper's ACCEPT_CASE_INSENSITIVE_ENUMS reaches, and the only reason it is on: nothing
-            // else in at.aimon.cli.config binds to an enum. Both spellings pass so that this surface feels like the
-            // starter's, whose relaxed binding already accepts them.
+            // The one key the mapper's ACCEPT_CASE_INSENSITIVE_ENUMS reaches. `llm.anthropic.thinkingMode` binds
+            // an enum too and does not inherit this -- its @JsonDeserialize replaces the EnumDeserializer the
+            // feature acts on, so that field folds case itself. Both spellings pass here so that this surface
+            // feels like the starter's, whose relaxed binding already accepts them.
             for (String written : new String[]{"low", "LOW", "Low"}) {
                 Path configFile = write("""
                         llm:
@@ -675,6 +677,180 @@ class CliConfigLoaderTest {
                     """);
 
             assertThat(loader.load(configFile.toString()).getLlmConfig().getModelCapabilities()).isEmpty();
+        }
+    }
+
+    @Nested
+    @DisplayName("Anthropic thinking block")
+    class AnthropicThinkingBlock {
+
+        private Path write(String body) throws IOException {
+            final Path configFile = tempDir.resolve("anthropic.yaml");
+            Files.writeString(configFile, body);
+            return configFile;
+        }
+
+        @Test
+        @DisplayName("Should bind all three keys")
+        void bindsAllThreeKeys() throws IOException {
+            Path configFile = write("""
+                    llm:
+                      provider: "anthropic"
+                      apiKey: "test-api-key"
+                      model: "claude-sonnet-4-5"
+                      anthropic:
+                        thinkingMode: extended
+                        thinkingBudgetTokens: 4000
+                        replayThinkingBlocks: false
+                    """);
+
+            AnthropicProviderConfig anthropic = loader.load(configFile.toString()).getLlmConfig().getAnthropic();
+
+            assertThat(anthropic.getThinkingMode()).isEqualTo(AnthropicThinkingMode.EXTENDED);
+            assertThat(anthropic.getThinkingBudgetTokens()).isEqualTo(4000);
+            assertThat(anthropic.getReplayThinkingBlocks()).isFalse();
+        }
+
+        @Test
+        @DisplayName("Should accept every mode spelling, in any case")
+        void everyModeSpellingBinds() throws IOException {
+            // Sourced from values() so a fifth constant fails here rather than going untested, and written in three
+            // casings because the folding is this key's own. @JsonDeserialize takes the field off the
+            // EnumDeserializer path, so the mapper-wide ACCEPT_CASE_INSENSITIVE_ENUMS never applies to it and what
+            // these three casings actually exercise is ThinkingModeDeserializer's equalsIgnoreCase.
+            for (AnthropicThinkingMode mode : AnthropicThinkingMode.values()) {
+                for (String written : new String[]{mode.name(), mode.name().toLowerCase(java.util.Locale.ROOT),
+                        mode.name().charAt(0) + mode.name().substring(1).toLowerCase(java.util.Locale.ROOT)}) {
+                    Path configFile = write("""
+                            llm:
+                              provider: "anthropic"
+                              apiKey: "test-api-key"
+                              anthropic:
+                                thinkingMode: %s
+                            """.formatted(written));
+
+                    assertThat(loader.load(configFile.toString()).getLlmConfig().getAnthropic().getThinkingMode())
+                            .as("thinkingMode written as `%s`", written).isEqualTo(mode);
+                }
+            }
+        }
+
+        @Test
+        @DisplayName("Should bind an unquoted off, which YAML reads as a boolean")
+        void unquotedOffBinds() throws IOException {
+            // The reason AnthropicProviderConfig.ThinkingModeDeserializer exists. `off` is a YAML 1.1 boolean, so
+            // the parser hands Jackson a VALUE_FALSE token and the stock enum deserializer refuses it -- one of the
+            // four documented spellings would not work as documented. getText() still carries the written scalar.
+            Path configFile = write("""
+                    llm:
+                      provider: "anthropic"
+                      apiKey: "test-api-key"
+                      anthropic:
+                        thinkingMode: off
+                    """);
+
+            assertThat(loader.load(configFile.toString()).getLlmConfig().getAnthropic().getThinkingMode())
+                    .isEqualTo(AnthropicThinkingMode.OFF);
+        }
+
+        @Test
+        @DisplayName("Should still refuse the other spellings YAML reads as booleans")
+        void otherYamlBooleansAreStillRefused() throws IOException {
+            // The deserializer restores the spellings this project documents, not every token YAML types as false.
+            // `no` and `false` are not thinking modes and must not quietly become one.
+            for (String written : new String[]{"no", "false"}) {
+                Path configFile = write("""
+                        llm:
+                          provider: "anthropic"
+                          apiKey: "test-api-key"
+                          anthropic:
+                            thinkingMode: %s
+                        """.formatted(written));
+
+                assertThatThrownBy(() -> loader.load(configFile.toString())).as("thinkingMode written as `%s`", written)
+                        .isInstanceOf(ConfigurationException.class)
+                        .hasMessageContaining("Invalid configuration structure");
+            }
+        }
+
+        @Test
+        @DisplayName("Should reject an unusable thinking mode rather than falling back")
+        void rejectsAnUnusableMode() throws IOException {
+            Path configFile = write("""
+                    llm:
+                      provider: "anthropic"
+                      apiKey: "test-api-key"
+                      anthropic:
+                        thinkingMode: adaptiv
+                    """);
+
+            assertThatThrownBy(() -> loader.load(configFile.toString())).isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("Invalid configuration structure");
+        }
+
+        @Test
+        @DisplayName("Should reject a misspelled key rather than ignoring it")
+        void rejectsAMisspelledKey() throws IOException {
+            // FAIL_ON_UNKNOWN_PROPERTIES is on for this mapper. The starter cannot do this -- Boot ignores an
+            // unknown property -- and that asymmetry now covers three more keys; it is backlog item L-1.
+            Path configFile = write("""
+                    llm:
+                      provider: "anthropic"
+                      apiKey: "test-api-key"
+                      anthropic:
+                        thinkingMod: auto
+                    """);
+
+            assertThatThrownBy(() -> loader.load(configFile.toString())).isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("Invalid configuration structure");
+        }
+
+        @Test
+        @DisplayName("Should leave every key null when the block is absent")
+        void anAbsentBlockIsEmpty() throws IOException {
+            Path configFile = write("""
+                    llm:
+                      provider: "anthropic"
+                      apiKey: "test-api-key"
+                      model: "claude-sonnet-5"
+                    """);
+
+            assertThat(loader.load(configFile.toString()).getLlmConfig().getAnthropic().isEmpty()).isTrue();
+        }
+
+        @Test
+        @DisplayName("Should treat a block with no children as absent")
+        void aChildlessBlockIsEmpty() throws IOException {
+            // yaml binds `anthropic:` with nothing under it to null, and the setter turns that back into an empty
+            // instance -- otherwise every read of this block would need a null check and the openai branch's
+            // refusal would fire on a block nobody wrote anything into.
+            Path configFile = write("""
+                    llm:
+                      provider: "anthropic"
+                      apiKey: "test-api-key"
+                      anthropic:
+                    """);
+
+            assertThat(loader.load(configFile.toString()).getLlmConfig().getAnthropic().isEmpty()).isTrue();
+        }
+
+        @Test
+        @DisplayName("Should not expand ${VAR} inside the block")
+        void environmentVariablesAreNotExpandedHere() throws IOException {
+            // Expansion runs after Jackson has bound and walks three named string fields in the llm block
+            // (apiKey, baseUrl, model) plus the capability map keys. A ${VAR} on an enum or an Integer therefore
+            // fails at bind time rather than passing through -- loud, which is the right half of this asymmetry.
+            // The starter has no such limit: Spring resolves placeholders before binding. Documented, not fixed.
+            Path configFile = write("""
+                    llm:
+                      provider: "anthropic"
+                      apiKey: "test-api-key"
+                      anthropic:
+                        thinkingMode: "${THINKING_MODE}"
+                    """);
+
+            assertThatThrownBy(() -> loader.load(configFile.toString())).isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("Invalid configuration structure");
         }
     }
 }

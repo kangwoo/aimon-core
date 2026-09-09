@@ -160,7 +160,7 @@ B-26 에서 틀린 것은 **"어디까지인가"** 였고, 그 차이는 수정�
 
 | 항목 | 문서가 적은 전제 | 실제 |
 |------|-----------------|------|
-| **B-21** | "공통 `aimon.llm.*` 을 최소 교집합만 두고 전용 키를 `aimon.llm.<provider>.*` 로 분리할지" | **나눌 것이 없다.** `AimonProperties.Llm` 에는 `provider` · `apiKey` · `model` · `baseUrl` · `timeout` 뿐이고 temperature · topP · penalty 는 **프로퍼티로 존재한 적이 없다.** 프로퍼티 분할은 있지도 않은 표면에 대한 결정이었다 — **2026-08-05 에는 참이었고 지금은 아니다.** #46 이 여섯 번째 축을 만들어 이 관측을 무효로 만들었고, 항목은 다시 열려 결정되고 닫혔다(§5) |
+| **B-21** | "공통 `aimon.llm.*` 을 최소 교집합만 두고 전용 키를 `aimon.llm.<provider>.*` 로 분리할지" | **나눌 것이 없다.** `AimonProperties.Llm` 에는 `provider` · `apiKey` · `model` · `baseUrl` · `timeout` 뿐이고 temperature · topP · penalty 는 **프로퍼티로 존재한 적이 없다.** 프로퍼티 분할은 있지도 않은 표면에 대한 결정이었다 — **2026-08-05 에는 참이었고 지금은 아니다.** #46 이 여섯 번째 축을 만들어 이 관측을 무효로 만들었고, 항목은 다시 열려 결정되고 닫혔다(§5). **2026-09-09 에 같은 기준이 두 번째로 적용되어 처음으로 "쪼갠다" 를 냈다** — #54 의 `thinking*` 세 키가 `aimon.llm.anthropic.*` 로 내려갔다. 위 답("나눌 것이 없다")은 `model-capabilities` 에 대해 그대로 참이고, 기준이 낳는 답이 키마다 다르다는 것이 §5 의 날짜 블록에 있다 |
 | **B-22** | "`CredentialStore` **구현 부재**. 참조 구현을 코어에 넣을지" | **이미 있다.** `InMemoryCredentialStore` 가 빌더까지 갖춘 채 들어 있고 `CredentialStore:20` 이 스스로를 "the default implementation is …" 로 가리킨다. 스타터도 `ObjectProvider<CredentialStore>` / `ObjectProvider<CredentialStoreFactory>` 를 이미 받는다. "이것 없이는 동작하지 않는다" 도 거짓이다 |
 | **B-20** | native 힌트 범위에 "Quartz 4종" | 4종의 출처가 없다. quartz 모듈에 `Class.forName` 은 **0건**이고, 반사 표면은 `JobBuilder.newJob(X.class)` 로 넘겨져 발화 시점에 Quartz 가 인스턴스화하는 **자체 Job 3종**(`DelegatingJob` · `RewakeJob` · `DreamerJob`)이다. 나머지 인용(`FileSystemFactory` 6건)은 정확하다 |
 | **B-6** | (§0.1 이 이미 한 번 고쳤다) "진짜 무한 대기는 `:197` 의 `future.get()`" | **무한 대기가 아니다.** `StdioMcpTransport:141-172` 는 `readLine()` 을 블로킹으로 부르지 않는다 — `ready()` 로 폴링하고 10ms 씩 자며 데드라인을 검사한다. 따라서 모든 `sendRequest` 는 `requestTimeout`(기본 30초) 안에 반드시 돌아오거나 던지고, 그 위의 `initialize()` · `create()` · `future.get()` 이 전부 그만큼 유계다 |
@@ -2401,7 +2401,7 @@ AgentSession session = sessionFactory.open(conversationId, agentName, options);
 
 | # | 원래 질문 | 처분 |
 |---|----------|------|
-| **B-21** · U-3 | 공통 `aimon.llm.*` 을 최소 교집합만 두고 전용 키를 `aimon.llm.<provider>.*` 로 분리할지 | **해소 → 2026-09-09 다시 열렸다가 결정되고 닫혔다(✅).** 해소 사유였던 관측("나눌 프로퍼티가 존재한 적이 없다 — `AimonProperties.Llm` 은 `provider` · `apiKey` · `model` · `baseUrl` · `timeout` 뿐이다")이 #46 으로 무효가 되었다: 여섯 번째 축 `model-capabilities` 가 생겼고, 그것을 어디에 둘지가 곧 이 질문이다. 아래 참조. 실제로 관측되는 발산은 여전히 `LlmModel` 축에 있고 **B-30** 그대로다 |
+| **B-21** · U-3 | 공통 `aimon.llm.*` 을 최소 교집합만 두고 전용 키를 `aimon.llm.<provider>.*` 로 분리할지 | **해소 → 2026-09-09 다시 열렸다가 결정되고 닫혔다(✅).** 해소 사유였던 관측("나눌 프로퍼티가 존재한 적이 없다 — `AimonProperties.Llm` 은 `provider` · `apiKey` · `model` · `baseUrl` · `timeout` 뿐이다")이 #46 으로 무효가 되었다: 여섯 번째 축 `model-capabilities` 가 생겼고, 그것을 어디에 둘지가 곧 이 질문이다. 아래 참조. 실제로 관측되는 발산은 여전히 `LlmModel` 축에 있고 **B-30** 그대로다. **2026-09-09 에 그 기준이 두 번째로 적용되어 처음으로 쪼갰다**(#54 의 `thinking*` 세 키) — 아래 두 번째 날짜 블록 |
 | **B-22** · U-6 | `CredentialStore` 참조 구현을 코어에 넣을지 | **해소.** `InMemoryCredentialStore` 가 이미 있고 `CredentialStore:20` 이 기본 구현으로 가리킨다. 스타터도 빈 자리를 열어 두었다. 없는 것은 구현이 아니라 프로퍼티 표면이며 **B-31** 로 옮겼다 — 그 표면은 2026-08-05 에 `aimon.credentials.*` 로 열렸다 |
 
 #### B-21 은 다시 살아났고, 다른 이유로 같은 답을 냈다 ✅
@@ -2445,6 +2445,47 @@ AgentSession session = sessionFactory.open(conversationId, agentName, options);
 > 거짓말하지 않게 하던 것이 *"읽지 않는 분기가 이름으로 거절한다"* 였는데, 이제 **두 분기가 모두 읽으므로**
 > 거절할 분기가 없다. 두 거절 가드는 삭제됐다. 근거:
 > [`../design/llm/anthropic-sampling-capabilities.md`](../design/llm/anthropic-sampling-capabilities.md) §7.
+
+##### 2026-09-09 — 기준의 **두 번째 적용**이고, **처음으로 "쪼갠다"** 가 나왔다 ✅
+
+#54 가 `AnthropicConfig` 의 세 노브(`thinkingMode` · `thinkingBudgetTokens` · `replayThinkingBlocks`)에 두
+표면을 주면서 같은 질문을 다시 물었고, 이번에는 답이 반대다. 항목은 **닫힌 채로 두고 번호도 재사용하지
+않는다** — 질문이 같고 규칙도 같으며, 바뀐 것은 규칙에 걸린 키들이기 때문이다. 이 등록부의 관례대로
+닫힌 항목은 번호를 지키고 날짜 블록을 기른다.
+
+| 키 | 조건 1 — 이름 | 조건 2 — 뜻 | 판정 |
+|---|---|---|---|
+| `thinkingMode` | **걸린다.** "thinking" 은 이 현상에 대한 Anthropic 의 단어이고, 이 저장소의 중립 명사는 `ReasoningEffort` · `ReasoningTrace` 다. 바인딩 대상 타입의 이름이 말 그대로 `AnthropicThinkingMode` 이며, 네 값 중 `EXTENDED` · `ADAPTIVE` 는 다른 어디에도 짝이 없는 Anthropic 의 와이어 모양이다 | 걸린다 — OpenAI 의 "thinking mode" 는 이 세 갈래 선택이 아닐 것이다(요청 모양 하나에 사다리 하나) | **벤더** |
+| `thinkingBudgetTokens` | **걸린다.** `budget_tokens` 는 Anthropic 요청 본문의 필드 이름 그대로다 | **걸린다.** 다른 벤더는 "얼마나 생각할까" 를 토큰 수로 적지 않는다 — OpenAI 는 사다리의 단이다 | **벤더** |
+| `replayThinkingBlocks` | **걸린다.** "thinking block" 은 서명이 붙은 `thinking` 콘텐츠 블록이라는 와이어 명사이며, 같은 payload 의 중립 이름은 `ReasoningTrace` 다 | 혼자 놓으면 통과한다("trace 를 되실을 것인가" 는 두 벤더 다 받을 수 있는 물음) — 그래서 여기서 일하는 것은 이름 조건이다 | **벤더** |
+
+세 개가 전부 조건 1 에 걸린다. §2.7 을 어떻게 읽어도 이 셋이 공통으로 남는 독법은 없다.
+
+**가장 정직하게 적어야 하는 것은 세 번째 줄이다.** `replayThinkingBlocks` 는 중립이라고 부르고 싶어지는
+키인데, 그것을 벤더로 내리자 네임스페이스가 오히려 정리됐다 — 공통 쪽은 이미 같은 물음의 중립 절반을
+갖고 있었기 때문이다.
+
+```
+aimon.llm.model-capabilities.<model>.supports-reasoning-trace-round-trip   # 중립: 이 모델이 trace 를 되싣는가
+aimon.llm.anthropic.replay-thinking-blocks                                 # Anthropic: 그래도 떼라, 서명이 깨지므로
+```
+
+앞은 **모델에 대한 사실**을 provider-neutral 어휘로 적고 두 클라이언트가 읽는다. 뒤는 **한 벤더의 서명 검증
+실패에서 빠져나오는 비상구**이고, 그 실패의 문장이 setter javadoc 에 그대로 인용되어 있다. 공통
+네임스페이스에 두었다면 두 줄이 한 칸 떨어져 앉아 범주가 다른 말을 하게 된다.
+
+**#54 의 본문이 제안한 키 이름과 이 결정이 어긋난다는 것을 여기 적어 둔다.** 이슈는
+`llm.thinkingMode` · `aimon.llm.thinking-mode` 를 제안하면서 두 문단 뒤에 *"이것을 같이 정할 만하다"* 고
+쓰고, `thinkingMode` 를 *"이름에 벤더 개념을 담은 첫 키"* 라고 부르며, *"이 이슈가 그 기준이 쓰인 이유"*
+라고 말한다. 질문은 이슈가 냈고 그 초안은 반대로 답했다. 초안대로 구현하면 **기준이 처음 적용된 그
+자리에서** 첫 벤더 이름 키가 공통 네임스페이스로 들어가고, 그러면 기준은 반증 불가능해진다 — 쪼개지
+않는 것을 정당화하는 데만 쓰인 규칙은 규칙이 아니다. 이 사실은 #54 를 닫을 때 말로도 남긴다.
+
+**그리고 C5 의 관측 하나가 만료됐다.** *"§9.3 의 `llm.anthropic: { … }` 자리는 예약되어 있지만 비어
+있다"* 는 이제 참이 아니다 — 이 세 키가 그 자리의 첫 입주자다. 처음 해소 사유가 만료된 것과 같은
+종류의 만료이며, 그래서 여기 적는다.
+
+근거 전문은 [`../design/llm/anthropic-thinking-config-surface.md`](../design/llm/anthropic-thinking-config-surface.md) §3.
 
 **B-13 도 결정 항목이었다 — 2026-08-05 에 결정되고 같은 날 닫혔다.** §7 이 그렇게 분류했고
 (“패치가 아니라 결정이다”) 본문은 §3 에 있다. 택일은 `isConfigured()` 계약을 없앨지,

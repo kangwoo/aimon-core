@@ -1,4 +1,4 @@
-# LLM 설정 표면 — 등록 항목 4건 (열림 4)
+# LLM 설정 표면 — 등록 항목 5건 (열림 5)
 
 출처는 #46 이다 — 모델 capability 표를 CLI yaml 과 스타터 프로퍼티에서 확장할 수 있게 한 작업.
 설계는 [`../design/llm/model-capability-config-key.md`](../design/llm/model-capability-config-key.md) 이고,
@@ -59,6 +59,21 @@ N-1 을 여기 적는 이유는 그것이 답이라고 보아서가 아니라 **
    하나 더 등록하면 되므로 서브트리가 늘수록 유리해진다.
 3. 호스트 앱이 `aimon.*` 아래 자기 키를 두지 않는다는 것이 규약으로 확정될 때 — 그러면 R12 의 유일한
    대가가 사라진다.
+
+> **2026-09-09 — 이 항목은 닫히지 않았고, 키 셋만큼 넓어졌다.** #54 가
+> `aimon.llm.anthropic.thinking-mode` · `.thinking-budget-tokens` · `.replay-thinking-blocks` 를 더했고,
+> 세 키 모두 같은 침묵 아래 있다 — `thinking-mod` 로 적은 배포는 아무 말도 듣지 못한 채 기본값으로 돈다.
+> **성질은 그대로다**: 원인은 여전히 `@ConfigurationProperties` 의 `ignoreUnknownFields = true` 이고, CLI
+> 는 여전히 같은 오타에 `ConfigurationException` 을 던진다(그쪽 매퍼가 `FAIL_ON_UNKNOWN_PROPERTIES` 를
+> 켠 채다). 닫는 길 셋(R12 · R14 · N-1)의 저울도 그대로다 — 이 세 키는 맵이 아니라 세 개의 리프이므로
+> R14 의 대가("자동완성이 사라진다")를 새로 지지도, 덜지도 않는다.
+> 침묵은 여기서도 테스트로 기록했다 — `AimonPropertiesValidationTest.aMisspelledAnthropicKeyIsSilentInTheStarter`.
+> 옆의 `aMisspelledFlagIsSilentInTheStarter` 와 같은 성격이며, 누가 이 항목을 닫으면 **둘이 함께 빨개진다.**
+>
+> **"언제 다시 볼까" 의 트리거 2 는 발화하지 않는다.** 그것이 세는 것은 *"같은 성질의 두 번째
+> 맵-of-객체 키"* 이고 `aimon.llm.anthropic` 은 그것이 아니다 — 고정된 리프 셋을 가진 중첩 객체 하나다.
+> R14 의 계산도 N-1 의 계산도 바뀌지 않으므로 **이 항목의 처분은 그대로**다. 재도출하게 두는 것보다
+> 적어 두는 편이 싸다.
 
 > 인수 조건과의 관계를 정직하게 적어 둔다. #46 의 인수 조건은
 > *"잘못된 설정이 조용히 통과하지 않는다 — 양쪽 표면 모두"* 였고, **값 오류와 의미 오류에 대해서는 양쪽
@@ -143,6 +158,20 @@ registry 를 자기 클라이언트에 넘길 수 있다), `provider=none` + 빈
 `responsesApiEnabled` 가 `aimon.llm.openai.*` 로 내려가면 그 키에 대해서는 이 질문이 자동으로 사라지므로
 (벤더 네임스페이스는 읽는 주체가 이름에 적혀 있다), 남는 것이 정확히 무엇인지 그때 다시 세어야 한다.
 
+> **2026-09-09 — 그 "다시 세는" 일이 L-2 보다 먼저 왔고, 세어 보니 늘었다.** #54 가
+> `aimon.llm.anthropic.*` 세 키를 더했다. 위 문단의 논리대로라면 벤더 네임스페이스 키는 읽는 주체가
+> 이름에 적혀 있으므로 이 질문에서 빠져야 하고, **한 갈래에서는 실제로 빠진다** — `provider=openai`
+> 배포는 그 블록을 이름으로 거절당하며, 그 거절은 #46 이 공유 네임스페이스를 위해 발명해야 했던 것과
+> 달리 여기서는 정당화가 필요 없다.
+>
+> **그러나 이 항목의 두 갈래는 거절할 분기가 없는 배포들이고, 거기서는 세 키가 그냥 늘어난다.**
+> `provider=none` 도, 자기 `LlmClient` 빈을 정의한 앱도 여전히 어느 분기에도 닿지 않으므로
+> `aimon.llm.anthropic.*` 는 거절되지도 읽히지도 않는다. 즉 **갈래는 둘 그대로이고 표면이 세 키 넓어졌다.**
+> 한 갈래에서는 오히려 답이 더 분명해졌다는 것도 적어 둔다 — 자기 클라이언트를 만드는 앱은
+> `model-capabilities` 를 `AimonProperties.modelCapabilityRegistry(...)` 로 소비할 수 있는 것과 달리,
+> 이 세 키를 소비하려면 `AnthropicConfig.Builder` 를 자기가 부르면 되므로 프레임워크가 열어 줄 표면이
+> 애초에 없다. 결정할 것은 그대로이고, 세는 수만 달라졌다.
+
 ---
 
 ## L-4 — 설정에서 prefix 를 선언할 길을 열 것인가
@@ -173,6 +202,45 @@ registry 를 자기 클라이언트에 넘길 수 있다), `provider=none` + 빈
 **언제 다시 볼까.** 가족 단위로 개명하는 배포가 실제로 나타날 때. 그때 세어야 하는 것은 "몇 줄을
 적어야 하는가" 이고, 그 수가 작으면 이 항목은 열린 채로 두는 것이 맞다 — 코어의 매칭 규칙을 하나 더
 만드는 비용이 줄 몇 개보다 비싸다.
+
+---
+
+## L-5 — CLI 의 매핑 오류 메시지가 어느 키인지 말하지 않는다
+
+*(2026-09-09 등록. 출처는 #54 —
+[`../design/llm/anthropic-thinking-config-surface.md`](../design/llm/anthropic-thinking-config-surface.md) §13 O-3)*
+
+**무엇을.** `CliConfigLoader` 는 Jackson 의 매핑 실패를 전부 한 문장으로 감싼다 —
+`Invalid configuration structure in: <file>`. 어느 키가 문제인지는 원인 예외에만 있고, 그것은
+`--verbose` 로만 보인다. 그 원인의 짧은 메시지를 감싸는 문장에 실어 준다.
+
+**왜.** L-1 이 기록한 비대칭의 **CLI 쪽 절반**이다. 그쪽은 스타터가 오타에 침묵한다는 것이고, 이쪽은
+CLI 가 시끄럽되 **무엇에 대해 시끄러운지 말하지 않는다**는 것이다. 두 표면 다 "잘못된 설정이 조용히
+통과하지 않는다" 는 충족하지만, CLI 의 운영자는 파일 이름만 받는다. 스타터 쪽은 프로퍼티 이름을 대는
+것이 규칙으로 자리 잡았고(`requireApiKey` · `requireModel` · `modelCapabilityRegistry` 의 재던지기),
+CLI 도 **자기가 판단하는 자리에서는** 같은 규칙을 지킨다 — 지키지 못하는 것은 판단이 Jackson 안에서
+일어나는 값 오류뿐이다.
+
+**어디.** `CliConfigLoader.java:73-74`(2026-09-09)의 `JsonMappingException` catch.
+
+**범위가 이 파일보다 넓다는 것을 적어 둔다.** 여기 등록하는 이유는 L-1 과 같은 표의 반대쪽이기
+때문이지만, 고치면 **CLI 의 모든 키**가 함께 좋아진다 — `memory` · `mcp` · `cli` 블록의 값 오류까지.
+그래서 이것은 LLM 키의 항목이라기보다 그 키들이 처음 부딪힌 자리다.
+
+**무엇이 막고 있나.** 아무것도 막고 있지 않다. 대가는 하나뿐이고 **그 문자열을 단언하는 기존
+테스트 넷**이다(`CliConfigLoaderTest` 의 `Invalid configuration structure` 단언들). 원인 메시지를
+덧붙이는 형태라면 `hasMessageContaining` 은 그대로 통과하므로 실제 비용은 그보다 작을 수 있다 —
+착수할 때 세어 보면 된다.
+
+**언제 다시 볼까.** #54 가 이 자리를 다시 지났고 고치지 않았다 — 그 국면의 주제가 설정 표면 하나였고,
+공유 메시지를 고치는 것은 CLI 전체에 대한 변경이라 얹혀 갈 수 없었다. 다음 사람은 **CLI 설정 키를
+하나라도 더하는 국면**에서 이것을 만난다. 그때 고치는 편이 싸다: 새 키의 실패 경험을 정하면서 기존
+키 전부의 것도 함께 정하게 된다.
+
+> 부분적으로는 이미 나아졌다. `llm.anthropic.thinkingMode` 는 자기 디시리얼라이저를 가지므로
+> **원인 예외가 프로퍼티 이름과 네 철자를 댄다**(`AnthropicProviderConfig.ThinkingModeDeserializer`).
+> 감싸는 문장은 여전히 파일 이름뿐이므로 이 항목은 그대로 열려 있고, 저 한 키는 고쳤을 때 무엇이
+> 보이게 되는지의 예시다.
 
 ---
 

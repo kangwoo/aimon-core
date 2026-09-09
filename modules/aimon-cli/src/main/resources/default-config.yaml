@@ -10,8 +10,8 @@ llm:
 # The built-in capability table knows models by their real names. An Azure deployment or an
 # OpenAI-compatible gateway behind `baseUrl` may expose one under a name of its own, and that name
 # falls through to the fail-open path -- so a model that rejects `temperature` gets it anyway, and
-# answers HTTP 400. Name the deployment here to say what it really accepts. Only the openai provider
-# reads this block; the key is the same name `model` above carries.
+# answers HTTP 400. Name the deployment here to say what it really accepts. Both providers read this
+# block; the key is the same name `model` above carries.
 #
 # Every flag is optional and each one is independent: what you leave out keeps today's behaviour, so
 # the one-line form below is a complete answer to the 400. Values are case-insensitive.
@@ -22,6 +22,29 @@ llm:
 #      supportsToolsWithReasoning: true         # tools and a reasoning effort may be combined
 #      supportsReasoningTraceRoundTrip: false   # true routes the model at /v1/responses -- leave false on a Chat-only gateway
 #      lowestReasoningEffort: minimal           # none | minimal | low | medium | high
+
+# Anthropic-only settings. Unlike `modelCapabilities` above, this block is read by the anthropic
+# provider alone -- all three key names carry Anthropic's own vocabulary -- so writing it under
+# `provider: openai` fails at startup rather than being ignored. Leave it out and the request is
+# byte-for-byte what it was: mode OFF, no budget, replay on.
+#  anthropic:
+#    thinkingMode: extended            # off (default) | extended | adaptive | auto -- case-insensitive
+#                                      #   off      send no thinking parameter (the model may still think)
+#                                      #   extended thinking: {"type": "enabled", "budget_tokens": N}
+#                                      #   adaptive thinking: {"type": "adaptive"} + output_config.effort
+#                                      #   auto     whichever dialect the capability table says this model
+#                                      #            speaks; a model the table cannot name sends nothing and
+#                                      #            warns -- declare it under `modelCapabilities` above
+#                                      # `extended` here rather than `auto` so this block boots as written:
+#                                      #   the budget line below is legal under that one mode only. Uncomment
+#                                      #   `auto` instead and the budget line has to go with it.
+#    thinkingBudgetTokens: 4000        # `extended` ONLY: any other mode fails at startup. >= 1024, and it
+#                                      #   is clamped below the request's max_tokens (4096 by default, so a
+#                                      #   larger number is sent as max_tokens - 1 with a WARN). Raising that
+#                                      #   ceiling is the agent definition's `model.maxTokens`, not a key here.
+#    replayThinkingBlocks: true        # default true. false strips stored thinking blocks from the history
+#                                      #   -- the remedy for "Invalid signature in thinking block. The block
+#                                      #   is bound to a different conversation."
 
 # Agent Configuration
 agent:

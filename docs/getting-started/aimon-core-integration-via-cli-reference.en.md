@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/aimon-core-integration-via-cli-reference.md
-source_commit: 87acc1d
+source_commit: 31e1c71
 ---
 
 # aimon-core integration guide — following aimon-cli as the reference
@@ -274,6 +274,82 @@ A declaration under `provider: anthropic` is **no longer refused** — that bran
 The starter property on the same axis is in
 [`embedding-agent-in-application.en.md`](embedding-agent-in-application.en.md). The two spellings do not mix —
 camelCase for the CLI, kebab-case for the starter.
+
+#### Tuning Anthropic's thinking — `llm.anthropic`
+
+Unlike the block just above, **this one is read by the anthropic branch alone.** All three key names carry
+Anthropic's own vocabulary — "thinking" is that vendor's word for what this repository elsewhere calls
+`ReasoningEffort` / `ReasoningTrace`, `budget_tokens` is a literal field of the request body, and a "thinking
+block" is a signed content block on its wire. So a block written under `provider: openai` is not ignored: it
+**fails at startup**.
+
+**Leave this block out and the request does not change by a single byte.** Capturing and replaying thinking
+blocks happens regardless of this setting, so a deployment on the newest models — where thinking is on by
+default — already has that benefit with nothing configured. What this block opens up is **tuning**: choosing a
+dialect, setting a budget, turning replay off.
+
+```yaml
+llm:
+  provider: anthropic
+  apiKey: "${ANTHROPIC_API_KEY}"
+  model: claude-sonnet-5
+  anthropic:
+    thinkingMode: auto
+    replayThinkingBlocks: true
+```
+
+| Key | Meaning | If omitted |
+|---|---|---|
+| `thinkingMode` | Which thinking request shape to send (the four values below) | `off` — no thinking parameter is sent |
+| `thinkingBudgetTokens` | An explicit `budget_tokens` for the `extended` dialect | Derived from the call's reasoning effort |
+| `replayThinkingBlocks` | Whether stored thinking blocks are replayed on the next request | `true` — they are replayed |
+
+The four values of `thinkingMode`. Case does not matter.
+
+| Value | What it sends |
+|---|---|
+| `off` (default) | No thinking parameter. **This does not mean the model will not think** — on the newest models it will, and those blocks are still captured and replayed |
+| `extended` | `thinking: {"type": "enabled", "budget_tokens": N}` — the budget dialect |
+| `adaptive` | `thinking: {"type": "adaptive"}` plus `output_config.effort` — the current generation's dialect |
+| `auto` | Whichever dialect the capability table says this model speaks. The value that lets one setting serve a deployment running several Claude models |
+
+**The two dialects are mutually exclusive per model and sending the wrong one is an HTTP 400.** That is why
+`auto` exists, and it is also `auto`'s limit — **against a model the table cannot name it sends nothing and
+warns.** If you rename models behind a gateway, declaring that name in the `llm.modelCapabilities` block just
+above is the whole remedy, and this is exactly where the two blocks meet.
+
+**`thinkingBudgetTokens` is not an independent knob; it belongs to `extended`.** Written together with `auto`,
+`adaptive` or the default `off` it **fails at startup** rather than being quietly ignored. The refusal under
+`auto` is what `AnthropicThinkingMode.AUTO` states: a number has no meaning until the dialect is known, and
+under `auto` it is not known until the request is built. The likeliest of the three mistakes is the third —
+**writing the budget and leaving the mode out.** The mode is then its default `off`, so the number reaches
+nothing, and that too is a startup failure.
+
+The value itself has a floor and a ceiling.
+
+- **A floor of 1024.** The API rejects a smaller budget on every request, so it is rejected at startup instead.
+- **A ceiling below `max_tokens`.** Thinking tokens count against `max_tokens`, so the client clamps to
+  `max_tokens - 1` and says so at WARN. **The default `max_tokens` is 4096, so on an untouched deployment
+  `thinkingBudgetTokens: 8000` goes out as 4095.** There is no key here for raising that ceiling — it is the
+  agent definition's `model.maxTokens`, a third configuration surface.
+
+Under `auto` and `adaptive`, how much thinking to do comes from the call's `ReasoningEffort`, and **there is no
+configuration key for that yet.** Today the value arrives on the agent's `LlmModel`.
+
+`replayThinkingBlocks: false` is an escape hatch for one named failure — *"Invalid `signature` in `thinking`
+block. The block is bound to a different conversation."* A signature stays valid only while the system prompt,
+the tools and the messages before it are unchanged, and AIMON re-renders its system prompt every iteration and
+compacts client-side. The vendor's own remedy is to strip every thinking block from the history, which is what
+`false` does. The cost is the feature itself: the model re-derives its reasoning each turn.
+
+**`${VAR}` is not expanded inside this block.** Expansion runs after Jackson has bound and walks three string
+fields of `llm` (`apiKey`, `baseUrl`, `model`) plus the capability map keys. A `${…}` on an enum or an integer
+field fails at bind time, so it does not pass through silently. The starter has no such limit — Spring resolves
+placeholders before binding.
+
+The starter properties on this axis are in
+[`embedding-agent-in-application.en.md`](embedding-agent-in-application.en.md). The spellings do not mix here
+either — `thinkingMode` on the CLI, `thinking-mode` in the starter.
 
 If `cli.tracing` is on, one more layer goes on top (line 697-712) — `TracingLlmClient` wraps the original
 client, and the same `Tracer` is injected into the executor factory as well, so turn/iteration/tool spans

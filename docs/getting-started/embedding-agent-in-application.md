@@ -285,6 +285,9 @@ aimon:
     provider: anthropic             # anthropic(기본) | openai | none
     api-key: ${ANTHROPIC_API_KEY}
     timeout: 60s
+    anthropic:                      # anthropic 분기만 읽는다 — 다른 provider 아래에 적으면 기동 실패
+      thinking-mode: "off"          # "off"(기본) | extended | adaptive | auto — 따옴표는 아래 참조
+      replay-thinking-blocks: true
 
   credentials:                      # 선택 — 도구가 'profile.field' 로 부르는 값 (§10)
     jira:
@@ -392,6 +395,47 @@ aimon:
   `AimonProperties.modelCapabilityRegistry(properties.getLlm())` 가 그 자리를 위해 public 입니다.
   CLI 쪽 같은 축의 키는 camelCase 이고
   [`aimon-core-integration-via-cli-reference.md`](aimon-core-integration-via-cli-reference.md) 에 있습니다.
+- `aimon.llm.anthropic.*` 는 **Anthropic 의 thinking 을 조율합니다** — 바로 위 블록과 달리 **anthropic 분기만
+  읽습니다.** 세 키의 이름이 전부 그 벤더의 어휘이기 때문이며(이 저장소가 다른 자리에서 `ReasoningEffort` ·
+  `ReasoningTrace` 라고 부르는 것에 대한 그쪽 단어가 "thinking" 이고, `budget_tokens` 는 요청 본문의 필드
+  이름이며, "thinking block" 은 서명이 붙은 와이어 블록입니다), 그래서 `provider: openai` 아래에 적힌 이
+  블록은 무시되지 않고 **기동을 실패시킵니다**. 적지 않으면 요청은 글자 하나 바뀌지 않습니다 — thinking
+  블록의 포착과 되싣기는 이 설정과 무관하게 늘 일어나므로, thinking 이 기본으로 켜진 최신 모델을 쓰는
+  배포는 아무것도 설정하지 않아도 그 이득을 받고 있습니다. 이 블록이 여는 것은 **조율**입니다.
+
+  ```yaml
+  aimon:
+    llm:
+      provider: anthropic
+      anthropic:
+        thinking-mode: extended       # "off"(기본) | extended | adaptive | auto
+        thinking-budget-tokens: 4000  # extended 에서만 — 그래서 위가 auto 가 아닙니다. >= 1024
+        replay-thinking-blocks: true
+  ```
+
+  `thinking-mode` 는 어느 요청 모양을 보낼지 정합니다 — `off` 는 thinking 파라미터를 보내지 않고(모델이
+  생각하지 않는다는 뜻은 아닙니다), `extended` 는 `thinking: {"type": "enabled", "budget_tokens": N}`,
+  `adaptive` 는 `thinking: {"type": "adaptive"}` 와 `output_config.effort`, `auto` 는 capability 표가 이
+  모델이 말한다고 적은 방언입니다. **두 방언은 모델마다 배타적이고 틀린 쪽은 HTTP 400 이라서** `auto` 가
+  있고, 같은 이유로 **표가 이름을 모르는 모델에는 아무것도 보내지 않고 경고합니다** — 처방은 그 이름을 위
+  `model-capabilities` 에 선언하는 것입니다. 대소문자는 가리지 않습니다.
+
+  **`off` 는 따옴표로 감쌉니다.** YAML 이 따옴표 없는 `off` 를 boolean 으로 읽어 Boot 가 문자열 `"false"` 로
+  넘기기 때문이며, 그때 기동은 실패하고 메시지가 이 따옴표를 알려 줍니다. CLI 는 파서가 읽은 원문을 볼 수
+  있어 이 제약이 없습니다 — 같은 충돌에 두 표면이 다르게 답하는 자리입니다.
+
+  **`thinking-budget-tokens` 는 독립된 노브가 아니라 `extended` 의 것입니다.** `auto` · `adaptive` · 기본
+  `off` 와 함께 적으면 **기동이 실패합니다**(방언이 정해지기 전에는 숫자에 뜻이 없습니다). 가장 흔한 실수는
+  **모드를 빼고 예산만 적는 것**이고, 그때 모드는 `off` 라 그 숫자가 아무 데도 닿지 않으므로 그것도 기동
+  실패입니다. 값에는 아래로 1024(API 의 하한)와 위로 `max_tokens` 미만이라는 두 상한이 있습니다 — thinking
+  토큰이 `max_tokens` 에 함께 계산되므로 클라이언트가 `max_tokens - 1` 로 clamp 하고 WARN 을 남기며,
+  **기본 `max_tokens` 가 4096 이라 손대지 않은 배포에서 `thinking-budget-tokens: 8000` 은 실제로 4095 로
+  나갑니다.** 천장을 올리는 프로퍼티는 없습니다 — 그것은 에이전트 정의의 `model.maxTokens` 입니다.
+
+  `replay-thinking-blocks: false` 는 이름 있는 실패 하나를 위한 비상구입니다 — *"Invalid `signature` in
+  `thinking` block. The block is bound to a different conversation."* 벤더의 처방이 이력에서 thinking 블록을
+  전부 떼는 것이고, 대가는 기능 자체입니다(모델이 매 턴 추론을 다시 세웁니다). **여기서도 키 이름의 오타는
+  조용합니다** — 위 블록과 같은 이유이고 같은 제약입니다. CLI 쪽 같은 축의 키는 camelCase 입니다.
 - `knowledge` / `memory` 의 `supplied` 는 "**여러분이 그 빈을 선언하고 스타터는 도구만 거기에 연결한다**"는
   뜻입니다. Spring 이 만들었으니 Spring 이 닫고, 스택은 빌려 쓸 뿐입니다. `knowledge.backend` 에
   **OpenSearch 값이 일부러 없는** 것도 같은 이유입니다 — `aimon-knowledge-opensearch` 는 존재하고 동작하지만

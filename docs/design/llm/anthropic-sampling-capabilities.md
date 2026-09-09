@@ -823,12 +823,15 @@ Listed rather than assumed, per the brief.
 
 ## 14. Handoff — what this makes cheaper
 
-- **#54** (`thinkingMode` / `thinkingBudgetTokens` / `replayThinkingBlocks` config keys) says it is
-  blocked on this one. It gets two things from here and neither is code it has to write: the CLI and
-  starter Anthropic branches now have a worked example of carrying a knob from both surfaces into
-  `AnthropicConfig.Builder`, and `AnthropicConfig` has already absorbed one breaking signature change
-  in this release, so #54's additions land on a class whose surface has just been reviewed. Per the
-  brief, this is noted rather than done.
+- ~~**#54** (`thinkingMode` / `thinkingBudgetTokens` / `replayThinkingBlocks` config keys) says it is
+  blocked on this one.~~ — **CLOSED** by
+  [`anthropic-thinking-config-surface.md`](anthropic-thinking-config-surface.md). The block this
+  bullet recorded was lifted when this document's own work landed, and the two things it predicted
+  #54 would inherit are the two it actually used: the worked example of carrying a knob from both
+  surfaces into `AnthropicConfig.Builder`, and a vendor config whose surface had just been reviewed.
+  One prediction was wrong in a way worth keeping — the keys did **not** land beside the shared ones.
+  All three names carry Anthropic concepts, so they went to `aimon.llm.anthropic.*` / `llm.anthropic.*`,
+  the first split the `model-capability-config-key.md` §2.7 criterion has produced.
 - ~~**F-1** (the thinking dialect as a per-model fact)~~ — **CLOSED** by
   [`reasoning-model-enablement.md`](reasoning-model-enablement.md) §3 (#60). This bullet said F-1 was
   unblocked in one respect and unchanged in the other: the table had gained `claude-*` rows, but

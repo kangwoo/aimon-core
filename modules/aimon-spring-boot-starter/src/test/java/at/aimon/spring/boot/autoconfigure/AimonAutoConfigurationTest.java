@@ -48,7 +48,9 @@ import at.aimon.core.credential.InMemoryCredentialStore;
 import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.capability.InMemoryModelCapabilityRegistry;
 import at.aimon.core.llm.capability.ModelCapabilityRegistry;
+import at.aimon.core.llms.anthropic.AnthropicConfig;
 import at.aimon.core.llms.anthropic.AnthropicLlmClient;
+import at.aimon.core.llms.anthropic.AnthropicThinkingMode;
 import at.aimon.core.llms.openai.OpenAILlmClient;
 import at.aimon.session.routing.SubmitRequest;
 import at.aimon.spring.boot.AimonAgents;
@@ -221,6 +223,181 @@ class AimonAutoConfigurationTest {
                     assertThat(registry.resolve("claude-opus-5"))
                             .isEqualTo(InMemoryModelCapabilityRegistry.withDefaults().resolve("claude-opus-5"));
                 });
+    }
+
+    @Test
+    @DisplayName("the three anthropic thinking keys reach the vendor config")
+    void thinkingKeysReachTheAnthropicClient(@TempDir Path workspace) {
+        minimal(workspace).withPropertyValues("aimon.llm.anthropic.thinking-mode=extended",
+                "aimon.llm.anthropic.thinking-budget-tokens=4000", "aimon.llm.anthropic.replay-thinking-blocks=false")
+                .run(ctx -> {
+                    assertThat(ctx).hasNotFailed();
+                    final AnthropicConfig config = AimonLlmAutoConfiguration.AnthropicConfiguration
+                            .anthropicConfig(ctx.getBean(AimonProperties.class).getLlm());
+                    assertThat(config.getThinkingMode()).isEqualTo(AnthropicThinkingMode.EXTENDED);
+                    assertThat(config.getThinkingBudgetTokens()).isEqualTo(4000);
+                    assertThat(config.isReplayThinkingBlocks()).isFalse();
+                });
+    }
+
+    @Test
+    @DisplayName("every thinking mode binds, in any case")
+    void everyThinkingModeBinds(@TempDir Path workspace) {
+        // Sourced from values() so a fifth constant fails here rather than going untested. The fold is this
+        // module's own -- the property is a String -- so unlike the CLI it has to be asserted, not inherited.
+        for (AnthropicThinkingMode mode : AnthropicThinkingMode.values()) {
+            for (String written : new String[]{mode.name(), mode.name().toLowerCase(java.util.Locale.ROOT)}) {
+                final List<String> properties = new ArrayList<>();
+                properties.add("aimon.llm.anthropic.thinking-mode=" + written);
+                if (mode == AnthropicThinkingMode.EXTENDED) {
+                    properties.add("aimon.llm.anthropic.thinking-budget-tokens=2048");
+                }
+                minimal(workspace).withPropertyValues(properties.toArray(new String[0]))
+                        .run(ctx -> assertThat(AimonLlmAutoConfiguration.AnthropicConfiguration
+                                .anthropicConfig(ctx.getBean(AimonProperties.class).getLlm()).getThinkingMode())
+                                .as("thinking-mode written as `%s`", written).isEqualTo(mode));
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("nothing set leaves the vendor defaults, so the request is what it was")
+    void noThinkingKeysIsTodaysConfig(@TempDir Path workspace) {
+        // Criterion 5 of the issue, as one equality rather than three getters: AnthropicConfig.equals covers every
+        // value an operator can write, so "equal to the config built with no keys" says no setter ran.
+        minimal(workspace).run(ctx -> {
+            final AnthropicConfig config = AimonLlmAutoConfiguration.AnthropicConfiguration
+                    .anthropicConfig(ctx.getBean(AimonProperties.class).getLlm());
+            assertThat(config.getThinkingMode()).isEqualTo(AnthropicThinkingMode.OFF);
+            assertThat(config.getThinkingBudgetTokens()).isNull();
+            assertThat(config.isReplayThinkingBlocks()).isTrue();
+        });
+    }
+
+    @Test
+    @DisplayName("an unusable thinking mode fails naming the property and the accepted spellings")
+    void anUnusableThinkingModeIsRefused(@TempDir Path workspace) {
+        minimal(workspace).withPropertyValues("aimon.llm.anthropic.thinking-mode=adaptiv")
+                .run(ctx -> assertThat(ctx).hasFailed().getFailure()
+                        .hasStackTraceContaining(AimonProperties.LLM_ANTHROPIC_THINKING_MODE)
+                        .hasStackTraceContaining("adaptive"));
+    }
+
+    @Test
+    @DisplayName("a thinking mode YAML turned into a boolean is refused with the quoting remedy")
+    void aYamlBooleanThinkingModeNamesTheQuotingRemedy(@TempDir Path workspace) {
+        // `off` is a YAML 1.1 boolean, so an unquoted one in an application.yml arrives here as the string
+        // "false" -- Boot loads it as Boolean.FALSE and converts. Nothing in a list of four spellings tells the
+        // operator that quoting is the fix, so the message says it. The CLI answers the same collision by reading
+        // the parser's original scalar, which this surface never receives.
+        minimal(workspace).withPropertyValues("aimon.llm.anthropic.thinking-mode=false")
+                .run(ctx -> assertThat(ctx).hasFailed().getFailure()
+                        .hasStackTraceContaining(AimonProperties.LLM_ANTHROPIC_THINKING_MODE)
+                        .hasStackTraceContaining("quoted"));
+    }
+
+    @Test
+    @DisplayName("a budget without the extended mode is refused, naming the block")
+    void aBudgetOutsideExtendedIsRefused(@TempDir Path workspace) {
+        // Two shapes, one rule, and the rule is AnthropicConfig's. Under auto the dialect is not known until the
+        // request is built; with nothing set the mode is OFF and the number reaches nothing.
+        minimal(workspace)
+                .withPropertyValues("aimon.llm.anthropic.thinking-mode=auto",
+                        "aimon.llm.anthropic.thinking-budget-tokens=4000")
+                .run(ctx -> assertThat(ctx).hasFailed().getFailure()
+                        .hasStackTraceContaining(AimonProperties.LLM_ANTHROPIC).hasStackTraceContaining("EXTENDED"));
+
+        minimal(workspace).withPropertyValues("aimon.llm.anthropic.thinking-budget-tokens=4000")
+                .run(ctx -> assertThat(ctx).hasFailed().getFailure()
+                        .hasStackTraceContaining(AimonProperties.LLM_ANTHROPIC).hasStackTraceContaining("OFF"));
+    }
+
+    @Test
+    @DisplayName("a budget below the API floor is refused, naming the block")
+    void aBudgetBelowTheFloorIsRefused(@TempDir Path workspace) {
+        minimal(workspace)
+                .withPropertyValues("aimon.llm.anthropic.thinking-mode=extended",
+                        "aimon.llm.anthropic.thinking-budget-tokens=512")
+                .run(ctx -> assertThat(ctx).hasFailed().getFailure()
+                        .hasStackTraceContaining(AimonProperties.LLM_ANTHROPIC).hasStackTraceContaining("1024"));
+    }
+
+    @Test
+    @DisplayName("an anthropic block under the openai provider is refused, naming both properties")
+    void anAnthropicBlockUnderOpenAiIsRefused(@TempDir Path workspace) {
+        minimal(workspace)
+                .withPropertyValues("aimon.llm.provider=openai", "aimon.llm.model=gpt-4o",
+                        "aimon.llm.anthropic.thinking-mode=auto")
+                .run(ctx -> assertThat(ctx).hasFailed().getFailure()
+                        .hasStackTraceContaining(AimonProperties.LLM_ANTHROPIC)
+                        .hasStackTraceContaining(AimonProperties.LLM_PROVIDER));
+    }
+
+    @Test
+    @DisplayName("the openai refusal survives the Anthropic module being absent")
+    void theOpenAiRefusalDoesNotNeedTheAnthropicModule(@TempDir Path workspace) {
+        // The assertion that would have gone red had the property been typed as the vendor enum. On this
+        // classpath AnthropicThinkingMode does not exist, so a signature naming it anywhere the binder or this
+        // refusal walks would be a NoClassDefFoundError instead of a message about a property.
+        minimal(workspace).withClassLoader(new FilteredClassLoader("at.aimon.core.llms.anthropic"))
+                .withPropertyValues("aimon.llm.provider=openai", "aimon.llm.model=gpt-4o",
+                        "aimon.llm.anthropic.thinking-mode=auto")
+                .run(ctx -> assertThat(ctx).hasFailed().getFailure()
+                        .hasStackTraceContaining(AimonProperties.LLM_ANTHROPIC)
+                        .hasStackTraceContaining(AimonProperties.LLM_PROVIDER));
+    }
+
+    @Test
+    @DisplayName("an empty anthropic block does not trip the openai branch")
+    void anEmptyAnthropicBlockDoesNotTripTheOpenAiBranch(@TempDir Path workspace) {
+        minimal(workspace).withPropertyValues("aimon.llm.provider=openai", "aimon.llm.model=gpt-4o")
+                .run(ctx -> assertThat(ctx).hasNotFailed());
+    }
+
+    @Test
+    @DisplayName("no AimonProperties signature names a vendor LLM type")
+    void noPropertiesSignatureNamesAVendorType() {
+        // The invariant behind the String-typed thinking-mode, stated as a rule rather than as its one instance.
+        // Both vendor modules are compileOnly here, and Spring's JavaBeanBinder calls getDeclaredMethods() on
+        // every bean it binds -- which resolves the signatures it finds. Measured: with the vendor class absent,
+        // reading a vendor-typed field for a null check costs nothing, but getDeclaredMethods() on a class that
+        // declares a vendor-typed accessor throws NoClassDefFoundError, an Error that Boot's BindException
+        // wrapping does not catch. The allow-list is by package rather than by exclusion so that the other two
+        // compileOnly families (org.quartz, the actuator) are covered by the same assertion -- but it needs the
+        // one explicit deny below to keep covering the family it was written for. Both vendor modules live under
+        // at.aimon.core.llms, which "at.aimon.core." swallows, so the allow-list alone would pass a vendor-typed
+        // accessor: exactly the case this test is named after.
+        final List<String> allowedPrefixes = List.of("java.", "at.aimon.core.", "at.aimon.bootstrap.",
+                "at.aimon.session.routing.", "at.aimon.spring.boot.");
+        final String vendorPrefix = "at.aimon.core.llms.";
+        final List<String> offenders = new ArrayList<>();
+        final List<Class<?>> pending = new ArrayList<>(List.of(AimonProperties.class));
+        final Set<Class<?>> seen = new java.util.LinkedHashSet<>();
+        while (!pending.isEmpty()) {
+            final Class<?> type = pending.remove(0);
+            if (!seen.add(type)) {
+                continue;
+            }
+            Collections.addAll(pending, type.getDeclaredClasses());
+            for (Method method : type.getDeclaredMethods()) {
+                final List<Class<?>> named = new ArrayList<>(List.of(method.getParameterTypes()));
+                named.add(method.getReturnType());
+                for (Class<?> signatureType : named) {
+                    Class<?> component = signatureType;
+                    while (component.isArray()) {
+                        component = component.getComponentType();
+                    }
+                    if (component.isPrimitive()) {
+                        continue;
+                    }
+                    final String name = component.getName();
+                    if (name.startsWith(vendorPrefix) || allowedPrefixes.stream().noneMatch(name::startsWith)) {
+                        offenders.add(type.getSimpleName() + "." + method.getName() + " -> " + name);
+                    }
+                }
+            }
+        }
+        assertThat(offenders).as("AimonProperties signatures naming a type outside the api dependencies").isEmpty();
     }
 
     @Test

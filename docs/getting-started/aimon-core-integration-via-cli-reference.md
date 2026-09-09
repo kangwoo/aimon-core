@@ -264,6 +264,79 @@ llm:
 같은 축의 스타터 프로퍼티는 [`embedding-agent-in-application.md`](embedding-agent-in-application.md) 에 있다.
 표기는 섞이지 않는다 — CLI 는 camelCase, 스타터는 kebab-case 다.
 
+#### Anthropic 의 thinking 을 조율할 때 — `llm.anthropic`
+
+바로 위 블록과 달리 **이 블록은 anthropic 분기만 읽는다.** 세 키의 이름이 전부 Anthropic 의 어휘이기
+때문이다 — "thinking" 은 이 저장소가 다른 자리에서 `ReasoningEffort` · `ReasoningTrace` 라고 부르는 것에
+대한 그 벤더의 단어이고, `budget_tokens` 는 요청 본문의 필드 이름 그대로이며, "thinking block" 은 서명이
+붙은 와이어 콘텐츠 블록이다. 그래서 `provider: openai` 아래에 적힌 이 블록은 무시되지 않고 **기동을
+실패시킨다.**
+
+**이 블록을 적지 않으면 요청은 글자 하나 바뀌지 않는다.** thinking 블록의 포착과 되싣기는 이 설정과
+무관하게 늘 일어나므로, thinking 이 기본으로 켜진 최신 모델을 쓰는 배포는 아무것도 설정하지 않아도 그
+이득을 이미 받고 있다. 이 블록이 여는 것은 **조율**이다 — 방언을 고르고, 예산을 정하고, 되싣기를 끄는 것.
+
+```yaml
+llm:
+  provider: anthropic
+  apiKey: "${ANTHROPIC_API_KEY}"
+  model: claude-sonnet-5
+  anthropic:
+    thinkingMode: auto
+    replayThinkingBlocks: true
+```
+
+| 키 | 뜻 | 적지 않으면 |
+|---|---|---|
+| `thinkingMode` | 어느 thinking 요청 모양을 보낼 것인가 (아래 네 값) | `off` — thinking 파라미터를 보내지 않는다 |
+| `thinkingBudgetTokens` | `extended` 방언의 명시적 `budget_tokens` | 호출의 reasoning effort 에서 파생된다 |
+| `replayThinkingBlocks` | 저장된 thinking 블록을 다음 요청에 되실을 것인가 | `true` — 되싣는다 |
+
+`thinkingMode` 의 네 값이다. 대소문자를 가리지 않는다.
+
+| 값 | 무엇을 보내는가 |
+|---|---|
+| `off` (기본) | thinking 파라미터를 보내지 않는다. **모델이 생각하지 않는다는 뜻이 아니다** — 최신 모델에서는 생각하고, 그 블록은 그대로 포착·되싣기된다 |
+| `extended` | `thinking: {"type": "enabled", "budget_tokens": N}` — 예산 방언 |
+| `adaptive` | `thinking: {"type": "adaptive"}` 와 `output_config.effort` — 현 세대 모델의 방언 |
+| `auto` | capability 표가 이 모델이 말한다고 적은 방언. 여러 Claude 모델을 도는 배포가 설정 하나로 갈 수 있는 값이다 |
+
+**두 방언은 모델마다 배타적이고 틀린 쪽을 보내면 HTTP 400 이다.** 그것이 `auto` 가 있는 이유이며, 동시에
+`auto` 의 한계이기도 하다 — **표가 이름을 모르는 모델에는 아무것도 보내지 않고 경고한다.** 게이트웨이
+뒤에서 모델을 개명해 쓴다면 그 이름을 바로 위 `llm.modelCapabilities` 에 선언하는 것이 처방이고, 두 블록이
+만나는 자리가 정확히 여기다.
+
+**`thinkingBudgetTokens` 는 독립된 노브가 아니라 `extended` 의 것이다.** `auto` · `adaptive` · 기본
+`off` 와 함께 적으면 **기동이 실패한다** — 조용히 무시되지 않는다. `auto` 아래에서 거절하는 이유는
+`AnthropicThinkingMode.AUTO` 가 적어 둔 그대로다: 방언이 정해지기 전에는 숫자에 뜻이 없고, `auto` 에서
+방언은 요청을 만들 때까지 정해지지 않는다. 가장 흔한 실수는 셋 중 세 번째다 — **모드를 빼고 예산만 적는
+것.** 그때 모드는 기본값 `off` 이므로 그 숫자는 아무 데도 닿지 않고, 그래서 그것도 기동 실패다.
+
+값 자체에도 두 개의 상한이 있다.
+
+- **아래로 1024.** API 가 그보다 작은 예산을 매 요청 거절하므로 기동 시점에 거절한다.
+- **위로 `max_tokens` 미만.** thinking 토큰이 `max_tokens` 에 함께 계산되므로 클라이언트가
+  `max_tokens - 1` 로 clamp 하고 그 사실을 WARN 으로 남긴다. **`max_tokens` 의 기본값은 4096 이므로,
+  아무것도 손대지 않은 배포에서 `thinkingBudgetTokens: 8000` 은 실제로 4095 로 나간다.** 천장을 올리는
+  키는 여기 없다 — 그것은 에이전트 정의의 `model.maxTokens` 이고, 세 번째 설정 표면이다.
+
+`auto` · `adaptive` 아래에서 "얼마나 생각할까" 를 정하는 것은 호출의 `ReasoningEffort` 이고, **그것을
+설정으로 적는 키는 아직 없다.** 오늘 그 값은 에이전트의 `LlmModel` 이 들고 온다.
+
+`replayThinkingBlocks: false` 는 이름 있는 실패 하나를 위한 비상구다 — *"Invalid `signature` in `thinking`
+block. The block is bound to a different conversation."* 서명은 시스템 프롬프트·도구·앞선 메시지가 그대로일
+때만 유효한데 AIMON 은 매 이터레이션 시스템 프롬프트를 다시 렌더하고 클라이언트에서 컴팩션한다. 벤더의
+처방이 이력에서 thinking 블록을 전부 떼는 것이고, `false` 가 그것이다. 대가는 기능 자체다 — 모델이 매 턴
+추론을 다시 세운다.
+
+**이 블록 안에서는 `${VAR}` 가 풀리지 않는다.** 확장은 Jackson 바인딩이 끝난 뒤 `llm` 의 문자열 필드 셋
+(`apiKey` · `baseUrl` · `model`)과 capability 맵 키만 훑기 때문이다. enum 이나 정수 필드에 적힌 `${…}` 는
+바인딩 시점에 실패하므로 조용히 통과하지는 않는다. 스타터에는 이 제약이 없다 — Spring 이 바인딩 전에
+플레이스홀더를 푼다.
+
+같은 축의 스타터 프로퍼티는 [`embedding-agent-in-application.md`](embedding-agent-in-application.md) 에
+있다. 여기서도 표기는 섞이지 않는다 — CLI 는 `thinkingMode`, 스타터는 `thinking-mode` 다.
+
 `cli.tracing`이 켜져 있으면 그 위에 한 겹이 더 붙는다 (line 697-712) — `TracingLlmClient`가 원본 클라이언트를
 감싸고, 같은 `Tracer`가 실행기 팩토리에도 주입되어 턴/이터레이션/도구 span까지 한 트리에 모인다. 감싸는 대상은
 **에이전트 턴 경로뿐**이다. 백그라운드 서브시스템(wiki 인덱싱, peer memory, dreamer)은 의도적으로 원본
