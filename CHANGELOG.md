@@ -250,6 +250,36 @@ Central is versioned independently).
 
 ### LLM: Anthropic's thinking blocks now survive a tool call too
 
+- **Verified against the real API, and one shipped claim was wrong.** The feature was built without a
+  key, so its design carried a list of what fixtures could not establish. Those calls have now been made.
+  **The load-bearing one holds: a `signature` this client parses and re-serialises through the SDK mapper
+  is accepted by Anthropic's verifier** — which is the single property the whole round trip rests on, and
+  the reason `AnthropicReasoningTraces` insists on the SDK's own mapper. That is established by a *pair* of
+  live assertions, not by acceptance alone: a stripped turn is also accepted, so "the replay succeeded"
+  would equally describe a client that silently dropped the block. The negative control is what settles it
+  — a signature with **one character changed** is rejected with ``Invalid `signature` in `thinking` block``,
+  so the verifier demonstrably reads it. `output_tokens_details.thinking_tokens`
+  is real under exactly that name, both dialect rejections are word for word what `AnthropicThinkingMode`'s
+  javadoc quotes, and the model/mode matrix matches the live model listing.
+
+  **What was wrong:** `replayThinkingBlocks(false)` under `EXTENDED` was described as a pair that would be
+  *rejected* on the second iteration of a tool loop, reasoned from two documented sentences. It is not —
+  the request is accepted and the next turn still thinks; the vendor's graceful-degradation sentence is
+  the one that governs. The warning stays, because the configuration does have a cost worth naming
+  (thinking tokens billed every turn for reasoning discarded before the next), but it now names that cost
+  instead of predicting a failure, and it fires for **both** dialects rather than only `EXTENDED`, since
+  the cost does not pick one. Nothing about the round trip itself changed.
+
+  **A correction to the sampling note below:** the rejection on Sonnet 5 / Opus 5 / Opus 4.7 / 4.8 /
+  Fable / Mythos is ``  `temperature` is deprecated for this model. `` — the parameter is refused outright
+  rather than compared against a default, so `temperature: 0.0` is rejected like any other value. That
+  makes the consequence stated there firmer, not weaker. `AnthropicThinkingMode.ADAPTIVE` is the one
+  configuration that reaches those models today, because asking for thinking is what suppresses the
+  parameter.
+
+  The live assertions are `AnthropicThinkingLiveTest`, gated on `ANTHROPIC_KEY` like the existing
+  integration test, so a keyless build still skips rather than fails.
+
 - **What it fixes.** `AnthropicLlmClient` dropped every `thinking` and `redacted_thinking` block it
   received (`convertResponse`, the line whose comment said "ignore other block types") and never sent one
   back, so the model re-derived its chain of thought on every ReAct iteration — worse answers, and

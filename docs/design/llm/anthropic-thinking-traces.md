@@ -114,6 +114,8 @@ the 1,024-token minimum… For complex tasks, start with a larger budget of 16,0
 > `top_p`, or `top_k` values return a 400 error on every request, regardless of whether thinking is
 > used. On older models, the restriction applies only while thinking is on: `temperature` and `top_k`
 > are incompatible with thinking, and `top_p` is allowed at values between 0.95 and 1.
+>
+> **Corrected by measurement — see §9 U-2.** The server's own wording is `` `temperature` is deprecated for this model. ``, so the parameter is refused outright rather than compared against a default and `temperature: 0.0` is rejected too. The consequence stated below is unchanged, and firmer.
 
 The **SDK javadoc says none of this** — `MessageCreateParams.temperature`'s doc is the generic
 *"Amount of randomness injected into the response. Defaults to `1.0`. Ranges from `0.0` to `1.0`"*, and
@@ -125,7 +127,8 @@ Two consequences, and they are different in kind:
 1. **Turning thinking on with today's `buildRequest` is a guaranteed 400.** `:325` calls
    `.temperature(temperature)` unconditionally, defaulting to `0.0`.
 2. **A pre-existing, unrelated breakage is now visible.** On Sonnet 5 / Opus 5 / Opus 4.7 / 4.8 and the
-   Fable/Mythos family, *any* non-default temperature 400s on every request — thinking or not — so
+   Fable/Mythos family, *any* temperature at all 400s on every request — thinking or not (the wording
+   "non-default" here was measured wrong; see §9 U-2) — so
    `AnthropicLlmClient` cannot talk to those models today at all. That is a model fact, not a thinking
    fact; §8 F-2 records it as a follow-up rather than smuggling a second fix into this one.
 
@@ -634,29 +637,45 @@ Existing behaviour-visible note from #43 applies unchanged: a usage carrying rea
 | **F-5** | **`thinking-binding-controls-2026-08-01`** with `prefix_mismatch_behavior: "drop_block"`. | The principled answer to row 7: it makes an invalidated prefix drop a block instead of failing a request, and reports what was dropped in `input_transformations`. A beta header plus a new config axis; it needs its own round. |
 | **F-6** | **A yaml / starter property surface** for `thinkingMode`, `thinkingBudgetTokens` and `replayThinkingBlocks`. | Decision 1 below. Programmatic only this round, following #43's F-2 precedent — and #46 is editing `aimon-cli` and `aimon-spring-boot-starter` right now. |
 | **F-7** | **`display: "summarized"` / `"updates"`.** | A11. Costs tokens for text nothing renders yet; pairs naturally with F-4. |
+| **F-8** | **A fourth test tier for live, paid, key-gated tests.** `AnthropicThinkingLiveTest` and `AnthropicLlmClientIntegrationTest` both run inside `./gradlew test` whenever `ANTHROPIC_KEY` is exported, so a key-holder's `checkAll` — and the release gate — makes real billed calls. | Blocked on a policy decision rather than on code. The three existing tiers (`docker`, `packaging`, `playwright`) are each excluded from `test` but included in CI, and `ReleaseGateMatchesCiGateTest` enforces that no tier is outside both. A live tier would be outside both, because CI has no key. Amending that invariant belongs in its own change; the interim mitigation is that the live assertions no longer depend on model prose. |
 
 ---
 
 ## 9. What has **not** been measured
 
-**No Anthropic API call was made in this run — there is no key.** Everything below is the honest list of
-what fixtures and unit tests cannot establish, kept in the form
-`openai-model-capabilities.md` §11/§15 and `openai-responses-path.md` §8 use.
+> **Four of these are now closed.** The design and the first implementation were written with no API key,
+> and this section was the list of what that left unproven. A later round ran the calls: **U-1, U-2, U-8
+> and U-10 are struck through below with what was measured**, and one of them — U-10 — came back the
+> opposite of the prediction, which is recorded in place rather than quietly deleted. The rest stand.
+> The live assertions live in `AnthropicThinkingLiveTest`, gated on `ANTHROPIC_KEY`.
 
-- **U-1 — the byte-exactness of a replayed `signature` has never been verified against the server.**
-  This is the one property the whole feature rests on and the one property only a live call can
-  demonstrate. What the tests *can* bind is the invariant we control: the decoded `signature` string
-  that leaves this client is `equals()` to the one that arrived, and the surrounding object gains and
-  loses no fields (asserted as a tree). What they cannot bind is whether Anthropic's verifier accepts
-  the re-serialised object — key ordering and JSON string escaping may differ from the bytes the server
-  sent, and the assumption that the verifier reads decoded values rather than raw bytes is exactly the
-  assumption every official SDK makes when it echoes a block back, but it is an assumption.
-  **Precision worth keeping:** the acceptance criterion is byte-exactness of the *signature*, not of the
-  *document*. This design does not claim the latter and no implementation could.
-- **U-2 — no request built here has ever been accepted or rejected by the API.** The mode/model matrix
-  in §2.1, the two 400 messages, the `[0.95, 1.0]` `top_p` window and the `budget_tokens` bounds are all
-  read from the vendor's documentation. They are recent, specific and internally consistent, which is
-  the best available evidence and is not the same as a measurement.
+Everything still open below is the honest list of what fixtures and unit tests cannot establish, kept in
+the form `openai-model-capabilities.md` §11/§15 and `openai-responses-path.md` §8 use.
+
+- ~~**U-1 — the byte-exactness of a replayed `signature` has never been verified against the server.**~~
+  **CLOSED, and it holds — but only because of a negative control.** `AnthropicThinkingLiveTest`
+  captures a real thinking block from `claude-haiku-4-5`, lets this client parse it into
+  `ContentBlockParam` and re-serialise it through the SDK mapper, and sends it back beside its
+  `tool_use`. The API accepts it.
+  **Acceptance on its own would have proved nothing, and the first version of that test made exactly
+  that mistake.** A stripped turn is *also* accepted (U-10), so "the second call succeeded" is satisfied
+  just as well by a client that silently dropped the block — the silent-no-op class §10's landmine note
+  exists to prevent, reappearing inside the test written to rule it out. What closes this item is the
+  pair: a signature with **one character changed** is rejected with ``messages.1.content.0: Invalid
+  `signature` in `thinking` block``. The verifier demonstrably reads it, so its accepting ours means
+  something.
+  The precision this item insisted on still stands: what is demonstrated is byte-exactness of the
+  *signature*, not of the *document* — the verifier reads decoded values, so key order and string
+  escaping do not have to match.
+- ~~**U-2 — no request built here has ever been accepted or rejected by the API.**~~
+  **CLOSED.** Both dialect rejections were provoked, and both server messages are **verbatim** what
+  `AnthropicThinkingMode`'s javadoc quotes. Both surface as `LlmInvalidRequestException`, so row 4's
+  non-retryable claim holds too, and §2.1's model/mode matrix matches the live `/v1/models` listing.
+  **One correction.** §2.3 paraphrased the sampling rule as *any non-default `temperature` returns 400*.
+  The real message is ``  `temperature` is deprecated for this model. `` — the parameter is refused
+  outright rather than judged against a default, so `temperature: 0.0` is rejected like any other value.
+  That makes §2.3 and F-2 firmer rather than weaker: with thinking off, this client cannot reach those
+  models at all.
 - **U-3 — the capture rule's "text intervenes" clause is reasoned from documented ordering, not
   observed, and §3.2's table covers the documented shapes rather than all shapes.** It is built from
   what the vendor documents (thinking-then-text-then-tool_use; progress updates sitting *"immediately
@@ -695,17 +714,26 @@ what fixtures and unit tests cannot establish, kept in the form
   two rungs are the vendor's numbers and which two are not. Whether `LOW = 2048` buys anything over
   `MINIMAL = 1024` on real work is unmeasured, and the honest statement is that the ladder is
   *ordered and bounded* rather than *tuned*.
-- **U-8 — `output_tokens_details.thinking_tokens` has never been seen on a real response.** The field
-  name comes from the docs; the SDK does not model it (§2.6). The tests assert the untyped read against a
-  hand-written JSON fixture, which proves the parser and not the field name. If the name is wrong the
-  counter reads 0 and nothing else changes.
-- **U-10 — whether `EXTENDED` + `replayThinkingBlocks(false)` actually 400s has not been observed.**
-  §2.4 carries two documented sentences that together say it must (*"required within a tool-use turn"*,
-  *"the final assistant turn of a thinking-enabled request must begin with a thinking block"*), and §7
-  row 14 carries a third that says mid-turn conflicts *"degrade gracefully… the API doesn't error"*.
-  Those cannot all three be load-bearing here and only a live call settles which. Until then the pair
-  is **warned about, not refused** — failure mode 16. If the rejection is observed, the warning becomes
-  an `AnthropicConfig` constructor check alongside the budget/mode one and this item closes.
+- ~~**U-8 — `output_tokens_details.thinking_tokens` has never been seen on a real response.**~~
+  **CLOSED.** It is there, under exactly that path: a `claude-haiku-4-5` extended call reported
+  `"output_tokens_details": {"thinking_tokens": 148}` inside `output_tokens: 239`. The name guessed from
+  the documentation was right, `AnthropicUsages` reads it, and §3.6's containment claim — reported, not
+  added to the total — is what the numbers show. `AnthropicThinkingLiveTest` asserts it is positive, is
+  `<= completionTokens`, and leaves the total at prompt + completion.
+- ~~**U-10 — whether `EXTENDED` + `replayThinkingBlocks(false)` actually 400s has not been observed.**~~
+  **CLOSED, and the answer is no — the prediction was wrong.** Stripping the thinking block from the
+  final assistant turn of an extended-thinking tool loop returns **200**, and the turn after it still
+  produces a fresh signed block. Of the three documented sentences that could not all be load-bearing,
+  the one that governs is §7 row 14's *the API doesn't error… it silently disables thinking for that
+  request*; the two that read as a hard requirement do not bite on this path.
+  **The hedge turned out right, for a reason other than the one given.** Warning rather than refusing at
+  construction was argued from *the rule is unmeasured, so do not make it un-overridable*. Had it been a
+  constructor check, it would now be refusing a configuration the server accepts. The warning survives,
+  rewritten to name a cost instead of a rejection and widened to both dialects, because the cost does
+  not pick one.
+  Recorded but not relied on: the stripped request's usage carried **no** `output_tokens_details` at
+  all, and the input token count was identical with and without the block — consistent with the server
+  filtering prior-turn thinking itself (§2.4's last bullet). Seen once; not a claim.
 - **U-9 — no docker-backed session-store round trip was run.** As on the OpenAI side, the encoding is
   decided in `JsonSessionSnapshotCodec` and `SessionRecordCodec` — both in the gate — and the backends
   store the result as an opaque string, so they cannot see the field. Unchanged by this work, since the
@@ -763,6 +791,7 @@ otherwise pass while the feature does nothing:
 | `AnthropicThinkingRequestTest` | `thinkingMode = OFF` produces a body byte-identical to today's, temperature included. `EXTENDED` produces `thinking.type = "enabled"` with the clamped budget and **no `temperature` key at all**. `ADAPTIVE` produces `thinking.type = "adaptive"` and `output_config.effort`. `top_p` at `0.5` omitted, at `0.97` sent. `reasoningEffort = NONE` produces no `thinking` key in either mode. Each divergence warns exactly once across two sends. |
 | `AnthropicStreamingReasoningTest` | A fixture stream `content_block_start(thinking)` → `thinking_delta`×2 → `signature_delta` → `content_block_stop` → `content_block_start(tool_use)` → `input_json_delta` → `content_block_stop` → `message_delta` → `message_stop` yields one anchored trace on the aggregated `LlmResponse`. A stream whose thinking block emits **no** `thinking_delta` (the `display: "omitted"` case) still yields a trace. A block with no `signature_delta` yields none, with one warning. Traces are flushed **before** `STREAM_END`, asserted by the absence of `IllegalStateException` and by `toLlmResponse()` carrying them. A `redacted_thinking` start with no deltas yields a trace. |
 | `AnthropicUsageTest` | `thinking_tokens` read from a blocking `Usage` fixture and from a streaming `message_delta` fixture; `totalTokens == input + output` in both; a missing `output_tokens_details`, a non-object one, and a non-numeric `thinking_tokens` each yield `0` without throwing. |
+| `AnthropicThinkingLiveTest` | **The only class here that talks to the API**, gated on `ANTHROPIC_KEY`. U-1 as a *pair*: a re-serialised signature is accepted, **and** one with a single character changed is rejected — the positive case alone is satisfied by a client that silently dropped the block, because a stripped turn is also accepted. Both dialect rejections asserted as whole sentences rather than fragments. `reasoningTokens` positive and within `completionTokens` off a real response. `ADAPTIVE` reaching an always-on model and `OFF` failing on the same one, pinned to its exact message. One tool-calling turn is captured once and shared by every case that needs one. |
 
 ### 10.2 Verified by mutation
 
@@ -781,16 +810,29 @@ different claims:
 | Flush streamed traces after `emitStreamEnd` instead of before | `AnthropicStreamingReasoningTest` (an `IllegalStateException` escaping the mapper) |
 | Add `thinkingTokens` into `totalTokens` | `AnthropicUsageTest` |
 | Send `thinking` when `thinkingMode = OFF` | `AnthropicThinkingRequestTest`'s byte-identical body case |
+| Make `toBlockParam` always return empty (a silent-drop replay regression) | `AnthropicThinkingLiveTest.mutatedSignatureIsRejected` — **and notably not** its positive sibling, which stays green. That asymmetry is the whole reason the negative control exists, and it was run rather than argued. |
 
 ### 10.3 What is not covered, and why that is part of the claim
 
-- **U-1 above.** No test proves the server accepts a replayed signature. The tests prove we do not
-  change it.
+- ~~**U-1 above.** No test proves the server accepts a replayed signature.~~ **Now covered** by
+  `AnthropicThinkingLiveTest`, gated on `ANTHROPIC_KEY` — so this remains true of any run without a key,
+  and the fixture suite still only proves we do not change the signature. Covered means the *pair*: the
+  positive case is not evidence without the mutated-signature control beside it, for the reason U-1 now
+  records.
+- **The live class is in neither tier this build defines.** It has no `@Tag`, so with a key exported it
+  runs inside `./gradlew test` and therefore inside `checkAll` and the release gate — paid, and
+  dependent on a model choosing to call a tool. A fourth tag tier (`docker` / `packaging` /
+  `playwright` being the three) is the shape that fits, and it is **not** taken here: those three are
+  each out of `test` but *in* CI, an invariant `ReleaseGateMatchesCiGateTest` enforces, and a live tier
+  would be out of both because CI has no key. That is a build-policy decision, not a rider on a test
+  change. What is done instead is to make the assertions themselves robust — no assertion on model
+  prose, `assumeTrue` where the model's choice to call a tool is the precondition — so a key-holder's
+  gate is not a coin flip. §8 F-8.
 - **The `IllegalArgumentException("Unsupported role: …")` arm** stays untested, as it is today: `Role`
   has three constants and all three are handled.
-- **The `thinkingMode` mismatch 400s** are not tested end to end, because reproducing them needs the
-  server. `AnthropicExceptionMapperTest` already binds `400 → LlmInvalidRequestException`, which is the
-  half we own.
+- ~~**The `thinkingMode` mismatch 400s** are not tested end to end, because reproducing them needs the
+  server.~~ **Now covered**, on the same gate: `AnthropicThinkingLiveTest` provokes both and asserts the
+  quoted message text, which is what makes §2.1's javadoc a fact rather than a transcription.
 
 ---
 
@@ -830,7 +872,8 @@ parameter, `temperature`'s setter is **not called** and `top_p` is sent only ins
 omission goes through **`reportDivergence`** (`AnthropicLlmClient.java:317`/`:379`) — nothing is silently
 substituted, exactly as the task required. `top_k` needs no handling: `LlmModel` has no such field.
 Separately and importantly: the same paragraph shows that on Sonnet 5, Opus 5, Opus 4.7/4.8 and the
-Fable/Mythos family, *any* non-default temperature 400s on **every** request — so today's unconditional
+Fable/Mythos family, *any* temperature at all 400s on **every** request (the "non-default" qualifier was
+measured wrong — §9 U-2) — so today's unconditional
 `.temperature(0.0)` at `:325` already blocks those models. That is a pre-existing bug this design
 **surfaces but does not fix** (F-2), and the CHANGELOG will say so rather than let a reader infer
 otherwise.
@@ -1009,14 +1052,35 @@ constructor check — which is what the same class does for a budget set outside
 rule is documented and unmeasured, and §7 row 14 documents graceful degradation that would contradict
 it. §9 U-10 is the item that closes this either way.
 
+### 13.9 A live test class, and the one prediction it overturned
+
+`AnthropicThinkingLiveTest` (new, `ANTHROPIC_KEY`-gated) holds the seven assertions that only a real call
+can make. It is separate from `AnthropicLlmClientIntegrationTest` on purpose: that class pins the
+client's ordinary behaviour on one model with thinking unconfigured, and folding a model matrix into it
+would make a single failure ambiguous between "thinking broke" and "the client broke".
+
+The headline is that **U-1 holds** — a signature this client parsed and re-serialised through the SDK
+mapper is accepted by the server. Every argument in §2.7 about why the mapper is load-bearing was
+reasoning toward that, and it is now measured rather than argued.
+
+The correction is **§13.8, which was wrong**. It predicted that `EXTENDED` +
+`replayThinkingBlocks(false)` would be rejected; it is accepted. `reportIfReplayIsOffUnderExtendedThinking`
+became `reportIfReplayIsOffWhileThinking`, its message names the cost rather than a rejection, and its
+gate widened to both dialects because a cost does not pick a dialect. §13.8 is left standing above rather
+than rewritten, because a design document that quietly edits out its own wrong predictions stops being
+usable as a record of what was believed when.
+
 ### 13.6 What the gate actually reported
 
-`./gradlew format` then `./gradlew checkAll`, offline. `aimon-llm-anthropic`: **217 tests, 0 failures, 13
-skipped**, counted from the JUnit XML rather than from the build's wording — the 13 are
-`AnthropicLlmClientIntegrationTest`, which is gated on `ANTHROPIC_KEY` and did not run. (An earlier revision of
-this line said 208; that count was taken from a results directory that had not been fully rewritten, and six of
-the difference are the cases §13.7 and §13.8 added.)
-Seven test classes are new (`AnthropicOutputBlocksTest`, `AnthropicThinkingBudgetsTest`,
+`./gradlew format` then `./gradlew checkAll`, offline. `aimon-llm-anthropic`: **225 tests, 0 failures**, counted
+from the JUnit XML rather than from the build's wording. **Without a key 21 skip** — `AnthropicLlmClientIntegrationTest`
+plus the eight cases of `AnthropicThinkingLiveTest`; **with one exported, none skip and all 225 run.**
+
+Two earlier revisions of this line were wrong and are worth naming, because both failure modes recur: the first said
+208, counted from a results directory that had not been fully rewritten; the second said 217, which was right until
+the live class was added in the same series and then was not updated.
+
+Eight test classes are new (`AnthropicOutputBlocksTest`, `AnthropicThinkingBudgetsTest`,
 `AnthropicReasoningTracesTest`, `AnthropicReasoningRoundTripTest`, `AnthropicThinkingRequestTest`,
-`AnthropicStreamingReasoningTest`, `AnthropicUsageTest`); `AnthropicConfigTest` gained seven cases; and exactly
-one existing test changed — the mock-signature migration §10 names.
+`AnthropicStreamingReasoningTest`, `AnthropicUsageTest`, `AnthropicThinkingLiveTest`); `AnthropicConfigTest` gained
+seven cases; and exactly one existing test changed — the mock-signature migration §10 names.
