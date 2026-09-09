@@ -14,6 +14,9 @@ import at.aimon.bootstrap.runtime.AgentRuntimeEviction;
 import at.aimon.bootstrap.spec.AgentRuntimeSpec;
 import at.aimon.bootstrap.spec.SessionSpec;
 import at.aimon.core.knowledge.SimpleDocumentChunker;
+import at.aimon.core.llm.ReasoningEffort;
+import at.aimon.core.llm.capability.InMemoryModelCapabilityRegistry;
+import at.aimon.core.llm.capability.ModelCapabilityDeclaration;
 import at.aimon.core.memory.MemoryInjectionMode;
 import at.aimon.core.tracing.TracePayloadPolicy;
 import at.aimon.core.tracing.impl.InMemoryTraceSpanStore;
@@ -121,6 +124,24 @@ public class AimonProperties implements InitializingBean {
 
     /** Property name: {@code aimon.llm.model}. */
     public static final String LLM_MODEL = PREFIX + ".llm.model";
+
+    /**
+     * Map of model name to its capability declaration — {@code aimon.llm.model-capabilities.<model>.<flag>}.
+     *
+     * <p>
+     * A map rather than a list because the model name <em>is</em> the identity, and because a map is what this
+     * starter's own documentation guard can walk into: {@code AimonDocumentedPropertiesTest} records a wildcard
+     * segment for a map and descends into its value type, while a {@code List<X>} is recorded as a leaf and its
+     * fields never become known keys.
+     *
+     * <p>
+     * The key stays under the shared {@code aimon.llm.*} namespace rather than moving to {@code aimon.llm.openai.*}
+     * because neither test for a provider-specific key applies: the name carries no vendor concept — it names a
+     * provider-neutral SPI — and the question it answers ("what does this model's request surface accept?") means the
+     * same thing for every vendor. What keeps the shared namespace honest is that the branch which cannot read it
+     * refuses it by name.
+     */
+    public static final String LLM_MODEL_CAPABILITIES = PREFIX + ".llm.model-capabilities";
 
     /** Backing store for session records. */
     public static final String SESSION_STORE = PREFIX + ".session.store";
@@ -289,6 +310,7 @@ public class AimonProperties implements InitializingBean {
         validateWorkspace();
         validateAgents();
         validateCredentials();
+        validateLlm();
         validateBounds();
         validateSessionTopology();
         validateScheduling();
@@ -611,6 +633,79 @@ public class AimonProperties implements InitializingBean {
             fields.keySet().forEach(
                     field -> requireReferenceable(field, CREDENTIALS + "." + profile + ".<field>", "credential field"));
         });
+    }
+
+    /**
+     * Refuses a model capability declaration that would bind and do nothing, by property name.
+     *
+     * <p>
+     * The judgement is not made here. This method builds the registry the LLM slice would build — the same call, the
+     * same core implementation — and throws the result away; what it adds is the property name, which the core
+     * exception cannot know. Doing it in {@code afterPropertiesSet} rather than in the slice is what makes the failure
+     * arrive before any bean is created, next to the other checks whose message has to name a property.
+     *
+     * <p>
+     * Not checked here: whether a declaration is <em>read</em>. That depends on which provider branch fires and on
+     * whether the application defined its own {@code LlmClient}, neither of which this bean can see —
+     * {@code AimonLlmAutoConfiguration} refuses a declaration under the Anthropic branch at the moment that branch
+     * actually runs, for the same reason {@code requireApiKey} lives there.
+     */
+    private void validateLlm() {
+        modelCapabilityRegistry(llm);
+    }
+
+    /**
+     * Builds the capability registry the {@code aimon.llm.model-capabilities} tree describes.
+     *
+     * <p>
+     * Shared by {@link #validateLlm()} and the LLM slice so that "the declaration is valid" and "the declaration is
+     * what the client uses" cannot be two different answers. Returns the plain built-in table when nothing is
+     * declared.
+     *
+     * <p>
+     * Public because of the one deployment shape neither branch of {@code AimonLlmAutoConfiguration} covers: an
+     * application that defines its own {@link at.aimon.core.llm.LlmClient} bean reaches no branch, so a declaration
+     * it wrote is neither refused nor read — it is that application's to consume. Saying so while keeping the only
+     * way to consume it package-private would leave that application re-implementing this translation, which is the
+     * second copy of the rules this whole seam exists to prevent. From such an application's own bean method:
+     *
+     * <pre>
+     * {@code
+     * LlmClient myGatewayClient(AimonProperties properties) {
+     *     return new OpenAILlmClient(OpenAIConfig.builder().apiKey(key).model("prod-assistant")
+     *             .modelCapabilityRegistry(AimonProperties.modelCapabilityRegistry(properties.getLlm())).build());
+     * }
+     * }
+     * </pre>
+     *
+     * @param llm
+     *            the bound LLM properties
+     * @return the built-in table extended by every declared entry
+     * @throws IllegalStateException
+     *             if an entry names nothing, is blank, is padded, collides with another once case is folded, or
+     *             declares none of the five flags
+     */
+    public static InMemoryModelCapabilityRegistry modelCapabilityRegistry(Llm llm) {
+        final Map<String, ModelCapabilityDeclaration> declarations = new LinkedHashMap<>();
+        llm.getModelCapabilities().forEach((model, entry) -> declarations.put(model, declarationOf(model, entry)));
+        try {
+            return InMemoryModelCapabilityRegistry.withDefaultsExtendedBy(declarations);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalStateException(LLM_MODEL_CAPABILITIES + " is invalid: " + e.getMessage(), e);
+        }
+    }
+
+    private static ModelCapabilityDeclaration declarationOf(String model, ModelCapabilityProperties entry) {
+        if (entry == null) {
+            // withDefaultsExtendedBy refuses this with the message an empty entry deserves, and it does so whichever
+            // of the two shapes the binder produced for one -- a null value, or an object with five null fields.
+            return null;
+        }
+        try {
+            return entry.toDeclaration();
+        } catch (IllegalArgumentException e) {
+            throw new IllegalStateException(LLM_MODEL_CAPABILITIES + "." + model + " is invalid: " + e.getMessage(), e);
+        }
     }
 
     /**
@@ -1088,6 +1183,18 @@ public class AimonProperties implements InitializingBean {
         /** Per-request timeout for the vendor client. */
         private Duration timeout = Duration.ofSeconds(60);
 
+        /**
+         * Per-model capability declarations, keyed by the name this deployment calls the model by.
+         *
+         * <p>
+         * The built-in capability table knows models by their real names, so a gateway or Azure deployment that
+         * renames one falls through to the fail-open path and keeps hitting whatever the table would have fixed.
+         * Declaring the deployment's own name here closes that. Declarations <em>extend</em> the built-in table —
+         * they are registered as exact entries, which the registry's existing precedence rule already resolves in
+         * their favour — so naming one model leaves every other row in place.
+         */
+        private Map<String, ModelCapabilityProperties> modelCapabilities = new LinkedHashMap<>();
+
         public String getProvider() {
             return provider;
         }
@@ -1126,6 +1233,121 @@ public class AimonProperties implements InitializingBean {
 
         public void setTimeout(Duration timeout) {
             this.timeout = timeout;
+        }
+
+        public Map<String, ModelCapabilityProperties> getModelCapabilities() {
+            return modelCapabilities;
+        }
+
+        public void setModelCapabilities(Map<String, ModelCapabilityProperties> modelCapabilities) {
+            this.modelCapabilities = modelCapabilities == null ? new LinkedHashMap<>() : modelCapabilities;
+        }
+    }
+
+    /**
+     * What one model's request surface accepts, as configuration states it.
+     *
+     * <p>
+     * Every flag is boxed so that "not declared" and "declared false" are different things: an omitted flag keeps
+     * {@code ModelCapabilities.unknown()}'s fail-open value, so an entry naming one flag changes that one flag and
+     * nothing else. Requiring all five would make an operator answer questions they cannot — a gateway operator knows
+     * {@code temperature} earns a 400 and does not know whether the model replays reasoning traces — and inventing
+     * {@code supports-reasoning-trace-round-trip=true} routes the deployment at an endpoint a Chat-only gateway does
+     * not have. An entry that declares <em>nothing</em> is refused instead, in {@link AimonProperties#validateLlm()}.
+     *
+     * <p>
+     * Nested inside {@code AimonProperties} rather than beside it because
+     * {@code AimonDocumentedPropertiesTest}'s walker only descends into types whose name starts with
+     * {@code AimonProperties$}; a top-level class here would leave this whole subtree outside the guard that keeps
+     * the documented property names honest.
+     *
+     * <p>
+     * Named with a {@code Properties} suffix, unlike most nested classes here. {@link SessionProperties} carries the
+     * same suffix for a different reason — its simple name is banned project-wide — while this one would otherwise
+     * collide with {@code at.aimon.core.llm.capability.ModelCapabilities}, a type this module also handles: the LLM
+     * slice translates these declarations into it.
+     */
+    public static class ModelCapabilityProperties {
+
+        /** {@code false} when the model rejects {@code temperature} / {@code top_p} / the penalties. */
+        private Boolean supportsSamplingParameters;
+
+        /** {@code true} when the model takes a reasoning-effort parameter at all. */
+        private Boolean supportsReasoningEffort;
+
+        /** {@code false} when the endpoint rejects tools together with a non-{@code NONE} effort. */
+        private Boolean supportsToolsWithReasoning;
+
+        /** {@code true} when the model returns reasoning traces a client should replay on the next turn. */
+        private Boolean supportsReasoningTraceRoundTrip;
+
+        /**
+         * The lowest rung on this model's reasoning ladder — the least effort it accepts as a value.
+         *
+         * <p>
+         * The framework's own enum rather than a String: the configuration processor then records the type, so an IDE
+         * offers the constants and this starter needs no hand-written metadata hint for them.
+         */
+        private ReasoningEffort lowestReasoningEffort;
+
+        public Boolean getSupportsSamplingParameters() {
+            return supportsSamplingParameters;
+        }
+
+        public void setSupportsSamplingParameters(Boolean supportsSamplingParameters) {
+            this.supportsSamplingParameters = supportsSamplingParameters;
+        }
+
+        public Boolean getSupportsReasoningEffort() {
+            return supportsReasoningEffort;
+        }
+
+        public void setSupportsReasoningEffort(Boolean supportsReasoningEffort) {
+            this.supportsReasoningEffort = supportsReasoningEffort;
+        }
+
+        public Boolean getSupportsToolsWithReasoning() {
+            return supportsToolsWithReasoning;
+        }
+
+        public void setSupportsToolsWithReasoning(Boolean supportsToolsWithReasoning) {
+            this.supportsToolsWithReasoning = supportsToolsWithReasoning;
+        }
+
+        public Boolean getSupportsReasoningTraceRoundTrip() {
+            return supportsReasoningTraceRoundTrip;
+        }
+
+        public void setSupportsReasoningTraceRoundTrip(Boolean supportsReasoningTraceRoundTrip) {
+            this.supportsReasoningTraceRoundTrip = supportsReasoningTraceRoundTrip;
+        }
+
+        public ReasoningEffort getLowestReasoningEffort() {
+            return lowestReasoningEffort;
+        }
+
+        public void setLowestReasoningEffort(ReasoningEffort lowestReasoningEffort) {
+            this.lowestReasoningEffort = lowestReasoningEffort;
+        }
+
+        /**
+         * Translates this entry into the framework's neutral declaration type.
+         *
+         * <p>
+         * A field copy and nothing more — what an omitted flag means is decided by
+         * {@link ModelCapabilityDeclaration}, and what a declared entry does to the table by
+         * {@link InMemoryModelCapabilityRegistry#withDefaultsExtendedBy(Map)}. Neither rule is restated here.
+         *
+         * @return the declaration this entry stands for
+         * @throws IllegalArgumentException
+         *             if the entry declares none of the five flags
+         */
+        ModelCapabilityDeclaration toDeclaration() {
+            return ModelCapabilityDeclaration.builder().supportsSamplingParameters(supportsSamplingParameters)
+                    .supportsReasoningEffort(supportsReasoningEffort)
+                    .supportsToolsWithReasoning(supportsToolsWithReasoning)
+                    .supportsReasoningTraceRoundTrip(supportsReasoningTraceRoundTrip)
+                    .lowestReasoningEffort(lowestReasoningEffort).build();
         }
     }
 

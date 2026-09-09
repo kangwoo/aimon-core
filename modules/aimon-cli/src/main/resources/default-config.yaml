@@ -7,6 +7,21 @@ llm:
   apiKey: "${OPENAI_KEY}"
   model: "gpt-5.1"
   timeout: 60
+# The built-in capability table knows models by their real names. An Azure deployment or an
+# OpenAI-compatible gateway behind `baseUrl` may expose one under a name of its own, and that name
+# falls through to the fail-open path -- so a model that rejects `temperature` gets it anyway, and
+# answers HTTP 400. Name the deployment here to say what it really accepts. Only the openai provider
+# reads this block; the key is the same name `model` above carries.
+#
+# Every flag is optional and each one is independent: what you leave out keeps today's behaviour, so
+# the one-line form below is a complete answer to the 400. Values are case-insensitive.
+#  modelCapabilities:
+#    prod-assistant:
+#      supportsSamplingParameters: false        # model rejects temperature / top_p / the penalties
+#      supportsReasoningEffort: true            # model takes a reasoning-effort parameter
+#      supportsToolsWithReasoning: true         # tools and a reasoning effort may be combined
+#      supportsReasoningTraceRoundTrip: false   # true routes the model at /v1/responses -- leave false on a Chat-only gateway
+#      lowestReasoningEffort: minimal           # none | minimal | low | medium | high
 
 # Agent Configuration
 agent:

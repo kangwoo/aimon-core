@@ -253,6 +253,14 @@ class AimonDocumentedPropertiesTest {
         // The map node, whose second segment is any agent ref the host chooses.
         assertThat(TREE.isKnownKey("aimon.agents.ops.bundle")).isTrue();
         assertThat(TREE.isKnownKey("aimon.agents.ops.nonexistent")).isFalse();
+        // The map-of-nested-class node: the model name is the host's to choose, the flags under it are not. Pinned
+        // because the walker descending into a map's value type is what makes this whole subtree checkable at all --
+        // had it been declared as a list, every flag under it would have been an unknown key in the guides below.
+        assertThat(TREE.isKnownKey("aimon.llm.model-capabilities.prod-assistant.supports-sampling-parameters"))
+                .isTrue();
+        assertThat(TREE.isKnownKey("aimon.llm.model-capabilities.prod-assistant.lowest-reasoning-effort")).isTrue();
+        assertThat(TREE.isKnownKey("aimon.llm.model-capabilities.prod-assistant.supports-sampling-parameter"))
+                .isFalse();
         // The map-of-maps node, where both the profile and the field are the host's to name.
         assertThat(TREE.isKnownKey("aimon.credentials.jira.password")).isTrue();
         assertThat(TREE.isKnownKey("aimon.credentials.jira")).isTrue();
