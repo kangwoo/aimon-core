@@ -647,7 +647,7 @@ invalid_request_error  messages.1.content.0: `thinking` 또는 `redacted_thinkin
 
 ---
 
-## L-13 — thinking 예산 clamp 경고가 `only 1 tokens` 로 읽히고, 듣는 처방 둘 중 하나만 말한다
+## L-15 — thinking 예산 clamp 경고가 `only 1 tokens` 로 읽히고, 듣는 처방 둘 중 하나만 말한다
 
 *(2026-09-10 등록. 출처는 #83 —
 [`../design/llm/thinking-reporting-and-dialect-records.md` §16](../design/llm/thinking-reporting-and-dialect-records.md#16-the-auto-budget-policy-decided-83-2026-09-10).
@@ -681,7 +681,7 @@ invalid_request_error  messages.1.content.0: `thinking` 또는 `redacted_thinkin
   §9 가 설계 시점의 미해결 목록, §11 이 구현 중 실측으로 뒤집힌 사실
 - [`../design/llm/thinking-reporting-and-dialect-records.md`](../design/llm/thinking-reporting-and-dialect-records.md) —
   L-6·L-7 을 닫고 L-9·L-10·L-11 을 연 설계. §14 가 방언 census 의 원자료, §15.4 가 이 세 항목의 승격 근거이고,
-  §16 이 #83 의 결정이자 L-13 의 출처다
+  §16 이 #83 의 결정이자 L-15 의 출처다
 - [`../design/llm/openai-model-capabilities.md`](../design/llm/openai-model-capabilities.md) — capability
   SPI 자체의 설계. §7 O-8 이 이 작업으로 닫혔다
 - [`../design/llm/openai-responses-path.md`](../design/llm/openai-responses-path.md) — F-2 가 L-2 의 출처

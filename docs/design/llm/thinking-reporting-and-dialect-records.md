@@ -1273,7 +1273,7 @@ added to `AUTO` turns it red.
    that work.** Lowering the effort to `low` (2048) or `minimal` (1024) also fits under 4096 — `llm.reasoningEffort`
    / `aimon.llm.reasoning-effort`, which `AnthropicThinkingResolver.java:301-303` reads after the agent
    definition's own `model.reasoningEffort`. Both operator guides name the second remedy; whether the warning
-   should, and its `only 1 tokens` grammar, are backlog `L-13`.
+   should, and its `only 1 tokens` grammar, are backlog `L-15`.
 5. **Nothing here is reachable without opting in.** `AnthropicConfig`'s default `thinkingMode` is `OFF`
    (`AnthropicConfig.java:43`, applied at `:294`), and keeping it there was its own decision —
    [`reasoning-model-enablement.md`](reasoning-model-enablement.md) §3.4: *"Making `AUTO` the default would turn
@@ -1332,7 +1332,7 @@ The decision is meant to be falsifiable, and these are its triggers:
   move §16.4's population.
 
 Naming the second remedy in the warning is **not** a trigger: it changes what the warning says, not what `AUTO` does.
-It is backlog `L-13`.
+It is backlog `L-15`.
 
 ### 16.6 Where else this is written
 
@@ -1345,7 +1345,7 @@ One rationale, here; everywhere else a sentence and a pointer back.
 | [`embedding-agent-in-application.md`](../../getting-started/embedding-agent-in-application.md) (+ `.en.md`) | the same paragraph in the starter's keys; its ceiling sentence was already true, since the starter ships no agent definition |
 | `modules/aimon-cli/src/main/resources/default-config.yaml` | a clause on the `auto` value, and the `thinkingBudgetTokens` comment scoped — comments only |
 | [`anthropic-thinking-config-surface.md`](anthropic-thinking-config-surface.md) §14 | two dated notes: beside `O-2`, which #83 does not answer, and beside D-4's *"defaults to 4096"* |
-| [`../../backlog/llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md) `L-13` | the warning's wording, and whether it should name the second remedy |
+| [`../../backlog/llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md) `L-15` | the warning's wording, and whether it should name the second remedy |
 | `AnthropicThinkingDialectTest`, `AnthropicThinkingBudgetsTest` | the request pinned end to end on a built-in row, and the unset-effort clamp stated directly |
 
 ### 16.7 Where the build departed from #83's reviewed design
@@ -1373,6 +1373,6 @@ decision.
 - [`anthropic-thinking-traces.md`](anthropic-thinking-traces.md) — §2.1's vendor per-model table and the two quoted 400s; §12 `Q-5`, §16's first reason
 - [`anthropic-thinking-config-surface.md`](anthropic-thinking-config-surface.md) — §13 `O-2`, which §16 does not answer, and the two dated §14 notes that point here
 - [`reasoning-effort-config-surface.md`](reasoning-effort-config-surface.md) — the set-valued precedent §10 A2 weighs and refuses
-- [`../../backlog/llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md) — L-6 and L-7 closed here; L-9, L-10 and L-11 opened by §15.4; L-13 opened by §16
+- [`../../backlog/llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md) — L-6 and L-7 closed here; L-9, L-10 and L-11 opened by §15.4; L-15 opened by §16
 - [`../../backlog/README.md`](../../backlog/README.md) — the rules for closing an item, and the index this change corrects twice
 - [`../../project/api-stability.md`](../../project/api-stability.md) — §5, which permits the enum addition at `0.x`
