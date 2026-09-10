@@ -1273,7 +1273,10 @@ added to `AUTO` turns it red.
    that work.** Lowering the effort to `low` (2048) or `minimal` (1024) also fits under 4096 — `llm.reasoningEffort`
    / `aimon.llm.reasoning-effort`, which `AnthropicThinkingResolver.java:301-303` reads after the agent
    definition's own `model.reasoningEffort`. Both operator guides name the second remedy; whether the warning
-   should, and its `only 1 tokens` grammar, are backlog `L-15`.
+   should, and its `only 1 tokens` grammar, are backlog `L-15`. **2026-09-10 (#89):** this reason covers the
+   requests the warning fires on — a clamp — and no others. A budget that fits under `max_tokens` by a single token
+   leaves the same one-token answer and is sent with no warning; which requests the warning covers, and why that
+   stays, is §16.8.
 5. **Nothing here is reachable without opting in.** `AnthropicConfig`'s default `thinkingMode` is `OFF`
    (`AnthropicConfig.java:43`, applied at `:294`), and keeping it there was its own decision —
    [`reasoning-model-enablement.md`](reasoning-model-enablement.md) §3.4: *"Making `AUTO` the default would turn
@@ -1315,7 +1318,8 @@ the difference is the population.
   1024 and up to that budget the answer is left one token; at or below 1024 no budget fits at all and the thinking
   parameter is omitted instead, with its own warning (`thinkingBudgetImpossible`,
   `AnthropicThinkingResolver.java:404-409`). Nothing in this repository can count how many deployments that shape
-  holds.
+  holds. **2026-09-10 (#89):** above the requested budget the answer is left `max_tokens` minus the budget — one
+  token at exactly one above it — and nothing is said; §16.8.
 
 This narrows who is affected; it does not reverse the decision.
 
@@ -1365,6 +1369,176 @@ decision.
 - **It had the dated D-4 note in `anthropic-thinking-config-surface.md` say all three surfaces named there were
   scoped.** Two were; the starter guide's sentence is true as written and was left alone, and the note says which.
 
+### 16.8 Which requests the clamp warning covers, decided (#89, 2026-09-10)
+
+*Appended 2026-09-10 by a later issue. Not a correction: §16.1–§16.7 stand as written, and the only edits to them are
+two dated pointers, in §16.2 reason 4 and §16.4. #83's build review raised this as its most important non-blocking
+finding, and #83 deliberately left it out of a documentation-only change. Issue #89 then offered three policies, and
+**the maintainer delegated the choice to that issue's run**: what follows is that run's decision, merged on the
+maintainer's confirmation.*
+
+**In one line: `thinkingBudgetClamped` covers a clamp — a request whose budget was reduced to fit under `max_tokens` —
+and not every request whose answer allowance is small. A budget that fits by one token is sent without a warning, and
+that is allowed.** #89's third option was taken: leave the code, narrow the record. No production behaviour changed
+with it.
+
+**Exactly which requests the warning covers.** Line numbers as of 2026-09-10 (`ade5978`). The
+`thinkingBudgetClamped=<requested>-><sent>` finding is **recorded and emitted** for a request — §3.1's two terms —
+**if and only if** all three hold:
+
+1. **The request carries a budgeted `thinking` parameter.** `thinkingMode` is not `off`; the effective
+   `reasoningEffort` (the call's `LlmModel` first, then `AnthropicConfig`) is not `none`; and the dialect resolves to
+   `BUDGETED`. That means `extended` on a row that is `BUDGETED`, `EITHER` or undescribed; `auto` on a `BUDGETED` row;
+   or `adaptive` translated on a `BUDGETED` row (`AnthropicThinkingResolver.java:78-96`, `:182-183`, `:207`,
+   `:213-234`).
+2. **`max_tokens` is above 1024** — the call's `LlmModel.maxTokens`, else `AnthropicConfig.getMaxTokens()`, which is
+   4096 unless `AnthropicConfig.Builder.maxTokens(int)` set it (`AnthropicLlmClient.java:375`,
+   `AnthropicConfig.java:41`). At or below 1024 no budget is sent, and `thinkingBudgetImpossible` is reported instead
+   (`AnthropicThinkingBudgets.java:136-137`).
+3. **The requested budget is at least `max_tokens`.** The requested budget is the explicit `thinkingBudgetTokens` if
+   one is set (legal under `extended` only), else the effort's rung (1024 / 2048 / 4096 / 16000), else 4096 when no
+   effort is set (`AnthropicThinkingBudgets.java:101-116`).
+
+When it is recorded, the budget sent is `max_tokens − 1` and exactly one token is left for the answer, every time,
+which is why the message always reads `only 1 tokens` (L-15). **Emitted is not the same as logged.**
+`reportDivergence` logs an emitted finding at WARN at most once per `AnthropicLlmClient` instance per distinct
+`requested->sent` pair, and not at all once that client's once-per-signature register — which every other divergence
+the client reports shares — holds 32 signatures (`AnthropicLlmClient.java:107`, `:681`). A second covered request on
+the same client is covered, and adds nothing to the log.
+
+**It covers nothing else.** A requested budget below `max_tokens` is sent as asked, however little it leaves —
+including one that fits by exactly one token, which leaves the same one-token worst case as a clamp.
+
+**The issue's table, re-derived.** The design run compiled this repository's own main sources and ran the resolver
+over #89's rows. Every cell of the issue is correct:
+
+| Request | `max_tokens` | `budget_tokens` sent | nominal tokens left | warning |
+|---|---|---|---|---|
+| `auto`, `BUDGETED` row, no effort | 4096 | 4095 | 1 | `thinkingBudgetClamped=4096->4095` |
+| `auto`, `BUDGETED` row, no effort | 4097 | 4096 | 1 | none |
+| `auto`, `BUDGETED` row, no effort | 4100 | 4096 | 4 | none |
+| `extended`, `thinkingBudgetTokens: 8000`, a `BUDGETED`, `EITHER` or undescribed row | 8001 | 8000 | 1 | none |
+| the same | 8000 | 7999 | 1 | `thinkingBudgetClamped=8000->7999` |
+
+Two things the issue does not say. The `extended` rows hold only off `ADAPTIVE` rows: there, `extended` is translated
+and carries no budget at all. And "fits by one token, no warning" holds for every source of a budget, including the
+`LOW` and `HIGH` rungs and a translated `adaptive` request, not only for `auto` at 4096.
+
+The "tokens left" column is **nominal**. The vendor's extended-thinking page (fetched 2026-09-10) says *"The budget is
+a target rather than a strict cap. Actual token usage varies with the task, and Claude may stop reasoning well before
+the budget is exhausted; `max_tokens` remains the hard ceiling on total output."* It publishes no answer allowance,
+headroom or ratio. Its only pairing is an example, 16000 and 10000.
+
+**The three options.**
+
+- **Option 1 — warn when `max_tokens − budget` is below a floor. Refused.** Every floor this repository could source
+  was examined:
+  - **1** is the API's own rule (budget `<` `max_tokens`). It is the only floor that is not invented, and it fails
+    #89's own scenario by one token: it catches 4097, then goes silent at 4098 with two tokens left, which answer no
+    better than one. It draws the line where requests stop being *legal*, not where they stop being able to answer.
+  - **1024** is the thinking minimum, borrowed for the answer.
+  - **6000** is the vendor's example pair, and citing it would dress an arbitrary pick.
+  - **24000** is the CLI bundles' 40000 minus `HIGH`, a configuration choice rather than a measurement.
+  - **The answer's real size** is the right quantity. In this ReAct loop that is usually a `tool_use` block sized by
+    its schema and its turn, and nothing has measured it. That is reason 3 of §16.2 again.
+
+  The figure being compared is also not the outcome, because the budget is a target.
+- **Option 2 — warn when the budget exceeds a share of `max_tokens`. Refused.** No share has a source: 50% has none,
+  62.5% is the vendor example, 40% is the CLI bundles, and "all but one token" is option 1 as a ratio. The issue offers
+  scaling as the advantage, and that is the objection: what has to fit, a tool call or a reply, does not grow with
+  `max_tokens` or with the budget, so a ratio of those two settings measures neither.
+- **Option 3 — leave the code and narrow this record. Taken**, for four reasons:
+  1. **The number does not exist, and a threshold is the number #83 refused.** Operators edit until a warning stops,
+     which is how #89's 4097 case arises. So any threshold becomes the deployment's de facto reserve, and reason 3 of
+     §16.2 refused to choose that reserve for the request. Choosing it for the log is the same act.
+  2. **These requests are not divergences.** The clamp warning is a `REQUIRES_THINKING` finding, *the request differs
+     from what you configured* (`AnthropicThinkingResolution.java:24-25`). 4097 and 8000/8001 are sent exactly as
+     configured, or as documented when no effort is set. §3.2's R-WHAT reports inert or reshaped combinations, and
+     §3.3 already declined to report a request that is honoured and judged unwise. A warning here would be a third
+     kind of finding with no rule, and the rule would need the number.
+  3. **The realised squeeze is reported when it happens, and needs no number — in one of its two shapes.** A final
+     turn without tool use that stops at `max_tokens` ends as `CompletionReason.TRUNCATED`, with
+     `[System: response truncated at max_tokens]` appended and a WARN (`OrcaAgentExecutor.java:1737-1752`, `:217`,
+     `:2289`); a streamed stop reason reaches that branch through `ChunkAggregator.java:100`. **A cut inside a
+     `tool_use` block is reported by nothing that names `max_tokens`.** That branch requires
+     `!response.hasToolUses()`, and a tool call cut short is still a tool call: its slot is registered when the block
+     starts (`AnthropicStreamingMapper.java:175`), its arguments parse to an empty map — silently when none arrived,
+     with a parse-failure WARN that does not say why when they are partial JSON (`ChunkAggregator.java:287-298`) — and
+     the executor dispatches it (`OrcaAgentExecutor.java:1768-1770`) on a branch that never reads the stop reason. The
+     Anthropic client's own `Anthropic response was truncated due to max_tokens limit` (`AnthropicLlmClient.java:786`)
+     does not reach an agent at all: its one caller is a blocking call made without a live cancellation token
+     (`:249`, `:282-286`), and the agent loop always passes a live one (`OrcaAgentExecutor.java:1529`, `:2987-2988`,
+     `LlmCallGateway.java:401`, `LlmCancellation.java:70-72`), so from an agent blocking and streaming calls alike
+     arrive as a stream. This is backlog L-16. It does not overturn the reason: closing that gap needs no number
+     either, and a threshold would leave it where it is.
+  4. **The warning's text stays true.** Every request it fires on leaves exactly one token, and raising `maxTokens` is
+     a remedy that works for it. Nothing here changes what it says (L-15).
+
+  §16.2's reason 2 is **not** among these, and this has to be said. A warning would fire the same under `auto` and
+  `extended`, so it does not make the two modes diverge.
+
+**The cost.** An operator who follows the warning by the smallest step, 4096 to 4097, loses the warning and keeps a
+one-token worst case. If thinking then spends its whole budget, the first thing they see is a truncated answer rather
+than a line before the request — and when the cut lands inside a tool call, not even that: a tool call with empty
+arguments, and nothing that names `max_tokens` (L-16). The trap is accepted, because the alternative is a line drawn by
+a number with no source, which moves the same trap to wherever the line is. The silence on a cut tool call is not
+accepted; it is open as L-16. Where the warning's advice could say *how far* to raise `maxTokens` is L-15's question,
+not this one.
+
+**What would re-open this.**
+
+- **A measured, or vendor-published, answer allowance.** This removes reason 1, and it is §16.5's first trigger too.
+- **Interleaved thinking being sent** (`anthropic-thinking-traces.md` A10 / F-3). The budget may then exceed
+  `max_tokens`, and both the clamp and this coverage change.
+- **A change to the clamp's target** away from `max_tokens − 1`. "Exactly one token" stops being true, and so does
+  L-15's premise.
+- **Evidence that the outcome signals above miss a squeeze L-16 does not already record.** L-16 itself is not a
+  trigger: the change it points at — naming a `max_tokens` stop wherever the cut lands, and attributing it to thinking
+  from `usage.output_tokens_details.thinking_tokens` — needs no number, and it is a change to the truncation report,
+  not to this warning.
+
+**Where it is pinned.** `AnthropicThinkingResolverTest.ClampWarningCoverage` asserts condition 3 as a property over
+every rung, conditions 1 and 2 path by path in both directions, and the table's rows. `AnthropicThinkingDialectTest`
+asserts end to end that 4097, 4100 and `extended` 8000/8001 go out with no warning at all.
+`AnthropicThinkingBudgetsTest` asserts that a fit by one token is not a clamp. A floor or proportion warning added
+without revisiting this section turns them red.
+
+### 16.9 Where the build departed from #89's reviewed design
+
+The design §16.8 was built from was reviewed once outside the repository — PASS, no blocking findings, seven
+non-blocking ones. Six of its statements would have landed false or incomplete — four found by that review, two by the
+build — and each was corrected here. Two placements moved as well. None changes the decision.
+
+- **It said the warning "is emitted for a request if and only if" the three conditions hold.** A second request that
+  meets all three on the same client logs nothing, and nothing is logged once the 32-signature register is full, so
+  the "iff" was false of the log. §16.8 now uses §3.1's two terms — *recorded and emitted* iff the three hold — and
+  states the once-per-signature rule separately.
+- **It gave condition 2's fallback as `AnthropicConfig`'s 4096.** The fallback is `AnthropicConfig.getMaxTokens()`,
+  which a library caller can set; 4096 is only its default. Without that, "exactly which requests" would not have held
+  for programmatic assembly.
+- **Its table named "a `BUDGETED` or undescribed row" for `extended` 8000/8001**, while condition 1 names `EITHER`
+  too. The row names all three, and `ClampWarningCoverage` asserts all three.
+- **It left the cut inside a `tool_use` block "not verified", and said the operator's first signal is a truncated
+  answer.** Reading answers it: on the streaming path such a cut is a tool call with empty arguments, and nothing names
+  `max_tokens`. Reason 3, "The cost" and the last re-open trigger now say so, and the gap is backlog L-16 rather than
+  an open question here — it is how every truncated tool call is reported, with thinking or without, so it outlives
+  this decision.
+- **It cited the Anthropic client's `max_tokens` WARN as firing "on every non-streaming response". From an agent it
+  never fires.** Found by the build, and missed by the design and its review alike, because neither traced the
+  cancellation token: `convertResponse` is reached only by a blocking call without a live token, the ReAct executor
+  always passes one, and the Anthropic client routes such a call through the streaming path. So the non-streaming half
+  of reason 3 did not exist for an agent either; L-16's table records where each signal stops.
+- **It said `ClampWarningCoverage` asserts "the three conditions as a property over every rung".** Its three planned
+  tests asserted condition 3 that way, plus the table's rows; conditions 1 and 2 were asserted nowhere as coverage.
+  The build added a fourth test, `theOtherTwoConditions`, which asserts both directions path by path, and "Where it is
+  pinned" says which test pins what.
+
+The two placements. The second dated pointer was to follow the §16.4 sentence that ends at
+`AnthropicThinkingResolver.java:404-409`; there it would have come before *"Nothing in this repository can count how
+many deployments that shape holds"* and changed what "that shape" refers to, so it ends the bullet instead, and its
+*"above that budget"* reads *"above the requested budget"* to keep a referent there. And `## 관련 문서` names L-16
+beside L-15; the design left that line alone because it registered nothing.
+
 ---
 
 ## 관련 문서
@@ -1373,6 +1547,6 @@ decision.
 - [`anthropic-thinking-traces.md`](anthropic-thinking-traces.md) — §2.1's vendor per-model table and the two quoted 400s; §12 `Q-5`, §16's first reason
 - [`anthropic-thinking-config-surface.md`](anthropic-thinking-config-surface.md) — §13 `O-2`, which §16 does not answer, and the two dated §14 notes that point here
 - [`reasoning-effort-config-surface.md`](reasoning-effort-config-surface.md) — the set-valued precedent §10 A2 weighs and refuses
-- [`../../backlog/llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md) — L-6 and L-7 closed here; L-9, L-10 and L-11 opened by §15.4; L-15 opened by §16
+- [`../../backlog/llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md) — L-6 and L-7 closed here; L-9, L-10 and L-11 opened by §15.4; L-15 opened by §16; L-16 opened by §16.8
 - [`../../backlog/README.md`](../../backlog/README.md) — the rules for closing an item, and the index this change corrects twice
 - [`../../project/api-stability.md`](../../project/api-stability.md) — §5, which permits the enum addition at `0.x`

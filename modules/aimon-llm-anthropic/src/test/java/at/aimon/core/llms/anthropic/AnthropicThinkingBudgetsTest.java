@@ -85,6 +85,18 @@ class AnthropicThinkingBudgetsTest {
     }
 
     @Test
+    @DisplayName("a budget one token under maxTokens is sent as asked — the clamp begins at maxTokens, not before it")
+    void aBudgetThatFitsByOneTokenIsNotClamped() {
+        // The other half of budgetIsClampedBelowMaxTokens, on #89's rows. The first three are sent as asked however
+        // little they leave the answer -- one token, four, one -- and only the last is a clamp, so only it is warned
+        // about (docs/design/llm/thinking-reporting-and-dialect-records.md section 16.8).
+        assertThat(AnthropicThinkingBudgets.budgetFor(null, null, 4097)).hasValue(4096);
+        assertThat(AnthropicThinkingBudgets.budgetFor(null, null, 4100)).hasValue(4096);
+        assertThat(AnthropicThinkingBudgets.budgetFor(null, 8000, 8001)).hasValue(8000);
+        assertThat(AnthropicThinkingBudgets.budgetFor(null, 8000, 8000)).hasValue(7999);
+    }
+
+    @Test
     @DisplayName("no legal budget exists when maxTokens leaves no room, and the answer is empty rather than illegal")
     void givesUpWhenNoLegalBudgetExists() {
         assertThat(AnthropicThinkingBudgets.budgetFor(ReasoningEffort.HIGH, null, 1024)).isEmpty();

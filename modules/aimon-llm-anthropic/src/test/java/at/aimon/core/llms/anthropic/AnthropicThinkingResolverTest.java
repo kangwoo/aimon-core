@@ -64,6 +64,10 @@ class AnthropicThinkingResolverTest {
         return resolution.parameter().map(p -> p.isAdaptive() ? "adaptive" : "enabled").orElse("none");
     }
 
+    private static long budgetOf(AnthropicThinkingResolution resolution) {
+        return resolution.parameter().orElseThrow().asEnabled().budgetTokens();
+    }
+
     @Nested
     @DisplayName("§3.3's decision table, one case per row")
     class DecisionTable {
@@ -249,6 +253,141 @@ class AnthropicThinkingResolverTest {
 
             assertThat(signatures(abandoned)).containsExactly("thinkingBudgetImpossible=512");
             assertThat(signatures(sent)).containsExactly("thinkingDialectTranslated=ADAPTIVE->BUDGETED@" + MODEL);
+        }
+    }
+
+    /**
+     * Which requests {@code thinkingBudgetClamped} covers, asserted in both directions.
+     *
+     * <p>
+     * #89, and a decision rather than an oversight: a budget that fits under {@code max_tokens} by one token leaves the
+     * answer as little as a clamp does and is sent without a finding.
+     * {@code docs/design/llm/thinking-reporting-and-dialect-records.md} §16.8 states the three conditions under which
+     * the finding is recorded and why nothing else is covered. A floor or proportion warning added without revisiting
+     * that section turns this class red, which is the point of it.
+     */
+    @Nested
+    @DisplayName("§16.8: the clamp warning covers a clamp, not a small answer allowance")
+    class ClampWarningCoverage {
+
+        private static final String HEADROOM = "a finding here is a headroom policy; read §16.8 first";
+
+        @Test
+        @DisplayName("#89's table: AUTO with no effort is warned about at maxTokens 4096 and not at 4097 or 4100")
+        void theIssuesTable() {
+            final LlmModel noEffort = LlmModel.builder().build();
+
+            final AnthropicThinkingResolution clamped = resolve(config(AnthropicThinkingMode.AUTO), BUDGETED, noEffort,
+                    4096);
+            assertThat(budgetOf(clamped)).isEqualTo(4095);
+            assertThat(signatures(clamped)).containsExactly("thinkingBudgetClamped=4096->4095");
+
+            for (int maxTokens : new int[]{4097, 4100}) {
+                final AnthropicThinkingResolution fits = resolve(config(AnthropicThinkingMode.AUTO), BUDGETED, noEffort,
+                        maxTokens);
+                assertThat(budgetOf(fits)).as("budget at maxTokens %d", maxTokens).isEqualTo(4096);
+                assertThat(signatures(fits))
+                        .as("maxTokens %d, %d tokens left: %s", maxTokens, maxTokens - 4096, HEADROOM).isEmpty();
+            }
+        }
+
+        @Test
+        @DisplayName("#89's extended case: 8000 under maxTokens 8001 is sent as asked on every row that sends a budget")
+        void anExplicitBudgetThatFitsByOneToken() {
+            for (ModelCapabilities capabilities : new ModelCapabilities[]{BUDGETED, EITHER, UNKNOWN}) {
+                final AnthropicThinkingResolution fits = resolve(
+                        config(AnthropicThinkingMode.EXTENDED).thinkingBudgetTokens(8000), capabilities,
+                        LlmModel.builder().build(), 8001);
+
+                assertThat(typeOf(fits)).as("%s", capabilities.thinkingDialect()).isEqualTo("enabled");
+                assertThat(budgetOf(fits)).as("%s", capabilities.thinkingDialect()).isEqualTo(8000);
+                assertThat(signatures(fits)).as("%s: %s", capabilities.thinkingDialect(), HEADROOM).isEmpty();
+            }
+
+            final AnthropicThinkingResolution clamped = resolve(
+                    config(AnthropicThinkingMode.EXTENDED).thinkingBudgetTokens(8000), BUDGETED,
+                    LlmModel.builder().build(), 8000);
+            assertThat(budgetOf(clamped)).isEqualTo(7999);
+            assertThat(signatures(clamped)).containsExactly("thinkingBudgetClamped=8000->7999");
+        }
+
+        @Test
+        @DisplayName("on every rung the finding is recorded exactly when the requested budget is at least maxTokens")
+        void theFindingIsRecordedExactlyWhenTheRequestedBudgetDoesNotFit() {
+            // The rungs are derived rather than written out: two of them are labelled arbitrary on
+            // AnthropicThinkingBudgets, and this test must not be what makes them hard to change.
+            int clamps = 0;
+            int fits = 0;
+            for (ReasoningEffort rung : new ReasoningEffort[]{null, ReasoningEffort.MINIMAL, ReasoningEffort.LOW,
+                    ReasoningEffort.MEDIUM, ReasoningEffort.HIGH}) {
+                // No effort is a model that sets none, not reasoningEffort(null): the builder's null handling is not
+                // what is under test.
+                final LlmModel model = rung == null ? LlmModel.builder().build() : effort(rung);
+                final int requested = AnthropicThinkingBudgets.requestedBudget(rung, null);
+                for (int maxTokens : new int[]{requested - 1, requested, requested + 1, requested + 4}) {
+                    // At or below the floor no budget is sent at all, which is condition 2 and the next test.
+                    if (maxTokens <= AnthropicThinkingBudgets.MINIMUM_BUDGET_TOKENS) {
+                        continue;
+                    }
+                    final AnthropicThinkingResolution resolution = resolve(config(AnthropicThinkingMode.AUTO), BUDGETED,
+                            model, maxTokens);
+                    final String row = "effort " + rung + ", requested " + requested + ", maxTokens " + maxTokens;
+
+                    if (requested >= maxTokens) {
+                        clamps++;
+                        assertThat(budgetOf(resolution)).as(row).isEqualTo(maxTokens - 1);
+                        assertThat(signatures(resolution)).as(row)
+                                .containsExactly("thinkingBudgetClamped=" + requested + "->" + (maxTokens - 1));
+                    } else {
+                        fits++;
+                        assertThat(budgetOf(resolution)).as(row).isEqualTo(requested);
+                        assertThat(signatures(resolution)).as("%s: %s", row, HEADROOM).isEmpty();
+                    }
+                }
+            }
+            // Both halves have to have run, or the property above holds vacuously.
+            assertThat(clamps).as("rows that clamp").isPositive();
+            assertThat(fits).as("rows that fit").isPositive();
+        }
+
+        @Test
+        @DisplayName("conditions 1 and 2: without a budgeted parameter, or without room for one, nothing is clamped")
+        void theOtherTwoConditions() {
+            // At maxTokens 4096 an unset effort's budget does not fit, so each of these would clamp if it sent a
+            // budgeted parameter at all. The positive half first: every path that does send one reaches the clamp.
+            final int clamping = 4096;
+            final LlmModel noEffort = LlmModel.builder().build();
+            final String clamp = "thinkingBudgetClamped=4096->4095";
+
+            assertThat(signatures(resolve(config(AnthropicThinkingMode.AUTO), BUDGETED, noEffort, clamping)))
+                    .as("AUTO on a BUDGETED row").contains(clamp);
+            for (ModelCapabilities capabilities : new ModelCapabilities[]{BUDGETED, EITHER, UNKNOWN}) {
+                assertThat(
+                        signatures(resolve(config(AnthropicThinkingMode.EXTENDED), capabilities, noEffort, clamping)))
+                        .as("EXTENDED on %s", capabilities.thinkingDialect()).contains(clamp);
+            }
+            assertThat(signatures(resolve(config(AnthropicThinkingMode.ADAPTIVE), BUDGETED, noEffort, clamping)))
+                    .as("ADAPTIVE translated onto a BUDGETED row").contains(clamp);
+
+            // Condition 1 fails: no budgeted parameter, so there is no budget to have clamped.
+            assertThat(signatures(resolve(config(AnthropicThinkingMode.OFF), BUDGETED, noEffort, clamping))).as("OFF")
+                    .noneMatch(s -> s.startsWith("thinkingBudgetClamped"));
+            assertThat(signatures(
+                    resolve(config(AnthropicThinkingMode.AUTO), BUDGETED, effort(ReasoningEffort.NONE), clamping)))
+                    .as("effort NONE").noneMatch(s -> s.startsWith("thinkingBudgetClamped"));
+            assertThat(signatures(resolve(config(AnthropicThinkingMode.AUTO), ADAPTIVE, noEffort, clamping)))
+                    .as("AUTO on an ADAPTIVE row").noneMatch(s -> s.startsWith("thinkingBudgetClamped"));
+            assertThat(signatures(resolve(config(AnthropicThinkingMode.AUTO), UNKNOWN, noEffort, clamping)))
+                    .as("AUTO on an undescribed row").noneMatch(s -> s.startsWith("thinkingBudgetClamped"));
+
+            // Condition 2 fails: at or below the floor no budget fits, and the finding is a different one.
+            for (int maxTokens : new int[]{AnthropicThinkingBudgets.MINIMUM_BUDGET_TOKENS, 512}) {
+                final AnthropicThinkingResolution none = resolve(config(AnthropicThinkingMode.AUTO), BUDGETED, noEffort,
+                        maxTokens);
+                assertThat(typeOf(none)).as("maxTokens %d", maxTokens).isEqualTo("none");
+                assertThat(signatures(none)).as("maxTokens %d", maxTokens)
+                        .containsExactly("thinkingBudgetImpossible=" + maxTokens);
+            }
         }
     }
 }
