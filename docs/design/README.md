@@ -108,6 +108,7 @@
 | [`spring-boot-starter.md`](integration/spring-boot-starter.md) | 조립 지식을 프레임워크 중립 층(`aimon-bootstrap`)으로 꺼내고 그 위에 얹은 자동설정 |
 | [`sandbox.md`](integration/sandbox.md) | 격리 실행 환경을 identifier 로 재사용하는 추상화와 Docker·Kubernetes 구현 |
 | [`mcp-tool.md`](integration/mcp-tool.md) | MCP 서버의 도구를 로컬 도구와 구분되지 않게 만드는 어댑터 |
+| [`config-value-expansion-and-frontmatter-strictness.md`](integration/config-value-expansion-and-frontmatter-strictness.md) | 작성자가 적은 설정 값이 말없이 버려지던 두 자리 — 필드 목록 대신 토큰 스트림 위의 일반 확장, 바인딩 전에 풀면서도 원문 스칼라를 잃지 않는 자리, 프론트매터가 못 읽는 값을 보고하게 만든 규칙 |
 
 ### documentation — 문서 자체를 지키는 장치
 

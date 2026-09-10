@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/aimon-core-integration-via-cli-reference.md
-source_commit: d3500f6
+source_commit: 3a41fcd
 ---
 
 # aimon-core integration guide — following aimon-cli as the reference
@@ -184,6 +184,47 @@ The mapping when you port this into your own application:
 | `factory.create(config)` | **Keep it** — either call `AgentSetupFactory` directly, or move its internals into your own composition root |
 | `try-with-resources` | Delegate the lifecycle to Spring `@Bean(destroyMethod = "close")` / Quarkus `@PreDestroy` / ... |
 | `replSession.start()` | An HTTP handler, a batch job, a WebSocket receive loop |
+
+### 3.1 `${VAR}` — where it is expanded
+
+**In every scalar value and every mapping key of the configuration file.** `${NAME}` is replaced by the value of
+the environment variable `NAME`, and a variable that is not set **fails startup naming both the variable and the
+key it was written on** —
+`Environment variable not set: OPENAI_KEY (at memory.dreamer.scorer.embedding.apiKey)`. There is no list of
+participating fields. While there was one it held three string fields of `llm` plus the capability map keys, and
+when the `memory` block gained a credential of its own nobody extended it — so the CLI's own shipped
+`default-config.yaml` demonstrated `apiKey: "${OPENAI_KEY}"` in a block the loader never visited.
+
+```yaml
+llm:
+  apiKey: "${OPENAI_API_KEY}"     # a string
+  timeout: "${LLM_TIMEOUT}"       # an integer -- expansion runs before binding, so this works too
+  anthropic:
+    thinkingMode: "${MODE}"       # an enum -- likewise
+  modelCapabilities:
+    ${DEPLOYMENT}:                # a mapping key
+      supportsSamplingParameters: false
+mcp:
+  servers:
+    - command: "npx"
+      args: ["-y", "${PACKAGE}"]  # an array element
+memory:
+  storagePath: "${HOME}/memory/representations.jsonl"   # part of a value is fine
+```
+
+The other half of the rule:
+
+- **Two sibling keys that expand to the same name are refused.** yaml stops you writing the same key twice, but it
+  cannot stop `${A}` and `${B}` from expanding to one value, and nobody reports it when the later one wins.
+- **Expansion is a single pass.** If a variable's value is itself `${OTHER}`, it stays literal.
+- **There is no escape for writing a literal `${`.**
+- **A scalar carrying no placeholder is never touched.** The text the parser read reaches the deserializer as
+  written, so `thinkingMode: off` still means `off` — `off` is a YAML 1.1 boolean, and only the written text tells
+  it apart from `no` and `false`.
+
+Expansion happens on the token stream **before** Jackson binds anything
+(`at.aimon.cli.config.PlaceholderExpandingParser`). That is why the starter and the CLI now give the same answer
+about when placeholders resolve: Spring resolves them before binding, and so does the CLI.
 
 ---
 
@@ -387,10 +428,9 @@ the tools and the messages before it are unchanged, and AIMON re-renders its sys
 compacts client-side. The vendor's own remedy is to strip every thinking block from the history, which is what
 `false` does. The cost is the feature itself: the model re-derives its reasoning each turn.
 
-**`${VAR}` is not expanded inside this block.** Expansion runs after Jackson has bound and walks three string
-fields of `llm` (`apiKey`, `baseUrl`, `model`) plus the capability map keys. A `${…}` on an enum or an integer
-field fails at bind time, so it does not pass through silently. The starter has no such limit — Spring resolves
-placeholders before binding.
+**`${VAR}` is expanded inside this block too** — including onto an enum. Expansion runs on the token stream
+before binding, so it does not depend on a field's Java type. The rule is in
+[§3.1](#31-var--where-it-is-expanded), and on this axis the starter and the CLI now give the same answer.
 
 The starter properties on this axis are in
 [`embedding-agent-in-application.en.md`](embedding-agent-in-application.en.md). The spellings do not mix here

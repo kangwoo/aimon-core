@@ -268,6 +268,7 @@ memory:
 ```
 
 - `scorer.type=llm` 은 항상 ready(전역 LLM 재사용). `embedding` 은 `scorer.embedding.apiKey` 가 없으면 **fail-soft** 로 비활성화되고 시작 시 이유를 로깅합니다(`notReadyReason()`).
+- 위 `apiKey` 의 `${OPENAI_KEY}` 는 **다른 모든 값과 같이 환경 변수에서 풀립니다.** 예전에는 풀리지 않아 리터럴 일곱 글자가 임베딩 프로바이더로 갔고 그 401 이 30분 뒤 Quartz 잡 안에서 나타났습니다 (#53). 규칙은 [CLI 레퍼런스 §3.1](../../getting-started/aimon-core-integration-via-cli-reference.md#31-var--어디서-풀리는가) 에 있습니다.
 - `cron` 은 프레임워크 공통의 **5 필드** 방언입니다(분 시 일 월 요일, 일요일=0). Quartz 의 6 필드 형태(`"0 */30 * * * ?"`)를 쓰면 **시작 시점에 거부**됩니다 — Quartz 로의 번역은 백엔드가 알아서 합니다. 요일을 숫자로 쓰던 설정은 1 을 빼세요(Quartz 금요일 6 → 여기서는 5).
 - dreamer 는 전용 Quartz 스케줄러(RAMJobStore)에서 돌아 foreground task 스케줄러와 경합하지 않습니다.
 - **단일 노드 전용입니다.** RAMJobStore 는 정의상 JVM 로컬이라 잡을 프로세스 간에 공유하지 않습니다. 같은 workspace 에 CLI 를 두 개 띄우면 통합(consolidation)이 두 번 돕니다 — 스케줄러를 하나로 줄여서 해결되는 문제가 아니라 **잡 저장소가 공유되지 않기 때문**이며, 클러스터링하려면 공유 JDBC JobStore 가 필요합니다.

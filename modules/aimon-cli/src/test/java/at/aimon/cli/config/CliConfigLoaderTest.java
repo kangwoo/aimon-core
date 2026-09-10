@@ -1022,12 +1022,13 @@ class CliConfigLoaderTest {
         }
 
         @Test
-        @DisplayName("Should not expand ${VAR} inside the block")
-        void environmentVariablesAreNotExpandedHere() throws IOException {
-            // Expansion runs after Jackson has bound and walks three named string fields in the llm block
-            // (apiKey, baseUrl, model) plus the capability map keys. A ${VAR} on an enum or an Integer therefore
-            // fails at bind time rather than passing through -- loud, which is the right half of this asymmetry.
-            // The starter has no such limit: Spring resolves placeholders before binding. Documented, not fixed.
+        @DisplayName("Should expand ${VAR} onto the enum, which binding used to make impossible")
+        void environmentVariablesAreExpandedHere() throws IOException {
+            // Replaces environmentVariablesAreNotExpandedHere, whose name and comment inverted with #53. Expansion
+            // used to run after Jackson had bound and walk named String fields, so a ${VAR} on an enum or an
+            // Integer failed at bind time. It now runs on the token stream, before binding, and reaches every
+            // scalar -- which is what lets the rule be stated in one sentence.
+            CliConfigLoader envLoader = new CliConfigLoader(name -> "adaptive");
             Path configFile = write("""
                     llm:
                       provider: "anthropic"
@@ -1036,8 +1037,285 @@ class CliConfigLoaderTest {
                         thinkingMode: "${THINKING_MODE}"
                     """);
 
-            assertThatThrownBy(() -> loader.load(configFile.toString())).isInstanceOf(ConfigurationException.class)
-                    .hasMessageContaining("Invalid configuration structure");
+            assertThat(envLoader.load(configFile.toString()).getLlmConfig().getAnthropic().getThinkingMode())
+                    .isEqualTo(AnthropicThinkingMode.ADAPTIVE);
+        }
+    }
+
+    @Nested
+    @DisplayName("${VAR} expansion, everywhere")
+    class PlaceholderExpansion {
+
+        private Path write(String body) throws IOException {
+            final Path configFile = tempDir.resolve("placeholders.yaml");
+            Files.writeString(configFile, body);
+            return configFile;
+        }
+
+        @Test
+        @DisplayName("Should expand the embedding apiKey the shipped default config demonstrates")
+        void expandsTheMemoryEmbeddingApiKey() throws IOException {
+            // Issue #53's reproduction, verbatim: default-config.yaml has demonstrated `apiKey: "${OPENAI_KEY}"`
+            // inside the memory block since the block was written, and the loader never visited it -- so the
+            // literal seven characters reached the embedding provider and the 401 arrived half an hour later
+            // inside a Quartz job, naming a workspace and no configuration key.
+            Path configFile = write("""
+                    llm:
+                      provider: "openai"
+                      apiKey: "test-api-key"
+                    memory:
+                      workspaceId: "default"
+                      peerId: "agent-default"
+                      storagePath: ".aimon/memory/representations.jsonl"
+                      dreamer:
+                        enabled: true
+                        scorer:
+                          type: embedding
+                          embedding:
+                            apiKey: "${OPENAI_KEY}"
+                    """);
+
+            assertThat(loader.load(configFile.toString()).getMemoryConfig().getDreamer().getScorer().getEmbedding()
+                    .getApiKey()).isEqualTo("stub-OPENAI_KEY");
+        }
+
+        @Test
+        @DisplayName("Should expand a variable embedded in a longer value")
+        void expandsInsideALongerValue() throws IOException {
+            Path configFile = write("""
+                    llm:
+                      provider: "openai"
+                      apiKey: "test-api-key"
+                    memory:
+                      workspaceId: "default"
+                      peerId: "agent-default"
+                      storagePath: "${HOME}/memory/representations.jsonl"
+                    """);
+
+            assertThat(loader.load(configFile.toString()).getMemoryConfig().getStoragePath())
+                    .isEqualTo("stub-HOME/memory/representations.jsonl");
+        }
+
+        @Test
+        @DisplayName("Should expand inside an array, which no field list ever reached")
+        void expandsInsideAnArray() throws IOException {
+            Path configFile = write("""
+                    llm:
+                      provider: "openai"
+                      apiKey: "test-api-key"
+                    mcp:
+                      servers:
+                        - name: "github"
+                          transportType: "STDIO"
+                          command: "npx"
+                          args: ["-y", "${PACKAGE}"]
+                          env:
+                            GITHUB_TOKEN: "${GITHUB_TOKEN}"
+                    """);
+
+            McpServerEntry entry = loader.load(configFile.toString()).getMcpConfig().getServers().get(0);
+            assertThat(entry.getArgs()).containsExactly("-y", "stub-PACKAGE");
+            assertThat(entry.getEnv()).containsEntry("GITHUB_TOKEN", "stub-GITHUB_TOKEN");
+        }
+
+        @Test
+        @DisplayName("Should expand onto a non-String field")
+        void expandsOntoAnInteger() throws IOException {
+            CliConfigLoader envLoader = new CliConfigLoader(name -> "45");
+            Path configFile = write("""
+                    llm:
+                      provider: "openai"
+                      apiKey: "test-api-key"
+                      timeout: "${TIMEOUT}"
+                    """);
+
+            assertThat(envLoader.load(configFile.toString()).getLlmConfig().getTimeout()).isEqualTo(45);
+        }
+
+        @Test
+        @DisplayName("Should expand a value written without quotes")
+        void expandsAnUnquotedValue() throws IOException {
+            // A quoted scalar is the case that survives a lossy mechanism; an unquoted one is not. Both forms are
+            // exercised because the difference is invisible until the mechanism is wrong.
+            Path configFile = write("""
+                    llm:
+                      provider: "openai"
+                      apiKey: ${OPENAI_KEY}
+                      model: ${MODEL}
+                    memory:
+                      workspaceId: "default"
+                      peerId: "agent-default"
+                      storagePath: ${HOME}/x.jsonl
+                    """);
+
+            CliConfig config = loader.load(configFile.toString());
+            assertThat(config.getLlmConfig().getApiKey()).isEqualTo("stub-OPENAI_KEY");
+            assertThat(config.getLlmConfig().getModel()).isEqualTo("stub-MODEL");
+            assertThat(config.getMemoryConfig().getStoragePath()).isEqualTo("stub-HOME/x.jsonl");
+        }
+
+        @Test
+        @DisplayName("Should name the variable and the key when the variable is not set")
+        void anUnsetVariableNamesTheKeyItWasWrittenOn() throws IOException {
+            // The general pass makes this failure reachable from every key, so the message has to say which one.
+            CliConfigLoader envLoader = new CliConfigLoader(name -> null);
+            Path configFile = write("""
+                    llm:
+                      provider: "openai"
+                      apiKey: "test-api-key"
+                    memory:
+                      workspaceId: "default"
+                      peerId: "agent-default"
+                      storagePath: "x.jsonl"
+                      dreamer:
+                        enabled: true
+                        scorer:
+                          type: embedding
+                          embedding:
+                            apiKey: "${OPENAI_KEY}"
+                    """);
+
+            assertThatThrownBy(() -> envLoader.load(configFile.toString())).isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("Environment variable not set: OPENAI_KEY")
+                    .hasMessageContaining("memory.dreamer.scorer.embedding.apiKey");
+        }
+
+        @Test
+        @DisplayName("Should name an array element's key path without an index")
+        void anUnsetVariableInsideAnArrayNamesTheKeyPath() throws IOException {
+            CliConfigLoader envLoader = new CliConfigLoader(name -> null);
+            Path configFile = write("""
+                    llm:
+                      provider: "openai"
+                      apiKey: "key"
+                    mcp:
+                      servers:
+                        - name: "github"
+                          transportType: "STDIO"
+                          command: "npx"
+                          args: ["-y", "${PACKAGE}"]
+                    """);
+
+            assertThatThrownBy(() -> envLoader.load(configFile.toString())).isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("Environment variable not set: PACKAGE")
+                    .hasMessageContaining("mcp.servers[].args[]");
+        }
+
+        @Test
+        @DisplayName("Should refuse two sibling keys outside the capability map that expand to one name")
+        void refusesACollisionOutsideTheCapabilityMap() throws IOException {
+            // The guard used to be a property of llm.modelCapabilities. It is now a property of every mapping,
+            // which is what makes the one-sentence rule true of the whole file.
+            CliConfigLoader envLoader = new CliConfigLoader(name -> "TOKEN");
+            Path configFile = write("""
+                    llm:
+                      provider: "openai"
+                      apiKey: "key"
+                    mcp:
+                      servers:
+                        - name: "github"
+                          transportType: "STDIO"
+                          command: "npx"
+                          env:
+                            ${PRIMARY}: "one"
+                            ${SECONDARY}: "two"
+                    """);
+
+            assertThatThrownBy(() -> envLoader.load(configFile.toString())).isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("${PRIMARY}").hasMessageContaining("${SECONDARY}")
+                    .hasMessageContaining("TOKEN").hasMessageContaining("mcp.servers[].env");
+        }
+
+        @Test
+        @DisplayName("Should refuse a literal key a placeholder expands onto")
+        void refusesALiteralKeyAPlaceholderExpandsOnto() throws IOException {
+            // The shape the old post-bind guard already refused, kept: it ran every declared key through the
+            // expander, so a literal `prod` beside a `${P}` that expands to `prod` collided there too.
+            CliConfigLoader envLoader = new CliConfigLoader(name -> "prod-assistant");
+            Path configFile = write("""
+                    llm:
+                      provider: "openai"
+                      apiKey: "key"
+                      modelCapabilities:
+                        prod-assistant:
+                          supportsSamplingParameters: false
+                        ${SECONDARY}:
+                          supportsReasoningEffort: true
+                    """);
+
+            assertThatThrownBy(() -> envLoader.load(configFile.toString())).isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("prod-assistant").hasMessageContaining("${SECONDARY}")
+                    .hasMessageContaining("llm.modelCapabilities");
+        }
+
+        @Test
+        @DisplayName("Should leave a key written twice to yaml's own last-wins")
+        void twoLiteralDuplicateKeysAreLeftAlone() throws IOException {
+            // The other half of the decision above. Recording every field name is what preserves the literal +
+            // placeholder refusal, and it also makes a plain duplicate visible for the first time -- which is a
+            // different defect, in a different layer, that this change deliberately does not start failing on.
+            Path configFile = write("""
+                    llm:
+                      provider: "openai"
+                      apiKey: "key"
+                      modelCapabilities:
+                        prod-assistant:
+                          supportsSamplingParameters: false
+                        prod-assistant:
+                          supportsReasoningEffort: true
+                    """);
+
+            assertThat(loader.load(configFile.toString()).getLlmConfig().getModelCapabilities())
+                    .containsOnlyKeys("prod-assistant");
+        }
+
+        @Test
+        @DisplayName("Should keep the written scalar for a value YAML types as a boolean, in a file that expands")
+        void aWrittenScalarSurvivesOnAStreamThatExpands() throws IOException {
+            // The property a re-serialised JsonNode tree loses. `off` is a YAML 1.1 boolean and arrives as
+            // VALUE_FALSE; only the written text tells it apart from `no` and `false`, which the same enum must
+            // keep refusing. The ${VAR} in the same file proves the decorator is active on this stream.
+            Path configFile = write("""
+                    llm:
+                      provider: "anthropic"
+                      apiKey: "${ANTHROPIC_KEY}"
+                      anthropic:
+                        thinkingMode: off
+                    """);
+
+            CliConfig config = loader.load(configFile.toString());
+            assertThat(config.getLlmConfig().getApiKey()).isEqualTo("stub-ANTHROPIC_KEY");
+            assertThat(config.getLlmConfig().getAnthropic().getThinkingMode()).isEqualTo(AnthropicThinkingMode.OFF);
+        }
+
+        @Test
+        @DisplayName("Should hand a String field the scalar exactly as written")
+        void aStringFieldSeesTheScalarExactlyAsWritten() throws IOException {
+            for (String written : new String[]{"0755", "1.10", "1e3", "yes", "off"}) {
+                Path configFile = write("""
+                        llm:
+                          provider: "openai"
+                          apiKey: "${OPENAI_KEY}"
+                        cli:
+                          prompt: %s
+                        """.formatted(written));
+
+                assertThat(loader.load(configFile.toString()).getCliSettings().getPrompt())
+                        .as("cli.prompt written as `%s`", written).isEqualTo(written);
+            }
+        }
+
+        @Test
+        @DisplayName("Should not expand a second time")
+        void expansionIsASinglePass() throws IOException {
+            CliConfigLoader envLoader = new CliConfigLoader(name -> "${OTHER}");
+            Path configFile = write("""
+                    llm:
+                      provider: "openai"
+                      apiKey: "${OUTER}"
+                    """);
+
+            assertThat(envLoader.load(configFile.toString()).getLlmConfig().getApiKey()).isEqualTo("${OTHER}");
         }
     }
 }

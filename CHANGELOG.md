@@ -31,6 +31,34 @@ Central is versioned independently).
   whole-valued `Double` is still accepted (`4096.0` binds `4096`) — the answer `ToolInputBinder` already
   gives on the tool surface — and a real fraction or an out-of-range whole number is now an error.
 
+### CLI: `${VAR}` is expanded everywhere in the configuration file, not in five places
+
+- **A `${VAR}` outside five hand-listed fields used to be handed on as its literal characters** (#53).
+  The CLI's own shipped `default-config.yaml` demonstrates `apiKey: "${OPENAI_KEY}"` inside the `memory`
+  block, which the loader never visited, so a deployment that followed the example passed the literal
+  seven characters to its embedding provider and read the resulting 401 half an hour later inside a
+  Quartz job, naming a workspace and no configuration key.
+
+- **The list is gone rather than extended, and the rule replacing it is one sentence:** every scalar
+  value and every mapping key in the configuration file is expanded; `${NAME}` is replaced by the
+  environment variable `NAME`, and a variable that is not set fails startup naming the variable and the
+  key it was written on. It is stated in
+  `docs/getting-started/aimon-core-integration-via-cli-reference.md` §3.1 and at the top of
+  `default-config.yaml`. A list that grows by one field every time a block gains a credential is what
+  produced this issue.
+
+- **Two behaviour changes a deployment can observe.** An unset variable **anywhere** in the file now
+  fails startup — outside those five fields it used to pass through as a literal. And `${VAR}` now works
+  on keys whose type is not `String`, such as `llm.timeout` and `llm.anthropic.thinkingMode`, because
+  expansion moved to the token stream and runs **before** Jackson binds. The CLI and the Spring starter
+  now give the same answer about when placeholders resolve.
+
+- **What did not change**, which is the part a reader of this diff will worry about: a scalar carrying
+  no placeholder reaches its deserializer exactly as the YAML parser read it, so `thinkingMode: off`
+  still means `off` and a `String`-typed key still sees `0755`, `1.10` and `yes` as written. The
+  refusal of two `llm.modelCapabilities` keys that expand to the same name is kept and generalised to
+  every mapping; two keys written identically are still yaml's own last-wins.
+
 ### LLM: a reasoning model's thinking is something a person can watch, and nothing else changes
 
 - **A reasoning model can deliberate for tens of seconds before it emits a visible token, and AIMON
