@@ -142,6 +142,7 @@ Documentation has its own gates, which `checkAll` does not cover:
 python3 scripts/check-doc-links.py             # every relative markdown link, target and anchor
 python3 scripts/check-translation-staleness.py # is each translation current with its canonical
 python3 scripts/check-translation-structure.py # does each translation still have the same shape
+python3 scripts/check-backlog-registers.py     # docs/backlog/: duplicate item IDs, and counts that disagree with the items
 ```
 
 The first walks every `*.md` in the repository and fails on two things: a link to a path

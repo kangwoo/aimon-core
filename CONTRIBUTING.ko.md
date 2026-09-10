@@ -145,6 +145,7 @@ CI(GitHub Actions)는 모든 PR 에서 `./gradlew checkAll` 을 돌리므로 깨
 python3 scripts/check-doc-links.py             # 모든 상대 마크다운 링크의 대상과 앵커
 python3 scripts/check-translation-staleness.py # 각 번역본이 정본과 같은 시점인가
 python3 scripts/check-translation-structure.py # 각 번역본이 여전히 같은 모양인가
+python3 scripts/check-backlog-registers.py     # docs/backlog/: 한 등록부 안의 중복 ID, 본문과 어긋난 건수
 ```
 
 첫 번째는 저장소의 모든 `*.md` 를 훑으면서 두 가지에 대해 실패합니다. 존재하지 않는 경로를 가리키는 링크,
