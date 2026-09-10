@@ -108,7 +108,7 @@ public class ModelCapabilityConfig {
     }
 
     /**
-     * 이 모델의 thinking 요청 파라미터가 어느 모양을 취하는가 — {@code unknown} · {@code budgeted} · {@code adaptive}.
+     * 이 모델의 thinking 요청 파라미터가 어느 모양을 취하는가 — {@code unknown} · {@code either} · {@code budgeted} · {@code adaptive}.
      *
      * <p>
      * enum 으로 바인딩하므로 {@code CliConfigLoader} 의 {@code ACCEPT_CASE_INSENSITIVE_ENUMS} 가 대소문자를 접어 준다.

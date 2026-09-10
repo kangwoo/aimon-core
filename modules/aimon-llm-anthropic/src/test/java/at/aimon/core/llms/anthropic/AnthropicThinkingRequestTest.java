@@ -28,6 +28,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.ReasoningEffort;
+import at.aimon.core.llm.capability.InMemoryModelCapabilityRegistry;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
@@ -78,8 +79,32 @@ class AnthropicThinkingRequestTest {
         return new AnthropicLlmClient(config, mockAnthropicClient);
     }
 
+    /**
+     * The undescribed model, and it is a fixture rather than an example.
+     *
+     * <p>
+     * Every golden body below embeds this name, and the ADAPTIVE cases assert an untranslated request — both of
+     * which are claims about a model the built-in capability table cannot answer for. It used to be
+     * {@code claude-sonnet-4-5}; the 2026-09-10 dialect census measured that name and gave it a
+     * {@link at.aimon.core.llm.capability.ThinkingDialect#BUDGETED} row, so the ADAPTIVE cases would have started
+     * seeing a translation and a warning. {@code claude-sonnet-4-20250514} is {@code AnthropicConfig}'s own
+     * {@code DEFAULT_MODEL}, which makes the golden bodies describe the shipped default rather than an arbitrary
+     * name — undescribed by the table, not undialected in fact, and {@link #theUndescribedModelReallyIsUndescribed}
+     * is what makes the next row that describes it fail with a sentence.
+     */
+    private static final String UNDESCRIBED_MODEL = "claude-sonnet-4-20250514";
+
     private static AnthropicConfig.Builder config() {
-        return AnthropicConfig.builder().apiKey("test-key").model("claude-sonnet-4-5");
+        return AnthropicConfig.builder().apiKey("test-key").model(UNDESCRIBED_MODEL);
+    }
+
+    @Test
+    @DisplayName("the model these golden bodies are built on really is outside the capability table")
+    void theUndescribedModelReallyIsUndescribed() {
+        assertThat(InMemoryModelCapabilityRegistry.withDefaults().capabilitiesOf(UNDESCRIBED_MODEL))
+                .as("%s must stay outside the built-in table for the golden bodies here to mean anything",
+                        UNDESCRIBED_MODEL)
+                .isEmpty();
     }
 
     private JsonNode send(AnthropicLlmClient client, LlmModel model) {
@@ -115,7 +140,7 @@ class AnthropicThinkingRequestTest {
         // from manufacturing a value does on the wire. Restoring a DEFAULT_TEMPERATURE in AnthropicConfig turns this
         // test red, which is the point of writing the body out in full.
         assertThat(body).isEqualTo("{\"max_tokens\":4096,\"messages\":[{\"content\":\"hi\",\"role\":\"user\"}],"
-                + "\"model\":\"claude-sonnet-4-5\",\"system\":\"You are helpful\"}");
+                + "\"model\":\"claude-sonnet-4-20250514\",\"system\":\"You are helpful\"}");
         assertThat(warnings()).isEmpty();
     }
 
@@ -166,7 +191,7 @@ class AnthropicThinkingRequestTest {
         assertThat(extended.has("thinking")).isFalse();
         // The consequence stated in the design rather than hidden: with no thinking parameter the thinking-side
         // omission does not fire, so a configured temperature is still on the wire. What decides whether that is a
-        // rejection is now the capability row — claude-sonnet-4-5 is not in the table, so this is the fail-open path.
+        // rejection is now the capability row — the fixture model is not in the table, so this is the fail-open path.
         assertThat(extended.get("temperature").asDouble()).isEqualTo(0.7);
 
         final JsonNode adaptive = send(client(config().thinkingMode(AnthropicThinkingMode.ADAPTIVE).build()),
@@ -411,7 +436,7 @@ class AnthropicThinkingRequestTest {
                 client(config().thinkingMode(AnthropicThinkingMode.ADAPTIVE).build()), LlmModel.builder().build()));
 
         assertThat(body).isEqualTo("{\"max_tokens\":4096,\"messages\":[{\"content\":\"hi\",\"role\":\"user\"}],"
-                + "\"model\":\"claude-sonnet-4-5\",\"system\":\"You are helpful\",\"thinking\":{\"type\":\"adaptive\"}}");
+                + "\"model\":\"claude-sonnet-4-20250514\",\"system\":\"You are helpful\",\"thinking\":{\"type\":\"adaptive\"}}");
         assertThat(warnings()).isEmpty();
     }
 

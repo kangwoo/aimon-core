@@ -268,6 +268,14 @@ public class AimonLlmAutoConfiguration {
          * to accept different spellings, and so that a fifth constant needs no edit here.
          *
          * <p>
+         * <strong>The other surface's copy is
+         * {@code at.aimon.cli.config.AnthropicProviderConfig.ThinkingModeDeserializer}</strong>, and naming it is the
+         * point of this paragraph: the duplication is unavoidable — that one binds the enum, this one a
+         * {@code String} — but <strong>both derive their accepted list from {@code values()}, so a fifth constant
+         * cannot silently reach one surface and miss the other.</strong> That is the reassuring half, and until this
+         * sentence neither copy said it, so a reader who found one had no way to know the other existed.
+         *
+         * <p>
          * The message carries one extra sentence for {@code true} / {@code false}, and it is not decoration.
          * {@code off} is a YAML 1.1 boolean: written unquoted in an {@code application.yml} it is loaded as
          * {@code Boolean.FALSE} and converted to the string {@code "false"} before this method ever sees it. So

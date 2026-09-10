@@ -99,9 +99,9 @@ public final class ModelCapabilities {
      * a rung it does not have costs a 400 that fails the turn. A model that really does start at {@code NONE} is
      * describable — register a row with {@code lowestReasoningEffort(NONE)}, or with
      * {@code acceptedReasoningEfforts(...)} when the ladder has a gap in it rather than a floor. The thinking dialect
-     * is {@link ThinkingDialect#UNKNOWN}, which is the only
-     * one of the seven that is not a permission at all: both real dialects are a 400 on the model that speaks the
-     * other, so the fail-open value here has to be the <em>absence</em> of the fact rather than one of its values.
+     * is {@link ThinkingDialect#UNKNOWN}, which is the only one of the seven that is not a permission at all: both
+     * real dialects are a 400 on the model that speaks <em>only</em> the other, so the fail-open value here has to be
+     * the <em>absence</em> of the fact rather than one of its values.
      * A reasoning summary is <em>allowed</em>, which is the same rule reaching the opposite boolean from
      * {@link #supportsReasoningEffort()}: a summary is only ever on a request because somebody set it, so withholding
      * it would be the fail-closed half. That default is also never consulted for a model nobody has described —
@@ -225,11 +225,13 @@ public final class ModelCapabilities {
      * Which shape this model's thinking-request parameter takes.
      *
      * <p>
-     * The axis this field describes is <em>mutually exclusive</em> — the two real dialects are each an HTTP 400 on a
-     * model that speaks the other — so unlike the five flags above it has no safe fail-open <em>value</em>. What makes
-     * it safe is the third constant: {@link ThinkingDialect#UNKNOWN} means <em>this table cannot answer</em>, and a
-     * client reading it leaves whatever the caller configured exactly as it was, which is the behaviour every model
-     * had before this field existed.
+     * The axis this field describes is <em>mutually exclusive for most models</em> — each real dialect is an HTTP 400
+     * on a model that speaks only the other — so unlike the five flags above it has no safe fail-open <em>value</em>.
+     * What makes it safe is that two of the four constants are not dialects at all:
+     * {@link ThinkingDialect#UNKNOWN} means <em>this table cannot answer</em>, and a client reading it leaves
+     * whatever the caller configured exactly as it was, which is the behaviour every model had before this field
+     * existed. {@link ThinkingDialect#EITHER} is the measured exception to the exclusivity — a model that accepts
+     * both shapes — and it exists so that "measured to take either" and "not described" stop being the same value.
      *
      * <p>
      * Vendor-shaped, like {@link #supportsToolsWithReasoning()} and for the same reason: one table is read by every

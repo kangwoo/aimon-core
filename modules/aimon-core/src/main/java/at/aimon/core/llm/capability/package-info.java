@@ -25,8 +25,8 @@
  * "nothing the caller asked for is withheld, and nothing the caller did not ask for is invented". An unknown model is
  * never refused and never has a parameter withheld — nor does it receive one nobody set. One field states that rule
  * as a value rather than deriving it: {@link at.aimon.core.llm.capability.ThinkingDialect#UNKNOWN} exists because
- * both of the real thinking dialects are an HTTP 400 on a model that speaks the other, so the safe answer for a
- * model nobody has described is not a dialect at all but "this table cannot answer".
+ * both of the real thinking dialects are an HTTP 400 on a model that speaks <em>only</em> the other, so the safe
+ * answer for a model nobody has described is not a dialect at all but "this table cannot answer".
  * <li><strong>Overridable.</strong> The built-in table
  * ({@link at.aimon.core.llm.capability.InMemoryModelCapabilityRegistry#withDefaults()}) knows models by their real
  * names. Azure deployments and OpenAI-compatible gateways rename models freely, so an operator on one of those must be

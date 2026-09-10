@@ -51,13 +51,23 @@ import at.aimon.core.llm.ReasoningEffort;
  *
  * <p>
  * <strong>The table describes two vendors</strong>, and one instance of it is read by both clients. The
- * {@code claude-*} rows state two flags — the names they match refuse the sampling parameters and speak the
- * {@link ThinkingDialect#ADAPTIVE} thinking dialect — and the {@code gpt-*} / {@code o*} rows cannot match a
- * {@code claude-*} name or the other way round, so the two blocks do not interfere. What they do share is the
+ * {@code claude-*} rows come in two shapes — six prefixes that state two flags (the names they match refuse the
+ * sampling parameters <em>and</em> speak the {@link ThinkingDialect#ADAPTIVE} thinking dialect) and five that state
+ * the dialect alone — and the {@code gpt-*} / {@code o*} rows cannot match a {@code claude-*} name or the other way
+ * round, so the two blocks do not interfere. What they do share is the
  * look-up: a {@code claude-*} name reaching {@code OpenAILlmClient} through an OpenAI-compatible gateway resolves to
  * the Anthropic rows and has its sampling suppressed too. That is the right answer arriving from an unexpected
  * direction, and it is stated here because it is invisible from either client's source. The dialect travels the same
  * way and costs nothing there: no OpenAI path reads it.
+ *
+ * <p>
+ * <strong>The dialect half of the Anthropic block is measured, 2026-09-10</strong>: five prefix rows carrying nothing
+ * but a dialect — {@code claude-opus-4-5} / {@code claude-sonnet-4-5} / {@code claude-haiku-4-5} as
+ * {@link ThinkingDialect#BUDGETED}, and {@code claude-opus-4-6} / {@code claude-sonnet-4-6} as
+ * {@link ThinkingDialect#EITHER}, the two names measured to accept both request shapes. The three budgeted prefixes
+ * cover six measured names, because the undated aliases resolve to the dated snapshots and are not in the model
+ * listing at all. They state a dialect and nothing else on purpose: these are the names the {@code claude-opus-4}
+ * warning below is about, and they accept the sampling parameters.
  *
  * <p>
  * <strong>The o-series is in the table</strong>, measured 2026-09-09: three prefix rows ({@code o1} / {@code o3} /
@@ -123,6 +133,19 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
             .supportsSamplingParameters(false).thinkingDialect(ThinkingDialect.ADAPTIVE).build();
 
     /**
+     * The dialect and nothing else, in the two states the 2026-09-10 census measured that
+     * {@link #ADAPTIVE_REFUSING_SAMPLING} cannot express. See the comment beside the registrations for why one fact is
+     * the whole row — above all why {@code supportsSamplingParameters} stays at its fail-open {@code true} here, which
+     * is the half of these rows that would silently change the wire if it did not.
+     */
+    private static final ModelCapabilities BUDGETED_DIALECT_ONLY = ModelCapabilities.builder()
+            .thinkingDialect(ThinkingDialect.BUDGETED).build();
+
+    /** @see #BUDGETED_DIALECT_ONLY */
+    private static final ModelCapabilities EITHER_DIALECT_ONLY = ModelCapabilities.builder()
+            .thinkingDialect(ThinkingDialect.EITHER).build();
+
+    /**
      * The o-series names whose reasoning-item replay was measured on 2026-09-09, alias and served snapshot alike. The
      * dated names were never <em>sent</em> — they were returned, as the {@code model} of the response whose replayed
      * item was accepted — so registering them is the honest reading of what answered, with one assumption stated in
@@ -154,6 +177,13 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
      * A later {@code registerPrefix} for a prefix already present replaces its entry <em>in place</em> — the original
      * registration position is kept, because {@link LinkedHashMap} does not reorder on re-put. That is what makes
      * overriding {@code gpt-5} safe: it cannot accidentally jump ahead of the more specific {@code gpt-5-chat}.
+     *
+     * <p>
+     * <strong>One name that promise no longer reaches, named here because this is the method that makes it:</strong>
+     * {@code registerPrefix("gpt-5", ...)} does not override {@code gpt-5.6-terra}, whose measured ladder earned it
+     * an exact row that shadows every prefix. Use {@code register("gpt-5.6-terra", ...)} for that one name. This
+     * class's javadoc states the exception in full, including why the promise was narrowed rather than the registry
+     * reshaped.
      *
      * @return a builder carrying the {@link #withDefaults()} entries
      */
@@ -210,47 +240,8 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
                 // and this field is about the floor. Without the row the neutral MINIMAL would translate to the wire
                 // value 'minimal' and 400.
                 .registerPrefix("o1", O_SERIES_REPLAY_UNMEASURED).registerPrefix("o3", O_SERIES_REPLAY_UNMEASURED)
-                .registerPrefix("o4", O_SERIES_REPLAY_UNMEASURED)
-                // Anthropic, measured 2026-09-09 against the account's own /v1/models listing. On these six the
-                // server refuses temperature at any non-default value, and top_p / top_k at ANY value including
-                // their defaults -- see docs/design/llm/anthropic-sampling-capabilities.md section 2. Suppression
-                // loses nothing: omitting temperature yields 1.0, which is the one value they accept. That is the
-                // same argument the registerPrefix("gpt-5", ...) comment above makes, arriving from another vendor.
-                //
-                // Prefixes rather than exact names so that a dated snapshot (claude-opus-5-2026...) inherits the
-                // row. Deliberately NOT "claude-opus-4": claude-opus-4-5 and claude-opus-4-6 accept all three
-                // (measured), and a family prefix would suppress a parameter they take. Five prefixes cover six
-                // measured names because claude-fable-5 also matches claude-fable-5-1.
-                //
-                // Registration order is free here: no claude-* prefix can collide with a gpt-*/o[134] one, and none
-                // of these five is a prefix of another (-4-7 and -4-8 are siblings, not nested).
-                //
-                // This table is read by BOTH clients. A claude-* name reaching OpenAILlmClient through an
-                // OpenAI-compatible gateway resolves to these rows and gets the same suppression -- correct, since
-                // the underlying model does refuse, but it is a consequence of one shared table rather than of
-                // anything either client says. Weigh it when editing a row: the blast radius is both providers.
-                //
-                // Two facts are stated, and the second arrived a round later. supportsSamplingParameters is the
-                // measured one above. thinkingDialect is ADAPTIVE, read off the vendor's per-model thinking table
-                // quoted in docs/design/llm/anthropic-thinking-traces.md section 2.1: every name these five
-                // prefixes reach is listed there as "adaptive only" and answers 400 to thinking.type=enabled. It is
-                // documentation rather than measurement, which is why it is a dialect rather than a permission --
-                // getting it wrong costs the same 400 an operator gets today, now with the framework's name on it.
-                //
-                // The other three stay fail-open on purpose: the Anthropic client captures and replays thinking
-                // blocks unconditionally and takes no reasoning-effort parameter of the OpenAI shape, so it never
-                // reads them -- a value there would be an assertion nothing consumes and nothing measured.
-                .registerPrefix("claude-fable-5", ADAPTIVE_REFUSING_SAMPLING)
-                .registerPrefix("claude-opus-5", ADAPTIVE_REFUSING_SAMPLING)
-                .registerPrefix("claude-opus-4-7", ADAPTIVE_REFUSING_SAMPLING)
-                .registerPrefix("claude-opus-4-8", ADAPTIVE_REFUSING_SAMPLING)
-                .registerPrefix("claude-sonnet-5", ADAPTIVE_REFUSING_SAMPLING)
-                // Documentation-derived, not measured: no Mythos model is visible to the account the probes ran on,
-                // so neither the fact nor the identifier shape was called. It ships because the vendor sentence
-                // enumerates nine names and all six reachable ones matched it exactly -- evidence about that
-                // sentence rather than about a sibling's name prefix. One family prefix asserts only the fact; a
-                // guessed "claude-mythos-5-1" would also assert an identifier nobody has seen.
-                .registerPrefix("claude-mythos", ADAPTIVE_REFUSING_SAMPLING);
+                .registerPrefix("o4", O_SERIES_REPLAY_UNMEASURED);
+        registerAnthropicDefaults(builder);
         // Round 8, measured 2026-09-09: these eight names accept a replayed reasoning item on /v1/responses (HTTP
         // 200, turn completed). A 200 alone would only mean "tolerated", so a control corrupted 40 characters of the
         // encrypted payload and got a 400 -- the server decrypts and consumes the item. That control was run on
@@ -288,6 +279,94 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
     }
 
     /**
+     * Registers the eleven {@code claude-*} prefixes, so that {@link #builderWithDefaults()} stays readable.
+     *
+     * <p>
+     * Extracted for length rather than for structure: the rows below are two blocks measured a day apart and the
+     * comments that say what each one does and does not assert are longer than the registrations. Registration order
+     * is free for all eleven — see the second comment in the block — so lifting them out of the chain changes
+     * nothing about what the table answers.
+     */
+    private static void registerAnthropicDefaults(Builder builder) {
+        // Anthropic, measured 2026-09-09 against the account's own /v1/models listing. On these six the
+        // server refuses temperature at any non-default value, and top_p / top_k at ANY value including
+        // their defaults -- see docs/design/llm/anthropic-sampling-capabilities.md section 2. Suppression
+        // loses nothing: omitting temperature yields 1.0, which is the one value they accept. That is the
+        // same argument the registerPrefix("gpt-5", ...) comment above makes, arriving from another vendor.
+        //
+        // Prefixes rather than exact names so that a dated snapshot (claude-opus-5-2026...) inherits the
+        // row. Deliberately NOT "claude-opus-4": claude-opus-4-5 and claude-opus-4-6 accept all three
+        // (measured), and a family prefix would suppress a parameter they take. Those two names now do have
+        // rows of their own, added by the 2026-09-10 dialect census below -- and those rows carry a dialect
+        // and nothing else, precisely so that this warning keeps holding. Five prefixes cover six measured
+        // names because claude-fable-5 also matches claude-fable-5-1.
+        //
+        // Registration order is free here: no claude-* prefix can collide with a gpt-*/o[134] one, and none
+        // of these five is a prefix of another (-4-7 and -4-8 are siblings, not nested).
+        //
+        // This table is read by BOTH clients. A claude-* name reaching OpenAILlmClient through an
+        // OpenAI-compatible gateway resolves to these rows and gets the same suppression -- correct, since
+        // the underlying model does refuse, but it is a consequence of one shared table rather than of
+        // anything either client says. Weigh it when editing a row: the blast radius is both providers.
+        //
+        // Two facts are stated, and the second arrived a round later. supportsSamplingParameters is the
+        // measured one above. thinkingDialect is ADAPTIVE, read off the vendor's per-model thinking table
+        // quoted in docs/design/llm/anthropic-thinking-traces.md section 2.1: every name these five
+        // prefixes reach is listed there as "adaptive only" and answers 400 to thinking.type=enabled.
+        // It shipped as documentation rather than measurement; the 2026-09-10 census confirmed all five
+        // live (adaptive 200, budgeted 400) across six model names. claude-mythos below is still
+        // documentation alone, because no model with that prefix is reachable.
+        //
+        // The other three stay fail-open on purpose: the Anthropic client captures and replays thinking
+        // blocks unconditionally and takes no reasoning-effort parameter of the OpenAI shape, so it never
+        // reads them -- a value there would be an assertion nothing consumes and nothing measured.
+        builder.registerPrefix("claude-fable-5", ADAPTIVE_REFUSING_SAMPLING)
+                .registerPrefix("claude-opus-5", ADAPTIVE_REFUSING_SAMPLING)
+                .registerPrefix("claude-opus-4-7", ADAPTIVE_REFUSING_SAMPLING)
+                .registerPrefix("claude-opus-4-8", ADAPTIVE_REFUSING_SAMPLING)
+                .registerPrefix("claude-sonnet-5", ADAPTIVE_REFUSING_SAMPLING)
+                // Documentation-derived, not measured: no Mythos model is visible to the account the probes ran on,
+                // so neither the fact nor the identifier shape was called. It ships because the vendor sentence
+                // enumerates nine names and all six reachable ones matched it exactly -- evidence about that
+                // sentence rather than about a sibling's name prefix. One family prefix asserts only the fact; a
+                // guessed "claude-mythos-5-1" would also assert an identifier nobody has seen.
+                .registerPrefix("claude-mythos", ADAPTIVE_REFUSING_SAMPLING)
+                // The dialect census, measured 2026-09-10 (docs/design/llm/reasoning-model-enablement.md section
+                // 3.5). Probing surface: this account's GET /v1/models listing PLUS three undated aliases the
+                // listing does not contain -- claude-opus-4-5, claude-sonnet-4-5 and claude-haiku-4-5 all resolve
+                // (the response's `model` names the dated snapshot) and speak the same dialect, so the listing is
+                // not the set of callable names. That correction is why these are prefixes: three rows cover six
+                // measured names, and the alias is the name a deployment is most likely to write.
+                //
+                // Two request shapes, on every name: {"type":"adaptive"} + output_config.effort, and
+                // {"type":"enabled","budget_tokens":1024}. The 4-5 families answered 400 / 200 -- BUDGETED. The two
+                // 4-6 models answered 200 / 200 -- both, which is what EITHER records.
+                //
+                // What these five rows deliberately do NOT say is the load-bearing half.
+                // supportsSamplingParameters stays at its fail-open true: these are exactly the names the prefix
+                // comment above warns a family prefix must not catch, because they ACCEPT temperature, top_p and
+                // top_k (measured 2026-09-09) and suppressing them would be a silent wire change. Nothing else was
+                // measured either, so nothing else is stated -- same rule as the ADAPTIVE block's last paragraph.
+                //
+                // Registration order is free here too, and it was checked rather than assumed: none of these five
+                // is a prefix of another or of an existing one (-4-5 / -4-6 / -4-7 / -4-8 are siblings, not
+                // nested), and claude-sonnet-4-20250514 -- AnthropicConfig's own default model -- does not start
+                // with claude-sonnet-4-5, so it stays undescribed.
+                .registerPrefix("claude-opus-4-5", BUDGETED_DIALECT_ONLY)
+                .registerPrefix("claude-sonnet-4-5", BUDGETED_DIALECT_ONLY)
+                .registerPrefix("claude-haiku-4-5", BUDGETED_DIALECT_ONLY)
+                // EITHER rather than ADAPTIVE, and that is a decision rather than caution: an ADAPTIVE row would
+                // translate a thinkingMode(EXTENDED) request -- a working, explicitly requested shape carrying the
+                // operator's exact token budget -- on the strength of a vendor preference, and the translation
+                // warning would then assert "which rejects the other one with HTTP 400" about a model measured to
+                // accept it. The vendor's preference (its per-model table marks the budgeted shape deprecated on
+                // these two, and the vendored SDK prints that at every call) is real, and it decides only what an
+                // AUTO request sends -- which is a client policy, stated in AnthropicThinkingResolver, not a row.
+                .registerPrefix("claude-opus-4-6", EITHER_DIALECT_ONLY)
+                .registerPrefix("claude-sonnet-4-6", EITHER_DIALECT_ONLY);
+    }
+
+    /**
      * The {@code gpt-5} family row's four flags, as a builder the caller finishes.
      *
      * <p>
@@ -319,12 +398,14 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
      * <p>
      * The table is kept as small as the problem: it describes only the families whose request surface is known to
      * differ from the historical default — {@code gpt-5-chat}, {@code gpt-5}, {@code gpt-5.6-terra} (the family row
-     * with the one measured ladder that has a gap in it), the o-series, and the Anthropic models
-     * that refuse sampling parameters and speak the adaptive thinking dialect — six whose <em>sampling</em> refusal
-     * was measured, plus the documentation-derived {@code claude-mythos} family, with the dialect on all seven read
-     * off the vendor's published per-model table rather than called. Everything else resolves to
-     * {@link ModelCapabilities#unknown()}, whose dialect is {@link ThinkingDialect#UNKNOWN} — so a model this table
-     * has never heard of keeps the thinking request it had before the dialect existed.
+     * with the one measured ladder that has a gap in it), the o-series, and eleven Anthropic prefixes. Six of those
+     * refuse sampling parameters and speak the adaptive thinking dialect — five whose <em>sampling</em> refusal was
+     * measured, plus the documentation-derived {@code claude-mythos} family; the adaptive dialect on five of the six
+     * was read off the vendor's published per-model table and then confirmed live on 2026-09-10, and
+     * {@code claude-mythos} remains documentation alone. The other five state a <em>dialect only</em>, measured
+     * 2026-09-10: three {@link ThinkingDialect#BUDGETED} and two {@link ThinkingDialect#EITHER}. Everything else
+     * resolves to {@link ModelCapabilities#unknown()}, whose dialect is {@link ThinkingDialect#UNKNOWN} — so a model
+     * this table has never heard of keeps the thinking request it had before the dialect existed.
      *
      * @return a registry with framework-default capability entries
      */

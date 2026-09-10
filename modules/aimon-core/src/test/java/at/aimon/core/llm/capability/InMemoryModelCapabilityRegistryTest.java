@@ -231,38 +231,70 @@ class InMemoryModelCapabilityRegistryTest {
     }
 
     @Test
-    @DisplayName("no row states the budgeted dialect, and no row anywhere else states a dialect at all")
-    void noBuiltInRowStatesTheBudgetedDialect() {
-        // Two claims in one, and both are about what the table does NOT say. The extended-only Claude models
-        // (Opus 4.5, Haiku 4.5, Sonnet 4.5 and the Claude 4 generation) genuinely speak the budgeted dialect, but
-        // they accept the sampling parameters, so nothing in the built-in table needs a row for them -- and a row
-        // added only to carry a dialect would suppress nothing while asserting an identifier shape. They stay
-        // UNKNOWN, which is exactly the state that keeps their requests as they are today.
+    @DisplayName("the 2026-09-10 census: the budgeted dialect is exactly three prefixes over six names")
+    void theBudgetedDialectIsStatedByExactlyThreePrefixes() {
+        // This test used to assert the opposite -- that NO built-in row stated the budgeted dialect -- and the
+        // reason it gave was "those models accept the sampling parameters, so nothing needs a row for them". The
+        // conclusion was right and the reason was a different fact from the one that mattered: a row can carry a
+        // dialect and suppress nothing, which is what the 2026-09-10 census rows do.
         //
-        // The OpenAI rows say nothing about the dialect for a different reason: no OpenAI path reads it, and this
-        // one table is shared, so a value there would be an assertion with no consumer.
+        // The OpenAI rows say nothing about the dialect for a reason that has not changed: no OpenAI path reads it,
+        // and this one table is shared, so a value there would be an assertion with no consumer.
         final InMemoryModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.withDefaults();
 
-        for (String model : new String[]{"claude-opus-4-5-20251101", "claude-sonnet-4-5-20250929",
-                "claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-6", "claude-sonnet-4-20250514",
-                "gpt-5", "gpt-5-chat-latest", "o3", "o4-mini", "prod-assistant"}) {
+        for (String model : new String[]{"claude-opus-4-5", "claude-opus-4-5-20251101", "claude-sonnet-4-5",
+                "claude-sonnet-4-5-20250929", "claude-haiku-4-5", "claude-haiku-4-5-20251001"}) {
+            assertThat(registry.resolve(model).thinkingDialect()).as("%s dialect", model)
+                    .isEqualTo(ThinkingDialect.BUDGETED);
+        }
+        // claude-sonnet-4-20250514 is AnthropicConfig's own default model and stays undescribed -- it does not start
+        // with claude-sonnet-4-5, which is the collision the prefix comment says was checked rather than assumed.
+        for (String model : new String[]{"claude-sonnet-4-20250514", "gpt-5", "gpt-5-chat-latest", "o3", "o4-mini",
+                "prod-assistant"}) {
             assertThat(registry.resolve(model).thinkingDialect()).as("%s dialect", model)
                     .isEqualTo(ThinkingDialect.UNKNOWN);
         }
     }
 
     @Test
-    @DisplayName("the Claude models that accept sampling are not caught by any row - the prefix trap")
-    void defaultsLeaveTheAcceptingClaudeModelsUnknown() {
+    @DisplayName("the 2026-09-10 census: the two models that take either dialect say so, not nothing")
+    void theBothDialectModelsStateEither() {
+        // Measured 2026-09-10: both request shapes return 200 on these two. Before this row they resolved to
+        // UNKNOWN, which means "this table cannot answer" -- a different statement from "either works", and the
+        // one a reader would have taken for "nobody has measured it".
+        final InMemoryModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.withDefaults();
+
+        for (String model : new String[]{"claude-opus-4-6", "claude-sonnet-4-6"}) {
+            assertThat(registry.resolve(model).thinkingDialect()).as("%s dialect", model)
+                    .isEqualTo(ThinkingDialect.EITHER);
+        }
+    }
+
+    @Test
+    @DisplayName("the Claude models that accept sampling keep it, even now that rows describe them")
+    void theAcceptingClaudeModelsKeepTheirSamplingParameters() {
         // This is the test that goes red if someone registers "claude-opus-4" as a family prefix. All five accept
         // temperature, top_p and top_k with thinking off (measured 2026-09-09), and a family prefix would suppress a
         // parameter they take -- a silent wire change, which is the failure the o-series rows were withheld for.
+        //
+        // Its INSTRUMENT changed on 2026-09-10 and its intent did not. It used to assert that no row matched these
+        // names at all, which was a proxy for the sampling guard while no row could carry a dialect alone. Rows now
+        // match, so the guard has to be asserted directly -- deleting this test instead would be the one way the
+        // change loses it.
         final InMemoryModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.withDefaults();
 
         for (String model : new String[]{"claude-opus-4-5-20251101", "claude-sonnet-4-5-20250929",
                 "claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-6"}) {
-            assertThat(registry.capabilitiesOf(model)).as("%s is described", model).isEmpty();
-            assertThat(registry.resolve(model)).as("%s row", model).isEqualTo(ModelCapabilities.unknown());
+            assertThat(registry.resolve(model).supportsSamplingParameters()).as("%s sampling", model).isTrue();
+            // The other four flags are the fail-open ones too: the dialect is the whole row.
+            assertThat(registry.resolve(model).supportsReasoningEffort()).as("%s effort", model)
+                    .isEqualTo(ModelCapabilities.unknown().supportsReasoningEffort());
+            assertThat(registry.resolve(model).supportsToolsWithReasoning()).as("%s tools+reasoning", model)
+                    .isEqualTo(ModelCapabilities.unknown().supportsToolsWithReasoning());
+            assertThat(registry.resolve(model).supportsReasoningTraceRoundTrip()).as("%s replay", model)
+                    .isEqualTo(ModelCapabilities.unknown().supportsReasoningTraceRoundTrip());
+            assertThat(registry.resolve(model).acceptedReasoningEfforts()).as("%s ladder", model)
+                    .isEqualTo(ModelCapabilities.unknown().acceptedReasoningEfforts());
         }
     }
 

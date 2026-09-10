@@ -36,9 +36,10 @@ llm:
 #      supportsReasoningTraceRoundTrip: false   # true routes the model at /v1/responses -- leave false on a Chat-only gateway
 #      supportsReasoningSummary: true           # false when the gateway takes reasoning.effort and 400s
 #                                               #   on reasoning.summary (only read on /v1/responses)
-#      thinkingDialect: adaptive                # unknown | budgeted | adaptive -- which thinking request
-#                                               #   shape this model speaks. `llm.anthropic.thinkingMode:
-#                                               #   auto` asks this. `unknown` says "act on no built-in row"
+#      thinkingDialect: adaptive                # unknown | either | budgeted | adaptive -- which thinking request
+#                                               #   shape this model speaks. `llm.anthropic.thinkingMode: auto`
+#                                               #   asks this. `unknown` says "act on no built-in row";
+#                                               #   `either` says the model was measured to take both
 #      lowestReasoningEffort: minimal           # none | minimal | low | medium | high -- the rung the
 #                                               #   ladder starts at, with everything above it accepted
 #      acceptedReasoningEfforts: [none, low, medium, high]

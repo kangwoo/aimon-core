@@ -7,6 +7,79 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### LLM: what the Anthropic thinking path tells an operator, and the records behind it
+
+- **Three warnings described a request other than the one that was sent** (#68), and the fix is one
+  reporting contract obeyed in one place rather than three patches. A step in the thinking resolution
+  now *records* a finding and the **finished request** decides which records are emitted: a finding
+  about the thinking parameter is dropped when the request ends up carrying none, and the one finding
+  that explains the absence is emitted instead. **Observable change: a request that asks for thinking
+  and then abandons it now emits one warning explaining why, instead of up to four describing a
+  request that was never sent.** Every divergence signature and every message is unchanged, and the
+  per-signature dedup register still sees only surviving findings — so a dropped finding cannot spend
+  its signature and silence that message for the life of the process.
+
+- **An effort silently dropped by an explicit budget on a *translated* adaptive request is now
+  warned about.** `thinkingBudgetTokens` is legal only under `thinkingMode: extended`, so it reaches
+  an adaptive request only by dialect translation — and there the call's `reasoningEffort` was
+  discarded with nothing said, because the `thinkingBudgetOverridesEffort` warning lived in the
+  budgeted branch alone. One recorder now covers both dialects. Same message, same signature, and
+  the combination gains the test it lacked.
+
+- **`thinkingDisplay` together with `reasoningEffort: none` stays silent, and that is now a derived
+  decision with a test pinning it** rather than a judgement someone remembered. The rule: an inert
+  combination is reported when there is a remedy that reverses nothing the operator set, or when the
+  operator could otherwise draw a false conclusion from what they see. Neither holds for this pair,
+  so nothing is said.
+
+- **`ThinkingDialect.EITHER`** — the fourth constant, for a model measured to accept **both** request
+  shapes (#73). `UNKNOWN` was covering two different situations: *the table cannot answer* and
+  *either works*. They differ in exactly one behaviour and it is `thinkingMode: auto`, which had
+  nothing to send for the first and can send either for the second. A named mode against an `EITHER`
+  row is **honoured unchanged and unreported** — translating a working, explicitly requested shape
+  would be a substitution with nothing behind it. `UNKNOWN` and `EITHER` are values a *row* may hold
+  and a *request* never speaks.
+
+- **BREAKING, and source-breaking for any out-of-tree exhaustive consumer of `ThinkingDialect`.** A
+  `switch` over the three constants that compiled before will no longer compile. `docs/project/api-stability.md`
+  §5 permits this at `0.x`, taken in one step rather than through a deprecation window, as with
+  `AgentExecutionEvent`'s sixteenth subtype in this same block. In-tree the compiler catches nothing —
+  every read is an `==` — so the reads were found by reading and each gained a test.
+
+- **Five new `claude-*` capability rows, measured 2026-09-10** and carrying a dialect and nothing
+  else. `claude-opus-4-5` / `claude-sonnet-4-5` / `claude-haiku-4-5` speak the **budgeted** dialect
+  (the first `BUDGETED` rows this table has ever shipped); `claude-opus-4-6` / `claude-sonnet-4-6`
+  accept **either**. Prefixes rather than exact names because the undated aliases resolve and are
+  absent from `GET /v1/models` — three rows cover six measured names. `supportsSamplingParameters`
+  stays fail-open `true` on all five: these are the names the table's own `claude-opus-4` warning is
+  about, and they accept the parameters a family prefix would have suppressed. The census is
+  `docs/design/llm/reasoning-model-enablement.md` §3.5.
+
+- **Behaviour changes those rows produce, on upgrade, with no configuration edit:**
+  - `thinkingMode: auto` on those five model families now **sends a thinking parameter and bills for
+    it**, where it previously sent nothing and warned. That is what `AUTO` asks for and what a row is
+    for, but it is new spending. It also opens the thinking gate in `applySamplingParameters`, so a
+    configured `temperature` is now **omitted** on those requests with a
+    `temperatureOmittedForThinking` warning, and a `top_p` outside `[0.95, 1.0]` goes the same way.
+    **And on the three budgeted families the budget is clamped**: with the shipped default
+    `maxTokens: 4096` and no `reasoningEffort` set, the request resolves to `budget_tokens: 4095`,
+    leaving one token for the visible answer and raising `thinkingBudgetClamped=4096->4095`, which
+    names the remedy. That is the same behaviour `extended` has always had on this dialect, arriving
+    for the first time on a deployment that only ever wrote `auto` — raise `maxTokens`.
+  - `thinkingMode: adaptive` on the three 4-5 families was a **certain HTTP 400**; it is now a
+    translated budgeted request that succeeds, with one WARN.
+  - `thinkingMode: extended` on `claude-opus-4-6` / `claude-sonnet-4-6` is **unchanged on the wire** —
+    `EITHER` honours it. Stated because "we gave these models a row" would otherwise read as a change.
+    The vendored SDK's per-call stderr deprecation notice for that shape therefore continues too;
+    this client neither suppresses nor paraphrases it.
+
+- **Three records the #54/#60/#61/#62 stack left behind** (#75), none of them a behaviour change:
+  the two `AnthropicThinkingMode.values()` folds (CLI deserializer and starter auto-configuration)
+  now name each other and state the reassurance neither did — both derive from `values()`, so a fifth
+  constant cannot reach one surface and miss the other; `builderWithDefaults()`'s javadoc names
+  `gpt-5.6-terra` as the one name its documented `registerPrefix("gpt-5", …)` override no longer
+  reaches; and `docs/backlog/README.md`'s index is corrected in two rows, settled by counting the
+  items rather than by reconciling to either number.
 ### LLM: the capability table and its two config surfaces now say only things that are true
 
 - **`thinkingDialect` was advertised as declarable and no config surface bound a key for it** (#69).
@@ -24,7 +97,7 @@ Central is versioned independently).
                                                thinking-dialect: adaptive
   ```
 
-  Values are the enum constants — `unknown` · `budgeted` · `adaptive`, any casing — and `unknown` is a
+  Values are the enum constants — `unknown` · `either` · `budgeted` · `adaptive`, any casing — and `unknown` is a
   real statement rather than an absence: *act on no built-in row for this name*, which is the answer for
   an operator who knows a row is wrong and not what the right value is.
 

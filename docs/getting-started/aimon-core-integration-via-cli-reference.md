@@ -277,7 +277,7 @@ llm:
 | `lowestReasoningEffort` | 이 모델의 effort 사다리가 어디서 시작하는가 (`none`…`high`). 거기서 위로 전부 받는다는 뜻이다 | `minimal` 부터 `high` 까지 |
 | `acceptedReasoningEfforts` | 받는 rung **전부**, 목록으로 — 사다리 중간에 구멍이 있을 때 쓰는 일반형 (`[none, low, medium, high]`). 빈 원소(`~`, 값 없는 `-`)는 건너뛰지 않고 **몇 번째인지를 부르며 기동을 실패시킨다** | 위 칸과 같다 |
 | `supportsReasoningSummary` | 이 모델이 추론 요약 요청(`reasoning.summary`)을 받는가. **OpenAI Responses 경로만 읽는다** — `supportsReasoningTraceRoundTrip: true` 인 이름만 그 경로에 가므로, `reasoning.effort` 는 받고 `reasoning.summary` 는 400 을 내는 게이트웨이를 적는 자리다 | `true` — 호출자가 요청한 것을 빼앗지 않는다 |
-| `thinkingDialect` | 이 모델의 thinking 요청이 어느 모양인가 — `unknown` · `budgeted` · `adaptive`. **anthropic 분기만 읽는다.** 아래 `llm.anthropic.thinkingMode: auto` 가 물어보는 값이 이것이다 | `unknown` — 표가 답할 수 없다는 뜻이고, 클라이언트는 설정된 것을 그대로 둔다 |
+| `thinkingDialect` | 이 모델의 thinking 요청이 어느 모양인가 — `unknown` · `either` · `budgeted` · `adaptive`. **anthropic 분기만 읽는다.** 아래 `llm.anthropic.thinkingMode: auto` 가 물어보는 값이 이것이다 | `unknown` — 표가 답할 수 없다는 뜻이고, 클라이언트는 설정된 것을 그대로 둔다 |
 
 이 선언은 내장 **표**를 대체하지 않고 확장한다. exact 항목으로 등록되므로 기존 `exact > prefix` 규칙이 그대로
 "사용자가 이긴다" 를 뜻하고, 그 승리는 **이름 하나만큼**이다 — `gpt-5` 를 선언하면 정확히 그 이름만 바뀌고

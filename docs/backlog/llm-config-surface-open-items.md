@@ -1,4 +1,4 @@
-# LLM 설정 표면 — 등록 항목 8건 (열림 8)
+# LLM 설정 표면 — 등록 항목 12건 (열림 9 · 닫힘 3)
 
 출처는 #46 이다 — 모델 capability 표를 CLI yaml 과 스타터 프로퍼티에서 확장할 수 있게 한 작업.
 설계는 [`../design/llm/model-capability-config-key.md`](../design/llm/model-capability-config-key.md) 이고,
@@ -372,6 +372,29 @@ CLI 도 **자기가 판단하는 자리에서는** 같은 규칙을 지킨다 �
 **언제 다시 볼까.** #60 의 표를 다음에 손댈 때. **이 국면(#62)에서 하지 않은 것은 의도**다 — 이미 리뷰를
 통과한 PR 을 넓히지 않으려는 것이고, 표는 그 PR 의 소유물이다.
 
+### 닫힘 (2026-09-10, #73)
+
+행 셋이 들어갔다. **다만 이 항목이 적어 둔 모양 그대로는 아니다 — 그리고 그 차이가 이 항목이 몰랐던
+사실에서 나왔다.**
+
+이 항목은 *"`claude-opus-4-5-20251101` · `claude-sonnet-4-5-20250929` · `claude-haiku-4-5-20251001`"*
+라는 **날짜 붙은 이름 셋**을 더하라고 적었다. 착수 시점의 재측정이 그 전제를 뒤집었다: 날짜 없는 별칭
+`claude-opus-4-5` · `claude-sonnet-4-5` · `claude-haiku-4-5` 도 **호출되고**(응답의 `model` 이 날짜 붙은
+스냅샷을 가리킨다) 같은 방언을 말하는데, **`GET /v1/models` 목록에는 없다.** 즉 이 항목이 프로브 방법으로
+물려받은 *"이 계정이 닿을 수 있는 모든 `claude-*` 모델"* = 모델 목록이라는 등식이 틀렸고, **호출 가능한
+이름의 집합은 목록보다 넓다.**
+
+그래서 들어간 것은 exact 행 셋이 아니라 **prefix 행 셋**이고, 그 셋이 **측정된 이름 여섯 개**를 덮는다.
+별칭 쪽이 배포가 실제로 적을 가능성이 높은 이름이므로, exact 로 갔다면 이 항목이 지적한 결함
+("표가 이름을 못 대면 `AUTO` 가 아무것도 얻지 못한다")을 그 절반에 대해 그대로 재생산했을 것이다.
+
+행이 **방언 하나만** 싣는 것도 착수 시점의 결정이다. `supportsSamplingParameters` 는 fail-open `true`
+그대로다 — 그 이름들은 `claude-opus-4` 를 family prefix 로 쓰지 말라는 경고가 가리키는 바로 그 이름들이고,
+샘플링 파라미터를 **받아 준다**. 행이 방언을 싣고 아무것도 억제하지 않는다는 것이 이 셋의 성질이다.
+
+측정과 방법의 정정은 [`../design/llm/reasoning-model-enablement.md`](../design/llm/reasoning-model-enablement.md)
+§3.5 에 있고, §9 U-1 의 유보가 그것으로 census 전체에 대해 해소되었다.
+
 ---
 
 ## L-7 — `ThinkingDialect` 에 "둘 다 받는다" 를 적을 자리가 없다
@@ -395,6 +418,37 @@ CLI 도 **자기가 판단하는 자리에서는** 같은 규칙을 지킨다 �
 누군가 `UNKNOWN` 을 "어느 쪽이든 된다" 로 읽고 버그를 낼 때. 값을 하나 더할지(`EITHER`), 아니면
 방언을 집합으로 표현할지(#61 이 `lowestReasoningEffort` → `acceptedReasoningEfforts` 로 한 것과 같은
 모양)는 착수 시점의 결정이다 — 후자에는 이미 **선례가 있다**.
+
+### 닫힘 (2026-09-10, #73). 트리거는 첫 번째였다 — L-6 을 착수하면서 같은 표를 열었다
+
+**`EITHER` 를 골랐다.** 네 번째 상수가 들어갔고 두 모델이 그 행을 갖는다.
+
+고른 이유는 "둘 다" 에 이름이 필요해서가 **아니다.** #73 이 그 반론을 정확히 적어 두었다 — *"`AUTO`
+아래에서 '둘 다' 는 어차피 하나로 정해져야 하고, 무엇을 고르든 그것은 모델에 대한 사실이 아니라
+정책이다."* 두 문장 다 참이고, 그래도 상수가 맞는 이유는 다른 데 있다: **`UNKNOWN` 은 하나의 동작이
+아니라 둘이었고, 둘 다 받는 모델은 그중 하나만 원한다.**
+
+| 자리 | `UNKNOWN` 이 하던 일 | 둘 다 받는 모델이 원하는 것 |
+|---|---|---|
+| 이름 붙은 모드 | 그대로 존중한다 (표가 반박할 수 없으므로) | **같다** — 표가 동의하므로 |
+| `AUTO` | 아무것도 보내지 않고 경고한다 | **다르다** — 하나를 골라야 한다 |
+
+그래서 `EITHER` 는 **`UNKNOWN` 이 하던 두 일을 쪼갠 것**이고, 그것이 이 항목이 요구한
+*"`UNKNOWN` 이 서로 다른 두 상황을 덮는 일을 그만둔다"* 를 이름 바꾸기가 아니라 분해로 충족한다.
+네 값은 두 쌍으로 갈린다 — `UNKNOWN` · `EITHER` 는 **표의 지식**을 말하고 요청이 절대 말하지 않는
+값이며, `BUDGETED` · `ADAPTIVE` 는 와이어 모양이다. 그 불변식은 enum javadoc 에 적혀 있고 테스트가
+지킨다.
+
+`AUTO` 가 무엇을 고르는지(adaptive)는 **행이 아니라 클라이언트**에 있다. 벤더의 per-model 표가 이 두
+모델에서 budgeted 쪽을 `(deprecated)` 로 표시하고, 벤더링된 SDK 가 그중 하나에 대해 매 호출 그 문장을
+찍는다 — 그것이 인용이다. 사실(둘 다 받는다, 측정 날짜와 함께 레지스트리에)과 정책(`AUTO` 는 adaptive
+를 선호한다, 인용과 함께 클라이언트에)이 서로 다른 자리에 적히므로 각각 따로 반박할 수 있다.
+
+**집합(`Set<ThinkingDialect>`)은 저울에 올렸고 실력으로 진 것이 아니라 범위로 졌다.** 이 항목이 가리킨
+선례(`acceptedReasoningEfforts`)는 실재하고 다른 주에는 맞는 답이었을 것이다. 여기서 제외된 이유는 둘
+이며 서로 독립이다 — `ModelCapabilities` 를 바꾸는데 그 파일은 형제 작업이 편집 중이고, `thinkingDialect`
+의 **설정 바인딩 모양**을 바꾸는데 그 결정도 그 작업의 것이다. 다음에 이 자리를 여는 사람이 "검토되지
+않았다" 가 아니라 "검토되고 미뤄졌다" 를 읽도록 적어 둔다.
 
 ---
 
@@ -463,10 +517,142 @@ capability 표 이전의 모양, 즉 400 을 낸 그 `temperature` 가 실려 �
 
 ---
 
+## L-9 — `thinkingDialect` 에 설정 키가 생기면 `EITHER` 도 그 목록에 들어가야 한다
+
+*(2026-09-10 등록. 출처는 #73 국면의 설계 —
+[`../design/llm/thinking-reporting-and-dialect-records.md`](../design/llm/thinking-reporting-and-dialect-records.md)
+§11 O-1. **이 국면 밖으로 결과가 나가는 조율 항목이다.**)*
+
+**무엇을.** `ThinkingDialect` 에 네 번째 상수 `EITHER` 가 들어갔다. 오늘 그것은 **자바 전용**이다 —
+`ModelCapabilityDeclaration` 은 `thinkingDialect` 필드를 갖고 있지만 **어느 설정 표면도 그것을 바인딩하지
+않는다**(2026-09-10 기준 `grep -rn "thinking-dialect\|thinkingDialect"` 가 CLI·스타터 main 소스에서 0건).
+누군가 그 필드에 키를 주면 **그 키의 허용값 목록과 프로퍼티 메타데이터에 네 번째 값을 함께 넣어야 한다.**
+
+**왜.** 상수를 더한 쪽과 키를 여는 쪽이 다른 작업이면, 키가 세 값만 받는 상태가 생긴다. 그러면 표에는
+있는데 설정으로는 적을 수 없는 값이 하나 생기고, 그것은 이 저장소가 반복해서 정정해 온 *"선언했는데
+읽히지 않는다"* 의 거울상이다 — 읽히기는 하는데 선언할 수 없다.
+
+**어디.** `ModelCapabilityDeclaration:55` 의 필드, 그리고 키가 생긴다면
+`at.aimon.cli.config.ModelCapabilityConfig` 와 스타터의
+`additional-spring-configuration-metadata.json`(2026-09-10).
+
+**언제 다시 볼까.** 그 키가 열릴 때. 형제 작업 `llm-capability-config-gaps` 가 그 결정을 갖고 있었고,
+이 항목은 그 결정이 어느 쪽으로 나든 잊히지 않게 하려고 있다 — 키를 열지 않기로 했다면 이 항목은
+그 결정과 함께 닫힌다.
+
+### 닫힘 (2026-09-10, #69 · #73 두 브랜치의 병합)
+
+**형제 작업은 키를 여는 쪽으로 결정했고**(#69, PR #76), 이 항목이 예고한 그대로 값 목록이 뒤처졌다.
+두 브랜치가 각자의 게이트를 통과했는데도 그랬다 — 어느 쪽도 혼자서는 틀리지 않았기 때문이다.
+`EITHER` 는 #73 쪽에만 있었고 키는 #69 쪽에만 있었으므로, 결함은 **병합으로 처음 존재하게 되었다.**
+그래서 닫는 것도 병합 커밋의 일이다.
+
+**고친 곳은 여섯이다** — `default-config.yaml` 의 주석, `ModelCapabilityConfig` 와
+`AimonProperties` 의 javadoc, CLI 레퍼런스의 정본과 번역본, 그리고 `CHANGELOG.md` 에서 #69 가 값을
+셋으로 적어 둔 줄. 전부 **사람이 읽는 목록**이다.
+
+**코드는 한 줄도 바뀌지 않았고, 그것이 이 항목의 위험이 작았던 이유다.** 두 표면 모두 enum 을 직접
+바인딩하므로 `thinkingDialect: either` 는 이 커밋 이전에도 이미 바인딩되었다 — 틀린 것은 동작이 아니라
+**받는 값이 셋이라고 적은 문서**였다. 스타터의
+`additional-spring-configuration-metadata.json` 에는 이 키의 항목이 없고 넣지 않았다: Boot 은 enum
+타입 프로퍼티의 허용값을 스스로 유도하므로, 손으로 적은 목록을 하나 더 만드는 것은 다음 상수가
+추가될 때 뒤처질 자리를 하나 더 만드는 것이다 — 이 항목이 기록한 실패 그 자체다.
+
+---
+
+## L-10 — budgeted 쪽을 선호하는 "둘 다 받는" 모델이 나오면 `EITHER` 로는 부족하다
+
+*(2026-09-10 등록. 출처는 같은 설계 §11 O-3.)*
+
+**무엇을.** `EITHER` 는 **선호를 싣지 않는다.** 어느 쪽을 보낼지는 `AUTO` 아래에서만 정해지고, 그 정책은
+행이 아니라 클라이언트에 있다 — `AnthropicLlmClient` 가 adaptive 를 고른다. 오늘 그것으로 충분한 이유는
+측정된 두 모델이 **둘 다** budgeted 쪽을 deprecated 로 표시하기 때문이다. 반대 방향의 모델이 나오면
+`EITHER` 행 하나로는 그 사실을 적을 수 없다.
+
+**왜.** 그때 필요한 것은 새 **사실**이고, 이 설계는 그것을 담을 자리를 만들지 않았다. 선택지는 셋이며
+전부 이 국면 밖이다 — 다섯 번째 상수(`BUDGETED_PREFERRED`, 설계 §10 A3 이 "정책을 행에 넣는다"는 이유로
+기각), `EITHER` 에 선호 필드, 또는 방언을 집합으로(§10 A2, `acceptedReasoningEfforts` 선례; 범위 때문에
+기각되었고 실력으로 진 것이 아니다).
+
+**어디.** `at.aimon.core.llm.capability.ThinkingDialect`, 그리고 그것을 읽는
+`AnthropicThinkingResolver.resolveAutoDialect`(2026-09-10).
+
+**언제 다시 볼까.** 벤더의 per-model 표에 `adaptive (deprecated)` 로 표시된 행이 나타날 때. 그전에는
+가정이 참인지 확인할 방법이 없고, 없는 모델을 위해 상수를 더하는 것은 이 저장소가 하지 않는 종류의
+일이다.
+
+---
+
+## L-11 — `claude-mythos` 행은 한 prefix 로 문서상 서로 다른 두 방언을 덮고 있다
+
+*(2026-09-10 등록. 출처는 같은 설계 §11 O-7.)*
+
+**무엇을.** 배포되는 여섯 ADAPTIVE prefix 중 다섯은 2026-09-10 에 실측으로 확인되었고
+`claude-mythos` 하나만 확인되지 않았다. 확인할 수 없는 것이 아니라 **확인할 대상이 없다** — 이 계정의
+`GET /v1/models` 에 그 prefix 로 시작하는 모델이 없다.
+
+**왜.** 그 사이 새 사실이 하나 생겼다. 벤더의 per-model 표는 *Mythos 5.1* 과 *Mythos 5* 를 adaptive
+전용으로, *Mythos Preview* 를 `Adaptive, extended` 로 싣는다. 즉 **하나의 prefix 가 문서상 서로 다른 두
+방언 상태를 덮고 있고**, 이제 그 두 번째 상태에는 이름이 있다 — `EITHER`. 오늘의 `ADAPTIVE` 는 앞의 둘에
+대해 맞고, Preview 에 대해서는 `EITHER` 의 `AUTO` 답과 같은 것을 보낸다(그래서 동작은 옳다). 틀린 것은
+동작이 아니라 **행이 말하는 내용**이며, 이것은 L-7 이 두 4-6 모델에 대해 지적했던 것과 같은 모양이다.
+
+**어디.** `InMemoryModelCapabilityRegistry.registerAnthropicDefaults` 의 `claude-mythos` 행,
+그리고 그것을 인용하는
+[`../design/llm/reasoning-model-enablement.md`](../design/llm/reasoning-model-enablement.md) §9 U-1
+(2026-09-10).
+
+**언제 다시 볼까.** 그 prefix 로 시작하는 모델이 어느 계정에서든 닿을 때. 그때 두 이름을 각각 프로브하면
+prefix 를 쪼갤지(Preview 만 `EITHER`) 그대로 둘지가 한 번에 정해진다. 그전에 쪼개는 것은 아무도 본 적 없는
+식별자를 주장하는 일이고, 그것은 이 행이 지금 한 prefix 인 이유 그 자체다.
+
+---
+
+## L-12 — 라이브 서명 음성 대조 테스트가 서버 문구 두 가지 때문에 절반쯤 깜빡인다
+
+*(2026-09-10 등록. 출처는 #73 국면의 빌드 —
+[`../design/llm/thinking-reporting-and-dialect-records.md`](../design/llm/thinking-reporting-and-dialect-records.md)
+가 그 파일을 편집하면서 실측했다. **고치지 않기로 한 것은 의도**다 — 아래.)*
+
+**무엇을.** `AnthropicThinkingLiveTest.ReplayedSignatureIsAccepted.mutatedSignatureIsRejected` 가
+서버 응답 문구를 그대로(`hasMessageContaining`) 대조하는데, 서버가 **같은 요청에 두 가지 400 을 번갈아**
+돌려준다. 어느 한쪽으로 좁히거나 둘 다 받아들이게 만든다.
+
+```
+invalid_request_error  Invalid `signature` in `thinking` block                          ← 지금 단언하는 것
+invalid_request_error  messages.1.content.0: `thinking` 또는 `redacted_thinking` 블록은
+                       마지막 assistant 메시지에서 수정될 수 없다 (원문 영어)              ← 실제로도 나온다
+```
+
+**왜.** **깨진 것은 주장이 아니라 문장이다.** 이 테스트의 주장은 *"서명을 한 글자 바꾸면 서버가 거절한다
+— 즉 검증기가 실제로 들여다본다"* 이고, 두 응답 모두 400 `invalid_request_error` 이므로 그 주장은 어느
+쪽이 오든 성립한다. 좁은 것은 문구 대조뿐이다. 그런데 그 결과는 **간헐적 빨강**이고, 간헐적 빨강은 다음
+사람에게 "이 테스트는 원래 가끔 실패한다" 를 가르친다 — 이 클래스의 존재 이유(음성 대조가 유일하게
+검증기를 증명한다)를 정확히 갉아먹는 방향이다.
+
+**실측.** 같은 커밋에서 연속 6회 중 **3회 실패**(2026-09-10). CI 는 `ANTHROPIC_KEY` 가 없어 이 클래스를
+건너뛰므로 게이트는 초록이고, 키를 가진 사람만 본다.
+
+**어디.** `AnthropicThinkingLiveTest:172-190` 근방(2026-09-10).
+
+**왜 그 국면에서 고치지 않았나.** 세 이슈(#68 · #73 · #75) 어디에도 속하지 않고, 그 변경의 diff 는 이
+중첩 클래스를 건드리지 않는다. 그리고 고치는 방법이 **문구를 넓히는 것**인데, 이 클래스는 *"필드 경로가
+아니라 문장 전체"* 를 대조한다고 **의도적으로** 적어 두었다 — `AnthropicThinkingMode` 의 javadoc 이 그
+문장들을 그대로 인용해서 운영자가 에러를 grep 해 찾아올 수 있게 하기 때문이다. 명시된 관례를 느슨하게
+하는 것은 오타 수정이 아니라 결정이고, 방언 기록에 관한 diff 안에 끼워 넣을 것이 아니다.
+
+**언제 다시 볼까.** 지금. 트리거를 기다릴 것이 없다 — 이미 발화하고 있고, 키를 가진 사람이 볼 때마다
+발화한다. 형태는 작다: 상태·타입만 단언하고 문장은 둘 중 하나를 받아들이거나, 두 문장이 공유하는 더 좁은
+부분 문자열로 좁히거나. **어느 쪽인지가 질문**이며, 그 결정이 이 항목이다.
+
+---
+
 ## 관련 문서
 
 - [`../design/llm/model-capability-config-key.md`](../design/llm/model-capability-config-key.md) — 설계.
   §9 가 설계 시점의 미해결 목록, §11 이 구현 중 실측으로 뒤집힌 사실
+- [`../design/llm/thinking-reporting-and-dialect-records.md`](../design/llm/thinking-reporting-and-dialect-records.md) —
+  L-6·L-7 을 닫고 L-9·L-10·L-11 을 연 설계. §14 가 방언 census 의 원자료, §15.4 가 이 세 항목의 승격 근거다
 - [`../design/llm/openai-model-capabilities.md`](../design/llm/openai-model-capabilities.md) — capability
   SPI 자체의 설계. §7 O-8 이 이 작업으로 닫혔다
 - [`../design/llm/openai-responses-path.md`](../design/llm/openai-responses-path.md) — F-2 가 L-2 의 출처
