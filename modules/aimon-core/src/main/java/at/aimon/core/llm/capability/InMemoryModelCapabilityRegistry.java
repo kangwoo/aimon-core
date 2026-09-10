@@ -155,6 +155,9 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
      * registration position is kept, because {@link LinkedHashMap} does not reorder on re-put. That is what makes
      * overriding {@code gpt-5} safe: it cannot accidentally jump ahead of the more specific {@code gpt-5-chat}.
      *
+     * The built-in gpt-5 prefix intentionally does not reach gpt-5.6-terra; that model has an
+     * exact row with a different accepted ladder, so this method's prefix override promise excludes it.
+     *
      * @return a builder carrying the {@link #withDefaults()} entries
      */
     public static Builder builderWithDefaults() {

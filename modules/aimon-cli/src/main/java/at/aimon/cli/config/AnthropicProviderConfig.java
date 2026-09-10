@@ -162,6 +162,8 @@ public class AnthropicProviderConfig {
 
     /**
      * {@code thinkingMode} 를 <b>파서가 읽은 원문 스칼라</b>에서 접는다. 이 필드에만 붙는 예외이며, 이유는 하나다 —
+     * 스타터도 AimonLlmAutoConfiguration.thinkingMode 에서 같은 values() 기반 fold 를 수행하므로
+     * enum 상수가 늘어나면 두 표면이 함께 읽히는지 확인한다.
      * 네 값 중 {@code off} 가 YAML 1.1 의 예약어다.
      *
      * <p>

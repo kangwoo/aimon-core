@@ -276,6 +276,9 @@ public class AimonLlmAutoConfiguration {
          * surface has the same collision and answers it differently — it can read the parser's original scalar,
          * which this one never receives.
          *
+         * The CLI performs the same values()-based fold in AnthropicProviderConfig; keep these two
+         * validation surfaces aligned when the enum gains a constant.
+         *
          * @param value
          *            the value as it was written
          * @return the matching constant
