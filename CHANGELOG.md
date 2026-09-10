@@ -1647,6 +1647,22 @@ Central is versioned independently).
   grep, and the `temperature` refusal whose exact wording is what separates it from a range error —
   are unchanged. `L-12` is closed.
 
+- **An exported provider key opts that provider's live classes into every ordinary build, and
+  `CONTRIBUTING.md` now says so** (#90). The environment variable is the tier's only gate — the four
+  classes carry no tag, and `test` excludes only `docker` and `packaging` — so while `OPENAI_KEY` or
+  `ANTHROPIC_KEY` is exported, `./gradlew test` and `checkAll` run that provider's live classes each time
+  the module's `test` task executes, and those runs bill. Measured without a real key: with the variable
+  set to a deliberately invalid value, the plain `:aimon-llm-openai:test` executed its 17 live tests and
+  failed 16 on HTTP 401, and `:aimon-llm-anthropic:test` executed its 25 and failed 24 — both builds red.
+  The same commands without the variable skipped all 42 and stayed green, and repeating a keyed command
+  with nothing changed reported `UP-TO-DATE` and ran nothing. The documented command now puts the keys in
+  front of itself instead of exporting them. `README.md`'s prerequisite still named the Anthropic key
+  `ANTHROPIC_API_KEY`, which no gate reads; it now says `ANTHROPIC_KEY`. The docs site's CLI quickstart
+  offered that same variable as an alternative the bundled configuration never reads; it now asks for the
+  OpenAI key the configuration does read and points at the CLI reference. Line citations of the live
+  classes in `docs/backlog/` that no longer landed — three of them already wrong in the commit that wrote
+  them — now name the method or annotation, or the commit they were counted against. Documentation only.
+
 ### Docs CI: translations are now checked for shape, not only for age
 
 - **New check `scripts/check-translation-structure.py`, wired as a second step of the CI job that

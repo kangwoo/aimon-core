@@ -1,6 +1,6 @@
 ---
 translated_from: CONTRIBUTING.md
-source_commit: 2cb6a2f
+source_commit: aa2bb4a
 ---
 
 # AIMON Core 기여 가이드
@@ -83,9 +83,7 @@ CI 를 포함해 — 이 클래스들이 각각 `SKIPPED` 로 보고되고 `chec
 이 계층은 사람이 검증하기로 마음먹었을 때만 검증됩니다.
 
 ```bash
-export ANTHROPIC_KEY=...
-export OPENAI_KEY=...
-
+ANTHROPIC_KEY=... OPENAI_KEY=... \
 ./gradlew :aimon-llm-anthropic:test --rerun \
               --tests 'at.aimon.core.llms.anthropic.AnthropicThinkingLiveTest' \
               --tests 'at.aimon.core.llms.anthropic.AnthropicLlmClientIntegrationTest' \
@@ -97,9 +95,18 @@ export OPENAI_KEY=...
 **돌릴 때마다 돈이 듭니다** — 키 주인의 계정에 청구되는 실제 호출입니다. 키를 커밋하지 말고, 이슈나
 풀 리퀘스트에 붙이는 실패 출력에서는 키를 가리세요.
 
+**게이트는 반대 방향으로도 걸리고, 위 명령이 키를 그 명령에만 붙이는 이유가 그것입니다.** 이 클래스들을
+평범한 빌드에서 빼 주는 것은 환경 변수 하나뿐입니다 — 태그가 없고, 기본 `test` 태스크는 `docker` 와
+`packaging` 만 뺍니다. 그래서 어떤 셸에 키가 export 되어 있는 동안에는 — 이 계층을 위해서든 CLI 를 돌리기
+위해서든 — 그 셸의 모든 `./gradlew test` 와 `checkAll` 이 위 명령만이 아니라 그 프로바이더의 라이브 클래스까지
+돌립니다. 그 모듈의 `test` 태스크가 `UP-TO-DATE` 로 보고되지 않고 실제로 돌 때마다 그렇고, 그것은 첫 빌드와
+그 모듈에 닿는 변경 뒤의 모든 빌드입니다. 그 실행은 API 를 호출하고 청구됩니다. 그리고 빌드하는 변경과 무관한
+이유로 빨개질 수 있습니다 — 더는 유효하지 않은 키는 인증에서(HTTP 401) 실패하고, 아래에 적은 썩음은 프로바이더
+쪽에서 실패합니다. 키는 위처럼 그것이 필요한 명령 하나 앞에 붙이거나, 빌드하기 전에 `unset` 하세요.
+
 **`--rerun` 은 선택이 아닙니다.** Gradle 은 환경 변수를 `test` 의 입력으로 치지 않으므로, 이 태스크들이
 마지막으로 돈 뒤로 달리 바뀐 것이 없으면 실행은 `UP-TO-DATE` 로 보고되고 아무것도 돌지 않습니다.
-키 없이 한 번 돌린 뒤 키를 export 하고 다시 돌리는 것이 정확히 그 경우입니다 — 1초도 안 걸려 초록이고,
+키 없이 한 번 돌린 뒤 키를 주고 다시 돌리는 것이 정확히 그 경우입니다 — 1초도 안 걸려 초록이고,
 테스트 출력은 한 줄도 없습니다. 출력이 테스트를 `PASSED` 로 나열하는지 확인하세요. `SKIPPED` 는 키가
 빠졌다는 뜻이고, `PASSED` 든 `SKIPPED` 든 테스트 줄이 한 줄도 없으면 태스크가 돌지 않은 것입니다.
 

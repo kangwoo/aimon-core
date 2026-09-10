@@ -633,7 +633,7 @@ invalid_request_error  messages.1.content.0: `thinking` 또는 `redacted_thinkin
 **실측.** 같은 커밋에서 연속 6회 중 **3회 실패**(2026-09-10). CI 는 `ANTHROPIC_KEY` 가 없어 이 클래스를
 건너뛰므로 게이트는 초록이고, 키를 가진 사람만 본다.
 
-**어디.** `AnthropicThinkingLiveTest:172-190` 근방(2026-09-10).
+**어디.** `AnthropicThinkingLiveTest:172-190` 근방(2026-09-10, `83d9067` 기준 — 아래 닫힘 블록의 정정).
 
 **왜 그 국면에서 고치지 않았나.** 세 이슈(#68 · #73 · #75) 어디에도 속하지 않고, 그 변경의 diff 는 이
 중첩 클래스를 건드리지 않는다. 그리고 고치는 방법이 **문구를 넓히는 것**인데, 이 클래스는 *"필드 경로가
@@ -657,7 +657,17 @@ content 블록의 경로**이기 때문이다. 상태·타입만으로는 "무�
 이 단언은 빨개지고 실패 출력이 그 메시지를 보여 준다. 그래도 넣은 것은 아래에 적은 규칙 그대로다 — 경로가 이
 거절을 **요청의 다른 자리에 대한 400** 과 가른다.
 
-**어디** *(2026-09-10)* — `AnthropicThinkingLiveTest:188` · `OpenAIReasoningLiveTest:229`
+**어디** *(2026-09-10)* — `AnthropicThinkingLiveTest.ReplayedSignatureIsAccepted.mutatedSignatureIsRejected` ·
+`OpenAIReasoningLiveTest.TheReproduction.theSameRequestOnChatCompletionsIsStillTheOriginal400`
+
+> **정정** *(2026-09-10, #90)*: 이 줄은 처음에 두 좌표를 줄 번호로 적었다 — `AnthropicThinkingLiveTest:188` ·
+> `OpenAIReasoningLiveTest:229`. 앞의 것은 맞았다. 뒤의 것은 **이 닫힘을 쓴 커밋(`e91b850`)에서 이미** 음성
+> 대조의 `@DisplayName` 줄이었고 메서드는 `:230` 이다 — 같은 커밋이 그 파일에 `BadRequestException` import 한
+> 줄을 더했고, 줄은 그 전의 파일에서 셌다. 둘 다 메서드 이름으로 바꾼 것은 다음 import 한 줄이 같은 일을 다시
+> 하지 않게 하려는 것이다. 위 항목 본문의 `:172-190` 은 종류가 다르다: 등록한 커밋(`83d9067`)에서는 맞았고 —
+> 메서드가 `:173` 이었다 — 같은 날 뒤의 커밋(`eedaa8f`)이 그 파일을 고치며 `:188` 로 밀렸다. 등록 시점의
+> 기록이므로 이름으로 바꾸지 않고, 날짜만으로는 그날의 어느 판본인지 풀리지 않으므로 커밋을 붙였다. 같은 날
+> 쓴 좌표 둘이 [`live-api-test-tier.md`](live-api-test-tier.md) LA-1 에서도 틀려 있었고 거기서 함께 고쳤다.
 
 **착수 시점의 재측정이 등록 근거를 그대로 확인했다.** 같은 커밋, 같은 요청으로 연속 6회를 돌렸고 본문은
 정확히 3 대 3 으로 갈렸다(2026-09-10). 여섯 모두 400 `invalid_request_error` 였다.

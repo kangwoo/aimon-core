@@ -93,9 +93,9 @@
 
 (1번의 클래스 이름은 이슈의 것과 다르다. 이슈는 `AnthropicThinkingDialectTest.DialectMismatchesAreRejected` 로
 적었는데, `AnthropicThinkingDialectTest` 는 실재하지만 키 게이트가 없는 테스트이고(§0.1 의 인구조사에 없다)
-그 안에 `DialectMismatchesAreRejected` 는 없다. 그 중첩 클래스는 `AnthropicThinkingLiveTest:223` 에만 선언되어
+그 안에 `DialectMismatchesAreRejected` 는 없다. 그 중첩 클래스는 `AnthropicThinkingLiveTest` 에만 선언되어
 있고, 그 javadoc 이 같은 사실 — 표가 배포된 날부터 빨갰고 CI 에 키가 없어 아무도 몰랐다 — 을 적고 있다. 이슈의
-이름대로 찾아가면 없는 자리에 닿으므로 여기 적는다.)
+이름대로 찾아가면 없는 자리에 닿으므로 여기 적는다. 이 자리에 있던 줄 번호가 빠진 이유는 아래 **어디** 의 정정이다.)
 
 셋 중 둘(2·3)은 **같은 결함**이다 — 주장이 *상태*만 요구하는 자리에서 테스트가 *문장*을 대조한다.
 셋 다 각자의 자리에서 "막지 않음" 으로 판단되어 이월되었고, 각각은 옳은 판단이었다. 모양은 셋이 다 쌓인
@@ -138,8 +138,8 @@ R-1 이 두 태그 계층을 두고 적은 문장 — *"그 차이는 양이 아
 
 **어디** *(2026-09-10)*
 
-- 게이트: `AnthropicThinkingLiveTest:76` · `AnthropicLlmClientIntegrationTest:41` ·
-  `OpenAIReasoningLiveTest:69` · `OpenAILlmClientIntegrationTest:41`
+- 게이트: 네 클래스 — `AnthropicThinkingLiveTest` · `AnthropicLlmClientIntegrationTest` · `OpenAIReasoningLiveTest` ·
+  `OpenAILlmClientIntegrationTest` — 각각의 클래스 선언에 붙은 `@EnabledIfEnvironmentVariable`
 - [`CONTRIBUTING.md`](../../CONTRIBUTING.md#live-api-tests) 의 `Live-API tests` 절과 그 번역본 — 명령,
   비용, `--rerun`, 정상 상태로서의 썩음. 같은 변경에서 `Prerequisites` 가 적고 있던
   `ANTHROPIC_API_KEY` 를 `ANTHROPIC_KEY` 로 고쳤다 — 트리의 어느 게이트도 앞의 이름을 읽지 않는다
@@ -148,6 +148,18 @@ R-1 이 두 태그 계층을 두고 적은 문장 — *"그 차이는 양이 아
   바로 아래에 적었다. 그 문장은 이슈가 선례로 가리킨 바로 그 파일에 있어서, 그대로 두면 이 계층에도
   게이트가 있다고 읽혔을 것이다
 - `.github/workflows/` — 키 없음(§0.2). **이 결정이 그 사실을 바꾸지 않는다**
+
+> **정정** *(2026-09-10, #90)*: 게이트 줄은 처음에 네 클래스를 줄 번호로 적었고(`AnthropicThinkingLiveTest:76` ·
+> `AnthropicLlmClientIntegrationTest:41` · `OpenAIReasoningLiveTest:69` · `OpenAILlmClientIntegrationTest:41`), §1
+> **왜** 의 괄호 문단은 `DialectMismatchesAreRejected` 의 자리를 `AnthropicThinkingLiveTest:223` 으로 적었다. 둘은
+> **이 문서를 쓴 커밋(`e91b850`)에서 이미** 틀려 있었다. `OpenAIReasoningLiveTest:69` 는 클래스의 `@DisplayName`
+> 줄이었고 게이트는 `:70` 이다 — 같은 커밋이 그 파일에 import 한 줄을 더했고, 줄은 그 전의 파일에서 셌다.
+> `:223` 은 앞 중첩 클래스 `ReplayedSignatureIsAccepted` 의 닫는 괄호였고, `DialectMismatchesAreRejected` 의
+> 선언은 `:227` 이다. 나머지 셋은 맞았지만 함께 이름으로 바꿨다 — 줄 번호는 import 한 줄에 어긋나고, 이 두 건이
+> 그것을 보여 준다. [`README.md`](README.md) 규칙 셋이 `playwrightTest` 의 좌표를 두고 적은 것과 같은 모양이다:
+> 인용을 쓴 커밋 안에서 파일이 움직였고, 가서 읽어 보라고 가리킨 줄이 가 보면 다른 줄이었다. `:69` 는 #90 이
+> 잡았고(L-12 닫힘 블록의 `:229` 도 함께 — 그쪽 정정은
+> [`llm-config-surface-open-items.md`](llm-config-surface-open-items.md) 에 있다), `:223` 은 같은 grep 이 더 냈다.
 
 **이 결정과 함께 고친 것.** 발견 2·3 — 문장을 대조하던 두 단언을 주장이 요구하는 만큼으로 좁혔다.
 2 는 [`llm-config-surface-open-items.md`](llm-config-surface-open-items.md) 의 `L-12` 로 등록되어 있었으므로

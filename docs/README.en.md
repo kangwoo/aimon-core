@@ -1,6 +1,6 @@
 ---
 translated_from: docs/README.md
-source_commit: 0ecb5ce
+source_commit: 8f71212
 ---
 
 # AIMON Documentation
@@ -51,12 +51,15 @@ tuned for, but the core itself is domain-neutral.
 
 ### Talk to the CLI
 
-All you need is **Java 17** and **one LLM API key**.
+All you need is **Java 17** and **one OpenAI API key** — the bundled default configuration reads `OPENAI_KEY`.
+Running on Anthropic takes a configuration change rather than a different variable name, and the CLI's
+configuration is covered by
+[`aimon-core-integration-via-cli-reference.en.md`](getting-started/aimon-core-integration-via-cli-reference.en.md).
 
 ```bash
 git clone https://github.com/kangwoo/aimon-core.git
 cd aimon-core
-export OPENAI_KEY=sk-...          # or ANTHROPIC_API_KEY
+export OPENAI_KEY=sk-...
 ./gradlew :aimon-cli:run
 ```
 
