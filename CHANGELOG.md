@@ -7,6 +7,30 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Core: an agent definition's frontmatter reports a number it cannot read instead of substituting one
+
+- **BREAKING for agent definitions that have been quietly running on a default** (#74). A definition
+  whose `model.temperature`, `model.topP`, `model.maxTokens`, `maxIterations`, `model.name` or
+  `version` holds something the parser cannot read has been starting anyway, on the default, since the
+  parser was written. It now fails to load, naming the key and the value. That is the point of the
+  change: `temperature: hot` bound `1.0` and the agent ran on a sampling parameter its author did not
+  choose, and `maxIterations: fifty` bound `Integer.MAX_VALUE` — a ReAct loop with no ceiling. A
+  definition whose numbers are numbers is unaffected, and no definition in this repository changed.
+
+- **The same treatment the key beside them already had.** `model.reasoningEffort` has thrown on this
+  class of input since #61, so one key in that method was strict and the rest were lenient. The rule is
+  now one rule: an **absent** key takes its documented default; a key **present with a value the parser
+  cannot use** is an `AgentDefinitionParseException` naming the key and the value.
+
+- **A key written with nothing after it is "present", not "absent".** `map.get(key) == null` cannot tell
+  the two apart, so `model:\n  name:\n` silently ran on `gpt5.1` and `version:` silently became
+  `1.0.0`. `containsKey` can, and now does.
+
+- **Two silent numeric conversions inside the same method go with them.** `maxTokens: 4096.5` truncated
+  to `4096` and `maxIterations: 9999999999` narrowed to `1410065407`, both through `intValue()`. A
+  whole-valued `Double` is still accepted (`4096.0` binds `4096`) — the answer `ToolInputBinder` already
+  gives on the tool surface — and a real fraction or an out-of-range whole number is now an error.
+
 ### LLM: a reasoning model's thinking is something a person can watch, and nothing else changes
 
 - **A reasoning model can deliberate for tens of seconds before it emits a visible token, and AIMON

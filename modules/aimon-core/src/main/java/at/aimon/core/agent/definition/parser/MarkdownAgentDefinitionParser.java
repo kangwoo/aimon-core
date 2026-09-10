@@ -1,6 +1,7 @@
 package at.aimon.core.agent.definition.parser;
 
 import java.io.InputStream;
+import java.math.BigDecimal;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -152,17 +153,19 @@ public final class MarkdownAgentDefinitionParser implements AgentDefinitionParse
 
         final LlmModel.Builder builder = LlmModel.builder();
 
+        // The guards prove the defaults these calls used to carry were unreachable except when the key was
+        // written with nothing after it, which is where a bare `name:` silently became gpt5.1.
         if (configMap.containsKey("name")) {
-            builder.name(extractString(configMap, "name", "gpt5.1"));
+            builder.name(requireString(configMap, "model.name"));
         }
         if (configMap.containsKey("temperature")) {
-            builder.temperature(extractDouble(configMap, "temperature", 1.0));
+            builder.temperature(requireDouble(configMap, "model.temperature"));
         }
         if (configMap.containsKey("maxTokens")) {
-            builder.maxTokens(extractInt(configMap, "maxTokens", 4096));
+            builder.maxTokens(requireInt(configMap, "model.maxTokens"));
         }
         if (configMap.containsKey("topP")) {
-            builder.topP(extractDouble(configMap, "topP", 1.0));
+            builder.topP(requireDouble(configMap, "model.topP"));
         }
         if (configMap.containsKey("reasoningEffort")) {
             builder.reasoningEffort(extractReasoningEffort(configMap));
@@ -175,12 +178,12 @@ public final class MarkdownAgentDefinitionParser implements AgentDefinitionParse
      * Reads {@code model.reasoningEffort} onto the neutral enum, ignoring case.
      *
      * <p>
-     * Deliberately <em>not</em> shaped like {@link #extractInt} and {@link #extractDouble} beside it. Those two
-     * substitute their default when the value has the wrong type, so {@code temperature: "hot"} silently becomes
-     * {@code 1.0} and nobody hears about it. This one throws, because a rung nobody recognises would otherwise reach
-     * the provider as "no effort configured" and the operator would read the absence as their setting being honoured.
-     * (The two neighbours are a pre-existing defect, recorded rather than fixed here — changing them changes the
-     * failure behaviour of three keys this round has no reason to touch.)
+     * All four keys in this block are now read the same way — a value the parser cannot use is an error naming the
+     * key and the value, never a silently substituted default. This one carries the extra thing an enum needs: the
+     * accepted spellings, listed in the message, because a rung nobody recognises would otherwise reach the provider
+     * as "no effort configured" and the operator would read the absence as their setting being honoured. (Until #74
+     * its three neighbours did substitute their default, so {@code temperature: "hot"} silently became {@code 1.0}
+     * and nobody heard about it.)
      *
      * <p>
      * The case tolerance is the one {@code CliConfigLoader} already applies to the same enum on the yaml surface, for
@@ -245,64 +248,102 @@ public final class MarkdownAgentDefinitionParser implements AgentDefinitionParse
     }
 
     /**
-     * Extracts a string value from map.
+     * Reads an optional text value.
+     *
+     * <p>
+     * {@code label} is the key as an operator wrote it, qualified where the key lives in a block
+     * ({@code model.name}); the map key is derived from it, so there is no second string to drift out of step with
+     * the message. Absence takes the default; a key written with nothing after it is an error, because
+     * {@code map.get(key) == null} cannot tell "not written" from "written empty" and substituting a default for the
+     * second is the defect this method used to have.
      *
      * @param map
      *            The map to extract from
-     * @param key
-     *            The key to look up
+     * @param label
+     *            The qualified key name, used both to look the value up and to name it in a failure
      * @param defaultValue
-     *            The default value if key not found
+     *            The value to use when the key is absent
      * @return The extracted string value
      */
-    private String extractString(Map<String, Object> map, String key, String defaultValue) {
-        final Object value = map.get(key);
-        return value != null ? value.toString() : defaultValue;
+    private String extractString(Map<String, Object> map, String label, String defaultValue) {
+        return map.containsKey(leafKey(label)) ? requireString(map, label) : defaultValue;
     }
 
-    private String extractStringOrElseThrow(Map<String, Object> map, String key) {
-        final Object value = map.get(key);
+    /** Reads an optional whole number, by the rule {@link #extractString} states. */
+    private int extractInt(Map<String, Object> map, String label, int defaultValue) {
+        return map.containsKey(leafKey(label)) ? requireInt(map, label) : defaultValue;
+    }
+
+    private String extractStringOrElseThrow(Map<String, Object> map, String label) {
+        final Object value = map.get(leafKey(label));
         if (value != null) {
             return value.toString();
         }
-        throw new AgentDefinitionParseException("Required key '" + key + "' not found in metadata.");
+        throw new AgentDefinitionParseException("Required key '" + label + "' not found in metadata.");
     }
 
     /**
-     * Extracts an integer value from map.
+     * Reads a text value the caller has already established is present.
      *
-     * @param map
-     *            The map to extract from
-     * @param key
-     *            The key to look up
-     * @param defaultValue
-     *            The default value if key not found
-     * @return The extracted integer value
+     * <p>
+     * Anything with a {@code toString()} is text, as it always was — the one value this refuses is no value at all.
      */
-    private int extractInt(Map<String, Object> map, String key, int defaultValue) {
-        final Object value = map.get(key);
-        if (value instanceof Number) {
-            return ((Number) value).intValue();
+    private String requireString(Map<String, Object> map, String label) {
+        final Object value = map.get(leafKey(label));
+        if (value != null) {
+            return value.toString();
         }
-        return defaultValue;
+        throw new AgentDefinitionParseException("Invalid " + label + ": no value. Expected a text value.");
     }
 
     /**
-     * Extracts a double value from map.
+     * Reads a whole number the caller has already established is present.
      *
-     * @param map
-     *            The map to extract from
-     * @param key
-     *            The key to look up
-     * @param defaultValue
-     *            The default value if key not found
-     * @return The extracted double value
+     * <p>
+     * A whole-valued {@code Double} is accepted and a real fraction is not, which is the answer
+     * {@code ToolInputBinder.isWholeNumber} already gives on the tool surface, and which
+     * {@code docs/features/tool/tool-development-guide.md} already documents for {@code integer} parameters —
+     * {@code 3.0} passes, a real fractional part does not. Reading through {@code intValue()} instead, which is
+     * what this did, truncated {@code 4096.5} to {@code 4096} and narrowed {@code 9999999999} to
+     * {@code 1410065407}, both without a word.
      */
-    private double extractDouble(Map<String, Object> map, String key, double defaultValue) {
-        final Object value = map.get(key);
-        if (value instanceof Number) {
-            return ((Number) value).doubleValue();
+    private int requireInt(Map<String, Object> map, String label) {
+        final Object value = map.get(leafKey(label));
+        if (value instanceof Number number) {
+            try {
+                final BigDecimal decimal = new BigDecimal(number.toString());
+                if (decimal.stripTrailingZeros().scale() <= 0) {
+                    return decimal.intValueExact();
+                }
+            } catch (NumberFormatException | ArithmeticException e) {
+                // NumberFormatException: `.inf` and `.nan` have no decimal form at all. ArithmeticException: a whole
+                // number too large for 32 bits. Both are the same answer to the operator, so both fall through.
+            }
         }
-        return defaultValue;
+        throw new AgentDefinitionParseException(
+                "Invalid " + label + ": " + value + ". Expected a whole number that fits in a 32-bit integer.");
+    }
+
+    /**
+     * Reads a number the caller has already established is present.
+     *
+     * <p>
+     * A numeric-looking {@code String} is <em>not</em> coerced: {@code temperature: "0.7"} is an error rather than
+     * {@code 0.7}, matching {@code ToolInputBinder.toDecimal}, and the message already tells the author what to
+     * write. {@code 1e-3} — the case that would have argued for coercion — arrives from snakeyaml as a
+     * {@code Double} anyway. Range is not this method's question: {@link LlmModel} owns it.
+     */
+    private double requireDouble(Map<String, Object> map, String label) {
+        final Object value = map.get(leafKey(label));
+        if (value instanceof Number number) {
+            return number.doubleValue();
+        }
+        throw new AgentDefinitionParseException("Invalid " + label + ": " + value + ". Expected a number.");
+    }
+
+    /** The map key inside a qualified label: {@code model.temperature} is stored under {@code temperature}. */
+    private String leafKey(String label) {
+        final int lastDot = label.lastIndexOf('.');
+        return lastDot < 0 ? label : label.substring(lastDot + 1);
     }
 }
