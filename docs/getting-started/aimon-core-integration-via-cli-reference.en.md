@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/aimon-core-integration-via-cli-reference.md
-source_commit: 3a41fcd
+source_commit: ccda809
 ---
 
 # aimon-core integration guide — following aimon-cli as the reference
@@ -418,6 +418,17 @@ The four values of `thinkingMode`. Case does not matter.
 | `adaptive` | `thinking: {"type": "adaptive"}` plus `output_config.effort` — the current generation's dialect |
 | `auto` | Whichever dialect the capability table says this model speaks. The value that lets one setting serve a deployment running several Claude models |
 
+On the three families the built-in table marks `BUDGETED` (`claude-opus-4-5` · `claude-sonnet-4-5` ·
+`claude-haiku-4-5`), `auto` sends the budget dialect, and **the budget comes from the call's `ReasoningEffort`** —
+the middle rung, 4096, when none is set. That budget meets the same ceiling as `thinkingBudgetTokens` below. When
+the agent definition sets no `model.maxTokens`, `max_tokens` is `AnthropicConfig`'s default of 4096, so the budget
+is clamped to 4095 with one WARN, **leaving one token for the visible answer.** All four agent definitions bundled
+with the CLI set `maxTokens: 40000`, so none of them meets this. There are two remedies — raise the agent
+definition's `model.maxTokens`, or lower `llm.reasoningEffort` above to `low` (2048) or `minimal` (1024) (or the
+agent definition's `model.reasoningEffort`, if it sets one). **The warning names only the first.** This is a
+decision, not an oversight; the reasons and the alternatives refused are in
+[`thinking-reporting-and-dialect-records.md` §16](../design/llm/thinking-reporting-and-dialect-records.md#16-the-auto-budget-policy-decided-83-2026-09-10).
+
 **The two dialects are mutually exclusive per model and sending the wrong one is an HTTP 400.** That is why
 `auto` exists, and it is also `auto`'s limit — **against a model the table cannot name it sends nothing and
 warns.** If you rename models behind a gateway, declaring that name's `thinkingDialect` in the
@@ -450,9 +461,11 @@ The value itself has a floor and a ceiling.
 
 - **A floor of 1024.** The API rejects a smaller budget on every request, so it is rejected at startup instead.
 - **A ceiling below `max_tokens`.** Thinking tokens count against `max_tokens`, so the client clamps to
-  `max_tokens - 1` and says so at WARN. **The default `max_tokens` is 4096, so on an untouched deployment
-  `thinkingBudgetTokens: 8000` goes out as 4095.** There is no key here for raising that ceiling — it is the
-  agent definition's `model.maxTokens`, a third configuration surface.
+  `max_tokens - 1` and says so at WARN. **That `max_tokens` is the agent definition's `model.maxTokens`, and
+  `AnthropicConfig`'s default of 4096 when it sets none — so on such an agent `thinkingBudgetTokens: 8000` goes
+  out as 4095.** All four agent definitions bundled with the CLI set `maxTokens: 40000`, so on those the budget
+  goes out as 8000. There is no key here for raising that ceiling — it is the agent definition's
+  `model.maxTokens`, a third configuration surface.
 
 Under `auto` and `adaptive`, how much thinking to do comes from the call's `ReasoningEffort`, and the key that
 writes it per deployment is the shared `llm.reasoningEffort` above.

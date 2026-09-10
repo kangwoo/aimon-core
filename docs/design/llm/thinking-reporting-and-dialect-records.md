@@ -1193,11 +1193,186 @@ that record exists to avoid.
 
 ---
 
+## 16. The `AUTO` budget policy, decided (#83, 2026-09-10)
+
+*Appended 2026-09-10 by a later issue. Not a correction — §15 remains the one place this document is wrong, and
+nothing above is edited. This section records a decision #73 left open: that build noticed the behaviour below and
+handed it on as "worth a maintainer's eye" rather than decide a budget policy inside a change about the dialect
+table. It lives here because this is the change that made the behaviour reachable, and §8 is the table that should
+have carried it.*
+
+**In one line: `thinkingMode: auto` on a model the table marks `BUDGETED` may resolve to a request whose thinking
+budget consumes all but one output token, and that is allowed.** Issue #83 offered three policies and the maintainer
+chose the first — **leave the behaviour exactly as it is, and record why**. No production behaviour changed with it.
+What follows is the why, written so the next reader finds the argument already had.
+
+### 16.1 The arithmetic, checkable without the issue
+
+Line numbers as of 2026-09-10.
+
+- **`AUTO` on a budgeted row takes `EXTENDED`'s branch.** `AnthropicThinkingResolver.java:165` hands `AUTO` to
+  `resolveAutoDialect`, which returns the row's own dialect when it is neither `EITHER` nor `UNKNOWN`
+  (`:182-183`), and `resolve` then takes the budgeted branch (`:92-96`) — the one `EXTENDED` reaches on the same
+  row.
+- **The rows are the three §14 measured.** `InMemoryModelCapabilityRegistry.java:355-357` registers
+  `claude-opus-4-5`, `claude-sonnet-4-5` and `claude-haiku-4-5` as prefixes carrying `BUDGETED_DIALECT_ONLY`
+  (`:141-142`); §14.4 is why they are prefixes and why they cover six measured names.
+- **An unset effort is the middle rung.** `AnthropicThinkingBudgets.java:105-107` answers a `null` effort with
+  `MEDIUM_BUDGET`, which is 4096 (`:84`).
+- **The clamp.** `AnthropicThinkingBudgets.java:140` is `Math.min(requested, maxTokens - 1)`, floored at 1024
+  (`:141`). `max_tokens` is `modelConfig.getMaxTokens().orElse(config.getMaxTokens())`
+  (`AnthropicLlmClient.java:375`), and `AnthropicConfig`'s default is 4096 (`AnthropicConfig.java:41`, applied at
+  `:290`). A requested 4096 against 4096 sends `budget_tokens: 4095`; thinking tokens count against `max_tokens`,
+  so one token is left for the answer.
+- **The warning.** Recorded at `AnthropicThinkingResolver.java:419-424` as `REQUIRES_THINKING` — it always
+  survives the filter, because the parameter it describes is set immediately after (`:426-427`) — under the
+  signature `thinkingBudgetClamped=4096->4095` (`:420`); emitted at `AnthropicLlmClient.java:400-401`; logged by
+  `reportDivergence` as `log.warn(message, args)` (`:684`). **The signature is the dedup key and is not in the log
+  line.** What an operator reads starts *"A thinking budget of 4096 tokens does not fit under maxTokens 4096;
+  sending 4095 instead"* and carries *"Raise maxTokens"* (`AnthropicThinkingResolver.java:421-423`). It is logged
+  **once per client instance** (`AnthropicLlmClient.java:681`, over the set declared at `:141`), for the reason
+  `:147-148` gives: what it describes was set once, in a configuration file.
+
+The `MINIMAL` and `LOW` rungs, 1024 and 2048 (`AnthropicThinkingBudgets.java:82-83`), fit under 4096 and produce no
+clamp and no warning. Reason 4 below depends on that.
+
+The row §8 should have carried, in that table's voice:
+
+| # | Shape | Disposition |
+|---|---|---|
+| **15** | `AUTO` on a budgeted family, with a `max_tokens` above 1024 and no larger than the budget — `AnthropicConfig`'s default 4096 is the common case — spends the whole output allowance on thinking | Left as is (#83). One WARN per client, naming `Raise maxTokens`; the second remedy, a lower `reasoningEffort`, is named by both operator guides and not by the warning. §8's B-1 stopped at *"sends a thinking parameter and bills for it"* and did not reach the budget |
+
+`AnthropicThinkingDialectTest.autoOnABuiltInBudgetedRowClampsUnderTheConfigDefaultMaxTokens` pins the request end to
+end — a built-in row, no effort, no `maxTokens` on the call: `max_tokens` 4096, `budget_tokens` 4095, exactly one
+warning, asserted on its message. It is the guard against this section quietly becoming false: a headroom policy
+added to `AUTO` turns it red.
+
+### 16.2 Why it stays — five reasons
+
+1. **It is what `extended` has always done on this dialect.** The clamp arrived with #47 (`5cbc6da`), the day
+   before this document's rows, and #47's record weighed this exact arithmetic:
+   [`anthropic-thinking-traces.md`](anthropic-thinking-traces.md) §12 `Q-5` answers *"It clamps to 4095 and warns,
+   which is correct"* and declines to raise `AnthropicConfig`'s default as a side effect of choosing a thinking
+   mode. This document's change did not alter what the clamp does. It altered who reaches it: before the rows,
+   `auto` had no dialect to send on these families, so it sent nothing and warned.
+2. **Consistency between the two modes has value, and divergence is what option 2 costs.** `AUTO`'s contract is that
+   the table decides the dialect — [`reasoning-model-enablement.md`](reasoning-model-enablement.md) §3.4: *"use the
+   model's dialect when the table knows it"* — not that the client decides how much. A headroom rule under `AUTO`
+   alone would send two different budgets to the same model, at the same `max_tokens` and effort, depending on
+   which word the operator wrote, and `AnthropicThinkingResolver` would hold two budget policies where it holds one.
+3. **"Usable headroom" is a number nobody has measured.** Every candidate — a fraction of `max_tokens`, a floor for
+   the answer, a fixed reserve — would be chosen the way the ladder's two middle rungs were, and
+   `AnthropicThinkingBudgets.java:36-44` labels those **arbitrary** in its own javadoc. There is no measurement to
+   choose it from, so option 2 would do what the issue itself warns against: it *"replaces a loud, correct warning
+   with a quiet, arbitrary policy."*
+4. **The warning names its own remedy.** *"Raise maxTokens: thinking tokens are counted against it, so the reply is
+   what this squeezes out, not the reasoning"* (`AnthropicThinkingResolver.java:421-423`) — an operator who reads it
+   is one edit from a request that can answer. Two precisions keep this reason honest. **"Loud" means once per
+   client**, at the first request that clamps, not on every call: right for a configuration fact, and a reason not
+   to read a quiet log after that first request as a fixed deployment. **And the warning names one of two edits
+   that work.** Lowering the effort to `low` (2048) or `minimal` (1024) also fits under 4096 — `llm.reasoningEffort`
+   / `aimon.llm.reasoning-effort`, which `AnthropicThinkingResolver.java:301-303` reads after the agent
+   definition's own `model.reasoningEffort`. Both operator guides name the second remedy; whether the warning
+   should, and its `only 1 tokens` grammar, are backlog `L-13`.
+5. **Nothing here is reachable without opting in.** `AnthropicConfig`'s default `thinkingMode` is `OFF`
+   (`AnthropicConfig.java:43`, applied at `:294`), and keeping it there was its own decision —
+   [`reasoning-model-enablement.md`](reasoning-model-enablement.md) §3.4: *"Making `AUTO` the default would turn
+   thinking on, and bill for it, in every Anthropic deployment that upgrades without reading the changelog."* A
+   deployment that never wrote a thinking mode sends no thinking parameter and never meets this.
+
+### 16.3 The two alternatives, and why each is refused
+
+- **Option 2 — reserve headroom under `AUTO`**, a fraction or a floor, so that `auto` means *a request that can
+  actually answer*. Refused for reasons 2 and 3: it makes `auto` and `extended` diverge on the same model, and the
+  reserve is a number nobody has measured.
+- **Option 3 — refuse: send nothing under `AUTO` when the budget cannot leave an answer, and warn as before the
+  rows.** The safest, and in the issue's own words it *"partly un-does what #73 was for"*. The rows exist so that
+  `AUTO` acts on a measured fact; declining to act on the only three rows that say `BUDGETED` hands back, on exactly
+  those models, the defect backlog `L-6` recorded and this document's change closed — `thinkingMode: auto` getting
+  nothing on them. And it leaves `extended` clamping as before, so it too makes the two modes behave differently on
+  the same model.
+
+### 16.4 Who actually meets it
+
+The issue calls 4096 *"the shipped default"* and describes the exposed deployment as one that *"only ever wrote
+`thinkingMode: auto` and never touched `maxTokens`"*. That is true of the library and not of the CLI as shipped, and
+the difference is the population.
+
+- **`max_tokens` is the agent's before it is the client's.** `AnthropicLlmClient.java:375` prefers
+  `LlmModel.getMaxTokens()`, which an agent definition sets from `model.maxTokens`
+  (`MarkdownAgentDefinitionParser.java:164-165`); `AnthropicConfig`'s 4096 applies only when the agent sets none.
+  Neither configuration surface binds an LLM `maxTokens`: `LlmClientFactory` never sets it, and
+  `AimonLlmAutoConfiguration.java:191-209` builds `AnthropicConfig` without it.
+- **Every agent definition bundled with the CLI sets `maxTokens: 40000`**
+  (`modules/aimon-cli/src/main/resources/agents/{default,default-anthropic,default-openai,ops-agent}/agent.md`),
+  which clears every rung, `HIGH`'s 16000 included. The CLI loads `agents/default` unless configured otherwise
+  (`default-config.yaml:124`, `AgentSetupFactory.java:140`, `:507`, `:872`), but that bundle names `gpt-5.1`; the
+  only bundle naming a budgeted family is `default-anthropic` (`claude-sonnet-4-5`), where `AUTO` sends
+  `budget_tokens: 4096` unclamped. No CLI deployment on a bundled definition meets this.
+- **The exposed population is a shape, not a count:** any agent whose model settings carry no `maxTokens`, or one no
+  larger than the requested budget (4096 with no effort set, 16000 at `high`) — which includes every starter
+  application that leaves it out, since the starter ships no agent definition and binds no LLM `maxTokens`. Above
+  1024 and up to that budget the answer is left one token; at or below 1024 no budget fits at all and the thinking
+  parameter is omitted instead, with its own warning (`thinkingBudgetImpossible`,
+  `AnthropicThinkingResolver.java:404-409`). Nothing in this repository can count how many deployments that shape
+  holds.
+
+This narrows who is affected; it does not reverse the decision.
+
+### 16.5 What would re-open this
+
+The decision is meant to be falsifiable, and these are its triggers:
+
+- **A measurement of usable headroom** — an answer allowance that is measured rather than chosen removes reason 3.
+- **A vendor change that stops counting thinking tokens against `max_tokens`** — the arithmetic stops existing.
+- **`O-2` being taken** ([`anthropic-thinking-config-surface.md`](anthropic-thinking-config-surface.md) §13). An
+  explicit budget under `AUTO` changes the shape, because the operator would then have written the number the
+  warning is about. #83 does not answer `O-2`, and that document's §14 says so beside it.
+- **A change to `AnthropicConfig`'s default `maxTokens`**, which `Q-5` refused once as a side effect and which would
+  move §16.4's population.
+
+Naming the second remedy in the warning is **not** a trigger: it changes what the warning says, not what `AUTO` does.
+It is backlog `L-13`.
+
+### 16.6 Where else this is written
+
+One rationale, here; everywhere else a sentence and a pointer back.
+
+| Where | What it carries |
+|---|---|
+| `CHANGELOG.md` `[Unreleased]` | the #73 behaviour-change bullet names the clamp, scoped to `AnthropicConfig`'s default, and points here; the #54 budget bullet's *"untouched deployment"* and the effort-ladder bullet's *"out of the box"* are scoped the same way |
+| [`aimon-core-integration-via-cli-reference.md`](../../getting-started/aimon-core-integration-via-cli-reference.md) (+ `.en.md`) | a paragraph after the `thinkingMode` table — the budget under `auto`, both remedies, a link here — and the `thinkingBudgetTokens` ceiling scoped |
+| [`embedding-agent-in-application.md`](../../getting-started/embedding-agent-in-application.md) (+ `.en.md`) | the same paragraph in the starter's keys; its ceiling sentence was already true, since the starter ships no agent definition |
+| `modules/aimon-cli/src/main/resources/default-config.yaml` | a clause on the `auto` value, and the `thinkingBudgetTokens` comment scoped — comments only |
+| [`anthropic-thinking-config-surface.md`](anthropic-thinking-config-surface.md) §14 | two dated notes: beside `O-2`, which #83 does not answer, and beside D-4's *"defaults to 4096"* |
+| [`../../backlog/llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md) `L-13` | the warning's wording, and whether it should name the second remedy |
+| `AnthropicThinkingDialectTest`, `AnthropicThinkingBudgetsTest` | the request pinned end to end on a built-in row, and the unset-effort clamp stated directly |
+
+### 16.7 Where the build departed from #83's reviewed design
+
+The design this section was built from was reviewed twice outside the repository. Four of its statements would have
+landed false — three found by its second review, one by the build — and each was corrected here. None changes the
+decision.
+
+- **It counted five sentences calling 4096 the default unconditionally; there were six.** The effort-ladder bullet
+  in `CHANGELOG.md` also said *"The clamp bites out of the box"*, false on the CLI for §16.4's reason, and was
+  scoped with the rest.
+- **It described the exposed population as agents that omit `model.maxTokens`.** One that sets a value no larger
+  than the requested budget meets the same clamp, and §16.4 says so.
+- **It had the CLI guide name the default agent bundle** as a deployment that sends a budget unclamped. That bundle
+  names `gpt-5.1` and never reaches a budgeted family, so the guide says "the bundled agent definitions" and §16.4
+  names `default-anthropic` as the one that does.
+- **It had the dated D-4 note in `anthropic-thinking-config-surface.md` say all three surfaces named there were
+  scoped.** Two were; the starter guide's sentence is true as written and was left alone, and the note says which.
+
+---
+
 ## 관련 문서
 
 - [`reasoning-model-enablement.md`](reasoning-model-enablement.md) — §3.3's table, §3.5's census, §7's failure modes, §9 U-1's discharge
-- [`anthropic-thinking-traces.md`](anthropic-thinking-traces.md) — §2.1's vendor per-model table and the two quoted 400s
+- [`anthropic-thinking-traces.md`](anthropic-thinking-traces.md) — §2.1's vendor per-model table and the two quoted 400s; §12 `Q-5`, §16's first reason
+- [`anthropic-thinking-config-surface.md`](anthropic-thinking-config-surface.md) — §13 `O-2`, which §16 does not answer, and the two dated §14 notes that point here
 - [`reasoning-effort-config-surface.md`](reasoning-effort-config-surface.md) — the set-valued precedent §10 A2 weighs and refuses
-- [`../../backlog/llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md) — L-6 and L-7 closed here; L-9, L-10 and L-11 opened by §15.4
+- [`../../backlog/llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md) — L-6 and L-7 closed here; L-9, L-10 and L-11 opened by §15.4; L-13 opened by §16
 - [`../../backlog/README.md`](../../backlog/README.md) — the rules for closing an item, and the index this change corrects twice
 - [`../../project/api-stability.md`](../../project/api-stability.md) — §5, which permits the enum addition at `0.x`

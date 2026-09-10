@@ -83,14 +83,20 @@ llm:
 #                                      #   adaptive thinking: {"type": "adaptive"} + output_config.effort
 #                                      #   auto     whichever dialect the capability table says this model
 #                                      #            speaks; a model the table cannot name sends nothing and
-#                                      #            warns -- declare it under `modelCapabilities` above
+#                                      #            warns -- declare it under `modelCapabilities` above. On
+#                                      #            the three budgeted claude-*-4-5 families the budget is
+#                                      #            `reasoningEffort`'s (4096 when unset) and is clamped
+#                                      #            like the one below: max_tokens 4096 sends 4095, one
+#                                      #            token left for the answer, with a WARN
 #                                      # `extended` here rather than `auto` so this block boots as written:
 #                                      #   the budget line below is legal under that one mode only. Uncomment
 #                                      #   `auto` instead and the budget line has to go with it.
 #    thinkingBudgetTokens: 4000        # `extended` ONLY: any other mode fails at startup. >= 1024, and it
-#                                      #   is clamped below the request's max_tokens (4096 by default, so a
-#                                      #   larger number is sent as max_tokens - 1 with a WARN). Raising that
-#                                      #   ceiling is the agent definition's `model.maxTokens`, not a key here.
+#                                      #   is clamped below the request's max_tokens (4096 when the agent
+#                                      #   definition sets no `model.maxTokens` -- the bundled agents set
+#                                      #   40000 -- and a larger number is sent as max_tokens - 1 with a WARN).
+#                                      #   Raising that ceiling is the agent definition's `model.maxTokens`,
+#                                      #   not a key here.
 #    thinkingDisplay: summarized       # unset by default, and `summarized` is the only value -- ASK for the
 #                                      #   model's thinking text and show it live, dimmed, as it is produced.
 #                                      #   (The server also accepts `omitted`, its own default; it is not offered

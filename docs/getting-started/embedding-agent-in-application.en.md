@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/embedding-agent-in-application.md
-source_commit: d3500f6
+source_commit: 2328822
 ---
 
 # Embedding an AIMON agent in your application
@@ -479,6 +479,17 @@ aimon:
   **Quote `off`.** YAML reads an unquoted `off` as a boolean, so Boot hands it over as the string `"false"`;
   startup then fails, with a message that names the quotes. The CLI has no such limit because it can read the
   parser's original scalar — one collision, answered differently by the two surfaces.
+
+  On the three families the built-in table marks `BUDGETED` (`claude-opus-4-5` · `claude-sonnet-4-5` ·
+  `claude-haiku-4-5`), `auto` sends the budget dialect, and **the budget comes from the call's
+  `ReasoningEffort`** — the middle rung, 4096, when none is set. That budget meets the same ceiling as
+  `thinking-budget-tokens` just below. When the agent definition sets no `model.maxTokens`, `max_tokens` is
+  `AnthropicConfig`'s default of 4096, so the budget is clamped to 4095 with one WARN, **leaving one token for the
+  visible answer.** There are two remedies — raise the agent definition's `model.maxTokens`, or lower
+  `aimon.llm.reasoning-effort` to `low` (2048) or `minimal` (1024) (or the agent definition's
+  `model.reasoningEffort`, if it sets one). **The warning names only the first.** This is a decision, not an
+  oversight; the reasons and the alternatives refused are in
+  [`thinking-reporting-and-dialect-records.md` §16](../design/llm/thinking-reporting-and-dialect-records.md#16-the-auto-budget-policy-decided-83-2026-09-10).
 
   **`thinking-budget-tokens` is not an independent knob; it belongs to `extended`.** Written together with
   `auto`, `adaptive` or the default `off` it **fails startup** (a number has no meaning until the dialect is
