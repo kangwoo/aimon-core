@@ -1,7 +1,9 @@
 package at.aimon.llm.capability.testkit;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchIllegalArgumentException;
 
 import java.util.Arrays;
 import java.util.EnumSet;
@@ -187,7 +189,24 @@ class ModelCapabilityBindingProbeTest {
         void refusesAValueTheDeclarationRefuses() {
             assertThatThrownBy(() -> probe.assertValuesReachTheDeclaration("acceptedReasoningEfforts",
                     List.of(EnumSet.noneOf(ReasoningEffort.class), EnumSet.of(ReasoningEffort.LOW))))
-                    .isInstanceOf(AssertionError.class).hasMessageContaining("refuses `acceptedReasoningEfforts`");
+                    .isInstanceOf(AssertionError.class).hasMessageContaining("refuses `acceptedReasoningEfforts`")
+                    .hasMessageContaining("pick one the declaration accepts")
+                    .hasMessageNotContaining("declaresAnything");
+        }
+
+        @Test
+        @DisplayName("a value the builder calls empty is blamed on declaresAnything(), since no other value would pass")
+        void blamesDeclaresAnythingWhenTheBuilderCallsTheValueEmpty() {
+            // Unreachable through a real key while declaresAnything() checks all eight, so the refusal is taken from
+            // an empty builder: it is the exception a key missing from that method produces whatever value is set.
+            final IllegalArgumentException emptyRefusal = catchIllegalArgumentException(
+                    () -> ModelCapabilityDeclaration.builder().build());
+
+            assertThat(ModelCapabilityBindingProbe.refusedProbeValue("supportsReasoningSummary", true, emptyRefusal))
+                    .hasMessageContaining("`supportsReasoningSummary` = true was the only key set")
+                    .hasMessageContaining("ModelCapabilityDeclaration.Builder.declaresAnything() does not check"
+                            + " the field `.supportsReasoningSummary(...)` writes")
+                    .hasMessageNotContaining("pick one the declaration accepts").cause().isSameAs(emptyRefusal);
         }
 
         @Test

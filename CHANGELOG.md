@@ -1454,6 +1454,30 @@ Central is versioned independently).
 
 ### Build, CI and the release gate
 
+- **Three testkits no longer run their consumers' tests against library versions those consumers do not
+  ship** (#91). `aimon-filesystem-testkit`, `aimon-session-testkit` and `aimon-llm-capability-testkit`
+  governed the JUnit their main sources compile against with `api(platform(libs.spring.boot.dependencies))`,
+  and `api` put Spring Boot's whole dependency management on every consumer's test classpath, where a
+  managed version newer than the one a module ships wins. Across their seven consumers, 29 artifacts
+  resolved under test to a version other than the shipped one, and 20 of them came from that platform:
+  the nine #87 added to `aimon-cli` (HikariCP 6.3.3 against the 5.1.0 it ships among them), the MongoDB
+  driver 5.5.2 against 4.11.1 on `aimon-filesystem-gridfs` and `aimon-session-mongodb`, HikariCP on
+  `aimon-session-postgres`, `reactor-core` on `aimon-session-redis` and Caffeine on the starter. All three
+  now take `platform(libs.junit.bom)`, as `aimon-memory-testkit` already did, and those 20 are gone; no
+  consumer gained a difference. The three are unpublished, and the POM and module metadata of all 21
+  published modules are byte-identical before and after. The reason is written once, next to `junit` in
+  `gradle/libs.versions.toml`, and the catalog's now-unused `spring-boot-dependencies` entry is removed.
+  The nine differences that remain predate this and have other sources — `spring-boot-starter-test`
+  (Logback and `jakarta.xml.bind-api` on the CLI), Testcontainers (`org.jetbrains:annotations`) and the
+  vendor SDKs on the starter's test classpath (`error_prone_annotations`).
+
+- **The model-capability binding probe names the right fix when the builder, not the value, refuses a
+  probe value** (#91). A declarable key missing from `ModelCapabilityDeclaration.Builder.declaresAnything()`
+  made `ModelCapabilityBindingProbe` say *"pick one the declaration accepts"*, which no value can satisfy;
+  it now points at `declaresAnything()`, and a test pins that message. The class javadoc of
+  `AbstractModelCapabilityBindingContractTest` credited yaml-key binding to `LlmClientFactoryTest`, which
+  never reaches Jackson; it is `CliConfigLoaderTest`.
+
 - **`playwrightTest` ran nothing, and now it runs in both gates.** The task was registered without
   `testClassesDirs` or `classpath` — which a bare `register<Test>` does not inherit from `test` — so it
   matched no test class, reported `NO-SOURCE` and finished green in 650ms. It had been in that state
