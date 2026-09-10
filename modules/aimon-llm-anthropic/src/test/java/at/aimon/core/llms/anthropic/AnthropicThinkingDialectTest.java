@@ -159,13 +159,19 @@ class AnthropicThinkingDialectTest {
                 .map(ILoggingEvent::getFormattedMessage).toList();
     }
 
-    // ── Row 1: OFF × any dialect → nothing, and nothing said ─────────────────────────────────────────────────────
+    // ── Row 1: OFF × any dialect → nothing, and nothing said ABOUT THE DIALECT ───────────────────────────────────
 
     @Test
-    @DisplayName("OFF sends no thinking parameter whatever the model speaks, and says nothing about it")
+    @DisplayName("OFF sends no thinking parameter whatever the model speaks, and says nothing about the dialect")
     void offIgnoresTheDialectEntirely() {
-        // Silence is correct here: the operator turned thinking off, so there is no question for the table to have
-        // answered and nothing was substituted. The dialect is not even looked up -- resolveThinking returns first.
+        // Silence about the dialect is correct here: the operator turned thinking off, so there is no question for
+        // the table to have answered and nothing was substituted. The dialect is not even looked up --
+        // resolveThinking returns first.
+        //
+        // What is NOT silent, since reasoningEffort became settable deployment-wide, is the effort itself: it was
+        // configured and reaches nothing, which is a different report about a different thing. The two are separated
+        // here rather than by dropping the assertion, because an empty-warnings assertion is what would notice a
+        // dialect warning leaking into a mode that never asks the table anything.
         for (String model : new String[]{ADAPTIVE_MODEL, BUDGETED_MODEL, UNKNOWN_MODEL}) {
             logAppender.list.clear();
             final JsonNode body = send(client(config(model, AnthropicThinkingMode.OFF).build()),
@@ -173,7 +179,13 @@ class AnthropicThinkingDialectTest {
 
             assertThat(body.has("thinking")).as("%s thinking", model).isFalse();
             assertThat(body.has("output_config")).as("%s output_config", model).isFalse();
-            assertThat(warnings()).as("%s warnings", model).isEmpty();
+            assertThat(warnings()).as("%s dialect warnings", model)
+                    .noneMatch(w -> w.contains("dialect") || w.contains("thinkingDialect"));
+            // hasSize(1) rather than allMatch alone: allMatch passes vacuously on an empty list, so on its own it
+            // would stop proving that the effort warning fires at all -- and the whole reason this assertion was
+            // split from the one above is that the effort warning is now expected here.
+            assertThat(warnings()).as("%s warnings", model).hasSize(1)
+                    .allMatch(w -> w.contains("the effort reaches nothing"));
         }
     }
 

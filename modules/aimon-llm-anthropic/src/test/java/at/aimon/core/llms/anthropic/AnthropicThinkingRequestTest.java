@@ -175,6 +175,97 @@ class AnthropicThinkingRequestTest {
     }
 
     @Test
+    @DisplayName("an effort configured on AnthropicConfig reaches the request when LlmModel sets none")
+    void configLevelReasoningEffortIsUsed() {
+        // The Anthropic half of the shared reasoningEffort key. Without the field this whole request would carry no
+        // effort at all, so aimon.llm.reasoning-effort would mean something on one provider and nothing on the
+        // other -- which is what would make a shared key a lie for half its users.
+        final JsonNode fromConfig = send(client(
+                config().thinkingMode(AnthropicThinkingMode.ADAPTIVE).reasoningEffort(ReasoningEffort.MEDIUM).build()),
+                LlmModel.builder().build());
+        final JsonNode fromCall = send(client(config().thinkingMode(AnthropicThinkingMode.ADAPTIVE).build()),
+                LlmModel.builder().reasoningEffort(ReasoningEffort.MEDIUM).build());
+
+        assertThat(fromConfig.get("output_config").get("effort").asText()).isEqualTo("medium");
+        // Stated as an equality of the two bodies rather than of the one key: the claim is that where the rung came
+        // from does not change the request, and only comparing the whole body defends that.
+        assertThat(fromConfig).isEqualTo(fromCall);
+    }
+
+    @Test
+    @DisplayName("the LlmModel's effort beats the one configured on the client")
+    void theRequestEffortBeatsTheConfiguredOne() {
+        // The precedence of the shared key: LlmModel first, then the client config -- the same rule
+        // OpenAiRequestParameters.requestedEffort has, written in the same shape on purpose. One configuration key
+        // means one resolution rule, and a pair of tests that read alike is what notices if one provider's drifts.
+        final JsonNode body = send(client(
+                config().thinkingMode(AnthropicThinkingMode.ADAPTIVE).reasoningEffort(ReasoningEffort.LOW).build()),
+                LlmModel.builder().reasoningEffort(ReasoningEffort.HIGH).build());
+
+        assertThat(body.get("output_config").get("effort").asText()).isEqualTo("high");
+    }
+
+    @Test
+    @DisplayName("a config-level NONE suppresses thinking exactly as a call-level NONE does")
+    void configLevelNoneSuppressesThinking() {
+        // The assertion that fails if only one of the two read sites learned the precedence. resolveThinking decides
+        // whether the request carries thinking at all; intendedEffort supplies the rung a translation warning names.
+        // A precedence applied in one and not the other is a gate and a warning disagreeing about one request.
+        final JsonNode body = send(client(
+                config().thinkingMode(AnthropicThinkingMode.ADAPTIVE).reasoningEffort(ReasoningEffort.NONE).build()),
+                LlmModel.builder().build());
+
+        assertThat(body.has("thinking")).isFalse();
+        assertThat(body.has("output_config")).isFalse();
+    }
+
+    @Test
+    @DisplayName("an effort under the default thinkingMode OFF reaches nothing, and is said once")
+    void anInertEffortIsReportedOnce() {
+        // "Configured and never read". reasoningEffort is settable deployment-wide from both surfaces and OFF is the
+        // shipped default, so "make it think harder" is a reasonable thing to write and on its own does nothing
+        // here. Not a refusal: the remedy is a second key, and failing the boot for a combination whose fix is
+        // another setting turns valid configuration into a startup failure.
+        final AnthropicLlmClient client = client(config().reasoningEffort(ReasoningEffort.HIGH).build());
+
+        send(client, LlmModel.builder().build());
+        send(client, LlmModel.builder().build());
+
+        assertThat(warnings()).filteredOn(w -> w.contains("the effort reaches nothing")).hasSize(1);
+        assertThat(warnings()).anyMatch(w -> w.contains("reasoningEffort HIGH") && w.contains("thinkingMode is OFF"));
+    }
+
+    @Test
+    @DisplayName("a call-level effort under OFF is reported too — the rule does not depend on where the value came from")
+    void anInertCallLevelEffortIsAlsoReported() {
+        // The deliberate behaviour change: a deployment setting model.reasoningEffort in an agent definition today,
+        // with the default mode, gets a new WARN line. Making the warning depend on the source would be an
+        // asymmetry -- where the value came from does not change whether it reached anything.
+        send(client(config().build()), LlmModel.builder().reasoningEffort(ReasoningEffort.HIGH).build());
+
+        assertThat(warnings()).anyMatch(w -> w.contains("the effort reaches nothing"));
+    }
+
+    @Test
+    @DisplayName("reasoningEffort NONE under OFF is silent — that pair is consistent, not inert")
+    void noneUnderOffIsSilent() {
+        // Both mean "send no thinking parameter", so telling this operator to turn thinking on would be advice in
+        // the wrong direction. The condition excluding NONE is the whole of this warning's correctness.
+        send(client(config().reasoningEffort(ReasoningEffort.NONE).build()), LlmModel.builder().build());
+        send(client(config().build()), LlmModel.builder().reasoningEffort(ReasoningEffort.NONE).build());
+
+        assertThat(warnings()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("no effort anywhere under OFF is silent")
+    void noEffortAnywhereUnderOffIsSilent() {
+        send(client(config().build()), LlmModel.builder().build());
+
+        assertThat(warnings()).isEmpty();
+    }
+
+    @Test
     @DisplayName("an explicit config budget is sent as given when it fits")
     void explicitBudgetIsSentAsGiven() {
         final JsonNode body = send(client(config().thinkingMode(AnthropicThinkingMode.EXTENDED)

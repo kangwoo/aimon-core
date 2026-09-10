@@ -131,7 +131,7 @@ final class OpenAIResponsesRequestFactory {
         }
 
         // Model rule, shared with the Chat path: a rung this model's ladder does not have is omitted and reported,
-        // never raised to meet the floor.
+        // never raised to the nearest one it does have.
         if (requested.isPresent()
                 && !OpenAiRequestParameters.maySendEffort(requested.get(), capabilities, modelName, reporter)) {
             return;

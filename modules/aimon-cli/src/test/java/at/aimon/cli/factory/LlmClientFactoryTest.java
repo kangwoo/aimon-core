@@ -3,6 +3,7 @@ package at.aimon.cli.factory;
 import static org.assertj.core.api.Assertions.*;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -17,6 +18,7 @@ import at.aimon.cli.config.LlmProviderConfig;
 import at.aimon.cli.config.ModelCapabilityConfig;
 import at.aimon.cli.exception.ConfigurationException;
 import at.aimon.core.llm.LlmClient;
+import at.aimon.core.llm.ReasoningEffort;
 import at.aimon.core.llm.capability.InMemoryModelCapabilityRegistry;
 import at.aimon.core.llm.capability.ModelCapabilityRegistry;
 import at.aimon.core.llms.anthropic.AnthropicConfig;
@@ -233,6 +235,11 @@ class LlmClientFactoryTest {
 
             ModelCapabilityRegistry registry = factory.openAiConfig(config).getModelCapabilityRegistry();
 
+            // One name per built-in SHAPE, not just per row: gpt-5-mini lands on a prefix row and the other two on
+            // exact ones. Round 9 gave gpt-5.6-terra an exact row of its own, so without the first line this test
+            // would sample no prefix row at all.
+            assertThat(registry.resolve("gpt-5-mini"))
+                    .isEqualTo(InMemoryModelCapabilityRegistry.withDefaults().resolve("gpt-5-mini"));
             assertThat(registry.resolve("gpt-5.6-terra"))
                     .isEqualTo(InMemoryModelCapabilityRegistry.withDefaults().resolve("gpt-5.6-terra"));
             assertThat(registry.resolve("o3-mini"))
@@ -244,6 +251,8 @@ class LlmClientFactoryTest {
         void noDeclarationsKeepsTheDefaultRegistry() {
             ModelCapabilityRegistry registry = factory.openAiConfig(openAi("gpt-4o")).getModelCapabilityRegistry();
 
+            assertThat(registry.resolve("gpt-5-mini"))
+                    .isEqualTo(InMemoryModelCapabilityRegistry.withDefaults().resolve("gpt-5-mini"));
             assertThat(registry.resolve("gpt-5.6-terra"))
                     .isEqualTo(InMemoryModelCapabilityRegistry.withDefaults().resolve("gpt-5.6-terra"));
         }
@@ -327,6 +336,52 @@ class LlmClientFactoryTest {
 
             assertThat(registry.resolve("claude-sonnet-5"))
                     .isEqualTo(InMemoryModelCapabilityRegistry.withDefaults().resolve("claude-sonnet-5"));
+        }
+
+        @Test
+        @DisplayName("Should carry a ladder written as a set through to the registry")
+        void aLadderWrittenAsASetReachesTheRegistry() {
+            // The general ladder form, end to end: yaml List -> ModelCapabilityConfig -> ModelCapabilityDeclaration
+            // -> the registry row a client reads. Asserted by resolving the declared name rather than by inspecting
+            // the declaration, because the translation from List to Set happens in between.
+            ModelCapabilityConfig capabilities = new ModelCapabilityConfig();
+            capabilities.setAcceptedReasoningEfforts(
+                    List.of(ReasoningEffort.NONE, ReasoningEffort.LOW, ReasoningEffort.MEDIUM, ReasoningEffort.HIGH));
+            LlmProviderConfig config = openAi("prod-assistant");
+            config.setModelCapabilities(Map.of("prod-assistant", capabilities));
+
+            ModelCapabilityRegistry registry = factory.openAiConfig(config).getModelCapabilityRegistry();
+
+            assertThat(registry.resolve("prod-assistant").acceptedReasoningEfforts()).containsExactly(
+                    ReasoningEffort.NONE, ReasoningEffort.LOW, ReasoningEffort.MEDIUM, ReasoningEffort.HIGH);
+        }
+
+        @Test
+        @DisplayName("Should reject a declaration stating both ladder keys, naming the yaml key")
+        void rejectsBothLadderKeys() {
+            // The core makes the judgement; this branch only renames the exception after the yaml key an operator
+            // has to go and edit.
+            ModelCapabilityConfig capabilities = new ModelCapabilityConfig();
+            capabilities.setLowestReasoningEffort(ReasoningEffort.LOW);
+            capabilities.setAcceptedReasoningEfforts(List.of(ReasoningEffort.NONE, ReasoningEffort.HIGH));
+            LlmProviderConfig config = openAi("prod-assistant");
+            config.setModelCapabilities(Map.of("prod-assistant", capabilities));
+
+            assertThatThrownBy(() -> factory.create(config)).isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("llm.modelCapabilities").hasMessageContaining("prod-assistant")
+                    .hasMessageContaining("acceptedReasoningEfforts");
+        }
+
+        @Test
+        @DisplayName("Should reject an empty ladder rather than treating it as undeclared, naming the yaml key")
+        void rejectsAnEmptyLadder() {
+            ModelCapabilityConfig capabilities = new ModelCapabilityConfig();
+            capabilities.setAcceptedReasoningEfforts(List.of());
+            LlmProviderConfig config = openAi("prod-assistant");
+            config.setModelCapabilities(Map.of("prod-assistant", capabilities));
+
+            assertThatThrownBy(() -> factory.create(config)).isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("llm.modelCapabilities").hasMessageContaining("acceptedReasoningEfforts");
         }
 
         @Test
@@ -471,6 +526,51 @@ class LlmClientFactoryTest {
             config.setModel("gpt-4o");
 
             assertThat(factory.openAiConfig(config).getModel()).isEqualTo("gpt-4o");
+        }
+    }
+
+    @Nested
+    @DisplayName("llm.reasoningEffort — the shared key")
+    class SharedReasoningEffort {
+
+        @Test
+        @DisplayName("Should reach BOTH vendor configs, which is what the shared namespace means")
+        void theKeyReachesBothBranches() {
+            // Written as one test over both branches rather than two tests, because the claim is about the pair:
+            // a key in the shared `llm` block that only one branch read would be a lie for half its users, and that
+            // is exactly the state llm.anthropic.* exists to keep this key out of.
+            LlmProviderConfig openai = new LlmProviderConfig();
+            openai.setProvider("openai");
+            openai.setApiKey("test-openai-api-key");
+            openai.setModel("gpt-5.1");
+            openai.setReasoningEffort(ReasoningEffort.HIGH);
+
+            LlmProviderConfig anthropic = new LlmProviderConfig();
+            anthropic.setProvider("anthropic");
+            anthropic.setApiKey("test-anthropic-api-key");
+            anthropic.setModel("claude-sonnet-5");
+            anthropic.setReasoningEffort(ReasoningEffort.HIGH);
+
+            assertThat(factory.openAiConfig(openai).getReasoningEffort()).contains(ReasoningEffort.HIGH);
+            assertThat(factory.anthropicConfig(anthropic).getReasoningEffort()).contains(ReasoningEffort.HIGH);
+        }
+
+        @Test
+        @DisplayName("Should leave both vendor configs untouched when the key is absent")
+        void anAbsentKeyChangesNeitherBranch() {
+            // The compatibility claim, in the shape #54 pinned for its own three keys: a deployment that writes
+            // nothing calls no setter, so the vendor default stands and the request is what it was.
+            LlmProviderConfig openai = new LlmProviderConfig();
+            openai.setProvider("openai");
+            openai.setApiKey("test-openai-api-key");
+            openai.setModel("gpt-5.1");
+
+            LlmProviderConfig anthropic = new LlmProviderConfig();
+            anthropic.setProvider("anthropic");
+            anthropic.setApiKey("test-anthropic-api-key");
+
+            assertThat(factory.openAiConfig(openai).getReasoningEffort()).isEmpty();
+            assertThat(factory.anthropicConfig(anthropic).getReasoningEffort()).isEmpty();
         }
     }
 }

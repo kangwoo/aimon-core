@@ -41,8 +41,19 @@ import at.aimon.core.llms.openai.exception.ToolConversionException;
 @DisplayName("OpenAIResponsesRequestFactory")
 class OpenAIResponsesRequestFactoryTest {
 
-    private static final ModelCapabilities GPT5 = InMemoryModelCapabilityRegistry.withDefaults()
-            .resolve("gpt-5.6-terra");
+    /**
+     * A gpt-5-family reasoning model and its row. The name was {@code gpt-5.6-terra} until that name got a row of
+     * its own for its measured ladder — which would have kept every assertion below green while testing a different
+     * row from the one they are about.
+     */
+    private static final String GPT5_NAME = "gpt-5-mini";
+
+    private static final ModelCapabilities GPT5 = InMemoryModelCapabilityRegistry.withDefaults().resolve(GPT5_NAME);
+
+    /** The one name whose ladder has a gap in it: {@code none} accepted, {@code minimal} rejected (measured). */
+    private static final String TERRA_NAME = "gpt-5.6-terra";
+
+    private static final ModelCapabilities TERRA = InMemoryModelCapabilityRegistry.withDefaults().resolve(TERRA_NAME);
 
     private static final OpenAIDivergenceReporter SILENT = (signature, message, args) -> {
     };
@@ -57,18 +68,23 @@ class OpenAIResponsesRequestFactoryTest {
 
     private ResponseCreateParams build(OpenAIConfig config, LlmModel model, List<ToolDefinition> tools,
             ModelCapabilities capabilities, OpenAIDivergenceReporter reporter) {
+        return build(config, model, tools, capabilities, reporter, GPT5_NAME);
+    }
+
+    private ResponseCreateParams build(OpenAIConfig config, LlmModel model, List<ToolDefinition> tools,
+            ModelCapabilities capabilities, OpenAIDivergenceReporter reporter, String modelName) {
         return factoryFor(config, reporter).build("You are helpful", List.of(Message.user("hi")), tools, model,
-                capabilities, "gpt-5.6-terra", "OpenAI");
+                capabilities, modelName, "OpenAI");
     }
 
     private static OpenAIConfig config() {
-        return OpenAIConfig.builder().apiKey("k").model("gpt-5.6-terra").build();
+        return OpenAIConfig.builder().apiKey("k").model(GPT5_NAME).build();
     }
 
     @Test
     @DisplayName("sampling parameters are MISSING, not JSON null, even when configured")
     void samplingIsSuppressedAsMissing() {
-        final OpenAIConfig config = OpenAIConfig.builder().apiKey("k").model("gpt-5.6-terra").temperature(0.7).topP(0.5)
+        final OpenAIConfig config = OpenAIConfig.builder().apiKey("k").model(GPT5_NAME).temperature(0.7).topP(0.5)
                 .build();
 
         final ResponseCreateParams params = build(config, LlmModel.builder().temperature(0.3).build(), List.of());
@@ -91,7 +107,7 @@ class OpenAIResponsesRequestFactoryTest {
         assertThat(body.get("store").asBoolean()).isFalse();
         // ...and the include is asked for explicitly because store:false is the case the SDK's javadoc singles out.
         assertThat(body.get("include").get(0).asText()).isEqualTo("reasoning.encrypted_content");
-        assertThat(body.get("model").asText()).isEqualTo("gpt-5.6-terra");
+        assertThat(body.get("model").asText()).isEqualTo(GPT5_NAME);
     }
 
     @Test
@@ -106,16 +122,15 @@ class OpenAIResponsesRequestFactoryTest {
     }
 
     @Test
-    @DisplayName("a rung below the model's ladder is omitted, not sent -- NONE is off this model's ladder")
-    void effortBelowTheLadderIsOmitted() {
+    @DisplayName("a rung off the model's ladder is omitted, not sent -- NONE is off the gpt-5 family's")
+    void effortOffTheLadderIsOmitted() {
         // The endpoint gpt-5.x is routed to by default, so this is where a configured NONE actually lands. The rung
         // is off this row's ladder on either surface (measured 2026-09-09: "Supported values are: 'minimal', 'low',
         // 'medium', and 'high'"), so sending it is a 400 -- and the Chat path guarded it while this one did not.
         //
-        // Round 8 narrowed the claim this test used to make in its own name: 'none' is not absent everywhere on
-        // OpenAI. gpt-5.6-terra accepts it, on both endpoints, and echoes it back. What is asserted here is
-        // unchanged -- the capability row this factory is handed says the floor is MINIMAL, and a rung below the
-        // floor is omitted whatever the vendor's other models do.
+        // The fixture is gpt-5-mini rather than gpt-5.6-terra, and the pair of tests is why: 'none' is not absent
+        // everywhere on OpenAI, terra accepts it, and since round 9 terra has a row that says so. Asserting the
+        // omission on a name whose row accepts the rung would assert nothing.
         final List<String> reported = new ArrayList<>();
         final ResponseCreateParams params = build(config(),
                 LlmModel.builder().reasoningEffort(ReasoningEffort.NONE).build(), List.of(aTool()), GPT5,
@@ -123,7 +138,40 @@ class OpenAIResponsesRequestFactoryTest {
 
         assertThat(params._reasoning()).isInstanceOf(JsonMissing.class);
         assertThat(ResponsesFixtures.bodyOf(params)).doesNotContain("\"effort\"");
-        assertThat(reported).containsExactly("reasoningEffortBelowLadder=NONE@gpt-5.6-terra");
+        assertThat(reported).containsExactly("reasoningEffortOffLadder=NONE@" + GPT5_NAME);
+    }
+
+    @Test
+    @DisplayName("NONE reaches the wire on gpt-5.6-terra, whose row says it accepts that rung")
+    void noneReachesTheWireOnTerra() {
+        // The other half of the row round 9 fixed, and the only place it is observable. Until then this rung was
+        // withheld from a model measured to accept it -- the mirror of the MINIMAL 400 the row was written for.
+        final List<String> reported = new ArrayList<>();
+        final ResponseCreateParams params = build(config(),
+                LlmModel.builder().reasoningEffort(ReasoningEffort.NONE).build(), List.of(aTool()), TERRA,
+                (signature, message, args) -> reported.add(signature), TERRA_NAME);
+
+        assertThat(ResponsesFixtures.bodyTreeOf(params).get("reasoning").get("effort").asText()).isEqualTo("none");
+        assertThat(reported).isEmpty();
+    }
+
+    @Test
+    @DisplayName("MINIMAL is off gpt-5.6-terra's ladder even though it is on the family's -- the gap, at the wire")
+    void minimalIsOffTerrasLadderThoughItIsOnTheFamilysOne() {
+        // The 400 this round removed. Terra resolved to the gpt-5 prefix row, whose ladder starts at MINIMAL, so a
+        // configured MINIMAL reached the wire as "effort":"minimal" and the API rejected it (measured 2026-09-09).
+        // No floor describes terra's ladder -- 'none' is below 'minimal' and terra takes it -- which is why the
+        // capability became a set and why this pair of assertions can both be true at once.
+        final List<String> reported = new ArrayList<>();
+        final ResponseCreateParams onTerra = build(config(),
+                LlmModel.builder().reasoningEffort(ReasoningEffort.MINIMAL).build(), List.of(), TERRA,
+                (signature, message, args) -> reported.add(signature), TERRA_NAME);
+        final ResponseCreateParams onFamily = build(config(),
+                LlmModel.builder().reasoningEffort(ReasoningEffort.MINIMAL).build(), List.of(), GPT5, SILENT);
+
+        assertThat(onTerra._reasoning()).isInstanceOf(JsonMissing.class);
+        assertThat(reported).containsExactly("reasoningEffortOffLadder=MINIMAL@" + TERRA_NAME);
+        assertThat(ResponsesFixtures.bodyTreeOf(onFamily).get("reasoning").get("effort").asText()).isEqualTo("minimal");
     }
 
     @Test
@@ -135,12 +183,10 @@ class OpenAIResponsesRequestFactoryTest {
         // than raised to 'low', because a raised rung is a request the operator did not make. Since round 8 this is
         // also the endpoint o4-mini actually reaches, so the o-series half is no longer hypothetical.
         //
-        // The gpt-5.x half asserts that 'minimal' DOES reach the wire for the gpt-5 row, and that assertion is
-        // deliberately kept even though the name GPT5 resolves through -- gpt-5.6-terra -- rejects 'minimal' at the
-        // live API (round 8). What this line pins is the factory honouring the capability row it is handed; the row
-        // being wrong for that one model is a separate, recorded defect, deliberately not fixed here. See section 13
-        // of docs/design/llm/openai-model-capabilities.md and docs/backlog/openai-model-capabilities-open-items.md
-        // item L-1.
+        // The gpt-5.x half asserts that 'minimal' DOES reach the wire for the gpt-5 family row, and the fixture
+        // name is what makes that true rather than a knowingly wrong assertion: it used to resolve through
+        // gpt-5.6-terra, which rejects 'minimal' at the live API, and round 9 gave that name a row of its own.
+        // minimalIsOffTerrasLadderThoughItIsOnTheFamilysOne above is where that fact now lives.
         final ModelCapabilities oSeries = InMemoryModelCapabilityRegistry.withDefaults().resolve("o4-mini");
         final List<String> reported = new ArrayList<>();
 
@@ -152,7 +198,7 @@ class OpenAIResponsesRequestFactoryTest {
 
         assertThat(ResponsesFixtures.bodyTreeOf(onGpt5).get("reasoning").get("effort").asText()).isEqualTo("minimal");
         assertThat(onOSeries._reasoning()).isInstanceOf(JsonMissing.class);
-        assertThat(reported).containsExactly("reasoningEffortBelowLadder=MINIMAL@gpt-5.6-terra");
+        assertThat(reported).containsExactly("reasoningEffortOffLadder=MINIMAL@" + GPT5_NAME);
     }
 
     @Test
@@ -239,7 +285,7 @@ class OpenAIResponsesRequestFactoryTest {
         final List<String> reported = new java.util.ArrayList<>();
 
         factoryFor(config(), (signature, message, args) -> reported.add(signature)).build("sys", List.of(assistant),
-                List.of(), LlmModel.builder().build(), GPT5, "gpt-5.6-terra", "OpenAI");
+                List.of(), LlmModel.builder().build(), GPT5, GPT5_NAME, "OpenAI");
 
         assertThat(reported).containsExactly("orphanedReasoningTrace@OpenAI");
     }
@@ -256,7 +302,7 @@ class OpenAIResponsesRequestFactoryTest {
         final List<String> reported = new java.util.ArrayList<>();
 
         factoryFor(config(), (signature, message, args) -> reported.add(signature)).build("sys", List.of(assistant),
-                List.of(), LlmModel.builder().build(), GPT5, "gpt-5.6-terra", "OpenAI");
+                List.of(), LlmModel.builder().build(), GPT5, GPT5_NAME, "OpenAI");
 
         assertThat(reported).isEmpty();
     }

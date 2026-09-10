@@ -3,8 +3,10 @@ package at.aimon.core.llm.capability;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -64,7 +66,7 @@ class InMemoryModelCapabilityRegistryTest {
     }
 
     @Test
-    @DisplayName("the o-series rows start their reasoning ladder at LOW, and gpt-5.x keeps the default MINIMAL")
+    @DisplayName("the o-series rows start their reasoning ladder at LOW, and the gpt-5 family keeps the default")
     void oSeriesLadderStartsAtLow() {
         // Measured 2026-09-09. Round 8 replaced the evidence for this row without moving it: round 6 quoted
         // "Supported values are: 'low', 'medium', 'high', and 'xhigh'" for o4-mini without recording that it came
@@ -75,12 +77,42 @@ class InMemoryModelCapabilityRegistryTest {
         // would translate to the wire value 'minimal' for the o-series and earn a 400.
         final InMemoryModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.withDefaults();
 
-        assertThat(registry.resolve("o4-mini").lowestReasoningEffort()).isEqualTo(ReasoningEffort.LOW);
-        assertThat(registry.resolve("o3-mini").lowestReasoningEffort()).isEqualTo(ReasoningEffort.LOW);
-        assertThat(registry.resolve("o1").lowestReasoningEffort()).isEqualTo(ReasoningEffort.LOW);
-        assertThat(registry.resolve("gpt-5.6-terra").lowestReasoningEffort()).isEqualTo(ReasoningEffort.MINIMAL);
-        // A model nobody describes keeps the fail-open floor, so nothing it was ever sent starts being withheld.
-        assertThat(registry.resolve("gpt-4o").lowestReasoningEffort()).isEqualTo(ReasoningEffort.MINIMAL);
+        final Set<ReasoningEffort> fromLow = EnumSet.range(ReasoningEffort.LOW, ReasoningEffort.HIGH);
+        final Set<ReasoningEffort> fromMinimal = EnumSet.range(ReasoningEffort.MINIMAL, ReasoningEffort.HIGH);
+
+        assertThat(registry.resolve("o4-mini").acceptedReasoningEfforts()).isEqualTo(fromLow);
+        assertThat(registry.resolve("o3-mini").acceptedReasoningEfforts()).isEqualTo(fromLow);
+        assertThat(registry.resolve("o1").acceptedReasoningEfforts()).isEqualTo(fromLow);
+        // The family PREFIX row, and the name is chosen for that: gpt-5.6-terra has its own row now and would be
+        // asserting something else entirely.
+        assertThat(registry.resolve("gpt-5-mini").acceptedReasoningEfforts()).isEqualTo(fromMinimal);
+        // A model nobody describes keeps the fail-open ladder, so nothing it was ever sent starts being withheld.
+        assertThat(registry.resolve("gpt-4o").acceptedReasoningEfforts()).isEqualTo(fromMinimal);
+    }
+
+    @Test
+    @DisplayName("gpt-5.6-terra has a row of its own: the family row with a hole in its ladder")
+    void terraStatesItsOwnLadder() {
+        // Round 8, measured 2026-09-09: all seven rungs were sent individually and terra answered none / low /
+        // medium / high / xhigh / max, REJECTING 'minimal' -- which the family prefix asserts it takes. This is the
+        // measurement that made the capability a set: no single floor describes a ladder with a hole in the middle.
+        // (xhigh and max have no ReasoningEffort constant by that enum's own decision, so the row states four.)
+        final ModelCapabilities terra = InMemoryModelCapabilityRegistry.withDefaults().resolve("gpt-5.6-terra");
+
+        final ModelCapabilities family = InMemoryModelCapabilityRegistry.withDefaults().resolve("gpt-5-mini");
+
+        assertThat(terra.acceptedReasoningEfforts()).containsExactly(ReasoningEffort.NONE, ReasoningEffort.LOW,
+                ReasoningEffort.MEDIUM, ReasoningEffort.HIGH);
+        assertThat(family.acceptedReasoningEfforts()).doesNotContain(ReasoningEffort.NONE)
+                .contains(ReasoningEffort.MINIMAL);
+        // ...and the ladder is the ONLY thing that differs. Asserted against the family row rather than against four
+        // literals so that "terra is the gpt-5 row with a different ladder" stays a fact of the table: a later
+        // change to the family row that forgets terra fails here instead of leaving two rows quietly disagreeing.
+        assertThat(terra.supportsSamplingParameters()).isEqualTo(family.supportsSamplingParameters());
+        assertThat(terra.supportsReasoningEffort()).isEqualTo(family.supportsReasoningEffort());
+        assertThat(terra.supportsToolsWithReasoning()).isEqualTo(family.supportsToolsWithReasoning());
+        assertThat(terra.supportsReasoningTraceRoundTrip()).isEqualTo(family.supportsReasoningTraceRoundTrip());
+        assertThat(terra.thinkingDialect()).isEqualTo(family.thinkingDialect());
     }
 
     @Test
@@ -108,7 +140,9 @@ class InMemoryModelCapabilityRegistryTest {
     @Test
     @DisplayName("the built-in table suppresses sampling and enables reasoning for the gpt-5 family")
     void defaultsDescribeGpt5() {
-        final ModelCapabilities gpt5 = InMemoryModelCapabilityRegistry.withDefaults().resolve("gpt-5.6-terra");
+        // A name the family PREFIX still answers for. gpt-5.6-terra used to stand here and now has an exact row,
+        // so it would keep this test green while changing its subject.
+        final ModelCapabilities gpt5 = InMemoryModelCapabilityRegistry.withDefaults().resolve("gpt-5-mini");
 
         assertThat(gpt5.supportsSamplingParameters()).isFalse();
         assertThat(gpt5.supportsReasoningEffort()).isTrue();
@@ -163,7 +197,8 @@ class InMemoryModelCapabilityRegistryTest {
             assertThat(caps.supportsSamplingParameters()).as("%s sampling", model).isFalse();
             assertThat(caps.supportsReasoningEffort()).as("%s effort", model).isTrue();
             assertThat(caps.supportsToolsWithReasoning()).as("%s tools+reasoning", model).isTrue();
-            assertThat(caps.lowestReasoningEffort()).as("%s floor", model).isEqualTo(ReasoningEffort.LOW);
+            assertThat(caps.acceptedReasoningEfforts()).as("%s ladder", model)
+                    .isEqualTo(EnumSet.range(ReasoningEffort.LOW, ReasoningEffort.HIGH));
         }
     }
 
@@ -190,7 +225,8 @@ class InMemoryModelCapabilityRegistryTest {
             assertThat(caps.supportsReasoningEffort()).as("%s effort", model).isFalse();
             assertThat(caps.supportsToolsWithReasoning()).as("%s tools+reasoning", model).isTrue();
             assertThat(caps.supportsReasoningTraceRoundTrip()).as("%s replay", model).isFalse();
-            assertThat(caps.lowestReasoningEffort()).as("%s floor", model).isEqualTo(ReasoningEffort.MINIMAL);
+            assertThat(caps.acceptedReasoningEfforts()).as("%s ladder", model)
+                    .isEqualTo(EnumSet.range(ReasoningEffort.MINIMAL, ReasoningEffort.HIGH));
         }
     }
 
@@ -288,7 +324,8 @@ class InMemoryModelCapabilityRegistryTest {
             assertThat(caps.supportsSamplingParameters()).as("%s sampling", model).isFalse();
             assertThat(caps.supportsReasoningEffort()).as("%s effort", model).isTrue();
             assertThat(caps.supportsToolsWithReasoning()).as("%s tools+reasoning", model).isTrue();
-            assertThat(caps.lowestReasoningEffort()).as("%s floor", model).isEqualTo(ReasoningEffort.LOW);
+            assertThat(caps.acceptedReasoningEfforts()).as("%s ladder", model)
+                    .isEqualTo(EnumSet.range(ReasoningEffort.LOW, ReasoningEffort.HIGH));
         }
     }
 
@@ -335,7 +372,7 @@ class InMemoryModelCapabilityRegistryTest {
 
         assertThat(registry.resolve("prod-assistant").supportsSamplingParameters()).isFalse();
         // ... without losing the built-in entries.
-        assertThat(registry.resolve("gpt-5.6-terra").supportsReasoningEffort()).isTrue();
+        assertThat(registry.resolve("gpt-5-mini").supportsReasoningEffort()).isTrue();
         assertThat(registry.resolve("gpt-4o")).isEqualTo(ModelCapabilities.unknown());
     }
 
@@ -345,10 +382,32 @@ class InMemoryModelCapabilityRegistryTest {
         final InMemoryModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.builderWithDefaults()
                 .registerPrefix("gpt-5", EVERYTHING_ALLOWED).build();
 
-        assertThat(registry.resolve("gpt-5.6-terra")).isEqualTo(EVERYTHING_ALLOWED);
+        // gpt-5-mini rather than gpt-5.6-terra: the subject here is the LinkedHashMap re-put keeping its position,
+        // and terra now has an exact row that would shadow the override and make this assert the opposite thing.
+        assertThat(registry.resolve("gpt-5-mini")).isEqualTo(EVERYTHING_ALLOWED);
         // Re-putting an existing key keeps its position in the LinkedHashMap, so gpt-5 cannot jump ahead of the more
         // specific gpt-5-chat and swallow it.
         assertThat(registry.resolve("gpt-5-chat-latest")).isEqualTo(ModelCapabilities.unknown());
+    }
+
+    @Test
+    @DisplayName("an exact row shadows a prefix override for its own name, and register() takes it back")
+    void anExactRowShadowsThePrefixOverrideAndIsItselfOverridable() {
+        // The narrowed promise, pinned. Overriding the gpt-5 prefix reaches every gpt-5* name EXCEPT the one with a
+        // measured row of its own -- the same shadowing the o-series exact rows produce for o1 and o1-2024-12-17 --
+        // and the third assertion is the escape hatch that narrowing now depends on. It is also the call a
+        // configured declaration makes through withDefaultsExtendedBy, so an operator reaches it too.
+        final InMemoryModelCapabilityRegistry overridden = InMemoryModelCapabilityRegistry.builderWithDefaults()
+                .registerPrefix("gpt-5", EVERYTHING_ALLOWED).build();
+
+        assertThat(overridden.resolve("gpt-5.6-terra")).isNotEqualTo(EVERYTHING_ALLOWED);
+        assertThat(overridden.resolve("gpt-5.6-terra"))
+                .isEqualTo(InMemoryModelCapabilityRegistry.withDefaults().resolve("gpt-5.6-terra"));
+
+        final InMemoryModelCapabilityRegistry displaced = InMemoryModelCapabilityRegistry.builderWithDefaults()
+                .register("gpt-5.6-terra", EVERYTHING_ALLOWED).build();
+
+        assertThat(displaced.resolve("gpt-5.6-terra")).isEqualTo(EVERYTHING_ALLOWED);
     }
 
     @Test
@@ -356,6 +415,8 @@ class InMemoryModelCapabilityRegistryTest {
     void reasoningTraceRoundTripIsSetOnlyWhereItIsTrue() {
         final InMemoryModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.withDefaults();
 
+        assertThat(registry.resolve("gpt-5-mini").supportsReasoningTraceRoundTrip()).isTrue();
+        // ...and terra's own row keeps it, which is the flag that would silently move that name off /v1/responses.
         assertThat(registry.resolve("gpt-5.6-terra").supportsReasoningTraceRoundTrip()).isTrue();
         // gpt-5-chat is the non-reasoning variant, and this false is what keeps the existing assertion that it
         // resolves equal to unknown() green -- i.e. it is the line that fails if the chat variant is ever routed to
@@ -386,8 +447,11 @@ class InMemoryModelCapabilityRegistryTest {
         // One name per built-in row, stated as assertions rather than as a count so that a row silently changing
         // value also fails. The list grew when round 8 added eight exact o-series rows beside the three prefix ones:
         // o3-mini and o4-mini now land on exact rows, so o3-x and o4-x are here to keep sampling the prefix rows
-        // they used to stand for. Dropping either pair would leave a built-in row this test no longer watches.
+        // they used to stand for. Round 9 split the gpt-5 pair the same way: gpt-5-mini is the prefix row and
+        // gpt-5.6-terra its own exact one. Dropping either pair would leave a built-in row this test no longer
+        // watches.
         assertThat(extended.resolve("gpt-5-chat-latest")).isEqualTo(stock.resolve("gpt-5-chat-latest"));
+        assertThat(extended.resolve("gpt-5-mini")).isEqualTo(stock.resolve("gpt-5-mini"));
         assertThat(extended.resolve("gpt-5.6-terra")).isEqualTo(stock.resolve("gpt-5.6-terra"));
         assertThat(extended.resolve("o1-x")).isEqualTo(stock.resolve("o1-x"));
         assertThat(extended.resolve("o3-x")).isEqualTo(stock.resolve("o3-x"));
@@ -399,8 +463,8 @@ class InMemoryModelCapabilityRegistryTest {
     @Test
     @DisplayName("no declarations is the plain built-in table")
     void noDeclarationsIsTheDefaultTable() {
-        assertThat(InMemoryModelCapabilityRegistry.withDefaultsExtendedBy(Map.of()).resolve("gpt-5.6-terra"))
-                .isEqualTo(InMemoryModelCapabilityRegistry.withDefaults().resolve("gpt-5.6-terra"));
+        assertThat(InMemoryModelCapabilityRegistry.withDefaultsExtendedBy(Map.of()).resolve("gpt-5-mini"))
+                .isEqualTo(InMemoryModelCapabilityRegistry.withDefaults().resolve("gpt-5-mini"));
         assertThat(InMemoryModelCapabilityRegistry.withDefaultsExtendedBy(null).resolve("o3-mini"))
                 .isEqualTo(InMemoryModelCapabilityRegistry.withDefaults().resolve("o3-mini"));
     }
@@ -423,6 +487,18 @@ class InMemoryModelCapabilityRegistryTest {
             .build();
 
     @Test
+    @DisplayName("a configured declaration displaces the built-in gpt-5.6-terra row too")
+    void aDeclarationDisplacesTheBuiltInTerraRow() {
+        // The escape hatch of the narrowed gpt-5 promise, as an operator reaches it rather than as a Java caller
+        // does. Without this the narrowing would hold only in-process, and a gateway that renamed terra could not
+        // restate what its own deployment really accepts.
+        final InMemoryModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry
+                .withDefaultsExtendedBy(Map.of("gpt-5.6-terra", EVERYTHING_ALLOWED_DECLARATION));
+
+        assertThat(registry.resolve("gpt-5.6-terra")).isEqualTo(EVERYTHING_ALLOWED_DECLARATION.capabilities());
+    }
+
+    @Test
     @DisplayName("every built-in row can be written as a declaration")
     void theConfigurationSurfaceCanExpressEveryBuiltInRow() {
         // The invariant behind exposing all five flags rather than the two an operator usually needs: if a row of the
@@ -432,20 +508,30 @@ class InMemoryModelCapabilityRegistryTest {
 
         assertThat(transcribe(stock.resolve("gpt-5-chat-latest")).capabilities())
                 .isEqualTo(stock.resolve("gpt-5-chat-latest"));
+        assertThat(transcribe(stock.resolve("gpt-5-mini")).capabilities()).isEqualTo(stock.resolve("gpt-5-mini"));
+        // The row that makes this invariant load-bearing rather than decorative: terra's ladder has a gap, so it is
+        // transcribable only because acceptedReasoningEfforts exists on the surface beside lowestReasoningEffort.
         assertThat(transcribe(stock.resolve("gpt-5.6-terra")).capabilities()).isEqualTo(stock.resolve("gpt-5.6-terra"));
         assertThat(transcribe(stock.resolve("o1-x")).capabilities()).isEqualTo(stock.resolve("o1-x"));
         assertThat(transcribe(stock.resolve("o3-mini")).capabilities()).isEqualTo(stock.resolve("o3-mini"));
         assertThat(transcribe(stock.resolve("o4-mini")).capabilities()).isEqualTo(stock.resolve("o4-mini"));
     }
 
-    /** Writes a resolved row out as a declaration would state it -- all five flags, explicitly. */
+    /**
+     * Writes a resolved row out as a declaration would state it -- every flag, explicitly.
+     *
+     * <p>
+     * The ladder goes out through {@code acceptedReasoningEfforts} rather than {@code lowestReasoningEffort} for one
+     * reason: the general form is the only one that can restate every shipped row. Transcribing through the floor
+     * would fail on gpt-5.6-terra and pass on everything else, which is precisely the row this invariant exists for.
+     */
     private static ModelCapabilityDeclaration transcribe(ModelCapabilities capabilities) {
         return ModelCapabilityDeclaration.builder()
                 .supportsSamplingParameters(capabilities.supportsSamplingParameters())
                 .supportsReasoningEffort(capabilities.supportsReasoningEffort())
                 .supportsToolsWithReasoning(capabilities.supportsToolsWithReasoning())
                 .supportsReasoningTraceRoundTrip(capabilities.supportsReasoningTraceRoundTrip())
-                .lowestReasoningEffort(capabilities.lowestReasoningEffort()).build();
+                .acceptedReasoningEfforts(capabilities.acceptedReasoningEfforts()).build();
     }
 
     @Test

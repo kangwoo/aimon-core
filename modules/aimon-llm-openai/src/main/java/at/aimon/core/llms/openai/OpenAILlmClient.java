@@ -454,7 +454,8 @@ public class OpenAILlmClient implements LlmClient {
         }
 
         // Model rule, shared with the Responses path: NONE is off every OpenAI ladder measured to date except
-        // gpt-5.6-terra's, and MINIMAL is off the o-series one.
+        // gpt-5.6-terra's, MINIMAL is off the o-series one, and MINIMAL is off terra's too -- which is why the
+        // capability is the set of accepted rungs rather than the lowest one.
         if (requested.isPresent() && !OpenAiRequestParameters.maySendEffort(requested.get(), capabilities, modelName,
                 this::reportDivergence)) {
             return;

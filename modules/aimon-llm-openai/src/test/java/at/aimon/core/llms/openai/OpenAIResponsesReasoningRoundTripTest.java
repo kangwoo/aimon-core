@@ -54,6 +54,13 @@ import ch.qos.logback.core.read.ListAppender;
 @ExtendWith(MockitoExtension.class)
 class OpenAIResponsesReasoningRoundTripTest {
 
+    /**
+     * A gpt-5-family reasoning model, meaning nothing more than that. It was {@code gpt-5.6-terra} until that name
+     * got a built-in row of its own for its measured ladder; a name with its own row would keep every assertion here
+     * green while quietly testing a different row from the one they are about.
+     */
+    private static final String A_REASONING_MODEL = "gpt-5-mini";
+
     private static final String ENCRYPTED = "gAAAAABmZ3JhdGlz";
 
     @Mock
@@ -64,7 +71,7 @@ class OpenAIResponsesReasoningRoundTripTest {
 
     private OpenAILlmClient client() {
         lenient().when(mockOpenAIClient.responses()).thenReturn(mockResponseService);
-        return new OpenAILlmClient(OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra").build(),
+        return new OpenAILlmClient(OpenAIConfig.builder().apiKey("test-key").model(A_REASONING_MODEL).build(),
                 mockOpenAIClient);
     }
 
@@ -79,7 +86,7 @@ class OpenAIResponsesReasoningRoundTripTest {
     }
 
     private static Response responseWithOutput(String... items) {
-        return ResponsesFixtures.response("{\"id\":\"resp_1\",\"created_at\":1,\"model\":\"gpt-5.6-terra\","
+        return ResponsesFixtures.response("{\"id\":\"resp_1\",\"created_at\":1,\"model\":\"gpt-5-mini\","
                 + "\"object\":\"response\",\"parallel_tool_calls\":true,\"tool_choice\":\"auto\",\"tools\":[],"
                 + "\"status\":\"completed\",\"output\":[" + String.join(",", items) + "]}");
     }
@@ -294,7 +301,7 @@ class OpenAIResponsesReasoningRoundTripTest {
         // dropped as foreign -- the feature silently doing nothing, which is the exact failure it exists to remove.
         lenient().when(mockOpenAIClient.responses()).thenReturn(mockResponseService);
         final OpenAILlmClient client = new RenamedProviderClient(
-                OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra").build(), mockOpenAIClient);
+                OpenAIConfig.builder().apiKey("test-key").model(A_REASONING_MODEL).build(), mockOpenAIClient);
         when(mockResponseService.create(any(ResponseCreateParams.class)))
                 .thenReturn(responseWithOutput(reasoningItem("rs_1", ENCRYPTED), functionCall("call_1", "Bash")));
 

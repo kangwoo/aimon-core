@@ -287,6 +287,33 @@ as the process and are never stored.
 
 ---
 
+## `ModelCapabilities.lowestReasoningEffort()` becomes `acceptedReasoningEfforts()`
+
+The mistake being corrected is a name that described a **boundary** while the thing being described is
+a **set**. It cost an HTTP 400: `gpt-5.6-terra` rejects `minimal` and accepts `none`, so its ladder has
+a gap in the middle and no single floor states it. Design:
+[`reasoning-effort-config-surface.md`](../design/llm/reasoning-effort-config-surface.md).
+
+| Old | New | Value |
+|-----|-----|-------|
+| `ModelCapabilities.lowestReasoningEffort()` (`aimon-core`) | `ModelCapabilities.acceptedReasoningEfforts()` | `ReasoningEffort` → `Set<ReasoningEffort>` |
+
+**The setter of the same name survives, and is not a rename.**
+`ModelCapabilities.Builder.lowestReasoningEffort(X)` keeps its signature and becomes shorthand for
+"the ladder starts at X and runs to the top", which is what every row that uses it always meant. So do
+both configuration keys — `llm.modelCapabilities.<m>.lowestReasoningEffort` and
+`aimon.llm.model-capabilities.<m>.lowest-reasoning-effort` — and that is a decision rather than
+inertia: the starter ignores an unknown property in silence, so renaming the key would have made every
+deployment that declared it lose the declaration without a word. Each gains a sibling,
+`acceptedReasoningEfforts`, for a ladder that cannot be written as a floor.
+
+There is **no adapter**. A caller reading the removed getter fails to compile, which is the outcome to
+want: the expression a floor invites is the one that produced the 400, and a getter returning
+`min(set)` would keep it reachable under a new spelling. `docs/project/api-stability.md` §5 permits the
+break and records that going in one step is this repository's habit for `0.x`.
+
+---
+
 ## The file memory backend moves into `aimon-core`
 
 `aimon-memory-file` stopped being a module. Its classes are unchanged -- same names, same signatures, same

@@ -52,6 +52,12 @@ import at.aimon.core.llms.openai.exception.MessageConversionException;
 @DisplayName("OpenAI Responses - content block parity with the Chat converter")
 @ExtendWith(MockitoExtension.class)
 class OpenAIResponsesContentBlockTest {
+    /**
+     * A gpt-5-family reasoning model, meaning nothing more than that. It was {@code gpt-5.6-terra} until that name
+     * got a built-in row of its own for its measured ladder; a name with its own row would keep every assertion here
+     * green while quietly testing a different row from the one they are about.
+     */
+    private static final String A_REASONING_MODEL = "gpt-5-mini";
 
     private static final byte[] PNG = {(byte) 0x89, 'P', 'N', 'G'};
 
@@ -65,7 +71,7 @@ class OpenAIResponsesContentBlockTest {
         lenient().when(mockOpenAIClient.responses()).thenReturn(mockResponseService);
         when(mockResponseService.create(any(ResponseCreateParams.class))).thenReturn(emptyResponse());
         final OpenAILlmClient client = new OpenAILlmClient(
-                OpenAIConfig.builder().apiKey("k").model("gpt-5.6-terra").build(), mockOpenAIClient);
+                OpenAIConfig.builder().apiKey("k").model(A_REASONING_MODEL).build(), mockOpenAIClient);
 
         client.sendMessage("sys", List.of(message), List.of(), LlmModel.builder().build());
 
@@ -77,7 +83,7 @@ class OpenAIResponsesContentBlockTest {
     private void expectConversionFailure(Message message, String messageFragment) {
         lenient().when(mockOpenAIClient.responses()).thenReturn(mockResponseService);
         final OpenAILlmClient client = new OpenAILlmClient(
-                OpenAIConfig.builder().apiKey("k").model("gpt-5.6-terra").build(), mockOpenAIClient);
+                OpenAIConfig.builder().apiKey("k").model(A_REASONING_MODEL).build(), mockOpenAIClient);
 
         assertThatThrownBy(() -> client.sendMessage("sys", List.of(message), List.of(), LlmModel.builder().build()))
                 .isInstanceOf(MessageConversionException.class).hasMessageContaining(messageFragment);

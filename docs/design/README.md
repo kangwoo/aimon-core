@@ -87,6 +87,7 @@
 | [`anthropic-sampling-capabilities.md`](llm/anthropic-sampling-capabilities.md) | 그 샘플링 파라미터를 **모델별로** 끄는 경로 — 능력 표가 두 벤더를 서술하게 되는 자리, 지어낸 `temperature` 의 폐기, 두 설정 표면의 Anthropic 분기 |
 | [`reasoning-model-enablement.md`](llm/reasoning-model-enablement.md) | reasoning 모델을 실제로 쓰기까지 남은 것 — 실행기가 이미 하고 있는 것의 감사, thinking 방언을 모델별 사실로 만드는 세 번째 값, effort·thinking 설정 키, 사용자에게 보이는 thinking 스트림 |
 | [`anthropic-thinking-config-surface.md`](llm/anthropic-thinking-config-surface.md) | 그 thinking 노브 셋의 설정 표면 — 벤더 네임스페이스로 처음 내려간 키들, 모드×예산이 한 설정인 이유, 두 표면이 `off` 에 다르게 답하는 자리 |
+| [`reasoning-effort-config-surface.md`](llm/reasoning-effort-config-surface.md) | `reasoningEffort` 의 설정 표면 — 같은 기준이 공통 네임스페이스로 답하는 자리, 바닥이 아니라 rung **집합**이 된 능력, exact 행이 prefix override 를 가리는 약속의 축소 |
 
 ### 상태를 갖는 서브시스템
 

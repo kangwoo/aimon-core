@@ -259,6 +259,9 @@ class AimonDocumentedPropertiesTest {
         assertThat(TREE.isKnownKey("aimon.llm.model-capabilities.prod-assistant.supports-sampling-parameters"))
                 .isTrue();
         assertThat(TREE.isKnownKey("aimon.llm.model-capabilities.prod-assistant.lowest-reasoning-effort")).isTrue();
+        // The List-typed leaf beside it. Recorded as a leaf, not descended into, which is the right answer -- its
+        // elements are enum constants rather than named keys.
+        assertThat(TREE.isKnownKey("aimon.llm.model-capabilities.prod-assistant.accepted-reasoning-efforts")).isTrue();
         assertThat(TREE.isKnownKey("aimon.llm.model-capabilities.prod-assistant.supports-sampling-parameter"))
                 .isFalse();
         // The map-of-maps node, where both the profile and the field are the host's to name.

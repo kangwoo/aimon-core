@@ -18,7 +18,8 @@ import at.aimon.core.llm.capability.ModelCapabilities;
  * <p>
  * The reasoning-effort rules split along the same seam, and the split is the point. <strong>Which rungs a model
  * accepts is a model fact</strong> — {@code gpt-5.x} has no {@code none}, the o-series has neither {@code none} nor
- * {@code minimal} — so {@link #maySendEffort} lives here and both endpoints ask it. <strong>Whether tools and
+ * {@code minimal}, and {@code gpt-5.6-terra} has {@code none} but not {@code minimal} — so {@link #maySendEffort}
+ * lives here and both endpoints ask it. <strong>Whether tools and
  * reasoning may share a request is an endpoint fact</strong>, so that clamp stays in the Chat client and
  * {@code /v1/responses}, where the two coexist, never applies it. Mixing the two up is how a value that is a 400 on
  * both endpoints came to be guarded on only one.
@@ -31,8 +32,9 @@ final class OpenAiRequestParameters {
     private static final String EFFORT_UNSUPPORTED_MESSAGE = "reasoningEffort {} is set on this request but {} takes "
             + "no reasoning-effort parameter; it is being omitted and the call will succeed without it.";
 
-    private static final String EFFORT_BELOW_LADDER_MESSAGE = "reasoningEffort {} is set on this request but {} has "
-            + "no rung below {}; the parameter is being omitted and the model will reason at its own default.";
+    private static final String EFFORT_OFF_LADDER_MESSAGE = "reasoningEffort {} is set on this request but {} does "
+            + "not accept that rung (it accepts {}); the parameter is being omitted and the model will reason at its "
+            + "own default.";
 
     private OpenAiRequestParameters() {
     }
@@ -135,13 +137,19 @@ final class OpenAiRequestParameters {
      *
      * <p>
      * Called by <em>both</em> endpoints, because the answer is a property of the model rather than of the request
-     * surface: no OpenAI model measured to date except {@code gpt-5.6-terra} has a {@code none} rung, and the
-     * o-series starts at {@code low}. Measured 2026-09-09 — on {@code /v1/chat/completions} {@code gpt-5-nano}
-     * answers <em>Supported values are: 'minimal', 'low', 'medium', and 'high'</em>, and on {@code /v1/responses}
-     * {@code o4-mini} answers <em>Unsupported value: 'minimal' is not supported with the 'o4-mini' model. Supported
-     * values are: 'low', 'medium', and 'high'.</em> An enumeration means nothing without the endpoint it came from —
-     * the same model enumerates different sets on the two surfaces — but the floor is {@code low} on both. Sending a
-     * rung below it is a 400, so it is omitted.
+     * surface: most OpenAI models measured to date have no {@code none} rung, the o-series starts at {@code low},
+     * and {@code gpt-5.6-terra} accepts {@code none} while rejecting {@code minimal}. Measured 2026-09-09 — on
+     * {@code /v1/chat/completions} {@code gpt-5-nano} answers <em>Supported values are: 'minimal', 'low', 'medium',
+     * and 'high'</em>, and on {@code /v1/responses} {@code o4-mini} answers <em>Unsupported value: 'minimal' is not
+     * supported with the 'o4-mini' model. Supported values are: 'low', 'medium', and 'high'.</em> An enumeration
+     * means nothing without the endpoint it came from — the same model enumerates different sets on the two surfaces
+     * — but the floor is {@code low} on both. Sending a rung the model does not have is a 400, so it is omitted.
+     *
+     * <p>
+     * <strong>A set membership test, not a comparison.</strong> This read {@code effort.compareTo(lowest) >= 0}
+     * while the capability was a floor, and that expression is what put {@code "effort":"minimal"} on terra's wire —
+     * its ladder has a hole in the middle and no floor describes it. The capability is now the set of rungs the
+     * model takes and this asks it the question directly.
      *
      * <p>
      * <strong>Omitted, never raised.</strong> Clamping {@code NONE} up to {@code minimal} would put a request on the
@@ -152,7 +160,7 @@ final class OpenAiRequestParameters {
      * @param effort
      *            the configured effort (must not be null)
      * @param capabilities
-     *            the resolved capabilities, which name the lowest rung (must not be null)
+     *            the resolved capabilities, which name the accepted rungs (must not be null)
      * @param modelName
      *            the resolved model name, for the warning text (must not be null)
      * @param reporter
@@ -161,12 +169,11 @@ final class OpenAiRequestParameters {
      */
     static boolean maySendEffort(ReasoningEffort effort, ModelCapabilities capabilities, String modelName,
             OpenAIDivergenceReporter reporter) {
-        final ReasoningEffort lowest = capabilities.lowestReasoningEffort();
-        if (effort.compareTo(lowest) >= 0) {
+        if (capabilities.acceptedReasoningEfforts().contains(effort)) {
             return true;
         }
-        reporter.report("reasoningEffortBelowLadder=" + effort + "@" + modelName, EFFORT_BELOW_LADDER_MESSAGE, effort,
-                modelName, lowest);
+        reporter.report("reasoningEffortOffLadder=" + effort + "@" + modelName, EFFORT_OFF_LADDER_MESSAGE, effort,
+                modelName, capabilities.acceptedReasoningEfforts());
         return false;
     }
 

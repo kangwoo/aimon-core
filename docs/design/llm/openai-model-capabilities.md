@@ -1435,6 +1435,18 @@ break parsing (SDK 4.52.0's `com.openai.models.Reasoning` declares both fields p
 `additionalProperties` map, verified against the resolved jar), and this repo never reads the response's
 `reasoning` object anyway. **Presence measured, semantics not.**
 
+> **Landed in round 9 (#61, 2026-09-10).** The body above stays as the design-time record it declares
+> itself to be — including the three-row table and *"a fix deferred"*. What happened: the capability
+> became a rung **set** (`ModelCapabilities.acceptedReasoningEfforts()`, the floor surviving as an
+> input-side shorthand), terra took an **exact row** stating `{none, low, medium, high}`, and the
+> exact-row-shadows-prefix interaction was answered not by reshaping the registry but by **narrowing
+> the promise** — to the weaker one the same class already made for `o1`, with the same
+> `register(...)` escape hatch. The table above is right that no registry shape fixes terra without
+> disabling the documented override; the question it does not ask is which half of that override's
+> promise is load-bearing. Reasoning:
+> [`reasoning-effort-config-surface.md`](reasoning-effort-config-surface.md) §3 · §4.
+> Terra's ladder was **not** re-measured — the row ships on the 2026-09-09 probe above.
+
 ### 13.5 Streaming — the first live probe, and it confirms the mapper
 
 Every probe before round 8 was blocking, which §11.5 recorded. This is the first live streaming

@@ -43,6 +43,12 @@ import at.aimon.core.llm.streaming.LlmStreamingOptions;
 @DisplayName("OpenAI Responses - per-request timeout")
 @ExtendWith(MockitoExtension.class)
 class OpenAIResponsesRequestTimeoutTest {
+    /**
+     * A gpt-5-family reasoning model, meaning nothing more than that. It was {@code gpt-5.6-terra} until that name
+     * got a built-in row of its own for its measured ladder; a name with its own row would keep every assertion here
+     * green while quietly testing a different row from the one they are about.
+     */
+    private static final String A_REASONING_MODEL = "gpt-5-mini";
 
     @Mock
     private OpenAIClient mockOpenAIClient;
@@ -52,7 +58,7 @@ class OpenAIResponsesRequestTimeoutTest {
 
     private OpenAILlmClient createClientWithMock() {
         lenient().when(mockOpenAIClient.responses()).thenReturn(mockResponseService);
-        return new OpenAILlmClient(OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra").build(),
+        return new OpenAILlmClient(OpenAIConfig.builder().apiKey("test-key").model(A_REASONING_MODEL).build(),
                 mockOpenAIClient);
     }
 

@@ -58,6 +58,12 @@ import at.aimon.core.llms.openai.exception.MessageConversionException;
 @DisplayName("OpenAI Responses - what a tool call's arguments may contain")
 @ExtendWith(MockitoExtension.class)
 class OpenAIResponsesToolArgumentParityTest {
+    /**
+     * A gpt-5-family reasoning model, meaning nothing more than that. It was {@code gpt-5.6-terra} until that name
+     * got a built-in row of its own for its measured ladder; a name with its own row would keep every assertion here
+     * green while quietly testing a different row from the one they are about.
+     */
+    private static final String A_REASONING_MODEL = "gpt-5-mini";
 
     /** Truncated after the key: syntactically a JSON string, not a JSON object. */
     private static final String MALFORMED = "{\"command\":";
@@ -110,7 +116,7 @@ class OpenAIResponsesToolArgumentParityTest {
                 .thenReturn(ResponsesFixtures.response(completedResponse(MALFORMED_CALL_ITEM)));
 
         final OpenAILlmClient client = new OpenAILlmClient(
-                OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra").build(), mockOpenAIClient);
+                OpenAIConfig.builder().apiKey("test-key").model(A_REASONING_MODEL).build(), mockOpenAIClient);
 
         assertThatThrownBy(() -> client.sendMessage("sys", List.of(Message.user("hi")), Collections.emptyList(),
                 LlmModel.builder().build())).isInstanceOf(LlmClientException.class)
@@ -180,7 +186,7 @@ class OpenAIResponsesToolArgumentParityTest {
                 .thenReturn(ResponsesFixtures.response(completedResponse(NULL_VALUED_CALL_ITEM)));
 
         final OpenAILlmClient client = new OpenAILlmClient(
-                OpenAIConfig.builder().apiKey("test-key").model("gpt-5.6-terra").build(), mockOpenAIClient);
+                OpenAIConfig.builder().apiKey("test-key").model(A_REASONING_MODEL).build(), mockOpenAIClient);
 
         final LlmResponse response = client.sendMessage("sys", List.of(Message.user("hi")), Collections.emptyList(),
                 LlmModel.builder().build());

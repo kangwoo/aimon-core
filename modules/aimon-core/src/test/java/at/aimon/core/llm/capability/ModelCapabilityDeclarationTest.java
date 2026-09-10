@@ -3,6 +3,9 @@ package at.aimon.core.llm.capability;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.EnumSet;
+import java.util.Set;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -36,8 +39,8 @@ class ModelCapabilityDeclarationTest {
                 .isEqualTo(ModelCapabilities.unknown().supportsToolsWithReasoning());
         assertThat(declaration.capabilities().supportsReasoningTraceRoundTrip())
                 .isEqualTo(ModelCapabilities.unknown().supportsReasoningTraceRoundTrip());
-        assertThat(declaration.capabilities().lowestReasoningEffort())
-                .isEqualTo(ModelCapabilities.unknown().lowestReasoningEffort());
+        assertThat(declaration.capabilities().acceptedReasoningEfforts())
+                .isEqualTo(ModelCapabilities.unknown().acceptedReasoningEfforts());
         assertThat(declaration.capabilities().thinkingDialect())
                 .isEqualTo(ModelCapabilities.unknown().thinkingDialect());
     }
@@ -53,7 +56,7 @@ class ModelCapabilityDeclarationTest {
     }
 
     @Test
-    @DisplayName("each of the six flags round-trips")
+    @DisplayName("each of the seven keys round-trips")
     void everyFlagRoundTrips() {
         final ModelCapabilityDeclaration declaration = ModelCapabilityDeclaration.builder()
                 .supportsSamplingParameters(false).supportsReasoningEffort(true).supportsToolsWithReasoning(false)
@@ -69,6 +72,43 @@ class ModelCapabilityDeclarationTest {
         assertThat(declaration.capabilities()).isEqualTo(ModelCapabilities.builder().supportsSamplingParameters(false)
                 .supportsReasoningEffort(true).supportsToolsWithReasoning(false).supportsReasoningTraceRoundTrip(true)
                 .lowestReasoningEffort(ReasoningEffort.LOW).thinkingDialect(ThinkingDialect.ADAPTIVE).build());
+    }
+
+    @Test
+    @DisplayName("the ladder can be declared as a set, and that is the form with a gap in it")
+    void theLadderIsDeclarableAsASet() {
+        // The invariant that made this key necessary: the built-in gpt-5.6-terra row states a ladder no floor
+        // describes, and a surface that cannot express a shipped row cannot describe a deployment that renamed it.
+        final ModelCapabilityDeclaration declaration = ModelCapabilityDeclaration.builder().acceptedReasoningEfforts(
+                EnumSet.of(ReasoningEffort.NONE, ReasoningEffort.LOW, ReasoningEffort.MEDIUM, ReasoningEffort.HIGH))
+                .build();
+
+        assertThat(declaration.acceptedReasoningEfforts()).contains(
+                EnumSet.of(ReasoningEffort.NONE, ReasoningEffort.LOW, ReasoningEffort.MEDIUM, ReasoningEffort.HIGH));
+        assertThat(declaration.lowestReasoningEffort()).isEmpty();
+        assertThat(declaration.capabilities().acceptedReasoningEfforts()).containsExactly(ReasoningEffort.NONE,
+                ReasoningEffort.LOW, ReasoningEffort.MEDIUM, ReasoningEffort.HIGH);
+    }
+
+    @Test
+    @DisplayName("declaring both ladder keys is refused, with a message naming both and which to keep")
+    void bothLadderKeysAreRefused() {
+        // Refused rather than resolved by precedence. A yaml file presents both keys at once with no order at all,
+        // so any winner this type picked would be one the operator could not have predicted -- unlike the Java
+        // builder's own last-call-wins, which reads off a sequence.
+        assertThatThrownBy(() -> ModelCapabilityDeclaration.builder().lowestReasoningEffort(ReasoningEffort.LOW)
+                .acceptedReasoningEfforts(EnumSet.of(ReasoningEffort.NONE, ReasoningEffort.HIGH)).build())
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("lowestReasoningEffort")
+                .hasMessageContaining("acceptedReasoningEfforts").hasMessageContaining("Keep acceptedReasoningEfforts");
+    }
+
+    @Test
+    @DisplayName("an empty declared ladder is refused by name rather than treated as undeclared")
+    void anEmptyDeclaredLadderIsRefused() {
+        // What an operator writing `acceptedReasoningEfforts: []` gets. Folding it into "not declared" would make
+        // something they wrote do nothing, which is the failure this whole surface removes.
+        assertThatThrownBy(() -> ModelCapabilityDeclaration.builder().acceptedReasoningEfforts(Set.of()).build())
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("acceptedReasoningEfforts");
     }
 
     @Test
@@ -93,6 +133,7 @@ class ModelCapabilityDeclarationTest {
 
         assertThat(declaration.supportsSamplingParameters()).isEmpty();
         assertThat(declaration.lowestReasoningEffort()).isEmpty();
+        assertThat(declaration.acceptedReasoningEfforts()).isEmpty();
         assertThat(declaration.thinkingDialect()).isEmpty();
         assertThat(declaration.supportsReasoningEffort()).contains(true);
     }
@@ -105,8 +146,8 @@ class ModelCapabilityDeclarationTest {
         // no-op produced an HTTP 400.
         assertThatThrownBy(() -> ModelCapabilityDeclaration.builder().build())
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("at least one")
-                .hasMessageContaining("supportsSamplingParameters").hasMessageContaining("thinkingDialect")
-                .hasMessageContaining("check the spelling");
+                .hasMessageContaining("supportsSamplingParameters").hasMessageContaining("acceptedReasoningEfforts")
+                .hasMessageContaining("thinkingDialect").hasMessageContaining("check the spelling");
     }
 
     @Test

@@ -48,7 +48,7 @@ import at.aimon.core.llm.capability.ModelCapabilityRegistry;
  *
  * <p>
  * <strong>How case 5 fails against that implementation.</strong> Its config model is {@code gpt-4o} and its request
- * model is {@code gpt-5.6-terra}. The correct resolution finds the built-in {@code gpt-5} prefix row, whose
+ * model is {@code gpt-5-mini}. The correct resolution finds the built-in {@code gpt-5} prefix row, whose
  * {@code supportsReasoningTraceRoundTrip()} is true, and the predicate holds; the wrong one resolves {@code gpt-4o},
  * finds no row, degrades to {@code ModelCapabilities.unknown()} whose flag is false, and the predicate fails. So the
  * wrong implementation calls {@code chat()}, and both assertions go red — "Wanted but not invoked" on the responses
@@ -67,6 +67,12 @@ import at.aimon.core.llm.capability.ModelCapabilityRegistry;
 @DisplayName("OpenAILlmClient - endpoint selection")
 @ExtendWith(MockitoExtension.class)
 class OpenAILlmClientEndpointSelectionTest {
+    /**
+     * A gpt-5-family reasoning model, meaning nothing more than that. It was {@code gpt-5.6-terra} until that name
+     * got a built-in row of its own for its measured ladder; a name with its own row would keep every assertion here
+     * green while quietly testing a different row from the one they are about.
+     */
+    private static final String A_REASONING_MODEL = "gpt-5-mini";
 
     /** Aborts each SDK call after the endpoint has been chosen, so no valid SDK response has to be constructed. */
     private static final RuntimeException SENTINEL = new RuntimeException("create-invoked");
@@ -126,7 +132,7 @@ class OpenAILlmClientEndpointSelectionTest {
         // OpenAILlmClientModelCapabilityTest.stockConfigFixesTheReportedFourHundred: nothing overridden, no registry
         // passed. This is the test that fails if OpenAIConfig's default registry is wired to EMPTY, or if the gpt-5
         // row loses its traceRoundTrip flag.
-        send(config("gpt-5.6-terra").build(), LlmModel.builder().build());
+        send(config(A_REASONING_MODEL).build(), LlmModel.builder().build());
 
         Assertions.assertThat(assertWentToResponses().model()).isPresent();
     }
@@ -144,7 +150,7 @@ class OpenAILlmClientEndpointSelectionTest {
     void anEmptyRegistryKeepsEvenALiteralGpt5OnChat() {
         // Round 1's acceptance criterion 4, restated for the endpoint: the client holds no model-name knowledge of
         // its own. If it did, this request would be routed by the name despite the registry knowing nothing.
-        send(config("gpt-5.6-terra").modelCapabilityRegistry(ModelCapabilityRegistry.EMPTY).build(),
+        send(config(A_REASONING_MODEL).modelCapabilityRegistry(ModelCapabilityRegistry.EMPTY).build(),
                 LlmModel.builder().build());
 
         assertWentToChat();
@@ -155,7 +161,7 @@ class OpenAILlmClientEndpointSelectionTest {
     void responsesApiDisabledKeepsAReasoningModelOnChat() {
         // The escape hatch for a gateway that implements only /v1/chat/completions while passing real model names
         // through -- a deployment that works today and that this branch would otherwise 404.
-        send(config("gpt-5.6-terra").responsesApiEnabled(false).build(), LlmModel.builder().build());
+        send(config(A_REASONING_MODEL).responsesApiEnabled(false).build(), LlmModel.builder().build());
 
         assertWentToChat();
     }
@@ -163,17 +169,17 @@ class OpenAILlmClientEndpointSelectionTest {
     @Test
     @DisplayName("5: the per-request model name, not the config's, selects the ENDPOINT")
     void perRequestModelNameSelectsTheEndpoint() {
-        send(config("gpt-4o").build(), LlmModel.builder().name("gpt-5.6-terra").build());
+        send(config("gpt-4o").build(), LlmModel.builder().name(A_REASONING_MODEL).build());
 
-        Assertions.assertThat(assertWentToResponses().model().orElseThrow().asString()).isEqualTo("gpt-5.6-terra");
+        Assertions.assertThat(assertWentToResponses().model().orElseThrow().asString()).isEqualTo(A_REASONING_MODEL);
     }
 
     @Test
     @DisplayName("6: a per-request non-reasoning name sends a reasoning session's call back to Chat")
     void perRequestModelNameAlsoSendsAReasoningSessionBackToChat() {
-        // The compaction case, as an assertion: a gpt-4o summarization call inside a gpt-5.6 session. Fails an
+        // The compaction case, as an assertion: a gpt-4o summarization call inside a gpt-5.x session. Fails an
         // implementation that routes to Responses when EITHER name is reasoning-capable -- which passes case 5.
-        send(config("gpt-5.6-terra").build(), LlmModel.builder().name("gpt-4o").build());
+        send(config(A_REASONING_MODEL).build(), LlmModel.builder().name("gpt-4o").build());
 
         Assertions.assertThat(assertWentToChat().model().asString()).isEqualTo("gpt-4o");
     }

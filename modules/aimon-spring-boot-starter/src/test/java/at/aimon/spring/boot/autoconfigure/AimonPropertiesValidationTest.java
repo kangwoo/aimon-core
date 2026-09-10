@@ -604,12 +604,14 @@ class AimonPropertiesValidationTest {
 
                     final ModelCapabilityRegistry registry = AimonProperties.modelCapabilityRegistry(llm);
                     assertThat(registry.resolve("prod-assistant").supportsSamplingParameters()).isFalse();
-                    assertThat(registry.resolve("prod-assistant").lowestReasoningEffort())
-                            .isEqualTo(ReasoningEffort.LOW);
+                    assertThat(registry.resolve("prod-assistant").acceptedReasoningEfforts())
+                            .containsExactly(ReasoningEffort.LOW, ReasoningEffort.MEDIUM, ReasoningEffort.HIGH);
                     // The three flags the entry did not name stay fail-open rather than falling to false, and the
                     // built-in rows are still there.
                     assertThat(registry.resolve("prod-assistant").supportsReasoningTraceRoundTrip()).isFalse();
                     assertThat(registry.resolve("prod-assistant").supportsToolsWithReasoning()).isTrue();
+                    assertThat(registry.resolve("gpt-5-mini"))
+                            .isEqualTo(InMemoryModelCapabilityRegistry.withDefaults().resolve("gpt-5-mini"));
                     assertThat(registry.resolve("gpt-5.6-terra"))
                             .isEqualTo(InMemoryModelCapabilityRegistry.withDefaults().resolve("gpt-5.6-terra"));
                 });
@@ -723,6 +725,53 @@ class AimonPropertiesValidationTest {
     }
 
     @Test
+    @DisplayName("a ladder written as a set binds, in both spellings relaxed binding accepts")
+    void acceptedReasoningEffortsBinds() {
+        // The general ladder form. Boot takes a comma-separated scalar and an indexed list onto the same
+        // List<ReasoningEffort>, and this asserts both rather than assuming: the empty-ladder refusal downstream
+        // depends on an unwritten key staying null rather than materialising an empty list, and that is only
+        // observable if the written forms are known to arrive.
+        runner.withPropertyValues(
+                "aimon.llm.model-capabilities.prod-assistant.accepted-reasoning-efforts=none,low,medium,high")
+                .run(ctx -> assertThat(
+                        AimonProperties.modelCapabilityRegistry(ctx.getBean(AimonProperties.class).getLlm())
+                                .resolve("prod-assistant").acceptedReasoningEfforts())
+                        .containsExactly(ReasoningEffort.NONE, ReasoningEffort.LOW, ReasoningEffort.MEDIUM,
+                                ReasoningEffort.HIGH));
+
+        runner.withPropertyValues("aimon.llm.model-capabilities.prod-assistant.accepted-reasoning-efforts[0]=NONE",
+                "aimon.llm.model-capabilities.prod-assistant.accepted-reasoning-efforts[1]=high")
+                .run(ctx -> assertThat(
+                        AimonProperties.modelCapabilityRegistry(ctx.getBean(AimonProperties.class).getLlm())
+                                .resolve("prod-assistant").acceptedReasoningEfforts())
+                        .containsExactly(ReasoningEffort.NONE, ReasoningEffort.HIGH));
+    }
+
+    @Test
+    @DisplayName("an entry that writes no ladder key at all still binds — the empty-set refusal needs that")
+    void anUnwrittenLadderKeyStaysUndeclared() {
+        // The binder assumption the empty-ladder refusal rests on: an unwritten List property is left null rather
+        // than materialised empty. If Boot materialised one, every declaration that never mentioned the ladder
+        // would be refused as stating an empty one.
+        runner.withPropertyValues("aimon.llm.model-capabilities.prod-assistant.supports-sampling-parameters=false")
+                .run(ctx -> {
+                    assertThat(ctx).hasNotFailed();
+                    assertThat(ctx.getBean(AimonProperties.class).getLlm().getModelCapabilities().get("prod-assistant")
+                            .getAcceptedReasoningEfforts()).isNull();
+                });
+    }
+
+    @Test
+    @DisplayName("stating both ladder keys fails the context, naming the property path")
+    void bothLadderKeysFailTheContext() {
+        runner.withPropertyValues("aimon.llm.model-capabilities.prod-assistant.lowest-reasoning-effort=low",
+                "aimon.llm.model-capabilities.prod-assistant.accepted-reasoning-efforts=none,high")
+                .run(ctx -> assertThat(ctx).hasFailed().getFailure()
+                        .hasStackTraceContaining(AimonProperties.LLM_MODEL_CAPABILITIES)
+                        .hasStackTraceContaining("acceptedReasoningEfforts"));
+    }
+
+    @Test
     @DisplayName("an unusable reasoning-effort value fails at binding with the accepted values")
     void anInvalidReasoningEffortFailsAtBinding() {
         runner.withPropertyValues("aimon.llm.model-capabilities.prod-assistant.lowest-reasoning-effort=lowish")
@@ -736,6 +785,40 @@ class AimonPropertiesValidationTest {
         runner.withPropertyValues("aimon.llm.model-capabilities.prod-assistant.lowest-reasoning-effort=LOW")
                 .run(ctx -> assertThat(ctx.getBean(AimonProperties.class).getLlm().getModelCapabilities()
                         .get("prod-assistant").getLowestReasoningEffort()).isEqualTo(ReasoningEffort.LOW));
+    }
+
+    @Test
+    @DisplayName("aimon.llm.reasoning-effort binds the enum, folds case, and fails loudly on a bad value")
+    void theSharedReasoningEffortKeyBinds() {
+        // The enum itself rather than a String -- ReasoningEffort is an aimon-core type, a hard dependency here, so
+        // the NoClassDefFoundError reasoning that made thinking-mode a String does not apply. Relaxed binding folds
+        // case for free as a consequence, which is the half asserted here.
+        for (String written : new String[]{"medium", "MEDIUM", "Medium"}) {
+            runner.withPropertyValues(AimonProperties.LLM_REASONING_EFFORT + "=" + written)
+                    .run(ctx -> assertThat(ctx.getBean(AimonProperties.class).getLlm().getReasoningEffort())
+                            .as("written as %s", written).isEqualTo(ReasoningEffort.MEDIUM));
+        }
+
+        runner.withPropertyValues(AimonProperties.LLM_REASONING_EFFORT + "=mediumish").run(ctx -> assertThat(ctx)
+                .hasFailed().getFailure().hasStackTraceContaining(AimonProperties.LLM_REASONING_EFFORT));
+
+        runner.run(ctx -> assertThat(ctx.getBean(AimonProperties.class).getLlm().getReasoningEffort()).isNull());
+    }
+
+    @Test
+    @DisplayName("a misspelled aimon.llm.reasoning-effort is silent here too — the same limitation, one key wider")
+    void aMisspelledReasoningEffortIsSilentInTheStarter() {
+        // The third limitation record of the same shape, and the one that widens
+        // docs/backlog/llm-config-surface-open-items.md item L-1 by a fourth key. Its two siblings pin a
+        // map-of-object leaf and a nested-object leaf; this one pins a SCALAR leaf on a bean that binds regardless
+        // of this key -- so nothing here fails to instantiate and the misspelling simply leaves the field null.
+        //
+        // The CLI throws for the same typo. If someone closes L-1, this test goes red with its two siblings, which
+        // is the correct outcome: it is a limitation record, not a guarantee.
+        runner.withPropertyValues("aimon.llm.reasoning-effor=medium").run(ctx -> {
+            assertThat(ctx).hasNotFailed();
+            assertThat(ctx.getBean(AimonProperties.class).getLlm().getReasoningEffort()).isNull();
+        });
     }
 
     @Test

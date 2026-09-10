@@ -7,6 +7,15 @@ llm:
   apiKey: "${OPENAI_KEY}"
   model: "gpt-5.1"
   timeout: 60
+# How hard the model should think. Read by BOTH providers -- the name is the framework's own neutral
+# type and the question means the same thing to either vendor, which is why it is here and not under
+# `anthropic` below. Commented out on purpose: an uncommented default would change every request this
+# CLI makes. A per-agent `model.reasoningEffort` in an agent definition wins over it.
+#
+# On Anthropic it needs `anthropic.thinkingMode` to be something other than the default `off`, or the
+# request carries no thinking parameter and the effort reaches nothing -- the client says so once.
+#  reasoningEffort: medium                      # none | minimal | low | medium | high -- case-insensitive
+
 # The built-in capability table knows models by their real names. An Azure deployment or an
 # OpenAI-compatible gateway behind `baseUrl` may expose one under a name of its own, and that name
 # falls through to the fail-open path -- so a model that rejects `temperature` gets it anyway, and
@@ -21,7 +30,13 @@ llm:
 #      supportsReasoningEffort: true            # model takes a reasoning-effort parameter
 #      supportsToolsWithReasoning: true         # tools and a reasoning effort may be combined
 #      supportsReasoningTraceRoundTrip: false   # true routes the model at /v1/responses -- leave false on a Chat-only gateway
-#      lowestReasoningEffort: minimal           # none | minimal | low | medium | high
+#      lowestReasoningEffort: minimal           # none | minimal | low | medium | high -- the rung the
+#                                               #   ladder starts at, with everything above it accepted
+#      acceptedReasoningEfforts: [none, low, medium, high]
+#                                               # the general form, for a ladder with a GAP in it (the
+#                                               #   built-in gpt-5.6-terra row is one: it takes `none`
+#                                               #   and rejects `minimal`). Mutually exclusive with
+#                                               #   `lowestReasoningEffort` -- writing both fails startup
 
 # Anthropic-only settings. Unlike `modelCapabilities` above, this block is read by the anthropic
 # provider alone -- all three key names carry Anthropic's own vocabulary -- so writing it under

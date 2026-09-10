@@ -8,6 +8,7 @@ import java.time.Duration;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import at.aimon.core.llm.ReasoningEffort;
 import at.aimon.core.llm.capability.ModelCapabilities;
 import at.aimon.core.llm.capability.ModelCapabilityRegistry;
 
@@ -318,6 +319,28 @@ class AnthropicConfigTest {
         assertThat(off).isNotEqualTo(adaptive).isNotEqualTo(noReplay);
         assertThat(off).isEqualTo(AnthropicConfig.builder().apiKey("test-key").build());
         assertThat(off).hasSameHashCodeAs(AnthropicConfig.builder().apiKey("test-key").build());
+    }
+
+    @Test
+    @DisplayName("reasoningEffort round-trips, defaults to unset, and participates in equality and toString")
+    void reasoningEffortRoundTrips() {
+        // Unset by default rather than defaulted to a rung: the client must be able to tell "nobody asked" from
+        // "somebody asked for medium", because the first sends nothing and the second is what an inert-effort
+        // warning is about. And equality has to carry it, because LlmClientFactoryTest pins "an empty block builds
+        // a config equal to no block at all" through this method.
+        assertThat(AnthropicConfig.builder().apiKey("test-key").build().getReasoningEffort()).isEmpty();
+        assertThat(AnthropicConfig.builder().apiKey("test-key").reasoningEffort(ReasoningEffort.HIGH).build()
+                .getReasoningEffort()).contains(ReasoningEffort.HIGH);
+
+        final AnthropicConfig unset = AnthropicConfig.builder().apiKey("test-key").build();
+        final AnthropicConfig high = AnthropicConfig.builder().apiKey("test-key").reasoningEffort(ReasoningEffort.HIGH)
+                .build();
+
+        assertThat(unset).isNotEqualTo(high);
+        assertThat(high)
+                .isEqualTo(AnthropicConfig.builder().apiKey("test-key").reasoningEffort(ReasoningEffort.HIGH).build());
+        assertThat(high.toString()).contains("reasoningEffort=HIGH");
+        assertThat(unset.toString()).contains("reasoningEffort=null");
     }
 
     @Test

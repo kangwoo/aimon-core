@@ -380,13 +380,19 @@ aimon:
           supports-sampling-parameters: false
   ```
 
-  다섯 플래그
+  여섯 플래그
   (`supports-sampling-parameters` · `supports-reasoning-effort` · `supports-tools-with-reasoning` ·
-  `supports-reasoning-trace-round-trip` · `lowest-reasoning-effort`)가 있고 **전부 선택**이며, 적지 않은 것은
-  오늘의 동작을 그대로 유지합니다 — 그래서 위의 한 줄이 400 에 대한 완전한 답입니다. 선언은 내장 표를
+  `supports-reasoning-trace-round-trip` · `lowest-reasoning-effort` · `accepted-reasoning-efforts`)가 있고
+  **전부 선택**이며, 적지 않은 것은
+  오늘의 동작을 그대로 유지합니다 — 그래서 위의 한 줄이 400 에 대한 완전한 답입니다. 뒤의 두 개는 같은
+  사실을 적는 **서로 배타적인** 두 방법입니다: `lowest-reasoning-effort` 는 "여기서 시작해서 끝까지" 의
+  축약이고, `accepted-reasoning-efforts=none,low,medium,high` 는 사다리 중간에 구멍이 있을 때 쓰는
+  일반형입니다(내장 `gpt-5.6-terra` 행이 실측된 그 경우입니다 — `none` 을 받고 `minimal` 을 거절합니다).
+  선언은 내장 표를
   **확장**하고(exact 항목으로 등록되므로 그 이름 하나만 이깁니다), 이름은 대소문자를 가리지 않으며, 점이 든
   이름은 `model-capabilities[gpt-5.7-x]` 처럼 **대괄호**로 감싸야 합니다(감싸지 않으면 항목이 아예 도착하지
-  않습니다). 아무것도 선언하지 않은 항목·대소문자만 다른 두 이름·잘못된 `lowest-reasoning-effort` 값은
+  않습니다). 아무것도 선언하지 않은 항목·두 사다리 키를 함께 적은 항목·빈
+  `accepted-reasoning-efforts` 목록·대소문자만 다른 두 이름·잘못된 `lowest-reasoning-effort` 값은
   프로퍼티 이름을 대며 기동을 실패시킵니다. `provider: anthropic` 아래의 선언은 **더 이상 거절되지
   않습니다** — 그 분기도 이 registry 를 읽기 때문입니다. **다만 플래그 이름의 오타는
   조용합니다** — Boot 가 모르는 프로퍼티를 무시하기 때문이며, 그것을 끄는 것은 `aimon.*` 트리 전체의 동작
@@ -395,6 +401,16 @@ aimon:
   `AimonProperties.modelCapabilityRegistry(properties.getLlm())` 가 그 자리를 위해 public 입니다.
   CLI 쪽 같은 축의 키는 camelCase 이고
   [`aimon-core-integration-via-cli-reference.md`](aimon-core-integration-via-cli-reference.md) 에 있습니다.
+- `aimon.llm.reasoning-effort` 는 **모델이 얼마나 생각할지**를 적습니다 — `none` · `minimal` · `low` ·
+  `medium` · `high` 중 하나이며, 완화된 바인딩이 대소문자를 접어 줍니다. 바로 아래의 `anthropic` 블록과 달리
+  **두 분기가 모두 읽습니다**: 이름이 중립 SPI 타입(`at.aimon.core.llm.ReasoningEffort`) 자신의 것이고,
+  "이 호출이 얼마나 숙고해야 하는가" 라는 물음이 벤더마다 다른 것을 뜻하지도 않기 때문입니다. 답으로 하는
+  일은 다릅니다 — OpenAI 는 rung 파라미터를 보내고 Anthropic 은 토큰 예산으로 옮깁니다. 에이전트 정의의
+  `model.reasoningEffort` 가 이것을 이깁니다. **Anthropic 에서는 `aimon.llm.anthropic.thinking-mode` 가
+  기본값 `off` 가 아니어야 뜻이 있습니다** — `off` 아래에서는 요청에 thinking 파라미터가 실리지 않으므로
+  effort 가 닿을 곳이 없고, 클라이언트가 프로세스당 한 번 WARN 으로 그 사실을 말합니다
+  (`reasoning-effort: none` 은 예외입니다 — 그것과 `off` 는 같은 것을 뜻합니다). 값 오타는 프로퍼티 이름을
+  대며 기동을 실패시키지만 **키 이름의 오타는 조용합니다**, 바로 위 문단과 같은 이유로.
 - `aimon.llm.anthropic.*` 는 **Anthropic 의 thinking 을 조율합니다** — 바로 위 블록과 달리 **anthropic 분기만
   읽습니다.** 세 키의 이름이 전부 그 벤더의 어휘이기 때문이며(이 저장소가 다른 자리에서 `ReasoningEffort` ·
   `ReasoningTrace` 라고 부르는 것에 대한 그쪽 단어가 "thinking" 이고, `budget_tokens` 는 요청 본문의 필드

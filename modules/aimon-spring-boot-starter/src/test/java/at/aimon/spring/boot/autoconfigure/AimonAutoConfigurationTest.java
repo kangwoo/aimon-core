@@ -46,6 +46,7 @@ import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.credential.CredentialStore;
 import at.aimon.core.credential.InMemoryCredentialStore;
 import at.aimon.core.llm.LlmClient;
+import at.aimon.core.llm.ReasoningEffort;
 import at.aimon.core.llm.capability.InMemoryModelCapabilityRegistry;
 import at.aimon.core.llm.capability.ModelCapabilityRegistry;
 import at.aimon.core.llms.anthropic.AnthropicConfig;
@@ -190,6 +191,10 @@ class AimonAutoConfigurationTest {
                     final ModelCapabilityRegistry registry = AimonLlmAutoConfiguration.OpenAiConfiguration
                             .openAiConfig(ctx.getBean(AimonProperties.class).getLlm()).getModelCapabilityRegistry();
                     assertThat(registry.resolve("prod-assistant").supportsSamplingParameters()).isFalse();
+                    // One name per built-in SHAPE: gpt-5-mini lands on a prefix row, the other two on exact ones.
+                    // Round 9 gave gpt-5.6-terra an exact row, so without the first line no prefix row is sampled.
+                    assertThat(registry.resolve("gpt-5-mini"))
+                            .isEqualTo(InMemoryModelCapabilityRegistry.withDefaults().resolve("gpt-5-mini"));
                     assertThat(registry.resolve("gpt-5.6-terra"))
                             .isEqualTo(InMemoryModelCapabilityRegistry.withDefaults().resolve("gpt-5.6-terra"));
                     assertThat(registry.resolve("o3-mini"))
@@ -203,6 +208,8 @@ class AimonAutoConfigurationTest {
         minimal(workspace).withPropertyValues("aimon.llm.provider=openai", "aimon.llm.model=gpt-4o").run(ctx -> {
             final ModelCapabilityRegistry registry = AimonLlmAutoConfiguration.OpenAiConfiguration
                     .openAiConfig(ctx.getBean(AimonProperties.class).getLlm()).getModelCapabilityRegistry();
+            assertThat(registry.resolve("gpt-5-mini"))
+                    .isEqualTo(InMemoryModelCapabilityRegistry.withDefaults().resolve("gpt-5-mini"));
             assertThat(registry.resolve("gpt-5.6-terra"))
                     .isEqualTo(InMemoryModelCapabilityRegistry.withDefaults().resolve("gpt-5.6-terra"));
         });
@@ -223,6 +230,39 @@ class AimonAutoConfigurationTest {
                     assertThat(registry.resolve("claude-opus-5"))
                             .isEqualTo(InMemoryModelCapabilityRegistry.withDefaults().resolve("claude-opus-5"));
                 });
+    }
+
+    @Test
+    @DisplayName("aimon.llm.reasoning-effort reaches BOTH vendor configs")
+    void theSharedReasoningEffortKeyReachesBothBranches(@TempDir Path workspace) {
+        // What the shared namespace means, as an assertion over the pair: a key under aimon.llm.* that only one
+        // branch consumed would be a lie for half its users, and that is exactly the state the aimon.llm.anthropic.*
+        // subtree exists to keep this key out of. Written as one test because the claim is about both at once.
+        minimal(workspace).withPropertyValues("aimon.llm.reasoning-effort=high").run(ctx -> {
+            assertThat(ctx).hasNotFailed();
+            final AimonProperties.Llm llm = ctx.getBean(AimonProperties.class).getLlm();
+            assertThat(AimonLlmAutoConfiguration.AnthropicConfiguration.anthropicConfig(llm).getReasoningEffort())
+                    .contains(ReasoningEffort.HIGH);
+        });
+
+        minimal(workspace).withPropertyValues("aimon.llm.provider=openai", "aimon.llm.model=gpt-5.1",
+                "aimon.llm.reasoning-effort=high").run(ctx -> {
+                    assertThat(ctx).hasNotFailed();
+                    assertThat(AimonLlmAutoConfiguration.OpenAiConfiguration
+                            .openAiConfig(ctx.getBean(AimonProperties.class).getLlm()).getReasoningEffort())
+                            .contains(ReasoningEffort.HIGH);
+                });
+    }
+
+    @Test
+    @DisplayName("no reasoning-effort leaves both vendor configs as they were")
+    void noSharedReasoningEffortChangesNeitherBranch(@TempDir Path workspace) {
+        minimal(workspace).run(ctx -> assertThat(AimonLlmAutoConfiguration.AnthropicConfiguration
+                .anthropicConfig(ctx.getBean(AimonProperties.class).getLlm()).getReasoningEffort()).isEmpty());
+
+        minimal(workspace).withPropertyValues("aimon.llm.provider=openai", "aimon.llm.model=gpt-5.1")
+                .run(ctx -> assertThat(AimonLlmAutoConfiguration.OpenAiConfiguration
+                        .openAiConfig(ctx.getBean(AimonProperties.class).getLlm()).getReasoningEffort()).isEmpty());
     }
 
     @Test
