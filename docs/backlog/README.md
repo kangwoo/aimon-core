@@ -303,7 +303,7 @@ B-6 이 그렇게 어긋나 있었다. §7 은 그 항목을 "MCP 를 실제로 
 
 | 문서 | 출처 | 항목 수 | 열림 | 닫힘 | 해소 |
 |------|------|--------|------|------|------|
-| [`spring-boot-starter-open-items.md`](spring-boot-starter-open-items.md) | `docs/design/integration/spring-boot-starter.md` (SBS-00 ~ SBS-12) | 34 | 4 | 25 | 5 |
+| [`spring-boot-starter-open-items.md`](spring-boot-starter-open-items.md) | `docs/design/integration/spring-boot-starter.md` (SBS-00 ~ SBS-12) | 34 | 4 | 26 | 4 |
 | [`interrupt-open-items.md`](interrupt-open-items.md) | `docs/design/agent-execution/interrupt.md` | 5 | 2 | 3 | 0 |
 | [`multi-instance-readiness.md`](multi-instance-readiness.md) | 아키텍처 리뷰 (2026-08-31) | 3 | 1 | 1 | 1 |
 | [`module-dependency-scope.md`](module-dependency-scope.md) | 아키텍처 리뷰 (2026-08-31) | 1 | 1 | 0 | 0 |
