@@ -21,6 +21,27 @@
           "name": "any"
         }
       ]
+    },
+    {
+      "name": "aimon.llm.anthropic.thinking-mode",
+      "values": [
+        {
+          "value": "off",
+          "description": "Send no thinking parameter. The default, and the request body an always-on model still thinks under."
+        },
+        {
+          "value": "extended",
+          "description": "thinking: {\"type\": \"enabled\", \"budget_tokens\": N} - the manual budget dialect."
+        },
+        {
+          "value": "adaptive",
+          "description": "thinking: {\"type\": \"adaptive\"}, with the call's reasoning effort as output_config.effort."
+        },
+        {
+          "value": "auto",
+          "description": "Whichever dialect the capability table says this model speaks; a model it cannot name sends nothing and warns."
+        }
+      ]
     }
   ]
 }

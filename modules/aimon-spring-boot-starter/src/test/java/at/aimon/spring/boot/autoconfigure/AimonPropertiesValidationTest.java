@@ -668,6 +668,39 @@ class AimonPropertiesValidationTest {
     }
 
     @Test
+    @DisplayName("the three anthropic thinking keys bind, and an absent block binds empty")
+    void theAnthropicBlockBinds() {
+        // Binding only. Whether a value is usable is decided in the guarded slice rather than in
+        // afterPropertiesSet, because folding the string onto the vendor enum would name a compileOnly type in a
+        // method that runs in every deployment -- see AimonProperties.Llm.Anthropic. That asymmetry with
+        // model-capabilities is deliberate, and it is why these assertions stop at the bound values.
+        runner.withPropertyValues("aimon.llm.anthropic.thinking-mode=Auto",
+                "aimon.llm.anthropic.thinking-budget-tokens=4000", "aimon.llm.anthropic.replay-thinking-blocks=false")
+                .run(ctx -> {
+                    final AimonProperties.Llm.Anthropic anthropic = ctx.getBean(AimonProperties.class).getLlm()
+                            .getAnthropic();
+                    assertThat(anthropic.getThinkingMode()).isEqualTo("Auto");
+                    assertThat(anthropic.getThinkingBudgetTokens()).isEqualTo(4000);
+                    assertThat(anthropic.getReplayThinkingBlocks()).isFalse();
+                    assertThat(anthropic.isEmpty()).isFalse();
+                });
+
+        runner.run(ctx -> assertThat(ctx.getBean(AimonProperties.class).getLlm().getAnthropic().isEmpty()).isTrue());
+    }
+
+    @Test
+    @DisplayName("a misspelled anthropic key is silent here too, which widens the same limit by three keys")
+    void aMisspelledAnthropicKeyIsSilentInTheStarter() {
+        // The same limitation record as aMisspelledFlagIsSilentInTheStarter below, on the keys this round adds.
+        // Backlog L-1: Boot's ignoreUnknownFields default makes the starter quiet where the CLI's mapper throws.
+        // Closing it turns both of these red, which is the correct outcome -- they are records, not guarantees.
+        runner.withPropertyValues("aimon.llm.anthropic.thinking-mod=auto").run(ctx -> {
+            assertThat(ctx).hasNotFailed();
+            assertThat(ctx.getBean(AimonProperties.class).getLlm().getAnthropic().isEmpty()).isTrue();
+        });
+    }
+
+    @Test
     @DisplayName("a misspelled flag is silent here, and that limit is measured rather than assumed")
     void aMisspelledFlagIsSilentInTheStarter() {
         // @ConfigurationProperties ignores unknown fields by default, and Boot's JavaBeanBinder does not instantiate

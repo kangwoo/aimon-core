@@ -1,10 +1,15 @@
 package at.aimon.spring.boot.autoconfigure;
 
+import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_ANTHROPIC;
+import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_ANTHROPIC_THINKING_BUDGET_TOKENS;
+import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_ANTHROPIC_THINKING_MODE;
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_API_KEY;
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_MODEL;
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_PROVIDER;
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.PROVIDER_ANTHROPIC;
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.PROVIDER_OPENAI;
+
+import java.util.Locale;
 
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
@@ -17,6 +22,7 @@ import org.springframework.context.annotation.Configuration;
 import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llms.anthropic.AnthropicConfig;
 import at.aimon.core.llms.anthropic.AnthropicLlmClient;
+import at.aimon.core.llms.anthropic.AnthropicThinkingMode;
 import at.aimon.core.llms.openai.OpenAIConfig;
 import at.aimon.core.llms.openai.OpenAILlmClient;
 
@@ -94,6 +100,36 @@ public class AimonLlmAutoConfiguration {
         }
     }
 
+    /**
+     * Rejects an {@code aimon.llm.anthropic} block that the selected provider will never read, by name.
+     *
+     * <p>
+     * "Configured and never read" is the failure this repository refuses everywhere else, and a subtree literally
+     * named after one vendor leaves no ambiguity about whose it is. The check runs from inside the branch that
+     * actually fired, for the reason {@link #requireApiKey} gives: outside a running branch it would turn valid
+     * configuration into a startup failure — {@code provider=none}, or an application that supplies its own
+     * {@link LlmClient}, are deployments where nobody is entitled to demand anything of this block.
+     *
+     * <p>
+     * Declared on the <em>enclosing</em> class rather than in a guarded slice, which the rest of this file
+     * arranges the other way round. That is safe and deliberate: this descriptor names only starter types, and
+     * the body reads three fields for null through {@link AimonProperties.Llm.Anthropic#isEmpty()} — reading a
+     * field loads no class. It has to be here, because the branch that needs it is the one whose classpath does
+     * not have the Anthropic module.
+     *
+     * @param llm
+     *            the bound LLM properties
+     * @param provider
+     *            the provider value that selected this branch
+     */
+    private static void refuseAnthropicBlock(AimonProperties.Llm llm, String provider) {
+        if (!llm.getAnthropic().isEmpty()) {
+            throw new IllegalStateException(LLM_ANTHROPIC + ".* is set but " + LLM_PROVIDER + "=" + provider
+                    + ", so nothing reads it. Remove the block, or select the provider that consumes it" + " ("
+                    + LLM_PROVIDER + "=" + PROVIDER_ANTHROPIC + ").");
+        }
+    }
+
     /** Anthropic branch — also the branch taken when {@code aimon.llm.provider} is absent. */
     @Configuration(proxyBeanMethods = false)
     @ConditionalOnClass(AnthropicLlmClient.class)
@@ -136,7 +172,95 @@ public class AimonLlmAutoConfiguration {
             if (!llm.getModelCapabilities().isEmpty()) {
                 config.modelCapabilityRegistry(AimonProperties.modelCapabilityRegistry(llm));
             }
-            return config.build();
+            applyThinking(config, llm.getAnthropic());
+            try {
+                return config.build();
+            } catch (IllegalArgumentException e) {
+                // Narrow on purpose. The IllegalArgumentExceptions build() can throw on this path are a blank API
+                // key, an out-of-range temperature, a non-positive maxTokens, a budget below 1024, and a budget
+                // under a mode other than EXTENDED. The first three cannot arrive -- requireApiKey rejects a blank
+                // key by property name first, and neither of the other two is settable from any configuration
+                // surface -- so the two that remain are both the budget's, which is why the message can name that
+                // one key rather than the block. If a later round makes temperature settable, that stops being
+                // true and the catch has to be split.
+                throw new IllegalStateException(LLM_ANTHROPIC_THINKING_BUDGET_TOKENS + " is invalid: " + e.getMessage(),
+                        e);
+            }
+        }
+
+        /**
+         * Copies the three {@code aimon.llm.anthropic} keys onto the vendor config, each only when it was
+         * written.
+         *
+         * <p>
+         * That "only when written" is the whole of the compatibility claim: a deployment that sets none of them
+         * calls none of these setters, so {@code AnthropicConfig}'s own defaults stand and the request is
+         * byte-for-byte what it was before this block existed.
+         *
+         * <p>
+         * The mode/budget interaction is not decided here. A budget is legal only under {@code EXTENDED}, and the
+         * one place that rule lives is {@code AnthropicConfig}'s constructor; re-checking it here would be a
+         * second copy of it that can disagree.
+         *
+         * @param config
+         *            the builder being assembled
+         * @param anthropic
+         *            the bound {@code aimon.llm.anthropic} block
+         */
+        private static void applyThinking(AnthropicConfig.Builder config, AimonProperties.Llm.Anthropic anthropic) {
+            if (anthropic.isEmpty()) {
+                return;
+            }
+            if (anthropic.getThinkingMode() != null) {
+                config.thinkingMode(thinkingMode(anthropic.getThinkingMode()));
+            }
+            if (anthropic.getThinkingBudgetTokens() != null) {
+                config.thinkingBudgetTokens(anthropic.getThinkingBudgetTokens());
+            }
+            if (anthropic.getReplayThinkingBlocks() != null) {
+                config.replayThinkingBlocks(anthropic.getReplayThinkingBlocks());
+            }
+        }
+
+        /**
+         * Folds the bound string onto the vendor enum, case-insensitively.
+         *
+         * <p>
+         * The property is a {@code String} — see {@link AimonProperties.Llm.Anthropic} for why — so the fold is by
+         * hand here. It iterates {@code values()} rather than a literal list so that the two surfaces cannot come
+         * to accept different spellings, and so that a fifth constant needs no edit here.
+         *
+         * <p>
+         * The message carries one extra sentence for {@code true} / {@code false}, and it is not decoration.
+         * {@code off} is a YAML 1.1 boolean: written unquoted in an {@code application.yml} it is loaded as
+         * {@code Boolean.FALSE} and converted to the string {@code "false"} before this method ever sees it. So
+         * the one value an operator writes to turn thinking off is also the one that arrives unrecognisable, and
+         * without the hint the message would list four spellings, one of which is the one they wrote. The CLI
+         * surface has the same collision and answers it differently — it can read the parser's original scalar,
+         * which this one never receives.
+         *
+         * @param value
+         *            the value as it was written
+         * @return the matching constant
+         * @throws IllegalStateException
+         *             naming the property and every accepted spelling
+         */
+        private static AnthropicThinkingMode thinkingMode(String value) {
+            final String written = value.trim();
+            for (AnthropicThinkingMode candidate : AnthropicThinkingMode.values()) {
+                if (candidate.name().equalsIgnoreCase(written)) {
+                    return candidate;
+                }
+            }
+            final StringBuilder accepted = new StringBuilder();
+            for (AnthropicThinkingMode candidate : AnthropicThinkingMode.values()) {
+                accepted.append(accepted.length() == 0 ? "" : ", ").append(candidate.name().toLowerCase(Locale.ROOT));
+            }
+            final String yamlHint = "true".equalsIgnoreCase(written) || "false".equalsIgnoreCase(written)
+                    ? " YAML reads an unquoted `off` as a boolean, so write it quoted: thinking-mode: \"off\"."
+                    : "";
+            throw new IllegalStateException(LLM_ANTHROPIC_THINKING_MODE + "=" + value
+                    + " is not a thinking mode. Accepted values: " + accepted + "." + yamlHint);
         }
     }
 
@@ -170,6 +294,7 @@ public class AimonLlmAutoConfiguration {
          * @return the assembled OpenAI config
          */
         static OpenAIConfig openAiConfig(AimonProperties.Llm llm) {
+            refuseAnthropicBlock(llm, PROVIDER_OPENAI);
             requireApiKey(llm, PROVIDER_OPENAI);
             requireModel(llm, PROVIDER_OPENAI);
             final OpenAIConfig.Builder config = OpenAIConfig.builder().apiKey(llm.getApiKey()).model(llm.getModel());

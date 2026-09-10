@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/embedding-agent-in-application.md
-source_commit: 87acc1d
+source_commit: 31e1c71
 ---
 
 # Embedding an AIMON agent in your application
@@ -301,6 +301,9 @@ aimon:
     provider: anthropic             # anthropic (default) | openai | none
     api-key: ${ANTHROPIC_API_KEY}
     timeout: 60s
+    anthropic:                      # read by the anthropic branch only — fails startup under another provider
+      thinking-mode: "off"          # "off" (default) | extended | adaptive | auto — quotes explained below
+      replay-thinking-blocks: true
 
   credentials:                      # optional — values a tool asks for as 'profile.field' (§10)
     jira:
@@ -414,6 +417,51 @@ aimon:
   The CLI key on the same axis is camelCase and
   lives in
   [`aimon-core-integration-via-cli-reference.en.md`](aimon-core-integration-via-cli-reference.en.md).
+- `aimon.llm.anthropic.*` **tunes Anthropic's thinking** — and unlike the block above, **it is read by the
+  anthropic branch alone.** All three key names carry that vendor's vocabulary ("thinking" is its word for
+  what this repository elsewhere calls `ReasoningEffort` / `ReasoningTrace`, `budget_tokens` is a field of
+  the request body, and a "thinking block" is a signed block on its wire), so a block written under
+  `provider: openai` is not ignored: it **fails startup**. Leave it out and the request does not change by a
+  byte — capturing and replaying thinking blocks happens regardless of this setting, so a deployment on the
+  newest models, where thinking is on by default, already has that benefit with nothing configured. What
+  this block opens up is **tuning**.
+
+  ```yaml
+  aimon:
+    llm:
+      provider: anthropic
+      anthropic:
+        thinking-mode: extended       # "off" (default) | extended | adaptive | auto
+        thinking-budget-tokens: 4000  # extended only — which is why the line above is not auto. >= 1024
+        replay-thinking-blocks: true
+  ```
+
+  `thinking-mode` picks which request shape to send — `off` sends no thinking parameter (which does not mean
+  the model will not think), `extended` sends `thinking: {"type": "enabled", "budget_tokens": N}`, `adaptive`
+  sends `thinking: {"type": "adaptive"}` plus `output_config.effort`, and `auto` sends whichever dialect the
+  capability table says this model speaks. **The two dialects are mutually exclusive per model and the wrong
+  one is an HTTP 400**, which is why `auto` exists — and for the same reason **a model the table cannot name
+  gets nothing, with a warning**; the remedy is declaring that name under `model-capabilities` above. Case
+  does not matter.
+
+  **Quote `off`.** YAML reads an unquoted `off` as a boolean, so Boot hands it over as the string `"false"`;
+  startup then fails, with a message that names the quotes. The CLI has no such limit because it can read the
+  parser's original scalar — one collision, answered differently by the two surfaces.
+
+  **`thinking-budget-tokens` is not an independent knob; it belongs to `extended`.** Written together with
+  `auto`, `adaptive` or the default `off` it **fails startup** (a number has no meaning until the dialect is
+  known). The likeliest mistake is **writing the budget and leaving the mode out**, where the mode is `off`
+  and the number reaches nothing — also a startup failure. The value has a floor of 1024 (the API's) and a
+  ceiling below `max_tokens`: thinking tokens count against it, so the client clamps to `max_tokens - 1` and
+  says so at WARN, and **since the default `max_tokens` is 4096, an untouched deployment sends
+  `thinking-budget-tokens: 8000` as 4095.** No property raises that ceiling — the agent definition's
+  `model.maxTokens` does.
+
+  `replay-thinking-blocks: false` is an escape hatch for one named failure — *"Invalid `signature` in
+  `thinking` block. The block is bound to a different conversation."* The vendor's own remedy is to strip
+  every thinking block from the history, and the cost is the feature itself (the model re-derives its
+  reasoning each turn). **A misspelled key name is silent here too** — the same reason and the same limit as
+  the block above. The CLI keys on the same axis are camelCase.
 - `supplied` under `knowledge` / `memory` means "**you declare that bean and the starter only connects the
   tools to it**". Spring made it, so Spring closes it, and the stack merely borrows. The same reason is
   why `knowledge.backend` **deliberately has no OpenSearch value** — `aimon-knowledge-opensearch` exists

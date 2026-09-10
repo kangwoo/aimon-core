@@ -9,14 +9,19 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
+import at.aimon.cli.config.AnthropicProviderConfig;
 import at.aimon.cli.config.LlmProviderConfig;
 import at.aimon.cli.config.ModelCapabilityConfig;
 import at.aimon.cli.exception.ConfigurationException;
 import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.capability.InMemoryModelCapabilityRegistry;
 import at.aimon.core.llm.capability.ModelCapabilityRegistry;
+import at.aimon.core.llms.anthropic.AnthropicConfig;
 import at.aimon.core.llms.anthropic.AnthropicLlmClient;
+import at.aimon.core.llms.anthropic.AnthropicThinkingMode;
 import at.aimon.core.llms.openai.OpenAILlmClient;
 
 @DisplayName("LlmClientFactory Tests")
@@ -334,6 +339,138 @@ class LlmClientFactoryTest {
 
             assertThatThrownBy(() -> factory.create(config)).isInstanceOf(ConfigurationException.class)
                     .hasMessageContaining("llm.modelCapabilities").hasMessageContaining("whitespace");
+        }
+    }
+
+    @Nested
+    @DisplayName("Anthropic thinking settings")
+    class AnthropicThinkingSettings {
+
+        private LlmProviderConfig anthropic() {
+            LlmProviderConfig config = new LlmProviderConfig();
+            config.setProvider("anthropic");
+            config.setApiKey("test-anthropic-api-key");
+            config.setModel("claude-sonnet-5");
+            return config;
+        }
+
+        @Test
+        @DisplayName("Should leave the request exactly as it was when the block is absent")
+        void nothingSetIsTodaysConfig() {
+            // The compatibility claim, asserted as one equality rather than three getters: AnthropicConfig.equals
+            // covers every value an operator can write (the registry is deliberately excluded from it), so a config
+            // built with an empty `anthropic:` block being equal to one built without the block at all says that
+            // no setter ran. Criterion 5 of the issue is exactly this sentence.
+            LlmProviderConfig withoutBlock = anthropic();
+            LlmProviderConfig withEmptyBlock = anthropic();
+            withEmptyBlock.setAnthropic(new AnthropicProviderConfig());
+
+            AnthropicConfig built = factory.anthropicConfig(withoutBlock);
+
+            assertThat(built.getThinkingMode()).isEqualTo(AnthropicThinkingMode.OFF);
+            assertThat(built.getThinkingBudgetTokens()).isNull();
+            assertThat(built.isReplayThinkingBlocks()).isTrue();
+            assertThat(factory.anthropicConfig(withEmptyBlock)).isEqualTo(built);
+        }
+
+        @ParameterizedTest
+        @EnumSource(AnthropicThinkingMode.class)
+        @DisplayName("Should bind every thinking mode the vendor enum has")
+        void everyModeBinds(AnthropicThinkingMode mode) {
+            // Sourced from values() rather than a literal list so that a fifth constant fails here instead of
+            // being silently under-covered. Case folding is not exercised here at all: it belongs to the yaml
+            // surface, where ThinkingModeDeserializer does it and CliConfigLoaderTest asserts it. This test starts
+            // after binding, so all it asks is whether a bound mode reaches the vendor config.
+            LlmProviderConfig config = anthropic();
+            config.getAnthropic().setThinkingMode(mode);
+            if (mode == AnthropicThinkingMode.EXTENDED) {
+                config.getAnthropic().setThinkingBudgetTokens(2048);
+            }
+
+            assertThat(factory.anthropicConfig(config).getThinkingMode()).isEqualTo(mode);
+        }
+
+        @Test
+        @DisplayName("Should carry a budget through under the one mode that accepts it")
+        void budgetReachesTheClient() {
+            LlmProviderConfig config = anthropic();
+            config.getAnthropic().setThinkingMode(AnthropicThinkingMode.EXTENDED);
+            config.getAnthropic().setThinkingBudgetTokens(4000);
+
+            assertThat(factory.anthropicConfig(config).getThinkingBudgetTokens()).isEqualTo(4000);
+        }
+
+        @Test
+        @DisplayName("Should let replay be turned off")
+        void replayCanBeTurnedOff() {
+            LlmProviderConfig config = anthropic();
+            config.getAnthropic().setReplayThinkingBlocks(false);
+
+            assertThat(factory.anthropicConfig(config).isReplayThinkingBlocks()).isFalse();
+        }
+
+        @Test
+        @DisplayName("Should refuse a budget under auto, naming the yaml block")
+        void budgetUnderAutoIsRefused() {
+            // The rule is AnthropicConfig's and is stated once there; this surface only adds the key path. Under
+            // AUTO the dialect is not known until the request is built, so a number has nothing to mean yet.
+            LlmProviderConfig config = anthropic();
+            config.getAnthropic().setThinkingMode(AnthropicThinkingMode.AUTO);
+            config.getAnthropic().setThinkingBudgetTokens(4000);
+
+            assertThatThrownBy(() -> factory.create(config)).isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("llm.anthropic").hasMessageContaining("EXTENDED");
+        }
+
+        @Test
+        @DisplayName("Should refuse a budget written on its own, naming the yaml block")
+        void budgetWithoutAModeIsRefused() {
+            // The likeliest of the three mistakes: the mode defaults to OFF, so the budget would reach nothing.
+            LlmProviderConfig config = anthropic();
+            config.getAnthropic().setThinkingBudgetTokens(4000);
+
+            assertThatThrownBy(() -> factory.create(config)).isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("llm.anthropic").hasMessageContaining("OFF");
+        }
+
+        @Test
+        @DisplayName("Should refuse a budget below the API's floor, naming the yaml block")
+        void aBudgetBelowTheFloorIsRefused() {
+            LlmProviderConfig config = anthropic();
+            config.getAnthropic().setThinkingMode(AnthropicThinkingMode.EXTENDED);
+            config.getAnthropic().setThinkingBudgetTokens(512);
+
+            assertThatThrownBy(() -> factory.create(config)).isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("llm.anthropic").hasMessageContaining("1024");
+        }
+
+        @Test
+        @DisplayName("Should refuse an anthropic block under the openai provider, naming both keys")
+        void anAnthropicBlockUnderOpenAiIsRefused() {
+            // "Configured and never read" is the failure this block's vendor namespace makes unambiguous: nothing
+            // about `llm.anthropic` is open to interpretation under `provider: openai`. Refused from inside the
+            // branch that runs, so a deployment with its own client is untouched.
+            LlmProviderConfig config = new LlmProviderConfig();
+            config.setProvider("openai");
+            config.setApiKey("test-openai-api-key");
+            config.setModel("gpt-4o");
+            config.getAnthropic().setThinkingMode(AnthropicThinkingMode.AUTO);
+
+            assertThatThrownBy(() -> factory.create(config)).isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("llm.anthropic").hasMessageContaining("llm.provider");
+        }
+
+        @Test
+        @DisplayName("Should leave the openai branch alone when the anthropic block is empty")
+        void anEmptyAnthropicBlockDoesNotTripTheOpenAiBranch() {
+            // The block binds to an empty instance rather than null, so the refusal has to ask isEmpty() rather
+            // than != null -- otherwise every OpenAI deployment fails at boot.
+            LlmProviderConfig config = new LlmProviderConfig();
+            config.setProvider("openai");
+            config.setApiKey("test-openai-api-key");
+            config.setModel("gpt-4o");
+
+            assertThat(factory.openAiConfig(config).getModel()).isEqualTo("gpt-4o");
         }
     }
 }

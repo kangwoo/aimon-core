@@ -4,6 +4,7 @@ import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import at.aimon.cli.config.AnthropicProviderConfig;
 import at.aimon.cli.config.LlmProviderConfig;
 import at.aimon.cli.config.ModelCapabilityConfig;
 import at.aimon.cli.exception.ConfigurationException;
@@ -19,6 +20,12 @@ public class LlmClientFactory {
 
     /** capability 선언 블록의 yaml 키 경로. 거절 메시지가 사용자가 고쳐야 하는 자리를 이 이름으로 부른다. */
     private static final String MODEL_CAPABILITIES_KEY = "llm.modelCapabilities";
+
+    /** Anthropic 전용 블록의 yaml 키 경로. 같은 이유로 상수다. */
+    private static final String ANTHROPIC_KEY = "llm.anthropic";
+
+    /** provider 선택자의 yaml 키 경로. {@link #ANTHROPIC_KEY} 를 거절할 때 함께 부른다. */
+    private static final String PROVIDER_KEY = "llm.provider";
 
     /** 설정에 따라 LLM 클라이언트를 생성한다. */
     public LlmClient create(LlmProviderConfig config) {
@@ -75,7 +82,43 @@ public class LlmClientFactory {
             builder.modelCapabilityRegistry(registryFor(declarations));
         }
 
-        return builder.build();
+        applyThinking(builder, config.getAnthropic());
+
+        try {
+            return builder.build();
+        } catch (IllegalArgumentException e) {
+            // 이 catch 가 좁은 이유. build() 가 이 경로에서 던질 수 있는 IllegalArgumentException 은 다섯이고
+            // (빈 apiKey · 범위 밖 temperature · 0 이하 maxTokens · 1024 미만 예산 · EXTENDED 아닌 모드의 예산),
+            // 앞의 셋은 여기까지 오지 않는다 — apiKey 는 validateApiKey 가 먼저 이름으로 거절하고, 나머지 둘은
+            // 어느 표면에서도 설정할 수 없다. 남는 둘이 **둘 다 예산의 것**이므로 메시지가 블록이 아니라 그 키
+            // 하나를 부른다. temperature 가 언젠가 설정 가능해지면 그것이 참이 아니게 되고, 그때 여기를 갈라야 한다.
+            throw new ConfigurationException(
+                    "Invalid `" + ANTHROPIC_KEY + ".thinkingBudgetTokens` in the LLM config: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * {@code llm.anthropic} 의 세 키를 vendor config 에 옮긴다. <b>적힌 것만</b> 옮기므로, 블록이 없는 배포의
+     * 요청은 이 변경 전과 글자 하나 다르지 않다 — 세 setter 중 하나도 불리지 않아 {@code AnthropicConfig} 의
+     * 기본값(모드 {@code OFF}, 예산 없음, replay {@code true})이 그대로 선다.
+     *
+     * <p>
+     * 두 키가 상호작용한다는 판단은 여기서 하지 않는다. 예산은 {@code EXTENDED} 아래에서만 뜻이 있고 그것을
+     * 거절하는 것은 {@code AnthropicConfig} 의 생성자다 — 여기서 미리 검사하면 같은 규칙의 두 번째 사본이 생긴다.
+     */
+    private void applyThinking(AnthropicConfig.Builder builder, AnthropicProviderConfig anthropic) {
+        if (anthropic == null || anthropic.isEmpty()) {
+            return;
+        }
+        if (anthropic.getThinkingMode() != null) {
+            builder.thinkingMode(anthropic.getThinkingMode());
+        }
+        if (anthropic.getThinkingBudgetTokens() != null) {
+            builder.thinkingBudgetTokens(anthropic.getThinkingBudgetTokens());
+        }
+        if (anthropic.getReplayThinkingBlocks() != null) {
+            builder.replayThinkingBlocks(anthropic.getReplayThinkingBlocks());
+        }
     }
 
     private LlmClient createOpenAIClient(LlmProviderConfig config) {
@@ -91,6 +134,7 @@ public class LlmClientFactory {
      * @return 조립된 OpenAI 설정
      */
     OpenAIConfig openAiConfig(LlmProviderConfig config) {
+        refuseAnthropicBlock(config);
         final String apiKey = validateApiKey(config.getApiKey());
         final OpenAIConfig.Builder builder = OpenAIConfig.builder().apiKey(apiKey).model(validateModel(config));
 
@@ -108,6 +152,22 @@ public class LlmClientFactory {
         }
 
         return builder.build();
+    }
+
+    /**
+     * 이 provider 가 읽지 않을 {@code llm.anthropic} 블록을 이름으로 거절한다.
+     *
+     * <p>
+     * "설정했는데 안 읽히는 것이 가장 나쁘다" 의 적용이다. 거절은 <b>실제로 도는 분기 안에서만</b> 한다 —
+     * 분기 밖에서 검사하면 그 블록을 정당하게 적어 둔 배포(자기 클라이언트를 쓰는 배포)를 기동 실패로 만든다.
+     * 반대 방향의 짝은 없다: 오늘 {@code llm.openai} 블록이 존재하지 않으므로 anthropic 분기가 거절할 것이 없다.
+     */
+    private void refuseAnthropicBlock(LlmProviderConfig config) {
+        if (config.getAnthropic() != null && !config.getAnthropic().isEmpty()) {
+            throw new ConfigurationException(
+                    "`" + ANTHROPIC_KEY + "` is set but `" + PROVIDER_KEY + "` is `" + config.getProvider()
+                            + "`, so nothing reads it. Remove the block, or set `" + PROVIDER_KEY + ": anthropic`.");
+        }
     }
 
     /**

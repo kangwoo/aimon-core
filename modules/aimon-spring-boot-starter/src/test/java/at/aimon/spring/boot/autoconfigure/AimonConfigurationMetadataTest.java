@@ -73,6 +73,36 @@ class AimonConfigurationMetadataTest {
                 "full");
         assertThat(valueCandidates(AimonProperties.LLM_PROVIDER)).containsExactlyInAnyOrder("anthropic", "openai",
                 "none");
+        // The second hand-written hint block, and it exists for the same reason as the first: the property is a
+        // String. Not because a third party contributes values here -- the set is closed -- but because the enum
+        // it folds onto lives in a compileOnly module, so naming it in a signature would be a NoClassDefFoundError
+        // on an OpenAI-only classpath. The assertion is derived from AnthropicThinkingMode.values() rather than
+        // written out, which is what makes a hand-written hint as drift-proof as a recorded enum type.
+        assertThat(valueCandidates(AimonProperties.LLM_ANTHROPIC_THINKING_MODE))
+                .containsExactlyInAnyOrderElementsOf(thinkingModeSpellings());
+    }
+
+    /**
+     * The four accepted {@code thinking-mode} spellings, read off the vendor enum.
+     *
+     * <p>
+     * Reflective rather than a direct reference because this module compiles against
+     * {@code aimon-llm-anthropic} but its type is {@code compileOnly}; the test classpath does carry it, and
+     * naming it here would be the one place in this module where a starter test depends on a vendor type. The
+     * fold in {@code AimonLlmAutoConfiguration} iterates the same {@code values()}, so this test goes red the
+     * moment the hints and the enum disagree.
+     */
+    private static List<String> thinkingModeSpellings() {
+        final List<String> spellings = new ArrayList<>();
+        try {
+            for (Object constant : Class.forName("at.aimon.core.llms.anthropic.AnthropicThinkingMode")
+                    .getEnumConstants()) {
+                spellings.add(((Enum<?>) constant).name().toLowerCase(java.util.Locale.ROOT));
+            }
+        } catch (ClassNotFoundException e) {
+            throw new IllegalStateException("aimon-llm-anthropic is on the test classpath of this module", e);
+        }
+        return spellings;
     }
 
     @Test
@@ -97,13 +127,17 @@ class AimonConfigurationMetadataTest {
     }
 
     @Test
-    @DisplayName("only the provider needs hand-written hints")
+    @DisplayName("only the two String selectors need hand-written hints")
     void enumSelectorsCarryTheirValuesInTheType() {
         // Locks the reason every other selector is an enum. If a hint block ever appears for one of them, either
         // the processor's behaviour changed or someone hand-wrote metadata that will now drift from the enum.
+        // The two exceptions are the two String-typed selectors, and each is a String for its own reason --
+        // aimon.llm.provider so a third party can contribute a value, thinking-mode so no signature in this
+        // module names a compileOnly vendor type.
         final List<String> hinted = new ArrayList<>();
         METADATA.path("hints").forEach(hint -> hinted.add(hint.path("name").asText()));
-        assertThat(hinted).containsExactly(AimonProperties.LLM_PROVIDER);
+        assertThat(hinted).containsExactlyInAnyOrder(AimonProperties.LLM_PROVIDER,
+                AimonProperties.LLM_ANTHROPIC_THINKING_MODE);
     }
 
     @Test
