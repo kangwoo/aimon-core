@@ -57,8 +57,10 @@ llm:
 #                                      #   is clamped below the request's max_tokens (4096 by default, so a
 #                                      #   larger number is sent as max_tokens - 1 with a WARN). Raising that
 #                                      #   ceiling is the agent definition's `model.maxTokens`, not a key here.
-#    thinkingDisplay: summarized       # unset by default. summarized | updates -- ASK for the model's thinking
-#                                      #   text and show it live, dimmed, as it is produced.
+#    thinkingDisplay: summarized       # unset by default, and `summarized` is the only value -- ASK for the
+#                                      #   model's thinking text and show it live, dimmed, as it is produced.
+#                                      #   (The server also accepts `omitted`, its own default; it is not offered
+#                                      #   here because it would open the stream and ask for nothing to fill it.)
 #                                      #   Two effects from one key, and which one bites depends on the mode:
 #                                      #     adaptive  writes thinking.display (without which this model
 #                                      #               generation omits the text entirely) AND forwards it

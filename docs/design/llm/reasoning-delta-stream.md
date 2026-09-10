@@ -23,7 +23,7 @@
 |---|---|---|
 | **N-1** | Where does the OpenAI opt-in key go? | **Vendor.** `llm.openai.reasoningSummary` / `aimon.llm.openai.reasoning-summary`. §2.7 test 1 fires: `reasoning.summary` is the OpenAI request-body path and `auto`/`concise`/`detailed` is OpenAI's value vocabulary. This **opens** `llm.openai.*`, the slot `L-2` and `spring-boot-starter.md` §9.3 left empty. §3.2 |
 | **N-2** | Where does the Anthropic opt-in key go? | **Vendor.** `llm.anthropic.thinkingDisplay` / `aimon.llm.anthropic.thinking-display`, a fourth key beside #54's three. §2.7 test 1 fires twice over: "thinking" is Anthropic's word for the phenomenon (this repository's neutral nouns are `ReasoningEffort` / `ReasoningTrace`) and `display` is the field name in Anthropic's request body. §3.3 |
-| **N-3** | And the neutral umbrella key a reader will ask about? | **It would be shared — and it is not shipped.** Applying §2.7 to a hypothetical `llm.streamReasoning` gives *shared* on both tests, the same answer #61 got for `reasoningEffort`. It is still not shipped, because shipping it beside N-1/N-2 creates two user concepts for one intent plus a precedence rule (the shape `model-capability-config-key.md` §3 **R2** rejects), and shipping it *instead* of them forecloses `concise`/`detailed`/`updates` behind a boolean that could only be widened by a breaking type change on a config key. Filed as a follow-up with a named trigger. §3.4 |
+| **N-3** | And the neutral umbrella key a reader will ask about? | **It would be shared — and it is not shipped.** Applying §2.7 to a hypothetical `llm.streamReasoning` gives *shared* on both tests, the same answer #61 got for `reasoningEffort`. It is still not shipped, because shipping it beside N-1/N-2 creates two user concepts for one intent plus a precedence rule (the shape `model-capability-config-key.md` §3 **R2** rejects), and shipping it *instead* of them forecloses `concise`/`detailed`/~~`updates`~~ behind a boolean that could only be widened by a breaking type change on a config key. Filed as a follow-up with a named trigger. §3.4 |
 | **T-1** | Does the reasoning text reach `ChunkAggregator.textBuffer`? | **No, and that is the load-bearing invariant.** A second buffer, `peekReasoningText()`, which `toLlmResponse()` does not read. The failure it prevents is a *privacy* failure, not a rendering one, and it is only observable on the mid-stream-cancel path — so that is the path the test drives. §4.2, §9.2 |
 | **T-2** | What actually gates the forwarding? | **Configuration, not the arrival of deltas.** On the Anthropic **budgeted** dialect `thinking_delta` events already arrive today and are swallowed at `AnthropicStreamingMapper.java:195-203`. Forwarding "whatever arrives" would turn reasoning text on for every existing `thinkingMode: extended` deployment without it asking. §5.2 — **a departure from the design of record's §5.1, which is stated only of the adaptive generation.** |
 | **T-3** | Does `isDroppable` become `instanceof A \|\| instanceof B`? | **No — it becomes a rank.** The one-line widening gives reasoning deltas *equal* rank with text deltas, so a reasoning burst evicts answer text: the opposite of what "ahead of text deltas" asks for. §4.5 |
@@ -110,7 +110,7 @@ Two things, and they are not the same thing said twice:
 | Provider | The ask on the wire | Where it lives |
 |---|---|---|
 | OpenAI (Responses) | `reasoning.summary` = `auto` \| `concise` \| `detailed` | A **typed SDK field**: `Reasoning.Builder.summary(Reasoning.Summary)`, values `AUTO`/`CONCISE`/`DETAILED` — verified by `javap` over `openai-java-core` 4.57.0 |
-| Anthropic (adaptive dialect) | `thinking.display` = `"summarized"` \| `"updates"` | **Not modelled in the SDK.** `ThinkingConfigAdaptive` in `anthropic-java-core` 2.13.0 carries `type` and nothing else — verified by reading `main/com/anthropic/models/messages/ThinkingConfigAdaptive.kt`. It carries `@JsonAnyGetter` + `putAdditionalProperty`, so the field can still be written; that is the same escape hatch `AnthropicUsages` already uses to *read* `output_tokens_details`, and `OpenAIMessageConverter:117,263` / `AnthropicMessageConverter:523` already use to *write* unmodelled properties |
+| Anthropic (adaptive dialect) | `thinking.display` = `"summarized"` \| ~~`"updates"`~~ (**wrong — measured `"omitted"`, §12.2**) | **Not modelled in the SDK.** `ThinkingConfigAdaptive` in `anthropic-java-core` 2.13.0 carries `type` and nothing else — verified by reading `main/com/anthropic/models/messages/ThinkingConfigAdaptive.kt`. It carries `@JsonAnyGetter` + `putAdditionalProperty`, so the field can still be written; that is the same escape hatch `AnthropicUsages` already uses to *read* `output_tokens_details`, and `OpenAIMessageConverter:117,263` / `AnthropicMessageConverter:523` already use to *write* unmodelled properties |
 
 `anthropic-thinking-traces.md` A11 recorded the SDK gap as *"moot on this SDK before it is declined"*.
 That was true of a round told to stay out of `aimon-core`; it is not a blocker now, but the fact that
@@ -154,7 +154,9 @@ than being duplicated.
 summarized` names Anthropic's field; a boolean `streamThinkingText: true` names Anthropic's *phenomenon*
 ("thinking"), which #54 already established is a vendor word. Both land in the vendor namespace. The
 shape is chosen on other grounds — §6.5 — and the chosen shape is the enum, because it lets an operator
-correct an unmeasured wire value (§11 O-1) without waiting for a release.
+correct an unmeasured wire value (§11 O-1) without waiting for a release. (**That last rationale is
+superseded — the value was measured and the ground is discharged; the enum survives on a different
+one. §12.2.**)
 
 ### 3.4 Key 3 — the neutral umbrella that is **not** shipped → would be **shared**
 
@@ -589,7 +591,7 @@ only frozen name in this file (`frozen-names.md:49`) and is untouched.
 
 | File | Change |
 |---|---|
-| `AnthropicThinkingDisplay.java` | **New** enum: `SUMMARIZED("summarized")`, `UPDATES("updates")`, each with `wireValue()`. Absent ≡ unset ≡ off — no `OFF` constant, both because a boxed null already says it (as `thinkingBudgetTokens` does) and because `off` is a YAML 1.1 reserved word, which is the entire reason `AnthropicProviderConfig.ThinkingModeDeserializer` exists |
+| `AnthropicThinkingDisplay.java` | **New** enum: `SUMMARIZED("summarized")`, ~~`UPDATES("updates")`~~ (**the second constant was measured invalid and dropped — §12.2**), each with `wireValue()`. Absent ≡ unset ≡ off — no `OFF` constant, both because a boxed null already says it (as `thinkingBudgetTokens` does) and because `off` is a YAML 1.1 reserved word, which is the entire reason `AnthropicProviderConfig.ThinkingModeDeserializer` exists |
 | `AnthropicConfig.java` | `thinkingDisplay` field (`Optional<AnthropicThinkingDisplay>` getter, beside `:186-207`), builder setter, javadoc naming the dialect asymmetry |
 | `AnthropicLlmClient.java` | `resolveThinking:529` writes `display` on the adaptive shape; the gate reaches `new AnthropicStreamingMapper(...)` at `:318`; a new divergence signature for "display set under `OFF`" and one for "display set under `EXTENDED`" (§8 rows 2-3), reported through the existing `reportRecurringDivergence` so each fires once per process |
 | `AnthropicStreamingMapper.java` | Constructor gate; `onContentBlockDelta:195-203` also emits; `emitReasoningDelta` beside `emitTextDelta:288-292`; class javadoc bullet `:52-54` and the comment `:200-203` rewritten |
@@ -673,7 +675,7 @@ lets the OpenAI one sit on the enclosing class.
 | **A2** | **Reuse `LlmStreamChunk`'s `textDelta` field for the new kind.** | A1 one layer down. `getTextDelta()` would return deliberation on a reasoning chunk, and the callers that read it without checking `getKind()` are exactly the ones that would not be updated. |
 | **A3** | **Ship the transport (F-4) now and the ask later.** | D-8, and the issue rejects it explicitly. An always-empty channel is untestable end to end, and the first bug report is about the feature rather than about the missing ask. Made worse by §5.2's finding: the Anthropic budgeted dialect would make the channel *non*-empty for one configuration and empty for the rest, which is the hardest possible shape to diagnose. |
 | **A4** | **Forward whatever the provider sends; no forwarding gate.** | Breaks criterion 6 on the Anthropic budgeted dialect, where `thinking_delta` already arrives (§5.2), and on any OpenAI-compatible gateway that emits summary events unasked. |
-| **A5** | **One neutral boolean key read by both providers.** | §3.4. Would be shared by the rule, and is a follow-up rather than this round's shape — a boolean cannot express `concise` / `detailed` / `updates`, and widening it later is a breaking type change on a config key. |
+| **A5** | **One neutral boolean key read by both providers.** | §3.4. Would be shared by the rule, and is a follow-up rather than this round's shape — a boolean cannot express `concise` / `detailed` / ~~`updates`~~, and widening it later is a breaking type change on a config key. (~~`updates`~~ was never a real value — §12.2. The argument survives it: the OpenAI ask carries three grains and the Anthropic one may yet.) |
 | **A6** | **A neutral key *and* the two vendor keys.** | The R2 shape from `model-capability-config-key.md` §3: two user concepts for one intent, plus a precedence rule for when both are written, on a feature with no users. |
 | **A7** | **A seventh `ModelCapabilities` field** — "does this model produce reasoning summaries". | R8's shape: a field nobody has measured, whose fail-open value is a guess, added to a published SPI so a gateway deployment has one more cell to fill. Nothing goes wrong today when the ask reaches a model that ignores it — the channel is quiet, exactly as when the key is unset. §11 O-2. |
 | **A8** | **Widen `isDroppable` to `A \|\| B`.** | Makes the two ranks equal, so a reasoning burst evicts answer text: the opposite of the ordering the issue asks for (§4.5). |
@@ -868,7 +870,8 @@ Stated as open questions rather than assumed. Items marked **O** need an answer 
 implementation; items marked **U** are measurements this round does not make, in the form the sibling
 documents use.
 
-- **O-1 — the `display` wire values are unverified, and one of them is on our request.** `F-7` names
+- **O-1 — the `display` wire values are unverified, and one of them is on our request.** — **CLOSED by
+  measurement, 2026-09-10; one of the two named values was indeed wrong. §12.2.** `F-7` names
   `"summarized"` and `"updates"`; `anthropic-thinking-traces.md:165` names `"omitted"` as the default.
   Nothing in this tree has ever sent the field, the SDK does not model it, and no API call was made for
   this document. If the accepted spelling differs, an opted-in adaptive request 400s (§8 row 4). The
@@ -882,6 +885,8 @@ documents use.
   `include: [reasoning.encrypted_content]` (`OpenAIResponsesRequestFactory:107`). `ResponseIncludable.Known`
   in 4.57.0 has **no** reasoning-summary constant (verified by `javap`), which suggests the summary
   arrives without one — but that is an inference from an absent enum constant, not a measurement.
+  **CLOSED by measurement, 2026-09-10: the reading was right, and it is no longer an inference — the server
+  enumerates the whole valid set in a 400 and no reasoning summary is in it. §12.3.**
 - **O-4 — should `AssistantReasoningDelta` cross a node boundary at all?** This design says yes: a
   remote subscriber (a web UI on another node) is precisely who wants to watch thinking, and the frame
   is the first thing sacrificed under pressure. The alternative — local fan-out only — would make the
@@ -956,3 +961,89 @@ is a yaml edit rather than a release), and the item is promoted rather than left
 [`../../backlog/reasoning-delta-stream-open-items.md`](../../backlog/reasoning-delta-stream-open-items.md)
 **RD-1**, with O-3 as **RD-2** and four more. Per `docs/backlog/README.md`'s first rule, that file —
 not §11 — is now the canonical record of what is open.
+
+**That paragraph is now history: the calls were made after the branch closed.** §12.2 and §12.3 record
+what came back. The paragraph is left standing rather than rewritten, because the state it describes —
+a wire value shipped unmeasured — is the state that produced the defect §12.2 fixes.
+
+### 12.2 O-1 / RD-1 closed by measurement — and `UPDATES` was wrong
+
+Live probes against `api.anthropic.com/v1/messages`, 2026-09-10, with a negative control. The evidence
+file is `MEASUREMENTS.md` in the task record.
+
+| request `thinking` | HTTP |
+|---|---|
+| `{"type":"adaptive"}` (no display) | 200 |
+| `{"type":"adaptive","display":"summarized"}` | 200 |
+| `{"type":"adaptive","display":"updates"}` | **400** |
+| `{"type":"adaptive","display":"omitted"}` | 200 |
+| `{"type":"adaptive","display":"zzz-not-a-real-value"}` (negative control) | **400** |
+
+The server's error body is identical for `updates` and for the bogus control —
+`thinking.adaptive.display: Input should be 'summarized', 'omitted'` — so the field is **validated**
+rather than ignored, which is what makes the 200s evidence instead of silence. **The accepted set is
+exactly `{summarized, omitted}`; there is no `updates`.** The wrong name came from
+[`anthropic-thinking-traces.md`](anthropic-thinking-traces.md) §8 F-7, which is itself wrong and now
+says so — and that same file's `:165` had already recorded `omitted` as the default, so the document
+contradicted itself before this document copied half of it.
+
+**The channel is not empty once asked.** On `claude-opus-5` with `display: summarized` and
+`output_config.effort = high`, a problem hard enough to earn deliberation returned a `thinking` block
+of 471 characters plus a signature (`thinking_tokens: 472`). §1's premise — that forwarding without the
+ask ships an always-empty channel on this dialect — is confirmed rather than assumed. **A caveat for
+anyone writing a test that asserts text arrives:** an easy prompt returns zero thinking blocks even at
+effort `high`, because adaptive decides not to think. Two probes on `claude-sonnet-5` (`17 * 23`, a
+three-variable word problem) came back empty for that reason and not because of anything in this code.
+
+#### The shape decision — `UPDATES` dropped rather than renamed to `OMITTED`
+
+`omitted` is a real accepted value, so the mechanical fix was `UPDATES("updates")` →
+`OMITTED("omitted")`. It was **not** taken. The enum is one constant.
+
+| | Why not |
+|---|---|
+| **`OMITTED` duplicates absence** | It is the server's own default, so writing it is behaviourally identical to leaving the key unset. It buys an operator no capability an absent key does not already give them, and this type's stated shape is *"Absent means off"* |
+| **Worse — it would be self-contradicting** | This key does two things, and the second is opening the forwarding gate: `AnthropicLlmClient:319` passes `getThinkingDisplay().isPresent()` into `AnthropicStreamingMapper`, which gates on **presence** (`:88`, `:213`), not on the value. So `thinkingDisplay: omitted` under `adaptive` would mean *"open the reasoning channel, and ask the server to put nothing in it"* — a state the enum would newly make writable, and one §8 would then owe a fifth warning row. **Under `extended` it is plainer still:** §5.3 sends no `display` on the budgeted shape at all, so presence alone opens the gate and `omitted` there would *stream thinking text* under a word meaning the opposite |
+| **Mirroring the vendor's enumeration is not this family's practice** | `AnthropicThinkingMode` is `OFF`/`EXTENDED`/`ADAPTIVE`/`AUTO` — four constants since #60, and the fourth strengthens the point: `AUTO` is not a wire value in any dialect, it asks the capability table which of the other two to send. `EXTENDED` writes the wire's `enabled` and `OFF` writes nothing at all. This repository maps vendor vocabulary onto its own rather than reproducing it |
+
+**Does one constant re-open enum-versus-boolean?** Partly, and the honest half is that §3.3's stated
+ground for the enum — *"it lets an operator correct an unmeasured wire value without waiting for a
+release"* — is now **discharged**: the value is measured, so there is nothing left to correct by yaml.
+The enum survives on §3.4's *other* stated ground, which the measurement does not touch: widening a
+shipped boolean configuration key into an enum later is a breaking type change, and the accepted set is
+the **server's** to widen — the sibling ask on the other provider already carries three grains
+(`auto`/`concise`/`detailed`), so grain on this axis is a thing vendors ship. An enum of one extends
+additively; a boolean does not. Arity 1 today is not arity 1 forever, and switching the type now would
+churn both configuration surfaces, both test suites and the starter metadata for no capability gained.
+
+### 12.3 O-3 / RD-2 closed by measurement — the code was right
+
+Live probes against `api.openai.com/v1/responses`, 2026-09-10, `gpt-5-mini`, `store: false`. The
+evidence file is `MEASUREMENTS-OPENAI.md` in the task record. **`OpenAIResponsesRequestFactory` is
+correct as shipped and no code changed.**
+
+| request | HTTP | `summary` parts |
+|---|---|---|
+| as shipped — `include:["reasoning.encrypted_content"]` + `reasoning:{effort:"high",summary:"auto"}` | 200 | **5** |
+| no `include` at all, same `reasoning` | 200 | **5** |
+| `include:["reasoning.summary"]` (negative control) | **400** | — |
+| no summary asked — `include:["reasoning.encrypted_content"]` + `reasoning:{effort:"high"}` | 200 | **0** |
+
+The 400 enumerates the entire valid `include` set — eight values, **none of them a reasoning summary** —
+so the wire has no such entry either. O-3's caveat that its reading was *"an inference from an absent
+enum constant, not a measurement"* is discharged in the code's favour: the reading was right, and the
+server said so rather than the SDK failing to mention it. The last row is the control that matters for
+this feature — **without the ask there are zero summary parts**, so the channel is genuinely opt-in and
+genuinely off until asked.
+
+**What these probes do not cover**, so the closure is not over-read: they were **non-streaming**, so
+they establish that the summary exists in the final response, not the `response.reasoning_summary_text.delta`
+event names the streaming path reads; and they were `gpt-5-mini` only.
+
+**One incidental observation that is not a licence to change anything.** `encrypted_content` came back
+even in the request that sent no `include` at all, while the factory's javadoc justifies requesting it
+explicitly because `store: false` is the case the SDK's own javadoc singles out. **The include stays and
+the javadoc is not softened.** One observation on one model is weaker than the vendor's documented
+contract, and the failure dropping it would cause — reasoning items silently failing to round-trip
+across turns — is the quiet kind. It is recorded here only so that a later reader does not test the line
+once, see a 200, and simplify it away.

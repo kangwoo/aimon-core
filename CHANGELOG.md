@@ -73,6 +73,21 @@ Central is versioned independently).
   deliberately not shipped; the reasoning and the trigger that would change it are `RD-4` in
   `docs/backlog/reasoning-delta-stream-open-items.md`.
 
+- **Both asks are now measured against the live APIs, and one of them was wrong.**
+  `thinkingDisplay` first carried two constants in this round, `summarized` and `updates`, and no
+  release ever carried the second one. The server accepts exactly `{summarized, omitted}` and returns
+  400 for anything else — the same 400 a deliberately bogus value gets, so the field is validated and
+  the accepted spelling is confirmed rather than merely unrejected. **`updates` is gone, and no
+  constant replaced it:** `omitted` is the server's own default, so writing it behaves exactly like
+  leaving the key unset, and since this key's other half is what opens the streaming gate,
+  `thinkingDisplay: omitted` would have meant "open the channel and put nothing in it". The wrong name
+  came from `docs/design/llm/anthropic-thinking-traces.md` §8 F-7, which is corrected at the source.
+  On the OpenAI side the measurement went the other way and **nothing changed**: `reasoning.summary`
+  needs no `include` entry of its own — a request that asks for one is refused with the whole valid
+  set enumerated, and none of the eight is a summary — so the reading previously inferred from an
+  absent SDK constant is now what the server says. Reasoning:
+  `docs/design/llm/reasoning-delta-stream.md` §12.2 and §12.3.
+
 - **`aimon.llm.openai.*` / CLI `llm.openai` is a new namespace**, the slot `L-2` and
   `spring-boot-starter.md` §9.3 have held open since before #46. Its arrival makes the block refusals
   symmetric: the OpenAI branch refuses a populated `llm.anthropic` as it always did, and the Anthropic

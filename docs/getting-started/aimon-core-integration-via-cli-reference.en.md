@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/aimon-core-integration-via-cli-reference.md
-source_commit: 3dd56df
+source_commit: d3500f6
 ---
 
 # aimon-core integration guide — following aimon-cli as the reference
@@ -333,7 +333,7 @@ llm:
 |---|---|---|
 | `thinkingMode` | Which thinking request shape to send (the four values below) | `off` — no thinking parameter is sent |
 | `thinkingBudgetTokens` | An explicit `budget_tokens` for the `extended` dialect | Derived from the call's reasoning effort |
-| `thinkingDisplay` | Whether to ask for the model's thinking text and stream it (`summarized` \| `updates`) | Neither is asked for and nothing is streamed |
+| `thinkingDisplay` | Whether to ask for the model's thinking text and stream it (`summarized`) | Neither is asked for and nothing is streamed |
 | `replayThinkingBlocks` | Whether stored thinking blocks are replayed on the next request | `true` — they are replayed |
 
 The four values of `thinkingMode`. Case does not matter.
@@ -372,7 +372,10 @@ writes it per deployment is the shared `llm.reasoningEffort` above.
 it writes `thinking.display` on the request — without which this model generation omits the text **entirely** —
 and at the same time opens the gate that streams that text to the user. Under `extended` the deltas already
 arrive, so it only opens the gate and no `display` is sent; the client says so once at WARN. Under the default
-`off` nothing reaches it, and it says so once there too.
+`off` nothing reaches it, and it says so once there too. There is one value, `summarized` — the other value the
+server accepts, `omitted`, is its own default, so writing it behaves exactly like leaving the key out, and because
+this key's other half opens the streaming gate, `omitted` would mean "open the channel and put nothing in it". So it
+is not offered.
 
 The REPL prints that text dimmed and distinct from the answer, opened by a `[thinking]` marker. **Leave it out
 and the request and the screen are what they were before this key existed** — it spends output tokens on every

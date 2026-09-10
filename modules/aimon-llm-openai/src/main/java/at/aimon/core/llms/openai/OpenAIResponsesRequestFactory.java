@@ -41,7 +41,13 @@ import at.aimon.core.llm.capability.ModelCapabilities;
  * <li><strong>{@code reasoning.summary} can be asked for, and only here.</strong> {@code encrypted_content} is
  * ciphertext, so a summary is the only readable form of this endpoint's reasoning; the Chat path has no equivalent
  * parameter at all. It is opt-in and unset by default, so the {@code reasoning} object below is built from up to two
- * optional parts and set only if at least one of them landed.
+ * optional parts and set only if at least one of them landed. <strong>It needs no {@code include} entry of its
+ * own</strong>, and that is measured rather than inferred: a request carrying {@code include: ["reasoning.summary"]}
+ * is refused with a 400 that enumerates the whole valid set — eight values, none of them a reasoning summary — while
+ * {@code reasoning.summary: "auto"} on its own returns five {@code summary_text} parts with or without any
+ * {@code include}. The control is the request that asks for no summary: zero parts, so the channel is off until
+ * asked. Non-streaming probes on {@code gpt-5-mini}, 2026-09-10, so they establish the summary in the final response
+ * rather than the streaming path's delta event names.
  * <li><strong>{@code store} is {@code false} and {@code reasoning.encrypted_content} is asked for.</strong> With
  * {@code store: true} the server retains the exchange and offers {@code previous_response_id} as an alternative to
  * replaying items — a second source of truth that no {@code SessionRecord} knows about, in a system that resumes

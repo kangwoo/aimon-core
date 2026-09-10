@@ -746,8 +746,8 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
      * The half that works is the forwarding: on this dialect {@code thinking_delta} events already arrive and the key
      * is what lets them reach the sink, so a watcher <em>does</em> see thinking text. The half that does not is the
      * word itself — {@code ThinkingConfigEnabled} is not given a {@code display} sibling (see
-     * {@link AnthropicThinkingDisplay}), so the value the operator chose between {@code summarized} and
-     * {@code updates} reached nothing. Without this line, working output would read as proof the field went out.
+     * {@link AnthropicThinkingDisplay}), so the {@code summarized} the operator wrote reached nothing. Without this
+     * line, working output would read as proof the field went out.
      */
     private void reportDisplayOnBudgetedDialect() {
         if (config.getThinkingDisplay().isEmpty()) {

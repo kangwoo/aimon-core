@@ -1463,10 +1463,11 @@ public class AimonProperties implements InitializingBean {
             private Integer thinkingBudgetTokens;
 
             /**
-             * Whether to ask the adaptive dialect for readable thinking text — {@code summarized} or
-             * {@code updates} — and, the same key's other half, whether that text is streamed to subscribers as it
-             * is produced. Case-insensitive. Unset by default, and unset means the request is byte-for-byte what it
-             * was and no thinking text streams.
+             * Whether to ask the adaptive dialect for readable thinking text — {@code summarized}, the only value
+             * offered — and, the same key's other half, whether that text is streamed to subscribers as it is
+             * produced. Case-insensitive. Unset by default, and unset means the request is byte-for-byte what it
+             * was and no thinking text streams. The server's other accepted value, {@code omitted}, is its own
+             * default and is deliberately not offered: it would open the stream and ask for nothing to fill it.
              *
              * <p>
              * On {@code thinking-mode: adaptive} it writes {@code thinking.display}, without which this model

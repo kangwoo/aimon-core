@@ -97,7 +97,7 @@ public class AnthropicProviderConfig {
      * <p>
      * 적지 않으면 요청도 이벤트도 이 키가 없던 때와 글자 하나 다르지 않다.
      *
-     * @return {@code summarized} 또는 {@code updates}, 또는 적지 않았으면 null (thinking 텍스트는 흐르지 않는다)
+     * @return {@code summarized}, 또는 적지 않았으면 null (thinking 텍스트는 흐르지 않는다)
      */
     public AnthropicThinkingDisplay getThinkingDisplay() {
         return thinkingDisplay;

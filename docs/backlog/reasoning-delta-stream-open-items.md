@@ -1,4 +1,4 @@
-# 추론 스트림 — 등록 항목 6건 (열림 6)
+# 추론 스트림 — 등록 항목 6건 (열림 4 · 닫힘 2)
 
 출처는 #62 다 — 모델의 숙고를 사용자가 볼 수 있게 만든 작업(`LlmStreamChunk.Kind.REASONING_DELTA` ·
 `AssistantReasoningDelta` · 양쪽 provider 의 opt-in 키). 설계는
@@ -14,7 +14,7 @@
 
 ---
 
-## RD-1 — `display` 의 와이어 값이 실측되지 않았고, 그중 하나가 우리 요청에 실린다
+## RD-1 — `display` 의 와이어 값이 실측되지 않았고, 그중 하나가 우리 요청에 실린다 · **닫힘 (2026-09-10, 실측)**
 
 **무엇을.** Anthropic 요청의 `thinking.display` 에 보내는 두 값(`"summarized"` · `"updates"`)이
 실제로 그 철자인지 한 번 확인한다.
@@ -47,7 +47,48 @@
 
 ---
 
-## RD-2 — `reasoning.summary` 가 `include` 항목을 요구하는지 실측되지 않았다
+### 닫힘 (2026-09-10) — 실측했고, **값 하나가 틀려 있었다**
+
+**결과.** 실제 요청을 보냈다(`api.anthropic.com/v1/messages`, 근거는 태스크 기록의 `MEASUREMENTS.md`).
+`display: "updates"` 는 **400** 이고, 서버가 돌려주는 본문은
+`thinking.adaptive.display: Input should be 'summarized', 'omitted'` 다. **받아 주는 집합은 정확히
+`{summarized, omitted}` 이고 `updates` 는 없다.**
+
+| 요청 `thinking` | HTTP |
+|---|---|
+| `{"type":"adaptive"}` (display 없음) | 200 |
+| `{"type":"adaptive","display":"summarized"}` | 200 |
+| `{"type":"adaptive","display":"updates"}` | **400** |
+| `{"type":"adaptive","display":"omitted"}` | 200 |
+| `{"type":"adaptive","display":"zzz-not-a-real-value"}` (음성 대조군) | **400** |
+
+**음성 대조군이 200 들을 증거로 만든다.** 엉터리 값이 똑같이 400 이므로 이 필드는 무시되는 것이 아니라
+**검증되는** 것이고, 따라서 `summarized` 의 200 은 침묵이 아니라 확인이다.
+
+**규칙 둘대로, 근거가 어땠는지도 적는다.** 이 항목의 근거는 **참이었다** — 값은 정말로 실측되지 않았고,
+정말로 그중 하나가 요청에 실려 있었다. 규칙 셋의 심각도 쪽이 달랐다: 항목은 이것을 "옵트인한 배포만
+400 을 맞는다" 로 **제한된 무게**라고 적었는데, 실제로는 그 배포가 맞는 것이 **100%** 다. `updates` 를
+고른 배포는 어쩌다 400 을 맞는 것이 아니라 **모든 adaptive 요청이 400** 이다. 확률이 아니라 상수였다.
+
+**출처도 함께 닫는다.** 틀린 이름은 `anthropic-thinking-traces.md` §8 F-7 에서 왔고, **같은 파일 `:165`
+가 이미 `omitted` 를 기본값으로 적고 있었다** — 문서가 스스로 모순되어 있었다. 그 행에 정정을 붙였다.
+
+**고친 방법 — `OMITTED` 로 개명하지 않고 상수를 뺐다.** `omitted` 은 실재하는 값이므로 기계적인 수정은
+`UPDATES("updates")` → `OMITTED("omitted")` 였지만, 그렇게 하지 않았다. 이유 셋과 enum-대-boolean 재검토는
+[`../design/llm/reasoning-delta-stream.md`](../design/llm/reasoning-delta-stream.md) §12.2 에 있다. 요지는
+`omitted` 이 **부재와 동작이 같은 데다**, 이 키의 나머지 절반이 흘려보내기 게이트를 열기 때문에
+(`AnthropicLlmClient` 가 `getThinkingDisplay().isPresent()` 를 `AnthropicStreamingMapper` 에 넘긴다)
+`thinkingDisplay: omitted` 이 **"채널을 열고 아무것도 담지 말라"** 라는 자기모순 상태가 된다는 것이다.
+
+**채널이 비어 있지 않다는 것도 확인했다.** `claude-opus-5` + `display: summarized` +
+`output_config.effort = high` 에서 471자 + 서명이 붙은 thinking 블록이 왔다(`thinking_tokens: 472`).
+다만 **쉬운 프롬프트는 effort `high` 에서도 thinking 블록이 0개**다 — adaptive 가 생각하지 않기로
+정하기 때문이며, "텍스트가 온다" 를 단언하는 테스트는 그래서 깨질 수 있다.
+
+**남는 것.** `AnthropicThinkingLiveTest` 는 그대로 있고, 여기서 확인되지 않은 것은 §11 O-2(budgeted 모양이
+`display` 형제를 받는지)와 스트리밍 이벤트 모양이다 — 이번 프로브는 전부 비스트리밍이었다.
+
+## RD-2 — `reasoning.summary` 가 `include` 항목을 요구하는지 실측되지 않았다 · **닫힘 (2026-09-10, 실측)**
 
 **무엇을.** OpenAI Responses 요청이 요약을 받으려면 `include` 에 무언가를 더 적어야 하는지 확인한다.
 
@@ -68,6 +109,45 @@
 `include` 가 빠진 것이 밖에서 똑같이 보이기 때문이다.
 
 ---
+
+### 닫힘 (2026-09-10) — 실측했고, **코드가 맞았다. 바꾼 것은 없다**
+
+**결과.** 실제 요청을 보냈다(`api.openai.com/v1/responses`, `gpt-5-mini`, `store: false`, 근거는 태스크
+기록의 `MEASUREMENTS-OPENAI.md`). **`OpenAIResponsesRequestFactory` 는 그대로 옳고 코드는 한 줄도 바뀌지
+않았다.**
+
+| 요청 | HTTP | `summary` 파트 |
+|---|---|---|
+| 지금 그대로 — `include:["reasoning.encrypted_content"]` + `reasoning:{effort:"high",summary:"auto"}` | 200 | **5** |
+| `include` 를 아예 안 보냄, `reasoning` 은 동일 | 200 | **5** |
+| `include:["reasoning.summary"]` (음성 대조군) | **400** | — |
+| 요약을 청하지 않음 — `include:["reasoning.encrypted_content"]` + `reasoning:{effort:"high"}` | 200 | **0** |
+
+**이 항목의 제목이 말하던 것이 바로 뒤집혔다.** 400 의 본문이 유효한 `include` 값 **전체를 열거**하는데,
+여덟 개 중 **요약에 해당하는 것이 없다.** 즉 SDK 가 모델링을 빠뜨린 것이 아니라 **와이어에도 없다.**
+
+**규칙 둘대로 적는다 — 근거가 틀렸다.** 이 항목은 스스로를 *"근거가 부재의 추론이다"* 로 적었고, 그것이
+이 항목이 열려 있던 이유였다. 추론은 **맞았고**, 이제 추론도 아니다 — 없는 enum 상수로부터 읽은 것이
+아니라 **서버가 집합을 직접 열거했다.** 따라서 이것은 "확인해 보니 다행히 맞았다" 가 아니라 **근거의
+종류가 바뀐 것**이다: 부재로부터의 읽기가 존재하는 400 본문으로 교체되었다.
+
+**심각도(규칙 셋)도 다시 잰다.** 항목은 실패 모드를 **"조용한 빈 채널"** — 아무도 알아채지 못하는 종류 —
+로 적었다. 그 서술은 옳았지만 **해당 사항이 없다.** 대신 마지막 행이 이 기능에 중요한 대조군이다:
+**청하지 않으면 요약 파트가 0개**이므로 채널은 진짜로 opt-in 이고 진짜로 꺼져 있다.
+
+**이 프로브가 덮지 않은 것** — 닫힘을 과독하지 않도록 함께 적는다.
+
+- **비스트리밍이다.** 전부 비스트리밍 `POST /v1/responses` 였으므로, 확인된 것은 **최종 응답에 요약이
+  존재한다**는 것이지 스트리밍 경로가 읽는 `response.reasoning_summary_text.delta` 이벤트 이름이 아니다.
+- **`gpt-5-mini` 하나다.** 다른 모델은 보지 않았다.
+
+**부수 관찰 하나 — 이것으로 아무것도 바꾸지 않는다.** `include` 를 아예 안 보낸 요청에서도
+`encrypted_content` 가 돌아왔다. 팩토리의 javadoc 은 `store: false` 가 SDK 자신의 javadoc 이 콕 집어
+말하는 경우라서 명시적으로 청한다고 적어 두었는데, 오늘 이 엔드포인트에서는 안 청해도 왔다. **그래도
+`include` 는 그대로 두고 javadoc 도 약화하지 않았다** — 모델 하나에 대한 관측 하나는 벤더의 문서화된
+계약보다 약하고, 그것을 뺐을 때 생기는 실패(reasoning item 이 턴을 넘어 조용히 왕복하지 못하는 것)는
+조용한 쪽이다. 나중에 누군가 javadoc 을 읽고 한 번 테스트해 본 뒤 그 줄을 "간소화" 하지 않도록 여기
+적어 둘 뿐이다.
 
 ## RD-3 — `OutputFormatter.displayEvent` 가 두 서브타입에서 던진다
 
@@ -103,7 +183,7 @@
 **왜 지금 안 했나.** 설계 §3.4 가 `model-capability-config-key.md` §2.7 을 적용해 **shared 로
 판정하고도 싣지 않았다**, 이유 둘 때문이다. (i) 벤더 키 둘 **옆에** 두면 §3 **R2** 가 거절하는
 모양이 된다 — 사용자 개념이 둘이 되고 둘이 동시에 지정될 때의 우선순위라는 세 번째 규칙이 생긴다.
-(ii) 벤더 키 둘 **대신** 두면 boolean 이 `concise` · `detailed` · `updates` 를 표현하지 못하고,
+(ii) 벤더 키 둘 **대신** 두면 boolean 이 `concise` · `detailed` 같은 결을 표현하지 못하고,
 나중에 enum 으로 넓히는 것은 설정 키의 **타입을 깨는 변경**이다.
 
 **언제 다시 볼까 — 트리거가 이름으로 적혀 있다.** 세 번째 provider 가 붙을 때, 또는 배포를 벤더

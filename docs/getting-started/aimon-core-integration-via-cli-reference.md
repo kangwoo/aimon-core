@@ -320,7 +320,7 @@ llm:
 |---|---|---|
 | `thinkingMode` | 어느 thinking 요청 모양을 보낼 것인가 (아래 네 값) | `off` — thinking 파라미터를 보내지 않는다 |
 | `thinkingBudgetTokens` | `extended` 방언의 명시적 `budget_tokens` | 호출의 reasoning effort 에서 파생된다 |
-| `thinkingDisplay` | 모델의 thinking 텍스트를 요청하고 흘려보낼 것인가 (`summarized` \| `updates`) | 아무것도 요청하지 않고 아무것도 흘리지 않는다 |
+| `thinkingDisplay` | 모델의 thinking 텍스트를 요청하고 흘려보낼 것인가 (`summarized`) | 아무것도 요청하지 않고 아무것도 흘리지 않는다 |
 | `replayThinkingBlocks` | 저장된 thinking 블록을 다음 요청에 되실을 것인가 | `true` — 되싣는다 |
 
 `thinkingMode` 의 네 값이다. 대소문자를 가리지 않는다.
@@ -358,7 +358,9 @@ llm:
 `thinking.display` 를 쓰고 — 그것이 없으면 이 세대의 모델은 thinking 텍스트를 **아예 주지 않는다** —
 동시에 그 텍스트를 사용자에게 흘려보내는 게이트를 연다. `extended` 에서는 델타가 이미 오고 있으므로
 게이트만 열고 `display` 는 보내지 않으며, 클라이언트가 그 사실을 한 번 WARN 으로 말한다. 기본값 `off`
-아래에서는 아무것도 닿지 않고, 역시 한 번 말한다.
+아래에서는 아무것도 닿지 않고, 역시 한 번 말한다. 값은 `summarized` 하나다 — 서버가 받아 주는 다른 값
+`omitted` 은 서버 자신의 기본값이라 적지 않은 것과 동작이 같고, 이 키의 나머지 절반이 흘려보내기 게이트를
+여는 것이므로 `omitted` 은 "채널을 열고 아무것도 담지 말라" 는 뜻이 된다. 그래서 제공하지 않는다.
 
 REPL 은 그 텍스트를 답변과 구별되게 흐린 색으로, `[thinking]` 표시를 앞세워 인쇄한다. **적지 않으면
 요청도 화면도 이 키가 없던 때와 같다** — 매 요청 출력 토큰을 쓰는 값이므로 opt-in 이다.

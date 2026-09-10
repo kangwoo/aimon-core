@@ -1,4 +1,4 @@
-# LLM 설정 표면 — 등록 항목 5건 (열림 5)
+# LLM 설정 표면 — 등록 항목 7건 (열림 7)
 
 출처는 #46 이다 — 모델 capability 표를 CLI yaml 과 스타터 프로퍼티에서 확장할 수 있게 한 작업.
 설계는 [`../design/llm/model-capability-config-key.md`](../design/llm/model-capability-config-key.md) 이고,
@@ -316,6 +316,72 @@ CLI 도 **자기가 판단하는 자리에서는** 같은 규칙을 지킨다 �
 > **원인 예외가 프로퍼티 이름과 네 철자를 댄다**(`AnthropicProviderConfig.ThinkingModeDeserializer`).
 > 감싸는 문장은 여전히 파일 이름뿐이므로 이 항목은 그대로 열려 있고, 저 한 키는 고쳤을 때 무엇이
 > 보이게 되는지의 예시다.
+
+---
+
+## L-6 — `BUDGETED` 쪽 절반이 선언된 행 없이 서 있는데, 이제 실측된 행이 셋 있다
+
+*(2026-09-10 등록. 출처는 #62 국면의 실측 —
+태스크 기록의 `MEASUREMENTS.md` §4. **작업 자체는 #60 / PR #64 의 영역이다.**)*
+
+**무엇을.** `InMemoryModelCapabilityRegistry` 의 thinking 방언 표에 **`BUDGETED` 행 셋**을 더한다 —
+`claude-opus-4-5-20251101` · `claude-sonnet-4-5-20250929` · `claude-haiku-4-5-20251001`.
+
+**왜.** 관측 가능한 결과는 **`thinkingMode: auto` 를 쓴 배포가 이 세 모델에서 아무것도 얻지 못한다**는
+것이다. 표가 이름을 못 대면 `resolveDialect` 는 `thinkingDialectUnknown@<model>` 을 내고 `AUTO` 는
+`OFF` 처럼 행동한다 — 그 세 모델이 실제로는 budgeted 방언을 **받아 주는데도** 그렇다. 그리고 라운드
+1·2·3 이 매번 *"`BUDGETED` 행이 하나도 배포되지 않으므로 그 절반은 선언된 행을 통해서만 시험된다"* 고
+적어 두었는데, 이제 그 절반에 넣을 **실측된** 행이 셋 있다.
+
+| 모델 | adaptive | budgeted | 표가 말하는 것 | 실측된 방언 |
+|---|---|---|---|---|
+| `claude-opus-4-5-20251101` | **400** | 200 | UNKNOWN | **BUDGETED** |
+| `claude-sonnet-4-5-20250929` | **400** | 200 | UNKNOWN | **BUDGETED** |
+| `claude-haiku-4-5-20251001` | **400** | 200 | UNKNOWN | **BUDGETED** |
+
+**어디.** `at.aimon.core.llm.capability.InMemoryModelCapabilityRegistry` 의 `registerPrefix` 행들
+(2026-09-10). 더할 것은 BUDGETED 쪽뿐이다 — **오늘 배포되는 ADAPTIVE 행 여섯 중 다섯이, 모델 이름
+여섯 개에 걸쳐 같은 프로브에서 확인되었다.** 행과 모델 이름은 **같은 수가 아니다**:
+`registerPrefix` 로 등록된 ADAPTIVE 행은 여섯이고(`InMemoryModelCapabilityRegistry:243-253` —
+`claude-fable-5` · `claude-opus-5` · `claude-opus-4-7` · `claude-opus-4-8` · `claude-sonnet-5` ·
+`claude-mythos`), 그중 **다섯**이 adaptive 200 · budgeted 400 으로 확인되었다. 프로브가 이름 여섯 개를
+친 것은 `claude-fable-5-1` 이 자기 행이 아니라 `claude-fable-5` prefix 에 걸리기 때문이다. 여섯 번째 행
+`claude-mythos` 는 여전히 확인 불가다 — 이 계정의 `GET /v1/models` 목록에 그 prefix 로 시작하는 모델이
+없다. 그것으로
+[`../design/llm/reasoning-model-enablement.md`](../design/llm/reasoning-model-enablement.md) §9 U-1 이
+적어 둔 *"행렬은 실측이지만 **오늘 어느 모델이 그 위에 있는지는 아니다**"* 라는 유보가 **그 다섯에 대해
+해소된다.**
+
+**세는 단위를 이렇게 적어 두는 것까지가 이 항목의 일이다.** 집합을 조금 틀리게 열거하는 것은 이 항목을
+낳은 정정(`AnthropicThinkingDisplay` 의 `updates`)이 바로잡는 결함과 **같은 종류**이고, 처음 쓴 이 문단이
+실제로 그 실수를 했다 — 리뷰가 잡았다.
+
+**언제 다시 볼까.** #60 의 표를 다음에 손댈 때. **이 국면(#62)에서 하지 않은 것은 의도**다 — 이미 리뷰를
+통과한 PR 을 넓히지 않으려는 것이고, 표는 그 PR 의 소유물이다.
+
+---
+
+## L-7 — `ThinkingDialect` 에 "둘 다 받는다" 를 적을 자리가 없다
+
+*(2026-09-10 등록. 출처는 같은 프로브 — `MEASUREMENTS.md` §4. **역시 #60 / PR #64 의 영역이다.**)*
+
+**무엇을.** `claude-opus-4-6` 과 `claude-sonnet-4-6` 은 **두 방언을 다 받아 준다**(둘 다 200). 오늘의
+`ThinkingDialect` 는 `UNKNOWN | BUDGETED | ADAPTIVE` 셋뿐이라 그 사실을 표현할 값이 없다.
+
+**왜.** 관측 가능한 결과는 **오독**이다. 두 모델은 지금 표에 없으므로 `UNKNOWN` 으로 읽히는데,
+`UNKNOWN` 의 뜻은 *"표가 답할 수 없다"* 이지 *"어느 쪽이든 된다"* 가 아니다. 동작은 지금도 옳다 —
+요청이 바뀌지 않으므로 아무것도 깨지지 않는다 — **틀린 것은 다음 사람이 읽게 될 이유**다. 라운드 1 의
+`deviations.md` §5 는 두 모델을 빼 둔 근거를 *"샘플링 파라미터를 받아 주므로 행이 필요 없다"* 로
+적었는데, 그것은 이번에 측정된 사실과 **다른 사실**이다. 즉 지금 이 자리에는 맞는 결론이 틀린 근거 위에
+서 있고, `README.md` 규칙 둘이 정확히 그것을 적어 두라고 한다.
+
+**어디.** `at.aimon.core.llm.capability.ThinkingDialect` 의 세 값, 그리고 그것을 읽는
+`AnthropicLlmClient.resolveDialect`(2026-09-10).
+
+**언제 다시 볼까.** 셋 중 하나다 — L-6 을 착수할 때(같은 표를 여는 김에), 세 번째 방언이 생길 때, 또는
+누군가 `UNKNOWN` 을 "어느 쪽이든 된다" 로 읽고 버그를 낼 때. 값을 하나 더할지(`EITHER`), 아니면
+방언을 집합으로 표현할지(#61 이 `lowestReasoningEffort` → `acceptedReasoningEfforts` 로 한 것과 같은
+모양)는 착수 시점의 결정이다 — 후자에는 이미 **선례가 있다**.
 
 ---
 

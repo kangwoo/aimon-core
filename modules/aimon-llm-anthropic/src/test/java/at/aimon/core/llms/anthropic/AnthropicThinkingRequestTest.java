@@ -8,6 +8,7 @@ import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 
 import java.util.List;
+import java.util.Set;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -426,12 +427,28 @@ class AnthropicThinkingRequestTest {
     }
 
     @Test
-    @DisplayName("the other constant reaches the wire under its own spelling")
-    void theUpdatesConstantReachesTheRequest() {
-        final JsonNode body = send(client(config().thinkingMode(AnthropicThinkingMode.ADAPTIVE)
-                .thinkingDisplay(AnthropicThinkingDisplay.UPDATES).build()), LlmModel.builder().build());
+    @DisplayName("every constant spells a value the server actually accepts")
+    void everyConstantSpellsAnAcceptedWireValue() {
+        // The regression this pins is a shipped one: `UPDATES("updates")` rode an opted-in adaptive request until a
+        // live probe returned 400 with `thinking.adaptive.display: Input should be 'summarized', 'omitted'` (a bogus
+        // control 400s identically, so the field is validated rather than ignored). Nothing else catches a wrong
+        // spelling -- the SDK does not model `display`, so it goes out through putAdditionalProperty untyped.
+        final Set<String> acceptedByTheServer = Set.of("summarized", "omitted");
 
-        assertThat(body.get("thinking").get("display").asText()).isEqualTo("updates");
+        assertThat(AnthropicThinkingDisplay.values()).allSatisfy(display -> assertThat(acceptedByTheServer)
+                .as("`%s` is sent as `%s`, which the server rejects", display, display.wireValue())
+                .contains(display.wireValue()));
+    }
+
+    @Test
+    @DisplayName("omitted is accepted by the server and deliberately absent from the enum")
+    void theEnumDoesNotCarryOmitted() {
+        // Not an oversight and not a value waiting to be added. `omitted` is the server's default, so writing it is
+        // behaviourally identical to leaving the key unset -- and because presence of the key is what opens the
+        // forwarding gate, `thinkingDisplay: omitted` would mean "open the reasoning channel, and ask the server to
+        // put nothing in it". AnthropicThinkingDisplay's javadoc carries the reasoning.
+        assertThat(AnthropicThinkingDisplay.values()).extracting(AnthropicThinkingDisplay::wireValue)
+                .containsExactly("summarized");
     }
 
     @Test
@@ -467,7 +484,7 @@ class AnthropicThinkingRequestTest {
         // A property of the configuration, not of the traffic: the condition is constant for the life of the client,
         // so reportDivergence's once-per-signature rule is the right one and reportRecurringDivergence's 1/10/100
         // cadence would repeat a sentence nothing changed about.
-        final AnthropicLlmClient client = client(config().thinkingDisplay(AnthropicThinkingDisplay.UPDATES).build());
+        final AnthropicLlmClient client = client(config().thinkingDisplay(AnthropicThinkingDisplay.SUMMARIZED).build());
         send(client, LlmModel.builder().build());
         send(client, LlmModel.builder().build());
         send(client, LlmModel.builder().build());

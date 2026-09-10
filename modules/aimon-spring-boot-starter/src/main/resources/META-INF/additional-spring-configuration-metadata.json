@@ -48,11 +48,7 @@
       "values": [
         {
           "value": "summarized",
-          "description": "Ask the adaptive dialect for a summary of the model's thinking, and stream it. Unset means neither."
-        },
-        {
-          "value": "updates",
-          "description": "Ask the adaptive dialect for short progress updates rather than a running summary, and stream them."
+          "description": "Ask the adaptive dialect for a summary of the model's thinking, and stream it. Unset means neither. The server accepts one other value, `omitted`, which is its own default and is deliberately not offered here: it would mean opening the stream and asking for nothing to put in it."
         }
       ]
     },
