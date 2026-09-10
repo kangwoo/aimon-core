@@ -286,13 +286,15 @@ class OpenAIResponsesRequestFactoryTest {
     @Test
     @DisplayName("a model that takes no reasoning effort at all still receives the summary")
     void aModelWithoutAnEffortLadderStillReceivesTheSummary() {
-        // No capability gate is added for summaries: ModelCapabilities says nothing about them, and inventing a
-        // seventh flag for an unmeasured axis would give every gateway operator one more question they cannot
-        // answer. A model that ignores the ask simply produces no summary events.
+        // The summary's own gate is a different flag from the effort's, and both fail open in the direction that
+        // preserves what the caller asked for: supportsReasoningSummary defaults to true because a summary is only
+        // ever on a request because somebody set it, so withholding it would be fail-CLOSED. gpt-4o's row states no
+        // summary flag, so it inherits that true, and this request is byte-identical to the one before #72.
         final OpenAIConfig config = OpenAIConfig.builder().apiKey("k").model("gpt-4o")
                 .reasoningSummary(OpenAiReasoningSummary.AUTO).build();
         final ModelCapabilities noEffort = InMemoryModelCapabilityRegistry.withDefaults().resolve("gpt-4o");
         assertThat(noEffort.supportsReasoningEffort()).as("fixture precondition").isFalse();
+        assertThat(noEffort.supportsReasoningSummary()).as("fixture precondition").isTrue();
 
         final JsonNode reasoning = ResponsesFixtures
                 .bodyTreeOf(build(config, LlmModel.builder().build(), List.of(), noEffort, SILENT, "gpt-4o"))
@@ -300,6 +302,73 @@ class OpenAIResponsesRequestFactoryTest {
 
         assertThat(reasoning.get("summary").asText()).isEqualTo("auto");
         assertThat(reasoning.has("effort")).isFalse();
+    }
+
+    @Test
+    @DisplayName("a model declared not to accept a summary gets none, while its effort still lands")
+    void aDeclaredSummaryRefusalWithholdsOnlyTheSummary() {
+        // #72: the gateway that implements reasoning.effort and 400s on reasoning.summary. Before this gate the
+        // summary went unconditionally and the request failed on the one parameter the table was never asked about.
+        final OpenAIConfig config = OpenAIConfig.builder().apiKey("k").model(GPT5_NAME)
+                .reasoningSummary(OpenAiReasoningSummary.AUTO).build();
+        final ModelCapabilities refusesSummary = ModelCapabilities.builder().supportsReasoningEffort(true)
+                .supportsReasoningTraceRoundTrip(true).supportsReasoningSummary(false).build();
+
+        final JsonNode reasoning = ResponsesFixtures.bodyTreeOf(build(config,
+                LlmModel.builder().reasoningEffort(ReasoningEffort.MEDIUM).build(), List.of(), refusesSummary, SILENT))
+                .get("reasoning");
+
+        assertThat(reasoning.has("summary")).isFalse();
+        assertThat(reasoning.get("effort").asText()).isEqualTo("medium");
+    }
+
+    @Test
+    @DisplayName("a withheld summary that was the only contributor leaves no reasoning object at all")
+    void aWithheldSummaryLeavesNoReasoningObject() {
+        // The "set the object only if at least one part landed" shape, on the new arm: an empty reasoning object is
+        // itself a wire change, so withholding the sole contributor has to withhold the object with it.
+        final OpenAIConfig config = OpenAIConfig.builder().apiKey("k").model(GPT5_NAME)
+                .reasoningSummary(OpenAiReasoningSummary.AUTO).build();
+        final ModelCapabilities refusesSummary = ModelCapabilities.builder().supportsReasoningSummary(false).build();
+
+        final ResponseCreateParams params = build(config, LlmModel.builder().build(), List.of(), refusesSummary,
+                SILENT);
+
+        assertThat(params._reasoning()).isInstanceOf(JsonMissing.class);
+        assertThat(ResponsesFixtures.bodyOf(params)).doesNotContain("reasoning\":{");
+    }
+
+    @Test
+    @DisplayName("a withheld summary is reported once, under a signature the Chat path's two do not use")
+    void aWithheldSummaryIsReported() {
+        // The repository's standing rule on this request: do not send a parameter a described model does not accept,
+        // and say that you withheld it. The signature is distinct from the client's reasoningSummaryOffResponsesPath
+        // and reasoningSummaryWithResponsesDisabled, which fire only when the request went to Chat Completions.
+        final OpenAIConfig config = OpenAIConfig.builder().apiKey("k").model(GPT5_NAME)
+                .reasoningSummary(OpenAiReasoningSummary.CONCISE).build();
+        final ModelCapabilities refusesSummary = ModelCapabilities.builder().supportsReasoningSummary(false).build();
+        final List<String> reported = new ArrayList<>();
+
+        build(config, LlmModel.builder().build(), List.of(), refusesSummary,
+                (signature, message, args) -> reported.add(signature));
+
+        assertThat(reported).containsExactly("reasoningSummary=CONCISE@" + GPT5_NAME);
+    }
+
+    @Test
+    @DisplayName("a deployment that declares nothing sends the request it sent before the summary had a gate")
+    void anUndeclaredModelIsByteIdentical() {
+        // The acceptance claim behind fail-open true: nothing on the wire moves for a deployment that writes none of
+        // the new keys. Asserted as the serialized body rather than field by field, because "byte-identical" is the
+        // claim.
+        final OpenAIConfig config = OpenAIConfig.builder().apiKey("k").model(GPT5_NAME)
+                .reasoningSummary(OpenAiReasoningSummary.AUTO).build();
+
+        final String body = ResponsesFixtures
+                .bodyOf(build(config, LlmModel.builder().reasoningEffort(ReasoningEffort.HIGH).build(), List.of(),
+                        ModelCapabilities.unknown(), SILENT));
+
+        assertThat(body).contains("\"summary\":\"auto\"");
     }
 
     @Test

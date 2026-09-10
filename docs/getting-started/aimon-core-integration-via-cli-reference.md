@@ -261,8 +261,10 @@ llm:
 `prod-assistant` 로 조회해도 맞는다). `${VAR}` 도 풀리므로 `model: ${DEPLOYMENT}` 을 쓰는 배포가 자기 모델을
 서술할 수 있다.
 
-여섯 플래그가 있고 **전부 선택**이다. 적지 않은 것은 `ModelCapabilities.unknown()` 의 값, 즉 **오늘의 동작**을
-그대로 유지한다 — 그래서 위의 한 줄이 400 에 대한 완전한 답이다. 다 요구하지 않는 이유는 게이트웨이
+여덟 플래그가 있고 **전부 선택**이다. 적지 않은 것은 `ModelCapabilities.unknown()` 의 값을 갖는다.
+**내장 표가 모르는 이름** — 위 예제처럼 개명된 게이트웨이 배포 — 에 대해서는 그것이 곧 **오늘의 동작**이고,
+그래서 위의 한 줄이 400 에 대한 완전한 답이다. **내장 표가 아는 이름**(`claude-sonnet-5`, `gpt-5-mini`)에
+대해서는 그렇지 않다 — 두 표 아래의 **"항목은 그 이름의 행 전체다"** 문단을 읽는다. 다 요구하지 않는 이유는 게이트웨이
 운영자가 "temperature 가 400 을 낸다" 는 알아도 "이 모델이 reasoning trace 를 되싣는가" 는 모르기 때문이며,
 그 칸을 억지로 채우면 `/v1/responses` 가 없는 게이트웨이에서 400 이 404 로 바뀐다.
 
@@ -273,12 +275,39 @@ llm:
 | `supportsToolsWithReasoning` | 도구와 non-`NONE` effort 를 한 요청에 함께 실을 수 있는가 | `true` — 근거 없이 좁히지 않는다 |
 | `supportsReasoningTraceRoundTrip` | reasoning trace 를 다음 턴에 되실어야 추론이 이어지는가 | `false` — Chat Completions 경로를 유지한다 |
 | `lowestReasoningEffort` | 이 모델의 effort 사다리가 어디서 시작하는가 (`none`…`high`). 거기서 위로 전부 받는다는 뜻이다 | `minimal` 부터 `high` 까지 |
-| `acceptedReasoningEfforts` | 받는 rung **전부**, 목록으로 — 사다리 중간에 구멍이 있을 때 쓰는 일반형 (`[none, low, medium, high]`) | 위 칸과 같다 |
+| `acceptedReasoningEfforts` | 받는 rung **전부**, 목록으로 — 사다리 중간에 구멍이 있을 때 쓰는 일반형 (`[none, low, medium, high]`). 빈 원소(`~`, 값 없는 `-`)는 건너뛰지 않고 **몇 번째인지를 부르며 기동을 실패시킨다** | 위 칸과 같다 |
+| `supportsReasoningSummary` | 이 모델이 추론 요약 요청(`reasoning.summary`)을 받는가. **OpenAI Responses 경로만 읽는다** — `supportsReasoningTraceRoundTrip: true` 인 이름만 그 경로에 가므로, `reasoning.effort` 는 받고 `reasoning.summary` 는 400 을 내는 게이트웨이를 적는 자리다 | `true` — 호출자가 요청한 것을 빼앗지 않는다 |
+| `thinkingDialect` | 이 모델의 thinking 요청이 어느 모양인가 — `unknown` · `budgeted` · `adaptive`. **anthropic 분기만 읽는다.** 아래 `llm.anthropic.thinkingMode: auto` 가 물어보는 값이 이것이다 | `unknown` — 표가 답할 수 없다는 뜻이고, 클라이언트는 설정된 것을 그대로 둔다 |
 
-이 선언은 내장 표를 **대체하지 않고 확장한다.** exact 항목으로 등록되므로 기존 `exact > prefix` 규칙이 그대로
+이 선언은 내장 **표**를 대체하지 않고 확장한다. exact 항목으로 등록되므로 기존 `exact > prefix` 규칙이 그대로
 "사용자가 이긴다" 를 뜻하고, 그 승리는 **이름 하나만큼**이다 — `gpt-5` 를 선언하면 정확히 그 이름만 바뀌고
 `gpt-5-mini` 는 여전히 내장 `gpt-5` prefix 가 답한다. 설정에서 prefix 를 선언하는 방법은 없다: prefix 우선순위는
 등록 순서이고, yaml 의 줄 순서가 그것을 정하게 만들 자리가 아니다.
+
+**내장 표에 있는 이름을 서술한다면, 항목은 그 이름의 행 전체다.** 표를 확장하는 것과 한 **행**을 패치하는 것은 다르다. 항목 하나는 그 이름의 행 **전체**이므로, 적지 않은
+플래그는 그 행이 말하던 값이 아니라 fail-open 값으로 떨어진다. 내장 표가 모르는 이름에는 차이가 없다 —
+덮을 행이 없기 때문이다. 아는 이름에는 있고, `claude-*` 행이 그 사례다: 그 행은 방언과 **샘플링 억제**
+두 가지를 말한다.
+
+```yaml
+# 틀림 — 억제가 되돌아온다
+modelCapabilities:
+  claude-sonnet-5:
+    thinkingDialect: unknown
+
+# 맞음 — 그 행이 말하던 플래그를 전부 다시 적는다
+modelCapabilities:
+  claude-sonnet-5:
+    thinkingDialect: unknown             # 또는 adaptive / budgeted
+    supportsSamplingParameters: false    # 내장 행에서 옮겨 적은 것 — 여기서는 선택이 아니다
+```
+
+위쪽은 `supportsSamplingParameters` 를 fail-open 인 `true` 로 되돌리므로 `temperature` 가 400 을 내는 모델로
+나간다 — 그리고 **경고가 없다.** 억제 WARN 은 플래그가 `false` 일 때만 울리기 때문이다. `thinkingMode: extended`
+로 피할 수도 없다: 그 분기는 `temperature` 는 빼지만 `top_p` 는 여전히 싣는다.
+
+**규칙은 한 줄이다 — 항목이 행 전체이므로, 내장 행이 말하던 플래그를 전부 옮겨 적는다.** `claude-*` 이름에
+대해서는 그것이 위의 두 개다.
 
 사다리를 적는 두 키는 **서로 배타적**이다. `lowestReasoningEffort` 는 "여기서 시작해서 끝까지" 라는 흔한
 경우의 축약이고, `acceptedReasoningEfforts` 는 중간이 비어 있는 사다리를 위한 것이다 — 내장 표의
@@ -334,8 +363,24 @@ llm:
 
 **두 방언은 모델마다 배타적이고 틀린 쪽을 보내면 HTTP 400 이다.** 그것이 `auto` 가 있는 이유이며, 동시에
 `auto` 의 한계이기도 하다 — **표가 이름을 모르는 모델에는 아무것도 보내지 않고 경고한다.** 게이트웨이
-뒤에서 모델을 개명해 쓴다면 그 이름을 바로 위 `llm.modelCapabilities` 에 선언하는 것이 처방이고, 두 블록이
-만나는 자리가 정확히 여기다.
+뒤에서 모델을 개명해 쓴다면 그 이름을 바로 위 `llm.modelCapabilities` 에 `thinkingDialect` 로 선언하는 것이
+처방이고, 두 블록이 만나는 자리가 정확히 여기다.
+
+```yaml
+llm:
+  provider: anthropic
+  baseUrl: https://gateway.internal
+  model: prod-claude
+  anthropic:
+    thinkingMode: auto
+  modelCapabilities:
+    prod-claude:
+      thinkingDialect: adaptive        # 실측한 값을 적는다. 모르면 unknown 이 정직한 답이다
+```
+
+**내장 표가 아는 이름**(`claude-sonnet-5` 등)에 대해 같은 것을 적을 때는 `supportsSamplingParameters: false`
+를 함께 적는다 — 항목이 행 전체이기 때문이며, 위 `llm.modelCapabilities` 절의
+**"항목은 그 이름의 행 전체다"** 문단이 그 이유다.
 
 **`thinkingBudgetTokens` 는 독립된 노브가 아니라 `extended` 의 것이다.** `auto` · `adaptive` · 기본
 `off` 와 함께 적으면 **기동이 실패한다** — 조용히 무시되지 않는다. `auto` 아래에서 거절하는 이유는

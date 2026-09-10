@@ -380,11 +380,20 @@ aimon:
           supports-sampling-parameters: false
   ```
 
-  여섯 플래그
+  여덟 플래그
   (`supports-sampling-parameters` · `supports-reasoning-effort` · `supports-tools-with-reasoning` ·
-  `supports-reasoning-trace-round-trip` · `lowest-reasoning-effort` · `accepted-reasoning-efforts`)가 있고
-  **전부 선택**이며, 적지 않은 것은
-  오늘의 동작을 그대로 유지합니다 — 그래서 위의 한 줄이 400 에 대한 완전한 답입니다. 뒤의 두 개는 같은
+  `supports-reasoning-trace-round-trip` · `supports-reasoning-summary` · `thinking-dialect` ·
+  `lowest-reasoning-effort` · `accepted-reasoning-efforts`)가 있고
+  **전부 선택**이며, **내장 표가 모르는 이름**(위 예제처럼 개명된 게이트웨이 배포)에 대해 적지 않은 것은
+  오늘의 동작을 그대로 유지합니다 — 그래서 위의 한 줄이 400 에 대한 완전한 답입니다.
+  **내장 표가 아는 이름에 대해서는 그렇지 않습니다 — 항목 하나가 그 이름의 행 전체이므로, 적지 않은 플래그는
+  그 행이 말하던 값이 아니라 fail-open 값으로 떨어집니다.** `claude-*` 행은 방언과 **샘플링 억제** 두 가지를
+  말하므로, `claude-sonnet-5` 에 `thinking-dialect` 만 적으면 억제가 `true` 로 되돌아가 `temperature` 가
+  400 을 내는 모델로 나갑니다 — 억제 WARN 은 플래그가 `false` 일 때만 울리므로 **경고도 없이**입니다.
+  그런 이름에는 그 행이 말하던 플래그를 전부 옮겨 적습니다(`thinking-dialect` 와
+  `supports-sampling-parameters: false`). `thinking-dialect` 는 anthropic 분기만,
+  `supports-reasoning-summary` 는 OpenAI Responses 경로만 읽습니다 — 후자는 `reasoning.effort` 는 받고
+  `reasoning.summary` 는 400 을 내는 게이트웨이를 적는 자리입니다. 뒤의 두 개는 같은
   사실을 적는 **서로 배타적인** 두 방법입니다: `lowest-reasoning-effort` 는 "여기서 시작해서 끝까지" 의
   축약이고, `accepted-reasoning-efforts=none,low,medium,high` 는 사다리 중간에 구멍이 있을 때 쓰는
   일반형입니다(내장 `gpt-5.6-terra` 행이 실측된 그 경우입니다 — `none` 을 받고 `minimal` 을 거절합니다).
@@ -392,7 +401,8 @@ aimon:
   **확장**하고(exact 항목으로 등록되므로 그 이름 하나만 이깁니다), 이름은 대소문자를 가리지 않으며, 점이 든
   이름은 `model-capabilities[gpt-5.7-x]` 처럼 **대괄호**로 감싸야 합니다(감싸지 않으면 항목이 아예 도착하지
   않습니다). 아무것도 선언하지 않은 항목·두 사다리 키를 함께 적은 항목·빈
-  `accepted-reasoning-efforts` 목록·대소문자만 다른 두 이름·잘못된 `lowest-reasoning-effort` 값은
+  `accepted-reasoning-efforts` 목록·**빈 원소를 낀 목록**(`none,,high` 는 몇 번째인지를 부르며 실패합니다)·
+  대소문자만 다른 두 이름·잘못된 `lowest-reasoning-effort` 값은
   프로퍼티 이름을 대며 기동을 실패시킵니다. `provider: anthropic` 아래의 선언은 **더 이상 거절되지
   않습니다** — 그 분기도 이 registry 를 읽기 때문입니다. **다만 플래그 이름의 오타는
   조용합니다** — Boot 가 모르는 프로퍼티를 무시하기 때문이며, 그것을 끄는 것은 `aimon.*` 트리 전체의 동작
@@ -433,8 +443,11 @@ aimon:
   생각하지 않는다는 뜻은 아닙니다), `extended` 는 `thinking: {"type": "enabled", "budget_tokens": N}`,
   `adaptive` 는 `thinking: {"type": "adaptive"}` 와 `output_config.effort`, `auto` 는 capability 표가 이
   모델이 말한다고 적은 방언입니다. **두 방언은 모델마다 배타적이고 틀린 쪽은 HTTP 400 이라서** `auto` 가
-  있고, 같은 이유로 **표가 이름을 모르는 모델에는 아무것도 보내지 않고 경고합니다** — 처방은 그 이름을 위
-  `model-capabilities` 에 선언하는 것입니다. 대소문자는 가리지 않습니다.
+  있고, 같은 이유로 **표가 이름을 모르는 모델에는 아무것도 보내지 않고 경고합니다** — 처방은 그 이름의
+  `thinking-dialect` 를 위 `model-capabilities` 에 선언하는 것이고
+  (`aimon.llm.model-capabilities.prod-claude.thinking-dialect=adaptive`), 내장 표가 아는 이름이라면
+  `supports-sampling-parameters: false` 를 함께 적습니다 — 항목이 행 전체이기 때문이며, 위 문단이 그
+  이유입니다. 대소문자는 가리지 않습니다.
 
   **`off` 는 따옴표로 감쌉니다.** YAML 이 따옴표 없는 `off` 를 boolean 으로 읽어 Boot 가 문자열 `"false"` 로
   넘기기 때문이며, 그때 기동은 실패하고 메시지가 이 따옴표를 알려 줍니다. CLI 는 파서가 읽은 원문을 볼 수

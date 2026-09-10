@@ -310,7 +310,7 @@ B-6 이 그렇게 어긋나 있었다. §7 은 그 항목을 "MCP 를 실제로 
 | [`architecture-review-open-items.md`](architecture-review-open-items.md) | 아키텍처 리뷰 (2026-08-31) | 8 | 2 | 6 | 0 |
 | [`translation-tooling-open-items.md`](translation-tooling-open-items.md) | 번역 낡음 가드 작업 (2026-09-06) | 4 | 3 | 1 | 0 |
 | [`openai-model-capabilities-open-items.md`](openai-model-capabilities-open-items.md) | o-시리즈 reasoning-item 재생 프로브 (2026-09-09) | 1 | 0 | 1 | 0 |
-| [`llm-config-surface-open-items.md`](llm-config-surface-open-items.md) | `docs/design/llm/model-capability-config-key.md` §9 (#46) | 5 | 5 | 0 | 0 |
+| [`llm-config-surface-open-items.md`](llm-config-surface-open-items.md) | `docs/design/llm/model-capability-config-key.md` §9 (#46) | 8 | 8 | 0 | 0 |
 | [`reasoning-delta-stream-open-items.md`](reasoning-delta-stream-open-items.md) | `docs/design/llm/reasoning-delta-stream.md` §11 (#62) | 6 | 6 | 0 | 0 |
 
 **그 문서의 칸이 `—` 였던 것은 규칙이 없어서가 아니라 그냥 채워지지 않아서였다** — 형식은 나머지 다섯
@@ -359,6 +359,12 @@ degradation 으로 이미 보고되고 있었다), 하나는 진단이 **이 저
 > 뜻이고, 이 README 자신의 **규칙 일곱**("요약표는 항목이 아니다")이 경계하는 방향의 반대편 사례다.
 > 그쪽은 표를 항목처럼 읽는 것을 막고, 이쪽은 표가 항목을 아예 세지 않는 것이다. #62 가 자기 줄을
 > 더하면서 함께 채웠다.
+
+> **2026-09-10 — 그 줄의 숫자가 `5 | 5` 로 굳어 있었다.** #62 가 줄을 채운 시점의 값이고, 그 뒤
+> L-6 · L-7 이 본문에 추가되면서 색인이 따라오지 않았다 — 문서 제목은 *"등록 항목 7건 (열림 7)"* 인데
+> 표는 다섯을 세고 있었다. 바로 위 문단이 경계하는 것과 **같은 실패**이며, 이번에는 표가 항목을 덜 센
+> 것이다. #69 라운드가 `L-8` 을 등록하면서 그 두 칸을 함께 고쳐 `8 | 8` 로 맞췄다 — `5`→`7` 의 절반은
+> 이 라운드의 것이 아니라 앞선 라운드가 남긴 것이며, 그렇게 적어 두는 편이 다음 사람에게 정직하다.
 
 **다섯 번째 문서(`llm-config-surface-open-items.md`)도 끝난 작업이 남긴 것이지만, 네 번째와 다른 자리에서
 왔다** — 그 작업의 **설계 문서**가 미해결 일곱 개를 스스로 세어 두었고, 그중 이 국면 밖으로 결과가 나가는

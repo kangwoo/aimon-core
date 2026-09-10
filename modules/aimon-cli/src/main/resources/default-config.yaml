@@ -22,21 +22,40 @@ llm:
 # answers HTTP 400. Name the deployment here to say what it really accepts. Both providers read this
 # block; the key is the same name `model` above carries.
 #
-# Every flag is optional and each one is independent: what you leave out keeps today's behaviour, so
-# the one-line form below is a complete answer to the 400. Values are case-insensitive.
+# Every flag is optional and each one is independent. For a name the built-in table does NOT describe
+# -- a renamed gateway deployment, which is the case above -- what you leave out keeps today's
+# behaviour, so the one-line form below is a complete answer to the 400. For a name the table DOES
+# describe (`claude-sonnet-5`, `gpt-5-mini`), an entry REPLACES that row rather than patching it, so
+# restate every flag that row stated: see the `claude-*` example at the bottom of this block.
+# Values are case-insensitive.
 #  modelCapabilities:
 #    prod-assistant:
 #      supportsSamplingParameters: false        # model rejects temperature / top_p / the penalties
 #      supportsReasoningEffort: true            # model takes a reasoning-effort parameter
 #      supportsToolsWithReasoning: true         # tools and a reasoning effort may be combined
 #      supportsReasoningTraceRoundTrip: false   # true routes the model at /v1/responses -- leave false on a Chat-only gateway
+#      supportsReasoningSummary: true           # false when the gateway takes reasoning.effort and 400s
+#                                               #   on reasoning.summary (only read on /v1/responses)
+#      thinkingDialect: adaptive                # unknown | budgeted | adaptive -- which thinking request
+#                                               #   shape this model speaks. `llm.anthropic.thinkingMode:
+#                                               #   auto` asks this. `unknown` says "act on no built-in row"
 #      lowestReasoningEffort: minimal           # none | minimal | low | medium | high -- the rung the
 #                                               #   ladder starts at, with everything above it accepted
 #      acceptedReasoningEfforts: [none, low, medium, high]
 #                                               # the general form, for a ladder with a GAP in it (the
 #                                               #   built-in gpt-5.6-terra row is one: it takes `none`
 #                                               #   and rejects `minimal`). Mutually exclusive with
-#                                               #   `lowestReasoningEffort` -- writing both fails startup
+#                                               #   `lowestReasoningEffort` -- writing both fails startup.
+#                                               #   An empty entry (`~`, or a bare `-`) fails startup too,
+#                                               #   naming the position: it is a typo, not a rung to skip
+#
+# Describing a name the built-in table already carries -- the shape `thinkingMode: auto` sends you to
+# when a gateway renames a Claude model. The entry is the whole row, so both flags are written: the
+# built-in `claude-*` row states the dialect AND that these models reject temperature / top_p, and an
+# entry naming only the first hands the second back as fail-open `true`, which is the 400 again.
+#    claude-sonnet-5:
+#      thinkingDialect: adaptive                # or `unknown` if you do not know it
+#      supportsSamplingParameters: false        # restated from the built-in row -- not optional here
 
 # Anthropic-only settings. Unlike `modelCapabilities` above, this block is read by the anthropic
 # provider alone -- all four key names carry Anthropic's own vocabulary -- so writing it under

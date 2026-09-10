@@ -7,6 +7,87 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### LLM: the capability table and its two config surfaces now say only things that are true
+
+- **`thinkingDialect` was advertised as declarable and no config surface bound a key for it** (#69).
+  `ModelCapabilityDeclaration.build()`'s refusal message named it, `AnthropicLlmClient`'s `auto` WARN
+  prescribed declaring it, and both operator guides repeated that prescription — while following the
+  advice was a hard `ConfigurationException` at boot on the CLI (its yaml mapper fails on an unknown
+  property) and a silent no-op in the starter (Boot ignores one). Both surfaces bind it now:
+
+  ```yaml
+  # aimon-cli — camelCase              # Spring Boot starter — kebab-case
+  llm:                                 aimon:
+    modelCapabilities:                   llm:
+      prod-claude:                         model-capabilities:
+        thinkingDialect: adaptive            prod-claude:
+                                               thinking-dialect: adaptive
+  ```
+
+  Values are the enum constants — `unknown` · `budgeted` · `adaptive`, any casing — and `unknown` is a
+  real statement rather than an absence: *act on no built-in row for this name*, which is the answer for
+  an operator who knows a row is wrong and not what the right value is.
+
+- **The key goes in the shared namespace**, which is the third application of
+  `docs/design/llm/model-capability-config-key.md` §2.7's criterion and the one where it needed
+  refining. #54 sent `thinkingMode` to `llm.anthropic.*` because "thinking" is Anthropic's word, and
+  issue #69's own body reads the criterion the same way for this key. It loses on three grounds: the
+  criterion picks a namespace for a **key family** rather than for a leaf, and this leaf joins
+  `model-capabilities.<model>` — splitting it would put one record type in two namespaces, keyed by
+  model name in both; §2.6 already fixed these leaf names as letter-for-letter transcriptions of the
+  `ModelCapabilities` Java fields, so nobody *chose* the name the test would be applied to; and #54 §12
+  had already placed this exact key here in writing, naming #69's trigger as the moment to do it.
+
+- **`reasoning.summary` now consults the capability table** (#72), through a seventh flag on a
+  published `0.x` SPI: `ModelCapabilities.supportsReasoningSummary()`, plus
+  `llm.modelCapabilities.<m>.supportsReasoningSummary` and
+  `aimon.llm.model-capabilities.<m>.supports-reasoning-summary`. It was the one reasoning parameter on
+  the Responses request with no gate at all while its sibling `reasoning.effort` had two, so a gateway
+  that implements the effort and rejects the summary answered 400 on the parameter nobody could
+  describe. **Fail-open `true`**, which is the same two-sided rule as every other default reaching the
+  opposite boolean from `supportsReasoningEffort`: a summary is only ever on a request because somebody
+  set `reasoningSummary`, so withholding it would be fail-*closed*. Nothing on the wire moves for a
+  deployment that declares none of this. When it does withhold, it reports once, the way
+  `maySendEffort` and `applySampling` already do. **`supportsReasoningTraceRoundTrip` was deliberately
+  not widened** to also mean "and accepts a summary" — it means something measured, and a gateway
+  satisfies the two independently.
+
+- **BEHAVIOUR CHANGE: a `null` element in a reasoning-effort rung list now fails startup** (#70). A
+  configuration that boots today stops booting. `acceptedReasoningEfforts: [none, ~, high]` used to bind
+  as `{NONE, HIGH}` in silence, and `accepted-reasoning-efforts=none,,high` did the same in the starter
+  — two identical folds over the same list, each skipping the element. That value decides **which
+  requests the client is allowed to send**, and a silently narrowed ladder does not fail: it makes the
+  client refuse an effort the operator declared, and the symptom turns up later as an omitted parameter
+  that reads as the model's own behaviour. Both surfaces now refuse it naming the leaf key in that
+  surface's own spelling **and the index**, so the fix is deleting the one entry the message points at.
+  (The starter's indexed spelling — `accepted-reasoning-efforts[1]=` — was already loud, for a different
+  reason: Boot leaves that index unbound and `IndexedElementsBinder` refuses it and every index after
+  it.) **#69 carries a narrow behaviour change on the starter for the same reason a key binding can:**
+  `thinking-dialect` did not bind at all before, so a deployment that wrote it was silently running on
+  the built-in row for that model, and it now runs on a replacing entry — which for a `claude-*` name
+  means the two-flag form is what keeps the sampling suppression.
+
+- **A declared entry is the whole row for its name, and three documents said otherwise.** No code
+  behaviour changes here. Both operator guides and the CLI's shipped `default-config.yaml` told
+  operators that what they leave out keeps today's behaviour — true only for a name the built-in table
+  does not describe. `thinkingDialect` is the first key whose documented target is a name that
+  **always** has a row (`claude-*`), and those rows carry a **suppression**, so
+  `{claude-sonnet-5: {thinkingDialect: unknown}}` hands `supportsSamplingParameters` back at fail-open
+  `true` and sends `temperature` to a model measured to refuse it — with no warning, because the
+  suppression WARN fires only when the flag is `false`. `withDefaultsExtendedBy`'s javadoc already
+  stated the rule; the surfaces did not. The three documents now print the **full** form and say why,
+  and a test in each of the three modules pins the behaviour so it is chosen rather than discovered.
+  The remaining general case — the same trap on the six older keys, and whether the surface should warn
+  — is `L-8` in `docs/backlog/llm-config-surface-open-items.md`.
+
+- **The declaration surface is eight keys and all eight bind on both surfaces**, which is the whole of
+  #69: the refusal message became true because the surfaces caught up with it, not because the message
+  got shorter. Two new tests keep it that way — one per surface module, each reflecting over
+  `ModelCapabilityDeclaration.Builder` and asserting that surface carries a property of the same name.
+  Neither can live in `aimon-core`, which cannot see either surface, and that blind spot is exactly what
+  #69 was. `L-1` (the CLI-throws / starter-ignores asymmetry) is **widened by two keys and closed by
+  none of this**.
+
 ### LLM: a reasoning model's thinking is something a person can watch, and nothing else changes
 
 - **A reasoning model can deliberate for tens of seconds before it emits a visible token, and AIMON

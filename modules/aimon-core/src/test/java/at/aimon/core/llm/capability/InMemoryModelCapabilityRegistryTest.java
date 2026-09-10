@@ -504,6 +504,10 @@ class InMemoryModelCapabilityRegistryTest {
         // The invariant behind exposing all five flags rather than the two an operator usually needs: if a row of the
         // shipped table could not be transcribed, the surface would be unable to describe a deployment that renamed
         // that family -- which is the entire problem. The o-series row is the one that needs lowestReasoningEffort.
+        //
+        // The claude-* rows below were NOT transcribable until #69: ADAPTIVE_REFUSING_SAMPLING carries a dialect, and
+        // transcribe() had no way to write one, so this invariant was quietly false for six rows from the moment #60
+        // put a dialect in that constant. It stayed green because it only covered OpenAI rows.
         final InMemoryModelCapabilityRegistry stock = InMemoryModelCapabilityRegistry.withDefaults();
 
         assertThat(transcribe(stock.resolve("gpt-5-chat-latest")).capabilities())
@@ -515,6 +519,11 @@ class InMemoryModelCapabilityRegistryTest {
         assertThat(transcribe(stock.resolve("o1-x")).capabilities()).isEqualTo(stock.resolve("o1-x"));
         assertThat(transcribe(stock.resolve("o3-mini")).capabilities()).isEqualTo(stock.resolve("o3-mini"));
         assertThat(transcribe(stock.resolve("o4-mini")).capabilities()).isEqualTo(stock.resolve("o4-mini"));
+        // The rows the dialect key makes expressible. Two of them, because the table states both real dialects.
+        assertThat(transcribe(stock.resolve("claude-sonnet-5")).capabilities())
+                .isEqualTo(stock.resolve("claude-sonnet-5"));
+        assertThat(transcribe(stock.resolve("claude-3-5-sonnet-20241022")).capabilities())
+                .isEqualTo(stock.resolve("claude-3-5-sonnet-20241022"));
     }
 
     /**
@@ -531,7 +540,48 @@ class InMemoryModelCapabilityRegistryTest {
                 .supportsReasoningEffort(capabilities.supportsReasoningEffort())
                 .supportsToolsWithReasoning(capabilities.supportsToolsWithReasoning())
                 .supportsReasoningTraceRoundTrip(capabilities.supportsReasoningTraceRoundTrip())
-                .acceptedReasoningEfforts(capabilities.acceptedReasoningEfforts()).build();
+                .acceptedReasoningEfforts(capabilities.acceptedReasoningEfforts())
+                .thinkingDialect(capabilities.thinkingDialect())
+                .supportsReasoningSummary(capabilities.supportsReasoningSummary()).build();
+    }
+
+    @Test
+    @DisplayName("a declaration replaces the built-in row for that name rather than patching it")
+    void aDeclarationReplacesRatherThanPatchesABuiltInRow() {
+        // A decision pinned, not a fix. withDefaultsExtendedBy registers the declaration's resolved capabilities as
+        // an exact entry, and capabilitiesOf answers with an exact hit before it looks at any prefix -- so a flag the
+        // entry left unwritten falls back to fail-open rather than to what the built-in row said. The claude-*
+        // prefix row states TWO flags, and one of them is a suppression, so this shape hands `temperature` back to a
+        // model measured to refuse it: an HTTP 400, and with no divergence WARN, because that warning fires only
+        // when supportsSamplingParameters is false.
+        //
+        // #69 is what makes this reachable from a configuration file for the first time, since thinkingDialect is the
+        // first key whose documented target is a name the built-in table always describes. The mechanism is #46's
+        // and is not changed here; the general remedy -- warn when a declaration shadows a row it does not restate --
+        // is L-8 in docs/backlog/llm-config-surface-open-items.md. This assertion is expected to change only if that
+        // mechanism does.
+        final ModelCapabilities bare = InMemoryModelCapabilityRegistry
+                .withDefaultsExtendedBy(Map.of("claude-sonnet-5",
+                        ModelCapabilityDeclaration.builder().thinkingDialect(ThinkingDialect.UNKNOWN).build()))
+                .resolve("claude-sonnet-5");
+
+        assertThat(bare.thinkingDialect()).isEqualTo(ThinkingDialect.UNKNOWN);
+        assertThat(bare.supportsSamplingParameters()).isTrue();
+    }
+
+    @Test
+    @DisplayName("the full form the guides prescribe keeps the flag the built-in row stated")
+    void theFullFormRestatesTheSuppression() {
+        // The other half of the pair above, and the yaml both operator guides now print: an entry for a described
+        // name restates every flag that row stated. Pinned here so the guides can be checked against a test rather
+        // than against a reading of the registry.
+        final ModelCapabilities full = InMemoryModelCapabilityRegistry
+                .withDefaultsExtendedBy(Map.of("claude-sonnet-5", ModelCapabilityDeclaration.builder()
+                        .thinkingDialect(ThinkingDialect.UNKNOWN).supportsSamplingParameters(false).build()))
+                .resolve("claude-sonnet-5");
+
+        assertThat(full.thinkingDialect()).isEqualTo(ThinkingDialect.UNKNOWN);
+        assertThat(full.supportsSamplingParameters()).isFalse();
     }
 
     @Test

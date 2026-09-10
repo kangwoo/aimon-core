@@ -1,4 +1,4 @@
-# LLM 설정 표면 — 등록 항목 7건 (열림 7)
+# LLM 설정 표면 — 등록 항목 8건 (열림 8)
 
 출처는 #46 이다 — 모델 capability 표를 CLI yaml 과 스타터 프로퍼티에서 확장할 수 있게 한 작업.
 설계는 [`../design/llm/model-capability-config-key.md`](../design/llm/model-capability-config-key.md) 이고,
@@ -110,6 +110,19 @@ N-1 을 여기 적는 이유는 그것이 답이라고 보아서가 아니라 **
 > 등록할 prefix 가 하나 늘어난 것이 아니라 **벤더 네임스페이스가 둘이 되어 같은 처방이 두 서브트리를
 > 덮게 되었다.** "언제 다시 볼까" 의 트리거 2 는 여전히 발화하지 않는다 — 그것이 세는 것은
 > 맵-of-객체 키이고 이 둘은 그것이 아니다.
+
+> **2026-09-10 (#69·#72) — 다시 닫히지 않았고, 키 둘만큼 더 넓어졌다.** 이 라운드가
+> `aimon.llm.model-capabilities.<model>.thinking-dialect` 와 `.supports-reasoning-summary` 를 더했다. 둘 다
+> **이미 세고 있던 서브트리 안의 잎**이므로(여섯 → 여덟) 트리거 2 는 이번에도 발화하지 않는다 —
+> 그것이 세는 것은 맵-of-객체 **키**이고 이 서브트리는 이미 그 하나로 세어져 있다. R12 · R14 · N-1 의
+> 저울도 그대로다.
+>
+> **CLI 쪽의 사정거리가 한 칸 줄어든 것만 적어 둔다.** 이 항목은 처음부터 *"CLI 는 같은 오타에 던진다"* 를
+> 비대칭의 다른 쪽으로 세어 왔는데, 그 던짐이 **정확히 철자가 맞은 `thinkingDialect`** 를 잡던 자리는
+> 없어졌다 — 그 키가 이제 바인딩되기 때문이고, 그것이 #69 다. 이것은 CLI 가 조용해진 것이 아니라
+> **잡을 오타가 하나 줄어든 것**이며, 비대칭 자체는 그대로다. 침묵의 기록도 그대로다 —
+> `AimonPropertiesValidationTest.aMisspelledFlagIsSilentInTheStarter` 는 초록으로 남고, 이 항목을 닫으면
+> 빨개지는 것이 옳은 결과다.
 
 ---
 
@@ -382,6 +395,71 @@ CLI 도 **자기가 판단하는 자리에서는** 같은 규칙을 지킨다 �
 누군가 `UNKNOWN` 을 "어느 쪽이든 된다" 로 읽고 버그를 낼 때. 값을 하나 더할지(`EITHER`), 아니면
 방언을 집합으로 표현할지(#61 이 `lowestReasoningEffort` → `acceptedReasoningEfforts` 로 한 것과 같은
 모양)는 착수 시점의 결정이다 — 후자에는 이미 **선례가 있다**.
+
+---
+
+## L-8 — 설정된 선언은 내장 행을 **대체**하는데, 두 설정 표면은 반대로 적고 있었다
+
+*(2026-09-10 등록. #69 를 구현하면서 나왔다. 세 문서와 한 키는 그 라운드에서 고쳤고, 여기 남는 것은
+**일반형**이다.)*
+
+**무엇을.** 선언이 내장 표에 있는 이름을 덮으면서 그 행이 말하던 플래그를 다시 적지 않았을 때, 표면이
+그것을 알아채게 만든다. 가장 그럴듯한 모양은 **기동 시 WARN** 이다.
+
+**왜.** 관측 가능한 결과는 HTTP 400 이고, 경고가 없다.
+
+```yaml
+modelCapabilities:
+  claude-sonnet-5:
+    thinkingDialect: unknown
+```
+
+이 항목은 `claude-sonnet-5` 에 대해 `unknown()` + 방언만 등록한다. 내장 `claude-*` prefix 행은 **두**
+플래그를 말하므로(`ADAPTIVE_REFUSING_SAMPLING` = `supportsSamplingParameters(false)` +
+`thinkingDialect(ADAPTIVE)`), `supportsSamplingParameters` 는 fail-open 인 `true` 로 돌아가고 설정된
+`temperature` 가 그대로 나간다 — #52 가 없애려고 존재하는 그 400 이다. **억제 WARN 은 플래그가 `false`
+일 때만 울리므로 아무 말도 나오지 않는다.** `thinkingMode: extended` 도 구제하지 못한다: 그 분기는
+`temperature` 는 빼지만 `top_p` 는 여전히 싣는다.
+
+**이 함정은 #69 가 만든 것이 아니라 여섯 키에 이미 있던 것이다.** `withDefaultsExtendedBy` 의 javadoc 이
+규칙을 그대로 적어 두었고(*"선언은 그 이름에 대한 행 전체이지 행에 대한 패치가 아니다 … 선언에서 다시
+적어 두는 것이 좋다"*), 클래스 javadoc 의 `register("o3", …)` 예제는 다섯 플래그를 다시 적으면서 그중
+하나에 `// MUST stay true` 주석까지 달아 두었다. #69 가 바꾼 것은 **누가 이 함정에 걸어 들어오는가**다 —
+지금까지 이 표면의 문서화된 대상은 내장 표가 들어 본 적 없는 게이트웨이 이름이었고(덮을 행이 없다),
+`thinkingDialect` 는 문서화된 대상이 **언제나 행을 가진 이름**인 첫 키다.
+
+읽는 사람을 반대로 보내는 문장이 하나 더 있다. 같은 javadoc 이 전체 교체를 *"the safe direction (the
+request keeps today's shape and stays on Chat Completions)"* 이라고 부르는데, 그 괄호는 그것이 붙어 있는
+o-시리즈 예제에 대해서만 참이고 `gpt-5` 계열과 `claude-*` 행에는 **거짓**이다 — 그 행들의 "오늘의 모양" 은
+capability 표 이전의 모양, 즉 400 을 낸 그 `temperature` 가 실려 있던 모양이다. 이 항목을 착수하는 사람이
+"함정은 무해하다" 로 결론 내릴 때 쓰게 될 문장이 정확히 저것이다.
+
+**어디.** `InMemoryModelCapabilityRegistry.withDefaultsExtendedBy:396`(선언의 `capabilities()` 를 그대로
+`register`) · `capabilitiesOf:424-430`(exact 가 prefix 를 이긴다) · `:122-123`(두 플래그짜리
+`ADAPTIVE_REFUSING_SAMPLING`) · `AnthropicLlmClient.applySamplingParameters:836`(억제 게이트) —
+전부 2026-09-10.
+
+**#69 가 고친 것과 남긴 것.** 고친 것: 반대로 적고 있던 문서 셋(CLI 레퍼런스 · 스타터 가이드 ·
+`default-config.yaml`)이 이제 **완전한 형태**만 처방한다. 그리고 세 모듈에 그 동작을 못박는 테스트가 있다 —
+`InMemoryModelCapabilityRegistryTest.aDeclarationReplacesRatherThanPatchesABuiltInRow`,
+`LlmClientFactoryTest.aDeclaredDialectAloneReplacesABuiltInRow`,
+`AimonPropertiesValidationTest.aDeclarationReplacesTheBuiltInRowRatherThanPatchingIt`. 각각 완전한 형태가
+억제를 지킨다는 짝 테스트를 함께 갖는다. 남긴 것: **기계 자체**와 나머지 일곱 키.
+
+**닫는 길 셋.** 앞의 둘은 #69 의 설계가 저울에 올려 기각했다.
+
+| 길 | 무엇을 얻나 | 무엇을 잃나 |
+|---|---|---|
+| **병합(merge) 모드** — 선언이 내장 행 위에 얹힌다 | 함정이 사라진다 | `withDefaultsExtendedBy` 의 javadoc 이 못박고 #46 이 결정한 규칙을 뒤집고, **오늘 있는 모든 선언의 뜻을 조용히 바꾼다.** 자기 라운드와 자기 논거가 필요하다 |
+| **거절** — 내장 행을 덮으면서 그 행의 플래그를 다시 적지 않은 항목을 기동 실패로 | 가장 시끄럽다 | 오늘 유효한 설정을 깬다. 여덟 키 전부에 대해, 이 라운드가 한 키에 대해서만 급하게 만든 문제 때문에 |
+| **경고** — 같은 조건에 기동 시 WARN | 맞는 모양이다. 오늘 유효한 설정을 깨지 않고 함정만 보이게 한다 | 그래도 여덟 키를 공유하는 표면 위의 **새 동작**이다. 다른 것에 대한 이슈 셋에 얹혀 갈 변경이 아니다 |
+
+**언제 다시 볼까.** 셋 중 하나다.
+
+1. 누군가 "선언을 했더니 모델이 **더 나빠졌다**" 를 보고할 때 — 그것이 이 함정의 관측 가능한 모양이다.
+2. 이 표면에 **다음 키가 들어올 때.** 키가 늘수록 다시 적어야 할 플래그가 늘고, 처방 스니펫이 길어진다.
+3. 내장 표에 **세 플래그짜리 행**이 생길 때. 오늘 최악은 두 개이고, 셋이 되면 손으로 옮겨 적는 처방이
+   버티지 못한다.
 
 ---
 

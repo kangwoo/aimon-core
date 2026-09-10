@@ -135,6 +135,20 @@ Three flags, the same three the issue sketched, with names sharpened from "what 
 > today's behaviour. The sketch above is left as the round-1 shape rather than rewritten, because the
 > reasoning under it — what each flag is *for*, and why fail-open is a different boolean per flag — is
 > what the later two were derived from.
+>
+> **And then to seven (2026-09-10).** This block already understated the type by one before this
+> edit: #60 added `thinkingDialect()` — the first field whose fail-open value is the *absence* of a
+> fact rather than a permission, because both real dialects are a 400 on the model that speaks the
+> other. #69 and #72 make it seven: `lowestReasoningEffort()` became the set
+> `acceptedReasoningEfforts()` under #61 (a retype, not a seventh field —
+> [`../../migration/rename-maps.md`](../../migration/rename-maps.md)), and #72 added
+> `supportsReasoningSummary()`, whose fail-open value is **`true`**. That is the same two-sided rule
+> reaching the opposite boolean from `supportsReasoningEffort()` rather than an exception to it: a
+> reasoning summary is only ever on a request because somebody set it, so withholding it would be the
+> fail-**closed** half. It is also never consulted for a model nobody has described, since the
+> parameter exists only on `/v1/responses` and a request reaches that endpoint only when
+> `supportsReasoningTraceRoundTrip()` is `true` — a flag whose own fail-open value is `false`. Design:
+> [`openai-responses-path.md`](openai-responses-path.md) §5 row 13.
 
 `ModelCapabilities.unknown()` is `(sampling = true, reasoningEffort = false, toolsWithReasoning =
 true)`. Note that fail-open is **not** "all true" — it is "today's behaviour", which is a different
