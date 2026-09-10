@@ -5,10 +5,10 @@ maxIterations: 10
 
 # Model Configuration
 model:
-  name: gpt-5.1
-  temperature: 0.2
-  topP: 0.1
+  name: gpt-5.6-terra
   maxTokens: 40000
+  # No temperature / topP: gpt-5.6-terra rejects sampling parameters, so they would be omitted with a WARN.
+  reasoningEffort: medium
 
 # Template Variables (can be overridden by users)
 variables:
