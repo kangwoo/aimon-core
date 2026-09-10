@@ -47,8 +47,16 @@ import ch.qos.logback.core.read.ListAppender;
  *
  * <p>
  * The model names are load-bearing. {@code claude-opus-5} and {@code claude-sonnet-5} are in the built-in table as
- * refusers; {@code claude-opus-4-5-20251101} is measured to accept all three parameters and is deliberately
- * <em>not</em> in the table; {@code prod-assistant} stands for a gateway rename nothing describes.
+ * refusers; {@code claude-opus-4-5-20251101} is measured to accept all three parameters; {@code prod-assistant}
+ * stands for a gateway rename nothing describes.
+ *
+ * <p>
+ * <strong>The accepting model gained a row on 2026-09-10 and these assertions are what proves the row withholds
+ * nothing.</strong> It used to be described here as "deliberately not in the table", because while a row could only
+ * be a pair of facts, a row for it would have suppressed a parameter it takes. The dialect census gave it a
+ * prefix that states a {@link at.aimon.core.llm.capability.ThinkingDialect} and <em>nothing else</em> — so
+ * {@code supportsSamplingParameters()} stays at its fail-open {@code true} and every assertion below is unchanged.
+ * If that ever stops being true, this class is where it shows.
  */
 @DisplayName("AnthropicLlmClient - per-model sampling capabilities")
 @ExtendWith(MockitoExtension.class)
@@ -60,7 +68,10 @@ class AnthropicLlmClientSamplingCapabilityTest {
     /** In the built-in table: refuses temperature at any non-default value and top_p at any value. */
     private static final String REFUSING_MODEL = "claude-opus-5";
 
-    /** Measured to accept all three parameters with thinking off, and deliberately absent from the table. */
+    /**
+     * Measured to accept all three parameters with thinking off. Described by a dialect-only row since 2026-09-10,
+     * which is why these assertions still hold — see the class javadoc.
+     */
     private static final String ACCEPTING_MODEL = "claude-opus-4-5-20251101";
 
     @Mock

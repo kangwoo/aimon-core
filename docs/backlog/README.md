@@ -303,15 +303,36 @@ B-6 이 그렇게 어긋나 있었다. §7 은 그 항목을 "MCP 를 실제로 
 
 | 문서 | 출처 | 항목 수 | 열림 | 닫힘 | 해소 |
 |------|------|--------|------|------|------|
-| [`spring-boot-starter-open-items.md`](spring-boot-starter-open-items.md) | `docs/design/integration/spring-boot-starter.md` (SBS-00 ~ SBS-12) | 34 | 4 | 25 | 5 |
+| [`spring-boot-starter-open-items.md`](spring-boot-starter-open-items.md) | `docs/design/integration/spring-boot-starter.md` (SBS-00 ~ SBS-12) | 34 | 4 | 26 | 4 |
 | [`interrupt-open-items.md`](interrupt-open-items.md) | `docs/design/agent-execution/interrupt.md` | 5 | 2 | 3 | 0 |
 | [`multi-instance-readiness.md`](multi-instance-readiness.md) | 아키텍처 리뷰 (2026-08-31) | 3 | 1 | 1 | 1 |
 | [`module-dependency-scope.md`](module-dependency-scope.md) | 아키텍처 리뷰 (2026-08-31) | 1 | 1 | 0 | 0 |
 | [`architecture-review-open-items.md`](architecture-review-open-items.md) | 아키텍처 리뷰 (2026-08-31) | 8 | 2 | 6 | 0 |
 | [`translation-tooling-open-items.md`](translation-tooling-open-items.md) | 번역 낡음 가드 작업 (2026-09-06) | 4 | 3 | 1 | 0 |
 | [`openai-model-capabilities-open-items.md`](openai-model-capabilities-open-items.md) | o-시리즈 reasoning-item 재생 프로브 (2026-09-09) | 1 | 0 | 1 | 0 |
-| [`llm-config-surface-open-items.md`](llm-config-surface-open-items.md) | `docs/design/llm/model-capability-config-key.md` §9 (#46) | 5 | 5 | 0 | 0 |
+| [`llm-config-surface-open-items.md`](llm-config-surface-open-items.md) | `docs/design/llm/model-capability-config-key.md` §9 (#46) | 11 | 9 | 2 | 0 |
 | [`reasoning-delta-stream-open-items.md`](reasoning-delta-stream-open-items.md) | `docs/design/llm/reasoning-delta-stream.md` §11 (#62) | 6 | 6 | 0 | 0 |
+
+> **2026-09-10 — 위 표의 두 칸을 세어서 고쳤다. 규칙 일곱의 두 번째 사례이고, 둘 다 같은 모양이다:
+> 본문을 고친 사람이 색인을 세지 않았다.**
+>
+> **`spring-boot-starter-open-items.md` 는 `25 | 5` 였고 그 파일 자신의 제목은 `닫힘 26 · 해소 4`
+> 였다.** 어느 쪽이 맞는지는 화해시키는 것이 아니라 **세어서** 정했다 — `B-1` … `B-34` 를 절별로
+> 훑으면 열림 4(B-7 · B-15 · B-23 · B-25) · 닫힘 26 · 해소 4(B-2 · B-9 · B-11 · B-22)이고
+> 4 + 26 + 4 = 34 로 정확히 닫힌다. **파일의 제목이 맞고 이 색인이 틀렸다.**
+> 어긋난 시점도 이름을 댈 수 있다: 이 행은 `eec9ccd`(Initial commit) 이래 `25 | 5` 로 한 번도 바뀌지
+> 않았고, `6a07573`(#46, 2026-09-09)이 B-21 을 해소에서 닫힘으로 옮기면서 **그 파일의 제목만**
+> `닫힘 25 · 해소 5` → `닫힘 26 · 해소 4` 로 고쳤다. 한쪽을 고치고 다른 쪽을 세지 않은 커밋이다.
+> §5 의 `5건` 항목 소계는 **건드리지 않는다** — 그것은 드리프트가 아니라 해소된 `B-22` 를 뺀 표시
+> 방식이고, 그 절의 산문이 그렇게 적어 두었다.
+>
+> **`llm-config-surface-open-items.md` 는 `5 | 5 | 0 | 0` 이었고 그 파일의 제목은 `7건 (열림 7)`
+> 이었다.** 바로 위 문단이 기록하는 `d3500f6` 이 이 행을 채운 **다음 커밋**(`3a41fcd`)이 L-6 과 L-7 을
+> 더하면서 색인을 세지 않았다. 이번 변경이 그 둘을 닫고 넷(L-8 · L-9 · L-10 · L-11)을 새로 열므로 행은
+> `11 | 9 | 2 | 0` 이 된다 — 낡은 칸이 정정되는 것과 소비되는 것이 같은 커밋에서 일어난다. **항목 수가
+> 늘어난 것은 진척이 아니다**: 두 번째 문단이 적어 둔 대로, 움직였다는 것은 그 자리를 누가 봤다는 뜻일
+> 뿐이다. 넷 중 셋은 설계가 스스로 센 미해결이고, L-11 은 **빌드가 실측한 것**이다 — 이 디렉토리가
+> 끝난 작업의 산물을 받는 세 번째 경로다.
 
 **그 문서의 칸이 `—` 였던 것은 규칙이 없어서가 아니라 그냥 채워지지 않아서였다** — 형식은 나머지 다섯
 문서가 제목과 표 양쪽에서 이미 쓰고 있었다. 등록 시점에 항목이 넷이었고 지금 둘이 닫혔으므로 표와

@@ -1438,7 +1438,9 @@ public class AimonProperties implements InitializingBean {
          * ({@code Binder.containsNoDescendantOf}), so the failure would arrive exactly when somebody first writes
          * {@code aimon.llm.anthropic.*} — most likely by copying the yaml out of the guide and forgetting the
          * dependency. The string is folded onto the enum inside the {@code @ConditionalOnClass}-guarded slice,
-         * over {@code AnthropicThinkingMode.values()} so the two surfaces cannot accept different spellings.
+         * over {@code AnthropicThinkingMode.values()} so the two surfaces cannot accept different spellings —
+         * {@code AimonLlmAutoConfiguration.AnthropicClientConfiguration.thinkingMode(String)} here, and
+         * {@code at.aimon.cli.config.AnthropicProviderConfig.ThinkingModeDeserializer} on the CLI.
          *
          * <p>
          * Every field is boxed, and null means "not written": that is what lets an absent block leave

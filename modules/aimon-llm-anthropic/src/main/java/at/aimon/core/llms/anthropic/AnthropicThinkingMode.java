@@ -35,9 +35,10 @@ package at.aimon.core.llms.anthropic;
  * <strong>Nothing in the request builder branches on a model name.</strong> It branches on
  * {@link at.aimon.core.llm.capability.ModelCapabilities#thinkingDialect()}, which the capability registry resolves
  * from the name that is about to go on the wire. That field is what an earlier round said did not exist: the axis is
- * mutually exclusive, so it had no safe two-valued default, and the answer was to make it three-valued —
- * {@link at.aimon.core.llm.capability.ThinkingDialect#UNKNOWN} is the absence of the fact rather than a dialect, and
- * a model no row describes keeps exactly the request it had before.
+ * mutually exclusive for most models, so it had no safe two-valued default, and the answer was to make two of its
+ * values not dialects at all — {@link at.aimon.core.llm.capability.ThinkingDialect#UNKNOWN} is the absence of the
+ * fact, so a model no row describes keeps exactly the request it had before, and
+ * {@link at.aimon.core.llm.capability.ThinkingDialect#EITHER} is the measured exception to the exclusivity.
  *
  * <p>
  * What follows for the four values here:
@@ -50,6 +51,9 @@ package at.aimon.core.llms.anthropic;
  * certain 400 and omitting the thinking would discard what was asked for, so translating loudly is the only option
  * that keeps both the turn and the intent. The neutral {@link at.aimon.core.llm.ReasoningEffort} is the intent both
  * dialects are spellings of, and {@code AnthropicThinkingBudgets} already maps it either way.
+ * <li>Against a model whose row says <em>either</em> shape is accepted, {@link #EXTENDED} and {@link #ADAPTIVE} are
+ * honoured unchanged and unreported. Nothing is a 400 and nothing diverges, so translating would be a substitution
+ * with nothing to justify it — even where the vendor prefers the other shape, which it says for itself.
  * <li>{@link #AUTO} states the intent without the wire fact and lets the table answer.
  * </ul>
  *
@@ -101,6 +105,13 @@ public enum AnthropicThinkingMode {
      * <p>
      * Registering the deployment's real name in the capability registry is the whole remedy for that, the same one
      * line that closes the sampling gap.
+     *
+     * <p>
+     * A row saying {@link at.aimon.core.llm.capability.ThinkingDialect#EITHER} is the one case where this mode picks
+     * rather than reads: both shapes are accepted, so the client sends the adaptive one and says nothing, because
+     * {@code AUTO} asked the table and the table answered. Which of the two it prefers is a client policy with the
+     * vendor's own deprecation notice behind it, and it lives in {@code AnthropicLlmClient} rather than on the enum —
+     * a row states a fact, and no probe measured a preference.
      *
      * <p>
      * One thing this mode cannot carry: an explicit {@link AnthropicConfig#getThinkingBudgetTokens()}, which

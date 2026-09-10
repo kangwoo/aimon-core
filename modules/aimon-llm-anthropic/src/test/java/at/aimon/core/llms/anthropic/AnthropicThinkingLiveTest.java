@@ -192,11 +192,33 @@ class AnthropicThinkingLiveTest {
     @DisplayName("U-2: the two dialect rejections, asserted as whole sentences")
     class DialectMismatchesAreRejected {
 
+        /**
+         * <strong>Both tests here suppress the capability table, and that is the whole point of the nested
+         * class.</strong>
+         *
+         * <p>
+         * What is under test is the <em>server's</em> two rejection sentences — {@code AnthropicThinkingMode}'s
+         * javadoc quotes them verbatim so an operator can grep an error and land there, and only a live call can say
+         * they are still the sentences. The client's dialect translation exists precisely to stop a request in this
+         * shape from ever being sent, so with the table in force there is nothing to reject: {@code EXTENDED} against
+         * an adaptive-only model comes out adaptive and succeeds.
+         *
+         * <p>
+         * This class was red on the {@code EXTENDED} half from the day the table shipped and nothing noticed, because
+         * these tests are gated on a key that CI does not have. The 2026-09-10 dialect census would have turned the
+         * {@code ADAPTIVE} half red the same way, by giving {@code claude-haiku-4-5} a budgeted row. Removing the
+         * table restores what each test always meant to measure — and it is the instrument the sibling class already
+         * uses at {@code AdaptiveReachability}'s negative control.
+         */
+        private AnthropicConfig.Builder withoutTheTable(String model) {
+            return config(model).modelCapabilityRegistry(ModelCapabilityRegistry.EMPTY);
+        }
+
         @Test
         @DisplayName("EXTENDED against an adaptive-only model")
         void extendedAgainstAdaptiveOnlyModel() throws Exception {
             try (AnthropicLlmClient client = new AnthropicLlmClient(
-                    config(ADAPTIVE_MODEL).thinkingMode(AnthropicThinkingMode.EXTENDED).build())) {
+                    withoutTheTable(ADAPTIVE_MODEL).thinkingMode(AnthropicThinkingMode.EXTENDED).build())) {
 
                 // The whole sentence, not the field path. AnthropicThinkingMode's javadoc quotes it verbatim so that
                 // an operator can grep the error text and land there, and only an assertion this wide keeps that
@@ -214,11 +236,31 @@ class AnthropicThinkingLiveTest {
         @DisplayName("ADAPTIVE against an extended-only model")
         void adaptiveAgainstExtendedOnlyModel() throws Exception {
             try (AnthropicLlmClient client = new AnthropicLlmClient(
-                    config(EXTENDED_MODEL).thinkingMode(AnthropicThinkingMode.ADAPTIVE).build())) {
+                    withoutTheTable(EXTENDED_MODEL).thinkingMode(AnthropicThinkingMode.ADAPTIVE).build())) {
 
                 assertThatThrownBy(() -> client.sendMessage(SYSTEM, List.of(Message.user("hi")), List.of(),
                         LlmModel.builder().build())).isInstanceOf(LlmInvalidRequestException.class)
                         .hasMessageContaining("adaptive thinking is not supported on this model");
+            }
+        }
+
+        @Test
+        @DisplayName("with the table in force, neither request is sent in the shape that earns the rejection")
+        void theTableIsWhatStopsBothOfThoseRequests() throws Exception {
+            // The other half of the pair, and the reason the two above had to have the table removed. Same models,
+            // same modes, table in force: the translation turns each into the shape its model accepts. Without this
+            // test, "we removed the table to make them fail" would be indistinguishable from "we removed the table
+            // to make them pass".
+            try (AnthropicLlmClient extended = new AnthropicLlmClient(
+                    config(ADAPTIVE_MODEL).thinkingMode(AnthropicThinkingMode.EXTENDED).build());
+                    AnthropicLlmClient adaptive = new AnthropicLlmClient(
+                            config(EXTENDED_MODEL).thinkingMode(AnthropicThinkingMode.ADAPTIVE).build())) {
+
+                assertThatCode(
+                        () -> extended.sendMessage(SYSTEM, List.of(Message.user("hi")), List.of(), minimalEffort()))
+                        .doesNotThrowAnyException();
+                assertThatCode(() -> adaptive.sendMessage(SYSTEM, List.of(Message.user("hi")), List.of(),
+                        LlmModel.builder().build())).doesNotThrowAnyException();
             }
         }
     }
