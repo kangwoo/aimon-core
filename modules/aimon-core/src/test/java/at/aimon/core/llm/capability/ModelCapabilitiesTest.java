@@ -47,6 +47,13 @@ class ModelCapabilitiesTest {
         // the model that speaks the other, so there is no safe two-valued default and UNKNOWN is the absence of the
         // fact -- which is what makes a client leave the request exactly as the caller configured it.
         assertThat(unknown.thinkingDialect()).isEqualTo(ThinkingDialect.UNKNOWN);
+        // True, where supportsReasoningEffort is false, and that is the same rule reaching the opposite boolean
+        // rather than an exception to it: a reasoning summary is only ever on a request because somebody set
+        // reasoningSummary, so withholding it is the fail-CLOSED half. It is also never read for a model nobody has
+        // described -- the parameter exists only on /v1/responses, which a request reaches only on
+        // supportsReasoningTraceRoundTrip(), whose own default is false -- so this value's job is to say what the
+        // rows that already exist mean, and none of them withholds it.
+        assertThat(unknown.supportsReasoningSummary()).isTrue();
     }
 
     @Test
@@ -74,6 +81,7 @@ class ModelCapabilitiesTest {
         assertThat(partial.acceptedReasoningEfforts()).containsExactly(ReasoningEffort.MINIMAL, ReasoningEffort.LOW,
                 ReasoningEffort.MEDIUM, ReasoningEffort.HIGH);
         assertThat(partial.thinkingDialect()).isEqualTo(ThinkingDialect.UNKNOWN);
+        assertThat(partial.supportsReasoningSummary()).isTrue();
     }
 
     @Test
@@ -81,7 +89,8 @@ class ModelCapabilitiesTest {
     void flagsRoundTrip() {
         final ModelCapabilities capabilities = ModelCapabilities.builder().supportsSamplingParameters(false)
                 .supportsReasoningEffort(true).supportsToolsWithReasoning(false)
-                .lowestReasoningEffort(ReasoningEffort.LOW).thinkingDialect(ThinkingDialect.BUDGETED).build();
+                .lowestReasoningEffort(ReasoningEffort.LOW).thinkingDialect(ThinkingDialect.BUDGETED)
+                .supportsReasoningSummary(false).build();
 
         assertThat(capabilities.supportsSamplingParameters()).isFalse();
         assertThat(capabilities.supportsReasoningEffort()).isTrue();
@@ -89,6 +98,7 @@ class ModelCapabilitiesTest {
         assertThat(capabilities.acceptedReasoningEfforts()).containsExactly(ReasoningEffort.LOW, ReasoningEffort.MEDIUM,
                 ReasoningEffort.HIGH);
         assertThat(capabilities.thinkingDialect()).isEqualTo(ThinkingDialect.BUDGETED);
+        assertThat(capabilities.supportsReasoningSummary()).isFalse();
     }
 
     @Test
@@ -169,7 +179,7 @@ class ModelCapabilitiesTest {
     }
 
     @Test
-    @DisplayName("equals and hashCode cover all six fields, the ladder among them")
+    @DisplayName("equals and hashCode cover all seven fields, the ladder among them")
     void equalsAndHashCode() {
         final ModelCapabilities a = ModelCapabilities.builder().supportsSamplingParameters(false)
                 .supportsReasoningEffort(true).supportsToolsWithReasoning(false).build();
@@ -195,6 +205,9 @@ class ModelCapabilitiesTest {
         assertThat(a).isNotEqualTo(
                 ModelCapabilities.builder().supportsSamplingParameters(false).supportsReasoningEffort(true)
                         .supportsToolsWithReasoning(false).thinkingDialect(ThinkingDialect.ADAPTIVE).build());
+        assertThat(a).isNotEqualTo(
+                ModelCapabilities.builder().supportsSamplingParameters(false).supportsReasoningEffort(true)
+                        .supportsToolsWithReasoning(false).supportsReasoningSummary(false).build());
         assertThat(a).isNotEqualTo(null).isNotEqualTo("not a descriptor");
     }
 
@@ -204,7 +217,8 @@ class ModelCapabilitiesTest {
         assertThat(ModelCapabilities.unknown().toString()).contains("supportsSamplingParameters=true")
                 .contains("supportsReasoningEffort=false").contains("supportsToolsWithReasoning=true")
                 .contains("supportsReasoningTraceRoundTrip=false")
-                .contains("acceptedReasoningEfforts=[MINIMAL, LOW, MEDIUM, HIGH]").contains("thinkingDialect=UNKNOWN");
+                .contains("acceptedReasoningEfforts=[MINIMAL, LOW, MEDIUM, HIGH]").contains("thinkingDialect=UNKNOWN")
+                .contains("supportsReasoningSummary=true");
     }
 
     @Test

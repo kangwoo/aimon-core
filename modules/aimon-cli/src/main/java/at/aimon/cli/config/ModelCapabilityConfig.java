@@ -4,9 +4,10 @@ import java.util.List;
 import java.util.Objects;
 
 import at.aimon.core.llm.ReasoningEffort;
+import at.aimon.core.llm.capability.ThinkingDialect;
 
 /**
- * yaml 로 적은 한 모델의 capability — {@code llm.modelCapabilities.<model>} 아래의 여섯 키.
+ * yaml 로 적은 한 모델의 capability — {@code llm.modelCapabilities.<model>} 아래의 여덟 키.
  *
  * <p>
  * 게이트웨이나 Azure 배포가 모델을 다른 이름으로 노출하면 내장 capability 표는 그 이름을 모르고, 그 배포는 표가 고쳐 주는 것을
@@ -25,6 +26,12 @@ import at.aimon.core.llm.ReasoningEffort;
  * 기동이 실패한다 — 판정은 코어의 {@code ModelCapabilityDeclaration} 이 한다.
  *
  * <p>
+ * {@code thinkingDialect} 는 <b>이 모델이 무엇인가</b>를 적는다 — {@code llm.anthropic.thinking*} 키들이
+ * <b>이 배포가 무엇을 원하는가</b>를 적는 것과 다른 물음이고, 그래서 이 맵 안에 있다. {@code thinkingMode: auto} 가
+ * 표에 물어보는 값이 정확히 이것이며, 게이트웨이 뒤에서 개명된 Claude 모델은 이 키 없이는 {@code auto} 를
+ * 답할 수 있게 만들 방법이 없다.
+ *
+ * <p>
  * {@code @JsonProperty} 를 붙이지 않는다 — 옆의 {@link LlmProviderConfig} 와 같이 빈 이름(camelCase)을 그대로 쓴다.
  * 필드 이름은 {@link at.aimon.core.llm.capability.ModelCapabilities} 의 자바 필드를 글자 그대로 옮긴 것이며,
  * {@code supports} 접두어를 떼지 않는다 — 같은 사실에 두 번째 어휘를 만들면 아무도 유지하지 않는 번역표가 생긴다.
@@ -36,6 +43,8 @@ public class ModelCapabilityConfig {
     private Boolean supportsReasoningTraceRoundTrip;
     private ReasoningEffort lowestReasoningEffort;
     private List<ReasoningEffort> acceptedReasoningEfforts;
+    private ThinkingDialect thinkingDialect;
+    private Boolean supportsReasoningSummary;
 
     /** ModelCapabilityConfig를 생성한다. */
     public ModelCapabilityConfig() {
@@ -98,6 +107,31 @@ public class ModelCapabilityConfig {
         this.acceptedReasoningEfforts = acceptedReasoningEfforts;
     }
 
+    /**
+     * 이 모델의 thinking 요청 파라미터가 어느 모양을 취하는가 — {@code unknown} · {@code either} · {@code budgeted} · {@code adaptive}.
+     *
+     * <p>
+     * enum 으로 바인딩하므로 {@code CliConfigLoader} 의 {@code ACCEPT_CASE_INSENSITIVE_ENUMS} 가 대소문자를 접어 준다.
+     * {@code unknown} 을 적는 것은 "선언하지 않음" 이 아니라 <b>이 이름에 대한 내장 행을 따르지 말라</b>는 진술이다.
+     *
+     * @return 적힌 방언 (적지 않았으면 null)
+     */
+    public ThinkingDialect getThinkingDialect() {
+        return thinkingDialect;
+    }
+
+    public void setThinkingDialect(ThinkingDialect thinkingDialect) {
+        this.thinkingDialect = thinkingDialect;
+    }
+
+    public Boolean getSupportsReasoningSummary() {
+        return supportsReasoningSummary;
+    }
+
+    public void setSupportsReasoningSummary(Boolean supportsReasoningSummary) {
+        this.supportsReasoningSummary = supportsReasoningSummary;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -112,13 +146,16 @@ public class ModelCapabilityConfig {
                 && Objects.equals(supportsToolsWithReasoning, that.supportsToolsWithReasoning)
                 && Objects.equals(supportsReasoningTraceRoundTrip, that.supportsReasoningTraceRoundTrip)
                 && lowestReasoningEffort == that.lowestReasoningEffort
-                && Objects.equals(acceptedReasoningEfforts, that.acceptedReasoningEfforts);
+                && Objects.equals(acceptedReasoningEfforts, that.acceptedReasoningEfforts)
+                && thinkingDialect == that.thinkingDialect
+                && Objects.equals(supportsReasoningSummary, that.supportsReasoningSummary);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(supportsSamplingParameters, supportsReasoningEffort, supportsToolsWithReasoning,
-                supportsReasoningTraceRoundTrip, lowestReasoningEffort, acceptedReasoningEfforts);
+                supportsReasoningTraceRoundTrip, lowestReasoningEffort, acceptedReasoningEfforts, thinkingDialect,
+                supportsReasoningSummary);
     }
 
     @Override
@@ -127,6 +164,7 @@ public class ModelCapabilityConfig {
                 + ", supportsReasoningEffort=" + supportsReasoningEffort + ", supportsToolsWithReasoning="
                 + supportsToolsWithReasoning + ", supportsReasoningTraceRoundTrip=" + supportsReasoningTraceRoundTrip
                 + ", lowestReasoningEffort=" + lowestReasoningEffort + ", acceptedReasoningEfforts="
-                + acceptedReasoningEfforts + '}';
+                + acceptedReasoningEfforts + ", thinkingDialect=" + thinkingDialect + ", supportsReasoningSummary="
+                + supportsReasoningSummary + '}';
     }
 }

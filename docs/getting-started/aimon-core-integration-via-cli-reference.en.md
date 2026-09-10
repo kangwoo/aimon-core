@@ -311,11 +311,13 @@ The map key is **the same name `model` carries**, and it is matched ignoring cas
 a look-up for `prod-assistant` still finds it). `${VAR}` is resolved in it too, so a deployment writing
 `model: ${DEPLOYMENT}` can describe its own model.
 
-There are six flags and **every one is optional**. What you leave out keeps `ModelCapabilities.unknown()`'s
-value, which is **today's behaviour** — which is why the single line above is a complete answer to the 400.
-They are not all required because a gateway operator who knows that `temperature` earns a 400 does not know
-whether the model replays reasoning traces, and filling that box in anyway turns the 400 into a 404 on a
-gateway that has no `/v1/responses`.
+There are eight flags and **every one is optional**. What you leave out keeps
+`ModelCapabilities.unknown()`'s value. For **a name the built-in table does not know** — a renamed gateway
+deployment, like the example above — that is **today's behaviour**, which is why the single line above is a
+complete answer to the 400. For **a name it does know** (`claude-sonnet-5`, `gpt-5-mini`) it is not — read
+the **"an entry is that name's whole row"** paragraph below the two tables. They are not all required because a gateway
+operator who knows that `temperature` earns a 400 does not know whether the model replays reasoning traces,
+and filling that box in anyway turns the 400 into a 404 on a gateway that has no `/v1/responses`.
 
 | Key | What it says | Left out |
 |---|---|---|
@@ -324,13 +326,43 @@ gateway that has no `/v1/responses`.
 | `supportsToolsWithReasoning` | whether tools and a non-`NONE` effort may share one request | `true` — nothing is narrowed without evidence |
 | `supportsReasoningTraceRoundTrip` | whether reasoning traces must be replayed for the reasoning to survive | `false` — stays on the Chat Completions path |
 | `lowestReasoningEffort` | where this model's effort ladder starts (`none`…`high`) — meaning it takes that rung and every one above it | `minimal` through `high` |
-| `acceptedReasoningEfforts` | **every** rung it takes, as a list — the general form, for a ladder with a gap in it (`[none, low, medium, high]`) | same as the row above |
+| `acceptedReasoningEfforts` | **every** rung it takes, as a list — the general form, for a ladder with a gap in it (`[none, low, medium, high]`). An empty element (`~`, or a bare `-`) is not skipped: it **fails startup naming the position** | same as the row above |
+| `supportsReasoningSummary` | whether this model accepts a reasoning-summary request (`reasoning.summary`). **Read on the OpenAI Responses path only** — a name reaches that path only when `supportsReasoningTraceRoundTrip: true`, so this is where you describe a gateway that takes `reasoning.effort` and 400s on `reasoning.summary` | `true` — what the caller asked for is not taken away |
+| `thinkingDialect` | which shape this model's thinking request takes — `unknown` · `either` · `budgeted` · `adaptive`. **Read by the anthropic branch only.** This is the value `llm.anthropic.thinkingMode: auto` below goes and asks for | `unknown` — the table cannot answer, and the client leaves whatever was configured as it was |
 
 A declaration **extends the built-in table rather than replacing it.** It is registered as an exact entry, so
 the existing `exact > prefix` rule is what makes the operator's entry win — and the win is **one name wide**:
 declaring `gpt-5` changes exactly that name, while `gpt-5-mini` is still answered by the built-in `gpt-5`
 prefix. There is no way to declare a prefix from configuration: prefix precedence is registration order, and a
 yaml file's line order is not the place to keep that.
+
+**If you are describing a name the built-in table already carries, the entry is that name's whole row.**
+Extending the **table** and patching one **row** are different things. An entry is the whole row for its name,
+so a flag you leave out falls back to its fail-open value rather than to what that row said. For a name the
+built-in table does not know there is no difference — there is no row to shadow. For a name it does know there
+is, and the `claude-*` rows are the case: each states two things, the dialect **and** the sampling
+suppression.
+
+```yaml
+# Wrong — the suppression comes back
+modelCapabilities:
+  claude-sonnet-5:
+    thinkingDialect: unknown
+
+# Right — restate every flag that row stated
+modelCapabilities:
+  claude-sonnet-5:
+    thinkingDialect: unknown             # or adaptive / budgeted
+    supportsSamplingParameters: false    # copied from the built-in row — not optional here
+```
+
+The first form puts `supportsSamplingParameters` back at its fail-open `true`, so `temperature` goes to a
+model that answers 400 to it — and **with no warning**, because the suppression WARN fires only when the flag
+is `false`. `thinkingMode: extended` is no escape either: that branch omits `temperature` and still sets
+`top_p`.
+
+**The rule is one line — the entry is the whole row, so copy every flag the built-in row states.** For a
+`claude-*` name that is the two above.
 
 The two ladder keys are **mutually exclusive**. `lowestReasoningEffort` is shorthand for the common case —
 "it starts here and runs to the top" — while `acceptedReasoningEfforts` is for a ladder with a gap in the
@@ -388,8 +420,24 @@ The four values of `thinkingMode`. Case does not matter.
 
 **The two dialects are mutually exclusive per model and sending the wrong one is an HTTP 400.** That is why
 `auto` exists, and it is also `auto`'s limit — **against a model the table cannot name it sends nothing and
-warns.** If you rename models behind a gateway, declaring that name in the `llm.modelCapabilities` block just
-above is the whole remedy, and this is exactly where the two blocks meet.
+warns.** If you rename models behind a gateway, declaring that name's `thinkingDialect` in the
+`llm.modelCapabilities` block just above is the whole remedy, and this is exactly where the two blocks meet.
+
+```yaml
+llm:
+  provider: anthropic
+  baseUrl: https://gateway.internal
+  model: prod-claude
+  anthropic:
+    thinkingMode: auto
+  modelCapabilities:
+    prod-claude:
+      thinkingDialect: adaptive        # write what you measured. If you do not know, unknown is the honest answer
+```
+
+Writing the same thing for **a name the built-in table does know** (`claude-sonnet-5` and friends) means
+writing `supportsSamplingParameters: false` beside it — the entry is the whole row, and the **"an entry is that
+name's whole row"** paragraph in the `llm.modelCapabilities` section above is why.
 
 **`thinkingBudgetTokens` is not an independent knob; it belongs to `extended`.** Written together with `auto`,
 `adaptive` or the default `off` it **fails at startup** rather than being quietly ignored. The refusal under

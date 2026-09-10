@@ -19,6 +19,7 @@ import at.aimon.core.knowledge.SimpleDocumentChunker;
 import at.aimon.core.llm.ReasoningEffort;
 import at.aimon.core.llm.capability.InMemoryModelCapabilityRegistry;
 import at.aimon.core.llm.capability.ModelCapabilityDeclaration;
+import at.aimon.core.llm.capability.ThinkingDialect;
 import at.aimon.core.memory.MemoryInjectionMode;
 import at.aimon.core.tracing.TracePayloadPolicy;
 import at.aimon.core.tracing.impl.InMemoryTraceSpanStore;
@@ -762,7 +763,7 @@ public class AimonProperties implements InitializingBean {
      * @return the built-in table extended by every declared entry
      * @throws IllegalStateException
      *             if an entry names nothing, is blank, is padded, collides with another once case is folded,
-     *             declares none of the six flags, or states both ladder keys at once
+     *             declares none of the eight flags, or states both ladder keys at once
      */
     public static InMemoryModelCapabilityRegistry modelCapabilityRegistry(Llm llm) {
         final Map<String, ModelCapabilityDeclaration> declarations = new LinkedHashMap<>();
@@ -777,7 +778,7 @@ public class AimonProperties implements InitializingBean {
     private static ModelCapabilityDeclaration declarationOf(String model, ModelCapabilityProperties entry) {
         if (entry == null) {
             // withDefaultsExtendedBy refuses this with the message an empty entry deserves, and it does so whichever
-            // of the two shapes the binder produced for one -- a null value, or an object with six null fields.
+            // of the two shapes the binder produced for one -- a null value, or an object with eight null fields.
             return null;
         }
         try {
@@ -1438,7 +1439,9 @@ public class AimonProperties implements InitializingBean {
          * ({@code Binder.containsNoDescendantOf}), so the failure would arrive exactly when somebody first writes
          * {@code aimon.llm.anthropic.*} — most likely by copying the yaml out of the guide and forgetting the
          * dependency. The string is folded onto the enum inside the {@code @ConditionalOnClass}-guarded slice,
-         * over {@code AnthropicThinkingMode.values()} so the two surfaces cannot accept different spellings.
+         * over {@code AnthropicThinkingMode.values()} so the two surfaces cannot accept different spellings —
+         * {@code AimonLlmAutoConfiguration.AnthropicClientConfiguration.thinkingMode(String)} here, and
+         * {@code at.aimon.cli.config.AnthropicProviderConfig.ThinkingModeDeserializer} on the CLI.
          *
          * <p>
          * Every field is boxed, and null means "not written": that is what lets an absent block leave
@@ -1592,6 +1595,29 @@ public class AimonProperties implements InitializingBean {
          */
         private List<ReasoningEffort> acceptedReasoningEfforts;
 
+        /**
+         * Which shape this model's thinking-request parameter takes — {@code unknown}, {@code either},
+         * {@code budgeted} or {@code adaptive}.
+         *
+         * <p>
+         * The framework's own enum rather than a String, for the same reason {@link #lowestReasoningEffort} is: the
+         * configuration processor records the type, so an IDE offers the constants and no hand-written metadata hint
+         * is needed. This says <em>what a model is</em>, which is why it lives here rather than beside
+         * {@code aimon.llm.anthropic.thinking-mode} — that key says what this deployment wants, and
+         * {@code thinking-mode: auto} is the value that comes here to ask.
+         *
+         * <p>
+         * Declaring {@code unknown} is not the same as leaving the key out: it states that no built-in row for this
+         * name should be acted on.
+         */
+        private ThinkingDialect thinkingDialect;
+
+        /**
+         * {@code false} when the endpoint serving this model rejects a request for a reasoning summary — the gateway
+         * that implements {@code reasoning.effort} and 400s on {@code reasoning.summary}.
+         */
+        private Boolean supportsReasoningSummary;
+
         public Boolean getSupportsSamplingParameters() {
             return supportsSamplingParameters;
         }
@@ -1640,6 +1666,22 @@ public class AimonProperties implements InitializingBean {
             this.acceptedReasoningEfforts = acceptedReasoningEfforts;
         }
 
+        public ThinkingDialect getThinkingDialect() {
+            return thinkingDialect;
+        }
+
+        public void setThinkingDialect(ThinkingDialect thinkingDialect) {
+            this.thinkingDialect = thinkingDialect;
+        }
+
+        public Boolean getSupportsReasoningSummary() {
+            return supportsReasoningSummary;
+        }
+
+        public void setSupportsReasoningSummary(Boolean supportsReasoningSummary) {
+            this.supportsReasoningSummary = supportsReasoningSummary;
+        }
+
         /**
          * Translates this entry into the framework's neutral declaration type.
          *
@@ -1657,7 +1699,8 @@ public class AimonProperties implements InitializingBean {
                     .supportsReasoningEffort(supportsReasoningEffort)
                     .supportsToolsWithReasoning(supportsToolsWithReasoning)
                     .supportsReasoningTraceRoundTrip(supportsReasoningTraceRoundTrip)
-                    .lowestReasoningEffort(lowestReasoningEffort).acceptedReasoningEfforts(rungSet()).build();
+                    .lowestReasoningEffort(lowestReasoningEffort).acceptedReasoningEfforts(rungSet())
+                    .thinkingDialect(thinkingDialect).supportsReasoningSummary(supportsReasoningSummary).build();
         }
 
         /**
@@ -1667,16 +1710,35 @@ public class AimonProperties implements InitializingBean {
          * An <em>empty</em> list is deliberately not folded into {@code null}: it becomes an empty set and the core
          * refuses it by name. Treating it as "not declared" would make something the operator wrote do nothing, and
          * a silent no-op is the failure this whole surface exists to remove.
+         *
+         * <p>
+         * An empty <em>element</em> is refused for the same reason, and names <em>which</em> one. The spelling that
+         * reaches here is the comma-delimited one — {@code accepted-reasoning-efforts=none,,high}, and a trailing
+         * comma alike — where the empty token survives the split and relaxed conversion makes it a {@code null} in
+         * the list. Skipping it would narrow which requests this model is allowed to send without saying so, and a
+         * narrowed ladder does not fail: it surfaces later as an omitted parameter, which reads as the model's
+         * behaviour rather than as a typo. The property path is put on the message by {@code declarationOf}'s catch.
+         *
+         * <p>
+         * The <em>indexed</em> spelling never gets this far, and that is Boot's doing rather than ours: measured,
+         * {@code accepted-reasoning-efforts[1]=} leaves that index <strong>unbound</strong> instead of converting it
+         * to {@code null}, and {@code IndexedElementsBinder} then refuses it and every index after it. So that
+         * spelling of the mistake was already loud, for an unrelated reason.
          */
         private Set<ReasoningEffort> rungSet() {
             if (acceptedReasoningEfforts == null) {
                 return null;
             }
             final Set<ReasoningEffort> rungs = EnumSet.noneOf(ReasoningEffort.class);
-            for (ReasoningEffort rung : acceptedReasoningEfforts) {
-                if (rung != null) {
-                    rungs.add(rung);
+            for (int index = 0; index < acceptedReasoningEfforts.size(); index++) {
+                final ReasoningEffort rung = acceptedReasoningEfforts.get(index);
+                if (rung == null) {
+                    throw new IllegalArgumentException("accepted-reasoning-efforts[" + index + "] has no value. An"
+                            + " empty list entry is a configuration error rather than a rung to skip — skipping it"
+                            + " would narrow which requests this model is allowed to send without saying so. Remove"
+                            + " the entry, or give it one of: none, minimal, low, medium, high.");
                 }
+                rungs.add(rung);
             }
             return rungs;
         }

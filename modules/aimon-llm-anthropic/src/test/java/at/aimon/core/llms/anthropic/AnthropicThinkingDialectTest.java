@@ -55,10 +55,23 @@ import ch.qos.logback.core.read.ListAppender;
  *
  * <p>
  * The model names are load-bearing. {@code claude-opus-5} is in the built-in table as adaptive-only;
- * {@code claude-sonnet-4-5} is deliberately <em>not</em> in it and stands for every model the table cannot answer
- * for; {@code prod-thinker} is a gateway rename whose budgeted dialect an operator has declared, which is also the
- * only way a {@link ThinkingDialect#BUDGETED} row exists at all — the built-in table has none, because the Claude
- * models that speak that dialect accept the sampling parameters and so need no row.
+ * {@code claude-sonnet-4-20250514} — {@code AnthropicConfig}'s own default model — is deliberately <em>not</em> in it
+ * and stands for every model the table cannot answer for; {@code prod-thinker} is a gateway rename whose budgeted
+ * dialect an operator has declared.
+ *
+ * <p>
+ * <strong>Two of those three sentences were rewritten on 2026-09-10 and the history is the point.</strong> The
+ * undescribed model used to be {@code claude-sonnet-4-5}, which the dialect census then measured and gave a row —
+ * so this class's fixture silently became a <em>described</em> model, and its golden bodies would have started
+ * describing a translated request. And the declared {@code prod-thinker} row used to be the only source of the
+ * budgeted dialect anywhere; the built-in table now ships three prefixes that state it. The declared row stays,
+ * because what it tests is that a declaration reaches the client, not that the dialect exists.
+ *
+ * <p>
+ * {@code claude-sonnet-4-20250514} is undescribed <strong>by the table</strong>, not undialected in fact — the
+ * vendor's own per-model table puts the Claude 4 generation in the extended-only group, so a future
+ * documentation-derived row will move it. {@link #theUndescribedModelReallyIsUndescribed} is what makes that
+ * survivable: the next row that describes this name fails with a sentence rather than with a golden-body diff.
  */
 @DisplayName("AnthropicLlmClient - the thinking dialect, looked up per model")
 @ExtendWith(MockitoExtension.class)
@@ -71,10 +84,13 @@ class AnthropicThinkingDialectTest {
     private static final String ADAPTIVE_MODEL = "claude-opus-5";
 
     /** Deliberately absent from the built-in table: the fail-open path, and the byte-identical claim. */
-    private static final String UNKNOWN_MODEL = "claude-sonnet-4-5";
+    private static final String UNKNOWN_MODEL = "claude-sonnet-4-20250514";
 
     /** A gateway rename an operator has described as speaking the budgeted dialect. */
     private static final String BUDGETED_MODEL = "prod-thinker";
+
+    /** In the built-in table since the 2026-09-10 census: measured to accept both request shapes. */
+    private static final String EITHER_MODEL = "claude-opus-4-6";
 
     /**
      * What the request body was before the dialect existed, captured at the parent commit by sending the same
@@ -83,18 +99,18 @@ class AnthropicThinkingDialectTest {
      * the "nothing is reported" half of the row.
      */
     private static final String TODAYS_EXTENDED_BODY = "{\"max_tokens\":4096,"
-            + "\"messages\":[{\"content\":\"hi\",\"role\":\"user\"}],\"model\":\"claude-sonnet-4-5\","
+            + "\"messages\":[{\"content\":\"hi\",\"role\":\"user\"}],\"model\":\"claude-sonnet-4-20250514\","
             + "\"system\":\"You are helpful\",\"thinking\":{\"budget_tokens\":2048,\"type\":\"enabled\"}}";
 
     /** The same, with {@code thinkingMode(ADAPTIVE)} and {@code reasoningEffort(MEDIUM)}. */
     private static final String TODAYS_ADAPTIVE_BODY = "{\"max_tokens\":4096,"
-            + "\"messages\":[{\"content\":\"hi\",\"role\":\"user\"}],\"model\":\"claude-sonnet-4-5\","
+            + "\"messages\":[{\"content\":\"hi\",\"role\":\"user\"}],\"model\":\"claude-sonnet-4-20250514\","
             + "\"output_config\":{\"effort\":\"medium\"},\"system\":\"You are helpful\","
             + "\"thinking\":{\"type\":\"adaptive\"}}";
 
     /** The same, with thinking off — which is also what {@code AUTO} sends when the table cannot answer. */
     private static final String TODAYS_THINKING_OFF_BODY = "{\"max_tokens\":4096,"
-            + "\"messages\":[{\"content\":\"hi\",\"role\":\"user\"}],\"model\":\"claude-sonnet-4-5\","
+            + "\"messages\":[{\"content\":\"hi\",\"role\":\"user\"}],\"model\":\"claude-sonnet-4-20250514\","
             + "\"system\":\"You are helpful\"}";
 
     @Mock
@@ -120,7 +136,7 @@ class AnthropicThinkingDialectTest {
         logAppender.stop();
     }
 
-    /** The built-in table plus one declared budgeted row, which is the only source of that dialect in-tree. */
+    /** The built-in table plus one declared budgeted row, standing for a gateway rename an operator described. */
     private static ModelCapabilityRegistry registry() {
         return InMemoryModelCapabilityRegistry.builderWithDefaults()
                 .register(BUDGETED_MODEL, ModelCapabilities.builder().thinkingDialect(ThinkingDialect.BUDGETED).build())
@@ -394,6 +410,171 @@ class AnthropicThinkingDialectTest {
 
         assertThat(body).isEqualTo(TODAYS_EXTENDED_BODY);
         assertThat(warnings()).anyMatch(w -> w.contains("registry is down"));
+    }
+
+    @Test
+    @DisplayName("the undescribed model really is undescribed, so the next row that names it fails here first")
+    void theUndescribedModelReallyIsUndescribed() {
+        // Three golden bodies in this class assert what a model outside the table gets, and they only mean that
+        // while the name really is outside it. The 2026-09-10 census took the previous fixture name away by
+        // measuring it; without this assertion the loss would have shown up as an unexplained golden-body diff in
+        // whichever change did it next.
+        assertThat(InMemoryModelCapabilityRegistry.withDefaults().capabilitiesOf(UNKNOWN_MODEL))
+                .as("%s must stay outside the built-in table for the golden bodies above to mean anything",
+                        UNKNOWN_MODEL)
+                .isEmpty();
+    }
+
+    // ── Rows 9 and 10: EITHER → the named mode is honoured, and AUTO picks ───────────────────────────────────────
+
+    @Test
+    @DisplayName("EXTENDED against a model that takes either dialect is honoured, not translated, and unreported")
+    void extendedAgainstAnEitherModelIsHonoured() {
+        // The reason EITHER is a constant rather than an ADAPTIVE row. An ADAPTIVE row here would translate a
+        // working, explicitly requested shape carrying the operator's exact intent -- and the translation warning
+        // would assert "which rejects the other one with HTTP 400" about a model measured to accept it.
+        final JsonNode body = send(client(config(EITHER_MODEL, AnthropicThinkingMode.EXTENDED).build()),
+                LlmModel.builder().reasoningEffort(ReasoningEffort.LOW).build());
+
+        assertThat(body.get("thinking").get("type").asText()).isEqualTo("enabled");
+        assertThat(body.get("thinking").get("budget_tokens").asInt()).isEqualTo(2048);
+        assertThat(body.has("output_config")).isFalse();
+        assertThat(warnings()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("ADAPTIVE against a model that takes either dialect is honoured too")
+    void adaptiveAgainstAnEitherModelIsHonoured() {
+        final JsonNode body = send(client(config(EITHER_MODEL, AnthropicThinkingMode.ADAPTIVE).build()),
+                LlmModel.builder().reasoningEffort(ReasoningEffort.MEDIUM).build());
+
+        assertThat(body.get("thinking").get("type").asText()).isEqualTo("adaptive");
+        assertThat(body.get("output_config").get("effort").asText()).isEqualTo("medium");
+        assertThat(warnings()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("AUTO against a model that takes either dialect picks the adaptive one, and says nothing")
+    void autoAgainstAnEitherModelPicksAdaptive() {
+        // The one place a policy is applied rather than a fact read. Unreported because AUTO asked the table a
+        // question and the table answered; the vendor's own deprecation notice is what argues for this direction,
+        // and the SDK prints it at every call without this client paraphrasing it.
+        final JsonNode body = send(client(config(EITHER_MODEL, AnthropicThinkingMode.AUTO).build()),
+                LlmModel.builder().reasoningEffort(ReasoningEffort.MEDIUM).build());
+
+        assertThat(body.get("thinking").get("type").asText()).isEqualTo("adaptive");
+        assertThat(body.get("output_config").get("effort").asText()).isEqualTo("medium");
+        assertThat(warnings()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("EITHER never reaches the wire: every mode sends a real shape or none at all")
+    void eitherIsNeverTheDialectARequestSpeaks() {
+        // The invariant ThinkingDialect's javadoc states, asserted where it can actually be observed. The trap it
+        // guards is concrete: resolveAutoDialect's old `if (known != UNKNOWN) return known` would have handed
+        // EITHER to the budgeted branch, and a request meant to be honoured as adaptive would have gone out
+        // budgeted.
+        for (AnthropicThinkingMode mode : AnthropicThinkingMode.values()) {
+            logAppender.list.clear();
+            final JsonNode body = send(client(config(EITHER_MODEL, mode).build()),
+                    LlmModel.builder().reasoningEffort(ReasoningEffort.MEDIUM).build());
+
+            if (mode == AnthropicThinkingMode.OFF) {
+                assertThat(body.has("thinking")).as("%s thinking", mode).isFalse();
+                continue;
+            }
+            assertThat(body.get("thinking").get("type").asText()).as("%s thinking type", mode).isIn("adaptive",
+                    "enabled");
+            // output_config accompanies the adaptive shape alone, on every path -- a bare output_config.effort is a
+            // measured 400 on two of the three models the census gave a budgeted row.
+            assertThat(body.has("output_config")).as("%s output_config", mode)
+                    .isEqualTo("adaptive".equals(body.get("thinking").get("type").asText()));
+        }
+    }
+
+    // ── #68: no warning describes a request that is not sent ─────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("a request that abandons thinking is explained once, not described three times")
+    void anAbandonedRequestGetsOneWarningAndNoDescriptionOfItself() {
+        // ADAPTIVE against a budgeted model with a display set and no room for a budget. Three findings are made
+        // and then made false: the translation, the display-on-budgeted note, and (in other shapes) the clamp. The
+        // NEGATIVE half is the test -- a positive-only assertion passed before this change too.
+        final JsonNode body = send(
+                client(config(BUDGETED_MODEL, AnthropicThinkingMode.ADAPTIVE).maxTokens(512)
+                        .thinkingDisplay(AnthropicThinkingDisplay.SUMMARIZED).build()),
+                LlmModel.builder().reasoningEffort(ReasoningEffort.LOW).build());
+
+        assertThat(body.has("thinking")).isFalse();
+        assertThat(body.has("output_config")).isFalse();
+        assertThat(warnings()).singleElement().asString().contains("leaves no room");
+        assertThat(warnings()).noneMatch(w -> w.contains("translated"))
+                .noneMatch(w -> w.contains("is not given a `display` field"));
+    }
+
+    @Test
+    @DisplayName("a dropped finding does not consume its signature, so the same warning still fires later")
+    void aDroppedFindingDoesNotSpendItsSignature() {
+        // The failure no single-send test can see: if dedup ran while findings were collected rather than when they
+        // are emitted, the first send's abandoned translation would register the signature and silence it for the
+        // life of the client. Two sends on ONE client, the second with room for a budget.
+        final AnthropicLlmClient client = client(
+                config(BUDGETED_MODEL, AnthropicThinkingMode.ADAPTIVE).maxTokens(512).build());
+        send(client, LlmModel.builder().reasoningEffort(ReasoningEffort.LOW).build());
+        assertThat(warnings()).noneMatch(w -> w.contains("translated"));
+
+        logAppender.list.clear();
+        send(client, LlmModel.builder().reasoningEffort(ReasoningEffort.LOW).maxTokens(16_000).build());
+
+        assertThat(warnings()).anyMatch(w -> w.contains("translated"));
+    }
+
+    @Test
+    @DisplayName("an effort dropped by a budget on a TRANSLATED adaptive request is warned about, not swallowed")
+    void aBudgetOverridingAnEffortIsReportedOnTheTranslatedAdaptivePath() {
+        // #68 item 2, and the case the issue says is untested. thinkingBudgetTokens is legal only under EXTENDED, so
+        // it reaches an adaptive request only by translation -- and there intendedEffort discards the call's rung in
+        // favour of the budget's nearest one. The warning that exists for exactly this used to live in the budgeted
+        // branch alone, so this path said nothing.
+        final JsonNode body = send(client(config(ADAPTIVE_MODEL, AnthropicThinkingMode.EXTENDED)
+                .thinkingBudgetTokens(2000).maxTokens(16_000).build()),
+                LlmModel.builder().reasoningEffort(ReasoningEffort.HIGH).build());
+
+        assertThat(body.get("thinking").get("type").asText()).isEqualTo("adaptive");
+        // nearestEffort(2000) is LOW -- the budget won, and HIGH is what was discarded.
+        assertThat(body.get("output_config").get("effort").asText()).isEqualTo("low");
+        assertThat(warnings()).anyMatch(w -> w.contains("the explicit budget wins"))
+                .anyMatch(w -> w.contains("translated"));
+    }
+
+    @Test
+    @DisplayName("the same warning covers the budgeted path, so one finding is pinned on both dialects")
+    void aBudgetOverridingAnEffortIsReportedOnTheBudgetedPathToo() {
+        final JsonNode body = send(client(config(BUDGETED_MODEL, AnthropicThinkingMode.EXTENDED)
+                .thinkingBudgetTokens(2000).maxTokens(16_000).build()),
+                LlmModel.builder().reasoningEffort(ReasoningEffort.HIGH).build());
+
+        assertThat(body.get("thinking").get("budget_tokens").asInt()).isEqualTo(2000);
+        assertThat(warnings()).anyMatch(w -> w.contains("the explicit budget wins"));
+    }
+
+    @Test
+    @DisplayName("thinkingDisplay with reasoningEffort NONE is deliberately silent — the pair agrees")
+    void displayWithEffortNoneIsSilent() {
+        // #68 item 3, decided rather than remembered. Both clauses of the reporting rule fail: the only remedy is
+        // "stop asking for no reasoning", which reverses a value the operator explicitly wrote, and no false
+        // conclusion is available because absent thinking text is exactly what NONE asked for.
+        //
+        // If a later change adds a fourth reporter for this pair, this test goes red -- read the rule in
+        // docs/design/llm/thinking-reporting-and-dialect-records.md section 3.2 before deleting it.
+        for (AnthropicThinkingMode mode : new AnthropicThinkingMode[]{AnthropicThinkingMode.ADAPTIVE,
+                AnthropicThinkingMode.EXTENDED, AnthropicThinkingMode.AUTO}) {
+            logAppender.list.clear();
+            send(client(config(ADAPTIVE_MODEL, mode).thinkingDisplay(AnthropicThinkingDisplay.SUMMARIZED).build()),
+                    LlmModel.builder().reasoningEffort(ReasoningEffort.NONE).build());
+
+            assertThat(warnings()).as("%s warnings", mode).isEmpty();
+        }
     }
 
     @Test

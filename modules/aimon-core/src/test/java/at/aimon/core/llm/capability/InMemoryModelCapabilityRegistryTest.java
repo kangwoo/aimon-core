@@ -231,38 +231,70 @@ class InMemoryModelCapabilityRegistryTest {
     }
 
     @Test
-    @DisplayName("no row states the budgeted dialect, and no row anywhere else states a dialect at all")
-    void noBuiltInRowStatesTheBudgetedDialect() {
-        // Two claims in one, and both are about what the table does NOT say. The extended-only Claude models
-        // (Opus 4.5, Haiku 4.5, Sonnet 4.5 and the Claude 4 generation) genuinely speak the budgeted dialect, but
-        // they accept the sampling parameters, so nothing in the built-in table needs a row for them -- and a row
-        // added only to carry a dialect would suppress nothing while asserting an identifier shape. They stay
-        // UNKNOWN, which is exactly the state that keeps their requests as they are today.
+    @DisplayName("the 2026-09-10 census: the budgeted dialect is exactly three prefixes over six names")
+    void theBudgetedDialectIsStatedByExactlyThreePrefixes() {
+        // This test used to assert the opposite -- that NO built-in row stated the budgeted dialect -- and the
+        // reason it gave was "those models accept the sampling parameters, so nothing needs a row for them". The
+        // conclusion was right and the reason was a different fact from the one that mattered: a row can carry a
+        // dialect and suppress nothing, which is what the 2026-09-10 census rows do.
         //
-        // The OpenAI rows say nothing about the dialect for a different reason: no OpenAI path reads it, and this
-        // one table is shared, so a value there would be an assertion with no consumer.
+        // The OpenAI rows say nothing about the dialect for a reason that has not changed: no OpenAI path reads it,
+        // and this one table is shared, so a value there would be an assertion with no consumer.
         final InMemoryModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.withDefaults();
 
-        for (String model : new String[]{"claude-opus-4-5-20251101", "claude-sonnet-4-5-20250929",
-                "claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-6", "claude-sonnet-4-20250514",
-                "gpt-5", "gpt-5-chat-latest", "o3", "o4-mini", "prod-assistant"}) {
+        for (String model : new String[]{"claude-opus-4-5", "claude-opus-4-5-20251101", "claude-sonnet-4-5",
+                "claude-sonnet-4-5-20250929", "claude-haiku-4-5", "claude-haiku-4-5-20251001"}) {
+            assertThat(registry.resolve(model).thinkingDialect()).as("%s dialect", model)
+                    .isEqualTo(ThinkingDialect.BUDGETED);
+        }
+        // claude-sonnet-4-20250514 is AnthropicConfig's own default model and stays undescribed -- it does not start
+        // with claude-sonnet-4-5, which is the collision the prefix comment says was checked rather than assumed.
+        for (String model : new String[]{"claude-sonnet-4-20250514", "gpt-5", "gpt-5-chat-latest", "o3", "o4-mini",
+                "prod-assistant"}) {
             assertThat(registry.resolve(model).thinkingDialect()).as("%s dialect", model)
                     .isEqualTo(ThinkingDialect.UNKNOWN);
         }
     }
 
     @Test
-    @DisplayName("the Claude models that accept sampling are not caught by any row - the prefix trap")
-    void defaultsLeaveTheAcceptingClaudeModelsUnknown() {
+    @DisplayName("the 2026-09-10 census: the two models that take either dialect say so, not nothing")
+    void theBothDialectModelsStateEither() {
+        // Measured 2026-09-10: both request shapes return 200 on these two. Before this row they resolved to
+        // UNKNOWN, which means "this table cannot answer" -- a different statement from "either works", and the
+        // one a reader would have taken for "nobody has measured it".
+        final InMemoryModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.withDefaults();
+
+        for (String model : new String[]{"claude-opus-4-6", "claude-sonnet-4-6"}) {
+            assertThat(registry.resolve(model).thinkingDialect()).as("%s dialect", model)
+                    .isEqualTo(ThinkingDialect.EITHER);
+        }
+    }
+
+    @Test
+    @DisplayName("the Claude models that accept sampling keep it, even now that rows describe them")
+    void theAcceptingClaudeModelsKeepTheirSamplingParameters() {
         // This is the test that goes red if someone registers "claude-opus-4" as a family prefix. All five accept
         // temperature, top_p and top_k with thinking off (measured 2026-09-09), and a family prefix would suppress a
         // parameter they take -- a silent wire change, which is the failure the o-series rows were withheld for.
+        //
+        // Its INSTRUMENT changed on 2026-09-10 and its intent did not. It used to assert that no row matched these
+        // names at all, which was a proxy for the sampling guard while no row could carry a dialect alone. Rows now
+        // match, so the guard has to be asserted directly -- deleting this test instead would be the one way the
+        // change loses it.
         final InMemoryModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.withDefaults();
 
         for (String model : new String[]{"claude-opus-4-5-20251101", "claude-sonnet-4-5-20250929",
                 "claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-6"}) {
-            assertThat(registry.capabilitiesOf(model)).as("%s is described", model).isEmpty();
-            assertThat(registry.resolve(model)).as("%s row", model).isEqualTo(ModelCapabilities.unknown());
+            assertThat(registry.resolve(model).supportsSamplingParameters()).as("%s sampling", model).isTrue();
+            // The other four flags are the fail-open ones too: the dialect is the whole row.
+            assertThat(registry.resolve(model).supportsReasoningEffort()).as("%s effort", model)
+                    .isEqualTo(ModelCapabilities.unknown().supportsReasoningEffort());
+            assertThat(registry.resolve(model).supportsToolsWithReasoning()).as("%s tools+reasoning", model)
+                    .isEqualTo(ModelCapabilities.unknown().supportsToolsWithReasoning());
+            assertThat(registry.resolve(model).supportsReasoningTraceRoundTrip()).as("%s replay", model)
+                    .isEqualTo(ModelCapabilities.unknown().supportsReasoningTraceRoundTrip());
+            assertThat(registry.resolve(model).acceptedReasoningEfforts()).as("%s ladder", model)
+                    .isEqualTo(ModelCapabilities.unknown().acceptedReasoningEfforts());
         }
     }
 
@@ -504,6 +536,10 @@ class InMemoryModelCapabilityRegistryTest {
         // The invariant behind exposing all five flags rather than the two an operator usually needs: if a row of the
         // shipped table could not be transcribed, the surface would be unable to describe a deployment that renamed
         // that family -- which is the entire problem. The o-series row is the one that needs lowestReasoningEffort.
+        //
+        // The claude-* rows below were NOT transcribable until #69: ADAPTIVE_REFUSING_SAMPLING carries a dialect, and
+        // transcribe() had no way to write one, so this invariant was quietly false for six rows from the moment #60
+        // put a dialect in that constant. It stayed green because it only covered OpenAI rows.
         final InMemoryModelCapabilityRegistry stock = InMemoryModelCapabilityRegistry.withDefaults();
 
         assertThat(transcribe(stock.resolve("gpt-5-chat-latest")).capabilities())
@@ -515,6 +551,11 @@ class InMemoryModelCapabilityRegistryTest {
         assertThat(transcribe(stock.resolve("o1-x")).capabilities()).isEqualTo(stock.resolve("o1-x"));
         assertThat(transcribe(stock.resolve("o3-mini")).capabilities()).isEqualTo(stock.resolve("o3-mini"));
         assertThat(transcribe(stock.resolve("o4-mini")).capabilities()).isEqualTo(stock.resolve("o4-mini"));
+        // The rows the dialect key makes expressible. Two of them, because the table states both real dialects.
+        assertThat(transcribe(stock.resolve("claude-sonnet-5")).capabilities())
+                .isEqualTo(stock.resolve("claude-sonnet-5"));
+        assertThat(transcribe(stock.resolve("claude-3-5-sonnet-20241022")).capabilities())
+                .isEqualTo(stock.resolve("claude-3-5-sonnet-20241022"));
     }
 
     /**
@@ -531,7 +572,48 @@ class InMemoryModelCapabilityRegistryTest {
                 .supportsReasoningEffort(capabilities.supportsReasoningEffort())
                 .supportsToolsWithReasoning(capabilities.supportsToolsWithReasoning())
                 .supportsReasoningTraceRoundTrip(capabilities.supportsReasoningTraceRoundTrip())
-                .acceptedReasoningEfforts(capabilities.acceptedReasoningEfforts()).build();
+                .acceptedReasoningEfforts(capabilities.acceptedReasoningEfforts())
+                .thinkingDialect(capabilities.thinkingDialect())
+                .supportsReasoningSummary(capabilities.supportsReasoningSummary()).build();
+    }
+
+    @Test
+    @DisplayName("a declaration replaces the built-in row for that name rather than patching it")
+    void aDeclarationReplacesRatherThanPatchesABuiltInRow() {
+        // A decision pinned, not a fix. withDefaultsExtendedBy registers the declaration's resolved capabilities as
+        // an exact entry, and capabilitiesOf answers with an exact hit before it looks at any prefix -- so a flag the
+        // entry left unwritten falls back to fail-open rather than to what the built-in row said. The claude-*
+        // prefix row states TWO flags, and one of them is a suppression, so this shape hands `temperature` back to a
+        // model measured to refuse it: an HTTP 400, and with no divergence WARN, because that warning fires only
+        // when supportsSamplingParameters is false.
+        //
+        // #69 is what makes this reachable from a configuration file for the first time, since thinkingDialect is the
+        // first key whose documented target is a name the built-in table always describes. The mechanism is #46's
+        // and is not changed here; the general remedy -- warn when a declaration shadows a row it does not restate --
+        // is L-8 in docs/backlog/llm-config-surface-open-items.md. This assertion is expected to change only if that
+        // mechanism does.
+        final ModelCapabilities bare = InMemoryModelCapabilityRegistry
+                .withDefaultsExtendedBy(Map.of("claude-sonnet-5",
+                        ModelCapabilityDeclaration.builder().thinkingDialect(ThinkingDialect.UNKNOWN).build()))
+                .resolve("claude-sonnet-5");
+
+        assertThat(bare.thinkingDialect()).isEqualTo(ThinkingDialect.UNKNOWN);
+        assertThat(bare.supportsSamplingParameters()).isTrue();
+    }
+
+    @Test
+    @DisplayName("the full form the guides prescribe keeps the flag the built-in row stated")
+    void theFullFormRestatesTheSuppression() {
+        // The other half of the pair above, and the yaml both operator guides now print: an entry for a described
+        // name restates every flag that row stated. Pinned here so the guides can be checked against a test rather
+        // than against a reading of the registry.
+        final ModelCapabilities full = InMemoryModelCapabilityRegistry
+                .withDefaultsExtendedBy(Map.of("claude-sonnet-5", ModelCapabilityDeclaration.builder()
+                        .thinkingDialect(ThinkingDialect.UNKNOWN).supportsSamplingParameters(false).build()))
+                .resolve("claude-sonnet-5");
+
+        assertThat(full.thinkingDialect()).isEqualTo(ThinkingDialect.UNKNOWN);
+        assertThat(full.supportsSamplingParameters()).isFalse();
     }
 
     @Test

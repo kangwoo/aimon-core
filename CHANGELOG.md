@@ -58,6 +58,213 @@ Central is versioned independently).
   still means `off` and a `String`-typed key still sees `0755`, `1.10` and `yes` as written. The
   refusal of two `llm.modelCapabilities` keys that expand to the same name is kept and generalised to
   every mapping; two keys written identically are still yaml's own last-wins.
+### LLM: what the Anthropic thinking path tells an operator, and the records behind it
+
+- **Three warnings described a request other than the one that was sent** (#68), and the fix is one
+  reporting contract obeyed in one place rather than three patches. A step in the thinking resolution
+  now *records* a finding and the **finished request** decides which records are emitted: a finding
+  about the thinking parameter is dropped when the request ends up carrying none, and the one finding
+  that explains the absence is emitted instead. **Observable change: a request that asks for thinking
+  and then abandons it now emits one warning explaining why, instead of up to four describing a
+  request that was never sent.** Every divergence signature and every message is unchanged, and the
+  per-signature dedup register still sees only surviving findings — so a dropped finding cannot spend
+  its signature and silence that message for the life of the process.
+
+- **An effort silently dropped by an explicit budget on a *translated* adaptive request is now
+  warned about.** `thinkingBudgetTokens` is legal only under `thinkingMode: extended`, so it reaches
+  an adaptive request only by dialect translation — and there the call's `reasoningEffort` was
+  discarded with nothing said, because the `thinkingBudgetOverridesEffort` warning lived in the
+  budgeted branch alone. One recorder now covers both dialects. Same message, same signature, and
+  the combination gains the test it lacked.
+
+- **`thinkingDisplay` together with `reasoningEffort: none` stays silent, and that is now a derived
+  decision with a test pinning it** rather than a judgement someone remembered. The rule: an inert
+  combination is reported when there is a remedy that reverses nothing the operator set, or when the
+  operator could otherwise draw a false conclusion from what they see. Neither holds for this pair,
+  so nothing is said.
+
+- **`ThinkingDialect.EITHER`** — the fourth constant, for a model measured to accept **both** request
+  shapes (#73). `UNKNOWN` was covering two different situations: *the table cannot answer* and
+  *either works*. They differ in exactly one behaviour and it is `thinkingMode: auto`, which had
+  nothing to send for the first and can send either for the second. A named mode against an `EITHER`
+  row is **honoured unchanged and unreported** — translating a working, explicitly requested shape
+  would be a substitution with nothing behind it. `UNKNOWN` and `EITHER` are values a *row* may hold
+  and a *request* never speaks.
+
+- **BREAKING, and source-breaking for any out-of-tree exhaustive consumer of `ThinkingDialect`.** A
+  `switch` over the three constants that compiled before will no longer compile. `docs/project/api-stability.md`
+  §5 permits this at `0.x`, taken in one step rather than through a deprecation window, as with
+  `AgentExecutionEvent`'s sixteenth subtype in this same block. In-tree the compiler catches nothing —
+  every read is an `==` — so the reads were found by reading and each gained a test.
+
+- **Five new `claude-*` capability rows, measured 2026-09-10** and carrying a dialect and nothing
+  else. `claude-opus-4-5` / `claude-sonnet-4-5` / `claude-haiku-4-5` speak the **budgeted** dialect
+  (the first `BUDGETED` rows this table has ever shipped); `claude-opus-4-6` / `claude-sonnet-4-6`
+  accept **either**. Prefixes rather than exact names because the undated aliases resolve and are
+  absent from `GET /v1/models` — three rows cover six measured names. `supportsSamplingParameters`
+  stays fail-open `true` on all five: these are the names the table's own `claude-opus-4` warning is
+  about, and they accept the parameters a family prefix would have suppressed. The census is
+  `docs/design/llm/reasoning-model-enablement.md` §3.5.
+
+- **Behaviour changes those rows produce, on upgrade, with no configuration edit:**
+  - `thinkingMode: auto` on those five model families now **sends a thinking parameter and bills for
+    it**, where it previously sent nothing and warned. That is what `AUTO` asks for and what a row is
+    for, but it is new spending. It also opens the thinking gate in `applySamplingParameters`, so a
+    configured `temperature` is now **omitted** on those requests with a
+    `temperatureOmittedForThinking` warning, and a `top_p` outside `[0.95, 1.0]` goes the same way.
+    **And on the three budgeted families the budget is clamped**: with the shipped default
+    `maxTokens: 4096` and no `reasoningEffort` set, the request resolves to `budget_tokens: 4095`,
+    leaving one token for the visible answer and raising `thinkingBudgetClamped=4096->4095`, which
+    names the remedy. That is the same behaviour `extended` has always had on this dialect, arriving
+    for the first time on a deployment that only ever wrote `auto` — raise `maxTokens`.
+  - `thinkingMode: adaptive` on the three 4-5 families was a **certain HTTP 400**; it is now a
+    translated budgeted request that succeeds, with one WARN.
+  - `thinkingMode: extended` on `claude-opus-4-6` / `claude-sonnet-4-6` is **unchanged on the wire** —
+    `EITHER` honours it. Stated because "we gave these models a row" would otherwise read as a change.
+    The vendored SDK's per-call stderr deprecation notice for that shape therefore continues too;
+    this client neither suppresses nor paraphrases it.
+
+- **Three records the #54/#60/#61/#62 stack left behind** (#75), none of them a behaviour change:
+  the two `AnthropicThinkingMode.values()` folds (CLI deserializer and starter auto-configuration)
+  now name each other and state the reassurance neither did — both derive from `values()`, so a fifth
+  constant cannot reach one surface and miss the other; `builderWithDefaults()`'s javadoc names
+  `gpt-5.6-terra` as the one name its documented `registerPrefix("gpt-5", …)` override no longer
+  reaches; and `docs/backlog/README.md`'s index is corrected in two rows, settled by counting the
+  items rather than by reconciling to either number.
+### LLM: the capability table and its two config surfaces now say only things that are true
+
+- **`thinkingDialect` was advertised as declarable and no config surface bound a key for it** (#69).
+  `ModelCapabilityDeclaration.build()`'s refusal message named it, `AnthropicLlmClient`'s `auto` WARN
+  prescribed declaring it, and both operator guides repeated that prescription — while following the
+  advice was a hard `ConfigurationException` at boot on the CLI (its yaml mapper fails on an unknown
+  property) and a silent no-op in the starter (Boot ignores one). Both surfaces bind it now:
+
+  ```yaml
+  # aimon-cli — camelCase              # Spring Boot starter — kebab-case
+  llm:                                 aimon:
+    modelCapabilities:                   llm:
+      prod-claude:                         model-capabilities:
+        thinkingDialect: adaptive            prod-claude:
+                                               thinking-dialect: adaptive
+  ```
+
+  Values are the enum constants — `unknown` · `either` · `budgeted` · `adaptive`, any casing — and `unknown` is a
+  real statement rather than an absence: *act on no built-in row for this name*, which is the answer for
+  an operator who knows a row is wrong and not what the right value is.
+
+- **The key goes in the shared namespace**, which is the third application of
+  `docs/design/llm/model-capability-config-key.md` §2.7's criterion and the one where it needed
+  refining. #54 sent `thinkingMode` to `llm.anthropic.*` because "thinking" is Anthropic's word, and
+  issue #69's own body reads the criterion the same way for this key. It loses on three grounds: the
+  criterion picks a namespace for a **key family** rather than for a leaf, and this leaf joins
+  `model-capabilities.<model>` — splitting it would put one record type in two namespaces, keyed by
+  model name in both; §2.6 already fixed these leaf names as letter-for-letter transcriptions of the
+  `ModelCapabilities` Java fields, so nobody *chose* the name the test would be applied to; and #54 §12
+  had already placed this exact key here in writing, naming #69's trigger as the moment to do it.
+
+- **`reasoning.summary` now consults the capability table** (#72), through a seventh flag on a
+  published `0.x` SPI: `ModelCapabilities.supportsReasoningSummary()`, plus
+  `llm.modelCapabilities.<m>.supportsReasoningSummary` and
+  `aimon.llm.model-capabilities.<m>.supports-reasoning-summary`. It was the one reasoning parameter on
+  the Responses request with no gate at all while its sibling `reasoning.effort` had two, so a gateway
+  that implements the effort and rejects the summary answered 400 on the parameter nobody could
+  describe. **Fail-open `true`**, which is the same two-sided rule as every other default reaching the
+  opposite boolean from `supportsReasoningEffort`: a summary is only ever on a request because somebody
+  set `reasoningSummary`, so withholding it would be fail-*closed*. Nothing on the wire moves for a
+  deployment that declares none of this. When it does withhold, it reports once, the way
+  `maySendEffort` and `applySampling` already do. **`supportsReasoningTraceRoundTrip` was deliberately
+  not widened** to also mean "and accepts a summary" — it means something measured, and a gateway
+  satisfies the two independently.
+
+- **BEHAVIOUR CHANGE: a `null` element in a reasoning-effort rung list now fails startup** (#70). A
+  configuration that boots today stops booting. `acceptedReasoningEfforts: [none, ~, high]` used to bind
+  as `{NONE, HIGH}` in silence, and `accepted-reasoning-efforts=none,,high` did the same in the starter
+  — two identical folds over the same list, each skipping the element. That value decides **which
+  requests the client is allowed to send**, and a silently narrowed ladder does not fail: it makes the
+  client refuse an effort the operator declared, and the symptom turns up later as an omitted parameter
+  that reads as the model's own behaviour. Both surfaces now refuse it naming the leaf key in that
+  surface's own spelling **and the index**, so the fix is deleting the one entry the message points at.
+  (The starter's indexed spelling — `accepted-reasoning-efforts[1]=` — was already loud, for a different
+  reason: Boot leaves that index unbound and `IndexedElementsBinder` refuses it and every index after
+  it.) **#69 carries a narrow behaviour change on the starter for the same reason a key binding can:**
+  `thinking-dialect` did not bind at all before, so a deployment that wrote it was silently running on
+  the built-in row for that model, and it now runs on a replacing entry — which for a `claude-*` name
+  means the two-flag form is what keeps the sampling suppression.
+
+- **A declared entry is the whole row for its name, and three documents said otherwise.** No code
+  behaviour changes here. Both operator guides and the CLI's shipped `default-config.yaml` told
+  operators that what they leave out keeps today's behaviour — true only for a name the built-in table
+  does not describe. `thinkingDialect` is the first key whose documented target is a name that
+  **always** has a row (`claude-*`), and those rows carry a **suppression**, so
+  `{claude-sonnet-5: {thinkingDialect: unknown}}` hands `supportsSamplingParameters` back at fail-open
+  `true` and sends `temperature` to a model measured to refuse it — with no warning, because the
+  suppression WARN fires only when the flag is `false`. `withDefaultsExtendedBy`'s javadoc already
+  stated the rule; the surfaces did not. The three documents now print the **full** form and say why,
+  and a test in each of the three modules pins the behaviour so it is chosen rather than discovered.
+  The remaining general case — the same trap on the six older keys, and whether the surface should warn
+  — is `L-8` in `docs/backlog/llm-config-surface-open-items.md`.
+
+- **The declaration surface is eight keys and all eight bind on both surfaces**, which is the whole of
+  #69: the refusal message became true because the surfaces caught up with it, not because the message
+  got shorter. Two new tests keep it that way — one per surface module, each reflecting over
+  `ModelCapabilityDeclaration.Builder` and asserting that surface carries a property of the same name.
+  Neither can live in `aimon-core`, which cannot see either surface, and that blind spot is exactly what
+  #69 was. `L-1` (the CLI-throws / starter-ignores asymmetry) is **widened by two keys and closed by
+  none of this**.
+### LLM: the reasoning stream is measured against both live APIs, and #43 is closed on evidence
+
+- **#62's streaming path had never been run against a live API on either provider** (#71). Every test
+  of it drove a hand-written event stream, which is green whatever the server actually sends — and a
+  wrong event name there does not fail, it produces **an empty channel indistinguishable from a model
+  that chose not to think**. Both halves are now measured — the event names counted off the raw SSE
+  body, then the same request driven through the client by a test that skips without a key:
+
+  | provider | request | what arrived |
+  |---|---|---|
+  | Anthropic | `claude-opus-5`, `thinkingMode: adaptive` + `thinkingDisplay: summarized`, effort `high` | `thinking_delta` × 34 and one `signature_delta` inside `content_block_delta` |
+  | OpenAI | `gpt-5-mini`, `reasoningSummary: auto`, effort `high` | `response.reasoning_summary_text.delta` × 611 |
+
+  Both reach the sink as `LlmStreamChunk.Kind.REASONING_DELTA`, and the deliberation is not inside the
+  answer text. **The prompt is part of the measurement:** an easy question returns no deliberation at
+  all even at `effort: high` with a display asked for, so both tests use a problem that earns it — a
+  test that is flaky for that reason would be worse than no test.
+
+- **`REASONING_DELTA` → `AssistantReasoningDelta` was the one hop nothing asserted.** Both ends were
+  pinned and the middle was not: the provider mappers by fixtures, the cross-node codec and the REPL
+  formatter by tests that *construct* the event by hand. A chunk that reached the executor and was
+  dropped in its switch would have been green everywhere. Now pinned, including that the reasoning
+  channel keeps its own chunk-index sequence rather than sharing the text one.
+
+- **`gpt-5.x` tool calling: the fix is confirmed against the live API, and the original 400 still
+  happens where the issue found it** (#43). The issue's own reproduction — a config carrying nothing
+  but a key and `model("gpt-5.6-terra")`, a default `LlmModel`, a non-empty tool list — is **accepted**
+  today. Forcing the same request back onto Chat Completions with `responsesApiEnabled(false)` returns
+  the issue's sentence verbatim (`Function tools with reasoning_effort are not supported for
+  gpt-5.6-terra in /v1/chat/completions`), with no `temperature` and no `reasoning_effort` sent — so
+  the endpoint routing is what fixes it, not a change of parameters. Both are now tests.
+
+- **The reasoning item really does round-trip, and the server really does read it.** A captured
+  `[reasoning, function_call]` turn is replayed on turn two and accepted; the same turn with 40
+  characters of `encrypted_content` overwritten is refused with *"The encrypted content for item rs_…
+  could not be verified"*. Without that control, "the second call succeeded" would be equally
+  satisfied by a client that dropped the item — which is not hypothetical: a turn carrying **no**
+  reasoning item at all is also accepted.
+
+- **A tool call does not imply a reasoning item, and that is a model decision rather than a defect.**
+  Measured: `gpt-5.6-terra` asked for the weather with a tool available returns
+  `output: [function_call]` and `reasoning_tokens: 0`. A turn that has to carry a reasoning item must
+  earn the reasoning *and* require the tool.
+
+- **One correction to #43's wording, not to the code.** The issue says these models reject sampling
+  parameters "by the presence of the parameter, regardless of value". On `/v1/responses`,
+  `gpt-5.6-terra` refuses `temperature: 0.0` and accepts `temperature: 1.0` — non-default values are
+  what it refuses, which is what `InMemoryModelCapabilityRegistry`'s `gpt-5` row already said and why
+  suppressing the parameter loses nothing on the wire.
+
+- **No production code changed.** This entry is tests and records. The evidence, request by request,
+  is in `docs/design/llm/reasoning-delta-stream.md` §12.4 and
+  `docs/design/llm/openai-responses-path.md` §10; `RD-1` and `RD-2` in
+  `docs/backlog/reasoning-delta-stream-open-items.md` record which of their caveats this discharges.
 
 ### LLM: a reasoning model's thinking is something a person can watch, and nothing else changes
 

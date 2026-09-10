@@ -180,8 +180,17 @@ the resolved fact.
 | `ADAPTIVE` | `ADAPTIVE` | `{"type":"adaptive"}` + `output_config.effort` — unchanged | nothing |
 | `EXTENDED` | `ADAPTIVE` | `{"type":"adaptive"}`, effort from the intent | WARN, once per signature |
 | `ADAPTIVE` | `BUDGETED` | `{"type":"enabled"}`, budget from the intent | WARN, once per signature |
+| `EXTENDED` | `EITHER` | `{"type":"enabled","budget_tokens":N}` — honoured, not translated | nothing |
+| `ADAPTIVE` | `EITHER` | `{"type":"adaptive"}` + `output_config.effort` — honoured | nothing |
 | `AUTO` | `BUDGETED` / `ADAPTIVE` | the model's dialect | nothing — this is what `AUTO` asked for |
+| `AUTO` | `EITHER` | `{"type":"adaptive"}` + `output_config.effort` | nothing — `AUTO` asked the table and it answered |
 | `AUTO` | `UNKNOWN` | nothing, as `OFF` | WARN — the operator asked the table and it had no answer |
+
+**The three `EITHER` rows arrived on 2026-09-10**, with the fourth `ThinkingDialect` constant they
+need. Two of them report nothing because nothing diverges: both shapes are accepted, so honouring
+the named mode is neither a 400 nor a substitution. The third is the only cell in this table where
+the client applies a **policy** rather than reading a fact, and §3.5 carries both the measurement and
+the citation for the direction it picks.
 
 **The translation is free.** Both directions already exist:
 `AnthropicThinkingBudgets.requestedBudget(effort, configuredBudget)` (`:96`) turns a rung into a
@@ -211,6 +220,60 @@ send nothing*. It is the value F-1 exists to make possible: the operator states 
 thinking on, and bill for it, in every Anthropic deployment that upgrades without reading the
 changelog. That is a behaviour change and it belongs to its own round with its own entry, not to a
 round whose other two phases are additive. §11 carries it.
+
+
+### 3.5 The dialect census, measured 2026-09-10
+
+§9 U-1 says this document made no API call. That is still true of the document; it is no longer true
+of the table. Every `claude-*` model this account can reach was probed on 2026-09-10, and this
+section is what the registry's inline comment cites the way the `gpt-5.6-terra` row cites
+[`openai-model-capabilities.md`](openai-model-capabilities.md) §13.3.
+
+**Method.** `POST /v1/messages`, `anthropic-version: 2023-06-01`, raw HTTP rather than the SDK so that
+no client-side validation could mask a server answer. Constant body: `max_tokens: 2048` and a
+one-sentence user message. Two shapes per model — **A** `{"thinking":{"type":"adaptive"}}` plus
+`output_config: {"effort":"low"}`, and **B** `{"thinking":{"type":"enabled","budget_tokens":1024}}`.
+Two passes over all eleven listed models reproduced each other in every cell, and the answers are
+request validation (`invalid_request_error`) rather than sampling.
+
+| model | A adaptive | B budgeted | dialect | row |
+|---|---|---|---|---|
+| `claude-fable-5`, `claude-fable-5-1` | 200 | 400 | ADAPTIVE | confirms `claude-fable-5` |
+| `claude-opus-5` | 200 | 400 | ADAPTIVE | confirms `claude-opus-5` |
+| `claude-sonnet-5` | 200 | 400 | ADAPTIVE | confirms `claude-sonnet-5` |
+| `claude-opus-4-7` | 200 | 400 | ADAPTIVE | confirms `claude-opus-4-7` |
+| `claude-opus-4-8` | 200 | 400 | ADAPTIVE | confirms `claude-opus-4-8` |
+| `claude-opus-4-5` **·** `claude-opus-4-5-20251101` | 400 | 200 | **BUDGETED** | new prefix `claude-opus-4-5` |
+| `claude-sonnet-4-5` **·** `claude-sonnet-4-5-20250929` | 400 | 200 | **BUDGETED** | new prefix `claude-sonnet-4-5` |
+| `claude-haiku-4-5` **·** `claude-haiku-4-5-20251001` | 400 | 200 | **BUDGETED** | new prefix `claude-haiku-4-5` |
+| `claude-opus-4-6` | 200 | 200 | **both** | new prefix, `EITHER` |
+| `claude-sonnet-4-6` | 200 | 200 | **both** | new prefix, `EITHER` |
+
+**Six ADAPTIVE prefix rows ship and five of them are confirmed, across six model names.** Rows and
+names are not the same count: `claude-fable-5-1` matches the `claude-fable-5` prefix rather than
+having a row. The sixth, `claude-mythos`, stays documentation-derived — no model with that prefix
+exists in this account's listing.
+
+**`GET /v1/models` is not the set of callable names, and that is a correction to the method three
+documents in this stack inherit.** The undated aliases `claude-opus-4-5` / `claude-sonnet-4-5` /
+`claude-haiku-4-5` are absent from the listing, resolve when called (the response's `model` names the
+dated snapshot) and speak the same dialect. That is why the three budgeted rows are **prefixes**:
+three rows cover six measured names, and the alias is the name a deployment is most likely to write.
+
+**Two controls, one of which is new information.** Sending `{"type":"adaptive"}` *alone* gives the
+same answer as shape A on all eleven, so every 400 in the A column is attributable to `thinking.type`
+rather than to `output_config`. And `output_config.effort` **without** any `thinking` parameter is a
+400 on `claude-haiku-4-5` and `claude-sonnet-4-5` (*"This model does not support the effort
+parameter."*) while `claude-opus-4-5` accepts it. Nothing in AIMON sends that combination — the
+resolution attaches an effort only to the adaptive shape — so this measures a guard rather than a
+bug, and the guard is now **load-bearing and measured** rather than tidy.
+
+**What the five new rows deliberately do not say.** `supportsSamplingParameters` stays at its
+fail-open `true`, and that is the half of these rows that matters most: these are exactly the names
+the block's own `claude-opus-4` warning is about, and they *accept* temperature, `top_p` and `top_k`.
+A row here carries a dialect and suppresses nothing. Nothing else was measured, so nothing else is
+stated — including `supportsReasoningEffort`, which the third control above would support a value for
+and which no Anthropic path reads.
 
 ---
 
@@ -451,7 +514,7 @@ pressure the choice is between dropping thinking and dropping answer text, and i
 
 | # | Shape | Disposition |
 |---|---|---|
-| 1 | A `claude-*` row states the wrong dialect | The 400 the operator gets today, now with the framework's name on it. Mitigated the way #52 mitigated the same class: rows come from the vendor's per-model table, and an operator can override one by name from configuration |
+| 1 | A `claude-*` row states the wrong dialect | The 400 the operator gets today, now with the framework's name on it. Mitigated the way #52 mitigated the same class: rows come from the vendor's per-model table, and an operator can override one by name from configuration. **(2026-09-10, #69) That mitigation was true only of a Java caller until now** — no configuration surface bound a key for the dialect, so following it was a hard `ConfigurationException` on the CLI and a silent no-op in the starter. It is true of configuration as of #69: `llm.modelCapabilities.<model>.thinkingDialect` and `aimon.llm.model-capabilities.<model>.thinking-dialect`, both binding the enum, both accepting `unknown` as a real statement — *act on no built-in row for this name* — for an operator who knows the row is wrong and not what the right answer is. **Write the whole row, not the one key:** a declaration replaces the built-in entry rather than patching it, and every `claude-*` row states two flags, so an entry naming only the dialect hands `supportsSamplingParameters` back at fail-open `true` and buys the 400 #52 exists to prevent. The guides print the full form; the general remedy is `L-8` in [`../../backlog/llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md) |
 | 2 | A gateway renames a Claude model; the dialect resolves `UNKNOWN` | Today's behaviour exactly, which is the point of D-2. `AUTO` warns rather than guessing |
 | 3 | `AUTO` + `UNKNOWN` sends nothing, and an operator reads that as thinking being on | The WARN is the only signal, and on an always-on model thinking *is* happening — it is only the request parameter that is absent. Wording must say which of the two it means |
 | 4 | Translation (§3.3) surprises an operator who set an exact `thinkingBudgetTokens` | WARN naming both the token count and the rung it became. This is the lossiest corner in the document and it is one warning, not a silent change |
@@ -460,6 +523,11 @@ pressure the choice is between dropping thinking and dropping answer text, and i
 | 7 | A new event subtype reaches an unpatched consumer | `IllegalStateException` at `OutputFormatter.java:329`; **or**, at `AgentExecutionEventPayload`, a silent drop across nodes. That asymmetry is why the payload is called out separately in §5.3 |
 | 8 | Reasoning text reaches the transcript as answer text | Prevented by D-9. A test asserts `peekText()` is unchanged by a `REASONING_DELTA` |
 | 9 | An out-of-tree consumer switches exhaustively on the sealed hierarchy | Source-breaking, CHANGELOG-visible. `0.x` permits it ([`api-stability.md`](../../project/api-stability.md) §5) |
+| 10 | A row states `EITHER` for a model that in fact rejects one shape | The 400 the operator gets today, now with the framework's name on it — row 1's disposition, unchanged. The blast radius is smaller than row 1's, because `EITHER` only ever *honours* what the mode named: the 400 is the one the mode would have earned with no row at all |
+| 11 | `AUTO` on an `EITHER` model picks adaptive; the operator wanted their token budget | Not silent and not a guess — the pick and its citation are in §3.5, in `ThinkingDialect`'s javadoc and in one client branch. The remedy is `thinkingMode: extended`, which `EITHER` honours **without** translation, which is what makes this cheap rather than a trap |
+| 12 | `output_config.effort` reaches a request whose shape is budgeted | Measured 400 on two of the three budgeted-row models (§3.5). Prevented by the shape check inside the thinking resolution, and pinned by tests asserting no `output_config` on a budgeted body — translated or `EITHER`-honoured. Before 2026-09-10 the guard was correct and untested |
+| 13 | A future author reports a thinking finding from inside the resolution again | Structurally unavailable: `AnthropicThinkingResolver` has no logger and cannot reach the client's private `reportDivergence`. The residual risk is somebody adding a logger to it, which is a reviewable line rather than an easy accident |
+| 14 | A dropped finding's signature is consumed, silencing that message for the process | Cannot happen: dedup lives in `reportDivergence`, which only ever sees `findingsToReport()`'s survivors. Written down because the natural mistake — deduping while collecting — reintroduces the silence this removed, and would be invisible to a test that asserts one warning at a time |
 
 ---
 
@@ -503,9 +571,16 @@ Written in the form the sibling documents use. **Not measured is not a task; it 
   account's `GET /v1/models`. **Rows and model names are not the same count, and this document says
   so explicitly because a set enumerated slightly wrong is the exact failure the change that added
   this note exists to correct.**
-  Evidence and the two facts that fall outside this document are in
+  **The census is now complete and lives in §3.5** — every reachable `claude-*` model, both request
+  shapes, two passes — and the two facts that used to fall outside this document have been folded
+  into the table: three `BUDGETED` prefixes and two `EITHER` ones. **L-6** and **L-7** in
   [`../../backlog/llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md)
-  **L-6** and **L-7**.
+  closed with it.
+  **Two things stay undischarged and neither is measurable from here.** `claude-mythos` has no
+  reachable model, and dated `claude-*-4-6-*` snapshots do not exist yet — two guessed names of the
+  shape the listing implies both answered 404, so nothing is claimed about them. The prefix rows
+  cover them by inheritance if they appear, which is the reason the `ADAPTIVE` block already gives
+  for using prefixes.
 - **U-2 — the `AUTO` + `UNKNOWN` warning has no field evidence** that operators read it. It is the
   one place this design substitutes a log line for a behaviour.
 - **U-3 — `reasoning.summary` has never been requested from this codebase**, so neither its token

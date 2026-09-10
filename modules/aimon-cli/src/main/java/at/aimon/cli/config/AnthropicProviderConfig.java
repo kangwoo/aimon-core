@@ -177,6 +177,14 @@ public class AnthropicProviderConfig {
      * 대소문자를 접는 것은 {@code CliConfigLoader} 의 {@code ACCEPT_CASE_INSENSITIVE_ENUMS} 가 이 필드에는
      * 닿지 않기 때문이며(그 기능은 기본 enum 디시리얼라이저의 것이다), 접는 방식은 스타터의 fold 와 같이
      * {@code values()} 를 돈다 — 두 표면이 서로 다른 철자를 받게 되지 않는다.
+     *
+     * <p>
+     * <b>그 스타터 쪽 fold 의 주소는
+     * {@code AimonLlmAutoConfiguration.AnthropicClientConfiguration.thinkingMode(String)} 이다.</b> 두 벌인 것은
+     * 피할 수 없다 — 이쪽은 enum 을, 저쪽은 {@code String} 을 바인딩한다 — 대신 <b>둘 다
+     * {@code AnthropicThinkingMode.values()} 를 돌기 때문에 다섯 번째 상수가 한쪽에만 조용히 빠질 수는 없다.</b>
+     * 안심해도 되는 이 사실을 어느 쪽도 말하지 않아서, 한 벌을 먼저 본 사람이 다른 벌이 있다는 것도, 그 쌍이
+     * 구조적으로 안전하다는 것도 알 길이 없었다.
      */
     public static class ThinkingModeDeserializer extends JsonDeserializer<AnthropicThinkingMode> {
 
