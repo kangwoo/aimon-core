@@ -41,7 +41,7 @@ If you're new and want a place to start, look for issues labeled `good first iss
 
 - **Java 17+** (build toolchain pins JDK 17)
 - **Gradle 8.x** — use the included wrapper (`./gradlew`); no system install required
-- **An LLM API key** for end-to-end testing — `OPENAI_KEY` or `ANTHROPIC_API_KEY`
+- **An LLM API key**, only to run the live-API tests — `ANTHROPIC_KEY` or `OPENAI_KEY`; see [Live-API tests](#live-api-tests)
 - (Optional) **Docker** for tests that use Testcontainers (MongoDB, Redis, PostgreSQL, OpenSearch)
 
 ### Build
@@ -60,6 +60,49 @@ If you're new and want a place to start, look for issues labeled `good first iss
 ./gradlew :aimon-core:test --tests "at.aimon.core.agent.tool.*Test"   # Glob pattern
 ./gradlew :aimon-core:test --tests "at.aimon.core.agent.tool.ToolInputTest"  # Single class
 ```
+
+### Live-API tests
+
+Four test classes call a provider's real API, and each one is gated on that provider's key with
+`@EnabledIfEnvironmentVariable`:
+
+| Class | Module | Key |
+|-------|--------|-----|
+| `AnthropicThinkingLiveTest` | `aimon-llm-anthropic` | `ANTHROPIC_KEY` |
+| `AnthropicLlmClientIntegrationTest` | `aimon-llm-anthropic` | `ANTHROPIC_KEY` |
+| `OpenAIReasoningLiveTest` | `aimon-llm-openai` | `OPENAI_KEY` |
+| `OpenAILlmClientIntegrationTest` | `aimon-llm-openai` | `OPENAI_KEY` |
+
+**This tier has no CI signal at all.** No workflow supplies either key, so wherever the keys are
+absent — CI included — each of these classes reports `SKIPPED` and `checkAll` stays green. The
+tier is verified only when a person chooses to verify it:
+
+```bash
+export ANTHROPIC_KEY=...
+export OPENAI_KEY=...
+
+./gradlew :aimon-llm-anthropic:test --rerun \
+              --tests 'at.aimon.core.llms.anthropic.AnthropicThinkingLiveTest' \
+              --tests 'at.aimon.core.llms.anthropic.AnthropicLlmClientIntegrationTest' \
+          :aimon-llm-openai:test --rerun \
+              --tests 'at.aimon.core.llms.openai.OpenAIReasoningLiveTest' \
+              --tests 'at.aimon.core.llms.openai.OpenAILlmClientIntegrationTest'
+```
+
+**Every run costs money** — these are billed calls on the account the keys belong to. Never commit a
+key, and redact it from any failure output you paste into an issue or a pull request.
+
+**`--rerun` is not optional.** Gradle does not treat environment variables as inputs to `test`, so if
+nothing else has changed since these tasks last ran, the run reports `UP-TO-DATE` and executes nothing.
+Exporting a key after a keyless run is exactly that case: green, in under a second, with no test output
+at all. Confirm the output lists the tests as `PASSED` — `SKIPPED` means a key was missing, and no
+test lines at all, neither `PASSED` nor `SKIPPED`, means the task did not run.
+
+Expect the tier to have rotted since anyone last ran it. With no signal, rot is the steady state rather
+than a surprise — a provider rewords an error, retires a model, or starts refusing a request shape — and
+it is found by whoever runs the tier next. If that is you, fix it or open an issue rather than stepping
+past it. Why the tier has no scheduled run, and what would change that, is recorded in
+[`docs/backlog/live-api-test-tier.md`](docs/backlog/live-api-test-tier.md).
 
 ### Quality Checks
 
