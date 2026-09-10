@@ -236,7 +236,7 @@ public class LlmClientFactory {
     }
 
     /**
-     * yaml 의 여섯 키를 중립 선언 타입으로 옮긴다. 적히지 않은 키는 {@code null} 로 남아 "선언되지 않음" 이 되고,
+     * yaml 의 여덟 키를 중립 선언 타입으로 옮긴다. 적히지 않은 키는 {@code null} 로 남아 "선언되지 않음" 이 되고,
      * 그것을 fail-open 값으로 푸는 것은 {@link ModelCapabilityDeclaration} 의 일이다.
      */
     private Map<String, ModelCapabilityDeclaration> declarationsOf(LlmProviderConfig config) {
@@ -261,7 +261,9 @@ public class LlmClientFactory {
                     .supportsToolsWithReasoning(capabilities.getSupportsToolsWithReasoning())
                     .supportsReasoningTraceRoundTrip(capabilities.getSupportsReasoningTraceRoundTrip())
                     .lowestReasoningEffort(capabilities.getLowestReasoningEffort())
-                    .acceptedReasoningEfforts(rungSetOf(capabilities.getAcceptedReasoningEfforts())).build();
+                    .acceptedReasoningEfforts(rungSetOf(capabilities.getAcceptedReasoningEfforts()))
+                    .thinkingDialect(capabilities.getThinkingDialect())
+                    .supportsReasoningSummary(capabilities.getSupportsReasoningSummary()).build();
         } catch (IllegalArgumentException e) {
             throw new ConfigurationException(
                     "Invalid `" + MODEL_CAPABILITIES_KEY + "." + name + "` in the LLM config: " + e.getMessage(), e);
@@ -274,6 +276,13 @@ public class LlmClientFactory {
      * <p>
      * <b>빈 목록은 여기서 빈 집합이 되고 코어가 거절한다.</b> 조용히 "선언되지 않음" 으로 접으면 운영자가 적은 것이
      * 아무 일도 하지 않게 되는데, 이 표면 전체가 그런 무언의 no-op 하나 때문에 생겼다.
+     *
+     * <p>
+     * <b>빈 원소도 마찬가지로 거절한다 — 다만 <em>몇 번째</em>인지를 함께 부른다.</b> yaml 에서
+     * {@code [none, ~, high]} 나 값 없는 {@code -} 는 Jackson 이 {@code null} 원소로 준다. 그것을 건너뛰면
+     * 사다리가 조용히 좁아지고, 좁아진 사다리는 실패하지 않는다 — 나중에 파라미터 하나가 빠진 요청으로
+     * 나타나므로 운영자는 그것을 모델의 성질로 읽는다. 예외 메시지에 yaml 키 경로를 얹는 것은
+     * {@link #declarationOf} 의 {@code catch} 다.
      */
     private Set<ReasoningEffort> rungSetOf(List<ReasoningEffort> rungs) {
         if (rungs == null) {
@@ -281,10 +290,15 @@ public class LlmClientFactory {
         }
         // yaml 은 시퀀스를 List 로 준다. 중복된 rung 은 뜻이 하나뿐이므로 접히고, EnumSet 이라 순서는 사다리 순이다.
         final Set<ReasoningEffort> set = EnumSet.noneOf(ReasoningEffort.class);
-        for (ReasoningEffort rung : rungs) {
-            if (rung != null) {
-                set.add(rung);
+        for (int index = 0; index < rungs.size(); index++) {
+            final ReasoningEffort rung = rungs.get(index);
+            if (rung == null) {
+                throw new IllegalArgumentException("acceptedReasoningEfforts[" + index + "] has no value. An empty"
+                        + " list entry (a bare `-`, or `~`) is a configuration error rather than a rung to skip —"
+                        + " skipping it would narrow which requests this model is allowed to send without saying so."
+                        + " Remove the entry, or give it one of: none, minimal, low, medium, high.");
             }
+            set.add(rung);
         }
         return set;
     }

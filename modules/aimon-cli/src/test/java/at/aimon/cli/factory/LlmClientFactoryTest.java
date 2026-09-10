@@ -2,6 +2,7 @@ package at.aimon.cli.factory;
 
 import static org.assertj.core.api.Assertions.*;
 
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -22,6 +23,7 @@ import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.ReasoningEffort;
 import at.aimon.core.llm.capability.InMemoryModelCapabilityRegistry;
 import at.aimon.core.llm.capability.ModelCapabilityRegistry;
+import at.aimon.core.llm.capability.ThinkingDialect;
 import at.aimon.core.llms.anthropic.AnthropicConfig;
 import at.aimon.core.llms.anthropic.AnthropicLlmClient;
 import at.aimon.core.llms.anthropic.AnthropicThinkingDisplay;
@@ -376,6 +378,24 @@ class LlmClientFactoryTest {
         }
 
         @Test
+        @DisplayName("Should reject a null rung, naming the yaml key and the position it sits at")
+        void rejectsANullRung() {
+            // #70. `acceptedReasoningEfforts: [none, ~, high]` used to bind as {NONE, HIGH} and say nothing, and a
+            // silently narrowed ladder does not fail -- it makes the client refuse an effort the operator declared,
+            // and the symptom turns up later as an omitted parameter rather than as a configuration error.
+            // Arrays.asList rather than List.of: the latter throws on a null element, which is the very thing this
+            // fixture has to carry.
+            ModelCapabilityConfig capabilities = new ModelCapabilityConfig();
+            capabilities.setAcceptedReasoningEfforts(Arrays.asList(ReasoningEffort.NONE, null, ReasoningEffort.HIGH));
+            LlmProviderConfig config = openAi("prod-assistant");
+            config.setModelCapabilities(Map.of("prod-assistant", capabilities));
+
+            assertThatThrownBy(() -> factory.create(config)).isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("llm.modelCapabilities").hasMessageContaining("prod-assistant")
+                    .hasMessageContaining("acceptedReasoningEfforts[1]").hasMessageContaining("has no value");
+        }
+
+        @Test
         @DisplayName("Should reject an empty ladder rather than treating it as undeclared, naming the yaml key")
         void rejectsAnEmptyLadder() {
             ModelCapabilityConfig capabilities = new ModelCapabilityConfig();
@@ -385,6 +405,85 @@ class LlmClientFactoryTest {
 
             assertThatThrownBy(() -> factory.create(config)).isInstanceOf(ConfigurationException.class)
                     .hasMessageContaining("llm.modelCapabilities").hasMessageContaining("acceptedReasoningEfforts");
+        }
+
+        @Test
+        @DisplayName("Should carry a declared thinking dialect through to the registry both branches read")
+        void aDeclaredThinkingDialectReachesTheRegistry() {
+            // #69, end to end and asserted by resolving rather than by inspecting the declaration. `prod-claude` is
+            // a name the built-in table does not describe -- which is what makes the one-key form safe to write here
+            // and is exactly the distinction aDeclaredDialectAloneReplacesABuiltInRow below is about.
+            ModelCapabilityConfig capabilities = new ModelCapabilityConfig();
+            capabilities.setThinkingDialect(ThinkingDialect.ADAPTIVE);
+            LlmProviderConfig config = anthropic("prod-claude");
+            config.setModelCapabilities(Map.of("prod-claude", capabilities));
+
+            assertThat(factory.anthropicConfig(config).getModelCapabilityRegistry().resolve("prod-claude")
+                    .thinkingDialect()).isEqualTo(ThinkingDialect.ADAPTIVE);
+        }
+
+        @Test
+        @DisplayName("Should let the dialect stand alone as a whole declaration, and reach the openai branch too")
+        void aDialectAloneIsAWholeDeclarationAndOneTableServesBothBranches() {
+            // One table, both branches -- which is what keeps the shared namespace honest (§2.7's own argument, now
+            // a fact rather than a prediction). The openai client never reads this flag; it is registered all the
+            // same, exactly as supports-tools-with-reasoning is for a model that never reaches Chat Completions.
+            ModelCapabilityConfig capabilities = new ModelCapabilityConfig();
+            capabilities.setThinkingDialect(ThinkingDialect.BUDGETED);
+            LlmProviderConfig config = openAi("prod-claude");
+            config.setModelCapabilities(Map.of("prod-claude", capabilities));
+
+            assertThat(
+                    factory.openAiConfig(config).getModelCapabilityRegistry().resolve("prod-claude").thinkingDialect())
+                    .isEqualTo(ThinkingDialect.BUDGETED);
+        }
+
+        @Test
+        @DisplayName("Should carry a declared reasoning-summary refusal through to the registry")
+        void aDeclaredSummaryRefusalReachesTheRegistry() {
+            // #72's config half: the per-model lever for a gateway that takes reasoning.effort and 400s on
+            // reasoning.summary. The ask itself lives on OpenAIConfig, per client -- this is the only per-model one.
+            ModelCapabilityConfig capabilities = new ModelCapabilityConfig();
+            capabilities.setSupportsReasoningSummary(false);
+            LlmProviderConfig config = openAi("prod-assistant");
+            config.setModelCapabilities(Map.of("prod-assistant", capabilities));
+
+            assertThat(factory.openAiConfig(config).getModelCapabilityRegistry().resolve("prod-assistant")
+                    .supportsReasoningSummary()).isFalse();
+        }
+
+        @Test
+        @DisplayName("Should replace, not patch, the built-in row when a described name declares only its dialect")
+        void aDeclaredDialectAloneReplacesABuiltInRow() {
+            // The trap, asserted so the behaviour is chosen rather than discovered. An entry is the WHOLE row for
+            // its name: the built-in claude-* prefix row states two flags, and naming only one hands the other back
+            // at its fail-open value -- here supportsSamplingParameters true, for models measured to answer 400 to
+            // temperature, and with no divergence WARN because that fires only when the flag is false.
+            //
+            // The mechanism is #46's and is not changed here; the general remedy (warn when a declaration shadows a
+            // row it does not restate) is L-8. This assertion is expected to change only if that mechanism does.
+            ModelCapabilityConfig bare = new ModelCapabilityConfig();
+            bare.setThinkingDialect(ThinkingDialect.UNKNOWN);
+            LlmProviderConfig config = anthropic("claude-sonnet-5");
+            config.setModelCapabilities(Map.of("claude-sonnet-5", bare));
+
+            assertThat(factory.anthropicConfig(config).getModelCapabilityRegistry().resolve("claude-sonnet-5")
+                    .supportsSamplingParameters()).isTrue();
+        }
+
+        @Test
+        @DisplayName("Should keep the suppression when the entry restates it — the form the guides print")
+        void theFullFormForADescribedNameKeepsTheSuppression() {
+            ModelCapabilityConfig full = new ModelCapabilityConfig();
+            full.setThinkingDialect(ThinkingDialect.UNKNOWN);
+            full.setSupportsSamplingParameters(false);
+            LlmProviderConfig config = anthropic("claude-sonnet-5");
+            config.setModelCapabilities(Map.of("claude-sonnet-5", full));
+
+            ModelCapabilityRegistry registry = factory.anthropicConfig(config).getModelCapabilityRegistry();
+
+            assertThat(registry.resolve("claude-sonnet-5").supportsSamplingParameters()).isFalse();
+            assertThat(registry.resolve("claude-sonnet-5").thinkingDialect()).isEqualTo(ThinkingDialect.UNKNOWN);
         }
 
         @Test

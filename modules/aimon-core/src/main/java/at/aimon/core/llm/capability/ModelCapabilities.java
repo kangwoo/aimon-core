@@ -44,6 +44,10 @@ public final class ModelCapabilities {
     private static final Set<ReasoningEffort> DEFAULT_ACCEPTED_REASONING_EFFORTS = unmodifiableLadder(
             EnumSet.range(ReasoningEffort.MINIMAL, ReasoningEffort.HIGH));
     private static final ThinkingDialect DEFAULT_THINKING_DIALECT = ThinkingDialect.UNKNOWN;
+    // True, unlike its nearest sibling DEFAULT_SUPPORTS_REASONING_EFFORT, and for the same rule rather than despite
+    // it: a reasoning summary is only ever on a request because somebody asked for one, so withholding it would be
+    // fail-CLOSED. See supportsReasoningSummary() and unknown()'s javadoc for why that stays safe.
+    private static final boolean DEFAULT_SUPPORTS_REASONING_SUMMARY = true;
 
     private static final ModelCapabilities UNKNOWN = builder().build();
 
@@ -53,6 +57,7 @@ public final class ModelCapabilities {
     private final boolean supportsReasoningTraceRoundTrip;
     private final Set<ReasoningEffort> acceptedReasoningEfforts;
     private final ThinkingDialect thinkingDialect;
+    private final boolean supportsReasoningSummary;
 
     private ModelCapabilities(Builder builder) {
         this.supportsSamplingParameters = builder.supportsSamplingParameters;
@@ -61,6 +66,7 @@ public final class ModelCapabilities {
         this.supportsReasoningTraceRoundTrip = builder.supportsReasoningTraceRoundTrip;
         this.acceptedReasoningEfforts = builder.acceptedReasoningEfforts;
         this.thinkingDialect = builder.thinkingDialect;
+        this.supportsReasoningSummary = builder.supportsReasoningSummary;
     }
 
     /**
@@ -93,11 +99,16 @@ public final class ModelCapabilities {
      * a rung it does not have costs a 400 that fails the turn. A model that really does start at {@code NONE} is
      * describable — register a row with {@code lowestReasoningEffort(NONE)}, or with
      * {@code acceptedReasoningEfforts(...)} when the ladder has a gap in it rather than a floor. The thinking dialect
-     * is {@link ThinkingDialect#UNKNOWN}, which is the only
-     * one of the six that is not a permission at all: both real dialects are a 400 on the model that speaks
-     * <em>only</em> the other, so the fail-open value here has to be the <em>absence</em> of the fact rather than one
-     * of its values.
-     * Changing any of these silently changes the wire for every deployment
+     * is {@link ThinkingDialect#UNKNOWN}, which is the only one of the seven that is not a permission at all: both
+     * real dialects are a 400 on the model that speaks <em>only</em> the other, so the fail-open value here has to be
+     * the <em>absence</em> of the fact rather than one of its values.
+     * A reasoning summary is <em>allowed</em>, which is the same rule reaching the opposite boolean from
+     * {@link #supportsReasoningEffort()}: a summary is only ever on a request because somebody set it, so withholding
+     * it would be the fail-closed half. That default is also never consulted for a model nobody has described —
+     * the parameter exists only on OpenAI's Responses endpoint, which a request reaches only when
+     * {@link #supportsReasoningTraceRoundTrip()} is {@code true}, and that flag's own fail-open value is
+     * {@code false}. So this one's job is to state what the rows that already exist mean, and they mean the summary
+     * is accepted. Changing any of these silently changes the wire for every deployment
      * running a model no registry describes, which is why a test asserts each one individually.
      *
      * @return the fail-open descriptor (never null)
@@ -233,6 +244,36 @@ public final class ModelCapabilities {
         return thinkingDialect;
     }
 
+    /**
+     * Whether the model accepts a request for a <em>reasoning summary</em>.
+     *
+     * <p>
+     * <strong>Read on OpenAI's Responses path and nowhere else</strong> — it gates {@code reasoning.summary} on
+     * {@code /v1/responses}, and no other client consults it, so declaring it {@code false} for a Claude model
+     * does nothing today. The name is neutral rather than OpenAI-shaped because Anthropic expresses the same axis
+     * as {@code thinking.display: summarized}, so a second consumer would not have to move the name — but nothing
+     * measured asks for one yet, and until it does this flag describes one endpoint's parameter.
+     *
+     * <p>
+     * The flag exists for the gateway case rather than for first-party OpenAI. A model served through an
+     * OpenAI-compatible gateway that a deployment has declared
+     * {@link #supportsReasoningTraceRoundTrip()} {@code true} for is one this framework will send to the Responses
+     * endpoint; if that gateway implements {@code reasoning.effort} but rejects {@code reasoning.summary}, the
+     * request is a 400 while the sibling parameter beside it is guarded twice. This is the per-model lever for that,
+     * because the ask itself is per <em>client</em>.
+     *
+     * <p>
+     * Deliberately <strong>not</strong> folded into {@link #supportsReasoningTraceRoundTrip()}. That flag means
+     * something measured — this model replays reasoning traces — and a gateway can satisfy it and reject a summary
+     * independently, so overloading it would make one declared row assert two facts an operator cannot separate.
+     *
+     * @return {@code true} when a client may ask for a reasoning summary; {@code false} when the parameter is
+     *         omitted and the omission reported
+     */
+    public boolean supportsReasoningSummary() {
+        return supportsReasoningSummary;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -247,13 +288,13 @@ public final class ModelCapabilities {
                 && supportsToolsWithReasoning == that.supportsToolsWithReasoning
                 && supportsReasoningTraceRoundTrip == that.supportsReasoningTraceRoundTrip
                 && acceptedReasoningEfforts.equals(that.acceptedReasoningEfforts)
-                && thinkingDialect == that.thinkingDialect;
+                && thinkingDialect == that.thinkingDialect && supportsReasoningSummary == that.supportsReasoningSummary;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(supportsSamplingParameters, supportsReasoningEffort, supportsToolsWithReasoning,
-                supportsReasoningTraceRoundTrip, acceptedReasoningEfforts, thinkingDialect);
+                supportsReasoningTraceRoundTrip, acceptedReasoningEfforts, thinkingDialect, supportsReasoningSummary);
     }
 
     @Override
@@ -262,7 +303,7 @@ public final class ModelCapabilities {
                 + ", supportsReasoningEffort=" + supportsReasoningEffort + ", supportsToolsWithReasoning="
                 + supportsToolsWithReasoning + ", supportsReasoningTraceRoundTrip=" + supportsReasoningTraceRoundTrip
                 + ", acceptedReasoningEfforts=" + acceptedReasoningEfforts + ", thinkingDialect=" + thinkingDialect
-                + '}';
+                + ", supportsReasoningSummary=" + supportsReasoningSummary + '}';
     }
 
     /**
@@ -279,6 +320,7 @@ public final class ModelCapabilities {
         private boolean supportsReasoningTraceRoundTrip = DEFAULT_SUPPORTS_REASONING_TRACE_ROUND_TRIP;
         private Set<ReasoningEffort> acceptedReasoningEfforts = DEFAULT_ACCEPTED_REASONING_EFFORTS;
         private ThinkingDialect thinkingDialect = DEFAULT_THINKING_DIALECT;
+        private boolean supportsReasoningSummary = DEFAULT_SUPPORTS_REASONING_SUMMARY;
 
         private Builder() {
         }
@@ -348,6 +390,11 @@ public final class ModelCapabilities {
                         + " supportsReasoningEffort(false) rather than an empty ladder.");
             }
             // EnumSet.copyOf would throw a NullPointerException of its own here, but not one that names the field.
+            // This is the Java-caller half of a rule the two configuration surfaces enforce with an index on it: a
+            // null rung is a mistake rather than a rung to skip, because skipping it narrows which requests the
+            // client may send without saying so. A caller reaching here passed something an EnumSet cannot be --
+            // new HashSet<>(Arrays.asList(NONE, null)) -- while an operator writes `[none, ~, high]`, and only the
+            // surface knows which position that was.
             for (ReasoningEffort rung : acceptedReasoningEfforts) {
                 Objects.requireNonNull(rung, "acceptedReasoningEfforts cannot contain a null rung");
             }
@@ -387,6 +434,16 @@ public final class ModelCapabilities {
          */
         public Builder thinkingDialect(ThinkingDialect thinkingDialect) {
             this.thinkingDialect = Objects.requireNonNull(thinkingDialect, "thinkingDialect cannot be null");
+            return this;
+        }
+
+        /**
+         * @param supportsReasoningSummary
+         *            {@code false} when the endpoint serving this model rejects a request for a reasoning summary
+         * @return This builder
+         */
+        public Builder supportsReasoningSummary(boolean supportsReasoningSummary) {
+            this.supportsReasoningSummary = supportsReasoningSummary;
             return this;
         }
 

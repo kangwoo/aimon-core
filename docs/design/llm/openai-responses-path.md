@@ -11,6 +11,13 @@
 > read out of `openai-java-core-4.52.0-sources.jar` or run against it; every claim about what the
 > *server* accepts comes from the issue body and the SDK's javadoc, and is labelled where it
 > matters. §8 is the complete list of what that leaves unverified.
+>
+> **That last paragraph describes the round this document records, and it is no longer the whole
+> story.** A later round ran **#43's** own reproduction and every one of its six work items against
+> the live API on 2026-09-10. §10 is that record, and it names which of §8's U-items it discharges
+> and which it leaves standing. (That round also closed #71, which is about the reasoning *stream* on
+> both providers — a different list, recorded in
+> [`reasoning-delta-stream.md`](reasoning-delta-stream.md) §12.4.)
 
 ---
 
@@ -454,6 +461,7 @@ is the same unverified server question as the anchor (§8, U-1).
 | 10 | **Transcripts grow.** An `encrypted_content` blob is far larger than the text of the turn, and every assistant turn in a reasoning session carries one. | Named as an operational cost, not engineered away: capping or truncating breaks the round trip, which is the whole feature. Compaction sheds them, which bounds a long session, and the switch removes them entirely. §8, U-5. |
 | 11 | **Token estimation under-counts on this path.** `HeuristicTokenEstimator` and `TikTokenEstimator` walk content blocks, tool uses and tool results, and count **0** for reasoning traces — while `DefaultCompactionGuard` drives every threshold from the estimator rather than from provider usage. So the guard under-counts by roughly `reasoning_tokens` on the axis it is watching. | **Deliberately not fixed**, and the obvious fix is wrong: counting the base64 blob as text would over-count by an order of magnitude against the true input cost and force premature compaction, destroying the traces. The blast radius is bounded — compaction drops the traces so the error resets, the context limits already reserve headroom for estimator error, and the same estimator already omits tool *definitions*, a larger and equally uncounted term. Recorded here so the next person to read a context-length 400 has the sentence. |
 | 12 | **A tool that works on Chat is rejected on Responses** because an implementer supplied `strict: true`. | §4.3, and a test that is red on `true` and on an omitted setter alike. |
+| 13 | **A gateway that accepts `reasoning.effort` and rejects `reasoning.summary`** (#72, 2026-09-10). It is on this endpoint at all because the deployment declared `supports-reasoning-trace-round-trip: true` for the name, and the summary was the one reasoning parameter on the request that consulted no capability — so the two gates that would have caught it sat on the sibling parameter and the turn failed with a 400. | A seventh flag, `ModelCapabilities.supportsReasoningSummary()`, gating only `reasoning.summary` and only here. **Fail-open `true`**, which is the same two-sided rule as the others reaching the opposite boolean from `supportsReasoningEffort()`: a summary is only ever on a request because somebody set it, so withholding it would be fail-*closed* — and the flag is never read for an undescribed model, since this endpoint is entered only on `supportsReasoningTraceRoundTrip()`, whose own fail-open value is `false`. Omitted and reported once when it withholds, the way `maySendEffort` and `applySampling` already are. **`supportsReasoningTraceRoundTrip` was deliberately not widened** to also mean "and accepts a summary": it means something measured, and a gateway satisfies the two independently. The remedies without the flag are both wider than the fault — unsetting `reasoningSummary` is per *client* while the model name is per request, and declaring the round trip `false` routes the model off this endpoint entirely. |
 
 ### 5.1 Provider errors that are not SDK exceptions
 
@@ -557,6 +565,7 @@ result as an opaque string and cannot see the field.
 | **F-3** | Native `input_file` for non-text documents on this path. | Taking it would make the same `Message` mean different things on the two endpoints and claim an unverified capability. |
 | **F-4** | **`strict: true` for tool schemas.** Strict mode improves tool-call accuracy and the field is already being written. | Turning it on rejects every schema that is not strict-compliant, and §4.3 shows that population is large and partly not ours. Needs its own gate, an audit, and its own CHANGELOG entry. |
 | ~~**F-5**~~ | ~~Reasoning *summary* deltas forwarded to the sink.~~ | **Done — [`reasoning-delta-stream.md`](reasoning-delta-stream.md) (#62).** Still a separate feature; it simply got its own round, together with the Anthropic half, because forwarding without asking would have shipped a channel that is always empty — `OpenAIResponsesRequestFactory` never set `reasoning.summary`, and on this endpoint the reasoning itself is `encrypted_content`, so the summary is the only readable form there is. Two corrections to this row's wording: **both** delta families are forwarded, not the summary alone (`response.reasoning_summary_text.delta` and `response.reasoning_text.delta` — forwarding only the first would leave a model that emits raw reasoning text showing nothing to a deployment that asked to see reasoning), and the ask itself opened `aimon.llm.openai.*` / CLI `llm.openai.*`, the namespace F-2 above reserves for `responsesApiEnabled`. Opt-in and unset by default on both surfaces; a model routed to Chat Completions, which has no such parameter, gets one WARN rather than silent inertness. |
+| **F-5 (a correction, 2026-09-10)** | This row says `OpenAIResponsesRequestFactory` **never set** `reasoning.summary`, which was true when it was written and stopped being true in the same round. #72 finishes the sentence the other way: the factory sets it, and **now consults a capability first** — `ModelCapabilities.supportsReasoningSummary()`, §5 row 13. The position the factory's own class javadoc recorded (*"the summary has no capability gate at all"*) was right about first-party OpenAI, where a model that **ignores** the ask simply produces no summary events, and silent about a gateway that **rejects** it, which is a 400 rather than an empty channel. The flag is fail-open `true`, so nothing on the wire moves for a deployment that declares none of it. |
 | ~~**F-6**~~ | ~~The o-series rows in the built-in table.~~ **Done — round 8.** | Was *"blocked on live-API verification"*. That verification happened on 2026-09-09: four o-series names accept a replayed reasoning item on `/v1/responses`, with a corruption control proving the item is consumed, so the flag flipped for the eight measured names and they now reach this path. It did **not** flip per prefix — `o1-pro` and `o4-mini-deep-research` were never called and keep the old behaviour through their prefix rows. [`openai-model-capabilities.md`](openai-model-capabilities.md) §13. |
 
 ---
@@ -632,6 +641,93 @@ Small, and each for a reason found in the code rather than chosen for convenienc
 7. **This document is in English**, matching the round-1 design it continually cross-references
    rather than the Korean the design specified. `docs/design/` is not a translation target either
    way.
+
+---
+
+## 10. Live verification — #43's own lists, walked (2026-09-10)
+
+Everything above §10 was written without a billed call. This section is the call, and it is here
+because #43 asks for the reproduction to be *run* rather than reasoned about. Every row names a
+request and what came back; the request-by-request log is the task record's `measurements.md`.
+
+### 10.1 The reproduction
+
+The issue's snippet, unchanged: a config carrying nothing but the key and `model("gpt-5.6-terra")`, a
+default `LlmModel`, a one-line question, and any non-empty tool list.
+
+| request | result |
+|---|---|
+| the snippet as written, through `OpenAILlmClient` | **accepted**; usage populated on both counters, stop reason present and not `UNKNOWN` |
+| the same request with `responsesApiEnabled(false)`, forcing Chat Completions | **HTTP 400**, body verbatim: *"Function tools with reasoning_effort are not supported for gpt-5.6-terra in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'."* |
+
+**The second row is what makes the first mean something.** It carries no `temperature` and no
+`reasoning_effort` — nothing was sent and the server still refused — so the issue's note that omitting
+the effort is not a workaround holds a year later, and **routing is the fix rather than a change of
+parameters**. Both rows are `OpenAIReasoningLiveTest.TheReproduction`.
+
+One correction to the issue's *wording*, which the code already had right: #43 says these models
+reject sampling parameters "by the presence of the parameter, regardless of value". On
+`/v1/responses`, `gpt-5.6-terra` refuses `temperature: 0.0` (*"Unsupported parameter: 'temperature' is
+not supported with this model."*) and **accepts `temperature: 1.0`**. It is the non-default value that
+is refused — which is what `InMemoryModelCapabilityRegistry`'s `gpt-5` row says, and why suppression
+loses nothing on the wire.
+
+### 10.2 The six work items, one by one
+
+| # | Work item | Evidence |
+|---|---|---|
+| 1 | Request building, sampling omitted rather than defaulted | 10.1 row 1 accepted on a model that refuses a non-default `temperature`; §4.1 and `OpenAiRequestParameters.applySampling` are the code, and the 400 in 10.1's last paragraph is why omission is load-bearing rather than tidy |
+| 2 | Reasoning item round trip | A captured `[reasoning, function_call]` turn replayed on turn two: **accepted**. The control below is the half that makes it a claim |
+| 3 | Streaming — a second mapper for `ResponseStreamEvent` | 611 `response.reasoning_summary_text.delta` events off the wire, and the same request through `sendMessageStreaming` reaching the sink as `REASONING_DELTA`. [`reasoning-delta-stream.md`](reasoning-delta-stream.md) §12.4 |
+| 4 | `TokenUsage.reasoningTokens` | The streamed turn reported `reasoning_tokens: 1280` of 1502 output tokens, read back through `getReasoningTokens()` as positive and `<= completionTokens` — §2.3's containment, on a live number rather than a fixture |
+| 5 | Stop reasons from `status` + `incomplete_details.reason` | `TOOL_USE` on the captured tool-calling turn, `END_TURN` on the streamed one, and *present and not `UNKNOWN`* on the reproduction. The `incomplete` arms are **not** measured — reaching them costs a deliberately truncated turn |
+| 6 | `call_id` versus `id` | The captured trace's `toolUseId` equals the turn's `call_id`, and the replay carrying a `function_call_output` keyed by it was accepted. Two ends agreeing on one identifier |
+
+**The negative control for item 2.** Replaying the item with the last 40 characters of its
+`encrypted_content` overwritten is refused: *"The encrypted content for item rs_… could not be
+verified. Reason: Encrypted content could not be decrypted or parsed."* Without it the acceptance
+above proves nothing, and that is not hypothetical here — see 10.3.
+
+### 10.3 A measurement that changed a test rather than the code
+
+`gpt-5.6-terra` asked *"What is the weather in Seoul? Use the get_weather tool."* with that tool
+available returns `output: [function_call]` and `output_tokens_details.reasoning_tokens: 0` — **no
+reasoning item at all.** Nothing was dropped; the model decided the question needed no thought.
+
+Two consequences worth carrying. A turn that has to anchor a reasoning item must **earn the reasoning
+and require the tool**, which is why the captured turn is arithmetic reported through a tool rather
+than a weather lookup. And a turn carrying no item is accepted on replay, which is exactly why item
+2's positive case needs its control.
+
+### 10.4 The "please preserve when porting" list
+
+#43 names four behaviours a from-scratch Responses client would regress. **There is no from-scratch
+client** — §2.2's single-client decision means all four live above the endpoint seam and run
+unchanged on both paths, which is a stronger answer than four separate ports would be.
+
+| Preserved behaviour | Where it is now | Bound by |
+|---|---|---|
+| `StreamResponse.close()` as the thread-safe idempotent abort lever, registered through `cancellation.onCancel(...)` after the stream opens | `OpenAILlmClient.sendMessageStreaming`, one `try` for both endpoints; `OpenAIStreamHandle.close()` delegates to it | `OpenAIResponsesCancellationTest` |
+| The fast path for "already cancelled before the connection opens" | the same method's first statement | same |
+| Cancellable non-streaming calls routed through the streaming path with a discarding sink | `OpenAILlmClient.sendMessage(SystemPromptParts, …)` — endpoint-independent, since `exchangeFor` runs below it | same |
+| `OpenAIExceptionMapper`'s `SseException` branch, classifying from the payload rather than the stream-open status | unchanged, and this endpoint needed **more** than it: three failure shapes here are events or statuses rather than thrown exceptions | `OpenAIResponsesExceptionRoutingTest`, `OpenAIResponsesErrorEventTest` |
+| Per-request timeout via `RequestOptions`, returning `null` to keep the single-argument overload | `perRequestOptions`, read by both exchanges | `OpenAIResponsesRequestTimeoutTest` |
+
+**These five rows are read off the code and its tests, not measured.** A live call exercises none of
+them except incidentally, and manufacturing a mid-stream server failure to bill one is not something
+this round did.
+
+### 10.5 What §8 still says
+
+**This round discharges none of §8's U-items.** That is worth stating plainly, because a section
+headed "live verification" invites the opposite assumption: what was measured here is the
+reproduction and the six work items, which are a different list. §8's only struck-through entry,
+**U-4**, was closed in round 8 and not by this one.
+
+**U-1** is the item this round comes closest to and still does not reach: the reasoning round trip is
+now measured as *working*, which says nothing about whether omitting the anchor would fail — that
+needs a request built deliberately wrong. **U-2**, **U-3**, **U-5**, **U-6**, **U-7** and **U-8**
+stand exactly as written.
 
 ---
 

@@ -47,7 +47,9 @@ import at.aimon.core.llm.capability.ModelCapabilities;
  * {@code reasoning.summary: "auto"} on its own returns five {@code summary_text} parts with or without any
  * {@code include}. The control is the request that asks for no summary: zero parts, so the channel is off until
  * asked. Non-streaming probes on {@code gpt-5-mini}, 2026-09-10, so they establish the summary in the final response
- * rather than the streaming path's delta event names.
+ * rather than the streaming path's delta event names. <strong>Since #72 it also consults a capability</strong> —
+ * {@link ModelCapabilities#supportsReasoningSummary()}, for the gateway that accepts the effort and rejects the
+ * summary; see {@link #applyReasoning}.
  * <li><strong>{@code store} is {@code false} and {@code reasoning.encrypted_content} is asked for.</strong> With
  * {@code store: true} the server retains the exchange and offers {@code previous_response_id} as an alternative to
  * replaying items — a second source of truth that no {@code SessionRecord} knows about, in a system that resumes
@@ -57,6 +59,12 @@ import at.aimon.core.llm.capability.ModelCapabilities;
  * </ul>
  */
 final class OpenAIResponsesRequestFactory {
+
+    // The signature this is reported under does not collide with the client's two Chat-path summary signatures
+    // (reasoningSummaryOffResponsesPath@…, reasoningSummaryWithResponsesDisabled@…): those fire only when the
+    // request went to Chat Completions and this one only when it went to Responses.
+    private static final String SUMMARY_UNSUPPORTED_MESSAGE = "reasoningSummary {} is set on this request but {} "
+            + "does not accept a reasoning summary; it is being omitted and the call will succeed without it.";
 
     private static final String PENALTY_UNSUPPORTED_MESSAGE = "{} {} is set on this request but the OpenAI Responses "
             + "API has no such parameter; it is being omitted and the call will succeed without it.";
@@ -136,10 +144,27 @@ final class OpenAIResponsesRequestFactory {
      * The two parts are independent on purpose. The effort keeps both of its existing gates
      * ({@code supportsReasoningEffort}, then {@code maySendEffort}) with exactly their old semantics: a value that
      * fails either is omitted and reported, and now simply contributes nothing to the object rather than returning
-     * early from the whole method. The summary has no capability gate at all — {@link ModelCapabilities} says nothing
-     * about summaries, and inventing a field for an unmeasured axis would make every gateway operator answer one more
-     * question they cannot. A model that ignores the ask produces no summary events, which is indistinguishable from
-     * the key being unset, and honest: the model did not produce one.
+     * early from the whole method. The summary now has one gate,
+     * {@link ModelCapabilities#supportsReasoningSummary()}.
+     *
+     * <p>
+     * <strong>It used to have none, and the reasoning for that was right about the case it covered and silent about
+     * the one that matters here</strong> (#72). The old argument was: a model that <em>ignores</em> the ask produces
+     * no summary events, which is indistinguishable from the key being unset, and honest. True — of first-party
+     * OpenAI. It says nothing about a <strong>gateway</strong>, which is what the capability table exists for: a
+     * deployment that declares {@code supports-reasoning-trace-round-trip: true} for a name behind an
+     * OpenAI-compatible gateway is what routes that name here, and a gateway that implements {@code reasoning.effort}
+     * while <em>rejecting</em> {@code reasoning.summary} answers 400 — with the two gates that would have caught it
+     * sitting on the other parameter. The remedies without a per-model flag are both wider than the fault: unsetting
+     * {@code reasoningSummary} takes it away from every model this client serves (the ask is on
+     * {@link OpenAIConfig}, per client, while the model name is resolved per request), and declaring
+     * {@code supportsReasoningTraceRoundTrip(false)} routes the model off this endpoint entirely, losing the trace
+     * round trip to suppress one optional parameter.
+     *
+     * <p>
+     * The gate is <strong>not</strong> {@code supportsReasoningTraceRoundTrip}: that flag means something measured —
+     * this model replays reasoning traces — and a gateway satisfies the two independently, so overloading it would
+     * make one declared row assert two facts an operator cannot separate.
      *
      * <p>
      * Before this shape the effort was the only contributor, so a deployment asking for a summary without an effort
@@ -158,8 +183,13 @@ final class OpenAIResponsesRequestFactory {
 
         final Optional<OpenAiReasoningSummary> summary = config.getReasoningSummary();
         if (summary.isPresent()) {
-            reasoning.summary(OpenAiReasoningSummaries.toWire(summary.get()));
-            any = true;
+            if (capabilities.supportsReasoningSummary()) {
+                reasoning.summary(OpenAiReasoningSummaries.toWire(summary.get()));
+                any = true;
+            } else {
+                reporter.report("reasoningSummary=" + summary.get() + "@" + modelName, SUMMARY_UNSUPPORTED_MESSAGE,
+                        summary.get(), modelName);
+            }
         }
 
         if (any) {

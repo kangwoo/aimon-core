@@ -262,6 +262,10 @@ class AimonDocumentedPropertiesTest {
         // The List-typed leaf beside it. Recorded as a leaf, not descended into, which is the right answer -- its
         // elements are enum constants rather than named keys.
         assertThat(TREE.isKnownKey("aimon.llm.model-capabilities.prod-assistant.accepted-reasoning-efforts")).isTrue();
+        // The two leaves #69 and #72 added. Pinned before the guide sweep below relies on the walker seeing them,
+        // because a guide naming a key the walker cannot resolve is exactly what that sweep is for.
+        assertThat(TREE.isKnownKey("aimon.llm.model-capabilities.prod-claude.thinking-dialect")).isTrue();
+        assertThat(TREE.isKnownKey("aimon.llm.model-capabilities.prod-assistant.supports-reasoning-summary")).isTrue();
         assertThat(TREE.isKnownKey("aimon.llm.model-capabilities.prod-assistant.supports-sampling-parameter"))
                 .isFalse();
         // The map-of-maps node, where both the profile and the field are the host's to name.

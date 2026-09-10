@@ -760,7 +760,7 @@ Fix: `25 | 5` → `26 | 4`. Do **not** touch §5's `5건` subtotal (O-8).
 that commit's own message says *"The backlog index was missing `llm-config-surface-open-items.md`
 entirely… both rows are filled in."* What is wrong now is different and smaller: the row reads `5 | 5 |
 0 | 0` while the file's title says `7건 (열림 7)`, because the very next commit (`3a41fcd`) added L-6
-and L-7 without updating the index. Since this run closes both, the row becomes **`7 | 5 | 2 | 0`** —
+and L-7 without updating the index. Since this run closes both, the row becomes **`12 | 9 | 3 | 0`** once the sibling run `llm-capability-config-gaps` has also landed its own item and the merge has closed L-9 (it was `7 | 5 | 2 | 0` against `main` as this was written) —
 so the stale row is corrected and consumed in the same change, and the PR body should say the issue's
 description of this half was superseded rather than silently write a different fix.
 
@@ -1180,9 +1180,9 @@ which is this repository's canonical record of what is open:
 
 | §11 | backlog | why it outlives this phase |
 |---|---|---|
-| **O-1** | **L-8** | whether the sibling run gives `thinkingDialect` a configuration key, and whether its value list then needs `EITHER`. A coordination item that survives the merge |
-| **O-3** | **L-9** | a both-dialect model that prefers the *budgeted* shape needs a fact this design has no room for. Trigger: a vendor table row marking `adaptive (deprecated)` |
-| **O-7** | **L-10** | `claude-mythos` ships one prefix over two documented dialect states and no reachable model to measure |
+| **O-1** | **L-9** | whether the sibling run gives `thinkingDialect` a configuration key, and whether its value list then needs `EITHER`. A coordination item that survives the merge |
+| **O-3** | **L-10** | a both-dialect model that prefers the *budgeted* shape needs a fact this design has no room for. Trigger: a vendor table row marking `adaptive (deprecated)` |
+| **O-7** | **L-11** | `claude-mythos` ships one prefix over two documented dialect states and no reachable model to measure |
 
 The other five stay here and are answered rather than open. **O-2** and **O-5** are settled by what
 shipped (three cross-reference sentences; §3.5 exists in
@@ -1198,6 +1198,6 @@ that record exists to avoid.
 - [`reasoning-model-enablement.md`](reasoning-model-enablement.md) — §3.3's table, §3.5's census, §7's failure modes, §9 U-1's discharge
 - [`anthropic-thinking-traces.md`](anthropic-thinking-traces.md) — §2.1's vendor per-model table and the two quoted 400s
 - [`reasoning-effort-config-surface.md`](reasoning-effort-config-surface.md) — the set-valued precedent §10 A2 weighs and refuses
-- [`../../backlog/llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md) — L-6 and L-7 closed here; L-8, L-9 and L-10 opened by §15.4
+- [`../../backlog/llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md) — L-6 and L-7 closed here; L-9, L-10 and L-11 opened by §15.4
 - [`../../backlog/README.md`](../../backlog/README.md) — the rules for closing an item, and the index this change corrects twice
 - [`../../project/api-stability.md`](../../project/api-stability.md) — §5, which permits the enum addition at `0.x`

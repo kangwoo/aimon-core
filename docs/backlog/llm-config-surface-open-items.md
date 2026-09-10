@@ -1,4 +1,4 @@
-# LLM 설정 표면 — 등록 항목 11건 (열림 9 · 닫힘 2)
+# LLM 설정 표면 — 등록 항목 12건 (열림 9 · 닫힘 3)
 
 출처는 #46 이다 — 모델 capability 표를 CLI yaml 과 스타터 프로퍼티에서 확장할 수 있게 한 작업.
 설계는 [`../design/llm/model-capability-config-key.md`](../design/llm/model-capability-config-key.md) 이고,
@@ -110,6 +110,19 @@ N-1 을 여기 적는 이유는 그것이 답이라고 보아서가 아니라 **
 > 등록할 prefix 가 하나 늘어난 것이 아니라 **벤더 네임스페이스가 둘이 되어 같은 처방이 두 서브트리를
 > 덮게 되었다.** "언제 다시 볼까" 의 트리거 2 는 여전히 발화하지 않는다 — 그것이 세는 것은
 > 맵-of-객체 키이고 이 둘은 그것이 아니다.
+
+> **2026-09-10 (#69·#72) — 다시 닫히지 않았고, 키 둘만큼 더 넓어졌다.** 이 라운드가
+> `aimon.llm.model-capabilities.<model>.thinking-dialect` 와 `.supports-reasoning-summary` 를 더했다. 둘 다
+> **이미 세고 있던 서브트리 안의 잎**이므로(여섯 → 여덟) 트리거 2 는 이번에도 발화하지 않는다 —
+> 그것이 세는 것은 맵-of-객체 **키**이고 이 서브트리는 이미 그 하나로 세어져 있다. R12 · R14 · N-1 의
+> 저울도 그대로다.
+>
+> **CLI 쪽의 사정거리가 한 칸 줄어든 것만 적어 둔다.** 이 항목은 처음부터 *"CLI 는 같은 오타에 던진다"* 를
+> 비대칭의 다른 쪽으로 세어 왔는데, 그 던짐이 **정확히 철자가 맞은 `thinkingDialect`** 를 잡던 자리는
+> 없어졌다 — 그 키가 이제 바인딩되기 때문이고, 그것이 #69 다. 이것은 CLI 가 조용해진 것이 아니라
+> **잡을 오타가 하나 줄어든 것**이며, 비대칭 자체는 그대로다. 침묵의 기록도 그대로다 —
+> `AimonPropertiesValidationTest.aMisspelledFlagIsSilentInTheStarter` 는 초록으로 남고, 이 항목을 닫으면
+> 빨개지는 것이 옳은 결과다.
 
 ---
 
@@ -439,7 +452,72 @@ CLI 도 **자기가 판단하는 자리에서는** 같은 규칙을 지킨다 �
 
 ---
 
-## L-8 — `thinkingDialect` 에 설정 키가 생기면 `EITHER` 도 그 목록에 들어가야 한다
+## L-8 — 설정된 선언은 내장 행을 **대체**하는데, 두 설정 표면은 반대로 적고 있었다
+
+*(2026-09-10 등록. #69 를 구현하면서 나왔다. 세 문서와 한 키는 그 라운드에서 고쳤고, 여기 남는 것은
+**일반형**이다.)*
+
+**무엇을.** 선언이 내장 표에 있는 이름을 덮으면서 그 행이 말하던 플래그를 다시 적지 않았을 때, 표면이
+그것을 알아채게 만든다. 가장 그럴듯한 모양은 **기동 시 WARN** 이다.
+
+**왜.** 관측 가능한 결과는 HTTP 400 이고, 경고가 없다.
+
+```yaml
+modelCapabilities:
+  claude-sonnet-5:
+    thinkingDialect: unknown
+```
+
+이 항목은 `claude-sonnet-5` 에 대해 `unknown()` + 방언만 등록한다. 내장 `claude-*` prefix 행은 **두**
+플래그를 말하므로(`ADAPTIVE_REFUSING_SAMPLING` = `supportsSamplingParameters(false)` +
+`thinkingDialect(ADAPTIVE)`), `supportsSamplingParameters` 는 fail-open 인 `true` 로 돌아가고 설정된
+`temperature` 가 그대로 나간다 — #52 가 없애려고 존재하는 그 400 이다. **억제 WARN 은 플래그가 `false`
+일 때만 울리므로 아무 말도 나오지 않는다.** `thinkingMode: extended` 도 구제하지 못한다: 그 분기는
+`temperature` 는 빼지만 `top_p` 는 여전히 싣는다.
+
+**이 함정은 #69 가 만든 것이 아니라 여섯 키에 이미 있던 것이다.** `withDefaultsExtendedBy` 의 javadoc 이
+규칙을 그대로 적어 두었고(*"선언은 그 이름에 대한 행 전체이지 행에 대한 패치가 아니다 … 선언에서 다시
+적어 두는 것이 좋다"*), 클래스 javadoc 의 `register("o3", …)` 예제는 다섯 플래그를 다시 적으면서 그중
+하나에 `// MUST stay true` 주석까지 달아 두었다. #69 가 바꾼 것은 **누가 이 함정에 걸어 들어오는가**다 —
+지금까지 이 표면의 문서화된 대상은 내장 표가 들어 본 적 없는 게이트웨이 이름이었고(덮을 행이 없다),
+`thinkingDialect` 는 문서화된 대상이 **언제나 행을 가진 이름**인 첫 키다.
+
+읽는 사람을 반대로 보내는 문장이 하나 더 있다. 같은 javadoc 이 전체 교체를 *"the safe direction (the
+request keeps today's shape and stays on Chat Completions)"* 이라고 부르는데, 그 괄호는 그것이 붙어 있는
+o-시리즈 예제에 대해서만 참이고 `gpt-5` 계열과 `claude-*` 행에는 **거짓**이다 — 그 행들의 "오늘의 모양" 은
+capability 표 이전의 모양, 즉 400 을 낸 그 `temperature` 가 실려 있던 모양이다. 이 항목을 착수하는 사람이
+"함정은 무해하다" 로 결론 내릴 때 쓰게 될 문장이 정확히 저것이다.
+
+**어디.** `InMemoryModelCapabilityRegistry.withDefaultsExtendedBy:396`(선언의 `capabilities()` 를 그대로
+`register`) · `capabilitiesOf:424-430`(exact 가 prefix 를 이긴다) · `:122-123`(두 플래그짜리
+`ADAPTIVE_REFUSING_SAMPLING`) · `AnthropicLlmClient.applySamplingParameters:836`(억제 게이트) —
+전부 2026-09-10.
+
+**#69 가 고친 것과 남긴 것.** 고친 것: 반대로 적고 있던 문서 셋(CLI 레퍼런스 · 스타터 가이드 ·
+`default-config.yaml`)이 이제 **완전한 형태**만 처방한다. 그리고 세 모듈에 그 동작을 못박는 테스트가 있다 —
+`InMemoryModelCapabilityRegistryTest.aDeclarationReplacesRatherThanPatchesABuiltInRow`,
+`LlmClientFactoryTest.aDeclaredDialectAloneReplacesABuiltInRow`,
+`AimonPropertiesValidationTest.aDeclarationReplacesTheBuiltInRowRatherThanPatchingIt`. 각각 완전한 형태가
+억제를 지킨다는 짝 테스트를 함께 갖는다. 남긴 것: **기계 자체**와 나머지 일곱 키.
+
+**닫는 길 셋.** 앞의 둘은 #69 의 설계가 저울에 올려 기각했다.
+
+| 길 | 무엇을 얻나 | 무엇을 잃나 |
+|---|---|---|
+| **병합(merge) 모드** — 선언이 내장 행 위에 얹힌다 | 함정이 사라진다 | `withDefaultsExtendedBy` 의 javadoc 이 못박고 #46 이 결정한 규칙을 뒤집고, **오늘 있는 모든 선언의 뜻을 조용히 바꾼다.** 자기 라운드와 자기 논거가 필요하다 |
+| **거절** — 내장 행을 덮으면서 그 행의 플래그를 다시 적지 않은 항목을 기동 실패로 | 가장 시끄럽다 | 오늘 유효한 설정을 깬다. 여덟 키 전부에 대해, 이 라운드가 한 키에 대해서만 급하게 만든 문제 때문에 |
+| **경고** — 같은 조건에 기동 시 WARN | 맞는 모양이다. 오늘 유효한 설정을 깨지 않고 함정만 보이게 한다 | 그래도 여덟 키를 공유하는 표면 위의 **새 동작**이다. 다른 것에 대한 이슈 셋에 얹혀 갈 변경이 아니다 |
+
+**언제 다시 볼까.** 셋 중 하나다.
+
+1. 누군가 "선언을 했더니 모델이 **더 나빠졌다**" 를 보고할 때 — 그것이 이 함정의 관측 가능한 모양이다.
+2. 이 표면에 **다음 키가 들어올 때.** 키가 늘수록 다시 적어야 할 플래그가 늘고, 처방 스니펫이 길어진다.
+3. 내장 표에 **세 플래그짜리 행**이 생길 때. 오늘 최악은 두 개이고, 셋이 되면 손으로 옮겨 적는 처방이
+   버티지 못한다.
+
+---
+
+## L-9 — `thinkingDialect` 에 설정 키가 생기면 `EITHER` 도 그 목록에 들어가야 한다
 
 *(2026-09-10 등록. 출처는 #73 국면의 설계 —
 [`../design/llm/thinking-reporting-and-dialect-records.md`](../design/llm/thinking-reporting-and-dialect-records.md)
@@ -462,9 +540,27 @@ CLI 도 **자기가 판단하는 자리에서는** 같은 규칙을 지킨다 �
 이 항목은 그 결정이 어느 쪽으로 나든 잊히지 않게 하려고 있다 — 키를 열지 않기로 했다면 이 항목은
 그 결정과 함께 닫힌다.
 
+### 닫힘 (2026-09-10, #69 · #73 두 브랜치의 병합)
+
+**형제 작업은 키를 여는 쪽으로 결정했고**(#69, PR #76), 이 항목이 예고한 그대로 값 목록이 뒤처졌다.
+두 브랜치가 각자의 게이트를 통과했는데도 그랬다 — 어느 쪽도 혼자서는 틀리지 않았기 때문이다.
+`EITHER` 는 #73 쪽에만 있었고 키는 #69 쪽에만 있었으므로, 결함은 **병합으로 처음 존재하게 되었다.**
+그래서 닫는 것도 병합 커밋의 일이다.
+
+**고친 곳은 여섯이다** — `default-config.yaml` 의 주석, `ModelCapabilityConfig` 와
+`AimonProperties` 의 javadoc, CLI 레퍼런스의 정본과 번역본, 그리고 `CHANGELOG.md` 에서 #69 가 값을
+셋으로 적어 둔 줄. 전부 **사람이 읽는 목록**이다.
+
+**코드는 한 줄도 바뀌지 않았고, 그것이 이 항목의 위험이 작았던 이유다.** 두 표면 모두 enum 을 직접
+바인딩하므로 `thinkingDialect: either` 는 이 커밋 이전에도 이미 바인딩되었다 — 틀린 것은 동작이 아니라
+**받는 값이 셋이라고 적은 문서**였다. 스타터의
+`additional-spring-configuration-metadata.json` 에는 이 키의 항목이 없고 넣지 않았다: Boot 은 enum
+타입 프로퍼티의 허용값을 스스로 유도하므로, 손으로 적은 목록을 하나 더 만드는 것은 다음 상수가
+추가될 때 뒤처질 자리를 하나 더 만드는 것이다 — 이 항목이 기록한 실패 그 자체다.
+
 ---
 
-## L-9 — budgeted 쪽을 선호하는 "둘 다 받는" 모델이 나오면 `EITHER` 로는 부족하다
+## L-10 — budgeted 쪽을 선호하는 "둘 다 받는" 모델이 나오면 `EITHER` 로는 부족하다
 
 *(2026-09-10 등록. 출처는 같은 설계 §11 O-3.)*
 
@@ -487,7 +583,7 @@ CLI 도 **자기가 판단하는 자리에서는** 같은 규칙을 지킨다 �
 
 ---
 
-## L-10 — `claude-mythos` 행은 한 prefix 로 문서상 서로 다른 두 방언을 덮고 있다
+## L-11 — `claude-mythos` 행은 한 prefix 로 문서상 서로 다른 두 방언을 덮고 있다
 
 *(2026-09-10 등록. 출처는 같은 설계 §11 O-7.)*
 
@@ -512,7 +608,7 @@ prefix 를 쪼갤지(Preview 만 `EITHER`) 그대로 둘지가 한 번에 정해
 
 ---
 
-## L-11 — 라이브 서명 음성 대조 테스트가 서버 문구 두 가지 때문에 절반쯤 깜빡인다
+## L-12 — 라이브 서명 음성 대조 테스트가 서버 문구 두 가지 때문에 절반쯤 깜빡인다
 
 *(2026-09-10 등록. 출처는 #73 국면의 빌드 —
 [`../design/llm/thinking-reporting-and-dialect-records.md`](../design/llm/thinking-reporting-and-dialect-records.md)
@@ -556,7 +652,7 @@ invalid_request_error  messages.1.content.0: `thinking` 또는 `redacted_thinkin
 - [`../design/llm/model-capability-config-key.md`](../design/llm/model-capability-config-key.md) — 설계.
   §9 가 설계 시점의 미해결 목록, §11 이 구현 중 실측으로 뒤집힌 사실
 - [`../design/llm/thinking-reporting-and-dialect-records.md`](../design/llm/thinking-reporting-and-dialect-records.md) —
-  L-6·L-7 을 닫고 L-8·L-9·L-10 을 연 설계. §14 가 방언 census 의 원자료, §15.4 가 이 세 항목의 승격 근거다
+  L-6·L-7 을 닫고 L-9·L-10·L-11 을 연 설계. §14 가 방언 census 의 원자료, §15.4 가 이 세 항목의 승격 근거다
 - [`../design/llm/openai-model-capabilities.md`](../design/llm/openai-model-capabilities.md) — capability
   SPI 자체의 설계. §7 O-8 이 이 작업으로 닫혔다
 - [`../design/llm/openai-responses-path.md`](../design/llm/openai-responses-path.md) — F-2 가 L-2 의 출처
