@@ -118,6 +118,13 @@ tasks.withType<Test>().configureEach {
 // Out of `test` is not the same as out of CI, and no tier in this build is out of both any more. `integrationTest`,
 // `packagingTest` and aimon-browser-playwright's own `playwrightTest` are each a step in the `build` or
 // `integration` job and a task in the release gate, and ReleaseGateMatchesCiGateTest holds the two lists together.
+//
+// That is a claim about tasks, and it does not reach a class gated with `@EnabledIfEnvironmentVariable`. Such a class
+// skips in whichever task picks it up unless its variable is set, no workflow sets one, and a skip leaves the build
+// green — so it has no CI signal at all. The provider-key live-API classes in aimon-llm-anthropic and
+// aimon-llm-openai are that shape deliberately, because they need a secret and bill every run; CONTRIBUTING.md's
+// "Live-API tests" says how to run them and why `--rerun` is required. aimon-sandbox-docker and
+// aimon-sandbox-kubernetes each hold one more class gated the same way.
 tasks.named<Test>("test") {
     useJUnitPlatform {
         excludeTags("docker")
@@ -199,8 +206,9 @@ tasks.withType<JacocoReport>().configureEach {
 // A module with no entry gets no rule rather than a floor of zero. Zero would be a rule that always passes,
 // which reads as "verified" in the task list and verifies nothing; absence at least tells the truth. The
 // modules legitimately absent are the ones with no coverage report at all — aimon-bom (a java-platform),
-// the three testkits (filesystem, session, memory — all main sources and no tests of their own; publishing
-// the memory one did not change that), and the samples.
+// the filesystem, session and memory testkits (all main sources and no tests of their own; publishing the
+// memory one did not change that), and the samples. Being a testkit is not the reason: aimon-llm-capability-testkit
+// has tests of its own, so it has a report and a floor like any other module.
 val coverageBaselines = Properties().apply {
     val file = rootProject.file("gradle/coverage-baselines.properties")
     if (file.exists()) {

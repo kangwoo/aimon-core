@@ -196,9 +196,28 @@ class AnthropicThinkingLiveTest {
                 // (StrippingTheBlock), so "the second call succeeded" is equally satisfied by a client that silently
                 // dropped the block. This is what shows the verifier read the signature — and therefore that its
                 // accepting ours means something.
+                //
+                // Not the whole sentence — and here that is not a preference but the only assertion that holds. The
+                // server answers this one request with either of two 400s, chosen non-deterministically (3 and 3 in
+                // six back-to-back runs on 2026-09-10):
+                //
+                // messages.1.content.0: Invalid `signature` in `thinking` block
+                // messages.1.content.0: `thinking` or `redacted_thinking` blocks in the latest assistant message
+                // cannot be modified. These blocks must remain as they were in the original response.
+                //
+                // Both are the verifier saying it noticed, which is the entire claim, so pinning either sentence
+                // makes the test red half the time for a reason that has nothing to do with signatures. What is
+                // asserted instead is what both bodies share, and each part earns its place by what it separates.
+                // `invalid_request_error` is the error's type field, not its wording. `messages.1.content.0`, the
+                // path of the block this test mutated, is wording, but the one piece both bodies carry, and it is
+                // what tells this rejection apart from a 400 about any other part of the request. It is still the
+                // server's text: a server that stopped prefixing its messages with the path would turn this red, and
+                // the failure would print the message that shows it. The whole-sentence convention this class
+                // observes at DialectMismatchesAreRejected is untouched — it covers the two dialect rejections that
+                // AnthropicThinkingMode's javadoc quotes for operators to grep, and neither of these is one of them.
                 assertThatThrownBy(() -> client.sendMessage(SYSTEM, secondTurn(first, mutated), List.of(weatherTool()),
                         minimalEffort())).isInstanceOf(LlmInvalidRequestException.class)
-                        .hasMessageContaining("Invalid `signature` in `thinking` block");
+                        .hasMessageContaining("invalid_request_error").hasMessageContaining("messages.1.content.0");
             }
         }
     }

@@ -215,6 +215,17 @@ Central is versioned independently).
   Neither can live in `aimon-core`, which cannot see either surface, and that blind spot is exactly what
   #69 was. `L-1` (the CLI-throws / starter-ignores asymmetry) is **widened by two keys and closed by
   none of this**.
+
+- **Those two tests now check that a key's value arrives, not only that the key exists** (#82). As #69
+  shipped them they stopped one step short of the only code written by hand for each key —
+  `LlmClientFactory.declarationOf` and `ModelCapabilityProperties.toDeclaration()` — so a ninth key with
+  a getter and a setter on both surfaces and no forwarding call would bind, say nothing, and never reach
+  the declaration, with both tests green. Each now writes two distinct values per key, generated from
+  the builder's setter types, through that surface's own forwarding, and compares the whole declaration
+  that comes out. The two share one contract in a new unpublished module, `aimon-llm-capability-testkit`:
+  the check still cannot live in `aimon-core`, but that never required two copies of it. Nothing an
+  operator writes or sees changes; `declarationOf` became package-private so the CLI's test can call it.
+
 ### LLM: the reasoning stream is measured against both live APIs, and #43 is closed on evidence
 
 - **#62's streaming path had never been run against a live API on either provider** (#71). Every test
@@ -1565,6 +1576,37 @@ Central is versioned independently).
   (12.1.12, `ee10-servlet`) meets no other pin in the build — there is no `jetty` entry in the version
   catalog at all. Javalin 7.2.3 is Java 17 bytecode, matching the toolchain. 7.2.1 is the release
   upstream marked unusable over a Jetty bug; this is the fix for it, not that.
+
+- **The live-API test tier is documented as manual-only, because it has no CI signal and never
+  did** (#81). Four classes call a provider's real API and gate on `ANTHROPIC_KEY` or `OPENAI_KEY`;
+  no workflow supplies either key, so wherever the keys are absent, CI included, they skip and the
+  build stays green. The issue offered two ways out — a scheduled workflow with the keys in repository
+  secrets, or saying plainly that the tier is verified only when someone chooses to verify it — and
+  **the maintainer chose the second**. [`CONTRIBUTING.md`](CONTRIBUTING.md) now carries the command,
+  the cost, and the consequence that comes with the choice: rot in this tier is the steady state,
+  found by whoever runs it next. `CONTRIBUTING.md` had also named `ANTHROPIC_API_KEY` as the key for
+  end-to-end testing, a name no gate in the tree reads; it now says `ANTHROPIC_KEY`. The decision,
+  the alternative it did not take, and what would reopen it are recorded in
+  [`docs/backlog/live-api-test-tier.md`](docs/backlog/live-api-test-tier.md).
+
+- **The obvious way to run that tier by hand ran nothing.** Gradle does not track environment
+  variables as inputs to `test`, so exporting the keys after a keyless run and repeating the same
+  command reported both test tasks `UP-TO-DATE` — green in 543ms with zero tests executed. It is the
+  `playwrightTest` failure at the top of this section in a new form: a tier that executes nothing
+  cannot be told apart from a passing one. The documented command passes `--rerun` to each task, which
+  was measured to execute all four classes.
+
+- **Two live assertions stopped pinning a vendor's sentence where their claim did not need one.**
+  `AnthropicThinkingLiveTest`'s signature negative control asserted one 400 body verbatim while the
+  server answers the same request with either of two — 3 and 3 in six back-to-back runs; it now
+  asserts the error type and the path of the block it mutated, which both bodies carry.
+  `OpenAIReasoningLiveTest` asserted OpenAI's Chat Completions refusal word for word; it no longer
+  reads the message at all, and asserts the structured `type` and `param` of the SDK's
+  `BadRequestException` instead — `invalid_request_error` and `reasoning_effort`, both measured as
+  filled by the server — which no rewording of the message can change. The assertions that pin whole
+  sentences on purpose — the two dialect rejections `AnthropicThinkingMode` quotes for operators to
+  grep, and the `temperature` refusal whose exact wording is what separates it from a range error —
+  are unchanged. `L-12` is closed.
 
 ### Docs CI: translations are now checked for shape, not only for age
 

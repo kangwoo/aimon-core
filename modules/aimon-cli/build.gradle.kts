@@ -38,6 +38,10 @@ dependencies {
     // Terminal features
     implementation(libs.jline)
     implementation(libs.jansi)
+
+    // The model-capability binding contract ModelCapabilityConfigBindingTest subclasses. The starter's surface runs
+    // the same one, which is why it lives in a module both can see rather than being copied into each.
+    testImplementation(project(":aimon-llm-capability-testkit"))
 }
 
 // Create executable JAR with all dependencies

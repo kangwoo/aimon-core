@@ -18,6 +18,11 @@ include(
     "aimon-knowledge-opensearch",
     "aimon-llm-anthropic",
     "aimon-llm-openai",
+    // The model-capability binding contract both configuration surfaces run — the CLI's `ModelCapabilityConfig` and
+    // the starter's `ModelCapabilityProperties` — so a key that binds and is never forwarded fails one statement of
+    // the rule rather than two copies of it. Not published, like `aimon-filesystem-testkit` above: every subject it
+    // checks is in this repository.
+    "aimon-llm-capability-testkit",
     "aimon-sandbox",
     "aimon-sandbox-docker",
     "aimon-sandbox-kubernetes",
@@ -30,7 +35,7 @@ include(
     "aimon-session-redis",
     "aimon-session-postgres",
     "aimon-session-mongodb",
-    // The shared five-tier PeerMemory contract suite. Published, unlike the two testkits above: its subjects are
+    // The shared five-tier PeerMemory contract suite. Published, unlike the other testkits above: its subjects are
     // `PeerMemory` backends, and the backend that most needs holding to the contract — `RemotePeerMemory` in the
     // aimon-memory service — lives in another repository and can only run the suite if it can depend on it.
     "aimon-memory-testkit",
@@ -57,6 +62,7 @@ project(":aimon-filesystem-testkit").projectDir = file("modules/aimon-filesystem
 project(":aimon-knowledge-opensearch").projectDir = file("modules/aimon-knowledge-opensearch")
 project(":aimon-llm-anthropic").projectDir = file("modules/aimon-llm-anthropic")
 project(":aimon-llm-openai").projectDir = file("modules/aimon-llm-openai")
+project(":aimon-llm-capability-testkit").projectDir = file("modules/aimon-llm-capability-testkit")
 project(":aimon-sandbox").projectDir = file("modules/aimon-sandbox")
 project(":aimon-sandbox-docker").projectDir = file("modules/aimon-sandbox-docker")
 project(":aimon-sandbox-kubernetes").projectDir = file("modules/aimon-sandbox-kubernetes")

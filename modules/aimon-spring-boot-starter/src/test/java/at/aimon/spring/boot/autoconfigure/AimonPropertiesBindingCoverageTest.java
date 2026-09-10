@@ -1,54 +1,56 @@
 package at.aimon.spring.boot.autoconfigure;
 
-import static org.assertj.core.api.Assertions.assertThat;
-
-import java.beans.Introspector;
-import java.beans.PropertyDescriptor;
-import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
-import java.util.Arrays;
-import java.util.List;
+import java.util.Locale;
 
 import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
 
 import at.aimon.core.llm.capability.ModelCapabilityDeclaration;
+import at.aimon.llm.capability.testkit.AbstractModelCapabilityBindingContractTest;
 
 /**
- * The starter half of #69's recurrence guard: every key {@link ModelCapabilityDeclaration} accepts has a property
- * here.
+ * The starter's subject for {@link AbstractModelCapabilityBindingContractTest}: every key
+ * {@link ModelCapabilityDeclaration} accepts has a property on {@link AimonProperties.ModelCapabilityProperties}, and a
+ * value written there reaches the declaration {@code toDeclaration()} builds from it.
  *
  * <p>
- * #69 <em>is</em> the absence of this test and its CLI twin ({@code ModelCapabilityConfigBindingTest}).
- * {@code thinkingDialect} was a fully built declaration key with no property on either surface, so the refusal
- * message that advertises it was advice an operator could not act on — silently on this surface, because Boot
- * ignores an unknown property (backlog {@code L-1}).
+ * #69 was the absence of the first half — {@code thinkingDialect} was a fully built declaration key with no property
+ * here, so the refusal message advertising it was advice an operator could not act on, and silently so on this
+ * surface, because Boot ignores an unknown property (backlog {@code L-1}). #82 was the absence of the second: a key can
+ * bind here and still be dropped by {@code toDeclaration()}, the one line per key written by hand. What is asserted,
+ * and why one contract serves this surface and the CLI's instead of a copy in each module, is written on the base
+ * class.
  *
  * <p>
- * Written as its own class rather than folded into {@code AimonAutoConfigurationTest} so that a failure says which
- * key is unbound rather than which context failed to start.
+ * Written as its own class rather than folded into {@code AimonAutoConfigurationTest} so that a failure says which key
+ * is unbound or dropped rather than which context failed to start. The operator spelling is derived here, not in the
+ * contract: kebab-case is Boot's naming rule, and the contract should not learn one surface's binder conventions.
  */
-@DisplayName("AimonProperties.ModelCapabilityProperties - every declarable key has a property")
-class AimonPropertiesBindingCoverageTest {
+@DisplayName("AimonProperties.ModelCapabilityProperties - every declarable key is bound, and its value reaches the declaration")
+class AimonPropertiesBindingCoverageTest
+        extends
+            AbstractModelCapabilityBindingContractTest<AimonProperties.ModelCapabilityProperties> {
 
-    @Test
-    @DisplayName("every setter on the declaration builder has a property of the same name on this surface")
-    void everyDeclarableKeyIsBound() throws Exception {
-        final List<String> declarable = Arrays.stream(ModelCapabilityDeclaration.Builder.class.getDeclaredMethods())
-                .filter(method -> Modifier.isPublic(method.getModifiers()))
-                .filter(method -> method.getParameterCount() == 1)
-                .filter(method -> method.getReturnType() == ModelCapabilityDeclaration.Builder.class)
-                .map(Method::getName).sorted().toList();
+    @Override
+    protected AimonProperties.ModelCapabilityProperties newSurface() {
+        return new AimonProperties.ModelCapabilityProperties();
+    }
 
-        final List<String> bound = Arrays
-                .stream(Introspector.getBeanInfo(AimonProperties.ModelCapabilityProperties.class, Object.class)
-                        .getPropertyDescriptors())
-                .filter(property -> property.getReadMethod() != null && property.getWriteMethod() != null)
-                .map(PropertyDescriptor::getName).sorted().toList();
+    @Override
+    protected ModelCapabilityDeclaration forward(AimonProperties.ModelCapabilityProperties surface) {
+        return surface.toDeclaration();
+    }
 
-        assertThat(declarable).as("the declaration's own key list, which is what the refusal message advertises")
-                .isNotEmpty();
-        assertThat(bound).as("aimon.llm.model-capabilities.<model>.* — every key an operator can write here")
-                .containsAll(declarable);
+    @Override
+    protected String operatorKeyPath(String key) {
+        return "aimon.llm.model-capabilities.<model>." + kebab(key);
+    }
+
+    @Override
+    protected String forwardingLocation() {
+        return "AimonProperties.ModelCapabilityProperties.toDeclaration";
+    }
+
+    private static String kebab(String camelCase) {
+        return camelCase.replaceAll("([A-Z])", "-$1").toLowerCase(Locale.ROOT);
     }
 }

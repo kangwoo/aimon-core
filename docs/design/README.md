@@ -82,6 +82,7 @@
 | [`multimodal-content.md`](llm/multimodal-content.md) | 이미지·문서를 메시지에 싣는 콘텐츠 모델 |
 | [`openai-model-capabilities.md`](llm/openai-model-capabilities.md) | 모델별로 요청에 실을 수 있는 파라미터 — 교체 가능하고 fail-open 인 능력 레지스트리, 그리고 gpt-5.x 도구 호출 |
 | [`model-capability-config-key.md`](llm/model-capability-config-key.md) | 그 능력 표를 **설정에서** 확장하는 키 — CLI yaml 과 스타터 프로퍼티, 부분 선언의 기본값, 게이트웨이가 개명한 모델 |
+| [`model-capability-binding-round-trip.md`](llm/model-capability-binding-round-trip.md) | 그 키가 바인딩될 뿐 아니라 **값이 선언까지 옮겨지는지** 모든 키에 대해 확인하는 가드 — 이름이 아니라 왕복을 보는 이유, 두 표면이 복사본 둘이 아니라 계약 하나를 돌리는 이유 |
 | [`openai-responses-path.md`](llm/openai-responses-path.md) | `/v1/responses` 경로 — 턴을 넘어 살아남는 추론 페이로드 슬롯, 엔드포인트를 모델별로 고르는 seam, 네 번째 토큰 카운터 |
 | [`anthropic-thinking-traces.md`](llm/anthropic-thinking-traces.md) | Anthropic 의 `thinking` / `redacted_thinking` 블록이 그 슬롯을 채우는 경로 — 두 갈래 thinking 요청 방언, effort→budget 사다리, thinking 과 충돌하는 샘플링 파라미터 |
 | [`anthropic-sampling-capabilities.md`](llm/anthropic-sampling-capabilities.md) | 그 샘플링 파라미터를 **모델별로** 끄는 경로 — 능력 표가 두 벤더를 서술하게 되는 자리, 지어낸 `temperature` 의 폐기, 두 설정 표면의 Anthropic 분기 |

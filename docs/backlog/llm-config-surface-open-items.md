@@ -1,4 +1,4 @@
-# LLM 설정 표면 — 등록 항목 13건 (열림 10 · 닫힘 3)
+# LLM 설정 표면 — 등록 항목 15건 (열림 11 · 닫힘 4)
 
 출처는 #46 이다 — 모델 capability 표를 CLI yaml 과 스타터 프로퍼티에서 확장할 수 있게 한 작업.
 설계는 [`../design/llm/model-capability-config-key.md`](../design/llm/model-capability-config-key.md) 이고,
@@ -645,6 +645,178 @@ invalid_request_error  messages.1.content.0: `thinking` 또는 `redacted_thinkin
 발화한다. 형태는 작다: 상태·타입만 단언하고 문장은 둘 중 하나를 받아들이거나, 두 문장이 공유하는 더 좁은
 부분 문자열로 좁히거나. **어느 쪽인지가 질문**이며, 그 결정이 이 항목이다.
 
+### 닫힘 (2026-09-10, #81)
+
+**두 선택지를 합쳤다.** 단언은 이제 상태·타입 — 예외가 `LlmInvalidRequestException`(400)이고 메시지에
+에러 타입 필드 `invalid_request_error` 가 있다 — 에, 두 문장이 공유하는 부분 문자열 하나
+`messages.1.content.0` 을 더한 것이다. 뒤의 것을 더한 이유는 그것이 **이 테스트가 서명을 바꾼 바로 그
+content 블록의 경로**이기 때문이다. 상태·타입만으로는 "무엇이든 400 이면 된다" 가 되는데, 경로가 붙으면
+거절이 **바꾼 블록을 가리킨다.** 다만 그 경로의 **값**은 이 테스트가 보낸 요청의 모양
+(`secondTurn` 의 두 번째 메시지, 첫 번째 content 블록)에서 나오지만, 그것이 메시지에 **실리는 것**은 여전히
+서버의 문구다. 두 본문이 모두 그 앞머리를 달고 오므로 어느 문장이 오든 남지만, 서버가 메시지에서 경로를 뺀다면
+이 단언은 빨개지고 실패 출력이 그 메시지를 보여 준다. 그래도 넣은 것은 아래에 적은 규칙 그대로다 — 경로가 이
+거절을 **요청의 다른 자리에 대한 400** 과 가른다.
+
+**어디** *(2026-09-10)* — `AnthropicThinkingLiveTest:188` · `OpenAIReasoningLiveTest:229`
+
+**착수 시점의 재측정이 등록 근거를 그대로 확인했다.** 같은 커밋, 같은 요청으로 연속 6회를 돌렸고 본문은
+정확히 3 대 3 으로 갈렸다(2026-09-10). 여섯 모두 400 `invalid_request_error` 였다.
+
+```
+messages.1.content.0: Invalid `signature` in `thinking` block                                        ← 3회
+messages.1.content.0: `thinking` or `redacted_thinking` blocks in the latest assistant message
+                      cannot be modified. These blocks must remain as they were in the original response. ← 3회
+```
+
+위 항목 본문의 인용은 두 줄 다 원문과 달랐고, 그 차이는 이 닫힘의 단언에 직접 닿는다. 첫째 줄은 앞머리
+`messages.1.content.0:` 없이 적혀 있었고, 둘째 줄은 문장을 한국어로 옮긴 것이었다. 실제 본문은 **둘 다 그
+경로로 시작하며**, 좁힌 단언이 기대는 공유 부분 문자열은 바로 그것이다. 등록 당시의 인용만 보고 이 단언을
+검토하면 첫째 본문에서 실패할 것처럼 읽히므로, 원문은 위의 코드 블록을 기준으로 삼는다.
+
+**"왜 그 국면에서 고치지 않았나" 의 근거는 절반이 틀렸다** — [`README.md`](README.md) 규칙 둘. 항목은
+고치는 방법이 문구를 넓히는 것이고, 그것이 이 클래스가 **의도적으로** 적어 둔 관례 — 필드 경로가 아니라
+문장 전체를 대조한다, `AnthropicThinkingMode` 의 javadoc 이 그 문장들을 인용하므로 — 를 느슨하게 하는
+결정이라고 적었다. 관례는 실재한다. **다만 이 테스트의 것이 아니었다.**
+
+| | `DialectMismatchesAreRejected` | `ReplayedSignatureIsAccepted.mutatedSignatureIsRejected` |
+|---|---|---|
+| 대조하던 문장 | 방언 거절 두 문장 | 서명 거절 문장 |
+| `AnthropicThinkingMode` 의 javadoc 이 인용하는가 | **그렇다** — 정확히 그 두 문장 | **아니다** |
+| 이 단언이 참으로 지켜 주던 grep 대상 | 있다 | 없다 |
+
+`AnthropicThinkingMode` 가 *"The two server messages, verbatim, so that an operator who greps the error text
+lands here"* 로 인용하는 것은 방언 두 문장뿐이다. 서명 문장의 앞머리 ``Invalid `signature` in `thinking` block``
+는 `AnthropicConfig.Builder#replayThinkingBlocks` 의 javadoc 에도 나오지만, 그것은
+*"The block is bound to a different conversation."* 으로 끝나는 **다른 실패** — 접두 불일치 — 이고 이
+테스트는 그 실패를 일으키지 않는다. 그러니 이 단언을 좁혀도 **어떤 grep 대상도 거짓이 되지 않는다.**
+관례를 느슨하게 한 것이 아니라, 관례의 사정거리 밖에 있던 단언을 그 관례에서 떼어 낸 것이다. 방언 두
+문장의 전체 대조는 그대로 두었고, 테스트의 새 주석이 그 경계를 적는다.
+
+**같은 클래스에서 좁히지 않은 문장이 하나 있다 — 그리고 그 경계가 이 닫힘의 규칙이다.**
+`AdaptiveReachability.withoutTheCapabilityRowTheSameCallIsRejected` 도 서버 문장
+``"`temperature` is deprecated for this model"`` 을 대조하는데, 그것은 그대로다. 그 테스트의 주석이 이유를
+적어 두었다 — *"a bare "temperature" substring would also pass on a range-validation error."* 거기서는
+문장이 **주장을 이웃한 다른 400 과 가르는 유일한 것**이다. 서명 테스트는 반대다: 두 본문이 **같은 주장**
+(검증기가 바뀐 블록을 알아챘다)을 말하므로 문장은 주장의 일부가 아니다. 규칙으로 쓰면 이렇다 —
+**문장이 주장을 이웃한 실패와 가를 때만 문장을 대조한다.** 이것을 적어 두는 이유는 다음 사람이 이 닫힘을
+선례로 들어 온도 테스트를 같은 병으로 좁히지 않게 하려는 것이다(규칙 다섯 — 값이 왜 그 값인지 설명이
+있으면 그것은 결함이 아니라 결정이다).
+
+**심각도는 적힌 그대로였다** — 규칙 셋. 등록은 6회 중 3회를, 재측정도 3 대 3 을 냈다.
+
+**처방은 실제 본문에 대고 확인했다** — 규칙 다섯. 초록 실행만으로는 이것이 증명되지 않는다: 좁힌 단언은
+어느 본문이 왔는지 출력하지 않으므로, 초록 N회는 둘째 본문이 한 번이라도 왔다는 증거가 아니다. 그래서 둘을
+따로 적는다.
+
+- **술어** — 위 6회에서 받은 실제 본문 여섯이 전부 두 부분 문자열을 담는다. 첫째 본문 셋과 둘째 본문 셋이
+  모두 참이므로, 좁힌 단언은 두 본문 어느 쪽에서도 참이다
+- **반복** — 좁힌 단언을 담은 최종 바이트(포맷 후)에서 `AnthropicThinkingLiveTest` 를 연속 6회 돌렸고 6회 모두
+  초록이었다 — 단독 5회(매회 12건 통과, 태스크가 `UP-TO-DATE` 가 아니라 실제로 돌았다)와, 이어서 네 클래스를
+  함께 돌린 1회(42건 통과)다. 서명 음성 대조는 6회 모두 통과했다(2026-09-10). 어느 본문이 왔는지는 보이지
+  않는다. 한 회가 둘째 본문일 확률을 재측정한 3/6 으로 잡으면 6회가 전부 첫째 본문이었을 확률은 (1/2)^6,
+  약 1.6% 다 — 6회 표본에서 나온 추정이지 관측이 아니다. 둘째 본문에서도 단언이 참이라는 증명은 위의
+  **술어**가 맡는다
+
+**같은 결함의 두 번째 사례도 여기서 닫는다. 새로 등록하지 않는다.** `OpenAIReasoningLiveTest` 의
+`TheReproduction.theSameRequestOnChatCompletionsIsStillTheOriginal400` 이 #43 에 붙은 OpenAI 문장을 문구
+그대로 대조하고 있었다 — #71 의 빌드 리뷰가 막지 않음으로 보고했고 어디에도 등록되지 않았다. 이쪽은
+깜빡이지 않는다: 2026-09-10 에 같은 요청으로 세 번 받은 본문이 세 번 다 같았다. 깨질 날은 비결정성이 아니라
+**OpenAI 가 문구를 고치는 날**이고, 그날 이 테스트는 #43 의 라우팅 회귀와 구별되지 않는 빨강이 된다.
+단언은 이제 메시지를 읽지 않는다. `OpenAIExceptionMapper` 가 원인으로 보존하는 SDK 의 `BadRequestException`
+에서 **구조화된 필드 둘** — `type` 이 `invalid_request_error`, `param` 이 `reasoning_effort` — 을 본다.
+2026-09-10 에 실측하니 서버가 둘 다 채웠다(`code` 는 비어 있었다). 메시지 문구를 고쳐도 이 두 필드는 바뀌지
+않고, `param` 은 거절된 파라미터를 이름으로 가리키는 필드이므로 이 거절을 같은 요청의 다른 파라미터에 대한
+400 과 가른다. 모델과 엔드포인트는 테스트가 스스로 정하므로(`config(REASONING_MODEL).responsesApiEnabled(false)`)
+서버가 되풀이하게 할 이유가 없다.
+
+**이 단언의 첫 판본은 틀렸고, 리뷰가 잡았다** — 규칙 둘. 처음에는 `reasoning_effort` · 모델 · 엔드포인트 세
+부분 문자열을 메시지에서 대조하면서 *"the parts OpenAI cannot reword without changing the API itself"* 라고 주석에 적었다.
+그런데 SDK 가 만드는 메시지는 `"400: " + error.message` 이고 구조화된 필드는 그 안에 없다. 세 부분 문자열은
+전부 **같은 영어 문장**에서 나왔으므로, 평범한 문구 변경 하나 — 예컨대 *"Function tools with reasoning_effort
+are not supported for this model. Use the Responses API."* — 로 셋 중 둘이 깨졌을 것이다. 그리고 주석이 그것은
+문구 변경일 수 없다고 말하고 있었으므로 읽는 사람은 그 빨강을 라우팅 회귀로 읽었을 것이다 — 이 작업이
+없애려던 실패 그 자체다. 구조화된 필드가 있는지는 추측하지 않고 한 번 호출해서 확인했다.
+
+**이 항목이 속한 더 큰 결정은 [`live-api-test-tier.md`](live-api-test-tier.md) 에 있다** — 이 계층에 CI
+신호가 없고, 그래서 L-12 같은 썩음은 뜻밖의 일이 아니라 정상 상태라는 것. #81 에서 메인테이너가 수동
+전용을 골랐다.
+
+---
+
+## L-13 — 선언에서 descriptor 로 가는 세 번째 손 전달에는 가드가 없다
+
+*(2026-09-10 등록. 출처는 #82 —
+[`../design/llm/model-capability-binding-round-trip.md`](../design/llm/model-capability-binding-round-trip.md)
+§9 O-1. 그 문서 §11 이 이 항목으로 올린 이유를 적는다.)*
+
+**무엇을.** `ModelCapabilityDeclaration` 이 `ModelCapabilities` 를 만드는 한 줄씩의 전달에도, #82 가 두 설정
+표면에 붙인 것과 같은 키별 왕복 확인을 붙인다.
+
+**왜.** #82 는 표면 → 선언 사이의 손 전달(`declarationOf` · `toDeclaration()`)을 키마다 자동으로 확인하게
+만들었다. 그 다음 고리가 같은 모양이다 — `resolve(Builder)` 가 필드마다
+`if (builder.x != null) resolved.x(builder.x)` 를 한 줄씩 적는다. 아홉 번째 키를 builder 에 더하고 여기서 한
+줄을 빠뜨리면 **선언은 맞고, 클라이언트가 읽는 descriptor 에는 그 키가 없다.** 관측 가능한 결과는 #69 · #82
+와 같다 — 운영자가 적은 키가 바인딩되고, 아무 메시지도 없고, 요청은 그 키가 없었던 것처럼 나간다. 그리고
+이번에는 두 표면 가드가 **둘 다 초록**이다. 그 가드들은 선언까지만 보도록 일부러 범위를 그었다(설계 §2.1).
+
+**어디.** `ModelCapabilityDeclaration.java:76-105` 의 `resolve(Builder)`(2026-09-10). 프로덕션에서 닿는다 —
+main 소스에서 `capabilities()` 를 읽는 곳은 `InMemoryModelCapabilityRegistry.java:477` 하나이고, 그
+`withDefaultsExtendedBy` 를 CLI(`LlmClientFactory.java:231`)와 스타터(`AimonProperties.java:772`)가 부른다.
+`\.withDefaultsExtendedBy(` 와 `::withDefaultsExtendedBy` 두 형태로 셌다(`README.md` 규칙 여섯).
+
+**지금 무엇이 반쯤 막고 있나.** 완전히 무방비는 아니다(규칙 셋). `ModelCapabilityDeclarationTest` 의
+`theRefusalMessageNamesEveryDeclarableKey` 는 `assertThat(setters).hasSize(8)`(`:119`)을 갖고 있어서, 키를
+더하는 사람은 **그 테스트 파일을 반드시 연다.** 다만 거기서 요구되는 편집은 숫자 하나다 — `capabilities()` 를
+확인하는 `everyFlagRoundTrips` · `theLadderIsDeclarableAsASet` 는 키마다 손으로 적혀 있어서, 숫자를 9 로 고치고
+단언을 더하지 않아도 초록이다. 사람을 파일 앞에 세울 뿐, 빠진 줄을 가리키지는 않는다.
+
+**처방은 적용해 보지 않았다(규칙 다섯).** 모양은 보인다. `aimon-core` 는 선언과 `ModelCapabilities` 를 둘 다
+보므로, 키마다 `declaration.capabilities()` 가 `ModelCapabilities.builder()` 에 **같은 이름의 setter** 를 같은
+값으로 부른 결과와 같은지 비교하면 된다 — 오늘 `ModelCapabilities.Builder` 는 여덟 키 전부에 같은 이름의
+setter 를 갖고 있다(2026-09-10 확인, 불리언은 원시형이라 값이 언박싱된다). 사다리 짝은 `ModelCapabilities` 에서
+하나로 합쳐지지만 전체 객체 비교라 걸리지 않아 보인다. 정하지 않은 것도 있다 — `aimon-llm-capability-testkit`
+의 probe 를 코어 테스트가 그대로 쓸지(`aimon-core:test` → testkit:main → `aimon-core:main`,
+`aimon-filesystem-testkit` 이 이미 그 모양이다), 코어 안에 작은 사본을 둘지.
+
+**언제 다시 볼까.** 다음에 선언 키를 더하는 사람이 `hasSize(8)` 을 고칠 때 — 이 구멍이 실제로 열리는 순간이
+그때다. 그보다 먼저 하면 더 싸다.
+
+---
+
+## L-14 — 바인더 고리는 여전히 키마다 손으로 확인되고, 스타터에는 아무도 확인하지 않는 키가 셋 있다
+
+*(2026-09-10 등록. 출처는 #82 — 같은 설계 §9 O-2, 그리고 이 항목을 등록하며 센 것.
+설계 §2.7 의 표가 이 세기로 **절반 틀렸다** — 그 문서 §11 에 정정이 있다.)*
+
+**무엇을.** 운영자가 적은 **텍스트**가 설정 표면 객체에 도착하는지 — CLI 는 Jackson, 스타터는 Boot relaxed
+binding — 를 새 키에 대해서도 손을 대지 않고 확인되게 만든다.
+
+**왜.** #82 의 계약은 bean setter 로 쓰므로 바인더를 지나가지 않는다. 설계가 의도한 범위다(§2.1, §8 A8).
+그 고리는 키마다 손으로 쓴 테스트에 맡겨져 있고, 설계 §2.7 은 그것을 "키마다 덮여 있다" 고 적었다.
+등록하며 세어 보니 한쪽 표면만 맞았다(규칙 둘).
+
+| 표면 | 설계 §2.7 이 적은 것 | 센 결과 (2026-09-10) |
+|---|---|---|
+| CLI | `LlmClientFactoryTest.ModelCapabilityDeclarations` 가 yaml 모양의 객체로 덮는다 | 그 클래스는 `ModelCapabilityConfig` 를 **자바 setter 로** 만들므로 Jackson 을 지나지 않는다. 바인더를 실제로 지나는 것은 `CliConfigLoaderTest` 의 yaml 문자열이고, 거기에 여덟 키가 **전부** 있다(일곱이 `:576-582`, `acceptedReasoningEfforts` 는 `:649` 등) |
+| 스타터 | `AimonPropertiesValidationTest` 의 프로퍼티 문자열이 덮는다 | 여덟 중 **다섯**만 있다. `supports-reasoning-effort` · `supports-tools-with-reasoning` · `supports-reasoning-trace-round-trip` 은 스타터 테스트 소스 **어디에도** 프로퍼티 문자열로 없다 — kebab 과 camelCase 두 철자로 셌고, camelCase 로 걸린 두 건(`:612-613`)은 결과 단언이다 |
+
+**심각도.** 오늘 빠진 셋은 전부 `Boolean` 이고, 스타터의 kebab 이름은 bean 프로퍼티 이름에서 파생되므로
+#82 계약의 첫 확인(이름이 있고 getter · setter 가 있다)이 통과하는 한 이름이 어긋날 길은 좁다(규칙 셋).
+실제로 틀릴 수 있는 자리는 **변환**이다 — enum 의 대소문자 접기, 쉼표 목록과 인덱스 목록, 빈 원소. #70 이
+두 표면에서 실측으로 고친 곳이 정확히 거기였다. 그러니 이 항목의 값은 오늘의 세 키보다 **변환이 필요한
+타입을 가진 다음 키**에 있다: 그 키는 두 가드를 초록으로 지나가고, 바인더 테스트는 누가 손으로 쓰기 전까지
+없다. CLI 는 모르는 필드에 기동이 실패하므로 **이름** 쪽은 스스로 시끄럽지만, 스타터에는 그 안전망도 없다(L-1).
+
+**모양.** 설계 §8 A8 — 계약을 바인더까지 늘리기 — 은 실패가 "이름이 바인딩되지 않음" 과 "값이 떨어짐"
+사이에서 모호해지고, 값을 **텍스트로 렌더링**하는 규칙(yaml 시퀀스 대 쉼표 목록)이 표면마다 달라서
+기각되었다. 그 이유가 여전히 맞다면 착수는 #82 계약에 붙이는 것이 아니라 표면마다 렌더러를 하나씩 받는
+**별개의** 계약이 된다. 적용해 보지는 않았다.
+
+**언제 다시 볼까.** 타입이 `Boolean` 이 아닌 선언 키 — enum · 목록 · 형식이 있는 문자열 — 를 더할 때.
+또는 L-1 을 착수할 때: `ignoreUnknownFields` 에 대한 결정이 스타터 바인더 고리에 무엇이 필요한지를 바꾼다.
+스타터의 세 키만 따로 막는 것은 한 줄짜리 테스트 셋이라 언제든 싸지만, 위 심각도대로 그것이 이 항목을 닫지는
+않는다.
+
 ---
 
 ## L-15 — thinking 예산 clamp 경고가 `only 1 tokens` 로 읽히고, 듣는 처방 둘 중 하나만 말한다
@@ -679,6 +851,8 @@ invalid_request_error  messages.1.content.0: `thinking` 또는 `redacted_thinkin
 
 - [`../design/llm/model-capability-config-key.md`](../design/llm/model-capability-config-key.md) — 설계.
   §9 가 설계 시점의 미해결 목록, §11 이 구현 중 실측으로 뒤집힌 사실
+- [`../design/llm/model-capability-binding-round-trip.md`](../design/llm/model-capability-binding-round-trip.md) —
+  #82 의 설계. §9 O-1 · O-2 가 L-13 · L-14 의 출처이고, §11 이 나머지 미해결을 왜 그 문서에 두었는지 적는다
 - [`../design/llm/thinking-reporting-and-dialect-records.md`](../design/llm/thinking-reporting-and-dialect-records.md) —
   L-6·L-7 을 닫고 L-9·L-10·L-11 을 연 설계. §14 가 방언 census 의 원자료, §15.4 가 이 세 항목의 승격 근거이고,
   §16 이 #83 의 결정이자 L-15 의 출처다
@@ -687,4 +861,6 @@ invalid_request_error  messages.1.content.0: `thinking` 또는 `redacted_thinkin
 - [`../design/llm/openai-responses-path.md`](../design/llm/openai-responses-path.md) — F-2 가 L-2 의 출처
 - [`spring-boot-starter-open-items.md`](spring-boot-starter-open-items.md) — B-21(공통 `aimon.llm.*` 을
   프로바이더별로 쪼갤 것인가)이 이 작업으로 다시 열려 결정되고 닫혔다. L-2 · L-3 이 그 결정문을 인용한다
+- [`live-api-test-tier.md`](live-api-test-tier.md) — L-12 가 닫힌 #81 의 결정. 라이브 API 계층에
+  CI 신호가 없다는 것과 그 이유
 - [`README.md`](README.md) — 항목 등록 규칙

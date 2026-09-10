@@ -1,6 +1,6 @@
 ---
 translated_from: CONTRIBUTING.md
-source_commit: b7c6c00
+source_commit: 2cb6a2f
 ---
 
 # AIMON Core 기여 가이드
@@ -46,7 +46,7 @@ source_commit: b7c6c00
 
 - **Java 17+** (빌드 툴체인이 JDK 17 로 고정되어 있습니다)
 - **Gradle 8.x** — 저장소에 포함된 래퍼(`./gradlew`)를 씁니다. 시스템에 따로 설치할 필요 없습니다
-- 종단 간 테스트용 **LLM API 키** — `OPENAI_KEY` 또는 `ANTHROPIC_API_KEY`
+- 라이브 API 테스트를 돌릴 때만 필요한 **LLM API 키** — `ANTHROPIC_KEY` 또는 `OPENAI_KEY`. [라이브 API 테스트](#라이브-api-테스트) 참고
 - (선택) Testcontainers 를 쓰는 테스트를 위한 **Docker** (MongoDB, Redis, PostgreSQL, OpenSearch)
 
 ### 빌드
@@ -65,6 +65,49 @@ source_commit: b7c6c00
 ./gradlew :aimon-core:test --tests "at.aimon.core.agent.tool.*Test"   # 글롭 패턴
 ./gradlew :aimon-core:test --tests "at.aimon.core.agent.tool.ToolInputTest"  # 단일 클래스
 ```
+
+### 라이브 API 테스트
+
+실제 프로바이더 API 를 호출하는 테스트 클래스가 넷 있고, 각각 그 프로바이더의 키로
+`@EnabledIfEnvironmentVariable` 게이트가 걸려 있습니다.
+
+| 클래스 | 모듈 | 키 |
+|--------|------|-----|
+| `AnthropicThinkingLiveTest` | `aimon-llm-anthropic` | `ANTHROPIC_KEY` |
+| `AnthropicLlmClientIntegrationTest` | `aimon-llm-anthropic` | `ANTHROPIC_KEY` |
+| `OpenAIReasoningLiveTest` | `aimon-llm-openai` | `OPENAI_KEY` |
+| `OpenAILlmClientIntegrationTest` | `aimon-llm-openai` | `OPENAI_KEY` |
+
+**이 계층에는 CI 신호가 전혀 없습니다.** 어느 워크플로도 두 키를 주지 않으므로, 키가 없는 곳에서는 —
+CI 를 포함해 — 이 클래스들이 각각 `SKIPPED` 로 보고되고 `checkAll` 은 초록으로 남습니다.
+이 계층은 사람이 검증하기로 마음먹었을 때만 검증됩니다.
+
+```bash
+export ANTHROPIC_KEY=...
+export OPENAI_KEY=...
+
+./gradlew :aimon-llm-anthropic:test --rerun \
+              --tests 'at.aimon.core.llms.anthropic.AnthropicThinkingLiveTest' \
+              --tests 'at.aimon.core.llms.anthropic.AnthropicLlmClientIntegrationTest' \
+          :aimon-llm-openai:test --rerun \
+              --tests 'at.aimon.core.llms.openai.OpenAIReasoningLiveTest' \
+              --tests 'at.aimon.core.llms.openai.OpenAILlmClientIntegrationTest'
+```
+
+**돌릴 때마다 돈이 듭니다** — 키 주인의 계정에 청구되는 실제 호출입니다. 키를 커밋하지 말고, 이슈나
+풀 리퀘스트에 붙이는 실패 출력에서는 키를 가리세요.
+
+**`--rerun` 은 선택이 아닙니다.** Gradle 은 환경 변수를 `test` 의 입력으로 치지 않으므로, 이 태스크들이
+마지막으로 돈 뒤로 달리 바뀐 것이 없으면 실행은 `UP-TO-DATE` 로 보고되고 아무것도 돌지 않습니다.
+키 없이 한 번 돌린 뒤 키를 export 하고 다시 돌리는 것이 정확히 그 경우입니다 — 1초도 안 걸려 초록이고,
+테스트 출력은 한 줄도 없습니다. 출력이 테스트를 `PASSED` 로 나열하는지 확인하세요. `SKIPPED` 는 키가
+빠졌다는 뜻이고, `PASSED` 든 `SKIPPED` 든 테스트 줄이 한 줄도 없으면 태스크가 돌지 않은 것입니다.
+
+이 계층은 누군가 마지막으로 돌린 뒤로 썩어 있으리라고 예상하세요. 신호가 없으니 썩음은 뜻밖의 일이 아니라
+정상 상태입니다 — 프로바이더가 에러 문구를 바꾸거나, 모델을 은퇴시키거나, 어떤 요청 모양을 거절하기
+시작합니다 — 그리고 그것은 다음에 이 계층을 돌리는 사람이 발견합니다. 그게 당신이라면 지나치지 말고
+고치거나 이슈를 여세요. 이 계층에 정기 실행이 없는 이유와 무엇이 그것을 바꿀지는
+[`docs/backlog/live-api-test-tier.md`](docs/backlog/live-api-test-tier.md) 에 기록되어 있습니다.
 
 ### 품질 검사
 
@@ -149,6 +192,7 @@ modules/
 │
 ├── aimon-llm-openai             # OpenAI LlmClient
 ├── aimon-llm-anthropic          # Anthropic LlmClient
+├── aimon-llm-capability-testkit # 공유 모델 capability 바인딩 계약 테스트
 │
 ├── aimon-filesystem-gridfs      # MongoDB GridFS VFS
 ├── aimon-filesystem-s3          # AWS S3 VFS

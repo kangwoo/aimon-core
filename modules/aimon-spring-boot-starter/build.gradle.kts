@@ -53,6 +53,10 @@ dependencies {
     // independent rather than merely written in two blocks.
     testImplementation(libs.spring.boot.starter.actuator)
 
+    // The model-capability binding contract AimonPropertiesBindingCoverageTest subclasses. The CLI's surface runs the
+    // same one, which is why it lives in a module both can see rather than being copied into each.
+    testImplementation(project(":aimon-llm-capability-testkit"))
+
     // AimonPropertiesMetadataTest reads the metadata the configuration processor generated for this module.
     // Jackson is already on the test runtime classpath transitively (aimon-core declares it `implementation`),
     // but not on the test *compile* classpath — and relying on a transitive runtime artifact to compile
