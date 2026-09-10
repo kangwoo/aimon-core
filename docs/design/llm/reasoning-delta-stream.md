@@ -1047,3 +1047,54 @@ the javadoc is not softened.** One observation on one model is weaker than the v
 contract, and the failure dropping it would cause — reasoning items silently failing to round-trip
 across turns — is the quiet kind. It is recorded here only so that a later reader does not test the line
 once, see a 200, and simplify it away.
+
+### 12.4 The streaming event names, measured — what §12.2 and §12.3 both left open (#71)
+
+Both closures above end with the same caveat, in the same words: the probes were **non-streaming**, so
+they established that thinking text and a reasoning summary exist in the *final response* and said
+nothing about the event names the streaming mappers read. That caveat is discharged here. Streaming
+requests were sent to both providers on 2026-09-10 and the SSE bodies counted.
+
+| provider | request | `delta` / `event` names counted |
+|---|---|---|
+| Anthropic | `claude-opus-5`, `thinking:{type:adaptive,display:summarized}`, `output_config:{effort:high}`, `stream:true` | **34 `thinking_delta`**, **1 `signature_delta`**, 2 `text_delta` — all inside `content_block_delta` |
+| OpenAI | `gpt-5-mini`, `reasoning:{effort:high,summary:auto}`, `store:false`, `stream:true` | **611 `response.reasoning_summary_text.delta`**, 201 `response.output_text.delta`, and three sibling types at four events each (`reasoning_summary_part.added`, `…part.done`, `…text.done`) |
+
+Both are HTTP 200. The Anthropic turn ordered its blocks `[thinking, text]` and reported
+`output_tokens: 338` with `thinking_tokens: 332`; the OpenAI turn carried 2095 characters of summary
+across its 611 deltas and reported `reasoning_tokens: 1280` of 1502 output tokens.
+
+**Why these are the names the code reads.** The mappers do not match on strings — they call SDK
+predicates — so the last link is which wire type each predicate stands for.
+`anthropic-java-core` 2.13.0's `ThinkingDelta` and `SignatureDelta` carry `thinking_delta` and
+`signature_delta`; `openai-java-core` 4.57.0's `ResponseReasoningSummaryTextDeltaEvent` carries
+`response.reasoning_summary_text.delta`. Those are exactly the three names counted above, so
+`delta.isThinking()`, `delta.isSignature()` and `event.isReasoningSummaryTextDelta()` are reading
+events that arrive.
+
+**What is still not measured, so this is not over-read.**
+
+- **`response.reasoning_text.delta`.** `gpt-5-mini` emits the summary family only, and no model reached
+  in this round emitted the raw family. §5.1's decision to forward both under one gate is unaffected —
+  it exists precisely for a model that emits the second — but the second remains untested against a
+  server.
+- **The budgeted (`EXTENDED`) dialect, streamed with a `display` sibling.** Still O-2, still unsent.
+- **Whether `thinking_delta` arrives on `claude-opus-5` *without* `display: summarized`.** RD-1
+  measured the blocking answer (no readable text); the streaming equivalent was not re-run, because a
+  call would re-establish on one path what the same server already answered on the other.
+
+**These names are now asserted by a test, not only recorded here.**
+`AnthropicThinkingLiveTest.ReasoningDeltasArriveOnAStream` and
+`OpenAIReasoningLiveTest.ReasoningDeltasArriveOnAStream` drive the same two requests through their
+clients and assert the chunks arrive as `REASONING_DELTA`. **Not in CI**, which holds no keys — both
+classes gate on one and skip there — so this is an assertion somebody with a key runs, not a standing
+guard against a protocol change. The prompt is part
+of each measurement and is documented as such on the constant — an easy question returns no
+deliberation at all even at `effort: high` with a display asked for, which is what would otherwise make
+these tests flaky for a reason that has nothing to do with the code.
+
+**And the hop those chunks then take is pinned too.** `OrcaAgentExecutorReasoningStreamTest` asserts a
+`REASONING_DELTA` chunk becomes one `AssistantReasoningDelta` on the separate index sequence §4.3.1
+specifies. It was the one link in this chain that nothing asserted: the mappers were covered by
+fixtures, and `AgentExecutionEventPayload` and the REPL formatter are covered by tests that construct
+the event by hand, so a chunk dropped in the executor's switch would have been green everywhere.
