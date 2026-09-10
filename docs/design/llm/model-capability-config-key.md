@@ -428,6 +428,14 @@ penalty 무시 등으로 공통 `aimon.llm.*` 키의 **의미가 프로바이더
 > `ModelCapabilityDeclaration.build()` 의 거절 메시지는 짧아져서가 아니라 표면이 따라잡아서 참이 되었다.
 > 되풀이 방지는 표면 모듈마다 테스트 하나다(`ModelCapabilityConfigBindingTest` ·
 > `AimonPropertiesBindingCoverageTest`) — 코어에는 쓸 수 없다. 코어는 두 표면을 보지 못한다.
+>
+> **2026-09-10 (#82) — 위 문장은 그대로 참이고, 두 테스트의 본문이 한 곳으로 옮겨졌다.** 둘은 키가 표면에
+> **있는지**만 봤고 `declarationOf` · `toDeclaration()` 이 그 **값을 옮기는지**는 보지 않았으므로, 아홉 번째
+> 키가 두 가드를 초록으로 둔 채 #69 를 되풀이할 수 있었다. 두 클래스는 이름과 모듈을 그대로 두고
+> `aimon-llm-capability-testkit` 의 `AbstractModelCapabilityBindingContractTest` 를 상속한다 — 키마다 서로 다른
+> 값 둘을 그 표면의 전달 코드에 통과시키고 나온 선언 전체를 비교한다. CLI 쪽 클래스는 전달 코드가 있는
+> `at.aimon.cli.factory` 로 옮겨졌다. "코어에 쓸 수 없다" 가 "복사본 둘" 을 뜻하지 않는 이유는
+> [`model-capability-binding-round-trip.md`](model-capability-binding-round-trip.md) §3.
 
 ---
 

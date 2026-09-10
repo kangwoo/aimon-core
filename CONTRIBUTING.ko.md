@@ -1,6 +1,6 @@
 ---
 translated_from: CONTRIBUTING.md
-source_commit: b7c6c00
+source_commit: 2cb6a2f
 ---
 
 # AIMON Core 기여 가이드
@@ -149,6 +149,7 @@ modules/
 │
 ├── aimon-llm-openai             # OpenAI LlmClient
 ├── aimon-llm-anthropic          # Anthropic LlmClient
+├── aimon-llm-capability-testkit # 공유 모델 capability 바인딩 계약 테스트
 │
 ├── aimon-filesystem-gridfs      # MongoDB GridFS VFS
 ├── aimon-filesystem-s3          # AWS S3 VFS

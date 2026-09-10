@@ -1,4 +1,4 @@
-# LLM 설정 표면 — 등록 항목 12건 (열림 9 · 닫힘 3)
+# LLM 설정 표면 — 등록 항목 14건 (열림 11 · 닫힘 3)
 
 출처는 #46 이다 — 모델 capability 표를 CLI yaml 과 스타터 프로퍼티에서 확장할 수 있게 한 작업.
 설계는 [`../design/llm/model-capability-config-key.md`](../design/llm/model-capability-config-key.md) 이고,
@@ -647,10 +647,88 @@ invalid_request_error  messages.1.content.0: `thinking` 또는 `redacted_thinkin
 
 ---
 
+## L-13 — 선언에서 descriptor 로 가는 세 번째 손 전달에는 가드가 없다
+
+*(2026-09-10 등록. 출처는 #82 —
+[`../design/llm/model-capability-binding-round-trip.md`](../design/llm/model-capability-binding-round-trip.md)
+§9 O-1. 그 문서 §11 이 이 항목으로 올린 이유를 적는다.)*
+
+**무엇을.** `ModelCapabilityDeclaration` 이 `ModelCapabilities` 를 만드는 한 줄씩의 전달에도, #82 가 두 설정
+표면에 붙인 것과 같은 키별 왕복 확인을 붙인다.
+
+**왜.** #82 는 표면 → 선언 사이의 손 전달(`declarationOf` · `toDeclaration()`)을 키마다 자동으로 확인하게
+만들었다. 그 다음 고리가 같은 모양이다 — `resolve(Builder)` 가 필드마다
+`if (builder.x != null) resolved.x(builder.x)` 를 한 줄씩 적는다. 아홉 번째 키를 builder 에 더하고 여기서 한
+줄을 빠뜨리면 **선언은 맞고, 클라이언트가 읽는 descriptor 에는 그 키가 없다.** 관측 가능한 결과는 #69 · #82
+와 같다 — 운영자가 적은 키가 바인딩되고, 아무 메시지도 없고, 요청은 그 키가 없었던 것처럼 나간다. 그리고
+이번에는 두 표면 가드가 **둘 다 초록**이다. 그 가드들은 선언까지만 보도록 일부러 범위를 그었다(설계 §2.1).
+
+**어디.** `ModelCapabilityDeclaration.java:76-105` 의 `resolve(Builder)`(2026-09-10). 프로덕션에서 닿는다 —
+main 소스에서 `capabilities()` 를 읽는 곳은 `InMemoryModelCapabilityRegistry.java:477` 하나이고, 그
+`withDefaultsExtendedBy` 를 CLI(`LlmClientFactory.java:231`)와 스타터(`AimonProperties.java:772`)가 부른다.
+`\.withDefaultsExtendedBy(` 와 `::withDefaultsExtendedBy` 두 형태로 셌다(`README.md` 규칙 여섯).
+
+**지금 무엇이 반쯤 막고 있나.** 완전히 무방비는 아니다(규칙 셋). `ModelCapabilityDeclarationTest` 의
+`theRefusalMessageNamesEveryDeclarableKey` 는 `assertThat(setters).hasSize(8)`(`:119`)을 갖고 있어서, 키를
+더하는 사람은 **그 테스트 파일을 반드시 연다.** 다만 거기서 요구되는 편집은 숫자 하나다 — `capabilities()` 를
+확인하는 `everyFlagRoundTrips` · `theLadderIsDeclarableAsASet` 는 키마다 손으로 적혀 있어서, 숫자를 9 로 고치고
+단언을 더하지 않아도 초록이다. 사람을 파일 앞에 세울 뿐, 빠진 줄을 가리키지는 않는다.
+
+**처방은 적용해 보지 않았다(규칙 다섯).** 모양은 보인다. `aimon-core` 는 선언과 `ModelCapabilities` 를 둘 다
+보므로, 키마다 `declaration.capabilities()` 가 `ModelCapabilities.builder()` 에 **같은 이름의 setter** 를 같은
+값으로 부른 결과와 같은지 비교하면 된다 — 오늘 `ModelCapabilities.Builder` 는 여덟 키 전부에 같은 이름의
+setter 를 갖고 있다(2026-09-10 확인, 불리언은 원시형이라 값이 언박싱된다). 사다리 짝은 `ModelCapabilities` 에서
+하나로 합쳐지지만 전체 객체 비교라 걸리지 않아 보인다. 정하지 않은 것도 있다 — `aimon-llm-capability-testkit`
+의 probe 를 코어 테스트가 그대로 쓸지(`aimon-core:test` → testkit:main → `aimon-core:main`,
+`aimon-filesystem-testkit` 이 이미 그 모양이다), 코어 안에 작은 사본을 둘지.
+
+**언제 다시 볼까.** 다음에 선언 키를 더하는 사람이 `hasSize(8)` 을 고칠 때 — 이 구멍이 실제로 열리는 순간이
+그때다. 그보다 먼저 하면 더 싸다.
+
+---
+
+## L-14 — 바인더 고리는 여전히 키마다 손으로 확인되고, 스타터에는 아무도 확인하지 않는 키가 셋 있다
+
+*(2026-09-10 등록. 출처는 #82 — 같은 설계 §9 O-2, 그리고 이 항목을 등록하며 센 것.
+설계 §2.7 의 표가 이 세기로 **절반 틀렸다** — 그 문서 §11 에 정정이 있다.)*
+
+**무엇을.** 운영자가 적은 **텍스트**가 설정 표면 객체에 도착하는지 — CLI 는 Jackson, 스타터는 Boot relaxed
+binding — 를 새 키에 대해서도 손을 대지 않고 확인되게 만든다.
+
+**왜.** #82 의 계약은 bean setter 로 쓰므로 바인더를 지나가지 않는다. 설계가 의도한 범위다(§2.1, §8 A8).
+그 고리는 키마다 손으로 쓴 테스트에 맡겨져 있고, 설계 §2.7 은 그것을 "키마다 덮여 있다" 고 적었다.
+등록하며 세어 보니 한쪽 표면만 맞았다(규칙 둘).
+
+| 표면 | 설계 §2.7 이 적은 것 | 센 결과 (2026-09-10) |
+|---|---|---|
+| CLI | `LlmClientFactoryTest.ModelCapabilityDeclarations` 가 yaml 모양의 객체로 덮는다 | 그 클래스는 `ModelCapabilityConfig` 를 **자바 setter 로** 만들므로 Jackson 을 지나지 않는다. 바인더를 실제로 지나는 것은 `CliConfigLoaderTest` 의 yaml 문자열이고, 거기에 여덟 키가 **전부** 있다(일곱이 `:576-582`, `acceptedReasoningEfforts` 는 `:649` 등) |
+| 스타터 | `AimonPropertiesValidationTest` 의 프로퍼티 문자열이 덮는다 | 여덟 중 **다섯**만 있다. `supports-reasoning-effort` · `supports-tools-with-reasoning` · `supports-reasoning-trace-round-trip` 은 스타터 테스트 소스 **어디에도** 프로퍼티 문자열로 없다 — kebab 과 camelCase 두 철자로 셌고, camelCase 로 걸린 두 건(`:612-613`)은 결과 단언이다 |
+
+**심각도.** 오늘 빠진 셋은 전부 `Boolean` 이고, 스타터의 kebab 이름은 bean 프로퍼티 이름에서 파생되므로
+#82 계약의 첫 확인(이름이 있고 getter · setter 가 있다)이 통과하는 한 이름이 어긋날 길은 좁다(규칙 셋).
+실제로 틀릴 수 있는 자리는 **변환**이다 — enum 의 대소문자 접기, 쉼표 목록과 인덱스 목록, 빈 원소. #70 이
+두 표면에서 실측으로 고친 곳이 정확히 거기였다. 그러니 이 항목의 값은 오늘의 세 키보다 **변환이 필요한
+타입을 가진 다음 키**에 있다: 그 키는 두 가드를 초록으로 지나가고, 바인더 테스트는 누가 손으로 쓰기 전까지
+없다. CLI 는 모르는 필드에 기동이 실패하므로 **이름** 쪽은 스스로 시끄럽지만, 스타터에는 그 안전망도 없다(L-1).
+
+**모양.** 설계 §8 A8 — 계약을 바인더까지 늘리기 — 은 실패가 "이름이 바인딩되지 않음" 과 "값이 떨어짐"
+사이에서 모호해지고, 값을 **텍스트로 렌더링**하는 규칙(yaml 시퀀스 대 쉼표 목록)이 표면마다 달라서
+기각되었다. 그 이유가 여전히 맞다면 착수는 #82 계약에 붙이는 것이 아니라 표면마다 렌더러를 하나씩 받는
+**별개의** 계약이 된다. 적용해 보지는 않았다.
+
+**언제 다시 볼까.** 타입이 `Boolean` 이 아닌 선언 키 — enum · 목록 · 형식이 있는 문자열 — 를 더할 때.
+또는 L-1 을 착수할 때: `ignoreUnknownFields` 에 대한 결정이 스타터 바인더 고리에 무엇이 필요한지를 바꾼다.
+스타터의 세 키만 따로 막는 것은 한 줄짜리 테스트 셋이라 언제든 싸지만, 위 심각도대로 그것이 이 항목을 닫지는
+않는다.
+
+---
+
 ## 관련 문서
 
 - [`../design/llm/model-capability-config-key.md`](../design/llm/model-capability-config-key.md) — 설계.
   §9 가 설계 시점의 미해결 목록, §11 이 구현 중 실측으로 뒤집힌 사실
+- [`../design/llm/model-capability-binding-round-trip.md`](../design/llm/model-capability-binding-round-trip.md) —
+  #82 의 설계. §9 O-1 · O-2 가 L-13 · L-14 의 출처이고, §11 이 나머지 미해결을 왜 그 문서에 두었는지 적는다
 - [`../design/llm/thinking-reporting-and-dialect-records.md`](../design/llm/thinking-reporting-and-dialect-records.md) —
   L-6·L-7 을 닫고 L-9·L-10·L-11 을 연 설계. §14 가 방언 census 의 원자료, §15.4 가 이 세 항목의 승격 근거다
 - [`../design/llm/openai-model-capabilities.md`](../design/llm/openai-model-capabilities.md) — capability
