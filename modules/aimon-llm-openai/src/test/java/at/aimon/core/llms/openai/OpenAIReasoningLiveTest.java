@@ -16,6 +16,7 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.openai.core.ObjectMappers;
+import com.openai.errors.BadRequestException;
 
 import at.aimon.core.agent.prompt.SystemPromptParts;
 import at.aimon.core.llm.LlmCallMetadata;
@@ -229,7 +230,7 @@ class OpenAIReasoningLiveTest {
         void theSameRequestOnChatCompletionsIsStillTheOriginal400() {
             // Without this, the sibling above proves only that some request succeeded — not that routing is what
             // fixed it. `responsesApiEnabled(false)` is the one switch that puts this model back where the issue
-            // found it, and the sentence asserted is the one pasted into the issue, still returned verbatim.
+            // found it, and this rejection is the issue's own 400 still being returned.
             //
             // Note what is *not* configured: no temperature, and no reasoning effort. The issue says omitting the
             // effort is not a workaround because the server's default for these models is `medium`, and this
@@ -237,11 +238,24 @@ class OpenAIReasoningLiveTest {
             final OpenAILlmClient client = new OpenAILlmClient(
                     config(REASONING_MODEL).responsesApiEnabled(false).build());
 
+            // Not the message. An earlier revision asserted the issue's sentence whole, and no narrower substring would
+            // be better: the SDK builds this exception's message as "400: " followed by the server's English sentence,
+            // so every part of it — the parameter, the model, the endpoint — is wording OpenAI can change. A rewording
+            // would turn this red while the routing it guards is still correct, and a test that goes red for a reason
+            // unrelated to its subject teaches the next reader to skip it.
+            //
+            // The mapper keeps the SDK exception as the cause, and that exception carries the error object's structured
+            // fields, which a rewording does not touch. Measured on 2026-09-10, the server fills two of them: `type` is
+            // invalid_request_error, and `param` names the refused parameter — which is what separates this refusal
+            // from a 400 about anything else in the same request. The model and the endpoint are not asserted: this
+            // test sets both itself.
             assertThatThrownBy(() -> client.sendMessage(SYSTEM, List.of(Message.user("What is 2+2?")),
                     List.of(recordAnswerTool()), LlmModel.builder().build()))
-                    .isInstanceOf(LlmInvalidRequestException.class)
-                    .hasMessageContaining("Function tools with reasoning_effort are not supported for "
-                            + REASONING_MODEL + " in /v1/chat/completions");
+                    .isInstanceOf(LlmInvalidRequestException.class).cause()
+                    .isInstanceOfSatisfying(BadRequestException.class, error -> {
+                        assertThat(error.type()).contains("invalid_request_error");
+                        assertThat(error.param()).contains("reasoning_effort");
+                    });
         }
     }
 
