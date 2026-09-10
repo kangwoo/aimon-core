@@ -36,6 +36,10 @@ class ModelCapabilitiesTest {
         // rather than on absence -- withholding a rung a model has costs a reported omission, sending one it lacks
         // costs a 400. Every other rung a caller can name stays sendable, which is the fail-open half.
         assertThat(unknown.lowestReasoningEffort()).isEqualTo(ReasoningEffort.MINIMAL);
+        // The sixth field is the only one whose fail-open value is not a permission. Both real dialects are a 400 on
+        // the model that speaks the other, so there is no safe two-valued default and UNKNOWN is the absence of the
+        // fact -- which is what makes a client leave the request exactly as the caller configured it.
+        assertThat(unknown.thinkingDialect()).isEqualTo(ThinkingDialect.UNKNOWN);
     }
 
     @Test
@@ -61,6 +65,7 @@ class ModelCapabilitiesTest {
         assertThat(partial.supportsSamplingParameters()).isTrue();
         assertThat(partial.supportsToolsWithReasoning()).isTrue();
         assertThat(partial.lowestReasoningEffort()).isEqualTo(ReasoningEffort.MINIMAL);
+        assertThat(partial.thinkingDialect()).isEqualTo(ThinkingDialect.UNKNOWN);
     }
 
     @Test
@@ -68,12 +73,22 @@ class ModelCapabilitiesTest {
     void flagsRoundTrip() {
         final ModelCapabilities capabilities = ModelCapabilities.builder().supportsSamplingParameters(false)
                 .supportsReasoningEffort(true).supportsToolsWithReasoning(false)
-                .lowestReasoningEffort(ReasoningEffort.LOW).build();
+                .lowestReasoningEffort(ReasoningEffort.LOW).thinkingDialect(ThinkingDialect.BUDGETED).build();
 
         assertThat(capabilities.supportsSamplingParameters()).isFalse();
         assertThat(capabilities.supportsReasoningEffort()).isTrue();
         assertThat(capabilities.supportsToolsWithReasoning()).isFalse();
         assertThat(capabilities.lowestReasoningEffort()).isEqualTo(ReasoningEffort.LOW);
+        assertThat(capabilities.thinkingDialect()).isEqualTo(ThinkingDialect.BUDGETED);
+    }
+
+    @Test
+    @DisplayName("a null thinking dialect is rejected — UNKNOWN is how a table says it cannot answer")
+    void nullThinkingDialectRejected() {
+        // The absence of the fact already has a name, and it is a constant rather than null. Accepting null would
+        // give the same state two spellings, one of which every reader has to remember to handle.
+        assertThatThrownBy(() -> ModelCapabilities.builder().thinkingDialect(null))
+                .isInstanceOf(NullPointerException.class).hasMessageContaining("thinkingDialect");
     }
 
     @Test
@@ -84,7 +99,7 @@ class ModelCapabilitiesTest {
     }
 
     @Test
-    @DisplayName("equals and hashCode cover all five fields")
+    @DisplayName("equals and hashCode cover all six fields")
     void equalsAndHashCode() {
         final ModelCapabilities a = ModelCapabilities.builder().supportsSamplingParameters(false)
                 .supportsReasoningEffort(true).supportsToolsWithReasoning(false).build();
@@ -104,6 +119,9 @@ class ModelCapabilitiesTest {
         assertThat(a).isNotEqualTo(
                 ModelCapabilities.builder().supportsSamplingParameters(false).supportsReasoningEffort(true)
                         .supportsToolsWithReasoning(false).lowestReasoningEffort(ReasoningEffort.LOW).build());
+        assertThat(a).isNotEqualTo(
+                ModelCapabilities.builder().supportsSamplingParameters(false).supportsReasoningEffort(true)
+                        .supportsToolsWithReasoning(false).thinkingDialect(ThinkingDialect.ADAPTIVE).build());
         assertThat(a).isNotEqualTo(null).isNotEqualTo("not a descriptor");
     }
 
@@ -112,7 +130,8 @@ class ModelCapabilitiesTest {
     void toStringNamesEveryFlag() {
         assertThat(ModelCapabilities.unknown().toString()).contains("supportsSamplingParameters=true")
                 .contains("supportsReasoningEffort=false").contains("supportsToolsWithReasoning=true")
-                .contains("supportsReasoningTraceRoundTrip=false").contains("lowestReasoningEffort=MINIMAL");
+                .contains("supportsReasoningTraceRoundTrip=false").contains("lowestReasoningEffort=MINIMAL")
+                .contains("thinkingDialect=UNKNOWN");
     }
 
     @Test

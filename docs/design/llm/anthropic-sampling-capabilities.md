@@ -829,11 +829,14 @@ Listed rather than assumed, per the brief.
   `AnthropicConfig.Builder`, and `AnthropicConfig` has already absorbed one breaking signature change
   in this release, so #54's additions land on a class whose surface has just been reviewed. Per the
   brief, this is noted rather than done.
-- **F-1** (the thinking dialect as a per-model fact) is unblocked in one respect and unchanged in the
-  other: the table now has `claude-*` rows, so "there is no Anthropic table" is no longer an obstacle
-  — but the reason A1 gave still stands, because `ModelCapabilities` still has no field whose
-  fail-open value is safe for a two-valued mutually exclusive axis. That is the whole of F-1 and it is
-  still a design round.
+- ~~**F-1** (the thinking dialect as a per-model fact)~~ — **CLOSED** by
+  [`reasoning-model-enablement.md`](reasoning-model-enablement.md) §3 (#60). This bullet said F-1 was
+  unblocked in one respect and unchanged in the other: the table had gained `claude-*` rows, but
+  `ModelCapabilities` still had no field whose fail-open value is safe for a two-valued mutually
+  exclusive axis. The second half was answered by refusing its premise — the axis is three-valued now.
+  `ThinkingDialect.UNKNOWN` is not a dialect but the absence of the fact, so it is safe as the value a
+  model nobody has described falls back to, and the six `claude-*` rows this document put in the table
+  are where the new field's `ADAPTIVE` now sits.
 
 ---
 

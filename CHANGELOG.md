@@ -10,10 +10,11 @@ Central is versioned independently).
 ### LLM: what a model accepts is now a fact the framework can look up, and gpt-5.x tool calling works
 
 - **New provider-neutral SPI `at.aimon.core.llm.capability`** — `ModelCapabilities`,
-  `ModelCapabilityRegistry` and `InMemoryModelCapabilityRegistry`. Five fields in all, three of them
+  `ModelCapabilityRegistry` and `InMemoryModelCapabilityRegistry`. Six fields in all, three of them
   introduced here (`supportsSamplingParameters`, `supportsReasoningEffort`,
-  `supportsToolsWithReasoning`) and two by the Responses entry below
-  (`supportsReasoningTraceRoundTrip`, `lowestReasoningEffort`). Purely additive. It sits **beside**
+  `supportsToolsWithReasoning`), two by the Responses entry below
+  (`supportsReasoningTraceRoundTrip`, `lowestReasoningEffort`) and one by the thinking-dialect entry
+  that follows (`thinkingDialect`). Purely additive. It sits **beside**
   `ModelContextWindowRegistry` and `ModelPriceTable` rather than folding into either: three per-model
   facts, three reasons to change, and each consumer depends on exactly its own.
 
@@ -248,6 +249,73 @@ Central is versioned independently).
   [`openai-model-capabilities-open-items.md`](docs/backlog/openai-model-capabilities-open-items.md).
   Full measurement, controls and decision: [`openai-model-capabilities.md`](docs/design/llm/openai-model-capabilities.md) §13.
 
+### LLM: the Anthropic thinking dialect is a per-model fact now, not a name the operator has to know
+
+- **What it fixes.** Anthropic has two mutually exclusive thinking request shapes, availability is per
+  model, and sending the wrong one is an HTTP 400 rather than a degraded answer:
+
+  ```jsonc
+  { "thinking": { "type": "enabled", "budget_tokens": 10000 } }                    // budgeted
+  { "thinking": { "type": "adaptive" }, "output_config": { "effort": "high" } }    // adaptive
+  ```
+
+  Which one reached the wire was decided entirely by `AnthropicConfig.thinkingMode`, **named by the
+  operator**. Nothing in the request builder branched on the model, so an operator had to know a
+  per-model fact the framework could look up, getting it wrong cost a turn, and there was no value of
+  the setting meaning *"whatever this model speaks"* — so the knob could not be set once for a
+  deployment running more than one Claude model.
+
+- **The sixth capability field, and why a third value was the whole answer.**
+  `ModelCapabilities.thinkingDialect()` returns the new
+  `at.aimon.core.llm.capability.ThinkingDialect { UNKNOWN, BUDGETED, ADAPTIVE }`, seeded at `UNKNOWN`
+  in the builder beside the five existing fail-open literals. Two previous rounds recorded this axis as
+  unmodellable, and the reason they gave was correct for the shape they assumed: both real dialects are
+  a 400 on the model that speaks the other, so neither can be the default for a model nobody has
+  described. **`UNKNOWN` is not a third dialect** — it is the absence of the fact, *this table cannot
+  answer, so do not act on it*, which is exactly the behaviour every model had before the field
+  existed. A model no row describes keeps its request **byte for byte**, and a test asserts that
+  against the literal body the parent commit produced.
+
+- **Where the rows come from.** The six `claude-*` prefix rows already in the built-in table
+  (`claude-fable-5`, `claude-opus-5`, `claude-opus-4-7`, `claude-opus-4-8`, `claude-sonnet-5`, and the
+  documentation-derived `claude-mythos`) now state `ADAPTIVE`, read off the vendor's own per-model
+  thinking table. That is **documentation, not measurement** — no call was made for this change — and
+  it is the same standing this table's Mythos row already had. No row states `BUDGETED`: the Claude
+  models that speak that dialect accept the sampling parameters, so nothing in the table needs a row
+  for them, and they stay `UNKNOWN` and unchanged.
+
+- **`AnthropicThinkingMode.AUTO`** — use the model's dialect when the table knows it, send nothing when
+  it does not. **The default stays `OFF`.** Flipping it would turn thinking on, and bill for it, in
+  every Anthropic deployment that upgrades without reading this file; that is its own change with its
+  own entry. `AUTO` against a model the registry cannot name is the one case here that sends nothing
+  *and warns*: an operator asked the table a question it could not answer, and the warning says
+  explicitly that it is the request parameter that is absent rather than the thinking — several current
+  models think by default whatever the request says.
+
+- **A mode that contradicts a known dialect is translated, not sent and not refused.** The request goes
+  out in the dialect the model speaks, carrying the same intent, and the substitution is reported at
+  `WARN` once per signature. This does **not** contradict the repository's standing "omitted and
+  reported, never raised to meet it" rule for `lowestReasoningEffort`: there, omitting leaves the
+  server's own default in force and the call succeeds; here, honouring the operator literally is a
+  guaranteed failed turn and omitting throws away the thinking they asked for. The translation itself
+  is free, because the neutral `ReasoningEffort` is the intent both dialects are spellings of. One
+  corner is lossy and gets one warning naming both numbers: an explicit `thinkingBudgetTokens` against
+  an adaptive-only model has no counterpart there, so it becomes the nearest rung.
+
+- **Nothing changes for a deployment that does not set `AUTO`** unless it is already pointing a
+  contradicting `thinkingMode` at a described `claude-*` model — in which case a turn that used to fail
+  with a non-retryable `LlmInvalidRequestException` now succeeds with a warning. Every other request is
+  byte-identical, `thinkingMode`'s default included.
+
+- **Declarable, and programmatically only for now.** `ModelCapabilityDeclaration` carries the sixth
+  flag, so a registry row can be overridden by name — including back to `UNKNOWN`, which is a real
+  statement here meaning *do not act on any built-in row for this name*. The CLI's
+  `llm.modelCapabilities` and the starter's `aimon.llm.model-capabilities` still expose five keys; a
+  configuration surface for the dialect is not part of this change.
+
+  Design and the full mode × dialect table, one test per row:
+  [`reasoning-model-enablement.md`](docs/design/llm/reasoning-model-enablement.md) §3.
+
 ### LLM: Anthropic's thinking blocks now survive a tool call too
 
 - **Verified against the real API, and one shipped claim was wrong.** The feature was built without a
@@ -328,6 +396,16 @@ Central is versioned independently).
   the wrong mode and you get a 400 — and it is mitigated by the failure being non-retryable and therefore
   loud, by the default being `OFF`, and by both exact server messages being quoted in
   `AnthropicThinkingMode`'s javadoc so the error text leads to the one-line fix.
+
+  **Superseded within this release**, by the thinking-dialect entry above — recorded rather than edited
+  away, because both entries ship in one release and this bullet is the reason the newer one exists. The
+  "separate round" it defers to is in these same notes: `ModelCapabilities` has a sixth field now,
+  `thinkingDialect`, and the axis it "has nowhere to carry" turned out not to have to be two-valued.
+  `AnthropicThinkingMode.AUTO` asks the table, and a named mode that contradicts a known dialect is
+  translated rather than sent as a certain 400 — so **naming the wrong mode no longer costs a turn** on a
+  model the table describes. Two things this bullet says do survive: the request builder still branches
+  on **no model name** (it branches on the descriptor the registry resolved *for* that name, which is
+  the whole point of the registry), and `OFF` is still the default.
 
 - **`ReasoningEffort` maps onto a token budget, and two of the four numbers are made up.** Extended mode
   takes a budget, not a rung, so the mapping is a choice: `MINIMAL 1024 / LOW 2048 / MEDIUM 4096 /

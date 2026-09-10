@@ -10,9 +10,10 @@
  *
  * <p>
  * The built-in table describes <strong>two vendors</strong> — several {@code gpt-*} / {@code o*} families and the
- * {@code claude-*} models that refuse {@code temperature}, {@code top_p} and {@code top_k} (six of them measured, plus
- * the documentation-derived {@code claude-mythos} family) — and one instance of it is consulted by both provider
- * clients. That is what the neutral name was for: the question "what does this model's request surface accept" has the
+ * {@code claude-*} models that refuse {@code temperature}, {@code top_p} and {@code top_k} and speak the adaptive
+ * thinking dialect (six of them measured, plus the documentation-derived {@code claude-mythos} family) — and one
+ * instance of it is consulted by both provider clients. That is what the neutral name was for: the question "what does
+ * this model's request surface accept" has the
  * same meaning whoever is asking it.
  *
  * <p>
@@ -22,7 +23,10 @@
  * <li><strong>Fail open.</strong> A model no registry describes resolves to
  * {@link at.aimon.core.llm.capability.ModelCapabilities#unknown()}, which is not "all permissions granted" but
  * "nothing the caller asked for is withheld, and nothing the caller did not ask for is invented". An unknown model is
- * never refused and never has a parameter withheld — nor does it receive one nobody set.
+ * never refused and never has a parameter withheld — nor does it receive one nobody set. One field states that rule
+ * as a value rather than deriving it: {@link at.aimon.core.llm.capability.ThinkingDialect#UNKNOWN} exists because
+ * both of the real thinking dialects are an HTTP 400 on a model that speaks the other, so the safe answer for a
+ * model nobody has described is not a dialect at all but "this table cannot answer".
  * <li><strong>Overridable.</strong> The built-in table
  * ({@link at.aimon.core.llm.capability.InMemoryModelCapabilityRegistry#withDefaults()}) knows models by their real
  * names. Azure deployments and OpenAI-compatible gateways rename models freely, so an operator on one of those must be

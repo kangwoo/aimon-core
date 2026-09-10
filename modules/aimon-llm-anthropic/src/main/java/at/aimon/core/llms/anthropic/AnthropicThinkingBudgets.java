@@ -67,6 +67,11 @@ import at.aimon.core.llm.ReasoningEffort;
  * Anthropic's ladder starts there.
  *
  * <p>
+ * <strong>One direction is an inverse rather than a mapping.</strong> {@link #nearestEffort(int)} goes from a token
+ * count back to a rung, which the two mappings above cannot do because they are not injective — it exists for the one
+ * request shape that has a budget and needs an effort, and it is the only lossy step here. See its javadoc.
+ *
+ * <p>
  * Pure and stateless. Reporting the clamp and the give-up belongs to the caller, which owns the divergence log.
  */
 final class AnthropicThinkingBudgets {
@@ -134,6 +139,42 @@ final class AnthropicThinkingBudgets {
         final int requested = requestedBudget(effort, configuredBudget);
         final int clamped = Math.min(requested, maxTokens - 1);
         return OptionalInt.of(Math.max(clamped, MINIMUM_BUDGET_TOKENS));
+    }
+
+    /**
+     * The rung whose budget is nearest the given token count — the one lossy step in the whole translation.
+     *
+     * <p>
+     * It exists for one corner: an operator who set an explicit {@code thinkingBudgetTokens} (which
+     * {@link AnthropicConfig} accepts only under {@link AnthropicThinkingMode#EXTENDED}) against a model the
+     * capability table says speaks the adaptive dialect. A token count has no adaptive counterpart, so the request
+     * cannot carry the number; the nearest rung is what survives, and the caller names both in its warning rather
+     * than substituting silently.
+     *
+     * <p>
+     * This is the only direction of the mapping that loses information, because it is the only one that is not a
+     * function of the neutral ladder: {@link #requestedBudget} and {@link #effortFor} both start from a rung.
+     * Distances are compared against the same four numbers {@code requestedBudget} produces, so the two stay in step
+     * by construction, and a tie resolves <em>downwards</em> — asking for less thinking than an ambiguous number
+     * might have meant is the cheaper of the two mistakes.
+     *
+     * @param budgetTokens
+     *            a {@code budget_tokens} value
+     * @return the nearest rung; never {@link ReasoningEffort#NONE}, which is the absence of thinking rather than an
+     *         amount of it
+     */
+    static ReasoningEffort nearestEffort(int budgetTokens) {
+        ReasoningEffort nearest = ReasoningEffort.MINIMAL;
+        long best = Long.MAX_VALUE;
+        for (ReasoningEffort rung : new ReasoningEffort[]{ReasoningEffort.MINIMAL, ReasoningEffort.LOW,
+                ReasoningEffort.MEDIUM, ReasoningEffort.HIGH}) {
+            final long distance = Math.abs((long) budgetTokens - requestedBudget(rung, null));
+            if (distance < best) {
+                best = distance;
+                nearest = rung;
+            }
+        }
+        return nearest;
     }
 
     /**

@@ -530,7 +530,7 @@ class OpenAILlmClientModelCapabilityTest {
     @Test
     @DisplayName("the minimal declaration keeps the deployment on Chat Completions")
     void theMinimalDeclarationStaysOnChatCompletions() {
-        // Why all five flags are not required: what an operator omits keeps today's behaviour. A declaration naming
+        // Why all six flags are not required: what an operator omits keeps today's behaviour. A declaration naming
         // only supportsSamplingParameters leaves supportsReasoningTraceRoundTrip false, so the deployment is not
         // routed at /v1/responses -- which on a Chat-only gateway would turn the 400 into a 404. responsesApiEnabled
         // is left at its default here on purpose: the point is that the declaration, not a second switch, is what

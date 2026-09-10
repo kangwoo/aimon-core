@@ -37,6 +37,7 @@ public final class ModelCapabilities {
     private static final boolean DEFAULT_SUPPORTS_TOOLS_WITH_REASONING = true;
     private static final boolean DEFAULT_SUPPORTS_REASONING_TRACE_ROUND_TRIP = false;
     private static final ReasoningEffort DEFAULT_LOWEST_REASONING_EFFORT = ReasoningEffort.MINIMAL;
+    private static final ThinkingDialect DEFAULT_THINKING_DIALECT = ThinkingDialect.UNKNOWN;
 
     private static final ModelCapabilities UNKNOWN = builder().build();
 
@@ -45,6 +46,7 @@ public final class ModelCapabilities {
     private final boolean supportsToolsWithReasoning;
     private final boolean supportsReasoningTraceRoundTrip;
     private final ReasoningEffort lowestReasoningEffort;
+    private final ThinkingDialect thinkingDialect;
 
     private ModelCapabilities(Builder builder) {
         this.supportsSamplingParameters = builder.supportsSamplingParameters;
@@ -52,6 +54,7 @@ public final class ModelCapabilities {
         this.supportsToolsWithReasoning = builder.supportsToolsWithReasoning;
         this.supportsReasoningTraceRoundTrip = builder.supportsReasoningTraceRoundTrip;
         this.lowestReasoningEffort = builder.lowestReasoningEffort;
+        this.thinkingDialect = builder.thinkingDialect;
     }
 
     /**
@@ -70,7 +73,10 @@ public final class ModelCapabilities {
      * on the asymmetry of the two mistakes: withholding a rung a model does have costs a reported omission and
      * leaves the server's own default in force, while sending a rung it does not have costs a 400 that fails the
      * turn. A model that really does start at {@code NONE} is describable — register a row with
-     * {@code lowestReasoningEffort(NONE)}. Changing any of these silently changes the wire for every deployment
+     * {@code lowestReasoningEffort(NONE)}. The thinking dialect is {@link ThinkingDialect#UNKNOWN}, which is the only
+     * one of the six that is not a permission at all: both real dialects are a 400 on the model that speaks the
+     * other, so the fail-open value here has to be the <em>absence</em> of the fact rather than one of its values.
+     * Changing any of these silently changes the wire for every deployment
      * running a model no registry describes, which is why a test asserts each one individually.
      *
      * @return the fail-open descriptor (never null)
@@ -175,6 +181,27 @@ public final class ModelCapabilities {
         return lowestReasoningEffort;
     }
 
+    /**
+     * Which shape this model's thinking-request parameter takes.
+     *
+     * <p>
+     * The axis this field describes is <em>mutually exclusive</em> — the two real dialects are each an HTTP 400 on a
+     * model that speaks the other — so unlike the five flags above it has no safe fail-open <em>value</em>. What makes
+     * it safe is the third constant: {@link ThinkingDialect#UNKNOWN} means <em>this table cannot answer</em>, and a
+     * client reading it leaves whatever the caller configured exactly as it was, which is the behaviour every model
+     * had before this field existed.
+     *
+     * <p>
+     * Vendor-shaped, like {@link #supportsToolsWithReasoning()} and for the same reason: one table is read by every
+     * client through one configuration translator, so a second registry for one vendor would double what a gateway
+     * deployment has to declare and give the two a way to disagree.
+     *
+     * @return the model's thinking dialect (never null; {@link ThinkingDialect#UNKNOWN} when nothing is known)
+     */
+    public ThinkingDialect thinkingDialect() {
+        return thinkingDialect;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -188,13 +215,13 @@ public final class ModelCapabilities {
                 && supportsReasoningEffort == that.supportsReasoningEffort
                 && supportsToolsWithReasoning == that.supportsToolsWithReasoning
                 && supportsReasoningTraceRoundTrip == that.supportsReasoningTraceRoundTrip
-                && lowestReasoningEffort == that.lowestReasoningEffort;
+                && lowestReasoningEffort == that.lowestReasoningEffort && thinkingDialect == that.thinkingDialect;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(supportsSamplingParameters, supportsReasoningEffort, supportsToolsWithReasoning,
-                supportsReasoningTraceRoundTrip, lowestReasoningEffort);
+                supportsReasoningTraceRoundTrip, lowestReasoningEffort, thinkingDialect);
     }
 
     @Override
@@ -202,7 +229,7 @@ public final class ModelCapabilities {
         return "ModelCapabilities{" + "supportsSamplingParameters=" + supportsSamplingParameters
                 + ", supportsReasoningEffort=" + supportsReasoningEffort + ", supportsToolsWithReasoning="
                 + supportsToolsWithReasoning + ", supportsReasoningTraceRoundTrip=" + supportsReasoningTraceRoundTrip
-                + ", lowestReasoningEffort=" + lowestReasoningEffort + '}';
+                + ", lowestReasoningEffort=" + lowestReasoningEffort + ", thinkingDialect=" + thinkingDialect + '}';
     }
 
     /**
@@ -218,6 +245,7 @@ public final class ModelCapabilities {
         private boolean supportsToolsWithReasoning = DEFAULT_SUPPORTS_TOOLS_WITH_REASONING;
         private boolean supportsReasoningTraceRoundTrip = DEFAULT_SUPPORTS_REASONING_TRACE_ROUND_TRIP;
         private ReasoningEffort lowestReasoningEffort = DEFAULT_LOWEST_REASONING_EFFORT;
+        private ThinkingDialect thinkingDialect = DEFAULT_THINKING_DIALECT;
 
         private Builder() {
         }
@@ -274,6 +302,21 @@ public final class ModelCapabilities {
         public Builder lowestReasoningEffort(ReasoningEffort lowestReasoningEffort) {
             this.lowestReasoningEffort = Objects.requireNonNull(lowestReasoningEffort,
                     "lowestReasoningEffort cannot be null");
+            return this;
+        }
+
+        /**
+         * Sets which shape this model's thinking-request parameter takes.
+         *
+         * @param thinkingDialect
+         *            the model's thinking dialect, or {@link ThinkingDialect#UNKNOWN} to say the table cannot answer
+         *            (must not be null)
+         * @return This builder
+         * @throws NullPointerException
+         *             if thinkingDialect is null
+         */
+        public Builder thinkingDialect(ThinkingDialect thinkingDialect) {
+            this.thinkingDialect = Objects.requireNonNull(thinkingDialect, "thinkingDialect cannot be null");
             return this;
         }
 
