@@ -453,6 +453,17 @@ aimon:
   넘기기 때문이며, 그때 기동은 실패하고 메시지가 이 따옴표를 알려 줍니다. CLI 는 파서가 읽은 원문을 볼 수
   있어 이 제약이 없습니다 — 같은 충돌에 두 표면이 다르게 답하는 자리입니다.
 
+  내장 표가 `BUDGETED` 로 적은 세 가족(`claude-opus-4-5` · `claude-sonnet-4-5` · `claude-haiku-4-5`)에서
+  `auto` 는 예산 방언을 보내고, **그 예산은 호출의 `ReasoningEffort` 에서 나옵니다** — 적지 않았으면 가운데
+  칸인 4096 입니다. 그 예산에도 바로 아래 `thinking-budget-tokens` 의 상한이 똑같이 걸립니다. 에이전트 정의가
+  `model.maxTokens` 를 적지 않았으면 `max_tokens` 는 `AnthropicConfig` 의 기본값 4096 이므로 예산은 4095 로
+  clamp 되고 WARN 이 한 번 뜨며, **답변에 남는 것은 1 토큰입니다.** 처방은 둘입니다 — 에이전트 정의의
+  `model.maxTokens` 를 올리거나, `aimon.llm.reasoning-effort` 를 `low`(2048) 나 `minimal`(1024) 로 내립니다
+  (에이전트 정의에 `model.reasoningEffort` 가 있으면 그쪽을). **경고가 말하는 처방은 앞의 것 하나뿐입니다.**
+  이것은 빠뜨린 것이 아니라 결정이며, 근거와 기각한 대안은
+  [`thinking-reporting-and-dialect-records.md` §16](../design/llm/thinking-reporting-and-dialect-records.md#16-the-auto-budget-policy-decided-83-2026-09-10)
+  에 있습니다.
+
   **`thinking-budget-tokens` 는 독립된 노브가 아니라 `extended` 의 것입니다.** `auto` · `adaptive` · 기본
   `off` 와 함께 적으면 **기동이 실패합니다**(방언이 정해지기 전에는 숫자에 뜻이 없습니다). 가장 흔한 실수는
   **모드를 빼고 예산만 적는 것**이고, 그때 모드는 `off` 라 그 숫자가 아무 데도 닿지 않으므로 그것도 기동

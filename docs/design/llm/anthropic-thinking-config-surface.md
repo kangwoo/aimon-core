@@ -731,7 +731,12 @@ written, with two additions worth naming because a later reader will look for th
   warned about, and since `max_tokens` defaults to 4096 a copied `thinkingBudgetTokens: 8000` goes
   out as 4095. Both guides and `default-config.yaml` say so, and say that the ceiling is raised in
   the agent definition's `model.maxTokens` — a third configuration surface neither §10.5 nor this
-  document's failure table mentioned.
+  document's failure table mentioned. **2026-09-10 (#83):** "defaults to 4096" is true of an agent
+  definition that sets no `model.maxTokens`; the four agent definitions bundled with the CLI set
+  40000, so on them a copied 8000 goes out as 8000. Of the three surfaces named here, the CLI guide
+  and `default-config.yaml` were scoped accordingly; the starter guide's sentence is true as written,
+  since the starter ships no agent definition and binds no LLM `maxTokens` — see
+  [`thinking-reporting-and-dialect-records.md` §16](thinking-reporting-and-dialect-records.md#16-the-auto-budget-policy-decided-83-2026-09-10).
 - **§9.2's item 10 pins the invariant rather than one instance of it**, also from review-1: the
   reflective test asserts every `AimonProperties` signature type against an allow-list of packages,
   so a future `org.quartz.*` or actuator type fails it too — the other two `compileOnly` families.
@@ -755,7 +760,7 @@ corrected.
 | # | Disposition |
 |---|---|
 | **O-1** — does B-21 reopen? | **Closed with a dated block**, as §3.5 chose. The register now carries the criterion's second application and first split under the same number. |
-| **O-2** — should `AUTO` accept a budget? | Not done, as §4 decided. `AnthropicConfig`'s validation is untouched. |
+| **O-2** — should `AUTO` accept a budget? | Not done, as §4 decided. `AnthropicConfig`'s validation is untouched. **2026-09-10 (#83):** not answered by #83 either — that issue is about what `AUTO` resolves to **without** a budget, and its decision is in [`thinking-reporting-and-dialect-records.md` §16](thinking-reporting-and-dialect-records.md#16-the-auto-budget-policy-decided-83-2026-09-10). |
 | **O-3** — is the CLI's generic mapping-error message good enough? | Not bundled, as decided. One side-effect: D-1's deserializer means a bad `thinkingMode` now names the property and the four spellings **in the cause**, which is more than `lowestReasoningEffort` has. The top-level `ConfigurationException` string is unchanged, so #46's bar is met rather than raised. |
 | **O-4** — should `llm.anthropic` support `${VAR}`? | Not extended. Documented in both guides and pinned by a test. |
 | **O-5** — the third-level naming | Not taken. §5.1's flat names shipped. |

@@ -1,4 +1,4 @@
-# LLM 설정 표면 — 등록 항목 14건 (열림 10 · 닫힘 4)
+# LLM 설정 표면 — 등록 항목 15건 (열림 11 · 닫힘 4)
 
 출처는 #46 이다 — 모델 capability 표를 CLI yaml 과 스타터 프로퍼티에서 확장할 수 있게 한 작업.
 설계는 [`../design/llm/model-capability-config-key.md`](../design/llm/model-capability-config-key.md) 이고,
@@ -819,6 +819,34 @@ binding — 를 새 키에 대해서도 손을 대지 않고 확인되게 만든
 
 ---
 
+## L-15 — thinking 예산 clamp 경고가 `only 1 tokens` 로 읽히고, 듣는 처방 둘 중 하나만 말한다
+
+*(2026-09-10 등록. 출처는 #83 —
+[`../design/llm/thinking-reporting-and-dialect-records.md` §16](../design/llm/thinking-reporting-and-dialect-records.md#16-the-auto-budget-policy-decided-83-2026-09-10).
+**그 결정 안에서 고치지 않은 것은 의도**다 — 기록하는 대상을 같은 PR 에서 바꾸지 않는다.)*
+
+**무엇을.** clamp 경고의 문구를 고친다 — 복수형을 바로잡고, 같은 편집에서 두 번째 처방(reasoning effort 를
+`low` · `minimal` 로 내리는 것)을 문구에 넣을지 정한다.
+
+**왜.** 문구의 `"leaves only {} tokens"` 에서 `{}` 는 `maxTokens - resolved` 이고, 이 경고가 뜨는 요청에서 그
+값은 **언제나 1** 이다. clamp 는 언제나 `maxTokens - 1` 에 떨어지기 때문이다 — `AnthropicConfig` 가 1024 미만
+예산을 거절하고(`AnthropicConfig.java:85-87`) 사다리의 바닥도 1024 이므로 요청된 예산은 1024 이상이며,
+`maxTokens` 가 1024 이하면 예산 자체를 포기한다(`AnthropicThinkingBudgets.java:136-141`). 그러니 바닥이 결과를
+끌어올리는 일은 없고, 예산이 `maxTokens - 1` 을 넘을 때만 clamp 가 일어나며 결과는 정확히 그 값이다. 즉 이
+경고는 **뜰 때마다**(`extended` 포함) `only 1 tokens for the visible answer` 로 나간다. 그리고 문구가 말하는
+처방은 `Raise maxTokens` 하나인데 실제로 듣는 편집은 둘이다 — effort 를 `low`(2048) 나 `minimal`(1024) 로 내려도
+기본값 4096 아래로 들어간다(§16 의 이유 4).
+
+**어디.** `AnthropicThinkingResolver.java:421-424`(2026-09-10). 그 요청을 못박는 테스트
+`AnthropicThinkingDialectTest.autoOnABuiltInBudgetedRowClampsUnderTheConfigDefaultMaxTokens` 는
+`"does not fit under maxTokens"` · `"Raise maxTokens"` 두 조각만 단언하므로, 두 조각을 남기는 한 문구를 고쳐도
+초록이다.
+
+**언제 다시 볼까.** 그 문구를 다음에 건드릴 때, 또는 §16 의 재검토 트리거 중 하나가 발화할 때. 기다릴 크기가
+아니므로 지금 집어도 된다.
+
+---
+
 ## 관련 문서
 
 - [`../design/llm/model-capability-config-key.md`](../design/llm/model-capability-config-key.md) — 설계.
@@ -826,7 +854,8 @@ binding — 를 새 키에 대해서도 손을 대지 않고 확인되게 만든
 - [`../design/llm/model-capability-binding-round-trip.md`](../design/llm/model-capability-binding-round-trip.md) —
   #82 의 설계. §9 O-1 · O-2 가 L-13 · L-14 의 출처이고, §11 이 나머지 미해결을 왜 그 문서에 두었는지 적는다
 - [`../design/llm/thinking-reporting-and-dialect-records.md`](../design/llm/thinking-reporting-and-dialect-records.md) —
-  L-6·L-7 을 닫고 L-9·L-10·L-11 을 연 설계. §14 가 방언 census 의 원자료, §15.4 가 이 세 항목의 승격 근거다
+  L-6·L-7 을 닫고 L-9·L-10·L-11 을 연 설계. §14 가 방언 census 의 원자료, §15.4 가 이 세 항목의 승격 근거이고,
+  §16 이 #83 의 결정이자 L-15 의 출처다
 - [`../design/llm/openai-model-capabilities.md`](../design/llm/openai-model-capabilities.md) — capability
   SPI 자체의 설계. §7 O-8 이 이 작업으로 닫혔다
 - [`../design/llm/openai-responses-path.md`](../design/llm/openai-responses-path.md) — F-2 가 L-2 의 출처

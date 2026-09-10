@@ -112,11 +112,15 @@ Central is versioned independently).
     for, but it is new spending. It also opens the thinking gate in `applySamplingParameters`, so a
     configured `temperature` is now **omitted** on those requests with a
     `temperatureOmittedForThinking` warning, and a `top_p` outside `[0.95, 1.0]` goes the same way.
-    **And on the three budgeted families the budget is clamped**: with the shipped default
-    `maxTokens: 4096` and no `reasoningEffort` set, the request resolves to `budget_tokens: 4095`,
-    leaving one token for the visible answer and raising `thinkingBudgetClamped=4096->4095`, which
-    names the remedy. That is the same behaviour `extended` has always had on this dialect, arriving
-    for the first time on a deployment that only ever wrote `auto` — raise `maxTokens`.
+    **And on the three budgeted families the budget is clamped**: with `AnthropicConfig`'s default
+    `maxTokens` of 4096 — what an agent definition that sets no `model.maxTokens` gets; the CLI's
+    bundled definitions set 40000 and do not reach this — and no `reasoningEffort` set, the request
+    resolves to `budget_tokens: 4095`, leaving one token for the visible answer and raising the
+    divergence `thinkingBudgetClamped=4096->4095`, whose message names the remedy. That is the same
+    behaviour `extended` has always had on this dialect, arriving for the first time on a deployment
+    that only ever wrote `auto` — raise `maxTokens`. Deliberate rather than an oversight: the policy,
+    the two alternatives weighed against it and what would re-open it are in
+    `docs/design/llm/thinking-reporting-and-dialect-records.md` §16 (#83).
   - `thinkingMode: adaptive` on the three 4-5 families was a **certain HTTP 400**; it is now a
     translated budgeted request that succeeds, with one WARN.
   - `thinkingMode: extended` on `claude-opus-4-6` / `claude-sonnet-4-6` is **unchanged on the wire** —
@@ -827,9 +831,9 @@ Central is versioned independently).
   default `off` it fails at startup naming the block, rather than being silently dropped — the rule is
   `AnthropicConfig`'s and the surfaces only add the key path. The likeliest mistake is writing a
   budget with no mode at all, where the mode is `off` and the number would reach nothing. A budget is
-  still floored at 1024 and clamped below `max_tokens`, whose default is 4096 — so on an untouched
-  deployment `thinkingBudgetTokens: 8000` goes out as 4095 with a WARN, and raising that ceiling is
-  the agent definition's `model.maxTokens`.
+  still floored at 1024 and clamped below `max_tokens`, which is 4096 when the agent definition sets
+  no `model.maxTokens` (the CLI's bundled definitions set 40000) — so there `thinkingBudgetTokens: 8000`
+  goes out as 4095 with a WARN, and raising that ceiling is the agent definition's `model.maxTokens`.
 
 - **An anthropic block under another provider fails at startup**, from inside the branch that runs.
   A subtree named after one vendor leaves no ambiguity about whose it is. Deployments where no branch
@@ -946,10 +950,11 @@ Central is versioned independently).
   vendor's own published numbers** — the documented floor and the documented complex-task starting point;
   **`LOW` and `MEDIUM` are arbitrary**, chosen as doublings of the floor, and the design says so rather than
   dressing them up. What is not arbitrary and is pinned by tests: monotonicity, the 1024 floor, the
-  `maxTokens - 1` clamp, and a loud give-up when no legal budget exists. **The clamp bites out of the box** —
-  the default `maxTokens` is 4096, so `HIGH` clamps to 4095 and says so at WARN. In adaptive mode it is a
-  ladder-to-ladder map onto `output_config.effort`, where the only loss is `MINIMAL` and `LOW` collapsing
-  onto `low`.
+  `maxTokens - 1` clamp, and a loud give-up when no legal budget exists. **The clamp bites on
+  `AnthropicConfig`'s default** — its `maxTokens` is 4096, so wherever the agent definition sets no
+  `model.maxTokens` (the CLI's bundled definitions set 40000) `HIGH` clamps to 4095 and says so at WARN.
+  In adaptive mode it is a ladder-to-ladder map onto `output_config.effort`, where the only loss is
+  `MINIMAL` and `LOW` collapsing onto `low`.
 
 - **`temperature` is omitted when thinking is on, never substituted.** Verified from the vendor docs rather
   than guessed, because the SDK javadoc says nothing about it: on thinking-capable models `temperature` and

@@ -72,6 +72,11 @@ import ch.qos.logback.core.read.ListAppender;
  * vendor's own per-model table puts the Claude 4 generation in the extended-only group, so a future
  * documentation-derived row will move it. {@link #theUndescribedModelReallyIsUndescribed} is what makes that
  * survivable: the next row that describes this name fails with a sentence rather than with a golden-body diff.
+ *
+ * <p>
+ * {@code claude-haiku-4-5} is a built-in budgeted prefix, used where the row itself — not a declaration — is what is
+ * under test: {@link #autoOnABuiltInBudgetedRowClampsUnderTheConfigDefaultMaxTokens} pins the request {@code AUTO}
+ * sends on it when {@code AnthropicConfig}'s default {@code maxTokens} reaches the wire.
  */
 @DisplayName("AnthropicLlmClient - the thinking dialect, looked up per model")
 @ExtendWith(MockitoExtension.class)
@@ -91,6 +96,14 @@ class AnthropicThinkingDialectTest {
 
     /** In the built-in table since the 2026-09-10 census: measured to accept both request shapes. */
     private static final String EITHER_MODEL = "claude-opus-4-6";
+
+    /**
+     * In the built-in table since the same census, as a budgeted prefix — a real row rather than a declared one, so
+     * removing or renaming it fails with a sentence. What {@code AUTO} sends on it at {@code AnthropicConfig}'s default
+     * {@code maxTokens} is decided, not accidental: {@code docs/design/llm/thinking-reporting-and-dialect-records.md}
+     * §16 (#83).
+     */
+    private static final String BUILT_IN_BUDGETED_MODEL = "claude-haiku-4-5";
 
     /**
      * What the request body was before the dialect existed, captured at the parent commit by sending the same
@@ -320,6 +333,31 @@ class AnthropicThinkingDialectTest {
         assertThat(budgeted.get("thinking").get("budget_tokens").asInt()).isEqualTo(2048);
         assertThat(budgeted.has("output_config")).isFalse();
         assertThat(warnings()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("AUTO on a built-in budgeted row at AnthropicConfig's 4096 maxTokens sends 4095 and warns once")
+    void autoOnABuiltInBudgetedRowClampsUnderTheConfigDefaultMaxTokens() {
+        // #83, and a decision rather than an oversight: why this request stays as it is -- one token left for the
+        // answer -- is docs/design/llm/thinking-reporting-and-dialect-records.md section 16. Any headroom policy added
+        // to AUTO turns this red; read that section before changing the assertions.
+        //
+        // No reasoningEffort and no maxTokens on the call, so the MEDIUM rung's 4096 meets AnthropicConfig's 4096:
+        // the shape of an agent definition that sets no model.maxTokens. Not the CLI's bundled agents -- they set
+        // 40000 and never clamp here.
+        final JsonNode body = send(client(config(BUILT_IN_BUDGETED_MODEL, AnthropicThinkingMode.AUTO).build()),
+                LlmModel.builder().build());
+
+        assertThat(body.get("max_tokens").asInt()).isEqualTo(4096);
+        // Before the dialect assertions, and described: without the row the name reads as UNKNOWN, AUTO sends no
+        // parameter, and the next line would die on a NullPointerException instead of naming the row.
+        assertThat(body.has("thinking")).as("the built-in BUDGETED row for %s", BUILT_IN_BUDGETED_MODEL).isTrue();
+        assertThat(body.get("thinking").get("type").asText()).isEqualTo("enabled");
+        assertThat(body.get("thinking").get("budget_tokens").asInt()).isEqualTo(4095);
+        // The message, not the signature: thinkingBudgetClamped=4096->4095 is the dedup key and never reaches the log
+        // line. singleElement() is what notices a second warning starting to fire on this path.
+        assertThat(warnings()).singleElement().asString().contains("does not fit under maxTokens")
+                .contains("Raise maxTokens");
     }
 
     // ── Row 8: AUTO × UNKNOWN → nothing, and this one is reported ────────────────────────────────────────────────

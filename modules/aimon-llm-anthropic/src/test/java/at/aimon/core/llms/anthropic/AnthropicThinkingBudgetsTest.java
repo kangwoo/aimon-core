@@ -72,6 +72,9 @@ class AnthropicThinkingBudgetsTest {
         // The default maxTokens of 4096 makes this the common case rather than an edge: HIGH clamps out of the box.
         assertThat(AnthropicThinkingBudgets.budgetFor(ReasoningEffort.HIGH, null, 4096)).hasValue(4095);
         assertThat(AnthropicThinkingBudgets.budgetFor(ReasoningEffort.HIGH, null, 8000)).hasValue(7999);
+        // So does an unset effort, whose middle rung is exactly 4096 -- the request #83 decided to leave as it is
+        // (docs/design/llm/thinking-reporting-and-dialect-records.md section 16).
+        assertThat(AnthropicThinkingBudgets.budgetFor(null, null, 4096)).hasValue(4095);
     }
 
     @Test
