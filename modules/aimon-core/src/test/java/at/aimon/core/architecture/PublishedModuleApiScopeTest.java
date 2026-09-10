@@ -74,12 +74,12 @@ import org.junit.jupiter.api.Test;
  * if that ever changes, add one rather than widening {@link #FACADE_MODULES}.
  *
  * <p>
- * Two of the three testkits — {@code aimon-filesystem-testkit} and {@code aimon-session-testkit} — use {@code api}
- * and are absent from the facade list for a different reason again: neither is published, so this scan never reaches
- * them. Their build scripts say so themselves. {@code aimon-memory-testkit} is published and therefore <em>is</em>
- * scanned, and it is on the facade list: its deliverable is a base class whose extension point is
- * {@code PeerMemory newBackend()}, so a subclass in another repository cannot write the override without aimon-core
- * on its compile classpath.
+ * Three of the four testkits — {@code aimon-filesystem-testkit}, {@code aimon-session-testkit} and
+ * {@code aimon-llm-capability-testkit} — use {@code api} and are absent from the facade list for a different reason
+ * again: none is published, so this scan never reaches them. Their build scripts say so themselves.
+ * {@code aimon-memory-testkit} is published and therefore <em>is</em> scanned, and it is on the facade list: its
+ * deliverable is a base class whose extension point is {@code PeerMemory newBackend()}, so a subclass in another
+ * repository cannot write the override without aimon-core on its compile classpath.
  *
  * <p>
  * Build scripts rather than bytecode is why this is plain JUnit and not ArchUnit — a dependency declaration never
@@ -107,7 +107,7 @@ class PublishedModuleApiScopeTest {
      * {@code aimon-memory-testkit} is the one entry here that is not an assembly. It is a contract suite, and what it
      * publishes is a base class a backend author extends: the abstract {@code PeerMemory newBackend()} an
      * out-of-repository backend has to override is an aimon-core type, so core belongs on that author's compile
-     * classpath by the same argument the facades use. The other two testkits are absent because they are not
+     * classpath by the same argument the facades use. The other three testkits are absent because they are not
      * published at all, not because they scope differently.
      */
     private static final List<String> FACADE_MODULES = List.of("aimon-bootstrap", "aimon-spring-boot-starter",

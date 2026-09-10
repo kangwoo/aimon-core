@@ -192,6 +192,7 @@ modules/
 │
 ├── aimon-llm-openai             # OpenAI LlmClient
 ├── aimon-llm-anthropic          # Anthropic LlmClient
+├── aimon-llm-capability-testkit # 공유 모델 capability 바인딩 계약 테스트
 │
 ├── aimon-filesystem-gridfs      # MongoDB GridFS VFS
 ├── aimon-filesystem-s3          # AWS S3 VFS

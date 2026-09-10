@@ -310,7 +310,7 @@ B-6 이 그렇게 어긋나 있었다. §7 은 그 항목을 "MCP 를 실제로 
 | [`architecture-review-open-items.md`](architecture-review-open-items.md) | 아키텍처 리뷰 (2026-08-31) | 8 | 2 | 6 | 0 |
 | [`translation-tooling-open-items.md`](translation-tooling-open-items.md) | 번역 낡음 가드 작업 (2026-09-06) | 4 | 3 | 1 | 0 |
 | [`openai-model-capabilities-open-items.md`](openai-model-capabilities-open-items.md) | o-시리즈 reasoning-item 재생 프로브 (2026-09-09) | 1 | 0 | 1 | 0 |
-| [`llm-config-surface-open-items.md`](llm-config-surface-open-items.md) | `docs/design/llm/model-capability-config-key.md` §9 (#46) | 12 | 8 | 4 | 0 |
+| [`llm-config-surface-open-items.md`](llm-config-surface-open-items.md) | `docs/design/llm/model-capability-config-key.md` §9 (#46) | 14 | 10 | 4 | 0 |
 | [`reasoning-delta-stream-open-items.md`](reasoning-delta-stream-open-items.md) | `docs/design/llm/reasoning-delta-stream.md` §11 (#62) | 9 | 7 | 2 | 0 |
 | [`config-value-expansion-open-items.md`](config-value-expansion-open-items.md) | `docs/design/integration/config-value-expansion-and-frontmatter-strictness.md` §9 (#53) | 2 | 2 | 0 | 0 |
 | [`live-api-test-tier.md`](live-api-test-tier.md) | 라이브 API 테스트 계층의 CI 신호 결정 — #81 (2026-09-10) | 1 | 0 | 1 | 0 |
@@ -338,8 +338,8 @@ B-6 이 그렇게 어긋나 있었다. §7 은 그 항목을 "MCP 를 실제로 
 > 뿐이다. 넷 중 셋은 설계가 스스로 센 미해결이고, L-12 는 **빌드가 실측한 것**이다 — 이 디렉토리가
 > 끝난 작업의 산물을 받는 세 번째 경로다.
 >
-> (그 뒤 같은 날 #81 이 L-12 를 닫아 위 표의 행은 `12 | 8 | 4 | 0` 이 되었다. 이 문단의 `12 | 9 | 3 | 0` 은
-> 그 앞 시점의 값이다.)
+> (그 뒤 같은 날 #81 이 L-12 를 닫아 위 표의 행은 `12 | 8 | 4 | 0` 이 되었고, 이어서 #82 가 L-13 · L-14 를
+> 열어 `14 | 10 | 4 | 0` 이 되었다. 이 문단의 `12 | 9 | 3 | 0` 은 그 앞 시점의 값이다.)
 
 **그 문서의 칸이 `—` 였던 것은 규칙이 없어서가 아니라 그냥 채워지지 않아서였다** — 형식은 나머지 다섯
 문서가 제목과 표 양쪽에서 이미 쓰고 있었다. 등록 시점에 항목이 넷이었고 지금 둘이 닫혔으므로 표와

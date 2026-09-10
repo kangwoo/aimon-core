@@ -211,6 +211,17 @@ Central is versioned independently).
   Neither can live in `aimon-core`, which cannot see either surface, and that blind spot is exactly what
   #69 was. `L-1` (the CLI-throws / starter-ignores asymmetry) is **widened by two keys and closed by
   none of this**.
+
+- **Those two tests now check that a key's value arrives, not only that the key exists** (#82). As #69
+  shipped them they stopped one step short of the only code written by hand for each key —
+  `LlmClientFactory.declarationOf` and `ModelCapabilityProperties.toDeclaration()` — so a ninth key with
+  a getter and a setter on both surfaces and no forwarding call would bind, say nothing, and never reach
+  the declaration, with both tests green. Each now writes two distinct values per key, generated from
+  the builder's setter types, through that surface's own forwarding, and compares the whole declaration
+  that comes out. The two share one contract in a new unpublished module, `aimon-llm-capability-testkit`:
+  the check still cannot live in `aimon-core`, but that never required two copies of it. Nothing an
+  operator writes or sees changes; `declarationOf` became package-private so the CLI's test can call it.
+
 ### LLM: the reasoning stream is measured against both live APIs, and #43 is closed on evidence
 
 - **#62's streaming path had never been run against a live API on either provider** (#71). Every test

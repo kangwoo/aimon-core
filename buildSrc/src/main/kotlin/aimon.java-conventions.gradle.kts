@@ -206,8 +206,9 @@ tasks.withType<JacocoReport>().configureEach {
 // A module with no entry gets no rule rather than a floor of zero. Zero would be a rule that always passes,
 // which reads as "verified" in the task list and verifies nothing; absence at least tells the truth. The
 // modules legitimately absent are the ones with no coverage report at all — aimon-bom (a java-platform),
-// the three testkits (filesystem, session, memory — all main sources and no tests of their own; publishing
-// the memory one did not change that), and the samples.
+// the filesystem, session and memory testkits (all main sources and no tests of their own; publishing the
+// memory one did not change that), and the samples. Being a testkit is not the reason: aimon-llm-capability-testkit
+// has tests of its own, so it has a report and a floor like any other module.
 val coverageBaselines = Properties().apply {
     val file = rootProject.file("gradle/coverage-baselines.properties")
     if (file.exists()) {
