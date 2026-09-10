@@ -26,8 +26,9 @@ dependencies {
     // POM's honesty; nothing here is published.
     api(project(":aimon-core"))
 
-    // JUnit and AssertJ are compiled against by this module's *main* source set, so — as in the filesystem testkit —
-    // the platform comes in here rather than relying on the one the conventions plugin puts on test configurations.
-    api(platform(libs.spring.boot.dependencies))
+    // JUnit and AssertJ are compiled against by this module's *main* source set, which the junit-bom arriving with the
+    // conventions plugin's test dependencies does not reach, so the platform comes in here. JUnit's own, not Spring
+    // Boot's — the catalog note next to `junit` says why, measured, for all four testkits.
+    api(platform(libs.junit.bom))
     api(libs.bundles.testing)
 }

@@ -61,9 +61,11 @@ import at.aimon.core.llm.capability.ModelCapabilityDeclaration;
  *
  * <p>
  * The probe writes through bean setters, so neither binder runs. That a yaml key or a property string arrives on the
- * surface at all is covered key by key, by hand, in {@code LlmClientFactoryTest} and
- * {@code AimonPropertiesValidationTest} — and that it is by hand is open, as {@code L-14} in
- * {@code docs/backlog/llm-config-surface-open-items.md}. Design: {@code docs/design/llm/}
+ * surface at all is asserted by hand, per key: yaml in {@code CliConfigLoaderTest}, which parses real yaml, and
+ * property strings in {@code AimonPropertiesValidationTest}, which does not yet cover every key.
+ * {@code LlmClientFactoryTest} is not part of it — it builds {@code ModelCapabilityConfig} through setters, as this
+ * probe does, and never reaches Jackson. That this step is by hand, and short of every key on the starter, is open as
+ * {@code L-14} in {@code docs/backlog/llm-config-surface-open-items.md}. Design: {@code docs/design/llm/}
  * {@code model-capability-binding-round-trip.md}.
  *
  * @param <S>

@@ -18,10 +18,10 @@ dependencies {
     // through implementation modules" rule exists to keep a published POM honest; nothing here is published.
     api(project(":aimon-core"))
 
-    // The testing bundle names JUnit without a version — every other module gets one from the junit-bom that
-    // arrives transitively with spring-boot-starter-test, which the conventions plugin puts on *test*
-    // configurations only. This is the one module whose main source set compiles against JUnit, so it brings the
-    // same platform in itself instead of hard-coding a second version.
-    api(platform(libs.spring.boot.dependencies))
+    // The testing bundle names JUnit without a version, and the junit-bom that arrives with spring-boot-starter-test
+    // reaches *test* configurations only — this module's *main* source set compiles against JUnit, so it names a
+    // platform itself. JUnit's own, not Spring Boot's: `api` hands the platform to every consumer's test classpath.
+    // Why that decides it, measured, is the catalog note next to `junit`, which covers all four testkits.
+    api(platform(libs.junit.bom))
     api(libs.bundles.testing)
 }

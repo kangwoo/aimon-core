@@ -65,6 +65,12 @@ import at.aimon.core.llm.capability.ModelCapabilityDeclaration;
  * accepted by the declaration, and told apart by its {@code equals}. Without that, an override returning an empty list
  * would be a skip with extra steps.
  *
+ * <p>
+ * "Accepted by the declaration" has one refusal that is not about the value. When {@code build()} calls a declaration
+ * with only the key set empty, every value of that key gets the same answer: the builder's {@code declaresAnything()}
+ * does not check the field. That refusal — recognised the same way as above — is reported against
+ * {@code declaresAnything()}, not as a value to replace, since no replacement could pass.
+ *
  * @param <S>
  *            the configuration surface's type
  */
@@ -191,10 +197,22 @@ public final class ModelCapabilityBindingProbe<S> {
         try {
             return DeclarableKeys.expectedDeclaration(key, value);
         } catch (IllegalArgumentException e) {
-            throw new AssertionError("ModelCapabilityDeclaration refuses `" + key + "` = " + value + " on its own,"
-                    + " before any surface is involved, so it cannot be a probe value: pick one the declaration"
-                    + " accepts.", e);
+            throw refusedProbeValue(key, value, e);
         }
+    }
+
+    static AssertionError refusedProbeValue(String key, Object value, IllegalArgumentException refusal) {
+        if (isEmptyDeclarationRefusal(refusal)) {
+            return new AssertionError("`" + key + "` = " + value + " was the only key set on"
+                    + " ModelCapabilityDeclaration.Builder, and build() refused it as a declaration that states"
+                    + " nothing. Every value of this key is refused the same way, so do not pick another one:"
+                    + " ModelCapabilityDeclaration.Builder.declaresAnything() does not check the field `." + key
+                    + "(...)` writes. Add that field to declaresAnything(). (The refusal is attached as the cause.)",
+                    refusal);
+        }
+        return new AssertionError("ModelCapabilityDeclaration refuses `" + key + "` = " + value + " on its own,"
+                + " before any surface is involved, so it cannot be a probe value: pick one the declaration"
+                + " accepts.", refusal);
     }
 
     private void assertValueReachesTheDeclaration(String key, Object value) {

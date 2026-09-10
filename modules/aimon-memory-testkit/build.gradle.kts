@@ -26,22 +26,19 @@ dependencies {
     // aimon-core type is a re-exported API surface in the sense that rule carves out.
     api(project(":aimon-core"))
 
-    // The narrowest platform that supplies what this module publishes without a version, and the reason it is not
-    // `spring-boot-dependencies` like the other two testkits.
+    // The narrowest platform that supplies what this module publishes without a version. Every testkit now takes the
+    // same one rather than `spring-boot-dependencies`, for the reason in the catalog note next to `junit`; this module
+    // switched first, because for a published module the cost does not stay inside this build.
     //
-    // Those two are not on Central, so what they re-export never leaves this build. This one is, and `api` puts a
-    // platform into both `apiElements` and `runtimeElements` of the published metadata. Exporting Spring Boot's
-    // platform would hand every consumer its entire dependency management — measured against a consumer on Spring
-    // Boot 3.4.0, sixteen coordinates move, including `spring-boot-dependencies` itself, because Gradle applies
-    // highest-version conflict resolution to platform modules too. A JUnit contract suite has no business
-    // relocating someone's Jackson, Logback and Netty.
+    // `api` puts a platform into both `apiElements` and `runtimeElements` of the published metadata. Exporting Spring
+    // Boot's platform would hand every consumer its entire dependency management — measured against a consumer on
+    // Spring Boot 3.4.0, sixteen coordinates move, including `spring-boot-dependencies` itself, because Gradle applies
+    // highest-version conflict resolution to platform modules too. A JUnit contract suite has no business relocating
+    // someone's Jackson, Logback and Netty.
     //
     // And it never needed to. The only thing this module publishes without a version is `junit-jupiter`; AssertJ
     // carries its own from the catalog. Spring Boot's platform was reaching ~1,400 managed coordinates to settle
     // one of them.
-    //
-    // The catalog comment next to `junit` explains why a number now exists there after deliberately not existing:
-    // in short, the tradeoff it described was priced for an unpublished module and publication reversed it.
     api(platform(libs.junit.bom))
 
     // The two the source actually uses, named individually rather than through `libs.bundles.testing`. That bundle
