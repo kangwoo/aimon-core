@@ -45,8 +45,8 @@
  * <p>
  * This package covers the <b>wire-level</b> abstraction between provider clients and the LLM
  * gateway. The agent execution event layer ({@code at.aimon.core.agent.stream}) is an entirely
- * separate concern: it publishes high-level {@code AssistantTextDelta} / {@code ...Reset} /
- * {@code ...Completed} events to subscribers (REPL, SDK consumers). The Orca executor is the
+ * separate concern: it publishes high-level {@code AssistantTextDelta} / {@code AssistantReasoningDelta} /
+ * {@code ...Reset} / {@code ...Completed} events to subscribers (REPL, SDK consumers). The Orca executor is the
  * single place where these two layers meet.
  *
  * @since 0.0.37

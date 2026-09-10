@@ -17,6 +17,13 @@ import at.aimon.core.llm.TokenUsage;
  * stream and wants subscribers to flush any trailing state (trim newlines, finalize progress indicators, etc.).
  *
  * <p>
+ * <b>This bounds the whole attempt, not just the text channel.</b> A completed stream ends
+ * {@link AssistantReasoningDelta} too, so a renderer showing both channels closes both here. The name predates the
+ * reasoning channel — see {@link AssistantTextStreamReset} for why it is not renamed. {@link #getTotalLength()} stays
+ * the <em>answer</em>'s length; deliberation is not counted into it any more than it is counted into the assistant
+ * message.
+ *
+ * <p>
  * Extra fields:
  *
  * <ul>

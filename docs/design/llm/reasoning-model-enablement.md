@@ -493,7 +493,19 @@ Written in the form the sibling documents use. **Not measured is not a task; it 
   [`anthropic-thinking-traces.md`](anthropic-thinking-traces.md) §2.1, which quotes the vendor's
   per-model table and whose §9 U-2 records that both dialect rejections *were* provoked live. So the
   matrix is measured; **which models are on it today is not.** The table was read on a date and models
-  are added continuously.
+  are added continuously. **Discharged for five of the six ADAPTIVE rows that ship, across six model
+  names, 2026-09-10** — the registry carries six ADAPTIVE prefixes
+  (`InMemoryModelCapabilityRegistry:243-253`), and probes after this document was written confirmed
+  five of them live (adaptive 200, budgeted 400): `claude-fable-5`, `claude-opus-5`,
+  `claude-opus-4-7`, `claude-opus-4-8`, `claude-sonnet-5`. Six *model names* were probed because
+  `claude-fable-5-1` is not a row of its own — it matches the `claude-fable-5` prefix. The sixth row,
+  `claude-mythos`, remains unverifiable because no model with that prefix exists in the probing
+  account's `GET /v1/models`. **Rows and model names are not the same count, and this document says
+  so explicitly because a set enumerated slightly wrong is the exact failure the change that added
+  this note exists to correct.**
+  Evidence and the two facts that fall outside this document are in
+  [`../../backlog/llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md)
+  **L-6** and **L-7**.
 - **U-2 — the `AUTO` + `UNKNOWN` warning has no field evidence** that operators read it. It is the
   one place this design substitutes a log line for a behaviour.
 - **U-3 — `reasoning.summary` has never been requested from this codebase**, so neither its token

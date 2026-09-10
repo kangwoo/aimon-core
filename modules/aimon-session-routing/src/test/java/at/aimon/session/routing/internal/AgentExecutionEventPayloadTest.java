@@ -19,6 +19,7 @@ import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.session.TurnId;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
 import at.aimon.core.agent.stream.AssistantMessageReceived;
+import at.aimon.core.agent.stream.AssistantReasoningDelta;
 import at.aimon.core.agent.stream.AssistantTextDelta;
 import at.aimon.core.agent.stream.AssistantTextStreamCompleted;
 import at.aimon.core.agent.stream.AssistantTextStreamReset;
@@ -69,6 +70,51 @@ class AgentExecutionEventPayloadTest {
             assertThat(AgentExecutionEventPayload.fromPayload(normalized))
                     .as("normalized round-trip of %s", event.getClass().getSimpleName()).contains(event);
         }
+    }
+
+    @Test
+    @DisplayName("the sample set names every permitted subtype, so a new one cannot be added without a branch here")
+    void samplesCoverEveryPermittedSubtype() {
+        // This codec is the one blast-radius site whose omission is SILENT: flatten() returns null for an
+        // unrecognized subtype and the relay skips the frame, so a missing branch loses cross-node delivery with no
+        // exception anywhere. Deriving the expectation from the permits clause makes the omission a red build.
+        final List<Class<?>> sampled = new ArrayList<>();
+        samples().forEach(event -> sampled.add(event.getClass()));
+
+        assertThat(sampled).containsExactlyInAnyOrder(AgentExecutionEvent.class.getPermittedSubclasses());
+    }
+
+    @Test
+    @DisplayName("a reasoning delta flattens to a non-null frame, which is what keeps it off the silent-drop path")
+    void reasoningDeltaIsNotSilentlyDropped() {
+        final AssistantReasoningDelta original = AssistantReasoningDelta.builder().timestamp(TS).agentRuntimeId(CTX)
+                .iteration(4).delta("weighing the options").chunkIndex(2).build();
+
+        final Map<String, Object> payload = AgentExecutionEventPayload.toPayload(original, TURN);
+
+        // Non-null is the real assertion: the `else` branch in flatten() yields null and the relay skips the frame,
+        // which is how a missing subtype branch loses cross-node delivery without an exception anywhere.
+        assertThat(payload).isNotNull().containsEntry(AgentExecutionEventPayload.KEY_TYPE, "AssistantReasoningDelta");
+        final AssistantReasoningDelta decoded = (AssistantReasoningDelta) AgentExecutionEventPayload
+                .fromPayload(payload).orElseThrow();
+        assertThat(decoded.getDelta()).isEqualTo("weighing the options");
+        assertThat(decoded.getChunkIndex()).isEqualTo(2);
+        assertThat(decoded.getIteration()).isEqualTo(4);
+        assertThat(decoded.getAgentRuntimeId()).isEqualTo(CTX);
+        assertThat(AgentExecutionEventPayload.turnIdOf(payload)).contains(TURN);
+    }
+
+    @Test
+    @DisplayName("an old node skips the reasoning frame rather than mistaking it for a text delta")
+    void anOldNodeSkipsTheReasoningFrame() {
+        // The rolling-upgrade half of the same site. An old node's decoder has no "AssistantReasoningDelta" case, so
+        // it hits the default and yields empty -- the graceful contract fromPayload documents. Simulated by renaming
+        // the type, because an old decoder is not on this classpath.
+        final Map<String, Object> payload = AgentExecutionEventPayload.toPayload(AssistantReasoningDelta.builder()
+                .timestamp(TS).agentRuntimeId(CTX).iteration(1).delta("thinking").chunkIndex(0).build(), TURN);
+        payload.put(AgentExecutionEventPayload.KEY_TYPE, "AnEvenNewerEvent");
+
+        assertThat(AgentExecutionEventPayload.fromPayload(payload)).isEmpty();
     }
 
     @Test
@@ -225,6 +271,8 @@ class AgentExecutionEventPayloadTest {
                 .messageSummary("planning next step").tokenUsage(tokens).build());
         events.add(AssistantTextDelta.builder().timestamp(TS).agentRuntimeId(CTX).iteration(1).delta("hello ")
                 .chunkIndex(3).build());
+        events.add(AssistantReasoningDelta.builder().timestamp(TS).agentRuntimeId(CTX).iteration(1)
+                .delta("weighing the options").chunkIndex(2).build());
         events.add(AssistantTextStreamReset.builder().timestamp(TS).agentRuntimeId(CTX).iteration(1)
                 .previousAttemptIndex(0).nextAttemptIndex(1).reason("retry after tool error").build());
         events.add(AssistantTextStreamCompleted.builder().timestamp(TS).agentRuntimeId(CTX).iteration(1).totalLength(42)

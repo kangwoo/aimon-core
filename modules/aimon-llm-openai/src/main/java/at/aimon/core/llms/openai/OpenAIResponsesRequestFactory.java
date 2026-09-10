@@ -38,6 +38,16 @@ import at.aimon.core.llm.capability.ModelCapabilities;
  * not about the endpoint, and no OpenAI model measured to date except {@code gpt-5.6-terra} has a {@code none} rung
  * on either surface. Dropping that check along with the clamp is how {@code reasoning.effort: "none"} reached this
  * endpoint as a 400.
+ * <li><strong>{@code reasoning.summary} can be asked for, and only here.</strong> {@code encrypted_content} is
+ * ciphertext, so a summary is the only readable form of this endpoint's reasoning; the Chat path has no equivalent
+ * parameter at all. It is opt-in and unset by default, so the {@code reasoning} object below is built from up to two
+ * optional parts and set only if at least one of them landed. <strong>It needs no {@code include} entry of its
+ * own</strong>, and that is measured rather than inferred: a request carrying {@code include: ["reasoning.summary"]}
+ * is refused with a 400 that enumerates the whole valid set — eight values, none of them a reasoning summary — while
+ * {@code reasoning.summary: "auto"} on its own returns five {@code summary_text} parts with or without any
+ * {@code include}. The control is the request that asks for no summary: zero parts, so the channel is off until
+ * asked. Non-streaming probes on {@code gpt-5-mini}, 2026-09-10, so they establish the summary in the final response
+ * rather than the streaming path's delta event names.
  * <li><strong>{@code store} is {@code false} and {@code reasoning.encrypted_content} is asked for.</strong> With
  * {@code store: true} the server retains the exchange and offers {@code previous_response_id} as an alternative to
  * replaying items — a second source of truth that no {@code SessionRecord} knows about, in a system that resumes
@@ -108,7 +118,7 @@ final class OpenAIResponsesRequestFactory {
 
         OpenAiRequestParameters.applySampling(modelConfig, config, capabilities, modelName,
                 new ResponsesSamplingSink(builder, modelName, reporter), reporter);
-        applyReasoningEffort(builder, modelConfig, capabilities, modelName);
+        applyReasoning(builder, modelConfig, capabilities, modelName);
 
         if (!tools.isEmpty()) {
             final List<Tool> responsesTools = converter.convertTools(tools);
@@ -119,26 +129,65 @@ final class OpenAIResponsesRequestFactory {
     }
 
     /**
-     * Sets {@code reasoning.effort}, or leaves it off. No tools clamp — see the class javadoc.
+     * Builds the {@code reasoning} object from up to two independent parts — {@code effort} and {@code summary} — and
+     * sets it only when at least one of them landed. No tools clamp on the effort — see the class javadoc.
+     *
+     * <p>
+     * The two parts are independent on purpose. The effort keeps both of its existing gates
+     * ({@code supportsReasoningEffort}, then {@code maySendEffort}) with exactly their old semantics: a value that
+     * fails either is omitted and reported, and now simply contributes nothing to the object rather than returning
+     * early from the whole method. The summary has no capability gate at all — {@link ModelCapabilities} says nothing
+     * about summaries, and inventing a field for an unmeasured axis would make every gateway operator answer one more
+     * question they cannot. A model that ignores the ask produces no summary events, which is indistinguishable from
+     * the key being unset, and honest: the model did not produce one.
+     *
+     * <p>
+     * Before this shape the effort was the only contributor, so a deployment asking for a summary without an effort
+     * would have got no {@code reasoning} object at all.
      */
-    private void applyReasoningEffort(ResponseCreateParams.Builder builder, LlmModel modelConfig,
+    private void applyReasoning(ResponseCreateParams.Builder builder, LlmModel modelConfig,
             ModelCapabilities capabilities, String modelName) {
+        final Reasoning.Builder reasoning = Reasoning.builder();
+        boolean any = false;
+
+        final Optional<ReasoningEffort> effort = acceptedEffort(modelConfig, capabilities, modelName);
+        if (effort.isPresent()) {
+            reasoning.effort(OpenAiReasoningEfforts.toWire(effort.get()));
+            any = true;
+        }
+
+        final Optional<OpenAiReasoningSummary> summary = config.getReasoningSummary();
+        if (summary.isPresent()) {
+            reasoning.summary(OpenAiReasoningSummaries.toWire(summary.get()));
+            any = true;
+        }
+
+        if (any) {
+            builder.reasoning(reasoning.build());
+        }
+    }
+
+    /**
+     * The effort this request may carry, or empty — the two gates that were {@code applyReasoningEffort}'s early
+     * returns, unchanged, lifted out so the summary can be applied independently of their verdict.
+     */
+    private Optional<ReasoningEffort> acceptedEffort(LlmModel modelConfig, ModelCapabilities capabilities,
+            String modelName) {
         final Optional<ReasoningEffort> requested = OpenAiRequestParameters.requestedEffort(modelConfig, config);
 
         if (!capabilities.supportsReasoningEffort()) {
             requested.ifPresent(effort -> OpenAiRequestParameters.reportUnsupportedEffort(effort, modelName, reporter));
-            return;
+            return Optional.empty();
         }
 
         // Model rule, shared with the Chat path: a rung this model's ladder does not have is omitted and reported,
         // never raised to the nearest one it does have.
         if (requested.isPresent()
                 && !OpenAiRequestParameters.maySendEffort(requested.get(), capabilities, modelName, reporter)) {
-            return;
+            return Optional.empty();
         }
 
-        requested.ifPresent(
-                effort -> builder.reasoning(Reasoning.builder().effort(OpenAiReasoningEfforts.toWire(effort)).build()));
+        return requested;
     }
 
     /**

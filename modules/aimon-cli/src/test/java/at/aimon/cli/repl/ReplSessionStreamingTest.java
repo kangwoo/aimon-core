@@ -43,6 +43,7 @@ import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
 import at.aimon.core.agent.stream.AssistantMessageReceived;
+import at.aimon.core.agent.stream.AssistantReasoningDelta;
 import at.aimon.core.agent.stream.AssistantTextDelta;
 import at.aimon.core.agent.stream.AssistantTextStreamCompleted;
 import at.aimon.core.agent.stream.ExecutionCompleted;
@@ -107,6 +108,8 @@ class ReplSessionStreamingTest {
                         .plannedIteration(1).build(),
                 AssistantMessageReceived.builder().timestamp(Instant.EPOCH).agentRuntimeId(agentRuntimeId).iteration(1)
                         .messageSummary("Thinking about the request").build(),
+                AssistantReasoningDelta.builder().timestamp(Instant.EPOCH).agentRuntimeId(agentRuntimeId).iteration(1)
+                        .delta("weighing the options").chunkIndex(0).build(),
                 ToolUseStarted.builder().timestamp(Instant.EPOCH).agentRuntimeId(agentRuntimeId).iteration(1)
                         .toolName("Read").toolUseId("tool-1").build(),
                 ToolResultReady.builder().timestamp(Instant.EPOCH).agentRuntimeId(agentRuntimeId).iteration(1)
@@ -150,6 +153,7 @@ class ReplSessionStreamingTest {
         // stdout assertions cannot observe.
         verify(formatter).displayIterationStarted(Mockito.any(IterationStarted.class));
         verify(formatter).displayAssistantMessageReceived(Mockito.any(AssistantMessageReceived.class));
+        verify(formatter).displayAssistantReasoningDelta(Mockito.any(AssistantReasoningDelta.class));
         verify(formatter).displayToolUseStarted(Mockito.any(ToolUseStarted.class));
         verify(formatter).displayToolResultReady(Mockito.any(ToolResultReady.class));
         verify(formatter).displayIterationCompleted(Mockito.any(IterationCompleted.class));

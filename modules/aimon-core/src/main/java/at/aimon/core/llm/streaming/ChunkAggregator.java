@@ -34,6 +34,14 @@ import at.aimon.core.llm.ToolUse;
  * {@link #peekText()} exposes the currently accumulated text in a thread-safe manner — used by
  * {@link at.aimon.core.agent.impl.orca.OrcaAgentExecutor} to preserve partial text in the conversation history when the
  * user cancels a streaming turn.
+ *
+ * <p>
+ * <b>Reasoning deltas accumulate separately and are never part of the response.</b>
+ * {@link LlmStreamChunk.Kind#REASONING_DELTA} feeds {@link #peekReasoningText()} alone — not {@link #peekText()}, not
+ * {@link #toLlmResponse()}. Because {@code peekText()} is what the executor commits to the transcript on a mid-stream
+ * cancel, a reasoning delta reaching {@code textBuffer} would persist the model's private deliberation as its public
+ * answer, and a transcript is not recoverable. Two buffers, one of which the response builder does not read, is how
+ * that is made structurally impossible rather than remembered.
  */
 public final class ChunkAggregator {
 
@@ -44,6 +52,7 @@ public final class ChunkAggregator {
 
     private final Object lock = new Object();
     private final StringBuilder textBuffer = new StringBuilder();
+    private final StringBuilder reasoningBuffer = new StringBuilder();
     private final Map<Integer, ToolCallAccumulator> toolCalls = new LinkedHashMap<>();
     private final List<ReasoningTrace> reasoningTraces = new ArrayList<>();
 
@@ -54,9 +63,11 @@ public final class ChunkAggregator {
     private int chunksAccepted;
 
     /**
-     * Consumes a chunk. Only {@link LlmStreamChunk.Kind#TEXT_DELTA} contributes to {@link #peekText()}. A
-     * {@link LlmStreamChunk.Kind#STREAM_END} chunk marks the aggregator as closed and captures the terminal usage /
-     * finish reason.
+     * Consumes a chunk. Only {@link LlmStreamChunk.Kind#TEXT_DELTA} contributes to {@link #peekText()} — that
+     * exclusivity is load-bearing rather than incidental, because {@code peekText()} is what an interrupted execution
+     * commits to the transcript as the assistant's answer. {@link LlmStreamChunk.Kind#REASONING_DELTA} goes to
+     * {@link #peekReasoningText()} instead. A {@link LlmStreamChunk.Kind#STREAM_END} chunk marks the aggregator as
+     * closed and captures the terminal usage / finish reason.
      *
      * @throws IllegalStateException
      *             if a second {@code STREAM_END} is received
@@ -72,6 +83,11 @@ public final class ChunkAggregator {
                 case TEXT_DELTA -> {
                     final String delta = chunk.getTextDelta().orElseThrow();
                     textBuffer.append(delta);
+                }
+                case REASONING_DELTA -> {
+                    // Deliberation, not answer: a separate buffer that toLlmResponse() does not read.
+                    final String delta = chunk.getReasoningDelta().orElseThrow();
+                    reasoningBuffer.append(delta);
                 }
                 case TOOL_USE_READY -> {
                     // Overlap signal (design §4.1): a completed tool_use block is surfaced to the sink for early
@@ -160,6 +176,23 @@ public final class ChunkAggregator {
     }
 
     /**
+     * Returns the model's accumulated deliberation for this stream.
+     *
+     * <p>
+     * Deliberately <em>not</em> read by {@link #toLlmResponse()} and deliberately not merged into {@link #peekText()}:
+     * see the class javadoc. Nothing downstream persists or replays it — it exists so the invariant can be asserted
+     * positively, and so a caller that genuinely wants "what was it thinking" has one seam to read rather than a
+     * reason to reach into the text buffer.
+     *
+     * @return a snapshot of the accumulated reasoning text. Safe to call at any time; empty when nothing asked for it.
+     */
+    public String peekReasoningText() {
+        synchronized (lock) {
+            return reasoningBuffer.toString();
+        }
+    }
+
+    /**
      * @return whether the aggregator has received its terminal {@code STREAM_END} chunk.
      */
     public boolean isClosed() {
@@ -203,6 +236,7 @@ public final class ChunkAggregator {
             if (!closed) {
                 throw new IllegalStateException("Aggregator has not received STREAM_END yet");
             }
+            // reasoningBuffer is deliberately absent here — see the class javadoc.
             text = textBuffer.toString();
             usage = tokenUsage == null ? TokenUsage.empty() : tokenUsage;
             reason = stopReason;

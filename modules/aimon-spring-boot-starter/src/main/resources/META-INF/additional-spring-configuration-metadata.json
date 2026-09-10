@@ -42,6 +42,32 @@
           "description": "Whichever dialect the capability table says this model speaks; a model it cannot name sends nothing and warns."
         }
       ]
+    },
+    {
+      "name": "aimon.llm.anthropic.thinking-display",
+      "values": [
+        {
+          "value": "summarized",
+          "description": "Ask the adaptive dialect for a summary of the model's thinking, and stream it. Unset means neither. The server accepts one other value, `omitted`, which is its own default and is deliberately not offered here: it would mean opening the stream and asking for nothing to put in it."
+        }
+      ]
+    },
+    {
+      "name": "aimon.llm.openai.reasoning-summary",
+      "values": [
+        {
+          "value": "auto",
+          "description": "Ask the Responses API to summarise the model's reasoning at a level it chooses, and stream it. Unset means neither."
+        },
+        {
+          "value": "concise",
+          "description": "Ask for a short summary of the model's reasoning, and stream it."
+        },
+        {
+          "value": "detailed",
+          "description": "Ask for a fuller summary of the model's reasoning, at a higher token cost, and stream it."
+        }
+      ]
     }
   ]
 }

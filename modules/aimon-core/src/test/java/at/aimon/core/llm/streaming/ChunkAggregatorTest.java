@@ -325,4 +325,61 @@ class ChunkAggregatorTest {
                 () -> agg.addReasoningTrace(ReasoningTrace.builder().providerName("OpenAI").payload("{}").build()));
     }
 
+    // ---- REASONING_DELTA: the second buffer, and what toLlmResponse() does not read ----
+
+    @Test
+    void reasoningDeltasNeverReachPeekText() {
+        final ChunkAggregator agg = new ChunkAggregator();
+
+        agg.accept(LlmStreamChunk.textDelta(0, "The answer "));
+        agg.accept(LlmStreamChunk.reasoningDelta(1, "SECRET-DELIBERATION"));
+        agg.accept(LlmStreamChunk.textDelta(2, "is 42."));
+
+        // peekText() is what an interrupted execution commits to the transcript, so this is the assertion the whole
+        // second buffer exists for.
+        assertThat(agg.peekText()).isEqualTo("The answer is 42.");
+        assertThat(agg.peekText()).doesNotContain("SECRET-DELIBERATION");
+        assertThat(agg.chunksAccepted()).isEqualTo(3);
+    }
+
+    @Test
+    void reasoningDeltasAccumulateIntoPeekReasoningText() {
+        final ChunkAggregator agg = new ChunkAggregator();
+
+        agg.accept(LlmStreamChunk.reasoningDelta(0, "first "));
+        agg.accept(LlmStreamChunk.reasoningDelta(1, "second"));
+
+        assertThat(agg.peekReasoningText()).isEqualTo("first second");
+    }
+
+    @Test
+    void peekReasoningTextIsEmptyWhenNothingAskedForIt() {
+        final ChunkAggregator agg = new ChunkAggregator();
+        agg.accept(LlmStreamChunk.textDelta(0, "only an answer"));
+
+        assertThat(agg.peekReasoningText()).isEmpty();
+    }
+
+    @Test
+    void toLlmResponseCarriesTheTextDeltasAndNothingElse() {
+        final ChunkAggregator agg = new ChunkAggregator();
+
+        agg.accept(LlmStreamChunk.reasoningDelta(0, "SECRET-DELIBERATION"));
+        agg.accept(LlmStreamChunk.textDelta(1, "visible"));
+        agg.accept(LlmStreamChunk.streamEnd(2, null, Optional.empty()));
+
+        final LlmResponse response = agg.toLlmResponse();
+        assertThat(response.getTextContent()).isEqualTo("visible");
+        // ...and the deliberation is still readable through its own accessor, so this is separation rather than loss.
+        assertThat(agg.peekReasoningText()).isEqualTo("SECRET-DELIBERATION");
+    }
+
+    @Test
+    void reasoningDeltaAfterCloseThrowsLikeEveryOtherKind() {
+        final ChunkAggregator agg = new ChunkAggregator();
+        agg.accept(LlmStreamChunk.streamEnd(0, null, Optional.empty()));
+
+        assertThatIllegalStateException().isThrownBy(() -> agg.accept(LlmStreamChunk.reasoningDelta(1, "after end")));
+    }
+
 }

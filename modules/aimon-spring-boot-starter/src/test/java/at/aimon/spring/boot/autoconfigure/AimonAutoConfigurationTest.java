@@ -51,8 +51,10 @@ import at.aimon.core.llm.capability.InMemoryModelCapabilityRegistry;
 import at.aimon.core.llm.capability.ModelCapabilityRegistry;
 import at.aimon.core.llms.anthropic.AnthropicConfig;
 import at.aimon.core.llms.anthropic.AnthropicLlmClient;
+import at.aimon.core.llms.anthropic.AnthropicThinkingDisplay;
 import at.aimon.core.llms.anthropic.AnthropicThinkingMode;
 import at.aimon.core.llms.openai.OpenAILlmClient;
+import at.aimon.core.llms.openai.OpenAiReasoningSummary;
 import at.aimon.session.routing.SubmitRequest;
 import at.aimon.spring.boot.AimonAgents;
 import at.aimon.spring.boot.AimonDisabledException;
@@ -266,7 +268,7 @@ class AimonAutoConfigurationTest {
     }
 
     @Test
-    @DisplayName("the three anthropic thinking keys reach the vendor config")
+    @DisplayName("the four anthropic thinking keys reach the vendor config")
     void thinkingKeysReachTheAnthropicClient(@TempDir Path workspace) {
         minimal(workspace).withPropertyValues("aimon.llm.anthropic.thinking-mode=extended",
                 "aimon.llm.anthropic.thinking-budget-tokens=4000", "aimon.llm.anthropic.replay-thinking-blocks=false")
@@ -278,6 +280,92 @@ class AimonAutoConfigurationTest {
                     assertThat(config.getThinkingBudgetTokens()).isEqualTo(4000);
                     assertThat(config.isReplayThinkingBlocks()).isFalse();
                 });
+
+        // The display key rides the other dialect, so it gets its own context rather than an illegal combination.
+        minimal(workspace).withPropertyValues("aimon.llm.anthropic.thinking-mode=adaptive",
+                "aimon.llm.anthropic.thinking-display=summarized").run(ctx -> {
+                    assertThat(ctx).hasNotFailed();
+                    assertThat(AimonLlmAutoConfiguration.AnthropicConfiguration
+                            .anthropicConfig(ctx.getBean(AimonProperties.class).getLlm()).getThinkingDisplay())
+                            .contains(AnthropicThinkingDisplay.SUMMARIZED);
+                });
+    }
+
+    @Test
+    @DisplayName("every thinking display binds, in any case")
+    void everyThinkingDisplayBinds(@TempDir Path workspace) {
+        // Sourced from values() for the same reason the mode loop below is, and asserted rather than inherited
+        // because the property is a String here and the fold is this module's own.
+        for (AnthropicThinkingDisplay display : AnthropicThinkingDisplay.values()) {
+            for (String written : new String[]{display.name(), display.name().toLowerCase(java.util.Locale.ROOT)}) {
+                minimal(workspace).withPropertyValues("aimon.llm.anthropic.thinking-display=" + written)
+                        .run(ctx -> assertThat(AimonLlmAutoConfiguration.AnthropicConfiguration
+                                .anthropicConfig(ctx.getBean(AimonProperties.class).getLlm()).getThinkingDisplay())
+                                .as("thinking-display written as `%s`", written).contains(display));
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("an unusable thinking display fails naming the property and the accepted spellings")
+    void anUnusableThinkingDisplayIsRefused(@TempDir Path workspace) {
+        minimal(workspace).withPropertyValues("aimon.llm.anthropic.thinking-display=verbose")
+                .run(ctx -> assertThat(ctx).hasFailed().getFailure()
+                        .hasStackTraceContaining(AimonProperties.LLM_ANTHROPIC_THINKING_DISPLAY)
+                        .hasStackTraceContaining("summarized"));
+    }
+
+    @Test
+    @DisplayName("the openai reasoning summary reaches the vendor config, in any case")
+    void reasoningSummaryReachesTheOpenAiClient(@TempDir Path workspace) {
+        for (OpenAiReasoningSummary summary : OpenAiReasoningSummary.values()) {
+            for (String written : new String[]{summary.name(), summary.name().toLowerCase(java.util.Locale.ROOT)}) {
+                minimal(workspace)
+                        .withPropertyValues("aimon.llm.provider=openai", "aimon.llm.model=gpt-5.1",
+                                "aimon.llm.openai.reasoning-summary=" + written)
+                        .run(ctx -> assertThat(AimonLlmAutoConfiguration.OpenAiConfiguration
+                                .openAiConfig(ctx.getBean(AimonProperties.class).getLlm()).getReasoningSummary())
+                                .as("reasoning-summary written as `%s`", written).contains(summary));
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("an unusable reasoning summary fails naming the property and the accepted spellings")
+    void anUnusableReasoningSummaryIsRefused(@TempDir Path workspace) {
+        minimal(workspace)
+                .withPropertyValues("aimon.llm.provider=openai", "aimon.llm.model=gpt-5.1",
+                        "aimon.llm.openai.reasoning-summary=verbose")
+                .run(ctx -> assertThat(ctx).hasFailed().getFailure()
+                        .hasStackTraceContaining(AimonProperties.LLM_OPENAI_REASONING_SUMMARY)
+                        .hasStackTraceContaining("concise"));
+    }
+
+    @Test
+    @DisplayName("an openai block under the anthropic provider is refused, naming both properties")
+    void anOpenAiBlockUnderAnthropicIsRefused(@TempDir Path workspace) {
+        // The mirror of the anthropic-under-openai refusal, which could not exist until this round opened
+        // aimon.llm.openai.*. The Anthropic branch is the default, so no provider property is needed.
+        minimal(workspace).withPropertyValues("aimon.llm.openai.reasoning-summary=auto")
+                .run(ctx -> assertThat(ctx).hasFailed().getFailure().hasStackTraceContaining(AimonProperties.LLM_OPENAI)
+                        .hasStackTraceContaining(AimonProperties.LLM_PROVIDER));
+    }
+
+    @Test
+    @DisplayName("the anthropic refusal survives the OpenAI module being absent")
+    void theAnthropicRefusalDoesNotNeedTheOpenAiModule(@TempDir Path workspace) {
+        // The reason AimonProperties.Llm.OpenAi's reasoning-summary is a String and its isEmpty() reads a field
+        // rather than calling a vendor type: on this classpath OpenAiReasoningSummary does not exist.
+        minimal(workspace).withClassLoader(new FilteredClassLoader("at.aimon.core.llms.openai"))
+                .withPropertyValues("aimon.llm.openai.reasoning-summary=auto")
+                .run(ctx -> assertThat(ctx).hasFailed().getFailure().hasStackTraceContaining(AimonProperties.LLM_OPENAI)
+                        .hasStackTraceContaining(AimonProperties.LLM_PROVIDER));
+    }
+
+    @Test
+    @DisplayName("an empty openai block does not trip the anthropic branch")
+    void anEmptyOpenAiBlockDoesNotTripTheAnthropicBranch(@TempDir Path workspace) {
+        minimal(workspace).run(ctx -> assertThat(ctx).hasNotFailed());
     }
 
     @Test
@@ -310,6 +398,7 @@ class AimonAutoConfigurationTest {
                     .anthropicConfig(ctx.getBean(AimonProperties.class).getLlm());
             assertThat(config.getThinkingMode()).isEqualTo(AnthropicThinkingMode.OFF);
             assertThat(config.getThinkingBudgetTokens()).isNull();
+            assertThat(config.getThinkingDisplay()).isEmpty();
             assertThat(config.isReplayThinkingBlocks()).isTrue();
         });
     }

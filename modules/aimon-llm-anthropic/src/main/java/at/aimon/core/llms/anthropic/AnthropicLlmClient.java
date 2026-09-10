@@ -316,7 +316,7 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
                 providerName);
         final ChunkAggregator aggregator = new ChunkAggregator();
         final AnthropicStreamingMapper mapper = new AnthropicStreamingMapper(sink, aggregator, providerName,
-                this::reportRecurringDivergence);
+                this::reportRecurringDivergence, config.getThinkingDisplay().isPresent());
 
         // A per-request timeout, when set, also bounds the streaming call (worst-case ceiling incl. no-progress
         // stalls); when unset, keep the single-argument overload so the client-wide default applies unchanged.
@@ -516,6 +516,7 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
         final ReasoningEffort effort = requestedEffort(modelConfig).orElse(null);
         if (mode == AnthropicThinkingMode.OFF) {
             reportInertEffort(effort);
+            reportInertDisplay();
             return Optional.empty();
         }
         if (effort == ReasoningEffort.NONE) {
@@ -526,8 +527,16 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
             return Optional.empty();
         }
         if (dialect.get() == ThinkingDialect.ADAPTIVE) {
-            return Optional.of(ThinkingConfigParam.ofAdaptive(ThinkingConfigAdaptive.builder().build()));
+            final ThinkingConfigAdaptive.Builder adaptive = ThinkingConfigAdaptive.builder();
+            // putAdditionalProperty rather than a typed setter because this SDK version does not model `display` --
+            // ThinkingConfigAdaptive carries `type` and nothing else. It is the SDK's own escape hatch
+            // (@JsonAnySetter/@JsonAnyGetter) and the one this repository already uses to write unmodelled request
+            // fields; when the SDK grows the field, one line changes here.
+            config.getThinkingDisplay().ifPresent(
+                    display -> adaptive.putAdditionalProperty("display", JsonValue.from(display.wireValue())));
+            return Optional.of(ThinkingConfigParam.ofAdaptive(adaptive.build()));
         }
+        reportDisplayOnBudgetedDialect();
         return resolveExtendedThinking(effort, maxTokens);
     }
 
@@ -692,6 +701,64 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
                         + "it — note that a model whose thinking is on by default still thinks regardless.",
                 effort, AnthropicThinkingMode.OFF, AnthropicThinkingMode.AUTO, AnthropicThinkingMode.ADAPTIVE,
                 AnthropicThinkingMode.EXTENDED);
+    }
+
+    /**
+     * Says once that {@code thinkingDisplay} is inert under {@link AnthropicThinkingMode#OFF}.
+     *
+     * <p>
+     * The same shape and the same reasoning as {@link #reportInertEffort}: with no {@code thinking} parameter on the
+     * request there is no {@code display} to carry and no {@code thinking_delta} to forward, so an operator who set
+     * the key sees nothing at all and has no other signal that the two settings disagree. Not a refusal, for that
+     * method's reason — the remedy is a second key, and failing a boot over a combination whose fix is another
+     * setting turns valid configuration into a startup failure.
+     *
+     * <p>
+     * Reported through {@link #reportDivergence} rather than {@link #reportRecurringDivergence} because this is a
+     * property of the configuration, not of the traffic: the condition is constant for the life of the process, so
+     * saying it once is saying it completely.
+     *
+     * <p>
+     * <strong>There is a fourth inert pair and it is deliberately not reported here.</strong> A display configured
+     * alongside {@link ReasoningEffort#NONE} also reaches nothing — {@link #resolveThinking} returns on that value
+     * before this method runs — and that silence is the same exclusion {@link #reportInertEffort} makes for the same
+     * value, for the same reason. {@code NONE} is the operator saying <em>do not reason</em>, so there is no
+     * deliberation for a display to show, and advising them to turn thinking on would be advice in the wrong
+     * direction. The three conditions this client does report are ones where the two settings disagree; this one is
+     * a pair that agrees.
+     */
+    private void reportInertDisplay() {
+        if (config.getThinkingDisplay().isEmpty()) {
+            return;
+        }
+        reportDivergence("thinkingDisplayWithThinkingOff=" + config.getThinkingDisplay().get(),
+                "thinkingDisplay {} is configured but thinkingMode is {}, so this request carries no thinking "
+                        + "parameter, no display reaches the server and no reasoning text reaches the stream. Set the "
+                        + "thinking mode ({}, {} or {}) to act on it.",
+                config.getThinkingDisplay().get(), AnthropicThinkingMode.OFF, AnthropicThinkingMode.ADAPTIVE,
+                AnthropicThinkingMode.EXTENDED, AnthropicThinkingMode.AUTO);
+    }
+
+    /**
+     * Says once that {@code thinkingDisplay} put nothing on a budgeted request, while still doing its other half.
+     *
+     * <p>
+     * The half that works is the forwarding: on this dialect {@code thinking_delta} events already arrive and the key
+     * is what lets them reach the sink, so a watcher <em>does</em> see thinking text. The half that does not is the
+     * word itself — {@code ThinkingConfigEnabled} is not given a {@code display} sibling (see
+     * {@link AnthropicThinkingDisplay}), so the {@code summarized} the operator wrote reached nothing. Without this
+     * line, working output would read as proof the field went out.
+     */
+    private void reportDisplayOnBudgetedDialect() {
+        if (config.getThinkingDisplay().isEmpty()) {
+            return;
+        }
+        reportDivergence("thinkingDisplayOnBudgetedDialect=" + config.getThinkingDisplay().get(),
+                "thinkingDisplay {} is configured but this request speaks the {} dialect, which is not given a "
+                        + "`display` field, so the value itself reaches nothing. Thinking text still streams — the "
+                        + "budgeted dialect emits it regardless and the key is what forwards it — so the visible "
+                        + "output is not evidence that the field went out.",
+                config.getThinkingDisplay().get(), ThinkingDialect.BUDGETED);
     }
 
     private Optional<ThinkingConfigParam> resolveExtendedThinking(ReasoningEffort effort, int maxTokens) {

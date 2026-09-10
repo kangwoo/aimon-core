@@ -52,6 +52,7 @@ public final class AnthropicConfig {
     private final ReasoningEffort reasoningEffort;
     private final AnthropicThinkingMode thinkingMode;
     private final Integer thinkingBudgetTokens;
+    private final AnthropicThinkingDisplay thinkingDisplay;
     private final boolean replayThinkingBlocks;
     private final ModelCapabilityRegistry modelCapabilityRegistry;
 
@@ -65,6 +66,7 @@ public final class AnthropicConfig {
         this.reasoningEffort = builder.reasoningEffort;
         this.thinkingMode = Objects.requireNonNull(builder.thinkingMode, "Thinking mode cannot be null");
         this.thinkingBudgetTokens = builder.thinkingBudgetTokens;
+        this.thinkingDisplay = builder.thinkingDisplay;
         this.replayThinkingBlocks = builder.replayThinkingBlocks;
         this.modelCapabilityRegistry = builder.modelCapabilityRegistry;
 
@@ -200,6 +202,29 @@ public final class AnthropicConfig {
     }
 
     /**
+     * Gets the {@code display} this deployment asks for on the adaptive dialect, and the switch that lets thinking
+     * text reach the stream sink at all.
+     *
+     * <p>
+     * The key does two things, and which one bites depends on the dialect. On {@code ADAPTIVE} it writes
+     * {@code thinking.display} — without which the model's thinking text is omitted entirely — <em>and</em> opens the
+     * forwarding gate. On {@code EXTENDED} the deltas already arrive, so it only opens the gate and no {@code display}
+     * is written (see {@link AnthropicThinkingDisplay}). Under {@code OFF} nothing reaches it and the client says so
+     * once.
+     *
+     * <p>
+     * Gating the <em>forwarding</em> on configuration rather than on the arrival of deltas is what keeps an existing
+     * {@code thinkingMode: extended} deployment unchanged on upgrade: those deltas arrive today and are swallowed, and
+     * "forward whatever arrives" would have turned reasoning text on for every one of them without it asking.
+     *
+     * @return Optional containing the requested display, or empty when none was configured — in which case no
+     *         {@code display} is sent and no reasoning text reaches the sink
+     */
+    public Optional<AnthropicThinkingDisplay> getThinkingDisplay() {
+        return Optional.ofNullable(thinkingDisplay);
+    }
+
+    /**
      * Whether stored thinking blocks are replayed on the next request.
      *
      * @return {@code true} (the default) to replay them
@@ -239,13 +264,13 @@ public final class AnthropicConfig {
                 && Objects.equals(baseUrl, that.baseUrl) && apiKey.equals(that.apiKey) && model.equals(that.model)
                 && timeout.equals(that.timeout) && reasoningEffort == that.reasoningEffort
                 && thinkingMode == that.thinkingMode && Objects.equals(thinkingBudgetTokens, that.thinkingBudgetTokens)
-                && replayThinkingBlocks == that.replayThinkingBlocks;
+                && thinkingDisplay == that.thinkingDisplay && replayThinkingBlocks == that.replayThinkingBlocks;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(baseUrl, apiKey, model, temperature, maxTokens, timeout, reasoningEffort, thinkingMode,
-                thinkingBudgetTokens, replayThinkingBlocks);
+                thinkingBudgetTokens, thinkingDisplay, replayThinkingBlocks);
     }
 
     @Override
@@ -253,7 +278,7 @@ public final class AnthropicConfig {
         return "AnthropicConfig{" + "baseUrl='" + baseUrl + '\'' + ", model='" + model + '\'' + ", temperature="
                 + temperature + ", maxTokens=" + maxTokens + ", timeout=" + timeout + ", reasoningEffort="
                 + reasoningEffort + ", thinkingMode=" + thinkingMode + ", thinkingBudgetTokens=" + thinkingBudgetTokens
-                + ", replayThinkingBlocks=" + replayThinkingBlocks + '}';
+                + ", thinkingDisplay=" + thinkingDisplay + ", replayThinkingBlocks=" + replayThinkingBlocks + '}';
     }
 
     /** Builder for AnthropicConfig. */
@@ -268,6 +293,7 @@ public final class AnthropicConfig {
         private ReasoningEffort reasoningEffort;
         private AnthropicThinkingMode thinkingMode = DEFAULT_THINKING_MODE;
         private Integer thinkingBudgetTokens;
+        private AnthropicThinkingDisplay thinkingDisplay;
         private boolean replayThinkingBlocks = DEFAULT_REPLAY_THINKING_BLOCKS;
         private ModelCapabilityRegistry modelCapabilityRegistry = InMemoryModelCapabilityRegistry.withDefaults();
 
@@ -407,6 +433,24 @@ public final class AnthropicConfig {
          */
         public Builder thinkingBudgetTokens(Integer thinkingBudgetTokens) {
             this.thinkingBudgetTokens = thinkingBudgetTokens;
+            return this;
+        }
+
+        /**
+         * Asks the adaptive dialect for readable thinking text, and lets it reach the stream sink.
+         *
+         * <p>
+         * Unset by default, and unset means no {@code display} on the wire and no reasoning delta forwarded — a
+         * deployment that does not call this setter sends the same bytes and sees the same events as before this key
+         * existed. What the two constants ask for, and why the budgeted dialect is not given the field, is on
+         * {@link AnthropicThinkingDisplay}.
+         *
+         * @param thinkingDisplay
+         *            the display to ask for, or {@code null} to leave the field off entirely
+         * @return This builder
+         */
+        public Builder thinkingDisplay(AnthropicThinkingDisplay thinkingDisplay) {
+            this.thinkingDisplay = thinkingDisplay;
             return this;
         }
 

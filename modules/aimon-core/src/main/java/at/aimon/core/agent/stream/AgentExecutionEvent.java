@@ -30,6 +30,7 @@ import at.aimon.core.agent.AgentRuntimeId;
  * <li>{@link IterationStarted}
  * <li>{@link AssistantMessageReceived}
  * <li>{@link AssistantTextDelta}
+ * <li>{@link AssistantReasoningDelta}
  * <li>{@link AssistantTextStreamReset}
  * <li>{@link AssistantTextStreamCompleted}
  * <li>{@link ToolUseStarted}
@@ -56,6 +57,7 @@ public abstract sealed class AgentExecutionEvent
         permits IterationStarted,
                 AssistantMessageReceived,
                 AssistantTextDelta,
+                AssistantReasoningDelta,
                 AssistantTextStreamReset,
                 AssistantTextStreamCompleted,
                 ToolUseStarted,

@@ -8,6 +8,7 @@ import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 
 import java.util.List;
+import java.util.Set;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -396,6 +397,99 @@ class AnthropicThinkingRequestTest {
         // operator looking for it on a request that never carried one, so the sentence says where it came from.
         assertThat(warnings()).anyMatch(w -> w.startsWith("No temperature was set on this call"))
                 .noneMatch(w -> w.startsWith("temperature 0.4 is incompatible"));
+    }
+
+    // ---- thinkingDisplay: the ask, and where it does not go ----
+
+    @Test
+    @DisplayName("thinkingDisplay unset leaves the adaptive body byte-identical to what it was")
+    void displayUnsetLeavesTheAdaptiveBodyUnchanged() {
+        // Criterion 6's Anthropic half, asserted on the serialised params rather than on a getter. A whole-body
+        // comparison for the same reason offSendsTodaysBodyUnchanged uses one: naming the key this change added
+        // cannot notice a second one it did not mean to add.
+        final String body = AnthropicFixtures.bodyOf(sendCapturingParams(
+                client(config().thinkingMode(AnthropicThinkingMode.ADAPTIVE).build()), LlmModel.builder().build()));
+
+        assertThat(body).isEqualTo("{\"max_tokens\":4096,\"messages\":[{\"content\":\"hi\",\"role\":\"user\"}],"
+                + "\"model\":\"claude-sonnet-4-5\",\"system\":\"You are helpful\",\"thinking\":{\"type\":\"adaptive\"}}");
+        assertThat(warnings()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("thinkingDisplay under ADAPTIVE writes display with the configured wire value")
+    void displayUnderAdaptiveReachesTheRequest() {
+        final JsonNode body = send(client(config().thinkingMode(AnthropicThinkingMode.ADAPTIVE)
+                .thinkingDisplay(AnthropicThinkingDisplay.SUMMARIZED).build()), LlmModel.builder().build());
+
+        assertThat(body.get("thinking").get("type").asText()).isEqualTo("adaptive");
+        assertThat(body.get("thinking").get("display").asText()).isEqualTo("summarized");
+        assertThat(warnings()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("every constant spells a value the server actually accepts")
+    void everyConstantSpellsAnAcceptedWireValue() {
+        // The regression this pins is a shipped one: `UPDATES("updates")` rode an opted-in adaptive request until a
+        // live probe returned 400 with `thinking.adaptive.display: Input should be 'summarized', 'omitted'` (a bogus
+        // control 400s identically, so the field is validated rather than ignored). Nothing else catches a wrong
+        // spelling -- the SDK does not model `display`, so it goes out through putAdditionalProperty untyped.
+        final Set<String> acceptedByTheServer = Set.of("summarized", "omitted");
+
+        assertThat(AnthropicThinkingDisplay.values()).allSatisfy(display -> assertThat(acceptedByTheServer)
+                .as("`%s` is sent as `%s`, which the server rejects", display, display.wireValue())
+                .contains(display.wireValue()));
+    }
+
+    @Test
+    @DisplayName("omitted is accepted by the server and deliberately absent from the enum")
+    void theEnumDoesNotCarryOmitted() {
+        // Not an oversight and not a value waiting to be added. `omitted` is the server's default, so writing it is
+        // behaviourally identical to leaving the key unset -- and because presence of the key is what opens the
+        // forwarding gate, `thinkingDisplay: omitted` would mean "open the reasoning channel, and ask the server to
+        // put nothing in it". AnthropicThinkingDisplay's javadoc carries the reasoning.
+        assertThat(AnthropicThinkingDisplay.values()).extracting(AnthropicThinkingDisplay::wireValue)
+                .containsExactly("summarized");
+    }
+
+    @Test
+    @DisplayName("thinkingDisplay under EXTENDED leaves the body untouched and says so once")
+    void displayUnderExtendedIsInertOnTheWireAndReported() {
+        // The budgeted shape is not given a display sibling (unmeasured, and the deltas already arrive there), so
+        // the word reaches nothing while the forwarding still works. Silence would let working output read as proof
+        // the field went out.
+        final JsonNode body = send(
+                client(config().thinkingMode(AnthropicThinkingMode.EXTENDED)
+                        .thinkingDisplay(AnthropicThinkingDisplay.SUMMARIZED).build()),
+                LlmModel.builder().reasoningEffort(ReasoningEffort.LOW).build());
+
+        assertThat(body.get("thinking").get("type").asText()).isEqualTo("enabled");
+        assertThat(body.get("thinking").has("display")).isFalse();
+        assertThat(warnings()).anyMatch(w -> w.contains("is not given a `display` field"));
+    }
+
+    @Test
+    @DisplayName("thinkingDisplay under the shipped default OFF reaches nothing, and says so once")
+    void displayUnderOffIsInertAndReported() {
+        final String body = AnthropicFixtures.bodyOf(
+                sendCapturingParams(client(config().thinkingDisplay(AnthropicThinkingDisplay.SUMMARIZED).build()),
+                        LlmModel.builder().build()));
+
+        assertThat(body).doesNotContain("thinking");
+        assertThat(warnings()).anyMatch(w -> w.contains("no display reaches the server"));
+    }
+
+    @Test
+    @DisplayName("the two inert-display warnings are each said once, however many requests are sent")
+    void inertDisplayIsReportedOncePerProcess() {
+        // A property of the configuration, not of the traffic: the condition is constant for the life of the client,
+        // so reportDivergence's once-per-signature rule is the right one and reportRecurringDivergence's 1/10/100
+        // cadence would repeat a sentence nothing changed about.
+        final AnthropicLlmClient client = client(config().thinkingDisplay(AnthropicThinkingDisplay.SUMMARIZED).build());
+        send(client, LlmModel.builder().build());
+        send(client, LlmModel.builder().build());
+        send(client, LlmModel.builder().build());
+
+        assertThat(warnings()).filteredOn(w -> w.contains("no display reaches the server")).hasSize(1);
     }
 
     @Test

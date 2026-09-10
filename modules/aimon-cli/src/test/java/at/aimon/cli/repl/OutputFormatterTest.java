@@ -1,6 +1,7 @@
 package at.aimon.cli.repl;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.ByteArrayOutputStream;
@@ -21,6 +22,7 @@ import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.impl.orca.OrcaAgentExecutionResult;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
+import at.aimon.core.agent.stream.AssistantReasoningDelta;
 import at.aimon.core.agent.stream.AssistantTextDelta;
 import at.aimon.core.agent.stream.AssistantTextStreamCompleted;
 import at.aimon.core.agent.stream.AssistantTextStreamReset;
@@ -263,6 +265,99 @@ class OutputFormatterTest {
             formatter.displayEvent(buildCompleted("final text".length()));
 
             assertThat(getOutput()).isEqualTo("final text" + System.lineSeparator());
+        }
+
+        // ---- the reasoning channel, and the three transitions off it ----
+
+        private AssistantReasoningDelta buildReasoning(String text, int chunkIndex) {
+            return AssistantReasoningDelta.builder().timestamp(Instant.now())
+                    .agentRuntimeId(AgentRuntimeId.of("agent:test-4")).iteration(1).delta(text).chunkIndex(chunkIndex)
+                    .build();
+        }
+
+        @Test
+        @DisplayName("Should open a reasoning run with one marker and then stream inline")
+        void shouldMarkAReasoningRunOnceAndStreamInline() {
+            formatter.displayEvent(buildReasoning("weighing ", 0));
+            formatter.displayEvent(buildReasoning("the options", 1));
+
+            // One marker for the run, not one per delta, and no newline between deltas: reasoning streams the way
+            // answer text does. The leading newline lifts the run off whatever line was in progress.
+            assertThat(getOutput()).isEqualTo(System.lineSeparator() + "[thinking] weighing the options");
+        }
+
+        @Test
+        @DisplayName("Should close the reasoning line with exactly one newline when answer text starts")
+        void shouldCloseTheReasoningLineOnTheFirstTextDelta() {
+            formatter.displayEvent(buildReasoning("weighing", 0));
+            formatter.displayEvent(buildDelta("The answer", 0));
+            formatter.displayEvent(buildDelta(" is 42.", 1));
+
+            // Exactly one newline at the transition, and none on the deltas that follow — the flag is cleared by the
+            // first of them.
+            assertThat(getOutput()).isEqualTo(
+                    System.lineSeparator() + "[thinking] weighing" + System.lineSeparator() + "The answer is 42.");
+        }
+
+        @Test
+        @DisplayName("Should not print a second newline when a stream completes on an open reasoning line")
+        void streamCompletionOnAnOpenReasoningLineDoesNotDoubleTheNewline() {
+            // displayAssistantTextStreamCompleted already prints an unconditional newline, so the transition here
+            // clears the flag WITHOUT printing. Printing as well would leave a stray blank line behind every stream
+            // that ended mid-thought.
+            formatter.displayEvent(buildReasoning("half a thought", 0));
+            formatter.displayEvent(buildCompleted(0));
+
+            assertThat(getOutput())
+                    .isEqualTo(System.lineSeparator() + "[thinking] half a thought" + System.lineSeparator());
+        }
+
+        @Test
+        @DisplayName("Should not add a blank gap when a stream resets on an open reasoning line")
+        void streamResetOnAnOpenReasoningLineDoesNotDoubleTheNewline() {
+            // Same rule, other event: the retry banner carries its own leading newline, and this file's existing
+            // test for that layout warns explicitly against adding a second one.
+            formatter.displayEvent(buildReasoning("half a thought", 0));
+            formatter.displayEvent(buildReset("5xx_retry"));
+
+            assertThat(getOutput()).isEqualTo(System.lineSeparator() + "[thinking] half a thought"
+                    + System.lineSeparator() + "[Retrying stream: 5xx_retry]" + System.lineSeparator());
+        }
+
+        @Test
+        @DisplayName("Should re-open the marker for a second reasoning run after answer text")
+        void aSecondReasoningRunGetsItsOwnMarker() {
+            formatter.displayEvent(buildReasoning("first", 0));
+            formatter.displayEvent(buildDelta("answer", 0));
+            formatter.displayEvent(buildReasoning("second", 1));
+
+            assertThat(getOutput()).isEqualTo(System.lineSeparator() + "[thinking] first" + System.lineSeparator()
+                    + "answer" + System.lineSeparator() + "[thinking] second");
+        }
+
+        @Test
+        @DisplayName("Should be distinguishable from answer text when colour is on")
+        void reasoningIsDimmedWhenColourIsOn() {
+            settings.setColorOutput(true);
+
+            formatter.displayEvent(buildReasoning("thinking", 0));
+            final String reasoningOut = getOutput();
+            outputStream.reset();
+            formatter.displayEvent(buildDelta("answer", 0));
+            final String textOut = getOutput();
+
+            // Two channels, two colours. The marker keeps them apart on a monochrome terminal, which the other
+            // cases in this class run on; this one covers the colour half.
+            assertThat(reasoningOut).contains("thinking").isNotEqualTo(textOut);
+            assertThat(reasoningOut).isNotEqualTo(System.lineSeparator() + "[thinking] thinking");
+        }
+
+        @Test
+        @DisplayName("Should not throw for the sixteenth subtype — displayEvent's chain ends in a throw")
+        void displayEventHandlesTheReasoningDelta() {
+            // OutputFormatter.displayEvent's final else throws for any subtype the chain does not name, so this is
+            // the assertion that the new event reached the chain at all.
+            assertThatCode(() -> formatter.displayEvent(buildReasoning("thinking", 0))).doesNotThrowAnyException();
         }
     }
 

@@ -210,6 +210,98 @@ class OpenAIResponsesRequestFactoryTest {
         assertThat(ResponsesFixtures.bodyOf(params)).doesNotContain("reasoning\":{");
     }
 
+    // ---- reasoning.summary: the second, independent contributor to the reasoning object ----
+
+    @Test
+    @DisplayName("summary unset and effort unset: no reasoning object at all, exactly as before")
+    void noSummaryAndNoEffortSendsNoReasoningBlock() {
+        // Criterion 6's OpenAI half. The whole reasoning object has to stay absent, not merely be empty: an empty
+        // object is a wire change, and a deployment that set nothing must see none.
+        final ResponseCreateParams params = build(config(), LlmModel.builder().build(), List.of());
+
+        assertThat(params._reasoning()).isInstanceOf(JsonMissing.class);
+        assertThat(ResponsesFixtures.bodyOf(params)).doesNotContain("reasoning\":{");
+    }
+
+    @Test
+    @DisplayName("summary unset and effort set: the object is what it was — effort alone")
+    void effortWithoutSummaryIsUnchanged() {
+        final ResponseCreateParams params = build(config(),
+                LlmModel.builder().reasoningEffort(ReasoningEffort.HIGH).build(), List.of());
+
+        final JsonNode reasoning = ResponsesFixtures.bodyTreeOf(params).get("reasoning");
+        assertThat(reasoning.get("effort").asText()).isEqualTo("high");
+        assertThat(reasoning.has("summary")).isFalse();
+    }
+
+    @Test
+    @DisplayName("summary set and effort unset: a reasoning object carrying only the summary")
+    void summaryWithoutEffortStillProducesAReasoningObject() {
+        // The case the old applyReasoningEffort shape could not produce: it called builder.reasoning(...) only when
+        // an effort was present, so asking for a summary alone would have sent no reasoning object at all.
+        final OpenAIConfig config = OpenAIConfig.builder().apiKey("k").model(GPT5_NAME)
+                .reasoningSummary(OpenAiReasoningSummary.DETAILED).build();
+
+        final JsonNode reasoning = ResponsesFixtures.bodyTreeOf(build(config, LlmModel.builder().build(), List.of()))
+                .get("reasoning");
+
+        assertThat(reasoning.get("summary").asText()).isEqualTo("detailed");
+        assertThat(reasoning.has("effort")).isFalse();
+    }
+
+    @Test
+    @DisplayName("summary set and effort set: both fields, on one object")
+    void summaryAndEffortTogether() {
+        final OpenAIConfig config = OpenAIConfig.builder().apiKey("k").model(GPT5_NAME)
+                .reasoningSummary(OpenAiReasoningSummary.AUTO).build();
+
+        final JsonNode reasoning = ResponsesFixtures
+                .bodyTreeOf(
+                        build(config, LlmModel.builder().reasoningEffort(ReasoningEffort.MEDIUM).build(), List.of()))
+                .get("reasoning");
+
+        assertThat(reasoning.get("summary").asText()).isEqualTo("auto");
+        assertThat(reasoning.get("effort").asText()).isEqualTo("medium");
+    }
+
+    @Test
+    @DisplayName("an effort that fails the ladder check is still omitted while the summary is still sent")
+    void anOmittedEffortDoesNotSuppressTheSummary() {
+        // The two contributors are independent, and this is the row that proves it: the effort's two gates keep
+        // their old semantics — omitted and reported — but no longer return early from the whole method.
+        final OpenAIConfig config = OpenAIConfig.builder().apiKey("k").model(GPT5_NAME)
+                .reasoningSummary(OpenAiReasoningSummary.CONCISE).build();
+        final List<String> reported = new ArrayList<>();
+
+        final JsonNode reasoning = ResponsesFixtures
+                .bodyTreeOf(build(config, LlmModel.builder().reasoningEffort(ReasoningEffort.NONE).build(), List.of(),
+                        GPT5, (signature, message, args) -> reported.add(signature)))
+                .get("reasoning");
+
+        assertThat(reasoning.has("effort")).isFalse();
+        assertThat(reasoning.get("summary").asText()).isEqualTo("concise");
+        assertThat(reported).containsExactly("reasoningEffortOffLadder=NONE@" + GPT5_NAME);
+    }
+
+    @Test
+    @DisplayName("a model that takes no reasoning effort at all still receives the summary")
+    void aModelWithoutAnEffortLadderStillReceivesTheSummary() {
+        // No capability gate is added for summaries: ModelCapabilities says nothing about them, and inventing a
+        // seventh flag for an unmeasured axis would give every gateway operator one more question they cannot
+        // answer. A model that ignores the ask simply produces no summary events.
+        final OpenAIConfig config = OpenAIConfig.builder().apiKey("k").model("gpt-4o")
+                .reasoningSummary(OpenAiReasoningSummary.AUTO).build();
+        final ModelCapabilities noEffort = InMemoryModelCapabilityRegistry.withDefaults().resolve("gpt-4o");
+        assertThat(noEffort.supportsReasoningEffort()).as("fixture precondition").isFalse();
+
+        final JsonNode reasoning = ResponsesFixtures
+                .bodyTreeOf(build(config, LlmModel.builder().build(), List.of(), noEffort, SILENT, "gpt-4o"))
+                .get("reasoning");
+
+        assertThat(reasoning.get("summary").asText()).isEqualTo("auto");
+        assertThat(reasoning.has("effort")).isFalse();
+    }
+
     @Test
     @DisplayName("a tool's schema is copied verbatim and strict is false")
     void toolSchemaIsCopiedVerbatimAndStrictIsFalse() {

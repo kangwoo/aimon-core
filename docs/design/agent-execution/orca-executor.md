@@ -325,6 +325,10 @@ context-length 시그널 → `LlmPromptTooLongException`, 401/403 → `LlmAuthEx
 강제한다 — TOOL_USE_READY 는 `toolUse` 를 요구하고 `textDelta` 를 금지, TEXT_DELTA/STREAM_END 는
 `toolUse` 를 금지한다.
 
+> **이후 네 번째 kind 가 붙었다** — `REASONING_DELTA`(#62). 같은 상호배제가 그 자리에도 걸린다:
+> `reasoningDelta` 를 요구하고 `textDelta`·`toolUse` 를 금지하며, 나머지 세 kind 는 `reasoningDelta` 를
+> 금지한다. 설계는 [`../llm/reasoning-delta-stream.md`](../llm/reasoning-delta-stream.md).
+
 `ChunkAggregator` 에는 **비-변조 읽기** `finalizeToolCall(int)` 를 추가한다. 슬롯이 비었거나
 id·name 이 결측이면 empty 를 돌려주는데, 이 조건은 `toLlmResponse()` 가 그 슬롯을 skip 하는 조건과
 **동일**하다. 부분 프래그먼트만 본 상태에서도 절대 throw 하지 않는다.

@@ -197,4 +197,72 @@ class LlmStreamChunkTest {
 
         assertThat(chunk.toString()).contains("TOOL_USE_READY").contains("index=4").contains("Grep").contains("tu_9");
     }
+
+    // ---- REASONING_DELTA (the model's deliberation, never its answer) ----
+
+    @Test
+    void reasoningDeltaCarriesIndexAndDelta() {
+        LlmStreamChunk chunk = LlmStreamChunk.reasoningDelta(3, "weighing the options");
+
+        assertThat(chunk.getKind()).isEqualTo(LlmStreamChunk.Kind.REASONING_DELTA);
+        assertThat(chunk.getIndex()).isEqualTo(3);
+        assertThat(chunk.getReasoningDelta()).contains("weighing the options");
+        // The load-bearing half: a reasoning chunk reads as empty through the accessor every existing caller uses,
+        // so a caller that never learned about this kind cannot read deliberation as answer text.
+        assertThat(chunk.getTextDelta()).isEmpty();
+        assertThat(chunk.getToolUse()).isEmpty();
+        assertThat(chunk.getTokenUsage()).isEmpty();
+    }
+
+    @Test
+    void reasoningDeltaRejectsNullDelta() {
+        assertThatNullPointerException().isThrownBy(() -> LlmStreamChunk.reasoningDelta(0, null));
+    }
+
+    @Test
+    void reasoningDeltaRejectsEmptyDelta() {
+        assertThatIllegalArgumentException().isThrownBy(() -> LlmStreamChunk.reasoningDelta(0, ""));
+    }
+
+    @Test
+    void getReasoningDeltaIsEmptyForOtherKinds() {
+        assertThat(LlmStreamChunk.textDelta(0, "x").getReasoningDelta()).isEmpty();
+        assertThat(LlmStreamChunk.toolUseReady(0, ToolUse.of("id", "N", Map.of())).getReasoningDelta()).isEmpty();
+        assertThat(LlmStreamChunk.streamEnd(0, null, Optional.empty()).getReasoningDelta()).isEmpty();
+    }
+
+    @Test
+    void builderRejectsReasoningDeltaOnEveryOtherKind() {
+        // Exclusivity is enforced in both directions at construction, so a chunk carrying both fields cannot exist
+        // for any consumer to disagree about.
+        assertThatIllegalArgumentException().isThrownBy(() -> LlmStreamChunk.builder()
+                .kind(LlmStreamChunk.Kind.TEXT_DELTA).index(0).textDelta("x").reasoningDelta("y").build());
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> LlmStreamChunk.builder().kind(LlmStreamChunk.Kind.TOOL_USE_READY).index(0)
+                        .toolUse(ToolUse.of("id", "N", Map.of())).reasoningDelta("y").build());
+        assertThatIllegalArgumentException().isThrownBy(() -> LlmStreamChunk.builder()
+                .kind(LlmStreamChunk.Kind.STREAM_END).index(0).reasoningDelta("y").build());
+    }
+
+    @Test
+    void builderRejectsTextDeltaAndToolUseOnReasoningDelta() {
+        assertThatIllegalArgumentException().isThrownBy(() -> LlmStreamChunk.builder()
+                .kind(LlmStreamChunk.Kind.REASONING_DELTA).index(0).reasoningDelta("y").textDelta("x").build());
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> LlmStreamChunk.builder().kind(LlmStreamChunk.Kind.REASONING_DELTA).index(0)
+                        .reasoningDelta("y").toolUse(ToolUse.of("id", "N", Map.of())).build());
+    }
+
+    @Test
+    void builderRejectsMissingDeltaOnReasoningDeltaKind() {
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> LlmStreamChunk.builder().kind(LlmStreamChunk.Kind.REASONING_DELTA).index(0).build());
+    }
+
+    @Test
+    void reasoningDeltaToStringContainsKindAndIndex() {
+        LlmStreamChunk chunk = LlmStreamChunk.reasoningDelta(2, "abc");
+
+        assertThat(chunk.toString()).contains("REASONING_DELTA").contains("index=2").contains("len=3");
+    }
 }

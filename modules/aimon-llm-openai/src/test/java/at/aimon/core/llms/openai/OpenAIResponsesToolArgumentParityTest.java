@@ -146,7 +146,7 @@ class OpenAIResponsesToolArgumentParityTest {
 
         final OpenAIResponsesStreamingMapper mapper = new OpenAIResponsesStreamingMapper(chunk -> {
         }, aggregator, new OpenAIResponsesMessageConverter(), "OpenAI", (signature, message, args) -> {
-        });
+        }, false);
 
         assertThatCode(() -> mapper.consume(events.stream())).doesNotThrowAnyException();
 

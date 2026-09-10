@@ -41,6 +41,14 @@ import at.aimon.core.llm.streaming.LlmStreamSink;
  * path (the ReAct loop's primary path) while every test whose fixtures the author writes stayed green.
  *
  * <p>
+ * <strong>Reasoning <em>text</em> is a different payload from the reasoning <em>item</em>, and the two never
+ * mix.</strong>
+ * The item above carries {@code encrypted_content} and is what the next request replays; the deltas below carry a
+ * server-written summary (or, on a model that emits it, raw reasoning text) and are what a person watches. They are
+ * forwarded only when this deployment asked for a summary, and {@code addReasoningTrace} is never called with one —
+ * putting summary text into a trace would change what is replayed to the model on the next iteration.
+ *
+ * <p>
  * Stateful and non-thread-safe by design — consume each SDK stream through a fresh instance.
  */
 final class OpenAIResponsesStreamingMapper {
@@ -50,6 +58,9 @@ final class OpenAIResponsesStreamingMapper {
     private final OpenAIResponsesMessageConverter converter;
     private final String providerName;
     private final OpenAIDivergenceReporter reporter;
+
+    /** Whether reasoning deltas reach the sink — see {@link OpenAIResponsesExchange}'s constructor. */
+    private final boolean forwardReasoning;
 
     /**
      * The output items as {@code output_item.done} delivered them: in output order, and including the
@@ -63,12 +74,14 @@ final class OpenAIResponsesStreamingMapper {
     private String lastIncompleteReason;
 
     OpenAIResponsesStreamingMapper(LlmStreamSink sink, ChunkAggregator aggregator,
-            OpenAIResponsesMessageConverter converter, String providerName, OpenAIDivergenceReporter reporter) {
+            OpenAIResponsesMessageConverter converter, String providerName, OpenAIDivergenceReporter reporter,
+            boolean forwardReasoning) {
         this.sink = Objects.requireNonNull(sink, "sink");
         this.aggregator = Objects.requireNonNull(aggregator, "aggregator");
         this.converter = Objects.requireNonNull(converter, "converter");
         this.providerName = Objects.requireNonNull(providerName, "providerName");
         this.reporter = Objects.requireNonNull(reporter, "reporter");
+        this.forwardReasoning = forwardReasoning;
     }
 
     /**
@@ -87,6 +100,13 @@ final class OpenAIResponsesStreamingMapper {
             if (!delta.isEmpty()) {
                 emitTextDelta(delta);
             }
+        } else if (forwardReasoning && event.isReasoningSummaryTextDelta()) {
+            emitReasoningDelta(event.asReasoningSummaryTextDelta().delta());
+        } else if (forwardReasoning && event.isReasoningTextDelta()) {
+            // Both families, under the one gate. A model that emits raw reasoning text rather than a summary would
+            // otherwise show nothing to a deployment that asked to see reasoning — the always-empty channel this
+            // whole feature exists to remove, at one-model granularity.
+            emitReasoningDelta(event.asReasoningTextDelta().delta());
         } else if (event.isOutputItemAdded()) {
             openToolCallSlot(event.asOutputItemAdded());
         } else if (event.isFunctionCallArgumentsDelta()) {
@@ -111,6 +131,23 @@ final class OpenAIResponsesStreamingMapper {
 
     private void emitTextDelta(String text) {
         final LlmStreamChunk chunk = LlmStreamChunk.textDelta(nextChunkIndex++, text);
+        aggregator.accept(chunk);
+        sink.accept(chunk);
+    }
+
+    /**
+     * Emits one reasoning delta, filtering empties as {@link #emitTextDelta} does.
+     *
+     * <p>
+     * Deliberately does <b>not</b> call {@code addReasoningTrace}: the trace on this path is the reasoning item's
+     * {@code encrypted_content}, and a summary is not a substitute for it. Merging the two would change what is
+     * replayed to the model next iteration, which is the kind of thing a later reader tidies up — hence this sentence.
+     */
+    private void emitReasoningDelta(String reasoning) {
+        if (reasoning == null || reasoning.isEmpty()) {
+            return;
+        }
+        final LlmStreamChunk chunk = LlmStreamChunk.reasoningDelta(nextChunkIndex++, reasoning);
         aggregator.accept(chunk);
         sink.accept(chunk);
     }

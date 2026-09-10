@@ -681,12 +681,15 @@ public SseEmitter stream(@RequestParam String threadId, @RequestParam String inp
 - `events(...)` 의 publisher 는 **여러 관찰자가 동시에 구독**할 수 있습니다.
 - 구독자는 **측면 출력**(side-channel)입니다 — 거기서 던진 예외로 턴이 취소되지 않습니다. 관측 실패가
   사용자 응답을 망가뜨리지 않도록 설계하세요.
-- 이벤트 타입은 `at.aimon.core.agent.stream` 에 **15개**입니다 (sealed 이므로 이것이 전부입니다) —
+- 이벤트 타입은 `at.aimon.core.agent.stream` 에 **16개**입니다 (sealed 이므로 이것이 전부입니다) —
   `IterationStarted` / `IterationCompleted` / `AssistantMessageReceived` / `AssistantTextDelta` /
-  `AssistantTextStreamReset` / `AssistantTextStreamCompleted` / `ToolUseStarted` / `ToolResultReady` /
-  `SubagentTaskCompleted` / `SkillTurnSuspendedEvent` / `CompactBoundary` / `InterruptedAt` / `RejectedAt` /
-  `ExecutionCompleted` / `ExecutionError`. `getIteration()` 은 sealed 기반 클래스의 `final` 메서드이므로
-  모든 서브타입에서 읽을 수 있습니다.
+  `AssistantReasoningDelta` / `AssistantTextStreamReset` / `AssistantTextStreamCompleted` / `ToolUseStarted` /
+  `ToolResultReady` / `SubagentTaskCompleted` / `SkillTurnSuspendedEvent` / `CompactBoundary` / `InterruptedAt` /
+  `RejectedAt` / `ExecutionCompleted` / `ExecutionError`. `getIteration()` 은 sealed 기반 클래스의 `final`
+  메서드이므로 모든 서브타입에서 읽을 수 있습니다.
+- `AssistantReasoningDelta` 는 모델의 **숙고**이지 답이 아닙니다. 두 채널을 한 누산기에 붙이면 사용자가
+  보는 답에 모델의 사고 과정이 섞입니다 — 별도 타입인 이유가 그것입니다. 이 채널은 provider 별로 opt-in
+  이며 기본은 꺼져 있습니다.
 
 ### 7.1 큐에 대한 정직한 이야기
 

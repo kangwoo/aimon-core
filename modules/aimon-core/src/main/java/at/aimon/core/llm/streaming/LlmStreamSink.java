@@ -13,6 +13,8 @@ package at.aimon.core.llm.streaming;
  * <b>Lifecycle expectations</b>:
  * <ul>
  * <li>Zero or more {@link LlmStreamChunk.Kind#TEXT_DELTA} chunks (chronologically increasing {@code index}).</li>
+ * <li>Zero or more {@link LlmStreamChunk.Kind#REASONING_DELTA} chunks interleaved with them, carrying the model's
+ * deliberation rather than its answer — only when the deployment opted in on its provider.</li>
  * <li>Exactly one terminal {@link LlmStreamChunk.Kind#STREAM_END} chunk per successful stream.</li>
  * <li>On provider error, the streaming call itself throws — the sink is not expected to receive a stream-end.</li>
  * </ul>

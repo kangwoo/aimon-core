@@ -10,6 +10,7 @@ import java.util.Set;
 import at.aimon.cli.config.AnthropicProviderConfig;
 import at.aimon.cli.config.LlmProviderConfig;
 import at.aimon.cli.config.ModelCapabilityConfig;
+import at.aimon.cli.config.OpenAiProviderConfig;
 import at.aimon.cli.exception.ConfigurationException;
 import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.ReasoningEffort;
@@ -27,6 +28,9 @@ public class LlmClientFactory {
 
     /** Anthropic 전용 블록의 yaml 키 경로. 같은 이유로 상수다. */
     private static final String ANTHROPIC_KEY = "llm.anthropic";
+
+    /** OpenAI 전용 블록의 yaml 키 경로. 이 라운드가 연 네임스페이스이고, 거절이 이 이름을 부른다. */
+    private static final String OPENAI_KEY = "llm.openai";
 
     /** provider 선택자의 yaml 키 경로. {@link #ANTHROPIC_KEY} 를 거절할 때 함께 부른다. */
     private static final String PROVIDER_KEY = "llm.provider";
@@ -66,6 +70,7 @@ public class LlmClientFactory {
      * @return 조립된 Anthropic 설정
      */
     AnthropicConfig anthropicConfig(LlmProviderConfig config) {
+        refuseOpenAiBlock(config);
         final String apiKey = validateApiKey(config.getApiKey());
         final AnthropicConfig.Builder builder = AnthropicConfig.builder().apiKey(apiKey);
 
@@ -126,6 +131,9 @@ public class LlmClientFactory {
         if (anthropic.getThinkingBudgetTokens() != null) {
             builder.thinkingBudgetTokens(anthropic.getThinkingBudgetTokens());
         }
+        if (anthropic.getThinkingDisplay() != null) {
+            builder.thinkingDisplay(anthropic.getThinkingDisplay());
+        }
         if (anthropic.getReplayThinkingBlocks() != null) {
             builder.replayThinkingBlocks(anthropic.getReplayThinkingBlocks());
         }
@@ -165,7 +173,22 @@ public class LlmClientFactory {
             builder.reasoningEffort(config.getReasoningEffort());
         }
 
+        applyOpenAi(builder, config.getOpenai());
+
         return builder.build();
+    }
+
+    /**
+     * {@code llm.openai} 의 키를 vendor config 에 옮긴다. {@link #applyThinking} 와 같은 계약이다 —
+     * <b>적힌 것만</b> 옮기므로, 블록이 없는 배포의 요청은 이 변경 전과 글자 하나 다르지 않다.
+     */
+    private void applyOpenAi(OpenAIConfig.Builder builder, OpenAiProviderConfig openai) {
+        if (openai == null || openai.isEmpty()) {
+            return;
+        }
+        if (openai.getReasoningSummary() != null) {
+            builder.reasoningSummary(openai.getReasoningSummary());
+        }
     }
 
     /**
@@ -174,13 +197,28 @@ public class LlmClientFactory {
      * <p>
      * "설정했는데 안 읽히는 것이 가장 나쁘다" 의 적용이다. 거절은 <b>실제로 도는 분기 안에서만</b> 한다 —
      * 분기 밖에서 검사하면 그 블록을 정당하게 적어 둔 배포(자기 클라이언트를 쓰는 배포)를 기동 실패로 만든다.
-     * 반대 방향의 짝은 없다: 오늘 {@code llm.openai} 블록이 존재하지 않으므로 anthropic 분기가 거절할 것이 없다.
+     *
+     * <p>
+     * <b>이제 반대 방향의 짝이 있다</b> — {@link #refuseOpenAiBlock}. 예전에는 {@code llm.openai} 블록이
+     * 존재하지 않아 anthropic 분기가 거절할 것이 없었고, 그것을 거짓으로 만든 것이 이 라운드다.
      */
     private void refuseAnthropicBlock(LlmProviderConfig config) {
         if (config.getAnthropic() != null && !config.getAnthropic().isEmpty()) {
             throw new ConfigurationException(
                     "`" + ANTHROPIC_KEY + "` is set but `" + PROVIDER_KEY + "` is `" + config.getProvider()
                             + "`, so nothing reads it. Remove the block, or set `" + PROVIDER_KEY + ": anthropic`.");
+        }
+    }
+
+    /**
+     * 이 provider 가 읽지 않을 {@code llm.openai} 블록을 이름으로 거절한다. {@link #refuseAnthropicBlock} 의
+     * 대칭이며 같은 규칙을 따른다 — 실제로 도는 분기 안에서만, 빈 블록에는 발화하지 않는다.
+     */
+    private void refuseOpenAiBlock(LlmProviderConfig config) {
+        if (config.getOpenai() != null && !config.getOpenai().isEmpty()) {
+            throw new ConfigurationException(
+                    "`" + OPENAI_KEY + "` is set but `" + PROVIDER_KEY + "` is `" + config.getProvider()
+                            + "`, so nothing reads it. Remove the block, or set `" + PROVIDER_KEY + ": openai`.");
         }
     }
 

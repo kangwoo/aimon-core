@@ -31,14 +31,17 @@ class AgentExecutionEventTest {
     class SealedHierarchyTests {
 
         @Test
-        @DisplayName("permits exactly 15 subtypes")
-        void permitsExactly15Subtypes() {
+        @DisplayName("permits exactly 16 subtypes")
+        void permitsExactly16Subtypes() {
+            // A tripwire, not a tautology: adding a subtype is source-breaking for any out-of-tree exhaustive
+            // consumer, so the count is spelled out here — and in this method's name and display name — to make
+            // landing one a deliberate edit rather than a green build.
             Class<?>[] permitted = AgentExecutionEvent.class.getPermittedSubclasses();
-            assertThat(permitted).hasSize(15).contains(IterationStarted.class, AssistantMessageReceived.class,
-                    AssistantTextDelta.class, AssistantTextStreamReset.class, AssistantTextStreamCompleted.class,
-                    ToolUseStarted.class, ToolResultReady.class, CompactBoundary.class, IterationCompleted.class,
-                    ExecutionCompleted.class, ExecutionError.class, SkillTurnSuspendedEvent.class, InterruptedAt.class,
-                    RejectedAt.class, SubagentTaskCompleted.class);
+            assertThat(permitted).hasSize(16).contains(IterationStarted.class, AssistantMessageReceived.class,
+                    AssistantTextDelta.class, AssistantReasoningDelta.class, AssistantTextStreamReset.class,
+                    AssistantTextStreamCompleted.class, ToolUseStarted.class, ToolResultReady.class,
+                    CompactBoundary.class, IterationCompleted.class, ExecutionCompleted.class, ExecutionError.class,
+                    SkillTurnSuspendedEvent.class, InterruptedAt.class, RejectedAt.class, SubagentTaskCompleted.class);
         }
 
         @Test

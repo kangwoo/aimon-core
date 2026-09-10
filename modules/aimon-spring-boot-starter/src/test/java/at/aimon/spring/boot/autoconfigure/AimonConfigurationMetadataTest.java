@@ -85,6 +85,12 @@ class AimonConfigurationMetadataTest {
         // written out, which is what makes a hand-written hint as drift-proof as a recorded enum type.
         assertThat(valueCandidates(AimonProperties.LLM_ANTHROPIC_THINKING_MODE))
                 .containsExactlyInAnyOrderElementsOf(thinkingModeSpellings());
+        // The third and fourth hand-written blocks, and both are here for the reason above: their enums live in
+        // compileOnly modules. Derived from values() for the same drift-proofing.
+        assertThat(valueCandidates(AimonProperties.LLM_ANTHROPIC_THINKING_DISPLAY)).containsExactlyInAnyOrderElementsOf(
+                enumSpellings("at.aimon.core.llms.anthropic.AnthropicThinkingDisplay"));
+        assertThat(valueCandidates(AimonProperties.LLM_OPENAI_REASONING_SUMMARY))
+                .containsExactlyInAnyOrderElementsOf(enumSpellings("at.aimon.core.llms.openai.OpenAiReasoningSummary"));
     }
 
     /**
@@ -106,6 +112,23 @@ class AimonConfigurationMetadataTest {
             }
         } catch (ClassNotFoundException e) {
             throw new IllegalStateException("aimon-llm-anthropic is on the test classpath of this module", e);
+        }
+        return spellings;
+    }
+
+    /**
+     * The accepted spellings of a vendor enum, read off it by name for the reason
+     * {@link #thinkingModeSpellings()} gives: both vendor modules are {@code compileOnly} here, and naming one of
+     * their types in a signature is the thing this module's tests exist to keep out.
+     */
+    private static List<String> enumSpellings(String className) {
+        final List<String> spellings = new ArrayList<>();
+        try {
+            for (Object constant : Class.forName(className).getEnumConstants()) {
+                spellings.add(((Enum<?>) constant).name().toLowerCase(java.util.Locale.ROOT));
+            }
+        } catch (ClassNotFoundException e) {
+            throw new IllegalStateException(className + " is on the test classpath of this module", e);
         }
         return spellings;
     }
@@ -132,17 +155,18 @@ class AimonConfigurationMetadataTest {
     }
 
     @Test
-    @DisplayName("only the two String selectors need hand-written hints")
+    @DisplayName("only the String selectors need hand-written hints")
     void enumSelectorsCarryTheirValuesInTheType() {
         // Locks the reason every other selector is an enum. If a hint block ever appears for one of them, either
         // the processor's behaviour changed or someone hand-wrote metadata that will now drift from the enum.
-        // The two exceptions are the two String-typed selectors, and each is a String for its own reason --
-        // aimon.llm.provider so a third party can contribute a value, thinking-mode so no signature in this
-        // module names a compileOnly vendor type.
+        // The exceptions are the String-typed selectors, and each is a String for its own reason --
+        // aimon.llm.provider so a third party can contribute a value, the three vendor keys so no signature in
+        // this module names a compileOnly vendor type.
         final List<String> hinted = new ArrayList<>();
         METADATA.path("hints").forEach(hint -> hinted.add(hint.path("name").asText()));
         assertThat(hinted).containsExactlyInAnyOrder(AimonProperties.LLM_PROVIDER,
-                AimonProperties.LLM_ANTHROPIC_THINKING_MODE);
+                AimonProperties.LLM_ANTHROPIC_THINKING_MODE, AimonProperties.LLM_ANTHROPIC_THINKING_DISPLAY,
+                AimonProperties.LLM_OPENAI_REASONING_SUMMARY);
     }
 
     @Test

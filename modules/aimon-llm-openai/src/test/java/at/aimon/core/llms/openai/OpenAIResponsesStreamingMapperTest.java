@@ -37,12 +37,20 @@ class OpenAIResponsesStreamingMapperTest {
     private final ChunkAggregator aggregator = new ChunkAggregator();
 
     private LlmResponse consume(OpenAIDivergenceReporter reporter, String... eventJson) {
+        return consume(reporter, false, eventJson);
+    }
+
+    /**
+     * @param forwardReasoning
+     *            whether the deployment asked for a reasoning summary — off in every case but one.
+     */
+    private LlmResponse consume(OpenAIDivergenceReporter reporter, boolean forwardReasoning, String... eventJson) {
         final List<ResponseStreamEvent> events = new ArrayList<>();
         for (String json : eventJson) {
             events.add(ResponsesFixtures.event(json));
         }
-        new OpenAIResponsesStreamingMapper(sink, aggregator, new OpenAIResponsesMessageConverter(), "OpenAI", reporter)
-                .consume(events.stream());
+        new OpenAIResponsesStreamingMapper(sink, aggregator, new OpenAIResponsesMessageConverter(), "OpenAI", reporter,
+                forwardReasoning).consume(events.stream());
         return aggregator.toLlmResponse();
     }
 

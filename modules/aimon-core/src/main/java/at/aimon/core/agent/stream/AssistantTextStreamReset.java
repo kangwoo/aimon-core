@@ -15,6 +15,12 @@ import at.aimon.core.agent.AgentRuntimeId;
  * visually rolled back before the next attempt's text starts arriving.
  *
  * <p>
+ * <b>This bounds the whole attempt, not just the text channel.</b> A retry discards everything the attempt produced,
+ * {@link AssistantReasoningDelta} included, so a renderer showing both channels clears both here. The name predates
+ * the reasoning channel and now says less than the event does; renaming a published event type (and the payload frame
+ * name that crosses a node boundary) to carry that nuance would be a larger change than the channel it describes.
+ *
+ * <p>
  * Subscribers (notably REPL / UI renderers) should respond by clearing any partial text accumulated from the previous
  * attempt and preparing for a fresh stream. The executor is responsible for also resetting the server-side aggregator
  * so the final assistant message reflects only the successful attempt.

@@ -14,7 +14,9 @@ import org.junit.jupiter.api.Test;
 
 import at.aimon.cli.exception.ConfigurationException;
 import at.aimon.core.llm.ReasoningEffort;
+import at.aimon.core.llms.anthropic.AnthropicThinkingDisplay;
 import at.aimon.core.llms.anthropic.AnthropicThinkingMode;
+import at.aimon.core.llms.openai.OpenAiReasoningSummary;
 
 @DisplayName("CliConfigLoader Tests")
 class CliConfigLoaderTest {
@@ -786,24 +788,58 @@ class CliConfigLoaderTest {
         }
 
         @Test
-        @DisplayName("Should bind all three keys")
-        void bindsAllThreeKeys() throws IOException {
+        @DisplayName("Should bind all four keys")
+        void bindsAllFourKeys() throws IOException {
             Path configFile = write("""
                     llm:
                       provider: "anthropic"
                       apiKey: "test-api-key"
                       model: "claude-sonnet-4-5"
                       anthropic:
-                        thinkingMode: extended
-                        thinkingBudgetTokens: 4000
+                        thinkingMode: adaptive
+                        thinkingDisplay: summarized
                         replayThinkingBlocks: false
                     """);
 
             AnthropicProviderConfig anthropic = loader.load(configFile.toString()).getLlmConfig().getAnthropic();
 
-            assertThat(anthropic.getThinkingMode()).isEqualTo(AnthropicThinkingMode.EXTENDED);
-            assertThat(anthropic.getThinkingBudgetTokens()).isEqualTo(4000);
+            assertThat(anthropic.getThinkingMode()).isEqualTo(AnthropicThinkingMode.ADAPTIVE);
+            assertThat(anthropic.getThinkingDisplay()).isEqualTo(AnthropicThinkingDisplay.SUMMARIZED);
             assertThat(anthropic.getReplayThinkingBlocks()).isFalse();
+
+            // The budget is on the other dialect, so it gets its own file rather than an illegal combination here.
+            Path budgeted = write("""
+                    llm:
+                      provider: "anthropic"
+                      apiKey: "test-api-key"
+                      anthropic:
+                        thinkingMode: extended
+                        thinkingBudgetTokens: 4000
+                    """);
+            assertThat(loader.load(budgeted.toString()).getLlmConfig().getAnthropic().getThinkingBudgetTokens())
+                    .isEqualTo(4000);
+        }
+
+        @Test
+        @DisplayName("Should accept every display spelling, in any case")
+        void everyDisplaySpellingBinds() throws IOException {
+            // Sourced from values() for the same reason the mode test beside it is. This key rides the default enum
+            // deserializer rather than a hand-written one — none of its spellings is a YAML boolean — so what these
+            // casings exercise is the mapper-wide ACCEPT_CASE_INSENSITIVE_ENUMS.
+            for (AnthropicThinkingDisplay display : AnthropicThinkingDisplay.values()) {
+                for (String written : new String[]{display.name(), display.name().toLowerCase(java.util.Locale.ROOT)}) {
+                    Path configFile = write("""
+                            llm:
+                              provider: "anthropic"
+                              apiKey: "test-api-key"
+                              anthropic:
+                                thinkingDisplay: %s
+                            """.formatted(written));
+
+                    assertThat(loader.load(configFile.toString()).getLlmConfig().getAnthropic().getThinkingDisplay())
+                            .as("thinkingDisplay written as `%s`", written).isEqualTo(display);
+                }
+            }
         }
 
         @Test
@@ -914,6 +950,47 @@ class CliConfigLoaderTest {
         }
 
         @Test
+        @DisplayName("Should bind the openai block, which this round opened")
+        void bindsTheOpenAiBlock() throws IOException {
+            Path configFile = write("""
+                    llm:
+                      provider: "openai"
+                      apiKey: "test-api-key"
+                      model: "gpt-5.1"
+                      openai:
+                        reasoningSummary: DeTaIlEd
+                    """);
+
+            // Case-insensitively, through the mapper-wide setting: unlike thinkingMode, no spelling of this key's
+            // values collides with a YAML boolean, so it needs no deserializer of its own.
+            assertThat(loader.load(configFile.toString()).getLlmConfig().getOpenai().getReasoningSummary())
+                    .isEqualTo(OpenAiReasoningSummary.DETAILED);
+        }
+
+        @Test
+        @DisplayName("Should treat an absent or childless openai block as empty")
+        void anAbsentOpenAiBlockIsEmpty() throws IOException {
+            Path absent = write("""
+                    llm:
+                      provider: "openai"
+                      apiKey: "test-api-key"
+                      model: "gpt-5.1"
+                    """);
+            Path childless = write("""
+                    llm:
+                      provider: "openai"
+                      apiKey: "test-api-key"
+                      model: "gpt-5.1"
+                      openai:
+                    """);
+
+            // Same contract as the anthropic block: the setter turns yaml's null back into an empty instance, so
+            // the anthropic branch's refusal does not fire on a block nobody wrote anything into.
+            assertThat(loader.load(absent.toString()).getLlmConfig().getOpenai().isEmpty()).isTrue();
+            assertThat(loader.load(childless.toString()).getLlmConfig().getOpenai().isEmpty()).isTrue();
+        }
+
+        @Test
         @DisplayName("Should treat a block with no children as absent")
         void aChildlessBlockIsEmpty() throws IOException {
             // yaml binds `anthropic:` with nothing under it to null, and the setter turns that back into an empty
@@ -927,6 +1004,21 @@ class CliConfigLoaderTest {
                     """);
 
             assertThat(loader.load(configFile.toString()).getLlmConfig().getAnthropic().isEmpty()).isTrue();
+        }
+
+        @Test
+        @DisplayName("Should reject a display value the enum does not have")
+        void anUnknownDisplayIsRejected() throws IOException {
+            Path configFile = write("""
+                    llm:
+                      provider: "anthropic"
+                      apiKey: "test-api-key"
+                      anthropic:
+                        thinkingDisplay: verbose
+                    """);
+
+            assertThatThrownBy(() -> loader.load(configFile.toString())).isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("Invalid configuration structure");
         }
 
         @Test

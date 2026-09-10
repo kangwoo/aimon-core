@@ -21,6 +21,7 @@ import at.aimon.core.agent.session.TurnId;
 import at.aimon.core.agent.session.signal.SessionSignal;
 import at.aimon.core.agent.session.signal.SessionSignalBus;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
+import at.aimon.core.agent.stream.AssistantReasoningDelta;
 import at.aimon.core.agent.stream.AssistantTextDelta;
 import at.aimon.core.agent.stream.ExecutionCompleted;
 import at.aimon.core.agent.stream.IterationStarted;
@@ -31,10 +32,16 @@ import at.aimon.core.agent.stream.IterationStarted;
  * <p>
  * The buffer used to reject whatever arrived once it was full. Because terminal frames are always the <em>last</em>
  * events of a turn, an overflowing turn dropped exactly the frame that tells a remote subscriber the turn is over, and
- * that subscriber never completed. The relay now discards the oldest droppable text delta to make room, and only
+ * that subscriber never completed. The relay now discards the oldest droppable frame to make room, and only
  * sacrifices a structural frame when the buffer holds nothing else.
+ *
+ * <p>
+ * There are three ranks rather than two since the reasoning channel arrived, and the rank of the <em>incoming</em>
+ * frame matters as well as that of the buffered one. The cases at the bottom of this class are the two a widened
+ * boolean would get wrong: a text delta must evict a buffered reasoning delta, and an incoming reasoning delta must
+ * be dropped rather than displace buffered answer text.
  */
-@DisplayName("SessionEventRelay remote buffer overflow prefers dropping text deltas")
+@DisplayName("SessionEventRelay remote buffer overflow prefers dropping reasoning, then text")
 class SessionEventRelayOverflowTest {
 
     private static final SessionId CONV = SessionId.of("c-relay-overflow");
@@ -120,12 +127,101 @@ class SessionEventRelayOverflowTest {
         assertThat(bus.published.get(bus.published.size() - 1)).isEqualTo("ExecutionCompleted");
     }
 
+    @Test
+    @DisplayName("an incoming text delta evicts a buffered reasoning delta and leaves the buffered text alone")
+    void textDeltaEvictsReasoningBeforeText() {
+        final RecordingSignalBus bus = new RecordingSignalBus();
+        final InProcessEventPublisher publisher = new InProcessEventPublisher();
+
+        try (SessionEventRelay relay = new SessionEventRelay(CONV, TURN, publisher, bus, "node-a",
+                new NoopDispatcher())) {
+            // One reasoning delta at the head, then answer text filling the rest.
+            relay.accept(reasoning(0));
+            for (int i = 1; i < SessionEventRelay.RELAY_QUEUE_CAPACITY; i++) {
+                relay.accept(delta(i));
+            }
+            relay.accept(delta(999));
+            assertThat(relay.getDroppedEventCount()).isEqualTo(1L);
+        }
+
+        // The one sacrificed frame is the reasoning delta, not the oldest text delta a single-rank scan would have
+        // taken. This is the row a widened `instanceof A || instanceof B` gets wrong.
+        assertThat(types(bus)).as("thinking is sacrificed before the answer").doesNotContain("AssistantReasoningDelta");
+        assertThat(bus.chunkIndexes()).contains(1, 999);
+    }
+
+    @Test
+    @DisplayName("an incoming reasoning delta is itself dropped rather than displacing buffered answer text")
+    void reasoningDeltaIsDroppedRatherThanEvictingText() {
+        final RecordingSignalBus bus = new RecordingSignalBus();
+        final InProcessEventPublisher publisher = new InProcessEventPublisher();
+
+        try (SessionEventRelay relay = new SessionEventRelay(CONV, TURN, publisher, bus, "node-a",
+                new NoopDispatcher())) {
+            for (int i = 0; i < SessionEventRelay.RELAY_QUEUE_CAPACITY; i++) {
+                relay.accept(delta(i));
+            }
+            relay.accept(reasoning(999));
+            assertThat(relay.getDroppedEventCount()).isEqualTo(1L);
+        }
+
+        // Under pressure the choice is between dropping thinking and dropping the answer, and it is not close: a
+        // text delta is never sacrificed for a reasoning delta.
+        assertThat(types(bus)).containsOnly("AssistantTextDelta");
+        assertThat(bus.published).hasSize(SessionEventRelay.RELAY_QUEUE_CAPACITY);
+    }
+
+    @Test
+    @DisplayName("a buffer of only reasoning deltas sacrifices its oldest for an incoming reasoning delta")
+    void reasoningDeltaEvictsTheOldestReasoningDelta() {
+        final RecordingSignalBus bus = new RecordingSignalBus();
+        final InProcessEventPublisher publisher = new InProcessEventPublisher();
+
+        try (SessionEventRelay relay = new SessionEventRelay(CONV, TURN, publisher, bus, "node-a",
+                new NoopDispatcher())) {
+            for (int i = 0; i < SessionEventRelay.RELAY_QUEUE_CAPACITY; i++) {
+                relay.accept(reasoning(i));
+            }
+            relay.accept(reasoning(999));
+            assertThat(relay.getDroppedEventCount()).isEqualTo(1L);
+        }
+
+        assertThat(bus.chunkIndexes()).as("chunk 0 is the reasoning delta that was sacrificed").doesNotContain(0)
+                .contains(999);
+    }
+
+    @Test
+    @DisplayName("a structural frame takes the buffered reasoning delta first, and only then a text delta")
+    void structuralFrameTakesReasoningFirst() {
+        final RecordingSignalBus bus = new RecordingSignalBus();
+        final InProcessEventPublisher publisher = new InProcessEventPublisher();
+
+        try (SessionEventRelay relay = new SessionEventRelay(CONV, TURN, publisher, bus, "node-a",
+                new NoopDispatcher())) {
+            for (int i = 0; i < SessionEventRelay.RELAY_QUEUE_CAPACITY - 1; i++) {
+                relay.accept(delta(i));
+            }
+            // Newest frame in the buffer, so an arrival-order scan would reach every text delta before it.
+            relay.accept(reasoning(500));
+            relay.accept(completed());
+            assertThat(relay.getDroppedEventCount()).isEqualTo(1L);
+        }
+
+        assertThat(types(bus)).doesNotContain("AssistantReasoningDelta");
+        assertThat(bus.published.get(bus.published.size() - 1)).isEqualTo("ExecutionCompleted");
+    }
+
     private static List<String> types(RecordingSignalBus bus) {
         return new ArrayList<>(bus.published);
     }
 
     private static AgentExecutionEvent delta(int chunk) {
         return AssistantTextDelta.builder().timestamp(TS).agentRuntimeId(CTX).iteration(1).delta("d" + chunk)
+                .chunkIndex(chunk).build();
+    }
+
+    private static AgentExecutionEvent reasoning(int chunk) {
+        return AssistantReasoningDelta.builder().timestamp(TS).agentRuntimeId(CTX).iteration(1).delta("r" + chunk)
                 .chunkIndex(chunk).build();
     }
 

@@ -50,7 +50,7 @@ aimon-cli (REPL)              OutputFormatter — delta 누적 출력, reset 시
                               wasStreamed 이면 final answer 인쇄 skip
         ▲ AgentExecutionEvent
 aimon-core (agent)            OrcaAgentExecutor.StreamingEventSink
-                              chunk → AssistantTextDelta / …Reset / …Completed
+                              chunk → AssistantTextDelta / AssistantReasoningDelta / …Reset / …Completed
         ▲ LlmStreamChunk (provider-neutral)
 aimon-core (llm)              LlmCallGateway — attempt 격리 · retry 통지 · buffering 옵션
                               at.aimon.core.llm.streaming — chunk · sink · aggregator · target
@@ -65,15 +65,23 @@ provider 모듈                 {OpenAI,Anthropic}LlmClient — SDK 스트림 �
 
 ## 4. provider-neutral chunk 모델
 
-### 4.1 `LlmStreamChunk` — 세 가지 kind
+### 4.1 `LlmStreamChunk` — 네 가지 kind
 
 | kind | 싣는 것 | 규칙 |
 |---|---|---|
-| `TEXT_DELTA` | 비어 있지 않은 `textDelta` | 빈 delta 는 **provider 매퍼가 사전 폐기**. `toolUse` 동반 금지 |
+| `TEXT_DELTA` | 비어 있지 않은 `textDelta` | 빈 delta 는 **provider 매퍼가 사전 폐기**. `reasoningDelta`·`toolUse` 동반 금지 |
+| `REASONING_DELTA` | 비어 있지 않은 `reasoningDelta` | 모델의 **숙고**이지 답이 아니다. 배포가 요청했을 때만 나온다. `textDelta`·`toolUse` 동반 금지 |
 | `TOOL_USE_READY` | 완성된 `ToolUse` 1개 | **advisory** — 스트림 중간에 tool_use 블록 하나의 인자가 다 모였음을 알린다 |
-| `STREAM_END` | 누적 `TokenUsage`, `finishReason`, 중립 `StopReason` | sink 수명당 **정확히 1회**. `textDelta`·`toolUse` 동반 금지 |
+| `STREAM_END` | 누적 `TokenUsage`, `finishReason`, 중립 `StopReason` | sink 수명당 **정확히 1회**. `textDelta`·`reasoningDelta`·`toolUse` 동반 금지 |
 
 불변 규칙은 빌더가 `IllegalArgumentException` 으로 강제한다 — 문서상의 약속이 아니라 생성 시점 검증이다.
+
+`REASONING_DELTA` 는 `TOOL_USE_READY` 와 같은 종류의 사후 보강이지만, **필드를 재사용하지 않는 것이
+설계의 전부**다. 텍스트를 `textDelta` 에 실었다면 `getTextDelta()` 를 kind 확인 없이 읽는 기존 호출자가
+전부 숙고를 답으로 읽게 된다. 그리고 그중 하나가 `ChunkAggregator.peekText()` 이고, 그것이 스트림 도중
+취소된 실행이 **전사에 assistant 메시지로 커밋하는 값**이다 — 전사는 되돌릴 수 없으므로 이것은 렌더링
+사고가 아니라 프라이버시 사고다. 그래서 aggregator 에도 `toLlmResponse()` 가 읽지 않는 두 번째 버퍼가
+따로 있다. 설계는 [`reasoning-delta-stream.md`](reasoning-delta-stream.md).
 
 `TOOL_USE_READY` 는 초기 설계에는 없던 kind다. **스트리밍-도구 중첩(eager dispatch)** 이 올라탈 자리로
 나중에 들어왔다 — 스트림이 아직 흐르는 동안 이미 완성된 도구 하나를 먼저 실행에 넘긴다. **advisory 인 것이
@@ -100,7 +108,8 @@ public interface LlmStreamSink {
 래퍼, 실행기의 `StreamingEventSink` 가 전부 같은 인터페이스를 구현한다. 여기에 누적 책임까지 얹었다면
 (기각한 대안 중 하나) 인터페이스가 비대해지고 데코레이터마다 그 책임을 다시 구현해야 했다.
 
-수명 계약: `TEXT_DELTA` 0회 이상 → `STREAM_END` 정확히 1회. **provider 오류 시에는 스트리밍 호출 자체가
+수명 계약: `TEXT_DELTA` 0회 이상 (배포가 요청했다면 `REASONING_DELTA` 가 그 사이에 섞인다) →
+`STREAM_END` 정확히 1회. **provider 오류 시에는 스트리밍 호출 자체가
 throw 하고 sink 는 stream-end 를 받지 못한다** — 그래서 UI 가 "시작했는데 끝나지 않은 스트림"을 보지
 않도록 실행기 쪽에서 합성 종료 이벤트를 낸다(§6).
 

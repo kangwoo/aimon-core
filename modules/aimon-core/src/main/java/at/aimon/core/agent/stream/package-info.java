@@ -5,18 +5,26 @@
  *
  * <p>
  * This package defines a sealed hierarchy rooted at {@link at.aimon.core.agent.stream.AgentExecutionEvent} whose
- * concrete subtypes describe discrete progress points reached while an agent executes:
+ * concrete subtypes describe discrete progress points reached while an agent executes — a new iteration, an
+ * assistant message, a tool invocation and its result, a compaction boundary, a terminal outcome:
  *
  * <ul>
  * <li>{@link at.aimon.core.agent.stream.IterationStarted} — a new ReAct iteration has begun
- * <li>{@link at.aimon.core.agent.stream.AssistantMessageReceived} — the LLM returned an assistant message
+ * <li>{@link at.aimon.core.agent.stream.AssistantTextDelta} — one fragment of the assistant's answer, streaming
+ * <li>{@link at.aimon.core.agent.stream.AssistantReasoningDelta} — one fragment of the model's <em>deliberation</em>,
+ * which is never the answer and is never accumulated with it
  * <li>{@link at.aimon.core.agent.stream.ToolUseStarted} — the executor is about to invoke a tool
- * <li>{@link at.aimon.core.agent.stream.ToolResultReady} — a tool invocation completed (success or error)
- * <li>{@link at.aimon.core.agent.stream.CompactBoundary} — a conversation compaction step was applied
- * <li>{@link at.aimon.core.agent.stream.IterationCompleted} — the current iteration finished
  * <li>{@link at.aimon.core.agent.stream.ExecutionCompleted} — the overall execution finished on its own terms
- * <li>{@link at.aimon.core.agent.stream.ExecutionError} — the overall execution ended with an error
  * </ul>
+ *
+ * <p>
+ * <b>That list is illustrative, not exhaustive, and deliberately so.</b> The exhaustive one is the {@code permits}
+ * clause of {@link at.aimon.core.agent.stream.AgentExecutionEvent} and the {@code
+ *
+<ul>
+ * } in its own javadoc, which
+ * sits next to the clause it mirrors; a second full enumeration here would be a second thing to keep in step, and it
+ * had already fallen eight subtypes behind before anyone noticed.
  *
  * <p>
  * Consumers (REPL, web UI, recorders, test assertions) are expected to subscribe to a

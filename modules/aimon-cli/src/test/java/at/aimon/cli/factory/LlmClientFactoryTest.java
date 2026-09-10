@@ -16,6 +16,7 @@ import org.junit.jupiter.params.provider.EnumSource;
 import at.aimon.cli.config.AnthropicProviderConfig;
 import at.aimon.cli.config.LlmProviderConfig;
 import at.aimon.cli.config.ModelCapabilityConfig;
+import at.aimon.cli.config.OpenAiProviderConfig;
 import at.aimon.cli.exception.ConfigurationException;
 import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.ReasoningEffort;
@@ -23,8 +24,10 @@ import at.aimon.core.llm.capability.InMemoryModelCapabilityRegistry;
 import at.aimon.core.llm.capability.ModelCapabilityRegistry;
 import at.aimon.core.llms.anthropic.AnthropicConfig;
 import at.aimon.core.llms.anthropic.AnthropicLlmClient;
+import at.aimon.core.llms.anthropic.AnthropicThinkingDisplay;
 import at.aimon.core.llms.anthropic.AnthropicThinkingMode;
 import at.aimon.core.llms.openai.OpenAILlmClient;
+import at.aimon.core.llms.openai.OpenAiReasoningSummary;
 
 @DisplayName("LlmClientFactory Tests")
 class LlmClientFactoryTest {
@@ -516,6 +519,25 @@ class LlmClientFactoryTest {
         }
 
         @Test
+        @DisplayName("Should carry a thinking display through to the vendor config")
+        void thinkingDisplayReachesTheClient() {
+            LlmProviderConfig config = anthropic();
+            config.getAnthropic().setThinkingMode(AnthropicThinkingMode.ADAPTIVE);
+            config.getAnthropic().setThinkingDisplay(AnthropicThinkingDisplay.SUMMARIZED);
+
+            assertThat(factory.anthropicConfig(config).getThinkingDisplay())
+                    .contains(AnthropicThinkingDisplay.SUMMARIZED);
+        }
+
+        @Test
+        @DisplayName("Should leave the display unset when the key is absent")
+        void anAbsentDisplayLeavesTheVendorDefault() {
+            // The compatibility claim for the fourth key: no setter call, so no display on the wire and no
+            // reasoning text on the stream.
+            assertThat(factory.anthropicConfig(anthropic()).getThinkingDisplay()).isEmpty();
+        }
+
+        @Test
         @DisplayName("Should leave the openai branch alone when the anthropic block is empty")
         void anEmptyAnthropicBlockDoesNotTripTheOpenAiBranch() {
             // The block binds to an empty instance rather than null, so the refusal has to ask isEmpty() rather
@@ -526,6 +548,67 @@ class LlmClientFactoryTest {
             config.setModel("gpt-4o");
 
             assertThat(factory.openAiConfig(config).getModel()).isEqualTo("gpt-4o");
+        }
+    }
+
+    @Nested
+    @DisplayName("llm.openai — the vendor block this round opened")
+    class OpenAiBlock {
+
+        private LlmProviderConfig openai() {
+            LlmProviderConfig config = new LlmProviderConfig();
+            config.setProvider("openai");
+            config.setApiKey("test-openai-api-key");
+            config.setModel("gpt-5.1");
+            return config;
+        }
+
+        @Test
+        @DisplayName("Should leave the vendor default standing when the block is absent or empty")
+        void anAbsentBlockChangesNothing() {
+            LlmProviderConfig withEmptyBlock = openai();
+            withEmptyBlock.setOpenai(new OpenAiProviderConfig());
+
+            assertThat(factory.openAiConfig(openai()).getReasoningSummary()).isEmpty();
+            assertThat(factory.openAiConfig(withEmptyBlock).getReasoningSummary()).isEmpty();
+        }
+
+        @ParameterizedTest
+        @EnumSource(OpenAiReasoningSummary.class)
+        @DisplayName("Should bind every summary level the vendor enum has")
+        void everySummaryLevelBinds(OpenAiReasoningSummary summary) {
+            // Sourced from values() rather than a literal list, for the reason the thinking-mode test beside it is:
+            // a fourth constant fails here instead of being silently under-covered.
+            LlmProviderConfig config = openai();
+            config.getOpenai().setReasoningSummary(summary);
+
+            assertThat(factory.openAiConfig(config).getReasoningSummary()).contains(summary);
+        }
+
+        @Test
+        @DisplayName("Should refuse an openai block under the anthropic provider, naming both keys")
+        void anOpenAiBlockUnderAnthropicIsRefused() {
+            // The mirror of the anthropic-under-openai refusal, and the reason it can exist at all: until this
+            // round there was no `llm.openai` block for the anthropic branch to refuse.
+            LlmProviderConfig config = new LlmProviderConfig();
+            config.setProvider("anthropic");
+            config.setApiKey("test-anthropic-api-key");
+            config.getOpenai().setReasoningSummary(OpenAiReasoningSummary.AUTO);
+
+            assertThatThrownBy(() -> factory.create(config)).isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("llm.openai").hasMessageContaining("llm.provider");
+        }
+
+        @Test
+        @DisplayName("Should leave the anthropic branch alone when the openai block is empty")
+        void anEmptyOpenAiBlockDoesNotTripTheAnthropicBranch() {
+            // Same isEmpty() contract as the other direction: the block binds to an empty instance rather than
+            // null, so a != null check would fail every Anthropic deployment at boot.
+            LlmProviderConfig config = new LlmProviderConfig();
+            config.setProvider("anthropic");
+            config.setApiKey("test-anthropic-api-key");
+
+            assertThat(factory.anthropicConfig(config).getThinkingMode()).isEqualTo(AnthropicThinkingMode.OFF);
         }
     }
 

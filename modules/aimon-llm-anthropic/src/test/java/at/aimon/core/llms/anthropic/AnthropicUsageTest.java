@@ -128,7 +128,7 @@ class AnthropicUsageTest {
     void streamedResponseReportsWithoutInflatingTheTotal() {
         final ChunkAggregator aggregator = new ChunkAggregator();
         new AnthropicStreamingMapper(LlmStreamSink.discarding(), aggregator, "Anthropic", (s, m, a) -> {
-        }).consume(List.of(event("""
+        }, false).consume(List.of(event("""
                 {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant",
                  "model":"claude-sonnet-4-5","content":[],"usage":{"input_tokens":10,"output_tokens":0}}}"""), event("""
                 {"type":"message_delta","delta":{"stop_reason":"end_turn"},

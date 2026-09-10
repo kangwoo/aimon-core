@@ -129,7 +129,7 @@ class AnthropicStreamingReasoningTest {
     private LlmResponse consume(RawMessageStreamEvent... events) {
         final ChunkAggregator aggregator = new ChunkAggregator();
         final AnthropicStreamingMapper mapper = new AnthropicStreamingMapper(LlmStreamSink.discarding(), aggregator,
-                PROVIDER, reporter);
+                PROVIDER, reporter, false);
         mapper.consume(List.of(events).stream());
         return aggregator.toLlmResponse();
     }
@@ -211,7 +211,7 @@ class AnthropicStreamingReasoningTest {
         // client's try-with-resources does not cover. The assertion is that nothing escapes and the traces arrive.
         final ChunkAggregator aggregator = new ChunkAggregator();
         final AnthropicStreamingMapper mapper = new AnthropicStreamingMapper(LlmStreamSink.discarding(), aggregator,
-                PROVIDER, reporter);
+                PROVIDER, reporter, false);
 
         assertThatCode(
                 () -> mapper
@@ -235,19 +235,49 @@ class AnthropicStreamingReasoningTest {
     }
 
     @Test
-    @DisplayName("thinking text is not forwarded to the sink")
+    @DisplayName("with the gate closed, thinking text is not forwarded to the sink and the trace is still built")
     void thinkingTextIsNotEmittedToTheSink() {
         final List<LlmStreamChunk> chunks = new ArrayList<>();
         final ChunkAggregator aggregator = new ChunkAggregator();
-        new AnthropicStreamingMapper(chunks::add, aggregator, PROVIDER, reporter).consume(List.of(messageStart(),
-                thinkingStart(0), thinkingDelta(0, "private reasoning"), signatureDelta(0, SIGNATURE), blockStop(0),
-                textStart(1), textDelta(1, "visible"), blockStop(1), messageStop()).stream());
+        consumeThinkingStream(chunks, aggregator, false);
 
-        // Carrying the block across turns and rendering it to a user are different features; the second would need a
-        // chunk kind aimon-core does not have.
+        // Off by default: a deployment that asked for nothing sees exactly what it saw before the reasoning channel
+        // existed — no reasoning chunks at all, and never the thinking text under a text delta.
+        assertThat(chunks).noneMatch(chunk -> chunk.getKind() == LlmStreamChunk.Kind.REASONING_DELTA);
         assertThat(chunks)
                 .noneMatch(chunk -> String.valueOf(chunk.getTextDelta().orElse("")).contains("private reasoning"));
-        assertThat(aggregator.toLlmResponse().getTextContent()).isEqualTo("visible");
+        final LlmResponse response = aggregator.toLlmResponse();
+        assertThat(response.getTextContent()).isEqualTo("visible");
+        assertThat(response.getReasoningTraces()).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("with the gate open, the same stream yields reasoning chunks AND the same trace")
+    void thinkingTextIsEmittedWhenTheGateIsOpen() {
+        final List<LlmStreamChunk> chunks = new ArrayList<>();
+        final ChunkAggregator aggregator = new ChunkAggregator();
+        consumeThinkingStream(chunks, aggregator, true);
+
+        // The pair with the test above is the point: the trace path and the sink path are independent, so opening
+        // the sink gate does not disturb what the next request replays.
+        assertThat(chunks).filteredOn(chunk -> chunk.getKind() == LlmStreamChunk.Kind.REASONING_DELTA).singleElement()
+                .satisfies(chunk -> assertThat(chunk.getReasoningDelta()).contains("private reasoning"));
+        final LlmResponse response = aggregator.toLlmResponse();
+        // ...and the deliberation is still not part of the answer.
+        assertThat(response.getTextContent()).isEqualTo("visible");
+        assertThat(aggregator.peekReasoningText()).isEqualTo("private reasoning");
+        assertThat(response.getReasoningTraces()).hasSize(1);
+        assertThat(AnthropicFixtures.treeOf(response.getReasoningTraces().get(0).getPayload()).get("thinking").asText())
+                .isEqualTo("private reasoning");
+    }
+
+    /** One thinking block plus one text block, through a mapper with the forwarding gate set as asked. */
+    private void consumeThinkingStream(List<LlmStreamChunk> chunks, ChunkAggregator aggregator,
+            boolean forwardReasoning) {
+        new AnthropicStreamingMapper(chunks::add, aggregator, PROVIDER, reporter, forwardReasoning)
+                .consume(List.of(messageStart(), thinkingStart(0), thinkingDelta(0, "private reasoning"),
+                        signatureDelta(0, SIGNATURE), blockStop(0), textStart(1), textDelta(1, "visible"), blockStop(1),
+                        messageStop()).stream());
     }
 
     @Test
@@ -293,7 +323,7 @@ class AnthropicStreamingReasoningTest {
     @DisplayName("the provider name is the one the client resolved, not a constant")
     void providerNameComesFromTheClient() {
         final ChunkAggregator aggregator = new ChunkAggregator();
-        new AnthropicStreamingMapper(LlmStreamSink.discarding(), aggregator, "MyAnthropic", reporter).consume(
+        new AnthropicStreamingMapper(LlmStreamSink.discarding(), aggregator, "MyAnthropic", reporter, false).consume(
                 List.of(messageStart(), thinkingStart(0), signatureDelta(0, SIGNATURE), blockStop(0), messageStop())
                         .stream());
 

@@ -310,6 +310,8 @@ B-6 이 그렇게 어긋나 있었다. §7 은 그 항목을 "MCP 를 실제로 
 | [`architecture-review-open-items.md`](architecture-review-open-items.md) | 아키텍처 리뷰 (2026-08-31) | 8 | 2 | 6 | 0 |
 | [`translation-tooling-open-items.md`](translation-tooling-open-items.md) | 번역 낡음 가드 작업 (2026-09-06) | 4 | 3 | 1 | 0 |
 | [`openai-model-capabilities-open-items.md`](openai-model-capabilities-open-items.md) | o-시리즈 reasoning-item 재생 프로브 (2026-09-09) | 1 | 0 | 1 | 0 |
+| [`llm-config-surface-open-items.md`](llm-config-surface-open-items.md) | `docs/design/llm/model-capability-config-key.md` §9 (#46) | 5 | 5 | 0 | 0 |
+| [`reasoning-delta-stream-open-items.md`](reasoning-delta-stream-open-items.md) | `docs/design/llm/reasoning-delta-stream.md` §11 (#62) | 6 | 6 | 0 | 0 |
 
 **그 문서의 칸이 `—` 였던 것은 규칙이 없어서가 아니라 그냥 채워지지 않아서였다** — 형식은 나머지 다섯
 문서가 제목과 표 양쪽에서 이미 쓰고 있었다. 등록 시점에 항목이 넷이었고 지금 둘이 닫혔으므로 표와
@@ -351,6 +353,12 @@ degradation 으로 이미 보고되고 있었다), 하나는 진단이 **이 저
 **그 설명이 덮는 범위가 값의 범위보다 좁다**는 것으로 끝났다(그 문서 §0). 규칙 다섯이 "설명이 있으면
 결함이 아니라 결정" 이라고 적을 때 빠져 있던 경우다 — 설명은 있는데 **그것이 값의 절반만 정당화**할
 수도 있다.
+
+> **2026-09-10 — 위 표에 다섯 번째 문서가 빠져 있었다.** 아래 문단이 `llm-config-surface-open-items.md`
+> 를 "다섯 번째 문서" 로 서술하는데 표에는 그 줄이 없었다 — 본문이 세는 것과 표가 세는 것이 달랐다는
+> 뜻이고, 이 README 자신의 **규칙 일곱**("요약표는 항목이 아니다")이 경계하는 방향의 반대편 사례다.
+> 그쪽은 표를 항목처럼 읽는 것을 막고, 이쪽은 표가 항목을 아예 세지 않는 것이다. #62 가 자기 줄을
+> 더하면서 함께 채웠다.
 
 **다섯 번째 문서(`llm-config-surface-open-items.md`)도 끝난 작업이 남긴 것이지만, 네 번째와 다른 자리에서
 왔다** — 그 작업의 **설계 문서**가 미해결 일곱 개를 스스로 세어 두었고, 그중 이 국면 밖으로 결과가 나가는

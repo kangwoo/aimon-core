@@ -15,6 +15,7 @@ public class LlmProviderConfig {
     private ReasoningEffort reasoningEffort;
     private Map<String, ModelCapabilityConfig> modelCapabilities = new LinkedHashMap<>();
     private AnthropicProviderConfig anthropic = new AnthropicProviderConfig();
+    private OpenAiProviderConfig openai = new OpenAiProviderConfig();
 
     /** LlmProviderConfig를 생성한다. */
     public LlmProviderConfig() {
@@ -114,6 +115,21 @@ public class LlmProviderConfig {
         this.anthropic = anthropic == null ? new AnthropicProviderConfig() : anthropic;
     }
 
+    /**
+     * OpenAI 전용 설정 — {@code llm.openai} 블록. {@code anthropic} 블록의 짝이며 같은 규칙을 따른다:
+     * <b>openai 분기만 읽고</b>, 다른 provider 아래에 적혀 있으면 조용히 무시되지 않고 기동을 실패시킨다.
+     * 이 라운드가 처음 여는 네임스페이스다 — 이유는 {@link OpenAiProviderConfig} 의 javadoc 에 있다.
+     *
+     * @return openai 블록 (비어 있을 수 있으나 null 은 아니다)
+     */
+    public OpenAiProviderConfig getOpenai() {
+        return openai;
+    }
+
+    public void setOpenai(OpenAiProviderConfig openai) {
+        this.openai = openai == null ? new OpenAiProviderConfig() : openai;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -127,19 +143,20 @@ public class LlmProviderConfig {
                 && Objects.equals(model, that.model) && Objects.equals(timeout, that.timeout)
                 && Objects.equals(baseUrl, that.baseUrl) && reasoningEffort == that.reasoningEffort
                 && Objects.equals(modelCapabilities, that.modelCapabilities)
-                && Objects.equals(anthropic, that.anthropic);
+                && Objects.equals(anthropic, that.anthropic) && Objects.equals(openai, that.openai);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(provider, apiKey, model, timeout, baseUrl, reasoningEffort, modelCapabilities, anthropic);
+        return Objects.hash(provider, apiKey, model, timeout, baseUrl, reasoningEffort, modelCapabilities, anthropic,
+                openai);
     }
 
     @Override
     public String toString() {
-        // apiKey 는 뺀다 (비밀). 나머지 두 블록은 싣는다 — 비밀이 아니고, 그것이 읽혔는지가 진단의 핵심이다.
+        // apiKey 는 뺀다 (비밀). 나머지 블록은 싣는다 — 비밀이 아니고, 그것이 읽혔는지가 진단의 핵심이다.
         return "LlmProviderConfig{" + "provider='" + provider + '\'' + ", model='" + model + '\'' + ", timeout="
                 + timeout + ", baseUrl='" + baseUrl + '\'' + ", reasoningEffort=" + reasoningEffort
-                + ", modelCapabilities=" + modelCapabilities + ", anthropic=" + anthropic + '}';
+                + ", modelCapabilities=" + modelCapabilities + ", anthropic=" + anthropic + ", openai=" + openai + '}';
     }
 }
