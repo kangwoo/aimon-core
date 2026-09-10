@@ -270,10 +270,12 @@ mkdocs serve            # http://127.0.0.1:8000 에서 미리보기
 mkdocs build --strict   # CI 가 돌리는 것과 같다 — 링크 경고가 실패가 된다
 
 python3 scripts/check-doc-links.py             # 경로 + 앵커
+python3 scripts/check-backlog-registers.py     # 등록부의 중복 ID · 제목과 색인의 건수
 python3 scripts/check-translation-staleness.py # 뒤처진 번역
 python3 scripts/check-translation-structure.py # 정본과 어긋난 구조
 ```
 
+앞의 둘은 CI 의 `docs-links` 잡에서 돈다 — 둘 다 텍스트만 읽으므로 얕은 클론으로 충분하다.
 뒤의 둘은 CI 의 `translations` 잡에서 함께 돈다. 둘 다 전체 이력을 필요로 하므로(얕은 클론에서는
 실패시키는 대신 보고한다) 그 잡만 `fetch-depth: 0` 으로 체크아웃한다.
 

@@ -12,6 +12,19 @@ permissions:
 jobs:
   # No path filter, and none is wanted: the checker walks every *.md in the repo, so a
   # link that breaks in a module README is caught by the same run as one in docs/.
+  #
+  # The backlog check shares this job for the reason it could not share `translations`:
+  # it reads text and nothing else -- no history, so the default shallow checkout is enough.
+  # It is a step here rather than a job of its own because the branch ruleset requires jobs
+  # by name; a new job would run without gating anything, and renaming this one would break
+  # a required context.
+  #
+  # Its two lines run in the opposite order from `translations`, on purpose. The self-test
+  # is still the only thing separating a check that read the registers and found them
+  # consistent from one that quietly stopped reading them, but it aims its mutations at the
+  # real tree, and under `bash -e` the first failing line ends the step. The check goes
+  # first so that a red step names the heading or row that is wrong; the self-test then
+  # only ever runs on a tree the check has passed, where a failure can only mean the checker.
   docs-links:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -20,6 +33,11 @@ jobs:
 
       - name: Check relative markdown links and anchors
         run: python3 scripts/check-doc-links.py
+
+      - name: Check backlog registers -- duplicate item IDs, and counts that disagree with the items
+        run: |
+          python3 scripts/check-backlog-registers.py --github
+          python3 scripts/check-backlog-registers.py --self-test
 
   # Two checks, asking different questions of the same 32 pairs: is the
   # translation current, and is it complete. They share a job because they share

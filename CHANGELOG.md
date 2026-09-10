@@ -7,6 +7,34 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Docs CI: backlog registers are checked for duplicate item IDs and for counts that disagree with the items
+
+- **New check `scripts/check-backlog-registers.py`, a second step of the `docs-links` job** (#88). On
+  2026-09-10 two branches registered `L-13` in the same register and git merged both item bodies without a
+  conflict; only the count lines collided. It fails on an item ID repeated within a register, on a register
+  title (`등록 항목 N건 (…)`) that disagrees with the items, on a `docs/backlog/README.md` index row that
+  disagrees with them, on a register with no row, and on an ID read in two registers (`L-1` predates the
+  check and is declared shared). A duplicate or shared ID's finding names the number to take instead: the
+  next one no register with that prefix uses.
+
+- **It reads headings, never tables or prose.** An item is a heading that starts with its ID; its state is
+  the heading's bold `열림`/`닫힘`/`완료`/`해소`, or `✅`, or a nested `### 닫힘 (…)`; nothing means open.
+  `interrupt-open-items.md` is read by its `## N.` numbers, which is how it is cited. A heading that starts
+  with an ID but is not an item fails instead of being skipped, and so does any register the check cannot
+  read -- there is no exemption.
+
+- **Two registers had headings reordered so they can be read, and no count changed**: the three §5 group
+  headings and the B-21 revival heading in `spring-boot-starter-open-items.md` (which also stops filing
+  B-21 under 해소), and `### T-1 (원문)` in `translation-tooling-open-items.md`. Before the edits the starter
+  read as 28 items against its title's 34; after them, 34 (열림 4 · 닫힘 26 · 해소 4). No title or index row
+  on `main` disagreed with its items, so no count was corrected.
+
+- **`--self-test` runs second, in the same step**: it breaks the real tree one way at a time (a duplicated
+  ID, a wrong title, a wrong row), switches each reading rule off in turn against a synthetic register, and
+  fires every other finding kind once. It aims only at registers and rows with no finding of their own, so
+  drift elsewhere on the tree leaves it green. It runs after the check -- the reverse of the translation
+  structure step -- so that a red step names the heading or row that is wrong, not the self-test.
+
 ### CLI: the bundled `default` agent runs on `gpt-5.6-terra`, and a `terra` bundle ships beside it
 
 - **The bundled `default` agent now names `gpt-5.6-terra` with `reasoningEffort: medium`** instead of

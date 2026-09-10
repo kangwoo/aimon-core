@@ -115,11 +115,12 @@
 ### documentation — 문서 자체를 지키는 장치
 
 이 축은 제품 서브시스템이 아니라 **저장소 문서의 도구**다. §1 의 도메인 축에서 벗어나는 유일한
-자리이며, 그 이유는 문서 자신의 첫 절에 적혀 있다.
+자리이며, 그 이유는 `translation-structure-check.md` 의 첫 절에 적혀 있다.
 
 | 문서 | 무엇이 있나 |
 |------|------------|
 | [`documentation/translation-structure-check.md`](documentation/translation-structure-check.md) | 정본과 번역본의 구조 일치를 강제하는 검사 — 여섯 축의 처분, 실패/경고를 가르는 쌍의 상태, 예외 표현, 공허 통과가 아님을 보이는 프로브 |
+| [`documentation/backlog-register-check.md`](documentation/backlog-register-check.md) | 백로그 등록부의 중복 ID 와, 항목과 어긋난 표제·색인 건수에 실패하는 검사 — 무엇을 항목과 상태로 읽는가, 번호로 인용되는 등록부의 선언된 읽기, 등록부 간 ID 유일성, 면제 없는 실패, 읽기 규칙을 하나씩 끄는 셀프 테스트 |
 
 ### backlog — 아직 결정하지 않은 것
 
