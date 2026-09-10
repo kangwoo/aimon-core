@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 
 import at.aimon.cli.exception.ConfigurationException;
 import at.aimon.core.llm.ReasoningEffort;
+import at.aimon.core.llm.capability.ThinkingDialect;
 import at.aimon.core.llms.anthropic.AnthropicThinkingDisplay;
 import at.aimon.core.llms.anthropic.AnthropicThinkingMode;
 import at.aimon.core.llms.openai.OpenAiReasoningSummary;
@@ -576,6 +577,8 @@ class CliConfigLoaderTest {
                           supportsReasoningEffort: true
                           supportsToolsWithReasoning: true
                           supportsReasoningTraceRoundTrip: false
+                          supportsReasoningSummary: false
+                          thinkingDialect: adaptive
                           lowestReasoningEffort: minimal
                     """);
 
@@ -587,7 +590,88 @@ class CliConfigLoaderTest {
             assertThat(declared.getSupportsReasoningEffort()).isTrue();
             assertThat(declared.getSupportsToolsWithReasoning()).isTrue();
             assertThat(declared.getSupportsReasoningTraceRoundTrip()).isFalse();
+            assertThat(declared.getSupportsReasoningSummary()).isFalse();
+            assertThat(declared.getThinkingDialect()).isEqualTo(ThinkingDialect.ADAPTIVE);
             assertThat(declared.getLowestReasoningEffort()).isEqualTo(ReasoningEffort.MINIMAL);
+        }
+
+        @Test
+        @DisplayName("Should bind the thinking dialect in any case, and tell unknown apart from an omitted key")
+        void bindsTheThinkingDialect() throws IOException {
+            // #69's key. The value an operator writes when a gateway renames a Claude model and `thinkingMode: auto`
+            // has nothing to answer with. Case folding comes from ACCEPT_CASE_INSENSITIVE_ENUMS, and is asserted
+            // rather than inherited -- this is the second enum that feature now reaches.
+            for (String written : new String[]{"adaptive", "ADAPTIVE", "Adaptive"}) {
+                Path configFile = write("""
+                        llm:
+                          provider: "anthropic"
+                          apiKey: "test-api-key"
+                          model: "prod-claude"
+                          modelCapabilities:
+                            prod-claude:
+                              thinkingDialect: %s
+                        """.formatted(written));
+
+                assertThat(loader.load(configFile.toString()).getLlmConfig().getModelCapabilities().get("prod-claude")
+                        .getThinkingDialect()).as("written as %s", written).isEqualTo(ThinkingDialect.ADAPTIVE);
+            }
+
+            // `unknown` is a value, not an absence: it says "act on no built-in row for this name". If it bound the
+            // same as an omitted key the escape hatch would not exist.
+            Path unknown = write("""
+                    llm:
+                      provider: "anthropic"
+                      apiKey: "test-api-key"
+                      model: "prod-claude"
+                      modelCapabilities:
+                        prod-claude:
+                          thinkingDialect: unknown
+                    """);
+
+            assertThat(loader.load(unknown.toString()).getLlmConfig().getModelCapabilities().get("prod-claude")
+                    .getThinkingDialect()).isEqualTo(ThinkingDialect.UNKNOWN);
+        }
+
+        @Test
+        @DisplayName("Should hand a null element straight through to the factory rather than dropping it here")
+        void aNullRungReachesTheBoundList() throws IOException {
+            // The reachability half of #70, measured rather than assumed. The loader binds and validates, and
+            // neither step looks inside this list -- so `~` arrives as a null element in the bound List and the
+            // refusal has to live where the list is folded, which is LlmClientFactory.rungSetOf. That refusal is
+            // asserted in LlmClientFactoryTest.rejectsANullRung; this test is why it is asserted there.
+            Path configFile = write("""
+                    llm:
+                      provider: "openai"
+                      apiKey: "test-api-key"
+                      model: "prod-assistant"
+                      modelCapabilities:
+                        prod-assistant:
+                          acceptedReasoningEfforts: [none, ~, high]
+                    """);
+
+            assertThat(loader.load(configFile.toString()).getLlmConfig().getModelCapabilities().get("prod-assistant")
+                    .getAcceptedReasoningEfforts()).containsExactly(ReasoningEffort.NONE, null, ReasoningEffort.HIGH);
+        }
+
+        @Test
+        @DisplayName("Should hand a valueless block-sequence entry through as a null element too")
+        void aBareDashReachesTheBoundListAsNull() throws IOException {
+            // The other spelling of the same mistake -- a commented-out entry that left its dash behind.
+            Path configFile = write("""
+                    llm:
+                      provider: "openai"
+                      apiKey: "test-api-key"
+                      model: "prod-assistant"
+                      modelCapabilities:
+                        prod-assistant:
+                          acceptedReasoningEfforts:
+                            - none
+                            -
+                            - high
+                    """);
+
+            assertThat(loader.load(configFile.toString()).getLlmConfig().getModelCapabilities().get("prod-assistant")
+                    .getAcceptedReasoningEfforts()).containsExactly(ReasoningEffort.NONE, null, ReasoningEffort.HIGH);
         }
 
         @Test
@@ -635,6 +719,8 @@ class CliConfigLoaderTest {
             assertThat(declared.getSupportsReasoningEffort()).isNull();
             assertThat(declared.getSupportsToolsWithReasoning()).isNull();
             assertThat(declared.getSupportsReasoningTraceRoundTrip()).isNull();
+            assertThat(declared.getSupportsReasoningSummary()).isNull();
+            assertThat(declared.getThinkingDialect()).isNull();
             assertThat(declared.getLowestReasoningEffort()).isNull();
             assertThat(declared.getAcceptedReasoningEfforts()).isNull();
         }

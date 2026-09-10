@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/embedding-agent-in-application.md
-source_commit: 3dd56df
+source_commit: d3500f6
 ---
 
 # Embedding an AIMON agent in your application
@@ -400,11 +400,21 @@ aimon:
           supports-sampling-parameters: false
   ```
 
-  There are six flags
+  There are eight flags
   (`supports-sampling-parameters` · `supports-reasoning-effort` · `supports-tools-with-reasoning` ·
-  `supports-reasoning-trace-round-trip` · `lowest-reasoning-effort` · `accepted-reasoning-efforts`) and
-  **every one is optional**; what you
-  leave out keeps today's behaviour, which is why the single line above is a complete answer to the 400. The
+  `supports-reasoning-trace-round-trip` · `supports-reasoning-summary` · `thinking-dialect` ·
+  `lowest-reasoning-effort` · `accepted-reasoning-efforts`) and
+  **every one is optional**; for **a name the built-in table does not know** (a renamed gateway deployment,
+  like the example above) what you leave out keeps today's behaviour, which is why the single line above is a
+  complete answer to the 400.
+  **For a name it does know it does not — an entry is that name's whole row, so a flag you leave out falls
+  back to its fail-open value rather than to what that row said.** The `claude-*` rows state two things, the
+  dialect **and** the sampling suppression, so writing only `thinking-dialect` for `claude-sonnet-5` puts the
+  suppression back at `true` and sends `temperature` to a model that answers 400 to it — and **with no
+  warning**, because the suppression WARN fires only when the flag is `false`. For such a name, copy every
+  flag that row states (`thinking-dialect` and `supports-sampling-parameters: false`). `thinking-dialect` is
+  read by the anthropic branch only and `supports-reasoning-summary` by the OpenAI Responses path only — the
+  latter is where you describe a gateway that takes `reasoning.effort` and 400s on `reasoning.summary`. The
   last two are **mutually exclusive** ways of stating one fact: `lowest-reasoning-effort` is shorthand for
   "it starts here and runs to the top", while `accepted-reasoning-efforts=none,low,medium,high` is the
   general form for a ladder with a gap in the middle (the built-in `gpt-5.6-terra` row is the measured
@@ -414,7 +424,8 @@ aimon:
   name is matched ignoring case, and a name containing a dot has to be wrapped in **brackets** —
   `model-capabilities[gpt-5.7-x]` — because without them the entry does not arrive at all. An entry that
   declares nothing, an entry stating both ladder keys, an empty
-  `accepted-reasoning-efforts` list, two names differing only in case, and an unusable
+  `accepted-reasoning-efforts` list, **a list with an empty element in it** (`none,,high` fails naming the
+  position), two names differing only in case, and an unusable
   `lowest-reasoning-effort` value all
   fail startup with the property named. A declaration under `provider: anthropic` is **no longer refused** —
   that branch reads this registry too. **A misspelled flag name,
@@ -460,8 +471,10 @@ aimon:
   sends `thinking: {"type": "adaptive"}` plus `output_config.effort`, and `auto` sends whichever dialect the
   capability table says this model speaks. **The two dialects are mutually exclusive per model and the wrong
   one is an HTTP 400**, which is why `auto` exists — and for the same reason **a model the table cannot name
-  gets nothing, with a warning**; the remedy is declaring that name under `model-capabilities` above. Case
-  does not matter.
+  gets nothing, with a warning**; the remedy is declaring that name's `thinking-dialect` under
+  `model-capabilities` above (`aimon.llm.model-capabilities.prod-claude.thinking-dialect=adaptive`), and for a
+  name the built-in table does know, writing `supports-sampling-parameters: false` beside it — the entry is
+  the whole row, and the paragraph above is why. Case does not matter.
 
   **Quote `off`.** YAML reads an unquoted `off` as a boolean, so Boot hands it over as the string `"false"`;
   startup then fails, with a message that names the quotes. The CLI has no such limit because it can read the

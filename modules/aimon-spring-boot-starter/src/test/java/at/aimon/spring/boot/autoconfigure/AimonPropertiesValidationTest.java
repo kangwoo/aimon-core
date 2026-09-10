@@ -16,6 +16,7 @@ import at.aimon.core.knowledge.SimpleDocumentChunker;
 import at.aimon.core.llm.ReasoningEffort;
 import at.aimon.core.llm.capability.InMemoryModelCapabilityRegistry;
 import at.aimon.core.llm.capability.ModelCapabilityRegistry;
+import at.aimon.core.llm.capability.ThinkingDialect;
 import at.aimon.session.routing.DeploymentMode;
 
 /**
@@ -745,6 +746,78 @@ class AimonPropertiesValidationTest {
                         AimonProperties.modelCapabilityRegistry(ctx.getBean(AimonProperties.class).getLlm())
                                 .resolve("prod-assistant").acceptedReasoningEfforts())
                         .containsExactly(ReasoningEffort.NONE, ReasoningEffort.HIGH));
+    }
+
+    @Test
+    @DisplayName("an empty element in the ladder fails the context, naming the property and the position")
+    void aNullRungFailsTheContext() {
+        // #70's starter half, and also the measurement behind the premise. The comma-delimited spelling is the one
+        // that reaches rungSet() with a hole in the list: commaDelimitedListToStringArray keeps the empty token and
+        // relaxed conversion turns it into a null element, for an interior comma and for a trailing one alike. If
+        // the binder had rejected it earlier these would fail by NOT failing, which is the signal -- and the third
+        // case below is exactly that outcome for the other spelling.
+        runner.withPropertyValues("aimon.llm.model-capabilities.prod-assistant.accepted-reasoning-efforts=none,,high")
+                .run(ctx -> assertThat(ctx).hasFailed().getFailure()
+                        .hasStackTraceContaining(AimonProperties.LLM_MODEL_CAPABILITIES)
+                        .hasStackTraceContaining("accepted-reasoning-efforts[1]")
+                        .hasStackTraceContaining("has no value"));
+
+        runner.withPropertyValues("aimon.llm.model-capabilities.prod-assistant.accepted-reasoning-efforts=none,high,")
+                .run(ctx -> assertThat(ctx).hasFailed().getFailure()
+                        .hasStackTraceContaining("accepted-reasoning-efforts[2] has no value"));
+
+        // The indexed spelling never reaches this check, and that is Boot's doing rather than ours: an index whose
+        // value is empty is not converted to null but left UNBOUND, and IndexedElementsBinder then refuses that index
+        // and every one after it -- "The elements [...[1],...[2]] were left unbound." So this spelling of the mistake
+        // was already loud. Recorded rather than asserted through our message, because asserting our own text here
+        // would claim a path this surface does not take.
+        runner.withPropertyValues("aimon.llm.model-capabilities.prod-assistant.accepted-reasoning-efforts[0]=none",
+                "aimon.llm.model-capabilities.prod-assistant.accepted-reasoning-efforts[1]=",
+                "aimon.llm.model-capabilities.prod-assistant.accepted-reasoning-efforts[2]=high")
+                .run(ctx -> assertThat(ctx).hasFailed().getFailure().hasStackTraceContaining("left unbound")
+                        .hasStackTraceContaining("accepted-reasoning-efforts[1]"));
+    }
+
+    @Test
+    @DisplayName("the thinking dialect binds, folds case, and reaches the descriptor a client reads")
+    void theThinkingDialectBinds() {
+        // #69's starter half. The enum binds directly -- ThinkingDialect is at.aimon.core.llm.capability, which
+        // noPropertiesSignatureNamesAVendorType allows -- so relaxed binding folds case and the configuration
+        // processor records the type, the same arrangement lowest-reasoning-effort already has.
+        for (String written : new String[]{"adaptive", "ADAPTIVE", "Adaptive"}) {
+            runner.withPropertyValues("aimon.llm.model-capabilities.prod-claude.thinking-dialect=" + written)
+                    .run(ctx -> assertThat(
+                            AimonProperties.modelCapabilityRegistry(ctx.getBean(AimonProperties.class).getLlm())
+                                    .resolve("prod-claude").thinkingDialect())
+                            .as("written as %s", written).isEqualTo(ThinkingDialect.ADAPTIVE));
+        }
+    }
+
+    @Test
+    @DisplayName("a declared reasoning-summary refusal binds and reaches the descriptor a client reads")
+    void theReasoningSummaryFlagBinds() {
+        runner.withPropertyValues("aimon.llm.model-capabilities.prod-assistant.supports-reasoning-summary=false").run(
+                ctx -> assertThat(AimonProperties.modelCapabilityRegistry(ctx.getBean(AimonProperties.class).getLlm())
+                        .resolve("prod-assistant").supportsReasoningSummary()).isFalse());
+    }
+
+    @Test
+    @DisplayName("a declaration replaces the built-in row for its name, and the full form is what keeps it")
+    void aDeclarationReplacesTheBuiltInRowRatherThanPatchingIt() {
+        // The starter half of the pair in LlmClientFactoryTest, so neither surface can drift from the yaml the two
+        // operator guides print. An entry is the whole row: naming only the dialect for a claude-* name hands the
+        // sampling suppression back at its fail-open true, and restating it is what the guides now prescribe.
+        // The mechanism is #46's; the general remedy is L-8.
+        runner.withPropertyValues("aimon.llm.model-capabilities.claude-sonnet-5.thinking-dialect=unknown").run(
+                ctx -> assertThat(AimonProperties.modelCapabilityRegistry(ctx.getBean(AimonProperties.class).getLlm())
+                        .resolve("claude-sonnet-5").supportsSamplingParameters()).isTrue());
+
+        runner.withPropertyValues("aimon.llm.model-capabilities.claude-sonnet-5.thinking-dialect=unknown",
+                "aimon.llm.model-capabilities.claude-sonnet-5.supports-sampling-parameters=false")
+                .run(ctx -> assertThat(
+                        AimonProperties.modelCapabilityRegistry(ctx.getBean(AimonProperties.class).getLlm())
+                                .resolve("claude-sonnet-5").supportsSamplingParameters())
+                        .isFalse());
     }
 
     @Test
