@@ -383,10 +383,6 @@ Central is versioned independently).
   distinguishes nothing on a monochrome terminal, which is a supported mode — and the text streams
   inline like answer text does. Collapsing, toggling and a `/thinking` command stay out of scope.
 
-  **Not measured:** no billed call was made on either provider, so the two `display` wire values ride
-  an opted-in request unverified (`RD-1`), and whether `reasoning.summary` needs an `include` entry is
-  inferred from an absent SDK enum constant rather than measured (`RD-2`).
-
   Design: [`reasoning-delta-stream.md`](docs/design/llm/reasoning-delta-stream.md).
   Closes `anthropic-thinking-traces.md` §8 **F-4** and **F-7**, and `openai-responses-path.md` §7
   **F-5**. Open items: `docs/backlog/reasoning-delta-stream-open-items.md`.
