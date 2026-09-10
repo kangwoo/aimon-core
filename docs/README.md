@@ -44,12 +44,14 @@ UI 도 없다. 무엇이 프레임워크 바깥에 있고 무엇이 필수인지
 
 ### CLI 로 말 걸어 보기
 
-필요한 것은 **Java 17** 과 **LLM API 키 하나**뿐이다.
+필요한 것은 **Java 17** 과 **OpenAI API 키 하나**뿐이다 — 번들된 기본 설정이 `OPENAI_KEY` 를 읽는다.
+Anthropic 으로 돌리려면 변수 이름이 아니라 설정을 바꿔야 하고, CLI 설정은
+[`aimon-core-integration-via-cli-reference.md`](getting-started/aimon-core-integration-via-cli-reference.md) 가 다룬다.
 
 ```bash
 git clone https://github.com/kangwoo/aimon-core.git
 cd aimon-core
-export OPENAI_KEY=sk-...          # 또는 ANTHROPIC_API_KEY
+export OPENAI_KEY=sk-...
 ./gradlew :aimon-cli:run
 ```
 

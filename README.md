@@ -111,7 +111,7 @@ so a distributed backend needs `aimon-core` alone — not `aimon-session-routing
 ### Prerequisites
 
 - Java 17 or higher
-- An LLM API key — `OPENAI_KEY` or `ANTHROPIC_API_KEY`
+- An LLM API key — `OPENAI_KEY` or `ANTHROPIC_KEY`
 
 ### Installation (Maven Central)
 
