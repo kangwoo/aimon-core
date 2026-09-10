@@ -7,6 +7,21 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### CLI: the bundled `default` agent runs on `gpt-5.6-terra`, and a `terra` bundle ships beside it
+
+- **The bundled `default` agent now names `gpt-5.6-terra` with `reasoningEffort: medium`** instead of
+  `gpt-5.1`. `temperature` and `topP` are gone from it: the built-in capability row says terra rejects
+  sampling parameters, so they would only have been omitted with a WARN on every request. `maxTokens: 40000`
+  is unchanged. An agent definition's `model.name` wins over `llm.model`, so a deployment whose endpoint
+  does not serve terra should pick another bundled agent (`agent.name`) rather than change `llm.model`.
+
+- **Its `explore` subagent names `gpt-5.1`** instead of `haiku`.
+
+- **New: the `terra` bundle and `modules/aimon-cli/examples/gpt-5.6-terra.yaml`.** A minimal agent — no
+  subagents, no template variables — and a config that runs it with `llm.openai.reasoningSummary: auto`, so
+  the model's reasoning summary streams live and dimmed. Run it with
+  `./gradlew :aimon-cli:run --args="--config modules/aimon-cli/examples/gpt-5.6-terra.yaml"`.
+
 ### Core: an agent definition's frontmatter reports a number it cannot read instead of substituting one
 
 - **BREAKING for agent definitions that have been quietly running on a default** (#74). A definition

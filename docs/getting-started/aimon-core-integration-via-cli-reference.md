@@ -405,7 +405,7 @@ llm:
 예산 방언을 보내고, **그 예산은 호출의 `ReasoningEffort` 에서 나온다** — 적지 않았으면 가운데 칸인 4096 이다.
 그 예산에도 아래 `thinkingBudgetTokens` 의 상한이 똑같이 걸린다. 에이전트 정의가 `model.maxTokens` 를 적지
 않았으면 `max_tokens` 는 `AnthropicConfig` 의 기본값 4096 이므로 예산은 4095 로 clamp 되고 WARN 이 한 번 뜨며,
-**답변에 남는 것은 1 토큰이다.** CLI 가 함께 배포하는 에이전트 정의는 넷 다 `maxTokens: 40000` 이라 그 정의로는
+**답변에 남는 것은 1 토큰이다.** CLI 가 함께 배포하는 에이전트 정의는 모두 `maxTokens: 40000` 이라 그 정의로는
 이 일이 일어나지 않는다. 처방은 둘이다 — 에이전트 정의의 `model.maxTokens` 를 올리거나, 위의
 `llm.reasoningEffort` 를 `low`(2048) 나 `minimal`(1024) 로 내린다(에이전트 정의에 `model.reasoningEffort` 가
 있으면 그쪽을). **경고가 말하는 처방은 앞의 것 하나뿐이다.** 이것은 빠뜨린 것이 아니라 결정이며, 근거와 기각한
@@ -446,7 +446,7 @@ llm:
 - **위로 `max_tokens` 미만.** thinking 토큰이 `max_tokens` 에 함께 계산되므로 클라이언트가
   `max_tokens - 1` 로 clamp 하고 그 사실을 WARN 으로 남긴다. **그 `max_tokens` 는 에이전트 정의의
   `model.maxTokens` 이고, 적지 않았으면 `AnthropicConfig` 의 기본값 4096 이다 — 그런 에이전트에서
-  `thinkingBudgetTokens: 8000` 은 실제로 4095 로 나간다.** CLI 가 함께 배포하는 에이전트 정의는 넷 다
+  `thinkingBudgetTokens: 8000` 은 실제로 4095 로 나간다.** CLI 가 함께 배포하는 에이전트 정의는 모두
   `maxTokens: 40000` 이라 그 정의로는 8000 이 그대로 나간다. 천장을 올리는 키는 여기 없다 — 그것은 에이전트
   정의의 `model.maxTokens` 이고, 세 번째 설정 표면이다.
 

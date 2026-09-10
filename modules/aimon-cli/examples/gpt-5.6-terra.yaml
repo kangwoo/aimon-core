@@ -1,0 +1,47 @@
+# aimon-cli -- gpt-5.6-terra (OpenAI reasoning model) example
+#
+#   export OPENAI_KEY=sk-...
+#   ./gradlew :aimon-cli:run --args="--config modules/aimon-cli/examples/gpt-5.6-terra.yaml"
+#
+# Key reference: docs/getting-started/aimon-core-integration-via-cli-reference.md
+# (commented default: modules/aimon-cli/src/main/resources/default-config.yaml)
+
+llm:
+  provider: "openai"
+  baseUrl: https://api.openai.com/v1
+  apiKey: "${OPENAI_KEY}"
+  model: "gpt-5.6-terra"        # fallback only -- the agent's model.name wins (see agents/terra/agent.md)
+  timeout: 120                  # reasoning at `high` answers slowly; the shipped default is 60
+
+  # How hard the model thinks. Deployment-wide; an agent definition's model.reasoningEffort wins over it.
+  # gpt-5.6-terra's built-in capability row accepts:  none | low | medium | high
+  # `minimal` is rejected by this model -- the client omits it and WARNs once instead of sending a 400.
+  reasoningEffort: medium
+
+  # OpenAI-only. terra's row routes it to /v1/responses, where a reasoning summary is available:
+  # the only readable form of the reasoning, streamed live and dimmed. Costs output tokens.
+  openai:
+    reasoningSummary: auto      # auto | concise | detailed
+
+  # NOT needed for `gpt-5.6-terra` itself -- the built-in table already has its row.
+  # Uncomment only when an Azure deployment / OpenAI-compatible gateway exposes terra under ANOTHER
+  # name (then also set llm.model and the agent's model.name to that name). A declared entry is the
+  # whole row, so every flag of terra's built-in row is restated here.
+  #modelCapabilities:
+  #  my-terra-deployment:
+  #    supportsSamplingParameters: false          # rejects temperature / top_p
+  #    supportsReasoningEffort: true
+  #    supportsToolsWithReasoning: true
+  #    supportsReasoningTraceRoundTrip: true      # /v1/responses -- set false on a Chat-Completions-only gateway
+  #    supportsReasoningSummary: true             # false if the gateway 400s on reasoning.summary
+  #    acceptedReasoningEfforts: [none, low, medium, high]   # the ladder has a gap: no `minimal`
+  #                                                         # (do not also write lowestReasoningEffort)
+
+agent:
+  name: "terra"                 # classpath bundle agents/terra/agent.md
+
+cli:
+  colorOutput: true
+  showIterations: true
+  showToolCalls: true
+  streaming: true
