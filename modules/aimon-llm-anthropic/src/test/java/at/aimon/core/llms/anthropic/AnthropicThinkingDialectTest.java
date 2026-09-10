@@ -345,6 +345,9 @@ class AnthropicThinkingDialectTest {
         // No reasoningEffort and no maxTokens on the call, so the MEDIUM rung's 4096 meets AnthropicConfig's 4096:
         // the shape of an agent definition that sets no model.maxTokens. Not the CLI's bundled agents -- they set
         // 40000 and never clamp here.
+        //
+        // One token further up is the neighbour below, which is silent: section 16.8 (#89) is which requests this
+        // warning covers.
         final JsonNode body = send(client(config(BUILT_IN_BUDGETED_MODEL, AnthropicThinkingMode.AUTO).build()),
                 LlmModel.builder().build());
 
@@ -358,6 +361,50 @@ class AnthropicThinkingDialectTest {
         // line. singleElement() is what notices a second warning starting to fire on this path.
         assertThat(warnings()).singleElement().asString().contains("does not fit under maxTokens")
                 .contains("Raise maxTokens");
+    }
+
+    @Test
+    @DisplayName("AUTO on a built-in budgeted row whose budget fits sends it unclamped and says nothing")
+    void autoOnABuiltInBudgetedRowThatFitsIsSilent() {
+        // #89, and a decision rather than an oversight: raising maxTokens from 4096 by the smallest step removes the
+        // warning above while the answer is still left one token (4097) or four (4100). Which requests the clamp
+        // warning covers, and why these are not among them, is
+        // docs/design/llm/thinking-reporting-and-dialect-records.md section 16.8.
+        //
+        // isEmpty() rather than noneMatch on the clamp's wording, deliberately: a new line on these requests, whatever
+        // it says, is a headroom policy that section has to be revisited for first.
+        for (int maxTokens : new int[]{4097, 4100}) {
+            logAppender.list.clear();
+            final JsonNode body = send(client(config(BUILT_IN_BUDGETED_MODEL, AnthropicThinkingMode.AUTO).build()),
+                    LlmModel.builder().maxTokens(maxTokens).build());
+
+            assertThat(body.get("max_tokens").asInt()).isEqualTo(maxTokens);
+            assertThat(body.has("thinking")).as("the built-in BUDGETED row for %s", BUILT_IN_BUDGETED_MODEL).isTrue();
+            assertThat(body.get("thinking").get("type").asText()).isEqualTo("enabled");
+            assertThat(body.get("thinking").get("budget_tokens").asInt()).isEqualTo(4096);
+            assertThat(warnings()).as(
+                    "maxTokens %d leaves %d tokens for the answer and is not a clamp; a warning here is a headroom "
+                            + "policy -- read section 16.8 of thinking-reporting-and-dialect-records.md first",
+                    maxTokens, maxTokens - 4096).isEmpty();
+        }
+    }
+
+    @Test
+    @DisplayName("EXTENDED with a budget of 8000 under maxTokens 8001 sends 8000 and says nothing")
+    void extendedWithABudgetThatFitsByOneTokenIsSilent() {
+        // #89's second case: the budget is an operator's number rather than a rung, and it fits by one token. The
+        // same decision as the test above, reached from the other source of a budget.
+        final JsonNode body = send(
+                client(config(UNKNOWN_MODEL, AnthropicThinkingMode.EXTENDED).thinkingBudgetTokens(8000).build()),
+                LlmModel.builder().maxTokens(8001).build());
+
+        assertThat(body.get("max_tokens").asInt()).isEqualTo(8001);
+        assertThat(body.get("thinking").get("type").asText()).isEqualTo("enabled");
+        assertThat(body.get("thinking").get("budget_tokens").asInt()).isEqualTo(8000);
+        assertThat(warnings())
+                .as("a budget of 8000 under maxTokens 8001 is not a clamp; a warning here is a headroom policy -- read "
+                        + "section 16.8 of thinking-reporting-and-dialect-records.md first")
+                .isEmpty();
     }
 
     // ── Row 8: AUTO × UNKNOWN → nothing, and this one is reported ────────────────────────────────────────────────

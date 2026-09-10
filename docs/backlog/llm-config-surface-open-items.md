@@ -1,4 +1,4 @@
-# LLM 설정 표면 — 등록 항목 15건 (열림 11 · 닫힘 4)
+# LLM 설정 표면 — 등록 항목 16건 (열림 12 · 닫힘 4)
 
 출처는 #46 이다 — 모델 capability 표를 CLI yaml 과 스타터 프로퍼티에서 확장할 수 있게 한 작업.
 설계는 [`../design/llm/model-capability-config-key.md`](../design/llm/model-capability-config-key.md) 이고,
@@ -857,6 +857,64 @@ binding — 를 새 키에 대해서도 손을 대지 않고 확인되게 만든
 
 ---
 
+## L-16 — 도구 호출 안에서 `max_tokens` 로 잘린 응답은 에이전트 경로 어디서도 `max_tokens` 라는 이름을 얻지 못한다
+
+*(2026-09-10 등록. 출처는 #89 —
+[`../design/llm/thinking-reporting-and-dialect-records.md` §16.8](../design/llm/thinking-reporting-and-dialect-records.md#168-which-requests-the-clamp-warning-covers-decided-89-2026-09-10).
+그 결정은 "실제로 잘린 응답은 일어났을 때 보고된다" 를 이유 하나로 삼는데, 그 이유가 **두 모양 중 하나에서만** 참이라는
+것이 이 항목이다. 결정을 뒤집지는 않는다 — 이 틈은 숫자 없이 닫히고, 경고 임계값을 두어도 그 너머에서 그대로 남는다.
+설정 표면 항목은 아니다. 여기 두는 것은 같은 결정의 짝인 L-15 가 여기 있어서다.)*
+
+**무엇을.** 에이전트 루프가 받은 응답이 `max_tokens` 로 끝났고 그 안에 도구 호출이 있을 때, 그 사실을 운영자가 보는
+곳에 `max_tokens` 라는 이름으로 남긴다.
+
+**왜.** 관측 가능한 결과는 이렇다 — thinking 예산이 출력 허용량을 거의 다 쓰는 요청(§16.8 의 `maxTokens: 4097` 처럼)에서
+모델이 도구 호출을 쓰다가 잘리면, 운영자가 보는 것은 **인자가 빈 도구 호출** 하나이고 로그 어디에도 `max_tokens` 가
+없다. 인자가 JSON 조각까지 왔으면 파싱 실패 WARN 이 뜨지만 왜 조각인지는 말하지 않고, 하나도 오기 전에 잘렸으면 그마저
+없다. 도구가 필수 파라미터를 선언했다면 기본값인 `WARN` 모드의 스키마 검증이 한 줄을 더 남기고 도구를 그대로
+실행한다(`DefaultToolExecutor.java:194-197`, `:201`) — 그 줄도 이유는 말하지 않는다. 도구 호출이 없는 마지막 턴이
+잘리면 `TRUNCATED` 로 끝나며 이름이 붙는 것과 대조된다.
+
+신호를 경로별로 세면 이렇다(`README.md` 규칙 여섯 — `convertResponse` 의 호출자는 `convertResponse(` 와
+`::convertResponse` 두 형태로 셌다).
+
+| 신호 | 어디 | 에이전트에서 닿는가 |
+|---|---|---|
+| 도구 호출 없는 마지막 턴의 `CompletionReason.TRUNCATED`, 마커, WARN | `OrcaAgentExecutor.java:1737-1752`, `:217`, `:2289` | **닿는다**, 두 경로 모두. 단 `!response.hasToolUses()` 일 때만이다 |
+| 도구 호출이 있는 응답 | `OrcaAgentExecutor.java:1768-1770` 이 그대로 도구를 실행한다 | 이 분기는 stop reason 을 읽지 않는다. 실행기에서 `LlmResponse.getStopReason()` 을 읽는 곳은 `:1742` 하나다(`:2548` 은 `BudgetTracker` 의 같은 이름 메서드다) |
+| Anthropic 클라이언트의 `Anthropic response was truncated due to max_tokens limit` | `AnthropicLlmClient.java:786`, `convertResponse` 안 | **닿지 않는다.** `convertResponse` 의 호출자는 `:249` 하나이고, 그것은 살아 있는 취소 토큰 **없이** 들어온 blocking 호출이다. 토큰이 `isSupported()` 면 blocking 호출도 스트리밍 경로로 돌아간다(`:282-286`). 실행기는 실행마다 `SignalBackedLlmCancellation` 을 만들어(`OrcaAgentExecutor.java:1529`) blocking 호출에도 넘기고(`:2987-2988`), 게이트웨이가 그대로 전달하며(`LlmCallGateway.java:401`), 그 타입은 `isSupported()` 를 재정의하지 않아 기본값 `true` 다(`LlmCancellation.java:70-72`) |
+| Anthropic 스트리밍 매퍼 | `AnthropicStreamingMapper.java` | `max_tokens` 정지에 아무것도 남기지 않는다. WARN 은 토큰 수 범위 초과(`:360`) 하나, 보고는 서명 없는 thinking 블록(`:282`) 하나다 |
+| CLI | `modules/aimon-cli/src/main/java` | `StopReason` 을 읽는 파일이 없다 |
+
+잘린 도구 호출이 여전히 도구 호출인 이유는 세 줄이다. 매퍼는 `tool_use` 블록이 **시작될 때** 슬롯을 등록하고
+(`AnthropicStreamingMapper.java:175`), `ChunkAggregator.toLlmResponse` 는 id 와 이름이 있는 슬롯을 전부 도구 호출로
+만들며(`ChunkAggregator.java:247-253`), 인자는 비었으면 조용히 `Map.of()`, 파싱에 실패하면 WARN 과 함께 빈 맵이
+된다(`:287-298`).
+
+**어디.** 위 표의 줄들(2026-09-10, `ade5978`). 틈의 모양을 한 줄로 가리키면 `OrcaAgentExecutor.java:1737` 의 분기
+조건이고, 그 틈을 메우는 것처럼 보이는 줄이 에이전트에서는 실행되지 않는 `AnthropicLlmClient.java:786` 이다.
+
+**심각도 (규칙 셋).** 읽어서 얻은 결론이고 돌려 보지는 않았다 — 실제 API 가 잘린 `tool_use` 블록에도
+`content_block_stop` 을 보내는지, 부분 JSON 이 어떤 모양으로 오는지는 라이브 호출 없이 확인하지 않았다. 다만 위 결론은
+그 둘에 기대지 않는다: 슬롯은 블록 **시작**에서 등록되므로 멈춤 이벤트가 없어도 도구 호출은 생긴다. 틈은 크래시가
+아니라 이유가 적히지 않은 도구 오류로 나타날 것으로 보이고, 모델이 같은 호출을 되풀이할 때 정체 가드
+(`MAX_CONSECUTIVE_STALLED_ITERATIONS`, `OrcaAgentExecutor.java:226`)에 닿는지는 세지 않았다. 그리고 #89 의 설계도 그
+리뷰도 `convertResponse` 의 WARN 을 신호로 셌다 — 취소 토큰을 따라가지 않으면 그 줄은 **정확히 인용되고 에이전트에서는
+한 번도 실행되지 않는다**(규칙 여섯의 모양이다).
+
+**처방은 적용해 보지 않았다 (규칙 다섯).** 모양은 보인다 — 실행기가 도구 호출이 있는 응답에서도
+`StopReason.isTruncated()` 를 읽어 이름을 붙이는 것(프로바이더 중립이고 두 경로에 공통이다), 그리고 thinking 이 켜진
+요청이면 그 잘림을 `usage.output_tokens_details.thinking_tokens` 로 thinking 에 귀속시키는 것(`AnthropicUsages` 가 이미
+읽는다. §16.8 이 숫자 없는 신호로 적어 둔 것이다). 정하지 않은 것이 둘 있다 — 잘린 도구 호출을 **여전히 실행할지**(지금은
+실행한다), 그리고 `convertResponse` 의 WARN 을 없앨지 스트리밍 쪽으로 옮길지. OpenAI 클라이언트의 같은 WARN
+(`OpenAIChatCompletionsExchange.java:85`, `OpenAIResponsesExchange.java:100`)이 같은 우회에 걸리는지는 세지 않았다.
+
+**언제 다시 볼까.** 실행기의 도구 호출 분기를 다음에 건드릴 때, 또는 인자가 빈 도구 호출이 이유 없이 보고될 때. 기다릴
+크기가 아니므로 지금 집어도 된다. 이 항목이 닫히면 §16.8 의 이유 3 이 두 모양 모두에서 참이 되므로, 그 문장과
+"The cost" 를 같은 편집에서 고친다.
+
+---
+
 ## 관련 문서
 
 - [`../design/llm/model-capability-config-key.md`](../design/llm/model-capability-config-key.md) — 설계.
@@ -865,7 +923,7 @@ binding — 를 새 키에 대해서도 손을 대지 않고 확인되게 만든
   #82 의 설계. §9 O-1 · O-2 가 L-13 · L-14 의 출처이고, §11 이 나머지 미해결을 왜 그 문서에 두었는지 적는다
 - [`../design/llm/thinking-reporting-and-dialect-records.md`](../design/llm/thinking-reporting-and-dialect-records.md) —
   L-6·L-7 을 닫고 L-9·L-10·L-11 을 연 설계. §14 가 방언 census 의 원자료, §15.4 가 이 세 항목의 승격 근거이고,
-  §16 이 #83 의 결정이자 L-15 의 출처다
+  §16 이 #83 의 결정이자 L-15 의 출처, §16.8 이 #89 의 결정이자 L-16 의 출처다
 - [`../design/llm/openai-model-capabilities.md`](../design/llm/openai-model-capabilities.md) — capability
   SPI 자체의 설계. §7 O-8 이 이 작업으로 닫혔다
 - [`../design/llm/openai-responses-path.md`](../design/llm/openai-responses-path.md) — F-2 가 L-2 의 출처
