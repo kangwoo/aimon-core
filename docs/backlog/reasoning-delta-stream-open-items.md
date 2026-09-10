@@ -88,6 +88,23 @@
 **남는 것.** `AnthropicThinkingLiveTest` 는 그대로 있고, 여기서 확인되지 않은 것은 §11 O-2(budgeted 모양이
 `display` 형제를 받는지)와 스트리밍 이벤트 모양이다 — 이번 프로브는 전부 비스트리밍이었다.
 
+#### 그중 **스트리밍 이벤트 모양은 이후 실측되었다** (2026-09-10, #71)
+
+같은 날 스트리밍 요청을 한 번 더 보냈다 — `claude-opus-5`, `thinking:{type:adaptive,display:summarized}`,
+`output_config:{effort:high}`, `stream:true`. **HTTP 200**, `content_block_delta` 안에
+**`thinking_delta` 34건**과 **`signature_delta` 1건**(`text_delta` 2건). 블록 순서는 `[thinking, text]`,
+`output_tokens: 338` 중 `thinking_tokens: 332`.
+
+`AnthropicStreamingMapper` 는 문자열이 아니라 SDK 술어(`delta.isThinking()` · `delta.isSignature()`)로
+분기하므로 마지막 고리는 그 술어가 어느 와이어 타입을 뜻하느냐인데, `anthropic-java-core` 2.13.0 의
+`ThinkingDelta` 와 `SignatureDelta` 가 각각 `thinking_delta` 와 `signature_delta` 를 들고 있다. 즉 이름이
+맞고 채널이 비어 있지 않다. `AnthropicThinkingLiveTest.ReasoningDeltasArriveOnAStream` 이 같은 요청을
+클라이언트로 보내 `REASONING_DELTA` 청크가 실제로 도착하는 것을 단언한다.
+
+**O-2 는 그대로 열려 있다** — budgeted 모양에 `display` 형제를 붙여 본 요청은 여전히 없다. 그리고
+`display: summarized` **없이** `claude-opus-5` 가 `thinking_delta` 를 보내는지도 스트리밍으로는 재확인하지
+않았다. 같은 서버가 이미 비스트리밍으로 답한 것을 다른 경로에서 한 번 더 사는 값이 없다고 보았다.
+
 ## RD-2 — `reasoning.summary` 가 `include` 항목을 요구하는지 실측되지 않았다 · **닫힘 (2026-09-10, 실측)**
 
 **무엇을.** OpenAI Responses 요청이 요약을 받으려면 `include` 에 무언가를 더 적어야 하는지 확인한다.
@@ -137,9 +154,26 @@
 
 **이 프로브가 덮지 않은 것** — 닫힘을 과독하지 않도록 함께 적는다.
 
-- **비스트리밍이다.** 전부 비스트리밍 `POST /v1/responses` 였으므로, 확인된 것은 **최종 응답에 요약이
-  존재한다**는 것이지 스트리밍 경로가 읽는 `response.reasoning_summary_text.delta` 이벤트 이름이 아니다.
-- **`gpt-5-mini` 하나다.** 다른 모델은 보지 않았다.
+- ~~**비스트리밍이다.**~~ **이 절반은 이후 실측되었다 (2026-09-10, #71)** — 아래.
+- **`gpt-5-mini` 하나다.** 다른 모델은 보지 않았다. 아래의 스트리밍 요청도 같은 모델이다.
+
+#### 스트리밍 이벤트 이름 — 실측 (2026-09-10, #71)
+
+`POST /v1/responses`, `gpt-5-mini`, `reasoning:{effort:"high",summary:"auto"}`, `store:false`,
+`stream:true`. **HTTP 200**, SSE `event:` 834줄 중 **`response.reasoning_summary_text.delta` 611건**
+(`response.output_text.delta` 201건, `reasoning_summary_part.added`/`.done` 각 4건,
+`reasoning_summary_text.done` 4건). 요약 텍스트는 611개 델타에 걸쳐 2095자,
+`reasoning_tokens: 1280` / `output_tokens: 1502`.
+
+`OpenAIResponsesStreamingMapper` 는 `event.isReasoningSummaryTextDelta()` 로 분기하고,
+`openai-java-core` 4.57.0 의 `ResponseReasoningSummaryTextDeltaEvent` 가
+`response.reasoning_summary_text.delta` 를 들고 있다 — 위에서 611번 센 그 이름이다.
+`OpenAIReasoningLiveTest.ReasoningDeltasArriveOnAStream` 이 같은 요청을 클라이언트로 보내
+`REASONING_DELTA` 청크 도착을 단언한다.
+
+**`response.reasoning_text.delta` 는 여전히 실측되지 않았다.** 이 모델은 요약 계열만 보낸다. 매퍼가 두
+계열을 한 게이트 아래 함께 흘려보내는 결정은 바로 그런 모델을 위한 것이므로 영향은 없지만, 두 번째 계열은
+서버를 상대로 확인된 적이 없다.
 
 **부수 관찰 하나 — 이것으로 아무것도 바꾸지 않는다.** `include` 를 아예 안 보낸 요청에서도
 `encrypted_content` 가 돌아왔다. 팩토리의 javadoc 은 `store: false` 가 SDK 자신의 javadoc 이 콕 집어

@@ -87,6 +87,60 @@ Central is versioned independently).
   Neither can live in `aimon-core`, which cannot see either surface, and that blind spot is exactly what
   #69 was. `L-1` (the CLI-throws / starter-ignores asymmetry) is **widened by two keys and closed by
   none of this**.
+### LLM: the reasoning stream is measured against both live APIs, and #43 is closed on evidence
+
+- **#62's streaming path had never been run against a live API on either provider** (#71). Every test
+  of it drove a hand-written event stream, which is green whatever the server actually sends — and a
+  wrong event name there does not fail, it produces **an empty channel indistinguishable from a model
+  that chose not to think**. Both halves are now measured — the event names counted off the raw SSE
+  body, then the same request driven through the client by a test that skips without a key:
+
+  | provider | request | what arrived |
+  |---|---|---|
+  | Anthropic | `claude-opus-5`, `thinkingMode: adaptive` + `thinkingDisplay: summarized`, effort `high` | `thinking_delta` × 34 and one `signature_delta` inside `content_block_delta` |
+  | OpenAI | `gpt-5-mini`, `reasoningSummary: auto`, effort `high` | `response.reasoning_summary_text.delta` × 611 |
+
+  Both reach the sink as `LlmStreamChunk.Kind.REASONING_DELTA`, and the deliberation is not inside the
+  answer text. **The prompt is part of the measurement:** an easy question returns no deliberation at
+  all even at `effort: high` with a display asked for, so both tests use a problem that earns it — a
+  test that is flaky for that reason would be worse than no test.
+
+- **`REASONING_DELTA` → `AssistantReasoningDelta` was the one hop nothing asserted.** Both ends were
+  pinned and the middle was not: the provider mappers by fixtures, the cross-node codec and the REPL
+  formatter by tests that *construct* the event by hand. A chunk that reached the executor and was
+  dropped in its switch would have been green everywhere. Now pinned, including that the reasoning
+  channel keeps its own chunk-index sequence rather than sharing the text one.
+
+- **`gpt-5.x` tool calling: the fix is confirmed against the live API, and the original 400 still
+  happens where the issue found it** (#43). The issue's own reproduction — a config carrying nothing
+  but a key and `model("gpt-5.6-terra")`, a default `LlmModel`, a non-empty tool list — is **accepted**
+  today. Forcing the same request back onto Chat Completions with `responsesApiEnabled(false)` returns
+  the issue's sentence verbatim (`Function tools with reasoning_effort are not supported for
+  gpt-5.6-terra in /v1/chat/completions`), with no `temperature` and no `reasoning_effort` sent — so
+  the endpoint routing is what fixes it, not a change of parameters. Both are now tests.
+
+- **The reasoning item really does round-trip, and the server really does read it.** A captured
+  `[reasoning, function_call]` turn is replayed on turn two and accepted; the same turn with 40
+  characters of `encrypted_content` overwritten is refused with *"The encrypted content for item rs_…
+  could not be verified"*. Without that control, "the second call succeeded" would be equally
+  satisfied by a client that dropped the item — which is not hypothetical: a turn carrying **no**
+  reasoning item at all is also accepted.
+
+- **A tool call does not imply a reasoning item, and that is a model decision rather than a defect.**
+  Measured: `gpt-5.6-terra` asked for the weather with a tool available returns
+  `output: [function_call]` and `reasoning_tokens: 0`. A turn that has to carry a reasoning item must
+  earn the reasoning *and* require the tool.
+
+- **One correction to #43's wording, not to the code.** The issue says these models reject sampling
+  parameters "by the presence of the parameter, regardless of value". On `/v1/responses`,
+  `gpt-5.6-terra` refuses `temperature: 0.0` and accepts `temperature: 1.0` — non-default values are
+  what it refuses, which is what `InMemoryModelCapabilityRegistry`'s `gpt-5` row already said and why
+  suppressing the parameter loses nothing on the wire.
+
+- **No production code changed.** This entry is tests and records. The evidence, request by request,
+  is in `docs/design/llm/reasoning-delta-stream.md` §12.4 and
+  `docs/design/llm/openai-responses-path.md` §10; `RD-1` and `RD-2` in
+  `docs/backlog/reasoning-delta-stream-open-items.md` record which of their caveats this discharges.
 
 ### LLM: a reasoning model's thinking is something a person can watch, and nothing else changes
 
