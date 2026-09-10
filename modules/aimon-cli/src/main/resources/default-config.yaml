@@ -1,5 +1,19 @@
 # Aimon CLI Default Configuration
 
+# ${VAR} -- every scalar value and every mapping key in this file is expanded from the environment.
+# `${NAME}` is replaced by the environment variable NAME, and a variable that is not set fails startup
+# naming the variable and the key it was written on. It works on any key, whatever the value's type --
+# a string, `llm.timeout`, an enum, an array element, a mapping key. Two keys that expand to the same
+# name are refused rather than one silently replacing the other. Expansion runs once, so a variable
+# whose value is itself `${OTHER}` stays literal, and there is no escape for writing a literal `${`.
+# A value with no placeholder in it is not touched at all -- the parser hands the deserializer the scalar
+# exactly as written, so a value YAML reads as a boolean or a number keeps its own spelling (writing
+# `off` under `anthropic.thinkingMode` still means off, not false).
+# Full rule: docs/getting-started/aimon-core-integration-via-cli-reference.md section 3.1.
+#
+# Commented-out lines are not expanded -- the `${OPENAI_KEY}` and `${GITHUB_TOKEN}` examples below cost
+# nothing until you uncomment them.
+
 # LLM Provider Configuration
 llm:
   provider: "openai"

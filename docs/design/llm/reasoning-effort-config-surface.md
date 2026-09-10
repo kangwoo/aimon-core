@@ -877,6 +877,11 @@ key appears in a guide, which is the machine half of this obligation.
   design records it as a carried-forward finding (the shape runs 1 and 2 used) rather than opening an
   item, because the task's backlog obligations are two specific items and adding a third is scope a
   reviewer did not ask for. If the run's handoff should instead register it, that is a one-line decision.
+  **→ Answered on 2026-09-10 by issue #74 — the call a human was being left to make — and fixed there.**
+  Neither a backlog item nor a carried-forward finding in the end: the parser now reports a value it
+  cannot use, on all six keys that could substitute a default. See
+  [`config-value-expansion-and-frontmatter-strictness.md`](../integration/config-value-expansion-and-frontmatter-strictness.md).
+  §6.3 and §14 stay as they were written — they are this round's design-time record, not a status board.
 - **O-4 — does the `gpt-5` prefix row's ladder stay *unset*?** This design leaves it unset, so it tracks
   the fail-open default, which is what the row's existing comment argues for and what measurement still
   supports. Stating `{MINIMAL, LOW, MEDIUM, HIGH}` explicitly would decouple the row from a default that

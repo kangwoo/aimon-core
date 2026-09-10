@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/memory/memory-usage-guide.md
-source_commit: 7ad65b7
+source_commit: d4608ba
 ---
 
 # Memory (Peer Memory) Usage Guide
@@ -275,6 +275,7 @@ memory:
 ```
 
 - `scorer.type=llm` is always ready (it reuses the global LLM). `embedding` is **fail-soft**: without `scorer.embedding.apiKey` it is disabled and the reason is logged at startup (`notReadyReason()`).
+- The `${OPENAI_KEY}` on that `apiKey` **is expanded from the environment, like every other value.** It used not to be, so the literal seven characters reached the embedding provider and its 401 surfaced half an hour later inside a Quartz job (#53). The rule is in [CLI reference §3.1](../../getting-started/aimon-core-integration-via-cli-reference.en.md#31-var--where-it-is-expanded).
 - `cron` is the framework's common **5-field** dialect (minute hour day-of-month month day-of-week, Sunday=0). Quartz's 6-field form (`"0 */30 * * * ?"`) is **rejected at startup** — translating to Quartz is the backend's job. If your config used numeric weekdays, subtract 1 (Quartz's Friday 6 → 5 here).
 - The dreamer runs on its own dedicated Quartz scheduler (RAMJobStore) so it does not contend with the foreground task scheduler.
 - **It is single-node only.** A RAMJobStore is JVM-local by definition, so it does not share jobs across processes. Start two CLIs against the same workspace and consolidation runs twice — this is not something you fix by reducing the number of schedulers, it is **because the job store is not shared**; clustering would require a shared JDBC JobStore.

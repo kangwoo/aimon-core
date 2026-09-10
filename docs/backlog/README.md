@@ -312,6 +312,7 @@ B-6 이 그렇게 어긋나 있었다. §7 은 그 항목을 "MCP 를 실제로 
 | [`openai-model-capabilities-open-items.md`](openai-model-capabilities-open-items.md) | o-시리즈 reasoning-item 재생 프로브 (2026-09-09) | 1 | 0 | 1 | 0 |
 | [`llm-config-surface-open-items.md`](llm-config-surface-open-items.md) | `docs/design/llm/model-capability-config-key.md` §9 (#46) | 12 | 9 | 3 | 0 |
 | [`reasoning-delta-stream-open-items.md`](reasoning-delta-stream-open-items.md) | `docs/design/llm/reasoning-delta-stream.md` §11 (#62) | 6 | 4 | 2 | 0 |
+| [`config-value-expansion-open-items.md`](config-value-expansion-open-items.md) | `docs/design/integration/config-value-expansion-and-frontmatter-strictness.md` §9 (#53) | 2 | 2 | 0 | 0 |
 
 > **2026-09-10 — 위 표의 두 칸을 세어서 고쳤다. 규칙 일곱의 두 번째 사례이고, 둘 다 같은 모양이다:
 > 본문을 고친 사람이 색인을 세지 않았다.**
@@ -330,7 +331,8 @@ B-6 이 그렇게 어긋나 있었다. §7 은 그 항목을 "MCP 를 실제로 
 > 이었다.** 바로 위 문단이 기록하는 `d3500f6` 이 이 행을 채운 **다음 커밋**(`3a41fcd`)이 L-6 과 L-7 을
 > 더하면서 색인을 세지 않았다. 이번 변경이 그 둘을 닫고 넷(L-9 · L-10 · L-11 · L-12)을 새로 열므로 행은
 > `12 | 9 | 3 | 0` 이 된다 — 넷 중 L-9 는 열리자마자 병합이 닫았고(형제 작업이 키를 열어 트리거가
-> 발화했다), `12` 라는 항목 수는 그 형제 작업의 L-8 을 포함한 값이다 — 낡은 칸이 정정되는 것과 소비되는 것이 같은 커밋에서 일어난다. **항목 수가
+> 발화했다), `12` 라는 항목 수는 그 형제 작업의 L-8 을 포함한 값이다.
+> 낡은 칸이 정정되는 것과 소비되는 것이 같은 커밋에서 일어난다. **항목 수가
 > 늘어난 것은 진척이 아니다**: 두 번째 문단이 적어 둔 대로, 움직였다는 것은 그 자리를 누가 봤다는 뜻일
 > 뿐이다. 넷 중 셋은 설계가 스스로 센 미해결이고, L-12 는 **빌드가 실측한 것**이다 — 이 디렉토리가
 > 끝난 작업의 산물을 받는 세 번째 경로다.

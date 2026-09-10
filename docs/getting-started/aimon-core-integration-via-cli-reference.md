@@ -180,6 +180,46 @@ public Integer call() {
 | `try-with-resources` | Spring `@Bean(destroyMethod = "close")` / Quarkus `@PreDestroy` 등으로 라이프사이클 위임 |
 | `replSession.start()` | HTTP 핸들러, 배치 잡, WebSocket 메시지 수신 루프 |
 
+### 3.1 `${VAR}` — 어디서 풀리는가
+
+**설정 파일의 모든 스칼라 값과 모든 매핑 키에서 풀린다.** `${NAME}` 은 환경 변수 `NAME` 의 값으로 바뀌고,
+값이 없는 변수는 **변수 이름과 그것이 적힌 키를 함께 말하며 기동을 실패시킨다** —
+`Environment variable not set: OPENAI_KEY (at memory.dreamer.scorer.embedding.apiKey)`. 참여하는 필드의
+목록은 없다. 목록이 있던 동안 그 목록은 `llm` 의 문자열 필드 셋과 capability 맵 키뿐이었고, `memory`
+블록이 자기 자격증명을 갖게 되었을 때 아무도 그것을 늘리지 않아서, CLI 자신이 배포하는
+`default-config.yaml` 이 loader 가 방문하지 않는 블록에 `apiKey: "${OPENAI_KEY}"` 를 예시로 싣고 있었다.
+
+```yaml
+llm:
+  apiKey: "${OPENAI_API_KEY}"     # 문자열
+  timeout: "${LLM_TIMEOUT}"       # 정수 — 바인딩 전에 풀리므로 이것도 된다
+  anthropic:
+    thinkingMode: "${MODE}"       # enum — 마찬가지
+  modelCapabilities:
+    ${DEPLOYMENT}:                # 매핑 키
+      supportsSamplingParameters: false
+mcp:
+  servers:
+    - command: "npx"
+      args: ["-y", "${PACKAGE}"]  # 배열 원소
+memory:
+  storagePath: "${HOME}/memory/representations.jsonl"   # 값의 일부여도 된다
+```
+
+규칙의 나머지 절반은 이렇다.
+
+- **같은 이름으로 풀리는 두 형제 키는 거절한다.** yaml 은 같은 키를 두 번 적는 것을 막지만 `${A}` 와
+  `${B}` 가 같은 값으로 풀리는 것은 막지 못하고, 그때 뒤엣것이 앞엣것을 덮으면 아무도 보고하지 않는다.
+- **한 번만 푼다.** 변수의 값이 다시 `${OTHER}` 이면 그대로 남는다.
+- **리터럴 `${` 를 적는 escape 는 없다.**
+- **플레이스홀더가 없는 스칼라는 건드리지 않는다.** 파서가 읽은 원문이 그대로 디시리얼라이저에 닿으므로
+  `thinkingMode: off` 는 여전히 `off` 를 뜻한다 — `off` 는 YAML 1.1 의 boolean 이라 원문 텍스트만이
+  그것을 `no` · `false` 와 구별한다.
+
+확장은 Jackson 이 바인딩하기 **전에** 토큰 스트림 위에서 일어난다
+(`at.aimon.cli.config.PlaceholderExpandingParser`). 그래서 스타터와 CLI 가 플레이스홀더를 푸는 시점에
+대해 같은 답을 한다 — 스타터는 Spring 이 바인딩 전에 풀고, CLI 도 이제 그렇다.
+
 ---
 
 ## 4. `AgentSetupFactory.create()`를 한 줄씩
@@ -416,10 +456,9 @@ block. The block is bound to a different conversation."* 서명은 시스템 프
 처방이 이력에서 thinking 블록을 전부 떼는 것이고, `false` 가 그것이다. 대가는 기능 자체다 — 모델이 매 턴
 추론을 다시 세운다.
 
-**이 블록 안에서는 `${VAR}` 가 풀리지 않는다.** 확장은 Jackson 바인딩이 끝난 뒤 `llm` 의 문자열 필드 셋
-(`apiKey` · `baseUrl` · `model`)과 capability 맵 키만 훑기 때문이다. enum 이나 정수 필드에 적힌 `${…}` 는
-바인딩 시점에 실패하므로 조용히 통과하지는 않는다. 스타터에는 이 제약이 없다 — Spring 이 바인딩 전에
-플레이스홀더를 푼다.
+**이 블록 안에서도 `${VAR}` 가 풀린다** — 값이 enum 이어도 그렇다. 확장은 바인딩 전에 토큰 스트림 위에서
+일어나므로 필드의 자바 타입과 무관하다. 규칙은 [§3.1](#31-var--어디서-풀리는가) 에 있고, 이 축에서 스타터와
+CLI 는 이제 같은 답을 한다.
 
 같은 축의 스타터 프로퍼티는 [`embedding-agent-in-application.md`](embedding-agent-in-application.md) 에
 있다. 여기서도 표기는 섞이지 않는다 — CLI 는 `thinkingMode`, 스타터는 `thinking-mode` 다.

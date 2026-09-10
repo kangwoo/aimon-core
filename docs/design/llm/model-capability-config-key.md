@@ -825,6 +825,9 @@ TASK.md 가 요구한 것은 아니다. 잘라도 기능은 성립한다(단 `mo
 4. **`CliConfigLoader` 는 `${VAR}` 를 손으로 나열한 필드에서만 푼다.** `mcp` 와 `llm` 의 세 필드뿐이고
    `memory` 블록은 전혀 풀지 않는다(`memory.dreamer.scorer.embedding.apiKey` 는 `${OPENAI_KEY}` 를
    예제로 싣고 있는데도). 이 작업의 범위 밖이지만 같은 종류의 조용한 실패다.
+   **→ #53 이 고쳤다**: 나열한 필드 목록 자체가 없어지고 설정 파일의 모든 스칼라와 모든 매핑 키가
+   바인딩 **전에** 풀린다. 여기서 지킨 `modelCapabilities` 키 충돌 거절은 삭제된 것이 아니라 모든 매핑의
+   성질로 일반화되었다 — [`config-value-expansion-and-frontmatter-strictness.md`](../integration/config-value-expansion-and-frontmatter-strictness.md).
 
 ---
 
