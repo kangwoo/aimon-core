@@ -247,8 +247,9 @@ class InMemoryModelCapabilityRegistryTest {
             assertThat(registry.resolve(model).thinkingDialect()).as("%s dialect", model)
                     .isEqualTo(ThinkingDialect.BUDGETED);
         }
-        // claude-sonnet-4-20250514 is AnthropicConfig's own default model and stays undescribed -- it does not start
-        // with claude-sonnet-4-5, which is the collision the prefix comment says was checked rather than assumed.
+        // claude-sonnet-4-20250514 was AnthropicConfig's default model until #116 moved it to claude-sonnet-4-5, and
+        // it stays undescribed -- it does not start with claude-sonnet-4-5, which is the collision the prefix comment
+        // says was checked rather than assumed.
         for (String model : new String[]{"claude-sonnet-4-20250514", "gpt-5", "gpt-5-chat-latest", "o3", "o4-mini",
                 "prod-assistant"}) {
             assertThat(registry.resolve(model).thinkingDialect()).as("%s dialect", model)

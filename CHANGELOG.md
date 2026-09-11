@@ -7,6 +7,26 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Anthropic client: the built-in default model is one the Messages API serves
+
+- **`aimon-llm-anthropic`: `AnthropicConfig`'s default model is now `claude-sonnet-4-5`** (#116). The Anthropic
+  Messages API answered the old default, `claude-sonnet-4-20250514`, with HTTP 404 `not_found_error` on 2026-09-11,
+  and so did `GET /v1/models/…`; `claude-sonnet-4-5` was served, as `claude-sonnet-4-5-20250929`. The default applies
+  wherever no model is written: an `AnthropicConfig` built without `.model(...)`; the CLI under `provider: anthropic`
+  with no `llm.model` — wiki page generation, a main agent whose definition has no `model.name`, a subagent that names
+  no model under one, and every memory component, whose startup line now names `claude-sonnet-4-5`; and the Spring
+  Boot starter with `aimon.llm.provider=anthropic` and no `aimon.llm.model`. Against the Anthropic Messages API each
+  of those requests failed before, so no request that worked there changes. **Behind a `baseUrl` gateway** that still
+  served or allowed the old name, such a deployment now sends `claude-sonnet-4-5` instead; a deployment that names its
+  model is unaffected.
+  - It is the model `default-anthropic` already runs on, and the built-in capability table already describes it; no
+    row was added. With a `thinkingMode` set and no model written, `auto` now sends budgeted thinking where it sent
+    none, and `adaptive` is translated to budgeted with the existing warning; `extended` and the shipped `off` are
+    unchanged. Its price and context-window rows are the ones the old name matched.
+  - Backlog `L-24` is closed. **This supersedes two sentences in the entries below**: #109's, that the default memory
+    can fall back to is unmeasured and registered as `L-24`, and #45's, that `AnthropicConfig` keeps its default
+    because `claude-sonnet-4-20250514` is current.
+
 ### CLI: subagents and memory run on a model the provider serves, and the banner shows what runs
 
 - **The bundled `explore` subagents no longer send `haiku`** (#104). `default-anthropic`, `default-openai` and
