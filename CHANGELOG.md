@@ -7,6 +7,31 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### CLI: a cut subagent's `Completion reason:` line is no longer coloured as part of a success
+
+- **The line is yellow when the subagent's status is `SUCCESS`** (#133). With colour output on, `OutputFormatter`
+  printed the line the Task tool adds after a subagent's result in the colour of the status word. For a fork whose final
+  answer was cut at `max_tokens`, which reads `✓ SUCCESS`, the one line that says the answer is incomplete was green
+  like the answer above it. The header, the answer's lines, a failed subagent's result — its reason line stays red —
+  and every line with colour output off are unchanged. `SubagentResultDisplayHook` now hands that line to
+  `OutputFormatter` apart from the summary. `aimon-cli` is an application, and no public API changed.
+- **The CLI's parse is tested against what `TaskTool` prints.** `SubagentResultDisplayHookTest` runs `TaskTool` itself
+  over a mocked subagent execution manager — a cut, a completed and a stalled fork — and feeds the hook its output. A
+  change to `TaskTool`'s text that the hook no longer parses now fails in `aimon-cli`; before, the hook's tests saw only
+  strings they built themselves. A background fork's `AgentOutput` and completion notification are unchanged (backlog
+  `L-25`).
+- **A fork's allow-list check is counted too** (#133). `DefaultSubagentExecutorTruncationTest` gives its subagent a
+  `tools:` entry with a pattern and a tool that counts the check's subject reads: none after the cut iteration, at least
+  one after the uncut one.
+- **Records, comments and a formatter fence** (#133). `docs/design/llm/thinking-reporting-and-dialect-records.md`
+  §16.8 still said a fork has no guard. It named a skill's loop among the callers for which the client's `max_tokens`
+  WARN is the only signal, and, with §16.10, it spoke of `L-22` and `L-23` as open. §16.11 corrects each, and each is
+  struck through where it stands, with a pointer to §16.11.
+  `docs/design/agent-execution/skill-loop-truncation-and-fork-stall.md` §12 corrects DV-4. Two comments that called a
+  fork's stalled-iteration guard "the turn's" now say it is the fork's own instance of the shared guard. The
+  `// spotless:off` fence in `OrcaAgentExecutor` covers `MAX_CONSECUTIVE_STALLED_ITERATIONS`' declaration and no longer
+  its javadoc, which `./gradlew format` and `checkFormat` now reach. No behaviour changed with any of these.
+
 ### Docs CI: the two doc checks write down where they read headings differently, and the link check pins its side
 
 - **Where the link check and the backlog check read a heading differently is written down** (#121), in
@@ -142,8 +167,10 @@ Central is versioned independently).
 - **Pinned by tests** (#117): the entry below's *"No permission check and no PermissionRequest/PreTool/PostTool hook
   runs for a refused call"*. On the turn, the fork and a skill's loop, a test counts the PermissionRequest, PreTool and
   PostTool hooks and the tool across a cut call and then the same call uncut: 0 after the first, 1 after the second.
-  The permission check itself is counted on the skill loop only (0, then at least 1): the turn and the fork pass an
-  empty allow-list, and the check returns before it reads anything, so a count there would read 0 either way.
+  The permission check itself is counted on the fork and the skill loop (0, then at least 1), whose tests give the
+  allow-list an entry with a pattern so that the check has to read the call — the fork's count was added by #133. The
+  turn passes an empty allow-list, and the check returns before it reads anything, so a count there would read 0
+  either way.
 
 - **API.** New public `at.aimon.core.agent.budget.StalledIterationGuard` — the threshold, the predicate, the
   per-execution streak and the stop message the three loops share. `OrcaAgentExecutor.MAX_CONSECUTIVE_STALLED_ITERATIONS`
