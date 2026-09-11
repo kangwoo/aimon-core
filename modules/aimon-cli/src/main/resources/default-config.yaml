@@ -20,7 +20,7 @@ llm:
 #   provider    -- this one
 #   apiKey      -- the other vendor's key
 #   baseUrl     -- remove it for the vendor's own endpoint; the shipped value below is OpenAI's host
-#   model       -- not the agent's model, but memory and the startup banner still use it (see its comment)
+#   model       -- not the agent's model, but memory and wiki generation still use it (see its comment)
 #   agent.name  -- see its comment under `agent:` below
 # Each agent request carries the model its agent definition names, not anything in this block. Startup
 # warns, without stopping, when a loaded definition names the other vendor's models and `baseUrl` cannot be
@@ -34,11 +34,10 @@ llm:
 #   - peer memory: the dialectic engine, deriver and reconciler, plus the dreamer and its LLM judge unless
 #     `memory.dreamer.scorer.llm.model` is set
 #   - wiki page generation
-#   - the name the startup banner prints in `LLM Provider: <provider> (<model>)`
-#   - the agent, only when its definition has no `model.name`
-# The openai provider requires it. Under anthropic it may be left out -- wiki generation and the banner then
-# use the client default claude-sonnet-4-20250514 -- but enabling `memory` without it fails startup. An
-# OpenAI name left here after switching to anthropic is what memory and wiki generation send to Anthropic.
+#   - the agent, and any subagent that names no model, only when the agent's definition has no `model.name`
+# The openai provider requires it. Under anthropic it may be left out -- memory and wiki generation then use
+# the Anthropic client's default model, and when `memory` is on, startup prints one line naming that model.
+# An OpenAI name left here after switching to anthropic is what memory and wiki generation send to Anthropic.
   model: "gpt-5.1"
   timeout: 60
 # How hard the model should think. Read by BOTH providers -- the name is the framework's own neutral
@@ -150,11 +149,12 @@ agent:
 # Selects the classpath bundle agents/<name>/. That bundle's agent.md `model.name`, and each of its
 # subagents' `model`, are the model names agent requests carry -- `llm.model` does not replace them.
 #   default            names OpenAI models: gpt-5.6-terra, and gpt-5.1 for its `explore` subagent
-#   default-anthropic  for `provider: anthropic` (claude-sonnet-4-5) -- but its `explore` subagent names
-#                      `haiku`, which is sent as written, and Anthropic's API rejected that name with
-#                      HTTP 404 on 2026-09-10 (backlog L-17)
+#   default-anthropic  for `provider: anthropic` (claude-sonnet-4-5; its `explore` subagent names no model
+#                      and runs on the same one)
 # Subagent files in .aimon/agents/ under the CLI's working directory (the jar's directory, else user.dir --
 # the banner's `Working Directory:` line) load with every agent, whichever bundle this names.
+# The startup banner's `Agent bundle:` line names the bundle that loaded, and `LLM Provider: <provider>
+# (<model>)` the model its main agent's requests carry.
   name: "default"
 
 

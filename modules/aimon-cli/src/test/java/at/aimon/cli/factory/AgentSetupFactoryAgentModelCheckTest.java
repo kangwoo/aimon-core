@@ -11,6 +11,8 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Supplier;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -308,10 +310,13 @@ class AgentSetupFactoryAgentModelCheckTest {
                     .orElseThrow(() -> new AssertionError("no entry for subagent " + subagentName)).getOrigin();
         }
 
+        // F1, F2 and F4 load `default`: since #104 it is the only shipped bundle whose subagent still names a model of
+        // its own, and a subagent that names none is not an entry at all.
+
         @Test
         @DisplayName("F1 the guard: a bundled subagent the runtime resolves is the bundle's own instance")
         void bundledSubagentIsBundle() throws Exception {
-            assertThat(originOf(declaredThroughStack("default-anthropic"), "explore")).isEqualTo(Origin.BUNDLE);
+            assertThat(originOf(declaredThroughStack("default"), "explore")).isEqualTo(Origin.BUNDLE);
         }
 
         @Test
@@ -319,14 +324,14 @@ class AgentSetupFactoryAgentModelCheckTest {
         void newUserSubagent() throws Exception {
             userSubagentFile("reviewer", "gpt-4o");
 
-            final List<DeclaredModel> models = declaredThroughStack("default-anthropic");
+            final List<DeclaredModel> models = declaredThroughStack("default");
 
             assertThat(originOf(models, "reviewer")).isEqualTo(Origin.OUTSIDE_BUNDLE);
             assertThat(originOf(models, "explore")).isEqualTo(Origin.BUNDLE);
         }
 
         @Test
-        @DisplayName("F3 a user file shadowing a bundled subagent with another model is OUTSIDE_BUNDLE")
+        @DisplayName("F3 a user file shadowing a bundled subagent that names no model is OUTSIDE_BUNDLE")
         void shadowWithAnotherModel() throws Exception {
             userSubagentFile("explore", "gpt-5.1");
 
@@ -336,13 +341,13 @@ class AgentSetupFactoryAgentModelCheckTest {
         @Test
         @DisplayName("F4 a user copy that keeps the bundled model is still OUTSIDE_BUNDLE — the same row as F3")
         void shadowKeepingTheBundledModel() throws Exception {
-            userSubagentFile("explore", "haiku");
+            userSubagentFile("explore", "gpt-5.1");
 
-            assertThat(originOf(declaredThroughStack("default-anthropic"), "explore")).isEqualTo(Origin.OUTSIDE_BUNDLE);
+            assertThat(originOf(declaredThroughStack("default"), "explore")).isEqualTo(Origin.OUTSIDE_BUNDLE);
         }
 
         @Test
-        @DisplayName("F5 review 2's variant end to end: the user copy's path is printed, the bundled file is not")
+        @DisplayName("F5 review 2's variant end to end: the printed path is the file the test wrote, the bundled one is not printed")
         void userCopyUnderTheShippedDefault() throws Exception {
             userSubagentFile("explore", "gpt-5.1");
             final AgentBundle bundle = loader.load("default");
@@ -352,10 +357,16 @@ class AgentSetupFactoryAgentModelCheckTest {
                 factory.reportAgentModelMismatch(config("anthropic", "default"), bundle, runtime::getSubagentRegistry,
                         () -> runtime.getEnvironment().getWorkingDirectory(), formatter);
 
-                final String expectedPath = Path.of(runtime.getEnvironment().getWorkingDirectory())
-                        .resolve(".aimon/agents/explore.md").toString();
-                assertThat(printed()).contains("agents/default/agent.md", "`agent.name: default-anthropic`",
-                        expectedPath, "does not change them").doesNotContain("agents/default/agents/explore.md");
+                assertThat(printed())
+                        .contains("agents/default/agent.md", "`agent.name: default-anthropic`", "does not change them")
+                        .doesNotContain("agents/default/agents/explore.md");
+                // A file comparison, not a string one (#107): the printed path must name the file this test wrote,
+                // whatever spelling the runtime's working directory gives it (macOS /var vs /private/var).
+                final Matcher entry = Pattern.compile("subagent `explore`, `(.+?)`: `model: gpt-5\\.1`")
+                        .matcher(printed());
+                assertThat(entry.find()).as("an entry line for the user's explore.md").isTrue();
+                assertThat(Files.isSameFile(Path.of(entry.group(1)), tempDir.resolve(".aimon/agents/explore.md")))
+                        .as("the printed path %s names the written file", entry.group(1)).isTrue();
             }
         }
     }

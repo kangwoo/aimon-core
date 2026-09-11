@@ -36,6 +36,7 @@ import at.aimon.cli.config.CliSettings;
 import at.aimon.cli.config.McpConfig;
 import at.aimon.cli.config.MemoryConfig;
 import at.aimon.cli.config.MemoryDreamerConfig;
+import at.aimon.cli.exception.ConfigurationException;
 import at.aimon.cli.hook.SubagentLaunchDisplayHook;
 import at.aimon.cli.hook.SubagentResultDisplayHook;
 import at.aimon.cli.hook.ToolCallDisplayHook;
@@ -188,6 +189,8 @@ public class AgentSetupFactory {
         // TRACE-01: the in-memory span store when tracing is enabled (cli.tracing), else null. The `/trace` REPL
         // command reads it to render the most recent turn's span tree.
         private final TraceSpanStore traceSpanStore;
+        // The configured agent.name — the bundle that loaded. Null only for test-built setups.
+        private final String agentBundleName;
 
         /** AgentSetup을 생성한다. */
         private AgentSetup(Builder builder) {
@@ -203,6 +206,7 @@ public class AgentSetupFactory {
             this.pendingTurnRegistry = builder.pendingTurnRegistry;
             this.skillApprovalChannel = builder.skillApprovalChannel;
             this.traceSpanStore = builder.traceSpanStore;
+            this.agentBundleName = builder.agentBundleName;
         }
 
         /**
@@ -301,6 +305,20 @@ public class AgentSetupFactory {
         }
 
         /**
+         * Returns the configured {@code agent.name} — the bundle that loaded.
+         *
+         * <p>
+         * Not the same as {@code getAgent().getName()}: that is the definition's own name, which the prompt and the
+         * runtime id are built from, and three shipped bundles share it ({@code default-agent}). The banner shows this
+         * one so a user can tell which bundle a provider switch actually selected.
+         *
+         * @return the bundle name, or {@code null} for a test-built setup
+         */
+        public String getAgentBundleName() {
+            return agentBundleName;
+        }
+
+        /**
          * Releases everything this CLI process started, in {@link TeardownPhase} order.
          *
          * <p>
@@ -342,6 +360,7 @@ public class AgentSetupFactory {
             private PendingTurnRegistry pendingTurnRegistry;
             private InteractiveSkillApprovalChannel skillApprovalChannel;
             private TraceSpanStore traceSpanStore;
+            private String agentBundleName;
 
             private Builder() {
             }
@@ -412,6 +431,12 @@ public class AgentSetupFactory {
                 return this;
             }
 
+            /** The configured {@code agent.name}. Left unset by tests, whose setups show no bundle line. */
+            public Builder agentBundleName(String agentBundleName) {
+                this.agentBundleName = agentBundleName;
+                return this;
+            }
+
             public AgentSetup build() {
                 return new AgentSetup(this);
             }
@@ -419,8 +444,7 @@ public class AgentSetupFactory {
 
     }
 
-    // Package-private so AgentModelProviderCheck prints a bundle file under the classpath root this loader reads.
-    static final String DEFAULT_AGENT_BUNDLE_BASE_PATH = "agents";
+    private static final String DEFAULT_AGENT_BUNDLE_BASE_PATH = "agents";
 
     private final LlmClientFactory llmClientFactory;
     private final AgentBundleLoader agentBundleLoader;
@@ -498,6 +522,9 @@ public class AgentSetupFactory {
                 : new TracingLlmClient(llmClient, tracer, tracePayloadPolicy);
 
         final OutputFormatter outputFormatter = createOutputFormatter(config);
+        // #105: the one model name every peer-memory component runs on, decided before the shell, the queue or the
+        // stack starts, so a refusal leaves none of them running. Null when memory is off.
+        final String memoryModelName = memoryModelName(config, llmClient, outputFormatter);
         // SK-13: build the LocalShell + shell-aware skill parser here rather than letting the stack default them, so
         // the bundle loader below shares the same parser. Supplying a parser is also what tells AimonStackBuilder not
         // to open a second shell of its own.
@@ -524,13 +551,13 @@ public class AgentSetupFactory {
         // redaction policy is shared with the deriver queue to keep detection categories consistent (design §6.5).
         final DialecticEngine dialecticEngine = (observationStore == null)
                 ? null
-                : new LlmDialecticEngine(llmClient, observationStore, config.getLlmConfig().getModel());
+                : new LlmDialecticEngine(llmClient, observationStore, memoryModelName);
         // The deriver and its queue used to be built after the stack, with the rest of the memory subsystem. They
         // move ahead of it because the queue is now a *material* of the memory backend — it is what makes the INGEST
         // tier exist — and MemorySpec is a stack input. Only the final-derivation runnable still has to wait, since
         // it needs the executor the stack publishes.
         final Deriver memoryDeriver = buildMemoryDeriver(memoryWiring, representationStore, observationStore, llmClient,
-                config.getLlmConfig().getModel(), config.getMemoryConfig(), outputFormatter);
+                memoryModelName, config.getMemoryConfig(), outputFormatter);
         final DerivationQueueManager memoryQueue = buildDerivationQueue(memoryDeriver);
         final MemorySpec memorySpec = buildMemorySpec(config.getMemoryConfig(), memoryWiring, representationStore,
                 observationStore, dialecticEngine, memoryQueue);
@@ -591,7 +618,8 @@ public class AgentSetupFactory {
         }
         return decorate(config, stack, agentBundle, fileSystem, skillHookShell, graalJsEngines,
                 new CliDecorations(outputFormatter, approvalChannel.get(), traceSpanStore, llmClient,
-                        new CliMemoryDecorations(memoryWiring, representationStore, observationStore, memoryQueue)));
+                        new CliMemoryDecorations(memoryWiring, representationStore, observationStore, memoryQueue,
+                                memoryModelName)));
     }
 
     /**
@@ -626,7 +654,8 @@ public class AgentSetupFactory {
                 () -> agentRuntime.getEnvironment().getWorkingDirectory(), cli.outputFormatter);
 
         return AgentSetup.builder().stack(stack).agentExecutor(agentExecutor).agent(agentBundle.getAgent())
-                .agentRuntime(agentRuntime).outputFormatter(cli.outputFormatter).fileSystem(fileSystem)
+                .agentRuntime(agentRuntime).agentBundleName(extractAgentName(config))
+                .outputFormatter(cli.outputFormatter).fileSystem(fileSystem)
                 .schedulingEngine(stack.schedulingEngine().orElse(null))
                 .messageQueueManager(stack.messageQueueManager()).liveSession(liveSession)
                 .pendingTurnRegistry(stack.pendingTurnRegistry()).skillApprovalChannel(cli.skillApprovalChannel)
@@ -658,7 +687,7 @@ public class AgentSetupFactory {
             stack.own(TeardownPhase.MEMORY_QUEUE, "memoryQueue.stop", memoryQueue::stop);
         }
         final DreamerSubsystem dreamerSubsystem = buildDreamerSubsystem(cli.memoryWiring, cli.observationStore,
-                cli.representationStore, cli.llmClient, config.getLlmConfig().getModel(), config.getMemoryConfig(),
+                cli.representationStore, cli.llmClient, cli.memoryModelName, config.getMemoryConfig(),
                 cli.outputFormatter);
         if (dreamerSubsystem != null) {
             stack.own(TeardownPhase.DREAMER, "dreamerScheduler", dreamerSubsystem::close);
@@ -702,7 +731,7 @@ public class AgentSetupFactory {
             final List<AgentModelProviderCheck.DeclaredModel> models = AgentModelProviderCheck
                     .declaredModels(agentBundle.getAgent(), agentBundle.getSubagentRegistry(), runtimeSubagents.get());
             final Optional<String> warning = AgentModelProviderCheck.warning(config.getLlmConfig(),
-                    extractAgentName(config), workingDirectory.get(), models);
+                    DEFAULT_AGENT_BUNDLE_BASE_PATH, extractAgentName(config), workingDirectory.get(), models);
             if (warning.isPresent()) {
                 log.warn("{}", warning.get());
                 outputFormatter.displayInfo(warning.get());
@@ -805,6 +834,7 @@ public class AgentSetupFactory {
         private final RepresentationStore representationStore;
         private final ObservationStore observationStore;
         private final DerivationQueueManager memoryQueue;
+        private final String memoryModelName;
 
         private CliDecorations(OutputFormatter outputFormatter, InteractiveSkillApprovalChannel skillApprovalChannel,
                 TraceSpanStore traceSpanStore, LlmClient llmClient, CliMemoryDecorations memory) {
@@ -816,16 +846,18 @@ public class AgentSetupFactory {
             this.representationStore = memory.representationStore;
             this.observationStore = memory.observationStore;
             this.memoryQueue = memory.memoryQueue;
+            this.memoryModelName = memory.memoryModelName;
         }
     }
 
     /**
      * The memory pieces the CLI keeps for itself after the stack is built — the dreamer's stores, the queue whose
-     * drain is on the teardown plan, and the workspace/observer pair the final-derivation runnable attributes to.
+     * drain is on the teardown plan, the workspace/observer pair the final-derivation runnable attributes to, and the
+     * model name the dreamer runs on, which {@link #memoryModelName} decided once for every memory component.
      *
      * <p>
      * They travel as one value because they are one subsystem, and because the alternative is a constructor with
-     * eight parameters in which two adjacent stores can be swapped without the compiler noticing.
+     * nine parameters in which two adjacent stores can be swapped without the compiler noticing.
      */
     private static final class CliMemoryDecorations {
 
@@ -833,13 +865,15 @@ public class AgentSetupFactory {
         private final RepresentationStore representationStore;
         private final ObservationStore observationStore;
         private final DerivationQueueManager memoryQueue;
+        private final String memoryModelName;
 
         private CliMemoryDecorations(MemoryWiring memoryWiring, RepresentationStore representationStore,
-                ObservationStore observationStore, DerivationQueueManager memoryQueue) {
+                ObservationStore observationStore, DerivationQueueManager memoryQueue, String memoryModelName) {
             this.memoryWiring = memoryWiring;
             this.representationStore = representationStore;
             this.observationStore = observationStore;
             this.memoryQueue = memoryQueue;
+            this.memoryModelName = memoryModelName;
         }
     }
 
@@ -975,6 +1009,53 @@ public class AgentSetupFactory {
     private void registerCliTools(OrcaAgentRuntime agentRuntime, OutputFormatter outputFormatter) {
         agentRuntime.getToolRegistry()
                 .register(new ConsoleOutputTool(outputFormatter::displayInfo, outputFormatter::displayError));
+    }
+
+    /**
+     * Decides the one model name every peer-memory component receives — the dialectic engine, the deriver and its
+     * reconciler, and the dreamer with its LLM judge unless {@code memory.dreamer.scorer.llm.model} is set (#105).
+     *
+     * <p>
+     * {@code llm.model} when it is set. Otherwise the model the client itself sends for a request that names none —
+     * how a main agent or a subagent without a model already runs — rather than a name invented here, and rather than
+     * refusing a key the {@code anthropic} branch leaves optional. That is a model the user did not write, so startup
+     * says so: on the terminal, paired with a WARN for the log file, as {@link #createRepresentationStore} reports the
+     * in-memory backend. Only a client with no default model of its own leaves nothing to run on, and that is refused
+     * with the key to set — as a {@link ConfigurationException}, which {@code AimonCli} reports as a configuration
+     * error, where the null the components used to receive surfaced as {@code Unexpected error: llmModelName cannot be
+     * null}.
+     *
+     * @param config
+     *            the CLI configuration — its {@code memory} block and {@code llm.model}
+     * @param llmClient
+     *            the client the memory components call, whose default model is the fallback
+     * @param outputFormatter
+     *            the terminal
+     * @return the model name, or {@code null} when memory is off (nothing is printed then)
+     * @throws ConfigurationException
+     *             when memory is on, {@code llm.model} is blank or absent, and the client has no default model
+     */
+    // Package-private so AgentSetupFactoryMemoryModelTest can drive each branch without assembling a stack.
+    static String memoryModelName(CliConfig config, LlmClient llmClient, OutputFormatter outputFormatter) {
+        final MemoryConfig memoryConfig = config.getMemoryConfig();
+        if (memoryConfig == null || !memoryConfig.isEnabled()) {
+            return null;
+        }
+        final String configured = config.getLlmConfig() == null ? null : config.getLlmConfig().getModel();
+        if (configured != null && !configured.isBlank()) {
+            return configured;
+        }
+        final Optional<String> clientDefault = llmClient.getDefaultModelName().filter(name -> !name.isBlank());
+        if (clientDefault.isEmpty()) {
+            throw new ConfigurationException("Peer memory needs a model: set `llm.model` in the LLM config - the "
+                    + llmClient.getProviderName() + " client has no default model to fall back to");
+        }
+        final String message = "Peer memory: `llm.model` is not set, so memory runs on the "
+                + llmClient.getProviderName() + " client's default model `" + clientDefault.get()
+                + "`. Set `llm.model` to choose another.";
+        log.warn("{}", message);
+        outputFormatter.displayInfo(message);
+        return clientDefault.get();
     }
 
     /**

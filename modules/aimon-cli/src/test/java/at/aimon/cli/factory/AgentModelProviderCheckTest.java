@@ -46,6 +46,9 @@ class AgentModelProviderCheckTest {
 
     private static final String WORKING_DIRECTORY = "/work";
 
+    /** The classpath root AgentSetupFactory's bundle loader reads, which the factory passes to the check. */
+    private static final String BUNDLE_BASE_PATH = "agents";
+
     private static LlmProviderConfig llm(String provider, String baseUrl) {
         final LlmProviderConfig config = new LlmProviderConfig();
         config.setProvider(provider);
@@ -54,7 +57,7 @@ class AgentModelProviderCheckTest {
     }
 
     private static Optional<String> check(String provider, String baseUrl, String agentName, DeclaredModel... models) {
-        return warning(llm(provider, baseUrl), agentName, WORKING_DIRECTORY, List.of(models));
+        return warning(llm(provider, baseUrl), BUNDLE_BASE_PATH, agentName, WORKING_DIRECTORY, List.of(models));
     }
 
     private static String fired(String provider, String baseUrl, String agentName, DeclaredModel... models) {
@@ -264,11 +267,22 @@ class AgentModelProviderCheckTest {
         @ValueSource(strings = {"   ", "/work\0dir"})
         @DisplayName("C8 a working directory that is null, blank or not a path prints the relative location")
         void relativeFallback(String workingDirectory) {
-            assertThatCode(() -> warning(llm("anthropic", null), "default-anthropic", workingDirectory,
-                    List.of(outside("reviewer", "gpt-4o")))).doesNotThrowAnyException();
+            assertThatCode(() -> warning(llm("anthropic", null), BUNDLE_BASE_PATH, "default-anthropic",
+                    workingDirectory, List.of(outside("reviewer", "gpt-4o")))).doesNotThrowAnyException();
 
-            assertThat(warning(llm("anthropic", null), "default-anthropic", workingDirectory,
+            assertThat(warning(llm("anthropic", null), BUNDLE_BASE_PATH, "default-anthropic", workingDirectory,
                     List.of(outside("reviewer", "gpt-4o")))).get().asString().contains("`.aimon/agents/reviewer.md`");
+        }
+
+        @Test
+        @DisplayName("a classpath line prints under the base path the caller passes, not a root of the check's own (#107)")
+        void bundleBasePathComesFromTheCaller() {
+            final Optional<String> message = warning(llm("anthropic", null), "bundles", "default", WORKING_DIRECTORY,
+                    List.of(main("gpt-5.6-terra"), bundled("explore", "gpt-5.1")));
+
+            assertThat(message).get().asString()
+                    .contains("classpath `bundles/default/agent.md`", "classpath `bundles/default/agents/explore.md`")
+                    .doesNotContain("classpath `agents/");
         }
 
         @Test
@@ -303,7 +317,8 @@ class AgentModelProviderCheckTest {
         @DisplayName("silent: an unknown provider, no llm block, no entries")
         void silentWithoutInputs() {
             assertThat(check("gemini", null, "default", main("gpt-5.6-terra"))).isEmpty();
-            assertThat(warning(null, "default", WORKING_DIRECTORY, List.of(main("gpt-5.6-terra")))).isEmpty();
+            assertThat(warning(null, BUNDLE_BASE_PATH, "default", WORKING_DIRECTORY, List.of(main("gpt-5.6-terra"))))
+                    .isEmpty();
             assertThat(check("anthropic", null, "default")).isEmpty();
         }
     }
@@ -324,7 +339,7 @@ class AgentModelProviderCheckTest {
         }
 
         private Optional<String> checkBundle(String bundleName, String provider) {
-            return warning(llm(provider, null), bundleName, WORKING_DIRECTORY, modelsOf(bundleName));
+            return warning(llm(provider, null), BUNDLE_BASE_PATH, bundleName, WORKING_DIRECTORY, modelsOf(bundleName));
         }
 
         @ParameterizedTest(name = "{0} under {1}: fires={2}")
@@ -353,10 +368,10 @@ class AgentModelProviderCheckTest {
         }
 
         @Test
-        @DisplayName("default-anthropic's explore names haiku, which neither family claims — silent by rule (L-17)")
-        void haikuIsSilentByRule() {
+        @DisplayName("default-anthropic declares its main agent's model alone — explore names none — and is silent under anthropic (#104)")
+        void defaultAnthropicDeclaresOnlyTheMainAgent() {
             assertThat(modelsOf("default-anthropic")).extracting(DeclaredModel::getModelName)
-                    .contains("claude-sonnet-4-5", "haiku");
+                    .containsExactly("claude-sonnet-4-5");
             assertThat(checkBundle("default-anthropic", "anthropic")).isEmpty();
         }
 
