@@ -146,6 +146,12 @@ Central is versioned independently).
   again after `cleanTest` and again after `clean` (313 tests, its 17 live tests skipped). The design is
   `docs/design/llm/provider-key-release-gate.md`.
 
+- **Records** (#119). `modules/aimon-cli/examples/gpt-5.6-terra.yaml` puts the key on the command, as the
+  quickstarts do. `CONTRIBUTING.md`'s test command and Quality Checks name all three tags `test` excludes, in both
+  languages. `docs/project/publishing-guide.md` and the `/release` skill name the refusal, and the guide the Docker
+  check. `docs/overview/architecture.md` (ko + en) and `docs/project/api-stability.md` describe the test as running
+  the script as well as comparing tasks. The design is `docs/design/llm/provider-key-census-claim-and-inputs.md`.
+
 ### Docs CI: the backlog check stops counting a commented-out item, and fails on item headings it used to skip
 
 - **A heading inside an HTML comment block is no longer read** (#102). The block does not render, so the
