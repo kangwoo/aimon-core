@@ -44,6 +44,31 @@ dependencies {
     testImplementation(project(":aimon-llm-capability-testkit"))
 }
 
+// The CLI's tests run on the versions the CLI ships (#99). aimon.java-conventions gives every module
+// spring-boot-starter-test, and here it raised three jars the distribution carries — logback-classic and
+// logback-core 1.5.13 -> 1.5.34, and Quartz's jakarta.xml.bind-api 4.0.4 -> 4.0.5 — so the Logback these tests
+// assert on was not the Logback `tasks.jar` below packs.
+//
+// Consistent resolution rather than naming the three: every version runtimeClasspath resolves becomes a strict
+// constraint on both test classpaths, so a catalog or Quartz bump moves the tests with the distribution, and a jar
+// raised the same way later is pulled back too. `dependencyInsight` names it ("by consistent resolution").
+//
+// The same strictness has a quiet side. A test library that asks for a newer version of a jar the CLI ships is
+// given the shipped one without a message: resolution fails only if that library's own request is strict, and
+// otherwise the only signal is a linkage error in :aimon-cli:test, and only if a test reaches the missing API.
+// A test that needs the newer jar is a decision to take on purpose — this block will not announce it.
+//
+// Test classpaths only: `java { consistentResolution { useRuntimeClasspathVersions() } }` would constrain the main
+// compile classpath too, where the conventions plugin's compileOnly org.jetbrains:annotations 26.1.0 cannot resolve
+// against the 13.0 kotlin-stdlib ships. `shouldResolveConsistentlyWith` is @Incubating (Gradle 9.2.1). The record of
+// every remaining test-classpath difference, and why each is accepted, is next to `junit` in
+// gradle/libs.versions.toml.
+configurations {
+    val shipped = runtimeClasspath.get()
+    testCompileClasspath { shouldResolveConsistentlyWith(shipped) }
+    testRuntimeClasspath { shouldResolveConsistentlyWith(shipped) }
+}
+
 // Create executable JAR with all dependencies
 tasks.jar {
     dependsOn(configurations.runtimeClasspath)

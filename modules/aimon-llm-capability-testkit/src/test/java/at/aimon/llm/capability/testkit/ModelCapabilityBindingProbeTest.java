@@ -1,6 +1,5 @@
 package at.aimon.llm.capability.testkit;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchIllegalArgumentException;
@@ -197,16 +196,30 @@ class ModelCapabilityBindingProbeTest {
         @Test
         @DisplayName("a value the builder calls empty is blamed on declaresAnything(), since no other value would pass")
         void blamesDeclaresAnythingWhenTheBuilderCallsTheValueEmpty() {
-            // Unreachable through a real key while declaresAnything() checks all eight, so the refusal is taken from
-            // an empty builder: it is the exception a key missing from that method produces whatever value is set.
+            // Driven through the public pair check, with the one step no real key can make fail substituted. Four
+            // facts close the real path: declaresAnything() checks all eight fields; every builder setter stores its
+            // argument unchanged; the probe refuses a null value before it asks the builder; and
+            // DeclarableKeys.expectedDeclaration always starts from ModelCapabilityDeclaration.builder(), whose
+            // constructor is private, so no builder with the defect can stand in for it. The substitute answers the
+            // way a builder whose declaresAnything() skips the key answers for every value of that key — with the
+            // refusal of an empty declaration, raised by the real builder rather than copied as a string — so what is
+            // pinned is the catch that recognises it, not only the sentence it produces.
             final IllegalArgumentException emptyRefusal = catchIllegalArgumentException(
                     () -> ModelCapabilityDeclaration.builder().build());
+            final ModelCapabilityBindingProbe<FakeSurface> builderSkipsTheKey = ModelCapabilityBindingProbe
+                    .forSurface(FakeSurface::new).forwarding(ModelCapabilityBindingProbeTest::copiesAll)
+                    .operatorKeyPath(key -> "fake." + key).forwardingLocation(FORWARDING)
+                    .expectedDeclaration((key, value) -> ModelCapabilityDeclaration.builder().build()).build();
+            final List<Object> pair = ProbeValues.distinctPairFor("supportsSamplingParameters");
 
-            assertThat(ModelCapabilityBindingProbe.refusedProbeValue("supportsReasoningSummary", true, emptyRefusal))
-                    .hasMessageContaining("`supportsReasoningSummary` = true was the only key set")
+            assertThatThrownBy(
+                    () -> builderSkipsTheKey.assertValuesReachTheDeclaration("supportsSamplingParameters", pair))
+                    .isInstanceOf(AssertionError.class)
+                    .hasMessageContaining("`supportsSamplingParameters` = " + pair.get(0) + " was the only key set")
                     .hasMessageContaining("ModelCapabilityDeclaration.Builder.declaresAnything() does not check"
-                            + " the field `.supportsReasoningSummary(...)` writes")
-                    .hasMessageNotContaining("pick one the declaration accepts").cause().isSameAs(emptyRefusal);
+                            + " the field `.supportsSamplingParameters(...)` writes")
+                    .hasMessageNotContaining("pick one the declaration accepts").cause()
+                    .isInstanceOf(IllegalArgumentException.class).hasMessage(emptyRefusal.getMessage());
         }
 
         @Test

@@ -143,7 +143,7 @@ L-2 tracks them. This fills a reserved slot.
 ### 3.5 What is written down
 
 `docs/backlog/spring-boot-starter-open-items.md` §5's B-21 subsection — the one titled
-*"B-21 은 다시 살아났고, 다른 이유로 같은 답을 냈다 ✅"* — gains a dated block recording:
+*"B-21 — 다시 살아났고, 다른 이유로 같은 답을 냈다 ✅"* — gains a dated block recording:
 
 1. the criterion's **second** application and its **first split**, with the three-key table of §3.2;
 2. that the decision contradicts #54's own proposed key names, and why (C1);

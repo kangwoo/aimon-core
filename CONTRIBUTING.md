@@ -154,10 +154,21 @@ reader lands at the top and never learns they were sent to the wrong section. Ex
 URLs are deliberately not checked; a gate that goes red because someone else's host is
 down stops being read. CI runs this as the `docs-links` job.
 
-The other two are about translations and run together as the `translations` job; what
-each fails on, and why one of them mostly does not, is under
+The second and third are about translations and run together as the `translations` job;
+what each fails on, and why one of them mostly does not, is under
 [Translations](#translations). Both need the full git history, so on a shallow clone they
 report rather than fail and say so.
+
+The fourth reads `docs/backlog/` and nothing else, and fails in several ways. Three of
+them: a register that writes an item ID twice; a register title (`등록 항목 N건 (…)`) or a
+`docs/backlog/README.md` index row that disagrees with the items; and a heading that begins
+with an item ID but is not read as an item (a heading skipped without a word is an item
+nobody counts). It needs no history, so CI runs it as the second step of the `docs-links`
+job: the check first, so that a red step names the heading or row that is wrong, then
+`--self-test`, which breaks the tree one way at a time to show the check still reads what
+it claims to. What it reads as an item and as a state is specified in the script's
+docstring; what someone registering an item needs to know is at the end of rule seven in
+`docs/backlog/README.md`.
 
 ### Previewing the documentation site
 

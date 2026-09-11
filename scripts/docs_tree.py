@@ -8,9 +8,10 @@ turns into an anchor, which canonical a translation declares, and whether that
 pair is current. check-backlog-registers.py walks nothing -- it reads
 docs/backlog/ -- but borrows three of this module's answers (what a heading is,
 what a fence hides, which file is a translation), so that it and the link checker
-cannot disagree about which lines are headings. Each script carrying its own
-copy is how the copies drift (`.venv` was in one skip set and missing from the
-other two), so the answers live here and the scripts import them.
+cannot disagree about which lines are headings outside HTML comment blocks, which
+it alone skips. Each script carrying its own copy is how the copies drift (`.venv`
+was in one skip set and missing from the other two), so the answers live here and
+the scripts import them.
 
 The last two answers are why this module runs git. That is a real cost -- it
 used to be pure text -- and it is paid for one reason: two checks now ask "is
