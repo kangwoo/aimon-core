@@ -27,6 +27,12 @@ Central is versioned independently).
     can fall back to is unmeasured and registered as `L-24`, and #45's, that `AnthropicConfig` keeps its default
     because `claude-sonnet-4-20250514` is current.
 
+- **Documentation** (#118). The CLI guide says what a subagent that names no model, and a definition without
+  `model.name`, run on when `llm.model` is not set (ko + en), and so does `default-config.yaml`'s `llm.model` comment.
+  Core javadoc for a subagent's `model` — `Subagent`, `SubagentMetadata`, `SubagentContentParser`, the
+  `at.aimon.core.subagent` package and the public SPI `SubagentBehaviorSupport` — no longer offers `sonnet`, `haiku` or
+  `opus`, and says a model id is sent as written; `resolvedModel()`'s name may be empty. No signature changed.
+
 ### CLI: subagents and memory run on a model the provider serves, and the banner shows what runs
 
 - **The bundled `explore` subagents no longer send `haiku`** (#104). `default-anthropic`, `default-openai` and
