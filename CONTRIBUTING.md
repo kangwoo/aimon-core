@@ -155,7 +155,13 @@ that does not exist, and a `#fragment` that matches no heading in the file it po
 The anchor failure matters more than it sounds — a wrong anchor still loads the page, so the
 reader lands at the top and never learns they were sent to the wrong section. External
 URLs are deliberately not checked; a gate that goes red because someone else's host is
-down stops being read. CI runs this as the `docs-links` job.
+down stops being read. CI runs this, and then `python3 scripts/check-doc-links.py --self-test`,
+in the same step: the first step of the `docs-links` job. The self-test reads no tree: for
+each heading shape it holds — places where `docs_tree.anchors_of` reads a heading
+differently from the page, from the backlog check, or both — it builds a small page and
+checks that a link to the heading still resolves, or still fails to, as that case's expected
+answer says. Those expected answers follow that function's docstring. Run it too when you
+change how `scripts/docs_tree.py` reads headings or fences.
 
 The second and third are about translations and run together as the `translations` job;
 what each fails on, and why one of them mostly does not, is under
