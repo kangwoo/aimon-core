@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/features.md
-source_commit: d4608ba
+source_commit: 53d14a1
 ---
 
 # Feature Catalog
@@ -510,4 +510,4 @@ environment can be swapped in for the local disk.
 - [`architecture.en.md`](architecture.en.md) — the reference for the core abstractions
 - [`glossary.en.md`](glossary.en.md) — the dictionary of terms and lifetimes
 - [`scope-model.en.md`](scope-model.en.md) — the lifetime, ownership and teardown rules
-- [`../features/`](../features/) — the index of per-feature guides
+- [`../features/`](../features/README.en.md) — the index of per-feature guides

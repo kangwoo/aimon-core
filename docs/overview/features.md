@@ -492,4 +492,4 @@ cron 이 재발화해도 런타임이 resolve 된다. 이 때문에 `AgentRuntim
 - [`architecture.md`](architecture.md) — 핵심 추상화 레퍼런스
 - [`glossary.md`](glossary.md) — 용어와 수명 사전
 - [`scope-model.md`](scope-model.md) — 수명·소유권·소멸 책임 규칙
-- [`../features/`](../features/) — 기능별 상세 가이드 색인
+- [`../features/`](../features/README.md) — 기능별 상세 가이드 색인
