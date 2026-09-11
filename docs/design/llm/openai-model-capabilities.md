@@ -269,9 +269,9 @@ and it is said once.
 **Correction (review round 2): the message must not say "configured".** In that subagent path nobody
 configured anything — `SubagentLlmDefaults` sets `0.7` from its own constant onto `LlmModel`, and at
 the point the client decides to warn there is nothing distinguishing that from an operator's value.
-The wording therefore states only that the value *is set on this request*: "temperature 0.7 is set on
+~~The wording therefore states only that the value *is set on this request*: "temperature 0.7 is set on
 this request but <model> does not accept sampling parameters; it is being omitted and the call will
-succeed without it." True for both origins, and it still tells the operator exactly what to look
+succeed without it."~~ *Correction mark ([§14](#14-a-correction-mark-in-25-134)): the struck quote writes the model as `<model>`, a placeholder outside code that the site renders as nothing; the message names the request's resolved model there.* True for both origins, and it still tells the operator exactly what to look
 for.
 
 ### 2.6 Where the client gets the registry
@@ -1573,4 +1573,19 @@ approved document is kept as approved, and the differences are written down rath
 - **§13.4 names the classes rather than counting them.** The design said terra is the `gpt-5` stand-in
   *"in five test classes"*; the tree has eighteen test files mentioning the name, and the five the
   design meant are five *tests* inside one class. The claim is unaffected and the number is gone.
+
+---
+
+## 14. A correction mark in §2.5 (#134)
+
+*Appended after issue [#134](https://github.com/kangwoo/aimon-core/issues/134), 2026-09-11. §2.5
+now carries a correction mark, the one kind of text [`../README.md`](../README.md) §3.4 allows
+before this record's §8 boundary besides `Status`.*
+
+§2.5 quotes the warning as "temperature 0.7 is set on this request but `<model>` does not accept
+sampling parameters; …", with `<model>` outside code, so the site renders it as an empty element and
+the sentence reads "…on this request but does not accept…". The placeholder stands for the model name
+the request resolves to, which the message names there (§8.2: `applySamplingParameters` takes the
+resolved model name). The approved sentence stays in place, struck through, and the mark beside it
+says what stood there. Nothing else before §8 changed, and no line moved.
 

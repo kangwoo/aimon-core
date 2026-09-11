@@ -1,9 +1,9 @@
 <configuration>
-    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
-        <encoder>
-            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
-        </encoder>
-    </appender>
+    <!-- File only, on purpose: no log event reaches the terminal, which belongs to the REPL
+         (docs/design/llm/provider-switch-agent-model-check.md relies on it). Do not define an appender here
+         without the appender-ref that uses it: Logback reports an unreferenced appender as a WARN, and any
+         WARN or ERROR while it configures itself makes it print its whole configuration status to stdout (#134).
+    -->
 
     <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
         <file>${user.home}/.aimon/logs/aimon.log</file>

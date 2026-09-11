@@ -1,3 +1,12 @@
+# Advisories. Nothing in this build reads these versions against an advisory database: no CI job runs a dependency
+# scanner, Dependabot alerts are off in the repository's settings (2026-09-11), and .github/dependabot.yml proposes
+# newer versions without knowing which old ones are affected. So a version inside a published advisory range is found
+# by reading. Before choosing or keeping a version, search NVD for the library by name
+# (services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=<name>) and read the project's release notes. Do not stop at
+# GitHub's advisory database or OSV: a query by package finds an advisory there only once it is reviewed, and the
+# `logback` note below records two CVEs neither returned. If Dependabot alerts and automatic dependency submission are
+# turned on, they report reviewed advisories against the resolved graph; this note still covers the rest.
+
 [versions]
 # Language
 java = "17"
@@ -149,20 +158,23 @@ opensearch-rest-client = "2.18.0"
 
 # Logging
 slf4j = "2.0.18"
-# The Logback aimon-cli ships — the one use of this entry that ships; every other module names it at test scope, or,
-# for the unpublished aimon-session-testkit, on a classpath that only ever joins a consumer's tests. 1.6.3 (#114), the
-# one release past every Logback CVE NVD lists on 2026-09-11. No 1.5.x is: CVE-2026-19880 (logback-classic up to
-# 1.6.2, a path traversal through SiftingAppender's MDC discriminator) is fixed only in 1.6.3, and CVE-2026-13006
-# (logback-core up to 1.5.36) circumvents the 1.5.19 fix for CVE-2025-11226, the advisory #114 was filed for. None of
-# the three is reachable from this build today — no Janino on any classpath, no SiftingAppender in the bundled
-# logback.xml, no MDC in any source (measured) — but a dependency or a user's own logback.xml can change each of those
-# without touching this line, so that was not a reason to stay. GitHub's advisory database and OSV listed neither of
-# the two newest: look for the next one in NVD and on logback.qos.ch/news.html, not only by id.
+# The Logback aimon-cli ships, and the Logback the unpublished aimon-sample-app packs, whose build script sets Spring
+# Boot's `logback.version` from this entry (#129); every other module names it at test scope, or, for the unpublished
+# aimon-session-testkit, on a classpath that only ever joins a consumer's tests. 1.6.3 (#114), the one release past
+# every Logback CVE NVD lists on 2026-09-11. No 1.5.x is: CVE-2026-19880 (logback-classic up to 1.6.2, a path traversal
+# through SiftingAppender's MDC discriminator) is fixed only in 1.6.3, and CVE-2026-13006 (logback-core up to 1.5.36)
+# circumvents the 1.5.19 fix for CVE-2025-11226, the advisory #114 was filed for. None of the three is reachable from
+# this build today — no Janino on any classpath, no SiftingAppender in the bundled logback.xml, no MDC in any source
+# (measured) — but a dependency or a user's own logback.xml can change each of those without touching this line, so
+# that was not a reason to stay. GitHub's advisory database holds the two newest only as unreviewed advisories that
+# name no package (GHSA-567r-vvh5-jjr8, GHSA-9mh8-hq67-v26g), so a query by package returns neither, and OSV has no
+# record of either (2026-09-11): look for the next one in NVD and on logback.qos.ch/news.html, not only by id.
 # 1.6.x is Logback's stable line and 1.5.x its legacy one. Spring Boot manages 1.5.x (3.5.16 resolves 1.5.34), so this
-# entry is ahead of `spring-boot` and wins on every test classpath that names it. Keep it at or above Boot's: below
-# it, spring-boot-starter-test raises this entry there, and aimon-session-testkit's shipped and tested versions part
-# again (backlog D-2). logback-classic 1.6.3 builds against slf4j 2.0.18, the version above; logback-core follows
-# logback-classic.
+# entry is ahead of `spring-boot` and wins on every test classpath that names it, and replaces Boot's version in
+# aimon-sample-app. Keep it at or above Boot's: below it, spring-boot-starter-test raises this entry there, and
+# aimon-session-testkit's shipped and tested versions part again (backlog D-2); below it, aimon-sample-app would pack
+# an older Logback than Boot manages. logback-classic 1.6.3 builds against slf4j 2.0.18, the version above;
+# logback-core follows logback-classic.
 logback = "1.6.3"
 
 # Code quality tools
