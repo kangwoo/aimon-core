@@ -468,7 +468,7 @@ public class OpenAILlmClient implements LlmClient {
      * halves of that were wrong: {@code none} is not an accepted value for these models ({@code gpt-5-nano} answers
      * <em>Supported values are: 'minimal', 'low', 'medium', and 'high'</em>), while a tools request that simply omits
      * the parameter returns 200. So the remedy is omission, and sending {@code NONE} was itself the bug. The probe
-     * table is in section 11 of {@code docs/design/llm/openai-model-capabilities.md}.
+     * table is in section 6.3 of {@code docs/design/llm/model-capabilities.md}.
      */
     private void applyReasoningEffort(ChatCompletionCreateParams.Builder requestBuilder, LlmModel modelConfig,
             ModelCapabilities capabilities, String modelName, List<ToolDefinition> tools) {

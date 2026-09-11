@@ -206,7 +206,7 @@ class OpenAILlmClientModelCapabilityTest {
         // Round 6, measured 2026-09-09: this used to assert an explicit NONE. The API rejects that value outright
         // ("Supported values are: 'minimal', 'low', 'medium', and 'high'"), while a tools request that omits the
         // parameter returns 200 -- so the shipped gpt-5 row now says supportsToolsWithReasoning=true and nothing is
-        // sent. See docs/design/llm/openai-model-capabilities.md section 11.
+        // sent. See docs/design/llm/model-capabilities.md section 6.3.
         assertThat(params._reasoningEffort()).isInstanceOf(JsonMissing.class);
     }
 
@@ -221,7 +221,7 @@ class OpenAILlmClientModelCapabilityTest {
         // still carried temperature=0.0, from OpenAIConfig.DEFAULT_TEMPERATURE. That fallback was removed
         // deliberately -- issue #43's "sampling parameters are sent only when the caller explicitly set them" beats
         // round 1's "an unknown model sends exactly what it sends today", which round 1 had recorded as design
-        // O-1/A6. See docs/design/llm/openai-model-capabilities.md section 9.
+        // O-1/A6. See docs/design/llm/request-parameters.md section 2.2.
         final ChatCompletionCreateParams params = capture(configWith("gpt-4o", ModelCapabilityRegistry.EMPTY),
                 modelWithAllSamplingValues(), List.of(A_TOOL));
 
@@ -259,7 +259,7 @@ class OpenAILlmClientModelCapabilityTest {
         // sampling was unverified and a wrong row is a *silent* sampling change, while no row left those users
         // exactly where they were. The probes closed that: o3-mini and o4-mini answer 400 to temperature 0.0 and 200
         // to 1.0, accept tools with no effort, and reject effort "none". So the rows are in, and this test says the
-        // opposite of what it used to -- deliberately. See docs/design/llm/openai-model-capabilities.md section 11.
+        // opposite of what it used to -- deliberately. See docs/design/llm/model-capabilities.md section 6.3.
         //
         // Round 8, measured 2026-09-09: o3's reasoning-item replay is now measured, its exact row says
         // supportsReasoningTraceRoundTrip=true, and a stock config on this name reaches /v1/responses. So
@@ -274,7 +274,7 @@ class OpenAILlmClientModelCapabilityTest {
         // still carried temperature=0.0, from OpenAIConfig.DEFAULT_TEMPERATURE. That fallback was removed
         // deliberately -- issue #43's "sampling parameters are sent only when the caller explicitly set them" beats
         // round 1's "an unknown model sends exactly what it sends today", which round 1 had recorded as design
-        // O-1/A6. See docs/design/llm/openai-model-capabilities.md section 9.
+        // O-1/A6. See docs/design/llm/request-parameters.md section 2.2.
         final ChatCompletionCreateParams params = capture(config("o3").responsesApiEnabled(false).build(),
                 modelWithAllSamplingValues(), List.of(A_TOOL));
 
@@ -289,7 +289,7 @@ class OpenAILlmClientModelCapabilityTest {
         // still carried temperature=0.0, from OpenAIConfig.DEFAULT_TEMPERATURE. That fallback was removed
         // deliberately -- issue #43's "sampling parameters are sent only when the caller explicitly set them" beats
         // round 1's "an unknown model sends exactly what it sends today", which round 1 had recorded as design
-        // O-1/A6. See docs/design/llm/openai-model-capabilities.md section 9.
+        // O-1/A6. See docs/design/llm/request-parameters.md section 2.2.
         final ChatCompletionCreateParams params = capture(config("gpt-5-chat-latest").build(),
                 modelWithAllSamplingValues(), List.of(A_TOOL));
 
@@ -309,7 +309,7 @@ class OpenAILlmClientModelCapabilityTest {
         // still carried temperature=0.0, from OpenAIConfig.DEFAULT_TEMPERATURE. That fallback was removed
         // deliberately -- issue #43's "sampling parameters are sent only when the caller explicitly set them" beats
         // round 1's "an unknown model sends exactly what it sends today", which round 1 had recorded as design
-        // O-1/A6. See docs/design/llm/openai-model-capabilities.md section 9.
+        // O-1/A6. See docs/design/llm/request-parameters.md section 2.2.
         final ChatCompletionCreateParams params = capture(configWith(A_REASONING_MODEL, exploding),
                 modelWithAllSamplingValues(), List.of(A_TOOL));
 
@@ -479,7 +479,7 @@ class OpenAILlmClientModelCapabilityTest {
         // still carried temperature=0.0, from OpenAIConfig.DEFAULT_TEMPERATURE. That fallback was removed
         // deliberately -- issue #43's "sampling parameters are sent only when the caller explicitly set them" beats
         // round 1's "an unknown model sends exactly what it sends today", which round 1 had recorded as design
-        // O-1/A6. See docs/design/llm/openai-model-capabilities.md section 9.
+        // O-1/A6. See docs/design/llm/request-parameters.md section 2.2.
         final ChatCompletionCreateParams params = capture(configWith(A_REASONING_MODEL, ModelCapabilityRegistry.EMPTY),
                 LlmModel.builder().temperature(0.3).topP(0.9).presencePenalty(1.0).frequencyPenalty(-1.0)
                         .reasoningEffort(ReasoningEffort.HIGH).build(),

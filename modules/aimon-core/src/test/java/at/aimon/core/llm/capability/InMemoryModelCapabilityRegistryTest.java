@@ -187,7 +187,7 @@ class InMemoryModelCapabilityRegistryTest {
         // accepts a replayed reasoning item on /v1/responses, and a corrupted payload 400s, so the item is consumed
         // rather than tolerated. The other four flags are asserted here as well, because a copy-paste that also
         // moved sampling would otherwise ship silently -- the failure mode the o-series rows were withheld for in
-        // the first place. See docs/design/llm/openai-model-capabilities.md section 13.
+        // the first place. See docs/design/llm/model-capabilities.md section 6.3.
         final InMemoryModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.withDefaults();
 
         for (String model : new String[]{"o1", "o1-2024-12-17", "o3", "o3-2025-04-16", "o3-mini", "o3-mini-2025-01-31",
@@ -215,7 +215,7 @@ class InMemoryModelCapabilityRegistryTest {
             final ModelCapabilities caps = registry.resolve(model);
             assertThat(caps.supportsSamplingParameters()).as("%s sampling", model).isFalse();
             // Two facts, two flags. The dialect is documentation rather than measurement -- the vendor's per-model
-            // thinking table quoted in docs/design/llm/anthropic-thinking-traces.md section 2.1 lists every one of
+            // thinking table (docs/design/llm/model-capabilities.md section 6.2) lists every one of
             // these as adaptive-only, rejecting thinking.type=enabled with a 400.
             assertThat(caps.thinkingDialect()).as("%s dialect", model).isEqualTo(ThinkingDialect.ADAPTIVE);
             // The other three stay fail-open. The Anthropic client replays thinking blocks unconditionally and takes

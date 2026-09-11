@@ -149,7 +149,7 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
      * The o-series names whose reasoning-item replay was measured on 2026-09-09, alias and served snapshot alike. The
      * dated names were never <em>sent</em> — they were returned, as the {@code model} of the response whose replayed
      * item was accepted — so registering them is the honest reading of what answered, with one assumption stated in
-     * section 13 of {@code docs/design/llm/openai-model-capabilities.md}: that requesting a snapshot reaches it.
+     * section 6.3 of {@code docs/design/llm/model-capabilities.md}: that requesting a snapshot reaches it.
      */
     private static final List<String> MEASURED_O_SERIES_NAMES = List.of("o1", "o1-2024-12-17", "o3", "o3-2025-04-16",
             "o3-mini", "o3-mini-2025-01-31", "o4-mini", "o4-mini-2025-04-16");
@@ -211,13 +211,13 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
                 // tools and no reasoning_effort returns 200, so there is no conflict to work around; and the remedy
                 // false used to trigger -- sending effort "none" -- is itself rejected, since "none" is not among the
                 // accepted values ('minimal', 'low', 'medium', 'high'). See section 11 of
-                // docs/design/llm/openai-model-capabilities.md for the probe table.
+                // docs/design/llm/model-capabilities.md section 6 for the probe table.
                 //
                 // Round 8 measured one member this ladder gets wrong: gpt-5.6-terra resolves here and REJECTS
                 // 'minimal' (its ladder is none/low/medium/high/xhigh/max), so a MINIMAL configured on that name was
                 // a 400. Round 9 gave that name an exact row -- below, beside the o-series ones -- which shadows
                 // this prefix for it alone; see this class's javadoc for what that costs an override, and
-                // docs/design/llm/reasoning-effort-config-surface.md for why the promise was narrowed rather than
+                // docs/design/llm/model-capabilities.md section 4.3 for why the promise was narrowed rather than
                 // the registry reshaped.
                 .registerPrefix("gpt-5", gpt5Family().build())
                 // The o-series, measured 2026-09-09 and no longer inferred. Round 1 cut these rows because the belief
@@ -255,7 +255,7 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
         // blocks below accept that cost for the same reason -- a measured fact about one name beats a tidier
         // override recipe. The remedy is in this class's javadoc and is the same for both.
         MEASURED_O_SERIES_NAMES.forEach(name -> builder.register(name, O_SERIES_REPLAY_MEASURED));
-        // Round 8, measured 2026-09-09 (docs/design/llm/openai-model-capabilities.md section 13.3): all seven rungs
+        // Round 8, measured 2026-09-09 (docs/design/llm/model-capabilities.md section 6.1): all seven rungs
         // were sent to gpt-5.6-terra individually and it answered 'none', 'low', 'medium', 'high', 'xhigh' and
         // 'max' -- and REJECTED 'minimal', which is the one value the family prefix's ladder asserts it takes. A
         // floor cannot describe a ladder with a hole in the middle, which is why this field is a set.
@@ -290,7 +290,7 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
     private static void registerAnthropicDefaults(Builder builder) {
         // Anthropic, measured 2026-09-09 against the account's own /v1/models listing. On these six the
         // server refuses temperature at any non-default value, and top_p / top_k at ANY value including
-        // their defaults -- see docs/design/llm/anthropic-sampling-capabilities.md section 2. Suppression
+        // their defaults -- see docs/design/llm/model-capabilities.md section 6.2. Suppression
         // loses nothing: omitting temperature yields 1.0, which is the one value they accept. That is the
         // same argument the registerPrefix("gpt-5", ...) comment above makes, arriving from another vendor.
         //
@@ -311,7 +311,7 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
         //
         // Two facts are stated, and the second arrived a round later. supportsSamplingParameters is the
         // measured one above. thinkingDialect is ADAPTIVE, read off the vendor's per-model thinking table
-        // quoted in docs/design/llm/anthropic-thinking-traces.md section 2.1: every name these five
+        // (see docs/design/llm/model-capabilities.md section 6.2): every name these five
         // prefixes reach is listed there as "adaptive only" and answers 400 to thinking.type=enabled.
         // It shipped as documentation rather than measurement; the 2026-09-10 census confirmed all five
         // live (adaptive 200, budgeted 400) across six model names. claude-mythos below is still
@@ -331,8 +331,8 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
                 // sentence rather than about a sibling's name prefix. One family prefix asserts only the fact; a
                 // guessed "claude-mythos-5-1" would also assert an identifier nobody has seen.
                 .registerPrefix("claude-mythos", ADAPTIVE_REFUSING_SAMPLING)
-                // The dialect census, measured 2026-09-10 (docs/design/llm/reasoning-model-enablement.md section
-                // 3.5). Probing surface: this account's GET /v1/models listing PLUS three undated aliases the
+                // The dialect census, measured 2026-09-10 (docs/design/llm/model-capabilities.md section
+                // 6.3). Probing surface: this account's GET /v1/models listing PLUS three undated aliases the
                 // listing does not contain -- claude-opus-4-5, claude-sonnet-4-5 and claude-haiku-4-5 all resolve
                 // (the response's `model` names the dated snapshot) and speak the same dialect, so the listing is
                 // not the set of callable names. That correction is why these are prefixes: three rows cover six

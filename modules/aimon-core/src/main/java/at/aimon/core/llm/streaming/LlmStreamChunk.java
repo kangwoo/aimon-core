@@ -27,11 +27,11 @@ import at.aimon.core.llm.ToolUse;
  * <p>
  * Tool-call argument <em>deltas</em> are intentionally <b>not</b> part of this model — the incremental JSON fragments
  * are accumulated by {@link ChunkAggregator} and the final response's tool uses are parsed once at stream end. See the
- * design document ({@code docs/design/llm/streaming.md}) §4.1 and §9 for the rationale.
+ * design document ({@code docs/design/llm/streaming.md}) §3 and §4.2 for the rationale.
  *
  * <p>
  * A <em>completed</em> tool_use block, however, may be surfaced early via {@link Kind#TOOL_USE_READY} so a caller can
- * begin executing a side-effect-free tool while the rest of the response is still streaming (design §4.1,
+ * begin executing a side-effect-free tool while the rest of the response is still streaming (design §3,
  * streaming-tool overlap). This signal is advisory: the authoritative tool uses remain those parsed by
  * {@link ChunkAggregator#toLlmResponse()} at stream end. Providers that cannot detect per-tool completion simply never
  * emit it.
@@ -66,7 +66,7 @@ public final class LlmStreamChunk {
         REASONING_DELTA,
         /**
          * A single tool_use block has finished streaming and its arguments are fully parsed. Carries the completed
-         * {@link ToolUse}. Advisory / overlap-only (design §4.1) — the final response's tool uses are still those
+         * {@link ToolUse}. Advisory / overlap-only (design §3) — the final response's tool uses are still those
          * built by {@link ChunkAggregator#toLlmResponse()}. Not emitted by every provider.
          */
         TOOL_USE_READY,
@@ -114,7 +114,7 @@ public final class LlmStreamChunk {
     }
 
     /**
-     * Creates a {@code TOOL_USE_READY} chunk announcing that one tool_use block has finished streaming (design §4.1).
+     * Creates a {@code TOOL_USE_READY} chunk announcing that one tool_use block has finished streaming (design §3).
      *
      * @param index
      *            zero-based chunk ordinal; must be non-negative. Carries the provider tool-call slot index for

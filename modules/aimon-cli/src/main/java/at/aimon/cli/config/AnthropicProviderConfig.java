@@ -22,7 +22,7 @@ import at.aimon.core.llms.anthropic.AnthropicThinkingMode;
  * "thinking block" 은 서명이 붙은 {@code thinking} 콘텐츠 블록이라는 와이어 명사다. 네 번째인
  * {@code thinkingDisplay} 는 그 기준에 두 번 걸린다 — "thinking" 이 벤더의 단어인 데다 {@code display} 는
  * 그 {@code thinking} 객체 안의 필드 이름이다. 기준은
- * {@code docs/design/llm/model-capability-config-key.md} §2.7 이고, 그 기준이 처음으로 "쪼갠다" 를 낸 자리다.
+ * {@code docs/design/llm/configuration-surface.md} §3.1 이고, 그 기준이 처음으로 "쪼갠다" 를 낸 자리다.
  *
  * <p>
  * 필드가 박싱 타입인 것은 <b>적지 않은 것과 값으로 적은 것을 구별하기 위해서</b>다. 적지 않은 필드는 setter 가 아예

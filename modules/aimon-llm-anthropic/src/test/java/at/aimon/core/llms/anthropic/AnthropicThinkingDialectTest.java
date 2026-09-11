@@ -37,7 +37,7 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 
 /**
- * The mode × dialect decision table of {@code docs/design/llm/reasoning-model-enablement.md} §3.3, one test per row.
+ * The mode × dialect decision table of {@code docs/design/llm/anthropic-thinking.md} §4.1, one test per row.
  *
  * <p>
  * The table's claim is that the dialect a request speaks is a per-model <em>fact</em> rather than a per-operator
@@ -101,8 +101,8 @@ class AnthropicThinkingDialectTest {
     /**
      * In the built-in table since the same census, as a budgeted prefix — a real row rather than a declared one, so
      * removing or renaming it fails with a sentence. What {@code AUTO} sends on it at {@code AnthropicConfig}'s default
-     * {@code maxTokens} is decided, not accidental: {@code docs/design/llm/thinking-reporting-and-dialect-records.md}
-     * §16 (#83).
+     * {@code maxTokens} is decided, not accidental: {@code docs/design/llm/anthropic-thinking.md}
+     * §6.2 (#83).
      */
     private static final String BUILT_IN_BUDGETED_MODEL = "claude-haiku-4-5";
 
@@ -340,7 +340,7 @@ class AnthropicThinkingDialectTest {
     @DisplayName("AUTO on a built-in budgeted row at AnthropicConfig's 4096 maxTokens sends 4095 and warns once")
     void autoOnABuiltInBudgetedRowClampsUnderTheConfigDefaultMaxTokens() {
         // #83, and a decision rather than an oversight: why this request stays as it is -- one token left for the
-        // answer -- is docs/design/llm/thinking-reporting-and-dialect-records.md section 16. Any headroom policy added
+        // answer -- is docs/design/llm/anthropic-thinking.md section 6.2. Any headroom policy added
         // to AUTO turns this red; read that section before changing the assertions.
         //
         // No reasoningEffort and no maxTokens on the call, so the MEDIUM rung's 4096 meets AnthropicConfig's 4096:
@@ -370,7 +370,7 @@ class AnthropicThinkingDialectTest {
         // #89, and a decision rather than an oversight: raising maxTokens from 4096 by the smallest step removes the
         // warning above while the answer is still left one token (4097) or four (4100). Which requests the clamp
         // warning covers, and why these are not among them, is
-        // docs/design/llm/thinking-reporting-and-dialect-records.md section 16.8.
+        // docs/design/llm/anthropic-thinking.md section 6.4.
         //
         // isEmpty() rather than noneMatch on the clamp's wording, deliberately: a new WARN from AnthropicLlmClient on
         // these requests, whatever it says, is a headroom policy that section has to be revisited for first.
@@ -386,7 +386,7 @@ class AnthropicThinkingDialectTest {
             assertThat(body.get("thinking").get("budget_tokens").asInt()).isEqualTo(4096);
             assertThat(warnings()).as(
                     "maxTokens %d leaves %d tokens for the answer and is not a clamp; a warning here is a headroom "
-                            + "policy -- read section 16.8 of thinking-reporting-and-dialect-records.md first",
+                            + "policy -- read section 6.4 of docs/design/llm/anthropic-thinking.md first",
                     maxTokens, maxTokens - 4096).isEmpty();
         }
     }
@@ -405,7 +405,7 @@ class AnthropicThinkingDialectTest {
         assertThat(body.get("thinking").get("budget_tokens").asInt()).isEqualTo(8000);
         assertThat(warnings())
                 .as("a budget of 8000 under maxTokens 8001 is not a clamp; a warning here is a headroom policy -- read "
-                        + "section 16.8 of thinking-reporting-and-dialect-records.md first")
+                        + "section 6.4 of docs/design/llm/anthropic-thinking.md first")
                 .isEmpty();
     }
 
@@ -653,7 +653,7 @@ class AnthropicThinkingDialectTest {
         // conclusion is available because absent thinking text is exactly what NONE asked for.
         //
         // If a later change adds a fourth reporter for this pair, this test goes red -- read the rule in
-        // docs/design/llm/thinking-reporting-and-dialect-records.md section 3.2 before deleting it.
+        // docs/design/llm/anthropic-thinking.md section 8.3 before deleting it.
         for (AnthropicThinkingMode mode : new AnthropicThinkingMode[]{AnthropicThinkingMode.ADAPTIVE,
                 AnthropicThinkingMode.EXTENDED, AnthropicThinkingMode.AUTO}) {
             logAppender.list.clear();
