@@ -8,11 +8,14 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
+import at.aimon.core.agent.budget.TruncatedResponses;
 import at.aimon.core.agent.prompt.SystemPromptParts;
 import at.aimon.core.base.Principal;
 import at.aimon.core.llm.LlmCallMetadata;
@@ -22,6 +25,7 @@ import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.ReasoningTrace;
 import at.aimon.core.llm.Role;
+import at.aimon.core.llm.StopReason;
 import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.llm.ToolUse;
@@ -33,6 +37,10 @@ import at.aimon.core.memory.PeerView;
 import at.aimon.core.memory.Workspace;
 import at.aimon.core.memory.deriver.tool.DeriverMemorySearchTool;
 import at.aimon.core.memory.deriver.tool.DeriverObservationCreateTool;
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 
 @DisplayName("ReActLlmDeriver")
 class ReActLlmDeriverTest {
@@ -197,6 +205,43 @@ class ReActLlmDeriverTest {
     }
 
     @Test
+    @DisplayName("a tool call in a response cut at max_tokens is refused, not run: nothing reaches the store")
+    void aCutToolCallIsRefusedNotRun() {
+        // Complete-looking input on purpose: the response does not say which call was cut, so none of them runs.
+        // No in-tree code constructs this deriver today (#115); the refusal is here for the day something does.
+        llm.enqueue(LlmResponse.of("",
+                List.of(ToolUse.of("call-1", DeriverObservationCreateTool.TOOL_NAME,
+                        Map.of("content", "alice prefers tea", "type", "EXPLICIT"))),
+                TokenUsage.of(10, 5, 15), StopReason.MAX_TOKENS));
+        llm.enqueue(LlmResponse.of("done", List.of(), TokenUsage.of(5, 5, 10)));
+        final AtomicReference<DerivationResult> result = new AtomicReference<>();
+
+        final List<String> warnings = warningsDuring(() -> result.set(deriver.derive(ctx())));
+
+        assertThat(result.get().getCreated()).isEmpty();
+        assertThat(store.count(OBSERVER)).isZero();
+        assertThat(llm.callCount()).isEqualTo(2);
+        final ToolUseResult answer = firstToolResultOf(llm.recordedMessagesOnCall(2));
+        assertThat(answer.getToolUseId()).isEqualTo("call-1");
+        assertThat(answer.isError()).isTrue();
+        assertThat(answer.getContent()).isEqualTo(TruncatedResponses.REFUSED_TOOL_CALL_MESSAGE);
+        assertThat(warnings).anySatisfy(warning -> assertThat(warning).contains("max_tokens").contains("iteration 1")
+                .contains(OBSERVER.key()).contains(DeriverObservationCreateTool.TOOL_NAME));
+    }
+
+    @Test
+    @DisplayName("a text-only response cut at max_tokens still ends the loop with an empty result")
+    void aCutTextOnlyResponseStillEndsTheLoop() {
+        // derive returns observations, never text, so a marker would have no reader.
+        llm.enqueue(LlmResponse.of("partial", List.of(), TokenUsage.of(10, 5, 15), StopReason.MAX_TOKENS));
+
+        DerivationResult result = deriver.derive(ctx());
+
+        assertThat(result.getCreated()).isEmpty();
+        assertThat(llm.callCount()).isEqualTo(1);
+    }
+
+    @Test
     @DisplayName("rejects illegal maxIterations")
     void rejectsIllegalMaxIterations() {
         assertThatThrownBy(() -> new ReActLlmDeriver(llm, store, "fake-model", null, 0))
@@ -213,6 +258,22 @@ class ReActLlmDeriverTest {
     private DerivationContext ctx() {
         return DerivationContext.builder().workspace(WS).sessionId("sess-1").observer(OBSERVER)
                 .messages(List.of(Message.user("hello"))).build();
+    }
+
+    /** The WARN messages {@link ReActLlmDeriver} logs while {@code action} runs. */
+    private static List<String> warningsDuring(Runnable action) {
+        final Logger logger = (Logger) LoggerFactory.getLogger(ReActLlmDeriver.class);
+        final ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            action.run();
+        } finally {
+            logger.detachAppender(appender);
+            appender.stop();
+        }
+        return appender.list.stream().filter(event -> event.getLevel() == Level.WARN)
+                .map(ILoggingEvent::getFormattedMessage).toList();
     }
 
     private static ToolUseResult firstToolResultOf(List<Message> conversation) {

@@ -41,6 +41,7 @@
 | [`artifact.md`](agent-execution/artifact.md) | 에이전트가 만든 파일을 사용자에게 건네는 경로 |
 | [`integration-test-layers.md`](agent-execution/integration-test-layers.md) | `OrcaAgentRuntime` 통합 테스트의 계층 구분과 무엇을 어디서 검증하는가 |
 | [`max-tokens-truncation-reporting.md`](agent-execution/max-tokens-truncation-reporting.md) | `max_tokens` 에서 잘린 응답에 두 ReAct 루프가 같은 답을 주는 자리 — 잘린 도구 호출을 실행하지 않고 거절하는 이유, 포크의 `TRUNCATED`, 추론 토큰을 숫자로만 붙이는 WARN, thinking 기록 §16.8 과 백로그 L-16 의 정정 |
+| [`skill-loop-truncation-and-fork-stall.md`](agent-execution/skill-loop-truncation-and-fork-stall.md) | 그 판정이 스킬 루프와 `ReActLlmDeriver` 에 닿는 자리 — 포크와 스킬 루프가 턴의 정체 가드를 함께 쓰는 이유, 멈춘 포크를 새 값이 아닌 `ERROR` 로 두고 열한 독자가 그것을 읽는 방식, `Task` 도구가 잘린 포크를 말하는 줄 |
 
 ### session — 영속 세션과 노드 로컬 핸들
 

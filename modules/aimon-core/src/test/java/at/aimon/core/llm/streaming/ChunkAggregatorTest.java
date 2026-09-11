@@ -5,15 +5,21 @@ import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException
 import static org.assertj.core.api.Assertions.assertThatIllegalStateException;
 import static org.assertj.core.api.Assertions.assertThatNullPointerException;
 
+import java.util.List;
 import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
 import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.ReasoningTrace;
 import at.aimon.core.llm.StopReason;
 import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.llm.ToolUse;
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 
 class ChunkAggregatorTest {
 
@@ -168,6 +174,45 @@ class ChunkAggregatorTest {
         LlmResponse resp = agg.toLlmResponse();
         assertThat(resp.getToolUses()).hasSize(1);
         assertThat(resp.getToolUses().get(0).getInput()).isEmpty();
+    }
+
+    @Test
+    void aParseFailureWarnsWithTheFailureAndTheLengthButNotTheArguments() {
+        // Jackson copies the offending token into its message, so logging e.getMessage() would leak it as surely as
+        // logging the arguments did (#117). This input fails against a fix that only drops the json= part.
+        final List<String> warnings = parseWarningsFor("{\"command\": SECRETTOKENxyz}");
+
+        assertThat(warnings).singleElement().satisfies(warning -> assertThat(warning).contains("JsonParseException")
+                .contains("at offset 12").contains("(27 chars)").doesNotContain("SECRETTOKENxyz"));
+    }
+
+    @Test
+    void anArgumentStringCutShortWarnsWhereItEndedWithoutTheArguments() {
+        // The shape #113's live probe saw for a tool call cut at max_tokens: an object that never closed.
+        final List<String> warnings = parseWarningsFor("{\"path\": \"/tmp/sea.txt\"");
+
+        assertThat(warnings).singleElement().satisfies(warning -> assertThat(warning).contains("JsonEOFException")
+                .contains("at offset 23").contains("(23 chars)").doesNotContain("/tmp/sea.txt"));
+    }
+
+    /** Feeds one tool call's arguments through the aggregator and returns the parse-failure WARNs it logged. */
+    private static List<String> parseWarningsFor(String arguments) {
+        final Logger logger = (Logger) LoggerFactory.getLogger(ChunkAggregator.class);
+        final ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            final ChunkAggregator agg = new ChunkAggregator();
+            agg.appendToolCallDelta(0, "call_1", "Bash", arguments);
+            agg.accept(LlmStreamChunk.streamEnd(0, null, Optional.empty()));
+            assertThat(agg.toLlmResponse().getToolUses().get(0).getInput()).isEmpty();
+        } finally {
+            logger.detachAppender(appender);
+            appender.stop();
+        }
+        return appender.list.stream().filter(event -> event.getLevel() == Level.WARN)
+                .map(ILoggingEvent::getFormattedMessage).filter(message -> message.contains("Failed to parse"))
+                .toList();
     }
 
     @Test

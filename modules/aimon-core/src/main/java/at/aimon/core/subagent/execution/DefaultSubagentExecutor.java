@@ -19,6 +19,7 @@ import at.aimon.core.agent.budget.BudgetDecision;
 import at.aimon.core.agent.budget.BudgetTracker;
 import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.budget.ExecutionBudget;
+import at.aimon.core.agent.budget.StalledIterationGuard;
 import at.aimon.core.agent.budget.TruncatedResponses;
 import at.aimon.core.agent.compact.CompactionDecision;
 import at.aimon.core.agent.compact.CompactionGuard;
@@ -101,8 +102,9 @@ import at.aimon.core.tools.todo.TodoWriteTool;
  * {@code toolUseId}), fires PermissionRequest/PreTool/PostTool hooks, and isolates PostTool hook failures so a hook
  * exception never discards a real tool result. A response the provider cut off at {@code max_tokens} gets the answers
  * that loop gives ({@link TruncatedResponses}): a final answer ends as {@link CompletionReason#TRUNCATED} with the
- * shared marker, and tool calls are refused rather than run. One difference remains, and it is not about
- * {@code max_tokens}: a fork has no stalled-iteration guard.
+ * shared marker, and tool calls are refused rather than run. And it stops on the same stalled-iteration guard
+ * ({@link StalledIterationGuard}): consecutive iterations whose tool calls all failed — refused or failing — end
+ * the fork as {@link CompletionReason#ERROR}.
  *
  * <p>
  * Thread-safe if the supplied {@link LlmCallGateway}, {@link ToolExecutionManager}, {@link HookExecutionManager} and
@@ -353,9 +355,9 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 final LoopContext lc = LoopContext.builder().context(context).transcriptBuffer(transcriptBuffer)
                         .executionId(executionId).systemPromptParts(systemPromptParts)
                         .effectiveMetadata(effectiveMetadata).modelConfig(modelConfig).budgetTracker(budgetTracker)
-                        .startTime(Instant.now()).toolContext(toolContext).sessionRegistry(sessionRegistry)
-                        .coordinator(coordinator).goal(request.getGoal())
-                        .executionAttributes(request.getExecutionAttributes()).build();
+                        .stalledIterationGuard(new StalledIterationGuard()).startTime(Instant.now())
+                        .toolContext(toolContext).sessionRegistry(sessionRegistry).coordinator(coordinator)
+                        .goal(request.getGoal()).executionAttributes(request.getExecutionAttributes()).build();
 
                 return runReActLoop(lc);
             } finally {
@@ -366,7 +368,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
 
     /**
      * Runs the subagent ReAct loop: fires OnStart hooks, then iterates LLM call → tool execution until a final answer,
-     * an exhausted budget/iteration bound, a cancellation, or an error.
+     * an exhausted budget/iteration bound, a cancellation, a stall ({@link StalledIterationGuard}), or an error.
      *
      * @param lc
      *            the immutable per-execution loop context (must not be null)
@@ -479,10 +481,12 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                         : executeToolUses(lc, response.getToolUses(), iterationCount);
                 lc.transcriptBuffer.addMessage(Message.toolUseResults(toolUseResults));
 
-                // Iteration-tail cancellation check: a tool may have cooperatively tripped the signal, or the parent
-                // may have cancelled between tool return and the next LLM call.
+                // Iteration-tail cancellation check (a tool or the parent may have tripped the signal), then the stall
+                // guard — in that order, so an iteration a cancellation cut short is never counted as a stall.
                 if (isCancelledOrInterrupted(cancellationSignal)) {
                     return createInterruptedResult(lc, iterationCount, accumulatedTokens);
+                } else if (lc.stalledIterationGuard.recordToolIteration(toolUseResults, truncated)) {
+                    return createStalledResult(lc, iterationCount, accumulatedTokens);
                 }
             }
 
@@ -821,9 +825,11 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      *
      * <p>
      * Nothing on the tool path runs for these calls: no PermissionRequest, PreTool or PostTool hook, and no execution.
-     * The progress stream still shows each call and its error, as {@link #executeToolUses} would. Unlike a turn, a fork
-     * has no stalled-iteration guard, so a fork whose every response is cut repeats this until its
-     * {@code maxIterations} or its budget stops it.
+     * The progress stream still shows each call and its error, as {@link #executeToolUses} would. A refused
+     * iteration is all-error, so the stalled-iteration guard counts it, as on a turn: a fork whose every response is
+     * cut ends as {@link CompletionReason#ERROR} after
+     * {@link StalledIterationGuard#MAX_CONSECUTIVE_STALLED_ITERATIONS} of them, with a stop message that names
+     * {@code max_tokens}.
      *
      * @param lc
      *            the loop context
@@ -1003,6 +1009,28 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
     }
 
     /**
+     * Creates the result of a fork the stalled-iteration guard stopped: {@link CompletionReason#ERROR}, as a turn the
+     * guard stops ends, with the guard's stop message ({@link StalledIterationGuard#stopMessage()}); OnStop hooks fire
+     * with {@code success=false}.
+     *
+     * <p>
+     * {@code ERROR} rather than a reason of its own: no reader of a fork's reason — a task record, a workflow step, a
+     * fork-mode skill, the Task tool — branches differently on a stall, and the one reader that needs to tell a streak
+     * of refused cut responses from a streak of failing tools, the parent model, reads it in the message. The WARN does
+     * not name {@code max_tokens}, so each cut response keeps the one WARN that does.
+     */
+    private SubagentExecutionResult createStalledResult(LoopContext lc, int iterationCount,
+            TokenUsage accumulatedTokens) {
+        log.warn(
+                "Subagent '{}' stalled-iteration guard tripped: consecutiveStalledIterations={}, iterations={}, "
+                        + "tokens={}",
+                lc.subagent().getName(), lc.stalledIterationGuard.getConsecutiveStalledIterations(), iterationCount,
+                accumulatedTokens.getTotalTokens());
+        return createFailureResult(lc, lc.stalledIterationGuard.stopMessage(), iterationCount, accumulatedTokens,
+                CompletionReason.ERROR);
+    }
+
+    /**
      * Creates a failure result carrying the given {@link CompletionReason} and fires OnStop hooks with
      * {@code success=false}.
      *
@@ -1051,6 +1079,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         private final LlmCallMetadata effectiveMetadata;
         private final LlmModel modelConfig;
         private final BudgetTracker budgetTracker;
+        /** The turn's death-spiral guard, one per execution like {@link #budgetTracker}. */
+        private final StalledIterationGuard stalledIterationGuard;
         private final Instant startTime;
         private final ToolContext toolContext;
         private final ToolRegistry sessionRegistry;
@@ -1066,6 +1096,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
             this.effectiveMetadata = b.effectiveMetadata;
             this.modelConfig = b.modelConfig;
             this.budgetTracker = b.budgetTracker;
+            this.stalledIterationGuard = b.stalledIterationGuard;
             this.startTime = b.startTime;
             this.toolContext = b.toolContext;
             this.sessionRegistry = b.sessionRegistry;
@@ -1106,6 +1137,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
             private LlmCallMetadata effectiveMetadata;
             private LlmModel modelConfig;
             private BudgetTracker budgetTracker;
+            private StalledIterationGuard stalledIterationGuard;
             private Instant startTime;
             private ToolContext toolContext;
             private ToolRegistry sessionRegistry;
@@ -1145,6 +1177,11 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
 
             private Builder budgetTracker(BudgetTracker budgetTracker) {
                 this.budgetTracker = budgetTracker;
+                return this;
+            }
+
+            private Builder stalledIterationGuard(StalledIterationGuard stalledIterationGuard) {
+                this.stalledIterationGuard = stalledIterationGuard;
                 return this;
             }
 

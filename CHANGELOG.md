@@ -7,6 +7,95 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Agent loop: a skill's loop refuses a cut tool call too, a fork stops after three stalled iterations, and the Task tool says when a fork's answer was cut
+
+- **A slash skill's tool loop no longer runs a tool call cut at `max_tokens`** (#115). `LlmSkillExecutor`, the loop a
+  skill invoked as `/<skill>` runs, never read the stop reason: a call cut mid-argument ran with whatever arguments had
+  arrived, and a cut final answer came back as a plain success. It now answers a cut response as both agent executors
+  do. None of the response's calls is dispatched, through the bound dispatcher or the fallback; each is answered with
+  the same `Cut off at max_tokens: …` error result, and the loop continues. A cut final answer is still a success, and
+  its text now ends with `[System: response truncated at max_tokens]` — the text the skill result, the turn's final
+  answer and the transcript carry. A skill result has no completion reason, so a turn that ran such a skill still ends
+  `COMPLETED` (backlog `L-26`). Each case logs a WARN naming the skill — for a cut call, the 1-based iteration and the
+  tool names, not their arguments — and the client's own `… truncated due to max_tokens limit` WARN still fires on
+  this blocking path.
+  - **A person sees less of a refusal here than on a turn.** A turn's refused call emits `ToolUseStarted` and
+    `ToolResultReady`, which the REPL prints. The command path emits no lifecycle event for any skill call, refused or
+    run, so a single refused call shows only in the log; a streak of them ends the skill with the stop message below,
+    which the REPL shows.
+
+- **A slash skill stops after three consecutive iterations whose tool calls all fail** (#115). It used to run to its
+  `max-iterations` (100 unless the skill sets one), and a slash command cannot be interrupted. It now fails with the
+  turn's stop message, `Execution aborted: 3 consecutive tool-only iterations made no progress (all tool calls
+  failed)`, whatever made the calls fail: a tool error or an unknown tool, an allow-list refusal on the dispatcher
+  path, a PermissionRequest or PreTool block, the side-effect approval gate denying a call — so a user who declines a
+  mutating call three iterations running ends the skill — or refused cut responses. One successful call resets the
+  streak. A permission violation on the fallback path still fails the skill at once.
+
+- **A subagent fork stops after three consecutive iterations whose tool calls all fail, and ends `ERROR`** (#115). A
+  fork had no stalled-iteration guard, so only `maxIterations` (1000 unless the subagent sets one; no in-tree caller
+  gives a fork a budget), a budget, cancellation or an error stopped it. It now stops on the turn's guard, for every
+  cause above — including the approval gate denying a call because a fork has no channel to ask through. OnStop hooks
+  fire with `success=false`, the progress stream ends `[ended: <stop message>]`, and every reader of the reason gets
+  `ERROR`, a value it already handles:
+  - task records persist `ERROR`, and a background task is `FAILED` with the stop message as its notification detail;
+  - `AgentStepResult.isComplete()` is `false`: the workflow step cache does not store the step,
+    `WorkflowPatterns.loopUntilDry` does not count it as a quiet round, `WorkflowPatterns.completenessCritic` stops at
+    it, and GraalJS workflow scripts read `isComplete: false` and `completionReason: "ERROR"`;
+  - a fork-mode skill fails with `Skill fork failed for '<skill>': <stop message>`;
+  - the Task tool prints `Status: FAILURE` and `Completion reason: ERROR`.
+
+  A cancellation that lands on the would-be third stalled iteration still ends the fork `INTERRUPTED`. **No
+  `CompletionReason` value was added.**
+
+- **The stop message names `max_tokens` when the streak was made of refused cut responses** (#115). On the turn, the
+  fork and a skill's loop, when every one of the three stalled iterations was a response cut at `max_tokens` whose
+  calls were refused, the message gains ` — each of those responses was cut off at max_tokens, and its tool calls were
+  refused`. Any other streak reads as above, byte for byte. The guards' own WARNs do not name `max_tokens`, so each cut
+  response's WARN stays the one that does.
+
+- **`ReActLlmDeriver` refuses a cut tool call too** (#115). A cut `deriver.observation.create` call no longer persists
+  an observation from whatever arguments arrived: each call is answered with the refusal, a WARN names `max_tokens`,
+  the iteration, the observer and the tool names, and the loop continues inside its six iterations and token budget. A
+  cut response with no tool calls ends the loop as before. No in-tree code constructs this deriver.
+
+- **The Task tool says when a fork did not finish on its own terms** (#117). After the result, a foreground Task call
+  now prints `Completion reason: <REASON>` whenever the reason is not `COMPLETED`; for a successful result — a fork
+  whose final answer was cut at `max_tokens` — it reads `Completion reason: TRUNCATED (the subagent's final answer is
+  incomplete)`. Everything from `=== Subagent Task Result ===` through `Result:` is unchanged, because `aimon-cli`'s
+  `SubagentResultDisplayHook` parses it and allows only whitespace between `Status:` and `Result:`; the CLI shows the
+  new line at the end of the rendered result. A `COMPLETED` result is byte-identical, and
+  `SubagentExecutionResult.getStatus()` still reads `SUCCESS` for a cut fork. `AgentOutput`, which reports a background
+  task, is unchanged (backlog `L-25`).
+
+- **`ChunkAggregator`'s parse-failure WARN no longer logs the arguments** (#117). It printed Jackson's message and the
+  whole accumulated `tool_call` arguments — a file body for a write, a command line. Dropping the arguments alone would
+  not have been enough, because Jackson copies the offending token into its message. The WARN now reads `Failed to
+  parse accumulated tool_call arguments as JSON: <ExceptionType> at offset N (L chars); the arguments are not logged`,
+  without the offset when Jackson does not know it.
+
+- **Pinned by tests** (#117): the entry below's *"No permission check and no PermissionRequest/PreTool/PostTool hook
+  runs for a refused call"*. On the turn, the fork and a skill's loop, a test counts the PermissionRequest, PreTool and
+  PostTool hooks and the tool across a cut call and then the same call uncut: 0 after the first, 1 after the second.
+  The permission check itself is counted on the skill loop only (0, then at least 1): the turn and the fork pass an
+  empty allow-list, and the check returns before it reads anything, so a count there would read 0 either way.
+
+- **API.** New public `at.aimon.core.agent.budget.StalledIterationGuard` — the threshold, the predicate, the
+  per-execution streak and the stop message the three loops share. `OrcaAgentExecutor.MAX_CONSECUTIVE_STALLED_ITERATIONS`
+  keeps its name and value (3), now taken from the guard. Nothing was renamed.
+
+- **Records.** `docs/design/agent-execution/orca-executor.md` §2.2 described a `TruncationRecoveryStrategy` and two
+  implementations that no source file declares; it now describes what shipped, and the sentences in §2, §5, §12 and
+  §13 that leaned on it follow. `AnthropicThinkingBudgetsTest.budgetIsClampedBelowMaxTokens`'s comment carries the
+  qualification #101 gave the javadoc. Backlog `L-22` and `L-23` are closed; `L-25` (the background half of the Task
+  tool's line) and `L-26` (whether a turn that ran a cut slash skill should end `TRUNCATED`) are registered. The design
+  is `docs/design/agent-execution/skill-loop-truncation-and-fork-stall.md`.
+
+- **This entry supersedes two sentences of #113's entry below:** *"`TaskTool` still prints `Status: SUCCESS`; what
+  tells the parent model is the marker at the end of the summary"* and *"A fork has no stalled-iteration guard, so a
+  fork whose every response is cut repeats the refusal until its `maxIterations` stops it — 1000 unless the subagent
+  sets one, since no in-tree caller gives a fork a request budget (backlog `L-23`)."*
+
 ### CLI: subagents and memory run on a model the provider serves, and the banner shows what runs
 
 - **The bundled `explore` subagents no longer send `haiku`** (#104). `default-anthropic`, `default-openai` and

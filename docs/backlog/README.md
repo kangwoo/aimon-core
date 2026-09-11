@@ -357,7 +357,7 @@ B-6 이 그렇게 어긋나 있었다. §7 은 그 항목을 "MCP 를 실제로 
 | [`architecture-review-open-items.md`](architecture-review-open-items.md) | 아키텍처 리뷰 (2026-08-31) | 8 | 2 | 6 | 0 |
 | [`translation-tooling-open-items.md`](translation-tooling-open-items.md) | 번역 낡음 가드 작업 (2026-09-06) | 4 | 3 | 1 | 0 |
 | [`openai-model-capabilities-open-items.md`](openai-model-capabilities-open-items.md) | o-시리즈 reasoning-item 재생 프로브 (2026-09-09) | 1 | 0 | 1 | 0 |
-| [`llm-config-surface-open-items.md`](llm-config-surface-open-items.md) | `docs/design/llm/model-capability-config-key.md` §9 (#46) | 24 | 14 | 10 | 0 |
+| [`llm-config-surface-open-items.md`](llm-config-surface-open-items.md) | `docs/design/llm/model-capability-config-key.md` §9 (#46) | 26 | 14 | 12 | 0 |
 | [`reasoning-delta-stream-open-items.md`](reasoning-delta-stream-open-items.md) | `docs/design/llm/reasoning-delta-stream.md` §11 (#62) | 9 | 7 | 2 | 0 |
 | [`config-value-expansion-open-items.md`](config-value-expansion-open-items.md) | `docs/design/integration/config-value-expansion-and-frontmatter-strictness.md` §9 (#53) | 2 | 2 | 0 | 0 |
 | [`live-api-test-tier.md`](live-api-test-tier.md) | 라이브 API 테스트 계층의 CI 신호 결정 — #81 (2026-09-10) | 2 | 1 | 1 | 0 |

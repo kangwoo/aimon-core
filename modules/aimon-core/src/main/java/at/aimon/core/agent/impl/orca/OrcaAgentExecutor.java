@@ -38,6 +38,7 @@ import at.aimon.core.agent.budget.BudgetDecision;
 import at.aimon.core.agent.budget.BudgetTracker;
 import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.budget.ExecutionBudget;
+import at.aimon.core.agent.budget.StalledIterationGuard;
 import at.aimon.core.agent.budget.TruncatedResponses;
 import at.aimon.core.agent.compact.CompactionDecision;
 import at.aimon.core.agent.compact.CompactionGuard;
@@ -221,6 +222,8 @@ public class OrcaAgentExecutor
      */
     public static final String TRUNCATION_MARKER = TruncatedResponses.TRUNCATION_MARKER;
 
+    // The declaration below is 122 characters on one line, and the formatter joins a wrapped line; keep it wrapped.
+    // spotless:off
     /**
      * Death-spiral guard: the number of <em>consecutive</em> stalled iterations tolerated before the ReAct loop
      * aborts with {@link CompletionReason#ERROR}. An iteration is "stalled" when it issued tool calls but every one of
@@ -229,8 +232,15 @@ public class OrcaAgentExecutor
      * remaining budget on a request that is not converging. A response cut off at {@code max_tokens} inside its tool
      * calls counts: every one of its calls is refused rather than run ({@link TruncatedResponses}), so consecutive cut
      * responses end the turn here.
+     *
+     * <p>
+     * Its value is {@link StalledIterationGuard#MAX_CONSECUTIVE_STALLED_ITERATIONS}: a subagent fork and a skill's loop
+     * stop on the same guard. The constant keeps its name and value here for callers that already read it from this
+     * class.
      */
-    public static final int MAX_CONSECUTIVE_STALLED_ITERATIONS = 3;
+    public static final int MAX_CONSECUTIVE_STALLED_ITERATIONS
+            = StalledIterationGuard.MAX_CONSECUTIVE_STALLED_ITERATIONS;
+    // spotless:on
 
     /**
      * The {@code tool_result} content returned for a {@code tool_use} that never started because the turn was
@@ -1556,9 +1566,9 @@ public class OrcaAgentExecutor
             // exposed CostSummary stays empty. Resolved once so a mid-loop field swap cannot toggle behaviour per turn.
             final boolean costTrackingEnabled = costEstimator != CostEstimator.NOOP;
             int iterationCount = 0;
-            // Consecutive stalled-iteration counter (reset to 0 on any iteration that made progress). Tripping
+            // Consecutive stalled-iteration streak (reset on any iteration that made progress). Tripping
             // MAX_CONSECUTIVE_STALLED_ITERATIONS aborts the loop before the next LLM call — the death-spiral guard.
-            int consecutiveStalledIterations = 0;
+            final StalledIterationGuard stalledIterationGuard = new StalledIterationGuard();
             // Number of queued user inputs drained at the PREVIOUS iteration's tail. Read at the top of the next
             // iteration to tag its LoopTransition as QUEUED_INPUT (observation-only; never drives control flow).
             int injectedLastTail = 0;
@@ -1803,27 +1813,24 @@ public class OrcaAgentExecutor
                             scope.transcriptBuffer.addMessage(Message.toolUseResults(toolUseResults));
                         }
 
-                        // Death-spiral guard: an iteration that issued tool calls but had every one of them
-                        // fail made no forward progress. Count consecutive such iterations; once
-                        // MAX_CONSECUTIVE_STALLED_ITERATIONS land back-to-back, abort here — BEFORE the queue drain and
-                        // budget continuation below — rather than feeding the all-error result back into another LLM
-                        // call and spending the rest of the budget on a request that is not converging. Any iteration
-                        // that made progress resets the counter.
+                        // Death-spiral guard (StalledIterationGuard, which a fork and a skill's loop share): an
+                        // iteration that issued tool calls but had every one of them fail made no forward progress.
+                        // Once MAX_CONSECUTIVE_STALLED_ITERATIONS such iterations land back-to-back, abort here —
+                        // BEFORE the queue drain and budget continuation below — rather than feeding the all-error
+                        // result back into another LLM call and spending the rest of the budget on a request that is
+                        // not converging. Any iteration that made progress resets the streak.
                         // An interrupted batch is not a death spiral. Once the signal is tripped every
                         // not-yet-started tool_use is short-circuited to an error result (see toolRunner), so an
-                        // interrupted iteration looks all-error to isStalledIteration. Counting it would let a trip
-                        // that lands on the third consecutive failing iteration finalise the turn as STALLED instead of
+                        // interrupted iteration looks all-error to the guard. Counting it would let a trip that lands
+                        // on the third consecutive failing iteration finalise the turn as a stall (ERROR) instead of
                         // INTERRUPTED. Read the signal directly here — the consuming isInterrupted(coordinator) check
                         // below owns the thread-interrupt half and must stay the single evaluation point for it.
-                        if (!cancellationSignal.isCancelled() && isStalledIteration(toolUseResults)) {
-                            consecutiveStalledIterations++;
-                            if (consecutiveStalledIterations >= MAX_CONSECUTIVE_STALLED_ITERATIONS) {
-                                scope.eventDispatcher.emitIterationCompleted(iterationCount, false);
-                                return handleStalledIteration(scope, iterationCount, accumulatedTokens,
-                                        consecutiveStalledIterations);
-                            }
-                        } else {
-                            consecutiveStalledIterations = 0;
+                        if (cancellationSignal.isCancelled()) {
+                            stalledIterationGuard.reset();
+                        } else if (stalledIterationGuard.recordToolIteration(toolUseResults, truncated)) {
+                            scope.eventDispatcher.emitIterationCompleted(iterationCount, false);
+                            return handleStalledIteration(scope, iterationCount, accumulatedTokens,
+                                    stalledIterationGuard);
                         }
 
                         // CQ-03: iteration-tail mid-turn injection. After tool results are committed to memory and
@@ -2264,8 +2271,9 @@ public class OrcaAgentExecutor
      * such a call changed nothing, and its result is dropped for the refusal. The WARN says which of the two happened.
      *
      * <p>
-     * A refused iteration is all-error, so {@link #isStalledIteration(List)} counts it, and
-     * {@link #MAX_CONSECUTIVE_STALLED_ITERATIONS} cut responses in a row end the turn.
+     * A refused iteration is all-error, so the stalled-iteration guard counts it, and
+     * {@link #MAX_CONSECUTIVE_STALLED_ITERATIONS} cut responses in a row end the turn, with a stop message that names
+     * {@code max_tokens} ({@link StalledIterationGuard#stopMessage()}).
      *
      * @param scope
      *            the execution scope (event dispatcher and the iteration's streaming scheduler)
@@ -2547,12 +2555,15 @@ public class OrcaAgentExecutor
      * progress and resets the consecutive-stall counter. This keeps the guard conservative — it fires only on
      * genuinely non-converging iterations, not on a single transient tool failure.
      *
+     * <p>
+     * Delegates to {@link StalledIterationGuard#isStalled(List)}, the one definition a fork and a skill's loop share.
+     *
      * @param toolUseResults
      *            the results of the tools executed this iteration (never null; may be empty)
      * @return {@code true} if the iteration issued at least one tool call and all of them failed
      */
     static boolean isStalledIteration(List<ToolUseResult> toolUseResults) {
-        return !toolUseResults.isEmpty() && toolUseResults.stream().allMatch(ToolUseResult::isError);
+        return StalledIterationGuard.isStalled(toolUseResults);
     }
 
     /**
@@ -2567,22 +2578,27 @@ public class OrcaAgentExecutor
      * at
      * which convergence was abandoned.
      *
+     * <p>
+     * The failure message is the guard's ({@link StalledIterationGuard#stopMessage()}): it names
+     * {@code max_tokens} when every stalled iteration was a cut response whose calls were refused. The WARN does
+     * not, so each cut response's own WARN stays the one line per response that says {@code max_tokens}.
+     *
      * @param scope
      *            the execution scope (must not be null)
      * @param iterationCount
      *            the number of iterations completed when the guard tripped
      * @param accumulatedTokens
      *            the accumulated token usage at the trip point
-     * @param stalledIterations
-     *            the consecutive stalled-iteration count that tripped the guard (for the diagnostic message)
+     * @param stalledIterationGuard
+     *            the guard that tripped, which supplies the streak length and the stop message
      * @return the failure result carrying {@link CompletionReason#ERROR} (never null)
      */
     private OrcaAgentExecutionResult handleStalledIteration(ExecutionScope scope, int iterationCount,
-            TokenUsage accumulatedTokens, int stalledIterations) {
-        final String stopMessage = "Execution aborted: " + stalledIterations
-                + " consecutive tool-only iterations made no progress (all tool calls failed)";
+            TokenUsage accumulatedTokens, StalledIterationGuard stalledIterationGuard) {
+        final String stopMessage = stalledIterationGuard.stopMessage();
         log.warn("Death-spiral guard tripped: consecutiveStalledIterations={}, iterations={}, tokens={}",
-                stalledIterations, iterationCount, accumulatedTokens.getTotalTokens());
+                stalledIterationGuard.getConsecutiveStalledIterations(), iterationCount,
+                accumulatedTokens.getTotalTokens());
 
         final ExecutionMetadata metadata = buildExecutionMetadata(iterationCount, accumulatedTokens, scope.startTime);
 

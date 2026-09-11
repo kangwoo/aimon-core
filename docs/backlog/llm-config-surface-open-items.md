@@ -1,4 +1,4 @@
-# LLM 설정 표면 — 등록 항목 24건 (열림 14 · 닫힘 10)
+# LLM 설정 표면 — 등록 항목 26건 (열림 14 · 닫힘 12)
 
 출처는 #46 이다 — 모델 capability 표를 CLI yaml 과 스타터 프로퍼티에서 확장할 수 있게 한 작업.
 설계는 [`../design/llm/model-capability-config-key.md`](../design/llm/model-capability-config-key.md) 이고,
@@ -1323,6 +1323,61 @@ limit` WARN 이 **뜬다.** 다만 그 줄은 어느 스킬이었는지, 어느 
 **언제 다시 볼까.** `LlmSkillExecutor` 의 루프를 다음에 건드릴 때, 또는 스킬 실행에서 이유 없는 도구 오류가 보고될 때.
 `ReActLlmDeriver` 는 main 소스에서 처음 생성될 때.
 
+### 닫힘 (2026-09-11, #115 · #117)
+
+**이제 스킬 루프도 `max_tokens` 에서 잘린 응답에 두 에이전트 실행기와 같은 답을 준다.** `LlmSkillExecutor` 는 응답마다
+`TruncatedResponses.isTruncated` 를 한 번 읽는다. 도구 호출이 있는 잘린 응답은 바운드 디스패처로도 폴백으로도 **디스패치하지
+않고** 호출마다 같은 거절 결과로 답한 뒤 루프를 잇는다. WARN 이 스킬 이름, 1부터 센 iteration, 도구 이름을 적는다 — 인자는 적지
+않는다. 도구 호출이 없는 잘린 최종 답은 성공으로 돌아가되 텍스트 끝에 `[System: response truncated at max_tokens]` 가 붙고, WARN
+이 스킬 이름을 적는다. 설계와 기각한 대안은
+[`../design/agent-execution/skill-loop-truncation-and-fork-stall.md`](../design/agent-execution/skill-loop-truncation-and-fork-stall.md)
+의 D1 · D2 · D5 에 있다.
+
+**정할 것 셋을 이렇게 정했다.**
+
+- **정체 가드 — 스킬 루프도 턴의 가드로 멈춘다(D5).** 새 `at.aimon.core.agent.budget.StalledIterationGuard` 가 턴 · 포크 · 스킬
+  루프의 한 정의다. 결과가 전부 오류인 iteration 이 연속 세 번이면 스킬은 턴과 같은 중단 메시지로 실패한다. 거절만 넣고 가드를
+  두지 않았다면 이 수정이 L-23 의 반복을 스킬 루프에 새로 만들었을 것이다. 가드는 잘림과 무관한 오류 루프도 끝낸다 — 도구 오류,
+  바운드 디스패처의 허용 목록 거절, PermissionRequest · PreTool 차단, 사용자가 부작용 승인을 세 iteration 연속 거절한 경우.
+  CHANGELOG 가 그 관측 가능한 변화를 이름으로 적는다.
+- **잘린 답이 스킬 결과에 보이는 자리 — `SkillExecutionResult.getResponse()` 의 끝이다(D1).** 스킬 결과에는 완료 사유가 없고,
+  그것을 읽는 유일한 소비자 `SkillBackedCommandExecutor` 는 네 필드를 `CommandExecutionResult` 로 옮길 뿐이라 타입 신호를 더해도
+  읽는 곳이 없다. 포크 모드 스킬은 이미 잘린 포크를 "성공 + 마커 텍스트" 로 전하고 있었다. 그래서 잘린 답을 돌려준 슬래시 스킬을
+  실행한 턴은 여전히 `COMPLETED` 로 끝나며, 그것을 바꿀지는 L-26 으로 올렸다.
+- **`ReActLlmDeriver` 도 함께 고쳤다(D2).** 잘린 응답의 도구 호출은 `invokeTool` 없이 거절하고, WARN 이 iteration · observer 키 ·
+  도구 이름을 적으며, 루프는 여섯 iteration 과 토큰 예산 안에서 잇는다. 도구 호출이 없는 잘린 응답은 전처럼 루프를 끝낸다 —
+  `derive` 는 텍스트가 아니라 관찰을 돌려주므로 표시할 답이 없다. 이 항목은 그 deriver 를 다시 볼 때를 "main 소스에서 처음
+  생성될 때" 로 적었는데, **그 트리거는 이 자리를 지나가지 않는다**(규칙 일곱). 누군가 그것을 조립하는 날의 변경은 CLI 의 메모리
+  배선이나 스타터 같은 다른 파일이고 이 클래스도 이 항목도 건드리지 않으므로, 결함이 소리 없이 함께 배포된다. **그리고 규칙
+  여섯대로 적는다 — 이 수정은 어느 배포도 생성하지 않는 클래스에 한 것이다.** main 소스 전체에서 `new ReActLlmDeriver(` ·
+  `ReActLlmDeriver::new` · 맨 이름을 세면 자기 파일 밖의 언급은 여전히 0이다.
+
+**처방은 실패하는 테스트로 먼저 확인했다 (규칙 다섯).** 가드를 먼저 넣고 어느 루프에도 배선하지 않은 채 설계 §7 의 테스트를 옛
+루프에 대고 돌렸다. 열 클래스 126건 중 15건이 적힌 이유로 실패했고, 이 항목의 것은 여덟이다 — 폴백 경로에서 잘린 호출이 실행됨,
+바운드 디스패처가 잘린 호출을 넘겨받음, 잘린 최종 답에 마커가 없음, 잘린 도구 응답 셋과 실패하는 도구 셋이 스킬을 끝내지 못함,
+추론 토큰 절을 붙일 WARN 이 아예 없음, 슬래시 스킬 E2E 에서 잘린 호출이 PermissionRequest · PreTool · PostTool 훅과 허용 목록
+검사와 도구에 모두 닿음, deriver 가 잘린 호출로 관찰을 저장함. 수정 뒤 같은 열 클래스는 126건 모두 초록이다.
+
+**심각도 (규칙 셋).** 등록 시점에 재지 않았던 blocking 경로의 모양을 2026-09-11 에 요청 하나로 쟀다 — Anthropic Messages API,
+`stream: false`, `claude-haiku-4-5`, 두 인자가 모두 필수인 도구 `write_file(path, content)` 를 `tool_choice` 로 강제,
+`max_tokens: 60`, HTTP 200(`req_011Cew8JyrxugAE6PL7atguf`), `stop_reason: max_tokens`. `content` 는 `tool_use` 블록 하나였고 그
+입력은 `{"path": "/tmp/sea.txt"}` 였다 — 비지도 않고 파싱에 실패하지도 않는, **끝난 인자만 담고 필수 인자 `content` 가 빠진
+온전한 객체**다. `AnthropicLlmClient.convertResponse` 는 그 입력을 그대로 `ToolUse` 의 인자 맵으로 옮긴다(코드에서 읽었고 이
+응답으로 돌리지는 않았다). 즉 수정 전의 스킬 루프는 경로만 있고 내용이 없는 쓰기를 디스패치했을 것이고 파싱 실패 WARN 도 뜨지
+않았을 것이다 — 남는 신호는 이 항목이 적은 클라이언트의 WARN 하나였다. 요청 하나의 관측이지 보장이 아니며, 위 결정은 그것에
+기대지 않는다. 그리고 이 항목이 적은 것보다 무거웠던 자리가 하나 있다 — 스킬 루프는 **끊을 수 없다.** `LlmSkillExecutor` 는 취소
+신호를 읽지 않고 슬래시 명령은 인터럽트되지 않으므로, 이 루프의 반복을 끝낼 것은 `max-iterations` 와 이제 정체 가드뿐이다.
+
+**남은 것.** 스킬 루프에서 거절된 호출 하나는 **어느 터미널에도 보이지 않는다.** 턴의 거절된 호출은 `ToolUseStarted` ·
+`ToolResultReady` 를 내고 REPL 이 그것을 찍지만, 명령 경로의 디스패처는 실행한 호출에도 수명 주기 이벤트를 내지 않고, REPL 의
+도구 호출 줄은 거절된 호출이 닿지 않는 PreTool 훅에서 온다. 그래서 거절 하나는 WARN 에만 보이고, 거절이 이어지면 중단 메시지가
+보인다. 명령 경로에 스킬 호출의 이벤트 채널이 없는 것이지 잘림의 틈이 아니므로 항목으로 올리지 않았다.
+
+**어디** *(2026-09-11)* — `LlmSkillExecutor` 의 `refuseTruncatedToolUses` · `stalledFailure` 와 루프 뒤의 잘린 최종 답 분기,
+`ReActLlmDeriver.refuseTruncatedToolUses`, `StalledIterationGuard`, 테스트 `LlmSkillExecutorTruncationTest` ·
+`SlashSkillToolDispatchE2EIntegrationTest.slashSkillCutToolCall_ReachesNoHookNoAllowListCheckAndNoTool` ·
+`ReActLlmDeriverTest.aCutToolCallIsRefusedNotRun`.
+
 ---
 
 ## L-23 — 서브에이전트 포크에는 정체 가드가 없어서, 매 응답이 `max_tokens` 에서 잘리는 포크는 기본 1000 iteration 까지 거절을 반복한다
@@ -1355,6 +1410,50 @@ limit` WARN 이 **뜬다.** 다만 그 줄은 어느 스킬이었는지, 어느 
 값을 읽는다.
 
 **언제 다시 볼까.** `DefaultSubagentExecutor` 의 루프를 다음에 건드릴 때, 또는 포크가 거절 WARN 을 반복한다는 보고가 있을 때.
+
+### 닫힘 (2026-09-11, #115 · #117)
+
+**이제 포크도 턴의 정체 가드로 멈춘다.** `DefaultSubagentExecutor.runReActLoop` 는 iteration 끝의 취소 검사 **뒤에** 그
+iteration 을 새 `at.aimon.core.agent.budget.StalledIterationGuard` 에 기록하고, 결과가 전부 오류인 iteration 이 연속 세 번이면
+턴과 같은 중단 메시지와 `CompletionReason.ERROR` 로 끝난다 — OnStop 훅은 `success=false`, 진행 스트림은 `[ended: …]`. 매 응답이
+잘리는 포크는 이제 `max_tokens` 크기의 요청을 세 번 보내고 끝난다. 가드는 턴 · 포크 · 스킬 루프가 함께 쓰는 한 정의다. 설계와
+기각한 대안은
+[`../design/agent-execution/skill-loop-truncation-and-fork-stall.md`](../design/agent-execution/skill-loop-truncation-and-fork-stall.md)
+의 D3 · D4 에 있다.
+
+**처방 둘 중 앞의 것을 골랐다 (규칙 다섯).** 턴의 가드를 옮겼고 잘린 응답만 따로 세지 않았다. 따로 세면 턴 옆에 "진척 없음" 의
+두 번째 정의가 생긴다. 잘린 응답과 실패하는 재시도가 번갈아 오는 포크는 잘리지 않은 iteration 마다 그 카운터가 리셋되어 멈추지
+않는다. 그리고 잘림과 무관한 포크의 오류 루프 — 예산 없이 최대 1000 iteration, 대개 아무도 보지 않는 백그라운드 태스크에서 — 가
+그대로 남는다. 턴의 가드는 바로 그것을 위해 만들어졌다.
+
+**앞의 것은 이 항목이 경고한 대로 포크의 동작을 더 넓게 바꾼다.** 결과가 전부 오류인 iteration 이 연속 세 번이면 원인과 무관하게
+포크가 끝난다 — 도구 오류, 모르는 도구 이름, 스키마 `ENFORCE` 거절, PermissionRequest · PreTool 차단, 그리고 포크에게는 물을 채널이
+없어서 부작용 승인 게이트가 거절한 경우. 전에는 `maxIterations` 까지 이어갔다. 성공한 호출 하나가 연속을 리셋한다. CHANGELOG 가 이
+변화를 이름으로 적는다.
+
+**끝난 포크의 `CompletionReason` 은 `ERROR` 다 — 새 값은 만들지 않았다.** 그 값을 읽는 곳을 전부 확인했다:
+`SubagentExecutionResult`(`getStatus()` 는 `FAILURE`), `TaskResult` 와 `JsonTaskResultCodec`(모든 노드 버전이 `"ERROR"` 를 읽는다),
+`AgentStepResult.isComplete()` 와 워크플로 단계 캐시, `StepOutcome` 과 그 코덱(`COMPLETED` 결과만 인코딩된다),
+`WorkflowPatterns.loopUntilDry` · `completenessCritic`, GraalJS `AgentResultView`, `SubagentBackedSkillForkExecutor`, 백그라운드
+태스크 완료, `Task` 도구. 정체를 다른 오류와 다르게 가르는 독자는 없다. 둘을 구분해야 하는 유일한 독자는 요약을 읽는 부모
+모델이고, 그 몫은 텍스트가 맡는다 — 연속된 정체가 전부 잘린 응답의 거절이었으면 턴 · 포크 · 스킬 루프 모두에서 중단 메시지 끝에
+`— each of those responses was cut off at max_tokens, and its tool calls were refused` 가 붙는다. 새 상수 `STALLED` 는 아무도 가르지
+않는 공개 · 영속 이름이 되고, 롤링 업그레이드 중 옛 노드는 그것을 `ERROR` 로 읽는다.
+
+**처방은 실패하는 테스트로 먼저 확인했다.** 가드를 넣되 어느 루프에도 배선하지 않은 채 옛 포크에 대고 돌린 두 테스트 — 잘린 도구
+응답 셋, 실패하는 도구 셋 — 가 둘 다 `COMPLETED` 로 실패했다. 문턱 전에 회복하는 포크, 셋째 정체 iteration 에 떨어진 부모
+취소(`INTERRUPTED`), 문턱보다 낮은 `maxIterations`(`MAX_ITERATIONS`)는 수정 전후 모두 초록이다.
+
+**심각도 (규칙 셋).** 재지 않은 것이 그대로 남는다 — 모델이 거절 문구를 읽고 출력을 줄이는지, 곧 가드가 실제로 얼마나 자주
+발화하는지는 여러 턴에 걸친 라이브 실행 없이는 잴 수 없다. 위 결정은 그것에 기대지 않는다.
+
+**남은 것.** [`../design/llm/thinking-reporting-and-dialect-records.md`](../design/llm/thinking-reporting-and-dialect-records.md)
+§16.8 이 *"a fork has no guard and repeats until its `maxIterations` (L-23)"* 라고 적고, 같은 문서의 두 자리가 L-22 · L-23 을
+열린 항목으로 적는다. 그 문서는 이번 작업의 파일이 아니어서 고치지 않았다 — 규칙 일곱이 말하는, 항목을 언급하는 문장이다.
+
+**어디** *(2026-09-11)* — `StalledIterationGuard`, `DefaultSubagentExecutor.runReActLoop` 의 iteration 끝과
+`createStalledResult`, `OrcaAgentExecutor.handleStalledIteration`, 테스트 `StalledIterationGuardTest` ·
+`DefaultSubagentExecutorStalledIterationTest` · `DefaultSubagentExecutorTruncationTest.threeCutToolResponsesInARowEndTheForkAsError`.
 
 ---
 
@@ -1391,6 +1490,65 @@ limit` WARN 이 **뜬다.** 다만 그 줄은 어느 스킬이었는지, 어느 
 
 ---
 
+## L-25 — 백그라운드 포크의 결과를 부모에게 전하는 두 자리는 `max_tokens` 에서 잘린 답을 완결된 답처럼 보여 준다
+
+*(2026-09-11 등록. 출처는 #117 — [설계](../design/agent-execution/skill-loop-truncation-and-fork-stall.md) §8.1 F-1. #117 의
+첫 항목은 전경 `Task` 호출의 출력을 고쳤고, 백그라운드로 띄운 포크가 지나는 두 파일은 그 작업의 파일이 아니었다. 여기 두는
+것은 L-23 의 짝이기 때문이다.)*
+
+**무엇을.** 백그라운드 포크의 최종 답이 `max_tokens` 에서 잘렸을 때, 그 결과를 부모 모델에게 전하는 `AgentOutput` 도구와 완료
+알림이 답이 잘렸다는 사실을 말하게 한다.
+
+**왜.** 관측 가능한 결과는 이렇다 — `run_in_background` 로 띄운 포크의 최종 답이 잘리면 태스크 기록은 `TRUNCATED` 를 저장한다.
+그러나 부모 모델이 그것을 읽는 두 자리는 그 값을 전하지 않는다. `AgentOutput` 은 `TaskResult.getStatus()` 를 찍으므로 `SUCCESS`
+로 보이고, 기록에 이미 있는 완료 사유는 찍지 않는다 — 요약은 뒤를 남기며 자르므로 끝의 마커는 거기서는 살아남는다. 완료 알림은
+그 태스크를 `COMPLETED` 로 부르고 요약을 **앞에서부터** 500자로 자르므로, 답이 길면 끝의 마커가 잘려 나간다. 전경 `Task` 호출은
+#117 이후 결과 뒤에 `Completion reason: TRUNCATED (…)` 줄을 찍는다 — 이 항목은 같은 결함의 백그라운드 절반이다.
+
+**어디** *(2026-09-11, `c561e17`)* — `AgentOutputTool.formatAgentResult` 의 `Status:` 줄(`AgentOutputTool.java:378`),
+`DefaultSubagentExecutionManager` 의 `completionDetail` · `truncateDetail` 과 `COMPLETION_DETAIL_MAX_CHARS`(`:107`).
+
+**심각도 (규칙 셋).** 읽어서 얻은 결론이고 돌려 보지는 않았다. 부모 모델이 알림과 `AgentOutput` 중 무엇을 먼저 읽는지, 잘린
+답이 500자를 넘는 경우가 얼마나 흔한지는 세지 않았다.
+
+**처방은 적용해 보지 않았다 (규칙 다섯).** 모양은 보인다 — 전경 `Task` 와 같은 줄을 `AgentOutput` 에도 찍는 것, 그리고 알림이
+완료 사유를 따로 적거나 요약을 뒤에서 남기며 자르는 것. `AgentOutput` 의 출력을 파싱하는 곳이 트리에 있는지는 확인하지 않았다 —
+전경 `Task` 의 출력은 `aimon-cli` 의 `SubagentResultDisplayHook` 이 파싱하므로 새 줄의 위치가 결정을 갈랐다.
+
+**언제 다시 볼까.** `AgentOutputTool` 이나 완료 알림을 다음에 건드릴 때, 또는 백그라운드 태스크의 잘린 답을 부모가 완결로 다뤘다는
+보고가 있을 때.
+
+---
+
+## L-26 — 잘린 최종 답을 돌려준 슬래시 스킬을 실행한 턴은 `COMPLETED` 로 끝난다
+
+*(2026-09-11 등록. 출처는 #115 — [설계](../design/agent-execution/skill-loop-truncation-and-fork-stall.md) §8.1 F-2 · §9 Q4. 결정
+항목이다 — 그 설계는 이 질문을 유지보수자가 정하도록 남겼고, 무엇으로 정하든 그 작업의 파일이 아닌 `command/**` 가 필요하다.)*
+
+**무엇을.** 슬래시 명령으로 실행한 인라인 스킬의 최종 답이 `max_tokens` 에서 잘렸을 때, 그 턴의 `CompletionReason` 이 그 사실을
+말하게 할지 정한다.
+
+**왜.** #115 이후 스킬 루프는 잘린 최종 답을 성공으로 돌려주고 텍스트 끝에 `[System: response truncated at max_tokens]` 를
+붙인다. 턴은 그 텍스트를 최종 답으로 커밋하고 `OrcaAgentExecutionResult.success(...)` 로 끝나므로 `COMPLETED` 다 — 에이전트가
+직접 쓴 잘린 답이 `TRUNCATED` 로 끝나는 것과 다르다. 턴의 완료 사유로 결과를 가르는 소비자(예: `LiveSession` 을 쓰는
+애플리케이션)는 텍스트에서 마커를 찾지 않는 한 차이를 모른다. 트리 안에는 턴의 `TRUNCATED` 로 가르는 독자가 없다 — CLI 의
+`OutputFormatter` 는 `INTERRUPTED` 만 본다.
+
+**어디** *(2026-09-11)* — `SkillExecutionResult`(완료 사유가 없다), `SkillBackedCommandExecutor.toCommandResult`(네 필드를
+옮긴다), `CommandExecutionResult`(사유를 담을 자리가 없다), `OrcaAgentExecutor.executeCommandFlow`(`success` 나 `failure` 로만
+끝낸다).
+
+**심각도 (규칙 셋).** 읽어서 얻은 결론이다. 트리 밖에서 턴의 완료 사유를 읽는 애플리케이션이 몇인지는 셀 수 없다.
+
+**처방은 적용해 보지 않았다 (규칙 다섯).** 모양은 둘이 보인다 — 스킬 결과와 `CommandExecutionResult` 에 사유를 더해 턴까지
+나르는 것(`command/**` 의 공개 추가), 또는 턴이 스킬 결과의 텍스트 끝에서 마커를 읽는 것. 지금처럼 두는 것도 선택지다 — 그 설계가
+타입 신호를 기각한 이유는 읽는 곳이 없다는 것이었고, 이 항목은 그 읽는 곳이 생기는 날을 위한 것이다.
+
+**언제 다시 볼까.** `CommandExecutionResult` 나 `executeCommandFlow` 를 다음에 건드릴 때, 또는 턴의 완료 사유로 잘린 답을 가르는
+소비자가 생길 때.
+
+---
+
 ## 관련 문서
 
 - [`../design/llm/model-capability-config-key.md`](../design/llm/model-capability-config-key.md) — 설계.
@@ -1402,6 +1560,9 @@ limit` WARN 이 **뜬다.** 다만 그 줄은 어느 스킬이었는지, 어느 
   §16 이 #83 의 결정이자 L-15 의 출처, §16.8 이 #89 의 결정이자 L-16 의 출처이며, §16.10 이 L-16 을 닫은 기록이다
 - [`../design/agent-execution/max-tokens-truncation-reporting.md`](../design/agent-execution/max-tokens-truncation-reporting.md) —
   #108 · #100 · #101 의 설계. L-16 을 닫았고, §11 이 L-22 · L-23 으로 올린 것과 설계 문서에 남긴 것을 가른다
+- [`../design/agent-execution/skill-loop-truncation-and-fork-stall.md`](../design/agent-execution/skill-loop-truncation-and-fork-stall.md) —
+  #115 · #117 의 설계. D1 · D2 · D5 가 L-22 를, D3 · D4 가 L-23 을 닫은 결정이고, §8.1 F-1 이 L-25 의, F-2 와 §9 Q4 가 L-26 의
+  출처이며, §11 이 구현이 설계에서 벗어난 자리다
 - [`../design/llm/openai-model-capabilities.md`](../design/llm/openai-model-capabilities.md) — capability
   SPI 자체의 설계. §7 O-8 이 이 작업으로 닫혔다
 - [`../design/llm/openai-responses-path.md`](../design/llm/openai-responses-path.md) — F-2 가 L-2 의 출처

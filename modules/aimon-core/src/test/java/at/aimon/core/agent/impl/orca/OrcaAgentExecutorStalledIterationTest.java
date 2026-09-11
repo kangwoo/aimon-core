@@ -127,6 +127,10 @@ class OrcaAgentExecutorStalledIterationTest {
             assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.ERROR);
             assertThat(result.getErrorMessage()).contains("consecutive");
             assertThat(result.getErrorMessage()).contains("no progress");
+            // Byte for byte: the guard moved into StalledIterationGuard, and only a streak made of refused cut
+            // responses gained a clause (#115). A streak of failing tools reads as it always has.
+            assertThat(result.getErrorMessage()).isEqualTo(
+                    "Execution aborted: 3 consecutive tool-only iterations made no progress (all tool calls failed)");
             assertThat(result.getMetadata().getIterationCount()).isEqualTo(3);
         }
 

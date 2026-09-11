@@ -50,7 +50,15 @@ public enum CompletionReason {
      * refused rather than run ({@link TruncatedResponses#refusal(at.aimon.core.llm.ToolUse)}) and the loop continues.
      */
     TRUNCATED,
-    /** Execution ended with an unexpected error. */
+    /**
+     * Execution ended with an unexpected error.
+     *
+     * <p>
+     * Also the reason of an execution {@link StalledIterationGuard} stopped: consecutive iterations whose tool
+     * calls all failed, refused cut responses included. No reader tells that apart from another error by this
+     * value; the error message does, and names {@code max_tokens} when every stalled iteration was a refused cut
+     * response.
+     */
     ERROR;
 
     /**
