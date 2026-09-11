@@ -18,7 +18,6 @@ import at.aimon.core.subagent.Subagent;
  */
 public final class SubagentLlmDefaults {
 
-    private static final String DEFAULT_MODEL_NAME = "gpt-4";
     private static final double DEFAULT_TEMPERATURE = 0.7;
     private static final int DEFAULT_MAX_TOKENS = 4096;
 
@@ -26,14 +25,18 @@ public final class SubagentLlmDefaults {
     }
 
     /**
-     * Resolves the model for a subagent: the subagent's own {@code model} alias when set, otherwise the default model's
+     * Resolves the model for a subagent: the subagent's own {@code model} name when set, otherwise the default model's
      * name, merged with the default's temperature and max-tokens. This is the model the ReAct path sends to the LLM.
+     *
+     * <p>
+     * When neither names a model, the result carries no name, and the client sends its own default model — exactly as
+     * it does for a main agent whose definition names none.
      *
      * @param subagent
      *            the subagent (must not be null)
      * @param defaultModel
      *            the default model config (must not be null)
-     * @return the resolved model (never null)
+     * @return the resolved model (never null; its name may be empty)
      */
     public static LlmModel resolveModel(Subagent subagent, LlmModel defaultModel) {
         return resolveModel(subagent, defaultModel, null);
@@ -44,19 +47,19 @@ public final class SubagentLlmDefaults {
      *
      * <p>
      * Priority (highest first): explicit {@code modelOverride} (e.g. the {@code Task} tool's {@code model} argument)
-     * &gt;
-     * the subagent's own {@code model} frontmatter alias &gt; the default model's name. Temperature and max-tokens are
-     * always inherited from {@code defaultModel} — only the model alias is overridden.
+     * &gt; the subagent's own {@code model} frontmatter name &gt; the default model's name. Every one of them is a
+     * model name sent as written — nothing here resolves an alias. When none is present the result carries no name,
+     * and the client applies its own default model at request time rather than a name invented here. Temperature and
+     * max-tokens are always inherited from {@code defaultModel} — only the model name is overridden.
      *
      * @param subagent
      *            the subagent (must not be null)
      * @param defaultModel
      *            the default model config (must not be null)
      * @param modelOverride
-     *            the per-invocation model alias; when {@code null} or blank the override is ignored and resolution
-     *            falls
-     *            back to the subagent/default chain
-     * @return the resolved model (never null)
+     *            the per-invocation model name; when {@code null} or blank the override is ignored and resolution
+     *            falls back to the subagent/default chain
+     * @return the resolved model (never null; its name may be empty)
      */
     public static LlmModel resolveModel(Subagent subagent, LlmModel defaultModel, String modelOverride) {
         Objects.requireNonNull(subagent, "subagent cannot be null");
@@ -68,7 +71,8 @@ public final class SubagentLlmDefaults {
         } else if (subagentModel != null && !subagentModel.isEmpty()) {
             modelName = subagentModel;
         } else {
-            modelName = defaultModel.getName().orElse(DEFAULT_MODEL_NAME);
+            // No literal: a nameless model is sent on the client's own default, as a nameless main agent already is.
+            modelName = defaultModel.getName().orElse(null);
         }
         return LlmModel.builder().name(modelName).temperature(defaultModel.getTemperature().orElse(DEFAULT_TEMPERATURE))
                 .maxTokens(defaultModel.getMaxTokens().orElse(DEFAULT_MAX_TOKENS)).build();
