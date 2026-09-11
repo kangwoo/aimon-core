@@ -98,8 +98,7 @@ final class AgentModelProviderCheck {
      * The prefixes the built-in capability rows are named under, per vendor: the eleven {@code claude-*} prefixes, and
      * {@code gpt-5-chat} / {@code gpt-5} / {@code gpt-5.6-terra} plus the {@code o1} / {@code o3} / {@code o4} rows and
      * their exact o-series names. Prefixes rather than the rows themselves, because a row look-up misses
-     * {@code gpt-4o}, {@code gpt-4.1} and {@code claude-sonnet-4-20250514} — the last being {@code AnthropicConfig}'s
-     * own default — and the registry carries no vendor to ask.
+     * {@code gpt-4o}, {@code gpt-4.1} and {@code claude-sonnet-4-20250514}, and the registry carries no vendor to ask.
      */
     static final Map<Vendor, List<String>> FAMILY_PREFIXES = Map.of(Vendor.ANTHROPIC, List.of("claude-"), Vendor.OPENAI,
             List.of("gpt-", "o1", "o3", "o4"));

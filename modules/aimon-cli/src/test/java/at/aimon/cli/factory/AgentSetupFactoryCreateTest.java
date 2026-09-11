@@ -30,7 +30,9 @@ import at.aimon.core.llm.LlmClient;
  *
  * <p>
  * Side effects, accepted: {@code create()} roots its file system at {@code user.dir} and starts hook hot reload over
- * the real {@code user.home}, so a developer's own {@code ~/.aimon/hooks.json} is read here. The assertions are
+ * the real {@code user.home}, so a developer's own {@code ~/.aimon/hooks.json} is read here. The tests also write
+ * {@code WARN} lines to {@code ~/.aimon/logs/aimon.log}: {@code create()} logs through the CLI's own
+ * {@code logback.xml}, and the test classpath has no {@code logback-test.xml} in its place. The assertions are
  * fragments such files can add to but cannot remove — the main agent always comes from the bundle — and everything the
  * stack started is released by {@link AgentSetup#close()}. The real Anthropic client is built with a placeholder key
  * and sends nothing: no test here runs a turn, and the final derivation on teardown skips an empty transcript.

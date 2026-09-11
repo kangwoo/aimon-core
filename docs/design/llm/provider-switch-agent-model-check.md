@@ -7,9 +7,10 @@
 > Source: issue [#92](https://github.com/kangwoo/aimon-core/issues/92).
 >
 > **[§10](#10-after-the-build--departures-corrections-and-what-went-to-the-backlog), appended after the build, is
-> where this document departs from what was built, and [§11](#11-after-104107), appended after #104–#107, is what
-> those four follow-up issues changed.** Everything between this header and §10 is the body as approved
-> in design review round 3, kept byte-exact rather than corrected — the house habit in this directory, for the
+> where this document departs from what was built; [§11](#11-after-104107), appended after #104–#107, is what
+> those four follow-up issues changed; and [§12](#12-after-116-and-118), appended after #116 and #118, corrects
+> one sentence of §11 and records that the default model changed.** Everything between this header and §10 is the
+> body as approved in design review round 3, kept byte-exact rather than corrected — the house habit in this directory, for the
 > reason `model-capability-binding-round-trip.md` gives. Its file:line citations and counts are at `main` `a1236c8`.
 > The review transcripts it cites (`review-1.md`, `review-2.md`, `rebuttal-1.md`) and the run records it names
 > (`design/q1-live-probe.md`, `$RUN_DIR/build/`) are not in the repository; §10.4 reproduces the probe's
@@ -1187,3 +1188,23 @@ The process exited 0. **§10.4's acceptance case** (`provider: anthropic`, `mode
 `agent.name: default`) printed the same warning as §10.4, and then `Agent bundle: default (agent name: default-agent)`
 and `LLM Provider: Anthropic (gpt-5.6-terra)` — the model the warning is about, where §10.4's banner showed
 `claude-sonnet-4-5`.
+
+---
+
+## 12. After #116 and #118
+
+*Appended 2026-09-11. #118 corrected one sentence of §11, and #116 changed the default model several sections name.
+The measurement and the decision are recorded in [`model-names-sent-and-shown.md`](model-names-sent-and-shown.md)
+§11. Everything above, §10 and §11 included, is left as it was.*
+
+### 12.1 What in this document no longer holds
+
+- **§11.2's fourth bullet** says a model-less subagent under a definition without `model.name` runs on "the client's
+  default model, which under the CLI is `llm.model`". That holds only when `llm.model` is set. Under
+  `provider: anthropic` without it — the configuration #105 lets start — the client's default is `AnthropicConfig`'s
+  built-in model, and that is what such a subagent runs on (#118 item 2). The CLI guide now states both cases.
+- **`claude-sonnet-4-20250514` as `AnthropicConfig`'s default** (§2's `llm.model` absent row, §3.1, §3.6 R6, §4.3,
+  §4.4, §11.3's startup line) was true at each passage's commit. On 2026-09-11 #116 measured it unserved — HTTP 404
+  `not_found_error` from `GET /v1/models/claude-sonnet-4-20250514` and from `POST /v1/messages` — and the default is
+  now `claude-sonnet-4-5`, measured served. R6's point still holds of the old name: a row look-up misses it. The new
+  default has a row.

@@ -137,7 +137,8 @@ scripts/release.sh minor         # 0.2.2 → 0.3.0
 
 | 단계 | 하는 일 |
 |------|---------|
-| pre-flight | `main` 브랜치, 클린 워킹 트리, `origin/main` 과 동기화, 태그 미존재 확인 |
+| 프로바이더 API 키 | `ANTHROPIC_KEY`·`OPENAI_KEY` 가 환경에 있으면(빈 문자열이어도, `--dry-run` 이어도) 시작하지 않는다. 인자를 읽은 다음 가장 먼저 — `git` 을 부르기 전에 — 돌고, 설정된 변수의 **이름만** 출력한다. 라이브 API 테스트의 게이트가 그 키뿐이라, 키가 있으면 품질 게이트가 청구되는 호출을 하게 되기 때문이다 ([라이브 API 테스트](../../CONTRIBUTING.ko.md#라이브-api-테스트)) |
+| pre-flight | `main` 브랜치, 클린 워킹 트리, `origin/main` 과 동기화, Docker 데몬 응답(`docker info`), 태그 미존재 확인 |
 | 크리덴셜 | Sonatype·GPG 설정 **이름만** 확인 (값은 절대 출력하지 않는다) |
 | 품질 게이트 | `checkAll` — CI 와 **같은** 태스크 |
 | 확인 | 버전 문자열을 직접 타이핑해야 진행 (`--yes` 로 생략) |

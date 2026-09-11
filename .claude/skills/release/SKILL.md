@@ -8,9 +8,9 @@ allowed-tools: "Bash, Read, Edit"
 # Release
 
 Publishes a new AIMON version to Maven Central via `scripts/release.sh`. **The script is the source
-of truth** and enforces every safety gate (clean tree, on `main`, synced with origin, Docker daemon
-reachable, credentials present, quality gate). This skill only invokes it — never reproduce the
-release steps by hand and never bypass the script's gates.
+of truth** and enforces every safety gate (no provider API key in the environment, clean tree, on
+`main`, synced with origin, Docker daemon reachable, credentials present, quality gate). This skill
+only invokes it — never reproduce the release steps by hand and never bypass the script's gates.
 
 ## Usage
 
@@ -75,6 +75,12 @@ Map the argument to `<bump>` (`patch` | `minor` | `major`, default `patch`).
 
 - Requires Maven Central credentials + GPG signing in `~/.gradle/gradle.properties` (the script
   verifies these before any mutation).
+- **No provider API key in the environment.** The script refuses to start while `ANTHROPIC_KEY` or
+  `OPENAI_KEY` is set — even to the empty string, `--dry-run` included, before it calls `git`. The
+  live-API test classes are gated on nothing but that key, so the quality gate would run them: billed
+  calls, and a gate that can fail for a reason on the provider's side. Relay the refusal like any
+  other abort; whether to `unset` the key or use the `env -u` form the message prints is the user's
+  call.
 - **Docker must be running.** The gate includes `integrationTest` (Testcontainers), so the script
   fails fast on a missing daemon rather than discovering it minutes in.
 - **A browser cache, or network to fetch one.** The gate includes `playwrightTest`, whose Gradle task

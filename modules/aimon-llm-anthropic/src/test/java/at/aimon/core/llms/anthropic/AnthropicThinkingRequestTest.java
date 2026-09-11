@@ -87,10 +87,12 @@ class AnthropicThinkingRequestTest {
      * which are claims about a model the built-in capability table cannot answer for. It used to be
      * {@code claude-sonnet-4-5}; the 2026-09-10 dialect census measured that name and gave it a
      * {@link at.aimon.core.llm.capability.ThinkingDialect#BUDGETED} row, so the ADAPTIVE cases would have started
-     * seeing a translation and a warning. {@code claude-sonnet-4-20250514} is {@code AnthropicConfig}'s own
-     * {@code DEFAULT_MODEL}, which makes the golden bodies describe the shipped default rather than an arbitrary
-     * name — undescribed by the table, not undialected in fact, and {@link #theUndescribedModelReallyIsUndescribed}
-     * is what makes the next row that describes it fail with a sentence.
+     * seeing a translation and a warning. {@code claude-sonnet-4-20250514} was {@code AnthropicConfig}'s own
+     * {@code DEFAULT_MODEL} until #116 measured it unserved on 2026-09-11 and the default moved to
+     * {@code claude-sonnet-4-5}. It stays the fixture because it is still a Claude name outside the table, and these
+     * golden bodies are request shapes built against a mocked SDK, so none of them is sent — undescribed by the
+     * table, not undialected in fact, and {@link #theUndescribedModelReallyIsUndescribed} is what makes the next row
+     * that describes it fail with a sentence.
      */
     private static final String UNDESCRIBED_MODEL = "claude-sonnet-4-20250514";
 

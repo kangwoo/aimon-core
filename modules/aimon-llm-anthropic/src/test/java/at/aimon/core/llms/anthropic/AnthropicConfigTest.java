@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import at.aimon.core.llm.ReasoningEffort;
 import at.aimon.core.llm.capability.ModelCapabilities;
 import at.aimon.core.llm.capability.ModelCapabilityRegistry;
+import at.aimon.core.llm.capability.ThinkingDialect;
 
 @DisplayName("AnthropicConfig - Configuration Builder Tests")
 class AnthropicConfigTest {
@@ -26,7 +27,7 @@ class AnthropicConfigTest {
 
         // Then: Should use defaults for other fields
         assertThat(config.getApiKey()).isEqualTo(apiKey);
-        assertThat(config.getModel()).isEqualTo("claude-sonnet-4-20250514");
+        assertThat(config.getModel()).isEqualTo("claude-sonnet-4-5");
         // Unset, not 0.0. A manufactured default would be sent on every request, and 0.0 is the one value the
         // current Claude generation refuses -- see docs/design/llm/anthropic-sampling-capabilities.md section 2.6.
         assertThat(config.getTemperature()).isEmpty();
@@ -366,6 +367,19 @@ class AnthropicConfigTest {
 
         assertThat(supplied.getModelCapabilityRegistry().resolve("claude-opus-5"))
                 .isEqualTo(ModelCapabilities.unknown());
+    }
+
+    @Test
+    @DisplayName("the default model is a name the shipped capability table describes")
+    void theDefaultModelIsDescribedByTheShippedTable() {
+        // #116: the default before this one, claude-sonnet-4-20250514, had no row, and the Messages API answered it
+        // with 404 on 2026-09-11. Tying the default to a measured row makes the next change of it face the table.
+        AnthropicConfig shipped = AnthropicConfig.builder().apiKey("test-key").build();
+
+        assertThat(shipped.getModelCapabilityRegistry().resolve(shipped.getModel()).thinkingDialect())
+                .as("the default model %s is meant to be a name the built-in table describes: its row was measured "
+                        + "2026-09-10, and the Messages API served it on 2026-09-11 (#116)", shipped.getModel())
+                .isEqualTo(ThinkingDialect.BUDGETED);
     }
 
     @Test

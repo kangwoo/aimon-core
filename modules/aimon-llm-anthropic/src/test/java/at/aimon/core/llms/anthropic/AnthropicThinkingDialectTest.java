@@ -55,9 +55,10 @@ import ch.qos.logback.core.read.ListAppender;
  *
  * <p>
  * The model names are load-bearing. {@code claude-opus-5} is in the built-in table as adaptive-only;
- * {@code claude-sonnet-4-20250514} — {@code AnthropicConfig}'s own default model — is deliberately <em>not</em> in it
- * and stands for every model the table cannot answer for; {@code prod-thinker} is a gateway rename whose budgeted
- * dialect an operator has declared.
+ * {@code claude-sonnet-4-20250514} — {@code AnthropicConfig}'s default model until #116 measured it unserved on
+ * 2026-09-11, when the default moved to the described {@code claude-sonnet-4-5}; no request here is sent — is
+ * deliberately <em>not</em> in it and stands for every model the table cannot answer for; {@code prod-thinker} is a
+ * gateway rename whose budgeted dialect an operator has declared.
  *
  * <p>
  * <strong>Two of those three sentences were rewritten on 2026-09-10 and the history is the point.</strong> The

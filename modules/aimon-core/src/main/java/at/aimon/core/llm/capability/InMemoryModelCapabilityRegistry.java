@@ -350,8 +350,9 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
                 //
                 // Registration order is free here too, and it was checked rather than assumed: none of these five
                 // is a prefix of another or of an existing one (-4-5 / -4-6 / -4-7 / -4-8 are siblings, not
-                // nested), and claude-sonnet-4-20250514 -- AnthropicConfig's own default model -- does not start
-                // with claude-sonnet-4-5, so it stays undescribed.
+                // nested), and claude-sonnet-4-20250514 -- AnthropicConfig's default model until #116 measured it
+                // unserved on 2026-09-11 -- does not start with claude-sonnet-4-5, so it stays undescribed. The
+                // default is now claude-sonnet-4-5 itself, which the row below describes.
                 .registerPrefix("claude-opus-4-5", BUDGETED_DIALECT_ONLY)
                 .registerPrefix("claude-sonnet-4-5", BUDGETED_DIALECT_ONLY)
                 .registerPrefix("claude-haiku-4-5", BUDGETED_DIALECT_ONLY)

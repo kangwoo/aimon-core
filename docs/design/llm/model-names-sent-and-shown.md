@@ -8,7 +8,8 @@
 > [#106](https://github.com/kangwoo/aimon-core/issues/106) and [#107](https://github.com/kangwoo/aimon-core/issues/107).
 >
 > **[§10](#10-after-the-build--departures-and-what-went-to-the-backlog), appended after the build, is where this
-> document departs from what was built.** Everything between this header and §10 is the body as approved in design
+> document departs from what was built, and [§11](#11-after-116-and-118), appended after #116 and #118, is what those
+> two follow-up issues measured and decided.** Everything between this header and §10 is the body as approved in design
 > review round 1 (PASS, no blocking findings, eleven non-blocking notes), kept byte-exact rather than corrected — the
 > house habit in this directory, for the reason `model-capability-binding-round-trip.md` gives. Its file:line
 > citations and counts are at `main` `9b642cc`. The review transcript (`review-1.md`) and the run records the body
@@ -19,7 +20,8 @@
 > (`docs/project/documentation-guide.md` §5.1). It continues
 > [`provider-switch-agent-model-check.md`](provider-switch-agent-model-check.md), whose §11 maps that document's
 > findings to the decisions here. What this work left open is in
-> [`../../backlog/llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md), L-24.
+> [`../../backlog/llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md), L-24, closed by
+> #116 (§11).
 
 Run `cli-model-followups`, base `main` at **`9b642cc`**. Every file:line below was re-read at that commit by this
 design agent; nothing is carried over from the issues or from #92's design without being re-read.
@@ -612,3 +614,165 @@ this change, no INFO line names either design record, and both locales' pages li
   null)` is still true of the model itself. The file is outside this change's files and is not edited, and CHANGELOG
   names the type among the code that can now find the name empty. It is not registered, for §8's reason: no in-tree
   reader calls `getName().get()` on it.
+
+---
+
+## 11. After #116 and #118
+
+*Appended 2026-09-11. #116 measured the default model §9 Q2 left open, and #118 took #109's four build-review notes,
+§8 X1, §10.5 X8 and §9 Q1. Their design passed review and was not committed as a file of its own: this section records
+its decisions, and §11.5 records where its build departed from it. Everything above, §10 included, is left as it was.*
+
+### 11.1 What §9's open questions became, the second time
+
+- **Q1 — the prompt.** #118 item 6 asked it again, and it is decided the same way: the prompt stays on the
+  definition's name (`default-agent> ` for the three default bundles), and `AimonCli` does not change. Four reasons:
+  1. **What Q1 protected is now pinned by a test.** L-21's complaint, that a user cannot tell which bundle a switch
+     selected, was answered by the `Agent bundle:` banner line, and #118 item 1 existed because nothing failed if that
+     line stopped printing. A test now fails when it does (§11.4). An `agent.name` prompt would be a second, untested
+     copy of an answer that is now enforced.
+  2. **The prompt matches the runtime id.** `AgentRuntimeId.from(Agent)` builds `agent:default-agent` from the same
+     name. That id is what hook scripts receive as `AIMON_AGENT_RUNTIME_ID`, what a skill body renders as
+     `${AIMON_AGENT_RUNTIME_ID}`, and what queued inputs are keyed by. The banner's `(agent name: default-agent)`
+     parenthesis exists to explain that pairing; next to an `agent.name` prompt it would explain nothing on screen.
+  3. **On the shipped configuration it says no more.** `agent.name` defaults to `default`, so the shipped prompt would
+     change from `default-agent> ` to `default> `.
+  4. **The smallest change is no change,** and `cli.prompt` already sets any prompt a user wants.
+
+  **Cost, stated.** In a terminal the banner scrolls away and the prompt stays, so after a long session the one line
+  still on screen does not name the bundle. The banner has also been observed only with stdin at end of file, never in
+  a TTY. **To overturn it:** build `AimonCli`'s default prompt from `agentSetup.getAgentBundleName() + "> "`; drop
+  "which is what explains the prompt" from `ReplSession.agentBundleLine`'s javadoc and "which is the prompt's" from the
+  display name of `ReplSessionBannerTest`'s first bundle-line test; and add a CHANGELOG line saying the prompt now shows
+  `agent.name`.
+
+- **Q2 — measured.** The name was read from `AnthropicConfig.DEFAULT_MODEL` at `c561e17`, not from an issue. The key
+  was passed to each request through a process-substitution header file scoped to that one command, and never
+  exported, printed or recorded. 2026-09-11, response dates 04:13:49 to 04:16:06 GMT:
+
+  | # | Request | HTTP | Result | `request-id` | Billed |
+  |---|---|---|---|---|---|
+  | 1 | `GET /v1/models/claude-sonnet-4-20250514` | 404 | `not_found_error`, `model: claude-sonnet-4-20250514` | `req_011Cew14Po9JL3pp2n45Lyy7` | No |
+  | 2 | `POST /v1/messages`, `model: claude-sonnet-4-20250514`, `max_tokens: 1`, a one-word user message | 404 | the same `not_found_error` | `req_011Cew1AD4e7L3o7274fYiWa` | No |
+  | 3 | `GET /v1/models/claude-sonnet-4-5` | 200 | `id: claude-sonnet-4-5-20250929`; `thinking.types.enabled` supported, `adaptive` not | `req_011Cew1ESjHVJA4iv1jppBdS` | No |
+  | 4 | `POST /v1/messages`, `model: claude-sonnet-4-5`, otherwise as row 2 | 200 | served `model: claude-sonnet-4-5-20250929`, `stop_reason: max_tokens` | `req_011Cew1EUgrGJw1SazZj49Gq` | Yes — 8 input + 1 output tokens |
+
+  Rows 3–4 exist because the default could change only to a name measured the same way; no other live call was made.
+
+  **The default is now `claude-sonnet-4-5`**, the smallest move among served names. It was measured the same way. The
+  built-in capability table already describes it — its `BUDGETED` prefix row, which row 3's `thinking.types` agrees
+  with — so no row was added and only `registerAnthropicDefaults`' comment changed. `default-anthropic`'s main agent
+  already runs on it, so the Anthropic default and the shipped Anthropic bundle are one name to keep served rather than
+  two. The price and context-window tables answer both names from the same `claude-sonnet-4` prefix, and the row states
+  no sampling fact, so temperature handling stays fail-open. And it stays a Sonnet. Rejected, one line each:
+  - **Keep `claude-sonnet-4-20250514` and record the measurement** — measured unserved, so every path L-24 lists would
+    keep failing at request time.
+  - **The dated snapshot `claude-sonnet-4-5-20250929`** — the shape that just went stale, and a second spelling of the
+    model `default-anthropic` runs on. The alias's cost, stated: the vendor may point it at a later snapshot of the
+    family; the served `model` names what ran, and the prefix row still describes it.
+  - **A newer family** (`claude-sonnet-4-6`, `claude-sonnet-5`) — not measured, and it changes the request beyond the
+    name: an `EITHER` row sends adaptive thinking under `auto`, and `claude-sonnet-5`'s row suppresses temperature.
+  - **No built-in default, with a model required** — breaks `AnthropicConfig.builder().apiKey(k).build()` in a
+    published module, and reverses this document's D-1 by making `llm.model` and `aimon.llm.model` required under
+    anthropic. The smaller option works.
+  - **A default resolved at runtime from `GET /v1/models`** — a network call inside config construction, whose answer
+    depends on the key and the account.
+
+  L-24 is closed. `AnthropicConfigTest` now also asserts that the default resolves to a described row, so the next
+  change of the default meets the table.
+
+### 11.2 What in this document no longer holds
+
+- **§7's row** "The client's default model is not served … **Not measured**": measured, and it was not served. The
+  row's handling described what happened — the requests failed at request time with the vendor's 404.
+- **§9 Q2** says changing the default "belongs to `aimon-llm-anthropic`, outside this run": #116 changed it.
+- **§10.3's startup line** names `claude-sonnet-4-20250514`; under the same configuration it now names
+  `claude-sonnet-4-5`. §10.1 DV-3's reason for keeping that literal out of `default-config.yaml` and the guide is what
+  kept both of them true through the change. The literal in §2 F7, §5.2, §5.3, §5.5 and §6 T2 is the body's, true at
+  `9b642cc`.
+- **§10.1 DV-7** says T2 asserts the client's own default "so it survives a change of that default (L-24)". It did:
+  the default changed and `AgentSetupFactoryCreateTest` needed no edit for it. Its one edit is #118 item 4's javadoc
+  sentence.
+- **"No request that worked changes"** holds against the Anthropic Messages API, the only endpoint measured. A
+  deployment whose `baseUrl` points at a gateway that still served or allowed the old name, and which writes no model,
+  now sends `claude-sonnet-4-5` there. What such a gateway does with that name was not measured; CHANGELOG says so.
+
+### 11.3 The findings #118 took
+
+- **§8 X1 and §10.5 X8 — core javadoc offering aliases (#118 item 5).** Taken: *say names are sent as written.* The
+  five files — `Subagent`, `SubagentMetadata`, the `at.aimon.core.subagent` package, `SubagentContentParser`, and the
+  public SPI `SubagentBehaviorSupport` — describe a subagent's `model` as an id sent to the configured provider exactly
+  as written, with no alias resolved. They also say what runs when it is absent: the `Task` tool's override wins, then
+  the subagent's own model, then the parent's, and when none names a model the client sends its own default. That is
+  the contract `SubagentLlmDefaults.resolveModel` already states. The alias values leave the three examples with
+  nothing put in their place, because an example writing `sonnet` next to "sent as written" teaches the 404 #104
+  measured for `haiku` (§10.1 DV-4's precedent). `resolvedModel()`'s `@return` keeps "never null" and adds "its name
+  may be empty"; no signature changed.
+
+  Rejected: *stop naming aliases* on its own. Replacing each alias with a full model id puts a vendor literal in
+  provider-neutral javadoc, wrong under the other provider and stale when the name retires (§10.1 DV-3's reason, and
+  §11.1 has just measured a literal going stale). Deleting the alias words without stating the contract would leave
+  `resolvedModel()` silent about an empty name.
+
+  What remains of X1 outside the five files — the anthropic module's README and javadoc samples, and `model: sonnet` in
+  `MarkdownSubagentParser` and `SubagentParser` — is L-27. The "override alias" wording in
+  `SubagentExecutionEnvironment`, `SubagentExecutionContext` and `DefaultSubagentExecutor` is not registered: it gives
+  no example value to copy.
+- **The build-review notes — #118 items 1–4.**
+  1. **The banner's calls.** `ReplSession.displayAgentInfo()` is package-private, and a nested class in
+     `ReplSessionBannerTest` calls it on a session built the way `ReplSessionRetryTest` builds one, with a formatter
+     that keeps each info line. It fails when either banner call, or the constructor's bundle-name read, is removed
+     (§11.4). The call from `start()` to `displayAgentInfo()` stays unpinned, because it needs a terminal.
+  2. **The guide sentence** (ko + en) now says a subagent that names no model, under a definition that names none,
+     runs on `llm.model` when it is set and on the Anthropic client's built-in default when it is not. The next
+     paragraph listed only memory and wiki generation among what runs on that default; it now lists a definition
+     without `model.name` too, and so does `default-config.yaml`'s `llm.model` comment. #92's record corrects its
+     §11.2 in an appended §12.
+  3. **L-20's citation** reads `TaskTool.java:553` as of `c561e17`, with a correction note; its other twelve citations
+     were re-read and held.
+  4. **The log file.** `AgentSetupFactoryCreateTest`'s side-effect note says its tests write `WARN` lines to
+     `~/.aimon/logs/aimon.log`, because `create()` logs through the CLI's own `logback.xml` and the test classpath has
+     no `logback-test.xml`.
+
+### 11.4 What was measured
+
+- **The four API calls** in §11.1. The build made no live call, and neither `ANTHROPIC_KEY` nor `OPENAI_KEY` was set in
+  any shell that ran `./gradlew`.
+- **The mutations**, 2026-09-11 from 05:14Z to 05:15Z. A script applied each one, requiring exactly one occurrence of
+  the text it replaced, and ran only the named class with `--rerun`. It restored the file from a copy, confirmed the
+  restore was byte-identical, and ran the same command again.
+
+  | Mutation | `./gradlew … --rerun --tests` | With the mutation | Restored |
+  |---|---|---|---|
+  | M1 — delete the `agentBundleLine(...)` call in `displayAgentInfo` | `:aimon-cli:test`, `*.ReplSessionBannerTest` | exit 1; 2 of 11 red: the bundle line, and the order | exit 0; 11 of 11 |
+  | M2 — delete the `providerLine(...)` call | the same | exit 1; 3 of 11 red: the provider line, the order, and the no-bundle case | exit 0; 11 of 11 |
+  | M2b — pass `null` instead of the agent to `providerLine` | the same | exit 1; 1 of 11 red: the provider line | exit 0; 11 of 11 |
+  | M3 — the constructor's `getAgentBundleName()` read becomes `null` | the same | exit 1; 2 of 11 red: the bundle line, and the order | exit 0; 11 of 11 |
+  | M4 — `DEFAULT_MODEL` back to `claude-sonnet-4-20250514` | `:aimon-llm-anthropic:test`, `*.AnthropicConfigTest` | exit 1; 2 of 33 red: the default's value, and the default resolving to `BUDGETED` | exit 0; 33 of 33 |
+
+- **The log file.** `./gradlew :aimon-cli:test --rerun --tests '*.AgentSetupFactoryCreateTest'` (2 tests, 0 failures)
+  added 7 lines to `~/.aimon/logs/aimon.log` and rolled nothing over. They were 4 `WARN` entries from
+  `AgentSetupFactory` and 3 continuation lines: T1's #92 mismatch warning, which spans several lines, and T2's memory
+  model line, in-memory backend line and in-memory observation store line.
+- **`./gradlew checkAll`**, 2026-09-11 05:20Z–05:25Z: exit 0. Every module's `test` task with sources executed —
+  10951 tests, 0 failures, 0 errors, 72 skipped, of which `aimon-core` ran 8168 (2 skipped), `aimon-llm-anthropic` 313
+  (25 skipped: its live-API classes, with no key set) and `aimon-cli` 474 (none skipped).
+
+### 11.5 Where the build departed from #118's design
+
+- **The banner test's client** has a default model (`claude-haiku-4-5`) different from the definition's
+  (`claude-sonnet-4-5`). The design gave both the same name, which let the test pass with `null` passed for the agent —
+  #106's bug at the call site. M2b is the mutation that shows the difference.
+- **"No request that worked changes"** is qualified to the Anthropic Messages API, and the `baseUrl` gateway case is
+  named (§11.2).
+- **The CHANGELOG entry** names two unreleased sentences it supersedes, #45's as well as #109's.
+- **`default-config.yaml`'s `llm.model` comment** received the same correction as the guide's next paragraph. The
+  design corrected the guide only, and the comment had the same omission.
+- **The guide edit** replaces the sentence rather than the whole cited lines, whose first line ends the previous
+  sentence.
+- **Three citations** the design gave for `memoryModelName` were off by a few lines; none was carried into the tree.
+- **Smaller choices:** the default-model assertion is its own test method; the banner test's runtime reports a fixed
+  working directory; `AnthropicConfig`'s comment ends "then" rather than "that day", so the formatter keeps it on two
+  lines.
+- **Named departures from the issues' file lists,** made as designed: the anthropic module README's default cell, the
+  guide's next paragraph, this run's step in the dated note under the backlog index, and the new L-27.

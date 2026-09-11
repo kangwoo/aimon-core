@@ -276,7 +276,8 @@ agent:
 번들의 `explore` 서브에이전트는 모델을 적지 않고 메인 에이전트의 모델로 돈다 — `default-anthropic` 에서는
 `claude-sonnet-4-5` 다(모델을 적는 것은 `default` 의 `explore` 뿐이고, 그것은 `gpt-5.1` 이다). 모델을 적지 않은
 서브에이전트는 메인 에이전트가 도는 모델로 돌고, 메인 에이전트의 정의도 모델을 적지 않았다면 클라이언트의 기본
-모델 — `llm.model` — 로 돈다.
+모델로 돈다 — `llm.model` 을 적었으면 그 값이고, 적지 않았다면(anthropic 에서만 그럴 수 있다) Anthropic
+클라이언트에 내장된 기본 모델이다.
 
 함께 바꾸는 키는 다섯이다.
 
@@ -288,8 +289,9 @@ agent:
 
 `llm.model` 이 여전히 닿는 곳은 peer memory(dialectic 엔진 · deriver · reconciler, 그리고
 `memory.dreamer.scorer.llm.model` 이 없으면 dreamer 와 그 LLM 판정기)와 위키 페이지 생성이다. `model.name` 이 없는
-정의는 이 값으로 돈다. anthropic 에서는 생략할 수 있다 — 그러면 메모리와 위키 생성이 Anthropic 클라이언트의 기본
-모델로 돌고, `memory` 를 켰다면 기동할 때 그 모델 이름을 한 줄로 알린다. 시작 배너의 `Agent bundle:` 줄은 불러온
+정의는 이 값으로 돈다. anthropic 에서는 생략할 수 있다 — 그러면 메모리, 위키 생성, 그리고 `model.name` 이 없는
+정의가 Anthropic 클라이언트의 기본 모델로 돌고, `memory` 를 켰다면 기동할 때 그 모델 이름을 한 줄로 알린다. 시작
+배너의 `Agent bundle:` 줄은 불러온
 번들을, `LLM Provider: <provider> (<model>)` 의 괄호 안은 메인 에이전트의 요청이 싣는 모델을 보여 준다 —
 서브에이전트가 따로 적은 모델은 보여 주지 않는다.
 

@@ -1,6 +1,6 @@
 ---
 translated_from: CONTRIBUTING.md
-source_commit: a1236c8
+source_commit: 1ae856c
 ---
 
 # AIMON Core 기여 가이드
@@ -60,7 +60,7 @@ source_commit: a1236c8
 ### 테스트 실행
 
 ```bash
-./gradlew test                                                        # 전체 단위 테스트 (@Tag("docker") 제외)
+./gradlew test                                                        # 전체 단위 테스트 (@Tag("docker"), @Tag("packaging"), @Tag("playwright") 제외)
 ./gradlew :aimon-core:test                                            # 단일 모듈
 ./gradlew :aimon-core:test --tests "at.aimon.core.agent.tool.*Test"   # 글롭 패턴
 ./gradlew :aimon-core:test --tests "at.aimon.core.agent.tool.ToolInputTest"  # 단일 클래스
@@ -128,8 +128,11 @@ ANTHROPIC_KEY=... OPENAI_KEY=... \
 ```
 
 `checkAll` 이 유일한 게이트입니다. 포맷 검사, Checkstyle, **그리고** 각 모듈의 `test` 태스크까지
-한 번에 돕니다. `./gradlew test` 를 따로 돌릴 필요는 이제 없습니다. Docker/Testcontainers 테스트는
-여기서 빠집니다 — `@Tag("docker")` 가 붙어 있고 `./gradlew integrationTest` 로 돕니다.
+한 번에 돕니다. `./gradlew test` 를 따로 돌릴 필요는 이제 없습니다. 태그가 붙은 세 계층은 `test` 가
+빼므로 여기서도 빠집니다 — 컨벤션 플러그인이 모든 모듈에서 빼는 `@Tag("docker")`(Docker/Testcontainers)와
+`@Tag("packaging")`(fat jar 실행), 그리고 `aimon-browser-playwright` 가 더 빼는 `@Tag("playwright")`(실제
+브라우저)입니다. 각각 `./gradlew integrationTest`, `./gradlew packagingTest`, `./gradlew playwrightTest` 로
+돌고, CI 와 릴리스 게이트가 셋 다 돌립니다.
 
 검사가 실패하면 HTML 리포트가 이유를 말해 줍니다.
 
