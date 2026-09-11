@@ -28,12 +28,12 @@ mapstruct = "1.5.5.Final"
 
 # Database
 postgresql = "42.7.13"
-h2 = "2.4.240"
+h2 = "2.5.250"
 hikari = "5.1.0"
 mongodb = "4.11.1"
 
 # Cloud & Storage
-aws-sdk = "2.54.12"
+aws-sdk = "2.54.13"
 
 # Testing
 # Test classpaths against shipped versions (#99). #91's bar: a module's tests run against the versions the module
