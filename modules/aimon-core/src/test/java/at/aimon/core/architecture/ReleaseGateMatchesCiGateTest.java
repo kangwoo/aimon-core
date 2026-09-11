@@ -3,21 +3,28 @@ package at.aimon.core.architecture;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
+import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 /**
  * A release must not pass a quality gate narrower than the one every pull request already clears.
@@ -53,8 +60,27 @@ import org.junit.jupiter.api.Test;
  * Testcontainers tests out of {@code test}. This pins that half of the fix so it cannot creep back;
  * <li>the {@code /release} skill's Notes name that same task list. A document is not a gate, but this one is read by
  * whoever is about to publish, and a wrong description of what a release is checked against is worth failing a build
- * over.
+ * over;
+ * <li>the release script refuses to start while a provider API key is in its environment, even one set to the empty
+ * string. It names every key that is set and no other, never prints a value, refuses before it invokes {@code git}
+ * for any reason and before its pre-flight checks, and still answers a bad argument with its usage line and exit 2
+ * first. The live-API classes carry no tag, so a key in the environment would run them inside {@code checkAll}:
+ * billed calls, a gate that can go red for a reason on the provider's side, and a gate CI — which has no key — does
+ * not run;
+ * <li>the keys it refuses are exactly the variables {@code @EnabledIfEnvironmentVariable} gates on in the provider
+ * modules' tests, so the next provider's key cannot join the build without joining the refusal.
  * </ul>
+ *
+ * <p>
+ * The refusal is behaviour, not a task name, so those tests run the script rather than read it: a commented-out,
+ * inverted or unreachable check passes any scan, and no scan can show that a value is never printed. They run the
+ * real file with {@code --dry-run} from an empty directory, with the environment cleared and a {@code PATH} holding
+ * only a stub {@code git} that records every call. The sandbox is inert with or without the check — no real
+ * {@code git}, {@code docker} or {@code ./gradlew} is reachable, and a run nothing refuses stops at
+ * {@code gradle.properties not found} — so removing the check turns these tests red instead of starting a release.
+ * The call log is what pins the ordering. A check moved below the {@code cd} that calls {@code git}, or below the
+ * {@code EXIT} trap that calls it again on a non-zero exit, still refuses before "Pre-flight checks" and would pass
+ * every other assertion here.
  *
  * <h2>What this cannot see</h2>
  *
@@ -73,6 +99,17 @@ import org.junit.jupiter.api.Test;
  * registered without {@code testClassesDirs} or {@code classpath}, so it matched no test class, reported
  * {@code NO-SOURCE} and went green in 650ms. A tier nothing runs is a tier nothing can tell apart from a passing
  * one.
+ *
+ * <p>
+ * The key refusal is held to what its census can read. A key read with {@code System.getenv} and an assumption rather
+ * than with the annotation, and a key gate outside {@code modules/aimon-llm-*}, are both invisible to it; so is a new
+ * class gated on a variable that is already refused, which is not a change the refusal needs. The sandbox classes
+ * gated on {@code AIMON_DOCKER_IT} and {@code AIMON_KUBERNETES_IT} are outside the census on purpose, and the script
+ * does not refuse them — whether it should is backlog {@code LA-2}. Nothing checks that the script calls nothing but
+ * {@code git} before its pre-flight checks: today it calls nothing else, and the stub records only {@code git}. And
+ * the provider modules' test sources are not inputs of this module's {@code test} task, so a local build that changes
+ * only them can report this test {@code UP-TO-DATE}. The tag scan above has the same gap; CI builds from a fresh
+ * checkout and does not.
  *
  * <p>
  * Shell and YAML rather than bytecode is why this is plain JUnit and not ArchUnit, following the precedent set by
@@ -147,6 +184,53 @@ class ReleaseGateMatchesCiGateTest {
      * the gate runs — see {@link #releaseSkillDoesNotCallAGatedTierUngated()} for why one assertion is not enough.
      */
     private static final List<String> UNGATED_CLAIM_MARKERS = List.of("opt-in", "outside both", "outside the gate");
+
+    /**
+     * The variables the live-API test classes are gated on, and so the ones the release script must refuse. Frozen
+     * rather than derived, on the precedent of {@link #TAG_TO_GATE_TASK}: the refusal cases run once per entry, and
+     * {@link #refusedKeysAreTheProviderModulesKeyGates()} holds the list equal to what the provider modules gate on.
+     */
+    private static final List<String> PROVIDER_KEY_VARIABLES = List.of("ANTHROPIC_KEY", "OPENAI_KEY");
+
+    /**
+     * The value the refusal cases put in a key. Not a key and not shaped like one — no {@code sk-} prefix for a secret
+     * scanner to flag — and distinctive enough that finding it anywhere in the script's output means a value was
+     * printed.
+     */
+    private static final String KEY_SENTINEL = "dummy-98-sentinel";
+
+    /** The first line the release script logs once it is past the key check. */
+    private static final String PRE_FLIGHT_LOG = "Pre-flight checks";
+
+    /** The release script's usage line, which a bad argument must still get before any key is looked at. */
+    private static final String USAGE_LINE = "Usage: scripts/release.sh";
+
+    /**
+     * {@code @EnabledIfEnvironmentVariable}, or its {@code @EnabledIfEnvironmentVariables} container, opening a line —
+     * anchored for the reasons given on {@link #TEST_TAG_ANNOTATION}. What follows is read up to the parenthesis that
+     * closes it, across as many lines as that takes, and every {@link #KEY_GATE_NAME} inside it counts.
+     *
+     * <p>
+     * Reading the whole argument list instead of expecting {@code named} straight after the parenthesis is what a
+     * probe asked for: {@code @EnabledIfEnvironmentVariable(matches = ".+", named = "GEMINI_KEY")} and the container
+     * both walked past that first pattern. For the case this census exists for, such a miss is silent rather than
+     * loud: a new provider module's one new name goes unread, the two old names are still found in the other modules,
+     * and the equality holds.
+     */
+    private static final Pattern KEY_GATE_ANNOTATION = Pattern
+            .compile("^\\s*@(?:[\\w.]+\\.)?EnabledIfEnvironmentVariables?\\(");
+
+    /** The {@code named} attribute inside a {@link #KEY_GATE_ANNOTATION}, in whichever position it is written. */
+    private static final Pattern KEY_GATE_NAME = Pattern.compile("\\bnamed\\s*=\\s*\"([^\"]+)\"");
+
+    /** The provider modules: every directory under {@code modules/} whose name starts with this. */
+    private static final String PROVIDER_MODULE_PREFIX = "aimon-llm-";
+
+    /**
+     * How long one sandboxed run of the release script may take. Nothing it can reach there blocks — the one
+     * {@code read} in the script comes after the gate — so this only has to outlast a slow machine starting bash.
+     */
+    private static final long SCRIPT_TIMEOUT_SECONDS = 30;
 
     private static final Path REPOSITORY_ROOT = locateRepositoryRoot();
 
@@ -304,6 +388,355 @@ class ReleaseGateMatchesCiGateTest {
         }
     }
 
+    /**
+     * One run per key, with only that key set. A refusal that also named the key that is not set would tell the
+     * operator to unset something that is not there, so each run must name its own key and not the other.
+     */
+    @Test
+    @DisplayName("the release script refuses to start while a provider API key is set, before it invokes git")
+    void releaseScriptRefusesEachProviderKey(@TempDir Path sandbox) throws IOException, InterruptedException {
+        assumeTrue(REPOSITORY_ROOT != null, "repository root not found from the working directory — nothing to scan");
+
+        for (final String key : PROVIDER_KEY_VARIABLES) {
+            final ScriptRun run = runReleaseScript(sandbox, key, Map.of(key, KEY_SENTINEL), "--dry-run");
+            assertRefused(run, List.of(key));
+        }
+    }
+
+    /**
+     * "Set" means present in the environment, whatever the value. A class gated with {@code matches = ".*"} runs on an
+     * empty value, and the refusal should not depend on how each class writes its regex.
+     */
+    @Test
+    @DisplayName("the release script refuses a provider API key set to the empty string")
+    void releaseScriptRefusesAKeySetToEmpty(@TempDir Path sandbox) throws IOException, InterruptedException {
+        assumeTrue(REPOSITORY_ROOT != null, "repository root not found from the working directory — nothing to scan");
+
+        final ScriptRun run = runReleaseScript(sandbox, "empty-key", Map.of("OPENAI_KEY", ""), "--dry-run");
+
+        assertRefused(run, List.of("OPENAI_KEY"));
+    }
+
+    @Test
+    @DisplayName("the release script names every provider API key that is set, in one refusal")
+    void releaseScriptNamesEveryKeyThatIsSet(@TempDir Path sandbox) throws IOException, InterruptedException {
+        assumeTrue(REPOSITORY_ROOT != null, "repository root not found from the working directory — nothing to scan");
+
+        final Map<String, String> environment = new TreeMap<>();
+        for (final String key : PROVIDER_KEY_VARIABLES) {
+            environment.put(key, KEY_SENTINEL);
+        }
+        final ScriptRun run = runReleaseScript(sandbox, "every-key", environment, "--dry-run");
+
+        assertRefused(run, PROVIDER_KEY_VARIABLES);
+    }
+
+    /**
+     * The refusal cases assert absences — no pre-flight, no {@code git} call — and an absence proves nothing unless the
+     * same sandbox without a key produces the presence. This run must get past the check to pre-flight and must call
+     * the stub, which shows the stub was on {@code PATH} and could execute. It also catches a check that refuses
+     * whether or not a key is set.
+     */
+    @Test
+    @DisplayName("the release script starts without a provider API key, so the refusal cases are not vacuous")
+    void releaseScriptStartsWithoutAProviderKey(@TempDir Path sandbox) throws IOException, InterruptedException {
+        assumeTrue(REPOSITORY_ROOT != null, "repository root not found from the working directory — nothing to scan");
+
+        final ScriptRun run = runReleaseScript(sandbox, "no-key", Map.of(), "--dry-run");
+
+        assertThat(run.output).withFailMessage(
+                "with no provider key set, %s did not reach its pre-flight checks — the key check refuses a clean "
+                        + "environment, or this harness no longer reaches the script:%n%s",
+                RELEASE_SCRIPT, run).contains(PRE_FLIGHT_LOG);
+        for (final String key : PROVIDER_KEY_VARIABLES) {
+            assertThat(run.output)
+                    .withFailMessage("with no provider key set, %s still named %s:%n%s", RELEASE_SCRIPT, key, run)
+                    .doesNotContain(key);
+        }
+        assertThat(run.gitCalls).withFailMessage(
+                "with no provider key set, %s never called the stub git — the stub is not reachable on PATH, so every "
+                        + "\"no git call\" assertion in the refusal cases would pass without checking anything:%n%s",
+                RELEASE_SCRIPT, run).contains("rev-parse --show-toplevel");
+    }
+
+    /**
+     * The key check comes after the argument loop, so a bad argument keeps the answer it always had: the usage line
+     * and exit 2. A check moved above the loop would refuse instead.
+     */
+    @Test
+    @DisplayName("the release script answers a bad argument with its usage line before it looks at provider keys")
+    void releaseScriptRejectsABadArgumentBeforeTheKeyCheck(@TempDir Path sandbox)
+            throws IOException, InterruptedException {
+        assumeTrue(REPOSITORY_ROOT != null, "repository root not found from the working directory — nothing to scan");
+
+        final ScriptRun run = runReleaseScript(sandbox, "bad-argument", Map.of("OPENAI_KEY", KEY_SENTINEL), "--bogus");
+
+        assertThat(run.exitCode).withFailMessage(
+                "given an unknown argument with OPENAI_KEY set, %s exited %d rather than 2 — the key check moved above "
+                        + "the argument loop:%n%s",
+                RELEASE_SCRIPT, run.exitCode, run).isEqualTo(2);
+        assertThat(run.output)
+                .withFailMessage("given an unknown argument, %s did not print its usage line:%n%s", RELEASE_SCRIPT, run)
+                .contains(USAGE_LINE);
+        assertThat(run.output).withFailMessage(
+                "given an unknown argument, %s answered with the key refusal rather than the usage line:%n%s",
+                RELEASE_SCRIPT, run).doesNotContain("OPENAI_KEY").doesNotContain(KEY_SENTINEL);
+        assertThat(run.gitCalls)
+                .withFailMessage("given an unknown argument, %s invoked git before exiting:%n%s", RELEASE_SCRIPT, run)
+                .isEmpty();
+    }
+
+    /**
+     * The refusal list is a hand-written copy of which variables gate a billed tier, and this class exists because
+     * such copies drift. So the copy is held to its source: the {@code @EnabledIfEnvironmentVariable} gates in the
+     * provider modules' tests. A provider module gated on a new variable fails here until
+     * {@link #PROVIDER_KEY_VARIABLES} names it, and that fails the refusal cases until the script refuses it too.
+     *
+     * <p>
+     * Scoped to {@code modules/aimon-llm-*} rather than the whole tree. Two classes elsewhere are gated the same way,
+     * on {@code AIMON_DOCKER_IT} and {@code AIMON_KUBERNETES_IT}, and neither variable is a provider key. An allowlist
+     * for them would need a written reason they may stay out of the refusal, and nobody has verified one — backlog
+     * {@code LA-1} §0.1 declined to write it, and {@code LA-2} leaves it open.
+     */
+    @Test
+    @DisplayName("the keys the release script refuses are the key gates in the provider modules")
+    void refusedKeysAreTheProviderModulesKeyGates() throws IOException {
+        assumeTrue(REPOSITORY_ROOT != null, "repository root not found from the working directory — nothing to scan");
+
+        final Set<String> gated = keyGateVariablesInProviderModules();
+
+        assertThat(gated)
+                .withFailMessage("found no @EnabledIfEnvironmentVariable under modules/%s*/src/test — the scan "
+                        + "is broken, not clean", PROVIDER_MODULE_PREFIX)
+                .isNotEmpty();
+        assertThat(gated).withFailMessage("the provider modules' tests are gated on %s, but %s refuses %s.%n"
+                + "If a gated variable is a provider key: add it to PROVIDER_KEY_VARIABLES in this test, make %s "
+                + "refuse it, and add its classes to CONTRIBUTING.md's live-API table. The refusal cases fail until "
+                + "the script refuses it.%n"
+                + "If it gates something that is not a provider key: narrow this scan to leave it out, with a note "
+                + "saying what it gates and why the release gate may inherit it.%n"
+                + "If a refused variable no longer gates anything: remove it here and from the script.", gated,
+                RELEASE_SCRIPT, PROVIDER_KEY_VARIABLES, RELEASE_SCRIPT)
+                .isEqualTo(new TreeSet<>(PROVIDER_KEY_VARIABLES));
+    }
+
+    /** Holds one refusal to everything the class javadoc says is enforced about it. */
+    private static void assertRefused(ScriptRun run, List<String> setKeys) {
+        assertThat(run.exitCode).withFailMessage("with %s set, %s exited %d instead of refusing with 1:%n%s", setKeys,
+                RELEASE_SCRIPT, run.exitCode, run).isEqualTo(1);
+        for (final String key : PROVIDER_KEY_VARIABLES) {
+            if (setKeys.contains(key)) {
+                assertThat(run.output)
+                        .withFailMessage("with %s set, %s did not name %s:%n%s", setKeys, RELEASE_SCRIPT, key, run)
+                        .contains(key);
+            } else {
+                assertThat(run.output).withFailMessage(
+                        "with %s set, the refusal also names %s, which is not set — the operator would be told to "
+                                + "unset something that is not there:%n%s",
+                        setKeys, key, run).doesNotContain(key);
+            }
+        }
+        assertThat(run.output)
+                .withFailMessage("with %s set, %s printed a key's value:%n%s", setKeys, RELEASE_SCRIPT, run)
+                .doesNotContain(KEY_SENTINEL);
+        assertThat(run.output).withFailMessage(
+                "with %s set, %s got as far as its pre-flight checks — the key check is gone, or below `log \"%s\"`:"
+                        + "%n%s",
+                setKeys, RELEASE_SCRIPT, PRE_FLIGHT_LOG, run).doesNotContain(PRE_FLIGHT_LOG);
+        assertThat(run.gitCalls).withFailMessage("with %s set, %s invoked git before refusing.%n"
+                + "The key check moved below the `cd` that calls git, or below `trap cleanup EXIT`, whose handler "
+                + "calls git when a refusal exits non-zero. A shell about to be refused must not reach `git fetch` "
+                + "first.%n%s", setKeys, RELEASE_SCRIPT, run).isEmpty();
+    }
+
+    /**
+     * Runs the real release script in {@code tempDir}/{@code caseName}, from an empty working directory, with a
+     * cleared environment that holds only {@code PATH}, {@code HOME} and the case's variables. {@code PATH} holds a
+     * single stub {@code git} that appends each call's arguments to a log outside the working directory, answers
+     * {@code rev-parse} with the directory it runs in, and exits 0, so the {@code EXIT} trap's
+     * {@code git diff --quiet} prints no note either.
+     *
+     * <p>
+     * Output goes to a file that is read only after the process exits, so a script that hangs cannot block the read
+     * and the timeout always fires. Clearing the environment keeps the no-key case deterministic on a machine with a
+     * key exported, and drops the {@code JAVA_TOOL_OPTIONS} the release script exports into the JVM running this.
+     */
+    private static ScriptRun runReleaseScript(Path tempDir, String caseName, Map<String, String> environment,
+            String... arguments) throws IOException, InterruptedException {
+        final Path bash = locateBash();
+        assumeTrue(bash != null, "no bash on PATH — " + RELEASE_SCRIPT + " cannot run here either");
+        assumeTrue(Files.getFileStore(tempDir).supportsFileAttributeView("posix"),
+                "the temp directory's file system has no POSIX permissions, so the stub git this test puts on PATH "
+                        + "cannot be made executable");
+
+        final Path sandbox = Files.createDirectories(tempDir.resolve(caseName));
+        final Path work = Files.createDirectories(sandbox.resolve("work"));
+        final Path bin = Files.createDirectories(sandbox.resolve("bin"));
+        final Path gitCallLog = sandbox.resolve("git-calls.log");
+        final Path output = sandbox.resolve("output.txt");
+
+        // The stub names its log single-quoted, which a quote in the temp path would break.
+        assertThat(gitCallLog.toString()).doesNotContain("'");
+        final Path stub = bin.resolve("git");
+        Files.writeString(stub, "#!/bin/sh\n" + "printf '%s\\n' \"$*\" >> '" + gitCallLog + "'\n"
+                + "[ \"$1\" = rev-parse ] && pwd\n" + "exit 0\n");
+        Files.setPosixFilePermissions(stub, PosixFilePermissions.fromString("rwxr-xr-x"));
+        requireRunnableStub(stub, gitCallLog);
+
+        final ProcessBuilder builder = new ProcessBuilder(bash.toString(),
+                REPOSITORY_ROOT.resolve(RELEASE_SCRIPT).toString());
+        builder.command().addAll(List.of(arguments));
+        builder.directory(work.toFile()).redirectErrorStream(true).redirectOutput(output.toFile());
+        final Map<String, String> processEnvironment = builder.environment();
+        processEnvironment.clear();
+        processEnvironment.put("PATH", bin.toString());
+        processEnvironment.put("HOME", work.toString());
+        processEnvironment.putAll(environment);
+
+        final Process process = builder.start();
+        process.getOutputStream().close();
+        awaitExit(process, RELEASE_SCRIPT + " " + String.join(" ", arguments));
+
+        final List<String> gitCalls = Files.exists(gitCallLog) ? Files.readAllLines(gitCallLog) : List.of();
+        return new ScriptRun(process.exitValue(), Files.readString(output, StandardCharsets.UTF_8), gitCalls);
+    }
+
+    /**
+     * Runs the stub once on its own and requires it to record the call. Every refusal case asserts that the log stayed
+     * empty, and a stub that cannot execute would satisfy that without the script being checked at all.
+     *
+     * <p>
+     * This fails where the two assumptions before it skip, because it answers a different question. Those two say
+     * the harness cannot be built on this machine: without bash the release script cannot run here either, and
+     * without POSIX permissions there is no execute bit to give the stub. A stub that was built and still does not
+     * run — a {@code noexec} temp mount, say — turns up on a machine that can run the release script, and skipping
+     * there would leave the refusal unpinned exactly where a release can still be cut. The remedy is to point
+     * {@code java.io.tmpdir} at a directory that allows execution.
+     */
+    private static void requireRunnableStub(Path stub, Path gitCallLog) throws IOException, InterruptedException {
+        final Process process;
+        try {
+            process = new ProcessBuilder(stub.toString(), "self-check").redirectErrorStream(true)
+                    .redirectOutput(ProcessBuilder.Redirect.DISCARD).start();
+        } catch (final IOException e) {
+            throw new AssertionError("the stub git at " + stub + " cannot be started (" + e.getMessage() + "), so no "
+                    + "assertion that the release script never called git would check anything. Point "
+                    + "java.io.tmpdir at a directory that allows execution.", e);
+        }
+        process.getOutputStream().close();
+        awaitExit(process, "the stub git at " + stub);
+        if (!Files.exists(gitCallLog)) {
+            throw new AssertionError("the stub git at " + stub + " ran but recorded nothing in " + gitCallLog
+                    + ", so no assertion that the release script never called git would check anything");
+        }
+        Files.delete(gitCallLog);
+    }
+
+    private static void awaitExit(Process process, String what) throws InterruptedException {
+        if (!process.waitFor(SCRIPT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+            process.destroyForcibly();
+            throw new AssertionError(what + " did not exit within " + SCRIPT_TIMEOUT_SECONDS + "s in the sandbox, "
+                    + "where nothing it can reach should block");
+        }
+    }
+
+    /**
+     * The first executable {@code bash} on this JVM's {@code PATH}, which is the one {@code #!/usr/bin/env bash} picks
+     * from the same {@code PATH}, or {@code null} when there is none.
+     */
+    private static Path locateBash() {
+        final String path = System.getenv("PATH");
+        if (path == null) {
+            return null;
+        }
+        for (final String directory : path.split(File.pathSeparator)) {
+            if (directory.isEmpty()) {
+                continue;
+            }
+            try {
+                final Path candidate = Path.of(directory, "bash");
+                if (Files.isRegularFile(candidate) && Files.isExecutable(candidate)) {
+                    return candidate;
+                }
+            } catch (final InvalidPathException e) {
+                // A PATH entry this platform cannot parse holds no bash this test could start.
+            }
+        }
+        return null;
+    }
+
+    /** The variables named by key-gate annotations in the test sources of every provider module. */
+    private static Set<String> keyGateVariablesInProviderModules() throws IOException {
+        final List<Path> providerModules;
+        try (Stream<Path> modules = Files.list(REPOSITORY_ROOT.resolve("modules"))) {
+            providerModules = modules.filter(Files::isDirectory)
+                    .filter(module -> module.getFileName().toString().startsWith(PROVIDER_MODULE_PREFIX)).toList();
+        }
+        final Set<String> names = new TreeSet<>();
+        for (final Path module : providerModules) {
+            final Path testSources = module.resolve("src/test");
+            if (!Files.isDirectory(testSources)) {
+                continue;
+            }
+            try (Stream<Path> files = Files.walk(testSources)) {
+                for (final Path file : files.filter(p -> p.toString().endsWith(".java")).toList()) {
+                    names.addAll(keyGateVariablesIn(Files.readAllLines(file)));
+                }
+            }
+        }
+        return names;
+    }
+
+    /**
+     * Every {@code named} value in one source file's key-gate annotations. Each annotation is read from the line it
+     * opens on through the line where its parentheses balance, counting only parentheses outside string literals,
+     * since a {@code matches} regex is free to contain one.
+     */
+    private static Set<String> keyGateVariablesIn(List<String> lines) {
+        final Set<String> names = new TreeSet<>();
+        for (int start = 0; start < lines.size(); start++) {
+            if (!KEY_GATE_ANNOTATION.matcher(lines.get(start)).find()) {
+                continue;
+            }
+            final StringBuilder annotation = new StringBuilder();
+            int depth = 0;
+            int line = start;
+            do {
+                annotation.append(lines.get(line)).append('\n');
+                depth += parenthesisBalance(lines.get(line));
+                line++;
+            } while (depth > 0 && line < lines.size());
+            final Matcher name = KEY_GATE_NAME.matcher(annotation);
+            while (name.find()) {
+                names.add(name.group(1));
+            }
+        }
+        return names;
+    }
+
+    /** Opening minus closing parentheses on one line of Java, not counting those inside a string literal. */
+    private static int parenthesisBalance(String line) {
+        int balance = 0;
+        boolean inString = false;
+        for (int i = 0; i < line.length(); i++) {
+            final char c = line.charAt(i);
+            if (inString) {
+                if (c == '\\') {
+                    i++;
+                } else if (c == '"') {
+                    inString = false;
+                }
+            } else if (c == '"') {
+                inString = true;
+            } else if (c == '(') {
+                balance++;
+            } else if (c == ')') {
+                balance--;
+            }
+        }
+        return balance;
+    }
+
     /** Distinct {@code @Tag} values annotated on tests anywhere under {@code modules/} and {@code samples/}. */
     private static Set<String> testTagsInRepository() throws IOException {
         final Set<String> tags = new TreeSet<>();
@@ -437,5 +870,27 @@ class ReleaseGateMatchesCiGateTest {
             candidate = candidate.getParent();
         }
         return null;
+    }
+
+    /** What one sandboxed run of the release script did. */
+    private static final class ScriptRun {
+
+        private final int exitCode;
+
+        private final String output;
+
+        /** Each line is one call's arguments; empty when the stub was never called. */
+        private final List<String> gitCalls;
+
+        private ScriptRun(int exitCode, String output, List<String> gitCalls) {
+            this.exitCode = exitCode;
+            this.output = output;
+            this.gitCalls = List.copyOf(gitCalls);
+        }
+
+        @Override
+        public String toString() {
+            return "exit " + exitCode + ", git calls " + gitCalls + ", output:" + System.lineSeparator() + output;
+        }
     }
 }
