@@ -1,4 +1,4 @@
-# LLM 설정 표면 — 등록 항목 16건 (열림 12 · 닫힘 4)
+# LLM 설정 표면 — 등록 항목 21건 (열림 17 · 닫힘 4)
 
 출처는 #46 이다 — 모델 capability 표를 CLI yaml 과 스타터 프로퍼티에서 확장할 수 있게 한 작업.
 설계는 [`../design/llm/model-capability-config-key.md`](../design/llm/model-capability-config-key.md) 이고,
@@ -915,6 +915,179 @@ binding — 를 새 키에 대해서도 손을 대지 않고 확인되게 만든
 
 ---
 
+## L-17 — 번들 서브에이전트의 `model: haiku` 는 별칭으로 풀리지 않고 그대로 나가며, Anthropic 은 그 이름에 404 를 준다
+
+*(2026-09-11 등록. 출처는 #92 —
+[`../design/llm/provider-switch-agent-model-check.md`](../design/llm/provider-switch-agent-model-check.md) 의 D2,
+§10 이 이 항목으로 올렸다. 번들의 `haiku` 를 고치는 것은 **그 작업의 범위 밖**으로 정해졌다. 새 등록부를 열지 않고
+여기 두는 것은 L-16 이 적은 것과 같은 이유다 — 그 작업의 짝이 이 등록부에 있다: #92 의 경고와 주석은
+`llm.provider` · `llm.model` · `agent.name` 위에 있고, 같은 작업이 남긴 L-18 ~ L-21 도 여기 있다.)*
+
+**무엇을.** 번들로 들어 있는 `explore` 서브에이전트 셋이 설정된 provider 가 실제로 서비스하는 모델 이름을 싣게 한다.
+
+**왜.** 관측 가능한 결과는 이렇다 — #92 의 주석과 가이드가 가리키는 짝인 `provider: anthropic` +
+`agent.name: default-anthropic` 에서 메인 에이전트는 `claude-sonnet-4-5` 로 돌지만, `explore` 에 위임한 작업은
+`model: haiku` 를 싣고 나간다. Anthropic Messages API 는 2026-09-10 에 그 이름에 HTTP 404 `not_found_error` 를
+돌려주었다(`req_011CevaKnvSxstq6wuuWgXd8`). #92 의 기동 경고는 이것을 **일부러** 잡지 않는다 — `haiku` 는 어느
+벤더의 계열에도 들지 않고, 그런 이름에 경고하면 그 별칭을 풀어 주는 게이트웨이 뒤에서 거짓 경보가 되기 때문이다
+(설계 §3.1, R19).
+
+**별칭을 푸는 것이 없다는 것은 이렇게 셌다 (규칙 여섯).** `SubagentLlmDefaults.resolveModel` 은 프론트매터 문자열을
+그대로 모델 이름으로 쓴다(`:68-69`). 그 메서드의 프로덕션 호출자는 `SubagentLlmDefaults.resolveModel(` 와
+`::resolveModel` 두 형태로 세어 둘이다 — `DefaultSubagentExecutor.java:768`, `DefaultSubagentBehaviorSupport.java:53`.
+`grep -rn haiku modules/*/src/main/java` 가 찾는 것은 javadoc 과 주석(`TaskTool.java:70` · `:94`,
+`SubagentMetadata.java:40`, `SubagentContentParser.java:25`, `LlmRerankSearchStrategy.java:80`,
+`AgentModelProviderCheck.java:40`), 그리고 `claude-` 로 시작하는 전체 이름의 prefix(`claude-3-5-haiku` ·
+`claude-3-haiku` · `claude-haiku-4` · `claude-haiku-4-5` — `InMemoryModelPriceTable` ·
+`InMemoryModelContextWindowRegistry` · `InMemoryModelCapabilityRegistry`)뿐이다. 맨 `haiku` 를 모델 id 로 옮기는
+코드는 없다. `src/main/resources` 에서는 아래 `explore.md` 셋만 걸린다. 설계 §2 의 같은 세기는 `claude-haiku-4` ·
+`claude-haiku-4-5` 와 `LlmRerankSearchStrategy` 를 빠뜨렸다 — 결론은 같고, 그 문서 §10 에 정정이 있다.
+
+**나머지 두 번들.** `default-openai` 와 `ops-agent` 의 `explore` 도 `haiku` 를 적는다. 두 번들의 메인 에이전트는
+`gpt-5.1` 이므로 그 `haiku` 는 OpenAI 로 나가고, OpenAI 가 무엇을 답하는지는 재지 않았다.
+
+**어디.** 2026-09-11, `a1236c8` 기준.
+
+- `modules/aimon-cli/src/main/resources/agents/{default-anthropic,default-openai,ops-agent}/agents/explore.md:5`
+- 해석 지점 `SubagentLlmDefaults.java:61-75`
+- 이 항목을 닫을 때 같은 편집에서 고칠 주의 문구 — `default-config.yaml` 의 `agent.name` 주석과, CLI 가이드의
+  [provider 를 바꿀 때](../getting-started/aimon-core-integration-via-cli-reference.md#provider-를-바꿀-때--agentname-도-함께-바꾼다)
+  절(ko + en)
+
+**심각도 (규칙 셋).** 잰 것은 그 이름을 실은 요청 하나가 404 를 받는다는 것이다. 그 뒤 `Task` 도구가 메인 에이전트에게
+무엇을 돌려주는지, 모델이 그다음 무엇을 하는지는 돌려 보지 않았다.
+
+**처방은 적용해 보지 않았다 (규칙 다섯).** 보이는 모양은 셋이고 어느 것도 고르지 않았다 — 번들마다 `model:` 에 벤더의
+전체 이름을 적는 것(이 번들들에 대해 재지 않았다), `model:` 을 지워 서브에이전트가 메인 에이전트의 이름을 물려받게
+하는 것(`:70-71`), 코어에서 provider 별로 별칭을 푸는 것. 셋째는 `Task` 도구의 `model` 설명(L-20)과 같은 결정에 닿는다.
+
+**언제 다시 볼까.** 번들의 `explore.md` 나 `SubagentLlmDefaults` 를 다음에 건드릴 때. 지금 집어도 될 만큼 작다.
+
+---
+
+## L-18 — anthropic 에서 `llm.model` 없이 `memory` 를 켜면 기동이 설정 키를 말하지 않는 메시지로 실패한다
+
+*(2026-09-11 등록. 출처는 #92 — [설계](../design/llm/provider-switch-agent-model-check.md) 의 D9, §10 이 이 항목으로
+올렸다. #92 는 이 실패를 `default-config.yaml` 의 `llm.model` 주석과 CLI 가이드에 **적었고 고치지 않았다**.)*
+
+**무엇을.** `provider: anthropic` 에서 `memory` 를 켜고 `llm.model` 을 적지 않은 설정이, 고쳐야 할 키를 말하며
+실패하게 하거나 기동하게 한다.
+
+**왜.** 관측 가능한 결과는 이렇다 — 그 설정은 `Unexpected error: llmModelName cannot be null` 을 찍고 종료하며, 메시지
+어디에도 `llm.model` 이 없다. openai 는 같은 누락을 `LlmClientFactory` 에서 키 이름을 대며 막는다
+(`LlmClientFactory.java:322-329`). anthropic 분기는 모델이 있을 때만 옮기고(`:77-79`) 클라이언트는 `AnthropicConfig`
+의 기본값으로 뜨므로 거기서는 아무것도 막히지 않는다. 그 뒤 `AgentSetupFactory` 가 dialectic 엔진을
+`config.getLlmConfig().getModel()` 로 가드 없이 만들고(`AgentSetupFactory.java:527`), 엔진이 null 이름을 거절하며
+(`LlmDialecticEngine.java:74`), 그 `NullPointerException` 은 `ConfigurationException` 이 아니므로 `AimonCli` 의
+마지막 catch 가 `Unexpected error:` 로 찍는다(`AimonCli.java:130`). 같은 값을 받는 나머지 넷도 null 을 거절한다 —
+`LlmDeriver.java:151`, `DefaultReconciler.java:102`, `RandomWalkDreamer.java:92`, `LlmJudgeSurprisalScorer.java:92`.
+
+**어디.** 2026-09-11, #92 를 담은 트리 기준 — `AgentSetupFactory.java:527`(엔진), `:532-533`(deriver 와 reconciler 에
+같은 값), `:661`(dreamer 에 같은 값), `AimonCli.java:130`, `LlmClientFactory.java:77-79` · `:322-329`, 그리고 위 다섯
+생성자의 줄.
+
+**심각도 (규칙 셋).** 돌려 봤다 — 2026-09-11 에 `provider: anthropic`, 가짜 키, `llm.model` 없음, `agent.name:
+default-anthropic`, `memory`(in-memory 백엔드)로 CLI 를 띄우자 `Peer memory enabled (in-memory backend, non-durable)`
+한 줄 뒤에 `Unexpected error: llmModelName cannot be null` 을 찍고 종료 코드 1 로 끝났다. 요청은 하나도 나가지 않았다 —
+실패가 스택을 조립하기 전에 일어난다. 위 원인 사슬은 읽어서 얻은 것이고, 돌려서 확인한 것은 그 끝의 메시지다.
+
+**처방은 적용해 보지 않았다 (규칙 다섯).** 모양은 둘이 보인다 — anthropic 분기에서도 `memory` 가 켜져 있으면
+`llm.model` 을 요구해 `ConfigurationException` 으로 키를 말하는 것, 또는 메모리 부품에 클라이언트의 기본 모델
+(`getDefaultModelName()`)을 넘기는 것. 둘째는 배너가 이미 보여 주는 이름과 같아지지만, 사용자가 적지 않은 모델로
+메모리 호출이 나간다는 결정이기도 하다.
+
+**언제 다시 볼까.** CLI 의 메모리 배선이나 `LlmClientFactory` 의 anthropic 분기를 다음에 건드릴 때. 닫을 때
+`default-config.yaml` 의 `llm.model` 주석과 가이드의 같은 문장을 같은 편집에서 고친다.
+
+---
+
+## L-19 — REPL 배너의 `LLM Provider: <provider> (<model>)` 는 에이전트가 보내는 모델이 아니라 `llm.model` 을 찍는다
+
+*(2026-09-11 등록. 출처는 #92 — [설계](../design/llm/provider-switch-agent-model-check.md) 의 D10, §10 이 이 항목으로
+올렸다. #92 는 이 괄호가 무엇인지 주석과 가이드에 적었고 배너는 바꾸지 않았다.)*
+
+**무엇을.** 시작 배너가 에이전트 요청이 실제로 싣는 모델을 보여 주거나, 괄호 안이 `llm.model` 이라는 것을 스스로
+말하게 한다.
+
+**왜.** 배너는 클라이언트의 `getDefaultModelName()` 을 찍고(`ReplSession.java:258-259`), 두 클라이언트 모두 그 자리에서
+`config.getModel()` 을 돌려준다(`AnthropicLlmClient.java:762-764`, `OpenAILlmClient.java:589-591`). 관측 가능한 결과 —
+#92 의 재현 설정(`provider: anthropic`, `model: claude-sonnet-4-5`, `agent.name: default`)으로 띄우면 배너가
+`LLM Provider: Anthropic (claude-sonnet-4-5)` 를 찍는데(2026-09-11 에 가짜 키로 기동만 해서 봤다), 에이전트 요청은
+`gpt-5.6-terra` 를 싣는다 — 그 이슈를 찾기 어렵게 만든 바로 그 모양이다. #92 이후 그 경우에는 배너 앞에 경고가 뜨지만, provider 는 맞고 이름만 다른 경우에는
+아무것도 뜨지 않는다: 배포된 설정 그대로면 괄호는 `llm.model` 의 `gpt-5.1` 이고 요청은 `gpt-5.6-terra` 다. anthropic
+에서 `llm.model` 을 생략하면 괄호는 `AnthropicConfig` 의 기본값 `claude-sonnet-4-20250514` 다.
+
+**어디.** 2026-09-11 — `ReplSession.java:258-259`, `AnthropicLlmClient.java:762-764`, `OpenAILlmClient.java:589-591`.
+
+**처방은 적용해 보지 않았다 (규칙 다섯).** 배너는 메인 에이전트의 `model.name` 을 바로 읽을 수 있다 — 괄호를 에이전트의
+모델로 바꿀지, 둘을 함께 보여 줄지를 정해야 한다. 서브에이전트의 모델은 한 줄에 담기지 않는다.
+
+**언제 다시 볼까.** `ReplSession.displayAgentInfo` 를 다음에 건드릴 때. 몇 줄짜리라 지금 집어도 된다. 닫을 때
+`default-config.yaml` 의 `llm.model` 주석과 가이드의 배너 문장을 같은 편집에서 고친다.
+
+---
+
+## L-20 — 서브에이전트 모델의 코어 기본값 두 곳이 provider 를 모른다: `gpt-4` 리터럴과 `Task` 도구 설명의 모델 제안
+
+*(2026-09-11 등록. 출처는 #92 — [설계](../design/llm/provider-switch-agent-model-check.md) 의 D4 · D5, §10 이 한 항목으로
+올렸다. 둘 다 `aimon-core` 이고 #92 의 파일 밖이다. L-17 의 셋째 처방 모양이 이 항목의 둘째와 같은 결정에 닿는다.)*
+
+**무엇을.** 코어가 서브에이전트의 모델 이름을 스스로 지을 때, 설정된 provider 가 서비스하지 않는 이름을 짓지 않게 한다.
+
+**왜.** 두 자리이고, 관측 가능한 결과가 각각 있다.
+
+- **`model.name` 이 없는 정의 아래에서 `model` 이 없는 서브에이전트는 리터럴 `gpt-4` 를 보낸다.**
+  `SubagentLlmDefaults.resolveModel` 은 서브에이전트 모델이 없으면 기본 모델의 이름을, 그것도 없으면
+  `DEFAULT_MODEL_NAME = "gpt-4"` 를 쓴다(`:21`, `:70-71`). `Task` 도구가 넘기는 기본 모델은 메인 에이전트의
+  `LlmModel` 이다 — 도구가 `agent.getMetadata().getModel()` 로 만들어지고(`OrcaSubagentToolProvider.java:91`) 그 값을
+  실행 환경에 넘긴다(`TaskTool.java:546`). 메인 에이전트의 이름이 비면 클라이언트가 `llm.model` 로 채우지만
+  (`orElse(config.getModel())`), 서브에이전트 경로는 그 값을 보지 못하고 `gpt-4` 를 싣는다. `provider: anthropic` 이면
+  그 요청은 Anthropic 에 `gpt-4` 로 나간다.
+- **`Task` 도구의 `model` 파라미터 설명이 provider 와 무관하게 `sonnet, gpt-4.1, gpt-4.1-nano` 를 권하고
+  `Prefer gpt-4.1-nano for simple tasks` 라고 적는다**(`TaskTool.java:345`). 모델이 그 설명을 따르면 그 이름이
+  override 로 최우선이 된다(`SubagentLlmDefaults.java:66-67`). anthropic 에서는 `gpt-4.1-nano` 가, openai 에서는 맨
+  별칭 `sonnet` 이 그대로 나간다.
+
+**셈과 범위 (규칙 여섯).** `resolveModel` 의 프로덕션 호출자는 두 형태로 세어 둘이다(L-17). 첫째는 **CLI 번들에서는
+닿지 않는다** — 번들 정의는 전부 `model.name` 을 적는다. 닿는 것은 `model` 블록 없는 사용자 정의나 코드로 만든
+`DefaultAgent` 다. 기본 모델이 들어오는 입구는 `Task` 도구 경로만 따라갔다 — 워크플로와 스킬 포크가
+`.defaultModel(` 로 넘기는 값의 출처는 세지 않았다.
+
+**심각도 (규칙 셋).** 읽어서 얻은 결론이고 돌려 보지는 않았다. 둘째는 모델이 설명을 따를 때만 일어나며, 얼마나 자주
+따르는지는 재지 않았다.
+
+**처방은 적용해 보지 않았다 (규칙 다섯).** 첫째는 서브에이전트 경로가 클라이언트의 기본 모델
+(`LlmClient.getDefaultModelName()`)을 마지막 폴백으로 쓰는 모양이 보인다. 둘째는 설명에서 모델 이름을 빼거나
+provider 별로 채우는 것이고, 후자는 L-17 의 셋째 모양(코어에서 provider 별 별칭 해석)과 같은 결정이다.
+
+**언제 다시 볼까.** `SubagentLlmDefaults` 나 `TaskTool` 의 입력 스키마를 다음에 건드릴 때, 또는 L-17 을 착수할 때.
+
+---
+
+## L-21 — 번들 셋이 메타데이터 이름 `default-agent` 를 함께 써서, 프롬프트와 런타임 id 로는 어느 번들이 떴는지 알 수 없다
+
+*(2026-09-11 등록. 출처는 #92 — [설계](../design/llm/provider-switch-agent-model-check.md) 의 D1, §10 이 이 항목으로
+올렸다. #92 의 주석 · 가이드 · 경고는 설정된 `agent.name` 을 쓰므로 이것을 바꾸지 않고도 참이다.)*
+
+**무엇을.** `default` · `default-openai` · `default-anthropic` 번들이 서로 구별되는 이름으로 사용자에게 보이게 한다 —
+`agent.md` 의 `name` 을 가르든, CLI 가 설정된 `agent.name` 을 보여 주든.
+
+**왜.** 셋 다 `name: default-agent` 를 적는다(`agents/{default,default-openai,default-anthropic}/agent.md:3`). 관측
+가능한 결과 — REPL 프롬프트는 `agentSetup.getAgent().getName()` 으로 만들어지므로(`AimonCli.java:107`) 셋 중 무엇을
+띄워도 `default-agent> ` 이고, `AgentRuntimeId.from(Agent)` 가 그 이름에서 파생되므로(`AgentRuntimeId.java:114-117`)
+런타임 id 도 셋 다 `agent:default-agent` 다. #92 가 적은 전환(`default` → `default-anthropic`)을 한 사용자는 프롬프트로는
+전환이 먹었는지 볼 수 없다.
+
+**심각도 (규칙 셋).** CLI 프로세스 하나는 번들 하나만 띄우므로 id 충돌은 없다. 이 id 로 키잉되어 CLI 재시작을 넘는
+상태가 있는지는 세지 않았다.
+
+**처방은 적용해 보지 않았다 (규칙 다섯).** 이름을 바꾸면 프롬프트와 런타임 id 가 함께 바뀐다. 그 id 를 참조하는 값
+(예: 스케줄 태스크의 `boundRuntimeId`)이 CLI 에서 저장되는지는 확인하지 않았다.
+
+**언제 다시 볼까.** 번들의 `agent.md` 를 다음에 건드릴 때 — L-17 을 착수하면 같은 디렉토리다.
+
+---
+
 ## 관련 문서
 
 - [`../design/llm/model-capability-config-key.md`](../design/llm/model-capability-config-key.md) — 설계.
@@ -931,4 +1104,8 @@ binding — 를 새 키에 대해서도 손을 대지 않고 확인되게 만든
   프로바이더별로 쪼갤 것인가)이 이 작업으로 다시 열려 결정되고 닫혔다. L-2 · L-3 이 그 결정문을 인용한다
 - [`live-api-test-tier.md`](live-api-test-tier.md) — L-12 가 닫힌 #81 의 결정. 라이브 API 계층에
   CI 신호가 없다는 것과 그 이유
+- [`../design/llm/provider-switch-agent-model-check.md`](../design/llm/provider-switch-agent-model-check.md) — #92 의
+  설계. §8 이 D 번호로 된 원래 목록이고, §10 이 그중 L-17 ~ L-21 로 올린 것과 설계 문서에 남긴 것을 가른다
+- [`../getting-started/aimon-core-integration-via-cli-reference.md`](../getting-started/aimon-core-integration-via-cli-reference.md#provider-를-바꿀-때--agentname-도-함께-바꾼다) —
+  CLI 가이드의 provider 전환 절. L-17 의 주의 문구와 L-18 · L-19 가 적힌 자리이고, 그 항목들을 닫을 때 함께 고친다
 - [`README.md`](README.md) — 항목 등록 규칙

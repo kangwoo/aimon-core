@@ -7,6 +7,46 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### CLI: startup says so when the agent's model belongs to the other provider
+
+- **Switching `llm.provider` left the agent on the other vendor's model, and nothing said so** (#92). The
+  model name each agent request carries comes from the agent definition — both clients send its `model.name`
+  in preference to `llm.model` — and the shipped `agent.name: default` names OpenAI models (`gpt-5.6-terra`,
+  and `gpt-5.1` for its `explore` subagent). A configuration whose `llm:` block was edited to Anthropic sent
+  those names to Anthropic, which answered `gpt-5.6-terra` with HTTP 404 `not_found_error` (measured
+  2026-09-10).
+
+- **Startup now prints one message, before the banner, when a loaded definition names the other vendor's
+  models.** It goes to the terminal and to `~/.aimon/logs/aimon.log`. The main agent and every subagent the
+  runtime resolves are checked, and each line names the key to change (`model.name` for the main agent,
+  `model` for a subagent) and where it was read: a bundle file as `classpath agents/<name>/…`, a user subagent
+  as its absolute path under `.aimon/agents` in the CLI's working directory. The file is chosen by instance
+  identity, so a user copy of a bundled subagent is named as the user file even when it keeps the bundled
+  model.
+
+- **It never stops startup, and it stays silent wherever a false alarm is possible.** It fires only when
+  `llm.baseUrl` is unset, is the provider's own public host, or is OpenAI's host under `provider: anthropic`
+  (what editing only `provider:` in the shipped file produces); behind any other `baseUrl` — a gateway, a
+  proxy, Azure — it is silent. It fires only on a name in the *other* vendor's family (`claude-*`; `gpt-*` and
+  `o1`/`o3`/`o4`, the prefixes the built-in capability rows are named under), and is silent on names neither
+  vendor claims, such as `haiku` or a renamed gateway deployment. There is no key to silence it.
+
+- **Each remedy is offered only where it changes something.** `agent.name: default-anthropic` (or `default`)
+  is offered when the main agent mismatches and `agent.name` is not already that bundle; files under
+  `.aimon/agents`, which load with every agent, are called out separately; a bundled subagent that mismatches
+  under a correct main agent gets "change the key" instead of a bundle switch; and OpenAI's host under
+  anthropic gets "remove `llm.baseUrl`" instead of "point it at a gateway".
+
+- **Documentation.** Comments next to `llm.provider`, `llm.model` and `agent.name` in `default-config.yaml`,
+  and a new passage in the CLI guide (`docs/getting-started/aimon-core-integration-via-cli-reference.md` §4.1,
+  ko + en), which `docs/README` now links to. Both say that switching changes five keys, not one; that
+  `llm.model` still reaches peer memory, wiki page generation and the name the banner prints in
+  `LLM Provider: <provider> (<model>)`; that `memory` needs it under anthropic; and that `default-anthropic`'s
+  `explore` subagent names `haiku`, which is sent as written and which Anthropic answered with HTTP 404 on
+  2026-09-10 — registered as backlog `L-17`, with the bundles unchanged. Four findings outside this fix are
+  registered beside it as `L-18` to `L-21`; the design is
+  `docs/design/llm/provider-switch-agent-model-check.md`.
+
 ### Docs CI: backlog registers are checked for duplicate item IDs and for counts that disagree with the items
 
 - **New check `scripts/check-backlog-registers.py`, a second step of the `docs-links` job** (#88). On
