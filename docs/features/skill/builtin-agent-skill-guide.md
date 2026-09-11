@@ -77,7 +77,7 @@ List<AgentBundle> all = registry.findAll();
 name: explore
 description: "커스텀 탐색 에이전트"
 allowed-tools: Read, Grep, Glob, Bash
-model: sonnet
+# model 없음: 메인 에이전트의 모델로 돈다. 다른 모델로 돌려야 할 때만 설정된 provider 가 서비스하는 id 를 적는다 — 쓰인 그대로 간다(별칭을 풀지 않는다).
 ---
 당신은 심층적인 코드베이스 분석 에이전트입니다.
 ...
@@ -120,7 +120,7 @@ description: "비활성화됨"
 name: my-analyzer
 description: "성능 분석 에이전트"
 allowed-tools: Read, Grep, Bash
-model: sonnet
+# model 없음: 메인 에이전트의 모델로 돈다. 다른 모델로 돌려야 할 때만 설정된 provider 가 서비스하는 id 를 적는다 — 쓰인 그대로 간다(별칭을 풀지 않는다).
 ---
 당신은 성능 분석 전문 에이전트입니다.
 ...

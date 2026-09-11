@@ -27,6 +27,22 @@ Central is versioned independently).
   CI and the release gate* limits its "only" to the two provider modules it is about: `aimon-browser-playwright` had
   excluded `playwright` since before that bullet was written.
 
+### Docs: two feature guides stop giving a subagent a model alias, and the override's javadoc stops calling it one
+
+- **The subagent development guide and the built-in agent skill guide (ko + en) no longer give their example
+  subagents the model `sonnet`** (#132). The four examples name no model. A comment in its place says the subagent
+  runs on its parent's model, usually the main agent's; that an id is worth writing only to run on another model the
+  configured provider serves; and that it goes to the provider as written. The subagent guide's `resolvedModel()` row
+  says the name is sent as written and may be empty, as `SubagentBehaviorSupport` does. Backlog `L-27` now lists both
+  guides' sites.
+- **Javadoc.** The per-invocation model override in `SubagentExecutionEnvironment`, `SubagentExecutionContext` and
+  `DefaultSubagentExecutor` is a model name sent as written, not an alias. No signature changed.
+- **`aimon-llm-anthropic` README.** `temperature` has no default. A call's `LlmModel` value is sent first, and with
+  neither that nor a configured value, none is sent. The table said `0.0`.
+- **The bundled skill-creator's `benchmark.json` sample** writes `"executor_model": "<model-name>"`, the placeholder
+  `aggregate_benchmark.py` writes, instead of `claude-sonnet-4-20250514`.
+- **Backlog.** `L-19` records that #116 changed the default model its registered sentence names.
+
 ### Docs CI: the two doc checks write down where they read headings differently, and the link check pins its side
 
 - **Where the link check and the backlog check read a heading differently is written down** (#121), in
