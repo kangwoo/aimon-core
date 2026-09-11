@@ -157,7 +157,7 @@ opensearch = "2.20.0"
 opensearch-rest-client = "2.18.0"
 
 # Logging
-slf4j = "2.0.18"
+slf4j = "2.0.19"
 # The Logback aimon-cli ships, and the Logback the unpublished aimon-sample-app packs, whose build script sets Spring
 # Boot's `logback.version` from this entry (#129); every other module names it at test scope, or, for the unpublished
 # aimon-session-testkit, on a classpath that only ever joins a consumer's tests. 1.6.3 (#114), the one release past
