@@ -870,3 +870,18 @@ to what it takes in — its header for the #46 design admits only the open quest
 The two that pass it are in
 [`../../backlog/llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md), and each entry
 there points back here.
+
+### 11.5 Later departures
+
+*Appended 2026-09-11 for #99. §4.1 is left as approved; this records where it stopped matching the tree.*
+
+- **§4.1's build script names a catalog alias that no longer exists.** It declares
+  `api(platform(libs.spring.boot.dependencies))`. #91 (`764f371`, merged as PR #95) replaced that line in this module,
+  and in `aimon-filesystem-testkit` and `aimon-session-testkit`, with `api(platform(libs.junit.bom))`, and removed the
+  `spring-boot-dependencies` entry from `gradle/libs.versions.toml`. Declared `api`, Spring Boot's platform reached
+  every consumer's test classpath and raised versions the consumer ships. On the two consumers this document added it
+  had moved eleven: nine on `aimon-cli` (§4.2), and Caffeine and `error_prone_annotations` on
+  `aimon-spring-boot-starter` (§4.3). The reason is written once, next to `junit` in the catalog;
+  `modules/aimon-llm-capability-testkit/build.gradle.kts` is the current script. What the platform's removal left
+  behind on those two consumers, and the decision on each, is
+  [`../testing/test-classpath-shipped-versions.md`](../testing/test-classpath-shipped-versions.md).

@@ -1,6 +1,6 @@
 ---
 translated_from: docs/README.md
-source_commit: 8f71212
+source_commit: 4f677a6
 ---
 
 # AIMON Documentation
@@ -59,9 +59,12 @@ configuration is covered by
 ```bash
 git clone https://github.com/kangwoo/aimon-core.git
 cd aimon-core
-export OPENAI_KEY=sk-...
-./gradlew :aimon-cli:run
+OPENAI_KEY=sk-... ./gradlew :aimon-cli:run
 ```
+
+The key goes on the command rather than being `export`ed, on purpose — while it is exported, `./gradlew test` and
+`checkAll` in that shell can run the live-API tests too, and those calls bill. See
+[Live-API tests](../CONTRIBUTING.md#live-api-tests).
 
 Once the REPL is up, just talk to it.
 

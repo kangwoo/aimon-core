@@ -1,9 +1,13 @@
-# 라이브 API 테스트 계층 — 등록 항목 1건 (열림 0 · 닫힘 1)
+# 라이브 API 테스트 계층 — 등록 항목 2건 (열림 1 · 닫힘 1)
 
 출처는 [#81](https://github.com/kangwoo/aimon-core/issues/81) 이고, 2026-09-10 의 작업이다. 이 문서는
 **결정 항목 하나**를 적는다 — 프로바이더 키에 게이트가 걸린 라이브 API 테스트 계층에 CI 신호를 줄
 것인가. 결정은 **등록과 같은 날 내려졌고** 그 결정이 요구한 문서화도 같은 변경에서 끝났으므로, 항목은
 열리자마자 닫힌다.
+
+*(2026-09-11, [#98](https://github.com/kangwoo/aimon-core/issues/98): 항목이 하나 더 있다. #98 은 릴리스 스크립트가
+프로바이더 키를 물려받지 않게 하면서 LA-1 의 결정에 기대게 되었고(LA-1 **어디** 의 마지막 줄), 그 거부가 멈춘 자리 —
+같은 모양으로 게이트가 걸린 클래스 둘 — 를 `LA-2` 로 열었다. 위 문단은 등록 시점의 서술로 둔다.)*
 
 그래도 적어 두는 이유는 [`README.md`](README.md) 규칙 넷이다 — *"결정은 내려지고 나면 근거가 아니라
 결론으로 인용된다."* 이 계층에 신호가 없다는 것을 다음에 알아챈 사람은 이슈가 제시한 것과 같은 처방
@@ -148,6 +152,11 @@ R-1 이 두 태그 계층을 두고 적은 문장 — *"그 차이는 양이 아
   바로 아래에 적었다. 그 문장은 이슈가 선례로 가리킨 바로 그 파일에 있어서, 그대로 두면 이 계층에도
   게이트가 있다고 읽혔을 것이다
 - `.github/workflows/` — 키 없음(§0.2). **이 결정이 그 사실을 바꾸지 않는다**
+- `scripts/release.sh` *(2026-09-11, [#98](https://github.com/kangwoo/aimon-core/issues/98))* — `ANTHROPIC_KEY` 나
+  `OPENAI_KEY` 가 환경에 있으면(빈 문자열로 설정된 것도) 시작하지 않는다. 이 결정이 서 있는 동안 릴리스 게이트는
+  CI 처럼 키 없이 돌아야 하기 때문이다. `ReleaseGateMatchesCiGateTest` 가 그 거부를 샌드박스에서 실제로 돌려 보고,
+  거부하는 변수 목록을 `modules/aimon-llm-*` 의 키 게이트와 같게 붙든다. **이 결정을 선택지 1 로 다시 열면 그 거부도
+  함께 다시 본다** — 신호를 주는 워크플로가 키를 갖게 되더라도, 릴리스 게이트가 그 키를 물려받을지는 따로 정할 일이다
 
 > **정정** *(2026-09-10, #90)*: 게이트 줄은 처음에 네 클래스를 줄 번호로 적었고(`AnthropicThinkingLiveTest:76` ·
 > `AnthropicLlmClientIntegrationTest:41` · `OpenAIReasoningLiveTest:69` · `OpenAILlmClientIntegrationTest:41`), §1
@@ -175,6 +184,9 @@ R-1 이 두 태그 계층을 두고 적은 문장 — *"그 차이는 양이 아
 2. **이 계층의 한 번 실행 비용이 크게 달라질 때** — 클래스가 늘거나 줄 때, 또는 프로바이더의 청구
    방식이 바뀔 때. 클래스를 더하는 사람이 `CONTRIBUTING.md` 의 표를 고치면 이 자리를 지나간다 — **다만
    그것을 강제하는 검사는 없고**, 표에 오르지 않은 채 들어온 키 게이트 클래스는 이 트리거를 지나가지 않는다.
+   *(2026-09-11, #98: 이제 절반은 강제된다 — `aimon-llm-*` 모듈에 **새 변수**로 게이트가 걸린 클래스가 들어오면
+   `ReleaseGateMatchesCiGateTest` 가 실패하고, 그 실패 메시지가 `CONTRIBUTING.md` 의 표를 고치라고 말한다. **이미 있는
+   변수**로 게이트가 걸린 클래스와 표 자체는 여전히 아무것도 강제하지 않는다.)*
    참고로 이슈는 #71 의 더 큰 스윕이 청구 호출 11건이었다고 적었다. **이 문서는 네 클래스 한 번의 청구
    호출 수를 세지 않았다**
 
@@ -182,11 +194,57 @@ R-1 이 두 태그 계층을 두고 적은 문장 — *"그 차이는 양이 아
 신호를 주기로 해도 그대로이므로, 그 신호를 내는 명령에도 §0.3 을 먼저 대 본다 — 아무것도 돌리지 않고 초록이
 되는지.
 
+### LA-2 — 릴리스 스크립트는 프로바이더 키만 거부하고, 같은 모양으로 게이트가 걸린 클래스 둘은 그대로 물려받는다 · **열림** *(2026-09-11, #98)*
+
+**무엇** — `scripts/release.sh` 가 `AIMON_DOCKER_IT` 와 `AIMON_KUBERNETES_IT` 도 거부할 것인가. §0.1 표의 마지막 두
+줄이다. [#98](https://github.com/kangwoo/aimon-core/issues/98) 은 두 프로바이더 키 중 하나라도 환경에 있으면 스크립트가
+시작하지 않게 했고(LA-1 **어디**), 이 둘은 거부 목록에 넣지 않았다.
+
+**왜 — 관측 가능한 결과.** 둘 중 하나를 `true` 로 export 한 셸에서 릴리스를 자르면, 게이트가 CI 가 한 번도 돌리지
+않는 클래스를 돌린다. 읽어서 확인한 것은 셋이다 *(2026-09-11)*.
+
+- `DockerSandboxBackendIntegrationTest` 와 `KubernetesSandboxBackendIntegrationTest` 에는 태그가 없고, 클래스 선언의
+  `@EnabledIfEnvironmentVariable(…, matches = "true")` 가 유일한 게이트다. 두 javadoc 이 적은 실행 명령도
+  `integrationTest` 가 아니라 모듈의 `test` 이고, 게이트의 `checkAll` 은 모든 모듈의 `test` 를 돈다
+- `.github/` 의 어느 워크플로도 두 변수를 켜지 않는다 — `grep -rn "AIMON_DOCKER_IT\|AIMON_KUBERNETES_IT" .github/` 0건
+- 두 클래스의 `@BeforeAll` 은 데몬이나 클러스터에 닿지 못하면 건너뛰지 않고 `IllegalStateException` 을 던진다. 그러니
+  변수는 켜져 있는데 클러스터가 없는 머신에서는 게이트가 빌드하는 변경과 무관한 이유로 빨개진다
+
+프로바이더 키와 **다른 점**도 있고, 그것이 #98 이 이 둘을 거부 목록에 넣지 않은 이유다. 이 둘은 청구되지 않는다.
+그리고 더 도는 테스트는 게이트를 CI 보다 **넓게** 만들지 좁게 만들지 않는다 — `ReleaseGateMatchesCiGateTest` 가 막으려는
+방향(릴리스가 PR 보다 좁은 게이트를 통과하는 것)이 아니다. 거부할 이유(CI 와 같은 게이트, 인프라 쪽 빨강)와 거부하지
+않을 이유(청구 없음, 더 엄격한 쪽)가 둘 다 있으므로 결정 항목이다.
+
+**결정하기 전에 확인할 것.** §0.1 이 그 둘을 등록하지 않은 이유 — *왜 CI 밖에 있는지 확인하지 않았다* — 는 이 결정의
+전제로 그대로 남는다(규칙 넷). 이 항목의 **왜** 는 그 이유에 기대지 않지만(위 셋은 읽어서 확인된다), 결정은 기댄다.
+CI 밖에 있는 이유가 "CI 에 데몬이나 클러스터가 없어서" 뿐이라면, 데몬은 릴리스 머신이 이미 갖추고 있다 — 릴리스
+스크립트의 게이트가 `integrationTest` 때문에 데몬을 요구한다. 심각도도 **돌려 보지 않았다**(규칙 셋): 변수를 켜고 두
+모듈의 `test` 를 돌리면 무엇이 되는지는 이 문서가 측정하지 않았다.
+
+**어디** *(2026-09-11)*
+
+- `scripts/release.sh` 의 `0. provider API keys` 절 — 거부 목록이 두 키뿐이고, 그 절의 주석이 이 항목을 가리킨다
+- `ReleaseGateMatchesCiGateTest.refusedKeysAreTheProviderModulesKeyGates` — 거부 목록과 대조하는 인구조사가
+  `modules/aimon-llm-*` 로 좁혀져 있다. 이 둘도 거부하기로 하면 그 범위와 `PROVIDER_KEY_VARIABLES` 라는 이름을 함께 고친다
+- 두 클래스의 클래스 선언, 그리고 `modules/aimon-sandbox-docker/README.md` · `modules/aimon-sandbox-kubernetes/README.md` 의
+  통합 테스트 실행 명령
+- 설계: [`provider-key-release-gate.md`](../design/llm/provider-key-release-gate.md) §2 D5 · §7 질문 2 · §9
+
+**언제 다시 볼까.** 둘 다 [`README.md`](README.md) 규칙 일곱의 물음에 대고 골랐고, 둘 다 **조건부로만** 통과한다.
+
+1. **두 변수 중 하나를 켠 셸에서 릴리스를 자르다가 게이트가 빨개질 때.** 빨간 클래스의 이름을 따라가면 이 항목이 아니라
+   그 클래스에 닿는다. 이 자리에 오는 것은 릴리스 스크립트의 거부 절 주석을 읽는 사람뿐이다
+2. **어느 워크플로가 두 변수 중 하나를 켤 때.** 그러면 CI 도 그 클래스를 돌리므로 거부할 이유 중 게이트 동일성이
+   사라진다. 워크플로를 고치는 사람이 이 문서를 읽는다는 보장은 없다
+
 ---
 
 ## 2. 관련
 
 - [#81](https://github.com/kangwoo/aimon-core/issues/81) — 이 결정의 출처. 두 선택지와 세 발견의 원문
+- [#98](https://github.com/kangwoo/aimon-core/issues/98) — `LA-2` 의 출처. 퀵스타트의 export 와 릴리스 게이트가 물려받던 키
+- [`../design/llm/provider-key-release-gate.md`](../design/llm/provider-key-release-gate.md) — 릴리스 스크립트의 키 거부와,
+  그 거부를 샌드박스에서 실제로 돌려 붙드는 테스트의 설계
 - [`CONTRIBUTING.md`](../../CONTRIBUTING.md#live-api-tests) — 이 계층을 돌리는 방법
 - [`llm-config-surface-open-items.md`](llm-config-surface-open-items.md) — `L-12` 가 여기서 닫혔다
 - [`architecture-review-open-items.md`](architecture-review-open-items.md) — R-1 · R-7, 태그 계층을 CI 에

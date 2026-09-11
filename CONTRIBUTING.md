@@ -92,11 +92,13 @@ key, and redact it from any failure output you paste into an issue or a pull req
 
 **The gate works in the other direction too, and that is why the command above scopes the keys to
 itself.** The environment variable is the only thing keeping these classes out of an ordinary build: they
-carry no tag, and the default `test` task excludes only `docker` and `packaging`. So while a key is
-exported in a shell — for this tier, or to run the CLI — every `./gradlew test` and `checkAll` in that
-shell runs that provider's live classes as well, not only the command above. That happens each time the
-module's `test` task executes rather than reporting `UP-TO-DATE`, which is the first build and any build
-after a change that reaches the module. Those runs call the API and bill. They can also go red for
+carry no tag, and the only exclusions in a module's `test` task are by tag: `docker` and `packaging`,
+which the conventions plugin excludes in every module, and `playwright`, which `aimon-browser-playwright`
+excludes as well. So while a key is exported in a shell — for this tier, or to run the CLI — every
+`./gradlew test` and `checkAll` in that shell runs that provider's live classes as well, not only the
+command above. That happens each time the module's `test` task executes rather than reporting
+`UP-TO-DATE` — for example the first build, a build after `clean` or `cleanTest`, and any build after a
+change that reaches the module. Those runs call the API and bill. They can also go red for
 reasons that have nothing to do with the change being built: a key that is no longer valid fails them on
 authentication (HTTP 401), and the rot described below fails them from the provider's side. Put the key
 in front of the one command that needs it, as above, or `unset` it before you build.
@@ -152,10 +154,21 @@ reader lands at the top and never learns they were sent to the wrong section. Ex
 URLs are deliberately not checked; a gate that goes red because someone else's host is
 down stops being read. CI runs this as the `docs-links` job.
 
-The other two are about translations and run together as the `translations` job; what
-each fails on, and why one of them mostly does not, is under
+The second and third are about translations and run together as the `translations` job;
+what each fails on, and why one of them mostly does not, is under
 [Translations](#translations). Both need the full git history, so on a shallow clone they
 report rather than fail and say so.
+
+The fourth reads `docs/backlog/` and nothing else, and fails in several ways. Three of
+them: a register that writes an item ID twice; a register title (`등록 항목 N건 (…)`) or a
+`docs/backlog/README.md` index row that disagrees with the items; and a heading that begins
+with an item ID but is not read as an item (a heading skipped without a word is an item
+nobody counts). It needs no history, so CI runs it as the second step of the `docs-links`
+job: the check first, so that a red step names the heading or row that is wrong, then
+`--self-test`, which breaks the tree one way at a time to show the check still reads what
+it claims to. What it reads as an item and as a state is specified in the script's
+docstring; what someone registering an item needs to know is at the end of rule seven in
+`docs/backlog/README.md`.
 
 ### Previewing the documentation site
 
