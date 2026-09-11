@@ -192,7 +192,7 @@ spotless = "6.25.0"
 #
 # The smallest version that has it, deliberately. Releases go through this same plugin, and 0.2.4 shipped on
 # 0.30.0, so the release path moves as little as possible while the snapshot path starts working.
-maven-publish = "0.32.0"
+maven-publish = "0.37.0"
 
 [libraries]
 # Spring Boot
