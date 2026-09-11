@@ -122,9 +122,10 @@ Central is versioned independently).
   a stub `git` that records its calls: once per key, once with a key set to the empty string, once with both,
   once with neither, and once with a bad argument. A refusal must come before any `git` call and before
   pre-flight, name exactly the keys that are set, and not print the value; the keyless run must reach
-  pre-flight and call the stub, so "no `git` call" cannot pass vacuously. The test also holds the refused set
-  equal to the `@EnabledIfEnvironmentVariable` gates under `modules/aimon-llm-*`, so a new provider's key
-  fails the build until the script refuses it. `AIMON_DOCKER_IT` and `AIMON_KUBERNETES_IT`, which gate two
+  pre-flight and call the stub, so "no `git` call" cannot pass vacuously. The test also holds the keys those
+  cases run on equal to the `@EnabledIfEnvironmentVariable` gates under `modules/aimon-llm-*`, so the script
+  must refuse at least those gates, and a new provider's key fails the build until the script refuses it. A
+  script that refused more would still pass. `AIMON_DOCKER_IT` and `AIMON_KUBERNETES_IT`, which gate two
   sandbox classes the same way, are not refused; whether they should be is registered as backlog `LA-2`.
 
 - **Documentation.** The three CLI quickstarts (`README.md`, `docs/README.md`, `docs/README.en.md`) put the

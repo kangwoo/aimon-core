@@ -67,8 +67,11 @@ import org.junit.jupiter.api.io.TempDir;
  * first. The live-API classes carry no tag, so a key in the environment would run them inside {@code checkAll}:
  * billed calls, a gate that can go red for a reason on the provider's side, and a gate CI — which has no key — does
  * not run;
- * <li>the keys it refuses are exactly the variables {@code @EnabledIfEnvironmentVariable} gates on in the provider
- * modules' tests, so the next provider's key cannot join the build without joining the refusal.
+ * <li>the keys it refuses include every variable {@code @EnabledIfEnvironmentVariable} gates on in the provider
+ * modules' tests, so the next provider's key cannot join the build without joining the refusal. That is "at least",
+ * not "exactly": the refusal cases run over a list held equal to those gates, so a script that also refused a
+ * variable outside them would pass here. Refusing more cannot narrow the gate, and whether the script should also
+ * refuse {@code AIMON_DOCKER_IT} and {@code AIMON_KUBERNETES_IT} is backlog {@code LA-2}.
  * </ul>
  *
  * <p>
@@ -499,7 +502,7 @@ class ReleaseGateMatchesCiGateTest {
      * {@code LA-1} §0.1 declined to write it, and {@code LA-2} leaves it open.
      */
     @Test
-    @DisplayName("the keys the release script refuses are the key gates in the provider modules")
+    @DisplayName("the keys the refusal cases run are the key gates in the provider modules")
     void refusedKeysAreTheProviderModulesKeyGates() throws IOException {
         assumeTrue(REPOSITORY_ROOT != null, "repository root not found from the working directory — nothing to scan");
 
