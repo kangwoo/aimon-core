@@ -86,7 +86,7 @@ class AnthropicThinkingBudgetsTest {
 
     @Test
     @DisplayName("a budget one token under maxTokens is sent as asked — the clamp begins at maxTokens, not before it")
-    void aBudgetThatFitsByOneTokenIsNotClamped() {
+    void aBudgetUnderMaxTokensIsSentAsAskedAndOneAtMaxTokensIsClamped() {
         // The other half of budgetIsClampedBelowMaxTokens, on #89's rows. The first three are sent as asked however
         // little they leave the answer -- one token, four, one -- and only the last is a clamp, so only it is warned
         // about (docs/design/llm/thinking-reporting-and-dialect-records.md section 16.8).

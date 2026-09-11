@@ -38,6 +38,7 @@ import at.aimon.core.agent.budget.BudgetDecision;
 import at.aimon.core.agent.budget.BudgetTracker;
 import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.budget.ExecutionBudget;
+import at.aimon.core.agent.budget.TruncatedResponses;
 import at.aimon.core.agent.compact.CompactionDecision;
 import at.aimon.core.agent.compact.CompactionGuard;
 import at.aimon.core.agent.compact.CompactionMetadata;
@@ -213,15 +214,21 @@ public class OrcaAgentExecutor
      * Marker appended to a final assistant turn that the provider cut off at its max-output-token limit
      * ({@link StopReason#MAX_TOKENS}). The partial text is still surfaced to the caller, but this suffix makes the
      * truncation explicit both to the human reader and to any downstream consumer inspecting the final answer.
+     *
+     * <p>
+     * Its value is {@link TruncatedResponses#TRUNCATION_MARKER}, which a subagent fork appends too. The constant keeps
+     * its name and text here for callers that already read it from this class.
      */
-    public static final String TRUNCATION_MARKER = "\n\n[System: response truncated at max_tokens]";
+    public static final String TRUNCATION_MARKER = TruncatedResponses.TRUNCATION_MARKER;
 
     /**
      * Death-spiral guard: the number of <em>consecutive</em> stalled iterations tolerated before the ReAct loop
      * aborts with {@link CompletionReason#ERROR}. An iteration is "stalled" when it issued tool calls but every one of
      * them failed (see {@link #isStalledIteration(List)}) — i.e. the model kept acting but made zero forward progress.
      * Once this many stalled iterations land back-to-back, the loop stops driving new LLM calls instead of burning the
-     * remaining budget on a request that is not converging.
+     * remaining budget on a request that is not converging. A response cut off at {@code max_tokens} inside its tool
+     * calls counts: every one of its calls is refused rather than run ({@link TruncatedResponses}), so consecutive cut
+     * responses end the turn here.
      */
     public static final int MAX_CONSECUTIVE_STALLED_ITERATIONS = 3;
 
@@ -1711,6 +1718,12 @@ public class OrcaAgentExecutor
                             scope.eventDispatcher.emitAssistantMessageReceived(iterationCount, response);
                         }
 
+                        // A response the provider cut off at max_tokens is read once, here, and both of its
+                        // shapes branch on it below: a final answer ends as TRUNCATED, and tool calls are refused
+                        // rather than run. DefaultSubagentExecutor gives a fork the same two answers
+                        // (TruncatedResponses).
+                        final boolean truncated = TruncatedResponses.isTruncated(response);
+
                         // SK-11.4: pre-flight scan of Skill tool_uses. If any need user approval, suspend the turn
                         // atomically — no assistant message and no tool_result are committed to TranscriptBuffer, so
                         // a
@@ -1718,8 +1731,9 @@ public class OrcaAgentExecutor
                         // approvals
                         // (populated by the approval channel before resume) flip the policy to ALLOW. Skipped when the
                         // scanner is unconfigured (headless context) so the legacy fail-closed path through SkillTool
-                        // continues to apply.
-                        if (skillPreflightScanner != null && response.hasToolUses()) {
+                        // continues to apply. Also skipped for a cut response: its calls are refused below, and nobody
+                        // should be asked to approve a call whose arguments may be the part that was cut.
+                        if (skillPreflightScanner != null && response.hasToolUses() && !truncated) {
                             final SkillPreflightScanResult scan = skillPreflightScanner.scan(response.getToolUses(),
                                     scope.agentRuntime.getId(), scope.transcriptBuffer.getSessionId(),
                                     scope.getPrincipal());
@@ -1739,8 +1753,6 @@ public class OrcaAgentExecutor
                             // partial text with an explicit marker and terminate as TRUNCATED (isSuccessful()=false) so
                             // callers can distinguish it from a normal COMPLETED finish, rather than silently treating
                             // the truncated fragment as the agent's considered answer.
-                            final boolean truncated = response.getStopReason().filter(StopReason::isTruncated)
-                                    .isPresent();
                             if (truncated) {
                                 final String flaggedAnswer = response.getTextContent() + TRUNCATION_MARKER;
                                 scope.transcriptBuffer
@@ -1749,7 +1761,8 @@ public class OrcaAgentExecutor
                                 scope.eventDispatcher.emitIterationCompleted(iterationCount, false);
                                 scope.eventDispatcher.emitExecutionCompleted(iterationCount,
                                         CompletionReason.TRUNCATED);
-                                return createTruncatedResult(scope, flaggedAnswer, iterationCount, accumulatedTokens);
+                                return createTruncatedResult(scope, flaggedAnswer, iterationCount, accumulatedTokens,
+                                        response.getTokenUsage());
                             }
                             scope.transcriptBuffer
                                     .addMessage(Message.assistant(response.getTextContent(), response.getToolUses())
@@ -1765,9 +1778,15 @@ public class OrcaAgentExecutor
                         // Mark the artifact count before tool execution; sliceFrom() below closes the window.
                         final int artifactCountBefore = scope.artifactCollector.size();
 
-                        // Execute all tool uses
-                        final List<ToolUseResult> toolUseResults = executeToolUses(scope, toolContext,
-                                response.getToolUses(), iterationCount, coordinator, sessionRegistry);
+                        // Execute all tool uses — unless the response was cut off at max_tokens. Then none of
+                        // them runs: a cut call's arguments did not arrive, and the response does not say which
+                        // call was cut. Everything after this is the same for both: the assistant commit, the
+                        // result commit, the stalled-iteration guard, the queue drain and the iteration-tail
+                        // checks.
+                        final List<ToolUseResult> toolUseResults = truncated
+                                ? refuseTruncatedToolUses(scope, response, iterationCount)
+                                : executeToolUses(scope, toolContext, response.getToolUses(), iterationCount,
+                                        coordinator, sessionRegistry);
 
                         // Collect artifacts produced during this iteration's tool execution and convert to
                         // MessageArtifact. One snapshot does the slicing — reading the collector twice (size, then
@@ -2234,6 +2253,54 @@ public class OrcaAgentExecutor
     }
 
     /**
+     * Answers every tool call of a response the provider cut off at {@code max_tokens} with
+     * {@link TruncatedResponses#refusal(ToolUse)}, instead of running it.
+     *
+     * <p>
+     * Nothing on the tool path runs for these calls — no permission check, no hook, no execution, no TOOL span — the
+     * same shape as the interrupt skip in {@link #toolRunner}. {@code ToolUseStarted} and {@code ToolResultReady} still
+     * fire per call, in order, so an event consumer sees each refused call and the reason. Eager work that streaming
+     * overlap already started from this response is discarded first: only {@code CONCURRENT_SAFE} tools start early, so
+     * such a call changed nothing, and its result is dropped for the refusal. The WARN says which of the two happened.
+     *
+     * <p>
+     * A refused iteration is all-error, so {@link #isStalledIteration(List)} counts it, and
+     * {@link #MAX_CONSECUTIVE_STALLED_ITERATIONS} cut responses in a row end the turn.
+     *
+     * @param scope
+     *            the execution scope (event dispatcher and the iteration's streaming scheduler)
+     * @param response
+     *            the cut response whose tool calls are refused
+     * @param iterationCount
+     *            the current iteration count
+     * @return one error result per tool call, in the response's order (never null)
+     */
+    private List<ToolUseResult> refuseTruncatedToolUses(ExecutionScope scope, LlmResponse response,
+            int iterationCount) {
+        final StreamingToolScheduler scheduler = scope.streamingToolScheduler;
+        final boolean eagerWorkStarted = scheduler != null && scheduler.hasAnyEager();
+        discardEagerToolUses(scope);
+        final List<ToolUse> toolUses = response.getToolUses();
+        log.warn(
+                "Agent response truncated at max_tokens in iteration {} with tool calls {}: {}; each is answered with "
+                        + "an error result{}",
+                iterationCount, toolUses.stream().map(ToolUse::getName).toList(),
+                eagerWorkStarted
+                        ? "calls streaming overlap had already started have their results discarded, and the others "
+                                + "are not run"
+                        : "none of them is run",
+                TruncatedResponses.reasoningClause(response.getTokenUsage()));
+        final List<ToolUseResult> results = new ArrayList<>(toolUses.size());
+        for (ToolUse toolUse : toolUses) {
+            scope.eventDispatcher.emitToolUseStarted(iterationCount, toolUse);
+            final ToolUseResult result = TruncatedResponses.refusal(toolUse);
+            scope.eventDispatcher.emitToolResultReady(iterationCount, toolUse, result);
+            results.add(result);
+        }
+        return results;
+    }
+
+    /**
      * Creates a success result with proper metadata and hooks.
      *
      * @param scope
@@ -2282,12 +2349,16 @@ public class OrcaAgentExecutor
      *            The number of iterations completed
      * @param accumulatedTokens
      *            The accumulated token usage
+     * @param responseUsage
+     *            The cut response's own token usage, read for the WARN's reasoning clause
+     *            ({@link TruncatedResponses#reasoningClause(TokenUsage)}); with no reasoning tokens reported the WARN
+     *            reads as it always has
      * @return The truncated result (never null)
      */
     private OrcaAgentExecutionResult createTruncatedResult(ExecutionScope scope, String finalAnswer, int iterationCount,
-            TokenUsage accumulatedTokens) {
-        log.warn("Agent execution truncated at max_tokens after {} iterations; surfacing flagged partial answer",
-                iterationCount);
+            TokenUsage accumulatedTokens, TokenUsage responseUsage) {
+        log.warn("Agent execution truncated at max_tokens after {} iterations; surfacing flagged partial answer{}",
+                iterationCount, TruncatedResponses.reasoningClause(responseUsage));
         log.debug("Token usage: {}", accumulatedTokens);
 
         final ExecutionMetadata metadata = buildExecutionMetadata(iterationCount, accumulatedTokens, scope.startTime);

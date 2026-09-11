@@ -121,8 +121,9 @@ final class AnthropicThinkingBudgets {
      * <p>
      * Thinking tokens count against {@code max_tokens} for the turn, so the budget must be strictly below it. That
      * bites immediately rather than at the edges: {@link AnthropicConfig}'s default {@code maxTokens} is 4096, so
-     * {@code HIGH} clamps to 4095 out of the box. Empty means {@code max_tokens} leaves no room for even the floor —
-     * omitting the parameter is better than sending one the server will certainly reject.
+     * {@code HIGH} clamps to 4095 whenever the call's {@link at.aimon.core.llm.LlmModel} sets no {@code maxTokens} and
+     * {@code AnthropicConfig.Builder.maxTokens(int)} was not used. Empty means {@code max_tokens} leaves no room for
+     * even the floor — omitting the parameter is better than sending one the server will certainly reject.
      *
      * @param effort
      *            the call's reasoning effort, or {@code null}

@@ -209,8 +209,9 @@ SPI 경계 유지, 저위험. 견고성이 더 필요해지면 `emit_result` 가
 
 `SubagentExecutionResult.getCompletionReason()`(`at.aimon.core.agent.budget.CompletionReason`) 은
 코어 최소 확장이다 — explicit-reason `success`/`failure` 오버로드를 추가하고 기존 3-arg 는
-`COMPLETED`/`ERROR` 로 위임해 back-compat 를 지킨다. `DefaultSubagentExecutor` 가 네 지점에서 공급한다
-(COMPLETED / budget stop reason / MAX_ITERATIONS / INTERRUPTED).
+`COMPLETED`/`ERROR` 로 위임해 back-compat 를 지킨다. `DefaultSubagentExecutor` 가 공급하는 사유는
+COMPLETED · TRUNCATED · budget stop reason · MAX_ITERATIONS · INTERRUPTED · ERROR 다. `TRUNCATED` 는 `max_tokens`
+에서 잘린 최종 답이다 — 부분 텍스트 끝에 마커가 붙고 `isSuccess()` 는 `true` 로 남는다. 턴과 같은 모양이다.
 
 워크플로 쪽은 `AgentStepResult.completionReason()` + `isComplete()` 로 노출한다 → judge·loop-until-dry
 패턴이 "DONE vs 예산소진 vs 실패" 를 `isSuccess()` boolean 이 아니라 정확히 구분한다.
@@ -343,7 +344,7 @@ inputHash/structureFingerprint 만 담는다. `SessionSnapshot`/`Message`/inline
 예산 회계는 `raw().getMetadata()` 가 아니라 캐시된 `StepOutcome.totalTokens/costMicros` 로 재수화한다.
 
 **(d) COMPLETED-only 저장** — `raw.isSuccess() && completionReason() == COMPLETED` 일 때만 save 한다.
-INTERRUPTED/FAILED/MAX_ITERATIONS/budget-stop 스텝은 캐시하지 않으므로 resume 가 그 스텝을 재실행한다
+INTERRUPTED/FAILED/MAX_ITERATIONS/budget-stop/TRUNCATED 스텝은 캐시하지 않으므로 resume 가 그 스텝을 재실행한다
 (특히 `stop(runId)` 후 resume 가 중단 스텝을 이어서 처리한다).
 
 **(e) 격리** — `StepKey` 는 owning `AgentRuntimeId` 를 포함하고, `ScopedStepResultCache` 데코레이터가

@@ -40,10 +40,14 @@ public enum CompletionReason {
      */
     SUSPENDED,
     /**
-     * The final assistant turn was cut off by the provider's max-output-token limit ({@link
-     * at.aimon.core.llm.StopReason#MAX_TOKENS}). The partial text is surfaced to the caller with a truncation marker
-     * appended, but the answer is incomplete — {@link #isSuccessful()} returns {@code false} so callers can
-     * distinguish it from a clean {@link #COMPLETED} finish.
+     * The final assistant response of a turn or of a subagent fork was cut off by the provider's max-output-token limit
+     * ({@link at.aimon.core.llm.StopReason#MAX_TOKENS}). The partial text is surfaced to the caller with
+     * {@link TruncatedResponses#TRUNCATION_MARKER} appended, but the answer is incomplete — {@link #isSuccessful()}
+     * returns {@code false} so callers can distinguish it from a clean {@link #COMPLETED} finish.
+     *
+     * <p>
+     * A response cut off inside its tool calls does <em>not</em> end the execution with this reason. Its calls are
+     * refused rather than run ({@link TruncatedResponses#refusal(at.aimon.core.llm.ToolUse)}) and the loop continues.
      */
     TRUNCATED,
     /** Execution ended with an unexpected error. */

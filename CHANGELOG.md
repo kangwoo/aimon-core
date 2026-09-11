@@ -7,6 +7,54 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Agent loop: a response cut at `max_tokens` says so on both executors, and its tool calls are not run
+
+- **A tool call in a response that stopped at `max_tokens` is no longer executed** (#108). The main executor used to
+  run such calls as they came: a call cut mid-argument reached its tool with an empty argument map, and no log line,
+  marker or completion reason said `max_tokens`. Now none of the response's tool calls runs — including calls that look
+  complete, because the response does not say which call was cut. Each is answered with an error result saying the
+  response was cut off at `max_tokens`, that no call which changes anything was run, and that fewer calls at once, or a
+  large argument split across calls, fits under the limit. The loop continues.
+  - No permission check and no PermissionRequest/PreTool/PostTool hook runs for a refused call, and a cut `Skill` call
+    no longer suspends the turn for approval.
+  - With streaming-tool overlap on, a `CONCURRENT_SAFE` call already started from the cut response may have run; its
+    result is discarded and the refusal takes its place.
+  - Three such responses in a row trip the existing stalled-iteration guard and end the turn as `ERROR`.
+
+- **The operator is told.** One WARN per cut response names `max_tokens`, the iteration and the tool names (not their
+  arguments), and says whether overlap had already started any of the calls. `ToolUseStarted` and `ToolResultReady`
+  still fire for each refused call; the REPL shows it as `Tool '<name>' failed: Cut off at max_tokens: …`, because its
+  usual tool-call line comes from a PreTool hook, which does not run. When the cut response's usage reports reasoning
+  tokens — both Anthropic paths and OpenAI's Responses API — this WARN and the existing truncated-answer WARN end with
+  `; the response's usage reports N output tokens and R reasoning tokens`. When it reports none (OpenAI Chat
+  Completions, or any usage without the counter), the text is what it was.
+
+- **A subagent fork's final answer cut at `max_tokens` is now `TRUNCATED`, not `COMPLETED`** (#100). The fork appends
+  the same `[System: response truncated at max_tokens]` marker, logs a WARN, fires OnStop hooks with `success=true`,
+  and ends its progress stream with `[completed: TRUNCATED at max_tokens after N iterations]`. `isSuccess()` stays
+  `true` and `getSummary()` keeps the partial text, as on a turn. What reads the reason sees the change:
+  - `AgentStepResult.isComplete()` is `false` for such a step: the workflow step cache does not store it (a resume
+    re-runs it), `WorkflowPatterns.loopUntilDry` does not count it as a quiet round,
+    `WorkflowPatterns.completenessCritic` stops at it, and GraalJS workflow scripts read `isComplete: false`;
+  - background task results record `TRUNCATED`;
+  - `TaskTool` still prints `Status: SUCCESS`; what tells the parent model is the marker at the end of the summary.
+
+  A fork's cut tool calls are refused as above. A fork has no stalled-iteration guard, so a fork whose every response
+  is cut repeats the refusal until its `maxIterations` stops it — 1000 unless the subagent sets one, since no in-tree
+  caller gives a fork a request budget (backlog `L-23`).
+
+- **Unchanged:** the Anthropic and OpenAI clients' own truncation WARNs, which callers of the blocking overloads still
+  reach (compaction, skill LLM execution, peer memory, the wiki); `CompletionReason` and `StopReason` values; and
+  `OrcaAgentExecutor.TRUNCATION_MARKER`'s name and text, now defined once in the new
+  `at.aimon.core.agent.budget.TruncatedResponses`.
+
+- **Records.** §16.8 of `docs/design/llm/thinking-reporting-and-dialect-records.md` stated three things the code does
+  not support and described only the main executor; it now says what the code does, and §16.10 records each
+  correction (#101). Three statements in `aimon-llm-anthropic` code are corrected with it, and
+  `AnthropicThinkingResolverTest.theOtherTwoConditions` gains the paths §16.8 said it covered. Backlog `L-16` is
+  closed; `L-22` (two more tool loops that never read the stop reason) and `L-23` are registered. The design is
+  `docs/design/agent-execution/max-tokens-truncation-reporting.md`.
+
 ### Release: `scripts/release.sh` refuses to start while a provider API key is in its environment
 
 - **`scripts/release.sh` now stops before anything else when `OPENAI_KEY` or `ANTHROPIC_KEY` is in its

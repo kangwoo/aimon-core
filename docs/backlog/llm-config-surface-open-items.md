@@ -1,4 +1,4 @@
-# LLM 설정 표면 — 등록 항목 21건 (열림 17 · 닫힘 4)
+# LLM 설정 표면 — 등록 항목 23건 (열림 18 · 닫힘 5)
 
 출처는 #46 이다 — 모델 capability 표를 CLI yaml 과 스타터 프로퍼티에서 확장할 수 있게 한 작업.
 설계는 [`../design/llm/model-capability-config-key.md`](../design/llm/model-capability-config-key.md) 이고,
@@ -886,6 +886,18 @@ binding — 를 새 키에 대해서도 손을 대지 않고 확인되게 만든
 | Anthropic 스트리밍 매퍼 | `AnthropicStreamingMapper.java` | `max_tokens` 정지에 아무것도 남기지 않는다. WARN 은 토큰 수 범위 초과(`:360`) 하나, 보고는 서명 없는 thinking 블록(`:282`) 하나다 |
 | CLI | `modules/aimon-cli/src/main/java` | `StopReason` 을 읽는 파일이 없다 |
 
+> **정정** *(2026-09-11, #101)*: 위 표에서 한 행은 틀렸고 두 행은 불완전했다. 등록 본문은 규칙 둘대로 고치지 않고
+> 두며, 지금의 사실은 아래 닫힘 블록이 적는다.
+>
+> - **3행이 틀렸다.** `convertResponse` 의 WARN 이 닿지 않는 것은 두 ReAct 루프의 호출뿐이다 — 둘 다 살아 있는 취소
+>   토큰을 넘기므로 호출이 스트림으로 간다. blocking 오버로드를 부르는 호출자는 **닿는다**: 컴팩션
+>   (`DefaultCompactionEngine`, `LlmClient` 의 다섯 인자 기본 구현을 거쳐), 스킬 LLM 실행(`LlmSkillExecutor`), CLI 가
+>   조립하는 peer memory(`LlmDialecticEngine` · `LlmDeriver` · `DefaultReconciler` · `RandomWalkDreamer` ·
+>   `LlmJudgeSurprisalScorer`), 위키 전략들. 행이 적은 "에이전트에서 닿지 않는다" 는 "ReAct 루프의 호출에서 닿지
+>   않는다" 였다.
+> - **1·2행은 `OrcaAgentExecutor` 만 서술했다.** 서브에이전트 포크(`DefaultSubagentExecutor`)는 stop reason 을 아예
+>   읽지 않았으므로, 포크의 잘린 최종 답은 `COMPLETED` 로 부모에게 갔고 잘린 도구 호출은 그대로 실행되었다(#100).
+
 잘린 도구 호출이 여전히 도구 호출인 이유는 세 줄이다. 매퍼는 `tool_use` 블록이 **시작될 때** 슬롯을 등록하고
 (`AnthropicStreamingMapper.java:175`), `ChunkAggregator.toLlmResponse` 는 id 와 이름이 있는 슬롯을 전부 도구 호출로
 만들며(`ChunkAggregator.java:247-253`), 인자는 비었으면 조용히 `Map.of()`, 파싱에 실패하면 WARN 과 함께 빈 맵이
@@ -912,6 +924,60 @@ binding — 를 새 키에 대해서도 손을 대지 않고 확인되게 만든
 **언제 다시 볼까.** 실행기의 도구 호출 분기를 다음에 건드릴 때, 또는 인자가 빈 도구 호출이 이유 없이 보고될 때. 기다릴
 크기가 아니므로 지금 집어도 된다. 이 항목이 닫히면 §16.8 의 이유 3 이 두 모양 모두에서 참이 되므로, 그 문장과
 "The cost" 를 같은 편집에서 고친다.
+
+### 닫힘 (2026-09-11, #108 · #100 · #101)
+
+**이제 두 에이전트 실행기가 `max_tokens` 에서 잘린 응답에 같은 답을 준다.** 도구 호출이 없는 최종 답은 턴이든
+서브에이전트 포크든 `CompletionReason.TRUNCATED` 로 끝나며 `[System: response truncated at max_tokens]` 마커와 WARN 이
+붙는다. 도구 호출이 있는 응답은 **어느 호출도 실행하지 않는다** — 호출마다 `max_tokens` 를 이름으로 대는 오류 결과로
+답하고, WARN 이 `max_tokens` · iteration · 도구 이름을 적고, 루프는 이어진다. 두 실행기 모두 프로바이더 중립의
+`StopReason` 을 `at.aimon.core.agent.budget.TruncatedResponses` 한 곳에서 읽는다. 설계와 기각한 대안은
+[`../design/agent-execution/max-tokens-truncation-reporting.md`](../design/agent-execution/max-tokens-truncation-reporting.md)
+에, 기록의 정정은
+[`thinking-reporting-and-dialect-records.md` §16.10](../design/llm/thinking-reporting-and-dialect-records.md#1610-what-168-overstated-and-the-cut-it-left-unnamed-101-108-100-2026-09-11)
+에 있다.
+
+**처방이 열어 둔 것을 한쪽으로 정했다 (규칙 다섯).** 이 항목은 잘린 도구 호출을 *여전히 실행할지* 를 열어 두었다.
+실행하지 않기로 했다. 잘린 호출의 인자는 부분이 아니라 없다 — 부분 JSON 은 파싱에 실패해 빈 맵이 된다. 그리고 중립
+응답은 **어느 호출이 잘렸는지 말하지 않으므로** 완결돼 보이는 호출도 함께 거절한다. 잘린 것만 고르려면 "마지막 호출"
+이라는 프로바이더 사실을 추측해야 하고, 틀리면 인자 없는 호출을 실행한다 — 고치려는 결함 그대로다. thinking 귀속은
+적어 둔 모양대로 `usage.output_tokens_details.thinking_tokens` 를 거쳤다. 그 값이 채우는 `TokenUsage.getReasoningTokens()`
+가 0 보다 크면 네 truncation WARN 이 출력·추론 토큰 수를 붙이고, 0 이면 아무것도 붙이지 않는다. 비율로 판정하지는
+않는다 — 그러려면 §16.8 이 거절한 숫자가 필요하다. `convertResponse` 의 WARN 은 없애지도 옮기지도 않았다(위 정정
+블록의 호출자들이 그것을 읽는다).
+
+**처방은 실패하는 테스트로 먼저 확인했다.** 기존 `maxTokensWithToolUsesIsNotTreatedAsTruncated` 는 도구가 실행됐는지를
+보지 않아 어느 결정에서도 초록이었다. 그래서 그 자리를 대신한 테스트를 포함해 새 테스트를 **옛 실행기에 대고 먼저**
+돌렸고, 네 클래스 40건 중 12건이 적힌 이유로 실패했다 — 도구 호출 수 `1`(단일 · 스트리밍) · `2`(둘), 오버랩에서 수확된
+`"ran"` 결과, 정체 가드 대신 `COMPLETED`, 잘린 `Skill` 호출의 `SUSPENDED`, 포크의 `COMPLETED`, `max_tokens` 를 적은
+WARN 의 부재. 수정 뒤 같은 네 클래스는 40건 모두 초록이다.
+
+**표의 근거는 위 정정 블록이 적는다 (규칙 둘).** 3행은 틀렸고 1·2행은 불완전했다.
+
+**세지 않았던 둘을 셌다.**
+
+- **OpenAI 의 두 WARN 도 같은 우회에 걸린다.** `OpenAILlmClient` 의 여섯 인자 오버로드는 지원되는 취소 토큰을 받으면
+  호출을 스트림으로 돌린다 — Anthropic 과 같은 자리다. 그러니 두 실행기에서는 닿지 않고, 이제 실행기의 WARN 이 그
+  자리를 맡는다. 추론 토큰 수는 OpenAI 에서 Responses 경로만 채운다(`OpenAiResponseUsages`). Chat Completions 는 0 으로
+  두므로 거기서는 WARN 에 절이 붙지 않는다.
+- **정체 가드는 잘린 도구 응답을 센다.** 거절된 iteration 은 결과가 전부 오류이므로 `isStalledIteration` 이 참이고, 턴은
+  연속 세 번이면 `ERROR` 로 끝난다 —
+  `OrcaAgentExecutorTruncationTest.threeCutToolResponsesInARowTripTheStalledIterationGuard`. **포크에는 가드가 없다.**
+  매 응답이 잘리는 포크는 `maxIterations`(서브에이전트가 정하지 않으면 1000)까지 거절을 반복한다 — L-23.
+
+**심각도 (규칙 셋).** 등록 시점에는 돌려 보지 않았다. 2026-09-11 에 요청 하나로 쟀다 — Anthropic Messages API
+스트리밍, `claude-haiku-4-5`, 도구 하나를 `tool_choice` 로 강제, `max_tokens: 60`, HTTP 200
+(`req_011Cevqhawj5VtNbJMQGcfSN`). 이벤트는 `message_start` → `content_block_start`(`tool_use`) → `ping` →
+`content_block_delta`(`input_json_delta`) 다섯 → `message_delta`(`stop_reason: max_tokens`) → `message_stop` 였고,
+**잘린 `tool_use` 블록에 `content_block_stop` 은 오지 않았다.** 누적된 인자는 객체가 닫히지 않은 JSON 이므로
+`ChunkAggregator` 는 파싱 실패 WARN 과 함께 빈 맵을 만든다 — 그 경로를 이 스트림으로 돌리지는 않았고 코드에서 읽었다.
+즉 수정 전에는 이 항목이 적은 모양 그대로, 인자가 빈 도구 호출이 이유 없이 실행되었을 것이다. 요청 하나의 관측이지
+보장이 아니며, 위 결정은 그것에 기대지 않는다.
+
+**어디** *(2026-09-11)* — `TruncatedResponses`, `OrcaAgentExecutor` 와 `DefaultSubagentExecutor` 각각의
+`refuseTruncatedToolUses` · `createTruncatedResult`, 테스트 `OrcaAgentExecutorTruncationTest` ·
+`DefaultSubagentExecutorTruncationTest` · `TruncatedResponsesTest` ·
+`OrcaAgentExecutorSkillSuspendTest.aSkillCallInACutResponseIsRefusedNotSuspended`.
 
 ---
 
@@ -1088,6 +1154,78 @@ provider 별로 채우는 것이고, 후자는 L-17 의 셋째 모양(코어에�
 
 ---
 
+## L-22 — 에이전트 실행기 밖의 도구 루프 둘은 stop reason 을 읽지 않아서, `max_tokens` 에서 잘린 도구 호출이 그대로 실행된다
+
+*(2026-09-11 등록. 출처는 #108 · #100 —
+[`../design/agent-execution/max-tokens-truncation-reporting.md`](../design/agent-execution/max-tokens-truncation-reporting.md)
+§8 을 §11.3 이 이 항목으로 올렸다. 그 작업은 두 에이전트 실행기만 고쳤고, 이 루프들은 **그 작업의 범위 밖**이었다. 여기
+두는 것은 L-16 의 짝이기 때문이다.)*
+
+**무엇을.** `LlmSkillExecutor` 의 도구 루프가 `max_tokens` 에서 잘린 응답을 두 에이전트 실행기처럼 다루게 한다 — 잘린
+응답의 도구 호출은 실행하지 않고 거절하며, 잘린 최종 답은 잘렸다고 표시한다.
+
+**왜.** 관측 가능한 결과는 L-16 이 닫히기 전의 모양 그대로다. 스킬을 `/my-skill` 로 부르면 `LlmSkillExecutor` 가 자기
+ReAct 루프(`while (currentResponse.hasToolUses())`)를 돌리는데, 그 루프는 `LlmResponse.getStopReason()` 을 읽지 않는다.
+응답이 도구 호출 안에서 잘리면 그 호출이 받은 인자 그대로 실행되고, 도구 호출 없이 잘린 답은 성공 결과로 돌아간다. 한
+가지가 다르다 — 이 루프는 네 인자 blocking `sendMessage` 를 부르므로 클라이언트 자신의 `… truncated due to max_tokens
+limit` WARN 이 **뜬다.** 다만 그 줄은 어느 스킬이었는지, 어느 도구 호출이 실행됐는지 말하지 않는다.
+
+**도달 가능성은 이렇게 셌다 (규칙 여섯).** main 소스에서 `new LlmSkillExecutor(` 와 `LlmSkillExecutor::new` 를 세면
+둘이고, 둘 다 `DefaultCommandExecutionManager` 안이다. 그 매니저는
+`OrcaAgentExecutorFactory.createDefaultCommandExecutionManager` 가 만든다 — 스킬 기반 슬래시 명령을 쓰는 배포는 이 루프에
+닿는다. **`ReActLlmDeriver.derive` 에도 같은 루프가 있지만** 같은 방법으로 세면 생성 지점이 **0** 이다. 그 이름을 부르는
+것은 자기 테스트와 아키텍처 테스트뿐이다. 그래서 그쪽은 근거가 아니라 관측으로 적는다 — 누군가 그것을 조립하는 날 같은
+결함이 함께 온다.
+
+**어디** *(2026-09-11)* — `LlmSkillExecutor` 의 `while (currentResponse.hasToolUses())` 루프, `ReActLlmDeriver.derive`
+의 `for` 루프, 두 실행기가 읽는 `at.aimon.core.agent.budget.TruncatedResponses`.
+
+**심각도 (규칙 셋).** 읽어서 얻은 결론이고 돌려 보지는 않았다. 잘린 스트림의 모양은 L-16 의 닫힘 블록이 한 번 쟀는데,
+스킬 루프는 blocking 경로라 응답을 `AnthropicLlmClient.convertResponse` 가 만든다. 그 경로에서 잘린 `tool_use` 블록의
+입력이 어떤 모양으로 오는지는 재지 않았다.
+
+**처방은 적용해 보지 않았다 (규칙 다섯).** 모양은 보인다 — `TruncatedResponses.isTruncated` 로 읽고 `refusal` 로 답하는
+것. 정할 것이 셋 남는다. 스킬 루프에는 정체 가드가 없으므로 거절이 스킬의 `maxIterations` 까지 반복될 수 있다(L-23 과 같은
+질문이다). 잘린 최종 답을 스킬 결과에서 무엇으로 표시할지. `ReActLlmDeriver` 를 함께 고칠지, 조립되지 않는 동안 둘지.
+
+**언제 다시 볼까.** `LlmSkillExecutor` 의 루프를 다음에 건드릴 때, 또는 스킬 실행에서 이유 없는 도구 오류가 보고될 때.
+`ReActLlmDeriver` 는 main 소스에서 처음 생성될 때.
+
+---
+
+## L-23 — 서브에이전트 포크에는 정체 가드가 없어서, 매 응답이 `max_tokens` 에서 잘리는 포크는 기본 1000 iteration 까지 거절을 반복한다
+
+*(2026-09-11 등록. 출처는 #100 — [설계](../design/agent-execution/max-tokens-truncation-reporting.md) §8 이 PR 본문으로만
+보냈던 것을 설계 리뷰가 막지 않음으로 다시 짚었고, §11.3 이 이 항목으로 올렸다. 가드가 없는 것 자체는 그 작업보다 오래되었고
+`max_tokens` 와 무관하다. 여기 두는 것은 그 결과가 L-16 을 닫은 거절과 만나는 자리이기 때문이다.)*
+
+**무엇을.** 포크가 진척 없는 iteration 을 끝없이 반복하지 않게 한다 — 턴의 정체 가드를 포크에도 두거나, 잘린 응답이
+이어질 때 포크를 끝낼 다른 경계를 둔다.
+
+**왜.** 관측 가능한 결과는 이렇다 — thinking 예산이 출력 허용량을 거의 다 쓰는 서브에이전트는 매 응답이 도구 호출 안에서
+잘릴 수 있다. #108 이후 두 실행기 모두 그런 호출을 거절한다. 턴은 연속 세 번이면 정체 가드가 `ERROR` 로 끝내지만
+(`OrcaAgentExecutor.MAX_CONSECUTIVE_STALLED_ITERATIONS`), **`DefaultSubagentExecutor.runReActLoop` 에는 그 가드가 없다.**
+포크를 멈추는 것은 `maxIterations`, 예산, 취소, 오류뿐이다. `maxIterations` 의 기본값은 `SubagentMetadata` 의 1000 이다.
+예산은 요청이 주는데, main 소스의 `SubagentExecutionRequest.builder()` 는 `DefaultSubagentExecutionManager` 한 곳뿐이고 거기서
+`.budget(` 을 부르지 않으므로 `ExecutionBudget.unlimited()` 가 된다. 그러니 그런 포크는 `max_tokens` 크기의 요청을 최대
+1000번 보내고 매번 WARN 을 남긴다. 수정 전에는 같은 포크가 받은 인자 그대로의 호출을 1000번까지 실행했을 것이므로
+**회귀가 아니다** — 드러났을 뿐이다.
+
+**어디** *(2026-09-11)* — `DefaultSubagentExecutor.runReActLoop` 의 `while (iterationCount < lc.maxIterations())`,
+`SubagentMetadata` 의 `DEFAULT_MAX_ITERATIONS`, `DefaultSubagentExecutionManager` 가 `SubagentExecutionRequest` 를 만드는 자리.
+
+**심각도 (규칙 셋).** 읽어서 얻은 결론이고 돌려 보지는 않았다. 매 응답이 잘리는 조건이 실제로 얼마나 이어지는지 — 모델이
+거절 문구를 읽고 출력을 줄이는지 — 는 재지 않았다.
+
+**처방은 적용해 보지 않았다 (규칙 다섯).** 모양은 둘이 보인다 — 턴의 가드(결과가 전부 오류인 iteration 을 연속으로 세기)를
+포크에 옮기는 것, 또는 잘린 응답만 따로 세는 것. 앞의 것은 잘림과 무관한 오류 루프까지 끝내므로 포크의 동작을 더 넓게
+바꾸고, 그때 끝난 포크의 `CompletionReason` 을 무엇으로 할지(턴은 `ERROR`)도 정해야 한다 — 워크플로 판정과 태스크 기록이 그
+값을 읽는다.
+
+**언제 다시 볼까.** `DefaultSubagentExecutor` 의 루프를 다음에 건드릴 때, 또는 포크가 거절 WARN 을 반복한다는 보고가 있을 때.
+
+---
+
 ## 관련 문서
 
 - [`../design/llm/model-capability-config-key.md`](../design/llm/model-capability-config-key.md) — 설계.
@@ -1096,7 +1234,9 @@ provider 별로 채우는 것이고, 후자는 L-17 의 셋째 모양(코어에�
   #82 의 설계. §9 O-1 · O-2 가 L-13 · L-14 의 출처이고, §11 이 나머지 미해결을 왜 그 문서에 두었는지 적는다
 - [`../design/llm/thinking-reporting-and-dialect-records.md`](../design/llm/thinking-reporting-and-dialect-records.md) —
   L-6·L-7 을 닫고 L-9·L-10·L-11 을 연 설계. §14 가 방언 census 의 원자료, §15.4 가 이 세 항목의 승격 근거이고,
-  §16 이 #83 의 결정이자 L-15 의 출처, §16.8 이 #89 의 결정이자 L-16 의 출처다
+  §16 이 #83 의 결정이자 L-15 의 출처, §16.8 이 #89 의 결정이자 L-16 의 출처이며, §16.10 이 L-16 을 닫은 기록이다
+- [`../design/agent-execution/max-tokens-truncation-reporting.md`](../design/agent-execution/max-tokens-truncation-reporting.md) —
+  #108 · #100 · #101 의 설계. L-16 을 닫았고, §11 이 L-22 · L-23 으로 올린 것과 설계 문서에 남긴 것을 가른다
 - [`../design/llm/openai-model-capabilities.md`](../design/llm/openai-model-capabilities.md) — capability
   SPI 자체의 설계. §7 O-8 이 이 작업으로 닫혔다
 - [`../design/llm/openai-responses-path.md`](../design/llm/openai-responses-path.md) — F-2 가 L-2 의 출처
