@@ -29,7 +29,7 @@ mapstruct = "1.5.5.Final"
 # Database
 postgresql = "42.7.13"
 h2 = "2.5.250"
-hikari = "5.1.0"
+hikari = "7.1.0"
 mongodb = "4.11.1"
 
 # Cloud & Storage
