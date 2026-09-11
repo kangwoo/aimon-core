@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/architecture.md
-source_commit: 53d14a1
+source_commit: 96e4952
 ---
 
 # Architecture
@@ -665,7 +665,7 @@ the code and these tests are not.
 | `YamlParserInstanceArchitectureTest` | No `Yaml` field anywhere in main sources (one per parse call). Reflection over field declarations rather than a source grep, so it also catches one reached through a wrapper |
 | `PublishedModuleApiScopeTest` | Only a facade declares a sibling module on `api`; every other published module uses `implementation` |
 | `PublishedModuleLoggingBindingTest` | A published library logs through the SLF4J API and does not choose the binding for its consumers |
-| `ReleaseGateMatchesCiGateTest` | `scripts/release.sh` runs the **same** Gradle task the CI workflow does, and refuses to start while a provider API key is in its environment — the second checked by running the script in a sandbox |
+| `ReleaseGateMatchesCiGateTest` | `scripts/release.sh` runs the **same verification tasks** the CI workflow does (`checkAll`, `integrationTest`, `packagingTest`, `playwrightTest` and `jacocoTestCoverageVerification`) in one invocation, and refuses to start while a provider API key is in its environment — the second checked by running the script in a sandbox |
 | `ExternalSchedulerWiringTest` | Performs the external-scheduler wiring from a different package, so `executeTask`'s visibility cannot quietly narrow |
 | `SessionNamingArchitectureTest` | The bare names `Session` and `AgentSession` cannot be used as type names (`aimon-session-routing`) |
 | `SessionRecordSoleWriterArchitectureTest` | No production code outside `agent.session.store` depends on the mutable `SessionRecord` (`aimon-session-routing`) |

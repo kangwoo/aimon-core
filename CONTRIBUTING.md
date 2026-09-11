@@ -121,11 +121,11 @@ Before pushing:
 
 ```bash
 ./gradlew format     # Apply Spotless (Eclipse formatter)
-./gradlew checkAll   # checkFormat + checkStyle + every module's unit tests
+./gradlew checkAll   # checkFormat + checkStyle + every module's unit tests + the BOM's verifyBom
 ```
 
-`checkAll` is the single gate: it runs the format check, Checkstyle, **and** each module's `test`
-task. A separate `./gradlew test` is no longer needed. Three tagged tiers stay out of it, because
+`checkAll` is the single gate: it runs the format check, Checkstyle, each module's `test` task **and** the
+BOM's `verifyBom`. A separate `./gradlew test` is no longer needed. Three tagged tiers stay out of it, because
 `test` excludes them: `@Tag("docker")` (Docker/Testcontainers) and `@Tag("packaging")` (fat-jar
 launches), which the conventions plugin excludes in every module, and `@Tag("playwright")` (a real
 browser), which `aimon-browser-playwright` excludes as well. They run via `./gradlew integrationTest`,
@@ -139,7 +139,10 @@ modules/<module>/build/reports/tests/test/index.html  # Test failures
 modules/<module>/build/reports/jacoco/                # Coverage
 ```
 
-CI (GitHub Actions) runs `./gradlew checkAll` on every PR — broken builds will be flagged automatically. See `.github/workflows/build.yml`.
+CI (GitHub Actions) runs `./gradlew checkAll` on every PR, and the tagged tiers beside it: `packagingTest` and
+`playwrightTest` in the same job, `integrationTest` in its own, and `jacocoTestReport` +
+`jacocoTestCoverageVerification` in a third. The release gate runs the same five verification tasks in one
+invocation. Broken builds will be flagged automatically. See `.github/workflows/build.yml`.
 
 Documentation has its own gates, which `checkAll` does not cover:
 

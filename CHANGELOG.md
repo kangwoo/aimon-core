@@ -7,6 +7,23 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Docs: what the release gate runs, and javadoc that no longer matched the code
+
+- **Five places described the gate as one task.** `scripts/release.sh` §4, `docs/overview/architecture.md` (ko + en),
+  `CONTRIBUTING.md` (+ ko), `CLAUDE.md` and the root `build.gradle.kts` now name what runs: `checkAll` is
+  `checkFormat` + `checkStyle` + every module's `test` + the BOM's `verifyBom`, and the gate is that plus
+  `integrationTest`, `packagingTest`, `playwrightTest` and `jacocoTestCoverageVerification` in one invocation — the
+  same verification tasks CI runs across three jobs, which additionally runs the report-only `jacocoTestReport`. The
+  root build's comment on `test` exclusions names all three tags rather than `docker` alone.
+- **Javadoc corrected where it contradicted the code.** `ModelCapabilities.supportsToolsWithReasoning()` said a
+  provider clamps to `NONE` when tools are present and that `gpt-5` answers `false`; the client omits the effort and
+  reports the omission, and every reasoning row the built-in table ships answers `true`. `ReasoningEffort.NONE` said a
+  provider may send it explicitly. `InMemoryModelCapabilityRegistry`'s class javadoc said a `false` there makes the
+  client send a value the API refuses. `AnthropicThinkingMode.OFF` said the request body carries the sampling
+  parameters, which the model's capability row decides on its own. `AnthropicThinkingMode`, `ThinkingDialect` and
+  backlog `L-10` placed the `AUTO` × `EITHER` preference in `AnthropicLlmClient`; it is in
+  `AnthropicThinkingResolver`.
+
 ### Docs: the LLM design records become ten documents, one per concept
 
 - **`docs/design/llm/` is rewritten by concept.** Twenty records, each written for one issue, become ten documents that
