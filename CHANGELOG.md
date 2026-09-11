@@ -7,6 +7,21 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Docs: a design record committed as its approved text keeps its test strategy and line citations
+
+- **`docs/design/README.md` §3.4 exempts such a record from part of §3** (#122). The exemption covers a record
+  whose `Status` names, by number, the section where the build's departures begin, and says the body before that
+  section is the text design review approved, unchanged. Twelve records carry this marker today. Such a record
+  keeps its test strategy, implementation order and `file:line` citations, and needs no decision table or
+  reference file map. A correction goes into a section after the boundary, never into the body.
+- **A citation is dated by its line, not its file.** A body citation is read at the base commit the record names.
+  A line after the boundary is read at the commit `git blame` gives for that line, which may be a merge. The
+  commit that added the file dates neither.
+- **Not lifted:** checkboxes, progress tables and phase logs stay out of every record, and so do usage and
+  troubleshooting material. The one allowance is a configuration snippet whose shape is itself the decision. A
+  record with a test strategy or citations but no marker is not exempt. Sixteen such records exist, and none was
+  edited. Backlog `T-7` records that no check looks for the marker.
+
 ### Anthropic client: the built-in default model is one the Messages API serves
 
 - **`aimon-llm-anthropic`: `AnthropicConfig`'s default model is now `claude-sonnet-4-5`** (#116). The Anthropic
@@ -148,10 +163,20 @@ Central is versioned independently).
   a stub `git` that records its calls: once per key, once with a key set to the empty string, once with both,
   once with neither, and once with a bad argument. A refusal must come before any `git` call and before
   pre-flight, name exactly the keys that are set, and not print the value; the keyless run must reach
-  pre-flight and call the stub, so "no `git` call" cannot pass vacuously. The test also holds the refused set
-  equal to the `@EnabledIfEnvironmentVariable` gates under `modules/aimon-llm-*`, so a new provider's key
-  fails the build until the script refuses it. `AIMON_DOCKER_IT` and `AIMON_KUBERNETES_IT`, which gate two
+  pre-flight and call the stub, so "no `git` call" cannot pass vacuously. The test also holds the keys those
+  cases run on equal to the `@EnabledIfEnvironmentVariable` gates under `modules/aimon-llm-*`, so the script
+  must refuse at least those gates, and a new provider's key fails the build until the script refuses it. A
+  script that refused more would still pass. `AIMON_DOCKER_IT` and `AIMON_KUBERNETES_IT`, which gate two
   sandbox classes the same way, are not refused; whether they should be is registered as backlog `LA-2`.
+
+- **A change to a provider module's test sources now re-runs that census locally** (#119). They were not inputs of
+  `aimon-core`'s `test`, so a build that added a key gate under `modules/aimon-llm-*/src/test` and changed nothing
+  else could report `ReleaseGateMatchesCiGateTest` `UP-TO-DATE` and stay green; CI, which builds from a fresh
+  checkout, did not. They are declared now, as a glob on the census's own prefix rather than a list of modules.
+  **The price:** a `checkAll` after such an edit also runs `aimon-core`'s suite, which it used to skip (measured:
+  `:aimon-core:test --rerun` ran 8168 tests in 40s on one macOS arm64 machine). The same test's tag scan reads
+  every test source in the repository and keeps its gap — declaring those would re-run that suite after a test edit
+  in any module — and the test's javadoc says so.
 
 - **Documentation.** The three CLI quickstarts (`README.md`, `docs/README.md`, `docs/README.en.md`) put the
   key on the command instead of exporting it, and say why in one sentence. `CONTRIBUTING.md` and its Korean
@@ -161,6 +186,12 @@ Central is versioned independently).
   was measured without a key on `:aimon-llm-openai`: a repeated `test` reported `UP-TO-DATE`, and `test` executed
   again after `cleanTest` and again after `clean` (313 tests, its 17 live tests skipped). The design is
   `docs/design/llm/provider-key-release-gate.md`.
+
+- **Records** (#119). `modules/aimon-cli/examples/gpt-5.6-terra.yaml` puts the key on the command, as the
+  quickstarts do. `CONTRIBUTING.md`'s test command and Quality Checks name all three tags `test` excludes, in both
+  languages. `docs/project/publishing-guide.md` and the `/release` skill name the refusal, and the guide the Docker
+  check. `docs/overview/architecture.md` (ko + en) and `docs/project/api-stability.md` describe the test as running
+  the script as well as comparing tasks. The design is `docs/design/llm/provider-key-census-claim-and-inputs.md`.
 
 ### Docs CI: the backlog check stops counting a commented-out item, and fails on item headings it used to skip
 

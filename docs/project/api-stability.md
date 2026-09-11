@@ -203,7 +203,7 @@ publish 를 거절한다.
 - 금지된 타입 이름 — 맨 `Session` / `AgentSession` (`SessionNamingArchitectureTest`)
 - `turn` / `iteration` / `execution` 어휘 혼용 (`TurnVocabularyArchitectureTest`)
 - BOM 이 관리하는 좌표와 실제 배포 대상의 일치 (`:aimon-bom:verifyBom`)
-- 릴리스 게이트가 CI 게이트보다 좁지 않은지 (`ReleaseGateMatchesCiGateTest`)
+- 릴리스 게이트가 CI 게이트보다 좁지 않은지 (`ReleaseGateMatchesCiGateTest` — 같은 테스트가 릴리스 스크립트를 샌드박스에서 실제로 돌려, 프로바이더 API 키가 환경에 있으면 시작하지 않는 것도 확인한다)
 
 **아직 검사하지 않는다:**
 
