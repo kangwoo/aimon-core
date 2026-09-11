@@ -95,15 +95,15 @@ import at.aimon.core.llm.ReasoningEffort;
  *
  * <p>
  * Whichever shape an entry for these models takes, {@link ModelCapabilities#supportsToolsWithReasoning()}
- * <strong>must stay {@code true}</strong>: they reject the effort value {@code none}, so a {@code false} there makes
- * the client send a value the API refuses.
+ * <strong>should stay {@code true}</strong>: a {@code false} makes the client omit the effort on every tools request
+ * to that model and report the omission, so an effort the model accepts silently stops reaching it.
  *
  * <pre>
  * {@code
  * InMemoryModelCapabilityRegistry.builderWithDefaults()
  *         .register("o3", ModelCapabilities.builder().supportsSamplingParameters(false)
  *                 .supportsReasoningEffort(true)
- *                 .supportsToolsWithReasoning(true) // MUST stay true: the o-series rejects effort "none"
+ *                 .supportsToolsWithReasoning(true) // Keep true: false omits the effort on every tools request
  *                 .supportsReasoningTraceRoundTrip(false) // sends this one name back to Chat Completions
  *                 .lowestReasoningEffort(ReasoningEffort.LOW).build())
  *         .build();

@@ -1,6 +1,6 @@
 ---
 translated_from: CONTRIBUTING.md
-source_commit: 3e2deef
+source_commit: fe70d5d
 ---
 
 # AIMON Core 기여 가이드
@@ -124,11 +124,11 @@ ANTHROPIC_KEY=... OPENAI_KEY=... \
 
 ```bash
 ./gradlew format     # Spotless 적용 (Eclipse formatter)
-./gradlew checkAll   # checkFormat + checkStyle + 모든 모듈의 단위 테스트
+./gradlew checkAll   # checkFormat + checkStyle + 모든 모듈의 단위 테스트 + BOM 의 verifyBom
 ```
 
-`checkAll` 이 유일한 게이트입니다. 포맷 검사, Checkstyle, **그리고** 각 모듈의 `test` 태스크까지
-한 번에 돕니다. `./gradlew test` 를 따로 돌릴 필요는 이제 없습니다. 태그가 붙은 세 계층은 `test` 가
+`checkAll` 이 유일한 게이트입니다. 포맷 검사, Checkstyle, 각 모듈의 `test` 태스크, **그리고** BOM 의
+`verifyBom` 까지 한 번에 돕니다. `./gradlew test` 를 따로 돌릴 필요는 이제 없습니다. 태그가 붙은 세 계층은 `test` 가
 빼므로 여기서도 빠집니다 — 컨벤션 플러그인이 모든 모듈에서 빼는 `@Tag("docker")`(Docker/Testcontainers)와
 `@Tag("packaging")`(fat jar 실행), 그리고 `aimon-browser-playwright` 가 더 빼는 `@Tag("playwright")`(실제
 브라우저)입니다. 각각 `./gradlew integrationTest`, `./gradlew packagingTest`, `./gradlew playwrightTest` 로
@@ -142,7 +142,10 @@ modules/<module>/build/reports/tests/test/index.html  # 테스트 실패
 modules/<module>/build/reports/jacoco/                # 커버리지
 ```
 
-CI(GitHub Actions)는 모든 PR 에서 `./gradlew checkAll` 을 돌리므로 깨진 빌드는 자동으로 드러납니다. `.github/workflows/build.yml` 을 보세요.
+CI(GitHub Actions)는 모든 PR 에서 `./gradlew checkAll` 과 그 옆의 태그 계층을 함께 돌립니다 — 같은 잡에서
+`packagingTest` 와 `playwrightTest`, 별도 잡에서 `integrationTest`, 세 번째 잡에서 `jacocoTestReport` 와
+`jacocoTestCoverageVerification` 입니다. 릴리스 게이트는 같은 검증 태스크 다섯을 한 번의 호출로 돌립니다.
+깨진 빌드는 자동으로 드러납니다. `.github/workflows/build.yml` 을 보세요.
 
 문서에는 `checkAll` 이 다루지 않는 별도의 게이트가 있습니다.
 

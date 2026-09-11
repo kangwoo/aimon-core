@@ -635,7 +635,7 @@ Orca는 도구를 도메인별 프로바이더로 조립한다. 외부 모듈은
 | `YamlParserInstanceArchitectureTest` | main 소스 어디에도 `Yaml` 필드가 없다 (파스마다 새로 만든다). 소스 grep 이 아니라 필드 선언 리플렉션이라 래퍼를 거친 것도 잡는다 |
 | `PublishedModuleApiScopeTest` | 형제 모듈을 `api` 로 선언하는 것은 파사드뿐, 나머지 published 모듈은 `implementation` |
 | `PublishedModuleLoggingBindingTest` | published 라이브러리는 SLF4J API 로만 로깅하고 바인딩을 소비자 대신 고르지 않는다 |
-| `ReleaseGateMatchesCiGateTest` | `scripts/release.sh` 가 CI 워크플로와 **같은** Gradle 태스크를 돌리고, 프로바이더 API 키가 환경에 있으면 시작하지 않는다 — 뒤의 것은 스크립트를 샌드박스에서 실제로 돌려 확인한다 |
+| `ReleaseGateMatchesCiGateTest` | `scripts/release.sh` 가 CI 워크플로와 **같은 검증 태스크**(`checkAll` · `integrationTest` · `packagingTest` · `playwrightTest` · `jacocoTestCoverageVerification`)를 한 번의 호출로 돌리고, 프로바이더 API 키가 환경에 있으면 시작하지 않는다 — 뒤의 것은 스크립트를 샌드박스에서 실제로 돌려 확인한다 |
 | `ExternalSchedulerWiringTest` | 외부 스케줄러 결선을 다른 패키지에서 수행해 `executeTask` 의 가시성이 조용히 좁아지지 못하게 한다 |
 | `SessionNamingArchitectureTest` | 맨 `Session` · `AgentSession` 을 타입 이름으로 쓸 수 없다 (`aimon-session-routing`) |
 | `SessionRecordSoleWriterArchitectureTest` | 가변 `SessionRecord` 에 의존하는 production 코드는 `agent.session.store` 밖에 없다 (`aimon-session-routing`) |
