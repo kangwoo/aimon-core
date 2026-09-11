@@ -112,7 +112,7 @@ Subagent dbTriage = Subagent.builder()
         .description("First-pass DB incident triage. Narrows down likely causes after inspecting metrics and logs.")  // TaskTool exposes it to the LLM
         .whenToUse("When a DB incident has occurred and needs a first-pass triage")  // optional — exposed as a trigger in the TaskTool description
         .tools(List.of("Read", "Grep", "Bash(psql:*)"))      // parsed the same way as markdown allowed-tools
-        .model("sonnet")                                     // a model alias
+        // No model: runs on its parent's model (usually the main agent's). Set one only to run on another model: an id the configured provider serves, sent as written
         .maxIterations(50)                                   // the ReAct loop ceiling
         .systemPrompt("You are a database triage specialist...")  // required
         .build();
@@ -261,7 +261,7 @@ Subagent dbTriage = Subagent.builder()
         .description("A first-pass DB incident triage specialist. Use it to diagnose slow queries and lock contention.")
         .whenToUse("When a DB incident such as a slow query or lock contention needs a first-pass triage")
         .tools(List.of("Read", "Grep", "Bash(psql:*)"))   // reads plus psql only — a narrow allow-list
-        .model("sonnet")
+        // No model: runs on its parent's model (usually the main agent's). Set one only to run on another model: an id the configured provider serves, sent as written
         .maxIterations(50)
         .systemPrompt("""
                 You are a database triage specialist.
@@ -338,7 +338,7 @@ Deterministic logic is the default for a code behaviour, but it can also call th
 
 | `support` accessor | Same as what ReAct uses? | Description |
 |--------------------|--------------------------|------|
-| `resolvedModel()` | ✅ | The **resolved model**, the subagent's `model` alias (say `sonnet`) merged with the default. (raw `ctx.getDefaultModel()` does not reflect the alias) |
+| `resolvedModel()` | ✅ | The **resolved model**: the per-invocation override, else the subagent's `model`, else the default's name, with the default's temperature and max tokens. The name is sent as written (no alias is resolved) and may be empty, in which case the client sends its own default model. (raw `ctx.getDefaultModel()` reflects neither the override nor `model`) |
 | `scopedToolRegistry()` | ✅ | The registry filtered by the subagent's allow-list (**exposure only, not enforcement** — trusted code can still reach everything through `ctx.getToolRegistry()`) |
 | `effectiveLlmCallMetadata()` | ✅ | The metadata for subagent usage attribution (component = the name, feature = `"subagent"`) |
 | `llmGateway()` | ✅ | A gateway with the same config as ReAct's (default retries, no fallback). `Optional.empty()` when no `LlmClient` is wired |
@@ -363,9 +363,9 @@ public SubagentExecutionResult execute(SubagentExecutionContext ctx, SubagentExe
 }
 ```
 
-> raw `ctx.getDefaultModel()` **does not reflect** the subagent's `model` alias, and `ctx.getToolRegistry()` is the full
-> registry with **no allow-list applied**. To behave the way ReAct does, use `support.resolvedModel()` and
-> `support.scopedToolRegistry()`.
+> raw `ctx.getDefaultModel()` **reflects neither** the per-invocation override nor the subagent's `model`, and
+> `ctx.getToolRegistry()` is the full registry with **no allow-list applied**. To behave the way ReAct does, use
+> `support.resolvedModel()` and `support.scopedToolRegistry()`.
 
 ### Registration and wiring
 

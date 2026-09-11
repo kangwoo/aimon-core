@@ -879,8 +879,9 @@ body left to the maintainer, and wording.
   the fork and the skill loop. The tests count the three hooks and the tool on all three loops. The permission
   (allow-list) check is counted on the skill loop only: the slash-skill E2E test's allow-list entry carries a pattern,
   so the check must ask a counting `ToolPermissionSubjectAware` tool for its subject — no read after the cut iteration,
-  at least one after the uncut one. The turn and the fork pass an empty allow-list, the validator returns before it
-  reads anything, and no positive control is possible there; the bullet says so.
+  at least one after the uncut one. ~~The turn and the fork pass an empty allow-list, the validator returns before it
+  reads anything, and no positive control is possible there; the bullet says so.~~ *(2026-09-11, #133: not true of the
+  fork — §12.1.)*
 - **DV-5 — `orca-executor.md` wording.** §2.2 states the reason continuation is not the default (merge and signature
   blocks) rather than §4.3's "그대로이고", because the rewrite removes the paragraph that word pointed at. The `:68`
   sentence gained a clause sending the tool-call shape to §2.2. §1.1's diagram is untouched: its `else executeToolUses`
@@ -976,3 +977,91 @@ them, so the wider guards of D3 and D5 flipped no existing test. The other skips
 The first Checkstyle run failed on DV-2's line, before the toggle. The four doc checks passed with this record in the
 tree — `check-doc-links.py`, `check-backlog-registers.py` (`llm-config-surface-open-items.md` at 26 / 14 / 12 / 0),
 `check-translation-staleness.py` and `check-translation-structure.py` — and so did `mkdocs build --strict`.
+
+## 12. After #133 — DV-4's reason was false for the fork, and what became of DV-1, DV-2, F-3 and F-4
+
+*Appended 2026-09-11 by #133, which collected three non-blocking notes from this work's build review and the two
+findings §11.3 sent to the PR body (F-3, F-4). No decision in §3 changed, and nothing above is rewritten. §11.1 DV-4
+carries one struck-through correction mark pointing here, the form [`../README.md`](../README.md) §3.4 allows. The
+`file:line` citations below read at the commit that adds this section, as §3.4 dates a line after the boundary; #133
+moves none of the lines they name.*
+
+### 12.1 DV-4 — a fork does not pass an empty allow-list
+
+DV-4 said the turn and the fork pass an empty allow-list, so the permission check could be counted on the skill loop
+only. That is true of the turn: `OrcaAgentExecutor.dispatchSingleTool` passes `allowedTools(List.of())`
+(`OrcaAgentExecutor.java:2498`). It is false of the fork: `DefaultSubagentExecutor.executeSingleTool` passes
+`subagent.getAllowedTools()` (`DefaultSubagentExecutor.java:920`), which a definition's `tools:` fills
+(`MarkdownSubagentParser.java:73`, `SubagentMetadata.java:144-147`). What was empty was the fork test's fixture, which
+declared no tools. With an entry that carries a pattern, `DefaultToolPermissionValidator.isAllowed` gets past its
+empty-list return (`:184`) and its pattern-less return (`:195`) and asks the tool for its subject (`:199`) — the
+positive control §7.7's test built for the skill loop.
+
+#133 added it for the fork. `DefaultSubagentExecutorTruncationTest.noHookAndNoAllowListCheckRunsForARefusedCall`
+(formerly `noHookRunsForARefusedCall`) gives the subagent the entry `Checked(count)` and a tool that counts subject
+reads: none after the cut iteration, at least one after the uncut one. Written without the pattern, the same test fails
+on that last read (§12.4). The CHANGELOG bullet DV-4 wrote now counts the check on the fork and the skill loop and
+names the turn alone as the loop that cannot. The slash-skill E2E test's comment no longer calls the skill loop the
+only one with a non-empty allow-list. §11.2 C-4 and §11.4 stand as written.
+
+### 12.2 The other follow-ups
+
+| §11 | What it left | Now |
+|---|---|---|
+| DV-1 | `LoopContext`'s field comment called the fork's guard *"The turn's death-spiral guard"*, and `DefaultSubagentExecutorStalledIterationTest`'s class comment said a fork stops *"with the turn's guard"* | Both say the guard is the fork's own per-execution instance of the shared `StalledIterationGuard` ([`../../overview/glossary.md`](../../overview/glossary.md) §4) |
+| DV-2 | The fence held the constant's fourteen-line javadoc as well as its two-line declaration, so an edit to that javadoc was neither formatted by `./gradlew format` nor flagged by `checkFormat` | The fence holds the declaration only (§12.4) |
+| F-3 | `thinking-reporting-and-dialect-records.md` §16.8 and §16.10 still presented a fork as guardless and L-22 · L-23 as open | Corrected in that record's §16.11 |
+| F-4 | The CLI rendered a cut fork's `Completion reason:` line in the success colour, and no `aimon-cli` test read real `TaskTool` output | §12.3 |
+
+### 12.3 F-4 — how the CLI shows a cut fork's `Completion reason:` line
+
+**The line gets its own colour.** With colour output on it is yellow when the status is `SUCCESS`, and red, as before,
+when it is `FAILURE`. The header, the answer and every line with colour output off are unchanged.
+`SubagentResultDisplayHook` splits a trailing reason line off the summary — only when the name is a `CompletionReason`
+that is not `isSuccessful()`, the condition `TaskTool` prints the line on — and hands it to
+`OutputFormatter.displaySubagentCompletionReason`.
+
+**Rejected:** a warning glyph (still success-coloured without the colour change, and it alters plain-text output); the
+summary coloured by the reason (it recolours the answer, not the one line that says it is incomplete); the header
+coloured by the reason (the header prints the status word D6 kept `SUCCESS`).
+
+**Pinned on `TaskTool`'s own output.** `SubagentResultDisplayHookTest` runs `TaskTool` over a mocked execution manager
+and feeds the hook what it prints. The test supplies values, never labels, so a change to `TaskTool`'s text that the
+hook stops parsing fails in `aimon-cli`.
+
+### 12.4 What was measured
+
+**The fork's control, with and without the pattern.** With the entry `Checked(count)`,
+`DefaultSubagentExecutorTruncationTest` ran 6 tests with none failed, against fork code that #133 did not change. With
+the entry written `Checked`, no pattern, the same class ran 6 and failed 1: the new test, at its last assertion,
+*"Expecting actual: 0 to be greater than: 0"*. Its other counts read as they did with the pattern. So the fifth count
+measures the allow-list check, and nothing else on the fork's path reads the subject. The slash-skill E2E class (4
+tests) and `DefaultSubagentExecutorStalledIterationTest` (4) passed after their comment changes.
+
+**The fence.** The probe was one javadoc line whose leading ` * ` sat two columns left: the formatter normalises that,
+and Checkstyle does not check it.
+
+| Step | File | `spotlessCheck` | `spotlessApply` |
+|---|---|---|---|
+| Control | Old fence; the probe in `TRUNCATION_MARKER`'s javadoc, outside any fence | fails, naming `OrcaAgentExecutor.java` | — |
+| The defect | Old fence; the probe in the constant's javadoc, inside the fence | passes | leaves the probe in place |
+| The fix | Fence narrowed to the declaration, no probe | passes | changes nothing, run twice; the declaration stays on two lines |
+| The fix, probed | Narrowed fence; the probe in the constant's javadoc, now outside the fence | fails, naming `OrcaAgentExecutor.java` | restores the narrowed file byte for byte |
+
+`checkstyleMain` on `aimon-core` passed with the narrowed shape: 1,138 files, no error, none in `OrcaAgentExecutor`.
+The file keeps its 3,447 lines, so no line below the fence moves. The fallback — the wide fence with a comment saying
+why the javadoc must sit inside — was not needed.
+
+**Rule five, before the CLI fix.** `OutputFormatter.displaySubagentCompletionReason` went in with an empty body and the
+hook unchanged, and the new tests ran against that: `SubagentResultDisplayHookTest` and `OutputFormatterTest`, 48
+tests, 6 failed, 0 skipped. Each failure was the one predicted. The hook tests for a cut and for a stalled fork saw a
+summary that still ended with the reason line. The colour test found the line printed `ESC[32m`, green. The formatter's
+colour-off, yellow and red tests found nothing printed. The completed fork's hook test and the `showToolCalls` test
+passed before and after. With the fix, the same two classes ran 48 of 48 green.
+
+**The gates.** `./gradlew format` changed nothing, and `./gradlew checkAll` with no provider key in the environment
+passed: BUILD SUCCESSFUL, 240 actionable tasks (100 executed, 140 up to date), and every module's `test` task that has
+sources executed in that run. 21 modules reported 10,992 tests, 0 failed, 72 skipped — `aimon-core` 8,201 (2 skipped)
+and `aimon-cli` 482 among them. The other skips are `aimon-llm-anthropic` 25 and `aimon-llm-openai` 17, whose live
+classes need a key, and `aimon-sandbox-docker` and `aimon-sandbox-kubernetes` 14 each. The four doc checks and
+`mkdocs build --strict` passed with this section in the tree.

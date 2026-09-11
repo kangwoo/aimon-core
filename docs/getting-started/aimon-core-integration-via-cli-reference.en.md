@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/aimon-core-integration-via-cli-reference.md
-source_commit: 5606b04
+source_commit: e69999a
 ---
 
 # aimon-core integration guide — following aimon-cli as the reference
@@ -300,9 +300,9 @@ Five keys change together:
 judge unless `memory.dreamer.scorer.llm.model` is set) and wiki page generation. A definition without `model.name`
 runs on it. Under anthropic it may be left out — memory, wiki generation and a definition without `model.name`
 then run on the Anthropic client's default model, and with `memory` enabled, startup prints one line naming that
-model. In the startup banner, the
-`Agent bundle:` line names the bundle that loaded, and the parentheses in `LLM Provider: <provider> (<model>)` are
-the model the main agent's requests carry — a subagent's own model is not shown.
+model. In the startup banner, the `Agent bundle:` line names the bundle that loaded, and the parentheses in
+`LLM Provider: <provider> (<model>)` are the model the main agent's requests carry — a subagent's own model is not
+shown.
 
 When a loaded definition names the other vendor's models, startup **warns — it never stops.** For the shipped
 `default` agent under `provider: anthropic`, that happens when `baseUrl` is absent, on Anthropic's host, or still

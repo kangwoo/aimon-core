@@ -183,8 +183,8 @@ class SlashSkillToolDispatchE2EIntegrationTest {
     void slashSkillCutToolCall_ReachesNoHookNoAllowListCheckAndNoTool() {
         // The skill loop's half of what #113's CHANGELOG entry says for the executors (#115, #117). The uncut
         // iteration is the positive control. The allow-list entry carries a pattern so that the check has to ask the
-        // tool for its subject: of the three loops this is the only one that passes a non-empty allow-list, so it is
-        // the only place the check can be seen not to run.
+        // tool for its subject. The turn passes an empty allow-list and cannot show this, and a fork whose definition
+        // declares a patterned tools: entry can: DefaultSubagentExecutorTruncationTest shows it (#133).
         final AtomicInteger permissionRequests = new AtomicInteger();
         final AtomicInteger preToolCalls = new AtomicInteger();
         final AtomicInteger postToolCalls = new AtomicInteger();

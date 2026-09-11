@@ -7,6 +7,67 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Release gate: an edit to the `/release` skill re-runs the tests that read it, and the documents name the gate's tasks
+
+- **`.claude/skills/release/SKILL.md` is an input of `aimon-core`'s `test` task** (#131). `ReleaseGateMatchesCiGateTest`
+  reads it in two tests — that the skill names the tasks `scripts/release.sh` gates a release on, and that no line of
+  it calls a gated tier opt-in — but the file was not declared, so a local build whose only change was to the skill
+  reported `:aimon-core:test` `UP-TO-DATE` and ran neither test; CI, which builds from a fresh checkout, ran both.
+  Measured with an earlier revision of the skill that both tests fail on: `UP-TO-DATE` before the declaration; after
+  it, the task executed and failed exactly those two. **The price:** a build after an edit to the skill alone also runs
+  `aimon-core`'s suite (measured: `:aimon-core:test --rerun` ran 8201 tests in 36s).
+- **Documentation.** `docs/project/publishing-guide.md`'s quality-gate row said the gate is `checkAll`, the same task
+  CI runs. It now names the five tasks the script runs in one invocation, says CI runs the same tasks as steps of three
+  jobs, and says `integrationTest` is why pre-flight checks for a Docker daemon. `CLAUDE.md` and
+  `.claude/rules/testing.md` name all three tags `test` excludes, as `CONTRIBUTING.md` does. The design is
+  `docs/design/llm/release-gate-docs-and-skill-input.md`.
+- **Wording.** The key census's failure message says what it compares — the provider modules' key gates against the
+  keys the refusal cases run the script with — where it said the script refuses that list. The test's *What this
+  cannot see* limits its `UP-TO-DATE` sentence to modules whose test sources are not inputs. #90's bullet under *Build,
+  CI and the release gate* limits its "only" to the two provider modules it is about: `aimon-browser-playwright` had
+  excluded `playwright` since before that bullet was written.
+
+### Docs: two feature guides stop giving a subagent a model alias, and the override's javadoc stops calling it one
+
+- **The subagent development guide and the built-in agent skill guide (ko + en) no longer give their example
+  subagents the model `sonnet`** (#132). The four examples name no model. A comment in its place says the subagent
+  runs on its parent's model, usually the main agent's; that an id is worth writing only to run on another model the
+  configured provider serves; and that it goes to the provider as written. The subagent guide's `resolvedModel()` row
+  says the name is sent as written and may be empty, as `SubagentBehaviorSupport` does. Backlog `L-27` now lists both
+  guides' sites.
+- **Javadoc.** The per-invocation model override in `SubagentExecutionEnvironment`, `SubagentExecutionContext` and
+  `DefaultSubagentExecutor` is a model name sent as written, not an alias. No signature changed.
+- **`aimon-llm-anthropic` README.** `temperature` has no default. A call's `LlmModel` value is sent first, and with
+  neither that nor a configured value, none is sent. The table said `0.0`.
+- **The bundled skill-creator's `benchmark.json` sample** writes `"executor_model": "<model-name>"`, the placeholder
+  `aggregate_benchmark.py` writes, instead of `claude-sonnet-4-20250514`.
+- **Backlog.** `L-19` records that #116 changed the default model its registered sentence names.
+
+### CLI: a cut subagent's `Completion reason:` line is no longer coloured as part of a success
+
+- **The line is yellow when the subagent's status is `SUCCESS`** (#133). With colour output on, `OutputFormatter`
+  printed the line the Task tool adds after a subagent's result in the colour of the status word. For a fork whose final
+  answer was cut at `max_tokens`, which reads `✓ SUCCESS`, the one line that says the answer is incomplete was green
+  like the answer above it. The header, the answer's lines, a failed subagent's result — its reason line stays red —
+  and every line with colour output off are unchanged. `SubagentResultDisplayHook` now hands that line to
+  `OutputFormatter` apart from the summary. `aimon-cli` is an application, and no public API changed.
+- **The CLI's parse is tested against what `TaskTool` prints.** `SubagentResultDisplayHookTest` runs `TaskTool` itself
+  over a mocked subagent execution manager — a cut, a completed and a stalled fork — and feeds the hook its output. A
+  change to `TaskTool`'s text that the hook no longer parses now fails in `aimon-cli`; before, the hook's tests saw only
+  strings they built themselves. A background fork's `AgentOutput` and completion notification are unchanged (backlog
+  `L-25`).
+- **A fork's allow-list check is counted too** (#133). `DefaultSubagentExecutorTruncationTest` gives its subagent a
+  `tools:` entry with a pattern and a tool that counts the check's subject reads: none after the cut iteration, at least
+  one after the uncut one.
+- **Records, comments and a formatter fence** (#133). `docs/design/llm/thinking-reporting-and-dialect-records.md`
+  §16.8 still said a fork has no guard. It named a skill's loop among the callers for which the client's `max_tokens`
+  WARN is the only signal, and, with §16.10, it spoke of `L-22` and `L-23` as open. §16.11 corrects each, and each is
+  struck through where it stands, with a pointer to §16.11.
+  `docs/design/agent-execution/skill-loop-truncation-and-fork-stall.md` §12 corrects DV-4. Two comments that called a
+  fork's stalled-iteration guard "the turn's" now say it is the fork's own instance of the shared guard. The
+  `// spotless:off` fence in `OrcaAgentExecutor` covers `MAX_CONSECUTIVE_STALLED_ITERATIONS`' declaration and no longer
+  its javadoc, which `./gradlew format` and `checkFormat` now reach. No behaviour changed with any of these.
+
 ### Dependencies: the sample app packs Logback 1.6.3, the CLI stops printing Logback's status, and Dependabot stops dropping updates
 
 - **`aimon-sample-app` packs `logback-classic` and `logback-core` 1.6.3 instead of 1.5.34** (#129). Spring Boot 3.5.16
@@ -180,8 +241,10 @@ Central is versioned independently).
 - **Pinned by tests** (#117): the entry below's *"No permission check and no PermissionRequest/PreTool/PostTool hook
   runs for a refused call"*. On the turn, the fork and a skill's loop, a test counts the PermissionRequest, PreTool and
   PostTool hooks and the tool across a cut call and then the same call uncut: 0 after the first, 1 after the second.
-  The permission check itself is counted on the skill loop only (0, then at least 1): the turn and the fork pass an
-  empty allow-list, and the check returns before it reads anything, so a count there would read 0 either way.
+  The permission check itself is counted on the fork and the skill loop (0, then at least 1), whose tests give the
+  allow-list an entry with a pattern so that the check has to read the call — the fork's count was added by #133. The
+  turn passes an empty allow-list, and the check returns before it reads anything, so a count there would read 0
+  either way.
 
 - **API.** New public `at.aimon.core.agent.budget.StalledIterationGuard` — the threshold, the predicate, the
   per-execution streak and the stop message the three loops share. `OrcaAgentExecutor.MAX_CONSECUTIVE_STALLED_ITERATIONS`
@@ -2141,9 +2204,9 @@ Central is versioned independently).
 
 - **An exported provider key opts that provider's live classes into every ordinary build, and
   `CONTRIBUTING.md` now says so** (#90). The environment variable is the tier's only gate — the four
-  classes carry no tag, and `test` excludes only `docker` and `packaging` — so while `OPENAI_KEY` or
-  `ANTHROPIC_KEY` is exported, `./gradlew test` and `checkAll` run that provider's live classes each time
-  the module's `test` task executes, and those runs bill. Measured without a real key: with the variable
+  classes carry no tag, and in their two modules `test` excludes only `docker` and `packaging` — so while
+  `OPENAI_KEY` or `ANTHROPIC_KEY` is exported, `./gradlew test` and `checkAll` run that provider's live classes
+  each time the module's `test` task executes, and those runs bill. Measured without a real key: with the variable
   set to a deliberately invalid value, the plain `:aimon-llm-openai:test` executed its 17 live tests and
   failed 16 on HTTP 401, and `:aimon-llm-anthropic:test` executed its 25 and failed 24 — both builds red.
   The same commands without the variable skipped all 42 and stayed green, and repeating a keyed command

@@ -82,7 +82,7 @@ Create the file `.aimon/agents/explore.md` and the user definition is used inste
 name: explore
 description: "A custom exploration agent"
 allowed-tools: Read, Grep, Glob, Bash
-model: sonnet
+# No model: runs on the main agent's. Write one only to run on another model: an id the configured provider serves, sent as written (no alias is resolved).
 ---
 You are an agent that analyses a codebase in depth.
 ...
@@ -125,7 +125,7 @@ You can add new Agents and Skills alongside the built-ins. The built-in and the 
 name: my-analyzer
 description: "A performance analysis agent"
 allowed-tools: Read, Grep, Bash
-model: sonnet
+# No model: runs on the main agent's. Write one only to run on another model: an id the configured provider serves, sent as written (no alias is resolved).
 ---
 You are an agent specialised in performance analysis.
 ...
