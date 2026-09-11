@@ -345,6 +345,12 @@ public final class SubagentExecutionResult {
      * ...), interruption and plain errors — the signal an workflow judge / loop-until-dry driver needs to tell
      * "needs another pass" from "genuinely failed".
      *
+     * <p>
+     * {@link CompletionReason#TRUNCATED} is a final answer the provider cut off at {@code max_tokens}: the partial
+     * text, ending in {@link at.aimon.core.agent.budget.TruncatedResponses#TRUNCATION_MARKER}, with
+     * {@link #isSuccess()} still {@code true} and the text in {@link #getSummary()}, the shape a turn has. So
+     * {@link #getStatus()} reads {@code SUCCESS} for it; the completion reason is what says the answer is incomplete.
+     *
      * @return the completion reason (never null)
      */
     public CompletionReason getCompletionReason() {

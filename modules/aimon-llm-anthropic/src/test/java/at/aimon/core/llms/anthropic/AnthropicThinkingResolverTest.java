@@ -379,15 +379,40 @@ class AnthropicThinkingResolverTest {
                     .as("AUTO on an ADAPTIVE row").noneMatch(s -> s.startsWith("thinkingBudgetClamped"));
             assertThat(signatures(resolve(config(AnthropicThinkingMode.AUTO), UNKNOWN, noEffort, clamping)))
                     .as("AUTO on an undescribed row").noneMatch(s -> s.startsWith("thinkingBudgetClamped"));
-
-            // Condition 2 fails: at or below the floor no budget fits, and the finding is a different one.
-            for (int maxTokens : new int[]{AnthropicThinkingBudgets.MINIMUM_BUDGET_TOKENS, 512}) {
-                final AnthropicThinkingResolution none = resolve(config(AnthropicThinkingMode.AUTO), BUDGETED, noEffort,
-                        maxTokens);
-                assertThat(typeOf(none)).as("maxTokens %d", maxTokens).isEqualTo("none");
-                assertThat(signatures(none)).as("maxTokens %d", maxTokens)
-                        .containsExactly("thinkingBudgetImpossible=" + maxTokens);
+            assertThat(signatures(resolve(config(AnthropicThinkingMode.AUTO), EITHER, noEffort, clamping)))
+                    .as("AUTO on an EITHER row, which picks adaptive")
+                    .noneMatch(s -> s.startsWith("thinkingBudgetClamped"));
+            assertThat(signatures(resolve(config(AnthropicThinkingMode.EXTENDED), ADAPTIVE, noEffort, clamping)))
+                    .as("EXTENDED translated onto an ADAPTIVE row")
+                    .noneMatch(s -> s.startsWith("thinkingBudgetClamped"));
+            for (ModelCapabilities capabilities : new ModelCapabilities[]{ADAPTIVE, EITHER, UNKNOWN}) {
+                assertThat(
+                        signatures(resolve(config(AnthropicThinkingMode.ADAPTIVE), capabilities, noEffort, clamping)))
+                        .as("ADAPTIVE on %s", capabilities.thinkingDialect())
+                        .noneMatch(s -> s.startsWith("thinkingBudgetClamped"));
             }
+
+            // Condition 2 fails: at or below the floor no budget fits, and the finding is a different one — on every
+            // path the positive half above shows sending a budgeted parameter.
+            for (int maxTokens : new int[]{AnthropicThinkingBudgets.MINIMUM_BUDGET_TOKENS, 512}) {
+                assertNoBudgetFits("AUTO on a BUDGETED row",
+                        resolve(config(AnthropicThinkingMode.AUTO), BUDGETED, noEffort, maxTokens), maxTokens);
+                for (ModelCapabilities capabilities : new ModelCapabilities[]{BUDGETED, EITHER, UNKNOWN}) {
+                    assertNoBudgetFits("EXTENDED on " + capabilities.thinkingDialect(),
+                            resolve(config(AnthropicThinkingMode.EXTENDED), capabilities, noEffort, maxTokens),
+                            maxTokens);
+                }
+                assertNoBudgetFits("ADAPTIVE translated onto a BUDGETED row",
+                        resolve(config(AnthropicThinkingMode.ADAPTIVE), BUDGETED, noEffort, maxTokens), maxTokens);
+            }
+        }
+
+        // containsExactly, not contains: at or below the floor no thinking parameter is sent, so the translated path's
+        // thinkingDialectTranslated finding is dropped at emission and the impossibility is the only one left.
+        private void assertNoBudgetFits(String path, AnthropicThinkingResolution none, int maxTokens) {
+            assertThat(typeOf(none)).as("%s, maxTokens %d", path, maxTokens).isEqualTo("none");
+            assertThat(signatures(none)).as("%s, maxTokens %d", path, maxTokens)
+                    .containsExactly("thinkingBudgetImpossible=" + maxTokens);
         }
     }
 }

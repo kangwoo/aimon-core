@@ -42,6 +42,7 @@ import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.Role;
+import at.aimon.core.llm.StopReason;
 import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.llm.ToolUse;
@@ -187,6 +188,35 @@ class OrcaAgentExecutorSkillSuspendTest {
         assertThat(event.getPendingSkills()).hasSize(1);
         assertThat(event.getPendingSkills().get(0).getSkillName()).isEqualTo("deploy");
         assertThat(registry.get(event.getPendingTurnId())).isPresent();
+    }
+
+    @Test
+    @DisplayName("a Skill call in a response cut at max_tokens is refused, not suspended for approval")
+    void aSkillCallInACutResponseIsRefusedNotSuspended() {
+        // #108: a cut response's calls are refused, so nobody is asked to approve one — its arguments may be the part
+        // that was cut. Here they arrived in full and the policy would ask; the stop reason alone decides.
+        final SequencedLlmClient llmClient = new SequencedLlmClient();
+        llmClient.enqueue(LlmResponse.of("calling skill",
+                List.of(ToolUse.of("tu-1", "Skill", Map.of("skill", "deploy", "args", "--prod"))),
+                TokenUsage.of(10, 10, 20), StopReason.MAX_TOKENS));
+        llmClient.enqueue(LlmResponse.of("done", List.of(), TokenUsage.of(5, 5, 10)));
+
+        final InMemoryPendingTurnRegistry registry = new InMemoryPendingTurnRegistry();
+        final SkillPreflightScanner scanner = new SkillPreflightScanner(
+                new MapBackedPolicy(Map.of("deploy", SkillInvocationDecision.ASK)), registryWith(List.of("deploy")));
+
+        final OrcaAgentExecutor executor = createExecutor(llmClient, scanner, registry);
+        final OrcaAgentRuntime context = createContext();
+        final OrcaAgentExecutionResult result = executor.execute(context,
+                OrcaAgentExecutionRequest.builder().userInput("hi").sessionId(SessionId.generate()).build());
+
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.COMPLETED);
+        assertThat(registry.listByAgentRuntime(context.getId())).isEmpty();
+        assertThat(result.getConversationHistory().stream().flatMap(message -> message.getToolUseResults().stream()))
+                .singleElement().satisfies(answer -> {
+                    assertThat(answer.isError()).isTrue();
+                    assertThat(answer.getContent()).contains("max_tokens");
+                });
     }
 
     @Test
