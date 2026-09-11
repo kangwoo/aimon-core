@@ -51,9 +51,11 @@ Anthropic 으로 돌리려면 변수 이름이 아니라 설정을 바꿔야 하
 ```bash
 git clone https://github.com/kangwoo/aimon-core.git
 cd aimon-core
-export OPENAI_KEY=sk-...
-./gradlew :aimon-cli:run
+OPENAI_KEY=sk-... ./gradlew :aimon-cli:run
 ```
+
+키를 `export` 하지 않고 명령 앞에 붙이는 것은 일부러다 — export 해 두면 그 셸의 `./gradlew test` 와 `checkAll`
+도 라이브 API 테스트를 돌릴 수 있고, 그 호출은 청구된다. [라이브 API 테스트](../CONTRIBUTING.ko.md#라이브-api-테스트) 참고.
 
 REPL 이 뜨면 그냥 말을 걸면 된다.
 

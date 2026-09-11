@@ -144,9 +144,12 @@ dependencies {
 ```bash
 git clone https://github.com/kangwoo/aimon-core.git
 cd aimon-core
-export OPENAI_KEY=sk-...
-./gradlew :aimon-cli:run
+OPENAI_KEY=sk-... ./gradlew :aimon-cli:run
 ```
+
+The key goes on the command rather than being `export`ed, on purpose: while a provider key is exported,
+`./gradlew test` and `checkAll` in that shell can run the live-API tests too, and those calls bill — see
+[Live-API tests](CONTRIBUTING.md#live-api-tests).
 
 Or build a fat JAR:
 
