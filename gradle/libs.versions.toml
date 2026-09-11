@@ -30,7 +30,7 @@ mapstruct = "1.5.5.Final"
 postgresql = "42.7.13"
 h2 = "2.4.240"
 hikari = "5.1.0"
-mongodb = "4.11.1"
+mongodb = "5.11.0"
 
 # Cloud & Storage
 aws-sdk = "2.54.12"
