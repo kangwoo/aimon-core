@@ -118,6 +118,20 @@ class TaskToolTest {
     }
 
     @Test
+    void modelParameterDescriptionNamesNoModelAndSaysTheValueIsSentAsWritten() {
+        // The model reads this on every turn and an override wins over everything else, so a name suggested here is a
+        // name sent to whichever provider is configured (#104).
+        @SuppressWarnings("unchecked")
+        final Map<String, Object> properties = (Map<String, Object>) tool.getDefinition().getInputSchema()
+                .get("properties");
+        @SuppressWarnings("unchecked")
+        final Map<String, Object> model = (Map<String, Object>) properties.get("model");
+
+        assertThat((String) model.get("description")).contains("exactly as written").doesNotContain("sonnet", "haiku",
+                "gpt-", "claude-");
+    }
+
+    @Test
     void definitionDescriptionIncludesPlaceholderWhenNoSubagents() {
         when(subagentRegistry.getAllSubagents()).thenReturn(List.of());
 

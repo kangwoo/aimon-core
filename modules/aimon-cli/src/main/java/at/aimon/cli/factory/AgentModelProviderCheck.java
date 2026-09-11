@@ -232,6 +232,9 @@ final class AgentModelProviderCheck {
      *
      * @param llm
      *            the {@code llm:} block
+     * @param bundleBasePath
+     *            the classpath root the caller's bundle loader reads bundles from, so a bundle file is printed where
+     *            that loader found it
      * @param agentName
      *            the configured {@code agent.name} — not the definition's metadata name, which three bundles share
      * @param workingDirectory
@@ -241,8 +244,8 @@ final class AgentModelProviderCheck {
      *            the entries from {@link #declaredModels}
      * @return the message, one header line, one line per entry and a line of remedies
      */
-    static Optional<String> warning(LlmProviderConfig llm, String agentName, String workingDirectory,
-            List<DeclaredModel> models) {
+    static Optional<String> warning(LlmProviderConfig llm, String bundleBasePath, String agentName,
+            String workingDirectory, List<DeclaredModel> models) {
         if (llm == null || models == null) {
             return Optional.empty();
         }
@@ -265,7 +268,7 @@ final class AgentModelProviderCheck {
                 .append(provider.providerKey()).append("`, but these definitions name ").append(other.displayName())
                 .append(" models, which ").append(provider.displayName()).append("'s API does not serve:");
         for (DeclaredModel model : mismatched) {
-            message.append("\n  - ").append(entryLine(model, agentName, workingDirectory));
+            message.append("\n  - ").append(entryLine(model, bundleBasePath, agentName, workingDirectory));
         }
         message.append("\nEach request carries these names; `llm.model` does not replace them.");
         for (String remedy : remedies(provider, endpoint, agentName, workingDirectory, mismatched)) {
@@ -311,8 +314,9 @@ final class AgentModelProviderCheck {
         return sentences;
     }
 
-    private static String entryLine(DeclaredModel model, String agentName, String workingDirectory) {
-        final String bundleRoot = AgentSetupFactory.DEFAULT_AGENT_BUNDLE_BASE_PATH + "/" + agentName;
+    private static String entryLine(DeclaredModel model, String bundleBasePath, String agentName,
+            String workingDirectory) {
+        final String bundleRoot = bundleBasePath + "/" + agentName;
         if (model.isMainAgent()) {
             return "main agent, classpath `" + bundleRoot + "/agent.md`: `model.name: " + model.getModelName() + "`";
         }

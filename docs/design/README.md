@@ -92,6 +92,7 @@
 | [`reasoning-effort-config-surface.md`](llm/reasoning-effort-config-surface.md) | `reasoningEffort` 의 설정 표면 — 같은 기준이 공통 네임스페이스로 답하는 자리, 바닥이 아니라 rung **집합**이 된 능력, exact 행이 prefix override 를 가리는 약속의 축소 |
 | [`reasoning-delta-stream.md`](llm/reasoning-delta-stream.md) | 사람이 볼 수 있는 추론 스트림 — 네 번째 chunk kind 와 열여섯 번째 sealed 서브타입, 숙고가 전사에 답으로 남지 않게 하는 두 번째 버퍼, 압박 아래 무엇을 먼저 버리는가의 세 등급, 두 벤더의 서로 다른 "요청" |
 | [`provider-switch-agent-model-check.md`](llm/provider-switch-agent-model-check.md) | CLI 에서 `llm.provider` 만 바꾸면 에이전트가 다른 벤더의 모델 이름을 계속 보내는 문제 — 두 관문(엔드포인트 · 모델 계열)으로 거짓 경보를 막는 기동 경고, 인스턴스 동일성으로 가리는 파일 출처, 무언가를 실제로 바꾸는 처방만 내놓는 규칙 |
+| [`model-names-sent-and-shown.md`](llm/model-names-sent-and-shown.md) | 그 기동 경고 뒤에 남은, CLI 가 보내고 보여 주는 모델 이름이 실제로 도는 것과 어긋나던 자리 — 모델을 적지 않은 부품은 지어낸 이름이 아니라 클라이언트의 기본 모델로 돈다는 한 원칙, 번들 `explore` 의 `haiku` 를 지운 이유, 모델을 권하지 않는 `Task` 도구 설명, 이름을 바꾸지 않고 번들을 구별하는 배너 |
 | [`thinking-reporting-and-dialect-records.md`](llm/thinking-reporting-and-dialect-records.md) | thinking 경로가 운영자에게 무엇을 말하는가 — 조립 중에는 아무것도 보고하지 않는 계약과 로거 없는 resolver, `UNKNOWN` 이 하던 두 일을 쪼갠 네 번째 방언 상수, 방언 census 의 원자료 |
 | [`provider-key-release-gate.md`](llm/provider-key-release-gate.md) | export 된 프로바이더 키가 평범한 빌드를 청구되는 라이브 API 실행으로 바꾸는 문제 — 키를 명령 앞에 붙이는 퀵스타트, 키가 환경에 있으면 시작하지 않는 릴리스 스크립트(unset 이 아니라 거부인 이유), 스크립트를 읽지 않고 샌드박스에서 돌려 순서까지 붙드는 테스트, 거부 목록을 프로바이더 모듈의 키 게이트와 대조하는 인구조사 |
 

@@ -67,7 +67,7 @@ import at.aimon.core.tools.ToolContextKeys;
  * <ul>
  * <li>Multiple subagent types (general-purpose, Explore, Plan, etc.)
  * <li>Autonomous execution with clear prompts
- * <li>Model selection (sonnet, haiku, opus)
+ * <li>Per-run model override (a model id the configured provider serves, sent as written)
  * <li>Background execution support
  * <li>Resume capability for continuing a previous run
  * </ul>
@@ -91,7 +91,7 @@ import at.aimon.core.tools.ToolContextKeys;
  *     // Launch a subagent
  *     ToolInput input = ToolInput
  *             .of(Map.of("subagent_name", "Explore", "prompt", "Find all authentication-related files in the codebase",
- *                     "description", "Find auth files", "model", "haiku"));
+ *                     "description", "Find auth files"));
  *     ToolResult result = taskTool.execute(input, context);
  * }
  * </pre>
@@ -101,6 +101,16 @@ public class TaskTool extends AbstractTool {
     public static final String TOOL_NAME = "Task";
 
     private static final Logger log = LoggerFactory.getLogger(TaskTool.class);
+
+    /**
+     * The {@code model} parameter's description. It names no model on purpose: this tool does not know the configured
+     * provider, the value reaches the request as written (no alias is resolved), and it wins over the subagent's own
+     * model — so any name listed here would be sent to a provider that may not serve it.
+     */
+    private static final String MODEL_DESCRIPTION = "Optional model id for this run only. It is sent to the configured"
+            + " provider exactly as written - no alias is resolved - and it overrides the subagent's own model. Leave"
+            + " it out unless you were given a specific model id: the run then uses the subagent's model, or the main"
+            + " agent's when the subagent names none.";
 
     private final LlmModel defaultModel;
     private final SubagentRegistry subagentRegistry;
@@ -340,10 +350,7 @@ public class TaskTool extends AbstractTool {
                 Map.of("type", "string", "description", "The task for the agent to perform. Be clear and detailed."),
                 "description",
                 Map.of("type", "string", "description", "A short (3-5 word) description of the task for tracking"),
-                "model",
-                Map.of("type", "string", "description",
-                        "Optional model to use (sonnet, gpt-4.1, gpt-4.1-nano). Prefer gpt-4.1-nano for simple tasks."),
-                "run_in_background",
+                "model", Map.of("type", "string", "description", MODEL_DESCRIPTION), "run_in_background",
                 Map.of("type", "boolean", "description",
                         "Set to true to run this agent in the background. Use AgentOutput tools to read output later."),
                 "resume",

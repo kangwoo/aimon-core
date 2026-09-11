@@ -12,8 +12,11 @@ import at.aimon.core.subagent.Subagent;
 @DisplayName("SubagentLlmDefaults.resolveModel — model resolution priority")
 class SubagentLlmDefaultsTest {
 
-    private static final LlmModel DEFAULT_MODEL = LlmModel.builder().name("gpt-4").temperature(0.3).maxTokens(2048)
-            .build();
+    // A name no fallback could produce on its own, so an assertion cannot pass by matching an invented literal.
+    private static final LlmModel DEFAULT_MODEL = LlmModel.builder().name("parent-model").temperature(0.3)
+            .maxTokens(2048).build();
+
+    private static final LlmModel NAMELESS_DEFAULT_MODEL = LlmModel.builder().temperature(0.3).maxTokens(2048).build();
 
     private static Subagent subagentWithModel(String model) {
         Subagent.Builder builder = Subagent.builder().name("explore").systemPrompt("(prompt)");
@@ -60,7 +63,29 @@ class SubagentLlmDefaultsTest {
 
         LlmModel resolved = SubagentLlmDefaults.resolveModel(subagent, DEFAULT_MODEL, null);
 
-        assertThat(resolved.getName()).contains("gpt-4");
+        assertThat(resolved.getName()).contains("parent-model");
+    }
+
+    @Test
+    @DisplayName("with no name anywhere the result is nameless, so the client sends its own default (#104)")
+    void noNameAnywhereStaysNameless() {
+        Subagent subagent = subagentWithModel(null);
+
+        LlmModel resolved = SubagentLlmDefaults.resolveModel(subagent, NAMELESS_DEFAULT_MODEL, null);
+
+        assertThat(resolved.getName()).isEmpty();
+        assertThat(resolved.getTemperature()).contains(0.3);
+        assertThat(resolved.getMaxTokens()).contains(2048);
+    }
+
+    @Test
+    @DisplayName("a nameless default still yields the subagent's own model when it names one")
+    void namelessDefaultKeepsTheSubagentModel() {
+        Subagent subagent = subagentWithModel("frontmatter-model");
+
+        LlmModel resolved = SubagentLlmDefaults.resolveModel(subagent, NAMELESS_DEFAULT_MODEL, null);
+
+        assertThat(resolved.getName()).contains("frontmatter-model");
     }
 
     @Test

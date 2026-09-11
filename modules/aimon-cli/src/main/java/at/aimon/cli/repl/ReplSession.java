@@ -31,6 +31,7 @@ import at.aimon.cli.budget.BudgetCommandHandler;
 import at.aimon.cli.config.CliSettings;
 import at.aimon.cli.factory.AgentSetupFactory;
 import at.aimon.cli.skill.InteractiveSkillApprovalChannel;
+import at.aimon.core.agent.Agent;
 import at.aimon.core.agent.AgentExecutionResult;
 import at.aimon.core.agent.SubmitOptions;
 import at.aimon.core.agent.budget.ExecutionBudget;
@@ -49,6 +50,7 @@ import at.aimon.core.agent.session.RewoundTurn;
 import at.aimon.core.agent.session.SubmitOutcome;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
 import at.aimon.core.agent.stream.SkillTurnSuspendedEvent;
+import at.aimon.core.llm.LlmClient;
 import at.aimon.core.skill.policy.pending.PendingTurnId;
 import at.aimon.core.skill.policy.pending.PendingTurnRegistry;
 import at.aimon.core.tracing.SpanType;
@@ -82,6 +84,10 @@ public class ReplSession {
 
     private final OrcaAgentExecutor agentExecutor;
     private final OrcaAgentRuntime agentRuntime;
+    // The banner reads these two: the definition's model and name, and the configured agent.name. Both null in
+    // test-built setups, which never call start().
+    private final Agent agent;
+    private final String agentBundleName;
     private final LiveSession liveSession;
     private final CliSettings settings;
     private final OutputFormatter formatter;
@@ -150,6 +156,8 @@ public class ReplSession {
 
         this.agentExecutor = agentSetup.getAgentExecutor();
         this.agentRuntime = agentSetup.getAgentRuntime();
+        this.agent = agentSetup.getAgent();
+        this.agentBundleName = agentSetup.getAgentBundleName();
         this.liveSession = Objects.requireNonNull(agentSetup.getLiveSession(),
                 "agentSetup.agentSession cannot be null");
         this.settings = settings;
@@ -253,10 +261,8 @@ public class ReplSession {
 
     private void displayAgentInfo() {
         formatter.displayInfo("Working Directory: " + agentRuntime.getEnvironment().getWorkingDirectory());
-        // getProviderName() is the vendor alone, so the model is recomposed here rather than read out of it.
-        final var llmClient = agentExecutor.getLlmClient();
-        formatter.displayInfo("LLM Provider: " + llmClient.getProviderName()
-                + llmClient.getDefaultModelName().map(model -> " (" + model + ")").orElse(""));
+        agentBundleLine(agentBundleName, agent).ifPresent(formatter::displayInfo);
+        formatter.displayInfo(providerLine(agentExecutor.getLlmClient(), agent));
         formatter.displayInfo("Available tools: " + agentRuntime.getToolRegistry().size() + " tools(s)");
         formatter.displayInfo(
                 "Available commands: " + agentRuntime.getCommandRegistry().getAllCommands().size() + " command(s)");
@@ -266,6 +272,55 @@ public class ReplSession {
                 "Available skills: " + agentRuntime.getSkillRegistry().getAllSkills().size() + " skill(s)");
 
         System.out.println();
+    }
+
+    /**
+     * The banner line naming the bundle {@code agent.name} loaded (#106).
+     *
+     * <p>
+     * The prompt and the runtime id are built from the definition's own name, and three shipped bundles share one
+     * ({@code default-agent}), so the configured name is the only thing that tells a user which bundle a provider
+     * switch selected. The definition's name is added in parentheses when the two differ, which is what explains the
+     * prompt.
+     *
+     * @param bundleName
+     *            the configured {@code agent.name}; null for a setup that carries none
+     * @param agent
+     *            the loaded main agent; may be null
+     * @return the line, or empty when there is no bundle name to show
+     */
+    // Package-private and static so ReplSessionBannerTest can check the banner without a terminal.
+    static Optional<String> agentBundleLine(String bundleName, Agent agent) {
+        if (bundleName == null || bundleName.isBlank()) {
+            return Optional.empty();
+        }
+        final String agentName = (agent == null) ? null : agent.getName();
+        if (agentName == null || agentName.equals(bundleName)) {
+            return Optional.of("Agent bundle: " + bundleName);
+        }
+        return Optional.of("Agent bundle: " + bundleName + " (agent name: " + agentName + ")");
+    }
+
+    /**
+     * The banner line naming the provider and the model the main agent's requests carry (#106): the definition's
+     * {@code model.name}, or the client's default model when the definition names none — the same
+     * {@code getName().orElse(...)} both clients apply to each request. The parenthesis used to be the client's
+     * default alone, which is {@code llm.model}, while every bundled definition names a model of its own. It is left
+     * out when that name is empty or blank. A subagent that names its own model is not shown.
+     *
+     * @param client
+     *            the client the agent's requests go through
+     * @param agent
+     *            the loaded main agent; may be null, which shows the client's default
+     * @return the line
+     */
+    static String providerLine(LlmClient client, Agent agent) {
+        final Optional<String> definitionModel = (agent == null)
+                ? Optional.empty()
+                : agent.getMetadata().getModel().getName();
+        final Optional<String> model = definitionModel.or(client::getDefaultModelName).filter(name -> !name.isBlank());
+        // getProviderName() is the vendor alone, so the model is recomposed here rather than read out of it.
+        return "LLM Provider: " + client.getProviderName() + model.map(name -> " (" + name + ")").orElse("");
     }
 
     /**
