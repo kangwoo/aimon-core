@@ -7,6 +7,48 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### CLI: the distribution ships Logback 1.6.3, past every Logback CVE NVD lists
+
+- **`aimon-cli` now ships `logback-classic` and `logback-core` 1.6.3 instead of 1.5.13** (#114). The CLI is the one
+  module that ships the catalog's Logback. 1.5.13 was inside CVE-2025-11226 (GHSA-25qh-j22f-pwp8, fixed in 1.5.19),
+  CVE-2026-13006 (logback-core up to 1.5.36, fixed in 1.5.37) and CVE-2026-19880 (logback-classic up to 1.6.2, fixed
+  only in 1.6.3), and three LOW advisories fixed by 1.5.34. None of those three named advisories is reachable from the
+  CLI as it ships: no Janino on its class path, no `SiftingAppender` in the bundled `logback.xml`, no MDC set by AIMON
+  code (measured). The version moves anyway, because a later dependency or a user's own configuration can change each of
+  those. Logback describes 1.6.x as its stable line and, apart from Janino conditionals, a drop-in replacement for
+  1.5.x. CVE-2026-19880 is the one with no fix on 1.5.x, and neither it nor CVE-2026-13006 has a GitHub advisory yet.
+  `slf4j-api` stays 2.0.18. The distribution's `lib/` and the fat jar carry the new pair, and the bundled `logback.xml`
+  loads with the same one warning as before (its unreferenced `CONSOLE` appender) and no error.
+
+- **If you replace the bundled `logback.xml`**, Logback's changes since 1.5.13 apply to your file: Janino-based `<if>`
+  conditionals are gone (1.5.37; they already needed Janino, which the distribution has never carried); 1.6.0 removed
+  deprecated API such as `ReconfigureOnChangeFilter`; 1.6.3 deprecates `ConsoleAppender`'s `withJansi` in favour of
+  `JansiConsoleAppender` and strips slashes from `SiftingAppender`'s MDC discriminator values. Logback's release notes
+  list the rest.
+
+- **What else moves: nothing published.** The CLI's tests move with its distribution (#99's consistent resolution). Ten
+  other projects name the catalog's Logback at test scope, where 1.6.3 now wins over the 1.5.34
+  `spring-boot-starter-test` brings. The unpublished `aimon-session-testkit` names it on its main classpaths, which only
+  ever join a consumer's tests; its main and test classpaths, 1.5.13 against 1.5.34 before, now both resolve 1.6.3, so
+  backlog D-2 drops that row. No published module's POM or module metadata changes, because none declares Logback
+  outside test scope. **This supersedes the #99 entry's "so its tests now run on Logback 1.5.13" below.**
+
+- **Four records #99 left, settled** (#120). Nothing a user or consumer resolves changes.
+  - `shouldResolveConsistentlyWith`, the `@Incubating` Gradle API that holds the CLI's test classpaths to what it ships,
+    stays. `aimon.java-conventions.gradle.kts` now says when a module build script may call incubating API. The CLI's
+    comment says what an upgrade that changes it can break: a removal fails every build, while a change in behaviour can
+    pass without failing anything. It also names the command that shows the second. Backlog D-3 lists a Gradle upgrade
+    as a trigger.
+  - `aimon-memory-testkit`'s contract suite was run once on exactly JUnit 5.12.2, the floor it publishes (21 tests, 0
+    failures); the `junit` note records how.
+  - `ModelCapabilityBindingProbeTest` drives the equality refusal through the probe's public pair check, and
+    `requireDistinguishable` is private.
+  - D-2 called its differences "not annotation jars", but `jakarta.annotation-api` is one. It now names what does set
+    them apart: code, and runtime-read annotations whose package moved from `javax` to `jakarta`.
+
+- **Records.** The design is `docs/design/testing/shipped-logback-and-test-classpath-followups.md`, and §11.5 of
+  `docs/design/testing/test-classpath-shipped-versions.md` records where #99's design stopped matching the tree.
+
 ### CLI: subagents and memory run on a model the provider serves, and the banner shows what runs
 
 - **The bundled `explore` subagents no longer send `haiku`** (#104). `default-anthropic`, `default-openai` and

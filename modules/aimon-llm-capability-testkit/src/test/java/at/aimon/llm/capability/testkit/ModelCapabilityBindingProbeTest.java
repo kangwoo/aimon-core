@@ -225,12 +225,24 @@ class ModelCapabilityBindingProbeTest {
         @Test
         @DisplayName("a pair whose declarations compare equal is refused, naming equals as the reason")
         void refusesAPairEqualsCannotTellApart() {
-            final ModelCapabilityDeclaration same = ModelCapabilityDeclaration.builder().supportsReasoningSummary(false)
-                    .build();
+            // Driven through the public pair check, with the one step no real key can make fail substituted.
+            // ModelCapabilityDeclaration.equals compares every field, so no two values of a real key give equal
+            // declarations, and the type is core's, final, with a private constructor, so no declaration with the
+            // defect can stand in. The substitute answers both values with the first value's real declaration — what a
+            // declaration whose equals skipped the key gives for any two of its values — so what is pinned is the check
+            // the pair goes through, not only the sentence the helper words.
+            final List<Object> pair = ProbeValues.distinctPairFor("supportsSamplingParameters");
+            final ModelCapabilityBindingProbe<FakeSurface> equalsSkipsTheKey = ModelCapabilityBindingProbe
+                    .forSurface(FakeSurface::new).forwarding(ModelCapabilityBindingProbeTest::copiesAll)
+                    .operatorKeyPath(key -> "fake." + key).forwardingLocation(FORWARDING)
+                    .expectedDeclaration((key, value) -> DeclarableKeys.expectedDeclaration(key, pair.get(0))).build();
 
-            assertThatThrownBy(() -> ModelCapabilityBindingProbe.requireDistinguishable("supportsReasoningSummary",
-                    List.of(true, false), same, same)).isInstanceOf(AssertionError.class)
-                    .hasMessageContaining("equals does not compare `supportsReasoningSummary`");
+            assertThatThrownBy(
+                    () -> equalsSkipsTheKey.assertValuesReachTheDeclaration("supportsSamplingParameters", pair))
+                    .isInstanceOf(AssertionError.class)
+                    .hasMessageContaining("equals does not compare `supportsSamplingParameters`")
+                    .hasMessageContaining("declaring it as " + pair.get(0) + " and as " + pair.get(1))
+                    .hasMessageNotContaining("was written on");
         }
 
         @Test

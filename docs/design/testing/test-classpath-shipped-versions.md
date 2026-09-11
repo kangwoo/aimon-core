@@ -830,3 +830,28 @@ configuration cache (§6 row 5), so no configuration-cache run was needed.
   unverified, and it has no consequence outside that note's claim.
 
 D-2 and D-3 each point back here through [`../../backlog/module-dependency-scope.md`](../../backlog/module-dependency-scope.md) §2.
+
+### 11.5 Later departures
+
+*Appended 2026-09-11 for #114 and #120, whose design is
+[`shipped-logback-and-test-classpath-followups.md`](shipped-logback-and-test-classpath-followups.md). Everything above
+is left as written; this records where it stopped matching the tree.*
+
+- **§3.1's "raise what ships", F-1 and open question 3 — the catalog's `logback` moved** (#114), to 1.6.3. §3.1 rejected
+  raising it *to equalise test numbers*, and that rejection still holds as a reason. What moved it is the reason F-1
+  left for the maintainer, and it turned out wider than F-1 said. 1.5.34, the version the rejected option named, is
+  inside CVE-2026-13006 (logback-core ≤ 1.5.36). Every 1.5.x is inside CVE-2026-19880 (logback-classic ≤ 1.6.2), fixed
+  only on 1.6.x. Consistent resolution carried the CLI's tests with the bump, as §3.1 said it would.
+  `aimon-session-testkit`'s pair left D-2 (B-2) — outranked, not aligned.
+- **§3.1's "Cost accepted", §6 row 4 and open question 1.** Two supporting sentences were wrong.
+  - "`buildSrc` already uses unstable API": `@Suppress("UnstableApiUsage")` sits on `VersionCatalogsExtension`, which
+    has no `@Incubating` in Gradle 9.2.1 (javap).
+  - "If a Gradle upgrade changes it, this build script stops compiling": true of a removal, which fails every build
+    since every project is configured. A change in behaviour, on the other hand, can pass without failing anything.
+
+  #120 decided the question with both halves written down: acceptable, on terms now at the end of
+  `buildSrc/src/main/kotlin/aimon.java-conventions.gradle.kts`. Backlog D-3 lists a Gradle upgrade as a trigger.
+- **F-3 → done** (#120). `refusesAPairEqualsCannotTellApart` drives `requireDistinguishable` through the
+  `expectedDeclaration` seam §3.5 added, and the helper is private.
+- **Open question 5 → run once.** The suite ran on exactly JUnit 5.12.2 (21 tests, 0 failures). The `junit` note says
+  so, how, and that nothing repeats it.
