@@ -128,6 +128,15 @@ Central is versioned independently).
   script that refused more would still pass. `AIMON_DOCKER_IT` and `AIMON_KUBERNETES_IT`, which gate two
   sandbox classes the same way, are not refused; whether they should be is registered as backlog `LA-2`.
 
+- **A change to a provider module's test sources now re-runs that census locally** (#119). They were not inputs of
+  `aimon-core`'s `test`, so a build that added a key gate under `modules/aimon-llm-*/src/test` and changed nothing
+  else could report `ReleaseGateMatchesCiGateTest` `UP-TO-DATE` and stay green; CI, which builds from a fresh
+  checkout, did not. They are declared now, as a glob on the census's own prefix rather than a list of modules.
+  **The price:** a `checkAll` after such an edit also runs `aimon-core`'s suite, which it used to skip (measured:
+  `:aimon-core:test --rerun` ran 8168 tests in 40s on one macOS arm64 machine). The same test's tag scan reads
+  every test source in the repository and keeps its gap — declaring those would re-run that suite after a test edit
+  in any module — and the test's javadoc says so.
+
 - **Documentation.** The three CLI quickstarts (`README.md`, `docs/README.md`, `docs/README.en.md`) put the
   key on the command instead of exporting it, and say why in one sentence. `CONTRIBUTING.md` and its Korean
   translation now say the only exclusions in a module's `test` task are by tag — `docker` and `packaging` from

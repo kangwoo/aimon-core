@@ -109,10 +109,13 @@ import org.junit.jupiter.api.io.TempDir;
  * class gated on a variable that is already refused, which is not a change the refusal needs. The sandbox classes
  * gated on {@code AIMON_DOCKER_IT} and {@code AIMON_KUBERNETES_IT} are outside the census on purpose, and the script
  * does not refuse them — whether it should is backlog {@code LA-2}. Nothing checks that the script calls nothing but
- * {@code git} before its pre-flight checks: today it calls nothing else, and the stub records only {@code git}. And
- * the provider modules' test sources are not inputs of this module's {@code test} task, so a local build that changes
- * only them can report this test {@code UP-TO-DATE}. The tag scan above has the same gap; CI builds from a fresh
- * checkout and does not.
+ * {@code git} before its pre-flight checks: today it calls nothing else, and the stub records only {@code git}. The
+ * provider modules' test sources are inputs of this module's {@code test} task — its build script declares the same
+ * {@code aimon-llm-*} tree this census walks, so widening the census means widening that declaration — and a change
+ * to them re-runs this module's whole {@code test} task, not only this class. The tag scan's sources are not: they are
+ * every test source in the repository, and declaring them would re-run this module's suite after a test edit in any
+ * module. So a local build that changes only another module's {@code @Tag}s can report this test {@code UP-TO-DATE};
+ * CI builds from a fresh checkout and does not.
  *
  * <p>
  * Shell and YAML rather than bytecode is why this is plain JUnit and not ArchUnit, following the precedent set by
@@ -226,7 +229,11 @@ class ReleaseGateMatchesCiGateTest {
     /** The {@code named} attribute inside a {@link #KEY_GATE_ANNOTATION}, in whichever position it is written. */
     private static final Pattern KEY_GATE_NAME = Pattern.compile("\\bnamed\\s*=\\s*\"([^\"]+)\"");
 
-    /** The provider modules: every directory under {@code modules/} whose name starts with this. */
+    /**
+     * The provider modules: every directory under {@code modules/} whose name starts with this. The
+     * {@code providerModuleTestSources} input in this module's build script declares the same tree, so a change to
+     * those sources re-runs the census; a wider census needs a wider declaration there.
+     */
     private static final String PROVIDER_MODULE_PREFIX = "aimon-llm-";
 
     /**
