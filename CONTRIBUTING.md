@@ -152,7 +152,7 @@ python3 scripts/check-backlog-registers.py     # docs/backlog/: duplicate item I
 
 The first walks every `*.md` in the repository and fails on two things: a link to a path
 that does not exist, and a `#fragment` that matches no heading in the file it points at.
-The second one matters more than it sounds — a wrong anchor still loads the page, so the
+The anchor failure matters more than it sounds — a wrong anchor still loads the page, so the
 reader lands at the top and never learns they were sent to the wrong section. External
 URLs are deliberately not checked; a gate that goes red because someone else's host is
 down stops being read. CI runs this as the `docs-links` job.

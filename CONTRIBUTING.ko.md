@@ -1,6 +1,6 @@
 ---
 translated_from: CONTRIBUTING.md
-source_commit: 1ae856c
+source_commit: 1586c68
 ---
 
 # AIMON Core 기여 가이드
@@ -154,7 +154,7 @@ python3 scripts/check-backlog-registers.py     # docs/backlog/: 한 등록부 �
 ```
 
 첫 번째는 저장소의 모든 `*.md` 를 훑으면서 두 가지에 대해 실패합니다. 존재하지 않는 경로를 가리키는 링크,
-그리고 대상 파일의 어느 제목과도 맞지 않는 `#fragment` 입니다. 두 번째가 들리는 것보다 중요합니다 —
+그리고 대상 파일의 어느 제목과도 맞지 않는 `#fragment` 입니다. 그중 앵커 쪽이 들리는 것보다 중요합니다 —
 앵커가 틀려도 페이지는 그대로 열리기 때문에, 독자는 문서 맨 위에 떨어지고서도 자기가 엉뚱한 절로
 보내졌다는 사실을 끝내 알지 못합니다. 외부 URL 은 일부러 검사하지 않습니다. 남의 호스트가 죽었다고
 빨개지는 게이트는 아무도 읽지 않게 되니까요. CI 는 이것을 `docs-links` 잡으로 돌립니다.
