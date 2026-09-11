@@ -222,8 +222,6 @@ public class OrcaAgentExecutor
      */
     public static final String TRUNCATION_MARKER = TruncatedResponses.TRUNCATION_MARKER;
 
-    // The declaration below is 122 characters on one line, and the formatter joins a wrapped line; keep it wrapped.
-    // spotless:off
     /**
      * Death-spiral guard: the number of <em>consecutive</em> stalled iterations tolerated before the ReAct loop
      * aborts with {@link CompletionReason#ERROR}. An iteration is "stalled" when it issued tool calls but every one of
@@ -238,6 +236,8 @@ public class OrcaAgentExecutor
      * stop on the same guard. The constant keeps its name and value here for callers that already read it from this
      * class.
      */
+    // The declaration below is 122 characters on one line, and the formatter joins a wrapped line; keep it wrapped.
+    // spotless:off
     public static final int MAX_CONSECUTIVE_STALLED_ITERATIONS
             = StalledIterationGuard.MAX_CONSECUTIVE_STALLED_ITERATIONS;
     // spotless:on
