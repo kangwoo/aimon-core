@@ -4,13 +4,13 @@
 // plugin reacts to it by calling a Gradle internal removed in Gradle 9), and a plain module gets to the same place
 // without touching release infrastructure.
 //
-// Published, unlike the other two testkits — and that difference is not an inconsistency, it is the difference
-// between what each suite's subjects are. `aimon-filesystem-testkit` and `aimon-session-testkit` describe contracts
-// whose every implementation is in this repository, so an unpublished module reaches all of them. This suite's
-// subjects are `PeerMemory` backends, and after the distributed memory backends moved out, the implementation that
-// most needs holding to the contract — `RemotePeerMemory`, in the aimon-memory service — is in another repository.
-// Leaving it unpublished meant the one backend the contract was written for was the one backend that could not run
-// it, which is the failure mode the suite exists to prevent.
+// Published, unlike the other three testkits — and that difference is not an inconsistency, it is the difference
+// between what each suite's subjects are. `aimon-filesystem-testkit`, `aimon-session-testkit` and
+// `aimon-llm-capability-testkit` describe contracts whose every subject is in this repository, so an unpublished
+// module reaches all of them. This suite's subjects are `PeerMemory` backends, and after the distributed memory
+// backends moved out, the implementation that most needs holding to the contract — `RemotePeerMemory`, in the
+// aimon-memory service — is in another repository. Leaving it unpublished meant the one backend the contract was
+// written for was the one backend that could not run it, which is the failure mode the suite exists to prevent.
 //
 // Note what this module does *not* depend on: `at.aimon.core.memory.file` and the `InMemory*Store`s. Those implement
 // stores, not tiers, and stores are the default backend's materials rather than the seam a backend is replaced at.

@@ -8,6 +8,7 @@ import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
@@ -80,12 +81,14 @@ public final class ModelCapabilityBindingProbe<S> {
     private final Function<? super S, ModelCapabilityDeclaration> forwarding;
     private final UnaryOperator<String> operatorKeyPath;
     private final String forwardingLocation;
+    private final BiFunction<String, Object, ModelCapabilityDeclaration> expectedDeclaration;
 
     private ModelCapabilityBindingProbe(Builder<S> builder) {
         this.newSurface = builder.newSurface;
         this.forwarding = Objects.requireNonNull(builder.forwarding, "forwarding");
         this.operatorKeyPath = Objects.requireNonNull(builder.operatorKeyPath, "operatorKeyPath");
         this.forwardingLocation = Objects.requireNonNull(builder.forwardingLocation, "forwardingLocation");
+        this.expectedDeclaration = Objects.requireNonNull(builder.expectedDeclaration, "expectedDeclaration");
     }
 
     /**
@@ -193,15 +196,15 @@ public final class ModelCapabilityBindingProbe<S> {
                 acceptedDeclaration(key, values.get(1)));
     }
 
-    private static ModelCapabilityDeclaration acceptedDeclaration(String key, Object value) {
+    private ModelCapabilityDeclaration acceptedDeclaration(String key, Object value) {
         try {
-            return DeclarableKeys.expectedDeclaration(key, value);
+            return expectedDeclaration.apply(key, value);
         } catch (IllegalArgumentException e) {
             throw refusedProbeValue(key, value, e);
         }
     }
 
-    static AssertionError refusedProbeValue(String key, Object value, IllegalArgumentException refusal) {
+    private static AssertionError refusedProbeValue(String key, Object value, IllegalArgumentException refusal) {
         if (isEmptyDeclarationRefusal(refusal)) {
             return new AssertionError("`" + key + "` = " + value + " was the only key set on"
                     + " ModelCapabilityDeclaration.Builder, and build() refused it as a declaration that states"
@@ -224,7 +227,7 @@ public final class ModelCapabilityBindingProbe<S> {
                         + " key, with that value, and nothing else. A missing field means the forwarding reads the"
                         + " wrong property; an extra one means one property feeds two setters", key, value,
                         surface.getClass().getName(), operatorKeyPath.apply(key), forwardingLocation)
-                .isEqualTo(DeclarableKeys.expectedDeclaration(key, value));
+                .isEqualTo(expectedDeclaration.apply(key, value));
     }
 
     private ModelCapabilityDeclaration forward(S surface, String key, Object value) {
@@ -272,9 +275,11 @@ public final class ModelCapabilityBindingProbe<S> {
         private Function<? super S, ModelCapabilityDeclaration> forwarding;
         private UnaryOperator<String> operatorKeyPath;
         private String forwardingLocation;
+        private BiFunction<String, Object, ModelCapabilityDeclaration> expectedDeclaration;
 
         private Builder(Supplier<? extends S> newSurface) {
             this.newSurface = Objects.requireNonNull(newSurface, "newSurface");
+            this.expectedDeclaration = DeclarableKeys::expectedDeclaration;
         }
 
         /**
@@ -308,9 +313,24 @@ public final class ModelCapabilityBindingProbe<S> {
         }
 
         /**
+         * @param expectedDeclaration
+         *            what the declaration answers for one key written alone, which is
+         *            {@link DeclarableKeys#expectedDeclaration} unless set. Package-private, like
+         *            {@link DeclarableKeys#namesOf}: the only other answer worth giving is the one a builder with a
+         *            defect gives, which no real key reaches, and this module's own test uses it to drive that refusal
+         *            through the pair check a real run takes.
+         * @return this builder
+         */
+        Builder<S> expectedDeclaration(BiFunction<String, Object, ModelCapabilityDeclaration> expectedDeclaration) {
+            this.expectedDeclaration = expectedDeclaration;
+            return this;
+        }
+
+        /**
          * @return a new {@link ModelCapabilityBindingProbe}
          * @throws NullPointerException
-         *             if the forwarding, the operator key path or the forwarding location was not set
+         *             if the forwarding, the operator key path or the forwarding location was not set, or the expected
+         *             declaration was set to {@code null}
          */
         public ModelCapabilityBindingProbe<S> build() {
             return new ModelCapabilityBindingProbe<>(this);

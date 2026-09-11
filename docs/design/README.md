@@ -115,13 +115,25 @@
 
 ### documentation — 문서 자체를 지키는 장치
 
-이 축은 제품 서브시스템이 아니라 **저장소 문서의 도구**다. §1 의 도메인 축에서 벗어나는 유일한
-자리이며, 그 이유는 `translation-structure-check.md` 의 첫 절에 적혀 있다.
+이 축은 제품 서브시스템이 아니라 **저장소 문서의 도구**다. §1 의 도메인 축에서 벗어나는
+두 자리 중 하나이며(다른 하나는 아래 `testing`), 이 축의 이유는 `translation-structure-check.md` 의 첫 절에 적혀 있다.
 
 | 문서 | 무엇이 있나 |
 |------|------------|
 | [`documentation/translation-structure-check.md`](documentation/translation-structure-check.md) | 정본과 번역본의 구조 일치를 강제하는 검사 — 여섯 축의 처분, 실패/경고를 가르는 쌍의 상태, 예외 표현, 공허 통과가 아님을 보이는 프로브 |
 | [`documentation/backlog-register-check.md`](documentation/backlog-register-check.md) | 백로그 등록부의 중복 ID 와, 항목과 어긋난 표제·색인 건수에 실패하는 검사 — 무엇을 항목과 상태로 읽는가, 번호로 인용되는 등록부의 선언된 읽기, 등록부 간 ID 유일성, 면제 없는 실패, 읽기 규칙을 하나씩 끄는 셀프 테스트 |
+
+### testing — 모듈의 테스트가 무엇 위에서 도는가
+
+이 축도 제품 서브시스템이 아니라 **테스트가 서는 바닥** — 빌드가 모듈의 테스트에 건네는 클래스패스와 테스트킷 —
+이고, 그래서 `features/` 쪽에 마주 보는 이름이 없다. 결정문은 코드 옆(`gradle/libs.versions.toml` 의 `junit`
+노트)에 있고, 이 디렉토리에는 그 결정의 측정과 기각한 대안이 있다 — 빌드 스크립트의 주석에는 대안의 크기를 잰
+표가 들어갈 자리가 없기 때문이다. 이름이 `build` 가 아닌 이유는 하나다: 루트 `.gitignore` 의 `build/` 가 그 이름의
+디렉토리를 어느 깊이에서든 무시하므로, `docs/design/build/` 에 둔 문서는 커밋되지 않는다.
+
+| 문서 | 무엇이 있나 |
+|------|------------|
+| [`testing/test-classpath-shipped-versions.md`](testing/test-classpath-shipped-versions.md) | 테스트 클래스패스가 발행 버전과 어긋난 아홉 자리를 출처별로 맞추거나 받아들인 결정 — `aimon-cli` 의 두 테스트 클래스패스만 런타임과 일관되게 해석하는 이유, 주석 jar 두 출처를 받아들인 근거, 발행되는 메모리 테스트킷의 JUnit 바닥, 크기를 재서 기각한 대안들 |
 
 ### backlog — 아직 결정하지 않은 것
 

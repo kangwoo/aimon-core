@@ -27,6 +27,28 @@ mongodb = "4.11.1"
 aws-sdk = "2.54.12"
 
 # Testing
+# Test classpaths against shipped versions (#99). #91's bar: a module's tests run against the versions the module
+# ships, unless the difference is a recorded choice. Compared on every module (runtimeClasspath against
+# testRuntimeClasspath, 2026-09-11), the differences come from four sources. This block decides three of them, per
+# source; the fourth, JUnit on aimon-memory-testkit, is about the number below and is answered at the end of its note.
+#
+# - spring-boot-starter-test, which aimon.java-conventions gives every module's tests: ALIGNED on aimon-cli, whose
+#   runtimeClasspath is its distribution. It raised logback-classic and logback-core (1.5.13 -> 1.5.34) and
+#   jakarta.xml.bind-api (4.0.4 -> 4.0.5); aimon-cli/build.gradle.kts now resolves both test classpaths
+#   consistently with runtimeClasspath, and says why. NOT DECIDED on three other modules, where the same source
+#   raises jakarta.xml.bind-api (4.0.4 -> 4.0.5) on aimon-scheduling-quartz, jakarta.annotation-api (1.3.5 -> 2.1.1)
+#   on aimon-knowledge-opensearch, and the Logback pair (1.5.13 -> 1.5.34) on aimon-session-testkit, which has no
+#   tests of its own: backlog D-2, docs/backlog/module-dependency-scope.md.
+# - Testcontainers (duct-tape): ACCEPTED. org.jetbrains:annotations 13.0 shipped (kotlin-stdlib, via okhttp), 17.0.0
+#   under test, on aimon-spring-boot-starter, aimon-filesystem-gridfs, aimon-filesystem-s3 and
+#   aimon-session-{mongodb,postgres,redis}. Both jars are CLASS-retention annotations and constant holders — nothing a
+#   test run loads — and no source here names them. Aligning would push Testcontainers below the version it asks for
+#   on six docker tiers to equalise a number nothing observes.
+# - The provider SDKs on aimon-spring-boot-starter's test classpath: ACCEPTED. error_prone_annotations 2.21.1 shipped
+#   (Caffeine, via aimon-session-routing), 2.33.0 under test (anthropic-java and openai-java both ask for it). An
+#   annotations jar no source here names; and the starter keeps both SDKs compileOnly so the application adds one,
+#   which then resolves 2.33.0 itself — the test classpath is that application's.
+#
 # JUnit carries no version on a module that only tests against it, on purpose: such a module gets
 # spring-boot-starter-test (aimon.java-conventions), which brings org.junit:junit-bom onto its *test*
 # configurations, and a number written here would be a dead letter reading like the truth.
@@ -42,17 +64,26 @@ aws-sdk = "2.54.12"
 # dependency management (~1,400 coordinates), and a platform constraint raises any version it names that the
 # consumer resolves lower. Published, that cost leaves the build — sixteen coordinates moved for a consumer
 # on Boot 3.4.0, which is why aimon-memory-testkit switched first. Unpublished, it stays inside the build,
-# where nothing shows it: the other three took Spring Boot's platform until #91, and twenty artifacts on six
-# of their seven consumers ran under test at a version the consumer does not ship (measured 2026-09-10) —
+# where nothing shows it: the other three took Spring Boot's platform until #91, and it had moved twenty-one
+# artifacts on six of their seven consumers to a version the consumer does not ship (measured 2026-09-10) —
 # among them HikariCP 6.3.3 against the 5.1.0 aimon-cli and aimon-session-postgres ship, and the MongoDB
-# driver 5.5.2 against the 4.11.1 aimon-filesystem-gridfs and aimon-session-mongodb ship. junit-bom costs the
-# consumer JUnit's coordinates, which is what a JUnit contract suite may fairly ask for.
+# driver 5.5.2 against the 4.11.1 aimon-filesystem-gridfs and aimon-session-mongodb ship. Twenty of those
+# differences went away with it; the twenty-first, the starter's error_prone_annotations, fell from 2.49.0 to
+# the 2.33.0 its provider SDKs ask for, and still differs (recounted for #99; the block above records it).
+# junit-bom costs the consumer JUnit's coordinates, which is what a JUnit contract suite may fairly ask for.
 #
 # So the number below is not the version this build's tests run on: whatever newer JUnit the other test
 # libraries on a classpath ask for wins by conflict resolution (5.13.4 or 5.14.4 today). It is the floor the
 # testkits set, and the constraint aimon-memory-testkit publishes. Keep it equal to the JUnit that
 # `spring-boot` above resolves to (today 5.12.2, checked 2026-09-10); if Spring Boot moves ahead the
 # constraint merely lags, and the newer JUnit wins over it by normal conflict resolution.
+# For aimon-memory-testkit that floor is the answer rather than a lag (#99). The suite compiles against 5.12.2,
+# and what it publishes — junit-bom 5.12.2 as a platform in the module metadata, an import in the POM — says
+# exactly that: the lowest JUnit it links against. Where it runs, a consumer's newer JUnit wins over it
+# (aimon-core's tests run it on 5.14.4, which archunit-junit5 asks for). Its own testRuntimeClasspath resolves
+# 5.13.4, which mockito-junit-jupiter 5.23.0 from the conventions plugin's test dependencies asks for, but the
+# module has no test sources, so no test runs there — and raising the published floor to match would move a
+# consumer's JUnit for a classpath that executes nothing. Not verified: no run executes the suite on exactly 5.12.2.
 junit = "5.12.2"
 assertj = "3.27.7"
 mockito = "5.23.0"
