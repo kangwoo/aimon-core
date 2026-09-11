@@ -7,6 +7,31 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Docs CI: the backlog check stops counting a commented-out item, and fails on item headings it used to skip
+
+- **A heading inside an HTML comment block is no longer read** (#102). The block does not render, so the
+  item is not on the page, and the check counted it anyway: a register whose title matched its visible items
+  failed with `… but the items read N+1`, and so did its index row.
+
+- **An ID heading written behind indentation, a `>` or a list marker now fails as `unread-heading`**
+  (`   ## CE-3 — …`, `> ## CE-3 — …`, `- ## CE-3 — …`). GitHub shows each as a heading, but the check skipped
+  them without a word, which inverted the verdict: a register whose title counted such an item failed with a
+  count that disagreed with the page, and one whose title did not count it passed. Move the heading to the
+  start of the line. A state record written that way inside an item's section (`   ### 닫힘 (…)`) fails the
+  same way. Indentation of any width counts, so an item-heading example in a four-space indented code block
+  fails too; examples belong in a fence. No register on `main` is written like this, so none changes verdict.
+
+- **Named, not read:** a setext heading and a raw HTML `<h2>`, in the docstring's BLIND SPOT and in
+  `docs/backlog/README.md`. The self-test pins both, so reading either later means changing the docstring too.
+
+- **Prose that went stale with #88's check.** `CONTRIBUTING.md` and `.ko.md` describe the fourth doc check,
+  where it runs and in which order. `docs/backlog/README.md` stops calling `결정됨` a kind of 열림 — B-10 is
+  decided, closed and counted 닫힘 — and records that `접힘` gets no index column and that section subtotals
+  are not checked. `anthropic-thinking-config-surface.md` quotes B-21's heading as it reads now. The check's
+  design document is trimmed to `docs/design/README.md`'s rules (decisions, rejected alternatives and
+  don'ts; no test plan, no line numbers) and states the order the workflow runs: the check, then
+  `--self-test`.
+
 ### CLI: startup says so when the agent's model belongs to the other provider
 
 - **Switching `llm.provider` left the agent on the other vendor's model, and nothing said so** (#92). The
