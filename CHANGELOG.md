@@ -7,6 +7,30 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Docs CI: the two doc checks write down where they read headings differently, and the link check pins its side
+
+- **Where the link check and the backlog check read a heading differently is written down** (#121), in
+  `docs_tree.anchors_of`'s docstring, with the reason each is left. A heading inside an HTML comment block gets an
+  anchor, so a link into one passes and lands at the top of the page. A heading behind one to three spaces, `>` or
+  a list marker gets none, so a correct link to one fails, and the backlog check reports it as `unread-heading`. A
+  heading after a `<!--` that `unfence` exposes inside a fence it pairs differently from the page is anchored, as
+  the page shows it, and the backlog check hides it. That last edge is why the backlog check's comment reading is
+  not taken into `anchors_of`: the link check would start failing correct links to headings the page shows.
+- **`check-doc-links.py --self-test`**, run by the `docs-links` job after the check, pins the link check's side of
+  each difference that docstring names, and of a `<details>` block. The backlog check's `--self-test` gains the
+  cases for its side: the mis-paired fence, a `<details>` block with no blank line, and the fence and comment
+  shapes SHARP EDGES now describes.
+- **Decision 6 names the raw HTML blocks the backlog check does not follow**: every kind in CommonMark 0.31.2 §4.6
+  but the comment. A heading inside `<details>` with no blank line after the opening tags is counted though the
+  page shows no heading. `docs/backlog/README.md` tells authors, and its rule seven now names every displaced
+  heading that fails: an ID heading, a numbered `## N.` and a state record.
+- **Wording.** SHARP EDGES says which fences and comments are recognised in a list item's continuation.
+  `CONTRIBUTING.md` and `.ko.md` say "the anchor failure" where "the second" counted failures, not checks. The
+  translation glossary counts four backlog words and defines `접힘` as the backlog README does. `features.md` and
+  `.en.md` link the feature-guide index's `README` instead of its directory, which mkdocs left unresolved.
+- **Registered:** backlog `T-5` (a link to a directory passes the link check, and mkdocs leaves it unresolved) and
+  `T-6` (YAML front matter is read as text, so a `#` line in it becomes an anchor).
+
 ### Docs: a design record committed as its approved text keeps its test strategy and line citations
 
 - **`docs/design/README.md` §3.4 exempts such a record from part of §3** (#122). The exemption covers a record

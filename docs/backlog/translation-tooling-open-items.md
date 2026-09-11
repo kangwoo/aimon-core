@@ -1,4 +1,4 @@
-# 번역 도구 — 등록 항목 5건 (열림 4 · 닫힘 1)
+# 번역 도구 — 등록 항목 7건 (열림 6 · 닫힘 1)
 
 출처는 2026-09-06 의 작업이다. **번역 낡음 가드가 32건 중 19건에 대해 아무 답도 못 하고 있었고**,
 그 19건의 `source_commit` 이 전부 오픈소스 전환 스쿼시(`eec9ccd`) 이전의 SHA 였다. 고친 것은
@@ -177,6 +177,52 @@ exit 1 이고 `stale` 은 그대로 exit 0 이다.
   시작하고, 그 목록은 아무도 다시 읽지 않는 표가 된다
 - **설계 기록을 더하는 PR 의 리뷰가 표지를 되묻는 일이 또 생길 때.** 이 규칙이 생기기 전에 세 리뷰가 그 자리를
   지나갔다. 규칙이 생긴 뒤에도 사람이 같은 확인을 하고 있다면 이 항목을 착수할 때다
+
+---
+
+## 1.3 두 검사의 제목 읽기를 적으며 본 것 (#121)
+
+링크 검사와 백로그 검사가 제목을 다르게 읽는 자리를 `scripts/docs_tree.py` 에 적으면서(#121) 그 일의 범위 밖에서
+본 것이다. 둘 다 `check-doc-links.py` 가 무엇을 받아들이는가의 빈자리라, 문서 검사를 다루는 이 등록부에 둔다.
+
+### T-5 — 링크 검사는 디렉토리를 가리키는 링크를 받아들이는데, 사이트는 그 링크를 풀지 못한다 · **열림**
+
+**무엇** — 사이트에 빌드되는 디렉토리를 가리키는 링크에 `check-doc-links.py` 가 실패할지, 그런 링크를 그 디렉토리의
+`README.md` 로 옮길지 정한다.
+
+**왜 — 관측 가능한 결과** 검사는 대상 경로가 있는지만 본다(`dest.exists()`). 디렉토리도 있으므로 통과한다.
+GitHub 에서는 디렉토리 링크가 트리 화면을 열고, `docs/` 밖이나 `exclude_docs` 로 뺀 디렉토리를 가리키는 링크는
+사이트 훅(`scripts/mkdocs_github_links.py`)이 GitHub URL 로 바꾼다 — 둘은 어느 쪽에서도 열린다. 남는 것은 **사이트에
+빌드되는 디렉토리**를 가리키는 링크다. mkdocs 는 `unrecognized relative link … left as is` 를 INFO 로 찍고 `href`
+를 그대로 두며, `mkdocs build --strict` 는 초록이다. 빌드된 사이트에서 `overview/features/` 의 `../design/` 은
+빌드되지 않은 `overview/design/` 을, `features/` 의 `tool/` 은 `index.html` 이 없는 디렉토리를 가리킨다.
+
+**어디** *(2026-09-11, `895ed2d` 위에 #121 을 얹은 트리)* — `scripts/check-doc-links.py` 의 `main()`, `dest.exists()`.
+저장소 전체에서 디렉토리를 가리키는 링크는 16개 파일에 72개이고 검사는 전부 받아들인다. 그중 사이트가 풀지 못하는
+것은 7개 파일의 41개로, `mkdocs build --strict` 가 INFO 46줄을 찍는다 — `docs/design/README.md` 는 두 로케일로
+빌드되어 그 파일의 다섯 개가 두 번씩 나온다. 파일별로는 `docs/features/README.md` 와 `.en.md` 가 13개씩,
+`docs/design/README.md` 5개, `docs/overview/features.md` 와 `.en.md` 가 4개씩, `docs/overview/architecture.md` 와
+`.en.md` 가 1개씩이다. #121 이 `features.md` 와 `features.en.md` 의 `../features/` 둘을 `README` 로 옮기기 전에는
+48줄이었다.
+
+**언제 다시 볼까** — `check-doc-links.py` 를 고칠 때. 고치는 사람은 `dest.exists()` 를 지나간다. 또는 사이트에서
+디렉토리 링크가 열리지 않는다는 보고가 올 때.
+
+### T-6 — YAML 프론트매터를 본문으로 읽어, 그 안의 `#` 줄이 앵커가 된다 · **열림**
+
+**무엇** — `docs_tree.anchors_of` 가 파일 맨 위의 `---` 블록(YAML 프론트매터)을 비우고 제목을 읽을지 정한다.
+
+**왜 — 관측 가능한 결과** `anchors_of` 는 프론트매터를 본문과 똑같이 읽는다. 그래서 그 안에서 줄 맨 앞의 `# ` 로
+시작하는 YAML 주석이 ATX 제목으로 읽혀 앵커가 되고, 그 앵커를 가리키는 링크는 검사를 통과한다. 페이지에는 그런
+제목이 없다. **오늘 그 앵커를 가리키는 링크는 없다** — 결함이 아니라 관측이다(규칙 여섯). 고칠 선례는 트리 안에
+있다 — `check-translation-structure.py` 는 비교하기 전에 `FRONT_MATTER` 를 떼어 낸다.
+
+**어디** *(2026-09-11)* — `scripts/docs_tree.py` 의 `anchors_of`. 줄 맨 앞의 `#` 줄 17개가 8개 파일에서 앵커가
+된다. 여덟 파일 모두 `modules/aimon-cli/src/main/resources/agents/**` 의 `agent.md` 와 `agents/explore.md` 이고
+사이트에 빌드되지 않는다. 들여 쓴 `#` 줄 11개는 제목으로 읽히지 않는다.
+
+**언제 다시 볼까** — `anchors_of` 를 고칠 때, 또는 `docs/` 아래 문서의 프론트매터에 `#` 주석이 처음 생길 때. 그
+앵커를 가리키는 링크가 생기는 것은 트리거가 될 수 없다 — 그 링크를 알리는 장치가 없다는 것이 이 항목이다.
 
 ---
 
