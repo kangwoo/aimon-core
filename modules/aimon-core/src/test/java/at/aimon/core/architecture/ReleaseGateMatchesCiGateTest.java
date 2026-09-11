@@ -114,8 +114,9 @@ import org.junit.jupiter.api.io.TempDir;
  * {@code aimon-llm-*} tree this census walks, so widening the census means widening that declaration — and a change
  * to them re-runs this module's whole {@code test} task, not only this class. The tag scan's sources are not: they are
  * every test source in the repository, and declaring them would re-run this module's suite after a test edit in any
- * module. So a local build that changes only another module's {@code @Tag}s can report this test {@code UP-TO-DATE};
- * CI builds from a fresh checkout and does not.
+ * module. So a local build that changes only the {@code @Tag}s of another module whose test sources are not inputs —
+ * one outside {@code modules/aimon-llm-*}, or a sample — can report this test {@code UP-TO-DATE}; CI builds from a
+ * fresh checkout and does not.
  *
  * <p>
  * Shell and YAML rather than bytecode is why this is plain JUnit and not ArchUnit, following the precedent set by
@@ -519,7 +520,8 @@ class ReleaseGateMatchesCiGateTest {
                 .withFailMessage("found no @EnabledIfEnvironmentVariable under modules/%s*/src/test — the scan "
                         + "is broken, not clean", PROVIDER_MODULE_PREFIX)
                 .isNotEmpty();
-        assertThat(gated).withFailMessage("the provider modules' tests are gated on %s, but %s refuses %s.%n"
+        assertThat(gated).withFailMessage("the provider modules' tests are gated on %s, but the keys the refusal cases "
+                + "run %s with are %s (PROVIDER_KEY_VARIABLES).%n"
                 + "If a gated variable is a provider key: add it to PROVIDER_KEY_VARIABLES in this test, make %s "
                 + "refuse it, and add its classes to CONTRIBUTING.md's live-API table. The refusal cases fail until "
                 + "the script refuses it.%n"
