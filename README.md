@@ -174,7 +174,7 @@ llm:
   provider: "openai"          # "anthropic" also changes baseUrl and agent.name (CLI guide, docs/getting-started)
   baseUrl: "https://api.openai.com/v1"
   apiKey: "${OPENAI_KEY}"     # ${ENV} interpolation supported
-  model: "gpt-4o-mini"
+  model: "gpt-5.1"
   timeout: 60
 
 agent:

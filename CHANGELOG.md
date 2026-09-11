@@ -7,6 +7,47 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### CLI: subagents and memory run on a model the provider serves, and the banner shows what runs
+
+- **The bundled `explore` subagents no longer send `haiku`** (#104). `default-anthropic`, `default-openai` and
+  `ops-agent` named `model: haiku`, which nothing resolves to a model id and which the Anthropic Messages API answered
+  with HTTP 404 on 2026-09-10. They now name no model and run on their main agent's (`claude-sonnet-4-5`, `gpt-5.1`,
+  `gpt-5.1`), so `agent.name` is the one switch for a whole bundle. `default`'s `explore` still names `gpt-5.1`.
+  **The "cheaper, faster" `explore` goes with it**: a user who wants one writes `.aimon/agents/explore.md` with a
+  full model id, which #92's startup check covers.
+
+- **`aimon-core`: `SubagentLlmDefaults.resolveModel` no longer invents `gpt-4`** (#104). When the Task tool's
+  override, the subagent's `model` and the parent model's name are all absent, the resolved `LlmModel` now carries no
+  name, and the client sends its own default model — as it already does for a main agent whose definition names none.
+  Code that reads the resolved model's name (`SubagentBehaviorSupport.resolvedModel()`, for one) can now find it empty.
+
+- **The Task tool's `model` parameter names no models** (#104). Its description suggested `sonnet`, `gpt-4.1` and
+  `gpt-4.1-nano` whatever the provider, and an override wins over everything else. It now says the value is a model
+  id sent exactly as written, with no alias resolved, and to leave it out unless given one. The input schema is
+  otherwise unchanged.
+
+- **`provider: anthropic` with `memory` on and no `llm.model` now starts** (#105). It used to exit with
+  `Unexpected error: llmModelName cannot be null`. The memory components — the dialectic engine, deriver, reconciler,
+  and the dreamer with its LLM judge — now receive one name: `llm.model` when it is set, otherwise the client's default
+  model. That is a model the user did not write, so startup says so in one line, on the terminal and in
+  `~/.aimon/logs/aimon.log`. A client with no default model of its own fails with a `ConfigurationException` that
+  names `llm.model`.
+
+- **The startup banner shows what runs** (#106). The parenthesis in `LLM Provider: <provider> (<model>)` is now the
+  model the main agent's requests carry — the definition's `model.name`, or the client's default when it names none —
+  instead of `llm.model`; as shipped it read `gpt-5.1` while requests carried `gpt-5.6-terra`. A new
+  `Agent bundle: <agent.name> (agent name: <definition name>)` line says which bundle loaded, because `default`,
+  `default-openai` and `default-anthropic` share the definition name `default-agent`, and with it the prompt and the
+  runtime id. **No bundle was renamed: the prompt and `AgentRuntimeId` are unchanged.**
+
+- **Documentation** (#106, #107). `README.md`'s Configuration sample shows `model: "gpt-5.1"`, matching
+  `default-config.yaml`; the CLI guide's thinking example writes the Anthropic key as `${ANTHROPIC_KEY}`, as the rest
+  of the page does (ko + en); the #92 design record's Status link resolves on both locales. **This entry supersedes
+  three sentences of #92's entry below**: that the banner prints `llm.model`, that `memory` needs `llm.model` under
+  anthropic, and that `default-anthropic`'s `explore` names `haiku`. Backlog `L-17` to `L-21` are closed, and the
+  unmeasured default model memory can now fall back to is registered as `L-24`; the design is
+  `docs/design/llm/model-names-sent-and-shown.md`.
+
 ### CLI: startup says so when the agent's model belongs to the other provider
 
 - **Switching `llm.provider` left the agent on the other vendor's model, and nothing said so** (#92). The

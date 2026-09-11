@@ -273,9 +273,10 @@ agent:
   name: default-anthropic
 ```
 
-`default-anthropic` 의 `explore` 서브에이전트는 `model: haiku` 를 적고 있고 이 이름은 별칭 해석 없이 그대로
-전송되는데, Anthropic Messages API 는 2026-09-10 에 `haiku` 에 HTTP 404 `not_found_error` 를 돌려주었다(백로그
-L-17).
+번들의 `explore` 서브에이전트는 모델을 적지 않고 메인 에이전트의 모델로 돈다 — `default-anthropic` 에서는
+`claude-sonnet-4-5` 다(모델을 적는 것은 `default` 의 `explore` 뿐이고, 그것은 `gpt-5.1` 이다). 모델을 적지 않은
+서브에이전트는 메인 에이전트가 도는 모델로 돌고, 메인 에이전트의 정의도 모델을 적지 않았다면 클라이언트의 기본
+모델 — `llm.model` — 로 돈다.
 
 함께 바꾸는 키는 다섯이다.
 
@@ -286,16 +287,17 @@ L-17).
 - `agent.name`
 
 `llm.model` 이 여전히 닿는 곳은 peer memory(dialectic 엔진 · deriver · reconciler, 그리고
-`memory.dreamer.scorer.llm.model` 이 없으면 dreamer 와 그 LLM 판정기), 위키 페이지 생성, 그리고 시작 배너가
-`LLM Provider: <provider> (<model>)` 로 찍는 이름이다 — **배너의 괄호 안은 에이전트의 모델이 아니라 `llm.model`
-이다.** `model.name` 이 없는 정의는 이 값으로 돈다. anthropic 에서는 생략할 수 있고 그러면 배너에 클라이언트
-기본값 `claude-sonnet-4-20250514` 가 나오지만, `memory` 를 켰다면 이 값이 없을 때 기동이 실패한다.
+`memory.dreamer.scorer.llm.model` 이 없으면 dreamer 와 그 LLM 판정기)와 위키 페이지 생성이다. `model.name` 이 없는
+정의는 이 값으로 돈다. anthropic 에서는 생략할 수 있다 — 그러면 메모리와 위키 생성이 Anthropic 클라이언트의 기본
+모델로 돌고, `memory` 를 켰다면 기동할 때 그 모델 이름을 한 줄로 알린다. 시작 배너의 `Agent bundle:` 줄은 불러온
+번들을, `LLM Provider: <provider> (<model>)` 의 괄호 안은 메인 에이전트의 요청이 싣는 모델을 보여 준다 —
+서브에이전트가 따로 적은 모델은 보여 주지 않는다.
 
 불러온 정의가 다른 벤더의 모델을 적고 있으면 시작할 때 **경고한다 — 기동을 멈추지는 않는다.** 배포된 `default`
 에이전트라면 `provider: anthropic` 에서 `baseUrl` 이 없거나, Anthropic 의 호스트이거나, 배포된 파일에서 남은
 OpenAI 의 호스트일 때 뜬다. 그 밖의 `baseUrl` 뒤에서는 조용하고, 어느 벤더도 제 것이라 하지 않는 이름에도
-조용하다 — 위의 `haiku` 도 여기에 든다. 경고는 배너보다 먼저 터미널에 찍히고 `~/.aimon/logs/aimon.log` 에도
-남는다. 줄마다 정의의 키(메인 에이전트는 `model.name`, 서브에이전트는 `model`)와 그것을 읽은 자리를 적는다 —
+조용하다 — 게이트웨이가 자기 배포에 붙인 이름 같은 것이다. 경고는 배너보다 먼저 터미널에 찍히고
+`~/.aimon/logs/aimon.log` 에도 남는다. 줄마다 정의의 키(메인 에이전트는 `model.name`, 서브에이전트는 `model`)와 그것을 읽은 자리를 적는다 —
 번들 파일은 `classpath` 로, 사용자 서브에이전트는 CLI 작업 디렉토리 아래의 절대 경로로. 그 디렉토리는 jar 가
 있는 디렉토리이고 jar 로 돌리지 않으면 `user.dir` 이며(`./gradlew :aimon-cli:run` 에서는 `modules/aimon-cli`),
 배너의 `Working Directory:` 줄이 그 값이다. 처방은 무언가를 실제로 바꾸는 것만 내놓는다.
@@ -425,7 +427,7 @@ modelCapabilities:
 ```yaml
 llm:
   provider: anthropic
-  apiKey: "${ANTHROPIC_API_KEY}"
+  apiKey: "${ANTHROPIC_KEY}"
   model: claude-sonnet-5
   anthropic:
     thinkingMode: auto

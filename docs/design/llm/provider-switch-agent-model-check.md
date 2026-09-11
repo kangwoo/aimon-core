@@ -2,11 +2,13 @@
 
 > Status: **IMPLEMENTED** — `aimon-cli` (`at.aimon.cli.factory.AgentModelProviderCheck` and the
 > `AgentSetupFactory.reportAgentModelMismatch` seam), the comments in `default-config.yaml`, and the CLI guide's
-> [provider-switch passage](../../getting-started/aimon-core-integration-via-cli-reference.md#provider-를-바꿀-때--agentname-도-함께-바꾼다).
+> provider-switch passage — §4.1 *provider 를 바꿀 때 — `agent.name` 도 함께 바꾼다* in
+> [`aimon-core-integration-via-cli-reference.md`](../../getting-started/aimon-core-integration-via-cli-reference.md).
 > Source: issue [#92](https://github.com/kangwoo/aimon-core/issues/92).
 >
 > **[§10](#10-after-the-build--departures-corrections-and-what-went-to-the-backlog), appended after the build, is
-> where this document departs from what was built.** Everything between this header and §10 is the body as approved
+> where this document departs from what was built, and [§11](#11-after-104107), appended after #104–#107, is what
+> those four follow-up issues changed.** Everything between this header and §10 is the body as approved
 > in design review round 3, kept byte-exact rather than corrected — the house habit in this directory, for the
 > reason `model-capability-binding-round-trip.md` gives. Its file:line citations and counts are at `main` `a1236c8`.
 > The review transcripts it cites (`review-1.md`, `review-2.md`, `rebuttal-1.md`) and the run records it names
@@ -14,7 +16,7 @@
 > measurements.
 >
 > What this work left open is in [`../../backlog/llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md),
-> L-17 ~ L-21.
+> L-17 ~ L-21, closed by #104–#107 (§11).
 
 Run `cli-provider-agent-switch`, base `main` at **`a1236c8`**. Scope is fixed by `TASK.md`: **option 1 (say it
 where the switch is made) + option 2 (warn at startup, never refuse)**, not option 3.
@@ -1113,3 +1115,75 @@ each:
 | The bundle registry's look-up hands back a copy of each instance — what F1 guards | F1, F2, and D's "the shipped default under anthropic names the main agent and its explore subagent" (3 of 77) |
 | `agent.name` is offered even when it already names the provider's bundle | C6 (1 of 77) |
 | None (control) | None — 77 of 77 green |
+
+---
+
+## 11. After #104–#107
+
+*Appended 2026-09-11. Issues #104–#107 closed the five findings §10.3 sent to the backlog, and took #107's review
+notes on this check. Their design is [`model-names-sent-and-shown.md`](model-names-sent-and-shown.md); the D-1 … D-5
+below are that document's decisions, not this one's D-findings. Everything above, §10 included, is left as it was.*
+
+### 11.1 Which finding each issue closed
+
+| §8 finding | Closed by | Decision taken in `model-names-sent-and-shown.md` |
+|---|---|---|
+| D1 — three bundles share `name: default-agent` | #106, L-21 | D-5: the banner shows the configured `agent.name` (`Agent bundle: default-anthropic (agent name: default-agent)`). No `agent.md` is renamed, so the prompt and `AgentRuntimeId` are unchanged |
+| D2 — the bundled `explore` subagents send `haiku` | #104, L-17 | D-2: `model:` is removed from the three `explore.md`, and each inherits its main agent's model |
+| D4 — `gpt-4` for a model-less subagent under a nameless definition | #104, L-20 | D-1: `SubagentLlmDefaults.resolveModel` leaves the model nameless, and the client sends its own default model |
+| D5 — the `Task` tool's `model` description | #104, L-20 | D-3: the description names no models and says the value is sent as written |
+| D9 — `memory` under anthropic without `llm.model` | #105, L-18 | D-1: memory runs on `llm.model`, else on the client's default model with one startup line saying so; a client with no default model is refused with a `ConfigurationException` naming `llm.model` |
+| D10 — the banner prints `llm.model` | #106, L-19 | D-4: the parenthesis is the model the main agent's requests carry |
+| D11 — `README.md` shows `model: "gpt-4o-mini"` | #106 | README's sample reads `model: "gpt-5.1"`, as `default-config.yaml` does |
+
+D3, D6, D7, D8 and D12 stay where §10.3 left them.
+
+### 11.2 What in this document no longer holds
+
+- **§10.1 DV-6 is reversed.** `AgentSetupFactory.DEFAULT_AGENT_BUNDLE_BASE_PATH` is `private` again, and
+  `AgentModelProviderCheck.warning` receives the bundle base path from its caller (#107 item 4). The printed classpath
+  root is still the one the loader reads; the check no longer reaches back into the class that calls it.
+- **The `haiku` caveat** of §4.3 and §4.4 item 3 is gone from `default-config.yaml`'s `agent.name` comment and from the
+  guide, because no shipped bundle names `haiku` any more. `default-anthropic` is now the clean switch that S-switch
+  (§3.4) names.
+- **The `llm.model` sentences** of §4.3 and §4.4 item 5 no longer say that the banner shows `llm.model`, or that
+  `memory` needs it under anthropic.
+- **§3.2 "What is not checked"** says model-less subagents under a definition without `model.name` fall back to `gpt-4`
+  (D4). They now run on the client's default model, which under the CLI is `llm.model`, as their main agent does.
+- **§6 F runs F1, F2 and F4 on `default`.** `default-anthropic`'s `explore` names no model now, so it is not an entry
+  and cannot carry the identity guard; `default`'s `explore` still names `gpt-5.1`. F3 still shadows
+  `default-anthropic`'s `explore`. **F5 compares files, not strings** (#107 item 2): it captures the printed path from
+  the entry line and asserts `Files.isSameFile` against the file the test wrote.
+- **§6 E's last paragraph** says nothing at the call site is left to test. That was true of the arguments, not of the
+  call itself (#107 item 1): `AgentSetupFactoryCreateTest` now goes through `create()` and fails when the
+  `reportAgentModelMismatch` call is removed.
+- **The Status header's guide link** carried the Korean guide's fragment, which has no target on the `/en/` site. It now
+  links the guide by file and names the passage in its text (#107 item 3).
+
+### 11.3 What was measured
+
+**The call through `create()`**, 2026-09-11. With the `reportAgentModelMismatch(...)` statement deleted from
+`decorate()`, `./gradlew :aimon-cli:test --rerun --tests '*.AgentSetupFactoryCreateTest'` exited 1, with
+`#107: the startup model check runs inside create(), …` red (1 of 2 tests). With the file restored byte-for-byte
+(checked with `cmp`), the same command exited 0 (2 of 2).
+
+**§10.4's D9 reproduction now starts.** 2026-09-11, `./gradlew :aimon-cli:run` with `provider: anthropic`, a
+placeholder key, no `llm.model`, `agent.name: default-anthropic`, `memory` on the in-memory backend, and
+`cli.colorOutput: false`. No input was given and no request was sent. The ASCII-art banner, the tool counts and the
+JLine notice are left out, and the working directory is abbreviated:
+
+```text
+Peer memory: `llm.model` is not set, so memory runs on the Anthropic client's default model `claude-sonnet-4-20250514`. Set `llm.model` to choose another.
+Peer memory enabled (in-memory backend, non-durable): workspace=ws-probe peer=peer-probe
+Aimon CLI - Interactive AI Agent
+Type '/help' for commands, '/quit' to exit
+Working Directory: <worktree>/modules/aimon-cli
+Agent bundle: default-anthropic (agent name: default-agent)
+LLM Provider: Anthropic (claude-sonnet-4-5)
+default-agent> Goodbye!
+```
+
+The process exited 0. **§10.4's acceptance case** (`provider: anthropic`, `model: claude-sonnet-4-5`,
+`agent.name: default`) printed the same warning as §10.4, and then `Agent bundle: default (agent name: default-agent)`
+and `LLM Provider: Anthropic (gpt-5.6-terra)` — the model the warning is about, where §10.4's banner showed
+`claude-sonnet-4-5`.

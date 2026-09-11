@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/aimon-core-integration-via-cli-reference.md
-source_commit: 6c53cfe
+source_commit: 4f677a6
 ---
 
 # aimon-core integration guide — following aimon-cli as the reference
@@ -282,9 +282,10 @@ agent:
   name: default-anthropic
 ```
 
-`default-anthropic`'s `explore` subagent names `model: haiku`, and that name is sent as written, with no alias
-resolution; the Anthropic Messages API answered `haiku` with HTTP 404 `not_found_error` on 2026-09-10 (backlog
-L-17).
+The bundles' `explore` subagents name no model and run on their main agent's — `claude-sonnet-4-5` in
+`default-anthropic` (the only `explore` that names one is `default`'s, and it names `gpt-5.1`). A subagent that
+names no model runs on what the main agent runs on, and when the main agent's definition names none either, on the
+client's default model — `llm.model`.
 
 Five keys change together:
 
@@ -295,16 +296,17 @@ Five keys change together:
 - `agent.name`
 
 `llm.model` still reaches peer memory (the dialectic engine, deriver and reconciler, plus the dreamer and its LLM
-judge unless `memory.dreamer.scorer.llm.model` is set), wiki page generation, and the name the startup banner
-prints in `LLM Provider: <provider> (<model>)` — **the name in the banner's parentheses is `llm.model`, not the
-agent's model.** A definition without `model.name` runs on it. Under anthropic it may be left out, and the banner
-then shows the client default `claude-sonnet-4-20250514`, but with `memory` enabled, startup fails without it.
+judge unless `memory.dreamer.scorer.llm.model` is set) and wiki page generation. A definition without `model.name`
+runs on it. Under anthropic it may be left out — memory and wiki generation then run on the Anthropic client's
+default model, and with `memory` enabled, startup prints one line naming that model. In the startup banner, the
+`Agent bundle:` line names the bundle that loaded, and the parentheses in `LLM Provider: <provider> (<model>)` are
+the model the main agent's requests carry — a subagent's own model is not shown.
 
 When a loaded definition names the other vendor's models, startup **warns — it never stops.** For the shipped
 `default` agent under `provider: anthropic`, that happens when `baseUrl` is absent, on Anthropic's host, or still
 on OpenAI's host from the shipped file. Behind any other `baseUrl` it is silent, and so it is on names neither
-vendor claims — including that `haiku`. The warning prints on the terminal before the banner and goes to
-`~/.aimon/logs/aimon.log`. Each line names the definition's key (`model.name` for the main agent, `model` for a
+vendor claims, such as a gateway's own deployment name. The warning prints on the terminal before the banner
+and goes to `~/.aimon/logs/aimon.log`. Each line names the definition's key (`model.name` for the main agent, `model` for a
 subagent) and where it was read: a bundle file as `classpath`, a user subagent as its absolute path under the
 CLI's working directory. That directory is the jar's directory, or `user.dir` when not running from a jar
 (`modules/aimon-cli` under `./gradlew :aimon-cli:run`), and it is the banner's `Working Directory:` line. It
@@ -444,7 +446,7 @@ dialect, setting a budget, turning replay off.
 ```yaml
 llm:
   provider: anthropic
-  apiKey: "${ANTHROPIC_API_KEY}"
+  apiKey: "${ANTHROPIC_KEY}"
   model: claude-sonnet-5
   anthropic:
     thinkingMode: auto
