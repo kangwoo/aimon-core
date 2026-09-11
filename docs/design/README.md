@@ -97,6 +97,7 @@
 | [`thinking-reporting-and-dialect-records.md`](llm/thinking-reporting-and-dialect-records.md) | thinking 경로가 운영자에게 무엇을 말하는가 — 조립 중에는 아무것도 보고하지 않는 계약과 로거 없는 resolver, `UNKNOWN` 이 하던 두 일을 쪼갠 네 번째 방언 상수, 방언 census 의 원자료 |
 | [`provider-key-release-gate.md`](llm/provider-key-release-gate.md) | export 된 프로바이더 키가 평범한 빌드를 청구되는 라이브 API 실행으로 바꾸는 문제 — 키를 명령 앞에 붙이는 퀵스타트, 키가 환경에 있으면 시작하지 않는 릴리스 스크립트(unset 이 아니라 거부인 이유), 스크립트를 읽지 않고 샌드박스에서 돌려 순서까지 붙드는 테스트, 거부 목록을 프로바이더 모듈의 키 게이트와 대조하는 인구조사 |
 | [`provider-key-census-claim-and-inputs.md`](llm/provider-key-census-claim-and-inputs.md) | 그 거부 뒤에 남은 두 결정과 기록 정정 — 테스트가 붙드는 것이 거부 목록과 게이트의 같음이 아니라 포함이어서 문장을 "적어도" 로 고친 이유(같음을 붙들면 `LA-2` 를 테스트가 정하게 된다), 인구조사가 읽는 프로바이더 모듈 테스트 소스를 `aimon-core` 의 `test` 입력으로 선언하고 태그 스캔은 선언하지 않은 이유와 그 비용 |
+| [`release-gate-docs-and-skill-input.md`](llm/release-gate-docs-and-skill-input.md) | 그 선언 뒤에 남은 여섯 가지 — 두 가드가 읽는 `/release` 스킬을 `aimon-core` 의 `test` 입력으로 선언한 이유(스킬만 고친 로컬 빌드는 두 가드를 돌리지 않았다)와 그 비용, 게이트를 `checkAll` 하나로 적던 퍼블리싱 가이드의 행, 틀린 기록을 대체하지 않고 제자리에서 고치는 기준(그 문장이 쓰일 때부터 틀렸는가, 뒤의 변경이 사실을 바꿨는가) |
 
 ### 상태를 갖는 서브시스템
 
