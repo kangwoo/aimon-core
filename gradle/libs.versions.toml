@@ -24,7 +24,7 @@ spring-dependency-management = "1.1.7"
 
 # Libraries
 lombok = "1.18.48"
-mapstruct = "1.5.5.Final"
+mapstruct = "1.6.3"
 
 # Database
 postgresql = "42.7.13"
