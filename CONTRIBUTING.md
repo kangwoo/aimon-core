@@ -92,11 +92,13 @@ key, and redact it from any failure output you paste into an issue or a pull req
 
 **The gate works in the other direction too, and that is why the command above scopes the keys to
 itself.** The environment variable is the only thing keeping these classes out of an ordinary build: they
-carry no tag, and the default `test` task excludes only `docker` and `packaging`. So while a key is
-exported in a shell — for this tier, or to run the CLI — every `./gradlew test` and `checkAll` in that
-shell runs that provider's live classes as well, not only the command above. That happens each time the
-module's `test` task executes rather than reporting `UP-TO-DATE`, which is the first build and any build
-after a change that reaches the module. Those runs call the API and bill. They can also go red for
+carry no tag, and the only exclusions in a module's `test` task are by tag: `docker` and `packaging`,
+which the conventions plugin excludes in every module, and `playwright`, which `aimon-browser-playwright`
+excludes as well. So while a key is exported in a shell — for this tier, or to run the CLI — every
+`./gradlew test` and `checkAll` in that shell runs that provider's live classes as well, not only the
+command above. That happens each time the module's `test` task executes rather than reporting
+`UP-TO-DATE` — for example the first build, a build after `clean` or `cleanTest`, and any build after a
+change that reaches the module. Those runs call the API and bill. They can also go red for
 reasons that have nothing to do with the change being built: a key that is no longer valid fails them on
 authentication (HTTP 401), and the rot described below fails them from the provider's side. Put the key
 in front of the one command that needs it, as above, or `unset` it before you build.
