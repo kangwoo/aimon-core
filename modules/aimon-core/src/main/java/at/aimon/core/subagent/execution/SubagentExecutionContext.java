@@ -134,7 +134,7 @@ public final class SubagentExecutionContext {
      * {@link #getDefaultModel() default model} — see
      * {@link SubagentLlmDefaults#resolveModel(at.aimon.core.subagent.Subagent, LlmModel, String)}.
      *
-     * @return an {@link Optional} holding the override alias, or empty when none was supplied
+     * @return an {@link Optional} holding the override, a model name sent as written, or empty when none was supplied
      */
     public Optional<String> getModelOverride() {
         return Optional.ofNullable(modelOverride);
@@ -270,11 +270,11 @@ public final class SubagentExecutionContext {
         }
 
         /**
-         * Sets the per-invocation model override alias. When non-null and non-blank it takes priority over the
+         * Sets the per-invocation model name, sent as written. When non-null and non-blank it takes priority over the
          * subagent's frontmatter model and the default model.
          *
          * @param modelOverride
-         *            the override alias (nullable; ignored when null/blank)
+         *            the per-invocation model name, sent as written (nullable; ignored when null/blank)
          * @return this builder
          */
         public Builder modelOverride(String modelOverride) {

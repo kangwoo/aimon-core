@@ -106,7 +106,7 @@ Subagent dbTriage = Subagent.builder()
         .description("DB 장애 1차 분류. 메트릭/로그 조회 후 원인 후보 좁히기.")  // TaskTool이 LLM에 노출
         .whenToUse("DB 장애가 발생해 1차 분류가 필요할 때")          // 선택 — TaskTool 설명에 트리거로 노출
         .tools(List.of("Read", "Grep", "Bash(psql:*)"))      // 마크다운 allowed-tools 와 동일 파싱
-        .model("sonnet")                                     // 모델 별칭
+        // model 없음: 부모(보통 메인 에이전트)의 모델로 돈다. 다른 모델로 돌려야 할 때만 설정된 provider 가 서비스하는 id 를 적는다 — 쓰인 그대로 간다
         .maxIterations(50)                                   // ReAct 루프 상한
         .systemPrompt("You are a database triage specialist...")  // 필수
         .build();
@@ -253,7 +253,7 @@ Subagent dbTriage = Subagent.builder()
         .description("DB 장애 1차 분류 전문가. 느린 쿼리/락 경합 진단 시 사용.")
         .whenToUse("느린 쿼리·락 경합 등 DB 장애 1차 분류가 필요할 때")
         .tools(List.of("Read", "Grep", "Bash(psql:*)"))   // 읽기 + psql 만 — 좁은 허용목록
-        .model("sonnet")
+        // model 없음: 부모(보통 메인 에이전트)의 모델로 돈다. 다른 모델로 돌려야 할 때만 설정된 provider 가 서비스하는 id 를 적는다 — 쓰인 그대로 간다
         .maxIterations(50)
         .systemPrompt("""
                 You are a database triage specialist.
@@ -326,7 +326,7 @@ public interface SubagentBehavior {
 
 | `support` accessor | ReAct가 쓰는 값과 동일? | 설명 |
 |--------------------|--------------------------|------|
-| `resolvedModel()` | ✅ | 서브에이전트 `model` 별칭(예: `sonnet`)을 default와 병합한 **해석된 모델**. (raw `ctx.getDefaultModel()`은 별칭 미반영) |
+| `resolvedModel()` | ✅ | 호출별 override, 없으면 서브에이전트 `model`, 없으면 default 의 이름에 default 의 temperature·max tokens 를 합친 **해석된 모델**. 이름은 쓰인 그대로 보내고(별칭을 풀지 않는다) 비어 있을 수 있으며, 그러면 클라이언트가 자기 기본 모델을 보낸다. (raw `ctx.getDefaultModel()`은 override 도 `model` 도 미반영) |
 | `scopedToolRegistry()` | ✅ | 서브에이전트 allow-list로 필터된 registry (**노출만, 강제 아님** — trusted code는 `ctx.getToolRegistry()`로 전체 접근 가능) |
 | `effectiveLlmCallMetadata()` | ✅ | 서브에이전트 사용량 귀속 metadata (component=이름, feature="subagent") |
 | `llmGateway()` | ✅ | ReAct와 동일 config(기본 재시도, 폴백 없음)의 게이트웨이. `LlmClient` 미배선 시 `Optional.empty()` |
@@ -351,9 +351,9 @@ public SubagentExecutionResult execute(SubagentExecutionContext ctx, SubagentExe
 }
 ```
 
-> raw `ctx.getDefaultModel()`은 서브에이전트의 `model` 별칭을 **반영하지 않으며**, `ctx.getToolRegistry()`는
-> allow-list가 **적용되지 않은** 전체 registry다. ReAct와 동일하게 동작하려면 `support.resolvedModel()` /
-> `support.scopedToolRegistry()`를 사용하라.
+> raw `ctx.getDefaultModel()`은 호출별 override 도 서브에이전트의 `model` 도 **반영하지 않으며**,
+> `ctx.getToolRegistry()`는 allow-list가 **적용되지 않은** 전체 registry다. ReAct와 동일하게 동작하려면
+> `support.resolvedModel()` / `support.scopedToolRegistry()`를 사용하라.
 
 ### 등록 + 배선
 
