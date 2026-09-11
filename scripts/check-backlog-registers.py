@@ -165,10 +165,13 @@ THE DECISIONS, each with its reason:
    Inside the other six the page shows no heading, and this reads an ATX line
    as one and counts it -- kind 1, `<pre`, `<script`, `<style` or `<textarea`,
    through a line holding one of their closing tags; 3, `<?`, through `?>`; 4,
-   `<!` and a letter (`<!DOCTYPE`), through `>`; 5, `<![CDATA[`, through `]]>`;
-   6, a block-level tag such as `<details>`, `<div>` or `<table>`, to the next
-   blank line; 7, any other complete tag alone on its line where it does not
-   interrupt a paragraph, to the next blank line. There the verdict is the
+   `<!` and an uppercase letter (`<!DOCTYPE`), through `>` -- CommonMark 0.31.2
+   takes any letter, but GFM 0.29-gfm §4.6 and cmark-gfm 0.29.0.gfm.13
+   (cmarkgfm 2025.10.22, run locally) take only an uppercase one, so a heading
+   after `<!doctype` shows there and is read here; 5, `<![CDATA[`, through
+   `]]>`; 6, a block-level tag such as `<details>`, `<div>` or `<table>`, to the
+   next blank line; 7, any other complete tag alone on its line where it does
+   not interrupt a paragraph, to the next blank line. There the verdict is the
    inverted one above: a title that counts what the page shows goes red, and
    one that counts the hidden heading goes green. They are not skipped because
    hiding one needs to know whether a fence or a container holds its start, and
@@ -1535,8 +1538,11 @@ def self_test():
     # register twice: with its title left alone, and with the title counting the
     # appended item. The row stays at 8, so a shape that is not read adds no
     # `index` finding and one that is read adds it to both, and both verdicts are
-    # exact. The shapes BLIND SPOT, SHARP EDGES and decision 6 name are pinned too,
-    # so that reading one differently later means changing the docstring as well.
+    # exact. Many of these shapes are ones BLIND SPOT, SHARP EDGES, decision 6 or
+    # docs_tree.anchors_of describes, and a change to whether a case's shape is
+    # read or reported turns that case red until its expected findings change.
+    # Not every shape those texts name has a case: backlog T-9 lists fence and
+    # comment shapes in SHARP EDGES measured to have none.
     # Where the link check reads a shape differently (#121), docs_tree.anchors_of
     # says why, and check-doc-links.py --self-test pins that side.
 
@@ -1551,6 +1557,9 @@ def self_test():
          ["<!--", f"## {prefix}-9 — 주석으로 가린 항목", "-->"], set(), False),
         ("an item heading inside a list item (docs_tree.anchors_of)",
          [f"- ## {prefix}-9 — 리스트 항목 안의 항목"], {"unread-heading"}, False),
+        ("an item heading in a list item's continuation, two spaces under `- ` "
+         "(SHARP EDGES; docs_tree.anchors_of)",
+         ["- 목록 항목", "", f"  ## {prefix}-9 — 목록 연속 줄의 항목"], {"unread-heading"}, False),
         ("an item heading indented four spaces (SHARP EDGES)",
          [f"    ## {prefix}-9 — 네 칸 들여 쓴 항목"], {"unread-heading"}, False),
         ("an item written as a setext heading (BLIND SPOT)",
@@ -1566,6 +1575,14 @@ def self_test():
           "</details>"], set(), True),
         ("an item heading in a fence in a list item's continuation (SHARP EDGES)",
          ["- 목록 항목", "  " + fence3, f"  ## {prefix}-9 — 목록 안 펜스 속 항목", "  " + fence3],
+         set(), False),
+        ("an item heading after the closer of a fence opened on a `- ` marker's line "
+         "(SHARP EDGES; docs_tree.anchors_of)",
+         ["- " + fence3 + "bash", "  한 줄", "  " + fence3, "",
+          f"## {prefix}-9 — 목록 표지 줄 펜스 뒤의 항목"], set(), False),
+        ("an item heading between backtick fence markers indented four spaces "
+         "(SHARP EDGES; docs_tree.anchors_of)",
+         ["    " + fence3, "", f"## {prefix}-9 — 네 칸 표지 사이의 항목", "", "    " + fence3],
          set(), False),
         ("an item heading in a comment opened two spaces in, in a list item's continuation "
          "(SHARP EDGES)",

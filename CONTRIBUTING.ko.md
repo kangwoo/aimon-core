@@ -1,6 +1,6 @@
 ---
 translated_from: CONTRIBUTING.md
-source_commit: 1586c68
+source_commit: 3e2deef
 ---
 
 # AIMON Core 기여 가이드
@@ -157,7 +157,12 @@ python3 scripts/check-backlog-registers.py     # docs/backlog/: 한 등록부 �
 그리고 대상 파일의 어느 제목과도 맞지 않는 `#fragment` 입니다. 그중 앵커 쪽이 들리는 것보다 중요합니다 —
 앵커가 틀려도 페이지는 그대로 열리기 때문에, 독자는 문서 맨 위에 떨어지고서도 자기가 엉뚱한 절로
 보내졌다는 사실을 끝내 알지 못합니다. 외부 URL 은 일부러 검사하지 않습니다. 남의 호스트가 죽었다고
-빨개지는 게이트는 아무도 읽지 않게 되니까요. CI 는 이것을 `docs-links` 잡으로 돌립니다.
+빨개지는 게이트는 아무도 읽지 않게 되니까요. CI 는 `docs-links` 잡의 첫 스텝에서 이것을 돌리고, 같은
+스텝에서 이어서 `python3 scripts/check-doc-links.py --self-test` 를 돌립니다. 셀프 테스트는 트리를 읽지
+않습니다. 붙잡는 제목 모양 — `docs_tree.anchors_of` 가 제목을 페이지나 백로그 검사와, 또는 둘 다와 다르게
+읽는 자리 — 마다 작은 페이지를 만들고, 그 제목으로 가는 링크가 그 케이스의 기대 답대로 풀리는지(또는
+풀리지 않는지) 봅니다. 기대 답은 그 함수의 docstring 을 따릅니다. `scripts/docs_tree.py` 가 제목이나
+펜스를 읽는 방식을 고쳤다면 이것도 돌리세요.
 
 두 번째와 세 번째는 번역에 관한 것이고 `translations` 잡에서 함께 돕니다. 각각 무엇에 실패하고 그중
 하나는 왜 대체로 실패하지 않는지는 [번역](#번역) 절에 있습니다. 둘 다 전체 git 이력이 필요하므로 얕은

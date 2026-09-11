@@ -93,8 +93,8 @@ def anchors_of(text):
     this does not: it blanks HTML comment blocks (its `uncomment`), and it
     reports a heading behind indentation, `>` or a list marker whose text it
     would read at the start of a line. Three shapes come out differently. "The
-    page" is CommonMark 0.31.2 as cmark-gfm renders it locally; github.com was
-    not observed.
+    page" is what cmark-gfm 0.29.0.gfm.13 renders, from cmarkgfm 2025.10.22 run
+    locally; github.com was not observed.
 
     * Inside an HTML comment block. The page shows no heading and the backlog
       check reads none, but this anchors it, so a link into one passes and
@@ -104,10 +104,15 @@ def anchors_of(text):
       gives no anchor, so a correct link to one fails; the backlog check
       reports it as unread-heading.
     * After a `<!--` on a line unfence() exposes inside a real fence. unfence()
-      pairs fence markers by position -- a shorter marker inside a longer fence
-      closes it, and the closer of a fence opened on a list marker's own line,
-      which it does not see open, opens one -- so a `<!--` the page shows as
-      code is plain text to it. This anchors the heading after the fence, as
+      pairs fence markers by position: the next marker closes a fence whatever
+      its character, length or info string, so a shorter marker inside a
+      longer fence closes it and the marker after that opens one again, and a
+      fence opened on a list marker's own line is not seen open at all, so its
+      closer opens one. Either way a `<!--` the page shows as code is plain
+      text to it. Where unfence() is back in step with the page by the heading
+      after that `<!--` -- as it is after a longer fence whose shorter markers
+      pair up inside it, when nothing before that fence was mis-paired, and is
+      not right after a list marker's fence -- this anchors that heading, as
       the page shows it; the backlog check's comment block opens on the `<!--`
       and runs to the next `-->`, so it reads no heading there.
 
@@ -139,11 +144,15 @@ def anchors_of(text):
     Where both checks read the same lines and both differ from the page, they
     do not differ from each other: unfence()'s pairing, a heading inside a raw
     HTML block other than a comment (decision 6 in check-backlog-registers.py
-    names those blocks), and YAML front matter read as text (backlog T-6).
+    names those blocks), and YAML front matter read as text (backlog T-6). In
+    the shapes the link self-test holds, two of unfence()'s pairings hide a
+    heading the page shows: one after the closer of a fence opened on a `- `
+    marker's line, and one between two backtick fence markers indented four
+    spaces, which the page reads there as an indented code block.
 
-    `check-doc-links.py --self-test` pins this function's side of the three
-    shapes and of a raw HTML block; the backlog check's `--self-test` pins its
-    side.
+    `check-doc-links.py --self-test` has a case for this function's side of
+    each of the three shapes, of a raw HTML block and of each of those two
+    pairings; the backlog check's `--self-test` has cases for its side.
     """
     found, seen = set(), {}
     body = unfence(text)
