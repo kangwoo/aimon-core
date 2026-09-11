@@ -154,7 +154,7 @@ graaljs = "23.0.8"
 
 # Search
 opensearch = "2.20.0"
-opensearch-rest-client = "2.18.0"
+opensearch-rest-client = "3.8.0"
 
 # Logging
 slf4j = "2.0.18"
