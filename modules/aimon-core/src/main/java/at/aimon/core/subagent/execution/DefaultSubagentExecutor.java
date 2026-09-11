@@ -1,6 +1,7 @@
 package at.aimon.core.subagent.execution;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -18,6 +19,7 @@ import at.aimon.core.agent.budget.BudgetDecision;
 import at.aimon.core.agent.budget.BudgetTracker;
 import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.budget.ExecutionBudget;
+import at.aimon.core.agent.budget.TruncatedResponses;
 import at.aimon.core.agent.compact.CompactionDecision;
 import at.aimon.core.agent.compact.CompactionGuard;
 import at.aimon.core.agent.compact.NoOpCompactionGuard;
@@ -97,7 +99,10 @@ import at.aimon.core.tools.todo.TodoWriteTool;
  * This executor mirrors the {@code OrcaAgentExecutor} ReAct loop for parity: tool execution carries the same
  * {@link ToolContext} keys (environment, LLM call metadata, artifact collector, cancellation signal, per-tool
  * {@code toolUseId}), fires PermissionRequest/PreTool/PostTool hooks, and isolates PostTool hook failures so a hook
- * exception never discards a real tool result.
+ * exception never discards a real tool result. A response the provider cut off at {@code max_tokens} gets the answers
+ * that loop gives ({@link TruncatedResponses}): a final answer ends as {@link CompletionReason#TRUNCATED} with the
+ * shared marker, and tool calls are refused rather than run. One difference remains, and it is not about
+ * {@code max_tokens}: a fork has no stalled-iteration guard.
  *
  * <p>
  * Thread-safe if the supplied {@link LlmCallGateway}, {@link ToolExecutionManager}, {@link HookExecutionManager} and
@@ -437,8 +442,21 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                     }
                 }
 
+                // A response cut off at max_tokens is read once, here, and both shapes below branch on it: the same two
+                // answers OrcaAgentExecutor gives a turn (TruncatedResponses).
+                final boolean truncated = TruncatedResponses.isTruncated(response);
+
                 // If no tool uses, we have the final answer
                 if (!response.hasToolUses()) {
+                    if (truncated) {
+                        // Not a clean final answer: surface the partial text with the shared marker and end as
+                        // TRUNCATED, so a parent, a workflow judge or a task record can tell it from a COMPLETED one.
+                        final String flaggedAnswer = response.getTextContent() + TruncatedResponses.TRUNCATION_MARKER;
+                        lc.transcriptBuffer.addMessage(
+                                Message.assistant(flaggedAnswer).withReasoningTraces(response.getReasoningTraces()));
+                        return createTruncatedResult(lc, flaggedAnswer, iterationCount, accumulatedTokens,
+                                response.getTokenUsage());
+                    }
                     lc.transcriptBuffer.addMessage(Message.assistant(response.getTextContent())
                             .withReasoningTraces(response.getReasoningTraces()));
                     return createSuccessResult(lc, response.getTextContent(), iterationCount, accumulatedTokens);
@@ -454,8 +472,11 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                     stream(lc, preamble + "\n");
                 }
 
-                // Execute tools with PermissionRequest/PreTool/PostTool hooks per tool
-                final List<ToolUseResult> toolUseResults = executeToolUses(lc, response.getToolUses(), iterationCount);
+                // Execute tools with PermissionRequest/PreTool/PostTool hooks per tool — unless the response was
+                // cut off at max_tokens, in which case none of them runs and each is answered with the refusal.
+                final List<ToolUseResult> toolUseResults = truncated
+                        ? refuseTruncatedToolUses(lc, response, iterationCount)
+                        : executeToolUses(lc, response.getToolUses(), iterationCount);
                 lc.transcriptBuffer.addMessage(Message.toolUseResults(toolUseResults));
 
                 // Iteration-tail cancellation check: a tool may have cooperatively tripped the signal, or the parent
@@ -793,6 +814,43 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
     }
 
     /**
+     * Answers every tool call of a response the provider cut off at {@code max_tokens} with
+     * {@link TruncatedResponses#refusal(ToolUse)} instead of running it — the answer {@code OrcaAgentExecutor} gives a
+     * turn, for the same reason: a cut call's arguments did not arrive, and the response does not say which call was
+     * cut.
+     *
+     * <p>
+     * Nothing on the tool path runs for these calls: no PermissionRequest, PreTool or PostTool hook, and no execution.
+     * The progress stream still shows each call and its error, as {@link #executeToolUses} would. Unlike a turn, a fork
+     * has no stalled-iteration guard, so a fork whose every response is cut repeats this until its
+     * {@code maxIterations} or its budget stops it.
+     *
+     * @param lc
+     *            the loop context
+     * @param response
+     *            the cut response whose tool calls are refused
+     * @param iterationCount
+     *            the current iteration count
+     * @return one error result per tool call, in the response's order (never null)
+     */
+    private List<ToolUseResult> refuseTruncatedToolUses(LoopContext lc, LlmResponse response, int iterationCount) {
+        final List<ToolUse> toolUses = response.getToolUses();
+        log.warn(
+                "Subagent '{}' response truncated at max_tokens in iteration {} with tool calls {}: none of them is "
+                        + "run; each is answered with an error result{}",
+                lc.subagent().getName(), iterationCount, toolUses.stream().map(ToolUse::getName).toList(),
+                TruncatedResponses.reasoningClause(response.getTokenUsage()));
+        final List<ToolUseResult> results = new ArrayList<>(toolUses.size());
+        for (ToolUse toolUse : toolUses) {
+            stream(lc, "\n→ " + toolUse.getName() + "\n");
+            final ToolUseResult result = TruncatedResponses.refusal(toolUse);
+            stream(lc, formatStreamedToolResult(toolUse, result));
+            results.add(result);
+        }
+        return results;
+    }
+
+    /**
      * Formats a single tool result for the progress stream: the tool name, its ok/error status, and a bounded snippet
      * of its content (long tool outputs are capped so the progress log stays readable — the authoritative artifact is
      * the streamed final answer).
@@ -876,6 +934,47 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 + iterationCount + " iterations]\n");
         return SubagentExecutionResult.success(finalAnswer, lc.transcriptBuffer.toSnapshot(), metadata,
                 CompletionReason.COMPLETED, estimateCost(lc, accumulatedTokens));
+    }
+
+    /**
+     * Creates the result for a final answer the provider cut off at {@code max_tokens}, firing OnStop hooks with
+     * {@code success=true}.
+     *
+     * <p>
+     * Mirrors {@link #createSuccessResult} but carries {@link CompletionReason#TRUNCATED}, the shape
+     * {@code OrcaAgentExecutor} gives a truncated turn. {@code success(...)} rather than {@code failure(...)} keeps the
+     * partial text in {@link SubagentExecutionResult#getSummary()}, where a failure would put an error message instead;
+     * the completion reason is what tells a parent, a workflow judge or a task record that the answer is incomplete.
+     *
+     * @param lc
+     *            the loop context
+     * @param flaggedAnswer
+     *            the partial answer, already suffixed with {@link TruncatedResponses#TRUNCATION_MARKER}
+     * @param iterationCount
+     *            the number of iterations completed
+     * @param accumulatedTokens
+     *            the execution's accumulated token usage
+     * @param responseUsage
+     *            the cut response's own token usage, read for the WARN's reasoning clause
+     * @return the truncated result (never null)
+     */
+    private SubagentExecutionResult createTruncatedResult(LoopContext lc, String flaggedAnswer, int iterationCount,
+            TokenUsage accumulatedTokens, TokenUsage responseUsage) {
+        log.warn(
+                "Subagent '{}' final answer truncated at max_tokens after {} iterations; returning flagged partial "
+                        + "answer{}",
+                lc.subagent().getName(), iterationCount, TruncatedResponses.reasoningClause(responseUsage));
+        final ExecutionMetadata metadata = buildMetadata(lc, iterationCount, accumulatedTokens);
+        final OnStopContext onStopContext = OnStopContext.builder().executorType(InvokerType.SUBAGENT)
+                .invokerName(lc.subagent().getName()).hookRegistry(lc.hookRegistry()).environment(lc.environment())
+                .success(true).finalAnswer(flaggedAnswer).metadata(metadata).executionAttributes(lc.executionAttributes)
+                .build();
+        hookExecutionManager.executeOnStop(onStopContext);
+        // The same terminal boundary a success streams, naming why the answer is incomplete.
+        stream(lc, "\n[final answer]\n" + flaggedAnswer + "\n[completed: TRUNCATED at max_tokens after "
+                + iterationCount + " iterations]\n");
+        return SubagentExecutionResult.success(flaggedAnswer, lc.transcriptBuffer.toSnapshot(), metadata,
+                CompletionReason.TRUNCATED, estimateCost(lc, accumulatedTokens));
     }
 
     /**

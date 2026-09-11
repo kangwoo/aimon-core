@@ -48,6 +48,119 @@ Central is versioned independently).
   unmeasured default model memory can now fall back to is registered as `L-24`; the design is
   `docs/design/llm/model-names-sent-and-shown.md`.
 
+### Agent loop: a response cut at `max_tokens` says so on both executors, and its tool calls are not run
+
+- **A tool call in a response that stopped at `max_tokens` is no longer executed** (#108). The main executor used to
+  run such calls as they came: a call cut mid-argument reached its tool with an empty argument map, and no log line,
+  marker or completion reason said `max_tokens`. Now none of the response's tool calls runs — including calls that look
+  complete, because the response does not say which call was cut. Each is answered with an error result saying the
+  response was cut off at `max_tokens`, that no call which changes anything was run, and that fewer calls at once, or a
+  large argument split across calls, fits under the limit. The loop continues.
+  - No permission check and no PermissionRequest/PreTool/PostTool hook runs for a refused call, and a cut `Skill` call
+    no longer suspends the turn for approval.
+  - With streaming-tool overlap on, a `CONCURRENT_SAFE` call already started from the cut response may have run; its
+    result is discarded and the refusal takes its place.
+  - Three such responses in a row trip the existing stalled-iteration guard and end the turn as `ERROR`.
+
+- **The operator is told.** One WARN per cut response names `max_tokens`, the iteration and the tool names (not their
+  arguments), and says whether overlap had already started any of the calls. `ToolUseStarted` and `ToolResultReady`
+  still fire for each refused call; the REPL shows it as `Tool '<name>' failed: Cut off at max_tokens: …`, because its
+  usual tool-call line comes from a PreTool hook, which does not run. When the cut response's usage reports reasoning
+  tokens — both Anthropic paths and OpenAI's Responses API — this WARN and the existing truncated-answer WARN end with
+  `; the response's usage reports N output tokens and R reasoning tokens`. When it reports none (OpenAI Chat
+  Completions, or any usage without the counter), the text is what it was.
+
+- **A subagent fork's final answer cut at `max_tokens` is now `TRUNCATED`, not `COMPLETED`** (#100). The fork appends
+  the same `[System: response truncated at max_tokens]` marker, logs a WARN, fires OnStop hooks with `success=true`,
+  and ends its progress stream with `[completed: TRUNCATED at max_tokens after N iterations]`. `isSuccess()` stays
+  `true` and `getSummary()` keeps the partial text, as on a turn. What reads the reason sees the change:
+  - `AgentStepResult.isComplete()` is `false` for such a step: the workflow step cache does not store it (a resume
+    re-runs it), `WorkflowPatterns.loopUntilDry` does not count it as a quiet round,
+    `WorkflowPatterns.completenessCritic` stops at it, and GraalJS workflow scripts read `isComplete: false`;
+  - background task results record `TRUNCATED`;
+  - `TaskTool` still prints `Status: SUCCESS`; what tells the parent model is the marker at the end of the summary.
+
+  A fork's cut tool calls are refused as above. A fork has no stalled-iteration guard, so a fork whose every response
+  is cut repeats the refusal until its `maxIterations` stops it — 1000 unless the subagent sets one, since no in-tree
+  caller gives a fork a request budget (backlog `L-23`).
+
+- **Unchanged:** the Anthropic and OpenAI clients' own truncation WARNs, which callers of the blocking overloads still
+  reach (compaction, skill LLM execution, peer memory, the wiki); `CompletionReason` and `StopReason` values; and
+  `OrcaAgentExecutor.TRUNCATION_MARKER`'s name and text, now defined once in the new
+  `at.aimon.core.agent.budget.TruncatedResponses`.
+
+- **Records.** §16.8 of `docs/design/llm/thinking-reporting-and-dialect-records.md` stated three things the code does
+  not support and described only the main executor; it now says what the code does, and §16.10 records each
+  correction (#101). Three statements in `aimon-llm-anthropic` code are corrected with it, and
+  `AnthropicThinkingResolverTest.theOtherTwoConditions` gains the paths §16.8 said it covered. Backlog `L-16` is
+  closed; `L-22` (two more tool loops that never read the stop reason) and `L-23` are registered. The design is
+  `docs/design/agent-execution/max-tokens-truncation-reporting.md`.
+
+### Release: `scripts/release.sh` refuses to start while a provider API key is in its environment
+
+- **`scripts/release.sh` now stops before anything else when `OPENAI_KEY` or `ANTHROPIC_KEY` is in its
+  environment** (#98), even set to the empty string, and `--dry-run` included. It exits 1 before it invokes
+  `git`, and so before its network and Docker checks. The message names the variables that are set, never a
+  value, and says how to proceed: `unset` them and re-run, or keep them out of one run with
+  `env -u <name> scripts/release.sh <args>`. A bad argument still gets exit 2 and the usage line first. No flag
+  lets a key through.
+
+- **Why.** The four live-API classes carry no tag, so their variable is their only gate. With a key in the
+  environment the gate's `checkAll` ran them: calls billed to that key's account, a gate that could go red for
+  a reason on the provider's side, and a gate that was no longer the one CI runs, since CI has no key. Neither
+  F-8 nor backlog `LA-1`'s manual-only decision is reopened; the release gate just stops inheriting a key.
+
+- **Observable change.** A release cut from a shell with a key exported used to run those classes inside the
+  gate; now it refuses to start. Not measured, carried over from the issue: a release run with a key exported.
+
+- **Refused, not unset.** The key stays exported in the shell the script was started from, where every later
+  build bills the same way. Unsetting it inside the script would fix one command of that shell and tell the
+  operator nothing.
+
+- **Pinned by running the script, not by reading it.** `ReleaseGateMatchesCiGateTest` runs the real
+  `scripts/release.sh --dry-run` from an empty directory, with a cleared environment and a `PATH` holding only
+  a stub `git` that records its calls: once per key, once with a key set to the empty string, once with both,
+  once with neither, and once with a bad argument. A refusal must come before any `git` call and before
+  pre-flight, name exactly the keys that are set, and not print the value; the keyless run must reach
+  pre-flight and call the stub, so "no `git` call" cannot pass vacuously. The test also holds the refused set
+  equal to the `@EnabledIfEnvironmentVariable` gates under `modules/aimon-llm-*`, so a new provider's key
+  fails the build until the script refuses it. `AIMON_DOCKER_IT` and `AIMON_KUBERNETES_IT`, which gate two
+  sandbox classes the same way, are not refused; whether they should be is registered as backlog `LA-2`.
+
+- **Documentation.** The three CLI quickstarts (`README.md`, `docs/README.md`, `docs/README.en.md`) put the
+  key on the command instead of exporting it, and say why in one sentence. `CONTRIBUTING.md` and its Korean
+  translation now say the only exclusions in a module's `test` task are by tag — `docker` and `packaging` from
+  the conventions plugin, `playwright` from `aimon-browser-playwright` — and give a build after `clean` or
+  `cleanTest` as one of the builds that execute it. Both were re-checked against the build files, and the second
+  was measured without a key on `:aimon-llm-openai`: a repeated `test` reported `UP-TO-DATE`, and `test` executed
+  again after `cleanTest` and again after `clean` (313 tests, its 17 live tests skipped). The design is
+  `docs/design/llm/provider-key-release-gate.md`.
+
+### Docs CI: the backlog check stops counting a commented-out item, and fails on item headings it used to skip
+
+- **A heading inside an HTML comment block is no longer read** (#102). The block does not render, so the
+  item is not on the page, and the check counted it anyway: a register whose title matched its visible items
+  failed with `… but the items read N+1`, and so did its index row.
+
+- **An ID heading written behind indentation, a `>` or a list marker now fails as `unread-heading`**
+  (`   ## CE-3 — …`, `> ## CE-3 — …`, `- ## CE-3 — …`). GitHub shows each as a heading, but the check skipped
+  them without a word, which inverted the verdict: a register whose title counted such an item failed with a
+  count that disagreed with the page, and one whose title did not count it passed. Move the heading to the
+  start of the line. A state record written that way inside an item's section (`   ### 닫힘 (…)`) fails the
+  same way. Indentation of any width counts, so an item-heading example in a four-space indented code block
+  fails too; examples belong in a fence. No register on `main` is written like this, so none changes verdict.
+
+- **Named, not read:** a setext heading and a raw HTML `<h2>`, in the docstring's BLIND SPOT and in
+  `docs/backlog/README.md`. The self-test pins both, so reading either later means changing the docstring too.
+
+- **Prose that went stale with #88's check.** `CONTRIBUTING.md` and `.ko.md` describe the fourth doc check,
+  where it runs and in which order. `docs/backlog/README.md` stops calling `결정됨` a kind of 열림 — B-10 is
+  decided, closed and counted 닫힘 — and records that `접힘` gets no index column and that section subtotals
+  are not checked. `anthropic-thinking-config-surface.md` quotes B-21's heading as it reads now. The check's
+  design document is trimmed to `docs/design/README.md`'s rules (decisions, rejected alternatives and
+  don'ts; no test plan, no line numbers) and states the order the workflow runs: the check, then
+  `--self-test`.
+
 ### CLI: startup says so when the agent's model belongs to the other provider
 
 - **Switching `llm.provider` left the agent on the other vendor's model, and nothing said so** (#92). The
@@ -1568,17 +1681,36 @@ Central is versioned independently).
   governed the JUnit their main sources compile against with `api(platform(libs.spring.boot.dependencies))`,
   and `api` put Spring Boot's whole dependency management on every consumer's test classpath, where a
   managed version newer than the one a module ships wins. Across their seven consumers, 29 artifacts
-  resolved under test to a version other than the shipped one, and 20 of them came from that platform:
+  resolved under test to a version other than the shipped one, and that platform had moved 21 of them:
   the nine #87 added to `aimon-cli` (HikariCP 6.3.3 against the 5.1.0 it ships among them), the MongoDB
   driver 5.5.2 against 4.11.1 on `aimon-filesystem-gridfs` and `aimon-session-mongodb`, HikariCP on
-  `aimon-session-postgres`, `reactor-core` on `aimon-session-redis` and Caffeine on the starter. All three
-  now take `platform(libs.junit.bom)`, as `aimon-memory-testkit` already did, and those 20 are gone; no
-  consumer gained a difference. The three are unpublished, and the POM and module metadata of all 21
-  published modules are byte-identical before and after. The reason is written once, next to `junit` in
-  `gradle/libs.versions.toml`, and the catalog's now-unused `spring-boot-dependencies` entry is removed.
-  The nine differences that remain predate this and have other sources — `spring-boot-starter-test`
-  (Logback and `jakarta.xml.bind-api` on the CLI), Testcontainers (`org.jetbrains:annotations`) and the
-  vendor SDKs on the starter's test classpath (`error_prone_annotations`).
+  `aimon-session-postgres`, `reactor-core` on `aimon-session-redis`, and Caffeine and
+  `error_prone_annotations` on the starter. All three now take `platform(libs.junit.bom)`, as
+  `aimon-memory-testkit` already did, and 20 of those differences are gone; the 21st, the starter's
+  `error_prone_annotations`, fell from 2.49.0 to 2.33.0 under test and still differs from the 2.21.1 it
+  ships, now through the vendor SDKs. No consumer gained a difference. The three are unpublished, and the
+  POM and module metadata of all 21 published modules are byte-identical before and after. The reason is
+  written once, next to `junit` in `gradle/libs.versions.toml`, and the catalog's now-unused
+  `spring-boot-dependencies` entry is removed. The nine that remain — that one, and eight that predate
+  this — have other sources: `spring-boot-starter-test` (Logback and `jakarta.xml.bind-api` on the CLI),
+  Testcontainers (`org.jetbrains:annotations`) and the vendor SDKs on the starter's test classpath
+  (`error_prone_annotations`).
+
+- **`aimon-cli`'s tests run on the Logback and JAXB API the CLI ships, and the other remaining test-classpath
+  differences are recorded as decisions** (#99). Of the nine artifacts the entry above left resolving under
+  test to a version their module does not ship, the three `spring-boot-starter-test` raised on the CLI —
+  `logback-classic` and `logback-core` 1.5.34 against the 1.5.13 it ships, `jakarta.xml.bind-api` 4.0.5
+  against 4.0.4 — are aligned: the CLI's two test classpaths now resolve consistently with its runtime
+  classpath, which is what its distribution packs, so its tests now run on Logback 1.5.13. The other six are
+  accepted, each with its measured reason, next to `junit` in `gradle/libs.versions.toml`: Testcontainers'
+  `org.jetbrains:annotations` and the provider SDKs' `error_prone_annotations` are annotation jars no code
+  here names. Nothing a consumer resolves changes — every compile and runtime classpath in the build, and
+  every published POM and module metadata file, is as before. The same note now says why
+  `aimon-memory-testkit` publishes a `junit-bom` floor of 5.12.2 while its test classpath, which runs no test,
+  resolves 5.13.4; the entry above is corrected (the platform moved 21 artifacts, and 20 differences went
+  away); and `ModelCapabilityBindingProbeTest` drives the `declaresAnything()` refusal through the probe's
+  public pair check instead of calling the helper that words it. What #99 left undecided — the same source on
+  three more modules, and a check that would notice the next difference — is backlog D-2 and D-3.
 
 - **The model-capability binding probe names the right fix when the builder, not the value, refuses a
   probe value** (#91). A declarable key missing from `ModelCapabilityDeclaration.Builder.declaresAnything()`

@@ -15,13 +15,19 @@ It fails on an ID repeated within a register, a title that disagrees with the
 items, an index row that disagrees with them, a register with no row, and an ID
 read in two registers.
 
-Design, with the numbers it was built on measured rather than assumed:
+Design decisions and the alternatives they rejected:
 docs/design/documentation/backlog-register-check.md. This docstring is the
 specification; `--self-test` pins it.
 
-WHAT IS AN ITEM. Only ATX headings of level 2 or deeper, outside fenced blocks --
-docs_tree.unfence, the reading check-doc-links.py computes anchors from. Tables,
-blockquotes, list items and prose never define an item.
+WHAT IS AN ITEM. Only ATX headings of level 2 or deeper, written at the start of
+a line, outside fenced blocks and HTML comment blocks. Fences are
+docs_tree.unfence's, the reading check-doc-links.py computes anchors from. A
+comment block opens on a line that begins `<!--` after at most three spaces and
+runs through the first line containing `-->`, the opening line included, or to
+the end of the file. Neither puts a heading on the page -- a fence shows it as
+code, a comment not at all -- so a commented-out item is removed, and the title
+counts without it. Tables, blockquotes, list items and prose never define an
+item.
 
     ID         [A-Z]{1,3}-<digits>, not followed by a letter, digit, `_` or `-`
                (so SBS-04b and P1-14 are not IDs)
@@ -36,8 +42,15 @@ blockquotes, list items and prose never define an item.
     unread     a heading that begins with an ID once `*` `` ` `` `~` `_` and any
                leading non-alphanumerics are stripped (`### T-1 (원문)`,
                `## **L-16** — …`, `### ✅ B-35 — …`) but is not an item. A
-               FINDING: it is the only way a heading could be skipped without
-               anyone being told, so it is not allowed to be quiet.
+               FINDING: a heading skipped without anyone being told is how an
+               item goes missing, so it is not allowed to be quiet.
+    displaced  an ATX heading behind indentation, `>` or a list marker, in any
+               order (`   ## CE-3 — …`, `> ## CE-3 — …`, `- ## CE-3 — …`), whose
+               text would be an item, an unread heading or a state record at the
+               start of the line. A FINDING, reported as unread-heading: GitHub
+               shows it as a heading, so skipping it would be quiet, and counting
+               it would read an item out of a quote. It is never an item, a
+               record or the end of a section.
 
 WHAT IS A STATE. Read from the item heading after inline code is blanked and
 `~~…~~` spans are deleted -- a word in backticks is an example, a struck word is
@@ -59,7 +72,9 @@ Qualifiers are never states. 결정 대기, 트리거 대기, 설계 대기, 소
 접힘 and 결정됨 are either text after a leading 열림 inside a bold span
 (`**열림 · 결정 대기**`) or text the reader never looks at. B-10's
 `**결정됨 (2026-08-05): 유지** … ✅` is 닫힘 by its glyph, which is how its title
-and the README count it.
+and the README count it. 결정됨 in particular is not a kind of 열림: README rule
+four's 결정됨이되 열림 is an item with work left and is written with 열림 or
+nothing, and a decision that left nothing to do closes its item with ✅.
 
 Three things are findings, not choices: two different explicit states in one
 heading; ✅ with an explicit 열림 or 해소; an explicit heading state that differs
@@ -83,10 +98,11 @@ every row names a register, and every count cell is an integer.
 THE DECISIONS, each with its reason:
 
 1. Heading shape -- the grammar above, not a heuristic. Ten of eleven registers
-   already write every item as an ID-first heading. "Any ID anywhere in a
-   heading" reads `#### 1차 전제 정정 … — B-20 의 …` and `#### B-21 은 …` as
-   duplicates; making open items state themselves would turn every branch that
-   adds an item in llm-config-surface's stateless style red.
+   already wrote every item as an ID-first heading when this landed. "Any ID
+   anywhere in a heading" reads `#### 1차 전제 정정 … — B-20 의 …` as a second
+   B-20, and B-22's heading, which names the B-21 revived under it, as a second
+   B-21; making open items state themselves would turn every branch that adds an
+   item in llm-config-surface's stateless style red.
    One register is written in another shape throughout and is CITED by that
    shape, so it has a declared reading (READINGS): interrupt-open-items.md's
    items are its level-2 `## N.` headings with N >= 1 (`## 0.` is its correction
@@ -125,6 +141,20 @@ THE DECISIONS, each with its reason:
    translations unresolvable while the job stayed green -- and the fix for an
    unreadable register (reorder a heading, write the title) always belongs to
    whoever is editing it, which is the argument that makes UNRESOLVABLE exit 1.
+6. What the page shows -- a register's only rendering is GitHub's (mkdocs.yml
+   excludes docs/backlog/), and the reading follows it both ways. A comment
+   block is not read: a heading no reader can see is not an item a reader can
+   count, and counting it would make the title count it too. A heading written
+   after indentation, `>` or a list marker is not read either, but when its text
+   matters it FAILS, as `displaced` above. Counting it would read an item out of
+   a quote, and would make indentation the one non-grammar shape that is counted
+   where `## **L-16** — …` is not; leaving it unread and unreported inverts the
+   verdict -- a title that counts what the page shows goes red, and one that
+   forgot it goes green. Setext and raw-HTML headings are left to BLIND SPOT
+   instead, because neither can be told from one line: a setext underline turns
+   the whole paragraph above it into the heading, and an HTML heading can carry
+   attributes or span lines, so a line pattern would report some of them and
+   stay quiet on the rest.
 
 WHERE IT RUNS: a second step of the `docs-links` job -- the check, then
 `--self-test`. The branch ruleset requires jobs by name, so a job of its own
@@ -140,9 +170,12 @@ tree, and the self-test only ever runs on a tree the check has passed -- where a
 failure can only mean the checker.
 
 NOT CHECKED, on purpose:
-  * section subtotals inside a register (`## 1. … — 7건 (…)`) -- the starter's §5
-    carries a documented non-standard one, and the issue asked for titles and
-    index rows
+  * section subtotals inside a register (`## 1. … — 7건 (…)`) -- a third copy of
+    the count, kept by one register, whose §5 subtotal is non-standard on
+    purpose: it leaves out a dissolved item and names 대기, which is not a
+    column. Checking subtotals means rewriting that recorded subtotal or
+    exempting a section, and decision 5 allows no exemption; whoever edits a
+    section recounts its subtotal by hand
   * derived tables that list IDs with states -- rule seven's derived views;
     items are headings, never table cells
   * whether a heading's state is TRUE. Agreement is duplication, not
@@ -150,19 +183,28 @@ NOT CHECKED, on purpose:
     headings say, and a count that disagrees can be wrong on either side
   * docs/design/backlog/ -- a different kind of backlog, and it has no counts
   * number reuse and order -- a single tree cannot show them
-  * headings inside multi-line HTML comments -- none exist
 
 BLIND SPOT. An item whose heading does not begin with what this grammar reads as
 an ID is not counted: no ID at all (`## 새 항목 — …`), a prefix the ID pattern does
 not match (`## ABCD-1 — …`, `## l-16 — …`), or, in the numbered register, a number
-that is not a level-2 `## N.` (`### 6. …`). If its author also left the title
-alone, the two mistakes cancel. The checker counts headings, not intentions.
+that is not a level-2 `## N.` (`### 6. …`). Neither is an item written as
+something other than an ATX `#` line: a setext heading (`CE-3 — …` underlined
+with `---` or `===`) or raw HTML (`<h2>CE-3 — …</h2>`). If its author also left
+the title alone, the two mistakes cancel. The checker counts headings, not
+intentions.
 
-SHARP EDGES, both loud. A sub-heading that happens to begin with a state word
+SHARP EDGES, all loud. A sub-heading that happens to begin with a state word
 (`### 해소 조건`) is read as a record -- a title or state finding names the line,
-and the fix is to reword the heading. And because the unread test strips leading
+and the fix is to reword the heading. Because the unread test strips leading
 punctuation along with glyphs, a heading that opens with a parenthesised ID
 (`### (L-3 참고) 배경`) is an unread-heading; start it with a word instead.
+Displacement is read from the line alone, so indentation of any width counts --
+a heading in a list item's continuation is indented four spaces or more, and so
+is an indented code block -- and a fence or comment written inside a blockquote
+or a list item is not recognised as one; an item-heading example belongs in an
+unquoted fence. And fences are read before comments, so a comment block holding
+an unmatched fence marker hides everything after it, which shows up as a title
+that counts more items than are read.
 
 Usage:
     python3 scripts/check-backlog-registers.py [--github]
@@ -205,6 +247,13 @@ TOTAL_COLUMN = "항목 수"
 LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)")
 SEPARATOR = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)*\|?\s*$")
 QUOTE_MARKERS = re.compile(r"^(?:>\s*)+")
+# A comment block as CommonMark defines one: a line that begins `<!--` after at
+# most three spaces, through the first line containing `-->` -- the opening line
+# included, which is how cmark reads `<!-- note -->` as a block of one line.
+COMMENT_OPEN = re.compile(r"^ {0,3}<!--")
+COMMENT_CLOSE = "-->"
+# Indentation, `>` markers and list markers, in any order, in front of a line.
+DISPLACED = re.compile(r"^(?:[ \t]*(?:>|[-*+](?=[ \t])|\d{1,9}[.)](?=[ \t])))*[ \t]*")
 
 ID_READING = "id"
 NUMBERED = "numbered"
@@ -237,8 +286,8 @@ SHARED_IDS = {
 # asserts that the reading changes: a rule that can be switched off without
 # changing anything is a rule that has already been deleted from the code.
 
-RULES = ("unfence", "code", "strike", "bold_only", "boundary", "records",
-         "same_prefix", "unwrap", "table_rows_only", "skip_zero")
+RULES = ("unfence", "uncomment", "code", "strike", "bold_only", "boundary", "records",
+         "same_prefix", "unwrap", "displaced", "table_rows_only", "skip_zero")
 
 
 class Rules:
@@ -332,6 +381,18 @@ def blank_code(text):
     return INLINE_CODE.sub(lambda m: " " * len(m.group(0)), text)
 
 
+def uncomment(text):
+    """Blank HTML comment blocks, preserving line numbering -- see WHAT IS AN ITEM."""
+    out, inside = [], False
+    for line in text.split("\n"):
+        if inside or COMMENT_OPEN.match(line):
+            inside = COMMENT_CLOSE not in line
+            out.append("")
+        else:
+            out.append(line)
+    return "\n".join(out)
+
+
 def prefix_of(item_id):
     return item_id.rsplit("-", 1)[0]
 
@@ -413,9 +474,48 @@ def label(register, item_id):
     return item_id if register.reading == ID_READING else f"§{item_id}"
 
 
+def report_displaced(reg, current, lineno, line, rules, add):
+    """An unread-heading for a heading behind indentation, `>` or a list marker whose text matters.
+
+    See `displaced` in the grammar. The heading is read for this and nothing else:
+    it never becomes an item, a record or the end of a section, so the reading
+    around it is the one the ATX lines at the start of a line give.
+    """
+    prefix = DISPLACED.match(line).group(0)
+    m = ATX_HEADING.match(line[len(prefix):]) if prefix else None
+    if not m:
+        return
+    level, htext = len(m.group(1)), m.group(2)
+    bare = unwrapped(htext, rules)
+    if ID.match(bare):
+        what = "an ID"
+        fix = ("start the heading at the beginning of the line; a quote or list item that "
+               "only cites an item must not begin its heading with the ID (`### 원문 — T-1`), "
+               "and an item-heading example belongs in a fence")
+    elif reg.reading == NUMBERED and numbered_item(level, bare, rules) is not None:
+        what = "a number"
+        fix = ("start the heading at the beginning of the line; a quote or list item that "
+               "only cites a numbered item must not begin its heading with the number")
+    elif (current is not None and level > current.level and rules.records
+          and record_state(htext, rules)):
+        what = f"a state word inside {' · '.join(label(reg, i) for i in current.ids)}'s section"
+        fix = ("start the record at the beginning of the line; a quoted or listed heading "
+               "inside an item's section must not begin with a state word")
+    else:
+        return
+    where = [w for w, present in (("inside a blockquote", ">" in prefix),
+                                  ("inside a list item",
+                                   any(c not in " \t>" for c in prefix))) if present]
+    add("unread-heading", reg.path, lineno,
+        f"`{line.strip()}` begins with {what} but is {' and '.join(where) or 'indented'}, "
+        f"and no heading is read there -- {fix}")
+
+
 def read_register(path, text, reading, rules, add):
     reg = Register(posixpath.basename(path), path, reading)
     body = unfence(text) if rules.unfence else "\n".join(text.splitlines())
+    if rules.uncomment:
+        body = uncomment(body)
     title_text = None
     id_headings = []
     current = None
@@ -423,6 +523,8 @@ def read_register(path, text, reading, rules, add):
     for lineno, line in enumerate(body.split("\n"), 1):
         m = ATX_HEADING.match(line)
         if not m:
+            if rules.displaced:
+                report_displaced(reg, current, lineno, line, rules, add)
             continue
         level, htext = len(m.group(1)), m.group(2)
 
@@ -924,6 +1026,10 @@ def synthetic_register(p):
         f"## {p}-8 — 전제가 없던 항목 · **해소**",
         f"### 원문 — {p}-1",
         "",
+        "<!--",
+        f"## {p}-1 — 주석 안의 제목은 항목이 아니다",
+        "-->",
+        "",
         "```markdown",
         f"## {p}-1 — 펜스 안의 예시는 항목이 아니다",
         "```",
@@ -1258,6 +1364,8 @@ def self_test():
         ("same_prefix", "same-prefix ID runs", f"{prefix}-7 · U-8 reads two items", {"title"}),
         ("unfence", "fenced blocks ignored", f"the fenced `## {prefix}-1` is a second {prefix}-1",
          {"duplicate-id"}),
+        ("uncomment", "HTML comment blocks ignored",
+         f"the commented-out `## {prefix}-1` is a second {prefix}-1", {"duplicate-id"}),
     ]
     for switch, rule, wrong, must in switches:
         # Only the finding the wrong reading names is required. Switching a rule
@@ -1277,6 +1385,15 @@ def self_test():
         lost = added(check(docs, rules=Rules(off=("unwrap",))), check(docs), path_s)
         ok, detail = verdict(lost, {"unread-heading"})
         return ok, (f"off: `## **{prefix}-9** — …` is skipped without a word; "
+                    f"the specified reading {detail}")
+
+    @case("rule: a heading behind indentation, `>` or a list marker is reported")
+    def _():
+        docs, _ = synthetic()
+        docs = with_lines(docs, path_s, lines_of(docs, path_s) + [f"   ## {prefix}-9 — 들여 쓴 항목"])
+        lost = added(check(docs, rules=Rules(off=("displaced",))), check(docs), path_s)
+        ok, detail = verdict(lost, {"unread-heading"})
+        return ok, (f"off: `   ## {prefix}-9 — …` is skipped without a word; "
                     f"the specified reading {detail}")
 
     @case("rule: only table lines are rows (`>` lines are not)")
@@ -1380,6 +1497,57 @@ def self_test():
     def _():
         return verdict(added(base, check({})), {"layout"})
 
+    # E. What the page shows (#102). Each shape is appended to the synthetic
+    # register twice: with its title left alone, and with the title counting the
+    # appended item. The row stays at 8, so no `index` finding is expected, and
+    # both verdicts are exact. The shapes BLIND SPOT names are pinned too, so that
+    # reading one later means changing the docstring as well.
+
+    title_9 = "# 셀프 테스트 — 등록 항목 9건 (열림 4 · 닫힘 4 · 해소 1)"
+    shapes = [
+        ("an item heading indented three spaces",
+         [f"   ## {prefix}-9 — 들여 쓴 항목"], {"unread-heading"}),
+        ("an item heading inside a blockquote",
+         [f"> ## {prefix}-9 — 인용 블록 안의 항목"], {"unread-heading"}),
+        ("an item heading inside an HTML comment block",
+         ["<!--", f"## {prefix}-9 — 주석으로 가린 항목", "-->"], set()),
+        ("an item heading inside a list item",
+         [f"- ## {prefix}-9 — 리스트 항목 안의 항목"], {"unread-heading"}),
+        ("an item heading indented four spaces (SHARP EDGES)",
+         [f"    ## {prefix}-9 — 네 칸 들여 쓴 항목"], {"unread-heading"}),
+        ("an item written as a setext heading (BLIND SPOT)",
+         [f"{prefix}-9 — setext 로 쓴 항목", "---"], set()),
+        ("an item written as a raw HTML heading (BLIND SPOT)",
+         [f"<h2>{prefix}-9 — HTML 로 쓴 항목</h2>"], set()),
+    ]
+    for name, appended, flagged in shapes:
+        def run(appended=appended, flagged=flagged):
+            docs, before = synthetic()
+            lines = lines_of(docs, path_s) + appended
+            untouched = added(before, check(with_lines(docs, path_s, lines)))
+            lines[lines.index(title_s)] = title_9
+            counting = added(before, check(with_lines(docs, path_s, lines)))
+            ok_untouched, untouched_detail = verdict(untouched, flagged)
+            ok_counting, counting_detail = verdict(counting, flagged | {"title"})
+            return (ok_untouched and ok_counting,
+                    f"title untouched: {untouched_detail}; title counting it: {counting_detail}")
+        cases.append((name, run))
+
+    @case("a state record behind indentation is reported, not read")
+    def _():
+        docs, before = synthetic()
+        lines = lines_of(docs, path_s) + [f"## {prefix}-9 — 새 항목", "   ### 닫힘 (날짜)"]
+        lines[lines.index(title_s)] = title_9
+        docs = with_lines(docs, path_s, lines)
+        # The title and the row both count the new item as 열림, which agrees with
+        # the items only while the displaced record is left unread.
+        table, row = row_of_synthetic(docs)
+        line = lines_of(docs, INDEX)[row.line - 1]
+        changed = replace_cells(line, row.spans, {table.columns[TOTAL_COLUMN]: 9,
+                                                  table.columns["열림"]: 4})
+        after = check(replace_line(docs, INDEX, row.line, changed))
+        return verdict(added(before, after), {"unread-heading"})
+
     print(f"self-test over {len(base.registers)} register(s), {len(base.rows)} index row(s), "
           f"{sum(r.total for r in base.registers)} item(s)")
     failed = unbuilt = 0
@@ -1412,6 +1580,7 @@ def self_test():
     print("every mutation adds the finding it names, and every reading rule still changes what "
           "is read")
     return 0
+
 
 def main():
     if "--self-test" in sys.argv:

@@ -371,8 +371,9 @@ class AnthropicThinkingDialectTest {
         // warning covers, and why these are not among them, is
         // docs/design/llm/thinking-reporting-and-dialect-records.md section 16.8.
         //
-        // isEmpty() rather than noneMatch on the clamp's wording, deliberately: a new line on these requests, whatever
-        // it says, is a headroom policy that section has to be revisited for first.
+        // isEmpty() rather than noneMatch on the clamp's wording, deliberately: a new WARN from AnthropicLlmClient on
+        // these requests, whatever it says, is a headroom policy that section has to be revisited for first.
+        // warnings() reads only the appender on that client's logger, so a line logged anywhere else is not seen here.
         for (int maxTokens : new int[]{4097, 4100}) {
             logAppender.list.clear();
             final JsonNode body = send(client(config(BUILT_IN_BUDGETED_MODEL, AnthropicThinkingMode.AUTO).build()),

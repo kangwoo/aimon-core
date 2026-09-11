@@ -1377,6 +1377,9 @@ finding, and #83 deliberately left it out of a documentation-only change. Issue 
 **the maintainer delegated the choice to that issue's run**: what follows is that run's decision, merged on the
 maintainer's confirmation.*
 
+*2026-09-11 (#101, #108, #100): edited in place where it stated more than the code supports, and where the code under
+reason 3 changed. What each sentence said before, and why it changed, is §16.10. The decision is untouched.*
+
 **In one line: `thinkingBudgetClamped` covers a clamp — a request whose budget was reduced to fit under `max_tokens` —
 and not every request whose answer allowance is small. A budget that fits by one token is sent without a warning, and
 that is allowed.** #89's third option was taken: leave the code, narrow the record. No production behaviour changed
@@ -1402,9 +1405,13 @@ with it.
 When it is recorded, the budget sent is `max_tokens − 1` and exactly one token is left for the answer, every time,
 which is why the message always reads `only 1 tokens` (L-15). **Emitted is not the same as logged.**
 `reportDivergence` logs an emitted finding at WARN at most once per `AnthropicLlmClient` instance per distinct
-`requested->sent` pair, and not at all once that client's once-per-signature register — which every other divergence
-the client reports shares — holds 32 signatures (`AnthropicLlmClient.java:107`, `:681`). A second covered request on
-the same client is covered, and adds nothing to the log.
+`requested->sent` pair, and not at all once that client's once-per-signature register, `reportedDivergences`, holds
+`MAX_REPORTED_DIVERGENCES` (32) signatures. That register is shared by the divergences the client reports once — facts
+of the configuration. It is not shared by every divergence: conditions of the traffic (a stream that loses a
+`signature_delta`, a stored payload this build cannot parse, a trace whose tool use is gone, a trace from another
+provider) go to a second register, `recurringDivergences`, which `reportRecurringDivergence` reports at the 1st, 10th,
+100th … occurrence under the same cap. A second covered request on the same client is covered, and adds nothing to the
+log.
 
 **It covers nothing else.** A requested budget below `max_tokens` is sent as asked, however little it leaves —
 including one that fits by exactly one token, which leaves the same one-token worst case as a clamp.
@@ -1456,21 +1463,37 @@ headroom or ratio. Its only pairing is an example, 16000 and 10000.
      configured, or as documented when no effort is set. §3.2's R-WHAT reports inert or reshaped combinations, and
      §3.3 already declined to report a request that is honoured and judged unwise. A warning here would be a third
      kind of finding with no rule, and the rule would need the number.
-  3. **The realised squeeze is reported when it happens, and needs no number — in one of its two shapes.** A final
-     turn without tool use that stops at `max_tokens` ends as `CompletionReason.TRUNCATED`, with
-     `[System: response truncated at max_tokens]` appended and a WARN (`OrcaAgentExecutor.java:1737-1752`, `:217`,
-     `:2289`); a streamed stop reason reaches that branch through `ChunkAggregator.java:100`. **A cut inside a
-     `tool_use` block is reported by nothing that names `max_tokens`.** That branch requires
-     `!response.hasToolUses()`, and a tool call cut short is still a tool call: its slot is registered when the block
-     starts (`AnthropicStreamingMapper.java:175`), its arguments parse to an empty map — silently when none arrived,
-     with a parse-failure WARN that does not say why when they are partial JSON (`ChunkAggregator.java:287-298`) — and
-     the executor dispatches it (`OrcaAgentExecutor.java:1768-1770`) on a branch that never reads the stop reason. The
-     Anthropic client's own `Anthropic response was truncated due to max_tokens limit` (`AnthropicLlmClient.java:786`)
-     does not reach an agent at all: its one caller is a blocking call made without a live cancellation token
-     (`:249`, `:282-286`), and the agent loop always passes a live one (`OrcaAgentExecutor.java:1529`, `:2987-2988`,
-     `LlmCallGateway.java:401`, `LlmCancellation.java:70-72`), so from an agent blocking and streaming calls alike
-     arrive as a stream. This is backlog L-16. It does not overturn the reason: closing that gap needs no number
-     either, and a threshold would leave it where it is.
+  3. **The realised squeeze is reported when it happens, and needs no number — in both of its shapes, by both agent
+     executors.** Both read the provider-neutral `StopReason` through one definition,
+     `at.aimon.core.agent.budget.TruncatedResponses`, so the answer is the same for every provider that maps its cut to
+     `MAX_TOKENS`, blocking or streamed.
+     - **A final answer cut off** — no tool call — ends as `CompletionReason.TRUNCATED`, with
+       `[System: response truncated at max_tokens]` appended and a WARN, on a turn (`OrcaAgentExecutor`) and on a
+       subagent fork (`DefaultSubagentExecutor.createTruncatedResult`). A streamed stop reason reaches both through
+       `ChunkAggregator`'s `STREAM_END` handling.
+     - **A cut inside a `tool_use` block** runs no tool. A call cut short still arrives as a tool call — its slot is
+       registered when the block starts (`AnthropicStreamingMapper.onContentBlockStart`), and arguments that never
+       finished parse to an empty map (`ChunkAggregator.parseArguments`) — and the response does not say which call was
+       cut. So neither executor runs any call of a response that stopped at `max_tokens`: each is answered with an
+       error result that names `max_tokens` (`TruncatedResponses.refusal`), a WARN names `max_tokens`, the iteration
+       and the tool names, and the loop continues. On a turn, three such responses in a row end the execution as
+       `ERROR` through the stalled-iteration guard; a fork has no guard and repeats until its `maxIterations` (L-23).
+       This shape was backlog L-16 until #108 closed it, and closing it needed no number either (§16.10).
+     - **The thinking share is given as counts.** When the cut response's usage reports reasoning tokens — both
+       Anthropic paths fill `TokenUsage.getReasoningTokens()` from `usage.output_tokens_details.thinking_tokens`, and so
+       does OpenAI's Responses path; Chat Completions does not — the four truncation WARNs end with the response's
+       output and reasoning counts. No share is turned into a verdict: that would need the number reason 1 says does
+       not exist.
+     - **The Anthropic client's own** `Anthropic response was truncated due to max_tokens limit` is kept, and it is not
+       what reports the squeeze to either executor. Its one caller, `convertResponse`, runs on the four-argument
+       blocking `sendMessage`; the six-argument overload reroutes a call carrying a supported cancellation token
+       through the stream, and both executors pass a live `SignalBackedLlmCancellation` on every call. OpenAI's two
+       WARNs sit in the same position in `OpenAILlmClient`. Callers of the blocking overloads do reach them, and for
+       them it is the only signal: compaction (`DefaultCompactionEngine`, through `LlmClient`'s five-argument default),
+       skill LLM execution (`LlmSkillExecutor`), peer memory as the CLI assembles it (`LlmDialecticEngine`,
+       `LlmDeriver`, `DefaultReconciler`, `RandomWalkDreamer`, `LlmJudgeSurprisalScorer`) and the wiki strategies.
+       Counted 2026-09-11 in main sources as `sendMessage(` and `::sendMessage`, then by construction site:
+       `ReActLlmDeriver` makes the same call and nothing constructs it.
   4. **The warning's text stays true.** Every request it fires on leaves exactly one token, and raising `maxTokens` is
      a remedy that works for it. Nothing here changes what it says (L-15).
 
@@ -1479,11 +1502,10 @@ headroom or ratio. Its only pairing is an example, 16000 and 10000.
 
 **The cost.** An operator who follows the warning by the smallest step, 4096 to 4097, loses the warning and keeps a
 one-token worst case. If thinking then spends its whole budget, the first thing they see is a truncated answer rather
-than a line before the request — and when the cut lands inside a tool call, not even that: a tool call with empty
-arguments, and nothing that names `max_tokens` (L-16). The trap is accepted, because the alternative is a line drawn by
-a number with no source, which moves the same trap to wherever the line is. The silence on a cut tool call is not
-accepted; it is open as L-16. Where the warning's advice could say *how far* to raise `maxTokens` is L-15's question,
-not this one.
+than a line before the request — or, when the cut lands inside a tool call, a WARN naming `max_tokens` beside calls
+that were refused rather than run. The trap is accepted, because the alternative is a line drawn by a number with no
+source, which moves the same trap to wherever the line is. The silence on a cut tool call was not accepted, and it is
+gone (§16.10). Where the warning's advice could say *how far* to raise `maxTokens` is L-15's question, not this one.
 
 **What would re-open this.**
 
@@ -1492,16 +1514,16 @@ not this one.
   `max_tokens`, and both the clamp and this coverage change.
 - **A change to the clamp's target** away from `max_tokens − 1`. "Exactly one token" stops being true, and so does
   L-15's premise.
-- **Evidence that the outcome signals above miss a squeeze L-16 does not already record.** L-16 itself is not a
-  trigger: the change it points at — naming a `max_tokens` stop wherever the cut lands, and attributing it to thinking
-  from `usage.output_tokens_details.thinking_tokens` — needs no number, and it is a change to the truncation report,
-  not to this warning.
+- **Evidence that the outcome signals above miss a squeeze that L-22 does not already record.** A change to how a
+  truncation is reported is not a trigger: #108 and #100 changed the report — a `max_tokens` stop named wherever the
+  cut lands, on both executors, with the reasoning count beside it — without touching this warning or needing a number.
 
 **Where it is pinned.** `AnthropicThinkingResolverTest.ClampWarningCoverage` asserts condition 3 as a property over
 every rung, conditions 1 and 2 path by path in both directions, and the table's rows. `AnthropicThinkingDialectTest`
-asserts end to end that 4097, 4100 and `extended` 8000/8001 go out with no warning at all.
+asserts end to end that 4097, 4100 and `extended` 8000/8001 go out with no warning from `AnthropicLlmClient`.
 `AnthropicThinkingBudgetsTest` asserts that a fit by one token is not a clamp. A floor or proportion warning added
-without revisiting this section turns them red.
+without revisiting this section turns them red. Reason 3's two shapes are pinned by `OrcaAgentExecutorTruncationTest`
+and `DefaultSubagentExecutorTruncationTest`, which assert against the same `TruncatedResponses` constants.
 
 ### 16.9 Where the build departed from #89's reviewed design
 
@@ -1527,17 +1549,78 @@ build — and each was corrected here. Two placements moved as well. None change
   never fires.** Found by the build, and missed by the design and its review alike, because neither traced the
   cancellation token: `convertResponse` is reached only by a blocking call without a live token, the ReAct executor
   always passes one, and the Anthropic client routes such a call through the streaming path. So the non-streaming half
-  of reason 3 did not exist for an agent either; L-16's table records where each signal stops.
+  of reason 3 did not exist for an agent either; L-16's table records where each signal stops. *(2026-09-11: narrower
+  than that — the two ReAct loops' own calls never reach it, and callers of the blocking overloads do; §16.10.)*
 - **It said `ClampWarningCoverage` asserts "the three conditions as a property over every rung".** Its three planned
   tests asserted condition 3 that way, plus the table's rows; conditions 1 and 2 were asserted nowhere as coverage.
   The build added a fourth test, `theOtherTwoConditions`, which asserts both directions path by path, and "Where it is
-  pinned" says which test pins what.
+  pinned" says which test pins what. *(2026-09-11: not on every path until §16.10's rows were added.)*
 
 The two placements. The second dated pointer was to follow the §16.4 sentence that ends at
 `AnthropicThinkingResolver.java:404-409`; there it would have come before *"Nothing in this repository can count how
 many deployments that shape holds"* and changed what "that shape" refers to, so it ends the bullet instead, and its
 *"above that budget"* reads *"above the requested budget"* to keep a referent there. And `## 관련 문서` names L-16
 beside L-15; the design left that line alone because it registered nothing.
+
+### 16.10 What §16.8 overstated, and the cut it left unnamed (#101, #108, #100, 2026-09-11)
+
+*Appended 2026-09-11. Not a change to #89's decision: option 3 stands, and the clamp warning is untouched. #96's build
+review left non-blocking findings against §16.8 unapplied; issue #101 collected them, and #108 and #100 changed the code
+under reason 3. §16.8 now says what the code does. This section keeps what it said, in §16.7's and §16.9's form: what it
+said, what is true, and what now reads differently.*
+
+- **"does not reach an agent at all".** Reason 3 said the Anthropic client's `max_tokens` WARN cannot reach an agent,
+  because its one caller is a blocking call and the agent loop always passes a live cancellation token. The argument
+  showed something narrower: the two ReAct loops' own calls arrive as a stream. Callers of the blocking overloads do
+  reach the WARN — compaction, while a turn runs, through `LlmClient`'s five-argument default, and also skill LLM
+  execution, peer memory and the wiki. Reason 3 now names them and says why the WARN stays. §16.9's fifth bullet made the
+  same claim and carries a dated pointer here; so does L-16's table, as a `정정` blockquote.
+- **"which every other divergence the client reports shares".** `AnthropicLlmClient` keeps two registers.
+  `reportedDivergences` holds the divergences reported once; `recurringDivergences` holds conditions of the traffic,
+  reported at the 1st, 10th, 100th … occurrence. "Emitted is not the same as logged" now says so, and names fields and
+  methods rather than line numbers.
+- **"conditions 1 and 2 path by path in both directions".** When §16.8 was merged, `theOtherTwoConditions` did not cover
+  `AUTO` on `EITHER`, `EXTENDED` on `ADAPTIVE`, or `ADAPTIVE` on `ADAPTIVE`, `EITHER` or undescribed rows, and it
+  asserted condition 2 for `AUTO` on `BUDGETED` only. The rows were added rather than the sentence narrowed: five
+  condition-1 rows, and condition 2 at `maxTokens` 1024 and 512 on every path that sends a budget (`EXTENDED` on
+  `BUDGETED`, `EITHER` and undescribed rows, and `ADAPTIVE` translated onto `BUDGETED`), each asserting the one surviving
+  finding exactly. Every row passed as the resolver's code predicted, so the sentence in "Where it is pinned" is kept,
+  and it is now true. §16.9's last bullet gets a dated pointer for the same reason.
+- **Reason 3's first shape held for the main executor only** (#100). `DefaultSubagentExecutor` never read the stop
+  reason, so a fork's final answer cut mid-sentence reached its parent as `COMPLETED`, with no marker. It now ends as
+  `TRUNCATED`, with the same marker and a WARN.
+- **Reason 3's second shape was open** (#108; L-16). A cut inside a `tool_use` block reached the operator as a tool that
+  ran with whatever arguments had arrived, and nothing said `max_tokens`. L-16 left open whether a truncated tool call
+  should still run; it does not. The complete-looking calls of the same response are refused too, because the response
+  does not say which call was cut, and a wrong guess would run a call with no arguments — the defect being fixed.
+- **"with no warning at all".** `AnthropicThinkingDialectTest`'s `warnings()` reads only the appender on
+  `AnthropicLlmClient`'s logger. "Where it is pinned" now says *with no warning from `AnthropicLlmClient`*.
+- **Three statements in `aimon-llm-anthropic` code:**
+  - the comment in `AnthropicThinkingDialectTest.autoOnABuiltInBudgetedRowThatFitsIsSilent` said `isEmpty()` catches
+    "a new line on these requests, whatever it says"; it now says a new WARN from `AnthropicLlmClient`, and that
+    `warnings()` reads nothing else;
+  - `AnthropicThinkingBudgetsTest.aBudgetThatFitsByOneTokenIsNotClamped` also asserted the clamp at 8000 / 8000 →
+    7999. It is renamed `aBudgetUnderMaxTokensIsSentAsAskedAndOneAtMaxTokensIsClamped` and not split, because its
+    comment reads the four rows as one table;
+  - `AnthropicThinkingBudgets.budgetFor`'s javadoc said `HIGH` clamps to 4095 "out of the box". It now says that
+    happens when the call's `LlmModel` sets no `maxTokens` and `AnthropicConfig.Builder.maxTokens(int)` was not used.
+
+**What changed in code** — the `CHANGELOG.md` `[Unreleased]` entry "Agent loop: a response cut at `max_tokens` says so
+on both executors, and its tool calls are not run". Both executors read one definition,
+`at.aimon.core.agent.budget.TruncatedResponses`. A response cut inside its tool calls runs none of them: each gets an
+error result that names `max_tokens` and asks for less output per response. A subagent fork's cut final answer is
+`TRUNCATED`. When the cut response reports reasoning tokens, the four truncation WARNs carry the output and reasoning
+counts, and no share. The design, the alternatives it refused and where the build departed from it are in
+[`../agent-execution/max-tokens-truncation-reporting.md`](../agent-execution/max-tokens-truncation-reporting.md).
+
+**Backlog.** L-16 is closed. L-22 (two more tool loops that never read the stop reason, one of them reachable) and L-23
+(a fork has no stalled-iteration guard, so a persistent cut repeats up to its iteration limit) are registered beside it.
+
+**Measured once.** A single streaming request to the Anthropic Messages API on 2026-09-11, forcing a tool call under
+`max_tokens: 60`, returned `input_json_delta` fragments and then `message_delta` with `stop_reason: max_tokens`, and
+**no `content_block_stop` for the cut `tool_use` block**. The joined input was `{"path": "/tmp/sea.txt"`, which does not
+parse. The details are in the design document's §11.4. One request is an observation, not a guarantee, and nothing
+above depends on it.
 
 ---
 
@@ -1547,6 +1630,7 @@ beside L-15; the design left that line alone because it registered nothing.
 - [`anthropic-thinking-traces.md`](anthropic-thinking-traces.md) — §2.1's vendor per-model table and the two quoted 400s; §12 `Q-5`, §16's first reason
 - [`anthropic-thinking-config-surface.md`](anthropic-thinking-config-surface.md) — §13 `O-2`, which §16 does not answer, and the two dated §14 notes that point here
 - [`reasoning-effort-config-surface.md`](reasoning-effort-config-surface.md) — the set-valued precedent §10 A2 weighs and refuses
-- [`../../backlog/llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md) — L-6 and L-7 closed here; L-9, L-10 and L-11 opened by §15.4; L-15 opened by §16; L-16 opened by §16.8
+- [`../../backlog/llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md) — L-6 and L-7 closed here; L-9, L-10 and L-11 opened by §15.4; L-15 opened by §16; L-16 opened by §16.8 and closed by §16.10
+- [`../agent-execution/max-tokens-truncation-reporting.md`](../agent-execution/max-tokens-truncation-reporting.md) — the design behind §16.10: why a cut tool call is refused rather than run, the fork's `TRUNCATED`, and L-22 and L-23
 - [`../../backlog/README.md`](../../backlog/README.md) — the rules for closing an item, and the index this change corrects twice
 - [`../../project/api-stability.md`](../../project/api-stability.md) — §5, which permits the enum addition at `0.x`

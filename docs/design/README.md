@@ -40,6 +40,7 @@
 | [`compaction.md`](agent-execution/compaction.md) | 컨텍스트가 차기 전 대화 요약. 트리거 조건, 실패 처리, `/compact` |
 | [`artifact.md`](agent-execution/artifact.md) | 에이전트가 만든 파일을 사용자에게 건네는 경로 |
 | [`integration-test-layers.md`](agent-execution/integration-test-layers.md) | `OrcaAgentRuntime` 통합 테스트의 계층 구분과 무엇을 어디서 검증하는가 |
+| [`max-tokens-truncation-reporting.md`](agent-execution/max-tokens-truncation-reporting.md) | `max_tokens` 에서 잘린 응답에 두 ReAct 루프가 같은 답을 주는 자리 — 잘린 도구 호출을 실행하지 않고 거절하는 이유, 포크의 `TRUNCATED`, 추론 토큰을 숫자로만 붙이는 WARN, thinking 기록 §16.8 과 백로그 L-16 의 정정 |
 
 ### session — 영속 세션과 노드 로컬 핸들
 
@@ -93,6 +94,7 @@
 | [`provider-switch-agent-model-check.md`](llm/provider-switch-agent-model-check.md) | CLI 에서 `llm.provider` 만 바꾸면 에이전트가 다른 벤더의 모델 이름을 계속 보내는 문제 — 두 관문(엔드포인트 · 모델 계열)으로 거짓 경보를 막는 기동 경고, 인스턴스 동일성으로 가리는 파일 출처, 무언가를 실제로 바꾸는 처방만 내놓는 규칙 |
 | [`model-names-sent-and-shown.md`](llm/model-names-sent-and-shown.md) | 그 기동 경고 뒤에 남은, CLI 가 보내고 보여 주는 모델 이름이 실제로 도는 것과 어긋나던 자리 — 모델을 적지 않은 부품은 지어낸 이름이 아니라 클라이언트의 기본 모델로 돈다는 한 원칙, 번들 `explore` 의 `haiku` 를 지운 이유, 모델을 권하지 않는 `Task` 도구 설명, 이름을 바꾸지 않고 번들을 구별하는 배너 |
 | [`thinking-reporting-and-dialect-records.md`](llm/thinking-reporting-and-dialect-records.md) | thinking 경로가 운영자에게 무엇을 말하는가 — 조립 중에는 아무것도 보고하지 않는 계약과 로거 없는 resolver, `UNKNOWN` 이 하던 두 일을 쪼갠 네 번째 방언 상수, 방언 census 의 원자료 |
+| [`provider-key-release-gate.md`](llm/provider-key-release-gate.md) | export 된 프로바이더 키가 평범한 빌드를 청구되는 라이브 API 실행으로 바꾸는 문제 — 키를 명령 앞에 붙이는 퀵스타트, 키가 환경에 있으면 시작하지 않는 릴리스 스크립트(unset 이 아니라 거부인 이유), 스크립트를 읽지 않고 샌드박스에서 돌려 순서까지 붙드는 테스트, 거부 목록을 프로바이더 모듈의 키 게이트와 대조하는 인구조사 |
 
 ### 상태를 갖는 서브시스템
 
@@ -116,13 +118,25 @@
 
 ### documentation — 문서 자체를 지키는 장치
 
-이 축은 제품 서브시스템이 아니라 **저장소 문서의 도구**다. §1 의 도메인 축에서 벗어나는 유일한
-자리이며, 그 이유는 `translation-structure-check.md` 의 첫 절에 적혀 있다.
+이 축은 제품 서브시스템이 아니라 **저장소 문서의 도구**다. §1 의 도메인 축에서 벗어나는
+두 자리 중 하나이며(다른 하나는 아래 `testing`), 이 축의 이유는 `translation-structure-check.md` 의 첫 절에 적혀 있다.
 
 | 문서 | 무엇이 있나 |
 |------|------------|
 | [`documentation/translation-structure-check.md`](documentation/translation-structure-check.md) | 정본과 번역본의 구조 일치를 강제하는 검사 — 여섯 축의 처분, 실패/경고를 가르는 쌍의 상태, 예외 표현, 공허 통과가 아님을 보이는 프로브 |
 | [`documentation/backlog-register-check.md`](documentation/backlog-register-check.md) | 백로그 등록부의 중복 ID 와, 항목과 어긋난 표제·색인 건수에 실패하는 검사 — 무엇을 항목과 상태로 읽는가, 번호로 인용되는 등록부의 선언된 읽기, 등록부 간 ID 유일성, 면제 없는 실패, 읽기 규칙을 하나씩 끄는 셀프 테스트 |
+
+### testing — 모듈의 테스트가 무엇 위에서 도는가
+
+이 축도 제품 서브시스템이 아니라 **테스트가 서는 바닥** — 빌드가 모듈의 테스트에 건네는 클래스패스와 테스트킷 —
+이고, 그래서 `features/` 쪽에 마주 보는 이름이 없다. 결정문은 코드 옆(`gradle/libs.versions.toml` 의 `junit`
+노트)에 있고, 이 디렉토리에는 그 결정의 측정과 기각한 대안이 있다 — 빌드 스크립트의 주석에는 대안의 크기를 잰
+표가 들어갈 자리가 없기 때문이다. 이름이 `build` 가 아닌 이유는 하나다: 루트 `.gitignore` 의 `build/` 가 그 이름의
+디렉토리를 어느 깊이에서든 무시하므로, `docs/design/build/` 에 둔 문서는 커밋되지 않는다.
+
+| 문서 | 무엇이 있나 |
+|------|------------|
+| [`testing/test-classpath-shipped-versions.md`](testing/test-classpath-shipped-versions.md) | 테스트 클래스패스가 발행 버전과 어긋난 아홉 자리를 출처별로 맞추거나 받아들인 결정 — `aimon-cli` 의 두 테스트 클래스패스만 런타임과 일관되게 해석하는 이유, 주석 jar 두 출처를 받아들인 근거, 발행되는 메모리 테스트킷의 JUnit 바닥, 크기를 재서 기각한 대안들 |
 
 ### backlog — 아직 결정하지 않은 것
 
