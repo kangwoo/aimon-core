@@ -130,7 +130,7 @@ try (AnthropicLlmClient client = new AnthropicLlmClient(config)) {
 | 파라미터 | 타입 | 기본값 | 범위 | 설명 |
 |---------|------|-------|------|------|
 | `apiKey` | String | (필수) | - | Anthropic API 키 |
-| `model` | String | `claude-sonnet-4-20250514` | - | 사용할 Claude 모델 |
+| `model` | String | `claude-sonnet-4-5` | - | 사용할 Claude 모델 |
 | `temperature` | double | `0.0` | 0.0 ~ 1.0 | 샘플링 온도 |
 | `maxTokens` | int | `4096` | > 0 | 최대 생성 토큰 수 |
 | `timeout` | Duration | 60초 | - | 요청 타임아웃 |

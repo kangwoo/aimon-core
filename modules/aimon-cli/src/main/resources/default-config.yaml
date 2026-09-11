@@ -35,8 +35,9 @@ llm:
 #     `memory.dreamer.scorer.llm.model` is set
 #   - wiki page generation
 #   - the agent, and any subagent that names no model, only when the agent's definition has no `model.name`
-# The openai provider requires it. Under anthropic it may be left out -- memory and wiki generation then use
-# the Anthropic client's default model, and when `memory` is on, startup prints one line naming that model.
+# The openai provider requires it. Under anthropic it may be left out -- memory, wiki generation, and an agent
+# whose definition has no `model.name` (with its subagents that name no model) then use the Anthropic
+# client's default model, and when `memory` is on, startup prints one line naming that model.
 # An OpenAI name left here after switching to anthropic is what memory and wiki generation send to Anthropic.
   model: "gpt-5.1"
   timeout: 60

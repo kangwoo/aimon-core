@@ -28,8 +28,9 @@ import at.aimon.core.subagent.execution.SubagentExecutionResult;
  * <p>
  * <b>ReAct-parity inputs.</b> A behavior gets the same resolved inputs the ReAct path uses:
  * <ul>
- * <li>{@link #resolvedModel()} — the subagent's {@code model} alias merged with the default (NOT the raw
- * {@code context.getDefaultModel()}).
+ * <li>{@link #resolvedModel()} — the model the ReAct path resolves: the per-invocation override, else the subagent's
+ * own {@code model}, else the default — each sent as written, and possibly nameless (NOT the raw
+ * {@code context.getDefaultModel()}, which ignores the first two).
  * <li>{@link #scopedToolRegistry()} — the registry filtered to the subagent's allow-list (exposed, not enforced).
  * <li>{@link #effectiveLlmCallMetadata()} — subagent usage-attribution metadata.
  * <li>{@link #llmGateway()} — the retry/fallback-aware gateway configured exactly like the ReAct path.
@@ -117,12 +118,13 @@ public interface SubagentBehaviorSupport {
     LlmCallMetadata effectiveLlmCallMetadata();
 
     /**
-     * Returns the model the subagent would run on — its own {@code model} alias merged with the default — identical to
-     * what the ReAct path resolves. Prefer this over {@code context.getDefaultModel()} (the raw default), which does
-     * NOT
-     * honor the subagent's {@code model}.
+     * Returns the model the subagent would run on, identical to what the ReAct path resolves: the per-invocation
+     * override, else the subagent's own {@code model}, else the default. No alias is resolved. When none of the three
+     * names a model the result carries no name, and the client sends its own default model. Prefer this over
+     * {@code context.getDefaultModel()} (the raw default), which honors neither the override nor the subagent's
+     * {@code model}.
      *
-     * @return the subagent-resolved model (never null)
+     * @return the subagent-resolved model (never null; its name may be empty)
      */
     LlmModel resolvedModel();
 

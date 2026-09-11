@@ -85,7 +85,7 @@ public class ReplSession {
     private final OrcaAgentExecutor agentExecutor;
     private final OrcaAgentRuntime agentRuntime;
     // The banner reads these two: the definition's model and name, and the configured agent.name. Both null in
-    // test-built setups, which never call start().
+    // test-built setups that leave them unset.
     private final Agent agent;
     private final String agentBundleName;
     private final LiveSession liveSession;
@@ -259,7 +259,9 @@ public class ReplSession {
         formatter.displayGoodbye();
     }
 
-    private void displayAgentInfo() {
+    // Package-private so ReplSessionBannerTest can check that the banner prints its lines, without the terminal
+    // start() opens.
+    void displayAgentInfo() {
         formatter.displayInfo("Working Directory: " + agentRuntime.getEnvironment().getWorkingDirectory());
         agentBundleLine(agentBundleName, agent).ifPresent(formatter::displayInfo);
         formatter.displayInfo(providerLine(agentExecutor.getLlmClient(), agent));

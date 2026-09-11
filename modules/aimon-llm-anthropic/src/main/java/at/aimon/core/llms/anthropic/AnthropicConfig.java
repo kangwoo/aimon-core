@@ -37,7 +37,9 @@ import at.aimon.core.llm.capability.ModelCapabilityRegistry;
  */
 public final class AnthropicConfig {
 
-    private static final String DEFAULT_MODEL = "claude-sonnet-4-20250514";
+    // Measured served by the Messages API on 2026-09-11 (#116, backlog L-24), and described by the capability table's
+    // claude-sonnet-4-5 row. claude-sonnet-4-20250514, the default before it, was answered 404 not_found_error then.
+    private static final String DEFAULT_MODEL = "claude-sonnet-4-5";
     private static final int DEFAULT_MAX_TOKENS = 4096;
     private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(60);
     private static final AnthropicThinkingMode DEFAULT_THINKING_MODE = AnthropicThinkingMode.OFF;

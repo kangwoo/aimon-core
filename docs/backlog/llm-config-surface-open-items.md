@@ -1,4 +1,4 @@
-# LLM 설정 표면 — 등록 항목 24건 (열림 14 · 닫힘 10)
+# LLM 설정 표면 — 등록 항목 25건 (열림 14 · 닫힘 11)
 
 출처는 #46 이다 — 모델 capability 표를 CLI yaml 과 스타터 프로퍼티에서 확장할 수 있게 한 작업.
 설계는 [`../design/llm/model-capability-config-key.md`](../design/llm/model-capability-config-key.md) 이고,
@@ -1221,9 +1221,12 @@ javadoc 예시가 2곳(`SubagentExecutionEnvironment` 와 `DefaultSubagentExecut
 | 입구 | 넘기는 값 |
 |---|---|
 | `OrcaAgentRuntimeFactory.java:962`, CLI 의 `GraalJsWorkflowToolProvider.java:85` | 메인 에이전트의 `agent.getMetadata().getModel()` |
-| `TaskTool.java:555`, `WorkflowTool.java:449`, `SubagentBackedSkillForkExecutor.java:113` | 생성자로 받은 값 — 셋 다 `agent.getMetadata().getModel()` 로 만들어진다(`OrcaSubagentToolProvider.java:91` · `:113`, `OrcaSkillForkExecutorResolver.java:67`) |
+| `TaskTool.java:553`, `WorkflowTool.java:449`, `SubagentBackedSkillForkExecutor.java:113` | 생성자로 받은 값 — 셋 다 `agent.getMetadata().getModel()` 로 만들어진다(`OrcaSubagentToolProvider.java:91` · `:113`, `OrcaSkillForkExecutorResolver.java:67`) |
 | `GraalJsWorkflowTool.java:255`, `DefaultSubagentExecutionManager.java:604`, `SubagentExecutionEnvironment.java:390` | 이미 받은 값을 옮긴다 |
 | `DefaultCommandExecutionManager.java:213`, `SkillBackedCommandExecutor.java:70` | 명령 실행의 `model` 인자 — 스킬 명령 경로이고 `resolveModel` 에 닿지 않는다. 그 인자의 출처는 더 따라가지 않았다 |
+
+> **정정** *(2026-09-11, #118)*: 이 표는 처음에 `TaskTool.java:555` 로 적었다. `c561e17` 에서 `.defaultModel(`
+> 호출은 `:553` 이고, 표와 괄호 안의 나머지 인용 열두 개는 같은 날 다시 읽어 맞았다.
 
 어느 입구도 이름을 지어내지 않으므로, 리터럴이 사라지면 서브에이전트 해석에 닿는 모든 입구에서 "이름이 없으면
 클라이언트의 기본 모델" 이 된다.
@@ -1389,6 +1392,93 @@ limit` WARN 이 **뜬다.** 다만 그 줄은 어느 스킬이었는지, 어느 
 **언제 다시 볼까.** `AnthropicConfig` 의 기본값을 다음에 건드릴 때, 또는 anthropic 에서 `llm.model` 없이 띄운 메모리나
 위키 생성이 404 로 실패한다는 보고가 올 때.
 
+### 닫힘 (2026-09-11, #116)
+
+**쟀고, 서비스되지 않았다 — 기본값을 `claude-sonnet-4-5` 로 바꿨다.** 잰 이름은 이슈가 아니라 코드에서 읽었다
+(`c561e17` 의 `AnthropicConfig.java:40`). 키는 요청마다 그 명령 하나에만 헤더 파일로 넘겼고, 내보내거나 기록하지
+않았다. 요청은 넷이고, 응답의 `date` 는 2026-09-11 04:13:49 ~ 04:16:06 GMT 다.
+
+| # | 요청 | HTTP | 답 | `request-id` | 과금 |
+|---|---|---|---|---|---|
+| 1 | `GET https://api.anthropic.com/v1/models/claude-sonnet-4-20250514` | 404 | `not_found_error` — `model: claude-sonnet-4-20250514` | `req_011Cew14Po9JL3pp2n45Lyy7` | 아니다 |
+| 2 | `POST https://api.anthropic.com/v1/messages` — `model: claude-sonnet-4-20250514`, `max_tokens: 1`, 한 단어 사용자 메시지 | 404 | 같은 `not_found_error` | `req_011Cew1AD4e7L3o7274fYiWa` | 아니다 |
+| 3 | `GET https://api.anthropic.com/v1/models/claude-sonnet-4-5` | 200 | `id: claude-sonnet-4-5-20250929` — `thinking.types` 는 `enabled` 지원, `adaptive` 미지원 | `req_011Cew1ESjHVJA4iv1jppBdS` | 아니다 |
+| 4 | `POST https://api.anthropic.com/v1/messages` — `model: claude-sonnet-4-5`, 나머지는 2 와 같다 | 200 | 서비스한 `model: claude-sonnet-4-5-20250929`, `stop_reason: max_tokens` | `req_011Cew1EUgrGJw1SazZj49Gq` | 그렇다 — 입력 8 · 출력 1 토큰 |
+
+3 · 4 는 기본값을 바꾼다면 **같은 방법으로 잰 이름**으로만 바꾸려고 쟀다. 이 작업의 라이브 호출은 이 넷뿐이다.
+
+**결정.** 옛 이름을 두고 쟀다고만 적는 모양은 설 자리가 없었다 — 서비스되지 않으므로, 두면 이 항목이 적은 네 자리가
+오늘 요청 시점에 전부 404 로 실패한다. 남은 물음은 어느 이름이냐였고 `claude-sonnet-4-5` 가 가장 작게 움직인다. 같은
+방법으로 쟀고, 내장 capability 표가 이미 서술하며(`claude-sonnet-4-5` prefix 행 — `BUDGETED` 이고 3 의
+`thinking.types` 와 맞는다), `default-anthropic` 번들의 메인 에이전트가 이미 그 이름으로 돌고, 가격 · 컨텍스트 창 표는
+두 이름을 같은 `claude-sonnet-4` prefix 로 답해 움직이지 않으며, 같은 Sonnet 급이다. 기각한 넷은 한 문장씩이다.
+
+- **날짜 붙은 스냅샷 `claude-sonnet-4-5-20250929`** — 방금 낡은 것이 바로 그 모양이고, 기본값과 번들이 한 모델을 두
+  철자로 적게 된다. 대가는 적어 둔다: 벤더가 undated 별칭을 같은 계열의 뒤 스냅샷으로 옮길 수 있다. 그때도 서비스한
+  `model` 이 무엇이 돌았는지 말하고, prefix 행이 그 이름을 서술한다.
+- **더 새 계열(`claude-sonnet-4-6`, `claude-sonnet-5`)** — 재지 않았고(과금 호출이 하나 더 든다), 이름 너머로 요청이
+  바뀐다. `claude-sonnet-4-6` 은 `EITHER` 행이라 `auto` 가 adaptive 로 가고, `claude-sonnet-5` 행은 temperature 를 억제한다.
+- **기본값을 없애고 모델을 요구하기** — 배포 모듈의 공개 계약(`AnthropicConfig.builder().apiKey(k).build()`)을 깨고,
+  #105 의 결정을 뒤집어 anthropic 에서 `llm.model` · `aimon.llm.model` 을 필수로 만든다. 더 작은 모양으로 충분하다.
+- **기동할 때 `GET /v1/models` 로 고르기** — 설정을 만드는 도중의 네트워크 호출이고, 키와 계정마다 답이 다르다.
+
+항목이 물었던 "내장 표가 새 이름을 서술해야 하는가" 의 답은 **이미 서술한다** 이다. 행은 더하지 않았고
+`InMemoryModelCapabilityRegistry` 의 `registerAnthropicDefaults` 주석과 그 테스트의 주석만 고쳤다. 근거는
+[설계](../design/llm/model-names-sent-and-shown.md) §11 이다.
+
+**보이는 변화.** 모델을 적지 않은 세 경로가 새 이름으로 요청한다 — `.model(...)` 없이 만든 `AnthropicConfig`,
+`llm.model` 없는 `provider: anthropic` CLI(이 항목의 네 자리이고, 메모리의 기동 줄은 이제 `claude-sonnet-4-5` 를 댄다),
+`aimon.llm.model` 없는 스타터. 옛 이름으로 나간 요청은 Anthropic Messages API 에서 전부 404 였으므로 **그 API 에서**
+성공하던 요청이 바뀌지는 않는다. `baseUrl` 뒤의 게이트웨이가 옛 이름을 아직 서비스하거나 허용하고 있었다면 이야기가
+다르다 — 모델을 적지 않은 그 배포는 이제 `claude-sonnet-4-5` 를 보내고, 게이트웨이가 그 이름을 어떻게 다루는지는 재지
+않았다. `thinkingMode` 를 적고 모델을 적지 않은 배포는 요청 모양도 바뀐다: `auto` 는 thinking 을 보내지 않던 자리에서
+budgeted thinking 을 보내고(과금된다), `adaptive` 는 기존 경고와 함께 budgeted 로 옮겨지며, `extended` 와 배포 기본값
+`off` 는 그대로다. CHANGELOG 에 적었다.
+
+**규칙 다섯 — 처방을 적용했고, 재는 것이 먼저였다.** 항목이 본 둘째 모양(잰 이름으로 바꾸기)이다. 첫째 모양(재어
+기록만 하기)은 잰 결과가 지웠다. `AnthropicConfigTest` 는 이제 기본값을 적은 단언에 더해, 기본값이 내장 표에서
+`BUDGETED` 로 풀리는지 본다 — 다음에 기본값을 바꾸는 사람은 표와 마주친다. 기본값을 옛 이름으로 되돌리면 두 단언이
+함께 빨개진다. 되돌려 보고 확인했다(설계 §11).
+
+**남은 것.** 별칭도 은퇴하거나 옮겨 갈 수 있다. 다시 볼 계기는 anthropic 에서 모델을 적지 않은 요청이 404 로 실패한다는
+보고, 또는 기본값을 다음에 건드릴 때다. 예시 코드가 여전히 서비스되지 않는 이름을 적는 자리는 L-27 로 올렸다.
+
+---
+
+## L-27 — 복사해 쓰는 예시가 설정된 provider 가 서비스하지 않는 모델 이름을 적는다
+
+*(2026-09-11 등록. 출처는 #116 의 실측과 #118 item 5 — [설계](../design/llm/model-names-sent-and-shown.md) §11 이
+이 항목으로 올렸다. 번호가 L-25 · L-26 을 건너뛴 것은 같은 날 다른 작업이 그 두 번호를 예약했기 때문이다.)*
+
+**무엇을.** 모델 이름을 적는 README 와 javadoc 예시가 서비스되는 이름을 적거나, 이름을 적지 않게 한다.
+
+**왜.** 관측 가능한 결과 — 예시를 그대로 복사한 사람의 첫 요청이 404 로 실패한다. `aimon-llm-anthropic` 의 README 빠른
+시작이 적는 `claude-sonnet-4-20250514` 는 2026-09-11 에 Messages API 와 모델 API 모두 404 였다(L-24). #118 item 5 는
+코어의 서브에이전트 다섯 파일에서 별칭 예시를 뺐지만, 같은 모양의 예시가 그 다섯 파일 밖에 남았다. 기본값을 바꾼 변경이
+이 줄들을 틀리게 만든 것은 아니다 — 그 전에도 서비스되지 않는 이름을 가리키고 있었다.
+
+**어디** *(2026-09-11)*.
+
+| 자리 | 적힌 이름 | 무엇 |
+|---|---|---|
+| `modules/aimon-llm-anthropic/README.md:55` | `claude-sonnet-4-20250514` | 빠른 시작의 `.model(...)` |
+| `modules/aimon-llm-anthropic/README.md:106` | `claude-opus-4-20250514` | 예시의 `.name(...)` |
+| `AnthropicConfig.java:34` | `claude-sonnet-4-20250514` | 클래스 javadoc 의 사용 예 |
+| `AnthropicConfig.java:321` | `claude-sonnet-4-20250514`, `claude-opus-4-20250514` | `Builder.model` 의 `@param` 예 |
+| `AnthropicLlmClient.java:78` | `claude-sonnet-4-20250514` | 클래스 javadoc 의 사용 예 |
+| `MarkdownSubagentParser.java:22` | `sonnet` | 프론트매터 예시의 `model:` |
+| `SubagentParser.java:20` | `sonnet` | 프론트매터 예시의 `model:` |
+
+**심각도 (규칙 셋).** `claude-sonnet-4-20250514` 는 2026-09-11 에 두 API 모두 404 였고(L-24), 맨 별칭 `haiku` 는
+2026-09-10 에 Anthropic 이 404 로 답했다([#92 설계](../design/llm/provider-switch-agent-model-check.md) §10.4). 코드는
+별칭을 풀지 않으므로 `sonnet` 도 쓰인 그대로 나간다. `claude-opus-4-20250514` 와 `sonnet` 자체는 재지 않았다.
+
+**처방은 적용해 보지 않았다 (규칙 다섯).** 모양은 둘이다 — 예시에서 모델 줄을 빼는 것(#118 item 5 가 코어 다섯 파일에서
+한 모양), 잰 이름으로 바꾸는 것. 후자는 낡을 리터럴을 늘린다.
+
+**언제 다시 볼까.** `aimon-llm-anthropic` 의 README 나 `AnthropicConfig` · `AnthropicLlmClient` 의 javadoc 을 다음에
+건드릴 때, 서브에이전트 파서를 건드릴 때, 또는 기본 모델이 다시 바뀔 때.
+
 ---
 
 ## 관련 문서
@@ -1413,7 +1503,8 @@ limit` WARN 이 **뜬다.** 다만 그 줄은 어느 스킬이었는지, 어느 
   설계. §8 이 D 번호로 된 원래 목록이고, §10 이 그중 L-17 ~ L-21 로 올린 것과 설계 문서에 남긴 것을 가르며, §11 이
   그 다섯을 닫은 #104 ~ #107 을 적는다
 - [`../design/llm/model-names-sent-and-shown.md`](../design/llm/model-names-sent-and-shown.md) — #104 ~ #107 의 설계.
-  D-1 ~ D-5 가 L-17 ~ L-21 을 닫은 결정이고, §9 Q2 가 L-24 의 출처, §10 이 구현이 설계에서 벗어난 자리다
+  D-1 ~ D-5 가 L-17 ~ L-21 을 닫은 결정이고, §9 Q2 가 L-24 의 출처, §10 이 구현이 설계에서 벗어난 자리이며, §11 이
+  #116 · #118 의 기록이다 — L-24 를 닫은 실측과 결정, 그리고 L-27 의 출처
 - [`../getting-started/aimon-core-integration-via-cli-reference.md`](../getting-started/aimon-core-integration-via-cli-reference.md#provider-를-바꿀-때--agentname-도-함께-바꾼다) —
   CLI 가이드의 provider 전환 절. L-17 의 주의 문구와 L-18 · L-19 가 적혀 있던 자리이고, #104 ~ #107 이 그 항목들을
   닫으며 함께 고쳤다
