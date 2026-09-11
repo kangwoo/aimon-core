@@ -98,7 +98,7 @@ aws-sdk = "2.54.12"
 # `testRuntimeOnly(enforcedPlatform("org.junit:junit-bom:5.12.2"))` to :aimon-core for
 # `:aimon-core:test --tests 'at.aimon.core.memory.StoreBackedPeerMemoryContractTest' --rerun`. Nothing in the build
 # repeats it; repeat it when this number or the suite changes.
-junit = "5.12.2"
+junit = "6.1.3"
 assertj = "3.27.7"
 mockito = "5.23.0"
 testcontainers = "1.21.4"
