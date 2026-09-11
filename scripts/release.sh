@@ -11,7 +11,7 @@
 #
 # Order of operations (publish is irreversible, so git history is only pushed AFTER a successful
 # publish; on failure the only side effect is an uncommitted gradle.properties bump, easily reverted):
-#   pre-flight → quality gate → confirm → bump (uncommitted) → publish → commit + tag → push
+#   provider-key check → pre-flight → quality gate → confirm → bump (uncommitted) → publish → commit + tag → push
 #
 set -euo pipefail
 
@@ -32,6 +32,68 @@ for arg in "$@"; do
     esac
 done
 
+log() { printf '\033[1;34m▶ %s\033[0m\n' "$*"; }
+ok() { printf '\033[1;32m✓ %s\033[0m\n' "$*"; }
+fail() {
+    printf '\033[1;31m✗ %s\033[0m\n' "$*" >&2
+    exit 1
+}
+
+# ── 0. provider API keys ────────────────────────────────────────────────────
+# The live-API test classes in aimon-llm-anthropic and aimon-llm-openai carry no tag: what keeps them out of
+# `checkAll` is @EnabledIfEnvironmentVariable on their provider's key, and nothing else. With ANTHROPIC_KEY or
+# OPENAI_KEY in this environment the gate in §4 would run them — calls billed to that key's account, and a gate
+# that can go red for a reason on the provider's side (a key that is no longer valid fails on HTTP 401). CI has
+# no key, so the gate would also stop being the one CI runs, which is the promise §4 is built on.
+#
+# Refuse rather than unset. The key stays exported in the shell this script was started from, and every later
+# `./gradlew test` or `checkAll` there bills the same way (CONTRIBUTING.md › Live-API tests); unsetting it in
+# here would fix one command of that shell and tell the operator nothing. A key set to the empty string is
+# refused too: the check asks whether the variable exists, and it never expands the value. AIMON_DOCKER_IT and
+# AIMON_KUBERNETES_IT gate two more classes the same way but bill nothing, and are not refused; whether the
+# release gate should inherit them is backlog LA-2 (docs/backlog/live-api-test-tier.md).
+#
+# This runs first. It needs nothing from the repository; a shell about to be refused should not trigger
+# `git fetch` or `docker info` first; and a refusal is not a failed release, so the EXIT trap's
+# gradle.properties note must not print beside it. It runs after the argument loop, so a bad argument still
+# gets exit 2 and the usage line. ReleaseGateMatchesCiGateTest runs this file from an empty directory with a
+# PATH holding only a stub `git` that records its calls, and fails if this check moves above the argument
+# loop, below the `cd` that calls `git`, below `trap cleanup EXIT` (the trap calls `git` when a refusal exits
+# non-zero), or below `log "Pre-flight checks"`.
+provider_keys_set=""
+for name in ANTHROPIC_KEY OPENAI_KEY; do
+    # `+set` asks whether the variable exists without expanding its value.
+    if [ -n "${!name+set}" ]; then
+        provider_keys_set="${provider_keys_set:+$provider_keys_set }$name"
+    fi
+done
+if [ -n "$provider_keys_set" ]; then
+    unset_flags=""
+    for name in $provider_keys_set; do
+        unset_flags="$unset_flags -u $name"
+    done
+    case "$provider_keys_set" in
+        *" "*)
+            keys_are="${provider_keys_set/ / and } are"
+            pronoun="them"
+            ;;
+        *)
+            keys_are="$provider_keys_set is"
+            pronoun="it"
+            ;;
+    esac
+    printf '%s\n' \
+        "${keys_are} set in this environment. This script never prints a key's value." \
+        "The live-API test classes are gated on nothing but a provider key, so the quality gate would run them:" \
+        "calls billed to that key's account, and a gate that can fail for a reason on the provider's side. CI runs" \
+        "this gate without a key, and a release must too. Unset ${pronoun} and re-run, which also keeps later builds" \
+        "in this shell from billing (CONTRIBUTING.md › Live-API tests):" \
+        "    unset ${provider_keys_set}" \
+        "or keep ${pronoun} out of this one run:" \
+        "    env${unset_flags} scripts/release.sh${*:+ $*}" >&2
+    fail "Refusing to start while a provider API key is in the environment: ${provider_keys_set}"
+fi
+
 cd "$(git rev-parse --show-toplevel)"
 
 # JAVA_TOOL_OPTIONS often carries -Xms (e.g. -Xms1g) from the shell, which clashes with the Gradle
@@ -39,13 +101,6 @@ cd "$(git rev-parse --show-toplevel)"
 # Pin a max-only override for every Gradle invocation here.
 export JAVA_TOOL_OPTIONS="-Xmx3g"
 GRADLE="./gradlew --console=plain"
-
-log() { printf '\033[1;34m▶ %s\033[0m\n' "$*"; }
-ok() { printf '\033[1;32m✓ %s\033[0m\n' "$*"; }
-fail() {
-    printf '\033[1;31m✗ %s\033[0m\n' "$*" >&2
-    exit 1
-}
 
 cleanup() {
     local rc=$?

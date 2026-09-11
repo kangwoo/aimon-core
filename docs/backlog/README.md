@@ -347,7 +347,7 @@ B-6 이 그렇게 어긋나 있었다. §7 은 그 항목을 "MCP 를 실제로 
 | [`llm-config-surface-open-items.md`](llm-config-surface-open-items.md) | `docs/design/llm/model-capability-config-key.md` §9 (#46) | 21 | 17 | 4 | 0 |
 | [`reasoning-delta-stream-open-items.md`](reasoning-delta-stream-open-items.md) | `docs/design/llm/reasoning-delta-stream.md` §11 (#62) | 9 | 7 | 2 | 0 |
 | [`config-value-expansion-open-items.md`](config-value-expansion-open-items.md) | `docs/design/integration/config-value-expansion-and-frontmatter-strictness.md` §9 (#53) | 2 | 2 | 0 | 0 |
-| [`live-api-test-tier.md`](live-api-test-tier.md) | 라이브 API 테스트 계층의 CI 신호 결정 — #81 (2026-09-10) | 1 | 0 | 1 | 0 |
+| [`live-api-test-tier.md`](live-api-test-tier.md) | 라이브 API 테스트 계층의 CI 신호 결정 — #81 (2026-09-10) | 2 | 1 | 1 | 0 |
 
 > **2026-09-10 — 위 표의 두 칸을 세어서 고쳤다. 규칙 일곱의 두 번째 사례이고, 둘 다 같은 모양이다:
 > 본문을 고친 사람이 색인을 세지 않았다.**

@@ -7,6 +7,46 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Release: `scripts/release.sh` refuses to start while a provider API key is in its environment
+
+- **`scripts/release.sh` now stops before anything else when `OPENAI_KEY` or `ANTHROPIC_KEY` is in its
+  environment** (#98), even set to the empty string, and `--dry-run` included. It exits 1 before it invokes
+  `git`, and so before its network and Docker checks. The message names the variables that are set, never a
+  value, and says how to proceed: `unset` them and re-run, or keep them out of one run with
+  `env -u <name> scripts/release.sh <args>`. A bad argument still gets exit 2 and the usage line first. No flag
+  lets a key through.
+
+- **Why.** The four live-API classes carry no tag, so their variable is their only gate. With a key in the
+  environment the gate's `checkAll` ran them: calls billed to that key's account, a gate that could go red for
+  a reason on the provider's side, and a gate that was no longer the one CI runs, since CI has no key. Neither
+  F-8 nor backlog `LA-1`'s manual-only decision is reopened; the release gate just stops inheriting a key.
+
+- **Observable change.** A release cut from a shell with a key exported used to run those classes inside the
+  gate; now it refuses to start. Not measured, carried over from the issue: a release run with a key exported.
+
+- **Refused, not unset.** The key stays exported in the shell the script was started from, where every later
+  build bills the same way. Unsetting it inside the script would fix one command of that shell and tell the
+  operator nothing.
+
+- **Pinned by running the script, not by reading it.** `ReleaseGateMatchesCiGateTest` runs the real
+  `scripts/release.sh --dry-run` from an empty directory, with a cleared environment and a `PATH` holding only
+  a stub `git` that records its calls: once per key, once with a key set to the empty string, once with both,
+  once with neither, and once with a bad argument. A refusal must come before any `git` call and before
+  pre-flight, name exactly the keys that are set, and not print the value; the keyless run must reach
+  pre-flight and call the stub, so "no `git` call" cannot pass vacuously. The test also holds the refused set
+  equal to the `@EnabledIfEnvironmentVariable` gates under `modules/aimon-llm-*`, so a new provider's key
+  fails the build until the script refuses it. `AIMON_DOCKER_IT` and `AIMON_KUBERNETES_IT`, which gate two
+  sandbox classes the same way, are not refused; whether they should be is registered as backlog `LA-2`.
+
+- **Documentation.** The three CLI quickstarts (`README.md`, `docs/README.md`, `docs/README.en.md`) put the
+  key on the command instead of exporting it, and say why in one sentence. `CONTRIBUTING.md` and its Korean
+  translation now say the only exclusions in a module's `test` task are by tag — `docker` and `packaging` from
+  the conventions plugin, `playwright` from `aimon-browser-playwright` — and give a build after `clean` or
+  `cleanTest` as one of the builds that execute it. Both were re-checked against the build files, and the second
+  was measured without a key on `:aimon-llm-openai`: a repeated `test` reported `UP-TO-DATE`, and `test` executed
+  again after `cleanTest` and again after `clean` (313 tests, its 17 live tests skipped). The design is
+  `docs/design/llm/provider-key-release-gate.md`.
+
 ### CLI: startup says so when the agent's model belongs to the other provider
 
 - **Switching `llm.provider` left the agent on the other vendor's model, and nothing said so** (#92). The
