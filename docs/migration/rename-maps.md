@@ -292,7 +292,7 @@ as the process and are never stored.
 The mistake being corrected is a name that described a **boundary** while the thing being described is
 a **set**. It cost an HTTP 400: `gpt-5.6-terra` rejects `minimal` and accepts `none`, so its ladder has
 a gap in the middle and no single floor states it. Design:
-[`reasoning-effort-config-surface.md`](../design/llm/reasoning-effort-config-surface.md).
+[`request-parameters.md` §4.2](../design/llm/request-parameters.md#42-ladder-는-집합이다--acceptedreasoningefforts-를-읽는-법).
 
 | Old | New | Value |
 |-----|-----|-------|

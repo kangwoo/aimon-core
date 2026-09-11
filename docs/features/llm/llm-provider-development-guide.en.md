@@ -430,7 +430,7 @@ This rule spent a long time with **one conforming implementation**. `OpenAIConfi
 both have this shape now, and how the second one got there is what the rule is worth — the value that
 class invented was `0.0`, which is **precisely the value** six models of the current Claude generation
 refuse, so in its default configuration it could not talk to them at all
-([`anthropic-sampling-capabilities.md`](../../design/llm/anthropic-sampling-capabilities.md) §2.6).
+([`request-parameters.md` §2.2](../../design/llm/request-parameters.md#22-값을-지어내지-않는다)).
 
 `resolve` is total and **fails open** — a model nobody has described comes back as
 `ModelCapabilities.unknown()`, which means **nothing the caller asked for is withheld, and nothing

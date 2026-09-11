@@ -13,7 +13,7 @@ import at.aimon.core.llms.openai.OpenAiReasoningSummary;
  * 언젠가 이리로 온다고 적어 두었다. 먼저 도착한 것이 이 키다.
  *
  * <p>
- * 판정 기준은 옆 블록과 같은 {@code docs/design/llm/model-capability-config-key.md} §2.7 이고, 첫 번째 검사가
+ * 판정 기준은 옆 블록과 같은 {@code docs/design/llm/configuration-surface.md} §3.1 이고, 첫 번째 검사가
  * 그대로 걸린다 — {@code reasoning.summary} 는 OpenAI 요청 본문의 경로 그 자체이고 값
  * ({@code auto} · {@code concise} · {@code detailed})도 OpenAI 의 어휘다. 그 배경에는 이 벤더의 세계관이 있다:
  * 이 엔드포인트에서 추론 자체는 {@code encrypted_content}(설계상 암호문)이므로 <b>요약이 유일하게 읽을 수 있는

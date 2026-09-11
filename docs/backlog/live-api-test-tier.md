@@ -241,7 +241,7 @@ CI 밖에 있는 이유가 "CI 에 데몬이나 클러스터가 없어서" 뿐�
   새로 읽게 된 테스트 소스만 바뀐 로컬 빌드가 인구조사를 `UP-TO-DATE` 로 건너뛴다.)*
 - 두 클래스의 클래스 선언, 그리고 `modules/aimon-sandbox-docker/README.md` · `modules/aimon-sandbox-kubernetes/README.md` 의
   통합 테스트 실행 명령
-- 설계: [`provider-key-release-gate.md`](../design/llm/provider-key-release-gate.md) §2 D5 · §7 질문 2 · §9
+- 설계: [`release-gate-provider-keys.md`](../design/testing/release-gate-provider-keys.md) §5(인구조사) · §10(남은 것) — 옛 `provider-key-release-gate.md` §2 D5 · §7 질문 2 · §9
 
 **언제 다시 볼까.** 둘 다 [`README.md`](README.md) 규칙 일곱의 물음에 대고 골랐고, 둘 다 **조건부로만** 통과한다.
 
@@ -256,7 +256,7 @@ CI 밖에 있는 이유가 "CI 에 데몬이나 클러스터가 없어서" 뿐�
 
 - [#81](https://github.com/kangwoo/aimon-core/issues/81) — 이 결정의 출처. 두 선택지와 세 발견의 원문
 - [#98](https://github.com/kangwoo/aimon-core/issues/98) — `LA-2` 의 출처. 퀵스타트의 export 와 릴리스 게이트가 물려받던 키
-- [`../design/llm/provider-key-release-gate.md`](../design/llm/provider-key-release-gate.md) — 릴리스 스크립트의 키 거부와,
+- [`../design/testing/release-gate-provider-keys.md`](../design/testing/release-gate-provider-keys.md) — 릴리스 스크립트의 키 거부와,
   그 거부를 샌드박스에서 실제로 돌려 붙드는 테스트의 설계
 - [`CONTRIBUTING.md`](../../CONTRIBUTING.md#live-api-tests) — 이 계층을 돌리는 방법
 - [`llm-config-surface-open-items.md`](llm-config-surface-open-items.md) — `L-12` 가 여기서 닫혔다

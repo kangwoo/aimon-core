@@ -4,7 +4,7 @@
 > `runtimeClasspath`), the record next to `junit` in `gradle/libs.versions.toml`, the comment in
 > `modules/aimon-memory-testkit/build.gradle.kts`, the package-private `expectedDeclaration` seam on
 > `ModelCapabilityBindingProbe.Builder` and the test that drives it, #91's entry in `CHANGELOG.md`, and §11.5 of
-> [`../llm/model-capability-binding-round-trip.md`](../llm/model-capability-binding-round-trip.md).
+> [`../llm/model-capability-binding-round-trip.md`](../llm/configuration-surface.md#84-계약의-자리).
 > Source: issue [#99](https://github.com/kangwoo/aimon-core/issues/99).
 >
 > **[§11](#11-after-the-build--departures-and-corrections), appended after the build, is where this document departs

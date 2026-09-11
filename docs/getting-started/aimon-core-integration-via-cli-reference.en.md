@@ -480,7 +480,7 @@ with the CLI sets `maxTokens: 40000`, so none of them meets this. There are two 
 definition's `model.maxTokens`, or lower `llm.reasoningEffort` above to `low` (2048) or `minimal` (1024) (or the
 agent definition's `model.reasoningEffort`, if it sets one). **The warning names only the first.** This is a
 decision, not an oversight; the reasons and the alternatives refused are in
-[`thinking-reporting-and-dialect-records.md` §16](../design/llm/thinking-reporting-and-dialect-records.md#16-the-auto-budget-policy-decided-83-2026-09-10).
+[`anthropic-thinking.md` §6.2](../design/llm/anthropic-thinking.md#62-auto-예산-정책--1토큰-답도-그대로-둔다).
 
 **The two dialects are mutually exclusive per model and sending the wrong one is an HTTP 400.** That is why
 `auto` exists, and it is also `auto`'s limit — **against a model the table cannot name it sends nothing and

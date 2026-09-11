@@ -1,7 +1,7 @@
 # LLM 설정 표면 — 등록 항목 27건 (열림 14 · 닫힘 13)
 
 출처는 #46 이다 — 모델 capability 표를 CLI yaml 과 스타터 프로퍼티에서 확장할 수 있게 한 작업.
-설계는 [`../design/llm/model-capability-config-key.md`](../design/llm/model-capability-config-key.md) 이고,
+설계는 옛 `model-capability-config-key.md`(지금은 [`../design/llm/configuration-surface.md`](../design/llm/configuration-surface.md)) 이고,
 그 문서 §9 의 미해결 일곱 개 중 **이 국면 밖으로 결과가 나가는 넷**이 여기로 올라왔다. 나머지 셋은
 설계 문서에 그대로 남는다 — 그쪽은 이 작업 안에서 답이 나왔거나(O-A: 실측으로 닫혔다, §11 D-1)
 이 작업의 범위 안에서 결정된 것(O-F: 문서 목록에 한 파일을 넣는 결정, O-G: 맵 키의 `${VAR}` 해석)이다.
@@ -160,8 +160,8 @@ N-1 을 여기 적는 이유는 그것이 답이라고 보아서가 아니라 **
 
 > **2026-09-10 — 그 스위치를 내리는 사람이 함께 재야 할 칸이 하나 생겼다 (#61).** 라운드 9 가
 > `gpt-5.6-terra` 에 exact 행을 주면서 그 사다리를 `{none, low, medium, high}` 로 적었는데, **그 사다리는
-> `/v1/responses` 에서만 실측되었다**([`../design/llm/openai-model-capabilities.md`](../design/llm/openai-model-capabilities.md)
-> §13.3, 그리고 그 문서가 §13.3 첫머리에서 *"인용된 열거는 그것이 나온 엔드포인트 없이는 아무 뜻이
+> `/v1/responses` 에서만 실측되었다**(옛 `openai-model-capabilities.md` §13.3, 지금은
+> [`../design/llm/model-capabilities.md` §6.1](../design/llm/model-capabilities.md#61-openai-행). 옛 문서가 §13.3 첫머리에서 *"인용된 열거는 그것이 나온 엔드포인트 없이는 아무 뜻이
 > 없다"* 고 경고하는 바로 그 자리다). 판정 지점인 `OpenAiRequestParameters.maySendEffort` 는 **두
 > 엔드포인트가 함께 부르므로**, `responsesApiEnabled(false)` 로 터라를 Chat Completions 에 강제한 배포는
 > 이제 재어진 적 없는 칸에 `reasoning_effort: none` 을 보낸다 — 오늘의 "보고된 누락" 이 400 이 될 수 있다.
@@ -170,7 +170,7 @@ N-1 을 여기 적는 이유는 그것이 답이라고 보아서가 아니라 **
 > 칸은 **이 항목을 착수하는 사람의 것**이다: `responsesApiEnabled` 에 설정 표면을 주는 순간 위 조합이
 > 운영자 경로로 내려오므로, 그때 터라의 `none` 을 Chat 에서 한 번 재거나(키가 있으면), 재지 않기로 하고
 > 그 사실을 적어야 한다. 행 자체는 여전히 옳다 — 대안은 `minimal` 에 대한 **실측된** 400 이다.
-> 근거: [`../design/llm/reasoning-effort-config-surface.md`](../design/llm/reasoning-effort-config-surface.md) §17.4.
+> 근거: 옛 `reasoning-effort-config-surface.md` §17.4 — 지금은 [`../design/llm/model-capabilities.md` §6.4](../design/llm/model-capabilities.md#64-미측정-칸).
 
 > **2026-09-10 (#62) — 이 항목이 "비어 있는 자리를 채우는 일" 이라고 적은 그 자리가 더 이상 비어 있지
 > 않다.** 추론 스트림 라운드가 `aimon.llm.openai.reasoning-summary` / CLI `llm.openai.reasoningSummary`
@@ -212,7 +212,8 @@ bean"*)을 따른 것이고, 빈이 있는 배포에 무언가를 요구하면 *
 > 자리**이지 이 항목의 두 갈래가 아니다 — `provider=none` 도, 자기 `LlmClient` 빈을 정의한 앱도 여전히
 > 어느 벤더 분기에도 닿지 않고, 그 배포의 선언은 여전히 조용히 아무것도 하지 않는다. 착수하는 사람이
 > 정할 것도 그대로다. 근거:
-> [`../design/llm/anthropic-sampling-capabilities.md`](../design/llm/anthropic-sampling-capabilities.md) §7.1.
+> 옛 `anthropic-sampling-capabilities.md` §7.1 — 지금은
+> [`../design/llm/configuration-surface.md` §6.3](../design/llm/configuration-surface.md#63-실행되는-분기만-읽히지-않을-벤더-블록을-거절한다).
 
 **즉 이것은 결함이 아니라 두 규칙의 충돌이다.**
 
@@ -296,7 +297,7 @@ registry 를 자기 클라이언트에 넘길 수 있다), `provider=none` + 빈
 ## L-5 — CLI 의 매핑 오류 메시지가 어느 키인지 말하지 않는다
 
 *(2026-09-09 등록. 출처는 #54 —
-[`../design/llm/anthropic-thinking-config-surface.md`](../design/llm/anthropic-thinking-config-surface.md) §13 O-3)*
+옛 `anthropic-thinking-config-surface.md` §13 O-3 — 지금은 [`../design/llm/configuration-surface.md` §6.4](../design/llm/configuration-surface.md#64-표면별-실패))*
 
 **무엇을.** `CliConfigLoader` 는 Jackson 의 매핑 실패를 전부 한 문장으로 감싼다 —
 `Invalid configuration structure in: <file>`. 어느 키가 문제인지는 원인 예외에만 있고, 그것은
@@ -361,7 +362,7 @@ CLI 도 **자기가 판단하는 자리에서는** 같은 규칙을 지킨다 �
 친 것은 `claude-fable-5-1` 이 자기 행이 아니라 `claude-fable-5` prefix 에 걸리기 때문이다. 여섯 번째 행
 `claude-mythos` 는 여전히 확인 불가다 — 이 계정의 `GET /v1/models` 목록에 그 prefix 로 시작하는 모델이
 없다. 그것으로
-[`../design/llm/reasoning-model-enablement.md`](../design/llm/reasoning-model-enablement.md) §9 U-1 이
+옛 `reasoning-model-enablement.md` §9 U-1(지금은 [`../design/llm/model-capabilities.md` §6.2](../design/llm/model-capabilities.md#62-anthropic-행))이
 적어 둔 *"행렬은 실측이지만 **오늘 어느 모델이 그 위에 있는지는 아니다**"* 라는 유보가 **그 다섯에 대해
 해소된다.**
 
@@ -392,8 +393,8 @@ CLI 도 **자기가 판단하는 자리에서는** 같은 규칙을 지킨다 �
 그대로다 — 그 이름들은 `claude-opus-4` 를 family prefix 로 쓰지 말라는 경고가 가리키는 바로 그 이름들이고,
 샘플링 파라미터를 **받아 준다**. 행이 방언을 싣고 아무것도 억제하지 않는다는 것이 이 셋의 성질이다.
 
-측정과 방법의 정정은 [`../design/llm/reasoning-model-enablement.md`](../design/llm/reasoning-model-enablement.md)
-§3.5 에 있고, §9 U-1 의 유보가 그것으로 census 전체에 대해 해소되었다.
+측정과 방법의 정정은 옛 `reasoning-model-enablement.md`
+§3.5(지금은 [`../design/llm/model-capabilities.md` §6.3](../design/llm/model-capabilities.md#63-행이-기대는-측정--방법과-대조군)) 에 있고, §9 U-1 의 유보가 그것으로 census 전체에 대해 해소되었다.
 
 ---
 
@@ -520,8 +521,8 @@ capability 표 이전의 모양, 즉 400 을 낸 그 `temperature` 가 실려 �
 ## L-9 — `thinkingDialect` 에 설정 키가 생기면 `EITHER` 도 그 목록에 들어가야 한다
 
 *(2026-09-10 등록. 출처는 #73 국면의 설계 —
-[`../design/llm/thinking-reporting-and-dialect-records.md`](../design/llm/thinking-reporting-and-dialect-records.md)
-§11 O-1. **이 국면 밖으로 결과가 나가는 조율 항목이다.**)*
+옛 `thinking-reporting-and-dialect-records.md`
+§11 O-1 — 지금은 [`../design/llm/configuration-surface.md` §3.2](../design/llm/configuration-surface.md#32-현재-키의-판정-표). **이 국면 밖으로 결과가 나가는 조율 항목이다.**)*
 
 **무엇을.** `ThinkingDialect` 에 네 번째 상수 `EITHER` 가 들어갔다. 오늘 그것은 **자바 전용**이다 —
 `ModelCapabilityDeclaration` 은 `thinkingDialect` 필드를 갖고 있지만 **어느 설정 표면도 그것을 바인딩하지
@@ -599,8 +600,8 @@ capability 표 이전의 모양, 즉 400 을 낸 그 `temperature` 가 실려 �
 
 **어디.** `InMemoryModelCapabilityRegistry.registerAnthropicDefaults` 의 `claude-mythos` 행,
 그리고 그것을 인용하는
-[`../design/llm/reasoning-model-enablement.md`](../design/llm/reasoning-model-enablement.md) §9 U-1
-(2026-09-10).
+옛 `reasoning-model-enablement.md` §9 U-1
+(2026-09-10) — 지금은 [`../design/llm/model-capabilities.md` §5.4](../design/llm/model-capabilities.md#54-documentation-derived-행--claude-mythos).
 
 **언제 다시 볼까.** 그 prefix 로 시작하는 모델이 어느 계정에서든 닿을 때. 그때 두 이름을 각각 프로브하면
 prefix 를 쪼갤지(Preview 만 `EITHER`) 그대로 둘지가 한 번에 정해진다. 그전에 쪼개는 것은 아무도 본 적 없는
@@ -611,7 +612,7 @@ prefix 를 쪼갤지(Preview 만 `EITHER`) 그대로 둘지가 한 번에 정해
 ## L-12 — 라이브 서명 음성 대조 테스트가 서버 문구 두 가지 때문에 절반쯤 깜빡인다
 
 *(2026-09-10 등록. 출처는 #73 국면의 빌드 —
-[`../design/llm/thinking-reporting-and-dialect-records.md`](../design/llm/thinking-reporting-and-dialect-records.md)
+옛 `thinking-reporting-and-dialect-records.md`
 가 그 파일을 편집하면서 실측했다. **고치지 않기로 한 것은 의도**다 — 아래.)*
 
 **무엇을.** `AnthropicThinkingLiveTest.ReplayedSignatureIsAccepted.mutatedSignatureIsRejected` 가
@@ -756,8 +757,8 @@ are not supported for this model. Use the Responses API."* — 로 셋 중 둘�
 ## L-13 — 선언에서 descriptor 로 가는 세 번째 손 전달에는 가드가 없다
 
 *(2026-09-10 등록. 출처는 #82 —
-[`../design/llm/model-capability-binding-round-trip.md`](../design/llm/model-capability-binding-round-trip.md)
-§9 O-1. 그 문서 §11 이 이 항목으로 올린 이유를 적는다.)*
+옛 `model-capability-binding-round-trip.md`
+§9 O-1(지금은 [`../design/llm/configuration-surface.md` §8.1](../design/llm/configuration-surface.md#81-무엇을-보는가)). 그 문서 §11 이 이 항목으로 올린 이유를 적는다.)*
 
 **무엇을.** `ModelCapabilityDeclaration` 이 `ModelCapabilities` 를 만드는 한 줄씩의 전달에도, #82 가 두 설정
 표면에 붙인 것과 같은 키별 왕복 확인을 붙인다.
@@ -832,7 +833,8 @@ binding — 를 새 키에 대해서도 손을 대지 않고 확인되게 만든
 ## L-15 — thinking 예산 clamp 경고가 `only 1 tokens` 로 읽히고, 듣는 처방 둘 중 하나만 말한다
 
 *(2026-09-10 등록. 출처는 #83 —
-[`../design/llm/thinking-reporting-and-dialect-records.md` §16](../design/llm/thinking-reporting-and-dialect-records.md#16-the-auto-budget-policy-decided-83-2026-09-10).
+옛 `thinking-reporting-and-dialect-records.md` §16 — 지금은
+[`../design/llm/anthropic-thinking.md` §6.2](../design/llm/anthropic-thinking.md#62-auto-예산-정책--1토큰-답도-그대로-둔다).
 **그 결정 안에서 고치지 않은 것은 의도**다 — 기록하는 대상을 같은 PR 에서 바꾸지 않는다.)*
 
 **무엇을.** clamp 경고의 문구를 고친다 — 복수형을 바로잡고, 같은 편집에서 두 번째 처방(reasoning effort 를
@@ -860,7 +862,8 @@ binding — 를 새 키에 대해서도 손을 대지 않고 확인되게 만든
 ## L-16 — 도구 호출 안에서 `max_tokens` 로 잘린 응답은 에이전트 경로 어디서도 `max_tokens` 라는 이름을 얻지 못한다
 
 *(2026-09-10 등록. 출처는 #89 —
-[`../design/llm/thinking-reporting-and-dialect-records.md` §16.8](../design/llm/thinking-reporting-and-dialect-records.md#168-which-requests-the-clamp-warning-covers-decided-89-2026-09-10).
+옛 `thinking-reporting-and-dialect-records.md` §16.8 — 지금은
+[`../design/llm/anthropic-thinking.md` §6.4](../design/llm/anthropic-thinking.md#64-clamp-경고의-범위--clamp-만).
 그 결정은 "실제로 잘린 응답은 일어났을 때 보고된다" 를 이유 하나로 삼는데, 그 이유가 **두 모양 중 하나에서만** 참이라는
 것이 이 항목이다. 결정을 뒤집지는 않는다 — 이 틈은 숫자 없이 닫히고, 경고 임계값을 두어도 그 너머에서 그대로 남는다.
 설정 표면 항목은 아니다. 여기 두는 것은 같은 결정의 짝인 L-15 가 여기 있어서다.)*
@@ -934,8 +937,8 @@ binding — 를 새 키에 대해서도 손을 대지 않고 확인되게 만든
 `StopReason` 을 `at.aimon.core.agent.budget.TruncatedResponses` 한 곳에서 읽는다. 설계와 기각한 대안은
 [`../design/agent-execution/max-tokens-truncation-reporting.md`](../design/agent-execution/max-tokens-truncation-reporting.md)
 에, 기록의 정정은
-[`thinking-reporting-and-dialect-records.md` §16.10](../design/llm/thinking-reporting-and-dialect-records.md#1610-what-168-overstated-and-the-cut-it-left-unnamed-101-108-100-2026-09-11)
-에 있다.
+옛 `thinking-reporting-and-dialect-records.md` §16.10(지금은
+[`../design/llm/anthropic-thinking.md` §6.4](../design/llm/anthropic-thinking.md#64-clamp-경고의-범위--clamp-만))에 있다.
 
 **처방이 열어 둔 것을 한쪽으로 정했다 (규칙 다섯).** 이 항목은 잘린 도구 호출을 *여전히 실행할지* 를 열어 두었다.
 실행하지 않기로 했다. 잘린 호출의 인자는 부분이 아니라 없다 — 부분 JSON 은 파싱에 실패해 빈 맵이 된다. 그리고 중립
@@ -984,7 +987,7 @@ WARN 의 부재. 수정 뒤 같은 네 클래스는 40건 모두 초록이다.
 ## L-17 — 번들 서브에이전트의 `model: haiku` 는 별칭으로 풀리지 않고 그대로 나가며, Anthropic 은 그 이름에 404 를 준다
 
 *(2026-09-11 등록. 출처는 #92 —
-[`../design/llm/provider-switch-agent-model-check.md`](../design/llm/provider-switch-agent-model-check.md) 의 D2,
+옛 `provider-switch-agent-model-check.md` 의 D2(지금은 [`../design/llm/model-name-resolution.md` §5.3](../design/llm/model-name-resolution.md#53-번들-explore-는-모델을-적지-않는다)),
 §10 이 이 항목으로 올렸다. 번들의 `haiku` 를 고치는 것은 **그 작업의 범위 밖**으로 정해졌다. 새 등록부를 열지 않고
 여기 두는 것은 L-16 이 적은 것과 같은 이유다 — 그 작업의 짝이 이 등록부에 있다: #92 의 경고와 주석은
 `llm.provider` · `llm.model` · `agent.name` 위에 있고, 같은 작업이 남긴 L-18 ~ L-21 도 여기 있다.)*
@@ -1037,7 +1040,7 @@ WARN 의 부재. 수정 뒤 같은 네 클래스는 40건 모두 초록이다.
 이름을 이 번들들로 실어 보낸 요청이 없고, 따라가야 할 벤더 이름이 셋 늘며, 물려받으면 `agent.name` 이 번들 전체의
 스위치 하나가 된다. 셋째 모양(코어의 provider 별 별칭 해석)은 capability 표가 일부러 싣지 않는 벤더 지식을 코어에
 넣고 `haiku` 가 provider 마다 다른 것을 뜻하게 만들어 기각했다. 근거는
-[설계](../design/llm/model-names-sent-and-shown.md) D-2 이고, 이 결정과 L-20 의 결정은 같은 원칙 하나(D-1)에서 나온다.
+[설계](../design/llm/model-name-resolution.md#21-쓰인-그대로-보낸다--별칭은-풀지-않는다)(옛 `model-names-sent-and-shown.md` D-2) 이고, 이 결정과 L-20 의 결정은 같은 원칙 하나(D-1)에서 나온다.
 
 **대가.** `explore` 는 "더 싸고 빠른 모델" 이라는 의도를 잃고 메인 모델로 돈다. 세 번들에서 그 요청은 이미 실패하고
 있었으므로(Anthropic 의 404 는 쟀고 OpenAI 쪽은 재지 않았다) 동작하던 것이 느려지지는 않는다. 싼 `explore` 를 원하면
@@ -1057,7 +1060,7 @@ WARN 의 부재. 수정 뒤 같은 네 클래스는 40건 모두 초록이다.
 
 ## L-18 — anthropic 에서 `llm.model` 없이 `memory` 를 켜면 기동이 설정 키를 말하지 않는 메시지로 실패한다
 
-*(2026-09-11 등록. 출처는 #92 — [설계](../design/llm/provider-switch-agent-model-check.md) 의 D9, §10 이 이 항목으로
+*(2026-09-11 등록. 출처는 #92 — [설계](../design/llm/model-name-resolution.md#33-memory--llmmodel-없으면-클라이언트-기본-모델을-알리고-쓴다)(옛 `provider-switch-agent-model-check.md`) 의 D9, §10 이 이 항목으로
 올렸다. #92 는 이 실패를 `default-config.yaml` 의 `llm.model` 주석과 CLI 가이드에 **적었고 고치지 않았다**.)*
 
 **무엇을.** `provider: anthropic` 에서 `memory` 를 켜고 `llm.model` 을 적지 않은 설정이, 고쳐야 할 키를 말하며
@@ -1098,7 +1101,7 @@ deriver 와 reconciler, dreamer 와 그 LLM 판정기로 간다. 기본 모델�
 로그 파일에 남긴다 — 이 항목이 적은 "사용자가 적지 않은 모델로 메모리 호출이 나간다" 는 결정을 거절이 아니라 알림으로
 치렀다. 첫째 모양(메모리가 켜지면 anthropic 에서도 `llm.model` 을 요구)은 기각했다: 팩토리가 anthropic 에서 선택으로
 두는 키를 조건부 필수로 좁히는데, 이미 클라이언트 기본값으로 도는 소비자(위키 생성, `model.name` 없는 메인
-에이전트)가 있어 메모리만 예외가 된다. 근거는 [설계](../design/llm/model-names-sent-and-shown.md) D-1 이고, 같은
+에이전트)가 있어 메모리만 예외가 된다. 근거는 [설계](../design/llm/model-name-resolution.md#2-원칙--모델을-적지-않은-부품은-클라이언트-기본-모델로-돈다)(옛 `model-names-sent-and-shown.md` D-1) 이고, 같은
 원칙이 L-20 의 서브에이전트 폴백을 정한다.
 
 **근거는 맞았다 (규칙 둘 · 여섯).** 엔진 하나만 가드하면 실패가 옮겨 갈 뿐이라는 경고가 맞았다. 착수하며 `new` 와
@@ -1121,7 +1124,7 @@ deriver 에서 기동이 멈췄을 것이고, dreamer 는 생성 실패를 스�
 
 ## L-19 — REPL 배너의 `LLM Provider: <provider> (<model>)` 는 에이전트가 보내는 모델이 아니라 `llm.model` 을 찍는다
 
-*(2026-09-11 등록. 출처는 #92 — [설계](../design/llm/provider-switch-agent-model-check.md) 의 D10, §10 이 이 항목으로
+*(2026-09-11 등록. 출처는 #92 — [설계](../design/llm/model-name-resolution.md#51-배너의-모델은-메인-에이전트의-요청이-싣는-모델이다)(옛 `provider-switch-agent-model-check.md`) 의 D10, §10 이 이 항목으로
 올렸다. #92 는 이 괄호가 무엇인지 주석과 가이드에 적었고 배너는 바꾸지 않았다.)*
 
 **무엇을.** 시작 배너가 에이전트 요청이 실제로 싣는 모델을 보여 주거나, 괄호 안이 `llm.model` 이라는 것을 스스로
@@ -1159,7 +1162,7 @@ deriver 에서 기동이 멈췄을 것이고, dreamer 는 생성 실패를 스�
 사용자는 여전히 무엇이 도는지 볼 수 없고, #92 의 재현에서 배너가 `gpt-5.6-terra` 경고 바로 아래에
 `claude-sonnet-4-5` 를 찍는 모양이 그대로 남는다. 둘을 함께 보여 주는 모양도 기각했다 — 배포된 설정에서 두 이름이
 달라서 "어느 것이 도는가" 를 한 괄호 안에서 다시 묻게 한다. 근거는
-[설계](../design/llm/model-names-sent-and-shown.md) D-4.
+[설계](../design/llm/model-name-resolution.md#51-배너의-모델은-메인-에이전트의-요청이-싣는-모델이다)(옛 `model-names-sent-and-shown.md` D-4).
 
 **남은 것.** 서브에이전트가 따로 적은 모델(`default` 의 `explore` 가 적는 `gpt-5.1`)은 보여 주지 않는다 — 항목이
 적은 대로 한 줄에 담기지 않는다. 가이드가 그 사실을 적는다. 어느 번들이 떴는지는 같은 배너의 `Agent bundle:` 줄이
@@ -1173,7 +1176,7 @@ deriver 에서 기동이 멈췄을 것이고, dreamer 는 생성 실패를 스�
 
 ## L-20 — 서브에이전트 모델의 코어 기본값 두 곳이 provider 를 모른다: `gpt-4` 리터럴과 `Task` 도구 설명의 모델 제안
 
-*(2026-09-11 등록. 출처는 #92 — [설계](../design/llm/provider-switch-agent-model-check.md) 의 D4 · D5, §10 이 한 항목으로
+*(2026-09-11 등록. 출처는 #92 — [설계](../design/llm/model-name-resolution.md#32-서브에이전트--override-서브에이전트-메인-에이전트-클라이언트-기본)(옛 `provider-switch-agent-model-check.md`) 의 D4 · D5, §10 이 한 항목으로
 올렸다. 둘 다 `aimon-core` 이고 #92 의 파일 밖이다. L-17 의 셋째 처방 모양이 이 항목의 둘째와 같은 결정에 닿는다.)*
 
 **무엇을.** 코어가 서브에이전트의 모델 이름을 스스로 지을 때, 설정된 provider 가 서비스하지 않는 이름을 짓지 않게 한다.
@@ -1217,7 +1220,7 @@ provider 별로 채우는 것이고, 후자는 L-17 의 셋째 모양(코어에�
 지점은 바뀌지 않았다. `Task` 도구의 `model` 설명은 이제 모델을 권하지 않고 계약을 적는다 — 값은 쓰인 그대로 설정된
 provider 로 가고, 별칭은 풀리지 않으며, 서브에이전트의 모델을 이긴다. provider 별로 이름을 채우는 모양은 `TaskTool` 이
 provider 를 모르므로 코어에 벤더 지식이나 새 생성자 인자를 들여야 해서 기각했다 — L-17 의 셋째 모양과 같은 결정이고
-같은 이유로 졌다. 근거는 [설계](../design/llm/model-names-sent-and-shown.md) D-1 · D-3.
+같은 이유로 졌다. 근거는 [설계](../design/llm/model-name-resolution.md#54-task-도구의-model-설명은-모델을-권하지-않고-계약을-말한다)(옛 `model-names-sent-and-shown.md` D-1 · D-3).
 
 **보이는 변화.** 해석된 모델의 이름을 읽는 코드(`SubagentBehaviorSupport.resolvedModel()` 을 쓰는 동작 구현 등)는 이제
 빈 이름을 볼 수 있다. 트리의 main 소스에는 그 이름을 `get()` 으로 꺼내는 곳이 없다. CHANGELOG 에 적었다.
@@ -1248,7 +1251,7 @@ javadoc 예시가 2곳(`SubagentExecutionEnvironment` 와 `DefaultSubagentExecut
 
 ## L-21 — 번들 셋이 메타데이터 이름 `default-agent` 를 함께 써서, 프롬프트와 런타임 id 로는 어느 번들이 떴는지 알 수 없다
 
-*(2026-09-11 등록. 출처는 #92 — [설계](../design/llm/provider-switch-agent-model-check.md) 의 D1, §10 이 이 항목으로
+*(2026-09-11 등록. 출처는 #92 — [설계](../design/llm/model-name-resolution.md#52-번들-줄과-프롬프트--번들-이름은-줄이-말하고-정의의-이름은-바꾸지-않는다)(옛 `provider-switch-agent-model-check.md`) 의 D1, §10 이 이 항목으로
 올렸다. #92 의 주석 · 가이드 · 경고는 설정된 `agent.name` 을 쓰므로 이것을 바꾸지 않고도 참이다.)*
 
 **무엇을.** `default` · `default-openai` · `default-anthropic` 번들이 서로 구별되는 이름으로 사용자에게 보이게 한다 —
@@ -1277,7 +1280,7 @@ javadoc 예시가 2곳(`SubagentExecutionEnvironment` 와 `DefaultSubagentExecut
 바뀌는 영속 정체성 변경인데, 아래 세기를 끝내지 못했고, 작은 모양으로 이 항목이 요구한 것("구별되게 보이게")이 채워진다.
 기본 프롬프트를 `agent.name` 으로 만드는 모양도 기각했다 — 매 입력마다 보이는 줄을 바꾸고, 배포된 프롬프트가
 `default> ` 가 되어 오히려 덜 말하며, 시스템의 나머지가 보고하는 런타임 id 와 어긋난다. 근거는
-[설계](../design/llm/model-names-sent-and-shown.md) D-5.
+[설계](../design/llm/model-name-resolution.md#52-번들-줄과-프롬프트--번들-이름은-줄이-말하고-정의의-이름은-바꾸지-않는다)(옛 `model-names-sent-and-shown.md` D-5).
 
 **항목이 세지 않았던 것을 셌다 (규칙 넷 — 결정의 전제).** 이름을 바꾸면 CLI 재시작을 넘어 무엇이 어긋나는가. 셀 수
 있는 것은 전부 재시작을 넘지 않았고, 끝까지 세지 못한 것이 둘 남았다.
@@ -1458,7 +1461,7 @@ iteration 을 새 `at.aimon.core.agent.budget.StalledIterationGuard` 에 기록�
 **심각도 (규칙 셋).** 재지 않은 것이 그대로 남는다 — 모델이 거절 문구를 읽고 출력을 줄이는지, 곧 가드가 실제로 얼마나 자주
 발화하는지는 여러 턴에 걸친 라이브 실행 없이는 잴 수 없다. 위 결정은 그것에 기대지 않는다.
 
-**남은 것.** [`../design/llm/thinking-reporting-and-dialect-records.md`](../design/llm/thinking-reporting-and-dialect-records.md)
+**남은 것.** 옛 `thinking-reporting-and-dialect-records.md`
 §16.8 이 *"a fork has no guard and repeats until its `maxIterations` (L-23)"* 라고 적고, 같은 문서의 두 자리가 L-22 · L-23 을
 열린 항목으로 적는다. 그 문서는 이번 작업의 파일이 아니어서 고치지 않았다 — 규칙 일곱이 말하는, 항목을 언급하는 문장이다.
 
@@ -1470,7 +1473,7 @@ iteration 을 새 `at.aimon.core.agent.budget.StalledIterationGuard` 에 기록�
 
 ## L-24 — anthropic 에서 `llm.model` 을 적지 않은 설정이 기대는 `AnthropicConfig` 의 기본 모델이 아직 서비스되는지 잰 적이 없다
 
-*(2026-09-11 등록. 출처는 #104 ~ #107 — [설계](../design/llm/model-names-sent-and-shown.md) §9 Q2, 그 문서 §10 이 이
+*(2026-09-11 등록. 출처는 #104 ~ #107 — [설계](../design/llm/model-name-resolution.md#4-클라이언트-기본-모델--openai-는-없고-anthropic-은-측정된-이름이다)(옛 `model-names-sent-and-shown.md`) §9 Q2, 그 문서 §10 이 이
 항목으로 올렸다. 번호가 L-22 · L-23 을 건너뛴 것은 같은 날 다른 작업이 그 두 번호를 예약했기 때문이다.)*
 
 **무엇을.** `AnthropicConfig` 의 기본 모델 `claude-sonnet-4-20250514` 가 Anthropic Messages API 에서 아직 서비스되는지
@@ -1531,7 +1534,7 @@ iteration 을 새 `at.aimon.core.agent.budget.StalledIterationGuard` 에 기록�
 
 항목이 물었던 "내장 표가 새 이름을 서술해야 하는가" 의 답은 **이미 서술한다** 이다. 행은 더하지 않았고
 `InMemoryModelCapabilityRegistry` 의 `registerAnthropicDefaults` 주석과 그 테스트의 주석만 고쳤다. 근거는
-[설계](../design/llm/model-names-sent-and-shown.md) §11 이다.
+[설계](../design/llm/model-name-resolution.md#4-클라이언트-기본-모델--openai-는-없고-anthropic-은-측정된-이름이다)(옛 `model-names-sent-and-shown.md` §11)이다.
 
 **보이는 변화.** 모델을 적지 않은 세 경로가 새 이름으로 요청한다 — `.model(...)` 없이 만든 `AnthropicConfig`,
 `llm.model` 없는 `provider: anthropic` CLI(이 항목의 네 자리이고, 메모리의 기동 줄은 이제 `claude-sonnet-4-5` 를 댄다),
@@ -1613,7 +1616,7 @@ budgeted thinking 을 보내고(과금된다), `adaptive` 는 기존 경고와 �
 
 ## L-27 — 복사해 쓰는 예시가 설정된 provider 가 서비스하지 않는 모델 이름을 적는다
 
-*(2026-09-11 등록. 출처는 #116 의 실측과 #118 item 5 — [설계](../design/llm/model-names-sent-and-shown.md) §11 이
+*(2026-09-11 등록. 출처는 #116 의 실측과 #118 item 5 — [설계](../design/llm/model-name-resolution.md#6-문서-예시-규칙--요청에-닿는-값에-모델-이름을-쓰지-않는다)(옛 `model-names-sent-and-shown.md`) §11 이
 이 항목으로 올렸다. 번호가 L-25 · L-26 을 건너뛴 것은 같은 날 다른 작업이 그 두 번호를 예약했기 때문이다.)*
 
 **무엇을.** 모델 이름을 적는 README 와 javadoc 예시가 서비스되는 이름을 적거나, 이름을 적지 않게 한다.
@@ -1646,7 +1649,7 @@ budgeted thinking 을 보내고(과금된다), `adaptive` 는 기존 경고와 �
 > 행뿐이고, 이 표의 README 두 행은 손대지 않았다.
 
 **심각도 (규칙 셋).** `claude-sonnet-4-20250514` 는 2026-09-11 에 두 API 모두 404 였고(L-24), 맨 별칭 `haiku` 는
-2026-09-10 에 Anthropic 이 404 로 답했다([#92 설계](../design/llm/provider-switch-agent-model-check.md) §10.4). 코드는
+2026-09-10 에 Anthropic 이 404 로 답했다([#92 설계](../design/llm/model-name-resolution.md#71-두-관문--엔드포인트와-모델-계열), 옛 `provider-switch-agent-model-check.md` §10.4). 코드는
 별칭을 풀지 않으므로 `sonnet` 도 쓰인 그대로 나간다. `claude-opus-4-20250514` 와 `sonnet` 자체는 재지 않았다.
 
 **처방은 적용해 보지 않았다 (규칙 다섯).** 모양은 둘이다 — 예시에서 모델 줄을 빼는 것(#118 item 5 가 코어 다섯 파일에서
@@ -1659,31 +1662,30 @@ budgeted thinking 을 보내고(과금된다), `adaptive` 는 기존 경고와 �
 
 ## 관련 문서
 
-- [`../design/llm/model-capability-config-key.md`](../design/llm/model-capability-config-key.md) — 설계.
-  §9 가 설계 시점의 미해결 목록, §11 이 구현 중 실측으로 뒤집힌 사실
-- [`../design/llm/model-capability-binding-round-trip.md`](../design/llm/model-capability-binding-round-trip.md) —
-  #82 의 설계. §9 O-1 · O-2 가 L-13 · L-14 의 출처이고, §11 이 나머지 미해결을 왜 그 문서에 두었는지 적는다
-- [`../design/llm/thinking-reporting-and-dialect-records.md`](../design/llm/thinking-reporting-and-dialect-records.md) —
-  L-6·L-7 을 닫고 L-9·L-10·L-11 을 연 설계. §14 가 방언 census 의 원자료, §15.4 가 이 세 항목의 승격 근거이고,
-  §16 이 #83 의 결정이자 L-15 의 출처, §16.8 이 #89 의 결정이자 L-16 의 출처이며, §16.10 이 L-16 을 닫은 기록이다
+이 등록부가 부르는 옛 설계 문서(`옛 …md`)와 그 절 번호는 [`../design/README.md` §4](../design/README.md#4-옛-경로-대응표) 가
+적은 마지막 판본 커밋에서 읽는다.
+
+- [`../design/llm/configuration-surface.md`](../design/llm/configuration-surface.md) — 설계. 옛 `model-capability-config-key.md`(§9 가 설계 시점의 미해결 목록, §11 이 구현 중
+  실측으로 뒤집힌 사실)와 옛 `model-capability-binding-round-trip.md`(#82 의 설계. §9 O-1 · O-2 가 L-13 · L-14 의 출처)를 합친 문서다
+- [`../design/llm/anthropic-thinking.md`](../design/llm/anthropic-thinking.md) — 옛 `thinking-reporting-and-dialect-records.md` 의 결정이 간 곳. 그 기록은 L-6·L-7 을 닫고
+  L-9·L-10·L-11 을 열었다. §14 의 방언 census 는 지금 `model-capabilities.md` §6, §16(#83 의 결정, L-15 의 출처)과
+  §16.8(#89 의 결정, L-16 의 출처)은 지금 이 문서 §6 이다
 - [`../design/agent-execution/max-tokens-truncation-reporting.md`](../design/agent-execution/max-tokens-truncation-reporting.md) —
   #108 · #100 · #101 의 설계. L-16 을 닫았고, §11 이 L-22 · L-23 으로 올린 것과 설계 문서에 남긴 것을 가른다
 - [`../design/agent-execution/skill-loop-truncation-and-fork-stall.md`](../design/agent-execution/skill-loop-truncation-and-fork-stall.md) —
   #115 · #117 의 설계. D1 · D2 · D5 가 L-22 를, D3 · D4 가 L-23 을 닫은 결정이고, §8.1 F-1 이 L-25 의, F-2 와 §9 Q4 가 L-26 의
   출처이며, §11 이 구현이 설계에서 벗어난 자리다
-- [`../design/llm/openai-model-capabilities.md`](../design/llm/openai-model-capabilities.md) — capability
-  SPI 자체의 설계. §7 O-8 이 이 작업으로 닫혔다
-- [`../design/llm/openai-responses-path.md`](../design/llm/openai-responses-path.md) — F-2 가 L-2 의 출처
+- [`../design/llm/model-capabilities.md`](../design/llm/model-capabilities.md) — capability SPI 자체의 설계(옛 `openai-model-capabilities.md`). 옛 §7 O-8 이 이 작업으로
+  닫혔다
+- [`../design/llm/openai-responses-path.md`](../design/llm/openai-responses-path.md) — 옛 판본의 F-2 가 L-2 의 출처
 - [`spring-boot-starter-open-items.md`](spring-boot-starter-open-items.md) — B-21(공통 `aimon.llm.*` 을
   프로바이더별로 쪼갤 것인가)이 이 작업으로 다시 열려 결정되고 닫혔다. L-2 · L-3 이 그 결정문을 인용한다
 - [`live-api-test-tier.md`](live-api-test-tier.md) — L-12 가 닫힌 #81 의 결정. 라이브 API 계층에
   CI 신호가 없다는 것과 그 이유
-- [`../design/llm/provider-switch-agent-model-check.md`](../design/llm/provider-switch-agent-model-check.md) — #92 의
-  설계. §8 이 D 번호로 된 원래 목록이고, §10 이 그중 L-17 ~ L-21 로 올린 것과 설계 문서에 남긴 것을 가르며, §11 이
-  그 다섯을 닫은 #104 ~ #107 을 적는다
-- [`../design/llm/model-names-sent-and-shown.md`](../design/llm/model-names-sent-and-shown.md) — #104 ~ #107 의 설계.
-  D-1 ~ D-5 가 L-17 ~ L-21 을 닫은 결정이고, §9 Q2 가 L-24 의 출처, §10 이 구현이 설계에서 벗어난 자리이며, §11 이
-  #116 · #118 의 기록이다 — L-24 를 닫은 실측과 결정, 그리고 L-27 의 출처
+- [`../design/llm/model-name-resolution.md`](../design/llm/model-name-resolution.md) — 옛 `provider-switch-agent-model-check.md`(#92 의 설계. §8 이 D 번호로 된 원래 목록이고,
+  §10 이 그중 L-17 ~ L-21 로 올린 것을 가르며, §11 이 그 다섯을 닫은 #104 ~ #107 을 적는다)와 옛
+  `model-names-sent-and-shown.md`(#104 ~ #107 의 설계. D-1 ~ D-5 가 L-17 ~ L-21 을 닫은 결정이고, §9 Q2 가 L-24 의 출처,
+  §11 이 L-24 를 닫은 실측과 결정이자 L-27 의 출처)를 합친 문서다
 - [`../getting-started/aimon-core-integration-via-cli-reference.md`](../getting-started/aimon-core-integration-via-cli-reference.md#provider-를-바꿀-때--agentname-도-함께-바꾼다) —
   CLI 가이드의 provider 전환 절. L-17 의 주의 문구와 L-18 · L-19 가 적혀 있던 자리이고, #104 ~ #107 이 그 항목들을
   닫으며 함께 고쳤다

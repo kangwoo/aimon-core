@@ -51,8 +51,8 @@ import at.aimon.core.subagent.SubagentRegistry;
  * {@code AgentSetupFactoryAgentModelCheckTest} builds the real stack to fail first when it does.
  *
  * <p>
- * Design, the alternatives rejected and where the implementation departed from it:
- * {@code docs/design/llm/provider-switch-agent-model-check.md}.
+ * Design and the alternatives rejected:
+ * {@code docs/design/llm/model-name-resolution.md} §7.
  */
 final class AgentModelProviderCheck {
 

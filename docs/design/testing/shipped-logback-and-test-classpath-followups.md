@@ -12,7 +12,7 @@
 > **[§13](#13-after-the-build--departures-and-corrections), appended after the build, is where this document departs
 > from what was built.** Everything between this header and §13 is the body as approved in design review round 3, kept
 > byte-exact rather than corrected — the house habit in this directory, for the reason
-> [`../llm/model-capability-binding-round-trip.md`](../llm/model-capability-binding-round-trip.md) gives. Its
+> [`../llm/model-capability-binding-round-trip.md`](../README.md#34-승인된-설계를-그대로-커밋한-기록) gives. Its
 > `file:line` citations are at `main` `c561e17`. The run records it cites (`TASK.md`, `review-1.md` to `review-3.md`,
 > `$RUN_DIR/design/probe/`, `$RUN_DIR/build/`) are not in the repository; §13 reproduces the measurements that matter.
 >

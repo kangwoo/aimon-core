@@ -196,7 +196,7 @@ class OpenAILlmClientParameterDivergenceTest {
         // that suppressing OpenAIConfig.DEFAULT_TEMPERATURE stayed quiet. That fallback was removed deliberately --
         // issue #43's "sampling parameters are sent only when the caller explicitly set them" beats round 1's "an
         // unknown model sends exactly what it sends today", which round 1 had recorded as design O-1/A6. See
-        // docs/design/llm/openai-model-capabilities.md section 9.
+        // docs/design/llm/request-parameters.md section 2.2.
         final OpenAILlmClient client = client(
                 OpenAIConfig.builder().apiKey("test-key").model(A_REASONING_MODEL).responsesApiEnabled(false).build());
 

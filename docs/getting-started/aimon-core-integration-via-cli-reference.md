@@ -460,7 +460,7 @@ llm:
 `llm.reasoningEffort` 를 `low`(2048) 나 `minimal`(1024) 로 내린다(에이전트 정의에 `model.reasoningEffort` 가
 있으면 그쪽을). **경고가 말하는 처방은 앞의 것 하나뿐이다.** 이것은 빠뜨린 것이 아니라 결정이며, 근거와 기각한
 대안은
-[`thinking-reporting-and-dialect-records.md` §16](../design/llm/thinking-reporting-and-dialect-records.md#16-the-auto-budget-policy-decided-83-2026-09-10)
+[`anthropic-thinking.md` §6.2](../design/llm/anthropic-thinking.md#62-auto-예산-정책--1토큰-답도-그대로-둔다)
 에 있다.
 
 **두 방언은 모델마다 배타적이고 틀린 쪽을 보내면 HTTP 400 이다.** 그것이 `auto` 가 있는 이유이며, 동시에

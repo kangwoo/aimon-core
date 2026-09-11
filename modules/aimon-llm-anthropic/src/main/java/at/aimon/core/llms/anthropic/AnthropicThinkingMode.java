@@ -59,7 +59,7 @@ package at.aimon.core.llms.anthropic;
  *
  * <p>
  * The full mode × dialect table, and why translating beats both refusing and omitting, is §3 of
- * {@code docs/design/llm/reasoning-model-enablement.md}.
+ * {@code docs/design/llm/anthropic-thinking.md} §4.
  *
  * @see AnthropicConfig.Builder#thinkingMode(AnthropicThinkingMode)
  * @see at.aimon.core.llm.capability.ThinkingDialect

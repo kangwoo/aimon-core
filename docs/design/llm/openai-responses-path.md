@@ -1,742 +1,599 @@
-# Design — the Responses API path (#43 phase 2)
+# OpenAI Responses 경로 (OpenAI Responses API Path)
 
-> Status: **IMPLEMENTED.** This is the record of what landed, written against the approved design of
-> round 4 and corrected where the code disagreed with it (§9 lists every departure). It is the
-> sequel to [`openai-model-capabilities.md`](openai-model-capabilities.md), whose §10 records which
-> of that document's open questions this round closed.
+> Status: **IMPLEMENTED** — `OpenAILlmClient` 하나가 요청마다 `/v1/chat/completions` 와 `/v1/responses` 중 하나를
+> 고른다. Responses 경로의 요청 조립, 메시지 변환, 응답·스트림 읽기, 오류 분류, reasoning summary 요청과 그 능력
+> 게이트가 들어가 있다. 남은 것은 §12.
 >
-> Branch: `fix/openai-model-capabilities`. Gate: `./gradlew checkAll`.
->
-> **No live API call was made**, in this round or any previous one. Every claim about the *SDK* was
-> read out of `openai-java-core-4.52.0-sources.jar` or run against it; every claim about what the
-> *server* accepts comes from the issue body and the SDK's javadoc, and is labelled where it
-> matters. §8 is the complete list of what that leaves unverified.
->
-> **That last paragraph describes the round this document records, and it is no longer the whole
-> story.** A later round ran **#43's** own reproduction and every one of its six work items against
-> the live API on 2026-09-10. §10 is that record, and it names which of §8's U-items it discharges
-> and which it leaves standing. (That round also closed #71, which is about the reasoning *stream* on
-> both providers — a different list, recorded in
-> [`reasoning-delta-stream.md`](reasoning-delta-stream.md) §12.4.)
+> 적용 대상: `aimon-llm-openai` — `at.aimon.core.llms.openai`(`OpenAILlmClient`, `OpenAIEndpointExchange`,
+> `OpenAIStreamHandle`, `OpenAIChatCompletionsExchange`, `OpenAIResponsesExchange`, `OpenAIResponsesRequestFactory`,
+> `OpenAIResponsesMessageConverter`, `OpenAIResponsesStreamingMapper`, `OpenAiResponseErrors`, `OpenAiResponseUsages`,
+> `OpenAiResponseStopReasons`, `OpenAiReasoningSummary`, `OpenAIConfig`) ·
+> `aimon-core` — `ModelCapabilities.supportsReasoningTraceRoundTrip()` · `supportsReasoningSummary()`.
 
 ---
 
-## 1. The problem, in one paragraph
+## 1. 문제와 범위
 
-Phase 1 made `gpt-5.x` usable with tools by sending `reasoning_effort: none`, which buys a working
-request by turning off the thing the model was chosen for. It also left a quieter cost in place:
-Chat Completions never returns reasoning items, so nothing carries across a tool call and the model
-re-derives its chain of thought on every ReAct iteration — worse answers, and reasoning tokens
-billed again each time, on exactly the multi-turn tool loops AIMON exists to run. The endpoint that
-fixes this is `/v1/responses`, and reaching it needs six things that did not exist: a
-`ResponseCreateParams` counterpart to the request builder; **somewhere to keep a reasoning item
-between turns**, which `Message` did not have and which lands in the persisted transcript when it is
-added; a second streaming mapper, because `OpenAIStreamingMapper` consumes `ChatCompletionChunk`
-while Responses emits `ResponseStreamEvent`; a fourth `TokenUsage` field, because Responses reports
-`reasoning_tokens` and three fields silently drop them; a stop-reason mapping, because
-`OpenAiStopReasons` knows only the Chat vocabulary; and `call_id` handling, because
-`OpenAIMessageConverter` writes `id`.
+Chat Completions 는 reasoning item 을 돌려주지 않는다. 그래서 도구 호출을 건너 넘어가는 것이 없고, ReAct 루프의
+iteration 마다 모델이 사고를 처음부터 다시 파생하며 reasoning 토큰도 다시 과금된다. 도구를 여러 번 부르는 루프가
+AIMON 이 도는 바로 그 모양이다. 이것을 푸는 엔드포인트가 `/v1/responses` 이므로, reasoning trace 를 다음 요청에
+되실어야 하는 모델은 그리로 보낸다.
 
-The risk was never any one of the six. It is that a Responses path is close to a from-scratch
-client, and the four non-obvious behaviours `OpenAILlmClient` took real work to get right get
-re-implemented slightly wrong in the copy. Most of the structure below exists to make copying them
-impossible rather than merely discouraged.
+어려운 것은 새 엔드포인트의 개별 기능이 아니다. Responses 경로는 거의 새 클라이언트 하나에 가깝고, 그렇게 만들면
+`OpenAILlmClient` 가 공들여 맞춘 비자명한 동작 네 개(§7.3)가 복사본에서 조금씩 틀리게 다시 구현된다. 이 문서의
+구조 대부분은 그 복사를 "하지 말자" 가 아니라 **할 수 없게** 만들기 위해 있다.
+
+**이 문서가 정하는 것.** 엔드포인트 이음매, 라우팅 술어, Responses 요청 매핑과 필수 필드, Chat 변환과의 패리티,
+응답·스트림 읽기 규칙, SDK 가 던지지 않는 오류의 분류, 두 엔드포인트가 공유하는 보존 동작, reasoning summary
+요청과 그 게이트, 그리고 이 경로의 전제를 세운 측정 결론.
+
+**다른 문서가 정본인 것.**
+
+| 개념 | 정본 |
+|---|---|
+| `ReasoningTrace` 슬롯, 부착 규칙, 영속, emit/capture 규칙, payload 직렬화, 드롭과 보고, `reasoningTokens` 회계 | [`reasoning-traces.md`](reasoning-traces.md) |
+| 샘플링 생략 규칙, effort ladder 와 Chat Completions 의 도구 규칙, divergence 보고 | [`request-parameters.md`](request-parameters.md) |
+| `ModelCapabilities` 필드의 뜻과 `unknown()` 값, 내장 표 행과 모델별 측정 결론 | [`model-capabilities.md`](model-capabilities.md) |
+| 추론 델타 채널(전달 게이트, 두 번째 버퍼) | [`streaming.md`](streaming.md) |
+| 취소 토큰과 abort 레버 | [`cancellation.md`](cancellation.md) |
+| 문서 콘텐츠 블록 거부 규칙 | [`multimodal-content.md`](multimodal-content.md) |
+| `reasoningSummary` 설정 키와 네임스페이스 | [`configuration-surface.md`](configuration-surface.md) |
+
+**비목표.**
+
+- **Chat Completions 경로를 바꾸지 않는다.** Chat 쪽 변환기와 요청 조립은 이 경로 때문에 열리지 않는다(§5)
+- **서버 쪽 대화 상태를 쓰지 않는다.** `store: true` 와 `previous_response_id` 는 쓰지 않는다(§4.2)
+- **Responses 에만 있는 표현력을 쓰지 않는다.** 네이티브 `input_file`, 도구 스키마 `strict: true` 는 같은 `Message`
+  가 엔드포인트에 따라 다른 뜻이 되게 하므로 이 경로의 범위가 아니다(§5.1, §4.4)
 
 ---
 
-## 2. The three decisions that carry beyond this round
+## 2. 엔드포인트 이음매 — 형제 클라이언트가 아니라 요청 단위 exchange
 
-### 2.1 The reasoning slot — a new ordered `List<ReasoningTrace>` on `Message`
+`OpenAILlmClient` 는 유일한 OpenAI `LlmClient` 로 남고 안에서 갈라진다. 갈림은 메서드 한가운데의 `if` 가 아니라
+주입되는 협력자다 — package-private `OpenAIEndpointExchange` 와 그 구현 둘(`OpenAIChatCompletionsExchange`,
+`OpenAIResponsesExchange`).
 
-**`MessageArtifact` was examined first and rejected**, for four reasons in descending order of how
-fatal they are:
+### 2.1 형제 `LlmClient` 를 두지 않는 이유
 
-| # | Why the existing sidecar cannot carry a reasoning payload |
-|---|---|
-| 1 | **Its two required fields are lies for this content.** `path` and `fileName` are both `requireNonBlank`. A reasoning item has no filesystem path and no file name; storing `"/dev/null"` to satisfy a validator is how a type stops meaning anything. |
-| 2 | **It is already consumed as a file reference.** It implements `ArtifactMetadata`, carries a `downloadToken`, and the CLI and session layers render it to a human as a downloadable file. A reasoning blob in that list would be offered to a user as a file. |
-| 3 | **`size` is a byte count with a `>= 0` invariant**, and there is nothing to put in it. |
-| 4 | Order and anchoring *could* be expressed there. Listed for completeness; rows 1–3 carry the rejection on their own. |
+`LlmClient` 를 하나 더 구현하는 형제 클라이언트는 두 가지에서 진다. 두 번째가 결정적이다.
 
-The nearer precedent argues the other way. `ToolUseResult.getRenderPayload()` is a deliberately
-opaque, provider-shaped sidecar — and the snapshot codec's contract says in as many words that it is
-**never persisted**. Reasoning traces need exactly the inverse guarantee: opaque *and* persisted.
-That is a new slot, not a reuse.
+1. **형제는 모델별로 고를 수 없는데, 요구는 모델별 선택이다.** `LlmClient` 메서드는 요청마다 모델 이름을 덮어쓸 수
+   있는 `LlmModel` 을 받으므로, 엔드포인트 결정은 클라이언트 단위가 아니라 **요청 단위**다. `gpt-5.x` 세션 안에서
+   `gpt-4o` 로 도는 컴팩션 호출은 흔한 경우다. 생성 시점에 형제를 고르면 에이전트가 모델을 덮어쓰는 순간 엔드포인트가
+   틀린다. 이것을 맞추려면 두 형제를 소유하고 디스패치하는 세 번째 타입이 필요하고, 그러면 같은 구조에 클래스 하나와
+   `LlmClientFactory` · 스타터 자동설정이 배워야 할 생성 지점 하나가 더 붙을 뿐이다
+2. **형제는 보존 동작을 복제한다.** 이미 취소된 호출의 빠른 경로, 스트림을 연 **뒤에** 등록하는 `onCancel`, 취소된
+   스트림을 재분류하는 세 갈래 catch, `SseException` 분류, `null` 을 돌려주는 `perRequestOptions` — 어느 것도
+   엔드포인트에 따라 달라지지 않는다. 둘째 클래스에 복사하면 맞춰야 할 곳이 둘이 되고, 그중 하나는 기존 테스트가 보지
+   않는 곳이다
 
-```java
-public final class ReasoningTrace {        // immutable class + builder
-    String providerName();                 // required, non-blank — LlmClient.getProviderName()
-    String payload();                      // required, non-blank — provider-owned opaque text
-    Optional<String> toolUseId();          // optional — the tool use this trace precedes
-}
-```
+### 2.2 `OpenAIEndpointExchange` 와 `OpenAIStreamHandle`
 
-Each field earns its place.
-
-- **`payload` is a `String`**, not `byte[]` or `Map`. It survives every wire this repo already has,
-  is inspectable by an operator reading a transcript, and forces the provider to own its encoding.
-  `aimon-core` performs exactly one operation on it: copy.
-- **`providerName` exists because a transcript outlives a client.** `LlmFallbackPolicy` can move a
-  session onto another model mid-run, an operator can change the configured provider and resume, and
-  a subagent snapshot can be replayed anywhere. Feeding an Anthropic thinking block to
-  `/v1/responses` is a 400 at best, so a client replays only its own traces and drops the rest.
-- **`toolUseId` is the anchor, and it is not provider leakage** — `MessageArtifact.getToolUseId()`
-  already means "the tool use this thing belongs to". Here it means *this trace immediately precedes
-  the tool use with this id in the provider's own output order*; empty means it precedes the
-  assistant's text or the end of the turn.
-
-#### Why an ordered list is not enough on its own
-
-A turn whose output is `[reasoning, call_1, reasoning, call_2]` must be replayed with each reasoning
-item in front of the call it produced. `Message` cannot express that: its text lives in
-`contentBlocks` and its calls live in `toolUses`, two separate lists. So the rule is written down
-once, in the provider, and driven by the anchor:
-
-```
-emit, for one ASSISTANT message:
-  1. every trace with no anchor, in stored order
-  2. the assistant text item, when there is text
-  3. for each tool use in order:  its anchored traces (stored order), then the tool call itself
-```
-
-and the capture rule is its mirror: walking the provider's output array in order, each reasoning item
-anchors to the **first tool call that follows it**, or to nothing if none does. `[r1, call_1, r2,
-call_2]` round-trips exactly; `[r1, msg]` and `[r1, r2, call_1]` both degenerate correctly.
-
-This is the one place the design defends against a server rule it could not test (§8, U-1). The
-anchor costs one nullable field and about ten lines; not having it costs a 400 on multi-tool-call
-turns that no unit test can discover.
-
-#### It lands in persisted state, and both directions are tolerant
-
-`Message` → `JsonSessionSnapshotCodec` → `SessionRecordCodec.encodeTranscript` → the Mongo /
-Postgres / Redis transcript column. Widening `Message` widens a stored wire format, which is the
-boundary [`frozen-names.md`](../../migration/frozen-names.md) guards. That document is about
-*renaming* stored names; a new optional field is additive and is not on its list. What it does
-demand is that the additivity be real in both directions:
-
-| Direction | Why it holds |
-|---|---|
-| **Old reader, new document** | `decodeMessage` reads five field names explicitly and ignores everything else. A `"reasoning"` array it has never heard of is skipped. Same forward tolerance `compactionFailureCount` already relies on. |
-| **New reader, old document** | The key is absent → empty list → the five-argument `restore`'s behaviour, unchanged. |
-
-`FORMAT_VERSION` **stays at 1**, on the codec's own existing argument: bumping it would make every
-stored snapshot undecodable to buy nothing, since both directions above are tolerant. The array is
-written **only when non-empty**, mirroring `toolUses`/`artifacts`, so every document produced before
-this field existed is byte-identical to one produced now.
-
-**The three `SessionRecordCodec` backends need no change at all**, and that is a property of a
-decision already made rather than luck: `encodeTranscript` hands the backend an **opaque string**
-(BSON forbids `.` and `$` in field names; `jsonb` forbids U+0000), and every backend stores it in a
-text column. A backend cannot see the new field, so it cannot mis-handle it.
-
-#### The slot fits Anthropic — demonstrated, not asserted
-
-Anthropic's shape is the harder one and the one to design against, because a thinking block is only
-accepted back if its `signature` returns **byte-exact**.
-
-| | Returned by the API | Sent back as | Fields |
-|---|---|---|---|
-| thinking | `ThinkingBlock` | `ThinkingBlockParam` (there is a `toParam()`) | `thinking`, `signature`, `type` |
-| redacted | `RedactedThinkingBlock` | `RedactedThinkingBlockParam` (likewise) | `data`, `type` |
-
-- **Opacity** — the client serialises the block to its own JSON and puts the string in `payload`.
-  Nothing in core reads it, so `signature` is never re-encoded, re-escaped or normalised by core.
-  Byte-exactness stays the provider's to keep, which is the only place it *can* be kept.
-- **Ordering** — Anthropic requires thinking blocks to lead the assistant content on a tool-using
-  turn, and a turn can carry several interleaved with tool_use blocks. The **anchor** transfers
-  exactly (`toolUseId` is `ToolUseBlock.id()`, the same neutral id `ToolUse.getId()` already holds).
-  The **emit rule does not**, and that is the one place the fit is a fit of the data rather than of
-  the algorithm: OpenAI wants unanchored reasoning, then the message, then anchored reasoning before
-  each call, whereas Anthropic wants every thinking block first. That is why the reconstruction rule
-  is written down *in the provider* — one rule per provider, over one shared shape.
-- **Two kinds in one slot** — `thinking` vs `redacted_thinking` needs no core-level discriminator,
-  because each block's own JSON carries `"type"`. That is what opacity buys.
-
-**The Anthropic implementation is a follow-up and was not started** (§7, F-1). `AnthropicLlmClient`
-keeps its `// Ignore other block types` comment and `AnthropicStreamingMapper` keeps its "not yet
-surfaced" note; neither file was opened.
-
-#### What OpenAI puts in `payload`, and the one trap measured
-
-The payload is the reasoning item's own JSON, produced and consumed by
-**`com.openai.core.ObjectMappers.jsonMapper()`** — the SDK's mapper, not a fresh `ObjectMapper`.
-That is not a style preference. Every SDK model carries a `@JsonAnySetter`/`@JsonAnyGetter` pair, so
-the SDK mapper round-trips losslessly *including a field this SDK version has never heard of* — which
-is what lets a payload stored by one build be replayed by another after the server adds a field. A
-plain `new ObjectMapper()` parses the same bytes and re-emits them with two invented fields
-(`"valid":true` from `isValid()`, `"content":null` from an `Optional` accessor lacking the SDK's
-`NON_ABSENT` inclusion); sending that back is a corrupted item. `OpenAIMessageConverter` already
-holds a plain `ObjectMapper`, so writing the wrong one here is the obvious mistake — three tests fail
-on it (§6).
-
-A second instruction follows from the same opacity: **a stored payload is never rebuilt through
-`ResponseReasoningItem.builder()`.** That builder requires `id` and `summary`; the `@JsonCreator`
-constructor does not, because its `JsonField`s default to missing. Deserialising therefore bypasses
-`checkRequired` entirely and no required accessor ever fires. Rebuilding would introduce validation
-failures on payloads the *server itself* produced, converting "drop one trace" into a thrown
-exception on a shape we have no business validating.
-
-### 2.2 One client, two endpoint exchanges — not a sibling `LlmClient`
-
-**Decision: `OpenAILlmClient` stays the single `LlmClient` and branches internally, but the branch
-is an injected collaborator — a package-private `OpenAIEndpointExchange` with two implementations —
-not an `if` in the middle of a method.**
-
-Issue #43 sketches `public class OpenAIResponsesLlmClient implements LlmClient` and leaves the choice
-open. A sibling loses on two counts, and the second is decisive:
-
-1. **A sibling cannot be selected per model, which is the requirement.** `LlmClient` methods take an
-   `LlmModel` that may override the model name per request, so the endpoint decision is per
-   *request*, not per client. Choosing a sibling at construction time gets the wrong endpoint the
-   moment an agent overrides its model — and a `gpt-4o` compaction call inside a `gpt-5.6` session is
-   the ordinary case, not an exotic one. Making it work needs a *third* type owning both siblings and
-   dispatching, at which point the "sibling" is an implementation detail of a facade and we have the
-   same structure with one more class and one more construction site for `LlmClientFactory` and
-   `AimonLlmAutoConfiguration` to learn.
-2. **A sibling duplicates the four preserved behaviours, which is the exact regression the issue
-   names.** The cancellation fast path, `onCancel(...)` registered *after* the stream opens, the
-   three-way catch that reclassifies a cancelled stream, the `SseException` routing, and
-   `perRequestOptions` returning `null` — none of that varies by endpoint. Copying it into a second
-   class means two places to keep right and one place the existing tests do not look.
-
-What *does* vary is exactly four things: how the params are built, how the blocking call is made, how
-the stream is opened and consumed, and how the result becomes an `LlmResponse`. So that is the seam:
+엔드포인트에 따라 달라지는 것은 정확히 넷이다 — 파라미터를 만드는 법, 블로킹 호출을 하는 법, 스트림을 열고 소비하는
+법, 결과를 `LlmResponse` 로 바꾸는 법. 이음매는 그 넷만 담는다.
 
 ```java
 interface OpenAIEndpointExchange {
-    LlmResponse callBlocking(RequestOptions options);                     // null -> single-arg overload
+    LlmResponse callBlocking(RequestOptions options);    // null → SDK 단일 인자 오버로드
     OpenAIStreamHandle openStream(RequestOptions options, LlmStreamSink sink, ChunkAggregator aggregator);
 }
 
-interface OpenAIStreamHandle extends AutoCloseable {   // erases StreamResponse<T>'s generic
+interface OpenAIStreamHandle extends AutoCloseable {   // StreamResponse<T> 의 제네릭을 지운다
     void consume();
-    @Override void close();                            // delegates to StreamResponse.close()
+    @Override void close();                            // StreamResponse.close() 에 위임
 }
 ```
 
-`OpenAIStreamHandle` exists for one reason: `StreamResponse<ChatCompletionChunk>` and
-`StreamResponse<ResponseStreamEvent>` have no useful common supertype, and erasing the generic behind
-two methods is what lets the client keep **one** try-with-resources, **one** `onCancel` registration
-and **one** catch cascade. It has no `toLlmResponse()`: the aggregator is owned by the client, which
-still ends with its own `return aggregator.toLlmResponse()` outside the try.
+- **`OpenAIStreamHandle` 이 있는 이유는 하나다.** `StreamResponse<ChatCompletionChunk>` 와
+  `StreamResponse<ResponseStreamEvent>` 에는 쓸모 있는 공통 상위 타입이 없다. 제네릭을 두 메서드 뒤로 지워야 클라이언트가
+  try-with-resources 하나, `onCancel` 등록 하나, catch 연쇄 하나를 유지할 수 있다
+- **핸들에는 `toLlmResponse()` 가 없다.** aggregator 는 클라이언트가 소유하고, 클라이언트가 try 밖에서 직접
+  `aggregator.toLlmResponse()` 로 끝낸다
+- **sink 와 aggregator 는 생성자 상태가 아니라 `openStream` 인자다.** 블로킹 경로에는 둘 다 없고, 두 경로 중 하나에서만
+  뜻이 있는 필드는 역참조를 기다리는 `null` 이다
 
-**Where the exchange is constructed matters and did not move.** `buildRequest(...)` ran *before* the
-try-with-resources, so a failure while building params escaped unmapped. The exchange — and
-therefore the params — is built at the same point, so that behaviour is byte-identical rather than
-accidentally improved or accidentally worsened. And **neither exchange catches anything**, so every
-failure still lands in the client's cascade and therefore still goes through `OpenAIExceptionMapper`.
+### 2.3 exchange 는 try 앞에서 만들어지고, 아무것도 catch 하지 않는다
 
-Selection stays on the capability lookup phase 1 already does:
+- **exchange — 따라서 요청 파라미터 — 는 클라이언트의 try 앞에서 만들어진다.** 파라미터를 만들다 실패하면 매핑되지 않은
+  채로 빠져나가는 것이 Chat 경로의 동작이고, 같은 자리에서 만들어야 그 동작이 우연히 좋아지거나 나빠지지 않는다
+- **두 exchange 모두 catch 가 없다.** 모든 실패가 클라이언트의 catch 연쇄에 닿고, 이 경로에서 `OpenAIExceptionMapper`
+  를 부르는 곳은 그 연쇄뿐이다. 스트림 도중 오류의 분류가 두 번째 엔드포인트에서도 살아남는 것이 약속이 아니라 구조가
+  된다
+
+---
+
+## 3. 라우팅 — `supportsReasoningTraceRoundTrip() && isResponsesApiEnabled()`
 
 ```java
 final String modelName = modelConfig.getName().orElse(config.getModel());
-final ModelCapabilities capabilities = capabilitiesFor(modelName);      // unchanged, fail-open, guarded
-if (capabilities.supportsReasoningTraceRoundTrip() && config.isResponsesApiEnabled()) { ... }
+final ModelCapabilities capabilities = capabilitiesFor(modelName);
+if (capabilities.supportsReasoningTraceRoundTrip() && config.isResponsesApiEnabled()) { ... }   // → Responses
 ```
 
-There is still no model-name string anywhere in this decision, which was round 1's acceptance
-criterion 4 and stays true.
+`OpenAILlmClient.exchangeFor` 가 이 결정을 요청마다 한 번 내린다. 두 항은 서로 다른 질문에 답한다.
 
-### 2.3 `reasoningTokens` is reported **alongside** cost, never added to it
+| 항 | 질문 | 성격 |
+|---|---|---|
+| `ModelCapabilities.supportsReasoningTraceRoundTrip()` | 이 **모델**이 다음 요청에 되실을 reasoning trace 를 돌려주는가 | 모델 사실. provider 중립 |
+| `OpenAIConfig.isResponsesApiEnabled()` | 이 **배포의 엔드포인트**가 `/v1/responses` 를 제공하는가 | 운영 사실. 기본 `true` |
 
-**Decision: `TokenUsage` gains a fourth field; `ModelPrice.costOf(...)` is not touched.**
+**모델 이름은 요청에서 온다.** `LlmModel` 의 이름이 클라이언트의 설정 모델을 덮어쓰고, 그 이름으로 능력을 조회한다.
+이것이 선택을 클라이언트 단위가 아니라 요청 단위로 만든다. 결정 어디에도 모델 이름 문자열은 없다 — 모델 지식은
+레지스트리로만 들어온다([`model-capabilities.md`](model-capabilities.md)). 능력을 조회할 수 없는 모델은 `unknown()`
+으로 떨어지고 그 답은 `false` 이므로, 설명되지 않은 모델은 새 엔드포인트로 가지 않는다. 레지스트리 조회 자체가
+실패해도 같은 결과다(조회 오류의 fail-open 도 model-capabilities.md).
 
-The reason is arithmetic, and it was measured rather than assumed. `reasoning_tokens` lives **inside**
-`output_tokens_details`: on a `{input:100, output:50, total:150, reasoning:30}` document, 30 of the
-50 output tokens were reasoning and `total = input + output` still holds. They are already billed as
-output tokens. Adding them to `costOf` would bill them twice; adding them to `totalTokens` would
-break what that field means.
+**첫 항은 엔드포인트가 아니라 중립 사실이다.** 그 사실에서 OpenAI 엔드포인트를 추론하는 일은 OpenAI 엔드포인트를 알아도
+되는 `aimon-llm-openai` 안에서 한다. Anthropic 클라이언트는 같은 플래그를 "thinking 블록을 되보낸다" 로 읽고
+엔드포인트는 바뀌지 않는다.
 
-| Consumer | Change |
-|---|---|
-| `ModelPrice.costOf` | **none.** Its javadoc gains one paragraph saying so, because "we deliberately ignore a field" is exactly what a reader will otherwise take for a bug. A test pins it. |
-| `TablePricedCostEstimator`, `CostSummary`, `ModelUsage` | **none.** They compose `costOf`. |
-| `MeteringLlmClient` / `LlmUsageRecorder`, `TracingLlmClient` / `DefaultTracer` | **none in signature** — they pass the whole `TokenUsage` through, so the new field arrives at every recorder for free. That is the "reported alongside" half. |
-| `LoggingLlmClient` | one extra field in the log line. |
-| `SessionRecordCodec.encodeTotals` / `decodeTotals` | **carries it**, additively. `decodeTotals` already reads with `node.path(...).asInt()`, which is 0 for a missing field. |
-| `AgentExecutionEventPayload.tokensToMap/FromMap`, `StatusSnapshotPayload` (twice) | **carries it**, additively — and this one has a rolling-upgrade trap, §5 row 6. |
+**둘째 항은 모델 사실이 아니라 배포 스위치다.** OpenAI 호환 게이트웨이 중에는 `/v1/chat/completions` 만 구현하고 실제
+모델 이름을 그대로 넘기는 것이 많다. 그런 배포는 `gpt-5.x` 이름을 내장 행으로 해석해 `/v1/responses` 로 보내고 404 를
+받는다. `responsesApiEnabled(false)` 는 모델에 대해 거짓말을 하지 않고 그 라우팅만 끄므로, 고쳐진 레지스트리 행은 그
+운영자에게도 계속 닿는다. 게이트웨이가 모델 이름을 **바꾸는** 경우는 이름이 `unknown()` 으로 해석되어 애초에 영향이
+없다. 기본 재시도 정책은 404 를 재시도하지 않으므로 이 실패는 한 번 크게 난다.
 
-**Source-breaking? No.** `TokenUsage.of(int,int,int)` is retained and yields `reasoningTokens = 0`; a
-four-argument overload is added; the constructor is private. **Behaviour-visible? Yes**, in
-`equals`/`hashCode`/`toString` — a usage carrying reasoning tokens is no longer equal to one without
-— and the CHANGELOG says that plainly rather than only saying "additive".
+두 항 모두 참이 아니면 요청은 Chat Completions 로 간다. 거기서는 도구와 effort 를 함께 받지 못하는 모델의 effort 를
+생략하는 도구 규칙이 다시 적용된다 — 그 규칙의 정본은 [`request-parameters.md`](request-parameters.md) 다.
 
-**Validation: `>= 0` only.** No `reasoningTokens <= completionTokens` invariant, even though every
-provider integrated so far reports containment. The value is filled by the *server*, and a new
-throwing cross-field check on it would turn an accounting surprise into a failed LLM call.
-
----
-
-## 3. Where the traces attach — all eight sites, generated rather than recalled
-
-The rule is literal: **every place that builds an assistant `Message` out of an `LlmResponse`
-attaches that response's traces, with no per-site judgement about whether the message will be read
-back.** A rule with an exception is a rule nobody can check with one grep.
-
-The list is the intersection of two greps over `modules/*/src/main/java`
-(`Message\.assistant(\|addAssistantMessage(` and `getTextContent()`), and there are **eight** sites in
-**four** files — the four ReAct loops the tree has.
-
-| # | Site | Branch | Is that message read back? |
-|---|---|---|---|
-| 1 | `OrcaAgentExecutor` | terminal, truncated (`flaggedAnswer`) | **yes** — persisted in the `SessionRecord`; the next user turn replays it |
-| 2 | `OrcaAgentExecutor` | terminal, clean | **yes** — same |
-| 3 | `OrcaAgentExecutor` | tool-use iteration | **yes** — the next iteration's `sendMessage` |
-| 4 | `DefaultSubagentExecutor` | terminal (no tool uses) | **yes** — the result snapshot a resumed fork rebuilds from |
-| 5 | `DefaultSubagentExecutor` | tool-use iteration | **yes** — the next iteration's `sendMessage` |
-| 6 | `LlmSkillExecutor` | tool-use iteration | **yes** — the buffer is re-sent |
-| 7 | `LlmSkillExecutor` | terminal | **no** — the buffer is local and is dropped at the `return` |
-| 8 | `ReActLlmDeriver` | tool-use iteration | **yes** — the conversation is re-sent |
-
-**Site 7 is attached even though nothing reads it, and that is the point of the rule.** Excluding it
-would cost nothing today and would replace a rule a reviewer can check with one grep by a rule with
-one footnote.
-
-**The six that look like sites and are not**, each excluded for a reason that can be checked:
-
-| Not a site | Why |
-|---|---|
-| `OrcaAgentExecutor`'s two slash-command paths | the text is a command's output; no `LlmResponse` exists |
-| `OrcaAgentExecutor`'s two mid-stream cancellation paths | the call was aborted, so `ChunkAggregator.toLlmResponse()` is never reached and **no `LlmResponse` is ever produced**. Right rather than merely convenient: a half-streamed reasoning item has no completed `encrypted_content` |
-| `MessageStripper.rebuild` | **deliberately drops traces** while keeping tool uses — §5 row 3, pinned by a test |
-| `DefaultCompactionEngine`'s summary | `CompactBoundary.summaryMessage(...)` returns a **user** message — a new message *about* the history, not the message a turn became, and not even the same role |
-| `TranscriptBuffer.addAssistantMessage` | a published convenience over a `String`; site 7 is its one caller that passes response text |
-| `LlmClient.sendMessageStreaming`'s default | it returns the very `LlmResponse` that `sendMessage` produced, so traces ride through untouched |
-
-**Why this is tested at the executors and not only at the provider.** The provider-side round-trip
-test drives `sendMessage` directly and then *reproduces* the executor's attachment by hand — which
-makes it green for every possible behaviour of every executor, including one that attaches nothing.
-It binds the provider, which is what it is for; it cannot bind a caller. Seven core-side tests over
-the four loops close that, each failing on exactly one dropped site, with no OpenAI type in any of
-them. Site 7 has no test and saying so is part of the claim: it writes into a buffer discarded at the
-next statement, so there is nothing an assertion can observe.
+**provider 이름도 같은 자리에서 한 번 해석된다.** `getProviderName()` 은 재정의할 수 있는 메서드이므로, 요청 팩토리가
+어느 저장된 trace 가 자기 것인지 가리는 이름과 exchange 가 돌아온 trace 에 붙이는 이름이 같아야 한다. 규칙 자체는
+[`reasoning-traces.md`](reasoning-traces.md) 가 정한다.
 
 ---
 
-## 4. Request building, conversion, and the required fields that are choices
+## 4. 요청 조립
 
-### 4.1 The mapping
+`OpenAIResponsesRequestFactory` 가 `ResponseCreateParams` 를 만든다.
+
+### 4.1 Chat ↔ Responses 매핑
 
 | Chat Completions | Responses |
 |---|---|
-| `messages` (system message first) | `instructions` = the system prompt; `input` = the converted item list |
-| `maxCompletionTokens` | `maxOutputTokens` |
-| `reasoningEffort(...)` (top level) | `reasoning(Reasoning.builder().effort(...))` |
-| `tools(List<ChatCompletionTool>)` | `tools(List<Tool>)` via `Tool.ofFunction(FunctionTool...)` — §4.3 |
-| `streamOptions.includeUsage` | **no counterpart** — that endpoint's `stream_options` carries only `includeObfuscation`, because usage is not opt-in there (§8, U-4) |
-| `temperature` / `top_p` | same two — and **no presence or frequency penalty at all** (§4.4) |
-| — | `store(false)` + `include(REASONING_ENCRYPTED_CONTENT)` |
+| `messages` (시스템 메시지가 맨 앞) | `instructions` = 시스템 프롬프트, `input` = 변환된 item 목록(§5) |
+| `maxCompletionTokens` | `maxOutputTokens` — `LlmModel` 의 값, 없으면 `OpenAIConfig` 의 값 |
+| 최상위 `reasoningEffort(...)` | `reasoning(Reasoning.builder().effort(...))` |
+| — | `reasoning.summary` — Chat 에 대응물이 없다(§8) |
+| `tools(List<ChatCompletionTool>)` | `tools(List<Tool>)` via `Tool.ofFunction(FunctionTool)` — `strict(false)`(§4.4) |
+| `streamOptions.includeUsage` | **대응물 없음.** 이 엔드포인트의 `stream_options` 에는 `include_obfuscation` 만 있다. usage 는 요청하지 않아도 실린다(§9) |
+| `temperature` / `top_p` | 같은 둘. **presence · frequency penalty 는 없다** |
+| — | `store(false)` + `include(REASONING_ENCRYPTED_CONTENT)`(§4.2) |
 
-**Omission is "never call the setter", on this endpoint too.** `temperature(Optional.empty())` and
-`topP((Double) null)` both route through `JsonField.ofNullable` and put `"temperature": null` on the
-wire, and a model that rejects the parameter by *presence* rejects the null form exactly like the
-value form. The rule is implemented through a shared helper so the two endpoints cannot drift, with
-the client's own `reportDivergence` passed in as a callback — that method's once-per-signature dedup
-set lives in the client and would not survive being moved.
+샘플링 파라미터는 Chat 경로와 같은 규칙으로 싣는다 — 누군가 값을 넣었을 때만, 생략은 setter 를 부르지 않는 것으로.
+두 엔드포인트가 같은 `OpenAiRequestParameters.applySampling` 을 거치므로 서로 어긋날 수 없다. 이 엔드포인트에 없는
+두 penalty 는 조용히 사라지지 않고 divergence 로 보고된다. 규칙의 정본은
+[`request-parameters.md`](request-parameters.md) 다.
 
-**`store(false)` is a decision, not a default.** With `store: true` the server retains the exchange
-and offers `previous_response_id` as an alternative to replaying items — a second source of truth no
-`SessionRecord` knows about, in a system that resumes sessions on other nodes, plus a data-retention
-change nobody asked for arriving as a rider on a bug fix. `include(REASONING_ENCRYPTED_CONTENT)` is
-requested explicitly because `store: false` is the case the SDK's javadoc singles out for it.
+### 4.2 `store(false)` 와 `include(reasoning.encrypted_content)`
 
-**The tools clamp is gone on this path; the ladder check is not.** Omitting the effort because tools
-are present is a Chat Completions rule. Here tools and reasoning coexist — that is the entire point of
-phase 2 — so the configured effort goes as asked and an unconfigured request gets the server's
-default, which is now the desirable one.
+**`store(false)` 는 기본값이 아니라 결정이다.** `store: true` 면 서버가 교환을 보관하고 item 을 되싣는 대신
+`previous_response_id` 를 쓸 수 있게 한다. 그것은 어떤 `SessionRecord` 도 모르는 두 번째 진실 원천이다 — 세션을 다른
+노드에서 재개하는 시스템에서 그렇다. 게다가 요청하지 않은 데이터 보관 변경을 끌어들인다.
 
-What does **not** go away is `OpenAiRequestParameters.maySendEffort`: which rungs a model accepts is a
-fact about the model, not about the endpoint, and no OpenAI model measured to date except
-`gpt-5.6-terra` has a `none` rung on either surface. Dropping that check along with the clamp is how
-`reasoning.effort: "none"` reached this endpoint as a 400 — see
-[`openai-model-capabilities.md`](openai-model-capabilities.md) §12, and §13.3 for the one model that
-does have the rung.
+**`include(reasoning.encrypted_content)` 는 명시적으로 요청한다.** SDK javadoc 이 그 항목이 필요한 경우로 지목하는 것이
+바로 `store: false` 다. `include` 없이도 `encrypted_content` 가 돌아온 관측이 있지만(§9) 항목을 빼지 않는다. 모델 하나의
+관측 한 번은 벤더의 문서 계약보다 약하고, 빼서 틀렸을 때의 결과 — reasoning item 이 다음 요청으로 조용히 되실리지
+못하는 것 — 는 드러나지 않는 종류다.
 
-### 4.2 Message conversion is parity with the Chat converter, case for case
+`reasoning.summary` 는 `include` 항목을 따로 요구하지 않는다. 이것은 추론이 아니라 측정이다(§9).
 
-`OpenAIMessageConverter` returns Chat types throughout, so a second conversion had to be written from
-scratch; keeping the Chat one **unopened** is what makes "Chat Completions is unchanged" structural
-rather than promised. The standard the new converter is held to is: *switching endpoints never
-changes what a message means*, including every throw.
+### 4.3 도구 규칙은 없고, ladder 검사는 공유한다
 
-**By role:** `USER` → one `ofMessage(role=USER, …)` carrying the content list (the multimodal
-carrier is used for the text-only case too, so there is no second shape to keep in sync);
-`ASSISTANT` → the emit rule of §2.1, with the text item carried by **`EasyInputMessage`** because
-`ResponseInputItem.Message.Role` declares only `USER`/`SYSTEM`/`DEVELOPER` and the remaining
-candidate requires a server-assigned `id` and `status`; `TOOL` → **one `function_call_output` per
-result**, same order, `call_id = getToolUseId()`, and the **same `"Error: "` prefix** a failed result
-gets on Chat; anything else → the same `IllegalArgumentException`, same message.
+**이 경로에는 도구 규칙이 없다.** 도구가 있다고 effort 를 생략하는 것은 Chat Completions 의 규칙이다. 여기서는 도구와
+reasoning 이 함께 가는 것이 이 경로의 존재 이유이므로, 설정된 effort 는 그대로 가고 설정되지 않은 요청은 서버 기본값을
+받는다.
 
-**By content block:** text → `input_text`; base64 image → `input_image` carrying the **same `data:`
-URL** the Chat converter builds; URL image → likewise; text-based document → inlined as `input_text`
-with the `[File: …]` header, **and without it when the document has no file name** (the Chat
-converter guards the prefix, so a converter that always writes the header passes a test that only
-ever supplies a name); non-text document → **the same `MessageConversionException`, same message**;
-unknown block → same throw.
+**ladder 검사는 남는다.** 모델이 어떤 rung 을 받는지는 엔드포인트가 아니라 모델에 대한 사실이므로, 두 엔드포인트가 같은
+`OpenAiRequestParameters.maySendEffort` 를 부른다. 도구 규칙과 함께 이 검사까지 빼면 모델이 받지 않는
+`reasoning.effort` 가 이 엔드포인트에 400 으로 도착한다. `Reasoning.effort` 는 `supportsReasoningEffort()` 가 거짓이거나
+요청 rung 이 모델의 `acceptedReasoningEfforts` 에 없으면 설정하지 않고 보고한다. 어느 모델이 어느 rung 을 받는지는
+[`model-capabilities.md`](model-capabilities.md), 생략·보고 규칙은 [`request-parameters.md`](request-parameters.md) 다.
 
-The non-text-document throw is the deliberate one. The Responses API *does* have a native
-`input_file` slot, so it could carry a PDF where Chat cannot. Taking it would make the same `Message`
-mean different things on the two endpoints and would claim a capability no live call has verified.
-Recorded as **F-3**.
+**`reasoning` 객체는 서로 독립인 두 부분에서 만든다** — effort 와 summary(§8). 둘 중 하나라도 실렸을 때만 객체를 설정한다.
+effort 가 게이트에서 떨어져도 summary 요청은 살아남고, 그 반대도 같다.
 
-The failure this guards is silent: `UserInputConverter` turns an attached screenshot into an
-`ImageContentBlock` on every user turn, so a converter that handled only text would emit a text-only
-item, the model would answer as though nothing was attached, and the build would stay green.
+### 4.4 `strict` 는 `false` — 안전해 보이는 선택이 아니라 패리티 선택
 
-### 4.3 `strict` is `false`, and that is the parity choice rather than the safe-looking one
+`FunctionTool.strict` 는 Responses 빌더에서 **필수**이고 Chat 에서는 **설정하지 않는다**. Chat 에서는 필드가 없으므로
+서버의 비엄격 기본값이 적용된다. setter 를 생략하는 선택지는 없다 — `build()` 가 던진다.
 
-`FunctionTool.strict` is **required** on the Responses builder and is **never set** on Chat, where
-the absent field leaves the server's non-strict default in force. Three values satisfy
-`checkRequired` — `true`, `false`, and an explicit `JsonNull` — and omitting the setter is not a
-fourth outcome but an `IllegalStateException`.
+**`false` 인 이유는 패리티가 엄격 검증의 부재이기 때문이다.** strict 모드는 JSON Schema 의 부분집합만 받는다(모든 객체에
+`additionalProperties: false`, 모든 프로퍼티가 `required`). 깨질 집단은 작지도 가설적이지도 않다. 이 저장소의
+`additionalProperties` 규칙은 `at.aimon.core.tools` 에만 걸리고 **MCP 스키마는 명시적으로 면제**된다. MCP 도구는 우리
+스키마가 아니라 서버의 스키마를 광고하기 때문이다. `true` 를 쓰면 지금 동작하는 도구가 엔드포인트 전환만으로 서버 거부가
+된다.
 
-**`false` is chosen because parity is the absence of strict validation, not its presence.** Strict
-mode accepts only a subset of JSON Schema (it requires `additionalProperties: false` on every object
-and every property listed in `required`), and the population that would break is neither small nor
-hypothetical: this repo's own `additionalProperties` rule is scoped to `at.aimon.core.tools` and
-**explicitly exempts MCP schemas**, because an MCP tool advertises the *server's* schema and not
-ours. Writing `true` would turn tools that work today into server-side rejections tomorrow.
+**`JsonNull` 도 쓰지 않는다.** 서버가 전에 보지 못한 필드는 값이 `null` 이든 `true` 든 동작 변경이다. `false` 는 필드가
+없을 때 뜻하던 것을 이 빌더가 받는 유일한 어휘로 말한다.
 
-`JsonNull` is rejected for the same reason `temperature: null` is: a field the server did not
-previously see is a behaviour change whether its value is `null` or `true`. `false` says what the
-absent field said, in the only vocabulary this builder accepts. Turning it on is a real option with a
-real argument, and it is **F-4** — it needs its own gate, an audit of the exempt population, and its
-own CHANGELOG entry, not a ride on a bug fix.
+도구 정의 변환 실패의 `ToolConversionException` 래핑은 **개선 없이** 복제한다 — 도구마다 같은 `log.error` 와 래핑, 같은
+타입, 같은 메시지, 두 경로 모두 try 앞에서 던진다.
 
-The `ToolConversionException` wrapping is mirrored **without being improved**: the same per-tool
-`log.error` + wrap, the same type, the same message, thrown from the same point in the same method,
-escaping before the try on both paths exactly as it does today.
+### 4.5 필수 필드 — 데이터가 정하는 값과 누군가 골라야 하는 값
 
-### 4.4 Every required field on this path, swept
+이 경로가 만드는 모든 SDK 타입의 필수 필드를 읽어, **데이터가 정하는 값**과 **누군가 논증해야 하는 선택**으로 나눈다.
+대부분은 데이터가 정한다. 선택인 칸은 아래뿐이고, 각각 결정과 이유가 있다.
 
-Every SDK type this design constructs, with its `checkRequired` set read out of the jar and
-classified as a value the data determines or a choice somebody has to argue:
-
-| Type constructed | `checkRequired` | Determined or a choice |
+| 타입 · 필드 | 결정 | 이유 |
 |---|---|---|
-| `ResponseCreateParams` | **none** — neither its builder nor `Body`'s calls `checkRequired`, and `model()` returns `Optional` | the model is supplied regardless, and two endpoint-selection tests bind it |
-| `Reasoning` | none | effort is optional; no *tools* clamp, but a rung below the model's `lowestReasoningEffort` is omitted |
-| **`FunctionTool`** | `name`, `parameters`, **`strict`** | name and parameters determined; **`strict` is a choice — §4.3** |
-| `FunctionTool.Parameters` | none (a `@JsonValue` map) | determined — the same key-by-key copy Chat does |
-| `ResponseInputItem.Message` (user) | `content`, `role` | determined |
-| `EasyInputMessage` (assistant text) | `content`, `role` | determined — and it is the carrier **because** `Message.Role` has no `ASSISTANT` |
-| `ResponseInputText` | `text` | determined |
-| **`ResponseInputImage`** | **`detail`** | **a choice, and it was argued** — `AUTO`, because that is what Chat effectively sends by omitting the field |
-| `ResponseInputItem.FunctionCallOutput` | `callId`, `output` | determined — including the `"Error: "` prefix |
-| `ResponseFunctionToolCall` (replayed call) | `arguments`, `callId`, `name` | determined; the item `id` is optional and is **deliberately not invented** |
-| `ResponseReasoningItem` (replayed trace) | `id`, `summary` | **never reached** — §2.1's deserialisation rule |
-
-**On the read path the rule is the other way round, and that is deliberate.** Reading is not
-`checkRequired` but `getRequired` accessors throwing at access time, and the split is by what the
-field means: **identity throws** (a `function_call` missing its `call_id` is a provider fault, and
-the throw lands inside the client's try where it is classified like any other failure), while
-**accounting degrades** (a missing token counter must not fail a turn that otherwise succeeded).
-Naming the split is the point — without it, "use raw accessors" applied everywhere would turn a
-malformed tool call into a silent empty `ToolUse`.
-
-### 4.5 `call_id` versus `id` (work item 6)
-
-A Responses `function_call` carries **both** an item `id` (`fc_…`, `Optional` in the SDK) and a
-`call_id` (`call_…`, required). `ToolUse.getId()` holds the **`call_id`**, because that is the one a
-`function_call_output` must match. The item `id` is **deliberately not preserved** across a replay
-and must not be invented. Whether a replayed `function_call` without its original item id is accepted
-is the same unverified server question as the anchor (§8, U-1).
+| `FunctionTool.strict` | `false` | §4.4 |
+| `ResponseInputImage.detail` | `AUTO` | Chat 이 필드를 생략해 사실상 보내는 값이다 |
+| assistant 텍스트의 운반체 | `EasyInputMessage` | `ResponseInputItem.Message.Role` 에는 `USER`/`SYSTEM`/`DEVELOPER` 만 있고, 남은 후보(`ofResponseOutputMessage`)는 서버가 배정한 `id` 와 `status` 를 요구한다 |
+| 되실은 `ResponseFunctionToolCall` 의 item `id` | 설정하지 않는다 | SDK 에서 선택 필드이고 서버가 배정한다. 지어낸 id 는 생략보다 나쁘다(§5.2) |
+| 되실은 `ResponseReasoningItem` 의 `id` · `summary` | 빌더를 거치지 않는다 | 저장된 payload 를 빌더로 재구성하지 않는다 — [`reasoning-traces.md`](reasoning-traces.md) |
+| `Reasoning.effort` | 모델의 `acceptedReasoningEfforts` 에 없는 rung 이면 설정하지 않는다 | §4.3 |
 
 ---
 
-## 5. Failure modes
+## 5. 메시지 변환 — Chat 변환기와 경우마다 같다
 
-| # | Failure | Handling |
-|---|---|---|
-| 1 | **A gateway implements only `/v1/chat/completions`** and is now sent to `/v1/responses`. Today it works; this branch would 404 it. | `OpenAIConfig.responsesApiEnabled(false)`. **Say the asymmetry plainly:** the *breakage* is fully yaml-creatable (`baseUrl` is a CLI key and a starter property, and any real `gpt-5*` name hits the built-in row) while the *fix* is Java-only. That is different in kind from the other programmatic-only knobs, which override things that already work. A 404 still fails loudly and once — the retry policy retries only rate-limit and overloaded. |
-| 2 | **Every counter on `ResponseUsage` is a required accessor, not just the reasoning one** — five deep: three at the top level, the details object beside them, and the reasoning counter one level down inside that. A document missing any top-level counter throws *before* the details are reached. | Raw accessors at every level; anything absent counts as zero, plus the narrowing guard the Chat path already has for `long` → `int`. One exception cannot be taken literally: `TokenUsage` enforces `total >= prompt + completion`, so a document that reports input and output but omits `total` reports the sum rather than 0 — reporting 0 would fail the very call this degradation protects. |
-| 3 | **A reasoning item replayed without the tool call it preceded** — the shape OpenAI is documented to reject. | Two guards. The anchor keeps them adjacent, and `MessageStripper` drops traces **while keeping tool uses**, so compaction cannot produce the dangling shape. The reverse mistake — keeping traces while dropping calls — is the one to review for. |
-| 4 | **A stored payload this build cannot parse** — a transcript written by a newer build, or a corrupted row. | Drop that trace, warn once, send the turn without it. A dropped trace costs re-derived reasoning; a thrown exception costs the session. Trace decoding never rethrows. |
-| 5 | **Provider swap mid-session.** | `providerName` is compared to `getProviderName()`; a foreign trace is dropped and warned once. Without this, an Anthropic thinking block reaches `/v1/responses`. |
-| 6 | **A rolling upgrade drops reasoning tokens on the cross-node wire — or NPEs.** `PayloadValues.asInt` is `((Number) requireNonNull(value)).intValue()`, and a map written by an old node has no reasoning key. Both decoders turn any `RuntimeException` into a dropped signal, so the obvious `asInt(map.get("reasoning"))` would discard the whole status update rather than report one counter as zero. | A new `PayloadValues.asIntOrZero` for the new key **only**. The existing three keep `asInt`, because their absence really is a malformed payload. Note the asymmetry with `SessionRecordCodec`, whose `node.path(...).asInt()` already defaults to 0 — one wire is tolerant by construction and the other is not. |
-| 7 | **Redaction does not reach a reasoning payload.** `Message.mapText` is documented as the single entry point for whole-message text rewriting, and the payload is deliberately outside it. | Stated, not hidden — in `mapText`'s javadoc, here, and in the CHANGELOG. It cannot be fixed by mapping the text: OpenAI's carrier is `encrypted_content` (ciphertext a rewritten byte invalidates) and Anthropic's `signature` has the same property. What is offered instead is an off switch, and the note that what leaves the process is a payload the provider itself produced and already holds. §8, U-2. |
-| 8 | **A provider error that the SDK does not raise** — `response.error`, `response.failed`, or a 200 `Response` with `status: "failed"`. The SSE decoder throws only on a **top-level** `"error"` key, which none of those three shapes has. | §5.1 in full. Both ways of getting it wrong are named there. |
-| 9 | **A streamed turn produces reasoning items with no `encrypted_content`** — the feature silently doing nothing. | One bounded warning. Traces are taken from `output_item.done` precisely because the SDK names that as the source populated under `store: false`. |
-| 10 | **Transcripts grow.** An `encrypted_content` blob is far larger than the text of the turn, and every assistant turn in a reasoning session carries one. | Named as an operational cost, not engineered away: capping or truncating breaks the round trip, which is the whole feature. Compaction sheds them, which bounds a long session, and the switch removes them entirely. §8, U-5. |
-| 11 | **Token estimation under-counts on this path.** `HeuristicTokenEstimator` and `TikTokenEstimator` walk content blocks, tool uses and tool results, and count **0** for reasoning traces — while `DefaultCompactionGuard` drives every threshold from the estimator rather than from provider usage. So the guard under-counts by roughly `reasoning_tokens` on the axis it is watching. | **Deliberately not fixed**, and the obvious fix is wrong: counting the base64 blob as text would over-count by an order of magnitude against the true input cost and force premature compaction, destroying the traces. The blast radius is bounded — compaction drops the traces so the error resets, the context limits already reserve headroom for estimator error, and the same estimator already omits tool *definitions*, a larger and equally uncounted term. Recorded here so the next person to read a context-length 400 has the sentence. |
-| 12 | **A tool that works on Chat is rejected on Responses** because an implementer supplied `strict: true`. | §4.3, and a test that is red on `true` and on an omitted setter alike. |
-| 13 | **A gateway that accepts `reasoning.effort` and rejects `reasoning.summary`** (#72, 2026-09-10). It is on this endpoint at all because the deployment declared `supports-reasoning-trace-round-trip: true` for the name, and the summary was the one reasoning parameter on the request that consulted no capability — so the two gates that would have caught it sat on the sibling parameter and the turn failed with a 400. | A seventh flag, `ModelCapabilities.supportsReasoningSummary()`, gating only `reasoning.summary` and only here. **Fail-open `true`**, which is the same two-sided rule as the others reaching the opposite boolean from `supportsReasoningEffort()`: a summary is only ever on a request because somebody set it, so withholding it would be fail-*closed* — and the flag is never read for an undescribed model, since this endpoint is entered only on `supportsReasoningTraceRoundTrip()`, whose own fail-open value is `false`. Omitted and reported once when it withholds, the way `maySendEffort` and `applySampling` already are. **`supportsReasoningTraceRoundTrip` was deliberately not widened** to also mean "and accepts a summary": it means something measured, and a gateway satisfies the two independently. The remedies without the flag are both wider than the fault — unsetting `reasoningSummary` is per *client* while the model name is per request, and declaring the round trip `false` routes the model off this endpoint entirely. |
+`OpenAIMessageConverter` 는 전부 Chat 타입을 돌려주므로 두 번째 변환기 `OpenAIResponsesMessageConverter` 가 필요하다.
+**Chat 변환기는 열지 않는다.** 열지 않아야 "Chat Completions 는 바뀌지 않는다" 가 약속이 아니라 구조가 된다.
 
-### 5.1 Provider errors that are not SDK exceptions
+새 변환기를 재는 기준은 하나다 — **엔드포인트를 바꿔도 메시지의 뜻은 바뀌지 않는다. 모든 throw 를 포함해서.**
 
-Both endpoints share one SSE decoder, and it throws `SseException` on exactly one condition: a
-**top-level** `"error"` key on the decoded payload. Chat Completions' mid-stream failure has that
-shape, which is why `OpenAIExceptionMapper`'s `SseException` branch is reachable there at all. The
-Responses shapes do not:
+### 5.1 역할별 · 블록별 매핑
 
-| Shape | Payload | Top-level `error`? | SDK throws? |
-|---|---|---|---|
-| `ResponseErrorEvent` | `{type, code, message, param, sequence_number}` | **no** | **no** — delivered as data |
-| `ResponseFailedEvent` | `{type, response:{…, error:{…}}, sequence_number}` | **no** — nested | **no** |
-| Blocking `create(...)` returning 200 with `status: "failed"` | a plain `Response` | n/a | **no** — a normal return value |
+**역할별.**
 
-Unhandled, the same server-side condition that yields a retryable `LlmOverloadedException` on the
-blocking/Chat path yields *no exception at all* here — which is precisely the divergence the
-preserved behaviour exists to prevent. Both ways of not-throwing are bad in their own way: leaving
-the aggregator unclosed escapes as `IllegalStateException` from **outside** the try, unmapped and
-reporting AIMON's internal state instead of the provider's error; closing it without throwing turns
-the failure into a **silent success** the executor accepts as the assistant's final answer.
-
-So `OpenAiResponseErrors` builds the exception and the caller throws it **from inside the try**,
-where the existing cascade classifies it — including the second catch's `isCancelled()` check, which
-is what makes a provider failure coinciding with a local cancellation report as a cancellation rather
-than a server fault.
-
-Classification is **exact parity by default**: `mapMidStreamError(...)`, already package-private and
-already what the Chat `SseException` branch calls, turns `rate_limit_exceeded` into a rate-limit
-exception and everything else into the retryable overloaded one. The one deliberate divergence is the
-request-content family — `invalid_prompt`, the `invalid_image*` group, `image_too_large`,
-`bio_policy`, `data_residency_mismatch` — which a blocking call would have rejected as a 400, and
-which sending through the mid-stream mapper would make retry until the policy gives up. The rule is
-stated as a three-element **transient** set with "unrecognised keeps parity", so a code OpenAI adds
-later inherits today's behaviour instead of silently becoming non-retryable (§8, U-3).
-
-### 5.2 How each preserved behaviour survives
-
-The structural answer is §2.2: all four live in `OpenAILlmClient`, none moves into an exchange, and
-the Responses path inherits them rather than re-implementing them.
-
-| Preserved behaviour | Survives because | Chat test | New test |
-|---|---|---|---|
-| **1. `StreamResponse.close()` as the abort lever, `onCancel` registered *after* the stream opens, fast path for already-cancelled** | The fast path stays where it is, before anything opens. The try-with-resources now holds an `OpenAIStreamHandle` whose `close()` delegates to the same thread-safe idempotent method, one indirection away. `onCancel(handle::close)` stays *inside* the try. | `OpenAILlmClientCancellationTest`, **unmodified** | `OpenAIResponsesCancellationTest` |
-| **2. Cancellable non-streaming rerouted through streaming, chunks discarded, usage still requested** | Not touched at all: the reroute is a decision about `cancellation.isSupported()` taken before any endpoint is chosen. | same class, **unmodified** | same class — including an assertion that the reassembled response carries non-empty usage |
-| **3. `SseException` classified from the payload, not the HTTP 200** | (a) **Neither exchange contains a `catch`**, so a genuinely thrown SDK failure reaches the client's cascade, the only place the mapper is called. (b) A Responses provider error is **not an SDK exception at all**, so §5.1 builds the exception the mapper would have produced and throws it from inside the try. | `OpenAIExceptionMapperTest`, **unmodified** | `OpenAIResponsesErrorEventTest` — every input an **event or a status**, never a pre-thrown exception |
-| **4. Per-request timeout via `RequestOptions`, `null` keeping the single-argument overload** | `perRequestOptions(modelConfig)` stays in the client; each exchange has the same one-line `options == null ? svc.x(p) : svc.x(p, o)`. | `OpenAILlmClientRequestTimeoutTest`, **unmodified** | `OpenAIResponsesRequestTimeoutTest`, whose `never()` assertions are the load-bearing half |
-
-"Unmodified" is part of the acceptance: editing those classes would hide exactly the regression they
-guard.
-
----
-
-## 6. What the tests bind, and how each one goes red
-
-Test quality is the acceptance criterion this job has failed on before, so each of these was
-**verified by mutation** — the bug was introduced, the test observed to go red, the bug reverted.
-
-| Mutation | Tests that go red |
+| 역할 | Responses item |
 |---|---|
-| Attach `List.of()` instead of the response's traces in `OrcaAgentExecutor` | its three seam tests |
-| …in `DefaultSubagentExecutor` | its two |
-| …in `LlmSkillExecutor` / `ReActLlmDeriver` | one each |
-| Resolve the endpoint from `config.getModel()` rather than the per-request name | `OpenAILlmClientEndpointSelectionTest` cases 5 and 6, each with two independent reds |
-| `.strict(true)` on the tool conversion | `toolSchemaIsCopiedVerbatimAndStrictIsFalse` |
-| A plain `ObjectMapper` for the reasoning payload | three tests, two in `OpenAiReasoningTracesTest` and the headline round-trip |
-| Log `response.error` instead of throwing (the round-1 defect) | seven tests in `OpenAIResponsesErrorEventTest` |
+| `USER` | `ofMessage(role=USER, …)` 하나에 콘텐츠 목록. 텍스트만 있는 경우에도 멀티모달 운반체를 써서 맞춰야 할 두 번째 모양을 만들지 않는다 |
+| `ASSISTANT` | reasoning trace 와 호출의 순서 규칙대로(규칙은 [`reasoning-traces.md`](reasoning-traces.md)), 텍스트는 `EasyInputMessage`(§4.5) |
+| `TOOL` | 결과마다 `function_call_output` 하나, 같은 순서, `call_id = getToolUseId()`. 실패한 결과는 Chat 과 **같은 `"Error: "` 접두어** |
+| 그 밖 | Chat 과 같은 `IllegalArgumentException`, 같은 메시지 |
 
-Three assertion rules are load-bearing and are followed everywhere:
+**콘텐츠 블록별.**
 
-- **Absence is asserted on the raw `_xxx()` accessor or on the serialised body**, never on
-  `xxx().isEmpty()`, because the SDK's `getOptional` collapses `JsonMissing` and `JsonNull` — an
-  implementation that put `"temperature": null` on the wire and earned the exact 400 this branch
-  removes would still pass an `isEmpty()` assertion.
-- **The reasoning payload is compared as a tree, never with `contains`.** A plain `ObjectMapper`
-  *preserves* `encrypted_content`; its corruption is an *addition*, so only a comparison that
-  notices extra keys can fail on it.
-- **A `never()` on an SDK service names its parameter type**, because `ResponseService` declares four
-  `create` and four `createStreaming` overloads and a bare `any()` is ambiguous across them.
-
-Two facts about coverage that are part of the claim rather than omissions:
-
-- **Site 7 has no test**, because it writes into a buffer discarded at the next statement — no
-  snapshot, no second call, no return value carrying it. It is protected by review.
-- **The `IllegalArgumentException("Unsupported role: …")` arm has no test**, because `Role` has
-  exactly three constants and all three are handled. It is mirrored anyway, for the same reason the
-  Chat converter has it: parity kept only where it is currently observable is not parity.
-
-**The docker-backed backend round trip was not run** (§8, U-6). The encoding is decided in
-`JsonSessionSnapshotCodec` and `SessionRecordCodec`, both covered in the gate; the backends store the
-result as an opaque string and cannot see the field.
-
----
-
-## 7. Follow-ups this round deliberately does not start
-
-| # | Item | Why not now |
-|---|---|---|
-| **F-1** | **Anthropic thinking blocks** — filling the same `ReasoningTrace` slot with `ThinkingBlock`/`RedactedThinkingBlock` JSON, anchored the same way. | Out of scope by instruction. The fit is demonstrated in §2.1; half-building it would put a second provider's byte-exactness requirement into a round that cannot test it. |
-| **F-2** | A yaml/property surface for the registry override, `responsesApiEnabled`, and the sampling parameters. | Three programmatic-only knobs now. One config issue, not three riders. **Partly done: #46 took the registry override alone** — CLI `llm.modelCapabilities`, starter `aimon.llm.model-capabilities`. The other two are still Java-only. That issue's design also settled where they go when someone takes them: `responsesApiEnabled` moves down to `aimon.llm.openai.*` / CLI `llm.openai.*` because it names a vendor endpoint, while the sampling keys stay in the shared namespace because they mean the same thing for every vendor. See [`model-capability-config-key.md`](model-capability-config-key.md) §2.7. |
-| **F-2 (a correction, 2026-09-10)** | This row counts **three** knobs and `reasoningEffort` is not among them — it is on `LlmModel` and `OpenAIConfig` rather than on this path's own surface, and the only mention of it in this document is the SDK mapping table in §3. **#61 gave that fourth knob its surface** (`llm.reasoningEffort` / `aimon.llm.reasoning-effort` / frontmatter `model.reasoningEffort`), so a reader counting what is left here gets the right number: the two this row still names — `responsesApiEnabled` and the sampling parameters — remain Java-only, and remain `L-2` in [`../../backlog/llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md). Design: [`reasoning-effort-config-surface.md`](reasoning-effort-config-surface.md). |
-| **F-3** | Native `input_file` for non-text documents on this path. | Taking it would make the same `Message` mean different things on the two endpoints and claim an unverified capability. |
-| **F-4** | **`strict: true` for tool schemas.** Strict mode improves tool-call accuracy and the field is already being written. | Turning it on rejects every schema that is not strict-compliant, and §4.3 shows that population is large and partly not ours. Needs its own gate, an audit, and its own CHANGELOG entry. |
-| ~~**F-5**~~ | ~~Reasoning *summary* deltas forwarded to the sink.~~ | **Done — [`reasoning-delta-stream.md`](reasoning-delta-stream.md) (#62).** Still a separate feature; it simply got its own round, together with the Anthropic half, because forwarding without asking would have shipped a channel that is always empty — `OpenAIResponsesRequestFactory` never set `reasoning.summary`, and on this endpoint the reasoning itself is `encrypted_content`, so the summary is the only readable form there is. Two corrections to this row's wording: **both** delta families are forwarded, not the summary alone (`response.reasoning_summary_text.delta` and `response.reasoning_text.delta` — forwarding only the first would leave a model that emits raw reasoning text showing nothing to a deployment that asked to see reasoning), and the ask itself opened `aimon.llm.openai.*` / CLI `llm.openai.*`, the namespace F-2 above reserves for `responsesApiEnabled`. Opt-in and unset by default on both surfaces; a model routed to Chat Completions, which has no such parameter, gets one WARN rather than silent inertness. |
-| **F-5 (a correction, 2026-09-10)** | This row says `OpenAIResponsesRequestFactory` **never set** `reasoning.summary`, which was true when it was written and stopped being true in the same round. #72 finishes the sentence the other way: the factory sets it, and **now consults a capability first** — `ModelCapabilities.supportsReasoningSummary()`, §5 row 13. The position the factory's own class javadoc recorded (*"the summary has no capability gate at all"*) was right about first-party OpenAI, where a model that **ignores** the ask simply produces no summary events, and silent about a gateway that **rejects** it, which is a 400 rather than an empty channel. The flag is fail-open `true`, so nothing on the wire moves for a deployment that declares none of it. |
-| ~~**F-6**~~ | ~~The o-series rows in the built-in table.~~ **Done — round 8.** | Was *"blocked on live-API verification"*. That verification happened on 2026-09-09: four o-series names accept a replayed reasoning item on `/v1/responses`, with a corruption control proving the item is consumed, so the flag flipped for the eight measured names and they now reach this path. It did **not** flip per prefix — `o1-pro` and `o4-mini-deep-research` were never called and keep the old behaviour through their prefix rows. [`openai-model-capabilities.md`](openai-model-capabilities.md) §13. |
-
----
-
-## 8. What could not be resolved
-
-- **U-1 — the anchor's exact necessity is inferred from a javadoc, not measured.**
-  `ResponseReasoningItem`'s own doc says these items must be included in `input` for subsequent
-  turns, and the API is widely reported to reject a reasoning item arriving without the item it
-  produced. The anchor is designed for the strict reading because the failure mode of guessing wrong
-  that way is a 400 no unit test can find, while the cost of being over-careful is one unused
-  nullable field.
-- **U-2 — a reasoning payload is outside the redaction gate and cannot be brought inside.** What is
-  offered is disclosure plus an off switch. A deployment with a hard redaction requirement on
-  everything leaving the process should set `responsesApiEnabled(false)` and accept phase 1's
-  behaviour. If that trade is unacceptable, the answer is a policy that refuses to *produce* traces
-  rather than one that rewrites them, and that is a separate design.
-- **U-3 — the terminal/transient split is reasoned from enum names**, not from observed responses.
-  The default arm is deliberately the parity arm, so the failure mode of being wrong is bounded: a
-  retryable code mis-listed as terminal loses its retries, and only for codes actually named.
-- ~~**U-4 — "`response.completed` carries usage without being asked" is a server claim.**~~
-  **Measured — round 8, 2026-09-09, on `o4-mini`.** The terminal event of a streamed `/v1/responses`
-  turn does carry a full `usage` object, with no `stream_options` equivalent having been sent. That is
-  the one name whose terminal payload was captured; the other four were recorded as event sequences
-  only, so the claim is closed for `o4-mini` and unmeasured for them. The rest of the entry stood as
-  written: `Response.usage()` is `Optional` in the SDK and the tests supply usage in their own
-  fixtures, so no test here would have failed if the server omitted it; what changes is that the claim
-  is no longer only a claim, for one name.
-  [`openai-model-capabilities.md`](openai-model-capabilities.md) §13.5.
-- **U-5 — transcript growth is stated, not budgeted.** Nobody has measured what a 40-turn `gpt-5`
-  tool loop does to a session row. The mitigations exist; the number does not.
-- **U-6 — the docker-backed backend round trip has never been run in this task.** §6 says what the
-  gate does prove.
-- **U-7 — `store: false` was chosen without measuring the alternative.** `previous_response_id` with
-  `store: true` would let the server keep the reasoning and would shrink the request. It was rejected
-  on architecture and on retention, not on measurement.
-- **U-8 — a stream that ends cleanly with no terminal event is a silent empty success.** Closing the
-  aggregator on drain is what keeps an unclosed aggregator from escaping unmapped; the consequence is
-  that a protocol-violating stream produces an empty successful response rather than an error. This
-  is **parity** — a Chat stream with no `finish_reason` behaves the same way today — and tightening
-  it is a change to both endpoints.
-
----
-
-## 9. Where the implementation departed from the approved design
-
-Small, and each for a reason found in the code rather than chosen for convenience.
-
-1. **`openStream` takes the sink and aggregator as arguments** rather than as exchange constructor
-   state. The blocking path has neither, and a field meaningful on only one of two paths is a null
-   waiting to be dereferenced. Everything the design cares about is unchanged: params are still built
-   at construction (before the try), the client still keeps one try-with-resources, one `onCancel`
-   and one cascade, and neither exchange catches anything.
-2. **`MessageStripper`'s identity fast path now also checks `hasReasoningTraces()`.** The design said
-   the stripper "keeps dropping" traces, which was true only of `rebuild(...)`: a text-only assistant
-   message took the fast path and carried its payloads — far larger than the text of the turn — into
-   the summarization call. One line in the guard makes the stated invariant actually true.
-3. **The Responses sampling sink reports the two penalties instead of swallowing them.** That
-   endpoint has no `presence_penalty` or `frequency_penalty` at all, which the design's mapping table
-   did not cover. On a model that accepts sampling, a configured penalty would otherwise vanish with
-   no error and no log line — the "succeeds with settings other than the configured ones" failure the
-   divergence reporting exists to remove.
-4. **`OpenAiResponseUsages` is a class the design's file list did not name.** The usage-degradation
-   rule is identical on the blocking and streaming paths and had to be shared; putting it in either
-   mapper would have made the other one's copy the place it drifts.
-5. **A missing `total_tokens` reports the sum, not zero.** §5 row 2 explains why "degrade to zero"
-   cannot be taken literally for that one counter.
-6. **The routing predicate is one term, not two.** The design's prose says "round-trip-capable +
-   reasoning-capable ⇒ use `/v1/responses`" in one place and implements
-   `supportsReasoningTraceRoundTrip() && isResponsesApiEnabled()` in two others. They agree on the
-   built-in table, so no test distinguishes them; the predicate as implemented is the one written
-   here, and the second term is the *deployment* question, not a second model fact.
-7. **This document is in English**, matching the round-1 design it continually cross-references
-   rather than the Korean the design specified. `docs/design/` is not a translation target either
-   way.
-
----
-
-## 10. Live verification — #43's own lists, walked (2026-09-10)
-
-Everything above §10 was written without a billed call. This section is the call, and it is here
-because #43 asks for the reproduction to be *run* rather than reasoned about. Every row names a
-request and what came back; the request-by-request log is the task record's `measurements.md`.
-
-### 10.1 The reproduction
-
-The issue's snippet, unchanged: a config carrying nothing but the key and `model("gpt-5.6-terra")`, a
-default `LlmModel`, a one-line question, and any non-empty tool list.
-
-| request | result |
+| 블록 | Responses content |
 |---|---|
-| the snippet as written, through `OpenAILlmClient` | **accepted**; usage populated on both counters, stop reason present and not `UNKNOWN` |
-| the same request with `responsesApiEnabled(false)`, forcing Chat Completions | **HTTP 400**, body verbatim: *"Function tools with reasoning_effort are not supported for gpt-5.6-terra in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'."* |
+| 텍스트 | `input_text` |
+| base64 이미지 | `input_image` — Chat 변환기가 만드는 것과 **같은 `data:` URL** |
+| URL 이미지 | `input_image` |
+| 텍스트 기반 문서 | `input_text` 로 인라인. `[File: …]` 머리를 붙이고, **파일 이름이 없으면 붙이지 않는다**(Chat 변환기가 접두어를 가드한다) |
+| 텍스트가 아닌 문서 | Chat 과 **같은 `MessageConversionException`, 같은 메시지** |
+| 모르는 블록 | 같은 throw |
 
-**The second row is what makes the first mean something.** It carries no `temperature` and no
-`reasoning_effort` — nothing was sent and the server still refused — so the issue's note that omitting
-the effort is not a workaround holds a year later, and **routing is the fix rather than a change of
-parameters**. Both rows are `OpenAIReasoningLiveTest.TheReproduction`.
+텍스트가 아닌 문서의 throw 는 의도한 것이다. Responses API 에는 PDF 를 실을 수 있는 네이티브 `input_file` 자리가 있지만,
+그것을 쓰면 같은 `Message` 가 두 엔드포인트에서 다른 뜻이 되고 어떤 라이브 호출도 확인하지 않은 능력을 주장하게 된다.
+문서 블록 거부 규칙 자체는 [`multimodal-content.md`](multimodal-content.md) 가 정하고, 이 경로는 그 규칙을 그대로
+따른다.
 
-One correction to the issue's *wording*, which the code already had right: #43 says these models
-reject sampling parameters "by the presence of the parameter, regardless of value". On
-`/v1/responses`, `gpt-5.6-terra` refuses `temperature: 0.0` (*"Unsupported parameter: 'temperature' is
-not supported with this model."*) and **accepts `temperature: 1.0`**. It is the non-default value that
-is refused — which is what `InMemoryModelCapabilityRegistry`'s `gpt-5` row says, and why suppression
-loses nothing on the wire.
+이 패리티가 막는 실패는 조용하다. `UserInputConverter` 는 사용자 입력마다 첨부 스크린샷을 `ImageContentBlock` 으로
+만든다. 텍스트만 다루는 변환기라면 텍스트만 있는 item 을 내고, 모델은 첨부가 없는 것처럼 답하고, 빌드는 초록으로 남는다.
 
-### 10.2 The six work items, one by one
+### 5.2 `call_id` 와 `id`
 
-| # | Work item | Evidence |
+Responses 의 `function_call` 은 item `id`(`fc_…`, SDK 에서 선택)와 `call_id`(`call_…`, 필수)를 **둘 다** 갖는다.
+`ToolUse.getId()` 는 **`call_id`** 를 담는다 — `function_call_output` 이 맞춰야 하는 것이 그것이기 때문이다. item `id` 는
+되싣기를 건너 **보존하지 않고** 지어내지도 않는다. 원래 item id 없이 되실은 `function_call` 이 수용되는지는 측정했다(§9).
+
+---
+
+## 6. 응답 읽기
+
+블로킹 경로는 `OpenAIResponsesExchange` 가 완성된 `Response` 를, 스트리밍 경로는 `OpenAIResponsesStreamingMapper` 가
+`ResponseStreamEvent` 를 읽는다. item 목록을 text · 도구 호출 · reasoning trace 로 나누는 규칙은 두 경로가 같은 한
+구현(`OpenAIResponsesMessageConverter` 의 출력 스캔)을 쓴다.
+
+### 6.1 identity 는 던지고, accounting 은 강등한다
+
+읽기는 SDK 의 필수 접근자가 접근 시점에 던지는 구조다. 그래서 어느 필드를 그 접근자로 읽을지를 **필드의 뜻**으로 가른다.
+
+- **identity 는 던진다.** `call_id` 나 `name` 이 없는 `function_call` 은 provider 결함이다. 일반 접근자로 읽고, 그 throw 는
+  클라이언트 try 안에서 다른 실패와 똑같이 분류된다
+- **accounting 은 강등한다.** 토큰 카운터가 빠졌다고 나머지가 성공한 요청을 실패시키지 않는다. `OpenAiResponseUsages` 는
+  `ResponseUsage` 의 모든 층 — 최상위 세 카운터, 그 옆의 details 객체, 그 안의 reasoning 카운터 — 을 raw `JsonField`
+  접근자로 읽고 없는 값을 0 으로 센다. `long` → `int` 좁힘 가드는 Chat 경로와 같다
+- **예외 하나: 누락된 `total_tokens` 는 0 이 아니라 합이다.** `TokenUsage` 는 `total >= prompt + completion` 을 강제하고
+  어기면 던진다. input 과 output 을 보고하고 total 을 뺀 문서에서 total 을 0 으로 두면, 강등이 지키려던 바로 그 호출이
+  실패한다
+
+이 분할에 이름을 붙이는 것이 요점이다. 없으면 "raw 접근자를 쓴다" 가 어디에나 적용되어 깨진 도구 호출이 조용한 빈
+`ToolUse` 가 된다. `reasoningTokens` 를 비용에 더하지 않는 규칙은 [`reasoning-traces.md`](reasoning-traces.md) 다.
+
+### 6.2 도구 인자 — JSON `null` 은 없는 파라미터, 깨진 JSON 은 Chat 처럼 던진다
+
+- **JSON `null` 인자 값은 깨진 입력이 아니라 없는 파라미터다.** 블로킹 읽기는 파싱한 인자 맵을
+  `NullSafeMaps.withoutNullValues` 로 복사한다. `Map.copyOf` 는 `null` 값을 거부하므로, 선택 파라미터를 생략하지 않고
+  `null` 로 채운 모델 하나가 요청 전체를 실패시킨다. Chat 변환기는 같은 결과에 `null` 을 `ToolUse` 로 넘기고 거기서
+  버리는 길로 닿는다
+- **블로킹 경로에서 깨진 인자 JSON 은 던진다** — Chat 변환기와 같은 타입, 같은 메시지로. 빈 맵으로 강등하면 설정 플래그
+  하나로 바뀌는 엔드포인트가 같은 provider 출력에 다른 결과를 낸다. 게다가 빈 맵은 작은 답이 아니라 **다른** 답이다 —
+  파라미터가 전부 선택인 도구는 모델이 아무것도 요청하지 않았다고 듣고 기본값으로 돈다
+- **스트리밍 경로는 도구 인자와 텍스트를 이 변환기로 읽지 않는다.** 거기서는 `ChunkAggregator` 가 인자 델타를 모아
+  파싱하고(깨진 JSON 은 경고와 함께 빈 맵으로 강등 — 모든 provider 공통의 스트리밍 규칙), 텍스트 버퍼는
+  `response.output_text.delta` 가 채운다. 스트리밍 경로의 스캔(`convertStreamedOutput`)은 reasoning trace 와 도구 호출
+  유무만 읽는다. 버려질 값을 다시 만들면 aggregator 가 이미 강등으로 처리한 도구 호출이 깨진 `arguments` 문자열 하나로
+  스트림 전체를 죽이게 된다
+
+### 6.3 스트림 — reasoning item 은 `output_item.done` 에서 취한다
+
+- **reasoning item 은 종료 `Response` 가 아니라 `response.output_item.done` 에서 취한다.** SDK 가 `store: false` 에서 완성된
+  item 과 `encrypted_content` 를 그 이벤트에서 쓰라고 지목한다. 측정으로 이유가 더 구체적이 되었다 — `.added` 와 `.done`
+  의 `encrypted_content` 는 서로 다르고 둘 다 되실으면 수용된다(§9). `.added` 는 item 이 열린 순간의 짧은 봉투다. 그것을
+  읽으면 던지지도 400 이 나지도 않고 **더 짧은 trace 를 조용히 되싣는다.** 그래서 `.done` 을 고르는 근거는 수용 여부가
+  아니라 내용의 완전성이다
+- **`response.output_text.done` 은 무시한다.** 텍스트는 델타로 이미 모였고, 그것까지 읽으면 텍스트가 두 번 센다
+- **추론 델타는 reasoning item 과 섞이지 않는다.** 두 delta 계열(§8)은 사람이 보는 텍스트이고 `REASONING_DELTA` chunk 로
+  나가며, reasoning trace 에는 절대 들어가지 않는다. 채널 규칙은 [`streaming.md`](streaming.md) 다
+
+### 6.4 stop reason — `status` · `incomplete_details.reason` · 도구 호출 유무
+
+`OpenAiResponseStopReasons` 는 Chat 의 `OpenAiStopReasons` 와 따로 있다. 두 엔드포인트가 어휘를 공유하지 않기 때문이다.
+Chat 의 `finish_reason` 은 도구 호출 응답(`tool_calls`)과 일반 응답(`stop`)을 구분하지만, Responses 는 둘 다
+`completed` 라고만 하고 구분은 출력 배열에 맡긴다. 그래서 매핑은 세 번째 입력으로 도구 호출 유무를 받는다 — 없으면 도구를
+부른 모든 응답이 `END_TURN` 으로 보고되고, `OrcaAgentExecutor` 는 그 값으로 분기한다.
+
+| 입력 | `StopReason` |
+|---|---|
+| `status` 가 `completed` 이거나 없음 | 도구 호출이 있으면 `TOOL_USE`, 없으면 `END_TURN` |
+| `incomplete` + `max_output_tokens` | `MAX_TOKENS` |
+| `incomplete` + `content_filter` | `REFUSAL` |
+| 그 밖 | `UNKNOWN` |
+
+매핑은 SDK enum 이 아니라 와이어 문자열 위의 순수 함수다 — SDK 버전이 모델링하지 않는 값이 와도 던지지 않는다.
+`status` 가 없는 게이트웨이 응답은 실패가 아니라 완료로 관대하게 읽는다. `incomplete` 두 갈래는 실제 응답으로 확인되지
+않았다(§12).
+
+### 6.5 reasoning item 이 없는 응답, `encrypted_content` 가 없는 item
+
+reasoning item 은 매 응답에 나오지 않는다 — 모델이 추론할 때만 나온다(§9). 그래서 **item 이 없는 응답은 정상이고 경고하지
+않는다.**
+
+경고하는 것은 다른 모양이다. 응답에 reasoning item 이 **있는데 그중 어느 것도** `encrypted_content` 를 싣지 않았으면, 다음
+요청에 되실을 것이 없고 기능이 조용히 아무 일도 하지 않는다. 블로킹·스트리밍 두 경로 모두 이 모양을 한 번 보고한다(배포가
+`include=reasoning.encrypted_content` 를 지키는지 확인하라는 문구).
+
+---
+
+## 7. 오류와 보존 동작
+
+### 7.1 SDK 가 던지지 않는 오류 — `OpenAiResponseErrors`
+
+두 엔드포인트는 SSE 디코더 하나를 공유하고, 그 디코더는 디코드된 payload 에 **최상위** `"error"` 키가 있을 때만
+`SseException` 을 던진다. Chat Completions 의 스트림 도중 실패는 그 모양이므로 `OpenAIExceptionMapper` 의
+`SseException` 분기가 거기서는 닿는다. Responses 의 실패 모양은 그렇지 않다.
+
+| 모양 | payload | 최상위 `error`? | SDK 가 던지는가 |
+|---|---|---|---|
+| `ResponseErrorEvent` (`response.error`) | `{type, code, message, param, sequence_number}` | 없음 | 아니다 — 데이터로 온다 |
+| `ResponseFailedEvent` (`response.failed`) | `{type, response:{…, error:{…}}, sequence_number}` | 없음(중첩) | 아니다 |
+| 블로킹 `create(...)` 가 200 과 실패 `status` 를 돌려줌 | 평범한 `Response` | 해당 없음 | 아니다 — 정상 반환값 |
+
+실패 `status` 는 `failed` · `cancelled` · `in_progress` · `queued` 넷이다. 스트림의 `response.completed` /
+`response.incomplete` 가 싣는 중첩 `response.status` 도 같은 검사를 거친다 — 규격을 따르는 provider 는 그 조건에
+`response.failed` 를 보내지만, 틀린 이벤트 타입을 고른 게이트웨이가 실패를 빈 답으로 바꿀 수 있어서는 안 된다.
+
+처리하지 않으면, 블로킹/Chat 경로에서 재시도 가능한 `LlmOverloadedException` 을 내는 서버 조건이 여기서는 **예외를 전혀
+내지 않는다.** 던지지 않는 두 방법이 각자 나쁘다.
+
+- **aggregator 를 닫지 않고 두면** try **밖**에서 `IllegalStateException` 으로 빠져나간다 — 매핑되지 않고, provider 의 오류가
+  아니라 AIMON 내부 상태를 보고한다
+- **닫고 던지지 않으면** 실패가 **조용한 성공**이 되고, 실행기는 그것을 assistant 의 최종 답으로 받아들인다
+
+그래서 `OpenAiResponseErrors` 가 예외를 만들고 exchange 나 매퍼가 **클라이언트 try 안에서** 던진다. 거기서 기존 catch 연쇄가
+분류한다 — 두 번째 catch 의 `isCancelled()` 검사까지 포함해서. 그 검사 덕분에 로컬 취소와 겹친 provider 실패는 서버 결함이
+아니라 취소로 보고된다. `OpenAiResponseErrors` 는 오류 객체의 필수 필드도 방어적으로 읽는다 — 이 클래스의 일은 provider 실패를
+분류된 예외로 바꾸는 것이므로, 깨진 오류 객체가 도중에 `OpenAIInvalidDataException` 을 내어 provider 의 실패를 우리 것으로
+바꿔치기해서는 안 된다.
+
+종료 이벤트 없이 깨끗하게 끝난 스트림은 빈 성공 응답이 된다. 드레인 뒤에 aggregator 를 닫는 것이 닫히지 않은 aggregator 가
+매핑 없이 빠져나가는 것을 막는데, 그 결과가 이것이다. 이것은 Chat 과 **패리티**다 — `finish_reason` 없는 Chat 스트림도 같다.
+
+### 7.2 재시도 분류 — 기본은 Chat 패리티, 요청 내용 계열만 terminal
+
+- **기본은 정확한 패리티다.** Chat 의 `SseException` 분기가 부르는 `OpenAIExceptionMapper.mapMidStreamError` 가
+  `rate_limit_exceeded` 를 rate-limit 예외로, 나머지를 재시도 가능한 overloaded 예외로 바꾼다. 블로킹 경로가 같은 조건에 내는
+  결과와 같다
+- **의도한 이탈은 요청 내용 계열 하나다.** `ResponseError.Code` 가 열거하는 `invalid_prompt`, `invalid_image*` 묶음,
+  `image_too_large`, `bio_policy`, `data_residency_mismatch` 같은 코드는 블로킹 호출이었다면 400 으로 거절되었을 것이다.
+  이것을 스트림 도중 매퍼로 보내면 영구히 깨진 요청이 정책이 포기할 때까지 재시도된다. 이 계열은
+  `LlmInvalidRequestException` 이 된다
+- **규칙은 terminal 목록이 아니라 transient 집합으로 쓴다.** transient 는 `server_error` · `rate_limit_exceeded` ·
+  `vector_store_timeout` 셋이고, **SDK 가 모델링하지 않는 코드는 패리티(재시도 가능)를 유지한다.** OpenAI 가 나중에 더하는
+  코드는 조용히 재시도 불가가 되지 않고 오늘의 동작을 물려받는다. 틀렸을 때의 피해도 한정된다 — 재시도 가능한 코드가
+  terminal 로 잘못 분류되면 그 코드만 재시도를 잃는다
+
+이 분할은 관측된 응답이 아니라 enum 이름에서 추론한 것이다(§12).
+
+### 7.3 보존해야 할 네 동작은 클라이언트에 한 번 있다
+
+구조적 답은 §2 다. 네 동작 모두 `OpenAILlmClient` 에 있고, 어느 것도 exchange 로 옮겨지지 않으며, Responses 경로는 그것을
+다시 구현하지 않고 물려받는다. 따로 포팅한 넷보다 강한 답이다 — 옮긴 적이 없으므로 조심스럽게 옮겼는지 물을 것도 없다.
+
+| 보존 동작 | 두 엔드포인트에서 살아남는 이유 |
+|---|---|
+| **1.** `StreamResponse.close()` 가 abort 레버이고, `onCancel` 은 스트림을 연 **뒤에** 등록하며, 이미 취소된 호출은 연결 전에 빠른 경로로 끝난다 | 빠른 경로는 무엇도 열기 전인 `sendMessageStreaming` 첫머리에 그대로 있다. try-with-resources 가 `OpenAIStreamHandle` 을 쥐고, 그 `close()` 가 같은 스레드 안전·멱등 메서드에 위임한다. `onCancel(handle::close)` 는 try **안**에 있다 |
+| **2.** 취소 가능한 비스트리밍 호출은 스트리밍 경로로 우회하고 chunk 는 버리며 usage 는 여전히 받는다 | 우회는 `sendMessage(SystemPromptParts, …, LlmCancellation)` 에서 `cancellation.isSupported()` 로 결정되고, 엔드포인트 선택(`exchangeFor`)은 그 아래에서 일어난다. 엔드포인트와 무관하다 |
+| **3.** `SseException` 은 HTTP 200 이 아니라 payload 로 분류한다 | exchange 에 catch 가 없어 SDK 가 실제로 던진 실패는 매퍼가 불리는 유일한 곳인 클라이언트 연쇄에 닿는다. Responses provider 오류는 애초에 SDK 예외가 아니므로 §7.1 이 매퍼가 만들었을 예외를 try 안에서 던진다 |
+| **4.** 요청 단위 timeout 은 `RequestOptions` 로 싣고, 설정이 없으면 `null` 을 돌려 SDK 단일 인자 오버로드를 유지한다 | `perRequestOptions` 는 클라이언트에 남고, 두 exchange 가 같은 `options == null ? svc.x(p) : svc.x(p, o)` 한 줄을 갖는다 |
+
+이 네 동작의 성립은 코드와 그 테스트로 확인한 것이지 라이브 호출로 실측한 것이 아니다 — 특히 3 은 스트림 도중의 서버 실패가
+필요하다. 백로그 [`RD-9`](../../backlog/reasoning-delta-stream-open-items.md) 가 그 사실을 열어 둔다(그 항목은 1 의 빠른
+경로를 따로 세어 다섯으로 적는다). 취소 설계 자체는 [`cancellation.md`](cancellation.md) 다.
+
+---
+
+## 8. reasoning summary 요청 — `supportsReasoningSummary` 게이트
+
+**요청해야만 나온다.** 이 엔드포인트의 reasoning 은 `encrypted_content` — 설계상 암호문 — 이므로, 사람이 읽을 수 있는 유일한
+형태는 서버가 쓰는 reasoning summary 다. 그리고 summary 는 요청하지 않으면 0개다(§9). 전달 채널만 있고 요청이 없으면 채널은
+언제나 비어 있으므로, 요청 파라미터와 전달 채널을 함께 둔다(함께 두는 결정의 정본은 [`streaming.md`](streaming.md)).
+
+**요청 모양.**
+
+- `OpenAIConfig.reasoningSummary(OpenAiReasoningSummary)` — `AUTO` · `CONCISE` · `DETAILED`. 기본은 미설정(opt-in)이다.
+  SDK 의 `Reasoning.Summary` 가 아니라 프레임워크 enum 인 이유는 공개 설정 표면에 SDK 타입을 두면 벤더 SDK 가 우리 API 의
+  일부가 되기 때문이다. 설정 키는 [`configuration-surface.md`](configuration-surface.md) 가 정한다
+- 요청은 클라이언트 단위(`OpenAIConfig`)이고 모델 이름은 요청 단위다. summary 는 §4.3 의 `reasoning` 객체에 effort 와 독립으로
+  들어간다
+
+**게이트.** 요청 팩토리는 summary 를 싣기 전에 `ModelCapabilities.supportsReasoningSummary()` 를 본다. 거짓이면 생략하고 한 번
+보고한다 — `maySendEffort` 와 샘플링 생략이 이미 하는 방식이다.
+
+- **게이트가 있어야 하는 이유는 게이트웨이다.** summary 요청을 **무시하는** 서버는 summary 이벤트를 내지 않고 끝나며, 그것은
+  키가 설정되지 않은 것과 구별되지 않는 정직한 결과다. 그러나 운영자가 어떤 이름에 `supportsReasoningTraceRoundTrip` 을 참으로
+  선언해 이 엔드포인트로 보낸 OpenAI 호환 게이트웨이가 `reasoning.effort` 는 구현하고 `reasoning.summary` 는 **거부하면**
+  400 이다 — 그것을 잡았을 두 게이트는 옆 파라미터(effort)에 서 있다
+- **플래그가 없을 때의 처방은 둘 다 결함보다 넓다.** `reasoningSummary` 를 끄면 이 클라이언트가 서비스하는 모든 모델에서
+  사라지고(요청은 클라이언트 단위다), 그 이름의 `supportsReasoningTraceRoundTrip` 을 거짓으로 선언하면 선택 파라미터 하나를 막으려고 모델을 이
+  엔드포인트에서 통째로 빼고 trace 왕복을 잃는다. 모델 단위 레버는 이 플래그뿐이다
+- **`supportsReasoningTraceRoundTrip` 에 겹치지 않는다.** 그 플래그는 측정된 사실 — 이 모델이 trace 를 되싣는다 — 을 뜻하고,
+  게이트웨이는 두 사실을 독립으로 만족한다. 겹치면 선언된 행 하나가 운영자가 가를 수 없는 두 사실을 주장한다
+- **fail-open 값은 `true` 다.** summary 는 누군가 설정했을 때만 요청에 있으므로 보류는 fail-closed 가 된다. 그리고 이 플래그는
+  이 엔드포인트에서만 읽히는데, 이 엔드포인트에는 fail-open 값이 `false` 인 `supportsReasoningTraceRoundTrip` 이 참일 때만
+  들어오므로 설명되지 않은 모델에 대해서는 애초에 읽히지 않는다. 플래그의 정의와 `unknown()` 값은
+  [`model-capabilities.md`](model-capabilities.md) 다
+
+**전달.** 매퍼는 `response.reasoning_summary_text.delta` 와 `response.reasoning_text.delta` **두 계열 모두**를 하나의 게이트
+아래 `REASONING_DELTA` 로 흘린다. 원문 계열을 빼면 summary 대신 원문을 내는 모델에서, 추론을 보겠다고 요청한 배포가 아무것도 보지
+못한다. 게이트는 델타의 도착이 아니라 `reasoningSummary` 가 설정되었는지다 — `baseUrl` 뒤의 호환 게이트웨이는 요청 없이
+summary 이벤트를 보낼 수 있고, 아무것도 설정하지 않은 배포는 달라지는 것이 없어야 한다. 전달 게이트의 정본은
+[`streaming.md`](streaming.md) 다.
+
+**Chat 으로 라우팅된 모델.** Chat Completions 에는 `reasoning.summary` 파라미터도 summary 이벤트도 없다. `reasoningSummary` 가
+설정되었는데 요청이 Chat 으로 가면, 운영자에게 키가 아무 데도 닿지 않는다는 것을 알릴 곳이 달리 없으므로 클라이언트가 한 번
+경고한다. 경고는 라우팅된 원인을 구분한다 — 모델이 trace 왕복을 하지 않는 경우(다른 모델이 필요하다)와
+`responsesApiEnabled=false` 인 경우(운영자가 켠 스위치다)의 처방이 다르기 때문이다. 이 두 signature 는 요청이 Chat 으로 갔을 때만,
+§8 게이트의 보고는 Responses 로 갔을 때만 발화하므로 서로 겹치지 않는다.
+
+---
+
+## 9. 측정된 결론 — 이 경로의 전제
+
+`api.openai.com` 에 직접 보낸 요청과 `OpenAILlmClient` 를 통한 요청으로 얻었다. 모델별 사실 — 어느 이름이 trace 왕복 행을 갖는가,
+rung 집합, `temperature` 값 거부 — 은 내장 표의 근거이므로 [`model-capabilities.md`](model-capabilities.md) 에 있다. 여기에는
+경로의 모양이 기대는 결론만 둔다.
+
+| 무엇 | 결과 | 측정 |
 |---|---|---|
-| 1 | Request building, sampling omitted rather than defaulted | 10.1 row 1 accepted on a model that refuses a non-default `temperature`; §4.1 and `OpenAiRequestParameters.applySampling` are the code, and the 400 in 10.1's last paragraph is why omission is load-bearing rather than tidy |
-| 2 | Reasoning item round trip | A captured `[reasoning, function_call]` turn replayed on turn two: **accepted**. The control below is the half that makes it a claim |
-| 3 | Streaming — a second mapper for `ResponseStreamEvent` | 611 `response.reasoning_summary_text.delta` events off the wire, and the same request through `sendMessageStreaming` reaching the sink as `REASONING_DELTA`. [`reasoning-delta-stream.md`](reasoning-delta-stream.md) §12.4 |
-| 4 | `TokenUsage.reasoningTokens` | The streamed turn reported `reasoning_tokens: 1280` of 1502 output tokens, read back through `getReasoningTokens()` as positive and `<= completionTokens` — §2.3's containment, on a live number rather than a fixture |
-| 5 | Stop reasons from `status` + `incomplete_details.reason` | `TOOL_USE` on the captured tool-calling turn, `END_TURN` on the streamed one, and *present and not `UNKNOWN`* on the reproduction. The `incomplete` arms are **not** measured — reaching them costs a deliberately truncated turn |
-| 6 | `call_id` versus `id` | The captured trace's `toolUseId` equals the turn's `call_id`, and the replay carrying a `function_call_output` keyed by it was accepted. Two ends agreeing on one identifier |
+| `/v1/responses` 가 도구와 reasoning 을 한 요청에 받는가 | 받는다(200) — `gpt-5-nano`, `o4-mini`, `o3-mini`, `o3`, `o1`, `gpt-5.6-terra` | 2026-09-09 |
+| 같은 도구 요청을 Chat Completions 로 강제하면 | `gpt-5.6-terra` 에 `responsesApiEnabled(false)` 로 Chat 을 강제하고 `temperature` 도 `reasoning_effort` 도 없이 도구만 실은 요청이 **HTTP 400** — *"Function tools with reasoning_effort are not supported for gpt-5.6-terra in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'."* 기본 설정(Responses 로 라우팅)의 같은 요청은 수용. 파라미터를 바꾸는 것이 아니라 **라우팅이 수정이다** | 2026-09-10 |
+| `store: false` 에서 `encrypted_content` 가 오는가 | 온다 | 2026-09-09 |
+| 되실은 reasoning item 을 서버가 소비하는가 | 온전한 item 은 수용, `encrypted_content` 의 40자를 덮어쓴 대조군은 400(*"could not be verified"*) — 수용은 무시가 아니라 검증된 소비다. 손상 대조군은 `o4-mini` · `gpt-5.6-terra` 에서만 돌렸고, 이것이 모델별이 아닌 플랫폼 수준 검사라는 해석은 추론이다 | 2026-09-09 · 2026-09-10 |
+| reasoning item 을 빼고 다시 보내면 | 200 — item 은 요청의 개선이지 전제조건이 아니다. 그래서 trace 왕복을 켜도, 되던 요청이 item 부족으로 실패하지 않는다 | 2026-09-09 |
+| `call_id` 와 item `id` | 다르다. 캡처한 trace 의 `toolUseId` 가 그 응답의 `call_id` 와 같고, 그 키로 되실은 `function_call_output` 과 item id 없는 `function_call` 이 수용된다 | 2026-09-09 · 2026-09-10 |
+| reasoning item 은 매 응답에 나오는가 | 아니다 — `gpt-5.6-terra` 는 추론이 필요 없는 질문에 `reasoning_tokens: 0` 과 `function_call` 만 낸다. item 없는 응답을 되실어도 수용 | 2026-09-09 · 2026-09-10 |
+| 스트림 이벤트 | 측정한 다섯 이름이 같은 이벤트 순서를 낸다. 매퍼가 처리해야 하는데 처리하지 않는 이벤트는 없다 | 2026-09-09 |
+| `output_item.added` 와 `.done` 의 `encrypted_content` | 다르다(`.added` 가 짧다). 둘 다 되실으면 수용 — `o4-mini` | 2026-09-09 |
+| 스트림 종료 `response.completed` 의 `usage` | 요청하지 않아도 실린다 — `o4-mini` 에서만 확인, 다른 이름은 미측정 | 2026-09-09 |
+| `reasoning.summary` 와 `include` | summary 는 `include` 없이 온다. `include: ["reasoning.summary"]` 는 유효하지 않은 값으로 400. summary 를 요청하지 않으면 summary 0개 — 비스트리밍, `gpt-5-mini` | 2026-09-10 |
+| summary 델타가 스트림으로 오는가 | `response.reasoning_summary_text.delta` 가 도착해 `REASONING_DELTA` 로 sink 에 닿는다 — `gpt-5-mini`. `response.reasoning_text.delta` 는 어느 서버에서도 관측되지 않았다 | 2026-09-10 |
+| `reasoning_tokens` 의 크기 | 스트리밍 응답에서 양수이고 `completionTokens` 이하 — 비용에 더하지 않는 회계 규칙의 근거([`reasoning-traces.md`](reasoning-traces.md)) | 2026-09-10 |
+| 응답 `reasoning` 객체의 추가 필드 | `gpt-5.6-terra` 는 `context` · `mode` 등의 필드를 에코한다. 파싱은 깨지지 않고 이 경로는 그 객체를 읽지 않는다 — 존재만 측정, 의미는 미측정 | 2026-09-09 |
+| stop reason | 도구를 부른 응답은 `TOOL_USE`, 텍스트 응답은 `END_TURN` | 2026-09-10 |
 
-**The negative control for item 2.** Replaying the item with the last 40 characters of its
-`encrypted_content` overwritten is refused: *"The encrypted content for item rs_… could not be
-verified. Reason: Encrypted content could not be decrypted or parsed."* Without it the acceptance
-above proves nothing, and that is not hypothetical here — see 10.3.
+---
 
-### 10.3 A measurement that changed a test rather than the code
+## 10. 기각한 대안
 
-`gpt-5.6-terra` asked *"What is the weather in Seoul? Use the get_weather tool."* with that tool
-available returns `output: [function_call]` and `output_tokens_details.reasoning_tokens: 0` — **no
-reasoning item at all.** Nothing was dropped; the model decided the question needed no thought.
+| 대안 | 기각 이유 |
+|---|---|
+| 형제 `LlmClient`(`OpenAIResponsesLlmClient`) | 엔드포인트는 요청 단위 결정인데 형제는 생성 시점에 고른다. 맞추려면 두 형제를 디스패치하는 세 번째 타입이 필요하다. 그리고 보존 동작 네 개를 복제한다(§2.1) |
+| Chat 변환기 `OpenAIMessageConverter` 를 열어 Responses 도 다루게 하기 | 그 클래스는 전부 Chat 타입을 돌려준다. 열지 않아야 "Chat 경로는 바뀌지 않는다" 가 구조가 된다(§5) |
+| 중립 타입의 플래그를 `usesResponsesApi` 로 부르기 | provider 중립 타입 안에 벤더 하나의 엔드포인트 이름이 들어간다. 중립 사실에서 엔드포인트를 추론하는 일은 `aimon-llm-openai` 의 몫이다(§3) |
+| `store: true` + `previous_response_id` | `SessionRecord` 가 모르는 두 번째 진실 원천이고, 세션을 다른 노드에서 재개하는 시스템과 맞지 않는다. 요청하지 않은 데이터 보관 변경이다(§4.2). 측정이 아니라 구조와 보관을 근거로 기각했다 |
+| 관측 한 번을 근거로 `include(reasoning.encrypted_content)` 빼기 | 모델 하나의 관측은 벤더 문서 계약보다 약하고, 틀렸을 때 trace 가 조용히 되실리지 못한다(§4.2) |
+| 이 경로에서도 도구 규칙과 함께 ladder 검사 빼기 | rung 은 모델 사실이다. 빼면 받지 않는 `reasoning.effort` 가 400 으로 도착한다(§4.3) |
+| `strict: true` | strict 호환이 아닌 스키마 — MCP 스키마를 포함한 우리가 소유하지 않는 집단 — 가 엔드포인트 전환만으로 거부된다(§4.4) |
+| `strict` 를 `JsonNull` 로 | 서버가 전에 보지 못한 필드는 값이 `null` 이어도 동작 변경이다(§4.4) |
+| assistant 텍스트를 `ofResponseOutputMessage` 로 | 서버가 배정하는 `id` 와 `status` 를 지어내야 한다(§4.5) |
+| 네이티브 `input_file` 로 PDF 싣기 | 같은 `Message` 가 두 엔드포인트에서 다른 뜻이 되고, 확인되지 않은 능력을 주장한다(§5.1) |
+| 블로킹 경로에서 깨진 인자 JSON 을 빈 맵으로 강등 | 같은 provider 출력에 엔드포인트마다 다른 결과를 낸다. 빈 맵은 작은 답이 아니라 다른 답이다(§6.2) |
+| trace 를 `output_item.added` 나 종료 `Response.output()` 에서 취하기 | `.added` 는 더 짧은 trace 를 조용히 되싣는다. SDK 는 `store: false` 에서 `.done` 을 지목한다(§6.3) |
+| Responses provider 오류를 로그로만 남기거나 aggregator 를 닫고 던지지 않기 | 앞엣것은 try 밖에서 매핑 없는 `IllegalStateException`, 뒤엣것은 실행기가 최종 답으로 받는 조용한 성공이다(§7.1) |
+| 재시도 분류를 terminal 코드 목록으로 쓰기 | OpenAI 가 더하는 코드가 조용히 재시도 불가가 된다. transient 집합 + 미인식은 패리티가 틀렸을 때의 피해를 한정한다(§7.2) |
+| summary 에 능력 게이트를 두지 않기 | 요청을 무시하는 서버에는 맞지만 거부하는 게이트웨이에서는 400 이다(§8) |
+| summary 게이트를 `supportsReasoningTraceRoundTrip` 에 겹치기 | 측정된 사실 하나에 독립인 두 번째 사실을 얹어, 운영자가 둘을 가를 수 없게 된다(§8) |
 
-Two consequences worth carrying. A turn that has to anchor a reasoning item must **earn the reasoning
-and require the tool**, which is why the captured turn is arithmetic reported through a tool rather
-than a weather lookup. And a turn carrying no item is accepted on replay, which is exactly why item
-2's positive case needs its control.
+---
 
-### 10.4 The "please preserve when porting" list
+## 11. 하지 말 것
 
-#43 names four behaviours a from-scratch Responses client would regress. **There is no from-scratch
-client** — §2.2's single-client decision means all four live above the endpoint seam and run
-unchanged on both paths, which is a stronger answer than four separate ports would be.
+- **exchange 안에 catch 를 두지 않는다.** 실패가 클라이언트 연쇄에 닿지 않으면 `OpenAIExceptionMapper` 분류와 취소 재분류를
+  둘 다 건너뛴다
+- **취소 빠른 경로, `onCancel` 등록, catch 연쇄, `perRequestOptions` 를 exchange 로 옮기지 않는다.** 두 엔드포인트가 공유하는
+  것을 한 곳에 두는 것이 이 구조의 전부다
+- **엔드포인트를 `config.getModel()` 로 고르지 않는다.** 요청의 `LlmModel` 이름으로 고른다. 설정 모델로 고르면 모델을 덮어쓴
+  요청이 틀린 엔드포인트로 간다
+- **라우팅에 모델 이름 문자열을 쓰지 않는다.** 모델 지식은 레지스트리로만 들어온다
+- **`getProviderName()` 을 요청 안에서 두 번 읽지 않는다.** 한 번 해석해 요청 팩토리와 exchange 에 함께 넘긴다
+- **필수 필드를 채우려고 값을 지어내지 않는다** — item `id`, `strict` 의 `JsonNull`, 서버가 배정하는 `status` 모두
+- **`strict` 를 `true` 로 바꾸지 않는다** — 그것은 이 경로의 부속 변경이 아니라 별도 결정이다(§12)
+- **도구 규칙을 없앤다고 `maySendEffort` 까지 빼지 않는다**
+- **`include(REASONING_ENCRYPTED_CONTENT)` 를 빼지 않는다.** 한 번의 200 은 계약이 아니다
+- **스트리밍 경로에서 도구 인자와 텍스트를 변환기로 다시 읽지 않는다.** 그 둘의 권위는 `ChunkAggregator` 다
+- **`response.output_text.done` 을 텍스트로 읽지 않는다.** 텍스트가 두 번 센다
+- **summary 텍스트를 reasoning trace 에 넣지 않는다.** 다음 iteration 에 모델로 되실리는 것이 바뀐다
+- **Responses provider 오류를 try 밖에서 던지거나, 던지지 않고 스트림을 끝내지 않는다**
+- **`supportsReasoningSummary` 가 할 일을 `supportsReasoningTraceRoundTrip` 에 맡기지 않는다**
 
-| Preserved behaviour | Where it is now | Bound by |
-|---|---|---|
-| `StreamResponse.close()` as the thread-safe idempotent abort lever, registered through `cancellation.onCancel(...)` after the stream opens | `OpenAILlmClient.sendMessageStreaming`, one `try` for both endpoints; `OpenAIStreamHandle.close()` delegates to it | `OpenAIResponsesCancellationTest` |
-| The fast path for "already cancelled before the connection opens" | the same method's first statement | same |
-| Cancellable non-streaming calls routed through the streaming path with a discarding sink | `OpenAILlmClient.sendMessage(SystemPromptParts, …)` — endpoint-independent, since `exchangeFor` runs below it | same |
-| `OpenAIExceptionMapper`'s `SseException` branch, classifying from the payload rather than the stream-open status | unchanged, and this endpoint needed **more** than it: three failure shapes here are events or statuses rather than thrown exceptions | `OpenAIResponsesExceptionRoutingTest`, `OpenAIResponsesErrorEventTest` |
-| Per-request timeout via `RequestOptions`, returning `null` to keep the single-argument overload | `perRequestOptions`, read by both exchanges | `OpenAIResponsesRequestTimeoutTest` |
+---
 
-**These five rows are read off the code and its tests, not measured.** A live call exercises none of
-them except incidentally, and manufacturing a mid-stream server failure to bill one is not something
-this round did.
+## 12. 남은 것
 
-### 10.5 What §8 still says
+백로그에 등록된 것.
 
-**This round discharges none of §8's U-items.** That is worth stating plainly, because a section
-headed "live verification" invites the opposite assumption: what was measured here is the
-reproduction and the six work items, which are a different list. §8's only struck-through entry,
-**U-4**, was closed in round 8 and not by this one.
+- **`response.reasoning_text.delta` 가 어느 서버에서도 관측되지 않았다** — 원문 계열 분기가 실제 이벤트 이름과 맞는지 모른다.
+  이름이 틀려도 400 이 아니라 빈 채널이다. [`RD-7`](../../backlog/reasoning-delta-stream-open-items.md)
+- **`incomplete` stop reason 두 갈래(`max_output_tokens`, `content_filter`)가 실제 응답으로 확인되지 않았다.**
+  [`RD-8`](../../backlog/reasoning-delta-stream-open-items.md)
+- **보존 동작(§7.3)은 코드로 확인했을 뿐 실측하지 않았다.** [`RD-9`](../../backlog/reasoning-delta-stream-open-items.md)
+- **`responsesApiEnabled` 에 설정 표면이 없다.** Chat 전용 게이트웨이 배포는 설정만으로 404 에 닿을 수 있는데 처방은 자바
+  전용이다. 이 스위치를 설정으로 내리면 `gpt-5.6-terra` 를 Chat 에 강제하는 조합이 운영자 경로로 내려오고, 그 모델의
+  rung 집합은 `/v1/responses` 에서만 측정되었다. [`L-2`](../../backlog/llm-config-surface-open-items.md)
 
-**U-1** is the item this round comes closest to and still does not reach: the reasoning round trip is
-now measured as *working*, which says nothing about whether omitting the anchor would fail — that
-needs a request built deliberately wrong. **U-2**, **U-3**, **U-5**, **U-6**, **U-7** and **U-8**
-stand exactly as written.
+등록되지 않은 것.
+
+- **OpenAI 로 텍스트가 아닌 문서를 보내는 길** — 네이티브 `input_file` 을 포함한 선택지는
+  [`multimodal-content.md`](multimodal-content.md) 의 남은 것에 있다. 이 경로가 지금 `input_file` 을 쓰지 않는 이유는 §5.1
+- **도구 스키마 `strict: true`** — 도구 호출 정확도를 높이지만 strict 호환이 아닌 스키마를 거부한다. 면제된 집단(MCP 스키마)의
+  감사와 별도 결정이 필요하다
+- **terminal/transient 분할은 관측이 아니라 `ResponseError.Code` enum 이름에서 추론했다** — 기본 갈래가 패리티라 틀렸을 때의
+  피해는 이름이 불린 코드의 재시도 상실로 한정된다
+- **`store: true` / `previous_response_id` 대안은 측정하지 않았다** — 요청을 줄일 수 있지만 구조와 보관 근거로 기각했다
+- **종료 이벤트 없이 끝난 스트림이 조용한 빈 성공이 된다** — Chat 과 패리티인 현재 동작이고, 강화하면 두 엔드포인트가 함께
+  바뀐다
+
+---
+
+## 부록 — 참조 파일 지도
+
+| 파일 | 무엇을 확인하나 |
+|---|---|
+| `OpenAILlmClient.java` | `exchangeFor` 의 라우팅 술어와 provider 이름 1회 해석, `reportInertReasoningSummary` 의 두 signature, `capabilitiesFor` 의 조회 오류 fail-open, `sendMessage(SystemPromptParts, …, LlmCancellation)` 의 스트리밍 우회, `sendMessageStreaming` 의 빠른 경로 · 단일 try · `onCancel` · catch 연쇄, `perRequestOptions` |
+| `OpenAIEndpointExchange.java` · `OpenAIStreamHandle.java` | 이음매의 네 갈래, 제네릭 지우기, `openStream` 인자, catch 없음 |
+| `OpenAIChatCompletionsExchange.java` · `OpenAIResponsesExchange.java` | 두 구현의 대칭, `null` options 규칙, 블로킹 결과의 실패 `status` 처리, `forwardReasoning` |
+| `OpenAIResponsesRequestFactory.java` | `store(false)` · `include`, `applyReasoning` 의 두 부분과 summary 게이트, `ResponsesSamplingSink` 의 penalty 보고 |
+| `OpenAIResponsesMessageConverter.java` | 역할·블록별 패리티, `EasyInputMessage`, `detail(AUTO)`, `strict(false)`, item id 미설정, `parseArguments` 의 `NullSafeMaps`, `convertOutput` / `convertStreamedOutput` |
+| `OpenAIResponsesStreamingMapper.java` | `output_item.done` 수집, 두 delta 계열 게이트, 실패 이벤트와 중첩 `status` 의 throw, `encrypted_content` 없는 item 경고 |
+| `OpenAiResponseErrors.java` | 세 실패 모양, 실패 `status` 넷, transient 집합과 미인식 코드 패리티 |
+| `OpenAiResponseUsages.java` | raw 접근자 강등, 누락 `total_tokens` 의 합 |
+| `OpenAiResponseStopReasons.java` | `status` · `incomplete_details.reason` · 도구 호출 유무 매핑 |
+| `OpenAiRequestParameters.java` | 두 엔드포인트가 공유하는 `applySampling` · `maySendEffort` |
+| `OpenAIExceptionMapper.java` | `SseException` 분기, `mapMidStreamError` |
+| `OpenAIConfig.java` · `OpenAiReasoningSummary.java` | `responsesApiEnabled`(기본 `true`)의 뜻, `reasoningSummary` 의 뜻과 enum |
+| `aimon-core` `llm/capability/ModelCapabilities.java` | `supportsReasoningTraceRoundTrip`(fail-open `false`), `supportsReasoningSummary`(fail-open `true`) |
+| `aimon-core` `base/NullSafeMaps.java` | `withoutNullValues` |
+| `OpenAIReasoningLiveTest.java` (테스트) | §9 결론 일부를 키가 있는 환경에서 다시 단언하는 라이브 테스트 |
+
+경로는 `modules/aimon-llm-openai/src/main/java/at/aimon/core/llms/openai/` 기준(테스트는 `src/test/…`). `aimon-core` 파일은
+`modules/aimon-core/src/main/java/at/aimon/core/` 기준.
 
 ---
 
 ## 관련 문서
 
-- [Per-model capability descriptor (#44) + gpt-5.x phase 1](openai-model-capabilities.md) — round 1
-  and 2, and §10 there records what this round closed
-- [스트리밍 설계](streaming.md) — §9 records the OpenAI half of reasoning-trace streaming as done
-- [LLM Provider 개발 가이드](../../features/llm/llm-provider-development-guide.md) — how a provider
-  fills and reads the slot
-- [LLM 사용량 계측](../../features/llm/llm-usage-metering.md) — `reasoningTokens` is recorded, not priced
-- [Frozen names](../../migration/frozen-names.md) — the boundary the persisted-state change respects
+- [`reasoning-traces.md`](reasoning-traces.md) — 이 경로가 캡처하고 되싣는 `ReasoningTrace` 의 슬롯·영속·순서 규칙
+- [`request-parameters.md`](request-parameters.md) — 샘플링 생략, effort ladder, Chat 도구 규칙, divergence 보고
+- [`model-capabilities.md`](model-capabilities.md) — 라우팅과 게이트가 읽는 플래그, 내장 표와 모델별 측정
+- [`streaming.md`](streaming.md) — `REASONING_DELTA` 채널과 전달 게이트
+- [`cancellation.md`](cancellation.md) — abort 레버와 비스트리밍 우회
+- [`multimodal-content.md`](multimodal-content.md) — 콘텐츠 블록과 문서 거부 규칙
+- [`configuration-surface.md`](configuration-surface.md) — `reasoningSummary` 키와 네임스페이스
+- [`../../backlog/reasoning-delta-stream-open-items.md`](../../backlog/reasoning-delta-stream-open-items.md) — RD-7 · RD-8 · RD-9
+- [`../../backlog/llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md) — L-2
+- [LLM Provider 개발 가이드](../../features/llm/llm-provider-development-guide.md) — provider 가 슬롯을 채우고 읽는 방법
+- [`.claude/rules/llm-provider.md`](../../../.claude/rules/llm-provider.md) — provider SDK 타입 비노출 규칙

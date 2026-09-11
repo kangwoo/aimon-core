@@ -1,6 +1,6 @@
 <configuration>
     <!-- File only, on purpose: no log event reaches the terminal, which belongs to the REPL
-         (docs/design/llm/provider-switch-agent-model-check.md relies on it). Do not define an appender here
+         (docs/design/llm/model-name-resolution.md §7.3 relies on it). Do not define an appender here
          without the appender-ref that uses it: Logback reports an unreferenced appender as a WARN, and any
          WARN or ERROR while it configures itself makes it print its whole configuration status to stdout (#134).
     -->

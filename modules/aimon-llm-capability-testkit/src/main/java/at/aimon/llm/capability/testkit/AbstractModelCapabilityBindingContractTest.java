@@ -66,7 +66,7 @@ import at.aimon.core.llm.capability.ModelCapabilityDeclaration;
  * {@code LlmClientFactoryTest} is not part of it — it builds {@code ModelCapabilityConfig} through setters, as this
  * probe does, and never reaches Jackson. That this step is by hand, and short of every key on the starter, is open as
  * {@code L-14} in {@code docs/backlog/llm-config-surface-open-items.md}. Design: {@code docs/design/llm/}
- * {@code model-capability-binding-round-trip.md}.
+ * {@code configuration-surface.md} §8.
  *
  * @param <S>
  *            the configuration surface's type
