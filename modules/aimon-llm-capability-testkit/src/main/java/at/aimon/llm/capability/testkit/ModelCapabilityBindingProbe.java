@@ -144,7 +144,7 @@ public final class ModelCapabilityBindingProbe<S> {
         }
     }
 
-    static void requireDistinguishable(String key, List<?> values, ModelCapabilityDeclaration first,
+    private static void requireDistinguishable(String key, List<?> values, ModelCapabilityDeclaration first,
             ModelCapabilityDeclaration second) {
         if (first.equals(second)) {
             throw new AssertionError("ModelCapabilityDeclaration.equals does not compare `" + key
@@ -316,8 +316,9 @@ public final class ModelCapabilityBindingProbe<S> {
          * @param expectedDeclaration
          *            what the declaration answers for one key written alone, which is
          *            {@link DeclarableKeys#expectedDeclaration} unless set. Package-private, like
-         *            {@link DeclarableKeys#namesOf}: the only other answer worth giving is the one a builder with a
-         *            defect gives, which no real key reaches, and this module's own test uses it to drive that refusal
+         *            {@link DeclarableKeys#namesOf}: the only other answer worth giving is the one a declaration with a
+         *            defect gives — a builder whose {@code declaresAnything()} skips the key, an {@code equals} that
+         *            does — which no real key reaches, and this module's own tests use it to drive those refusals
          *            through the pair check a real run takes.
          * @return this builder
          */

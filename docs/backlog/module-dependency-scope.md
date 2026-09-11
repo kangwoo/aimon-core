@@ -103,11 +103,13 @@ least one LLM provider"* 라고 안내하고 예제가 둘 다 선언하며, BOM
 [`../design/testing/test-classpath-shipped-versions.md`](../design/testing/test-classpath-shipped-versions.md) 에 있다.
 
 아래 둘은 그 결정이 닿지 않은 것이다. 측정은 전부 2026-09-11, `main` `9b642cc` 에서 `runtimeClasspath` 와
-`testRuntimeClasspath` 를 비교한 것이다.
+`testRuntimeClasspath` 를 비교한 것이다. D-2 의 표는 #114·#120 에서 `c561e17` 과 그 변경 뒤에 다시 쟀고, 그 결정과
+측정은 [`../design/testing/shipped-logback-and-test-classpath-followups.md`](../design/testing/shipped-logback-and-test-classpath-followups.md)
+에 있다.
 
 ### D-2 — `spring-boot-starter-test` 가 #99 가 결정하지 않은 모듈에서 발행 버전을 테스트 아래 올린다 · **열림 · 결정 대기**
 
-**무엇** — 아래 세 모듈의 차이를 `aimon-cli` 처럼 맞출지(두 테스트 클래스패스를 `runtimeClasspath` 와 일관되게
+**무엇** — 아래 두 모듈의 차이를 `aimon-cli` 처럼 맞출지(두 테스트 클래스패스를 `runtimeClasspath` 와 일관되게
 해석), 이유를 적고 받아들일지 모듈별로 결정한다.
 
 **왜 — 관측 가능한 결과**
@@ -116,28 +118,34 @@ least one LLM provider"* 라고 안내하고 예제가 둘 다 선언하며, BOM
 |------|---------|--------------|
 | `aimon-scheduling-quartz` | `jakarta.xml.bind:jakarta.xml.bind-api` | 4.0.4 → 4.0.5 |
 | `aimon-knowledge-opensearch` | `jakarta.annotation:jakarta.annotation-api` | 1.3.5 → 2.1.1 |
-| `aimon-session-testkit` | `ch.qos.logback:logback-classic` · `logback-core` | 1.5.13 → 1.5.34 |
 
-셋 다 #99 가 `aimon-cli` 에서 맞춘 것과 **같은 출처**이고, #99 가 받아들인 두 출처와 달리 주석 jar 가 아니다.
+둘 다 #99 가 `aimon-cli` 에서 맞춘 것과 **같은 출처**다. #99 가 받아들인 두 출처와 이 둘을 가르는 것은 jar 의 종류가
+아니라 — `jakarta.annotation-api` 도 주석 jar 다 — 테스트 실행에 닿는 방식이다. `jakarta.xml.bind-api` 는 코드를 담고,
+`jakarta.annotation-api` 는 프레임워크가 실행 중에 읽는 RUNTIME-retention 주석을 담으며 1.3.5 와 2.1.1 사이에 패키지가
+`javax` 에서 `jakarta` 로 바뀐다.
 
 - `jakarta.xml.bind-api` 는 클래스 108개 가운데 78개가 주석이 아닌 코드다(`JAXBContext` · `ContextFinder` ·
   `DatatypeConverter` …). `aimon-cli` 에서 맞춘 이유 중 하나가 그대로 걸린다.
 - `jakarta.annotation-api` 는 버전 차이보다 나쁘다. 1.3.5 는 `javax.annotation.*` 패키지이고 2.1.1 은
-  `jakarta.annotation.*` 이므로, **발행되는 클래스가 테스트 클래스패스에는 아예 없다.** 그 모듈의 테스트 경로가
-  그 클래스를 필요로 하는지는 실측하지 않았다.
-- `aimon-session-testkit` 은 테스트 소스가 없고, 그 런타임 클래스패스는 소비자의 테스트 클래스패스에만
-  합류하므로 이 차이 위에서 실행되는 테스트는 없다. 그래도 적는 이유는 이 차이가 **기록 없이 생겼기**
-  때문이다 — #95 이전(`ade5978`)에는 Spring Boot 플랫폼이 그 버전을 관리해서 차이가 없었다.
+  `jakarta.annotation.*` 이므로, **발행되는 클래스가 테스트 클래스패스에는 아예 없다.** 2.1.1 의 주석 타입 16개
+  가운데 15개가 RUNTIME-retention 이다(`@PostConstruct` · `@PreDestroy` · `@Resource` 처럼 컨테이너가 실행 중에 읽는
+  것들). 그 모듈의 테스트 경로가 그 클래스를 필요로 하는지는 실측하지 않았다.
+- `aimon-session-testkit` 의 Logback 쌍(1.5.13 → 1.5.34)은 이 표에서 빠졌다(#114, 2026-09-11). 맞춘 것이 아니다 —
+  카탈로그 `logback` 이 1.6.3 으로 올라 `spring-boot-starter-test` 가 가져오는 1.5.34 보다 높아졌고, 이제 두
+  클래스패스가 모두 1.6.3 을 해석한다(`dependencyInsight`). 이 모듈의 빌드 스크립트는 그대로이므로, Spring Boot 가
+  카탈로그보다 높은 Logback 을 관리하게 되면 차이는 다시 생긴다.
 
-**어디** — `modules/aimon-scheduling-quartz/build.gradle.kts`, `modules/aimon-knowledge-opensearch/build.gradle.kts`,
-`modules/aimon-session-testkit/build.gradle.kts` (2026-09-11). 맞추는 쪽을 고른다면 선례는
-`modules/aimon-cli/build.gradle.kts` 의 `configurations { … shouldResolveConsistentlyWith(…) }` 블록이다.
+**어디** — `modules/aimon-scheduling-quartz/build.gradle.kts`, `modules/aimon-knowledge-opensearch/build.gradle.kts`
+(2026-09-11, `c561e17`). 맞추는 쪽을 고른다면 선례는 `modules/aimon-cli/build.gradle.kts` 의
+`configurations { … shouldResolveConsistentlyWith(…) }` 블록이다.
 
 **언제 다시 볼까**
-- 이 세 빌드 스크립트 중 하나를 다음에 고칠 때
+- 이 두 빌드 스크립트 중 하나를 다음에 고칠 때
 - `aimon-scheduling-quartz` 나 `aimon-knowledge-opensearch` 의 테스트가 JAXB 나 `javax.annotation` 클래스에서
   실패할 때
-- D-3 의 검사를 만들 때 — 그 검사는 이 셋을 목록에 올리거나 없애라고 먼저 요구한다
+- D-3 의 검사를 만들 때 — 그 검사는 이 둘을 목록에 올리거나 없애라고 먼저 요구한다
+- `spring-boot` 올림이 카탈로그 `logback` 보다 높은 Logback 을 가져올 때 — `aimon-session-testkit` 의 쌍이 이 표로
+  돌아온다
 
 ### D-3 — 테스트와 발행 버전의 차이를 적은 기록을 아무것도 검사하지 않는다 · **열림 · 결정 대기**
 
@@ -164,6 +172,9 @@ least one LLM provider"* 라고 안내하고 예제가 둘 다 선언하며, BOM
 - 다음 차이가 검사가 아니라 읽기로 발견될 때
 - 다음 Spring Boot 또는 Testcontainers 버전 올림
 - D-2 를 결정할 때 — 받아들이는 쪽을 고르면 산문 목록이 한 번 더 늘어난다
+- Gradle 을 올릴 때 — `aimon-cli` 가 테스트 클래스패스를 맞추는 `shouldResolveConsistentlyWith` 는 `@Incubating` 이다
+  (#120). 없어지면 모든 빌드가 설정 단계에서 멈춘다. 동작만 바뀌면 아무것도 실패하지 않은 채 그 모듈의 테스트가 다시
+  `spring-boot-starter-test` 가 올린 버전 위에서 돌 수 있다. 그것을 알아챌 것이 이 검사다.
 
 ---
 

@@ -250,3 +250,17 @@ dependencies {
     "testRuntimeOnly"(libs.findLibrary("junit-platform-launcher").get())
     "testImplementation"(libs.findLibrary("spring-boot-starter-test").get())
 }
+
+// Incubating Gradle API in a module build script (#120). Gradle does not hold it still across releases: it "may change
+// in future Gradle versions until it is no longer incubating", and such a change is highlighted in that release's notes
+// rather than deprecated first, as a public API's would be (docs.gradle.org/current/userguide/feature_lifecycle.html).
+// A module build script may still call one when no stable API does the same job at a cost this build accepts, and when
+// the comment beside the call says what the call holds in place, on which Gradle version its status was checked, and
+// what an upgrade that changes it can break.
+//
+// That last part has two halves, and only one is sure to be loud. Removed or re-signed, the call stops its script
+// compiling, and since every project is configured on every invocation, every build fails before a task runs. Changed
+// in what it does, it can pass without failing anything — so the comment has to name the command that shows whether
+// the call still holds.
+//
+// aimon-cli's `shouldResolveConsistentlyWith` is called on these terms, and its comment is the worked example.
