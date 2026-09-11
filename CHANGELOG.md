@@ -7,6 +7,21 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Docs: a design record committed as its approved text keeps its test strategy and line citations
+
+- **`docs/design/README.md` §3.4 exempts such a record from part of §3** (#122). The exemption covers a record
+  whose `Status` names, by number, the section where the build's departures begin, and says the body before that
+  section is the text design review approved, unchanged. Twelve records carry this marker today. Such a record
+  keeps its test strategy, implementation order and `file:line` citations, and needs no decision table or
+  reference file map. A correction goes into a section after the boundary, never into the body.
+- **A citation is dated by its line, not its file.** A body citation is read at the base commit the record names.
+  A line after the boundary is read at the commit `git blame` gives for that line, which may be a merge. The
+  commit that added the file dates neither.
+- **Not lifted:** checkboxes, progress tables and phase logs stay out of every record, and so do usage and
+  troubleshooting material. The one allowance is a configuration snippet whose shape is itself the decision. A
+  record with a test strategy or citations but no marker is not exempt. Sixteen such records exist, and none was
+  edited. Backlog `T-7` records that no check looks for the marker.
+
 ### CLI: subagents and memory run on a model the provider serves, and the banner shows what runs
 
 - **The bundled `explore` subagents no longer send `haiku`** (#104). `default-anthropic`, `default-openai` and

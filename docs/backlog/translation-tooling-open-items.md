@@ -1,4 +1,4 @@
-# 번역 도구 — 등록 항목 4건 (열림 3 · 닫힘 1)
+# 번역 도구 — 등록 항목 5건 (열림 4 · 닫힘 1)
 
 출처는 2026-09-06 의 작업이다. **번역 낡음 가드가 32건 중 19건에 대해 아무 답도 못 하고 있었고**,
 그 19건의 `source_commit` 이 전부 오픈소스 전환 스쿼시(`eec9ccd`) 이전의 SHA 였다. 고친 것은
@@ -123,6 +123,60 @@ exit 1 이고 `stale` 은 그대로 exit 0 이다.
 **언제 다시 볼까** — 식별자가 번역된 번역본이 한 번 나왔을 때, 또는 §1.3 (e) 의 잔여 33건을 사람이
 줄일 만한 크기로 접는 방법이 보일 때. **앞의 트리거는 순환한다**(그것을 감지할 장치가 없다는 것이 이
 항목이다) — 그래서 뒤의 것이 실질적인 트리거이고, 번역 감사를 손으로 할 일이 생기면 그 자리를 지나간다.
+
+---
+
+## 1.2 설계 기록 규칙이 연 것 (#122)
+
+설계 기록의 면제 규칙([`../design/README.md`](../design/README.md#34-승인된-설계를-그대로-커밋한-기록) §3.4)을
+쓰면서 남긴 것이다. 번역 도구가 아니라 설계 기록의 빈자리지만, 문서 검사를 다루는 등록부가 이것이라 여기 둔다.
+
+### T-7 — 설계 기록에 면제 표지가 있는지 확인하는 검사가 없다 · **열림**
+
+**무엇** — `docs/design/` 의 기록이 테스트 전략 절(`## N. Test strategy` · `## N. 테스트 전략`)이나 `file:line`
+인용을 가질 때, `Status` 에 면제 표지가 있고 그 표지가 가리키는 `## N.` 경계 절이 실제로 있는지 확인하는 검사를
+만들지 정한다.
+
+**왜 — 관측 가능한 결과** 그런 기록이 28건 들어왔고 어느 검사도 알리지 않았다 — 테스트 전략
+절을 가진 것이 17건(영어 제목 15 · 한국어 제목 2), `file:line` 만 가진 것이 11건이다. 드러난 것은 세 PR 의
+리뷰가 각자 짚었기 때문이다(#113 · #112 · #109, 이슈 #122). 규칙이 생긴 지금도 표지를 확인하는 것은 사람이다.
+
+표지에서 기계로 읽을 수 있는 절반 — `Status` 블록 문단 안의 `§N`, 같은 문단의 승인 어휘(`approved` ·
+`reviewed body` · `승인` · `리뷰를 통과`), 그 번호의 `## N.` 제목 — 을 2026-09-11 에 `c561e17` 의 `docs/design/`
+전체에 스크래치 스크립트로 대어 보았다.
+
+| 사람이 읽은 판정 | 스크립트 |
+|---|---|
+| 표지가 있다 — 12건 | 12건 모두 찾았다. 1건(`llm/model-capability-config-key.md`)은 경계를 §11 이 아니라 §0 으로 짚었다 |
+| 표지가 아니다 — 승인 어휘가 있지만 본문을 고쳤다고 말한다 | 2건을 표지로 읽었다: `llm/anthropic-thinking-traces.md`, `llm/openai-responses-path.md` |
+| 표지가 아니다 — 승인이 문서의 주제다 | 1건을 표지로 읽었다: `skill/approval-scope.md` |
+
+그러므로 **조건 2(본문이 승인된 글 그대로라고 말하는가)는 어휘로 판정되지 않는다.** 검사가 확실히 할 수 있는
+것은 "테스트 전략이나 인용이 있는데 `Status` 에 경계 번호가 없다" 와 "가리킨 `## N.` 이 없다" 까지다. 조건 2 를
+기계에 맡기려면 표지 문장의 모양을 정해야 하고, 그러면 이미 있는 12건의 문구가 제각각이라는 것이 비용이 된다.
+
+**오늘 켜면 16건이 실패한다** — 표지 없이 테스트 전략이나 인용을 가진 기록이다. `llm/` 의
+`reasoning-model-enablement.md` · `reasoning-delta-stream.md` · `anthropic-thinking-traces.md` ·
+`anthropic-sampling-capabilities.md`, `session/inbox-collect-durability.md`, `memory/pluggable-memory-backend.md`,
+그리고 초기 커밋부터 있던 열 건 — `tool/` 의 `tool-search.md` · `parallel-execution.md` · `contract-hardening.md`,
+`hook/` 의 `hook-system.md` · `async-rewake.md`, `subagent/` 의 `execution.md` · `code-defined-registration.md`,
+`llm/` 의 `streaming.md` · `cancellation.md`, `agent-execution/integration-test-layers.md`. 열 건 중 여섯은 인용이
+참조 파일 지도에만 있다(§3.3 은 지도를 파일 단위로 적으라고 한다).
+
+인용을 세는 모양(`name.ext:N`, 확장자 `java` · `md` · `kts` · `py` · `sh` · `yaml` · `toml`)에는 사각지대가 하나
+있다 — 확장자 없는 `Type:N` 을 보지 못한다. `\b[A-Z][A-Za-z0-9]+:[0-9]+` 로 세면 `memory/pluggable-memory-backend.md`
+에 33개가 있고, `memory/peer-memory.md` 는 그런 토큰 하나(`CliConfigLoader:36`) 때문에 위 목록 밖에 있다.
+
+**어디** *(2026-09-11)* — 규칙은 [`../design/README.md`](../design/README.md#34-승인된-설계를-그대로-커밋한-기록) §3.4.
+검사를 붙일 자리는 `.github/workflows/build.yml` 의 `docs-links` 잡이 자연스럽다 — 텍스트만 읽는 검사 둘
+(`check-doc-links.py` · `check-backlog-registers.py`)이 이미 거기서 돈다. 스크래치 스크립트는 커밋하지 않았다.
+
+**언제 다시 볼까** — 둘 중 먼저 오는 것.
+
+- **위 16건이 처분될 때** — 표지를 달든 규약대로 줄이든. 그 전에 켜는 검사는 16건짜리 예외 목록을 들고
+  시작하고, 그 목록은 아무도 다시 읽지 않는 표가 된다
+- **설계 기록을 더하는 PR 의 리뷰가 표지를 되묻는 일이 또 생길 때.** 이 규칙이 생기기 전에 세 리뷰가 그 자리를
+  지나갔다. 규칙이 생긴 뒤에도 사람이 같은 확인을 하고 있다면 이 항목을 착수할 때다
 
 ---
 
