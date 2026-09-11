@@ -200,7 +200,12 @@ public final class Subagent {
             return this;
         }
 
-        /** Sets the model alias (e.g. {@code "sonnet"}). When unset, the executor default applies. */
+        /**
+         * Sets the model id this subagent's requests carry. It is sent to the configured provider exactly as written —
+         * no alias is resolved — and a per-invocation override (the {@code Task} tool's {@code model} argument) takes
+         * precedence. When unset, the subagent runs on its parent's model, or on the client's default model when that
+         * names none either.
+         */
         public Builder model(String model) {
             this.model = model;
             return this;

@@ -56,10 +56,11 @@
  * {
  *     &#64;code
  *     // Define a subagent in code (equivalent to an agents/*.md file)
+ *     // No .model(...): it runs on its parent's model. An id set there is sent as written.
  *     Subagent codeReviewer = Subagent.builder().name("code-reviewer")
  *             .description("Reviews code for best practices and issues")
  *             .whenToUse("When you need code review or quality analysis").tools(List.of("Read", "Grep", "Write"))
- *             .model("sonnet").maxIterations(50).systemPrompt("You are a code reviewer...").build();
+ *             .maxIterations(50).systemPrompt("You are a code reviewer...").build();
  *
  *     // Register it so the main agent can discover and delegate to it via TaskTool
  *     SubagentRegistry registry = new InMemorySubagentRegistry();

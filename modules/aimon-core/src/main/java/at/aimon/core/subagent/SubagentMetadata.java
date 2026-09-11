@@ -37,7 +37,7 @@ public final class SubagentMetadata {
     private final String description;
     private final String whenToUse; // Optional trigger conditions for selecting this subagent
     private final List<AllowedTool> allowedTools; // Parsed AllowedTool objects
-    private final String model; // sonnet, haiku, opus
+    private final String model; // model id, sent as written; null or empty inherits the parent's
     private final int maxIterations; // Maximum ReAct loop iterations
 
     private SubagentMetadata(String description, String whenToUse, List<AllowedTool> allowedTools, String model,

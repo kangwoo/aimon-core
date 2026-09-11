@@ -22,7 +22,8 @@ import org.yaml.snakeyaml.constructor.SafeConstructor;
  * <li>description: A human-readable subagent description (should include when to use)
  * <li>when-to-use: Optional trigger conditions for selecting this subagent
  * <li>allowed-tools: List or comma-separated string of allowed tools
- * <li>model: Model to use (sonnet, haiku, opus)
+ * <li>model: Optional model id, sent to the configured provider as written — no alias is resolved. When absent, the
+ * subagent runs on its parent's model
  * <li>max-iterations: Optional positive integer cap on the ReAct loop (defaults applied downstream)
  * </ul>
  *
@@ -36,7 +37,6 @@ import org.yaml.snakeyaml.constructor.SafeConstructor;
  * description: Expert code reviewer. Use when reviewing code for quality, security, and best practices.
  * when-to-use: When you need code review or quality analysis
  * allowed-tools: Read, Grep, Glob, Bash
- * model: sonnet
  * max-iterations: 50
  * ---
  *
@@ -58,7 +58,6 @@ import org.yaml.snakeyaml.constructor.SafeConstructor;
  *             ---
  *             description: Code reviewer. Use when reviewing code for quality and security.
  *             allowed-tools: Read, Grep
- *             model: sonnet
  *             ---
  *
  *             You are an expert code reviewer...
