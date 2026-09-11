@@ -7,19 +7,46 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Docs CI: both heading self-tests now fail on the two fence changes #135 reported
+
+- **The two one-line changes to `docs_tree.FENCE` that #135 reported now fail both self-tests** (#135). One also
+  opens a fence on a `-`, `*` or `+` marker's line; the other ignores fence markers indented four spaces. Before,
+  each left every check green with unchanged output. The backlog check's `--self-test` gains three cases: an item
+  heading after the closer of a fence opened on a `- ` marker's line, one between backtick fence markers indented
+  four spaces, and one two spaces under `- `. `check-doc-links.py --self-test` gains the first two. Each case holds
+  one shape. Changes measured to move only another shape still pass: opening a fence on an ordered, `*` or `+`
+  marker's line, or ignoring four-space `~~~` markers (backlog `T-9`).
+- **`docs_tree.anchors_of`'s docstring no longer says a heading after a list marker's fence is anchored.** At that
+  fence's closer `unfence` falls out of step with the page, so the link check gives a heading right after it no
+  anchor. The docstring now says a heading after an exposed `<!--` is anchored only where `unfence` is back in step
+  with the page. It names that list-marker pairing, and four-space backtick markers, among the readings both checks
+  share.
+- **Decision 6 gives kind 4's start as the GFM spec and cmark-gfm 0.29.0.gfm.13 read it**: `<!` and an uppercase
+  letter. A heading after a lowercase `<!doctype` shows in that cmark-gfm, run locally, and is read by the check, so
+  it is no longer counted among the blocks that hide one. `anchors_of` now names that cmark-gfm version, run
+  locally, as "the page".
+- **Wording.** The link check's module docstring and the `docs-links` job's comment now say that a change altering
+  a case's answer stays red until that case's expected answer changes; both said until a docstring changes. The
+  job's comment no longer calls every case a difference from both the page and the backlog check, and the link
+  self-test's comment lists the shapes it has cases for. That self-test now reports 9 shapes, and its closing line
+  speaks of the shapes it lists rather than every shape the docstring names. `CONTRIBUTING.md` and `.ko.md`
+  describe that self-test and where CI runs it.
+- **Registered:** backlog `T-9`, ten changes to fence and comment readings in SHARP EDGES, measured to leave every
+  self-test green.
+
 ### Docs CI: the two doc checks write down where they read headings differently, and the link check pins its side
 
 - **Where the link check and the backlog check read a heading differently is written down** (#121), in
   `docs_tree.anchors_of`'s docstring, with the reason each is left. A heading inside an HTML comment block gets an
   anchor, so a link into one passes and lands at the top of the page. A heading behind one to three spaces, `>` or
   a list marker gets none, so a correct link to one fails, and the backlog check reports it as `unread-heading`. A
-  heading after a `<!--` that `unfence` exposes inside a fence it pairs differently from the page is anchored, as
+  heading after a `<!--` that `unfence` exposes between two shorter markers inside a longer fence is anchored, as
   the page shows it, and the backlog check hides it. That last edge is why the backlog check's comment reading is
   not taken into `anchors_of`: the link check would start failing correct links to headings the page shows.
 - **`check-doc-links.py --self-test`**, run by the `docs-links` job after the check, pins the link check's side of
   each difference that docstring names, and of a `<details>` block. The backlog check's `--self-test` gains the
-  cases for its side: the mis-paired fence, a `<details>` block with no blank line, and the fence and comment
-  shapes SHARP EDGES now describes.
+  cases for its side: the mis-paired fence, a `<details>` block with no blank line, and three fence and comment
+  shapes SHARP EDGES now describes: a fence and a comment in a list item's continuation, and a comment after `>`.
 - **Decision 6 names the raw HTML blocks the backlog check does not follow**: every kind in CommonMark 0.31.2 §4.6
   but the comment. A heading inside `<details>` with no blank line after the opening tags is counted though the
   page shows no heading. `docs/backlog/README.md` tells authors, and its rule seven now names every displaced

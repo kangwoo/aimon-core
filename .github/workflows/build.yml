@@ -26,10 +26,10 @@ jobs:
   # first so that a red step names the heading or row that is wrong; the self-test then
   # only ever runs on a tree the check has passed, where a failure can only mean the checker.
   #
-  # The link check's `--self-test` reads no tree. It pins, one case per shape, where
-  # docs_tree.anchors_of reads a heading differently from the page and from the backlog
-  # check, so a change to that reading goes red until the docstring that explains it
-  # changes too. It runs after the check only so that a red step names a broken link first.
+  # The link check's `--self-test` reads no tree. Each case pins how docs_tree.anchors_of
+  # reads one heading shape -- differently from the page, the backlog check, or both -- so a
+  # change that alters a case's answer goes red until its expected answer changes too. It runs
+  # after the check only so that a red step names a broken link first.
   docs-links:
     runs-on: ubuntu-latest
     timeout-minutes: 5
