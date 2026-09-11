@@ -8,10 +8,12 @@ turns into an anchor, which canonical a translation declares, and whether that
 pair is current. check-backlog-registers.py walks nothing -- it reads
 docs/backlog/ -- but borrows three of this module's answers (what a heading is,
 what a fence hides, which file is a translation), so that it and the link checker
-cannot disagree about which lines are headings outside HTML comment blocks, which
-it alone skips. Each script carrying its own copy is how the copies drift (`.venv`
-was in one skip set and missing from the other two), so the answers live here and
-the scripts import them.
+start from the same heading lines. They do not end on the same ones: the backlog
+check also skips HTML comment blocks and reports headings behind indentation, `>`
+or a list marker, and where that makes the two read a heading differently, with
+why each place is left, is written down at `anchors_of`. Each script carrying its
+own copy is how the copies drift (`.venv` was in one skip set and missing from the
+other two), so the answers live here and the scripts import them.
 
 The last two answers are why this module runs git. That is a real cost -- it
 used to be pure text -- and it is paid for one reason: two checks now ask "is
@@ -81,7 +83,68 @@ def slug(heading):
 
 
 def anchors_of(text):
-    """Every fragment that resolves inside one markdown file."""
+    """Every fragment that resolves inside one markdown file.
+
+    A heading is an ATX_HEADING line at the start of a line in unfence()'s
+    output; a hand-written anchor is an `<a name|id>` anywhere in the raw text.
+
+    WHERE THE LINK CHECK AND THE BACKLOG CHECK READ HEADINGS DIFFERENTLY.
+    check-backlog-registers.py starts from the same lines and does two things
+    this does not: it blanks HTML comment blocks (its `uncomment`), and it
+    reports a heading behind indentation, `>` or a list marker whose text it
+    would read at the start of a line. Three shapes come out differently. "The
+    page" is CommonMark 0.31.2 as cmark-gfm renders it locally; github.com was
+    not observed.
+
+    * Inside an HTML comment block. The page shows no heading and the backlog
+      check reads none, but this anchors it, so a link into one passes and
+      lands at the top of the page.
+    * Behind one to three spaces, `>` or a list marker, or in a list item's
+      continuation (two spaces under `- `). The page shows a heading, but this
+      gives no anchor, so a correct link to one fails; the backlog check
+      reports it as unread-heading.
+    * After a `<!--` on a line unfence() exposes inside a real fence. unfence()
+      pairs fence markers by position -- a shorter marker inside a longer fence
+      closes it, and the closer of a fence opened on a list marker's own line,
+      which it does not see open, opens one -- so a `<!--` the page shows as
+      code is plain text to it. This anchors the heading after the fence, as
+      the page shows it; the backlog check's comment block opens on the `<!--`
+      and runs to the next `-->`, so it reads no heading there.
+
+    Why each is left:
+
+    * The comment reading is not taken in here because of the third shape: in
+      this function it would fail a correct link to a heading the page shows,
+      a new way for this check to skip one on top of unfence()'s own. Reading
+      comment blocks without that edge needs fences paired the way CommonMark
+      pairs them inside quotes and list items, which a reading of one line at a
+      time does not have. What leaving it costs, measured when this was
+      written: no heading in the tree sits inside a comment block, and taking
+      the reading in would change no file's anchors.
+    * A displaced heading gets no anchor because whether a fence, comment or
+      HTML block opened in the same quote or list item holds it is not on its
+      line (`> <!--` / `> ## x` / `> -->` shows no heading), and because the
+      site does not render every displaced shape as a heading: its
+      Python-Markdown does not for one to three spaces, a `1)` list, a list
+      marker right after a paragraph line, or a list item's continuation. That
+      failure is loud, and moving the heading to the start of the line fixes
+      the link on both. The backlog check reports them for its own reason,
+      decision 6 in that script.
+    * The third shape is the backlog check's edge, named in its SHARP EDGES.
+
+    `-N` numbering follows the first two: a heading this anchors inside a
+    comment block takes a number the page does not give, and a displaced
+    heading takes one on the page that it does not take here.
+
+    Where both checks read the same lines and both differ from the page, they
+    do not differ from each other: unfence()'s pairing, a heading inside a raw
+    HTML block other than a comment (decision 6 in check-backlog-registers.py
+    names those blocks), and YAML front matter read as text (backlog T-6).
+
+    `check-doc-links.py --self-test` pins this function's side of the three
+    shapes and of a raw HTML block; the backlog check's `--self-test` pins its
+    side.
+    """
     found, seen = set(), {}
     body = unfence(text)
     for line in body.splitlines():

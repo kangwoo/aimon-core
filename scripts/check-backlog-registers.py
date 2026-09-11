@@ -26,8 +26,12 @@ comment block opens on a line that begins `<!--` after at most three spaces and
 runs through the first line containing `-->`, the opening line included, or to
 the end of the file. Neither puts a heading on the page -- a fence shows it as
 code, a comment not at all -- so a commented-out item is removed, and the title
-counts without it. Tables, blockquotes, list items and prose never define an
-item.
+counts without it. No other kind of raw HTML block is recognised, so a heading
+inside one is read -- decision 6 names them. Tables, blockquotes, list items and
+prose never define an item. check-doc-links.py reads headings through the same
+unfence but skips no comment block; where that makes the two checks read a
+heading differently, and why it is left, is written down at
+docs_tree.anchors_of.
 
     ID         [A-Z]{1,3}-<digits>, not followed by a letter, digit, `_` or `-`
                (so SBS-04b and P1-14 are not IDs)
@@ -142,7 +146,8 @@ THE DECISIONS, each with its reason:
    unreadable register (reorder a heading, write the title) always belongs to
    whoever is editing it, which is the argument that makes UNRESOLVABLE exit 1.
 6. What the page shows -- a register's only rendering is GitHub's (mkdocs.yml
-   excludes docs/backlog/), and the reading follows it both ways. A comment
+   excludes docs/backlog/), and the reading follows it for comment blocks and
+   displaced headings, not for the other raw HTML blocks (below). A comment
    block is not read: a heading no reader can see is not an item a reader can
    count, and counting it would make the title count it too. A heading written
    after indentation, `>` or a list marker is not read either, but when its text
@@ -155,6 +160,22 @@ THE DECISIONS, each with its reason:
    the whole paragraph above it into the heading, and an HTML heading can carry
    attributes or span lines, so a line pattern would report some of them and
    stay quiet on the rest.
+   The raw HTML blocks it does not follow: a comment is one of the seven kinds
+   of HTML block in CommonMark 0.31.2 §4.6, and the only kind recognised here.
+   Inside the other six the page shows no heading, and this reads an ATX line
+   as one and counts it -- kind 1, `<pre`, `<script`, `<style` or `<textarea`,
+   through a line holding one of their closing tags; 3, `<?`, through `?>`; 4,
+   `<!` and a letter (`<!DOCTYPE`), through `>`; 5, `<![CDATA[`, through `]]>`;
+   6, a block-level tag such as `<details>`, `<div>` or `<table>`, to the next
+   blank line; 7, any other complete tag alone on its line where it does not
+   interrupt a paragraph, to the next blank line. There the verdict is the
+   inverted one above: a title that counts what the page shows goes red, and
+   one that counts the hidden heading goes green. They are not skipped because
+   hiding one needs to know whether a fence or a container holds its start, and
+   unfence pairs fence markers by position -- a start it exposes inside a real
+   fence would hide headings the page shows, the edge SHARP EDGES names for
+   comments, carried to six more kinds. A heading under `<details>` shows on the
+   page once a blank line follows the opening tags, which ends the block.
 
 WHERE IT RUNS: a second step of the `docs-links` job -- the check, then
 `--self-test`. The branch ruleset requires jobs by name, so a job of its own
@@ -199,12 +220,25 @@ and the fix is to reword the heading. Because the unread test strips leading
 punctuation along with glyphs, a heading that opens with a parenthesised ID
 (`### (L-3 참고) 배경`) is an unread-heading; start it with a word instead.
 Displacement is read from the line alone, so indentation of any width counts --
-a heading in a list item's continuation is indented four spaces or more, and so
-is an indented code block -- and a fence or comment written inside a blockquote
-or a list item is not recognised as one; an item-heading example belongs in an
-unquoted fence. And fences are read before comments, so a comment block holding
-an unmatched fence marker hides everything after it, which shows up as a title
-that counts more items than are read.
+a heading in a list item's continuation sits as far in as the item's text (two
+spaces under `- `, three under `1. `), one in an indented code block four, and
+both are reported. Fences and comments are read from the line alone too. A fence
+marker is recognised after any indentation but not after `>` or on a list
+marker's own line, and the next marker closes it whatever its character, length
+or info string. So a fence in a list item's continuation hides the heading in
+it, as the page does; four-space markers in an indented code block hide a
+heading the page shows; and the closer of a fence opened on a list marker's own
+line (`- ```…`) opens a fence the page does not have. A comment is recognised
+after up to three spaces, in a list item's continuation too, but not after `>`,
+on a list marker's own line or after four spaces. The lines inside a fence or
+comment that is not recognised are read as if it were not there, so a heading in
+one is reported when it is itself behind `>` or indentation; an item-heading
+example belongs in a fence opened neither after `>` nor on a list marker's line.
+And fences are read before comments: a comment block holding an unmatched fence
+marker hides everything after it, and so does a `<!--` inside a real fence that
+unfence has closed early or not seen open -- the two fence cases above. A
+heading hidden that way shows up as a title that counts more items than are
+read.
 
 Usage:
     python3 scripts/check-backlog-registers.py [--github]
@@ -1499,36 +1533,60 @@ def self_test():
 
     # E. What the page shows (#102). Each shape is appended to the synthetic
     # register twice: with its title left alone, and with the title counting the
-    # appended item. The row stays at 8, so no `index` finding is expected, and
-    # both verdicts are exact. The shapes BLIND SPOT names are pinned too, so that
-    # reading one later means changing the docstring as well.
+    # appended item. The row stays at 8, so a shape that is not read adds no
+    # `index` finding and one that is read adds it to both, and both verdicts are
+    # exact. The shapes BLIND SPOT, SHARP EDGES and decision 6 name are pinned too,
+    # so that reading one differently later means changing the docstring as well.
+    # Where the link check reads a shape differently (#121), docs_tree.anchors_of
+    # says why, and check-doc-links.py --self-test pins that side.
 
     title_9 = "# 셀프 테스트 — 등록 항목 9건 (열림 4 · 닫힘 4 · 해소 1)"
+    fence3, fence4 = "`" * 3, "`" * 4
     shapes = [
-        ("an item heading indented three spaces",
-         [f"   ## {prefix}-9 — 들여 쓴 항목"], {"unread-heading"}),
-        ("an item heading inside a blockquote",
-         [f"> ## {prefix}-9 — 인용 블록 안의 항목"], {"unread-heading"}),
-        ("an item heading inside an HTML comment block",
-         ["<!--", f"## {prefix}-9 — 주석으로 가린 항목", "-->"], set()),
-        ("an item heading inside a list item",
-         [f"- ## {prefix}-9 — 리스트 항목 안의 항목"], {"unread-heading"}),
+        ("an item heading indented three spaces (docs_tree.anchors_of)",
+         [f"   ## {prefix}-9 — 들여 쓴 항목"], {"unread-heading"}, False),
+        ("an item heading inside a blockquote (docs_tree.anchors_of)",
+         [f"> ## {prefix}-9 — 인용 블록 안의 항목"], {"unread-heading"}, False),
+        ("an item heading inside an HTML comment block (docs_tree.anchors_of)",
+         ["<!--", f"## {prefix}-9 — 주석으로 가린 항목", "-->"], set(), False),
+        ("an item heading inside a list item (docs_tree.anchors_of)",
+         [f"- ## {prefix}-9 — 리스트 항목 안의 항목"], {"unread-heading"}, False),
         ("an item heading indented four spaces (SHARP EDGES)",
-         [f"    ## {prefix}-9 — 네 칸 들여 쓴 항목"], {"unread-heading"}),
+         [f"    ## {prefix}-9 — 네 칸 들여 쓴 항목"], {"unread-heading"}, False),
         ("an item written as a setext heading (BLIND SPOT)",
-         [f"{prefix}-9 — setext 로 쓴 항목", "---"], set()),
+         [f"{prefix}-9 — setext 로 쓴 항목", "---"], set(), False),
         ("an item written as a raw HTML heading (BLIND SPOT)",
-         [f"<h2>{prefix}-9 — HTML 로 쓴 항목</h2>"], set()),
+         [f"<h2>{prefix}-9 — HTML 로 쓴 항목</h2>"], set(), False),
+        ("an item heading after a `<!--` that unfence exposes inside a longer fence "
+         "(SHARP EDGES; docs_tree.anchors_of)",
+         [fence4 + "markdown", fence3, "<!--", fence3, fence4, "",
+          f"## {prefix}-9 — 펜스 뒤의 항목"], set(), False),
+        ("an item heading inside a `<details>` block with no blank line is read (decision 6)",
+         ["<details>", "<summary>요약</summary>", f"## {prefix}-9 — details 안의 항목",
+          "</details>"], set(), True),
+        ("an item heading in a fence in a list item's continuation (SHARP EDGES)",
+         ["- 목록 항목", "  " + fence3, f"  ## {prefix}-9 — 목록 안 펜스 속 항목", "  " + fence3],
+         set(), False),
+        ("an item heading in a comment opened two spaces in, in a list item's continuation "
+         "(SHARP EDGES)",
+         ["- 목록 항목", "  <!--", f"  ## {prefix}-9 — 목록 안 주석 속 항목", "  -->"], set(), False),
+        ("an item heading in a comment opened after `>` (SHARP EDGES)",
+         ["> <!--", f"> ## {prefix}-9 — 인용 안 주석 속 항목", "> -->"], {"unread-heading"}, False),
     ]
-    for name, appended, flagged in shapes:
-        def run(appended=appended, flagged=flagged):
+    for name, appended, flagged, read in shapes:
+        def run(appended=appended, flagged=flagged, read=read):
             docs, before = synthetic()
             lines = lines_of(docs, path_s) + appended
             untouched = added(before, check(with_lines(docs, path_s, lines)))
             lines[lines.index(title_s)] = title_9
             counting = added(before, check(with_lines(docs, path_s, lines)))
-            ok_untouched, untouched_detail = verdict(untouched, flagged)
-            ok_counting, counting_detail = verdict(counting, flagged | {"title"})
+            if read:
+                # A ninth item: the untouched title and the row, still at 8, both disagree.
+                want_untouched, want_counting = flagged | {"title", "index"}, flagged | {"index"}
+            else:
+                want_untouched, want_counting = flagged, flagged | {"title"}
+            ok_untouched, untouched_detail = verdict(untouched, want_untouched)
+            ok_counting, counting_detail = verdict(counting, want_counting)
             return (ok_untouched and ok_counting,
                     f"title untouched: {untouched_detail}; title counting it: {counting_detail}")
         cases.append((name, run))
