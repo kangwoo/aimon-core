@@ -1,11 +1,12 @@
-# 백엔드 모듈의 POM 스코프 — 등록 항목 1건 (열림 1 · 결정 대기)
+# 백엔드 모듈의 POM 스코프와 테스트 클래스패스 버전 — 등록 항목 3건 (열림 3 · 결정 대기)
 
 `.claude/rules/code-style.md` 와 `.claude/rules/architecture.md` 가 같은 규칙을 두 번 적고 있다 —
 **implementation 모듈은 `implementation(project(":aimon-core"))` 를 쓰고, 파사드만 `api()` 를 쓴다.**
 이 문서는 그 규칙을 뒤집자는 것이 아니라, 규칙이 감수하기로 한 **비용이 어디에 남아 있는지**를
 기록한다.
 
-출처는 2026-08-31 의 아키텍처 리뷰다.
+출처는 2026-08-31 의 아키텍처 리뷰다. §2 는 그 이웃 축 — 모듈이 발행하는 **버전**과 그 모듈의 테스트가
+도는 버전 — 을 #99 (2026-09-11) 에서 받는다.
 
 ---
 
@@ -88,10 +89,91 @@ least one LLM provider"* 라고 안내하고 예제가 둘 다 선언하며, BOM
 
 ---
 
-## 2. 관련
+## 2. 테스트 클래스패스의 버전 — #99 가 남긴 것
+
+§1 과 이웃한 축이다. §1 은 모듈이 **발행하는 스코프**가 그 모듈의 공개 API 와 어긋나는 자리이고, 이 절은
+모듈이 **발행하는 버전**과 그 모듈의 **테스트가 도는 버전**이 어긋나는 자리다.
+
+기준은 #91 이 세웠다 — *모듈의 테스트는 그 모듈이 발행하는 버전 위에서 돈다. 그 차이가 의도해서 기록한
+선택이 아니라면.* #95 가 테스트킷의 Spring Boot 플랫폼이 만든 차이 20건을 없앴고, #99 가 남은 아홉을
+출처별로 결정했다. `spring-boot-starter-test` 가 `aimon-cli` 에서 올린 셋은 **맞췄고**
+(`modules/aimon-cli/build.gradle.kts`), Testcontainers 의 `org.jetbrains:annotations` 와 프로바이더 SDK 의
+`error_prone_annotations` 는 이유를 적고 **받아들였다**. 결정문은 `gradle/libs.versions.toml` 의 `junit` 노트
+바로 위에 있고, 근거와 기각한 대안은
+[`../design/testing/test-classpath-shipped-versions.md`](../design/testing/test-classpath-shipped-versions.md) 에 있다.
+
+아래 둘은 그 결정이 닿지 않은 것이다. 측정은 전부 2026-09-11, `main` `9b642cc` 에서 `runtimeClasspath` 와
+`testRuntimeClasspath` 를 비교한 것이다.
+
+### D-2 — `spring-boot-starter-test` 가 #99 가 결정하지 않은 모듈에서 발행 버전을 테스트 아래 올린다 · **열림 · 결정 대기**
+
+**무엇** — 아래 세 모듈의 차이를 `aimon-cli` 처럼 맞출지(두 테스트 클래스패스를 `runtimeClasspath` 와 일관되게
+해석), 이유를 적고 받아들일지 모듈별로 결정한다.
+
+**왜 — 관측 가능한 결과**
+
+| 모듈 | 아티팩트 | 발행 → 테스트 |
+|------|---------|--------------|
+| `aimon-scheduling-quartz` | `jakarta.xml.bind:jakarta.xml.bind-api` | 4.0.4 → 4.0.5 |
+| `aimon-knowledge-opensearch` | `jakarta.annotation:jakarta.annotation-api` | 1.3.5 → 2.1.1 |
+| `aimon-session-testkit` | `ch.qos.logback:logback-classic` · `logback-core` | 1.5.13 → 1.5.34 |
+
+셋 다 #99 가 `aimon-cli` 에서 맞춘 것과 **같은 출처**이고, #99 가 받아들인 두 출처와 달리 주석 jar 가 아니다.
+
+- `jakarta.xml.bind-api` 는 클래스 108개 가운데 78개가 주석이 아닌 코드다(`JAXBContext` · `ContextFinder` ·
+  `DatatypeConverter` …). `aimon-cli` 에서 맞춘 이유 중 하나가 그대로 걸린다.
+- `jakarta.annotation-api` 는 버전 차이보다 나쁘다. 1.3.5 는 `javax.annotation.*` 패키지이고 2.1.1 은
+  `jakarta.annotation.*` 이므로, **발행되는 클래스가 테스트 클래스패스에는 아예 없다.** 그 모듈의 테스트 경로가
+  그 클래스를 필요로 하는지는 실측하지 않았다.
+- `aimon-session-testkit` 은 테스트 소스가 없고, 그 런타임 클래스패스는 소비자의 테스트 클래스패스에만
+  합류하므로 이 차이 위에서 실행되는 테스트는 없다. 그래도 적는 이유는 이 차이가 **기록 없이 생겼기**
+  때문이다 — #95 이전(`ade5978`)에는 Spring Boot 플랫폼이 그 버전을 관리해서 차이가 없었다.
+
+**어디** — `modules/aimon-scheduling-quartz/build.gradle.kts`, `modules/aimon-knowledge-opensearch/build.gradle.kts`,
+`modules/aimon-session-testkit/build.gradle.kts` (2026-09-11). 맞추는 쪽을 고른다면 선례는
+`modules/aimon-cli/build.gradle.kts` 의 `configurations { … shouldResolveConsistentlyWith(…) }` 블록이다.
+
+**언제 다시 볼까**
+- 이 세 빌드 스크립트 중 하나를 다음에 고칠 때
+- `aimon-scheduling-quartz` 나 `aimon-knowledge-opensearch` 의 테스트가 JAXB 나 `javax.annotation` 클래스에서
+  실패할 때
+- D-3 의 검사를 만들 때 — 그 검사는 이 셋을 목록에 올리거나 없애라고 먼저 요구한다
+
+### D-3 — 테스트와 발행 버전의 차이를 적은 기록을 아무것도 검사하지 않는다 · **열림 · 결정 대기**
+
+**무엇** — 모듈의 `runtimeClasspath` 와 `testRuntimeClasspath`(원한다면 `testCompileClasspath` 도)의 버전이
+기록된 목록 밖에서 어긋나면 실패하는 검사를 둘지 결정한다.
+
+**왜 — 관측 가능한 결과**
+- 기록이 산문이다. Spring Boot · Testcontainers · SDK 를 올리거나 테스트 라이브러리를 하나 더하면 차이가
+  생기거나 사라지는데, 그것을 알리는 것이 없다. `gradle/libs.versions.toml` 의 결정문은 그 날짜의 측정이고,
+  다음 버전 올림이 그것을 조용히 틀리게 만든다.
+- 지금까지 차이는 **읽어서** 찾았고, 읽은 범위가 결과를 정했다. #95 는 테스트킷의 소비자 일곱만 셌고, 빌드
+  전체를 센 것은 #99 의 설계가 처음이다 — 그래서 D-2 가 나왔다.
+- 컴파일 축은 통째로 기록되지 않았다. #95 와 #99 는 런타임과 테스트 런타임만 비교했다. `aimon-cli` 의 방법을
+  `aimon.java-conventions` 로 옮기는 실험에서는 23개 프로젝트의 항목 94개가 바뀌었고, 그중 72개가
+  `testCompileClasspath` 였다.
+
+**어디** — 아직 코드가 없다(2026-09-11). #99 의 설계가 쓴 프로브는 저장소에 들어오지 않았고, 핵심은 이것뿐이다:
+프로젝트마다 `runtimeClasspath` 와 `testRuntimeClasspath` 의 `incoming.resolutionResult.allComponents` 에서
+`ModuleComponentIdentifier` 인 것만 골라 `group:name` 으로 맞대고, 버전이 다른 쌍을 낸다. 검사로 만든다면 자리는
+`buildSrc/src/main/kotlin/aimon.java-conventions.gradle.kts` 가 모듈마다 등록하고 루트의 `checkAll` 이 모으는
+태스크이고, 받아들인 목록은 산문 노트가 아니라 그 태스크가 읽을 수 있는 곳에 있어야 한다.
+
+**언제 다시 볼까**
+- 다음 차이가 검사가 아니라 읽기로 발견될 때
+- 다음 Spring Boot 또는 Testcontainers 버전 올림
+- D-2 를 결정할 때 — 받아들이는 쪽을 고르면 산문 목록이 한 번 더 늘어난다
+
+---
+
+## 3. 관련
 
 - `.claude/rules/code-style.md` · `.claude/rules/architecture.md` — 규칙 원문
 - `modules/aimon-filesystem-testkit/build.gradle.kts` — 규칙이 **왜** 그런지 산문으로 적힌 유일한
   빌드 파일 (*"to keep a published POM honest"*)
+- `gradle/libs.versions.toml` 의 `junit` 노트와 그 바로 위 블록 — §2 의 결정문
+- `modules/aimon-cli/build.gradle.kts` — 테스트 클래스패스를 발행 버전에 맞춘 모듈과 그 방법
+- [`../design/testing/test-classpath-shipped-versions.md`](../design/testing/test-classpath-shipped-versions.md) — §2 의 설계 근거와 기각한 대안
 - [`multi-instance-readiness.md`](multi-instance-readiness.md) — 같은 리뷰에서 나온 다른 항목
 - [`../project/api-stability.md`](../project/api-stability.md) — `0.x` 가 약속하는 것

@@ -1527,17 +1527,36 @@ Central is versioned independently).
   governed the JUnit their main sources compile against with `api(platform(libs.spring.boot.dependencies))`,
   and `api` put Spring Boot's whole dependency management on every consumer's test classpath, where a
   managed version newer than the one a module ships wins. Across their seven consumers, 29 artifacts
-  resolved under test to a version other than the shipped one, and 20 of them came from that platform:
+  resolved under test to a version other than the shipped one, and that platform had moved 21 of them:
   the nine #87 added to `aimon-cli` (HikariCP 6.3.3 against the 5.1.0 it ships among them), the MongoDB
   driver 5.5.2 against 4.11.1 on `aimon-filesystem-gridfs` and `aimon-session-mongodb`, HikariCP on
-  `aimon-session-postgres`, `reactor-core` on `aimon-session-redis` and Caffeine on the starter. All three
-  now take `platform(libs.junit.bom)`, as `aimon-memory-testkit` already did, and those 20 are gone; no
-  consumer gained a difference. The three are unpublished, and the POM and module metadata of all 21
-  published modules are byte-identical before and after. The reason is written once, next to `junit` in
-  `gradle/libs.versions.toml`, and the catalog's now-unused `spring-boot-dependencies` entry is removed.
-  The nine differences that remain predate this and have other sources — `spring-boot-starter-test`
-  (Logback and `jakarta.xml.bind-api` on the CLI), Testcontainers (`org.jetbrains:annotations`) and the
-  vendor SDKs on the starter's test classpath (`error_prone_annotations`).
+  `aimon-session-postgres`, `reactor-core` on `aimon-session-redis`, and Caffeine and
+  `error_prone_annotations` on the starter. All three now take `platform(libs.junit.bom)`, as
+  `aimon-memory-testkit` already did, and 20 of those differences are gone; the 21st, the starter's
+  `error_prone_annotations`, fell from 2.49.0 to 2.33.0 under test and still differs from the 2.21.1 it
+  ships, now through the vendor SDKs. No consumer gained a difference. The three are unpublished, and the
+  POM and module metadata of all 21 published modules are byte-identical before and after. The reason is
+  written once, next to `junit` in `gradle/libs.versions.toml`, and the catalog's now-unused
+  `spring-boot-dependencies` entry is removed. The nine that remain — that one, and eight that predate
+  this — have other sources: `spring-boot-starter-test` (Logback and `jakarta.xml.bind-api` on the CLI),
+  Testcontainers (`org.jetbrains:annotations`) and the vendor SDKs on the starter's test classpath
+  (`error_prone_annotations`).
+
+- **`aimon-cli`'s tests run on the Logback and JAXB API the CLI ships, and the other remaining test-classpath
+  differences are recorded as decisions** (#99). Of the nine artifacts the entry above left resolving under
+  test to a version their module does not ship, the three `spring-boot-starter-test` raised on the CLI —
+  `logback-classic` and `logback-core` 1.5.34 against the 1.5.13 it ships, `jakarta.xml.bind-api` 4.0.5
+  against 4.0.4 — are aligned: the CLI's two test classpaths now resolve consistently with its runtime
+  classpath, which is what its distribution packs, so its tests now run on Logback 1.5.13. The other six are
+  accepted, each with its measured reason, next to `junit` in `gradle/libs.versions.toml`: Testcontainers'
+  `org.jetbrains:annotations` and the provider SDKs' `error_prone_annotations` are annotation jars no code
+  here names. Nothing a consumer resolves changes — every compile and runtime classpath in the build, and
+  every published POM and module metadata file, is as before. The same note now says why
+  `aimon-memory-testkit` publishes a `junit-bom` floor of 5.12.2 while its test classpath, which runs no test,
+  resolves 5.13.4; the entry above is corrected (the platform moved 21 artifacts, and 20 differences went
+  away); and `ModelCapabilityBindingProbeTest` drives the `declaresAnything()` refusal through the probe's
+  public pair check instead of calling the helper that words it. What #99 left undecided — the same source on
+  three more modules, and a check that would notice the next difference — is backlog D-2 and D-3.
 
 - **The model-capability binding probe names the right fix when the builder, not the value, refuses a
   probe value** (#91). A declarable key missing from `ModelCapabilityDeclaration.Builder.declaresAnything()`
