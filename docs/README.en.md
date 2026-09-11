@@ -54,7 +54,7 @@ tuned for, but the core itself is domain-neutral.
 All you need is **Java 17** and **one OpenAI API key** — the bundled default configuration reads `OPENAI_KEY`.
 Running on Anthropic takes a configuration change rather than a different variable name, and the CLI's
 configuration is covered by
-[`aimon-core-integration-via-cli-reference.en.md`](getting-started/aimon-core-integration-via-cli-reference.en.md).
+[`aimon-core-integration-via-cli-reference.en.md`](getting-started/aimon-core-integration-via-cli-reference.en.md#switching-providers--change-agentname-too).
 
 ```bash
 git clone https://github.com/kangwoo/aimon-core.git

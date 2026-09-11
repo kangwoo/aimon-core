@@ -171,7 +171,7 @@ The CLI reads YAML configuration. Default location: `modules/aimon-cli/src/main/
 
 ```yaml
 llm:
-  provider: "openai"          # or "anthropic"
+  provider: "openai"          # "anthropic" also changes baseUrl and agent.name (CLI guide, docs/getting-started)
   baseUrl: "https://api.openai.com/v1"
   apiKey: "${OPENAI_KEY}"     # ${ENV} interpolation supported
   model: "gpt-4o-mini"

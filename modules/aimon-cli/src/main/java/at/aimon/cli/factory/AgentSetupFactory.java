@@ -9,6 +9,7 @@ import java.util.Optional;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 
 import org.quartz.Scheduler;
 import org.quartz.SchedulerException;
@@ -121,6 +122,7 @@ import at.aimon.core.skill.policy.SkillInvocationDecision;
 import at.aimon.core.skill.policy.pending.PendingTurn;
 import at.aimon.core.skill.policy.pending.PendingTurnRegistry;
 import at.aimon.core.skill.render.ShellArgumentTokenizer;
+import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.tools.console.ConsoleOutputTool;
 import at.aimon.core.tracing.SpanExporter;
 import at.aimon.core.tracing.SpanRedactor;
@@ -417,7 +419,8 @@ public class AgentSetupFactory {
 
     }
 
-    private static final String DEFAULT_AGENT_BUNDLE_BASE_PATH = "agents";
+    // Package-private so AgentModelProviderCheck prints a bundle file under the classpath root this loader reads.
+    static final String DEFAULT_AGENT_BUNDLE_BASE_PATH = "agents";
 
     private final LlmClientFactory llmClientFactory;
     private final AgentBundleLoader agentBundleLoader;
@@ -619,6 +622,8 @@ public class AgentSetupFactory {
                         stack.messageQueueManager(), agentExecutor.getHookExecutionManager(),
                         stack.sessionRecordStore()));
         enrollMemorySubsystem(stack, config, cli);
+        reportAgentModelMismatch(config, agentBundle, agentRuntime::getSubagentRegistry,
+                () -> agentRuntime.getEnvironment().getWorkingDirectory(), cli.outputFormatter);
 
         return AgentSetup.builder().stack(stack).agentExecutor(agentExecutor).agent(agentBundle.getAgent())
                 .agentRuntime(agentRuntime).outputFormatter(cli.outputFormatter).fileSystem(fileSystem)
@@ -660,6 +665,51 @@ public class AgentSetupFactory {
         }
         stack.own(TeardownPhase.MEMORY_MAINTENANCE, "memoryMaintenance", buildMemoryMaintenance(cli.memoryWiring,
                 cli.observationStore, cli.representationStore, cli.outputFormatter));
+    }
+
+    /**
+     * Prints one startup message when a loaded definition names a model the configured provider's API cannot serve
+     * (#92), and never stops startup — {@link AgentModelProviderCheck} decides what is a mismatch and what to say.
+     *
+     * <p>
+     * The message goes where the CLI's other startup conditions go: to the terminal through
+     * {@link OutputFormatter#displayInfo}, paired with a WARN for the log file. The pair rather than the WARN alone,
+     * because the root logger writes to the file only. It is called after the stack is built, so it prints before the
+     * REPL banner.
+     *
+     * <p>
+     * The collaborators arrive as suppliers and are read inside the {@code try}, so a registry, a parse or a supplier
+     * that throws costs this message and nothing else: the failure goes to the log file and startup continues, as
+     * {@link #resolveTracingMaxPayloadChars} treats a bad observability setting.
+     *
+     * @param config
+     *            the CLI configuration — its {@code llm:} block and the configured {@code agent.name}
+     * @param agentBundle
+     *            the loaded bundle, whose own subagent registry decides which entries are classpath files
+     * @param runtimeSubagents
+     *            the runtime's subagent registry — the winning definition per name, which is what the Task tool sees
+     * @param workingDirectory
+     *            the runtime's working directory, which a user subagent's printed path resolves under
+     * @param outputFormatter
+     *            the terminal
+     */
+    // Package-private so AgentSetupFactoryAgentModelCheckTest can drive it with throwing collaborators and through the
+    // real stack wiring.
+    void reportAgentModelMismatch(CliConfig config, AgentBundle agentBundle,
+            Supplier<SubagentRegistry> runtimeSubagents, Supplier<String> workingDirectory,
+            OutputFormatter outputFormatter) {
+        try {
+            final List<AgentModelProviderCheck.DeclaredModel> models = AgentModelProviderCheck
+                    .declaredModels(agentBundle.getAgent(), agentBundle.getSubagentRegistry(), runtimeSubagents.get());
+            final Optional<String> warning = AgentModelProviderCheck.warning(config.getLlmConfig(),
+                    extractAgentName(config), workingDirectory.get(), models);
+            if (warning.isPresent()) {
+                log.warn("{}", warning.get());
+                outputFormatter.displayInfo(warning.get());
+            }
+        } catch (RuntimeException e) {
+            log.warn("Agent model check skipped: {}", e.getMessage(), e);
+        }
     }
 
     /**

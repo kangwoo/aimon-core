@@ -126,8 +126,9 @@ class AimonDocumentedPropertiesTest {
             // extension, so `aimon.java-conventions.gradle.kts` is a different token from the bare id above and
             // needs its own entry — a doc that cites the file by name rather than the plugin by id hits this one.
             Map.entry("aimon.java-conventions.gradle.kts", "Gradle script plugin file"),
-            Map.entry("aimon.publishable.gradle.kts", "Gradle script plugin file"),
-            Map.entry("aimon.yaml", "filename"));
+            Map.entry("aimon.publishable.gradle.kts", "Gradle script plugin file"), Map.entry("aimon.yaml", "filename"),
+            // The CLI's log file, ~/.aimon/logs/aimon.log, named by the CLI guide as where its startup warnings go.
+            Map.entry("aimon.log", "filename"));
 
     /** Marks a line as claiming a default rather than showing an example value. */
     private static final Pattern DEFAULT_MARKER = Pattern.compile("기본값|기본|default|Default");

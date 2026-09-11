@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/aimon-core-integration-via-cli-reference.md
-source_commit: b0e2a92
+source_commit: 6c53cfe
 ---
 
 # aimon-core integration guide — following aimon-cli as the reference
@@ -260,6 +260,55 @@ Each builder constructs the SDK-specific configuration object (`AnthropicConfig`
 present they build a model capability registry from it and pass that to `modelCapabilityRegistry(...)`, and
 when `llm.reasoningEffort` is present they pass it straight through
 (`anthropicConfig(...)` · `openAiConfig(...)`).
+
+#### Switching providers — change `agent.name` too
+
+The model name each agent request carries comes from the **agent definition**, not from the `llm:` block.
+`agent.name` selects the classpath bundle `agents/<name>/`, and both clients send
+`modelConfig.getName().orElse(config.getModel())` — so a definition's `model.name`, when it has one, wins over
+`llm.model`, and every bundled definition has one. The shipped `agent.name: default` names OpenAI models
+(`gpt-5.6-terra` for the main agent, `gpt-5.1` for its `explore` subagent). Edit only the `llm:` block to
+Anthropic and those names go to Anthropic, whose Messages API answered `gpt-5.6-terra` with HTTP 404
+`not_found_error` on 2026-09-10.
+
+This is the configuration switched to Anthropic:
+
+```yaml
+llm:
+  provider: anthropic
+  apiKey: "${ANTHROPIC_KEY}"
+  model: claude-sonnet-4-5
+agent:
+  name: default-anthropic
+```
+
+`default-anthropic`'s `explore` subagent names `model: haiku`, and that name is sent as written, with no alias
+resolution; the Anthropic Messages API answered `haiku` with HTTP 404 `not_found_error` on 2026-09-10 (backlog
+L-17).
+
+Five keys change together:
+
+- `provider`
+- `apiKey` — that vendor's key
+- `baseUrl` — remove it. The shipped file sets OpenAI's host, and a leftover one keeps every request on that host
+- `model` — not the agent's model, but the places in the next paragraph still use it, so an OpenAI name left here is what memory and wiki generation send to Anthropic
+- `agent.name`
+
+`llm.model` still reaches peer memory (the dialectic engine, deriver and reconciler, plus the dreamer and its LLM
+judge unless `memory.dreamer.scorer.llm.model` is set), wiki page generation, and the name the startup banner
+prints in `LLM Provider: <provider> (<model>)` — **the name in the banner's parentheses is `llm.model`, not the
+agent's model.** A definition without `model.name` runs on it. Under anthropic it may be left out, and the banner
+then shows the client default `claude-sonnet-4-20250514`, but with `memory` enabled, startup fails without it.
+
+When a loaded definition names the other vendor's models, startup **warns — it never stops.** For the shipped
+`default` agent under `provider: anthropic`, that happens when `baseUrl` is absent, on Anthropic's host, or still
+on OpenAI's host from the shipped file. Behind any other `baseUrl` it is silent, and so it is on names neither
+vendor claims — including that `haiku`. The warning prints on the terminal before the banner and goes to
+`~/.aimon/logs/aimon.log`. Each line names the definition's key (`model.name` for the main agent, `model` for a
+subagent) and where it was read: a bundle file as `classpath`, a user subagent as its absolute path under the
+CLI's working directory. That directory is the jar's directory, or `user.dir` when not running from a jar
+(`modules/aimon-cli` under `./gradlew :aimon-cli:run`), and it is the banner's `Working Directory:` line. It
+offers only remedies that change something.
 
 #### How hard the model should think — `llm.reasoningEffort`
 

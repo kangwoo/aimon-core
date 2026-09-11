@@ -253,6 +253,53 @@ return switch (provider) {
 registry 를 만들어 `modelCapabilityRegistry(...)` 로 넘기고, `llm.reasoningEffort` 가 있으면 그대로 넘긴다
 (`anthropicConfig(...)` · `openAiConfig(...)`).
 
+#### provider 를 바꿀 때 — `agent.name` 도 함께 바꾼다
+
+에이전트 요청마다 실리는 모델 이름은 `llm:` 블록이 아니라 **에이전트 정의**에서 온다. `agent.name` 이 클래스패스
+번들 `agents/<name>/` 을 고르고, 두 클라이언트는 모두 `modelConfig.getName().orElse(config.getModel())` 을
+보낸다 — 정의에 `model.name` 이 있으면 그것이 `llm.model` 을 이기며, 번들로 들어 있는 정의는 전부 그것을 적고
+있다. 배포된 설정의 `agent.name: default` 는 OpenAI 모델을 적는다(메인 에이전트 `gpt-5.6-terra`, `explore`
+서브에이전트 `gpt-5.1`). 그래서 `llm:` 블록만 Anthropic 으로 고치면 그 이름들이 Anthropic 으로 나가고, Anthropic
+Messages API 는 2026-09-10 에 `gpt-5.6-terra` 에 HTTP 404 `not_found_error` 를 돌려주었다.
+
+Anthropic 으로 바꾼 설정은 이렇다.
+
+```yaml
+llm:
+  provider: anthropic
+  apiKey: "${ANTHROPIC_KEY}"
+  model: claude-sonnet-4-5
+agent:
+  name: default-anthropic
+```
+
+`default-anthropic` 의 `explore` 서브에이전트는 `model: haiku` 를 적고 있고 이 이름은 별칭 해석 없이 그대로
+전송되는데, Anthropic Messages API 는 2026-09-10 에 `haiku` 에 HTTP 404 `not_found_error` 를 돌려주었다(백로그
+L-17).
+
+함께 바꾸는 키는 다섯이다.
+
+- `provider`
+- `apiKey` — 그 벤더의 키
+- `baseUrl` — 지운다. 배포된 파일이 OpenAI 의 호스트를 적고 있으므로, 남겨 두면 요청이 계속 그 호스트로 간다
+- `model` — 에이전트의 모델은 아니지만 아래 문단의 자리들이 여전히 쓰므로, OpenAI 이름을 남겨 두면 메모리와 위키 생성이 그 이름을 Anthropic 으로 보낸다
+- `agent.name`
+
+`llm.model` 이 여전히 닿는 곳은 peer memory(dialectic 엔진 · deriver · reconciler, 그리고
+`memory.dreamer.scorer.llm.model` 이 없으면 dreamer 와 그 LLM 판정기), 위키 페이지 생성, 그리고 시작 배너가
+`LLM Provider: <provider> (<model>)` 로 찍는 이름이다 — **배너의 괄호 안은 에이전트의 모델이 아니라 `llm.model`
+이다.** `model.name` 이 없는 정의는 이 값으로 돈다. anthropic 에서는 생략할 수 있고 그러면 배너에 클라이언트
+기본값 `claude-sonnet-4-20250514` 가 나오지만, `memory` 를 켰다면 이 값이 없을 때 기동이 실패한다.
+
+불러온 정의가 다른 벤더의 모델을 적고 있으면 시작할 때 **경고한다 — 기동을 멈추지는 않는다.** 배포된 `default`
+에이전트라면 `provider: anthropic` 에서 `baseUrl` 이 없거나, Anthropic 의 호스트이거나, 배포된 파일에서 남은
+OpenAI 의 호스트일 때 뜬다. 그 밖의 `baseUrl` 뒤에서는 조용하고, 어느 벤더도 제 것이라 하지 않는 이름에도
+조용하다 — 위의 `haiku` 도 여기에 든다. 경고는 배너보다 먼저 터미널에 찍히고 `~/.aimon/logs/aimon.log` 에도
+남는다. 줄마다 정의의 키(메인 에이전트는 `model.name`, 서브에이전트는 `model`)와 그것을 읽은 자리를 적는다 —
+번들 파일은 `classpath` 로, 사용자 서브에이전트는 CLI 작업 디렉토리 아래의 절대 경로로. 그 디렉토리는 jar 가
+있는 디렉토리이고 jar 로 돌리지 않으면 `user.dir` 이며(`./gradlew :aimon-cli:run` 에서는 `modules/aimon-cli`),
+배너의 `Working Directory:` 줄이 그 값이다. 처방은 무언가를 실제로 바꾸는 것만 내놓는다.
+
 #### 모델이 얼마나 생각할지 — `llm.reasoningEffort`
 
 ```yaml
