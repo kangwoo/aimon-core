@@ -183,7 +183,7 @@ public final class SubagentExecutionEnvironment {
      * When present and non-blank it takes priority over the subagent's own {@code model} frontmatter and the
      * {@link #getDefaultModel() default model} during model resolution.
      *
-     * @return an {@link Optional} holding the override alias, or empty when none was supplied
+     * @return an {@link Optional} holding the override, a model name sent as written, or empty when none was supplied
      */
     public Optional<String> getModelOverride() {
         return Optional.ofNullable(modelOverride);
@@ -504,11 +504,11 @@ public final class SubagentExecutionEnvironment {
         }
 
         /**
-         * Sets the per-invocation model override alias (the {@code Task} tool's {@code model} argument). When non-null
-         * and non-blank it takes priority over the subagent frontmatter model and the default model.
+         * Sets the per-invocation model name (the {@code Task} tool's {@code model} argument), sent as written. When
+         * non-null and non-blank it takes priority over the subagent frontmatter model and the default model.
          *
          * @param modelOverride
-         *            the override alias (nullable; ignored when null/blank)
+         *            the per-invocation model name, sent as written (nullable; ignored when null/blank)
          * @return This builder
          */
         public Builder modelOverride(String modelOverride) {

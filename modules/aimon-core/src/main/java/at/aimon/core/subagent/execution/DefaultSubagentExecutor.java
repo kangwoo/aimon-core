@@ -786,7 +786,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * @param defaultConfig
      *            The default model config to use as fallback
      * @param modelOverride
-     *            The per-invocation model alias (nullable/blank = ignored), highest priority when present
+     *            The per-invocation model name, sent as written (nullable/blank = ignored), highest priority when set
      * @return An LlmModel
      */
     private LlmModel buildModelConfig(Subagent subagent, LlmModel defaultConfig, String modelOverride) {
