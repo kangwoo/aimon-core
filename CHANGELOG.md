@@ -7,6 +7,26 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Release gate: an edit to the `/release` skill re-runs the tests that read it, and the documents name the gate's tasks
+
+- **`.claude/skills/release/SKILL.md` is an input of `aimon-core`'s `test` task** (#131). `ReleaseGateMatchesCiGateTest`
+  reads it in two tests — that the skill names the tasks `scripts/release.sh` gates a release on, and that no line of
+  it calls a gated tier opt-in — but the file was not declared, so a local build whose only change was to the skill
+  reported `:aimon-core:test` `UP-TO-DATE` and ran neither test; CI, which builds from a fresh checkout, ran both.
+  Measured with an earlier revision of the skill that both tests fail on: `UP-TO-DATE` before the declaration; after
+  it, the task executed and failed exactly those two. **The price:** a build after an edit to the skill alone also runs
+  `aimon-core`'s suite (measured: `:aimon-core:test --rerun` ran 8201 tests in 36s).
+- **Documentation.** `docs/project/publishing-guide.md`'s quality-gate row said the gate is `checkAll`, the same task
+  CI runs. It now names the five tasks the script runs in one invocation, says CI runs the same tasks as steps of three
+  jobs, and says `integrationTest` is why pre-flight checks for a Docker daemon. `CLAUDE.md` and
+  `.claude/rules/testing.md` name all three tags `test` excludes, as `CONTRIBUTING.md` does. The design is
+  `docs/design/llm/release-gate-docs-and-skill-input.md`.
+- **Wording.** The key census's failure message says what it compares — the provider modules' key gates against the
+  keys the refusal cases run the script with — where it said the script refuses that list. The test's *What this
+  cannot see* limits its `UP-TO-DATE` sentence to modules whose test sources are not inputs. #90's bullet under *Build,
+  CI and the release gate* limits its "only" to the two provider modules it is about: `aimon-browser-playwright` had
+  excluded `playwright` since before that bullet was written.
+
 ### Docs CI: the two doc checks write down where they read headings differently, and the link check pins its side
 
 - **Where the link check and the backlog check read a heading differently is written down** (#121), in
@@ -2102,9 +2122,9 @@ Central is versioned independently).
 
 - **An exported provider key opts that provider's live classes into every ordinary build, and
   `CONTRIBUTING.md` now says so** (#90). The environment variable is the tier's only gate — the four
-  classes carry no tag, and `test` excludes only `docker` and `packaging` — so while `OPENAI_KEY` or
-  `ANTHROPIC_KEY` is exported, `./gradlew test` and `checkAll` run that provider's live classes each time
-  the module's `test` task executes, and those runs bill. Measured without a real key: with the variable
+  classes carry no tag, and in their two modules `test` excludes only `docker` and `packaging` — so while
+  `OPENAI_KEY` or `ANTHROPIC_KEY` is exported, `./gradlew test` and `checkAll` run that provider's live classes
+  each time the module's `test` task executes, and those runs bill. Measured without a real key: with the variable
   set to a deliberately invalid value, the plain `:aimon-llm-openai:test` executed its 17 live tests and
   failed 16 on HTTP 401, and `:aimon-llm-anthropic:test` executed its 25 and failed 24 — both builds red.
   The same commands without the variable skipped all 42 and stayed green, and repeating a keyed command
