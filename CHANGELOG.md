@@ -2102,9 +2102,9 @@ Central is versioned independently).
 
 - **An exported provider key opts that provider's live classes into every ordinary build, and
   `CONTRIBUTING.md` now says so** (#90). The environment variable is the tier's only gate — the four
-  classes carry no tag, and `test` excludes only `docker` and `packaging` — so while `OPENAI_KEY` or
-  `ANTHROPIC_KEY` is exported, `./gradlew test` and `checkAll` run that provider's live classes each time
-  the module's `test` task executes, and those runs bill. Measured without a real key: with the variable
+  classes carry no tag, and in their two modules `test` excludes only `docker` and `packaging` — so while
+  `OPENAI_KEY` or `ANTHROPIC_KEY` is exported, `./gradlew test` and `checkAll` run that provider's live classes
+  each time the module's `test` task executes, and those runs bill. Measured without a real key: with the variable
   set to a deliberately invalid value, the plain `:aimon-llm-openai:test` executed its 17 live tests and
   failed 16 on HTTP 401, and `:aimon-llm-anthropic:test` executed its 25 and failed 24 — both builds red.
   The same commands without the variable skipped all 42 and stayed green, and repeating a keyed command
