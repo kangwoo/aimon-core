@@ -150,7 +150,7 @@ jtokkit = "1.1.0"
 # GraalJS (Phase 5 workflow frontend). JDK-17 line: 23.0.x is the last GraalVM-for-JDK-17
 # release train (23.1+ requires JDK 21). Upgrade seam: on a JDK-21 baseline, bump to 24.x and swap
 # graal-sdk -> org.graalvm.polyglot:polyglot, js -> org.graalvm.polyglot:js-community@pom.
-graaljs = "23.0.8"
+graaljs = "25.3.4.1"
 
 # Search
 opensearch = "2.20.0"
