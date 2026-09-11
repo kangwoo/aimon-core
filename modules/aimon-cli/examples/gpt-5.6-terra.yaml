@@ -1,7 +1,10 @@
 # aimon-cli -- gpt-5.6-terra (OpenAI reasoning model) example
 #
-#   export OPENAI_KEY=sk-...
-#   ./gradlew :aimon-cli:run --args="--config modules/aimon-cli/examples/gpt-5.6-terra.yaml"
+#   OPENAI_KEY=sk-... ./gradlew :aimon-cli:run --args="--config modules/aimon-cli/examples/gpt-5.6-terra.yaml"
+#
+# The key goes on the command rather than being exported, on purpose: while a provider key is exported,
+# `./gradlew test` and `checkAll` in that shell can run the live-API tests too, and those calls bill.
+# See CONTRIBUTING.md › Live-API tests.
 #
 # Key reference: docs/getting-started/aimon-core-integration-via-cli-reference.md
 # (commented default: modules/aimon-cli/src/main/resources/default-config.yaml)

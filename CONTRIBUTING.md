@@ -55,7 +55,7 @@ If you're new and want a place to start, look for issues labeled `good first iss
 ### Test
 
 ```bash
-./gradlew test                                                        # All unit tests (excludes @Tag("docker"))
+./gradlew test                                                        # All unit tests (excludes @Tag("docker"), @Tag("packaging") and @Tag("playwright"))
 ./gradlew :aimon-core:test                                            # Single module
 ./gradlew :aimon-core:test --tests "at.aimon.core.agent.tool.*Test"   # Glob pattern
 ./gradlew :aimon-core:test --tests "at.aimon.core.agent.tool.ToolInputTest"  # Single class
@@ -125,8 +125,11 @@ Before pushing:
 ```
 
 `checkAll` is the single gate: it runs the format check, Checkstyle, **and** each module's `test`
-task. A separate `./gradlew test` is no longer needed. Docker/Testcontainers tests stay out of it —
-they are tagged `@Tag("docker")` and run via `./gradlew integrationTest`.
+task. A separate `./gradlew test` is no longer needed. Three tagged tiers stay out of it, because
+`test` excludes them: `@Tag("docker")` (Docker/Testcontainers) and `@Tag("packaging")` (fat-jar
+launches), which the conventions plugin excludes in every module, and `@Tag("playwright")` (a real
+browser), which `aimon-browser-playwright` excludes as well. They run via `./gradlew integrationTest`,
+`./gradlew packagingTest` and `./gradlew playwrightTest`, and CI and the release gate run all three.
 
 When a check fails, the HTML reports say why:
 
