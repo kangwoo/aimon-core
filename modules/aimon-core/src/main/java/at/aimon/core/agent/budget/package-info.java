@@ -13,8 +13,11 @@
  * <li>{@link at.aimon.core.agent.budget.BudgetTracker} — per-execution counter store that decides when a dimension
  * has been exhausted
  * <li>{@link at.aimon.core.agent.budget.BudgetDecision} — tracker verdict consumed by the ReAct loop driver
- * <li>{@link at.aimon.core.agent.budget.TruncatedResponses} — how both ReAct loops treat a response cut off at
+ * <li>{@link at.aimon.core.agent.budget.TruncatedResponses} — how every tool loop treats a response cut off at
  * {@code max_tokens}: the marker on a partial answer, the refusal of its tool calls, and the WARN's reasoning clause
+ * <li>{@link at.aimon.core.agent.budget.StalledIterationGuard} — the death-spiral guard a turn, a fork and a skill's
+ * loop share: consecutive iterations whose tool calls all failed stop the loop, with a stop message that names
+ * {@code max_tokens} when every one of them was a refused cut response
  * </ul>
  *
  * <p>

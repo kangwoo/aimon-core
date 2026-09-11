@@ -602,6 +602,15 @@ public class TaskTool extends AbstractTool {
     /**
      * Formats the subagent execution result for display.
      *
+     * <p>
+     * When the subagent did not finish on its own terms, a {@code Completion reason:} line follows the result. For a
+     * final answer cut off at {@code max_tokens} it is what says, besides the marker at the end of the answer, that a
+     * {@code Status: SUCCESS} result is incomplete ({@link SubagentExecutionResult#getCompletionReason()}). It goes
+     * <em>after</em> the result, never beside {@code Status:}: {@code aimon-cli}'s {@code SubagentResultDisplayHook}
+     * parses this block and accepts nothing but whitespace between {@code Status:} and {@code Result:}, so a line
+     * there would silently stop the CLI rendering subagent results. A {@code COMPLETED} result reads exactly as it
+     * always has.
+     *
      * @param result
      *            The subagent execution result
      * @param subagentName
@@ -626,6 +635,15 @@ public class TaskTool extends AbstractTool {
         // pointer.
         output.append("Result:").append(Constants.NEWLINE);
         output.append(SubagentResultFormatter.truncateTailKeep(result.getSummary(), null)).append(Constants.NEWLINE);
+
+        if (!result.getCompletionReason().isSuccessful()) {
+            output.append("Completion reason: ").append(result.getCompletionReason().name());
+            if (result.isSuccess()) {
+                // It answered, but not on its own terms: the answer is here and it is not whole.
+                output.append(" (the subagent's final answer is incomplete)");
+            }
+            output.append(Constants.NEWLINE);
+        }
 
         return output.toString();
     }

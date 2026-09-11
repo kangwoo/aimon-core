@@ -8,7 +8,12 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import at.aimon.core.agent.ExecutionId;
+import at.aimon.core.agent.budget.StalledIterationGuard;
+import at.aimon.core.agent.budget.TruncatedResponses;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.tool.SideEffectLevel;
@@ -61,8 +66,20 @@ import at.aimon.core.tools.ToolContextKeys;
  * (rendered body).
  * <li>Filter tools by {@link Skill#hasToolRestrictions() declared restrictions}.
  * <li>Call the LLM. Loop while the response contains tool uses, executing tools and feeding results back.
- * <li>Stop when the loop finishes naturally or {@code max-iterations} is reached.
+ * <li>Stop when the loop finishes naturally, {@code max-iterations} is reached, or
+ * {@link StalledIterationGuard#MAX_CONSECUTIVE_STALLED_ITERATIONS} iterations in a row had every tool call fail.
  * </ol>
+ *
+ * <p>
+ * <b>A response cut off at {@code max_tokens}.</b> This loop gives the answers both agent executors give
+ * ({@link TruncatedResponses}). None of a cut response's tool calls is dispatched, on either path below: each is
+ * answered with {@link TruncatedResponses#refusal(ToolUse)}, because a cut call's arguments did not arrive and the
+ * response does not say which call was cut. A cut final answer comes back as a success whose text ends with
+ * {@link TruncatedResponses#TRUNCATION_MARKER} — a skill result has no completion reason, and that is how a fork-mode
+ * skill's cut answer already reads. Both log a WARN naming the skill. The executors' stalled-iteration guard
+ * ({@link StalledIterationGuard}) stops this loop too, so a streak of refused or failing calls fails the skill with the
+ * guard's stop message instead of running to {@code max-iterations}; nothing else could stop it, because a slash
+ * command cannot be interrupted.
  *
  * <p>
  * <b>How tool calls leave this loop.</b> Step 5 does not call the {@link ToolExecutionManager} directly when the caller
@@ -85,6 +102,8 @@ import at.aimon.core.tools.ToolContextKeys;
  * @see at.aimon.core.skill.render.DefaultSkillContentRenderer
  */
 public class LlmSkillExecutor implements SkillExecutor {
+
+    private static final Logger log = LoggerFactory.getLogger(LlmSkillExecutor.class);
 
     private final LlmClient llmClient;
     private final SkillContentRenderer renderer;
@@ -188,12 +207,19 @@ public class LlmSkillExecutor implements SkillExecutor {
 
             int iterationCount = 0;
             final int maxIterations = skill.getMetadata().getMaxIterations();
+            // The death-spiral guard both agent executors stop on. A slash command cannot be interrupted, so without it
+            // a skill whose calls keep failing — or keep being refused at max_tokens — runs to max-iterations.
+            final StalledIterationGuard stalledIterationGuard = new StalledIterationGuard();
             while (currentResponse.hasToolUses()) {
                 if (iterationCount >= maxIterations) {
                     final SkillExecutionMetadata metadata = buildMetadata(iterationCount, accumulatedTokens, startTime);
                     final String errorMsg = "Max tools execution iterations (" + maxIterations + ") exceeded";
                     return SkillExecutionResult.failure(errorMsg, new IllegalStateException(errorMsg), metadata);
                 }
+
+                // A response cut off at max_tokens is read once, here: its tool calls are refused rather than
+                // dispatched, the answer both agent executors give (TruncatedResponses).
+                final boolean truncated = TruncatedResponses.isTruncated(currentResponse);
 
                 final Message assistantMessage = Message
                         .assistant(currentResponse.getTextContent(), currentResponse.getToolUses())
@@ -204,16 +230,39 @@ public class LlmSkillExecutor implements SkillExecutor {
                 // Use the real execution ToolContext (principal, agent runtime id, filesystem, ...) — the same one
                 // the fork path forwards — rather than an empty context, so user-invoked skill tools run with identity
                 // and environment. SkillExecutionContext guarantees a non-null ToolContext (defaults to empty).
-                final List<ToolUseResult> toolResults = toolDispatcher.dispatch(toolRegistry, context.getToolContext(),
-                        currentResponse.getToolUses(), allowedTools, iterationCount);
+                final List<ToolUseResult> toolResults = truncated
+                        ? refuseTruncatedToolUses(skill, currentResponse, iterationCount)
+                        : toolDispatcher.dispatch(toolRegistry, context.getToolContext(), currentResponse.getToolUses(),
+                                allowedTools, iterationCount);
 
                 final Message toolResultMessage = Message.toolUseResults(toolResults);
                 transcriptBuffer.addMessage(toolResultMessage);
+
+                // Before the next call, so a stalled skill spends no further request on the streak.
+                if (stalledIterationGuard.recordToolIteration(toolResults, truncated)) {
+                    return stalledFailure(skill, stalledIterationGuard, iterationCount + 1, accumulatedTokens,
+                            startTime);
+                }
 
                 currentResponse = llmClient.sendMessage(transcriptBuffer.getSystemPrompt(),
                         transcriptBuffer.getMessages(), filteredTools, context.getDefaultModel());
                 accumulatedTokens = accumulatedTokens.add(currentResponse.getTokenUsage());
                 iterationCount++;
+            }
+
+            // A final answer cut off at max_tokens is not a clean one. Keep the partial text — a failure's response
+            // would be an error message instead — and mark it with the marker the executors put on a TRUNCATED answer.
+            if (TruncatedResponses.isTruncated(currentResponse)) {
+                final String flaggedAnswer = currentResponse.getTextContent() + TruncatedResponses.TRUNCATION_MARKER;
+                log.warn(
+                        "Skill '{}' final answer truncated at max_tokens after {} tool iterations; returning flagged "
+                                + "partial answer{}",
+                        skill.getName(), iterationCount,
+                        TruncatedResponses.reasoningClause(currentResponse.getTokenUsage()));
+                transcriptBuffer.addMessage(
+                        Message.assistant(flaggedAnswer).withReasoningTraces(currentResponse.getReasoningTraces()));
+                return SkillExecutionResult.success(flaggedAnswer,
+                        buildMetadata(iterationCount, accumulatedTokens, startTime));
             }
 
             // addAssistantMessage(String) cannot carry traces, and this buffer is discarded at the return below, so
@@ -233,6 +282,66 @@ public class LlmSkillExecutor implements SkillExecutor {
             final SkillExecutionMetadata metadata = buildMetadata(0, accumulatedTokens, startTime);
             return SkillExecutionResult.failure(e, metadata);
         }
+    }
+
+    /**
+     * Answers every tool call of a response the provider cut off at {@code max_tokens} with
+     * {@link TruncatedResponses#refusal(ToolUse)} instead of dispatching it — the answer both agent executors give, for
+     * the same reason: a cut call's arguments did not arrive, and the response does not say which call was cut.
+     *
+     * <p>
+     * Nothing on either dispatch path runs for these calls: no PermissionRequest, PreTool or PostTool hook, no
+     * approval gate, no allow-list check and no tool. Unlike a turn's refused call, a person watching the REPL sees
+     * nothing of it either, because this path emits no lifecycle event for any call; the WARN is where an operator
+     * reads it, and the stop message is where the person running the skill does once a streak of refusals ends it.
+     *
+     * @param skill
+     *            the running skill, named in the WARN
+     * @param response
+     *            the cut response whose tool calls are refused
+     * @param iterationCount
+     *            the number of tool iterations completed before this one (the WARN names it 1-based)
+     * @return one error result per tool call, in the response's order (never null)
+     */
+    private static List<ToolUseResult> refuseTruncatedToolUses(Skill skill, LlmResponse response, int iterationCount) {
+        final List<ToolUse> toolUses = response.getToolUses();
+        log.warn(
+                "Skill '{}' response truncated at max_tokens in iteration {} with tool calls {}: none of them is run; "
+                        + "each is answered with an error result{}",
+                skill.getName(), iterationCount + 1, toolUses.stream().map(ToolUse::getName).toList(),
+                TruncatedResponses.reasoningClause(response.getTokenUsage()));
+        return toolUses.stream().map(TruncatedResponses::refusal).toList();
+    }
+
+    /**
+     * The failure of a skill the stalled-iteration guard stopped.
+     *
+     * <p>
+     * The response is the guard's stop message ({@link StalledIterationGuard#stopMessage()}), which names
+     * {@code max_tokens} when every iteration of the streak was a refused cut response; it is what the turn commits and
+     * what a person running the skill reads. The WARN does not name {@code max_tokens}, so each cut response keeps the
+     * one WARN that does.
+     *
+     * @param skill
+     *            the stopped skill, named in the WARN
+     * @param guard
+     *            the guard that tripped
+     * @param toolIterations
+     *            the tool iterations completed, the one that tripped the guard included
+     * @param tokens
+     *            the run's accumulated token usage
+     * @param startTime
+     *            when the run started
+     * @return the failure result (never null)
+     */
+    private static SkillExecutionResult stalledFailure(Skill skill, StalledIterationGuard guard, int toolIterations,
+            TokenUsage tokens, Instant startTime) {
+        log.warn(
+                "Skill '{}' stalled-iteration guard tripped: consecutiveStalledIterations={}, iterations={}, tokens={}",
+                skill.getName(), guard.getConsecutiveStalledIterations(), toolIterations, tokens.getTotalTokens());
+        final String message = guard.stopMessage();
+        return SkillExecutionResult.failure(message, new IllegalStateException(message),
+                buildMetadata(toolIterations, tokens, startTime));
     }
 
     /**

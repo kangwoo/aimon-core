@@ -24,6 +24,8 @@ import org.mockito.ArgumentCaptor;
 
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.Environment;
+import at.aimon.core.agent.budget.CompletionReason;
+import at.aimon.core.agent.budget.TruncatedResponses;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.tool.ToolContext;
@@ -364,6 +366,61 @@ class TaskToolTest {
 
         assertThat(result.isError()).isTrue();
         assertThat(result.getContent()).contains("Invalid parameter");
+    }
+
+    // --- Completion reason (#117) ------------------------------------------------------------------
+
+    @Test
+    void executeNamesTheCompletionReasonAfterTheResultWhenTheForksAnswerWasCut() {
+        final String partial = "The module has three packages: api, impl, and" + TruncatedResponses.TRUNCATION_MARKER;
+        when(executionManager.execute(any(SubagentExecutionEnvironment.class), anyString(), eq("Explore"),
+                eq("Find auth files"), eq("auth")))
+                .thenReturn(SubagentExecutionResult.success(partial, emptySnapshot(), metadata(),
+                        CompletionReason.TRUNCATED));
+
+        ToolResult result = tool.execute(validInput(), contextWithId());
+
+        assertThat(result.isSuccess()).isTrue();
+        // aimon-cli's SubagentResultDisplayHook parses this block and allows nothing but whitespace between Status: and
+        // Result:, so the header stays contiguous and the reason comes after the result.
+        assertThat(result.getContent()).contains("Status: SUCCESS\nIterations: 3\nTokens: 300\n\nResult:\n")
+                .endsWith(partial + "\nCompletion reason: TRUNCATED (the subagent's final answer is incomplete)\n");
+    }
+
+    @Test
+    void executeLeavesACompletedResultExactlyAsItWas() {
+        when(executionManager.execute(any(SubagentExecutionEnvironment.class), anyString(), eq("Explore"),
+                eq("Find auth files"), eq("auth"))).thenReturn(successResult());
+
+        ToolResult result = tool.execute(validInput(), contextWithId());
+
+        assertThat(result.getContent()).isEqualTo("=== Subagent Task Result ===\nSubagent: Explore\nTask: auth\n"
+                + "Status: SUCCESS\nIterations: 3\nTokens: 300\n\nResult:\ndone\n");
+    }
+
+    @Test
+    void executeNamesTheCompletionReasonOfAFailedForkWithNoGloss() {
+        final String stopMessage = "Execution aborted: 3 consecutive tool-only iterations made no progress (all tool "
+                + "calls failed)";
+        when(executionManager.execute(any(SubagentExecutionEnvironment.class), anyString(), eq("Explore"),
+                eq("Find auth files"), eq("auth")))
+                .thenReturn(SubagentExecutionResult.failure(stopMessage, emptySnapshot(), metadata(),
+                        CompletionReason.ERROR));
+
+        ToolResult result = tool.execute(validInput(), contextWithId());
+
+        assertThat(result.getContent()).contains("Status: FAILURE\n")
+                .endsWith(stopMessage + "\nCompletion reason: ERROR\n").doesNotContain("incomplete");
+    }
+
+    private static SessionSnapshot emptySnapshot() {
+        return SessionSnapshot.of(SessionId.generate(), "sys", List.of());
+    }
+
+    private static ExecutionMetadata metadata() {
+        Instant now = Instant.now();
+        return ExecutionMetadata.builder().iterationCount(3).tokenUsage(TokenUsage.of(100, 200, 300))
+                .timestamps(now, now).build();
     }
 
     // --- Foreground result truncation ------------------------------------------------------------

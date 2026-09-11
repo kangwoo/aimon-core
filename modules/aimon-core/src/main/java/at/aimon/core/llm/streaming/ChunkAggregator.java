@@ -12,6 +12,7 @@ import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -292,9 +293,25 @@ public final class ChunkAggregator {
             final Map<String, Object> parsed = OBJECT_MAPPER.readValue(json, MAP_TYPE);
             return parsed == null ? Map.of() : parsed;
         } catch (Exception e) {
-            log.warn("Failed to parse accumulated tool_call arguments as JSON: {} (json={})", e.getMessage(), json);
+            // Neither the arguments nor e.getMessage(): the arguments hold whatever the call carried — a file body, a
+            // command line — and Jackson copies the offending token into its message. The failure's type, where
+            // parsing stopped and the length say what a cut or malformed call looks like without either.
+            log.warn("Failed to parse accumulated tool_call arguments as JSON: {}{} ({} chars); the arguments are not "
+                    + "logged", e.getClass().getSimpleName(), offsetClause(e), json.length());
             return new HashMap<>();
         }
+    }
+
+    /**
+     * {@code " at offset N"} when the parse failure carries a known character offset, otherwise {@code ""}. Jackson
+     * reports {@code -1} for an offset it does not know, and "at offset -1" would read as a fact.
+     */
+    private static String offsetClause(Exception e) {
+        if (e instanceof JsonProcessingException parseFailure && parseFailure.getLocation() != null
+                && parseFailure.getLocation().getCharOffset() >= 0) {
+            return " at offset " + parseFailure.getLocation().getCharOffset();
+        }
+        return "";
     }
 
     private static final class ToolCallAccumulator {

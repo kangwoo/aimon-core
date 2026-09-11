@@ -47,6 +47,11 @@ import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
+import at.aimon.core.hook.HookEventType;
+import at.aimon.core.hook.event.PermissionRequestHook;
+import at.aimon.core.hook.event.PostToolHook;
+import at.aimon.core.hook.event.PreToolHook;
+import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmCancellation;
 import at.aimon.core.llm.LlmClient;
@@ -238,6 +243,39 @@ class OrcaAgentExecutorTruncationTest {
         // One WARN per cut response, each naming max_tokens; the guard's own WARN does not.
         assertThat(warnings()).filteredOn(warning -> warning.contains("max_tokens"))
                 .hasSize(OrcaAgentExecutor.MAX_CONSECUTIVE_STALLED_ITERATIONS);
+        // The stop message is what a reader of the ERROR sees, and a streak made only of refusals says why (#115).
+        assertThat(result.getErrorMessage()).endsWith(
+                "(all tool calls failed) — each of those responses was cut off at max_tokens, and its tool calls were "
+                        + "refused");
+    }
+
+    @Test
+    @DisplayName("no PermissionRequest, PreTool or PostTool hook runs for a refused call; the same call uncut reaches all three")
+    void noHookRunsForARefusedCall() {
+        // Pins what #113's CHANGELOG entry says and aRefusedCallStillEmitsItsLifecycleEvents only stated in a comment
+        // (#117). The uncut iteration is the positive control: without it, 0 could mean "not wired" as easily as
+        // "not reached".
+        final HookCounters hooks = new HookCounters();
+        final CountingTool tool = new CountingTool();
+        final SequencedLlmClient llmClient = new SequencedLlmClient();
+        llmClient.enqueue(LlmResponse.of("", List.of(ToolUse.of("tu-1", CountingTool.TOOL_NAME, Map.of())), USAGE,
+                StopReason.MAX_TOKENS));
+        llmClient.enqueue(LlmResponse.of("", List.of(ToolUse.of("tu-2", CountingTool.TOOL_NAME, Map.of())), USAGE,
+                StopReason.TOOL_USE));
+        llmClient.enqueue(LlmResponse.of("done", List.of(), USAGE, StopReason.END_TURN));
+        final List<List<Integer>> reachedBeforeEachCall = new ArrayList<>();
+        llmClient.beforeEachCall = () -> reachedBeforeEachCall.add(hooks.andTool(tool.invocations));
+
+        final OrcaAgentExecutionResult result = createExecutor(llmClient)
+                .execute(createContext(registryWith(tool), hooks.registry), request());
+
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.COMPLETED);
+        // [PermissionRequest, PreTool, PostTool, tool] before each LLM call: after the cut iteration, then the uncut
+        // one.
+        assertThat(reachedBeforeEachCall).containsExactly(List.of(0, 0, 0, 0), List.of(0, 0, 0, 0),
+                List.of(1, 1, 1, 1));
+        assertThat(lastToolResults(llmClient.seen.get(1))).singleElement().satisfies(
+                answer -> assertThat(answer.getContent()).isEqualTo(TruncatedResponses.REFUSED_TOOL_CALL_MESSAGE));
     }
 
     @Test
@@ -376,12 +414,16 @@ class OrcaAgentExecutorTruncationTest {
     }
 
     private OrcaAgentRuntime createContext(DefaultToolRegistry toolRegistry) {
+        return createContext(toolRegistry, new DefaultHookRegistry());
+    }
+
+    private OrcaAgentRuntime createContext(DefaultToolRegistry toolRegistry, DefaultHookRegistry hookRegistry) {
         final LocalFileSystem fileSystem = new LocalFileSystem(new LocalFileSystemConfig(tempDir.toString()));
         fileSystem.initialize();
         return OrcaAgentRuntime.builder()
                 .agent(DefaultAgent.builder().name("TestAgent").maxIterations(10).systemPrompt("You are a test agent")
                         .build())
-                .toolRegistry(toolRegistry).hookRegistry(new DefaultHookRegistry())
+                .toolRegistry(toolRegistry).hookRegistry(hookRegistry)
                 .commandRegistry(new DefaultCommandRegistry(fileSystem, ".aimon/commands"))
                 .subagentRegistry(new DefaultSubagentRegistry(fileSystem, ".aimon/agents"))
                 .skillRegistry(new DefaultSkillRegistry(fileSystem, ".aimon/skills")).fileSystem(fileSystem)
@@ -423,6 +465,9 @@ class OrcaAgentExecutorTruncationTest {
         private final List<LlmResponse> responses = new ArrayList<>();
         private final List<List<Message>> seen = new ArrayList<>();
         private Duration delayBeforeResponse = Duration.ZERO;
+        /** Runs at the start of every call, so a test can read what the previous iteration reached. */
+        private Runnable beforeEachCall = () -> {
+        };
 
         void enqueue(LlmResponse response) {
             responses.add(response);
@@ -441,6 +486,7 @@ class OrcaAgentExecutorTruncationTest {
         @Override
         public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
                 LlmModel modelConfig, LlmCallMetadata metadata) {
+            beforeEachCall.run();
             seen.add(List.copyOf(messages));
             if (!delayBeforeResponse.isZero()) {
                 try {
@@ -500,6 +546,34 @@ class OrcaAgentExecutorTruncationTest {
         @Override
         public String getProviderName() {
             return "Streaming";
+        }
+    }
+
+    /** Counts PermissionRequest, PreTool and PostTool invocations on a hook registry of its own. */
+    private static final class HookCounters {
+        final AtomicInteger permissionRequest = new AtomicInteger();
+        final AtomicInteger preTool = new AtomicInteger();
+        final AtomicInteger postTool = new AtomicInteger();
+        final DefaultHookRegistry registry = new DefaultHookRegistry();
+
+        HookCounters() {
+            registry.register(HookEventType.PERMISSION_REQUEST, (PermissionRequestHook) context -> {
+                permissionRequest.incrementAndGet();
+                return HookResult.success();
+            });
+            registry.register(HookEventType.PRE_TOOL, (PreToolHook) context -> {
+                preTool.incrementAndGet();
+                return HookResult.success();
+            });
+            registry.register(HookEventType.POST_TOOL, (PostToolHook) context -> {
+                postTool.incrementAndGet();
+                return HookResult.success();
+            });
+        }
+
+        /** {@code [PermissionRequest, PreTool, PostTool, tool]} as they read now. */
+        List<Integer> andTool(AtomicInteger toolInvocations) {
+            return List.of(permissionRequest.get(), preTool.get(), postTool.get(), toolInvocations.get());
         }
     }
 

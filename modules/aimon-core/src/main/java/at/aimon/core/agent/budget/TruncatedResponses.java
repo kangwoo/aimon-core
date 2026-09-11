@@ -13,22 +13,27 @@ import at.aimon.core.llm.ToolUseResult;
  * ({@link StopReason#MAX_TOKENS}).
  *
  * <p>
- * One definition for both ReAct loops — {@code OrcaAgentExecutor}, which runs a turn, and
- * {@code DefaultSubagentExecutor}, which runs a fork — so the two cannot give different answers to the same stop
- * reason. It lives beside {@link CompletionReason} rather than on the main executor because the fork may not
- * reference {@code at.aimon.core.agent.impl}.
+ * One definition for all four tool loops in the tree — {@code OrcaAgentExecutor}, which runs a turn,
+ * {@code DefaultSubagentExecutor}, which runs a fork, {@code LlmSkillExecutor}, which runs a skill's own loop, and
+ * {@code ReActLlmDeriver} — so they cannot give different answers to the same stop reason. It lives beside
+ * {@link CompletionReason} rather than on the main executor because the fork may not reference
+ * {@code at.aimon.core.agent.impl}.
  *
  * <p>
- * A cut response comes in two shapes, and both loops answer each the same way:
+ * A cut response comes in two shapes:
  *
  * <ul>
- * <li><b>A final answer</b>, with no tool calls. The execution ends as {@link CompletionReason#TRUNCATED}: the partial
- * text with {@link #TRUNCATION_MARKER} appended, and a WARN.
- * <li><b>A response with tool calls.</b> None of them is run. Each is answered with {@link #refusal(ToolUse)}, the
- * results are committed as executed results are (every {@code tool_use} must be answered), and the loop continues. A
- * call cut short still arrives as a tool call — a streamed {@code tool_use} is registered when its block starts, and
- * arguments that never finished parse to an empty map — and the neutral {@link LlmResponse} does not say which call was
- * cut. Running any of them risks running one with none of the arguments the model was writing.
+ * <li><b>A final answer</b>, with no tool calls. On the two executors the execution ends as
+ * {@link CompletionReason#TRUNCATED}: the partial text with {@link #TRUNCATION_MARKER} appended, and a WARN. A skill's
+ * loop returns the same marked text as its result, which carries no completion reason. The deriver returns observations
+ * rather than text, so it has no answer to mark.
+ * <li><b>A response with tool calls.</b> None of them is run, on any of the four loops. Each is answered with
+ * {@link #refusal(ToolUse)}, the results are committed as executed results are (every {@code tool_use} must be
+ * answered), and the loop continues — on a turn, a fork and a skill's loop until {@link StalledIterationGuard} ends a
+ * streak of them. A call cut short still arrives as a tool call — a streamed {@code tool_use} is registered when its
+ * block starts, and arguments that never finished parse to an empty map — and the neutral {@link LlmResponse} does
+ * not say which call was cut. Running any of them risks running one with none of the arguments the model was
+ * writing.
  * </ul>
  *
  * <p>
