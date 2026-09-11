@@ -12,7 +12,6 @@ plugins {
     id("com.diffplug.spotless")
 }
 
-@Suppress("UnstableApiUsage")
 val libs = the<org.gradle.api.artifacts.VersionCatalogsExtension>().named("libs")
 
 java {

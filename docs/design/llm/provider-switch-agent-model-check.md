@@ -10,11 +10,11 @@
 > where this document departs from what was built; [§11](#11-after-104107), appended after #104–#107, is what
 > those four follow-up issues changed; and [§12](#12-after-116-and-118), appended after #116 and #118, corrects
 > one sentence of §11 and records that the default model changed.** Everything between this header and §10 is the
-> body as approved in design review round 3, kept byte-exact rather than corrected — the house habit in this directory, for the
-> reason `model-capability-binding-round-trip.md` gives. Its file:line citations and counts are at `main` `a1236c8`.
-> The review transcripts it cites (`review-1.md`, `review-2.md`, `rebuttal-1.md`) and the run records it names
-> (`design/q1-live-probe.md`, `$RUN_DIR/build/`) are not in the repository; §10.4 reproduces the probe's
-> measurements.
+> body as approved in design review round 3, kept byte-exact rather than corrected — the house habit in this
+> directory, for the reason `model-capability-binding-round-trip.md` gives. Its file:line citations and counts are
+> at `main` `a1236c8`. The review transcripts it cites (`review-1.md`, `review-2.md`, `rebuttal-1.md`) and the run
+> records it names (`design/q1-live-probe.md`, `$RUN_DIR/build/`) are not in the repository; §10.4 reproduces the
+> probe's measurements.
 >
 > What this work left open is in [`../../backlog/llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md),
 > L-17 ~ L-21, closed by #104–#107 (§11).

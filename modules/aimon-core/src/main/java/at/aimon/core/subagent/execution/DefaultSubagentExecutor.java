@@ -786,7 +786,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * @param defaultConfig
      *            The default model config to use as fallback
      * @param modelOverride
-     *            The per-invocation model alias (nullable/blank = ignored), highest priority when present
+     *            The per-invocation model name, sent as written (nullable/blank = ignored), highest priority when set
      * @return An LlmModel
      */
     private LlmModel buildModelConfig(Subagent subagent, LlmModel defaultConfig, String modelOverride) {
@@ -1079,7 +1079,10 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         private final LlmCallMetadata effectiveMetadata;
         private final LlmModel modelConfig;
         private final BudgetTracker budgetTracker;
-        /** The turn's death-spiral guard, one per execution like {@link #budgetTracker}. */
+        /**
+         * This fork's own {@link StalledIterationGuard}: one instance per execution, like {@link #budgetTracker}, of
+         * the guard the turn and a skill's loop use too.
+         */
         private final StalledIterationGuard stalledIterationGuard;
         private final Instant startTime;
         private final ToolContext toolContext;

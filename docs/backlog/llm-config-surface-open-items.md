@@ -1135,6 +1135,14 @@ deriver 에서 기동이 멈췄을 것이고, dreamer 는 생성 실패를 스�
 아무것도 뜨지 않는다: 배포된 설정 그대로면 괄호는 `llm.model` 의 `gpt-5.1` 이고 요청은 `gpt-5.6-terra` 다. anthropic
 에서 `llm.model` 을 생략하면 괄호는 `AnthropicConfig` 의 기본값 `claude-sonnet-4-20250514` 다.
 
+> **정정** *(2026-09-11, #132)*: 위 **왜.** 의 마지막 문장 — anthropic 에서 `llm.model` 을 생략하면 괄호는
+> `AnthropicConfig` 의 기본값 `claude-sonnet-4-20250514` 다 — 은 등록한 날에 참이었다. 그 뒤 두 가지가 바뀌었다. 괄호가
+> 무엇을 찍는지는 #106 이 바꿨고(아래 닫힘), 그 기본값은 #116 이 `claude-sonnet-4-5` 로 바꿨다(L-24 의 닫힘 — 옛 이름은
+> 2026-09-11 에 Messages API 가 404 로 답했다). 그래서 지금은 anthropic 에서 `llm.model` 을 생략하고 메인 에이전트
+> 정의가 `model.name` 을 적지 않으면 괄호가 `claude-sonnet-4-5` 다(`2eddf3d` 의 `ReplSession.java:319-325`,
+> `LlmClientFactory.java:77-79`, `AnthropicLlmClient.java:762-764`, `AnthropicConfig.java:42`). 등록 문장은 규칙 둘대로
+> 고치지 않고 둔다.
+
 **어디.** 2026-09-11 — `ReplSession.java:258-259`, `AnthropicLlmClient.java:762-764`, `OpenAILlmClient.java:589-591`.
 
 **처방은 적용해 보지 않았다 (규칙 다섯).** 배너는 메인 에이전트의 `model.name` 을 바로 읽을 수 있다 — 괄호를 에이전트의
@@ -1626,6 +1634,16 @@ budgeted thinking 을 보내고(과금된다), `adaptive` 는 기존 경고와 �
 | `AnthropicLlmClient.java:78` | `claude-sonnet-4-20250514` | 클래스 javadoc 의 사용 예 |
 | `MarkdownSubagentParser.java:22` | `sonnet` | 프론트매터 예시의 `model:` |
 | `SubagentParser.java:20` | `sonnet` | 프론트매터 예시의 `model:` |
+| `docs/features/subagent/subagent-development-guide.md:109` · `:256` — 영어 `.en.md:115` · `:264` | `sonnet` | 코드 서브에이전트 예시 둘의 `.model(...)`. 앞의 것은 `// 모델 별칭` 이라고 적는다 — #132 가 고쳤다 |
+| `docs/features/subagent/subagent-development-guide.md:329` · `:354` — 영어 `.en.md:341` · `:366` | `sonnet` | `resolvedModel()` 행과 그 아래 인용이 서브에이전트의 `model` 을 별칭이라 부른다. 이름은 앞의 줄에만 있다 — #132 가 고쳤다 |
+| `docs/features/skill/builtin-agent-skill-guide.md:80` · `:123` — 영어 `.en.md:85` · `:128` | `sonnet` | `.aimon/agents/explore.md` · `my-analyzer.md` 프론트매터 예시의 `model:` — #132 가 고쳤다 |
+
+> **정정** *(2026-09-11, #132)*: 이 표는 처음에 일곱 행이었고, 같은 모양의 자리를 두 기능 가이드에서 빠뜨렸다 — 마지막
+> 세 행이 그것이고 줄은 `2eddf3d` 에서 읽었다. 세 행은 #132 가 고쳤다: 예시의 모델 줄을 빼고 그 자리에, 모델이 없으면
+> 무엇으로 도는지와 언제 id 를 적는지를 말하는 주석을 두었고(처방의 첫째 모양), `resolvedModel()` 행은 코어 javadoc
+> 처럼 이름을 쓰인 그대로 보내며 비어 있을 수 있다고 적는다. 앞의 일곱 행은 그대로 열려 있다. 이 항목의 **언제 다시
+> 볼까** 가 말한 계기 하나가 왔지만 — #132 가 `aimon-llm-anthropic` 의 README 를 건드렸다 — 고친 것은 `temperature`
+> 행뿐이고, 이 표의 README 두 행은 손대지 않았다.
 
 **심각도 (규칙 셋).** `claude-sonnet-4-20250514` 는 2026-09-11 에 두 API 모두 404 였고(L-24), 맨 별칭 `haiku` 는
 2026-09-10 에 Anthropic 이 404 로 답했다([#92 설계](../design/llm/provider-switch-agent-model-check.md) §10.4). 코드는

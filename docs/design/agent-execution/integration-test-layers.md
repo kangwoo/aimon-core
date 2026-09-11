@@ -237,7 +237,7 @@ Node = 실제 팩토리 + 실제 기본 프로바이더 + 실제 LocalFileSystem
 
 `JAVA_TOOL_OPTIONS=-Xms1g -Xmx4g` 같은 값이 셸에 있으면 Gradle Worker Daemon 이 "Initial heap size
 set to a larger value than the maximum heap size" 로 죽는다. 빌드 규약이 테스트 JVM 힙을 핀으로
-고정해둔 이유가 이것이며(`aimon.java-conventions.gradle.kts:77-79`), 그래도 걸리면
+고정해둔 이유가 이것이며(`aimon.java-conventions.gradle.kts` 의 `tasks.withType<Test>()` 블록 — `minHeapSize` · `maxHeapSize`), 그래도 걸리면
 `JAVA_TOOL_OPTIONS= ./gradlew …` 로 비우고 실행한다. 환경 문제이지 코드 문제가 아니다.
 
 ### 8.4 `script()` 는 커서를 되감는다 — 한 세션의 여러 턴은 하나의 스크립트다

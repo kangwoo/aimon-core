@@ -3,6 +3,7 @@ package at.aimon.cli.repl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.fusesource.jansi.Ansi.ansi;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
@@ -444,6 +445,46 @@ class OutputFormatterTest {
 
             formatter.displaySubagentResult("  ", "code-analyzer", "Analyze code quality", "SUCCESS", 5, 1200,
                     "Found 3 issues");
+
+            assertThat(getOutput()).isEmpty();
+        }
+
+        @Test
+        @DisplayName("Should print a Completion reason line as a summary line when colour is off")
+        void completionReasonLinePrintsAsASummaryLineWhenColourIsOff() {
+            formatter.displaySubagentCompletionReason("  ", "SUCCESS", "Completion reason: TRUNCATED");
+
+            assertThat(getOutput()).isEqualTo("    Completion reason: TRUNCATED" + System.lineSeparator());
+        }
+
+        @Test
+        @DisplayName("Should print a successful subagent's Completion reason line in yellow, not the success colour")
+        void completionReasonLineOfASuccessIsYellow() {
+            settings.setColorOutput(true);
+            String line = "Completion reason: TRUNCATED (the subagent's final answer is incomplete)";
+
+            formatter.displaySubagentCompletionReason("  ", "SUCCESS", line);
+
+            assertThat(getOutput()).isEqualTo("    " + ansi().fgYellow().a(line).reset() + System.lineSeparator());
+        }
+
+        @Test
+        @DisplayName("Should print a failed subagent's Completion reason line in red, like its summary")
+        void completionReasonLineOfAFailureIsRed() {
+            settings.setColorOutput(true);
+            String line = "Completion reason: ERROR";
+
+            formatter.displaySubagentCompletionReason("  ", "FAILURE", line);
+
+            assertThat(getOutput()).isEqualTo("    " + ansi().fgRed().a(line).reset() + System.lineSeparator());
+        }
+
+        @Test
+        @DisplayName("Should not print a Completion reason line when showToolCalls is false")
+        void completionReasonLineIsNotPrintedWhenShowToolCallsDisabled() {
+            settings.setShowToolCalls(false);
+
+            formatter.displaySubagentCompletionReason("  ", "SUCCESS", "Completion reason: TRUNCATED");
 
             assertThat(getOutput()).isEmpty();
         }

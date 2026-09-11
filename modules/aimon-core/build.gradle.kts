@@ -55,10 +55,10 @@ checkstyle {
 // cannot infer them. Without these declarations the offending edit leaves `test` UP-TO-DATE and the guard
 // never runs — the build reports green on exactly the change the test exists to catch.
 //
-// `ReleaseGateMatchesCiGateTest` reads the release script and the CI workflow, and its key census reads every
-// `.java` under `modules/aimon-llm-*/src/test`. That tree is declared below as a glob on the census's own
-// `aimon-llm-` prefix rather than a list of modules, so a provider module is an input as soon as its directory
-// exists; a wider census needs a wider glob here. The same test's tag scan reads every test source under
+// `ReleaseGateMatchesCiGateTest` reads the release script, the CI workflow and the `/release` skill, and its key
+// census reads every `.java` under `modules/aimon-llm-*/src/test`. That tree is declared below as a glob on the
+// census's own `aimon-llm-` prefix rather than a list of modules, so a provider module is an input as soon as its
+// directory exists; a wider census needs a wider glob here. The same test's tag scan reads every test source under
 // `modules/` and `samples/` and is not declared: that would re-run this module's suite, most of the build's tests,
 // after a test edit in any module. The test's javadoc says so.
 // `PublishedModuleApiScopeTest` and `PublishedModuleLoggingBindingTest` read build scripts: every module's
@@ -69,6 +69,7 @@ checkstyle {
 tasks.test {
     inputs.file(rootProject.file("scripts/release.sh")).withPropertyName("releaseScript")
     inputs.file(rootProject.file(".github/workflows/build.yml")).withPropertyName("ciWorkflow")
+    inputs.file(rootProject.file(".claude/skills/release/SKILL.md")).withPropertyName("releaseSkill")
     inputs.files(rootProject.fileTree("modules") { include("aimon-llm-*/src/test/**/*.java") })
         .withPropertyName("providerModuleTestSources")
     inputs.files(rootProject.fileTree("modules") { include("*/build.gradle.kts") })

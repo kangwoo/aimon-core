@@ -111,7 +111,7 @@
 | 발행 모듈의 POM 스코프 | [`module-dependency-scope.md`](module-dependency-scope.md) D-1 |
 | 승인·보류턴 저장소의 분산 이음매 | [`multi-instance-readiness.md`](multi-instance-readiness.md) M-1 · M-2 |
 | `OrcaAgentExecutor` 분해 | [`../design/agent-execution/orca-executor.md`](../design/agent-execution/orca-executor.md) §13-1 — ReAct 코어를 `DefaultSubagentExecutor` 와 공유하는 계획이 이미 있고 이음매(`agent.loop.LoopTransition`)도 놓여 있다 |
-| 공개 타입 축소 (`aimon-core` **1,012개**, 저장소 전체 1,281개 — 2026-08-31 확인) | [`../project/roadmap.md`](../project/roadmap.md) §3 — `1.0` 의 javadoc 완비 조건과 같은 뿌리이고, 측정 장치(`-Xdoclint:none`, `aimon.java-conventions.gradle.kts:21`)를 켜는 것이 선행이다 |
+| 공개 타입 축소 (`aimon-core` **1,012개**, 저장소 전체 1,281개 — 2026-08-31 확인) | [`../project/roadmap.md`](../project/roadmap.md) §3 — `1.0` 의 javadoc 완비 조건과 같은 뿌리이고, 측정 장치(`-Xdoclint:none`, `aimon.java-conventions.gradle.kts` 의 `tasks.withType<Javadoc>()` 블록)를 켜는 것이 선행이다 |
 | S3 가 공유 파일시스템 계약 테스트를 돌지 않는다 | [`../design/filesystem/backend-contract.md`](../design/filesystem/backend-contract.md) §11 — 이미 열린 항목으로 등록되어 있다. R-5 를 확인하다 나왔고, 새 번호를 주면 중복이 된다 |
 
 마지막 줄이 규칙 하나의 예외처럼 보일 수 있으므로 적어 둔다. 그 표는 **설계 시점 기록으로 동결된 표가
@@ -558,8 +558,8 @@ R-7 은 자기 숫자가 macOS 값이라는 한계를 적어 두었다. 그 한�
 
 **왜 — 관측 가능한 결과**
 
-JaCoCo 는 **리포트만** 만든다. `aimon.java-conventions.gradle.kts:7` 이 플러그인을 붙이고 `:149` 가
-`JacocoReport` 를 설정하지만, 검증 규칙은 **한 줄도 없다**. 그래서 커버리지는 떨어져도 아무것도
+JaCoCo 는 **리포트만** 만든다. `aimon.java-conventions.gradle.kts` 의 `plugins { }` 블록이 `jacoco` 를 붙이고
+`tasks.withType<JacocoReport>()` 블록이 리포트를 설정하지만, 검증 규칙은 **한 줄도 없다**. 그래서 커버리지는 떨어져도 아무것도
 깨뜨리지 않는다 — CI 는 HTML 을 업로드하고, 아무도 그것을 열지 않아도 초록이다.
 
 이 사실은 이미 한 자리에 적혀 있다. `ReleaseGateMatchesCiGateTest.REPORTING_ONLY_CI_TASKS` 가

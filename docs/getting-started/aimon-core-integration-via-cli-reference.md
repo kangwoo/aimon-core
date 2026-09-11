@@ -291,9 +291,8 @@ agent:
 `memory.dreamer.scorer.llm.model` 이 없으면 dreamer 와 그 LLM 판정기)와 위키 페이지 생성이다. `model.name` 이 없는
 정의는 이 값으로 돈다. anthropic 에서는 생략할 수 있다 — 그러면 메모리, 위키 생성, 그리고 `model.name` 이 없는
 정의가 Anthropic 클라이언트의 기본 모델로 돌고, `memory` 를 켰다면 기동할 때 그 모델 이름을 한 줄로 알린다. 시작
-배너의 `Agent bundle:` 줄은 불러온
-번들을, `LLM Provider: <provider> (<model>)` 의 괄호 안은 메인 에이전트의 요청이 싣는 모델을 보여 준다 —
-서브에이전트가 따로 적은 모델은 보여 주지 않는다.
+배너의 `Agent bundle:` 줄은 불러온 번들을, `LLM Provider: <provider> (<model>)` 의 괄호 안은 메인 에이전트의
+요청이 싣는 모델을 보여 준다 — 서브에이전트가 따로 적은 모델은 보여 주지 않는다.
 
 불러온 정의가 다른 벤더의 모델을 적고 있으면 시작할 때 **경고한다 — 기동을 멈추지는 않는다.** 배포된 `default`
 에이전트라면 `provider: anthropic` 에서 `baseUrl` 이 없거나, Anthropic 의 호스트이거나, 배포된 파일에서 남은

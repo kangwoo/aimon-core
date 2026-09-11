@@ -46,8 +46,9 @@ import at.aimon.core.subagent.SubagentContent;
 import at.aimon.core.subagent.SubagentMetadata;
 
 /**
- * A fork stops a streak of iterations that make no progress with the turn's guard, {@link StalledIterationGuard}
- * (#115), and ends as {@link CompletionReason#ERROR}.
+ * A fork stops a streak of iterations that make no progress with its own instance of {@link StalledIterationGuard} —
+ * one per execution, of the guard the turn and a skill's loop use too (#115) — and ends as
+ * {@link CompletionReason#ERROR}.
  *
  * <p>
  * Mirrors {@code OrcaAgentExecutorStalledIterationTest}: it trips at the threshold, a fork that recovers before the
