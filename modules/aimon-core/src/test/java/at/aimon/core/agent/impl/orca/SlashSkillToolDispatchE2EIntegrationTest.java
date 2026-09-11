@@ -18,6 +18,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import at.aimon.core.agent.DefaultAgent;
 import at.aimon.core.agent.Environment;
+import at.aimon.core.agent.budget.TruncatedResponses;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.transcript.DefaultTranscriptManager;
@@ -27,6 +28,8 @@ import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.agent.tool.permission.PermissionSubject;
+import at.aimon.core.agent.tool.permission.ToolPermissionSubjectAware;
 import at.aimon.core.command.DefaultCommandExecutionManager;
 import at.aimon.core.command.DefaultCommandRegistry;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
@@ -34,6 +37,7 @@ import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
+import at.aimon.core.hook.event.PermissionRequestHook;
 import at.aimon.core.hook.event.PostToolHook;
 import at.aimon.core.hook.event.PreToolHook;
 import at.aimon.core.hook.execution.HookResult;
@@ -42,6 +46,8 @@ import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.Message;
+import at.aimon.core.llm.StopReason;
+import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.llm.ToolUse;
 import at.aimon.core.skill.InvokePolicy;
@@ -172,6 +178,56 @@ class SlashSkillToolDispatchE2EIntegrationTest {
         assertThat(llmClient.toolResultText()).contains("not allowed").contains("SomethingElse");
     }
 
+    @Test
+    @DisplayName("a skill's tool call cut at max_tokens reaches no hook, no allow-list check and no tool; the same call uncut reaches them all")
+    void slashSkillCutToolCall_ReachesNoHookNoAllowListCheckAndNoTool() {
+        // The skill loop's half of what #113's CHANGELOG entry says for the executors (#115, #117). The uncut
+        // iteration is the positive control. The allow-list entry carries a pattern so that the check has to ask the
+        // tool for its subject: of the three loops this is the only one that passes a non-empty allow-list, so it is
+        // the only place the check can be seen not to run.
+        final AtomicInteger permissionRequests = new AtomicInteger();
+        final AtomicInteger preToolCalls = new AtomicInteger();
+        final AtomicInteger postToolCalls = new AtomicInteger();
+        hookRegistry.register(HookEventType.PERMISSION_REQUEST, (PermissionRequestHook) context -> {
+            permissionRequests.incrementAndGet();
+            return HookResult.success();
+        });
+        hookRegistry.register(HookEventType.PRE_TOOL, (PreToolHook) context -> {
+            preToolCalls.incrementAndGet();
+            return HookResult.success();
+        });
+        hookRegistry.register(HookEventType.POST_TOOL, (PostToolHook) context -> {
+            postToolCalls.incrementAndGet();
+            return HookResult.success();
+        });
+        final SubjectCountingTool tool = new SubjectCountingTool();
+        toolRegistry.register(tool);
+
+        skillRegistry.add(inlineSkill("audit", "Audit this: $ARGUMENTS",
+                SubjectCountingTool.NAME + "(" + SubjectCountingTool.SUBJECT + ")"));
+        llmClient.script(
+                LlmResponse.of("", List.of(ToolUse.of("call-1", SubjectCountingTool.NAME, Map.of())),
+                        TokenUsage.empty(), StopReason.MAX_TOKENS),
+                LlmResponse.of("", List.of(ToolUse.of("call-2", SubjectCountingTool.NAME, Map.of())),
+                        TokenUsage.empty(), StopReason.TOOL_USE),
+                LlmResponse.text("audit complete"));
+        final List<List<Integer>> reachedBeforeEachCall = new ArrayList<>();
+        llmClient.beforeEachCall = () -> reachedBeforeEachCall.add(List.of(permissionRequests.get(), preToolCalls.get(),
+                postToolCalls.get(), tool.executions, tool.subjectReads));
+
+        final OrcaAgentExecutionResult result = executor.execute(createContext(), createRequest("/audit src"));
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.getFinalAnswer()).isEqualTo("audit complete");
+        assertThat(reachedBeforeEachCall).hasSize(3);
+        // [PermissionRequest, PreTool, PostTool, tool, allow-list subject reads] after the cut iteration...
+        assertThat(reachedBeforeEachCall.get(1)).containsExactly(0, 0, 0, 0, 0);
+        // ...and after the uncut one. How often the allow-list check reads the subject per call is its own business.
+        assertThat(reachedBeforeEachCall.get(2).subList(0, 4)).containsExactly(1, 1, 1, 1);
+        assertThat(reachedBeforeEachCall.get(2).get(4)).isPositive();
+        assertThat(llmClient.toolResultText()).contains(TruncatedResponses.REFUSED_TOOL_CALL_MESSAGE);
+    }
+
     private OrcaAgentRuntime createContext() {
         final LocalFileSystem fileSystem = new LocalFileSystem(new LocalFileSystemConfig(tempDir.toString()));
         fileSystem.initialize();
@@ -274,6 +330,35 @@ class SlashSkillToolDispatchE2EIntegrationTest {
     }
 
     /**
+     * Counts its executions and every time the allow-list check asks it for the value to judge, which it always names
+     * as {@link #SUBJECT}.
+     */
+    private static final class SubjectCountingTool implements Tool, ToolPermissionSubjectAware {
+        static final String NAME = "Checked";
+        static final String SUBJECT = "count";
+
+        private int executions;
+        private int subjectReads;
+
+        @Override
+        public ToolDefinition getDefinition() {
+            return ToolDefinition.of(NAME, "Counts executions and permission subject reads", Map.of("type", "object"));
+        }
+
+        @Override
+        public ToolResult execute(ToolInput input, ToolContext context) {
+            this.executions++;
+            return ToolResult.success("checked");
+        }
+
+        @Override
+        public Optional<PermissionSubject> permissionSubject(ToolInput input, ToolContext context) {
+            this.subjectReads++;
+            return Optional.of(PermissionSubject.command(SUBJECT));
+        }
+    }
+
+    /**
      * Returns scripted responses in order (the last one repeats), and remembers the tool-result messages it was handed
      * so a test can read back what the skill's loop observed.
      */
@@ -281,6 +366,9 @@ class SlashSkillToolDispatchE2EIntegrationTest {
         private final List<LlmResponse> responses = new ArrayList<>();
         private final List<String> toolResults = new ArrayList<>();
         private int callCount;
+        /** Runs at the start of every call, so a test can read what the previous iteration reached. */
+        private Runnable beforeEachCall = () -> {
+        };
 
         void script(LlmResponse... scripted) {
             responses.clear();
@@ -300,6 +388,7 @@ class SlashSkillToolDispatchE2EIntegrationTest {
         @Override
         public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
                 LlmModel modelConfig, LlmCallMetadata metadata) {
+            beforeEachCall.run();
             for (Message message : messages) {
                 if (message.hasToolResults()) {
                     message.getToolUseResults().forEach(r -> toolResults.add(r.getContent()));

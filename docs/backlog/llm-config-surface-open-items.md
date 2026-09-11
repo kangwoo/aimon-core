@@ -1,4 +1,4 @@
-# LLM 설정 표면 — 등록 항목 24건 (열림 14 · 닫힘 10)
+# LLM 설정 표면 — 등록 항목 27건 (열림 14 · 닫힘 13)
 
 출처는 #46 이다 — 모델 capability 표를 CLI yaml 과 스타터 프로퍼티에서 확장할 수 있게 한 작업.
 설계는 [`../design/llm/model-capability-config-key.md`](../design/llm/model-capability-config-key.md) 이고,
@@ -1221,9 +1221,12 @@ javadoc 예시가 2곳(`SubagentExecutionEnvironment` 와 `DefaultSubagentExecut
 | 입구 | 넘기는 값 |
 |---|---|
 | `OrcaAgentRuntimeFactory.java:962`, CLI 의 `GraalJsWorkflowToolProvider.java:85` | 메인 에이전트의 `agent.getMetadata().getModel()` |
-| `TaskTool.java:555`, `WorkflowTool.java:449`, `SubagentBackedSkillForkExecutor.java:113` | 생성자로 받은 값 — 셋 다 `agent.getMetadata().getModel()` 로 만들어진다(`OrcaSubagentToolProvider.java:91` · `:113`, `OrcaSkillForkExecutorResolver.java:67`) |
+| `TaskTool.java:553`, `WorkflowTool.java:449`, `SubagentBackedSkillForkExecutor.java:113` | 생성자로 받은 값 — 셋 다 `agent.getMetadata().getModel()` 로 만들어진다(`OrcaSubagentToolProvider.java:91` · `:113`, `OrcaSkillForkExecutorResolver.java:67`) |
 | `GraalJsWorkflowTool.java:255`, `DefaultSubagentExecutionManager.java:604`, `SubagentExecutionEnvironment.java:390` | 이미 받은 값을 옮긴다 |
 | `DefaultCommandExecutionManager.java:213`, `SkillBackedCommandExecutor.java:70` | 명령 실행의 `model` 인자 — 스킬 명령 경로이고 `resolveModel` 에 닿지 않는다. 그 인자의 출처는 더 따라가지 않았다 |
+
+> **정정** *(2026-09-11, #118)*: 이 표는 처음에 `TaskTool.java:555` 로 적었다. `c561e17` 에서 `.defaultModel(`
+> 호출은 `:553` 이고, 표와 괄호 안의 나머지 인용 열두 개는 같은 날 다시 읽어 맞았다.
 
 어느 입구도 이름을 지어내지 않으므로, 리터럴이 사라지면 서브에이전트 해석에 닿는 모든 입구에서 "이름이 없으면
 클라이언트의 기본 모델" 이 된다.
@@ -1323,6 +1326,61 @@ limit` WARN 이 **뜬다.** 다만 그 줄은 어느 스킬이었는지, 어느 
 **언제 다시 볼까.** `LlmSkillExecutor` 의 루프를 다음에 건드릴 때, 또는 스킬 실행에서 이유 없는 도구 오류가 보고될 때.
 `ReActLlmDeriver` 는 main 소스에서 처음 생성될 때.
 
+### 닫힘 (2026-09-11, #115 · #117)
+
+**이제 스킬 루프도 `max_tokens` 에서 잘린 응답에 두 에이전트 실행기와 같은 답을 준다.** `LlmSkillExecutor` 는 응답마다
+`TruncatedResponses.isTruncated` 를 한 번 읽는다. 도구 호출이 있는 잘린 응답은 바운드 디스패처로도 폴백으로도 **디스패치하지
+않고** 호출마다 같은 거절 결과로 답한 뒤 루프를 잇는다. WARN 이 스킬 이름, 1부터 센 iteration, 도구 이름을 적는다 — 인자는 적지
+않는다. 도구 호출이 없는 잘린 최종 답은 성공으로 돌아가되 텍스트 끝에 `[System: response truncated at max_tokens]` 가 붙고, WARN
+이 스킬 이름을 적는다. 설계와 기각한 대안은
+[`../design/agent-execution/skill-loop-truncation-and-fork-stall.md`](../design/agent-execution/skill-loop-truncation-and-fork-stall.md)
+의 D1 · D2 · D5 에 있다.
+
+**정할 것 셋을 이렇게 정했다.**
+
+- **정체 가드 — 스킬 루프도 턴의 가드로 멈춘다(D5).** 새 `at.aimon.core.agent.budget.StalledIterationGuard` 가 턴 · 포크 · 스킬
+  루프의 한 정의다. 결과가 전부 오류인 iteration 이 연속 세 번이면 스킬은 턴과 같은 중단 메시지로 실패한다. 거절만 넣고 가드를
+  두지 않았다면 이 수정이 L-23 의 반복을 스킬 루프에 새로 만들었을 것이다. 가드는 잘림과 무관한 오류 루프도 끝낸다 — 도구 오류,
+  바운드 디스패처의 허용 목록 거절, PermissionRequest · PreTool 차단, 사용자가 부작용 승인을 세 iteration 연속 거절한 경우.
+  CHANGELOG 가 그 관측 가능한 변화를 이름으로 적는다.
+- **잘린 답이 스킬 결과에 보이는 자리 — `SkillExecutionResult.getResponse()` 의 끝이다(D1).** 스킬 결과에는 완료 사유가 없고,
+  그것을 읽는 유일한 소비자 `SkillBackedCommandExecutor` 는 네 필드를 `CommandExecutionResult` 로 옮길 뿐이라 타입 신호를 더해도
+  읽는 곳이 없다. 포크 모드 스킬은 이미 잘린 포크를 "성공 + 마커 텍스트" 로 전하고 있었다. 그래서 잘린 답을 돌려준 슬래시 스킬을
+  실행한 턴은 여전히 `COMPLETED` 로 끝나며, 그것을 바꿀지는 L-26 으로 올렸다.
+- **`ReActLlmDeriver` 도 함께 고쳤다(D2).** 잘린 응답의 도구 호출은 `invokeTool` 없이 거절하고, WARN 이 iteration · observer 키 ·
+  도구 이름을 적으며, 루프는 여섯 iteration 과 토큰 예산 안에서 잇는다. 도구 호출이 없는 잘린 응답은 전처럼 루프를 끝낸다 —
+  `derive` 는 텍스트가 아니라 관찰을 돌려주므로 표시할 답이 없다. 이 항목은 그 deriver 를 다시 볼 때를 "main 소스에서 처음
+  생성될 때" 로 적었는데, **그 트리거는 이 자리를 지나가지 않는다**(규칙 일곱). 누군가 그것을 조립하는 날의 변경은 CLI 의 메모리
+  배선이나 스타터 같은 다른 파일이고 이 클래스도 이 항목도 건드리지 않으므로, 결함이 소리 없이 함께 배포된다. **그리고 규칙
+  여섯대로 적는다 — 이 수정은 어느 배포도 생성하지 않는 클래스에 한 것이다.** main 소스 전체에서 `new ReActLlmDeriver(` ·
+  `ReActLlmDeriver::new` · 맨 이름을 세면 자기 파일 밖의 언급은 여전히 0이다.
+
+**처방은 실패하는 테스트로 먼저 확인했다 (규칙 다섯).** 가드를 먼저 넣고 어느 루프에도 배선하지 않은 채 설계 §7 의 테스트를 옛
+루프에 대고 돌렸다. 열 클래스 126건 중 15건이 적힌 이유로 실패했고, 이 항목의 것은 여덟이다 — 폴백 경로에서 잘린 호출이 실행됨,
+바운드 디스패처가 잘린 호출을 넘겨받음, 잘린 최종 답에 마커가 없음, 잘린 도구 응답 셋과 실패하는 도구 셋이 스킬을 끝내지 못함,
+추론 토큰 절을 붙일 WARN 이 아예 없음, 슬래시 스킬 E2E 에서 잘린 호출이 PermissionRequest · PreTool · PostTool 훅과 허용 목록
+검사와 도구에 모두 닿음, deriver 가 잘린 호출로 관찰을 저장함. 수정 뒤 같은 열 클래스는 126건 모두 초록이다.
+
+**심각도 (규칙 셋).** 등록 시점에 재지 않았던 blocking 경로의 모양을 2026-09-11 에 요청 하나로 쟀다 — Anthropic Messages API,
+`stream: false`, `claude-haiku-4-5`, 두 인자가 모두 필수인 도구 `write_file(path, content)` 를 `tool_choice` 로 강제,
+`max_tokens: 60`, HTTP 200(`req_011Cew8JyrxugAE6PL7atguf`), `stop_reason: max_tokens`. `content` 는 `tool_use` 블록 하나였고 그
+입력은 `{"path": "/tmp/sea.txt"}` 였다 — 비지도 않고 파싱에 실패하지도 않는, **끝난 인자만 담고 필수 인자 `content` 가 빠진
+온전한 객체**다. `AnthropicLlmClient.convertResponse` 는 그 입력을 그대로 `ToolUse` 의 인자 맵으로 옮긴다(코드에서 읽었고 이
+응답으로 돌리지는 않았다). 즉 수정 전의 스킬 루프는 경로만 있고 내용이 없는 쓰기를 디스패치했을 것이고 파싱 실패 WARN 도 뜨지
+않았을 것이다 — 남는 신호는 이 항목이 적은 클라이언트의 WARN 하나였다. 요청 하나의 관측이지 보장이 아니며, 위 결정은 그것에
+기대지 않는다. 그리고 이 항목이 적은 것보다 무거웠던 자리가 하나 있다 — 스킬 루프는 **끊을 수 없다.** `LlmSkillExecutor` 는 취소
+신호를 읽지 않고 슬래시 명령은 인터럽트되지 않으므로, 이 루프의 반복을 끝낼 것은 `max-iterations` 와 이제 정체 가드뿐이다.
+
+**남은 것.** 스킬 루프에서 거절된 호출 하나는 **어느 터미널에도 보이지 않는다.** 턴의 거절된 호출은 `ToolUseStarted` ·
+`ToolResultReady` 를 내고 REPL 이 그것을 찍지만, 명령 경로의 디스패처는 실행한 호출에도 수명 주기 이벤트를 내지 않고, REPL 의
+도구 호출 줄은 거절된 호출이 닿지 않는 PreTool 훅에서 온다. 그래서 거절 하나는 WARN 에만 보이고, 거절이 이어지면 중단 메시지가
+보인다. 명령 경로에 스킬 호출의 이벤트 채널이 없는 것이지 잘림의 틈이 아니므로 항목으로 올리지 않았다.
+
+**어디** *(2026-09-11)* — `LlmSkillExecutor` 의 `refuseTruncatedToolUses` · `stalledFailure` 와 루프 뒤의 잘린 최종 답 분기,
+`ReActLlmDeriver.refuseTruncatedToolUses`, `StalledIterationGuard`, 테스트 `LlmSkillExecutorTruncationTest` ·
+`SlashSkillToolDispatchE2EIntegrationTest.slashSkillCutToolCall_ReachesNoHookNoAllowListCheckAndNoTool` ·
+`ReActLlmDeriverTest.aCutToolCallIsRefusedNotRun`.
+
 ---
 
 ## L-23 — 서브에이전트 포크에는 정체 가드가 없어서, 매 응답이 `max_tokens` 에서 잘리는 포크는 기본 1000 iteration 까지 거절을 반복한다
@@ -1355,6 +1413,50 @@ limit` WARN 이 **뜬다.** 다만 그 줄은 어느 스킬이었는지, 어느 
 값을 읽는다.
 
 **언제 다시 볼까.** `DefaultSubagentExecutor` 의 루프를 다음에 건드릴 때, 또는 포크가 거절 WARN 을 반복한다는 보고가 있을 때.
+
+### 닫힘 (2026-09-11, #115 · #117)
+
+**이제 포크도 턴의 정체 가드로 멈춘다.** `DefaultSubagentExecutor.runReActLoop` 는 iteration 끝의 취소 검사 **뒤에** 그
+iteration 을 새 `at.aimon.core.agent.budget.StalledIterationGuard` 에 기록하고, 결과가 전부 오류인 iteration 이 연속 세 번이면
+턴과 같은 중단 메시지와 `CompletionReason.ERROR` 로 끝난다 — OnStop 훅은 `success=false`, 진행 스트림은 `[ended: …]`. 매 응답이
+잘리는 포크는 이제 `max_tokens` 크기의 요청을 세 번 보내고 끝난다. 가드는 턴 · 포크 · 스킬 루프가 함께 쓰는 한 정의다. 설계와
+기각한 대안은
+[`../design/agent-execution/skill-loop-truncation-and-fork-stall.md`](../design/agent-execution/skill-loop-truncation-and-fork-stall.md)
+의 D3 · D4 에 있다.
+
+**처방 둘 중 앞의 것을 골랐다 (규칙 다섯).** 턴의 가드를 옮겼고 잘린 응답만 따로 세지 않았다. 따로 세면 턴 옆에 "진척 없음" 의
+두 번째 정의가 생긴다. 잘린 응답과 실패하는 재시도가 번갈아 오는 포크는 잘리지 않은 iteration 마다 그 카운터가 리셋되어 멈추지
+않는다. 그리고 잘림과 무관한 포크의 오류 루프 — 예산 없이 최대 1000 iteration, 대개 아무도 보지 않는 백그라운드 태스크에서 — 가
+그대로 남는다. 턴의 가드는 바로 그것을 위해 만들어졌다.
+
+**앞의 것은 이 항목이 경고한 대로 포크의 동작을 더 넓게 바꾼다.** 결과가 전부 오류인 iteration 이 연속 세 번이면 원인과 무관하게
+포크가 끝난다 — 도구 오류, 모르는 도구 이름, 스키마 `ENFORCE` 거절, PermissionRequest · PreTool 차단, 그리고 포크에게는 물을 채널이
+없어서 부작용 승인 게이트가 거절한 경우. 전에는 `maxIterations` 까지 이어갔다. 성공한 호출 하나가 연속을 리셋한다. CHANGELOG 가 이
+변화를 이름으로 적는다.
+
+**끝난 포크의 `CompletionReason` 은 `ERROR` 다 — 새 값은 만들지 않았다.** 그 값을 읽는 곳을 전부 확인했다:
+`SubagentExecutionResult`(`getStatus()` 는 `FAILURE`), `TaskResult` 와 `JsonTaskResultCodec`(모든 노드 버전이 `"ERROR"` 를 읽는다),
+`AgentStepResult.isComplete()` 와 워크플로 단계 캐시, `StepOutcome` 과 그 코덱(`COMPLETED` 결과만 인코딩된다),
+`WorkflowPatterns.loopUntilDry` · `completenessCritic`, GraalJS `AgentResultView`, `SubagentBackedSkillForkExecutor`, 백그라운드
+태스크 완료, `Task` 도구. 정체를 다른 오류와 다르게 가르는 독자는 없다. 둘을 구분해야 하는 유일한 독자는 요약을 읽는 부모
+모델이고, 그 몫은 텍스트가 맡는다 — 연속된 정체가 전부 잘린 응답의 거절이었으면 턴 · 포크 · 스킬 루프 모두에서 중단 메시지 끝에
+`— each of those responses was cut off at max_tokens, and its tool calls were refused` 가 붙는다. 새 상수 `STALLED` 는 아무도 가르지
+않는 공개 · 영속 이름이 되고, 롤링 업그레이드 중 옛 노드는 그것을 `ERROR` 로 읽는다.
+
+**처방은 실패하는 테스트로 먼저 확인했다.** 가드를 넣되 어느 루프에도 배선하지 않은 채 옛 포크에 대고 돌린 두 테스트 — 잘린 도구
+응답 셋, 실패하는 도구 셋 — 가 둘 다 `COMPLETED` 로 실패했다. 문턱 전에 회복하는 포크, 셋째 정체 iteration 에 떨어진 부모
+취소(`INTERRUPTED`), 문턱보다 낮은 `maxIterations`(`MAX_ITERATIONS`)는 수정 전후 모두 초록이다.
+
+**심각도 (규칙 셋).** 재지 않은 것이 그대로 남는다 — 모델이 거절 문구를 읽고 출력을 줄이는지, 곧 가드가 실제로 얼마나 자주
+발화하는지는 여러 턴에 걸친 라이브 실행 없이는 잴 수 없다. 위 결정은 그것에 기대지 않는다.
+
+**남은 것.** [`../design/llm/thinking-reporting-and-dialect-records.md`](../design/llm/thinking-reporting-and-dialect-records.md)
+§16.8 이 *"a fork has no guard and repeats until its `maxIterations` (L-23)"* 라고 적고, 같은 문서의 두 자리가 L-22 · L-23 을
+열린 항목으로 적는다. 그 문서는 이번 작업의 파일이 아니어서 고치지 않았다 — 규칙 일곱이 말하는, 항목을 언급하는 문장이다.
+
+**어디** *(2026-09-11)* — `StalledIterationGuard`, `DefaultSubagentExecutor.runReActLoop` 의 iteration 끝과
+`createStalledResult`, `OrcaAgentExecutor.handleStalledIteration`, 테스트 `StalledIterationGuardTest` ·
+`DefaultSubagentExecutorStalledIterationTest` · `DefaultSubagentExecutorTruncationTest.threeCutToolResponsesInARowEndTheForkAsError`.
 
 ---
 
@@ -1389,6 +1491,152 @@ limit` WARN 이 **뜬다.** 다만 그 줄은 어느 스킬이었는지, 어느 
 **언제 다시 볼까.** `AnthropicConfig` 의 기본값을 다음에 건드릴 때, 또는 anthropic 에서 `llm.model` 없이 띄운 메모리나
 위키 생성이 404 로 실패한다는 보고가 올 때.
 
+### 닫힘 (2026-09-11, #116)
+
+**쟀고, 서비스되지 않았다 — 기본값을 `claude-sonnet-4-5` 로 바꿨다.** 잰 이름은 이슈가 아니라 코드에서 읽었다
+(`c561e17` 의 `AnthropicConfig.java:40`). 키는 요청마다 그 명령 하나에만 헤더 파일로 넘겼고, 내보내거나 기록하지
+않았다. 요청은 넷이고, 응답의 `date` 는 2026-09-11 04:13:49 ~ 04:16:06 GMT 다.
+
+| # | 요청 | HTTP | 답 | `request-id` | 과금 |
+|---|---|---|---|---|---|
+| 1 | `GET https://api.anthropic.com/v1/models/claude-sonnet-4-20250514` | 404 | `not_found_error` — `model: claude-sonnet-4-20250514` | `req_011Cew14Po9JL3pp2n45Lyy7` | 아니다 |
+| 2 | `POST https://api.anthropic.com/v1/messages` — `model: claude-sonnet-4-20250514`, `max_tokens: 1`, 한 단어 사용자 메시지 | 404 | 같은 `not_found_error` | `req_011Cew1AD4e7L3o7274fYiWa` | 아니다 |
+| 3 | `GET https://api.anthropic.com/v1/models/claude-sonnet-4-5` | 200 | `id: claude-sonnet-4-5-20250929` — `thinking.types` 는 `enabled` 지원, `adaptive` 미지원 | `req_011Cew1ESjHVJA4iv1jppBdS` | 아니다 |
+| 4 | `POST https://api.anthropic.com/v1/messages` — `model: claude-sonnet-4-5`, 나머지는 2 와 같다 | 200 | 서비스한 `model: claude-sonnet-4-5-20250929`, `stop_reason: max_tokens` | `req_011Cew1EUgrGJw1SazZj49Gq` | 그렇다 — 입력 8 · 출력 1 토큰 |
+
+3 · 4 는 기본값을 바꾼다면 **같은 방법으로 잰 이름**으로만 바꾸려고 쟀다. 이 작업의 라이브 호출은 이 넷뿐이다.
+
+**결정.** 옛 이름을 두고 쟀다고만 적는 모양은 설 자리가 없었다 — 서비스되지 않으므로, 두면 이 항목이 적은 네 자리가
+오늘 요청 시점에 전부 404 로 실패한다. 남은 물음은 어느 이름이냐였고 `claude-sonnet-4-5` 가 가장 작게 움직인다. 같은
+방법으로 쟀고, 내장 capability 표가 이미 서술하며(`claude-sonnet-4-5` prefix 행 — `BUDGETED` 이고 3 의
+`thinking.types` 와 맞는다), `default-anthropic` 번들의 메인 에이전트가 이미 그 이름으로 돌고, 가격 · 컨텍스트 창 표는
+두 이름을 같은 `claude-sonnet-4` prefix 로 답해 움직이지 않으며, 같은 Sonnet 급이다. 기각한 넷은 한 문장씩이다.
+
+- **날짜 붙은 스냅샷 `claude-sonnet-4-5-20250929`** — 방금 낡은 것이 바로 그 모양이고, 기본값과 번들이 한 모델을 두
+  철자로 적게 된다. 대가는 적어 둔다: 벤더가 undated 별칭을 같은 계열의 뒤 스냅샷으로 옮길 수 있다. 그때도 서비스한
+  `model` 이 무엇이 돌았는지 말하고, prefix 행이 그 이름을 서술한다.
+- **더 새 계열(`claude-sonnet-4-6`, `claude-sonnet-5`)** — 재지 않았고(과금 호출이 하나 더 든다), 이름 너머로 요청이
+  바뀐다. `claude-sonnet-4-6` 은 `EITHER` 행이라 `auto` 가 adaptive 로 가고, `claude-sonnet-5` 행은 temperature 를 억제한다.
+- **기본값을 없애고 모델을 요구하기** — 배포 모듈의 공개 계약(`AnthropicConfig.builder().apiKey(k).build()`)을 깨고,
+  #105 의 결정을 뒤집어 anthropic 에서 `llm.model` · `aimon.llm.model` 을 필수로 만든다. 더 작은 모양으로 충분하다.
+- **기동할 때 `GET /v1/models` 로 고르기** — 설정을 만드는 도중의 네트워크 호출이고, 키와 계정마다 답이 다르다.
+
+항목이 물었던 "내장 표가 새 이름을 서술해야 하는가" 의 답은 **이미 서술한다** 이다. 행은 더하지 않았고
+`InMemoryModelCapabilityRegistry` 의 `registerAnthropicDefaults` 주석과 그 테스트의 주석만 고쳤다. 근거는
+[설계](../design/llm/model-names-sent-and-shown.md) §11 이다.
+
+**보이는 변화.** 모델을 적지 않은 세 경로가 새 이름으로 요청한다 — `.model(...)` 없이 만든 `AnthropicConfig`,
+`llm.model` 없는 `provider: anthropic` CLI(이 항목의 네 자리이고, 메모리의 기동 줄은 이제 `claude-sonnet-4-5` 를 댄다),
+`aimon.llm.model` 없는 스타터. 옛 이름으로 나간 요청은 Anthropic Messages API 에서 전부 404 였으므로 **그 API 에서**
+성공하던 요청이 바뀌지는 않는다. `baseUrl` 뒤의 게이트웨이가 옛 이름을 아직 서비스하거나 허용하고 있었다면 이야기가
+다르다 — 모델을 적지 않은 그 배포는 이제 `claude-sonnet-4-5` 를 보내고, 게이트웨이가 그 이름을 어떻게 다루는지는 재지
+않았다. `thinkingMode` 를 적고 모델을 적지 않은 배포는 요청 모양도 바뀐다: `auto` 는 thinking 을 보내지 않던 자리에서
+budgeted thinking 을 보내고(과금된다), `adaptive` 는 기존 경고와 함께 budgeted 로 옮겨지며, `extended` 와 배포 기본값
+`off` 는 그대로다. CHANGELOG 에 적었다.
+
+**규칙 다섯 — 처방을 적용했고, 재는 것이 먼저였다.** 항목이 본 둘째 모양(잰 이름으로 바꾸기)이다. 첫째 모양(재어
+기록만 하기)은 잰 결과가 지웠다. `AnthropicConfigTest` 는 이제 기본값을 적은 단언에 더해, 기본값이 내장 표에서
+`BUDGETED` 로 풀리는지 본다 — 다음에 기본값을 바꾸는 사람은 표와 마주친다. 기본값을 옛 이름으로 되돌리면 두 단언이
+함께 빨개진다. 되돌려 보고 확인했다(설계 §11).
+
+**남은 것.** 별칭도 은퇴하거나 옮겨 갈 수 있다. 다시 볼 계기는 anthropic 에서 모델을 적지 않은 요청이 404 로 실패한다는
+보고, 또는 기본값을 다음에 건드릴 때다. 예시 코드가 여전히 서비스되지 않는 이름을 적는 자리는 L-27 로 올렸다.
+
+---
+
+## L-25 — 백그라운드 포크의 결과를 부모에게 전하는 두 자리는 `max_tokens` 에서 잘린 답을 완결된 답처럼 보여 준다
+
+*(2026-09-11 등록. 출처는 #117 — [설계](../design/agent-execution/skill-loop-truncation-and-fork-stall.md) §8.1 F-1. #117 의
+첫 항목은 전경 `Task` 호출의 출력을 고쳤고, 백그라운드로 띄운 포크가 지나는 두 파일은 그 작업의 파일이 아니었다. 여기 두는
+것은 L-23 의 짝이기 때문이다.)*
+
+**무엇을.** 백그라운드 포크의 최종 답이 `max_tokens` 에서 잘렸을 때, 그 결과를 부모 모델에게 전하는 `AgentOutput` 도구와 완료
+알림이 답이 잘렸다는 사실을 말하게 한다.
+
+**왜.** 관측 가능한 결과는 이렇다 — `run_in_background` 로 띄운 포크의 최종 답이 잘리면 태스크 기록은 `TRUNCATED` 를 저장한다.
+그러나 부모 모델이 그것을 읽는 두 자리는 그 값을 전하지 않는다. `AgentOutput` 은 `TaskResult.getStatus()` 를 찍으므로 `SUCCESS`
+로 보이고, 기록에 이미 있는 완료 사유는 찍지 않는다 — 요약은 뒤를 남기며 자르므로 끝의 마커는 거기서는 살아남는다. 완료 알림은
+그 태스크를 `COMPLETED` 로 부르고 요약을 **앞에서부터** 500자로 자르므로, 답이 길면 끝의 마커가 잘려 나간다. 전경 `Task` 호출은
+#117 이후 결과 뒤에 `Completion reason: TRUNCATED (…)` 줄을 찍는다 — 이 항목은 같은 결함의 백그라운드 절반이다.
+
+**어디** *(2026-09-11, `c561e17`)* — `AgentOutputTool.formatAgentResult` 의 `Status:` 줄(`AgentOutputTool.java:378`),
+`DefaultSubagentExecutionManager` 의 `completionDetail` · `truncateDetail` 과 `COMPLETION_DETAIL_MAX_CHARS`(`:107`).
+
+**심각도 (규칙 셋).** 읽어서 얻은 결론이고 돌려 보지는 않았다. 부모 모델이 알림과 `AgentOutput` 중 무엇을 먼저 읽는지, 잘린
+답이 500자를 넘는 경우가 얼마나 흔한지는 세지 않았다.
+
+**처방은 적용해 보지 않았다 (규칙 다섯).** 모양은 보인다 — 전경 `Task` 와 같은 줄을 `AgentOutput` 에도 찍는 것, 그리고 알림이
+완료 사유를 따로 적거나 요약을 뒤에서 남기며 자르는 것. `AgentOutput` 의 출력을 파싱하는 곳이 트리에 있는지는 확인하지 않았다 —
+전경 `Task` 의 출력은 `aimon-cli` 의 `SubagentResultDisplayHook` 이 파싱하므로 새 줄의 위치가 결정을 갈랐다.
+
+**언제 다시 볼까.** `AgentOutputTool` 이나 완료 알림을 다음에 건드릴 때, 또는 백그라운드 태스크의 잘린 답을 부모가 완결로 다뤘다는
+보고가 있을 때.
+
+---
+
+## L-26 — 잘린 최종 답을 돌려준 슬래시 스킬을 실행한 턴은 `COMPLETED` 로 끝난다
+
+*(2026-09-11 등록. 출처는 #115 — [설계](../design/agent-execution/skill-loop-truncation-and-fork-stall.md) §8.1 F-2 · §9 Q4. 결정
+항목이다 — 그 설계는 이 질문을 유지보수자가 정하도록 남겼고, 무엇으로 정하든 그 작업의 파일이 아닌 `command/**` 가 필요하다.)*
+
+**무엇을.** 슬래시 명령으로 실행한 인라인 스킬의 최종 답이 `max_tokens` 에서 잘렸을 때, 그 턴의 `CompletionReason` 이 그 사실을
+말하게 할지 정한다.
+
+**왜.** #115 이후 스킬 루프는 잘린 최종 답을 성공으로 돌려주고 텍스트 끝에 `[System: response truncated at max_tokens]` 를
+붙인다. 턴은 그 텍스트를 최종 답으로 커밋하고 `OrcaAgentExecutionResult.success(...)` 로 끝나므로 `COMPLETED` 다 — 에이전트가
+직접 쓴 잘린 답이 `TRUNCATED` 로 끝나는 것과 다르다. 턴의 완료 사유로 결과를 가르는 소비자(예: `LiveSession` 을 쓰는
+애플리케이션)는 텍스트에서 마커를 찾지 않는 한 차이를 모른다. 트리 안에는 턴의 `TRUNCATED` 로 가르는 독자가 없다 — CLI 의
+`OutputFormatter` 는 `INTERRUPTED` 만 본다.
+
+**어디** *(2026-09-11)* — `SkillExecutionResult`(완료 사유가 없다), `SkillBackedCommandExecutor.toCommandResult`(네 필드를
+옮긴다), `CommandExecutionResult`(사유를 담을 자리가 없다), `OrcaAgentExecutor.executeCommandFlow`(`success` 나 `failure` 로만
+끝낸다).
+
+**심각도 (규칙 셋).** 읽어서 얻은 결론이다. 트리 밖에서 턴의 완료 사유를 읽는 애플리케이션이 몇인지는 셀 수 없다.
+
+**처방은 적용해 보지 않았다 (규칙 다섯).** 모양은 둘이 보인다 — 스킬 결과와 `CommandExecutionResult` 에 사유를 더해 턴까지
+나르는 것(`command/**` 의 공개 추가), 또는 턴이 스킬 결과의 텍스트 끝에서 마커를 읽는 것. 지금처럼 두는 것도 선택지다 — 그 설계가
+타입 신호를 기각한 이유는 읽는 곳이 없다는 것이었고, 이 항목은 그 읽는 곳이 생기는 날을 위한 것이다.
+
+**언제 다시 볼까.** `CommandExecutionResult` 나 `executeCommandFlow` 를 다음에 건드릴 때, 또는 턴의 완료 사유로 잘린 답을 가르는
+소비자가 생길 때.
+
+---
+
+## L-27 — 복사해 쓰는 예시가 설정된 provider 가 서비스하지 않는 모델 이름을 적는다
+
+*(2026-09-11 등록. 출처는 #116 의 실측과 #118 item 5 — [설계](../design/llm/model-names-sent-and-shown.md) §11 이
+이 항목으로 올렸다. 번호가 L-25 · L-26 을 건너뛴 것은 같은 날 다른 작업이 그 두 번호를 예약했기 때문이다.)*
+
+**무엇을.** 모델 이름을 적는 README 와 javadoc 예시가 서비스되는 이름을 적거나, 이름을 적지 않게 한다.
+
+**왜.** 관측 가능한 결과 — 예시를 그대로 복사한 사람의 첫 요청이 404 로 실패한다. `aimon-llm-anthropic` 의 README 빠른
+시작이 적는 `claude-sonnet-4-20250514` 는 2026-09-11 에 Messages API 와 모델 API 모두 404 였다(L-24). #118 item 5 는
+코어의 서브에이전트 다섯 파일에서 별칭 예시를 뺐지만, 같은 모양의 예시가 그 다섯 파일 밖에 남았다. 기본값을 바꾼 변경이
+이 줄들을 틀리게 만든 것은 아니다 — 그 전에도 서비스되지 않는 이름을 가리키고 있었다.
+
+**어디** *(2026-09-11)*.
+
+| 자리 | 적힌 이름 | 무엇 |
+|---|---|---|
+| `modules/aimon-llm-anthropic/README.md:55` | `claude-sonnet-4-20250514` | 빠른 시작의 `.model(...)` |
+| `modules/aimon-llm-anthropic/README.md:106` | `claude-opus-4-20250514` | 예시의 `.name(...)` |
+| `AnthropicConfig.java:34` | `claude-sonnet-4-20250514` | 클래스 javadoc 의 사용 예 |
+| `AnthropicConfig.java:321` | `claude-sonnet-4-20250514`, `claude-opus-4-20250514` | `Builder.model` 의 `@param` 예 |
+| `AnthropicLlmClient.java:78` | `claude-sonnet-4-20250514` | 클래스 javadoc 의 사용 예 |
+| `MarkdownSubagentParser.java:22` | `sonnet` | 프론트매터 예시의 `model:` |
+| `SubagentParser.java:20` | `sonnet` | 프론트매터 예시의 `model:` |
+
+**심각도 (규칙 셋).** `claude-sonnet-4-20250514` 는 2026-09-11 에 두 API 모두 404 였고(L-24), 맨 별칭 `haiku` 는
+2026-09-10 에 Anthropic 이 404 로 답했다([#92 설계](../design/llm/provider-switch-agent-model-check.md) §10.4). 코드는
+별칭을 풀지 않으므로 `sonnet` 도 쓰인 그대로 나간다. `claude-opus-4-20250514` 와 `sonnet` 자체는 재지 않았다.
+
+**처방은 적용해 보지 않았다 (규칙 다섯).** 모양은 둘이다 — 예시에서 모델 줄을 빼는 것(#118 item 5 가 코어 다섯 파일에서
+한 모양), 잰 이름으로 바꾸는 것. 후자는 낡을 리터럴을 늘린다.
+
+**언제 다시 볼까.** `aimon-llm-anthropic` 의 README 나 `AnthropicConfig` · `AnthropicLlmClient` 의 javadoc 을 다음에
+건드릴 때, 서브에이전트 파서를 건드릴 때, 또는 기본 모델이 다시 바뀔 때.
+
 ---
 
 ## 관련 문서
@@ -1402,6 +1650,9 @@ limit` WARN 이 **뜬다.** 다만 그 줄은 어느 스킬이었는지, 어느 
   §16 이 #83 의 결정이자 L-15 의 출처, §16.8 이 #89 의 결정이자 L-16 의 출처이며, §16.10 이 L-16 을 닫은 기록이다
 - [`../design/agent-execution/max-tokens-truncation-reporting.md`](../design/agent-execution/max-tokens-truncation-reporting.md) —
   #108 · #100 · #101 의 설계. L-16 을 닫았고, §11 이 L-22 · L-23 으로 올린 것과 설계 문서에 남긴 것을 가른다
+- [`../design/agent-execution/skill-loop-truncation-and-fork-stall.md`](../design/agent-execution/skill-loop-truncation-and-fork-stall.md) —
+  #115 · #117 의 설계. D1 · D2 · D5 가 L-22 를, D3 · D4 가 L-23 을 닫은 결정이고, §8.1 F-1 이 L-25 의, F-2 와 §9 Q4 가 L-26 의
+  출처이며, §11 이 구현이 설계에서 벗어난 자리다
 - [`../design/llm/openai-model-capabilities.md`](../design/llm/openai-model-capabilities.md) — capability
   SPI 자체의 설계. §7 O-8 이 이 작업으로 닫혔다
 - [`../design/llm/openai-responses-path.md`](../design/llm/openai-responses-path.md) — F-2 가 L-2 의 출처
@@ -1413,7 +1664,8 @@ limit` WARN 이 **뜬다.** 다만 그 줄은 어느 스킬이었는지, 어느 
   설계. §8 이 D 번호로 된 원래 목록이고, §10 이 그중 L-17 ~ L-21 로 올린 것과 설계 문서에 남긴 것을 가르며, §11 이
   그 다섯을 닫은 #104 ~ #107 을 적는다
 - [`../design/llm/model-names-sent-and-shown.md`](../design/llm/model-names-sent-and-shown.md) — #104 ~ #107 의 설계.
-  D-1 ~ D-5 가 L-17 ~ L-21 을 닫은 결정이고, §9 Q2 가 L-24 의 출처, §10 이 구현이 설계에서 벗어난 자리다
+  D-1 ~ D-5 가 L-17 ~ L-21 을 닫은 결정이고, §9 Q2 가 L-24 의 출처, §10 이 구현이 설계에서 벗어난 자리이며, §11 이
+  #116 · #118 의 기록이다 — L-24 를 닫은 실측과 결정, 그리고 L-27 의 출처
 - [`../getting-started/aimon-core-integration-via-cli-reference.md`](../getting-started/aimon-core-integration-via-cli-reference.md#provider-를-바꿀-때--agentname-도-함께-바꾼다) —
   CLI 가이드의 provider 전환 절. L-17 의 주의 문구와 L-18 · L-19 가 적혀 있던 자리이고, #104 ~ #107 이 그 항목들을
   닫으며 함께 고쳤다

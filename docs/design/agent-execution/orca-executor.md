@@ -65,9 +65,9 @@ execute(runtime, request)
 
 ## 2. 잘린 응답을 최종 답변으로 오인하지 않는다
 
-가장 심각한 결함이었다. 토큰 상한으로 **잘린 응답**은 tool_use 를 담고 있지 않으므로
+가장 심각한 결함이었다. 토큰 상한으로 **잘린 응답**이 tool_use 를 담고 있지 않으면
 `!hasToolUses()` 분기를 타고 **완성된 최종 답변으로 조용히 처리**되었다. 사용자는 잘렸다는 사실을
-알 수 없었다.
+알 수 없었다. tool_use 를 담은 채 잘린 응답은 받은 인자 그대로 그 호출을 실행했다 — 두 모양의 답은 §2.2 에 있다.
 
 정보가 없어서가 아니었다 — 스트리밍 경로의 `ChunkAggregator` 는 `finishReason` 을 **이미 캡처**하고
 `LlmResponse` 를 조립할 때 버렸고, 비스트리밍 Anthropic 경로는 `MAX_TOKENS` 를 감지해 **경고 로그만**
@@ -95,24 +95,21 @@ public enum StopReason {
 `LlmResponse` 와 `LlmStreamChunk` 가 이 값을 나르고 `ChunkAggregator` 가 전달한다.
 기존 `of(text, tools, usage)` 시그니처는 보존한다.
 
-### 2.2 복구 정책은 인터페이스, 기본은 보수적
+### 2.2 한 정의, 두 모양 — 전략 인터페이스는 만들지 않았다
 
-```java
-public interface TruncationRecoveryStrategy {
-    TruncationDecision onTruncated(TruncationContext ctx);   // 예외를 던지지 않는다
-}
-// CONTINUE(이어쓰기 후 재루프) | FINALIZE_AS_TRUNCATED(잘림 표기 후 종료)
-```
+판정은 `StopReason.isTruncated()` 하나이고, 그것을 읽는 곳은 `at.aimon.core.agent.budget.TruncatedResponses` 하나다.
+도구 호출이 없는 잘린 최종 답은 부분 텍스트에 `[System: response truncated at max_tokens]` 를 붙여 노출한다 — 두
+실행기에서는 `CompletionReason.TRUNCATED` 로 끝나고(`isSuccess() == true`, `isSuccessful() == false`), 스킬
+루프(`LlmSkillExecutor`)는 같은 마커를 스킬 결과의 텍스트 끝에 붙인다. 도구 호출이 있는 잘린 응답은 어느 호출도 실행하지
+않고 호출마다 `max_tokens` 를 말하는 오류 결과로 답한 뒤 루프를 잇는다 — 응답은 어느 호출이 잘렸는지 말하지 않기
+때문이다. 턴·포크·스킬 루프에서는 그런 응답이 이어지면 §5 의 정체 가드가 끝낸다. `ReActLlmDeriver` 는 잘린 도구 호출을
+거절하는 것만 같다 — 텍스트를 돌려주지 않으므로 표시할 답이 없고, 반복은 여섯 iteration 과 토큰 예산이 끝낸다.
 
-기본은 **`FlaggingTruncationRecoveryStrategy`** 다 — 이어쓰기를 시도하지 않고 부분 답변을
-`[System: response truncated at max_tokens]` 마커와 함께 노출한 뒤 `CompletionReason.TRUNCATED`
-로 종료한다. 부분 텍스트는 사용자에게 보이되(`isSuccess() == true`) 실행은 성공으로 세지 않는다
-(`CompletionReason.isSuccessful() == false`).
-
-**이어쓰기를 기본으로 하지 않은 이유**는 병합이다. continuation 은 결과 병합과 서명 블록 처리에
-복잡도가 있고, 잘못 병합하면 구조화 출력이 깨진다. 1단계 목표는 "잘렸음을 정직하게 알리는 것"
-이며 그것만으로 조용한 오답이 사라진다 — 회귀 위험이 없는 최소 변경이다. 참조처럼 합성 user
-메시지로 이어쓰는 `ContinuingTruncationRecoveryStrategy` 는 opt-in 으로 남는다.
+`TruncationRecoveryStrategy` 같은 전략 인터페이스와 이어쓰기(continuation)는 **만들지 않았다**. 이어쓰기를 기본으로
+두지 않은 이유는 병합이다 — continuation 은 결과 병합과 서명 블록 처리에 복잡도가 있고, 잘못 병합하면 구조화 출력이
+깨진다. 잘렸음을 정직하게 알리는 것만으로 조용한 오답이 사라진다. 호출을 실행하지 않고 거절하는 이유는
+[`max-tokens-truncation-reporting.md`](max-tokens-truncation-reporting.md) 에, 그 판정이 스킬 루프와 포크의 정체
+가드에 닿은 결정은 [`skill-loop-truncation-and-fork-stall.md`](skill-loop-truncation-and-fork-stall.md) 에 있다.
 
 ---
 
@@ -159,6 +156,13 @@ aimon-core 는 툴 실패를 예외가 아니라 `ToolResult.error()` 로 반환
 최종 답변이 나오면 카운터를 리셋한다.
 
 이것이 포착하는 것은 "모델이 계속 실패하는 툴을 반복 호출" 하는 실제 death-spiral 이다.
+
+정의는 `at.aimon.core.agent.budget.StalledIterationGuard` 하나이고, 턴과 서브에이전트 포크(`DefaultSubagentExecutor`)와
+스킬 루프(`LlmSkillExecutor`)가 함께 쓴다. 턴과 포크는 `CompletionReason.ERROR` 로, 완료 사유가 없는 스킬 결과는 실패로
+끝난다. 취소로 끊긴 iteration 은 세지 않는다 — 턴은 신호를 먼저 읽고, 포크는 iteration 끝의 취소 검사 뒤에 센다.
+`max_tokens` 에서 잘린 응답의 호출은 전부 거절되어 오류이므로(§2.2) 가드가 그것도 센다. 연속된 정체가 **전부** 그런
+응답이었으면 중단 메시지 끝에 그 사실이 붙는다 — 실패하는 도구는 다른 도구를 부르고, 잘린 응답은 한 응답의 출력을 줄이는
+것을 부르기 때문이다.
 
 ---
 
@@ -367,8 +371,8 @@ provider 매퍼는 블록이 **완성되는 즉시** 신호를 **sink 로만** �
 이 문서의 모든 항목이 지킨 규칙이다.
 
 - 기존 `LlmResponse.of(...)` 시그니처 보존. `stopReason` 부재는 `UNKNOWN` → 기존 판정 그대로.
-- 새 SPI(`TruncationRecoveryStrategy` / `ContextAssembler` / `CostEstimator` / fallback policy /
-  `streamingOverlap`)는 전부 빌더 opt-in 이고 기본값이 안전 no-op 이다.
+- 새 SPI(`ContextAssembler` / `CostEstimator` / fallback policy / `streamingOverlap`)는 전부 빌더 opt-in 이고
+  기본값이 안전 no-op 이다.
 - `CompletionReason` 은 값 추가(`TRUNCATED`, `COST_BUDGET_EXCEEDED`)만 한다.
 - provider 매핑은 점진 도입이 가능하다 — 매핑하지 않은 provider 는 `UNKNOWN` 으로 남는다.
 
@@ -401,7 +405,8 @@ provider 매퍼는 블록이 **완성되는 즉시** 신호를 **sink 로만** �
 2. **투기적 side-work** — 툴 배치 후 요약·prefetch 를 비블로킹 시작해 다음 iteration 에서 소비하는
    지연 은닉. 확정 소비자가 없어 구현하지 않고
    [백로그](../backlog/orca-executor-speculative-side-work.md) 로 분리했다.
-3. **잘림 이어쓰기(continuation) 승격** — 결과 병합·서명 블록 정책이 정해지면 기본값 후보가 된다(§2.2).
+3. **잘림 이어쓰기(continuation)** — 만들지 않았고 끼울 자리도 없다(§2.2). 만든다면 잘린 도구 호출의 거절과 최종 답의
+   마커를 **대신하는** 것이 되며, 결과 병합·서명 블록 정책이 먼저 정해져야 한다.
 4. **프롬프트 초과 2계층 복구** — `compact → drop-oldest` (§3).
 5. **모델 fallback 잔여** — 부분 스트림 tombstone 정리, 런타임 모델 해상도 (§10).
 6. **컨텍스트 refresh 트리거** — 지금은 턴 시작 1회다. N iteration 주기와 파일 변경 이벤트 중 무엇을

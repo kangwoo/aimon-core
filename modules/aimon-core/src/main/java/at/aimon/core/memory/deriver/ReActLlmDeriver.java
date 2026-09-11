@@ -9,6 +9,7 @@ import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import at.aimon.core.agent.budget.TruncatedResponses;
 import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
@@ -46,6 +47,18 @@ import at.aimon.core.memory.redaction.RedactionPolicy;
  * exceptions are swallowed and the partial result is returned, mirroring
  * {@link LlmDeriver} so the queue manager keeps treating throws as failed
  * tasks rather than as silent data loss.
+ *
+ * <p>
+ * A response the provider cut off at {@code max_tokens} has its tool calls
+ * refused rather than run ({@link TruncatedResponses}), as in every other tool
+ * loop in the tree: a cut call's arguments did not arrive, and the response
+ * does not say which call was cut, so an observation persisted from any of
+ * them could hold none of what the model was writing. Each call is answered
+ * with the shared refusal, a WARN names {@code max_tokens}, and the loop
+ * continues inside the same iteration cap and token budget, which bound a
+ * persistent cut. A cut response with no tool calls ends the loop as any text
+ * response does — {@code derive} returns observations, not text, so there is
+ * no answer to mark.
  *
  * <p>
  * Observations created during the loop are surfaced in
@@ -211,10 +224,15 @@ public final class ReActLlmDeriver implements Deriver {
 
             conversation.add(Message.assistant(response.getTextContent(), response.getToolUses())
                     .withReasoningTraces(response.getReasoningTraces()));
-            List<ToolUseResult> results = new ArrayList<>(response.getToolUses().size());
-            for (ToolUse toolUse : response.getToolUses()) {
-                ToolUseResult result = invokeTool(toolUse, toolContext, createdIds);
-                results.add(result);
+            List<ToolUseResult> results;
+            if (TruncatedResponses.isTruncated(response)) {
+                results = refuseTruncatedToolUses(response, iteration, ctx);
+            } else {
+                results = new ArrayList<>(response.getToolUses().size());
+                for (ToolUse toolUse : response.getToolUses()) {
+                    ToolUseResult result = invokeTool(toolUse, toolContext, createdIds);
+                    results.add(result);
+                }
             }
             conversation.add(Message.toolUseResults(results));
 
@@ -229,6 +247,22 @@ public final class ReActLlmDeriver implements Deriver {
         log.info("ReActLlmDeriver finished: observer={}, created={}, tokens={}, ids={}", ctx.getObserver().key(),
                 created.size(), totalTokens, createdIds.size());
         return DerivationResult.of(created, List.of(), totalTokens);
+    }
+
+    /**
+     * Answers every tool call of a response the provider cut off at {@code max_tokens} with
+     * {@link TruncatedResponses#refusal(ToolUse)} instead of invoking it — see the class javadoc. Nothing reaches the
+     * observation store from these calls.
+     */
+    private static List<ToolUseResult> refuseTruncatedToolUses(LlmResponse response, int iteration,
+            DerivationContext ctx) {
+        List<ToolUse> toolUses = response.getToolUses();
+        log.warn(
+                "ReActLlmDeriver response truncated at max_tokens in iteration {} for {} with tool calls {}: none of "
+                        + "them is run; each is answered with an error result{}",
+                iteration, ctx.getObserver().key(), toolUses.stream().map(ToolUse::getName).toList(),
+                TruncatedResponses.reasoningClause(response.getTokenUsage()));
+        return toolUses.stream().map(TruncatedResponses::refusal).toList();
     }
 
     private ToolContext buildToolContext(DerivationContext ctx) {

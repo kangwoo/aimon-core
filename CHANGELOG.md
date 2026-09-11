@@ -7,6 +7,136 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Docs: a design record committed as its approved text keeps its test strategy and line citations
+
+- **`docs/design/README.md` §3.4 exempts such a record from part of §3** (#122). The exemption covers a record
+  whose `Status` names, by number, the section where the build's departures begin, and says the body before that
+  section is the text design review approved, unchanged. Twelve records carry this marker today. Such a record
+  keeps its test strategy, implementation order and `file:line` citations, and needs no decision table or
+  reference file map. A correction goes into a section after the boundary, never into the body.
+- **A citation is dated by its line, not its file.** A body citation is read at the base commit the record names.
+  A line after the boundary is read at the commit `git blame` gives for that line, which may be a merge. The
+  commit that added the file dates neither.
+- **Not lifted:** checkboxes, progress tables and phase logs stay out of every record, and so do usage and
+  troubleshooting material. The one allowance is a configuration snippet whose shape is itself the decision. A
+  record with a test strategy or citations but no marker is not exempt. Sixteen such records exist, and none was
+  edited. Backlog `T-7` records that no check looks for the marker.
+
+### Anthropic client: the built-in default model is one the Messages API serves
+
+- **`aimon-llm-anthropic`: `AnthropicConfig`'s default model is now `claude-sonnet-4-5`** (#116). The Anthropic
+  Messages API answered the old default, `claude-sonnet-4-20250514`, with HTTP 404 `not_found_error` on 2026-09-11,
+  and so did `GET /v1/models/…`; `claude-sonnet-4-5` was served, as `claude-sonnet-4-5-20250929`. The default applies
+  wherever no model is written: an `AnthropicConfig` built without `.model(...)`; the CLI under `provider: anthropic`
+  with no `llm.model` — wiki page generation, a main agent whose definition has no `model.name`, a subagent that names
+  no model under one, and every memory component, whose startup line now names `claude-sonnet-4-5`; and the Spring
+  Boot starter with `aimon.llm.provider=anthropic` and no `aimon.llm.model`. Against the Anthropic Messages API each
+  of those requests failed before, so no request that worked there changes. **Behind a `baseUrl` gateway** that still
+  served or allowed the old name, such a deployment now sends `claude-sonnet-4-5` instead; a deployment that names its
+  model is unaffected.
+  - It is the model `default-anthropic` already runs on, and the built-in capability table already describes it; no
+    row was added. With a `thinkingMode` set and no model written, `auto` now sends budgeted thinking where it sent
+    none, and `adaptive` is translated to budgeted with the existing warning; `extended` and the shipped `off` are
+    unchanged. Its price and context-window rows are the ones the old name matched.
+  - Backlog `L-24` is closed. **This supersedes two sentences in the entries below**: #109's, that the default memory
+    can fall back to is unmeasured and registered as `L-24`, and #45's, that `AnthropicConfig` keeps its default
+    because `claude-sonnet-4-20250514` is current.
+
+- **Documentation** (#118). The CLI guide says what a subagent that names no model, and a definition without
+  `model.name`, run on when `llm.model` is not set (ko + en), and so does `default-config.yaml`'s `llm.model` comment.
+  Core javadoc for a subagent's `model` — `Subagent`, `SubagentMetadata`, `SubagentContentParser`, the
+  `at.aimon.core.subagent` package and the public SPI `SubagentBehaviorSupport` — no longer offers `sonnet`, `haiku` or
+  `opus`, and says a model id is sent as written; `resolvedModel()`'s name may be empty. No signature changed.
+
+### Agent loop: a skill's loop refuses a cut tool call too, a fork stops after three stalled iterations, and the Task tool says when a fork's answer was cut
+
+- **A slash skill's tool loop no longer runs a tool call cut at `max_tokens`** (#115). `LlmSkillExecutor`, the loop a
+  skill invoked as `/<skill>` runs, never read the stop reason: a call cut mid-argument ran with whatever arguments had
+  arrived, and a cut final answer came back as a plain success. It now answers a cut response as both agent executors
+  do. None of the response's calls is dispatched, through the bound dispatcher or the fallback; each is answered with
+  the same `Cut off at max_tokens: …` error result, and the loop continues. A cut final answer is still a success, and
+  its text now ends with `[System: response truncated at max_tokens]` — the text the skill result, the turn's final
+  answer and the transcript carry. A skill result has no completion reason, so a turn that ran such a skill still ends
+  `COMPLETED` (backlog `L-26`). Each case logs a WARN naming the skill — for a cut call, the 1-based iteration and the
+  tool names, not their arguments — and the client's own `… truncated due to max_tokens limit` WARN still fires on
+  this blocking path.
+  - **A person sees less of a refusal here than on a turn.** A turn's refused call emits `ToolUseStarted` and
+    `ToolResultReady`, which the REPL prints. The command path emits no lifecycle event for any skill call, refused or
+    run, so a single refused call shows only in the log; a streak of them ends the skill with the stop message below,
+    which the REPL shows.
+
+- **A slash skill stops after three consecutive iterations whose tool calls all fail** (#115). It used to run to its
+  `max-iterations` (100 unless the skill sets one), and a slash command cannot be interrupted. It now fails with the
+  turn's stop message, `Execution aborted: 3 consecutive tool-only iterations made no progress (all tool calls
+  failed)`, whatever made the calls fail: a tool error or an unknown tool, an allow-list refusal on the dispatcher
+  path, a PermissionRequest or PreTool block, the side-effect approval gate denying a call — so a user who declines a
+  mutating call three iterations running ends the skill — or refused cut responses. One successful call resets the
+  streak. A permission violation on the fallback path still fails the skill at once.
+
+- **A subagent fork stops after three consecutive iterations whose tool calls all fail, and ends `ERROR`** (#115). A
+  fork had no stalled-iteration guard, so only `maxIterations` (1000 unless the subagent sets one; no in-tree caller
+  gives a fork a budget), a budget, cancellation or an error stopped it. It now stops on the turn's guard, for every
+  cause above — including the approval gate denying a call because a fork has no channel to ask through. OnStop hooks
+  fire with `success=false`, the progress stream ends `[ended: <stop message>]`, and every reader of the reason gets
+  `ERROR`, a value it already handles:
+  - task records persist `ERROR`, and a background task is `FAILED` with the stop message as its notification detail;
+  - `AgentStepResult.isComplete()` is `false`: the workflow step cache does not store the step,
+    `WorkflowPatterns.loopUntilDry` does not count it as a quiet round, `WorkflowPatterns.completenessCritic` stops at
+    it, and GraalJS workflow scripts read `isComplete: false` and `completionReason: "ERROR"`;
+  - a fork-mode skill fails with `Skill fork failed for '<skill>': <stop message>`;
+  - the Task tool prints `Status: FAILURE` and `Completion reason: ERROR`.
+
+  A cancellation that lands on the would-be third stalled iteration still ends the fork `INTERRUPTED`. **No
+  `CompletionReason` value was added.**
+
+- **The stop message names `max_tokens` when the streak was made of refused cut responses** (#115). On the turn, the
+  fork and a skill's loop, when every one of the three stalled iterations was a response cut at `max_tokens` whose
+  calls were refused, the message gains ` — each of those responses was cut off at max_tokens, and its tool calls were
+  refused`. Any other streak reads as above, byte for byte. The guards' own WARNs do not name `max_tokens`, so each cut
+  response's WARN stays the one that does.
+
+- **`ReActLlmDeriver` refuses a cut tool call too** (#115). A cut `deriver.observation.create` call no longer persists
+  an observation from whatever arguments arrived: each call is answered with the refusal, a WARN names `max_tokens`,
+  the iteration, the observer and the tool names, and the loop continues inside its six iterations and token budget. A
+  cut response with no tool calls ends the loop as before. No in-tree code constructs this deriver.
+
+- **The Task tool says when a fork did not finish on its own terms** (#117). After the result, a foreground Task call
+  now prints `Completion reason: <REASON>` whenever the reason is not `COMPLETED`; for a successful result — a fork
+  whose final answer was cut at `max_tokens` — it reads `Completion reason: TRUNCATED (the subagent's final answer is
+  incomplete)`. Everything from `=== Subagent Task Result ===` through `Result:` is unchanged, because `aimon-cli`'s
+  `SubagentResultDisplayHook` parses it and allows only whitespace between `Status:` and `Result:`; the CLI shows the
+  new line at the end of the rendered result. A `COMPLETED` result is byte-identical, and
+  `SubagentExecutionResult.getStatus()` still reads `SUCCESS` for a cut fork. `AgentOutput`, which reports a background
+  task, is unchanged (backlog `L-25`).
+
+- **`ChunkAggregator`'s parse-failure WARN no longer logs the arguments** (#117). It printed Jackson's message and the
+  whole accumulated `tool_call` arguments — a file body for a write, a command line. Dropping the arguments alone would
+  not have been enough, because Jackson copies the offending token into its message. The WARN now reads `Failed to
+  parse accumulated tool_call arguments as JSON: <ExceptionType> at offset N (L chars); the arguments are not logged`,
+  without the offset when Jackson does not know it.
+
+- **Pinned by tests** (#117): the entry below's *"No permission check and no PermissionRequest/PreTool/PostTool hook
+  runs for a refused call"*. On the turn, the fork and a skill's loop, a test counts the PermissionRequest, PreTool and
+  PostTool hooks and the tool across a cut call and then the same call uncut: 0 after the first, 1 after the second.
+  The permission check itself is counted on the skill loop only (0, then at least 1): the turn and the fork pass an
+  empty allow-list, and the check returns before it reads anything, so a count there would read 0 either way.
+
+- **API.** New public `at.aimon.core.agent.budget.StalledIterationGuard` — the threshold, the predicate, the
+  per-execution streak and the stop message the three loops share. `OrcaAgentExecutor.MAX_CONSECUTIVE_STALLED_ITERATIONS`
+  keeps its name and value (3), now taken from the guard. Nothing was renamed.
+
+- **Records.** `docs/design/agent-execution/orca-executor.md` §2.2 described a `TruncationRecoveryStrategy` and two
+  implementations that no source file declares; it now describes what shipped, and the sentences in §2, §5, §12 and
+  §13 that leaned on it follow. `AnthropicThinkingBudgetsTest.budgetIsClampedBelowMaxTokens`'s comment carries the
+  qualification #101 gave the javadoc. Backlog `L-22` and `L-23` are closed; `L-25` (the background half of the Task
+  tool's line) and `L-26` (whether a turn that ran a cut slash skill should end `TRUNCATED`) are registered. The design
+  is `docs/design/agent-execution/skill-loop-truncation-and-fork-stall.md`.
+
+- **This entry supersedes two sentences of #113's entry below:** *"`TaskTool` still prints `Status: SUCCESS`; what
+  tells the parent model is the marker at the end of the summary"* and *"A fork has no stalled-iteration guard, so a
+  fork whose every response is cut repeats the refusal until its `maxIterations` stops it — 1000 unless the subagent
+  sets one, since no in-tree caller gives a fork a request budget (backlog `L-23`)."*
+
 ### CLI: the distribution ships Logback 1.6.3, past every Logback CVE NVD lists
 
 - **`aimon-cli` now ships `logback-classic` and `logback-core` 1.6.3 instead of 1.5.13** (#114). The CLI is the one
@@ -164,10 +294,20 @@ Central is versioned independently).
   a stub `git` that records its calls: once per key, once with a key set to the empty string, once with both,
   once with neither, and once with a bad argument. A refusal must come before any `git` call and before
   pre-flight, name exactly the keys that are set, and not print the value; the keyless run must reach
-  pre-flight and call the stub, so "no `git` call" cannot pass vacuously. The test also holds the refused set
-  equal to the `@EnabledIfEnvironmentVariable` gates under `modules/aimon-llm-*`, so a new provider's key
-  fails the build until the script refuses it. `AIMON_DOCKER_IT` and `AIMON_KUBERNETES_IT`, which gate two
+  pre-flight and call the stub, so "no `git` call" cannot pass vacuously. The test also holds the keys those
+  cases run on equal to the `@EnabledIfEnvironmentVariable` gates under `modules/aimon-llm-*`, so the script
+  must refuse at least those gates, and a new provider's key fails the build until the script refuses it. A
+  script that refused more would still pass. `AIMON_DOCKER_IT` and `AIMON_KUBERNETES_IT`, which gate two
   sandbox classes the same way, are not refused; whether they should be is registered as backlog `LA-2`.
+
+- **A change to a provider module's test sources now re-runs that census locally** (#119). They were not inputs of
+  `aimon-core`'s `test`, so a build that added a key gate under `modules/aimon-llm-*/src/test` and changed nothing
+  else could report `ReleaseGateMatchesCiGateTest` `UP-TO-DATE` and stay green; CI, which builds from a fresh
+  checkout, did not. They are declared now, as a glob on the census's own prefix rather than a list of modules.
+  **The price:** a `checkAll` after such an edit also runs `aimon-core`'s suite, which it used to skip (measured:
+  `:aimon-core:test --rerun` ran 8168 tests in 40s on one macOS arm64 machine). The same test's tag scan reads
+  every test source in the repository and keeps its gap — declaring those would re-run that suite after a test edit
+  in any module — and the test's javadoc says so.
 
 - **Documentation.** The three CLI quickstarts (`README.md`, `docs/README.md`, `docs/README.en.md`) put the
   key on the command instead of exporting it, and say why in one sentence. `CONTRIBUTING.md` and its Korean
@@ -177,6 +317,12 @@ Central is versioned independently).
   was measured without a key on `:aimon-llm-openai`: a repeated `test` reported `UP-TO-DATE`, and `test` executed
   again after `cleanTest` and again after `clean` (313 tests, its 17 live tests skipped). The design is
   `docs/design/llm/provider-key-release-gate.md`.
+
+- **Records** (#119). `modules/aimon-cli/examples/gpt-5.6-terra.yaml` puts the key on the command, as the
+  quickstarts do. `CONTRIBUTING.md`'s test command and Quality Checks name all three tags `test` excludes, in both
+  languages. `docs/project/publishing-guide.md` and the `/release` skill name the refusal, and the guide the Docker
+  check. `docs/overview/architecture.md` (ko + en) and `docs/project/api-stability.md` describe the test as running
+  the script as well as comparing tasks. The design is `docs/design/llm/provider-key-census-claim-and-inputs.md`.
 
 ### Docs CI: the backlog check stops counting a commented-out item, and fails on item headings it used to skip
 

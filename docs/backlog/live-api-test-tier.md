@@ -155,7 +155,8 @@ R-1 이 두 태그 계층을 두고 적은 문장 — *"그 차이는 양이 아
 - `scripts/release.sh` *(2026-09-11, [#98](https://github.com/kangwoo/aimon-core/issues/98))* — `ANTHROPIC_KEY` 나
   `OPENAI_KEY` 가 환경에 있으면(빈 문자열로 설정된 것도) 시작하지 않는다. 이 결정이 서 있는 동안 릴리스 게이트는
   CI 처럼 키 없이 돌아야 하기 때문이다. `ReleaseGateMatchesCiGateTest` 가 그 거부를 샌드박스에서 실제로 돌려 보고,
-  거부하는 변수 목록을 `modules/aimon-llm-*` 의 키 게이트와 같게 붙든다. **이 결정을 선택지 1 로 다시 열면 그 거부도
+  그 거부가 `modules/aimon-llm-*` 의 키 게이트를 **적어도** 모두 덮게 붙든다 — 거부 사례를 돌리는 변수 목록을 그
+  게이트와 같게 붙들기 때문이다. **이 결정을 선택지 1 로 다시 열면 그 거부도
   함께 다시 본다** — 신호를 주는 워크플로가 키를 갖게 되더라도, 릴리스 게이트가 그 키를 물려받을지는 따로 정할 일이다
 
 > **정정** *(2026-09-10, #90)*: 게이트 줄은 처음에 네 클래스를 줄 번호로 적었고(`AnthropicThinkingLiveTest:76` ·
@@ -169,6 +170,14 @@ R-1 이 두 태그 계층을 두고 적은 문장 — *"그 차이는 양이 아
 > 인용을 쓴 커밋 안에서 파일이 움직였고, 가서 읽어 보라고 가리킨 줄이 가 보면 다른 줄이었다. `:69` 는 #90 이
 > 잡았고(L-12 닫힘 블록의 `:229` 도 함께 — 그쪽 정정은
 > [`llm-config-surface-open-items.md`](llm-config-surface-open-items.md) 에 있다), `:223` 은 같은 grep 이 더 냈다.
+
+> **정정** *(2026-09-11, [#119](https://github.com/kangwoo/aimon-core/issues/119))*: 위 **어디** 의
+> `scripts/release.sh` 줄은 처음에 *"거부하는 변수 목록을 `modules/aimon-llm-*` 의 키 게이트와 같게 붙든다"* 고
+> 적었다. 테스트가 붙드는 것은 같음이 아니라 **포함**이다 — 거부 사례를 돌리는 목록이 게이트와 같고, 스크립트가
+> 그 목록의 변수를 하나씩 거부하는지를 보므로, 그 밖의 변수를 더 거부하는 스크립트도 통과한다. 같음을 붙들려면
+> 거부하지 **않는** 변수를 테스트에 적어야 하는데, 그 자리에 올 변수는 `LA-2` 의 둘뿐이고 그렇게 하면 `LA-2` 를
+> 테스트로 결정하게 되므로 문장을 고쳤다. 같은 문장이 `CHANGELOG.md` 의 #98 항목과 테스트의 javadoc ·
+> `@DisplayName` 에도 있었고 함께 고쳤다.
 
 **이 결정과 함께 고친 것.** 발견 2·3 — 문장을 대조하던 두 단언을 주장이 요구하는 만큼으로 좁혔다.
 2 는 [`llm-config-surface-open-items.md`](llm-config-surface-open-items.md) 의 `L-12` 로 등록되어 있었으므로
@@ -226,6 +235,10 @@ CI 밖에 있는 이유가 "CI 에 데몬이나 클러스터가 없어서" 뿐�
 - `scripts/release.sh` 의 `0. provider API keys` 절 — 거부 목록이 두 키뿐이고, 그 절의 주석이 이 항목을 가리킨다
 - `ReleaseGateMatchesCiGateTest.refusedKeysAreTheProviderModulesKeyGates` — 거부 목록과 대조하는 인구조사가
   `modules/aimon-llm-*` 로 좁혀져 있다. 이 둘도 거부하기로 하면 그 범위와 `PROVIDER_KEY_VARIABLES` 라는 이름을 함께 고친다
+  *(2026-09-11, #119: 스크립트가 두 변수를 더 거부해도 지금은 어떤 테스트도 실패하지 않는다 — 테스트는 거부를
+  '적어도' 로 붙든다. 범위와 이름을 고치는 것은 그 새 거부를 **붙들기** 위해서다. 범위를 넓히면
+  `modules/aimon-core/build.gradle.kts` 의 `providerModuleTestSources` 입력도 같은 범위로 넓힌다 — 그렇지 않으면
+  새로 읽게 된 테스트 소스만 바뀐 로컬 빌드가 인구조사를 `UP-TO-DATE` 로 건너뛴다.)*
 - 두 클래스의 클래스 선언, 그리고 `modules/aimon-sandbox-docker/README.md` · `modules/aimon-sandbox-kubernetes/README.md` 의
   통합 테스트 실행 명령
 - 설계: [`provider-key-release-gate.md`](../design/llm/provider-key-release-gate.md) §2 D5 · §7 질문 2 · §9
