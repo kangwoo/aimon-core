@@ -1870,7 +1870,7 @@ main 소스에 있고(`at.aimon.core.credential.InMemoryCredentialStore`), 스�
   `aimon.llm.<provider>.*` 로 — 즉 위 트리가 비워 둔 그 자리로 간다. 이 키는 손으로 쓴 메타데이터 힌트를
   **필요로 하지 않는다**: `lowest-reasoning-effort` 가 코어 enum 이라 프로세서가 `type` 에 클래스를 적고 IDE 가
   상수를 읽는다. 근거 전문은
-  [`../llm/model-capability-config-key.md`](../llm/model-capability-config-key.md) §2.7 에 있다.
+  [`../llm/configuration-surface.md` §5.1](../llm/configuration-surface.md#51-표면별-타입) 에 있다.
 - **예약 작업의 정의 버전** — cron 이 발화하는 시점에 에이전트 정의가 예약 당시와 달라져 있을 수 있다
   (`invalidate` 후 재생성). 의도된 동작이지만 사용자에게는 놀라움이다. 정의 버전을 `ScheduledTask` 에
   남겨 실행 로그에 표시할지 결정한다 — **스냅샷 고정은 하지 않는다**(옛 프롬프트로 도는 것이 더 나쁘다).

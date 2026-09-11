@@ -489,7 +489,7 @@ aimon:
   `aimon.llm.reasoning-effort` to `low` (2048) or `minimal` (1024) (or the agent definition's
   `model.reasoningEffort`, if it sets one). **The warning names only the first.** This is a decision, not an
   oversight; the reasons and the alternatives refused are in
-  [`thinking-reporting-and-dialect-records.md` §16](../design/llm/thinking-reporting-and-dialect-records.md#16-the-auto-budget-policy-decided-83-2026-09-10).
+  [`anthropic-thinking.md` §6.2](../design/llm/anthropic-thinking.md#62-auto-예산-정책--1토큰-답도-그대로-둔다).
 
   **`thinking-budget-tokens` is not an independent knob; it belongs to `extended`.** Written together with
   `auto`, `adaptive` or the default `off` it **fails startup** (a number has no meaning until the dialect is

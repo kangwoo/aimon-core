@@ -3,7 +3,7 @@
 > Status: **IMPLEMENTED** — `aimon-core` (`at.aimon.core.agent.budget.TruncatedResponses` and the cut-response
 > branches of `OrcaAgentExecutor` and `DefaultSubagentExecutor`), three statements in `aimon-llm-anthropic`, and the
 > records: §16.8 and §16.10 of
-> [`thinking-reporting-and-dialect-records.md`](../llm/thinking-reporting-and-dialect-records.md), backlog `L-16`
+> [`thinking-reporting-and-dialect-records.md`](../llm/anthropic-thinking.md#64-clamp-경고의-범위--clamp-만), backlog `L-16`
 > (closed), `L-22` and `L-23`. Sources: issues [#108](https://github.com/kangwoo/aimon-core/issues/108),
 > [#100](https://github.com/kangwoo/aimon-core/issues/100) and [#101](https://github.com/kangwoo/aimon-core/issues/101).
 >
@@ -11,7 +11,7 @@
 > where this document departs from what was built.** Everything between this header and §11 is the body as approved in
 > design review round 1 (PASS, no blocking findings, ten non-blocking), kept byte-exact rather than corrected — the
 > house habit in this directory, for the reason
-> [`../llm/model-capability-binding-round-trip.md`](../llm/model-capability-binding-round-trip.md) gives. Its
+> [`../llm/model-capability-binding-round-trip.md`](../README.md#34-승인된-설계를-그대로-커밋한-기록) gives. Its
 > `file:line` citations are at `main` `9b642cc`. The review transcript and run records it names (`review-1.md`,
 > `$RUN_DIR/build/`, `TASK.md`) are not in the repository; §11 reproduces what was measured.
 >

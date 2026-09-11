@@ -7,14 +7,14 @@
 > `@Suppress("UnstableApiUsage")` removed from `buildSrc`, backlog D-2's sentence, the six citations #134 item 5 lists,
 > §14 and the §4.10 correction mark of
 > [`shipped-logback-and-test-classpath-followups.md`](shipped-logback-and-test-classpath-followups.md), §14 and the §2.5
-> correction mark of [`../llm/openai-model-capabilities.md`](../llm/openai-model-capabilities.md), and the section of
+> correction mark of [`../llm/openai-model-capabilities.md`](../llm/model-capabilities.md), and the section of
 > `CHANGELOG.md` that opens "Dependencies: the sample app packs Logback 1.6.3". Sources: issues
 > [#129](https://github.com/kangwoo/aimon-core/issues/129) and [#134](https://github.com/kangwoo/aimon-core/issues/134).
 >
 > **[§11](#11-after-the-build--departures-and-corrections), appended after the build, is where this document departs
 > from what was built.** Everything between this header and §11 is the body as approved in design review round 1, kept
 > byte-exact rather than corrected — the house habit in this directory, for the reason
-> [`../llm/model-capability-binding-round-trip.md`](../llm/model-capability-binding-round-trip.md) gives. Its
+> [`../llm/model-capability-binding-round-trip.md`](../README.md#34-승인된-설계를-그대로-커밋한-기록) gives. Its
 > `file:line` citations are at `main` `2eddf3d`. The run records it cites (`TASK.md`, `review-1.md`,
 > `$RUN_DIR/design/probe/`, `$RUN_DIR/build/`) are not in the repository; §11 reproduces the measurements that matter.
 >

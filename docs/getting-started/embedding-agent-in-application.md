@@ -461,7 +461,7 @@ aimon:
   `model.maxTokens` 를 올리거나, `aimon.llm.reasoning-effort` 를 `low`(2048) 나 `minimal`(1024) 로 내립니다
   (에이전트 정의에 `model.reasoningEffort` 가 있으면 그쪽을). **경고가 말하는 처방은 앞의 것 하나뿐입니다.**
   이것은 빠뜨린 것이 아니라 결정이며, 근거와 기각한 대안은
-  [`thinking-reporting-and-dialect-records.md` §16](../design/llm/thinking-reporting-and-dialect-records.md#16-the-auto-budget-policy-decided-83-2026-09-10)
+  [`anthropic-thinking.md` §6.2](../design/llm/anthropic-thinking.md#62-auto-예산-정책--1토큰-답도-그대로-둔다)
   에 있습니다.
 
   **`thinking-budget-tokens` 는 독립된 노브가 아니라 `extended` 의 것입니다.** `auto` · `adaptive` · 기본

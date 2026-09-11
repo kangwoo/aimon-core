@@ -7,6 +7,24 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Docs: the LLM design records become ten documents, one per concept
+
+- **`docs/design/llm/` is rewritten by concept.** Twenty records, each written for one issue, become ten documents that
+  each own one concept: `streaming`, `cancellation`, `multimodal-content`, `model-capabilities`, `request-parameters`,
+  `reasoning-traces`, `openai-responses-path`, `anthropic-thinking`, `configuration-surface` and
+  `model-name-resolution`. The three release-gate records become `docs/design/testing/release-gate-provider-keys.md`.
+  They are written in Korean like the rest of `docs/design/`; the process history is gone, the decisions, their reasons
+  and the rejected alternatives stay. The sixteen removed records remain in git history, and `docs/design/README.md` §4
+  lists each with the commit of its last revision. Section numbers are not preserved.
+- **Links.** The backlog registers, the feature and getting-started guides (ko + en), `docs/migration/rename-maps.md`
+  and this file's links point at the new documents. Where a backlog sentence cites an old record's section, it keeps the
+  old number and adds the new location. The five §3.4 records change link targets only, and code-span paths in earlier
+  entries of this file are left as written.
+- **Javadoc.** Comments and test failure messages that cited an old record's section cite the new document's. No code
+  changed.
+- **`docs/project/documentation-guide.md` §7** says when a wrong record sentence is corrected in place and when it is
+  superseded — a rule that until now lived only in one of the removed records.
+
 ### Release gate: an edit to the `/release` skill re-runs the tests that read it, and the documents name the gate's tasks
 
 - **`.claude/skills/release/SKILL.md` is an input of `aimon-core`'s `test` task** (#131). `ReleaseGateMatchesCiGateTest`
@@ -976,7 +994,7 @@ Central is versioned independently).
   distinguishes nothing on a monochrome terminal, which is a supported mode — and the text streams
   inline like answer text does. Collapsing, toggling and a `/thinking` command stay out of scope.
 
-  Design: [`reasoning-delta-stream.md`](docs/design/llm/reasoning-delta-stream.md).
+  Design: [`reasoning-delta-stream.md`](docs/design/llm/streaming.md).
   Closes `anthropic-thinking-traces.md` §8 **F-4** and **F-7**, and `openai-responses-path.md` §7
   **F-5**. Open items: `docs/backlog/reasoning-delta-stream-open-items.md`.
 
@@ -1220,7 +1238,7 @@ Central is versioned independently).
   `MINIMAL` on that model is a 400 — unreachable from configuration today, unfixable in the current table
   without breaking the `gpt-5` prefix override the class documents, and tracked as L-1 in
   [`openai-model-capabilities-open-items.md`](docs/backlog/openai-model-capabilities-open-items.md).
-  Full measurement, controls and decision: [`openai-model-capabilities.md`](docs/design/llm/openai-model-capabilities.md) §13.
+  Full measurement, controls and decision: [`openai-model-capabilities.md`](docs/design/llm/model-capabilities.md) §13.
 
 ### LLM: the Anthropic thinking dialect is a per-model fact now, not a name the operator has to know
 
@@ -1289,7 +1307,7 @@ Central is versioned independently).
   is still not among them.)
 
   Design and the full mode × dialect table, one test per row:
-  [`reasoning-model-enablement.md`](docs/design/llm/reasoning-model-enablement.md) §3.
+  [`reasoning-model-enablement.md`](docs/design/llm/anthropic-thinking.md) §3.
 
 ### LLM: how hard a model should think is reachable from configuration, and one model's ladder has a hole in it
 
@@ -1367,7 +1385,7 @@ Central is versioned independently).
   `reasoningEffortBelowLadder=` → `reasoningEffortOffLadder=`, and the message now prints the rungs
   the model does accept instead of the one it starts at. It is internal apart from the log text.
 
-  Design: [`reasoning-effort-config-surface.md`](docs/design/llm/reasoning-effort-config-surface.md).
+  Design: [`reasoning-effort-config-surface.md`](docs/design/llm/request-parameters.md).
   Closes `L-1` in `docs/backlog/openai-model-capabilities-open-items.md`.
 
 ### LLM: Anthropic's thinking settings are reachable from configuration, under a vendor namespace
@@ -1429,7 +1447,7 @@ Central is versioned independently).
   values in any case. **In the starter, quote `off`** — YAML reads it unquoted as a boolean, and the
   failure message says so.
 
-  Design: [`anthropic-thinking-config-surface.md`](docs/design/llm/anthropic-thinking-config-surface.md).
+  Design: [`anthropic-thinking-config-surface.md`](docs/design/llm/configuration-surface.md).
 
 ### LLM: Anthropic's thinking blocks now survive a tool call too
 
