@@ -132,7 +132,7 @@ jansi = "2.4.3"
 jsoup = "1.23.2"
 
 # Browser Automation
-playwright = "1.58.0"
+playwright = "1.62.0"
 
 # Container
 docker-java = "3.7.1"
