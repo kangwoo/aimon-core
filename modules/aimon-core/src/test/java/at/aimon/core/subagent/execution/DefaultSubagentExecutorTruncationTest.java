@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.AfterEach;
@@ -26,6 +27,8 @@ import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.agent.tool.permission.PermissionSubject;
+import at.aimon.core.agent.tool.permission.ToolPermissionSubjectAware;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
@@ -152,27 +155,34 @@ class DefaultSubagentExecutorTruncationTest {
     }
 
     @Test
-    @DisplayName("no PermissionRequest, PreTool or PostTool hook runs for a refused call; the same call uncut reaches all three")
-    void noHookRunsForARefusedCall() {
-        // The fork's half of what #113's CHANGELOG entry says (#117). The uncut iteration is the positive control.
+    @DisplayName("no PermissionRequest, PreTool or PostTool hook and no allow-list check runs for a refused call; the same call uncut reaches them all")
+    void noHookAndNoAllowListCheckRunsForARefusedCall() {
+        // The fork's half of what #113's CHANGELOG entry says (#117, #133). The uncut iteration is the positive
+        // control. A fork passes its definition's tools: as the allow-list, and the check reads the call only when an
+        // entry carries a pattern, so this entry has one: the check has to ask the tool for its subject.
         final HookCounters hooks = new HookCounters();
-        final CountingTool tool = new CountingTool();
+        final SubjectCountingTool tool = new SubjectCountingTool();
         final StubLlmClient llm = new StubLlmClient();
-        llm.responses.add(LlmResponse.of("", List.of(ToolUse.of("t1", CountingTool.TOOL_NAME, Map.of())), USAGE,
+        llm.responses.add(LlmResponse.of("", List.of(ToolUse.of("t1", SubjectCountingTool.TOOL_NAME, Map.of())), USAGE,
                 StopReason.MAX_TOKENS));
-        llm.responses.add(LlmResponse.of("", List.of(ToolUse.of("t2", CountingTool.TOOL_NAME, Map.of())), USAGE,
+        llm.responses.add(LlmResponse.of("", List.of(ToolUse.of("t2", SubjectCountingTool.TOOL_NAME, Map.of())), USAGE,
                 StopReason.TOOL_USE));
         llm.responses.add(LlmResponse.of("done", List.of(), USAGE, StopReason.END_TURN));
         final List<List<Integer>> reachedBeforeEachCall = new ArrayList<>();
-        llm.beforeEachCall = () -> reachedBeforeEachCall.add(hooks.andTool(tool.invocations));
+        llm.beforeEachCall = () -> reachedBeforeEachCall.add(hooks.andTool(tool.invocations, tool.subjectReads));
 
-        final SubagentExecutionResult result = execute(llm, registryWith(tool), hooks.registry);
+        final SubagentExecutionResult result = execute(llm, registryWith(tool), hooks.registry,
+                List.of(SubjectCountingTool.TOOL_NAME + "(" + SubjectCountingTool.SUBJECT + ")"));
 
         assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.COMPLETED);
-        // [PermissionRequest, PreTool, PostTool, tool] before each LLM call: after the cut iteration, then the uncut
-        // one.
-        assertThat(reachedBeforeEachCall).containsExactly(List.of(0, 0, 0, 0), List.of(0, 0, 0, 0),
-                List.of(1, 1, 1, 1));
+        assertThat(reachedBeforeEachCall).hasSize(3);
+        // [PermissionRequest, PreTool, PostTool, tool, allow-list subject reads] before each LLM call: before the first
+        // and after the cut iteration...
+        assertThat(reachedBeforeEachCall.get(0)).containsExactly(0, 0, 0, 0, 0);
+        assertThat(reachedBeforeEachCall.get(1)).containsExactly(0, 0, 0, 0, 0);
+        // ...and after the uncut one. How often the allow-list check reads the subject per call is its own business.
+        assertThat(reachedBeforeEachCall.get(2).subList(0, 4)).containsExactly(1, 1, 1, 1);
+        assertThat(reachedBeforeEachCall.get(2).get(4)).isPositive();
     }
 
     @Test
@@ -242,13 +252,19 @@ class DefaultSubagentExecutorTruncationTest {
 
     private SubagentExecutionResult execute(LlmClient llm, DefaultToolRegistry registry,
             DefaultHookRegistry hookRegistry) {
+        return execute(llm, registry, hookRegistry, List.of());
+    }
+
+    /** Runs a subagent whose definition declares {@code tools} — the allow-list a fork passes to every call. */
+    private SubagentExecutionResult execute(LlmClient llm, DefaultToolRegistry registry,
+            DefaultHookRegistry hookRegistry, List<String> tools) {
         final SubagentOutputSink sink = text -> {
             synchronized (streamed) {
                 streamed.append(text);
             }
         };
         final Subagent subagent = Subagent.of(SUBAGENT,
-                SubagentMetadata.builder().description("d").maxIterations(5).build(),
+                SubagentMetadata.builder().description("d").maxIterations(5).tools(tools).build(),
                 SubagentContent.of("you are " + SUBAGENT));
         final SubagentExecutionContext context = SubagentExecutionContext.builder()
                 .agentRuntimeId(AgentRuntimeId.of("agent:test-1")).subagent(subagent)
@@ -297,9 +313,10 @@ class DefaultSubagentExecutorTruncationTest {
             });
         }
 
-        /** {@code [PermissionRequest, PreTool, PostTool, tool]} as they read now. */
-        List<Integer> andTool(AtomicInteger toolInvocations) {
-            return List.of(permissionRequest.get(), preTool.get(), postTool.get(), toolInvocations.get());
+        /** {@code [PermissionRequest, PreTool, PostTool, tool, allow-list subject reads]} as they read now. */
+        List<Integer> andTool(AtomicInteger toolInvocations, AtomicInteger subjectReads) {
+            return List.of(permissionRequest.get(), preTool.get(), postTool.get(), toolInvocations.get(),
+                    subjectReads.get());
         }
     }
 
@@ -318,6 +335,35 @@ class DefaultSubagentExecutorTruncationTest {
         public ToolResult execute(ToolInput input, ToolContext context) {
             invocations.incrementAndGet();
             return ToolResult.success("ran");
+        }
+    }
+
+    /**
+     * Counts its invocations and every time the allow-list check asks it for the value to judge, which it always names
+     * as {@link #SUBJECT}.
+     */
+    private static final class SubjectCountingTool extends AbstractTool implements ToolPermissionSubjectAware {
+        static final String TOOL_NAME = "Checked";
+        static final String SUBJECT = "count";
+
+        final AtomicInteger invocations = new AtomicInteger();
+        final AtomicInteger subjectReads = new AtomicInteger();
+
+        SubjectCountingTool() {
+            super(TOOL_NAME, "counts its invocations and permission subject reads for truncation tests",
+                    Map.of("type", "object", "properties", Map.of(), "required", List.of()));
+        }
+
+        @Override
+        public ToolResult execute(ToolInput input, ToolContext context) {
+            invocations.incrementAndGet();
+            return ToolResult.success("checked");
+        }
+
+        @Override
+        public Optional<PermissionSubject> permissionSubject(ToolInput input, ToolContext context) {
+            subjectReads.incrementAndGet();
+            return Optional.of(PermissionSubject.command(SUBJECT));
         }
     }
 

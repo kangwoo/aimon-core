@@ -1477,8 +1477,9 @@ headroom or ratio. Its only pairing is an example, 16000 and 10000.
        cut. So neither executor runs any call of a response that stopped at `max_tokens`: each is answered with an
        error result that names `max_tokens` (`TruncatedResponses.refusal`), a WARN names `max_tokens`, the iteration
        and the tool names, and the loop continues. On a turn, three such responses in a row end the execution as
-       `ERROR` through the stalled-iteration guard; a fork has no guard and repeats until its `maxIterations` (L-23).
-       This shape was backlog L-16 until #108 closed it, and closing it needed no number either (§16.10).
+       `ERROR` through the stalled-iteration guard; ~~a fork has no guard and repeats until its `maxIterations`
+       (L-23).~~ *(2026-09-11, #133: no longer true — §16.11.)* This shape was backlog L-16 until #108 closed it, and
+       closing it needed no number either (§16.10).
      - **The thinking share is given as counts.** When the cut response's usage reports reasoning tokens — both
        Anthropic paths fill `TokenUsage.getReasoningTokens()` from `usage.output_tokens_details.thinking_tokens`, and so
        does OpenAI's Responses path; Chat Completions does not — the four truncation WARNs end with the response's
@@ -1490,10 +1491,10 @@ headroom or ratio. Its only pairing is an example, 16000 and 10000.
        through the stream, and both executors pass a live `SignalBackedLlmCancellation` on every call. OpenAI's two
        WARNs sit in the same position in `OpenAILlmClient`. Callers of the blocking overloads do reach them, and for
        them it is the only signal: compaction (`DefaultCompactionEngine`, through `LlmClient`'s five-argument default),
-       skill LLM execution (`LlmSkillExecutor`), peer memory as the CLI assembles it (`LlmDialecticEngine`,
-       `LlmDeriver`, `DefaultReconciler`, `RandomWalkDreamer`, `LlmJudgeSurprisalScorer`) and the wiki strategies.
-       Counted 2026-09-11 in main sources as `sendMessage(` and `::sendMessage`, then by construction site:
-       `ReActLlmDeriver` makes the same call and nothing constructs it.
+       ~~skill LLM execution (`LlmSkillExecutor`),~~ *(2026-09-11, #133: no longer true — §16.11.)* peer memory as the
+       CLI assembles it (`LlmDialecticEngine`, `LlmDeriver`, `DefaultReconciler`, `RandomWalkDreamer`,
+       `LlmJudgeSurprisalScorer`) and the wiki strategies. Counted 2026-09-11 in main sources as `sendMessage(` and
+       `::sendMessage`, then by construction site: `ReActLlmDeriver` makes the same call and nothing constructs it.
   4. **The warning's text stays true.** Every request it fires on leaves exactly one token, and raising `maxTokens` is
      a remedy that works for it. Nothing here changes what it says (L-15).
 
@@ -1514,9 +1515,10 @@ gone (§16.10). Where the warning's advice could say *how far* to raise `maxToke
   `max_tokens`, and both the clamp and this coverage change.
 - **A change to the clamp's target** away from `max_tokens − 1`. "Exactly one token" stops being true, and so does
   L-15's premise.
-- **Evidence that the outcome signals above miss a squeeze that L-22 does not already record.** A change to how a
-  truncation is reported is not a trigger: #108 and #100 changed the report — a `max_tokens` stop named wherever the
-  cut lands, on both executors, with the reasoning count beside it — without touching this warning or needing a number.
+- **Evidence that the outcome signals above miss a squeeze ~~that L-22 does not already record~~.** *(2026-09-11,
+  #133: no longer true — §16.11.)* A change to how a truncation is reported is not a trigger: #108 and #100 changed
+  the report — a `max_tokens` stop named wherever the cut lands, on both executors, with the reasoning count beside
+  it — without touching this warning or needing a number.
 
 **Where it is pinned.** `AnthropicThinkingResolverTest.ClampWarningCoverage` asserts condition 3 as a property over
 every rung, conditions 1 and 2 path by path in both directions, and the table's rows. `AnthropicThinkingDialectTest`
@@ -1613,14 +1615,60 @@ error result that names `max_tokens` and asks for less output per response. A su
 counts, and no share. The design, the alternatives it refused and where the build departed from it are in
 [`../agent-execution/max-tokens-truncation-reporting.md`](../agent-execution/max-tokens-truncation-reporting.md).
 
-**Backlog.** L-16 is closed. L-22 (two more tool loops that never read the stop reason, one of them reachable) and L-23
-(a fork has no stalled-iteration guard, so a persistent cut repeats up to its iteration limit) are registered beside it.
+**Backlog.** L-16 is closed. ~~L-22 (two more tool loops that never read the stop reason, one of them reachable) and
+L-23 (a fork has no stalled-iteration guard, so a persistent cut repeats up to its iteration limit) are registered
+beside it.~~ *(2026-09-11, #133: no longer true — §16.11.)*
 
 **Measured once.** A single streaming request to the Anthropic Messages API on 2026-09-11, forcing a tool call under
 `max_tokens: 60`, returned `input_json_delta` fragments and then `message_delta` with `stop_reason: max_tokens`, and
 **no `content_block_stop` for the cut `tool_use` block**. The joined input was `{"path": "/tmp/sea.txt"`, which does not
 parse. The details are in the design document's §11.4. One request is an observation, not a guarantee, and nothing
 above depends on it.
+
+### 16.11 What §16.8 and §16.10 still said after #115 and #117 (#133, 2026-09-11)
+
+*Appended 2026-09-11 by #133. Not a change to #89's decision: option 3 stands, and the clamp warning is untouched.
+#115 and #117 changed the code under reason 3 once more and closed L-22 and L-23. That work left this record as it
+was, because the record was not among that run's files
+([`../agent-execution/skill-loop-truncation-and-fork-stall.md`](../agent-execution/skill-loop-truncation-and-fork-stall.md)
+§11.3, F-3). This section keeps the form of §16.7, §16.9 and §16.10 — what was said, what is true — but not §16.10's
+placement.*
+
+**Why §16.8 is not edited in place this time.** §16.10 rewrote §16.8 and kept the old wording in its own section
+(`babfc1a`). [`../README.md`](../README.md) §3.4 did not exist then; it arrived with `c646fd2` (#122). This record's
+`Status` carries §3.4's marker — §15 is the boundary, and the body above it is the text as approved — so §3.4 governs
+it. §3.4 treats a section appended after the boundary as it treats the body: the section is not rewritten, and a later
+correction is a new section. So each stale sentence below keeps its words where it stands, struck through, followed by
+a dated pointer here. §16.10's in-place edits stay: they were made before the rule, and undoing them would be a rewrite
+too.
+
+- **§16.8 reason 3 — *"a fork has no guard and repeats until its `maxIterations` (L-23)"*.** Since #115 a fork stops on
+  `at.aimon.core.agent.budget.StalledIterationGuard`, the one definition the turn, a fork and a skill's loop use, each
+  execution holding its own instance. Three consecutive iterations whose tool calls all fail, refused cut responses
+  included, end the fork as `ERROR`. When every one of them was a refused cut response, the stop message ends
+  ` — each of those responses was cut off at max_tokens, and its tool calls were refused`. L-23 is closed.
+- **§16.8 reason 3 — *"for them it is the only signal: … skill LLM execution (`LlmSkillExecutor`) …"*.** Since #115 a
+  skill's loop reads the stop reason itself. It refuses every call of a cut response, with a WARN naming the skill, the
+  iteration and the tool names, and returns a cut final answer marked `[System: response truncated at max_tokens]`,
+  with a WARN naming the skill. The client's WARN still fires on that blocking path, but it is no longer the only
+  signal there. The rest of the list is unchanged. `ReActLlmDeriver`, named in the next sentence, now refuses a cut tool
+  call with a WARN of its own; a cut response with no tool calls still ends its loop without one, and nothing constructs
+  it.
+- **§16.8 reason 3 names "both agent executors"** as the loops that read `TruncatedResponses`. A skill's loop and
+  `ReActLlmDeriver` read it too. That is incomplete, not false, so the sentence carries no mark.
+- **§16.8 "What would re-open this" — *"a squeeze that L-22 does not already record"*.** L-22 is closed. The squeezes
+  the outcome signals are known to miss are now recorded as L-25 and L-26. Under L-25, a background fork's cut answer
+  reaches its parent through `AgentOutput` and the completion notification as though it were complete. Under L-26, a
+  turn that ran a slash skill whose final answer was cut ends `COMPLETED`. The trigger is evidence of a squeeze neither
+  records.
+- **§16.10 "Backlog." — *"L-22 (…) and L-23 (…) are registered beside it."*** They were, then. Both were closed on
+  2026-09-11 by #115 and #117. The decisions are D1–D5 of that work's record, and the closures are in
+  [`../../backlog/llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md). That work
+  registered L-25 and L-26.
+
+**Unchanged.** "Where it is pinned" holds: `OrcaAgentExecutorTruncationTest` and
+`DefaultSubagentExecutorTruncationTest` pin reason 3's two shapes. L-23's closure names the first sentence above under
+*남은 것*; that note belongs to the closure's date and was left as written.
 
 ---
 

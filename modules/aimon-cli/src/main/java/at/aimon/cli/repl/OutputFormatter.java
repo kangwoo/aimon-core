@@ -256,7 +256,8 @@ public class OutputFormatter {
      * @param tokens
      *            The total tokens used
      * @param summary
-     *            The result summary or error message
+     *            The result summary or error message, without the {@code Completion reason:} line the Task tool prints
+     *            after it (see {@link #displaySubagentCompletionReason})
      */
     public void displaySubagentResult(String indent, String subagentName, String description, String status,
             int iterations, int tokens, String summary) {
@@ -292,6 +293,34 @@ public class OutputFormatter {
                     System.out.println(summaryIndent + line);
                 }
             }
+        }
+    }
+
+    /**
+     * Displays the {@code Completion reason:} line the Task tool prints after a subagent's result when the subagent did
+     * not finish on its own terms. It is kept apart from {@link #displaySubagentResult}'s summary so that a result
+     * whose status is {@code SUCCESS} — an answer cut at max_tokens — does not print that line in the success colour.
+     *
+     * @param indent
+     *            The indentation of the result header (the line is indented as a summary line)
+     * @param status
+     *            The result's status word (SUCCESS or FAILURE)
+     * @param line
+     *            The reason line exactly as the Task tool printed it
+     */
+    public void displaySubagentCompletionReason(String indent, String status, String line) {
+        if (!settings.isShowToolCalls()) {
+            return;
+        }
+
+        String summaryIndent = indent + "  ";
+        if (settings.isColorOutput()) {
+            // Not the status colour: a SUCCESS that carries this line is an answer cut at max_tokens, and green would
+            // read the one line that says so as part of the success. A failure's line keeps the red of its summary.
+            Ansi color = "SUCCESS".equals(status) ? ansi().fgYellow() : ansi().fgRed();
+            System.out.println(summaryIndent + color.a(line).reset());
+        } else {
+            System.out.println(summaryIndent + line);
         }
     }
 
