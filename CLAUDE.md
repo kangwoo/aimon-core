@@ -7,7 +7,7 @@ AIMON is a ReAct (Reasoning and Acting) agent framework for IT operations automa
 ```bash
 ./gradlew build                    # Build entire project
 ./gradlew :aimon-core:build        # Build specific module
-./gradlew test                     # Run all unit tests (excludes @Tag("docker") integration tests)
+./gradlew test                     # Run all unit tests (excludes @Tag("docker"), @Tag("packaging") and @Tag("playwright"))
 ./gradlew :aimon-core:test         # Run tests for specific module
 ./gradlew :aimon-core:test --tests "at.aimon.core.agent.tool.ToolInputTest"  # Single test class
 ./gradlew integrationTest          # Run Docker/Testcontainers integration tests (@Tag("docker")) — needs a Docker daemon
