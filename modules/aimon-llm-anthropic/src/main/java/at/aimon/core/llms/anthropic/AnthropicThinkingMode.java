@@ -67,8 +67,8 @@ package at.aimon.core.llms.anthropic;
 public enum AnthropicThinkingMode {
 
     /**
-     * Send no {@code thinking} parameter. The request body is what it was before thinking support existed, sampling
-     * parameters included.
+     * Send no {@code thinking} parameter. The request body is what it was before thinking support existed: no
+     * thinking rule touches the sampling parameters, which then follow the model's capability row alone.
      *
      * <p>
      * This does <em>not</em> mean "the model will not think": on the always-on models it will, and those blocks are
@@ -110,7 +110,8 @@ public enum AnthropicThinkingMode {
      * A row saying {@link at.aimon.core.llm.capability.ThinkingDialect#EITHER} is the one case where this mode picks
      * rather than reads: both shapes are accepted, so the client sends the adaptive one and says nothing, because
      * {@code AUTO} asked the table and the table answered. Which of the two it prefers is a client policy with the
-     * vendor's own deprecation notice behind it, and it lives in {@code AnthropicLlmClient} rather than on the enum —
+     * vendor's own deprecation notice behind it, and it lives in {@code AnthropicThinkingResolver.resolveAutoDialect}
+     * rather than on the enum —
      * a row states a fact, and no probe measured a preference.
      *
      * <p>

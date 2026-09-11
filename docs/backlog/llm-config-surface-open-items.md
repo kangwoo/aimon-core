@@ -413,7 +413,7 @@ CLI 도 **자기가 판단하는 자리에서는** 같은 규칙을 지킨다 �
 서 있고, `README.md` 규칙 둘이 정확히 그것을 적어 두라고 한다.
 
 **어디.** `at.aimon.core.llm.capability.ThinkingDialect` 의 세 값, 그리고 그것을 읽는
-`AnthropicLlmClient.resolveDialect`(2026-09-10).
+`AnthropicThinkingResolver.resolveDialect`(2026-09-12 확인).
 
 **언제 다시 볼까.** 셋 중 하나다 — L-6 을 착수할 때(같은 표를 여는 김에), 세 번째 방언이 생길 때, 또는
 누군가 `UNKNOWN` 을 "어느 쪽이든 된다" 로 읽고 버그를 낼 때. 값을 하나 더할지(`EITHER`), 아니면
@@ -566,7 +566,7 @@ capability 표 이전의 모양, 즉 400 을 낸 그 `temperature` 가 실려 �
 *(2026-09-10 등록. 출처는 같은 설계 §11 O-3.)*
 
 **무엇을.** `EITHER` 는 **선호를 싣지 않는다.** 어느 쪽을 보낼지는 `AUTO` 아래에서만 정해지고, 그 정책은
-행이 아니라 클라이언트에 있다 — `AnthropicLlmClient` 가 adaptive 를 고른다. 오늘 그것으로 충분한 이유는
+행이 아니라 클라이언트에 있다 — `AnthropicThinkingResolver.resolveAutoDialect` 가 adaptive 를 고른다(2026-09-12 확인). 오늘 그것으로 충분한 이유는
 측정된 두 모델이 **둘 다** budgeted 쪽을 deprecated 로 표시하기 때문이다. 반대 방향의 모델이 나오면
 `EITHER` 행 하나로는 그 사실을 적을 수 없다.
 
