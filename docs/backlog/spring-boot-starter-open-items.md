@@ -900,7 +900,7 @@ B-34 가 뚫은 것이 배달 경로(영속 구현 → 스택)의 한쪽 끝이�
 #### (a) 가젯 역직렬화 — 지금은 재현되지 않는다
 
 원래 근거는 "한 파서만 `SafeConstructor` 를 쓴다" 였다. 그 비대칭은 사실이지만, **핀 버전에서
-보안 차이를 만들지 않는다.** snakeyaml **2.2**(`libs.versions.toml:57`) 로 직접 돌려 확인했다.
+보안 차이를 만들지 않는다.** snakeyaml **2.2**(그때의 핀이다. 지금 `libs.versions.toml` 의 `snakeyaml` 은 2.7 이고, 2.7 에서는 다시 돌리지 않았다) 로 직접 돌려 확인했다.
 
 ```
 new Yaml()                 on 가젯 -> REJECTED: ComposerException: Global tag is not allowed: …ScriptEngineManager
@@ -1355,7 +1355,7 @@ name is registered, it replaces the existing one"), `register` 는 실제로 그
 
 | 항목이 적은 근거 | 실제 (2026-08-05 확인) |
 |-----------------|----------------------|
-| `availableProcessors()` 는 **CPU 제한 컨테이너에서 노드의 코어 수를 본다** | 이 저장소의 베이스라인에서 거짓. `UseContainerSupport` 는 JDK 10 부터 기본 on 이고 Java 17 은 cgroup v1·v2 의 CPU 쿼터를 읽는다 — 툴체인은 `languageVersion = 17` 이다(`aimon.java-conventions.gradle.kts:16`). 노드 코어가 보이려면 `-XX:-UseContainerSupport` 를 **명시해야** 한다. 반대 방향도 이미 막혀 있다 — 0.5 CPU 컨테이너는 `1` 을 돌려주지만 두 자리 모두 `Math.max(2, …)` 바닥이 있어 풀이 1 로 쪼그라들지 않는다 |
+| `availableProcessors()` 는 **CPU 제한 컨테이너에서 노드의 코어 수를 본다** | 이 저장소의 베이스라인에서 거짓. `UseContainerSupport` 는 JDK 10 부터 기본 on 이고 Java 17 은 cgroup v1·v2 의 CPU 쿼터를 읽는다 — 툴체인은 `languageVersion = 17` 이다(`aimon.java-conventions.gradle.kts` 의 `java { toolchain { … } }` 블록). 노드 코어가 보이려면 `-XX:-UseContainerSupport` 를 **명시해야** 한다. 반대 방향도 이미 막혀 있다 — 0.5 CPU 컨테이너는 `1` 을 돌려주지만 두 자리 모두 `Math.max(2, …)` 바닥이 있어 풀이 1 로 쪼그라들지 않는다 |
 | 턴 실행기가 무제한 cached pool 이라 **상한이 없다 — 세션이 몰리면 스레드가 무한히 늘어난다** | 풀이 무제한인 것은 맞지만 **거기 올라가는 일이 게이트를 통과한다.** `activeTurns` 는 `Set<SessionId>` 이고 `tryBeginTurn` 은 `activeTurns.add(sessionId)` 다(`:295`, `:709`) — **노드당 세션당 턴 1개**. 살아 있는 스레드 수는 도착률이 아니라 **동시 활성 세션 수**를 따라가고, 그 수는 다시 `maxCachedSessions`(기본 1000, 설정 가능)에 눌린다. 세션이 캡보다 몰리면 스레드가 느는 게 아니라 LRU 축출이 일어난다 |
 
 **처방은 듣지 않는 정도가 아니라 반대로 작동한다.** `:954` 의 javadoc 이 `turnExecutor` 를 `scheduler`

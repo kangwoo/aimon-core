@@ -66,7 +66,7 @@ B-23 은 로드맵 관점에서 특별하다 — `1.0` 조건 중 "외부 백엔
 | `aimon-core` 밖에서 온 백엔드 구현이 하나 이상 | **0건.** 25개 모듈 전부 이 저장소 안에 있다. B-23 이 여기에 걸려 있다 |
 | 스코프 모델이 개명 없이 한 주기를 넘김 | 최근 두 번의 파괴적 변경이 **둘 다** 여기서 나왔다(`AgentExecutionContext` → `AgentRuntime`, `Conversation`/`AgentSession` → `SessionRecord`/`LiveSession`). 세 번째가 없어야 한다 |
 | starter 미결 항목 정리 | 4건 남음 — 전부 외부 조건 대기(§2) |
-| 공개 API javadoc 완비 | **측정 장치가 없다.** 빌드는 `-Xdoclint:none` 으로 javadoc 린트를 끄고 있다(`buildSrc/src/main/kotlin/aimon.java-conventions.gradle.kts:21`). 완비 여부를 말하려면 그 스위치부터 켜야 한다 |
+| 공개 API javadoc 완비 | **측정 장치가 없다.** 빌드는 `-Xdoclint:none` 으로 javadoc 린트를 끄고 있다(`buildSrc/src/main/kotlin/aimon.java-conventions.gradle.kts` 의 `tasks.withType<Javadoc>()` 블록). 완비 여부를 말하려면 그 스위치부터 켜야 한다 |
 | 번역 신선도 CI 동작 | Phase 5. 정본이 한국어인 프로젝트에서 번역이 조용히 낡으면 문서가 틀린 API 문서가 된다 |
 
 **`1.0` 은 날짜가 아니라 상태다.** 위 여섯이 전부 참이 되기 전에는 올리지 않고, 참이 되면 그 이상

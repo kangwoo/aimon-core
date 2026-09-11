@@ -16,6 +16,10 @@
 > `file:line` citations are at `main` `c561e17`. The run records it cites (`TASK.md`, `review-1.md` to `review-3.md`,
 > `$RUN_DIR/design/probe/`, `$RUN_DIR/build/`) are not in the repository; §13 reproduces the measurements that matter.
 >
+> [§14](#14-after-129-and-134--corrections-and-where-the-findings-went), appended after #129 and #134, corrects what
+> the body and §13.3 say about GitHub's advisory database and what F-2 says about Dependabot, and records the
+> correction mark at §4.10.
+>
 > What this work left open is in [`../../backlog/module-dependency-scope.md`](../../backlog/module-dependency-scope.md),
 > D-2 and D-3.
 >
@@ -844,8 +848,9 @@ Unchanged (§3.6).
     - `Status: **IMPLEMENTED** —` followed by what implements it (the catalog entry and notes, the CLI comment, the
       conventions note, the probe and its test, D-2 and D-3, §11.5 of #99's record, the `CHANGELOG.md` section);
     - the sources, #114 and #120;
-    - a sentence saying that everything between the header and §13 is the body as approved in review round <n>, kept
-      byte-exact rather than corrected;
+    - ~~a sentence saying that everything between the header and §13 is the body as approved in review round <n>, kept
+      byte-exact rather than corrected;~~ *Correction mark ([§14.3](#143-the-placeholder-at-410)): the struck text
+      reads "review round" and then `<n>`, a placeholder outside code that the site renders as nothing. The round was 3.*
     - a sentence saying that the run records it cites (`$RUN_DIR/…`, `review-*.md`) are not in the repository.
   - **`## 13. After the build — departures and corrections`**, appended after the build from `build/deviations.md`, the
     build review and what was measured.
@@ -1308,3 +1313,68 @@ byte-identical to `c561e17`, so the lines `provider-key-release-gate.md` cites t
 
 D-2 and D-3 point back here through §2 of
 [`../../backlog/module-dependency-scope.md`](../../backlog/module-dependency-scope.md).
+
+---
+
+## 14. After #129 and #134 — corrections, and where the findings went
+
+*Appended after issues [#129](https://github.com/kangwoo/aimon-core/issues/129) and
+[#134](https://github.com/kangwoo/aimon-core/issues/134), at `main` `2eddf3d`. Everything between the header and §13 is
+still the approved body, byte-exact, except for the correction mark at §4.10 (§14.3). This section records where that
+body and §13 are wrong about GitHub's advisory database and about Dependabot, and where F-1, F-3, F-6, F-7 and F-8 went.*
+
+### 14.1 GitHub's advisory database has both CVEs — unreviewed, naming no package
+
+§1 ("The two newest have no entry in GitHub's advisory database or OSV"), the GHSA column of §2.1's table, the §4.1 and
+§4.8 drafts, §8 F-4, §9 question 3, §12 rounds 1 and 2, and §13.3 all say the database has no advisory for
+CVE-2026-13006 or CVE-2026-19880. It had one for each before this record was written:
+
+| CVE | GHSA | published | type | `vulnerabilities` |
+|---|---|---|---|---|
+| CVE-2026-13006 | GHSA-567r-vvh5-jjr8 | 2026-06-24 | `unreviewed` | `[]` |
+| CVE-2026-19880 | GHSA-9mh8-hq67-v26g | 2026-08-14 | `unreviewed` | `[]` |
+
+What held is narrower: a query by package does not find them. `GET /advisories?ecosystem=maven&affects=` for
+`ch.qos.logback:logback-core` or `logback-classic`, with `type=reviewed` or `type=unreviewed`, lists neither, because
+neither names a package. §2.1's `securityVulnerabilities` sentence is such a query, and it is right. OSV still answers
+"Vulnerability not found" for both CVE ids and both GHSA ids, and returns nothing for either artifact at 1.5.34, 1.6.2 or
+1.6.3. NVD still has both *Deferred*, with no CPE configuration. F-4's conclusion therefore stands — a scanner reading
+GitHub's database or OSV calls Logback 1.5.34–1.6.2 clean — and only its premise changes. The catalog note and
+`CHANGELOG.md` now say what the database returns (#129). Queried 2026-09-11, 10:16:50–10:17:13 UTC.
+
+### 14.2 F-2 — Dependabot computed a Logback bump in every run, and the open-PR limit dropped it
+
+F-2 says no Dependabot PR ever touched Logback, and calls 1.5.13 → 1.5.38 patch-level. The three Gradle update jobs
+before this record were runs 33366906463 and 33369271715 (2026-08-31) and 34069303184 (2026-09-07). Each logs
+`Updating ch.qos.logback:logback-classic from 1.5.13 to 1.6.3` — a minor, which `production-patches` does not take — and
+submits it as an individual PR. It was the 7th, 23rd and 6th of 29, 24 and 22 submissions. The jobs called
+`create_pull_request` 29, 24 and 24 times, and five PRs appeared each time: `open-pull-requests-limit: 5`. That setting is
+now 50, a bound above the most one run could submit on the catalog as it stands (#129).
+
+### 14.3 The placeholder at §4.10
+
+C-2 records that §4.10's "review round `<n>`" renders as "review round ,". §4.10 now carries the correction mark
+[`../README.md`](../README.md) §3.4 allows: the approved sentence stays, struck through, and the mark says what stood
+there. With the header, that mark's two `~~` pairs and added text, and §13–§14 removed, the body is byte-identical to
+the approved design.
+
+### 14.4 Where F-1, F-3, F-6, F-7 and F-8 went
+
+- **F-1** — both `@Suppress("UnstableApiUsage")` are gone (#134). §3.2 kept them because deleting
+  `aimon.java-conventions.gradle.kts:15` "shifts `:116` and `:128-133`, which another record cites accurately". Under
+  §3.4 as merged with #123, a citation whose tree can be restored is dated rather than wrong, and every accurate citation
+  below `:15` is dated to an older commit. `:buildSrc:compileKotlin` gives the same single warning before and after, in
+  `aimon.publishable.gradle.kts`.
+- **F-3** — the build still runs no dependency scanner. The note at the top of `gradle/libs.versions.toml` says that a
+  version inside an advisory range is found by reading, and where to look. Enabling Dependabot alerts, with automatic
+  dependency submission, was proposed to the maintainer in the pull request for #129 and #134; neither is a change in
+  the repository.
+- **F-6** — six of its nine citations now name what they describe (#134): `architecture-review-open-items.md` `:114` and
+  `:561`, `roadmap.md:69`, `spring-boot-starter-open-items.md` `:903` and `:1358`, `integration-test-layers.md:240`. The
+  other three stay: `reasoning-effort-config-surface.md:969` was accurate, `openai-model-capabilities.md:433` is in an
+  approved body, and `architecture-review-open-items.md:393` quotes the file as it was before `5801997`.
+- **F-7** — the bundled `logback.xml` no longer defines the `CONSOLE` appender. Launched from the built distribution,
+  the CLI printed 30 Logback status lines to stdout before and none after, with stderr and the exit code unchanged; log
+  output still goes only to `~/.aimon/logs/aimon.log` (#134).
+- **F-8** — `aimon-sample-app` sets Spring Boot's `logback.version` from the catalog and packs 1.6.3; both fat jars
+  start, and `FatJarPackagingTest` passes (#129).

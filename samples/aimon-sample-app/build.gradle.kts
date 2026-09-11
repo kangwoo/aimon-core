@@ -51,7 +51,20 @@ dependencies {
     // spring-dependency-management keeps managing logback-core produced a split pair (classic 1.5.13 against
     // core 1.5.34) that fails at startup with NoSuchMethodError. A sample app takes its logging stack from Boot,
     // like the applications it stands in for.
+    // It takes the version from the catalog rather than from Boot, though: see `logback.version` below.
 }
+
+// Spring Boot 3.5.16 manages Logback 1.5.34, inside CVE-2026-13006 (logback-core up to 1.5.36; needs Janino, which this
+// class path does not carry) and CVE-2026-19880 (logback-classic up to 1.6.2; needs a SiftingAppender whose MDC
+// discriminator an attacker influences, and this module has no Logback configuration file), and no Spring Boot line
+// manages a Logback outside both (#129). So the sample does what an application does to take a fix Boot does not
+// manage yet: it overrides the property Boot's dependency management reads for logback-classic and logback-core, with
+// the catalog's `logback` — the version aimon-cli ships. One property moves both jars; naming one of them is what split
+// the pair above. Both fat jars start on it, on Boot's default logging setup (packagingTest, 2026-09-11). A catalog
+// bump moves this with it, and `packagingTest` is what fails if that Logback stops starting under Boot — though not
+// for a logback-spring.xml, whose Boot extensions nothing here loads. If Boot ever manages a newer Logback than the
+// catalog, this line holds the sample below Boot's; the catalog note says to keep `logback` at or above it.
+extra["logback.version"] = libs.versions.logback.get()
 
 tasks.named<BootJar>("bootJar") {
     mainClass.set(sampleMainClass)

@@ -7,6 +7,44 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Dependencies: the sample app packs Logback 1.6.3, the CLI stops printing Logback's status, and Dependabot stops dropping updates
+
+- **`aimon-sample-app` packs `logback-classic` and `logback-core` 1.6.3 instead of 1.5.34** (#129). Spring Boot 3.5.16
+  manages 1.5.34, inside CVE-2026-13006 (logback-core up to 1.5.36) and CVE-2026-19880 (logback-classic up to 1.6.2),
+  and no Boot line manages a Logback outside both. The sample's build script now sets Boot's `logback.version` from the
+  catalog's `logback`, the version `aimon-cli` ships, so the two jars move together. Both fat jars start on it: the
+  packaging tier passes (6 tests), and each jar also started, by hand, on a `logback-spring.xml` that uses
+  `<springProfile>` and `<springProperty>`. The sample is not published, and no version a published module declares
+  changes.
+
+- **The CLI no longer prints Logback's configuration status when it starts** (#134). The bundled `logback.xml` defined a
+  `CONSOLE` appender that nothing referenced. Logback reports that as a WARN, and a WARN while it configures itself
+  makes it print every status line to stdout — 30 lines, before the REPL's first output or a configuration error. The
+  appender is gone. Log output still goes only to `~/.aimon/logs/aimon.log`, and nothing else a user sees at start-up
+  changes. A replacement `logback.xml` copied from the old one keeps printing the status until the unreferenced
+  appender is removed from it. **This supersedes #127's entry below**, which says the file "loads with the same one
+  warning as before (its unreferenced `CONSOLE` appender)".
+
+- **Dependabot no longer drops Gradle updates past five open PRs** (#129). `open-pull-requests-limit` goes from 5 to 50.
+  At 5, each of the three Gradle runs so far submitted 24 to 29 pull requests and five were opened; the rest were
+  dropped with no log line saying so, Logback 1.6.3 among them every time. Expect the first run after this to open
+  about twenty PRs, one per production minor or major the catalog is behind on. Grouping and auto-merge are unchanged,
+  so those PRs wait for a person.
+
+- **Nothing in the build reports a version inside an advisory range, and the catalog now says so** (#129). The note at
+  the top of `gradle/libs.versions.toml` says where to look: NVD by the library's name, and the project's release notes.
+  GitHub's advisory database and OSV find an advisory by package only once it is reviewed, and they hold CVE-2026-13006
+  and CVE-2026-19880 as unreviewed advisories naming no package, or not at all. #127's entry below said neither CVE had
+  a GitHub advisory; that sentence is corrected in place.
+
+- **Records** (#129, #134). Backlog D-2 says what sets each of its two jars apart from #99's accepted annotation jars.
+  Two design records carry a correction mark where a placeholder rendered as nothing — §4.10 of
+  `docs/design/testing/shipped-logback-and-test-classpath-followups.md`, which also gains a §14 on where #127's findings
+  went, and §2.5 of `docs/design/llm/openai-model-capabilities.md`, which gains a §14 for its mark. `buildSrc` drops two
+  `@Suppress("UnstableApiUsage")` that suppressed nothing (Kotlin compile warnings unchanged). Six line citations into
+  the conventions plugin and the catalog now name what they point at. The design is
+  `docs/design/testing/packed-logback-and-advisory-reporting-followups.md`.
+
 ### Docs CI: the two doc checks write down where they read headings differently, and the link check pins its side
 
 - **Where the link check and the backlog check read a heading differently is written down** (#121), in
@@ -170,7 +208,8 @@ Central is versioned independently).
   CLI as it ships: no Janino on its class path, no `SiftingAppender` in the bundled `logback.xml`, no MDC set by AIMON
   code (measured). The version moves anyway, because a later dependency or a user's own configuration can change each of
   those. Logback describes 1.6.x as its stable line and, apart from Janino conditionals, a drop-in replacement for
-  1.5.x. CVE-2026-19880 is the one with no fix on 1.5.x, and neither it nor CVE-2026-13006 has a GitHub advisory yet.
+  1.5.x. CVE-2026-19880 is the one with no fix on 1.5.x. GitHub's advisory database holds it and CVE-2026-13006 only as
+  unreviewed advisories that name no package, so a query by package finds neither (corrected in #129's entry above).
   `slf4j-api` stays 2.0.18. The distribution's `lib/` and the fat jar carry the new pair, and the bundled `logback.xml`
   loads with the same one warning as before (its unreferenced `CONSOLE` appender) and no error.
 

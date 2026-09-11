@@ -10,7 +10,6 @@ plugins {
     id("aimon.java-conventions")
 }
 
-@Suppress("UnstableApiUsage")
 val libs = the<org.gradle.api.artifacts.VersionCatalogsExtension>().named("libs")
 
 dependencies {

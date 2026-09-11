@@ -9,6 +9,11 @@
 #
 # Every Gradle coordinate below appears in `gradle/libs.versions.toml`. Keep it that way: a pattern that
 # matches nothing is invisible, and the group it belongs to silently stops grouping.
+#
+# Version updates only. Nothing here reports a version that sits inside an advisory range: Dependabot
+# proposes newer versions without knowing which old ones are affected, and Dependabot alerts are a
+# repository setting that is off (2026-09-11). The note at the top of `gradle/libs.versions.toml` says
+# how an affected version is found.
 version: 2
 
 updates:
@@ -19,7 +24,16 @@ updates:
       day: monday
       time: "09:00"
       timezone: Asia/Seoul
-    open-pull-requests-limit: 5
+    # Not a throttle — the grouping below decides how many PRs a week brings. Dependabot opens at most
+    # this many version-update PRs at a time, grouped ones included, and drops every other update it
+    # computed without saying so: the job log still shows a `create_pull_request` call for each, and the
+    # PR never appears. At 5, the three Gradle runs to 2026-09-07 made 29, 24 and 24 such calls and
+    # opened five PRs each, so a Logback release fixing two CVEs was computed three times and shown none
+    # (#129). 50 is a bound above the worst case on today's catalog, not an expected count: every version
+    # ref and the wrapper behind at once, each as its own PR, plus the three groups — 49 on 2026-09-11,
+    # when the largest run measured had submitted 29. If the catalog outgrows it, raise it: past the
+    # limit, updates are dropped again, and the only sign is a job log with more calls than new PRs.
+    open-pull-requests-limit: 50
     labels:
       - dependencies
     commit-message:

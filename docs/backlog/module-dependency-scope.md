@@ -119,10 +119,10 @@ least one LLM provider"* 라고 안내하고 예제가 둘 다 선언하며, BOM
 | `aimon-scheduling-quartz` | `jakarta.xml.bind:jakarta.xml.bind-api` | 4.0.4 → 4.0.5 |
 | `aimon-knowledge-opensearch` | `jakarta.annotation:jakarta.annotation-api` | 1.3.5 → 2.1.1 |
 
-둘 다 #99 가 `aimon-cli` 에서 맞춘 것과 **같은 출처**다. #99 가 받아들인 두 출처와 이 둘을 가르는 것은 jar 의 종류가
-아니라 — `jakarta.annotation-api` 도 주석 jar 다 — 테스트 실행에 닿는 방식이다. `jakarta.xml.bind-api` 는 코드를 담고,
-`jakarta.annotation-api` 는 프레임워크가 실행 중에 읽는 RUNTIME-retention 주석을 담으며 1.3.5 와 2.1.1 사이에 패키지가
-`javax` 에서 `jakarta` 로 바뀐다.
+둘 다 #99 가 `aimon-cli` 에서 맞춘 것과 **같은 출처**다. #99 가 받아들인 두 출처는 주석 jar 이고, 이 둘이 그 둘과
+갈리는 자리는 jar 마다 다르다. `jakarta.xml.bind-api` 는 jar 의 종류부터 다르다 — 주석 jar 가 아니라 코드를 담은 jar 다.
+`jakarta.annotation-api` 는 같은 주석 jar 이지만 테스트 실행에 닿는 방식이 다르다 — 프레임워크가 실행 중에 읽는
+RUNTIME-retention 주석을 담고, 1.3.5 와 2.1.1 사이에 패키지가 `javax` 에서 `jakarta` 로 바뀐다.
 
 - `jakarta.xml.bind-api` 는 클래스 108개 가운데 78개가 주석이 아닌 코드다(`JAXBContext` · `ContextFinder` ·
   `DatatypeConverter` …). `aimon-cli` 에서 맞춘 이유 중 하나가 그대로 걸린다.
