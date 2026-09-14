@@ -33,7 +33,7 @@ hikari = "5.1.0"
 mongodb = "4.11.1"
 
 # Cloud & Storage
-aws-sdk = "2.54.13"
+aws-sdk = "2.54.16"
 
 # Testing
 # Test classpaths against shipped versions (#99). #91's bar: a module's tests run against the versions the module
