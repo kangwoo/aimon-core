@@ -11,7 +11,7 @@
 > [`.claude/rules/testing.md`](../../../.claude/rules/testing.md)
 >
 > 관련 문서: [`../agent-execution/artifact.md`](../agent-execution/artifact.md) (VFS 에 쌓인 파일이
-> 사용자에게 건네지는 경로), [`../integration/sandbox.md`](../integration/sandbox.md),
+> 사용자에게 건네지는 경로), [aimon-sandbox 의 `sandbox.md`](https://github.com/kangwoo/aimon-sandbox/blob/main/docs/design/sandbox.md),
 > [`../../overview/architecture.md`](../../overview/architecture.md)
 
 ---
@@ -305,5 +305,5 @@ GFS-07 은 배선 기본값 하나다. `FileSystemFactory.createFromEnvironment(
 - [`../../overview/architecture.md`](../../overview/architecture.md) — `VirtualFileSystem` 이 놓인 자리
 - [`../../overview/scope-model.md`](../../overview/scope-model.md) — 만든 쪽이 닫는다 (§6 의 `ownsClient`)
 - [`../agent-execution/artifact.md`](../agent-execution/artifact.md) — VFS 에 쌓인 파일이 사용자에게 건네지는 경로
-- [`../integration/sandbox.md`](../integration/sandbox.md) — 격리 실행 환경과 파일시스템의 경계
+- [aimon-sandbox 의 `sandbox.md`](https://github.com/kangwoo/aimon-sandbox/blob/main/docs/design/sandbox.md) — 격리 실행 환경과 파일시스템의 경계 (별도 저장소)
 - [`../../features/tool/tool-development-guide.md`](../../features/tool/tool-development-guide.md) — `Read`/`Write`/`Edit` 가 이 계약 위에 선다

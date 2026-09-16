@@ -7,6 +7,48 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### The sandbox modules move to their own repository
+
+- **`aimon-sandbox`, `aimon-sandbox-docker` and `aimon-sandbox-kubernetes` left this build** for
+  [aimon-sandbox](https://github.com/kangwoo/aimon-sandbox), and the Maven group moved with them:
+  `at.aimon.core:aimon-sandbox*` through 0.2.4, `at.aimon.sandbox:*` from now. This is neither a rename nor a
+  removal. No source changed — the package is still `at.aimon.sandbox.*`, `SandboxBackend` keeps every
+  signature, and the four tools keep their names, input schemas and `ToolContext` keys — and the 0.2.4
+  artifacts stay on Central, so a build that never updates keeps resolving them. Nothing is stored anywhere, so
+  nothing migrates: one line per dependency. The mapping is in
+  [`docs/migration/rename-maps.md`](docs/migration/rename-maps.md).
+- **Why these three and not others.** They were the only leaf in the build: no module depended on them
+  (`aimon-cli` and the starter do not wire them, and no build file outside their own named them), and the only
+  mention left anywhere in this repository was a package string in an ArchUnit rule. What they take from
+  aimon-core is sixteen public types across `agent.orca`, `agent.tool`, `agent.artifact` and `filesystem`, with
+  no `*.impl` import — so the seam the split needed was already drawn. The two backends import no aimon-core
+  type at all.
+- **The BOM stops managing them**, which follows from deriving its constraints from this build's publishing
+  subprojects rather than from a decision about sandboxes. A consumer that took the version from the BOM now
+  writes it out. The new repository publishes no BOM of its own.
+- **`at.aimon.sandbox..` stays in `ArchitectureRulesTest`'s forbidden-package list**, beside
+  `at.aimon.memory..`: an implementation package that left is one core may depend on even less than before, and
+  a coordinate from Central would satisfy such an import as readily as a project dependency did.
+- **Backlog `LA-2` dissolved rather than closed** — whether `scripts/release.sh` should also refuse
+  `AIMON_DOCKER_IT` and `AIMON_KUBERNETES_IT`. Both classes those variables gated went with the modules, so
+  there is no longer anything to decide here; nothing was decided, which is why it is not a close. The comments
+  in `scripts/release.sh`, `ReleaseGateMatchesCiGateTest` and `aimon.java-conventions` that pointed at it were
+  rewritten in the same change.
+- **Docs that named the modules now name the coordinate and the repository** — the module tables in `README.md`,
+  `CONTRIBUTING.md` (+ ko), `CLAUDE.md`, `MAINTAINERS.md`, `docs/README.md` (+ en), `docs/overview/features.md`
+  (+ en), `docs/overview/context.md` (+ en) and the integration guide (+ en), plus `SECURITY.md`, whose sandbox
+  escape category now routes those reports to the repository that owns the backends. The design document moved
+  with the code; `docs/design/README.md` and `docs/design/filesystem/backend-contract.md` point at its new home.
+
+### Docs: the sandbox modules never implemented `VirtualShell`
+
+- **Six places said they did** — `docs/overview/architecture.md` §4.6 and its extension-point table, and three
+  rows and a bullet in `docs/getting-started/aimon-core-integration-via-cli-reference.md`, in both languages.
+  The word `VirtualShell` appears nowhere in those modules and never did; the only implementation in the build
+  is `LocalShell`, and what the sandbox isolates is four tools the model calls by name, not the agent's shell.
+  A reader following that advice would have gone looking for a class that does not exist. Corrected in place
+  rather than superseded: the sentences described the tree wrongly from the day they were written.
+
 ### Docs: what the release gate runs, and javadoc that no longer matched the code
 
 - **Five places described the gate as one task.** `scripts/release.sh` §4, `docs/overview/architecture.md` (ko + en),
@@ -485,8 +527,9 @@ Central is versioned independently).
   pre-flight and call the stub, so "no `git` call" cannot pass vacuously. The test also holds the keys those
   cases run on equal to the `@EnabledIfEnvironmentVariable` gates under `modules/aimon-llm-*`, so the script
   must refuse at least those gates, and a new provider's key fails the build until the script refuses it. A
-  script that refused more would still pass. `AIMON_DOCKER_IT` and `AIMON_KUBERNETES_IT`, which gate two
-  sandbox classes the same way, are not refused; whether they should be is registered as backlog `LA-2`.
+  script that refused more would still pass. `AIMON_DOCKER_IT` and `AIMON_KUBERNETES_IT`, which gated two
+  sandbox classes the same way, are not refused; that was backlog `LA-2`, and it dissolved in this same release
+  when the sandbox modules left the build and took both classes with them.
 
 - **A change to a provider module's test sources now re-runs that census locally** (#119). They were not inputs of
   `aimon-core`'s `test`, so a build that added a key gate under `modules/aimon-llm-*/src/test` and changed nothing

@@ -180,7 +180,7 @@ Features that are in the catalogue but have no separate guide document. For now 
 | Area | Where to look for now |
 |------|-----------|
 | MCP integration | [`mcp-tool.md`](../design/integration/mcp-tool.md) |
-| Sandboxes | [`sandbox.md`](../design/integration/sandbox.md) · `modules/aimon-sandbox/README.md` |
+| Sandboxes | [the aimon-sandbox repository](https://github.com/kangwoo/aimon-sandbox) — the design document (`docs/design/sandbox.md`) and the module READMEs moved there |
 | Filesystem / shell | the `package-info.java` of `at.aimon.core.filesystem` · `at.aimon.core.shell` |
 | Commands (`/compact` and the rest) | [`command-unification.md`](../design/skill/command-unification.md) |
 | Permissions / credentials | [`tool-development-guide.en.md` › the permission system](tool/tool-development-guide.en.md) |

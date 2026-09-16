@@ -72,14 +72,16 @@ over HTTP.
 |---|---|
 | `aimon-workflow-graaljs` | GraalJS frontend — JS-scripted multi-subagent workflows (`WorkflowJs` tool) |
 
-### Browser & Sandbox
+### Browser
 
 | Module | Purpose |
 |---|---|
 | `aimon-browser-playwright` | Playwright-driven browser automation Tool |
-| `aimon-sandbox` | Persistent sandbox abstraction (run shell commands in isolated environments with VFS sync) |
-| `aimon-sandbox-docker` | Docker container backend for `aimon-sandbox` |
-| `aimon-sandbox-kubernetes` | Kubernetes Pod backend for `aimon-sandbox` |
+
+> Sandboxes — isolated, reusable container/pod environments an agent runs commands in — live in
+> [aimon-sandbox](https://github.com/kangwoo/aimon-sandbox), published as
+> `at.aimon.sandbox:aimon-sandbox{,-docker,-kubernetes}`. They were part of this repository through
+> 0.2.4 under `at.aimon.core:*`; those artifacts remain on Maven Central.
 
 ### Scheduling
 

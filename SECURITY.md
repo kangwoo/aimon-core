@@ -26,7 +26,7 @@ Use one of these private channels:
 
 Please include, as far as you can:
 
-- The affected module and version (`aimon-core 0.2.2`, `aimon-sandbox-docker`, …)
+- The affected module and version (`aimon-core 0.2.2`, `aimon-browser-playwright`, …)
 - What an attacker gains — the impact, not just the mechanism
 - Reproduction steps or a minimal proof of concept
 - Any configuration required to reach the vulnerable path (which tools are registered,
@@ -59,8 +59,10 @@ explicitly.
   (`AllowedTool` patterns, `PermissionSubject`, `CustomToolPermissionRule`) should have
   rejected but did not. Path-pattern escapes (`..` traversal, normalization gaps) and
   command-pattern escapes (shell metacharacter injection) belong here
-- **Sandbox escape** — code running under `aimon-sandbox-docker` or
-  `aimon-sandbox-kubernetes` reaching the host or another tenant
+- **Sandbox escape** — report these to
+  [aimon-sandbox](https://github.com/kangwoo/aimon-sandbox), which is where the container and pod
+  backends live. This repository's part of that surface is what it hands a backend: tool inputs,
+  permission patterns and the `VirtualFileSystem` a transfer reads from
 - **Credential leakage** — secrets from `CredentialStore`, environment, or provider
   configuration appearing in traces, logs, transcripts, or LLM requests where the
   redaction layer was expected to remove them
@@ -97,8 +99,9 @@ we will work it out together.
 
 If you are deploying AIMON with untrusted input reaching the agent:
 
-- Run tool execution inside a sandbox (`aimon-sandbox-docker` / `aimon-sandbox-kubernetes`)
-  rather than the local shell
+- Run command execution through the sandbox tools
+  ([aimon-sandbox](https://github.com/kangwoo/aimon-sandbox), `at.aimon.sandbox:aimon-sandbox-docker`
+  or `-kubernetes`) rather than letting `BashTool` reach the host shell
 - Constrain every tool with an explicit pattern — note that registering both `"Read"` and
   `"Read(/tmp/**)"` is *not* unrestricted access, and that a tool with a configured
   pattern but no resolvable subject is **denied**

@@ -100,8 +100,7 @@ class PublishedModuleApiScopeTest {
      * {@code aimon-bootstrap} needs two such lines — {@code :aimon-core} and {@code :aimon-session-routing} —
      * because {@code AimonStack} returns types from both, and {@code aimon-session-routing} keeps core on
      * {@code implementation} so it does not re-export core on its own. A facade re-exports every module whose types
-     * appear in its own signatures, not just core. The sandbox pair re-export their SPI the same way while keeping
-     * {@code implementation} for their own libraries.
+     * appear in its own signatures, not just core.
      *
      * <p>
      * {@code aimon-memory-testkit} is the one entry here that is not an assembly. It is a contract suite, and what it
@@ -111,7 +110,7 @@ class PublishedModuleApiScopeTest {
      * published at all, not because they scope differently.
      */
     private static final List<String> FACADE_MODULES = List.of("aimon-bootstrap", "aimon-spring-boot-starter",
-            "aimon-sandbox-docker", "aimon-sandbox-kubernetes", "aimon-memory-testkit");
+            "aimon-memory-testkit");
 
     /** Never reaches the published POM, so it cannot describe it wrongly. Open to every module. */
     private static final List<String> BUILD_INTERNAL_CONFIGURATIONS = List.of("compileOnly", "testImplementation",

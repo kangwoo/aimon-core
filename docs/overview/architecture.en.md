@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/architecture.md
-source_commit: 96e4952
+source_commit: 2d3bee2
 ---
 
 # Architecture
@@ -103,7 +103,7 @@ Each layer depends only on the layers below it.
 │ Implementation                                                │
 │   built in: ReadTool, BashTool, LocalFileSystem, LocalShell   │
 │   external: aimon-llm-*, aimon-filesystem-*, aimon-session-*, │
-│             aimon-memory-*, aimon-sandbox-*, …                │
+│             aimon-knowledge-*, aimon-browser-*, …             │
 └───────────────────────────────────────────────────────────────┘
 ```
 
@@ -364,8 +364,10 @@ public interface VirtualShell extends AutoCloseable {
 ```
 
 `ShellCommandResult` holds the exit code, stdout, stderr and elapsed time.
-The sandbox modules (`aimon-sandbox-docker`, `aimon-sandbox-kubernetes`) provide isolated
-execution implementations.
+There is exactly **one** implementation, `LocalShell` (`shell.impl.local`) — the sandbox modules do
+not implement this interface. What they isolate is not the shell but four tools (`RunSandbox` ·
+`CopyToSandbox` · `RestartSandbox` · `DeleteSandbox`), so a container-isolated **shell** is something
+you implement yourself.
 
 ### 4.7 Session
 
@@ -615,7 +617,7 @@ budget is per **execution unit** rather than per session becomes visible.
 | a bundle of Orca tools | `OrcaToolProvider` | implement the `at.aimon.core.agent.orca` SPI |
 | an LLM provider | `LlmClient` | implement in a separate module |
 | a file backend | `VirtualFileSystem` | implement (see GridFS, S3) |
-| a shell backend | `VirtualShell` | implement (see the sandbox modules) |
+| a shell backend | `VirtualShell` | implement (`LocalShell` is the only built-in one — the sandbox modules do not implement this SPI) |
 | a lifecycle hook | the 13 interfaces in `hook.event` | `HookRegistry.register(HookEventType, hook)` |
 | a skill | `Skill` | write a SKILL.md per the Agent Skills standard |
 | a subagent | `Subagent` | the code builder, or a Markdown definition |

@@ -136,7 +136,7 @@ dependencies {
 | `aimon-filesystem-s3` | S3/MinIO를 백엔드로 |
 | `aimon-scheduling-quartz` | 작업 스케줄링이 필요하면 |
 | `aimon-knowledge-opensearch` | 벡터 검색 기반 KnowledgeStore |
-| `aimon-sandbox-docker` / `aimon-sandbox-kubernetes` | 격리된 셸 실행이 필요하면 |
+| `at.aimon.sandbox:aimon-sandbox-docker` / `-kubernetes` ([별도 저장소](https://github.com/kangwoo/aimon-sandbox)) | 컨테이너/파드에 격리된 명령 실행 **도구**가 필요하면 |
 | `aimon-browser-playwright` | 브라우저 자동화 도구가 필요하면 |
 
 > **모듈 의존성 규칙** (.claude/rules/architecture.md): 구현 모듈은 `implementation(project(":aimon-core"))`로만 코어를 참조한다. `api()`로 노출하지 않는다 — 코어 타입이 트랜지티브 의존성으로 새는 것을 막기 위해.
@@ -584,7 +584,8 @@ final AgentBundle agentBundle = effectiveBundleLoader.load(extractAgentName(conf
 
 **여러분의 적응 포인트:**
 - Agent 정의를 코드/DB에서 동적으로 만들고 싶으면 `AgentBundle`을 직접 빌드해서 `AgentSetupFactory`의 패키지-프라이빗 생성자로 주입한다.
-- 셸 실행을 컨테이너에 격리하려면 `aimon-sandbox-docker`/`aimon-sandbox-kubernetes`의 `VirtualShell` 구현체로 교체.
+- 셸 실행 자체를 컨테이너에 격리하려면 `VirtualShell` 을 **직접 구현한다** — 내장 구현은 `LocalShell` 하나뿐이고,
+  샌드박스 모듈은 이 SPI 를 구현하지 않는다. 그쪽이 주는 격리는 셸 교체가 아니라 `RunSandbox` 등 도구 4종이다.
 
 ### 4.3 세션 레코드 저장소, 트랜스크립트 매니저, 메시지 큐, 파일 시스템 (line 726-733)
 
@@ -865,7 +866,7 @@ final LiveSession liveSession = new DefaultLiveSession(
 |---------|----------------|----------------------|
 | `LlmClient` | OpenAI 또는 Anthropic SDK 래퍼 | 사내 LLM 게이트웨이를 감싼 자체 구현 |
 | `VirtualFileSystem` | `LocalFileSystem` (jar 디렉터리 기준) | `GridFSFileSystem` / `S3FileSystem` / 사용자별 격리된 인스턴스 |
-| `VirtualShell` | `LocalShell` | `aimon-sandbox-docker` 컨테이너 격리 셸 |
+| `VirtualShell` | `LocalShell` | 직접 구현 — 컨테이너 격리 **셸**은 프레임워크에 없다 (샌드박스 모듈은 도구로 격리한다) |
 | `SessionRecordStore` | `InMemorySessionRecordStore` | `aimon-session-mongodb` / `-postgres` / `-redis` 영속 구현 |
 | `TranscriptManager` | `DefaultTranscriptManager` (+ 백그라운드 체크포인트 우편함) | 대개 그대로 — 갈아끼울 것은 그 아래 `SessionRecordStore`다 |
 | `MessageQueueManager` | in-memory | 분산 큐 백엔드 |

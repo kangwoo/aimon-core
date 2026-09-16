@@ -106,7 +106,7 @@
 | 문서 | 무엇이 있나 |
 |------|------------|
 | [`spring-boot-starter.md`](integration/spring-boot-starter.md) | 조립 지식을 프레임워크 중립 층(`aimon-bootstrap`)으로 꺼내고 그 위에 얹은 자동설정 |
-| [`sandbox.md`](integration/sandbox.md) | 격리 실행 환경을 identifier 로 재사용하는 추상화와 Docker·Kubernetes 구현 |
+| [`sandbox.md`](https://github.com/kangwoo/aimon-sandbox/blob/main/docs/design/sandbox.md) | 격리 실행 환경을 identifier 로 재사용하는 추상화와 Docker·Kubernetes 구현. **이 저장소에 없다** — 모듈과 함께 [aimon-sandbox](https://github.com/kangwoo/aimon-sandbox) 로 옮겨 갔다 |
 | [`mcp-tool.md`](integration/mcp-tool.md) | MCP 서버의 도구를 로컬 도구와 구분되지 않게 만드는 어댑터 |
 | [`config-value-expansion-and-frontmatter-strictness.md`](integration/config-value-expansion-and-frontmatter-strictness.md) | 작성자가 적은 설정 값이 말없이 버려지던 두 자리 — 필드 목록 대신 토큰 스트림 위의 일반 확장, 바인딩 전에 풀면서도 원문 스칼라를 잃지 않는 자리, 프론트매터가 못 읽는 값을 보고하게 만든 규칙 |
 
@@ -293,7 +293,7 @@
 | `agent-execution-tracing-design.md` | [`observability/tracing.md`](observability/tracing.md) |
 | `trace-payload-capture-design.md` | [`observability/tracing.md`](observability/tracing.md) |
 | `spring-boot-starter-design.md` | [`integration/spring-boot-starter.md`](integration/spring-boot-starter.md) |
-| `implemented/sandbox.md` | [`integration/sandbox.md`](integration/sandbox.md) |
+| `implemented/sandbox.md` · `integration/sandbox.md` | [aimon-sandbox 의 `docs/design/sandbox.md`](https://github.com/kangwoo/aimon-sandbox/blob/main/docs/design/sandbox.md) — 모듈이 분리되면서 문서도 따라갔다 |
 | `implemented/mcp-tool-design.md` | [`integration/mcp-tool.md`](integration/mcp-tool.md) |
 | `llm/openai-model-capabilities.md` | [`llm/model-capabilities.md`](llm/model-capabilities.md) · [`llm/request-parameters.md`](llm/request-parameters.md) · [`llm/openai-responses-path.md`](llm/openai-responses-path.md) · [`llm/model-name-resolution.md`](llm/model-name-resolution.md) — 마지막 판본 `378cb6e` |
 | `llm/anthropic-thinking-traces.md` | [`llm/reasoning-traces.md`](llm/reasoning-traces.md) · [`llm/anthropic-thinking.md`](llm/anthropic-thinking.md) · [`llm/request-parameters.md`](llm/request-parameters.md) · [`llm/model-capabilities.md`](llm/model-capabilities.md) — 마지막 판본 `3a41fcd` |

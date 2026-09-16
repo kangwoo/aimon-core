@@ -227,10 +227,6 @@ modules/
 ├── aimon-filesystem-s3          # AWS S3 VFS
 ├── aimon-filesystem-testkit     # 공유 VirtualFileSystem 계약 테스트
 │
-├── aimon-sandbox                # 샌드박스 추상화
-├── aimon-sandbox-docker         # Docker 백엔드
-├── aimon-sandbox-kubernetes     # Kubernetes 백엔드
-│
 ├── aimon-session-routing        # 멀티 노드 세션 라우팅 (SPI 는 aimon-core 에)
 ├── aimon-session-testkit        # 공유 멀티 노드 세션 계약 테스트
 ├── aimon-session-redis          # Redis 세션 저장소

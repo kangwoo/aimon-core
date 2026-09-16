@@ -157,7 +157,7 @@ IMPORTANT: **세션(`SessionRecord`)과 라이브 세션(`LiveSession`)은 다�
 | 워크플로 | `Workflow` | core |
 | 워크플로 (JS 스크립트) | `WorkflowJs` | `aimon-workflow-graaljs` |
 | 브라우저 | `Browser` | `aimon-browser-playwright` |
-| 샌드박스 | `RunSandbox`, `CopyToSandbox`, `RestartSandbox`, `DeleteSandbox` | `aimon-sandbox-*` |
+| 샌드박스 | `RunSandbox`, `CopyToSandbox`, `RestartSandbox`, `DeleteSandbox` | `at.aimon.sandbox:*` (별도 저장소) |
 
 **관련 문서**
 - [도구 개발 가이드](../features/tool/tool-development-guide.md) — 새 도구를 만들 때의 정본
@@ -435,10 +435,10 @@ cron 이 재발화해도 런타임이 resolve 된다. 이 때문에 `AgentRuntim
 
 | 기능 | 진입점 | 위치 |
 |------|--------|------|
-| 샌드박스 추상화 | 샌드박스 SPI | `aimon-sandbox` |
-| Docker 구현 | — | `aimon-sandbox-docker` |
-| Kubernetes 구현 | — | `aimon-sandbox-kubernetes` |
-| 샌드박스 도구 | `RunSandbox`, `CopyToSandbox`, `RestartSandbox`, `DeleteSandbox` | `aimon-sandbox-*` |
+| 샌드박스 추상화 | 샌드박스 SPI | `at.aimon.sandbox:aimon-sandbox` |
+| Docker 구현 | — | `at.aimon.sandbox:aimon-sandbox-docker` |
+| Kubernetes 구현 | — | `at.aimon.sandbox:aimon-sandbox-kubernetes` |
+| 샌드박스 도구 | `RunSandbox`, `CopyToSandbox`, `RestartSandbox`, `DeleteSandbox` | `at.aimon.sandbox:*` |
 | 브라우저 자동화 | `Browser` 도구, `BrowserSession` | `aimon-browser-playwright` |
 
 **관련 문서**

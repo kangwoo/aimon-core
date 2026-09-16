@@ -82,7 +82,7 @@ flowchart TB
 | **메모리** | 관찰 축적과 장기 기억 승격 | 양방향 | 코어 내장(in-memory · `at.aimon.core.memory.file`), 멀티 인스턴스는 원격 `PeerMemory` 백엔드 — [aimon-memory](https://github.com/kangwoo/aimon-memory) | 메모리 기능이 꺼진다 |
 | **지식 저장소** | RAG 검색, 위키 | 양방향 | `aimon-knowledge-opensearch` | `KeywordKnowledgeStore` (코어) 로 키워드 검색만 |
 | **파일 스토리지** | 에이전트가 보는 파일 세계 | 양방향 | `aimon-filesystem-gridfs` · `aimon-filesystem-s3` | 로컬 디스크 (`filesystem.impl.local`) |
-| **샌드박스 런타임** | 격리된 명령 실행 | 나감 | `aimon-sandbox-docker` · `aimon-sandbox-kubernetes` | `LocalShell` — 호스트 프로세스 권한으로 그대로 실행된다 |
+| **샌드박스 런타임** | 격리된 명령 실행 | 나감 | `at.aimon.sandbox:aimon-sandbox-docker` · `-kubernetes` (별도 저장소) | `LocalShell` — 호스트 프로세스 권한으로 그대로 실행된다 |
 | **MCP 서버** | 외부 도구 합류 | 나감 (stdio · HTTP) | core (`at.aimon.core.mcp`) | 내장 도구만 |
 | **브라우저** | 웹 자동화 | 나감 | `aimon-browser-playwright` | `Browser` 도구가 없다 |
 | **공개 웹 / 검색** | `WebSearch` · `WebFetch` | 나감 (HTTPS) | core (`at.aimon.core.tools.web`) | 그 두 도구가 실패한다. SSRF 가드는 코어에 있다 |
