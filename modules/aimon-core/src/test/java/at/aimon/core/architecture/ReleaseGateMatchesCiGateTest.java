@@ -102,7 +102,8 @@ import org.junit.jupiter.api.io.TempDir;
  * badly it rots. {@code playwrightTest} spent that time not merely ungated but inert — its Gradle task was
  * registered without {@code testClassesDirs} or {@code classpath}, so it matched no test class, reported
  * {@code NO-SOURCE} and went green in 650ms. A tier nothing runs is a tier nothing can tell apart from a passing
- * one.
+ * one. That tier is no longer this build's — it left with aimon-browser-playwright — but the blind spot it
+ * demonstrated is, so the lesson stays here with the check it justifies.
  *
  * <p>
  * The key refusal is held to what its census can read. A key read with {@code System.getenv} and an assumption rather
@@ -166,7 +167,7 @@ class ReleaseGateMatchesCiGateTest {
      * new tag with no entry fails here, and an entry whose task is missing from either gate fails too.
      */
     private static final Map<String, String> TAG_TO_GATE_TASK = Map.of("docker", "integrationTest", "packaging",
-            "packagingTest", "playwright", "playwrightTest");
+            "packagingTest");
 
     /**
      * {@code @Tag("...")} as an annotation, not as a mention inside javadoc — the distinction §0.4-a of the backlog

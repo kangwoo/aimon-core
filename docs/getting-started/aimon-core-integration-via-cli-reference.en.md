@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/aimon-core-integration-via-cli-reference.md
-source_commit: 2d3bee2
+source_commit: 8c8de45
 ---
 
 # aimon-core integration guide — following aimon-cli as the reference
@@ -142,7 +142,7 @@ dependencies {
 | `aimon-scheduling-quartz` | If you need task scheduling |
 | `aimon-knowledge-opensearch` | A vector-search-backed KnowledgeStore |
 | `at.aimon.sandbox:aimon-sandbox-docker` / `-kubernetes` ([separate repository](https://github.com/kangwoo/aimon-sandbox)) | If you need **tools** that run commands isolated in a container/pod |
-| `aimon-browser-playwright` | If you need browser automation tools |
+| `at.aimon.browser:aimon-browser-playwright` ([separate repository](https://github.com/kangwoo/aimon-browser)) | If you need browser automation tools |
 
 > **Module dependency rule** (.claude/rules/architecture.md): implementation modules reference the core only through `implementation(project(":aimon-core"))`. They do not expose it with `api()` — that would leak core types as a transitive dependency.
 

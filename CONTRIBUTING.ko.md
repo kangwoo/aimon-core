@@ -60,7 +60,7 @@ source_commit: fe70d5d
 ### 테스트 실행
 
 ```bash
-./gradlew test                                                        # 전체 단위 테스트 (@Tag("docker"), @Tag("packaging"), @Tag("playwright") 제외)
+./gradlew test                                                        # 전체 단위 테스트 (@Tag("docker"), @Tag("packaging") 제외)
 ./gradlew :aimon-core:test                                            # 단일 모듈
 ./gradlew :aimon-core:test --tests "at.aimon.core.agent.tool.*Test"   # 글롭 패턴
 ./gradlew :aimon-core:test --tests "at.aimon.core.agent.tool.ToolInputTest"  # 단일 클래스
@@ -97,8 +97,8 @@ ANTHROPIC_KEY=... OPENAI_KEY=... \
 
 **게이트는 반대 방향으로도 걸리고, 위 명령이 키를 그 명령에만 붙이는 이유가 그것입니다.** 이 클래스들을
 평범한 빌드에서 빼 주는 것은 환경 변수 하나뿐입니다 — 태그가 없고, 모듈의 `test` 태스크는 태그로만 테스트를
-뺍니다 — 컨벤션 플러그인이 모든 모듈에서 빼는 `docker` 와 `packaging`, 그리고 `aimon-browser-playwright` 가
-더 빼는 `playwright` 입니다. 그래서 어떤 셸에 키가 export 되어 있는 동안에는 — 이 계층을 위해서든 CLI 를
+뺍니다 — 컨벤션 플러그인이 모든 모듈에서 빼는 `docker` 와 `packaging` 뿐입니다. 그래서 어떤 셸에 키가
+export 되어 있는 동안에는 — 이 계층을 위해서든 CLI 를
 돌리기 위해서든 — 그 셸의 모든 `./gradlew test` 와 `checkAll` 이 위 명령만이 아니라 그 프로바이더의 라이브
 클래스까지 돌립니다. 그 모듈의 `test` 태스크가 `UP-TO-DATE` 로 보고되지 않고 실제로 돌 때마다 그렇습니다 —
 예를 들어 첫 빌드, `clean` 이나 `cleanTest` 뒤의 빌드, 그 모듈에 닿는 변경 뒤의 모든 빌드가 그렇습니다. 그
@@ -128,11 +128,11 @@ ANTHROPIC_KEY=... OPENAI_KEY=... \
 ```
 
 `checkAll` 이 유일한 게이트입니다. 포맷 검사, Checkstyle, 각 모듈의 `test` 태스크, **그리고** BOM 의
-`verifyBom` 까지 한 번에 돕니다. `./gradlew test` 를 따로 돌릴 필요는 이제 없습니다. 태그가 붙은 세 계층은 `test` 가
+`verifyBom` 까지 한 번에 돕니다. `./gradlew test` 를 따로 돌릴 필요는 이제 없습니다. 태그가 붙은 두 계층은 `test` 가
 빼므로 여기서도 빠집니다 — 컨벤션 플러그인이 모든 모듈에서 빼는 `@Tag("docker")`(Docker/Testcontainers)와
-`@Tag("packaging")`(fat jar 실행), 그리고 `aimon-browser-playwright` 가 더 빼는 `@Tag("playwright")`(실제
-브라우저)입니다. 각각 `./gradlew integrationTest`, `./gradlew packagingTest`, `./gradlew playwrightTest` 로
-돌고, CI 와 릴리스 게이트가 셋 다 돌립니다.
+`@Tag("packaging")`(fat jar 실행)입니다. 각각 `./gradlew integrationTest`, `./gradlew packagingTest` 로
+돌고, CI 와 릴리스 게이트가 둘 다 돌립니다. (셋째였던 `@Tag("playwright")` 는 aimon-browser-playwright 가
+별도 저장소로 옮겨 가면서 함께 나갔습니다.)
 
 검사가 실패하면 HTML 리포트가 이유를 말해 줍니다.
 
@@ -143,8 +143,8 @@ modules/<module>/build/reports/jacoco/                # 커버리지
 ```
 
 CI(GitHub Actions)는 모든 PR 에서 `./gradlew checkAll` 과 그 옆의 태그 계층을 함께 돌립니다 — 같은 잡에서
-`packagingTest` 와 `playwrightTest`, 별도 잡에서 `integrationTest`, 세 번째 잡에서 `jacocoTestReport` 와
-`jacocoTestCoverageVerification` 입니다. 릴리스 게이트는 같은 검증 태스크 다섯을 한 번의 호출로 돌립니다.
+`packagingTest`, 별도 잡에서 `integrationTest`, 세 번째 잡에서 `jacocoTestReport` 와
+`jacocoTestCoverageVerification` 입니다. 릴리스 게이트는 같은 검증 태스크 넷을 한 번의 호출로 돌립니다.
 깨진 빌드는 자동으로 드러납니다. `.github/workflows/build.yml` 을 보세요.
 
 문서에는 `checkAll` 이 다루지 않는 별도의 게이트가 있습니다.
@@ -239,7 +239,6 @@ modules/
 ├── aimon-scheduling-quartz      # 분산 cron 스케줄러
 ├── aimon-workflow-graaljs       # GraalJS 스크립트 기반 서브에이전트 워크플로
 ├── aimon-rewake-webhook         # HMAC 검증 HTTP 엔드포인트로 rewake 발화
-└── aimon-browser-playwright     # Playwright 브라우저 자동화
 
 samples/
 ├── aimon-sample-app             # 최소 임베딩 예제

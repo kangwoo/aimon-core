@@ -7,7 +7,7 @@ AIMON is a ReAct (Reasoning and Acting) agent framework for IT operations automa
 ```bash
 ./gradlew build                    # Build entire project
 ./gradlew :aimon-core:build        # Build specific module
-./gradlew test                     # Run all unit tests (excludes @Tag("docker"), @Tag("packaging") and @Tag("playwright"))
+./gradlew test                     # Run all unit tests (excludes @Tag("docker") and @Tag("packaging"))
 ./gradlew :aimon-core:test         # Run tests for specific module
 ./gradlew :aimon-core:test --tests "at.aimon.core.agent.tool.ToolInputTest"  # Single test class
 ./gradlew integrationTest          # Run Docker/Testcontainers integration tests (@Tag("docker")) — needs a Docker daemon
@@ -81,8 +81,7 @@ modules/
 ├── aimon-knowledge-opensearch       # OpenSearch knowledge store
 ├── aimon-scheduling-quartz          # Quartz-based task scheduler (clustered/distributed)
 ├── aimon-workflow-graaljs           # GraalJS frontend: JS-scripted subagent workflow
-├── aimon-rewake-webhook             # Javalin HTTP endpoint that fires rewake (HMAC-verified)
-└── aimon-browser-playwright         # Playwright-based browser automation
+└── aimon-rewake-webhook             # Javalin HTTP endpoint that fires rewake (HMAC-verified)
 ```
 
 NOTE: 샌드박스는 **이 빌드에 없다.** `aimon-sandbox` · `aimon-sandbox-docker` ·
@@ -123,7 +122,7 @@ Within `aimon-core`, top-level packages follow a domain + impl split:
   ArchUnit. External modules and other core packages must depend on neutral SPI packages instead.
 - **`at.aimon.core.agent.orca`** — public Orca tool-provider SPI surface
   (`OrcaToolProvider`, `OrcaToolProviderContext`, `OrcaProviderDependencies`). External modules
-  (`aimon-browser-playwright`, the external `aimon-sandbox`, ...) and other core packages
+  (the external `aimon-sandbox` and `aimon-browser-playwright`, ...) and other core packages
   (`mcp.orca`, `tools.*`, ...) implement these interfaces — they must NOT import from
   `at.aimon.core.agent.impl..`.
 

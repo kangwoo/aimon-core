@@ -55,7 +55,7 @@ If you're new and want a place to start, look for issues labeled `good first iss
 ### Test
 
 ```bash
-./gradlew test                                                        # All unit tests (excludes @Tag("docker"), @Tag("packaging") and @Tag("playwright"))
+./gradlew test                                                        # All unit tests (excludes @Tag("docker") and @Tag("packaging"))
 ./gradlew :aimon-core:test                                            # Single module
 ./gradlew :aimon-core:test --tests "at.aimon.core.agent.tool.*Test"   # Glob pattern
 ./gradlew :aimon-core:test --tests "at.aimon.core.agent.tool.ToolInputTest"  # Single class
@@ -93,8 +93,7 @@ key, and redact it from any failure output you paste into an issue or a pull req
 **The gate works in the other direction too, and that is why the command above scopes the keys to
 itself.** The environment variable is the only thing keeping these classes out of an ordinary build: they
 carry no tag, and the only exclusions in a module's `test` task are by tag: `docker` and `packaging`,
-which the conventions plugin excludes in every module, and `playwright`, which `aimon-browser-playwright`
-excludes as well. So while a key is exported in a shell — for this tier, or to run the CLI — every
+which the conventions plugin excludes in every module. So while a key is exported in a shell — for this tier, or to run the CLI — every
 `./gradlew test` and `checkAll` in that shell runs that provider's live classes as well, not only the
 command above. That happens each time the module's `test` task executes rather than reporting
 `UP-TO-DATE` — for example the first build, a build after `clean` or `cleanTest`, and any build after a
@@ -125,11 +124,11 @@ Before pushing:
 ```
 
 `checkAll` is the single gate: it runs the format check, Checkstyle, each module's `test` task **and** the
-BOM's `verifyBom`. A separate `./gradlew test` is no longer needed. Three tagged tiers stay out of it, because
-`test` excludes them: `@Tag("docker")` (Docker/Testcontainers) and `@Tag("packaging")` (fat-jar
-launches), which the conventions plugin excludes in every module, and `@Tag("playwright")` (a real
-browser), which `aimon-browser-playwright` excludes as well. They run via `./gradlew integrationTest`,
-`./gradlew packagingTest` and `./gradlew playwrightTest`, and CI and the release gate run all three.
+BOM's `verifyBom`. A separate `./gradlew test` is no longer needed. Two tagged tiers stay out of it, because
+`test` excludes them: `@Tag("docker")` (Docker/Testcontainers) and `@Tag("packaging")` (fat-jar launches),
+both excluded by the conventions plugin in every module. They run via `./gradlew integrationTest` and
+`./gradlew packagingTest`, and CI and the release gate run both. (There was a third, `@Tag("playwright")`,
+until aimon-browser-playwright moved to its own repository and took the tier with it.)
 
 When a check fails, the HTML reports say why:
 
@@ -139,10 +138,9 @@ modules/<module>/build/reports/tests/test/index.html  # Test failures
 modules/<module>/build/reports/jacoco/                # Coverage
 ```
 
-CI (GitHub Actions) runs `./gradlew checkAll` on every PR, and the tagged tiers beside it: `packagingTest` and
-`playwrightTest` in the same job, `integrationTest` in its own, and `jacocoTestReport` +
-`jacocoTestCoverageVerification` in a third. The release gate runs the same five verification tasks in one
-invocation. Broken builds will be flagged automatically. See `.github/workflows/build.yml`.
+CI (GitHub Actions) runs `./gradlew checkAll` on every PR, and the tagged tiers beside it: `packagingTest` in
+the same job, `integrationTest` in its own, and `jacocoTestReport` + `jacocoTestCoverageVerification` in a
+third. The release gate runs the same four verification tasks in one invocation. Broken builds will be flagged automatically. See `.github/workflows/build.yml`.
 
 Documentation has its own gates, which `checkAll` does not cover:
 
@@ -243,7 +241,6 @@ modules/
 ├── aimon-scheduling-quartz      # Distributed cron scheduler
 ├── aimon-workflow-graaljs       # GraalJS-scripted subagent workflow
 ├── aimon-rewake-webhook         # HMAC-verified HTTP endpoint that fires rewake
-└── aimon-browser-playwright     # Playwright browser automation
 
 samples/
 ├── aimon-sample-app             # Minimal embedding example

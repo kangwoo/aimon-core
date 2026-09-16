@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/tool/tool-development-guide.md
-source_commit: eec9ccd
+source_commit: 8c8de45
 ---
 
 # Tool Development Guide
@@ -507,8 +507,9 @@ private static Map<String, Object> createInputSchema() {
 
 - **Every built-in tool declares it, without exception.** `BuiltInToolSchemaArchitectureTest` checks it at
   build time and there is no exclusion list — but **its scope is the `at.aimon.core.tools` package**.
-  Built-in tools living elsewhere (`at.aimon.core.memory.deriver.tool`, `at.aimon.sandbox.tool`, the
-  Playwright and GraalJS tools) follow the same rule, but this test does not protect them. Scoping it by
+  Built-in tools living elsewhere (`at.aimon.core.memory.deriver.tool`, the GraalJS tools, and — in
+  repositories of their own — `at.aimon.sandbox.tool` and the Playwright tools) follow the same rule, but
+  this test does not protect them. Scoping it by
   package convention is deliberate, and the reason is in the test's javadoc — scanning every subtype of
   `Tool` catches `at.aimon.core.mcp.McpTool`, whose advertised schema is the server's, not ours. The check
   looks at **the top-level map only** — attaching the key to array item schemas alone leaves the place

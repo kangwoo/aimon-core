@@ -42,7 +42,6 @@ above.
 | LLM providers | `aimon-llm-openai`, `aimon-llm-anthropic` |
 | Storage | `aimon-session-*`, `aimon-memory-testkit`, `aimon-knowledge-opensearch` |
 | Filesystem | `aimon-filesystem-gridfs`, `aimon-filesystem-s3`, `aimon-filesystem-testkit` |
-| Browser | `aimon-browser-playwright` |
 | Scheduling & workflow | `aimon-scheduling-quartz`, `aimon-workflow-graaljs`, `aimon-rewake-webhook` |
 | Docs & build | `docs/`, `buildSrc/`, `.github/`, `scripts/` |
 

@@ -137,7 +137,7 @@ dependencies {
 | `aimon-scheduling-quartz` | 작업 스케줄링이 필요하면 |
 | `aimon-knowledge-opensearch` | 벡터 검색 기반 KnowledgeStore |
 | `at.aimon.sandbox:aimon-sandbox-docker` / `-kubernetes` ([별도 저장소](https://github.com/kangwoo/aimon-sandbox)) | 컨테이너/파드에 격리된 명령 실행 **도구**가 필요하면 |
-| `aimon-browser-playwright` | 브라우저 자동화 도구가 필요하면 |
+| `at.aimon.browser:aimon-browser-playwright` ([별도 저장소](https://github.com/kangwoo/aimon-browser)) | 브라우저 자동화 도구가 필요하면 |
 
 > **모듈 의존성 규칙** (.claude/rules/architecture.md): 구현 모듈은 `implementation(project(":aimon-core"))`로만 코어를 참조한다. `api()`로 노출하지 않는다 — 코어 타입이 트랜지티브 의존성으로 새는 것을 막기 위해.
 

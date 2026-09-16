@@ -245,7 +245,7 @@ INTERRUPTED, SUSPENDED, MAX_ITERATIONS, 그리고 커맨드 처리 경로. 실�
 | 파일명 추출 | [`ArtifactFileNames.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/artifact/ArtifactFileNames.java) |
 | 쓰기 데코레이터 | [`ArtifactAwareWriteTool.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/tools/artifact/ArtifactAwareWriteTool.java) |
 | 편집 데코레이터 | [`ArtifactAwareEditTool.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/tools/artifact/ArtifactAwareEditTool.java) |
-| 스크린샷 데코레이터 | [`ArtifactAwareBrowserTool.java`](../../../modules/aimon-browser-playwright/src/main/java/at/aimon/browser/playwright/artifact/ArtifactAwareBrowserTool.java) |
+| 스크린샷 데코레이터 | [`ArtifactAwareBrowserTool.java`](https://github.com/kangwoo/aimon-browser/blob/main/modules/aimon-browser-playwright/src/main/java/at/aimon/browser/playwright/artifact/ArtifactAwareBrowserTool.java) — 별도 저장소 |
 | 등록 스위치 | [`OrcaFileToolProvider.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/impl/orca/tool/OrcaFileToolProvider.java) |
 | 컨텍스트 키 | [`ToolContextKeys.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/tools/ToolContextKeys.java) |
 | 결과 부착 | [`OrcaAgentExecutionResult.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/impl/orca/OrcaAgentExecutionResult.java) |

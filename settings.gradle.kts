@@ -9,7 +9,6 @@ include(
     "aimon-bootstrap",
     "aimon-cli",
     "aimon-spring-boot-starter",
-    "aimon-browser-playwright",
     "aimon-filesystem-gridfs",
     "aimon-filesystem-s3",
     // The shared VirtualFileSystem contract test. Not published — it exists so each backend is checked against
@@ -52,7 +51,6 @@ project(":aimon-core").projectDir = file("modules/aimon-core")
 project(":aimon-bootstrap").projectDir = file("modules/aimon-bootstrap")
 project(":aimon-cli").projectDir = file("modules/aimon-cli")
 project(":aimon-spring-boot-starter").projectDir = file("modules/aimon-spring-boot-starter")
-project(":aimon-browser-playwright").projectDir = file("modules/aimon-browser-playwright")
 project(":aimon-filesystem-gridfs").projectDir = file("modules/aimon-filesystem-gridfs")
 project(":aimon-filesystem-s3").projectDir = file("modules/aimon-filesystem-s3")
 project(":aimon-filesystem-testkit").projectDir = file("modules/aimon-filesystem-testkit")

@@ -27,10 +27,9 @@ paths:
 - Tests that need a Docker daemon (Testcontainers — MongoDB / Postgres / Redis / LocalStack / GridFS, etc.)
   MUST be annotated `@Tag("docker")` at the class level.
 - `./gradlew test` / `build` / `check` **exclude** `@Tag("docker")` so unit tests stay fast and daemonless.
-  (`test` also excludes `@Tag("packaging")` in every module and `@Tag("playwright")` in `aimon-browser-playwright`;
-  those run via `./gradlew packagingTest` and `./gradlew playwrightTest`.)
+  (`test` also excludes `@Tag("packaging")` in every module; those run via `./gradlew packagingTest`.)
 - Run them with `./gradlew integrationTest` (per-module task; needs a running Docker daemon).
-- Convention mirrors `@Tag("playwright")` in `aimon-browser-playwright`. Wiring lives in
+- The same convention carried `@Tag("playwright")` until `aimon-browser-playwright` moved to its own repository. Wiring lives in
   `buildSrc/.../aimon.java-conventions.gradle.kts` (`test` excludes the tag; `integrationTest` includes it).
 - Keep the container lifecycle in a single `*TestSupport` class per module; tag every test class that uses it.
 

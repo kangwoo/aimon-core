@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/features.md
-source_commit: 53d14a1
+source_commit: 8c8de45
 ---
 
 # Feature Catalog
@@ -171,7 +171,7 @@ The unit through which an agent interacts with the outside world. The contract i
 **Related documents**
 - [tool development guide](../features/tool/tool-development-guide.en.md) — the canonical document for writing a new tool
 - [parallel tool execution guide](../features/tool/parallel-tool-execution-guide.en.md)
-- [browser tool guide](../features/tool/browser-tool-guide.en.md)
+- [browser tool guide](https://github.com/kangwoo/aimon-browser/blob/main/docs/browser-tool-guide.en.md) (separate repository)
 
 ---
 
@@ -457,10 +457,10 @@ environment can be swapped in for the local disk.
 | the Docker implementation | — | `at.aimon.sandbox:aimon-sandbox-docker` |
 | the Kubernetes implementation | — | `at.aimon.sandbox:aimon-sandbox-kubernetes` |
 | the sandbox tools | `RunSandbox`, `CopyToSandbox`, `RestartSandbox`, `DeleteSandbox` | `at.aimon.sandbox:*` |
-| browser automation | the `Browser` tool, `BrowserSession` | `aimon-browser-playwright` |
+| browser automation | the `Browser` tool, `BrowserSession` | `at.aimon.browser:aimon-browser-playwright` (separate repository) |
 
 **Related documents**
-- [browser tool guide](../features/tool/browser-tool-guide.en.md)
+- [browser tool guide](https://github.com/kangwoo/aimon-browser/blob/main/docs/browser-tool-guide.en.md) (separate repository)
 
 ---
 

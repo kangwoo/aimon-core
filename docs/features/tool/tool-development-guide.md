@@ -510,7 +510,7 @@ private static Map<String, Object> createInputSchema() {
 
 - **내장 도구는 예외 없이 전부 선언한다.** `BuiltInToolSchemaArchitectureTest` 가 빌드에서 확인하며
   제외 목록은 없다 — 단 **검사 범위는 `at.aimon.core.tools` 패키지**다. 그 밖에 사는 내장 도구
-  (`at.aimon.core.memory.deriver.tool`, `at.aimon.sandbox.tool`, Playwright·GraalJS 도구)도 규칙은
+  (`at.aimon.core.memory.deriver.tool`, GraalJS 도구, 그리고 별도 저장소의 `at.aimon.sandbox.tool` · Playwright 도구)도 규칙은
   똑같이 지키지만 이 테스트가 지켜 주지는 않는다. 범위를 패키지 관례로 잡은 것은 의도이며 이유는 테스트
   javadoc 에 있다 — `Tool` 하위 타입을 전부 스캔하면 `at.aimon.core.mcp.McpTool` 이 걸리는데, 그것이
   광고하는 스키마는 우리 것이 아니라 서버의 것이다. 검사는 **최상위 맵만** 본다 — 배열 item 스키마에만

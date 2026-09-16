@@ -131,9 +131,6 @@ jansi = "2.4.3"
 # HTML Parsing
 jsoup = "1.23.2"
 
-# Browser Automation
-playwright = "1.58.0"
-
 # HTTP & Networking
 okhttp = "5.5.0"
 javalin = "7.2.3"
@@ -273,9 +270,6 @@ javalin = { module = "io.javalin:javalin", version.ref = "javalin" }
 
 # HTML Parsing
 jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
-
-# Browser Automation
-playwright = { module = "com.microsoft.playwright:playwright", version.ref = "playwright" }
 
 # AI & LLM
 openai-client = { module = "com.openai:openai-java", version.ref = "openai" }

@@ -349,6 +349,35 @@ temp-file swap are all identical. That is the usual rule here -- see
 
 ---
 
+## aimon-browser-playwright moved to its own repository
+
+Same shape as the sandbox section below, one module instead of three. `aimon-browser-playwright` is alive in
+[aimon-browser](https://github.com/kangwoo/aimon-browser) with every `.java` file byte for byte, the package
+still `at.aimon.browser.playwright.*`, and the `Browser` tool keeping its name, input schema, `ToolContext`
+keys and permission rule. Only the Maven coordinate changed.
+
+| Through 0.2.4 | From now |
+|-----|-----|
+| `at.aimon.core:aimon-browser-playwright` | `at.aimon.browser:aimon-browser-playwright` |
+
+`at.aimon.core:aimon-browser-playwright:0.2.4` stays on Central and keeps resolving; it receives no further
+releases. Nothing migrates — the module stores nothing.
+
+**What did not move is the part worth knowing about.** `SsrfGuard` (`at.aimon.core.tools.web.security`) and
+`ContentExtractor` (`at.aimon.core.tools.web.fetch`) stay here, shared between `WebFetchTool` and the browser
+tool. Both are public API by the package rule in [`../project/api-stability.md`](../project/api-stability.md)
+§2, so the browser repository depends on them legitimately. But `SsrfGuard` is a security control, and the
+split turned an in-repository shared class into a cross-repository contract: a hole fixed here reaches the
+browser tool only after a release of this repository, and until that repository raises its `aimon-core` line
+the two run different SSRF defences. **Do not fork the guard** — a second copy of an SSRF allowlist is a
+second copy that goes stale silently.
+
+The browser tier moved with the module, and that was the point: `playwrightTest` was a CI step and a release
+gate task here, carrying a browser cache, a version-resolution guard and a 94-second cold Chromium install for
+a module nothing in this build depended on. `scripts/release.sh` now asks for a Docker daemon and nothing else.
+
+---
+
 ## The sandbox modules moved to their own repository
 
 Searching for `aimon-sandbox` in this build finds nothing, and unlike the two rows below that is **not**

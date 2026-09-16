@@ -19,9 +19,11 @@ import at.aimon.core.agent.tool.ToolInput;
  * Most tools do not need a rule. A tool that is restricted by one input field — {@code Bash} by its {@code command},
  * {@code Read} by its {@code file_path} — implements {@link ToolPermissionSubjectAware} instead, names that value, and
  * lets the framework match it. A rule is for judgements a single value cannot carry: a combination of several inputs,
- * a private pattern grammar, or a lookup against an external policy. {@code BrowserToolPermissionRule}
- * (in {@code aimon-browser-playwright}) is the in-tree example — its {@code action:url} specs are one tool's own
- * syntax, deliberately not part of the framework vocabulary.
+ * a private pattern grammar, or a lookup against an external policy. There is no implementation of this interface
+ * in this repository: the worked example is {@code BrowserToolPermissionRule} in
+ * <a href="https://github.com/kangwoo/aimon-browser">aimon-browser</a>, whose {@code action:url} specs are one
+ * tool's own syntax, deliberately not part of the framework vocabulary. That the only implementation lives outside
+ * this build is the point of the interface rather than a gap in it.
  *
  * <h2>Design Principles</h2>
  *

@@ -106,17 +106,18 @@ tasks.withType<Test>().configureEach {
 
 // Docker/Testcontainers-backed tests are annotated `@Tag("docker")`. The default `test` task — run by
 // `build` / `check` — excludes them so unit tests stay fast and need no Docker daemon; the separate
-// `integrationTest` task runs exactly those. Mirrors the `@Tag("playwright")` convention in
-// aimon-browser-playwright. Modules with no docker-tagged tests simply run nothing in `integrationTest`.
+// `integrationTest` task runs exactly those. Modules with no docker-tagged tests simply run nothing in
+// `integrationTest`. (A third tier of the same shape, `@Tag("playwright")`, lived in aimon-browser-playwright's
+// own build file until that module moved to its own repository, and went with it.)
 //
 // `@Tag("packaging")` is a third tier with the same shape and a different reason. Those tests build a fat jar
 // and launch it in a child JVM, so they cost tens of seconds — which does not belong in the loop a developer runs
 // on every save. Excluded from `test` for the same reason `docker` is, and given its own task for the same reason
 // too. Repeated `useJUnitPlatform { }` calls accumulate into one options set, so both exclusions apply.
 //
-// Out of `test` is not the same as out of CI, and no tier in this build is out of both any more. `integrationTest`,
-// `packagingTest` and aimon-browser-playwright's own `playwrightTest` are each a step in the `build` or
-// `integration` job and a task in the release gate, and ReleaseGateMatchesCiGateTest holds the two lists together.
+// Out of `test` is not the same as out of CI, and no tier in this build is out of both any more. `integrationTest`
+// and `packagingTest` are each a step in the `build` or `integration` job and a task in the release gate, and
+// ReleaseGateMatchesCiGateTest holds the two lists together.
 //
 // That is a claim about tasks, and it does not reach a class gated with `@EnabledIfEnvironmentVariable`. Such a class
 // skips in whichever task picks it up unless its variable is set, no workflow sets one, and a skip leaves the build
@@ -221,13 +222,13 @@ coverageBaselines.getProperty(project.name)?.let { floor ->
         // @Tag("docker") measures near zero when only `test` has run, and JaCoCo reports that as "ratio is 0.00,
         // but expected minimum is 0.83" — which reads as a collapse rather than as a tier that was never run.
         //
-        // It named only `test integrationTest` until aimon-browser-playwright's floor started depending on
-        // `playwrightTest` too. Following it literally then left that one module failing at 0.83 with the advice
-        // already taken — the same class of wrong-because-derived instruction this file's tier comment above hit,
-        // and worse here because it is the sentence handed to the person the failure just stopped.
+        // It named only `test integrationTest` until a second module's floor came to depend on a third tier.
+        // Following it literally then left that module failing with the advice already taken — the same class of
+        // wrong-because-derived instruction this file's tier comment above hit, and worse here because it is the
+        // sentence handed to the person the failure just stopped. It names no tier now for that reason.
         description = "Fails if line coverage dropped below gradle/coverage-baselines.properties. Needs every " +
-            "tier's execution data: run `test integrationTest playwrightTest` first, or the docker-backed modules " +
-            "measure zero and aimon-browser-playwright measures 0.83."
+            "tier's execution data, so run `test` together with every tagged tier — a module measured with one of " +
+            "its tiers missing reports a collapse rather than the tier that did not run."
         violationRules {
             rule {
                 limit {
