@@ -125,7 +125,7 @@ snakeyaml = "2.7"
 cron-utils = "9.2.1"
 mustache = "0.9.14"
 picocli = "4.7.7"
-jline = "3.24.1"
+jline = "4.4.3"
 jansi = "2.4.3"
 
 # HTML Parsing
