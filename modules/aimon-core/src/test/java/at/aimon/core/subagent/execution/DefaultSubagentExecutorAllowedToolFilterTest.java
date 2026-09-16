@@ -17,6 +17,7 @@ import at.aimon.core.agent.interrupt.NoopCancellationSignal;
 import at.aimon.core.agent.tool.AbstractTool;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
+import at.aimon.core.agent.tool.SideEffectLevel;
 import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
@@ -110,13 +111,32 @@ class DefaultSubagentExecutorAllowedToolFilterTest {
                 SubagentContent.of("you are explorer"));
     }
 
+    private static Tool tool(String name, SideEffectLevel level) {
+        return new AbstractTool(name, name + " description", Map.of("type", "object")) {
+            @Override
+            public ToolResult execute(ToolInput input, ToolContext context) {
+                return ToolResult.success("ran " + name);
+            }
+
+            @Override
+            public SideEffectLevel getSideEffectLevel() {
+                return level;
+            }
+        };
+    }
+
     private DefinitionCapturingLlmClient run(Subagent subagent, DefinitionCapturingLlmClient client, Tool... tools) {
+        return run(subagent, client, new DefaultToolExecutionManager(), tools);
+    }
+
+    private DefinitionCapturingLlmClient run(Subagent subagent, DefinitionCapturingLlmClient client,
+            DefaultToolExecutionManager manager, Tool... tools) {
         final DefaultToolRegistry registry = new DefaultToolRegistry();
         for (Tool tool : tools) {
             registry.register(tool);
         }
 
-        final DefaultSubagentExecutor executor = new DefaultSubagentExecutor(client, new DefaultToolExecutionManager(),
+        final DefaultSubagentExecutor executor = new DefaultSubagentExecutor(client, manager,
                 new DefaultHookExecutionManager());
 
         final SubagentExecutionContext context = SubagentExecutionContext.builder()
@@ -171,6 +191,28 @@ class DefaultSubagentExecutorAllowedToolFilterTest {
                 new DefinitionCapturingLlmClient(), tool("Reader"), tool("Writer"));
 
         assertThat(client.firstOffer()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("the ceiling and the allow-list compose: each keeps something, together they keep nothing")
+    void theTwoFiltersCompose() {
+        // The case neither filter can reach alone, and the one this PR newly makes reachable. A writer subagent under
+        // a read-only ceiling: the allow-list keeps only Write, the ceiling strips Write, and the intersection is
+        // empty. Before this change the allow-list did not touch the offer, so the model was still shown Reader.
+        final DefinitionCapturingLlmClient client = run(subagentAllowing(List.of("Writer")),
+                new DefinitionCapturingLlmClient(), new DefaultToolExecutionManager(SideEffectLevel.READ_ONLY),
+                tool("Reader", SideEffectLevel.READ_ONLY), tool("Writer", SideEffectLevel.MUTATING));
+
+        assertThat(client.firstOffer()).isEmpty();
+
+        // Each filter alone still leaves something, which is what makes this a composition failure rather than either
+        // filter being too strict on its own.
+        assertThat(run(subagentAllowing(List.of("Writer")), new DefinitionCapturingLlmClient(),
+                tool("Reader", SideEffectLevel.READ_ONLY), tool("Writer", SideEffectLevel.MUTATING)).firstOffer())
+                .containsExactly("Writer");
+        assertThat(run(subagentAllowing(List.of()), new DefinitionCapturingLlmClient(),
+                new DefaultToolExecutionManager(SideEffectLevel.READ_ONLY), tool("Reader", SideEffectLevel.READ_ONLY),
+                tool("Writer", SideEffectLevel.MUTATING)).firstOffer()).containsExactly("Reader");
     }
 
     @Test
