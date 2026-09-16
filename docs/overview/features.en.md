@@ -166,7 +166,7 @@ The unit through which an agent interacts with the outside world. The contract i
 | workflow | `Workflow` | core |
 | workflow (JS script) | `WorkflowJs` | `aimon-workflow-graaljs` |
 | browser | `Browser` | `aimon-browser-playwright` |
-| sandbox | `RunSandbox`, `CopyToSandbox`, `RestartSandbox`, `DeleteSandbox` | `aimon-sandbox-*` |
+| sandbox | `RunSandbox`, `CopyToSandbox`, `RestartSandbox`, `DeleteSandbox` | `at.aimon.sandbox:*` (separate repository) |
 
 **Related documents**
 - [tool development guide](../features/tool/tool-development-guide.en.md) — the canonical document for writing a new tool
@@ -453,10 +453,10 @@ environment can be swapped in for the local disk.
 
 | Feature | Entry point | Where |
 |------|--------|------|
-| the sandbox abstraction | the sandbox SPI | `aimon-sandbox` |
-| the Docker implementation | — | `aimon-sandbox-docker` |
-| the Kubernetes implementation | — | `aimon-sandbox-kubernetes` |
-| the sandbox tools | `RunSandbox`, `CopyToSandbox`, `RestartSandbox`, `DeleteSandbox` | `aimon-sandbox-*` |
+| the sandbox abstraction | the sandbox SPI | `at.aimon.sandbox:aimon-sandbox` |
+| the Docker implementation | — | `at.aimon.sandbox:aimon-sandbox-docker` |
+| the Kubernetes implementation | — | `at.aimon.sandbox:aimon-sandbox-kubernetes` |
+| the sandbox tools | `RunSandbox`, `CopyToSandbox`, `RestartSandbox`, `DeleteSandbox` | `at.aimon.sandbox:*` |
 | browser automation | the `Browser` tool, `BrowserSession` | `aimon-browser-playwright` |
 
 **Related documents**

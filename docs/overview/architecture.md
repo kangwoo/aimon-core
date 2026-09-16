@@ -95,7 +95,7 @@ IMPORTANT (패키지 규약): `at.aimon.core.<domain>` 은 인터페이스와 �
 │ Implementation                                                 │
 │   내장: ReadTool, BashTool, LocalFileSystem, LocalShell, …      │
 │   외부 모듈: aimon-llm-*, aimon-filesystem-*, aimon-session-*,   │
-│             aimon-memory-*, aimon-sandbox-*, …                  │
+│             aimon-knowledge-*, aimon-browser-*, …               │
 └───────────────────────────────────────────────────────────────┘
 ```
 
@@ -348,7 +348,9 @@ public interface VirtualShell extends AutoCloseable {
 ```
 
 `ShellCommandResult` 는 exit code, stdout, stderr, 소요 시간을 담는다.
-샌드박스 모듈(`aimon-sandbox-docker`, `aimon-sandbox-kubernetes`)이 격리 실행 구현을 제공한다.
+구현은 `LocalShell`(`shell.impl.local`) **하나뿐**이다 — 샌드박스 모듈은 이 인터페이스를 구현하지 않는다.
+그쪽의 격리는 셸을 갈아 끼우는 것이 아니라 도구 4종(`RunSandbox` · `CopyToSandbox` · `RestartSandbox` ·
+`DeleteSandbox`)으로 주어지므로, 컨테이너에 격리된 **셸**이 필요하면 직접 구현한다.
 
 ### 4.7 Session
 
@@ -586,7 +588,7 @@ Orca는 도구를 도메인별 프로바이더로 조립한다. 외부 모듈은
 | Orca 도구 묶음 | `OrcaToolProvider` | `at.aimon.core.agent.orca` SPI 구현 |
 | LLM 프로바이더 | `LlmClient` | 별도 모듈에서 구현 |
 | 파일 백엔드 | `VirtualFileSystem` | 구현 (GridFS, S3 참조) |
-| 셸 백엔드 | `VirtualShell` | 구현 (샌드박스 모듈 참조) |
+| 셸 백엔드 | `VirtualShell` | 구현 (내장 구현은 `LocalShell` 하나뿐 — 샌드박스 모듈은 이 SPI 를 구현하지 않는다) |
 | 라이프사이클 훅 | `hook.event` 의 13개 인터페이스 | `HookRegistry.register(HookEventType, hook)` |
 | 스킬 | `Skill` | Agent Skills 표준의 SKILL.md 작성 |
 | 서브에이전트 | `Subagent` | 코드 빌더 또는 Markdown 정의 |

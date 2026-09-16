@@ -347,6 +347,41 @@ the JSON Lines format, the field names inside each record, the sidecar `<log>.lo
 temp-file swap are all identical. That is the usual rule here -- see
 [`frozen-names.md`](frozen-names.md) -- applied to a file format instead of a DDL.
 
+---
+
+## The sandbox modules moved to their own repository
+
+Searching for `aimon-sandbox` in this build finds nothing, and unlike the two rows below that is **not**
+because anything was deleted. All three modules — `aimon-sandbox`, `aimon-sandbox-docker`,
+`aimon-sandbox-kubernetes` — are alive in [aimon-sandbox](https://github.com/kangwoo/aimon-sandbox), with
+every `.java` file byte for byte as it was. The Java package did not move: it is still `at.aimon.sandbox.*`,
+the `SandboxBackend` SPI keeps every signature, and the four tools keep their names, their input schemas and
+their `ToolContext` keys. Only the Maven coordinate changed.
+
+| Through 0.2.4 | From now |
+|-----|-----|
+| `at.aimon.core:aimon-sandbox` | `at.aimon.sandbox:aimon-sandbox` |
+| `at.aimon.core:aimon-sandbox-docker` | `at.aimon.sandbox:aimon-sandbox-docker` |
+| `at.aimon.core:aimon-sandbox-kubernetes` | `at.aimon.sandbox:aimon-sandbox-kubernetes` |
+
+IMPORTANT: this is **neither a rename nor a removal**, and the difference matters in both directions. The old
+coordinates are not withdrawn — `at.aimon.core:aimon-sandbox:0.2.4` and its two backends stay on Central and
+keep resolving — so a build that never updates keeps working; they simply receive no further releases. And
+nothing needs migrating, because there is nothing stored: unlike the memory modules below, these three own no
+tables, no collections and no file format. Moving is one line per dependency, and the version restarts at
+`0.1.0` because the new group id has no release history of its own.
+
+The aimon-core BOM no longer manages these three, which follows from how it is built rather than from a
+decision about them: it derives its constraints from the subprojects of this build that publish. A consumer
+that took their version from the BOM now writes it out, or takes it from the new repository — which publishes
+no BOM, on the grounds that three coordinates, two of which carry the third on `api`, do not earn one.
+
+What stayed behind is one line of enforcement. `at.aimon.sandbox..` is still in the forbidden-package list of
+`ArchitectureRulesTest.coreHasNoSiblingModuleDependencies`, beside `at.aimon.memory..`, so the dependency
+cannot start running the other way now that satisfying it would only take a coordinate from Central. The
+design document went with the code, from `docs/design/integration/sandbox.md` to
+[`docs/design/sandbox.md`](https://github.com/kangwoo/aimon-sandbox/blob/main/docs/design/sandbox.md) there.
+
 ## Two memory backend modules were removed, not renamed
 
 Searching for these will find nothing, and that is the answer rather than a missing row:

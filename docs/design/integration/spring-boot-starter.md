@@ -361,8 +361,10 @@ actuator refresh 같은 기능을 붙이려면 외부에서 직렬화해야 한�
 선언된 스타터의 소비자는 **컴파일 타임에 `aimon-core` 타입을 전혀 볼 수 없다**. `@Bean LlmClient`,
 `AgentRuntime`, `SessionId` 를 쓰는 사용자 코드가 전부 컴파일 실패한다.
 
-스타터는 구현 모듈이 아니라 **파사드/애그리게이터**이므로 이 규칙의 예외가 된다(§6 D5). in-tree
-선례가 있다 — `aimon-sandbox-docker` 는 `api(project(":aimon-sandbox"))` 를 쓴다.
+스타터는 구현 모듈이 아니라 **파사드/애그리게이터**이므로 이 규칙의 예외가 된다(§6 D5). 이 글을 쓸 때의
+in-tree 선례는 `aimon-sandbox-docker` 의 `api(project(":aimon-sandbox"))` 였다 — 그 모듈은 이후
+[aimon-sandbox](https://github.com/kangwoo/aimon-sandbox) 로 분리되었고, 남은 in-tree 선례는
+`aimon-bootstrap` 이 `aimon-core` 와 `aimon-session-routing` 을 둘 다 `api` 로 내보내는 것이다.
 
 또한 **Spring 은 어느 모듈의 main 컴파일 클래스패스에도 없다**. `aimon.java-conventions` 가
 `spring-boot-starter-test` 를 `testImplementation` 으로만 건다. 스타터 모듈은 main 스코프
@@ -1574,7 +1576,7 @@ Spring 의 순서 결정이 아예 관여하지 않게 된다.
 **결정**: `.claude/rules/code-style.md` 의 `implementation` 규칙에 **파사드 모듈 예외**를 명문화한다.
 **근거**: §2.6. `implementation` 은 POM 에서 runtime scope 가 되어 소비자 컴파일이 불가능해진다.
 규칙의 의도(구현 모듈이 코어 타입을 전이 노출하지 않게)는 유지하되, 스타터는 정의상 **노출이 목적**이다.
-선례: `aimon-sandbox-docker` 의 `api(project(":aimon-sandbox"))`.
+선례: `aimon-sandbox-docker` 의 `api(project(":aimon-sandbox"))` (이후 별도 저장소로 분리 — §2.6).
 
 ### D6. Spring Boot 베이스라인은 **3.5.x**
 

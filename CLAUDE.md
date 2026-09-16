@@ -71,10 +71,6 @@ modules/
 ├── aimon-filesystem-gridfs          # MongoDB GridFS virtual filesystem
 ├── aimon-filesystem-s3              # AWS S3 virtual filesystem
 │
-├── aimon-sandbox                    # Sandbox abstraction (interface)
-├── aimon-sandbox-docker             # Docker sandbox implementation
-├── aimon-sandbox-kubernetes         # Kubernetes sandbox implementation
-│
 ├── aimon-session-mongodb            # MongoDB-backed session store
 ├── aimon-session-postgres           # PostgreSQL-backed session store
 ├── aimon-session-redis              # Redis-backed session store
@@ -88,6 +84,15 @@ modules/
 ├── aimon-rewake-webhook             # Javalin HTTP endpoint that fires rewake (HMAC-verified)
 └── aimon-browser-playwright         # Playwright-based browser automation
 ```
+
+NOTE: 샌드박스는 **이 빌드에 없다.** `aimon-sandbox` · `aimon-sandbox-docker` ·
+`aimon-sandbox-kubernetes` 는 별도 저장소 [aimon-sandbox](https://github.com/kangwoo/aimon-sandbox) 로
+**분리되었다** — 제거(aimon-memory-*)도 병합(aimon-memory-file)도 아니고, 코드가 한 글자도 바뀌지 않은 채
+저장소만 옮겨 간 것이다. 좌표는 바뀌었다: `at.aimon.core:aimon-sandbox*` 는 0.2.4 까지이며 그 아티팩트는
+Central 에 그대로 남아 있고, 이후로는 `at.aimon.sandbox:*` 다. 분리의 근거는 하나다 — 그 셋은 **어떤 모듈도
+의존하지 않는 잎(leaf)** 이었고(역의존 0건), 코어에서 쓰는 것은 공개 SPI 뿐이라 경계가 이미 그어져 있었다.
+반대 방향의 의존은 생기지 않는다: `at.aimon.sandbox..` 는 `ArchitectureRulesTest` 의 금지 패키지 목록에
+`at.aimon.memory..` 와 나란히 남아 있다. 설계 문서도 함께 옮겨 갔다(옛 `docs/design/integration/sandbox.md`).
 
 NOTE: `aimon-session-routing` has been renamed twice — `aimon-session-web` → `aimon-session-base`
 → `aimon-session-routing`. The first rename only said what the module *was not* (not a web-only
@@ -118,7 +123,7 @@ Within `aimon-core`, top-level packages follow a domain + impl split:
   ArchUnit. External modules and other core packages must depend on neutral SPI packages instead.
 - **`at.aimon.core.agent.orca`** — public Orca tool-provider SPI surface
   (`OrcaToolProvider`, `OrcaToolProviderContext`, `OrcaProviderDependencies`). External modules
-  (`aimon-sandbox`, `aimon-browser-playwright`, ...) and other core packages
+  (`aimon-browser-playwright`, the external `aimon-sandbox`, ...) and other core packages
   (`mcp.orca`, `tools.*`, ...) implement these interfaces — they must NOT import from
   `at.aimon.core.agent.impl..`.
 

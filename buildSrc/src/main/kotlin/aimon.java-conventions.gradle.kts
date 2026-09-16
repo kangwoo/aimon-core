@@ -122,8 +122,8 @@ tasks.withType<Test>().configureEach {
 // skips in whichever task picks it up unless its variable is set, no workflow sets one, and a skip leaves the build
 // green — so it has no CI signal at all. The provider-key live-API classes in aimon-llm-anthropic and
 // aimon-llm-openai are that shape deliberately, because they need a secret and bill every run; CONTRIBUTING.md's
-// "Live-API tests" says how to run them and why `--rerun` is required. aimon-sandbox-docker and
-// aimon-sandbox-kubernetes each hold one more class gated the same way.
+// "Live-API tests" says how to run them and why `--rerun` is required. Two more classes of that shape, gated on
+// AIMON_DOCKER_IT and AIMON_KUBERNETES_IT, left this build with the sandbox modules.
 tasks.named<Test>("test") {
     useJUnitPlatform {
         excludeTags("docker")

@@ -320,7 +320,7 @@ class PackageDependencyArchitectureTest {
             + " at.aimon.core.agent.orca, not on agent.impl directly.")
     void agentImplMustNotLeakOutsideAgentTree() {
         // Scope: scan production classes that live OUTSIDE at.aimon.core.agent.. — i.e. ext packages
-        // (mcp.orca, tools.*, scheduling.*, ...) and external impl modules (aimon-sandbox, aimon-llm-*, etc.).
+        // (mcp.orca, tools.*, scheduling.*, ...) and external impl modules (aimon-llm-*, aimon-browser-*, etc.).
         // Those callers may only see the public Orca SPIs in at.aimon.core.agent.orca.., never the executor
         // internals in at.aimon.core.agent.impl... The session→orca coupling inside core.agent.session is a
         // separate, intentionally-internal concern (the session API uses concrete OrcaAgentExecution* types

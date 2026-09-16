@@ -231,10 +231,6 @@ modules/
 ├── aimon-filesystem-s3          # AWS S3 VFS
 ├── aimon-filesystem-testkit     # Shared VirtualFileSystem contract tests
 │
-├── aimon-sandbox                # Sandbox abstraction
-├── aimon-sandbox-docker         # Docker backend
-├── aimon-sandbox-kubernetes     # Kubernetes backend
-│
 ├── aimon-session-routing        # Multi-node session routing (SPIs live in aimon-core)
 ├── aimon-session-testkit        # Shared multi-node session contract tests
 ├── aimon-session-redis          # Redis session store

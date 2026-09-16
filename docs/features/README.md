@@ -177,7 +177,7 @@ cron/일회성 예약 실행과 루틴.
 | 영역 | 지금 볼 곳 |
 |------|-----------|
 | MCP 연동 | [`mcp-tool.md`](../design/integration/mcp-tool.md) |
-| 샌드박스 | [`sandbox.md`](../design/integration/sandbox.md) · `modules/aimon-sandbox/README.md` |
+| 샌드박스 | [aimon-sandbox 저장소](https://github.com/kangwoo/aimon-sandbox) — 설계 문서(`docs/design/sandbox.md`)와 모듈 README 가 그쪽으로 옮겨 갔다 |
 | 파일시스템 / 셸 | `at.aimon.core.filesystem` · `at.aimon.core.shell` 의 `package-info.java` |
 | 명령 (`/compact` 등) | [`command-unification.md`](../design/skill/command-unification.md) |
 | 권한 / 자격증명 | [`tool-development-guide.md` › 권한 시스템](tool/tool-development-guide.md) |

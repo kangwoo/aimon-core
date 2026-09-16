@@ -49,9 +49,9 @@ fail() {
 # Refuse rather than unset. The key stays exported in the shell this script was started from, and every later
 # `./gradlew test` or `checkAll` there bills the same way (CONTRIBUTING.md › Live-API tests); unsetting it in
 # here would fix one command of that shell and tell the operator nothing. A key set to the empty string is
-# refused too: the check asks whether the variable exists, and it never expands the value. AIMON_DOCKER_IT and
-# AIMON_KUBERNETES_IT gate two more classes the same way but bill nothing, and are not refused; whether the
-# release gate should inherit them is backlog LA-2 (docs/backlog/live-api-test-tier.md).
+# refused too: the check asks whether the variable exists, and it never expands the value. Two more variables,
+# AIMON_DOCKER_IT and AIMON_KUBERNETES_IT, used to gate classes here the same way while billing nothing; they
+# left with the sandbox modules, so every gate this script has to reason about now bills.
 #
 # This runs first. It needs nothing from the repository; a shell about to be refused should not trigger
 # `git fetch` or `docker info` first; and a refusal is not a failed release, so the EXIT trap's

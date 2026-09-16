@@ -70,8 +70,9 @@ import org.junit.jupiter.api.io.TempDir;
  * <li>the keys it refuses include every variable {@code @EnabledIfEnvironmentVariable} gates on in the provider
  * modules' tests, so the next provider's key cannot join the build without joining the refusal. That is "at least",
  * not "exactly": the refusal cases run over a list held equal to those gates, so a script that also refused a
- * variable outside them would pass here. Refusing more cannot narrow the gate, and whether the script should also
- * refuse {@code AIMON_DOCKER_IT} and {@code AIMON_KUBERNETES_IT} is backlog {@code LA-2}.
+ * variable outside them would pass here. Refusing more cannot narrow the gate. The two variables that used to make
+ * that distinction matter — {@code AIMON_DOCKER_IT} and {@code AIMON_KUBERNETES_IT} — left with the sandbox modules,
+ * so every gated class this repository still holds is a provider-key one.
  * </ul>
  *
  * <p>
@@ -106,9 +107,10 @@ import org.junit.jupiter.api.io.TempDir;
  * <p>
  * The key refusal is held to what its census can read. A key read with {@code System.getenv} and an assumption rather
  * than with the annotation, and a key gate outside {@code modules/aimon-llm-*}, are both invisible to it; so is a new
- * class gated on a variable that is already refused, which is not a change the refusal needs. The sandbox classes
- * gated on {@code AIMON_DOCKER_IT} and {@code AIMON_KUBERNETES_IT} are outside the census on purpose, and the script
- * does not refuse them — whether it should is backlog {@code LA-2}. Nothing checks that the script calls nothing but
+ * class gated on a variable that is already refused, which is not a change the refusal needs. Two sandbox classes
+ * gated on {@code AIMON_DOCKER_IT} and {@code AIMON_KUBERNETES_IT} used to sit outside the census on purpose, and the
+ * script refused neither variable — backlog {@code LA-2}, dissolved when those modules moved to their own repository
+ * and took both classes along. Nothing checks that the script calls nothing but
  * {@code git} before its pre-flight checks: today it calls nothing else, and the stub records only {@code git}. The
  * provider modules' test sources are inputs of this module's {@code test} task — its build script declares the same
  * {@code aimon-llm-*} tree this census walks, so widening the census means widening that declaration — and a change
@@ -504,10 +506,11 @@ class ReleaseGateMatchesCiGateTest {
      * {@link #PROVIDER_KEY_VARIABLES} names it, and that fails the refusal cases until the script refuses it too.
      *
      * <p>
-     * Scoped to {@code modules/aimon-llm-*} rather than the whole tree. Two classes elsewhere are gated the same way,
-     * on {@code AIMON_DOCKER_IT} and {@code AIMON_KUBERNETES_IT}, and neither variable is a provider key. An allowlist
-     * for them would need a written reason they may stay out of the refusal, and nobody has verified one — backlog
-     * {@code LA-1} §0.1 declined to write it, and {@code LA-2} leaves it open.
+     * Scoped to {@code modules/aimon-llm-*} rather than the whole tree. That scope used to matter for a second
+     * reason: two classes elsewhere were gated the same way on {@code AIMON_DOCKER_IT} and
+     * {@code AIMON_KUBERNETES_IT}, neither of them a provider key. Both left with the sandbox modules, so the scope
+     * now excludes nothing that exists — it is kept because the next such class should have to be considered rather
+     * than swept in.
      */
     @Test
     @DisplayName("the keys the refusal cases run are the key gates in the provider modules")

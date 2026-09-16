@@ -23,9 +23,6 @@ include(
     // the rule rather than two copies of it. Not published, like `aimon-filesystem-testkit` above: every subject it
     // checks is in this repository.
     "aimon-llm-capability-testkit",
-    "aimon-sandbox",
-    "aimon-sandbox-docker",
-    "aimon-sandbox-kubernetes",
     "aimon-rewake-webhook",
     "aimon-scheduling-quartz",
     "aimon-session-routing",
@@ -63,9 +60,6 @@ project(":aimon-knowledge-opensearch").projectDir = file("modules/aimon-knowledg
 project(":aimon-llm-anthropic").projectDir = file("modules/aimon-llm-anthropic")
 project(":aimon-llm-openai").projectDir = file("modules/aimon-llm-openai")
 project(":aimon-llm-capability-testkit").projectDir = file("modules/aimon-llm-capability-testkit")
-project(":aimon-sandbox").projectDir = file("modules/aimon-sandbox")
-project(":aimon-sandbox-docker").projectDir = file("modules/aimon-sandbox-docker")
-project(":aimon-sandbox-kubernetes").projectDir = file("modules/aimon-sandbox-kubernetes")
 project(":aimon-rewake-webhook").projectDir = file("modules/aimon-rewake-webhook")
 project(":aimon-scheduling-quartz").projectDir = file("modules/aimon-scheduling-quartz")
 project(":aimon-session-routing").projectDir = file("modules/aimon-session-routing")

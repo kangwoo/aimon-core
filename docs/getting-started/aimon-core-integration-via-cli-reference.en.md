@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/aimon-core-integration-via-cli-reference.md
-source_commit: e69999a
+source_commit: 2d3bee2
 ---
 
 # aimon-core integration guide — following aimon-cli as the reference
@@ -141,7 +141,7 @@ dependencies {
 | `aimon-filesystem-s3` | S3/MinIO as the backend |
 | `aimon-scheduling-quartz` | If you need task scheduling |
 | `aimon-knowledge-opensearch` | A vector-search-backed KnowledgeStore |
-| `aimon-sandbox-docker` / `aimon-sandbox-kubernetes` | If you need isolated shell execution |
+| `at.aimon.sandbox:aimon-sandbox-docker` / `-kubernetes` ([separate repository](https://github.com/kangwoo/aimon-sandbox)) | If you need **tools** that run commands isolated in a container/pod |
 | `aimon-browser-playwright` | If you need browser automation tools |
 
 > **Module dependency rule** (.claude/rules/architecture.md): implementation modules reference the core only through `implementation(project(":aimon-core"))`. They do not expose it with `api()` — that would leak core types as a transitive dependency.
@@ -608,7 +608,9 @@ final AgentBundle agentBundle = effectiveBundleLoader.load(extractAgentName(conf
 
 **Your adaptation points:**
 - If you want to build agent definitions dynamically from code or a database, build the `AgentBundle` yourself and inject it through `AgentSetupFactory`'s package-private constructor.
-- To isolate shell execution in a container, swap in the `VirtualShell` implementation from `aimon-sandbox-docker` / `aimon-sandbox-kubernetes`.
+- To isolate shell execution itself in a container, **implement `VirtualShell` yourself** — `LocalShell` is the only
+  built-in implementation, and the sandbox modules do not implement this SPI. What they isolate is four tools
+  (`RunSandbox` and friends), not the shell.
 
 ### 4.3 Session record store, transcript manager, message queue, filesystem (line 726-733)
 
@@ -895,7 +897,7 @@ this in your own shell, preserve those four pairs.
 |-----------|----------------------|----------------------------------------|
 | `LlmClient` | An OpenAI or Anthropic SDK wrapper | Your own implementation wrapping an in-house LLM gateway |
 | `VirtualFileSystem` | `LocalFileSystem` (relative to the jar directory) | `GridFSFileSystem` / `S3FileSystem` / a per-user isolated instance |
-| `VirtualShell` | `LocalShell` | The container-isolated shell from `aimon-sandbox-docker` |
+| `VirtualShell` | `LocalShell` | Implement it yourself — there is no container-isolated **shell** in the framework (the sandbox modules isolate tools instead) |
 | `SessionRecordStore` | `InMemorySessionRecordStore` | A persistent implementation from `aimon-session-mongodb` / `-postgres` / `-redis` |
 | `TranscriptManager` | `DefaultTranscriptManager` (+ the background checkpoint mailbox) | Usually unchanged — what you swap is the `SessionRecordStore` underneath |
 | `MessageQueueManager` | in-memory | A distributed queue backend |

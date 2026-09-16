@@ -134,10 +134,6 @@ jsoup = "1.23.2"
 # Browser Automation
 playwright = "1.58.0"
 
-# Container
-docker-java = "3.7.1"
-kubernetes-client = "27.0.0"
-
 # HTTP & Networking
 okhttp = "5.5.0"
 javalin = "7.2.3"
@@ -280,12 +276,6 @@ jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
 
 # Browser Automation
 playwright = { module = "com.microsoft.playwright:playwright", version.ref = "playwright" }
-
-# Container
-docker-java-core = { module = "com.github.docker-java:docker-java-core", version.ref = "docker-java" }
-docker-java-transport-httpclient5 = { module = "com.github.docker-java:docker-java-transport-httpclient5", version.ref = "docker-java" }
-kubernetes-client-java = { module = "io.kubernetes:client-java", version.ref = "kubernetes-client" }
-kubernetes-client-java-extended = { module = "io.kubernetes:client-java-extended", version.ref = "kubernetes-client" }
 
 # AI & LLM
 openai-client = { module = "com.openai:openai-java", version.ref = "openai" }

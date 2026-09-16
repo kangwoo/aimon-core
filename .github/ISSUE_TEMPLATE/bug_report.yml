@@ -46,7 +46,6 @@ body:
         - aimon-llm-anthropic
         - aimon-filesystem-gridfs
         - aimon-filesystem-s3
-        - aimon-sandbox (docker / kubernetes)
         - aimon-session (mongodb / postgres / redis / routing)
         - aimon-memory (file / mongodb / postgres)
         - aimon-knowledge-opensearch
