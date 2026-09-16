@@ -47,7 +47,7 @@ body:
         - aimon-filesystem-gridfs
         - aimon-filesystem-s3
         - aimon-session (mongodb / postgres / redis / routing)
-        - aimon-memory (file / mongodb / postgres)
+        - aimon-memory-testkit
         - aimon-knowledge-opensearch
         - aimon-scheduling-quartz
         - aimon-workflow-graaljs
