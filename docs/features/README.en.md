@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/README.md
-source_commit: eec9ccd
+source_commit: 8c8de45
 ---
 
 # Feature Documentation (Features)
@@ -56,7 +56,7 @@ The unit through which an agent interacts with the outside world.
 |------|------|
 | [`tool-development-guide.en.md`](tool/tool-development-guide.en.md) | **The canonical text for building a new tool** — the `Tool` contract, schemas, error handling, permissions |
 | [`parallel-tool-execution-guide.en.md`](tool/parallel-tool-execution-guide.en.md) | Running tools in parallel within one batch (`ConcurrencyBehavior`) |
-| [`browser-tool-guide.en.md`](tool/browser-tool-guide.en.md) | Configuring and using the Playwright-backed `Browser` tool |
+| [`browser-tool-guide.en.md`](https://github.com/kangwoo/aimon-browser/blob/main/docs/browser-tool-guide.en.md) | Configuring and using the Playwright-backed `Browser` tool. **Not in this repository** — it moved to [aimon-browser](https://github.com/kangwoo/aimon-browser) with the module |
 
 Design rationale: [`parallel-execution.md`](../design/tool/parallel-execution.md) ·
 [`tool-search.md`](../design/tool/tool-search.md)

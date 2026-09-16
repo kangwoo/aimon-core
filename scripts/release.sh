@@ -221,21 +221,13 @@ fi
 # extra: unlike CI, where the tiers run in separate jobs and a third job reassembles their execution data,
 # everything above already ran in THIS workspace, so the floor is checked against the complete picture.
 #
-# `playwrightTest` (@Tag("playwright")) joined last, on integrationTest's argument rather than packagingTest's:
-# aimon-browser-playwright is published, and these four tests are the only ones in it that start a real browser.
-# PlaywrightLifecycleManager -- which owns the browser process, the daemon worker thread and the shutdown ordering
-# -- measures 9% line without them and 57% with them. The tier had never actually run anywhere: its Gradle task was
-# missing `testClassesDirs` and `classpath`, so it reported NO-SOURCE and went green in 650ms.
-#
-# THIS MEANS A RELEASE NOW DOWNLOADS CHROMIUM ONCE, if the machine has no browser cache: 280 MB over the wire, 94s,
-# 520 MB unpacked (measured 2026-09-05). Afterwards the tier costs about twenty seconds. That is a smaller demand
-# than the Docker daemon integrationTest already made of this script, and it is made safely -- the task installs
-# the browser as a build step, so a cold machine is slow rather than red. Before that, Playwright.create() did the
-# download inline inside PlaywrightLifecycleManager's 30-second init timeout and every test failed.
+# There was a fourth task here, `playwrightTest`, and cutting a release used to download Chromium once on a
+# machine with no browser cache -- 280 MB, 94s. It left with aimon-browser-playwright when that module moved to
+# its own repository, and so did the demand: this script now asks for a Docker daemon and nothing else.
 #
 # No tier is opt-in any more. Every @Tag in this build is a CI step and a gate task.
-log "Quality gate: checkAll + integrationTest + packagingTest + playwrightTest + coverage floor"
-$GRADLE checkAll integrationTest packagingTest playwrightTest jacocoTestCoverageVerification
+log "Quality gate: checkAll + integrationTest + packagingTest + coverage floor"
+$GRADLE checkAll integrationTest packagingTest jacocoTestCoverageVerification
 ok "Quality gate passed"
 
 if [ "$DRY_RUN" = 1 ]; then

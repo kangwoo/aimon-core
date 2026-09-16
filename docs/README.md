@@ -152,7 +152,7 @@ IMPORTANT: 헷갈리기 쉬운 두 쌍이 있고, 이 프로젝트는 그 둘을
 | **조립** | `aimon-bootstrap` · `aimon-spring-boot-starter` · `aimon-bom` | 배선과 종료 순서를 대신 잡아 준다 |
 | **LLM** | `aimon-llm-openai` · `aimon-llm-anthropic` | 실제 모델 호출 (하나는 반드시 필요) |
 | **세션 저장** | `aimon-session-{redis,postgres,mongodb}` · `aimon-session-routing` | 영속과 멀티 노드 라우팅 |
-| **실행 환경** | `at.aimon.sandbox:aimon-sandbox{,-docker,-kubernetes}` ([별도 저장소](https://github.com/kangwoo/aimon-sandbox)) · `aimon-browser-playwright` | 격리된 명령 실행 도구, 웹 자동화 |
+| **실행 환경** | 둘 다 별도 저장소 — `at.aimon.sandbox:*` ([aimon-sandbox](https://github.com/kangwoo/aimon-sandbox)) · `at.aimon.browser:*` ([aimon-browser](https://github.com/kangwoo/aimon-browser)) | 격리된 명령 실행 도구, 웹 자동화 |
 | **저장/검색** | `aimon-filesystem-{gridfs,s3}` · `aimon-knowledge-opensearch` | VFS 백엔드, RAG |
 | **그 밖** | `aimon-scheduling-quartz` · `aimon-workflow-graaljs` · `aimon-rewake-webhook` | 분산 cron, JS 워크플로, 비동기 깨우기 |
 | **참조 앱** | `aimon-cli` | 프레임워크를 다 배선해 둔 REPL (게시하지 않음) |

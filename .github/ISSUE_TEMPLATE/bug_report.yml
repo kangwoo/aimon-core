@@ -52,7 +52,6 @@ body:
         - aimon-scheduling-quartz
         - aimon-workflow-graaljs
         - aimon-rewake-webhook
-        - aimon-browser-playwright
         - Documentation only
         - Not sure
     validations:

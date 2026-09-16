@@ -52,9 +52,11 @@ import at.aimon.core.tools.artifact.ArtifactAwareWriteTool;
  * <h2>What this rule cannot see</h2>
  *
  * <p>
- * {@code aimon-browser-playwright}'s {@code ArtifactAwareBrowserTool} delegates to its wrapped tool the same way the
- * two artifact decorators here do, and this rule will never catch it: the core test suite does not have that module
- * on its classpath. That gap is a property of where the test lives, not an exemption.
+ * {@code ArtifactAwareBrowserTool} delegates to its wrapped tool the same way the two artifact decorators here do,
+ * and this rule will never catch it: it lives in <a href="https://github.com/kangwoo/aimon-browser">aimon-browser</a>,
+ * which the core test suite does not have on its classpath. That gap is a property of where the test lives, not an
+ * exemption, and the split widened it from another module to another repository — a decorator written there is now
+ * checked only by whatever that build checks it with.
  */
 @DisplayName("Tool Execution Gate Architecture Tests")
 class ToolExecutionGateArchitectureTest {

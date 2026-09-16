@@ -59,9 +59,9 @@ tasks.register("checkStyle") {
 }
 
 // `test` here is each module's own test task, which excludes `@Tag("docker")` and `@Tag("packaging")` in every
-// module (see the aimon.java-conventions plugin) plus `@Tag("playwright")` in aimon-browser-playwright. Those
-// tiers run under `integrationTest`, `packagingTest` and `playwrightTest`, which `checkAll` does not aggregate
-// but CI and the release gate both name -- out of this aggregate is not out of the gates.
+// module (see the aimon.java-conventions plugin). Those tiers run under `integrationTest` and `packagingTest`,
+// which `checkAll` does not aggregate but CI and the release gate both name -- out of this aggregate is not out
+// of the gates. (There was a third, `playwrightTest`, until aimon-browser-playwright moved to its own repository.)
 //
 // The BOM has no tests, but it does have a claim that can be wrong — that it manages exactly the modules
 // this build publishes — so `checkAll` picks up its `verifyBom` in place of the test task it lacks.

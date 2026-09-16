@@ -162,7 +162,7 @@ IMPORTANT: **세션(`SessionRecord`)과 라이브 세션(`LiveSession`)은 다�
 **관련 문서**
 - [도구 개발 가이드](../features/tool/tool-development-guide.md) — 새 도구를 만들 때의 정본
 - [도구 병렬 실행 가이드](../features/tool/parallel-tool-execution-guide.md)
-- [브라우저 도구 가이드](../features/tool/browser-tool-guide.md)
+- [브라우저 도구 가이드](https://github.com/kangwoo/aimon-browser/blob/main/docs/browser-tool-guide.md) (별도 저장소)
 
 ---
 
@@ -439,10 +439,10 @@ cron 이 재발화해도 런타임이 resolve 된다. 이 때문에 `AgentRuntim
 | Docker 구현 | — | `at.aimon.sandbox:aimon-sandbox-docker` |
 | Kubernetes 구현 | — | `at.aimon.sandbox:aimon-sandbox-kubernetes` |
 | 샌드박스 도구 | `RunSandbox`, `CopyToSandbox`, `RestartSandbox`, `DeleteSandbox` | `at.aimon.sandbox:*` |
-| 브라우저 자동화 | `Browser` 도구, `BrowserSession` | `aimon-browser-playwright` |
+| 브라우저 자동화 | `Browser` 도구, `BrowserSession` | `at.aimon.browser:aimon-browser-playwright` (별도 저장소) |
 
 **관련 문서**
-- [브라우저 도구 가이드](../features/tool/browser-tool-guide.md)
+- [브라우저 도구 가이드](https://github.com/kangwoo/aimon-browser/blob/main/docs/browser-tool-guide.md) (별도 저장소)
 
 ---
 

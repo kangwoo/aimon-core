@@ -84,7 +84,7 @@ flowchart TB
 | **파일 스토리지** | 에이전트가 보는 파일 세계 | 양방향 | `aimon-filesystem-gridfs` · `aimon-filesystem-s3` | 로컬 디스크 (`filesystem.impl.local`) |
 | **샌드박스 런타임** | 격리된 명령 실행 | 나감 | `at.aimon.sandbox:aimon-sandbox-docker` · `-kubernetes` (별도 저장소) | `LocalShell` — 호스트 프로세스 권한으로 그대로 실행된다 |
 | **MCP 서버** | 외부 도구 합류 | 나감 (stdio · HTTP) | core (`at.aimon.core.mcp`) | 내장 도구만 |
-| **브라우저** | 웹 자동화 | 나감 | `aimon-browser-playwright` | `Browser` 도구가 없다 |
+| **브라우저** | 웹 자동화 | 나감 | `at.aimon.browser:aimon-browser-playwright` (별도 저장소) | `Browser` 도구가 없다 |
 | **공개 웹 / 검색** | `WebSearch` · `WebFetch` | 나감 (HTTPS) | core (`at.aimon.core.tools.web`) | 그 두 도구가 실패한다. SSRF 가드는 코어에 있다 |
 | **스케줄러 저장소** | cron 의 클러스터 락과 복구 | 양방향 (JDBC) | `aimon-scheduling-quartz` | `InMemoryTaskScheduler` — 멀티 노드면 **cron 이 노드마다 중복 발화** |
 | **외부 이벤트 소스** | 웹훅으로 에이전트 깨우기 | **들어옴** (HTTP) | `aimon-rewake-webhook` | rewake 를 호스트가 직접 결선해야 한다 |

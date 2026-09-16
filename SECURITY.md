@@ -26,7 +26,7 @@ Use one of these private channels:
 
 Please include, as far as you can:
 
-- The affected module and version (`aimon-core 0.2.2`, `aimon-browser-playwright`, …)
+- The affected module and version (`aimon-core 0.2.2`, `aimon-session-redis`, …)
 - What an attacker gains — the impact, not just the mechanism
 - Reproduction steps or a minimal proof of concept
 - Any configuration required to reach the vulnerable path (which tools are registered,

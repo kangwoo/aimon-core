@@ -1,6 +1,6 @@
 ---
 translated_from: docs/README.md
-source_commit: 2d3bee2
+source_commit: 8c8de45
 ---
 
 # AIMON Documentation
@@ -161,7 +161,7 @@ opt-in — the core holds interfaces and the implementations live outside it.
 | **Assembly** | `aimon-bootstrap` · `aimon-spring-boot-starter` · `aimon-bom` | Wiring and teardown order done for you |
 | **LLM** | `aimon-llm-openai` · `aimon-llm-anthropic` | The actual model calls (you need one of them) |
 | **Session storage** | `aimon-session-{redis,postgres,mongodb}` · `aimon-session-routing` | Persistence and multi-node routing |
-| **Execution environments** | `at.aimon.sandbox:aimon-sandbox{,-docker,-kubernetes}` ([separate repository](https://github.com/kangwoo/aimon-sandbox)) · `aimon-browser-playwright` | Tools that run commands isolated, web automation |
+| **Execution environments** | Both in repositories of their own — `at.aimon.sandbox:*` ([aimon-sandbox](https://github.com/kangwoo/aimon-sandbox)) · `at.aimon.browser:*` ([aimon-browser](https://github.com/kangwoo/aimon-browser)) | Tools that run commands isolated, web automation |
 | **Storage / retrieval** | `aimon-filesystem-{gridfs,s3}` · `aimon-knowledge-opensearch` | VFS backends, RAG |
 | **Everything else** | `aimon-scheduling-quartz` · `aimon-workflow-graaljs` · `aimon-rewake-webhook` | Distributed cron, JS workflows, async wake-up |
 | **Reference app** | `aimon-cli` | A REPL with the whole framework wired up (not published) |

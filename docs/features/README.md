@@ -53,7 +53,7 @@ IMPORTANT: 세션(`SessionRecord`)과 라이브 세션(`LiveSession`)의 차이�
 |------|------|
 | [`tool-development-guide.md`](tool/tool-development-guide.md) | **새 도구를 만들 때의 정본** — `Tool` 계약, 스키마, 에러 처리, 권한 |
 | [`parallel-tool-execution-guide.md`](tool/parallel-tool-execution-guide.md) | 같은 배치 내 도구 병렬 실행 (`ConcurrencyBehavior`) |
-| [`browser-tool-guide.md`](tool/browser-tool-guide.md) | Playwright 기반 `Browser` 도구 설정·사용 |
+| [`browser-tool-guide.md`](https://github.com/kangwoo/aimon-browser/blob/main/docs/browser-tool-guide.md) | Playwright 기반 `Browser` 도구 설정·사용. **이 저장소에 없다** — 모듈과 함께 [aimon-browser](https://github.com/kangwoo/aimon-browser) 로 옮겨 갔다 |
 
 설계 근거: [`parallel-execution.md`](../design/tool/parallel-execution.md) ·
 [`tool-search.md`](../design/tool/tool-search.md)

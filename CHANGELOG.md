@@ -7,6 +7,37 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### aimon-browser-playwright moves to its own repository too
+
+- **The module left this build** for [aimon-browser](https://github.com/kangwoo/aimon-browser), group
+  `at.aimon.core` → `at.aimon.browser`. Same shape as the sandbox split in this release and same terms: no
+  source changed, package `at.aimon.browser.playwright.*` unchanged, `at.aimon.core:aimon-browser-playwright:0.2.4`
+  stays on Central. `docs/migration/rename-maps.md` carries the coordinate.
+- **Unlike the sandbox modules, this one was costing something**, and that cost is what moved. `playwrightTest`
+  was a step in CI's `build` job and a task in the release gate, and it brought a Playwright version-resolution
+  guard, an `actions/cache` entry of about 249 MiB, a 94-second cold Chromium install, and a release gate that
+  demanded a browser cache on the machine cutting the release. All of it went with the module; `scripts/release.sh`
+  now asks for a Docker daemon and nothing else, and the `.claude/skills/release` prerequisite about a browser
+  cache is gone.
+- **The build has two tagged tiers again, not three.** `ReleaseGateMatchesCiGateTest`'s `TAG_TO_GATE_TASK` drops
+  `playwright` → `playwrightTest`; that map fails when a tag has no entry *and* when an entry names a task missing
+  from either gate, so it would have gone red either way. The `Archive unit-tier coverage data` step loses its
+  second glob and the guard that went with it — a guard over a glob that can never match reads as protection and
+  is not.
+- **The coverage floor travelled with the module.** 87 was re-frozen after the tier was wired precisely so the
+  module could not reach it on the unit tier alone, which is what stopped anyone dropping the tier back out of CI
+  quietly. That reasoning belongs where the tier now runs, and `gradle/coverage-baselines.properties` keeps one
+  sentence of it rather than the whole note.
+- **`SsrfGuard` and `ContentExtractor` are now a cross-repository contract.** Both live in
+  `at.aimon.core.tools.web.*` and are shared between this repository's `WebFetchTool` and the browser tool. They
+  are public API by the package rule in `docs/project/api-stability.md` §2, so the dependency is legitimate — but
+  `SsrfGuard` is a security control, and a hole fixed here now reaches the browser tool only after a release of
+  this repository. That is the price of this split, recorded rather than discovered later; the new repository's
+  README, its module build file and its version catalog all say so at the dependency.
+- **`CustomToolPermissionRule` has no implementation in this repository any more.** Its javadoc named
+  `BrowserToolPermissionRule` as "the in-tree example"; it now points at the other repository and says that an
+  interface whose only implementation is out of tree is the interface working, not a gap.
+
 ### The sandbox modules move to their own repository
 
 - **`aimon-sandbox`, `aimon-sandbox-docker` and `aimon-sandbox-kubernetes` left this build** for
