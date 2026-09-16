@@ -193,6 +193,18 @@ public class LlmSkillExecutor implements SkillExecutor {
             final SideEffectLevel ceiling = toolExecutionManager.getMaxSideEffectLevel();
             final List<ToolDefinition> filteredTools = filterTools(skill, context.getAvailableTools()).stream()
                     .filter(tool -> ceiling.permits(tool.getSideEffectLevel())).map(Tool::getDefinition).toList();
+            if (filteredTools.isEmpty() && skill.hasToolRestrictions()) {
+                // Either filter alone leaves something; together they can leave nothing — a misspelled allowed-tools
+                // entry, or one naming only tools above the ceiling. No provider rejects an empty tools field (all
+                // omit it), so the model answers from prose and the skill reports a clean result: an answer that looks
+                // like work that was never done. The outcome is left alone — a skill that legitimately needs no tool
+                // exists — but it is not left silent.
+                log.warn(
+                        "Skill '{}' is offered no tools: its allowed-tools names {} and the side-effect ceiling is "
+                                + "{}, leaving nothing from the {} available tool(s). It will answer without acting.",
+                        skill.getName(), skill.getMetadata().getAllowedTools(), ceiling,
+                        context.getAvailableTools().size());
+            }
 
             // Prefer the per-execution dispatcher the agent executor binds into the command tool context: it runs each
             // call through the same SingleToolInvoker pipeline the ReAct loop uses, so a skill cannot reach a tool by

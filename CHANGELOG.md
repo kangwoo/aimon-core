@@ -7,6 +7,63 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Fixed: a fork-mode skill's `allowed-tools` reached the fork, and a tool-less skill says so
+
+- **A skill's own allow-list now binds its fork** (#172). `SubagentBackedSkillForkExecutor` handed the target
+  subagent's name to the execution manager and nothing else, so a fork ran under that subagent's `allowed-tools`
+  alone and the skill's own list stopped at the fork boundary. `allowed-tools: Read` therefore bound a skill on its
+  inline path (`LlmSkillExecutor`) and **not at all** on its fork path — the looser of the two being the one the
+  skill author did not choose. The two lists now apply together.
+- **Together, not either-or.** `AllowedTools.intersect` returns the narrowest list that is a subset of both, and it
+  is exact wherever it can be: an empty side restricts nothing so the other governs; a name only one side mentions
+  is dropped; a side naming a tool with no pattern yields to the other's pattern, so a skill's `Bash` against a
+  subagent's `Bash(git:*)` forks as `Bash(git:*)`. Two *different* patterns are dropped rather than approximated —
+  the intersection of two globs is not computable in general, and guessing wide would grant what one side refused.
+- **No overlap refuses the fork instead of running it.** This is the reason `intersect` returns an `Optional` rather
+  than a list: an empty allow-list means *unrestricted* to every validator in that package, so handing on the
+  intersection of two disjoint lists as an empty list would invert the strictest pairing into the loosest. The fork
+  fails with a message naming both lists.
+- **New `SubagentExecutionManager.executeInline(env, taskId, subagent, goal, description)`** carries the adjusted
+  definition with the task id and description the name-based method puts into hooks and task records. Deliberately
+  not an overload of `execute`: a name and a definition are not interchangeable, and overloading them made a call
+  with a matcher in that position ambiguous to the compiler as well.
+- **A skill offered no tools is logged**, the counterpart of the subagent warning above: its allow-list and the
+  side-effect ceiling can compose to nothing, and the model then answers from prose while the skill reports a clean
+  result. The outcome is unchanged; it is no longer silent.
+
+### Changed: a subagent is no longer offered tools its own allow-list forbids
+
+- **A fork's tool definitions are now filtered by its `allowed-tools`, not just by the side-effect ceiling** (#172).
+  `DefaultSubagentExecutor` built the definition list it sends to the LLM from the whole registry, so a subagent
+  declaring `allowed-tools: Read, Grep` was still shown `Bash` — and could pick it, spend an iteration, and read
+  a permission refusal. Enforcement was never missing; the allow-list reached `ToolExecutionManager` all along.
+  What was missing was withholding the offer.
+- **This is the second axis of a rule the same statement already applied.** The line above it filters by the
+  ceiling read from the `ToolExecutionManager`, for the stated reason that "a fork shown a tool above the ceiling
+  would spend an iteration picking it and reading the refusal" and that reading the ceiling from the manager keeps
+  "the filter and the refusal" from disagreeing. The new filter reads `Subagent.getAllowedTools()` — the same value
+  passed to the manager for the refusal — so it satisfies that second clause too.
+- **A pattern entry still offers its tool, deliberately.** `Bash(git:*)` keeps `Bash` on offer, because a list of
+  tools cannot express *which arguments* are allowed; narrowing on the pattern would hide calls that are in fact
+  permitted. What is withheld is a tool whose **name** appears nowhere in the allow-list — already a denial before
+  any pattern is consulted, which is also why the filter can never withhold something that would have been allowed.
+- **Only the definitions are narrowed; the registry is left alone.** Not because dispatch resolves against it — it
+  does not, `SingleToolInvoker` hands the execution manager the context's full registry and reads the session registry
+  only for interrupt behaviour, so a forbidden name still reports a permission denial rather than `"Unknown tool: …"`
+  either way. The reason is that the session registry may be the `ToolSearchRegistry` carrying the execution's
+  activation state, which a narrowed copy would discard along with the only route to a deferred tool.
+- **A fork offered nothing is now logged.** Either filter alone always left something; together they can leave
+  nothing — an allow-list of misspelled names, one naming only tools above the side-effect ceiling, or one omitting
+  `ToolSearch` where every tool is deferred. No provider rejects an empty `tools` field (all three omit it), so the
+  model answers from prose and the fork reports `COMPLETED`: a fabricated answer a parent reads as clean. The outcome
+  is unchanged — changing it is a behaviour change of its own — but it is no longer silent. `ToolSearch` being subject
+  to the allow-list is the documented control (`docs/design/tool/tool-search.md` §7), and the subagent guide now says
+  what omitting it costs.
+- **Nothing changes for a subagent that declares no restrictions**, which is the default for both markdown and
+  `Subagent.builder()`: `hasToolRestrictions()` is false and every tool stays on offer. New shared helper
+  `at.aimon.core.subagent.SubagentToolScope` now holds the name-matching both execution paths use —
+  `DefaultSubagentBehaviorSupport` had a private copy of it and delegates instead.
+
 ### Dependencies: the Anthropic SDK reaches 2.62.0, and the thinking-token counter moves onto its typed field
 
 - **`com.anthropic:anthropic-java` goes from 2.13.0 to 2.62.0** (#166). The bump needs exactly one source change,

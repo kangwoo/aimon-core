@@ -58,9 +58,14 @@ class SubagentBackedSkillForkExecutorTest {
     }
 
     private static Skill forkSkill(String agentName) {
+        return forkSkill(agentName, List.of());
+    }
+
+    private static Skill forkSkill(String agentName, List<String> allowedTools) {
         return Skill.builder().name("review")
                 .metadata(SkillMetadata.builder().name("review").description("Review code")
-                        .executionMode(ExecutionMode.FORK).forkAgentName(agentName).build())
+                        .executionMode(ExecutionMode.FORK).forkAgentName(agentName).allowedToolsList(allowedTools)
+                        .build())
                 .content(SkillContent.of("body")).build();
     }
 
@@ -94,12 +99,12 @@ class SubagentBackedSkillForkExecutorTest {
     @Test
     void fork_DelegatesToSubagentExecutionManagerWithRenderedGoal() {
         // Arrange — a known subagent and a successful execution result
-        when(subagentRegistry.getSubagent("code-reviewer")).thenReturn(Optional.of(mock(Subagent.class)));
+        when(subagentRegistry.getSubagent("code-reviewer")).thenReturn(Optional.of(subagent("code-reviewer")));
         SubagentExecutionResult success = SubagentExecutionResult.success("LGTM",
                 SessionSnapshot.of(SessionId.generate(), "sys", List.of()),
                 ExecutionMetadata.builder().iterationCount(1).tokenUsage(TokenUsage.empty())
                         .timestamps(Instant.now(), Instant.now()).build());
-        when(subagentExecutionManager.execute(any(SubagentExecutionEnvironment.class), any(), eq("code-reviewer"),
+        when(subagentExecutionManager.executeInline(any(SubagentExecutionEnvironment.class), any(), any(),
                 eq("rendered body"), any())).thenReturn(success);
 
         // Act
@@ -112,7 +117,7 @@ class SubagentBackedSkillForkExecutorTest {
 
         ArgumentCaptor<SubagentExecutionEnvironment> envCaptor = ArgumentCaptor
                 .forClass(SubagentExecutionEnvironment.class);
-        verify(subagentExecutionManager).execute(envCaptor.capture(), any(), eq("code-reviewer"), eq("rendered body"),
+        verify(subagentExecutionManager).executeInline(envCaptor.capture(), any(), any(), eq("rendered body"),
                 any());
         assertThat(envCaptor.getValue().getAgentRuntimeId()).isEqualTo(AgentRuntimeIds.testCtx("ctx-42"));
     }
@@ -153,8 +158,8 @@ class SubagentBackedSkillForkExecutorTest {
 
     /** Runs a successful fork against the given context and returns the environment the manager was handed. */
     private SubagentExecutionEnvironment captureEnvFor(ToolContext context) {
-        when(subagentRegistry.getSubagent("code-reviewer")).thenReturn(Optional.of(mock(Subagent.class)));
-        when(subagentExecutionManager.execute(any(SubagentExecutionEnvironment.class), any(), eq("code-reviewer"),
+        when(subagentRegistry.getSubagent("code-reviewer")).thenReturn(Optional.of(subagent("code-reviewer")));
+        when(subagentExecutionManager.executeInline(any(SubagentExecutionEnvironment.class), any(), any(),
                 eq("rendered body"), any()))
                         .thenReturn(SubagentExecutionResult.success("LGTM",
                                 SessionSnapshot.of(SessionId.generate(), "sys", List.of()),
@@ -165,19 +170,19 @@ class SubagentBackedSkillForkExecutorTest {
 
         final ArgumentCaptor<SubagentExecutionEnvironment> captor = ArgumentCaptor
                 .forClass(SubagentExecutionEnvironment.class);
-        verify(subagentExecutionManager).execute(captor.capture(), any(), eq("code-reviewer"), eq("rendered body"),
+        verify(subagentExecutionManager).executeInline(captor.capture(), any(), any(), eq("rendered body"),
                 any());
         return captor.getValue();
     }
 
     @Test
     void fork_PropagatesSubagentFailureMessage() {
-        when(subagentRegistry.getSubagent("code-reviewer")).thenReturn(Optional.of(mock(Subagent.class)));
+        when(subagentRegistry.getSubagent("code-reviewer")).thenReturn(Optional.of(subagent("code-reviewer")));
         SubagentExecutionResult failure = SubagentExecutionResult.failure("subagent crashed",
                 SessionSnapshot.of(SessionId.generate()),
                 ExecutionMetadata.builder().iterationCount(0).tokenUsage(TokenUsage.empty())
                         .timestamps(Instant.now(), Instant.now()).build());
-        when(subagentExecutionManager.execute(any(), any(), any(), any(), any())).thenReturn(failure);
+        when(subagentExecutionManager.executeInline(any(), any(), any(), any(), any())).thenReturn(failure);
 
         SkillForkOutcome outcome = executor.fork(forkSkill("code-reviewer"), "goal", contextWithExecutionId("ctx-1"));
 
@@ -194,29 +199,107 @@ class SubagentBackedSkillForkExecutorTest {
         assertThat(outcome.isSuccess()).isFalse();
         assertThat(outcome.getErrorMessage()).get().asString().contains("Skill 'review'")
                 .contains("unknown subagent 'missing'");
-        verify(subagentExecutionManager, never()).execute(any(), any(), any(), any(), any());
+        verify(subagentExecutionManager, never()).executeInline(any(), any(), any(), any(), any());
     }
 
     @Test
     void fork_MissingAgentRuntimeId_FailsWithClearMessage() {
-        when(subagentRegistry.getSubagent("code-reviewer")).thenReturn(Optional.of(mock(Subagent.class)));
+        when(subagentRegistry.getSubagent("code-reviewer")).thenReturn(Optional.of(subagent("code-reviewer")));
 
         SkillForkOutcome outcome = executor.fork(forkSkill("code-reviewer"), "goal", ToolContext.empty());
 
         assertThat(outcome.isSuccess()).isFalse();
         assertThat(outcome.getErrorMessage()).get().asString().contains("agent runtime ID not available");
-        verify(subagentExecutionManager, never()).execute(any(), any(), any(), any(), any());
+        verify(subagentExecutionManager, never()).executeInline(any(), any(), any(), any(), any());
     }
 
     @Test
     void fork_ManagerThrows_WrappedAsFailure() {
-        when(subagentRegistry.getSubagent("code-reviewer")).thenReturn(Optional.of(mock(Subagent.class)));
-        when(subagentExecutionManager.execute(any(), any(), any(), any(), any()))
+        when(subagentRegistry.getSubagent("code-reviewer")).thenReturn(Optional.of(subagent("code-reviewer")));
+        when(subagentExecutionManager.executeInline(any(), any(), any(), any(), any()))
                 .thenThrow(new RuntimeException("network down"));
 
         SkillForkOutcome outcome = executor.fork(forkSkill("code-reviewer"), "goal", contextWithExecutionId("ctx-1"));
 
         assertThat(outcome.isSuccess()).isFalse();
         assertThat(outcome.getErrorMessage()).get().asString().contains("Fork execution failed").contains("network down");
+    }
+
+    /** A real, unrestricted subagent — a bare mock returns null metadata, which {@code Subagent.of} forbids. */
+    private static Subagent subagent(String name) {
+        return Subagent.builder().name(name).systemPrompt("you are " + name).build();
+    }
+
+    private static Subagent subagent(String name, List<String> allowedTools) {
+        return Subagent.builder().name(name).systemPrompt("you are " + name).tools(allowedTools).build();
+    }
+
+    /** Runs a fork against the given target and returns the definition the manager was actually handed. */
+    private Subagent captureForkedSubagent(Subagent target, Skill skill) {
+        when(subagentRegistry.getSubagent(target.getName())).thenReturn(Optional.of(target));
+        when(subagentExecutionManager.executeInline(any(), any(), any(), any(), any()))
+                .thenReturn(SubagentExecutionResult.success("LGTM",
+                        SessionSnapshot.of(SessionId.generate(), "sys", List.of()),
+                        ExecutionMetadata.builder().iterationCount(1).tokenUsage(TokenUsage.empty())
+                                .timestamps(Instant.now(), Instant.now()).build()));
+
+        assertThat(executor.fork(skill, "rendered body", contextWithExecutionId("ctx-1")).isSuccess()).isTrue();
+
+        final ArgumentCaptor<Subagent> captor = ArgumentCaptor.forClass(Subagent.class);
+        verify(subagentExecutionManager).executeInline(any(), any(), captor.capture(), any(), any());
+        return captor.getValue();
+    }
+
+    @Test
+    void fork_CarriesTheSkillsOwnAllowListIntoTheFork() {
+        // The gap this closes: the skill's allowed-tools used to stop at the fork boundary, so `allowed-tools: Read`
+        // bound a skill's inline path and nothing at all here.
+        final Subagent forked = captureForkedSubagent(subagent("code-reviewer"),
+                forkSkill("code-reviewer", List.of("Read")));
+
+        assertThat(forked.getAllowedTools()).extracting(Object::toString).containsExactly("Read");
+        assertThat(forked.getName()).as("the name must survive — hooks, attribution and behaviour lookup key on it")
+                .isEqualTo("code-reviewer");
+    }
+
+    @Test
+    void fork_AppliesBothAllowListsTogetherRatherThanEitherAlone() {
+        final Subagent forked = captureForkedSubagent(subagent("code-reviewer", List.of("Read", "Grep")),
+                forkSkill("code-reviewer", List.of("Read", "Write")));
+
+        // Read is on both lists; Grep and Write are on one each and neither survives.
+        assertThat(forked.getAllowedTools()).extracting(Object::toString).containsExactly("Read");
+    }
+
+    @Test
+    void fork_KeepsTheSubagentsPatternWhenTheSkillNamesTheToolPlainly() {
+        final Subagent forked = captureForkedSubagent(subagent("code-reviewer", List.of("Bash(git:*)")),
+                forkSkill("code-reviewer", List.of("Bash")));
+
+        assertThat(forked.getAllowedTools()).extracting(Object::toString).containsExactly("Bash(git:*)");
+    }
+
+    @Test
+    void fork_UnrestrictedSkillLeavesTheSubagentsListUntouched() {
+        final Subagent forked = captureForkedSubagent(subagent("code-reviewer", List.of("Read", "Grep")),
+                forkSkill("code-reviewer"));
+
+        assertThat(forked.getAllowedTools()).extracting(Object::toString).containsExactly("Read", "Grep");
+    }
+
+    @Test
+    void fork_NoOverlapBetweenAllowListsIsRefusedRatherThanRunUnrestricted() {
+        // An empty intersection cannot be handed on as an empty list: that reads as "no restrictions", turning the
+        // strictest pairing into the loosest. Refusing is the only safe reading.
+        when(subagentRegistry.getSubagent("code-reviewer"))
+                .thenReturn(Optional.of(subagent("code-reviewer", List.of("Write"))));
+
+        final SkillForkOutcome outcome = executor.fork(forkSkill("code-reviewer", List.of("Read")), "goal",
+                contextWithExecutionId("ctx-1"));
+
+        assertThat(outcome.isSuccess()).isFalse();
+        assertThat(outcome.getErrorMessage()).get().asString().contains("nothing in common").contains("Read")
+                .contains("Write");
+        verify(subagentExecutionManager, never()).executeInline(any(), any(), any(), any(), any());
     }
 }

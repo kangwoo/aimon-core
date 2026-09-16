@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/subagent/subagent-development-guide.md
-source_commit: eec9ccd
+source_commit: 43c8949
 ---
 
 # Subagent Development Guide
@@ -97,6 +97,24 @@ at.aimon.core.subagent/
 Since the consumers (`TaskTool`, the executor, `/agents`, a skill fork) see nothing but the read-only
 `SubagentRegistry` abstraction, whatever you define in code is exposed, executed and listed automatically,
 **with no change to the calling layer's code**.
+
+### Where a tool restriction takes effect
+
+`allowed-tools` (markdown) and `.tools(...)` (code) are the same allow-list, and it acts at **two points**
+during a run. Both read the one `Subagent.getAllowedTools()`, so the two cannot disagree.
+
+| Point | What it does |
+|-------|---------------|
+| The prompt | A tool whose **name** is absent from the allow-list is left out of the tool definitions sent to the LLM — the model cannot pick it in the first place |
+| `ToolSearch` | It is subject to the allow-list too. In a deployment using deferred tools, an allow-list that omits `ToolSearch` leaves **no route** to them |
+| Dispatch | A call made anyway is refused with `ToolPermissionViolationException` |
+
+A **pattern entry such as `Bash(git:*)` still offers its tool.** A list of tools cannot say "which arguments" —
+`Bash` stays visible to the model, and a command that is not `git` is refused at dispatch.
+
+If an allow-list **matches no registered tool at all** — a typo, a tool from a module that is not wired, a missing
+`ToolSearch` — the subagent answers with no tools, and that execution is still recorded as a success. A warning is
+logged when it happens, so start there if a subagent returns an answer without acting.
 
 ---
 

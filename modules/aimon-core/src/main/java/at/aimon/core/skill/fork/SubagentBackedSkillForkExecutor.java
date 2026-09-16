@@ -1,7 +1,9 @@
 package at.aimon.core.skill.fork;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 
 import org.slf4j.Logger;
@@ -11,12 +13,16 @@ import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolRegistry;
+import at.aimon.core.agent.tool.permission.AllowedTool;
+import at.aimon.core.agent.tool.permission.AllowedTools;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.skill.Skill;
+import at.aimon.core.subagent.Subagent;
 import at.aimon.core.subagent.SubagentExecutionEnvironment;
 import at.aimon.core.subagent.SubagentExecutionManager;
+import at.aimon.core.subagent.SubagentMetadata;
 import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
 import at.aimon.core.tools.InvokingSessionAccess;
@@ -88,10 +94,28 @@ public final class SubagentBackedSkillForkExecutor implements SkillForkExecutor 
 
         // Fail fast when the target subagent does not exist; otherwise the executor would surface a less specific
         // SubagentNotFoundException nested inside a generic execution failure.
-        if (subagentRegistry.getSubagent(agentName).isEmpty()) {
+        final Subagent target = subagentRegistry.getSubagent(agentName).orElse(null);
+        if (target == null) {
             return SkillForkOutcome
                     .failure(String.format("Skill '%s' references unknown subagent '%s'", skill.getName(), agentName));
         }
+
+        // Carry the skill's own allow-list into the fork. Without this the fork runs under the target subagent's list
+        // alone, so `allowed-tools` is enforced on a skill's inline path (LlmSkillExecutor) and not at all here — the
+        // looser of the two paths being the one the skill author did not pick. The two lists apply together: the
+        // result never permits what either refuses.
+        final List<AllowedTool> skillAllowed = skill.getMetadata().getAllowedTools();
+        final Optional<List<AllowedTool>> effective = AllowedTools.intersect(skillAllowed,
+                target.getMetadata().getAllowedTools());
+        if (effective.isEmpty()) {
+            // Empty means "nothing in common", which an allow-list cannot express — an empty list reads as
+            // unrestricted. Refusing is the only safe reading, and it names both sides so the mismatch is fixable.
+            return SkillForkOutcome.failure(String.format(
+                    "Skill '%s' cannot fork to subagent '%s': their allowed-tools have nothing in common "
+                            + "(skill allows %s, subagent allows %s)",
+                    skill.getName(), agentName, skillAllowed, target.getMetadata().getAllowedTools()));
+        }
+        final Subagent effectiveTarget = withAllowedTools(target, effective.get());
 
         final AgentRuntimeId agentRuntimeId = toolContext.get(ToolContextKeys.AGENT_RUNTIME_ID).orElse(null);
         if (agentRuntimeId == null) {
@@ -118,8 +142,8 @@ public final class SubagentBackedSkillForkExecutor implements SkillForkExecutor 
         final String description = "skill:" + skill.getName();
 
         try {
-            final SubagentExecutionResult result = subagentExecutionManager.execute(env, taskId, agentName, goal,
-                    description);
+            final SubagentExecutionResult result = subagentExecutionManager.executeInline(env, taskId, effectiveTarget,
+                    goal, description);
             if (result.isSuccess()) {
                 return SkillForkOutcome.success(result.getFinalAnswer());
             }
@@ -129,5 +153,18 @@ public final class SubagentBackedSkillForkExecutor implements SkillForkExecutor 
                     e.getMessage(), e);
             return SkillForkOutcome.failure("Fork execution failed: " + e.getMessage());
         }
+    }
+
+    /**
+     * Returns the subagent with its allow-list replaced, keeping every other field — the name above all, since hooks,
+     * attribution and behaviour lookup all key on it.
+     */
+    private static Subagent withAllowedTools(Subagent subagent, List<AllowedTool> allowedTools) {
+        final SubagentMetadata metadata = subagent.getMetadata();
+        return Subagent.of(subagent.getName(),
+                SubagentMetadata.builder().description(metadata.getDescription()).whenToUse(metadata.getWhenToUse())
+                        .model(metadata.getModel()).maxIterations(metadata.getMaxIterations())
+                        .allowedTools(allowedTools).build(),
+                subagent.getContent());
     }
 }

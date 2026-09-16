@@ -7,6 +7,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Predicate;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -74,6 +75,7 @@ import at.aimon.core.llm.exception.LlmCallCancelledException;
 import at.aimon.core.llm.exception.LlmClientException;
 import at.aimon.core.llm.invoke.LlmCallGateway;
 import at.aimon.core.subagent.Subagent;
+import at.aimon.core.subagent.SubagentToolScope;
 import at.aimon.core.toolinvocation.SingleToolInvoker;
 import at.aimon.core.toolinvocation.ToolInvocationSpec;
 import at.aimon.core.toolinvocation.approval.SideEffectApprovalGate;
@@ -409,13 +411,9 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 // AUTO compaction gate. NoOpCompactionGuard returns NONE, leaving behavior unchanged.
                 applyCompactionGate(lc, iterationCount);
 
-                // Query available tools each iteration so newly activated deferred tools are included, and withhold
-                // whatever the tool execution manager would refuse anyway — a fork shown a tool above the ceiling
-                // would spend an iteration picking it and reading the refusal. The ceiling is read from the manager
-                // rather than configured here on purpose: the filter and the refusal then cannot disagree.
-                final SideEffectLevel ceiling = toolExecutionManager.getMaxSideEffectLevel();
-                final List<ToolDefinition> availableTools = lc.sessionRegistry.findAll().stream()
-                        .filter(tool -> ceiling.permits(tool.getSideEffectLevel())).map(Tool::getDefinition).toList();
+                // Re-read every iteration so newly activated deferred tools are included. See the method for the
+                // two things it withholds and why.
+                final List<ToolDefinition> availableTools = availableToolDefinitions(lc, iterationCount);
 
                 // Send message to LLM via the gateway (retry/fallback aware, metadata-carrying parts overload). The
                 // LlmCancellation lets a trip abort the in-flight call; clear the per-call abort lever in a finally
@@ -733,6 +731,63 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 log.warn("ToolContextEnricher {} failed: {}", enricher.getClass().getName(), e.getMessage(), e);
             }
         }
+    }
+
+    /**
+     * Builds the tool definitions offered to this fork's LLM, withholding whatever the tool execution manager would
+     * refuse anyway — a fork shown a tool it cannot use spends an iteration picking it and reading the refusal.
+     *
+     * <p>
+     * Two axes are withheld, and each reads its bound from the same place the refusal does, so a filter and a refusal
+     * cannot disagree:
+     *
+     * <ul>
+     * <li>The <b>side-effect ceiling</b>, read from the {@link ToolExecutionManager} rather than configured here.
+     * <li>The <b>subagent's allow-list</b>, read through {@link SubagentToolScope} from the same
+     * {@code getAllowedTools()} handed to that manager at dispatch. Only a tool whose <i>name</i> the allow-list never
+     * mentions is withheld: a pattern entry such as {@code Bash(git:*)} keeps {@code Bash} on offer, because a tool
+     * list cannot say which arguments are allowed, and an out-of-pattern call is still refused at dispatch.
+     * </ul>
+     *
+     * <p>
+     * <b>Only the definitions are narrowed; {@code lc.sessionRegistry} is left alone.</b> Not because dispatch
+     * resolves against it — it does not, on either path: {@link SingleToolInvoker} passes the context's full registry
+     * to the execution manager and reads the session registry only for interrupt behaviour, and the parallel
+     * dispatcher reads it only to decide whether to parallelize before handing the call to that same invoker. The
+     * reasons are that this registry may be the {@link ToolSearchRegistry} carrying the fork's activation state, which
+     * a narrowed copy would discard along with the only route to a deferred tool; and that narrowing it would couple
+     * an allow-list to two unrelated mechanisms, forcing any batch naming a withheld tool to run sequentially and
+     * resolving that tool as {@code NON_INTERRUPTIBLE}.
+     *
+     * <p>
+     * <b>An empty result is logged.</b> Either filter alone always left something; together they can leave nothing —
+     * an allow-list of misspelled names, one naming only tools above the ceiling, or one omitting
+     * {@code ToolSearch} in a deployment whose tools are all deferred. Every provider omits an empty {@code tools}
+     * field rather than rejecting it, so the model answers from prose and the fork reports a clean success. The
+     * warning is what makes that diagnosable. Logging on the first iteration is enough and not a sample:
+     * {@code findAll()} only ever grows, and both bounds are fixed for the execution, so an offer empty here is empty
+     * for every later iteration.
+     *
+     * @param lc
+     *            the loop context of the running fork
+     * @param iterationCount
+     *            the 1-based iteration about to call the LLM
+     * @return the definitions to send with the next LLM call
+     */
+    private List<ToolDefinition> availableToolDefinitions(LoopContext lc, int iterationCount) {
+        final SideEffectLevel ceiling = toolExecutionManager.getMaxSideEffectLevel();
+        final Subagent subagent = lc.subagent();
+        final Predicate<Tool> admitted = SubagentToolScope.admissionFilter(subagent);
+        final List<ToolDefinition> definitions = lc.sessionRegistry.findAll().stream()
+                .filter(tool -> ceiling.permits(tool.getSideEffectLevel())).filter(admitted).map(Tool::getDefinition)
+                .toList();
+        if (definitions.isEmpty() && iterationCount == 1 && subagent.hasToolRestrictions()) {
+            log.warn(
+                    "Subagent '{}' is offered no tools: its allowed-tools names {} and the side-effect ceiling is {}, "
+                            + "leaving nothing from the {} registered tool(s). It will answer without acting.",
+                    subagent.getName(), subagent.getAllowedTools(), ceiling, lc.sessionRegistry.findAll().size());
+        }
+        return definitions;
     }
 
     /**
