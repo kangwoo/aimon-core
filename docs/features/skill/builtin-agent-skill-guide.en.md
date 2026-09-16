@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/skill/builtin-agent-skill-guide.md
-source_commit: eec9ccd
+source_commit: 2e1dfae
 ---
 
 # Built-in Agent/Skill Guide
@@ -209,6 +209,26 @@ What happens when the `review` example above (`execution.mode: fork`, `agent: co
 
 1. A SubAgent named `code-reviewer` must be registered (`.aimon/agents/code-reviewer.md`, or a built-in bundle). If it is not, the fork fails immediately without any LLM or SubAgent call.
 2. The host must wire the whole SubAgent infrastructure (the six pieces: `Agent`, `SubagentRegistry`, `ToolRegistry`, `HookRegistry`, `Environment`, `SubagentExecutionManager`). `aimon-cli` satisfies this by default. Miss any one of them and a fork-mode skill invocation fails with `fork execution is not configured` — deliberate behaviour, so that an inline-only deployment remains possible.
+
+### A fork applies both allow-lists together
+
+A skill's `allowed-tools` does not stop at the fork boundary — it binds **alongside** the target SubAgent's list. A
+call either side refuses is not permitted.
+
+| Skill | SubAgent | What the fork gets |
+|------|----------|-----------------|
+| (none) | `Read, Grep` | `Read, Grep` — the skill restricts nothing, so the SubAgent's list stands |
+| `Read` | (none) | `Read` — the SubAgent restricts nothing, so the skill's list stands |
+| `Read, Write` | `Read, Grep` | `Read` — only what is on both |
+| `Bash` | `Bash(git:*)` | `Bash(git:*)` — the skill does not restrict arguments, so the SubAgent's pattern wins |
+| `Read` | `Write` | **the fork fails** — nothing is common to both |
+
+The last row fails for safety. An empty allow-list means **"no restrictions"** in this codebase, so handing on the
+intersection of two disjoint lists as an empty list would **invert the strictest configuration into the loosest**. It
+is refused instead of handed on, and the error names both lists.
+
+Two different patterns (`Bash(git:*)` and `Bash(npm:*)`) are **dropped**. The intersection of two globs is not
+computable in general, and guessing wide would grant what one side refused. An identical pattern survives as it is.
 
 ### Invoking with a slash (when `invoke.user: true`)
 

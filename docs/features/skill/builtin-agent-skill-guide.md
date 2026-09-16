@@ -205,6 +205,26 @@ Review the following: $1
 1. `code-reviewer` 라는 SubAgent가 등록돼 있어야 한다 (`.aimon/agents/code-reviewer.md` 또는 빌트인 번들). 미등록이면 fork는 LLM/SubAgent 호출 없이 즉시 실패한다.
 2. 호스트가 SubAgent 인프라(6요소: `Agent`, `SubagentRegistry`, `ToolRegistry`, `HookRegistry`, `Environment`, `SubagentExecutionManager`)를 모두 와이어링해야 한다. `aimon-cli`는 기본으로 만족한다. 하나라도 빠지면 fork-mode 스킬 호출은 `fork execution is not configured` 로 실패한다 — 인라인 전용 배포를 가능하게 하려는 의도된 동작이다.
 
+### fork 는 두 허용목록을 함께 적용한다
+
+스킬의 `allowed-tools` 는 fork 경계에서 멈추지 않는다 — 대상 SubAgent 의 목록과 **함께** 걸린다. 어느 한쪽이
+거부하는 호출은 허용되지 않는다.
+
+| 스킬 | SubAgent | fork 가 받는 것 |
+|------|----------|-----------------|
+| (없음) | `Read, Grep` | `Read, Grep` — 스킬이 제한하지 않으므로 SubAgent 의 목록이 그대로 |
+| `Read` | (없음) | `Read` — SubAgent 가 제한하지 않으므로 스킬의 목록이 그대로 |
+| `Read, Write` | `Read, Grep` | `Read` — 양쪽에 있는 것만 |
+| `Bash` | `Bash(git:*)` | `Bash(git:*)` — 스킬이 인자를 제한하지 않으므로 SubAgent 의 패턴이 이긴다 |
+| `Read` | `Write` | **fork 실패** — 겹치는 것이 없다 |
+
+마지막 줄이 실패인 이유는 안전 때문이다. 빈 허용목록은 이 코드베이스에서 **"제한 없음"** 을 뜻하므로, 겹치지
+않는 두 목록의 교집합을 빈 목록으로 넘기면 **가장 엄격한 설정이 가장 느슨한 설정으로 뒤집힌다.** 그래서 넘기지
+않고 거부하며, 오류 메시지가 양쪽 목록을 함께 보여 준다.
+
+서로 다른 패턴 둘(`Bash(git:*)` 와 `Bash(npm:*)`)은 **버린다.** 두 glob 의 교집합은 일반적으로 계산할 수 없고,
+넓게 어림잡으면 한쪽이 거부한 것을 허용하게 된다. 같은 패턴이면 그대로 살아남는다.
+
 ### 슬래시로 호출 (`invoke.user: true` 일 때)
 
 REPL에서:

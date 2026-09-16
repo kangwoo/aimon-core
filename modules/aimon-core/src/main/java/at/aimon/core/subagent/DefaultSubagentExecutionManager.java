@@ -550,6 +550,21 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
                 SubagentOutputSink.NO_OP);
     }
 
+    @Override
+    public SubagentExecutionResult executeInline(SubagentExecutionEnvironment env, String taskId, Subagent subagent,
+            String goal, String description) {
+        Objects.requireNonNull(env, "Execution environment cannot be null");
+        Objects.requireNonNull(taskId, "Task id cannot be null");
+        Objects.requireNonNull(subagent, "Subagent cannot be null");
+        Objects.requireNonNull(goal, "Goal cannot be null");
+        Objects.requireNonNull(description, "Description cannot be null");
+        // The name-based foreground path with the lookup already done: same signal, same no-op sink, same taskId and
+        // description into hooks and task records. Only the resolution differs, which is the point — the caller hands
+        // over a definition it has already adjusted.
+        return runExecute(env, taskId, SubagentTarget.inline(subagent), goal, description, env.getCancellationSignal(),
+                SubagentOutputSink.NO_OP);
+    }
+
     /**
      * Shared execution body for the foreground and background paths. The effective cancellation signal is injected as
      * the subagent's parent signal: foreground passes the environment's signal; background passes the per-task

@@ -7,6 +7,30 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Fixed: a fork-mode skill's `allowed-tools` reached the fork, and a tool-less skill says so
+
+- **A skill's own allow-list now binds its fork** (#172). `SubagentBackedSkillForkExecutor` handed the target
+  subagent's name to the execution manager and nothing else, so a fork ran under that subagent's `allowed-tools`
+  alone and the skill's own list stopped at the fork boundary. `allowed-tools: Read` therefore bound a skill on its
+  inline path (`LlmSkillExecutor`) and **not at all** on its fork path — the looser of the two being the one the
+  skill author did not choose. The two lists now apply together.
+- **Together, not either-or.** `AllowedTools.intersect` returns the narrowest list that is a subset of both, and it
+  is exact wherever it can be: an empty side restricts nothing so the other governs; a name only one side mentions
+  is dropped; a side naming a tool with no pattern yields to the other's pattern, so a skill's `Bash` against a
+  subagent's `Bash(git:*)` forks as `Bash(git:*)`. Two *different* patterns are dropped rather than approximated —
+  the intersection of two globs is not computable in general, and guessing wide would grant what one side refused.
+- **No overlap refuses the fork instead of running it.** This is the reason `intersect` returns an `Optional` rather
+  than a list: an empty allow-list means *unrestricted* to every validator in that package, so handing on the
+  intersection of two disjoint lists as an empty list would invert the strictest pairing into the loosest. The fork
+  fails with a message naming both lists.
+- **New `SubagentExecutionManager.executeInline(env, taskId, subagent, goal, description)`** carries the adjusted
+  definition with the task id and description the name-based method puts into hooks and task records. Deliberately
+  not an overload of `execute`: a name and a definition are not interchangeable, and overloading them made a call
+  with a matcher in that position ambiguous to the compiler as well.
+- **A skill offered no tools is logged**, the counterpart of the subagent warning above: its allow-list and the
+  side-effect ceiling can compose to nothing, and the model then answers from prose while the skill reports a clean
+  result. The outcome is unchanged; it is no longer silent.
+
 ### Changed: a subagent is no longer offered tools its own allow-list forbids
 
 - **A fork's tool definitions are now filtered by its `allowed-tools`, not just by the side-effect ceiling** (#172).
