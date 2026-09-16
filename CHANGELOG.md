@@ -7,6 +7,16 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Fixed: the bug-report template offered two modules that do not exist
+
+- **`aimon-memory (file / mongodb / postgres)`** was still a choice in
+  `.github/ISSUE_TEMPLATE/bug_report.yml` after `aimon-memory-file` merged into `aimon-core` and the
+  other two were removed, so a reporter could file against modules this build has not had for some time.
+  The row is now `aimon-memory-testkit`, the one `aimon-memory-*` module that remains; a bug in the
+  memory SPI or the file backend belongs to `aimon-core`, which the list already offers. Unrelated to the
+  module splits in this release — it dated from the earlier memory removal and was noticed while
+  auditing that list for them.
+
 ### aimon-browser-playwright moves to its own repository too
 
 - **The module left this build** for [aimon-browser](https://github.com/kangwoo/aimon-browser), group
