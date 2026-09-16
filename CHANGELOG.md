@@ -7,6 +7,29 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Dependencies: the Anthropic SDK reaches 2.62.0, and the thinking-token counter moves onto its typed field
+
+- **`com.anthropic:anthropic-java` goes from 2.13.0 to 2.62.0** (#166). The bump needs exactly one source change,
+  in `AnthropicUsages`. Without it the reasoning-token counter reports `0` on every Anthropic response — silently,
+  because that class is built never to throw — and four `AnthropicUsageTest` cases are what caught it.
+- **The counter went quiet because the SDK started modelling the field.** 2.13.0 modelled neither
+  `usage.output_tokens_details` nor the `thinking_tokens` inside it, so both arrived among `_additionalProperties()`
+  and were read from there. 2.62.0 adds `OutputTokensDetails`, reachable from `Usage` and `MessageDeltaUsage` alike,
+  and a modelled field never lands among the additional properties — so the untyped lookup found nothing. The class
+  javadoc had said that when the SDK grew the accessor, one class would change; this is that change, and it is that
+  one class.
+- **It reads the SDK's raw accessors, not its typed ones.** `outputTokensDetails()` and `thinkingTokens()` raise
+  `AnthropicInvalidDataException` on a shape they did not expect, and this counter must not fail a turn that
+  otherwise succeeded. `_outputTokensDetails()` and `_thinkingTokens()` carry the same values as `JsonField`, whose
+  `asKnown()` and `asNumber()` answer an empty `Optional` on exactly the shapes the typed pair would have thrown on.
+  The contract is unchanged: a missing key, a wrong shape, a non-numeric value and an overflow all still yield `0`,
+  and the value is still neither priced nor added to `totalTokens`.
+- **Two new deprecation warnings are left standing.** `MessageCreateParams.Builder.temperature` and `.topP` are
+  deprecated in 2.62.0 because models released after Claude Opus 4.6 reject both parameters outright. Every overload
+  is deprecated, so there is nothing to migrate to — the warning is the vendor's notice about the API, not a pending
+  edit here — and the suppression `ModelCapabilities.supportsSamplingParameters()` already drives is what keeps those
+  models from being sent either value.
+
 ### Fixed: the bug-report template offered two modules that do not exist
 
 - **`aimon-memory (file / mongodb / postgres)`** was still a choice in
