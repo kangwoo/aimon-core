@@ -751,10 +751,13 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      *
      * <p>
      * <b>Only the definitions are narrowed; {@code lc.sessionRegistry} is left alone.</b> Not because dispatch
-     * resolves against it — it does not, {@link SingleToolInvoker} passes the context's full registry to the execution
-     * manager and reads the session registry only for interrupt behaviour — but because that registry may be the
-     * {@link ToolSearchRegistry} carrying this fork's activation state, which is also published into the tool context.
-     * Replacing it with a narrowed copy would drop that type, and with it the only route to a deferred tool.
+     * resolves against it — it does not, on either path: {@link SingleToolInvoker} passes the context's full registry
+     * to the execution manager and reads the session registry only for interrupt behaviour, and the parallel
+     * dispatcher reads it only to decide whether to parallelize before handing the call to that same invoker. The
+     * reasons are that this registry may be the {@link ToolSearchRegistry} carrying the fork's activation state, which
+     * a narrowed copy would discard along with the only route to a deferred tool; and that narrowing it would couple
+     * an allow-list to two unrelated mechanisms, forcing any batch naming a withheld tool to run sequentially and
+     * resolving that tool as {@code NON_INTERRUPTIBLE}.
      *
      * <p>
      * <b>An empty result is logged.</b> Either filter alone always left something; together they can leave nothing —
