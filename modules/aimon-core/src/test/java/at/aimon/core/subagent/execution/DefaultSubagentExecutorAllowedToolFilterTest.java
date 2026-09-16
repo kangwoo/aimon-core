@@ -34,6 +34,7 @@ import at.aimon.core.llm.ToolUseResult;
 import at.aimon.core.subagent.Subagent;
 import at.aimon.core.subagent.SubagentContent;
 import at.aimon.core.subagent.SubagentMetadata;
+import at.aimon.core.tools.search.ToolSearchTool;
 
 /**
  * Locks in the allow-list half of the fork's definition filter, the sibling of
@@ -160,11 +161,41 @@ class DefaultSubagentExecutorAllowedToolFilterTest {
     }
 
     @Test
-    @DisplayName("the dispatch registry is untouched: a forbidden call is denied, not reported as an unknown tool")
+    @DisplayName("an allow-list naming nothing registered leaves an empty offer, and the fork still reports success")
+    void anAllowListNamingNothingRegisteredEmptiesTheOffer() {
+        // Pinning the bad outcome rather than endorsing it. Every provider omits an empty `tools` field instead of
+        // rejecting it, so the model answers from prose and the fork reports COMPLETED — a fabricated answer a parent
+        // reads as clean. Before this filter the allow-list could not produce this state; now a typo can, which is why
+        // availableToolDefinitions logs it. Changing the outcome to a failure is a behaviour change on its own.
+        final DefinitionCapturingLlmClient client = run(subagentAllowing(List.of("Reeder", "Grepper")),
+                new DefinitionCapturingLlmClient(), tool("Reader"), tool("Writer"));
+
+        assertThat(client.firstOffer()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("ToolSearch is withheld unless the allow-list names it, as the tool-search design intends")
+    void toolSearchIsSubjectToTheAllowList() {
+        // docs/design/tool/tool-search.md §7 makes ToolSearch subject to the allow-list on purpose, so this is the
+        // documented control rather than an oversight — but in a deployment whose tools are all deferred it is also
+        // the only route to them, so omitting it strands the fork. The guide's table now says so.
+        final DefinitionCapturingLlmClient withoutIt = run(subagentAllowing(List.of("Reader")),
+                new DefinitionCapturingLlmClient(), tool("Reader"), tool(ToolSearchTool.TOOL_NAME));
+        assertThat(withoutIt.firstOffer()).contains("Reader").doesNotContain(ToolSearchTool.TOOL_NAME);
+
+        final DefinitionCapturingLlmClient withIt = run(subagentAllowing(List.of("Reader", ToolSearchTool.TOOL_NAME)),
+                new DefinitionCapturingLlmClient(), tool("Reader"), tool(ToolSearchTool.TOOL_NAME));
+        assertThat(withIt.firstOffer()).contains("Reader", ToolSearchTool.TOOL_NAME);
+    }
+
+    @Test
+    @DisplayName("a forbidden call is still denied, not reported as an unknown tool")
     void forbiddenCallsStillReadAsPermissionDenials() {
         final DefinitionCapturingLlmClient client = new DefinitionCapturingLlmClient();
         // The model is not offered Writer, but nothing stops it naming one anyway — that call must still be told it
-        // is forbidden rather than that it does not exist.
+        // is forbidden rather than that it does not exist. This holds because the execution manager resolves against
+        // the context's full registry (SingleToolInvoker passes spec.getToolRegistry()), independently of what the
+        // offer was narrowed to.
         client.responses.add(LlmResponse.of("", List.of(ToolUse.of("t1", "Writer", Map.of()))));
 
         run(subagentAllowing(List.of("Reader")), client, tool("Reader"), tool("Writer"));

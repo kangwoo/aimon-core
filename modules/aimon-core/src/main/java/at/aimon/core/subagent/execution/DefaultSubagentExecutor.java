@@ -7,6 +7,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Predicate;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -412,7 +413,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
 
                 // Re-read every iteration so newly activated deferred tools are included. See the method for the
                 // two things it withholds and why.
-                final List<ToolDefinition> availableTools = availableToolDefinitions(lc);
+                final List<ToolDefinition> availableTools = availableToolDefinitions(lc, iterationCount);
 
                 // Send message to LLM via the gateway (retry/fallback aware, metadata-carrying parts overload). The
                 // LlmCancellation lets a trip abort the in-flight call; clear the per-call abort lever in a finally
@@ -749,20 +750,41 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * </ul>
      *
      * <p>
-     * Only the definitions are narrowed. {@code lc.sessionRegistry} is also the dispatch registry, and dropping a tool
-     * from it would report a forbidden name as {@code "Unknown tool: …"} — a collapse
-     * {@code DefaultToolExecutionManager} avoids on purpose so an invented name does not read like a forbidden one in
-     * the audit trail.
+     * <b>Only the definitions are narrowed; {@code lc.sessionRegistry} is left alone.</b> Not because dispatch
+     * resolves against it — it does not, {@link SingleToolInvoker} passes the context's full registry to the execution
+     * manager and reads the session registry only for interrupt behaviour — but because that registry may be the
+     * {@link ToolSearchRegistry} carrying this fork's activation state, which is also published into the tool context.
+     * Replacing it with a narrowed copy would drop that type, and with it the only route to a deferred tool.
+     *
+     * <p>
+     * <b>An empty result is logged.</b> Either filter alone always left something; together they can leave nothing —
+     * an allow-list of misspelled names, one naming only tools above the ceiling, or one omitting
+     * {@code ToolSearch} in a deployment whose tools are all deferred. Every provider omits an empty {@code tools}
+     * field rather than rejecting it, so the model answers from prose and the fork reports a clean success. The
+     * warning is what makes that diagnosable. Logging on the first iteration is enough and not a sample:
+     * {@code findAll()} only ever grows, and both bounds are fixed for the execution, so an offer empty here is empty
+     * for every later iteration.
      *
      * @param lc
      *            the loop context of the running fork
+     * @param iterationCount
+     *            the 1-based iteration about to call the LLM
      * @return the definitions to send with the next LLM call
      */
-    private List<ToolDefinition> availableToolDefinitions(LoopContext lc) {
+    private List<ToolDefinition> availableToolDefinitions(LoopContext lc, int iterationCount) {
         final SideEffectLevel ceiling = toolExecutionManager.getMaxSideEffectLevel();
         final Subagent subagent = lc.subagent();
-        return lc.sessionRegistry.findAll().stream().filter(tool -> ceiling.permits(tool.getSideEffectLevel()))
-                .filter(tool -> SubagentToolScope.admits(subagent, tool)).map(Tool::getDefinition).toList();
+        final Predicate<Tool> admitted = SubagentToolScope.admissionFilter(subagent);
+        final List<ToolDefinition> definitions = lc.sessionRegistry.findAll().stream()
+                .filter(tool -> ceiling.permits(tool.getSideEffectLevel())).filter(admitted).map(Tool::getDefinition)
+                .toList();
+        if (definitions.isEmpty() && iterationCount == 1 && subagent.hasToolRestrictions()) {
+            log.warn(
+                    "Subagent '{}' is offered no tools: its allowed-tools names {} and the side-effect ceiling is {}, "
+                            + "leaving nothing from the {} registered tool(s). It will answer without acting.",
+                    subagent.getName(), subagent.getAllowedTools(), ceiling, lc.sessionRegistry.findAll().size());
+        }
+        return definitions;
     }
 
     /**

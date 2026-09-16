@@ -9,7 +9,7 @@ Central is versioned independently).
 
 ### Changed: a subagent is no longer offered tools its own allow-list forbids
 
-- **A fork's tool definitions are now filtered by its `allowed-tools`, not just by the side-effect ceiling.**
+- **A fork's tool definitions are now filtered by its `allowed-tools`, not just by the side-effect ceiling** (#172).
   `DefaultSubagentExecutor` built the definition list it sends to the LLM from the whole registry, so a subagent
   declaring `allowed-tools: Read, Grep` was still shown `Bash` — and could pick it, spend an iteration, and read
   a permission refusal. Enforcement was never missing; the allow-list reached `ToolExecutionManager` all along.
@@ -23,10 +23,18 @@ Central is versioned independently).
   tools cannot express *which arguments* are allowed; narrowing on the pattern would hide calls that are in fact
   permitted. What is withheld is a tool whose **name** appears nowhere in the allow-list — already a denial before
   any pattern is consulted, which is also why the filter can never withhold something that would have been allowed.
-- **The registry is untouched, so the audit trail keeps a distinction it was built to keep.** Only the
-  `ToolDefinition` list is narrowed. `lc.sessionRegistry` is also the dispatch registry, and removing a tool from it
-  would report a forbidden name as `"Unknown tool: …"` — the collapse `DefaultToolExecutionManager` avoids on purpose
-  so "an invented name [does not] read differently to a forbidden one".
+- **Only the definitions are narrowed; the registry is left alone.** Not because dispatch resolves against it — it
+  does not, `SingleToolInvoker` hands the execution manager the context's full registry and reads the session registry
+  only for interrupt behaviour, so a forbidden name still reports a permission denial rather than `"Unknown tool: …"`
+  either way. The reason is that the session registry may be the `ToolSearchRegistry` carrying the execution's
+  activation state, which a narrowed copy would discard along with the only route to a deferred tool.
+- **A fork offered nothing is now logged.** Either filter alone always left something; together they can leave
+  nothing — an allow-list of misspelled names, one naming only tools above the side-effect ceiling, or one omitting
+  `ToolSearch` where every tool is deferred. No provider rejects an empty `tools` field (all three omit it), so the
+  model answers from prose and the fork reports `COMPLETED`: a fabricated answer a parent reads as clean. The outcome
+  is unchanged — changing it is a behaviour change of its own — but it is no longer silent. `ToolSearch` being subject
+  to the allow-list is the documented control (`docs/design/tool/tool-search.md` §7), and the subagent guide now says
+  what omitting it costs.
 - **Nothing changes for a subagent that declares no restrictions**, which is the default for both markdown and
   `Subagent.builder()`: `hasToolRestrictions()` is false and every tool stays on offer. New shared helper
   `at.aimon.core.subagent.SubagentToolScope` now holds the name-matching both execution paths use —
