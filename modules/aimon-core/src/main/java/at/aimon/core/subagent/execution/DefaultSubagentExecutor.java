@@ -74,6 +74,7 @@ import at.aimon.core.llm.exception.LlmCallCancelledException;
 import at.aimon.core.llm.exception.LlmClientException;
 import at.aimon.core.llm.invoke.LlmCallGateway;
 import at.aimon.core.subagent.Subagent;
+import at.aimon.core.subagent.SubagentToolScope;
 import at.aimon.core.toolinvocation.SingleToolInvoker;
 import at.aimon.core.toolinvocation.ToolInvocationSpec;
 import at.aimon.core.toolinvocation.approval.SideEffectApprovalGate;
@@ -409,13 +410,9 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 // AUTO compaction gate. NoOpCompactionGuard returns NONE, leaving behavior unchanged.
                 applyCompactionGate(lc, iterationCount);
 
-                // Query available tools each iteration so newly activated deferred tools are included, and withhold
-                // whatever the tool execution manager would refuse anyway — a fork shown a tool above the ceiling
-                // would spend an iteration picking it and reading the refusal. The ceiling is read from the manager
-                // rather than configured here on purpose: the filter and the refusal then cannot disagree.
-                final SideEffectLevel ceiling = toolExecutionManager.getMaxSideEffectLevel();
-                final List<ToolDefinition> availableTools = lc.sessionRegistry.findAll().stream()
-                        .filter(tool -> ceiling.permits(tool.getSideEffectLevel())).map(Tool::getDefinition).toList();
+                // Re-read every iteration so newly activated deferred tools are included. See the method for the
+                // two things it withholds and why.
+                final List<ToolDefinition> availableTools = availableToolDefinitions(lc);
 
                 // Send message to LLM via the gateway (retry/fallback aware, metadata-carrying parts overload). The
                 // LlmCancellation lets a trip abort the in-flight call; clear the per-call abort lever in a finally
@@ -733,6 +730,39 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 log.warn("ToolContextEnricher {} failed: {}", enricher.getClass().getName(), e.getMessage(), e);
             }
         }
+    }
+
+    /**
+     * Builds the tool definitions offered to this fork's LLM, withholding whatever the tool execution manager would
+     * refuse anyway — a fork shown a tool it cannot use spends an iteration picking it and reading the refusal.
+     *
+     * <p>
+     * Two axes are withheld, and each reads its bound from the same place the refusal does, so a filter and a refusal
+     * cannot disagree:
+     *
+     * <ul>
+     * <li>The <b>side-effect ceiling</b>, read from the {@link ToolExecutionManager} rather than configured here.
+     * <li>The <b>subagent's allow-list</b>, read through {@link SubagentToolScope} from the same
+     * {@code getAllowedTools()} handed to that manager at dispatch. Only a tool whose <i>name</i> the allow-list never
+     * mentions is withheld: a pattern entry such as {@code Bash(git:*)} keeps {@code Bash} on offer, because a tool
+     * list cannot say which arguments are allowed, and an out-of-pattern call is still refused at dispatch.
+     * </ul>
+     *
+     * <p>
+     * Only the definitions are narrowed. {@code lc.sessionRegistry} is also the dispatch registry, and dropping a tool
+     * from it would report a forbidden name as {@code "Unknown tool: …"} — a collapse
+     * {@code DefaultToolExecutionManager} avoids on purpose so an invented name does not read like a forbidden one in
+     * the audit trail.
+     *
+     * @param lc
+     *            the loop context of the running fork
+     * @return the definitions to send with the next LLM call
+     */
+    private List<ToolDefinition> availableToolDefinitions(LoopContext lc) {
+        final SideEffectLevel ceiling = toolExecutionManager.getMaxSideEffectLevel();
+        final Subagent subagent = lc.subagent();
+        return lc.sessionRegistry.findAll().stream().filter(tool -> ceiling.permits(tool.getSideEffectLevel()))
+                .filter(tool -> SubagentToolScope.admits(subagent, tool)).map(Tool::getDefinition).toList();
     }
 
     /**
