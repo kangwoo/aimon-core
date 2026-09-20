@@ -2531,8 +2531,11 @@ public class OrcaAgentExecutor
      * outcome is deliberately unchanged — an agent that legitimately needs no tool exists — but it is not left silent.
      *
      * <p>
-     * The first iteration is enough and is not a sample: {@code findAll()} only ever grows, and both bounds are fixed
-     * for the execution, so an offer empty here is empty for every later iteration.
+     * Logging on the first iteration only, and not as a sample: both bounds are fixed for the execution, and the
+     * registry it draws from grows rather than shrinks on the path that motivates re-reading it at all (a
+     * {@code ToolSearchRegistry} refuses {@code unregister}). A plain registry can be emptied mid-execution by a
+     * hook or an embedder, in which case the warning is missed — the cost of that is a missing log line, not a
+     * missing bound.
      *
      * @param scope
      *            the running execution's scope

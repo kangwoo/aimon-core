@@ -238,6 +238,23 @@ public final class DefaultAgent implements Agent {
             if (content == null && contentBuilder == null) {
                 throw new IllegalStateException("Agent content must be set (use content() or systemPrompt())");
             }
+            // A whole metadata object and the convenience setters are two ways to say the same thing, and mixing
+            // them used to drop one of them in silence — whichever order they were called in, since metadata(...)
+            // clears the builder and the builder is only consulted when metadata is absent. That is tolerable while
+            // the droppable fields are a name and an iteration cap; it is not once one of them is allowedTools,
+            // because the value that goes missing is a restriction and it goes missing fail-open. Refusing the
+            // ambiguous spec is the same answer this repository gives a configured-but-unread store.
+            if (metadata != null && metadataBuilder != null) {
+                throw new IllegalStateException("Agent metadata was set both ways: metadata(...) and the convenience "
+                        + "setters (name/model/maxIterations/tools/allowedTools) cannot be combined, because one of "
+                        + "them would be silently discarded. Put every field on the AgentMetadata, or use only the "
+                        + "convenience setters.");
+            }
+            if (content != null && contentBuilder != null) {
+                throw new IllegalStateException("Agent content was set both ways: content(...) and the convenience "
+                        + "setters (systemPrompt/...) cannot be combined, because one of them would be silently "
+                        + "discarded.");
+            }
             AgentMetadata finalMetadata = metadata != null ? metadata : metadataBuilder.build();
             AgentContent finalContent = content != null ? content : contentBuilder.build();
             return new DefaultAgent(finalMetadata, finalContent);

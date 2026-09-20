@@ -17,8 +17,8 @@ import at.aimon.core.agent.tool.permission.AllowedTool;
  * <pre>
  * {
  *     &#64;code
- *     Agent agent = DefaultAgent.builder().name("MyAgent").metadata(AgentMetadata.of(10))
- *             .content(AgentContent.of("You are helpful...", modelConfig)).build();
+ *     Agent agent = DefaultAgent.builder().name("MyAgent").maxIterations(10)
+ *             .systemPrompt("You are helpful...").build();
  *
  *     String name = agent.getName();
  *     int maxIterations = agent.getMaxIterations(); // convenience method

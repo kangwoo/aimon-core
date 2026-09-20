@@ -269,7 +269,14 @@ public final class MarkdownAgentDefinitionParser implements AgentDefinitionParse
                 if (element == null) {
                     continue;
                 }
-                final String spec = element.toString().trim();
+                // toString() on a non-scalar would make a tool out of it — `- Read: yes` is a one-entry map, and
+                // `{Read=yes}` is a perfectly acceptable tool name as far as AllowedTool.parse is concerned. Same
+                // refusal the subagent parser gives a non-scalar, for the same reason.
+                if (!(element instanceof String text)) {
+                    throw new AgentDefinitionParseException("Invalid 'allowed-tools' entry: expected a string, got "
+                            + element.getClass().getName() + " (" + element + ")");
+                }
+                final String spec = text.trim();
                 if (!spec.isEmpty()) {
                     specs.add(spec);
                 }

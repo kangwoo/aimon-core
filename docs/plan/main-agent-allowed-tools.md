@@ -130,5 +130,10 @@ PR 직전 에이전트 둘이 리뷰했고(규약 · 적대적 correctness), 둘
 | **code behavior 가 천장에 "묶인다" 는 주장이 과했다** — behavior 는 실행 컨텍스트로 **전체 레지스트리**를 받는다(`SubagentToolScope` javadoc 이 *"exposes the allow-list without enforcing it"* 라고 이미 적어 둔 성질). 테스트 이름도 주장만 하고 검증하지 않았다 | 문구를 고쳤다 — "handed the same narrowed definition" 이 실제로 참인 것이고, 테스트 이름·CHANGELOG·클래스 javadoc 을 거기에 맞췄다. 코드는 그대로 |
 | **`SKILL.md` 의 `allowed-tools` 는 공백 구분**이라 `agent.md` 로 옮기면 `Read Grep` 이 도구 이름 하나가 된다 | 도구 **이름**에 공백이 있으면 구분자를 알려주며 거부한다. 이름만 보는 이유는 패턴에는 공백이 정당하게 들어가기 때문(`Bash(npm install)`) |
 
+| **`DefaultAgent.builder().metadata(m).tools(...)` 가 허용목록을 조용히 버린다** — 순서를 뒤집어도 같다. 기존 빌더 모양이지만 이제 버려지는 것이 **제한**이고 fail-open 으로 버려진다 | 두 방식을 섞으면 `build()` 가 거부한다(metadata·content 양쪽). 트리 안에 섞는 호출자는 없었고, `Agent` javadoc 예제가 바로 그 함정을 시연하며 존재하지도 않는 `AgentMetadata.of(int)` 를 쓰고 있어 함께 고쳤다 |
+| `SubagentToolScope` javadoc 이 "두 모양 다 `admissionFilter` 로 표현된다" 고 적지만 `scope()` 는 자기 경로를 쓴다 | `scope()` 도 `admissionFilter` 를 쓰게 해서 문장을 참으로 만들었다 |
+| 내 테스트 둘이 이름값을 못 한다 — `invoke_unrestrictedCallerPublishesAnEmptyList` 는 발행 줄을 지워도 통과한다(`CallerAllowedTools.of` 가 키 없음도 빈 리스트로 읽으므로) | 키를 직접 단언하도록 바꿨다. 발행 줄을 지우고 돌려 **4건이 실패**하는 것을 확인했다. `TaskToolTest` 쪽은 기본값 회귀 가드임을 주석으로 한정했다 |
+| `warnOnEmptyToolOffer` javadoc 의 "`findAll()` only ever grows" 가 성질로 단언되어 있다 — 평범한 레지스트리는 훅·임베더가 비울 수 있다 | 문장을 사실에 맞췄다. 놓치는 것은 로그 한 줄이지 경계가 아니다 |
+
 리뷰가 확인했으나 문제 없던 것: 빌더/불변성과 `equals`/`hashCode`/`toString`, import 순서, 패키지 경계와
 ArchUnit, turn/iteration/execution 어휘, javadoc 완전성, 번역 구조 일치, `rename-maps.md` 불필요 판단.

@@ -490,6 +490,22 @@ class MarkdownAgentDefinitionParserTest {
         }
 
         @Test
+        @DisplayName("Should reject a non-scalar list element rather than make a tool name out of it")
+        void shouldRejectANonScalarListElement() {
+            // `- Read: yes` is a one-entry map, and AllowedTool.parse would happily name a tool "{Read=yes}".
+            final String content = """
+                    ---
+                    name: test
+                    allowed-tools:
+                      - Read: yes
+                    ---
+                    body""";
+
+            assertThatThrownBy(() -> parser.parse(stream(content))).isInstanceOf(AgentDefinitionParseException.class)
+                    .hasMessageContaining("expected a string");
+        }
+
+        @Test
         @DisplayName("Should reject an entry that is not a valid tool specification")
         void shouldRejectAMalformedEntry() {
             final String content = """

@@ -236,7 +236,9 @@ class TaskToolTest {
     @Test
     void executeWithoutACallerAllowListImposesNoCeiling() {
         // Absence and an empty list must mean the same thing — unrestricted — or a call path that does not run
-        // through SingleToolInvoker would spawn work bound by a null.
+        // through SingleToolInvoker would spawn work bound by a null. This one asserts a default, so it is a guard
+        // against a regression to null rather than a proof that TaskTool read anything; the test above is what
+        // proves the read.
         assertThat(captureEnvFor(contextWithId()).getCallerAllowedTools()).isEmpty();
     }
 

@@ -23,7 +23,15 @@ Central is versioned independently).
 - **The value is comma-or-list**, matching `agents/*.md`. A `SKILL.md` allow-list is *space*-delimited, so a list
   copied from one would otherwise parse as a single oddly-named tool and leave the agent matching nothing; a tool
   name containing whitespace is rejected, naming the separator to use. The check is on the name rather than the
-  whole entry because a pattern may legitimately contain a space — `Bash(npm install)`.
+  whole entry because a pattern may legitimately contain a space — `Bash(npm install)`. A non-scalar list element is
+  refused too, rather than becoming a tool called `{Read=yes}`.
+- **`DefaultAgent.Builder` refuses an ambiguous spec.** `metadata(...)` and the convenience setters
+  (`name`/`model`/`maxIterations`/`tools`/`allowedTools`) are two ways to say the same thing, and combining them
+  discarded one of them in whichever order they were called — `metadata(...)` clears the builder, and the builder is
+  only consulted when `metadata` is absent. Tolerable while the droppable fields were a name and an iteration cap;
+  not once one of them is an allow-list, because what goes missing is a restriction and it goes missing *fail-open*.
+  Both combinations now throw. The same guard covers `content(...)` against its own setters. No in-tree caller mixed
+  the two; the `Agent` Javadoc example did, and also named an `AgentMetadata.of(int)` factory that does not exist.
 - **It acts at the same two points a subagent's does**, reading one value so the two cannot disagree: names absent
   from the list are withheld from the definitions sent to the LLM, and naming one anyway is refused at dispatch as
   *not allowed* rather than *unknown tool*. Only the definitions are narrowed, never the registry, which may carry

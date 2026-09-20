@@ -163,7 +163,10 @@ class SingleToolInvokerTest {
 
         final ArgumentCaptor<ToolContext> ctxCaptor = ArgumentCaptor.forClass(ToolContext.class);
         verify(toolExecutionManager).execute(any(), ctxCaptor.capture(), eq(toolRegistry), eq(List.of()));
-        assertThat(CallerAllowedTools.of(ctxCaptor.getValue())).isEmpty();
+        // On the key, not through CallerAllowedTools.of — that reads an absent key as an empty list too, so
+        // asserting the accessor here would pass with the publication deleted. What is worth pinning is that the
+        // unrestricted case publishes, rather than leaving a spawn site to infer "no ceiling" from silence.
+        assertThat(ctxCaptor.getValue().get(ToolContextKeys.CALLER_ALLOWED_TOOLS)).contains(List.of());
     }
 
     @Test

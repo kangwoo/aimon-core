@@ -2,9 +2,7 @@ package at.aimon.core.subagent;
 
 import java.util.List;
 import java.util.Objects;
-import java.util.Set;
 import java.util.function.Predicate;
-import java.util.stream.Collectors;
 
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.agent.tool.Tool;
@@ -91,10 +89,10 @@ public final class SubagentToolScope {
         if (!subagent.hasToolRestrictions()) {
             return full;
         }
-        final Set<String> allowedNames = allowedNames(subagent);
+        final Predicate<Tool> admitted = admissionFilter(subagent);
         final DefaultToolRegistry scoped = new DefaultToolRegistry();
         for (Tool tool : full.findAll()) {
-            if (allowedNames.contains(tool.getDefinition().getName())) {
+            if (admitted.test(tool)) {
                 scoped.register(tool);
             }
         }
@@ -128,10 +126,5 @@ public final class SubagentToolScope {
                         .model(metadata.getModel()).maxIterations(metadata.getMaxIterations())
                         .allowedTools(allowedTools).build(),
                 subagent.getContent());
-    }
-
-    private static Set<String> allowedNames(Subagent subagent) {
-        return subagent.getAllowedTools().stream().map(AllowedTool::getToolName)
-                .collect(Collectors.toUnmodifiableSet());
     }
 }
