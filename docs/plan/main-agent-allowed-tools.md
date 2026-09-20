@@ -115,3 +115,17 @@ argument rather than the tool belongs in the allow-list (`AllowedTool`, e.g. `Ba
   여전히 조용히 무시된다(기존 동작)
 - **엔드투엔드 테스트** — 사슬을 고리별로 잠갔다(발행 · 운반 · 강제). 실제 턴에서 세 고리가 이어지는 것을
   한 테스트로 확인하지는 않았다
+
+## 10. 리뷰가 바꾼 것
+
+PR 직전 에이전트 둘이 리뷰했고(규약 · 적대적 correctness), 둘 다 반영했다. 결과가 §3~§5 의 범위를 넓혔다.
+
+| 발견 | 처분 |
+|------|------|
+| **`AllowedTools.intersect` 가 "이름만 있는 항목" 을 무제한으로 읽는다** — validator 는 `noneMatch(hasPattern)`, intersect 는 `anyMatch(!hasPattern)` 이었다. `intersect([Read, Read(/tmp/**)], [Read(/etc/**)])` → `[Read(/etc/**)]`, 즉 **포크가 호출자보다 넓어진다**. 인자 순서에도 의존했고 천장 호출부가 느슨한 쪽 순서를 쓰고 있었다 | 고쳤다. #172 에서 들어온 기존 버그지만, 이 변경이 그 함수를 **모든** spawn 의 강제 수단으로 승격시키므로 여기서 고치는 것이 맞다. 회귀 테스트 2개 + javadoc 두 문장 정정 |
+| **스킬 경로가 두 절반 밖에 있다** — 스킬의 도구는 자기 목록에만 묶였다. 에이전트가 `Read, Grep` 인데 스킬이 `Bash` 를 적으면 `/my-skill` 도, 모델의 `Skill` 호출도 Bash 에 닿았다 | 고쳤다. `LlmSkillExecutor` 가 한 지점에서 교집합 → 제안·dispatch·빈 제안 경고가 한 값에서 나온다. 슬래시 경로는 `commandToolContext` 가 손으로 만들어져 위에 도구 호출이 없으므로 키를 직접 발행한다 |
+| "허용목록" 표기 불일치 · 테스트의 `java.util.ArrayList` FQCN | 고쳤다 |
+| `builtin-agent-skill-guide.en.md` 의 `source_commit` 변경이 이 변경셋과 무관하다 | 맞다. **별도 커밋**으로 분리했고 PR 본문에 이유를 적었다 — #172 스쿼시가 남긴 고아 SHA 라 `translations` 잡이 main 에서 이미 빨갛다 |
+
+리뷰가 확인했으나 문제 없던 것: 빌더/불변성과 `equals`/`hashCode`/`toString`, import 순서, 패키지 경계와
+ArchUnit, turn/iteration/execution 어휘, javadoc 완전성, 번역 구조 일치, `rename-maps.md` 불필요 판단.
