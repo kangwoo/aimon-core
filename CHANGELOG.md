@@ -7,6 +7,76 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Added: the main agent can declare `allowed-tools`, and a delegation cannot exceed it
+
+- **An agent now declares its own allow-list**, the surface a subagent, a skill and a command each already had and
+  the agent itself did not. `OrcaAgentExecutor` hard-coded an empty list at dispatch — the spelling of *unrestricted*
+  — so the only argument-aware control on the main path was a hand-written `PermissionRequestHook`, which is code
+  rather than a declaration. The allow-list is where `toolinvocation/approval`'s own package documentation already
+  pointed for risk that depends on the argument rather than the tool (`Bash(git:*)`), and the main agent could not
+  reach it.
+- **Declared as `allowed-tools`** in an `agent.md` frontmatter, or through `DefaultAgent.builder().tools(...)` /
+  `AgentMetadata.Builder.allowedTools(...)`. The key is kebab while every other key in that file is camelCase, which
+  is deliberate: it is the Agent Skills specification's name and the three sibling surfaces already spell it that
+  way. `allowedTools` is therefore **rejected by name** rather than ignored — an unknown key is otherwise dropped in
+  silence, which would hand back an unrestricted agent while its author believes they restricted it.
+- **It acts at the same two points a subagent's does**, reading one value so the two cannot disagree: names absent
+  from the list are withheld from the definitions sent to the LLM, and naming one anyway is refused at dispatch as
+  *not allowed* rather than *unknown tool*. Only the definitions are narrowed, never the registry, which may carry
+  the `ToolSearch` activation state. A pattern entry still offers its tool — a tool list cannot say which arguments
+  are allowed.
+- **An empty offer is logged**, as it already is for a subagent and a skill: a misspelled name, a list naming only
+  tools above the side-effect ceiling, or one omitting `ToolSearch` where the tools are deferred can leave nothing,
+  and no provider rejects an empty `tools` field, so the model answers from prose and the turn completes cleanly.
+- **Default unchanged.** An agent that declares nothing has an empty list, which every validator reads as
+  unrestricted; no existing deployment behaves differently.
+
+### Added: a spawned run is bound by its caller's allow-list as well as its own
+
+- **Delegation is no longer an escalation.** A subagent's, a workflow step's and a skill fork's `allowed-tools` bound
+  the spawned run alone, so an agent narrowed to `Read, Grep` reached `Bash` by launching a subagent that names it —
+  the narrowing described what the agent did with its own hands rather than what it could cause. Without this the
+  new agent allow-list would have been a tool-offer convenience rather than a boundary.
+- **The caller's list travels on the tool context.** `SingleToolInvoker` publishes the list it hands the
+  `ToolExecutionManager` under `ToolContextKeys.CALLER_ALLOWED_TOOLS`; `Task`, both workflow tools and the skill fork
+  executor put it on the `SubagentExecutionEnvironment` they build. Because every run republishes its own effective
+  list, the ceiling follows nesting to any depth without a spawn site knowing how deep it is — the property
+  `InvokingSessionAccess.idToPropagate` already gives the invoking session. Read it with `CallerAllowedTools.of`, so
+  an absent key and an empty list cannot be told apart: both mean unrestricted.
+- **Enforced in one place**, `DefaultSubagentExecutionManager` where a resolved subagent becomes an execution
+  context. That is the single point both execution branches pass through, so a registered code behavior is bound by
+  the same ceiling as the ReAct loop, and no spawn site can forget to apply it.
+- **No overlap refuses the run** rather than running it, for the reason `AllowedTools.intersect` returns an
+  `Optional`: an empty list reads as unrestricted everywhere in the permission package, so passing on an empty
+  intersection would invert the strictest possible pairing into the loosest. The message names both lists.
+- **New**: `AllowedTools.admissionFilter(List<AllowedTool>)`, now the one implementation of name-level narrowing that
+  the agent and subagent paths share, and `SubagentToolScope.withAllowedTools`, promoted from a private helper in
+  `SubagentBackedSkillForkExecutor`. `SubagentExecutionEnvironment.callerAllowedTools` defaults to an empty list, so
+  an environment built as before imposes no ceiling.
+- **A skill is bound by its caller too**, on both paths into it. `LlmSkillExecutor` intersected nothing: a skill's
+  own `allowed-tools` was the only bound on the tools it ran, so a skill naming `Bash` reached `Bash` inside an agent
+  narrowed to `Read, Grep` — by a model call to `Skill` or by a user typing `/my-skill`. It now intersects the
+  caller's list in once, which bounds the offer, the dispatch and the empty-offer warning from one value. The
+  user-slash path additionally needs the key published by hand (`OrcaAgentExecutor`'s command tool context is
+  hand-built, with no tool call above it to enrich it), and that also gives a fork-mode skill spawned from a slash
+  command the ceiling it was missing.
+
+### Fixed: `AllowedTools.intersect` read a bare name beside a pattern as unrestricted
+
+- **A name-only entry does not remove that tool's other constraints** (#172 regression, promoted in severity here).
+  `DefaultToolPermissionValidator` grants a name outright only when *no* entry for it carries a pattern
+  (`noneMatch(hasPattern)`) — `Read, Read(/tmp/**)` means `/tmp` only, which the tool guide states. `intersect` asked
+  the opposite question (`anyMatch(!hasPattern)`) and treated that side as imposing no constraint on `Read`, handing
+  the other side's entries through unchanged.
+- **What that cost.** `intersect([Read, Read(/tmp/**)], [Read])` returned `[Read]`, and
+  `intersect([Read, Read(/tmp/**)], [Read(/etc/**)])` returned `[Read(/etc/**)]` — a spawned run reading `/etc` that
+  its caller is denied. It was also order-dependent, and the ceiling call site used the looser order. Reachable
+  before this release only for a fork-mode skill against its target subagent; this release makes the same function
+  the enforcement behind every `Task`, workflow and skill-fork spawn, which is why it is fixed here rather than
+  noted.
+- Two sentences of `intersect`'s own Javadoc were false and are corrected: the precondition is the absence of every
+  pattern for that name, not the presence of one entry without one. The result is now order-independent.
+
 ### Fixed: a fork-mode skill's `allowed-tools` reached the fork, and a tool-less skill says so
 
 - **A skill's own allow-list now binds its fork** (#172). `SubagentBackedSkillForkExecutor` handed the target

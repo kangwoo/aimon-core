@@ -1,5 +1,6 @@
 package at.aimon.core.subagent;
 
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Predicate;
@@ -9,22 +10,15 @@ import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.permission.AllowedTool;
+import at.aimon.core.agent.tool.permission.AllowedTools;
 
 /**
  * Narrows a tool view to the names a subagent's allow-list admits, shared by the two subagent execution paths.
  *
  * <p>
- * <b>Name level is all this can do, and that is a property of the allow-list rather than a shortcoming here.</b> An
- * {@link AllowedTool} may carry a pattern ({@code Bash(git:*)}, {@code Read(/tmp/**)}), and a pattern cannot be
- * expressed in a list of tools — the tool is either offered or it is not. So a pattern-restricted tool stays in the
- * narrowed view and its out-of-pattern calls are still refused at dispatch. What this removes is the other case: a tool
- * whose <i>name</i> appears nowhere in the allow-list, which could never have been dispatched at all.
- *
- * <p>
- * <b>The narrowing is conservative by construction.</b> Refusal starts by keeping only the entries whose name equals
- * the called tool's ({@code DefaultToolPermissionValidator}), so a name absent from the allow-list is already a denial
- * before any pattern is consulted. A name match is therefore a necessary condition for permission, and filtering on
- * the name set can never withhold a tool that would have been allowed.
+ * <b>Both shapes narrow by name only, and neither can over-withhold.</b> The reasoning lives on
+ * {@link AllowedTools#admissionFilter(java.util.List)}, which both shapes here are expressed in terms of: a pattern
+ * cannot be said in a list of tools, and a name absent from an allow-list is already a denial.
  *
  * <p>
  * The two callers want different shapes and the difference matters:
@@ -60,11 +54,7 @@ public final class SubagentToolScope {
      */
     public static Predicate<Tool> admissionFilter(Subagent subagent) {
         Objects.requireNonNull(subagent, "Subagent cannot be null");
-        if (!subagent.hasToolRestrictions()) {
-            return tool -> true;
-        }
-        final Set<String> allowedNames = allowedNames(subagent);
-        return tool -> allowedNames.contains(tool.getDefinition().getName());
+        return AllowedTools.admissionFilter(subagent.getAllowedTools());
     }
 
     /**
@@ -109,6 +99,35 @@ public final class SubagentToolScope {
             }
         }
         return scoped;
+    }
+
+    /**
+     * Returns the subagent with its allow-list replaced, keeping every other field — the name above all, since hooks,
+     * attribution and behaviour lookup all key on it.
+     *
+     * <p>
+     * The narrowed definition is how a caller's ceiling reaches a fork: both consumers of the allow-list
+     * ({@code availableToolDefinitions} and the dispatch spec) read it off the {@code Subagent}, so replacing the
+     * definition once leaves them unable to disagree, and a code behavior handed the same context sees the same
+     * bound.
+     *
+     * @param subagent
+     *            the subagent to rebase (must not be null)
+     * @param allowedTools
+     *            the allow-list to put in place of its own (must not be null)
+     * @return a new subagent identical but for the allow-list
+     * @throws NullPointerException
+     *             if either argument is null
+     */
+    public static Subagent withAllowedTools(Subagent subagent, List<AllowedTool> allowedTools) {
+        Objects.requireNonNull(subagent, "Subagent cannot be null");
+        Objects.requireNonNull(allowedTools, "Allowed tools cannot be null");
+        final SubagentMetadata metadata = subagent.getMetadata();
+        return Subagent.of(subagent.getName(),
+                SubagentMetadata.builder().description(metadata.getDescription()).whenToUse(metadata.getWhenToUse())
+                        .model(metadata.getModel()).maxIterations(metadata.getMaxIterations())
+                        .allowedTools(allowedTools).build(),
+                subagent.getContent());
     }
 
     private static Set<String> allowedNames(Subagent subagent) {

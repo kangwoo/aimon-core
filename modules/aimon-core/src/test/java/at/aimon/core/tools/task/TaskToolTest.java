@@ -32,6 +32,7 @@ import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmModel;
@@ -217,6 +218,26 @@ class TaskToolTest {
     @Test
     void executeWithoutAnyConversationLeavesTheInvokerEmpty() {
         assertThat(captureEnvFor(contextWithId()).getInvokingSessionId()).isEmpty();
+    }
+
+    @Test
+    void executeCarriesTheCallersAllowListOntoTheEnvironmentAsACeiling() {
+        // The link that turns the agent's allow-list from a tool-offer convenience into a boundary: without it, an
+        // agent narrowed to Read reaches Bash by launching a subagent that names it. SingleToolInvoker publishes the
+        // key; DefaultSubagentExecutionManager intersects it with the target's own list; this is the hop between.
+        final List<AllowedTool> callerAllowed = List.of(AllowedTool.parse("Read"), AllowedTool.parse("Bash(git:*)"));
+        final ToolContext context = ToolContext.builder()
+                .put(ToolContextKeys.AGENT_RUNTIME_ID, AgentRuntimeId.of("agent:test"))
+                .put(ToolContextKeys.CALLER_ALLOWED_TOOLS, callerAllowed).build();
+
+        assertThat(captureEnvFor(context).getCallerAllowedTools()).isEqualTo(callerAllowed);
+    }
+
+    @Test
+    void executeWithoutACallerAllowListImposesNoCeiling() {
+        // Absence and an empty list must mean the same thing — unrestricted — or a call path that does not run
+        // through SingleToolInvoker would spawn work bound by a null.
+        assertThat(captureEnvFor(contextWithId()).getCallerAllowedTools()).isEmpty();
     }
 
     /** Runs a successful foreground Task against the given context and returns the environment it built. */

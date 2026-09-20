@@ -145,10 +145,28 @@ final class OrcaAgentExecutorTestSupport {
         return newContext(runtimeIdValue, registry, new DefaultHookRegistry());
     }
 
+    /**
+     * A context whose <b>agent</b> declares an allow-list, for the two places that list is read: the definition
+     * filter and the dispatch spec. The tools are registered in full — narrowing the registry instead would be a
+     * different mechanism with a different failure ("unknown tool" rather than a permission denial).
+     */
+    OrcaAgentRuntime newContextAllowing(String runtimeIdValue, List<String> allowedTools, Tool... tools) {
+        final DefaultToolRegistry registry = new DefaultToolRegistry();
+        for (Tool tool : tools) {
+            registry.register(tool);
+        }
+        return newContext(runtimeIdValue, registry, new DefaultHookRegistry(), allowedTools);
+    }
+
     OrcaAgentRuntime newContext(String runtimeIdValue, ToolRegistry toolRegistry, HookRegistry hookRegistry) {
+        return newContext(runtimeIdValue, toolRegistry, hookRegistry, List.of());
+    }
+
+    OrcaAgentRuntime newContext(String runtimeIdValue, ToolRegistry toolRegistry, HookRegistry hookRegistry,
+            List<String> allowedTools) {
         return OrcaAgentRuntime.builder().id(AgentRuntimeId.of(runtimeIdValue))
                 .agent(DefaultAgent.builder().name("TestAgent").maxIterations(5).systemPrompt("You are a test agent")
-                        .build())
+                        .tools(allowedTools).build())
                 .toolRegistry(toolRegistry).hookRegistry(hookRegistry)
                 .commandRegistry(new DefaultCommandRegistry(fileSystem, ".aimon/commands"))
                 .subagentRegistry(new DefaultSubagentRegistry(fileSystem, ".aimon/agents"))

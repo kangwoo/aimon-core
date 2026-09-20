@@ -3,11 +3,13 @@ package at.aimon.core.agent.definition;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
 import at.aimon.core.agent.Version;
+import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.llm.LlmModel;
 
 /**
@@ -58,6 +60,7 @@ public final class AgentDefinition {
     private final String systemPrompt;
     private final Set<String> tags;
     private final Map<String, Object> variables;
+    private final List<AllowedTool> allowedTools;
 
     /**
      * AgentDefinition을 생성한다.
@@ -73,6 +76,7 @@ public final class AgentDefinition {
         systemPrompt = Objects.requireNonNull(builder.systemPrompt, "AgentDefinition: System prompt cannot be null");
         tags = builder.tags != null ? Collections.unmodifiableSet(new LinkedHashSet<>(builder.tags)) : Set.of();
         variables = builder.variables != null ? Map.copyOf(builder.variables) : Map.of();
+        allowedTools = builder.allowedTools != null ? List.copyOf(builder.allowedTools) : List.of();
     }
 
     /**
@@ -148,6 +152,19 @@ public final class AgentDefinition {
     }
 
     /**
+     * Returns the allow-list declared by this definition's {@code allowed-tools} frontmatter.
+     *
+     * <p>
+     * <b>An empty list means unrestricted</b>, the reading every validator in
+     * {@code at.aimon.core.agent.tool.permission} gives one, and the default for a definition that omits the key.
+     *
+     * @return An immutable list of allowed tools (never null, may be empty)
+     */
+    public List<AllowedTool> getAllowedTools() {
+        return allowedTools;
+    }
+
+    /**
      * Builder for constructing {@link AgentDefinition} instances.
      *
      * <p>
@@ -161,6 +178,7 @@ public final class AgentDefinition {
         private String systemPrompt;
         private Set<String> tags;
         private Map<String, Object> variables;
+        private List<AllowedTool> allowedTools;
 
         /**
          * Sets the agent name.
@@ -251,6 +269,18 @@ public final class AgentDefinition {
          */
         public Builder variables(Map<String, Object> variables) {
             this.variables = variables;
+            return this;
+        }
+
+        /**
+         * Sets the allow-list bounding every tool call the agent makes.
+         *
+         * @param allowedTools
+         *            The allowed tools (optional, defaults to an empty list meaning unrestricted)
+         * @return This builder for method chaining
+         */
+        public Builder allowedTools(List<AllowedTool> allowedTools) {
+            this.allowedTools = allowedTools;
             return this;
         }
 

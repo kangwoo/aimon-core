@@ -1,7 +1,9 @@
 package at.aimon.core.agent;
 
+import java.util.List;
 import java.util.Objects;
 
+import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.llm.LlmModel;
 
 /**
@@ -176,6 +178,36 @@ public final class DefaultAgent implements Agent {
         public Builder model(LlmModel modelConfig) {
             ensureMetadataBuilder();
             this.metadataBuilder.model(modelConfig);
+            return this;
+        }
+
+        /**
+         * Sets the allow-list from raw specification strings (e.g. {@code "Read"}, {@code "Bash(git:*)"}).
+         *
+         * @param tools
+         *            The tool-specification strings (must not be null)
+         * @return This builder
+         * @throws NullPointerException
+         *             if tools is null
+         */
+        public Builder tools(List<String> tools) {
+            ensureMetadataBuilder();
+            this.metadataBuilder.tools(tools);
+            return this;
+        }
+
+        /**
+         * Sets the allow-list directly from parsed {@link AllowedTool} entries.
+         *
+         * @param allowedTools
+         *            The allowed tools (must not be null; an empty list means unrestricted)
+         * @return This builder
+         * @throws NullPointerException
+         *             if allowedTools is null
+         */
+        public Builder allowedTools(List<AllowedTool> allowedTools) {
+            ensureMetadataBuilder();
+            this.metadataBuilder.allowedTools(allowedTools);
             return this;
         }
 

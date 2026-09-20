@@ -44,6 +44,7 @@ import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.llm.ToolUse;
 import at.aimon.core.llm.ToolUseResult;
 import at.aimon.core.toolinvocation.approval.SideEffectApprovalGate;
+import at.aimon.core.tools.CallerAllowedTools;
 import at.aimon.core.tools.ToolContextKeys;
 
 /**
@@ -145,6 +146,24 @@ class SingleToolInvokerTest {
         final ArgumentCaptor<ToolContext> ctxCaptor = ArgumentCaptor.forClass(ToolContext.class);
         verify(toolExecutionManager).execute(any(), ctxCaptor.capture(), eq(toolRegistry), eq(allowList));
         assertThat(ctxCaptor.getValue().get(ToolContextKeys.CURRENT_TOOL_USE_ID_KEY)).contains(TOOL_USE_ID);
+        // The same list is also published for the tool to read, which is how a tool that spawns work (Task, the
+        // workflow tools, a skill fork) bounds that work by what its own caller may do. Publishing it here rather
+        // than at each spawn site is what makes the ceiling follow nesting to any depth.
+        assertThat(CallerAllowedTools.of(ctxCaptor.getValue())).isEqualTo(allowList);
+    }
+
+    @Test
+    @DisplayName("an unrestricted caller publishes an empty list, which reads the same as no ceiling at all")
+    void invoke_unrestrictedCallerPublishesAnEmptyList() {
+        givenToolBehavior(InterruptBehavior.NON_INTERRUPTIBLE);
+        when(toolExecutionManager.execute(any(), any(), any(), any()))
+                .thenReturn(ToolExecutionResult.of(TOOL_USE_ID, ToolResult.success("ok")));
+
+        invoker.invoke(spec(toolUse(Map.of()), List.of()));
+
+        final ArgumentCaptor<ToolContext> ctxCaptor = ArgumentCaptor.forClass(ToolContext.class);
+        verify(toolExecutionManager).execute(any(), ctxCaptor.capture(), eq(toolRegistry), eq(List.of()));
+        assertThat(CallerAllowedTools.of(ctxCaptor.getValue())).isEmpty();
     }
 
     @Test

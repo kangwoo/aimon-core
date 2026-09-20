@@ -18,6 +18,7 @@ import java.util.concurrent.Flow;
 import java.util.concurrent.SubmissionPublisher;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 import org.slf4j.Logger;
@@ -95,6 +96,7 @@ import at.aimon.core.agent.tool.ToolContextEnricher;
 import at.aimon.core.agent.tool.ToolContextEnrichmentInfo;
 import at.aimon.core.agent.tool.ToolExecutionManager;
 import at.aimon.core.agent.tool.ToolRegistry;
+import at.aimon.core.agent.tool.permission.AllowedTools;
 import at.aimon.core.agent.tool.search.ToolSearchCatalog;
 import at.aimon.core.agent.tool.search.ToolSearchRegistry;
 import at.aimon.core.base.Principal;
@@ -1573,6 +1575,11 @@ public class OrcaAgentExecutor
             // iteration to tag its LoopTransition as QUEUED_INPUT (observation-only; never drives control flow).
             int injectedLastTail = 0;
             final int maxIterations = scope.getAgent().getMetadata().getMaxIterations();
+            // The agent's own allow-list, reduced to a name-admission predicate once per execution: the list is fixed
+            // for the execution, while the registry it filters is re-read every iteration for newly activated
+            // deferred tools. An agent that declares nothing admits everything, which is what it did before the
+            // declaration existed.
+            final Predicate<Tool> agentAdmits = AllowedTools.admissionFilter(scope.getAgent().getAllowedTools());
 
             // CONV-COMPACT-01: resolve the compaction guard once per ReAct loop. NoOpCompactionGuard is the framework
             // default — behaviour is unchanged unless the caller wires a real guard via the agent runtime.
@@ -1670,11 +1677,14 @@ public class OrcaAgentExecutor
                     try {
 
                         // Query available tools each iteration so newly activated deferred tools are included.
-                        // Tools exceeding the side-effect ceiling are withheld so the LLM never proposes a call the
-                        // execution manager would refuse.
+                        // Two axes are withheld, and each reads its bound from the same value the refusal reads, so a
+                        // filter and a refusal cannot disagree: the side-effect ceiling, and the agent's own
+                        // allow-list (the same list dispatchSingleTool hands the execution manager). A tool the model
+                        // could only pick to read a refusal costs it an iteration.
                         final List<ToolDefinition> availableTools = sessionRegistry.findAll().stream()
-                                .filter(t -> maxSideEffectLevel.permits(t.getSideEffectLevel()))
+                                .filter(t -> maxSideEffectLevel.permits(t.getSideEffectLevel())).filter(agentAdmits)
                                 .map(Tool::getDefinition).toList();
+                        warnOnEmptyToolOffer(scope, availableTools, sessionRegistry, iterationCount);
 
                         // Streaming-tool overlap (design §11): when the executor streams AND the dispatcher
                         // supports eager dispatch (parallel + the streamingOverlap opt-in, pool open), install a
@@ -2051,6 +2061,12 @@ public class OrcaAgentExecutor
                     .put(ToolContextKeys.EXECUTION_ATTRIBUTES_KEY, scope.getExecutionAttributes())
                     .put(ToolContextKeys.LLM_CALL_METADATA_KEY, scope.llmCallMetadata)
                     .put(ToolContextKeys.SKILL_FORK_EXECUTOR_KEY, skillForkExecutor)
+                    // The agent's allow-list, as the ceiling on everything this command causes. This context is
+                    // hand-built rather than enriched by SingleToolInvoker — the slash path has no tool call above
+                    // it — so it is the one place the key has to be published by hand, and without it a user-typed
+                    // /my-skill would run a skill's tools, and spawn a fork-mode skill's subagent, unbounded by the
+                    // restriction the agent itself is under.
+                    .put(ToolContextKeys.CALLER_ALLOWED_TOOLS, agentRuntime.getAgent().getAllowedTools())
                     .put(ToolContextKeys.SKILL_TOOL_DISPATCHER_KEY, commandToolDispatcher(scope, commandCoordinator))
                     .build();
             return commandExecutionManager.execute(executionRequest, transcriptBuffer,
@@ -2074,8 +2090,9 @@ public class OrcaAgentExecutor
      *
      * <p>
      * The invocation is stamped {@code MAIN_AGENT}: a skill is not a subagent, it is the agent doing what the user
-     * asked. The skill's own {@code allowed-tools} list arrives per call from {@code LlmSkillExecutor} and narrows
-     * dispatch further, which is the one thing the loop's own dispatch does not do (it passes an empty list).
+     * asked. The list arrives per call from {@code LlmSkillExecutor}, which hands over the skill's own
+     * {@code allowed-tools} already intersected with the agent's — the ceiling published into this command's tool
+     * context — so the two bounds reach dispatch as one value.
      *
      * @param scope
      *            the execution scope supplying the agent runtime and execution attributes (must not be null)
@@ -2490,15 +2507,52 @@ public class OrcaAgentExecutor
             int iterationCount, Map<String, Object> executionAttributes, InterruptCoordinator coordinator,
             ToolRegistry sessionRegistry) {
         // Delegate the interrupt-registrar + PermissionRequest/PreTool/execute/PostTool sequence to the shared
-        // pipeline. The main-agent variance is the MAIN_AGENT invoker identity and an empty allow-list (unrestricted).
+        // pipeline. The main-agent variance is the MAIN_AGENT invoker identity and the agent's own allow-list — the
+        // same list the offer filter reads, so the two cannot disagree about what this agent may call. An agent that
+        // declares none hands over an empty list, which every validator reads as unrestricted.
         final Agent agent = agentRuntime.getAgent();
         final ToolInvocationSpec spec = ToolInvocationSpec.builder().invokerType(InvokerType.MAIN_AGENT)
                 .invokerName(agent.getName()).hookRegistry(agentRuntime.getHookRegistry())
                 .environment(agentRuntime.getEnvironment()).executionAttributes(executionAttributes)
-                .toolRegistry(agentRuntime.getToolRegistry()).sessionRegistry(sessionRegistry).allowedTools(List.of())
-                .coordinator(coordinator).toolContext(toolContext).toolUse(toolUse).iterationCount(iterationCount)
-                .build();
+                .toolRegistry(agentRuntime.getToolRegistry()).sessionRegistry(sessionRegistry)
+                .allowedTools(agent.getAllowedTools()).coordinator(coordinator).toolContext(toolContext)
+                .toolUse(toolUse).iterationCount(iterationCount).build();
         return singleToolInvoker.invoke(spec);
+    }
+
+    /**
+     * Warns once when an execution's tool offer is empty while the agent declares an allow-list.
+     *
+     * <p>
+     * Either filter alone always left something; together they can leave nothing — an allow-list of misspelled names,
+     * one naming only tools above the side-effect ceiling, or one omitting {@code ToolSearch} in a deployment whose
+     * tools are all deferred. Every provider omits an empty {@code tools} field rather than rejecting it, so the model
+     * answers from prose and the turn completes cleanly: an answer that looks like work that was never done. The
+     * outcome is deliberately unchanged — an agent that legitimately needs no tool exists — but it is not left silent.
+     *
+     * <p>
+     * The first iteration is enough and is not a sample: {@code findAll()} only ever grows, and both bounds are fixed
+     * for the execution, so an offer empty here is empty for every later iteration.
+     *
+     * @param scope
+     *            the running execution's scope
+     * @param offered
+     *            the definitions about to be sent to the LLM
+     * @param sessionRegistry
+     *            the registry the offer was drawn from, named in the message for its size
+     * @param iterationCount
+     *            the 1-based iteration about to call the LLM
+     */
+    private void warnOnEmptyToolOffer(ExecutionScope scope, List<ToolDefinition> offered, ToolRegistry sessionRegistry,
+            int iterationCount) {
+        final Agent agent = scope.getAgent();
+        if (!offered.isEmpty() || iterationCount != 1 || !agent.hasToolRestrictions()) {
+            return;
+        }
+        log.warn(
+                "Agent '{}' is offered no tools: its allowed-tools names {} and the side-effect ceiling is {}, "
+                        + "leaving nothing from the {} registered tool(s). It will answer without acting.",
+                agent.getName(), agent.getAllowedTools(), maxSideEffectLevel, sessionRegistry.findAll().size());
     }
 
     /**

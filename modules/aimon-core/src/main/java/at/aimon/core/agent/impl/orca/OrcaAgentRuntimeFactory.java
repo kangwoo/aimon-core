@@ -957,10 +957,13 @@ public class OrcaAgentRuntimeFactory {
         // that uses it, so there is no one session whose skill approvals it could inherit. The per-call runners
         // built inside WorkflowTool / GraalJsWorkflowTool do carry it, because those are built per invocation from the
         // calling execution's ToolContext.
+        // The agent's allow-list is read from the agent rather than from a ToolContext, unlike the per-call runners:
+        // this one is agent-scoped and has no calling execution to read from. Same ceiling either way — every run it
+        // spawns is a run of this agent's.
         final SubagentExecutionEnvironment baseEnv = SubagentExecutionEnvironment.builder()
                 .agentRuntimeId(agentRuntimeId).subagentRegistry(subagentRegistry).toolRegistry(toolRegistry)
                 .hookRegistry(hookRegistry).environment(environment).defaultModel(agent.getMetadata().getModel())
-                .toolContextEnrichers(toolContextEnrichers).build();
+                .toolContextEnrichers(toolContextEnrichers).callerAllowedTools(agent.getAllowedTools()).build();
         // Wire the worktree environment factory so an `isolate=true` workflow step gets a per-branch scoped
         // filesystem view (it fails loud if a script requests isolation and none is wired). Isolation stays
         // opt-in per AgentTask; wiring the factory only makes it available. A bootstrap may swap the built-in

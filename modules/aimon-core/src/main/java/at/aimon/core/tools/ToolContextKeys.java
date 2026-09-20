@@ -1,5 +1,6 @@
 package at.aimon.core.tools;
 
+import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 
@@ -12,6 +13,7 @@ import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolContextKey;
+import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.agent.tool.search.ToolSearchRegistry;
 import at.aimon.core.base.Principal;
 import at.aimon.core.filesystem.VirtualFileSystem;
@@ -319,6 +321,34 @@ public final class ToolContextKeys {
     @SuppressWarnings("unchecked")
     public static final ToolContextKey<Consumer<AgentExecutionEvent>> AGENT_EVENT_SINK = ToolContextKey
             .of("agentEventSink", (Class<Consumer<AgentExecutionEvent>>) (Class<?>) Consumer.class);
+
+    /**
+     * Typed key for the allow-list bounding the run that is making this tool call.
+     *
+     * <p>
+     * Published by {@code SingleToolInvoker} from the same list it hands the {@code ToolExecutionManager}, so it is
+     * always the bound the caller is actually held to: the agent's own list on the main path, the (already narrowed)
+     * subagent's on a fork, a skill's on its inline path.
+     *
+     * <p>
+     * Read it only to <b>pass it on</b>. Spawning code &mdash; {@code Task}, the workflow tools, the skill fork
+     * executor &mdash; puts it on the {@code SubagentExecutionEnvironment} it builds so the spawned run cannot be
+     * granted what the spawner was refused; {@code DefaultSubagentExecutor} then intersects it with the target's own
+     * list. Because each run republishes its own effective list here, the ceiling follows nesting to any depth
+     * without a spawn site having to know how deep it is &mdash; the same property
+     * {@link InvokingSessionAccess#idToPropagate} gives the invoking session.
+     *
+     * <p>
+     * Do <b>not</b> read it to decide whether the current call is permitted. That decision belongs to
+     * {@code ToolExecutionManager}, which is handed the same list directly; a tool re-deciding it from the context
+     * would be a second judge that can disagree with the first. <b>An empty list means unrestricted</b>, as it does
+     * everywhere in {@code at.aimon.core.agent.tool.permission}, and absence means the same thing &mdash; use
+     * {@link CallerAllowedTools#of(ToolContext)} rather than reading the key directly, so the two spellings of
+     * "no restriction" cannot be told apart by accident.
+     */
+    @SuppressWarnings("unchecked")
+    public static final ToolContextKey<List<AllowedTool>> CALLER_ALLOWED_TOOLS = ToolContextKey.of("callerAllowedTools",
+            (Class<List<AllowedTool>>) (Class<?>) List.class);
 
     private ToolContextKeys() {
         throw new AssertionError("This class should not be instantiated");

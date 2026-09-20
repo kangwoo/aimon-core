@@ -3,9 +3,12 @@ package at.aimon.core.agent;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.stream.Collectors;
 
+import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.llm.LlmModel;
 
 /**
@@ -35,6 +38,7 @@ public final class AgentMetadata {
     private final LlmModel model;
     private final int maxIterations;
     private final Set<String> tags;
+    private final List<AllowedTool> allowedTools;
 
     private AgentMetadata(Builder builder) {
         this.name = Objects.requireNonNull(builder.name, "Agent name cannot be null");
@@ -44,6 +48,7 @@ public final class AgentMetadata {
         this.maxIterations = builder.maxIterations;
         this.model = Objects.requireNonNull(builder.model, "Model config cannot be null");
         this.tags = Collections.unmodifiableSet(new LinkedHashSet<>(builder.tags));
+        this.allowedTools = List.copyOf(builder.allowedTools);
     }
 
     /**
@@ -91,6 +96,30 @@ public final class AgentMetadata {
         return tags;
     }
 
+    /**
+     * Returns the allow-list bounding every tool call this agent makes.
+     *
+     * <p>
+     * The same {@link AllowedTool} vocabulary the subagent, skill and command surfaces use, applied to the main agent
+     * for the first time. <b>An empty list means unrestricted</b>, which is what every validator in
+     * {@code at.aimon.core.agent.tool.permission} does with one, and is the default — an agent that declares nothing
+     * behaves exactly as it did before this field existed.
+     *
+     * @return An immutable list of allowed tools (never null, may be empty)
+     */
+    public List<AllowedTool> getAllowedTools() {
+        return allowedTools;
+    }
+
+    /**
+     * Returns whether this agent declares any tool restriction at all.
+     *
+     * @return true when the allow-list is non-empty
+     */
+    public boolean hasToolRestrictions() {
+        return !allowedTools.isEmpty();
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -101,18 +130,18 @@ public final class AgentMetadata {
         }
         AgentMetadata that = (AgentMetadata) o;
         return name.equals(that.name) && maxIterations == that.maxIterations && model.equals(that.model)
-                && tags.equals(that.tags);
+                && tags.equals(that.tags) && allowedTools.equals(that.allowedTools);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(name, maxIterations, model, tags);
+        return Objects.hash(name, maxIterations, model, tags, allowedTools);
     }
 
     @Override
     public String toString() {
         return "AgentMetadata{" + "name='" + name + "', maxIterations=" + maxIterations + ", model=" + model + ", tags="
-                + tags + '}';
+                + tags + ", allowedTools=" + allowedTools + '}';
     }
 
     /** Builder for AgentMetadata. */
@@ -121,6 +150,7 @@ public final class AgentMetadata {
         private LlmModel model = LlmModel.builder().build();
         private int maxIterations = DEFAULT_MAX_ITERATIONS;
         private Set<String> tags = new LinkedHashSet<>();
+        private List<AllowedTool> allowedTools = List.of();
 
         private Builder() {
         }
@@ -200,6 +230,38 @@ public final class AgentMetadata {
                 replacement.add(Objects.requireNonNull(tag, "Tag cannot be null"));
             }
             this.tags = replacement;
+            return this;
+        }
+
+        /**
+         * Sets the allow-list from raw specification strings (e.g. {@code "Read"}, {@code "Bash(git:*)"}), parsed
+         * through the same path as the {@code allowed-tools} frontmatter of an {@code agent.md}.
+         *
+         * @param tools
+         *            The tool-specification strings (must not be null or contain null elements)
+         * @return This builder
+         * @throws NullPointerException
+         *             if tools or any element is null
+         */
+        public Builder tools(List<String> tools) {
+            Objects.requireNonNull(tools, "Tools cannot be null");
+            this.allowedTools = tools.stream()
+                    .map(spec -> AllowedTool.parse(Objects.requireNonNull(spec, "Tool specification cannot be null")))
+                    .collect(Collectors.toUnmodifiableList());
+            return this;
+        }
+
+        /**
+         * Sets the allow-list directly from parsed {@link AllowedTool} entries.
+         *
+         * @param allowedTools
+         *            The allowed tools (must not be null; an empty list means unrestricted)
+         * @return This builder
+         * @throws NullPointerException
+         *             if allowedTools is null
+         */
+        public Builder allowedTools(List<AllowedTool> allowedTools) {
+            this.allowedTools = List.copyOf(Objects.requireNonNull(allowedTools, "Allowed tools cannot be null"));
             return this;
         }
 

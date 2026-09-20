@@ -22,9 +22,10 @@ import at.aimon.core.skill.Skill;
 import at.aimon.core.subagent.Subagent;
 import at.aimon.core.subagent.SubagentExecutionEnvironment;
 import at.aimon.core.subagent.SubagentExecutionManager;
-import at.aimon.core.subagent.SubagentMetadata;
 import at.aimon.core.subagent.SubagentRegistry;
+import at.aimon.core.subagent.SubagentToolScope;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
+import at.aimon.core.tools.CallerAllowedTools;
 import at.aimon.core.tools.InvokingSessionAccess;
 import at.aimon.core.tools.ToolContextKeys;
 
@@ -115,7 +116,7 @@ public final class SubagentBackedSkillForkExecutor implements SkillForkExecutor 
                             + "(skill allows %s, subagent allows %s)",
                     skill.getName(), agentName, skillAllowed, target.getMetadata().getAllowedTools()));
         }
-        final Subagent effectiveTarget = withAllowedTools(target, effective.get());
+        final Subagent effectiveTarget = SubagentToolScope.withAllowedTools(target, effective.get());
 
         final AgentRuntimeId agentRuntimeId = toolContext.get(ToolContextKeys.AGENT_RUNTIME_ID).orElse(null);
         if (agentRuntimeId == null) {
@@ -135,7 +136,7 @@ public final class SubagentBackedSkillForkExecutor implements SkillForkExecutor 
         final SubagentExecutionEnvironment env = SubagentExecutionEnvironment.builder().agentRuntimeId(agentRuntimeId)
                 .subagentRegistry(subagentRegistry).toolRegistry(toolRegistry).hookRegistry(hookRegistry)
                 .environment(environment).defaultModel(defaultModel).executionAttributes(executionAttributes)
-                .parentLlmCallMetadata(parentMetadata)
+                .parentLlmCallMetadata(parentMetadata).callerAllowedTools(CallerAllowedTools.of(toolContext))
                 .invokingSessionId(InvokingSessionAccess.idToPropagate(toolContext).orElse(null)).build();
 
         final String taskId = UUID.randomUUID().toString();
@@ -153,18 +154,5 @@ public final class SubagentBackedSkillForkExecutor implements SkillForkExecutor 
                     e.getMessage(), e);
             return SkillForkOutcome.failure("Fork execution failed: " + e.getMessage());
         }
-    }
-
-    /**
-     * Returns the subagent with its allow-list replaced, keeping every other field — the name above all, since hooks,
-     * attribution and behaviour lookup all key on it.
-     */
-    private static Subagent withAllowedTools(Subagent subagent, List<AllowedTool> allowedTools) {
-        final SubagentMetadata metadata = subagent.getMetadata();
-        return Subagent.of(subagent.getName(),
-                SubagentMetadata.builder().description(metadata.getDescription()).whenToUse(metadata.getWhenToUse())
-                        .model(metadata.getModel()).maxIterations(metadata.getMaxIterations())
-                        .allowedTools(allowedTools).build(),
-                subagent.getContent());
     }
 }
