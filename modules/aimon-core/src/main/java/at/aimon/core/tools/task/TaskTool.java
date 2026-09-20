@@ -51,6 +51,7 @@ import at.aimon.core.subagent.task.ScopedSessionSnapshotStore;
 import at.aimon.core.subagent.task.SessionSnapshotStore;
 import at.aimon.core.subagent.task.TaskOutputStore;
 import at.aimon.core.subagent.task.TaskResultStore;
+import at.aimon.core.tools.CallerAllowedTools;
 import at.aimon.core.tools.InvokingSessionAccess;
 import at.aimon.core.tools.ToolContextKeys;
 
@@ -556,7 +557,7 @@ public class TaskTool extends AbstractTool {
                 .toolContextEnrichers(toolContextEnrichers).taskOutputStore(taskOutputStore)
                 .taskResultStore(taskResultStore).sessionSnapshotStore(sessionSnapshotStore)
                 .previousSnapshot(previousSnapshot).messageQueueManager(messageQueueManager)
-                .parentEventSink(parentEventSink)
+                .parentEventSink(parentEventSink).callerAllowedTools(CallerAllowedTools.of(context))
                 .invokingSessionId(InvokingSessionAccess.idToPropagate(context).orElse(null)).build();
     }
 

@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.definition.AgentDefinition;
 import at.aimon.core.agent.definition.exception.AgentDefinitionParseException;
+import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.ReasoningEffort;
 
@@ -366,6 +367,156 @@ class MarkdownAgentDefinitionParserTest {
             assertThat(definition.getModel().getMaxTokens()).contains(4096);
             assertThat(definition.getModel().getTemperature()).contains(1.0);
             assertThat(definition.getModel().getTopP()).contains(0.001);
+        }
+    }
+
+    @Nested
+    @DisplayName("allowed-tools parsing")
+    class AllowedToolsParsing {
+
+        @Test
+        @DisplayName("Should parse the YAML list form, keeping patterns intact")
+        void shouldParseListForm() {
+            final String content = """
+                    ---
+                    name: test
+                    allowed-tools:
+                      - Read
+                      - Bash(git:*)
+                    ---
+                    body""";
+
+            final AgentDefinition definition = parser.parse(stream(content));
+
+            assertThat(definition.getAllowedTools()).hasSize(2);
+            assertThat(definition.getAllowedTools().get(0).getToolName()).isEqualTo("Read");
+            assertThat(definition.getAllowedTools().get(0).hasPattern()).isFalse();
+            assertThat(definition.getAllowedTools().get(1).getToolName()).isEqualTo("Bash");
+            assertThat(definition.getAllowedTools().get(1).hasPattern()).isTrue();
+        }
+
+        @Test
+        @DisplayName("Should parse the comma-separated string form the subagent parser also accepts")
+        void shouldParseStringForm() {
+            final String content = """
+                    ---
+                    name: test
+                    allowed-tools: Read, Grep , Bash(git:*)
+                    ---
+                    body""";
+
+            final AgentDefinition definition = parser.parse(stream(content));
+
+            assertThat(definition.getAllowedTools()).extracting(AllowedTool::getToolName).containsExactly("Read",
+                    "Grep", "Bash");
+        }
+
+        @Test
+        @DisplayName("Should yield an empty list when the key is absent, which means unrestricted")
+        void anAbsentKeyMeansUnrestricted() {
+            final String content = """
+                    ---
+                    name: test
+                    ---
+                    body""";
+
+            assertThat(parser.parse(stream(content)).getAllowedTools()).isEmpty();
+        }
+
+        @Test
+        @DisplayName("Should reject the camelCase spelling instead of ignoring it")
+        void shouldRejectTheCamelCaseSpelling() {
+            // The rest of this file's keys are camelCase, so `allowedTools` is the spelling this surface invites —
+            // and an unknown key is otherwise dropped in silence, which would hand back an unrestricted agent while
+            // the operator believes they restricted it. Naming the accepted spelling is the whole point of failing.
+            final String content = """
+                    ---
+                    name: test
+                    allowedTools: Read
+                    ---
+                    body""";
+
+            assertThatThrownBy(() -> parser.parse(stream(content))).isInstanceOf(AgentDefinitionParseException.class)
+                    .hasMessageContaining("allowedTools").hasMessageContaining("allowed-tools");
+        }
+
+        @Test
+        @DisplayName("Should reject a space-separated list rather than read it as one oddly-named tool")
+        void shouldRejectASpaceSeparatedList() {
+            // The realistic mistake: a SKILL.md allow-list is space-delimited, so this is what a copied list looks
+            // like. Read as one tool named "Read Grep" it would leave the agent matching nothing at all.
+            final String content = """
+                    ---
+                    name: test
+                    allowed-tools: Read Grep
+                    ---
+                    body""";
+
+            assertThatThrownBy(() -> parser.parse(stream(content))).isInstanceOf(AgentDefinitionParseException.class)
+                    .hasMessageContaining("whitespace").hasMessageContaining("commas");
+        }
+
+        @Test
+        @DisplayName("Should keep accepting a pattern that legitimately contains a space")
+        void shouldAcceptASpaceInsideAPattern() {
+            // The reason the check is on the tool name and not the whole spec.
+            final String content = """
+                    ---
+                    name: test
+                    allowed-tools: Bash(npm install), Read
+                    ---
+                    body""";
+
+            final AgentDefinition definition = parser.parse(stream(content));
+
+            assertThat(definition.getAllowedTools()).extracting(AllowedTool::getToolName).containsExactly("Bash",
+                    "Read");
+            assertThat(definition.getAllowedTools().get(0).hasPattern()).isTrue();
+        }
+
+        @Test
+        @DisplayName("Should reject a value that is neither a list nor a string")
+        void shouldRejectAMapping() {
+            final String content = """
+                    ---
+                    name: test
+                    allowed-tools:
+                      Read: yes
+                    ---
+                    body""";
+
+            assertThatThrownBy(() -> parser.parse(stream(content))).isInstanceOf(AgentDefinitionParseException.class)
+                    .hasMessageContaining("allowed-tools");
+        }
+
+        @Test
+        @DisplayName("Should reject a non-scalar list element rather than make a tool name out of it")
+        void shouldRejectANonScalarListElement() {
+            // `- Read: yes` is a one-entry map, and AllowedTool.parse would happily name a tool "{Read=yes}".
+            final String content = """
+                    ---
+                    name: test
+                    allowed-tools:
+                      - Read: yes
+                    ---
+                    body""";
+
+            assertThatThrownBy(() -> parser.parse(stream(content))).isInstanceOf(AgentDefinitionParseException.class)
+                    .hasMessageContaining("expected a string");
+        }
+
+        @Test
+        @DisplayName("Should reject an entry that is not a valid tool specification")
+        void shouldRejectAMalformedEntry() {
+            final String content = """
+                    ---
+                    name: test
+                    allowed-tools: Bash(git:*
+                    ---
+                    body""";
+
+            assertThatThrownBy(() -> parser.parse(stream(content))).isInstanceOf(AgentDefinitionParseException.class)
+                    .hasMessageContaining("allowed-tools");
         }
     }
 }

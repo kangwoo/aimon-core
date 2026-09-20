@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/tool/tool-development-guide.md
-source_commit: 8c8de45
+source_commit: f651622
 ---
 
 # Tool Development Guide
@@ -735,6 +735,34 @@ specific allow:    "Bash(npm install)"
 A caution — **a name-only entry is not an unrestricted allow once it is mixed with a pattern entry of the same name.** Register both `"Read"` and `"Read(/tmp/**)"` and reads outside `/tmp` are denied. It becomes unrestricted only when **not one** of the entries registered under that name carries a pattern.
 
 And **a pattern that cannot be interpreted is a denial**. If a pattern is configured for a tool that has neither a subject nor a rule, that call is denied — this position used to be an unrestricted allow, which meant the strictest-looking configuration produced the weakest enforcement.
+
+### Where an allow-list is declared — four surfaces, and their ceiling
+
+An allow-list is declared in four places, and the key is spelled **`allowed-tools` in all four**.
+
+| Surface | Markdown | Code |
+|---------|----------|------|
+| **Agent** (main) | `agent.md` | `DefaultAgent.builder().tools(...)` |
+| **Subagent** | `agents/*.md` | `Subagent.builder().tools(...)` |
+| **Skill** | `SKILL.md` | — |
+| **Command** | the command file | — |
+
+Every other key in `agent.md` is camelCase (`maxIterations`) and this one alone is kebab, deliberately — it is the Agent Skills specification's name, and the other three surfaces already spell it that way. In exchange, writing `allowedTools` **fails the parse rather than being ignored in silence**: an unknown key is otherwise dropped, which would leave an unrestricted agent behind while its author believes they restricted it.
+
+A declared list acts at **two points**, and both read the one same value, so they cannot disagree.
+
+| Point | What it does |
+|-------|--------------|
+| The prompt | a tool whose **name** the list never mentions is dropped from the definitions sent to the LLM — the model cannot pick it at all |
+| Execution | naming it anyway is refused. Not "unknown tool" but "not allowed", which is exactly why the registry is left unnarrowed |
+
+**A pattern entry still offers its tool.** `Bash(git:*)` does not remove `Bash` from the offer — a tool list cannot say which arguments are allowed, so the argument is judged at the point of execution instead.
+
+IMPORTANT: **nothing exceeds its caller's list.** A run spawned as a subagent, a workflow step or a skill fork is bound by its own list **and by its caller's**, and so are the tools a skill uses in its own ReAct loop — whether the model calls `Skill` or the user types `/my-skill`. When the two have nothing in common the run is **refused**: an empty list reads everywhere as *unrestricted*, so passing on an empty intersection as an empty list would invert the strictest possible pairing into the loosest.
+
+And **a name-only entry is not unrestricted once a pattern entry for the same name sits beside it.** Writing both `Read` and `Read(/tmp/**)` means `/tmp` only, and the intersection carries that pattern through — otherwise a fork would come out wider than the run that spawned it.
+
+Finally, **an offer left with no tools at all is logged**. A misspelled name does that, so does a list naming only tools above the side-effect ceiling, and so does one omitting `ToolSearch` in a deployment whose tools are deferred. No provider rejects an empty `tools` field, so the model answers from prose and the run finishes cleanly — work never done, looking like work done.
 
 ---
 

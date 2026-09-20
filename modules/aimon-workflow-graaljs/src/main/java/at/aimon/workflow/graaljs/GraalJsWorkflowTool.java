@@ -35,6 +35,7 @@ import at.aimon.core.llm.LlmModel;
 import at.aimon.core.subagent.SubagentExecutionEnvironment;
 import at.aimon.core.subagent.SubagentExecutionManager;
 import at.aimon.core.subagent.SubagentRegistry;
+import at.aimon.core.tools.CallerAllowedTools;
 import at.aimon.core.tools.InvokingSessionAccess;
 import at.aimon.core.tools.ToolContextKeys;
 import at.aimon.core.workflow.RunId;
@@ -254,7 +255,7 @@ public final class GraalJsWorkflowTool extends AbstractTool {
                 .toolRegistry(toolRegistry).hookRegistry(hookRegistry).environment(environment)
                 .defaultModel(defaultModel).executionAttributes(executionAttributes)
                 .parentLlmCallMetadata(parentMetadata).cancellationSignal(parentSignal).principal(principal)
-                .toolContextEnrichers(toolContextEnrichers)
+                .toolContextEnrichers(toolContextEnrichers).callerAllowedTools(CallerAllowedTools.of(context))
                 .invokingSessionId(InvokingSessionAccess.idToPropagate(context).orElse(null)).build();
     }
 

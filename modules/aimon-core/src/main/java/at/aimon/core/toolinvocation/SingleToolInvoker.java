@@ -158,9 +158,13 @@ public final class SingleToolInvoker {
 
         final TerminatorRegistrar registrar = needsRegistrar ? spec.getCoordinator().newTerminatorRegistrar() : null;
         try {
-            // Enrich tool context with current toolUseId and, when applicable, the per-tool terminator registrar.
+            // Enrich tool context with current toolUseId, the allow-list this invocation is held to, and, when
+            // applicable, the per-tool terminator registrar. The allow-list is published from the same value handed
+            // to the execution manager below, so a tool that spawns work (Task, the workflow tools, a skill fork)
+            // can bound that work by what its own caller may do without a second, drifting source for it.
             final ToolContext.Builder enrichedBuilder = ToolContext.builder().putAll(spec.getToolContext().getContext())
-                    .put(ToolContextKeys.CURRENT_TOOL_USE_ID_KEY, toolUse.getId());
+                    .put(ToolContextKeys.CURRENT_TOOL_USE_ID_KEY, toolUse.getId())
+                    .put(ToolContextKeys.CALLER_ALLOWED_TOOLS, spec.getAllowedTools());
             if (registrar != null) {
                 enrichedBuilder.put(InterruptToolKeys.TERMINATOR_REGISTRAR, registrar);
             }

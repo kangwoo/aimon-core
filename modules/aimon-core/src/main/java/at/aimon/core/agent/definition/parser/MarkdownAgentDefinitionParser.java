@@ -2,6 +2,8 @@ package at.aimon.core.agent.definition.parser;
 
 import java.io.InputStream;
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -16,6 +18,8 @@ import org.yaml.snakeyaml.constructor.SafeConstructor;
 import at.aimon.core.agent.Version;
 import at.aimon.core.agent.definition.AgentDefinition;
 import at.aimon.core.agent.definition.exception.AgentDefinitionParseException;
+import at.aimon.core.agent.tool.exception.InvalidToolSpecException;
+import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.ReasoningEffort;
 
@@ -39,6 +43,7 @@ import at.aimon.core.llm.ReasoningEffort;
  * tags:
  *   - coding
  *   - java
+ * allowed-tools: Read, Grep, Bash(git:*)
  * variables:
  *   language: Java
  * ---
@@ -101,12 +106,15 @@ public final class MarkdownAgentDefinitionParser implements AgentDefinitionParse
             // Extract tags
             final Set<String> tags = extractTags(frontmatter);
 
+            // Extract the allow-list
+            final List<AllowedTool> allowedTools = extractAllowedTools(frontmatter);
+
             // Extract variables
             @SuppressWarnings("unchecked")
             final Map<String, Object> variables = (Map<String, Object>) frontmatter.getOrDefault("variables", Map.of());
 
             return AgentDefinition.builder().name(name).version(version).model(model).maxIterations(maxIterations)
-                    .systemPrompt(body).tags(tags).variables(variables).build();
+                    .systemPrompt(body).tags(tags).variables(variables).allowedTools(allowedTools).build();
         } catch (AgentDefinitionParseException e) {
             throw e;
         } catch (Exception e) {
@@ -209,6 +217,97 @@ public final class MarkdownAgentDefinitionParser implements AgentDefinitionParse
         }
         throw new AgentDefinitionParseException(
                 "Invalid model.reasoningEffort: " + value + ". Accepted values: " + accepted + ".");
+    }
+
+    /**
+     * Extracts the {@code allowed-tools} allow-list from frontmatter.
+     *
+     * <p>
+     * The key is spelled the way the Agent Skills specification spells it, and the way the skill, subagent and
+     * command surfaces already spell it — deliberately, even though this file's other keys are camelCase. One
+     * concept read by four surfaces is worth more than one file's internal consistency, and an operator moving a
+     * list from {@code agents/*.md} to {@code agent.md} should not have to respell it. That holds for the
+     * <em>key</em> on all four surfaces and for the <em>value</em> on {@code agents/*.md}, which is comma-or-list
+     * like this one; a {@code SKILL.md} list is space-delimited, and a space-separated value is rejected below
+     * rather than read as one oddly-named tool.
+     *
+     * <p>
+     * That choice has a cost this method pays rather than passes on: {@code allowedTools} is the spelling this
+     * file's neighbours would suggest, and an unknown key is otherwise <b>ignored in silence</b> here — the reader
+     * would get an agent with no restrictions and no indication that the line they wrote did nothing. It is
+     * therefore rejected by name, pointing at the accepted spelling.
+     *
+     * <p>
+     * Accepts what the subagent parser accepts: a YAML list, or one string of comma-separated entries.
+     *
+     * @param frontmatter
+     *            The frontmatter map
+     * @return The parsed allow-list (never null; empty means unrestricted)
+     * @throws AgentDefinitionParseException
+     *             if the value is neither a list nor a string, if an entry is not a valid
+     *             {@link AllowedTool} specification, or if the camelCase spelling was used. A malformed entry is
+     *             re-thrown named rather than left as the generic "failed to parse", because the key it belongs to
+     *             is the thing the reader has to go and fix
+     */
+    private List<AllowedTool> extractAllowedTools(Map<String, Object> frontmatter) {
+        if (frontmatter.containsKey("allowedTools")) {
+            throw new AgentDefinitionParseException(
+                    "Unknown key 'allowedTools'. The allow-list key is spelled 'allowed-tools', as it is for "
+                            + "skills, subagents and commands.");
+        }
+
+        final Object raw = frontmatter.get("allowed-tools");
+        if (raw == null) {
+            return List.of();
+        }
+
+        final List<String> specs = new ArrayList<>();
+        if (raw instanceof String text) {
+            Arrays.stream(text.split(",")).map(String::trim).filter(spec -> !spec.isEmpty()).forEach(specs::add);
+        } else if (raw instanceof List<?> list) {
+            for (Object element : list) {
+                if (element == null) {
+                    continue;
+                }
+                // toString() on a non-scalar would make a tool out of it — `- Read: yes` is a one-entry map, and
+                // `{Read=yes}` is a perfectly acceptable tool name as far as AllowedTool.parse is concerned. Same
+                // refusal the subagent parser gives a non-scalar, for the same reason.
+                if (!(element instanceof String text)) {
+                    throw new AgentDefinitionParseException("Invalid 'allowed-tools' entry: expected a string, got "
+                            + element.getClass().getName() + " (" + element + ")");
+                }
+                final String spec = text.trim();
+                if (!spec.isEmpty()) {
+                    specs.add(spec);
+                }
+            }
+        } else {
+            throw new AgentDefinitionParseException(
+                    "Invalid 'allowed-tools' value: expected a YAML list or a comma-separated string, got "
+                            + raw.getClass().getName());
+        }
+
+        final List<AllowedTool> allowedTools = new ArrayList<>(specs.size());
+        for (String spec : specs) {
+            final AllowedTool entry;
+            try {
+                entry = AllowedTool.parse(spec);
+            } catch (InvalidToolSpecException | IllegalArgumentException e) {
+                throw new AgentDefinitionParseException("Invalid 'allowed-tools' entry: " + spec, e);
+            }
+            // A tool name cannot contain whitespace, so one that does is a list that was not separated. The reason
+            // this is worth its own message: a SKILL.md allow-list is space-delimited (SkillMetadata splits on
+            // \s+), so `Read Grep` copied from a skill parses here as one tool named "Read Grep" — an agent that
+            // then silently runs with an allow-list matching nothing. The test is on the name rather than the whole
+            // spec because a pattern may legitimately contain a space: Bash(npm install).
+            if (entry.getToolName().chars().anyMatch(Character::isWhitespace)) {
+                throw new AgentDefinitionParseException("Invalid 'allowed-tools' entry: '" + spec
+                        + "'. A tool name cannot contain whitespace — separate entries with commas or write them as a "
+                        + "YAML list. (A SKILL.md allow-list is space-delimited; an agent.md one is not.)");
+            }
+            allowedTools.add(entry);
+        }
+        return List.copyOf(allowedTools);
     }
 
     /**

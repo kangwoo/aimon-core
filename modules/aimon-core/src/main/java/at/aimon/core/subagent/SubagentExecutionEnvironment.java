@@ -16,6 +16,7 @@ import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
 import at.aimon.core.agent.tool.ToolContextEnricher;
 import at.aimon.core.agent.tool.ToolRegistry;
+import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.base.Principal;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.knowledge.KnowledgeScope;
@@ -90,6 +91,7 @@ public final class SubagentExecutionEnvironment {
     private final SessionSnapshot previousSnapshot;
     private final MessageQueueManager messageQueueManager;
     private final Consumer<AgentExecutionEvent> parentEventSink;
+    private final List<AllowedTool> callerAllowedTools;
 
     private SubagentExecutionEnvironment(Builder builder) {
         agentRuntimeId = Objects.requireNonNull(builder.agentRuntimeId, "Agent runtime ID cannot be null");
@@ -119,6 +121,7 @@ public final class SubagentExecutionEnvironment {
         previousSnapshot = builder.previousSnapshot;
         messageQueueManager = builder.messageQueueManager;
         parentEventSink = builder.parentEventSink;
+        callerAllowedTools = List.copyOf(builder.callerAllowedTools);
     }
 
     /**
@@ -373,6 +376,21 @@ public final class SubagentExecutionEnvironment {
     }
 
     /**
+     * Returns the allow-list of the run that is spawning this one, which the spawned run cannot exceed.
+     *
+     * <p>
+     * A ceiling, not a grant: {@code DefaultSubagentExecutor} intersects it with the target's own
+     * {@code allowed-tools}, so the fork ends up bound by both and a delegation cannot widen what its caller may do.
+     * Spawning code fills it from {@link at.aimon.core.tools.CallerAllowedTools#of}; an environment built without it
+     * imposes no ceiling, which is what every caller did before this field existed.
+     *
+     * @return An immutable list (never null); <b>empty means unrestricted</b>
+     */
+    public List<AllowedTool> getCallerAllowedTools() {
+        return callerAllowedTools;
+    }
+
+    /**
      * Returns a builder seeded with every field of this environment, for deriving a variant that shares all borrowed
      * collaborators (registries, stores, model, ...) but overrides selected fields.
      *
@@ -393,7 +411,8 @@ public final class SubagentExecutionEnvironment {
                 .knowledgeScope(knowledgeScope).toolContextEnrichers(toolContextEnrichers)
                 .taskOutputStore(taskOutputStore).taskResultStore(taskResultStore)
                 .sessionSnapshotStore(sessionSnapshotStore).previousSnapshot(previousSnapshot)
-                .messageQueueManager(messageQueueManager).parentEventSink(parentEventSink);
+                .messageQueueManager(messageQueueManager).parentEventSink(parentEventSink)
+                .callerAllowedTools(callerAllowedTools);
     }
 
     @Override
@@ -427,6 +446,7 @@ public final class SubagentExecutionEnvironment {
         private SessionSnapshot previousSnapshot;
         private MessageQueueManager messageQueueManager;
         private Consumer<AgentExecutionEvent> parentEventSink;
+        private List<AllowedTool> callerAllowedTools = List.of();
 
         private Builder() {
         }
@@ -699,6 +719,21 @@ public final class SubagentExecutionEnvironment {
          */
         public Builder parentEventSink(Consumer<AgentExecutionEvent> parentEventSink) {
             this.parentEventSink = parentEventSink;
+            return this;
+        }
+
+        /**
+         * Sets the allow-list of the spawning run, imposed as a ceiling on the run this environment describes.
+         *
+         * @param callerAllowedTools
+         *            the caller's allow-list (must not be null; an empty list imposes no ceiling)
+         * @return this builder
+         * @throws NullPointerException
+         *             if callerAllowedTools is null
+         */
+        public Builder callerAllowedTools(List<AllowedTool> callerAllowedTools) {
+            this.callerAllowedTools = List
+                    .copyOf(Objects.requireNonNull(callerAllowedTools, "Caller allowed tools cannot be null"));
             return this;
         }
 

@@ -23,6 +23,7 @@ import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolRegistry;
+import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmModel;
@@ -154,6 +155,26 @@ class SubagentBackedSkillForkExecutorTest {
         final SubagentExecutionEnvironment env = captureEnvFor(contextWithExecutionId("ctx-42"));
 
         assertThat(env.getInvokingSessionId()).isEmpty();
+    }
+
+    @Test
+    void fork_CarriesTheCallersAllowListOntoTheEnvironmentAsACeiling() {
+        // A fork-mode skill spawns a subagent, and the run it spawns must not outrank the run that asked for it.
+        // The key reaches here two ways: SingleToolInvoker enriches it on the Skill tool-call path, and
+        // OrcaAgentExecutor publishes it by hand into the command tool context on the user-slash path — the one
+        // context with no tool call above it. Without this hop a `/my-skill` fork ran with no ceiling at all.
+        final List<AllowedTool> callerAllowed = List.of(AllowedTool.parse("Read"), AllowedTool.parse("Bash(git:*)"));
+
+        final SubagentExecutionEnvironment env = captureEnvFor(
+                ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, AgentRuntimeIds.testCtx("ctx-42"))
+                        .put(ToolContextKeys.CALLER_ALLOWED_TOOLS, callerAllowed).build());
+
+        assertThat(env.getCallerAllowedTools()).isEqualTo(callerAllowed);
+    }
+
+    @Test
+    void fork_WithoutACallerAllowList_ImposesNoCeiling() {
+        assertThat(captureEnvFor(contextWithExecutionId("ctx-42")).getCallerAllowedTools()).isEmpty();
     }
 
     /** Runs a successful fork against the given context and returns the environment the manager was handed. */

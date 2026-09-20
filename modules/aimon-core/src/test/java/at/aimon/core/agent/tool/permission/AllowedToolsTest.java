@@ -83,6 +83,40 @@ class AllowedToolsTest {
                 .as("an empty allow-list is unrestricted, which is why empty must not be returned as a list").isTrue();
     }
 
+    /**
+     * A bare name is <b>not</b> "no constraint on this tool" once a pattern entry for the same name sits beside it:
+     * {@code Read, Read(/tmp/**)} means <em>/tmp only</em>, which the tool guide states and
+     * {@link DefaultToolPermissionValidator} implements with {@code noneMatch(hasPattern)}. A conjunction that read
+     * the bare name as unrestricted would hand a spawned run a wider reach than the caller that spawned it — the
+     * exact inversion the ceiling exists to prevent.
+     */
+    @Test
+    @DisplayName("a bare name beside a pattern for the same name does not make that side unrestricted")
+    void aBareNameBesideAPatternIsNotUnrestricted() {
+        // Caller means "/tmp only"; the other side names Read with no pattern at all. The caller's pattern must
+        // survive, or the spawned run outranks its caller.
+        assertThat(spellingsOf(AllowedTools.intersect(list("Read", "Read(/tmp/**)"), list("Read"))))
+                .containsExactly("Read", "Read(/tmp/**)");
+
+        // Stated in the terms that make it dangerous, through the validator that actually judges the call.
+        final ToolPermissionValidator validator = new DefaultToolPermissionValidator();
+        final List<AllowedTool> effective = AllowedTools.intersect(list("Read", "Read(/tmp/**)"), list("Read"))
+                .orElseThrow();
+        assertThat(validator.validateByName("Read", effective).isAllowed())
+                .as("a patterned name cannot be judged by name alone, so the by-name check denies it").isFalse();
+
+        // And the same pairing the other way round yields the same list: a ceiling must not depend on argument order.
+        assertThat(spellingsOf(AllowedTools.intersect(list("Read"), list("Read", "Read(/tmp/**)"))))
+                .containsExactly("Read", "Read(/tmp/**)");
+    }
+
+    @Test
+    @DisplayName("two different patterns for one name are dropped rather than approximated")
+    void twoDifferentPatternsAreDropped() {
+        // Neither side's glob is computable from the other's, so the pair is refused rather than guessed wide.
+        assertThat(AllowedTools.intersect(list("Read", "Read(/tmp/**)"), list("Read(/etc/**)"))).isEmpty();
+    }
+
     @Test
     @DisplayName("the result is deduplicated and null arguments are rejected")
     void deduplicatesAndRejectsNulls() {

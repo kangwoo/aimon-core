@@ -1,5 +1,9 @@
 package at.aimon.core.agent;
 
+import java.util.List;
+
+import at.aimon.core.agent.tool.permission.AllowedTool;
+
 /**
  * Agent definition interface.
  *
@@ -13,8 +17,8 @@ package at.aimon.core.agent;
  * <pre>
  * {
  *     &#64;code
- *     Agent agent = DefaultAgent.builder().name("MyAgent").metadata(AgentMetadata.of(10))
- *             .content(AgentContent.of("You are helpful...", modelConfig)).build();
+ *     Agent agent = DefaultAgent.builder().name("MyAgent").maxIterations(10)
+ *             .systemPrompt("You are helpful...").build();
  *
  *     String name = agent.getName();
  *     int maxIterations = agent.getMaxIterations(); // convenience method
@@ -46,5 +50,27 @@ public interface Agent {
      * @return The agent content (never null)
      */
     AgentContent getContent();
+
+    /**
+     * Gets the allow-list bounding every tool call this agent makes.
+     *
+     * <p>
+     * <b>An empty list means unrestricted</b>, which is both the default and what every validator in
+     * {@code at.aimon.core.agent.tool.permission} does with one.
+     *
+     * @return An immutable list of allowed tools (never null, may be empty)
+     */
+    default List<AllowedTool> getAllowedTools() {
+        return getMetadata().getAllowedTools();
+    }
+
+    /**
+     * Gets whether this agent declares any tool restriction at all.
+     *
+     * @return true when the allow-list is non-empty
+     */
+    default boolean hasToolRestrictions() {
+        return getMetadata().hasToolRestrictions();
+    }
 
 }

@@ -1,7 +1,9 @@
 package at.aimon.core.agent;
 
+import java.util.List;
 import java.util.Objects;
 
+import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.llm.LlmModel;
 
 /**
@@ -179,6 +181,36 @@ public final class DefaultAgent implements Agent {
             return this;
         }
 
+        /**
+         * Sets the allow-list from raw specification strings (e.g. {@code "Read"}, {@code "Bash(git:*)"}).
+         *
+         * @param tools
+         *            The tool-specification strings (must not be null)
+         * @return This builder
+         * @throws NullPointerException
+         *             if tools is null
+         */
+        public Builder tools(List<String> tools) {
+            ensureMetadataBuilder();
+            this.metadataBuilder.tools(tools);
+            return this;
+        }
+
+        /**
+         * Sets the allow-list directly from parsed {@link AllowedTool} entries.
+         *
+         * @param allowedTools
+         *            The allowed tools (must not be null; an empty list means unrestricted)
+         * @return This builder
+         * @throws NullPointerException
+         *             if allowedTools is null
+         */
+        public Builder allowedTools(List<AllowedTool> allowedTools) {
+            ensureMetadataBuilder();
+            this.metadataBuilder.allowedTools(allowedTools);
+            return this;
+        }
+
         private void ensureMetadataBuilder() {
             if (metadataBuilder == null) {
                 metadataBuilder = AgentMetadata.builder();
@@ -205,6 +237,23 @@ public final class DefaultAgent implements Agent {
             }
             if (content == null && contentBuilder == null) {
                 throw new IllegalStateException("Agent content must be set (use content() or systemPrompt())");
+            }
+            // A whole metadata object and the convenience setters are two ways to say the same thing, and mixing
+            // them used to drop one of them in silence — whichever order they were called in, since metadata(...)
+            // clears the builder and the builder is only consulted when metadata is absent. That is tolerable while
+            // the droppable fields are a name and an iteration cap; it is not once one of them is allowedTools,
+            // because the value that goes missing is a restriction and it goes missing fail-open. Refusing the
+            // ambiguous spec is the same answer this repository gives a configured-but-unread store.
+            if (metadata != null && metadataBuilder != null) {
+                throw new IllegalStateException("Agent metadata was set both ways: metadata(...) and the convenience "
+                        + "setters (name/model/maxIterations/tools/allowedTools) cannot be combined, because one of "
+                        + "them would be silently discarded. Put every field on the AgentMetadata, or use only the "
+                        + "convenience setters.");
+            }
+            if (content != null && contentBuilder != null) {
+                throw new IllegalStateException("Agent content was set both ways: content(...) and the convenience "
+                        + "setters (systemPrompt/...) cannot be combined, because one of them would be silently "
+                        + "discarded.");
             }
             AgentMetadata finalMetadata = metadata != null ? metadata : metadataBuilder.build();
             AgentContent finalContent = content != null ? content : contentBuilder.build();
