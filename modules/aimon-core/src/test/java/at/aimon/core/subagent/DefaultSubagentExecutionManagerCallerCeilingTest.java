@@ -45,8 +45,10 @@ import at.aimon.core.subagent.execution.SubagentExecutor;
  *
  * <p>
  * The ceiling is applied where the resolved subagent is turned into an execution context, which is the one place both
- * execution branches pass through. The consequence is tested directly here: a registered <b>code behavior</b> is
- * handed the same narrowed definition as the ReAct loop, so the boundary does not depend on which branch runs.
+ * execution branches pass through, so no spawn site can forget it and a registered <b>code behavior</b> is handed the
+ * same narrowed definition the ReAct loop gets. That is receipt rather than enforcement: a behavior is trusted code
+ * and its context carries the full registry, so it can still reach past the list. The ceiling binds what runs through
+ * {@code ToolExecutionManager}, which is every call the ReAct loop makes.
  */
 @DisplayName("DefaultSubagentExecutionManager — caller allow-list ceiling")
 class DefaultSubagentExecutionManagerCallerCeilingTest {
@@ -125,8 +127,13 @@ class DefaultSubagentExecutionManagerCallerCeilingTest {
     }
 
     @Test
-    @DisplayName("a registered code behavior is bound by the same ceiling as the ReAct loop")
-    void aCodeBehaviorSeesTheSameCeiling() {
+    @DisplayName("a registered code behavior is handed the same narrowed definition as the ReAct loop")
+    void aCodeBehaviorIsHandedTheSameNarrowedDefinition() {
+        // Handed, not bound, and the name says only what is asserted. A behavior is trusted code: its execution
+        // context carries the full registry, so it can reach a tool the ceiling excludes without going through
+        // ToolExecutionManager — the property SubagentToolScope already documents for its registry shape. What this
+        // pins is that the narrowing happens above the branch, so the behavior path is not handed a wider definition
+        // than the ReAct loop would get.
         final InMemorySubagentBehaviorRegistry behaviors = new InMemorySubagentBehaviorRegistry();
         final List<List<AllowedTool>> seen = new ArrayList<>();
         behaviors.register("explorer", (ctx, req, support) -> {

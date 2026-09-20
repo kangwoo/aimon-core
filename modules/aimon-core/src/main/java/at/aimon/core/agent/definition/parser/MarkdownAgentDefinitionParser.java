@@ -226,7 +226,10 @@ public final class MarkdownAgentDefinitionParser implements AgentDefinitionParse
      * The key is spelled the way the Agent Skills specification spells it, and the way the skill, subagent and
      * command surfaces already spell it — deliberately, even though this file's other keys are camelCase. One
      * concept read by four surfaces is worth more than one file's internal consistency, and an operator moving a
-     * list from {@code agents/*.md} to {@code agent.md} should not have to respell it.
+     * list from {@code agents/*.md} to {@code agent.md} should not have to respell it. That holds for the
+     * <em>key</em> on all four surfaces and for the <em>value</em> on {@code agents/*.md}, which is comma-or-list
+     * like this one; a {@code SKILL.md} list is space-delimited, and a space-separated value is rejected below
+     * rather than read as one oddly-named tool.
      *
      * <p>
      * That choice has a cost this method pays rather than passes on: {@code allowedTools} is the spelling this
@@ -279,11 +282,23 @@ public final class MarkdownAgentDefinitionParser implements AgentDefinitionParse
 
         final List<AllowedTool> allowedTools = new ArrayList<>(specs.size());
         for (String spec : specs) {
+            final AllowedTool entry;
             try {
-                allowedTools.add(AllowedTool.parse(spec));
+                entry = AllowedTool.parse(spec);
             } catch (InvalidToolSpecException | IllegalArgumentException e) {
                 throw new AgentDefinitionParseException("Invalid 'allowed-tools' entry: " + spec, e);
             }
+            // A tool name cannot contain whitespace, so one that does is a list that was not separated. The reason
+            // this is worth its own message: a SKILL.md allow-list is space-delimited (SkillMetadata splits on
+            // \s+), so `Read Grep` copied from a skill parses here as one tool named "Read Grep" — an agent that
+            // then silently runs with an allow-list matching nothing. The test is on the name rather than the whole
+            // spec because a pattern may legitimately contain a space: Bash(npm install).
+            if (entry.getToolName().chars().anyMatch(Character::isWhitespace)) {
+                throw new AgentDefinitionParseException("Invalid 'allowed-tools' entry: '" + spec
+                        + "'. A tool name cannot contain whitespace — separate entries with commas or write them as a "
+                        + "YAML list. (A SKILL.md allow-list is space-delimited; an agent.md one is not.)");
+            }
+            allowedTools.add(entry);
         }
         return List.copyOf(allowedTools);
     }

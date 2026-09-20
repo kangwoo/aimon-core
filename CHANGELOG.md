@@ -20,6 +20,10 @@ Central is versioned independently).
   is deliberate: it is the Agent Skills specification's name and the three sibling surfaces already spell it that
   way. `allowedTools` is therefore **rejected by name** rather than ignored — an unknown key is otherwise dropped in
   silence, which would hand back an unrestricted agent while its author believes they restricted it.
+- **The value is comma-or-list**, matching `agents/*.md`. A `SKILL.md` allow-list is *space*-delimited, so a list
+  copied from one would otherwise parse as a single oddly-named tool and leave the agent matching nothing; a tool
+  name containing whitespace is rejected, naming the separator to use. The check is on the name rather than the
+  whole entry because a pattern may legitimately contain a space — `Bash(npm install)`.
 - **It acts at the same two points a subagent's does**, reading one value so the two cannot disagree: names absent
   from the list are withheld from the definitions sent to the LLM, and naming one anyway is refused at dispatch as
   *not allowed* rather than *unknown tool*. Only the definitions are narrowed, never the registry, which may carry
@@ -44,8 +48,11 @@ Central is versioned independently).
   `InvokingSessionAccess.idToPropagate` already gives the invoking session. Read it with `CallerAllowedTools.of`, so
   an absent key and an empty list cannot be told apart: both mean unrestricted.
 - **Enforced in one place**, `DefaultSubagentExecutionManager` where a resolved subagent becomes an execution
-  context. That is the single point both execution branches pass through, so a registered code behavior is bound by
-  the same ceiling as the ReAct loop, and no spawn site can forget to apply it.
+  context. That is the single point both execution branches pass through, so no spawn site can forget to apply it and
+  a registered code behavior is handed the same narrowed definition as the ReAct loop. *Handed*, not bound: a
+  behavior is trusted code and reaches the full registry through its execution context, exactly as it could before —
+  `SubagentToolScope` has always said its registry shape "exposes the allow-list without enforcing it". The ceiling
+  binds what runs through `ToolExecutionManager`, which is every tool call the ReAct loop makes.
 - **No overlap refuses the run** rather than running it, for the reason `AllowedTools.intersect` returns an
   `Optional`: an empty list reads as unrestricted everywhere in the permission package, so passing on an empty
   intersection would invert the strictest possible pairing into the loosest. The message names both lists.

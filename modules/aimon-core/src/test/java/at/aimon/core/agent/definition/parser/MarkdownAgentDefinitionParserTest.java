@@ -441,6 +441,40 @@ class MarkdownAgentDefinitionParserTest {
         }
 
         @Test
+        @DisplayName("Should reject a space-separated list rather than read it as one oddly-named tool")
+        void shouldRejectASpaceSeparatedList() {
+            // The realistic mistake: a SKILL.md allow-list is space-delimited, so this is what a copied list looks
+            // like. Read as one tool named "Read Grep" it would leave the agent matching nothing at all.
+            final String content = """
+                    ---
+                    name: test
+                    allowed-tools: Read Grep
+                    ---
+                    body""";
+
+            assertThatThrownBy(() -> parser.parse(stream(content))).isInstanceOf(AgentDefinitionParseException.class)
+                    .hasMessageContaining("whitespace").hasMessageContaining("commas");
+        }
+
+        @Test
+        @DisplayName("Should keep accepting a pattern that legitimately contains a space")
+        void shouldAcceptASpaceInsideAPattern() {
+            // The reason the check is on the tool name and not the whole spec.
+            final String content = """
+                    ---
+                    name: test
+                    allowed-tools: Bash(npm install), Read
+                    ---
+                    body""";
+
+            final AgentDefinition definition = parser.parse(stream(content));
+
+            assertThat(definition.getAllowedTools()).extracting(AllowedTool::getToolName).containsExactly("Bash",
+                    "Read");
+            assertThat(definition.getAllowedTools().get(0).hasPattern()).isTrue();
+        }
+
+        @Test
         @DisplayName("Should reject a value that is neither a list nor a string")
         void shouldRejectAMapping() {
             final String content = """

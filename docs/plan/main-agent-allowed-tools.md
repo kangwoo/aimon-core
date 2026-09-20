@@ -127,5 +127,8 @@ PR 직전 에이전트 둘이 리뷰했고(규약 · 적대적 correctness), 둘
 | "허용목록" 표기 불일치 · 테스트의 `java.util.ArrayList` FQCN | 고쳤다 |
 | `builtin-agent-skill-guide.en.md` 의 `source_commit` 변경이 이 변경셋과 무관하다 | 맞다. **별도 커밋**으로 분리했고 PR 본문에 이유를 적었다 — #172 스쿼시가 남긴 고아 SHA 라 `translations` 잡이 main 에서 이미 빨갛다 |
 
+| **code behavior 가 천장에 "묶인다" 는 주장이 과했다** — behavior 는 실행 컨텍스트로 **전체 레지스트리**를 받는다(`SubagentToolScope` javadoc 이 *"exposes the allow-list without enforcing it"* 라고 이미 적어 둔 성질). 테스트 이름도 주장만 하고 검증하지 않았다 | 문구를 고쳤다 — "handed the same narrowed definition" 이 실제로 참인 것이고, 테스트 이름·CHANGELOG·클래스 javadoc 을 거기에 맞췄다. 코드는 그대로 |
+| **`SKILL.md` 의 `allowed-tools` 는 공백 구분**이라 `agent.md` 로 옮기면 `Read Grep` 이 도구 이름 하나가 된다 | 도구 **이름**에 공백이 있으면 구분자를 알려주며 거부한다. 이름만 보는 이유는 패턴에는 공백이 정당하게 들어가기 때문(`Bash(npm install)`) |
+
 리뷰가 확인했으나 문제 없던 것: 빌더/불변성과 `equals`/`hashCode`/`toString`, import 순서, 패키지 경계와
 ArchUnit, turn/iteration/execution 어휘, javadoc 완전성, 번역 구조 일치, `rename-maps.md` 불필요 판단.
