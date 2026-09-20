@@ -7,6 +7,8 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-20
+
 ### Added: the main agent can declare `allowed-tools`, and a delegation cannot exceed it
 
 - **An agent now declares its own allow-list**, the surface a subagent, a skill and a command each already had and
