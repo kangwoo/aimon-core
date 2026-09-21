@@ -137,7 +137,7 @@ javalin = "7.2.3"
 
 # AI & LLM
 openai = "4.63.1"
-anthropic = "2.62.0"
+anthropic = "2.63.0"
 jtokkit = "1.1.0"
 
 # GraalJS (Phase 5 workflow frontend). JDK-17 line: 23.0.x is the last GraalVM-for-JDK-17
