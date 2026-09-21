@@ -146,7 +146,7 @@ jtokkit = "1.1.0"
 graaljs = "25.3.4.1"
 
 # Search
-opensearch = "2.20.0"
+opensearch = "3.10.0"
 opensearch-rest-client = "2.18.0"
 
 # Logging
