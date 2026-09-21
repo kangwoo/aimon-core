@@ -213,8 +213,12 @@ fi
 # only verification any module has; it is the only one that can see a fat jar at all. Packaging turns
 # resource lookup into jar-entry enumeration, and when that breaks the skill list comes back silently short
 # instead of failing — a regression this framework has actually shipped. Every other test here runs off a
-# directory class path, where that code path does not exist. The task builds both fat jars itself and costs
+# directory class path, where that code path does not exist. The task builds the fat jar itself and costs
 # under a minute, which is why it is gated on the same line rather than argued about.
+#
+# It built two until the Boot 4 baseline, the second with Boot's pre-3.2 "classic" loader, so the enumeration
+# was checked under both of Boot's URL schemes. Boot 4 removed that loader and the second jar went with it --
+# see FatJarPackagingTest's class javadoc for what the tier no longer covers.
 #
 # `jacocoTestCoverageVerification` is here rather than exempted because it can fail a build, and the rule
 # this script is held to is that a release passes no narrower a gate than a pull request. It costs nothing

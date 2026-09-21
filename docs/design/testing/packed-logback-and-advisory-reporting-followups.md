@@ -269,6 +269,19 @@ what the existing note at `:49-53` records: classic from the catalog, core from 
 - If a later catalog bump brings a Logback that Boot 3.5.x cannot start, CI's `build` job fails: its
   `Fat-jar packaging tests` step launches both fat jars.
 
+> **Boundary — two details of this section changed with the Spring Boot 4 baseline (D6).** The mechanism
+> and the conclusion hold: `extra["logback.version"]` is still read, re-measured on 4.1.1 as
+> `logback-core 1.6.3 (selected by rule)` with `logback-classic 1.5.38 -> 1.6.3`. What changed is the
+> arithmetic around it. Boot now manages **1.5.38**, not 1.5.34, which is past CVE-2026-13006 — so of the
+> two CVEs this document weighs, only CVE-2026-19880 still argues for the override. And the packaging step
+> launches **one** fat jar, not two: Boot 4 removed the classic loader, so the second jar no longer exists
+> (`FatJarPackagingTest`'s class javadoc records what that costs). The guard in row 2 of the failure-mode
+> table below still fires; it just has one jar to fire on.
+>
+> The body above is left as written per [`../../project/documentation-guide.md`](../../project/documentation-guide.md)
+> §7 — true when written, falsified by a later change, so it gets a superseding statement rather than an
+> in-place edit. The change's own record is in `CHANGELOG.md` under the Boot 4 entry.
+
 **Why not the options the issue lists as alternatives.**
 - **Keep 1.5.34 and record why.** It is defensible on reachability: no Janino on the sample's class path, and no
   Logback configuration file, so no `SiftingAppender` discriminator. But the sample is what an integrator copies. Its

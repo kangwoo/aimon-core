@@ -1578,30 +1578,74 @@ Spring 의 순서 결정이 아예 관여하지 않게 된다.
 규칙의 의도(구현 모듈이 코어 타입을 전이 노출하지 않게)는 유지하되, 스타터는 정의상 **노출이 목적**이다.
 선례: `aimon-sandbox-docker` 의 `api(project(":aimon-sandbox"))` (이후 별도 저장소로 분리 — §2.6).
 
-### D6. Spring Boot 베이스라인은 **3.5.x**
+### D6. Spring Boot 베이스라인은 **4.1.x**
 
-**결정**: `spring-boot-autoconfigure` **3.5.x**(작성 시점 최신 3.5.16)에 대해 컴파일한다. 지원 창은
-"이 애노테이션 표면에 한해 Boot 3.5.x ~ 4.1.x". Boot 4 전용 아티팩트는 **필요해질 때 별도로** 낸다 —
-하나의 아티팩트가 두 메이저를 지원하지 않는다.
-**기각한 대안 (a)**: 저장소가 현재 카탈로그에 고정한 3.4.1 — OSS 지원이 끝났다.
-**기각한 대안 (b)**: Boot 4.x 베이스라인 — 아직 채택률이 낮고, junit 6 로의 테스트 클래스패스 점프를
-21개 모듈 전체에 강요한다.
-**근거**:
-- **3.5 는 Boot 3 계열의 마지막 라인이고 상용 지원이 2032-06-30 까지**로 유난히 길다(4.0 은 2027-12-31,
-  4.1 은 2028-07-31). 라이브러리 저자에게 중요한 것은 OSS EOL 이 아니라 "소비자가 실제로 몇 년 그 위에
-  앉아 있는가"다.
-- 호환 창은 추론이 아니라 확인된 것이다 — `@AutoConfiguration` 의 멤버 집합이 3.4.1 과 4.1.0 사이에
-  동일하고(javap 비교), `@ConditionalOn*` 은 여전히 `org.springframework.boot.autoconfigure.condition` 에,
-  `@ConfigurationProperties` 는 여전히 `org.springframework.boot.context.properties` 에 있으며,
-  `…AutoConfiguration.imports` 파일도 4.1.0 에 존재한다.
-- Boot 팀이 "모듈화 리팩터링 때문에 한 아티팩트로 Boot 3 과 4 를 동시에 지원하는 것"을 강하게
-  비권장한다. LangChain4j 의 우회책이 `-spring-boot-starter` / `-spring-boot4-starter` **쌍둥이 36개**다.
+**결정**: `spring-boot-autoconfigure` **4.1.x**(작성 시점 최신 GA 4.1.1, Spring Framework 7.0.9)에
+대해 컴파일한다. 하나의 아티팩트가 두 메이저를 지원하지 않는다는 원칙은 **그대로다** — 다만 그 하나가
+이제 Boot 4 쪽이다. Boot 3 에 남아야 하는 소비자는 `0.3.0` 계열에 머문다.
+
+**이 결정은 이전 D6 을 뒤집은 것이고, 뒤집힌 근거를 먼저 적는다.** 옛 D6 은 베이스라인을 3.5 에
+고정했고 이유는 API 가 아니라 **지원 창**이었다 — 3.5 는 Boot 3 계열의 마지막 라인으로 상용 지원이
+2032-06-30 까지인 반면 4.0 은 2027-12-31, 4.1 은 2028-07-31 이다. 그 비대칭은 **지금도 사실이며 이
+결정으로 사라지지 않는다.** 소비자가 이 스타터 위에 앉아 있을 수 있는 기간은 약 4년 짧아졌다.
+그것이 이 결정의 가격이고, 아래 "무엇을 샀는가"가 그 대가로 얻은 것이다.
+
+**옛 D6 의 기각 사유 두 개 중 하나는 이미 무효였다.** 옛 기각 대안 (b)(Boot 4 베이스라인)의 근거는
+"채택률이 낮고, junit 6 로의 테스트 클래스패스 점프를 21개 모듈 전체에 강요한다" 였다. 뒤쪽은
+**이 결정을 내리기 전에 이미 일어나 있었다** — Dependabot #161 (2026-09-16) 이 `junit-bom` 을
+5.12.2 → 6.1.3 으로 올렸고, 그 플랫폼은 네 개 testkit 이 `api` 로 내놓는다. 그래서 **Boot 3.5 위에서
+이미 11개 프로젝트가 JUnit 6.1.3 으로 돌고 있었다** — testkit 넷과 그것을 `testImplementation` 으로
+받는 일곱(`aimon-core` · `aimon-cli` · `aimon-spring-boot-starter` · `aimon-filesystem-gridfs` ·
+`aimon-session-{mongodb,postgres,redis}`). 나머지는 5.13.4 / 5.14.4 였다. 추론이 아니라 `spring-boot`
+를 3.5.16 으로 되돌려 각 모듈의 `dependencyInsight` 를 읽어 측정했다(2026-09-21).
+
+즉 점프는 이미, 그리고 **빌드의 절반에 걸쳐 고르지 않게** 치러져 있었고 그 사실을 말하는 문장이
+아무 데도 없었다. 치르지 않은 비용을 이유로 든 기각은 그 비용이 치러진 뒤에는 근거가 아니다.
+
+**무엇을 샀는가 — 실측한 것만 적는다.**
+
+| 확인 대상 | 결과 |
+|---|---|
+| Java 베이스라인 | **17 그대로.** `spring-boot-4.1.1` 의 `SpringApplication.class` 는 major version 61. Boot 4 가 Java 21 을 요구한다는 것은 사실이 아니다 |
+| `@AutoConfiguration` · `@ConditionalOn*` · `@ConfigurationProperties` · `…AutoConfiguration.imports` | 전부 그대로. 자동설정 표면은 한 줄도 바뀌지 않았다 |
+| Framework 7.0.9 쪽 14종 (`Bean` · `SmartLifecycle` · `ObjectProvider` · `aot.hint.*` …) | 14/14 존재 |
+| 테스트 표면 (`ApplicationContextRunner` · `FilteredClassLoader` · `AutoConfigurations`) | 그대로 |
+| **Actuator health 3종** | **이동.** `o.s.b.actuate.health.{HealthIndicator,Health,Status}` → `o.s.b.health.contributor.*`, 아티팩트도 `spring-boot-actuator` → `spring-boot-health` |
+| 메트릭 자동설정 이름 (`afterName` 문자열) | **이동.** `o.s.b.actuate.autoconfigure.metrics.*` → `o.s.b.micrometer.metrics.autoconfigure.*` |
+| `WebServerInitializedEvent` · `WebServerGracefulShutdownLifecycle` | **이동.** `o.s.b.web.context.*` → `o.s.b.web.server.context.*` (아티팩트 `spring-boot-web-server`) |
+| **classic fat-jar 로더** | **제거됨.** `LoaderImplementation` 이 `spring-boot-loader-tools` 에 없고 `BootJar` 에 `loaderImplementation` 프로퍼티가 없다 |
+| `MemberCategory` | **늘었다.** Framework 7 이 `ACCESS_PUBLIC_FIELDS` · `ACCESS_DECLARED_FIELDS` 를 추가했고, `BindingReflectionHintsRegistrar` 가 `DECLARED_FIELDS` 대신 그쪽을 등록한다(`Todo` 로 실측). 등록자는 Spring 에 위임하므로 프로덕션 동작은 그대로고, 따라간 것은 `AimonRuntimeHintsTest` 의 단언이다 |
+| **AOT 리소스 패턴 의미론** | **바뀜.** 아래 참조 |
+
+이 중 마지막 항목이 이 이주가 실제로 **고친** 것이다. Framework 6 은 `*` 를 `.*` 로 풀어 디렉토리
+구분자를 넘겼고, Framework 7 은 GraalVM glob 의미론이라 `*` 가 `/` 에서 멈추고 `**` 만 내려간다
+(두 버전에서 각각 실측). 등록자의 패턴은 `agents/*` 였으므로 **Boot 4 에서는 `agents/` 아래의 어떤
+번들 파일도 힌트에 덮이지 않았을 것이다** — 그리고 그 실패는 네이티브 빌드에서만, "파일이 그냥
+없다" 는 모양으로 나타난다. `agents/**` 로 고쳤고, 그 철자는 Framework 6·7 양쪽에서 매칭된다.
+`AimonRuntimeHintsTest` 의 drift guard 가 이것을 잡았다.
+
+**기각한 대안 (a)**: 3.5 유지. 지원 창만 보면 이쪽이 옳다. 고르지 않은 것은 위의 "샀는가" 표가
+아니라 그 아래 한 줄 때문이다 — 3.5 에 머물면 `agents/*` 결함은 **발견되지 않은 채 남고**, Boot 4
+앱에서 스타터의 health indicator 는 조용히 사라진 상태로 계속 간다(아래).
+**기각한 대안 (b)**: 두 아티팩트(`-spring-boot-starter` / `-spring-boot4-starter`) 병행. Boot 팀이
+비권장하는 바로 그 우회책이고, LangChain4j 가 그 길에서 **쌍둥이 36개**를 유지하고 있다. 이 저장소가
+그 유지 비용을 감당할 근거가 없다.
+
+**Boot 3 앱에서 무엇이 깨지는가 — 대칭적으로 적는다.** 이 스타터를 Boot 3.5 앱에 올리면 옛 D6 이
+Boot 4 에 대해 기술했던 손실이 **방향만 바뀐 채 그대로** 일어난다: health 분기의
+`@ConditionalOnClass` 가 Boot 4 타입을 가리키므로 Boot 3 클래스패스에서는 매칭되지 않고,
+health indicator 가 조용히 사라진다. 자동설정 표면 자체는 양쪽에서 동일하므로 컨텍스트는 뜨고
+앱은 돈다. 이것이 "한 아티팩트가 두 메이저를 지원하지 않는다" 가 뜻하는 구체적 내용이다.
 
 **부수 결정**: 스타터는 **자신의 `ObjectMapper` 를 직접 만든다.** 앱의 `ObjectMapper` 빈을 주입받지
 않는다 — Boot 4 에서 그 빈은 Jackson 3(`tools.jackson`) 타입일 수 있고, 그때
 `@ConditionalOnBean(ObjectMapper.class)` 는 **조건에 따라** 매칭되기도 안 되기도 한다
 (`spring-boot-jackson2` 가 클래스패스에 남아 있으면 Jackson 2 `ObjectMapper` 빈이 여전히 존재한다).
-결과가 확정적이지 않다는 점이 오히려 빌리지 않을 이유다.
+결과가 확정적이지 않다는 점이 오히려 빌리지 않을 이유다. **이 부수 결정은 베이스라인이 바뀌어도
+그대로이며, 이번 이주에서 값을 했다** — 스타터 main 소스의 Jackson 참조는 여전히 **0건**이라
+Jackson 3 전환이 스타터에 닿지 않았다. 닿은 곳은 샘플 앱의 패키징 헬퍼 하나뿐이고, 그쪽은
+Jackson 3 으로 옮겼다. AIMON 코어는 계속 Jackson 2 를 싣고, 두 메이저는 패키지 이름이 달라
+한 JVM 안에서 공존한다 — `packagingTest` 가 Boot 4 fat jar 를 띄워 그것을 확인한다.
 
 ### D7. 서버 기본값은 CLI 기본값과 다르다
 

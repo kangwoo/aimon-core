@@ -42,7 +42,7 @@ CLI 대화만 필요하다면 이 문서 대신 [agent-session-guide.md](../feat
 
 | 길 | 언제 | 여러분이 직접 하는 일 |
 |----|------|----------------------|
-| **스타터** — `aimon-spring-boot-starter` | Spring Boot 3 애플리케이션 | 프로퍼티 3개 + `LlmClient` 자격증명. 나머지는 auto-configuration |
+| **스타터** — `aimon-spring-boot-starter` | Spring Boot 4 애플리케이션 | 프로퍼티 3개 + `LlmClient` 자격증명. 나머지는 auto-configuration |
 | **부트스트랩** — `aimon-bootstrap` | Spring 이 아닌 JVM 호스트 (Quarkus / Micronaut / plain `main` / 배치) | `AimonStackSpec` 을 손으로 만들고 `AimonStack` 을 닫는다 (§14) |
 | **손 배선** — `aimon-core` 직접 | 조립의 형태 자체를 바꿔야 할 때 | 전부 — 실행자·레지스트리·팩토리·teardown 순서 (부록 A) |
 
@@ -133,8 +133,8 @@ public class AgentController {
 | 형태 | 지원 | 검증 |
 |------|------|------|
 | Spring Boot 실행 가능 jar — nested 로더 (`jar:nested:`, Boot 3.2+) | ✅ | `FatJarPackagingTest` 가 실제 JVM 을 띄워 확인 |
-| Spring Boot 실행 가능 jar — classic 로더 (`jar:file:`) | ✅ | 같은 테스트가 같은 단언을 두 번째 jar 에 반복 |
-| 디렉토리(exploded) 클래스패스 — 개발·IDE | ✅ | 같은 테스트가 세 번째 프로세스로 확인 |
+| Spring Boot 실행 가능 jar — classic 로더 (`jar:file:`) | ⚠️ | **더는 검증하지 않는다** — Boot 4 가 그 로더를 제거해 띄울 jar 자체가 없다 |
+| 디렉토리(exploded) 클래스패스 — 개발·IDE | ✅ | 같은 테스트가 두 번째 프로세스로 확인 |
 | WAR 를 서블릿 컨테이너에 배치 | ❌ | — |
 | `jlink` 런타임 이미지 (`jrt:`) | ❌ | — |
 | GraalVM native 이미지 | ❌ | — |

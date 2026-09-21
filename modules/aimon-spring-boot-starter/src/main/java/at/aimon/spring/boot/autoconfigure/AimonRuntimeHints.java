@@ -33,9 +33,24 @@ import at.aimon.core.tools.todo.TodoStatus;
  * {@code agents/<bundle>/skills/index} and {@code agents/<bundle>/skills/<name>/SKILL.md} — but a skill directory
  * also carries payload files whose names no constant knows, because {@code BundledSkillMaterializer} copies
  * whatever is there. A hint listing only the five shapes would therefore be provably incomplete, so the whole
- * subtree is registered instead. In Spring's pattern syntax {@code *} becomes {@code .*} and crosses directory
- * separators (see {@code ResourcePatternHint#toRegex()}), which is also the exact regex written into
- * {@code resource-config.json}, so one pattern covers the tree.
+ * subtree is registered instead — with {@code **}, which is the part worth reading twice.
+ *
+ * <p>
+ * This pattern was {@code agents/*} until the Spring Boot 4 baseline, because Spring Framework 6 turned {@code *}
+ * into {@code .*} and let it cross directory separators. <b>Framework 7 does not</b>: it matches GraalVM's glob
+ * syntax, where {@code *} stops at a {@code /} and only {@code **} descends. Measured on both, with
+ * {@code RuntimeHintsPredicates.resource().forResource(…)} against a hint registered from each pattern:
+ *
+ * <pre>
+ * 6.2.19   agents/*  vs agents/p/agent.md -&gt; true    agents/** vs agents/p/agent.md -&gt; true
+ * 7.0.9    agents/*  vs agents/p/agent.md -&gt; FALSE   agents/** vs agents/p/agent.md -&gt; true
+ * </pre>
+ *
+ * <p>
+ * So on Framework 7 the old pattern covered {@code agents/} itself and nothing below it — every bundled skill
+ * body, every agent definition, every payload file would have been missing from a native image, and the failure
+ * would have appeared only in a native build, as a file that is simply not there. {@code **} matches on both
+ * lines, so this is not a Boot-4-only spelling; it is the one that was always meant.
  *
  * <p>
  * <b>What this does not fix.</b> Resource <em>enumeration</em> is not hintable at all: to materialize a skill's
@@ -67,7 +82,7 @@ final class AimonRuntimeHints implements RuntimeHintsRegistrar {
      *
      * @see #registerHints(RuntimeHints, ClassLoader)
      */
-    static final String AGENT_BUNDLE_RESOURCE_PATTERN = "agents/*";
+    static final String AGENT_BUNDLE_RESOURCE_PATTERN = "agents/**";
 
     /** Binary names of the job types Quartz instantiates reflectively; absent unless the scheduler module is. */
     static final List<String> QUARTZ_JOB_CLASS_NAMES = List.of(

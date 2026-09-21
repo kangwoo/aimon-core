@@ -12,14 +12,20 @@
 java = "17"
 
 # Frameworks
-# Spring Boot baseline the starter compiles against (spring-boot-starter-design.md D6): the 3.5 line is
-# the last of Boot 3 and is commercially supported to 2032-06, which is what matters to a library author.
+# Spring Boot baseline the starter compiles against (spring-boot-starter-design.md D6): the 4.1 line, which
+# brings Spring Framework 7.0.x. D6 previously fixed this at 3.5 for the support window — 3.5 is the last of
+# Boot 3 and is commercially supported to 2032-06, against 2028-07 for 4.1 — and that trade was taken
+# deliberately in the other direction: see D6 for what was given up and why.
+#
+# Boot 4 keeps the Java 17 baseline (spring-boot-4.1.1's SpringApplication.class is major version 61,
+# measured), so this ref moved without `java` above moving with it.
+#
 # The same ref pins spring-boot-starter-test, which every module gets from aimon.java-conventions,
 # and the Boot Gradle plugin in [plugins] — one ref, so a version bump is provably one edit. There was
 # a second pair of keys (spring-boot-plugin / dependency-management-plugin) holding the same two values
 # for the plugins alone; it was collapsed because nothing kept the two halves in step. If you ever need
 # the plugin to lead or trail the library BOM, split the ref back out deliberately rather than by drift.
-spring-boot = "3.5.16"
+spring-boot = "4.1.1"
 spring-dependency-management = "1.1.7"
 
 # Libraries
@@ -81,23 +87,75 @@ aws-sdk = "2.55.0"
 # the 2.33.0 its provider SDKs ask for, and still differs (recounted for #99; the block above records it).
 # junit-bom costs the consumer JUnit's coordinates, which is what a JUnit contract suite may fairly ask for.
 #
-# So the number below is not the version this build's tests run on: whatever newer JUnit the other test
-# libraries on a classpath ask for wins by conflict resolution (5.13.4 or 5.14.4 today). It is the floor the
-# testkits set, and the constraint aimon-memory-testkit publishes. Keep it equal to the JUnit that
-# `spring-boot` above resolves to (today 5.12.2, checked 2026-09-10); if Spring Boot moves ahead the
-# constraint merely lags, and the newer JUnit wins over it by normal conflict resolution.
-# For aimon-memory-testkit that floor is the answer rather than a lag (#99). The suite compiles against 5.12.2,
-# and what it publishes — junit-bom 5.12.2 as a platform in the module metadata, an import in the POM — says
-# exactly that: the lowest JUnit it links against. Where it runs, a consumer's newer JUnit wins over it
-# (aimon-core's tests run it on 5.14.4, which archunit-junit5 asks for). Its own testRuntimeClasspath resolves
-# 5.13.4, which mockito-junit-jupiter 5.23.0 from the conventions plugin's test dependencies asks for, but the
-# module has no test sources, so no test runs there — and raising the published floor to match would move a
-# consumer's JUnit for a classpath that executes nothing. Run once on exactly 5.12.2 (#120, 2026-09-11): aimon-core's
-# StoreBackedPeerMemoryContractTest, the suite's one in-tree subclass, with every Jupiter jar at 5.12.2 and every
-# Platform jar at 1.12.2 on that run's classpath — 21 tests, 0 failed, 0 skipped. An init script added
-# `testRuntimeOnly(enforcedPlatform("org.junit:junit-bom:5.12.2"))` to :aimon-core for
-# `:aimon-core:test --tests 'at.aimon.core.memory.StoreBackedPeerMemoryContractTest' --rerun`. Nothing in the build
-# repeats it; repeat it when this number or the suite changes.
+# So the number below is not necessarily the version a given module's tests run on: whatever newer JUnit the
+# other test libraries on a classpath ask for wins by conflict resolution. On Boot 4.1.1 every module resolves
+# JUnit 6 — 6.1.3 where a testkit's platform reaches, 6.0.3 from spring-boot-starter-test everywhere else
+# (measured across all 23 projects, 2026-09-21). It is the floor the testkits set, and the constraint
+# aimon-memory-testkit publishes. Keep it at or above the JUnit that
+# `spring-boot` above resolves to (Boot 4.1.1 manages 6.0.3; this entry is 6.1.3, checked 2026-09-21).
+# Ahead is the safe direction, because this platform is `api` on four testkits and so raises a consumer's
+# JUnit rather than being raised by it; behind, Spring Boot's newer JUnit wins by normal conflict
+# resolution and the number here becomes a floor nothing observes.
+#
+# The instruction here used to read "keep it equal ... (today 5.12.2)", and by 2026-09-16 the line below
+# said 6.1.3 — Dependabot #161 had moved the value while the sentence above it stayed. That is how **11 of
+# this build's projects already resolved JUnit 6.1.3 while still on Boot 3.5**: the four testkits, which
+# declare the platform, and the seven modules that take one on `testImplementation` and therefore inherit it
+# through `api` — aimon-core, aimon-cli, aimon-spring-boot-starter, aimon-filesystem-gridfs and
+# aimon-session-{mongodb,postgres,redis}. Everything else stayed on 5.13.4 or 5.14.4. Measured by pinning
+# `spring-boot` back to 3.5.16 and reading dependencyInsight on each (2026-09-21), not inferred.
+# "Resolved" rather than "ran", and the two numbers differ: **11 projects resolve it, 8 run tests on it** —
+# the seven consumers plus aimon-llm-capability-testkit, the only testkit with test sources of its own
+# (measured: the other three have 0). For those three the platform is what their *main* sources compile
+# against and what they publish, which is the whole point of declaring it `api`; no test executes there.
+#
+# The Boot 4 move finished what that bump started. spring-boot-starter-test 4.1.1 asks for 6.0.3, so the
+# modules the testkit platform does not reach moved off JUnit 5 too: every project in this build now resolves
+# JUnit 6, 6.1.3 or 6.0.3 (measured across all 23, 2026-09-21). Nothing here is on JUnit 5 any more.
+#
+# That is also why the Boot 4 move (D6) did not have to pay for a JUnit 6 jump: it was already paid, and
+# paid unevenly, which is the part worth noticing — half the build had moved and no sentence said so.
+# "At or above" is stated as a range for that reason — an exact equality is a sentence the next bot
+# invalidates.
+# For aimon-memory-testkit that floor is the answer rather than a lag (#99). The suite compiles against, and
+# publishes, whatever this entry says — junit-bom as a platform in the module metadata, an import in the POM —
+# and that is the lowest JUnit it links against. Today that is 6.1.3, so the floor it publishes is 6.1.3.
+#
+# The paragraph here used to read "compiles against 5.12.2 … aimon-core's tests run it on 5.14.4 … its own
+# testRuntimeClasspath resolves 5.13.4", and every one of those three numbers was stale: the entry below moved
+# to 6.1.3 (Dependabot #161) and the sentence did not follow, exactly like the instruction above it. Re-measured
+# 2026-09-21 on Boot 4.1.1: `:aimon-core:dependencyInsight --configuration testRuntimeClasspath` reports
+# junit-jupiter-api **6.1.3**, "by conflict resolution: between versions 6.1.3, 6.0.3 and 5.13.4" — 6.0.3 being
+# what spring-boot-starter-test 4.1.1 asks for. The old prose described a build that no longer exists.
+#
+# The consequence the old paragraph reasoned about is the one to keep: raising the published floor moves a
+# consumer's JUnit, so it is a decision about consumers rather than about this build. What changed is that the
+# floor is no longer below what the build runs — it is the thing setting it.
+#
+# The floor is verified by running the suite on it, because nothing in an ordinary build does: where the suite
+# runs, a consumer's JUnit normally wins by conflict resolution, so the published constraint itself goes
+# unexercised. Run it with `scripts/verify-junit-floor.init.gradle.kts`, which pins every JUnit artifact on
+# :aimon-core's test runtime classpath with `enforcedPlatform` and prints the pinned jars:
+#
+#   ./gradlew -I scripts/verify-junit-floor.init.gradle.kts -PjunitFloor=6.1.3 \
+#       :aimon-core:printJunitJars \
+#       :aimon-core:test --tests 'at.aimon.core.memory.StoreBackedPeerMemoryContractTest' --rerun
+#
+# **Last run on 6.1.3 (2026-09-21, with the Boot 4 move): 21 tests, 0 failed, 0 skipped**, with junit-jupiter,
+# -api, -engine, -params and junit-platform-commons, -engine, -launcher all at 6.1.3 on that run's classpath.
+# Repeat it when this number or the suite changes. The previous run was #120 (2026-09-11) on the then-floor
+# 5.12.2, also 21 tests — the suite has not changed size between them.
+#
+# Two things about that classpath are worth reading rather than assuming. The **Platform** jars are 6.1.3, not
+# 1.x: JUnit 6 folded the separately-numbered platform line into one version, so the old record's "every
+# Platform jar at 1.12.2" has no counterpart to compare against. And `junit-4.13.2` is on the classpath too,
+# from okhttp3:mockwebserver via aimon-filesystem-testkit — that is JUnit 4 under the `junit:junit` coordinate,
+# which `org.junit:junit-bom` does not govern and this floor says nothing about.
+#
+# Nothing in the build repeats this automatically, on purpose: pinning JUnit for one suite is not worth a
+# permanent tier for a claim that moves about once a year. The script is stored rather than retyped because
+# the instruction above had lapsed **twice** before anyone noticed — Dependabot moved the floor and no run
+# followed — and re-deriving the pin, not running it, was the cost that made it easy to skip.
 junit = "6.1.3"
 assertj = "3.27.7"
 mockito = "5.23.0"
@@ -162,7 +220,7 @@ slf4j = "2.0.19"
 # that was not a reason to stay. GitHub's advisory database holds the two newest only as unreviewed advisories that
 # name no package (GHSA-567r-vvh5-jjr8, GHSA-9mh8-hq67-v26g), so a query by package returns neither, and OSV has no
 # record of either (2026-09-11): look for the next one in NVD and on logback.qos.ch/news.html, not only by id.
-# 1.6.x is Logback's stable line and 1.5.x its legacy one. Spring Boot manages 1.5.x (3.5.16 resolves 1.5.34), so this
+# 1.6.x is Logback's stable line and 1.5.x its legacy one. Spring Boot manages 1.5.x (4.1.1 resolves 1.5.38), so this
 # entry is ahead of `spring-boot` and wins on every test classpath that names it, and replaces Boot's version in
 # aimon-sample-app. Keep it at or above Boot's: below it, spring-boot-starter-test raises this entry there, and
 # aimon-session-testkit's shipped and tested versions part again (backlog D-2); below it, aimon-sample-app would pack
@@ -200,6 +258,13 @@ spring-boot-starter-test = { module = "org.springframework.boot:spring-boot-star
 spring-boot-autoconfigure = { module = "org.springframework.boot:spring-boot-autoconfigure", version.ref = "spring-boot" }
 spring-boot-configuration-processor = { module = "org.springframework.boot:spring-boot-configuration-processor", version.ref = "spring-boot" }
 spring-boot-autoconfigure-processor = { module = "org.springframework.boot:spring-boot-autoconfigure-processor", version.ref = "spring-boot" }
+# Named only by aimon-spring-boot-starter's tests, for one constant: WebServerGracefulShutdownLifecycle's
+# SMART_LIFECYCLE_PHASE, which AimonLifecycleTest orders AIMON's own phase against. Boot 3 carried that class in
+# the core `spring-boot` jar, which every test classpath already had; Boot 4's modularisation moved it to
+# org.springframework.boot.web.server.context in this artifact, so it has to be asked for by name. Not
+# spring-boot-starter-web, which would put a servlet container on the classpath of a slice test that starts no
+# web server.
+spring-boot-web-server = { module = "org.springframework.boot:spring-boot-web-server", version.ref = "spring-boot" }
 
 # Database
 postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" }
@@ -245,6 +310,11 @@ commons-lang3 = { module = "org.apache.commons:commons-lang3", version.ref = "co
 jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
 jackson-datatype-jsr310 = { module = "com.fasterxml.jackson.datatype:jackson-datatype-jsr310", version.ref = "jackson" }
 jackson-dataformat-yaml = { module = "com.fasterxml.jackson.dataformat:jackson-dataformat-yaml", version.ref = "jackson" }
+# Jackson 3, carrying no version on purpose — the same shape as `junit-jupiter` above and for the same reason.
+# Its one consumer is aimon-sample-app, which applies Boot's dependency management, so Boot's jackson-bom (3.1.5
+# on 4.1.1) decides the version; a number here would be a second opinion nothing reconciles. The `jackson` ref
+# above is Jackson 2 and stays — that is what aimon-core ships, and the two majors coexist by package name.
+jackson3-databind = { module = "tools.jackson.core:jackson-databind" }
 snakeyaml = { module = "org.yaml:snakeyaml", version.ref = "snakeyaml" }
 mustache-java = { module = "com.github.spullara.mustache.java:compiler", version.ref = "mustache" }
 cron-utils = { module = "com.cronutils:cron-utils", version.ref = "cron-utils" }

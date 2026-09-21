@@ -30,10 +30,18 @@ dependencies {
     // depended on AIMON, and both branches are @ConditionalOnClass-guarded so the types are never loaded.
     //
     // The starter rather than micrometer-core alone, even though the two branches are independent: this one
-    // artifact supplies both org.springframework.boot.actuate.health.HealthIndicator and
-    // io.micrometer.core.instrument.MeterRegistry, and it carries the Micrometer version Boot 3.5 manages.
-    // Naming libs.micrometer.core instead would pin 1.12.1 from this catalog against the 1.14.x an application
-    // on this Boot line actually runs — a compile against one minor and a runtime on another, for no gain.
+    // artifact supplies both the health API and io.micrometer.core.instrument.MeterRegistry, and it carries the
+    // Micrometer version Boot manages. Naming libs.micrometer.core instead would pin this catalog's entry
+    // against whatever an application on this Boot line actually runs, and the two are free to diverge: they did
+    // under the previous baseline, where this catalog said 1.12.1 and a Boot 3.5 application ran 1.14.x.
+    //
+    // They agree today — catalog `micrometer` is 1.17.1 and spring-boot-dependencies 4.1.1 manages 1.17.1, so
+    // testCompileClasspath resolves 1.17.1 either way (measured). That is a coincidence of the current numbers,
+    // not a reason the line could be changed: nothing holds the catalog entry and Boot's in step, and taking
+    // Boot's through this artifact is what makes the question not arise.
+    //
+    // On Boot 4 "the health API" is org.springframework.boot.health.contributor.HealthIndicator, in the separate
+    // spring-boot-health artifact; this starter POM brings it, which is why no second coordinate is named here.
     compileOnly(libs.spring.boot.starter.actuator)
 
     implementation(libs.slf4j.api)
@@ -52,6 +60,12 @@ dependencies {
     // can be hidden separately with FilteredClassLoader, which is the only way to show they really are
     // independent rather than merely written in two blocks.
     testImplementation(libs.spring.boot.starter.actuator)
+
+    // One constant: WebServerGracefulShutdownLifecycle.SMART_LIFECYCLE_PHASE, which AimonLifecycleTest orders
+    // AIMON's shutdown phase against. Boot 3 shipped that class in the core `spring-boot` jar, so the test
+    // compiled without naming anything; Boot 4 moved it into this artifact. Test scope only — the starter's main
+    // sources never mention a web server, and they must not start to.
+    testImplementation(libs.spring.boot.web.server)
 
     // The model-capability binding contract AimonPropertiesBindingCoverageTest subclasses. The CLI's surface runs the
     // same one, which is why it lives in a module both can see rather than being copied into each.

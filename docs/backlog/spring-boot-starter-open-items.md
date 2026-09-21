@@ -2310,6 +2310,19 @@ todo 바인딩 제거 → 2건, Quartz 루프 제거 → **정확히 3건**(나�
 Spring 의 패턴에서 `*` 는 디렉토리 구분자를 넘으므로 `agents/*` 한 줄이 앱이 무엇을 넣든 그 아래를
 덮는다. 즉 앱마다 달라지는 것은 **패턴이 아니라 패턴에 걸리는 파일**이었고, 그 둘을 같은 것으로 셌다.
 
+> **경계 — 위 두 문단의 Spring 쪽 사실은 Spring Boot 4 이주(D6 재작성) 이후 거짓이다.** 결론은 그대로
+> 유효하고 B-20 은 닫힌 채로 남는다. 바뀐 것은 **근거로 든 메커니즘**이다. Framework 7 은
+> `ResourcePatternHint#toRegex()` 를 **제거했고**(그래서 "정규식을 `resource-config.json` 에 그대로
+> 적는다" 는 문장은 더 이상 그 형태로 성립하지 않는다 — 술어와 native 빌드가 같은 매칭을 쓴다는 결론은
+> `matches(String)` 를 통해 그대로 유지된다), `*` 는 **디렉토리 구분자를 넘지 않는다**. 그래서 이 항목이
+> 옳다고 판단해 출하한 `agents/*` 는 Boot 4 에서 `agents/` 아래를 하나도 덮지 못했고, 이주 과정에서
+> `agents/**` 로 고쳤다. 실측과 경위는 `CHANGELOG.md` 의 *"the native-image resource hint covered nothing
+> below `agents/`"* 항목과 [`../design/integration/spring-boot-starter.md`](../design/integration/spring-boot-starter.md) D6 에 있다.
+>
+> 기록을 제자리에서 고치지 않는 이유는 [`../project/documentation-guide.md`](../project/documentation-guide.md) §7
+> 이다 — 쓰일 때는 참이었고 뒤의 변경이 사실을 바꾼 문장은 대체 문장을 받는다. 다만 이 등록부는 무엇이
+> 열려 있는지의 정본이므로(§3.2), 그 대체가 여기서도 읽히도록 이 경계를 둔다.
+
 **두 거짓이 서로를 지탱하고 있었다.** 검증할 수 없다고 믿으면 굳이 고정하려 들지 않고, 고정할 수
 없다고 믿으면 검증해 봐야 소용없다고 느낀다. 어느 한쪽만 확인했어도 나머지가 무너졌을 텐데, 두
 문장 모두 **소스를 열지 않고** 써졌다 — 1차 정정에서 그토록 꼼꼼히 센 것이 전부 "무엇을 힌트에
