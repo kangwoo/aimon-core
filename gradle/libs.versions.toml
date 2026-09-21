@@ -132,11 +132,30 @@ aws-sdk = "2.54.16"
 # consumer's JUnit, so it is a decision about consumers rather than about this build. What changed is that the
 # floor is no longer below what the build runs — it is the thing setting it.
 #
-# There was a one-off verification recorded here (#120, 2026-09-11): aimon-core's StoreBackedPeerMemoryContractTest,
-# the suite's one in-tree subclass, pinned to exactly the then-floor with an init script adding
-# `testRuntimeOnly(enforcedPlatform(...))` — 21 tests, 0 failed, 0 skipped. Nothing in the build repeats it.
-# **It has not been repeated since the floor moved to 6.1.3**, and its own instruction said to repeat it when
-# this number or the suite changes. That is an outstanding item, recorded here rather than quietly dropped.
+# The floor is verified by running the suite on it, because nothing in an ordinary build does: where the suite
+# runs, a consumer's JUnit normally wins by conflict resolution, so the published constraint itself goes
+# unexercised. Run it with `scripts/verify-junit-floor.init.gradle.kts`, which pins every JUnit artifact on
+# :aimon-core's test runtime classpath with `enforcedPlatform` and prints the pinned jars:
+#
+#   ./gradlew -I scripts/verify-junit-floor.init.gradle.kts -PjunitFloor=6.1.3 \
+#       :aimon-core:printJunitJars \
+#       :aimon-core:test --tests 'at.aimon.core.memory.StoreBackedPeerMemoryContractTest' --rerun
+#
+# **Last run on 6.1.3 (2026-09-21, with the Boot 4 move): 21 tests, 0 failed, 0 skipped**, with junit-jupiter,
+# -api, -engine, -params and junit-platform-commons, -engine, -launcher all at 6.1.3 on that run's classpath.
+# Repeat it when this number or the suite changes. The previous run was #120 (2026-09-11) on the then-floor
+# 5.12.2, also 21 tests — the suite has not changed size between them.
+#
+# Two things about that classpath are worth reading rather than assuming. The **Platform** jars are 6.1.3, not
+# 1.x: JUnit 6 folded the separately-numbered platform line into one version, so the old record's "every
+# Platform jar at 1.12.2" has no counterpart to compare against. And `junit-4.13.2` is on the classpath too,
+# from okhttp3:mockwebserver via aimon-filesystem-testkit — that is JUnit 4 under the `junit:junit` coordinate,
+# which `org.junit:junit-bom` does not govern and this floor says nothing about.
+#
+# Nothing in the build repeats this automatically, on purpose: pinning JUnit for one suite is not worth a
+# permanent tier for a claim that moves about once a year. The script is stored rather than retyped because
+# the instruction above had lapsed **twice** before anyone noticed — Dependabot moved the floor and no run
+# followed — and re-deriving the pin, not running it, was the cost that made it easy to skip.
 junit = "6.1.3"
 assertj = "3.27.7"
 mockito = "5.23.0"

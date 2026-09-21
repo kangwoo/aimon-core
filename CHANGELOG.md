@@ -90,6 +90,14 @@ Central is versioned independently).
 - **The Boot 4 move finished that migration rather than starting it.** `spring-boot-starter-test` 4.1.1 asks for
   JUnit 6.0.3, so the modules the testkit platform does not reach moved off JUnit 5 as well. Every project in
   this build now resolves JUnit 6 — 6.1.3 or 6.0.3, measured across all 23. Nothing is on JUnit 5 any more.
+- **The floor's own verification was repeated, and the script for it is now stored.** `aimon-memory-testkit`
+  publishes `junit-bom` as a platform, so the catalog's `junit` entry is a constraint on consumers rather than
+  just a number this build runs — and nothing in an ordinary build exercises it, because a consumer's JUnit
+  wins by conflict resolution. The note beside it said to re-run the contract suite pinned to the floor
+  whenever that number changed; it had lapsed twice. Re-run on 6.1.3: **21 tests, 0 failed, 0 skipped**, every
+  Jupiter and Platform jar at 6.1.3 (JUnit 6 folded the `1.x` platform line into one version). The pin now
+  lives in `scripts/verify-junit-floor.init.gradle.kts` — deliberately not wired into any task, because
+  re-deriving the pin was the cost that made it skippable, not running it.
 
 
 ## [0.3.0] - 2026-09-20
