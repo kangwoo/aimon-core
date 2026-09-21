@@ -3,13 +3,13 @@ package at.aimon.spring.boot.autoconfigure;
 import java.util.List;
 
 import org.springframework.boot.actuate.endpoint.SanitizingFunction;
-import org.springframework.boot.actuate.health.HealthIndicator;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -67,8 +67,8 @@ import io.micrometer.core.instrument.MeterRegistry;
  * that to unmasked would make the first tracing session the moment an API key lands in a log aggregator.
  */
 @AutoConfiguration(before = AimonAutoConfiguration.class, afterName = {
-        "org.springframework.boot.actuate.autoconfigure.metrics.MetricsAutoConfiguration",
-        "org.springframework.boot.actuate.autoconfigure.metrics.CompositeMeterRegistryAutoConfiguration"})
+        "org.springframework.boot.micrometer.metrics.autoconfigure.MetricsAutoConfiguration",
+        "org.springframework.boot.micrometer.metrics.autoconfigure.CompositeMeterRegistryAutoConfiguration"})
 @ConditionalOnProperty(name = AimonProperties.ENABLED, havingValue = "true", matchIfMissing = true)
 @EnableConfigurationProperties(AimonProperties.class)
 public class AimonObservabilityAutoConfiguration {

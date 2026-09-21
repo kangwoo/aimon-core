@@ -7,6 +7,91 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Changed: the Spring Boot baseline is 4.1, and D6 was reversed to get there
+
+- **`aimon-spring-boot-starter` now compiles against Spring Boot 4.1.1** (Spring Framework 7.0.9), up from 3.5.16.
+  One version ref moves the libraries, `spring-boot-starter-test` on every module's test classpath, and the Boot
+  Gradle plugin. `docs/design/integration/spring-boot-starter.md` **D6 was rewritten**, not amended: it had fixed the
+  baseline at 3.5 deliberately, for the support window rather than the API, and that reasoning is not wrong now —
+  3.5 is supported commercially to 2032-06-30 where 4.1 ends 2028-07-31. **This release gives up roughly four years
+  of consumer support window.** D6 records what was bought with it.
+- **Java 17 is unchanged.** Boot 4 does not require Java 21, contrary to the common expectation:
+  `spring-boot-4.1.1`'s `SpringApplication.class` is class-file major version 61. The `java` entry in the version
+  catalog did not move.
+- **The autoconfiguration surface did not move at all.** `@AutoConfiguration`, every `@ConditionalOn*`,
+  `@ConfigurationProperties`, `EnableConfigurationProperties`, the `…AutoConfiguration.imports` mechanism,
+  `SanitizingFunction`, and the `ApplicationContextRunner` / `FilteredClassLoader` / `AutoConfigurations` test
+  surface are all where they were, as are the fourteen Spring Framework types the starter names.
+- **Boot 3 applications lose the health indicator.** Four things moved, and this is the one a consumer feels.
+  `org.springframework.boot.actuate.health.{HealthIndicator,Health,Status}` became
+  `org.springframework.boot.health.contributor.*` in the separate `spring-boot-health` artifact, so the health
+  branch's `@ConditionalOnClass` now names a Boot 4 type. On a Boot 3.5 class path that condition does not match,
+  the branch backs off, the context still starts, and `/actuator/health/aimon` is simply absent. That is the same
+  loss this starter previously inflicted on Boot 4 applications, with the direction reversed, and it is what "one
+  artifact does not serve two majors" means concretely. The other four moves are internal: the metrics
+  autoconfiguration names in `afterName` (`…actuate.autoconfigure.metrics.*` → `…micrometer.metrics.autoconfigure.*`);
+  `WebServerInitializedEvent` / `WebServerGracefulShutdownLifecycle` (`…web.context.*` → `…web.server.context.*`,
+  now in `spring-boot-web-server`, which the starter names at test scope for one constant); and Spring Framework
+  7's new `MemberCategory.ACCESS_*` field constants, which `BindingReflectionHintsRegistrar` now registers in
+  place of `DECLARED_FIELDS` — visible only to `AimonRuntimeHintsTest`, which asserts the categories Spring's
+  registrar chooses and had to follow it.
+
+### Fixed: the native-image resource hint covered nothing below `agents/`
+
+- **`AimonRuntimeHints` registered `agents/*`, which stopped matching when Spring Framework 7 changed what `*`
+  means.** Framework 6 expanded it to `.*` and crossed directory separators; Framework 7 uses GraalVM glob
+  semantics, where `*` stops at a `/` and only `**` descends. Measured on both, with
+  `RuntimeHintsPredicates.resource().forResource(…)`: `agents/*` against `agents/p/agent.md` is `true` on 6.2.19 and
+  **`false` on 7.0.9**. Left alone, a native image built on Boot 4 would have carried no bundled skill body, no agent
+  definition and no payload file, and would have failed only at runtime in a native build, as a file that is not
+  there. The pattern is now `agents/**`, which matches on both versions and is the spelling that was always meant.
+  `AimonRuntimeHintsTest`'s drift guard is what caught this.
+- **This supersedes the `AimonRuntimeHints` bullet in [0.2.4]**, which states that bundle resources are registered
+  as `agents/*` because `ResourcePatternHint#toRegex()` maps `*` to `.*` and crosses separators. That was true of
+  the Spring Framework the starter compiled against when it was written; Framework 7 removed `toRegex()` and changed
+  the matcher, and the sentence became false rather than merely dated.
+
+### Removed: the classic fat-jar loader comparison
+
+- **`aimon-sample-app` no longer builds a second fat jar with Boot's pre-3.2 loader**, and
+  `FatJarPackagingTest.bothBootLoadersAgree` is gone with it. This is a **loss of coverage, not a cleanup**: Boot 4
+  removed the classic loader, so there is nothing to build. `LoaderImplementation` is not in
+  `spring-boot-loader-tools` 4.1.1 and `BootJar` has no `loaderImplementation` property. The comparison existed
+  because AIMON reads skill trees by casting a resource URL's connection to `JarURLConnection`, and that cast is now
+  exercised under one loader scheme only; the packaged-versus-exploded comparison is what still keeps it honest. The
+  packaging tier is now one fat jar and two JVMs instead of two and three.
+
+### Changed: Jackson 3 reaches the sample app, and nothing else
+
+- **The starter was already immune**, which is D6's side decision earning its keep: the starter builds its own
+  `ObjectMapper` rather than injecting the application's, and its main sources contain **zero** Jackson references.
+  Boot 4 defaulting to Jackson 3 (`tools.jackson`) therefore does not reach it. `aimon-core` continues to ship
+  Jackson 2, and the two majors coexist in one JVM because their package names differ — `packagingTest` starts the
+  Boot 4 fat jar and introspects it over HTTP, which is where that stops being a claim.
+- **One test helper moved.** `SampleAppProcess` parsed the running app's JSON replies with Jackson 2 taken
+  transitively from `spring-boot-starter-web`; Boot 4's web starter no longer carries it. The helper now uses
+  `tools.jackson`, declared explicitly and without a version so the sample takes Jackson's version from Boot's
+  dependency management, as an application does.
+
+### Fixed: a version-catalog instruction its own value had already violated
+
+- **The `junit` note said "keep it equal to the JUnit that `spring-boot` resolves to (today 5.12.2)" while the line
+  below it read `6.1.3`.** Dependabot #161 moved the value on 2026-09-16 and left the sentence. The consequence was
+  invisible and material: the `junit-bom` platform is `api` on four testkits, so **11 of this build's projects
+  already resolved JUnit 6.1.3 on Boot 3.5, and 8 of them ran tests on it** — the seven modules that take a
+  testkit (`aimon-core`, `aimon-cli`, `aimon-spring-boot-starter`, `aimon-filesystem-gridfs`,
+  `aimon-session-{mongodb,postgres,redis}`) plus `aimon-llm-capability-testkit`, the one testkit with test
+  sources of its own; the other three testkits resolve it for their main sources and publish it, but run
+  nothing. Everything else stayed on 5.13.4 or 5.14.4. Measured by
+  pinning `spring-boot` back to 3.5.16 and reading `dependencyInsight` on each, not inferred. The note now says
+  "at or above", explains which direction is safe, and records that this is why the Boot 4 move did not have to
+  pay for a JUnit 6 jump — it had already been paid, across half the build, with nothing saying so. This also
+  retires one of old D6's two stated grounds for rejecting a Boot 4 baseline.
+- **The Boot 4 move finished that migration rather than starting it.** `spring-boot-starter-test` 4.1.1 asks for
+  JUnit 6.0.3, so the modules the testkit platform does not reach moved off JUnit 5 as well. Every project in
+  this build now resolves JUnit 6 — 6.1.3 or 6.0.3, measured across all 23. Nothing is on JUnit 5 any more.
+
+
 ## [0.3.0] - 2026-09-20
 
 ### Added: the main agent can declare `allowed-tools`, and a delegation cannot exceed it

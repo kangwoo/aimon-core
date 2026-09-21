@@ -25,13 +25,11 @@ import org.junit.jupiter.api.io.TempDir;
  * reading the code and concluding.
  *
  * <p>
- * Four shapes are compared, because each one can fail while the others pass:
+ * Three shapes are compared, because each one can fail while the others pass:
  *
  * <ul>
  * <li><b>Two dependency jars</b> both contributing skills under the same resource path. Reading only the first
  * is a regression that a single-jar sample would never catch, and it is one this framework has had.
- * <li><b>Nested versus classic</b> Boot loaders — {@code jar:nested:} (3.2+) and {@code jar:file:} (before it).
- * An application on either must behave the same.
  * <li><b>Packaged versus exploded</b> — the deployment layout against the development layout. This is the only
  * test in the build that can see them diverge, and they have.
  * <li><b>A bundle whose skills carry no index</b>, which must be said out loud rather than silently loading
@@ -39,8 +37,19 @@ import org.junit.jupiter.api.io.TempDir;
  * </ul>
  *
  * <p>
- * Tagged {@code packaging}: these build two fat jars and launch three JVMs, so they are excluded from
- * {@code test} and run by {@code ./gradlew :aimon-sample-app:packagingTest}.
+ * There were four until the Boot 4 baseline (see {@code spring-boot-starter.md} D6). The fourth was
+ * <b>nested versus classic</b> Boot loaders — {@code jar:nested:} (3.2+) against the {@code jar:file:} scheme
+ * that preceded it — and it is gone because the subject is gone: Boot 4 removed the classic loader outright.
+ * {@code LoaderImplementation} is no longer in {@code spring-boot-loader-tools} and {@code BootJar} no longer
+ * has a {@code loaderImplementation} property (both measured against 4.1.1), so there is no second jar to
+ * build. <b>This is a real loss of coverage, not a cleanup.</b> What it covered — that the
+ * {@code JarURLConnection} cast holds under whichever scheme the loader uses — is now checked under one scheme
+ * only, and an application still on Boot 3 packages with a loader nothing here exercises. The remaining
+ * packaged-versus-exploded comparison is what keeps the cast honest at all.
+ *
+ * <p>
+ * Tagged {@code packaging}: these build a fat jar and launch two JVMs, so they are excluded from {@code test}
+ * and run by {@code ./gradlew :aimon-sample-app:packagingTest}.
  */
 @Tag("packaging")
 @DisplayName("A packaged application sees everything its dependencies ship")
@@ -57,32 +66,26 @@ class FatJarPackagingTest {
     private static Path tempDir;
 
     private static SampleAppProcess nested;
-    private static SampleAppProcess classic;
     private static SampleAppProcess exploded;
 
     private static Map<String, Object> nestedView;
-    private static Map<String, Object> classicView;
     private static Map<String, Object> explodedView;
 
     @BeforeAll
     static void launchAll() {
-        // Started once and shared. Each launch is a JVM and a Spring context; per-test launches would triple the
+        // Started once and shared. Each launch is a JVM and a Spring context; per-test launches would double the
         // cost of the tier without changing a single assertion, since none of these tests mutate the app.
         nested = SampleAppProcess.launchJar("nested", jarPath("aimon.sample.bootJar"), tempDir.resolve("nested"));
-        classic = SampleAppProcess.launchJar("classic", jarPath("aimon.sample.bootJarClassic"),
-                tempDir.resolve("classic"));
         exploded = SampleAppProcess.launchExploded("exploded", requiredProperty("aimon.sample.explodedClasspath"),
                 tempDir.resolve("exploded"));
 
         nestedView = nested.introspect();
-        classicView = classic.introspect();
         explodedView = exploded.introspect();
     }
 
     @AfterAll
     static void stopAll() {
         closeQuietly(nested);
-        closeQuietly(classic);
         closeQuietly(exploded);
     }
 
@@ -140,13 +143,6 @@ class FatJarPackagingTest {
                 .as("silently loading zero skills is indistinguishable from shipping none; at default log level "
                         + "an operator must see the difference")
                 .contains("agents/noindex/skills").contains("no index file exists");
-    }
-
-    @Test
-    @DisplayName("Boot's classic loader and its nested loader agree")
-    void bothBootLoadersAgree() {
-        assertThat(classicView.get("agentDefinitionProtocol")).isEqualTo("jar");
-        assertSameAssembly(classicView, nestedView, "the classic (pre-3.2) Boot loader");
     }
 
     @Test

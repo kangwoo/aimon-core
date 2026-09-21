@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/embedding-agent-in-application.md
-source_commit: 2328822
+source_commit: 96870e0
 ---
 
 # Embedding an AIMON agent in your application
@@ -49,7 +49,7 @@ go, the more you have to assemble yourself.
 
 | Path | When | What you do yourself |
 |------|------|----------------------|
-| **Starter** — `aimon-spring-boot-starter` | A Spring Boot 3 application | Three properties + `LlmClient` credentials. Auto-configuration does the rest |
+| **Starter** — `aimon-spring-boot-starter` | A Spring Boot 4 application | Three properties + `LlmClient` credentials. Auto-configuration does the rest |
 | **Bootstrap** — `aimon-bootstrap` | A JVM host that is not Spring (Quarkus / Micronaut / plain `main` / batch) | Build an `AimonStackSpec` by hand and close the `AimonStack` (§14) |
 | **Manual wiring** — `aimon-core` directly | When you have to change the shape of the assembly itself | Everything — executor, registries, factories, teardown order (Appendix A) |
 
@@ -144,8 +144,8 @@ application from an IDE.
 | Shape | Supported | Verified by |
 |-------|-----------|-------------|
 | Spring Boot executable jar — nested loader (`jar:nested:`, Boot 3.2+) | ✅ | `FatJarPackagingTest` launches a real JVM and checks |
-| Spring Boot executable jar — classic loader (`jar:file:`) | ✅ | the same test repeats the same assertions on a second jar |
-| Directory (exploded) classpath — development and IDE | ✅ | the same test checks with a third process |
+| Spring Boot executable jar — classic loader (`jar:file:`) | ⚠️ | **No longer verified** — Boot 4 removed that loader, so there is no such jar to launch |
+| Directory (exploded) classpath — development and IDE | ✅ | the same test checks with a second process |
 | A WAR deployed into a servlet container | ❌ | — |
 | `jlink` runtime image (`jrt:`) | ❌ | — |
 | GraalVM native image | ❌ | — |
