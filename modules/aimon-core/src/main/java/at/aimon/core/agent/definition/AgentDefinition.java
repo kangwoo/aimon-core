@@ -6,8 +6,10 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
+import at.aimon.core.agent.ContextEngineKind;
 import at.aimon.core.agent.Version;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.llm.LlmModel;
@@ -61,6 +63,7 @@ public final class AgentDefinition {
     private final Set<String> tags;
     private final Map<String, Object> variables;
     private final List<AllowedTool> allowedTools;
+    private final ContextEngineKind contextEngine;
 
     /**
      * AgentDefinition을 생성한다.
@@ -77,6 +80,7 @@ public final class AgentDefinition {
         tags = builder.tags != null ? Collections.unmodifiableSet(new LinkedHashSet<>(builder.tags)) : Set.of();
         variables = builder.variables != null ? Map.copyOf(builder.variables) : Map.of();
         allowedTools = builder.allowedTools != null ? List.copyOf(builder.allowedTools) : List.of();
+        contextEngine = builder.contextEngine;
     }
 
     /**
@@ -165,6 +169,15 @@ public final class AgentDefinition {
     }
 
     /**
+     * Returns the context engine the frontmatter asks for ({@code context-engine}).
+     *
+     * @return the engine, or empty to leave it to the deployment's default
+     */
+    public Optional<ContextEngineKind> getContextEngine() {
+        return Optional.ofNullable(contextEngine);
+    }
+
+    /**
      * Builder for constructing {@link AgentDefinition} instances.
      *
      * <p>
@@ -179,6 +192,19 @@ public final class AgentDefinition {
         private Set<String> tags;
         private Map<String, Object> variables;
         private List<AllowedTool> allowedTools;
+        private ContextEngineKind contextEngine;
+
+        /**
+         * Sets the context engine the agent asks for.
+         *
+         * @param contextEngine
+         *            the engine, or {@code null} for the deployment's default
+         * @return This builder for method chaining
+         */
+        public Builder contextEngine(ContextEngineKind contextEngine) {
+            this.contextEngine = contextEngine;
+            return this;
+        }
 
         /**
          * Sets the agent name.

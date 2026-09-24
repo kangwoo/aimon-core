@@ -169,6 +169,31 @@ class DefaultCompactionEngineSummarizeTest {
     }
 
     /** Records the summary call and answers with a fixed text. */
+    @Test
+    void aRollingSummaryAsksForTheTenSectionsAndUpdatesThePreviousSummary() {
+        final CompactionResult result = engine.summarize(request(List.of(Message.user("new work"))).rolling(true)
+                .previousSummary("PREVIOUS SUMMARY TEXT").targetSummaryTokens(640).build());
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(client.lastSystemPrompt.get()).contains("Key decisions and constraints").contains("cumulative")
+                .contains("Update the previous summary").contains("PREVIOUS SUMMARY TEXT").contains("about 640 tokens");
+        assertThat(client.lastMessages.get()).extracting(Message::getContent).containsExactly("new work");
+    }
+
+    @Test
+    void aFirstRollingSummaryHasNoPreviousSummaryToUpdate() {
+        engine.summarize(request(List.of(Message.user("work"))).rolling(true).build());
+
+        assertThat(client.lastSystemPrompt.get()).contains("Key decisions and constraints")
+                .doesNotContain("Update the previous summary");
+    }
+
+    @Test
+    void aPreviousSummaryWithoutRollingIsRefused() {
+        assertThatThrownBy(() -> request(List.of(Message.user("x"))).previousSummary("p").build())
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
     private static class RecordingClient implements LlmClient {
         final AtomicReference<List<Message>> lastMessages = new AtomicReference<>();
         final AtomicReference<String> lastSystemPrompt = new AtomicReference<>();

@@ -15,6 +15,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import at.aimon.bootstrap.runtime.AgentRuntimeEviction;
 import at.aimon.bootstrap.spec.AgentRuntimeSpec;
 import at.aimon.bootstrap.spec.SessionSpec;
+import at.aimon.core.agent.ContextEngineKind;
+import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.knowledge.SimpleDocumentChunker;
 import at.aimon.core.llm.ReasoningEffort;
 import at.aimon.core.llm.capability.InMemoryModelCapabilityRegistry;
@@ -369,6 +371,8 @@ public class AimonProperties implements InitializingBean {
     private final Budget budget = new Budget();
 
     private final SessionProperties session = new SessionProperties();
+
+    private final ContextProperties context = new ContextProperties();
 
     private final Tools tools = new Tools();
 
@@ -1032,6 +1036,10 @@ public class AimonProperties implements InitializingBean {
 
     public Budget getBudget() {
         return budget;
+    }
+
+    public ContextProperties getContext() {
+        return context;
     }
 
     public SessionProperties getSession() {
@@ -1789,6 +1797,29 @@ public class AimonProperties implements InitializingBean {
     }
 
     /**
+     * {@code aimon.context.*} — how an agent's LLM view is shrunk as a conversation grows.
+     */
+    public static class ContextProperties {
+
+        /**
+         * The context engine agents get when their AGENT.md names none ({@code context-engine}): {@code default}
+         * compacts the whole view into one summary near the model's limit; {@code rolling} keeps the start and the
+         * recent end verbatim, summarizes the middle earlier and in smaller steps, and registers the
+         * {@code SessionHistory} tool. {@code rolling} requires {@code aimon.session.log-write-format=v2}; startup
+         * fails otherwise.
+         */
+        private ContextEngineKind engine = ContextEngineKind.DEFAULT;
+
+        public ContextEngineKind getEngine() {
+            return engine;
+        }
+
+        public void setEngine(ContextEngineKind engine) {
+            this.engine = engine;
+        }
+    }
+
+    /**
      * Session storage and cache tuning.
      *
      * <p>
@@ -1824,6 +1855,13 @@ public class AimonProperties implements InitializingBean {
         /** How long shutdown waits for in-flight turns to finish before abandoning them. */
         private Duration shutdownDrainTimeout = SessionSpec.DEFAULT_DRAIN_TIMEOUT;
 
+        /**
+         * The session log format this node writes: {@code v1} (default) or {@code v2}. Every build reads both;
+         * switch a cluster to {@code v2} only once every node runs a build that reads it. {@code v2} keeps the log
+         * append-only and is what {@code aimon.context.engine=rolling} requires.
+         */
+        private SessionLogFormat logWriteFormat = SessionLogFormat.V1;
+
         private final Cache cache = new Cache();
 
         public SessionStoreType getStore() {
@@ -1852,6 +1890,14 @@ public class AimonProperties implements InitializingBean {
 
         public Duration getShutdownDrainTimeout() {
             return shutdownDrainTimeout;
+        }
+
+        public SessionLogFormat getLogWriteFormat() {
+            return logWriteFormat;
+        }
+
+        public void setLogWriteFormat(SessionLogFormat logWriteFormat) {
+            this.logWriteFormat = logWriteFormat;
         }
 
         public void setShutdownDrainTimeout(Duration shutdownDrainTimeout) {

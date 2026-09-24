@@ -171,7 +171,7 @@ public class DefaultCompactionEngine implements CompactionEngine {
                     request.getEnvironment(), request.getExecutionId().orElse(null), memory.getSessionId(),
                     originalMessages.size(), preTokenCount, inRangeMessages, discoveredToolNames,
                     request.getCustomInstructions().orElse(null), request.getCallMetadata().orElse(null),
-                    request.getModel(), startedAt);
+                    request.getModel(), startedAt, null);
             if (attempt.failure != null) {
                 return attempt.failure;
             }
@@ -246,7 +246,7 @@ public class DefaultCompactionEngine implements CompactionEngine {
                     request.getEnvironment(), request.getExecutionId().orElse(null), request.getSessionId(),
                     messages.size(), preTokenCount, messages, discoveredToolNames,
                     request.getCustomInstructions().orElse(null), request.getCallMetadata().orElse(null),
-                    request.getModel(), startedAt);
+                    request.getModel(), startedAt, request.isRolling() ? request : null);
             if (attempt.failure != null) {
                 return attempt.failure;
             }
@@ -301,13 +301,15 @@ public class DefaultCompactionEngine implements CompactionEngine {
      *            the size PreCompact hooks are shown and failure metadata records
      * @param inRangeMessages
      *            the messages actually summarized
+     * @param rolling
+     *            the rolling summary request whose prompt to build, or {@code null} for the full-compaction prompt
      * @return the summary text, or the failure result to return as-is
      */
     @SuppressWarnings("checkstyle:ParameterNumber")
     private SummaryAttempt generateSummary(CompactionTrigger trigger, HookRegistry registry, Environment environment,
             ExecutionId executionId, SessionId sessionId, int hookMessageCount, int preTokenCount,
             List<Message> inRangeMessages, List<String> discoveredToolNames, String customInstructions,
-            LlmCallMetadata callerMetadata, LlmModel model, Instant startedAt) {
+            LlmCallMetadata callerMetadata, LlmModel model, Instant startedAt, SummaryRequest rolling) {
         // 1) PreCompact hooks
         final PreCompactContext preContext = applyIdentity(
                 PreCompactContext.builder().invokerType(InvokerType.mainAgent()).invokerName("compaction-engine")
@@ -338,7 +340,10 @@ public class DefaultCompactionEngine implements CompactionEngine {
 
         // 3) Build summary prompt — merge custom instructions from hooks + request
         final String mergedInstructions = mergeCustomInstructions(customInstructions, preFeedback);
-        final String systemPrompt = summaryPromptTemplate.buildSystemPrompt(mergedInstructions);
+        final String systemPrompt = rolling == null
+                ? summaryPromptTemplate.buildSystemPrompt(mergedInstructions)
+                : summaryPromptTemplate.buildRollingSystemPrompt(mergedInstructions,
+                        rolling.getPreviousSummary().orElse(null), rolling.getTargetSummaryTokens());
 
         // 4) Summary LLM call (no tools, attribute as feature=COMPACTION). Caller-supplied metadata (e.g. the
         // invoking principal for a /compact command) wins on overlap; engine defaults fill the rest.

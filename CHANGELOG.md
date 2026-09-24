@@ -7,6 +7,33 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Added: the rolling context engine and `SessionHistory`
+
+- **`RollingContextEngine`** (`at.aimon.core.agent.context`) keeps the head (up to the first conversation user message)
+  and a recent tail verbatim and summarizes the middle into one span that only widens; each compaction updates the
+  previous summary instead of re-summarizing it (`SummaryRequest.rolling` / `previousSummary` /
+  `targetSummaryTokens`, `SummaryPromptTemplate.buildRollingSystemPrompt`). It compacts at
+  `min(0.6 × effective window, auto-compact threshold)`, tries eliding large tool results first (`[tool result elided:
+  seq=N]`), retreats from the tail budget to half of it to the last legal cut, warns instead of compacting when no cut
+  helps, and absorbs the head only at the blocking limit. Where a model and system prompt cannot sustain rolling, or
+  the log is version 1, a call is served by the default engine. `/compact` fails with the new
+  `CompactionContendedException` when another compaction of the session is running. Design:
+  `docs/design/agent-execution/context-engine.md` §5.
+- **`SessionHistoryTool`** (`at.aimon.core.tools.session`, tool name `SessionHistory`) reads back the current session's
+  conversation entries by `seq` or by case-insensitive search, sealed ranges included. Registered only when the rolling
+  engine is wired. The executor publishes the running log to tools as `SessionLogSource` (`SessionHistoryTool.LOG_SOURCE_KEY`).
+- **Choosing the engine.** Spring `aimon.context.engine` (`default` | `rolling`), AGENT.md frontmatter
+  `context-engine` (a camelCase `contextEngine` fails parsing), `ExecutorSpec.contextEngine(...)`,
+  `OrcaAgentRuntimeFactory.withContextEngine(...)`; the agent's own value wins. New `ContextEngineKind`,
+  `AgentMetadata.getContextEngine()`, `AgentDefinition.getContextEngine()`.
+- **The write-format switch is exposed**: Spring `aimon.session.log-write-format` (`v1` default | `v2`),
+  `SessionSpec.logWriteFormat(...)`, `OrcaAgentRuntimeFactory.withSessionLogWriteFormat(...)`. A runtime asking for
+  `rolling` on a version-1 node fails to build — for a declared agent, at startup. With `v2` the runtime factory builds
+  the default engine with `writeFormat(V2)`.
+- **`CompactionMetadata`** gained `getKind()` (`CompactionKind`: `PRUNE` / `ROLLING` / `FULL` / `FALLBACK`; `FULL`
+  unless set), the view's head / span / tail tokens, the summary tokens and the absorbed seq range; `equals` and
+  `hashCode` include them.
+
 ### Added: sealing — ranges the view no longer shows leave the record
 
 - **`SessionLogSegmentStore`** (`at.aimon.core.agent.session.store`) holds sealed ranges of session logs outside the

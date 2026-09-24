@@ -279,8 +279,9 @@ public final class AimonStackBuilder {
         // raw store: the session store that owns the fenced view is built inside the router, after this manager.
         final SessionLogSegmentStore segmentStore = spec.getSession().getSegmentStore().orElseGet(
                 () -> spec.getSession().getRecordStore().isEmpty() ? new InMemorySessionLogSegmentStore() : null);
+        final SessionLogFormat logWriteFormat = spec.getSession().getLogWriteFormat();
         final TranscriptManager transcriptManager = new DefaultTranscriptManager(sessionRecordStore, sessionCheckpoints,
-                SessionLogFormat.V1, segmentStore == null ? null : SessionLogStorage.builder(segmentStore).build());
+                logWriteFormat, segmentStore == null ? null : SessionLogStorage.builder(segmentStore).build());
         final MessageQueueManager messageQueueManager = new DefaultMessageQueueManager(
                 spec.getMessageQueueRepository().orElseGet(InMemoryMessageQueueRepository::new));
 
@@ -406,7 +407,10 @@ public final class AimonStackBuilder {
                 .withPendingTurnRegistry(pendingTurnRegistry).withAgentApprovalStore(agentApprovalStore)
                 .withSessionApprovalStore(sessionApprovalStore).withSkillInvocationPolicy(skillInvocationPolicy)
                 .withToolContextEnrichers(toolContextEnrichers).withRewakeService(rewakeService)
-                .withWorkflowRunnerEnabled(toolSpec.isWorkflowRunnerEnabled());
+                .withWorkflowRunnerEnabled(toolSpec.isWorkflowRunnerEnabled())
+                // The same write format the transcript manager writes with: rolling on a version-1 node is refused
+                // when its runtime is built, which for a declared agent is here, at startup.
+                .withSessionLogWriteFormat(logWriteFormat).withContextEngine(executorSpec.getContextEngine());
         final ScheduledTaskManager taskManager = schedulingLifecycle == null
                 ? null
                 : schedulingLifecycle.engine().getTaskManager();

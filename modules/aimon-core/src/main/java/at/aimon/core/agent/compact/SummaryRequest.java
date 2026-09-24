@@ -36,6 +36,9 @@ public final class SummaryRequest {
     private final Environment environment;
     private final String customInstructions;
     private final LlmCallMetadata callMetadata;
+    private final boolean rolling;
+    private final String previousSummary;
+    private final int targetSummaryTokens;
 
     private SummaryRequest(Builder builder) {
         this.messages = List.copyOf(Objects.requireNonNull(builder.messages, "messages cannot be null"));
@@ -48,6 +51,17 @@ public final class SummaryRequest {
         this.environment = Objects.requireNonNull(builder.environment, "environment cannot be null");
         this.customInstructions = builder.customInstructions;
         this.callMetadata = builder.callMetadata;
+        this.rolling = builder.rolling;
+        this.previousSummary = builder.previousSummary == null || builder.previousSummary.isBlank()
+                ? null
+                : builder.previousSummary;
+        this.targetSummaryTokens = builder.targetSummaryTokens;
+        if (targetSummaryTokens < 0) {
+            throw new IllegalArgumentException("targetSummaryTokens must be >= 0, got: " + targetSummaryTokens);
+        }
+        if (previousSummary != null && !rolling) {
+            throw new IllegalArgumentException("a previous summary is only updated by a rolling summary");
+        }
     }
 
     public static Builder builder() {
@@ -109,6 +123,28 @@ public final class SummaryRequest {
         return Optional.ofNullable(callMetadata);
     }
 
+    /**
+     * Whether this summary is one generation of a rolling summary (context-engine §5.4): the ten sections with
+     * {@code Key decisions and constraints} added, the cumulative sections kept, and a target length. {@code false} —
+     * the default — is the nine-section summary a full compaction has always asked for.
+     */
+    public boolean isRolling() {
+        return rolling;
+    }
+
+    /**
+     * The summary this one updates, when a rolling span widens. The messages are then only what the span newly
+     * absorbs, and the instruction is "update the previous summary", not "summarize". Empty for a first summary.
+     */
+    public Optional<String> getPreviousSummary() {
+        return Optional.ofNullable(previousSummary);
+    }
+
+    /** The summary length the prompt asks for, in tokens. {@code 0} asks for none. Never enforced by a second call. */
+    public int getTargetSummaryTokens() {
+        return targetSummaryTokens;
+    }
+
     /** Builder for {@link SummaryRequest}. */
     public static final class Builder {
         private List<Message> messages;
@@ -121,6 +157,9 @@ public final class SummaryRequest {
         private Environment environment;
         private String customInstructions;
         private LlmCallMetadata callMetadata;
+        private boolean rolling;
+        private String previousSummary;
+        private int targetSummaryTokens;
 
         private Builder() {
         }
@@ -177,6 +216,36 @@ public final class SummaryRequest {
 
         public Builder callMetadata(LlmCallMetadata callMetadata) {
             this.callMetadata = callMetadata;
+            return this;
+        }
+
+        /**
+         * @param rolling
+         *            whether this is a rolling summary (see {@link SummaryRequest#isRolling()})
+         * @return this builder
+         */
+        public Builder rolling(boolean rolling) {
+            this.rolling = rolling;
+            return this;
+        }
+
+        /**
+         * @param previousSummary
+         *            the summary to update, or {@code null} / blank for a first summary; requires {@link #rolling}
+         * @return this builder
+         */
+        public Builder previousSummary(String previousSummary) {
+            this.previousSummary = previousSummary;
+            return this;
+        }
+
+        /**
+         * @param targetSummaryTokens
+         *            the length to ask for in tokens, {@code 0} for none (must be {@code >= 0})
+         * @return this builder
+         */
+        public Builder targetSummaryTokens(int targetSummaryTokens) {
+            this.targetSummaryTokens = targetSummaryTokens;
             return this;
         }
 

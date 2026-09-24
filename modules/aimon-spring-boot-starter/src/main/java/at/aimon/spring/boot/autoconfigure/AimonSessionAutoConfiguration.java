@@ -105,7 +105,7 @@ public class AimonSessionAutoConfiguration {
         final AimonProperties.SessionProperties session = properties.getSession();
         final SessionSpec.Builder builder = SessionSpec.builder().drainTimeout(session.getShutdownDrainTimeout())
                 .idleTtl(session.getCache().getIdleTtl()).maxCachedSessions(session.getCache().getMaxEntries())
-                .mode(session.getMode()).nodeId(session.getNodeId());
+                .mode(session.getMode()).nodeId(session.getNodeId()).logWriteFormat(session.getLogWriteFormat());
 
         final SessionRecordStore supplied = ApplicationBeans.resolve(recordStores, SessionRecordStore.class,
                 beanFactory, SESSION_SPEC_BEAN);

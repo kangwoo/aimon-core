@@ -32,6 +32,8 @@ import at.aimon.bootstrap.spec.AgentDescriptor;
 import at.aimon.bootstrap.spec.AimonAgentCustomizer;
 import at.aimon.bootstrap.spec.CredentialStoreFactory;
 import at.aimon.core.agent.AgentRuntimeId;
+import at.aimon.core.agent.ContextEngineKind;
+import at.aimon.core.agent.context.RollingContextEngine;
 import at.aimon.core.agent.impl.orca.OrcaAgentRuntime;
 import at.aimon.core.agent.input.ImageInput;
 import at.aimon.core.agent.input.MultimodalInput;
@@ -39,6 +41,7 @@ import at.aimon.core.agent.input.TextInput;
 import at.aimon.core.agent.input.UserInput;
 import at.aimon.core.agent.orca.tool.OrcaToolProvider;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.agent.tool.AbstractTool;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
@@ -112,6 +115,32 @@ class AimonAutoConfigurationTest {
             assertThat(ctx).hasSingleBean(AimonSessions.class).hasSingleBean(AimonStack.class);
             assertThat(ctx).getBean(LlmClient.class).isInstanceOf(AnthropicLlmClient.class);
             assertThat(ctx.getBean(AimonStack.class).primaryRuntimeId().toString()).isEqualTo("agent:" + AGENT);
+        });
+    }
+
+    @Test
+    @DisplayName("aimon.context.engine=rolling needs aimon.session.log-write-format=v2, and rolls with it")
+    void rollingNeedsTheVersionTwoWriteFormat(@TempDir Path workspace) {
+        minimal(workspace).withPropertyValues("aimon.context.engine=rolling").run(ctx -> assertThat(ctx).hasFailed()
+                .getFailure().hasStackTraceContaining("rolling").hasStackTraceContaining("version 1"));
+
+        minimal(workspace).withPropertyValues("aimon.context.engine=rolling", "aimon.session.log-write-format=v2")
+                .run(ctx -> {
+                    final AimonStack stack = ctx.getBean(AimonStack.class);
+                    assertThat(stack.spec().getExecutor().getContextEngine()).isEqualTo(ContextEngineKind.ROLLING);
+                    assertThat(stack.spec().getSession().getLogWriteFormat()).isEqualTo(SessionLogFormat.V2);
+                    assertThat(stack.runtimes().get(stack.primaryRuntimeId()).getContextEngine())
+                            .isInstanceOf(RollingContextEngine.class);
+                });
+    }
+
+    @Test
+    @DisplayName("without the two properties the stack keeps the default engine and version-1 writes")
+    void theDefaultsAreTheDefaultEngineAndVersionOne(@TempDir Path workspace) {
+        minimal(workspace).run(ctx -> {
+            final AimonStack stack = ctx.getBean(AimonStack.class);
+            assertThat(stack.spec().getExecutor().getContextEngine()).isEqualTo(ContextEngineKind.DEFAULT);
+            assertThat(stack.spec().getSession().getLogWriteFormat()).isEqualTo(SessionLogFormat.V1);
         });
     }
 

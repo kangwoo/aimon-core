@@ -320,9 +320,13 @@ aimon:
     mode: single-node               # single-node (default) | distributed
     node-id: ${HOSTNAME}
     shutdown-drain-timeout: 30s
+    log-write-format: v1            # v1 (default) | v2 — switch to v2 only once every node reads it
     cache:
       max-entries: 1000
       idle-ttl: 30m
+
+  context:
+    engine: default                 # default (default) | rolling — rolling needs session.log-write-format: v2
 
   skill:
     approval:

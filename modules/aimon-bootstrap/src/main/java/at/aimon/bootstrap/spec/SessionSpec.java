@@ -13,6 +13,7 @@ import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.store.SessionLeaseStore;
 import at.aimon.core.agent.session.store.SessionLogSegmentStore;
 import at.aimon.core.agent.session.store.SessionRecordStore;
+import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.base.ExternallyManaged;
 import at.aimon.session.routing.DeploymentMode;
 
@@ -55,6 +56,7 @@ public final class SessionSpec {
 
     private final SessionRecordStore recordStore;
     private final SessionLogSegmentStore segmentStore;
+    private final SessionLogFormat logWriteFormat;
     private final Duration drainTimeout;
     private final Duration idleTtl;
     private final Integer maxCachedSessions;
@@ -68,6 +70,7 @@ public final class SessionSpec {
     private SessionSpec(Builder builder) {
         this.recordStore = builder.recordStore;
         this.segmentStore = builder.segmentStore;
+        this.logWriteFormat = Objects.requireNonNullElse(builder.logWriteFormat, SessionLogFormat.V1);
         this.drainTimeout = Objects.requireNonNullElse(builder.drainTimeout, DEFAULT_DRAIN_TIMEOUT);
         this.idleTtl = builder.idleTtl;
         this.maxCachedSessions = builder.maxCachedSessions;
@@ -180,6 +183,22 @@ public final class SessionSpec {
     }
 
     /**
+     * Returns the session log format this node writes (session-log §7.3).
+     *
+     * <p>
+     * Every build reads both formats; this decides only what is written. It is switched in two steps across a
+     * cluster: deploy with {@link SessionLogFormat#V1} until every node runs a build that reads version 2, then switch
+     * to {@link SessionLogFormat#V2}. A record already read as version 2 is written as version 2 either way. The
+     * version-2 format is what keeps the log append-only, and the rolling context engine requires it: a runtime asking
+     * for rolling on a version-1 node fails to build.
+     *
+     * @return the format, {@link SessionLogFormat#V1} by default
+     */
+    public SessionLogFormat getLogWriteFormat() {
+        return logWriteFormat;
+    }
+
+    /**
      * Returns how long shutdown waits for in-flight turns before releasing leases.
      *
      * @return the drain timeout, never null
@@ -265,6 +284,7 @@ public final class SessionSpec {
 
         private SessionRecordStore recordStore;
         private SessionLogSegmentStore segmentStore;
+        private SessionLogFormat logWriteFormat;
         private Duration drainTimeout;
         private Duration idleTtl;
         private Integer maxCachedSessions;
@@ -300,6 +320,18 @@ public final class SessionSpec {
          */
         public Builder segmentStore(@ExternallyManaged SessionLogSegmentStore segmentStore) {
             this.segmentStore = segmentStore;
+            return this;
+        }
+
+        /**
+         * Sets the session log format this node writes.
+         *
+         * @param logWriteFormat
+         *            the format, or null for {@link SessionLogFormat#V1} (see {@link SessionSpec#getLogWriteFormat()})
+         * @return this builder
+         */
+        public Builder logWriteFormat(SessionLogFormat logWriteFormat) {
+            this.logWriteFormat = logWriteFormat;
             return this;
         }
 

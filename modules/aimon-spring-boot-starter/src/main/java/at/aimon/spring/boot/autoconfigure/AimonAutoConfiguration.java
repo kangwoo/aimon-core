@@ -407,9 +407,9 @@ public class AimonAutoConfiguration {
             final AimonStackSpec.Builder builder = AimonStackSpec.builder()
                     .llm(LlmSpec
                             .of(tracer == null ? llmClient : new TracingLlmClient(llmClient, tracer, payloadPolicy)))
-                    .executor(tracer == null
-                            ? ExecutorSpec.defaults()
-                            : ExecutorSpec.builder().tracer(tracer).tracePayloadPolicy(payloadPolicy).build())
+                    .executor(ExecutorSpec.builder().tracer(tracer)
+                            .tracePayloadPolicy(tracer == null ? null : payloadPolicy)
+                            .contextEngine(properties.getContext().getEngine()).build())
                     .knowledgeStore(slices.getKnowledgeStore()).memory(slices.getMemory()).fileSystem(fileSystemSpec)
                     .session(sessionSpec).scheduling(schedulingSpec).agents(toAgentSpecs(properties))
                     .agentRuntimes(toAgentRuntimeSpec(properties.getAgentRuntime()))

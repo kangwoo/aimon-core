@@ -5,6 +5,7 @@ import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -39,6 +40,7 @@ public final class AgentMetadata {
     private final int maxIterations;
     private final Set<String> tags;
     private final List<AllowedTool> allowedTools;
+    private final ContextEngineKind contextEngine;
 
     private AgentMetadata(Builder builder) {
         this.name = Objects.requireNonNull(builder.name, "Agent name cannot be null");
@@ -49,6 +51,7 @@ public final class AgentMetadata {
         this.model = Objects.requireNonNull(builder.model, "Model config cannot be null");
         this.tags = Collections.unmodifiableSet(new LinkedHashSet<>(builder.tags));
         this.allowedTools = List.copyOf(builder.allowedTools);
+        this.contextEngine = builder.contextEngine;
     }
 
     /**
@@ -120,6 +123,16 @@ public final class AgentMetadata {
         return !allowedTools.isEmpty();
     }
 
+    /**
+     * Returns the context engine this agent asks for, from AGENT.md frontmatter {@code context-engine}. Empty means
+     * the deployment's default decides.
+     *
+     * @return the declared engine, or empty
+     */
+    public Optional<ContextEngineKind> getContextEngine() {
+        return Optional.ofNullable(contextEngine);
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -130,18 +143,20 @@ public final class AgentMetadata {
         }
         AgentMetadata that = (AgentMetadata) o;
         return name.equals(that.name) && maxIterations == that.maxIterations && model.equals(that.model)
-                && tags.equals(that.tags) && allowedTools.equals(that.allowedTools);
+                && tags.equals(that.tags) && allowedTools.equals(that.allowedTools)
+                && contextEngine == that.contextEngine;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(name, maxIterations, model, tags, allowedTools);
+        return Objects.hash(name, maxIterations, model, tags, allowedTools, contextEngine);
     }
 
     @Override
     public String toString() {
         return "AgentMetadata{" + "name='" + name + "', maxIterations=" + maxIterations + ", model=" + model + ", tags="
-                + tags + ", allowedTools=" + allowedTools + '}';
+                + tags + ", allowedTools=" + allowedTools
+                + (contextEngine != null ? ", contextEngine=" + contextEngine.configValue() : "") + '}';
     }
 
     /** Builder for AgentMetadata. */
@@ -151,8 +166,21 @@ public final class AgentMetadata {
         private int maxIterations = DEFAULT_MAX_ITERATIONS;
         private Set<String> tags = new LinkedHashSet<>();
         private List<AllowedTool> allowedTools = List.of();
+        private ContextEngineKind contextEngine;
 
         private Builder() {
+        }
+
+        /**
+         * Sets the context engine this agent asks for.
+         *
+         * @param contextEngine
+         *            the engine, or {@code null} to leave it to the deployment's default
+         * @return This builder
+         */
+        public Builder contextEngine(ContextEngineKind contextEngine) {
+            this.contextEngine = contextEngine;
+            return this;
         }
 
         /**

@@ -211,6 +211,19 @@ public final class DefaultAgent implements Agent {
             return this;
         }
 
+        /**
+         * Sets the context engine this agent asks for.
+         *
+         * @param contextEngine
+         *            the engine, or {@code null} to leave it to the deployment's default
+         * @return This builder
+         */
+        public Builder contextEngine(ContextEngineKind contextEngine) {
+            ensureMetadataBuilder();
+            this.metadataBuilder.contextEngine(contextEngine);
+            return this;
+        }
+
         private void ensureMetadataBuilder() {
             if (metadataBuilder == null) {
                 metadataBuilder = AgentMetadata.builder();

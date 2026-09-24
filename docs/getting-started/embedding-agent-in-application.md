@@ -304,9 +304,13 @@ aimon:
     mode: single-node               # single-node(기본) | distributed
     node-id: ${HOSTNAME}
     shutdown-drain-timeout: 30s
+    log-write-format: v1            # v1(기본) | v2 — 모든 노드가 v2 를 읽게 배포된 뒤에 v2 로 바꾼다
     cache:
       max-entries: 1000
       idle-ttl: 30m
+
+  context:
+    engine: default                 # default(기본) | rolling — rolling 은 session.log-write-format: v2 가 필요하다
 
   skill:
     approval:

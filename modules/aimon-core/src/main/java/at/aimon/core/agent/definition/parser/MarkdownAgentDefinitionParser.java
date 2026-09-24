@@ -15,6 +15,7 @@ import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.constructor.SafeConstructor;
 
+import at.aimon.core.agent.ContextEngineKind;
 import at.aimon.core.agent.Version;
 import at.aimon.core.agent.definition.AgentDefinition;
 import at.aimon.core.agent.definition.exception.AgentDefinitionParseException;
@@ -44,6 +45,7 @@ import at.aimon.core.llm.ReasoningEffort;
  *   - coding
  *   - java
  * allowed-tools: Read, Grep, Bash(git:*)
+ * context-engine: rolling
  * variables:
  *   language: Java
  * ---
@@ -113,12 +115,45 @@ public final class MarkdownAgentDefinitionParser implements AgentDefinitionParse
             @SuppressWarnings("unchecked")
             final Map<String, Object> variables = (Map<String, Object>) frontmatter.getOrDefault("variables", Map.of());
 
+            final ContextEngineKind contextEngine = extractContextEngine(frontmatter);
+
             return AgentDefinition.builder().name(name).version(version).model(model).maxIterations(maxIterations)
-                    .systemPrompt(body).tags(tags).variables(variables).allowedTools(allowedTools).build();
+                    .systemPrompt(body).tags(tags).variables(variables).allowedTools(allowedTools)
+                    .contextEngine(contextEngine).build();
         } catch (AgentDefinitionParseException e) {
             throw e;
         } catch (Exception e) {
             throw new AgentDefinitionParseException("Failed to parse agent definition", e);
+        }
+    }
+
+    /**
+     * Extracts {@code context-engine} from frontmatter: {@code default} or {@code rolling}, case ignored.
+     *
+     * <p>
+     * Spelled like {@code allowed-tools}, and for the same reason a camelCase {@code contextEngine} is an error rather
+     * than an unknown key ignored: ignoring it would leave the agent on the default engine while its author believes
+     * it rolls.
+     *
+     * @return the engine, or {@code null} when the key is absent
+     */
+    private ContextEngineKind extractContextEngine(Map<String, Object> frontmatter) {
+        if (frontmatter.containsKey("contextEngine")) {
+            throw new AgentDefinitionParseException(
+                    "Unknown key 'contextEngine'. The context engine key is spelled 'context-engine'.");
+        }
+        final Object raw = frontmatter.get("context-engine");
+        if (raw == null) {
+            return null;
+        }
+        if (!(raw instanceof String text)) {
+            throw new AgentDefinitionParseException(
+                    "Invalid 'context-engine' value: expected a string, got " + raw.getClass().getName());
+        }
+        try {
+            return ContextEngineKind.fromConfig(text);
+        } catch (IllegalArgumentException e) {
+            throw new AgentDefinitionParseException("Invalid 'context-engine' value: " + e.getMessage(), e);
         }
     }
 

@@ -18,6 +18,7 @@ import org.junit.jupiter.api.io.TempDir;
 import at.aimon.bootstrap.assemble.MemoryAssembly;
 import at.aimon.bootstrap.spec.AgentSpec;
 import at.aimon.bootstrap.spec.AgentWorkspaceLayout;
+import at.aimon.bootstrap.spec.ExecutorSpec;
 import at.aimon.bootstrap.spec.FileSystemSpec;
 import at.aimon.bootstrap.spec.LlmSpec;
 import at.aimon.bootstrap.spec.MemorySpec;
@@ -25,12 +26,16 @@ import at.aimon.bootstrap.spec.SchedulingSpec;
 import at.aimon.bootstrap.spec.SessionSpec;
 import at.aimon.bootstrap.spec.SkillApprovalSpec;
 import at.aimon.core.agent.AgentRuntimeId;
+import at.aimon.core.agent.ContextEngineKind;
 import at.aimon.core.agent.DefaultAgent;
+import at.aimon.core.agent.context.RollingContextEngine;
 import at.aimon.core.agent.impl.AgentBundle;
+import at.aimon.core.agent.impl.orca.OrcaAgentRuntime;
 import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.store.InMemorySessionLogSegmentStore;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
+import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.base.Principal;
@@ -55,6 +60,7 @@ import at.aimon.core.scheduling.scheduler.TaskScheduler;
 import at.aimon.core.tools.memory.MemoryRecallTool;
 import at.aimon.core.tools.memory.MemorySearchTool;
 import at.aimon.core.tools.memory.ObserveTool;
+import at.aimon.core.tools.session.SessionHistoryTool;
 
 /**
  * Stands a real stack up and tears it down — the whole point of the neutral layer being pure Java.
@@ -147,6 +153,23 @@ class AimonStackBuilderTest {
                 .segmentStore(new InMemorySessionLogSegmentStore()).build();
         try (AimonStack stack = AimonStackBuilder.build(specFor(workspace, "ops").session(withSegments).build())) {
             assertThat(stack.agentExecutor().getTranscriptManager().getLogReader()).isPresent();
+        }
+    }
+
+    @Test
+    @DisplayName("the rolling context engine needs the version-2 write format, and gets SessionHistory with it")
+    void rollingNeedsTheVersionTwoWriteFormat(@TempDir Path workspace) {
+        final ExecutorSpec rolling = ExecutorSpec.builder().contextEngine(ContextEngineKind.ROLLING).build();
+
+        assertThatThrownBy(() -> AimonStackBuilder.build(specFor(workspace, "ops").executor(rolling).build()))
+                .hasStackTraceContaining("version 1").hasStackTraceContaining("rolling");
+
+        final SessionSpec versionTwo = SessionSpec.builder().logWriteFormat(SessionLogFormat.V2).build();
+        try (AimonStack stack = AimonStackBuilder
+                .build(specFor(workspace, "ops").executor(rolling).session(versionTwo).build())) {
+            final OrcaAgentRuntime runtime = stack.runtimes().get(stack.primaryRuntimeId());
+            assertThat(runtime.getContextEngine()).isInstanceOf(RollingContextEngine.class);
+            assertThat(runtime.getToolRegistry().findByName(SessionHistoryTool.TOOL_NAME)).isPresent();
         }
     }
 

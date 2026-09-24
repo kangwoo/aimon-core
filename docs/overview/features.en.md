@@ -88,6 +88,7 @@ feed turns in through a [session](#2-sessions).
 - [command queue guide](../features/agent-execution/command-queue-guide.en.md)
 - [interruptible tools guide](../features/agent-execution/interruptible-tools-guide.en.md)
 - [the system-reminder convention](../features/agent-execution/system-reminder-convention.en.md)
+- [the context engine guide](../features/agent-execution/context-engine-guide.en.md) — the compaction policy for long conversations (`default` / `rolling`)
 
 ---
 

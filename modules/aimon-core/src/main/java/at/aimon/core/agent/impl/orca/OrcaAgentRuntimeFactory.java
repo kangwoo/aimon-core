@@ -8,6 +8,7 @@ import java.util.function.Function;
 
 import at.aimon.core.agent.Agent;
 import at.aimon.core.agent.AgentRuntimeId;
+import at.aimon.core.agent.ContextEngineKind;
 import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.compact.CompactionEngine;
 import at.aimon.core.agent.compact.CompactionFailureStore;
@@ -16,7 +17,10 @@ import at.aimon.core.agent.compact.DefaultCompactionEngine;
 import at.aimon.core.agent.compact.DefaultCompactionGuard;
 import at.aimon.core.agent.compact.DefaultPromptSizeRecoveryStrategy;
 import at.aimon.core.agent.compact.InMemoryCompactionFailureStore;
+import at.aimon.core.agent.compact.PromptSizeRecoveryStrategy;
+import at.aimon.core.agent.context.ContextEngine;
 import at.aimon.core.agent.context.DefaultContextEngine;
+import at.aimon.core.agent.context.RollingContextEngine;
 import at.aimon.core.agent.impl.AgentBundle;
 import at.aimon.core.agent.impl.orca.command.OrcaCommandProvider;
 import at.aimon.core.agent.impl.orca.command.OrcaCommandProviderContext;
@@ -32,6 +36,7 @@ import at.aimon.core.agent.impl.orca.tool.OrcaTodoToolProvider;
 import at.aimon.core.agent.orca.OrcaProviderDependencies;
 import at.aimon.core.agent.orca.tool.OrcaToolProvider;
 import at.aimon.core.agent.orca.tool.OrcaToolProviderContext;
+import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.agent.tool.ToolContextEnricher;
 import at.aimon.core.agent.tool.ToolRegistry;
@@ -75,6 +80,7 @@ import at.aimon.core.subagent.task.TaskResultStore;
 import at.aimon.core.subagent.task.VfsSessionSnapshotStore;
 import at.aimon.core.subagent.task.VfsTaskOutputStore;
 import at.aimon.core.subagent.task.VfsTaskResultStore;
+import at.aimon.core.tools.session.SessionHistoryTool;
 import at.aimon.core.workflow.WorkflowRunner;
 import at.aimon.core.workflow.WorkflowRunnerOptions;
 import at.aimon.core.workflow.WorkflowRunners;
@@ -221,6 +227,11 @@ public class OrcaAgentRuntimeFactory {
     // branch-scoped VFS. A bootstrap supplies an alternative implementation for e.g. Bash-inclusive isolation or
     // overlay read-through without touching buildWorkflowRunner.
     private Function<VirtualFileSystem, WorktreeEnvironmentFactory> worktreeEnvironmentFactoryFactory;
+    // Context-engine design §10: the engine an agent gets when its AGENT.md does not name one, and the session log
+    // format this node writes. The two meet at runtime creation: rolling keeps its summary span in the view state,
+    // which a version-1 record cannot store, so asking for it on a version-1 node fails there (session-log §7.3).
+    private ContextEngineKind defaultContextEngine = ContextEngineKind.DEFAULT;
+    private SessionLogFormat sessionLogWriteFormat = SessionLogFormat.V1;
 
     /**
      * Creates a factory with default configuration.
@@ -520,6 +531,34 @@ public class OrcaAgentRuntimeFactory {
      */
     public OrcaAgentRuntimeFactory withCompactionFailureStore(CompactionFailureStore failureStore) {
         this.compactionFailureStore = failureStore;
+        return this;
+    }
+
+    /**
+     * Sets the context engine an agent's runtime is built with when its AGENT.md frontmatter does not name one
+     * ({@code context-engine}). {@link ContextEngineKind#ROLLING} also registers the {@code SessionHistory} tool, and
+     * requires {@link #withSessionLogWriteFormat(SessionLogFormat) the version-2 write format}.
+     *
+     * @param kind
+     *            the deployment default (must not be null; default {@link ContextEngineKind#DEFAULT})
+     * @return this factory (for chaining)
+     */
+    public OrcaAgentRuntimeFactory withContextEngine(ContextEngineKind kind) {
+        this.defaultContextEngine = Objects.requireNonNull(kind, "kind must not be null");
+        return this;
+    }
+
+    /**
+     * Declares the session log format this node writes — the same switch the transcript manager is built with. With
+     * {@link SessionLogFormat#V2} the default engine refuses at build time a collaborator that cannot keep the log
+     * append-only; with {@link SessionLogFormat#V1} a runtime asking for the rolling engine fails to build.
+     *
+     * @param writeFormat
+     *            the format (must not be null; default {@link SessionLogFormat#V1})
+     * @return this factory (for chaining)
+     */
+    public OrcaAgentRuntimeFactory withSessionLogWriteFormat(SessionLogFormat writeFormat) {
+        this.sessionLogWriteFormat = Objects.requireNonNull(writeFormat, "writeFormat must not be null");
         return this;
     }
 
@@ -849,17 +888,19 @@ public class OrcaAgentRuntimeFactory {
         // hands us a shared one.
         final CompactionEngine compactionEngine = DefaultCompactionEngine.withDefaults(agentExecutor.getLlmClient(),
                 tokenEstimator, agentExecutor.getHookExecutionManager());
+        final CompactionFailureStore failureStore = compactionFailureStore != null
+                ? compactionFailureStore
+                : new InMemoryCompactionFailureStore();
         final CompactionGuard compactionGuard = new DefaultCompactionGuard(compactionEngine, modelContextWindowRegistry,
                 tokenEstimator, DefaultCompactionGuard.DEFAULT_MAX_CONSECUTIVE_FAILURES,
-                DefaultCompactionGuard.DEFAULT_MAX_TRACKED_SESSIONS,
-                compactionFailureStore != null ? compactionFailureStore : new InMemoryCompactionFailureStore());
+                DefaultCompactionGuard.DEFAULT_MAX_TRACKED_SESSIONS, failureStore);
         // The one place the agent's LLM view is shrunk: the compaction gate, prompt-too-long recovery and /compact all
-        // go through it. It wraps the guard and the recovery strategy above and still rewrites the transcript in place
-        // (context-engine design §4); the default recovery strategy drops the oldest droppable user message and
-        // retries instead of aborting the turn.
-        final DefaultContextEngine contextEngine = DefaultContextEngine.builder().compactionGuard(compactionGuard)
-                .recoveryStrategy(new DefaultPromptSizeRecoveryStrategy()).compactionEngine(compactionEngine)
-                .tokenEstimator(tokenEstimator).build();
+        // go through it. The default recovery strategy drops the oldest droppable user message and retries instead of
+        // aborting the turn. Which engine is the agent's to say (AGENT.md context-engine), else the deployment's.
+        final PromptSizeRecoveryStrategy recoveryStrategy = new DefaultPromptSizeRecoveryStrategy();
+        final ContextEngineKind engineKind = agent.getMetadata().getContextEngine().orElse(defaultContextEngine);
+        final ContextEngine contextEngine = buildContextEngine(agentRuntimeId, engineKind, compactionEngine,
+                compactionGuard, failureStore, recoveryStrategy);
 
         // Back background-subagent live output with a VFS-persisted segment log rooted in this context's file
         // system, so the AgentOutput tool can tail progress incrementally and (in a scale-out deployment) any node can
@@ -927,6 +968,11 @@ public class OrcaAgentRuntimeFactory {
         for (OrcaToolProvider provider : toolProviders) {
             provider.registerTools(toolRegistry, context);
         }
+        // Rolling elides tool results and summarizes ranges the model saw; SessionHistory is how it reads them back
+        // (context-engine §6). The default engine has no placeholder to follow, so it does not get the tool.
+        if (engineKind == ContextEngineKind.ROLLING) {
+            toolRegistry.register(new SessionHistoryTool());
+        }
 
         // Create command provider context
         final OrcaCommandProviderContext commandContext = OrcaCommandProviderContext.builder()
@@ -943,8 +989,33 @@ public class OrcaAgentRuntimeFactory {
                 .mcpClientManager(mcpClientManager).knowledgeStore(knowledgeStore).compactionEngine(compactionEngine)
                 .compactionGuard(compactionGuard)
                 // Still exposed on its own for callers that read it; the executor consults it through the engine.
-                .promptSizeRecoveryStrategy(contextEngine.getRecoveryStrategy()).contextEngine(contextEngine)
+                .promptSizeRecoveryStrategy(recoveryStrategy).contextEngine(contextEngine)
                 .toolContextEnrichers(toolContextEnrichers).workflowRunner(workflowRunner).ownedShell(ownedShell)
+                .build();
+    }
+
+    /**
+     * Builds the agent's context engine. Rolling on a version-1 node is refused here, which is at startup for a
+     * declared agent: the engine would have nowhere to keep its summary span (session-log §7.3).
+     */
+    @SuppressWarnings("deprecation") // the default engine wraps the version-1 guard on purpose
+    private ContextEngine buildContextEngine(AgentRuntimeId agentRuntimeId, ContextEngineKind kind,
+            CompactionEngine compactionEngine, CompactionGuard compactionGuard, CompactionFailureStore failureStore,
+            PromptSizeRecoveryStrategy recoveryStrategy) {
+        if (kind == ContextEngineKind.ROLLING) {
+            if (sessionLogWriteFormat == SessionLogFormat.V1) {
+                throw new IllegalStateException("Agent runtime " + agentRuntimeId + " asks for the rolling context"
+                        + " engine, which keeps its summary span in the view state; the session log write format is"
+                        + " version 1, which cannot store it. Switch the write format to version 2 once every node"
+                        + " reads it, or use the default context engine.");
+            }
+            return RollingContextEngine.builder().compactionEngine(compactionEngine)
+                    .modelContextWindowRegistry(modelContextWindowRegistry).tokenEstimator(tokenEstimator)
+                    .failureStore(failureStore).recoveryStrategy(recoveryStrategy).writeFormat(sessionLogWriteFormat)
+                    .build();
+        }
+        return DefaultContextEngine.builder().compactionGuard(compactionGuard).recoveryStrategy(recoveryStrategy)
+                .compactionEngine(compactionEngine).tokenEstimator(tokenEstimator).writeFormat(sessionLogWriteFormat)
                 .build();
     }
 

@@ -82,6 +82,7 @@
 - [명령 큐 가이드](../features/agent-execution/command-queue-guide.md)
 - [중단 가능 도구 가이드](../features/agent-execution/interruptible-tools-guide.md)
 - [system-reminder 규약](../features/agent-execution/system-reminder-convention.md)
+- [Context Engine 가이드](../features/agent-execution/context-engine-guide.md) — 긴 대화의 압축 정책 (`default` / `rolling`)
 
 ---
 

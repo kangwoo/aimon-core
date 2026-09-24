@@ -71,6 +71,8 @@ import at.aimon.core.agent.queue.MessageQueueManager;
 import at.aimon.core.agent.queue.QueuedInput;
 import at.aimon.core.agent.queue.QueuedInputPriority;
 import at.aimon.core.agent.session.transcript.LogOrigin;
+import at.aimon.core.agent.session.transcript.SessionLogReader;
+import at.aimon.core.agent.session.transcript.SessionLogSource;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.session.transcript.TranscriptManager;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
@@ -152,6 +154,7 @@ import at.aimon.core.toolinvocation.ToolInvocationSpec;
 import at.aimon.core.toolinvocation.approval.SideEffectApprovalGate;
 import at.aimon.core.tools.ToolContextKeys;
 import at.aimon.core.tools.file.ReadTool;
+import at.aimon.core.tools.session.SessionHistoryTool;
 import at.aimon.core.tools.todo.TodoWriteTool;
 import at.aimon.core.tracing.SpanContext;
 import at.aimon.core.tracing.SpanType;
@@ -834,11 +837,13 @@ public class OrcaAgentExecutor
      * @param agentEventSink
      *            A bound reference to this executor's event emitter (never null). Published so the {@code Task}
      *            tool can forward it to a background subagent for best-effort {@code SubagentTaskCompleted} emission.
+     * @param logReader
+     *            reads the session's sealed ranges, or {@code null} when the transcript manager seals nothing
      * @return The tool context (never null)
      */
     private static ToolContext createToolContext(ExecutionScope scope, ToolRegistry sessionRegistry,
             CancellationSignal cancellationSignal, MessageQueueManager messageQueueManager,
-            Consumer<AgentExecutionEvent> agentEventSink) {
+            Consumer<AgentExecutionEvent> agentEventSink, SessionLogReader logReader) {
         final ToolContext.Builder builder = ToolContext.builder();
         builder.put(ToolContextKeys.AGENT_RUNTIME_ID, scope.agentRuntime.getId());
         builder.put(ToolContextKeys.SESSION_ID, scope.transcriptBuffer.getSessionId());
@@ -874,6 +879,10 @@ public class OrcaAgentExecutor
             builder.put(ToolContextKeys.MESSAGE_QUEUE_MANAGER, messageQueueManager);
         }
         builder.put(ToolContextKeys.AGENT_EVENT_SINK, agentEventSink);
+
+        // The running session's log — this turn's buffer plus its sealed ranges — for SessionHistory, which reads back
+        // what the context engine no longer shows. Read through the buffer, not the record: the record lags a turn.
+        builder.put(SessionHistoryTool.LOG_SOURCE_KEY, SessionLogSource.of(scope.transcriptBuffer, logReader));
 
         // Inject per-session ToolSearchRegistry if applicable
         if (sessionRegistry instanceof ToolSearchRegistry searchRegistry) {
@@ -1565,7 +1574,8 @@ public class OrcaAgentExecutor
             scope.executionRequest.getBudgetObserver().accept(scope.budgetTracker);
 
             final ToolContext toolContext = createToolContext(scope, sessionRegistry, cancellationSignal,
-                    messageQueueManager, event -> scope.eventDispatcher.dispatch(event));
+                    messageQueueManager, event -> scope.eventDispatcher.dispatch(event),
+                    transcriptManager.getLogReader().orElse(null));
 
             TokenUsage accumulatedTokens = TokenUsage.empty();
             // Model name for cost attribution — constant for the whole execution, resolved once. Empty (null) when

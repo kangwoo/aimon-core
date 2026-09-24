@@ -1,7 +1,9 @@
 package at.aimon.bootstrap.spec;
 
+import java.util.Objects;
 import java.util.Optional;
 
+import at.aimon.core.agent.ContextEngineKind;
 import at.aimon.core.llm.cost.CostEstimator;
 import at.aimon.core.memory.MemoryContextProvider;
 import at.aimon.core.tracing.TracePayloadPolicy;
@@ -33,6 +35,7 @@ public final class ExecutorSpec {
     private final TracePayloadPolicy tracePayloadPolicy;
     private final CostEstimator costEstimator;
     private final MemoryContextProvider memoryContextProvider;
+    private final ContextEngineKind contextEngine;
 
     private ExecutorSpec(Builder builder) {
         this.streaming = builder.streaming;
@@ -40,6 +43,7 @@ public final class ExecutorSpec {
         this.tracePayloadPolicy = builder.tracePayloadPolicy;
         this.costEstimator = builder.costEstimator;
         this.memoryContextProvider = builder.memoryContextProvider;
+        this.contextEngine = Objects.requireNonNullElse(builder.contextEngine, ContextEngineKind.DEFAULT);
     }
 
     /**
@@ -106,10 +110,21 @@ public final class ExecutorSpec {
         return Optional.ofNullable(memoryContextProvider);
     }
 
+    /**
+     * Returns the context engine an agent's runtime is built with when its AGENT.md does not name one
+     * ({@code context-engine}). {@link ContextEngineKind#ROLLING} needs
+     * {@link SessionSpec#getLogWriteFormat() the version-2 log write format}; the stack refuses to start otherwise.
+     *
+     * @return the default engine, {@link ContextEngineKind#DEFAULT} unless set
+     */
+    public ContextEngineKind getContextEngine() {
+        return contextEngine;
+    }
+
     @Override
     public String toString() {
-        return "ExecutorSpec[streaming=" + streaming + ", tracer=" + (tracer != null) + ", memoryContext="
-                + (memoryContextProvider != null) + "]";
+        return "ExecutorSpec[streaming=" + streaming + ", contextEngine=" + contextEngine.configValue() + ", tracer="
+                + (tracer != null) + ", memoryContext=" + (memoryContextProvider != null) + "]";
     }
 
     /** Builder for {@link ExecutorSpec}. */
@@ -120,8 +135,21 @@ public final class ExecutorSpec {
         private TracePayloadPolicy tracePayloadPolicy;
         private CostEstimator costEstimator;
         private MemoryContextProvider memoryContextProvider;
+        private ContextEngineKind contextEngine;
 
         private Builder() {
+        }
+
+        /**
+         * Sets the context engine agents get when their AGENT.md names none.
+         *
+         * @param contextEngine
+         *            the engine, or {@code null} for {@link ContextEngineKind#DEFAULT}
+         * @return this builder
+         */
+        public Builder contextEngine(ContextEngineKind contextEngine) {
+            this.contextEngine = contextEngine;
+            return this;
         }
 
         /**
