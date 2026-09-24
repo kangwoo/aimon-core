@@ -135,6 +135,41 @@ public final class SessionViewState {
     }
 
     /**
+     * Returns whether the view leaves every seq of {@code [fromSeq, toSeq)} out as it is — the condition for sealing
+     * that range (session-log §5.1). The span and the dropped ranges may share the work between them.
+     *
+     * @param fromSeq
+     *            the first seq of the range
+     * @param toSeq
+     *            the first seq after the range
+     * @return whether no seq of the range appears verbatim in the view; true for an empty range
+     */
+    public boolean hidesRange(long fromSeq, long toSeq) {
+        long cursor = fromSeq;
+        while (cursor < toSeq) {
+            final long covered = coveredUntil(cursor);
+            if (covered <= cursor) {
+                return false;
+            }
+            cursor = covered;
+        }
+        return true;
+    }
+
+    /** Returns the end of the hiding range that contains {@code seq}, or {@code seq} itself when none does. */
+    private long coveredUntil(long seq) {
+        if (summarySpan != null && summarySpan.getRange().contains(seq)) {
+            return summarySpan.getToSeq();
+        }
+        for (SeqRange range : droppedRanges) {
+            if (range.contains(seq)) {
+                return range.getToSeq();
+            }
+        }
+        return seq;
+    }
+
+    /**
      * @param seq
      *            the seq to test
      * @return whether {@code seq} lies in a dropped range

@@ -490,6 +490,46 @@ class DefaultSessionStoreTest {
         assertThatNullPointerException().isThrownBy(() -> new DefaultSessionStore(leases, null));
     }
 
+    @Nested
+    @DisplayName("segments — the fenced delete view")
+    class Segments {
+
+        private final InMemorySessionLogSegmentStore raw = new InMemorySessionLogSegmentStore();
+
+        private SessionLogSegment segment() {
+            return SessionLogSegment.builder().sessionId(conv).id(SegmentId.generate()).fromSeq(0).toSeq(1)
+                    .entryCount(1).payload("p").createdAt(clock.instant()).build();
+        }
+
+        @Test
+        @DisplayName("the holder deletes; a node that does not hold the session cannot")
+        void deletesAreFenced() {
+            final SessionLogSegment segment = segment();
+            nodeB.segments(raw).put(segment);
+            nodeA.acquire(conv, "node-A", LEASE).orElseThrow();
+
+            assertThatExceptionOfType(SessionNotHeldException.class)
+                    .isThrownBy(() -> nodeB.segments(raw).delete(conv, segment.getId()));
+            assertThatExceptionOfType(SessionNotHeldException.class)
+                    .isThrownBy(() -> nodeB.segments(raw).deleteAll(conv));
+            assertThat(raw.get(conv, segment.getId())).isPresent();
+
+            nodeA.segments(raw).delete(conv, segment.getId());
+            assertThat(raw.get(conv, segment.getId())).isEmpty();
+        }
+
+        @Test
+        @DisplayName("writes and reads are not fenced")
+        void writesAndReadsPassThrough() {
+            final SessionLogSegment segment = segment();
+
+            nodeB.segments(raw).put(segment);
+
+            assertThat(nodeB.segments(raw).get(conv, segment.getId())).contains(segment);
+            assertThat(nodeB.segments(raw).list(conv)).hasSize(1);
+        }
+    }
+
     /** A clock the test moves by hand, so lease expiry needs no sleeping. */
     private static final class MutableClock extends Clock {
 

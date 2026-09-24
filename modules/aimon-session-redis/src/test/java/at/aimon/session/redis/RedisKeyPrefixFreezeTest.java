@@ -67,4 +67,12 @@ class RedisKeyPrefixFreezeTest {
         // listSessionIds and clear.
         assertThat(RedisSessionRecordStore.DEFAULT_KEY_PREFIX).isEqualTo("aimon:session:record");
     }
+
+    @Test
+    @DisplayName("the segment prefix still names the deployed session-log segment hashes")
+    void segmentPrefixIsFrozen() {
+        // Renaming it would leave every manifest pointing at segments under the old prefix: each sealed range would
+        // read back as a gap and garbage collection would never find the old keys to delete.
+        assertThat(RedisSessionLogSegmentStore.DEFAULT_KEY_PREFIX).isEqualTo("aimon:session:segment");
+    }
 }

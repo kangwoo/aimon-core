@@ -11,6 +11,7 @@ import at.aimon.core.agent.session.inbox.SessionInbox;
 import at.aimon.core.agent.session.signal.SessionSignalBus;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.store.SessionLeaseStore;
+import at.aimon.core.agent.session.store.SessionLogSegmentStore;
 import at.aimon.core.agent.session.store.SessionRecordStore;
 import at.aimon.core.base.ExternallyManaged;
 import at.aimon.session.routing.DeploymentMode;
@@ -53,6 +54,7 @@ public final class SessionSpec {
     public static final Duration DEFAULT_DRAIN_TIMEOUT = Duration.ofSeconds(30);
 
     private final SessionRecordStore recordStore;
+    private final SessionLogSegmentStore segmentStore;
     private final Duration drainTimeout;
     private final Duration idleTtl;
     private final Integer maxCachedSessions;
@@ -65,6 +67,7 @@ public final class SessionSpec {
 
     private SessionSpec(Builder builder) {
         this.recordStore = builder.recordStore;
+        this.segmentStore = builder.segmentStore;
         this.drainTimeout = Objects.requireNonNullElse(builder.drainTimeout, DEFAULT_DRAIN_TIMEOUT);
         this.idleTtl = builder.idleTtl;
         this.maxCachedSessions = builder.maxCachedSessions;
@@ -163,6 +166,20 @@ public final class SessionSpec {
     }
 
     /**
+     * Returns the store sealed ranges of session logs are moved into (session-log §5.6).
+     *
+     * <p>
+     * When absent, the stack pairs an in-memory segment store with an in-memory record store — the two lose everything
+     * together — and seals nothing when the record store was supplied, since an in-memory segment store behind a
+     * durable record would turn every sealed range into a gap after a restart.
+     *
+     * @return the store, or empty
+     */
+    public Optional<SessionLogSegmentStore> getSegmentStore() {
+        return Optional.ofNullable(segmentStore);
+    }
+
+    /**
      * Returns how long shutdown waits for in-flight turns before releasing leases.
      *
      * @return the drain timeout, never null
@@ -247,6 +264,7 @@ public final class SessionSpec {
     public static final class Builder {
 
         private SessionRecordStore recordStore;
+        private SessionLogSegmentStore segmentStore;
         private Duration drainTimeout;
         private Duration idleTtl;
         private Integer maxCachedSessions;
@@ -269,6 +287,19 @@ public final class SessionSpec {
          */
         public Builder recordStore(@ExternallyManaged SessionRecordStore recordStore) {
             this.recordStore = recordStore;
+            return this;
+        }
+
+        /**
+         * Sets the store sealed ranges of session logs are moved into. Supply one backed by the same database as the
+         * record store — a segment is data moved out of the record and must be kept at least as safely.
+         *
+         * @param segmentStore
+         *            the store, or null (see {@link SessionSpec#getSegmentStore()})
+         * @return this builder
+         */
+        public Builder segmentStore(@ExternallyManaged SessionLogSegmentStore segmentStore) {
+            this.segmentStore = segmentStore;
             return this;
         }
 

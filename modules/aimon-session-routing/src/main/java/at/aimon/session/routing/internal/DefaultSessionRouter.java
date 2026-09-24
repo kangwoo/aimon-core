@@ -65,6 +65,7 @@ import at.aimon.core.agent.session.signal.SessionSignal;
 import at.aimon.core.agent.session.signal.SessionSignalBus;
 import at.aimon.core.agent.session.store.ClaimResult;
 import at.aimon.core.agent.session.store.SessionLease;
+import at.aimon.core.agent.session.store.SessionLogSegmentStore;
 import at.aimon.core.agent.session.store.SessionRecordView;
 import at.aimon.core.agent.session.store.SessionStore;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
@@ -140,6 +141,7 @@ public final class DefaultSessionRouter implements SessionRouter {
      * and serves the agent runtimes too.
      */
     private final SessionApprovalStore sessionApprovalStore;
+    private final SessionLogSegmentStore segmentStore;
 
     private final LiveSessionCache sessionCache;
     private final InProcessEventPublisher eventPublisher;
@@ -386,6 +388,7 @@ public final class DefaultSessionRouter implements SessionRouter {
                 "releaseInterruptTimeout");
         this.metrics = Objects.requireNonNull(metrics, "metrics must not be null");
         this.sessionApprovalStore = config.sessionApprovalStore();
+        this.segmentStore = config.segmentStore();
 
         // The close listener is how a held lease gets back to the cluster: every way a session can end — idle TTL, LRU,
         // an explicit release, an EVICT signal, shutdown — ends in a close, and none of them knows about leases.
@@ -2730,6 +2733,7 @@ public final class DefaultSessionRouter implements SessionRouter {
                     throw e;
                 }
                 recordDeleted = true;
+                deleteSegments(sessionId);
                 emitTerminalInterrupt(sessionId, InterruptReason.SESSION_RELEASED);
                 eventPublisher.complete(sessionId);
                 final SessionSignalBus.Subscription sub = subscriptions.remove(sessionId);
@@ -2770,6 +2774,23 @@ public final class DefaultSessionRouter implements SessionRouter {
                 // answer like any other.
                 rerunDoorbellIfRung(sessionId);
             }
+        }
+    }
+
+    /**
+     * Deletes every sealed segment of a deleted session, after its record, through the fenced view (session-log §6.2).
+     * A failure is logged and not rethrown: the record is already gone, so what is left is segments no manifest names,
+     * which nothing reads.
+     */
+    private void deleteSegments(SessionId sessionId) {
+        if (segmentStore == null) {
+            return;
+        }
+        try {
+            store.segments(segmentStore).deleteAll(sessionId);
+        } catch (Exception e) {
+            log.warn("Segment delete failed for deleted session {}; its segments are orphans: {}", sessionId.value(),
+                    e.toString());
         }
     }
 

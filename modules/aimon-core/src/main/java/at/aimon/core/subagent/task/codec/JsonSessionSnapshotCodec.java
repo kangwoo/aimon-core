@@ -19,10 +19,12 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.store.SegmentId;
 import at.aimon.core.agent.session.transcript.LogOrigin;
 import at.aimon.core.agent.session.transcript.SeqRange;
 import at.aimon.core.agent.session.transcript.SessionLogEntry;
 import at.aimon.core.agent.session.transcript.SessionLogFormat;
+import at.aimon.core.agent.session.transcript.SessionLogManifestEntry;
 import at.aimon.core.agent.session.transcript.SessionLogState;
 import at.aimon.core.agent.session.transcript.SessionRewindPoint;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
@@ -143,6 +145,10 @@ public final class JsonSessionSnapshotCodec implements SessionSnapshotCodec {
     private static final String FIELD_MESSAGES_SUMMARIZED = "messagesSummarized";
     private static final String FIELD_DISCOVERED_TOOL_NAMES = "discoveredToolNames";
     private static final String FIELD_PLACEHOLDER = "placeholder";
+    private static final String FIELD_MANIFEST = "manifest";
+    private static final String FIELD_SEGMENT_ID = "segmentId";
+    private static final String FIELD_CONTENT_HASH = "contentHash";
+    private static final String FIELD_ENTRY_COUNT = "entryCount";
 
     private static final String FIELD_ROLE = "role";
     private static final String FIELD_CONTENT = "content";
@@ -226,6 +232,19 @@ public final class JsonSessionSnapshotCodec implements SessionSnapshotCodec {
                 rewindAt = state.getRewindPoint().map(SessionRewindPoint::getSeq).orElse(-1L);
                 if (!state.getViewState().isEmpty()) {
                     root.set(FIELD_VIEW_STATE, encodeViewState(state.getViewState()));
+                }
+                // Written only when something was sealed, like the view state: a log that never sealed encodes as it
+                // did before the manifest existed.
+                if (!state.getManifest().isEmpty()) {
+                    final ArrayNode lines = root.putArray(FIELD_MANIFEST);
+                    for (SessionLogManifestEntry line : state.getManifest()) {
+                        final ObjectNode node = lines.addObject();
+                        node.put(FIELD_FROM_SEQ, line.getFromSeq());
+                        node.put(FIELD_TO_SEQ, line.getToSeq());
+                        node.put(FIELD_SEGMENT_ID, line.getSegmentId().value());
+                        node.put(FIELD_CONTENT_HASH, line.getContentHash());
+                        node.put(FIELD_ENTRY_COUNT, line.getEntryCount());
+                    }
                 }
             } else {
                 final ArrayNode messages = root.putArray(FIELD_MESSAGES);
@@ -332,9 +351,100 @@ public final class JsonSessionSnapshotCodec implements SessionSnapshotCodec {
         try {
             return SessionLogState.builder().entries(entries).nextSeq(nextSeq).floorSeq(floorSeq)
                     .rewindPoint(decodeRewindPoint(pointNode, at)).format(SessionLogFormat.V2)
-                    .viewState(decodeViewState(root.get(FIELD_VIEW_STATE))).build();
+                    .viewState(decodeViewState(root.get(FIELD_VIEW_STATE)))
+                    .manifest(decodeManifest(root.get(FIELD_MANIFEST))).build();
         } catch (IllegalArgumentException e) {
             throw new SessionSnapshotCodecException("Inconsistent session log: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Reads a version-2 manifest. Absent means nothing was sealed. Bounds, overlap and "hidden by the view" are
+     * checked by {@link SessionLogState}'s own invariants.
+     */
+    private static List<SessionLogManifestEntry> decodeManifest(JsonNode node) {
+        if (node == null || node.isNull()) {
+            return List.of();
+        }
+        if (!node.isArray()) {
+            throw new SessionSnapshotCodecException("manifest is not a JSON array");
+        }
+        final List<SessionLogManifestEntry> lines = new ArrayList<>();
+        for (JsonNode line : node) {
+            if (line == null || !line.isObject()) {
+                throw new SessionSnapshotCodecException("Manifest line is not a JSON object");
+            }
+            lines.add(SessionLogManifestEntry.builder().fromSeq(requiredLong(line, FIELD_FROM_SEQ))
+                    .toSeq(requiredLong(line, FIELD_TO_SEQ))
+                    .segmentId(SegmentId.of(requiredText(line, FIELD_SEGMENT_ID)))
+                    .contentHash(requiredText(line, FIELD_CONTENT_HASH))
+                    .entryCount((int) requiredLong(line, FIELD_ENTRY_COUNT)).build());
+        }
+        return lines;
+    }
+
+    /**
+     * Encodes log entries — seq, origin and message — with the message encoding the transcript uses. This is the
+     * payload of a sealed segment (session-log §5.6); backends store it as an opaque string.
+     *
+     * @param entries
+     *            the entries (must not be null)
+     * @return the encoded entries (never null)
+     * @throws SessionSnapshotCodecException
+     *             if encoding fails
+     */
+    public String encodeEntries(List<SessionLogEntry> entries) {
+        Objects.requireNonNull(entries, "entries cannot be null");
+        try {
+            final ObjectNode root = MAPPER.createObjectNode();
+            root.put(FIELD_VERSION, FORMAT_VERSION_V2);
+            final ArrayNode array = root.putArray(FIELD_ENTRIES);
+            for (SessionLogEntry entry : entries) {
+                final ObjectNode node = array.addObject();
+                node.put(FIELD_SEQ, entry.getSeq());
+                node.put(FIELD_ORIGIN, entry.getOrigin().name());
+                node.set(FIELD_MESSAGE, encodeMessage(entry.getMessage()));
+            }
+            return MAPPER.writeValueAsString(root);
+        } catch (JsonProcessingException e) {
+            throw new SessionSnapshotCodecException("Failed to encode log entries: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Decodes what {@link #encodeEntries(List)} wrote.
+     *
+     * @param encoded
+     *            the encoded entries (must not be null)
+     * @return the entries in stored order (never null)
+     * @throws SessionSnapshotCodecException
+     *             if the payload is not a readable entry list
+     */
+    public List<SessionLogEntry> decodeEntries(String encoded) {
+        Objects.requireNonNull(encoded, "encoded cannot be null");
+        try {
+            final JsonNode root = MAPPER.readTree(encoded);
+            if (root == null || !root.isObject() || root.path(FIELD_VERSION).asInt(-1) != FORMAT_VERSION_V2) {
+                throw new SessionSnapshotCodecException("Encoded log entries are not a version-2 entry list");
+            }
+            final List<SessionLogEntry> entries = new ArrayList<>();
+            final JsonNode array = root.get(FIELD_ENTRIES);
+            if (array == null || !array.isArray()) {
+                throw new SessionSnapshotCodecException("Encoded log entries carry no entry array");
+            }
+            for (JsonNode entryNode : array) {
+                if (entryNode == null || !entryNode.isObject()) {
+                    throw new SessionSnapshotCodecException("Log entry is not a JSON object");
+                }
+                entries.add(SessionLogEntry.of(requiredLong(entryNode, FIELD_SEQ),
+                        decodeMessage(entryNode.get(FIELD_MESSAGE)),
+                        decodeOrigin(requiredText(entryNode, FIELD_ORIGIN))));
+            }
+            return entries;
+        } catch (SessionSnapshotCodecException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new SessionSnapshotCodecException("Failed to decode log entries: " + e.getMessage(), e);
         }
     }
 

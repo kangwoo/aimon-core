@@ -26,8 +26,11 @@ import at.aimon.core.llm.Role;
  * {@code floorSeq} is where the log restarts after {@code /clear}; nothing below it is part of the session any more.
  *
  * <p>
- * The entries held here are the ones the record itself carries. {@link #getMessages()} is therefore "the part of the
- * log that is in the record" — today that is the whole log, but it is not a promise that it always will be.
+ * The entries held here are the ones the record itself carries — the <em>hot</em> entries. {@link #getMessages()} is
+ * therefore "the part of the log that is in the record", not the whole log: a range the view no longer shows verbatim
+ * can be sealed out of the record into a segment ({@link #seal(SessionLogManifestEntry)}), and the {@linkplain
+ * #getManifest() manifest} is then what remembers it (session-log §5). Reading the whole log, sealed ranges included,
+ * is {@link SessionLogReader}'s job.
  *
  * <p>
  * <b>Invariants</b>, checked on construction:
@@ -36,6 +39,8 @@ import at.aimon.core.llm.Role;
  * <li>{@code 0 <= floorSeq <= nextSeq}
  * <li>entry seqs are strictly increasing and every one lies in {@code [floorSeq, nextSeq)}
  * <li>a rewind point's seq lies in {@code [floorSeq, nextSeq]}
+ * <li>manifest ranges are sorted, disjoint and lie in {@code [floorSeq, nextSeq)}; no carried entry lies in one; each
+ * is hidden by the view state; no rewind point lies strictly inside one; a non-empty manifest requires version 2
  * </ul>
  *
  * <p>
@@ -71,6 +76,9 @@ public final class SessionLogState {
     private final SessionRewindPoint rewindPoint;
     private final SessionLogFormat format;
     private final SessionViewState viewState;
+
+    /** Unmodifiable, owned by this instance, sorted by {@code fromSeq}. */
+    private final List<SessionLogManifestEntry> manifest;
 
     private SessionLogState(Builder builder) {
         this.nextSeq = builder.nextSeq;
@@ -113,6 +121,52 @@ public final class SessionLogState {
         }
         this.entries = Collections.unmodifiableList(ownedEntries);
         this.messages = Collections.unmodifiableList(ownedMessages);
+        this.manifest = List.copyOf(Objects.requireNonNull(builder.manifest, "manifest cannot be null"));
+        checkManifest();
+    }
+
+    private void checkManifest() {
+        if (manifest.isEmpty()) {
+            return;
+        }
+        if (format != SessionLogFormat.V2) {
+            throw new IllegalArgumentException("a manifest can only be carried by a version-2 log, got " + format);
+        }
+        long previousTo = floorSeq;
+        for (SessionLogManifestEntry line : manifest) {
+            if (line.getFromSeq() < previousTo || line.getToSeq() > nextSeq) {
+                throw new IllegalArgumentException("manifest range " + line.getRange() + " overlaps another or lies"
+                        + " outside [floorSeq=" + floorSeq + ", nextSeq=" + nextSeq + ")");
+            }
+            if (!viewState.hidesRange(line.getFromSeq(), line.getToSeq())) {
+                throw new IllegalArgumentException(
+                        "manifest range " + line.getRange() + " is not hidden by the view state " + viewState);
+            }
+            if (rewindPoint != null && rewindPoint.getSeq() > line.getFromSeq()
+                    && rewindPoint.getSeq() < line.getToSeq()) {
+                throw new IllegalArgumentException(
+                        "rewindPoint seq " + rewindPoint.getSeq() + " lies inside the sealed range " + line.getRange());
+            }
+            previousTo = line.getToSeq();
+        }
+        for (SessionLogEntry entry : entries) {
+            if (sealedLineOf(entry.getSeq()) != null) {
+                throw new IllegalArgumentException(
+                        "entry seq " + entry.getSeq() + " lies in a sealed range; a sealed entry is not carried");
+            }
+        }
+    }
+
+    private SessionLogManifestEntry sealedLineOf(long seq) {
+        for (SessionLogManifestEntry line : manifest) {
+            if (line.contains(seq)) {
+                return line;
+            }
+            if (line.getFromSeq() > seq) {
+                return null;
+            }
+        }
+        return null;
     }
 
     /**
@@ -184,7 +238,7 @@ public final class SessionLogState {
      */
     public Builder toBuilder() {
         return new Builder().entries(entries).nextSeq(nextSeq).floorSeq(floorSeq).rewindPoint(rewindPoint)
-                .format(format).viewState(viewState);
+                .format(format).viewState(viewState).manifest(manifest);
     }
 
     /**
@@ -247,6 +301,72 @@ public final class SessionLogState {
     }
 
     /**
+     * Returns the sealed ranges of this log: each line names the segment its range was moved into.
+     *
+     * @return an unmodifiable list sorted by {@code fromSeq} (never null; empty for a version-1 state)
+     */
+    public List<SessionLogManifestEntry> getManifest() {
+        return manifest;
+    }
+
+    /**
+     * Returns the carried entries whose seq lies in {@code [fromSeq, toSeq)}, in seq order.
+     *
+     * @param fromSeq
+     *            the first seq
+     * @param toSeq
+     *            the first seq after the range
+     * @return an unmodifiable list (never null, may be empty)
+     */
+    public List<SessionLogEntry> entriesIn(long fromSeq, long toSeq) {
+        final int from = countBefore(fromSeq);
+        final int to = Math.max(from, countBefore(toSeq));
+        return entries.subList(from, to);
+    }
+
+    /**
+     * Returns this state with the range of {@code line} sealed: its entries leave the record and the manifest names
+     * the segment that now holds them (session-log §5). The view does not change — a sealable range is one the view
+     * already leaves out.
+     *
+     * @param line
+     *            the manifest line for the segment just written (must not be null)
+     * @return the state (never null)
+     * @throws IllegalStateException
+     *             if this is a version-1 state
+     * @throws IllegalArgumentException
+     *             if the range lies outside {@code [floorSeq, nextSeq)}, overlaps a sealed range, is not hidden by the
+     *             view state, contains a rewind point, has a cut that is not legal, or holds a different number of
+     *             entries than the line says
+     */
+    public SessionLogState seal(SessionLogManifestEntry line) {
+        Objects.requireNonNull(line, "line cannot be null");
+        if (format != SessionLogFormat.V2) {
+            throw new IllegalStateException("only a version-2 log can be sealed");
+        }
+        final long from = line.getFromSeq();
+        final long to = line.getToSeq();
+        if (!isLegalCut(from) || !isLegalCut(to)) {
+            throw new IllegalArgumentException(
+                    "sealed range " + line.getRange() + " would split a tool_use from its tool_result");
+        }
+        final List<SessionLogEntry> sealed = entriesIn(from, to);
+        if (sealed.size() != line.getEntryCount()) {
+            throw new IllegalArgumentException("sealed range " + line.getRange() + " holds " + sealed.size()
+                    + " carried entries, the manifest line says " + line.getEntryCount());
+        }
+        final List<SessionLogEntry> kept = new ArrayList<>(entries.size() - sealed.size());
+        kept.addAll(entries.subList(0, countBefore(from)));
+        kept.addAll(entries.subList(countBefore(to), entries.size()));
+        final List<SessionLogManifestEntry> lines = new ArrayList<>(manifest.size() + 1);
+        lines.addAll(manifest);
+        lines.add(line);
+        lines.sort((a, b) -> Long.compare(a.getFromSeq(), b.getFromSeq()));
+        // The constructor checks the rest: bounds, overlap, hidden by the view, no rewind point inside.
+        return toBuilder().entries(kept).manifest(lines).build();
+    }
+
+    /**
      * Returns the messages of the {@link LogOrigin#CONVERSATION} entries, in seq order — the log as a record of what
      * was said, without what the runtime injected. This is what memory ingest reads.
      *
@@ -273,6 +393,11 @@ public final class SessionLogState {
      */
     public boolean isLegalCut(long seq) {
         if (seq < floorSeq || seq > nextSeq) {
+            return false;
+        }
+        final SessionLogManifestEntry sealed = sealedLineOf(seq);
+        if (sealed != null && seq != sealed.getFromSeq()) {
+            // Inside a sealed range there is nothing carried to check against, and nothing should cut there.
             return false;
         }
         return LegalCuts.isLegal(messages, countBefore(seq));
@@ -377,16 +502,23 @@ public final class SessionLogState {
 
     /**
      * Returns whether the session has any conversation to speak of: a live {@link LogOrigin#CONVERSATION} entry
-     * whose message is a user message.
+     * whose message is a user message, or a sealed range.
      *
      * <p>
      * Synthetic user messages do not count — a session whose only user-role entries are runtime injections has not
      * been spoken to yet. Nor does the count of seqs handed out: a new session whose first turn was interrupted and
      * rewound has used seqs but holds no conversation, and must be treated as new.
      *
+     * <p>
+     * A sealed range counts without being read: ranges are sealed only once a compaction summarized or dropped them,
+     * which happens to conversations, and the execution loop never reads sealed entries (session-log §3.4).
+     *
      * @return true if a live conversation user message exists
      */
     public boolean hasConversation() {
+        if (!manifest.isEmpty()) {
+            return true;
+        }
         for (SessionLogEntry entry : entries) {
             if (entry.getOrigin() == LogOrigin.CONVERSATION && entry.getMessage() != null
                     && entry.getMessage().getRole() == Role.USER) {
@@ -400,12 +532,17 @@ public final class SessionLogState {
      * Returns how many entries of the log are still alive — neither cut by a rewind nor cleared by {@code /clear}.
      *
      * <p>
-     * Not {@code nextSeq - floorSeq}: that also counts the seqs a rewind cut away.
+     * Not {@code nextSeq - floorSeq}: that also counts the seqs a rewind cut away. Sealed entries count — they are
+     * out of the record, not out of the log (session-log §6.2).
      *
      * @return the live entry count (never negative)
      */
     public int liveEntryCount() {
-        return entries.size();
+        int count = entries.size();
+        for (SessionLogManifestEntry line : manifest) {
+            count += line.getEntryCount();
+        }
+        return count;
     }
 
     /**
@@ -462,19 +599,35 @@ public final class SessionLogState {
      * lying wholly after the cut is dropped, and one reaching past it ends at the cut with its summary kept. That
      * summary may describe part of what was cut — a known inaccuracy (session-log §6.1, §11).
      *
+     * <p>
+     * Manifest lines whose range starts at or after the cut are dropped whole; their segments become orphans for
+     * garbage collection. Sealing never lets a range straddle the rewind point, so no segment has to be read or split.
+     *
      * @param seq
      *            the first seq to drop
      * @return the shorter state, or {@code this} when there was nothing to drop (never null)
+     * @throws IllegalArgumentException
+     *             if {@code seq} lies strictly inside a sealed range
      */
     public SessionLogState truncateFrom(long seq) {
         final int keep = countBefore(seq);
         final boolean dropPoint = rewindPoint != null && rewindPoint.getSeq() >= seq;
         final SessionViewState cutView = viewState.truncatedFrom(seq);
-        if (keep == entries.size() && !dropPoint && cutView.equals(viewState)) {
+        final List<SessionLogManifestEntry> keptLines = new ArrayList<>(manifest.size());
+        for (SessionLogManifestEntry line : manifest) {
+            if (line.getFromSeq() < seq && line.getToSeq() > seq) {
+                throw new IllegalArgumentException("cannot cut the log at seq " + seq + ": it lies inside the sealed"
+                        + " range " + line.getRange());
+            }
+            if (line.getFromSeq() < seq) {
+                keptLines.add(line);
+            }
+        }
+        if (keep == entries.size() && !dropPoint && cutView.equals(viewState) && keptLines.size() == manifest.size()) {
             return this;
         }
         return toBuilder().entries(entries.subList(0, keep)).rewindPoint(dropPoint ? null : rewindPoint)
-                .viewState(cutView).build();
+                .viewState(cutView).manifest(keptLines).build();
     }
 
     /**
@@ -488,14 +641,15 @@ public final class SessionLogState {
     }
 
     /**
-     * Returns this state emptied the way {@code /clear} empties it: no entries, no rewind point, an empty view state,
-     * and {@code floorSeq} raised to {@code nextSeq} so the log continues from where it was rather than from 0.
+     * Returns this state emptied the way {@code /clear} empties it: no entries, no manifest, no rewind point, an empty
+     * view state, and {@code floorSeq} raised to {@code nextSeq} so the log continues from where it was rather than
+     * from 0. The cleared manifest's segments are deleted by whoever saves the result (session-log §6.2).
      *
      * @return the cleared state (never null)
      */
     public SessionLogState clear() {
         return toBuilder().entries(List.of()).floorSeq(nextSeq).rewindPoint(null).viewState(SessionViewState.empty())
-                .build();
+                .manifest(List.of()).build();
     }
 
     /**
@@ -536,19 +690,20 @@ public final class SessionLogState {
         }
         return nextSeq == other.nextSeq && floorSeq == other.floorSeq && format == other.format
                 && entries.equals(other.entries) && Objects.equals(rewindPoint, other.rewindPoint)
-                && viewState.equals(other.viewState);
+                && viewState.equals(other.viewState) && manifest.equals(other.manifest);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(nextSeq, floorSeq, entries, rewindPoint, format, viewState);
+        return Objects.hash(nextSeq, floorSeq, entries, rewindPoint, format, viewState, manifest);
     }
 
     @Override
     public String toString() {
         return "SessionLogState{entries=" + entries.size() + ", floorSeq=" + floorSeq + ", nextSeq=" + nextSeq
                 + ", rewindable=" + (rewindPoint != null) + ", format=" + format
-                + (viewState.isEmpty() ? "" : ", viewState=" + viewState) + "}";
+                + (viewState.isEmpty() ? "" : ", viewState=" + viewState)
+                + (manifest.isEmpty() ? "" : ", sealed=" + manifest.size()) + "}";
     }
 
     /** Builder for {@link SessionLogState}. Invariants are checked by {@link #build()}. */
@@ -560,8 +715,20 @@ public final class SessionLogState {
         private SessionRewindPoint rewindPoint;
         private SessionLogFormat format = SessionLogFormat.V1;
         private SessionViewState viewState = SessionViewState.empty();
+        private List<SessionLogManifestEntry> manifest = List.of();
 
         private Builder() {
+        }
+
+        /**
+         * @param manifest
+         *            the sealed ranges (must not be null; copied on build; must be empty unless the format is
+         *            {@link SessionLogFormat#V2})
+         * @return this builder
+         */
+        public Builder manifest(List<SessionLogManifestEntry> manifest) {
+            this.manifest = Objects.requireNonNull(manifest, "manifest cannot be null");
+            return this;
         }
 
         /**

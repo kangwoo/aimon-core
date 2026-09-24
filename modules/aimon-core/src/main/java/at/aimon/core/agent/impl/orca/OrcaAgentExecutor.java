@@ -1655,6 +1655,10 @@ public class OrcaAgentExecutor
                                     viewSized
                                             ? compactionDecision.getView().getMessages().size()
                                             : scope.transcriptBuffer.size());
+                            // What the view stopped showing verbatim can leave the record now, on this thread, so a
+                            // long turn's mid-turn checkpoints do not keep rewriting it (session-log §5.3). Runs after
+                            // the boundary event, which may still read the buffer's size.
+                            transcriptManager.seal(scope.transcriptBuffer);
                             break;
                         case WARN :
                             log.warn("Compaction guard warning at iteration {}: {}", iterationCount,

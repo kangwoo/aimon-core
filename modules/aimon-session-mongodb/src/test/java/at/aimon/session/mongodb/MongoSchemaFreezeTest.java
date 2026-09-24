@@ -80,6 +80,7 @@ class MongoSchemaFreezeTest {
         // transcripts in it, and a later rename would leave every resumed session reading an empty collection Mongo
         // creates on demand, which is a silently emptied conversation rather than an error.
         assertThat(DocumentKeys.COLL_SESSION_RECORDS).isEqualTo("session_records");
+        assertThat(DocumentKeys.COLL_SESSION_LOG_SEGMENTS).isEqualTo("session_log_segments");
     }
 
     @Test
@@ -90,6 +91,7 @@ class MongoSchemaFreezeTest {
         assertThat(script).contains("ensureCollection(\"idempotency_entries\")");
         assertThat(script).contains("ensureCollection(\"background_task\")");
         assertThat(script).contains("ensureCollection(\"session_records\")");
+        assertThat(script).contains("ensureCollection(\"session_log_segments\")");
 
         // The signal collection is capped, and that is not decoration: the change-stream bus depends on it. A rename
         // that drops the option provisions an unbounded collection which grows until the disk does.
@@ -118,5 +120,14 @@ class MongoSchemaFreezeTest {
         // half could drift away from it unnoticed.
         assertThat(script)
                 .contains("target.background_task.createIndex( { contextId: 1 }, { name: \"by_context\" } );");
+    }
+
+    @Test
+    @DisplayName("the segment index is declared on the frozen collection, field and name")
+    void segmentIndexIsFrozen() {
+        // Every read, list and delete of MongoSessionLogSegmentStore filters on sessionId; without the index GC and
+        // session delete scan the whole collection.
+        assertThat(script)
+                .contains("target.session_log_segments.createIndex( { sessionId: 1 }, { name: \"by_session\" } );");
     }
 }

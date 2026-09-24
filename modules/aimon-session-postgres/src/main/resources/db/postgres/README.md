@@ -13,6 +13,8 @@ Recommended on a fresh database (V1 module ship — V1 only):
 psql "$DATABASE_URL" -c 'CREATE SCHEMA IF NOT EXISTS aimon_session;'
 psql "$DATABASE_URL" --set=search_path=aimon_session,public \
      -v ON_ERROR_STOP=1 -f V1__init.sql
+psql "$DATABASE_URL" --set=search_path=aimon_session,public \
+     -v ON_ERROR_STOP=1 -f V2__session_log_segment.sql
 ```
 
 ## Files
@@ -20,7 +22,10 @@ psql "$DATABASE_URL" --set=search_path=aimon_session,public \
 - `V1__init.sql` — required at deploy. Tables + minimal correctness indexes
   (`conversation_lock`, `conversation_lock_fence`, `conversation_signal`,
   `conversation_inbox`, `idempotency_entry`).
-- `V2__indexes.sql` — **opt-in / future-work, not yet shipped**. Operators add
+- `V2__session_log_segment.sql` — required at deploy, after V1. The
+  `session_log_segment` table that `PostgresSessionLogSegmentStore` writes sealed
+  session-log ranges to (`docs/design/session/session-log.md` §5.6).
+- `V3__indexes.sql` — **opt-in / future-work, not yet shipped**. Operators add
   this only when concrete monitoring thresholds trigger (see
   `docs/design/session/backends.md` §7.4).
 

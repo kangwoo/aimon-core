@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/memory/memory-usage-guide.md
-source_commit: 6210326
+source_commit: e24ccc3
 ---
 
 # Memory (Peer Memory) Usage Guide
@@ -258,6 +258,12 @@ Neither value sends what the runtime injected (`LogOrigin.SYNTHETIC` — the use
 `<system-reminder>`s, the file and skill lists a restore hook attaches). What is sent is split into chunks of about 32K
 estimated tokens (`IngestChunks.DEFAULT_MAX_INGEST_TOKENS`), cut only where no `tool_use` is separated from its
 `tool_result` — compaction no longer bounds the payload to one window.
+
+On a version-2 log, a range compaction left out of the view can be **sealed** into a segment outside the record (when a
+segment store is wired). Neither value loses it: `execution-end` keeps the entries sealed during an execution in memory
+until the execution ends and puts them in the delta, and `session-end` reads the whole log, sealed ranges included,
+page by page through `SessionLogReader` rather than from the record. A range whose segment is missing or fails its hash
+is reported as a synthetic `[history unavailable: seq a..b]` entry and left out of ingest.
 
 ### 7.2 The `memory.dreamer` block (`MemoryDreamerConfig`)
 

@@ -17,11 +17,16 @@ import at.aimon.core.agent.compact.DefaultCompactionEngine;
 import at.aimon.core.agent.compact.DefaultCompactionGuard;
 import at.aimon.core.agent.context.DefaultContextEngine;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.store.InMemorySessionLogSegmentStore;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.store.SessionCheckpointMailbox;
 import at.aimon.core.agent.session.transcript.DefaultTranscriptManager;
+import at.aimon.core.agent.session.transcript.LogOrigin;
+import at.aimon.core.agent.session.transcript.SeqRange;
 import at.aimon.core.agent.session.transcript.SessionLogFormat;
+import at.aimon.core.agent.session.transcript.SessionLogManifestEntry;
 import at.aimon.core.agent.session.transcript.SessionLogState;
+import at.aimon.core.agent.session.transcript.SessionLogStorage;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.base.Principal;
 import at.aimon.core.command.DefaultCommandRegistry;
@@ -108,6 +113,45 @@ class OrcaAgentExecutorViewModeTest {
         assertThat(resumed.get(0).getContent()).isEqualTo(sentAfterCompaction.get(0).getContent());
         assertThat(resumed.get(1).getContent()).isEqualTo(sentAfterCompaction.get(1).getContent());
         assertThat(resumed).extracting(Message::getContent).contains("second answer", "third question");
+    }
+
+    @Test
+    @DisplayName("with a segment store, the compacted range leaves the record mid-turn and stays readable")
+    void compactionSealsTheSummarizedRange() {
+        final RecordingClient llm = new RecordingClient("first answer", "THE SUMMARY", "second answer", "third answer");
+        final List<ExecutionMemoryUpdate> fed = new ArrayList<>();
+        final InMemorySessionLogSegmentStore segments = new InMemorySessionLogSegmentStore();
+        final DefaultTranscriptManager transcripts = new DefaultTranscriptManager(repository,
+                SessionCheckpointMailbox.disabled(), SessionLogFormat.V2,
+                SessionLogStorage.builder(segments).minSealTokens(0).build());
+        final OrcaAgentExecutor executor = new OrcaAgentExecutorFactory().withExecutionMemorySink(fed::add).create(llm,
+                transcripts);
+        final OrcaAgentRuntime runtime = runtime(executor, llm);
+        final SessionId sessionId = SessionId.generate();
+
+        executor.execute(runtime, request(sessionId, "first question"));
+        executor.execute(runtime, request(sessionId, LONG_QUESTION));
+
+        final SessionLogState stored = repository.load(sessionId).orElseThrow().getLogState();
+        // Sealed mid-turn, while the turn's rewind point at seq 2 was live: the range is split there, so a rewind of
+        // that turn would drop the second line whole instead of splitting a segment (session-log §5.1).
+        assertThat(stored.getManifest()).extracting(SessionLogManifestEntry::getRange)
+                .containsExactly(SeqRange.of(0, 2), SeqRange.of(2, 3));
+        assertThat(stored.getConversationMessages()).extracting(Message::getContent).as("only what the view shows")
+                .containsExactly("second answer");
+        assertThat(segments.list(sessionId)).hasSize(2);
+
+        final List<String> wholeLog = transcripts.getLogReader().orElseThrow().read(sessionId, 0, Long.MAX_VALUE)
+                .getEntries().stream().filter(entry -> entry.getOrigin() == LogOrigin.CONVERSATION)
+                .map(entry -> entry.getMessage().getContent()).toList();
+        assertThat(wholeLog).containsExactly("first question", "first answer", LONG_QUESTION, "second answer");
+        assertThat(fed.get(1).getMessages()).extracting(Message::getContent)
+                .as("sealing mid-turn does not shrink the ingest delta")
+                .containsExactly(LONG_QUESTION, "second answer");
+
+        executor.execute(runtime, request(sessionId, "third question"));
+        assertThat(llm.calls.get(3).get(1).getContent()).contains("THE SUMMARY");
+        assertThat(llm.calls.get(3)).extracting(Message::getContent).contains("second answer", "third question");
     }
 
     // ============================== helpers ==============================

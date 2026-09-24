@@ -177,6 +177,29 @@ public final class DefaultSessionStore implements SessionStore {
      * Drops local holdership of {@code lease}, matched on the fencing token rather than on object identity so a
      * reconstructed-but-equivalent lease still works. A newer lease for the same session is left alone.
      */
+    @Override
+    public SessionLogSegmentStore segments(SessionLogSegmentStore raw) {
+        return new FencedSegments(Objects.requireNonNull(raw, "raw must not be null"));
+    }
+
+    private void requireHeld(SessionId sessionId, String operation) {
+        Objects.requireNonNull(sessionId, "sessionId must not be null");
+
+        final SessionLease lease = held.get(sessionId);
+        if (lease == null) {
+            throw new SessionNotHeldException("Refusing " + operation + " for session " + sessionId.value()
+                    + ": this node holds no lease for it.");
+        }
+        final Optional<LeaseHolder> holder = leaseStore.findHolder(sessionId);
+        if (holder.isEmpty() || holder.get().getFencingToken() != lease.getFencingToken()
+                || !holder.get().getHolderId().equals(lease.getHolderId())) {
+            forget(lease);
+            throw new SessionNotHeldException("Refusing " + operation + " for session " + sessionId.value()
+                    + ": lease (token=" + lease.getFencingToken() + ") is no longer current, observed holder is "
+                    + holder.map(LeaseHolder::toString).orElse("none") + '.');
+        }
+    }
+
     private void forget(SessionLease lease) {
         held.computeIfPresent(lease.getSessionId(),
                 (id, current) -> current.getFencingToken() == lease.getFencingToken() ? null : current);
@@ -196,6 +219,43 @@ public final class DefaultSessionStore implements SessionStore {
      * backing implementation does so with an atomic primitive. Fencing and then delegating adds holdership to that
      * guarantee; expressing any of these as a read followed by a write here would spend it.
      */
+    private final class FencedSegments implements SessionLogSegmentStore {
+
+        private final SessionLogSegmentStore raw;
+
+        private FencedSegments(SessionLogSegmentStore raw) {
+            this.raw = raw;
+        }
+
+        @Override
+        public void put(SessionLogSegment segment) {
+            // Not fenced: a late segment is harmless until a manifest names it, and only the holder writes manifests.
+            raw.put(segment);
+        }
+
+        @Override
+        public Optional<SessionLogSegment> get(SessionId sessionId, SegmentId id) {
+            return raw.get(sessionId, id);
+        }
+
+        @Override
+        public List<SegmentInfo> list(SessionId sessionId) {
+            return raw.list(sessionId);
+        }
+
+        @Override
+        public void delete(SessionId sessionId, SegmentId id) {
+            requireHeld(sessionId, "segment delete");
+            raw.delete(sessionId, id);
+        }
+
+        @Override
+        public void deleteAll(SessionId sessionId) {
+            requireHeld(sessionId, "segment deleteAll");
+            raw.deleteAll(sessionId);
+        }
+    }
+
     private final class FencedRecords implements SessionRecordStore {
 
         @Override
@@ -263,22 +323,5 @@ public final class DefaultSessionStore implements SessionStore {
                             + "sessions at once. Use the underlying SessionRecordStore directly.");
         }
 
-        private void requireHeld(SessionId sessionId, String operation) {
-            Objects.requireNonNull(sessionId, "sessionId must not be null");
-
-            final SessionLease lease = held.get(sessionId);
-            if (lease == null) {
-                throw new SessionNotHeldException("Refusing " + operation + " for session " + sessionId.value()
-                        + ": this node holds no lease for it.");
-            }
-            final Optional<LeaseHolder> holder = leaseStore.findHolder(sessionId);
-            if (holder.isEmpty() || holder.get().getFencingToken() != lease.getFencingToken()
-                    || !holder.get().getHolderId().equals(lease.getHolderId())) {
-                forget(lease);
-                throw new SessionNotHeldException("Refusing " + operation + " for session " + sessionId.value()
-                        + ": lease (token=" + lease.getFencingToken() + ") is no longer current, observed holder is "
-                        + holder.map(LeaseHolder::toString).orElse("none") + '.');
-            }
-        }
     }
 }

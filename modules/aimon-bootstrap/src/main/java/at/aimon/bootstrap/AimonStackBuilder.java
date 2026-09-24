@@ -39,10 +39,14 @@ import at.aimon.core.agent.impl.orca.OrcaAgentRuntimeFactory;
 import at.aimon.core.agent.queue.DefaultMessageQueueManager;
 import at.aimon.core.agent.queue.InMemoryMessageQueueRepository;
 import at.aimon.core.agent.queue.MessageQueueManager;
+import at.aimon.core.agent.session.store.InMemorySessionLogSegmentStore;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.store.SessionCheckpointMailbox;
+import at.aimon.core.agent.session.store.SessionLogSegmentStore;
 import at.aimon.core.agent.session.store.SessionRecordStore;
 import at.aimon.core.agent.session.transcript.DefaultTranscriptManager;
+import at.aimon.core.agent.session.transcript.SessionLogFormat;
+import at.aimon.core.agent.session.transcript.SessionLogStorage;
 import at.aimon.core.agent.session.transcript.TranscriptManager;
 import at.aimon.core.agent.tool.ToolContextEnricher;
 import at.aimon.core.filesystem.VirtualFileSystem;
@@ -269,8 +273,14 @@ public final class AimonStackBuilder {
                     "Sessions are held in memory only. Transcripts, session totals and budget overrides are lost on"
                             + " restart, and a second instance cannot serve a session this one started.");
         }
-        final TranscriptManager transcriptManager = new DefaultTranscriptManager(sessionRecordStore,
-                sessionCheckpoints);
+        // Sealing needs somewhere to seal to. A supplied store is used as given; an in-memory record store gets an
+        // in-memory segment store, since the two are lost together; a supplied record store with no segment store
+        // seals nothing rather than pairing durable manifests with segments that vanish on restart. Deletes go to the
+        // raw store: the session store that owns the fenced view is built inside the router, after this manager.
+        final SessionLogSegmentStore segmentStore = spec.getSession().getSegmentStore().orElseGet(
+                () -> spec.getSession().getRecordStore().isEmpty() ? new InMemorySessionLogSegmentStore() : null);
+        final TranscriptManager transcriptManager = new DefaultTranscriptManager(sessionRecordStore, sessionCheckpoints,
+                SessionLogFormat.V1, segmentStore == null ? null : SessionLogStorage.builder(segmentStore).build());
         final MessageQueueManager messageQueueManager = new DefaultMessageQueueManager(
                 spec.getMessageQueueRepository().orElseGet(InMemoryMessageQueueRepository::new));
 
@@ -484,7 +494,7 @@ public final class AimonStackBuilder {
         // --- Session router -------------------------------------------------------------------------------
         // Registered before start-up of anything else so that a failure below still drains sessions first.
         final SessionRouter sessionRouter = buildSessionRouter(spec, agentRuntimeResolver, agentExecutor,
-                messageQueueManager, sessionRecordStore, sessionApprovalStore);
+                messageQueueManager, sessionRecordStore, sessionApprovalStore, segmentStore);
         final Duration drainTimeout = spec.getSession().getDrainTimeout();
         teardown.own(TeardownPhase.SESSIONS, "sessionRouter.closeGracefully(" + drainTimeout + ")",
                 () -> closeRouter(sessionRouter, drainTimeout));
@@ -676,13 +686,14 @@ public final class AimonStackBuilder {
      */
     private static SessionRouter buildSessionRouter(AimonStackSpec spec, AgentRuntimeResolver agentRuntimeResolver,
             OrcaAgentExecutor agentExecutor, MessageQueueManager messageQueueManager,
-            SessionRecordStore sessionRecordStore, SessionApprovalStore sessionApprovalStore) {
+            SessionRecordStore sessionRecordStore, SessionApprovalStore sessionApprovalStore,
+            SessionLogSegmentStore segmentStore) {
         final SessionSpec session = spec.getSession();
         final StackLiveSessionOpener opener = new StackLiveSessionOpener(agentRuntimeResolver, agentExecutor,
                 messageQueueManager, agentExecutor.getHookExecutionManager(), sessionRecordStore);
         final SessionRouterBuilder builder = SessionRouter.builder().sessionOpener(opener)
                 .sessionRecordStore(sessionRecordStore).sessionApprovalStore(sessionApprovalStore)
-                .mode(session.getMode());
+                .sessionLogSegmentStore(segmentStore).mode(session.getMode());
         session.getNodeId().ifPresent(builder::nodeId);
         session.getLeaseStore().ifPresent(builder::sessionLeaseStore);
         session.getSignalBus().ifPresent(builder::signalBus);

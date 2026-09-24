@@ -251,6 +251,11 @@ IMPORTANT: `execution-end` 의 델타는 로그의 **seq** 에 걸린 기준점�
 나누며, 청크 경계는 `tool_use` 와 그 `tool_result` 를 가르지 않는 곳이다 — 압축이 더 이상 페이로드를 창 크기로 묶어
 주지 않기 때문이다.
 
+버전 2 로그에서는 압축이 뷰에서 뺀 구간이 레코드 밖의 세그먼트로 **봉인**될 수 있다(세그먼트 저장소가 배선된 경우).
+두 값 모두 그것을 잃지 않는다. `execution-end` 는 실행 중에 봉인된 항목을 실행이 끝날 때까지 메모리에 들고 있다가
+델타에 넣고, `session-end` 는 레코드가 아니라 `SessionLogReader` 로 봉인 구간까지 로그 전체를 페이지 단위로 읽는다.
+세그먼트가 없거나 해시가 맞지 않는 구간은 `[history unavailable: seq a..b]` 합성 항목으로 보고되어 수집에서 빠진다.
+
 ### 7.2 `memory.dreamer` 블록 (`MemoryDreamerConfig`)
 
 ```yaml

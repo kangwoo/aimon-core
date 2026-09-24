@@ -3,6 +3,7 @@ package at.aimon.cli.factory;
 import java.io.File;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -61,6 +62,10 @@ import at.aimon.core.agent.session.LiveSession;
 import at.aimon.core.agent.session.LiveSessionOptions;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
+import at.aimon.core.agent.session.transcript.LogOrigin;
+import at.aimon.core.agent.session.transcript.SessionLogEntry;
+import at.aimon.core.agent.session.transcript.SessionLogPage;
+import at.aimon.core.agent.session.transcript.SessionLogReader;
 import at.aimon.core.base.Principal;
 import at.aimon.core.config.hook.HookHotReloadBootstrap;
 import at.aimon.core.config.hook.ReloadInvoker;
@@ -1395,22 +1400,54 @@ public class AgentSetupFactory {
     private static void enqueueFinalDerivation(DerivationQueueManager queue, OrcaAgentExecutor agentExecutor,
             SessionId sessionId, Workspace workspace, PeerView observer, OutputFormatter outputFormatter) {
         final var transcriptManager = agentExecutor.getTranscriptManager();
-        final var memory = transcriptManager.initialize(sessionId, null);
         // The log as it was said: what the runtime injected is left out, and on a version-2 log a compaction left the
-        // original in place, so no summary is fed in as if it were conversation (context-engine §7, L5).
-        final var messages = memory.getConversationMessages();
-        if (messages.isEmpty()) {
+        // original in place, so no summary is fed in as if it were conversation (context-engine §7, L5). Sealed ranges
+        // are part of what was said, so the log is read through the reader, a page at a time, when there is one.
+        final List<List<Message>> pages = transcriptManager.getLogReader()
+                .map(reader -> readConversationPages(reader, sessionId))
+                .orElseGet(() -> List.of(transcriptManager.initialize(sessionId, null).getConversationMessages()));
+        // Nothing bounds a whole session's log to one window any more; the deriver takes one chunk per call.
+        final List<List<Message>> chunks = new ArrayList<>();
+        int messageCount = 0;
+        for (List<Message> page : pages) {
+            messageCount += page.size();
+            chunks.addAll(
+                    IngestChunks.split(page, IngestChunks.DEFAULT_MAX_INGEST_TOKENS, new HeuristicTokenEstimator()));
+        }
+        if (messageCount == 0) {
             log.debug("Peer memory final derivation skipped: conversation has no messages");
             return;
         }
-        // Nothing bounds a whole session's log to one window any more; the deriver takes one chunk per call.
-        final List<List<Message>> chunks = IngestChunks.split(messages, IngestChunks.DEFAULT_MAX_INGEST_TOKENS,
-                new HeuristicTokenEstimator());
-        outputFormatter.displayInfo("Peer memory: enqueuing final derivation for " + messages.size() + " message(s)"
+        outputFormatter.displayInfo("Peer memory: enqueuing final derivation for " + messageCount + " message(s)"
                 + (chunks.size() > 1 ? " in " + chunks.size() + " chunks" : "") + "...");
         for (List<Message> chunk : chunks) {
             queue.enqueue(DerivationTask.builder().workspace(workspace).sessionId(sessionId.value()).observer(observer)
                     .messages(chunk).build());
+        }
+    }
+
+    /**
+     * Reads the stored log of {@code sessionId} page by page and keeps the conversation entries of each page. Pages end
+     * at legal cuts, so no page splits a tool pair; a gap in a sealed range is a synthetic entry and drops out here.
+     */
+    static List<List<Message>> readConversationPages(SessionLogReader reader, SessionId sessionId) {
+        final List<List<Message>> pages = new ArrayList<>();
+        long from = 0;
+        while (true) {
+            final SessionLogPage page = reader.read(sessionId, from, Long.MAX_VALUE);
+            final List<Message> conversation = new ArrayList<>();
+            for (SessionLogEntry entry : page.getEntries()) {
+                if (entry.getOrigin() == LogOrigin.CONVERSATION) {
+                    conversation.add(entry.getMessage());
+                }
+            }
+            if (!conversation.isEmpty()) {
+                pages.add(conversation);
+            }
+            if (!page.hasMore()) {
+                return pages;
+            }
+            from = page.getNextFromSeq().getAsLong();
         }
     }
 

@@ -177,4 +177,20 @@ public interface SessionStore {
      * @return a fenced repository view; never null
      */
     SessionRecordStore records();
+
+    /**
+     * The segment delete path, fenced against the leases this node holds (session-log §5.4, §5.6).
+     *
+     * <p>
+     * {@link SessionLogSegmentStore#delete} and {@link SessionLogSegmentStore#deleteAll} re-prove holdership exactly as
+     * {@link #records()} does before delegating to {@code raw}; a delete for a session this node does not hold is
+     * rejected, so a node that lost a session cannot delete segments the new holder's manifest still names. Writes and
+     * reads pass straight through — a segment write is harmless until a manifest names it, which is why it is not
+     * fenced. The same window {@link #records()} leaves open is left open here.
+     *
+     * @param raw
+     *            the application's segment store (must not be null)
+     * @return a fenced view over it; never null
+     */
+    SessionLogSegmentStore segments(SessionLogSegmentStore raw);
 }

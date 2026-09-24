@@ -22,12 +22,15 @@ import at.aimon.bootstrap.spec.FileSystemSpec;
 import at.aimon.bootstrap.spec.LlmSpec;
 import at.aimon.bootstrap.spec.MemorySpec;
 import at.aimon.bootstrap.spec.SchedulingSpec;
+import at.aimon.bootstrap.spec.SessionSpec;
 import at.aimon.bootstrap.spec.SkillApprovalSpec;
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.DefaultAgent;
 import at.aimon.core.agent.impl.AgentBundle;
 import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.store.InMemorySessionLogSegmentStore;
+import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.base.Principal;
@@ -125,6 +128,26 @@ class AimonStackBuilderTest {
     private static AimonStackSpec.Builder specFor(Path workspace, String agentName) {
         return AimonStackSpec.builder().workspaceRoot(workspace.toString()).llm(LlmSpec.of(STUB_LLM))
                 .agent(AgentSpec.of(bundle(agentName)));
+    }
+
+    @Test
+    @DisplayName("an in-memory record store is paired with an in-memory segment store; a supplied one seals nothing")
+    void segmentStoreFollowsTheRecordStore(@TempDir Path workspace) {
+        try (AimonStack stack = AimonStackBuilder.build(specFor(workspace, "ops").build())) {
+            assertThat(stack.agentExecutor().getTranscriptManager().getLogReader()).isPresent();
+        }
+        final SessionSpec durableWithoutSegments = SessionSpec.builder().recordStore(new InMemorySessionRecordStore())
+                .build();
+        try (AimonStack stack = AimonStackBuilder
+                .build(specFor(workspace, "ops").session(durableWithoutSegments).build())) {
+            assertThat(stack.agentExecutor().getTranscriptManager().getLogReader())
+                    .as("never an in-memory segment store behind a supplied record store").isEmpty();
+        }
+        final SessionSpec withSegments = SessionSpec.builder().recordStore(new InMemorySessionRecordStore())
+                .segmentStore(new InMemorySessionLogSegmentStore()).build();
+        try (AimonStack stack = AimonStackBuilder.build(specFor(workspace, "ops").session(withSegments).build())) {
+            assertThat(stack.agentExecutor().getTranscriptManager().getLogReader()).isPresent();
+        }
     }
 
     @Test

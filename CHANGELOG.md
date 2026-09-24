@@ -7,6 +7,33 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Added: sealing — ranges the view no longer shows leave the record
+
+- **`SessionLogSegmentStore`** (`at.aimon.core.agent.session.store`) holds sealed ranges of session logs outside the
+  records; `SessionLogState` carries a manifest of `SessionLogManifestEntry` lines (range, fresh `SegmentId`, content
+  hash, entry count) in the `version: 2` document. A segment exists only while a manifest names it. Implementations:
+  `InMemorySessionLogSegmentStore`, `MongoSessionLogSegmentStore` (collection `session_log_segments`, index
+  `by_session` in `init.js`), `PostgresSessionLogSegmentStore` (table `session_log_segment`, new operator file
+  `V2__session_log_segment.sql` — apply it after `V1__init.sql`; the unshipped future index file is now named
+  `V3__indexes.sql`), `RedisSessionLogSegmentStore` (prefix `aimon:session:segment`). Design:
+  `docs/design/session/session-log.md` §5.
+- **`DefaultTranscriptManager` seals** when given a `SessionLogStorage` (`minSealTokens` 32K, `segmentGcGrace` 1h —
+  never zero —, `maxReadTokens` 32K): the executor seals right after a compaction and the turn-end save seals before it
+  writes, on the turn's thread; runs are split at the rewind point. After a successful save it deletes the segments
+  `/clear` cut loose and collects orphans older than the grace period. `TranscriptManager` gained default
+  `seal(...)` and `getLogReader()`.
+- **`SessionLogReader`** reads the whole log, sealed ranges included, a page at a time (pages end at legal cuts), and
+  reports a missing or mismatched segment as a `[history unavailable: seq a..b]` gap instead of failing. The CLI's
+  session-end derivation reads through it.
+- **`SessionStore.segments(raw)`** returns the fenced delete view (new abstract method; `DefaultSessionStore`
+  implements it). `SessionRouterBuilder.sessionLogSegmentStore(...)` makes a session delete remove the session's
+  segments after its record. `SessionSpec.segmentStore(...)` wires a store into the stack; without one an in-memory
+  record store gets an in-memory segment store and a supplied record store seals nothing.
+- **Meaning changes** (session-log §10): once a range is sealed, `TranscriptBuffer.getMessages()`,
+  `AgentExecutionResult.getConversationHistory()` and `SessionSnapshot.getConversationHistory()` no longer return it;
+  `liveEntryCount()` (and `/clear`'s "Removed N messages") and `hasConversation()` count sealed ranges. Nothing seals
+  until the version-2 write mode is turned on.
+
 ### Changed: on a version-2 log, compaction changes the view, not the log
 
 - **`SessionViewState` keeps what the LLM view leaves out.** It is part of `SessionLogState` and persisted with it in

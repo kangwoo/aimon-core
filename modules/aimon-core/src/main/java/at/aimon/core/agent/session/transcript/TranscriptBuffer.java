@@ -11,6 +11,7 @@ import java.util.Optional;
 import at.aimon.core.agent.SubmitOptions;
 import at.aimon.core.agent.input.UserInput;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.store.SegmentId;
 import at.aimon.core.agent.session.store.SessionCheckpointMailbox;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.Role;
@@ -36,6 +37,12 @@ import at.aimon.core.llm.Role;
  * On a version-2 buffer compaction and recovery change the view state ({@link #summarizeView(SummarySpan)},
  * {@link #dropFromView(long, long)}, {@link #elideInView(long, String)}) and the log stays append-only; only the
  * version-1 write mode still rewrites it with {@link #replaceWith(List)}.
+ *
+ * <p>
+ * <b>Sealing.</b> A range the view no longer shows verbatim can be moved out of the record into a segment
+ * ({@link #seal(SessionLogManifestEntry)}, session-log §5). The sealed entries leave {@link #getMessages()} and the
+ * persisted form at once, but stay in this buffer's memory until the execution ends, so the execution-end ingest still
+ * sees them. A buffer lives for one turn, so "until the execution ends" is "until this buffer is dropped".
  *
  * <p>
  * <b>Thread safety:</b> Mutator and reader methods are {@code synchronized} on this instance, so concurrent access
@@ -101,6 +108,21 @@ public class TranscriptBuffer {
     private long floorSeq;
     private SessionLogFormat format = SessionLogFormat.V1;
     private SessionViewState viewState = SessionViewState.empty();
+    private final List<SessionLogManifestEntry> manifest = new ArrayList<>();
+
+    /**
+     * Entries sealed out of the record while this buffer was alive. Not persisted and not part of
+     * {@link #getMessages()};
+     * kept so {@link #messagesSinceIngestMark()} can still hand the execution's sealed messages to memory (session-log
+     * §5.3).
+     */
+    private final List<SessionLogEntry> sealedInMemory = new ArrayList<>();
+
+    /**
+     * Segments a {@link #clear()} cut loose. They are deleted only after the cleared record has been saved, so no saved
+     * record ever points at a deleted segment (session-log §6.2).
+     */
+    private final List<SegmentId> pendingSegmentDeletions = new ArrayList<>();
     private long version;
     private volatile DirtyListener dirtyListener;
 
@@ -331,6 +353,9 @@ public class TranscriptBuffer {
      * @see SessionLogState#hasConversation()
      */
     public synchronized boolean hasConversation() {
+        if (!manifest.isEmpty()) {
+            return true;
+        }
         for (SessionLogEntry entry : entries) {
             if (entry.getOrigin() == LogOrigin.CONVERSATION && entry.getMessage() != null
                     && entry.getMessage().getRole() == Role.USER) {
@@ -347,7 +372,69 @@ public class TranscriptBuffer {
      * @see SessionLogState#liveEntryCount()
      */
     public synchronized int liveEntryCount() {
-        return entries.size();
+        int count = entries.size();
+        for (SessionLogManifestEntry line : manifest) {
+            count += line.getEntryCount();
+        }
+        return count;
+    }
+
+    /**
+     * Returns the sealed ranges of this buffer's log.
+     *
+     * @return an immutable list sorted by {@code fromSeq} (never null)
+     */
+    public synchronized List<SessionLogManifestEntry> getManifest() {
+        return List.copyOf(manifest);
+    }
+
+    /**
+     * Seals the range of {@code line}: its entries leave the record and the manifest names the segment the caller has
+     * already written them to. See {@link SessionLogState#seal(SessionLogManifestEntry)} for the rules.
+     *
+     * <p>
+     * The sealed entries stay in this buffer's memory — not in {@link #getMessages()}, not persisted — until the buffer
+     * is dropped, so the execution-end ingest still reads them. A mutation of what is persisted, so it bumps the
+     * version and notifies the dirty listener.
+     *
+     * @param line
+     *            the manifest line for the segment just written (must not be null)
+     * @throws IllegalStateException
+     *             if this buffer's log is version 1
+     * @throws IllegalArgumentException
+     *             if the line breaks a rule of {@link SessionLogState#seal(SessionLogManifestEntry)}
+     */
+    public synchronized void seal(SessionLogManifestEntry line) {
+        final SessionLogState sealed = getLogState().seal(line);
+        for (int i = entries.size() - 1; i >= 0; i--) {
+            if (line.contains(entries.get(i).getSeq())) {
+                sealedInMemory.add(entries.remove(i));
+                messageTimestamps.remove(i);
+            }
+        }
+        sealedInMemory.sort((a, b) -> Long.compare(a.getSeq(), b.getSeq()));
+        manifest.clear();
+        manifest.addAll(sealed.getManifest());
+        markDirty();
+    }
+
+    /**
+     * Returns the segments a {@link #clear()} cut loose and that nobody has deleted yet.
+     *
+     * @return an immutable list (never null)
+     */
+    synchronized List<SegmentId> pendingSegmentDeletions() {
+        return List.copyOf(pendingSegmentDeletions);
+    }
+
+    /**
+     * Forgets pending deletions once they have been dealt with.
+     *
+     * @param done
+     *            the ids to forget (must not be null)
+     */
+    synchronized void forgetSegmentDeletions(List<SegmentId> done) {
+        pendingSegmentDeletions.removeAll(done);
     }
 
     /**
@@ -389,7 +476,7 @@ public class TranscriptBuffer {
      */
     public synchronized SessionLogState getLogState() {
         return SessionLogState.builder().entries(entries).nextSeq(nextSeq).floorSeq(floorSeq).rewindPoint(rewindPoint)
-                .format(format).viewState(viewState).build();
+                .format(format).viewState(viewState).manifest(manifest).build();
     }
 
     /**
@@ -536,6 +623,10 @@ public class TranscriptBuffer {
         // Losing the ability to retry this one turn is the honest price.
         rewindPoint = null;
         viewState = SessionViewState.empty();
+        // The sealed ranges lie below the new floor and cannot be addressed any more. Their segments become orphans,
+        // which garbage collection deletes once the rewritten record is saved.
+        manifest.clear();
+        sealedInMemory.clear();
         // Same reasoning, different consequence: every rewritten entry now has a seq above the ingest mark, so a delta
         // taken against it would re-send the compaction summary as if it were new conversation. The execution that
         // was rewritten forgoes its ingest and the next one marks afresh.
@@ -606,6 +697,11 @@ public class TranscriptBuffer {
         rewindPoint = null;
         viewState = SessionViewState.empty();
         ingestMark = -1;
+        for (SessionLogManifestEntry line : manifest) {
+            pendingSegmentDeletions.add(line.getSegmentId());
+        }
+        manifest.clear();
+        sealedInMemory.clear();
         entries.clear();
         messageTimestamps.clear();
         floorSeq = nextSeq;
@@ -754,6 +850,7 @@ public class TranscriptBuffer {
         buffer.floorSeq = state.getFloorSeq();
         buffer.format = state.getFormat();
         buffer.viewState = state.getViewState();
+        buffer.manifest.addAll(state.getManifest());
         buffer.rewindPoint = state.getRewindPoint().orElse(null);
         return buffer;
     }
@@ -840,8 +937,14 @@ public class TranscriptBuffer {
         if (ingestMark < 0) {
             return List.of();
         }
+        // Sealed entries of this execution come first: a range is sealed only behind what the view still shows, and
+        // everything sealed in this buffer was sealed during this execution.
+        final List<SessionLogEntry> candidates = new ArrayList<>(sealedInMemory.size() + entries.size());
+        candidates.addAll(sealedInMemory);
+        candidates.addAll(entries);
+        candidates.sort((a, b) -> Long.compare(a.getSeq(), b.getSeq()));
         final List<Message> since = new ArrayList<>();
-        for (SessionLogEntry entry : entries) {
+        for (SessionLogEntry entry : candidates) {
             if (entry.getSeq() >= ingestMark && entry.getOrigin() == LogOrigin.CONVERSATION) {
                 since.add(entry.getMessage());
             }
@@ -881,6 +984,9 @@ public class TranscriptBuffer {
             messageTimestamps.remove(last);
         }
         viewState = viewState.truncatedFrom(from);
+        // Sealing splits at the rewind point, so every line either lies wholly before it or starts at or after it.
+        manifest.removeIf(line -> line.getFromSeq() >= from);
+        sealedInMemory.removeIf(entry -> entry.getSeq() >= from);
         markDirty();
         return Optional.of(rewound);
     }
