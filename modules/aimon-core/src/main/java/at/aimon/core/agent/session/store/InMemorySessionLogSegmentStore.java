@@ -1,6 +1,8 @@
 package at.aimon.core.agent.session.store;
 
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -66,6 +68,36 @@ public final class InMemorySessionLogSegmentStore implements SessionLogSegmentSt
             infos.add(segment.info());
         }
         return List.copyOf(infos);
+    }
+
+    /**
+     * Exact: only sessions holding a segment older than {@code createdBefore}, in ascending id order, each once per
+     * pass. The cursor is the last id of the previous page.
+     */
+    @Override
+    public SegmentScanPage scanSessions(Instant createdBefore, String cursor, int limit) {
+        Objects.requireNonNull(createdBefore, "createdBefore cannot be null");
+        if (limit <= 0) {
+            throw new IllegalArgumentException("limit must be positive, got " + limit);
+        }
+        final List<SessionId> matching = new ArrayList<>();
+        for (Map.Entry<SessionId, Map<SegmentId, SessionLogSegment>> e : segments.entrySet()) {
+            if (cursor != null && e.getKey().value().compareTo(cursor) <= 0) {
+                continue;
+            }
+            for (SessionLogSegment segment : e.getValue().values()) {
+                if (segment.getCreatedAt().isBefore(createdBefore)) {
+                    matching.add(e.getKey());
+                    break;
+                }
+            }
+        }
+        matching.sort(Comparator.comparing(SessionId::value));
+        if (matching.size() <= limit) {
+            return SegmentScanPage.of(matching, null);
+        }
+        final List<SessionId> page = matching.subList(0, limit);
+        return SegmentScanPage.of(page, page.get(limit - 1).value());
     }
 
     @Override

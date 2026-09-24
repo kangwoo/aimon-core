@@ -3,6 +3,7 @@ package at.aimon.core.tools.session;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.InstanceOfAssertFactories.MAP;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -18,6 +19,7 @@ import at.aimon.core.agent.session.store.InMemorySessionLogSegmentStore;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.store.SegmentId;
 import at.aimon.core.agent.session.store.SegmentInfo;
+import at.aimon.core.agent.session.store.SegmentScanPage;
 import at.aimon.core.agent.session.store.SessionLogSegment;
 import at.aimon.core.agent.session.store.SessionLogSegmentStore;
 import at.aimon.core.agent.session.transcript.LogOrigin;
@@ -304,6 +306,14 @@ class SessionHistoryToolTest {
                 @Override
                 public List<SegmentInfo> list(SessionId sessionId) {
                     return segments.list(sessionId);
+                }
+
+                @Override
+
+                public SegmentScanPage scanSessions(Instant createdBefore, String cursor, int limit) {
+
+                    return segments.scanSessions(createdBefore, cursor, limit);
+
                 }
 
                 @Override

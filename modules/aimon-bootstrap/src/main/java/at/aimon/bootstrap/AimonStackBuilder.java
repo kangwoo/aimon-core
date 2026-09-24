@@ -6,11 +6,14 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import at.aimon.bootstrap.assemble.LateBoundFencedSegmentStore;
 import at.aimon.bootstrap.assemble.MemoryAssembly;
+import at.aimon.bootstrap.assemble.SegmentSweepSchedule;
 import at.aimon.bootstrap.assemble.StackAgentRuntimeProvisioner;
 import at.aimon.bootstrap.assemble.StackLiveSessionOpener;
 import at.aimon.bootstrap.assemble.StackPaths;
@@ -46,6 +49,7 @@ import at.aimon.core.agent.session.store.SessionLogSegmentStore;
 import at.aimon.core.agent.session.store.SessionRecordStore;
 import at.aimon.core.agent.session.transcript.DefaultTranscriptManager;
 import at.aimon.core.agent.session.transcript.SessionLogFormat;
+import at.aimon.core.agent.session.transcript.SessionLogSegmentSweeper;
 import at.aimon.core.agent.session.transcript.SessionLogStorage;
 import at.aimon.core.agent.session.transcript.TranscriptManager;
 import at.aimon.core.agent.tool.ToolContextEnricher;
@@ -275,8 +279,7 @@ public final class AimonStackBuilder {
         }
         // Sealing needs somewhere to seal to. A supplied store is used as given; an in-memory record store gets an
         // in-memory segment store, since the two are lost together; a supplied record store with no segment store
-        // seals nothing rather than pairing durable manifests with segments that vanish on restart. Deletes go to the
-        // raw store: the session store that owns the fenced view is built inside the router, after this manager.
+        // seals nothing rather than pairing durable manifests with segments that vanish on restart.
         final SessionLogSegmentStore segmentStore = spec.getSession().getSegmentStore().orElseGet(
                 () -> spec.getSession().getRecordStore().isEmpty() ? new InMemorySessionLogSegmentStore() : null);
         final SessionLogFormat logWriteFormat = spec.getSession().getLogWriteFormat();
@@ -288,8 +291,20 @@ public final class AimonStackBuilder {
                             + " nothing is sealed: every record keeps its whole history and each save rewrites it."
                             + " Supply a SessionLogSegmentStore (SessionSpec.segmentStore) from the same backend.");
         }
+        // In distributed mode the manager's segment deletes (turn-end GC, /clear) are fenced by the lease this node
+        // holds, so a node that lost a session cannot delete what the new holder's manifest names. The session store
+        // that owns the fenced view is built inside the router, after this manager, so the manager gets a view that is
+        // bound once the router exists. A single node deletes through the raw store: there is no second holder to
+        // protect against, and a live session built outside the router (the CLI's) holds no lease a fence could see.
+        final LateBoundFencedSegmentStore fencedDeletes = segmentStore != null
+                && spec.getSession().getMode() == DeploymentMode.DISTRIBUTED
+                        ? new LateBoundFencedSegmentStore(segmentStore)
+                        : null;
         final TranscriptManager transcriptManager = new DefaultTranscriptManager(sessionRecordStore, sessionCheckpoints,
-                logWriteFormat, segmentStore == null ? null : SessionLogStorage.builder(segmentStore).build());
+                logWriteFormat,
+                segmentStore == null
+                        ? null
+                        : SessionLogStorage.builder(segmentStore).deleteStore(fencedDeletes).build());
         final MessageQueueManager messageQueueManager = new DefaultMessageQueueManager(
                 spec.getMessageQueueRepository().orElseGet(InMemoryMessageQueueRepository::new));
 
@@ -510,6 +525,17 @@ public final class AimonStackBuilder {
         final Duration drainTimeout = spec.getSession().getDrainTimeout();
         teardown.own(TeardownPhase.SESSIONS, "sessionRouter.closeGracefully(" + drainTimeout + ")",
                 () -> closeRouter(sessionRouter, drainTimeout));
+        if (fencedDeletes != null) {
+            fencedDeletes.bind(sessionRouter.fencedSegmentStore().orElseThrow(() -> new AimonBootstrapException(
+                    "The session router was given a segment store but exposes no fenced view of it")));
+        }
+        // Registered after the router, so within SESSIONS it stops first: no pass is still deleting while sessions
+        // drain. Started with the other background sweepers, in AimonStack.startRuntimes().
+        final SegmentSweepSchedule segmentSweep = buildSegmentSweep(spec.getSession(), segmentStore,
+                sessionRecordStore);
+        if (segmentSweep != null) {
+            teardown.own(TeardownPhase.SESSIONS, "segmentSweep", segmentSweep);
+        }
 
         // --- Assembled ------------------------------------------------------------------------------------
         // Nothing is started here. Everything that has to happen before this stack can serve is behind
@@ -517,7 +543,8 @@ public final class AimonStackBuilder {
         // has a matching close even if the line after it throws.
         final AimonStack stack = new AimonStack(spec, teardown, sessionRouter, agentExecutor, agentRuntimeRegistry,
                 schedulingLifecycle, sessionRecordStore, messageQueueManager, pendingTurnRegistry, pendingTurnReaper,
-                fileSystems, primaryRuntimeId, runtimes, agentDescriptors, agentRuntimeResolver, degradations.build());
+                fileSystems, primaryRuntimeId, runtimes, agentDescriptors, agentRuntimeResolver, segmentSweep,
+                degradations.build());
         log.info("AIMON stack assembled: {} teardown entrie(s), agent(s) {}", teardown.entries().size(),
                 runtimes.keySet());
         if (!stack.degradations().isEmpty()) {
@@ -714,6 +741,28 @@ public final class AimonStackBuilder {
         session.getIdleTtl().ifPresent(builder::idleTtl);
         session.getMaxCachedSessions().ifPresent(builder::maxCachedSessions);
         return builder.build();
+    }
+
+    /**
+     * Builds the store-wide orphan sweep when the spec turns it on (session-log §11). The sweeper deletes through the
+     * raw store: it holds no session, so a fenced delete would refuse everything, and what keeps it safe is the
+     * manifest check plus its grace period — see {@link SessionLogSegmentSweeper}.
+     *
+     * @return the schedule, or null when the sweep is off
+     */
+    private static SegmentSweepSchedule buildSegmentSweep(SessionSpec session, SessionLogSegmentStore segmentStore,
+            SessionRecordStore recordStore) {
+        final Optional<Duration> interval = session.getSegmentSweepInterval();
+        if (interval.isEmpty()) {
+            return null;
+        }
+        if (segmentStore == null) {
+            // SessionSpec refuses this combination; kept as a guard against the two rules drifting apart.
+            throw new AimonBootstrapException("A segment sweep was requested but this stack has no segment store");
+        }
+        final SessionLogSegmentSweeper.Builder sweeper = SessionLogSegmentSweeper.builder(segmentStore, recordStore);
+        session.getSegmentSweepGrace().ifPresent(sweeper::grace);
+        return new SegmentSweepSchedule(sweeper.build(), interval.get());
     }
 
     private static void closeRouter(SessionRouter sessionRouter, Duration drainTimeout) {

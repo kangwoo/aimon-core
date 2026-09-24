@@ -3,13 +3,21 @@ package at.aimon.session.routing.builder;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.time.Instant;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 import at.aimon.core.agent.session.LiveSessionFactory;
 import at.aimon.core.agent.session.OpenAttributes;
+import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.exception.SessionNotHeldException;
+import at.aimon.core.agent.session.store.InMemorySessionLogSegmentStore;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
+import at.aimon.core.agent.session.store.SegmentId;
+import at.aimon.core.agent.session.store.SessionLogSegment;
+import at.aimon.core.agent.session.store.SessionLogSegmentStore;
 import at.aimon.core.agent.session.store.SessionRecordStore;
 import at.aimon.session.routing.LiveSessionOpener;
 import at.aimon.session.routing.SessionRouter;
@@ -79,6 +87,36 @@ class SessionRouterBuilderTest {
             assertThat(OpenAttributes.empty().isEmpty()).isTrue();
         } finally {
             manager.close();
+        }
+    }
+
+    @Test
+    @DisplayName("fencedSegmentStore() is empty without a segment store, and refuses deletes for unheld sessions")
+    void fencedSegmentStore() {
+        final LiveSessionOpener opener = Mockito.mock(LiveSessionOpener.class);
+        final SessionRouter bare = SessionRouter.builder().sessionOpener(opener)
+                .sessionRecordStore(new InMemorySessionRecordStore()).build();
+        try {
+            assertThat(bare.fencedSegmentStore()).isEmpty();
+        } finally {
+            bare.close();
+        }
+
+        final InMemorySessionLogSegmentStore raw = new InMemorySessionLogSegmentStore();
+        final SessionId session = SessionId.of("never-held");
+        final SessionLogSegment segment = SessionLogSegment.builder().sessionId(session).id(SegmentId.generate())
+                .fromSeq(0).toSeq(1).entryCount(1).payload("[]").createdAt(Instant.now()).build();
+        final SessionRouter router = SessionRouter.builder().sessionOpener(opener)
+                .sessionRecordStore(new InMemorySessionRecordStore()).sessionLogSegmentStore(raw).build();
+        try {
+            final SessionLogSegmentStore fenced = router.fencedSegmentStore().orElseThrow();
+            fenced.put(segment);
+            assertThat(fenced.get(session, segment.getId())).isPresent();
+            assertThatThrownBy(() -> fenced.delete(session, segment.getId()))
+                    .isInstanceOf(SessionNotHeldException.class);
+            assertThat(raw.get(session, segment.getId())).isPresent();
+        } finally {
+            router.close();
         }
     }
 }

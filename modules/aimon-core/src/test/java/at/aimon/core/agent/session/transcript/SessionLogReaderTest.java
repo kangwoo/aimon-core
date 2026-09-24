@@ -15,6 +15,7 @@ import at.aimon.core.agent.session.store.InMemorySessionLogSegmentStore;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.store.SegmentId;
 import at.aimon.core.agent.session.store.SegmentInfo;
+import at.aimon.core.agent.session.store.SegmentScanPage;
 import at.aimon.core.agent.session.store.SessionLogSegment;
 import at.aimon.core.agent.session.store.SessionLogSegmentStore;
 import at.aimon.core.llm.Message;
@@ -262,6 +263,14 @@ class SessionLogReaderTest {
         @Override
         public List<SegmentInfo> list(SessionId sessionId) {
             return delegate.list(sessionId);
+        }
+
+        @Override
+
+        public SegmentScanPage scanSessions(Instant createdBefore, String cursor, int limit) {
+
+            return delegate.scanSessions(createdBefore, cursor, limit);
+
         }
 
         @Override

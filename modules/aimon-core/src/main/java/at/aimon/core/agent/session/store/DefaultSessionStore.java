@@ -1,6 +1,7 @@
 package at.aimon.core.agent.session.store;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -241,6 +242,11 @@ public final class DefaultSessionStore implements SessionStore {
         @Override
         public List<SegmentInfo> list(SessionId sessionId) {
             return raw.list(sessionId);
+        }
+
+        @Override
+        public SegmentScanPage scanSessions(Instant createdBefore, String cursor, int limit) {
+            return raw.scanSessions(createdBefore, cursor, limit);
         }
 
         @Override

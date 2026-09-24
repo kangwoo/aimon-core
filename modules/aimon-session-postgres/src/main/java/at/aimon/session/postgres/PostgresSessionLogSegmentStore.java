@@ -5,6 +5,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -16,6 +17,7 @@ import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.exception.SessionLogSegmentStoreException;
 import at.aimon.core.agent.session.store.SegmentId;
 import at.aimon.core.agent.session.store.SegmentInfo;
+import at.aimon.core.agent.session.store.SegmentScanPage;
 import at.aimon.core.agent.session.store.SessionLogSegment;
 import at.aimon.core.agent.session.store.SessionLogSegmentStore;
 
@@ -43,6 +45,10 @@ public final class PostgresSessionLogSegmentStore implements SessionLogSegmentSt
 
     private static final String SQL_LIST = "SELECT segment_id, created_at FROM session_log_segment "
             + "WHERE session_id = ?";
+
+    // The primary key's leading column serves both the range on session_id and the order; the cursor is the last id.
+    private static final String SQL_SCAN = "SELECT DISTINCT session_id FROM session_log_segment "
+            + "WHERE created_at < ? AND session_id > ? ORDER BY session_id LIMIT ?";
 
     private static final String SQL_DELETE = "DELETE FROM session_log_segment WHERE session_id = ? AND segment_id = ?";
 
@@ -110,6 +116,33 @@ public final class PostgresSessionLogSegmentStore implements SessionLogSegmentSt
             throw failure("list", sessionId, e);
         }
         return infos;
+    }
+
+    /**
+     * Exact: only sessions with a segment older than {@code createdBefore}, in ascending id order, each once per pass.
+     * The cursor is the last session id of the previous page; a fresh pass starts after the empty string, which sorts
+     * before every id.
+     */
+    @Override
+    public SegmentScanPage scanSessions(Instant createdBefore, String cursor, int limit) {
+        Objects.requireNonNull(createdBefore, "createdBefore must not be null");
+        if (limit <= 0) {
+            throw new IllegalArgumentException("limit must be positive, got " + limit);
+        }
+        final List<SessionId> ids = new ArrayList<>();
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(SQL_SCAN)) {
+            ps.setTimestamp(1, Timestamp.from(createdBefore));
+            ps.setString(2, cursor == null ? "" : cursor);
+            ps.setInt(3, limit);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    ids.add(SessionId.of(rs.getString(1)));
+                }
+            }
+        } catch (SQLException e) {
+            throw new SessionLogSegmentStoreException("Postgres error during scanSessions", e);
+        }
+        return SegmentScanPage.of(ids, ids.size() < limit ? null : ids.get(ids.size() - 1).value());
     }
 
     @Override

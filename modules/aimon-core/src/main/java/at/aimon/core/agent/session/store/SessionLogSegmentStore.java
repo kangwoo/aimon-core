@@ -1,5 +1,6 @@
 package at.aimon.core.agent.session.store;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -76,6 +77,32 @@ public interface SessionLogSegmentStore {
      *             if the backend fails
      */
     List<SegmentInfo> list(SessionId sessionId);
+
+    /**
+     * Pages through the sessions that hold segments, for the store-wide orphan sweep (session-log §11).
+     *
+     * <p>
+     * Over a full pass — from a null cursor until {@link SegmentScanPage#getNextCursor()} is empty — every session that
+     * held a segment created before {@code createdBefore} when the pass started, and still holds it, appears at least
+     * once. The answer is allowed to be looser than that, because the sweeper checks each session itself: a backend may
+     * also return sessions whose segments are all newer, may return a session on more than one page, and may treat
+     * {@code limit} as a hint rather than a bound (Redis {@code SCAN} does all three). What it may not do is skip a
+     * qualifying session, which would leave its orphans for good.
+     *
+     * <p>
+     * Not fenced: it is a read, and the sweep deletes nothing a record's manifest names.
+     *
+     * @param createdBefore
+     *            only sessions with a segment older than this need to be reported (must not be null)
+     * @param cursor
+     *            where to continue, as returned by the previous page; null to start a pass
+     * @param limit
+     *            how many sessions a page should hold (must be positive; a hint for some backends)
+     * @return the page (never null)
+     * @throws SessionLogSegmentStoreException
+     *             if the backend fails
+     */
+    SegmentScanPage scanSessions(Instant createdBefore, String cursor, int limit);
 
     /**
      * Deletes one segment of a session. Call it only through the fenced view when a {@link SessionStore} exists.

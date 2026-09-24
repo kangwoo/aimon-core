@@ -5,7 +5,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -14,6 +17,7 @@ import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.exception.SessionLogSegmentStoreException;
 import at.aimon.core.agent.session.store.SegmentId;
 import at.aimon.core.agent.session.store.SegmentInfo;
+import at.aimon.core.agent.session.store.SegmentScanPage;
 import at.aimon.core.agent.session.store.SessionLogSegment;
 import at.aimon.core.agent.session.store.SessionLogSegmentCodec;
 import at.aimon.core.agent.session.store.SessionLogSegmentStore;
@@ -167,6 +171,58 @@ public abstract class AbstractSessionLogSegmentStoreContractTest {
 
         store().deleteAll(base);
         assertThat(store().list(base)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a full scan reports every session with an old segment, however small the pages")
+    void scanReportsEverySessionWithAnOldSegment() {
+        // Odd ids on purpose: a backend that derives the id from a key must give back exactly what was stored.
+        final List<SessionId> sessions = List.of(SessionId.of("seg-scan-a"), SessionId.of("seg-scan-b:created"),
+                SessionId.of("seg-scan-*?[c]"), SessionId.of("seg-scan-}d{"));
+        for (SessionId session : sessions) {
+            store().put(segment(session, SegmentId.generate(), "old"));
+        }
+
+        for (int limit : new int[]{1, 2, 1000}) {
+            assertThat(fullScan(CREATED.plus(1, ChronoUnit.HOURS), limit)).as("limit %d", limit).containsAll(sessions);
+        }
+    }
+
+    @Test
+    @DisplayName("a scan still reports a session once one of its old segments is gone, and not after all are")
+    void scanFollowsDeletes() {
+        final SessionId session = SessionId.of("seg-scan-deleted");
+        final SessionLogSegment a = segment(session, SegmentId.generate(), "a");
+        final SessionLogSegment b = segment(session, SegmentId.generate(), "b");
+        store().put(a);
+        store().put(b);
+
+        store().delete(session, a.getId());
+        assertThat(fullScan(CREATED.plus(1, ChronoUnit.HOURS), 10)).contains(session);
+
+        store().deleteAll(session);
+        assertThat(fullScan(CREATED.plus(1, ChronoUnit.HOURS), 10)).doesNotContain(session);
+    }
+
+    @Test
+    @DisplayName("a scan rejects a non-positive limit")
+    void scanRejectsNonPositiveLimit() {
+        assertThatThrownBy(() -> store().scanSessions(CREATED, null, 0)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    /** Runs one pass to the end, guarding against a cursor that never finishes. */
+    private Set<SessionId> fullScan(Instant createdBefore, int limit) {
+        final Set<SessionId> seen = new HashSet<>();
+        final List<String> cursors = new ArrayList<>();
+        String cursor = null;
+        do {
+            final SegmentScanPage page = store().scanSessions(createdBefore, cursor, limit);
+            seen.addAll(page.getSessionIds());
+            cursor = page.getNextCursor().orElse(null);
+            cursors.add(cursor);
+            assertThat(cursors.size()).as("the scan must finish").isLessThan(100_000);
+        } while (cursor != null);
+        return seen;
     }
 
     private static SessionLogSegment segment(SessionId session, SegmentId id, String payload) {

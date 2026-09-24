@@ -141,7 +141,12 @@ public final class DefaultSessionRouter implements SessionRouter {
      * and serves the agent runtimes too.
      */
     private final SessionApprovalStore sessionApprovalStore;
-    private final SessionLogSegmentStore segmentStore;
+    /**
+     * The segment store behind {@link #store}'s fenced delete view, or {@code null} when none was configured. Built
+     * once: the view is a thin wrapper, and handing out one instance lets the stack share it with the transcript
+     * manager that deletes on this router's behalf.
+     */
+    private final SessionLogSegmentStore fencedSegments;
 
     private final LiveSessionCache sessionCache;
     private final InProcessEventPublisher eventPublisher;
@@ -388,7 +393,7 @@ public final class DefaultSessionRouter implements SessionRouter {
                 "releaseInterruptTimeout");
         this.metrics = Objects.requireNonNull(metrics, "metrics must not be null");
         this.sessionApprovalStore = config.sessionApprovalStore();
-        this.segmentStore = config.segmentStore();
+        this.fencedSegments = config.segmentStore() == null ? null : store.segments(config.segmentStore());
 
         // The close listener is how a held lease gets back to the cluster: every way a session can end — idle TTL, LRU,
         // an explicit release, an EVICT signal, shutdown — ends in a close, and none of them knows about leases.
@@ -2783,15 +2788,20 @@ public final class DefaultSessionRouter implements SessionRouter {
      * which nothing reads.
      */
     private void deleteSegments(SessionId sessionId) {
-        if (segmentStore == null) {
+        if (fencedSegments == null) {
             return;
         }
         try {
-            store.segments(segmentStore).deleteAll(sessionId);
+            fencedSegments.deleteAll(sessionId);
         } catch (Exception e) {
             log.warn("Segment delete failed for deleted session {}; its segments are orphans: {}", sessionId.value(),
                     e.toString());
         }
+    }
+
+    @Override
+    public Optional<SessionLogSegmentStore> fencedSegmentStore() {
+        return Optional.ofNullable(fencedSegments);
     }
 
     /**

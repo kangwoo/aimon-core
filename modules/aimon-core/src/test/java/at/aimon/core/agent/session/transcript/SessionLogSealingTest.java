@@ -3,6 +3,7 @@ package at.aimon.core.agent.session.transcript;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -16,6 +17,7 @@ import at.aimon.core.agent.session.exception.SessionLogSegmentStoreException;
 import at.aimon.core.agent.session.store.InMemorySessionLogSegmentStore;
 import at.aimon.core.agent.session.store.SegmentId;
 import at.aimon.core.agent.session.store.SegmentInfo;
+import at.aimon.core.agent.session.store.SegmentScanPage;
 import at.aimon.core.agent.session.store.SessionLogSegment;
 import at.aimon.core.agent.session.store.SessionLogSegmentCodec;
 import at.aimon.core.agent.session.store.SessionLogSegmentStore;
@@ -219,6 +221,14 @@ class SessionLogSealingTest {
                 @Override
                 public List<SegmentInfo> list(SessionId sessionId) {
                     return backing.list(sessionId);
+                }
+
+                @Override
+
+                public SegmentScanPage scanSessions(Instant createdBefore, String cursor, int limit) {
+
+                    return backing.scanSessions(createdBefore, cursor, limit);
+
                 }
 
                 @Override

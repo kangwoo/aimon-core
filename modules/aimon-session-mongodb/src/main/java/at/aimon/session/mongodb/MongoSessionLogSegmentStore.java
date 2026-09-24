@@ -1,5 +1,6 @@
 package at.aimon.session.mongodb;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
@@ -16,6 +17,7 @@ import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.exception.SessionLogSegmentStoreException;
 import at.aimon.core.agent.session.store.SegmentId;
 import at.aimon.core.agent.session.store.SegmentInfo;
+import at.aimon.core.agent.session.store.SegmentScanPage;
 import at.aimon.core.agent.session.store.SessionLogSegment;
 import at.aimon.core.agent.session.store.SessionLogSegmentStore;
 import at.aimon.session.mongodb.internal.DocumentKeys;
@@ -129,6 +131,36 @@ public final class MongoSessionLogSegmentStore implements SessionLogSegmentStore
             throw failure("list", sessionId, e);
         }
         return infos;
+    }
+
+    /**
+     * Exact: only sessions with a segment older than {@code createdBefore}, in ascending id order, each once per pass —
+     * a {@code $match} / {@code $group} / {@code $sort} / {@code $limit} aggregation. The cursor is the last session id
+     * of the previous page; ids compare as strings, the same order {@code $sort} uses.
+     */
+    @Override
+    public SegmentScanPage scanSessions(Instant createdBefore, String cursor, int limit) {
+        Objects.requireNonNull(createdBefore, "createdBefore must not be null");
+        if (limit <= 0) {
+            throw new IllegalArgumentException("limit must be positive, got " + limit);
+        }
+        final Document match = new Document(DocumentKeys.F_SEGMENT_CREATED_AT,
+                new Document("$lt", Date.from(createdBefore)));
+        if (cursor != null) {
+            match.append(DocumentKeys.F_SEGMENT_SESSION_ID, new Document("$gt", cursor));
+        }
+        final List<Document> pipeline = List.of(new Document("$match", match),
+                new Document("$group", new Document(DocumentKeys.F_ID, "$" + DocumentKeys.F_SEGMENT_SESSION_ID)),
+                new Document("$sort", new Document(DocumentKeys.F_ID, 1)), new Document("$limit", limit));
+        final List<SessionId> ids = new ArrayList<>();
+        try {
+            for (Document doc : collection.aggregate(pipeline)) {
+                ids.add(SessionId.of(doc.getString(DocumentKeys.F_ID)));
+            }
+        } catch (MongoException e) {
+            throw new SessionLogSegmentStoreException("Mongo error during scanSessions", e);
+        }
+        return SegmentScanPage.of(ids, ids.size() < limit ? null : ids.get(ids.size() - 1).value());
     }
 
     @Override

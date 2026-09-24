@@ -1862,6 +1862,20 @@ public class AimonProperties implements InitializingBean {
          */
         private SessionLogFormat logWriteFormat = SessionLogFormat.V1;
 
+        /**
+         * How often this node sweeps the segment store for orphan log segments — the ones per-session garbage
+         * collection never reaches because nobody resumes their session. Unset (the default) leaves the sweep off.
+         * Needs a segment store: an in-memory record store brings one, a supplied record store needs a
+         * {@code SessionLogSegmentStore} bean. Safe on every node of a cluster at once.
+         */
+        private Duration segmentSweepInterval;
+
+        /**
+         * How old an orphan segment must be before the sweep deletes it. Unset means 24 hours. Only read when
+         * {@code segment-sweep-interval} is set.
+         */
+        private Duration segmentSweepGrace;
+
         private final Cache cache = new Cache();
 
         public SessionStoreType getStore() {
@@ -1898,6 +1912,22 @@ public class AimonProperties implements InitializingBean {
 
         public void setLogWriteFormat(SessionLogFormat logWriteFormat) {
             this.logWriteFormat = logWriteFormat;
+        }
+
+        public Duration getSegmentSweepInterval() {
+            return segmentSweepInterval;
+        }
+
+        public void setSegmentSweepInterval(Duration segmentSweepInterval) {
+            this.segmentSweepInterval = segmentSweepInterval;
+        }
+
+        public Duration getSegmentSweepGrace() {
+            return segmentSweepGrace;
+        }
+
+        public void setSegmentSweepGrace(Duration segmentSweepGrace) {
+            this.segmentSweepGrace = segmentSweepGrace;
         }
 
         public void setShutdownDrainTimeout(Duration shutdownDrainTimeout) {

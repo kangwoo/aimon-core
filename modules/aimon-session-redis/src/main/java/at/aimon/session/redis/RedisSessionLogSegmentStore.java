@@ -16,9 +16,13 @@ import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.exception.SessionLogSegmentStoreException;
 import at.aimon.core.agent.session.store.SegmentId;
 import at.aimon.core.agent.session.store.SegmentInfo;
+import at.aimon.core.agent.session.store.SegmentScanPage;
 import at.aimon.core.agent.session.store.SessionLogSegment;
 import at.aimon.core.agent.session.store.SessionLogSegmentStore;
+import io.lettuce.core.KeyScanCursor;
 import io.lettuce.core.RedisException;
+import io.lettuce.core.ScanArgs;
+import io.lettuce.core.ScanCursor;
 import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
@@ -49,6 +53,12 @@ import io.lettuce.core.api.sync.RedisCommands;
  * over the wire. Both hashes change together in one Lua script — {@link #put} refuses an id that already exists
  * rather than overwriting it, and {@link #delete} removes the field from both — so they cannot disagree. A session
  * delete drops both keys.
+ *
+ * <p>
+ * {@link #scanSessions} walks the {@code :created} keys with {@code SCAN}, so no index key has to be kept in step with
+ * the per-session keys — an index would sit in its own cluster slot and could not change atomically with them. The
+ * scan reads the node this connection points at, which is the whole keyspace for the standalone connection this class
+ * takes.
  *
  * <p>
  * Keys carry no TTL: a segment lives as long as the record's manifest names it, and garbage collection decides when
@@ -167,6 +177,37 @@ public final class RedisSessionLogSegmentStore implements SessionLogSegmentStore
         }
     }
 
+    /**
+     * A {@code SCAN} over the sessions' {@code :created} keys; the cursor is Redis's own. Looser than the other
+     * backends in the ways the SPI allows: every session with any segment is reported regardless of
+     * {@code createdBefore}, a session may appear twice in a pass, and {@code limit} is passed as {@code COUNT}, which
+     * Redis treats as a hint.
+     */
+    @Override
+    public SegmentScanPage scanSessions(Instant createdBefore, String cursor, int limit) {
+        Objects.requireNonNull(createdBefore, "createdBefore must not be null");
+        if (limit <= 0) {
+            throw new IllegalArgumentException("limit must be positive, got " + limit);
+        }
+        final String keyStart = keyPrefix + TAG_OPEN;
+        try {
+            final KeyScanCursor<String> page = commands.scan(ScanCursor.of(cursor == null ? "0" : cursor),
+                    ScanArgs.Builder.matches(globEscape(keyStart) + "*" + globEscape(CREATED_SUFFIX)).limit(limit));
+            final List<SessionId> ids = new ArrayList<>(page.getKeys().size());
+            for (String key : page.getKeys()) {
+                // The key ends in the created suffix and starts with the prefix; what lies between is the session id,
+                // whatever it contains — a session id holding "}:created" still ends before the last suffix.
+                if (key.startsWith(keyStart) && key.endsWith(CREATED_SUFFIX)
+                        && key.length() > keyStart.length() + CREATED_SUFFIX.length()) {
+                    ids.add(SessionId.of(key.substring(keyStart.length(), key.length() - CREATED_SUFFIX.length())));
+                }
+            }
+            return SegmentScanPage.of(ids, page.isFinished() ? null : page.getCursor());
+        } catch (RedisException e) {
+            throw new SessionLogSegmentStoreException("Redis error during scanSessions", e);
+        }
+    }
+
     @Override
     public void delete(SessionId sessionId, SegmentId id) {
         Objects.requireNonNull(sessionId, "sessionId must not be null");
@@ -197,6 +238,19 @@ public final class RedisSessionLogSegmentStore implements SessionLogSegmentStore
     /** The creation-time hash of a session. Package-private so the freeze test can pin the layout. */
     String createdKey(SessionId sessionId) {
         return keyPrefix + TAG_OPEN + sessionId.value() + CREATED_SUFFIX;
+    }
+
+    /** Escapes the glob metacharacters of {@code SCAN MATCH}, so a prefix is matched literally. */
+    private static String globEscape(String literal) {
+        final StringBuilder out = new StringBuilder(literal.length());
+        for (int i = 0; i < literal.length(); i++) {
+            final char c = literal.charAt(i);
+            if (c == '*' || c == '?' || c == '[' || c == ']' || c == '\\') {
+                out.append('\\');
+            }
+            out.append(c);
+        }
+        return out.toString();
     }
 
     private static SessionLogSegmentStoreException failure(String operation, SessionId sessionId, Exception cause) {

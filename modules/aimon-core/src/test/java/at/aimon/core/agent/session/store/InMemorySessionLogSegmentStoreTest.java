@@ -21,6 +21,27 @@ import at.aimon.core.agent.session.SessionId;
 class InMemorySessionLogSegmentStoreTest {
 
     @Test
+    @DisplayName("scanSessions is exact: old segments only, ascending ids, the cursor continues after the last id")
+    void scanIsExact() {
+        final InMemorySessionLogSegmentStore store = new InMemorySessionLogSegmentStore();
+        final Instant old = Instant.parse("2026-09-24T10:00:00Z");
+        for (String id : new String[]{"c", "a", "b"}) {
+            store.put(SessionLogSegment.builder().sessionId(SessionId.of(id)).id(SegmentId.generate()).fromSeq(0)
+                    .toSeq(1).entryCount(1).payload("[]").createdAt(old).build());
+        }
+        store.put(SessionLogSegment.builder().sessionId(SessionId.of("young")).id(SegmentId.generate()).fromSeq(0)
+                .toSeq(1).entryCount(1).payload("[]").createdAt(old.plusSeconds(3600)).build());
+        final Instant cutoff = old.plusSeconds(60);
+
+        final SegmentScanPage first = store.scanSessions(cutoff, null, 2);
+        assertThat(first.getSessionIds()).containsExactly(SessionId.of("a"), SessionId.of("b"));
+        assertThat(first.getNextCursor()).contains("b");
+        final SegmentScanPage second = store.scanSessions(cutoff, "b", 2);
+        assertThat(second.getSessionIds()).containsExactly(SessionId.of("c"));
+        assertThat(second.getNextCursor()).isEmpty();
+    }
+
+    @Test
     @DisplayName("a put racing the delete of the session's last segment is never lost")
     void putRacingLastDeleteIsKept() throws Exception {
         // Deleting the last segment detaches the session's inner map. A put that had already fetched that map and

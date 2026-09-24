@@ -7,6 +7,7 @@ import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.lang.reflect.Method;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -132,6 +133,24 @@ class AimonAutoConfigurationTest {
                     assertThat(stack.runtimes().get(stack.primaryRuntimeId()).getContextEngine())
                             .isInstanceOf(RollingContextEngine.class);
                 });
+    }
+
+    @Test
+    @DisplayName("aimon.session.segment-sweep-interval turns the orphan sweep on; unset leaves it off")
+    void segmentSweepProperties(@TempDir Path workspace) {
+        minimal(workspace)
+                .withPropertyValues("aimon.session.segment-sweep-interval=1h", "aimon.session.segment-sweep-grace=48h")
+                .run(ctx -> {
+                    final AimonStack stack = ctx.getBean(AimonStack.class);
+                    assertThat(stack.spec().getSession().getSegmentSweepInterval()).contains(Duration.ofHours(1));
+                    assertThat(stack.spec().getSession().getSegmentSweepGrace()).contains(Duration.ofHours(48));
+                    assertThat(stack.teardownPlan()).anyMatch(entry -> entry.contains("segmentSweep"));
+                });
+        minimal(workspace)
+                .run(ctx -> assertThat(ctx.getBean(AimonStack.class).spec().getSession().getSegmentSweepInterval())
+                        .isEmpty());
+        minimal(workspace).withPropertyValues("aimon.session.segment-sweep-grace=48h")
+                .run(ctx -> assertThat(ctx).hasFailed().getFailure().hasStackTraceContaining("segmentSweepInterval"));
     }
 
     @Test
