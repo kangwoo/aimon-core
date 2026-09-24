@@ -61,9 +61,11 @@ import at.aimon.core.agent.session.DefaultLiveSession;
 import at.aimon.core.agent.session.LiveSession;
 import at.aimon.core.agent.session.LiveSessionOptions;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.store.InMemorySessionLogSegmentStore;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.transcript.LogOrigin;
 import at.aimon.core.agent.session.transcript.SessionLogEntry;
+import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.agent.session.transcript.SessionLogPage;
 import at.aimon.core.agent.session.transcript.SessionLogReader;
 import at.aimon.core.base.Principal;
@@ -595,7 +597,7 @@ public class AgentSetupFactory {
                 .agent(AgentSpec.builder().bundle(agentBundle)
                         .addCustomizer(runtime -> configureHooks(runtime, outputFormatter))
                         .addCustomizer(runtime -> registerCliTools(runtime, outputFormatter)).build())
-                .session(SessionSpec.builder().recordStore(new InMemorySessionRecordStore()).build())
+                .session(buildSessionSpec(config.getCliSettings().getSessionLogWriteFormat()))
                 .skillApproval(approvalSpec).memory(memorySpec)
                 // No memoryContextProvider here any more: MemoryAssembly builds the injection provider from the spec
                 // above, and AimonStackSpec rejects having both. The CLI supplies neither instead of both.
@@ -787,6 +789,25 @@ public class AgentSetupFactory {
             builder.mcp(mcpClientFactory, mcpConfig.toConfigProvider());
         }
         return builder.build();
+    }
+
+    /**
+     * The CLI's session storage: in memory, written in {@code writeFormat}. Version 2 also gets an in-memory segment
+     * store, so a compaction's hidden ranges are sealed out of the record as they would be on any other node; the two
+     * stores live and die with this process together, so no manifest can outlive the segments it names. Version 1
+     * seals nothing and needs none — the supplied record store is what tells the stack not to default one.
+     *
+     * @param writeFormat
+     *            the format from {@code cli.sessionLogWriteFormat} (must not be null)
+     * @return the session spec (never null)
+     */
+    static SessionSpec buildSessionSpec(SessionLogFormat writeFormat) {
+        final SessionSpec.Builder session = SessionSpec.builder().recordStore(new InMemorySessionRecordStore())
+                .logWriteFormat(Objects.requireNonNull(writeFormat, "writeFormat must not be null"));
+        if (writeFormat == SessionLogFormat.V2) {
+            session.segmentStore(new InMemorySessionLogSegmentStore());
+        }
+        return session.build();
     }
 
     /**
