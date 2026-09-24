@@ -52,7 +52,8 @@ Central is versioned independently).
   `V2__session_log_segment.sql` — apply it after `V1__init.sql`; the unshipped future index file is now named
   `V3__indexes.sql`), `RedisSessionLogSegmentStore` (prefix `aimon:session:segment`, keys
   `<prefix>:{s:<sessionId>}:data` / `<prefix>:{s:<sessionId>}:created` — one Redis Cluster slot per session; a prefix
-  containing `{` is refused). The Mongo `_id` is the `{sessionId, segmentId}` pair. Design:
+  containing `{` is refused; it takes a standalone `StatefulRedisConnection` or a `StatefulRedisClusterConnection`).
+  The Mongo `_id` is the `{sessionId, segmentId}` pair. Design:
   `docs/design/session/session-log.md` §5.
 - **`DefaultTranscriptManager` seals** when given a `SessionLogStorage` (`minSealTokens` 32K, `segmentGcGrace` 1h —
   never zero —, `maxReadTokens` 32K): the executor seals right after a compaction and the turn-end save seals before it
@@ -66,18 +67,35 @@ Central is versioned independently).
 - **`SessionStore.segments(raw)`** returns the fenced delete view (new abstract method; `DefaultSessionStore`
   implements it). `SessionRouterBuilder.sessionLogSegmentStore(...)` makes a session delete remove the session's
   segments after its record. `SessionSpec.segmentStore(...)` wires a store into the stack; without one an in-memory
-  record store gets an in-memory segment store and a supplied record store seals nothing. In
-  `DeploymentMode.DISTRIBUTED` the stack's turn-end GC and `/clear` deletes go through the router's fenced view — new
-  `SessionRouter.fencedSegmentStore()` (default: empty) — so a node that lost a session's lease cannot delete segments
-  the new holder's manifest names; single-node stacks delete through the raw store.
+  record store gets an in-memory segment store and a supplied record store seals nothing.
+- **The stack's record writes and segment deletes are fenced by the lease.** The transcript manager's turn-end saves
+  and checkpoints, the live sessions' totals / budget / persisted-rewind writes, and the turn-end GC and `/clear`
+  deletes go through the router's fenced views — new `SessionRouter.fencedRecordStore(SessionFence)` and
+  `fencedSegmentStore(SessionFence)` (defaults: empty), over the new `SessionStore.records(SessionFence)` /
+  `segments(raw, SessionFence)` (default methods: `HOLDER_ONLY` only). New enum `SessionFence`: `HOLDER_ONLY` in
+  `DeploymentMode.DISTRIBUTED`, so a node that lost a session's lease can neither overwrite the new holder's record nor
+  delete segments its manifest names; `UNLESS_HELD_ELSEWHERE` for a single-node stack given a lease store, which
+  refuses only sessions another node holds and still lets a live session opened outside the router (the CLI's) save and
+  collect; no fence on a single-node stack with the default lease store. **Behaviour change in distributed mode:** a
+  live session opened outside the router holds no lease, so all of its saves are refused — open every session through
+  the router. A refused turn-end save logs one WARN and skips that save's GC; refused checkpoints and fenced GC deletes
+  log at DEBUG.
+- **A `/clear` no longer leaves a gap behind a late checkpoint.** `SessionCheckpointMailbox.drain(SessionId)` (new;
+  `flush` is the same drain without the answer) reports whether a checkpoint of older state can still land, and the
+  transcript manager deletes nothing — neither `/clear`'s segments nor orphans — after a save whose drain gave up; the
+  `/clear` deletes are retried after the next save whose drain completes. New
+  `SessionCheckpointMailbox.background(Duration drainTimeout)` (default `DEFAULT_DRAIN_TIMEOUT`, 5s).
 - **Store-wide orphan sweep** (opt-in): `SessionLogSegmentSweeper` (`at.aimon.core.agent.session.transcript`) walks the
   whole segment store and deletes segments older than a grace (24h by default) that the session's record, read after
   the listing, does not name — the orphans of sessions nobody reopens, which turn-end GC never reaches. Wired with
   `SessionSpec.segmentSweepInterval(...)` / `segmentSweepGrace(...)` or Spring `aimon.session.segment-sweep-interval` /
   `aimon.session.segment-sweep-grace`; off unless the interval is set, and refused at startup without a segment store.
-  Safe on every node at once. **SPI addition:** `SessionLogSegmentStore.scanSessions(createdBefore, cursor, limit)`
+  Safe on every node at once, and run once per cluster per interval when the stack has a lease store: the sweeper's new
+  `Builder.coordination(leaseStore, holderId, lease)` makes `sweepIfClaimed()` take a sweep lease on the reserved id
+  `aimon:segment-sweep` (`SWEEP_LEASE_ID`) for one interval, renewed page by page and kept after the pass, and skip the
+  pass when another node holds it. **SPI addition:** `SessionLogSegmentStore.scanSessions(createdBefore, cursor, limit)`
   returning `SegmentScanPage` — a full pass must not miss a session holding an old segment, and may over-report or
-  repeat (Redis walks its `:created` keys with `SCAN`). A custom backend implements it.
+  repeat (Redis walks its `:created` keys with `SCAN`, every master in turn on a cluster connection). A custom backend implements it.
 - **Meaning changes** (session-log §10): once a range is sealed, `TranscriptBuffer.getMessages()`,
   `AgentExecutionResult.getConversationHistory()` and `SessionSnapshot.getConversationHistory()` no longer return it;
   `liveEntryCount()` (and `/clear`'s "Removed N messages") and `hasConversation()` count sealed ranges. Nothing seals

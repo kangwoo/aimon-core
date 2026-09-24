@@ -635,3 +635,14 @@ CTX-05 가 선행 조건이다. 그때 되살린다면 고정 단위는 "메모�
   저장소를 함께 붙이므로 롤링의 압축이 가린 구간은 레코드 밖으로 봉인되고 `SessionHistory` 가 그것을 다시 읽는다. 기본값은
   v1 그대로다 — 다른 조립과 같은 기본값을 두려는 것이지, CLI 에 v2 를 못 읽는 옛 노드가 있어서가 아니다(CLI 의 세션은 메모리에
   있다)
+
+### 13.8 세 번째 개선에서 닫힌 것
+
+저장 쪽(레코드 쓰기의 펜스, 클러스터에 한 번만 도는 스윕, Redis Cluster 스캔, `/clear` 뒤 늦은 체크포인트)은
+[`session-log.md` §12.7](../session/session-log.md#127-세-번째-개선에서-닫힌-것) 에 있다. 뷰 쪽에 닿는 것은 하나다.
+
+- **CLI 에서 롤링 에이전트가 턴을 돈다는 것을 끝에서 끝까지 고정했다.** §13.7 의 테스트는 CLI 가 v2 에서 롤링 에이전트를
+  **띄우는** 것까지만 보였다. 이제 `AgentSetupFactoryLogWriteFormatTest.rollingAgentRunsATurnOnVersionTwo` 가 실제
+  `AgentSetupFactory.create()` 로 만든 CLI 의 라이브 세션에서 stub 모델로 턴 하나를 돌리고, 기록이 v2 로 저장되는 것, 가린 구간이
+  CLI 가 붙인 in-memory 세그먼트 저장소로 봉인되는 것, 로그 reader 가 gap 없이 다시 읽는 것을 확인한다. 봉인은 손으로 가린
+  구간으로 일으킨다 — 롤링 엔진 자신의 압축은 stub 턴이 채우지 못하는 컨텍스트 창을 필요로 하기 때문이다
