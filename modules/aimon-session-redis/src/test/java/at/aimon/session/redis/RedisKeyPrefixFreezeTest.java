@@ -1,9 +1,17 @@
 package at.aimon.session.redis;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import java.util.List;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
+
+import at.aimon.core.agent.session.SessionId;
+import io.lettuce.core.api.StatefulRedisConnection;
+import io.lettuce.core.cluster.SlotHash;
 
 /**
  * Pins the default Redis key prefixes, which name live keys and pub/sub channels in a running cluster.
@@ -74,5 +82,53 @@ class RedisKeyPrefixFreezeTest {
         // Renaming it would leave every manifest pointing at segments under the old prefix: each sealed range would
         // read back as a gap and garbage collection would never find the old keys to delete.
         assertThat(RedisSessionLogSegmentStore.DEFAULT_KEY_PREFIX).isEqualTo("aimon:session:segment");
+    }
+
+    @Test
+    @DisplayName("the segment key layout is hash-tagged by session and suffixed after it")
+    void segmentKeyLayoutIsFrozen() {
+        // Set before the first release, deliberately: the earlier <prefix>:<sid> / <prefix>:<sid>:created pair let
+        // session "X:created" own session "X"'s creation hash. Changing the layout after a deployment orphans every
+        // sealed range exactly as renaming the prefix would.
+        final RedisSessionLogSegmentStore store = new RedisSessionLogSegmentStore(connection());
+        assertThat(store.dataKey(SessionId.of("s-1"))).isEqualTo("aimon:session:segment:{s:s-1}:data");
+        assertThat(store.createdKey(SessionId.of("s-1"))).isEqualTo("aimon:session:segment:{s:s-1}:created");
+    }
+
+    @Test
+    @DisplayName("no session's segment key spells another session's")
+    void segmentKeysDoNotCollideAcrossSessions() {
+        final RedisSessionLogSegmentStore store = new RedisSessionLogSegmentStore(connection());
+        final SessionId x = SessionId.of("X");
+        final SessionId xCreated = SessionId.of("X:created");
+        final SessionId xBrace = SessionId.of("X}:created");
+        final SessionId leadingBrace = SessionId.of("}x");
+        assertThat(List.of(store.dataKey(x), store.createdKey(x), store.dataKey(xCreated), store.createdKey(xCreated),
+                store.dataKey(xBrace), store.createdKey(xBrace), store.dataKey(leadingBrace),
+                store.createdKey(leadingBrace))).doesNotHaveDuplicates();
+    }
+
+    @Test
+    @DisplayName("both keys of a session hash to one cluster slot, even when the id contains a brace")
+    void segmentKeysShareOneSlot() {
+        final RedisSessionLogSegmentStore store = new RedisSessionLogSegmentStore(connection());
+        for (String id : new String[]{"s-1", "X:created", "a}b", "{nested}", "tenant:42/session", "}x", "}", "}}",
+                "{}"}) {
+            final SessionId session = SessionId.of(id);
+            assertThat(SlotHash.getSlot(store.dataKey(session))).as(id)
+                    .isEqualTo(SlotHash.getSlot(store.createdKey(session)));
+        }
+    }
+
+    @Test
+    @DisplayName("a prefix containing a brace is refused - it would pin every session to one slot")
+    void braceInPrefixRefused() {
+        assertThatThrownBy(() -> new RedisSessionLogSegmentStore(connection(), "tenant{a}:segment"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static StatefulRedisConnection<String, String> connection() {
+        return Mockito.mock(StatefulRedisConnection.class);
     }
 }

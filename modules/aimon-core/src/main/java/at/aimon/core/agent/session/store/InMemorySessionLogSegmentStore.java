@@ -23,16 +23,24 @@ import at.aimon.core.agent.session.exception.SessionLogSegmentStoreException;
  */
 public final class InMemorySessionLogSegmentStore implements SessionLogSegmentStore {
 
-    /** Both levels are {@link ConcurrentHashMap}s, so the compound map operations below are atomic. */
+    /**
+     * Both levels are {@link ConcurrentHashMap}s. Every write that can create or detach an inner map runs inside a
+     * {@code compute} on the outer one, so a {@link #put} can never land in an inner map that a concurrent
+     * {@link #delete} of the session's last segment has just detached — which would lose the segment and leave its
+     * manifest entry dangling.
+     */
     private final Map<SessionId, Map<SegmentId, SessionLogSegment>> segments = new ConcurrentHashMap<>();
 
     @Override
     public void put(SessionLogSegment segment) {
         Objects.requireNonNull(segment, "segment cannot be null");
-        final SessionLogSegment previous = segments
-                .computeIfAbsent(segment.getSessionId(), id -> new ConcurrentHashMap<>())
-                .putIfAbsent(segment.getId(), segment);
-        if (previous != null) {
+        final boolean[] duplicate = new boolean[1];
+        segments.compute(segment.getSessionId(), (key, held) -> {
+            final Map<SegmentId, SessionLogSegment> target = held != null ? held : new ConcurrentHashMap<>();
+            duplicate[0] = target.putIfAbsent(segment.getId(), segment) != null;
+            return target;
+        });
+        if (duplicate[0]) {
             throw new SessionLogSegmentStoreException("Segment " + segment.getId() + " already exists for session "
                     + segment.getSessionId() + "; segment ids are never reused");
         }

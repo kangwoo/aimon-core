@@ -27,8 +27,8 @@ import at.aimon.session.mongodb.internal.DocumentKeys;
  *
  * <pre>{@code
  * {
- *   "_id":        "<segmentId>",
- *   "sessionId":  "<sessionId>",       // indexed — every query is scoped by it
+ *   "_id":        { "sessionId": "<sessionId>", "segmentId": "<segmentId>" },
+ *   "sessionId":  "<sessionId>",       // indexed — list and deleteAll are scoped by it
  *   "fromSeq":    <long>,
  *   "toSeq":      <long>,
  *   "entryCount": <int>,
@@ -38,9 +38,12 @@ import at.aimon.session.mongodb.internal.DocumentKeys;
  * }</pre>
  *
  * <p>
- * {@code _id} is the segment id, so {@link #put} is an {@code insertOne} and a duplicate id is rejected by the server
- * rather than overwritten. Reads and deletes filter on {@code sessionId} as well as {@code _id}, so one session never
- * sees another's segment. A segment is sized by {@code minSealTokens}, far below the 16MB document limit.
+ * {@code _id} is the pair of session id and segment id, in that field order — the SPI scopes a segment id by session,
+ * so the same id in two sessions is two documents. {@link #put} is an {@code insertOne}, and a duplicate within a
+ * session is rejected by the server rather than overwritten. {@link #get} and {@link #delete} match the whole
+ * {@code _id}; {@link #list} and {@link #deleteAll} filter on the top-level {@code sessionId}, which the
+ * {@code by_session} index covers — an index on a subdocument {@code _id} does not serve a query on one of its fields.
+ * A segment is sized by {@code minSealTokens}, far below the 16MB document limit.
  *
  * <p>
  * Not fenced, like the record store: deletes are fenced when reached through {@code SessionStore.segments(...)}.
@@ -77,7 +80,7 @@ public final class MongoSessionLogSegmentStore implements SessionLogSegmentStore
     @Override
     public void put(SessionLogSegment segment) {
         Objects.requireNonNull(segment, "segment must not be null");
-        final Document doc = new Document(DocumentKeys.F_ID, segment.getId().value())
+        final Document doc = new Document(DocumentKeys.F_ID, compoundId(segment.getSessionId(), segment.getId()))
                 .append(DocumentKeys.F_SEGMENT_SESSION_ID, segment.getSessionId().value())
                 .append(DocumentKeys.F_SEGMENT_FROM_SEQ, segment.getFromSeq())
                 .append(DocumentKeys.F_SEGMENT_TO_SEQ, segment.getToSeq())
@@ -118,7 +121,8 @@ public final class MongoSessionLogSegmentStore implements SessionLogSegmentStore
         try {
             for (Document doc : collection.find(bySession(sessionId))
                     .projection(new Document(DocumentKeys.F_SEGMENT_CREATED_AT, 1))) {
-                infos.add(SegmentInfo.of(SegmentId.of(doc.getString(DocumentKeys.F_ID)),
+                final Document id = doc.get(DocumentKeys.F_ID, Document.class);
+                infos.add(SegmentInfo.of(SegmentId.of(id.getString(DocumentKeys.F_SEGMENT_ID)),
                         doc.getDate(DocumentKeys.F_SEGMENT_CREATED_AT).toInstant()));
             }
         } catch (MongoException e) {
@@ -153,7 +157,13 @@ public final class MongoSessionLogSegmentStore implements SessionLogSegmentStore
     }
 
     private static Document byId(SessionId sessionId, SegmentId id) {
-        return new Document(DocumentKeys.F_ID, id.value()).append(DocumentKeys.F_SEGMENT_SESSION_ID, sessionId.value());
+        return new Document(DocumentKeys.F_ID, compoundId(sessionId, id));
+    }
+
+    /** Field order matters: Mongo compares subdocuments field by field, in order. Built in one place only. */
+    private static Document compoundId(SessionId sessionId, SegmentId id) {
+        return new Document(DocumentKeys.F_SEGMENT_SESSION_ID, sessionId.value()).append(DocumentKeys.F_SEGMENT_ID,
+                id.value());
     }
 
     private static SessionLogSegmentStoreException failure(String operation, SessionId sessionId, Exception cause) {

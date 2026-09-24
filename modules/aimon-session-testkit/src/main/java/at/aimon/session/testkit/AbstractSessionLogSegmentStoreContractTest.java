@@ -126,6 +126,49 @@ public abstract class AbstractSessionLogSegmentStoreContractTest {
         assertThat(store().get(bystander, c.getId())).contains(c);
     }
 
+    @Test
+    @DisplayName("the same segment id in two sessions is two segments")
+    void sameIdInTwoSessions() {
+        // The SPI scopes an id by session. A backend keyed on the id alone would refuse the second put — or worse,
+        // let one session's delete remove the other's segment.
+        final SessionId first = SessionId.of("seg-shared-a");
+        final SessionId second = SessionId.of("seg-shared-b");
+        final SegmentId id = SegmentId.generate();
+        store().put(segment(first, id, "first"));
+        store().put(segment(second, id, "second"));
+
+        assertThat(store().get(first, id).orElseThrow().getPayload()).isEqualTo("first");
+        assertThat(store().get(second, id).orElseThrow().getPayload()).isEqualTo("second");
+
+        store().delete(first, id);
+        assertThat(store().get(first, id)).isEmpty();
+        assertThat(store().get(second, id).orElseThrow().getPayload()).isEqualTo("second");
+        assertThat(store().list(second)).extracting(SegmentInfo::getId).containsExactly(id);
+    }
+
+    @Test
+    @DisplayName("a session id that extends another's is a different session")
+    void sessionIdsThatExtendEachOtherStayApart() {
+        // A backend that builds keys by concatenating the session id with a suffix can make "X:created" name one of
+        // "X"'s keys. Listing, reading and deleting either session must leave the other untouched.
+        final SessionId base = SessionId.of("seg-X");
+        final SessionId extended = SessionId.of("seg-X:created");
+        final SessionLogSegment a = segment(base, SegmentId.generate(), "base");
+        final SessionLogSegment b = segment(extended, SegmentId.generate(), "extended");
+        store().put(a);
+        store().put(b);
+
+        assertThat(store().list(base)).extracting(SegmentInfo::getId).containsExactly(a.getId());
+        assertThat(store().list(extended)).extracting(SegmentInfo::getId).containsExactly(b.getId());
+
+        store().deleteAll(extended);
+        assertThat(store().list(base)).extracting(SegmentInfo::getId).containsExactly(a.getId());
+        assertThat(store().get(base, a.getId())).contains(a);
+
+        store().deleteAll(base);
+        assertThat(store().list(base)).isEmpty();
+    }
+
     private static SessionLogSegment segment(SessionId session, SegmentId id, String payload) {
         return SessionLogSegment.builder().sessionId(session).id(id).fromSeq(3).toSeq(6).entryCount(2).payload(payload)
                 .createdAt(CREATED).build();

@@ -27,10 +27,22 @@ import io.lettuce.core.api.sync.RedisCommands;
  * Redis-backed {@link SessionLogSegmentStore}: two hashes per session.
  *
  * <pre>{@code
- * <prefix>:<sessionId>          field <segmentId> -> {"fromSeq":..,"toSeq":..,"entryCount":..,"createdAt":"..",
- *                                                     "payload":"<encoded entries>"}
- * <prefix>:<sessionId>:created  field <segmentId> -> "<createdAt, ISO-8601>"
+ * <prefix>:{s:<sessionId>}:data     field <segmentId> -> {"fromSeq":..,"toSeq":..,"entryCount":..,"createdAt":"..",
+ *                                                          "payload":"<encoded entries>"}
+ * <prefix>:{s:<sessionId>}:created  field <segmentId> -> "<createdAt, ISO-8601>"
  * }</pre>
+ *
+ * <p>
+ * The layout is chosen for two properties. <b>No two sessions share a key:</b> both keys end in a fixed suffix after
+ * the session id, so one session's key can never spell another's — an earlier {@code <prefix>:<sid>} /
+ * {@code <prefix>:<sid>:created} pair let session {@code X:created}'s data hash be session {@code X}'s creation hash.
+ * <b>Both keys of a session live in one Redis Cluster slot:</b> the braces are a hash tag, so the two-key Lua scripts
+ * and the two-key {@code DEL} never raise {@code CROSSSLOT}. The tag opens with the fixed marker {@code s:} so it is
+ * never empty: Redis hashes from the first {@code '{'} to the first {@code '}'} after it, and hashes the <em>whole</em>
+ * key when that span is empty — which a bare {@code {<sessionId>}} would make it for an id starting with
+ * {@code '}'}, sending the two keys to different slots. A session id containing {@code '}'} anywhere only shortens
+ * the tag to {@code s:} plus the id's prefix, and both keys share that tag. A custom prefix must not contain
+ * {@code '{'}, or it would become the tag and put every session in one slot.
  *
  * <p>
  * The second hash is what {@link #list} reads, so garbage collection lists a session without pulling every payload
@@ -48,7 +60,10 @@ public final class RedisSessionLogSegmentStore implements SessionLogSegmentStore
     /** Default key prefix. Frozen from its first deployment on — {@code RedisKeyPrefixFreezeTest} pins it. */
     public static final String DEFAULT_KEY_PREFIX = "aimon:session:segment";
 
-    private static final String CREATED_SUFFIX = ":created";
+    /** Opens the hash tag, so the tag is never empty whatever the session id starts with. */
+    private static final String TAG_OPEN = ":{s:";
+    private static final String DATA_SUFFIX = "}:data";
+    private static final String CREATED_SUFFIX = "}:created";
 
     private static final String F_FROM_SEQ = "fromSeq";
     private static final String F_TO_SEQ = "toSeq";
@@ -88,6 +103,10 @@ public final class RedisSessionLogSegmentStore implements SessionLogSegmentStore
         Objects.requireNonNull(connection, "connection must not be null");
         this.commands = connection.sync();
         this.keyPrefix = Objects.requireNonNull(keyPrefix, "keyPrefix must not be null");
+        if (keyPrefix.indexOf('{') >= 0) {
+            throw new IllegalArgumentException("keyPrefix must not contain '{' - it would become the hash tag of "
+                    + "every key and put all sessions in one cluster slot: " + keyPrefix);
+        }
     }
 
     @Override
@@ -170,12 +189,14 @@ public final class RedisSessionLogSegmentStore implements SessionLogSegmentStore
         }
     }
 
-    private String dataKey(SessionId sessionId) {
-        return keyPrefix + ":" + sessionId.value();
+    /** The payload hash of a session. Package-private so the freeze test can pin the layout. */
+    String dataKey(SessionId sessionId) {
+        return keyPrefix + TAG_OPEN + sessionId.value() + DATA_SUFFIX;
     }
 
-    private String createdKey(SessionId sessionId) {
-        return dataKey(sessionId) + CREATED_SUFFIX;
+    /** The creation-time hash of a session. Package-private so the freeze test can pin the layout. */
+    String createdKey(SessionId sessionId) {
+        return keyPrefix + TAG_OPEN + sessionId.value() + CREATED_SUFFIX;
     }
 
     private static SessionLogSegmentStoreException failure(String operation, SessionId sessionId, Exception cause) {
