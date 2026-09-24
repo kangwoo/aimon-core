@@ -44,6 +44,7 @@ import at.aimon.core.agent.prompt.Staticness;
 import at.aimon.core.agent.prompt.SystemPromptPart;
 import at.aimon.core.agent.prompt.SystemPromptParts;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.transcript.LogOrigin;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.tool.DefaultParallelToolDispatcher;
 import at.aimon.core.agent.tool.InterruptToolKeys;
@@ -572,7 +573,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 .userMessage(lc.goal).executionAttributes(lc.executionAttributes).build();
         final List<HookResult> onStartResults = hookExecutionManager.executeOnStart(onStartContext);
         HookFeedback.toReminderBlock(HookFeedback.collectAdvisory(onStartResults))
-                .ifPresent(lc.transcriptBuffer::addUserMessage);
+                .ifPresent(block -> lc.transcriptBuffer.addMessage(Message.user(block), LogOrigin.SYNTHETIC));
     }
 
     /**

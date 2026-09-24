@@ -7,6 +7,30 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Changed: the session transcript is a seq-addressed log (`SessionLogState`)
+
+- **One value crosses the load and save chains whole.** `SessionLogState` (`at.aimon.core.agent.session.transcript`)
+  holds the log entries — each `(seq, message, origin)` — plus `nextSeq`, `floorSeq`, the rewind point and the format.
+  `SessionTranscript`, `SessionSnapshot`, `SessionRecord`, `StoredSessionRecord` and `TranscriptBuffer` hand it on
+  instead of copying messages and rewind point field by field. `SessionRecordView` gained a `default getLogState()`.
+  Design: `docs/design/session/session-log.md` §2, §7.2.
+- **Seqs are never reused.** A rewind cuts the log with `SessionLogState.truncateFrom(seq)` and `/clear` raises
+  `floorSeq` to `nextSeq`; neither moves `nextSeq`. `SessionRewindPoint` now holds a seq — `getMessageCount()` became
+  `getSeq()` ([`rename-maps.md`](docs/migration/rename-maps.md)).
+- **Entries record their origin.** `TranscriptBuffer.addMessage(Message, LogOrigin)` is new; the plain appenders mean
+  `CONVERSATION`. The user-context block, assembled reminders, OnStart advisory feedback, a command's reply and the
+  post-compaction restore hooks now append `SYNTHETIC` — hooks through the new `PostCompactContext.addSyntheticMessage`.
+  Whether a turn is a resumption is `hasConversation()` (a live `CONVERSATION` user entry), not a user-message count.
+- **`JsonSessionSnapshotCodec` reads `version: 2`, and still writes `version: 1`.** Version 2 carries the whole log
+  state. The write format is `SessionLogFormat` — `V1` by default, switched per node with the new
+  `DefaultTranscriptManager(store, mailbox, SessionLogFormat)` or `JsonSessionSnapshotCodec(SessionLogFormat)` once
+  every node reads version 2. The upgrade is sticky: a record read as version 2 is written as version 2 even by a node
+  still set to version 1. A binary older than this one cannot read version 2.
+- **Meaning changes.** `TranscriptBuffer.getMessages()`, `SessionSnapshot.getConversationHistory()` and
+  `AgentExecutionResult.getConversationHistory()` are "the log entries the record carries". Today that is still every
+  message; once sealing moves part of the log out of the record it will not be. `ClearCommand`'s "Removed N messages"
+  counts live entries.
+
 ### Changed: the Spring Boot baseline is 4.1, and D6 was reversed to get there
 
 - **`aimon-spring-boot-starter` now compiles against Spring Boot 4.1.1** (Spring Framework 7.0.9), up from 3.5.16.

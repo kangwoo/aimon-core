@@ -78,7 +78,8 @@ public final class ClearCommand extends SystemCommand implements DirectExecutabl
             return CommandExecutionResult.success("No active conversation to clear.");
         }
 
-        final int messageCount = previousSnapshot.getConversationHistory().size();
+        // Live entries, not the seqs handed out: a rewind cuts entries without giving their seqs back.
+        final int messageCount = previousSnapshot.getLogState().liveEntryCount();
 
         // Clear the transcript buffer if available
         if (context.getTranscriptBuffer() != null) {

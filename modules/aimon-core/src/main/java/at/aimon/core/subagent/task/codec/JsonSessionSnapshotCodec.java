@@ -17,6 +17,10 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.transcript.LogOrigin;
+import at.aimon.core.agent.session.transcript.SessionLogEntry;
+import at.aimon.core.agent.session.transcript.SessionLogFormat;
+import at.aimon.core.agent.session.transcript.SessionLogState;
 import at.aimon.core.agent.session.transcript.SessionRewindPoint;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.llm.Message;
@@ -69,13 +73,34 @@ import at.aimon.core.llm.content.TextContentBlock;
  * produce for it, which was {@code 0}: no snapshot reaching this codec came from a persisted record. Bumping the
  * version would have made every existing snapshot file undecodable to buy nothing.
  *
+ * <h2>Two versions</h2>
+ *
+ * <p>
+ * Version 1 is the document described above: a {@code messages} array and a rewind point stored as a message count.
+ * Version 2 ({@link #FORMAT_VERSION_V2}) carries the whole {@link SessionLogState}: {@code nextSeq}, {@code floorSeq},
+ * an {@code entries} array of {@code {seq, origin, message}}, and a rewind point stored as a seq. Both are read.
+ *
+ * <p>
+ * What is written is the later of the codec's write format ({@link SessionLogFormat#V1} unless constructed otherwise)
+ * and the snapshot's own {@link SessionLogState#getFormat()}. The second half is the sticky upgrade: a state decoded
+ * from a version-2 document says {@link SessionLogFormat#V2}, so it cannot be written back as version 1 — which would
+ * drop its seqs and origins, and restart the seqs at 0 on the next read. Writing version 1 converts at the boundary:
+ * the rewind point's seq becomes the number of carried entries before it, and seqs and origins are not written.
+ *
+ * <p>
+ * The write gate being here, in the codec, is what makes it apply to every writer — the session record backends and
+ * the subagent resume snapshots ({@code VfsSessionSnapshotStore}) alike.
+ *
  * <p>
  * Stateless and thread-safe: the shared {@link ObjectMapper} is used only for tree building and text I/O.
  */
 public final class JsonSessionSnapshotCodec implements SessionSnapshotCodec {
 
-    /** Current serialization format version. */
+    /** The version-1 format: a plain message list. Written unless the write format or the snapshot asks for more. */
     public static final int FORMAT_VERSION = 1;
+
+    /** The version-2 format: the whole session log state. */
+    public static final int FORMAT_VERSION_V2 = 2;
 
     private static final Logger log = LoggerFactory.getLogger(JsonSessionSnapshotCodec.class);
 
@@ -91,6 +116,12 @@ public final class JsonSessionSnapshotCodec implements SessionSnapshotCodec {
     private static final String FIELD_MESSAGE_COUNT = "messageCount";
     private static final String FIELD_USER_INPUT = "userInput";
     private static final String FIELD_SUBMIT_OPTIONS = "submitOptions";
+    private static final String FIELD_SEQ = "seq";
+    private static final String FIELD_NEXT_SEQ = "nextSeq";
+    private static final String FIELD_FLOOR_SEQ = "floorSeq";
+    private static final String FIELD_ENTRIES = "entries";
+    private static final String FIELD_ORIGIN = "origin";
+    private static final String FIELD_MESSAGE = "message";
 
     private static final String FIELD_ROLE = "role";
     private static final String FIELD_CONTENT = "content";
@@ -127,29 +158,67 @@ public final class JsonSessionSnapshotCodec implements SessionSnapshotCodec {
     private static final String SOURCE_BASE64 = "base64";
     private static final String SOURCE_URL = "url";
 
+    private final SessionLogFormat writeFormat;
+
+    /**
+     * Creates a codec that writes version 1 unless a snapshot requires version 2.
+     */
+    public JsonSessionSnapshotCodec() {
+        this(SessionLogFormat.V1);
+    }
+
+    /**
+     * Creates a codec that writes at least {@code writeFormat}.
+     *
+     * @param writeFormat
+     *            the format to write at least (must not be null)
+     */
+    public JsonSessionSnapshotCodec(SessionLogFormat writeFormat) {
+        this.writeFormat = Objects.requireNonNull(writeFormat, "writeFormat cannot be null");
+    }
+
     @Override
     public String encode(SessionSnapshot snapshot) {
         Objects.requireNonNull(snapshot, "snapshot cannot be null");
         try {
+            final SessionLogState state = snapshot.getLogState();
+            final SessionLogFormat format = writeFormat.atLeast(state.getFormat());
             final ObjectNode root = MAPPER.createObjectNode();
-            root.put(FIELD_VERSION, FORMAT_VERSION);
+            root.put(FIELD_VERSION, format.getWireVersion());
             root.put(FIELD_CONVERSATION_ID, snapshot.getSessionId().value());
             if (snapshot.getSystemPrompt() != null) {
                 root.put(FIELD_SYSTEM_PROMPT, snapshot.getSystemPrompt());
             } else {
                 root.putNull(FIELD_SYSTEM_PROMPT);
             }
-            final ArrayNode messages = root.putArray(FIELD_MESSAGES);
-            for (Message message : snapshot.getConversationHistory()) {
-                messages.add(encodeMessage(message));
+            final long rewindAt;
+            if (format == SessionLogFormat.V2) {
+                root.put(FIELD_NEXT_SEQ, state.getNextSeq());
+                root.put(FIELD_FLOOR_SEQ, state.getFloorSeq());
+                final ArrayNode entries = root.putArray(FIELD_ENTRIES);
+                for (SessionLogEntry entry : state.getEntries()) {
+                    final ObjectNode node = entries.addObject();
+                    node.put(FIELD_SEQ, entry.getSeq());
+                    node.put(FIELD_ORIGIN, entry.getOrigin().name());
+                    node.set(FIELD_MESSAGE, encodeMessage(entry.getMessage()));
+                }
+                rewindAt = state.getRewindPoint().map(SessionRewindPoint::getSeq).orElse(-1L);
+            } else {
+                final ArrayNode messages = root.putArray(FIELD_MESSAGES);
+                for (Message message : state.getMessages()) {
+                    messages.add(encodeMessage(message));
+                }
+                // Version 1 stores a position, and version 1 reads positions back as seqs 0..n-1 — so the position is
+                // the number of carried entries before the point.
+                rewindAt = state.getRewindPoint().map(point -> (long) state.countBefore(point.getSeq())).orElse(-1L);
             }
             // Written only when there is one, so a snapshot with nothing to retry encodes exactly as it did before
             // this field existed. A reader that predates it ignores it; this reader defaults it to absent, which is
             // the truthful answer for a document written when sessions could not be rewound at all.
-            if (snapshot.getRewindPoint().isPresent()) {
-                final SessionRewindPoint point = snapshot.getRewindPoint().get();
+            if (state.getRewindPoint().isPresent()) {
+                final SessionRewindPoint point = state.getRewindPoint().get();
                 final ObjectNode node = root.putObject(FIELD_REWIND_POINT);
-                node.put(FIELD_MESSAGE_COUNT, point.getMessageCount());
+                node.put(format == SessionLogFormat.V2 ? FIELD_SEQ : FIELD_MESSAGE_COUNT, rewindAt);
                 node.set(FIELD_USER_INPUT, UserInputCodec.encode(point.getUserInput()));
                 // Written only when the turn carried options, so a turn submitted without any — every turn the CLI
                 // submits — encodes exactly as it did before they were remembered.
@@ -173,22 +242,16 @@ public final class JsonSessionSnapshotCodec implements SessionSnapshotCodec {
                 throw new SessionSnapshotCodecException("Encoded snapshot is not a JSON object");
             }
             final int version = root.path(FIELD_VERSION).asInt(-1);
-            if (version != FORMAT_VERSION) {
+            if (version != FORMAT_VERSION && version != FORMAT_VERSION_V2) {
                 throw new SessionSnapshotCodecException("Unsupported session snapshot format version: " + version
-                        + " (expected " + FORMAT_VERSION + ")");
+                        + " (expected " + FORMAT_VERSION + " or " + FORMAT_VERSION_V2 + ")");
             }
             final SessionId sessionId = SessionId.of(requiredText(root, FIELD_CONVERSATION_ID));
             final String systemPrompt = root.hasNonNull(FIELD_SYSTEM_PROMPT)
                     ? root.get(FIELD_SYSTEM_PROMPT).asText()
                     : null;
-            final List<Message> messages = new ArrayList<>();
-            final JsonNode messagesNode = root.get(FIELD_MESSAGES);
-            if (messagesNode != null && messagesNode.isArray()) {
-                for (JsonNode messageNode : messagesNode) {
-                    messages.add(decodeMessage(messageNode));
-                }
-            }
-            return SessionSnapshot.of(sessionId, systemPrompt, messages, decodeRewindPoint(root, messages.size()));
+            final SessionLogState state = version == FORMAT_VERSION_V2 ? decodeV2(root) : decodeV1(root);
+            return SessionSnapshot.fromLog(sessionId, systemPrompt, state);
         } catch (SessionSnapshotCodecException e) {
             throw e;
         } catch (Exception e) {
@@ -197,25 +260,75 @@ public final class JsonSessionSnapshotCodec implements SessionSnapshotCodec {
     }
 
     /**
-     * Reads the rewind point, and refuses one that does not fit the history it arrived with.
+     * Reads a version-1 document: the messages migrate to seqs {@code 0..n-1}, all {@link LogOrigin#CONVERSATION}.
+     */
+    private SessionLogState decodeV1(JsonNode root) {
+        final List<Message> messages = new ArrayList<>();
+        final JsonNode messagesNode = root.get(FIELD_MESSAGES);
+        if (messagesNode != null && messagesNode.isArray()) {
+            for (JsonNode messageNode : messagesNode) {
+                messages.add(decodeMessage(messageNode));
+            }
+        }
+        final JsonNode pointNode = root.get(FIELD_REWIND_POINT);
+        final long keep = pointNode == null ? -1 : pointNode.path(FIELD_MESSAGE_COUNT).asLong(-1);
+        if (pointNode != null && pointNode.isObject() && (keep < 0 || keep > messages.size())) {
+            throw new SessionSnapshotCodecException("Rewind point keeps " + keep + " of " + messages.size()
+                    + " messages, which is not a position in this transcript");
+        }
+        return SessionLogState.ofMessages(messages, decodeRewindPoint(pointNode, keep));
+    }
+
+    /**
+     * Reads a version-2 document into the state it was written from. The state's own invariants — ascending seqs
+     * within {@code [floorSeq, nextSeq)}, a rewind point within {@code [floorSeq, nextSeq]} — are the document's
+     * validation: a document that breaks one was not written by this codec.
+     */
+    private SessionLogState decodeV2(JsonNode root) {
+        final long nextSeq = requiredLong(root, FIELD_NEXT_SEQ);
+        final long floorSeq = requiredLong(root, FIELD_FLOOR_SEQ);
+        final List<SessionLogEntry> entries = new ArrayList<>();
+        final JsonNode entriesNode = root.get(FIELD_ENTRIES);
+        if (entriesNode != null && entriesNode.isArray()) {
+            for (JsonNode entryNode : entriesNode) {
+                if (entryNode == null || !entryNode.isObject()) {
+                    throw new SessionSnapshotCodecException("Log entry is not a JSON object");
+                }
+                entries.add(SessionLogEntry.of(requiredLong(entryNode, FIELD_SEQ),
+                        decodeMessage(entryNode.get(FIELD_MESSAGE)),
+                        decodeOrigin(requiredText(entryNode, FIELD_ORIGIN))));
+            }
+        }
+        final JsonNode pointNode = root.get(FIELD_REWIND_POINT);
+        final long at = pointNode == null ? -1 : pointNode.path(FIELD_SEQ).asLong(-1);
+        if (pointNode != null && pointNode.isObject() && (at < floorSeq || at > nextSeq)) {
+            throw new SessionSnapshotCodecException(
+                    "Rewind point seq " + at + " lies outside [floorSeq=" + floorSeq + ", nextSeq=" + nextSeq + "]");
+        }
+        try {
+            return SessionLogState.builder().entries(entries).nextSeq(nextSeq).floorSeq(floorSeq)
+                    .rewindPoint(decodeRewindPoint(pointNode, at)).format(SessionLogFormat.V2).build();
+        } catch (IllegalArgumentException e) {
+            throw new SessionSnapshotCodecException("Inconsistent session log: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Reads the rewind point's input and options, once its position has been checked against the log it arrived
+     * with.
      *
      * <p>
-     * A count past the end of the messages is not a document this codec can honour: rewinding to it would either
-     * throw or silently keep the whole turn. The pair is written in one document by one writer, so a mismatch means
-     * the document is corrupt — saying so beats materialising a snapshot whose retry is a trap.
+     * A position that is not in the log is not a document this codec can honour: rewinding to it would either throw
+     * or silently keep the whole turn. The pair is written in one document by one writer, so a mismatch means the
+     * document is corrupt — the callers refuse it before this is reached.
      */
-    private SessionRewindPoint decodeRewindPoint(JsonNode root, int messageCount) {
-        final JsonNode node = root.get(FIELD_REWIND_POINT);
+    private SessionRewindPoint decodeRewindPoint(JsonNode node, long seq) {
         if (node == null || !node.isObject()) {
             return null;
         }
-        final int keep = node.path(FIELD_MESSAGE_COUNT).asInt(-1);
-        if (keep < 0 || keep > messageCount) {
-            throw new SessionSnapshotCodecException("Rewind point keeps " + keep + " of " + messageCount
-                    + " messages, which is not a position in this transcript");
-        }
-        // Unlike the count, the input describes something optional. The count indexes the messages that arrived with
-        // it, so a mismatch means the document is inconsistent and refusing is the only honest answer. An input this
+        // Unlike the position, the input describes something optional. The position addresses the log that arrived
+        // with it, so a mismatch means the document is inconsistent and refusing is the only honest answer. An input
+        // this
         // reader cannot decode — written under an older field name, or tagged with a type a later build added — costs
         // exactly one turn's retry, while throwing would cost the whole record: every backend turns a decode failure
         // into a SessionRecordStoreException, so the session could not be opened at all. "Nothing to retry" is both
@@ -226,7 +339,7 @@ public final class JsonSessionSnapshotCodec implements SessionSnapshotCodec {
             return null;
         }
         try {
-            return SessionRewindPoint.of(keep, UserInputCodec.decode(userInput),
+            return SessionRewindPoint.of(seq, UserInputCodec.decode(userInput),
                     SubmitOptionsCodec.decode(node.get(FIELD_SUBMIT_OPTIONS)));
         } catch (SessionSnapshotCodecException e) {
             // Refusing rather than degrading is the right trade here and the opposite of what the session inbox
@@ -237,6 +350,22 @@ public final class JsonSessionSnapshotCodec implements SessionSnapshotCodec {
                     + " retryable", e.getMessage());
             return null;
         }
+    }
+
+    private static LogOrigin decodeOrigin(String origin) {
+        try {
+            return LogOrigin.valueOf(origin);
+        } catch (IllegalArgumentException e) {
+            throw new SessionSnapshotCodecException("Unknown log entry origin: " + origin, e);
+        }
+    }
+
+    private static long requiredLong(JsonNode node, String field) {
+        final JsonNode value = node.get(field);
+        if (value == null || !value.canConvertToLong() || !value.isIntegralNumber()) {
+            throw new SessionSnapshotCodecException("Missing or non-integral field '" + field + "'");
+        }
+        return value.asLong();
     }
 
     private ObjectNode encodeMessage(Message message) {

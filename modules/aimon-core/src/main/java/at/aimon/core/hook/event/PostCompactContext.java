@@ -10,9 +10,11 @@ import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.compact.CompactionMetadata;
 import at.aimon.core.agent.compact.CompactionTrigger;
 import at.aimon.core.agent.compact.InvokedSkillRecord;
+import at.aimon.core.agent.session.transcript.LogOrigin;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.execution.HookContext;
+import at.aimon.core.llm.Message;
 
 /**
  * Context for {@link PostCompactHook}.
@@ -20,6 +22,12 @@ import at.aimon.core.hook.execution.HookContext;
  * <p>
  * Provides access to the post-compaction transcript buffer and the metadata of the just-completed compaction.
  * Hooks may use this context to attach restorative messages (e.g. recently-read files) to the conversation.
+ *
+ * <p>
+ * Attach them through {@link #addSyntheticMessage(Message)}, not by appending to {@link #getTranscriptBuffer()}
+ * directly. A restored file list is the runtime's doing, not something said in the conversation; appended with the
+ * buffer's plain {@code addMessage}/{@code addUserMessage} it would be recorded as conversation, and memory ingest
+ * and history recall would then treat it as such.
  *
  * <p>
  * Immutable value object. Use builder to create instances.
@@ -94,6 +102,19 @@ public final class PostCompactContext implements HookContext {
 
     public TranscriptBuffer getTranscriptBuffer() {
         return transcriptBuffer;
+    }
+
+    /**
+     * Appends {@code message} to the transcript as {@link LogOrigin#SYNTHETIC} — the way a hook attaches restorative
+     * context after compaction.
+     *
+     * @param message
+     *            the message to append (must not be null)
+     * @throws NullPointerException
+     *             if {@code message} is null
+     */
+    public void addSyntheticMessage(Message message) {
+        transcriptBuffer.addMessage(message, LogOrigin.SYNTHETIC);
     }
 
     /**

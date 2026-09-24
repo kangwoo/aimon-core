@@ -16,6 +16,7 @@ import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.compact.CompactionMetadata;
 import at.aimon.core.agent.compact.CompactionTrigger;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.transcript.LogOrigin;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolContext;
@@ -84,6 +85,8 @@ class RecentFilesRestoreHookTest {
         Message appended = memory.getLastMessage();
         assertThat(appended.getContent()).contains("[System note: re-attaching").contains("=== /b ===")
                 .contains("beta-content").contains("=== /c ===").contains("gamma-content").doesNotContain("=== /a ===");
+        // Re-attached files are the runtime's doing, not conversation: memory ingest and recall must skip them.
+        assertThat(memory.getLogState().getEntries().get(memory.size() - 1).getOrigin()).isEqualTo(LogOrigin.SYNTHETIC);
     }
 
     @Test

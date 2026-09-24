@@ -70,6 +70,7 @@ import at.aimon.core.agent.prompt.UserContextMessageBuilder;
 import at.aimon.core.agent.queue.MessageQueueManager;
 import at.aimon.core.agent.queue.QueuedInput;
 import at.aimon.core.agent.queue.QueuedInputPriority;
+import at.aimon.core.agent.session.transcript.LogOrigin;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.session.transcript.TranscriptManager;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
@@ -1361,7 +1362,9 @@ public class OrcaAgentExecutor
             log.debug("No AgentEnvironmentSnapshotProvider configured; skipping user-context injection");
             return;
         }
-        if (transcriptBuffer.countUserMessages() > 0) {
+        // "Resumed" means the session has conversation, not merely user-role entries: the synthetic blocks this very
+        // method injects are user-role too, and a first turn that was interrupted and rewound leaves none behind.
+        if (transcriptBuffer.hasConversation()) {
             log.debug("Conversation resumed (existing user messages present); skipping user-context injection");
             return;
         }
@@ -1373,7 +1376,7 @@ public class OrcaAgentExecutor
             return;
         }
 
-        transcriptBuffer.addMessage(synthetic.get());
+        transcriptBuffer.addMessage(synthetic.get(), LogOrigin.SYNTHETIC);
         log.debug("Injected synthetic user-context message as messages[0]");
     }
 
@@ -1439,7 +1442,7 @@ public class OrcaAgentExecutor
         }
         try {
             final String body = SystemReminderFormatter.wrapMany(entries);
-            transcriptBuffer.addMessage(Message.user(body));
+            transcriptBuffer.addMessage(Message.user(body), LogOrigin.SYNTHETIC);
             log.debug("Injected {} assembled user-context block(s) as a synthetic reminder message", entries.size());
         } catch (RuntimeException e) {
             log.warn("Failed to inject assembled user-context blocks; skipping: {}", e.getMessage());
@@ -1471,7 +1474,7 @@ public class OrcaAgentExecutor
                     blockReasons);
         }
         HookFeedback.toReminderBlock(HookFeedback.collectAdvisory(onStartResults))
-                .ifPresent(block -> scope.transcriptBuffer.addMessage(Message.user(block)));
+                .ifPresent(block -> scope.transcriptBuffer.addMessage(Message.user(block), LogOrigin.SYNTHETIC));
     }
 
     /**
@@ -1495,15 +1498,18 @@ public class OrcaAgentExecutor
         final ExecutionMetadata metadata = commandExecutionResult.getMetadata()
                 .orElseGet(() -> buildExecutionMetadata(0, TokenUsage.empty(), scope.startTime));
 
-        // Attach any artifacts produced during command execution to the assistant message
+        // Attach any artifacts produced during command execution to the assistant message. The reply is the command's,
+        // not the model's, so it goes into the log as a runtime injection.
         final List<FileArtifact> commandArtifacts = scope.artifactCollector.getArtifacts();
         if (commandArtifacts.isEmpty()) {
-            scope.transcriptBuffer.addMessage(Message.assistant(commandExecutionResult.getResponse()));
+            scope.transcriptBuffer.addMessage(Message.assistant(commandExecutionResult.getResponse()),
+                    LogOrigin.SYNTHETIC);
         } else {
             final List<MessageArtifact> messageArtifacts = commandArtifacts.stream()
                     .map(FileArtifact::toMessageArtifact).toList();
-            scope.transcriptBuffer
-                    .addMessage(Message.assistant(commandExecutionResult.getResponse(), List.of(), messageArtifacts));
+            scope.transcriptBuffer.addMessage(
+                    Message.assistant(commandExecutionResult.getResponse(), List.of(), messageArtifacts),
+                    LogOrigin.SYNTHETIC);
         }
 
         invokeOnStop(scope, commandExecutionResult.isSuccess(), commandExecutionResult.getResponse(), metadata);

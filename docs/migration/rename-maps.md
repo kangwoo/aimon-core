@@ -287,6 +287,32 @@ as the process and are never stored.
 
 ---
 
+## `SessionRewindPoint` holds a seq, not a message count
+
+The mistake being corrected is a name that described a **position** while the thing being described is an
+**address**. The session transcript became a seq-addressed log (design:
+[`session-log.md`](../design/session/session-log.md) §3.1): every entry has a seq that is never reused, and a rewind
+point is the seq of the interrupted turn's first entry. A message count is an index, and an index stops pointing at the
+same entry the moment anything before it leaves the record — which sealing (§5) will make routine.
+
+| Old | New | Value |
+|-----|-----|-------|
+| `SessionRewindPoint.getMessageCount()` (`aimon-core`) | `SessionRewindPoint.getSeq()` | `int` count → `long` seq |
+| `SessionRewindPoint.of(int messageCount, …)` | `SessionRewindPoint.of(long seq, …)` | same arguments, now a seq |
+
+The factory keeps its name, so a caller passing an `int` still compiles — and on a log that was never cleared,
+compacted or rewound the seq and the old count are the same number. They diverge after `/clear` (seqs continue from
+where they were) and after a rewind (cut seqs are not handed out again). There is no adapter for the accessor: a
+getter that answered with a count would reintroduce the index the change exists to remove.
+
+**The stored form did not change for version-1 documents.** A version-1 transcript still stores
+`rewindPoint.messageCount`; the codec converts at the boundary. A version-2 document (`JsonSessionSnapshotCodec`
+`version: 2`) stores `rewindPoint.seq`. Every build that knows `SessionLogState` reads both; which one it writes is
+`SessionLogFormat` — version 1 by default, version 2 when the write switch says so or the record was read as
+version 2.
+
+---
+
 ## `ModelCapabilities.lowestReasoningEffort()` becomes `acceptedReasoningEfforts()`
 
 The mistake being corrected is a name that described a **boundary** while the thing being described is

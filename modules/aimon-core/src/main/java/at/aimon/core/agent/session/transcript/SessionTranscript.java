@@ -1,7 +1,5 @@
 package at.aimon.core.agent.session.transcript;
 
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -10,7 +8,7 @@ import at.aimon.core.agent.session.store.SessionRecord;
 import at.aimon.core.llm.Message;
 
 /**
- * The immutable {@code (systemPrompt, messages)} pair that makes up a session's LLM-visible conversation history.
+ * The immutable {@code (systemPrompt, SessionLogState)} pair that makes up a session's stored transcript.
  *
  * <p>
  * {@link SessionRecord} is an aggregate of two unrelated halves: the transcript below, and a set of bookkeeping side
@@ -33,42 +31,32 @@ import at.aimon.core.llm.Message;
  * {@link SessionSnapshot}.
  *
  * <p>
+ * <strong>The log is one value.</strong> Everything but the prompt — entries, seqs, rewind point, format — is held as
+ * a single {@link SessionLogState} and handed on whole. {@link #getMessages()} is that state's messages, the part of
+ * the log the record carries.
+ *
+ * <p>
  * Instances are immutable and therefore thread-safe.
  */
 public final class SessionTranscript {
 
-    private static final SessionTranscript EMPTY = new SessionTranscript(null,
-            Collections.unmodifiableList(new ArrayList<>()), null);
+    private static final SessionTranscript EMPTY = new SessionTranscript(null, SessionLogState.empty());
 
     private final String systemPrompt;
 
-    /** Always an unmodifiable view over a list this instance exclusively owns. */
-    private final List<Message> messages;
-
     /**
-     * Where the most recent turn began, when that turn was interrupted; null otherwise.
+     * The log: entries, seqs, and the rewind point.
      *
      * <p>
-     * Held here rather than as a side field of the record because it counts <em>these</em> messages. A write that
-     * replaces the message list replaces the point along with it, which is what keeps the two from disagreeing —
-     * compaction rewrites the history through {@code replaceWith}, and a point that survived that would index into a
-     * history that no longer exists.
+     * The rewind point is held in here rather than as a side field of the record because it addresses <em>these</em>
+     * entries. A write that replaces the log replaces the point along with it, which is what keeps the two from
+     * disagreeing.
      */
-    private final SessionRewindPoint rewindPoint;
+    private final SessionLogState logState;
 
-    /**
-     * @param systemPrompt
-     *            the system prompt (may be null)
-     * @param ownedUnmodifiableMessages
-     *            an unmodifiable view over a list no other object holds a reference to
-     * @param rewindPoint
-     *            where the last turn began if it was interrupted (may be null)
-     */
-    private SessionTranscript(String systemPrompt, List<Message> ownedUnmodifiableMessages,
-            SessionRewindPoint rewindPoint) {
+    private SessionTranscript(String systemPrompt, SessionLogState logState) {
         this.systemPrompt = systemPrompt;
-        this.messages = ownedUnmodifiableMessages;
-        this.rewindPoint = rewindPoint;
+        this.logState = logState;
     }
 
     /**
@@ -84,7 +72,8 @@ public final class SessionTranscript {
      * Creates a transcript from a system prompt and a message history.
      *
      * <p>
-     * The message list is defensively copied, so later mutations of {@code messages} do not affect the result.
+     * The messages become a version-1 log (see {@link SessionLogState#ofMessages(List)}); the list is defensively
+     * copied, so later mutations of {@code messages} do not affect the result.
      *
      * @param systemPrompt
      *            the system prompt (may be null)
@@ -111,19 +100,30 @@ public final class SessionTranscript {
      * @throws NullPointerException
      *             if {@code messages} is null
      * @throws IllegalArgumentException
-     *             if {@code rewindPoint} counts more messages than there are
+     *             if {@code rewindPoint} points past the end of the messages
      */
     public static SessionTranscript of(String systemPrompt, List<Message> messages, SessionRewindPoint rewindPoint) {
         Objects.requireNonNull(messages, "messages cannot be null");
-        if (rewindPoint != null && rewindPoint.getMessageCount() > messages.size()) {
-            throw new IllegalArgumentException("rewindPoint counts " + rewindPoint.getMessageCount()
-                    + " messages but the transcript holds " + messages.size());
-        }
-        if (systemPrompt == null && messages.isEmpty() && rewindPoint == null) {
+        return fromLog(systemPrompt, SessionLogState.ofMessages(messages, rewindPoint));
+    }
+
+    /**
+     * Creates a transcript around an already-built log, adopted whole.
+     *
+     * @param systemPrompt
+     *            the system prompt (may be null)
+     * @param logState
+     *            the log (must not be null)
+     * @return a new transcript (never null)
+     * @throws NullPointerException
+     *             if {@code logState} is null
+     */
+    public static SessionTranscript fromLog(String systemPrompt, SessionLogState logState) {
+        Objects.requireNonNull(logState, "logState cannot be null");
+        if (systemPrompt == null && logState.equals(SessionLogState.empty())) {
             return EMPTY;
         }
-        return new SessionTranscript(systemPrompt, Collections.unmodifiableList(new ArrayList<>(messages)),
-                rewindPoint);
+        return new SessionTranscript(systemPrompt, logState);
     }
 
     /**
@@ -136,7 +136,16 @@ public final class SessionTranscript {
     }
 
     /**
-     * Gets the message history.
+     * Gets the log, whole.
+     *
+     * @return the log state (never null)
+     */
+    public SessionLogState getLogState() {
+        return logState;
+    }
+
+    /**
+     * Gets the messages of the log entries this transcript carries.
      *
      * <p>
      * The returned list is unmodifiable and, because this type is immutable, is a stable snapshot — it is safe to
@@ -146,21 +155,21 @@ public final class SessionTranscript {
      * @return the messages (never null, may be empty)
      */
     public List<Message> getMessages() {
-        return messages;
+        return logState.getMessages();
     }
 
     /**
      * @return the number of messages in this transcript
      */
     public int size() {
-        return messages.size();
+        return logState.getMessages().size();
     }
 
     /**
      * @return true if this transcript has no messages
      */
     public boolean isEmpty() {
-        return messages.isEmpty();
+        return logState.getMessages().isEmpty();
     }
 
     /**
@@ -168,13 +177,13 @@ public final class SessionTranscript {
      *
      * @param newSystemPrompt
      *            the replacement system prompt (may be null to clear it)
-     * @return a transcript with the same messages and the given prompt (never null)
+     * @return a transcript with the same log and the given prompt (never null)
      */
     public SessionTranscript withSystemPrompt(String newSystemPrompt) {
         if (Objects.equals(this.systemPrompt, newSystemPrompt)) {
             return this;
         }
-        return new SessionTranscript(newSystemPrompt, messages, rewindPoint);
+        return fromLog(newSystemPrompt, logState);
     }
 
     /**
@@ -183,7 +192,7 @@ public final class SessionTranscript {
      * @return the rewind point, or empty when the last turn ended some other way (never null)
      */
     public Optional<SessionRewindPoint> getRewindPoint() {
-        return Optional.ofNullable(rewindPoint);
+        return logState.getRewindPoint();
     }
 
     /**
@@ -191,23 +200,17 @@ public final class SessionTranscript {
      *
      * @param newRewindPoint
      *            the point to carry, or null to drop the one held
-     * @return a transcript with the same prompt and messages (never null)
+     * @return a transcript with the same prompt and entries (never null)
      * @throws IllegalArgumentException
-     *             if {@code newRewindPoint} counts more messages than there are
+     *             if {@code newRewindPoint}'s seq lies outside {@code [floorSeq, nextSeq]}
      */
     public SessionTranscript withRewindPoint(SessionRewindPoint newRewindPoint) {
-        if (Objects.equals(rewindPoint, newRewindPoint)) {
-            return this;
-        }
-        if (newRewindPoint != null && newRewindPoint.getMessageCount() > messages.size()) {
-            throw new IllegalArgumentException("rewindPoint counts " + newRewindPoint.getMessageCount()
-                    + " messages but the transcript holds " + messages.size());
-        }
-        return new SessionTranscript(systemPrompt, messages, newRewindPoint);
+        final SessionLogState updated = logState.withRewindPoint(newRewindPoint);
+        return updated == logState ? this : fromLog(systemPrompt, updated);
     }
 
     /**
-     * Returns this transcript with the interrupted turn taken back out — the messages it added are dropped and the
+     * Returns this transcript with the interrupted turn taken back out — the entries it added are dropped and the
      * rewind point with them.
      *
      * <p>
@@ -218,15 +221,12 @@ public final class SessionTranscript {
      *         to (never null)
      */
     public SessionTranscript rewind() {
-        if (rewindPoint == null) {
-            return this;
-        }
-        final List<Message> kept = new ArrayList<>(messages.subList(0, rewindPoint.getMessageCount()));
-        return of(systemPrompt, kept, null);
+        final SessionLogState rewound = logState.rewind();
+        return rewound == logState ? this : fromLog(systemPrompt, rewound);
     }
 
     /**
-     * Returns a copy of this transcript with {@code message} appended.
+     * Returns a copy of this transcript with {@code message} appended as {@link LogOrigin#CONVERSATION}.
      *
      * <p>
      * Runs in O(n): the backing list is copied. See the class javadoc for why that is acceptable here.
@@ -239,10 +239,7 @@ public final class SessionTranscript {
      */
     public SessionTranscript append(Message message) {
         Objects.requireNonNull(message, "message cannot be null");
-        final List<Message> appended = new ArrayList<>(messages.size() + 1);
-        appended.addAll(messages);
-        appended.add(message);
-        return new SessionTranscript(systemPrompt, Collections.unmodifiableList(appended), rewindPoint);
+        return new SessionTranscript(systemPrompt, logState.append(message, LogOrigin.CONVERSATION));
     }
 
     @Override
@@ -253,18 +250,17 @@ public final class SessionTranscript {
         if (!(o instanceof SessionTranscript other)) {
             return false;
         }
-        return Objects.equals(systemPrompt, other.systemPrompt) && messages.equals(other.messages)
-                && Objects.equals(rewindPoint, other.rewindPoint);
+        return Objects.equals(systemPrompt, other.systemPrompt) && logState.equals(other.logState);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(systemPrompt, messages, rewindPoint);
+        return Objects.hash(systemPrompt, logState);
     }
 
     @Override
     public String toString() {
-        return "SessionTranscript{hasSystemPrompt=" + (systemPrompt != null) + ", messages=" + messages.size()
-                + ", rewindable=" + (rewindPoint != null) + "}";
+        return "SessionTranscript{hasSystemPrompt=" + (systemPrompt != null) + ", messages=" + size() + ", rewindable="
+                + logState.getRewindPoint().isPresent() + "}";
     }
 }

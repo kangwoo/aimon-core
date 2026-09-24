@@ -50,6 +50,7 @@ public class DefaultTranscriptManager implements TranscriptManager {
 
     private final SessionRecordStore repository;
     private final SessionCheckpointMailbox mailbox;
+    private final SessionLogFormat writeFormat;
 
     /**
      * Creates a new TranscriptManager without mid-turn checkpointing — the transcript is persisted only at the end of
@@ -78,8 +79,41 @@ public class DefaultTranscriptManager implements TranscriptManager {
      *             if any parameter is null
      */
     public DefaultTranscriptManager(SessionRecordStore repository, SessionCheckpointMailbox mailbox) {
+        this(repository, mailbox, SessionLogFormat.V1);
+    }
+
+    /**
+     * Creates a new TranscriptManager that writes the transcripts it hands out in at least {@code writeFormat}.
+     *
+     * <p>
+     * This is the node's write-format switch. It defaults to {@link SessionLogFormat#V1}, and a cluster turns it to
+     * {@link SessionLogFormat#V2} only once every node reads version 2 (see {@link SessionLogFormat}). It can only
+     * raise a buffer's format: a record read as version 2 is written as version 2 on a node still set to version 1.
+     *
+     * @param repository
+     *            The session record store used to load and save the transcript (must not be null)
+     * @param mailbox
+     *            The checkpoint mailbox (must not be null; use {@link SessionCheckpointMailbox#disabled()} to
+     *            persist only at end of turn)
+     * @param writeFormat
+     *            The format this node writes transcripts in (must not be null)
+     * @throws NullPointerException
+     *             if any parameter is null
+     */
+    public DefaultTranscriptManager(SessionRecordStore repository, SessionCheckpointMailbox mailbox,
+            SessionLogFormat writeFormat) {
         this.repository = Objects.requireNonNull(repository, "Repository cannot be null");
         this.mailbox = Objects.requireNonNull(mailbox, "Mailbox cannot be null");
+        this.writeFormat = Objects.requireNonNull(writeFormat, "Write format cannot be null");
+    }
+
+    /**
+     * Returns the format this manager writes transcripts in at least.
+     *
+     * @return the write format (never null)
+     */
+    public SessionLogFormat getWriteFormat() {
+        return writeFormat;
     }
 
     /**
@@ -115,6 +149,7 @@ public class DefaultTranscriptManager implements TranscriptManager {
             log.debug("Creating new session: {}", sessionId.value());
             memory = new TranscriptBuffer(sessionId, systemPrompt);
         }
+        memory.requireFormat(writeFormat);
 
         memory.setDirtyListener(m -> mailbox.checkpoint(m, this::persistSnapshotQuietly));
         return memory;
