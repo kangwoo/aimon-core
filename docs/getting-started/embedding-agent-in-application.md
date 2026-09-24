@@ -305,6 +305,8 @@ aimon:
     node-id: ${HOSTNAME}
     shutdown-drain-timeout: 30s
     log-write-format: v1            # v1(기본) | v2 — 모든 노드가 v2 를 읽게 배포된 뒤에 v2 로 바꾼다
+    segment-sweep-interval: 1h      # 비우면 꺼짐(기본) — 다시 열리지 않는 세션의 고아 세그먼트를 치운다
+    segment-sweep-grace: 24h        # 기본 24h — 이보다 오래된, 레코드가 가리키지 않는 세그먼트만 지운다
     cache:
       max-entries: 1000
       idle-ttl: 30m

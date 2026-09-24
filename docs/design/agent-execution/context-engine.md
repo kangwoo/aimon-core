@@ -571,7 +571,8 @@ CTX-05 가 선행 조건이다. 그때 되살린다면 고정 단위는 "메모�
   막는다. §5.7 의 복원 훅은 트리 어디서도 기본 등록되지 않으므로 코드 변경 없이 문서만 적었다
 - **선택.** 기본 engine 은 `ExecutorSpec.contextEngine(...)`(Spring `aimon.context.engine`)이고 에이전트 frontmatter 가
   이긴다. rolling 은 v2 쓰기 형식을 요구한다 — 선언된 에이전트는 기동이 실패하고, 테넌트 런타임은 첫 resolve 에서 실패한다.
-  **CLI 에는 쓰기 형식 스위치가 없어** 언제나 v1 이므로 `context-engine: rolling` 에이전트는 CLI 로 기동하지 않는다
+  CLI 는 `cli.sessionLogWriteFormat` 으로 쓰기 형식을 고르며 기본은 v1 이다. v1 인 CLI 에서 `context-engine: rolling`
+  에이전트는 기동하지 않고, `v2` 로 두면 뜬다(§13.7)
 - 사용 가이드는 [`../../features/agent-execution/context-engine-guide.md`](../../features/agent-execution/context-engine-guide.md)
   로 새로 썼다. §8.3 이 말한 [`compaction.md`](compaction.md) 쪽의 대체 표시는 달지 않았다
 
@@ -623,3 +624,14 @@ CTX-05 가 선행 조건이다. 그때 되살린다면 고정 단위는 "메모�
   스키마 설명도 "in full" 을 빼고 그렇게 고쳤다. 검색은 여러 64 seq 창에 걸친 읽을 수 없는 구간을 한 줄로 합쳐 보고하고,
   gap 을 표시 문자열이 아니라 `SessionLogPage.getGaps()` 로 알아본다. 한 호출은 `SessionLogReadCache` 하나로 각 세그먼트를
   한 번만 읽는다. 도구는 여전히 상태를 두지 않는다
+
+### 13.7 두 번째 개선에서 닫힌 것
+
+구현 뒤 개선의 두 번째 묶음 중 뷰 쪽에 닿는 것이다. 저장 쪽(삭제 펜스, 저장소 단위 스윕)은
+[`session-log.md` §12.6](../session/session-log.md#126-두-번째-개선에서-닫힌-것) 에 있다.
+
+- **CLI 에서 롤링을 쓸 수 있다.** `cli.sessionLogWriteFormat: v2` 가 CLI 의 쓰기 형식 스위치다. CLI 설정의 다른 키처럼
+  camelCase 이고, 스타터의 `aimon.session.log-write-format=v2` 처럼 대소문자를 가리지 않는다. v2 면 CLI 는 in-memory 세그먼트
+  저장소를 함께 붙이므로 롤링의 압축이 가린 구간은 레코드 밖으로 봉인되고 `SessionHistory` 가 그것을 다시 읽는다. 기본값은
+  v1 그대로다 — 다른 조립과 같은 기본값을 두려는 것이지, CLI 에 v2 를 못 읽는 옛 노드가 있어서가 아니다(CLI 의 세션은 메모리에
+  있다)

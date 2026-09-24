@@ -30,7 +30,9 @@ Central is versioned independently).
 - **The write-format switch is exposed**: Spring `aimon.session.log-write-format` (`v1` default | `v2`),
   `SessionSpec.logWriteFormat(...)`, `OrcaAgentRuntimeFactory.withSessionLogWriteFormat(...)`. A runtime asking for
   `rolling` on a version-1 node fails to build — for a declared agent, at startup. With `v2` the runtime factory builds
-  the default engine with `writeFormat(V2)`.
+  the default engine with `writeFormat(V2)`. The CLI has its own key, `cli.sessionLogWriteFormat` (`v1` default |
+  `v2`); with `v2` it also pairs an in-memory segment store with its in-memory records, so a `context-engine: rolling`
+  agent runs under the CLI.
 - **`CompactionMetadata`** gained `getKind()` (`CompactionKind`: `PRUNE` / `ROLLING` / `FULL` / `FALLBACK`; `FULL`
   unless set), the view's head / span / tail tokens, the summary tokens and the absorbed seq range; `equals` and
   `hashCode` include them. A rolling `FALLBACK` decision (no cut can bring the view down) is recorded in
@@ -64,7 +66,18 @@ Central is versioned independently).
 - **`SessionStore.segments(raw)`** returns the fenced delete view (new abstract method; `DefaultSessionStore`
   implements it). `SessionRouterBuilder.sessionLogSegmentStore(...)` makes a session delete remove the session's
   segments after its record. `SessionSpec.segmentStore(...)` wires a store into the stack; without one an in-memory
-  record store gets an in-memory segment store and a supplied record store seals nothing.
+  record store gets an in-memory segment store and a supplied record store seals nothing. In
+  `DeploymentMode.DISTRIBUTED` the stack's turn-end GC and `/clear` deletes go through the router's fenced view — new
+  `SessionRouter.fencedSegmentStore()` (default: empty) — so a node that lost a session's lease cannot delete segments
+  the new holder's manifest names; single-node stacks delete through the raw store.
+- **Store-wide orphan sweep** (opt-in): `SessionLogSegmentSweeper` (`at.aimon.core.agent.session.transcript`) walks the
+  whole segment store and deletes segments older than a grace (24h by default) that the session's record, read after
+  the listing, does not name — the orphans of sessions nobody reopens, which turn-end GC never reaches. Wired with
+  `SessionSpec.segmentSweepInterval(...)` / `segmentSweepGrace(...)` or Spring `aimon.session.segment-sweep-interval` /
+  `aimon.session.segment-sweep-grace`; off unless the interval is set, and refused at startup without a segment store.
+  Safe on every node at once. **SPI addition:** `SessionLogSegmentStore.scanSessions(createdBefore, cursor, limit)`
+  returning `SegmentScanPage` — a full pass must not miss a session holding an old segment, and may over-report or
+  repeat (Redis walks its `:created` keys with `SCAN`). A custom backend implements it.
 - **Meaning changes** (session-log §10): once a range is sealed, `TranscriptBuffer.getMessages()`,
   `AgentExecutionResult.getConversationHistory()` and `SessionSnapshot.getConversationHistory()` no longer return it;
   `liveEntryCount()` (and `/clear`'s "Removed N messages") and `hasConversation()` count sealed ranges. Nothing seals

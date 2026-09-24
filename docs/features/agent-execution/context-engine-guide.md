@@ -20,8 +20,8 @@
 ## 2. 켜기
 
 `rolling` 은 **버전 2 로그 쓰기 형식**을 요구한다 — 요약 구간을 뷰 상태에 적어야 하는데 버전 1 레코드는 그것을 담지 못한다.
-버전 1 쓰기 노드에서 `rolling` 을 고르면 **기동이 실패한다.** CLI(`aimon-cli`)에는 쓰기 형식 스위치가 없어 언제나 `v1` 로
-쓰므로, AGENT.md 에 `context-engine: rolling` 을 적은 에이전트는 CLI 로는 기동하지 않는다.
+버전 1 쓰기 노드에서 `rolling` 을 고르면 **기동이 실패한다.** CLI(`aimon-cli`)도 기본은 `v1` 이므로, AGENT.md 에
+`context-engine: rolling` 을 적은 에이전트를 CLI 로 띄우려면 `cli.sessionLogWriteFormat: v2` 를 준다(§2.4).
 
 IMPORTANT: 쓰기 형식은 클러스터 전체가 두 단계로 바꾼다. 먼저 모든 노드를 버전 2 를 **읽을 수 있는** 빌드로 배포하고(쓰기는
 여전히 `v1`), 그 배포가 끝난 뒤에 `v2` 로 바꾼다. 한번 버전 2 로 쓰인 레코드는 버전 1 쓰기 노드도 버전 2 로 다시 쓴다.
@@ -40,6 +40,8 @@ aimon:
 (`MongoSessionLogSegmentStore` · `PostgresSessionLogSegmentStore` · `RedisSessionLogSegmentStore`). 버전 2 는 로그를 제자리에서
 줄이지 않으므로, 세그먼트 저장소가 없으면 아무것도 봉인되지 않고 레코드가 세션의 전 이력을 영원히 싣는다 — 스택은 그때
 `session-log-sealing` degradation 을 기록한다. `AimonStackSpec` 조립이라면 `SessionSpec.segmentStore(...)` 로 준다.
+다시 열리지 않는 세션의 고아 세그먼트까지 치우려면 `aimon.session.segment-sweep-interval` 로 저장소 단위 스윕을 켠다 —
+[웹 세션 배포 가이드](../session/web-session-deployment-guide.md) 참조.
 
 ### 2.2 에이전트별 — AGENT.md
 
@@ -65,6 +67,17 @@ AimonStackSpec.builder()
 
 `OrcaAgentRuntimeFactory` 를 직접 쓰는 조립은 `withSessionLogWriteFormat(...)` · `withContextEngine(...)` 로 같은 값을 준다.
 엔진 자체를 만들어 넣으려면 `RollingContextEngine.builder()` 로 비율을 바꿀 수 있다(§4).
+
+### 2.4 CLI
+
+```yaml
+cli:
+  sessionLogWriteFormat: v2   # v1(기본) | v2 — CLI 설정의 다른 키처럼 camelCase
+```
+
+CLI 는 세션을 메모리에 두므로 §2 의 두 단계 배포가 필요 없다 — 이 값만 바꾸면 된다. `v2` 면 CLI 는 in-memory 세그먼트
+저장소를 함께 붙여, 압축이 가린 구간을 레코드 밖으로 봉인하고 `SessionHistory` 가 그것을 다시 읽는다. `context-engine` 은
+AGENT.md 에서 고른다(§2.2).
 
 ## 3. `rolling` 이 하는 일
 

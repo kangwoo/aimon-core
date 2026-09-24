@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/agent-execution/context-engine-guide.md
-source_commit: 69f36fd
+source_commit: 7d801ab
 ---
 
 # Context Engine Guide — shrinking the context of long conversations
@@ -27,8 +27,8 @@ ingest receives the original rather than a summary.
 
 `rolling` requires the **version-2 log write format** — the summarized range has to be written to the view state, and
 a version-1 record cannot hold it. Choosing `rolling` on a node that writes version 1 **fails startup.** The CLI
-(`aimon-cli`) has no write-format switch and always writes `v1`, so an agent whose AGENT.md says
-`context-engine: rolling` does not start under the CLI.
+(`aimon-cli`) also defaults to `v1`, so to run an agent whose AGENT.md says `context-engine: rolling` under the CLI,
+set `cli.sessionLogWriteFormat: v2` (§2.4).
 
 IMPORTANT: The write format is switched across the whole cluster in two steps. First deploy a build that **can read**
 version 2 to every node (still writing `v1`), and only once that deployment is complete switch to `v2`. A record
@@ -48,7 +48,9 @@ When `aimon.session.store` is not `in-memory`, also expose the same backend modu
 (`MongoSessionLogSegmentStore`, `PostgresSessionLogSegmentStore` or `RedisSessionLogSegmentStore`). Version 2 never
 shrinks the log in place, so without a segment store nothing is sealed and the record carries the session's whole
 history forever — the stack then records a `session-log-sealing` degradation. An `AimonStackSpec` assembly passes it
-through `SessionSpec.segmentStore(...)`.
+through `SessionSpec.segmentStore(...)`. To also clear the orphan segments of sessions nobody reopens, turn on the
+store-wide sweep with `aimon.session.segment-sweep-interval` — see the
+[web session deployment guide](../session/web-session-deployment-guide.en.md).
 
 ### 2.2 Per agent — AGENT.md
 
@@ -75,6 +77,17 @@ AimonStackSpec.builder()
 An assembly using `OrcaAgentRuntimeFactory` directly passes the same values through `withSessionLogWriteFormat(...)`
 and `withContextEngine(...)`. To build the engine yourself and change its ratios, use `RollingContextEngine.builder()`
 (§4).
+
+### 2.4 CLI
+
+```yaml
+cli:
+  sessionLogWriteFormat: v2   # v1 (default) | v2 — camelCase, like the CLI's other keys
+```
+
+The CLI keeps sessions in memory, so the two-step rollout of §2 does not apply — changing this value is all it takes.
+With `v2` the CLI also attaches an in-memory segment store, so the ranges a compaction hides are sealed out of the
+record and `SessionHistory` reads them back. The `context-engine` itself is chosen in AGENT.md (§2.2).
 
 ## 3. What `rolling` does
 

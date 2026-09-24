@@ -553,10 +553,13 @@ v1 쓰기 모드에서 `DefaultContextEngine` 은 기록을 고쳐 쓰는 지금
 
 - **GC 는 턴 종료 저장 뒤에만 돈다.** §5.4 의 "세션을 열 때" 는 하지 않았다. 세션 열기(`DefaultTranscriptManager.initialize`)
   는 턴마다 일어나므로 저장 뒤 한 번과 겹치고 `list` 호출만 두 배가 된다. grace 는 0 이하를 거절하고 기본은 1시간이다
-- **조립된 스택의 GC 와 `/clear` 삭제는 raw 저장소로 간다.** §5.4 · §6.2 는 `SessionStore` 가 있으면 펜스 뷰
+- **조립된 스택의 GC 와 `/clear` 삭제는 분산 모드에서 펜스 뷰로 간다.** §5.4 · §6.2 는 `SessionStore` 가 있으면 펜스 뷰
   (`SessionStore.segments(raw)`)를 쓰라고 한다. 그 뷰를 가진 `SessionStore` 는 `SessionRouterBuilder.build()` 안에서 transcript
-  manager 보다 **뒤에** 만들어진다. `SessionLogStorage.deleteStore` 로 펜스 뷰를 넘길 자리는 있지만 bootstrap 은 비워 둔다.
-  같은 경로의 레코드 쓰기가 이미 펜스 없이 간다(§5.2)는 것이 판단의 근거다. 라우터의 세션 삭제는 펜스 뷰를 쓴다
+  manager 보다 **뒤에** 만들어지므로, bootstrap 은 manager 에 `LateBoundFencedSegmentStore` 를 `deleteStore` 로 주고 라우터가
+  생긴 뒤 `SessionRouter.fencedSegmentStore()` 에 묶는다. 묶이기 전의 삭제는 raw 로 떨어지지 않고 실패한다 — 그때는 턴이 돌 수
+  없으므로 도달하면 배선 결함이다. **단일 노드 모드는 raw 로 지운다.** 막을 두 번째 홀더가 없고, 라우터 밖에서 만든 라이브
+  세션(CLI 의 것)은 펜스가 볼 리스를 쥐지 않아 펜스를 걸면 모든 삭제가 거절된다. 라우터의 세션 삭제는 처음부터 펜스 뷰를
+  쓴다. 같은 경로의 **레코드 쓰기는 여전히 펜스 없이 간다**(§5.2) — §12.4
 - **`/clear`** 는 잘려 나간 줄의 세그먼트 id 를 버퍼에 쌓아 두고, 비운 레코드의 저장이 성공한 **뒤에만** 지운다. 저장이
   실패하면 남겨 두고 GC 가 나중에 줍는다
 - **rewind.** `TranscriptBuffer.rewind()` 와 `SessionLogState.truncateFrom` 은 `fromSeq` 가 절단 이후인 줄을 통째로 버린다.
@@ -567,14 +570,16 @@ v1 쓰기 모드에서 `DefaultContextEngine` 은 기록을 고쳐 쓰는 지금
 
 ### 12.4 알려진 열린 결과
 
-구현을 마친 시점에 남아 있는 행동상의 틈이다.
+구현을 마친 시점에 남아 있는 행동상의 틈이다. 열림/닫힘의 정본은
+[`../../backlog/session-log-open-items.md`](../../backlog/session-log-open-items.md) 다.
 
-- **다시 열리지 않는 세션의 고아는 영원히 남는다.** GC 가 턴 종료 저장 뒤에만 돌기 때문에(§12.3) 다음 턴이 오지 않으면
-  아무도 줍지 않는다 — 영속된 `rewindLastTurn` 이 끊어 낸 세그먼트, 실패한 `/clear` 삭제, 저장되지 못한 봉인, flush
-  timeout 뒤 늦게 도착한 옛 스냅샷이 남긴 고아. 답은 §11 의 저장소 단위 고아 정리이고 아직 없다
-- **raw 저장소 삭제는 리스를 잃은 노드를 막지 못한다.** 리스를 잃은 줄 모르는 노드가 `/clear` 를 돌리면 grace 없이 새
-  홀더의 레코드가 가리키는 세그먼트를 지울 수 있고, 그 노드의 GC 는 자기의 낡은 manifest 에 없는 새 홀더의 세그먼트 중
-  grace 가 지난 것을 지울 수 있다. 지워진 구간은 gap 으로 읽힌다. 같은 노드의 펜스 없는 레코드 쓰기가 더 큰 위험이다
+- **다시 열리지 않는 세션의 고아는 스윕을 켜야 줍는다.** GC 가 턴 종료 저장 뒤에만 돌기 때문에(§12.3) 다음 턴이 오지 않으면
+  GC 는 줍지 않는다 — 영속된 `rewindLastTurn` 이 끊어 낸 세그먼트, 실패한 `/clear` 삭제, 저장되지 못한 봉인, flush timeout
+  뒤 늦게 도착한 옛 스냅샷이 남긴 고아. 저장소 단위 스윕(§12.6)이 그것을 줍지만 **opt-in** 이다. 켜지 않은 배포에서는 여전히
+  남는다
+- **펜스가 막는 것은 삭제뿐이다.** 분산 모드에서 리스를 잃은 노드의 GC · `/clear` 삭제는 이제 거절된다(§12.3). 그러나 같은
+  노드의 **레코드 쓰기**는 펜스 없이 가므로, 그 노드의 늦은 저장은 새 홀더의 레코드를 여전히 덮어쓸 수 있다 — 삭제보다 큰
+  위험이고, 레코드 쓰기를 `SessionStore.records()` 로 옮기는 일은 이 설계 밖이다. 단일 노드 모드의 삭제는 raw 다(§12.3)
 - **`/clear` 뒤에 늦게 도착한 체크포인트가 dangling manifest 를 되살린다.** `/clear` 는 비운 레코드를 저장한 뒤 잘린 줄의
   세그먼트를 grace 없이 지운다. `mailbox.flush` 가 timeout 으로 놓친 `/clear` 이전의 체크포인트가 그 저장 **뒤에** 쓰이면,
   레코드는 이미 지워진 세그먼트를 가리키는 옛 manifest 를 다시 든다. 결과는 실패가 아니라 gap 이다 — reader 와
@@ -593,3 +598,34 @@ v1 쓰기 모드에서 `DefaultContextEngine` 은 기록을 고쳐 쓰는 지금
 - **큰 세그먼트를 창·페이지마다 다시 디코드하지 않는다.** 호출 단위 `SessionLogReadCache`(§12.2)
 - **reader 의 페이지 상한이 답 없는 `tool_use` 뒤에도 걸린다**(§12.2)
 - **Redis 키 충돌과 Cluster 슬롯, Mongo 의 세션 범위 `_id`, in-memory `put` 의 경합**(§12.2)
+
+### 12.6 두 번째 개선에서 닫힌 것
+
+구현 뒤 개선의 두 번째 묶음이다. 위 절들의 본문도 그에 맞게 고쳤다.
+
+- **조립된 스택의 삭제 펜스.** §12.3 첫 항목. `SessionRouter.fencedSegmentStore()` 가 새 공개 표면이고, 라우터는 그 뷰를 한
+  번만 만들어 자기 세션 삭제에도 쓴다. 리스를 빼앗긴 노드의 늦은 GC 가 거절되는 것을 조립된 스택 위에서 고정하는 테스트
+  (`AimonStackSegmentFencingTest`)가 있다
+- **저장소 단위 고아 스윕 — §11 의 세 번째 질문에 대한 답.** `SessionLogSegmentSweeper`(`agent.session.transcript`)가
+  세그먼트 저장소 전체를 훑는다. 세그먼트를 지우는 조건은 둘이다. **grace 보다 오래됐고**, 목록을 읽은 **뒤에** 읽은 레코드의
+  manifest 가 가리키지 않거나 레코드가 없을 것. 레코드를 읽지 못하면(백엔드 실패, 코덱이 거절한 문서) 그 세션은 이번 회차에
+  건너뛴다. 스위퍼는 세션을 쥐지 않으므로 펜스 뷰는 모든 삭제를 거절한다. 그래서 raw 로 지우고, 안전은 GC 와 같은 두
+  조건(manifest 확인 + grace)에 기댄다. 여러 노드가 동시에 돌려도 안전하다 — 서로의 일을 반복할 뿐이다. grace 기본은
+  **24시간**이다. GC 의 1시간보다 긴 이유는, 스위퍼는 홀더가 아니어서 봉인과 그것을 가리키는 레코드 쓰기 사이의 시간을
+  가장 길게 잡아야 하기 때문이다
+- **SPI 에 `scanSessions(createdBefore, cursor, limit)` 를 더했다.** 결과는 `SegmentScanPage` 이고 커서는 불투명하다. 계약은
+  일부러 느슨하다. 한 회차 안에서 오래된 세그먼트를 가진 세션을 **빠뜨리지만 않으면** 된다. 더 많이 돌려주거나, 같은 세션을
+  두 번 돌려주거나, `limit` 을 힌트로 다뤄도 된다. in-memory · Postgres · Mongo 는 정확하다(나이로 거르고, 세션 id 오름차순,
+  커서는 마지막 id). Redis 는 `SCAN` 으로 `:created` 키를 훑는다. 세션별 키와 **같은 슬롯에 둘 수 없는** 색인 키를 따로 두지
+  않으려는 선택이다. 그래서 나이로 거르지 않고, 중복을 허용하며, `COUNT` 는 힌트다. 이 클래스가 받는 standalone 연결에서는
+  그 노드의 키 공간이 전체다. 계약 테스트(`AbstractSessionLogSegmentStoreContractTest`)가 네 백엔드 모두에서 돈다 — 이상한
+  세션 id(`X:created`, glob 문자, 중괄호)와 `limit` 1 짜리 페이징을 포함한다
+- **배선은 opt-in 이다.** `SessionSpec.segmentSweepInterval(...)` / `segmentSweepGrace(...)`, Spring 은
+  `aimon.session.segment-sweep-interval` / `aimon.session.segment-sweep-grace`. 간격이 없으면 꺼져 있다. 스택은
+  `SegmentSweepSchedule`(daemon 스레드 하나)을 만들고, 다른 백그라운드 스위퍼와 함께 `startRuntimes()` 에서 시작하며,
+  `SESSIONS` 단계에서 라우터보다 먼저 닫는다. 첫 회차는 간격 하나를 기다린다. grace 만 있고 간격이 없는 설정, 그리고 세그먼트
+  저장소 없이 레코드 저장소만 준 설정(봉인되는 것이 없어 스윕할 것도 없다)은 조립 시점에 거절한다
+- **CLI 의 쓰기 형식 스위치.** `cli.sessionLogWriteFormat: v2`. v2 면 CLI 는 in-memory 레코드 옆에 in-memory 세그먼트
+  저장소를 붙인다 — 둘이 같은 프로세스와 함께 사라지므로 manifest 가 세그먼트보다 오래 살 수 없다. 기본은 v1 이고,
+  `context-engine: rolling` 에이전트는 v2 에서만 뜬다 —
+  [`context-engine.md` §13.7](../agent-execution/context-engine.md#137-두-번째-개선에서-닫힌-것)
