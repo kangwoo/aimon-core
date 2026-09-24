@@ -7,6 +7,8 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
@@ -77,6 +79,72 @@ class DefaultTranscriptManagerSealingTest {
         assertThat(stored.getManifest()).hasSize(1);
         assertThat(segments.list(SESSION)).hasSize(1);
         assertThat(manager.initialize(SESSION, "system").liveEntryCount()).isEqualTo(4);
+    }
+
+    /**
+     * A seal that lands marks the buffer dirty and so raises a checkpoint. On a background mailbox that checkpoint has
+     * to be drained <em>before</em> the authoritative save: raised after the flush barrier it would be written after
+     * the
+     * save by the writer thread, and undo whatever an out-of-turn write (a delete, a persisted rewind) did in between.
+     */
+    @Test
+    void theSealsCheckpointIsDrainedBeforeTheAuthoritativeSave() {
+        final List<String> writers = new CopyOnWriteArrayList<>();
+        final InMemorySessionRecordStore recording = new InMemorySessionRecordStore() {
+            @Override
+            public void mergeFromSnapshot(SessionSnapshot snapshot) {
+                writers.add(Thread.currentThread().getName());
+                super.mergeFromSnapshot(snapshot);
+            }
+        };
+        final SessionCheckpointMailbox mailbox = SessionCheckpointMailbox.background();
+        try {
+            final DefaultTranscriptManager manager = new DefaultTranscriptManager(recording, mailbox,
+                    SessionLogFormat.V2, SessionLogStorage.builder(segments).minSealTokens(0).clock(clock).build());
+            final TranscriptBuffer buffer = compactedTurn(manager);
+            mailbox.flush(SESSION);
+            writers.clear();
+
+            manager.saveSilently(buffer);
+            assertThat(mailbox.pendingCheckpointSessionIds()).as("nothing queued behind the save").isEmpty();
+
+            recording.delete(SESSION);
+            segments.deleteAll(SESSION);
+        } finally {
+            mailbox.close();
+        }
+
+        assertThat(writers).last().isEqualTo(Thread.currentThread().getName());
+        assertThat(recording.load(SESSION)).as("no late checkpoint resurrects the deleted session").isEmpty();
+    }
+
+    @Test
+    void theThrowingSaveAlsoDrainsTheSealsCheckpointFirst() {
+        final List<String> writers = new CopyOnWriteArrayList<>();
+        final InMemorySessionRecordStore recording = new InMemorySessionRecordStore() {
+            @Override
+            public void mergeFromSnapshot(SessionSnapshot snapshot) {
+                writers.add(Thread.currentThread().getName());
+                super.mergeFromSnapshot(snapshot);
+            }
+        };
+        final SessionCheckpointMailbox mailbox = SessionCheckpointMailbox.background();
+        try {
+            final DefaultTranscriptManager manager = new DefaultTranscriptManager(recording, mailbox,
+                    SessionLogFormat.V2, SessionLogStorage.builder(segments).minSealTokens(0).clock(clock).build());
+            final TranscriptBuffer buffer = compactedTurn(manager);
+            mailbox.flush(SESSION);
+            writers.clear();
+
+            manager.save(buffer);
+            assertThat(mailbox.pendingCheckpointSessionIds()).isEmpty();
+            recording.delete(SESSION);
+        } finally {
+            mailbox.close();
+        }
+
+        assertThat(writers).last().isEqualTo(Thread.currentThread().getName());
+        assertThat(recording.load(SESSION)).isEmpty();
     }
 
     @Test

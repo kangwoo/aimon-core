@@ -65,6 +65,16 @@ class ViewProjectionTest {
     }
 
     @Test
+    void aTriggerThisNodeDoesNotKnowStillProjects() {
+        final SummarySpan future = span(0, 4).toBuilder().trigger("SCHEDULED").build();
+
+        final ViewProjection view = ViewProjection.of(log().summarize(future));
+
+        assertThat(view.getMessages().get(0))
+                .isEqualTo(CompactBoundary.boundaryMessage("b-1", CompactionTrigger.AUTO, 42, 4, List.of("Read")));
+    }
+
+    @Test
     void aSpanWhoseEntriesAreAllGoneStillShowsItsMarkersAtTheEnd() {
         final SessionLogState rewound = log().summarize(span(4, 5)).truncateFrom(5);
         final SessionLogState spanPastTheEntries = rewound.toBuilder().entries(rewound.getEntries().subList(0, 4))

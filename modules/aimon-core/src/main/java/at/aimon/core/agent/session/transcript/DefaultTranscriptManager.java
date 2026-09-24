@@ -196,7 +196,8 @@ public class DefaultTranscriptManager implements TranscriptManager {
      * Saves the transcript to the repository.
      *
      * <p>
-     * Drains any pending mid-turn checkpoint first, so this write is the last one for the session. The predecessor
+     * Seals first, then drains any pending mid-turn checkpoint — including the one a landed seal raises — so this write
+     * is the last one for the session. The predecessor
      * of {@link SessionCheckpointMailbox} only drained on the {@link #saveSilently} path, which left this one
      * racing a late background write.
      *
@@ -215,8 +216,10 @@ public class DefaultTranscriptManager implements TranscriptManager {
     @Override
     public void save(TranscriptBuffer memory) {
         Objects.requireNonNull(memory, "Transcript buffer cannot be null");
-        mailbox.flush(memory.getSessionId());
+        // Seal BEFORE the flush: a seal that lands marks the buffer dirty, and the checkpoint that raises must be
+        // drained by the barrier below — raised after it, it would be written after this save (session-log §5.3).
         seal(memory);
+        mailbox.flush(memory.getSessionId());
         final SessionSnapshot saved = memory.toSnapshot();
         persistSnapshot(saved);
         afterSave(memory, saved);
@@ -280,11 +283,13 @@ public class DefaultTranscriptManager implements TranscriptManager {
     @Override
     public void saveSilently(TranscriptBuffer memory) {
         Objects.requireNonNull(memory, "Transcript buffer cannot be null");
+        // Sealed before the save rather than after, so this very write already leaves the sealed ranges out — and
+        // before the flush, because a seal that lands marks the buffer dirty: the checkpoint that raises has to be
+        // behind the barrier below, not queued after it where it would overtake this save.
+        seal(memory);
         // Drain the mailbox BEFORE the authoritative persist so an in-flight checkpoint (holding an older snapshot)
         // cannot land in the repository after our write returns.
         mailbox.flush(memory.getSessionId());
-        // Sealed before the save rather than after, so this very write already leaves the sealed ranges out.
-        seal(memory);
         final SessionSnapshot saved;
         try {
             saved = memory.toSnapshot();

@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/agent-execution/context-engine-guide.md
-source_commit: 6b71be0
+source_commit: bc8715e
 ---
 
 # Context Engine Guide — shrinking the context of long conversations
@@ -26,7 +26,9 @@ ingest receives the original rather than a summary.
 ## 2. Turning it on
 
 `rolling` requires the **version-2 log write format** — the summarized range has to be written to the view state, and
-a version-1 record cannot hold it. Choosing `rolling` on a node that writes version 1 **fails startup.**
+a version-1 record cannot hold it. Choosing `rolling` on a node that writes version 1 **fails startup.** The CLI
+(`aimon-cli`) has no write-format switch and always writes `v1`, so an agent whose AGENT.md says
+`context-engine: rolling` does not start under the CLI.
 
 IMPORTANT: The write format is switched across the whole cluster in two steps. First deploy a build that **can read**
 version 2 to every node (still writing `v1`), and only once that deployment is complete switch to `v2`. A record
@@ -41,6 +43,12 @@ aimon:
   context:
     engine: rolling         # default (default) | rolling — the value when the agent names none
 ```
+
+When `aimon.session.store` is not `in-memory`, also expose the same backend module's `SessionLogSegmentStore` as a bean
+(`MongoSessionLogSegmentStore`, `PostgresSessionLogSegmentStore` or `RedisSessionLogSegmentStore`). Version 2 never
+shrinks the log in place, so without a segment store nothing is sealed and the record carries the session's whole
+history forever — the stack then records a `session-log-sealing` degradation. An `AimonStackSpec` assembly passes it
+through `SessionSpec.segmentStore(...)`.
 
 ### 2.2 Per agent — AGENT.md
 

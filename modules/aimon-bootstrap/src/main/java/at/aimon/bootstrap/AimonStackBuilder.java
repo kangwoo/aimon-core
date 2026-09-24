@@ -280,6 +280,14 @@ public final class AimonStackBuilder {
         final SessionLogSegmentStore segmentStore = spec.getSession().getSegmentStore().orElseGet(
                 () -> spec.getSession().getRecordStore().isEmpty() ? new InMemorySessionLogSegmentStore() : null);
         final SessionLogFormat logWriteFormat = spec.getSession().getLogWriteFormat();
+        if (segmentStore == null && logWriteFormat == SessionLogFormat.V2) {
+            // Version 2 never rewrites the log in place, so without a segment store the durable record carries every
+            // entry of the session for good and each checkpoint rewrites all of it (session-log §5).
+            degradations.add("session-log-sealing",
+                    "The session log is written as version 2 over a supplied record store with no segment store, so"
+                            + " nothing is sealed: every record keeps its whole history and each save rewrites it."
+                            + " Supply a SessionLogSegmentStore (SessionSpec.segmentStore) from the same backend.");
+        }
         final TranscriptManager transcriptManager = new DefaultTranscriptManager(sessionRecordStore, sessionCheckpoints,
                 logWriteFormat, segmentStore == null ? null : SessionLogStorage.builder(segmentStore).build());
         final MessageQueueManager messageQueueManager = new DefaultMessageQueueManager(

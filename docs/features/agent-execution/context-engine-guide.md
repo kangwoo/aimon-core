@@ -20,7 +20,8 @@
 ## 2. 켜기
 
 `rolling` 은 **버전 2 로그 쓰기 형식**을 요구한다 — 요약 구간을 뷰 상태에 적어야 하는데 버전 1 레코드는 그것을 담지 못한다.
-버전 1 쓰기 노드에서 `rolling` 을 고르면 **기동이 실패한다.**
+버전 1 쓰기 노드에서 `rolling` 을 고르면 **기동이 실패한다.** CLI(`aimon-cli`)에는 쓰기 형식 스위치가 없어 언제나 `v1` 로
+쓰므로, AGENT.md 에 `context-engine: rolling` 을 적은 에이전트는 CLI 로는 기동하지 않는다.
 
 IMPORTANT: 쓰기 형식은 클러스터 전체가 두 단계로 바꾼다. 먼저 모든 노드를 버전 2 를 **읽을 수 있는** 빌드로 배포하고(쓰기는
 여전히 `v1`), 그 배포가 끝난 뒤에 `v2` 로 바꾼다. 한번 버전 2 로 쓰인 레코드는 버전 1 쓰기 노드도 버전 2 로 다시 쓴다.
@@ -34,6 +35,11 @@ aimon:
   context:
     engine: rolling         # default(기본) | rolling — 에이전트가 따로 적지 않았을 때의 값
 ```
+
+`aimon.session.store` 가 `in-memory` 가 아니면 같은 백엔드 모듈의 `SessionLogSegmentStore` 도 빈으로 내놓는다
+(`MongoSessionLogSegmentStore` · `PostgresSessionLogSegmentStore` · `RedisSessionLogSegmentStore`). 버전 2 는 로그를 제자리에서
+줄이지 않으므로, 세그먼트 저장소가 없으면 아무것도 봉인되지 않고 레코드가 세션의 전 이력을 영원히 싣는다 — 스택은 그때
+`session-log-sealing` degradation 을 기록한다. `AimonStackSpec` 조립이라면 `SessionSpec.segmentStore(...)` 로 준다.
 
 ### 2.2 에이전트별 — AGENT.md
 

@@ -140,13 +140,27 @@ public final class ViewProjection {
     }
 
     private static void placeMarkers(SummarySpan span, List<Message> messages, List<Long> seqs, List<Boolean> asIs) {
-        messages.add(CompactBoundary.boundaryMessage(span.getBoundaryId(), CompactionTrigger.valueOf(span.getTrigger()),
-                span.getPreTokenCount(), span.getMessagesSummarized(), span.getDiscoveredToolNames()));
+        messages.add(CompactBoundary.boundaryMessage(span.getBoundaryId(), triggerOf(span), span.getPreTokenCount(),
+                span.getMessagesSummarized(), span.getDiscoveredToolNames()));
         messages.add(CompactBoundary.summaryMessage(span.getBoundaryId(), span.getSummaryText()));
         seqs.add(MADE_BY_VIEW);
         seqs.add(MADE_BY_VIEW);
         asIs.add(Boolean.FALSE);
         asIs.add(Boolean.FALSE);
+    }
+
+    /**
+     * The span's trigger, read leniently: the projection runs at every {@code prepare}, so a persisted value this node
+     * does not know — a future enum constant, a damaged document — must not make the session unable to run a turn.
+     * The trigger only labels the boundary marker, so {@link CompactionTrigger#AUTO} is a safe, deterministic stand-in.
+     */
+    private static CompactionTrigger triggerOf(SummarySpan span) {
+        for (CompactionTrigger trigger : CompactionTrigger.values()) {
+            if (trigger.name().equals(span.getTrigger())) {
+                return trigger;
+            }
+        }
+        return CompactionTrigger.AUTO;
     }
 
     private static Message elide(Message original, String placeholder) {

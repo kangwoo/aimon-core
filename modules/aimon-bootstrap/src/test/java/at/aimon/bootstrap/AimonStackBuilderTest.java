@@ -157,6 +157,26 @@ class AimonStackBuilderTest {
     }
 
     @Test
+    @DisplayName("version 2 over a supplied record store with no segment store is a recorded degradation")
+    void versionTwoWithoutASegmentStoreIsADegradation(@TempDir Path workspace) {
+        final SessionSpec unsealed = SessionSpec.builder().recordStore(new InMemorySessionRecordStore())
+                .logWriteFormat(SessionLogFormat.V2).build();
+        try (AimonStack stack = AimonStackBuilder.build(specFor(workspace, "ops").session(unsealed).build())) {
+            assertThat(stack.degradations().has("session-log-sealing")).isTrue();
+            assertThat(stack.degradations().describe()).contains("SessionLogSegmentStore");
+        }
+        final SessionSpec sealed = SessionSpec.builder().recordStore(new InMemorySessionRecordStore())
+                .segmentStore(new InMemorySessionLogSegmentStore()).logWriteFormat(SessionLogFormat.V2).build();
+        try (AimonStack stack = AimonStackBuilder.build(specFor(workspace, "ops").session(sealed).build())) {
+            assertThat(stack.degradations().has("session-log-sealing")).isFalse();
+        }
+        final SessionSpec versionOne = SessionSpec.builder().recordStore(new InMemorySessionRecordStore()).build();
+        try (AimonStack stack = AimonStackBuilder.build(specFor(workspace, "ops").session(versionOne).build())) {
+            assertThat(stack.degradations().has("session-log-sealing")).as("v1 compacts in place").isFalse();
+        }
+    }
+
+    @Test
     @DisplayName("the rolling context engine needs the version-2 write format, and gets SessionHistory with it")
     void rollingNeedsTheVersionTwoWriteFormat(@TempDir Path workspace) {
         final ExecutorSpec rolling = ExecutorSpec.builder().contextEngine(ContextEngineKind.ROLLING).build();
