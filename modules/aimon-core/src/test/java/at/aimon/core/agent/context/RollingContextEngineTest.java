@@ -29,9 +29,11 @@ import at.aimon.core.agent.compact.DefaultPromptSizeRecoveryStrategy;
 import at.aimon.core.agent.compact.InMemoryCompactionFailureStore;
 import at.aimon.core.agent.compact.SummaryRequest;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.store.SegmentId;
 import at.aimon.core.agent.session.transcript.LogOrigin;
 import at.aimon.core.agent.session.transcript.SeqRange;
 import at.aimon.core.agent.session.transcript.SessionLogFormat;
+import at.aimon.core.agent.session.transcript.SessionLogManifestEntry;
 import at.aimon.core.agent.session.transcript.SummarySpan;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.hook.DefaultHookRegistry;
@@ -144,11 +146,16 @@ class RollingContextEngineTest {
             assertThat(summary.getPreviousSummary()).isEmpty();
             assertThat(summary.getTargetSummaryTokens()).isEqualTo(80);
             assertThat(summary.getTrigger()).isEqualTo(CompactionTrigger.AUTO);
-            assertThat(summary.getMessages()).hasSize(8);
+            assertThat(summary.getMessages()).hasSize(9);
             assertThat(summary.getMessages().get(0).getContent())
                     .as("an absorbed range starting with an assistant message gets a user message in front")
                     .isEqualTo(RollingContextEngine.CONTINUATION_NOTE);
             assertThat(summary.getMessages().subList(1, 8)).isEqualTo(logBefore.subList(1, 8));
+            assertThat(summary.getMessages().get(8)).as("and one after, since it ends with an assistant message")
+                    .satisfies(last -> {
+                        assertThat(last.getRole()).isEqualTo(Role.USER);
+                        assertThat(last.getContent()).isEqualTo(RollingContextEngine.SUMMARIZE_NOTE);
+                    });
 
             assertThat(decision.getCompactionMetadata()).hasValueSatisfying(metadata -> {
                 assertThat(metadata.getKind()).isEqualTo(CompactionKind.ROLLING);
@@ -210,8 +217,40 @@ class RollingContextEngineTest {
                 assertThat(span.getFromSeq()).as("the span keeps its start").isEqualTo(1);
                 assertThat(span.getToSeq()).isGreaterThan(8);
                 assertThat(span.getSummaryText()).isEqualTo("SUMMARY-2");
-                assertThat(span.getMessagesSummarized()).isEqualTo(7 + second.getMessages().size());
+                assertThat(span.getMessagesSummarized()).isEqualTo(7 + second.getMessages().stream()
+                        .filter(m -> !RollingContextEngine.SUMMARIZE_NOTE.equals(m.getContent())).count());
             });
+        }
+
+        @Test
+        void aSummaryRequestEndingWithAUserMessageGetsNoClosingNote() {
+            buffer.addUserMessage("goal");
+            for (int i = 1; i <= 10; i++) {
+                // Every message a user one, so the absorbed range cannot end with an assistant message.
+                buffer.addUserMessage("u".repeat(60));
+            }
+
+            engine().prepare(request());
+
+            final List<Message> sent = summarizer.summarized.get(0).getMessages();
+            assertThat(sent.get(sent.size() - 1).getContent()).isNotEqualTo(RollingContextEngine.SUMMARIZE_NOTE);
+            assertThat(sent).extracting(Message::getRole).containsOnly(Role.USER);
+        }
+
+        @Test
+        void aSummaryRequestEndingWithToolResultsGetsNoClosingNote() {
+            buffer.addUserMessage("goal");
+            for (int i = 0; i < 4; i++) {
+                buffer.addMessage(Message.assistant("", List.of(ToolUse.of("t" + i, "Read", Map.of()))));
+                buffer.addMessage(Message.toolUseResults(List.of(ToolUseResult.success("t" + i, "r".repeat(100)))));
+            }
+            buffer.addUserMessage("u".repeat(200));
+
+            engine().prepare(request());
+
+            final List<Message> sent = summarizer.summarized.get(0).getMessages();
+            assertThat(sent.get(sent.size() - 1).getRole()).as("tool results are sent in the user's role")
+                    .isEqualTo(Role.TOOL);
         }
 
         @Test
@@ -252,6 +291,43 @@ class RollingContextEngineTest {
 
             assertThat(buffer.getViewState().getSummarySpan())
                     .hasValueSatisfying(span -> assertThat(span.getFromSeq()).isZero());
+        }
+
+        @Test
+        void aSealedRangeBeforeTheFirstCarriedUserMessageEmptiesTheHead() {
+            // The real first user message was dropped by a recovery and then sealed: it is no longer carried, and the
+            // first carried user message is a later one. That one must not become the head.
+            buffer.addUserMessage("goal");
+            buffer.addAssistantMessage("a".repeat(10));
+            buffer.addUserMessage("later");
+            for (int i = 0; i < 10; i++) {
+                buffer.addMessage(i % 2 == 0 ? Message.assistant("a".repeat(60)) : Message.user("u".repeat(60)));
+            }
+            buffer.dropFromView(0, 2);
+            buffer.seal(SessionLogManifestEntry.builder().fromSeq(0).toSeq(2).segmentId(SegmentId.generate())
+                    .contentHash("sha256:x").entryCount(2).build());
+
+            engine().prepare(request());
+
+            assertThat(buffer.getViewState().getSummarySpan()).hasValueSatisfying(
+                    span -> assertThat(span.getFromSeq()).as("no head: the span starts at the floor").isZero());
+        }
+
+        @Test
+        void aDroppedButCarriedFirstUserMessageStillAnchorsTheHead() {
+            // Dropped but not sealed: the log still carries it, so the head is anchored on it by seq.
+            buffer.addUserMessage("goal");
+            buffer.addAssistantMessage("a".repeat(10));
+            buffer.addUserMessage("later");
+            for (int i = 0; i < 10; i++) {
+                buffer.addMessage(i % 2 == 0 ? Message.assistant("a".repeat(60)) : Message.user("u".repeat(60)));
+            }
+            buffer.dropFromView(0, 1);
+
+            engine().prepare(request());
+
+            assertThat(buffer.getViewState().getSummarySpan())
+                    .hasValueSatisfying(span -> assertThat(span.getFromSeq()).isEqualTo(1));
         }
 
         @Test
@@ -427,6 +503,52 @@ class RollingContextEngineTest {
     }
 
     @Nested
+    class ThrowingEngine {
+
+        @Test
+        void aSummarizeThatThrowsIsAFailedCompactionCountedByTheBreaker() {
+            summarizer.throwOnSummarize = true;
+            conversation(10, 60);
+            final RollingContextEngine engine = engine();
+
+            for (int i = 0; i < 3; i++) {
+                final ContextDecision decision = engine.prepare(request());
+                assertThat(decision.getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
+            }
+            assertThat(failures.get(buffer.getSessionId())).isEqualTo(3);
+            assertThat(engine.prepare(request()).getReason()).contains("circuit breaker");
+            assertThat(buffer.getViewState().getSummarySpan()).isEmpty();
+        }
+
+        @Test
+        void aSummaryInstalledThatThrowsKeepsTheSpanAndReportsAFailure() {
+            summarizer.throwOnInstall = true;
+            conversation(10, 60);
+
+            final ContextDecision decision = engine().prepare(request());
+
+            assertThat(decision.getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
+            assertThat(decision.getReason()).contains("failed");
+            assertThat(buffer.getViewState().getSummarySpan()).as("the span was recorded before the hook ran")
+                    .isPresent();
+            assertThat(decision.getView().getMessages()).as("and the view already shows it")
+                    .anySatisfy(m -> assertThat(m.getContent()).contains("SUMMARY-1"));
+            assertThat(failures.get(buffer.getSessionId())).isEqualTo(1);
+        }
+
+        @Test
+        void compactNowReturnsAFailureInsteadOfThrowing() {
+            summarizer.throwOnSummarize = true;
+            conversation(6, 60);
+
+            final CompactionResult result = engine().compactNow(request(), null);
+
+            assertThat(result.isFailure()).isTrue();
+            assertThat(result.getError()).containsInstanceOf(IllegalStateException.class);
+        }
+    }
+
+    @Nested
     class CompactNow {
 
         @Test
@@ -543,6 +665,8 @@ class RollingContextEngineTest {
         private final List<CompactionResult> installed = new ArrayList<>();
         private int compacted;
         private boolean fail;
+        private boolean throwOnSummarize;
+        private boolean throwOnInstall;
         private Runnable duringSummarize = () -> {
         };
 
@@ -562,6 +686,9 @@ class RollingContextEngineTest {
         @Override
         public CompactionResult summarize(SummaryRequest request) {
             summarized.add(request);
+            if (throwOnSummarize) {
+                throw new IllegalStateException("custom engine blew up");
+            }
             duringSummarize.run();
             final Instant now = Instant.now();
             final CompactionMetadata metadata = CompactionMetadata.builder().trigger(request.getTrigger())
@@ -576,6 +703,9 @@ class RollingContextEngineTest {
         public void summaryInstalled(SummaryRequest request, CompactionResult result,
                 TranscriptBuffer transcriptBuffer) {
             installed.add(result);
+            if (throwOnInstall) {
+                throw new IllegalStateException("PostCompact hook blew up");
+            }
         }
     }
 }

@@ -13,6 +13,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.LongPredicate;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,6 +39,7 @@ import at.aimon.core.agent.session.transcript.LegalCuts;
 import at.aimon.core.agent.session.transcript.LogOrigin;
 import at.aimon.core.agent.session.transcript.SessionLogEntry;
 import at.aimon.core.agent.session.transcript.SessionLogFormat;
+import at.aimon.core.agent.session.transcript.SessionLogManifestEntry;
 import at.aimon.core.agent.session.transcript.SessionLogState;
 import at.aimon.core.agent.session.transcript.SummarySpan;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
@@ -108,6 +110,13 @@ public final class RollingContextEngine implements ContextEngine {
     /** Stands before an absorbed range that does not start with a user message, so the summary call's does. */
     static final String CONTINUATION_NOTE = "[The earlier part of this conversation is covered by the previous"
             + " summary.]";
+
+    /**
+     * Closes a summary call's input that would otherwise end with an assistant message. An absorbed range usually ends
+     * at the assistant's last text, because the tail cut prefers to start at a user message; a request ending with an
+     * assistant message reads as a prefill, which some providers reject and others continue instead of summarizing.
+     */
+    static final String SUMMARIZE_NOTE = "[End of the part to summarize. Write the updated summary now.]";
 
     private static final Logger log = LoggerFactory.getLogger(RollingContextEngine.class);
 
@@ -459,6 +468,9 @@ public final class RollingContextEngine implements ContextEngine {
             input.add(Message.user(CONTINUATION_NOTE));
         }
         input.addAll(absorbed);
+        if (!endsOnTheUserSide(input)) {
+            input.add(Message.user(SUMMARIZE_NOTE));
+        }
         final SummaryRequest summaryRequest = SummaryRequest.builder().messages(input)
                 .systemPrompt(call.request.getSystemPrompt()).sessionId(buffer.getSessionId())
                 .executionId(call.request.getCaller().getExecutionId().orElse(null)).trigger(trigger)
@@ -468,7 +480,14 @@ public final class RollingContextEngine implements ContextEngine {
                 .callMetadata(call.request.getCallMetadata().orElse(null)).rolling(true)
                 .previousSummary(held != null ? held.getSummaryText() : null).targetSummaryTokens(call.summaryBudget)
                 .build();
-        final CompactionResult summarized = compactionEngine.summarize(summaryRequest);
+        final CompactionResult summarized;
+        try {
+            summarized = compactionEngine.summarize(summaryRequest);
+        } catch (RuntimeException e) {
+            // A custom engine that throws must not fail the execution; the breaker counts it like any failure.
+            log.warn("Rolling summary of session {} failed: {}", buffer.getSessionId(), e.toString(), e);
+            return failure(trigger, e);
+        }
         if (summarized == null || summarized.isFailure()) {
             return summarized != null
                     ? summarized
@@ -500,10 +519,27 @@ public final class RollingContextEngine implements ContextEngine {
                 .startedAt(produced.getStartedAt()).completedAt(Instant.now()).discoveredToolNames(List.copyOf(tools))
                 .viewShape(shape.head, shape.span, shape.tail).summaryTokens(tokenEstimator.estimateText(summaryText))
                 .absorbedRange(absorbedFrom, plan.toSeq).build());
-        compactionEngine.summaryInstalled(summaryRequest, installed, buffer);
+        try {
+            compactionEngine.summaryInstalled(summaryRequest, installed, buffer);
+        } catch (RuntimeException e) {
+            // The span is already recorded and stays: the view is what the next call sends either way. The failure is
+            // reported, and counted by the breaker, so a PostCompact path that always throws stops being retried.
+            log.warn("PostCompact handling of the rolling summary of session {} failed: {}", buffer.getSessionId(),
+                    e.toString(), e);
+            return CompactionResult.failure(e, installed.getMetadata());
+        }
         log.info("Rolling compaction of session {}: span now {} (stage {}), absorbed {} messages, {} -> {} tokens",
                 buffer.getSessionId(), span.getRange(), plan.stage, absorbed.size(), call.estimated, postTokens);
         return installed;
+    }
+
+    /**
+     * Whether the summary call's input ends with a message sent in the user's role: a user message, or tool results,
+     * which providers send in the user's role too.
+     */
+    private static boolean endsOnTheUserSide(List<Message> input) {
+        final Role last = input.get(input.size() - 1).getRole();
+        return last == Role.USER || last == Role.TOOL;
     }
 
     private Shape shapeOf(ViewProjection view, long headEndSeq, long spanEndSeq) {
@@ -632,11 +668,14 @@ public final class RollingContextEngine implements ContextEngine {
         private final int[] tokens;
         private final long headEndSeq;
         private final int headTokens;
+        /** {@link SessionLogState#isLegalCut} for this call's state, computed once rather than per position. */
+        private final LongPredicate legal;
 
         private Call(ContextRequest request, Thresholds thresholds) {
             this.request = request;
             this.buffer = request.getTranscriptBuffer();
             this.state = buffer.getLogState();
+            this.legal = state.legalCuts();
             this.view = ViewProjection.of(state);
             this.held = state.getViewState().getSummarySpan().orElse(null);
             this.modelName = thresholds.modelName;
@@ -690,10 +729,22 @@ public final class RollingContextEngine implements ContextEngine {
                 }
             }
             if (end < 0 || (held != null && held.getFromSeq() < end)
-                    || conversationTokens > (long) (headTokenRatio * effective)) {
+                    || conversationTokens > (long) (headTokenRatio * effective) || sealedBefore(end)) {
                 return floor;
             }
             return end;
+        }
+
+        /**
+         * Whether a sealed range starts below {@code end}. The head is anchored on the log's first conversation user
+         * message by seq, and a sealed range is not carried: if one lies before the first carried user message, the
+         * true first one may be inside it — a recovery {@code drop} hid it and the range was sealed later. Taking the
+         * first carried one instead would make a later message the head and keep it verbatim for good, so the head is
+         * empty.
+         */
+        private boolean sealedBefore(long end) {
+            final List<SessionLogManifestEntry> manifest = state.getManifest();
+            return !manifest.isEmpty() && manifest.get(0).getFromSeq() < end;
         }
 
         private boolean isVersionOneMarker(SessionLogEntry entry) {
@@ -789,7 +840,7 @@ public final class RollingContextEngine implements ContextEngine {
             }
             final List<Cut> cuts = new ArrayList<>();
             final long end = state.getNextSeq();
-            if (end > firstAbsorbable && end >= minimum && state.isLegalCut(end)) {
+            if (end > firstAbsorbable && end >= minimum && legal.test(end)) {
                 cuts.add(new Cut(end, 0, false));
             }
             // Back to front, so each cut's verbatim tail is a running sum.
@@ -803,7 +854,7 @@ public final class RollingContextEngine implements ContextEngine {
                     break;
                 }
                 tail += tokens[p];
-                if (state.isLegalCut(seq)) {
+                if (legal.test(seq)) {
                     cuts.add(new Cut(seq, tail, view.getMessages().get(p).getRole() == Role.USER));
                 }
             }

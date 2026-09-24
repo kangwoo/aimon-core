@@ -514,7 +514,10 @@ public final class OrcaAgentExecutionResult implements AgentExecutionResult {
     /**
      * Returns metadata for each compaction the {@link at.aimon.core.agent.compact.CompactionGuard} performed during
      * this execution, in the order they happened. Empty when no compaction ran. Includes both successful and failed
-     * compaction attempts; consumers can inspect each entry's success state via the metadata.
+     * compaction attempts; consumers can inspect each entry's success state via the metadata. A rolling context
+     * engine's decision not to compact because no cut would bring the view down is recorded too, as an entry whose
+     * {@link CompactionMetadata#getKind() kind} is {@link at.aimon.core.agent.compact.CompactionKind#FALLBACK}, one
+     * per iteration that decided so.
      *
      * @return an unmodifiable list of compaction metadata (never null, may be empty)
      */

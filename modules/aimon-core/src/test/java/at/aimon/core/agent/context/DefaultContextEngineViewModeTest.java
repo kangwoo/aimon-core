@@ -287,6 +287,22 @@ class DefaultContextEngineViewModeTest {
         }
 
         @Test
+        void aNullSummaryIsACleanFailureNotAnNpe() {
+            buffer.addUserMessage("hello");
+            buffer.addAssistantMessage("hi");
+            summarizer.returnNull = true;
+
+            final CompactionResult result = engine().compactNow(request(), null);
+
+            assertThat(result).isNotNull();
+            assertThat(result.isFailure()).isTrue();
+            assertThat(result.getError())
+                    .hasValueSatisfying(error -> assertThat(error).hasMessageContaining("summarize() returned null"));
+            assertThat(result.getMetadata().getTrigger()).isEqualTo(CompactionTrigger.MANUAL);
+            assertThat(buffer.getViewState().getSummarySpan()).isEmpty();
+        }
+
+        @Test
         void anEmptyViewIsNotCompacted() {
             final CompactionResult result = engine().compactNow(request(), null);
 
@@ -332,6 +348,97 @@ class DefaultContextEngineViewModeTest {
         }
     }
 
+    /**
+     * The in-place fallback meeting a log that already carries a view: a version-1 node whose engine cannot keep the
+     * log append-only, serving a record another node compacted in view mode.
+     */
+    @Nested
+    class InPlaceFallbackOverAView {
+
+        private DefaultContextEngine inPlaceOnly(CompactionGuard guard) {
+            return DefaultContextEngine.builder().compactionGuard(guard)
+                    .recoveryStrategy(new DefaultPromptSizeRecoveryStrategy()).compactionEngine(summarizer)
+                    .tokenEstimator(estimator).build();
+        }
+
+        private void summarizedLog() {
+            fillPastTheAutoThreshold();
+            engine().prepare(request());
+            assertThat(buffer.getViewState().getSummarySpan()).isPresent();
+            buffer.addUserMessage("after the summary");
+        }
+
+        @Test
+        void theViewIsSentAndNothingIsCompactedInPlace() {
+            summarizedLog();
+            final CompactionGuard rewriting = (memory, model, hookRegistry, environment) -> {
+                throw new AssertionError("the guard must not be asked to rewrite a log that carries a view");
+            };
+            final List<Message> logBefore = buffer.getMessages();
+
+            final ContextDecision decision = inPlaceOnly(rewriting).prepare(request());
+
+            assertThat(decision.getAction()).isEqualTo(CompactionDecision.Action.NONE);
+            assertThat(decision.getReason()).isEqualTo(DefaultContextEngine.IN_PLACE_REFUSED);
+            assertThat(decision.getView().getMessages()).as("the projected view, not the raw entries")
+                    .isEqualTo(ViewProjection.of(buffer.getLogState()).getMessages());
+            assertThat(decision.getView().getMessages()).extracting(Message::getContent)
+                    .doesNotContain("x".repeat(4300));
+            assertThat(buffer.getMessages()).isEqualTo(logBefore);
+            assertThat(buffer.getViewState().getSummarySpan()).as("the span survives").isPresent();
+        }
+
+        @Test
+        void compactNowFailsRatherThanErasingTheSpan() {
+            summarizedLog();
+            final CompactionGuard custom = (memory, model, hookRegistry, environment) -> CompactionDecision.none();
+
+            final CompactionResult result = inPlaceOnly(custom).compactNow(request(), null);
+
+            assertThat(result.isFailure()).isTrue();
+            assertThat(result.getError()).hasValueSatisfying(
+                    error -> assertThat(error).hasMessageContaining(DefaultContextEngine.IN_PLACE_REFUSED));
+            assertThat(buffer.getViewState().getSummarySpan()).isPresent();
+        }
+
+        @Test
+        void recoveryDropsFromTheViewInsteadOfReplacingTheBuffer() {
+            summarizedLog();
+            final CompactionGuard custom = (memory, model, hookRegistry, environment) -> CompactionDecision.none();
+            final List<Message> logBefore = buffer.getMessages();
+
+            final var recovered = inPlaceOnly(custom).recover(request(), new LlmPromptTooLongException("too long"));
+
+            assertThat(buffer.getMessages()).as("the log is not rewritten").isEqualTo(logBefore);
+            assertThat(buffer.getViewState().getSummarySpan()).isPresent();
+            recovered.ifPresent(view -> assertThat(view.getMessages())
+                    .isEqualTo(ViewProjection.of(buffer.getLogState()).getMessages()));
+        }
+
+        @Test
+        void aVersionTwoLogWithoutAViewIsStillCompactedInPlace() {
+            fillPastTheAutoThreshold();
+            final CompactionGuard rewriting = (memory, model, hookRegistry, environment) -> {
+                memory.replaceWith(List.of(Message.user("rewritten")));
+                return CompactionDecision.compact(CompactionResult.success("s", metadata()), "custom", 1, 2);
+            };
+
+            final ContextDecision decision = inPlaceOnly(rewriting).prepare(request());
+
+            assertThat(decision.getView().getMessages()).extracting(Message::getContent).containsExactly("rewritten");
+        }
+
+        @Test
+        void passthroughSendsTheViewOfAVersionTwoLog() {
+            summarizedLog();
+
+            final ContextDecision decision = ContextEngine.passthrough().prepare(request());
+
+            assertThat(decision.getView().getMessages())
+                    .isEqualTo(ViewProjection.of(buffer.getLogState()).getMessages());
+        }
+    }
+
     private static CompactionMetadata metadata() {
         final Instant now = Instant.now();
         return CompactionMetadata.builder().trigger(CompactionTrigger.AUTO).startedAt(now).completedAt(now).build();
@@ -343,6 +450,7 @@ class DefaultContextEngineViewModeTest {
         private final List<SummaryRequest> summarized = new ArrayList<>();
         private final List<CompactionResult> installed = new ArrayList<>();
         private boolean fail;
+        private boolean returnNull;
         private java.util.function.Consumer<TranscriptBuffer> onInstalled = memory -> {
         };
 
@@ -359,6 +467,9 @@ class DefaultContextEngineViewModeTest {
         @Override
         public CompactionResult summarize(SummaryRequest request) {
             summarized.add(request);
+            if (returnNull) {
+                return null;
+            }
             final Instant now = Instant.now();
             final CompactionMetadata metadata = CompactionMetadata.builder().trigger(request.getTrigger())
                     .preCompactTokenCount(100).messagesSummarized(request.getMessages().size()).startedAt(now)

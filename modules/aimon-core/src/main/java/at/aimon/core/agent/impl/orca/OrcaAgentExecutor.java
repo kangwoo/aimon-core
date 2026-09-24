@@ -41,6 +41,7 @@ import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.budget.ExecutionBudget;
 import at.aimon.core.agent.budget.StalledIterationGuard;
 import at.aimon.core.agent.budget.TruncatedResponses;
+import at.aimon.core.agent.compact.CompactionKind;
 import at.aimon.core.agent.compact.CompactionMetadata;
 import at.aimon.core.agent.context.ContextAssembler;
 import at.aimon.core.agent.context.ContextAssemblyRequest;
@@ -1673,6 +1674,11 @@ public class OrcaAgentExecutor
                         case WARN :
                             log.warn("Compaction guard warning at iteration {}: {}", iterationCount,
                                     compactionDecision.getReason());
+                            // A rolling engine that could not bring the view down says so as a FALLBACK record: it
+                            // belongs with the compactions in the result, not only in the log (context-engine §5.6).
+                            compactionDecision.getCompactionMetadata()
+                                    .filter(m -> m.getKind() == CompactionKind.FALLBACK)
+                                    .ifPresent(scope.compactionEvents::add);
                             break;
                         case NONE :
                         default :

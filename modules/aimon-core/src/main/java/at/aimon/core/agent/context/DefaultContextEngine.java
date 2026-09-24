@@ -68,7 +68,9 @@ import at.aimon.core.llm.token.TokenEstimator;
  * (its contract is to rewrite the buffer, which cannot be translated into view state operations), or a
  * {@link CompactionEngine} that does not {@linkplain CompactionEngine#supportsSummarize() summarize}. That happens only
  * on a node configured to write version 1 meeting a record already upgraded; a node configured to write version 2
- * refuses the combination when it is built (see {@link Builder#writeFormat}).
+ * refuses the combination when it is built (see {@link Builder#writeFormat}). A version-2 transcript that already
+ * carries a view state or sealed ranges is not compacted in place, since {@code replaceWith} would erase both: it is
+ * sent as its projected view, {@link #compactNow} fails, and recovery drops from the view.
  * </ul>
  *
  * <p>
@@ -79,6 +81,10 @@ import at.aimon.core.llm.token.TokenEstimator;
 @SuppressWarnings("deprecation") // the in-place mode is built on the deprecated guard and compact() on purpose
 public final class DefaultContextEngine implements ContextEngine {
 
+    /** The reason given when a log carrying a view cannot be compacted by an engine that only compacts in place. */
+    static final String IN_PLACE_REFUSED = "in-place compaction refused: the version-2 log carries a view state or"
+            + " sealed ranges that it would erase";
+
     private static final Logger log = LoggerFactory.getLogger(DefaultContextEngine.class);
 
     private final CompactionGuard compactionGuard;
@@ -87,6 +93,7 @@ public final class DefaultContextEngine implements ContextEngine {
     private final TokenEstimator tokenEstimator;
     private final boolean viewCapable;
     private final AtomicBoolean fallbackWarned = new AtomicBoolean();
+    private final AtomicBoolean inPlaceRefusedWarned = new AtomicBoolean();
 
     private DefaultContextEngine(Builder builder) {
         this.compactionGuard = builder.compactionGuard != null
@@ -156,6 +163,9 @@ public final class DefaultContextEngine implements ContextEngine {
         if (inViewMode(buffer)) {
             return prepareView(request);
         }
+        if (carriesView(buffer)) {
+            return prepareRefusingInPlace(request);
+        }
         final int sizeBefore = buffer.size();
 
         final CompactionDecision decision;
@@ -186,12 +196,44 @@ public final class DefaultContextEngine implements ContextEngine {
         return ContextDecision.from(decision, viewOf(request, ViewProjection.of(buffer.getLogState())), before.size());
     }
 
+    /**
+     * The in-place fallback met a version-2 log that already carries a view state or a manifest. Compacting in place
+     * would replace the buffer through {@link TranscriptBuffer#replaceWith(List)}, which clears both: the summary
+     * span's text would be lost, the hot originals it hides would become the prompt again, and the sealed segments the
+     * manifest names would be collected as orphans. So the view is projected and sent as it is, and nothing is
+     * compacted; prompt-too-long recovery still works, by dropping from the view.
+     */
+    private ContextDecision prepareRefusingInPlace(ContextRequest request) {
+        final TranscriptBuffer buffer = request.getTranscriptBuffer();
+        if (inPlaceRefusedWarned.compareAndSet(false, true)) {
+            log.warn(
+                    "Session {} has a version-2 log with a view state or sealed ranges, which in-place compaction"
+                            + " would destroy; it is sent as its view and not compacted by this context engine ({})",
+                    buffer.getSessionId(), viewModeGap(compactionGuard, compactionEngine));
+        }
+        final ViewProjection view = ViewProjection.of(buffer.getLogState());
+        return ContextDecision.from(CompactionDecision.none(IN_PLACE_REFUSED), viewOf(request, view), view.size());
+    }
+
+    /**
+     * Whether {@code buffer} is a version-2 log carrying what in-place compaction would erase: a view state or sealed
+     * ranges. Only asked outside view mode.
+     */
+    private static boolean carriesView(TranscriptBuffer buffer) {
+        if (buffer.getFormat() != SessionLogFormat.V2) {
+            return false;
+        }
+        return !buffer.getViewState().isEmpty() || !buffer.getManifest().isEmpty();
+    }
+
     @Override
     public Optional<ContextView> recover(ContextRequest request, LlmPromptTooLongException error) {
         Objects.requireNonNull(request, "request cannot be null");
         Objects.requireNonNull(error, "error cannot be null");
         final TranscriptBuffer buffer = request.getTranscriptBuffer();
-        if (inViewMode(buffer)) {
+        // Dropping from the view needs no summary, so a log that carries a view recovers that way even when this
+        // engine cannot serve it in view mode — a replaceWith here would erase the view state and the manifest.
+        if (inViewMode(buffer) || carriesView(buffer)) {
             return recoverView(request, error);
         }
         final PromptSizeRecoveryDecision decision = recoveryStrategy.recover(buffer.getMessages(), error);
@@ -264,6 +306,14 @@ public final class DefaultContextEngine implements ContextEngine {
                             .build());
         }
         final TranscriptBuffer buffer = request.getTranscriptBuffer();
+        if (!inViewMode(buffer) && carriesView(buffer)) {
+            final Instant now = Instant.now();
+            return CompactionResult.failure(
+                    new IllegalStateException(
+                            IN_PLACE_REFUSED + " (" + viewModeGap(compactionGuard, compactionEngine) + ")"),
+                    CompactionMetadata.builder().trigger(CompactionTrigger.MANUAL).startedAt(now).completedAt(now)
+                            .build());
+        }
         if (inViewMode(buffer)) {
             final CompactionResult result = summarizeIntoView(request, CompactionTrigger.MANUAL, instructions,
                     ViewProjection.of(buffer.getLogState()));
@@ -325,7 +375,13 @@ public final class DefaultContextEngine implements ContextEngine {
                 .environment(requireEnvironment(request)).customInstructions(instructions)
                 .callMetadata(request.getCallMetadata().orElse(null)).build();
         final CompactionResult summarized = compactionEngine.summarize(summaryRequest);
-        if (summarized == null || summarized.isFailure()) {
+        if (summarized == null) {
+            // compactNow reads the result's isSuccess(); a null would surface there as an NPE, not a failure.
+            final Instant now = Instant.now();
+            return CompactionResult.failure(new IllegalStateException("summarize() returned null"),
+                    CompactionMetadata.builder().trigger(trigger).startedAt(now).completedAt(now).build());
+        }
+        if (summarized.isFailure()) {
             return summarized;
         }
         final CompactionMetadata produced = summarized.getMetadata();

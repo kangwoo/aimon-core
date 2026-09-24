@@ -3,6 +3,7 @@ package at.aimon.core.agent.impl.orca;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -15,7 +16,10 @@ import at.aimon.core.agent.DefaultAgent;
 import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.compact.CompactionDecision;
 import at.aimon.core.agent.compact.CompactionGuard;
+import at.aimon.core.agent.compact.CompactionKind;
+import at.aimon.core.agent.compact.CompactionMetadata;
 import at.aimon.core.agent.compact.CompactionResult;
+import at.aimon.core.agent.compact.CompactionTrigger;
 import at.aimon.core.agent.compact.NoOpCompactionGuard;
 import at.aimon.core.agent.context.ContextDecision;
 import at.aimon.core.agent.context.ContextEngine;
@@ -121,6 +125,49 @@ class OrcaAgentExecutorContextEngineTest {
         assertThat(result.isSuccess()).isFalse();
         assertThat(result.getErrorMessage()).contains("over the limit");
         assertThat(client.sent).isEmpty();
+    }
+
+    @Test
+    void aRollingFallbackWarningIsRecordedWithTheCompactionEvents() {
+        final RecordingClient client = new RecordingClient(0);
+        final Instant now = Instant.now();
+        final CompactionMetadata fallback = CompactionMetadata.builder().trigger(CompactionTrigger.AUTO)
+                .kind(CompactionKind.FALLBACK).preCompactTokenCount(700).startedAt(now).completedAt(now).build();
+        final ContextEngine warning = new ViewSubstitutingEngine(Optional.empty()) {
+            @Override
+            public ContextDecision prepare(ContextRequest request) {
+                return ContextDecision.builder().view(ContextView.of(List.of(VIEW_MARKER)))
+                        .action(CompactionDecision.Action.WARN).reason("cannot bring the view down")
+                        .compactionMetadata(fallback).build();
+            }
+        };
+
+        final OrcaAgentExecutionResult result = createExecutor(client).execute(createRuntime(warning),
+                OrcaAgentExecutionRequest.builder().userInput("hi").sessionId(SessionId.generate()).build());
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.getCompactionEvents()).containsExactly(fallback);
+    }
+
+    @Test
+    void anyOtherWarningRecordsNothing() {
+        final RecordingClient client = new RecordingClient(0);
+        final Instant now = Instant.now();
+        final CompactionMetadata notAFallback = CompactionMetadata.builder().trigger(CompactionTrigger.AUTO)
+                .kind(CompactionKind.ROLLING).startedAt(now).completedAt(now).build();
+        final ContextEngine warning = new ViewSubstitutingEngine(Optional.empty()) {
+            @Override
+            public ContextDecision prepare(ContextRequest request) {
+                return ContextDecision.builder().view(ContextView.of(List.of(VIEW_MARKER)))
+                        .action(CompactionDecision.Action.WARN).reason("warning band").compactionMetadata(notAFallback)
+                        .build();
+            }
+        };
+
+        final OrcaAgentExecutionResult result = createExecutor(client).execute(createRuntime(warning),
+                OrcaAgentExecutionRequest.builder().userInput("hi").sessionId(SessionId.generate()).build());
+
+        assertThat(result.getCompactionEvents()).isEmpty();
     }
 
     @Test
