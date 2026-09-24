@@ -1247,9 +1247,11 @@ public class OrcaAgentExecutor
      * the flag.
      *
      * <p>
-     * The delta comes from the mark set at the top of {@code execute()}, and is empty when the history was rewritten
-     * underneath the execution — see {@link TranscriptBuffer#messagesSinceIngestMark()} for why that execution is
-     * skipped rather than re-sent. The sink is contracted to swallow its own failures; the catch here is for a sink
+     * The delta comes from the mark set at the top of {@code execute()}: the conversation entries added since, without
+     * what the runtime injected. On a version-2 log compaction leaves the log alone, so a compacted execution is fed
+     * as it was said; only in the version-1 write mode is it empty when the history was rewritten underneath the
+     * execution — see {@link TranscriptBuffer#messagesSinceIngestMark()} for why that execution is skipped rather than
+     * re-sent. The sink is contracted to swallow its own failures; the catch here is for a sink
      * that is wrong about that, because nothing in memory is worth throwing out of a finally block that has already
      * saved the transcript.
      */
@@ -1627,9 +1629,10 @@ public class OrcaAgentExecutor
                     // thresholds, may compact it before the next LLM call, and returns the view that call is sent.
                     // When the budget tracker requested proactive compaction, the request's budgetForced flag lowers
                     // the effective trigger to the warning band.
-                    // Snapshot the message count BEFORE the engine runs — the default engine rewrites memory in
-                    // place, so this is the only point where the pre-compaction size is observable for the
-                    // CompactBoundary event below.
+                    // Snapshot the message count BEFORE the engine runs — in place, the engine rewrites memory, so
+                    // this is the only point where the pre-compaction size is observable for the CompactBoundary
+                    // event below. An engine that reports the view's own sizes wins: with an append-only log the
+                    // log does not shrink, only the view does (context-engine §10).
                     final int messagesBeforeCompaction = scope.transcriptBuffer.size();
                     final ContextRequest contextRequest = contextRequest(scope, budgetForcedCompaction);
                     final ContextDecision compactionDecision = contextEngine.prepare(contextRequest);
@@ -1646,8 +1649,12 @@ public class OrcaAgentExecutor
                             // Publish the compaction-boundary observability event. Emitted here (not at the
                             // iteration tail) so it is ordered immediately before this iteration's IterationStarted,
                             // reflecting that the compaction happened just before the LLM call it precedes.
-                            scope.eventDispatcher.emitCompactBoundary(iterationCount, messagesBeforeCompaction,
-                                    scope.transcriptBuffer.size());
+                            final boolean viewSized = compactionDecision.getViewSizeBefore().isPresent();
+                            scope.eventDispatcher.emitCompactBoundary(iterationCount,
+                                    compactionDecision.getViewSizeBefore().orElse(messagesBeforeCompaction),
+                                    viewSized
+                                            ? compactionDecision.getView().getMessages().size()
+                                            : scope.transcriptBuffer.size());
                             break;
                         case WARN :
                             log.warn("Compaction guard warning at iteration {}: {}", iterationCount,

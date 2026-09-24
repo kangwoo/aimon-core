@@ -5,6 +5,8 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.SortedMap;
+import java.util.TreeMap;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,11 +20,14 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.LogOrigin;
+import at.aimon.core.agent.session.transcript.SeqRange;
 import at.aimon.core.agent.session.transcript.SessionLogEntry;
 import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.agent.session.transcript.SessionLogState;
 import at.aimon.core.agent.session.transcript.SessionRewindPoint;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
+import at.aimon.core.agent.session.transcript.SessionViewState;
+import at.aimon.core.agent.session.transcript.SummarySpan;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.MessageArtifact;
 import at.aimon.core.llm.ReasoningTrace;
@@ -78,7 +83,10 @@ import at.aimon.core.llm.content.TextContentBlock;
  * <p>
  * Version 1 is the document described above: a {@code messages} array and a rewind point stored as a message count.
  * Version 2 ({@link #FORMAT_VERSION_V2}) carries the whole {@link SessionLogState}: {@code nextSeq}, {@code floorSeq},
- * an {@code entries} array of {@code {seq, origin, message}}, and a rewind point stored as a seq. Both are read.
+ * an {@code entries} array of {@code {seq, origin, message}}, a rewind point stored as a seq, and — when it leaves
+ * anything out — a {@code viewState} object: {@code summarySpan} (the range, the summary text and the boundary's
+ * metadata), {@code droppedRanges} ({@code {fromSeq, toSeq}} each) and {@code elisions} ({@code {seq, placeholder}}
+ * each). Both versions are read; a version-2 document without {@code viewState} has an empty one.
  *
  * <p>
  * What is written is the later of the codec's write format ({@link SessionLogFormat#V1} unless constructed otherwise)
@@ -122,6 +130,19 @@ public final class JsonSessionSnapshotCodec implements SessionSnapshotCodec {
     private static final String FIELD_ENTRIES = "entries";
     private static final String FIELD_ORIGIN = "origin";
     private static final String FIELD_MESSAGE = "message";
+    private static final String FIELD_VIEW_STATE = "viewState";
+    private static final String FIELD_SUMMARY_SPAN = "summarySpan";
+    private static final String FIELD_DROPPED_RANGES = "droppedRanges";
+    private static final String FIELD_ELISIONS = "elisions";
+    private static final String FIELD_FROM_SEQ = "fromSeq";
+    private static final String FIELD_TO_SEQ = "toSeq";
+    private static final String FIELD_SUMMARY_TEXT = "summaryText";
+    private static final String FIELD_BOUNDARY_ID = "boundaryId";
+    private static final String FIELD_TRIGGER = "trigger";
+    private static final String FIELD_PRE_TOKEN_COUNT = "preTokenCount";
+    private static final String FIELD_MESSAGES_SUMMARIZED = "messagesSummarized";
+    private static final String FIELD_DISCOVERED_TOOL_NAMES = "discoveredToolNames";
+    private static final String FIELD_PLACEHOLDER = "placeholder";
 
     private static final String FIELD_ROLE = "role";
     private static final String FIELD_CONTENT = "content";
@@ -203,6 +224,9 @@ public final class JsonSessionSnapshotCodec implements SessionSnapshotCodec {
                     node.set(FIELD_MESSAGE, encodeMessage(entry.getMessage()));
                 }
                 rewindAt = state.getRewindPoint().map(SessionRewindPoint::getSeq).orElse(-1L);
+                if (!state.getViewState().isEmpty()) {
+                    root.set(FIELD_VIEW_STATE, encodeViewState(state.getViewState()));
+                }
             } else {
                 final ArrayNode messages = root.putArray(FIELD_MESSAGES);
                 for (Message message : state.getMessages()) {
@@ -307,10 +331,84 @@ public final class JsonSessionSnapshotCodec implements SessionSnapshotCodec {
         }
         try {
             return SessionLogState.builder().entries(entries).nextSeq(nextSeq).floorSeq(floorSeq)
-                    .rewindPoint(decodeRewindPoint(pointNode, at)).format(SessionLogFormat.V2).build();
+                    .rewindPoint(decodeRewindPoint(pointNode, at)).format(SessionLogFormat.V2)
+                    .viewState(decodeViewState(root.get(FIELD_VIEW_STATE))).build();
         } catch (IllegalArgumentException e) {
             throw new SessionSnapshotCodecException("Inconsistent session log: " + e.getMessage(), e);
         }
+    }
+
+    private static ObjectNode encodeViewState(SessionViewState viewState) {
+        final ObjectNode node = MAPPER.createObjectNode();
+        viewState.getSummarySpan().ifPresent(span -> {
+            final ObjectNode spanNode = node.putObject(FIELD_SUMMARY_SPAN);
+            spanNode.put(FIELD_FROM_SEQ, span.getFromSeq());
+            spanNode.put(FIELD_TO_SEQ, span.getToSeq());
+            spanNode.put(FIELD_SUMMARY_TEXT, span.getSummaryText());
+            spanNode.put(FIELD_BOUNDARY_ID, span.getBoundaryId());
+            spanNode.put(FIELD_TRIGGER, span.getTrigger());
+            spanNode.put(FIELD_PRE_TOKEN_COUNT, span.getPreTokenCount());
+            spanNode.put(FIELD_MESSAGES_SUMMARIZED, span.getMessagesSummarized());
+            final ArrayNode tools = spanNode.putArray(FIELD_DISCOVERED_TOOL_NAMES);
+            span.getDiscoveredToolNames().forEach(tools::add);
+        });
+        final ArrayNode ranges = node.putArray(FIELD_DROPPED_RANGES);
+        for (SeqRange range : viewState.getDroppedRanges()) {
+            final ObjectNode rangeNode = ranges.addObject();
+            rangeNode.put(FIELD_FROM_SEQ, range.getFromSeq());
+            rangeNode.put(FIELD_TO_SEQ, range.getToSeq());
+        }
+        final ArrayNode elisions = node.putArray(FIELD_ELISIONS);
+        viewState.getElisions().forEach((seq, placeholder) -> {
+            final ObjectNode elisionNode = elisions.addObject();
+            elisionNode.put(FIELD_SEQ, seq);
+            elisionNode.put(FIELD_PLACEHOLDER, placeholder);
+        });
+        return node;
+    }
+
+    /**
+     * Reads a version-2 view state. Absent means empty — the log leaves nothing out of its view. The seqs are checked
+     * against the log by {@link SessionLogState}'s own invariants.
+     */
+    private static SessionViewState decodeViewState(JsonNode node) {
+        if (node == null || node.isNull()) {
+            return SessionViewState.empty();
+        }
+        if (!node.isObject()) {
+            throw new SessionSnapshotCodecException("viewState is not a JSON object");
+        }
+        SummarySpan span = null;
+        final JsonNode spanNode = node.get(FIELD_SUMMARY_SPAN);
+        if (spanNode != null && !spanNode.isNull()) {
+            final List<String> tools = new ArrayList<>();
+            final JsonNode toolsNode = spanNode.get(FIELD_DISCOVERED_TOOL_NAMES);
+            if (toolsNode != null && toolsNode.isArray()) {
+                toolsNode.forEach(tool -> tools.add(tool.asText()));
+            }
+            span = SummarySpan.builder().fromSeq(requiredLong(spanNode, FIELD_FROM_SEQ))
+                    .toSeq(requiredLong(spanNode, FIELD_TO_SEQ)).summaryText(requiredText(spanNode, FIELD_SUMMARY_TEXT))
+                    .boundaryId(requiredText(spanNode, FIELD_BOUNDARY_ID))
+                    .trigger(requiredText(spanNode, FIELD_TRIGGER))
+                    .preTokenCount(spanNode.path(FIELD_PRE_TOKEN_COUNT).asInt(0))
+                    .messagesSummarized(spanNode.path(FIELD_MESSAGES_SUMMARIZED).asInt(0)).discoveredToolNames(tools)
+                    .build();
+        }
+        final List<SeqRange> ranges = new ArrayList<>();
+        final JsonNode rangesNode = node.get(FIELD_DROPPED_RANGES);
+        if (rangesNode != null && rangesNode.isArray()) {
+            for (JsonNode rangeNode : rangesNode) {
+                ranges.add(SeqRange.of(requiredLong(rangeNode, FIELD_FROM_SEQ), requiredLong(rangeNode, FIELD_TO_SEQ)));
+            }
+        }
+        final SortedMap<Long, String> elisions = new TreeMap<>();
+        final JsonNode elisionsNode = node.get(FIELD_ELISIONS);
+        if (elisionsNode != null && elisionsNode.isArray()) {
+            for (JsonNode elisionNode : elisionsNode) {
+                elisions.put(requiredLong(elisionNode, FIELD_SEQ), requiredText(elisionNode, FIELD_PLACEHOLDER));
+            }
+        }
+        return SessionViewState.of(span, ranges, elisions);
     }
 
     /**

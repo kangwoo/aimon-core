@@ -44,6 +44,15 @@ import at.aimon.core.llm.Role;
  * {@link SessionLogFormat} for why the upgrade is sticky.
  *
  * <p>
+ * <b>View state.</b> {@link #getViewState()} says what the LLM view leaves out of the log — a summarized span, dropped
+ * ranges, elided tool results. It is changed by {@link #summarize(SummarySpan)}, {@link #drop(long, long)} and
+ * {@link #elide(long, String)}, never by rewriting entries; each checks that its cuts are
+ * {@linkplain #isLegalCut(long) legal}. A view state can only be written in version 2, so a non-empty one requires
+ * {@link SessionLogFormat#V2}, and the three operations refuse a version-1 state: a version-1 write mode compacts by
+ * rewriting the log instead. The two paths that cut the log — {@link #truncateFrom(long)} and {@link #clear()} — clean
+ * up whatever pointed at the cut seqs (session-log §6).
+ *
+ * <p>
  * Immutable and therefore thread-safe. Every operation returns a new instance.
  */
 public final class SessionLogState {
@@ -61,12 +70,14 @@ public final class SessionLogState {
 
     private final SessionRewindPoint rewindPoint;
     private final SessionLogFormat format;
+    private final SessionViewState viewState;
 
     private SessionLogState(Builder builder) {
         this.nextSeq = builder.nextSeq;
         this.floorSeq = builder.floorSeq;
         this.rewindPoint = builder.rewindPoint;
         this.format = Objects.requireNonNull(builder.format, "format cannot be null");
+        this.viewState = Objects.requireNonNull(builder.viewState, "viewState cannot be null");
         if (floorSeq < 0 || floorSeq > nextSeq) {
             throw new IllegalArgumentException(
                     "floorSeq must lie in [0, nextSeq], got floorSeq=" + floorSeq + ", nextSeq=" + nextSeq);
@@ -92,6 +103,13 @@ public final class SessionLogState {
         if (rewindPoint != null && (rewindPoint.getSeq() < floorSeq || rewindPoint.getSeq() > nextSeq)) {
             throw new IllegalArgumentException("rewindPoint seq " + rewindPoint.getSeq() + " lies outside [floorSeq="
                     + floorSeq + ", nextSeq=" + nextSeq + "]");
+        }
+        if (!viewState.isEmpty() && format != SessionLogFormat.V2) {
+            throw new IllegalArgumentException("a view state can only be carried by a version-2 log, got " + format);
+        }
+        if (!viewState.liesWithin(floorSeq, nextSeq)) {
+            throw new IllegalArgumentException(
+                    "view state " + viewState + " points outside [floorSeq=" + floorSeq + ", nextSeq=" + nextSeq + "]");
         }
         this.entries = Collections.unmodifiableList(ownedEntries);
         this.messages = Collections.unmodifiableList(ownedMessages);
@@ -150,7 +168,8 @@ public final class SessionLogState {
     }
 
     /**
-     * Starts building a state. Defaults: no entries, both seqs 0, no rewind point, {@link SessionLogFormat#V1}.
+     * Starts building a state. Defaults: no entries, both seqs 0, no rewind point, {@link SessionLogFormat#V1}, an
+     * empty view state.
      *
      * @return a new builder (never null)
      */
@@ -165,7 +184,7 @@ public final class SessionLogState {
      */
     public Builder toBuilder() {
         return new Builder().entries(entries).nextSeq(nextSeq).floorSeq(floorSeq).rewindPoint(rewindPoint)
-                .format(format);
+                .format(format).viewState(viewState);
     }
 
     /**
@@ -216,6 +235,144 @@ public final class SessionLogState {
      */
     public SessionLogFormat getFormat() {
         return format;
+    }
+
+    /**
+     * Returns what the LLM view leaves out of this log.
+     *
+     * @return the view state (never null; empty for a version-1 state)
+     */
+    public SessionViewState getViewState() {
+        return viewState;
+    }
+
+    /**
+     * Returns the messages of the {@link LogOrigin#CONVERSATION} entries, in seq order — the log as a record of what
+     * was said, without what the runtime injected. This is what memory ingest reads.
+     *
+     * @return an unmodifiable list (never null, may be empty)
+     */
+    public List<Message> getConversationMessages() {
+        final List<Message> conversation = new ArrayList<>(entries.size());
+        for (SessionLogEntry entry : entries) {
+            if (entry.getOrigin() == LogOrigin.CONVERSATION) {
+                conversation.add(entry.getMessage());
+            }
+        }
+        return Collections.unmodifiableList(conversation);
+    }
+
+    /**
+     * Returns whether a cut at {@code seq} — between the entries below it and those at or above it — splits no
+     * {@code tool_use} from its {@code tool_result}. See {@link LegalCuts} for the rule; it is checked against the
+     * entries this state carries.
+     *
+     * @param seq
+     *            the cut
+     * @return whether the cut is legal; false when {@code seq} lies outside {@code [floorSeq, nextSeq]}
+     */
+    public boolean isLegalCut(long seq) {
+        if (seq < floorSeq || seq > nextSeq) {
+            return false;
+        }
+        return LegalCuts.isLegal(messages, countBefore(seq));
+    }
+
+    /**
+     * Returns this state with {@code span} as its summary span: the view shows the span's marker pair instead of the
+     * entries in its range. The log is not touched.
+     *
+     * <p>
+     * There is one span. A new one must cover the one held — a span only ever widens — and absorbs it; dropped ranges
+     * and elisions inside it are forgotten, since the span hides them anyway.
+     *
+     * @param span
+     *            the span (must not be null)
+     * @return the state (never null)
+     * @throws IllegalStateException
+     *             if this is a version-1 state
+     * @throws IllegalArgumentException
+     *             if the span lies outside {@code [floorSeq, nextSeq]}, does not cover the span held, or either of its
+     *             cuts is not legal
+     */
+    public SessionLogState summarize(SummarySpan span) {
+        Objects.requireNonNull(span, "span cannot be null");
+        requireViewCapable();
+        requireLegalRange(span.getFromSeq(), span.getToSeq());
+        final Optional<SummarySpan> held = viewState.getSummarySpan();
+        if (held.isPresent()
+                && (span.getFromSeq() > held.get().getFromSeq() || span.getToSeq() < held.get().getToSeq())) {
+            throw new IllegalArgumentException(
+                    "a summary span only widens: " + span.getRange() + " does not cover " + held.get().getRange());
+        }
+        return toBuilder().viewState(viewState.withSummarySpan(span)).build();
+    }
+
+    /**
+     * Returns this state with {@code [fromSeq, toSeq)} left out of the view — without a summary. Prompt-too-long
+     * recovery uses it. The log is not touched.
+     *
+     * @param fromSeq
+     *            the first seq to drop
+     * @param toSeq
+     *            the first seq after the dropped range
+     * @return the state (never null)
+     * @throws IllegalStateException
+     *             if this is a version-1 state
+     * @throws IllegalArgumentException
+     *             if the range is empty, lies outside {@code [floorSeq, nextSeq]}, or either of its cuts is not legal
+     */
+    public SessionLogState drop(long fromSeq, long toSeq) {
+        requireViewCapable();
+        requireLegalRange(fromSeq, toSeq);
+        return toBuilder().viewState(viewState.withDroppedRange(SeqRange.of(fromSeq, toSeq))).build();
+    }
+
+    /**
+     * Returns this state with the tool result bodies of the entry at {@code seq} shown as {@code placeholder}. The
+     * tool_use ids and error flags stay, so no pair is broken — which is why no cut needs checking. The log is not
+     * touched.
+     *
+     * @param seq
+     *            the seq of a {@link Role#TOOL} entry this state carries
+     * @param placeholder
+     *            the text shown instead (must not be null)
+     * @return the state (never null)
+     * @throws IllegalStateException
+     *             if this is a version-1 state
+     * @throws IllegalArgumentException
+     *             if no carried entry has that seq or it is not a tool result
+     */
+    public SessionLogState elide(long seq, String placeholder) {
+        Objects.requireNonNull(placeholder, "placeholder cannot be null");
+        requireViewCapable();
+        final int index = countBefore(seq);
+        if (index >= entries.size() || entries.get(index).getSeq() != seq) {
+            throw new IllegalArgumentException("no entry with seq " + seq + " in this log");
+        }
+        final Message message = entries.get(index).getMessage();
+        if (message == null || message.getRole() != Role.TOOL) {
+            throw new IllegalArgumentException("only a tool result can be elided, seq " + seq + " is not one");
+        }
+        return toBuilder().viewState(viewState.withElision(seq, placeholder)).build();
+    }
+
+    private void requireViewCapable() {
+        if (format != SessionLogFormat.V2) {
+            throw new IllegalStateException(
+                    "a view state can only be kept by a version-2 log; a version-1 log is compacted in place");
+        }
+    }
+
+    private void requireLegalRange(long fromSeq, long toSeq) {
+        if (fromSeq < floorSeq || toSeq > nextSeq || toSeq <= fromSeq) {
+            throw new IllegalArgumentException("range [" + fromSeq + ", " + toSeq
+                    + ") is empty or lies outside [floorSeq=" + floorSeq + ", nextSeq=" + nextSeq + "]");
+        }
+        if (!isLegalCut(fromSeq) || !isLegalCut(toSeq)) {
+            throw new IllegalArgumentException("range [" + fromSeq + ", " + toSeq
+                    + ") would split a tool_use from its tool_result; both ends must be legal cuts");
+        }
     }
 
     /**
@@ -300,6 +457,11 @@ public final class SessionLogState {
      * {@code nextSeq} does not move — seqs are not reused. A rewind point at or after the cut described a turn that
      * no longer exists and is dropped with it; one before the cut survives.
      *
+     * <p>
+     * The view state forgets what pointed at the cut seqs: dropped ranges and elisions are cut back, a summary span
+     * lying wholly after the cut is dropped, and one reaching past it ends at the cut with its summary kept. That
+     * summary may describe part of what was cut — a known inaccuracy (session-log §6.1, §11).
+     *
      * @param seq
      *            the first seq to drop
      * @return the shorter state, or {@code this} when there was nothing to drop (never null)
@@ -307,10 +469,12 @@ public final class SessionLogState {
     public SessionLogState truncateFrom(long seq) {
         final int keep = countBefore(seq);
         final boolean dropPoint = rewindPoint != null && rewindPoint.getSeq() >= seq;
-        if (keep == entries.size() && !dropPoint) {
+        final SessionViewState cutView = viewState.truncatedFrom(seq);
+        if (keep == entries.size() && !dropPoint && cutView.equals(viewState)) {
             return this;
         }
-        return toBuilder().entries(entries.subList(0, keep)).rewindPoint(dropPoint ? null : rewindPoint).build();
+        return toBuilder().entries(entries.subList(0, keep)).rewindPoint(dropPoint ? null : rewindPoint)
+                .viewState(cutView).build();
     }
 
     /**
@@ -324,13 +488,14 @@ public final class SessionLogState {
     }
 
     /**
-     * Returns this state emptied the way {@code /clear} empties it: no entries, no rewind point, and
-     * {@code floorSeq} raised to {@code nextSeq} so the log continues from where it was rather than from 0.
+     * Returns this state emptied the way {@code /clear} empties it: no entries, no rewind point, an empty view state,
+     * and {@code floorSeq} raised to {@code nextSeq} so the log continues from where it was rather than from 0.
      *
      * @return the cleared state (never null)
      */
     public SessionLogState clear() {
-        return toBuilder().entries(List.of()).floorSeq(nextSeq).rewindPoint(null).build();
+        return toBuilder().entries(List.of()).floorSeq(nextSeq).rewindPoint(null).viewState(SessionViewState.empty())
+                .build();
     }
 
     /**
@@ -370,18 +535,20 @@ public final class SessionLogState {
             return false;
         }
         return nextSeq == other.nextSeq && floorSeq == other.floorSeq && format == other.format
-                && entries.equals(other.entries) && Objects.equals(rewindPoint, other.rewindPoint);
+                && entries.equals(other.entries) && Objects.equals(rewindPoint, other.rewindPoint)
+                && viewState.equals(other.viewState);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(nextSeq, floorSeq, entries, rewindPoint, format);
+        return Objects.hash(nextSeq, floorSeq, entries, rewindPoint, format, viewState);
     }
 
     @Override
     public String toString() {
         return "SessionLogState{entries=" + entries.size() + ", floorSeq=" + floorSeq + ", nextSeq=" + nextSeq
-                + ", rewindable=" + (rewindPoint != null) + ", format=" + format + "}";
+                + ", rewindable=" + (rewindPoint != null) + ", format=" + format
+                + (viewState.isEmpty() ? "" : ", viewState=" + viewState) + "}";
     }
 
     /** Builder for {@link SessionLogState}. Invariants are checked by {@link #build()}. */
@@ -392,8 +559,20 @@ public final class SessionLogState {
         private long floorSeq;
         private SessionRewindPoint rewindPoint;
         private SessionLogFormat format = SessionLogFormat.V1;
+        private SessionViewState viewState = SessionViewState.empty();
 
         private Builder() {
+        }
+
+        /**
+         * @param viewState
+         *            what the view leaves out of the log (must not be null; must be empty unless the format is
+         *            {@link SessionLogFormat#V2})
+         * @return this builder
+         */
+        public Builder viewState(SessionViewState viewState) {
+            this.viewState = Objects.requireNonNull(viewState, "viewState cannot be null");
+            return this;
         }
 
         /**

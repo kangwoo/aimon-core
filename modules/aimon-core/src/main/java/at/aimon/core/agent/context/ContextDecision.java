@@ -2,6 +2,7 @@ package at.aimon.core.agent.context;
 
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalInt;
 
 import at.aimon.core.agent.compact.CompactionDecision;
 import at.aimon.core.agent.compact.CompactionMetadata;
@@ -27,6 +28,7 @@ public final class ContextDecision {
     private final CompactionMetadata compactionMetadata;
     private final int estimatedTokens;
     private final int blockingLimit;
+    private final int viewSizeBefore;
 
     private ContextDecision(Builder builder) {
         this.view = Objects.requireNonNull(builder.view, "view cannot be null");
@@ -35,6 +37,7 @@ public final class ContextDecision {
         this.compactionMetadata = builder.compactionMetadata;
         this.estimatedTokens = builder.estimatedTokens;
         this.blockingLimit = builder.blockingLimit;
+        this.viewSizeBefore = builder.viewSizeBefore;
     }
 
     public static Builder builder() {
@@ -62,10 +65,27 @@ public final class ContextDecision {
      * @return the decision (never null)
      */
     public static ContextDecision from(CompactionDecision decision, ContextView view) {
+        return from(decision, view, -1);
+    }
+
+    /**
+     * Carries a {@link CompactionDecision} over unchanged, attaching the view computed after it and the size of the
+     * view it was taken on.
+     *
+     * @param decision
+     *            the guard's decision (must not be null)
+     * @param view
+     *            the view computed after the decision took effect (must not be null)
+     * @param viewSizeBefore
+     *            how many messages the view held before, or a negative value for unknown
+     * @return the decision (never null)
+     */
+    public static ContextDecision from(CompactionDecision decision, ContextView view, int viewSizeBefore) {
         Objects.requireNonNull(decision, "decision cannot be null");
         return builder().view(view).action(decision.getAction()).reason(decision.getReason())
                 .compactionMetadata(decision.getCompactionResult().map(CompactionResult::getMetadata).orElse(null))
-                .estimatedTokens(decision.getEstimatedTokens()).blockingLimit(decision.getBlockingLimit()).build();
+                .estimatedTokens(decision.getEstimatedTokens()).blockingLimit(decision.getBlockingLimit())
+                .viewSizeBefore(viewSizeBefore).build();
     }
 
     /** The messages to send on this call. */
@@ -96,6 +116,15 @@ public final class ContextDecision {
         return blockingLimit;
     }
 
+    /**
+     * How many messages the view held before the decision took effect — the "before" of a compaction's boundary event,
+     * compared with {@link #getView()} as the "after". Both are view sizes: with an append-only log, compaction does
+     * not shrink the log, only the view (context-engine §10). Empty when the engine did not report it.
+     */
+    public OptionalInt getViewSizeBefore() {
+        return viewSizeBefore < 0 ? OptionalInt.empty() : OptionalInt.of(viewSizeBefore);
+    }
+
     @Override
     public String toString() {
         return "ContextDecision{action=" + action + ", reason='" + reason + "', view=" + view
@@ -112,6 +141,7 @@ public final class ContextDecision {
         private CompactionMetadata compactionMetadata;
         private int estimatedTokens;
         private int blockingLimit;
+        private int viewSizeBefore = -1;
 
         private Builder() {
         }
@@ -143,6 +173,16 @@ public final class ContextDecision {
 
         public Builder blockingLimit(int blockingLimit) {
             this.blockingLimit = blockingLimit;
+            return this;
+        }
+
+        /**
+         * @param viewSizeBefore
+         *            how many messages the view held before the decision took effect, or a negative value for unknown
+         * @return this builder
+         */
+        public Builder viewSizeBefore(int viewSizeBefore) {
+            this.viewSizeBefore = viewSizeBefore;
             return this;
         }
 

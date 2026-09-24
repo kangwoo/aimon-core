@@ -31,6 +31,13 @@ import at.aimon.core.llm.Role;
  * said</em> can tell the two apart.
  *
  * <p>
+ * <b>Log and view.</b> What the model is sent is not {@link #getMessages()}: it is the view a
+ * {@link at.aimon.core.agent.context.ContextEngine} computes from the log and the {@link #getViewState() view state}.
+ * On a version-2 buffer compaction and recovery change the view state ({@link #summarizeView(SummarySpan)},
+ * {@link #dropFromView(long, long)}, {@link #elideInView(long, String)}) and the log stays append-only; only the
+ * version-1 write mode still rewrites it with {@link #replaceWith(List)}.
+ *
+ * <p>
  * <b>Thread safety:</b> Mutator and reader methods are {@code synchronized} on this instance, so concurrent access
  * from the {@link SessionCheckpointMailbox} writer thread does not race with the agent's main ReAct loop
  * thread.
@@ -93,6 +100,7 @@ public class TranscriptBuffer {
     private long nextSeq;
     private long floorSeq;
     private SessionLogFormat format = SessionLogFormat.V1;
+    private SessionViewState viewState = SessionViewState.empty();
     private long version;
     private volatile DirtyListener dirtyListener;
 
@@ -381,7 +389,91 @@ public class TranscriptBuffer {
      */
     public synchronized SessionLogState getLogState() {
         return SessionLogState.builder().entries(entries).nextSeq(nextSeq).floorSeq(floorSeq).rewindPoint(rewindPoint)
-                .format(format).build();
+                .format(format).viewState(viewState).build();
+    }
+
+    /**
+     * Returns what the LLM view leaves out of this buffer's log.
+     *
+     * @return the view state (never null; empty for a version-1 buffer)
+     */
+    public synchronized SessionViewState getViewState() {
+        return viewState;
+    }
+
+    /**
+     * Returns the messages of the {@link LogOrigin#CONVERSATION} entries this buffer holds, in seq order — what was
+     * said, without what the runtime injected.
+     *
+     * @return an immutable list (never null, may be empty)
+     * @see SessionLogState#getConversationMessages()
+     */
+    public synchronized List<Message> getConversationMessages() {
+        final List<Message> conversation = new ArrayList<>(entries.size());
+        for (SessionLogEntry entry : entries) {
+            if (entry.getOrigin() == LogOrigin.CONVERSATION) {
+                conversation.add(entry.getMessage());
+            }
+        }
+        return Collections.unmodifiableList(conversation);
+    }
+
+    /**
+     * Makes {@code span} the view's summary span. The log is not touched. See
+     * {@link SessionLogState#summarize(SummarySpan)} for the rules.
+     *
+     * <p>
+     * A mutation of what the model is sent, so it bumps the version and notifies the dirty listener: the view state
+     * is persisted with the record, through the same checkpoint path as the log.
+     *
+     * @param span
+     *            the span (must not be null)
+     * @throws IllegalStateException
+     *             if this buffer's log is version 1
+     * @throws IllegalArgumentException
+     *             if the span breaks a rule of {@link SessionLogState#summarize(SummarySpan)}
+     */
+    public synchronized void summarizeView(SummarySpan span) {
+        adoptViewState(getLogState().summarize(span));
+    }
+
+    /**
+     * Leaves {@code [fromSeq, toSeq)} out of the view. The log is not touched. See
+     * {@link SessionLogState#drop(long, long)} for the rules.
+     *
+     * @param fromSeq
+     *            the first seq to drop
+     * @param toSeq
+     *            the first seq after the dropped range
+     * @throws IllegalStateException
+     *             if this buffer's log is version 1
+     * @throws IllegalArgumentException
+     *             if the range breaks a rule of {@link SessionLogState#drop(long, long)}
+     */
+    public synchronized void dropFromView(long fromSeq, long toSeq) {
+        adoptViewState(getLogState().drop(fromSeq, toSeq));
+    }
+
+    /**
+     * Shows the tool result bodies of the entry at {@code seq} as {@code placeholder}. The log is not touched. See
+     * {@link SessionLogState#elide(long, String)} for the rules.
+     *
+     * @param seq
+     *            the seq of a tool result entry
+     * @param placeholder
+     *            the text shown instead (must not be null)
+     * @throws IllegalStateException
+     *             if this buffer's log is version 1
+     * @throws IllegalArgumentException
+     *             if the entry breaks a rule of {@link SessionLogState#elide(long, String)}
+     */
+    public synchronized void elideInView(long seq, String placeholder) {
+        adoptViewState(getLogState().elide(seq, placeholder));
+    }
+
+    private void adoptViewState(SessionLogState changed) {
+        viewState = changed.getViewState();
+        markDirty();
     }
 
     /**
@@ -399,13 +491,19 @@ public class TranscriptBuffer {
      * <b>This rewrites the log.</b> The replacement entries receive fresh seqs from {@code nextSeq} — seqs are never
      * reused — and {@code floorSeq} rises to the first of them, since nothing before survives. A replacement message
      * that is the very instance of an entry being replaced keeps that entry's origin, matched in order; every other
-     * one is {@link LogOrigin#CONVERSATION}. This is the in-place behaviour of the version-1 write mode.
+     * one is {@link LogOrigin#CONVERSATION}. This is the in-place behaviour of the version-1 write mode. Any view state
+     * pointed at the rewritten entries and is dropped with them.
      *
      * @param newMessages
      *            the new message list (must not be null; may be empty)
      * @throws NullPointerException
      *             if {@code newMessages} is null or contains null elements
+     * @deprecated A version-2 log is append-only: the view is shrunk through the view state
+     *             ({@link #summarizeView(SummarySpan)}, {@link #dropFromView(long, long)}), by a
+     *             {@link at.aimon.core.agent.context.ContextEngine}. This remains only for the version-1 write mode
+     *             (session-log §3.3).
      */
+    @Deprecated
     public synchronized void replaceWith(List<Message> newMessages) {
         Objects.requireNonNull(newMessages, "newMessages cannot be null");
         for (Message message : newMessages) {
@@ -437,6 +535,7 @@ public class TranscriptBuffer {
         // would throw into saveSilently, which swallows it, and the whole turn's history would be dropped in silence.
         // Losing the ability to retry this one turn is the honest price.
         rewindPoint = null;
+        viewState = SessionViewState.empty();
         // Same reasoning, different consequence: every rewritten entry now has a seq above the ingest mark, so a delta
         // taken against it would re-send the compaction summary as if it were new conversation. The execution that
         // was rewritten forgoes its ingest and the next one marks afresh.
@@ -462,7 +561,11 @@ public class TranscriptBuffer {
      *             if {@code index} is negative or {@code >= size()}
      * @throws NullPointerException
      *             if {@code newMessage} is null
+     * @deprecated Rewrites the log. Its one caller, {@link at.aimon.core.agent.compact.TimeBasedMicrocompact}, has no
+     *             production wiring; a version-2 log hides a tool result body through
+     *             {@link #elideInView(long, String)} instead (session-log §3.3).
      */
+    @Deprecated
     public synchronized void replaceMessageAt(int index, Message newMessage) {
         Objects.requireNonNull(newMessage, "newMessage cannot be null");
         if (index < 0 || index >= entries.size()) {
@@ -496,11 +599,12 @@ public class TranscriptBuffer {
      *
      * <p>
      * The log's seqs are not reset: {@code floorSeq} rises to {@code nextSeq} and the next entry continues from there
-     * (see {@link SessionLogState#clear()}).
+     * (see {@link SessionLogState#clear()}). The view state is emptied with the log.
      */
     public synchronized void clear() {
         systemPrompt = null;
         rewindPoint = null;
+        viewState = SessionViewState.empty();
         ingestMark = -1;
         entries.clear();
         messageTimestamps.clear();
@@ -628,7 +732,7 @@ public class TranscriptBuffer {
      * <p>
      * The new context is independent of the snapshot and can be modified without affecting the original snapshot. The
      * snapshot's log is adopted whole: entries with their seqs and origins, {@code nextSeq}, {@code floorSeq}, the
-     * rewind point and the format.
+     * rewind point, the format and the view state.
      *
      * @param snapshot
      *            The snapshot to convert (must not be null)
@@ -649,6 +753,7 @@ public class TranscriptBuffer {
         buffer.nextSeq = state.getNextSeq();
         buffer.floorSeq = state.getFloorSeq();
         buffer.format = state.getFormat();
+        buffer.viewState = state.getViewState();
         buffer.rewindPoint = state.getRewindPoint().orElse(null);
         return buffer;
     }
@@ -702,7 +807,16 @@ public class TranscriptBuffer {
     }
 
     /**
-     * Returns the messages added since {@link #markIngestPoint()}, or empty when there is no usable mark.
+     * Returns the conversation messages added since {@link #markIngestPoint()}, or empty when there is no usable mark.
+     *
+     * <p>
+     * {@link LogOrigin#SYNTHETIC} entries are left out: what the runtime injected is not something the conversation
+     * said, and memory must not learn it as such. Leaving them out splits no tool pair — runtime injections are user
+     * messages or assistant messages without calls.
+     *
+     * <p>
+     * On a version-2 buffer the mark survives compaction and recovery: they change the view state, not the log, so a
+     * compacted execution is ingested as it was said, not as its summary (context-engine §7).
      *
      * <p>
      * Empty means one of three things, and the caller treats them the same way — send nothing:
@@ -728,7 +842,7 @@ public class TranscriptBuffer {
         }
         final List<Message> since = new ArrayList<>();
         for (SessionLogEntry entry : entries) {
-            if (entry.getSeq() >= ingestMark) {
+            if (entry.getSeq() >= ingestMark && entry.getOrigin() == LogOrigin.CONVERSATION) {
                 since.add(entry.getMessage());
             }
         }
@@ -766,6 +880,7 @@ public class TranscriptBuffer {
             entries.remove(last);
             messageTimestamps.remove(last);
         }
+        viewState = viewState.truncatedFrom(from);
         markDirty();
         return Optional.of(rewound);
     }

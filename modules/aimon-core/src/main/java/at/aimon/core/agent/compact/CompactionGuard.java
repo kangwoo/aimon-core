@@ -38,7 +38,14 @@ import at.aimon.core.llm.LlmModel;
  * transcript label, which is what every guard did before the overload existed. An implementation that wants a
  * session-less run to be identified honestly overrides the five-argument overloads too, as
  * {@link DefaultCompactionGuard} does.
+ *
+ * @deprecated The guard's contract is "take the buffer and rewrite it if needed", which cannot be translated into view
+ *             state operations on an append-only log. It is accepted only in the version-1 write mode; a node that
+ *             writes version 2 refuses one other than {@link DefaultCompactionGuard} (whose rules the default context
+ *             engine reuses) or {@link NoOpCompactionGuard} when it is built. To change the decision rules, implement
+ *             {@link at.aimon.core.agent.context.ContextEngine} (context-engine §8.2).
  */
+@Deprecated
 public interface CompactionGuard {
 
     /**

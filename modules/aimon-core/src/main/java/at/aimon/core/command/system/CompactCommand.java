@@ -95,6 +95,7 @@ public final class CompactCommand extends SystemCommand implements DirectExecuta
      * @param environment
      *            the runtime environment forwarded to hook contexts (must not be null)
      */
+    @SuppressWarnings("deprecation") // the version-1 compaction SPI is carried through on purpose
     public CompactCommand(CompactionEngine compactionEngine, CompactionGuard compactionGuard, HookRegistry hookRegistry,
             HookExecutionManager hookExecutionManager, Environment environment) {
         this(DefaultContextEngine.builder()

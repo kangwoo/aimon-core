@@ -2,10 +2,8 @@ package at.aimon.core.agent.compact;
 
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
-import java.util.Set;
 import java.util.UUID;
 
 import org.slf4j.Logger;
@@ -28,7 +26,6 @@ import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.Role;
-import at.aimon.core.llm.ToolUse;
 import at.aimon.core.llm.token.TokenEstimator;
 
 /**
@@ -65,23 +62,6 @@ public class DefaultCompactionEngine implements CompactionEngine {
 
     /** Reentrancy guard to prevent nested compaction (e.g. a hook triggering another compaction). */
     private static final ThreadLocal<Boolean> COMPACTION_IN_PROGRESS = ThreadLocal.withInitial(() -> Boolean.FALSE);
-
-    /**
-     * Tool name to scan for when collecting recently-read file paths. Hard-coded as a string to avoid the layering
-     * violation that would occur if {@code at.aimon.core.agent.compact} imported {@code at.aimon.core.tools.file}.
-     */
-    private static final String READ_TOOL_NAME_FOR_FILE_TRACKING = "Read";
-
-    /**
-     * Tool name to scan for when collecting Skill invocations. Hard-coded for the same layering reason as
-     * {@link #READ_TOOL_NAME_FOR_FILE_TRACKING} — {@code at.aimon.core.agent.compact} must not import
-     * {@code at.aimon.core.tools.skill}.
-     */
-    private static final String SKILL_TOOL_NAME_FOR_INVOCATION_TRACKING = "Skill";
-
-    /** Input keys on the {@code Skill} tool — duplicated as constants to avoid the layering import. */
-    private static final String SKILL_TOOL_INPUT_KEY_NAME = "skill";
-    private static final String SKILL_TOOL_INPUT_KEY_ARGS = "args";
 
     private final LlmClient llmClient;
     private final TokenEstimator tokenEstimator;
@@ -130,7 +110,14 @@ public class DefaultCompactionEngine implements CompactionEngine {
                 messageStripper);
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * @deprecated see {@link CompactionEngine#compact(CompactionRequest)}
+     */
+    @Deprecated
     @Override
+    @SuppressWarnings("deprecation") // rewriting in place is what this entry is for
     public CompactionResult compact(CompactionRequest request) {
         Objects.requireNonNull(request, "Request cannot be null");
 
@@ -175,9 +162,9 @@ public class DefaultCompactionEngine implements CompactionEngine {
             final List<Message> prefix = List.copyOf(originalMessages.subList(0, fromIndex));
             final List<Message> tail = List.copyOf(originalMessages.subList(toIndex, originalMessages.size()));
             final int rangePreTokenCount = tokenEstimator.estimate(originalSystemPrompt, inRangeMessages);
-            final List<String> discoveredToolNames = collectDiscoveredToolNames(inRangeMessages);
-            final List<String> recentReadFilePaths = collectRecentReadFilePaths(inRangeMessages);
-            final List<InvokedSkillRecord> invokedSkills = collectInvokedSkills(inRangeMessages);
+            final List<String> discoveredToolNames = CompactionScans.discoveredToolNames(inRangeMessages);
+            final List<String> recentReadFilePaths = CompactionScans.recentReadFilePaths(inRangeMessages);
+            final List<InvokedSkillRecord> invokedSkills = CompactionScans.invokedSkills(inRangeMessages);
 
             // 1)-4) PreCompact hooks, strip, summary prompt and the summary LLM call — the half summarize() shares.
             final SummaryAttempt attempt = generateSummary(request.getTrigger(), request.getHookRegistry(),
@@ -254,7 +241,7 @@ public class DefaultCompactionEngine implements CompactionEngine {
             final Instant startedAt = Instant.now();
             final List<Message> messages = request.getMessages();
             final int preTokenCount = tokenEstimator.estimate(request.getSystemPrompt(), messages);
-            final List<String> discoveredToolNames = collectDiscoveredToolNames(messages);
+            final List<String> discoveredToolNames = CompactionScans.discoveredToolNames(messages);
             final SummaryAttempt attempt = generateSummary(request.getTrigger(), request.getHookRegistry(),
                     request.getEnvironment(), request.getExecutionId().orElse(null), request.getSessionId(),
                     messages.size(), preTokenCount, messages, discoveredToolNames,
@@ -271,6 +258,35 @@ public class DefaultCompactionEngine implements CompactionEngine {
             return CompactionResult.success(attempt.summaryText, metadata);
         } finally {
             COMPACTION_IN_PROGRESS.remove();
+        }
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>
+     * Fires the {@code PostCompactHook}s exactly as {@link #compact(CompactionRequest)} does after its own rewrite:
+     * the same invoker, the same files read and skills invoked — gathered from {@link SummaryRequest#getMessages()},
+     * what was summarized — and the buffer the summary now stands in.
+     */
+    @Override
+    public void summaryInstalled(SummaryRequest request, CompactionResult installed,
+            TranscriptBuffer transcriptBuffer) {
+        Objects.requireNonNull(request, "request cannot be null");
+        Objects.requireNonNull(installed, "installed cannot be null");
+        Objects.requireNonNull(transcriptBuffer, "transcriptBuffer cannot be null");
+        try {
+            final PostCompactContext postContext = PostCompactContext.builder().invokerType(InvokerType.mainAgent())
+                    .invokerName("compaction-engine").hookRegistry(request.getHookRegistry())
+                    .environment(request.getEnvironment()).trigger(request.getTrigger())
+                    .compactionMetadata(installed.getMetadata()).compactSummary(installed.getSummaryText().orElse(""))
+                    .transcriptBuffer(transcriptBuffer)
+                    .recentReadFilePaths(CompactionScans.recentReadFilePaths(request.getMessages()))
+                    .invokedSkills(CompactionScans.invokedSkills(request.getMessages())).timestamp(Instant.now())
+                    .build();
+            hookExecutionManager.executePostCompact(postContext);
+        } catch (RuntimeException e) {
+            log.warn("PostCompactHook execution failed: {}", e.getMessage(), e);
         }
     }
 
@@ -456,78 +472,6 @@ public class DefaultCompactionEngine implements CompactionEngine {
                             + "preserved tail would begin with an orphaned tool_result");
         }
         return requested;
-    }
-
-    private List<String> collectDiscoveredToolNames(List<Message> messages) {
-        final Set<String> names = new LinkedHashSet<>();
-        for (Message message : messages) {
-            if (message.hasToolUses()) {
-                for (ToolUse toolUse : message.getToolUses()) {
-                    names.add(toolUse.getName());
-                }
-            }
-        }
-        return List.copyOf(names);
-    }
-
-    /**
-     * Scans the conversation for {@code Read} tool invocations and returns the {@code file_path} arguments in
-     * insertion order with duplicates collapsed to their most recent position. Snapshot taken before
-     * {@link TranscriptBuffer#replaceWith(List)} so {@code PostCompactHook}s can use it to re-attach files lost in
-     * the L3 summary.
-     */
-    private List<String> collectRecentReadFilePaths(List<Message> messages) {
-        final LinkedHashSet<String> paths = new LinkedHashSet<>();
-        for (Message message : messages) {
-            if (!message.hasToolUses()) {
-                continue;
-            }
-            for (ToolUse toolUse : message.getToolUses()) {
-                if (!READ_TOOL_NAME_FOR_FILE_TRACKING.equals(toolUse.getName())) {
-                    continue;
-                }
-                final Object filePathArg = toolUse.getInput().get("file_path");
-                if (filePathArg instanceof String filePath && !filePath.isBlank()) {
-                    paths.remove(filePath);
-                    paths.add(filePath);
-                }
-            }
-        }
-        return List.copyOf(paths);
-    }
-
-    /**
-     * Scans the conversation for {@code Skill} tool invocations and returns one {@link InvokedSkillRecord} per
-     * (skill-name, args) pair in occurrence order, with duplicates collapsed to their most recent position. Mirrors
-     * {@link #collectRecentReadFilePaths(List)} so {@code PostCompactHook}s can use the snapshot to remind the agent
-     * which skills it had activated before the L3 summary collapsed the {@code tool_use}/{@code tool_result} pairs.
-     *
-     * <p>
-     * Invocations missing or having a blank {@code skill} input are skipped. {@code args} is normalised: missing or
-     * non-string values become the empty string so equality and presentation are predictable.
-     */
-    private List<InvokedSkillRecord> collectInvokedSkills(List<Message> messages) {
-        final LinkedHashSet<InvokedSkillRecord> records = new LinkedHashSet<>();
-        for (Message message : messages) {
-            if (!message.hasToolUses()) {
-                continue;
-            }
-            for (ToolUse toolUse : message.getToolUses()) {
-                if (!SKILL_TOOL_NAME_FOR_INVOCATION_TRACKING.equals(toolUse.getName())) {
-                    continue;
-                }
-                final Object nameArg = toolUse.getInput().get(SKILL_TOOL_INPUT_KEY_NAME);
-                if (!(nameArg instanceof String name) || name.isBlank()) {
-                    continue;
-                }
-                final Object argsArg = toolUse.getInput().get(SKILL_TOOL_INPUT_KEY_ARGS);
-                final String args = (argsArg instanceof String s) ? s : "";
-                final InvokedSkillRecord record = InvokedSkillRecord.of(name, args);
-                records.remove(record);
-                records.add(record);
-            }
-        }
-        return List.copyOf(records);
     }
 
     private String mergeCustomInstructions(String fromRequest, List<String> hookFeedback) {

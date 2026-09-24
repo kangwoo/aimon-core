@@ -7,6 +7,33 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Changed: on a version-2 log, compaction changes the view, not the log
+
+- **`SessionViewState` keeps what the LLM view leaves out.** It is part of `SessionLogState` and persisted with it in
+  the `version: 2` document: one `SummarySpan` (a seq range shown as the boundary / summary marker pair, with the
+  summary text and boundary metadata stored), dropped seq ranges, and elided tool results. It is changed only by
+  `SessionLogState.summarize` / `drop` / `elide` (and `TranscriptBuffer.summarizeView` / `dropFromView` /
+  `elideInView`), each of which refuses a cut that splits a `tool_use` from its `tool_result` (`LegalCuts`). A rewind
+  and `/clear` clean up whatever pointed at the seqs they cut. Design: `docs/design/session/session-log.md` §4, §6.
+- **`DefaultContextEngine` has a view mode**, chosen per transcript by its log format. On a version-2 log the model is
+  sent exactly what the in-place mode sent — the `[boundary, summary]` pair after a compaction, the view minus the
+  oldest user message after a prompt-too-long recovery — but the log keeps every message: the summary is recorded as
+  the view state's span, recovery as `drop(s, s + 1)`, and the view is projected deterministically from the log and
+  the view state (`ViewProjection`). A version-1 log is still compacted in place. Design:
+  `docs/design/agent-execution/context-engine.md` §4, §8.2.
+- **SPI additions.** `CompactionEngine.summaryInstalled(...)` fires the PostCompact hooks for a summary the caller
+  installed; `DefaultCompactionGuard.decide(...)` takes the guard's decision over a caller's view and leaves the
+  compaction to the caller; `ContextDecision.getViewSizeBefore()` makes the executor's compaction-boundary event report
+  view sizes; `DefaultContextEngine.Builder.writeFormat(V2)` refuses, at build time, a custom `CompactionGuard` or a
+  `CompactionEngine` that cannot `summarize`.
+- **Deprecated** (context-engine §8.2, session-log §3.3): `CompactionGuard`, `CompactionEngine.compact(...)`,
+  `TranscriptBuffer.replaceWith(...)` / `replaceMessageAt(...)`, `TimeBasedMicrocompact`. All keep working for the
+  version-1 write mode.
+- **Memory ingest reads the log as it was said.** `TranscriptBuffer.messagesSinceIngestMark()` and the CLI's
+  session-end derivation (`getConversationMessages()`) leave out `SYNTHETIC` entries; on a version-2 log a compacted
+  execution is no longer skipped. Ingest is sent in chunks of `IngestChunks.DEFAULT_MAX_INGEST_TOKENS` (32K estimated
+  tokens) cut at legal cuts — `IngestingExecutionMemorySink` gained a constructor taking the budget.
+
 ### Changed: the session transcript is a seq-addressed log (`SessionLogState`)
 
 - **One value crosses the load and save chains whole.** `SessionLogState` (`at.aimon.core.agent.session.transcript`)

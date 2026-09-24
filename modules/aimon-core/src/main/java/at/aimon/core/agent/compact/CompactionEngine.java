@@ -1,5 +1,7 @@
 package at.aimon.core.agent.compact;
 
+import at.aimon.core.agent.session.transcript.TranscriptBuffer;
+
 /**
  * Performs the L3 full compaction: collapse the entire conversation history into a single LLM-generated summary that
  * replaces the previous messages.
@@ -39,7 +41,12 @@ public interface CompactionEngine {
      *         either case
      * @throws NullPointerException
      *             if {@code request} is null
+     * @deprecated Rewrites the transcript in place, which a version-2 (append-only) log does not allow. A context
+     *             engine calls {@link #summarize(SummaryRequest)}, records the summary in the view state and reports
+     *             it through {@link #summaryInstalled}. This entry remains for the version-1 write mode
+     *             (context-engine §8.2).
      */
+    @Deprecated
     CompactionResult compact(CompactionRequest request);
 
     /**
@@ -73,5 +80,31 @@ public interface CompactionEngine {
     default CompactionResult summarize(SummaryRequest request) {
         throw new UnsupportedOperationException(
                 getClass().getName() + " does not support summarize(); check supportsSummarize() first");
+    }
+
+    /**
+     * Tells the engine that a summary {@link #summarize(SummaryRequest)} produced has been installed, so it can do the
+     * half {@code summarize} leaves out: fire the {@code PostCompactHook}s, now that the post-compaction state exists.
+     *
+     * <p>
+     * A context engine that keeps the log append-only records the summary in the view state rather than in the
+     * transcript, and calls this afterwards. The hooks receive {@code transcriptBuffer} — what a restore hook appends
+     * there lands after the summarized range and so is part of the next view — and {@code installed}'s metadata,
+     * whose post-compaction size is the caller's to fill in. Hook failures are the engine's to swallow; this must not
+     * throw for them.
+     *
+     * <p>
+     * The default does nothing: an engine written before this method existed has no hooks of its own to fire.
+     *
+     * @param request
+     *            the request the summary was produced for (must not be null)
+     * @param installed
+     *            the successful result, with its metadata completed by the caller (must not be null)
+     * @param transcriptBuffer
+     *            the buffer the summary was installed in (must not be null)
+     */
+    default void summaryInstalled(SummaryRequest request, CompactionResult installed,
+            TranscriptBuffer transcriptBuffer) {
+        // no-op by default
     }
 }

@@ -139,6 +139,7 @@ public class OrcaSystemCommandProvider implements OrcaCommandProvider {
                 new ApproveTurnCommand(pendingTurnRegistry, sessionApprovalStore, agentApprovalStore));
     }
 
+    @SuppressWarnings("deprecation") // the version-1 compaction SPI is carried through on purpose
     private void registerCompactCommand(MutableCommandRegistry registry, OrcaCommandProviderContext context) {
         final ContextEngine contextEngine = context.getContextEngine();
         if (contextEngine != null && context.getHookRegistry() != null && context.getHookExecutionManager() != null

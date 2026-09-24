@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-development-guide.md
-source_commit: eec9ccd
+source_commit: 6df9672
 ---
 
 # Hook Development Guide
@@ -298,7 +298,7 @@ Each hook receives the context object that matches its firing point. Every conte
 |--------|------|------|
 | `getCompactionMetadata()` | `CompactionMetadata` | Metadata of the compaction that just finished |
 | `getRecentReadFilePaths()` / `getInvokedSkills()` | `List<…>` | Files read and skills invoked in the compacted range (a pre-compaction snapshot) |
-| `getTranscriptBuffer()` | `TranscriptBuffer` | The transcript after compaction |
+| `getTranscriptBuffer()` | `TranscriptBuffer` | The transcript after compaction. On a version-2 log the compaction is recorded in the view state, so the log (`getMessages()`) still holds the originals |
 | `addSyntheticMessage(Message)` | — | Attaches a restorative message as `LogOrigin.SYNTHETIC` |
 
 To attach a restorative message after compaction — a file list, a skill list — use **`addSyntheticMessage(...)`**,

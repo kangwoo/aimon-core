@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/memory/memory-usage-guide.md
-source_commit: d4608ba
+source_commit: 6210326
 ---
 
 # Memory (Peer Memory) Usage Guide
@@ -243,14 +243,21 @@ It is injected into the executor with `OrcaAgentExecutorFactory.withMemoryContex
 | Value | When it sends | What it costs |
 |----|------------|------|
 | `off` | Never | Memory fills only through `Observe` calls or another process |
-| `session-end` (default) | The whole transcript, once, when the REPL exits | Today's behaviour. It uses no delta, so the same message cannot go twice. In exchange, what a session learns is not available to that session |
+| `session-end` (default) | Every conversation entry of the transcript, once, when the REPL exits | Today's behaviour. It uses no delta, so the same message cannot go twice. In exchange, what a session learns is not available to that session |
 | `execution-end` | The messages an execution added, as it ends | The deriver runs per execution (more LLM calls). In exchange, memory is usable inside the session that is producing it |
 
-IMPORTANT: `execution-end` has one loss and it is deliberate. The delta is anchored on a **message count**
-(`Message` has no stable id), so a compaction or a prompt-size recovery that replaces the history wholesale leaves
-that anchor pointing nowhere. That execution then sends **nothing**, and the next one anchors afresh — cheaper than
-sending a summary as if it were conversation, and cheaper than re-sending messages already ingested. The reasoning is
-in [Pluggable memory backend](../../design/memory/pluggable-memory-backend.md) §7.2.
+IMPORTANT: `execution-end` takes its delta from an anchor on the log's **seq** (`Message` has no stable id). On a
+version-2 log, compaction and prompt-size recovery change the view state rather than the log, so the anchor survives
+and a compacted execution is ingested as it was said. The loss remains **only in the version-1 write mode** — there
+the history is replaced wholesale, so that execution sends **nothing** and the next one anchors afresh, which is
+cheaper than sending a summary as if it were conversation or re-sending messages already ingested. The reasoning is in
+[Pluggable memory backend](../../design/memory/pluggable-memory-backend.md) §7.2 and
+[Context Engine](../../design/agent-execution/context-engine.md) §7.
+
+Neither value sends what the runtime injected (`LogOrigin.SYNTHETIC` — the user-context block, assembled
+`<system-reminder>`s, the file and skill lists a restore hook attaches). What is sent is split into chunks of about 32K
+estimated tokens (`IngestChunks.DEFAULT_MAX_INGEST_TOKENS`), cut only where no `tool_use` is separated from its
+`tool_result` — compaction no longer bounds the payload to one window.
 
 ### 7.2 The `memory.dreamer` block (`MemoryDreamerConfig`)
 

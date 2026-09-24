@@ -241,6 +241,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * @throws NullPointerException
      *             if any parameter is null
      */
+    @SuppressWarnings("deprecation") // the version-1 compaction SPI is carried through on purpose
     public DefaultSubagentExecutor(LlmCallGateway<TranscriptBuffer> gateway, ToolExecutionManager toolExecutionManager,
             HookExecutionManager hookExecutionManager, CompactionGuard compactionGuard) {
         this(gateway, toolExecutionManager, hookExecutionManager, DefaultContextEngine.builder()

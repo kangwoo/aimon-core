@@ -45,6 +45,7 @@ import at.aimon.core.subagent.SubagentRegistry;
  *
  * @see OrcaCommandProvider
  */
+@SuppressWarnings("deprecation") // the version-1 compaction SPI is carried through on purpose
 public final class OrcaCommandProviderContext {
 
     /**

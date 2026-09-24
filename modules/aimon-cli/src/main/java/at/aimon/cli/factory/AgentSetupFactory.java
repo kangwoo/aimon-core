@@ -75,12 +75,15 @@ import at.aimon.core.knowledge.wiki.LlmWikiPageGenerator;
 import at.aimon.core.knowledge.wiki.WikiKnowledgeStore;
 import at.aimon.core.knowledge.wiki.WikiPageGenerator;
 import at.aimon.core.llm.LlmClient;
+import at.aimon.core.llm.Message;
+import at.aimon.core.llm.token.HeuristicTokenEstimator;
 import at.aimon.core.llms.openai.OpenAIEmbeddingClient;
 import at.aimon.core.llms.openai.OpenAIEmbeddingConfig;
 import at.aimon.core.mcp.DefaultMcpClientFactory;
 import at.aimon.core.memory.InMemoryObservationStore;
 import at.aimon.core.memory.InMemoryRepresentationStore;
 import at.aimon.core.memory.InMemoryWorkspaceStore;
+import at.aimon.core.memory.IngestChunks;
 import at.aimon.core.memory.MemoryIngestMode;
 import at.aimon.core.memory.MemoryInjectionMode;
 import at.aimon.core.memory.ObservationStore;
@@ -1393,16 +1396,22 @@ public class AgentSetupFactory {
             SessionId sessionId, Workspace workspace, PeerView observer, OutputFormatter outputFormatter) {
         final var transcriptManager = agentExecutor.getTranscriptManager();
         final var memory = transcriptManager.initialize(sessionId, null);
-        final var messages = memory.getMessages();
+        // The log as it was said: what the runtime injected is left out, and on a version-2 log a compaction left the
+        // original in place, so no summary is fed in as if it were conversation (context-engine §7, L5).
+        final var messages = memory.getConversationMessages();
         if (messages.isEmpty()) {
             log.debug("Peer memory final derivation skipped: conversation has no messages");
             return;
         }
-        final DerivationTask task = DerivationTask.builder().workspace(workspace).sessionId(sessionId.value())
-                .observer(observer).messages(messages).build();
-        outputFormatter
-                .displayInfo("Peer memory: enqueuing final derivation for " + messages.size() + " message(s)...");
-        queue.enqueue(task);
+        // Nothing bounds a whole session's log to one window any more; the deriver takes one chunk per call.
+        final List<List<Message>> chunks = IngestChunks.split(messages, IngestChunks.DEFAULT_MAX_INGEST_TOKENS,
+                new HeuristicTokenEstimator());
+        outputFormatter.displayInfo("Peer memory: enqueuing final derivation for " + messages.size() + " message(s)"
+                + (chunks.size() > 1 ? " in " + chunks.size() + " chunks" : "") + "...");
+        for (List<Message> chunk : chunks) {
+            queue.enqueue(DerivationTask.builder().workspace(workspace).sessionId(sessionId.value()).observer(observer)
+                    .messages(chunk).build());
+        }
     }
 
     /**

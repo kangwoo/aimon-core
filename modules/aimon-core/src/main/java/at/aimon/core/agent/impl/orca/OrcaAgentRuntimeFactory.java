@@ -800,7 +800,8 @@ public class OrcaAgentRuntimeFactory {
         }
     }
 
-    @SuppressWarnings("checkstyle:ParameterNumber")
+    // deprecation: the version-1 compaction SPI (the guard) is carried through on purpose
+    @SuppressWarnings({"checkstyle:ParameterNumber", "deprecation"})
     private OrcaAgentRuntime doCreate(AgentRuntimeId agentRuntimeId, OrcaAgentExecutor agentExecutor,
             ScheduledTaskManager scheduledTaskManager, AgentBundle agentBundle, VirtualFileSystem fileSystem,
             CredentialStore credentialStore, List<OrcaToolProvider> toolProviders,

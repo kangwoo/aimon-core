@@ -55,6 +55,7 @@ import at.aimon.core.workflow.WorkflowRunner;
  * }
  * </pre>
  */
+@SuppressWarnings("deprecation") // the version-1 compaction SPI is carried through on purpose
 public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntime, AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(OrcaAgentRuntime.class);

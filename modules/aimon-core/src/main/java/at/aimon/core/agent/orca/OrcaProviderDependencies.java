@@ -45,6 +45,7 @@ import at.aimon.core.subagent.task.TaskResultStore;
  * }
  * </pre>
  */
+@SuppressWarnings("deprecation") // the version-1 compaction SPI is carried through on purpose
 public final class OrcaProviderDependencies {
 
     /**

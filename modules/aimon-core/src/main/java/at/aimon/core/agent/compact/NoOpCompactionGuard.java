@@ -18,6 +18,7 @@ import at.aimon.core.llm.LlmModel;
  * <p>
  * Thread-safe and stateless.
  */
+@SuppressWarnings("deprecation") // the version-1 compaction SPI is carried through on purpose
 public final class NoOpCompactionGuard implements CompactionGuard {
 
     private static final NoOpCompactionGuard INSTANCE = new NoOpCompactionGuard();
