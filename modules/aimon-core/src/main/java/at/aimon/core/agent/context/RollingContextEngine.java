@@ -420,6 +420,17 @@ public final class RollingContextEngine implements ContextEngine {
     }
 
     /**
+     * The log's own message at {@code seq}, for a position the view shows elided. Context-engine §5.4 feeds the summary
+     * the originals being absorbed, not the view: prune elides exactly the region the next widening absorbs, so reading
+     * the view would let every pruned tool result reach the cumulative summary only as its placeholder. The region is
+     * outside the span, so it is hot; {@code shown} is kept only if the entry is somehow not carried.
+     */
+    private static Message original(SessionLogState state, long seq, Message shown) {
+        final List<SessionLogEntry> entry = state.entriesIn(seq, seq + 1);
+        return entry.isEmpty() || entry.get(0).getSeq() != seq ? shown : entry.get(0).getMessage();
+    }
+
+    /**
      * Summarizes what {@code plan} absorbs — updating the held summary — and records the widened span. The log is not
      * touched; PostCompact hooks fire through {@link CompactionEngine#summaryInstalled} once the span is in place.
      */
@@ -433,7 +444,9 @@ public final class RollingContextEngine implements ContextEngine {
             if (seq == ViewProjection.MADE_BY_VIEW || seq < plan.fromSeq || seq >= plan.toSeq) {
                 continue;
             }
-            absorbed.add(call.view.getMessages().get(p));
+            absorbed.add(call.view.isVerbatim(p)
+                    ? call.view.getMessages().get(p)
+                    : original(call.state, seq, call.view.getMessages().get(p)));
             if (absorbedFrom < 0) {
                 absorbedFrom = seq;
             }

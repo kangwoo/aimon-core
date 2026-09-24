@@ -297,6 +297,35 @@ class RollingContextEngineTest {
                     });
             assertThat(buffer.getMessages()).as("the original stays in the log").isEqualTo(logBefore);
         }
+
+        @Test
+        void aPrunedResultReachesTheSummaryAsItsOriginal() {
+            final String fact = "IMPORTANT-FACT " + "x".repeat(700);
+            buffer.addUserMessage("goal");
+            buffer.addMessage(Message.assistant("", List.of(ToolUse.of("t1", "Read", Map.of()))));
+            buffer.addMessage(Message.toolUseResults(List.of(ToolUseResult.success("t1", fact))));
+            buffer.addAssistantMessage("a".repeat(60));
+            buffer.addUserMessage("u".repeat(60));
+            buffer.addAssistantMessage("a".repeat(60));
+            buffer.addUserMessage("u".repeat(60));
+            final RollingContextEngine engine = engine();
+            engine.prepare(request());
+            assertThat(buffer.getViewState().getElisions()).containsOnlyKeys(2L);
+
+            for (int i = 0; i < 8; i++) {
+                if (i % 2 == 0) {
+                    buffer.addAssistantMessage("a".repeat(100));
+                } else {
+                    buffer.addUserMessage("u".repeat(100));
+                }
+            }
+            engine.prepare(request());
+
+            assertThat(summarizer.summarized).hasSize(1);
+            assertThat(summarizer.summarized.get(0).getMessages()).flatExtracting(Message::getToolUseResults)
+                    .extracting(ToolUseResult::getContent).as("context-engine §5.4: the originals, not the view")
+                    .containsExactly(fact);
+        }
     }
 
     @Nested
