@@ -38,6 +38,7 @@
 | [`interrupt.md`](agent-execution/interrupt.md) | `InterruptBehavior` 4종, capability 와 coordinator 분리, 도구를 안전하게 끊는 경로 |
 | [`interceptor.md`](agent-execution/interceptor.md) | `AgentExecutionInterceptor` — `execute()` 경계를 가로채는 동기 체인 |
 | [`compaction.md`](agent-execution/compaction.md) | 컨텍스트가 차기 전 대화 요약. 트리거 조건, 실패 처리, `/compact` |
+| [`context-engine.md`](agent-execution/context-engine.md) | (PROPOSED) LLM 에 보낼 뷰를 정하는 `ContextEngine` — 판정·복구·`/compact` 를 한 자리에, 장기 대화용 롤링 engine |
 | [`artifact.md`](agent-execution/artifact.md) | 에이전트가 만든 파일을 사용자에게 건네는 경로 |
 | [`integration-test-layers.md`](agent-execution/integration-test-layers.md) | `OrcaAgentRuntime` 통합 테스트의 계층 구분과 무엇을 어디서 검증하는가 |
 | [`max-tokens-truncation-reporting.md`](agent-execution/max-tokens-truncation-reporting.md) | `max_tokens` 에서 잘린 응답에 두 ReAct 루프가 같은 답을 주는 자리 — 잘린 도구 호출을 실행하지 않고 거절하는 이유, 포크의 `TRUNCATED`, 추론 토큰을 숫자로만 붙이는 WARN, thinking 기록 §16.8 과 백로그 L-16 의 정정 |
@@ -52,6 +53,7 @@
 | [`routing.md`](session/routing.md) | sticky 라우팅 없이 세션당 턴을 직렬화하는 멀티 노드 계층 |
 | [`backends.md`](session/backends.md) | PostgreSQL · MongoDB · Redis 세 백엔드의 스키마와 보장 차이 |
 | [`inbox-collect-durability.md`](session/inbox-collect-durability.md) | 인박스 `collect` 가 한 항목의 디코드 실패로 배치를 잃지 않게 — 후보 셋의 백엔드별 비용과 기각 사유 |
+| [`session-log.md`](session/session-log.md) | (PROPOSED) transcript 를 append-only 로그 + 뷰 상태로 분리. seq 주소, 봉인, `/clear`·rewind, v1 이행 |
 
 ### tool — 도구 계약
 

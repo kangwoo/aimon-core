@@ -1,0 +1,454 @@
+# Session Log — 기록과 뷰의 분리
+
+> Status: **PROPOSED** — 적용 대상 `aimon-core`, `aimon-bootstrap`, `aimon-session-{mongodb,postgres,redis}`
+> (세그먼트 저장소 구현). 열린 질문은 §11.
+> 후속 설계: [`../agent-execution/context-engine.md`](../agent-execution/context-engine.md) (이 저장 모델 위에서 뷰를 만드는 자리)
+> 관련 문서: [`session-model.md`](session-model.md), [`backends.md`](backends.md),
+> [`../agent-execution/compaction.md`](../agent-execution/compaction.md), [`../../overview/scope-model.md`](../../overview/scope-model.md)
+
+---
+
+## 1. 무엇을 푸는가
+
+`SessionRecord` 의 transcript 는 **LLM 에 보이는 대화**다. 압축과 prompt-too-long 복구가 그것을 `replaceWith` 로 고쳐
+쓰므로, 뷰를 줄이는 일이 곧 기록을 지우는 일이 된다. 그 결과가 [`context-engine.md` §1.1](../agent-execution/context-engine.md)
+의 L3~L5 다 — 원문 소실, 압축된 실행의 메모리 누락, 요약문의 ingest.
+
+이 문서는 기록을 **append-only 로그**로 바꾸고, 뷰를 줄이는 정보는 로그 옆의 **뷰 상태**에 따로 둔다. 로그는 압축으로
+줄지 않고, 뷰 상태는 로그를 가리키기만 한다.
+
+그 대가로 새 문제가 하나 생긴다. 지금 레코드는 압축 덕분에 크기에 상한이 있고, 체크포인트는 매번 레코드 전체를 쓴다.
+로그가 줄지 않으면 쓰기량이 세션 길이의 제곱으로 는다. 그래서 이 설계의 절반은 **뷰에 원문으로 나타나지 않는 로그
+구간을 레코드 밖으로 봉인(seal)하는** 규칙이다(§5).
+
+---
+
+## 2. 모양
+
+```
+SessionRecord.transcript  =  systemPrompt + SessionLogState
+  SessionLogState
+    ├─ nextSeq, floorSeq
+    ├─ hot entries      (seq, message, origin)   — 봉인되지 않은 항목, seq 오름차순
+    ├─ manifest         [(fromSeq, toSeq, segmentId, contentHash)]  — 봉인된 구간
+    ├─ viewState        SessionViewState  (context-engine 이 바꾼다)
+    └─ rewindPoint      seq 기반
+
+SessionLogSegmentStore  (레코드 밖)
+  segment  segmentId → 불변 메시지 목록
+```
+
+| 값 | 수명 | 어디 |
+|----|------|------|
+| 로그 항목 | session | 봉인 전에는 레코드, 봉인 후에는 세그먼트 저장소 |
+| manifest · 뷰 상태 · rewind point | session | 레코드 |
+| ingest mark | 한 실행 | 노드 로컬, 영속하지 않음 (지금 그대로 — seq 로 바뀔 뿐) |
+
+**하나의 불변 값** — 위의 레코드 쪽 전부를 `SessionLogState` 하나로 묶는다. 지금 transcript 는 레코드 로드·저장 체인의
+여러 타입(§7.2)을 지나며 필드별로 **골라서** 복사되고, 새 필드는 한 홉이라도 빠지면 조용히 사라진다. 한 값으로 묶으면
+체인은 그 값을 통째로 넘기기만 한다.
+
+**한 레코드에 두는 이유** — 로그·manifest·뷰 상태를 한 번의 저장으로 원자적으로 바꾸기 위해서다. 뷰 상태가 레코드에
+없는 seq 를 가리키거나, 레코드가 없는 세그먼트를 가리키는 순간이 생기지 않는다.
+
+---
+
+## 3. 로그
+
+### 3.1 seq
+
+로그 항목은 인덱스가 아니라 **seq** 로 주소를 갖는다. seq 는 세션마다 0 부터 단조 증가하고 **재사용하지 않는다** —
+rewind 로 잘리거나 `/clear` 로 지워진 뒤에도 다음 항목은 `nextSeq` 에서 이어진다.
+
+로그를 가리키는 값은 전부 seq 다 — rewind point, ingest mark, 뷰 상태의 span·범위·elision, manifest, 도구의 placeholder.
+로그가 압축으로 줄지 않으므로 이 값들은 **다시 매핑될 일이 없다.** 제자리 수정 모델에서 압축마다 필요했던 위치 재매핑이
+사라지는 것이 이것 때문이다.
+
+재사용하지 않는 이유 — 잘린 seq 를 다시 쓰면 이미 LLM 에 나간 placeholder 나 다른 노드의 manifest 가 다른 메시지를
+가리키게 된다.
+
+### 3.2 항목의 출처 — `origin`
+
+항목은 `(seq, message, origin)` 이다. `origin` 은 이 메시지가 **대화인지 런타임이 넣은 것인지**를 말한다.
+
+| origin | 예 | ingest·되찾기 |
+|--------|----|---------------|
+| `CONVERSATION` | 사용자 입력, assistant 응답, 도구 결과, mid-turn 사용자 메시지 | 포함 |
+| `SYNTHETIC` | CTX-06 user-context 블록, 조립된 `<system-reminder>`, 압축 복원 훅이 붙인 파일·스킬 목록 | **제외** |
+
+`Message` 에는 메타데이터 자리가 없고, 넣으면 모든 `LlmClient` 변환과 코덱이 영향을 받는다. 텍스트 태그로 판별하면
+mid-turn 사용자 메시지(`<system-reminder key="user-mid-turn-message">` 로 감싸인다)를 오분류한다. 그래서 출처는 메시지가
+아니라 **로그 항목**에 둔다.
+
+- **API** — `addMessage(Message, LogOrigin)` 을 더하고, 기존 `addMessage(Message)`·`addUserMessage(...)` 는 `CONVERSATION` 을
+  뜻한다. 런타임 주입 경로는 전부 `SYNTHETIC` 오버로드로 바꾼다
+- **런타임 주입 경로** — CTX-06 user-context(`maybeInjectUserContextMessage`), 조립된 컨텍스트(`injectAssembledUserContext`),
+  OnStart 훅의 advisory 피드백(`HookFeedback.toReminderBlock`), 명령 흐름이 남기는 assistant 응답(`executeCommandFlow`), 압축
+  복원 훅. 외부 훅이 `PostCompactContext.getTranscriptBuffer()` 로 받은 버퍼에 append 하면 기본값 `CONVERSATION` 이 된다 —
+  훅 컨텍스트는 `addSyntheticMessage(...)` 를 함께 노출하고, 훅 개발 가이드가 그것을 쓰라고 말한다
+
+v1 에서 옮겨 온 항목은 전부 `CONVERSATION` 이다 — 판별할 근거가 없다.
+
+### 3.3 `TranscriptBuffer` 의 API
+
+지금 `getMessages()` 는 "레코드에 있는 메시지 = LLM 뷰 = 기록" 이었다. 셋이 갈라지므로 API 도 셋이 된다.
+
+| API | 뜻 | 쓰는 곳 |
+|-----|----|---------|
+| `getMessages()` | hot 항목, `floorSeq` 이후 | 레코드 안의 것만 보면 되는 곳 — 서브에이전트 스냅샷(봉인하지 않으므로 전체와 같다), 명령의 이전 스냅샷 |
+| `SessionLogReader.read(sessionId, fromSeq, toSeq)` | 봉인 포함 전체 기록 | 되찾기 도구, `SESSION_END`, 운영 도구 |
+| `ContextEngine.prepare(...)` 의 뷰 | LLM 에 보낼 것 | LLM 호출 자리 |
+
+`getMessages()` 는 봉인이 돌면 앞에서부터 줄어든다 — 기록도 뷰도 아닌 "레코드 안의 부분" 이다. 이 뜻의 변화는 공개 API
+(`AgentExecutionResult.getConversationHistory()`, `SessionSnapshot.getConversationHistory()`)에도 번진다. 호출자 전수와
+각각의 이행은 부록 A 에 있다.
+
+`replaceWith(...)`·`replaceMessageAt(...)` 는 v2 에서 쓰지 않는다. 뷰를 줄이던 호출자(압축, 복구)는 뷰 상태 연산이 되고,
+`TimeBasedMicrocompact` 는 프로덕션 배선이 없으므로 deprecated 로 둔다. v1 쓰기 모드(§7.3)에서만 남는다.
+
+### 3.4 봉인된 기록 읽기
+
+**실행 루프와 뷰 계산은 봉인된 항목을 읽지 않는다.** §5.1 의 봉인 조건이 그것을 보장한다. 봉인된 항목을 읽는 것은
+`SessionLogReader` 뿐이고, 그것은 manifest 가 가리키는 세그먼트만 읽는다.
+
+읽기는 **페이지 단위**다 — `read` 는 한 번에 `maxReadTokens` 까지 돌려주고 다음 커서를 준다. 세션 전체 로그는 모델 창의
+몇 배일 수 있어, 한 번에 메모리에 올리거나 한 LLM 호출에 싣는 것을 API 모양으로 막는다
+([`context-engine.md` §7](../agent-execution/context-engine.md)).
+
+---
+
+## 4. 뷰 상태 — `SessionViewState`
+
+```
+SessionViewState
+  summarySpan   : { fromSeq, toSeq, summaryText, boundaryId, boundaryMeta }   (0 또는 1개)
+  droppedRanges : [ [fromSeq, toSeq) ... ]                                     (prompt-too-long 복구)
+  elisions      : { seq → placeholder }                                         (L0 prune)
+```
+
+뷰 = `floorSeq` 이후의 로그에서
+
+1. `droppedRanges` 의 항목을 뺀다
+2. `summarySpan` 구간을 `[boundary, summary]` 마커 쌍으로 대체한다
+3. `elisions` 의 도구 결과 본문을 placeholder 로 바꾼다 (tool_use id·error 플래그는 보존)
+
+- **결정적이다** — 입력은 hot 항목과 뷰 상태뿐이다. span 안의 항목은 봉인되어 있어도 뷰 계산은 그것을 읽지 않는다 —
+  요약문이 대신한다
+- **마커 메타데이터는 span 에 저장한다** — `CompactBoundary` 의 경계 메시지는 `trigger`, `preTokenCount`,
+  `messagesSummarized`, `discoveredToolNames` 를 담는다. 뷰 계산 때 로그에서 다시 모으면 봉인된 구간을 읽게 된다. 압축 시
+  `boundaryMeta` 로 저장하고, span 이 넓어질 때 누적 갱신한다
+- **span 이 하나인 이유** — 요약이 여럿이면 순서·중첩을 관리해야 하고, 누적 갱신이 한 요약을 전제한다. 새 압축은 이전
+  span 을 흡수해 넓어진다
+- **모든 절단면은 합법이어야 한다** — `droppedRanges` 와 span 의 경계에서 `tool_use`/`tool_result` 짝이 갈라지면 안 된다.
+  뷰 상태를 바꾸는 쪽([`context-engine.md` §3.4](../agent-execution/context-engine.md))이 지킨다
+
+뷰 상태를 바꾸는 것은 둘이다. **뷰를 줄이는** 연산은 `ContextEngine` 만 한다. **로그를 자르는** 두 경로(rewind, `/clear`,
+§6)는 잘린 seq 를 가리키던 뷰 상태를 정리한다.
+
+---
+
+## 5. 봉인
+
+### 5.1 무엇을 봉인할 수 있나
+
+seq `s` 는 **뷰에 원문으로 나타나지 않을 때** — `summarySpan` 안, 또는 `droppedRanges` 안 — 봉인할 수 있다. 뷰 계산이 봉인된
+항목을 읽지 않게 하는 조건이고, 이것 하나뿐이다.
+
+- **구간 단위** — 봉인은 prefix 가 아니다. 롤링 engine 의 head 는 뷰에 원문으로 영원히 남으므로 봉인되지 않고, 그 뒤의 span
+  구간이 봉인된다. hot 항목은 seq 로 주소하는 정렬 구조이며 "`floorSeq` 이후에서 manifest 구간을 뺀 항목" 이다
+- **rewind point 에서 끊는다** — 봉인 구간은 rewind point 를 걸치지 않는다. 걸치면 두 구간으로 나누어 봉인한다. 그래야 rewind
+  가 세그먼트를 읽거나 쪼개지 않고 **manifest 항목 단위로** 버릴 수 있다(§6.1)
+- **크기** — 연속한 봉인 가능 구간이 `minSealTokens`(기본 32K) 이상일 때만 봉인한다
+- 압축하지 않는 세션은 봉인하지 않는다. 짧은 세션의 저장은 지금과 같다
+
+rewind point 와 ingest mark 는 봉인 조건이 아니다. rewind 는 manifest 항목을 버리는 것으로 봉인된 구간을 자르고(§6.1), 실행 끝
+ingest 는 봉인된 항목을 메모리에서 읽는다(§5.3).
+
+### 5.2 manifest 가 유효성을 정한다
+
+세그먼트는 **레코드의 manifest 가 가리킬 때만 존재한다.** 세그먼트 저장소에 있어도 manifest 에 없으면 고아이고, 아무도
+읽지 않으며, GC 가 지운다(§5.4).
+
+- `segmentId` 는 봉인할 때마다 새로 만든 uuid 다. 두 노드가 같은 구간을 봉인해도 서로를 덮어쓰지 않는다
+- manifest 항목은 `(fromSeq, toSeq, segmentId, contentHash, entryCount)` 다. 읽을 때 해시를 검증하고, 개수는 §6.2 가 쓴다
+
+**펜싱** — 세그먼트 쓰기는 펜싱하지 않는다. lease 를 잃은 노드가 늦게 쓴 세그먼트는 새 홀더의 manifest 에 없으므로 무효다.
+transcript 쓰기 자체가 펜싱되는지는 어셈블리가 주는 `SessionRecordStore` 에 달려 있다 — `AimonStackBuilder` 는 spec 의 레코드
+저장소를 그대로 `DefaultTranscriptManager` 에 준다. 이 설계는 그것에 기대지 않는다. 다만 펜싱되지 않은 늦은 레코드 쓰기가
+**GC 가 이미 지운 세그먼트**를 가리키는 manifest 를 되살릴 수는 있다. 그 경우는 §5.5 의 읽기 규칙이 받는다.
+
+### 5.3 언제·어디서 — 버퍼를 가진 스레드에서 동기로
+
+봉인은 **그 턴을 돌리는 스레드**가 동기로 한다. 두 시점이 있다.
+
+| 시점 | 이유 |
+|------|------|
+| 압축 직후 (iteration 경계, `ContextEngine` 이 뷰 상태를 바꾼 뒤) | 긴 단일 턴 동안에도 레코드가 창 크기 근처로 유지되게. 없으면 턴 중간 체크포인트가 그 턴의 로그 전체를 매번 다시 쓴다 — 지금 코드에서는 턴 중간 압축이 레코드를 줄이므로 회귀가 되고, Mongo 는 한 문서 16MB 한도에 닿는다 |
+| 턴 끝 저장 직전 (`endTurn()` 뒤) | 턴 중간 봉인이 `minSealTokens` 에 못 미쳐 남긴 구간을 마저 |
+
+```
+봉인 (버퍼를 가진 스레드, 동기)
+  ① 봉인 가능 구간 R 계산 (rewind point 에서 끊는다)
+  ② segmentStore.put(newId, R 의 항목)             — 실패하면 R 은 봉인하지 않는다
+  ③ 버퍼: hot 에서 R 을 빼고 manifest 에 (R, newId, …) 추가, dirty
+       R 의 항목은 이 실행이 끝날 때까지 버퍼의 메모리에 남는다 (영속하지 않는다)
+  ④ 다음 체크포인트 또는 턴 끝 저장이 레코드를 쓴다
+```
+
+- **버퍼를 다른 스레드에서 고치지 않는다.** 버퍼는 턴마다 레코드에서 새로 만들어진다(`DefaultTranscriptManager.initialize`).
+  다른 스레드가 지난 턴의 버퍼를 고치면 그 버퍼가 체크포인트 slot 을 가로채 옛 상태로 레코드를 덮어쓸 수 있다. 버퍼를 가진
+  스레드가 동기로 고치면 그런 버퍼가 없다. 세션의 턴은 직렬화되어 있으므로 봉인도 직렬화된다
+- **ingest** — 실행 끝 ingest 는 메모리 안의 버퍼를 읽는다. ③ 은 R 의 항목을 영속 형태에서만 빼고 메모리에는 실행이 끝날
+  때까지 남기므로, 봉인이 ingest 델타를 줄이지 않는다. 다음 턴의 버퍼는 레코드에서 만들어지므로 R 을 들고 있지 않다
+- **저장 성공 신호가 필요 없다.** 저장이 실패하면 저장된 레코드는 R 을 hot 으로 들고 있고, ② 의 세그먼트는 고아다
+- **`SessionCheckpointMailbox.disabled()` 조립**에서도 같다 — 봉인은 mailbox 와 무관하다
+- **지연** — 봉인이 일어나는 iteration 에 세그먼트 쓰기 한 번이 더해진다. `minSealTokens` 때문에 압축마다는 아니다
+
+| 실패 지점 | 레코드 | 세그먼트 저장소 | 결과 |
+|-----------|--------|-----------------|------|
+| ② 실패 | 그대로 | 없음 | 다음 시점에 다시 |
+| ③ 후 저장 전 크래시, 또는 저장 실패 | 이전 레코드 (R 은 hot) | 고아 | 원본 무손상. 다음 봉인이 새 id 로 다시 |
+| 체크포인트 `flush` 타임아웃 뒤 옛 스냅샷이 늦게 도착 | R 이 hot 으로 되돌아감 | 고아 | 원본 무손상. 다음 봉인이 다시 |
+| 저장 성공 | manifest 가 가리킴 | 세그먼트 있음 | 정상 |
+
+**레코드 크기** — hot 에 남는 것은 **뷰에 원문으로 보이는 부분**(head, tail, span 밖의 원문)과 `minSealTokens` 미만의 조각이다.
+모델 context window 로 한정되므로 긴 단일 턴 동안에도 레코드 크기는 창 크기 근처다 — 지금 압축이 주는 상한과 같다. manifest
+는 봉인 한 번에 한 줄이다.
+
+### 5.4 GC
+
+GC 는 고아 세그먼트를 지운다. 세 조건을 모두 만족할 때만 지운다.
+
+- **그 세션의 주인만** — 세션을 연 노드가, 그 세션의 턴을 돌리지 않는 순간에(세션을 열 때, 턴 끝 저장 직후 같은 스레드에서)
+  돈다. 턴 중간 봉인이 만든 세그먼트는 턴 끝 저장으로 manifest 에 실린 뒤에야 GC 를 만나므로 지워지지 않는다. 삭제는 `SessionStore` 가 주는 **펜싱된 삭제 뷰**로 한다.
+  `SessionStore` 가 없는 조립(CLI, 단일 노드)은 lease 가 없으므로 원시 저장소로 지운다
+- **저장된 레코드의 manifest 에 없다**
+- **유예 기간** — `createdAt` 이 `segmentGcGrace`(기본 1시간, lease TTL 보다 충분히 길게) 이전. 다른 노드가 진행 중인 봉인
+  (lease 를 잃었지만 아직 모르는 노드)의 세그먼트를 보호한다. 0 은 허용하지 않는다
+
+### 5.5 읽기
+
+`SessionLogReader` 는 manifest 가 가리키는 세그먼트만 읽는다. 세그먼트가 없거나 해시가 맞지 않으면 — §5.2 의 늦은 레코드
+쓰기, 운영 사고 — **실패하지 않고 구멍을 보고한다.** 그 구간 대신 `[history unavailable: seq a..b]` 를 돌려주고 WARN 을
+남긴다. 되찾기와 `SESSION_END` 는 기록의 일부를 잃을 수는 있어도 세션 전체를 잃으면 안 된다. 실행 루프는 봉인된 구간을
+읽지 않으므로 구멍이 대화를 깨지 않는다.
+
+### 5.6 SPI
+
+```java
+public interface SessionLogSegmentStore {
+    void put(SessionLogSegment segment);                               // 새 id 만. 펜싱 없음
+    Optional<SessionLogSegment> get(SessionId sessionId, SegmentId id);
+    List<SegmentInfo> list(SessionId sessionId);                        // (id, createdAt) — GC 용
+    void delete(SessionId sessionId, SegmentId id);                     // 펜싱된 뷰로만
+    void deleteAll(SessionId sessionId);                                // 세션 삭제
+}
+```
+
+- **패키지** — `at.aimon.core.agent.session.store`. 예외는 `at.aimon.core.agent.session.exception`
+- **펜싱된 삭제 뷰** — `SessionStore.segments(SessionLogSegmentStore raw)` 를 더한다. `records()` 와 같은 re-proof 로
+  `delete`·`deleteAll` 을 감싼다
+- **기본 구현** — `InMemorySessionLogSegmentStore`. 세션 백엔드 모듈이 구현체를 제공한다 — Mongo 컬렉션, Postgres 테이블,
+  Redis 해시. 수명은 레코드와 같다(세션 삭제 시 `deleteAll`). **read-after-write** 가 필요하다
+- **인코딩** — 레코드 transcript 와 같은 `JsonSessionSnapshotCodec` 의 메시지 인코딩. 백엔드는 불투명 문자열로 저장한다
+- **저장 시 보호** — 레코드에 있던 데이터를 옮긴 것이다. 보호 수준은 레코드와 같으면 되고 약하면 안 된다
+
+---
+
+## 6. 로그를 줄이는 두 경로
+
+로그는 압축으로 줄지 않지만, 사용자가 명시적으로 지우는 경로가 둘 있다. 둘 다 `SessionLogState` 의 연산으로 정의해,
+버퍼 경로와 저장된 레코드 경로가 같은 규칙을 쓴다.
+
+### 6.1 rewind — `truncateFrom(seq)`
+
+중단된 턴을 버린다. 실제 경로는 `TranscriptBuffer.rewind()` 가 아니라 **`DefaultLiveSession.rewindLastTurn` →
+`rewindPersistedTranscript`** 다(버퍼의 `rewind()` 는 main 소스에 호출자가 없다). 지금 그 경로는 저장된 레코드의 메시지를
+인덱스로 잘라 새 `SessionSnapshot` 을 만든다. 봉인 뒤에는 인덱스가 seq 와 어긋나고, 새 스냅샷은 뷰 상태와 `nextSeq` 를
+잃는다.
+
+v2 에서는 두 경로 모두 `SessionLogState.truncateFrom(rewindPoint.seq)` 를 쓴다.
+
+- hot 항목은 잘리고, **`fromSeq` 가 rewind point 이상인 manifest 항목은 버린다.** 봉인 구간은 rewind point 에서 끊겨
+  있으므로(§5.1) 걸치는 항목이 없다. 세그먼트를 읽거나 쪼갤 필요가 없고, 버려진 세그먼트는 고아가 되어 GC 가 지운다
+- `nextSeq` 는 그대로다 — seq 를 재사용하지 않는다
+- 뷰 상태에서 잘린 seq 이상을 가리키는 것을 정리한다. `droppedRanges`·`elisions` 는 그 부분을 버린다
+- `summarySpan` 이 rewind point 뒤에 통째로 있으면 버리고, **걸치면**(중단된 턴 안에서 롤링 압축이 일어난 경우) `toSeq` 를
+  rewind point 로 자르고 요약은 그대로 둔다. 요약에 버려진 부분의 내용이 섞여 있을 수 있다 — 알려진 부정확함이다(§11)
+
+### 6.2 `/clear` — `clear()`
+
+지금 `/clear` 는 기록을 지운다. 그 뜻을 지킨다.
+
+- hot 항목·manifest·뷰 상태를 비우고 `floorSeq = nextSeq` 로 둔다. seq 는 이어서 증가한다
+- **읽기는 즉시 막힌다** — `SessionLogReader` 는 manifest 만 따르므로 지운 대화는 되찾기 도구로 보이지 않는다
+- **삭제는 저장 뒤에** — 비운 레코드를 쓰는 턴 끝 저장이 성공하면, 같은 저장 경로가 clear 이전 manifest 의 세그먼트를
+  펜싱된 삭제 뷰로 지운다. 저장이 먼저이므로 "레코드는 가리키는데 세그먼트가 없는" 상태가 생기지 않는다. 삭제가 실패하면
+  남은 세그먼트는 고아이고 GC(§5.4)가 지운다
+- `ClearCommand` 의 "Removed N messages" 는 **살아 있는 항목 수** — hot 항목 수 + manifest 의 `entryCount` 합 — 로 센다.
+  `nextSeq − floorSeq` 는 rewind 로 잘린 seq 까지 센다
+
+세션 삭제(`DefaultSessionRouter` 의 `records().delete`)는 레코드를 지운 뒤 `deleteAll` 을 부른다. 둘 사이에 실패하면
+세그먼트가 남는데, 가리키는 레코드가 없으므로 고아다. 세션 단위 GC 는 레코드가 없는 세션을 볼 수 없으므로, 저장소 단위
+정리(`list` 가 아니라 전체 스캔)를 운영 도구로 둔다(§11).
+
+---
+
+## 7. 저장 형식과 이행
+
+### 7.1 형식
+
+`JsonSessionSnapshotCodec` 은 이미 `version` 필드를 항상 쓴다(`FORMAT_VERSION = 1`)고, decode 는 다른 값이면 실패한다.
+새 형식은 **`version: 2`** 이고 `SessionLogState` 를 담는다. 판별은 이 필드로 한다.
+
+세션 백엔드는 transcript 를 불투명 문자열로 저장하므로 **백엔드의 레코드 저장 코드는 바뀌지 않는다.** 바뀌는 것은 core 의
+레코드 타입 체인(§7.2)과, 새 세그먼트 저장소 구현이다.
+
+같은 코덱을 **서브에이전트 resume 스냅샷**(`VfsSessionSnapshotStore`, 공유 파일 시스템)도 쓴다. 이 경로도 §7.3 의 쓰기
+게이트를 따른다 — 게이트가 코덱에 있기 때문이다.
+
+### 7.2 로드·저장 체인
+
+v2 상태는 다음 타입을 지난다. 지금은 모두 `systemPrompt`·`messages`·`rewindPoint` 를 필드별로 복사한다.
+
+| 방향 | 체인 |
+|------|------|
+| 로드 | 백엔드 → `SessionRecordCodec.decodeTranscript` → `StoredSessionRecord.Builder.transcript(SessionSnapshot)` → `SessionRecordView` → `SessionSnapshot.from(view)` → `TranscriptBuffer.fromSnapshot` |
+| 저장 | `TranscriptBuffer.toSnapshot` → `SessionRecord.fromSnapshot` → `SessionTranscript` → `SessionRecordCodec.encodeTranscript` → 백엔드 |
+
+- 각 타입은 `SessionLogState` 를 통째로 들고 넘긴다. 메시지 목록은 그 값의 뷰로 제공한다
+- `SessionRecordView` 에는 트리 밖 구현이 있다([`session-model.md` §3.5](session-model.md)). 새 accessor 는 `default` 로
+  더한다
+- **인덱스 검증 두 곳**을 seq 의미로 다시 정의한다 — `SessionTranscript.of`/`withRewindPoint` 의 "`rewindPoint.getMessageCount()
+  > messages.size()` 면 거부" 와 코덱 `decodeRewindPoint` 의 "`keep > messageCount` 면 거부". 그대로 두면 봉인 뒤 레코드 로드
+  자체가 실패한다. v2 의 검증은 "`rewindPoint.seq` 가 `[floorSeq, nextSeq]` 안에 있고 어떤 manifest 구간에도 속하지 않는다" 다
+
+### 7.3 이행
+
+**v1 레코드 읽기** — `version: 1` 은 v1 으로 읽는다.
+
+- 메시지는 seq `0..n-1`, `origin = CONVERSATION` 인 로그가 된다
+- 뷰 상태는 비어 있다. v1 레코드에 남은 경계·요약 마커 메시지는 **로그의 평범한 메시지**로 남는다. 그 앞의 원문은 이미
+  잃었다 — 이행이 되돌릴 수 없는 손실이다
+
+**혼합 버전 클러스터** — 두 단계로 켠다.
+
+1. **읽기** — 모든 노드가 v1·v2 를 읽을 수 있게 배포한다. 쓰기는 v1 이다
+2. **쓰기** — 전 노드 배포가 끝난 뒤 쓰기를 v2 로 바꾼다
+
+두 규칙을 더한다.
+
+- **sticky upgrade** — v1 쓰기 모드의 노드도 **v2 로 읽은 레코드는 v2 로 쓴다.** 2단계로 바꾸는 과정 자체가 롤링 배포라,
+  그 사이 v1 쓰기 노드가 v2 레코드를 v1 으로 다시 쓰면 뷰 상태·manifest·`nextSeq` 가 사라진다 — span 이 사라져 hot 원문이
+  그대로 뷰가 되고, 봉인된 구간이 참조를 잃고, seq 가 0 부터 다시 시작한다
+- **되돌리기** — v2 레코드가 하나라도 쓰인 뒤에는 1단계 이전 바이너리로 되돌리는 것을 **지원하지 않는다.** 그 바이너리는
+  v2 를 읽지 못한다
+
+v1 쓰기 모드에서 `DefaultContextEngine` 은 기록을 고쳐 쓰는 지금의 동작으로 물러난다. `RollingContextEngine` 은 v1 에서
+구현할 수 없으므로 **v1 쓰기 모드에서 배선하면 기동 시 실패한다**.
+
+---
+
+## 8. 설계 결정
+
+| 쟁점 | 결정 | 기각한 대안과 이유 |
+|------|------|-------------------|
+| 위치 주소 | seq, 재사용 안 함 | **인덱스** — 로그가 봉인되고 잘리면 인덱스가 움직여 모든 위치 값을 다시 매핑해야 한다 |
+| 레코드 쪽 상태의 형태 | 불변 값 `SessionLogState` 하나 | **기존 타입에 필드 추가** — 로드·저장 체인이 필드별로 복사하므로 한 홉만 빠져도 조용히 사라진다 |
+| 항목의 출처 | 로그 항목의 `origin` | **`Message` 메타데이터** — 모든 `LlmClient` 변환과 코덱에 번진다. **텍스트 태그** — mid-turn 사용자 메시지를 오분류한다 |
+| `getMessages()` 의 뜻 | hot 항목 (공개 API 의미 변경) | **전체 기록** — 봉인된 항목을 매번 읽어야 해 실행 루프가 세그먼트 저장소에 의존한다. **뷰** — 호출자 대부분이 뷰를 원하지 않는다 |
+| 레코드 크기 | 구간 단위 봉인 | **로그 전체를 레코드에** — 체크포인트 쓰기량이 세션 길이의 제곱. **prefix 봉인** — 롤링의 head 가 원문으로 남아 봉인이 한 걸음도 나아가지 못한다 |
+| 세그먼트 유효성 | 레코드의 manifest 가 정한다 | **`(sessionId, fromSeq)` 결정적 id + 멱등 put** — 같은 노드가 넓어진 구간을 다시 봉인하거나 두 노드가 다른 구간을 봉인하면 같은 id 에 다른 내용이 생긴다 |
+| 세그먼트 쓰기 펜싱 | 하지 않는다 | **lease 증명 후 쓰기** — 증명과 쓰기 사이의 틈은 닫히지 않는다(`SessionStore` 가 명시). manifest 가 늦은 쓰기를 무해하게 만든다 |
+| 봉인 조건에 "저장 완료" | 넣지 않는다 | **마지막 저장 seq 이하만 봉인** — 체크포인트 콜백은 성공을 돌려주지 않고 실패를 삼키며, 저장 경로가 셋이다. manifest 모델에서는 저장이 실패해도 항목이 레코드에 남으므로 필요 없다 |
+| 봉인 시점 | 버퍼를 가진 스레드에서 동기로 — 압축 직후와 턴 끝 | **비동기 executor** — 버퍼는 턴마다 새로 만들어지므로, 지난 턴의 버퍼에 결과를 적용하면 그 버퍼가 체크포인트 slot 을 가로채 레코드를 옛 상태로 덮어쓴다. **턴 끝에만** — 긴 단일 턴 동안 레코드가 그 턴 전체를 들어, 턴 중간 압축이 레코드를 줄이는 지금보다 나빠진다. **체크포인트 writer** — 앱 전체에 하나다 |
+| rewind 와 봉인 | 봉인 구간을 rewind point 에서 끊고, rewind 는 manifest 항목을 버린다 | **rewind point 이후는 봉인하지 않음** — 현재 턴이 통째로 봉인 대상에서 빠져 위의 "턴 끝에만" 과 같은 결과가 된다 |
+| ingest mark 를 봉인 조건으로 | 넣지 않는다 | 봉인된 항목은 실행이 끝날 때까지 메모리에 남는다. ingest 는 메모리 안의 버퍼를 읽는다 |
+| 세그먼트 누락 시 읽기 | 구멍을 보고한다 | **실패** — 펜싱 없는 늦은 레코드 쓰기가 지워진 세그먼트를 가리킬 수 있다. 기록 일부의 손실이 세션 전체의 실패가 되면 안 된다 |
+| `/clear` | 저장 성공 뒤 같은 경로에서 삭제, 실패분은 GC | **저장 전 삭제** — 저장이 실패하면 레코드가 없는 세그먼트를 가리킨다. **GC 에만 맡김** — 지운 대화가 유예 기간 동안 저장소에 남는다 |
+| 펜싱된 삭제 뷰 | `SessionStore.segments(...)` 추가 | **세그먼트 저장소가 lease 를 직접 확인** — 펜싱 규칙이 두 곳에 생긴다 |
+| 세그먼트 저장소 | 새 SPI | **`SessionRecordStore` 확장** — 레코드 저장소는 "세션당 한 행" 을 전제로 원자성을 설계했다 |
+| 혼합 버전 | 2단계 + sticky upgrade | **한 번에 전환** — v1 노드가 v2 레코드를 읽지 못한다. **sticky 없이 2단계** — 전환 중 v1 쓰기가 v2 상태를 지운다 |
+
+---
+
+## 9. 하지 말 것
+
+- **실행 루프에서 봉인된 로그를 읽지 않는다.** 필요해 보이면 봉인 조건이 틀린 것이다. 조건을 고친다
+- **manifest 에 없는 세그먼트를 읽지 않는다.** 저장소에 있다는 것은 유효하다는 뜻이 아니다
+- **버퍼를 다른 스레드에서 고치지 않는다.** 봉인은 그 턴을 돌리는 스레드가 동기로 한다
+- **봉인 구간이 rewind point 를 걸치게 하지 않는다.** rewind 가 세그먼트를 쪼개야 하게 된다
+- **봉인된 항목을 실행 중에 메모리에서 버리지 않는다.** 실행 끝 ingest 가 그것을 읽는다
+- **GC 유예 기간을 0 으로 두지 않는다.** 다른 노드가 진행 중인 봉인의 세그먼트를 지운다
+- **세그먼트가 없다고 읽기를 실패시키지 않는다.** 구멍을 보고한다
+- **seq 를 재사용하지 않는다.** rewind 와 `/clear` 뒤에도 `nextSeq` 에서 잇는다
+- **로그를 고쳐 쓰지 않는다.** 로그를 줄이는 것은 `truncateFrom`(rewind)과 `clear` 뿐이다. 뷰를 줄이고 싶으면 뷰 상태를 바꾼다
+- **`SessionLogState` 를 필드별로 복사하지 않는다.** 체인의 어느 홉에서든 통째로 넘긴다
+- **v1 쓰기 노드가 v2 레코드를 v1 으로 쓰지 않는다.** sticky upgrade 를 끄지 않는다
+- **세그먼트를 레코드보다 약하게 보호하지 않는다.** 같은 데이터다
+
+---
+
+## 10. 영향받는 공개 API
+
+| API | 변화 |
+|-----|------|
+| `TranscriptBuffer.getMessages()` | 의미 변경 — hot 항목 (§3.3) |
+| `AgentExecutionResult.getConversationHistory()`, `SessionSnapshot.getConversationHistory()` | 같은 의미 변경. 봉인이 일어난 세션에서는 전체 대화가 아니다 |
+| `TranscriptBuffer.replaceWith`, `replaceMessageAt` | v2 쓰기 모드에서 쓰지 않는다. deprecated |
+| `SessionStore` | `segments(...)` 추가 |
+| `SessionRecordView` | `getLogState()` default accessor 추가 |
+| `SessionRewindPoint` | 개수가 아니라 seq 를 든다 |
+
+---
+
+## 11. 열린 질문
+
+- **rewind 를 걸친 span** — 요약에 버려진 턴의 내용이 섞이는 부정확함(§6.1)을 받아들일지, 넓히기 전 요약을 하나 더 들고
+  있다가 되돌릴지
+- **긴 실행의 메모리** — 봉인된 항목은 실행이 끝날 때까지 메모리에 남는다(§5.3). 영속 크기는 창 크기로 묶이지만 한 실행의
+  메모리는 그 실행의 크기다. 문제가 되면 ingest 를 실행 중간에도 흘려보내 그 부분을 메모리에서 놓을지
+- **저장소 단위 고아 정리** — 레코드 삭제와 `deleteAll` 사이 실패로 남은 세그먼트를 찾는 운영 도구의 형태
+- **세그먼트 병합** — `minSealTokens` 로 부족하면 작은 세그먼트를 합칠지. 합치면 manifest 한 줄이 바뀐다
+- **v1 쓰기 모드의 수명** — §7.3 의 물러난 동작을 언제 지울지
+
+---
+
+## 부록 A. `TranscriptBuffer` 소비자와 이행
+
+| 호출자 | 지금 읽는 뜻 | v2 |
+|--------|-------------|----|
+| `OrcaAgentExecutor.invokeGatewayOnce` (동기·스트리밍) | 뷰 | `ContextEngine.prepare` 의 뷰 |
+| `OrcaAgentExecutor.invokeGateway` (복구) | 뷰 | `ContextEngine.recover` |
+| `OrcaAgentExecutor` 압축 게이트 전후 `size()` → `emitCompactBoundary` | 뷰 크기 | engine 이 돌려주는 뷰 크기 — 로그 크기는 압축해도 변하지 않는다 |
+| `OrcaAgentExecutor.maybeInjectUserContextMessage` (재개 여부) | 사용자 메시지 수 | `SessionLogState.hasConversation()` — `floorSeq` 이후 살아 있는 `CONVERSATION` USER 항목이 있는가. `truncateFrom` 이 갱신한다. `nextSeq > floorSeq` 로 판정하면 첫 턴이 중단되어 rewind 된 새 세션에서 재시도가 CTX-06 블록을 받지 못한다 |
+| `OrcaAgentExecutor` → `AgentExecutionResult.getConversationHistory()` | 대화 전체 | hot 항목 (§10) |
+| `DefaultCompactionGuard.evaluate` / `preconditionMet` | 뷰 | engine 내부의 뷰 |
+| `DefaultCompactionEngine` (`getMessages`, `replaceWith`) | 뷰 | 요약만 만든다. 교체는 뷰 상태 연산 |
+| `TimeBasedMicrocompact` | 뷰 | 배선 없음. deprecated |
+| `CompactCommand` (`getMessages().isEmpty()`) | 뷰 | 뷰가 비었는지 |
+| `ClearCommand` ("Removed N messages") | 전체 | 살아 있는 항목 수 (§6.2) |
+| `DefaultCommandExecutionManager` (`previousSnapshot`) | 전체 | 스냅샷은 `SessionLogState` 를 든다 |
+| CLI `AgentSetupFactory` (`SESSION_END` 최종 derivation) | 전체 | `SessionLogReader` 페이지 읽기 |
+| `DefaultLiveSession.rewindPersistedTranscript` | 인덱스 | `SessionLogState.truncateFrom` (§6.1) |
+| `SessionRecord.rewind` / `SessionTranscript.rewind` | 인덱스 | 같음 |
+| `SessionTranscript.of` 검증, 코덱 `decodeRewindPoint` | 인덱스 ≤ size | seq 범위 검증 (§7.2) |
+| `DefaultSubagentExecutor` (호출, `toSnapshot`/`fromSnapshot`) | 뷰 = 전체 | 호출은 engine 의 뷰. 포크는 세션이 없어 봉인하지 않으므로 스냅샷은 전체와 같다 |
+| `LlmSkillExecutor` 두 호출 | 스크래치 버퍼 | engine 의 뷰 (`passthrough`) |
+| `RecentFilesRestoreHook`, `InvokedSkillsRestoreHook` | (append) | `addSyntheticMessage` |
+| OnStart advisory 피드백, `executeCommandFlow` 의 assistant 응답 | (append) | `SYNTHETIC` (§3.2) |
+
+---
+
+## 부록 B. 참조 파일 지도
+
+| 관심사 | 파일 |
+|--------|------|
+| 기록 | [`TranscriptBuffer.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/session/transcript/TranscriptBuffer.java) |
+| 영속 값 | [`SessionTranscript.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/session/transcript/SessionTranscript.java), [`SessionSnapshot.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/session/transcript/SessionSnapshot.java), [`SessionRecord.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/session/store/SessionRecord.java) |
+| 인코딩 | [`SessionRecordCodec.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/session/store/SessionRecordCodec.java), [`JsonSessionSnapshotCodec.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/subagent/task/codec/JsonSessionSnapshotCodec.java) |
+| 저장 경로 | [`DefaultTranscriptManager.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/session/transcript/DefaultTranscriptManager.java), [`SessionCheckpointMailbox.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/session/store/SessionCheckpointMailbox.java) |
+| rewind | [`DefaultLiveSession.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/session/DefaultLiveSession.java) |
+| 펜싱 | [`SessionStore.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/session/store/SessionStore.java) |
+| 어셈블리 | [`AimonStackBuilder.java`](../../../modules/aimon-bootstrap/src/main/java/at/aimon/bootstrap/AimonStackBuilder.java) |
+| 백엔드 | [`PostgresSessionRecordStore.java`](../../../modules/aimon-session-postgres/src/main/java/at/aimon/session/postgres/PostgresSessionRecordStore.java), [`MongoSessionRecordStore.java`](../../../modules/aimon-session-mongodb/src/main/java/at/aimon/session/mongodb/MongoSessionRecordStore.java) |
