@@ -19,13 +19,12 @@ import at.aimon.core.agent.session.store.SegmentInfo;
 import at.aimon.core.agent.session.store.SegmentScanPage;
 import at.aimon.core.agent.session.store.SessionLogSegment;
 import at.aimon.core.agent.session.store.SessionLogSegmentStore;
-import io.lettuce.core.KeyScanCursor;
 import io.lettuce.core.RedisException;
 import io.lettuce.core.ScanArgs;
-import io.lettuce.core.ScanCursor;
 import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
-import io.lettuce.core.api.sync.RedisCommands;
+import io.lettuce.core.cluster.api.StatefulRedisClusterConnection;
+import io.lettuce.core.cluster.api.sync.RedisClusterCommands;
 
 /**
  * Redis-backed {@link SessionLogSegmentStore}: two hashes per session.
@@ -56,9 +55,11 @@ import io.lettuce.core.api.sync.RedisCommands;
  *
  * <p>
  * {@link #scanSessions} walks the {@code :created} keys with {@code SCAN}, so no index key has to be kept in step with
- * the per-session keys — an index would sit in its own cluster slot and could not change atomically with them. The
- * scan reads the node this connection points at, which is the whole keyspace for the standalone connection this class
- * takes.
+ * the per-session keys — an index would sit in its own cluster slot and could not change atomically with them.
+ * {@code SCAN} only walks the node it is sent to. Over a standalone connection that node is the whole keyspace; over a
+ * cluster connection the scan walks every master in turn, carrying the node in its cursor, so a session on any
+ * master is reported. A topology change during a pass can still hide keys from that pass — {@code SCAN}'s own caveat
+ * — and the next pass sees them.
  *
  * <p>
  * Keys carry no TTL: a segment lives as long as the record's manifest names it, and garbage collection decides when
@@ -92,7 +93,8 @@ public final class RedisSessionLogSegmentStore implements SessionLogSegmentStore
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    private final RedisCommands<String, String> commands;
+    private final RedisClusterCommands<String, String> commands;
+    private final KeyspaceScanner scanner;
     private final String keyPrefix;
 
     /**
@@ -110,8 +112,39 @@ public final class RedisSessionLogSegmentStore implements SessionLogSegmentStore
      *            the key prefix (must not be null)
      */
     public RedisSessionLogSegmentStore(StatefulRedisConnection<String, String> connection, String keyPrefix) {
-        Objects.requireNonNull(connection, "connection must not be null");
-        this.commands = connection.sync();
+        this(Objects.requireNonNull(connection, "connection must not be null").sync(),
+                KeyspaceScanner.standalone(connection.sync()), keyPrefix);
+    }
+
+    /**
+     * A store over a Redis Cluster. Every per-session command goes to the slot its hash tag names; the store-wide scan
+     * walks every master.
+     *
+     * @param connection
+     *            the cluster connection (must not be null)
+     */
+    public RedisSessionLogSegmentStore(StatefulRedisClusterConnection<String, String> connection) {
+        this(connection, DEFAULT_KEY_PREFIX);
+    }
+
+    /**
+     * @param connection
+     *            the cluster connection (must not be null)
+     * @param keyPrefix
+     *            the key prefix (must not be null, must not contain {@code '{'})
+     */
+    public RedisSessionLogSegmentStore(StatefulRedisClusterConnection<String, String> connection, String keyPrefix) {
+        this(Objects.requireNonNull(connection, "connection must not be null").sync(),
+                KeyspaceScanner.cluster(connection), keyPrefix);
+    }
+
+    /** Package-private so a test can drive the per-node scan without a cluster. */
+    RedisSessionLogSegmentStore(RedisClusterCommands<String, String> commands, KeyspaceScanner scanner,
+            String keyPrefix) {
+        // Not null-checked, as the standalone constructors never checked what sync() answered: the key layout
+        // (dataKey / createdKey) needs no commands, and a null here fails on first use.
+        this.commands = commands;
+        this.scanner = Objects.requireNonNull(scanner, "scanner must not be null");
         this.keyPrefix = Objects.requireNonNull(keyPrefix, "keyPrefix must not be null");
         if (keyPrefix.indexOf('{') >= 0) {
             throw new IllegalArgumentException("keyPrefix must not contain '{' - it would become the hash tag of "
@@ -178,7 +211,8 @@ public final class RedisSessionLogSegmentStore implements SessionLogSegmentStore
     }
 
     /**
-     * A {@code SCAN} over the sessions' {@code :created} keys; the cursor is Redis's own. Looser than the other
+     * A {@code SCAN} over the sessions' {@code :created} keys; the cursor is Redis's own over a standalone connection,
+     * and {@code <nodeId>:<nodeCursor>} over a cluster connection. Looser than the other
      * backends in the ways the SPI allows: every session with any segment is reported regardless of
      * {@code createdBefore}, a session may appear twice in a pass, and {@code limit} is passed as {@code COUNT}, which
      * Redis treats as a hint.
@@ -191,7 +225,7 @@ public final class RedisSessionLogSegmentStore implements SessionLogSegmentStore
         }
         final String keyStart = keyPrefix + TAG_OPEN;
         try {
-            final KeyScanCursor<String> page = commands.scan(ScanCursor.of(cursor == null ? "0" : cursor),
+            final KeyspaceScanner.Step page = scanner.next(cursor,
                     ScanArgs.Builder.matches(globEscape(keyStart) + "*" + globEscape(CREATED_SUFFIX)).limit(limit));
             final List<SessionId> ids = new ArrayList<>(page.getKeys().size());
             for (String key : page.getKeys()) {
@@ -202,7 +236,7 @@ public final class RedisSessionLogSegmentStore implements SessionLogSegmentStore
                     ids.add(SessionId.of(key.substring(keyStart.length(), key.length() - CREATED_SUFFIX.length())));
                 }
             }
-            return SegmentScanPage.of(ids, page.isFinished() ? null : page.getCursor());
+            return SegmentScanPage.of(ids, page.getNextCursor());
         } catch (RedisException e) {
             throw new SessionLogSegmentStoreException("Redis error during scanSessions", e);
         }
