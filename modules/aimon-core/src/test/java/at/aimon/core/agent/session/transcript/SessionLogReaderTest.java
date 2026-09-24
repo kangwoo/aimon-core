@@ -6,6 +6,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 
@@ -13,12 +14,15 @@ import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.store.InMemorySessionLogSegmentStore;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.store.SegmentId;
+import at.aimon.core.agent.session.store.SegmentInfo;
 import at.aimon.core.agent.session.store.SessionLogSegment;
+import at.aimon.core.agent.session.store.SessionLogSegmentStore;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.Role;
 import at.aimon.core.llm.ToolUse;
 import at.aimon.core.llm.ToolUseResult;
 import at.aimon.core.llm.token.HeuristicTokenEstimator;
+import at.aimon.core.llm.token.TokenEstimator;
 
 /**
  * {@link SessionLogReader}: the manifest decides what is read, missing segments are gaps, and pages end at legal cuts.
@@ -134,5 +138,140 @@ class SessionLogReaderTest {
     @Test
     void aSessionWithNoRecordReadsEmpty() {
         assertThat(reader(0).read(SessionId.of("absent"), 0, Long.MAX_VALUE).getEntries()).isEmpty();
+    }
+
+    @Test
+    void aCrashOrphanedToolUseDoesNotDisableThePageBound() {
+        // A call whose result a crash never wrote keeps every later cut illegal. Without the hard limit the second page
+        // would run to the end of the log.
+        final List<Message> messages = new ArrayList<>();
+        messages.add(Message.user("q1"));
+        messages.add(Message.assistant("", List.of(ToolUse.of("lost", "Read", Map.of()))));
+        for (int i = 0; i < 20; i++) {
+            messages.add(i % 2 == 0 ? Message.user("u" + i) : Message.assistant("a" + i));
+        }
+        records.mergeFromSnapshot(SessionSnapshot.fromLog(SESSION, "system", SessionLogState.ofMessages(messages)));
+        final SessionLogReader reader = new SessionLogReader(records, segments, 10, new TenPerMessage());
+
+        final List<List<Long>> pages = new ArrayList<>();
+        long from = 0;
+        while (true) {
+            final SessionLogPage page = reader.read(SESSION, from, Long.MAX_VALUE);
+            pages.add(page.getEntries().stream().map(SessionLogEntry::getSeq).toList());
+            if (!page.hasMore()) {
+                break;
+            }
+            from = page.getNextFromSeq().getAsLong();
+        }
+
+        assertThat(pages.get(0)).containsExactly(0L);
+        assertThat(pages.get(1)).as("cut at twice the budget, open call and all").containsExactly(1L, 2L);
+        assertThat(pages)
+                .allSatisfy(page -> assertThat(page.size()).isLessThanOrEqualTo(SessionLogReader.HARD_LIMIT_FACTOR));
+        assertThat(pages.stream().mapToInt(List::size).sum()).as("nothing is lost").isEqualTo(22);
+    }
+
+    @Test
+    void aPendingCallStillKeepsItsResultOnThePageBelowTheHardLimit() {
+        sealedBuffer();
+
+        // Budget 1, hard limit 2: the call at seq 1 is pending when the budget is reached, and its result at seq 2
+        // follows — a result never starts a page, whatever the limit.
+        final SessionLogPage page = reader(1).read(SESSION, 1, Long.MAX_VALUE);
+
+        assertThat(page.getEntries()).extracting(SessionLogEntry::getSeq).containsExactly(1L, 2L);
+    }
+
+    @Test
+    void oneCacheLoadsEachSegmentOnceAcrossWindows() {
+        sealedBuffer();
+        final CountingSegments counting = new CountingSegments(segments);
+        final SessionLogReader reader = new SessionLogReader(records, counting, 0, new HeuristicTokenEstimator());
+        final SessionLogState state = records.load(SESSION).orElseThrow().getLogState();
+
+        final SessionLogReadCache cache = SessionLogReadCache.create();
+        for (long from = 0; from < 4; from++) {
+            reader.read(SESSION, state, from, from + 1, cache);
+        }
+        assertThat(counting.gets).as("four windows over one segment, one cache").isEqualTo(1);
+        assertThat(cache.size()).isEqualTo(1);
+
+        counting.gets = 0;
+        for (long from = 0; from < 4; from++) {
+            reader.read(SESSION, state, from, from + 1);
+        }
+        assertThat(counting.gets).as("without a shared cache every window loads it again").isEqualTo(4);
+    }
+
+    @Test
+    void anUnreadableSegmentIsRememberedAsUnreadable() {
+        final TranscriptBuffer buffer = sealedBuffer();
+        segments.delete(SESSION, buffer.getManifest().get(0).getSegmentId());
+        final CountingSegments counting = new CountingSegments(segments);
+        final SessionLogReader reader = new SessionLogReader(records, counting, 0, new HeuristicTokenEstimator());
+        final SessionLogState state = records.load(SESSION).orElseThrow().getLogState();
+        final SessionLogReadCache cache = SessionLogReadCache.create();
+
+        final SessionLogPage first = reader.read(SESSION, state, 0, 2, cache);
+        final SessionLogPage second = reader.read(SESSION, state, 2, 4, cache);
+
+        assertThat(first.getGaps()).containsExactly(SeqRange.of(0, 2));
+        assertThat(second.getGaps()).containsExactly(SeqRange.of(2, 4));
+        assertThat(counting.gets).isEqualTo(1);
+    }
+
+    /** Ten tokens per message, nothing else. */
+    private static final class TenPerMessage implements TokenEstimator {
+
+        @Override
+        public int estimate(String systemPrompt, List<Message> messages) {
+            return 10 * messages.size();
+        }
+
+        @Override
+        public int estimateMessage(Message message) {
+            return 10;
+        }
+
+        @Override
+        public int estimateText(String text) {
+            return 0;
+        }
+    }
+
+    /** Counts {@code get} calls on a delegate store. */
+    private static final class CountingSegments implements SessionLogSegmentStore {
+        private final SessionLogSegmentStore delegate;
+        private int gets;
+
+        private CountingSegments(SessionLogSegmentStore delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public void put(SessionLogSegment segment) {
+            delegate.put(segment);
+        }
+
+        @Override
+        public Optional<SessionLogSegment> get(SessionId sessionId, SegmentId id) {
+            gets++;
+            return delegate.get(sessionId, id);
+        }
+
+        @Override
+        public List<SegmentInfo> list(SessionId sessionId) {
+            return delegate.list(sessionId);
+        }
+
+        @Override
+        public void delete(SessionId sessionId, SegmentId id) {
+            delegate.delete(sessionId, id);
+        }
+
+        @Override
+        public void deleteAll(SessionId sessionId) {
+            delegate.deleteAll(sessionId);
+        }
     }
 }

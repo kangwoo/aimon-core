@@ -44,8 +44,18 @@ import at.aimon.core.llm.token.TokenEstimator;
  * long, and the API shape is what stops a caller loading it at once. A page ends only at a legal cut (context-engine
  * §3.4, §7), so a page handed to one LLM call never carries an unanswered {@code tool_use} or an orphan
  * {@code tool_result}; a run that cannot be cut is kept whole even when it exceeds the budget. Every page holds at
- * least
- * one entry.
+ * least one entry.
+ *
+ * <p>
+ * <b>A bound that holds.</b> An unanswered {@code tool_use} — a call whose result a crash never wrote — would keep
+ * every later position illegal, and the page would grow to the end of the log. So once a page reaches
+ * {@link #HARD_LIMIT_FACTOR} times {@code maxReadTokens} it is cut at the next position that does not start with a
+ * tool result, even with calls still open. In a well-formed log that point is never reached: a call's results follow
+ * it at once, and a result is never the first entry of a page. Past it, the calls still open are the orphans.
+ *
+ * <p>
+ * <b>Segments are loaded once per {@link SessionLogReadCache}.</b> A caller reading many windows or pages passes one
+ * cache through all of them.
  *
  * <p>
  * The execution loop never uses this; it has no reason to read sealed entries (session-log §9).
@@ -54,6 +64,9 @@ import at.aimon.core.llm.token.TokenEstimator;
  * Thread-safe if the stores are.
  */
 public final class SessionLogReader {
+
+    /** How far past {@code maxReadTokens} a page may grow while a {@code tool_use} is still unanswered. */
+    public static final int HARD_LIMIT_FACTOR = 2;
 
     private static final Logger log = LoggerFactory.getLogger(SessionLogReader.class);
 
@@ -112,14 +125,36 @@ public final class SessionLogReader {
      * @return the page (never null)
      */
     public SessionLogPage read(SessionId sessionId, SessionLogState state, long fromSeq, long toSeq) {
+        return read(sessionId, state, fromSeq, toSeq, SessionLogReadCache.create());
+    }
+
+    /**
+     * Reads one page of {@code state}, loading each sealed segment at most once across every read given the same
+     * {@code cache}.
+     *
+     * @param sessionId
+     *            the session the segments belong to (must not be null)
+     * @param state
+     *            the log (must not be null)
+     * @param fromSeq
+     *            the first seq to read
+     * @param toSeq
+     *            the first seq not to read
+     * @param cache
+     *            the caller's cache for this operation (must not be null)
+     * @return the page (never null)
+     */
+    public SessionLogPage read(SessionId sessionId, SessionLogState state, long fromSeq, long toSeq,
+            SessionLogReadCache cache) {
         Objects.requireNonNull(sessionId, "sessionId cannot be null");
         Objects.requireNonNull(state, "state cannot be null");
+        Objects.requireNonNull(cache, "cache cannot be null");
         final long from = Math.max(fromSeq, state.getFloorSeq());
         final long to = Math.min(toSeq, state.getNextSeq());
         if (from >= to) {
             return SessionLogPage.empty();
         }
-        final Cursor cursor = new Cursor(sessionId, state, from, to);
+        final Cursor cursor = new Cursor(sessionId, state, from, to, cache);
         final List<SessionLogEntry> page = new ArrayList<>();
         final List<SeqRange> gaps = new ArrayList<>();
         final Set<String> pending = new HashSet<>();
@@ -133,8 +168,12 @@ public final class SessionLogReader {
                 track(pending, item.entry.getMessage());
                 tokens += tokenEstimator.estimateMessage(item.entry.getMessage());
             }
-            if (maxReadTokens > 0 && tokens >= maxReadTokens && pending.isEmpty() && cursor.hasNext()
-                    && !cursor.peek().isToolResult()) {
+            if (maxReadTokens > 0 && tokens >= maxReadTokens && cursor.hasNext() && !cursor.peek().isToolResult()
+                    && (pending.isEmpty() || tokens >= (long) HARD_LIMIT_FACTOR * maxReadTokens)) {
+                if (!pending.isEmpty()) {
+                    log.debug("Page of session {} cut at seq {} with unanswered tool calls {}", sessionId.value(),
+                            cursor.peek().entry.getSeq(), pending);
+                }
                 return SessionLogPage.of(page, gaps, OptionalLong.of(cursor.peek().entry.getSeq()));
             }
         }
@@ -178,9 +217,11 @@ public final class SessionLogReader {
         private int carriedIndex;
         private int lineIndex;
         private final Deque<Item> buffered = new ArrayDeque<>();
+        private final SessionLogReadCache cache;
 
-        private Cursor(SessionId sessionId, SessionLogState state, long from, long to) {
+        private Cursor(SessionId sessionId, SessionLogState state, long from, long to, SessionLogReadCache cache) {
             this.sessionId = sessionId;
+            this.cache = cache;
             this.carried = state.entriesIn(from, to);
             this.from = from;
             this.to = to;
@@ -245,6 +286,16 @@ public final class SessionLogReader {
 
         /** Returns the entries of the line's segment, or null when the segment cannot be trusted. */
         private List<SessionLogEntry> load(SessionLogManifestEntry line) {
+            final Optional<List<SessionLogEntry>> cached = cache.get(sessionId, line.getSegmentId());
+            if (cached != null) {
+                return cached.orElse(null);
+            }
+            final List<SessionLogEntry> loaded = loadUncached(line);
+            cache.put(sessionId, line.getSegmentId(), loaded);
+            return loaded;
+        }
+
+        private List<SessionLogEntry> loadUncached(SessionLogManifestEntry line) {
             final Optional<SessionLogSegment> segment;
             try {
                 segment = segments.get(sessionId, line.getSegmentId());

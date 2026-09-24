@@ -5,6 +5,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.LongPredicate;
 
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.Role;
@@ -404,6 +405,27 @@ public final class SessionLogState {
     }
 
     /**
+     * Returns {@link #isLegalCut(long)} for this state as a predicate whose answers are computed once, for callers that
+     * test many cuts along the log. {@code isLegalCut} rescans the carried entries per call, which makes a scan over
+     * every position quadratic; this is one pass up front and a binary search per question.
+     *
+     * @return the predicate (never null); it answers for this state only, which is immutable
+     */
+    public LongPredicate legalCuts() {
+        final boolean[] legal = LegalCuts.legalPositions(messages);
+        return seq -> {
+            if (seq < floorSeq || seq > nextSeq) {
+                return false;
+            }
+            final SessionLogManifestEntry sealed = sealedLineOf(seq);
+            if (sealed != null && seq != sealed.getFromSeq()) {
+                return false;
+            }
+            return legal[countBefore(seq)];
+        };
+    }
+
+    /**
      * Returns this state with {@code span} as its summary span: the view shows the span's marker pair instead of the
      * entries in its range. The log is not touched.
      *
@@ -554,14 +576,18 @@ public final class SessionLogState {
      * @return the number of entries before it (never negative)
      */
     public int countBefore(long seq) {
-        int count = 0;
-        for (SessionLogEntry entry : entries) {
-            if (entry.getSeq() >= seq) {
-                break;
+        // Entries are in ascending seq order, so this is a lower-bound binary search.
+        int low = 0;
+        int high = entries.size();
+        while (low < high) {
+            final int mid = (low + high) >>> 1;
+            if (entries.get(mid).getSeq() < seq) {
+                low = mid + 1;
+            } else {
+                high = mid;
             }
-            count++;
         }
-        return count;
+        return low;
     }
 
     /**

@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.llm.Message;
@@ -70,29 +71,52 @@ public final class SessionLogSource {
      * @return the entries (never null)
      */
     public List<SessionLogEntry> read(SessionLogState state, long fromSeq, long toSeq) {
+        return readRange(state, fromSeq, toSeq, SessionLogReadCache.create()).getEntries();
+    }
+
+    /**
+     * Reads every entry of {@code state} in {@code [fromSeq, toSeq)} as one page: the entries in seq order, gap entries
+     * included, and the unreadable ranges as {@link SessionLogPage#getGaps()} — so a caller need not recognise a gap by
+     * its text. Sealed segments are loaded at most once across every call given the same {@code cache}.
+     *
+     * @param state
+     *            the log to read (must not be null)
+     * @param fromSeq
+     *            the first seq
+     * @param toSeq
+     *            the first seq not to read
+     * @param cache
+     *            the caller's cache for this operation (must not be null)
+     * @return the whole range as a last page (never null)
+     */
+    public SessionLogPage readRange(SessionLogState state, long fromSeq, long toSeq, SessionLogReadCache cache) {
         Objects.requireNonNull(state, "state cannot be null");
+        Objects.requireNonNull(cache, "cache cannot be null");
+        final List<SessionLogEntry> entries = new ArrayList<>();
+        final List<SeqRange> gaps = new ArrayList<>();
         if (reader != null) {
-            final List<SessionLogEntry> entries = new ArrayList<>();
             long from = fromSeq;
             while (true) {
-                final SessionLogPage page = reader.read(getSessionId(), state, from, toSeq);
+                final SessionLogPage page = reader.read(getSessionId(), state, from, toSeq, cache);
                 entries.addAll(page.getEntries());
+                gaps.addAll(page.getGaps());
                 if (!page.hasMore()) {
-                    return entries;
+                    return SessionLogPage.of(entries, gaps, OptionalLong.empty());
                 }
                 from = page.getNextFromSeq().getAsLong();
             }
         }
-        final List<SessionLogEntry> entries = new ArrayList<>(state.entriesIn(fromSeq, toSeq));
+        entries.addAll(state.entriesIn(fromSeq, toSeq));
         for (SessionLogManifestEntry line : state.getManifest()) {
             final long from = Math.max(fromSeq, line.getFromSeq());
             final long to = Math.min(toSeq, line.getToSeq());
             if (from < to) {
-                entries.add(SessionLogEntry.of(from, Message.user(SessionLogPage.gapText(SeqRange.of(from, to))),
-                        LogOrigin.SYNTHETIC));
+                final SeqRange gap = SeqRange.of(from, to);
+                gaps.add(gap);
+                entries.add(SessionLogEntry.of(from, Message.user(SessionLogPage.gapText(gap)), LogOrigin.SYNTHETIC));
             }
         }
         entries.sort((a, b) -> Long.compare(a.getSeq(), b.getSeq()));
-        return entries;
+        return SessionLogPage.of(entries, gaps, OptionalLong.empty());
     }
 }

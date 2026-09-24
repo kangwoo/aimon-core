@@ -4,11 +4,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 
 import java.util.List;
+import java.util.Map;
+import java.util.function.LongPredicate;
 
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.input.TextInput;
+import at.aimon.core.agent.session.store.SegmentId;
 import at.aimon.core.llm.Message;
+import at.aimon.core.llm.ToolUse;
+import at.aimon.core.llm.ToolUseResult;
 
 /**
  * Pins the log value itself: seq addressing, the invariants the constructor checks, and the two operations that cut the
@@ -186,5 +191,51 @@ class SessionLogStateTest {
     @Test
     void theMessageViewToleratesContainsNull() {
         assertThat(SessionLogState.ofMessages(List.of(ASK)).getMessages().contains(null)).isFalse();
+    }
+
+    @Test
+    void legalCutsAnswersExactlyAsIsLegalCutDoes() {
+        // seq 0 q, 1 call t1, 2 result t1, 3 a, 4 q, 5 call t2+t3, 6 result t2, 7 result t3, 8 a, 9 q, 10 call t4
+        // (never answered); [0, 4) summarized and sealed, and a rewind point at 9.
+        final SessionLogState log = SessionLogState
+                .ofMessages(List.of(Message.user("q1"),
+                        Message.assistant("", List.of(ToolUse.of("t1", "Read", Map.of()))),
+                        Message.toolUseResults(List.of(ToolUseResult.success("t1", "r1"))), Message.assistant("a1"),
+                        Message.user("q2"),
+                        Message.assistant("",
+                                List.of(ToolUse.of("t2", "Read", Map.of()), ToolUse.of("t3", "Read", Map.of()))),
+                        Message.toolUseResults(List.of(ToolUseResult.success("t2", "r2"))),
+                        Message.toolUseResults(List.of(ToolUseResult.success("t3", "r3"))), Message.assistant("a2"),
+                        Message.user("q3"), Message.assistant("", List.of(ToolUse.of("t4", "Read", Map.of())))))
+                .withFormatAtLeast(SessionLogFormat.V2).withRewindPoint(SessionRewindPoint.of(9, TextInput.of("q3")))
+                .summarize(SummarySpan.builder().fromSeq(0).toSeq(4).summaryText("s").boundaryId("b").trigger("AUTO")
+                        .build());
+        final SessionLogState sealed = log.seal(SessionLogManifestEntry.builder().fromSeq(0).toSeq(4)
+                .segmentId(SegmentId.generate()).contentHash("sha256:x").entryCount(4).build());
+
+        for (SessionLogState state : List.of(log, sealed)) {
+            final LongPredicate legal = state.legalCuts();
+            for (long seq = -1; seq <= state.getNextSeq() + 1; seq++) {
+                assertThat(legal.test(seq)).as("seq %d", seq).isEqualTo(state.isLegalCut(seq));
+            }
+        }
+        assertThat(sealed.legalCuts().test(2)).as("inside a sealed range").isFalse();
+        assertThat(sealed.legalCuts().test(4)).isTrue();
+        assertThat(sealed.legalCuts().test(6)).as("splits t2/t3").isFalse();
+        assertThat(sealed.legalCuts().test(11)).as("the end, with t4 unanswered").isFalse();
+    }
+
+    @Test
+    void countBeforeFindsThePositionOfAnySeq() {
+        final SessionLogState log = SessionLogState.ofMessages(List.of(ASK, ASK, ASK, ASK)).truncateFrom(2).append(ASK,
+                LogOrigin.CONVERSATION);
+        // entries at seqs 0, 1, 4
+
+        assertThat(log.countBefore(0)).isZero();
+        assertThat(log.countBefore(1)).isEqualTo(1);
+        assertThat(log.countBefore(3)).isEqualTo(2);
+        assertThat(log.countBefore(4)).isEqualTo(2);
+        assertThat(log.countBefore(5)).isEqualTo(3);
+        assertThat(log.countBefore(Long.MAX_VALUE)).isEqualTo(3);
     }
 }
