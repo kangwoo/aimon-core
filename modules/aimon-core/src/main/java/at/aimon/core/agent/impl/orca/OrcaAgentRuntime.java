@@ -14,6 +14,8 @@ import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.compact.CompactionEngine;
 import at.aimon.core.agent.compact.CompactionGuard;
 import at.aimon.core.agent.compact.PromptSizeRecoveryStrategy;
+import at.aimon.core.agent.context.ContextEngine;
+import at.aimon.core.agent.context.DefaultContextEngine;
 import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolContextEnricher;
 import at.aimon.core.agent.tool.ToolRegistry;
@@ -76,6 +78,7 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
     private final CompactionEngine compactionEngine; // nullable - opt-in conversation compaction
     private final CompactionGuard compactionGuard; // nullable - paired with compactionEngine; defaults to NoOp upstream
     private final PromptSizeRecoveryStrategy promptSizeRecoveryStrategy; // nullable - defaults to NoOp upstream
+    private final ContextEngine contextEngine; // never null - derived from the three above when not set explicitly
     private final List<ToolContextEnricher> toolContextEnrichers;
     private final WorkflowRunner workflowRunner; // nullable - only present when background runs are enabled
     // TCH-01: non-null ONLY when core built the default shell itself. A shell handed in via
@@ -88,8 +91,8 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
             CommandRegistry commandRegistry, SubagentRegistry subagentRegistry, SkillRegistry skillRegistry,
             VirtualFileSystem fileSystem, Environment environment, McpClientManager mcpClientManager,
             KnowledgeStore knowledgeStore, CompactionEngine compactionEngine, CompactionGuard compactionGuard,
-            PromptSizeRecoveryStrategy promptSizeRecoveryStrategy, List<ToolContextEnricher> toolContextEnrichers,
-            WorkflowRunner workflowRunner, VirtualShell ownedShell) {
+            PromptSizeRecoveryStrategy promptSizeRecoveryStrategy, ContextEngine contextEngine,
+            List<ToolContextEnricher> toolContextEnrichers, WorkflowRunner workflowRunner, VirtualShell ownedShell) {
         this.id = Objects.requireNonNull(id, "ID cannot be null");
         this.agent = Objects.requireNonNull(agent, "Agent cannot be null");
         this.toolRegistry = Objects.requireNonNull(toolRegistry, "Tool registry cannot be null");
@@ -104,6 +107,7 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
         this.compactionEngine = compactionEngine; // nullable
         this.compactionGuard = compactionGuard; // nullable
         this.promptSizeRecoveryStrategy = promptSizeRecoveryStrategy; // nullable
+        this.contextEngine = Objects.requireNonNull(contextEngine, "contextEngine cannot be null");
         this.toolContextEnrichers = List
                 .copyOf(Objects.requireNonNull(toolContextEnrichers, "toolContextEnrichers cannot be null"));
         this.workflowRunner = workflowRunner; // nullable
@@ -228,6 +232,21 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
     }
 
     /**
+     * Returns the engine that decides what every LLM call of this agent is sent &mdash; the compaction gate,
+     * prompt-too-long recovery and {@code /compact} all go through it.
+     *
+     * <p>
+     * When none was set explicitly, this is a {@link DefaultContextEngine} over {@link #getCompactionGuard()},
+     * {@link #getPromptSizeRecoveryStrategy()} and {@link #getCompactionEngine()}, each defaulting to its no-op, so a
+     * runtime configured through those three setters behaves as it did before the engine existed.
+     *
+     * @return the context engine (never null)
+     */
+    public ContextEngine getContextEngine() {
+        return contextEngine;
+    }
+
+    /**
      * Returns the registered {@link ToolContextEnricher enrichers} that should be invoked before each tool call.
      *
      * @return an immutable list of enrichers (never null; possibly empty)
@@ -335,6 +354,7 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
         private CompactionEngine compactionEngine;
         private CompactionGuard compactionGuard;
         private PromptSizeRecoveryStrategy promptSizeRecoveryStrategy;
+        private ContextEngine contextEngine;
         private List<ToolContextEnricher> toolContextEnrichers = List.of();
         private WorkflowRunner workflowRunner;
         private VirtualShell ownedShell;
@@ -429,6 +449,15 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
         }
 
         /**
+         * ContextEngine을 설정한다 (nullable). 설정하지 않으면 build() 가 compactionGuard · promptSizeRecoveryStrategy ·
+         * compactionEngine 으로 {@link DefaultContextEngine} 을 만든다.
+         */
+        public Builder contextEngine(ContextEngine contextEngine) {
+            this.contextEngine = contextEngine;
+            return this;
+        }
+
+        /**
          * ToolContextEnricher 목록을 설정한다. null이면 빈 목록으로 처리된다.
          */
         public Builder toolContextEnrichers(List<ToolContextEnricher> toolContextEnrichers) {
@@ -457,9 +486,14 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
                 Objects.requireNonNull(agent, "Agent must be set before build() can derive an id");
                 id = AgentRuntimeId.from(agent);
             }
+            final ContextEngine effectiveEngine = contextEngine != null
+                    ? contextEngine
+                    : DefaultContextEngine.builder().compactionGuard(compactionGuard)
+                            .recoveryStrategy(promptSizeRecoveryStrategy).compactionEngine(compactionEngine).build();
             return new OrcaAgentRuntime(id, agent, toolRegistry, hookRegistry, commandRegistry, subagentRegistry,
                     skillRegistry, fileSystem, environment, mcpClientManager, knowledgeStore, compactionEngine,
-                    compactionGuard, promptSizeRecoveryStrategy, toolContextEnrichers, workflowRunner, ownedShell);
+                    compactionGuard, promptSizeRecoveryStrategy, effectiveEngine, toolContextEnrichers, workflowRunner,
+                    ownedShell);
         }
     }
 

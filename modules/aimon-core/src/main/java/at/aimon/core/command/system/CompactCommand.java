@@ -12,9 +12,12 @@ import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.compact.CompactionEngine;
 import at.aimon.core.agent.compact.CompactionGuard;
 import at.aimon.core.agent.compact.CompactionMetadata;
-import at.aimon.core.agent.compact.CompactionRequest;
 import at.aimon.core.agent.compact.CompactionResult;
 import at.aimon.core.agent.compact.CompactionTrigger;
+import at.aimon.core.agent.context.ContextCaller;
+import at.aimon.core.agent.context.ContextEngine;
+import at.aimon.core.agent.context.ContextRequest;
+import at.aimon.core.agent.context.DefaultContextEngine;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.base.Principal;
 import at.aimon.core.command.SystemCommand;
@@ -35,10 +38,10 @@ import at.aimon.core.llm.LlmCallMetadata;
  * The compact command:
  *
  * <ul>
- * <li>Builds a {@link CompactionRequest} with {@link CompactionTrigger#MANUAL} and caller-supplied
- * {@link LlmCallMetadata} (principal + traceId) so the summary LLM call is properly attributed to the invoking user
- * <li>Runs it through the configured {@link CompactionEngine}
- * <li>Resets the {@link CompactionGuard}'s circuit breaker on success so AUTO compactions can resume
+ * <li>Builds a {@link ContextRequest} carrying caller-supplied {@link LlmCallMetadata} (principal + traceId) so the
+ * summary LLM call is properly attributed to the invoking user
+ * <li>Runs it through the agent's {@link ContextEngine#compactNow}, which performs a {@link CompactionTrigger#MANUAL}
+ * compaction and resets the AUTO circuit breaker on success so AUTO compactions can resume
  * <li>Fires {@code OnStopHook} after the compaction completes — observability tools that listen for execution-stop
  * events therefore see MANUAL compactions on the same channel as agent runs
  * <li>Returns a short summary describing the resulting token reduction
@@ -71,14 +74,15 @@ public final class CompactCommand extends SystemCommand implements DirectExecuta
 
     private static final Logger log = LoggerFactory.getLogger(CompactCommand.class);
 
-    private final CompactionEngine compactionEngine;
-    private final CompactionGuard compactionGuard;
+    private final ContextEngine contextEngine;
     private final HookRegistry hookRegistry;
     private final HookExecutionManager hookExecutionManager;
     private final Environment environment;
 
     /**
-     * Creates a new CompactCommand.
+     * Creates a new CompactCommand over a bare {@link CompactionEngine} and {@link CompactionGuard}, wrapped in a
+     * {@link DefaultContextEngine} &mdash; the engine performs the summarization, the guard's circuit breaker is reset
+     * on success.
      *
      * @param compactionEngine
      *            the engine that performs the L3 summarization (must not be null)
@@ -93,9 +97,28 @@ public final class CompactCommand extends SystemCommand implements DirectExecuta
      */
     public CompactCommand(CompactionEngine compactionEngine, CompactionGuard compactionGuard, HookRegistry hookRegistry,
             HookExecutionManager hookExecutionManager, Environment environment) {
+        this(DefaultContextEngine.builder()
+                .compactionEngine(Objects.requireNonNull(compactionEngine, "compactionEngine cannot be null"))
+                .compactionGuard(Objects.requireNonNull(compactionGuard, "compactionGuard cannot be null")).build(),
+                hookRegistry, hookExecutionManager, environment);
+    }
+
+    /**
+     * Creates a new CompactCommand that compacts through the agent's {@link ContextEngine}.
+     *
+     * @param contextEngine
+     *            the engine whose {@link ContextEngine#compactNow} performs the compaction (must not be null)
+     * @param hookRegistry
+     *            the hook registry consulted for PreCompact / PostCompact hooks (must not be null)
+     * @param hookExecutionManager
+     *            invoked to fire {@code OnStopHook} after the compaction completes (must not be null)
+     * @param environment
+     *            the runtime environment forwarded to hook contexts (must not be null)
+     */
+    public CompactCommand(ContextEngine contextEngine, HookRegistry hookRegistry,
+            HookExecutionManager hookExecutionManager, Environment environment) {
         super(COMMAND_NAME, "Manually compact the current conversation");
-        this.compactionEngine = Objects.requireNonNull(compactionEngine, "compactionEngine cannot be null");
-        this.compactionGuard = Objects.requireNonNull(compactionGuard, "compactionGuard cannot be null");
+        this.contextEngine = Objects.requireNonNull(contextEngine, "contextEngine cannot be null");
         this.hookRegistry = Objects.requireNonNull(hookRegistry, "hookRegistry cannot be null");
         this.hookExecutionManager = Objects.requireNonNull(hookExecutionManager, "hookExecutionManager cannot be null");
         this.environment = Objects.requireNonNull(environment, "environment cannot be null");
@@ -117,17 +140,18 @@ public final class CompactCommand extends SystemCommand implements DirectExecuta
         final String customInstructions = request.getArguments().map(String::trim).filter(s -> !s.isEmpty())
                 .orElse(null);
 
-        final LlmCallMetadata callMetadata = buildCallMetadata(memory, request.getPrincipal().orElse(null));
-
-        final CompactionRequest compactionRequest = CompactionRequest.builder().transcriptBuffer(memory)
-                .trigger(CompactionTrigger.MANUAL).model(context.getDefaultModel()).hookRegistry(hookRegistry)
-                .environment(environment).customInstructions(customInstructions).callMetadata(callMetadata).build();
+        final Principal principal = request.getPrincipal().orElse(null);
+        final ContextRequest contextRequest = ContextRequest.builder().transcriptBuffer(memory)
+                .model(context.getDefaultModel()).hookRegistry(hookRegistry).environment(environment)
+                .caller(ContextCaller.builder().principal(principal).build())
+                .callMetadata(buildCallMetadata(memory, principal)).build();
 
         final Instant startedAt = Instant.now();
         CompactionResult result = null;
         RuntimeException unexpected = null;
         try {
-            result = compactionEngine.compact(compactionRequest);
+            // The engine also resets the AUTO circuit breaker when the compaction succeeds.
+            result = contextEngine.compactNow(contextRequest, customInstructions);
         } catch (RuntimeException e) {
             unexpected = e;
             log.error("MANUAL compaction failed unexpectedly: {}", e.getMessage(), e);
@@ -136,10 +160,6 @@ public final class CompactCommand extends SystemCommand implements DirectExecuta
 
         final CommandExecutionResult commandResult = buildCommandResult(result, unexpected);
         invokeOnStop(commandResult, startedAt, completedAt);
-
-        if (commandResult.isSuccess()) {
-            compactionGuard.recordExternalSuccess(memory.getSessionId());
-        }
         return commandResult;
     }
 

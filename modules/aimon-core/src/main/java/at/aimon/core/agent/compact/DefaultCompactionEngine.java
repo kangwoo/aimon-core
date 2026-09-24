@@ -11,8 +11,10 @@ import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.hook.HookExecutionManager;
 import at.aimon.core.hook.HookFeedback;
@@ -22,6 +24,7 @@ import at.aimon.core.hook.event.PreCompactContext;
 import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmClient;
+import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.Role;
@@ -176,67 +179,17 @@ public class DefaultCompactionEngine implements CompactionEngine {
             final List<String> recentReadFilePaths = collectRecentReadFilePaths(inRangeMessages);
             final List<InvokedSkillRecord> invokedSkills = collectInvokedSkills(inRangeMessages);
 
-            // 1) PreCompact hooks
+            // 1)-4) PreCompact hooks, strip, summary prompt and the summary LLM call — the half summarize() shares.
+            final SummaryAttempt attempt = generateSummary(request.getTrigger(), request.getHookRegistry(),
+                    request.getEnvironment(), request.getExecutionId().orElse(null), memory.getSessionId(),
+                    originalMessages.size(), preTokenCount, inRangeMessages, discoveredToolNames,
+                    request.getCustomInstructions().orElse(null), request.getCallMetadata().orElse(null),
+                    request.getModel(), startedAt);
+            if (attempt.failure != null) {
+                return attempt.failure;
+            }
+            final String summaryText = attempt.summaryText;
             final HookRegistry registry = request.getHookRegistry();
-            final PreCompactContext preContext = applyIdentity(
-                    PreCompactContext.builder().invokerType(InvokerType.mainAgent()).invokerName("compaction-engine")
-                            .hookRegistry(registry).environment(request.getEnvironment()).trigger(request.getTrigger())
-                            .messageCount(originalMessages.size()).estimatedTokens(preTokenCount).timestamp(startedAt),
-                    request).build();
-            final List<HookResult> preResults = hookExecutionManager.executePreCompact(preContext);
-            // Advisory only: a blocked result's feedback IS its deny reason, and the block paths below already report
-            // it (AUTO through CompactionBlockedByHookException, MANUAL through the downgrade warning). Collecting it
-            // here as well would splice a veto message into the summarization prompt as if it were a summarization
-            // instruction.
-            final List<String> preFeedback = HookFeedback.collectAdvisory(preResults);
-
-            if (request.getTrigger() == CompactionTrigger.AUTO && hookExecutionManager.hasBlockedResult(preResults)) {
-                final List<String> reasons = hookExecutionManager.collectBlockedReasons(preResults);
-                final CompactionBlockedByHookException blocked = new CompactionBlockedByHookException(reasons);
-                log.warn("Compaction (AUTO) blocked by PreCompactHook(s): {}", reasons);
-                final CompactionMetadata metadata = baseMetadataBuilder(request).preCompactTokenCount(preTokenCount)
-                        .messagesSummarized(inRangeMessages.size()).startedAt(startedAt).completedAt(Instant.now())
-                        .discoveredToolNames(discoveredToolNames).build();
-                return CompactionResult.failure(blocked, metadata);
-            }
-            if (request.getTrigger() == CompactionTrigger.MANUAL && hookExecutionManager.hasBlockedResult(preResults)) {
-                log.warn("Compaction (MANUAL) PreCompactHook block(s) downgraded to warning: {}",
-                        hookExecutionManager.collectBlockedReasons(preResults));
-            }
-
-            // 2) Strip non-text blocks for the summary call (in-range only)
-            final List<Message> strippedMessages = messageStripper.stripNonTextBlocks(inRangeMessages);
-
-            // 3) Build summary prompt — merge custom instructions from hooks + request
-            final String mergedInstructions = mergeCustomInstructions(request.getCustomInstructions().orElse(null),
-                    preFeedback);
-            final String systemPrompt = summaryPromptTemplate.buildSystemPrompt(mergedInstructions);
-
-            // 4) Summary LLM call (no tools, attribute as feature=COMPACTION). Caller-supplied metadata (e.g. the
-            // invoking principal for a /compact command) wins on overlap; engine defaults fill the rest.
-            final LlmCallMetadata engineDefaults = LlmCallMetadata.builder().component("compaction-engine")
-                    .feature(LlmCallMetadata.Feature.COMPACTION).traceId(memory.getSessionId().toString()).build();
-            final LlmCallMetadata callMetadata = request.getCallMetadata().map(c -> c.withDefaults(engineDefaults))
-                    .orElse(engineDefaults);
-            final LlmResponse response;
-            try {
-                response = llmClient.sendMessage(systemPrompt, strippedMessages, List.of(), request.getModel(),
-                        callMetadata);
-            } catch (RuntimeException e) {
-                log.error("Compaction summary LLM call failed: {}", e.getMessage(), e);
-                final CompactionMetadata metadata = baseMetadataBuilder(request).preCompactTokenCount(preTokenCount)
-                        .messagesSummarized(inRangeMessages.size()).startedAt(startedAt).completedAt(Instant.now())
-                        .discoveredToolNames(discoveredToolNames).build();
-                return CompactionResult.failure(e, metadata);
-            }
-
-            final String summaryText = Objects.requireNonNullElse(response.getTextContent(), "");
-            if (summaryText.isBlank()) {
-                final CompactionMetadata metadata = baseMetadataBuilder(request).preCompactTokenCount(preTokenCount)
-                        .messagesSummarized(inRangeMessages.size()).startedAt(startedAt).completedAt(Instant.now())
-                        .discoveredToolNames(discoveredToolNames).build();
-                return CompactionResult.failure(new IllegalStateException("Compaction summary was empty"), metadata);
-            }
 
             // 5) Build the post-compaction message pair (boundary marker + summary body) and splice into the surviving
             // prefix/tail. For full compaction (no range) prefix and tail are empty, which yields the original
@@ -278,6 +231,150 @@ public class DefaultCompactionEngine implements CompactionEngine {
         }
     }
 
+    @Override
+    public boolean supportsSummarize() {
+        return true;
+    }
+
+    @Override
+    public CompactionResult summarize(SummaryRequest request) {
+        Objects.requireNonNull(request, "Request cannot be null");
+
+        if (COMPACTION_IN_PROGRESS.get()) {
+            log.warn("Reentrant summarize attempt suppressed for {}",
+                    describeSubject(request.getExecutionId().orElse(null), request.getSessionId()));
+            final CompactionMetadata metadata = CompactionMetadata.builder().trigger(request.getTrigger())
+                    .startedAt(Instant.now()).completedAt(Instant.now()).build();
+            return CompactionResult.failure(
+                    new CompactionReentrancyException("Compaction already in progress on this thread"), metadata);
+        }
+
+        COMPACTION_IN_PROGRESS.set(Boolean.TRUE);
+        try {
+            final Instant startedAt = Instant.now();
+            final List<Message> messages = request.getMessages();
+            final int preTokenCount = tokenEstimator.estimate(request.getSystemPrompt(), messages);
+            final List<String> discoveredToolNames = collectDiscoveredToolNames(messages);
+            final SummaryAttempt attempt = generateSummary(request.getTrigger(), request.getHookRegistry(),
+                    request.getEnvironment(), request.getExecutionId().orElse(null), request.getSessionId(),
+                    messages.size(), preTokenCount, messages, discoveredToolNames,
+                    request.getCustomInstructions().orElse(null), request.getCallMetadata().orElse(null),
+                    request.getModel(), startedAt);
+            if (attempt.failure != null) {
+                return attempt.failure;
+            }
+            final CompactionMetadata metadata = CompactionMetadata.builder().trigger(request.getTrigger())
+                    .preCompactTokenCount(preTokenCount).messagesSummarized(messages.size()).startedAt(startedAt)
+                    .completedAt(Instant.now()).discoveredToolNames(discoveredToolNames).build();
+            log.info("Summary generated: {} messages, {} tokens summarized (trigger={})", messages.size(),
+                    preTokenCount, request.getTrigger());
+            return CompactionResult.success(attempt.summaryText, metadata);
+        } finally {
+            COMPACTION_IN_PROGRESS.remove();
+        }
+    }
+
+    /**
+     * The summary half of a compaction, shared by {@link #compact(CompactionRequest)} and
+     * {@link #summarize(SummaryRequest)}: PreCompact hooks, non-text stripping, the summary prompt and the summary LLM
+     * call. Runs with the reentrancy flag already set by the caller.
+     *
+     * @param hookMessageCount
+     *            the message count PreCompact hooks are shown &mdash; the whole conversation for {@code compact}
+     * @param preTokenCount
+     *            the size PreCompact hooks are shown and failure metadata records
+     * @param inRangeMessages
+     *            the messages actually summarized
+     * @return the summary text, or the failure result to return as-is
+     */
+    @SuppressWarnings("checkstyle:ParameterNumber")
+    private SummaryAttempt generateSummary(CompactionTrigger trigger, HookRegistry registry, Environment environment,
+            ExecutionId executionId, SessionId sessionId, int hookMessageCount, int preTokenCount,
+            List<Message> inRangeMessages, List<String> discoveredToolNames, String customInstructions,
+            LlmCallMetadata callerMetadata, LlmModel model, Instant startedAt) {
+        // 1) PreCompact hooks
+        final PreCompactContext preContext = applyIdentity(
+                PreCompactContext.builder().invokerType(InvokerType.mainAgent()).invokerName("compaction-engine")
+                        .hookRegistry(registry).environment(environment).trigger(trigger).messageCount(hookMessageCount)
+                        .estimatedTokens(preTokenCount).timestamp(startedAt),
+                executionId, sessionId).build();
+        final List<HookResult> preResults = hookExecutionManager.executePreCompact(preContext);
+        // Advisory only: a blocked result's feedback IS its deny reason, and the block paths below already report
+        // it (AUTO through CompactionBlockedByHookException, MANUAL through the downgrade warning). Collecting it
+        // here as well would splice a veto message into the summarization prompt as if it were a summarization
+        // instruction.
+        final List<String> preFeedback = HookFeedback.collectAdvisory(preResults);
+
+        if (trigger == CompactionTrigger.AUTO && hookExecutionManager.hasBlockedResult(preResults)) {
+            final List<String> reasons = hookExecutionManager.collectBlockedReasons(preResults);
+            final CompactionBlockedByHookException blocked = new CompactionBlockedByHookException(reasons);
+            log.warn("Compaction (AUTO) blocked by PreCompactHook(s): {}", reasons);
+            return SummaryAttempt.failed(CompactionResult.failure(blocked,
+                    failureMetadata(trigger, preTokenCount, inRangeMessages.size(), startedAt, discoveredToolNames)));
+        }
+        if (trigger == CompactionTrigger.MANUAL && hookExecutionManager.hasBlockedResult(preResults)) {
+            log.warn("Compaction (MANUAL) PreCompactHook block(s) downgraded to warning: {}",
+                    hookExecutionManager.collectBlockedReasons(preResults));
+        }
+
+        // 2) Strip non-text blocks for the summary call (in-range only)
+        final List<Message> strippedMessages = messageStripper.stripNonTextBlocks(inRangeMessages);
+
+        // 3) Build summary prompt — merge custom instructions from hooks + request
+        final String mergedInstructions = mergeCustomInstructions(customInstructions, preFeedback);
+        final String systemPrompt = summaryPromptTemplate.buildSystemPrompt(mergedInstructions);
+
+        // 4) Summary LLM call (no tools, attribute as feature=COMPACTION). Caller-supplied metadata (e.g. the
+        // invoking principal for a /compact command) wins on overlap; engine defaults fill the rest.
+        final LlmCallMetadata engineDefaults = LlmCallMetadata.builder().component("compaction-engine")
+                .feature(LlmCallMetadata.Feature.COMPACTION).traceId(sessionId.toString()).build();
+        final LlmCallMetadata callMetadata = callerMetadata != null
+                ? callerMetadata.withDefaults(engineDefaults)
+                : engineDefaults;
+        final LlmResponse response;
+        try {
+            response = llmClient.sendMessage(systemPrompt, strippedMessages, List.of(), model, callMetadata);
+        } catch (RuntimeException e) {
+            log.error("Compaction summary LLM call failed: {}", e.getMessage(), e);
+            return SummaryAttempt.failed(CompactionResult.failure(e,
+                    failureMetadata(trigger, preTokenCount, inRangeMessages.size(), startedAt, discoveredToolNames)));
+        }
+
+        final String summaryText = Objects.requireNonNullElse(response.getTextContent(), "");
+        if (summaryText.isBlank()) {
+            return SummaryAttempt.failed(CompactionResult.failure(
+                    new IllegalStateException("Compaction summary was empty"),
+                    failureMetadata(trigger, preTokenCount, inRangeMessages.size(), startedAt, discoveredToolNames)));
+        }
+        return SummaryAttempt.succeeded(summaryText);
+    }
+
+    private static CompactionMetadata failureMetadata(CompactionTrigger trigger, int preTokenCount,
+            int messagesSummarized, Instant startedAt, List<String> discoveredToolNames) {
+        return CompactionMetadata.builder().trigger(trigger).preCompactTokenCount(preTokenCount)
+                .messagesSummarized(messagesSummarized).startedAt(startedAt).completedAt(Instant.now())
+                .discoveredToolNames(discoveredToolNames).build();
+    }
+
+    /** Outcome of {@link #generateSummary}: exactly one of the two fields is set. */
+    private static final class SummaryAttempt {
+        private final String summaryText;
+        private final CompactionResult failure;
+
+        private SummaryAttempt(String summaryText, CompactionResult failure) {
+            this.summaryText = summaryText;
+            this.failure = failure;
+        }
+
+        static SummaryAttempt succeeded(String summaryText) {
+            return new SummaryAttempt(summaryText, null);
+        }
+
+        static SummaryAttempt failed(CompactionResult failure) {
+            return new SummaryAttempt(null, failure);
+        }
+    }
+
     private CompactionMetadata.Builder baseMetadataBuilder(CompactionRequest request) {
         return CompactionMetadata.builder().trigger(request.getTrigger());
     }
@@ -295,17 +392,18 @@ public class DefaultCompactionEngine implements CompactionEngine {
      *
      * @param builder
      *            the context builder to stamp (must not be null)
-     * @param request
-     *            the compaction request carrying the optional run identity (must not be null)
+     * @param executionId
+     *            the session-less run's identity, or {@code null} for a compaction inside a genuine session
+     * @param sessionId
+     *            the transcript label, used as the identity when {@code executionId} is null (must not be null)
      * @return the same builder, for chaining (never null)
      */
-    private static PreCompactContext.Builder applyIdentity(PreCompactContext.Builder builder,
-            CompactionRequest request) {
-        final ExecutionId executionId = request.getExecutionId().orElse(null);
+    private static PreCompactContext.Builder applyIdentity(PreCompactContext.Builder builder, ExecutionId executionId,
+            SessionId sessionId) {
         if (executionId != null) {
             return builder.executionId(executionId);
         }
-        return builder.sessionIdValue(request.getTranscriptBuffer().getSessionId().toString());
+        return builder.sessionIdValue(sessionId.toString());
     }
 
     /**
@@ -316,8 +414,11 @@ public class DefaultCompactionEngine implements CompactionEngine {
      * @return a short human-readable subject (never null)
      */
     private static String describeSubject(CompactionRequest request) {
-        return request.getExecutionId().map(id -> "execution " + id.value())
-                .orElseGet(() -> "session " + request.getTranscriptBuffer().getSessionId());
+        return describeSubject(request.getExecutionId().orElse(null), request.getTranscriptBuffer().getSessionId());
+    }
+
+    private static String describeSubject(ExecutionId executionId, SessionId sessionId) {
+        return executionId != null ? "execution " + executionId.value() : "session " + sessionId;
     }
 
     /**

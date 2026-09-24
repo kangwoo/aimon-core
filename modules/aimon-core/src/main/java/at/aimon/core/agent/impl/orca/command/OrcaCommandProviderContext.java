@@ -5,6 +5,7 @@ import java.util.Objects;
 import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.compact.CompactionEngine;
 import at.aimon.core.agent.compact.CompactionGuard;
+import at.aimon.core.agent.context.ContextEngine;
 import at.aimon.core.agent.orca.OrcaProviderDependencies;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.command.CommandRegistry;
@@ -189,6 +190,15 @@ public final class OrcaCommandProviderContext {
      */
     public CompactionGuard getCompactionGuard() {
         return dependencies.getCompactionGuard();
+    }
+
+    /**
+     * Returns the context engine that decides what the agent's LLM calls are sent.
+     *
+     * @return the context engine, may be null when the assembly did not supply one
+     */
+    public ContextEngine getContextEngine() {
+        return dependencies.getContextEngine();
     }
 
     /**

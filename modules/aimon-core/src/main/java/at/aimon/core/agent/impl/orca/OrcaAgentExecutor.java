@@ -41,17 +41,16 @@ import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.budget.ExecutionBudget;
 import at.aimon.core.agent.budget.StalledIterationGuard;
 import at.aimon.core.agent.budget.TruncatedResponses;
-import at.aimon.core.agent.compact.CompactionDecision;
-import at.aimon.core.agent.compact.CompactionGuard;
 import at.aimon.core.agent.compact.CompactionMetadata;
-import at.aimon.core.agent.compact.NoOpCompactionGuard;
-import at.aimon.core.agent.compact.NoOpPromptSizeRecoveryStrategy;
-import at.aimon.core.agent.compact.PromptSizeRecoveryDecision;
-import at.aimon.core.agent.compact.PromptSizeRecoveryStrategy;
 import at.aimon.core.agent.context.ContextAssembler;
 import at.aimon.core.agent.context.ContextAssemblyRequest;
 import at.aimon.core.agent.context.ContextBlock;
 import at.aimon.core.agent.context.ContextBlockKind;
+import at.aimon.core.agent.context.ContextCaller;
+import at.aimon.core.agent.context.ContextDecision;
+import at.aimon.core.agent.context.ContextEngine;
+import at.aimon.core.agent.context.ContextRequest;
+import at.aimon.core.agent.context.ContextView;
 import at.aimon.core.agent.exception.ContextWindowExceededException;
 import at.aimon.core.agent.impl.orca.tool.OrcaSkillForkExecutorResolver;
 import at.aimon.core.agent.interrupt.CancellationSignal;
@@ -1581,10 +1580,10 @@ public class OrcaAgentExecutor
             // declaration existed.
             final Predicate<Tool> agentAdmits = AllowedTools.admissionFilter(scope.getAgent().getAllowedTools());
 
-            // CONV-COMPACT-01: resolve the compaction guard once per ReAct loop. NoOpCompactionGuard is the framework
-            // default — behaviour is unchanged unless the caller wires a real guard via the agent runtime.
-            final CompactionGuard compactionGuard = scope.agentRuntime.getCompactionGuard()
-                    .orElse(NoOpCompactionGuard.instance());
+            // CONV-COMPACT-01: resolve the context engine once per ReAct loop. It is the one place the LLM view is
+            // shrunk — the compaction gate below and the prompt-too-long recovery in invokeGateway both go through it.
+            // A runtime configured with no guard and no recovery strategy yields an engine that does neither.
+            final ContextEngine contextEngine = scope.agentRuntime.getContextEngine();
 
             try {
                 while (iterationCount < maxIterations) {
@@ -1618,20 +1617,16 @@ public class OrcaAgentExecutor
                     scope.budgetTracker.recordIteration();
                     log.debug("Starting iteration {} of {}", iterationCount, maxIterations);
 
-                    // CONV-COMPACT-01: AUTO compaction gate. Evaluates the conversation against per-model thresholds
-                    // and may rewrite memory in place before the next LLM call. When the budget tracker requested
-                    // proactive compaction, forceCompact lowers the effective trigger to the warning band.
-                    // Snapshot the message count BEFORE the guard runs — it rewrites memory in place, so this is
-                    // the
-                    // only point where the pre-compaction size is observable for the CompactBoundary event below.
+                    // CONV-COMPACT-01: AUTO compaction gate. The engine evaluates the conversation against per-model
+                    // thresholds, may compact it before the next LLM call, and returns the view that call is sent.
+                    // When the budget tracker requested proactive compaction, the request's budgetForced flag lowers
+                    // the effective trigger to the warning band.
+                    // Snapshot the message count BEFORE the engine runs — the default engine rewrites memory in
+                    // place, so this is the only point where the pre-compaction size is observable for the
+                    // CompactBoundary event below.
                     final int messagesBeforeCompaction = scope.transcriptBuffer.size();
-                    final CompactionDecision compactionDecision = budgetForcedCompaction
-                            ? compactionGuard.forceCompact(scope.transcriptBuffer,
-                                    scope.getAgent().getMetadata().getModel(), scope.getHookRegistry(),
-                                    scope.getEnvironment())
-                            : compactionGuard.maybeCompact(scope.transcriptBuffer,
-                                    scope.getAgent().getMetadata().getModel(), scope.getHookRegistry(),
-                                    scope.getEnvironment());
+                    final ContextRequest contextRequest = contextRequest(scope, budgetForcedCompaction);
+                    final ContextDecision compactionDecision = contextEngine.prepare(contextRequest);
                     switch (compactionDecision.getAction()) {
                         case BLOCK :
                             log.error("Compaction guard blocked iteration {}: {}", iterationCount,
@@ -1641,8 +1636,7 @@ public class OrcaAgentExecutor
                         case COMPACT :
                             log.info("Compaction performed before iteration {}: {}", iterationCount,
                                     compactionDecision.getReason());
-                            compactionDecision.getCompactionResult()
-                                    .ifPresent(r -> scope.compactionEvents.add(r.getMetadata()));
+                            compactionDecision.getCompactionMetadata().ifPresent(scope.compactionEvents::add);
                             // Publish the compaction-boundary observability event. Emitted here (not at the
                             // iteration tail) so it is ordered immediately before this iteration's IterationStarted,
                             // reflecting that the compaction happened just before the LLM call it precedes.
@@ -1701,8 +1695,8 @@ public class OrcaAgentExecutor
 
                         final LlmResponse response;
                         try {
-                            response = invokeGateway(scope, iterationCount, availableTools, cancellationSignal,
-                                    llmCancellation);
+                            response = invokeGateway(scope, contextEngine, contextRequest, compactionDecision.getView(),
+                                    iterationCount, availableTools, cancellationSignal, llmCancellation);
                         } finally {
                             // LLM-CANCEL: drop the just-finished call's abort lever so a trip landing while the next
                             // tools run cannot invoke a stale (already-closed) stream. Idempotent close() makes this
@@ -3096,40 +3090,50 @@ public class OrcaAgentExecutor
      *            the turn-scoped cancellation signal polled from inside the streaming sink
      * @return the aggregated LLM response
      */
-    private LlmResponse invokeGateway(ExecutionScope scope, int iteration, List<ToolDefinition> availableTools,
-            CancellationSignal cancellationSignal, SignalBackedLlmCancellation llmCancellation) {
+    @SuppressWarnings("checkstyle:ParameterNumber")
+    private LlmResponse invokeGateway(ExecutionScope scope, ContextEngine contextEngine, ContextRequest contextRequest,
+            ContextView view, int iteration, List<ToolDefinition> availableTools, CancellationSignal cancellationSignal,
+            SignalBackedLlmCancellation llmCancellation) {
         try {
-            return invokeGatewayOnce(scope, iteration, availableTools, cancellationSignal, llmCancellation);
+            return invokeGatewayOnce(scope, view, iteration, availableTools, cancellationSignal, llmCancellation);
         } catch (LlmPromptTooLongException e) {
-            // Post-call prompt-too-long fallback. Consult the recovery strategy to drop the
-            // oldest non-protected message and retry once. If the strategy declines (NONE) or the retry itself fails,
-            // the original behaviour resumes — the exception propagates to the ReAct loop's error path.
-            final PromptSizeRecoveryStrategy strategy = scope.agentRuntime.getPromptSizeRecoveryStrategy()
-                    .orElse(NoOpPromptSizeRecoveryStrategy.instance());
-            final List<Message> currentMessages = scope.transcriptBuffer.getMessages();
-            final PromptSizeRecoveryDecision decision = strategy.recover(currentMessages, e);
-            if (decision.getAction() != PromptSizeRecoveryDecision.Action.RETRY) {
-                log.warn("Prompt-too-long recovery declined at iteration {} ({}); rethrowing", iteration,
-                        decision.getReason());
+            // Post-call prompt-too-long fallback. The context engine shrinks the view (the default engine drops the
+            // oldest non-protected user message) and the call is retried once. If the engine cannot shrink it or the
+            // retry itself fails, the original behaviour resumes — the exception propagates to the ReAct loop's error
+            // path.
+            final Optional<ContextView> recovered = contextEngine.recover(contextRequest, e);
+            if (recovered.isEmpty()) {
+                log.warn("Prompt-too-long recovery declined at iteration {}; rethrowing", iteration);
                 throw e;
             }
-            final List<Message> recovered = decision.getRecoveredMessages()
-                    .orElseThrow(() -> new IllegalStateException("RETRY decision must carry recoveredMessages"));
-            log.warn("Prompt-too-long recovery applied at iteration {}: {}", iteration, decision.getReason());
-            scope.transcriptBuffer.replaceWith(recovered);
-            return invokeGatewayOnce(scope, iteration, availableTools, cancellationSignal, llmCancellation);
+            log.warn("Prompt-too-long recovery applied at iteration {}", iteration);
+            return invokeGatewayOnce(scope, recovered.get(), iteration, availableTools, cancellationSignal,
+                    llmCancellation);
         }
     }
 
-    private LlmResponse invokeGatewayOnce(ExecutionScope scope, int iteration, List<ToolDefinition> availableTools,
-            CancellationSignal cancellationSignal, SignalBackedLlmCancellation llmCancellation) {
+    /**
+     * Builds the {@link ContextRequest} of one iteration's LLM call. Carries no execution id: the main loop runs a
+     * session's turn, so the buffer's session id is the identity a compaction's hooks are given.
+     */
+    private static ContextRequest contextRequest(ExecutionScope scope, boolean budgetForced) {
+        return ContextRequest.builder().transcriptBuffer(scope.transcriptBuffer)
+                .model(scope.getAgent().getMetadata().getModel()).hookRegistry(scope.getHookRegistry())
+                .environment(scope.getEnvironment())
+                .caller(ContextCaller.builder().principal(scope.getPrincipal()).build()).budgetForced(budgetForced)
+                .build();
+    }
+
+    private LlmResponse invokeGatewayOnce(ExecutionScope scope, ContextView view, int iteration,
+            List<ToolDefinition> availableTools, CancellationSignal cancellationSignal,
+            SignalBackedLlmCancellation llmCancellation) {
         // TRACE-01: attribute this LLM call to the active span (the current ITERATION span, or the turn span outside
         // the loop). enrich(...) is a no-op under Tracer.noop(), so the metadata is unchanged when tracing is off.
         final LlmCallMetadata callMetadata = scope.activeSpan.enrich(scope.llmCallMetadata);
         if (!useStreaming) {
             try {
-                return gateway.sendMessage(scope.systemPromptParts, scope.transcriptBuffer.getMessages(),
-                        availableTools, scope.getAgent().getMetadata().getModel(), callMetadata, llmCancellation);
+                return gateway.sendMessage(scope.systemPromptParts, view.getMessages(), availableTools,
+                        scope.getAgent().getMetadata().getModel(), callMetadata, llmCancellation);
             } catch (LlmCallCancelledException e) {
                 // Two sources can raise this on the blocking path: the gateway's pre-attempt short-circuit, and a
                 // genuine in-flight abort — a cancellable token (isSupported()) makes the provider reroute the blocking
@@ -3152,9 +3156,8 @@ public class OrcaAgentExecutor
         try {
             final LlmStreamTarget streamTarget = LlmStreamTarget.builder().options(streamingOptions).sink(sink)
                     .retryListener(sink::onRetry).build();
-            return gateway.sendMessageStreaming(scope.systemPromptParts, scope.transcriptBuffer.getMessages(),
-                    availableTools, scope.getAgent().getMetadata().getModel(), callMetadata, streamTarget,
-                    llmCancellation);
+            return gateway.sendMessageStreaming(scope.systemPromptParts, view.getMessages(), availableTools,
+                    scope.getAgent().getMetadata().getModel(), callMetadata, streamTarget, llmCancellation);
         } catch (CancelledExecutionException e) {
             // The turn is being cancelled mid-stream — drop any eager tool work (side-effect-free, so safe to
             // discard) before preserving the streamed prefix.

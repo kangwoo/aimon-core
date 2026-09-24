@@ -16,6 +16,7 @@ import at.aimon.core.agent.compact.DefaultCompactionEngine;
 import at.aimon.core.agent.compact.DefaultCompactionGuard;
 import at.aimon.core.agent.compact.DefaultPromptSizeRecoveryStrategy;
 import at.aimon.core.agent.compact.InMemoryCompactionFailureStore;
+import at.aimon.core.agent.context.DefaultContextEngine;
 import at.aimon.core.agent.impl.AgentBundle;
 import at.aimon.core.agent.impl.orca.command.OrcaCommandProvider;
 import at.aimon.core.agent.impl.orca.command.OrcaCommandProviderContext;
@@ -851,6 +852,13 @@ public class OrcaAgentRuntimeFactory {
                 tokenEstimator, DefaultCompactionGuard.DEFAULT_MAX_CONSECUTIVE_FAILURES,
                 DefaultCompactionGuard.DEFAULT_MAX_TRACKED_SESSIONS,
                 compactionFailureStore != null ? compactionFailureStore : new InMemoryCompactionFailureStore());
+        // The one place the agent's LLM view is shrunk: the compaction gate, prompt-too-long recovery and /compact all
+        // go through it. It wraps the guard and the recovery strategy above and still rewrites the transcript in place
+        // (context-engine design §4); the default recovery strategy drops the oldest droppable user message and
+        // retries instead of aborting the turn.
+        final DefaultContextEngine contextEngine = DefaultContextEngine.builder().compactionGuard(compactionGuard)
+                .recoveryStrategy(new DefaultPromptSizeRecoveryStrategy()).compactionEngine(compactionEngine)
+                .tokenEstimator(tokenEstimator).build();
 
         // Back background-subagent live output with a VFS-persisted segment log rooted in this context's file
         // system, so the AgentOutput tool can tail progress incrementally and (in a scale-out deployment) any node can
@@ -886,7 +894,7 @@ public class OrcaAgentRuntimeFactory {
                 .sessionSnapshotStore(sessionSnapshotStore).skillRegistry(skillRegistry).toolRegistry(toolRegistry)
                 .hookRegistry(hookRegistry).hookExecutionManager(agentExecutor.getHookExecutionManager())
                 .scheduledTaskManager(scheduledTaskManager).credentialStore(credentialStore).environment(environment)
-                .compactionEngine(compactionEngine).compactionGuard(compactionGuard)
+                .compactionEngine(compactionEngine).compactionGuard(compactionGuard).contextEngine(contextEngine)
                 .pendingTurnRegistry(pendingTurnRegistry).agentApprovalStore(agentApprovalStore)
                 .sessionApprovalStore(sessionApprovalStore).skillInvocationPolicy(skillInvocationPolicy)
                 .rewakeService(rewakeService).build();
@@ -933,10 +941,8 @@ public class OrcaAgentRuntimeFactory {
                 .skillRegistry(skillRegistry).fileSystem(fileSystem).environment(environment)
                 .mcpClientManager(mcpClientManager).knowledgeStore(knowledgeStore).compactionEngine(compactionEngine)
                 .compactionGuard(compactionGuard)
-                // Wire the default prompt-too-long recovery strategy so a PromptTooLong error is recovered by
-                // dropping the oldest droppable user message and retrying, instead of aborting the turn. The strategy
-                // is stateless; the executor still falls back to NoOp when a context carries none.
-                .promptSizeRecoveryStrategy(new DefaultPromptSizeRecoveryStrategy())
+                // Still exposed on its own for callers that read it; the executor consults it through the engine.
+                .promptSizeRecoveryStrategy(contextEngine.getRecoveryStrategy()).contextEngine(contextEngine)
                 .toolContextEnrichers(toolContextEnrichers).workflowRunner(workflowRunner).ownedShell(ownedShell)
                 .build();
     }

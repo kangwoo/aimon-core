@@ -15,6 +15,8 @@ import org.slf4j.LoggerFactory;
 import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.budget.StalledIterationGuard;
 import at.aimon.core.agent.budget.TruncatedResponses;
+import at.aimon.core.agent.context.ContextEngine;
+import at.aimon.core.agent.context.ContextRequest;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.tool.SideEffectLevel;
@@ -107,6 +109,9 @@ import at.aimon.core.tools.ToolContextKeys;
 public class LlmSkillExecutor implements SkillExecutor {
 
     private static final Logger log = LoggerFactory.getLogger(LlmSkillExecutor.class);
+
+    /** The skill loop never shrinks its view (context-engine design §3.2): its scratch buffer stays short. */
+    private static final ContextEngine CONTEXT_ENGINE = ContextEngine.passthrough();
 
     private final LlmClient llmClient;
     private final SkillContentRenderer renderer;
@@ -221,8 +226,13 @@ public class LlmSkillExecutor implements SkillExecutor {
             final SkillToolDispatcher toolDispatcher = context.getToolContext()
                     .get(ToolContextKeys.SKILL_TOOL_DISPATCHER_KEY).orElse(this::dispatchWithoutHooks);
 
-            LlmResponse currentResponse = llmClient.sendMessage(systemPrompt, transcriptBuffer.getMessages(),
-                    filteredTools, context.getDefaultModel());
+            // The skill loop compacts nothing: it runs on a fresh scratch buffer per execution that never grows long
+            // enough to need it. It still asks the engine for the view, so no LLM call reads the transcript directly.
+            final ContextRequest contextRequest = ContextRequest.builder().transcriptBuffer(transcriptBuffer)
+                    .model(context.getDefaultModel()).build();
+            LlmResponse currentResponse = llmClient.sendMessage(systemPrompt,
+                    CONTEXT_ENGINE.prepare(contextRequest).getView().getMessages(), filteredTools,
+                    context.getDefaultModel());
             accumulatedTokens = accumulatedTokens.add(currentResponse.getTokenUsage());
 
             int iterationCount = 0;
@@ -265,7 +275,8 @@ public class LlmSkillExecutor implements SkillExecutor {
                 }
 
                 currentResponse = llmClient.sendMessage(transcriptBuffer.getSystemPrompt(),
-                        transcriptBuffer.getMessages(), filteredTools, context.getDefaultModel());
+                        CONTEXT_ENGINE.prepare(contextRequest).getView().getMessages(), filteredTools,
+                        context.getDefaultModel());
                 accumulatedTokens = accumulatedTokens.add(currentResponse.getTokenUsage());
                 iterationCount++;
             }
