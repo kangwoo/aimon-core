@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/agent-execution/context-engine-guide.md
-source_commit: bc8715e
+source_commit: 69f36fd
 ---
 
 # Context Engine Guide — shrinking the context of long conversations
@@ -129,12 +129,15 @@ Registered when `rolling` is wired. With it the agent reads back originals the v
 | `seq` | The original of that message — the N of `[tool result elided: seq=N]` |
 | `query` | A case-insensitive substring search, most recent first |
 | `limit` | How many search results (default 5, at most 20) |
+| `offset` | With `seq`: the character to start reading that message at (default 0) |
 
 - The scope is **the current session's conversation entries** only — `SYNTHETIC` entries the runtime injected,
   anything before `/clear`, and other sessions are not visible
-- Sealed ranges are read too. A segment that cannot be read is reported as "could not be read"
+- Sealed ranges are read too. A segment that cannot be read is reported as "could not be read", once
 - A search scans only the most recent 1 million tokens, and says so in the result when it stopped there
-- Results are the matching message with two on either side, each message cut to 2000 characters
+- Results are the matching message with two on either side, each message cut to 2000 characters. A cut says how many
+  characters are left and the `offset` of the next part, so a long original can be read in full with `seq` and that
+  `offset`
 
 ## Related documents
 

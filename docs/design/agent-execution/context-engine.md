@@ -511,7 +511,8 @@ CTX-05 가 선행 조건이다. 그때 되살린다면 고정 단위는 "메모�
 - **뷰 모드의 조건.** guard 가 정확히 `DefaultCompactionGuard`(하위 클래스 아님) 또는 `NoOpCompactionGuard` 이고
   compaction engine 이 `supportsSummarize()` 일 때다. 모드는 노드가 아니라 **버퍼의 형식**(`TranscriptBuffer.getFormat()`)
   으로 고른다 — sticky 로 올라간 레코드는 v1 쓰기 노드에서도 뷰 모드다. 그 밖의 조합이 v2 버퍼를 만나면 in-place 로
-  물러나고 engine 당 WARN 을 한 번 남긴다. 그 결과는 §13.5 첫 항목이다
+  물러나고 engine 당 WARN 을 한 번 남긴다. 다만 뷰 상태나 manifest 를 가진 v2 버퍼는 in-place 로 압축하지 않는다 —
+  §13.6 첫 항목이고, 그 결과는 §13.5 첫 항목이다
 - **"v2 에서 기동 실패" 의 자리**는 `DefaultContextEngine.Builder.writeFormat(V2)` 다. `build()` 가 커스텀
   `CompactionGuard`, 요약하지 못하는 engine, engine 없는 Default guard 를 거절한다. `OrcaAgentRuntimeFactory` 는 노드의
   쓰기 형식으로 이것을 건다. `OrcaAgentRuntime.Builder` 가 파생하는 engine 은 형식을 받지 않으므로(v1) 그 경로로 들어온
@@ -579,19 +580,46 @@ CTX-05 가 선행 조건이다. 그때 되살린다면 고정 단위는 "메모�
 구현을 마친 시점에 남아 있는 행동상의 틈이다. 어느 것도 지원되는 조립(`OrcaAgentRuntimeFactory` · `AimonStackBuilder` ·
 스타터)에서 상태를 깨뜨리지는 않지만 설계가 약속한 것과 다르다.
 
-- **in-place 로 물러난 v2 로그는 뷰 상태를 무시한다.** §13.2 의 폴백은 `buffer.getMessages()` — carried 항목 그대로 —
-  를 보내고 그것을 압축한다. span 의 요약은 모델에 가지 않고, span 이 가린 항목과 drop 된 항목이 되돌아오며, 봉인된 구간은
-  말없이 빠진다. 이어지는 `replaceWith` 는 span 과 manifest 를 지우므로 요약과 봉인된 기록이 로그를 영영 떠나고, 세그먼트는
-  grace 뒤에 GC 가 지운다. 닿는 조건은 뷰 모드를 못 하는 engine(커스텀 guard, 요약하지 못하는 compaction engine)이 v2
-  레코드를 만나는 경우다 — v2 이행 중 노드마다 engine 구성이 다를 때, 또는 `OrcaAgentRuntime.Builder` 로 커스텀 guard 를
-  넣은 경우(§13.2). `PassthroughContextEngine` 도 같은 모양이지만 뷰 상태를 가진 v2 버퍼를 넘기는 호출자가 없다.
-  고치는 방향은 물러나기 전에 뷰를 투영하는 것(`ViewProjection.of`), 또는 뷰 상태나 manifest 가 비어 있지 않은 버퍼에
-  `replaceWith` 를 거절하는 것이다
-- **`headEnd()` 가 틀린 head 를 고를 수 있다.** head 를 첫 *carried* CONVERSATION user 항목에서 찾는다. prompt-too-long
-  `drop` 이 진짜 첫 요청을 가리고 그 구간이 `minSealTokens` 에 닿아 봉인되면, 뒤의 user 메시지가 head 가 되어 영원히
-  원문으로 남는다. 드물고 상태는 깨지지 않는다
+- **in-place 로 압축할 수 없는 v2 로그는 압축되지 않는다.** 뷰 모드를 못 하는 engine 이 뷰 상태나 manifest 를 가진 v2
+  버퍼를 만나면 이제 투영한 뷰를 보내고 압축하지 않는다(§13.6). 로그는 계속 자라고, blocking 한계에 닿기 전까지는
+  prompt-too-long 복구(뷰에서 drop)만 크기를 줄인다. 그 engine 구성으로 v2 레코드를 오래 서빙하면 턴이 결국 한계에서
+  실패한다 — 설계가 약속한 것은 그런 노드가 v2 에서 기동하지 않는 것(§13.2)이고, 이것은 v1 노드가 올라간 레코드를 만났을
+  때의 결과다
 - **두 engine 의 `/compact` 실패 계약이 다르다.** 롤링은 경합 시 `CompactionContendedException`, 기본 engine 은 lock 없이
   진행한다(§13.2)
-- **비용이 긴 로그에서 제곱으로 자란다.** 롤링의 절단면 계산은 뷰 위치마다 O(n) 인 `isLegalCut` 을 불러 `prepare` 한 번이
-  O(n²) 이다(`LegalCuts.legalPositions` 한 번이면 된다). `SessionHistoryTool` 의 검색과 `SessionLogReader` 의 페이징은 큰
-  세그먼트를 창·페이지마다 다시 읽고 해시 검사하고 디코드하므로 봉인된 기록 크기의 제곱이다(`maxScanTokens` 까지)
+- **FALLBACK 은 그것을 결정한 iteration 마다 기록된다.** 임계값을 넘은 채 어떤 절단도 도움이 되지 않으면 이후의
+  iteration 마다 같은 결정이 나므로 실행 결과의 `compactionEvents` 에 FALLBACK 항목이 iteration 수만큼 쌓인다(§13.6).
+  관측으로는 정확하지만 한 실행에 여러 줄일 수 있다
+
+### 13.6 구현 뒤 개선에서 닫힌 것
+
+리뷰가 남긴 항목 중 뷰 쪽에서 고친 것이다. 저장 쪽은 [`session-log.md` §12.5](../session/session-log.md#125-구현-뒤-개선에서-닫힌-것)
+에 있다.
+
+- **in-place 폴백은 v2 로그의 뷰를 지킨다.** `DefaultContextEngine` 이 뷰 모드를 못 하는데 v2 버퍼가 뷰 상태나 manifest 를
+  들고 있으면, `prepare` 는 `ViewProjection` 으로 투영한 뷰를 보내고 압축하지 않는다(`NONE`, 사유
+  `in-place compaction refused …`, engine 당 WARN 한 번). `compactNow` 는 같은 사유로 실패하고, `recover` 는 요약이
+  필요 없는 뷰 drop 으로 복구한다 — `replaceWith` 가 span 과 manifest 를 지워 요약과 봉인된 기록을 잃는 경로가 없어졌다.
+  뷰 상태도 manifest 도 없는 v2 버퍼는 예전처럼 in-place 로 압축한다. `PassthroughContextEngine` 도 뷰 상태를 가진 v2 버퍼는
+  투영해서 보낸다
+- **롤링 요약 요청은 user 쪽 메시지로 끝난다.** tail 절단이 user 메시지 시작을 선호하므로 흡수 구간은 대개 assistant 로
+  끝나고, 그대로 보내면 프로바이더가 prefill 로 읽는다(거절하거나 요약 대신 문장을 이어 쓴다). 입력이 user 도 tool result 도
+  아닌 메시지로 끝나면 합성 user 지시(`SUMMARIZE_NOTE`)를 뒤에 붙인다. tool result 는 프로바이더가 user 역할로 보내므로
+  붙이지 않는다
+- **요약 엔진의 예외가 실행을 실패시키지 않는다.** 롤링은 `summarize(...)` 와 `summaryInstalled(...)` 가 던진 예외를 실패
+  결과로 바꾼다(`prepare` · `compactNow` 모두). breaker 에 세는 것은 AUTO 경로(`prepare`)뿐이다 — `compactNow` 의 실패는
+  다른 MANUAL 경로처럼 실패 결과로 돌려줄 뿐 세지 않는다. `summaryInstalled` 가 던지면 span 은 이미 기록되어 있으므로
+  그대로 두고 실패를 보고한다. 기본 engine 의 뷰 모드 `compactNow` 는 `summarize()` 가 null 을 돌려주면 NPE 대신 깨끗한
+  실패를 돌려준다
+- **head 는 로그의 첫 CONVERSATION user 항목에 seq 로 고정된다.** 그 항목이 carried 가 아니라 봉인된 구간에 있을 수 있으면 —
+  첫 carried user 항목보다 앞에서 시작하는 manifest 줄이 있으면 — head 는 비어 있다. 뒤의 user 메시지를 head 로 삼아 영원히
+  원문으로 두지 않는다. drop 되었지만 carried 인 첫 요청은 예전처럼 head 를 정한다
+- **절단면 계산이 한 번에 끝난다.** `SessionLogState.legalCuts()` 가 `LegalCuts.legalPositions` 를 한 번 돌리고 seq 마다
+  이분 탐색으로 답하는 술어를 돌려준다(`countBefore` 도 이분 탐색이 되었다). 롤링의 `cuts()` 가 그것을 쓴다
+- **FALLBACK 은 실행 결과에 남는다.** executor 는 `WARN` 결정이 `kind=FALLBACK` 메타데이터를 들고 있으면 그것을
+  `compactionEvents` 에 더한다(§5.6 의 관측). 다른 WARN 은 예전처럼 로그로만 남는다
+- **`SessionHistoryTool`.** `maxResultChars` 보다 긴 메시지는 잘린 자리에 "남은 글자 수와 다음 부분의 `offset`" 을 적고,
+  `seq` 와 함께 `offset` 을 넘기면 다음 부분을 돌려준다 — elide 된 원문은 커서 elide 된 것이므로 이제 끝까지 읽을 수 있다.
+  스키마 설명도 "in full" 을 빼고 그렇게 고쳤다. 검색은 여러 64 seq 창에 걸친 읽을 수 없는 구간을 한 줄로 합쳐 보고하고,
+  gap 을 표시 문자열이 아니라 `SessionLogPage.getGaps()` 로 알아본다. 한 호출은 `SessionLogReadCache` 하나로 각 세그먼트를
+  한 번만 읽는다. 도구는 여전히 상태를 두지 않는다

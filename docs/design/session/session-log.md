@@ -520,10 +520,29 @@ v1 쓰기 모드에서 `DefaultContextEngine` 은 기록을 고쳐 쓰는 지금
 - **reader 의 모양.** `read(sessionId, from, to)` 는 레코드를 읽고 `read(sessionId, state, from, to)` 는 손에 든 로그를
   읽는다(실행 중인 턴의 `SessionHistoryTool`). 페이지는 합법 절단에서만 끝나고 항목을 하나 이상 든다. gap 은 두 번
   돌아온다 — 구간의 첫 seq 에 SYNTHETIC user 항목 `[history unavailable: seq a..b]` 로, 그리고 `getGaps()` 로
+- **페이지 상한은 답 없는 호출이 있어도 걸린다.** 크래시로 결과가 쓰이지 않은 `tool_use` 가 있으면 그 뒤의 어떤 위치도
+  합법 절단이 아니어서, 절단 조건을 그대로 두면 나머지 로그가 한 페이지로 온다. 그래서 페이지가
+  `HARD_LIMIT_FACTOR`(2) × `maxReadTokens` 에 닿으면, 열린 호출이 남아 있어도 tool result 로 시작하지 않는 다음 위치에서
+  자른다. 정상 로그에서는 닿지 않는다 — 호출의 결과는 바로 뒤에 오고, result 는 페이지의 첫 항목이 되지 않는다
+- **세그먼트는 호출 단위 캐시로 한 번만 읽는다.** `SessionLogReadCache` 를 받는 `read(sessionId, state, from, to, cache)` 와
+  `SessionLogSource.readRange(...)` 가 생겼다. 한 번의 작업(도구 호출 하나)이 만든 캐시를 여러 창·페이지에 넘기면 같은
+  세그먼트를 한 번만 가져오고 해시 검사하고 디코드한다. 읽지 못한 세그먼트도 기억하므로 WARN 은 작업당 한 번이다. 작업을
+  넘어 두지 않는다 — manifest 가 바뀌면 GC 가 지운 세그먼트를 캐시가 붙들고 있게 된다
 - **백엔드.** Postgres 는 `V2__session_log_segment.sql`(운영자가 `V1__init.sql` 뒤에 적용)이고, README 가 미래 인덱스용으로
-  예약해 둔 이름은 `V3__indexes.sql` 로 밀렸다. Redis 는 세션당 해시 둘 — `<prefix>:<sid>`(id → payload 를 든 JSON)와
-  `<prefix>:<sid>:created`(id → createdAt) — 이라 `list` 가 payload 를 끌어오지 않고, Lua 스크립트가 둘을 맞추며, 기본
-  prefix `aimon:session:segment` 는 동결 테스트에 걸려 있다. 세 백엔드 모두 중복 id 의 `put` 을 거절한다
+  예약해 둔 이름은 `V3__indexes.sql` 로 밀렸다. Redis 는 세션당 해시 둘 — `<prefix>:{s:<sid>}:data`(id → payload 를
+  든 JSON)와 `<prefix>:{s:<sid>}:created`(id → createdAt) — 이라 `list` 가 payload 를 끌어오지 않고, Lua 스크립트가 둘을
+  맞춘다. 중괄호는 hash tag 라서 두 키가 Redis Cluster 의 한 슬롯에 들고, 두 키 스크립트와 `DEL` 이 `CROSSSLOT` 을 내지
+  않는다. tag 는 고정 표식 `s:` 로 시작한다 — Redis 는 첫 `{` 와 그 뒤 첫 `}` 사이가 비면 키 **전체**를 해시하므로,
+  `{<sid>}` 만으로는 `}` 로 시작하는 id 의 두 키가 서로 다른 슬롯에 떨어진다. 접미사가 세션 id **뒤**에 고정되어
+  있으므로 한 세션의 키가 다른 세션의 키가 될 수 없다 — 처음의
+  `<prefix>:<sid>` / `<prefix>:<sid>:created` 는 세션 `X:created` 의 data 키가 세션 `X` 의 created 키와 같았다(첫 배포 전에
+  바꿨다). 기본 prefix `aimon:session:segment` 와 이 키 모양은 동결 테스트에 걸려 있고, `{` 가 든 prefix 는 모든 세션을 한
+  슬롯에 몰아넣으므로 거절한다. Mongo 의 `_id` 는 `{sessionId, segmentId}` 쌍이다 — 세그먼트 id 는 세션 범위라서 세그먼트
+  id 하나만 `_id` 로 두면 다른 세션의 같은 id 를 E11000 으로 거절한다. `list` · `deleteAll` 은 여전히 최상위 `sessionId`
+  와 `by_session` 인덱스로 간다. 세 백엔드 모두 세션 안의 중복 id 의 `put` 을 거절하고, 계약 테스트가 "두 세션의 같은 id"
+  와 "다른 세션 id 를 늘인 세션 id(`X` 와 `X:created`)" 를 모든 백엔드에 돌린다
+- **in-memory 세그먼트 저장소의 `put`** 은 바깥 맵의 `compute` 안에서 넣는다. 세션의 마지막 세그먼트를 지우는 `delete` 가
+  안쪽 맵을 떼어 내는 순간 그 맵에 쓰던 `put` 은 세그먼트를 잃고, 그 세그먼트를 가리키는 manifest 는 gap 이 된다
 - **조립의 짝.** `SessionSpec.segmentStore(...)` 가 생겼다. 없을 때 in-memory 레코드 저장소는 in-memory 세그먼트 저장소와
   짝을 이루고, 공급된 레코드 저장소는 세그먼트 저장소 없이 **아무것도 봉인하지 않는다** — 영속 manifest 뒤에 재시작하면
   사라지는 세그먼트를 두면 봉인 구간이 전부 gap 이 된다. 이때 쓰기 형식이 v2 이면 스택이 `session-log-sealing`
@@ -541,7 +560,10 @@ v1 쓰기 모드에서 `DefaultContextEngine` 은 기록을 고쳐 쓰는 지금
 - **`/clear`** 는 잘려 나간 줄의 세그먼트 id 를 버퍼에 쌓아 두고, 비운 레코드의 저장이 성공한 **뒤에만** 지운다. 저장이
   실패하면 남겨 두고 GC 가 나중에 줍는다
 - **rewind.** `TranscriptBuffer.rewind()` 와 `SessionLogState.truncateFrom` 은 `fromSeq` 가 절단 이후인 줄을 통째로 버린다.
-  `DefaultLiveSession` 의 영속 rewind 는 인덱스가 아니라 저장된 로그에 `truncateFrom` 을 건다
+  `DefaultLiveSession` 의 영속 rewind 는 인덱스가 아니라 저장된 로그에 `truncateFrom` 을 건다. 봉인된 v2 레코드 — rewind
+  point 에서 끝나는 줄과 거기서 시작하는 줄, 그리고 그 점을 걸친 span — 에서 `rewindLastTurn` 부터 재시도까지를 끝에서
+  끝까지 고정하는 테스트(`SealedLogRewindIntegrationTest`)가 있다. 앞의 줄은 남고 뒤의 줄은 버려지며 span 은 그 점으로
+  잘리고, reader 는 gap 없이 읽고, 재시도는 요약을 보고 멈춘 시도의 항목은 보지 않는다. 새 결함은 드러나지 않았다
 
 ### 12.4 알려진 열린 결과
 
@@ -553,10 +575,21 @@ v1 쓰기 모드에서 `DefaultContextEngine` 은 기록을 고쳐 쓰는 지금
 - **raw 저장소 삭제는 리스를 잃은 노드를 막지 못한다.** 리스를 잃은 줄 모르는 노드가 `/clear` 를 돌리면 grace 없이 새
   홀더의 레코드가 가리키는 세그먼트를 지울 수 있고, 그 노드의 GC 는 자기의 낡은 manifest 에 없는 새 홀더의 세그먼트 중
   grace 가 지난 것을 지울 수 있다. 지워진 구간은 gap 으로 읽힌다. 같은 노드의 펜스 없는 레코드 쓰기가 더 큰 위험이다
-- **v2 레코드가 in-place 폴백을 만나면 manifest 를 잃는다.** 뷰 모드를 못 하는 engine 이 v2 레코드를 압축하면
-  `replaceWith` 가 span 과 manifest 를 지우고 봉인된 기록이 로그를 떠난다 —
-  [`context-engine.md` §13.5](../agent-execution/context-engine.md#135-알려진-열린-결과)
+- **`/clear` 뒤에 늦게 도착한 체크포인트가 dangling manifest 를 되살린다.** `/clear` 는 비운 레코드를 저장한 뒤 잘린 줄의
+  세그먼트를 grace 없이 지운다. `mailbox.flush` 가 timeout 으로 놓친 `/clear` 이전의 체크포인트가 그 저장 **뒤에** 쓰이면,
+  레코드는 이미 지워진 세그먼트를 가리키는 옛 manifest 를 다시 든다. 결과는 실패가 아니라 gap 이다 — reader 와
+  `SessionHistoryTool` 은 그 구간을 `[history unavailable: …]` 로 보고한다. 같은 늦은 체크포인트가 지운 메시지를 되살리는
+  기존 문제와 뿌리가 같고, 그 문제가 고쳐지면 함께 사라진다. 위의 "무해한 고아" 는 저장되지 못한 봉인 쪽의 결과이고, 이것은
+  지워진 쪽의 결과다
 - **GC 의 grace 는 두 노드의 시계를 비교한다.** 세그먼트의 `createdAt` 은 봉인한 노드의 시계이고 비교는 수집하는 노드의
   시계로 한다. skew 만큼 grace 가 늘거나 준다. 1시간에서는 무해하지만 `segmentGcGrace` 를 줄이는 운영자는 알아야 한다
-- **큰 세그먼트는 읽을 때마다 다시 디코드된다.** reader 의 페이징과 `SessionHistoryTool` 의 검색이 창·페이지마다 같은
-  세그먼트를 다시 읽고 해시 검사한다 — [`context-engine.md` §13.5](../agent-execution/context-engine.md#135-알려진-열린-결과)
+
+### 12.5 구현 뒤 개선에서 닫힌 것
+
+리뷰가 남긴 항목 중 저장 쪽에서 고친 것이다. 위 절들의 본문도 그에 맞게 고쳤다.
+
+- **v2 레코드가 in-place 폴백을 만나도 manifest 를 잃지 않는다.** 뷰 상태나 manifest 가 있는 v2 버퍼는 in-place 로 압축하지
+  않는다 — [`context-engine.md` §13.6](../agent-execution/context-engine.md#136-구현-뒤-개선에서-닫힌-것)
+- **큰 세그먼트를 창·페이지마다 다시 디코드하지 않는다.** 호출 단위 `SessionLogReadCache`(§12.2)
+- **reader 의 페이지 상한이 답 없는 `tool_use` 뒤에도 걸린다**(§12.2)
+- **Redis 키 충돌과 Cluster 슬롯, Mongo 의 세션 범위 `_id`, in-memory `put` 의 경합**(§12.2)

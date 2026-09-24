@@ -22,6 +22,7 @@ Central is versioned independently).
 - **`SessionHistoryTool`** (`at.aimon.core.tools.session`, tool name `SessionHistory`) reads back the current session's
   conversation entries by `seq` or by case-insensitive search, sealed ranges included. Registered only when the rolling
   engine is wired. The executor publishes the running log to tools as `SessionLogSource` (`SessionHistoryTool.LOG_SOURCE_KEY`).
+  A message longer than one result is returned in parts: pass `offset` with `seq` to read the next one.
 - **Choosing the engine.** Spring `aimon.context.engine` (`default` | `rolling`), AGENT.md frontmatter
   `context-engine` (a camelCase `contextEngine` fails parsing), `ExecutorSpec.contextEngine(...)`,
   `OrcaAgentRuntimeFactory.withContextEngine(...)`; the agent's own value wins. New `ContextEngineKind`,
@@ -32,7 +33,12 @@ Central is versioned independently).
   the default engine with `writeFormat(V2)`.
 - **`CompactionMetadata`** gained `getKind()` (`CompactionKind`: `PRUNE` / `ROLLING` / `FULL` / `FALLBACK`; `FULL`
   unless set), the view's head / span / tail tokens, the summary tokens and the absorbed seq range; `equals` and
-  `hashCode` include them.
+  `hashCode` include them. A rolling `FALLBACK` decision (no cut can bring the view down) is recorded in
+  `OrcaAgentExecutionResult.getCompactionEvents()`, once per iteration that decided so.
+- **The in-place fallback no longer erases a version-2 view.** An engine that cannot serve view mode (a custom
+  `CompactionGuard`, a `CompactionEngine` without `summarize`) meeting a version-2 buffer that carries a view state or
+  sealed ranges now sends the projected view and does not compact it; `compactNow` fails and recovery drops from the
+  view. `ContextEngine.passthrough()` sends such a buffer as its projected view too.
 
 ### Added: sealing — ranges the view no longer shows leave the record
 
@@ -42,7 +48,9 @@ Central is versioned independently).
   `InMemorySessionLogSegmentStore`, `MongoSessionLogSegmentStore` (collection `session_log_segments`, index
   `by_session` in `init.js`), `PostgresSessionLogSegmentStore` (table `session_log_segment`, new operator file
   `V2__session_log_segment.sql` — apply it after `V1__init.sql`; the unshipped future index file is now named
-  `V3__indexes.sql`), `RedisSessionLogSegmentStore` (prefix `aimon:session:segment`). Design:
+  `V3__indexes.sql`), `RedisSessionLogSegmentStore` (prefix `aimon:session:segment`, keys
+  `<prefix>:{s:<sessionId>}:data` / `<prefix>:{s:<sessionId>}:created` — one Redis Cluster slot per session; a prefix
+  containing `{` is refused). The Mongo `_id` is the `{sessionId, segmentId}` pair. Design:
   `docs/design/session/session-log.md` §5.
 - **`DefaultTranscriptManager` seals** when given a `SessionLogStorage` (`minSealTokens` 32K, `segmentGcGrace` 1h —
   never zero —, `maxReadTokens` 32K): the executor seals right after a compaction and the turn-end save seals before it
@@ -51,7 +59,8 @@ Central is versioned independently).
   `seal(...)` and `getLogReader()`.
 - **`SessionLogReader`** reads the whole log, sealed ranges included, a page at a time (pages end at legal cuts), and
   reports a missing or mismatched segment as a `[history unavailable: seq a..b]` gap instead of failing. The CLI's
-  session-end derivation reads through it.
+  session-end derivation reads through it. A page reaching twice `maxReadTokens` is cut even with a `tool_use` left
+  unanswered by a crash. `SessionLogReadCache` lets one operation load each segment once across many reads.
 - **`SessionStore.segments(raw)`** returns the fenced delete view (new abstract method; `DefaultSessionStore`
   implements it). `SessionRouterBuilder.sessionLogSegmentStore(...)` makes a session delete remove the session's
   segments after its record. `SessionSpec.segmentStore(...)` wires a store into the stack; without one an in-memory
