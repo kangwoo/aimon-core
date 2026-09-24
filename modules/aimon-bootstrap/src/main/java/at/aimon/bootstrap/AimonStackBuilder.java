@@ -295,11 +295,10 @@ public final class AimonStackBuilder {
                             + " Supply a SessionLogSegmentStore (SessionSpec.segmentStore) from the same backend.");
         }
         // The manager's record writes (turn-end saves, checkpoints) and segment deletes (turn-end GC, /clear) go
-        // through
-        // the lease this node holds, so a node that lost a session cannot overwrite the record the new holder writes or
-        // delete what its manifest names. The session store that owns the fenced views is built inside the router,
-        // after this manager, so the manager gets views that are bound once the router exists. See sessionFence(...)
-        // for which policy each shape of stack gets, and why a plain single-node stack gets none.
+        // through the lease this node holds, so a node that lost a session cannot overwrite the record the new holder
+        // writes or delete what its manifest names. The session store that owns the fenced views is built inside the
+        // router, after this manager, so the manager gets views that are bound once the router exists. See
+        // sessionFence(...) for which policy each shape of stack gets, and why a plain single-node stack gets none.
         final SessionFence fence = sessionFence(spec.getSession());
         final LateBoundFencedRecordStore fencedRecords = fence == null
                 ? null
@@ -783,7 +782,8 @@ public final class AimonStackBuilder {
      * Builds the store-wide orphan sweep when the spec turns it on (session-log §11). The sweeper deletes through the
      * raw store: it holds no session, so a fenced delete would refuse everything, and what keeps it safe is the
      * manifest check plus its grace period — see {@link SessionLogSegmentSweeper}. With a supplied lease store the
-     * passes are coordinated through a sweep lease held for one interval, so a cluster runs one pass per interval.
+     * passes are coordinated through a sweep lease that the holding node keeps extending, so a cluster runs one pass
+     * per interval.
      *
      * @return the schedule, or null when the sweep is off
      */

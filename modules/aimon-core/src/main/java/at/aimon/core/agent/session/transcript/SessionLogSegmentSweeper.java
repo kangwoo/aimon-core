@@ -9,6 +9,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -56,7 +57,6 @@ import at.aimon.core.agent.session.store.SessionRecordView;
  *
  * <h2>Why it is not fenced, and why several nodes may run it</h2>
  *
- *
  * <p>
  * The sweeper holds no session, so a fenced delete would refuse everything; it deletes through the raw store. What
  * makes that safe is the same pair that protects per-session collection from a peer's in-progress sealing — the
@@ -80,7 +80,19 @@ import at.aimon.core.agent.session.store.SessionRecordView;
  * above.
  *
  * <p>
- * Application-scoped and thread-safe; {@link #sweep()} is one full pass and holds no state between passes.
+ * The holder's own next pass does not go through {@link SessionLeaseStore#tryAcquire}: the pass ends by renewing the
+ * lease for one interval, and the holder's schedule fires one interval later, so whether the lease has lapsed by then
+ * is a race between the scheduler's clock and the lease store's — and a lease store refuses a second acquire from the
+ * holder it already has. Losing that race would skip a whole interval, halving the sweep rate of a node that sweeps
+ * alone. So the sweeper remembers the lease it last won and first {@linkplain SessionLeaseStore#extend extends} it. The
+ * extend succeeds while the lease is held, and on most backends after it lapsed with no successor too. When it fails —
+ * another node took over, or the backend no longer knows a lapsed lease — the sweeper forgets the lease and acquires,
+ * which succeeds unless another node holds it now.
+ *
+ * <p>
+ * Application-scoped and thread-safe; {@link #sweep()} is one full pass. The only state kept between passes is the
+ * sweep lease this node last won. The schedule calls {@link #sweepIfClaimed()} from one thread; two concurrent calls on
+ * the same node may both run a pass, which is the safe case above.
  */
 public final class SessionLogSegmentSweeper {
 
@@ -106,6 +118,7 @@ public final class SessionLogSegmentSweeper {
     private final SessionLeaseStore leaseStore;
     private final String holderId;
     private final Duration leaseDuration;
+    private final AtomicReference<SessionLease> heldLease = new AtomicReference<>();
 
     private SessionLogSegmentSweeper(Builder builder) {
         this.segmentStore = Objects.requireNonNull(builder.segmentStore, "segmentStore cannot be null");
@@ -162,6 +175,10 @@ public final class SessionLogSegmentSweeper {
      * {@link #sweep()}.
      *
      * <p>
+     * A node that won the lease before extends it rather than acquiring it again, so the holder's consecutive passes
+     * never depend on whether its lease happened to lapse just before its schedule fired — see the class javadoc.
+     *
+     * <p>
      * A lease store that cannot be reached skips the pass too, logged: running without the lease is what coordination
      * exists to prevent, and the next pass is one interval away.
      *
@@ -173,7 +190,7 @@ public final class SessionLogSegmentSweeper {
         }
         final Optional<SessionLease> lease;
         try {
-            lease = leaseStore.tryAcquire(SWEEP_LEASE_ID, holderId, leaseDuration);
+            lease = claim();
         } catch (RuntimeException e) {
             log.warn("Taking the segment sweep lease failed; this pass is skipped: {}", e.toString());
             return OptionalInt.empty();
@@ -183,6 +200,20 @@ public final class SessionLogSegmentSweeper {
             return OptionalInt.empty();
         }
         return OptionalInt.of(pass(lease.get()));
+    }
+
+    /** Extends the lease this node still holds, or acquires one when it holds none or has been taken over. */
+    private Optional<SessionLease> claim() {
+        final SessionLease own = heldLease.get();
+        if (own != null) {
+            if (leaseStore.extend(own, leaseDuration)) {
+                return Optional.of(own);
+            }
+            heldLease.compareAndSet(own, null);
+        }
+        final Optional<SessionLease> acquired = leaseStore.tryAcquire(SWEEP_LEASE_ID, holderId, leaseDuration);
+        acquired.ifPresent(heldLease::set);
+        return acquired;
     }
 
     /**
@@ -227,7 +258,8 @@ public final class SessionLogSegmentSweeper {
         }
         try {
             if (!leaseStore.extend(lease, leaseDuration)) {
-                log.debug("The segment sweep lease lapsed mid-pass; another node may start its own");
+                heldLease.compareAndSet(lease, null);
+                log.debug("The segment sweep lease lapsed or was taken over mid-pass; another node may start its own");
             }
         } catch (RuntimeException e) {
             log.debug("Renewing the segment sweep lease failed: {}", e.toString());

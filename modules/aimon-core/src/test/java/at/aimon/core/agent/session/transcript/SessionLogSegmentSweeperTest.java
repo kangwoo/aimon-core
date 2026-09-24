@@ -28,6 +28,7 @@ import at.aimon.core.agent.session.store.SegmentId;
 import at.aimon.core.agent.session.store.SegmentInfo;
 import at.aimon.core.agent.session.store.SegmentScanPage;
 import at.aimon.core.agent.session.store.SessionCheckpointMailbox;
+import at.aimon.core.agent.session.store.SessionLease;
 import at.aimon.core.agent.session.store.SessionLeaseStore;
 import at.aimon.core.agent.session.store.SessionLogSegment;
 import at.aimon.core.agent.session.store.SessionLogSegmentStore;
@@ -228,14 +229,74 @@ class SessionLogSegmentSweeperTest {
                 .extracting(LeaseHolder::getHolderId).isEqualTo("node-a");
 
         orphan(SessionId.of("coord-2"), NOW.minus(GRACE).minusSeconds(1));
-        assertThat(nodeB.sweepIfClaimed()).as("node-a holds the sweep lease").isEmpty();
-        assertThat(nodeA.sweepIfClaimed()).as("not released after the pass: node-a skips too").isEmpty();
+        assertThat(nodeB.sweepIfClaimed()).as("not released after the pass: node-b skips").isEmpty();
         assertThat(segments.list(SessionId.of("coord-2"))).hasSize(1);
 
         // node-a dies here: nothing renews its lease. Once it lapses, the next node to tick takes over.
         now.set(now.get().plus(Duration.ofHours(1)));
         assertThat(nodeB.sweepIfClaimed()).hasValue(1);
         assertThat(segments.list(SessionId.of("coord-2"))).isEmpty();
+    }
+
+    @Test
+    @DisplayName("coordinated: the holder's consecutive intervals sweep, whichever of its tick and its lease's expiry"
+            + " comes first")
+    void holderSweepsEveryInterval() {
+        final InMemorySessionLeaseStore leases = new InMemorySessionLeaseStore(clock);
+        final SessionLogSegmentSweeper nodeA = coordinated(leases, "node-a", segments);
+        final SessionLogSegmentSweeper nodeB = coordinated(leases, "node-b", segments);
+
+        for (int interval = 0; interval < 4; interval++) {
+            orphan(SessionId.of("tick-" + interval), now.get().minus(GRACE).minusSeconds(1));
+            assertThat(nodeA.sweepIfClaimed()).as("interval %d on the holder", interval).hasValue(1);
+            assertThat(nodeB.sweepIfClaimed()).as("interval %d on the other node", interval).isEmpty();
+            // Alternate a tick that fires a moment before the lease the last pass renewed expires (the store would
+            // refuse a re-acquire) with one that fires a moment after it.
+            now.set(now.get().plus(Duration.ofHours(1)).plusMillis(interval % 2 == 0 ? -1 : 1));
+        }
+    }
+
+    @Test
+    @DisplayName("coordinated: a holder whose backend forgets a lapsed lease acquires again; one taken over skips")
+    void holderReacquiresOrYieldsWhenItsExtendFails() {
+        final InMemorySessionLeaseStore inner = new InMemorySessionLeaseStore(clock);
+        // Redis-shaped: an extend of a lapsed lease fails because the key is gone.
+        final SessionLeaseStore forgetful = new SessionLeaseStore() {
+            @Override
+            public Optional<SessionLease> tryAcquire(SessionId id, String holderId, Duration lease) {
+                return inner.tryAcquire(id, holderId, lease);
+            }
+
+            @Override
+            public Optional<LeaseHolder> findHolder(SessionId id) {
+                return inner.findHolder(id);
+            }
+
+            @Override
+            public boolean extend(SessionLease lease, Duration duration) {
+                return inner.findHolder(lease.getSessionId()).isPresent() && inner.extend(lease, duration);
+            }
+
+            @Override
+            public void release(SessionLease lease) {
+                inner.release(lease);
+            }
+        };
+        final SessionLogSegmentSweeper nodeA = coordinated(forgetful, "node-a", segments);
+        final SessionLogSegmentSweeper nodeB = coordinated(forgetful, "node-b", segments);
+        orphan(SessionId.of("forget-1"), NOW.minus(GRACE).minusSeconds(1));
+        assertThat(nodeA.sweepIfClaimed()).hasValue(1);
+
+        now.set(now.get().plus(Duration.ofHours(1)).plusMillis(1));
+        orphan(SessionId.of("forget-2"), NOW.minus(GRACE).minusSeconds(1));
+        assertThat(nodeA.sweepIfClaimed()).as("lapsed and forgotten: node-a acquires afresh").hasValue(1);
+
+        now.set(now.get().plus(Duration.ofHours(2)));
+        orphan(SessionId.of("forget-3"), NOW.minus(GRACE).minusSeconds(1));
+        assertThat(nodeB.sweepIfClaimed()).as("node-a stopped ticking; node-b takes over").hasValue(1);
+        assertThat(nodeA.sweepIfClaimed()).as("taken over: node-a's extend and acquire both fail").isEmpty();
+        assertThat(inner.findHolder(SessionLogSegmentSweeper.SWEEP_LEASE_ID)).get().extracting(LeaseHolder::getHolderId)
+                .isEqualTo("node-b");
     }
 
     @Test

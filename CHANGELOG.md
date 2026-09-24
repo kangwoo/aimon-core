@@ -82,8 +82,11 @@ Central is versioned independently).
   log at DEBUG.
 - **A `/clear` no longer leaves a gap behind a late checkpoint.** `SessionCheckpointMailbox.drain(SessionId)` (new;
   `flush` is the same drain without the answer) reports whether a checkpoint of older state can still land, and the
-  transcript manager deletes nothing — neither `/clear`'s segments nor orphans — after a save whose drain gave up; the
-  `/clear` deletes are retried after the next save whose drain completes. New
+  transcript manager deletes nothing — neither `/clear`'s segments nor orphans — after a save whose drain gave up. The
+  `/clear` deletes stay pending on that turn's transcript buffer and are retried only by a later save of the same
+  buffer whose drain completes; once the turn ends they are not retried as such — the segments are either named again
+  by the manifest the late checkpoint resurrected (and kept), or left as orphans that turn-end GC or the store-wide
+  sweep collects after the grace. New
   `SessionCheckpointMailbox.background(Duration drainTimeout)` (default `DEFAULT_DRAIN_TIMEOUT`, 5s).
 - **Store-wide orphan sweep** (opt-in): `SessionLogSegmentSweeper` (`at.aimon.core.agent.session.transcript`) walks the
   whole segment store and deletes segments older than a grace (24h by default) that the session's record, read after
@@ -93,9 +96,11 @@ Central is versioned independently).
   Safe on every node at once, and run once per cluster per interval when the stack has a lease store: the sweeper's new
   `Builder.coordination(leaseStore, holderId, lease)` makes `sweepIfClaimed()` take a sweep lease on the reserved id
   `aimon:segment-sweep` (`SWEEP_LEASE_ID`) for one interval, renewed page by page and kept after the pass, and skip the
-  pass when another node holds it. **SPI addition:** `SessionLogSegmentStore.scanSessions(createdBefore, cursor, limit)`
-  returning `SegmentScanPage` — a full pass must not miss a session holding an old segment, and may over-report or
-  repeat (Redis walks its `:created` keys with `SCAN`, every master in turn on a cluster connection). A custom backend implements it.
+  pass when another node holds it. The holding node's next pass extends the lease it last won instead of acquiring it
+  again, so its own tick never loses a race against that lease's expiry. **SPI addition:**
+  `SessionLogSegmentStore.scanSessions(createdBefore, cursor, limit)` returning `SegmentScanPage` — a full pass must not
+  miss a session holding an old segment, and may over-report or repeat (Redis walks its `:created` keys with `SCAN`,
+  every master in turn on a cluster connection). A custom backend implements it.
 - **Meaning changes** (session-log §10): once a range is sealed, `TranscriptBuffer.getMessages()`,
   `AgentExecutionResult.getConversationHistory()` and `SessionSnapshot.getConversationHistory()` no longer return it;
   `liveEntryCount()` (and `/clear`'s "Removed N messages") and `hasConversation()` count sealed ranges. Nothing seals
