@@ -2,6 +2,9 @@ package at.aimon.core.agent.session.transcript;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -17,12 +20,15 @@ import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.exception.SessionLogSegmentStoreException;
+import at.aimon.core.agent.session.store.InMemorySessionLeaseStore;
 import at.aimon.core.agent.session.store.InMemorySessionLogSegmentStore;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
+import at.aimon.core.agent.session.store.LeaseHolder;
 import at.aimon.core.agent.session.store.SegmentId;
 import at.aimon.core.agent.session.store.SegmentInfo;
 import at.aimon.core.agent.session.store.SegmentScanPage;
 import at.aimon.core.agent.session.store.SessionCheckpointMailbox;
+import at.aimon.core.agent.session.store.SessionLeaseStore;
 import at.aimon.core.agent.session.store.SessionLogSegment;
 import at.aimon.core.agent.session.store.SessionLogSegmentStore;
 import at.aimon.core.agent.session.store.SessionRecordView;
@@ -176,6 +182,104 @@ class SessionLogSegmentSweeperTest {
         assertThat(segments.list(SessionId.of("sweep-broken"))).hasSize(1);
     }
 
+    /**
+     * The ordering rule the sweeper's safety rests on: the record is read <em>after</em> the segments are listed, so a
+     * segment the record names by then is kept even if nothing named it when the pass began. The fake makes the record
+     * name the segment as a side effect of the listing — the shape of a holder saving the turn that sealed it while the
+     * sweep is running.
+     */
+    @Test
+    @DisplayName("a segment named by the time the record is read is kept, even though the listing came first")
+    void readsTheRecordAfterListing() {
+        final SessionId session = SessionId.of("sweep-named-mid-pass");
+        final SegmentId sealed = sealedSession(session);
+        final SessionSnapshot naming = SessionSnapshot.from(records.load(session).orElseThrow());
+        records.delete(session);
+        now.set(NOW.plus(GRACE).plusSeconds(1));
+        final ForwardingSegments savingDuringTheListing = new ForwardingSegments(segments) {
+            @Override
+            public List<SegmentInfo> list(SessionId sessionId) {
+                final List<SegmentInfo> listed = super.list(sessionId);
+                if (sessionId.equals(session)) {
+                    records.mergeFromSnapshot(naming);
+                }
+                return listed;
+            }
+        };
+
+        final int deleted = SessionLogSegmentSweeper.builder(savingDuringTheListing, records).grace(GRACE).clock(clock)
+                .build().sweep();
+
+        assertThat(deleted).isZero();
+        assertThat(segments.get(session, sealed)).isPresent();
+    }
+
+    @Test
+    @DisplayName("coordinated: one node sweeps per lease period; the others skip until the lease lapses")
+    void coordinatedSweepRunsOnOneNode() {
+        final InMemorySessionLeaseStore leases = new InMemorySessionLeaseStore(clock);
+        final SessionLogSegmentSweeper nodeA = coordinated(leases, "node-a", segments);
+        final SessionLogSegmentSweeper nodeB = coordinated(leases, "node-b", segments);
+        orphan(SessionId.of("coord-1"), NOW.minus(GRACE).minusSeconds(1));
+
+        assertThat(nodeA.isCoordinated()).isTrue();
+        assertThat(nodeA.sweepIfClaimed()).hasValue(1);
+        assertThat(leases.findHolder(SessionLogSegmentSweeper.SWEEP_LEASE_ID)).get()
+                .extracting(LeaseHolder::getHolderId).isEqualTo("node-a");
+
+        orphan(SessionId.of("coord-2"), NOW.minus(GRACE).minusSeconds(1));
+        assertThat(nodeB.sweepIfClaimed()).as("node-a holds the sweep lease").isEmpty();
+        assertThat(nodeA.sweepIfClaimed()).as("not released after the pass: node-a skips too").isEmpty();
+        assertThat(segments.list(SessionId.of("coord-2"))).hasSize(1);
+
+        // node-a dies here: nothing renews its lease. Once it lapses, the next node to tick takes over.
+        now.set(now.get().plus(Duration.ofHours(1)));
+        assertThat(nodeB.sweepIfClaimed()).hasValue(1);
+        assertThat(segments.list(SessionId.of("coord-2"))).isEmpty();
+    }
+
+    @Test
+    @DisplayName("coordinated: a pass longer than the lease renews it page by page, so nobody starts a second one")
+    void coordinatedSweepRenewsDuringALongPass() {
+        final InMemorySessionLeaseStore leases = new InMemorySessionLeaseStore(clock);
+        for (int i = 0; i < 3; i++) {
+            orphan(SessionId.of("coord-long-" + i), NOW.minus(GRACE).minusSeconds(1));
+        }
+        final ForwardingSegments slowPages = new ForwardingSegments(segments) {
+            @Override
+            public SegmentScanPage scanSessions(Instant createdBefore, String cursor, int limit) {
+                now.set(now.get().plus(Duration.ofMinutes(40)));
+                return super.scanSessions(createdBefore, cursor, limit);
+            }
+        };
+
+        assertThat(coordinated(leases, "node-a", slowPages).sweepIfClaimed()).hasValue(3);
+
+        assertThat(coordinated(leases, "node-b", segments).sweepIfClaimed())
+                .as("the lease was renewed after the last page, two hours into a one-hour lease").isEmpty();
+    }
+
+    @Test
+    @DisplayName("coordinated: a lease store that cannot be reached skips the pass; uncoordinated always runs")
+    void leaseStoreFailureSkipsThePass() {
+        orphan(SessionId.of("coord-down"), NOW.minus(GRACE).minusSeconds(1));
+        final SessionLeaseStore down = mock(SessionLeaseStore.class);
+        when(down.tryAcquire(any(), any(), any())).thenThrow(new IllegalStateException("lease store down"));
+
+        assertThat(coordinated(down, "node-a", segments).sweepIfClaimed()).isEmpty();
+        assertThat(segments.list(SessionId.of("coord-down"))).hasSize(1);
+        assertThat(sweeper().isCoordinated()).isFalse();
+        assertThat(sweeper().sweepIfClaimed()).hasValue(1);
+        assertThatThrownBy(() -> SessionLogSegmentSweeper.builder(segments, records)
+                .coordination(down, "node-a", Duration.ZERO).build()).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    private SessionLogSegmentSweeper coordinated(SessionLeaseStore leases, String holder,
+            SessionLogSegmentStore store) {
+        return SessionLogSegmentSweeper.builder(store, records).grace(GRACE).pageSize(1).clock(clock)
+                .coordination(leases, holder, Duration.ofHours(1)).build();
+    }
+
     @Test
     @DisplayName("a zero grace or page size is refused")
     void rejectsNonPositiveSettings() {
@@ -214,9 +318,9 @@ class SessionLogSegmentSweeperTest {
     }
 
     private static class ForwardingSegments implements SessionLogSegmentStore {
-        private final InMemorySessionLogSegmentStore delegate;
+        private final SessionLogSegmentStore delegate;
 
-        ForwardingSegments(InMemorySessionLogSegmentStore delegate) {
+        ForwardingSegments(SessionLogSegmentStore delegate) {
             this.delegate = delegate;
         }
 

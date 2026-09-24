@@ -8,7 +8,9 @@ import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.TurnId;
 import at.aimon.core.agent.session.exception.ConflictingAgentException;
+import at.aimon.core.agent.session.store.SessionFence;
 import at.aimon.core.agent.session.store.SessionLogSegmentStore;
+import at.aimon.core.agent.session.store.SessionRecordStore;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
 import at.aimon.session.routing.builder.SessionRouterBuilder;
 
@@ -193,6 +195,43 @@ public interface SessionRouter extends AutoCloseable {
      * @return the fenced view, or empty when the router has no segment store
      */
     default Optional<SessionLogSegmentStore> fencedSegmentStore() {
+        return fencedSegmentStore(SessionFence.HOLDER_ONLY);
+    }
+
+    /**
+     * The segment store this router was given, behind its session store's delete view under {@code fence}.
+     * {@link SessionFence#HOLDER_ONLY} is {@link #fencedSegmentStore()}; {@link SessionFence#UNLESS_HELD_ELSEWHERE}
+     * lets through deletes for sessions nobody holds, for a single-node assembly whose live sessions are not all opened
+     * through this router.
+     *
+     * <p>
+     * The default returns empty, so existing implementations and test doubles remain source-compatible.
+     *
+     * @param fence
+     *            which deletes the view lets through (must not be null)
+     * @return the fenced view, or empty when the router has no segment store
+     */
+    default Optional<SessionLogSegmentStore> fencedSegmentStore(SessionFence fence) {
+        return Optional.empty();
+    }
+
+    /**
+     * The record store this router was given, behind its session store's write view under {@code fence}
+     * ({@code SessionStore.records(fence)}).
+     *
+     * <p>
+     * Hand it to whatever writes records on behalf of the sessions this router runs — the transcript manager's
+     * turn-end saves and checkpoints, a live session's totals — so a node that has lost a session cannot overwrite the
+     * record the new holder is writing. Reads pass straight through.
+     *
+     * <p>
+     * The default returns empty, so existing implementations and test doubles remain source-compatible.
+     *
+     * @param fence
+     *            which writes the view lets through (must not be null)
+     * @return the fenced view, or empty when this router does not offer one
+     */
+    default Optional<SessionRecordStore> fencedRecordStore(SessionFence fence) {
         return Optional.empty();
     }
 

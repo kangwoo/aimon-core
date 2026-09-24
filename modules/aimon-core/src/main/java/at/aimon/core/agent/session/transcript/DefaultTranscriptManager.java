@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.exception.SessionNotHeldException;
 import at.aimon.core.agent.session.store.SegmentId;
 import at.aimon.core.agent.session.store.SessionCheckpointMailbox;
 import at.aimon.core.agent.session.store.SessionRecordStore;
@@ -219,10 +220,10 @@ public class DefaultTranscriptManager implements TranscriptManager {
         // Seal BEFORE the flush: a seal that lands marks the buffer dirty, and the checkpoint that raises must be
         // drained by the barrier below — raised after it, it would be written after this save (session-log §5.3).
         seal(memory);
-        mailbox.flush(memory.getSessionId());
+        final boolean drained = mailbox.drain(memory.getSessionId());
         final SessionSnapshot saved = memory.toSnapshot();
         persistSnapshot(saved);
-        afterSave(memory, saved);
+        afterSave(memory, saved, drained);
     }
 
     @Override
@@ -241,9 +242,21 @@ public class DefaultTranscriptManager implements TranscriptManager {
     /**
      * Runs once the record is saved, on the saving thread: the segments a {@code /clear} cut loose go first — the saved
      * record no longer names them — then orphans past the grace period.
+     *
+     * <p>
+     * Nothing is deleted when the checkpoint drain before the save gave up ({@code drained} false). A checkpoint whose
+     * snapshot predates this save may then still be inside its store call, and when it lands it puts the older manifest
+     * back — deleting the segments that manifest names would turn its reads into gaps (session-log §12.4). The
+     * {@code /clear} deletions stay pending and are retried after the next save whose drain completes; orphans wait for
+     * the next collection.
      */
-    private void afterSave(TranscriptBuffer memory, SessionSnapshot saved) {
+    private void afterSave(TranscriptBuffer memory, SessionSnapshot saved, boolean drained) {
         if (garbageCollector == null) {
+            return;
+        }
+        if (!drained) {
+            log.info("Segment deletes for session {} deferred: a checkpoint written before this save may still land",
+                    memory.getSessionId().value());
             return;
         }
         final List<SegmentId> cleared = memory.pendingSegmentDeletions();
@@ -263,6 +276,11 @@ public class DefaultTranscriptManager implements TranscriptManager {
     private void persistSnapshotQuietly(SessionSnapshot snapshot) {
         try {
             persistSnapshot(snapshot);
+        } catch (SessionNotHeldException e) {
+            // Expected once the lease is gone, and repeated for every checkpoint until the turn ends: the turn-end save
+            // reports it once at WARN.
+            log.debug("Mid-turn checkpoint for {} refused by the lease fence: {}", snapshot.getSessionId().value(),
+                    e.getMessage());
         } catch (Exception e) {
             log.warn("Mid-turn checkpoint failed for {}: {}", snapshot.getSessionId().value(), e.getMessage());
         }
@@ -289,11 +307,19 @@ public class DefaultTranscriptManager implements TranscriptManager {
         seal(memory);
         // Drain the mailbox BEFORE the authoritative persist so an in-flight checkpoint (holding an older snapshot)
         // cannot land in the repository after our write returns.
-        mailbox.flush(memory.getSessionId());
+        final boolean drained = mailbox.drain(memory.getSessionId());
         final SessionSnapshot saved;
         try {
             saved = memory.toSnapshot();
             persistSnapshot(saved);
+        } catch (SessionNotHeldException e) {
+            // The lease fence refused the write: another node holds this session now, or this node's lease lapsed. The
+            // record the holder writes is the one to keep, so this turn's tail is dropped rather than written over it —
+            // the loss a lost lease already implies. Nothing is deleted either: the manifest this node would collect
+            // against is not the one in the record.
+            log.warn("Session {} was not saved: this node no longer holds it, so the current holder's record is kept"
+                    + " ({})", memory.getSessionId().value(), e.getMessage());
+            return;
         } catch (Exception e) {
             // saveSilently is the no-throw end-of-turn path; a persistence failure here is an expected operational
             // error (disk full, network partition), so log at WARN to mirror the checkpoint failure level.
@@ -301,6 +327,6 @@ public class DefaultTranscriptManager implements TranscriptManager {
             // Do not throw to preserve the original execution flow
             return;
         }
-        afterSave(memory, saved);
+        afterSave(memory, saved, drained);
     }
 }

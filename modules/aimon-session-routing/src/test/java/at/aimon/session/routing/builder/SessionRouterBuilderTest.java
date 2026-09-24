@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Instant;
+import java.util.List;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -16,9 +17,11 @@ import at.aimon.core.agent.session.exception.SessionNotHeldException;
 import at.aimon.core.agent.session.store.InMemorySessionLogSegmentStore;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.store.SegmentId;
+import at.aimon.core.agent.session.store.SessionFence;
 import at.aimon.core.agent.session.store.SessionLogSegment;
 import at.aimon.core.agent.session.store.SessionLogSegmentStore;
 import at.aimon.core.agent.session.store.SessionRecordStore;
+import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.session.routing.LiveSessionOpener;
 import at.aimon.session.routing.SessionRouter;
 
@@ -117,6 +120,47 @@ class SessionRouterBuilderTest {
             assertThat(raw.get(session, segment.getId())).isPresent();
         } finally {
             router.close();
+        }
+    }
+
+    @Test
+    @DisplayName("fenced views under each policy: HOLDER_ONLY refuses an unheld session, UNLESS_HELD_ELSEWHERE lets it"
+            + " through")
+    void fencedViewsByPolicy() {
+        final LiveSessionOpener opener = Mockito.mock(LiveSessionOpener.class);
+        final InMemorySessionLogSegmentStore raw = new InMemorySessionLogSegmentStore();
+        final InMemorySessionRecordStore records = new InMemorySessionRecordStore();
+        final SessionId session = SessionId.of("never-held-policy");
+        final SessionLogSegment segment = SessionLogSegment.builder().sessionId(session).id(SegmentId.generate())
+                .fromSeq(0).toSeq(1).entryCount(1).payload("[]").createdAt(Instant.now()).build();
+        raw.put(segment);
+        final SessionRouter router = SessionRouter.builder().sessionOpener(opener).sessionRecordStore(records)
+                .sessionLogSegmentStore(raw).build();
+        try {
+            assertThat(router.fencedSegmentStore(SessionFence.HOLDER_ONLY))
+                    .containsSame(router.fencedSegmentStore().orElseThrow());
+            final SessionRecordStore strict = router.fencedRecordStore(SessionFence.HOLDER_ONLY).orElseThrow();
+            assertThatThrownBy(() -> strict.mergeFromSnapshot(SessionSnapshot.of(session, "p", List.of())))
+                    .isInstanceOf(SessionNotHeldException.class);
+
+            final SessionRecordStore lenient = router.fencedRecordStore(SessionFence.UNLESS_HELD_ELSEWHERE)
+                    .orElseThrow();
+            lenient.mergeFromSnapshot(SessionSnapshot.of(session, "p", List.of()));
+            assertThat(records.exists(session)).isTrue();
+            router.fencedSegmentStore(SessionFence.UNLESS_HELD_ELSEWHERE).orElseThrow().delete(session,
+                    segment.getId());
+            assertThat(raw.get(session, segment.getId())).isEmpty();
+        } finally {
+            router.close();
+        }
+
+        final SessionRouter bare = SessionRouter.builder().sessionOpener(opener)
+                .sessionRecordStore(new InMemorySessionRecordStore()).build();
+        try {
+            assertThat(bare.fencedSegmentStore(SessionFence.UNLESS_HELD_ELSEWHERE)).isEmpty();
+            assertThat(bare.fencedRecordStore(SessionFence.UNLESS_HELD_ELSEWHERE)).isPresent();
+        } finally {
+            bare.close();
         }
     }
 }

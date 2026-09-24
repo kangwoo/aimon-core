@@ -21,6 +21,10 @@ import at.aimon.core.agent.session.transcript.SessionLogSegmentSweeper;
  * next one runs on schedule; the sweeper already swallows storage failures, so only a bug reaches that log line.
  *
  * <p>
+ * Each tick calls {@link SessionLogSegmentSweeper#sweepIfClaimed()}, so a sweeper built with coordination runs its pass
+ * only on the node holding the sweep lease, and one without it runs every time.
+ *
+ * <p>
  * Thread-safe; {@link #start()} and {@link #close()} are idempotent.
  */
 public final class SegmentSweepSchedule implements AutoCloseable {
@@ -60,7 +64,8 @@ public final class SegmentSweepSchedule implements AutoCloseable {
         });
         final long delayMs = Math.max(1L, interval.toMillis());
         executor.scheduleWithFixedDelay(this::sweepQuietly, delayMs, delayMs, TimeUnit.MILLISECONDS);
-        log.info("Segment sweep started: interval={}, grace={}", interval, sweeper.getGrace());
+        log.info("Segment sweep started: interval={}, grace={}, coordinated={}", interval, sweeper.getGrace(),
+                sweeper.isCoordinated());
     }
 
     /**
@@ -72,7 +77,7 @@ public final class SegmentSweepSchedule implements AutoCloseable {
 
     private void sweepQuietly() {
         try {
-            sweeper.sweep();
+            sweeper.sweepIfClaimed();
         } catch (RuntimeException e) {
             log.error("Segment sweep pass failed: {}", e.getMessage(), e);
         }

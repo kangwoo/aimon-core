@@ -9,6 +9,9 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
@@ -190,6 +193,74 @@ class DefaultTranscriptManagerSealingTest {
 
         assertThat(segments.list(SESSION)).as("the stored record still names it").hasSize(1);
         assertThat(next.pendingSegmentDeletions()).hasSize(1);
+    }
+
+    /**
+     * session-log §12.4: a checkpoint whose snapshot predates the {@code /clear} save, still inside its store call when
+     * that save's drain gives up, lands afterwards and puts the pre-clear manifest back. Deleting the cleared segments
+     * then would turn every read of that record into a gap, so the deletes wait for a save whose drain completes.
+     */
+    @Test
+    void aClearWhoseDrainGaveUpDefersItsDeletesUntilALateCheckpointCannotLand() throws Exception {
+        final CountDownLatch entered = new CountDownLatch(1);
+        final CountDownLatch release = new CountDownLatch(1);
+        final AtomicBoolean blockNext = new AtomicBoolean(false);
+        final List<Boolean> staleWriteReadable = new CopyOnWriteArrayList<>();
+        final InMemorySessionRecordStore stalling = new InMemorySessionRecordStore() {
+            @Override
+            public void mergeFromSnapshot(SessionSnapshot snapshot) {
+                final boolean stall = Thread.currentThread().getName().equals("aimon-session-checkpoint")
+                        && blockNext.compareAndSet(true, false);
+                if (stall) {
+                    entered.countDown();
+                    try {
+                        release.await(10, TimeUnit.SECONDS);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+                super.mergeFromSnapshot(snapshot);
+                if (stall) {
+                    // The moment the stale manifest is back in the record: is every segment it names still there?
+                    staleWriteReadable.add(snapshot.getLogState().getManifest().stream()
+                            .allMatch(line -> segments.get(SESSION, line.getSegmentId()).isPresent()));
+                }
+            }
+        };
+        final SessionCheckpointMailbox mailbox = SessionCheckpointMailbox.background(Duration.ofMillis(200));
+        try {
+            final DefaultTranscriptManager manager = new DefaultTranscriptManager(stalling, mailbox,
+                    SessionLogFormat.V2, SessionLogStorage.builder(segments).minSealTokens(0).clock(clock).build());
+            manager.saveSilently(compactedTurn(manager));
+            final List<SegmentId> sealed = segments.list(SESSION).stream().map(SegmentInfo::getId).toList();
+            assertThat(sealed).hasSize(1);
+
+            final TranscriptBuffer next = manager.initialize(SESSION, "system");
+            blockNext.set(true);
+            next.addUserMessage("before the clear");
+            assertThat(entered.await(10, TimeUnit.SECONDS)).as("the pre-clear checkpoint is in its store call")
+                    .isTrue();
+            next.clear();
+
+            manager.saveSilently(next);
+
+            assertThat(segments.list(SESSION)).as("deferred: the pre-clear checkpoint may still land").hasSize(1);
+            assertThat(next.pendingSegmentDeletions()).containsExactlyElementsOf(sealed);
+
+            release.countDown();
+            mailbox.flush(SESSION);
+            assertThat(staleWriteReadable).as("the stale manifest landed with its segments still there")
+                    .containsExactly(true);
+
+            manager.saveSilently(next);
+
+            assertThat(stalling.load(SESSION).orElseThrow().getLogState().getManifest()).isEmpty();
+            assertThat(segments.list(SESSION)).as("a save whose drain completed deletes them").isEmpty();
+            assertThat(next.pendingSegmentDeletions()).isEmpty();
+        } finally {
+            release.countDown();
+            mailbox.close();
+        }
     }
 
     @Test

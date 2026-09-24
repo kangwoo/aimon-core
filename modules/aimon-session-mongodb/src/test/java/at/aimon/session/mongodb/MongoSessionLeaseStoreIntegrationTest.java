@@ -12,7 +12,9 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.store.LeaseHolder;
 import at.aimon.core.agent.session.store.SessionLease;
+import at.aimon.core.agent.session.transcript.SessionLogSegmentSweeper;
 import at.aimon.session.mongodb.internal.DocumentKeys;
 
 /**
@@ -34,6 +36,15 @@ class MongoSessionLeaseStoreIntegrationTest {
         MongoTestSupport.dropAndApplyDdl();
         lock = new MongoSessionLeaseStore(MongoTestSupport.sharedDatabase(), DocumentKeys.COLL_LOCKS,
                 Clock.systemUTC());
+    }
+
+    @Test
+    @DisplayName("the segment sweep's reserved id takes an ordinary lease: one holder, the rest refused until it lapses")
+    void sweepLeaseIdIsAnOrdinaryLease() {
+        final SessionId id = SessionLogSegmentSweeper.SWEEP_LEASE_ID;
+        assertThat(lock.tryAcquire(id, "node-A", Duration.ofSeconds(10))).isPresent();
+        assertThat(lock.tryAcquire(id, "node-B", Duration.ofSeconds(10))).isEmpty();
+        assertThat(lock.findHolder(id)).get().extracting(LeaseHolder::getHolderId).isEqualTo("node-A");
     }
 
     @Test

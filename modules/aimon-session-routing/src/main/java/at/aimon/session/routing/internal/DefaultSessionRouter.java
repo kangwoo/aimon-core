@@ -64,8 +64,10 @@ import at.aimon.core.agent.session.inbox.UnreadableEntry;
 import at.aimon.core.agent.session.signal.SessionSignal;
 import at.aimon.core.agent.session.signal.SessionSignalBus;
 import at.aimon.core.agent.session.store.ClaimResult;
+import at.aimon.core.agent.session.store.SessionFence;
 import at.aimon.core.agent.session.store.SessionLease;
 import at.aimon.core.agent.session.store.SessionLogSegmentStore;
+import at.aimon.core.agent.session.store.SessionRecordStore;
 import at.aimon.core.agent.session.store.SessionRecordView;
 import at.aimon.core.agent.session.store.SessionStore;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
@@ -147,6 +149,8 @@ public final class DefaultSessionRouter implements SessionRouter {
      * manager that deletes on this router's behalf.
      */
     private final SessionLogSegmentStore fencedSegments;
+    /** The raw segment store under {@link #fencedSegments}; the other fence policies are built over it on request. */
+    private final SessionLogSegmentStore rawSegments;
 
     private final LiveSessionCache sessionCache;
     private final InProcessEventPublisher eventPublisher;
@@ -393,7 +397,8 @@ public final class DefaultSessionRouter implements SessionRouter {
                 "releaseInterruptTimeout");
         this.metrics = Objects.requireNonNull(metrics, "metrics must not be null");
         this.sessionApprovalStore = config.sessionApprovalStore();
-        this.fencedSegments = config.segmentStore() == null ? null : store.segments(config.segmentStore());
+        this.rawSegments = config.segmentStore();
+        this.fencedSegments = rawSegments == null ? null : store.segments(rawSegments);
 
         // The close listener is how a held lease gets back to the cluster: every way a session can end — idle TTL, LRU,
         // an explicit release, an EVICT signal, shutdown — ends in a close, and none of them knows about leases.
@@ -2800,8 +2805,16 @@ public final class DefaultSessionRouter implements SessionRouter {
     }
 
     @Override
-    public Optional<SessionLogSegmentStore> fencedSegmentStore() {
-        return Optional.ofNullable(fencedSegments);
+    public Optional<SessionLogSegmentStore> fencedSegmentStore(SessionFence fence) {
+        if (Objects.requireNonNull(fence, "fence must not be null") == SessionFence.HOLDER_ONLY) {
+            return Optional.ofNullable(fencedSegments);
+        }
+        return Optional.ofNullable(rawSegments).map(raw -> store.segments(raw, fence));
+    }
+
+    @Override
+    public Optional<SessionRecordStore> fencedRecordStore(SessionFence fence) {
+        return Optional.of(store.records(Objects.requireNonNull(fence, "fence must not be null")));
     }
 
     /**

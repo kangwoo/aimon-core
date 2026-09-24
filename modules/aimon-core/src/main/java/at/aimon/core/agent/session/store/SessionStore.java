@@ -1,6 +1,7 @@
 package at.aimon.core.agent.session.store;
 
 import java.time.Duration;
+import java.util.Objects;
 import java.util.Optional;
 
 import at.aimon.core.agent.session.SessionId;
@@ -179,6 +180,27 @@ public interface SessionStore {
     SessionRecordStore records();
 
     /**
+     * The record write path under a chosen {@link SessionFence}. {@link SessionFence#HOLDER_ONLY} is
+     * {@link #records()}.
+     *
+     * <p>
+     * The default answers {@link SessionFence#HOLDER_ONLY} and refuses the other policy, so an implementation written
+     * before the policy existed stays source-compatible and never fences more loosely than it knows how to.
+     *
+     * @param fence
+     *            which writes the view lets through (must not be null)
+     * @return a fenced repository view; never null
+     * @throws UnsupportedOperationException
+     *             if this store cannot apply {@code fence}
+     */
+    default SessionRecordStore records(SessionFence fence) {
+        if (Objects.requireNonNull(fence, "fence must not be null") == SessionFence.HOLDER_ONLY) {
+            return records();
+        }
+        throw new UnsupportedOperationException(getClass().getName() + " does not implement the " + fence + " fence");
+    }
+
+    /**
      * The segment delete path, fenced against the leases this node holds (session-log §5.4, §5.6).
      *
      * <p>
@@ -193,4 +215,25 @@ public interface SessionStore {
      * @return a fenced view over it; never null
      */
     SessionLogSegmentStore segments(SessionLogSegmentStore raw);
+
+    /**
+     * The segment delete path under a chosen {@link SessionFence}. {@link SessionFence#HOLDER_ONLY} is
+     * {@link #segments(SessionLogSegmentStore)}; the default refuses the other policy, as
+     * {@link #records(SessionFence)}
+     * does.
+     *
+     * @param raw
+     *            the application's segment store (must not be null)
+     * @param fence
+     *            which deletes the view lets through (must not be null)
+     * @return a fenced view over {@code raw}; never null
+     * @throws UnsupportedOperationException
+     *             if this store cannot apply {@code fence}
+     */
+    default SessionLogSegmentStore segments(SessionLogSegmentStore raw, SessionFence fence) {
+        if (Objects.requireNonNull(fence, "fence must not be null") == SessionFence.HOLDER_ONLY) {
+            return segments(raw);
+        }
+        throw new UnsupportedOperationException(getClass().getName() + " does not implement the " + fence + " fence");
+    }
 }

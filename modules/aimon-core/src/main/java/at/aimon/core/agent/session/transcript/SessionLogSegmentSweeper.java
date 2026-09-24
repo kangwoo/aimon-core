@@ -7,6 +7,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Set;
 
 import org.slf4j.Logger;
@@ -16,6 +17,8 @@ import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.store.SegmentId;
 import at.aimon.core.agent.session.store.SegmentInfo;
 import at.aimon.core.agent.session.store.SegmentScanPage;
+import at.aimon.core.agent.session.store.SessionLease;
+import at.aimon.core.agent.session.store.SessionLeaseStore;
 import at.aimon.core.agent.session.store.SessionLogSegmentStore;
 import at.aimon.core.agent.session.store.SessionRecordStore;
 import at.aimon.core.agent.session.store.SessionRecordView;
@@ -45,7 +48,14 @@ import at.aimon.core.agent.session.store.SessionRecordView;
  * It deletes nothing it is unsure of: when the record cannot be read (a backend failure, or a document the codec
  * rejects), the session is skipped for this pass.
  *
+ * <p>
+ * The manifest is read through {@link SessionRecordView#getLogState()}, so every live segment's safety rests on the
+ * record store's views overriding it. The interface default answers a manifest-less version-1 state; a record store
+ * whose views rely on that default would have every sealed segment of every session swept once it is older than the
+ * grace. The in-tree record stores override it.
+ *
  * <h2>Why it is not fenced, and why several nodes may run it</h2>
+ *
  *
  * <p>
  * The sweeper holds no session, so a fenced delete would refuse everything; it deletes through the raw store. What
@@ -55,6 +65,19 @@ import at.aimon.core.agent.session.store.SessionRecordView;
  * nodes merely repeat each other's work, and a delete of a segment already gone is a no-op. The grace must exceed the
  * longest a sealed segment can wait for the record write that names it — a turn-end save or a checkpoint — which is why
  * the default is a day rather than the hour per-session collection uses.
+ *
+ * <h2>Once per cluster, not once per node</h2>
+ *
+ * <p>
+ * Safe is not the same as cheap: a pass costs a scan of the whole store, so every node that runs it multiplies that
+ * read. With {@link Builder#coordination} set, {@link #sweepIfClaimed()} first takes the <em>sweep lease</em> — a lease
+ * on the reserved id {@link #SWEEP_LEASE_ID} in the deployment's {@link SessionLeaseStore} — and skips the pass when
+ * another node holds it. The lease is taken for one sweep interval, renewed after every page while the pass runs, and
+ * <b>not released</b> when the pass ends: holding it until it lapses is what keeps the other nodes, whose schedules are
+ * not aligned with this one's, from running their own pass in the same interval. A node that dies holding it stops
+ * renewing it, and the first node whose schedule fires after it lapses takes over — no pass is lost for longer than
+ * one lease. A pass that outlives a lease it failed to renew merely overlaps another node's, which is the safe case
+ * above.
  *
  * <p>
  * Application-scoped and thread-safe; {@link #sweep()} is one full pass and holds no state between passes.
@@ -67,6 +90,12 @@ public final class SessionLogSegmentSweeper {
     /** The default number of sessions asked for per page of the scan. */
     public static final int DEFAULT_PAGE_SIZE = 100;
 
+    /**
+     * The reserved id the sweep lease is taken on. It lives in the lease store only — no record, no segment — so it
+     * never appears in a session listing; a real session must not be given this id.
+     */
+    public static final SessionId SWEEP_LEASE_ID = SessionId.of("aimon:segment-sweep");
+
     private static final Logger log = LoggerFactory.getLogger(SessionLogSegmentSweeper.class);
 
     private final SessionLogSegmentStore segmentStore;
@@ -74,6 +103,9 @@ public final class SessionLogSegmentSweeper {
     private final Duration grace;
     private final int pageSize;
     private final Clock clock;
+    private final SessionLeaseStore leaseStore;
+    private final String holderId;
+    private final Duration leaseDuration;
 
     private SessionLogSegmentSweeper(Builder builder) {
         this.segmentStore = Objects.requireNonNull(builder.segmentStore, "segmentStore cannot be null");
@@ -81,6 +113,16 @@ public final class SessionLogSegmentSweeper {
         this.grace = Objects.requireNonNull(builder.grace, "grace cannot be null");
         this.clock = Objects.requireNonNull(builder.clock, "clock cannot be null");
         this.pageSize = builder.pageSize;
+        this.leaseStore = builder.leaseStore;
+        this.holderId = builder.holderId;
+        this.leaseDuration = builder.leaseDuration;
+        if (leaseStore != null) {
+            Objects.requireNonNull(holderId, "holderId cannot be null");
+            Objects.requireNonNull(leaseDuration, "leaseDuration cannot be null");
+            if (leaseDuration.isZero() || leaseDuration.isNegative()) {
+                throw new IllegalArgumentException("leaseDuration must be positive, got " + leaseDuration);
+            }
+        }
         if (grace.isZero() || grace.isNegative()) {
             throw new IllegalArgumentException("grace must be positive: a zero grace deletes the segment of a sealing"
                     + " whose record has not been written yet, got " + grace);
@@ -109,12 +151,51 @@ public final class SessionLogSegmentSweeper {
     }
 
     /**
-     * Runs one full pass over the store. Never throws for a storage failure: a failed scan ends the pass early, and a
-     * failed read or delete skips that session or segment until the next pass.
+     * @return whether passes are coordinated through a sweep lease
+     */
+    public boolean isCoordinated() {
+        return leaseStore != null;
+    }
+
+    /**
+     * Runs one full pass unless another node holds the sweep lease. Without {@link Builder#coordination} this is
+     * {@link #sweep()}.
+     *
+     * <p>
+     * A lease store that cannot be reached skips the pass too, logged: running without the lease is what coordination
+     * exists to prevent, and the next pass is one interval away.
+     *
+     * @return how many segments were deleted, or empty when the pass was skipped
+     */
+    public OptionalInt sweepIfClaimed() {
+        if (leaseStore == null) {
+            return OptionalInt.of(sweep());
+        }
+        final Optional<SessionLease> lease;
+        try {
+            lease = leaseStore.tryAcquire(SWEEP_LEASE_ID, holderId, leaseDuration);
+        } catch (RuntimeException e) {
+            log.warn("Taking the segment sweep lease failed; this pass is skipped: {}", e.toString());
+            return OptionalInt.empty();
+        }
+        if (lease.isEmpty()) {
+            log.debug("Segment sweep skipped: another node holds the sweep lease");
+            return OptionalInt.empty();
+        }
+        return OptionalInt.of(pass(lease.get()));
+    }
+
+    /**
+     * Runs one full pass over the store, whatever any other node is doing. Never throws for a storage failure: a failed
+     * scan ends the pass early, and a failed read or delete skips that session or segment until the next pass.
      *
      * @return how many segments were deleted
      */
     public int sweep() {
+        return pass(null);
+    }
+
+    private int pass(SessionLease lease) {
         final Instant cutoff = clock.instant().minus(grace);
         int deleted = 0;
         String cursor = null;
@@ -131,11 +212,26 @@ public final class SessionLogSegmentSweeper {
                 deleted += sweepSession(sessionId, cutoff);
             }
             cursor = page.getNextCursor().orElse(null);
+            renew(lease);
         } while (cursor != null);
         if (deleted > 0) {
             log.info("Segment sweep deleted {} orphan segment(s)", deleted);
         }
         return deleted;
+    }
+
+    /** Keeps the sweep lease for another interval while a long pass runs. Failure is logged and the pass goes on. */
+    private void renew(SessionLease lease) {
+        if (lease == null) {
+            return;
+        }
+        try {
+            if (!leaseStore.extend(lease, leaseDuration)) {
+                log.debug("The segment sweep lease lapsed mid-pass; another node may start its own");
+            }
+        } catch (RuntimeException e) {
+            log.debug("Renewing the segment sweep lease failed: {}", e.toString());
+        }
     }
 
     private int sweepSession(SessionId sessionId, Instant cutoff) {
@@ -203,8 +299,30 @@ public final class SessionLogSegmentSweeper {
         private Duration grace = DEFAULT_GRACE;
         private int pageSize = DEFAULT_PAGE_SIZE;
         private Clock clock = Clock.systemUTC();
+        private SessionLeaseStore leaseStore;
+        private String holderId;
+        private Duration leaseDuration;
 
         private Builder() {
+        }
+
+        /**
+         * Coordinates passes across nodes through a sweep lease, so {@link #sweepIfClaimed()} runs on one node per
+         * lease period. Give every node the same lease store and its own holder id.
+         *
+         * @param leaseStore
+         *            the deployment's shared lease store (must not be null)
+         * @param holderId
+         *            this node's identity in that store (must not be null)
+         * @param leaseDuration
+         *            how long a pass keeps the other nodes out — the sweep interval (must be positive)
+         * @return this builder
+         */
+        public Builder coordination(SessionLeaseStore leaseStore, String holderId, Duration leaseDuration) {
+            this.leaseStore = Objects.requireNonNull(leaseStore, "leaseStore cannot be null");
+            this.holderId = Objects.requireNonNull(holderId, "holderId cannot be null");
+            this.leaseDuration = Objects.requireNonNull(leaseDuration, "leaseDuration cannot be null");
+            return this;
         }
 
         /**

@@ -19,12 +19,23 @@ import at.aimon.cli.config.CliConfig;
 import at.aimon.cli.config.CliSettings;
 import at.aimon.cli.config.LlmProviderConfig;
 import at.aimon.cli.factory.AgentSetupFactory.AgentSetup;
+import at.aimon.core.agent.AgentExecutionResult;
 import at.aimon.core.agent.ContextEngineKind;
 import at.aimon.core.agent.DefaultAgent;
 import at.aimon.core.agent.context.RollingContextEngine;
 import at.aimon.core.agent.impl.AgentBundle;
+import at.aimon.core.agent.session.LiveSession;
 import at.aimon.core.agent.session.transcript.SessionLogFormat;
+import at.aimon.core.agent.session.transcript.SessionLogPage;
+import at.aimon.core.agent.session.transcript.SessionLogState;
+import at.aimon.core.agent.session.transcript.SummarySpan;
+import at.aimon.core.agent.session.transcript.TranscriptBuffer;
+import at.aimon.core.agent.session.transcript.TranscriptManager;
 import at.aimon.core.llm.LlmClient;
+import at.aimon.core.llm.LlmModel;
+import at.aimon.core.llm.LlmResponse;
+import at.aimon.core.llm.Message;
+import at.aimon.core.llm.ToolDefinition;
 
 /**
  * {@code cli.sessionLogWriteFormat}: the CLI writes version 1 unless told otherwise, and an agent declaring
@@ -104,6 +115,76 @@ class AgentSetupFactoryLogWriteFormatTest {
                 () -> new AgentSetupFactory(llmClientFactory, AgentSetupFactoryLogWriteFormatTest::rollingBundle)
                         .create(config(SessionLogFormat.V1)).close())
                 .hasStackTraceContaining("rolling").hasStackTraceContaining("version 1");
+    }
+
+    /**
+     * The end-to-end claim behind the switch: a rolling agent does not only start on the CLI with {@code v2}, it runs
+     * turns there. One real turn goes through the CLI's own live session against a stub model; then the turn's opening
+     * entries — with a bulky message after them, to clear the minimum sealable size — are hidden and saved, which seals
+     * them into the in-memory segment store the CLI paired with the in-memory
+     * records, and the log reader reads the whole session back without a gap. The seal is driven by hand rather than
+     * by the rolling engine's own compaction, which needs a context window the stub turn does not fill.
+     */
+    @Test
+    @DisplayName("with v2 a rolling agent runs a real turn on the CLI, and its log seals and reads back whole")
+    void rollingAgentRunsATurnOnVersionTwo() {
+        final List<Integer> calls = new ArrayList<>();
+        final LlmClientFactory stubModel = new LlmClientFactory() {
+            @Override
+            public LlmClient create(LlmProviderConfig config) {
+                return new LlmClient() {
+                    @Override
+                    public LlmResponse sendMessage(String systemPrompt, List<Message> messages,
+                            List<ToolDefinition> tools, LlmModel modelConfig) {
+                        calls.add(messages.size());
+                        return LlmResponse.text("pong");
+                    }
+
+                    @Override
+                    public String getProviderName() {
+                        return "stub";
+                    }
+                };
+            }
+        };
+
+        try (AgentSetup setup = new AgentSetupFactory(stubModel, AgentSetupFactoryLogWriteFormatTest::rollingBundle)
+                .create(config(SessionLogFormat.V2))) {
+            assertThat(setup.getAgentRuntime().getContextEngine()).isInstanceOf(RollingContextEngine.class);
+            final LiveSession session = setup.getLiveSession();
+
+            final AgentExecutionResult result = session.submit("ping");
+
+            assertThat(result.isSuccess()).as(String.valueOf(result.getErrorMessage())).isTrue();
+            assertThat(result.getFinalAnswer()).isEqualTo("pong");
+            assertThat(calls).as("the stub model answered the turn").hasSize(1);
+
+            final TranscriptManager manager = setup.getAgentExecutor().getTranscriptManager();
+            final TranscriptBuffer saved = manager.initialize(session.getSessionId(), "You are a probe.");
+            assertThat(saved.toSnapshot().getLogState().getFormat()).isEqualTo(SessionLogFormat.V2);
+            final long entries = saved.liveEntryCount();
+            assertThat(entries).as("the turn's user message and answer are in the record").isGreaterThanOrEqualTo(2);
+
+            // Large enough to clear the default minimum sealable run (SessionLogStorage.DEFAULT_MIN_SEAL_TOKENS).
+            final String bulky = "context ".repeat(40_000);
+            saved.addUserMessage(bulky);
+            saved.addAssistantMessage("again");
+            saved.summarizeView(SummarySpan.builder().fromSeq(0).toSeq(entries + 1).summaryText("the first turn")
+                    .boundaryId("cli-probe").trigger("AUTO").build());
+            manager.saveSilently(saved);
+
+            final SessionLogState stored = manager.initialize(session.getSessionId(), "You are a probe.").toSnapshot()
+                    .getLogState();
+            assertThat(stored.getManifest()).as("the hidden range was sealed into a segment").isNotEmpty();
+            final SessionLogPage page = manager.getLogReader().orElseThrow().read(session.getSessionId(), 0,
+                    Long.MAX_VALUE);
+            assertThat(page.getGaps()).isEmpty();
+            // Compared by content without printing it: a failure would otherwise dump the bulky message.
+            final List<String> read = page.getEntries().stream().map(entry -> entry.getMessage().getContent()).toList();
+            assertThat(read.subList(0, 2)).as("the sealed turn reads back from the segment").containsExactly("ping",
+                    "pong");
+            assertThat(read.contains(bulky)).as("the bulky sealed entry reads back").isTrue();
+        }
     }
 
     @Test

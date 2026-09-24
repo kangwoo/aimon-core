@@ -1866,13 +1866,16 @@ public class AimonProperties implements InitializingBean {
          * How often this node sweeps the segment store for orphan log segments — the ones per-session garbage
          * collection never reaches because nobody resumes their session. Unset (the default) leaves the sweep off.
          * Needs a segment store: an in-memory record store brings one, a supplied record store needs a
-         * {@code SessionLogSegmentStore} bean. Safe on every node of a cluster at once.
+         * {@code SessionLogSegmentStore} bean. Safe on every node of a cluster at once, and cheap there too: with a
+         * {@code SessionLeaseStore} bean the nodes take the pass in turns through a sweep lease, so the cluster scans
+         * the store once per interval rather than once per node.
          */
         private Duration segmentSweepInterval;
 
         /**
-         * How old an orphan segment must be before the sweep deletes it. Unset means 24 hours. Only read when
-         * {@code segment-sweep-interval} is set.
+         * How old an orphan segment must be before the sweep deletes it. Unset means 24 hours. Setting it without
+         * {@code segment-sweep-interval} is refused at startup rather than ignored — a grace with no sweep to apply it
+         * to is a configuration that does nothing.
          */
         private Duration segmentSweepGrace;
 

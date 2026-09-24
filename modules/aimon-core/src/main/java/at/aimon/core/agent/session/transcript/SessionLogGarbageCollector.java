@@ -10,6 +10,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.exception.SessionNotHeldException;
 import at.aimon.core.agent.session.store.SegmentId;
 import at.aimon.core.agent.session.store.SegmentInfo;
 
@@ -82,6 +83,11 @@ public final class SessionLogGarbageCollector {
             try {
                 storage.getDeleteStore().delete(sessionId, info.getId());
                 deleted++;
+            } catch (SessionNotHeldException e) {
+                // The lease fence is doing its job — this node no longer holds the session, typically a save that ran
+                // after the lease was returned. Not a fault, so not a warning; the holder collects its own orphans.
+                log.debug("Orphan segment {} of session {} left to its holder: {}", info.getId(), sessionId.value(),
+                        e.getMessage());
             } catch (RuntimeException e) {
                 log.warn("Deleting orphan segment {} of session {} failed: {}", info.getId(), sessionId.value(),
                         e.toString());
@@ -109,6 +115,9 @@ public final class SessionLogGarbageCollector {
         for (SegmentId id : ids) {
             try {
                 storage.getDeleteStore().delete(sessionId, id);
+            } catch (SessionNotHeldException e) {
+                log.debug("Cleared segment {} of session {} left to its holder: {}", id, sessionId.value(),
+                        e.getMessage());
             } catch (RuntimeException e) {
                 log.warn("Deleting cleared segment {} of session {} failed; garbage collection will retry: {}", id,
                         sessionId.value(), e.toString());

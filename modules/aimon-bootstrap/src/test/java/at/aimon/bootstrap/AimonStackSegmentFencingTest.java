@@ -1,6 +1,7 @@
 package at.aimon.bootstrap;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.AdditionalAnswers.delegatesTo;
 import static org.mockito.Mockito.mock;
 
@@ -24,16 +25,21 @@ import at.aimon.bootstrap.spec.SessionSpec;
 import at.aimon.core.agent.DefaultAgent;
 import at.aimon.core.agent.impl.AgentBundle;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.exception.SessionNotHeldException;
 import at.aimon.core.agent.session.idempotency.InMemoryIdempotencyStore;
 import at.aimon.core.agent.session.inbox.InMemorySessionInbox;
 import at.aimon.core.agent.session.signal.InMemorySignalBus;
 import at.aimon.core.agent.session.store.InMemorySessionLeaseStore;
 import at.aimon.core.agent.session.store.InMemorySessionLogSegmentStore;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
+import at.aimon.core.agent.session.store.LeaseHolder;
 import at.aimon.core.agent.session.store.SegmentId;
+import at.aimon.core.agent.session.store.SessionFence;
 import at.aimon.core.agent.session.store.SessionLogSegment;
 import at.aimon.core.agent.session.store.SessionRecordStore;
 import at.aimon.core.agent.session.transcript.SessionLogFormat;
+import at.aimon.core.agent.session.transcript.SessionLogSegmentSweeper;
+import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.session.transcript.TranscriptManager;
 import at.aimon.core.base.Principal;
@@ -46,9 +52,15 @@ import at.aimon.session.routing.DeploymentMode;
 import at.aimon.session.routing.SubmitRequest;
 
 /**
- * The assembled stack's segment deletes — turn-end garbage collection and {@code /clear} — go through the lease this
- * node holds (session-log §5.4, §5.6). A node holding the session deletes its orphans; a node that lost it to another
- * cannot, even though its own record writes still land. A single node deletes through the raw store.
+ * The assembled stack's record writes (turn-end saves, checkpoints) and segment deletes (turn-end garbage collection,
+ * {@code /clear}) go through the lease this node holds (session-log §5.4, §5.6, §12.3).
+ *
+ * <ul>
+ * <li>Distributed: a node holding the session saves and deletes; a node that lost it, or never held it, does neither.
+ * <li>Single node with a supplied lease store: a session nobody holds — the CLI's shape, a live session opened outside
+ * the router — saves and deletes as before; a session another node holds is refused.
+ * <li>Single node with the default lease store: raw, as always.
+ * </ul>
  */
 class AimonStackSegmentFencingTest {
 
@@ -90,11 +102,17 @@ class AimonStackSegmentFencingTest {
             delegatesTo(new InMemorySessionRecordStore()));
 
     private AimonStackSpec spec(Path workspace, DeploymentMode mode) {
+        return spec(workspace, mode, false);
+    }
+
+    private AimonStackSpec spec(Path workspace, DeploymentMode mode, boolean singleNodeLeaseStore) {
         final SessionSpec.Builder session = SessionSpec.builder().mode(mode).recordStore(records).segmentStore(segments)
                 .logWriteFormat(SessionLogFormat.V2);
         if (mode == DeploymentMode.DISTRIBUTED) {
             session.nodeId("pod-a").leaseStore(leases).signalBus(new InMemorySignalBus())
                     .inbox(new InMemorySessionInbox()).idempotencyStore(new InMemoryIdempotencyStore());
+        } else if (singleNodeLeaseStore) {
+            session.nodeId("pod-a").leaseStore(leases);
         }
         return AimonStackSpec.builder().workspaceRoot(workspace.toString()).llm(LlmSpec.of(TEXT_LLM))
                 .agent(AgentSpec.of(AgentBundle.builder()
@@ -118,12 +136,23 @@ class AimonStackSegmentFencingTest {
                 .getFuture().toCompletableFuture().get(30, TimeUnit.SECONDS);
     }
 
-    /** A save on this node's transcript manager, outside any turn — the path a stale node's late save takes. */
+    /**
+     * A save on this node's transcript manager, outside any turn — the path a stale node's late save takes, and the
+     * path
+     * a live session opened outside the router (the CLI's) takes every turn. Uses the turn-end path, which never
+     * throws.
+     */
     private static void saveOutsideTheRouter(AimonStack stack, SessionId session) {
         final TranscriptManager manager = stack.agentExecutor().getTranscriptManager();
         final TranscriptBuffer buffer = manager.initialize(session, "You are ops.");
         buffer.addUserMessage("late");
-        manager.save(buffer);
+        manager.saveSilently(buffer);
+    }
+
+    /** Whether the record holds the message {@link #saveOutsideTheRouter} writes. */
+    private boolean recordHasLateSave(SessionId session) {
+        return records.load(session).map(record -> SessionSnapshot.from(record).getConversationHistory().stream()
+                .anyMatch(message -> "late".equals(message.getContent()))).orElse(false);
     }
 
     @Test
@@ -138,10 +167,12 @@ class AimonStackSegmentFencingTest {
         }
 
         assertThat(segments.get(session, orphan)).isEmpty();
+        assertThat(records.load(session)).as("the holder's turn-end save landed through the fenced view").isPresent();
+        assertThat(SessionSnapshot.from(records.load(session).orElseThrow()).getConversationHistory()).isNotEmpty();
     }
 
     @Test
-    @DisplayName("distributed: a node whose lease another node took cannot delete that session's segments")
+    @DisplayName("distributed: a node whose lease another node took can neither save that session nor delete its segments")
     void staleHolderIsRejected(@TempDir Path workspace) throws Exception {
         final SessionId session = SessionId.of("fence-stale");
 
@@ -155,7 +186,13 @@ class AimonStackSegmentFencingTest {
 
             saveOutsideTheRouter(stack, session);
 
+            assertThat(recordHasLateSave(session)).as("pod-a's late save is refused by the fence").isFalse();
             assertThat(segments.get(session, orphan)).as("pod-a's late GC is refused by the fence").isPresent();
+            final TranscriptManager manager = stack.agentExecutor().getTranscriptManager();
+            final TranscriptBuffer buffer = manager.initialize(session, "You are ops.");
+            buffer.addUserMessage("late");
+            assertThatThrownBy(() -> manager.save(buffer)).as("the throwing save path says why")
+                    .isInstanceOf(SessionNotHeldException.class);
         }
     }
 
@@ -170,6 +207,7 @@ class AimonStackSegmentFencingTest {
             saveOutsideTheRouter(stack, session);
         }
 
+        assertThat(recordHasLateSave(session)).isFalse();
         assertThat(segments.get(session, orphan)).isPresent();
     }
 
@@ -180,10 +218,56 @@ class AimonStackSegmentFencingTest {
         final SegmentId orphan = plantOrphan(session);
 
         try (AimonStack stack = AimonStackBuilder.build(spec(workspace, DeploymentMode.SINGLE_NODE))) {
+            assertThat(stack.sessionRouter().fencedRecordStore(SessionFence.HOLDER_ONLY)).isPresent();
             saveOutsideTheRouter(stack, session);
         }
 
+        assertThat(recordHasLateSave(session)).isTrue();
         assertThat(segments.get(session, orphan)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("single node + lease store: a session nobody holds (the CLI's shape) saves and collects as before")
+    void singleNodeWithLeaseStoreUnheldSessionPasses(@TempDir Path workspace) {
+        final SessionId session = SessionId.of("fence-single-unheld");
+        final SegmentId orphan = plantOrphan(session);
+
+        try (AimonStack stack = AimonStackBuilder.build(spec(workspace, DeploymentMode.SINGLE_NODE, true))) {
+            saveOutsideTheRouter(stack, session);
+        }
+
+        assertThat(recordHasLateSave(session)).isTrue();
+        assertThat(segments.get(session, orphan)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("single node + lease store: the router's own turn saves and collects through its lease")
+    void singleNodeWithLeaseStoreHolderPasses(@TempDir Path workspace) throws Exception {
+        final SessionId session = SessionId.of("fence-single-held");
+        final SegmentId orphan = plantOrphan(session);
+
+        try (AimonStack stack = AimonStackBuilder.build(spec(workspace, DeploymentMode.SINGLE_NODE, true))) {
+            runTurn(stack, session);
+            assertThat(leases.findHolder(session)).as("the router holds the session").isPresent();
+        }
+
+        assertThat(segments.get(session, orphan)).isEmpty();
+        assertThat(SessionSnapshot.from(records.load(session).orElseThrow()).getConversationHistory()).isNotEmpty();
+    }
+
+    @Test
+    @DisplayName("single node + lease store: a session another node holds can neither be saved nor collected")
+    void singleNodeWithLeaseStoreHeldElsewhereIsRejected(@TempDir Path workspace) {
+        final SessionId session = SessionId.of("fence-single-elsewhere");
+        assertThat(leases.tryAcquire(session, "pod-b", Duration.ofDays(30))).isPresent();
+        final SegmentId orphan = plantOrphan(session);
+
+        try (AimonStack stack = AimonStackBuilder.build(spec(workspace, DeploymentMode.SINGLE_NODE, true))) {
+            saveOutsideTheRouter(stack, session);
+        }
+
+        assertThat(recordHasLateSave(session)).isFalse();
+        assertThat(segments.get(session, orphan)).isPresent();
     }
 
     @Test
@@ -205,6 +289,39 @@ class AimonStackSegmentFencingTest {
                 TimeUnit.MILLISECONDS.sleep(10);
             }
             assertThat(segments.get(session, orphan)).isEmpty();
+        }
+    }
+
+    @Test
+    @DisplayName("with a lease store the sweep is coordinated: a pass takes the sweep lease as this node, and a node"
+            + " that finds it held skips its pass")
+    void sweepIsCoordinatedThroughTheLeaseStore(@TempDir Path workspace) throws Exception {
+        final SessionId session = SessionId.of("sweep-coordinated");
+        final SegmentId orphan = plantOrphan(session);
+        final AimonStackSpec base = spec(workspace, DeploymentMode.DISTRIBUTED);
+        final AimonStackSpec withSweep = AimonStackSpec.builder().workspaceRoot(workspace.toString())
+                .llm(LlmSpec.of(TEXT_LLM)).agent(base.getAgents().get(0))
+                .session(SessionSpec.builder().mode(DeploymentMode.DISTRIBUTED).nodeId("pod-a").leaseStore(leases)
+                        .signalBus(new InMemorySignalBus()).inbox(new InMemorySessionInbox())
+                        .idempotencyStore(new InMemoryIdempotencyStore()).recordStore(records).segmentStore(segments)
+                        .segmentSweepInterval(Duration.ofMillis(20)).segmentSweepGrace(Duration.ofMinutes(1)).build())
+                .build();
+
+        // pod-b is sweeping this interval: pod-a's passes skip and the orphan stays.
+        assertThat(leases.tryAcquire(SessionLogSegmentSweeper.SWEEP_LEASE_ID, "pod-b", Duration.ofDays(1))).isPresent();
+        try (AimonStack stack = AimonStackBuilder.build(withSweep)) {
+            TimeUnit.MILLISECONDS.sleep(200);
+            assertThat(segments.get(session, orphan)).as("pod-b holds the sweep lease").isPresent();
+
+            // pod-b's lease lapses (it died); pod-a takes the next pass.
+            leaseNow.set(leaseNow.get().plus(Duration.ofDays(2)));
+            final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (segments.get(session, orphan).isPresent() && System.nanoTime() < deadline) {
+                TimeUnit.MILLISECONDS.sleep(10);
+            }
+            assertThat(segments.get(session, orphan)).isEmpty();
+            assertThat(leases.findHolder(SessionLogSegmentSweeper.SWEEP_LEASE_ID)).get()
+                    .extracting(LeaseHolder::getHolderId).isEqualTo("pod-a");
         }
     }
 
