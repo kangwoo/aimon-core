@@ -1,6 +1,8 @@
 # Context Engine — LLM 에 무엇을 보낼지 정하는 자리
 
-> Status: **PROPOSED** — 적용 대상 `aimon-core`, `aimon-bootstrap`, `aimon-spring-boot-starter`. 열린 질문은 §12.
+> Status: **IMPLEMENTED** — 적용 대상 `aimon-core`, `aimon-bootstrap`, `aimon-spring-boot-starter`. 열린 질문은 §12.
+> §1 ~ §12 와 부록은 리뷰를 통과한 설계 그대로다(`f09d891`, 승인 뒤 고치지 않았다). 구현이 갈라진 자리와 남은 틈은
+> [§13](#13-구현과의-차이).
 > 선행 설계: [`../session/session-log.md`](../session/session-log.md) (기록과 뷰의 분리 — 이 문서가 딛고 서는 저장 모델)
 > 관련 문서: [`compaction.md`](compaction.md) (요약 생성 부품), [`orca-executor.md`](orca-executor.md) (ReAct 루프),
 > [`../memory/peer-memory.md`](../memory/peer-memory.md), [`../../overview/scope-model.md`](../../overview/scope-model.md)
@@ -462,3 +464,134 @@ CTX-05 가 선행 조건이다. 그때 되살린다면 고정 단위는 "메모�
 | 예산 | `BudgetTracker` — [`orca-executor.md` §4](orca-executor.md) |
 | 메모리 ingest | [`IngestingExecutionMemorySink.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/memory/IngestingExecutionMemorySink.java), [`LlmDeriver.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/memory/deriver/LlmDeriver.java) |
 | 시스템 프롬프트 (engine 밖) | [`SystemPromptRenderer.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/impl/orca/SystemPromptRenderer.java), [`ContextAssembler.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/context/ContextAssembler.java) |
+
+---
+
+## 13. 구현과의 차이
+
+§1 ~ §12 와 부록은 리뷰를 통과한 설계 그대로다(`f09d891`). 이 절은 구현이 그 글에서 갈라진 자리와, 구현을 마친 뒤에도
+열려 있는 결과를 적는다. 저장 쪽의 차이는 [`session-log.md` §12](../session/session-log.md#12-구현과의-차이) 에 있다.
+
+### 13.1 SPI 와 호출 지점 (§3, §8.2)
+
+- **`ContextRequest` 에 `callMetadata` 가 있다.** §3.1 목록에는 없다. `/compact` 는 `LlmCallMetadata`
+  (`component = compact-command`, traceId, principal)를 붙이는데 `ContextCaller(executionId, principal)` 로는 component
+  이름을 나를 수 없다. 선택 필드이고 engine 은 그대로 `CompactionRequest` 로 넘긴다
+- **`hookRegistry` · `environment` 는 선택이다.** 스킬 루프(`LlmSkillExecutor`)는 scratch 버퍼 위에서 돌고 둘 다 없으며
+  `passthrough()` 를 쓴다. `DefaultContextEngine` 은 둘 중 하나가 빠지면 `IllegalArgumentException` 을 던진다
+- **`summarize` 의 모양.** `CompactionEngine.summarize(SummaryRequest)` 는 새 타입이 아니라 `CompactionResult` 를 돌려준다.
+  PreCompact 는 발화하지만 PostCompact 는 발화하지 않는다 — PostCompact 는 설치된 뒤의 상태를 보는데 그것은 호출자만
+  만든다. 그래서 `summaryInstalled(SummaryRequest, CompactionResult, TranscriptBuffer)`(기본 no-op)를 더했고,
+  `DefaultCompactionEngine` 은 `compact()` 와 같은 invoker 이름·같은 파일/스킬 스캔으로 PostCompact 를 거기서 발화한다.
+  롤링을 위해 `SummaryRequest` 에 `rolling` · `previousSummary` · `targetSummaryTokens` 가 붙었다
+- **ArchUnit 예외 하나.** `agent.context` 는 `ContextRequest` 가 `HookRegistry` 를 들어야 하므로 `agent..` 의 hook 금지
+  규칙에서 떨어져, `HookRegistry` 하나만 허용하는 규칙(`agentContextMayDependOnHookRegistryOnly`)을 받았다.
+  `agent.compact` · `agent.session` 과 같은 모양이다
+- **메인 루프의 `ContextCaller` 는 `ExecutionId` 를 싣지 않는다.** 오늘처럼 세션 정체성으로 부른다. 포크만 싣는다
+- **`/compact` 의 breaker 리셋이 OnStop 훅보다 먼저 일어난다.** §8.2 대로 리셋이 engine 안으로 들어갔기 때문이다.
+  예전에는 OnStop 뒤였다. 성공 조건은 같다
+- **복구 사유 로그**는 executor 가 아니라 `DefaultContextEngine.recover` 가 남긴다. 흐름(전략 1회, 재시도 1회)은 같다
+- **배선 표면.** `OrcaAgentRuntime.getContextEngine()` 은 null 이 아니다 — 명시한 engine 이 없으면 `build()` 가 guard ·
+  복구 전략 · compaction engine 으로 `DefaultContextEngine` 을 파생한다. `OrcaProviderDependencies.contextEngine`,
+  `CompactCommand(ContextEngine, …)`, `DefaultSubagentExecutor(…, ContextEngine)` 가 생겼고 옛 생성자는 그것을 감싸서 남았다
+- **`ContextView.estimatedTokens` 는 추정하지 않았으면 0** 이다. `passthrough()` 와 추정기 없는 파생 engine 이 그렇다
+- **`ContextDecision.getViewSizeBefore()`** (`OptionalInt`)를 더했다. 부록 A 가 말한 대로 executor 의 `CompactBoundary`
+  크기는 뷰 크기다. 이것을 보고하지 않는 engine(mock, passthrough)에서는 예전처럼 `buffer.size()` 를 쓴다
+- **`ContextEngineKind` 는 `at.aimon.core.agent` 에 있다.** `AgentMetadata`(`agent` 패키지)가 들고 있고 `agent.context` 는
+  이미 `agent` 에 의존하므로, `agent.context` 에 두면 순환이 생긴다
+- 구현체(`DefaultContextEngine` · `RollingContextEngine` · `ViewProjection` · `RecoveryDiff`)는 §3.1 대로 `agent.context`
+  에 있다. `.impl` 이 아니다 — `DefaultContextAssembler` 가 선례다
+
+### 13.2 `DefaultContextEngine` 의 뷰 모드 (§4, §8.2)
+
+- **판정 규칙의 재사용.** guard 의 진입점은 전부 자기 `compact` 로 버퍼를 고쳐 쓴다. 그래서
+  `DefaultCompactionGuard.decide(sessionId, systemPrompt, view, model, budgetForced, Compactor)` 를 더했다 — 같은
+  `tryLock` · ladder · precondition · breaker 를 호출자가 준 뷰에 돌리고, 압축 자체는 콜백으로 되돌려 준다.
+  옛 진입점은 같은 코드로 위임한다
+- **뷰 모드의 조건.** guard 가 정확히 `DefaultCompactionGuard`(하위 클래스 아님) 또는 `NoOpCompactionGuard` 이고
+  compaction engine 이 `supportsSummarize()` 일 때다. 모드는 노드가 아니라 **버퍼의 형식**(`TranscriptBuffer.getFormat()`)
+  으로 고른다 — sticky 로 올라간 레코드는 v1 쓰기 노드에서도 뷰 모드다. 그 밖의 조합이 v2 버퍼를 만나면 in-place 로
+  물러나고 engine 당 WARN 을 한 번 남긴다. 그 결과는 §13.5 첫 항목이다
+- **"v2 에서 기동 실패" 의 자리**는 `DefaultContextEngine.Builder.writeFormat(V2)` 다. `build()` 가 커스텀
+  `CompactionGuard`, 요약하지 못하는 engine, engine 없는 Default guard 를 거절한다. `OrcaAgentRuntimeFactory` 는 노드의
+  쓰기 형식으로 이것을 건다. `OrcaAgentRuntime.Builder` 가 파생하는 engine 은 형식을 받지 않으므로(v1) 그 경로로 들어온
+  커스텀 guard 는 거절되지 않는다
+- **전체 compaction** 의 span 은 `[floorSeq, nextSeq)` 이고 요약 입력은 현재 뷰(이전 `[B, S]` 포함)다 — in-place 재압축이
+  보내던 것과 같으므로 L2 가 그대로다. `summarizeView` 가 span 을 거절하면 실패이고 로그는 그대로다
+- **`compactNow`** 는 뷰 전체를 MANUAL 로 요약하고 성공하면 breaker 를 리셋한다. 빈 뷰는 LLM 을 부르지 않고 실패한다.
+  기본 engine 에는 `tryLock` 과 경합 실패가 없다 — §5.6 이 그것을 롤링 engine 의 절에 두었고, 롤링만
+  `CompactionContendedException` 을 돌려준다
+- **복구 어댑터 `RecoveryDiff`.** 전략의 답을 뷰와 인스턴스로 대조한다(왼쪽부터 탐욕 — 같은 인스턴스가 둘이면 앞의 것이
+  남는다). 빠진 위치를 run 으로 묶어 run 마다 `drop` 하나. 새 메시지나 고쳐 쓴 메시지, 뷰가 만든 메시지(마커·elide 된
+  결과)를 빼는 답, 아무것도 빼지 않는 답, 합법 절단을 어기는 구간은 WARN 과 함께 거절한다. 모든 구간을 상태의 사본에서
+  먼저 검증하므로 답은 통째로 적용되거나 전혀 적용되지 않는다
+- **deprecation.** `CompactionGuard`, `CompactionEngine.compact`, `TimeBasedMicrocompact` 가 deprecated 다(버퍼 쪽은
+  session-log). `DefaultCompactionGuard` · `NoOpCompactionGuard` 자체와 guard 타입을 받는 주입 자리는 뷰 모드가 재사용하므로
+  deprecate 하지 않고 `@SuppressWarnings("deprecation")` 로 담았다
+- **메모리 ingest(§7).** SYNTHETIC 을 빼고 합법 절단에서 나눈다. 두 절단 사이의 run 이 예산을 넘으면 쪼개지 않고 통째로
+  보낸다. §7 에 값이 없던 `maxIngestTokens` 의 기본은 `IngestChunks.DEFAULT_MAX_INGEST_TOKENS = 32_000` 이고 설정 키로
+  노출하지 않았다
+
+### 13.3 `RollingContextEngine` (§5)
+
+- **§5.6 의 WARN 행은 적힌 대로는 거의 닿지 않는다.** "모델이 롤링을 지탱하는가" 검사가 먼저 돌고, 그것을 통과했다면
+  stage 2(tail 0, head 유지)의 예상 크기는 언제나 `warning` 아래라서 절단면이 있으면 채택된다. 그래서 FALLBACK 경고는
+  **어떤 합법 절단도 흡수할 것이 없을 때** 낸다 — 현실적인 경우는 요약이 `summaryTokenRatio` 보다 훨씬 길게 돌아와
+  head + 마커만으로 임계값을 넘는 것이다. blocking 에서는 같은 상황이 stage 3(head 흡수)로 간다
+- **복구는 기본 engine 의 것이다.** §5 에 롤링의 복구가 없다. `recover` 는 같은 compaction engine · failure store · 복구
+  전략으로 만든 내부 `DefaultContextEngine` 에 위임하고, v1 버퍼와 §5.6 의 "기본 동작으로 물러남" 도 그것이 맡는다.
+  그 안의 guard lock 은 롤링 engine 의 lock 과 따로이며 한 호출은 둘 중 하나만 쓴다
+- **precondition** 은 guard 의 것이 아니라 "뷰의 끝이 합법 절단" (`LegalCuts.isLegal`)이다. §3.4 의 불변식이고, 차이는
+  다른 호출이 답을 기다리는데 `TOOL` 로 끝나는 뷰에서만 드러난다
+- **본문이 열어 둔 선택들.**
+  - user 메시지로 시작하지 않는 요약 입력에는 합성 user 메시지(`CONTINUATION_NOTE`)를 앞에 붙인다. span 이 새로 흡수하는
+    구간은 assistant 메시지로 시작하기 쉽고 프로바이더는 그런 요청을 거절한다
+  - 이전 요약은 메시지가 아니라 요약 호출의 시스템 프롬프트에 데이터로 격리해 넣는다(`<<<PREVIOUS_SUMMARY>>>`).
+    user 뒤에 user 가 오는 것을 피하고 PostCompact 의 파일/스킬 스캔에서도 빠진다
+  - `summaryModel` 은 요약 호출의 모델을 통째로 바꾼다
+  - L0 prune 은 stage 0(tail 예산) 절단이 흡수할 구간만 본다. stage 0 절단이 없으면 prune 도 없다
+  - span 의 `preTokenCount` 는 압축 전 뷰의 추정이고, span 의 `messagesSummarized` 는 누적, 메타데이터의 것은 이번에 흡수한
+    양이다
+  - "롤링을 지탱하지 못하는 모델" WARN 은 모델 이름당 한 번이다. 시스템 프롬프트는 실행마다 바뀔 수 있어 키로 쓰면
+    끝없이 자란다
+  - 비율은 `RollingContextEngine.Builder` 값뿐이고 Spring 속성이 아니다. §10 이 이름을 준 것은 `aimon.context.engine` 과
+    `context-engine` 뿐이다
+- **저장된 span 의 trigger 는 너그럽게 읽는다.** `ViewProjection` 은 모르는 `summarySpan.trigger` 를 `AUTO` 로 투영한다.
+  trigger 는 경계 마커의 라벨일 뿐이고 대체값이 결정적이므로 §3.3 은 그대로 성립한다. 던지면 그 세션은 다시는 턴을
+  돌지 못한다
+
+### 13.4 `SessionHistoryTool` 과 선택 (§6, §10)
+
+- **도구가 로그에 닿는 길.** 실행 중인 버퍼(레코드는 한 턴 늦다)와 봉인 구간을 읽을 reader 가 필요하다. executor 가 메인
+  루프의 도구 컨텍스트마다 `SessionLogSource`(버퍼 + 선택적 `SessionLogReader`)를 `SessionHistoryTool.LOG_SOURCE_KEY` 로
+  넣는다 — `TodoWriteTool.CONTEXT_ID_KEY` 선례다. reader 가 없으면 봉인 구간은 gap 항목으로 보고한다
+- 검색은 뒤에서부터 64 seq 창으로 훑고 토큰은 `HeuristicTokenEstimator` 로 센다. 도구는 `CONCURRENT_SAFE` 다
+- **등록.** 해석된 engine 이 rolling 이면 런타임 팩토리가 도구 provider 들 뒤에 직접 등록한다. allow-list 는 여전히 이름으로
+  막는다. §5.7 의 복원 훅은 트리 어디서도 기본 등록되지 않으므로 코드 변경 없이 문서만 적었다
+- **선택.** 기본 engine 은 `ExecutorSpec.contextEngine(...)`(Spring `aimon.context.engine`)이고 에이전트 frontmatter 가
+  이긴다. rolling 은 v2 쓰기 형식을 요구한다 — 선언된 에이전트는 기동이 실패하고, 테넌트 런타임은 첫 resolve 에서 실패한다.
+  **CLI 에는 쓰기 형식 스위치가 없어** 언제나 v1 이므로 `context-engine: rolling` 에이전트는 CLI 로 기동하지 않는다
+- 사용 가이드는 [`../../features/agent-execution/context-engine-guide.md`](../../features/agent-execution/context-engine-guide.md)
+  로 새로 썼다. §8.3 이 말한 [`compaction.md`](compaction.md) 쪽의 대체 표시는 달지 않았다
+
+### 13.5 알려진 열린 결과
+
+구현을 마친 시점에 남아 있는 행동상의 틈이다. 어느 것도 지원되는 조립(`OrcaAgentRuntimeFactory` · `AimonStackBuilder` ·
+스타터)에서 상태를 깨뜨리지는 않지만 설계가 약속한 것과 다르다.
+
+- **in-place 로 물러난 v2 로그는 뷰 상태를 무시한다.** §13.2 의 폴백은 `buffer.getMessages()` — carried 항목 그대로 —
+  를 보내고 그것을 압축한다. span 의 요약은 모델에 가지 않고, span 이 가린 항목과 drop 된 항목이 되돌아오며, 봉인된 구간은
+  말없이 빠진다. 이어지는 `replaceWith` 는 span 과 manifest 를 지우므로 요약과 봉인된 기록이 로그를 영영 떠나고, 세그먼트는
+  grace 뒤에 GC 가 지운다. 닿는 조건은 뷰 모드를 못 하는 engine(커스텀 guard, 요약하지 못하는 compaction engine)이 v2
+  레코드를 만나는 경우다 — v2 이행 중 노드마다 engine 구성이 다를 때, 또는 `OrcaAgentRuntime.Builder` 로 커스텀 guard 를
+  넣은 경우(§13.2). `PassthroughContextEngine` 도 같은 모양이지만 뷰 상태를 가진 v2 버퍼를 넘기는 호출자가 없다.
+  고치는 방향은 물러나기 전에 뷰를 투영하는 것(`ViewProjection.of`), 또는 뷰 상태나 manifest 가 비어 있지 않은 버퍼에
+  `replaceWith` 를 거절하는 것이다
+- **`headEnd()` 가 틀린 head 를 고를 수 있다.** head 를 첫 *carried* CONVERSATION user 항목에서 찾는다. prompt-too-long
+  `drop` 이 진짜 첫 요청을 가리고 그 구간이 `minSealTokens` 에 닿아 봉인되면, 뒤의 user 메시지가 head 가 되어 영원히
+  원문으로 남는다. 드물고 상태는 깨지지 않는다
+- **두 engine 의 `/compact` 실패 계약이 다르다.** 롤링은 경합 시 `CompactionContendedException`, 기본 engine 은 lock 없이
+  진행한다(§13.2)
+- **비용이 긴 로그에서 제곱으로 자란다.** 롤링의 절단면 계산은 뷰 위치마다 O(n) 인 `isLegalCut` 을 불러 `prepare` 한 번이
+  O(n²) 이다(`LegalCuts.legalPositions` 한 번이면 된다). `SessionHistoryTool` 의 검색과 `SessionLogReader` 의 페이징은 큰
+  세그먼트를 창·페이지마다 다시 읽고 해시 검사하고 디코드하므로 봉인된 기록 크기의 제곱이다(`maxScanTokens` 까지)

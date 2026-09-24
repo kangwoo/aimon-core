@@ -1,7 +1,9 @@
 # Session Log — 기록과 뷰의 분리
 
-> Status: **PROPOSED** — 적용 대상 `aimon-core`, `aimon-bootstrap`, `aimon-session-{mongodb,postgres,redis}`
+> Status: **IMPLEMENTED** — 적용 대상 `aimon-core`, `aimon-bootstrap`, `aimon-session-{mongodb,postgres,redis}`
 > (세그먼트 저장소 구현). 열린 질문은 §11.
+> §1 ~ §11 과 부록은 리뷰를 통과한 설계 그대로다(`f09d891`, 승인 뒤 고치지 않았다). 구현이 갈라진 자리와 남은 틈은
+> [§12](#12-구현과의-차이).
 > 후속 설계: [`../agent-execution/context-engine.md`](../agent-execution/context-engine.md) (이 저장 모델 위에서 뷰를 만드는 자리)
 > 관련 문서: [`session-model.md`](session-model.md), [`backends.md`](backends.md),
 > [`../agent-execution/compaction.md`](../agent-execution/compaction.md), [`../../overview/scope-model.md`](../../overview/scope-model.md)
@@ -452,3 +454,109 @@ v1 쓰기 모드에서 `DefaultContextEngine` 은 기록을 고쳐 쓰는 지금
 | 펜싱 | [`SessionStore.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/session/store/SessionStore.java) |
 | 어셈블리 | [`AimonStackBuilder.java`](../../../modules/aimon-bootstrap/src/main/java/at/aimon/bootstrap/AimonStackBuilder.java) |
 | 백엔드 | [`PostgresSessionRecordStore.java`](../../../modules/aimon-session-postgres/src/main/java/at/aimon/session/postgres/PostgresSessionRecordStore.java), [`MongoSessionRecordStore.java`](../../../modules/aimon-session-mongodb/src/main/java/at/aimon/session/mongodb/MongoSessionRecordStore.java) |
+
+---
+
+## 12. 구현과의 차이
+
+§1 ~ §11 과 부록은 리뷰를 통과한 설계 그대로다(`f09d891`). 이 절은 구현이 그 글에서 갈라진 자리와, 구현을 마친 뒤에도
+열려 있는 결과를 적는다. 뷰를 만드는 쪽의 차이는
+[`context-engine.md` §13](../agent-execution/context-engine.md#13-구현과의-차이) 에 있다.
+
+### 12.1 로그와 저장 형식 (§3, §4, §7)
+
+- **쓰기 형식은 codec 이 아니라 로그 상태가 든다.** §7.1 은 쓰기 게이트를 codec 에 두었지만, 백엔드는 모두 정적
+  `SessionRecordCodec` 으로 부르고 `DefaultContextEngine` 도 형식을 알아야 한다(뷰 모드냐 in-place 냐). 그래서
+  `SessionLogState.getFormat()` 이 "이 상태가 적어도 이 형식으로 쓰여야 한다" 를 말하고, codec 은
+  `max(쓰기 형식, 상태 형식)` 으로 쓴다. sticky upgrade 가 여기서 저절로 나온다 — `version: 2` 에서 읽은 상태는 `V2` 를
+  들고 언제나 `V2` 로 쓰인다. 노드 스위치는 `DefaultTranscriptManager(store, mailbox, SessionLogFormat)` 이고(내주는 버퍼를
+  전부 그 형식으로 올린다) `JsonSessionSnapshotCodec(SessionLogFormat)` 이 `VfsSessionSnapshotStore` 를 덮는다
+- **스위치의 노출.** `SessionSpec.logWriteFormat(...)`, Spring `aimon.session.log-write-format`,
+  `OrcaAgentRuntimeFactory.withSessionLogWriteFormat(...)`. **CLI 에는 없다** — CLI 는 언제나 v1 로 쓴다
+- **뷰 상태 타입의 자리.** `SessionViewState` · `SummarySpan` · `SeqRange` · `LegalCuts` 는 `agent.session.transcript` 에
+  있고, 연산(`summarize` / `drop` / `elide`)은 합법 절단 불변식이 항목을 필요로 하므로 `SessionLogState` 에 있다. 버퍼는
+  `summarizeView` / `dropFromView` / `elideInView` 로 그것을 비춘다. 투영(`ViewProjection`)은 `agent.context` 에 있다 —
+  마커를 만드는 `CompactBoundary` 가 `agent.compact` 에 있어 여기 두면 순환이 생긴다. `SummarySpan` 은 trigger 를
+  `CompactionTrigger` 의 이름(문자열)으로, 경계 메타데이터(`boundaryId` · `preTokenCount` · `messagesSummarized` ·
+  `discoveredToolNames`)와 함께 저장한다. 비어 있지 않은 뷰 상태는 V2 를 요구한다
+- **v2 문서의 `viewState`** 는 객체(`summarySpan` · `droppedRanges` · `elisions`)이고 비어 있지 않을 때만 쓴다. 없으면 빈
+  것으로 읽는다
+- **로그를 받는 팩토리의 이름**은 `SessionTranscript.fromLog(...)` · `SessionSnapshot.fromLog(...)` 다. `of(..., null)` 을
+  넘기는 기존 호출이 두 오버로드 사이에서 모호해진다
+- **`SessionRewindPoint`.** `of(long seq, …)` 는 같은 이름으로 남았고 `getMessageCount()` 는 `getSeq()` 로 바뀌었다
+  ([`../../migration/rename-maps.md`](../../migration/rename-maps.md)). `int` 를 넘기던 호출은 컴파일되지만 이미 컴파일된
+  호출자에게는 바이너리 비호환이다. rewind 검증 문구는 "rewind seq 가 `[floorSeq, nextSeq]` 안" 이 되었다
+- **v1 in-place 압축의 seq.** v1 쓰기(와 [`context-engine.md` §13.2](../agent-execution/context-engine.md#132-defaultcontextengine-의-뷰-모드-4-82) 의 폴백)가 쓰는 `replaceWith` 는 교체 항목에 `nextSeq` 부터 새 seq 를 주고
+  `floorSeq` 를 그 첫 seq 로 올린다. 교체된 항목과 같은 인스턴스는 origin 을 유지하고 나머지는 CONVERSATION 이다.
+  manifest 는 새 floor 아래로 내려가므로 지운다 — 세그먼트는 GC 의 고아가 된다
+- **SYNTHETIC.** 서브에이전트의 OnStart advisory feedback(`DefaultSubagentExecutor.fireOnStart`)도 SYNTHETIC 으로 붙는다.
+  §3.2 목록은 메인 루프만 적었지만 이유가 같다. 훅 개발 가이드에는 `PostCompactContext` 절이 없어서 새로 썼다
+- **공개 API 추가.** `SessionRecordView.getLogState()` 는 default 메서드이고 `SessionStore.segments(raw)` 는 **추상** 메서드다
+  (트리 밖 구현은 컴파일이 깨진다 — `0.x` 에서 허용되고 CHANGELOG 에 있다)
+
+### 12.2 봉인 (§5)
+
+- **봉인의 자리.** §5.3 은 executor 가 "버퍼의 봉인" 을 부른다고 했지만 버퍼에는 저장소가 없다. 일은 `SessionLogSealer` 가
+  하고, `DefaultTranscriptManager` 가 `SessionLogStorage`(세그먼트 저장소, 삭제 뷰, `minSealTokens`, `segmentGcGrace`,
+  `maxReadTokens`, 추정기, clock)를 받을 때 그것을 소유한다. `TranscriptManager` 에 default 메서드 `seal(buffer)`(no-op)와
+  `getLogReader()`(empty)가 생겼고, executor 는 `COMPACT` 의 경계 이벤트 뒤에 `seal` 을 부른다
+- **턴 종료 순서는 seal → `mailbox.flush` → 저장이다.** §5.3 은 "봉인한 뒤 저장" 만 말하고 체크포인트 barrier 를 말하지
+  않는다. 봉인이 성공하면 버퍼가 dirty 가 되어 체크포인트를 올리므로, flush 뒤에 봉인하면 그 체크포인트가 barrier 밖에
+  줄 서서 권위 있는 저장 **뒤에** 쓰인다 — 삭제된 세션을 되살리고, 영속된 rewind 를 되돌린다. 순서를 바꾸어 봉인이 올린
+  체크포인트가 저장 전에 비워진다. 대가는 무언가를 봉인한 턴 종료 저장마다 같은 상태의 백그라운드 쓰기 한 번이다
+- **payload 는 쓴 그대로 해시한다.** `SessionLogSegment.payload` 는 `SessionLogSegmentCodec`(→
+  `JsonSessionSnapshotCodec.encodeEntries` / `decodeEntries`)이 쓴 문자열이고, `contentHash` 는 그 문자열의
+  `sha256:<hex>` 다 — 다시 인코딩한 항목이 아니다. 메시지 타입을 거친 왕복은 손실이 없지만 바이트 동일을 약속하지 않는다.
+  manifest 한 줄의 타입 이름은 `SessionLogManifestEntry` 다
+- **manifest 불변식은 `SessionLogState` 가 강제한다**(codec 은 "Inconsistent session log" 로 거절한다). 줄은 정렬 · 서로소 ·
+  `[floorSeq, nextSeq)` 안이고, carried 항목은 봉인 구간에 없고, 모든 줄은 뷰 상태가 가리며(`SessionViewState.hidesRange`),
+  비어 있지 않은 manifest 는 V2 이고, rewind point 는 줄의 **안쪽**에 있을 수 없다. 줄의 `fromSeq` 와 같은 rewind point 는
+  허용한다 — 바로 "rewind 지점에서 나눈다" 의 경우이고 `truncateFrom` 이 그 줄을 통째로 버린다
+- **`hasConversation()` 은 manifest 줄도 센다.** 전 이력이 봉인된 세션이 새 세션처럼 보여 다음 턴이 CTX-06 블록을 다시
+  받지 않게 하려는 것이다
+- **ingest 를 위한 보존.** 봉인된 항목은 버퍼의 private 목록으로 옮겨진다(영속하지 않고 `getMessages()` 에도 없다).
+  `messagesSinceIngestMark()` 가 그것을 합치므로 실행 중 봉인이 실행 종료 델타를 줄이지 않는다.
+  `getConversationMessages()` 는 carried 항목만이고, CLI 의 session-end 경로는 `SessionLogReader` 로 읽는다
+- **reader 의 모양.** `read(sessionId, from, to)` 는 레코드를 읽고 `read(sessionId, state, from, to)` 는 손에 든 로그를
+  읽는다(실행 중인 턴의 `SessionHistoryTool`). 페이지는 합법 절단에서만 끝나고 항목을 하나 이상 든다. gap 은 두 번
+  돌아온다 — 구간의 첫 seq 에 SYNTHETIC user 항목 `[history unavailable: seq a..b]` 로, 그리고 `getGaps()` 로
+- **백엔드.** Postgres 는 `V2__session_log_segment.sql`(운영자가 `V1__init.sql` 뒤에 적용)이고, README 가 미래 인덱스용으로
+  예약해 둔 이름은 `V3__indexes.sql` 로 밀렸다. Redis 는 세션당 해시 둘 — `<prefix>:<sid>`(id → payload 를 든 JSON)와
+  `<prefix>:<sid>:created`(id → createdAt) — 이라 `list` 가 payload 를 끌어오지 않고, Lua 스크립트가 둘을 맞추며, 기본
+  prefix `aimon:session:segment` 는 동결 테스트에 걸려 있다. 세 백엔드 모두 중복 id 의 `put` 을 거절한다
+- **조립의 짝.** `SessionSpec.segmentStore(...)` 가 생겼다. 없을 때 in-memory 레코드 저장소는 in-memory 세그먼트 저장소와
+  짝을 이루고, 공급된 레코드 저장소는 세그먼트 저장소 없이 **아무것도 봉인하지 않는다** — 영속 manifest 뒤에 재시작하면
+  사라지는 세그먼트를 두면 봉인 구간이 전부 gap 이 된다. 이때 쓰기 형식이 v2 이면 스택이 `session-log-sealing`
+  degradation 을 남긴다(v1 은 제자리에서 압축하므로 아니다). Spring 스타터는 `SessionLogSegmentStore` 빈을 읽어 넘긴다 —
+  속성은 없고 빈이 선택자다
+
+### 12.3 GC 와 두 삭제 경로 (§5.4, §6)
+
+- **GC 는 턴 종료 저장 뒤에만 돈다.** §5.4 의 "세션을 열 때" 는 하지 않았다. 세션 열기(`DefaultTranscriptManager.initialize`)
+  는 턴마다 일어나므로 저장 뒤 한 번과 겹치고 `list` 호출만 두 배가 된다. grace 는 0 이하를 거절하고 기본은 1시간이다
+- **조립된 스택의 GC 와 `/clear` 삭제는 raw 저장소로 간다.** §5.4 · §6.2 는 `SessionStore` 가 있으면 펜스 뷰
+  (`SessionStore.segments(raw)`)를 쓰라고 한다. 그 뷰를 가진 `SessionStore` 는 `SessionRouterBuilder.build()` 안에서 transcript
+  manager 보다 **뒤에** 만들어진다. `SessionLogStorage.deleteStore` 로 펜스 뷰를 넘길 자리는 있지만 bootstrap 은 비워 둔다.
+  같은 경로의 레코드 쓰기가 이미 펜스 없이 간다(§5.2)는 것이 판단의 근거다. 라우터의 세션 삭제는 펜스 뷰를 쓴다
+- **`/clear`** 는 잘려 나간 줄의 세그먼트 id 를 버퍼에 쌓아 두고, 비운 레코드의 저장이 성공한 **뒤에만** 지운다. 저장이
+  실패하면 남겨 두고 GC 가 나중에 줍는다
+- **rewind.** `TranscriptBuffer.rewind()` 와 `SessionLogState.truncateFrom` 은 `fromSeq` 가 절단 이후인 줄을 통째로 버린다.
+  `DefaultLiveSession` 의 영속 rewind 는 인덱스가 아니라 저장된 로그에 `truncateFrom` 을 건다
+
+### 12.4 알려진 열린 결과
+
+구현을 마친 시점에 남아 있는 행동상의 틈이다.
+
+- **다시 열리지 않는 세션의 고아는 영원히 남는다.** GC 가 턴 종료 저장 뒤에만 돌기 때문에(§12.3) 다음 턴이 오지 않으면
+  아무도 줍지 않는다 — 영속된 `rewindLastTurn` 이 끊어 낸 세그먼트, 실패한 `/clear` 삭제, 저장되지 못한 봉인, flush
+  timeout 뒤 늦게 도착한 옛 스냅샷이 남긴 고아. 답은 §11 의 저장소 단위 고아 정리이고 아직 없다
+- **raw 저장소 삭제는 리스를 잃은 노드를 막지 못한다.** 리스를 잃은 줄 모르는 노드가 `/clear` 를 돌리면 grace 없이 새
+  홀더의 레코드가 가리키는 세그먼트를 지울 수 있고, 그 노드의 GC 는 자기의 낡은 manifest 에 없는 새 홀더의 세그먼트 중
+  grace 가 지난 것을 지울 수 있다. 지워진 구간은 gap 으로 읽힌다. 같은 노드의 펜스 없는 레코드 쓰기가 더 큰 위험이다
+- **v2 레코드가 in-place 폴백을 만나면 manifest 를 잃는다.** 뷰 모드를 못 하는 engine 이 v2 레코드를 압축하면
+  `replaceWith` 가 span 과 manifest 를 지우고 봉인된 기록이 로그를 떠난다 —
+  [`context-engine.md` §13.5](../agent-execution/context-engine.md#135-알려진-열린-결과)
+- **GC 의 grace 는 두 노드의 시계를 비교한다.** 세그먼트의 `createdAt` 은 봉인한 노드의 시계이고 비교는 수집하는 노드의
+  시계로 한다. skew 만큼 grace 가 늘거나 준다. 1시간에서는 무해하지만 `segmentGcGrace` 를 줄이는 운영자는 알아야 한다
+- **큰 세그먼트는 읽을 때마다 다시 디코드된다.** reader 의 페이징과 `SessionHistoryTool` 의 검색이 창·페이지마다 같은
+  세그먼트를 다시 읽고 해시 검사한다 — [`context-engine.md` §13.5](../agent-execution/context-engine.md#135-알려진-열린-결과)
