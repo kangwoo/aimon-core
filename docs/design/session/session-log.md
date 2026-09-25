@@ -603,19 +603,19 @@ v1 쓰기 모드에서 `DefaultContextEngine` 은 기록을 고쳐 쓰는 지금
 - **GC 의 grace 는 두 노드의 시계를 비교한다.** 세그먼트의 `createdAt` 은 봉인한 노드의 시계이고 비교는 수집하는 노드의
   시계로 한다. skew 만큼 grace 가 늘거나 준다. 1시간에서는 무해하지만 `segmentGcGrace` 를 줄이는 운영자는 알아야 한다
 
-### 12.5 구현 뒤 개선에서 닫힌 것
+### 12.5 v2 폴백과 읽기 경로 보강
 
 리뷰가 남긴 항목 중 저장 쪽에서 고친 것이다. 위 절들의 본문도 그에 맞게 고쳤다.
 
 - **v2 레코드가 in-place 폴백을 만나도 manifest 를 잃지 않는다.** 뷰 상태나 manifest 가 있는 v2 버퍼는 in-place 로 압축하지
-  않는다 — [`context-engine.md` §13.6](../agent-execution/context-engine.md#136-구현-뒤-개선에서-닫힌-것)
+  않는다 — [`context-engine.md` §13.6](../agent-execution/context-engine.md#136-in-place-폴백과-롤링-요약-보강)
 - **큰 세그먼트를 창·페이지마다 다시 디코드하지 않는다.** 호출 단위 `SessionLogReadCache`(§12.2)
 - **reader 의 페이지 상한이 답 없는 `tool_use` 뒤에도 걸린다**(§12.2)
 - **Redis 키 충돌과 Cluster 슬롯, Mongo 의 세션 범위 `_id`, in-memory `put` 의 경합**(§12.2)
 
-### 12.6 두 번째 개선에서 닫힌 것
+### 12.6 조립된 스택의 삭제 펜스와 저장소 단위 스윕
 
-구현 뒤 개선의 두 번째 묶음이다. 위 절들의 본문도 그에 맞게 고쳤다.
+구현 뒤 리뷰가 남긴 항목 중 조립과 배선에 닿는 것이다. 위 절들의 본문도 그에 맞게 고쳤다.
 
 - **조립된 스택의 삭제 펜스.** §12.3 첫 항목. `SessionRouter.fencedSegmentStore()` 가 새 공개 표면이고, 라우터는 그 뷰를 한
   번만 만들어 자기 세션 삭제에도 쓴다. 리스를 빼앗긴 노드의 늦은 GC 가 거절되는 것을 조립된 스택 위에서 고정하는 테스트
@@ -643,9 +643,9 @@ v1 쓰기 모드에서 `DefaultContextEngine` 은 기록을 고쳐 쓰는 지금
 - **CLI 의 쓰기 형식 스위치.** `cli.sessionLogWriteFormat: v2`. v2 면 CLI 는 in-memory 레코드 옆에 in-memory 세그먼트
   저장소를 붙인다 — 둘이 같은 프로세스와 함께 사라지므로 manifest 가 세그먼트보다 오래 살 수 없다. 기본은 v1 이고,
   `context-engine: rolling` 에이전트는 v2 에서만 뜬다 —
-  [`context-engine.md` §13.7](../agent-execution/context-engine.md#137-두-번째-개선에서-닫힌-것)
+  [`context-engine.md` §13.7](../agent-execution/context-engine.md#137-cli-의-쓰기-형식-스위치)
 
-### 12.7 세 번째 개선에서 닫힌 것
+### 12.7 레코드 쓰기 펜스와 스윕 조정
 
 [`../../backlog/session-log-open-items.md`](../../backlog/session-log-open-items.md) 의 SL-1…SL-5 다. 위 절들의 본문도 그에 맞게
 고쳤다.

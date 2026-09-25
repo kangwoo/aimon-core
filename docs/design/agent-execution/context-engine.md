@@ -592,9 +592,9 @@ CTX-05 가 선행 조건이다. 그때 되살린다면 고정 단위는 "메모�
   iteration 마다 같은 결정이 나므로 실행 결과의 `compactionEvents` 에 FALLBACK 항목이 iteration 수만큼 쌓인다(§13.6).
   관측으로는 정확하지만 한 실행에 여러 줄일 수 있다
 
-### 13.6 구현 뒤 개선에서 닫힌 것
+### 13.6 in-place 폴백과 롤링 요약 보강
 
-리뷰가 남긴 항목 중 뷰 쪽에서 고친 것이다. 저장 쪽은 [`session-log.md` §12.5](../session/session-log.md#125-구현-뒤-개선에서-닫힌-것)
+리뷰가 남긴 항목 중 뷰 쪽에서 고친 것이다. 저장 쪽은 [`session-log.md` §12.5](../session/session-log.md#125-v2-폴백과-읽기-경로-보강)
 에 있다.
 
 - **in-place 폴백은 v2 로그의 뷰를 지킨다.** `DefaultContextEngine` 이 뷰 모드를 못 하는데 v2 버퍼가 뷰 상태나 manifest 를
@@ -625,10 +625,10 @@ CTX-05 가 선행 조건이다. 그때 되살린다면 고정 단위는 "메모�
   gap 을 표시 문자열이 아니라 `SessionLogPage.getGaps()` 로 알아본다. 한 호출은 `SessionLogReadCache` 하나로 각 세그먼트를
   한 번만 읽는다. 도구는 여전히 상태를 두지 않는다
 
-### 13.7 두 번째 개선에서 닫힌 것
+### 13.7 CLI 의 쓰기 형식 스위치
 
-구현 뒤 개선의 두 번째 묶음 중 뷰 쪽에 닿는 것이다. 저장 쪽(삭제 펜스, 저장소 단위 스윕)은
-[`session-log.md` §12.6](../session/session-log.md#126-두-번째-개선에서-닫힌-것) 에 있다.
+§13.6 뒤에 고친 것 중 뷰 쪽에 닿는 것이다. 저장 쪽(삭제 펜스, 저장소 단위 스윕)은
+[`session-log.md` §12.6](../session/session-log.md#126-조립된-스택의-삭제-펜스와-저장소-단위-스윕) 에 있다.
 
 - **CLI 에서 롤링을 쓸 수 있다.** `cli.sessionLogWriteFormat: v2` 가 CLI 의 쓰기 형식 스위치다. CLI 설정의 다른 키처럼
   camelCase 이고, 스타터의 `aimon.session.log-write-format=v2` 처럼 대소문자를 가리지 않는다. v2 면 CLI 는 in-memory 세그먼트
@@ -636,10 +636,10 @@ CTX-05 가 선행 조건이다. 그때 되살린다면 고정 단위는 "메모�
   v1 그대로다 — 다른 조립과 같은 기본값을 두려는 것이지, CLI 에 v2 를 못 읽는 옛 노드가 있어서가 아니다(CLI 의 세션은 메모리에
   있다)
 
-### 13.8 세 번째 개선에서 닫힌 것
+### 13.8 CLI 롤링 턴의 끝에서 끝까지 테스트
 
 저장 쪽(레코드 쓰기의 펜스, 클러스터에 한 번만 도는 스윕, Redis Cluster 스캔, `/clear` 뒤 늦은 체크포인트)은
-[`session-log.md` §12.7](../session/session-log.md#127-세-번째-개선에서-닫힌-것) 에 있다. 뷰 쪽에 닿는 것은 하나다.
+[`session-log.md` §12.7](../session/session-log.md#127-레코드-쓰기-펜스와-스윕-조정) 에 있다. 뷰 쪽에 닿는 것은 하나다.
 
 - **CLI 에서 롤링 에이전트가 턴을 돈다는 것을 끝에서 끝까지 고정했다.** §13.7 의 테스트는 CLI 가 v2 에서 롤링 에이전트를
   **띄우는** 것까지만 보였다. 이제 `AgentSetupFactoryLogWriteFormatTest.rollingAgentRunsATurnOnVersionTwo` 가 실제

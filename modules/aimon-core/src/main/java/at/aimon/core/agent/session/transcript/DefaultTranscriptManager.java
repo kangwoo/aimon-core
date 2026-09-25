@@ -252,7 +252,7 @@ public class DefaultTranscriptManager implements TranscriptManager {
      * The {@code /clear} deletions stay pending on this buffer and are retried only by a later save of the same buffer
      * whose drain completes. A later turn builds a new buffer from the record and does not carry them: by then the
      * segments are either named again by the manifest the late checkpoint put back, and kept, or orphans that a later
-     * collection or the store-wide sweep deletes after the grace. Orphans wait for the next collection.
+     * collection or the store-wide sweep deletes after the grace.
      */
     private void afterSave(TranscriptBuffer memory, SessionSnapshot saved, boolean drained) {
         if (garbageCollector == null) {

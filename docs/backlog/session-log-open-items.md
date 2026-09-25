@@ -1,12 +1,12 @@
 # 세션 로그 · 봉인 — 등록 항목 5건 (닫힘 5)
 
-출처는 context engine 과 session log 작업(단계 1~5)과 그 뒤의 두 차례 개선이다. 설계는
+출처는 context engine 과 session log 작업, 그리고 그 뒤에 리뷰가 남긴 항목을 고친 보강이다. 설계는
 [`../design/session/session-log.md`](../design/session/session-log.md) 와
 [`../design/agent-execution/context-engine.md`](../design/agent-execution/context-engine.md) 이고, 두 문서의
 "구현과의 차이" 절(§12 · §13)이 구현 시점에 남은 틈을 적었다. 그중 **이 작업 안에서 닫지 않은 것**이 여기로 올라왔다.
 
-두 번째 개선에서 닫힌 것 — 조립된 스택의 삭제 펜스(분산 모드), 저장소 단위 고아 스윕, CLI 의 쓰기 형식 스위치 — 은
-session-log §12.6 과 context-engine §13.7 에 있고 여기에는 싣지 않았다. 아래 다섯 건은 **세 번째 개선에서 모두 닫혔다**
+이 문서에 올리기 전에 닫힌 것 — 조립된 스택의 삭제 펜스(분산 모드), 저장소 단위 고아 스윕, CLI 의 쓰기 형식 스위치 — 은
+session-log §12.6 과 context-engine §13.7 에 있고 여기에는 싣지 않았다. 아래 다섯 건은 **모두 닫혔다**
 (2026-09-24). 각 항목의 "닫힘" 절이 어떻게 닫혔는지와, 착수해 보니 적힌 것과 달랐던 점을 적는다. 설계 쪽 기록은
 session-log §12.7 과 context-engine §13.8 이다.
 
@@ -33,7 +33,7 @@ session-log §12.7 과 context-engine §13.8 이다.
 **언제 다시 볼까.** 분산 모드 배포에서 노드 이동 뒤 전사가 되돌아가거나 gap 이 보고될 때, 또는 레코드 백엔드에 펜싱
 compare-and-set 이 생길 때.
 
-### 닫힘 (2026-09-24, 세 번째 개선)
+### 닫힘 (2026-09-24, session-log §12.7)
 
 transcript manager 의 레코드 저장소 자리에 `LateBoundFencedRecordStore`(bootstrap `assemble`)를 주고, 라우터가 생긴 뒤
 `SessionRouter.fencedRecordStore(fence)` 에 묶는다 — 삭제 쪽 `LateBoundFencedSegmentStore` 와 같은 순서 풀이다. 분산
@@ -43,7 +43,7 @@ transcript manager 의 레코드 저장소 자리에 `LateBoundFencedRecordStore
 **적힌 것보다 넓었다.** 항목은 transcript manager 만 말했지만 같은 raw 저장소를 라우터 opener 가 만드는 라이브 세션도 쓴다 —
 누계 · 예산 덮어쓰기 · 영속 rewind 가 모두 레코드 쓰기다. 그것도 같은 뷰로 옮겼다. 그리고 **거절된 저장의 처리**가 새로
 필요했다: 턴 끝의 `saveSilently` 는 거절을 WARN 한 줄로 남기고 그 저장 뒤의 GC 를 건너뛴다. 매 체크포인트마다 반복되는 거절과
-펜스가 거절한 GC 삭제는 DEBUG 로 낮췄다 — 두 번째 개선의 리뷰가 "결함처럼 읽힌다" 고 짚은 WARN 이다. 분산 모드에서 라우터 밖에서
+펜스가 거절한 GC 삭제는 DEBUG 로 낮췄다 — WARN 으로는 예정된 거절이 결함처럼 읽혔다. 분산 모드에서 라우터 밖에서
 연 라이브 세션은 이제 모든 저장이 거절된다 — 이 모드의 계약(모든 세션은 라우터로 연다)을 문서에 적었다. "재증명과 쓰기 사이의
 창" 은 항목이 적은 대로 남는다.
 
@@ -61,7 +61,7 @@ CLI 의 것 — 은 리스를 쥐지 않으므로 모든 GC 삭제가 거절되�
 **언제 다시 볼까.** 단일 노드 모드로 durable 리스 저장소를 쓰는 배포가 보고되거나, CLI 가 라우터를 거쳐 세션을 열게 될 때
 (그러면 조건을 "리스 저장소가 있으면" 으로 넓힐 수 있다).
 
-### 닫힘 (2026-09-24, 세 번째 개선)
+### 닫힘 (2026-09-24, session-log §12.7)
 
 **규칙을 하나 더 만들었다 — `SessionFence.UNLESS_HELD_ELSEWHERE`.** 리스 저장소가 **다른** 홀더를 가리키면 거절하고, 이
 노드가 쥐었거나 아무도 쥐지 않았으면 통과시킨다. 단일 노드 스택은 리스 저장소를 받았을 때만 이 펜스를 레코드 쓰기와 삭제
@@ -88,7 +88,7 @@ javadoc 과 session-log §12.4 에 적었다.
 **언제 다시 볼까.** 스윕 한 회차의 비용이 실측될 때, 또는 `aimon-scheduling-quartz` 의 클러스터 잡에 올릴 다른
 애플리케이션 범위 작업이 생길 때.
 
-### 닫힘 (2026-09-24, 세 번째 개선)
+### 닫힘 (2026-09-24, session-log §12.7)
 
 리더 선출도 Quartz 클러스터 잡도 아니고, **이미 있는 `SessionLeaseStore` 위의 스윕 리스**다. 예약 id
 `aimon:segment-sweep`(`SessionLogSegmentSweeper.SWEEP_LEASE_ID`)에 리스를 잡은 노드만 그 회차를 돈다
@@ -97,10 +97,13 @@ javadoc 과 session-log §12.4 에 적었다.
 **"놓지 않는다" 가 핵심이었다.** 회차가 끝나면 리스를 놓는 모양이 먼저 떠오르지만, 그러면 일정이 어긋난 다른 노드가 몇 초 뒤
 같은 간격 안에서 다시 돈다 — 한 번에 하나만 돌 뿐 여전히 노드 수만큼 돈다. 그래서 리스를 **간격 하나만큼** 잡고, 긴 회차에는
 페이지마다 연장하고, 끝나도 놓지 않는다. 쥔 노드는 다음 회차에 리스를 다시 따지 않고 자기 리스를 연장한다 — 다시 따면 자기
-틱과 리스 만료 중 어느 것이 먼저냐에 따라 간격 하나를 건너뛸 수 있었다(네 번째 개선에서 고침). 쥔 노드가 죽으면 연장이 멈추고
-만료 뒤 다음 노드가 잇는다 — 잃는 것은 간격 하나다.
+틱과 리스 만료 중 어느 것이 먼저냐에 따라 간격 하나를 건너뛸 수 있었다(닫은 뒤에 고쳤다 — session-log §12.7 의 SL-3 항목과
+`CHANGELOG.md` 의 "Store-wide orphan sweep" 항목). 쥔 노드가 죽으면 연장이 멈추고 만료 뒤 다음 노드가 잇는다 — 잃는 것은
+간격 하나다.
 스택은 리스 저장소를 받으면 자동으로 조정한다(holder id 는 `nodeId`). 테스트: `SessionLogSegmentSweeperTest` 의 coordinated
-셋, `AimonStackSegmentFencingTest.sweepIsCoordinatedThroughTheLeaseStore`.
+테스트들, 실제 Mongo · Postgres · Redis 리스 저장소 위에서 `sweepIfClaimed` 를 연달아 돌리는
+`*SessionLeaseStoreIntegrationTest.sweepHolder*` 셋(연장 · 만료 뒤 · 이어받기 — Redis 는 만료된 키를 잊으므로 만료 뒤에는
+새 토큰으로 다시 딴다), `AimonStackSegmentFencingTest.sweepIsCoordinatedThroughTheLeaseStore`.
 
 ## SL-4 — Redis 스캔은 standalone 연결만 본다 · **닫힘**
 
@@ -117,7 +120,7 @@ javadoc 과 session-log §12.4 에 적었다.
 **언제 다시 볼까.** 세션 백엔드가 Redis Cluster 연결을 받게 될 때 — 그때 이 메서드가 노드마다 `SCAN` 하도록 같은 변경에서
 고친다.
 
-### 닫힘 (2026-09-24, 세 번째 개선)
+### 닫힘 (2026-09-24, session-log §12.7)
 
 `RedisSessionLogSegmentStore` 가 `StatefulRedisClusterConnection` 생성자를 얻었고, `scanSessions` 는 마스터를 노드 id 순으로
 하나씩 `SCAN` 한다. 커서는 `<nodeId>:<nodeCursor>` 다. **Lettuce 의 클러스터 스캔을 그대로 쓸 수는 없었다** — 그것은 노드 위치를
@@ -144,7 +147,7 @@ javadoc 과 session-log §12.4 에 적었다.
 
 **언제 다시 볼까.** 늦은 체크포인트가 삭제·rewind 를 되돌리는 문제를 고칠 때 — 같은 변경에서 사라진다.
 
-### 닫힘 (2026-09-24, 세 번째 개선)
+### 닫힘 (2026-09-24, session-log §12.7)
 
 **두 선택지 중 "삭제를 미룬다" 쪽이다. 그리고 미루는 조건은 grace 가 아니라 drain 의 결과다.** "체크포인트가 `/clear` 이전
 스냅샷을 쓰지 못하게" 하는 쪽은 성립하지 않았다 — 문제의 체크포인트는 스냅샷을 찍은 뒤 저장소 호출 **안에서** 걸려 있으므로,

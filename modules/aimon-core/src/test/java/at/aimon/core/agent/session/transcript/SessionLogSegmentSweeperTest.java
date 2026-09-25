@@ -257,6 +257,31 @@ class SessionLogSegmentSweeperTest {
     }
 
     @Test
+    @DisplayName("coordinated: the in-memory store keeps a lapsed lease, so the holder extends it — same fencing token —"
+            + " and a takeover makes that extend fail")
+    void holderExtendsItsLapsedLeaseOnTheInMemoryStore() {
+        final InMemorySessionLeaseStore leases = new InMemorySessionLeaseStore(clock);
+        final SessionLogSegmentSweeper nodeA = coordinated(leases, "node-a", segments);
+        final SessionLogSegmentSweeper nodeB = coordinated(leases, "node-b", segments);
+
+        assertThat(nodeA.sweepIfClaimed()).isPresent();
+        final long first = leases.findHolder(SessionLogSegmentSweeper.SWEEP_LEASE_ID).orElseThrow().getFencingToken();
+        assertThat(nodeA.sweepIfClaimed()).as("second pass inside the lease").isPresent();
+
+        now.set(now.get().plus(Duration.ofHours(1)).plusMillis(1));
+        assertThat(nodeA.sweepIfClaimed()).as("pass after the lease lapsed").isPresent();
+        assertThat(leases.findHolder(SessionLogSegmentSweeper.SWEEP_LEASE_ID)).get()
+                .extracting(LeaseHolder::getFencingToken).as("extended, not reacquired").isEqualTo(first);
+        assertThat(nodeB.sweepIfClaimed()).isEmpty();
+
+        now.set(now.get().plus(Duration.ofHours(2)));
+        assertThat(nodeB.sweepIfClaimed()).as("node-a stopped ticking; node-b takes over").isPresent();
+        assertThat(nodeA.sweepIfClaimed()).as("the old holder").isEmpty();
+        assertThat(leases.findHolder(SessionLogSegmentSweeper.SWEEP_LEASE_ID)).get()
+                .extracting(LeaseHolder::getHolderId).isEqualTo("node-b");
+    }
+
+    @Test
     @DisplayName("coordinated: a holder whose backend forgets a lapsed lease acquires again; one taken over skips")
     void holderReacquiresOrYieldsWhenItsExtendFails() {
         final InMemorySessionLeaseStore inner = new InMemorySessionLeaseStore(clock);
