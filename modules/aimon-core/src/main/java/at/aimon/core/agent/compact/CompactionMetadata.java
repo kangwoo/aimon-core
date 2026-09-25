@@ -31,6 +31,7 @@ public final class CompactionMetadata {
     private final int summaryTokens;
     private final long absorbedFromSeq;
     private final long absorbedToSeq;
+    private final int blockingLimit;
 
     private CompactionMetadata(Builder builder) {
         this.preCompactTokenCount = builder.preCompactTokenCount;
@@ -54,6 +55,7 @@ public final class CompactionMetadata {
         }
         this.absorbedFromSeq = builder.absorbedFromSeq;
         this.absorbedToSeq = builder.absorbedToSeq;
+        this.blockingLimit = requireNonNegative(builder.blockingLimit, "blockingLimit");
         if (preCompactTokenCount < 0) {
             throw new IllegalArgumentException("preCompactTokenCount must be >= 0");
         }
@@ -142,6 +144,45 @@ public final class CompactionMetadata {
         return absorbedToSeq < 0 ? OptionalLong.empty() : OptionalLong.of(absorbedToSeq);
     }
 
+    /**
+     * The blocking limit, in estimated tokens, the compaction was decided against; {@code 0} when the engine did not
+     * report it. The rolling context engine reports it on every record it produces.
+     */
+    public int getBlockingLimit() {
+        return blockingLimit;
+    }
+
+    /**
+     * Whether the view was still at or above the blocking limit after this compaction. The rolling context engine
+     * reaches that only at the blocking limit, when the messages the model has not answered yet keep the view there
+     * after everything before them was absorbed; the view is then sent as it is (context-engine §13.10). Always
+     * {@code false} when the limit was not reported.
+     *
+     * @return true when {@link #getBlockingLimit()} is reported and {@link #getPostCompactTokenCount()} reaches it
+     */
+    public boolean isOverBlockingLimit() {
+        return blockingLimit > 0 && postCompactTokenCount >= blockingLimit;
+    }
+
+    /**
+     * Returns a copy of this record with the blocking limit set.
+     *
+     * @param blockingLimit
+     *            the blocking limit in estimated tokens (must be {@code >= 0}; {@code 0} means unreported)
+     * @return the copy (never null)
+     */
+    public CompactionMetadata withBlockingLimit(int blockingLimit) {
+        final Builder builder = builder().preCompactTokenCount(preCompactTokenCount)
+                .postCompactTokenCount(postCompactTokenCount).messagesSummarized(messagesSummarized).trigger(trigger)
+                .startedAt(startedAt).completedAt(completedAt).discoveredToolNames(discoveredToolNames).kind(kind)
+                .viewShape(headTokens, spanTokens, tailTokens).summaryTokens(summaryTokens)
+                .blockingLimit(blockingLimit);
+        if (absorbedFromSeq >= 0) {
+            builder.absorbedRange(absorbedFromSeq, absorbedToSeq);
+        }
+        return builder.build();
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -157,14 +198,14 @@ public final class CompactionMetadata {
                 && discoveredToolNames.equals(that.discoveredToolNames) && kind == that.kind
                 && headTokens == that.headTokens && spanTokens == that.spanTokens && tailTokens == that.tailTokens
                 && summaryTokens == that.summaryTokens && absorbedFromSeq == that.absorbedFromSeq
-                && absorbedToSeq == that.absorbedToSeq;
+                && absorbedToSeq == that.absorbedToSeq && blockingLimit == that.blockingLimit;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(preCompactTokenCount, postCompactTokenCount, messagesSummarized, trigger, startedAt,
                 completedAt, discoveredToolNames, kind, headTokens, spanTokens, tailTokens, summaryTokens,
-                absorbedFromSeq, absorbedToSeq);
+                absorbedFromSeq, absorbedToSeq, blockingLimit);
     }
 
     @Override
@@ -190,6 +231,7 @@ public final class CompactionMetadata {
         private int summaryTokens;
         private long absorbedFromSeq = -1;
         private long absorbedToSeq = -1;
+        private int blockingLimit;
 
         private Builder() {
         }
@@ -272,6 +314,17 @@ public final class CompactionMetadata {
         public Builder absorbedRange(long fromSeq, long toSeq) {
             this.absorbedFromSeq = fromSeq;
             this.absorbedToSeq = toSeq;
+            return this;
+        }
+
+        /**
+         * @param blockingLimit
+         *            the blocking limit the compaction was decided against, in estimated tokens (must be {@code >= 0};
+         *            {@code 0}, the default, means unreported)
+         * @return this builder
+         */
+        public Builder blockingLimit(int blockingLimit) {
+            this.blockingLimit = blockingLimit;
             return this;
         }
 

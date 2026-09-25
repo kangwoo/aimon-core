@@ -29,8 +29,13 @@ Central is versioned independently).
   result larger than the tail budget used to be elided before the model had read it, and reading it back through
   `SessionHistory` could be elided again. When the unread part alone keeps the view over the threshold the engine warns
   (`FALLBACK`); at the blocking limit it summarizes everything before it and sends the view even if still over, with a
-  WARN, and blocks (`ContextWindowExceededException`) when nothing is left to absorb. Prompt-too-long recovery refuses a
-  strategy answer that drops an unread message, in both engines. A `SessionHistory` search result stops adding matches
+  WARN and a `COMPACT` decision whose reason carries `RollingContextEngine.STILL_OVER_BLOCKING`, and blocks
+  (`ContextWindowExceededException`) when nothing is left to absorb. The execution result tells that case apart
+  without the model's limits: every rolling compaction record carries `CompactionMetadata.getBlockingLimit()`, and
+  `isOverBlockingLimit()` is true on the one sent over it. Manual `/compact` stops at the same place: after an
+  interrupted turn it summarizes only what precedes the unanswered user message, and a view that is nothing but
+  unanswered input fails with "nothing to compact". Prompt-too-long recovery refuses a strategy answer that drops an
+  unread message, in both engines. A `SessionHistory` search result stops adding matches
   at `SEARCH_RESULT_PARTS` (10) × `maxResultChars` characters and says so.
 - **Choosing the engine.** Spring `aimon.context.engine` (`default` | `rolling`), AGENT.md frontmatter
   `context-engine` (a camelCase `contextEngine` fails parsing), `ExecutorSpec.contextEngine(...)`,

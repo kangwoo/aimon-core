@@ -116,6 +116,16 @@ public final class RollingContextEngine implements ContextEngine {
     public static final double DEFAULT_MIN_TAIL_RATIO = 0.05;
     public static final int DEFAULT_PRUNE_MIN_TOKENS = 500;
 
+    /**
+     * The phrase a blocking-limit {@code COMPACT} decision's reason carries when the compacted view is still at or
+     * above
+     * the blocking limit: everything before the unread part was summarized, head included, and the unread part alone
+     * keeps it there. The view is sent as it is; the provider, or prompt-too-long recovery, has the last word
+     * (context-engine §13.10). The same fact reaches the execution result as
+     * {@link CompactionMetadata#isOverBlockingLimit()} on that compaction's record.
+     */
+    public static final String STILL_OVER_BLOCKING = "the view is still at or above the blocking limit";
+
     /** Stands before an absorbed range that does not start with a user message, so the summary call's does. */
     static final String CONTINUATION_NOTE = "[The earlier part of this conversation is covered by the previous"
             + " summary.]";
@@ -126,6 +136,9 @@ public final class RollingContextEngine implements ContextEngine {
      * assistant message reads as a prefill, which some providers reject and others continue instead of summarizing.
      */
     static final String SUMMARIZE_NOTE = "[End of the part to summarize. Write the updated summary now.]";
+
+    /** The reason of a successful compaction at the blocking limit. */
+    static final String BLOCKING_REASON = "blocking-limit forced compaction";
 
     private static final Logger log = LoggerFactory.getLogger(RollingContextEngine.class);
 
@@ -333,8 +346,9 @@ public final class RollingContextEngine implements ContextEngine {
             final CompactionResult result = compact(call, threshold, true);
             if (result.isSuccess()) {
                 failureStore.reset(sessionId);
-                return call.decision(CompactionDecision.compact(result, "blocking-limit forced compaction", estimated,
-                        call.blocking), result.getMetadata());
+                return call.decision(
+                        CompactionDecision.compact(result, blockingReason(call, result), estimated, call.blocking),
+                        result.getMetadata());
             }
             recordFailureIfTransient(sessionId, result);
             return call.decision(CompactionDecision.block(
@@ -416,6 +430,21 @@ public final class RollingContextEngine implements ContextEngine {
                     result.getMetadata().getPostCompactTokenCount(), call.blocking, call.unreadTokens);
         }
         return result;
+    }
+
+    /**
+     * The reason a successful blocking-limit compaction reports. When the view still sits at or above the blocking
+     * limit — the unread part alone keeps it there — the reason says so. Only the summarizing path can end there: a
+     * prune plan exists only when it lands below the threshold, which is below the blocking limit. The action stays
+     * {@code COMPACT}: the view goes out as it is (context-engine §13.10).
+     */
+    private static String blockingReason(Call call, CompactionResult result) {
+        final int post = result.getMetadata().getPostCompactTokenCount();
+        if (post < call.blocking) {
+            return BLOCKING_REASON;
+        }
+        return BLOCKING_REASON + "; " + STILL_OVER_BLOCKING + " (post=" + post + ", blocking=" + call.blocking
+                + ", unread=" + call.unreadTokens + "); sending it as it is";
     }
 
     private CompactionDecision applyPrune(Call call, Plan plan, int estimated) {
@@ -945,10 +974,13 @@ public final class RollingContextEngine implements ContextEngine {
                     ? viewOfCurrent()
                     : ContextView.of(after.getMessages(),
                             tokenEstimator.estimate(request.getSystemPrompt(), after.getMessages()));
+            final CompactionMetadata record = metadata != null
+                    ? metadata
+                    : decision.getCompactionResult().map(CompactionResult::getMetadata).orElse(null);
+            // Every record carries the limit it was decided against, so a reader of the execution result can tell a
+            // view sent over the limit (CompactionMetadata#isOverBlockingLimit) without knowing the model's limits.
             return ContextDecision.builder().view(sent).action(decision.getAction()).reason(decision.getReason())
-                    .compactionMetadata(metadata != null
-                            ? metadata
-                            : decision.getCompactionResult().map(CompactionResult::getMetadata).orElse(null))
+                    .compactionMetadata(record == null ? null : record.withBlockingLimit(blocking))
                     .estimatedTokens(decision.getEstimatedTokens()).blockingLimit(decision.getBlockingLimit())
                     .viewSizeBefore(view.size()).build();
         }

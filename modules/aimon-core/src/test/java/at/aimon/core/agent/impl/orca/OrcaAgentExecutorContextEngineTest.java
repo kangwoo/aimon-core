@@ -26,6 +26,7 @@ import at.aimon.core.agent.context.ContextEngine;
 import at.aimon.core.agent.context.ContextRequest;
 import at.aimon.core.agent.context.ContextView;
 import at.aimon.core.agent.context.DefaultContextEngine;
+import at.aimon.core.agent.context.RollingContextEngine;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.transcript.DefaultTranscriptManager;
@@ -147,6 +148,35 @@ class OrcaAgentExecutorContextEngineTest {
 
         assertThat(result.isSuccess()).isTrue();
         assertThat(result.getCompactionEvents()).containsExactly(fallback);
+    }
+
+    @Test
+    void aBlockingCompactionThatLeftTheViewOverTheLimitIsTellableFromTheResult() {
+        final RecordingClient client = new RecordingClient(0);
+        final Instant now = Instant.now();
+        final CompactionMetadata overTheLimit = CompactionMetadata.builder().trigger(CompactionTrigger.AUTO)
+                .kind(CompactionKind.ROLLING).preCompactTokenCount(1100).postCompactTokenCount(1028).startedAt(now)
+                .completedAt(now).build().withBlockingLimit(950);
+        final ContextEngine compacting = new ViewSubstitutingEngine(Optional.empty()) {
+            @Override
+            public ContextDecision prepare(ContextRequest request) {
+                return ContextDecision.builder().view(ContextView.of(List.of(VIEW_MARKER)))
+                        .action(CompactionDecision.Action.COMPACT)
+                        .reason("blocking-limit forced compaction; " + RollingContextEngine.STILL_OVER_BLOCKING)
+                        .compactionMetadata(overTheLimit).estimatedTokens(1100).blockingLimit(950).build();
+            }
+        };
+
+        final OrcaAgentExecutionResult result = createExecutor(client).execute(createRuntime(compacting),
+                OrcaAgentExecutionRequest.builder().userInput("hi").sessionId(SessionId.generate()).build());
+
+        assertThat(result.isSuccess()).as("the view is sent as it is").isTrue();
+        assertThat(client.sent).hasSize(1);
+        assertThat(result.getCompactionEvents()).as("without the caller knowing the model's limits").singleElement()
+                .satisfies(event -> {
+                    assertThat(event.getBlockingLimit()).isEqualTo(950);
+                    assertThat(event.isOverBlockingLimit()).isTrue();
+                });
     }
 
     @Test

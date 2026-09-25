@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/agent-execution/context-engine-guide.md
-source_commit: db4266a
+source_commit: e5135b5
 ---
 
 # Context Engine Guide — shrinking the context of long conversations
@@ -107,7 +107,9 @@ view:  [ head ][ boundary summary ][ verbatim ........ ][ tail ...... ]
   tool it just called, or input that arrived after its reply) is neither hidden nor put into the summary. A tool
   result larger than the tail budget still goes out verbatim until the model has read it. If that alone keeps the view
   over the threshold, the engine only warns; at the blocking limit it summarizes everything before it, head included,
-  and sends the view even if it is still over. When nothing is left to absorb, the execution stops
+  and sends the view even if it is still over — the decision's reason (`ContextDecision.getReason()`) then carries the
+  `RollingContextEngine.STILL_OVER_BLOCKING` phrase, and that compaction's record in the execution result has
+  `CompactionMetadata.isOverBlockingLimit()` true. When nothing is left to absorb, the execution stops
   (`ContextWindowExceededException`)
 - **The summary** — **updated** from the previous summary plus the newly absorbed original. `Primary Request and
   Intent`, `Key decisions and constraints` and `Pending Tasks` are cumulative sections
@@ -116,7 +118,10 @@ view:  [ head ][ boundary summary ][ verbatim ........ ][ tail ...... ]
   handled the same way
 
 `/compact` skips only the threshold decision and cuts the same way. If another compaction of the same session is in
-progress, it does not wait and shows the failure.
+progress, it does not wait and shows the failure. It leaves the unanswered part alone just as automatic compaction
+does — when a turn was interrupted and the view ends with a user message the model never answered, `/compact`
+summarizes only what precedes it and that message stays verbatim. A view that is nothing but unanswered input gives a
+failure saying there is nothing to compact.
 
 The restore hooks that re-attach recent files and the skill list after a compaction (`RecentFilesRestoreHook`,
 `InvokedSkillsRestoreHook`) are not registered — the tail is already verbatim, and re-attached files pile up in the
@@ -137,7 +142,8 @@ These are values of `RollingContextEngine.Builder`. They are not exposed as star
 | `summaryModel` | the call's model | A model for summaries only. Must be of the same provider |
 
 A compaction's `CompactionMetadata` carries `kind` (`PRUNE`/`ROLLING`/`FULL`/`FALLBACK`), the head, span and tail
-tokens, the summary tokens and the absorbed seq range — tune by reading these.
+tokens, the summary tokens, the absorbed seq range and the blocking limit it was decided against
+(`getBlockingLimit()`) — tune by reading these.
 
 ## 5. The `SessionHistory` tool
 

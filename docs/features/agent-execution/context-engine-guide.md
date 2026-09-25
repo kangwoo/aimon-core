@@ -93,14 +93,17 @@ AGENT.md 에서 고른다(§2.2).
   고른다. 최선으로도 내려가지 못하면 압축하지 않고 경고만 남긴다. blocking 한계에서만 head 까지 요약에 넣는다
 - **모델이 아직 답하지 않은 것은 건드리지 않는다** — 마지막 assistant 메시지 뒤(방금 부른 도구의 결과, 또는 답 뒤에 들어온
   입력)는 가리지도 요약에 넣지도 않는다. 도구 결과 하나가 tail 예산보다 커도 모델이 읽기 전에는 원문 그대로 간다. 그것만으로
-  임계값을 넘으면 경고만 남기고, blocking 한계에서는 그 앞을 head 까지 모두 요약한 뒤 넘더라도 그대로 보낸다. 더 흡수할 것이
-  없으면 실행을 멈춘다(`ContextWindowExceededException`)
+  임계값을 넘으면 경고만 남기고, blocking 한계에서는 그 앞을 head 까지 모두 요약한 뒤 넘더라도 그대로 보낸다 — 그때 결정의
+  사유(`ContextDecision.getReason()`)에 `RollingContextEngine.STILL_OVER_BLOCKING` 문구가 붙고, 실행 결과의 그 압축 기록은
+  `CompactionMetadata.isOverBlockingLimit()` 가 참이다. 더 흡수할 것이 없으면 실행을 멈춘다(`ContextWindowExceededException`)
 - **요약** — 이전 요약 + 새로 흡수되는 원문으로 **갱신**한다. `Primary Request and Intent` · `Key decisions and constraints` ·
   `Pending Tasks` 는 누적 섹션이다
 - **물러나기** — 창이 작거나 시스템 프롬프트가 커서 압축 직후에도 warning 선 아래로 내려갈 수 없는 모델이면, 그 호출은 `default`
   engine 으로 처리하고 모델마다 한 번 WARN 을 남긴다. 버전 1 로그도 마찬가지다
 
 `/compact` 는 임계값 판정만 건너뛰고 같은 방식으로 자른다. 같은 세션을 다른 압축이 처리하는 중이면 기다리지 않고 실패를 보여 준다.
+미응답 부분도 자동 압축과 똑같이 건드리지 않는다 — 턴이 중단되어 뷰가 답을 받지 못한 사용자 메시지로 끝나면 `/compact` 는 그 앞까지만
+요약하고, 그 메시지는 원문으로 남는다. 뷰가 미응답 입력뿐이면 요약할 것이 없다는 실패를 보여 준다.
 
 압축 뒤 최근 파일·스킬 목록을 다시 붙이는 복원 훅(`RecentFilesRestoreHook`, `InvokedSkillsRestoreHook`)은 등록하지 않는다 —
 tail 이 이미 원문이고, 붙인 파일이 tail 에 쌓여 다음 압축을 앞당긴다.
@@ -120,7 +123,7 @@ tail 이 이미 원문이고, 붙인 파일이 tail 에 쌓여 다음 압축을 
 | `summaryModel` | 호출 모델 | 요약 전용 모델. 같은 프로바이더여야 한다 |
 
 압축 결과의 `CompactionMetadata` 에는 `kind`(`PRUNE`/`ROLLING`/`FULL`/`FALLBACK`), head·span·tail 토큰, 요약 토큰, 흡수한 seq
-범위가 실린다 — 튜닝은 이 값을 보고 한다.
+범위, 판정 기준이 된 blocking 한계(`getBlockingLimit()`)가 실린다 — 튜닝은 이 값을 보고 한다.
 
 ## 5. `SessionHistory` 도구
 

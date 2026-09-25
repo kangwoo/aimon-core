@@ -474,8 +474,11 @@ class RollingContextEngineTest {
             final ContextDecision decision = engine().prepare(request());
 
             assertThat(decision.getAction()).isEqualTo(CompactionDecision.Action.WARN);
-            assertThat(decision.getCompactionMetadata())
-                    .hasValueSatisfying(metadata -> assertThat(metadata.getKind()).isEqualTo(CompactionKind.FALLBACK));
+            assertThat(decision.getCompactionMetadata()).hasValueSatisfying(metadata -> {
+                assertThat(metadata.getKind()).isEqualTo(CompactionKind.FALLBACK);
+                assertThat(metadata.getBlockingLimit()).isEqualTo(950);
+                assertThat(metadata.isOverBlockingLimit()).isFalse();
+            });
             assertThat(buffer.getViewState().isEmpty()).as("nothing elided, nothing absorbed").isTrue();
             assertThat(summarizer.summarized).isEmpty();
         }
@@ -498,6 +501,16 @@ class RollingContextEngineTest {
             assertThat(first.getView().getMessages().get(first.getView().getMessages().size() - 1)).isSameAs(fresh);
             assertThat(first.getView().getEstimatedTokens()).as("still over: sent as it is")
                     .isGreaterThanOrEqualTo(950);
+            assertThat(first.getReason()).as("the decision says the view went out over the limit")
+                    .startsWith(RollingContextEngine.BLOCKING_REASON).contains(RollingContextEngine.STILL_OVER_BLOCKING)
+                    .contains("blocking=950");
+            assertThat(first.getCompactionMetadata()).as("and so does the record the execution result carries")
+                    .hasValueSatisfying(metadata -> {
+                        assertThat(metadata.getKind()).isEqualTo(CompactionKind.ROLLING);
+                        assertThat(metadata.getPostCompactTokenCount()).isGreaterThanOrEqualTo(950);
+                        assertThat(metadata.getBlockingLimit()).isEqualTo(950);
+                        assertThat(metadata.isOverBlockingLimit()).isTrue();
+                    });
 
             // The same view again — the provider refused and recovery found nothing to drop, say — has nothing left
             // to absorb: the engine blocks instead of summarizing the summary.
@@ -507,6 +520,63 @@ class RollingContextEngineTest {
             assertThat(second.getReason()).contains("not answered yet");
             assertThat(summarizer.summarized).hasSize(1);
             assertThat(buffer.getViewState().getElisions()).isEmpty();
+        }
+
+        @Test
+        void atTheBlockingLimitAnOlderReadResultIsPrunedByTheCutBeforeTheUnreadPart() {
+            buffer.addUserMessage("goal");
+            toolCall("t0", 800); // seq 2: read and answered below
+            buffer.addAssistantMessage("a".repeat(60));
+            buffer.addUserMessage("u".repeat(60));
+            toolCall("t1", 250); // seq 6: unread, larger than the tail budget, so stage 0 has no cut
+            assertThat(viewSize()).as("past blocking (950)").isGreaterThanOrEqualTo(950);
+            final Message fresh = buffer.getMessages().get(6);
+
+            final ContextDecision decision = engine().prepare(request());
+
+            assertThat(decision.getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
+            assertThat(decision.getReason()).isEqualTo(RollingContextEngine.BLOCKING_REASON);
+            assertThat(decision.getCompactionMetadata()).hasValueSatisfying(metadata -> {
+                assertThat(metadata.getKind()).isEqualTo(CompactionKind.PRUNE);
+                assertThat(metadata.isOverBlockingLimit()).as("a prune lands below the threshold").isFalse();
+            });
+            assertThat(buffer.getViewState().getElisions()).as("the read result, not the unread one")
+                    .containsOnlyKeys(2L);
+            assertThat(buffer.getViewState().getSummarySpan()).isEmpty();
+            assertThat(summarizer.summarized).isEmpty();
+            final List<Message> view = decision.getView().getMessages();
+            assertThat(view.get(view.size() - 1)).isSameAs(fresh);
+        }
+
+        @Test
+        void aManualCompactionOfAnInterruptedTurnAbsorbsOnlyWhatPrecedesTheUnansweredInput() {
+            conversation(9, 60); // ends with an assistant reply at seq 9
+            // seq 10: the turn was interrupted before the model answered. Larger than the tail budget (200), so only
+            // the unread boundary, not the budget, keeps it out of the span.
+            buffer.addUserMessage("q".repeat(300));
+            final Message unanswered = buffer.getMessages().get(10);
+
+            final CompactionResult result = engine().compactNow(request(), null);
+
+            assertThat(result.isSuccess()).isTrue();
+            assertThat(buffer.getViewState().getSummarySpan()).as("up to, not including, the unanswered input")
+                    .hasValueSatisfying(span -> assertThat(span.getRange()).isEqualTo(SeqRange.of(1, 10)));
+            assertThat(summarizer.summarized.get(0).getMessages()).as("the unanswered input is not summarized")
+                    .noneSatisfy(m -> assertThat(m).isSameAs(unanswered));
+            final List<Message> view = ViewProjection.of(buffer.getLogState()).getMessages();
+            assertThat(view.get(view.size() - 1)).isSameAs(unanswered);
+        }
+
+        @Test
+        void aManualCompactionOfAViewThatIsOnlyUnansweredInputIsAFailure() {
+            buffer.addUserMessage("q".repeat(40)); // no assistant message yet: the whole view is unread
+
+            final CompactionResult result = engine().compactNow(request(), null);
+
+            assertThat(result.isFailure()).isTrue();
+            assertThat(result.getError())
+                    .hasValueSatisfying(error -> assertThat(error.getMessage()).contains("nothing to compact"));
+            assertThat(summarizer.summarized).isEmpty();
         }
 
         @Test
@@ -553,6 +623,12 @@ class RollingContextEngineTest {
             assertThat(decision.getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
             assertThat(buffer.getViewState().getSummarySpan())
                     .hasValueSatisfying(span -> assertThat(span.getRange()).isEqualTo(SeqRange.of(0, 2)));
+            assertThat(decision.getReason()).as("the compacted view is below the limit")
+                    .isEqualTo(RollingContextEngine.BLOCKING_REASON);
+            assertThat(decision.getCompactionMetadata()).hasValueSatisfying(metadata -> {
+                assertThat(metadata.getBlockingLimit()).isEqualTo(950);
+                assertThat(metadata.isOverBlockingLimit()).isFalse();
+            });
             final SummaryRequest summary = summarizer.summarized.get(0);
             assertThat(summary.getPreviousSummary()).hasValue("s".repeat(900));
             assertThat(summary.getMessages()).extracting(Message::getContent).containsExactly("goal");

@@ -1,4 +1,4 @@
-# 세션 로그 · 봉인 — 등록 항목 5건 (닫힘 5)
+# 세션 로그 · 봉인 — 등록 항목 6건 (열림 1 · 닫힘 5)
 
 출처는 context engine 과 session log 작업, 그리고 그 뒤에 리뷰가 남긴 항목을 고친 보강이다. 설계는
 [`../design/session/session-log.md`](../design/session/session-log.md) 와
@@ -6,9 +6,9 @@
 "구현과의 차이" 절(§12 · §13)이 구현 시점에 남은 틈을 적었다. 그중 **이 작업 안에서 닫지 않은 것**이 여기로 올라왔다.
 
 이 문서에 올리기 전에 닫힌 것 — 조립된 스택의 삭제 펜스(분산 모드), 저장소 단위 고아 스윕, CLI 의 쓰기 형식 스위치 — 은
-session-log §12.6 과 context-engine §13.7 에 있고 여기에는 싣지 않았다. 아래 다섯 건은 **모두 닫혔다**
+session-log §12.6 과 context-engine §13.7 에 있고 여기에는 싣지 않았다. SL-1 ~ SL-5 는 **모두 닫혔다**
 (2026-09-24). 각 항목의 "닫힘" 절이 어떻게 닫혔는지와, 착수해 보니 적힌 것과 달랐던 점을 적는다. 설계 쪽 기록은
-session-log §12.7 과 context-engine §13.8 이다.
+session-log §12.7 과 context-engine §13.8 이다. SL-6 은 그 뒤 context-engine §13.10 이 **의도적으로 열어 둔** 결과다.
 
 `README.md` 의 규칙대로 **열림/닫힘의 정본은 이 문서**다. 줄 번호는 **마지막 확인 날짜와 함께** 적는다. 아래 인용은
 전부 2026-09-24 기준이다.
@@ -162,3 +162,20 @@ drain 이 끝나는 평소 경로에서 `/clear` 는 전처럼 즉시 지운다.
 이 항목이 막은 것은 그 결과가 gap 이 되는 것이다. 테스트:
 `DefaultTranscriptManagerSealingTest.aClearWhoseDrainGaveUpDefersItsDeletesUntilALateCheckpointCannotLand`(백그라운드 mailbox,
 저장소 호출 안에 걸린 체크포인트, 착지 순간에 세그먼트가 모두 남아 있는지 확인) 와 `SessionCheckpointMailboxTest` 의 drain 넷.
+
+## SL-6 — 기본 engine 은 auto 임계값을 넘는 미응답 도구 결과를 매번 요약으로 접는다 · **열림**
+
+**무엇을.** `DefaultContextEngine` 의 뷰 모드에도 "모델이 아직 답하지 않은 것은 압축하지 않는다"(context-engine §13.10)를
+적용할지 정한다.
+
+**왜.** 롤링 engine 은 미응답 부분을 가리지도 흡수하지도 않지만, 기본 engine 은 §4 의 약속("모델이 보는 것은 바뀌지 않는다",
+v1 in-place 와 같은 결과)대로 뷰 전체를 `[floorSeq, nextSeq)` span 으로 요약한다. 그래서 기본 engine 의 auto 임계값을 넘는
+도구 결과 하나는 모델이 읽기 전에 요약으로 접히고, 모델이 같은 도구를 다시 부르면 같은 일이 되풀이된다. 롤링 engine 의
+고리(elide → `SessionHistory` 로 다시 읽기 → elide)와 달리 결과 원문은 요약 호출에 그대로 들어가므로 정보가 사라지지는
+않는다. 그 크기면 blocking 에도 가깝고 v1 과 같은 동작이라 이 작업에서는 바꾸지 않았다(2026-09-25 확인).
+
+**어디.** `modules/aimon-core/src/main/java/at/aimon/core/agent/context/DefaultContextEngine.java` 의 뷰 모드 요약 경로.
+설계 쪽 기록은 context-engine §13.10 의 "기본 engine 의 뷰 모드는 바꾸지 않았다" 항목이다.
+
+**언제 다시 볼까.** 기본 engine 으로 도는 배포에서 큰 도구 결과를 부른 직후 같은 도구를 반복해 부르는 실행이 보고될 때,
+또는 기본 engine 이 v1 과의 동일성 약속을 내려놓을 때.

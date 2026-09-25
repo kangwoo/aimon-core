@@ -684,18 +684,33 @@ live 테스트의 keyless 쌍둥이가 처음 돌 때 드러난 결함이다. �
 - **극단 — 미응답 부분만으로 넘칠 때(결정).**
   - blocking 미만: 어떤 절단도 임계값 아래로 내려가지 못하므로 §5.6 의 `WARN`(`kind = FALLBACK`) 행이다. 뷰는 그대로 간다
   - blocking 이상: stage 3 이 head 까지 미응답 부분 앞의 모든 것을 요약한다. 그래도 blocking 을 넘으면 WARN 로그를 남기고
-    **그대로 보낸다** — 추정은 휴리스틱이고 판정은 프로바이더와 prompt-too-long 복구의 몫이다. 같은 뷰로 다시 오면(복구가
+    **그대로 보낸다** — 추정은 휴리스틱이고 판정은 프로바이더와 prompt-too-long 복구의 몫이다. 결정은 여전히 `COMPACT` 지만
+    사유가 `blocking-limit forced compaction; the view is still at or above the blocking limit (post=…, blocking=…,
+    unread=…)` 로 바뀐다(`RollingContextEngine.STILL_OVER_BLOCKING`). 로그만이 아니라 결정에서, 그리고 실행 결과에서
+    평소의 blocking 압축과 구별되어야 호출자가 로그를 긁지 않는다. 실행기는 결정의 사유를 결과에 싣지 않으므로 사실은
+    메타데이터로 간다 — 롤링 engine 이 내는 모든 압축 기록(`ROLLING`·`PRUNE`·`FALLBACK`)에 판정 기준이 된 blocking 한계
+    (`CompactionMetadata.getBlockingLimit()`)가 실리고, `getCompactionEvents()` 의 그 기록은
+    `isOverBlockingLimit()` 가 참이다. 모델의 한계를 모르는 호출자도 구별할 수 있다. 이 경우는 요약 경로에서만 생긴다 —
+    prune 계획은 임계값 아래로 내려갈 때만 있고 임계값은 blocking 보다 낮다. 같은 뷰로 다시 오면(복구가
     아무것도 줄이지 못했다) 새로 흡수할 것이 없으므로 요약을 다시 요약하지 않고 `BLOCK` 이다 — 실행은
     `ContextWindowExceededException` 으로 끝나고 사유에 미응답 부분의 크기가 들어간다. 반복도, 미응답 결과의 elide 도 없다
   - 모델이 답하면 그 결과는 더 이상 미응답이 아니므로 다음 iteration 의 압축이 평소처럼 가리거나 흡수한다
+- **수동 `/compact` 도 같다.** `compactNow` 는 임계값 판정만 건너뛰고 같은 절단면을 쓰므로 미응답 부분 앞에서 멈춘다. 턴이
+  중단되어 뷰가 답을 받지 못한 사용자 메시지로 끝나면 `/compact` 는 그 앞까지만 요약하고 그 메시지는 원문으로 남는다. 뷰가
+  미응답 입력뿐이면(assistant 메시지가 하나도 없다) 흡수할 것이 없으므로 `nothing to compact` 실패다. 사용자가 요청한
+  압축이어도 예외를 두지 않은 이유는 같다 — 그 입력은 다음 턴의 모델이 답해야 하는 것이고, 요약으로 접으면 모델은 원문이 아니라
+  요약자의 말로 질문을 받는다
 - **복구.** `RecoveryDiff` 가 미응답 메시지를 빼는 전략의 답을 거절한다 — 두 engine 모두의 뷰 복구가 거친다.
   `DefaultPromptSizeRecoveryStrategy` 는 마지막 USER 를 빼지 않고 TOOL 을 빼지 않으므로 원래 거기에 닿지 않았다. 이 검사는
   사용자 전략을 위한 것이다
-- **기본 engine 의 뷰 모드는 바꾸지 않았다.** 뷰 전체를 `[floorSeq, nextSeq)` span 으로 요약하는 것은 §4 가 약속한 "모델이
-  보는 것은 바뀌지 않는다"(v1 in-place 와 같은 결과)의 일부다. 거기에는 prune 도 placeholder 도 없고, 미응답 결과는 요약 호출에
-  **원문 그대로** 들어가며 `SessionHistory` 도 등록되지 않으므로 elide → 다시 읽기 → elide 의 고리가 없다. 남는 위험은
-  기본 engine 의 auto 임계값을 넘는 도구 결과 하나가 매번 요약으로 접히는 것인데, 그 크기면 blocking 에도 가깝고
-  v1 과 같은 동작이다. 열린 결과로 남긴다
+- **기본 engine 의 뷰 모드는 바꾸지 않았다(결정).** 위 규칙은 롤링 engine 의 것이다. 기본 engine 은 뷰 전체를
+  `[floorSeq, nextSeq)` span 으로 요약하는데, 이것이 §4 가 약속한 "모델이 보는 것은 바뀌지 않는다"(v1 in-place 와 같은 결과)
+  자체다 — 미응답 부분을 남기면 그 약속을 깬다. 그리고 규칙이 막으려는 고리가 거기에는 없다: prune 도 placeholder 도 없고,
+  미응답 결과는 요약 호출에 **원문 그대로** 들어가며 `SessionHistory` 도 등록되지 않으므로 elide → 다시 읽기 → elide 가
+  생기지 않는다. 남는 위험은 하나다 — 기본 engine 의 auto 임계값을 넘는 도구 결과 하나가 모델이 읽기 전에 요약으로 접히고,
+  같은 도구를 다시 부르면 또 접힌다. 정보는 요약 안에 남고, 그 크기면 blocking 에도 가까우며, v1 과 같은 동작이다. 이 결과는
+  열어 두었고 [`SL-6`](../../backlog/session-log-open-items.md#sl-6--기본-engine-은-auto-임계값을-넘는-미응답-도구-결과를-매번-요약으로-접는다--열림)
+  이 정본이다
 - **`SessionHistory` 의 상한.** `seq` 읽기는 메시지와 이웃 넷, 각 `maxResultChars`(2000자)까지다. 검색은 일치마다 그만큼을
   더했으므로 `limit` 20 이면 20만 자까지 갈 수 있었다. 이제 결과가 `SEARCH_RESULT_PARTS`(10) × `maxResultChars` 에 닿으면 더
   일치를 붙이지 않고 그 사실을 적는다(첫 일치는 언제나 보인다). 방금 받은 도구 결과는 위 규칙으로 보호되므로, 큰 원문을
@@ -704,3 +719,9 @@ live 테스트의 keyless 쌍둥이가 처음 돌 때 드러난 결함이다. �
   않음, 미응답만으로 넘칠 때 WARN, blocking 에서 흡수 후 BLOCK)은 이전 engine 에서 실패한다. keyless 쌍둥이
   `ContextEngineLiveRigTest`(두 모듈)는 `HISTORY_RESULT_CHARS`(800자) 우회를 버리고 도구의 기본 상한으로 돈다 — 이전
   engine 에서는 실패하고 지금은 통과한다
+  - 그 뒤에 더한 셋(2026-09-25): blocking 에서 흡수 후에도 넘을 때 결정 사유에 `STILL_OVER_BLOCKING` 이 붙고 기록의
+    `isOverBlockingLimit()` 가 참인 것(같은 테스트, 결과까지는
+    `OrcaAgentExecutorContextEngineTest.aBlockingCompactionThatLeftTheViewOverTheLimitIsTellableFromTheResult`),
+    blocking 경로에서 미응답 앞의 절단면이 정한 prune 이 이미 읽은 결과만 가리는 것
+    (`atTheBlockingLimitAnOlderReadResultIsPrunedByTheCutBeforeTheUnreadPart`), 수동 `/compact` 가 중단된 턴의 미응답 입력 앞에서
+    멈추고 미응답 입력뿐이면 실패하는 것(`aManualCompactionOfAnInterruptedTurn…`, `aManualCompactionOfAViewThatIsOnlyUnansweredInput…`)

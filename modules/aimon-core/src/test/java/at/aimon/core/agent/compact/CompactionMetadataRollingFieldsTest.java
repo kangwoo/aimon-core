@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Instant;
+import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
@@ -45,6 +46,37 @@ class CompactionMetadataRollingFieldsTest {
                 base().kind(CompactionKind.ROLLING).viewShape(10, 20, 30).summaryTokens(5).absorbedRange(3, 9).build())
                 .isNotEqualTo(base().kind(CompactionKind.ROLLING).build());
         assertThat(metadata.toString()).contains("kind=ROLLING");
+    }
+
+    @Test
+    void theBlockingLimitIsUnreportedUnlessSet() {
+        final CompactionMetadata metadata = base().postCompactTokenCount(5000).build();
+
+        assertThat(metadata.getBlockingLimit()).isZero();
+        assertThat(metadata.isOverBlockingLimit()).as("no limit, no claim").isFalse();
+    }
+
+    @Test
+    void aViewAtOrAboveTheReportedLimitIsOverIt() {
+        assertThat(base().postCompactTokenCount(950).blockingLimit(950).build().isOverBlockingLimit()).isTrue();
+        assertThat(base().postCompactTokenCount(1028).blockingLimit(950).build().isOverBlockingLimit()).isTrue();
+        assertThat(base().postCompactTokenCount(949).blockingLimit(950).build().isOverBlockingLimit()).isFalse();
+        assertThatThrownBy(() -> base().blockingLimit(-1).build()).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void withBlockingLimitCopiesEveryOtherField() {
+        final CompactionMetadata original = base().kind(CompactionKind.ROLLING).preCompactTokenCount(1100)
+                .postCompactTokenCount(400).messagesSummarized(7).viewShape(10, 20, 30).summaryTokens(5)
+                .absorbedRange(3, 9).discoveredToolNames(List.of("Read")).build();
+
+        final CompactionMetadata stamped = original.withBlockingLimit(950);
+
+        assertThat(stamped.getBlockingLimit()).isEqualTo(950);
+        assertThat(stamped).isNotEqualTo(original);
+        assertThat(stamped.withBlockingLimit(0)).isEqualTo(original);
+        final CompactionMetadata plain = base().build().withBlockingLimit(950);
+        assertThat(plain.getAbsorbedFromSeq()).as("an empty range stays empty").isEmpty();
     }
 
     @Test
