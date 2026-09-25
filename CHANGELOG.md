@@ -41,6 +41,14 @@ Central is versioned independently).
   `CompactionGuard`, a `CompactionEngine` without `summarize`) meeting a version-2 buffer that carries a view state or
   sealed ranges now sends the projected view and does not compact it; `compactNow` fails and recovery drops from the
   view. `ContextEngine.passthrough()` sends such a buffer as its projected view too.
+- **Live tests for the context engines.** `AnthropicContextEngineLiveTest` and `OpenAIContextEngineLiveTest` run the
+  rolling engine through the real executor against the real API, gated on the existing `ANTHROPIC_KEY` /
+  `OPENAI_KEY` like the other live classes: a fact planted in a pruned tool result is recovered after several rolling
+  cycles, every summary request is accepted (on Anthropic also under extended thinking), sealing happens, and the
+  session survives a version-2 codec round trip. The Anthropic class also forces a `/compact` on the default engine in
+  view mode. A keyless twin, `ContextEngineLiveRigTest`, runs the same scenario against a scripted model in every
+  build. How to run them and what they cost is under
+  [`CONTRIBUTING.md` › Live-API tests](CONTRIBUTING.md#live-api-tests).
 
 ### Added: sealing — ranges the view no longer shows leave the record
 
