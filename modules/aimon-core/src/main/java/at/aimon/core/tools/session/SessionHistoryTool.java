@@ -43,7 +43,9 @@ import at.aimon.core.llm.token.TokenEstimator;
  * <b>Search</b> is a case-insensitive substring match with no index, so it is a linear scan: from the most recent
  * message back, up to {@code maxScanTokens}. When the limit stops it, the result says that older history was not
  * searched. Each match is shown with up to two conversation messages on either side, every message cut to
- * {@code maxResultChars}. A range that cannot be read is reported once, however many windows it spans.
+ * {@code maxResultChars}. A range that cannot be read is reported once, however many windows it spans. The whole result
+ * is bounded too: once it holds {@value #SEARCH_RESULT_PARTS} times {@code maxResultChars}, no further match is added
+ * and the result says so — so a broad query cannot return a result larger than the reads it replaces.
  *
  * <p>
  * <b>Long messages</b> come back in parts: a message longer than {@code maxResultChars} is cut with a note naming the
@@ -70,6 +72,11 @@ public class SessionHistoryTool extends AbstractTool {
     public static final int MAX_LIMIT = 20;
     public static final int DEFAULT_MAX_SCAN_TOKENS = 1_000_000;
     public static final int DEFAULT_MAX_RESULT_CHARS = 2_000;
+    /**
+     * A search stops adding matches once its result holds this many times {@code maxResultChars}: twice the most a
+     * {@code seq} read returns (a message and its four neighbours).
+     */
+    public static final int SEARCH_RESULT_PARTS = 10;
 
     private static final Logger log = LoggerFactory.getLogger(SessionHistoryTool.class);
 
@@ -258,9 +265,15 @@ public class SessionHistoryTool extends AbstractTool {
         final List<SessionLogEntry> oldestFirst = new ArrayList<>(newestFirst);
         Collections.reverse(oldestFirst);
         final StringBuilder out = new StringBuilder();
+        final long maxChars = (long) SEARCH_RESULT_PARTS * maxResultChars;
         int found = 0;
+        boolean capped = false;
         for (int i = oldestFirst.size() - 1; i >= 0 && found < limit; i--) {
             if (textOf(oldestFirst.get(i).getMessage()).toLowerCase(Locale.ROOT).contains(needle)) {
+                if (found > 0 && out.length() >= maxChars) {
+                    capped = true;
+                    break;
+                }
                 out.append("=== match at seq ").append(oldestFirst.get(i).getSeq()).append(" ===\n");
                 appendWithContext(out, oldestFirst, i);
                 out.append('\n');
@@ -269,6 +282,10 @@ public class SessionHistoryTool extends AbstractTool {
         }
         if (found == 0) {
             out.append("No message in this session's history matches '").append(query).append("'.\n");
+        }
+        if (capped) {
+            out.append("More matches were not shown: the result stops at ").append(maxChars)
+                    .append(" characters. Narrow the query, or read a match by its seq.\n");
         }
         if (truncated) {
             out.append("Older history was not searched: the search stops after ").append(maxScanTokens)

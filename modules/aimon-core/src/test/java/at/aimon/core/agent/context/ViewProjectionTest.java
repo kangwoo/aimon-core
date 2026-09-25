@@ -117,4 +117,16 @@ class ViewProjectionTest {
 
         assertThat(ViewProjection.of(elsewhere).getMessages()).isEqualTo(ViewProjection.of(state).getMessages());
     }
+
+    @Test
+    void whatFollowsTheLastAssistantMessageIsUnread() {
+        assertThat(ViewProjection.of(log()).firstUnreadPosition()).as("the user input after the reply").isEqualTo(4);
+        assertThat(ViewProjection.of(SessionLogState.ofMessages(List.of(Q1, CALL, RESULT))).firstUnreadPosition())
+                .as("the results of the last tool_use").isEqualTo(2);
+        assertThat(ViewProjection.of(SessionLogState.ofMessages(List.of(Q1, CALL, RESULT, A1))).firstUnreadPosition())
+                .as("a finished turn has nothing unread").isEqualTo(4);
+        assertThat(ViewProjection.of(SessionLogState.ofMessages(List.of(Q1, Q2))).firstUnreadPosition())
+                .as("no reply yet: the last message").isEqualTo(1);
+        assertThat(ViewProjection.of(SessionLogState.ofMessages(List.of())).firstUnreadPosition()).isZero();
+    }
 }

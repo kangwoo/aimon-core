@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/agent-execution/context-engine-guide.md
-source_commit: 7d801ab
+source_commit: db4266a
 ---
 
 # Context Engine Guide — shrinking the context of long conversations
@@ -103,6 +103,12 @@ view:  [ head ][ boundary summary ][ verbatim ........ ][ tail ...... ]
 - **Where to cut** — it retreats from the tail budget (20% of the window) to half of it to the last legal cut, and
   takes the first whose expected size is under the threshold. If even the best cannot get under, it does not compact
   and only warns. Only at the blocking limit does it put the head into the summary too
+- **What the model has not answered yet is left alone** — what follows the last assistant message (the results of the
+  tool it just called, or input that arrived after its reply) is neither hidden nor put into the summary. A tool
+  result larger than the tail budget still goes out verbatim until the model has read it. If that alone keeps the view
+  over the threshold, the engine only warns; at the blocking limit it summarizes everything before it, head included,
+  and sends the view even if it is still over. When nothing is left to absorb, the execution stops
+  (`ContextWindowExceededException`)
 - **The summary** — **updated** from the previous summary plus the newly absorbed original. `Primary Request and
   Intent`, `Key decisions and constraints` and `Pending Tasks` are cumulative sections
 - **Falling back** — for a model whose small window or large system prompt means even a just-compacted view cannot get
@@ -151,6 +157,8 @@ Registered when `rolling` is wired. With it the agent reads back originals the v
 - Results are the matching message with two on either side, each message cut to 2000 characters. A cut says how many
   characters are left and the `offset` of the next part, so a long original can be read in full with `seq` and that
   `offset`
+- A search result as a whole also stops at 20,000 characters (ten times the per-message cut), and says that matches
+  were left unshown
 
 ## Related documents
 

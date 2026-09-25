@@ -12,6 +12,7 @@ import at.aimon.core.agent.session.transcript.SessionLogState;
 import at.aimon.core.agent.session.transcript.SessionViewState;
 import at.aimon.core.agent.session.transcript.SummarySpan;
 import at.aimon.core.llm.Message;
+import at.aimon.core.llm.Role;
 import at.aimon.core.llm.ToolUseResult;
 
 /**
@@ -137,6 +138,27 @@ public final class ViewProjection {
      */
     public boolean isVerbatim(int position) {
         return verbatim[position];
+    }
+
+    /**
+     * Returns the position of the first message the model has not answered yet: what follows the view's last
+     * assistant message — the tool results answering its {@code tool_use}, or the user input after its reply. A view
+     * with no assistant message has only its last message unread.
+     *
+     * <p>
+     * The unread part is what the next call asks the model to respond to, so a context engine never elides it,
+     * absorbs it into a summary span, or drops it: a tool result elided before the model has read it would be asked
+     * for again, and could be elided again (context-engine §13.10).
+     *
+     * @return the first unread position, or {@link #size()} when the view is empty or ends with an assistant message
+     */
+    public int firstUnreadPosition() {
+        for (int p = messages.size() - 1; p >= 0; p--) {
+            if (messages.get(p).getRole() == Role.ASSISTANT) {
+                return p + 1;
+            }
+        }
+        return messages.isEmpty() ? 0 : messages.size() - 1;
     }
 
     private static void placeMarkers(SummarySpan span, List<Message> messages, List<Long> seqs, List<Boolean> asIs) {

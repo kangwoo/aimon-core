@@ -84,6 +84,15 @@ import at.aimon.core.llm.token.TokenEstimator;
  * ({@link CompactionKind#PRUNE}); when that alone is enough nothing is summarized.
  *
  * <p>
+ * <b>What the model has not read yet.</b> Every cut stops at the view's
+ * {@linkplain ViewProjection#firstUnreadPosition()
+ * unread part} — the tool results answering the last {@code tool_use}, or the input after the last reply — so no
+ * compaction elides it or absorbs it into the summary before the model has responded to it (context-engine §13.10).
+ * When that part alone keeps the view over the threshold, the engine warns instead of compacting; at the blocking
+ * limit it absorbs everything before it, head included, and sends the view even if it is still over, with a WARN; when
+ * nothing is left to absorb it blocks.
+ *
+ * <p>
  * <b>Falling back.</b> Rolling only pays when a compacted view ends below the warning band:
  * {@code system + head + summaryTokenRatio × effective + minTailRatio × effective < warning}. Where it does not — a
  * small window, or a large system prompt, known only at call time — this engine behaves as {@link DefaultContextEngine}
@@ -390,10 +399,23 @@ public final class RollingContextEngine implements ContextEngine {
             plan = call.spanPlan(true, Double.MAX_VALUE);
         }
         if (plan == null) {
+            final String unread = call.unreadTokens > 0
+                    ? "; the messages the model has not answered yet (" + call.unreadTokens
+                            + " tokens) stay verbatim and are never absorbed"
+                    : "";
             return failure(CompactionTrigger.AUTO,
-                    new IllegalStateException("no legal cut leaves anything for the summary to absorb"));
+                    new IllegalStateException("no legal cut leaves anything for the summary to absorb" + unread));
         }
-        return summarizeSpan(call, plan, CompactionTrigger.AUTO, null);
+        final CompactionResult result = summarizeSpan(call, plan, CompactionTrigger.AUTO, null);
+        if (blocking && result.isSuccess() && result.getMetadata().getPostCompactTokenCount() >= call.blocking) {
+            // Absorbing everything before the unread part was the last resort; the request goes out as it is and the
+            // provider, or prompt-too-long recovery, has the last word. Compacting again would find nothing new.
+            log.warn("Rolling compaction of session {} absorbed everything before the messages the model has not"
+                    + " answered yet, and the view is still at {} tokens (blocking limit {}; unread part {} tokens);"
+                    + " sending it as it is", call.buffer.getSessionId(),
+                    result.getMetadata().getPostCompactTokenCount(), call.blocking, call.unreadTokens);
+        }
+        return result;
     }
 
     private CompactionDecision applyPrune(Call call, Plan plan, int estimated) {
@@ -670,6 +692,13 @@ public final class RollingContextEngine implements ContextEngine {
         private final int headTokens;
         /** {@link SessionLogState#isLegalCut} for this call's state, computed once rather than per position. */
         private final LongPredicate legal;
+        /**
+         * The seq the view's unread part starts at ({@link ViewProjection#firstUnreadPosition()}): no cut lies after
+         * it and nothing from it on is elided. {@link Long#MAX_VALUE} when nothing is unread.
+         */
+        private final long unreadFromSeq;
+        /** Estimated tokens of the unread part; 0 when nothing is unread. */
+        private final int unreadTokens;
 
         private Call(ContextRequest request, Thresholds thresholds) {
             this.request = request;
@@ -699,6 +728,20 @@ public final class RollingContextEngine implements ContextEngine {
                 }
             }
             this.headTokens = head;
+            long unreadFrom = Long.MAX_VALUE;
+            int unread = 0;
+            for (int p = view.firstUnreadPosition(); p < view.size(); p++) {
+                final long seq = view.sourceSeq(p);
+                if (seq == ViewProjection.MADE_BY_VIEW) {
+                    continue;
+                }
+                if (unreadFrom == Long.MAX_VALUE) {
+                    unreadFrom = seq;
+                }
+                unread += tokens[p];
+            }
+            this.unreadFromSeq = unreadFrom;
+            this.unreadTokens = unread;
         }
 
         /**
@@ -791,20 +834,24 @@ public final class RollingContextEngine implements ContextEngine {
 
         /**
          * Tries eliding the large tool results in what the tail-budget cut would absorb (context-engine §5.5), and
-         * returns the elisions when they alone bring the view under {@code threshold}.
+         * returns the elisions when they alone bring the view under {@code threshold}. When no cut fits the tail
+         * budget — the unread part alone is larger — the last cut before the unread part bounds the region instead,
+         * so the older results can still be elided (context-engine §13.10).
          */
         private Plan prunePlan(int threshold, int minTokens) {
             final List<Cut> cuts = cuts(spanFrom(false));
-            final Cut cut = cuts.isEmpty() ? null : byTailBudget(cuts, (int) (tailTokenRatio * effective));
-            if (cut == null) {
+            if (cuts.isEmpty()) {
                 return null;
             }
+            final Cut budgeted = byTailBudget(cuts, (int) (tailTokenRatio * effective));
+            final Cut cut = budgeted != null ? budgeted : cuts.get(cuts.size() - 1);
             final long from = held != null ? held.getToSeq() : headEndSeq;
             final List<Long> elisions = new ArrayList<>();
             int saved = 0;
             for (int p = 0; p < view.size(); p++) {
                 final long seq = view.sourceSeq(p);
-                if (seq == ViewProjection.MADE_BY_VIEW || seq < from || seq >= cut.seq || !view.isVerbatim(p)) {
+                if (seq == ViewProjection.MADE_BY_VIEW || seq < from || seq >= cut.seq || seq >= unreadFromSeq
+                        || !view.isVerbatim(p)) {
                     continue;
                 }
                 final Message message = view.getMessages().get(p);
@@ -821,8 +868,9 @@ public final class RollingContextEngine implements ContextEngine {
         }
 
         /**
-         * Every legal cut at or after the held span's end whose span, starting at {@code from}, would absorb at least
-         * one view message it does not already hide — with the tokens left verbatim after it. In seq order.
+         * Every legal cut at or after the held span's end, and at or before the start of the unread part, whose span,
+         * starting at {@code from}, would absorb at least one view message it does not already hide — with the tokens
+         * left verbatim after it. In seq order.
          */
         private List<Cut> cuts(long from) {
             final long minimum = held != null ? Math.max(from, held.getToSeq()) : from;
@@ -840,7 +888,7 @@ public final class RollingContextEngine implements ContextEngine {
             }
             final List<Cut> cuts = new ArrayList<>();
             final long end = state.getNextSeq();
-            if (end > firstAbsorbable && end >= minimum && legal.test(end)) {
+            if (end > firstAbsorbable && end >= minimum && end <= unreadFromSeq && legal.test(end)) {
                 cuts.add(new Cut(end, 0, false));
             }
             // Back to front, so each cut's verbatim tail is a running sum.
@@ -854,7 +902,7 @@ public final class RollingContextEngine implements ContextEngine {
                     break;
                 }
                 tail += tokens[p];
-                if (legal.test(seq)) {
+                if (seq <= unreadFromSeq && legal.test(seq)) {
                     cuts.add(new Cut(seq, tail, view.getMessages().get(p).getRole() == Role.USER));
                 }
             }

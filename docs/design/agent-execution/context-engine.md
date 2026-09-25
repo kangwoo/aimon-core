@@ -664,3 +664,43 @@ CTX-05 가 선행 조건이다. 그때 되살린다면 고정 단위는 "메모�
   그대로 넘기므로, `summarize()` 를 직접 구현한 사용자 engine 이 요청을 닫는 것은 그 engine 의 몫이다
 - **빈 응답이 이유를 말한다.** Anthropic 클라이언트의 `No content blocks` 예외 문장에 `stop_reason` 과 요청이 assistant
   메시지로 끝났는지(prefill 인지)가 들어간다. 예외 타입은 그대로 `LlmClientException` 이다
+
+### 13.10 모델이 아직 답하지 않은 것은 압축하지 않는다
+
+live 테스트의 keyless 쌍둥이가 처음 돌 때 드러난 결함이다. 도구 결과 하나가 tail 예산보다 크면 stage 0 이 빈 tail
+절단(`nextSeq`)을 고를 수 있었고, 그러면 §5.5 의 prune 이 방금 도착한 도구 결과를 — 모델이 읽기 전에 — 흡수 구간으로 보고
+가렸다. 모델이 `SessionHistory` 로 다시 읽으면 또 큰 결과가 오고 같은 일이 되풀이된다. 기본 비율로는 effective window 의
+약 20% 를 넘는 결과 하나면 일어난다.
+
+- **규칙.** 뷰의 **미응답 부분** — 마지막 assistant 메시지 뒤의 모든 것(방금 부른 `tool_use` 의 결과, 또는 답 뒤에 들어온
+  입력) — 은 가리지도, span 에 흡수하지도 않는다(`ViewProjection.firstUnreadPosition()`). assistant 메시지가 하나도 없는 뷰는
+  마지막 메시지 하나가 미응답이다. 롤링이 계산하는 모든 절단면(stage 0 · 1 · 2, blocking 의 stage 3, prune 이 보는 구간)은
+  미응답 부분의 시작 이하에서만 고른다. 결과와 그 `tool_use` 사이는 합법 절단이 아니므로 실제 한계는 그 `tool_use` 를 낸
+  assistant 메시지의 시작이다. 도구 결과만이 아니라 입력까지 넓게 잡은 것은 의도다 — 같은 경로로 최신 user 메시지가 요약에
+  흡수될 수 있었고, 그것도 모델이 아직 답하지 않은 입력이다
+- **prune 의 구간.** §13.3 은 "stage 0 절단이 없으면 prune 도 없다" 라고 적었다. 미응답 부분이 tail 예산보다 크면 stage 0
+  절단이 늘 없으므로, 그때는 미응답 부분 앞의 마지막 절단이 prune 구간을 정한다 — 그 앞의 **이미 읽은** 큰 결과는 여전히
+  가릴 수 있다. 이 한 줄은 §13.3 의 그 항목을 대체한다
+- **극단 — 미응답 부분만으로 넘칠 때(결정).**
+  - blocking 미만: 어떤 절단도 임계값 아래로 내려가지 못하므로 §5.6 의 `WARN`(`kind = FALLBACK`) 행이다. 뷰는 그대로 간다
+  - blocking 이상: stage 3 이 head 까지 미응답 부분 앞의 모든 것을 요약한다. 그래도 blocking 을 넘으면 WARN 로그를 남기고
+    **그대로 보낸다** — 추정은 휴리스틱이고 판정은 프로바이더와 prompt-too-long 복구의 몫이다. 같은 뷰로 다시 오면(복구가
+    아무것도 줄이지 못했다) 새로 흡수할 것이 없으므로 요약을 다시 요약하지 않고 `BLOCK` 이다 — 실행은
+    `ContextWindowExceededException` 으로 끝나고 사유에 미응답 부분의 크기가 들어간다. 반복도, 미응답 결과의 elide 도 없다
+  - 모델이 답하면 그 결과는 더 이상 미응답이 아니므로 다음 iteration 의 압축이 평소처럼 가리거나 흡수한다
+- **복구.** `RecoveryDiff` 가 미응답 메시지를 빼는 전략의 답을 거절한다 — 두 engine 모두의 뷰 복구가 거친다.
+  `DefaultPromptSizeRecoveryStrategy` 는 마지막 USER 를 빼지 않고 TOOL 을 빼지 않으므로 원래 거기에 닿지 않았다. 이 검사는
+  사용자 전략을 위한 것이다
+- **기본 engine 의 뷰 모드는 바꾸지 않았다.** 뷰 전체를 `[floorSeq, nextSeq)` span 으로 요약하는 것은 §4 가 약속한 "모델이
+  보는 것은 바뀌지 않는다"(v1 in-place 와 같은 결과)의 일부다. 거기에는 prune 도 placeholder 도 없고, 미응답 결과는 요약 호출에
+  **원문 그대로** 들어가며 `SessionHistory` 도 등록되지 않으므로 elide → 다시 읽기 → elide 의 고리가 없다. 남는 위험은
+  기본 engine 의 auto 임계값을 넘는 도구 결과 하나가 매번 요약으로 접히는 것인데, 그 크기면 blocking 에도 가깝고
+  v1 과 같은 동작이다. 열린 결과로 남긴다
+- **`SessionHistory` 의 상한.** `seq` 읽기는 메시지와 이웃 넷, 각 `maxResultChars`(2000자)까지다. 검색은 일치마다 그만큼을
+  더했으므로 `limit` 20 이면 20만 자까지 갈 수 있었다. 이제 결과가 `SEARCH_RESULT_PARTS`(10) × `maxResultChars` 에 닿으면 더
+  일치를 붙이지 않고 그 사실을 적는다(첫 일치는 언제나 보인다). 방금 받은 도구 결과는 위 규칙으로 보호되므로, 큰 원문을
+  다시 읽는 모델이 같은 elide 에 갇히지 않는다
+- **테스트.** `RollingContextEngineTest.Unread` 의 넷(tail 예산보다 큰 새 결과가 elide 되지 않음, 최신 user 메시지가 흡수되지
+  않음, 미응답만으로 넘칠 때 WARN, blocking 에서 흡수 후 BLOCK)은 이전 engine 에서 실패한다. keyless 쌍둥이
+  `ContextEngineLiveRigTest`(두 모듈)는 `HISTORY_RESULT_CHARS`(800자) 우회를 버리고 도구의 기본 상한으로 돈다 — 이전
+  engine 에서는 실패하고 지금은 통과한다

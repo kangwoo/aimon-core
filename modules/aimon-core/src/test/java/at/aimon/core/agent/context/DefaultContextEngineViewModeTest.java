@@ -225,14 +225,31 @@ class DefaultContextEngineViewModeTest {
             buffer.addUserMessage("q");
             buffer.addMessage(Message.assistant("", List.of(ToolUse.of("t1", "Read", Map.of()))));
             buffer.addMessage(Message.toolUseResults(List.of(ToolUseResult.success("t1", "body"))));
+            buffer.addMessage(Message.assistant("read it"));
+            buffer.addUserMessage("latest");
+            final DefaultContextEngine engine = DefaultContextEngine.builder().compactionGuard(guard)
+                    .compactionEngine(summarizer)
+                    .recoveryStrategy((messages, error) -> PromptSizeRecoveryDecision
+                            .retry(List.of(messages.get(0), messages.get(3), messages.get(4)), "dropped the pair"))
+                    .build();
+
+            assertThat(engine.recover(request(), new LlmPromptTooLongException("too long"))).isPresent();
+            assertThat(buffer.getViewState().getDroppedRanges()).containsExactly(SeqRange.of(1, 3));
+        }
+
+        @Test
+        void aToolResultTheModelHasNotAnsweredIsNeverDropped() {
+            buffer.addUserMessage("q");
+            buffer.addMessage(Message.assistant("", List.of(ToolUse.of("t1", "Read", Map.of()))));
+            buffer.addMessage(Message.toolUseResults(List.of(ToolUseResult.success("t1", "body"))));
             buffer.addUserMessage("latest");
             final DefaultContextEngine engine = DefaultContextEngine.builder().compactionGuard(guard)
                     .compactionEngine(summarizer).recoveryStrategy((messages, error) -> PromptSizeRecoveryDecision
                             .retry(List.of(messages.get(0), messages.get(3)), "dropped the pair"))
                     .build();
 
-            assertThat(engine.recover(request(), new LlmPromptTooLongException("too long"))).isPresent();
-            assertThat(buffer.getViewState().getDroppedRanges()).containsExactly(SeqRange.of(1, 3));
+            assertThat(engine.recover(request(), new LlmPromptTooLongException("too long"))).isEmpty();
+            assertThat(buffer.getViewState().isEmpty()).isTrue();
         }
 
         @Test

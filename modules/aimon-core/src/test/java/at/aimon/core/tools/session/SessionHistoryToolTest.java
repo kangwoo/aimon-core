@@ -205,6 +205,25 @@ class SessionHistoryToolTest {
         }
 
         @Test
+        void aBroadSearchIsBoundedAndSaysSo() {
+            final SessionHistoryTool narrow = new SessionHistoryTool(1_000_000, 10, new HeuristicTokenEstimator());
+            final TranscriptBuffer many = new TranscriptBuffer(SESSION);
+            many.requireFormat(SessionLogFormat.V2);
+            for (int i = 0; i < 40; i++) {
+                many.addUserMessage("needle " + "x".repeat(100));
+            }
+
+            final String content = narrow
+                    .execute(ToolInput.of("query", "needle", "limit", 20), context(SessionLogSource.of(many, null)))
+                    .getContent();
+
+            assertThat(content).contains("=== match at seq 39 ===").contains("More matches were not shown")
+                    .doesNotContain("=== match at seq 20 ===");
+            assertThat(content.length()).as("one match past the cap at most")
+                    .isLessThan(2 * SessionHistoryTool.SEARCH_RESULT_PARTS * 10 + 1_000);
+        }
+
+        @Test
         void searchesToolInputsAndResultsButNotSyntheticEntries() {
             final SessionLogSource source = SessionLogSource.of(buffer(), null);
 

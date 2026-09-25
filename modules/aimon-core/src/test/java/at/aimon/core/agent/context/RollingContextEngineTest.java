@@ -404,6 +404,122 @@ class RollingContextEngineTest {
         }
     }
 
+    /**
+     * What the model has not answered yet — the results of the last {@code tool_use}, or the input after the last
+     * reply — is never elided or absorbed (context-engine §13.10).
+     */
+    @Nested
+    class Unread {
+
+        private void toolCall(String id, int resultSize) {
+            buffer.addMessage(Message.assistant("", List.of(ToolUse.of(id, "Read", Map.of()))));
+            buffer.addMessage(Message.toolUseResults(List.of(ToolUseResult.success(id, "x".repeat(resultSize)))));
+        }
+
+        @Test
+        void aFreshResultLargerThanTheTailBudgetIsNotElidedBeforeTheModelReadsIt() {
+            conversation(6, 60);
+            toolCall("t1", 300); // seq 8: larger than the tail budget (200); 668 tokens in all
+            final Message fresh = buffer.getMessages().get(8);
+
+            final ContextDecision decision = engine().prepare(request());
+
+            assertThat(decision.getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
+            assertThat(buffer.getViewState().getElisions()).as("the unread result is not pruned").isEmpty();
+            assertThat(buffer.getViewState().getSummarySpan()).as("the span stops before the tool_use")
+                    .hasValueSatisfying(span -> assertThat(span.getRange()).isEqualTo(SeqRange.of(1, 7)));
+            final List<Message> view = decision.getView().getMessages();
+            assertThat(view.get(view.size() - 1)).isSameAs(fresh);
+            assertThat(view.get(view.size() - 2).getToolUses()).extracting(ToolUse::getId).containsExactly("t1");
+            assertThat(summarizer.summarized.get(0).getMessages()).flatExtracting(Message::getToolUseResults)
+                    .as("nor summarized").isEmpty();
+        }
+
+        @Test
+        void anOlderResultIsStillPrunedWhileTheUnreadOneStays() {
+            buffer.addUserMessage("goal");
+            toolCall("t0", 520); // seq 2: read and answered below
+            buffer.addAssistantMessage("a".repeat(60));
+            buffer.addUserMessage("u".repeat(60));
+            toolCall("t1", 250); // seq 6: unread, larger than the tail budget
+
+            final ContextDecision decision = engine().prepare(request());
+
+            assertThat(decision.getCompactionMetadata())
+                    .hasValueSatisfying(metadata -> assertThat(metadata.getKind()).isEqualTo(CompactionKind.PRUNE));
+            assertThat(buffer.getViewState().getElisions()).containsOnlyKeys(2L);
+            assertThat(summarizer.summarized).isEmpty();
+        }
+
+        @Test
+        void theLatestUserMessageIsNeverAbsorbed() {
+            conversation(9, 60); // ends with an assistant message at seq 9
+            buffer.addUserMessage("q".repeat(300)); // seq 10: larger than the tail budget
+            final Message latest = buffer.getMessages().get(10);
+
+            final ContextDecision decision = engine().prepare(request());
+
+            assertThat(decision.getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
+            assertThat(buffer.getViewState().getSummarySpan())
+                    .hasValueSatisfying(span -> assertThat(span.getToSeq()).isLessThanOrEqualTo(10));
+            final List<Message> view = decision.getView().getMessages();
+            assertThat(view.get(view.size() - 1)).isSameAs(latest);
+        }
+
+        @Test
+        void whenTheUnreadResultAloneKeepsTheViewOverTheThresholdTheEngineWarns() {
+            buffer.addUserMessage("goal");
+            toolCall("t1", 700); // 708 tokens: past rolling auto (600), below blocking (950)
+
+            final ContextDecision decision = engine().prepare(request());
+
+            assertThat(decision.getAction()).isEqualTo(CompactionDecision.Action.WARN);
+            assertThat(decision.getCompactionMetadata())
+                    .hasValueSatisfying(metadata -> assertThat(metadata.getKind()).isEqualTo(CompactionKind.FALLBACK));
+            assertThat(buffer.getViewState().isEmpty()).as("nothing elided, nothing absorbed").isTrue();
+            assertThat(summarizer.summarized).isEmpty();
+        }
+
+        @Test
+        void atTheBlockingLimitEverythingBeforeTheUnreadResultIsAbsorbedAndThenTheEngineBlocks() {
+            buffer.addUserMessage("goal");
+            buffer.addAssistantMessage("a".repeat(60));
+            buffer.addUserMessage("u".repeat(60));
+            toolCall("t1", 900); // seq 4; 1028 tokens: past blocking (950)
+            final Message fresh = buffer.getMessages().get(4);
+            final RollingContextEngine engine = engine();
+
+            final ContextDecision first = engine.prepare(request());
+
+            assertThat(first.getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
+            assertThat(buffer.getViewState().getSummarySpan()).as("stage 3: the head too, up to the tool_use")
+                    .hasValueSatisfying(span -> assertThat(span.getRange()).isEqualTo(SeqRange.of(0, 3)));
+            assertThat(buffer.getViewState().getElisions()).isEmpty();
+            assertThat(first.getView().getMessages().get(first.getView().getMessages().size() - 1)).isSameAs(fresh);
+            assertThat(first.getView().getEstimatedTokens()).as("still over: sent as it is")
+                    .isGreaterThanOrEqualTo(950);
+
+            // The same view again — the provider refused and recovery found nothing to drop, say — has nothing left
+            // to absorb: the engine blocks instead of summarizing the summary.
+            final ContextDecision second = engine.prepare(request());
+
+            assertThat(second.getAction()).isEqualTo(CompactionDecision.Action.BLOCK);
+            assertThat(second.getReason()).contains("not answered yet");
+            assertThat(summarizer.summarized).hasSize(1);
+            assertThat(buffer.getViewState().getElisions()).isEmpty();
+        }
+
+        @Test
+        void aManualCompactionOfAFinishedTurnStillReachesTheEnd() {
+            conversation(9, 60); // ends with an assistant reply: nothing is unread
+
+            final CompactionResult result = engine().compactNow(request(), null);
+
+            assertThat(result.isSuccess()).isTrue();
+            assertThat(buffer.getViewState().getSummarySpan()).isPresent();
+        }
+    }
+
     @Nested
     class Retreat {
 

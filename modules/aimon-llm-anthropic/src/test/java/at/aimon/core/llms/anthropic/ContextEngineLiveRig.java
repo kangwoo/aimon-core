@@ -101,14 +101,6 @@ final class ContextEngineLiveRig {
 
     static final String REPORT_TOOL = "fetch_report";
 
-    /**
-     * How much of each matched message {@code SessionHistory} returns. Kept well under the rolling tail budget (700
-     * tokens here): a fresh tool result larger than the tail is absorbed by the next cut and elided before the model
-     * has
-     * read it. That is an engine hazard in its own right, and not what this scenario sets out to test.
-     */
-    static final int HISTORY_RESULT_CHARS = 800;
-
     /** Filler turns a scenario may spend reaching its rolling cycles; the assertions then say how many came. */
     static final int MAX_FILLER_TURNS = 12;
 
@@ -163,8 +155,9 @@ final class ContextEngineLiveRig {
         final DefaultToolRegistry tools = new DefaultToolRegistry();
         tools.register(new ReportTool());
         if (rolling) {
-            tools.register(new SessionHistoryTool(SessionHistoryTool.DEFAULT_MAX_SCAN_TOKENS, HISTORY_RESULT_CHARS,
-                    estimator));
+            // The tool's own default cut: its fresh result may exceed the rolling tail, and the engine keeps it
+            // verbatim until the model has answered it (context-engine §13.10).
+            tools.register(new SessionHistoryTool());
         }
         final DefaultAgent agent = DefaultAgent.builder().name("ContextEngineLiveAgent").maxIterations(6)
                 .systemPrompt(SYSTEM_PROMPT).model(model).build();
@@ -317,7 +310,7 @@ final class ContextEngineLiveRig {
 
     /**
      * The report the first turn fetches: about a thousand tokens of log lines with the vault code near the top, so a
-     * {@code SessionHistory} match cut at {@link #HISTORY_RESULT_CHARS} still shows it.
+     * {@code SessionHistory} match cut at {@link SessionHistoryTool#DEFAULT_MAX_RESULT_CHARS} still shows it.
      */
     static String plantedReport() {
         final StringBuilder report = new StringBuilder("Report R-1 (operations log excerpt)\n");

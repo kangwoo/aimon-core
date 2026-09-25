@@ -22,8 +22,10 @@ import at.aimon.core.llm.Message;
  * <p>
  * Refused, with the reason reported: an answer holding a message the view did not (a new one, or one the strategy
  * rewrote — a strategy that truncates a long tool result included); an answer that leaves out a message the view made
- * (a compaction marker, an elided placeholder), which has no seq of its own to drop; an answer that leaves nothing
- * out. Whether each range is a legal cut is checked by the view state operation itself.
+ * (a compaction marker, an elided placeholder), which has no seq of its own to drop; an answer that leaves out a
+ * message the model has not answered yet ({@link ViewProjection#firstUnreadPosition()}) — the next call asks the
+ * model to respond to it; an answer that leaves nothing out. Whether each range is a legal cut is checked by the view
+ * state operation itself.
  */
 final class RecoveryDiff {
 
@@ -54,6 +56,11 @@ final class RecoveryDiff {
         }
         if (left.isEmpty()) {
             return refused("the answer leaves nothing out");
+        }
+        final int unread = view.firstUnreadPosition();
+        if (left.get(left.size() - 1) >= unread) {
+            return refused("the answer leaves out a message the model has not answered yet (what follows the last"
+                    + " assistant message) at view position " + left.get(left.size() - 1));
         }
         final List<SeqRange> ranges = new ArrayList<>();
         int runStart = -1;

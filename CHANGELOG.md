@@ -23,6 +23,15 @@ Central is versioned independently).
   conversation entries by `seq` or by case-insensitive search, sealed ranges included. Registered only when the rolling
   engine is wired. The executor publishes the running log to tools as `SessionLogSource` (`SessionHistoryTool.LOG_SOURCE_KEY`).
   A message longer than one result is returned in parts: pass `offset` with `seq` to read the next one.
+- **What the model has not answered yet is never compacted away.** The rolling engine's cuts — tail budget, its
+  half, the last legal cut, the blocking limit's head-absorbing cut, and the region L0 prune elides — all stop at the
+  view's unread part: what follows the last assistant message (`ViewProjection.firstUnreadPosition()`). A fresh tool
+  result larger than the tail budget used to be elided before the model had read it, and reading it back through
+  `SessionHistory` could be elided again. When the unread part alone keeps the view over the threshold the engine warns
+  (`FALLBACK`); at the blocking limit it summarizes everything before it and sends the view even if still over, with a
+  WARN, and blocks (`ContextWindowExceededException`) when nothing is left to absorb. Prompt-too-long recovery refuses a
+  strategy answer that drops an unread message, in both engines. A `SessionHistory` search result stops adding matches
+  at `SEARCH_RESULT_PARTS` (10) × `maxResultChars` characters and says so.
 - **Choosing the engine.** Spring `aimon.context.engine` (`default` | `rolling`), AGENT.md frontmatter
   `context-engine` (a camelCase `contextEngine` fails parsing), `ExecutorSpec.contextEngine(...)`,
   `OrcaAgentRuntimeFactory.withContextEngine(...)`; the agent's own value wins. New `ContextEngineKind`,
