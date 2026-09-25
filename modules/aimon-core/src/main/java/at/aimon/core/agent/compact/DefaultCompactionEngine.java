@@ -58,6 +58,16 @@ import at.aimon.core.llm.token.TokenEstimator;
  */
 public class DefaultCompactionEngine implements CompactionEngine {
 
+    /**
+     * Closes a summary request whose messages would otherwise end with an assistant message. A conversation between
+     * turns ends on the assistant's final answer, so the whole-conversation summary of {@code /compact}, of an AUTO
+     * compaction in view mode and of the in-place v1 compaction all end there; a request ending with an assistant
+     * message reads as a prefill of a finished answer, which Anthropic answers with no content blocks at all and other
+     * providers may continue instead of summarizing. Appended to the summary call's input only — never to the
+     * transcript, the log or the view.
+     */
+    public static final String SUMMARIZE_NOTE = "[End of the conversation to summarize. Write the summary now.]";
+
     private static final Logger log = LoggerFactory.getLogger(DefaultCompactionEngine.class);
 
     /** Reentrancy guard to prevent nested compaction (e.g. a hook triggering another compaction). */
@@ -335,8 +345,9 @@ public class DefaultCompactionEngine implements CompactionEngine {
                     hookExecutionManager.collectBlockedReasons(preResults));
         }
 
-        // 2) Strip non-text blocks for the summary call (in-range only)
-        final List<Message> strippedMessages = messageStripper.stripNonTextBlocks(inRangeMessages);
+        // 2) Strip non-text blocks for the summary call (in-range only), and close the input on the user side so the
+        // request is never an assistant prefill
+        final List<Message> strippedMessages = closedOnTheUserSide(messageStripper.stripNonTextBlocks(inRangeMessages));
 
         // 3) Build summary prompt — merge custom instructions from hooks + request
         final String mergedInstructions = mergeCustomInstructions(customInstructions, preFeedback);
@@ -368,6 +379,25 @@ public class DefaultCompactionEngine implements CompactionEngine {
                     failureMetadata(trigger, preTokenCount, inRangeMessages.size(), startedAt, discoveredToolNames)));
         }
         return SummaryAttempt.succeeded(summaryText);
+    }
+
+    /**
+     * Returns {@code messages} unchanged when it is empty or its last message is on the user side (a user message, or
+     * tool results — which every provider carries on the user side), otherwise a copy with {@link #SUMMARIZE_NOTE}
+     * appended as a user message.
+     */
+    static List<Message> closedOnTheUserSide(List<Message> messages) {
+        if (messages.isEmpty()) {
+            return messages;
+        }
+        final Role last = messages.get(messages.size() - 1).getRole();
+        if (last == Role.USER || last == Role.TOOL) {
+            return messages;
+        }
+        final List<Message> closed = new ArrayList<>(messages.size() + 1);
+        closed.addAll(messages);
+        closed.add(Message.user(SUMMARIZE_NOTE));
+        return closed;
     }
 
     private static CompactionMetadata failureMetadata(CompactionTrigger trigger, int preTokenCount,

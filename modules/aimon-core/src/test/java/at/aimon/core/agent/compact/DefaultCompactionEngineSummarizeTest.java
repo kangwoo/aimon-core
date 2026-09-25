@@ -78,7 +78,9 @@ class DefaultCompactionEngineSummarizeTest {
 
         assertThat(result.isSuccess()).isTrue();
         assertThat(result.getSummaryText()).hasValue("the summary");
-        assertThat(client.lastMessages.get()).hasSize(2);
+        assertThat(client.lastMessages.get()).hasSize(3);
+        assertThat(client.lastMessages.get().subList(0, 2)).isEqualTo(messages);
+        assertThat(client.lastMessages.get().get(2).getContent()).isEqualTo(DefaultCompactionEngine.SUMMARIZE_NOTE);
         assertThat(client.lastSystemPrompt.get()).contains("keep names");
         assertThat(client.lastMetadata.get().getFeature()).hasValue(LlmCallMetadata.Feature.COMPACTION);
         assertThat(client.lastMetadata.get().getTraceId()).hasValue("s-1");

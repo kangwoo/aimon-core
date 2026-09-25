@@ -310,6 +310,40 @@ class AnthropicLlmClientTest {
         }
 
         @Test
+        @DisplayName("An empty response names the stop reason and that the request ended on an assistant message")
+        void noContentBlocksAfterAnAssistantMessageIsReportedAsAPrefill() {
+            com.anthropic.models.messages.Message anthropicMessage = mock(com.anthropic.models.messages.Message.class);
+            when(anthropicMessage.content()).thenReturn(List.of());
+            when(anthropicMessage.stopReason()).thenReturn(Optional.of(StopReason.END_TURN));
+            when(mockMessageService.create(any(MessageCreateParams.class))).thenReturn(anthropicMessage);
+
+            AnthropicLlmClient client = createClientWithMock();
+
+            assertThatThrownBy(() -> client.sendMessage("system",
+                    List.of(Message.user("remember PELICAN"), Message.assistant("ok", List.of())),
+                    Collections.emptyList(), LlmModel.builder().build())).isInstanceOf(LlmClientException.class)
+                    .hasMessageContaining("No content blocks in Anthropic response")
+                    .hasMessageContaining("stop_reason=end_turn")
+                    .hasMessageContaining("request ended on an assistant message").hasMessageContaining("prefill");
+        }
+
+        @Test
+        @DisplayName("An empty response to a request ending on a user message says so, with no stop reason as none")
+        void noContentBlocksAfterAUserMessageIsNotReportedAsAPrefill() {
+            com.anthropic.models.messages.Message anthropicMessage = mock(com.anthropic.models.messages.Message.class);
+            when(anthropicMessage.content()).thenReturn(List.of());
+            when(anthropicMessage.stopReason()).thenReturn(Optional.empty());
+            when(mockMessageService.create(any(MessageCreateParams.class))).thenReturn(anthropicMessage);
+
+            AnthropicLlmClient client = createClientWithMock();
+
+            assertThatThrownBy(() -> client.sendMessage("system", List.of(Message.user("test")),
+                    Collections.emptyList(), LlmModel.builder().build())).isInstanceOf(LlmClientException.class)
+                    .hasMessageContaining("stop_reason=none").hasMessageContaining("request ended on a user message")
+                    .hasMessageNotContaining("prefill");
+        }
+
+        @Test
         @DisplayName("Should handle null _input() in ToolUseBlock")
         void shouldHandleNullInputInToolUseBlock() {
             // Given

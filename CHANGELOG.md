@@ -136,6 +136,13 @@ Central is versioned independently).
 - **Deprecated** (context-engine §8.2, session-log §3.3): `CompactionGuard`, `CompactionEngine.compact(...)`,
   `TranscriptBuffer.replaceWith(...)` / `replaceMessageAt(...)`, `TimeBasedMicrocompact`. All keep working for the
   version-1 write mode.
+- **Every summary request ends on the user side.** `DefaultCompactionEngine` appends a synthetic user instruction
+  (`SUMMARIZE_NOTE`) to a summary call's input that would otherwise end on an assistant message — the normal shape
+  between turns. Anthropic answers such a request as a prefill of a finished answer, with no content blocks, which
+  failed `/compact` in view mode against the real provider; the in-place (version-1) and AUTO summaries had the same
+  shape. The note goes to the summary call only, never to the log, the view or the buffer. The Anthropic client's
+  `No content blocks` error now names the stop reason and whether the request ended on an assistant message. Design:
+  `docs/design/agent-execution/context-engine.md` §13.9.
 - **Memory ingest reads the log as it was said.** `TranscriptBuffer.messagesSinceIngestMark()` and the CLI's
   session-end derivation (`getConversationMessages()`) leave out `SYNTHETIC` entries; on a version-2 log a compacted
   execution is no longer skipped. Ingest is sent in chunks of `IngestChunks.DEFAULT_MAX_INGEST_TOKENS` (32K estimated

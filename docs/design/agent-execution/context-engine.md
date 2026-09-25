@@ -646,3 +646,21 @@ CTX-05 가 선행 조건이다. 그때 되살린다면 고정 단위는 "메모�
   `AgentSetupFactory.create()` 로 만든 CLI 의 라이브 세션에서 stub 모델로 턴 하나를 돌리고, 기록이 v2 로 저장되는 것, 가린 구간이
   CLI 가 붙인 in-memory 세그먼트 저장소로 봉인되는 것, 로그 reader 가 gap 없이 다시 읽는 것을 확인한다. 봉인은 손으로 가린
   구간으로 일으킨다 — 롤링 엔진 자신의 압축은 stub 턴이 채우지 못하는 컨텍스트 창을 필요로 하기 때문이다
+
+### 13.9 모든 요약 요청은 user 쪽으로 끝난다
+
+§13.6 의 두 번째 항목은 롤링만 고쳤다. 실제 Anthropic 에 돌린 첫 라이브 테스트에서 기본 engine 의 뷰 모드 `/compact` 가
+`No content blocks in Anthropic response` 로 실패했고, 원인은 같았다 — 턴이 끝난 대화는 assistant 의 최종 답으로 끝나고,
+뷰 전체를 요약하는 요청이 그대로 그 메시지로 끝났다. Anthropic 은 그것을 끝난 답의 prefill 로 읽고 content block 없이
+돌려준다. v1 in-place `compact` 와 뷰 모드의 AUTO 요약도 같은 모양이었다.
+
+- **닫는 자리는 `DefaultCompactionEngine` 하나다.** 요약 LLM 호출을 만드는 `generateSummary` 가, 비텍스트 블록을 벗긴 입력이
+  user 도 tool result 도 아닌 메시지로 끝나면 합성 user 지시(`DefaultCompactionEngine.SUMMARIZE_NOTE`)를 붙인다. 그래서
+  `/compact`(뷰 모드 · in-place), AUTO 요약(뷰 모드 · in-place), 롤링 요약이 모두 한 곳을 지난다. 지시는 요약 호출의 입력에만
+  들어가고 로그 · 뷰 · 버퍼에는 들어가지 않으므로 v1 의 결과(boundary + summary 쌍)는 그대로다. 요약 입력의 크기를 못 박았던
+  테스트 셋은 결함이 있던 요청 모양을 고정한 것이라 고쳤다
+- **롤링의 `SUMMARIZE_NOTE` 는 남는다.** 롤링은 `summarize()` 를 지원하는 **아무** `CompactionEngine` 과도 돌기 때문에 자기
+  입력을 스스로 닫는다. 기본 engine 은 이미 user 로 끝난 입력에 아무것도 더 붙이지 않는다. 기본 engine 의 뷰 모드는 뷰를
+  그대로 넘기므로, `summarize()` 를 직접 구현한 사용자 engine 이 요청을 닫는 것은 그 engine 의 몫이다
+- **빈 응답이 이유를 말한다.** Anthropic 클라이언트의 `No content blocks` 예외 문장에 `stop_reason` 과 요청이 assistant
+  메시지로 끝났는지(prefill 인지)가 들어간다. 예외 타입은 그대로 `LlmClientException` 이다

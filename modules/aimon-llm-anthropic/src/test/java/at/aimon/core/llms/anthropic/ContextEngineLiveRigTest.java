@@ -97,6 +97,10 @@ class ContextEngineLiveRigTest {
         assertThat(rig.storedLog().getViewState().getSummarySpan()).isPresent();
         assertThat(ContextEngineLiveRig.loggedEntryCount(rig.storedLog())).isEqualTo(entriesBefore);
         assertThat(rig.summaries().count()).isEqualTo(1);
+        // The view ends on the assistant's "noted"; sent as it is, the request is a prefill of a finished answer, which
+        // Anthropic answers with no content blocks. The compaction engine closes it on the user side.
+        assertThat(rig.summaries().lastRoles()).as("the role the forced summary request ends on")
+                .containsExactly(Role.USER);
         rig.turn("What was the codeword?");
     }
 
