@@ -140,7 +140,8 @@ public final class FileSystemAgentBundleLoader implements AgentBundleLoader {
     private Agent createAgent(AgentDefinition definition) {
         final AgentMetadata metadata = AgentMetadata.builder().name(definition.getName()).model(definition.getModel())
                 .maxIterations(definition.getMaxIterations()).tags(definition.getTags())
-                .allowedTools(definition.getAllowedTools()).build();
+                .allowedTools(definition.getAllowedTools()).contextEngine(definition.getContextEngine().orElse(null))
+                .build();
         final AgentContent content = AgentContent.builder().systemPrompt(definition.getSystemPrompt())
                 .variables(definition.getVariables()).build();
         return DefaultAgent.builder().metadata(metadata).content(content).build();

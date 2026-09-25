@@ -7,6 +7,185 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Added: the rolling context engine and `SessionHistory`
+
+- **`RollingContextEngine`** (`at.aimon.core.agent.context`) keeps the head (up to the first conversation user message)
+  and a recent tail verbatim and summarizes the middle into one span that only widens; each compaction updates the
+  previous summary instead of re-summarizing it (`SummaryRequest.rolling` / `previousSummary` /
+  `targetSummaryTokens`, `SummaryPromptTemplate.buildRollingSystemPrompt`). It compacts at
+  `min(0.6 × effective window, auto-compact threshold)`, tries eliding large tool results first (`[tool result elided:
+  seq=N]`), retreats from the tail budget to half of it to the last legal cut, warns instead of compacting when no cut
+  helps, and absorbs the head only at the blocking limit. Where a model and system prompt cannot sustain rolling, or
+  the log is version 1, a call is served by the default engine. `/compact` fails with the new
+  `CompactionContendedException` when another compaction of the session is running. Design:
+  `docs/design/agent-execution/context-engine.md` §5.
+- **`SessionHistoryTool`** (`at.aimon.core.tools.session`, tool name `SessionHistory`) reads back the current session's
+  conversation entries by `seq` or by case-insensitive search, sealed ranges included. Registered only when the rolling
+  engine is wired. The executor publishes the running log to tools as `SessionLogSource` (`SessionHistoryTool.LOG_SOURCE_KEY`).
+  A message longer than one result is returned in parts: pass `offset` with `seq` to read the next one.
+- **What the model has not answered yet is never compacted away.** The rolling engine's cuts — tail budget, its
+  half, the last legal cut, the blocking limit's head-absorbing cut, and the region L0 prune elides — all stop at the
+  view's unread part: what follows the last assistant message (`ViewProjection.firstUnreadPosition()`). A fresh tool
+  result larger than the tail budget used to be elided before the model had read it, and reading it back through
+  `SessionHistory` could be elided again. When the unread part alone keeps the view over the threshold the engine warns
+  (`FALLBACK`); at the blocking limit it summarizes everything before it and sends the view even if still over, with a
+  WARN and a `COMPACT` decision whose reason carries `RollingContextEngine.STILL_OVER_BLOCKING`, and blocks
+  (`ContextWindowExceededException`) when nothing is left to absorb. The execution result tells that case apart
+  without the model's limits: every rolling compaction record carries `CompactionMetadata.getBlockingLimit()`, and
+  `isOverBlockingLimit()` is true on the one sent over it. Manual `/compact` stops at the same place: after an
+  interrupted turn it summarizes only what precedes the unanswered user message, and a view that is nothing but
+  unanswered input fails with "nothing to compact". Prompt-too-long recovery refuses a strategy answer that drops an
+  unread message, in both engines. A `SessionHistory` search result stops adding matches
+  at `SEARCH_RESULT_PARTS` (10) × `maxResultChars` characters and says so.
+- **Choosing the engine.** Spring `aimon.context.engine` (`default` | `rolling`), AGENT.md frontmatter
+  `context-engine` (a camelCase `contextEngine` fails parsing), `ExecutorSpec.contextEngine(...)`,
+  `OrcaAgentRuntimeFactory.withContextEngine(...)`; the agent's own value wins. New `ContextEngineKind`,
+  `AgentMetadata.getContextEngine()`, `AgentDefinition.getContextEngine()`.
+- **The write-format switch is exposed**: Spring `aimon.session.log-write-format` (`v1` default | `v2`),
+  `SessionSpec.logWriteFormat(...)`, `OrcaAgentRuntimeFactory.withSessionLogWriteFormat(...)`. A runtime asking for
+  `rolling` on a version-1 node fails to build — for a declared agent, at startup. With `v2` the runtime factory builds
+  the default engine with `writeFormat(V2)`. The CLI has its own key, `cli.sessionLogWriteFormat` (`v1` default |
+  `v2`); with `v2` it also pairs an in-memory segment store with its in-memory records, so a `context-engine: rolling`
+  agent runs under the CLI.
+- **`CompactionMetadata`** gained `getKind()` (`CompactionKind`: `PRUNE` / `ROLLING` / `FULL` / `FALLBACK`; `FULL`
+  unless set), the view's head / span / tail tokens, the summary tokens and the absorbed seq range; `equals` and
+  `hashCode` include them. A rolling `FALLBACK` decision (no cut can bring the view down) is recorded in
+  `OrcaAgentExecutionResult.getCompactionEvents()`, once per iteration that decided so.
+- **The in-place fallback no longer erases a version-2 view.** An engine that cannot serve view mode (a custom
+  `CompactionGuard`, a `CompactionEngine` without `summarize`) meeting a version-2 buffer that carries a view state or
+  sealed ranges now sends the projected view and does not compact it; `compactNow` fails and recovery drops from the
+  view. `ContextEngine.passthrough()` sends such a buffer as its projected view too.
+- **Live tests for the context engines.** `AnthropicContextEngineLiveTest` and `OpenAIContextEngineLiveTest` run the
+  rolling engine through the real executor against the real API, gated on the existing `ANTHROPIC_KEY` /
+  `OPENAI_KEY` like the other live classes: a fact planted in a pruned tool result is recovered after several rolling
+  cycles, every summary request is accepted (on Anthropic also under extended thinking), sealing happens, and the
+  session survives a version-2 codec round trip. The Anthropic class also forces a `/compact` on the default engine in
+  view mode. A keyless twin, `ContextEngineLiveRigTest`, runs the same scenario against a scripted model in every
+  build. How to run them and what they cost is under
+  [`CONTRIBUTING.md` › Live-API tests](CONTRIBUTING.md#live-api-tests).
+
+### Added: sealing — ranges the view no longer shows leave the record
+
+- **`SessionLogSegmentStore`** (`at.aimon.core.agent.session.store`) holds sealed ranges of session logs outside the
+  records; `SessionLogState` carries a manifest of `SessionLogManifestEntry` lines (range, fresh `SegmentId`, content
+  hash, entry count) in the `version: 2` document. A segment exists only while a manifest names it. Implementations:
+  `InMemorySessionLogSegmentStore`, `MongoSessionLogSegmentStore` (collection `session_log_segments`, index
+  `by_session` in `init.js`), `PostgresSessionLogSegmentStore` (table `session_log_segment`, new operator file
+  `V2__session_log_segment.sql` — apply it after `V1__init.sql`; the unshipped future index file is now named
+  `V3__indexes.sql`), `RedisSessionLogSegmentStore` (prefix `aimon:session:segment`, keys
+  `<prefix>:{s:<sessionId>}:data` / `<prefix>:{s:<sessionId>}:created` — one Redis Cluster slot per session; a prefix
+  containing `{` is refused; it takes a standalone `StatefulRedisConnection` or a `StatefulRedisClusterConnection`).
+  The Mongo `_id` is the `{sessionId, segmentId}` pair. Design:
+  `docs/design/session/session-log.md` §5.
+- **`DefaultTranscriptManager` seals** when given a `SessionLogStorage` (`minSealTokens` 32K, `segmentGcGrace` 1h —
+  never zero —, `maxReadTokens` 32K): the executor seals right after a compaction and the turn-end save seals before it
+  writes, on the turn's thread; runs are split at the rewind point. After a successful save it deletes the segments
+  `/clear` cut loose and collects orphans older than the grace period. `TranscriptManager` gained default
+  `seal(...)` and `getLogReader()`.
+- **`SessionLogReader`** reads the whole log, sealed ranges included, a page at a time (pages end at legal cuts), and
+  reports a missing or mismatched segment as a `[history unavailable: seq a..b]` gap instead of failing. The CLI's
+  session-end derivation reads through it. A page reaching twice `maxReadTokens` is cut even with a `tool_use` left
+  unanswered by a crash. `SessionLogReadCache` lets one operation load each segment once across many reads.
+- **`SessionStore.segments(raw)`** returns the fenced delete view (new abstract method; `DefaultSessionStore`
+  implements it). `SessionRouterBuilder.sessionLogSegmentStore(...)` makes a session delete remove the session's
+  segments after its record. `SessionSpec.segmentStore(...)` wires a store into the stack; without one an in-memory
+  record store gets an in-memory segment store and a supplied record store seals nothing.
+- **The stack's record writes and segment deletes are fenced by the lease.** The transcript manager's turn-end saves
+  and checkpoints, the live sessions' totals / budget / persisted-rewind writes, and the turn-end GC and `/clear`
+  deletes go through the router's fenced views — new `SessionRouter.fencedRecordStore(SessionFence)` and
+  `fencedSegmentStore(SessionFence)` (defaults: empty), over the new `SessionStore.records(SessionFence)` /
+  `segments(raw, SessionFence)` (default methods: `HOLDER_ONLY` only). New enum `SessionFence`: `HOLDER_ONLY` in
+  `DeploymentMode.DISTRIBUTED`, so a node that lost a session's lease can neither overwrite the new holder's record nor
+  delete segments its manifest names; `UNLESS_HELD_ELSEWHERE` for a single-node stack given a lease store, which
+  refuses only sessions another node holds and still lets a live session opened outside the router (the CLI's) save and
+  collect; no fence on a single-node stack with the default lease store. **Behaviour change in distributed mode:** a
+  live session opened outside the router holds no lease, so all of its saves are refused — open every session through
+  the router. A refused turn-end save logs one WARN and skips that save's GC; refused checkpoints and fenced GC deletes
+  log at DEBUG.
+- **A `/clear` no longer leaves a gap behind a late checkpoint.** `SessionCheckpointMailbox.drain(SessionId)` (new;
+  `flush` is the same drain without the answer) reports whether a checkpoint of older state can still land, and the
+  transcript manager deletes nothing — neither `/clear`'s segments nor orphans — after a save whose drain gave up. The
+  `/clear` deletes stay pending on that turn's transcript buffer and are retried only by a later save of the same
+  buffer whose drain completes; once the turn ends they are not retried as such — the segments are either named again
+  by the manifest the late checkpoint resurrected (and kept), or left as orphans that turn-end GC or the store-wide
+  sweep collects after the grace. New
+  `SessionCheckpointMailbox.background(Duration drainTimeout)` (default `DEFAULT_DRAIN_TIMEOUT`, 5s).
+- **Store-wide orphan sweep** (opt-in): `SessionLogSegmentSweeper` (`at.aimon.core.agent.session.transcript`) walks the
+  whole segment store and deletes segments older than a grace (24h by default) that the session's record, read after
+  the listing, does not name — the orphans of sessions nobody reopens, which turn-end GC never reaches. Wired with
+  `SessionSpec.segmentSweepInterval(...)` / `segmentSweepGrace(...)` or Spring `aimon.session.segment-sweep-interval` /
+  `aimon.session.segment-sweep-grace`; off unless the interval is set, and refused at startup without a segment store.
+  Safe on every node at once, and run once per cluster per interval when the stack has a lease store: the sweeper's new
+  `Builder.coordination(leaseStore, holderId, lease)` makes `sweepIfClaimed()` take a sweep lease on the reserved id
+  `aimon:segment-sweep` (`SWEEP_LEASE_ID`) for one interval, renewed page by page and kept after the pass, and skip the
+  pass when another node holds it. The holding node's next pass extends the lease it last won instead of acquiring it
+  again, so its own tick never loses a race against that lease's expiry. **SPI addition:**
+  `SessionLogSegmentStore.scanSessions(createdBefore, cursor, limit)` returning `SegmentScanPage` — a full pass must not
+  miss a session holding an old segment, and may over-report or repeat (Redis walks its `:created` keys with `SCAN`,
+  every master in turn on a cluster connection). A custom backend implements it.
+- **Meaning changes** (session-log §10): once a range is sealed, `TranscriptBuffer.getMessages()`,
+  `AgentExecutionResult.getConversationHistory()` and `SessionSnapshot.getConversationHistory()` no longer return it;
+  `liveEntryCount()` (and `/clear`'s "Removed N messages") and `hasConversation()` count sealed ranges. Nothing seals
+  until the version-2 write mode is turned on.
+
+### Changed: on a version-2 log, compaction changes the view, not the log
+
+- **`SessionViewState` keeps what the LLM view leaves out.** It is part of `SessionLogState` and persisted with it in
+  the `version: 2` document: one `SummarySpan` (a seq range shown as the boundary / summary marker pair, with the
+  summary text and boundary metadata stored), dropped seq ranges, and elided tool results. It is changed only by
+  `SessionLogState.summarize` / `drop` / `elide` (and `TranscriptBuffer.summarizeView` / `dropFromView` /
+  `elideInView`), each of which refuses a cut that splits a `tool_use` from its `tool_result` (`LegalCuts`). A rewind
+  and `/clear` clean up whatever pointed at the seqs they cut. Design: `docs/design/session/session-log.md` §4, §6.
+- **`DefaultContextEngine` has a view mode**, chosen per transcript by its log format. On a version-2 log the model is
+  sent exactly what the in-place mode sent — the `[boundary, summary]` pair after a compaction, the view minus the
+  oldest user message after a prompt-too-long recovery — but the log keeps every message: the summary is recorded as
+  the view state's span, recovery as `drop(s, s + 1)`, and the view is projected deterministically from the log and
+  the view state (`ViewProjection`). A version-1 log is still compacted in place. Design:
+  `docs/design/agent-execution/context-engine.md` §4, §8.2.
+- **SPI additions.** `CompactionEngine.summaryInstalled(...)` fires the PostCompact hooks for a summary the caller
+  installed; `DefaultCompactionGuard.decide(...)` takes the guard's decision over a caller's view and leaves the
+  compaction to the caller; `ContextDecision.getViewSizeBefore()` makes the executor's compaction-boundary event report
+  view sizes; `DefaultContextEngine.Builder.writeFormat(V2)` refuses, at build time, a custom `CompactionGuard` or a
+  `CompactionEngine` that cannot `summarize`.
+- **Deprecated** (context-engine §8.2, session-log §3.3): `CompactionGuard`, `CompactionEngine.compact(...)`,
+  `TranscriptBuffer.replaceWith(...)` / `replaceMessageAt(...)`, `TimeBasedMicrocompact`. All keep working for the
+  version-1 write mode.
+- **Every summary request ends on the user side.** `DefaultCompactionEngine` appends a synthetic user instruction
+  (`SUMMARIZE_NOTE`) to a summary call's input that would otherwise end on an assistant message — the normal shape
+  between turns. Anthropic answers such a request as a prefill of a finished answer, with no content blocks, which
+  failed `/compact` in view mode against the real provider; the in-place (version-1) and AUTO summaries had the same
+  shape. The note goes to the summary call only, never to the log, the view or the buffer. The Anthropic client's
+  `No content blocks` error now names the stop reason and whether the request ended on an assistant message. Design:
+  `docs/design/agent-execution/context-engine.md` §13.9.
+- **Memory ingest reads the log as it was said.** `TranscriptBuffer.messagesSinceIngestMark()` and the CLI's
+  session-end derivation (`getConversationMessages()`) leave out `SYNTHETIC` entries; on a version-2 log a compacted
+  execution is no longer skipped. Ingest is sent in chunks of `IngestChunks.DEFAULT_MAX_INGEST_TOKENS` (32K estimated
+  tokens) cut at legal cuts — `IngestingExecutionMemorySink` gained a constructor taking the budget.
+
+### Changed: the session transcript is a seq-addressed log (`SessionLogState`)
+
+- **One value crosses the load and save chains whole.** `SessionLogState` (`at.aimon.core.agent.session.transcript`)
+  holds the log entries — each `(seq, message, origin)` — plus `nextSeq`, `floorSeq`, the rewind point and the format.
+  `SessionTranscript`, `SessionSnapshot`, `SessionRecord`, `StoredSessionRecord` and `TranscriptBuffer` hand it on
+  instead of copying messages and rewind point field by field. `SessionRecordView` gained a `default getLogState()`.
+  Design: `docs/design/session/session-log.md` §2, §7.2.
+- **Seqs are never reused.** A rewind cuts the log with `SessionLogState.truncateFrom(seq)` and `/clear` raises
+  `floorSeq` to `nextSeq`; neither moves `nextSeq`. `SessionRewindPoint` now holds a seq — `getMessageCount()` became
+  `getSeq()` ([`rename-maps.md`](docs/migration/rename-maps.md)).
+- **Entries record their origin.** `TranscriptBuffer.addMessage(Message, LogOrigin)` is new; the plain appenders mean
+  `CONVERSATION`. The user-context block, assembled reminders, OnStart advisory feedback, a command's reply and the
+  post-compaction restore hooks now append `SYNTHETIC` — hooks through the new `PostCompactContext.addSyntheticMessage`.
+  Whether a turn is a resumption is `hasConversation()` (a live `CONVERSATION` user entry), not a user-message count.
+- **`JsonSessionSnapshotCodec` reads `version: 2`, and still writes `version: 1`.** Version 2 carries the whole log
+  state. The write format is `SessionLogFormat` — `V1` by default, switched per node with the new
+  `DefaultTranscriptManager(store, mailbox, SessionLogFormat)` or `JsonSessionSnapshotCodec(SessionLogFormat)` once
+  every node reads version 2. The upgrade is sticky: a record read as version 2 is written as version 2 even by a node
+  still set to version 1. A binary older than this one cannot read version 2.
+- **Meaning changes.** `TranscriptBuffer.getMessages()`, `SessionSnapshot.getConversationHistory()` and
+  `AgentExecutionResult.getConversationHistory()` are "the log entries the record carries". Today that is still every
+  message; once sealing moves part of the log out of the record it will not be. `ClearCommand`'s "Removed N messages"
+  counts live entries.
+
 ### Changed: the Spring Boot baseline is 4.1, and D6 was reversed to get there
 
 - **`aimon-spring-boot-starter` now compiles against Spring Boot 4.1.1** (Spring Framework 7.0.9), up from 3.5.16.

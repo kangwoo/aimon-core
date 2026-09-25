@@ -11,7 +11,9 @@ import at.aimon.core.agent.session.inbox.SessionInbox;
 import at.aimon.core.agent.session.signal.SessionSignalBus;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.store.SessionLeaseStore;
+import at.aimon.core.agent.session.store.SessionLogSegmentStore;
 import at.aimon.core.agent.session.store.SessionRecordStore;
+import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.base.ExternallyManaged;
 import at.aimon.session.routing.DeploymentMode;
 
@@ -53,6 +55,10 @@ public final class SessionSpec {
     public static final Duration DEFAULT_DRAIN_TIMEOUT = Duration.ofSeconds(30);
 
     private final SessionRecordStore recordStore;
+    private final SessionLogSegmentStore segmentStore;
+    private final SessionLogFormat logWriteFormat;
+    private final Duration segmentSweepInterval;
+    private final Duration segmentSweepGrace;
     private final Duration drainTimeout;
     private final Duration idleTtl;
     private final Integer maxCachedSessions;
@@ -65,6 +71,10 @@ public final class SessionSpec {
 
     private SessionSpec(Builder builder) {
         this.recordStore = builder.recordStore;
+        this.segmentStore = builder.segmentStore;
+        this.logWriteFormat = Objects.requireNonNullElse(builder.logWriteFormat, SessionLogFormat.V1);
+        this.segmentSweepInterval = builder.segmentSweepInterval;
+        this.segmentSweepGrace = builder.segmentSweepGrace;
         this.drainTimeout = Objects.requireNonNullElse(builder.drainTimeout, DEFAULT_DRAIN_TIMEOUT);
         this.idleTtl = builder.idleTtl;
         this.maxCachedSessions = builder.maxCachedSessions;
@@ -84,8 +94,32 @@ public final class SessionSpec {
         if (this.maxCachedSessions != null && this.maxCachedSessions < 1) {
             throw new IllegalArgumentException("maxCachedSessions must be >= 1: " + this.maxCachedSessions);
         }
+        validateSegmentSweep();
         if (this.mode == DeploymentMode.DISTRIBUTED) {
             validateDistributed();
+        }
+    }
+
+    /**
+     * Refuses a sweep that could never run: one with a non-positive interval or grace, and one over a supplied record
+     * store with no segment store — the stack seals nothing then, so there would be nothing to sweep, and a setting
+     * that is accepted and then ignored is the worse answer.
+     */
+    private void validateSegmentSweep() {
+        if (segmentSweepInterval != null && (segmentSweepInterval.isNegative() || segmentSweepInterval.isZero())) {
+            throw new IllegalArgumentException("segmentSweepInterval must be positive: " + segmentSweepInterval);
+        }
+        if (segmentSweepGrace != null && (segmentSweepGrace.isNegative() || segmentSweepGrace.isZero())) {
+            throw new IllegalArgumentException("segmentSweepGrace must be positive: " + segmentSweepGrace);
+        }
+        if (segmentSweepGrace != null && segmentSweepInterval == null) {
+            throw new IllegalArgumentException("segmentSweepGrace is set but segmentSweepInterval is not, so the sweep"
+                    + " it configures never runs. Set segmentSweepInterval to enable the sweep.");
+        }
+        if (segmentSweepInterval != null && segmentStore == null && recordStore != null) {
+            throw new IllegalArgumentException("segmentSweepInterval is set over a supplied record store with no"
+                    + " segment store, so nothing is ever sealed and there is nothing to sweep. Supply a"
+                    + " SessionLogSegmentStore (segmentStore) from the same backend, or drop the sweep.");
         }
     }
 
@@ -160,6 +194,60 @@ public final class SessionSpec {
      */
     public Optional<SessionRecordStore> getRecordStore() {
         return Optional.ofNullable(recordStore);
+    }
+
+    /**
+     * Returns the store sealed ranges of session logs are moved into (session-log §5.6).
+     *
+     * <p>
+     * When absent, the stack pairs an in-memory segment store with an in-memory record store — the two lose everything
+     * together — and seals nothing when the record store was supplied, since an in-memory segment store behind a
+     * durable record would turn every sealed range into a gap after a restart.
+     *
+     * @return the store, or empty
+     */
+    public Optional<SessionLogSegmentStore> getSegmentStore() {
+        return Optional.ofNullable(segmentStore);
+    }
+
+    /**
+     * Returns the session log format this node writes (session-log §7.3).
+     *
+     * <p>
+     * Every build reads both formats; this decides only what is written. It is switched in two steps across a
+     * cluster: deploy with {@link SessionLogFormat#V1} until every node runs a build that reads version 2, then switch
+     * to {@link SessionLogFormat#V2}. A record already read as version 2 is written as version 2 either way. The
+     * version-2 format is what keeps the log append-only, and the rolling context engine requires it: a runtime asking
+     * for rolling on a version-1 node fails to build.
+     *
+     * @return the format, {@link SessionLogFormat#V1} by default
+     */
+    public SessionLogFormat getLogWriteFormat() {
+        return logWriteFormat;
+    }
+
+    /**
+     * Returns how often this node sweeps the segment store for orphans (session-log §11).
+     *
+     * <p>
+     * Per-session garbage collection runs only when a session is saved, so the orphans of a session nobody resumes —
+     * segments a rewind cut, a failed {@code /clear} delete, a sealing never saved, a deleted record whose segment
+     * delete failed — stay until this sweep finds them. Off unless set. Safe on every node of a cluster at once (the
+     * nodes only repeat each other's work), though one node is enough.
+     *
+     * @return the interval, or empty when the sweep is off
+     */
+    public Optional<Duration> getSegmentSweepInterval() {
+        return Optional.ofNullable(segmentSweepInterval);
+    }
+
+    /**
+     * Returns how old an unnamed segment must be before the sweep deletes it.
+     *
+     * @return the grace, or empty for {@code SessionLogSegmentSweeper.DEFAULT_GRACE} (24 hours)
+     */
+    public Optional<Duration> getSegmentSweepGrace() {
+        return Optional.ofNullable(segmentSweepGrace);
     }
 
     /**
@@ -247,6 +335,10 @@ public final class SessionSpec {
     public static final class Builder {
 
         private SessionRecordStore recordStore;
+        private SessionLogSegmentStore segmentStore;
+        private SessionLogFormat logWriteFormat;
+        private Duration segmentSweepInterval;
+        private Duration segmentSweepGrace;
         private Duration drainTimeout;
         private Duration idleTtl;
         private Integer maxCachedSessions;
@@ -269,6 +361,57 @@ public final class SessionSpec {
          */
         public Builder recordStore(@ExternallyManaged SessionRecordStore recordStore) {
             this.recordStore = recordStore;
+            return this;
+        }
+
+        /**
+         * Sets the store sealed ranges of session logs are moved into. Supply one backed by the same database as the
+         * record store — a segment is data moved out of the record and must be kept at least as safely.
+         *
+         * @param segmentStore
+         *            the store, or null (see {@link SessionSpec#getSegmentStore()})
+         * @return this builder
+         */
+        public Builder segmentStore(@ExternallyManaged SessionLogSegmentStore segmentStore) {
+            this.segmentStore = segmentStore;
+            return this;
+        }
+
+        /**
+         * Sets the session log format this node writes.
+         *
+         * @param logWriteFormat
+         *            the format, or null for {@link SessionLogFormat#V1} (see {@link SessionSpec#getLogWriteFormat()})
+         * @return this builder
+         */
+        public Builder logWriteFormat(SessionLogFormat logWriteFormat) {
+            this.logWriteFormat = logWriteFormat;
+            return this;
+        }
+
+        /**
+         * Turns on the store-wide orphan segment sweep and sets how often it runs.
+         *
+         * @param segmentSweepInterval
+         *            a positive interval, or null to leave the sweep off (see
+         *            {@link SessionSpec#getSegmentSweepInterval()})
+         * @return this builder
+         */
+        public Builder segmentSweepInterval(Duration segmentSweepInterval) {
+            this.segmentSweepInterval = segmentSweepInterval;
+            return this;
+        }
+
+        /**
+         * Sets how old an unnamed segment must be before the sweep deletes it. Needs
+         * {@link #segmentSweepInterval(Duration)}.
+         *
+         * @param segmentSweepGrace
+         *            a positive duration, or null for the sweeper's default
+         * @return this builder
+         */
+        public Builder segmentSweepGrace(Duration segmentSweepGrace) {
+            this.segmentSweepGrace = segmentSweepGrace;
             return this;
         }
 

@@ -1,0 +1,328 @@
+package at.aimon.core.agent.session.transcript;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+
+import org.junit.jupiter.api.Test;
+
+import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.store.InMemorySessionLogSegmentStore;
+import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
+import at.aimon.core.agent.session.store.SegmentId;
+import at.aimon.core.agent.session.store.SegmentInfo;
+import at.aimon.core.agent.session.store.SessionCheckpointMailbox;
+import at.aimon.core.agent.session.store.SessionLogSegment;
+import at.aimon.core.llm.Message;
+
+/**
+ * The storage half of sealing as {@link DefaultTranscriptManager} runs it: seal before the turn-end save, delete what
+ * {@code /clear} cut loose after it, collect orphans past the grace period (session-log §5.3, §5.4, §6.2).
+ */
+class DefaultTranscriptManagerSealingTest {
+
+    private static final SessionId SESSION = SessionId.of("manager-seal");
+    private static final Instant NOW = Instant.parse("2026-09-24T12:00:00Z");
+
+    private final InMemorySessionRecordStore records = new InMemorySessionRecordStore();
+    private final InMemorySessionLogSegmentStore segments = new InMemorySessionLogSegmentStore();
+    private final AtomicReference<Instant> now = new AtomicReference<>(NOW);
+    private final Clock clock = new Clock() {
+        @Override
+        public ZoneOffset getZone() {
+            return ZoneOffset.UTC;
+        }
+
+        @Override
+        public Clock withZone(java.time.ZoneId zone) {
+            return this;
+        }
+
+        @Override
+        public Instant instant() {
+            return now.get();
+        }
+    };
+
+    private DefaultTranscriptManager manager() {
+        return new DefaultTranscriptManager(records, SessionCheckpointMailbox.disabled(), SessionLogFormat.V2,
+                SessionLogStorage.builder(segments).minSealTokens(0).clock(clock).build());
+    }
+
+    /** A turn that compacted everything but its last answer. */
+    private static TranscriptBuffer compactedTurn(DefaultTranscriptManager manager) {
+        final TranscriptBuffer buffer = manager.initialize(SESSION, "system");
+        buffer.addUserMessage("q1");
+        buffer.addAssistantMessage("a1");
+        buffer.addUserMessage("q2");
+        buffer.addAssistantMessage("a2");
+        buffer.summarizeView(
+                SummarySpan.builder().fromSeq(0).toSeq(3).summaryText("s").boundaryId("b").trigger("AUTO").build());
+        return buffer;
+    }
+
+    @Test
+    void theTurnEndSaveSealsBeforeItWrites() {
+        final DefaultTranscriptManager manager = manager();
+
+        manager.saveSilently(compactedTurn(manager));
+
+        final SessionLogState stored = records.load(SESSION).orElseThrow().getLogState();
+        assertThat(stored.getEntries()).extracting(entry -> entry.getMessage().getContent()).containsExactly("a2");
+        assertThat(stored.getManifest()).hasSize(1);
+        assertThat(segments.list(SESSION)).hasSize(1);
+        assertThat(manager.initialize(SESSION, "system").liveEntryCount()).isEqualTo(4);
+    }
+
+    /**
+     * A seal that lands marks the buffer dirty and so raises a checkpoint. On a background mailbox that checkpoint has
+     * to be drained <em>before</em> the authoritative save: raised after the flush barrier it would be written after
+     * the
+     * save by the writer thread, and undo whatever an out-of-turn write (a delete, a persisted rewind) did in between.
+     */
+    @Test
+    void theSealsCheckpointIsDrainedBeforeTheAuthoritativeSave() {
+        final List<String> writers = new CopyOnWriteArrayList<>();
+        final InMemorySessionRecordStore recording = new InMemorySessionRecordStore() {
+            @Override
+            public void mergeFromSnapshot(SessionSnapshot snapshot) {
+                writers.add(Thread.currentThread().getName());
+                super.mergeFromSnapshot(snapshot);
+            }
+        };
+        final SessionCheckpointMailbox mailbox = SessionCheckpointMailbox.background();
+        try {
+            final DefaultTranscriptManager manager = new DefaultTranscriptManager(recording, mailbox,
+                    SessionLogFormat.V2, SessionLogStorage.builder(segments).minSealTokens(0).clock(clock).build());
+            final TranscriptBuffer buffer = compactedTurn(manager);
+            mailbox.flush(SESSION);
+            writers.clear();
+
+            manager.saveSilently(buffer);
+            assertThat(mailbox.pendingCheckpointSessionIds()).as("nothing queued behind the save").isEmpty();
+
+            recording.delete(SESSION);
+            segments.deleteAll(SESSION);
+        } finally {
+            mailbox.close();
+        }
+
+        assertThat(writers).last().isEqualTo(Thread.currentThread().getName());
+        assertThat(recording.load(SESSION)).as("no late checkpoint resurrects the deleted session").isEmpty();
+    }
+
+    @Test
+    void theThrowingSaveAlsoDrainsTheSealsCheckpointFirst() {
+        final List<String> writers = new CopyOnWriteArrayList<>();
+        final InMemorySessionRecordStore recording = new InMemorySessionRecordStore() {
+            @Override
+            public void mergeFromSnapshot(SessionSnapshot snapshot) {
+                writers.add(Thread.currentThread().getName());
+                super.mergeFromSnapshot(snapshot);
+            }
+        };
+        final SessionCheckpointMailbox mailbox = SessionCheckpointMailbox.background();
+        try {
+            final DefaultTranscriptManager manager = new DefaultTranscriptManager(recording, mailbox,
+                    SessionLogFormat.V2, SessionLogStorage.builder(segments).minSealTokens(0).clock(clock).build());
+            final TranscriptBuffer buffer = compactedTurn(manager);
+            mailbox.flush(SESSION);
+            writers.clear();
+
+            manager.save(buffer);
+            assertThat(mailbox.pendingCheckpointSessionIds()).isEmpty();
+            recording.delete(SESSION);
+        } finally {
+            mailbox.close();
+        }
+
+        assertThat(writers).last().isEqualTo(Thread.currentThread().getName());
+        assertThat(recording.load(SESSION)).isEmpty();
+    }
+
+    @Test
+    void theLogReaderSeesTheWholeLog() {
+        final DefaultTranscriptManager manager = manager();
+        manager.saveSilently(compactedTurn(manager));
+
+        final SessionLogReader reader = manager.getLogReader().orElseThrow();
+
+        assertThat(reader.read(SESSION, 0, Long.MAX_VALUE).getEntries()).hasSize(4);
+    }
+
+    @Test
+    void clearDeletesTheSealedSegmentsAfterTheClearedRecordIsSaved() {
+        final DefaultTranscriptManager manager = manager();
+        manager.saveSilently(compactedTurn(manager));
+
+        final TranscriptBuffer next = manager.initialize(SESSION, "system");
+        next.clear();
+        manager.saveSilently(next);
+
+        assertThat(records.load(SESSION).orElseThrow().getLogState().getManifest()).isEmpty();
+        assertThat(segments.list(SESSION)).isEmpty();
+    }
+
+    @Test
+    void clearKeepsTheSegmentsWhenTheSaveFails() {
+        final DefaultTranscriptManager manager = manager();
+        manager.saveSilently(compactedTurn(manager));
+        final InMemorySessionRecordStore failing = new InMemorySessionRecordStore() {
+            @Override
+            public void mergeFromSnapshot(SessionSnapshot snapshot) {
+                throw new IllegalStateException("down");
+            }
+        };
+        final DefaultTranscriptManager broken = new DefaultTranscriptManager(failing,
+                SessionCheckpointMailbox.disabled(), SessionLogFormat.V2,
+                SessionLogStorage.builder(segments).minSealTokens(0).clock(clock).build());
+        final TranscriptBuffer next = manager.initialize(SESSION, "system");
+        next.clear();
+
+        broken.saveSilently(next);
+
+        assertThat(segments.list(SESSION)).as("the stored record still names it").hasSize(1);
+        assertThat(next.pendingSegmentDeletions()).hasSize(1);
+    }
+
+    /**
+     * session-log §12.4: a checkpoint whose snapshot predates the {@code /clear} save, still inside its store call when
+     * that save's drain gives up, lands afterwards and puts the pre-clear manifest back. Deleting the cleared segments
+     * then would turn every read of that record into a gap, so the deletes wait for a save whose drain completes.
+     */
+    @Test
+    void aClearWhoseDrainGaveUpDefersItsDeletesUntilALateCheckpointCannotLand() throws Exception {
+        final CountDownLatch entered = new CountDownLatch(1);
+        final CountDownLatch release = new CountDownLatch(1);
+        final AtomicBoolean blockNext = new AtomicBoolean(false);
+        final List<Boolean> staleWriteReadable = new CopyOnWriteArrayList<>();
+        final InMemorySessionRecordStore stalling = new InMemorySessionRecordStore() {
+            @Override
+            public void mergeFromSnapshot(SessionSnapshot snapshot) {
+                final boolean stall = Thread.currentThread().getName().equals("aimon-session-checkpoint")
+                        && blockNext.compareAndSet(true, false);
+                if (stall) {
+                    entered.countDown();
+                    try {
+                        release.await(10, TimeUnit.SECONDS);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+                super.mergeFromSnapshot(snapshot);
+                if (stall) {
+                    // The moment the stale manifest is back in the record: is every segment it names still there?
+                    staleWriteReadable.add(snapshot.getLogState().getManifest().stream()
+                            .allMatch(line -> segments.get(SESSION, line.getSegmentId()).isPresent()));
+                }
+            }
+        };
+        final SessionCheckpointMailbox mailbox = SessionCheckpointMailbox.background(Duration.ofMillis(200));
+        try {
+            final DefaultTranscriptManager manager = new DefaultTranscriptManager(stalling, mailbox,
+                    SessionLogFormat.V2, SessionLogStorage.builder(segments).minSealTokens(0).clock(clock).build());
+            manager.saveSilently(compactedTurn(manager));
+            final List<SegmentId> sealed = segments.list(SESSION).stream().map(SegmentInfo::getId).toList();
+            assertThat(sealed).hasSize(1);
+
+            final TranscriptBuffer next = manager.initialize(SESSION, "system");
+            blockNext.set(true);
+            next.addUserMessage("before the clear");
+            assertThat(entered.await(10, TimeUnit.SECONDS)).as("the pre-clear checkpoint is in its store call")
+                    .isTrue();
+            next.clear();
+
+            manager.saveSilently(next);
+
+            assertThat(segments.list(SESSION)).as("deferred: the pre-clear checkpoint may still land").hasSize(1);
+            assertThat(next.pendingSegmentDeletions()).containsExactlyElementsOf(sealed);
+
+            release.countDown();
+            mailbox.flush(SESSION);
+            assertThat(staleWriteReadable).as("the stale manifest landed with its segments still there")
+                    .containsExactly(true);
+
+            manager.saveSilently(next);
+
+            assertThat(stalling.load(SESSION).orElseThrow().getLogState().getManifest()).isEmpty();
+            assertThat(segments.list(SESSION)).as("a save whose drain completed deletes them").isEmpty();
+            assertThat(next.pendingSegmentDeletions()).isEmpty();
+        } finally {
+            release.countDown();
+            mailbox.close();
+        }
+    }
+
+    @Test
+    void orphansAreCollectedOnlyPastTheGracePeriod() {
+        final DefaultTranscriptManager manager = manager();
+        manager.saveSilently(compactedTurn(manager));
+        final SegmentId orphan = SegmentId.generate();
+        segments.put(SessionLogSegment.builder().sessionId(SESSION).id(orphan).fromSeq(0).toSeq(1).entryCount(1)
+                .payload("late write").createdAt(NOW).build());
+
+        manager.saveSilently(manager.initialize(SESSION, "system"));
+        assertThat(segments.list(SESSION)).extracting(SegmentInfo::getId).contains(orphan);
+
+        now.set(NOW.plus(Duration.ofHours(2)));
+        manager.saveSilently(manager.initialize(SESSION, "system"));
+        assertThat(segments.list(SESSION)).extracting(SegmentInfo::getId).doesNotContain(orphan).hasSize(1);
+    }
+
+    @Test
+    void theExecutorSealPointSealsMidTurn() {
+        final DefaultTranscriptManager manager = manager();
+        final TranscriptBuffer buffer = compactedTurn(manager);
+
+        manager.seal(buffer);
+
+        assertThat(buffer.getManifest()).hasSize(1);
+        assertThat(records.load(SESSION)).as("sealing does not write the record").isEmpty();
+    }
+
+    @Test
+    void withoutStorageNothingIsSealed() {
+        final DefaultTranscriptManager manager = new DefaultTranscriptManager(records,
+                SessionCheckpointMailbox.disabled(), SessionLogFormat.V2);
+
+        manager.saveSilently(compactedTurn(manager));
+
+        assertThat(records.load(SESSION).orElseThrow().getLogState().getEntries()).hasSize(4);
+        assertThat(manager.getLogReader()).isEmpty();
+    }
+
+    @Test
+    void aZeroGracePeriodIsRefused() {
+        assertThatThrownBy(() -> SessionLogStorage.builder(segments).segmentGcGrace(Duration.ZERO).build())
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(new SessionLogGarbageCollector(SessionLogStorage.builder(segments).build()).collect(SESSION,
+                SessionLogState.empty())).isZero();
+    }
+
+    @Test
+    void messagesSealedMidTurnReachTheIngestDelta() {
+        final DefaultTranscriptManager manager = manager();
+        final TranscriptBuffer buffer = manager.initialize(SESSION, "system");
+        buffer.markIngestPoint();
+        buffer.addMessage(Message.user("q1"));
+        buffer.addMessage(Message.assistant("a1"));
+        buffer.addMessage(Message.user("q2"));
+        buffer.summarizeView(
+                SummarySpan.builder().fromSeq(0).toSeq(2).summaryText("s").boundaryId("b").trigger("AUTO").build());
+
+        manager.seal(buffer);
+
+        assertThat(buffer.getMessages()).hasSize(1);
+        assertThat(buffer.messagesSinceIngestMark()).extracting(Message::getContent).containsExactly("q1", "a1", "q2");
+    }
+}

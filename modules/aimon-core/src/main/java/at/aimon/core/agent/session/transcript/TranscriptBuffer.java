@@ -11,16 +11,38 @@ import java.util.Optional;
 import at.aimon.core.agent.SubmitOptions;
 import at.aimon.core.agent.input.UserInput;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.store.SegmentId;
 import at.aimon.core.agent.session.store.SessionCheckpointMailbox;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.Role;
 
 /**
- * The append-oriented, mutable conversation history of one session.
+ * The append-oriented, mutable session log of one session, as a running turn sees it.
  *
  * <p>
- * Maintains a list of messages exchanged between the user and assistant, along with an optional system prompt for
- * persistence.
+ * Holds the log entries the record carries — each a message, its seq and its {@link LogOrigin} — along with an
+ * optional system prompt for persistence. Entries are addressed by seq, which is never reused (see
+ * {@link SessionLogState}); {@link #getMessages()} is the messages of those entries, in seq order.
+ *
+ * <p>
+ * <b>Origin.</b> {@link #addMessage(Message)} and the other plain appenders record
+ * {@link LogOrigin#CONVERSATION}. Anything the runtime puts into the log on its own — the user-context block, an
+ * assembled reminder, hook feedback, a command's reply, a file list re-attached after compaction — goes through
+ * {@link #addMessage(Message, LogOrigin)} with {@link LogOrigin#SYNTHETIC}, so that readers of the log as <em>what was
+ * said</em> can tell the two apart.
+ *
+ * <p>
+ * <b>Log and view.</b> What the model is sent is not {@link #getMessages()}: it is the view a
+ * {@link at.aimon.core.agent.context.ContextEngine} computes from the log and the {@link #getViewState() view state}.
+ * On a version-2 buffer compaction and recovery change the view state ({@link #summarizeView(SummarySpan)},
+ * {@link #dropFromView(long, long)}, {@link #elideInView(long, String)}) and the log stays append-only; only the
+ * version-1 write mode still rewrites it with {@link #replaceWith(List)}.
+ *
+ * <p>
+ * <b>Sealing.</b> A range the view no longer shows verbatim can be moved out of the record into a segment
+ * ({@link #seal(SessionLogManifestEntry)}, session-log §5). The sealed entries leave {@link #getMessages()} and the
+ * persisted form at once, but stay in this buffer's memory until the execution ends, so the execution-end ingest still
+ * sees them. A buffer lives for one turn, so "until the execution ends" is "until this buffer is dropped".
  *
  * <p>
  * <b>Thread safety:</b> Mutator and reader methods are {@code synchronized} on this instance, so concurrent access
@@ -80,8 +102,27 @@ public class TranscriptBuffer {
     private final SessionId sessionId;
     private final Clock clock;
     private String systemPrompt;
-    private final List<Message> messages;
+    private final List<SessionLogEntry> entries;
     private final List<Instant> messageTimestamps;
+    private long nextSeq;
+    private long floorSeq;
+    private SessionLogFormat format = SessionLogFormat.V1;
+    private SessionViewState viewState = SessionViewState.empty();
+    private final List<SessionLogManifestEntry> manifest = new ArrayList<>();
+
+    /**
+     * Entries sealed out of the record while this buffer was alive. Not persisted and not part of
+     * {@link #getMessages()};
+     * kept so {@link #messagesSinceIngestMark()} can still hand the execution's sealed messages to memory (session-log
+     * §5.3).
+     */
+    private final List<SessionLogEntry> sealedInMemory = new ArrayList<>();
+
+    /**
+     * Segments a {@link #clear()} cut loose. They are deleted only after the cleared record has been saved, so no saved
+     * record ever points at a deleted segment (session-log §6.2).
+     */
+    private final List<SegmentId> pendingSegmentDeletions = new ArrayList<>();
     private long version;
     private volatile DirtyListener dirtyListener;
 
@@ -97,15 +138,14 @@ public class TranscriptBuffer {
     private SessionRewindPoint rewindPoint;
 
     /**
-     * How many messages this buffer held when the current execution started, or {@code -1} when there is no usable
-     * mark.
+     * The seq the current execution's first entry received, or {@code -1} when there is no usable mark.
      *
      * <p>
-     * The counterpart of {@link #rewindPoint} for the memory ingest path, and it is a count for the same reason:
-     * {@code Message} carries no stable id, so "which messages are new" can only be a position. That makes it
-     * vulnerable to the same thing — {@link #replaceWith(List)} rewrites the history under it, and an index into a
-     * history that no longer exists is worse than no index at all. So the mark is dropped there, exactly as the
-     * rewind point is, and {@link #messagesSinceIngestMark()} answers empty rather than guessing.
+     * The counterpart of {@link #rewindPoint} for the memory ingest path, and a seq for the same reason:
+     * {@code Message} carries no stable id, so "which messages are new" has to be an address in the log. It is still
+     * vulnerable to one thing — {@link #replaceWith(List)} rewrites the log under it, and the entries after the mark
+     * are then the rewrite, not this execution's messages. So the mark is dropped there, exactly as the rewind point
+     * is, and {@link #messagesSinceIngestMark()} answers empty rather than guessing.
      *
      * <p>
      * Node-local and not persisted. It is set and read within one execution, in one process, so there is nothing for a
@@ -116,7 +156,7 @@ public class TranscriptBuffer {
      * Like the rewind point, it neither bumps {@link #getVersion()} nor notifies the dirty listener — it says nothing
      * about the LLM-visible history.
      */
-    private int ingestMark = -1;
+    private long ingestMark = -1;
 
     /**
      * Creates an empty buffer without a system prompt.
@@ -148,8 +188,9 @@ public class TranscriptBuffer {
      * Creates a buffer with a system prompt and initial messages.
      *
      * <p>
-     * Creates a defensive copy of the provided messages list. Each initial message receives the current clock instant
-     * as
+     * Creates a defensive copy of the provided messages list. The messages become a version-1 log — seqs
+     * {@code 0..n-1}, every entry {@link LogOrigin#CONVERSATION}. Each initial message receives the current clock
+     * instant as
      * its timestamp — original timestamps from a prior session are not preserved through this entry point. Use
      * {@link #fromSnapshot(SessionSnapshot)} for snapshot rehydration semantics.
      *
@@ -189,13 +230,12 @@ public class TranscriptBuffer {
         this.sessionId = Objects.requireNonNull(sessionId, "Session id cannot be null");
         Objects.requireNonNull(messages, "Messages cannot be null");
         this.clock = Objects.requireNonNull(clock, "Clock cannot be null");
-        this.messages = new ArrayList<>(messages);
+        this.entries = new ArrayList<>(messages.size());
         this.messageTimestamps = new ArrayList<>(messages.size());
-        if (!messages.isEmpty()) {
-            final Instant now = clock.instant();
-            for (int i = 0; i < messages.size(); i++) {
-                this.messageTimestamps.add(now);
-            }
+        final Instant now = clock.instant();
+        for (Message message : messages) {
+            this.entries.add(SessionLogEntry.of(nextSeq++, message, LogOrigin.CONVERSATION));
+            this.messageTimestamps.add(now);
         }
         this.systemPrompt = systemPrompt;
     }
@@ -210,9 +250,7 @@ public class TranscriptBuffer {
      */
     public synchronized void addUserMessage(String content) {
         Objects.requireNonNull(content, "Content cannot be null");
-        messages.add(Message.user(content));
-        messageTimestamps.add(clock.instant());
-        markDirty();
+        append(Message.user(content), LogOrigin.CONVERSATION);
     }
 
     /**
@@ -225,13 +263,11 @@ public class TranscriptBuffer {
      */
     public synchronized void addAssistantMessage(String content) {
         Objects.requireNonNull(content, "Content cannot be null");
-        messages.add(Message.assistant(content));
-        messageTimestamps.add(clock.instant());
-        markDirty();
+        append(Message.assistant(content), LogOrigin.CONVERSATION);
     }
 
     /**
-     * Adds a message to the conversation.
+     * Adds a message to the conversation, as {@link LogOrigin#CONVERSATION}.
      *
      * @param message
      *            The message to add (must not be null)
@@ -239,40 +275,292 @@ public class TranscriptBuffer {
      *             if message is null
      */
     public synchronized void addMessage(Message message) {
+        addMessage(message, LogOrigin.CONVERSATION);
+    }
+
+    /**
+     * Appends a message to the log with an explicit origin.
+     *
+     * <p>
+     * Runtime injections — anything the conversation did not say — pass {@link LogOrigin#SYNTHETIC}. The model sees
+     * them like any other message; readers of the log as a record of the conversation skip them.
+     *
+     * @param message
+     *            The message to add (must not be null)
+     * @param origin
+     *            where the message came from (must not be null)
+     * @throws NullPointerException
+     *             if either argument is null
+     */
+    public synchronized void addMessage(Message message, LogOrigin origin) {
         Objects.requireNonNull(message, "Message cannot be null");
-        messages.add(message);
+        Objects.requireNonNull(origin, "Origin cannot be null");
+        append(message, origin);
+    }
+
+    private void append(Message message, LogOrigin origin) {
+        entries.add(SessionLogEntry.of(nextSeq++, message, origin));
         messageTimestamps.add(clock.instant());
         markDirty();
     }
 
     /**
-     * Gets all messages in the conversation.
+     * Gets the messages of the log entries this buffer holds, in seq order.
      *
      * <p>
-     * Returns an immutable copy to prevent external modification.
+     * That is the part of the session log held in the record — until sealing moves part of the log out of the record,
+     * every message of the session. It is not the LLM view: what the model is sent is decided by
+     * {@link at.aimon.core.agent.context.ContextEngine}. Returns an immutable copy to prevent external modification.
      *
      * @return An immutable list of messages (never null, may be empty)
      */
     public synchronized List<Message> getMessages() {
-        return Collections.unmodifiableList(new ArrayList<>(messages));
+        final List<Message> messages = new ArrayList<>(entries.size());
+        for (SessionLogEntry entry : entries) {
+            messages.add(entry.getMessage());
+        }
+        return Collections.unmodifiableList(messages);
     }
 
     /**
-     * Gets the number of messages in the conversation.
+     * Gets the number of messages this buffer holds.
      *
      * @return The message count
      */
     public synchronized int size() {
-        return messages.size();
+        return entries.size();
     }
 
     /**
-     * Checks if the conversation is empty.
+     * Checks if this buffer holds no messages.
      *
      * @return true if no messages exist, false otherwise
      */
     public synchronized boolean isEmpty() {
-        return messages.isEmpty();
+        return entries.isEmpty();
+    }
+
+    /**
+     * Returns whether the session has a live conversation user message — a {@link LogOrigin#CONVERSATION} entry with
+     * the user role.
+     *
+     * <p>
+     * This is the "is this session being resumed" question. Synthetic user messages do not answer it, and neither
+     * does the number of seqs handed out: a new session whose first turn was interrupted and rewound has used seqs
+     * but holds no conversation.
+     *
+     * @return true if a live conversation user message exists
+     * @see SessionLogState#hasConversation()
+     */
+    public synchronized boolean hasConversation() {
+        if (!manifest.isEmpty()) {
+            return true;
+        }
+        for (SessionLogEntry entry : entries) {
+            if (entry.getOrigin() == LogOrigin.CONVERSATION && entry.getMessage() != null
+                    && entry.getMessage().getRole() == Role.USER) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Returns how many entries of the log are still alive — neither cut by a rewind nor removed by {@link #clear()}.
+     *
+     * @return the live entry count (never negative)
+     * @see SessionLogState#liveEntryCount()
+     */
+    public synchronized int liveEntryCount() {
+        int count = entries.size();
+        for (SessionLogManifestEntry line : manifest) {
+            count += line.getEntryCount();
+        }
+        return count;
+    }
+
+    /**
+     * Returns the sealed ranges of this buffer's log.
+     *
+     * @return an immutable list sorted by {@code fromSeq} (never null)
+     */
+    public synchronized List<SessionLogManifestEntry> getManifest() {
+        return List.copyOf(manifest);
+    }
+
+    /**
+     * Seals the range of {@code line}: its entries leave the record and the manifest names the segment the caller has
+     * already written them to. See {@link SessionLogState#seal(SessionLogManifestEntry)} for the rules.
+     *
+     * <p>
+     * The sealed entries stay in this buffer's memory — not in {@link #getMessages()}, not persisted — until the buffer
+     * is dropped, so the execution-end ingest still reads them. A mutation of what is persisted, so it bumps the
+     * version and notifies the dirty listener.
+     *
+     * @param line
+     *            the manifest line for the segment just written (must not be null)
+     * @throws IllegalStateException
+     *             if this buffer's log is version 1
+     * @throws IllegalArgumentException
+     *             if the line breaks a rule of {@link SessionLogState#seal(SessionLogManifestEntry)}
+     */
+    public synchronized void seal(SessionLogManifestEntry line) {
+        final SessionLogState sealed = getLogState().seal(line);
+        for (int i = entries.size() - 1; i >= 0; i--) {
+            if (line.contains(entries.get(i).getSeq())) {
+                sealedInMemory.add(entries.remove(i));
+                messageTimestamps.remove(i);
+            }
+        }
+        sealedInMemory.sort((a, b) -> Long.compare(a.getSeq(), b.getSeq()));
+        manifest.clear();
+        manifest.addAll(sealed.getManifest());
+        markDirty();
+    }
+
+    /**
+     * Returns the segments a {@link #clear()} cut loose and that nobody has deleted yet.
+     *
+     * @return an immutable list (never null)
+     */
+    synchronized List<SegmentId> pendingSegmentDeletions() {
+        return List.copyOf(pendingSegmentDeletions);
+    }
+
+    /**
+     * Forgets pending deletions once they have been dealt with.
+     *
+     * @param done
+     *            the ids to forget (must not be null)
+     */
+    synchronized void forgetSegmentDeletions(List<SegmentId> done) {
+        pendingSegmentDeletions.removeAll(done);
+    }
+
+    /**
+     * Returns the seq the next appended entry will receive.
+     *
+     * @return the next seq (never negative)
+     */
+    public synchronized long getNextSeq() {
+        return nextSeq;
+    }
+
+    /**
+     * Returns the format this buffer's log must at least be written in.
+     *
+     * @return the format (never null)
+     */
+    public synchronized SessionLogFormat getFormat() {
+        return format;
+    }
+
+    /**
+     * Requires this buffer's log to be written in at least {@code minimum} from now on. Never lowers the format.
+     *
+     * <p>
+     * Bookkeeping only — no version bump, no dirty notification — like {@link #beginTurn}: nothing the model sees
+     * changes, and the next save writes the format anyway.
+     *
+     * @param minimum
+     *            the format to require (must not be null)
+     */
+    public synchronized void requireFormat(SessionLogFormat minimum) {
+        this.format = format.atLeast(Objects.requireNonNull(minimum, "minimum cannot be null"));
+    }
+
+    /**
+     * Returns the log this buffer holds as one immutable value — entries, seqs, rewind point, format.
+     *
+     * @return the log state (never null)
+     */
+    public synchronized SessionLogState getLogState() {
+        return SessionLogState.builder().entries(entries).nextSeq(nextSeq).floorSeq(floorSeq).rewindPoint(rewindPoint)
+                .format(format).viewState(viewState).manifest(manifest).build();
+    }
+
+    /**
+     * Returns what the LLM view leaves out of this buffer's log.
+     *
+     * @return the view state (never null; empty for a version-1 buffer)
+     */
+    public synchronized SessionViewState getViewState() {
+        return viewState;
+    }
+
+    /**
+     * Returns the messages of the {@link LogOrigin#CONVERSATION} entries this buffer holds, in seq order — what was
+     * said, without what the runtime injected.
+     *
+     * @return an immutable list (never null, may be empty)
+     * @see SessionLogState#getConversationMessages()
+     */
+    public synchronized List<Message> getConversationMessages() {
+        final List<Message> conversation = new ArrayList<>(entries.size());
+        for (SessionLogEntry entry : entries) {
+            if (entry.getOrigin() == LogOrigin.CONVERSATION) {
+                conversation.add(entry.getMessage());
+            }
+        }
+        return Collections.unmodifiableList(conversation);
+    }
+
+    /**
+     * Makes {@code span} the view's summary span. The log is not touched. See
+     * {@link SessionLogState#summarize(SummarySpan)} for the rules.
+     *
+     * <p>
+     * A mutation of what the model is sent, so it bumps the version and notifies the dirty listener: the view state
+     * is persisted with the record, through the same checkpoint path as the log.
+     *
+     * @param span
+     *            the span (must not be null)
+     * @throws IllegalStateException
+     *             if this buffer's log is version 1
+     * @throws IllegalArgumentException
+     *             if the span breaks a rule of {@link SessionLogState#summarize(SummarySpan)}
+     */
+    public synchronized void summarizeView(SummarySpan span) {
+        adoptViewState(getLogState().summarize(span));
+    }
+
+    /**
+     * Leaves {@code [fromSeq, toSeq)} out of the view. The log is not touched. See
+     * {@link SessionLogState#drop(long, long)} for the rules.
+     *
+     * @param fromSeq
+     *            the first seq to drop
+     * @param toSeq
+     *            the first seq after the dropped range
+     * @throws IllegalStateException
+     *             if this buffer's log is version 1
+     * @throws IllegalArgumentException
+     *             if the range breaks a rule of {@link SessionLogState#drop(long, long)}
+     */
+    public synchronized void dropFromView(long fromSeq, long toSeq) {
+        adoptViewState(getLogState().drop(fromSeq, toSeq));
+    }
+
+    /**
+     * Shows the tool result bodies of the entry at {@code seq} as {@code placeholder}. The log is not touched. See
+     * {@link SessionLogState#elide(long, String)} for the rules.
+     *
+     * @param seq
+     *            the seq of a tool result entry
+     * @param placeholder
+     *            the text shown instead (must not be null)
+     * @throws IllegalStateException
+     *             if this buffer's log is version 1
+     * @throws IllegalArgumentException
+     *             if the entry breaks a rule of {@link SessionLogState#elide(long, String)}
+     */
+    public synchronized void elideInView(long seq, String placeholder) {
+        adoptViewState(getLogState().elide(seq, placeholder));
+    }
+
+    private void adoptViewState(SessionLogState changed) {
+        viewState = changed.getViewState();
+        markDirty();
     }
 
     /**
@@ -286,11 +574,23 @@ public class TranscriptBuffer {
      * <p>
      * The supplied list is defensively copied; later mutations of the source list are not reflected.
      *
+     * <p>
+     * <b>This rewrites the log.</b> The replacement entries receive fresh seqs from {@code nextSeq} — seqs are never
+     * reused — and {@code floorSeq} rises to the first of them, since nothing before survives. A replacement message
+     * that is the very instance of an entry being replaced keeps that entry's origin, matched in order; every other
+     * one is {@link LogOrigin#CONVERSATION}. This is the in-place behaviour of the version-1 write mode. Any view state
+     * pointed at the rewritten entries and is dropped with them.
+     *
      * @param newMessages
      *            the new message list (must not be null; may be empty)
      * @throws NullPointerException
      *             if {@code newMessages} is null or contains null elements
+     * @deprecated A version-2 log is append-only: the view is shrunk through the view state
+     *             ({@link #summarizeView(SummarySpan)}, {@link #dropFromView(long, long)}), by a
+     *             {@link at.aimon.core.agent.context.ContextEngine}. This remains only for the version-1 write mode
+     *             (session-log §3.3).
      */
+    @Deprecated
     public synchronized void replaceWith(List<Message> newMessages) {
         Objects.requireNonNull(newMessages, "newMessages cannot be null");
         for (Message message : newMessages) {
@@ -299,24 +599,37 @@ public class TranscriptBuffer {
         // Caller must serialize access (see class-level "Thread safety" Javadoc). The clear+addAll pair is logically
         // atomic from the perspective of the only legal observer (the ReAct loop driving the conversation), since no
         // other thread is allowed to mutate the list concurrently.
-        messages.clear();
-        messages.addAll(newMessages);
+        final List<SessionLogEntry> replaced = new ArrayList<>(entries);
+        entries.clear();
         messageTimestamps.clear();
-        if (!newMessages.isEmpty()) {
-            final Instant now = clock.instant();
-            for (int i = 0; i < newMessages.size(); i++) {
-                messageTimestamps.add(now);
+        floorSeq = nextSeq;
+        final Instant now = clock.instant();
+        int cursor = 0;
+        for (Message message : newMessages) {
+            LogOrigin origin = LogOrigin.CONVERSATION;
+            for (int i = cursor; i < replaced.size(); i++) {
+                if (replaced.get(i).getMessage() == message) {
+                    origin = replaced.get(i).getOrigin();
+                    cursor = i + 1;
+                    break;
+                }
             }
+            entries.add(SessionLogEntry.of(nextSeq++, message, origin));
+            messageTimestamps.add(now);
         }
-        // The history the mark counted is gone, so the mark cannot survive it. Compaction typically leaves far fewer
-        // messages than there were, and a count that is no longer a position in the transcript does more than rewind
-        // to the wrong place: it is validated where the transcript is rebuilt, so the end-of-turn persist would throw
-        // into saveSilently, which swallows it, and the whole turn's history would be dropped in silence. Losing the
-        // ability to retry this one turn is the honest price.
+        // The entries the point addressed are gone, so the point cannot survive them. It now lies below floorSeq, which
+        // is not a position in this log: it is validated where the transcript is rebuilt, so the end-of-turn persist
+        // would throw into saveSilently, which swallows it, and the whole turn's history would be dropped in silence.
+        // Losing the ability to retry this one turn is the honest price.
         rewindPoint = null;
-        // Same reasoning, different consequence: the ingest mark counted messages that are gone, so a delta taken
-        // against it would re-send the compaction summary as if it were new conversation, or send a slice of it. The
-        // execution that was rewritten forgoes its ingest and the next one marks afresh.
+        viewState = SessionViewState.empty();
+        // The sealed ranges lie below the new floor and cannot be addressed any more. Their segments become orphans,
+        // which garbage collection deletes once the rewritten record is saved.
+        manifest.clear();
+        sealedInMemory.clear();
+        // Same reasoning, different consequence: every rewritten entry now has a seq above the ingest mark, so a delta
+        // taken against it would re-send the compaction summary as if it were new conversation. The execution that
+        // was rewritten forgoes its ingest and the next one marks afresh.
         ingestMark = -1;
         markDirty();
     }
@@ -326,7 +639,8 @@ public class TranscriptBuffer {
      *
      * <p>
      * Used by {@link at.aimon.core.agent.compact.TimeBasedMicrocompact} to rewrite a single message (typically a tool
-     * result whose content is being scrubbed) without disturbing the timestamp side-channel. The original timestamp is
+     * result whose content is being scrubbed) without disturbing the timestamp side-channel. The entry keeps its seq
+     * and origin. The original timestamp is
      * intentionally retained so that subsequent microcompact passes can recognise the slot as already aged out and skip
      * it as idempotent.
      *
@@ -338,13 +652,17 @@ public class TranscriptBuffer {
      *             if {@code index} is negative or {@code >= size()}
      * @throws NullPointerException
      *             if {@code newMessage} is null
+     * @deprecated Rewrites the log. Its one caller, {@link at.aimon.core.agent.compact.TimeBasedMicrocompact}, has no
+     *             production wiring; a version-2 log hides a tool result body through
+     *             {@link #elideInView(long, String)} instead (session-log §3.3).
      */
+    @Deprecated
     public synchronized void replaceMessageAt(int index, Message newMessage) {
         Objects.requireNonNull(newMessage, "newMessage cannot be null");
-        if (index < 0 || index >= messages.size()) {
-            throw new IndexOutOfBoundsException("Index " + index + " out of bounds for size " + messages.size());
+        if (index < 0 || index >= entries.size()) {
+            throw new IndexOutOfBoundsException("Index " + index + " out of bounds for size " + entries.size());
         }
-        messages.set(index, newMessage);
+        entries.set(index, entries.get(index).withMessage(newMessage));
         markDirty();
     }
 
@@ -369,13 +687,24 @@ public class TranscriptBuffer {
      * <p>
      * This method resets the conversation to a completely empty state, removing both the message history and the system
      * prompt. The system prompt will be automatically re-initialized on the next agent execution.
+     *
+     * <p>
+     * The log's seqs are not reset: {@code floorSeq} rises to {@code nextSeq} and the next entry continues from there
+     * (see {@link SessionLogState#clear()}). The view state is emptied with the log.
      */
     public synchronized void clear() {
         systemPrompt = null;
         rewindPoint = null;
+        viewState = SessionViewState.empty();
         ingestMark = -1;
-        messages.clear();
+        for (SessionLogManifestEntry line : manifest) {
+            pendingSegmentDeletions.add(line.getSegmentId());
+        }
+        manifest.clear();
+        sealedInMemory.clear();
+        entries.clear();
         messageTimestamps.clear();
+        floorSeq = nextSeq;
         markDirty();
     }
 
@@ -385,10 +714,10 @@ public class TranscriptBuffer {
      * @return The last message, or null if conversation is empty
      */
     public synchronized Message getLastMessage() {
-        if (messages.isEmpty()) {
+        if (entries.isEmpty()) {
             return null;
         }
-        return messages.get(messages.size() - 1);
+        return entries.get(entries.size() - 1).getMessage();
     }
 
     /**
@@ -408,10 +737,11 @@ public class TranscriptBuffer {
             throw new IllegalArgumentException("Count cannot be negative");
         }
 
-        if (count == 0 || messages.isEmpty()) {
+        if (count == 0 || entries.isEmpty()) {
             return List.of();
         }
 
+        final List<Message> messages = getMessages();
         int fromIndex = Math.max(0, messages.size() - count);
         return Collections.unmodifiableList(new ArrayList<>(messages.subList(fromIndex, messages.size())));
     }
@@ -422,7 +752,7 @@ public class TranscriptBuffer {
      * @return The count of user messages
      */
     public synchronized int countUserMessages() {
-        return (int) messages.stream().filter(m -> m.getRole() == Role.USER).count();
+        return (int) entries.stream().map(SessionLogEntry::getMessage).filter(m -> m.getRole() == Role.USER).count();
     }
 
     /**
@@ -431,7 +761,8 @@ public class TranscriptBuffer {
      * @return The count of assistant messages
      */
     public synchronized int countAssistantMessages() {
-        return (int) messages.stream().filter(m -> m.getRole() == Role.ASSISTANT).count();
+        return (int) entries.stream().map(SessionLogEntry::getMessage).filter(m -> m.getRole() == Role.ASSISTANT)
+                .count();
     }
 
     /**
@@ -476,8 +807,8 @@ public class TranscriptBuffer {
      * Converts this buffer to an immutable {@link SessionSnapshot}.
      *
      * <p>
-     * Creates a snapshot capturing the current state of the transcript, including the system prompt and all messages.
-     * The snapshot is immutable and will not reflect any future changes to this context.
+     * Creates a snapshot capturing the current state of the transcript: the system prompt and the whole log, as one
+     * {@link SessionLogState}. The snapshot is immutable and will not reflect any future changes to this context.
      *
      * <p>
      * If the system prompt is null (e.g., after {@link #clear()}), an empty string will be used. The system prompt will
@@ -488,15 +819,16 @@ public class TranscriptBuffer {
     public synchronized SessionSnapshot toSnapshot() {
         // Allow null systemPrompt - use empty string as fallback
         // System prompt will be re-initialized on next agent execution
-        return SessionSnapshot.of(sessionId, systemPrompt, Collections.unmodifiableList(new ArrayList<>(messages)),
-                rewindPoint);
+        return SessionSnapshot.fromLog(sessionId, systemPrompt, getLogState());
     }
 
     /**
      * Creates a new mutable transcript buffer from an immutable snapshot.
      *
      * <p>
-     * The new context is independent of the snapshot and can be modified without affecting the original snapshot.
+     * The new context is independent of the snapshot and can be modified without affecting the original snapshot. The
+     * snapshot's log is adopted whole: entries with their seqs and origins, {@code nextSeq}, {@code floorSeq}, the
+     * rewind point, the format and the view state.
      *
      * @param snapshot
      *            The snapshot to convert (must not be null)
@@ -506,9 +838,20 @@ public class TranscriptBuffer {
      */
     public static TranscriptBuffer fromSnapshot(SessionSnapshot snapshot) {
         Objects.requireNonNull(snapshot, "Snapshot cannot be null");
+        final SessionLogState state = snapshot.getLogState();
         final TranscriptBuffer buffer = new TranscriptBuffer(snapshot.getSessionId(), snapshot.getSystemPrompt(),
-                snapshot.getConversationHistory());
-        buffer.rewindPoint = snapshot.getRewindPoint().orElse(null);
+                List.of(), Clock.systemUTC());
+        final Instant now = buffer.clock.instant();
+        for (SessionLogEntry entry : state.getEntries()) {
+            buffer.entries.add(entry);
+            buffer.messageTimestamps.add(now);
+        }
+        buffer.nextSeq = state.getNextSeq();
+        buffer.floorSeq = state.getFloorSeq();
+        buffer.format = state.getFormat();
+        buffer.viewState = state.getViewState();
+        buffer.manifest.addAll(state.getManifest());
+        buffer.rewindPoint = state.getRewindPoint().orElse(null);
         return buffer;
     }
 
@@ -534,7 +877,7 @@ public class TranscriptBuffer {
      *             if either argument is null
      */
     public synchronized void beginTurn(UserInput userInput, SubmitOptions submitOptions) {
-        rewindPoint = SessionRewindPoint.of(messages.size(), userInput, submitOptions);
+        rewindPoint = SessionRewindPoint.of(nextSeq, userInput, submitOptions);
     }
 
     /**
@@ -557,11 +900,20 @@ public class TranscriptBuffer {
      * notification.
      */
     public synchronized void markIngestPoint() {
-        ingestMark = messages.size();
+        ingestMark = nextSeq;
     }
 
     /**
-     * Returns the messages added since {@link #markIngestPoint()}, or empty when there is no usable mark.
+     * Returns the conversation messages added since {@link #markIngestPoint()}, or empty when there is no usable mark.
+     *
+     * <p>
+     * {@link LogOrigin#SYNTHETIC} entries are left out: what the runtime injected is not something the conversation
+     * said, and memory must not learn it as such. Leaving them out splits no tool pair — runtime injections are user
+     * messages or assistant messages without calls.
+     *
+     * <p>
+     * On a version-2 buffer the mark survives compaction and recovery: they change the view state, not the log, so a
+     * compacted execution is ingested as it was said, not as its summary (context-engine §7).
      *
      * <p>
      * Empty means one of three things, and the caller treats them the same way — send nothing:
@@ -582,10 +934,22 @@ public class TranscriptBuffer {
      * @return the new messages in order, or an empty list (never null)
      */
     public synchronized List<Message> messagesSinceIngestMark() {
-        if (ingestMark < 0 || ingestMark > messages.size()) {
+        if (ingestMark < 0) {
             return List.of();
         }
-        return List.copyOf(messages.subList(ingestMark, messages.size()));
+        // Sealed entries of this execution come first: a range is sealed only behind what the view still shows, and
+        // everything sealed in this buffer was sealed during this execution.
+        final List<SessionLogEntry> candidates = new ArrayList<>(sealedInMemory.size() + entries.size());
+        candidates.addAll(sealedInMemory);
+        candidates.addAll(entries);
+        candidates.sort((a, b) -> Long.compare(a.getSeq(), b.getSeq()));
+        final List<Message> since = new ArrayList<>();
+        for (SessionLogEntry entry : candidates) {
+            if (entry.getSeq() >= ingestMark && entry.getOrigin() == LogOrigin.CONVERSATION) {
+                since.add(entry.getMessage());
+            }
+        }
+        return List.copyOf(since);
     }
 
     /**
@@ -612,13 +976,17 @@ public class TranscriptBuffer {
             return Optional.empty();
         }
         final SessionRewindPoint rewound = rewindPoint;
-        final int keep = rewindPoint.getMessageCount();
+        final long from = rewindPoint.getSeq();
         rewindPoint = null;
-        while (messages.size() > keep) {
-            final int last = messages.size() - 1;
-            messages.remove(last);
+        while (!entries.isEmpty() && entries.get(entries.size() - 1).getSeq() >= from) {
+            final int last = entries.size() - 1;
+            entries.remove(last);
             messageTimestamps.remove(last);
         }
+        viewState = viewState.truncatedFrom(from);
+        // Sealing splits at the rewind point, so every line either lies wholly before it or starts at or after it.
+        manifest.removeIf(line -> line.getFromSeq() >= from);
+        sealedInMemory.removeIf(entry -> entry.getSeq() >= from);
         markDirty();
         return Optional.of(rewound);
     }
@@ -660,9 +1028,8 @@ public class TranscriptBuffer {
 
     @Override
     public synchronized String toString() {
-        long userCount = messages.stream().filter(m -> m.getRole() == Role.USER).count();
-        long assistantCount = messages.stream().filter(m -> m.getRole() == Role.ASSISTANT).count();
-        return "TranscriptBuffer{" + "hasSystemPrompt=" + (systemPrompt != null) + ", messages=" + messages.size()
-                + ", user=" + userCount + ", assistant=" + assistantCount + ", version=" + version + "}";
+        return "TranscriptBuffer{" + "hasSystemPrompt=" + (systemPrompt != null) + ", messages=" + entries.size()
+                + ", user=" + countUserMessages() + ", assistant=" + countAssistantMessages() + ", nextSeq=" + nextSeq
+                + ", version=" + version + "}";
     }
 }

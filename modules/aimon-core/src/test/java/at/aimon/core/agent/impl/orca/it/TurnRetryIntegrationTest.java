@@ -30,6 +30,7 @@ import at.aimon.core.agent.session.RewoundTurn;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.SubmitOutcome;
 import at.aimon.core.agent.session.store.SessionRecordView;
+import at.aimon.core.agent.session.transcript.SessionLogState;
 import at.aimon.core.base.Principal;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.content.ImageContentBlock;
@@ -200,6 +201,30 @@ class TurnRetryIntegrationTest {
 
         assertThat(storedRecord(retried).getMessages()).as("the stopped attempt must have been taken back out")
                 .hasSize(messagesAfterOneCleanTurn);
+    }
+
+    /**
+     * The rewind cuts the stored log by seq and leaves {@code nextSeq} where it was, so the retry's entries continue
+     * past the seqs the stopped attempt used instead of reusing them — a seq, once handed out, never means a
+     * different message.
+     */
+    @Test
+    @DisplayName("a retry continues the log's seqs rather than reusing the ones the rewind cut")
+    void aRetryDoesNotReuseTheSeqsTheRewindCut() {
+        final SessionId sessionId = OrcaRuntimeItSupport.newSession();
+        scriptGateThenAnswer(sessionId);
+        final DefaultLiveSession session = node.openLiveSession(sessionId);
+        interruptAGatedTurn(session, "go");
+        final SessionLogState interrupted = storedRecord(sessionId).getLogState();
+        final long turnStart = interrupted.getRewindPoint().orElseThrow().getSeq();
+
+        llm.script(sessionId.value(), ScriptedLlmClient.text("done"));
+        session.retryLastTurn().orElseThrow();
+
+        final SessionLogState retried = storedRecord(sessionId).getLogState();
+        assertThat(retried.getEntries()).filteredOn(entry -> entry.getSeq() >= turnStart)
+                .allSatisfy(entry -> assertThat(entry.getSeq()).isGreaterThanOrEqualTo(interrupted.getNextSeq()));
+        assertThat(retried.getNextSeq()).isGreaterThan(interrupted.getNextSeq());
     }
 
     /**

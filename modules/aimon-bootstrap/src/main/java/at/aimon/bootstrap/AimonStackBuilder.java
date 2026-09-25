@@ -6,11 +6,16 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import at.aimon.bootstrap.assemble.LateBoundFencedRecordStore;
+import at.aimon.bootstrap.assemble.LateBoundFencedSegmentStore;
 import at.aimon.bootstrap.assemble.MemoryAssembly;
+import at.aimon.bootstrap.assemble.SegmentSweepSchedule;
 import at.aimon.bootstrap.assemble.StackAgentRuntimeProvisioner;
 import at.aimon.bootstrap.assemble.StackLiveSessionOpener;
 import at.aimon.bootstrap.assemble.StackPaths;
@@ -39,10 +44,16 @@ import at.aimon.core.agent.impl.orca.OrcaAgentRuntimeFactory;
 import at.aimon.core.agent.queue.DefaultMessageQueueManager;
 import at.aimon.core.agent.queue.InMemoryMessageQueueRepository;
 import at.aimon.core.agent.queue.MessageQueueManager;
+import at.aimon.core.agent.session.store.InMemorySessionLogSegmentStore;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.store.SessionCheckpointMailbox;
+import at.aimon.core.agent.session.store.SessionFence;
+import at.aimon.core.agent.session.store.SessionLogSegmentStore;
 import at.aimon.core.agent.session.store.SessionRecordStore;
 import at.aimon.core.agent.session.transcript.DefaultTranscriptManager;
+import at.aimon.core.agent.session.transcript.SessionLogFormat;
+import at.aimon.core.agent.session.transcript.SessionLogSegmentSweeper;
+import at.aimon.core.agent.session.transcript.SessionLogStorage;
 import at.aimon.core.agent.session.transcript.TranscriptManager;
 import at.aimon.core.agent.tool.ToolContextEnricher;
 import at.aimon.core.filesystem.VirtualFileSystem;
@@ -269,8 +280,38 @@ public final class AimonStackBuilder {
                     "Sessions are held in memory only. Transcripts, session totals and budget overrides are lost on"
                             + " restart, and a second instance cannot serve a session this one started.");
         }
-        final TranscriptManager transcriptManager = new DefaultTranscriptManager(sessionRecordStore,
-                sessionCheckpoints);
+        // Sealing needs somewhere to seal to. A supplied store is used as given; an in-memory record store gets an
+        // in-memory segment store, since the two are lost together; a supplied record store with no segment store
+        // seals nothing rather than pairing durable manifests with segments that vanish on restart.
+        final SessionLogSegmentStore segmentStore = spec.getSession().getSegmentStore().orElseGet(
+                () -> spec.getSession().getRecordStore().isEmpty() ? new InMemorySessionLogSegmentStore() : null);
+        final SessionLogFormat logWriteFormat = spec.getSession().getLogWriteFormat();
+        if (segmentStore == null && logWriteFormat == SessionLogFormat.V2) {
+            // Version 2 never rewrites the log in place, so without a segment store the durable record carries every
+            // entry of the session for good and each checkpoint rewrites all of it (session-log §5).
+            degradations.add("session-log-sealing",
+                    "The session log is written as version 2 over a supplied record store with no segment store, so"
+                            + " nothing is sealed: every record keeps its whole history and each save rewrites it."
+                            + " Supply a SessionLogSegmentStore (SessionSpec.segmentStore) from the same backend.");
+        }
+        // The manager's record writes (turn-end saves, checkpoints) and segment deletes (turn-end GC, /clear) go
+        // through the lease this node holds, so a node that lost a session cannot overwrite the record the new holder
+        // writes or delete what its manifest names. The session store that owns the fenced views is built inside the
+        // router, after this manager, so the manager gets views that are bound once the router exists. See
+        // sessionFence(...) for which policy each shape of stack gets, and why a plain single-node stack gets none.
+        final SessionFence fence = sessionFence(spec.getSession());
+        final LateBoundFencedRecordStore fencedRecords = fence == null
+                ? null
+                : new LateBoundFencedRecordStore(sessionRecordStore);
+        final LateBoundFencedSegmentStore fencedDeletes = fence == null || segmentStore == null
+                ? null
+                : new LateBoundFencedSegmentStore(segmentStore);
+        final SessionRecordStore sessionRecordWrites = fencedRecords == null ? sessionRecordStore : fencedRecords;
+        final TranscriptManager transcriptManager = new DefaultTranscriptManager(sessionRecordWrites,
+                sessionCheckpoints, logWriteFormat,
+                segmentStore == null
+                        ? null
+                        : SessionLogStorage.builder(segmentStore).deleteStore(fencedDeletes).build());
         final MessageQueueManager messageQueueManager = new DefaultMessageQueueManager(
                 spec.getMessageQueueRepository().orElseGet(InMemoryMessageQueueRepository::new));
 
@@ -396,7 +437,10 @@ public final class AimonStackBuilder {
                 .withPendingTurnRegistry(pendingTurnRegistry).withAgentApprovalStore(agentApprovalStore)
                 .withSessionApprovalStore(sessionApprovalStore).withSkillInvocationPolicy(skillInvocationPolicy)
                 .withToolContextEnrichers(toolContextEnrichers).withRewakeService(rewakeService)
-                .withWorkflowRunnerEnabled(toolSpec.isWorkflowRunnerEnabled());
+                .withWorkflowRunnerEnabled(toolSpec.isWorkflowRunnerEnabled())
+                // The same write format the transcript manager writes with: rolling on a version-1 node is refused
+                // when its runtime is built, which for a declared agent is here, at startup.
+                .withSessionLogWriteFormat(logWriteFormat).withContextEngine(executorSpec.getContextEngine());
         final ScheduledTaskManager taskManager = schedulingLifecycle == null
                 ? null
                 : schedulingLifecycle.engine().getTaskManager();
@@ -483,11 +527,31 @@ public final class AimonStackBuilder {
 
         // --- Session router -------------------------------------------------------------------------------
         // Registered before start-up of anything else so that a failure below still drains sessions first.
-        final SessionRouter sessionRouter = buildSessionRouter(spec, agentRuntimeResolver, agentExecutor,
-                messageQueueManager, sessionRecordStore, sessionApprovalStore);
+        // The live sessions write their totals, budget overrides and persisted rewinds through the same fenced view as
+        // the transcript manager; the router itself gets the raw store, because its session store is what builds that
+        // view over it.
+        final StackLiveSessionOpener opener = new StackLiveSessionOpener(agentRuntimeResolver, agentExecutor,
+                messageQueueManager, agentExecutor.getHookExecutionManager(), sessionRecordWrites);
+        final SessionRouter sessionRouter = buildSessionRouter(spec, opener, sessionRecordStore, sessionApprovalStore,
+                segmentStore);
         final Duration drainTimeout = spec.getSession().getDrainTimeout();
         teardown.own(TeardownPhase.SESSIONS, "sessionRouter.closeGracefully(" + drainTimeout + ")",
                 () -> closeRouter(sessionRouter, drainTimeout));
+        if (fencedRecords != null) {
+            fencedRecords.bind(sessionRouter.fencedRecordStore(fence).orElseThrow(() -> new AimonBootstrapException(
+                    "The session router exposes no fenced view of its record store")));
+        }
+        if (fencedDeletes != null) {
+            fencedDeletes.bind(sessionRouter.fencedSegmentStore(fence).orElseThrow(() -> new AimonBootstrapException(
+                    "The session router was given a segment store but exposes no fenced view of it")));
+        }
+        // Registered after the router, so within SESSIONS it stops first: no pass is still deleting while sessions
+        // drain. Started with the other background sweepers, in AimonStack.startRuntimes().
+        final SegmentSweepSchedule segmentSweep = buildSegmentSweep(spec.getSession(), segmentStore,
+                sessionRecordStore);
+        if (segmentSweep != null) {
+            teardown.own(TeardownPhase.SESSIONS, "segmentSweep", segmentSweep);
+        }
 
         // --- Assembled ------------------------------------------------------------------------------------
         // Nothing is started here. Everything that has to happen before this stack can serve is behind
@@ -495,7 +559,8 @@ public final class AimonStackBuilder {
         // has a matching close even if the line after it throws.
         final AimonStack stack = new AimonStack(spec, teardown, sessionRouter, agentExecutor, agentRuntimeRegistry,
                 schedulingLifecycle, sessionRecordStore, messageQueueManager, pendingTurnRegistry, pendingTurnReaper,
-                fileSystems, primaryRuntimeId, runtimes, agentDescriptors, agentRuntimeResolver, degradations.build());
+                fileSystems, primaryRuntimeId, runtimes, agentDescriptors, agentRuntimeResolver, segmentSweep,
+                degradations.build());
         log.info("AIMON stack assembled: {} teardown entrie(s), agent(s) {}", teardown.entries().size(),
                 runtimes.keySet());
         if (!stack.degradations().isEmpty()) {
@@ -674,15 +739,13 @@ public final class AimonStackBuilder {
      * the collaborator it configured would be the worse answer. The mode decides what may be <em>defaulted</em>,
      * which is the builder's own rule; it does not decide what may be supplied.
      */
-    private static SessionRouter buildSessionRouter(AimonStackSpec spec, AgentRuntimeResolver agentRuntimeResolver,
-            OrcaAgentExecutor agentExecutor, MessageQueueManager messageQueueManager,
-            SessionRecordStore sessionRecordStore, SessionApprovalStore sessionApprovalStore) {
+    private static SessionRouter buildSessionRouter(AimonStackSpec spec, StackLiveSessionOpener opener,
+            SessionRecordStore sessionRecordStore, SessionApprovalStore sessionApprovalStore,
+            SessionLogSegmentStore segmentStore) {
         final SessionSpec session = spec.getSession();
-        final StackLiveSessionOpener opener = new StackLiveSessionOpener(agentRuntimeResolver, agentExecutor,
-                messageQueueManager, agentExecutor.getHookExecutionManager(), sessionRecordStore);
         final SessionRouterBuilder builder = SessionRouter.builder().sessionOpener(opener)
                 .sessionRecordStore(sessionRecordStore).sessionApprovalStore(sessionApprovalStore)
-                .mode(session.getMode());
+                .sessionLogSegmentStore(segmentStore).mode(session.getMode());
         session.getNodeId().ifPresent(builder::nodeId);
         session.getLeaseStore().ifPresent(builder::sessionLeaseStore);
         session.getSignalBus().ifPresent(builder::signalBus);
@@ -691,6 +754,56 @@ public final class AimonStackBuilder {
         session.getIdleTtl().ifPresent(builder::idleTtl);
         session.getMaxCachedSessions().ifPresent(builder::maxCachedSessions);
         return builder.build();
+    }
+
+    /**
+     * Which lease fence the stack's record writes and segment deletes go through, or null for none (session-log §12.3).
+     *
+     * <ul>
+     * <li><b>Distributed</b> — {@link SessionFence#HOLDER_ONLY}. Every live session is opened through the router, which
+     * claims it first, so a write for a session this node does not hold is a node that lost it.
+     * <li><b>Single node with a supplied lease store</b> — {@link SessionFence#UNLESS_HELD_ELSEWHERE}. A durable lease
+     * store is how a second node can come to hold a session this one ran (the first node of a cluster brought up alone
+     * is {@link #buildSessionRouter}'s example), so a write for a session held elsewhere is refused. A session nobody
+     * holds still passes, because a live session built outside the router — the CLI's — holds no lease; refusing it
+     * would refuse every save and every garbage-collection delete it makes.
+     * <li><b>Single node, default lease store</b> — none. The lease store is this process's own, so nothing else can
+     * hold a session, and the writes go straight to the raw stores as they always have.
+     * </ul>
+     */
+    private static SessionFence sessionFence(SessionSpec session) {
+        if (session.getMode() == DeploymentMode.DISTRIBUTED) {
+            return SessionFence.HOLDER_ONLY;
+        }
+        return session.getLeaseStore().isPresent() ? SessionFence.UNLESS_HELD_ELSEWHERE : null;
+    }
+
+    /**
+     * Builds the store-wide orphan sweep when the spec turns it on (session-log §11). The sweeper deletes through the
+     * raw store: it holds no session, so a fenced delete would refuse everything, and what keeps it safe is the
+     * manifest check plus its grace period — see {@link SessionLogSegmentSweeper}. With a supplied lease store the
+     * passes are coordinated through a sweep lease that the holding node keeps extending, so a cluster runs one pass
+     * per interval.
+     *
+     * @return the schedule, or null when the sweep is off
+     */
+    private static SegmentSweepSchedule buildSegmentSweep(SessionSpec session, SessionLogSegmentStore segmentStore,
+            SessionRecordStore recordStore) {
+        final Optional<Duration> interval = session.getSegmentSweepInterval();
+        if (interval.isEmpty()) {
+            return null;
+        }
+        if (segmentStore == null) {
+            // SessionSpec refuses this combination; kept as a guard against the two rules drifting apart.
+            throw new AimonBootstrapException("A segment sweep was requested but this stack has no segment store");
+        }
+        final SessionLogSegmentSweeper.Builder sweeper = SessionLogSegmentSweeper.builder(segmentStore, recordStore);
+        session.getSegmentSweepGrace().ifPresent(sweeper::grace);
+        // A supplied lease store is shared with any other node, so the pass is taken in turns through it: one node per
+        // interval scans the store, not every node that has the sweep switched on. Without one there is only this node.
+        session.getLeaseStore().ifPresent(leaseStore -> sweeper.coordination(leaseStore,
+                session.getNodeId().orElseGet(() -> "segment-sweep-" + UUID.randomUUID()), interval.get()));
+        return new SegmentSweepSchedule(sweeper.build(), interval.get());
     }
 
     private static void closeRouter(SessionRouter sessionRouter, Duration drainTimeout) {

@@ -3,6 +3,7 @@ package at.aimon.cli.factory;
 import java.io.File;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -60,7 +61,13 @@ import at.aimon.core.agent.session.DefaultLiveSession;
 import at.aimon.core.agent.session.LiveSession;
 import at.aimon.core.agent.session.LiveSessionOptions;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.store.InMemorySessionLogSegmentStore;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
+import at.aimon.core.agent.session.transcript.LogOrigin;
+import at.aimon.core.agent.session.transcript.SessionLogEntry;
+import at.aimon.core.agent.session.transcript.SessionLogFormat;
+import at.aimon.core.agent.session.transcript.SessionLogPage;
+import at.aimon.core.agent.session.transcript.SessionLogReader;
 import at.aimon.core.base.Principal;
 import at.aimon.core.config.hook.HookHotReloadBootstrap;
 import at.aimon.core.config.hook.ReloadInvoker;
@@ -75,12 +82,15 @@ import at.aimon.core.knowledge.wiki.LlmWikiPageGenerator;
 import at.aimon.core.knowledge.wiki.WikiKnowledgeStore;
 import at.aimon.core.knowledge.wiki.WikiPageGenerator;
 import at.aimon.core.llm.LlmClient;
+import at.aimon.core.llm.Message;
+import at.aimon.core.llm.token.HeuristicTokenEstimator;
 import at.aimon.core.llms.openai.OpenAIEmbeddingClient;
 import at.aimon.core.llms.openai.OpenAIEmbeddingConfig;
 import at.aimon.core.mcp.DefaultMcpClientFactory;
 import at.aimon.core.memory.InMemoryObservationStore;
 import at.aimon.core.memory.InMemoryRepresentationStore;
 import at.aimon.core.memory.InMemoryWorkspaceStore;
+import at.aimon.core.memory.IngestChunks;
 import at.aimon.core.memory.MemoryIngestMode;
 import at.aimon.core.memory.MemoryInjectionMode;
 import at.aimon.core.memory.ObservationStore;
@@ -587,7 +597,7 @@ public class AgentSetupFactory {
                 .agent(AgentSpec.builder().bundle(agentBundle)
                         .addCustomizer(runtime -> configureHooks(runtime, outputFormatter))
                         .addCustomizer(runtime -> registerCliTools(runtime, outputFormatter)).build())
-                .session(SessionSpec.builder().recordStore(new InMemorySessionRecordStore()).build())
+                .session(buildSessionSpec(config.getCliSettings().getSessionLogWriteFormat()))
                 .skillApproval(approvalSpec).memory(memorySpec)
                 // No memoryContextProvider here any more: MemoryAssembly builds the injection provider from the spec
                 // above, and AimonStackSpec rejects having both. The CLI supplies neither instead of both.
@@ -779,6 +789,25 @@ public class AgentSetupFactory {
             builder.mcp(mcpClientFactory, mcpConfig.toConfigProvider());
         }
         return builder.build();
+    }
+
+    /**
+     * The CLI's session storage: in memory, written in {@code writeFormat}. Version 2 also gets an in-memory segment
+     * store, so a compaction's hidden ranges are sealed out of the record as they would be on any other node; the two
+     * stores live and die with this process together, so no manifest can outlive the segments it names. Version 1
+     * seals nothing and needs none — the supplied record store is what tells the stack not to default one.
+     *
+     * @param writeFormat
+     *            the format from {@code cli.sessionLogWriteFormat} (must not be null)
+     * @return the session spec (never null)
+     */
+    static SessionSpec buildSessionSpec(SessionLogFormat writeFormat) {
+        final SessionSpec.Builder session = SessionSpec.builder().recordStore(new InMemorySessionRecordStore())
+                .logWriteFormat(Objects.requireNonNull(writeFormat, "writeFormat must not be null"));
+        if (writeFormat == SessionLogFormat.V2) {
+            session.segmentStore(new InMemorySessionLogSegmentStore());
+        }
+        return session.build();
     }
 
     /**
@@ -1392,17 +1421,55 @@ public class AgentSetupFactory {
     private static void enqueueFinalDerivation(DerivationQueueManager queue, OrcaAgentExecutor agentExecutor,
             SessionId sessionId, Workspace workspace, PeerView observer, OutputFormatter outputFormatter) {
         final var transcriptManager = agentExecutor.getTranscriptManager();
-        final var memory = transcriptManager.initialize(sessionId, null);
-        final var messages = memory.getMessages();
-        if (messages.isEmpty()) {
+        // The log as it was said: what the runtime injected is left out, and on a version-2 log a compaction left the
+        // original in place, so no summary is fed in as if it were conversation (context-engine §7, L5). Sealed ranges
+        // are part of what was said, so the log is read through the reader, a page at a time, when there is one.
+        final List<List<Message>> pages = transcriptManager.getLogReader()
+                .map(reader -> readConversationPages(reader, sessionId))
+                .orElseGet(() -> List.of(transcriptManager.initialize(sessionId, null).getConversationMessages()));
+        // Nothing bounds a whole session's log to one window any more; the deriver takes one chunk per call.
+        final List<List<Message>> chunks = new ArrayList<>();
+        int messageCount = 0;
+        for (List<Message> page : pages) {
+            messageCount += page.size();
+            chunks.addAll(
+                    IngestChunks.split(page, IngestChunks.DEFAULT_MAX_INGEST_TOKENS, new HeuristicTokenEstimator()));
+        }
+        if (messageCount == 0) {
             log.debug("Peer memory final derivation skipped: conversation has no messages");
             return;
         }
-        final DerivationTask task = DerivationTask.builder().workspace(workspace).sessionId(sessionId.value())
-                .observer(observer).messages(messages).build();
-        outputFormatter
-                .displayInfo("Peer memory: enqueuing final derivation for " + messages.size() + " message(s)...");
-        queue.enqueue(task);
+        outputFormatter.displayInfo("Peer memory: enqueuing final derivation for " + messageCount + " message(s)"
+                + (chunks.size() > 1 ? " in " + chunks.size() + " chunks" : "") + "...");
+        for (List<Message> chunk : chunks) {
+            queue.enqueue(DerivationTask.builder().workspace(workspace).sessionId(sessionId.value()).observer(observer)
+                    .messages(chunk).build());
+        }
+    }
+
+    /**
+     * Reads the stored log of {@code sessionId} page by page and keeps the conversation entries of each page. Pages end
+     * at legal cuts, so no page splits a tool pair; a gap in a sealed range is a synthetic entry and drops out here.
+     */
+    static List<List<Message>> readConversationPages(SessionLogReader reader, SessionId sessionId) {
+        final List<List<Message>> pages = new ArrayList<>();
+        long from = 0;
+        while (true) {
+            final SessionLogPage page = reader.read(sessionId, from, Long.MAX_VALUE);
+            final List<Message> conversation = new ArrayList<>();
+            for (SessionLogEntry entry : page.getEntries()) {
+                if (entry.getOrigin() == LogOrigin.CONVERSATION) {
+                    conversation.add(entry.getMessage());
+                }
+            }
+            if (!conversation.isEmpty()) {
+                pages.add(conversation);
+            }
+            if (!page.hasMore()) {
+                return pages;
+            }
+            from = page.getNextFromSeq().getAsLong();
+        }
     }
 
     /**

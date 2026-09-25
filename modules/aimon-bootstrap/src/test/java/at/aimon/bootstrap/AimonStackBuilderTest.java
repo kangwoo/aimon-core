@@ -18,16 +18,24 @@ import org.junit.jupiter.api.io.TempDir;
 import at.aimon.bootstrap.assemble.MemoryAssembly;
 import at.aimon.bootstrap.spec.AgentSpec;
 import at.aimon.bootstrap.spec.AgentWorkspaceLayout;
+import at.aimon.bootstrap.spec.ExecutorSpec;
 import at.aimon.bootstrap.spec.FileSystemSpec;
 import at.aimon.bootstrap.spec.LlmSpec;
 import at.aimon.bootstrap.spec.MemorySpec;
 import at.aimon.bootstrap.spec.SchedulingSpec;
+import at.aimon.bootstrap.spec.SessionSpec;
 import at.aimon.bootstrap.spec.SkillApprovalSpec;
 import at.aimon.core.agent.AgentRuntimeId;
+import at.aimon.core.agent.ContextEngineKind;
 import at.aimon.core.agent.DefaultAgent;
+import at.aimon.core.agent.context.RollingContextEngine;
 import at.aimon.core.agent.impl.AgentBundle;
+import at.aimon.core.agent.impl.orca.OrcaAgentRuntime;
 import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.store.InMemorySessionLogSegmentStore;
+import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
+import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.base.Principal;
@@ -52,6 +60,7 @@ import at.aimon.core.scheduling.scheduler.TaskScheduler;
 import at.aimon.core.tools.memory.MemoryRecallTool;
 import at.aimon.core.tools.memory.MemorySearchTool;
 import at.aimon.core.tools.memory.ObserveTool;
+import at.aimon.core.tools.session.SessionHistoryTool;
 
 /**
  * Stands a real stack up and tears it down — the whole point of the neutral layer being pure Java.
@@ -125,6 +134,63 @@ class AimonStackBuilderTest {
     private static AimonStackSpec.Builder specFor(Path workspace, String agentName) {
         return AimonStackSpec.builder().workspaceRoot(workspace.toString()).llm(LlmSpec.of(STUB_LLM))
                 .agent(AgentSpec.of(bundle(agentName)));
+    }
+
+    @Test
+    @DisplayName("an in-memory record store is paired with an in-memory segment store; a supplied one seals nothing")
+    void segmentStoreFollowsTheRecordStore(@TempDir Path workspace) {
+        try (AimonStack stack = AimonStackBuilder.build(specFor(workspace, "ops").build())) {
+            assertThat(stack.agentExecutor().getTranscriptManager().getLogReader()).isPresent();
+        }
+        final SessionSpec durableWithoutSegments = SessionSpec.builder().recordStore(new InMemorySessionRecordStore())
+                .build();
+        try (AimonStack stack = AimonStackBuilder
+                .build(specFor(workspace, "ops").session(durableWithoutSegments).build())) {
+            assertThat(stack.agentExecutor().getTranscriptManager().getLogReader())
+                    .as("never an in-memory segment store behind a supplied record store").isEmpty();
+        }
+        final SessionSpec withSegments = SessionSpec.builder().recordStore(new InMemorySessionRecordStore())
+                .segmentStore(new InMemorySessionLogSegmentStore()).build();
+        try (AimonStack stack = AimonStackBuilder.build(specFor(workspace, "ops").session(withSegments).build())) {
+            assertThat(stack.agentExecutor().getTranscriptManager().getLogReader()).isPresent();
+        }
+    }
+
+    @Test
+    @DisplayName("version 2 over a supplied record store with no segment store is a recorded degradation")
+    void versionTwoWithoutASegmentStoreIsADegradation(@TempDir Path workspace) {
+        final SessionSpec unsealed = SessionSpec.builder().recordStore(new InMemorySessionRecordStore())
+                .logWriteFormat(SessionLogFormat.V2).build();
+        try (AimonStack stack = AimonStackBuilder.build(specFor(workspace, "ops").session(unsealed).build())) {
+            assertThat(stack.degradations().has("session-log-sealing")).isTrue();
+            assertThat(stack.degradations().describe()).contains("SessionLogSegmentStore");
+        }
+        final SessionSpec sealed = SessionSpec.builder().recordStore(new InMemorySessionRecordStore())
+                .segmentStore(new InMemorySessionLogSegmentStore()).logWriteFormat(SessionLogFormat.V2).build();
+        try (AimonStack stack = AimonStackBuilder.build(specFor(workspace, "ops").session(sealed).build())) {
+            assertThat(stack.degradations().has("session-log-sealing")).isFalse();
+        }
+        final SessionSpec versionOne = SessionSpec.builder().recordStore(new InMemorySessionRecordStore()).build();
+        try (AimonStack stack = AimonStackBuilder.build(specFor(workspace, "ops").session(versionOne).build())) {
+            assertThat(stack.degradations().has("session-log-sealing")).as("v1 compacts in place").isFalse();
+        }
+    }
+
+    @Test
+    @DisplayName("the rolling context engine needs the version-2 write format, and gets SessionHistory with it")
+    void rollingNeedsTheVersionTwoWriteFormat(@TempDir Path workspace) {
+        final ExecutorSpec rolling = ExecutorSpec.builder().contextEngine(ContextEngineKind.ROLLING).build();
+
+        assertThatThrownBy(() -> AimonStackBuilder.build(specFor(workspace, "ops").executor(rolling).build()))
+                .hasStackTraceContaining("version 1").hasStackTraceContaining("rolling");
+
+        final SessionSpec versionTwo = SessionSpec.builder().logWriteFormat(SessionLogFormat.V2).build();
+        try (AimonStack stack = AimonStackBuilder
+                .build(specFor(workspace, "ops").executor(rolling).session(versionTwo).build())) {
+            final OrcaAgentRuntime runtime = stack.runtimes().get(stack.primaryRuntimeId());
+            assertThat(runtime.getContextEngine()).isInstanceOf(RollingContextEngine.class);
+            assertThat(runtime.getToolRegistry().findByName(SessionHistoryTool.TOOL_NAME)).isPresent();
+        }
     }
 
     @Test

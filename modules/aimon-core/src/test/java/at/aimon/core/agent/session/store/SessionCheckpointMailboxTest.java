@@ -306,6 +306,69 @@ class SessionCheckpointMailboxTest {
     }
 
     @Test
+    @DisplayName("drain answers true when nothing is pending, when it reached the barrier, and when disabled")
+    void drainAnswersTrueWhenNothingCanLandLater() {
+        mailbox = SessionCheckpointMailbox.background();
+        final SessionId id = SessionId.generate();
+        final TranscriptBuffer memory = new TranscriptBuffer(id, "sys");
+        final List<SessionSnapshot> writes = new CopyOnWriteArrayList<>();
+
+        assertThat(mailbox.drain(id)).as("nothing pending").isTrue();
+        memory.addUserMessage("hi");
+        mailbox.checkpoint(memory, writes::add);
+        assertThat(mailbox.drain(id)).as("barrier reached").isTrue();
+        assertThat(writes).hasSize(1);
+        assertThat(SessionCheckpointMailbox.disabled().drain(id)).isTrue();
+    }
+
+    @Test
+    @DisplayName("drain answers false when it gave up on a writer still inside a store call")
+    void drainAnswersFalseWhenAStaleWriteCanStillLand() throws Exception {
+        mailbox = SessionCheckpointMailbox.background(Duration.ofMillis(100));
+        final SessionId id = SessionId.generate();
+        final TranscriptBuffer memory = new TranscriptBuffer(id, "sys");
+        final Gate gate = new Gate();
+        final List<SessionSnapshot> writes = new CopyOnWriteArrayList<>();
+
+        memory.addUserMessage("m1");
+        mailbox.checkpoint(memory, gate.firstCallBlocks(writes));
+        assertThat(gate.entered.await(2, TimeUnit.SECONDS)).isTrue();
+
+        final long startNanos = System.nanoTime();
+        assertThat(mailbox.drain(id)).isFalse();
+        assertThat(Duration.ofNanos(System.nanoTime() - startNanos)).as("the configured timeout is used")
+                .isLessThan(Duration.ofSeconds(2));
+
+        gate.release();
+        assertThat(mailbox.drain(id)).as("the stale write has landed").isTrue();
+    }
+
+    @Test
+    @DisplayName("after close, drain answers whether an abandoned writer could still write")
+    void drainAfterCloseReportsTheAbandonedWriter() throws Exception {
+        mailbox = SessionCheckpointMailbox.background(Duration.ofMillis(100));
+        final SessionId id = SessionId.generate();
+        final TranscriptBuffer memory = new TranscriptBuffer(id, "sys");
+        final Gate gate = new Gate();
+
+        memory.addUserMessage("m1");
+        mailbox.checkpoint(memory, gate.firstCallBlocks(new CopyOnWriteArrayList<>()));
+        assertThat(gate.entered.await(2, TimeUnit.SECONDS)).isTrue();
+        mailbox.close();
+
+        assertThat(mailbox.drain(id)).as("the abandoned writer is still alive").isFalse();
+        gate.release();
+        await().atMost(Duration.ofSeconds(2)).until(() -> mailbox.drain(id));
+    }
+
+    @Test
+    @DisplayName("a non-positive drain timeout is refused")
+    void drainTimeoutMustBePositive() {
+        assertThatThrownBy(() -> SessionCheckpointMailbox.background(Duration.ZERO))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     @DisplayName("a disabled mailbox never writes")
     void disabledMailboxNeverWrites() {
         mailbox = SessionCheckpointMailbox.disabled();

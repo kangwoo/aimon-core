@@ -63,15 +63,17 @@ If you're new and want a place to start, look for issues labeled `good first iss
 
 ### Live-API tests
 
-Four test classes call a provider's real API, and each one is gated on that provider's key with
+Six test classes call a provider's real API, and each one is gated on that provider's key with
 `@EnabledIfEnvironmentVariable`:
 
 | Class | Module | Key |
 |-------|--------|-----|
 | `AnthropicThinkingLiveTest` | `aimon-llm-anthropic` | `ANTHROPIC_KEY` |
 | `AnthropicLlmClientIntegrationTest` | `aimon-llm-anthropic` | `ANTHROPIC_KEY` |
+| `AnthropicContextEngineLiveTest` | `aimon-llm-anthropic` | `ANTHROPIC_KEY` |
 | `OpenAIReasoningLiveTest` | `aimon-llm-openai` | `OPENAI_KEY` |
 | `OpenAILlmClientIntegrationTest` | `aimon-llm-openai` | `OPENAI_KEY` |
+| `OpenAIContextEngineLiveTest` | `aimon-llm-openai` | `OPENAI_KEY` |
 
 **This tier has no CI signal at all.** No workflow supplies either key, so wherever the keys are
 absent — CI included — each of these classes reports `SKIPPED` and `checkAll` stays green. The
@@ -82,10 +84,22 @@ ANTHROPIC_KEY=... OPENAI_KEY=... \
 ./gradlew :aimon-llm-anthropic:test --rerun \
               --tests 'at.aimon.core.llms.anthropic.AnthropicThinkingLiveTest' \
               --tests 'at.aimon.core.llms.anthropic.AnthropicLlmClientIntegrationTest' \
+              --tests 'at.aimon.core.llms.anthropic.AnthropicContextEngineLiveTest' \
           :aimon-llm-openai:test --rerun \
               --tests 'at.aimon.core.llms.openai.OpenAIReasoningLiveTest' \
-              --tests 'at.aimon.core.llms.openai.OpenAILlmClientIntegrationTest'
+              --tests 'at.aimon.core.llms.openai.OpenAILlmClientIntegrationTest' \
+              --tests 'at.aimon.core.llms.openai.OpenAIContextEngineLiveTest'
 ```
+
+The two `*ContextEngineLiveTest` classes drive the context engines through the real executor with a
+deliberately small context window, so a rolling cycle comes every few turns: a fact is planted in a large
+tool result, filler turns push the session through rolling cycles, the fact is asked for, and the session
+is reloaded through the version-2 codec and continued. The Anthropic class also runs the rolling scenario
+under extended thinking — where a summary request that ended on an assistant message would be refused as
+a prefill — and a forced `/compact` on the default engine in view mode. Together they make about 40 calls
+on `claude-haiku-4-5` and `gpt-4o-mini`. Each has a keyless twin, `ContextEngineLiveRigTest`, which runs
+the same scenario against a scripted model in every ordinary build, so a change that stops the scenario
+reaching its rolling cycles is caught without a key.
 
 **Every run costs money** — these are billed calls on the account the keys belong to. Never commit a
 key, and redact it from any failure output you paste into an issue or a pull request.

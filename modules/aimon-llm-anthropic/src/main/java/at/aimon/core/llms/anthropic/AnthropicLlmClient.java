@@ -37,6 +37,7 @@ import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.ReasoningTrace;
+import at.aimon.core.llm.Role;
 import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.llm.ToolUse;
@@ -246,7 +247,7 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
                     : client.messages().create(request, requestOptions);
 
             // Convert response
-            return convertResponse(result, providerName);
+            return convertResponse(result, providerName, endsOnAnAssistantMessage(messages));
 
         } catch (MessageConversionException | ToolConversionException e) {
             // Already LlmClientException subtypes — propagate as-is
@@ -771,15 +772,42 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
     }
 
     /**
+     * Whether the request's last message is an assistant message. Anthropic reads such a request as a prefill: the
+     * response continues that message, and when the message already reads as a finished answer the response carries no
+     * content blocks at all.
+     */
+    static boolean endsOnAnAssistantMessage(List<Message> messages) {
+        return !messages.isEmpty() && messages.get(messages.size() - 1).getRole() == Role.ASSISTANT;
+    }
+
+    /**
+     * The message of the exception thrown for a response with no content blocks. It names the stop reason and whether
+     * the request ended on an assistant message, because those two facts are what tell a prefill of a finished answer
+     * ({@code end_turn} after an assistant turn) apart from a refusal or a token limit.
+     */
+    static String noContentBlocksMessage(com.anthropic.models.messages.Message result,
+            boolean requestEndedOnAssistant) {
+        final String stopReason = result.stopReason().map(StopReason::asString).orElse("none");
+        return "No content blocks in Anthropic response (stop_reason=" + stopReason + ", request ended on "
+                + (requestEndedOnAssistant
+                        ? "an assistant message, which Anthropic reads as a prefill; end the request on a user message)"
+                        : "a user message)");
+    }
+
+    /**
      * Converts Anthropic response to aimon LlmResponse.
      *
      * @param result
      *            The Anthropic message result
      * @param providerName
      *            this client's provider name, resolved once by the caller and stamped onto every captured trace
+     * @param requestEndedOnAssistant
+     *            whether the request's last message was an assistant message — a prefill; reported only when the
+     *            response comes back empty, which is what Anthropic does with a prefill of a finished answer
      * @return The aimon LlmResponse
      */
-    private LlmResponse convertResponse(com.anthropic.models.messages.Message result, String providerName) {
+    private LlmResponse convertResponse(com.anthropic.models.messages.Message result, String providerName,
+            boolean requestEndedOnAssistant) {
         // Check stop reason for potential issues
         result.stopReason().ifPresent(stopReason -> {
             if (StopReason.MAX_TOKENS.equals(stopReason)) {
@@ -791,7 +819,7 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
 
         List<ContentBlock> contentBlocks = result.content();
         if (contentBlocks == null || contentBlocks.isEmpty()) {
-            throw new LlmClientException("No content blocks in Anthropic response");
+            throw new LlmClientException(noContentBlocksMessage(result, requestEndedOnAssistant));
         }
 
         StringBuilder textContent = new StringBuilder();

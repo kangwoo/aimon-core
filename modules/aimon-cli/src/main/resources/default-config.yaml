@@ -183,6 +183,7 @@ cli:
   streaming: true      # PSTREAM-11: stream assistant text token-by-token (disable with --no-streaming)
   enableWorkflow: false  # Opt-in: register the experimental multi-perspective `Workflow` tool
   enableWorkflowJs: false  # Opt-in: register the GraalJS-scripted `WorkflowJs` tool (module aimon-workflow-graaljs)
+#  sessionLogWriteFormat: v2  # v1 (default) | v2 — v2 is what an agent with `context-engine: rolling` needs
 
 # Peer Memory (SK-MEM Stage 9, Honcho-analogue)
 # Uncomment and fill all three required fields to enable MemoryRecallTool and the

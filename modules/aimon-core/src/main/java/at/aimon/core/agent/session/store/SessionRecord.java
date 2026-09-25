@@ -6,6 +6,7 @@ import java.util.Optional;
 
 import at.aimon.core.agent.budget.ExecutionBudget;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.transcript.SessionLogState;
 import at.aimon.core.agent.session.transcript.SessionRewindPoint;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.session.transcript.SessionTranscript;
@@ -274,9 +275,11 @@ public class SessionRecord implements SessionRecordView {
      */
     public static SessionRecord copyOf(SessionRecordView view) {
         Objects.requireNonNull(view, "View cannot be null");
+        // The log goes across whole. Rebuilding it from getMessages() would drop the rewind point, the seqs, the
+        // origins and the format — every one of them a value a later save would then write back without.
         final SessionTranscript sourceTranscript = view instanceof SessionRecord record
                 ? record.getTranscript()
-                : SessionTranscript.of(view.getSystemPrompt(), view.getMessages());
+                : SessionTranscript.fromLog(view.getSystemPrompt(), view.getLogState());
         return new SessionRecord(view.getId(), sourceTranscript, view.getCompactionFailureCount(),
                 view.getAgentRef().orElse(null), view.getSessionTotals(), view.getBudgetOverride().orElse(null));
     }
@@ -304,13 +307,13 @@ public class SessionRecord implements SessionRecordView {
      */
     public static SessionRecord fromSnapshot(SessionSnapshot snapshot) {
         Objects.requireNonNull(snapshot, "Snapshot cannot be null");
-        final SessionRecord record = new SessionRecord(snapshot.getSessionId(), snapshot.getSystemPrompt(),
-                snapshot.getConversationHistory());
-        // The rewind point rides the transcript rather than the side fields, so it comes across here instead of being
-        // restored from the existing record by the merge. That is the point of where it lives: it counts the messages
-        // this snapshot brought, and a merge that kept the previous one would point into a history it did not index.
-        record.transcript = record.transcript.withRewindPoint(snapshot.getRewindPoint().orElse(null));
-        return record;
+        // The whole log — rewind point included — rides the transcript rather than the side fields, so it comes across
+        // here instead of being restored from the existing record by the merge. That is the point of where it lives:
+        // it addresses the entries this snapshot brought, and a merge that kept the previous one would point into a
+        // log it did not describe.
+        return new SessionRecord(snapshot.getSessionId(),
+                SessionTranscript.fromLog(snapshot.getSystemPrompt(), snapshot.getLogState()), 0, null,
+                SessionTotals.empty(), null);
     }
 
     /**
@@ -334,6 +337,16 @@ public class SessionRecord implements SessionRecordView {
     @Override
     public Optional<SessionRewindPoint> getRewindPoint() {
         return transcript.getRewindPoint();
+    }
+
+    /**
+     * Gets the session log, whole — read from the transcript.
+     *
+     * @return the log state (never null)
+     */
+    @Override
+    public SessionLogState getLogState() {
+        return transcript.getLogState();
     }
 
     /**
@@ -384,7 +397,7 @@ public class SessionRecord implements SessionRecordView {
     }
 
     /**
-     * Gets all messages in the transcript.
+     * Gets the messages of the log entries this record carries.
      *
      * <p>
      * Returns an immutable point-in-time snapshot: the list cannot be modified by the caller, and subsequent appends

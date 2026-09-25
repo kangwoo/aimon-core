@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/embedding-agent-in-application.md
-source_commit: 96870e0
+source_commit: bc8715e
 ---
 
 # Embedding an AIMON agent in your application
@@ -320,9 +320,15 @@ aimon:
     mode: single-node               # single-node (default) | distributed
     node-id: ${HOSTNAME}
     shutdown-drain-timeout: 30s
+    log-write-format: v1            # v1 (default) | v2 — switch to v2 only once every node reads it
+    segment-sweep-interval: 1h      # unset means off (default) — clears orphan segments of sessions nobody reopens
+    segment-sweep-grace: 24h        # 24h by default — only segments older than this, named by no record, are deleted
     cache:
       max-entries: 1000
       idle-ttl: 30m
+
+  context:
+    engine: default                 # default (default) | rolling — rolling needs session.log-write-format: v2
 
   skill:
     approval:

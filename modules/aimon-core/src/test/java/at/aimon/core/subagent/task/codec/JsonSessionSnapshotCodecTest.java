@@ -218,7 +218,7 @@ class JsonSessionSnapshotCodecTest {
         final SessionSnapshot decoded = codec.decode(codec.encode(snapshot));
 
         assertThat(decoded.getRewindPoint()).isPresent();
-        assertThat(decoded.getRewindPoint().orElseThrow().getMessageCount()).isEqualTo(1);
+        assertThat(decoded.getRewindPoint().orElseThrow().getSeq()).isEqualTo(1);
         assertThat(decoded.getRewindPoint().orElseThrow().getUserInput()).isEqualTo(ask);
     }
 

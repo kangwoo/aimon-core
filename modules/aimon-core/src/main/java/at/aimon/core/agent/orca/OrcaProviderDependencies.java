@@ -3,6 +3,7 @@ package at.aimon.core.agent.orca;
 import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.compact.CompactionEngine;
 import at.aimon.core.agent.compact.CompactionGuard;
+import at.aimon.core.agent.context.ContextEngine;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.credential.CredentialStore;
 import at.aimon.core.hook.HookExecutionManager;
@@ -44,6 +45,7 @@ import at.aimon.core.subagent.task.TaskResultStore;
  * }
  * </pre>
  */
+@SuppressWarnings("deprecation") // the version-1 compaction SPI is carried through on purpose
 public final class OrcaProviderDependencies {
 
     /**
@@ -69,6 +71,7 @@ public final class OrcaProviderDependencies {
     private final Environment environment;
     private final CompactionEngine compactionEngine;
     private final CompactionGuard compactionGuard;
+    private final ContextEngine contextEngine;
     private final PendingTurnRegistry pendingTurnRegistry;
     private final AgentApprovalStore agentApprovalStore;
     private final SessionApprovalStore sessionApprovalStore;
@@ -90,6 +93,7 @@ public final class OrcaProviderDependencies {
         environment = builder.environment;
         compactionEngine = builder.compactionEngine;
         compactionGuard = builder.compactionGuard;
+        contextEngine = builder.contextEngine;
         pendingTurnRegistry = builder.pendingTurnRegistry;
         agentApprovalStore = builder.agentApprovalStore;
         sessionApprovalStore = builder.sessionApprovalStore;
@@ -228,6 +232,16 @@ public final class OrcaProviderDependencies {
     }
 
     /**
+     * Returns the context engine that decides what the agent's LLM calls are sent. {@code /compact} goes through it.
+     *
+     * @return the context engine, may be null when the assembly did not supply one &mdash; consumers then fall back to
+     *         {@link #getCompactionEngine()} and {@link #getCompactionGuard()}
+     */
+    public ContextEngine getContextEngine() {
+        return contextEngine;
+    }
+
+    /**
      * Returns the pending turn registry used by the SK-11 atomic-suspension flow.
      *
      * @return the pending turn registry, may be null when skill suspension is not configured
@@ -306,6 +320,7 @@ public final class OrcaProviderDependencies {
         private Environment environment;
         private CompactionEngine compactionEngine;
         private CompactionGuard compactionGuard;
+        private ContextEngine contextEngine;
         private PendingTurnRegistry pendingTurnRegistry;
         private AgentApprovalStore agentApprovalStore;
         private SessionApprovalStore sessionApprovalStore;
@@ -480,6 +495,18 @@ public final class OrcaProviderDependencies {
          */
         public Builder compactionGuard(CompactionGuard compactionGuard) {
             this.compactionGuard = compactionGuard;
+            return this;
+        }
+
+        /**
+         * Sets the context engine.
+         *
+         * @param contextEngine
+         *            the context engine (may be null)
+         * @return this builder
+         */
+        public Builder contextEngine(ContextEngine contextEngine) {
+            this.contextEngine = contextEngine;
             return this;
         }
 

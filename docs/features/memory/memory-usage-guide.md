@@ -236,14 +236,25 @@ executor 에는 `OrcaAgentExecutorFactory.withMemoryContextProvider(...)` 로 �
 | 값 | 언제 보내나 | 대가 |
 |----|------------|------|
 | `off` | 보내지 않는다 | 메모리는 `Observe` 호출이나 다른 프로세스로만 찬다 |
-| `session-end` (기본) | REPL 이 끝날 때 전사 전체를 한 번 | 기존 동작 그대로. 델타를 쓰지 않으므로 같은 메시지가 두 번 갈 수 없다. 대신 세션이 도는 동안 배운 것은 그 세션이 쓰지 못한다 |
+| `session-end` (기본) | REPL 이 끝날 때 전사의 대화 항목 전체를 한 번 | 기존 동작 그대로. 델타를 쓰지 않으므로 같은 메시지가 두 번 갈 수 없다. 대신 세션이 도는 동안 배운 것은 그 세션이 쓰지 못한다 |
 | `execution-end` | 실행이 끝날 때 그 실행이 추가한 메시지만 | 실행마다 디라이버가 돈다(LLM 호출이 늘어난다). 대신 메모리가 세션 안에서 즉시 쓰인다 |
 
-IMPORTANT: `execution-end` 에는 손실이 하나 있고 그것은 의도된 것이다. 델타의 기준점은 **메시지 개수**이며
-(`Message` 에 안정적인 id 가 없다), compaction 이나 프롬프트 크기 복구가 이력을 통째로 갈아 끼우면 그 기준점은
-무의미해진다. 그 실행은 **아무것도 보내지 않고** 다음 실행이 다시 기준점을 잡는다 — 요약을 대화인 척 보내거나
-이미 수집된 메시지를 다시 보내는 것보다 싸기 때문이다. 근거는
-[교체 가능한 메모리 백엔드](../../design/memory/pluggable-memory-backend.md) §7.2 에 있다.
+IMPORTANT: `execution-end` 의 델타는 로그의 **seq** 에 걸린 기준점에서 구한다(`Message` 에 안정적인 id 가 없다).
+버전 2 로그에서는 compaction 과 프롬프트 크기 복구가 로그가 아니라 뷰 상태를 바꾸므로 기준점이 살아남고, 압축된
+실행도 말해진 그대로 수집된다. 손실은 **버전 1 쓰기 모드에만** 남는다 — 거기서는 이력을 통째로 갈아 끼우므로 그
+실행은 **아무것도 보내지 않고** 다음 실행이 다시 기준점을 잡는다. 요약을 대화인 척 보내거나 이미 수집된 메시지를
+다시 보내는 것보다 싸기 때문이다. 근거는 [교체 가능한 메모리 백엔드](../../design/memory/pluggable-memory-backend.md)
+§7.2 와 [Context Engine](../../design/agent-execution/context-engine.md) §7 에 있다.
+
+두 값 모두 런타임이 주입한 항목(`LogOrigin.SYNTHETIC` — user-context 블록, 조립된 `<system-reminder>`, 복원 훅이 붙인
+파일·스킬 목록)은 보내지 않는다. 한 번에 보내는 양은 추정 32K 토큰(`IngestChunks.DEFAULT_MAX_INGEST_TOKENS`) 단위로
+나누며, 청크 경계는 `tool_use` 와 그 `tool_result` 를 가르지 않는 곳이다 — 압축이 더 이상 페이로드를 창 크기로 묶어
+주지 않기 때문이다.
+
+버전 2 로그에서는 압축이 뷰에서 뺀 구간이 레코드 밖의 세그먼트로 **봉인**될 수 있다(세그먼트 저장소가 배선된 경우).
+두 값 모두 그것을 잃지 않는다. `execution-end` 는 실행 중에 봉인된 항목을 실행이 끝날 때까지 메모리에 들고 있다가
+델타에 넣고, `session-end` 는 레코드가 아니라 `SessionLogReader` 로 봉인 구간까지 로그 전체를 페이지 단위로 읽는다.
+세그먼트가 없거나 해시가 맞지 않는 구간은 `[history unavailable: seq a..b]` 합성 항목으로 보고되어 수집에서 빠진다.
 
 ### 7.2 `memory.dreamer` 블록 (`MemoryDreamerConfig`)
 

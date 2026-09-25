@@ -22,9 +22,14 @@ import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.budget.ExecutionBudget;
 import at.aimon.core.agent.budget.StalledIterationGuard;
 import at.aimon.core.agent.budget.TruncatedResponses;
-import at.aimon.core.agent.compact.CompactionDecision;
 import at.aimon.core.agent.compact.CompactionGuard;
 import at.aimon.core.agent.compact.NoOpCompactionGuard;
+import at.aimon.core.agent.context.ContextCaller;
+import at.aimon.core.agent.context.ContextDecision;
+import at.aimon.core.agent.context.ContextEngine;
+import at.aimon.core.agent.context.ContextRequest;
+import at.aimon.core.agent.context.ContextView;
+import at.aimon.core.agent.context.DefaultContextEngine;
 import at.aimon.core.agent.exception.ContextWindowExceededException;
 import at.aimon.core.agent.exception.MaxIterationsExceededException;
 import at.aimon.core.agent.interrupt.CancellationSignal;
@@ -39,6 +44,7 @@ import at.aimon.core.agent.prompt.Staticness;
 import at.aimon.core.agent.prompt.SystemPromptPart;
 import at.aimon.core.agent.prompt.SystemPromptParts;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.transcript.LogOrigin;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.tool.DefaultParallelToolDispatcher;
 import at.aimon.core.agent.tool.InterruptToolKeys;
@@ -110,7 +116,7 @@ import at.aimon.core.tools.todo.TodoWriteTool;
  *
  * <p>
  * Thread-safe if the supplied {@link LlmCallGateway}, {@link ToolExecutionManager}, {@link HookExecutionManager} and
- * {@link CompactionGuard} are thread-safe.
+ * {@link ContextEngine} are thread-safe.
  *
  * <p>
  * Example usage:
@@ -144,7 +150,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
     private final LlmCallGateway<TranscriptBuffer> gateway;
     private final ToolExecutionManager toolExecutionManager;
     private final HookExecutionManager hookExecutionManager;
-    private final CompactionGuard compactionGuard;
+    private final ContextEngine contextEngine;
 
     /**
      * Shared per-tool invocation pipeline; identical logic drives the main-agent {@code OrcaAgentExecutor}.
@@ -181,7 +187,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      *
      * <p>
      * The client is auto-wrapped in a pass-through {@link LlmCallGateway} (default retry policy, no fallback, no
-     * prompt-too-long handler) and compaction is disabled ({@link NoOpCompactionGuard}). This preserves the legacy
+     * prompt-too-long handler) and compaction is disabled ({@link ContextEngine#passthrough()}). This preserves the
+     * legacy
      * single-client construction path used by callers and tests.
      *
      * @param llmClient
@@ -196,14 +203,14 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
     public DefaultSubagentExecutor(LlmClient llmClient, ToolExecutionManager toolExecutionManager,
             HookExecutionManager hookExecutionManager) {
         this(LlmCallGateway.<TranscriptBuffer>withDefaultRetry(llmClient), toolExecutionManager, hookExecutionManager,
-                NoOpCompactionGuard.instance());
+                ContextEngine.passthrough());
     }
 
     /**
      * Creates a new DefaultSubagentExecutor backed by a pre-configured {@link LlmCallGateway}.
      *
      * <p>
-     * Compaction is disabled ({@link NoOpCompactionGuard}).
+     * Compaction is disabled ({@link ContextEngine#passthrough()}).
      *
      * @param gateway
      *            The LLM call gateway wrapping the underlying client with retry/fallback semantics (must not be null)
@@ -216,11 +223,12 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      */
     public DefaultSubagentExecutor(LlmCallGateway<TranscriptBuffer> gateway, ToolExecutionManager toolExecutionManager,
             HookExecutionManager hookExecutionManager) {
-        this(gateway, toolExecutionManager, hookExecutionManager, NoOpCompactionGuard.instance());
+        this(gateway, toolExecutionManager, hookExecutionManager, ContextEngine.passthrough());
     }
 
     /**
-     * Primary constructor.
+     * Creates a DefaultSubagentExecutor whose AUTO compaction is decided by a bare {@link CompactionGuard}, wrapped in
+     * a {@link DefaultContextEngine}.
      *
      * @param gateway
      *            The LLM call gateway wrapping the underlying client with retry/fallback semantics (must not be null)
@@ -233,14 +241,40 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * @throws NullPointerException
      *             if any parameter is null
      */
+    @SuppressWarnings("deprecation") // the version-1 compaction SPI is carried through on purpose
     public DefaultSubagentExecutor(LlmCallGateway<TranscriptBuffer> gateway, ToolExecutionManager toolExecutionManager,
             HookExecutionManager hookExecutionManager, CompactionGuard compactionGuard) {
+        this(gateway, toolExecutionManager, hookExecutionManager, DefaultContextEngine.builder()
+                .compactionGuard(Objects.requireNonNull(compactionGuard, "Compaction guard cannot be null")).build());
+    }
+
+    /**
+     * Primary constructor.
+     *
+     * <p>
+     * A fork has no session, so whatever view state the engine keeps lives on the fork's own buffer and is never
+     * persisted.
+     *
+     * @param gateway
+     *            The LLM call gateway wrapping the underlying client with retry/fallback semantics (must not be null)
+     * @param toolExecutionManager
+     *            The tool execution manager (must not be null)
+     * @param hookExecutionManager
+     *            The hook execution manager (must not be null)
+     * @param contextEngine
+     *            The engine deciding what each of the fork's LLM calls is sent; use {@link ContextEngine#passthrough()}
+     *            to disable compaction (must not be null)
+     * @throws NullPointerException
+     *             if any parameter is null
+     */
+    public DefaultSubagentExecutor(LlmCallGateway<TranscriptBuffer> gateway, ToolExecutionManager toolExecutionManager,
+            HookExecutionManager hookExecutionManager, ContextEngine contextEngine) {
         this.gateway = Objects.requireNonNull(gateway, "gateway cannot be null");
         this.toolExecutionManager = Objects.requireNonNull(toolExecutionManager,
                 "Tool execution manager cannot be null");
         this.hookExecutionManager = Objects.requireNonNull(hookExecutionManager,
                 "Hook execution manager cannot be null");
-        this.compactionGuard = Objects.requireNonNull(compactionGuard, "Compaction guard cannot be null");
+        this.contextEngine = Objects.requireNonNull(contextEngine, "Context engine cannot be null");
         this.singleToolInvoker = new SingleToolInvoker(toolExecutionManager, hookExecutionManager);
     }
 
@@ -408,8 +442,9 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 lc.budgetTracker.recordIteration();
                 stream(lc, "\n[iteration " + iterationCount + "]\n");
 
-                // AUTO compaction gate. NoOpCompactionGuard returns NONE, leaving behavior unchanged.
-                applyCompactionGate(lc, iterationCount);
+                // AUTO compaction gate. The passthrough engine returns NONE, leaving behavior unchanged; either way the
+                // engine returns the view this iteration's call is sent.
+                final ContextView view = applyCompactionGate(lc, iterationCount);
 
                 // Re-read every iteration so newly activated deferred tools are included. See the method for the
                 // two things it withholds and why.
@@ -421,8 +456,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 // stale abort.
                 final LlmResponse response;
                 try {
-                    response = gateway.sendMessage(lc.systemPromptParts, lc.transcriptBuffer.getMessages(),
-                            availableTools, lc.modelConfig, lc.effectiveMetadata, llmCancellation);
+                    response = gateway.sendMessage(lc.systemPromptParts, view.getMessages(), availableTools,
+                            lc.modelConfig, lc.effectiveMetadata, llmCancellation);
                 } finally {
                     llmCancellation.clearAbort();
                 }
@@ -539,28 +574,31 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 .userMessage(lc.goal).executionAttributes(lc.executionAttributes).build();
         final List<HookResult> onStartResults = hookExecutionManager.executeOnStart(onStartContext);
         HookFeedback.toReminderBlock(HookFeedback.collectAdvisory(onStartResults))
-                .ifPresent(lc.transcriptBuffer::addUserMessage);
+                .ifPresent(block -> lc.transcriptBuffer.addMessage(Message.user(block), LogOrigin.SYNTHETIC));
     }
 
     /**
-     * Evaluates the AUTO compaction guard for the upcoming LLM call and applies its decision (BLOCK throws, COMPACT and
-     * WARN log, NONE is a no-op).
+     * Asks the context engine for the upcoming LLM call's view and applies its decision (BLOCK throws, COMPACT and WARN
+     * log, NONE is a no-op).
      *
      * @param lc
      *            the loop context
      * @param iterationCount
      *            the current iteration count (for logging)
+     * @return the view to send (never null)
      * @throws ContextWindowExceededException
-     *             if the guard blocks the iteration
+     *             if the engine blocks the iteration
      */
-    private void applyCompactionGate(LoopContext lc, int iterationCount) {
-        // Hand the guard this fork's run identity. Without it the compaction engine has only the transcript label to
+    private ContextView applyCompactionGate(LoopContext lc, int iterationCount) {
+        // Hand the engine this fork's run identity. Without it the compaction engine has only the transcript label to
         // go on, and that label is a SessionId wrapping this very execution id — so a PreCompact hook would be told the
         // fork had a session, and told an execution id as its name. The two are tied together at both entries into
         // execute(): a fresh fork derives the label from the id (forkTranscriptLabel), a resume derives the id back out
         // of the restored label (ExecutionId.of), which is why the round trip has to survive the snapshot.
-        final CompactionDecision decision = compactionGuard.maybeCompact(lc.transcriptBuffer, lc.modelConfig,
-                lc.hookRegistry(), lc.environment(), lc.executionId);
+        final ContextDecision decision = contextEngine
+                .prepare(ContextRequest.builder().transcriptBuffer(lc.transcriptBuffer).model(lc.modelConfig)
+                        .hookRegistry(lc.hookRegistry()).environment(lc.environment())
+                        .caller(ContextCaller.builder().executionId(lc.executionId).build()).build());
         switch (decision.getAction()) {
             case BLOCK :
                 log.error("Compaction guard blocked subagent iteration {}: {}", iterationCount, decision.getReason());
@@ -576,6 +614,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
             default :
                 break;
         }
+        return decision.getView();
     }
 
     /**

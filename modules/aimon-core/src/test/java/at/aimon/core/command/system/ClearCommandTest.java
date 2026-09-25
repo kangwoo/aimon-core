@@ -9,6 +9,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.transcript.SessionLogState;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
@@ -83,6 +84,23 @@ class ClearCommandTest {
         assertThat(result.isSuccess()).isTrue();
         assertThat(result.getResponse()).contains("Conversation cleared. Removed 2 message(s).");
         assertThat(memory.getMessages()).isEmpty();
+    }
+
+    /**
+     * The count is live entries, not seqs handed out: a rewind cuts entries without giving their seqs back, so
+     * {@code nextSeq - floorSeq} would over-count.
+     */
+    @Test
+    void reportsLiveEntriesRatherThanSeqsHandedOut() {
+        final SessionLogState rewound = SessionLogState
+                .ofMessages(
+                        List.of(Message.user("a"), Message.assistant("b"), Message.user("c"), Message.assistant("d")))
+                .truncateFrom(2);
+
+        CommandExecutionResult result = new ClearCommand().execute(createContext(SESSION),
+                requestWith(SessionSnapshot.fromLog(SESSION, null, rewound)));
+
+        assertThat(result.getResponse()).contains("Removed 2 message(s).");
     }
 
     @Test

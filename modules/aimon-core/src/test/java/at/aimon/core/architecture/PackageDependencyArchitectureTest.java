@@ -94,6 +94,10 @@ class PackageDependencyArchitectureTest {
     // restoration. Hook contexts (PreCompactContext, PostCompactContext) in turn reference compaction value types
     // (CompactionTrigger, CompactionMetadata), so the coupling is bidirectional and intentional.
     private static final String PKG_AGENT_COMPACT = AgentCorePackage.class.getPackageName() + ".compact..";
+    // Narrow carve-out: the ContextEngine SPI (context-engine design §3) lives under agent.context. Its request carries
+    // the HookRegistry a compacting engine hands to PreCompact / PostCompact hooks, so the package may reference that
+    // one hook type and nothing else from at.aimon.core.hook.
+    private static final String PKG_AGENT_CONTEXT = AgentCorePackage.class.getPackageName() + ".context..";
     // Narrow carve-out: at.aimon.core.agent.orca holds the public Orca tool-provider SPIs (OrcaToolProvider,
     // OrcaToolProviderContext, OrcaProviderDependencies). They aggregate dependencies from cross-cutting
     // registries (subagent, skill, scheduling, credential, hook, mcp, ...) by design — this is the SPI surface
@@ -175,11 +179,11 @@ class PackageDependencyArchitectureTest {
         // The SK-11 SkillTurnSuspendedEvent (in agent.stream) references PendingTurnId / PendingSkillRequest from the
         // ext.skill.policy.pending DTO package — see PKG_EXT_SKILL_PENDING carve-out comment.
         ArchRule rule = classes().that().resideInAPackage(PKG_AGENT_CORE).and()
-                .resideOutsideOfPackage(PKG_AGENT_COMPACT).and().resideOutsideOfPackage(PKG_AGENT_ORCA).and()
-                .resideOutsideOfPackage(PKG_AGENT_SESSION).and().resideOutsideOfPackage(PKG_AGENTS).should()
-                .onlyDependOnClassesThat().resideInAnyPackage(PKG_AGENT_CORE, PKG_CORE, PKG_LLM_CORE,
-                        PKG_FILESYSTEM_CORE, PKG_SHELL_CORE, PKG_AGENTS, PKG_SKILL_POLICY_PENDING, PKG_JAVA, PKG_SLF4J,
-                        PKG_SNAKEYAML, PKG_JACKSON, PKG_MUSTACHE);
+                .resideOutsideOfPackage(PKG_AGENT_COMPACT).and().resideOutsideOfPackage(PKG_AGENT_CONTEXT).and()
+                .resideOutsideOfPackage(PKG_AGENT_ORCA).and().resideOutsideOfPackage(PKG_AGENT_SESSION).and()
+                .resideOutsideOfPackage(PKG_AGENTS).should().onlyDependOnClassesThat().resideInAnyPackage(
+                        PKG_AGENT_CORE, PKG_CORE, PKG_LLM_CORE, PKG_FILESYSTEM_CORE, PKG_SHELL_CORE, PKG_AGENTS,
+                        PKG_SKILL_POLICY_PENDING, PKG_JAVA, PKG_SLF4J, PKG_SNAKEYAML, PKG_JACKSON, PKG_MUSTACHE);
 
         rule.check(classes);
     }
@@ -204,6 +208,20 @@ class PackageDependencyArchitectureTest {
                         .or(JavaClass.Predicates.resideInAnyPackage(PKG_AGENT_CORE, PKG_CORE, PKG_LLM_CORE,
                                 PKG_FILESYSTEM_CORE, PKG_SHELL_CORE, PKG_AGENTS, PKG_JAVA, PKG_SLF4J, PKG_SNAKEYAML,
                                 PKG_JACKSON, PKG_MUSTACHE)));
+
+        rule.check(classes);
+    }
+
+    @Test
+    @DisplayName("at.aimon.core.agent.context may depend only on HookRegistry from at.aimon.core.hook — the registry a"
+            + " compacting ContextEngine forwards to PreCompact / PostCompact hooks")
+    void agentContextMayDependOnHookRegistryOnly() {
+        // Narrow carve-out: see PKG_AGENT_CONTEXT. Everything else agent.context needs is in the agent core allow-list.
+        ArchRule rule = classes().that().resideInAPackage(PKG_AGENT_CONTEXT).should()
+                .onlyDependOnClassesThat(JavaClass.Predicates.belongToAnyOf(HookRegistry.class)
+                        .or(JavaClass.Predicates.resideInAnyPackage(PKG_AGENT_CORE, PKG_CORE, PKG_LLM_CORE,
+                                PKG_FILESYSTEM_CORE, PKG_SHELL_CORE, PKG_AGENTS, PKG_SKILL_POLICY_PENDING, PKG_JAVA,
+                                PKG_SLF4J, PKG_SNAKEYAML, PKG_JACKSON, PKG_MUSTACHE)));
 
         rule.check(classes);
     }

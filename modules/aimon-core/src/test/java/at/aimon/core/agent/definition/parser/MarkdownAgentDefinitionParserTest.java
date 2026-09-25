@@ -11,6 +11,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
+import at.aimon.core.agent.ContextEngineKind;
 import at.aimon.core.agent.definition.AgentDefinition;
 import at.aimon.core.agent.definition.exception.AgentDefinitionParseException;
 import at.aimon.core.agent.tool.permission.AllowedTool;
@@ -517,6 +518,45 @@ class MarkdownAgentDefinitionParserTest {
 
             assertThatThrownBy(() -> parser.parse(stream(content))).isInstanceOf(AgentDefinitionParseException.class)
                     .hasMessageContaining("allowed-tools");
+        }
+    }
+
+    @Nested
+    @DisplayName("context-engine")
+    class ContextEngineParsing {
+
+        private String withContextEngine(String line) {
+            return "---\nname: test\n" + line + "\n---\nbody";
+        }
+
+        @Test
+        @DisplayName("Should bind the engine, ignoring case")
+        void shouldBindTheEngine() {
+            assertThat(parser.parse(stream(withContextEngine("context-engine: rolling"))).getContextEngine())
+                    .contains(ContextEngineKind.ROLLING);
+            assertThat(parser.parse(stream(withContextEngine("context-engine: Default"))).getContextEngine())
+                    .contains(ContextEngineKind.DEFAULT);
+        }
+
+        @Test
+        @DisplayName("An absent key leaves the choice to the deployment")
+        void anAbsentKeyIsEmpty() {
+            assertThat(parser.parse(stream(withContextEngine("maxIterations: 3"))).getContextEngine()).isEmpty();
+        }
+
+        @Test
+        @DisplayName("Should reject an unknown engine, listing the accepted ones")
+        void shouldRejectAnUnknownEngine() {
+            assertThatThrownBy(() -> parser.parse(stream(withContextEngine("context-engine: sliding"))))
+                    .isInstanceOf(AgentDefinitionParseException.class).hasMessageContaining("context-engine")
+                    .hasMessageContaining("default").hasMessageContaining("rolling");
+        }
+
+        @Test
+        @DisplayName("Should reject the camelCase spelling rather than ignore it")
+        void shouldRejectCamelCase() {
+            assertThatThrownBy(() -> parser.parse(stream(withContextEngine("contextEngine: rolling"))))
+                    .isInstanceOf(AgentDefinitionParseException.class).hasMessageContaining("context-engine");
         }
     }
 }

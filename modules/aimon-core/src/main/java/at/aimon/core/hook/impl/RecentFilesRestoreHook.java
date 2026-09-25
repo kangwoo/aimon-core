@@ -15,6 +15,7 @@ import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.hook.event.PostCompactContext;
 import at.aimon.core.hook.event.PostCompactHook;
 import at.aimon.core.hook.execution.HookResult;
+import at.aimon.core.llm.Message;
 
 /**
  * {@link PostCompactHook} that re-attaches the most recently {@code Read}-accessed files after a compaction so the
@@ -100,7 +101,7 @@ public final class RecentFilesRestoreHook implements PostCompactHook {
 
         final String body = formatRestoreMessage(outcomes);
         final TranscriptBuffer memory = context.getTranscriptBuffer();
-        memory.addUserMessage(body);
+        context.addSyntheticMessage(Message.user(body));
         log.info("Re-attached {} recently-read file(s) after compaction (session={})", outcomes.size(),
                 memory.getSessionId());
         return HookResult.success();

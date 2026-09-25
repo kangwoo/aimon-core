@@ -10,9 +10,13 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.transcript.LogOrigin;
+import at.aimon.core.agent.session.transcript.SessionLogFormat;
+import at.aimon.core.agent.session.transcript.SummarySpan;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.base.Principal;
 import at.aimon.core.llm.Message;
+import at.aimon.core.llm.token.HeuristicTokenEstimator;
 
 /**
  * The ingest delta, and what the sink does with it.
@@ -117,6 +121,36 @@ class ExecutionMemoryIngestTest {
         }
 
         @Test
+        @DisplayName("what the runtime injected is not offered — only what the conversation said")
+        void syntheticEntriesAreLeftOut() {
+            final TranscriptBuffer buffer = buffer();
+            buffer.markIngestPoint();
+            buffer.addMessage(Message.user("<system-reminder>context</system-reminder>"), LogOrigin.SYNTHETIC);
+            buffer.addUserMessage("question");
+            buffer.addAssistantMessage("answer");
+
+            assertThat(buffer.messagesSinceIngestMark()).extracting(Message::getContent).containsExactly("question",
+                    "answer");
+        }
+
+        @Test
+        @DisplayName("on a version-2 log a compaction keeps the mark — the execution is offered as it was said")
+        void viewModeCompactionKeepsTheMark() {
+            final TranscriptBuffer buffer = buffer();
+            buffer.requireFormat(SessionLogFormat.V2);
+            buffer.addUserMessage("before");
+            buffer.markIngestPoint();
+            buffer.addUserMessage("three");
+            buffer.addAssistantMessage("four");
+
+            buffer.summarizeView(SummarySpan.builder().fromSeq(0).toSeq(3).summaryText("[summary]").boundaryId("b")
+                    .trigger("AUTO").build());
+
+            assertThat(buffer.messagesSinceIngestMark()).extracting(Message::getContent).containsExactly("three",
+                    "four");
+        }
+
+        @Test
         @DisplayName("clear drops the mark too")
         void clearDropsTheMark() {
             final TranscriptBuffer buffer = buffer();
@@ -150,6 +184,22 @@ class ExecutionMemoryIngestTest {
                 messages.add(Message.user(content));
             }
             return ExecutionMemoryUpdate.builder().sessionId(sessionId).principal(principal).messages(messages).build();
+        }
+
+        @Test
+        @DisplayName("a delta larger than the budget is ingested in chunks, cut between messages")
+        void aLargeDeltaIsIngestedInChunks() {
+            final MemoryIngestor ingestor = request -> {
+                ingested.add(request);
+                return MemoryIngestReceipt.builder().accepted(request.getMessages().size()).build();
+            };
+            final ExecutionMemorySink sink = new IngestingExecutionMemorySink(ingestor, WS,
+                    MemoryPeerResolver.fixed(Principal.user("alice", "Alice")), 100, new HeuristicTokenEstimator());
+
+            sink.afterExecution(update(SESSION, null, "a".repeat(300), "b".repeat(300), "c".repeat(300)));
+
+            assertThat(ingested).hasSize(3);
+            assertThat(ingested).allSatisfy(request -> assertThat(request.getMessages()).hasSize(1));
         }
 
         @Test
