@@ -246,6 +246,9 @@ public class AimonProperties implements InitializingBean {
     /** Engine that runs scheduled tasks. */
     public static final String SCHEDULING_BACKEND = PREFIX + ".scheduling.backend";
 
+    /** Prefix of the rolling context engine's tuning properties. */
+    public static final String CONTEXT_ROLLING = PREFIX + ".context.rolling";
+
     /** Whether the scheduling engine starts with the application context. */
     public static final String SCHEDULING_AUTO_STARTUP = PREFIX + ".scheduling.auto-startup";
 
@@ -844,6 +847,22 @@ public class AimonProperties implements InitializingBean {
         requirePositive(agentRuntime.getSweepInterval(), AGENT_RUNTIME_SWEEP_INTERVAL);
         requirePositive(skill.getApproval().getPendingTurnTtl(), SKILL_APPROVAL_PENDING_TURN_TTL);
         requireNoBlankEntry(skill.getApproval().getAllow(), SKILL_APPROVAL_ALLOW);
+        // Checked here, not only when a rolling runtime is built: an agent can pick rolling in its AGENT.md later,
+        // and a bad ratio should not wait for that agent to be the one that fails.
+        final ContextProperties.Rolling rolling = context.getRolling();
+        requireRatio(rolling.getAutoCompactRatio(), CONTEXT_ROLLING + ".auto-compact-ratio");
+        requireRatio(rolling.getHeadTokenRatio(), CONTEXT_ROLLING + ".head-token-ratio");
+        requireRatio(rolling.getTailTokenRatio(), CONTEXT_ROLLING + ".tail-token-ratio");
+        requireRatio(rolling.getSummaryTokenRatio(), CONTEXT_ROLLING + ".summary-token-ratio");
+        requireRatio(rolling.getMinTailRatio(), CONTEXT_ROLLING + ".min-tail-ratio");
+        requireAtLeastOne(rolling.getPruneMinTokens(), CONTEXT_ROLLING + ".prune-min-tokens");
+    }
+
+    private static void requireRatio(Double value, String property) {
+        if (value != null && !(value > 0.0 && value <= 1.0)) {
+            throw new IllegalStateException(property + "=" + value + " must be in (0, 1] — a fraction of the"
+                    + " model's effective context window.");
+        }
     }
 
     private static void requireAtLeastOne(Integer value, String property) {
@@ -1810,12 +1829,99 @@ public class AimonProperties implements InitializingBean {
          */
         private ContextEngineKind engine = ContextEngineKind.DEFAULT;
 
+        /**
+         * {@code aimon.context.rolling.*} — thresholds of the rolling engine, for every agent that runs it (chosen
+         * here or in its AGENT.md). An unset value keeps the engine default. The summary model is not a property; set
+         * it through {@code ExecutorSpec.rollingContextEngineCustomizer}.
+         */
+        private final Rolling rolling = new Rolling();
+
         public ContextEngineKind getEngine() {
             return engine;
         }
 
         public void setEngine(ContextEngineKind engine) {
             this.engine = engine;
+        }
+
+        public Rolling getRolling() {
+            return rolling;
+        }
+
+        /** The rolling engine's thresholds; ratios are fractions of the model's effective window, in (0, 1]. */
+        public static class Rolling {
+
+            /** Where rolling compaction starts (engine default 0.6). */
+            private Double autoCompactRatio;
+
+            /** Cap on the head's conversation tokens (engine default 0.05). */
+            private Double headTokenRatio;
+
+            /** Budget of the verbatim tail (engine default 0.20). */
+            private Double tailTokenRatio;
+
+            /** Summary length asked of the model (engine default 0.08). */
+            private Double summaryTokenRatio;
+
+            /** Smallest tail rolling must be able to keep, else a call falls back to the default engine (0.05). */
+            private Double minTailRatio;
+
+            /** Smallest tool result, in tokens, worth eliding before summarizing (engine default 500). */
+            private Integer pruneMinTokens;
+
+            public Double getAutoCompactRatio() {
+                return autoCompactRatio;
+            }
+
+            public void setAutoCompactRatio(Double autoCompactRatio) {
+                this.autoCompactRatio = autoCompactRatio;
+            }
+
+            public Double getHeadTokenRatio() {
+                return headTokenRatio;
+            }
+
+            public void setHeadTokenRatio(Double headTokenRatio) {
+                this.headTokenRatio = headTokenRatio;
+            }
+
+            public Double getTailTokenRatio() {
+                return tailTokenRatio;
+            }
+
+            public void setTailTokenRatio(Double tailTokenRatio) {
+                this.tailTokenRatio = tailTokenRatio;
+            }
+
+            public Double getSummaryTokenRatio() {
+                return summaryTokenRatio;
+            }
+
+            public void setSummaryTokenRatio(Double summaryTokenRatio) {
+                this.summaryTokenRatio = summaryTokenRatio;
+            }
+
+            public Double getMinTailRatio() {
+                return minTailRatio;
+            }
+
+            public void setMinTailRatio(Double minTailRatio) {
+                this.minTailRatio = minTailRatio;
+            }
+
+            public Integer getPruneMinTokens() {
+                return pruneMinTokens;
+            }
+
+            public void setPruneMinTokens(Integer pruneMinTokens) {
+                this.pruneMinTokens = pruneMinTokens;
+            }
+
+            /** Whether any threshold is set. */
+            public boolean isTuned() {
+                return autoCompactRatio != null || headTokenRatio != null || tailTokenRatio != null
+                        || summaryTokenRatio != null || minTailRatio != null || pruneMinTokens != null;
+            }
         }
     }
 

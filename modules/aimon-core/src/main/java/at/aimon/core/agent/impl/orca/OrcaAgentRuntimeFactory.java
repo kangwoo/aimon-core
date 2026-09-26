@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Consumer;
 import java.util.function.Function;
 
 import at.aimon.core.agent.Agent;
@@ -232,6 +233,8 @@ public class OrcaAgentRuntimeFactory {
     // which a version-1 record cannot store, so asking for it on a version-1 node fails there (session-log §7.3).
     private ContextEngineKind defaultContextEngine = ContextEngineKind.DEFAULT;
     private SessionLogFormat sessionLogWriteFormat = SessionLogFormat.V1;
+    // Tunes the rolling engine's thresholds before the factory wires its collaborators in; null keeps the defaults.
+    private Consumer<RollingContextEngine.Builder> rollingContextEngineCustomizer;
 
     /**
      * Creates a factory with default configuration.
@@ -559,6 +562,23 @@ public class OrcaAgentRuntimeFactory {
      */
     public OrcaAgentRuntimeFactory withSessionLogWriteFormat(SessionLogFormat writeFormat) {
         this.sessionLogWriteFormat = Objects.requireNonNull(writeFormat, "writeFormat must not be null");
+        return this;
+    }
+
+    /**
+     * Tunes the rolling engine of every runtime this factory builds with {@link ContextEngineKind#ROLLING} — its
+     * ratios, {@code pruneMinTokens}, {@code summaryModel} and {@code maxConsecutiveFailures}. The customizer runs on a
+     * fresh builder once per runtime, before the factory sets the collaborators it owns (compaction engine, model
+     * window registry, token estimator, failure store, recovery strategy, write format), so setting those here has no
+     * effect. Invalid values fail when the runtime is built, which for a declared agent is at startup.
+     *
+     * @param customizer
+     *            applied to each rolling engine's builder (may be {@code null} to keep the engine defaults)
+     * @return this factory (for chaining)
+     */
+    public OrcaAgentRuntimeFactory withRollingContextEngineCustomizer(
+            Consumer<RollingContextEngine.Builder> customizer) {
+        this.rollingContextEngineCustomizer = customizer;
         return this;
     }
 
@@ -1009,10 +1029,14 @@ public class OrcaAgentRuntimeFactory {
                         + " version 1, which cannot store it. Switch the write format to version 2 once every node"
                         + " reads it, or use the default context engine.");
             }
-            return RollingContextEngine.builder().compactionEngine(compactionEngine)
-                    .modelContextWindowRegistry(modelContextWindowRegistry).tokenEstimator(tokenEstimator)
-                    .failureStore(failureStore).recoveryStrategy(recoveryStrategy).writeFormat(sessionLogWriteFormat)
-                    .build();
+            final RollingContextEngine.Builder builder = RollingContextEngine.builder();
+            if (rollingContextEngineCustomizer != null) {
+                rollingContextEngineCustomizer.accept(builder);
+            }
+            // Wired after the customizer, so a customizer tunes the engine but cannot unplug it from this runtime.
+            return builder.compactionEngine(compactionEngine).modelContextWindowRegistry(modelContextWindowRegistry)
+                    .tokenEstimator(tokenEstimator).failureStore(failureStore).recoveryStrategy(recoveryStrategy)
+                    .writeFormat(sessionLogWriteFormat).build();
         }
         return DefaultContextEngine.builder().compactionGuard(compactionGuard).recoveryStrategy(recoveryStrategy)
                 .compactionEngine(compactionEngine).tokenEstimator(tokenEstimator).writeFormat(sessionLogWriteFormat)

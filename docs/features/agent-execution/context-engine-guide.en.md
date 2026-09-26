@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/agent-execution/context-engine-guide.md
-source_commit: e5135b5
+source_commit: 6e0e405
 ---
 
 # Context Engine Guide — shrinking the context of long conversations
@@ -42,6 +42,9 @@ aimon:
     log-write-format: v2    # v1 (default) | v2
   context:
     engine: rolling         # default (default) | rolling — the value when the agent names none
+    rolling:                # optional — rolling's thresholds (§4). Unset values keep the engine default
+      tail-token-ratio: 0.25
+      prune-min-tokens: 1000
 ```
 
 When `aimon.session.store` is not `in-memory`, also expose the same backend module's `SessionLogSegmentStore` as a bean
@@ -74,9 +77,9 @@ AimonStackSpec.builder()
         .build();
 ```
 
-An assembly using `OrcaAgentRuntimeFactory` directly passes the same values through `withSessionLogWriteFormat(...)`
-and `withContextEngine(...)`. To build the engine yourself and change its ratios, use `RollingContextEngine.builder()`
-(§4).
+Rolling's thresholds are changed with `ExecutorSpec.builder().rollingContextEngineCustomizer(b -> b.tailTokenRatio(0.25))`
+(§4). An assembly using `OrcaAgentRuntimeFactory` directly passes the same values through
+`withSessionLogWriteFormat(...)`, `withContextEngine(...)` and `withRollingContextEngineCustomizer(...)`.
 
 ### 2.4 CLI
 
@@ -129,17 +132,31 @@ tail and bring the next compaction forward.
 
 ## 4. Tuning
 
-These are values of `RollingContextEngine.Builder`. They are not exposed as starter properties.
+These are values of `RollingContextEngine.Builder`. Where they go depends on how the stack is assembled.
 
-| Value | Default | Meaning |
-|-------|---------|---------|
-| `autoCompactRatio` | 0.6 | Where compaction starts, relative to the effective window |
-| `headTokenRatio` | 0.05 | Cap on the head's conversation part. Beyond it the head is empty and the summary takes over |
-| `tailTokenRatio` | 0.20 | The tail budget kept verbatim |
-| `summaryTokenRatio` | 0.08 | The summary length asked for |
-| `minTailRatio` | 0.05 | The minimum tail used to judge "can this model sustain rolling" |
-| `pruneMinTokens` | 500 | The smallest tool result worth hiding |
-| `summaryModel` | the call's model | A model for summaries only. Must be of the same provider |
+- **Spring Boot starter** — the `aimon.context.rolling.*` properties (the kebab names in the table below). `summaryModel`
+  has no property
+- **`AimonStackSpec`** — `ExecutorSpec.builder().rollingContextEngineCustomizer(builder -> ...)`
+- **`OrcaAgentRuntimeFactory`** — `withRollingContextEngineCustomizer(builder -> ...)`
+
+The customizer is applied once to a fresh builder for every runtime that runs rolling (whether chosen as the deployment
+default or in AGENT.md). The factory sets the collaborators (`compactionEngine`, `tokenEstimator`, `writeFormat`, ...)
+**after** the customizer, so changing them there has no effect. An out-of-range value fails when the runtime is built —
+at startup, for a declared agent. The starter also checks the ratios at startup on its own, so a bad value is refused
+even while no agent runs rolling yet.
+
+| Value | Starter property | Default | Meaning |
+|-------|------------------|---------|---------|
+| `autoCompactRatio` | `auto-compact-ratio` | 0.6 | Where compaction starts, relative to the effective window |
+| `headTokenRatio` | `head-token-ratio` | 0.05 | Cap on the head's conversation part. Beyond it the head is empty and the summary takes over |
+| `tailTokenRatio` | `tail-token-ratio` | 0.20 | The tail budget kept verbatim |
+| `summaryTokenRatio` | `summary-token-ratio` | 0.08 | The summary length asked for |
+| `minTailRatio` | `min-tail-ratio` | 0.05 | The minimum tail used to judge "can this model sustain rolling" |
+| `pruneMinTokens` | `prune-min-tokens` | 500 | The smallest tool result worth hiding |
+| `summaryModel` | — | the call's model | A model for summaries only. Must be of the same provider |
+| `maxConsecutiveFailures` | — | 3 | After this many summaries fail in a row, threshold compaction stops for that session. Compaction at the blocking limit continues |
+
+Every ratio is in (0, 1]; `pruneMinTokens` and `maxConsecutiveFailures` are at least 1.
 
 A compaction's `CompactionMetadata` carries `kind` (`PRUNE`/`ROLLING`/`FULL`/`FALLBACK`), the head, span and tail
 tokens, the summary tokens, the absorbed seq range and the blocking limit it was decided against

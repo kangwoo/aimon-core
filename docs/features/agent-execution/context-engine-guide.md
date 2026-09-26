@@ -34,6 +34,9 @@ aimon:
     log-write-format: v2    # v1(기본) | v2
   context:
     engine: rolling         # default(기본) | rolling — 에이전트가 따로 적지 않았을 때의 값
+    rolling:                # 선택 — rolling 의 임계값 (§4). 적지 않은 값은 engine 기본값
+      tail-token-ratio: 0.25
+      prune-min-tokens: 1000
 ```
 
 `aimon.session.store` 가 `in-memory` 가 아니면 같은 백엔드 모듈의 `SessionLogSegmentStore` 도 빈으로 내놓는다
@@ -65,8 +68,9 @@ AimonStackSpec.builder()
         .build();
 ```
 
-`OrcaAgentRuntimeFactory` 를 직접 쓰는 조립은 `withSessionLogWriteFormat(...)` · `withContextEngine(...)` 로 같은 값을 준다.
-엔진 자체를 만들어 넣으려면 `RollingContextEngine.builder()` 로 비율을 바꿀 수 있다(§4).
+rolling 의 임계값은 `ExecutorSpec.builder().rollingContextEngineCustomizer(b -> b.tailTokenRatio(0.25))` 로 바꾼다(§4).
+`OrcaAgentRuntimeFactory` 를 직접 쓰는 조립은 `withSessionLogWriteFormat(...)` · `withContextEngine(...)` ·
+`withRollingContextEngineCustomizer(...)` 로 같은 값을 준다.
 
 ### 2.4 CLI
 
@@ -110,17 +114,29 @@ tail 이 이미 원문이고, 붙인 파일이 tail 에 쌓여 다음 압축을 
 
 ## 4. 조정
 
-`RollingContextEngine.Builder` 의 값이다. 스타터 프로퍼티로는 노출하지 않는다.
+`RollingContextEngine.Builder` 의 값이다. 조립 방식마다 넣는 자리가 다르다.
 
-| 값 | 기본 | 뜻 |
-|----|------|----|
-| `autoCompactRatio` | 0.6 | 압축 시작점, effective window 대비 |
-| `headTokenRatio` | 0.05 | head 의 대화 부분 상한. 넘으면 head 는 비고 요약이 맡는다 |
-| `tailTokenRatio` | 0.20 | 원문으로 남길 tail 예산 |
-| `summaryTokenRatio` | 0.08 | 요약에 요구하는 길이 |
-| `minTailRatio` | 0.05 | "롤링을 감당하는가" 판정에 쓰는 최소 tail |
-| `pruneMinTokens` | 500 | 가릴 만한 도구 결과의 최소 크기 |
-| `summaryModel` | 호출 모델 | 요약 전용 모델. 같은 프로바이더여야 한다 |
+- **Spring Boot 스타터** — `aimon.context.rolling.*` 프로퍼티(아래 표의 kebab 이름). `summaryModel` 은 프로퍼티가 없다
+- **`AimonStackSpec`** — `ExecutorSpec.builder().rollingContextEngineCustomizer(builder -> ...)`
+- **`OrcaAgentRuntimeFactory`** — `withRollingContextEngineCustomizer(builder -> ...)`
+
+customizer 는 rolling 을 쓰는 런타임마다(배포 기본값으로 골랐든 AGENT.md 로 골랐든) 새 빌더에 한 번 적용된다. 협력 객체
+(`compactionEngine` · `tokenEstimator` · `writeFormat` 등)는 customizer **다음에** 팩토리가 넣으므로, customizer 에서 바꿔도
+효과가 없다. 범위를 벗어난 값은 런타임을 만들 때 실패한다 — 선언된 에이전트라면 기동 시점이다. 스타터는 비율을 기동 시점에
+따로 검사하므로, 지금 rolling 을 쓰는 에이전트가 없어도 잘못된 값은 거부된다.
+
+| 값 | 스타터 프로퍼티 | 기본 | 뜻 |
+|----|----------------|------|----|
+| `autoCompactRatio` | `auto-compact-ratio` | 0.6 | 압축 시작점, effective window 대비 |
+| `headTokenRatio` | `head-token-ratio` | 0.05 | head 의 대화 부분 상한. 넘으면 head 는 비고 요약이 맡는다 |
+| `tailTokenRatio` | `tail-token-ratio` | 0.20 | 원문으로 남길 tail 예산 |
+| `summaryTokenRatio` | `summary-token-ratio` | 0.08 | 요약에 요구하는 길이 |
+| `minTailRatio` | `min-tail-ratio` | 0.05 | "롤링을 감당하는가" 판정에 쓰는 최소 tail |
+| `pruneMinTokens` | `prune-min-tokens` | 500 | 가릴 만한 도구 결과의 최소 크기 |
+| `summaryModel` | — | 호출 모델 | 요약 전용 모델. 같은 프로바이더여야 한다 |
+| `maxConsecutiveFailures` | — | 3 | 요약이 연달아 이만큼 실패하면 그 세션의 임계값 압축을 멈춘다. blocking 한계의 압축은 계속한다 |
+
+비율은 모두 (0, 1] 범위이고 `pruneMinTokens` 와 `maxConsecutiveFailures` 는 1 이상이다.
 
 압축 결과의 `CompactionMetadata` 에는 `kind`(`PRUNE`/`ROLLING`/`FULL`/`FALLBACK`), head·span·tail 토큰, 요약 토큰, 흡수한 seq
 범위, 판정 기준이 된 blocking 한계(`getBlockingLimit()`)가 실린다 — 튜닝은 이 값을 보고 한다.

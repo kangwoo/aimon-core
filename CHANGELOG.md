@@ -64,6 +64,18 @@ Central is versioned independently).
   build. How to run them and what they cost is under
   [`CONTRIBUTING.md` › Live-API tests](CONTRIBUTING.md#live-api-tests).
 
+### Added: tuning the rolling engine without assembling a runtime by hand
+
+- The guide pointed at `RollingContextEngine.builder()` for changing rolling's ratios, but no assembly path took a
+  built engine: the factory, `AimonStackSpec` and the starter accepted only a `ContextEngineKind`. The thresholds can
+  now be set at each layer — `OrcaAgentRuntimeFactory.withRollingContextEngineCustomizer(Consumer<RollingContextEngine.Builder>)`,
+  `ExecutorSpec.Builder.rollingContextEngineCustomizer(...)`, and the starter's `aimon.context.rolling.*`
+  (`auto-compact-ratio`, `head-token-ratio`, `tail-token-ratio`, `summary-token-ratio`, `min-tail-ratio`,
+  `prune-min-tokens`). The customizer runs before the factory wires the engine's collaborators, so it tunes the engine
+  but cannot replace its compaction engine, estimator or write format. The starter refuses an out-of-range ratio at
+  startup even when no agent runs rolling yet. `RollingContextEngine` exposes the tuned values through getters.
+  Guide: `docs/features/agent-execution/context-engine-guide.md` §4.
+
 ### Added: sealing — ranges the view no longer shows leave the record
 
 - **`SessionLogSegmentStore`** (`at.aimon.core.agent.session.store`) holds sealed ranges of session logs outside the

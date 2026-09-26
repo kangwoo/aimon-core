@@ -228,6 +228,41 @@ public final class RollingContextEngine implements ContextEngine {
         return fallback;
     }
 
+    /** Rolling auto-compact trigger as a fraction of the effective window. */
+    public double getAutoCompactRatio() {
+        return autoCompactRatio;
+    }
+
+    /** Cap on the head's conversation tokens as a fraction of the effective window. */
+    public double getHeadTokenRatio() {
+        return headTokenRatio;
+    }
+
+    /** The verbatim tail's budget as a fraction of the effective window. */
+    public double getTailTokenRatio() {
+        return tailTokenRatio;
+    }
+
+    /** The summary length asked for, as a fraction of the effective window. */
+    public double getSummaryTokenRatio() {
+        return summaryTokenRatio;
+    }
+
+    /** The smallest tail rolling must be able to keep, as a fraction of the effective window. */
+    public double getMinTailRatio() {
+        return minTailRatio;
+    }
+
+    /** The smallest tool result body worth eliding, in tokens. */
+    public int getPruneMinTokens() {
+        return pruneMinTokens;
+    }
+
+    /** The model summaries are asked of, or empty for the call's own model. */
+    public Optional<LlmModel> getSummaryModel() {
+        return Optional.ofNullable(summaryModel);
+    }
+
     @Override
     public ContextDecision prepare(ContextRequest request) {
         Objects.requireNonNull(request, "request cannot be null");

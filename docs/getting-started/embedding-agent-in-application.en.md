@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/embedding-agent-in-application.md
-source_commit: bc8715e
+source_commit: db4266a
 ---
 
 # Embedding an AIMON agent in your application
@@ -329,6 +329,8 @@ aimon:
 
   context:
     engine: default                 # default (default) | rolling — rolling needs session.log-write-format: v2
+    rolling:                        # optional — the rolling engine's thresholds. Unset values keep the engine default
+      auto-compact-ratio: 0.6       # every ratio is in (0, 1] — the other keys: context-engine guide §4
 
   skill:
     approval:

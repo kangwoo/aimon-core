@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -100,6 +101,51 @@ class OrcaAgentRuntimeFactoryContextEngineTest {
         assertThatThrownBy(() -> create(new OrcaAgentRuntimeFactory(), agent(ContextEngineKind.ROLLING)))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("version 1")
                 .hasMessageContaining("rolling");
+    }
+
+    @Test
+    @DisplayName("the rolling customizer tunes the engine's thresholds")
+    void theRollingCustomizerTunesTheEngine() {
+        final OrcaAgentRuntime runtime = create(
+                new OrcaAgentRuntimeFactory().withContextEngine(ContextEngineKind.ROLLING)
+                        .withSessionLogWriteFormat(SessionLogFormat.V2).withRollingContextEngineCustomizer(
+                                b -> b.autoCompactRatio(0.5).tailTokenRatio(0.3).pruneMinTokens(800)),
+                agent(null));
+
+        final RollingContextEngine engine = (RollingContextEngine) runtime.getContextEngine();
+        assertThat(engine.getAutoCompactRatio()).isEqualTo(0.5);
+        assertThat(engine.getTailTokenRatio()).isEqualTo(0.3);
+        assertThat(engine.getPruneMinTokens()).isEqualTo(800);
+        assertThat(engine.getHeadTokenRatio()).as("untouched values keep the engine default")
+                .isEqualTo(RollingContextEngine.DEFAULT_HEAD_TOKEN_RATIO);
+    }
+
+    @Test
+    @DisplayName("the factory wires the engine after the customizer, so a customizer cannot unplug it")
+    void theFactoryWiringWinsOverTheCustomizer() {
+        final OrcaAgentRuntime runtime = create(new OrcaAgentRuntimeFactory()
+                .withContextEngine(ContextEngineKind.ROLLING).withSessionLogWriteFormat(SessionLogFormat.V2)
+                .withRollingContextEngineCustomizer(b -> b.writeFormat(SessionLogFormat.V1).compactionEngine(null)),
+                agent(null));
+
+        assertThat(runtime.getContextEngine()).isInstanceOf(RollingContextEngine.class);
+    }
+
+    @Test
+    @DisplayName("an invalid tuned value fails when the runtime is built; default-engine agents never run the customizer")
+    void invalidTuningFailsAndDefaultAgentsSkipIt() {
+        final AtomicInteger calls = new AtomicInteger();
+        final OrcaAgentRuntimeFactory factory = new OrcaAgentRuntimeFactory()
+                .withSessionLogWriteFormat(SessionLogFormat.V2).withRollingContextEngineCustomizer(b -> {
+                    calls.incrementAndGet();
+                    b.autoCompactRatio(1.5);
+                });
+
+        assertThat(create(factory, agent(ContextEngineKind.DEFAULT)).getContextEngine())
+                .isInstanceOf(DefaultContextEngine.class);
+        assertThat(calls).hasValue(0);
+        assertThatThrownBy(() -> create(factory, agent(ContextEngineKind.ROLLING)))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("autoCompactRatio");
     }
 
     private OrcaAgentExecutor createExecutor() {

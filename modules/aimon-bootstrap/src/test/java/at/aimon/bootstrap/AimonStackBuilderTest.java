@@ -194,6 +194,21 @@ class AimonStackBuilderTest {
     }
 
     @Test
+    @DisplayName("ExecutorSpec's rolling customizer reaches the rolling engine of every runtime")
+    void rollingCustomizerReachesTheEngine(@TempDir Path workspace) {
+        final ExecutorSpec rolling = ExecutorSpec.builder().contextEngine(ContextEngineKind.ROLLING)
+                .rollingContextEngineCustomizer(b -> b.tailTokenRatio(0.25)).build();
+        final SessionSpec versionTwo = SessionSpec.builder().logWriteFormat(SessionLogFormat.V2).build();
+
+        try (AimonStack stack = AimonStackBuilder
+                .build(specFor(workspace, "ops").executor(rolling).session(versionTwo).build())) {
+            final RollingContextEngine engine = (RollingContextEngine) stack.runtimes().get(stack.primaryRuntimeId())
+                    .getContextEngine();
+            assertThat(engine.getTailTokenRatio()).isEqualTo(0.25);
+        }
+    }
+
+    @Test
     @DisplayName("assembles a working stack from a minimal spec")
     void assemblesMinimalStack(@TempDir Path workspace) {
         try (AimonStack stack = AimonStackBuilder.build(specFor(workspace, "ops").build())) {
