@@ -3,6 +3,7 @@ package at.aimon.spring.boot.autoconfigure;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,6 +37,7 @@ import at.aimon.bootstrap.spec.SkillApprovalSpec;
 import at.aimon.bootstrap.spec.ToolSpec;
 import at.aimon.core.agent.Agent;
 import at.aimon.core.agent.budget.ExecutionBudget;
+import at.aimon.core.agent.context.RollingContextEngine;
 import at.aimon.core.agent.queue.MessageQueueRepository;
 import at.aimon.core.credential.CredentialStore;
 import at.aimon.core.credential.InMemoryCredentialStore;
@@ -409,7 +411,9 @@ public class AimonAutoConfiguration {
                             .of(tracer == null ? llmClient : new TracingLlmClient(llmClient, tracer, payloadPolicy)))
                     .executor(ExecutorSpec.builder().tracer(tracer)
                             .tracePayloadPolicy(tracer == null ? null : payloadPolicy)
-                            .contextEngine(properties.getContext().getEngine()).build())
+                            .contextEngine(properties.getContext().getEngine())
+                            .rollingContextEngineCustomizer(toRollingCustomizer(properties.getContext().getRolling()))
+                            .build())
                     .knowledgeStore(slices.getKnowledgeStore()).memory(slices.getMemory()).fileSystem(fileSystemSpec)
                     .session(sessionSpec).scheduling(schedulingSpec).agents(toAgentSpecs(properties))
                     .agentRuntimes(toAgentRuntimeSpec(properties.getAgentRuntime()))
@@ -786,6 +790,33 @@ public class AimonAutoConfiguration {
                 builder.maxWallClockDuration(budget.getMaxWallClock());
             }
             return builder.build();
+        }
+
+        private static Consumer<RollingContextEngine.Builder> toRollingCustomizer(
+                AimonProperties.ContextProperties.Rolling rolling) {
+            if (!rolling.isTuned()) {
+                return null;
+            }
+            return builder -> {
+                if (rolling.getAutoCompactRatio() != null) {
+                    builder.autoCompactRatio(rolling.getAutoCompactRatio());
+                }
+                if (rolling.getHeadTokenRatio() != null) {
+                    builder.headTokenRatio(rolling.getHeadTokenRatio());
+                }
+                if (rolling.getTailTokenRatio() != null) {
+                    builder.tailTokenRatio(rolling.getTailTokenRatio());
+                }
+                if (rolling.getSummaryTokenRatio() != null) {
+                    builder.summaryTokenRatio(rolling.getSummaryTokenRatio());
+                }
+                if (rolling.getMinTailRatio() != null) {
+                    builder.minTailRatio(rolling.getMinTailRatio());
+                }
+                if (rolling.getPruneMinTokens() != null) {
+                    builder.pruneMinTokens(rolling.getPruneMinTokens());
+                }
+            };
         }
     }
 

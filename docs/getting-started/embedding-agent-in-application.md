@@ -313,6 +313,8 @@ aimon:
 
   context:
     engine: default                 # default(기본) | rolling — rolling 은 session.log-write-format: v2 가 필요하다
+    rolling:                        # 선택 — rolling engine 의 임계값. 적지 않은 값은 engine 기본값
+      auto-compact-ratio: 0.6       # 비율은 모두 (0, 1] — 나머지 키는 context-engine 가이드 §4
 
   skill:
     approval:

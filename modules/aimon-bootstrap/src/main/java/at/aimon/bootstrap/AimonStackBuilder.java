@@ -440,7 +440,8 @@ public final class AimonStackBuilder {
                 .withWorkflowRunnerEnabled(toolSpec.isWorkflowRunnerEnabled())
                 // The same write format the transcript manager writes with: rolling on a version-1 node is refused
                 // when its runtime is built, which for a declared agent is here, at startup.
-                .withSessionLogWriteFormat(logWriteFormat).withContextEngine(executorSpec.getContextEngine());
+                .withSessionLogWriteFormat(logWriteFormat).withContextEngine(executorSpec.getContextEngine())
+                .withRollingContextEngineCustomizer(executorSpec.getRollingContextEngineCustomizer().orElse(null));
         final ScheduledTaskManager taskManager = schedulingLifecycle == null
                 ? null
                 : schedulingLifecycle.engine().getTaskManager();

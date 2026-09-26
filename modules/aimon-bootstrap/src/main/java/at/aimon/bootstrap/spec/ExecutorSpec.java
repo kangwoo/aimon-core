@@ -2,8 +2,10 @@ package at.aimon.bootstrap.spec;
 
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Consumer;
 
 import at.aimon.core.agent.ContextEngineKind;
+import at.aimon.core.agent.context.RollingContextEngine;
 import at.aimon.core.llm.cost.CostEstimator;
 import at.aimon.core.memory.MemoryContextProvider;
 import at.aimon.core.tracing.TracePayloadPolicy;
@@ -36,6 +38,7 @@ public final class ExecutorSpec {
     private final CostEstimator costEstimator;
     private final MemoryContextProvider memoryContextProvider;
     private final ContextEngineKind contextEngine;
+    private final Consumer<RollingContextEngine.Builder> rollingContextEngineCustomizer;
 
     private ExecutorSpec(Builder builder) {
         this.streaming = builder.streaming;
@@ -44,6 +47,7 @@ public final class ExecutorSpec {
         this.costEstimator = builder.costEstimator;
         this.memoryContextProvider = builder.memoryContextProvider;
         this.contextEngine = Objects.requireNonNullElse(builder.contextEngine, ContextEngineKind.DEFAULT);
+        this.rollingContextEngineCustomizer = builder.rollingContextEngineCustomizer;
     }
 
     /**
@@ -121,10 +125,21 @@ public final class ExecutorSpec {
         return contextEngine;
     }
 
+    /**
+     * Returns the customizer that tunes the rolling context engine of every agent that runs it — whether chosen here
+     * or by its AGENT.md.
+     *
+     * @return the customizer, or empty to keep the engine defaults
+     */
+    public Optional<Consumer<RollingContextEngine.Builder>> getRollingContextEngineCustomizer() {
+        return Optional.ofNullable(rollingContextEngineCustomizer);
+    }
+
     @Override
     public String toString() {
-        return "ExecutorSpec[streaming=" + streaming + ", contextEngine=" + contextEngine.configValue() + ", tracer="
-                + (tracer != null) + ", memoryContext=" + (memoryContextProvider != null) + "]";
+        return "ExecutorSpec[streaming=" + streaming + ", contextEngine=" + contextEngine.configValue()
+                + ", rollingTuned=" + (rollingContextEngineCustomizer != null) + ", tracer=" + (tracer != null)
+                + ", memoryContext=" + (memoryContextProvider != null) + "]";
     }
 
     /** Builder for {@link ExecutorSpec}. */
@@ -136,6 +151,7 @@ public final class ExecutorSpec {
         private CostEstimator costEstimator;
         private MemoryContextProvider memoryContextProvider;
         private ContextEngineKind contextEngine;
+        private Consumer<RollingContextEngine.Builder> rollingContextEngineCustomizer;
 
         private Builder() {
         }
@@ -149,6 +165,20 @@ public final class ExecutorSpec {
          */
         public Builder contextEngine(ContextEngineKind contextEngine) {
             this.contextEngine = contextEngine;
+            return this;
+        }
+
+        /**
+         * Tunes the rolling context engine — its ratios, {@code pruneMinTokens}, {@code summaryModel} and
+         * {@code maxConsecutiveFailures}. It runs once per rolling runtime on a fresh builder, before the stack wires
+         * the engine's collaborators in, so it cannot replace them. Agents on the default engine never call it.
+         *
+         * @param customizer
+         *            applied to each rolling engine's builder, or {@code null} for the engine defaults
+         * @return this builder
+         */
+        public Builder rollingContextEngineCustomizer(Consumer<RollingContextEngine.Builder> customizer) {
+            this.rollingContextEngineCustomizer = customizer;
             return this;
         }
 
