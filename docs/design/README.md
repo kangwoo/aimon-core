@@ -63,6 +63,7 @@
 | [`side-effect-axes.md`](tool/side-effect-axes.md) | 부작용을 하나의 등급이 아니라 축으로 나눈 이유 |
 | [`parallel-execution.md`](tool/parallel-execution.md) | `ConcurrencyBehavior` 와 2단 게이트(모델 의도 + 프레임워크 안전성) |
 | [`tool-search.md`](tool/tool-search.md) | 도구가 많아졌을 때 스키마를 지연 로드하는 검색 계층 |
+| [`execution-environment.md`](tool/execution-environment.md) | (PROPOSED) 도구의 파일 시스템·셸을 실행마다 고르는 `ExecutionEnvironment` — 제어 저장소 분리, 격리를 환경 기능으로, 파일 stamp |
 
 ### skill · hook · subagent · workflow — 확장점
 
