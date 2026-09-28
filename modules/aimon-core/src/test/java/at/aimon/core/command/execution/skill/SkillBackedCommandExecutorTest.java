@@ -13,9 +13,11 @@ import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.ExecutionId;
+import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolRegistry;
+import at.aimon.core.base.Principal;
 import at.aimon.core.command.Command;
 import at.aimon.core.command.CommandMetadata;
 import at.aimon.core.command.CommandType;
@@ -33,6 +35,9 @@ import at.aimon.core.skill.execution.SkillExecutionMetadata;
 import at.aimon.core.skill.execution.SkillExecutionRequest;
 import at.aimon.core.skill.execution.SkillExecutionResult;
 import at.aimon.core.skill.execution.SkillExecutor;
+import at.aimon.core.skill.render.DefaultSkillContentRenderer;
+import at.aimon.core.skill.render.RenderContext;
+import at.aimon.core.skill.render.SkillContentRenderer;
 import at.aimon.core.tools.ToolContextKeys;
 
 @DisplayName("SkillBackedCommandExecutor")
@@ -199,6 +204,99 @@ class SkillBackedCommandExecutorTest {
         assertThat(seenContext.get().getToolContext().getContext()).isEmpty();
     }
 
+    /**
+     * Regression: the command path used to leave the request's render context at {@link RenderContext#empty()}, so a
+     * command-invoked body rendered {@code bash ${AIMON_SKILL_DIR}/scripts/x.sh} as {@code bash /scripts/x.sh}. The
+     * stub renders with the real renderer so the assertion is on the text the skill would actually run.
+     */
+    @Test
+    @DisplayName("renders ${AIMON_SKILL_DIR} as the skill's explicit base directory")
+    void shouldRenderSkillDirFromExplicitBaseDir() {
+        Skill skill = skillBuilder("deploy", "bash ${AIMON_SKILL_DIR}/scripts/x.sh").baseDir("/skills/deploy").build();
+
+        String rendered = renderViaCommand(skill,
+                CommandExecutionContext.builder().command(new SkillBackedCommand(skill))
+                        .defaultModel(LlmModel.builder().build()).toolRegistry(new DefaultToolRegistry()).build(),
+                CommandExecutionRequest.builder().build());
+
+        assertThat(rendered).isEqualTo("bash /skills/deploy/scripts/x.sh");
+    }
+
+    @Test
+    @DisplayName("renders ${AIMON_SKILL_DIR} derived from a resource path when the skill has no explicit base directory")
+    void shouldRenderSkillDirDerivedFromResourcePath() {
+        Skill skill = skillBuilder("deploy", "bash ${AIMON_SKILL_DIR}/scripts/x.sh")
+                .putRootFile("SKILL.md", "/skills/deploy/SKILL.md").build();
+
+        String rendered = renderViaCommand(skill, buildContext(new SkillBackedCommand(skill)),
+                CommandExecutionRequest.builder().build());
+
+        // Parent of the first resource path — the same fallback the Skill tool applies.
+        assertThat(rendered).isEqualTo("bash /skills/deploy/scripts/x.sh");
+    }
+
+    @Test
+    @DisplayName("copies runtime id, session id and principal from the forwarded ToolContext into the render context")
+    void shouldCopyToolContextValuesIntoRenderContext() {
+        Principal toolPrincipal = Principal.user("tool-user", "Tool User");
+        ToolContext toolContext = ToolContext.builder()
+                .put(ToolContextKeys.AGENT_RUNTIME_ID, AgentRuntimeId.fromName("ops"))
+                .put(ToolContextKeys.SESSION_ID, SessionId.of("conv-1")).put(ToolContextKeys.PRINCIPAL, toolPrincipal)
+                .build();
+
+        RenderContext seen = captureRenderContext(toolContext, CommandExecutionRequest.builder().build());
+
+        assertThat(seen.getAgentRuntimeId()).contains("agent:ops");
+        assertThat(seen.getSessionId()).contains("conv-1");
+        assertThat(seen.getPrincipal()).contains(toolPrincipal);
+        // A session's turn is named by its session id; the exclusive pair leaves the execution id empty.
+        assertThat(seen.getExecutionId()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("the command request's principal wins over the ToolContext principal")
+    void shouldPreferRequestPrincipal() {
+        Principal caller = Principal.user("caller", "Caller");
+        ToolContext toolContext = ToolContext.builder()
+                .put(ToolContextKeys.PRINCIPAL, Principal.user("tool-user", "Tool User")).build();
+
+        RenderContext seen = captureRenderContext(toolContext,
+                CommandExecutionRequest.builder().principal(caller).build());
+
+        assertThat(seen.getPrincipal()).contains(caller);
+    }
+
+    @Test
+    @DisplayName("keeps a forwarded execution id rather than the command's own")
+    void shouldKeepForwardedExecutionId() {
+        ToolContext toolContext = ToolContext.builder()
+                .put(ToolContextKeys.EXECUTION_ID, ExecutionId.of("routine:nightly:run-1")).build();
+
+        RenderContext seen = captureRenderContext(toolContext, CommandExecutionRequest.builder().build());
+
+        assertThat(seen.getSessionId()).isEmpty();
+        assertThat(seen.getExecutionId()).contains("routine:nightly:run-1");
+    }
+
+    @Test
+    @DisplayName("names the run by its own execution id when the ToolContext carries neither a session nor an execution")
+    void shouldFallBackToOwnExecutionIdWithoutSession() {
+        AtomicReference<SkillExecutionContext> seenContext = new AtomicReference<>();
+        AtomicReference<SkillExecutionRequest> seenRequest = new AtomicReference<>();
+        SkillExecutor stub = (context, request) -> {
+            seenContext.set(context);
+            seenRequest.set(request);
+            return SkillExecutionResult.success("ok");
+        };
+
+        new SkillBackedCommandExecutor(stub).execute(buildContext(new SkillBackedCommand(simpleSkill("commit"))),
+                CommandExecutionRequest.builder().build());
+
+        RenderContext seen = seenRequest.get().getRenderContext();
+        assertThat(seen.getSessionId()).isEmpty();
+        assertThat(seen.getExecutionId()).contains(seenContext.get().getExecutionId().value());
+    }
+
     @Test
     @DisplayName("execute() rejects null context and request")
     void shouldRejectNullContextOrRequest() {
@@ -215,6 +313,36 @@ class SkillBackedCommandExecutorTest {
         ToolRegistry toolRegistry = new DefaultToolRegistry();
         return CommandExecutionContext.builder().command(command).defaultModel(LlmModel.builder().build())
                 .toolRegistry(toolRegistry).build();
+    }
+
+    private static String renderViaCommand(Skill skill, CommandExecutionContext context,
+            CommandExecutionRequest request) {
+        SkillContentRenderer renderer = new DefaultSkillContentRenderer();
+        AtomicReference<String> rendered = new AtomicReference<>();
+        SkillExecutor stub = (c, r) -> {
+            rendered.set(renderer.render(c.getSkill(), r.getRawArguments(), r.getRenderContext()));
+            return SkillExecutionResult.success("ok");
+        };
+        new SkillBackedCommandExecutor(stub).execute(context, request);
+        return rendered.get();
+    }
+
+    private static RenderContext captureRenderContext(ToolContext toolContext, CommandExecutionRequest request) {
+        AtomicReference<SkillExecutionRequest> seenRequest = new AtomicReference<>();
+        SkillExecutor stub = (context, r) -> {
+            seenRequest.set(r);
+            return SkillExecutionResult.success("ok");
+        };
+        CommandExecutionContext context = CommandExecutionContext.builder()
+                .command(new SkillBackedCommand(simpleSkill("commit"))).defaultModel(LlmModel.builder().build())
+                .toolRegistry(new DefaultToolRegistry()).toolContext(toolContext).build();
+        new SkillBackedCommandExecutor(stub).execute(context, request);
+        return seenRequest.get().getRenderContext();
+    }
+
+    private static Skill.Builder skillBuilder(String name, String body) {
+        SkillMetadata m = SkillMetadata.builder().name(name).description("desc").build();
+        return Skill.builder().name(name).metadata(m).content(SkillContent.of(body));
     }
 
     private static Skill simpleSkill(String name) {

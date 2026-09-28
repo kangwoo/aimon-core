@@ -227,6 +227,19 @@ Central is versioned independently).
   place of `DECLARED_FIELDS` — visible only to `AimonRuntimeHintsTest`, which asserts the categories Spring's
   registrar chooses and had to follow it.
 
+### Fixed: a skill run as a slash command rendered `${AIMON_SKILL_DIR}` as an empty string
+
+- **`SkillBackedCommandExecutor` never set a render context on the `SkillExecutionRequest`**, so the request fell back
+  to `RenderContext.empty()` and every `AIMON_*` variable in a command-invoked skill body rendered empty with a WARN:
+  `bash ${AIMON_SKILL_DIR}/scripts/x.sh` became `bash /scripts/x.sh`. Only the `Skill` tool built a context. Both
+  paths now build it through **`SkillRenderContexts`** (`at.aimon.core.skill.render`): `builderFor(Skill,
+  ToolContext)` copies the agent runtime id, session id, execution id and principal from the tool context, and
+  `resolveSkillBaseDir(Skill)` — the explicit `Skill.getBaseDir()`, else the parent of the first resource path, moved
+  unchanged out of `SkillTool` — sets the base directory. The `Skill` tool's output is unchanged.
+- **The command path adds two values the tool path does not have.** The command request's principal, when present,
+  wins over the tool context's. And a command run whose tool context names neither a session nor an execution renders
+  `${AIMON_EXECUTION_ID}` as the command's own generated execution id; it is never set beside a session id.
+
 ### Fixed: the native-image resource hint covered nothing below `agents/`
 
 - **`AimonRuntimeHints` registered `agents/*`, which stopped matching when Spring Framework 7 changed what `*`

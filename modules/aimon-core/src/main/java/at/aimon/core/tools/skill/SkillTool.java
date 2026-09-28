@@ -12,16 +12,12 @@ import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.Constants;
-import at.aimon.core.agent.ExecutionId;
-import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.tool.AbstractTool;
 import at.aimon.core.agent.tool.ToolCategories;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
-import at.aimon.core.base.Principal;
 import at.aimon.core.llm.DynamicToolDefinitionProvider;
 import at.aimon.core.skill.ExecutionMode;
 import at.aimon.core.skill.Skill;
@@ -38,8 +34,8 @@ import at.aimon.core.skill.policy.SkillInvocationDecision;
 import at.aimon.core.skill.policy.SkillInvocationPolicy;
 import at.aimon.core.skill.policy.SkillInvocationRequest;
 import at.aimon.core.skill.render.NoOpSkillContentRenderer;
-import at.aimon.core.skill.render.RenderContext;
 import at.aimon.core.skill.render.SkillContentRenderer;
+import at.aimon.core.skill.render.SkillRenderContexts;
 import at.aimon.core.tools.InvokingSessionAccess;
 import at.aimon.core.tools.ToolContextKeys;
 
@@ -351,7 +347,8 @@ public class SkillTool extends AbstractTool {
                 // Render instructions through the configured renderer (no-op by default)
                 final String renderedInstructions;
                 try {
-                    renderedInstructions = renderer.render(skill, args, buildRenderContext(skill, context));
+                    renderedInstructions = renderer.render(skill, args,
+                            SkillRenderContexts.builderFor(skill, context).build());
                 } catch (RuntimeException e) {
                     log.error("Failed to render skill '{}': {}", skill.getName(), e.getMessage(), e);
                     return ToolResult.error("Failed to render skill: " + e.getMessage());
@@ -396,76 +393,6 @@ public class SkillTool extends AbstractTool {
             default ->
                 String.format("Skill invocation rejected by policy: '%s' (decision=%s).", skill.getName(), decision);
         };
-    }
-
-    /**
-     * Builds a {@link RenderContext} for rendering the given skill.
-     *
-     * <p>
-     * Populates the context with the agent runtime identifier, the identity of the run doing the rendering, principal,
-     * and skill base directory derived from the active {@link ToolContext} and the resource paths registered on the
-     * skill. Missing values are simply omitted; the renderer is expected to handle absent fields gracefully.
-     *
-     * <p>
-     * The three ids address different lifetimes. The runtime id is <b>agent-scoped</b>: every session served by this
-     * agent renders the same value, so a skill body must not treat {@code ${AIMON_AGENT_RUNTIME_ID}} as a per-run
-     * uniqueness discriminator. The other two are the exclusive pair that names the run itself —
-     * {@code ${AIMON_SESSION_ID}} when the run is a session's turn, {@code ${AIMON_EXECUTION_ID}} when it is not
-     * (a skill invoked from inside a subagent fork or a scheduled routine). Both are copied straight across rather
-     * than merged: the session key is empty in a fork precisely so a body cannot mistake a run identity for a
-     * session, and collapsing them here would undo that.
-     *
-     * @param skill
-     *            The skill being rendered (must not be null)
-     * @param context
-     *            The tool context (must not be null)
-     * @return A render context (never null)
-     */
-    private RenderContext buildRenderContext(Skill skill, ToolContext context) {
-        Objects.requireNonNull(skill, "Skill cannot be null");
-        Objects.requireNonNull(context, "Context cannot be null");
-
-        final RenderContext.Builder builder = RenderContext.builder();
-        context.get(ToolContextKeys.AGENT_RUNTIME_ID).map(AgentRuntimeId::value).ifPresent(builder::agentRuntimeId);
-        context.get(ToolContextKeys.SESSION_ID).map(SessionId::value).ifPresent(builder::sessionId);
-        context.get(ToolContextKeys.EXECUTION_ID).map(ExecutionId::value).ifPresent(builder::executionId);
-        context.get(ToolContextKeys.PRINCIPAL).ifPresent((Principal p) -> builder.principal(p));
-        // Prefer the authoritative base directory carried by the skill; fall back to deriving it from a resource path
-        // for skills assembled without an explicit base directory (backwards compatibility).
-        skill.getBaseDir().or(() -> deriveSkillBaseDir(skill)).ifPresent(builder::skillBaseDir);
-        return builder.build();
-    }
-
-    /**
-     * Derives the skill's base directory from any of its registered resource paths.
-     *
-     * <p>
-     * Used as a fallback only when a skill carries no explicit {@link Skill#getBaseDir() base directory}. Skills that
-     * ship with at least one root file, script, reference, or asset can have their base directory inferred by stripping
-     * the filename from the resource's full virtual filesystem path. Skills with no resources return empty, in which
-     * case downstream consumers (renderer) may emit a warning when the corresponding placeholder is referenced.
-     *
-     * @param skill
-     *            The skill to inspect (must not be null)
-     * @return The base directory if derivable, otherwise empty
-     */
-    private static Optional<String> deriveSkillBaseDir(Skill skill) {
-        return firstResourcePath(skill).map(SkillTool::parentPath);
-    }
-
-    private static Optional<String> firstResourcePath(Skill skill) {
-        return Optional.<String>empty().or(() -> skill.getRootFiles().values().stream().findFirst())
-                .or(() -> skill.getScripts().values().stream().findFirst())
-                .or(() -> skill.getReferences().values().stream().findFirst())
-                .or(() -> skill.getAssets().values().stream().findFirst());
-    }
-
-    private static String parentPath(String fullPath) {
-        final int slash = fullPath.lastIndexOf('/');
-        if (slash <= 0) {
-            return "";
-        }
-        return fullPath.substring(0, slash);
     }
 
     /**
