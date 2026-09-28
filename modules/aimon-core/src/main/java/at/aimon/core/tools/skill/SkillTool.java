@@ -35,8 +35,8 @@ import at.aimon.core.skill.policy.SkillInvocationPolicy;
 import at.aimon.core.skill.policy.SkillInvocationRequest;
 import at.aimon.core.skill.render.NoOpSkillContentRenderer;
 import at.aimon.core.skill.render.SkillContentRenderer;
-import at.aimon.core.skill.render.SkillRenderContexts;
 import at.aimon.core.tools.InvokingSessionAccess;
+import at.aimon.core.tools.SkillRenderContextAccess;
 import at.aimon.core.tools.ToolContextKeys;
 
 /**
@@ -348,7 +348,7 @@ public class SkillTool extends AbstractTool {
                 final String renderedInstructions;
                 try {
                     renderedInstructions = renderer.render(skill, args,
-                            SkillRenderContexts.builderFor(skill, context).build());
+                            SkillRenderContextAccess.builderFor(skill, context).build());
                 } catch (RuntimeException e) {
                     log.error("Failed to render skill '{}': {}", skill.getName(), e.getMessage(), e);
                     return ToolResult.error("Failed to render skill: " + e.getMessage());

@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/skill/builtin-agent-skill-guide.md
-source_commit: a039699
+source_commit: 56930f5
 ---
 
 # Built-in Agent/Skill Guide
@@ -448,8 +448,8 @@ Working directory: /tmp/work/${AIMON_SESSION_ID}${AIMON_EXECUTION_ID}
 > overhaul **completed** that deprecation — the alias branch was deleted, and the literal is bound to the session id its
 > name promised from the start. A body that ignored the WARN and went on using the alias now receives *a different value*.
 
-NOTE (a current limitation): the production path that actually fills `RenderContext` is `SkillTool` (the path where the
-model invokes a skill as a tool) and **that one alone**. The `/skill-name` slash invocation
-(`SkillBackedCommandExecutor`) and a routine step (`RoutineExecutor`) render with an empty context, so all five
-variables above are substituted with `""` — `${AIMON_SKILL_DIR}` is no exception. Connecting a context to those paths is
-separate work.
+NOTE: `RenderContext` is filled from the tool context of the run that invoked the skill (`SkillRenderContextAccess`).
+`SkillTool`, which the model calls as a tool, and the `/skill-name` slash invocation (`SkillBackedCommandExecutor`) go
+through the same helper, so the two paths substitute the same values. A slash invocation carries the session id, and
+`${AIMON_USER}` is the `Principal` of the caller who typed the command. A routine step that calls the `Skill` tool
+renders with the step's tool context (`AGENT_RUNTIME_ID` · `PRINCIPAL` · `EXECUTION_ID`).

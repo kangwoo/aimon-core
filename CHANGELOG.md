@@ -232,13 +232,21 @@ Central is versioned independently).
 - **`SkillBackedCommandExecutor` never set a render context on the `SkillExecutionRequest`**, so the request fell back
   to `RenderContext.empty()` and every `AIMON_*` variable in a command-invoked skill body rendered empty with a WARN:
   `bash ${AIMON_SKILL_DIR}/scripts/x.sh` became `bash /scripts/x.sh`. Only the `Skill` tool built a context. Both
-  paths now build it through **`SkillRenderContexts`** (`at.aimon.core.skill.render`): `builderFor(Skill,
-  ToolContext)` copies the agent runtime id, session id, execution id and principal from the tool context, and
-  `resolveSkillBaseDir(Skill)` — the explicit `Skill.getBaseDir()`, else the parent of the first resource path, moved
-  unchanged out of `SkillTool` — sets the base directory. The `Skill` tool's output is unchanged.
+  paths now build it through **`SkillRenderContextAccess.builderFor(Skill, ToolContext)`** (`at.aimon.core.tools`),
+  which copies the agent runtime id, session id, execution id and principal from the tool context on top of
+  **`SkillRenderContexts.builderFor(Skill)`** (`at.aimon.core.skill.render`), which sets the base directory. The split
+  keeps `skill.render` free of the tool layer.
 - **The command path adds two values the tool path does not have.** The command request's principal, when present,
-  wins over the tool context's. And a command run whose tool context names neither a session nor an execution renders
+  wins over the tool context's — the command flow's tool context carries none, so it is the only source of
+  `${AIMON_USER}` there. And a command run whose tool context names neither a session nor an execution renders
   `${AIMON_EXECUTION_ID}` as the command's own generated execution id; it is never set beside a session id.
+- **A skill with no explicit base directory and no root files derived `${AIMON_SKILL_DIR}` one level too deep.** The
+  fallback took the parent of the first script (or reference, or asset), so a scripts-only skill resolved to
+  `…/scripts` and `${AIMON_SKILL_DIR}/scripts/x.sh` pointed at `…/scripts/scripts/x.sh`; with a nested key such as
+  `lib/y.sh` it was deeper still, and which one won depended on map order. It now strips the resource's key and its
+  category directory, giving the skill root. Reached by hand-assembled skills and by any `SkillRepository` that does
+  not override `resolveBaseDir`; `Vfs`/`PathSkillRepository` set the base directory explicitly and are unaffected.
+  This changes the `Skill` tool's output for such skills too.
 
 ### Fixed: the native-image resource hint covered nothing below `agents/`
 

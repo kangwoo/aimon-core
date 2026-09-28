@@ -19,7 +19,7 @@ import at.aimon.core.skill.execution.SkillExecutionRequest;
 import at.aimon.core.skill.execution.SkillExecutionResult;
 import at.aimon.core.skill.execution.SkillExecutor;
 import at.aimon.core.skill.render.RenderContext;
-import at.aimon.core.skill.render.SkillRenderContexts;
+import at.aimon.core.tools.SkillRenderContextAccess;
 import at.aimon.core.tools.ToolContextKeys;
 
 /**
@@ -89,9 +89,8 @@ public final class SkillBackedCommandExecutor implements CommandExecutor {
     }
 
     /**
-     * Builds the {@link RenderContext} the skill body is rendered with — the same one the {@code Skill} tool would
-     * build
-     * for this skill and tool context, so {@code ${AIMON_SKILL_DIR}} and the other {@code AIMON_*} variables expand
+     * Builds the {@link RenderContext} the skill body is rendered with — the one the {@code Skill} tool builds for
+     * this skill and tool context, so {@code ${AIMON_SKILL_DIR}} and the other {@code AIMON_*} variables expand
      * identically whichever way the skill was invoked. Without it the request falls back to
      * {@link RenderContext#empty()} and a body such as {@code bash ${AIMON_SKILL_DIR}/scripts/x.sh} renders as
      * {@code bash /scripts/x.sh}.
@@ -105,7 +104,7 @@ public final class SkillBackedCommandExecutor implements CommandExecutor {
      */
     private static RenderContext buildRenderContext(Skill skill, ToolContext toolContext,
             CommandExecutionRequest request, ExecutionId executionId) {
-        final RenderContext.Builder builder = SkillRenderContexts.builderFor(skill, toolContext);
+        final RenderContext.Builder builder = SkillRenderContextAccess.builderFor(skill, toolContext);
         request.getPrincipal().ifPresent(builder::principal);
         if (toolContext.get(ToolContextKeys.SESSION_ID).isEmpty()
                 && toolContext.get(ToolContextKeys.EXECUTION_ID).isEmpty()) {

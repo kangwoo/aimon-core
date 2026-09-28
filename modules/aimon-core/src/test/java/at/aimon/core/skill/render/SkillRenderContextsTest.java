@@ -3,19 +3,15 @@ package at.aimon.core.skill.render;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.Map;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
-import at.aimon.core.agent.AgentRuntimeId;
-import at.aimon.core.agent.ExecutionId;
-import at.aimon.core.agent.session.SessionId;
-import at.aimon.core.agent.tool.ToolContext;
-import at.aimon.core.base.Principal;
 import at.aimon.core.skill.Skill;
 import at.aimon.core.skill.SkillContent;
 import at.aimon.core.skill.SkillMetadata;
-import at.aimon.core.tools.ToolContextKeys;
 
 @DisplayName("SkillRenderContexts")
 class SkillRenderContextsTest {
@@ -50,17 +46,40 @@ class SkillRenderContextsTest {
         }
 
         @Test
-        @DisplayName("falls back to scripts, then references, then assets")
+        @DisplayName("falls back to scripts, then references, then assets — each resolving to the skill root")
         void shouldFallBackThroughResourceKinds() {
             assertThat(SkillRenderContexts
-                    .resolveSkillBaseDir(skill("s").putScript("run.sh", "/a/scripts/run.sh").build()))
-                    .contains("/a/scripts");
+                    .resolveSkillBaseDir(skill("s").putScript("run.sh", "/a/scripts/run.sh").build())).contains("/a");
             assertThat(SkillRenderContexts
-                    .resolveSkillBaseDir(skill("s").putReference("r.md", "/b/references/r.md").build()))
-                    .contains("/b/references");
+                    .resolveSkillBaseDir(skill("s").putReference("r.md", "/b/references/r.md").build())).contains("/b");
             assertThat(
                     SkillRenderContexts.resolveSkillBaseDir(skill("s").putAsset("a.json", "/c/assets/a.json").build()))
-                    .contains("/c/assets");
+                    .contains("/c");
+        }
+
+        /**
+         * Regression: the fallback used to take the plain parent of the first script, so a scripts-only skill
+         * resolved to {@code .../scripts} and {@code ${AIMON_SKILL_DIR}/scripts/x.sh} doubled the segment. With a
+         * nested key the parent was deeper still, and which one won depended on map order.
+         */
+        @Test
+        @DisplayName("a nested resource key still resolves to the skill root, whichever resource is first")
+        void shouldStripNestedKeyToSkillRoot() {
+            Skill nested = skill("s").putScript("lib/util/y.sh", "/skills/s/scripts/lib/util/y.sh").build();
+            Skill mixed = skill("s")
+                    .scripts(Map.of("x.sh", "/skills/s/scripts/x.sh", "lib/y.sh", "/skills/s/scripts/lib/y.sh"))
+                    .build();
+
+            assertThat(SkillRenderContexts.resolveSkillBaseDir(nested)).contains("/skills/s");
+            assertThat(SkillRenderContexts.resolveSkillBaseDir(mixed)).contains("/skills/s");
+        }
+
+        @Test
+        @DisplayName("a path outside the conventional layout falls back to its parent")
+        void shouldFallBackToParentForUnconventionalPath() {
+            assertThat(SkillRenderContexts
+                    .resolveSkillBaseDir(skill("s").putScript("run.sh", "/flat/elsewhere/run.sh").build()))
+                    .contains("/flat/elsewhere");
         }
 
         @Test
@@ -91,52 +110,27 @@ class SkillRenderContextsTest {
     class BuilderFor {
 
         @Test
-        @DisplayName("copies the ToolContext ids and principal and sets the resolved base directory")
-        void shouldPopulateFromToolContextAndSkill() {
-            Principal principal = Principal.user("alice", "Alice");
-            ToolContext context = ToolContext.builder()
-                    .put(ToolContextKeys.AGENT_RUNTIME_ID, AgentRuntimeId.fromName("ops"))
-                    .put(ToolContextKeys.SESSION_ID, SessionId.of("conv-1")).put(ToolContextKeys.PRINCIPAL, principal)
-                    .build();
+        @DisplayName("sets only the resolved base directory")
+        void shouldSetOnlyBaseDir() {
+            RenderContext rc = SkillRenderContexts.builderFor(skill("s").baseDir("/skills/s").build()).build();
 
-            RenderContext rc = SkillRenderContexts.builderFor(skill("s").baseDir("/skills/s").build(), context).build();
-
-            assertThat(rc.getAgentRuntimeId()).contains("agent:ops");
-            assertThat(rc.getSessionId()).contains("conv-1");
-            assertThat(rc.getExecutionId()).isEmpty();
-            assertThat(rc.getPrincipal()).contains(principal);
             assertThat(rc.getSkillBaseDir()).contains("/skills/s");
-        }
-
-        @Test
-        @DisplayName("copies an execution id without inventing a session id")
-        void shouldCopyExecutionIdOnly() {
-            ToolContext context = ToolContext.builder()
-                    .put(ToolContextKeys.EXECUTION_ID, ExecutionId.of("subagent:reviewer:fork-7")).build();
-
-            RenderContext rc = SkillRenderContexts.builderFor(skill("s").build(), context).build();
-
-            assertThat(rc.getExecutionId()).contains("subagent:reviewer:fork-7");
+            assertThat(rc.getAgentRuntimeId()).isEmpty();
             assertThat(rc.getSessionId()).isEmpty();
+            assertThat(rc.getExecutionId()).isEmpty();
+            assertThat(rc.getPrincipal()).isEmpty();
         }
 
         @Test
-        @DisplayName("an empty ToolContext and a resource-less skill yield an empty context")
+        @DisplayName("a skill with no base directory and no resources yields an empty context")
         void shouldYieldEmptyContext() {
-            RenderContext rc = SkillRenderContexts.builderFor(skill("s").build(), ToolContext.empty()).build();
-
-            assertThat(rc).isEqualTo(RenderContext.empty());
+            assertThat(SkillRenderContexts.builderFor(skill("s").build()).build()).isEqualTo(RenderContext.empty());
         }
 
         @Test
-        @DisplayName("rejects null arguments")
-        void shouldRejectNulls() {
-            Skill skill = skill("s").build();
-
-            assertThatThrownBy(() -> SkillRenderContexts.builderFor(null, ToolContext.empty()))
-                    .isInstanceOf(NullPointerException.class);
-            assertThatThrownBy(() -> SkillRenderContexts.builderFor(skill, null))
-                    .isInstanceOf(NullPointerException.class);
+        @DisplayName("rejects a null skill")
+        void shouldRejectNullSkill() {
+            assertThatThrownBy(() -> SkillRenderContexts.builderFor(null)).isInstanceOf(NullPointerException.class);
         }
     }
 
