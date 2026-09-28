@@ -98,6 +98,38 @@ class RipgrepControlStoreTest {
         assertThat(grep(env, Map.of("pattern", "token", "glob", "*"))).contains("src/a.txt");
     }
 
+    @Test
+    @DisplayName("an isolated branch whose directory is a link into the control store or out of the workspace is refused")
+    void linkedBranchRootRefused() throws IOException {
+        // The check runs before rg starts, so no rg is needed: a refusal is IllegalArgumentException, and a target that
+        // passes it fails later, starting the missing program.
+        final Path noRg = workspace.resolve("no-such-rg");
+        final RipgrepContentSearch parent = new RipgrepContentSearch(noRg, workspace, List.of(".aimon"));
+        Files.createDirectories(workspace.resolve(".worktrees"));
+        Files.createSymbolicLink(workspace.resolve(".worktrees/step_1"), workspace.resolve(".aimon"));
+        final Path outside = Files.createTempDirectory("rg-outside");
+        try {
+            Files.createSymbolicLink(workspace.resolve(".worktrees/step_2"), outside);
+            Files.createDirectories(workspace.resolve(".worktrees/step_3"));
+            final ContentQuery query = ContentQuery.builder().pattern("token").path(".").build();
+
+            assertThatThrownBy(() -> parent.rootedAt(workspace.resolve(".worktrees/step_1")).search(query))
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("hidden prefix");
+            assertThatThrownBy(() -> parent.rootedAt(workspace.resolve(".worktrees/step_2")).search(query))
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("outside the workspace");
+            // A real branch directory passes the check (and then fails to start the missing rg).
+            assertThatThrownBy(() -> parent.rootedAt(workspace.resolve(".worktrees/step_3")).search(query))
+                    .isInstanceOf(IllegalStateException.class).hasMessageContaining("could not start rg");
+            // The branch keeps the parent's hidden prefixes.
+            assertThatThrownBy(() -> parent.rootedAt(workspace.resolve(".worktrees/step_3"))
+                    .search(ContentQuery.builder().pattern("token").path(".aimon").build()))
+                    .isInstanceOf(IllegalArgumentException.class);
+        } finally {
+            Files.deleteIfExists(workspace.resolve(".worktrees/step_2"));
+            Files.deleteIfExists(outside);
+        }
+    }
+
     @Nested
     @DisplayName("with the real rg")
     class RealRipgrep {

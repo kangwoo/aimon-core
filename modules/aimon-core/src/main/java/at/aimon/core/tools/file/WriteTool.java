@@ -21,6 +21,7 @@ import at.aimon.core.agent.tool.permission.ToolPermissionSubjectAware;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.exception.ExecutionEnvironmentUnavailableException;
 import at.aimon.core.filesystem.VirtualFileSystem;
+import at.aimon.core.filesystem.exception.FileAccessDeniedException;
 import at.aimon.core.filesystem.exception.FileAlreadyExistsException;
 import at.aimon.core.filesystem.exception.InvalidPathException;
 import at.aimon.core.tools.ExecutionEnvironmentAccess;
@@ -189,6 +190,10 @@ public class WriteTool extends AbstractTool implements ToolPermissionSubjectAwar
             return ToolResult.error("Invalid parameter: " + e.getMessage());
         } catch (IllegalStateException | ExecutionEnvironmentUnavailableException e) {
             log.warn("No usable execution environment: {}", e.getMessage());
+            return ToolResult.error(e.getMessage());
+        } catch (FileAccessDeniedException e) {
+            // A path rule refused it: an expected answer, not a failure of the tool.
+            log.warn("{}", e.getMessage());
             return ToolResult.error(e.getMessage());
         } catch (InvalidPathException e) {
             log.warn("Invalid path: {}", e.getMessage());

@@ -1195,9 +1195,10 @@ and why. Entries marked **(open)** are also tracked in
   `resolveUnder` resolves a relative path against the base, normalises it, and returns where it lands (or `null` when
   it lands outside). The decorator matches rules on that, and treats a path that lands outside like a `DENY`ed one
   (`FileAccessDeniedException("outside this filesystem")`, `exists` false) rather than passing it through.
-  `PathRule.covers` and `RipgrepContentSearch`'s hidden check compare ASCII case-insensitively
+  `PathRule.covers` and `RipgrepContentSearch`'s hidden check compare case-insensitively
   (`VfsPaths.isUnderIgnoreCase`), so `.AIMON/x` is caught on APFS/NTFS; on a case-sensitive store this also hides a
-  user directory spelled `.AIMON`, which is the safe direction. `rootRelative` itself is unchanged: stamp keys and
+  user directory spelled `.AIMON`, which is the safe direction. Since PR review 1 the comparison folds Unicode, not
+  only ASCII (see the entry below). `rootRelative` itself is unchanged: stamp keys and
   `ScopedVirtualFileSystem` keep their behaviour. `RipgrepContentSearch` resolves its target with `resolveUnder` too.
 - **The GridFS etag is the file document's `ObjectId`, not the spec's md5 (open, EE-5).** Design §7 lists the etag
   source as "GridFS(md5)". `GridFSFile.getMD5()` was removed in driver 5.0 (§0 item 8), so `GridFSFileSystem.getMetadata`
@@ -1214,6 +1215,25 @@ and why. Entries marked **(open)** are also tracked in
   `StagingException` before anything is written or deleted. `scan` never produces anything else; a hand-built
   `StagedResource` (SPI code, a remote repository's keys) could otherwise write outside its copy or make the cleanup of
   an interrupted copy delete the control store.
+- **Path rules fold Unicode, not only ASCII (PR review 1).** APFS folds U+017F `ſ` to `s`, so
+  `.aimon-ſtaged/…` named the staging area and `Write` replaced a staged script, and `.ſecrets/…` read through a
+  `DENY` rule. `VfsPaths.isUnderIgnoreCase` now compares names folded by `VfsPaths.foldCase`: NFKC, then
+  `toLowerCase`/`toUpperCase`/`toLowerCase(Locale.ROOT)`, then NFC. That covers compatibility forms (`ſ`, the `ﬅ`
+  ligature), full case mappings (`ß` and U+1E9E `ẞ` → `ss`, the Kelvin sign → `k`) and NFD spellings. The leading
+  lower-casing matters: `ẞ` is already uppercase, so upper-then-lower stopped at `ß`, and `.ẞh/id` read through a
+  `deny(".ssh")` rule on APFS (PR review 2). Folding more than a store does only hides more. The PR review brute-forced
+  every BMP code point that APFS equates with a one- or two-letter ASCII name and found `ẞ` the only mismatch, so this
+  is checked for short names, not proven for all of Unicode. NTFS's trailing-dot and 8.3 aliases are still open (EE-33).
+- **`stagingRoot` is validated, and the sweep cannot delete outside a staging area (PR review 1).** With explicit
+  `pathRules(...)`, `stagingRoot(".")` or `stagingRoot("src")` let the startup sweep delete old workspace directories.
+  `build()` now requires one directory name (no `.`, `..`, `/`, `\` or `:`) that is not the control store, and throws
+  `IllegalArgumentException` otherwise. The sweep also does nothing when the staging directory's real path is the
+  workspace's, and it only deletes copy directories whose name is a content key: exactly
+  `StagedResource.CONTENT_KEY_HEX_LENGTH` (16) lowercase hex characters, so a misconfigured `stagingRoot("logs")`
+  leaves `logs/2024/01` alone (PR review 2). `stage()` validates a hand-built key against the same shape.
+- **A failed provider build closes what it built (PR review 1).** When a step of the constructor throws after the
+  owned `LocalFileSystem` or `LocalShell` exists, both are closed before the exception propagates. The package-private
+  `Builder.ownedResourceDecorator(...)` lets a test see it. EE-23 still covers the bootstrap level.
 
 ### 10.3 Executors, runtime, factory
 
@@ -1273,6 +1293,23 @@ and why. Entries marked **(open)** are also tracked in
   found zero files. The startup sweep's `NOFOLLOW_LINKS` rule (review 3) is unchanged: the sweep deletes, this rule
   reads. This also settles EE-16 (a linked file outside the root is now refused, not staged). Tests:
   `SkillLinkStagingTest` (five cases) and `ReadOnlyLocalFileSystemTest.linkedFileConfined`.
+- **A skill that fails to load no longer fails the listing (PR review 1, blocking).** `getAllSkills()` and `reloadAll()`
+  let the first `SkillRepositoryException` escape. So one skill that the link rule refused took down every skill, and
+  with them `SkillTool.getDefinition()` (its description is built from the listing), tool registration, `/skills`,
+  `SkillBackedCommandRegistry` and the REPL banner. That loop predates this change, but the link rule gave it a new
+  trigger. Both now skip that skill with a WARN (spec §4.4: only that skill does not load). A failure is not cached,
+  so `getSkill(name)` keeps throwing the error that says why. Other failures (the repository listing itself, a parse
+  error) still propagate as before. Test: `SkillLinkStagingTest.refusedSkillSkippedInListings`.
+- **The zero-file backstop exempts `.stageignore` (PR review 1).** The backstop ran after `.stageignore` was applied, so
+  a skill whose ignore file excluded everything was refused. It now refuses only when the source's own listing is
+  empty too. Test: `SkillLinkStagingTest.stageIgnoreExcludingEverythingLoads`.
+- **`StagedResource.scan` fails on an unreadable file (PR review 1).** §3.3's classpath row has `scan` skip a listed
+  entry it cannot read, with a WARN, "exactly as `BundledSkillMaterializer` skips it". That is the silently missing file
+  under `${AIMON_SKILL_DIR}` the link rule exists to prevent. `scan` now throws `UncheckedIOException` naming the file
+  and pointing at `.stageignore`, and the registry reports it as a `SkillRepositoryException`. An entry the ignore file
+  excludes is never read. The materializer itself is unchanged, so the classpath source and the materialized copy can
+  now differ for an unreadable resource: the source refuses the skill, and the materializer skips the resource.
+  Test: `StagedResourceTest.unreadableFailsScan`.
 
 ### 10.5 Tools
 
@@ -1314,6 +1351,16 @@ and why. Entries marked **(open)** are also tracked in
   interrupt was not seen. stdout is now drained on its own thread while the caller polls the process, the timeout and
   `ContentQuery.isCancelled()`; either kills rg. `ContentQuery` gained `cancellation(BooleanSupplier)` (default: never),
   and `Grep` passes its `CancellationSignal`.
+- **An isolated branch's content search is confined to the parent workspace (PR review 1).** `rootedAt(branchRoot)`
+  dropped the parent's hidden prefixes, and `confineRealPath` compared the target with the branch root's own real
+  path. So a `.worktrees/step_1 -> ../.aimon` link made the branch's `Grep` return control-store contents. The branch
+  search now keeps the parent's hidden prefixes, and it also requires the branch root's real path, and the target's,
+  to lie under the parent root's real path and outside every hidden prefix. Test:
+  `RipgrepControlStoreTest.linkedBranchRootRefused`.
+- **A path-rule refusal is a plain tool error (PR review 1).** `Read`, `Write` and `Edit` let
+  `FileAccessDeniedException` fall into their catch-all. The model saw "Unexpected error: Access denied …" (or "Failed
+  to write file: …"), and `Read` and `Write` logged it at ERROR with a stack trace. The tools now return the
+  exception's message ("Access denied: <path> (<reason>)") and log it at WARN. Test: `FileToolsPathRuleTest`.
 
 ### 10.6 Bootstrap, CLI, starter, sample
 

@@ -28,9 +28,10 @@ import at.aimon.core.filesystem.exception.VirtualFileSystemException;
  * never a bare {@code move} (S3/GridFS move is a non-atomic copy-then-delete).
  *
  * <p>
- * <b>Where branches come from.</b> The workflow runner isolates each leaf under a key derived from its deterministic
- * structural step path ({@code at.aimon.core.workflow.impl.DefaultWorkflowContext}'s {@code sanitizeBranchKey}). An
- * assembler that knows only the keys — for example from listing {@code .worktrees/} — rebuilds each branch with
+ * <b>Where branches come from.</b> Each branch is an {@link ExecutionEnvironment#isolate(String) isolate(key)} of the
+ * parent, under a key the caller derives deterministically; the local environment accepts keys of the shape
+ * {@code [A-Za-z0-9_]+} ({@code LocalExecutionEnvironment.isolate}). An assembler that knows only the keys — for
+ * example from listing {@code .worktrees/} — rebuilds each branch with
  * {@code parent.isolate(key).orElseThrow()}: isolation is deterministic on the key, so this is the same view the run
  * used. Staged skill copies are shared with the parent and never appear in a branch listing, so they are never
  * promoted; a file a branch wrote under its own {@code .aimon/} is promoted to the root {@code .aimon/}, where the

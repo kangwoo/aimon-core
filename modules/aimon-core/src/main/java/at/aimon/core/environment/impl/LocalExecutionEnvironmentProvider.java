@@ -12,6 +12,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.UnaryOperator;
 import java.util.stream.Stream;
 
 import org.slf4j.Logger;
@@ -21,6 +22,7 @@ import at.aimon.core.environment.EnvironmentRequest;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.ExecutionEnvironmentProvider;
 import at.aimon.core.filesystem.PathRule;
+import at.aimon.core.filesystem.VfsPaths;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.filesystem.impl.PathRuleVirtualFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
@@ -89,53 +91,71 @@ public final class LocalExecutionEnvironmentProvider implements ExecutionEnviron
 
     private LocalExecutionEnvironmentProvider(Builder builder) {
         final List<AutoCloseable> ownedResources = new ArrayList<>();
-        final Path ownedRoot;
-        if (builder.workspaceRoot != null) {
-            if (builder.fileSystem != null) {
-                throw new IllegalStateException("Set either workspaceRoot or fileSystem, not both");
+        try {
+            final Path ownedRoot;
+            if (builder.workspaceRoot != null) {
+                if (builder.fileSystem != null) {
+                    throw new IllegalStateException("Set either workspaceRoot or fileSystem, not both");
+                }
+                ownedRoot = builder.workspaceRoot.toAbsolutePath().normalize();
+                final LocalFileSystem localFileSystem = new LocalFileSystem(
+                        new LocalFileSystemConfig(ownedRoot.toString()));
+                ownedResources.add(builder.ownedResourceDecorator.apply(localFileSystem::close));
+                localFileSystem.initialize();
+                this.rawFileSystem = localFileSystem;
+            } else {
+                ownedRoot = null;
+                this.rawFileSystem = Objects.requireNonNull(builder.fileSystem,
+                        "workspaceRoot or fileSystem is required");
             }
-            ownedRoot = builder.workspaceRoot.toAbsolutePath().normalize();
-            final LocalFileSystem localFileSystem = new LocalFileSystem(
-                    new LocalFileSystemConfig(ownedRoot.toString()));
-            localFileSystem.initialize();
-            ownedResources.add(localFileSystem::close);
-            this.rawFileSystem = localFileSystem;
-        } else {
-            ownedRoot = null;
-            this.rawFileSystem = Objects.requireNonNull(builder.fileSystem, "workspaceRoot or fileSystem is required");
+            final String workingDirectory = rawFileSystem.getWorkingDirectory();
+            final Path hostRoot = LocalExecutionEnvironment.localPathOf(workingDirectory);
+
+            final VirtualShell shell;
+            if (builder.shell != null) {
+                shell = builder.shell;
+            } else {
+                final LocalShell localShell = new LocalShell(hostRoot);
+                ownedResources.add(builder.ownedResourceDecorator.apply(localShell::close));
+                shell = localShell;
+            }
+            this.owned = List.copyOf(ownedResources);
+
+            final List<PathRule> rules = builder.pathRules != null
+                    ? builder.pathRules
+                    : defaultPathRules(builder.stagingRoot);
+            final VirtualFileSystem toolFileSystem = rules.isEmpty()
+                    ? rawFileSystem
+                    : new PathRuleVirtualFileSystem(rawFileSystem, rules);
+
+            if (ownedRoot != null) {
+                sweepStaging(ownedRoot, ownedRoot.resolve(builder.stagingRoot), builder.stagingSweepGrace,
+                        builder.clock);
+            }
+
+            final LocalStaging staging = new LocalStaging(rawFileSystem, toolFileSystem, builder.stagingRoot,
+                    builder.maxStagedBytes);
+            final RipgrepContentSearch contentSearch = builder.contentSearch && hostRoot != null
+                    ? Optional.ofNullable(builder.ripgrepExecutable).or(RipgrepContentSearch::probe)
+                            .map(rg -> new RipgrepContentSearch(rg, hostRoot, hiddenPrefixes(rules))).orElse(null)
+                    : null;
+            this.environment = new LocalExecutionEnvironment(toolFileSystem, shell, staging, contentSearch,
+                    workingDirectory);
+        } catch (RuntimeException | Error e) {
+            // Nobody else holds what was built so far: close it here, or a failed build leaks the shell.
+            closeAll(ownedResources, e);
+            throw e;
         }
-        final String workingDirectory = rawFileSystem.getWorkingDirectory();
-        final Path hostRoot = LocalExecutionEnvironment.localPathOf(workingDirectory);
+    }
 
-        final VirtualShell shell;
-        if (builder.shell != null) {
-            shell = builder.shell;
-        } else {
-            final LocalShell localShell = new LocalShell(hostRoot);
-            ownedResources.add(localShell::close);
-            shell = localShell;
+    private static void closeAll(List<AutoCloseable> resources, Throwable cause) {
+        for (AutoCloseable resource : resources) {
+            try {
+                resource.close();
+            } catch (Exception e) {
+                cause.addSuppressed(e);
+            }
         }
-        this.owned = List.copyOf(ownedResources);
-
-        final List<PathRule> rules = builder.pathRules != null
-                ? builder.pathRules
-                : defaultPathRules(builder.stagingRoot);
-        final VirtualFileSystem toolFileSystem = rules.isEmpty()
-                ? rawFileSystem
-                : new PathRuleVirtualFileSystem(rawFileSystem, rules);
-
-        if (ownedRoot != null) {
-            sweepStaging(ownedRoot, ownedRoot.resolve(builder.stagingRoot), builder.stagingSweepGrace, builder.clock);
-        }
-
-        final LocalStaging staging = new LocalStaging(rawFileSystem, toolFileSystem, builder.stagingRoot,
-                builder.maxStagedBytes);
-        final RipgrepContentSearch contentSearch = builder.contentSearch && hostRoot != null
-                ? Optional.ofNullable(builder.ripgrepExecutable).or(RipgrepContentSearch::probe)
-                        .map(rg -> new RipgrepContentSearch(rg, hostRoot, hiddenPrefixes(rules))).orElse(null)
-                : null;
-        this.environment = new LocalExecutionEnvironment(toolFileSystem, shell, staging, contentSearch,
-                workingDirectory);
     }
 
     /**
@@ -203,14 +223,18 @@ public final class LocalExecutionEnvironmentProvider implements ExecutionEnviron
      * repository, the model through the shell) can replace with a symbolic link. The sweep therefore never follows
      * one: it does nothing when the staging directory is a link or resolves outside the workspace, and it only
      * descends into, and deletes, name and copy directories that are real directories rather than links to them.
+     * It also never sweeps the workspace root itself, and it only deletes copy directories whose name is a content
+     * key, so a directory that is not a staging area is left alone even if one were configured as such.
      */
     static void sweepStaging(Path ownedRoot, Path stagingDir, Duration grace, Clock clock) {
         if (!Files.isDirectory(stagingDir, LinkOption.NOFOLLOW_LINKS)) {
             return;
         }
         try {
-            if (!stagingDir.toRealPath().startsWith(ownedRoot.toRealPath())) {
-                log.warn("Staging sweep skipped: {} resolves outside the workspace {}", stagingDir, ownedRoot);
+            final Path realStaging = stagingDir.toRealPath();
+            final Path realRoot = ownedRoot.toRealPath();
+            if (!realStaging.startsWith(realRoot) || realStaging.equals(realRoot)) {
+                log.warn("Staging sweep skipped: {} is not a directory inside the workspace {}", stagingDir, ownedRoot);
                 return;
             }
         } catch (IOException e) {
@@ -234,7 +258,8 @@ public final class LocalExecutionEnvironmentProvider implements ExecutionEnviron
     private static void sweepName(Path nameDir, Instant cutoff) throws IOException {
         final List<Path> copies;
         try (Stream<Path> keys = Files.list(nameDir)) {
-            copies = keys.filter(LocalExecutionEnvironmentProvider::isRealDirectory).toList();
+            copies = keys.filter(LocalExecutionEnvironmentProvider::isRealDirectory)
+                    .filter(k -> LocalStaging.isContentKey(k.getFileName().toString())).toList();
         }
         final Optional<Path> newest = copies.stream().filter(k -> Files.exists(k.resolve(LocalStaging.MARKER)))
                 .max(Comparator.comparing(k -> modified(k.resolve(LocalStaging.MARKER))));
@@ -285,6 +310,7 @@ public final class LocalExecutionEnvironmentProvider implements ExecutionEnviron
         private Clock clock = Clock.systemUTC();
         private boolean contentSearch = true;
         private Path ripgrepExecutable;
+        private UnaryOperator<AutoCloseable> ownedResourceDecorator = UnaryOperator.identity();
 
         private Builder() {
         }
@@ -341,7 +367,8 @@ public final class LocalExecutionEnvironmentProvider implements ExecutionEnviron
 
         /**
          * @param stagingRoot
-         *            the staging area's directory under the workspace (default {@value #DEFAULT_STAGING_ROOT})
+         *            the staging area's directory under the workspace (default {@value #DEFAULT_STAGING_ROOT}): one
+         *            path segment, not {@code .} or {@code ..}, and not the control store
          * @return this builder
          */
         public Builder stagingRoot(String stagingRoot) {
@@ -402,9 +429,44 @@ public final class LocalExecutionEnvironmentProvider implements ExecutionEnviron
             return this;
         }
 
-        /** @return the provider */
+        /**
+         * Wraps the closer of every resource the provider builds and owns. Package-private: it exists so tests can see
+         * that a failed build closes what it had built.
+         *
+         * @param decorator
+         *            the wrapper
+         * @return this builder
+         */
+        Builder ownedResourceDecorator(UnaryOperator<AutoCloseable> decorator) {
+            this.ownedResourceDecorator = Objects.requireNonNull(decorator, "decorator must not be null");
+            return this;
+        }
+
+        /**
+         * @return the provider
+         * @throws IllegalArgumentException
+         *             if the staging root is not a single directory name under the workspace, or names the control
+         *             store
+         */
         public LocalExecutionEnvironmentProvider build() {
+            validateStagingRoot(stagingRoot);
             return new LocalExecutionEnvironmentProvider(this);
+        }
+
+        /**
+         * The startup sweep deletes old directories two levels below the staging root, so a staging root that is the
+         * workspace itself, lies outside it or is the control store would have it delete the user's or the control
+         * store's directories.
+         */
+        private static void validateStagingRoot(String stagingRoot) {
+            if (stagingRoot.isEmpty() || stagingRoot.equals(".") || stagingRoot.equals("..")
+                    || stagingRoot.contains("/") || stagingRoot.contains("\\") || stagingRoot.indexOf(':') >= 0) {
+                throw new IllegalArgumentException(
+                        "stagingRoot must be one directory name under the workspace, not '" + stagingRoot + "'");
+            }
+            if (VfsPaths.isUnderIgnoreCase(stagingRoot, CONTROL_DIRECTORY)) {
+                throw new IllegalArgumentException("stagingRoot must not be the control store " + CONTROL_DIRECTORY);
+            }
         }
     }
 }

@@ -57,6 +57,8 @@ final class RipgrepContentSearch implements ContentSearch {
 
     private final Path executable;
     private final Path root;
+    /** The workspace root the hidden prefixes are relative to: {@link #root} itself, or an isolated branch's parent. */
+    private final Path boundary;
     private final List<String> hiddenPrefixes;
     private final Duration timeout;
 
@@ -65,8 +67,14 @@ final class RipgrepContentSearch implements ContentSearch {
     }
 
     RipgrepContentSearch(Path executable, Path root, List<String> hiddenPrefixes, Duration timeout) {
+        this(executable, root, root, hiddenPrefixes, timeout);
+    }
+
+    private RipgrepContentSearch(Path executable, Path root, Path boundary, List<String> hiddenPrefixes,
+            Duration timeout) {
         this.executable = Objects.requireNonNull(executable, "executable must not be null");
         this.root = Objects.requireNonNull(root, "root must not be null");
+        this.boundary = Objects.requireNonNull(boundary, "boundary must not be null");
         this.hiddenPrefixes = List.copyOf(hiddenPrefixes);
         this.timeout = Objects.requireNonNull(timeout, "timeout must not be null");
     }
@@ -95,9 +103,13 @@ final class RipgrepContentSearch implements ContentSearch {
         return Optional.empty();
     }
 
-    /** Returns the same search rooted at another directory (an isolated branch), without hidden prefixes. */
+    /**
+     * Returns the same search rooted at a directory inside this one (an isolated branch). It keeps this search's hidden
+     * prefixes, and checks every target's real path against this search's root as well: a branch directory that is a
+     * link into the control store, or out of the workspace, is refused rather than searched.
+     */
     RipgrepContentSearch rootedAt(Path branchRoot) {
-        return new RipgrepContentSearch(executable, branchRoot, List.of(), timeout);
+        return new RipgrepContentSearch(executable, branchRoot, boundary, hiddenPrefixes, timeout);
     }
 
     @Override
@@ -152,20 +164,32 @@ final class RipgrepContentSearch implements ContentSearch {
      * path and outside every hidden prefix, or the walk answers instead (and refuses the link itself).
      */
     private void confineRealPath(String target, String requested) {
+        final Path realBoundary;
         final Path realRoot;
         final Path realTarget;
         try {
+            realBoundary = boundary.toRealPath();
             realRoot = root.toRealPath();
             realTarget = root.resolve(target.isEmpty() ? "." : target).toRealPath();
         } catch (IOException | RuntimeException e) {
             throw new IllegalArgumentException("cannot resolve " + requested + ": " + e.getMessage(), e);
         }
+        // An isolated branch's root is a directory the model can replace with a link: it must itself stay inside the
+        // workspace and outside every hidden prefix.
+        if (!realRoot.startsWith(realBoundary) || hidden(relative(realBoundary, realRoot))) {
+            throw new IllegalArgumentException(
+                    "search root resolves outside the workspace or into a hidden prefix: " + root);
+        }
         if (!realTarget.startsWith(realRoot)) {
             throw new IllegalArgumentException("path resolves outside the search root: " + requested);
         }
-        if (hidden(realRoot.relativize(realTarget).toString().replace('\\', '/'))) {
+        if (hidden(relative(realRoot, realTarget)) || hidden(relative(realBoundary, realTarget))) {
             throw new IllegalArgumentException("path resolves into a hidden prefix: " + requested);
         }
+    }
+
+    private static String relative(Path base, Path path) {
+        return base.relativize(path).toString().replace('\\', '/');
     }
 
     private boolean hidden(String rootRelative) {

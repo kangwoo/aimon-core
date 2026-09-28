@@ -1,8 +1,10 @@
 package at.aimon.core.environment;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.InputStream;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 
@@ -102,8 +104,8 @@ class StagedResourceTest {
     }
 
     @Test
-    @DisplayName("a listed entry that cannot be read is left out of the set and the hash")
-    void unreadableSkipped() {
+    @DisplayName("a listed entry that cannot be read fails the scan, naming the file")
+    void unreadableFailsScan() {
         final VirtualFileSystem flaky = new DelegatingFileSystem(control) {
             @Override
             public InputStream read(String path) {
@@ -113,11 +115,25 @@ class StagedResourceTest {
                 return super.read(path);
             }
         };
-        final StagedResource resource = StagedResource.scan(flaky, "skills/demo", "demo");
-        assertThat(resource.getFiles()).containsExactly("SKILL.md", "scripts/run.sh");
-        control.delete("skills/demo/templates/t.md");
-        assertThat(resource.getContentKey())
-                .isEqualTo(StagedResource.scan(control, "skills/demo", "demo").getContentKey());
+        assertThatThrownBy(() -> StagedResource.scan(flaky, "skills/demo", "demo"))
+                .isInstanceOf(UncheckedIOException.class).hasMessageContaining("templates/t.md")
+                .hasMessageContaining("'demo'").hasMessageContaining(StagedResource.STAGE_IGNORE_FILE);
+    }
+
+    @Test
+    @DisplayName("an unreadable entry that .stageignore excludes is never read")
+    void unreadableButIgnored() {
+        control.write("skills/demo/.stageignore", "templates/\n");
+        final VirtualFileSystem flaky = new DelegatingFileSystem(control) {
+            @Override
+            public InputStream read(String path) {
+                if (path.endsWith("templates/t.md")) {
+                    throw new IllegalStateException("unreadable");
+                }
+                return super.read(path);
+            }
+        };
+        assertThat(StagedResource.scan(flaky, "skills/demo", "demo").getFiles()).doesNotContain("templates/t.md");
     }
 
     @Test

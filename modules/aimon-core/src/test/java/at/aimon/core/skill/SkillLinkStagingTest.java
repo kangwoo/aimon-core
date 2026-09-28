@@ -30,6 +30,7 @@ import at.aimon.core.skill.parser.MarkdownSkillParser;
 import at.aimon.core.skill.repository.PathSkillRepository;
 import at.aimon.core.skill.repository.SkillRepository;
 import at.aimon.core.skill.repository.SkillSource;
+import at.aimon.core.tools.skill.SkillTool;
 
 /**
  * The link rule for staging a host-path skill (execution-environment design §4.4): a symbolic link is followed when
@@ -144,6 +145,37 @@ class SkillLinkStagingTest {
                 .hasMessageContaining("'foo'").hasMessageContaining("zero files");
     }
 
+    @Test
+    @DisplayName("a refused skill does not take the others, or the Skill tool's definition, down with it")
+    void refusedSkillSkippedInListings() throws IOException {
+        writeSkill(skills.resolve("good"), "good");
+        final Path real = writeSkill(tempDir.resolve("elsewhere/bad"), "bad");
+        link(skills.resolve("bad"), real);
+        final DefaultSkillRegistry registry = new DefaultSkillRegistry(new PathSkillRepository(skills),
+                new MarkdownSkillParser());
+
+        assertThat(registry.getAllSkills()).extracting(Skill::getName).containsExactly("good");
+        final String description = new SkillTool(registry).getDefinition().getDescription();
+        assertThat(description).contains("good").doesNotContain("bad-skill");
+
+        registry.reloadAll();
+        assertThat(registry.getAllSkills()).extracting(Skill::getName).containsExactly("good");
+        // Asked for by name, the refused skill still says why.
+        assertThatThrownBy(() -> registry.getSkill("bad")).isInstanceOf(SkillRepositoryException.class)
+                .hasMessageContaining("'bad'").hasMessageContaining("outside the root");
+        assertThat(registry.getSkill("good")).isPresent();
+    }
+
+    @Test
+    @DisplayName("a skill whose .stageignore excludes every file loads, and stages empty")
+    void stageIgnoreExcludingEverythingLoads() throws IOException {
+        writeSkill(skills.resolve("foo"));
+        Files.writeString(skills.resolve("foo/.stageignore"), "*\n");
+
+        final StagedResource resource = stagedResource(new PathSkillRepository(skills));
+        assertThat(resource.getFiles()).isEmpty();
+    }
+
     private StagedResource stagedResource(SkillRepository repository) {
         return new DefaultSkillRegistry(repository, new MarkdownSkillParser()).getSkill("foo").orElseThrow()
                 .getStagedResource().orElseThrow();
@@ -156,8 +188,13 @@ class SkillLinkStagingTest {
     }
 
     private static Path writeSkill(Path dir) throws IOException {
+        return writeSkill(dir, "foo");
+    }
+
+    private static Path writeSkill(Path dir, String name) throws IOException {
         Files.createDirectories(dir.resolve("scripts"));
-        Files.writeString(dir.resolve("SKILL.md"), SKILL_MD);
+        Files.writeString(dir.resolve("SKILL.md"),
+                SKILL_MD.replace("name: foo", "name: " + name).replace("Linked skill", name + "-skill"));
         Files.writeString(dir.resolve("scripts/run.sh"), "echo hi");
         return dir;
     }

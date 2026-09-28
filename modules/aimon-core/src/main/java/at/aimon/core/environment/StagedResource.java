@@ -22,9 +22,10 @@ import at.aimon.core.filesystem.VirtualFileSystem;
  *
  * <p>
  * <b>The file-set rule is fixed here, once.</b> {@link #scan} lists {@code sourceDir} recursively, drops paths
- * ignored by {@code sourceDir/.stageignore} ({@link StageIgnore}), leaves out any listed entry it cannot read (with a
- * WARN, the same way the bundled-skill materializer skips an unreadable resource), and records exactly the relative
- * paths it hashed in {@link #getFiles()}. The {@link #getContentKey() content key} is the SHA-256 (16 hex characters)
+ * ignored by {@code sourceDir/.stageignore} ({@link StageIgnore}), fails on any remaining entry it cannot read (a
+ * copy without it would be missing a file under {@code ${AIMON_SKILL_DIR}} with nothing reporting it), and records
+ * exactly the relative paths it hashed in {@link #getFiles()}. The {@link #getContentKey() content key} is the SHA-256
+ * (16 hex characters)
  * of the sorted {@code relPath + '\0' + bytes + '\0'} entries. A provider's {@code stage()} copies <b>exactly</b>
  * {@link #getFiles()} and nothing else; if one of those files cannot be read at copy time, or the bytes it copies no
  * longer hash to the content key, it fails without writing the {@code .staged} marker, so an incomplete or mislabelled
@@ -45,7 +46,8 @@ public final class StagedResource {
     /** Name of the gitignore-syntax file that excludes paths from staging. */
     public static final String STAGE_IGNORE_FILE = ".stageignore";
 
-    private static final int CONTENT_KEY_HEX_LENGTH = 16;
+    /** Length of a {@link #getContentKey() content key}: 16 lowercase hex characters. */
+    public static final int CONTENT_KEY_HEX_LENGTH = 16;
 
     private final VirtualFileSystem sourceFileSystem;
     private final String sourceDir;
@@ -64,8 +66,8 @@ public final class StagedResource {
     }
 
     /**
-     * Scans a directory into a staged resource: lists it, applies {@code .stageignore}, hashes the files it can read
-     * and records exactly that file list.
+     * Scans a directory into a staged resource: lists it, applies {@code .stageignore}, hashes every file left and
+     * records exactly that file list.
      *
      * @param fileSystem
      *            the source filesystem (must not be null)
@@ -75,7 +77,9 @@ public final class StagedResource {
      *            the resource name, used as a path segment of the staged copy (must not be null)
      * @return the resource
      * @throws UncheckedIOException
-     *             if the directory cannot be listed
+     *             if a listed file that {@code .stageignore} does not exclude cannot be read
+     * @throws RuntimeException
+     *             whatever the source filesystem throws when the directory cannot be listed
      */
     public static StagedResource scan(VirtualFileSystem fileSystem, String directory, String name) {
         Objects.requireNonNull(fileSystem, "fileSystem must not be null");
@@ -99,10 +103,10 @@ public final class StagedResource {
             final byte[] bytes;
             try (InputStream in = fileSystem.read(join(dir, rel))) {
                 bytes = in.readAllBytes();
-            } catch (IOException | RuntimeException e) {
-                log.warn("Skipping unreadable resource '{}' of '{}' while scanning for staging: {}", rel, name,
-                        e.getMessage());
-                continue;
+            } catch (IOException e) {
+                throw new UncheckedIOException(unreadable(rel, name, e), e);
+            } catch (RuntimeException e) {
+                throw new UncheckedIOException(new IOException(unreadable(rel, name, e), e));
             }
             hasher.add(rel, bytes);
             hashed.add(rel);
@@ -110,6 +114,11 @@ public final class StagedResource {
         }
         return builder().sourceFileSystem(fileSystem).sourceDir(dir).name(name).contentKey(hasher.build())
                 .totalBytes(total).files(hashed).build();
+    }
+
+    private static String unreadable(String rel, String name, Exception e) {
+        return "Cannot read '" + rel + "' of '" + name + "' while scanning for staging: " + e.getMessage()
+                + "; exclude it with " + STAGE_IGNORE_FILE + " if it should not be staged";
     }
 
     /**

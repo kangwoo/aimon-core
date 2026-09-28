@@ -21,6 +21,7 @@ import at.aimon.core.agent.tool.permission.ToolPermissionSubjectAware;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.exception.ExecutionEnvironmentUnavailableException;
 import at.aimon.core.filesystem.VirtualFileSystem;
+import at.aimon.core.filesystem.exception.FileAccessDeniedException;
 import at.aimon.core.filesystem.exception.FileNotFoundException;
 import at.aimon.core.filesystem.exception.InvalidPathException;
 import at.aimon.core.tools.ExecutionEnvironmentAccess;
@@ -234,6 +235,9 @@ public class EditTool extends AbstractTool implements ToolPermissionSubjectAware
         } catch (IllegalArgumentException e) {
             return ToolResult.error("Invalid parameter: " + e.getMessage());
         } catch (IllegalStateException | ExecutionEnvironmentUnavailableException e) {
+            return ToolResult.error(e.getMessage());
+        } catch (FileAccessDeniedException e) {
+            // A path rule refused it: an expected answer, not a failure of the tool.
             return ToolResult.error(e.getMessage());
         } catch (FileNotFoundException e) {
             return ToolResult.error("File not found: " + e.getMessage());

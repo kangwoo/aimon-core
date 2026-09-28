@@ -1,5 +1,6 @@
 package at.aimon.core.filesystem;
 
+import java.text.Normalizer;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.Locale;
@@ -151,9 +152,10 @@ public final class VfsPaths {
     }
 
     /**
-     * Like {@link #isUnder}, but compares ASCII case-insensitively, so {@code .AIMON/x} is under {@code .aimon}. Access
-     * rules use this: on a case-insensitive store (APFS, NTFS) both spellings name the same directory, and on a
-     * case-sensitive one hiding a differently cased twin is the safe direction.
+     * Like {@link #isUnder}, but compares {@linkplain #foldCase folded} names, so {@code .AIMON/x} and
+     * {@code .aimon-ſtaged/x} (U+017F LATIN SMALL LETTER LONG S) are under {@code .aimon} and {@code .aimon-staged}.
+     * Access rules use this: on a case-insensitive store (APFS, NTFS) such spellings name the same directory, and on a
+     * case-sensitive one hiding a differently spelled twin is the safe direction.
      *
      * @param rootRelative
      *            a normalised root-relative path
@@ -165,7 +167,26 @@ public final class VfsPaths {
         if (rootRelative == null || prefix == null) {
             return false;
         }
-        return isUnder(rootRelative.toLowerCase(Locale.ROOT), prefix.toLowerCase(Locale.ROOT));
+        return isUnder(foldCase(rootRelative), foldCase(prefix));
+    }
+
+    /**
+     * Folds a path for a case-insensitive comparison that is at least as aggressive as the stores it guards: NFKC
+     * (compatibility forms such as {@code ſ} → {@code s} and the {@code ﬅ} ligature → {@code st}), then a full case
+     * fold as lower-, upper- and lower-casing ({@code ß} → {@code ss}, the Kelvin sign → {@code k}), then NFC again.
+     * The first lower-casing is what folds an uppercase letter whose full fold expands: {@code ẞ} (U+1E9E) is already
+     * uppercase, so upper-then-lower would stop at {@code ß}, while lower-upper-lower gives {@code ß}, {@code SS},
+     * {@code ss} — as APFS does. Folding more than a store does only hides more, which is the direction an access rule
+     * may err in.
+     *
+     * @param path
+     *            a path
+     * @return the folded path
+     */
+    static String foldCase(String path) {
+        final String compatible = Normalizer.normalize(path, Normalizer.Form.NFKC);
+        final String folded = compatible.toLowerCase(Locale.ROOT).toUpperCase(Locale.ROOT).toLowerCase(Locale.ROOT);
+        return Normalizer.normalize(folded, Normalizer.Form.NFC);
     }
 
     /**

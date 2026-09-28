@@ -35,8 +35,9 @@ final class LocalStaging {
 
     private static final Logger log = LoggerFactory.getLogger(LocalStaging.class);
 
-    /** What {@link StagedResource.ContentKeyBuilder} produces: lowercase hex, never a path. */
-    private static final Pattern CONTENT_KEY = Pattern.compile("[0-9a-f]+");
+    /** What {@link StagedResource.ContentKeyBuilder} produces: exactly 16 lowercase hex characters, never a path. */
+    private static final Pattern CONTENT_KEY = Pattern
+            .compile("[0-9a-f]{" + StagedResource.CONTENT_KEY_HEX_LENGTH + "}");
 
     private final VirtualFileSystem rawFileSystem;
     private final VirtualFileSystem passthroughFileSystem;
@@ -50,6 +51,13 @@ final class LocalStaging {
         this.passthroughFileSystem = passthroughFileSystem;
         this.stagingRoot = Objects.requireNonNull(stagingRoot, "stagingRoot must not be null");
         this.maxStagedBytes = maxStagedBytes;
+    }
+
+    /**
+     * Whether a directory name has the shape of a content key (exactly 16 lowercase hex): what the sweep may delete.
+     */
+    static boolean isContentKey(String name) {
+        return CONTENT_KEY.matcher(name).matches();
     }
 
     String stagingRoot() {
@@ -75,7 +83,7 @@ final class LocalStaging {
         // (SPI code, a remote repository's keys) could otherwise write or delete outside its own copy.
         if (!CONTENT_KEY.matcher(resource.getContentKey()).matches()) {
             throw new StagingException("Cannot stage '" + name + "': the content key '" + resource.getContentKey()
-                    + "' is not a lowercase hex string");
+                    + "' is not 16 lowercase hex characters");
         }
         for (String relPath : resource.getFiles()) {
             if (!isConfinedRelativePath(relPath)) {

@@ -93,4 +93,25 @@ class VfsPathsTest {
         assertThat(VfsPaths.isUnderIgnoreCase(".AIMON2/x", ".aimon")).isFalse();
         assertThat(VfsPaths.isUnderIgnoreCase(null, ".aimon")).isFalse();
     }
+
+    @Test
+    @DisplayName("isUnderIgnoreCase folds Unicode letters a case-insensitive store treats as the same name")
+    void isUnderIgnoreCaseUnicode() {
+        // U+017F LATIN SMALL LETTER LONG S: APFS folds it to 's'
+        assertThat(VfsPaths.isUnderIgnoreCase(".aimon-\u017Ftaged/k/run.sh", ".aimon-staged")).isTrue();
+        assertThat(VfsPaths.isUnderIgnoreCase(".\u017Fecrets/key", ".secrets")).isTrue();
+        // U+FB05 LATIN SMALL LIGATURE LONG S T
+        assertThat(VfsPaths.isUnderIgnoreCase(".aimon-\uFB05aged/x", ".aimon-staged")).isTrue();
+        // U+212A KELVIN SIGN folds to 'k'
+        assertThat(VfsPaths.isUnderIgnoreCase("\u212Aeys/x", "keys")).isTrue();
+        // NFD spelling of a precomposed prefix
+        assertThat(VfsPaths.isUnderIgnoreCase("cafe\u0301/x", "caf\u00E9")).isTrue();
+        // U+1E9E LATIN CAPITAL LETTER SHARP S: its full fold is "ss" (APFS opens .ssh through .ẞh)
+        assertThat(VfsPaths.isUnderIgnoreCase(".\u1E9Eh/id", ".ssh")).isTrue();
+        assertThat(VfsPaths.isUnderIgnoreCase(".\u00DFh/id", ".ssh")).isTrue();
+        assertThat(VfsPaths.isUnderIgnoreCase(".ssh/id", ".\u1E9Eh")).isTrue();
+        assertThat(VfsPaths.isUnderIgnoreCase("a\u1E9Eets/x", "assets")).isTrue();
+        // Whole segments still
+        assertThat(VfsPaths.isUnderIgnoreCase(".\u017Fecrets2/key", ".secrets")).isFalse();
+    }
 }

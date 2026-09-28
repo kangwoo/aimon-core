@@ -27,6 +27,7 @@ import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.FileStamp;
 import at.aimon.core.environment.exception.ExecutionEnvironmentUnavailableException;
 import at.aimon.core.filesystem.VirtualFileSystem;
+import at.aimon.core.filesystem.exception.FileAccessDeniedException;
 import at.aimon.core.filesystem.exception.FileNotFoundException;
 import at.aimon.core.filesystem.exception.InvalidPathException;
 import at.aimon.core.tools.ExecutionEnvironmentAccess;
@@ -223,6 +224,10 @@ public class ReadTool extends AbstractTool implements ToolPermissionSubjectAware
             return ToolResult.error("Invalid parameter: " + e.getMessage());
         } catch (IllegalStateException | ExecutionEnvironmentUnavailableException e) {
             log.warn("No usable execution environment: {}", e.getMessage());
+            return ToolResult.error(e.getMessage());
+        } catch (FileAccessDeniedException e) {
+            // A path rule refused it: an expected answer, not a failure of the tool.
+            log.warn("{}", e.getMessage());
             return ToolResult.error(e.getMessage());
         } catch (FileNotFoundException e) {
             log.warn("File not found: {}", e.getMessage());

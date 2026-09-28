@@ -8,6 +8,9 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import at.aimon.core.environment.StagedResource;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.skill.exception.SkillNotFoundException;
@@ -32,10 +35,16 @@ import at.aimon.core.skill.repository.VfsSkillRepository;
  * for the winner rather than running its own repository I/O and parse. A miss is not cached, so an absent skill stays
  * loadable once it appears.
  * <li>{@link #reloadAll()} publishes a fully-built cache in one assignment. Readers never observe the intermediate
- * empty state that a clear-then-refill would expose, and a load failure part-way through leaves the previous cache
- * serving rather than an emptied one.
+ * empty state that a clear-then-refill would expose, and a failure part-way through that is not one skill's own (the
+ * repository listing, a parse error) leaves the previous cache serving rather than an emptied one.
  * <li>{@link #reloadSkill(String)} and {@link #reloadAll()} exclude each other.
  * </ul>
+ *
+ * <p>
+ * One skill that cannot be loaded does not take the others down (execution-environment design §4.4: "that skill does
+ * not load"). {@link #getAllSkills()} and {@link #reloadAll()} skip a skill whose load fails with a
+ * {@link SkillRepositoryException} — a link the link rule refuses, a scan that fails — and log it at WARN;
+ * {@link #getSkill(String)} of that skill keeps throwing the exception that says why.
  *
  * <p>
  * What is <em>not</em> promised: a {@code getSkill} that overlaps a reload may deposit its entry into the cache the
@@ -66,6 +75,8 @@ public class DefaultSkillRegistry implements SkillRegistry {
 
     /** The file whose presence makes a directory a skill. */
     private static final String SKILL_FILE = "SKILL.md";
+
+    private static final Logger log = LoggerFactory.getLogger(DefaultSkillRegistry.class);
 
     private final SkillRepository repository;
     private final SkillParser parser;
@@ -183,16 +194,25 @@ public class DefaultSkillRegistry implements SkillRegistry {
             throw new SkillRepositoryException(
                     String.format("Failed to scan skill '%s' for staging: %s", skillName, e.getMessage()), e);
         }
-        // A source directory that holds SKILL.md but scans to no file at all could not see its own contents (a link
-        // it did not follow, say). Staging it would serve an empty copy under ${AIMON_SKILL_DIR} with nothing
-        // reporting it; fail here instead (design §4.4, the link rule).
-        if (resource.getFiles().isEmpty() && holdsSkillFile(source)) {
+        // A source directory that holds SKILL.md but lists no file at all could not see its own contents (a link it
+        // did not follow, say). Staging it would serve an empty copy under ${AIMON_SKILL_DIR} with nothing reporting
+        // it; fail here instead (design §4.4, the link rule). A directory whose .stageignore excluded every file it
+        // lists is what its author asked for, and stages empty.
+        if (resource.getFiles().isEmpty() && holdsSkillFile(source) && listsNothing(source)) {
             throw new SkillRepositoryException(String.format(
                     "Skill '%s' holds SKILL.md but its directory '%s' scanned to zero files; refusing to stage an"
                             + " empty copy",
                     skillName, source.getDirectory()));
         }
         return resource;
+    }
+
+    private static boolean listsNothing(SkillSource source) {
+        try {
+            return source.getFileSystem().listRecursive(source.getDirectory()).isEmpty();
+        } catch (RuntimeException e) {
+            throw new SkillRepositoryException("Failed to list " + source.getDirectory() + " of a scanned skill", e);
+        }
     }
 
     private static boolean holdsSkillFile(SkillSource source) {
@@ -213,8 +233,11 @@ public class DefaultSkillRegistry implements SkillRegistry {
         final List<Skill> skills = new ArrayList<>();
 
         for (String skillName : skillNames) {
-            final Optional<Skill> skill = getSkill(skillName);
-            skill.ifPresent(skills::add);
+            try {
+                getSkill(skillName).ifPresent(skills::add);
+            } catch (SkillRepositoryException e) {
+                logSkipped(skillName, e);
+            }
         }
 
         return skills;
@@ -240,8 +263,21 @@ public class DefaultSkillRegistry implements SkillRegistry {
         // registry and starts loading against it, and abandons the cache emptied if a reload throws part-way.
         final ConcurrentMap<String, Skill> reloaded = new ConcurrentHashMap<>();
         for (String skillName : repository.findAllNames()) {
-            loadComplete(skillName).ifPresent(skill -> reloaded.put(skillName, skill));
+            try {
+                loadComplete(skillName).ifPresent(skill -> reloaded.put(skillName, skill));
+            } catch (SkillRepositoryException e) {
+                logSkipped(skillName, e);
+            }
         }
         cache = reloaded;
+    }
+
+    /**
+     * A skill that fails to load is left out of a listing rather than failing it: the tool definition, the command
+     * list and the banner are all built from {@link #getAllSkills()}. It is not cached, so {@link #getSkill(String)}
+     * reports the same error to whoever asks for it by name.
+     */
+    private static void logSkipped(String skillName, SkillRepositoryException e) {
+        log.warn("Skill '{}' is not loaded: {}", skillName, e.getMessage());
     }
 }

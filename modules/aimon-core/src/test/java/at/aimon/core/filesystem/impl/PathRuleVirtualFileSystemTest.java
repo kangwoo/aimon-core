@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
@@ -151,6 +153,29 @@ class PathRuleVirtualFileSystemTest {
         assertThatThrownBy(() -> fs.deleteRecursive(".AIMON-STAGED")).isInstanceOf(FileAccessDeniedException.class);
         assertThat(PathRule.deny(".aimon").covers(".AIMON/x")).isTrue();
         assertThat(PathRule.deny(".aimon").covers(".AIMON2/x")).isFalse();
+    }
+
+    @Test
+    @DisplayName("a Unicode letter that folds onto a rule's name does not bypass it (U+017F LONG S)")
+    void unicodeFoldedPrefixes() throws IOException {
+        assertThatThrownBy(() -> fs.write(".aimon-\u017Ftaged/n/k/x.sh", "PWNED"))
+                .isInstanceOf(FileAccessDeniedException.class);
+        assertThat(Files.readString(tempDir.resolve(".aimon-staged/n/k/x.sh"))).isEqualTo("staged");
+
+        raw.write(".secrets/key", "top secret");
+        final VirtualFileSystem secrets = new PathRuleVirtualFileSystem(raw, List.of(PathRule.deny(".secrets")));
+        assertThat(secrets.exists(".\u017Fecrets/key")).isFalse();
+        assertThatThrownBy(() -> secrets.read(".\u017Fecrets/key")).isInstanceOf(FileAccessDeniedException.class);
+        assertThat(PathRule.deny(".secrets").covers(".\u017Fecrets/key")).isTrue();
+
+        // U+1E9E CAPITAL SHARP S folds to "ss": APFS opens .ssh/id through it
+        raw.write(".ssh/id", "private key");
+        final VirtualFileSystem ssh = new PathRuleVirtualFileSystem(raw, List.of(PathRule.deny(".ssh")));
+        for (String alias : List.of(".\u1E9Eh/id", ".\u00DFh/id", ".s\u017Fh/id", ".SSH/id")) {
+            assertThat(ssh.exists(alias)).as(alias).isFalse();
+            assertThatThrownBy(() -> ssh.read(alias)).as(alias).isInstanceOf(FileAccessDeniedException.class);
+        }
+        assertThat(PathRule.deny(".ssh").covers(".\u1E9Eh/id")).isTrue();
     }
 
     @Test

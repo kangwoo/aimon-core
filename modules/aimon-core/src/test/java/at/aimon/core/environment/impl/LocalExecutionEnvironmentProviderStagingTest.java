@@ -11,6 +11,7 @@ import java.nio.file.attribute.FileTime;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -241,14 +242,14 @@ class LocalExecutionEnvironmentProviderStagingTest {
     void sweep() throws Exception {
         final Instant now = Instant.parse("2026-09-28T12:00:00Z");
         final Path report = workspace.resolve(".aimon-staged/report");
-        final Path newest = stagedCopy(report, "knew", now.minus(Duration.ofHours(1)));
-        final Path young = stagedCopy(report, "kyoung", now.minus(Duration.ofHours(2)));
-        final Path old = stagedCopy(report, "kold", now.minus(Duration.ofHours(48)));
-        final Path partial = report.resolve("kpartial");
+        final Path newest = stagedCopy(report, "00000000000e0e0e", now.minus(Duration.ofHours(1)));
+        final Path young = stagedCopy(report, "00000000000a0a0a", now.minus(Duration.ofHours(2)));
+        final Path old = stagedCopy(report, "00000000000d0d0d", now.minus(Duration.ofHours(48)));
+        final Path partial = report.resolve("00000000000b0b0b");
         Files.createDirectories(partial);
         Files.writeString(partial.resolve("half.txt"), "x");
         Files.setLastModifiedTime(partial, FileTime.from(now.minus(Duration.ofHours(48))));
-        final Path freshPartial = report.resolve("kfreshpartial");
+        final Path freshPartial = report.resolve("00000000000f0f0f");
         Files.createDirectories(freshPartial);
         Files.setLastModifiedTime(freshPartial, FileTime.from(now.minus(Duration.ofMinutes(5))));
 
@@ -280,8 +281,8 @@ class LocalExecutionEnvironmentProviderStagingTest {
 
         // A link that stays inside the workspace is skipped too: the staging directory must be a real directory.
         final Path inside = workspace.resolve("keep/report");
-        final Path old = stagedCopy(inside, "kold", now.minus(Duration.ofHours(48)));
-        stagedCopy(inside, "knew", now.minus(Duration.ofHours(1)));
+        final Path old = stagedCopy(inside, "00000000000d0d0d", now.minus(Duration.ofHours(48)));
+        stagedCopy(inside, "00000000000e0e0e", now.minus(Duration.ofHours(1)));
         Files.createSymbolicLink(workspace.resolve("staged-link"), workspace.resolve("keep"));
         LocalExecutionEnvironmentProvider.sweepStaging(workspace, workspace.resolve("staged-link"),
                 Duration.ofHours(24), Clock.fixed(now, ZoneOffset.UTC));
@@ -300,14 +301,120 @@ class LocalExecutionEnvironmentProviderStagingTest {
         Files.createDirectories(staging.resolve("report"));
         // A name directory that is a link, and a copy directory that is a link, both older than the grace.
         Files.createSymbolicLink(staging.resolve("work"), elsewhere.resolve("work"));
-        Files.createSymbolicLink(staging.resolve("report/klink"), victim);
-        final Path real = stagedCopy(staging.resolve("report"), "knew", now.minus(Duration.ofHours(1)));
+        Files.createSymbolicLink(staging.resolve("report/00000000000c0c0c"), victim);
+        final Path real = stagedCopy(staging.resolve("report"), "00000000000e0e0e", now.minus(Duration.ofHours(1)));
 
         ownedEnv(LocalExecutionEnvironmentProvider.builder().clock(Clock.fixed(now, ZoneOffset.UTC))
                 .stagingSweepGrace(Duration.ofHours(24)));
 
         assertThat(victim.resolve("notes.md")).hasContent("mine");
         assertThat(real).exists();
+    }
+
+    @Test
+    @DisplayName("the sweep leaves a directory whose name is not a content key, however old")
+    void sweepKeepsNonKeyDirectories() throws Exception {
+        final Instant now = Instant.parse("2026-09-28T12:00:00Z");
+        final Path report = workspace.resolve(".aimon-staged/report");
+        final Path old = stagedCopy(report, "00000000000d0d0d", now.minus(Duration.ofHours(48)));
+        stagedCopy(report, "00000000000e0e0e", now.minus(Duration.ofHours(1)));
+        final Path notAKey = report.resolve("main");
+        Files.createDirectories(notAKey);
+        Files.writeString(notAKey.resolve("keep.txt"), "mine");
+        Files.setLastModifiedTime(notAKey, FileTime.from(now.minus(Duration.ofDays(400))));
+
+        ownedEnv(LocalExecutionEnvironmentProvider.builder().clock(Clock.fixed(now, ZoneOffset.UTC))
+                .stagingSweepGrace(Duration.ofHours(24)));
+
+        assertThat(old).doesNotExist();
+        assertThat(notAKey.resolve("keep.txt")).hasContent("mine");
+    }
+
+    @Test
+    @DisplayName("a staging root over user directories never sweeps one whose name is short hex, like logs/2024/01")
+    void sweepKeepsShortHexDirectories() throws Exception {
+        final Instant now = Instant.parse("2026-09-28T12:00:00Z");
+        final List<Path> logs = new ArrayList<>();
+        for (String month : List.of("01", "12")) {
+            final Path dir = Files.createDirectories(workspace.resolve("logs/2024/" + month));
+            Files.writeString(dir.resolve("app.log"), "log " + month);
+            Files.setLastModifiedTime(dir, FileTime.from(now.minus(Duration.ofDays(400))));
+            logs.add(dir.resolve("app.log"));
+        }
+        final Path cafe = Files.createDirectories(workspace.resolve("logs/beef/cafe"));
+        Files.setLastModifiedTime(cafe, FileTime.from(now.minus(Duration.ofDays(400))));
+
+        ownedEnv(LocalExecutionEnvironmentProvider.builder().stagingRoot("logs").clock(Clock.fixed(now, ZoneOffset.UTC))
+                .stagingSweepGrace(Duration.ofHours(24)));
+
+        assertThat(logs.get(0)).hasContent("log 01");
+        assertThat(logs.get(1)).hasContent("log 12");
+        assertThat(cafe).exists();
+    }
+
+    @Test
+    @DisplayName("the sweep never runs over the workspace root itself")
+    void sweepSkipsWorkspaceRoot() throws Exception {
+        final Instant now = Instant.parse("2026-09-28T12:00:00Z");
+        final Path old = stagedCopy(workspace.resolve("src"), "00000000000d0d0d", now.minus(Duration.ofHours(48)));
+        stagedCopy(workspace.resolve("src"), "00000000000e0e0e", now.minus(Duration.ofHours(1)));
+
+        LocalExecutionEnvironmentProvider.sweepStaging(workspace, workspace.resolve("."), Duration.ofHours(24),
+                Clock.fixed(now, ZoneOffset.UTC));
+        LocalExecutionEnvironmentProvider.sweepStaging(workspace, workspace, Duration.ofHours(24),
+                Clock.fixed(now, ZoneOffset.UTC));
+
+        assertThat(old).exists();
+    }
+
+    @Test
+    @DisplayName("a staging root that is not one directory name, or is the control store, is refused at build()")
+    void invalidStagingRootRefused() {
+        for (String root : List.of("", ".", "..", "src/main", "/tmp/x", "a\\b", "C:", ".aimon", ".AIMON")) {
+            assertThatThrownBy(() -> LocalExecutionEnvironmentProvider.builder().workspaceRoot(workspace)
+                    .stagingRoot(root).pathRules(List.of()).contentSearch(false).build()).as(root)
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("stagingRoot");
+        }
+        // One ordinary name is fine, with the default rules or explicit ones.
+        final LocalExecutionEnvironmentProvider provider = LocalExecutionEnvironmentProvider.builder()
+                .workspaceRoot(workspace).stagingRoot("staged").pathRules(List.of()).contentSearch(false).build();
+        closeables.add(provider);
+    }
+
+    @Test
+    @DisplayName("a build that fails after creating its filesystem and shell closes both")
+    void failedBuildClosesOwnedResources() throws Exception {
+        final List<String> closed = new ArrayList<>();
+        final Clock broken = new Clock() {
+            @Override
+            public ZoneOffset getZone() {
+                return ZoneOffset.UTC;
+            }
+
+            @Override
+            public Clock withZone(ZoneId zone) {
+                return this;
+            }
+
+            @Override
+            public Instant instant() {
+                throw new IllegalStateException("clock broken");
+            }
+        };
+        final int[] counter = {0};
+        final LocalExecutionEnvironmentProvider.Builder builder = LocalExecutionEnvironmentProvider.builder()
+                .workspaceRoot(workspace).clock(broken).contentSearch(false).ownedResourceDecorator(closer -> {
+                    final String label = "resource-" + counter[0]++;
+                    return () -> {
+                        closed.add(label);
+                        closer.close();
+                    };
+                });
+        // The sweep reads the clock only when there is a staging directory to sweep.
+        Files.createDirectories(workspace.resolve(".aimon-staged"));
+
+        assertThatThrownBy(builder::build).isInstanceOf(IllegalStateException.class).hasMessage("clock broken");
+        assertThat(closed).containsExactly("resource-0", "resource-1");
     }
 
     @Test
@@ -330,7 +437,7 @@ class LocalExecutionEnvironmentProviderStagingTest {
         Files.createDirectories(control.getParent());
         Files.writeString(control, "{}");
         final ExecutionEnvironment env = ownedEnv();
-        for (String key : List.of("../../.aimon", "..", "", "ABCDEF", "k1/x")) {
+        for (String key : List.of("../../.aimon", "..", "", "ABCDEF", "k1/x", "abcdef", "0123456789abcdef0")) {
             final StagedResource resource = StagedResource.builder().sourceFileSystem(this.control)
                     .sourceDir("skills/demo").name("demo").contentKey(key).files(List.of("SKILL.md")).build();
             assertThatThrownBy(() -> env.stage(resource)).as(key).isInstanceOf(StagingException.class)

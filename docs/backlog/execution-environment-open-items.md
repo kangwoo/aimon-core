@@ -1,4 +1,4 @@
-# 실행 환경 — 등록 항목 34건 (열림 33 · 닫힘 1)
+# 실행 환경 — 등록 항목 39건 (열림 38 · 닫힘 1)
 
 출처는 `ExecutionEnvironment` 구현 작업이다. 설계는 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md)
 이고, 구현 계획(승인본)과 구현이 그 계획에서 벗어난 점은
@@ -12,7 +12,10 @@
 같은 계열의 지적 셋 — 스테이징 스윕의 심볼릭 링크, `relPath`/`contentKey` 검증, `rg` 의 링크 대상과 timeout — 은 이 변경에서
 고쳤으므로 여기 없다). EE-26~EE-34 는 빌드 리뷰 4 의 비차단 지적 가운데 이 변경에서 고치지 않은 것을 2026-09-29 에 옮긴
 것이다. 같은 리뷰의 차단 지적(링크된 스킬 디렉터리가 빈 사본으로 스테이징됨)은 링크 규칙(설계 §4.4)으로 고쳤고, 그 규칙이
-EE-16 도 닫았다. 테스트 Javadoc 이 낡았다는 지적도 이 변경에서 고쳤다.
+EE-16 도 닫았다. 테스트 Javadoc 이 낡았다는 지적도 이 변경에서 고쳤다. EE-35~EE-39 는 PR #195 의 리뷰 1 에서 나온 비차단
+지적 가운데 고치지 않은 것을 2026-09-29 에 옮긴 것이다. 같은 리뷰의 차단 지적(링크 규칙이 거부한 스킬 하나가 스킬 목록
+전체와 `Skill` 도구를 무너뜨림)과 비차단 지적 여덟 건은 고쳤고, 그 내용은 구현 문서 §10 에 있다. 그 리뷰가 EE-27 과
+EE-33 의 범위를 넓혔으므로 두 항목의 본문도 고쳤다.
 
 ---
 
@@ -403,7 +406,9 @@ Javadoc 을 실제 동작에 맞춘다.
 **무엇을.** `ScopedVirtualFileSystem` 의 공유 접두어 검사를 경로 규칙과 같은 `VfsPaths.isUnderIgnoreCase` 로 맞춘다.
 
 **왜.** 경로 규칙은 대소문자를 무시하는데 공유 접두어 검사는 구분한다. 브랜치에서 `.AIMON-STAGED/x` 에 쓰면 브랜치 안에서는
-허용되고 승격 때 거절되어 병합이 중단된다. 우회되는 것은 없다. EE-8 과 같은 모양이다.
+허용되고 승격 때 거절되어 병합이 중단된다. 우회되는 것은 없다. EE-8 과 같은 모양이다. PR #195 리뷰 1 이 두 가지를 더
+확인했다. 그런 쓰기는 부모의 스테이징 영역이 아니라 브랜치 안의 `.worktrees/<k>/.AIMON-STAGED/x` 에 놓인다(무해하지만
+일관되지 않다). 그리고 대소문자를 구분하지 않는 파일 시스템에서는 브랜치 키 `a` 와 `A` 가 한 디렉터리를 나눠 쓴다.
 
 **어디.** `modules/aimon-core/src/main/java/at/aimon/core/filesystem/impl/ScopedVirtualFileSystem.java` 의 `sharedPrefixes`
 검사.
@@ -484,12 +489,21 @@ Javadoc 을 실제 동작에 맞춘다.
 
 출처: 빌드 리뷰 4.
 
-## EE-33 — 경로 규칙의 대소문자 접기가 ASCII 뿐이고 Windows 별칭을 모른다 · **열림**
+## EE-33 — 경로 규칙이 Windows 의 이름 별칭을 모른다 · **열림**
 
 **무엇을.** Windows 호스트에서 규칙이 맞을 때 NTFS 의 끝 점·공백 별칭(`.aimon.`)과 8.3 짧은 이름 같은 세그먼트를 거부한다.
 
-**왜.** `VfsPaths` 의 대소문자 접기는 `Locale.ROOT` 기반 ASCII 뿐이고, 그런 별칭은 정규화하지 않는다. Windows 에서는 같은
+**왜.** 경로 규칙은 이름을 접어서(대소문자·유니코드) 비교하지만, 그런 별칭은 정규화하지 않는다. Windows 에서는 같은
 디렉터리를 다른 이름으로 부를 수 있다.
+
+처음 등록할 때는 대소문자 접기가 ASCII 뿐이라는 것도 이 항목에 들어 있었고, 별칭은 Windows 에만 있다고 적었다. 틀렸다.
+PR #195 리뷰 1 이 **macOS 에도 별칭이 있음**을 재현했다 — APFS 는 U+017F `ſ` 를 `s` 로 접으므로, 기본 제공자에서
+`.aimon-ſtaged/…` 쓰기가 받아들여져 스테이징된 스크립트가 바뀌었고, `PathRule.deny(".secrets")` 는 `.ſecrets/key` 로
+읽혔다. 그 절반은 이 변경에서 고쳤다: `VfsPaths.isUnderIgnoreCase` 가 NFKC → 소문자·대문자·소문자 → NFC 로 접은 이름을
+비교한다(`VfsPaths.foldCase`, 구현 문서 §10.2). 첫 수정은 대문자·소문자만 거쳐서 U+1E9E `ẞ` 를 `ß` 에서 멈췄고, APFS 에서
+`.ẞh/id` 가 `deny(".ssh")` 를 우회했다(PR 리뷰 2). 앞에 소문자화를 한 번 더 두어 `ss` 까지 접히게 고쳤다. 리뷰가 APFS 가
+한두 글자 ASCII 이름과 같게 보는 BMP 코드 포인트를 전수 대조해 어긋난 것은 `ẞ` 하나였다 — 짧은 이름에 대해 확인한 것이지
+유니코드 전체에 대해 증명한 것은 아니다. 남은 것은 위의 Windows 전용 별칭이다.
 
 **어디.** `modules/aimon-core/src/main/java/at/aimon/core/filesystem/VfsPaths.java`.
 
@@ -509,3 +523,79 @@ Javadoc 을 실제 동작에 맞춘다.
 **언제 다시 볼까.** 사용량을 모델이나 외부 사용자에게 보여 주는 도구가 생길 때.
 
 출처: 빌드 리뷰 4.
+
+## EE-35 — 링크 허용 루트를 설정 파일로 정할 수 없다 · **열림**
+
+**무엇을.** `PathSkillRepository` 의 허용 링크 루트(`allowedLinkRoot(s)`)를 에이전트 번들 로더, CLI, 부트스트랩, 스타터
+설정으로 노출한다.
+
+**왜.** 허용 루트는 빌더로만 정할 수 있다. `FileSystemAgentBundleLoader` 는 `new PathSkillRepository(skillsPath)` 로 저장소를
+만들고, CLI·부트스트랩·스타터에는 그 값을 넘길 설정이 없다. 그래서 디스크에서 읽는 에이전트는 공유 헬퍼를 링크한 스킬
+(`skills/foo -> /opt/shared/foo`)을 허용할 수 없다 — 그 스킬은 적재되지 않는다(이제 그 스킬만 빠진다). 사용자 결정의 "허용
+루트는 설정할 수 있게 한다" 는 프로그램으로 조립할 때만 채워졌다.
+
+**어디.** `modules/aimon-core/src/main/java/at/aimon/core/agent/impl/FileSystemAgentBundleLoader.java` 171행(2026-09-29),
+`modules/aimon-core/src/main/java/at/aimon/core/skill/repository/PathSkillRepository.java` 의 `Builder`.
+
+**언제 다시 볼까.** 링크로 설치한 스킬이 적재되지 않는다는 보고가 나올 때, 또는 스타터에 스킬 설정 절이 생길 때.
+
+출처: PR #195 리뷰 1.
+
+## EE-36 — `ReadOnlyLocalFileSystem` 은 읽기와 전체 목록만 실제 경로를 검사한다 · **열림**
+
+**무엇을.** `exists`, `isDirectory`, `getMetadata`, `list` 에도 링크 규칙의 실제 경로 검사를 적용하고, `read` 는 검사한 실제
+경로로 파일을 연다.
+
+**왜.** 네 메서드는 검사 없이 링크를 따라가므로 루트 밖 파일의 존재와 크기가 드러난다. `read` 는 실제 경로를 검사한 뒤 링크
+경로로 파일을 열어, 검사와 사용 사이에 링크를 바꿀 틈이 있다. 스킬 디렉터리는 운영자가 정하는 것이라 위험은 낮다.
+
+**어디.** `modules/aimon-core/src/main/java/at/aimon/core/filesystem/impl/local/ReadOnlyLocalFileSystem.java` 의 `read`(133행),
+`exists`(152행), `isDirectory`(157행), `getMetadata`(162행), `list`(180행) (2026-09-29).
+
+**언제 다시 볼까.** 스킬 디렉터리를 운영자가 아닌 쪽에서 받게 될 때(EE-16 의 재검토 조건과 같다).
+
+출처: PR #195 리뷰 1.
+
+## EE-37 — 스테이징 마커는 있는지만 본다 · **열림**
+
+**무엇을.** `.staged` 마커에 이미 쓰고 있는 `contentKey` 를 읽어, 경로의 키와 같을 때만 "이미 스테이징됨" 으로 본다.
+
+**왜.** 설계 §4.4·§15 대로 마커가 생략을 정하지만, 지금은 마커가 있는지만 검사한다. 키는 결정적이고 예측할 수 있으므로,
+미리 심어 둔 `.aimon-staged/<name>/<key>/` 와 `.staged` 는 그대로 제공된다. 그런 사본은 복제한 저장소에서 올 수 있다(EE-4).
+마커 내용까지 비교해도 비용은 작다. 다만 셸이 사본을 고칠 수 있다는 전제(§2 비목표)는 그대로라 경계가 되지는 않는다.
+
+**어디.** `modules/aimon-core/src/main/java/at/aimon/core/environment/impl/LocalStaging.java` 의 마커 검사(95·104행,
+2026-09-29).
+
+**언제 다시 볼까.** EE-4 를 다룰 때, 또는 스테이징 영역을 저장소에 커밋한 사례가 나올 때.
+
+출처: PR #195 리뷰 1.
+
+## EE-38 — 대소문자를 구분하는 소스를 구분하지 않는 디스크에 스테이징하면 파일이 합쳐진다 · **열림**
+
+**무엇을.** 스테이징 전에 접은 이름이 겹치는 파일 쌍을 찾아 거부하거나, 복사한 결과를 디스크에서 다시 해시한다.
+
+**왜.** 클래스패스·S3·GridFS 소스에 `RUN.sh` 와 `run.sh` 가 함께 있으면 APFS·NTFS 에서는 한 파일로 합쳐진다. 복사 검증은
+소스에서 읽은 바이트를 해시하므로 디스크에 실제로 놓인 것과 달라도 통과한다. 드문 경우다.
+
+**어디.** `modules/aimon-core/src/main/java/at/aimon/core/environment/impl/LocalStaging.java` 의 `copy`(130행 부근,
+2026-09-29).
+
+**언제 다시 볼까.** 스테이징된 스킬 파일이 소스와 다르다는 보고가 나올 때.
+
+출처: PR #195 리뷰 1.
+
+## EE-39 — 경로 규칙 파일 시스템의 `search` 가 결과를 덜 돌려줄 수 있다 · **열림**
+
+**무엇을.** `PathRuleVirtualFileSystem.search` 가 위임에 더 많이 요청하거나(over-fetch), 가려진 항목을 걷는 동안 걸러
+`maxResults` 를 채운다.
+
+**왜.** 지금은 `maxResults` 를 그대로 위임에 넘긴 뒤 가려진 결과를 뺀다. 그래서 보이는 결과가 더 있어도 그보다 적게 돌아올 수
+있다. 가려진 것이 새지는 않는다.
+
+**어디.** `modules/aimon-core/src/main/java/at/aimon/core/filesystem/impl/PathRuleVirtualFileSystem.java` 의 `search`(201행,
+2026-09-29).
+
+**언제 다시 볼까.** `search` 를 결과 개수에 기대는 도구가 쓰게 될 때.
+
+출처: PR #195 리뷰 1.
