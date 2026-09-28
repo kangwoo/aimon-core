@@ -120,6 +120,35 @@ class SlashSkillForkE2EIntegrationTest {
         assertThat(llmClient.callCount()).isOne();
     }
 
+    /**
+     * Regression: the slash path rendered with {@code RenderContext.empty()}, so every {@code ${AIMON_*}} variable
+     * came out empty and {@code bash ${AIMON_SKILL_DIR}/scripts/x.sh} ran {@code bash /scripts/x.sh}. Driven through
+     * the real {@code OrcaAgentExecutor} command flow so the assertion covers the tool context that flow actually
+     * builds, not a hand-made one.
+     */
+    @Test
+    @DisplayName("renders ${AIMON_SKILL_DIR}, ${AIMON_SESSION_ID} and ${AIMON_AGENT_RUNTIME_ID} on the slash path")
+    void slashForkSkill_RendersAimonVariablesFromCommandFlow() {
+        final Skill skill = Skill.builder().name("deploy")
+                .metadata(SkillMetadata.builder().name("deploy").description("e2e fixture — deploy")
+                        .invokePolicy(InvokePolicy.of(true, true)).executionMode(ExecutionMode.FORK)
+                        .forkAgentName("code-reviewer").build())
+                .content(SkillContent
+                        .of("bash ${AIMON_SKILL_DIR}/scripts/x.sh ${AIMON_SESSION_ID} ${AIMON_AGENT_RUNTIME_ID}"))
+                .baseDir("/skills/deploy").build();
+        skillRegistry.add(skill);
+        subagentRegistry.add(simpleSubagent("code-reviewer"));
+        final OrcaAgentRuntime runtime = createContext();
+        final SessionId sessionId = SessionId.generate();
+
+        final OrcaAgentExecutionResult result = executor.execute(runtime,
+                OrcaAgentExecutionRequest.builder().userInput("/deploy").sessionId(sessionId).build());
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(llmClient.lastUserMessage())
+                .contains("bash /skills/deploy/scripts/x.sh " + sessionId.value() + " " + runtime.getId().value());
+    }
+
     @Test
     @DisplayName("unknown subagent — slash invocation surfaces clear failure (fail-fast in fork executor)")
     void slashForkSkill_UnknownSubagent_FailsFastFromCommandFlow() {

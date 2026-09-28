@@ -439,7 +439,7 @@ IMPORTANT: 세 id 변수는 **수명이 다르므로 서로 대체되지 않는�
 > 그 deprecation 을 **완료**했다 — 별칭 분기는 삭제되었고 리터럴은 이름이 처음부터 약속한 세션 id 에 묶였다.
 > WARN 을 무시하고 별칭을 계속 쓴 본문은 이제 *다른 값*을 받는다.
 
-NOTE (현재 한계): `RenderContext` 를 실제로 채우는 프로덕션 경로는 `SkillTool`(모델이 도구로 스킬을 호출하는
-경로) **하나뿐**이다. `/skill-name` 슬래시 호출(`SkillBackedCommandExecutor`)과 루틴 스텝(`RoutineExecutor`)
-은 빈 컨텍스트로 렌더하므로 위 5개 변수가 모두 `""` 로 치환된다 — `${AIMON_SKILL_DIR}` 도 예외가 아니다.
-이 경로들에 컨텍스트를 연결하는 것은 별도 작업이다.
+NOTE: `RenderContext` 는 스킬을 호출한 실행의 툴 컨텍스트에서 채워진다(`SkillRenderContextAccess`). 모델이
+도구로 부르는 `SkillTool` 과 `/skill-name` 슬래시 호출(`SkillBackedCommandExecutor`)이 같은 헬퍼를 거치므로 두
+경로의 치환 결과가 같다. 슬래시 호출에는 세션 id 가 실리고, `${AIMON_USER}` 는 명령을 친 호출자의 `Principal` 이다.
+루틴 스텝에서 `Skill` 도구를 부르면 스텝의 툴 컨텍스트(`AGENT_RUNTIME_ID` · `PRINCIPAL` · `EXECUTION_ID`)로 렌더된다.

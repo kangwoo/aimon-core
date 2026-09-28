@@ -294,8 +294,8 @@ class SkillToolTest {
         // Act
         tool.execute(ToolInput.of(Map.of("skill", "alert-analysis")), emptyContext);
 
-        // Assert
-        assertThat(capturedContext[0].getSkillBaseDir()).contains("/skills/alert-analysis/scripts");
+        // Assert — the skill root, not the scripts/ directory the script sits in
+        assertThat(capturedContext[0].getSkillBaseDir()).contains("/skills/alert-analysis");
     }
 
     @Test
