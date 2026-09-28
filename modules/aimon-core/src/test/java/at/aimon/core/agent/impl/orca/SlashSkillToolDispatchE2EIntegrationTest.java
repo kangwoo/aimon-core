@@ -32,6 +32,7 @@ import at.aimon.core.agent.tool.permission.PermissionSubject;
 import at.aimon.core.agent.tool.permission.ToolPermissionSubjectAware;
 import at.aimon.core.command.DefaultCommandExecutionManager;
 import at.aimon.core.command.DefaultCommandRegistry;
+import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
 import at.aimon.core.hook.DefaultHookExecutionManager;
@@ -239,7 +240,9 @@ class SlashSkillToolDispatchE2EIntegrationTest {
                 .agent(DefaultAgent.builder().name("TestAgent").maxIterations(3).systemPrompt("You are a test agent")
                         .model(LlmModel.builder().name("gpt-4").build()).build())
                 .toolRegistry(toolRegistry).hookRegistry(hookRegistry).commandRegistry(commandRegistry)
-                .subagentRegistry(new EmptySubagentRegistry()).skillRegistry(skillRegistry).fileSystem(fileSystem)
+                .subagentRegistry(new EmptySubagentRegistry()).skillRegistry(skillRegistry)
+                .controlFileSystem(fileSystem)
+                .executionEnvironmentProvider(TestExecutionEnvironments.provider(fileSystem))
                 .environment(Environment.createDefault()).build();
     }
 

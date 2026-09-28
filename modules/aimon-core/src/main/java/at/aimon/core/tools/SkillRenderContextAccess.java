@@ -1,12 +1,18 @@
 package at.aimon.core.tools;
 
 import java.util.Objects;
+import java.util.Optional;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.base.Principal;
+import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.environment.StagedResource;
 import at.aimon.core.skill.Skill;
 import at.aimon.core.skill.render.RenderContext;
 import at.aimon.core.skill.render.SkillRenderContexts;
@@ -29,6 +35,8 @@ import at.aimon.core.skill.render.SkillRenderContexts;
  */
 public final class SkillRenderContextAccess {
 
+    private static final Logger log = LoggerFactory.getLogger(SkillRenderContextAccess.class);
+
     private SkillRenderContextAccess() {
         throw new AssertionError("This class should not be instantiated");
     }
@@ -37,8 +45,8 @@ public final class SkillRenderContextAccess {
      * Starts a {@link RenderContext} builder for rendering the given skill in the given run.
      *
      * <p>
-     * Populates the agent runtime identifier, the identity of the run doing the rendering, principal, and skill base
-     * directory (see {@link SkillRenderContexts#resolveSkillBaseDir(Skill)}). Missing values are simply omitted; the
+     * Populates the agent runtime identifier, the identity of the run doing the rendering, principal, and the skill
+     * directory. Missing values are simply omitted; the
      * renderer is expected to handle absent fields gracefully. A builder is returned rather than a context so a caller
      * holding a more specific value (a command's own principal, say) can set it before building.
      *
@@ -51,6 +59,13 @@ public final class SkillRenderContextAccess {
      * than merged: the session key is empty in a fork precisely so a body cannot mistake a run identity for a
      * session, and collapsing them here would undo that.
      *
+     * <p>
+     * <b>The skill directory is always a staged path.</b> {@code ${AIMON_SKILL_DIR}} is set to what the run's
+     * {@code ExecutionEnvironment.stage(...)} returns for the skill's {@link Skill#getStagedResource() resource}
+     * (execution-environment design §4.4) — a copy the run's shell and file tools can both read — and never to a
+     * repository path, which the shell may not be able to see. Without a resource (a hand-built skill) or without an
+     * environment in the context, it stays unset and renders empty, with a WARN.
+     *
      * @param skill
      *            The skill being rendered (must not be null)
      * @param context
@@ -58,6 +73,10 @@ public final class SkillRenderContextAccess {
      * @return A pre-populated builder (never null)
      * @throws NullPointerException
      *             if either argument is null
+     * @throws at.aimon.core.environment.exception.StagingException
+     *             if the skill cannot be staged; callers turn it into a tool or command error
+     * @throws at.aimon.core.environment.exception.ExecutionEnvironmentUnavailableException
+     *             if the run's environment is unavailable
      */
     public static RenderContext.Builder builderFor(Skill skill, ToolContext context) {
         Objects.requireNonNull(skill, "Skill cannot be null");
@@ -68,6 +87,17 @@ public final class SkillRenderContextAccess {
         context.get(ToolContextKeys.SESSION_ID).map(SessionId::value).ifPresent(builder::sessionId);
         context.get(ToolContextKeys.EXECUTION_ID).map(ExecutionId::value).ifPresent(builder::executionId);
         context.get(ToolContextKeys.PRINCIPAL).ifPresent((Principal p) -> builder.principal(p));
+
+        final Optional<StagedResource> resource = skill.getStagedResource();
+        final Optional<ExecutionEnvironment> environment = ExecutionEnvironmentAccess.of(context);
+        if (resource.isEmpty()) {
+            log.warn("Skill '{}' carries no staged resource; ${{AIMON_SKILL_DIR}} renders empty", skill.getName());
+        } else if (environment.isEmpty()) {
+            log.warn("No execution environment to stage skill '{}' into; ${{AIMON_SKILL_DIR}} renders empty",
+                    skill.getName());
+        } else {
+            builder.skillBaseDir(environment.get().stage(resource.get()));
+        }
         return builder;
     }
 }

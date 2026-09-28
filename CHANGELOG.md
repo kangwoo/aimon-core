@@ -7,6 +7,74 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Changed (breaking): tools run in a per-execution `ExecutionEnvironment`, and the control store is split out
+
+Design: `docs/design/tool/execution-environment.md` (implementation plan and departures:
+`execution-environment-implementation.md`; open items: `docs/backlog/execution-environment-open-items.md`). No
+compatibility layer (`docs/project/api-stability.md` §5).
+
+- **New SPI `at.aimon.core.environment`.** `ExecutionEnvironment` (file system, shell, `EnvironmentDescriptor`,
+  `stage`, `isolate`, `contentSearch`, `durable`) and `ExecutionEnvironmentProvider`. Both executors and scheduled
+  routines resolve one environment per execution, before prompt assembly, and publish it under the **write-once**
+  `ToolContextKeys.EXECUTION_ENVIRONMENT` (with `EXECUTION_ENVIRONMENT_PROVIDER` for forks). A second write of a
+  write-once name — including an enricher's — throws. A failing or missing provider yields an
+  `UnavailableExecutionEnvironment` whose file and shell calls fail with the cause. There is no host fallback. The
+  local implementation is `environment.impl.LocalExecutionEnvironmentProvider`.
+- **Tools hold no file system or shell.** `ReadTool()`, `WriteTool()` / `WriteTool(boolean)`, `EditTool()`,
+  `GrepTool()`, `BashTool(BackgroundBashManager)`, `ArtifactAwareWriteTool/EditTool(ArtifactArchive)`. `WikiIngest` and
+  `Skill` read the environment too. Removed: `OrcaToolProviderContext.getFileSystem()` / `getShell()` (use
+  `getControlFileSystem()`), `ToolContextKeys.VIRTUAL_FILE_SYSTEM`, `OrcaAgentRuntimeFactory.withShell(...)`,
+  `OrcaAgentRuntime.ownedShell`, and `agent.impl.orca.environment.{VirtualExecutionEnvironment,
+  LocalExecutionEnvironment, LocalShells}`. `OrcaAgentRuntimeFactory.create(...)` now requires
+  `withExecutionEnvironmentProvider(...)`. `Bash` runs in the workspace root, not the JVM's working directory.
+- **Control store.** The runtime's file system is now `getControlFileSystem()`. Skill, agent and command definitions,
+  task output, task results, snapshots, the CLI wiki and archived artifacts live there. Default directories are
+  relative to the control root (`skills`, `agents`, `commands`, `task-output`, `task-result`, `task-snapshot`,
+  `step-cache`, `bundled-skills`), and a local stack keeps the control root at `{workspace}/.aimon/`, so physical paths
+  are unchanged. The file tools cannot see `.aimon/` (DENY) and cannot modify `.aimon-staged/` (READ_ONLY). The opt-out
+  is `aimon.environment.control-writable=true`. The path rules resolve a path the way the backend does, so
+  `../<workspace-name>/.aimon/…` and `{workspace}/../<workspace-name>/.aimon/…` are caught; they match ignoring case
+  (`.AIMON/` is caught on a case-insensitive store); and a path that leaves the workspace is refused rather than passed
+  through.
+- **Relocation for direct-core embedders.** The `VirtualFileSystem` passed to
+  `OrcaAgentRuntimeFactory.create(...)` / `OrcaAgentRuntimeManager.getOrCreateRuntime(...)` is now the **control
+  root**, and the factory's default directories moved with it: `.aimon/skills` → `skills`, `.aimon/agents` → `agents`,
+  `.aimon/commands` → `commands`, `.aimon/task-output` → `task-output` (likewise the task-result and snapshot stores).
+  An embedder that keeps passing its workspace VFS no longer finds `{workspace}/.aimon/skills|agents|commands`, and
+  task output moves into the workspace. Pass `{workspace}/.aimon` instead to keep the physical paths. Likewise a
+  `VfsStepResultCache` built over a whole workspace VFS now writes to `{vfs}/step-cache`; build it over the control
+  store. Bootstrap, the starter and the CLI already do this.
+- **`OrcaAgentRuntimeManager.Builder.build()` requires a factory with a provider.** It no longer defaults to
+  `new OrcaAgentRuntimeFactory()` (which could not create a runtime without an `ExecutionEnvironmentProvider`): a
+  missing factory, or one without `withExecutionEnvironmentProvider(...)` /
+  `withExecutionEnvironmentProviderFactory(...)`, throws `IllegalStateException` at build time. See
+  `docs/getting-started/embedding-agent-in-application.md` §A.
+- **`${AIMON_SKILL_DIR}` is always a staged copy.** Every `SkillRepository` implements the new abstract
+  `resolveSource(String)`, which replaces `resolveBaseDir` (removed with `Skill.getBaseDir()`). The registry scans each
+  skill into a `StagedResource`, and rendering calls `env.stage(...)`, which makes a content-addressed, read-only copy
+  under `{workspace}/.aimon-staged/{name}/{contentKey}/`. `.stageignore` excludes files. The staging limit is
+  `aimon.environment.staging.max-bytes` (default 50 MB).
+- **Workflow isolation is `ExecutionEnvironment.isolate(branchKey)`.** Removed: `WorktreeEnvironmentFactory`,
+  `WorktreeToolEnvironmentFactory`, `worktreeFactory` on `WorkflowRunnerOptions` / `DefaultWorkflowRunner.Builder` /
+  `GraalJsWorkflowTool.Builder`, `withWorktreeEnvironmentFactory`, and the second argument of
+  `GraalJsWorkflowToolProvider`. `WorktreeMerge.promote(ExecutionEnvironment parent, List<ExecutionEnvironment>
+  branches, Policy)`. Bash commands in a branch default to the branch root.
+- **Stale-write protection.** `ReadTool.FILE_STAMPS_KEY` (read stamps: size + mtime, or `FileMetadata.getEtag()` when
+  the backend has one — S3 ETag, GridFS file id) replaces `READ_FILES_KEY`. `Edit`, and `Write` over an existing file,
+  refuse with "Read the file before modifying it" or "File changed since it was read; Read it again". A file read in an
+  earlier turn must be read again.
+- **Prompt and hooks describe the execution's environment.** The environment block renders the
+  `EnvironmentDescriptor`. `Environment` keeps only `timeZone`: `workingDirectory`, `platform`, `osVersion` and
+  `createWithWorkingDirectory` are removed. `ContextAssemblyRequest` carries `executionEnvironment` in place of
+  `environment` / `fileSystem`. Pre/PostTool hook contexts expose `getEnvironmentDescriptor()`.
+- **Smaller additions.** `ExecutionOptions.background`, `ShellCommandResult.notices()` (shown by `Bash` as
+  `[environment] …` lines), `ContentSearch` (`Grep` delegates to `rg` when it is on the `PATH`, and matching files are
+  now listed in path order), `FileArtifact.getStorage()` (`WORKSPACE` / `CONTROL`) with `ArtifactPolicy` and the
+  starter's `aimon.tools.artifact.*`, bootstrap `ExecutionEnvironmentSpec` / `ToolSpec.artifactPolicy`, and
+  `RecentFilesRestoreHook(..., ToolContext readContext)`.
+- **External modules** `aimon-sandbox` (`OrcaSandboxToolProvider`) and `aimon-browser` (`OrcaBrowserToolProvider`)
+  read `getFileSystem()` and must move to the new SPI (backlog EE-1).
+
 ### Added: the rolling context engine and `SessionHistory`
 
 - **`RollingContextEngine`** (`at.aimon.core.agent.context`) keeps the head (up to the first conversation user message)

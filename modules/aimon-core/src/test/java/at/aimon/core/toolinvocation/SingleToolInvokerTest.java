@@ -34,9 +34,13 @@ import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.agent.tool.execution.ToolExecutionResult;
 import at.aimon.core.agent.tool.permission.AllowedTool;
+import at.aimon.core.environment.EnvironmentDescriptor;
+import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.hook.HookExecutionManager;
 import at.aimon.core.hook.HookFeedback;
 import at.aimon.core.hook.HookRegistry;
+import at.aimon.core.hook.event.PostToolContext;
+import at.aimon.core.hook.event.PreToolContext;
 import at.aimon.core.hook.execution.AskPromptHandler;
 import at.aimon.core.hook.execution.Decision;
 import at.aimon.core.hook.execution.HookResult;
@@ -114,6 +118,33 @@ class SingleToolInvokerTest {
     }
 
     // --- tests ------------------------------------------------------------------------------------------------------
+
+    @Test
+    @DisplayName("pre/post tool hooks see the descriptor of the execution's environment, not the host (design §10)")
+    void toolHooksCarryTheExecutionEnvironmentDescriptor() {
+        givenToolBehavior(InterruptBehavior.NON_INTERRUPTIBLE);
+        when(toolExecutionManager.execute(any(), any(), any(), any()))
+                .thenReturn(ToolExecutionResult.of(TOOL_USE_ID, ToolResult.success("done")));
+        final EnvironmentDescriptor descriptor = EnvironmentDescriptor.builder().workingDirectory("/workspace")
+                .platform("linux").build();
+        final ToolContext context = ToolContext.builder()
+                .put(ToolContextKeys.EXECUTION_ENVIRONMENT, TestExecutionEnvironments.withDescriptor(descriptor))
+                .build();
+        final ToolInvocationSpec spec = ToolInvocationSpec.builder().invokerType(InvokerType.MAIN_AGENT)
+                .invokerName("agent").hookRegistry(hookRegistry).environment(mock(Environment.class))
+                .executionAttributes(Map.of()).toolRegistry(toolRegistry).sessionRegistry(sessionRegistry)
+                .allowedTools(List.of()).coordinator(coordinator).toolContext(context)
+                .toolUse(toolUse(Map.of("file_path", "/x"))).iterationCount(1).build();
+
+        invoker.invoke(spec);
+
+        final ArgumentCaptor<PreToolContext> pre = ArgumentCaptor.forClass(PreToolContext.class);
+        final ArgumentCaptor<PostToolContext> post = ArgumentCaptor.forClass(PostToolContext.class);
+        verify(hookExecutionManager).executePreTool(pre.capture());
+        verify(hookExecutionManager).executePostTool(post.capture());
+        assertThat(pre.getValue().getEnvironmentDescriptor()).contains(descriptor);
+        assertThat(post.getValue().getEnvironmentDescriptor()).contains(descriptor);
+    }
 
     @Test
     @DisplayName("normal path executes the tool and fires permission/pre/post hooks")

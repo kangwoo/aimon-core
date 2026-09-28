@@ -1,7 +1,6 @@
 package at.aimon.core.tools.file;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -16,10 +15,13 @@ import org.junit.jupiter.api.io.TempDir;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.environment.TestExecutionEnvironments;
+import at.aimon.core.environment.UnavailableExecutionEnvironment;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
 import at.aimon.core.llm.ToolDefinition;
+import at.aimon.core.tools.ToolContextKeys;
 
 /** Unit tests for {@link ReadTool}. */
 class ReadToolTest {
@@ -35,7 +37,11 @@ class ReadToolTest {
         LocalFileSystemConfig config = new LocalFileSystemConfig(tempDir.toString());
         fileSystem = new LocalFileSystem(config);
         fileSystem.initialize();
-        readTool = new ReadTool(fileSystem);
+        readTool = new ReadTool();
+    }
+
+    private ToolContext context() {
+        return TestExecutionEnvironments.context(fileSystem);
     }
 
     @AfterEach
@@ -48,15 +54,34 @@ class ReadToolTest {
     // Constructor tests
 
     @Test
-    void testConstructor_NullFileSystem_ThrowsException() {
-        assertThatThrownBy(() -> new ReadTool(null)).isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("File system cannot be null");
+    void testExecute_NoEnvironment_ReturnsErrorWithoutThrowing() {
+        ToolResult result = readTool.execute(ToolInput.of(Map.of("file_path", "a.txt")), ToolContext.empty());
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).contains("No execution environment");
     }
 
     @Test
-    void testConstructor_ValidFileSystem_Success() {
-        ReadTool tool = new ReadTool(fileSystem);
-        assertThat(tool).isNotNull();
+    void testExecute_UnavailableEnvironment_ErrorCarriesCause() {
+        ToolContext unavailable = ToolContext.builder()
+                .put(ToolContextKeys.EXECUTION_ENVIRONMENT, UnavailableExecutionEnvironment.of("sandbox is down"))
+                .build();
+
+        ToolResult result = readTool.execute(ToolInput.of(Map.of("file_path", "a.txt")), unavailable);
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).contains("sandbox is down");
+    }
+
+    @Test
+    void testExecute_RecordsStampUnderNormalisedKey() throws IOException {
+        Files.writeString(tempDir.resolve("a.txt"), "hello");
+        ToolContext context = context();
+
+        ToolResult result = readTool.execute(ToolInput.of(Map.of("file_path", "./a.txt")), context);
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(context.get(ReadTool.FILE_STAMPS_KEY).orElseThrow()).containsOnlyKeys("a.txt");
     }
 
     // getDefinition tests
@@ -103,7 +128,7 @@ class ReadToolTest {
         Map<String, Object> toolUse = Map.of("file_path", testFile.toString());
 
         // Act
-        ToolResult result = readTool.execute(ToolInput.of(toolUse), ToolContext.empty());
+        ToolResult result = readTool.execute(ToolInput.of(toolUse), context());
 
         // Assert
         assertThat(result.isSuccess()).isTrue();
@@ -121,7 +146,7 @@ class ReadToolTest {
         Map<String, Object> toolUse = Map.of("file_path", testFile.toString());
 
         // Act
-        ToolResult result = readTool.execute(ToolInput.of(toolUse), ToolContext.empty());
+        ToolResult result = readTool.execute(ToolInput.of(toolUse), context());
 
         // Assert
         assertThat(result.isSuccess()).isTrue();
@@ -137,7 +162,7 @@ class ReadToolTest {
         Map<String, Object> toolUse = Map.of("file_path", testFile.toString(), "offset", 3);
 
         // Act
-        ToolResult result = readTool.execute(ToolInput.of(toolUse), ToolContext.empty());
+        ToolResult result = readTool.execute(ToolInput.of(toolUse), context());
 
         // Assert
         assertThat(result.isSuccess()).isTrue();
@@ -157,7 +182,7 @@ class ReadToolTest {
         Map<String, Object> toolUse = Map.of("file_path", testFile.toString(), "limit", 3);
 
         // Act
-        ToolResult result = readTool.execute(ToolInput.of(toolUse), ToolContext.empty());
+        ToolResult result = readTool.execute(ToolInput.of(toolUse), context());
 
         // Assert
         assertThat(result.isSuccess()).isTrue();
@@ -177,7 +202,7 @@ class ReadToolTest {
         Map<String, Object> toolUse = Map.of("file_path", testFile.toString(), "offset", 2, "limit", 3);
 
         // Act
-        ToolResult result = readTool.execute(ToolInput.of(toolUse), ToolContext.empty());
+        ToolResult result = readTool.execute(ToolInput.of(toolUse), context());
 
         // Assert
         assertThat(result.isSuccess()).isTrue();
@@ -199,7 +224,7 @@ class ReadToolTest {
         Map<String, Object> toolUse = Map.of("file_path", testFile.toString());
 
         // Act
-        ToolResult result = readTool.execute(ToolInput.of(toolUse), ToolContext.empty());
+        ToolResult result = readTool.execute(ToolInput.of(toolUse), context());
 
         // Assert
         assertThat(result.isSuccess()).isTrue();
@@ -219,7 +244,7 @@ class ReadToolTest {
         Map<String, Object> toolUse = Map.of("file_path", testFile.toString(), "offset", 100);
 
         // Act
-        ToolResult result = readTool.execute(ToolInput.of(toolUse), ToolContext.empty());
+        ToolResult result = readTool.execute(ToolInput.of(toolUse), context());
 
         // Assert
         assertThat(result.isSuccess()).isTrue();
@@ -237,7 +262,7 @@ class ReadToolTest {
         Map<String, Object> toolUse = Map.of("file_path", directory.toString());
 
         // Act
-        ToolResult result = readTool.execute(ToolInput.of(toolUse), ToolContext.empty());
+        ToolResult result = readTool.execute(ToolInput.of(toolUse), context());
 
         // Assert
         assertThat(result.isError()).isTrue();
@@ -251,7 +276,7 @@ class ReadToolTest {
         Map<String, Object> toolUse = Map.of();
 
         // Act
-        ToolResult result = readTool.execute(ToolInput.of(toolUse), ToolContext.empty());
+        ToolResult result = readTool.execute(ToolInput.of(toolUse), context());
 
         // Assert
         assertThat(result.isError()).isTrue();
@@ -264,7 +289,7 @@ class ReadToolTest {
         Map<String, Object> toolUse = Map.of("file_path", tempDir.resolve("nonexistent.txt").toString());
 
         // Act
-        ToolResult result = readTool.execute(ToolInput.of(toolUse), ToolContext.empty());
+        ToolResult result = readTool.execute(ToolInput.of(toolUse), context());
 
         // Assert
         assertThat(result.isError()).isTrue();
@@ -280,7 +305,7 @@ class ReadToolTest {
         Map<String, Object> toolUse = Map.of("file_path", testFile.toString(), "offset", 0);
 
         // Act
-        ToolResult result = readTool.execute(ToolInput.of(toolUse), ToolContext.empty());
+        ToolResult result = readTool.execute(ToolInput.of(toolUse), context());
 
         // Assert
         assertThat(result.isError()).isTrue();
@@ -296,7 +321,7 @@ class ReadToolTest {
         Map<String, Object> toolUse = Map.of("file_path", testFile.toString(), "offset", -5);
 
         // Act
-        ToolResult result = readTool.execute(ToolInput.of(toolUse), ToolContext.empty());
+        ToolResult result = readTool.execute(ToolInput.of(toolUse), context());
 
         // Assert
         assertThat(result.isError()).isTrue();
@@ -312,7 +337,7 @@ class ReadToolTest {
         Map<String, Object> toolUse = Map.of("file_path", testFile.toString(), "limit", 0);
 
         // Act
-        ToolResult result = readTool.execute(ToolInput.of(toolUse), ToolContext.empty());
+        ToolResult result = readTool.execute(ToolInput.of(toolUse), context());
 
         // Assert
         assertThat(result.isError()).isTrue();
@@ -328,7 +353,7 @@ class ReadToolTest {
         Map<String, Object> toolUse = Map.of("file_path", testFile.toString(), "limit", -10);
 
         // Act
-        ToolResult result = readTool.execute(ToolInput.of(toolUse), ToolContext.empty());
+        ToolResult result = readTool.execute(ToolInput.of(toolUse), context());
 
         // Assert
         assertThat(result.isError()).isTrue();
@@ -344,7 +369,7 @@ class ReadToolTest {
         Map<String, Object> toolUse = Map.of("file_path", testFile.toString(), "offset", "not a number");
 
         // Act
-        ToolResult result = readTool.execute(ToolInput.of(toolUse), ToolContext.empty());
+        ToolResult result = readTool.execute(ToolInput.of(toolUse), context());
 
         // Assert
         assertThat(result.isError()).isTrue();
@@ -361,7 +386,7 @@ class ReadToolTest {
         Map<String, Object> toolUse = Map.of("file_path", testFile.toString(), "limit", "not a number");
 
         // Act
-        ToolResult result = readTool.execute(ToolInput.of(toolUse), ToolContext.empty());
+        ToolResult result = readTool.execute(ToolInput.of(toolUse), context());
 
         // Assert
         assertThat(result.isError()).isTrue();
@@ -380,7 +405,7 @@ class ReadToolTest {
         Map<String, Object> toolUse = Map.of("file_path", testFile.toString());
 
         // Act
-        ToolResult result = readTool.execute(ToolInput.of(toolUse), ToolContext.empty());
+        ToolResult result = readTool.execute(ToolInput.of(toolUse), context());
 
         // Assert
         assertThat(result.isSuccess()).isTrue();
@@ -404,7 +429,7 @@ class ReadToolTest {
         Map<String, Object> toolUse = Map.of("file_path", testFile.toString(), "limit", 100);
 
         // Act
-        ToolResult result = readTool.execute(ToolInput.of(toolUse), ToolContext.empty());
+        ToolResult result = readTool.execute(ToolInput.of(toolUse), context());
 
         // Assert
         assertThat(result.isSuccess()).isTrue();
@@ -428,7 +453,7 @@ class ReadToolTest {
         Map<String, Object> toolUse = Map.of("file_path", testFile.toString(), "offset", 9, "limit", 2);
 
         // Act
-        ToolResult result = readTool.execute(ToolInput.of(toolUse), ToolContext.empty());
+        ToolResult result = readTool.execute(ToolInput.of(toolUse), context());
 
         // Assert
         assertThat(result.isSuccess()).isTrue();

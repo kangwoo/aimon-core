@@ -3,43 +3,68 @@ package at.aimon.core.agent.impl.orca.environment;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.util.Arrays;
 import java.util.List;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import at.aimon.core.agent.AgentRuntimeId;
+import at.aimon.core.environment.EnvironmentDescriptor;
+import at.aimon.core.environment.EnvironmentRequest;
+import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.environment.StagedResource;
+import at.aimon.core.environment.impl.LocalExecutionEnvironmentProvider;
 import at.aimon.core.filesystem.BackendStatus;
 import at.aimon.core.filesystem.FileMetadata;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.filesystem.exception.VirtualFileSystemException;
-import at.aimon.core.filesystem.impl.local.LocalFileSystem;
-import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
+import at.aimon.core.shell.VirtualShell;
 
-@DisplayName("WorktreeMerge — promote branch subtrees to canonical (design §6.3)")
+@DisplayName("WorktreeMerge — promote branch environments to their parent (design §6.3)")
 class WorktreeMergeTest {
 
-    private LocalFileSystem vfs;
+    @TempDir
+    Path tempDir;
 
-    private void setUp(Path tempDir) {
-        vfs = new LocalFileSystem(new LocalFileSystemConfig(tempDir.toString()));
-        vfs.initialize();
+    private LocalExecutionEnvironmentProvider provider;
+    private ExecutionEnvironment parent;
+
+    private void setUp() {
+        provider = LocalExecutionEnvironmentProvider.builder().workspaceRoot(tempDir).contentSearch(false).build();
+        parent = provider
+                .resolve(EnvironmentRequest.builder().agentRuntimeId(AgentRuntimeId.fromName("merge")).build());
+    }
+
+    @AfterEach
+    void tearDown() {
+        if (provider != null) {
+            provider.close();
+        }
+    }
+
+    private ExecutionEnvironment branch(String key) {
+        return parent.isolate(key).orElseThrow();
     }
 
     @Test
     @DisplayName("promotes disjoint branch files to canonical paths and deletes the branch sources")
-    void promotesDisjointBranches(@TempDir Path tempDir) {
-        setUp(tempDir);
-        vfs.write(".worktrees/a/file1.txt", "one");
-        vfs.write(".worktrees/a/dir/file2.txt", "two");
-        vfs.write(".worktrees/b/file3.txt", "three");
+    void promotesDisjointBranches() {
+        setUp();
+        branch("a").fileSystem().write("file1.txt", "one");
+        branch("a").fileSystem().write("dir/file2.txt", "two");
+        branch("b").fileSystem().write("file3.txt", "three");
 
-        final MergeReport report = WorktreeMerge.promote(vfs, List.of("a", "b"), WorktreeMerge.Policy.FIRST_WINS);
+        final MergeReport report = WorktreeMerge.promote(parent, List.of(branch("a"), branch("b")),
+                WorktreeMerge.Policy.FIRST_WINS);
 
+        final VirtualFileSystem vfs = parent.fileSystem();
         assertThat(report.hasConflicts()).isFalse();
         assertThat(report.promoted()).containsExactlyInAnyOrder("file1.txt", "dir/file2.txt", "file3.txt");
         assertThat(vfs.exists("file1.txt")).isTrue();
@@ -52,101 +77,97 @@ class WorktreeMergeTest {
 
     @Test
     @DisplayName("FAIL policy promotes nothing and reports the cross-branch collision")
-    void conflictUnderFailPolicy(@TempDir Path tempDir) {
-        setUp(tempDir);
-        vfs.write(".worktrees/a/same.txt", "from-a");
-        vfs.write(".worktrees/b/same.txt", "from-b");
+    void conflictUnderFailPolicy() {
+        setUp();
+        branch("a").fileSystem().write("same.txt", "from-a");
+        branch("b").fileSystem().write("same.txt", "from-b");
 
-        final MergeReport report = WorktreeMerge.promote(vfs, List.of("a", "b"), WorktreeMerge.Policy.FAIL);
+        final MergeReport report = WorktreeMerge.promote(parent, List.of(branch("a"), branch("b")),
+                WorktreeMerge.Policy.FAIL);
 
         assertThat(report.hasConflicts()).isTrue();
         assertThat(report.conflicts()).containsExactly("same.txt");
         assertThat(report.promoted()).isEmpty();
-        assertThat(vfs.exists("same.txt")).isFalse(); // nothing promoted
+        assertThat(parent.fileSystem().exists("same.txt")).isFalse(); // nothing promoted
+    }
+
+    @Test
+    @DisplayName("FIRST_WINS resolves a collision to the first branch in the list")
+    void conflictFirstWins() {
+        setUp();
+        branch("a").fileSystem().write("same.txt", "from-a");
+        branch("b").fileSystem().write("same.txt", "from-b");
+
+        final MergeReport report = WorktreeMerge.promote(parent, List.of(branch("a"), branch("b")),
+                WorktreeMerge.Policy.FIRST_WINS);
+
+        assertThat(report.conflicts()).containsExactly("same.txt");
+        assertThat(report.promoted()).containsExactly("same.txt");
+        assertThat(readAll("same.txt")).isEqualTo("from-a");
     }
 
     @Test
     @DisplayName("LAST_WINS resolves a collision to the last branch")
-    void conflictLastWins(@TempDir Path tempDir) {
-        setUp(tempDir);
-        vfs.write(".worktrees/a/same.txt", "from-a");
-        vfs.write(".worktrees/b/same.txt", "from-b");
+    void conflictLastWins() {
+        setUp();
+        branch("a").fileSystem().write("same.txt", "from-a");
+        branch("b").fileSystem().write("same.txt", "from-b");
 
-        final MergeReport report = WorktreeMerge.promote(vfs, List.of("a", "b"), WorktreeMerge.Policy.LAST_WINS);
+        final MergeReport report = WorktreeMerge.promote(parent, List.of(branch("a"), branch("b")),
+                WorktreeMerge.Policy.LAST_WINS);
 
         assertThat(report.conflicts()).containsExactly("same.txt");
         assertThat(report.promoted()).containsExactly("same.txt");
         assertThat(readAll("same.txt")).isEqualTo("from-b");
     }
 
-    // --- branch-key shape validation (defensive re-check before any filesystem access) -------------------------
-
     @Test
-    @DisplayName("rejects malformed branch keys with IllegalArgumentException before touching the filesystem")
-    void rejectsMalformedBranchKeys(@TempDir Path tempDir) {
-        setUp(tempDir);
-        vfs.write("canonical.txt", "untouched");
-        vfs.write(".worktrees/ok/file1.txt", "one");
+    @DisplayName("an assembler that only knows branch keys rebuilds the same branches with isolate(key)")
+    void branchesRebuiltFromKeysPromote() {
+        setUp();
+        branch("p0_0_a0").fileSystem().write("out.txt", "payload");
 
-        // Malformed key comes AFTER a valid one: validation is up-front, so not even the valid branch may promote.
-        for (final String bad : List.of("../docs", "", "a/b", "a.b")) {
-            assertThatThrownBy(() -> WorktreeMerge.promote(vfs, List.of("ok", bad), WorktreeMerge.Policy.FIRST_WINS))
-                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("[A-Za-z0-9_]+")
-                    .hasMessageContaining("got: " + bad);
-        }
-
-        // Canonical tree completely untouched: nothing promoted, branch source intact, existing file unchanged.
-        assertThat(vfs.exists("file1.txt")).isFalse();
-        assertThat(vfs.exists(".worktrees/ok/file1.txt")).isTrue();
-        assertThat(readAll("canonical.txt")).isEqualTo("untouched");
-    }
-
-    @Test
-    @DisplayName("rejects a null branch key element with IllegalArgumentException")
-    void rejectsNullBranchKeyElement(@TempDir Path tempDir) {
-        setUp(tempDir);
-        vfs.write(".worktrees/ok/file1.txt", "one");
-
-        assertThatThrownBy(() -> WorktreeMerge.promote(vfs, Arrays.asList("ok", null), WorktreeMerge.Policy.FIRST_WINS))
-                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("[A-Za-z0-9_]+");
-
-        assertThat(vfs.exists("file1.txt")).isFalse();
-        assertThat(vfs.exists(".worktrees/ok/file1.txt")).isTrue();
-    }
-
-    @Test
-    @DisplayName("a framework-shaped branch key (letters, digits, underscores) still promotes")
-    void frameworkShapedKeyPromotes(@TempDir Path tempDir) {
-        setUp(tempDir);
-        vfs.write(".worktrees/p0_0_a0/out.txt", "payload");
-
-        final MergeReport report = WorktreeMerge.promote(vfs, List.of("p0_0_a0"), WorktreeMerge.Policy.FIRST_WINS);
+        // A fresh isolate() of the same key is the same view the run used: isolation is deterministic on the key.
+        final MergeReport report = WorktreeMerge.promote(parent, List.of(parent.isolate("p0_0_a0").orElseThrow()),
+                WorktreeMerge.Policy.FIRST_WINS);
 
         assertThat(report.hasConflicts()).isFalse();
         assertThat(report.promoted()).containsExactly("out.txt");
         assertThat(readAll("out.txt")).isEqualTo("payload");
-        assertThat(vfs.exists(".worktrees/p0_0_a0/out.txt")).isFalse();
+        assertThat(parent.fileSystem().exists(".worktrees/p0_0_a0/out.txt")).isFalse();
+    }
+
+    @Test
+    @DisplayName("the branch-key shape check now lives in isolate(): malformed keys are rejected there")
+    void rejectsMalformedBranchKeys() {
+        setUp();
+        for (final String bad : List.of("../docs", "", "a/b", "a.b")) {
+            assertThatThrownBy(() -> parent.isolate(bad)).isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("[A-Za-z0-9_]+").hasMessageContaining("got: " + bad);
+        }
+        assertThatThrownBy(() -> parent.isolate(null)).isInstanceOf(IllegalArgumentException.class);
     }
 
     // --- mid-merge failure semantics (fail-fast, no rollback, partial progress observable) ----------------------
 
     @Test
     @DisplayName("mid-merge failure aborts fail-fast, keeps promoted files in place, and reports partial progress")
-    void midMergeFailureReportsPartialProgress(@TempDir Path tempDir) {
-        setUp(tempDir);
-        vfs.write(".worktrees/a/first.txt", "one");
-        vfs.write(".worktrees/b/second.txt", "two");
-        // Branch 'a' promotes cleanly; the copy of branch 'b''s file simulates a backend failure.
-        final VirtualFileSystem failing = new FailingCopyFileSystem(vfs, ".worktrees/b/");
+    void midMergeFailureReportsPartialProgress() {
+        setUp();
+        branch("a").fileSystem().write("first.txt", "one");
+        branch("b").fileSystem().write("second.txt", "two");
+        // Branch 'a' promotes cleanly; writing branch 'b''s file to the parent simulates a backend failure.
+        final ExecutionEnvironment failing = new FailingParent(parent,
+                new FailingWriteFileSystem(parent.fileSystem(), "second.txt"));
 
-        assertThatThrownBy(() -> WorktreeMerge.promote(failing, List.of("a", "b"), WorktreeMerge.Policy.FIRST_WINS))
-                .isInstanceOf(VirtualFileSystemException.class).hasMessageContaining("second.txt")
-                .hasMessageContaining("branch 'b'").hasMessageContaining("after 1 promoted file(s)")
-                .hasMessageContaining("0 conflict(s)").hasMessageContaining("no rollback")
-                .hasRootCauseMessage("simulated backend failure: .worktrees/b/second.txt");
+        assertThatThrownBy(() -> WorktreeMerge.promote(failing, List.of(branch("a"), branch("b")),
+                WorktreeMerge.Policy.FIRST_WINS)).isInstanceOf(VirtualFileSystemException.class)
+                .hasMessageContaining("second.txt").hasMessageContaining("branch #1")
+                .hasMessageContaining("after 1 promoted file(s)").hasMessageContaining("0 conflict(s)")
+                .hasMessageContaining("no rollback").hasRootCauseMessage("simulated backend failure: second.txt");
 
+        final VirtualFileSystem vfs = parent.fileSystem();
         // The first file was fully promoted (copied + branch source deleted) before the abort — no rollback.
-        assertThat(vfs.exists("first.txt")).isTrue();
         assertThat(readAll("first.txt")).isEqualTo("one");
         assertThat(vfs.exists(".worktrees/a/first.txt")).isFalse();
         // The failed file is untouched, so re-running the merge after the failure is resolved is safe.
@@ -155,38 +176,69 @@ class WorktreeMergeTest {
     }
 
     private String readAll(String path) {
-        try (var in = vfs.read(path)) {
-            return new String(in.readAllBytes());
-        } catch (java.io.IOException e) {
+        try (var in = parent.fileSystem().read(path)) {
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException e) {
             throw new RuntimeException(e);
         }
     }
 
+    /** The parent environment with its filesystem swapped for a failing one. */
+    private static final class FailingParent implements ExecutionEnvironment {
+        private final ExecutionEnvironment delegate;
+        private final VirtualFileSystem fileSystem;
+
+        FailingParent(ExecutionEnvironment delegate, VirtualFileSystem fileSystem) {
+            this.delegate = delegate;
+            this.fileSystem = fileSystem;
+        }
+
+        @Override
+        public VirtualFileSystem fileSystem() {
+            return fileSystem;
+        }
+
+        @Override
+        public VirtualShell shell() {
+            return delegate.shell();
+        }
+
+        @Override
+        public EnvironmentDescriptor descriptor() {
+            return delegate.descriptor();
+        }
+
+        @Override
+        public String stage(StagedResource resource) {
+            return delegate.stage(resource);
+        }
+    }
+
     /**
-     * Forwarding {@link VirtualFileSystem} decorator that simulates a mid-merge backend failure: {@link #copy}
-     * throws {@link VirtualFileSystemException} for any source path under the given prefix; every other operation
-     * delegates unchanged. Lets a test drive the fail-fast abort on the second file of a promotion.
+     * Forwarding {@link VirtualFileSystem} decorator that simulates a mid-merge backend failure: {@link #write}
+     * throws {@link VirtualFileSystemException} for the given canonical path; every other operation delegates
+     * unchanged. Lets a test drive the fail-fast abort on the second file of a promotion.
      */
-    private static final class FailingCopyFileSystem implements VirtualFileSystem {
+    private static final class FailingWriteFileSystem implements VirtualFileSystem {
 
         private final VirtualFileSystem delegate;
-        private final String failingSourcePrefix;
+        private final String failingPath;
 
-        FailingCopyFileSystem(VirtualFileSystem delegate, String failingSourcePrefix) {
+        FailingWriteFileSystem(VirtualFileSystem delegate, String failingPath) {
             this.delegate = delegate;
-            this.failingSourcePrefix = failingSourcePrefix;
+            this.failingPath = failingPath;
         }
 
         @Override
         public void copy(String sourcePath, String destinationPath, boolean overwrite) {
-            if (sourcePath.startsWith(failingSourcePrefix)) {
-                throw new VirtualFileSystemException("simulated backend failure: " + sourcePath);
-            }
             delegate.copy(sourcePath, destinationPath, overwrite);
         }
 
         @Override
         public void write(String path, InputStream content, long contentLength) {
+            if (path.equals(failingPath)) {
+                throw new VirtualFileSystemException("simulated backend failure: " + path);
+            }
             delegate.write(path, content, contentLength);
         }
 

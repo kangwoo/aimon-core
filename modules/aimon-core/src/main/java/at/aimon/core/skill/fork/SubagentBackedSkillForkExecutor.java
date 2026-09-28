@@ -26,6 +26,7 @@ import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.subagent.SubagentToolScope;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
 import at.aimon.core.tools.CallerAllowedTools;
+import at.aimon.core.tools.ExecutionEnvironmentAccess;
 import at.aimon.core.tools.InvokingSessionAccess;
 import at.aimon.core.tools.ToolContextKeys;
 
@@ -137,7 +138,11 @@ public final class SubagentBackedSkillForkExecutor implements SkillForkExecutor 
                 .subagentRegistry(subagentRegistry).toolRegistry(toolRegistry).hookRegistry(hookRegistry)
                 .environment(environment).defaultModel(defaultModel).executionAttributes(executionAttributes)
                 .parentLlmCallMetadata(parentMetadata).callerAllowedTools(CallerAllowedTools.of(toolContext))
-                .invokingSessionId(InvokingSessionAccess.idToPropagate(toolContext).orElse(null)).build();
+                .invokingSessionId(InvokingSessionAccess.idToPropagate(toolContext).orElse(null))
+                // The fork resolves its own environment from the spawning runtime's provider, with this execution's
+                // environment as its parent (execution-environment design §5.2).
+                .executionEnvironment(ExecutionEnvironmentAccess.of(toolContext).orElse(null))
+                .executionEnvironmentProvider(ExecutionEnvironmentAccess.providerOf(toolContext).orElse(null)).build();
 
         final String taskId = UUID.randomUUID().toString();
         final String description = "skill:" + skill.getName();

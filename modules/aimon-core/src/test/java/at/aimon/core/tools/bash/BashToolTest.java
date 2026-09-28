@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -14,6 +15,8 @@ import org.junit.jupiter.api.Test;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.environment.TestExecutionEnvironments;
+import at.aimon.core.environment.UnavailableExecutionEnvironment;
 import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.shell.ExecutionOptions;
 import at.aimon.core.shell.ShellCommand;
@@ -23,6 +26,7 @@ import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.shell.exception.ShellExecutionException;
 import at.aimon.core.shell.exception.ShellTimeoutException;
 import at.aimon.core.shell.impl.local.LocalShell;
+import at.aimon.core.tools.ToolContextKeys;
 
 /** Unit tests for {@link BashTool}. */
 class BashToolTest {
@@ -34,8 +38,8 @@ class BashToolTest {
     @BeforeEach
     void setUp() {
         stubShell = new StubShell();
-        bashTool = new BashTool(stubShell);
-        context = ToolContext.empty();
+        bashTool = new BashTool(null);
+        context = shellContext(stubShell);
     }
 
     @AfterEach
@@ -45,19 +49,85 @@ class BashToolTest {
         }
     }
 
-    // Constructor tests
+    /** The context an executor would build: the execution environment carrying the shell. */
+    private static ToolContext shellContext(VirtualShell shell) {
+        return TestExecutionEnvironments.withoutStamps(TestExecutionEnvironments.ofShell(shell));
+    }
+
+    // Execution environment tests
 
     @Test
-    void testConstructor_NullShell_ThrowsException() {
-        assertThatThrownBy(() -> new BashTool(null)).isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("Shell cannot be null");
+    void testExecute_NoEnvironment_ReturnsErrorWithoutThrowing() {
+        ToolResult result = bashTool.execute(ToolInput.of(Map.of("command", "echo x")), ToolContext.empty());
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).contains("No execution environment");
     }
 
     @Test
-    void testConstructor_ValidShell_Success() {
-        BashTool tool = new BashTool(stubShell);
-        assertThat(tool).isNotNull();
-        tool.shutdown();
+    void testExecute_UnavailableEnvironment_ErrorCarriesCause() {
+        ToolContext unavailable = ToolContext.builder()
+                .put(ToolContextKeys.EXECUTION_ENVIRONMENT, UnavailableExecutionEnvironment.of("sandbox is down"))
+                .build();
+
+        ToolResult result = bashTool.execute(ToolInput.of(Map.of("command", "echo x")), unavailable);
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).contains("sandbox is down");
+    }
+
+    @Test
+    void testExecute_Foreground_IsNotMarkedBackground() {
+        stubShell.setNextOutput("ok");
+
+        bashTool.execute(ToolInput.of(Map.of("command", "echo ok")), context);
+
+        assertThat(stubShell.lastOptions().isBackground()).isFalse();
+    }
+
+    @Test
+    void testExecute_Background_IsMarkedBackgroundAndKeepsTheEnvironmentShell() throws Exception {
+        BackgroundBashManager manager = new BackgroundBashManager();
+        BashTool tool = new BashTool(manager);
+        stubShell.setNextOutput("from the env shell");
+        try {
+            ToolResult result = tool.execute(ToolInput.of(Map.of("command", "sleep 1", "run_in_background", true)),
+                    context);
+            assertThat(result.isSuccess()).isTrue();
+            String taskId = result.getContent().substring(result.getContent().indexOf("bash_")).split("\\s")[0];
+
+            // The context the task was started from is gone by now; the task still runs in the shell it captured.
+            assertThat(manager.awaitCompletion(taskId, 5)).isTrue();
+
+            assertThat(manager.readNewOutput(taskId, null))
+                    .hasValueSatisfying(output -> assertThat(output).contains("from the env shell"));
+            assertThat(stubShell.lastOptions().isBackground()).isTrue();
+        } finally {
+            tool.shutdown();
+        }
+    }
+
+    // Environment notices (execution-environment design §8)
+
+    @Test
+    void testExecute_Notices_ArePrefixedBeforeStdoutAndNotMixedIntoStderr() {
+        stubShell.setNextResult(new ShellCommandResult(0, "out\n", "", Duration.ofMillis(1), false,
+                List.of("shell session was reopened; cwd was reset", "environment was recreated")));
+
+        ToolResult result = bashTool.execute(ToolInput.of(Map.of("command", "ls")), context);
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.getContent()).isEqualTo("[environment] shell session was reopened; cwd was reset\n"
+                + "[environment] environment was recreated\n" + "out\n");
+    }
+
+    @Test
+    void testExecute_NoNotices_OutputUnchanged() {
+        stubShell.setNextResult(new ShellCommandResult(0, "out\n", "", Duration.ofMillis(1)));
+
+        ToolResult result = bashTool.execute(ToolInput.of(Map.of("command", "ls")), context);
+
+        assertThat(result.getContent()).isEqualTo("out\n");
     }
 
     // getDefinition tests
@@ -414,7 +484,7 @@ class BashToolTest {
     @Test
     void testExecute_BackgroundExecution_WithManager_Success() {
         BackgroundBashManager manager = new BackgroundBashManager();
-        BashTool bashToolWithManager = new BashTool(stubShell, manager);
+        BashTool bashToolWithManager = new BashTool(manager);
 
         Map<String, Object> toolUse = Map.of("command", "echo test", "run_in_background", true);
 
@@ -436,12 +506,12 @@ class BashToolTest {
 
     @Test
     void testExecute_WithRealShell_Success() {
-        BashTool realBashTool = new BashTool(new LocalShell());
+        BashTool realBashTool = new BashTool(null);
 
         try {
             Map<String, Object> toolUse = Map.of("command", "echo 'Hello World'");
 
-            ToolResult result = realBashTool.execute(ToolInput.of(toolUse), context);
+            ToolResult result = realBashTool.execute(ToolInput.of(toolUse), shellContext(new LocalShell()));
 
             assertThat(result.isSuccess()).isTrue();
             assertThat(result.getContent()).contains("Hello World");
@@ -452,12 +522,12 @@ class BashToolTest {
 
     @Test
     void testExecute_WithRealShell_CommandFails() {
-        BashTool realBashTool = new BashTool(new LocalShell());
+        BashTool realBashTool = new BashTool(null);
 
         try {
             Map<String, Object> toolUse = Map.of("command", "false");
 
-            ToolResult result = realBashTool.execute(ToolInput.of(toolUse), context);
+            ToolResult result = realBashTool.execute(ToolInput.of(toolUse), shellContext(new LocalShell()));
 
             assertThat(result.isError()).isTrue();
             assertThat(result.getContent()).isEqualTo("[exit code: 1]");
@@ -468,12 +538,12 @@ class BashToolTest {
 
     @Test
     void testExecute_WithRealShell_GitCommand() {
-        BashTool realBashTool = new BashTool(new LocalShell());
+        BashTool realBashTool = new BashTool(null);
 
         try {
             Map<String, Object> toolUse = Map.of("command", "git --version");
 
-            ToolResult result = realBashTool.execute(ToolInput.of(toolUse), context);
+            ToolResult result = realBashTool.execute(ToolInput.of(toolUse), shellContext(new LocalShell()));
 
             assertThat(result.isSuccess()).isTrue();
             assertThat(result.getContent()).contains("git version");

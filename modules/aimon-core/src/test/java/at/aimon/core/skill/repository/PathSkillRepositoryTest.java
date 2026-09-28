@@ -6,13 +6,20 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,6 +27,13 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.slf4j.LoggerFactory;
 
+import at.aimon.core.agent.AgentRuntimeId;
+import at.aimon.core.environment.EnvironmentRequest;
+import at.aimon.core.environment.StagedResource;
+import at.aimon.core.environment.impl.LocalExecutionEnvironmentProvider;
+import at.aimon.core.skill.DefaultSkillRegistry;
+import at.aimon.core.skill.Skill;
+import at.aimon.core.skill.parser.MarkdownSkillParser;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
@@ -298,43 +312,108 @@ class PathSkillRepositoryTest {
     }
 
     // -----------------------------------------------------------------------
-    // resolveBaseDir
+    // resolveSource (staging source, execution-environment design §4.4)
     // -----------------------------------------------------------------------
 
     @Test
-    void resolveBaseDir_returnsAbsolutePathForExistingSkill() {
-        final Optional<String> result = repository.resolveBaseDir("commit");
+    void resolveSource_readsTheSkillFilesThroughAReadOnlyFileSystem() throws IOException {
+        final SkillSource source = repository.resolveSource("commit").orElseThrow();
 
-        assertThat(result).isPresent();
-        assertThat(result.get()).isEqualTo(tempDir.resolve("commit").toAbsolutePath().toString());
+        assertThat(source.getDirectory()).isEqualTo("commit");
+        assertThat(source.getFileSystem().listRecursive(source.getDirectory())).containsExactlyInAnyOrder(
+                "commit/SKILL.md", "commit/config.yaml", "commit/scripts/run.sh", "commit/references/guide.md",
+                "commit/assets/icon.png");
+        try (InputStream in = source.getFileSystem().read("commit/scripts/run.sh")) {
+            assertThat(new String(in.readAllBytes(), StandardCharsets.UTF_8)).isEqualTo("#!/bin/bash\necho hello");
+        }
+        assertThatThrownBy(() -> source.getFileSystem().write("commit/x.txt", "x"))
+                .isInstanceOf(UnsupportedOperationException.class);
+        assertThatThrownBy(() -> source.getFileSystem().delete("commit/SKILL.md"))
+                .isInstanceOf(UnsupportedOperationException.class);
+        assertThat(tempDir.resolve("commit/x.txt")).doesNotExist();
     }
 
     @Test
-    void resolveBaseDir_returnsEmptyForNonexistentSkill() {
-        final Optional<String> result = repository.resolveBaseDir("nonexistent");
-
-        assertThat(result).isEmpty();
+    void resolveSource_returnsEmptyForNonexistentSkill() {
+        assertThat(repository.resolveSource("nonexistent")).isEmpty();
     }
 
     @Test
-    void resolveBaseDir_returnsEmptyForPathTraversal() {
-        final Optional<String> result = repository.resolveBaseDir("../../etc/passwd");
-
-        assertThat(result).isEmpty();
+    void resolveSource_returnsEmptyForPathTraversal() {
+        assertThat(repository.resolveSource("../../etc/passwd")).isEmpty();
+        assertThat(repository.resolveSource("../x")).isEmpty();
     }
 
     @Test
-    void resolveBaseDir_throwsOnNullSkillName() {
-        assertThatThrownBy(() -> repository.resolveBaseDir(null)).isInstanceOf(NullPointerException.class);
+    void resolveSource_throwsOnNullSkillName() {
+        assertThatThrownBy(() -> repository.resolveSource(null)).isInstanceOf(NullPointerException.class);
     }
 
     @Test
-    void resolveBaseDir_returnsAbsolutePathForSkillWithOnlySkillMd() {
-        // deploy has only SKILL.md — the dir exists, so a base dir should be returned
-        final Optional<String> result = repository.resolveBaseDir("deploy");
+    void resolveSource_presentForSkillWithOnlySkillMd() {
+        final SkillSource source = repository.resolveSource("deploy").orElseThrow();
 
-        assertThat(result).isPresent();
-        assertThat(result.get()).isEqualTo(tempDir.resolve("deploy").toAbsolutePath().toString());
+        assertThat(source.getFileSystem().listRecursive(source.getDirectory())).containsExactly("deploy/SKILL.md");
+    }
+
+    /**
+     * A read-only skills directory (a ConfigMap volume, a read-only root filesystem) keeps working: the source neither
+     * creates nor checks writability, the registry loads and hashes the skill, and a local environment stages it.
+     */
+    @Test
+    void readOnlyRoot_loadsScansAndStages(@TempDir Path workspace) throws IOException {
+        assumeTrue(FileSystems.getDefault().supportedFileAttributeViews().contains("posix"), "needs POSIX permissions");
+        assumeFalse("root".equals(System.getProperty("user.name")), "root ignores permission bits");
+        final Path readOnly = Files.createDirectories(workspace.resolve("ro-skills"));
+        final Path skillDir = Files.createDirectories(readOnly.resolve("ro"));
+        Files.writeString(skillDir.resolve("SKILL.md"), "---\nname: ro\ndescription: read-only\n---\nBody");
+        Files.writeString(Files.createDirectories(skillDir.resolve("scripts")).resolve("x.sh"), "echo ro");
+        makeReadOnly(readOnly);
+        try (LocalExecutionEnvironmentProvider provider = LocalExecutionEnvironmentProvider.builder()
+                .workspaceRoot(workspace.resolve("work")).contentSearch(false).build()) {
+            final PathSkillRepository readOnlyRepository = new PathSkillRepository(readOnly);
+            final Skill skill = new DefaultSkillRegistry(readOnlyRepository, new MarkdownSkillParser()).getSkill("ro")
+                    .orElseThrow();
+            final StagedResource resource = skill.getStagedResource().orElseThrow();
+
+            assertThat(resource.getFiles()).containsExactly("SKILL.md", "scripts/x.sh");
+            final String staged = provider
+                    .resolve(EnvironmentRequest.builder().agentRuntimeId(AgentRuntimeId.fromName("ro")).build())
+                    .stage(resource);
+            assertThat(Path.of(staged, "scripts", "x.sh")).hasContent("echo ro");
+        } finally {
+            makeWritable(readOnly);
+        }
+    }
+
+    @Test
+    void missingRoot_constructsWithoutCreatingTheDirectory(@TempDir Path parent) {
+        final Path missing = parent.resolve("no-such-skills");
+
+        final PathSkillRepository missingRepository = new PathSkillRepository(missing);
+
+        assertThat(missingRepository.findAllNames()).isEmpty();
+        assertThat(missingRepository.resolveSource("any")).isEmpty();
+        assertThat(missing).doesNotExist();
+    }
+
+    private static void makeReadOnly(Path root) throws IOException {
+        try (Stream<Path> walk = Files.walk(root)) {
+            for (Path path : walk.toList()) {
+                Files.setPosixFilePermissions(path,
+                        Files.isDirectory(path)
+                                ? PosixFilePermissions.fromString("r-xr-xr-x")
+                                : PosixFilePermissions.fromString("r--r--r--"));
+            }
+        }
+    }
+
+    private static void makeWritable(Path root) throws IOException {
+        try (Stream<Path> walk = Files.walk(root)) {
+            for (Path path : walk.toList()) {
+                Files.setPosixFilePermissions(path, PosixFilePermissions.fromString("rwxr-xr-x"));
+            }
+        }
     }
 
     // -----------------------------------------------------------------------

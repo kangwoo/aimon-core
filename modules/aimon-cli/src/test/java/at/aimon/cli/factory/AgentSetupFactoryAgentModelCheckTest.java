@@ -355,7 +355,7 @@ class AgentSetupFactoryAgentModelCheckTest {
             try (AimonStack stack = stackFor(bundle)) {
                 final OrcaAgentRuntime runtime = stack.runtime(stack.primaryRuntimeId()).orElseThrow();
                 factory.reportAgentModelMismatch(config("anthropic", "default"), bundle, runtime::getSubagentRegistry,
-                        () -> runtime.getEnvironment().getWorkingDirectory(), formatter);
+                        () -> AgentSetupFactory.workingDirectoryOf(runtime), formatter);
 
                 assertThat(printed())
                         .contains("agents/default/agent.md", "`agent.name: default-anthropic`", "does not change them")

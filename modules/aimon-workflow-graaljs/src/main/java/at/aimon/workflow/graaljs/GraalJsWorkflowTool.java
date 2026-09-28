@@ -36,6 +36,7 @@ import at.aimon.core.subagent.SubagentExecutionEnvironment;
 import at.aimon.core.subagent.SubagentExecutionManager;
 import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.tools.CallerAllowedTools;
+import at.aimon.core.tools.ExecutionEnvironmentAccess;
 import at.aimon.core.tools.InvokingSessionAccess;
 import at.aimon.core.tools.ToolContextKeys;
 import at.aimon.core.workflow.RunId;
@@ -43,7 +44,6 @@ import at.aimon.core.workflow.WorkflowBudget;
 import at.aimon.core.workflow.WorkflowRunner;
 import at.aimon.core.workflow.WorkflowRunnerOptions;
 import at.aimon.core.workflow.WorkflowRunners;
-import at.aimon.core.workflow.WorktreeEnvironmentFactory;
 import at.aimon.workflow.graaljs.exception.JsScriptException;
 
 /**
@@ -81,7 +81,6 @@ public final class GraalJsWorkflowTool extends AbstractTool {
     private final JsSandboxConfig sandbox;
     private final SubagentResolver subagentResolver;
     private final WorkflowRunner backgroundRunner;
-    private final WorktreeEnvironmentFactory worktreeFactory;
 
     private GraalJsWorkflowTool(Builder builder) {
         super(TOOL_NAME,
@@ -104,7 +103,6 @@ public final class GraalJsWorkflowTool extends AbstractTool {
         this.sandbox = builder.sandbox != null ? builder.sandbox : JsSandboxConfig.defaults();
         this.subagentResolver = builder.subagentResolver != null ? builder.subagentResolver : SubagentResolver.inline();
         this.backgroundRunner = builder.backgroundRunner; // nullable
-        this.worktreeFactory = builder.worktreeFactory; // nullable
     }
 
     public static Builder builder() {
@@ -237,9 +235,6 @@ public final class GraalJsWorkflowTool extends AbstractTool {
                 options.budget(WorkflowBudget.ofAgents(maxAgents));
             }
         }
-        if (worktreeFactory != null) {
-            options.worktreeFactory(worktreeFactory);
-        }
         return options.build();
     }
 
@@ -256,7 +251,11 @@ public final class GraalJsWorkflowTool extends AbstractTool {
                 .defaultModel(defaultModel).executionAttributes(executionAttributes)
                 .parentLlmCallMetadata(parentMetadata).cancellationSignal(parentSignal).principal(principal)
                 .toolContextEnrichers(toolContextEnrichers).callerAllowedTools(CallerAllowedTools.of(context))
-                .invokingSessionId(InvokingSessionAccess.idToPropagate(context).orElse(null)).build();
+                .invokingSessionId(InvokingSessionAccess.idToPropagate(context).orElse(null))
+                // The fork resolves its own environment from the spawning runtime's provider, with this execution's
+                // environment as its parent (execution-environment design §5.2).
+                .executionEnvironment(ExecutionEnvironmentAccess.of(context).orElse(null))
+                .executionEnvironmentProvider(ExecutionEnvironmentAccess.providerOf(context).orElse(null)).build();
     }
 
     private static Map<String, Object> readArgs(ToolInput input) {
@@ -294,7 +293,6 @@ public final class GraalJsWorkflowTool extends AbstractTool {
         private JsSandboxConfig sandbox;
         private SubagentResolver subagentResolver;
         private WorkflowRunner backgroundRunner;
-        private WorktreeEnvironmentFactory worktreeFactory;
 
         private Builder() {
         }
@@ -354,12 +352,6 @@ public final class GraalJsWorkflowTool extends AbstractTool {
         /** Optional app-scoped runner enabling background mode; when null, background mode returns an error. */
         public Builder backgroundRunner(WorkflowRunner backgroundRunner) {
             this.backgroundRunner = backgroundRunner;
-            return this;
-        }
-
-        /** Optional worktree factory enabling {@code isolation:'worktree'} descriptors. */
-        public Builder worktreeFactory(WorktreeEnvironmentFactory worktreeFactory) {
-            this.worktreeFactory = worktreeFactory;
             return this;
         }
 

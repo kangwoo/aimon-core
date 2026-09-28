@@ -18,15 +18,19 @@ import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.agent.tool.permission.PermissionSubject;
 import at.aimon.core.agent.tool.permission.ToolPermissionSubjectAware;
+import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.environment.exception.ExecutionEnvironmentUnavailableException;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.filesystem.exception.FileAlreadyExistsException;
 import at.aimon.core.filesystem.exception.InvalidPathException;
+import at.aimon.core.tools.ExecutionEnvironmentAccess;
 
 /**
  * Tool for writing file contents.
  *
  * <p>
- * This tools allows the LLM to write files to a VirtualFileSystem with support for:
+ * This tools allows the LLM to write files to the execution environment's filesystem
+ * ({@code ToolContextKeys.EXECUTION_ENVIRONMENT}, read on every call) with support for:
  *
  * <ul>
  * <li>Creating new files
@@ -39,8 +43,9 @@ import at.aimon.core.filesystem.exception.InvalidPathException;
  * Thread-safe as long as the underlying VirtualFileSystem is thread-safe.
  *
  * <p>
- * <strong>CRITICAL</strong>: This tools will OVERWRITE existing files without warning. For existing files, prefer using
- * Edit tools for targeted modifications.
+ * <strong>CRITICAL</strong>: This tools will OVERWRITE existing files. Overwriting an existing file requires that the
+ * file was {@code Read} in this execution and has not changed since (execution-environment design §7); a new file needs
+ * no read. For existing files, prefer using Edit tools for targeted modifications.
  *
  * <p>
  * Example usage:
@@ -48,9 +53,8 @@ import at.aimon.core.filesystem.exception.InvalidPathException;
  * <pre>
  * {
  *     &#64;code
- *     VirtualFileSystem vfs = new LocalFileSystem("/base/path");
- *     Tool writeTool = new WriteTool(vfs);
- *     ToolContext context = ToolContext.empty();
+ *     Tool writeTool = new WriteTool();
+ *     ToolContext context = ToolContext.builder().put(ToolContextKeys.EXECUTION_ENVIRONMENT, env).build();
  *
  *     // Create new file
  *     ToolInput input1 = ToolInput.of(Map.of("file_path", "/path/to/newfile.txt", "content", "Hello World"));
@@ -65,19 +69,13 @@ import at.aimon.core.filesystem.exception.InvalidPathException;
 public class WriteTool extends AbstractTool implements ToolPermissionSubjectAware {
     public static final String TOOL_NAME = "Write";
     private static final Logger log = LoggerFactory.getLogger(WriteTool.class);
-    private final VirtualFileSystem fileSystem;
     private final boolean useRelativePaths;
 
     /**
      * Creates a new WriteTool with relative path display enabled by default.
-     *
-     * @param fileSystem
-     *            The virtual file system to use for file operations (must not be null)
-     * @throws NullPointerException
-     *             if fileSystem is null
      */
-    public WriteTool(VirtualFileSystem fileSystem) {
-        this(fileSystem, true);
+    public WriteTool() {
+        this(true);
     }
 
     /**
@@ -92,23 +90,19 @@ public class WriteTool extends AbstractTool implements ToolPermissionSubjectAwar
      * <li>Required parameter: "content" (string) - The content to write
      * </ul>
      *
-     * @param fileSystem
-     *            The virtual file system to use for file operations (must not be null)
      * @param useRelativePaths
-     *            If true, display file paths relative to the working directory in result messages. If false, display
-     *            absolute paths.
-     * @throws NullPointerException
-     *             if fileSystem is null
+     *            If true, display file paths relative to the execution environment's working directory in result
+     *            messages. If false, display absolute paths.
      */
-    public WriteTool(VirtualFileSystem fileSystem, boolean useRelativePaths) {
+    public WriteTool(boolean useRelativePaths) {
         super(TOOL_NAME,
                 "Write content to a file in the filesystem. Creates new files or overwrites existing files completely. "
-                        + "CRITICAL: This will overwrite existing files without warning. "
+                        + "CRITICAL: This will overwrite existing files. "
+                        + "An existing file must be Read first in this execution; a new file needs no read. "
                         + "For existing files, prefer Edit tools. "
                         + "Parent directories may be created automatically if supported by backend. "
                         + "The file_path must be an absolute path, not a relative path.",
                 ToolCategories.FILESYSTEM, createInputSchema());
-        this.fileSystem = Objects.requireNonNull(fileSystem, "File system cannot be null");
         this.useRelativePaths = useRelativePaths;
     }
 
@@ -162,9 +156,18 @@ public class WriteTool extends AbstractTool implements ToolPermissionSubjectAwar
 
             log.debug("Writing file: {} ({} bytes)", filePath, content.length());
 
+            final ExecutionEnvironment env = ExecutionEnvironmentAccess.require(context);
+            final VirtualFileSystem fileSystem = env.fileSystem();
+
             // Check if path is a directory
             if (fileSystem.isDirectory(filePath)) {
                 return ToolResult.error("Cannot write to directory: " + filePath + ". Provide a file path instead.");
+            }
+
+            // Overwriting an existing file needs a current read stamp (design §7); a new file does not.
+            final Optional<String> staleWrite = FileStamps.checkBeforeModify(context, env, filePath);
+            if (staleWrite.isPresent()) {
+                return ToolResult.error(staleWrite.get() + ": " + filePath);
             }
 
             // Convert content to InputStream
@@ -172,10 +175,11 @@ public class WriteTool extends AbstractTool implements ToolPermissionSubjectAwar
             try (InputStream contentStream = new ByteArrayInputStream(contentBytes)) {
                 // Write file
                 fileSystem.write(filePath, contentStream, contentBytes.length);
+                FileStamps.refresh(context, env, filePath);
 
                 // Return success message
                 log.debug("Successfully wrote file: {}", filePath);
-                final String displayPath = toDisplayPath(filePath);
+                final String displayPath = toDisplayPath(fileSystem, filePath);
                 final String message = String.format("Successfully wrote %d bytes to %s", contentBytes.length,
                         displayPath);
                 return ToolResult.success(message);
@@ -183,6 +187,9 @@ public class WriteTool extends AbstractTool implements ToolPermissionSubjectAwar
         } catch (IllegalArgumentException e) {
             log.warn("Invalid parameter: {}", e.getMessage());
             return ToolResult.error("Invalid parameter: " + e.getMessage());
+        } catch (IllegalStateException | ExecutionEnvironmentUnavailableException e) {
+            log.warn("No usable execution environment: {}", e.getMessage());
+            return ToolResult.error(e.getMessage());
         } catch (InvalidPathException e) {
             log.warn("Invalid path: {}", e.getMessage());
             return ToolResult.error("Invalid path: " + e.getMessage());
@@ -197,7 +204,7 @@ public class WriteTool extends AbstractTool implements ToolPermissionSubjectAwar
         }
     }
 
-    private String toDisplayPath(String filePath) {
+    private String toDisplayPath(VirtualFileSystem fileSystem, String filePath) {
         if (!useRelativePaths) {
             return filePath;
         }
@@ -217,7 +224,8 @@ public class WriteTool extends AbstractTool implements ToolPermissionSubjectAwar
      * matched against.
      *
      * <p>
-     * Empty when the call cannot be judged: no {@code file_path}, or a relative one with no {@code Environment} in the
+     * Empty when the call cannot be judged: no {@code file_path}, or a relative one with no execution environment in
+     * the
      * context to resolve it against. A configured pattern then denies the call rather than guessing.
      */
     @Override

@@ -5,9 +5,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.net.URLConnection;
+import java.net.URLStreamHandler;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -26,6 +29,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.slf4j.LoggerFactory;
 
+import at.aimon.core.environment.StagedResource;
+import at.aimon.core.filesystem.impl.local.LocalFileSystem;
+import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
@@ -491,5 +497,164 @@ class ClasspathSkillRepositoryTest {
     private static URL directoryUrl(Path directory) throws IOException {
         final String uri = directory.toUri().toString();
         return URI.create(uri.endsWith("/") ? uri : uri + "/").toURL();
+    }
+
+    @Nested
+    @DisplayName("resolveSource (staging source)")
+    class StagingSourceTests {
+
+        private static final String BASE = "staging/skills";
+
+        @TempDir
+        Path tempDir;
+
+        private final Map<String, String> resources = Map.of(BASE + "/index", "demo\n", BASE + "/demo/SKILL.md",
+                "---\nname: demo\ndescription: \"demo\"\n---\n# demo\n", BASE + "/demo/scripts/hello.sh",
+                "echo hello\n", BASE + "/demo/templates/report.md", "# Report\n");
+
+        @Test
+        @DisplayName("an exploded class path: the source lists exactly what the materializer copies, with the same key")
+        void explodedSourceMatchesMaterializer() throws Exception {
+            try (URLClassLoader loader = new URLClassLoader(new URL[]{explodedRoot()}, null)) {
+                assertParityWithMaterializer(loader);
+            }
+        }
+
+        @Test
+        @DisplayName("a jar class path: the source lists exactly what the materializer copies, with the same key")
+        void jarSourceMatchesMaterializer() throws Exception {
+            try (URLClassLoader loader = new URLClassLoader(new URL[]{jarRoot()}, null)) {
+                assertParityWithMaterializer(loader);
+            }
+        }
+
+        @Test
+        @DisplayName("findAllFiles is populated from the same walk, keyed relative to the skill directory")
+        void findAllFilesIsPopulated() throws Exception {
+            try (URLClassLoader loader = new URLClassLoader(new URL[]{explodedRoot()}, null)) {
+                final ClasspathSkillRepository repository = new ClasspathSkillRepository(BASE, loader);
+
+                assertThat(repository.findAllFiles("demo")).containsOnlyKeys("scripts/hello.sh", "templates/report.md")
+                        .containsEntry("scripts/hello.sh", BASE + "/demo/scripts/hello.sh");
+            }
+        }
+
+        @Test
+        @DisplayName("an unknown skill has no source")
+        void unknownSkillHasNoSource() throws Exception {
+            try (URLClassLoader loader = new URLClassLoader(new URL[]{explodedRoot()}, null)) {
+                assertThat(new ClasspathSkillRepository(BASE, loader).resolveSource("nope")).isEmpty();
+            }
+        }
+
+        @Test
+        @DisplayName("mutating calls on the source filesystem throw")
+        void sourceIsReadOnly() throws Exception {
+            try (URLClassLoader loader = new URLClassLoader(new URL[]{explodedRoot()}, null)) {
+                final SkillSource source = new ClasspathSkillRepository(BASE, loader).resolveSource("demo")
+                        .orElseThrow();
+
+                assertThatThrownBy(() -> source.getFileSystem().write("demo/x", new byte[0]))
+                        .isInstanceOf(UnsupportedOperationException.class);
+                assertThatThrownBy(() -> source.getFileSystem().delete("demo/SKILL.md"))
+                        .isInstanceOf(UnsupportedOperationException.class);
+            }
+        }
+
+        @Test
+        @DisplayName("an unenumerable layout exposes SKILL.md alone and logs one WARN naming the protocol")
+        void unenumerableLayoutListsOnlySkillMd() throws Exception {
+            final Logger logger = (Logger) LoggerFactory.getLogger(ClasspathSkillSourceFileSystem.class);
+            final ListAppender<ILoggingEvent> appender = new ListAppender<>();
+            appender.start();
+            logger.addAppender(appender);
+            try (URLClassLoader parent = new URLClassLoader(new URL[]{explodedRoot()}, null)) {
+                final ClassLoader loader = new UnwalkableDirectoryClassLoader(parent, BASE + "/demo");
+                final SkillSource source = new ClasspathSkillRepository(BASE, loader).resolveSource("demo")
+                        .orElseThrow();
+
+                assertThat(source.getFileSystem().listRecursive(source.getDirectory()))
+                        .containsExactly("demo/SKILL.md");
+                source.getFileSystem().listRecursive(source.getDirectory());
+                assertThat(appender.list.stream().filter(e -> e.getLevel() == Level.WARN)
+                        .map(ILoggingEvent::getFormattedMessage)).singleElement().asString().contains("vfs");
+            } finally {
+                logger.detachAppender(appender);
+                appender.stop();
+            }
+        }
+
+        private void assertParityWithMaterializer(ClassLoader loader) throws Exception {
+            final ClasspathSkillRepository repository = new ClasspathSkillRepository(BASE, loader);
+            final SkillSource source = repository.resolveSource("demo").orElseThrow();
+
+            final Path target = Files.createDirectories(tempDir.resolve("materialized"));
+            final LocalFileSystem materializedFs = new LocalFileSystem(new LocalFileSystemConfig(target.toString()));
+            materializedFs.initialize();
+            try {
+                new BundledSkillMaterializer(loader).materialize(BASE, materializedFs, "bundled");
+
+                final StagedResource fromClasspath = StagedResource.scan(source.getFileSystem(), source.getDirectory(),
+                        "demo");
+                final StagedResource fromMaterialized = StagedResource.scan(materializedFs, "bundled/demo", "demo");
+
+                assertThat(fromClasspath.getFiles()).containsExactly("SKILL.md", "scripts/hello.sh",
+                        "templates/report.md");
+                assertThat(fromClasspath.getFiles()).isEqualTo(fromMaterialized.getFiles());
+                assertThat(fromClasspath.getContentKey()).isEqualTo(fromMaterialized.getContentKey());
+            } finally {
+                materializedFs.close();
+            }
+        }
+
+        private URL explodedRoot() throws IOException {
+            final Path root = Files.createDirectories(tempDir.resolve("exploded"));
+            for (Map.Entry<String, String> resource : resources.entrySet()) {
+                final Path file = root.resolve(resource.getKey());
+                Files.createDirectories(file.getParent());
+                Files.writeString(file, resource.getValue(), StandardCharsets.UTF_8);
+            }
+            return directoryUrl(root);
+        }
+
+        private URL jarRoot() throws IOException {
+            final Path jarPath = tempDir.resolve("skills.jar");
+            try (OutputStream out = Files.newOutputStream(jarPath); JarOutputStream jar = new JarOutputStream(out)) {
+                for (Map.Entry<String, String> resource : resources.entrySet()) {
+                    jar.putNextEntry(new JarEntry(resource.getKey()));
+                    jar.write(resource.getValue().getBytes(StandardCharsets.UTF_8));
+                    jar.closeEntry();
+                }
+            }
+            return jarPath.toUri().toURL();
+        }
+    }
+
+    /** Resolves one directory on a protocol the walker cannot enumerate, everything else through the parent. */
+    private static final class UnwalkableDirectoryClassLoader extends ClassLoader {
+
+        private final String unwalkableDirectory;
+
+        UnwalkableDirectoryClassLoader(ClassLoader parent, String unwalkableDirectory) {
+            super(parent);
+            this.unwalkableDirectory = unwalkableDirectory;
+        }
+
+        @Override
+        public URL getResource(String name) {
+            if (name.startsWith(unwalkableDirectory)) {
+                try {
+                    return new URL("vfs", "", -1, "/" + name, new URLStreamHandler() {
+                        @Override
+                        protected URLConnection openConnection(URL url) {
+                            throw new UnsupportedOperationException("Not expected to be opened");
+                        }
+                    });
+                } catch (MalformedURLException e) {
+                    throw new IllegalStateException(e);
+                }
+            }
+            return super.getResource(name);
+        }
     }
 }

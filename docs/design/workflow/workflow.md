@@ -84,7 +84,6 @@ at.aimon.core.workflow/                # SPI + 값객체 (중립 표면)
 ├── StepResultCache / StepKey / StepOutcome
 ├── Pipeline / Stage                   # N-스테이지 타입-보존 빌더
 ├── WorkflowPatterns / Verdict / JudgedResult
-├── WorktreeEnvironmentFactory         # 격리 seam (호출자 주입)
 ├── exception/{WorkflowException, WorkflowBudgetExceededException}
 └── impl/
     ├── DefaultWorkflowRunner / DefaultWorkflowContext / ContextExecutionOptions
@@ -407,34 +406,37 @@ Semaphore 에서 블록, native stack) → 병리적 설정에서 native-thread 
 
 ### 6.3 worktree 격리
 
-병렬 서브에이전트가 같은 파일을 쓰면 안전 검증 없이는 위험하다. git worktree 의 아날로그로
-**path-prefix 스코핑된 `VirtualFileSystem`** 을 브랜치별로 준다.
+병렬 서브에이전트가 같은 파일을 쓰면 안전 검증 없이는 위험하다. 격리는 **실행 환경의 기능**이다
+([`../tool/execution-environment.md`](../tool/execution-environment.md) §5.2) — 러너는 브랜치마다 부모 환경에서
+파생 환경을 얻는다.
 
 ```java
-@FunctionalInterface
-public interface WorktreeEnvironmentFactory {
-    SubagentExecutionEnvironment derive(SubagentExecutionEnvironment baseEnv, String branchKey);
-}
+// DefaultWorkflowContext.resolveEnv (요지)
+ExecutionEnvironment parent = baseEnv.getExecutionEnvironment()
+        .orElseGet(() -> resolveOrUnavailable(baseEnv.getExecutionEnvironmentProvider(), request));
+ExecutionEnvironment branch = parent.isolate(branchKey)
+        .orElseThrow(() -> new WorkflowException("... does not support isolation — refusing to run unscoped"));
+return baseEnv.toBuilder().executionEnvironment(branch).build();
 ```
 
-- **호출자 주입** — per-branch 스코프 VFS 와 재바인딩된 파일-툴 `ToolRegistry` 는 **어셈블리의 factory
-  만** 생성한다. workflow 패키지는 `agent.tool`/`tools.file`/`filesystem.impl` 을 import 하지 않고
-  `factory.derive(baseEnv, branchKey)` + `env.toBuilder()` 만 호출한다 → ArchUnit allow-list 델타 0.
-  파일 툴의 VFS 가 생성자-bound 라 컨텍스트로 교체할 수 없기 때문에 이 seam 이 필요하다.
+- **레지스트리 복제 없음** — 파일 툴과 `Bash` 는 생성자가 아니라 실행 환경에서 파일 시스템·셸을 꺼내므로,
+  브랜치 환경을 포크의 부모 환경으로 넘기는 것만으로 브랜치의 도구가 브랜치를 본다. `toolRegistry` 는 base 그대로다.
+  옛 `WorktreeEnvironmentFactory` SPI 와 그 기본 구현(레지스트리를 복제해 파일 툴을 재바인딩하던
+  `WorktreeToolEnvironmentFactory`)은 이것으로 대체되어 삭제되었다.
+- **로컬 브랜치** — `LocalExecutionEnvironment.isolate(key)` 는 `.worktrees/<key>/` 에 스코프된
+  `ScopedVirtualFileSystem`(부모의 경로 규칙 위)과, 기본 cwd 를 브랜치 루트로 바꾸는 셸 뷰를 준다. 그래서 이제
+  `Bash` 도 기본 cwd 만큼은 격리된다 — 명령 안의 절대 경로까지 막지는 않는다("파일 도구 + 기본 cwd" 수준). 파생
+  환경은 `durable() == false` 다. 스테이징 영역(`.aimon-staged/`)은 부모와 공유되어 브랜치 목록에 나오지 않는다.
 - **disjoint 서브트리** — 구축상 zero-clobber, zero-copy 이며 Local/S3/GridFS 에 균일하게 적용된다.
   `ScopedVirtualFileSystem` 은 `list`/`listRecursive`/`search` **셋 다 결과에서 prefix 를 균일 strip**
-  해 round-trip 불변식을 지키고, 파일 툴이 넘기는 **절대 경로 입력**도 브랜치 루트 기준으로 해석한다.
-  `getWorkingDirectory()` 는 branch-relative `"."` 로 고정된다.
+  해 round-trip 불변식을 지키고, 파일 툴이 넘기는 **절대 경로 입력**(브랜치 루트의 호스트 경로 포함)도 브랜치
+  루트 기준으로 해석한다.
 - **borrows-not-owns** — `ScopedVirtualFileSystem.close()`/`initialize()` 는 delegate 에 no-op 다.
-  공유 백엔드 VFS 는 이를 생성한 부트스트랩만 close 하며, 브랜치 teardown 이나 `runner.close()` 는
-  base VFS 를 절대 close 하지 않는다.
-- **결정적 브랜치 이름** — 브랜치 서브트리는 결정적 구조 step-path 에서 명명되므로 형제/동일-입력
-  브랜치가 서브트리를 공유하지 않고 재실행·cross-node 에서 안정적이다.
-- **격리 착시 없음** — factory 미설정 상태에서 `isolate = true` 는 첫 사용 시 run-fatal
+  브랜치 teardown 이나 `runner.close()` 는 부모의 파일 시스템·셸을 절대 close 하지 않는다 — 소유자는 제공자다.
+- **결정적 브랜치 이름** — 브랜치 키는 결정적 구조 step-path 에서 명명되므로(`[A-Za-z0-9_]+`) 형제/동일-입력
+  브랜치가 서브트리를 공유하지 않고 재실행·cross-node 에서 안정적이다. 같은 키로 `isolate` 하면 같은 뷰가 나온다.
+- **격리 착시 없음** — 환경이 `isolate()` 를 지원하지 않으면 `isolate = true` 는 첫 사용 시 run-fatal
   `WorkflowException` 이다. 스크립트가 격리를 요청했는데 unscoped 로 실행하지 않는다.
-- **VFS-only 경계** — 스코프되는 것은 `VirtualFileSystem` 뿐이다. Bash/shell/샌드박스 변조는
-  `Environment.getWorkingDirectory()`(별도 필드)를 경유하므로 factory 가 스코프 Environment 도
-  파생하지 않는 한 **격리되지 않는다**(문서화된 부분격리 caveat).
 
 **캐시와의 상호작용이 load-bearing 하다.** `StepOutcome` 은 transcript-free 라 캐시 HIT 가 파일 델타를
 재생하지 못한다 → base VFS 를 변조하는 스텝이 캐시되면 쓰기가 조용히 사라진다. 그래서
@@ -444,7 +446,10 @@ public interface WorktreeEnvironmentFactory {
 스텝은 `nonCacheable(true)` 를 명시해야 한다** — `isolate = true` 는 worktree 로 돌려버리므로 대체재가
 되지 못한다.
 
-**병합은 명시적·비자동이다.** N-way 자동병합은 last-writer-wins 은닉과 snapshot 일관성 규칙을
+**병합은 명시적·비자동이다.** `WorktreeMerge.promote(parent, branches, policy)` 가 브랜치 환경 목록을 받아 충돌을
+먼저 훑고 `Policy` 로 고른 뒤 브랜치 파일을 부모로 복사한다. 키만 아는 조립 코드는 `parent.isolate(key).orElseThrow()`
+로 같은 브랜치를 다시 얻는다. 브랜치가 자기 `.aimon/` 아래에 쓴 파일은 부모의 제어 저장소(`DENY`) 에 막혀 승격이
+실패한다 — 병합을 통해 제어 평면을 쓰는 통로는 없다. N-way 자동병합은 last-writer-wins 은닉과 snapshot 일관성 규칙을
 요구하므로 과도하다고 판단했다. 복구 가능한 worktree/병합 실패는 `WorkflowException` 을 **절대 상속하지
 않는다** — 실패 `AgentStepResult` 또는 merge-report 데이터로 표현한다. `WorkflowException` 은 진짜
 run-fatal 전용이며, `BoundedFanoutDispatcher` 가 그것만 재-throw 해 run 을 abort 하기 때문이다.
@@ -649,7 +654,7 @@ prelude 를 켠 결정성 모드에서만 resume 를 허용한다.
 | 불변식 | 근거 |
 |---|---|
 | 병렬 서브에이전트는 agent-scoped `ToolRegistry`(`LinkedHashMap`, 비동기화)를 **읽기만** 한다 | 부트스트랩 1회 등록 후 read-only 규율에서만 안전 |
-| per-execution 가변 `ToolContext`(`ReadTool.READ_FILES_KEY` 등)는 실행마다 새로 생성되어 격리된다 | 각 `manager.execute` 가 독립 컨텍스트를 만든다. executor 가 넣는 read-files set 은 `ConcurrentHashMap.newKeySet()` |
+| per-execution 가변 `ToolContext`(`ReadTool.FILE_STAMPS_KEY` 등)는 실행마다 새로 생성되어 격리된다 | 각 `manager.execute` 가 독립 컨텍스트를 만든다. executor 가 넣는 stamp 맵은 `ConcurrentHashMap` |
 | 오케스트레이션은 `LiveSession` 을 만지지 않고 매니저로 서브에이전트를 직접 실행한다 | 라이브 세션은 thread-safe 가 아니다 |
 | 사용자 정의 `WorkflowEventSink` 와 Pre/PostTool 훅은 thread-safe 여야 한다 | worker 스레드에서 동시 호출된다 |
 | 전역 leaf `Semaphore` permit 은 **terminal leaf 만** 감싸고 join 을 가로질러 보유하지 않는다 | acyclic wait-for ⇒ 데드락 자유 (D13) |

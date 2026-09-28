@@ -2,6 +2,7 @@ package at.aimon.core.agent.impl.orca;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -24,6 +25,9 @@ import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.command.DefaultCommandExecutionManager;
 import at.aimon.core.command.DefaultCommandRegistry;
+import at.aimon.core.environment.StagedResource;
+import at.aimon.core.environment.impl.LocalExecutionEnvironmentProvider;
+import at.aimon.core.filesystem.VirtualFileSystems;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
 import at.aimon.core.hook.DefaultHookExecutionManager;
@@ -78,6 +82,7 @@ class SlashSkillForkE2EIntegrationTest {
     private InMemorySubagentRegistry subagentRegistry;
     private DefaultToolRegistry toolRegistry;
     private OrcaAgentExecutor executor;
+    private LocalExecutionEnvironmentProvider environmentProvider;
 
     @BeforeEach
     void setUp() {
@@ -99,6 +104,9 @@ class SlashSkillForkE2EIntegrationTest {
     @AfterEach
     void tearDown() {
         subagentManager.close();
+        if (environmentProvider != null) {
+            environmentProvider.close();
+        }
     }
 
     @Test
@@ -124,18 +132,23 @@ class SlashSkillForkE2EIntegrationTest {
      * Regression: the slash path rendered with {@code RenderContext.empty()}, so every {@code ${AIMON_*}} variable
      * came out empty and {@code bash ${AIMON_SKILL_DIR}/scripts/x.sh} ran {@code bash /scripts/x.sh}. Driven through
      * the real {@code OrcaAgentExecutor} command flow so the assertion covers the tool context that flow actually
-     * builds, not a hand-made one.
+     * builds, not a hand-made one. {@code ${AIMON_SKILL_DIR}} is the copy the runtime's execution environment staged
+     * the skill to (execution-environment design §4.4), not the skill's source directory.
      */
     @Test
     @DisplayName("renders ${AIMON_SKILL_DIR}, ${AIMON_SESSION_ID} and ${AIMON_AGENT_RUNTIME_ID} on the slash path")
-    void slashForkSkill_RendersAimonVariablesFromCommandFlow() {
+    void slashForkSkill_RendersAimonVariablesFromCommandFlow() throws Exception {
+        final Path sourceRoot = Files.createDirectories(tempDir.resolve("skill-source/deploy/scripts"));
+        Files.writeString(sourceRoot.resolve("x.sh"), "echo deploy");
+        final StagedResource resource = StagedResource
+                .scan(VirtualFileSystems.readOnlyLocal(tempDir.resolve("skill-source")), "deploy", "deploy");
         final Skill skill = Skill.builder().name("deploy")
                 .metadata(SkillMetadata.builder().name("deploy").description("e2e fixture — deploy")
                         .invokePolicy(InvokePolicy.of(true, true)).executionMode(ExecutionMode.FORK)
                         .forkAgentName("code-reviewer").build())
                 .content(SkillContent
                         .of("bash ${AIMON_SKILL_DIR}/scripts/x.sh ${AIMON_SESSION_ID} ${AIMON_AGENT_RUNTIME_ID}"))
-                .baseDir("/skills/deploy").build();
+                .stagedResource(resource).build();
         skillRegistry.add(skill);
         subagentRegistry.add(simpleSubagent("code-reviewer"));
         final OrcaAgentRuntime runtime = createContext();
@@ -145,8 +158,10 @@ class SlashSkillForkE2EIntegrationTest {
                 OrcaAgentExecutionRequest.builder().userInput("/deploy").sessionId(sessionId).build());
 
         assertThat(result.isSuccess()).isTrue();
+        final Path staged = tempDir.resolve("workspace/.aimon-staged/deploy/" + resource.getContentKey());
         assertThat(llmClient.lastUserMessage())
-                .contains("bash /skills/deploy/scripts/x.sh " + sessionId.value() + " " + runtime.getId().value());
+                .contains("bash " + staged + "/scripts/x.sh " + sessionId.value() + " " + runtime.getId().value());
+        assertThat(staged.resolve("scripts/x.sh")).hasContent("echo deploy");
     }
 
     @Test
@@ -183,6 +198,8 @@ class SlashSkillForkE2EIntegrationTest {
     }
 
     private OrcaAgentRuntime createContext() {
+        environmentProvider = LocalExecutionEnvironmentProvider.builder().workspaceRoot(tempDir.resolve("workspace"))
+                .contentSearch(false).build();
         final LocalFileSystem fileSystem = new LocalFileSystem(new LocalFileSystemConfig(tempDir.toString()));
         fileSystem.initialize();
         final DefaultCommandRegistry commandRegistry = new DefaultCommandRegistry(List.of(), skillRegistry, fileSystem,
@@ -193,8 +210,8 @@ class SlashSkillForkE2EIntegrationTest {
                 .agent(DefaultAgent.builder().name("TestAgent").maxIterations(2).systemPrompt("You are a test agent")
                         .model(LlmModel.builder().name("gpt-4").build()).build())
                 .toolRegistry(toolRegistry).hookRegistry(new DefaultHookRegistry()).commandRegistry(commandRegistry)
-                .subagentRegistry(subagentRegistry).skillRegistry(skillRegistry).fileSystem(fileSystem)
-                .environment(Environment.createDefault()).build();
+                .subagentRegistry(subagentRegistry).skillRegistry(skillRegistry).controlFileSystem(fileSystem)
+                .environment(Environment.createDefault()).executionEnvironmentProvider(environmentProvider).build();
     }
 
     private static OrcaAgentExecutionRequest createRequest(String userInput) {

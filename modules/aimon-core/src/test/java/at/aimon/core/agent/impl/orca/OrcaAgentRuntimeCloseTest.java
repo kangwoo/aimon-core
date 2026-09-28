@@ -1,11 +1,14 @@
 package at.aimon.core.agent.impl.orca;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+
+import java.util.List;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -19,6 +22,8 @@ import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.command.CommandRegistry;
+import at.aimon.core.environment.ExecutionEnvironmentProvider;
+import at.aimon.core.environment.impl.LocalExecutionEnvironmentProvider;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.knowledge.KnowledgeStore;
@@ -30,9 +35,10 @@ import at.aimon.core.workflow.WorkflowRunner;
 
 /**
  * Verifies the agent-scoped {@link OrcaAgentRuntime#close()} contract: it must release <b>every</b>
- * agent-scoped resource it owns ({@link McpClientManager}, {@link WorkflowRunner}, and the default
- * {@link VirtualShell} when core built it) but must <b>not</b> close the application-scoped {@link KnowledgeStore}
- * (whose lifetime is owned outside the context).
+ * agent-scoped resource it owns ({@link McpClientManager}, {@link WorkflowRunner}) but must <b>not</b> close the
+ * application-scoped {@link KnowledgeStore} (whose lifetime is owned outside the context), nor the
+ * {@link ExecutionEnvironmentProvider} it borrows — the provider owns the shells and filesystems behind the
+ * environments it resolves (execution-environment design §4.3).
  *
  * <p>
  * The {@code WorkflowRunner} cases matter because it is the second of three owned closables: a naive
@@ -41,9 +47,8 @@ import at.aimon.core.workflow.WorkflowRunner;
  * the tests below pin that every delegate is reached and that no failure propagates to the caller.
  *
  * <p>
- * The shell is the third, and it is stored <em>only</em> when core created it (TCH-01). A shell handed in through
- * {@code OrcaAgentRuntimeFactory.withShell(...)} belongs to the assembly, so it never reaches this builder at all —
- * that half of the ownership rule is pinned by {@code OrcaAgentRuntimeFactoryShellWiringTest}.
+ * There used to be a third owned closable, the default shell core built when the assembly supplied none (TCH-01).
+ * It is gone: shells belong to the execution environment provider, which the runtime never closes.
  */
 @DisplayName("OrcaAgentRuntime close() Tests")
 @ExtendWith(MockitoExtension.class)
@@ -70,20 +75,21 @@ class OrcaAgentRuntimeCloseTest {
     @Mock
     private WorkflowRunner workflowRunner;
     @Mock
-    private VirtualShell ownedShell;
+    private VirtualShell providerShell;
 
     /** Builds a context over the shared mocks; {@code null} delegates are simply left unset on the builder. */
     private OrcaAgentRuntime newContext(McpClientManager mcp, WorkflowRunner runner) {
         return newContext(mcp, runner, null);
     }
 
-    /** As above, plus the shell core built for itself — {@code null} models a shell borrowed from the assembly. */
-    private OrcaAgentRuntime newContext(McpClientManager mcp, WorkflowRunner runner, VirtualShell shell) {
+    /** As above, plus the execution environment provider the runtime borrows. */
+    private OrcaAgentRuntime newContext(McpClientManager mcp, WorkflowRunner runner,
+            ExecutionEnvironmentProvider provider) {
         when(agent.getName()).thenReturn("close-test");
         final OrcaAgentRuntime.Builder builder = OrcaAgentRuntime.builder()
                 .id(AgentRuntimeId.from(agent)).agent(agent).toolRegistry(toolRegistry)
                 .hookRegistry(hookRegistry).commandRegistry(commandRegistry).subagentRegistry(subagentRegistry)
-                .skillRegistry(skillRegistry).fileSystem(fileSystem).environment(Environment.createDefault())
+                .skillRegistry(skillRegistry).controlFileSystem(fileSystem).environment(Environment.createDefault())
                 .knowledgeStore(knowledgeStore);
         if (mcp != null) {
             builder.mcpClientManager(mcp);
@@ -91,8 +97,8 @@ class OrcaAgentRuntimeCloseTest {
         if (runner != null) {
             builder.workflowRunner(runner);
         }
-        if (shell != null) {
-            builder.ownedShell(shell);
+        if (provider != null) {
+            builder.executionEnvironmentProvider(provider);
         }
         return builder.build();
     }
@@ -104,7 +110,7 @@ class OrcaAgentRuntimeCloseTest {
         OrcaAgentRuntime context = OrcaAgentRuntime.builder()
                 .id(AgentRuntimeId.from(agent)).agent(agent).toolRegistry(toolRegistry)
                 .hookRegistry(hookRegistry).commandRegistry(commandRegistry).subagentRegistry(subagentRegistry)
-                .skillRegistry(skillRegistry).fileSystem(fileSystem).environment(Environment.createDefault())
+                .skillRegistry(skillRegistry).controlFileSystem(fileSystem).environment(Environment.createDefault())
                 .mcpClientManager(mcpClientManager).knowledgeStore(knowledgeStore).build();
 
         context.close();
@@ -119,7 +125,7 @@ class OrcaAgentRuntimeCloseTest {
         OrcaAgentRuntime context = OrcaAgentRuntime.builder()
                 .id(AgentRuntimeId.from(agent)).agent(agent).toolRegistry(toolRegistry)
                 .hookRegistry(hookRegistry).commandRegistry(commandRegistry).subagentRegistry(subagentRegistry)
-                .skillRegistry(skillRegistry).fileSystem(fileSystem).environment(Environment.createDefault())
+                .skillRegistry(skillRegistry).controlFileSystem(fileSystem).environment(Environment.createDefault())
                 .mcpClientManager(mcpClientManager).knowledgeStore(knowledgeStore).build();
 
         context.close();
@@ -134,7 +140,7 @@ class OrcaAgentRuntimeCloseTest {
         OrcaAgentRuntime context = OrcaAgentRuntime.builder()
                 .id(AgentRuntimeId.from(agent)).agent(agent).toolRegistry(toolRegistry)
                 .hookRegistry(hookRegistry).commandRegistry(commandRegistry).subagentRegistry(subagentRegistry)
-                .skillRegistry(skillRegistry).fileSystem(fileSystem).environment(Environment.createDefault())
+                .skillRegistry(skillRegistry).controlFileSystem(fileSystem).environment(Environment.createDefault())
                 .mcpClientManager(mcpClientManager).knowledgeStore(knowledgeStore).build();
 
         context.close();
@@ -150,7 +156,7 @@ class OrcaAgentRuntimeCloseTest {
         OrcaAgentRuntime context = OrcaAgentRuntime.builder()
                 .id(AgentRuntimeId.from(agent)).agent(agent).toolRegistry(toolRegistry)
                 .hookRegistry(hookRegistry).commandRegistry(commandRegistry).subagentRegistry(subagentRegistry)
-                .skillRegistry(skillRegistry).fileSystem(fileSystem).environment(Environment.createDefault())
+                .skillRegistry(skillRegistry).controlFileSystem(fileSystem).environment(Environment.createDefault())
                 .knowledgeStore(knowledgeStore).build();
 
         context.close();
@@ -212,49 +218,35 @@ class OrcaAgentRuntimeCloseTest {
     }
 
     @Test
-    @DisplayName("close() closes the default shell core created for itself (TCH-01)")
-    void close_closesOwnedShell() throws Exception {
-        final OrcaAgentRuntime context = newContext(mcpClientManager, workflowRunner, ownedShell);
+    @DisplayName("close() never closes the execution environment provider or the shell behind it (borrowed, §4.3)")
+    void close_neverClosesTheExecutionEnvironmentProvider() throws Exception {
+        final LocalExecutionEnvironmentProvider provider = LocalExecutionEnvironmentProvider.builder()
+                .fileSystem(fileSystem).shell(providerShell).contentSearch(false).pathRules(List.of()).build();
+        final OrcaAgentRuntime context = newContext(mcpClientManager, workflowRunner, provider);
 
         context.close();
 
-        // There is no fan-out over the AgentScoped marker: the shell is closed only because it was added to close()'s
-        // hardcoded list by name. Drop it from that list and nothing else would notice — hence this guard.
-        verify(ownedShell).close();
+        // A background Bash task may still run in this shell after the runtime is gone; only the provider's owner
+        // decides when it closes.
+        verify(providerShell, never()).close();
+        verify(fileSystem, never()).close();
+        assertThat(context.getExecutionEnvironmentProvider()).isSameAs(provider);
     }
 
     @Test
-    @DisplayName("close() still closes the shell when McpClientManager and WorkflowRunner both throw")
-    void close_closesOwnedShellEvenWhenEarlierDelegatesThrow() throws Exception {
-        doThrow(new IllegalStateException("mcp shutdown boom")).when(mcpClientManager).close();
-        doThrow(new IllegalStateException("runner shutdown boom")).when(workflowRunner).close();
-        final OrcaAgentRuntime context = newContext(mcpClientManager, workflowRunner, ownedShell);
-
-        // The shell is last in the list, so it is the delegate a shared try/catch would strand.
-        assertThatCode(context::close).doesNotThrowAnyException();
-
-        verify(ownedShell).close();
-    }
-
-    @Test
-    @DisplayName("close() swallows a shell close() failure instead of propagating it to the caller")
-    void close_swallowsOwnedShellCloseFailure() throws Exception {
-        doThrow(new IllegalStateException("shell shutdown boom")).when(ownedShell).close();
-        final OrcaAgentRuntime context = newContext(mcpClientManager, workflowRunner, ownedShell);
+    @DisplayName("close() does not touch a provider that is itself AutoCloseable")
+    void close_doesNotCloseAnAutoCloseableProvider() throws Exception {
+        final ClosableProvider provider = org.mockito.Mockito.mock(ClosableProvider.class);
+        final OrcaAgentRuntime context = newContext(mcpClientManager, workflowRunner, provider);
 
         assertThatCode(context::close).doesNotThrowAnyException();
 
+        verify(provider, never()).close();
         verify(workflowRunner).close();
     }
 
-    @Test
-    @DisplayName("close() is a no-op when the shell was supplied by the assembly (borrowed, so never stored)")
-    void close_noopWhenShellIsBorrowed() {
-        final OrcaAgentRuntime context = newContext(mcpClientManager, workflowRunner, null);
-
-        assertThatCode(context::close).doesNotThrowAnyException();
-
-        verify(workflowRunner).close();
+    /** A provider that owns resources, as the local one does. */
+    interface ClosableProvider extends ExecutionEnvironmentProvider, AutoCloseable {
     }
 
     @Test

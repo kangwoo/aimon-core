@@ -32,6 +32,7 @@ import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.base.Principal;
 import at.aimon.core.command.DefaultCommandExecutionManager;
 import at.aimon.core.command.DefaultCommandRegistry;
+import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
 import at.aimon.core.hook.DefaultHookExecutionManager;
@@ -341,8 +342,9 @@ class OrcaAgentExecutorSkillSuspendTest {
                 .toolRegistry(new DefaultToolRegistry()).hookRegistry(new DefaultHookRegistry())
                 .commandRegistry(new DefaultCommandRegistry(fileSystem, ".aimon/commands"))
                 .subagentRegistry(new DefaultSubagentRegistry(fileSystem, ".aimon/agents"))
-                .skillRegistry(new TestSkillRegistry()).fileSystem(fileSystem).environment(Environment.createDefault())
-                .build();
+                .skillRegistry(new TestSkillRegistry()).controlFileSystem(fileSystem)
+                .executionEnvironmentProvider(TestExecutionEnvironments.provider(fileSystem))
+                .environment(Environment.createDefault()).build();
     }
 
     private OrcaAgentExecutor createExecutor(LlmClient llmClient, SkillPreflightScanner scanner,

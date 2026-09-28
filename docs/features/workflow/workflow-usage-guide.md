@@ -143,7 +143,6 @@ WorkflowRunnerOptions options = WorkflowRunnerOptions.builder()
         .stepResultCache(WorkflowRunners.inMemoryStepResultCache())
         .runStore(myRunStore)                    // 백그라운드 런 제어 평면 저장소
         .backgroundConfig(WorkflowBackgroundConfig.of(4))
-        .worktreeFactory(worktreeFactory)        // isolate=true 스텝을 쓸 때만
         .build();
 ```
 
@@ -155,18 +154,17 @@ WorkflowRunnerOptions options = WorkflowRunnerOptions.builder()
 | `stepResultCache` | `StepResultCache.NO_OP` (재개 불가) | 중단된 런을 재실행 시 캐시 히트로 건너뛰기 |
 | `runStore` | in-memory | 멀티 인스턴스 런 목록/상태 공유 |
 | `backgroundConfig` | `WorkflowBackgroundConfig.defaults()` | 동시 백그라운드 런 수·큐 용량 |
-| `worktreeFactory` | 없음 → `isolate` 스텝은 런 치명적 실패 | 파일을 변조하는 병렬 스텝 격리 |
 
 ### 코어가 조립하는 방식 (참고)
 
 `OrcaAgentRuntimeFactory#buildWorkflowRunner`가 표준 조립 예시다.
-컨텍스트당 러너 하나를 만들고 in-memory 스텝 캐시와 워크트리 팩토리를 붙인다.
+컨텍스트당 러너 하나를 만들고 in-memory 스텝 캐시를 붙인다. 격리를 위한 옵션은 없다 — `isolate` 스텝은 실행
+환경에서 브랜치를 파생한다(아래 "워크트리 격리").
 
 ```java
 return WorkflowRunners.create(subagentExecutionManager, baseEnv,
         WorkflowRunnerOptions.builder()
                 .stepResultCache(WorkflowRunners.inMemoryStepResultCache())
-                .worktreeFactory(worktreeFactory)
                 .build());
 ```
 
@@ -557,11 +555,15 @@ public interface WorkflowEventSink {
 AgentTask.builder().subagent(migrator).goal(...).isolate(true).build();
 ```
 
-- 각 스텝이 **자기 git 워크트리**에서 돈다. 비용이 있다(스텝당 셋업 + 디스크).
-- 변경이 없으면 워크트리는 자동 정리된다.
+- 각 스텝이 **자기 격리 브랜치**에서 돈다 — 러너가 실행 환경의 `ExecutionEnvironment.isolate(branchKey)` 로
+  파생한 환경이다. 로컬 환경에서는 파일 도구가 `.worktrees/<branchKey>/` 아래로 스코프되고, `Bash` 도 기본
+  작업 디렉터리가 그 브랜치 루트가 된다(명령 안의 절대 경로까지 막지는 않는다). 샌드박스는 git worktree 를 쓴다.
+- 브랜치의 파일은 `WorktreeMerge.promote(parent, branches, policy)` 로 부모에 올린다. 키만 아는 조립 코드는
+  `parent.isolate(key).orElseThrow()` 로 같은 브랜치를 다시 얻는다. 브랜치 안의 `.aimon/` 파일은 부모의 제어
+  저장소 보호에 걸려 승격이 실패한다.
 - `isolate(true)`는 캐시 불가다 (부수효과 재생 불가).
-- **`worktreeFactory`를 주입하지 않은 러너에서 `isolate` 스텝을 만나면 런 치명적 실패(C30)** 다.
-  옵션에 `WorktreeEnvironmentFactory`를 반드시 넣는다.
+- **격리를 지원하지 않는 실행 환경에서 `isolate` 스텝을 만나면 런 치명적 실패(C30)** 다. 격리 없이 돌리지
+  않는다. 따로 주입할 옵션은 없다 — 예전의 `worktreeFactory` / `WorktreeEnvironmentFactory` 는 없어졌다.
 
 병렬 스텝이 서로 다른 파일만 건드린다면 격리는 불필요하다. 같은 파일을 다투는 경우에만 켠다.
 
@@ -599,7 +601,7 @@ try (WorkflowRunner runner = WorkflowRunners.create(subagentExecutionManager, en
 - [ ] 재개를 원하면서 `DEFAULT_RUN_ID`를 쓰고 있지 않은가? (캐시 안 됨)
 - [ ] 공유 러너에서 `perBatchMax`를 잡았는가?
 - [ ] 이벤트 싱크가 thread-safe한가?
-- [ ] `isolate(true)`를 쓰면서 `worktreeFactory`를 주입했는가?
+- [ ] `isolate(true)`를 쓰는 러너의 실행 환경이 `isolate()` 를 지원하는가?
 - [ ] 호출당 만든 러너를 닫는가? 빌려온 매니저를 닫지 않는가?
 - [ ] `loopUntilDry` 계열 루프의 dedup 기준이 "확정본"이 아니라 "본 적 있는 것"인가?
 - [ ] 커버리지를 잘라냈다면(top-N, 샘플링) `ctx.log`로 무엇을 버렸는지 남겼는가?

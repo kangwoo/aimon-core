@@ -2,15 +2,16 @@ package at.aimon.core.filesystem.impl;
 
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Deque;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 import at.aimon.core.filesystem.BackendStatus;
 import at.aimon.core.filesystem.FileMetadata;
 import at.aimon.core.filesystem.FileSystemUsage;
+import at.aimon.core.filesystem.VfsPaths;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.filesystem.exception.FileNotFoundException;
 import at.aimon.core.filesystem.exception.InvalidPathException;
@@ -47,6 +48,14 @@ import at.aimon.core.filesystem.exception.InvalidPathException;
  * path) — so a tool that captures it as a default search root (e.g. {@code GrepTool}) round-trips instead of
  * double-prefixing.</li>
  * <li><b>{@code search} pattern</b> is a filename glob, not a path, so it is passed through <em>unscoped</em>.</li>
+ * <li><b>Branch host paths.</b> For a {@code '/'}-anchored base, an absolute path under {@code {base}/{prefix}} — the
+ * branch root as a shell working in it sees it — is stripped to its branch-relative remainder <em>before</em> the base
+ * itself is stripped, so the file tools accept the same absolute path the shell uses.</li>
+ * <li><b>Shared prefixes.</b> A path whose branch-relative form lies under one of the {@code sharedPrefixes} (whole
+ * segments, after normalisation) is passed to the delegate <em>without</em> the branch prefix: the branch sees the
+ * parent's directory there. The local execution environment shares its staging area this way, so a staged skill copy
+ * is reachable from every branch, is never copied per branch, and never appears in a branch listing (so a merge never
+ * promotes it).</li>
  * <li><b>{@code getUsageSummary()}</b> reports the branch subtree, by delegating to the path-scoped overload with the
  * branch prefix — "the whole filesystem", scoped, is the branch. A backend that cannot answer per subtree still falls
  * back to whole-backend usage through that overload's default.</li>
@@ -57,6 +66,7 @@ public final class ScopedVirtualFileSystem implements VirtualFileSystem {
     private final VirtualFileSystem delegate;
     private final String prefix;
     private final String baseWorkingDir;
+    private final Set<String> sharedPrefixes;
 
     /**
      * @param delegate
@@ -67,14 +77,37 @@ public final class ScopedVirtualFileSystem implements VirtualFileSystem {
      *            not be null or blank)
      */
     public ScopedVirtualFileSystem(VirtualFileSystem delegate, String prefix) {
+        this(delegate, prefix, Set.of());
+    }
+
+    /**
+     * @param delegate
+     *            the shared backend filesystem to scope (must not be null; borrowed — never closed)
+     * @param prefix
+     *            the branch prefix (e.g. {@code .worktrees/<branchKey>}; must not be null or blank)
+     * @param sharedPrefixes
+     *            root-relative directories the branch sees unscoped — the delegate's own (must not be null)
+     */
+    public ScopedVirtualFileSystem(VirtualFileSystem delegate, String prefix, Set<String> sharedPrefixes) {
         this.delegate = Objects.requireNonNull(delegate, "delegate cannot be null");
         Objects.requireNonNull(prefix, "prefix cannot be null");
-        final String normalized = normalizeRelative(prefix);
+        Objects.requireNonNull(sharedPrefixes, "sharedPrefixes cannot be null");
+        final String normalized = VfsPaths.normalizeRelative(prefix);
         if (normalized == null || normalized.isEmpty()) {
             throw new IllegalArgumentException("prefix must be a non-empty relative path, got: " + prefix);
         }
         this.prefix = normalized;
         this.baseWorkingDir = delegate.getWorkingDirectory();
+        final Set<String> shared = new LinkedHashSet<>();
+        for (String sharedPrefix : sharedPrefixes) {
+            final String normalizedShared = VfsPaths.normalizeRelative(sharedPrefix);
+            if (normalizedShared == null || normalizedShared.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "shared prefix must be a non-empty relative path, got: " + sharedPrefix);
+            }
+            shared.add(normalizedShared);
+        }
+        this.sharedPrefixes = Set.copyOf(shared);
     }
 
     // --- path scoping ---------------------------------------------------------------------------------------------
@@ -99,9 +132,14 @@ public final class ScopedVirtualFileSystem implements VirtualFileSystem {
             throw new InvalidPathException(path, "backslash separators are not supported");
         }
         final String rel = toBranchRelative(path);
-        final String normalizedRel = normalizeRelative(rel);
+        final String normalizedRel = VfsPaths.normalizeRelative(rel);
         if (normalizedRel == null) {
             throw new InvalidPathException(path, "escapes the worktree branch prefix '" + prefix + "'");
+        }
+        for (String shared : sharedPrefixes) {
+            if (VfsPaths.isUnder(normalizedRel, shared)) {
+                return normalizedRel;
+            }
         }
         return normalizedRel.isEmpty() ? prefix : prefix + "/" + normalizedRel;
     }
@@ -131,6 +169,12 @@ public final class ScopedVirtualFileSystem implements VirtualFileSystem {
         // backends ACCEPT leading-slash paths as anchored on their root — so such inputs fall through to the
         // strip-leading-slashes logic below, exactly like the documented base == "/" case.
         if (baseWorkingDir.startsWith("/") && !baseWorkingDir.equals("/")) {
+            final String branchRoot = baseWorkingDir + "/" + prefix;
+            if (p.equals(branchRoot)) {
+                return "";
+            } else if (p.startsWith(branchRoot + "/")) {
+                return p.substring(branchRoot.length() + 1);
+            }
             if (p.equals(baseWorkingDir)) {
                 p = "";
             } else if (p.startsWith(baseWorkingDir + "/")) {
@@ -181,29 +225,6 @@ public final class ScopedVirtualFileSystem implements VirtualFileSystem {
         return p.substring(start);
     }
 
-    /**
-     * Normalises a relative path by resolving {@code .} and {@code ..} segments.
-     *
-     * @return the normalised path (possibly empty for the root), or {@code null} if it escapes above its own root
-     */
-    private static String normalizeRelative(String rel) {
-        final Deque<String> out = new ArrayDeque<>();
-        for (final String segment : rel.split("/")) {
-            if (segment.isEmpty() || segment.equals(".")) {
-                continue;
-            }
-            if (segment.equals("..")) {
-                if (out.isEmpty()) {
-                    return null; // escapes above the root
-                }
-                out.removeLast();
-            } else {
-                out.addLast(segment);
-            }
-        }
-        return String.join("/", out);
-    }
-
     // --- delegated, scoped operations -----------------------------------------------------------------------------
 
     @Override
@@ -245,7 +266,8 @@ public final class ScopedVirtualFileSystem implements VirtualFileSystem {
         final FileMetadata scoped = delegate.getMetadata(scope(path));
         return FileMetadata.builder().path(unscope(scoped.getPath())).size(scoped.getSize())
                 .directory(scoped.isDirectory()).createdAt(scoped.getCreatedAt()).modifiedAt(scoped.getModifiedAt())
-                .mimeType(scoped.getMimeType().orElse(null)).customMetadata(scoped.getCustomMetadata()).build();
+                .mimeType(scoped.getMimeType().orElse(null)).customMetadata(scoped.getCustomMetadata())
+                .etag(scoped.getEtag().orElse(null)).build();
     }
 
     @Override

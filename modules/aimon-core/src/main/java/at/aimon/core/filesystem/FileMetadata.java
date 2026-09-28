@@ -15,7 +15,12 @@ import java.util.Optional;
  * bytes (non-negative, 0 for directories) - createdAt (Instant, required): Creation timestamp in UTC - modifiedAt
  * (Instant, required): Last modification timestamp in UTC - directory (boolean, optional): Whether this entry is a
  * directory (defaults to false) - mimeType (String, optional): MIME type (e.g., "text/plain", "image/jpeg") -
- * customMetadata (Map, optional): Backend-specific metadata
+ * customMetadata (Map, optional): Backend-specific metadata - etag (String, optional): an opaque version token
+ *
+ * <p>
+ * <b>Change detection contract.</b> Whenever a file's content changes, {@link #getModifiedAt()} or {@link #getEtag()}
+ * must change. A backend whose modification time is coarse (whole seconds) must supply an etag, or a same-size rewrite
+ * within one tick goes unnoticed by the file tools' read stamps.
  */
 public final class FileMetadata {
     /** FileMetadata Builder를 반환한다. */
@@ -30,6 +35,7 @@ public final class FileMetadata {
     private final boolean directory;
     private final String mimeType;
     private final Map<String, String> customMetadata;
+    private final String etag;
 
     private FileMetadata(Builder builder) {
         path = Objects.requireNonNull(builder.path, "Path cannot be null");
@@ -39,6 +45,7 @@ public final class FileMetadata {
         directory = builder.directory;
         mimeType = builder.mimeType;
         customMetadata = Collections.unmodifiableMap(new HashMap<>(builder.customMetadata));
+        etag = builder.etag;
 
         if (size < 0) {
             throw new IllegalArgumentException("Size must be non-negative, got: " + size);
@@ -76,6 +83,16 @@ public final class FileMetadata {
         return customMetadata;
     }
 
+    /**
+     * Returns the backend's version token for the file's content (S3 ETag, GridFS file id), if it has one. When
+     * present it is preferred over size and modification time to decide whether a file changed.
+     *
+     * @return the etag, or empty
+     */
+    public Optional<String> getEtag() {
+        return Optional.ofNullable(etag);
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -87,19 +104,20 @@ public final class FileMetadata {
         final FileMetadata that = (FileMetadata) o;
         return size == that.size && directory == that.directory && Objects.equals(path, that.path)
                 && Objects.equals(createdAt, that.createdAt) && Objects.equals(modifiedAt, that.modifiedAt)
-                && Objects.equals(mimeType, that.mimeType) && Objects.equals(customMetadata, that.customMetadata);
+                && Objects.equals(mimeType, that.mimeType) && Objects.equals(customMetadata, that.customMetadata)
+                && Objects.equals(etag, that.etag);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(path, size, directory, createdAt, modifiedAt, mimeType, customMetadata);
+        return Objects.hash(path, size, directory, createdAt, modifiedAt, mimeType, customMetadata, etag);
     }
 
     @Override
     public String toString() {
         return "FileMetadata{" + "path='" + path + '\'' + ", size=" + size + ", directory=" + directory + ", createdAt="
                 + createdAt + ", modifiedAt=" + modifiedAt + ", mimeType='" + mimeType + '\'' + ", customMetadata="
-                + customMetadata + '}';
+                + customMetadata + ", etag=" + etag + '}';
     }
 
     /** Builder for constructing FileMetadata instances. */
@@ -111,6 +129,7 @@ public final class FileMetadata {
         private boolean directory;
         private String mimeType;
         private final Map<String, String> customMetadata = new HashMap<>();
+        private String etag;
 
         /** path를 설정한다. */
         public Builder path(String path) {
@@ -157,6 +176,12 @@ public final class FileMetadata {
         /** 커스텀 메타데이터를 일괄 추가한다. */
         public Builder customMetadata(Map<String, String> metadata) {
             customMetadata.putAll(metadata);
+            return this;
+        }
+
+        /** etag 를 설정한다 (nullable). */
+        public Builder etag(String etag) {
+            this.etag = etag;
             return this;
         }
 

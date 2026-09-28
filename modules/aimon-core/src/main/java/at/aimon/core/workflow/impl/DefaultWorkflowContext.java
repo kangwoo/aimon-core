@@ -21,6 +21,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 
 import at.aimon.core.agent.AgentRuntimeId;
+import at.aimon.core.environment.EnvironmentRequest;
+import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.environment.ExecutionEnvironments;
 import at.aimon.core.llm.cost.Money;
 import at.aimon.core.subagent.Subagent;
 import at.aimon.core.subagent.SubagentExecutionEnvironment;
@@ -35,7 +38,6 @@ import at.aimon.core.workflow.StepResultCache;
 import at.aimon.core.workflow.WorkflowBudget;
 import at.aimon.core.workflow.WorkflowContext;
 import at.aimon.core.workflow.WorkflowEventSink;
-import at.aimon.core.workflow.WorktreeEnvironmentFactory;
 import at.aimon.core.workflow.exception.WorkflowBudgetExceededException;
 import at.aimon.core.workflow.exception.WorkflowException;
 
@@ -80,9 +82,6 @@ public final class DefaultWorkflowContext implements WorkflowContext {
     /** Global LLM-concurrency ceiling shared across runs; wraps only the terminal leaf (design §6.2). */
     private final LeafConcurrencyLimiter leafSlots;
 
-    /** Caller-injected per-branch env derivation for worktree isolation; {@code null} disables isolation (§6.3). */
-    private final WorktreeEnvironmentFactory worktreeFactory;
-
     /** Max fan-out nesting depth; a deeper {@code parallel}/{@code pipeline} degrades to sequential (§6.2). */
     private final int maxNestingDepth;
 
@@ -119,7 +118,6 @@ public final class DefaultWorkflowContext implements WorkflowContext {
         this.stepResultCache = resume.cache();
         Objects.requireNonNull(execution, "execution cannot be null");
         this.leafSlots = Objects.requireNonNull(execution.leafSlots(), "leafSlots cannot be null");
-        this.worktreeFactory = execution.worktreeFactory(); // nullable — null means isolation unavailable (C30)
         if (execution.maxNestingDepth() < 1) {
             throw new IllegalArgumentException("maxNestingDepth must be >= 1, got: " + execution.maxNestingDepth());
         }
@@ -167,19 +165,37 @@ public final class DefaultWorkflowContext implements WorkflowContext {
     }
 
     /**
-     * Resolves the environment a step runs against. Non-isolated steps use the borrowed base env; an isolated step
-     * derives a per-branch env via the injected {@link WorktreeEnvironmentFactory}, or fails run-fatal if none is wired
+     * Resolves the environment a step runs against. Non-isolated steps use the borrowed base env. An isolated step
+     * asks the execution environment for a branch ({@link ExecutionEnvironment#isolate}, execution-environment design
+     * §5.2) — the parent's environment when the run has one, else one resolved from the runtime's provider (a
+     * runtime-level runner has no calling execution). The branch environment becomes the step's parent environment,
+     * which the fork's provider hands back unchanged; the tool registry and the cancellation signal are the base
+     * env's. An environment that cannot isolate fails the run rather than running the branch unscoped (C30).
      * Independent of cache state so isolation holds under {@code NO_OP}.
      */
     private SubagentExecutionEnvironment resolveEnv(AgentTask task, String path) {
         if (!task.isIsolate()) {
             return baseEnv;
         }
-        if (worktreeFactory == null) {
-            throw new WorkflowException("agent task requested isolation (isolate=true) but no "
-                    + "WorktreeEnvironmentFactory is configured — refusing to run unscoped (C30)");
+        final ExecutionEnvironment parent = baseEnv.getExecutionEnvironment()
+                .orElseGet(() -> ExecutionEnvironments.resolveOrUnavailable(
+                        baseEnv.getExecutionEnvironmentProvider().orElse(null),
+                        EnvironmentRequest.builder().agentRuntimeId(baseEnv.getAgentRuntimeId())
+                                .principal(baseEnv.getPrincipal().orElse(null)).build()));
+        final String branchKey = sanitizeBranchKey(path);
+        final Optional<ExecutionEnvironment> branch;
+        try {
+            branch = parent.isolate(branchKey);
+        } catch (RuntimeException e) {
+            throw new WorkflowException("agent task requested isolation (isolate=true) but the execution environment "
+                    + "could not isolate branch '" + branchKey + "': " + e.getMessage()
+                    + " — refusing to run unscoped");
         }
-        return worktreeFactory.derive(baseEnv, sanitizeBranchKey(path));
+        if (branch.isEmpty()) {
+            throw new WorkflowException("agent task requested isolation (isolate=true) but the execution environment "
+                    + "does not support isolation — refusing to run unscoped (C30)");
+        }
+        return baseEnv.toBuilder().executionEnvironment(branch.get()).build();
     }
 
     /** Turns a structural step-path into a single filesystem-safe branch subtree name (deterministic). */

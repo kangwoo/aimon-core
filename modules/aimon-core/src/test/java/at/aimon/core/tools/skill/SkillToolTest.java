@@ -16,6 +16,15 @@ import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.base.Principal;
+import at.aimon.core.environment.EnvironmentDescriptor;
+import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.environment.StagedResource;
+import at.aimon.core.environment.UnavailableExecutionEnvironment;
+import at.aimon.core.filesystem.BackendStatus;
+import at.aimon.core.filesystem.BackendType;
+import at.aimon.core.filesystem.FileMetadata;
+import at.aimon.core.filesystem.VirtualFileSystem;
+import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.skill.ExecutionMode;
 import at.aimon.core.skill.InvokePolicy;
 import at.aimon.core.skill.Skill;
@@ -255,11 +264,13 @@ class SkillToolTest {
     }
 
     @Test
-    void testExecute_RenderContext_SkillBaseDirDerivedFromRootFiles() {
-        // Arrange
+    void testExecute_RenderContext_SkillDirIsNeverDerivedFromRepositoryPaths() {
+        // Arrange — a hand-built skill with repository paths but no StagedResource. ${AIMON_SKILL_DIR} used to be
+        // derived from those paths; it now comes only from ExecutionEnvironment.stage() (design §4.4, §15).
         Skill skill = Skill.builder().name("alert-analysis")
                 .metadata(SkillMetadata.builder().name("alert-analysis").description("Analyzes alerts").build())
-                .content(SkillContent.of("Body")).putRootFile("SKILL.md", "/skills/alert-analysis/SKILL.md").build();
+                .content(SkillContent.of("Body")).putRootFile("SKILL.md", "/skills/alert-analysis/SKILL.md")
+                .putScript("run.py", "/skills/alert-analysis/scripts/run.py").build();
         mockRegistry.addSkill(skill);
 
         final RenderContext[] capturedContext = new RenderContext[1];
@@ -273,29 +284,7 @@ class SkillToolTest {
         tool.execute(ToolInput.of(Map.of("skill", "alert-analysis")), emptyContext);
 
         // Assert
-        assertThat(capturedContext[0].getSkillBaseDir()).contains("/skills/alert-analysis");
-    }
-
-    @Test
-    void testExecute_RenderContext_SkillBaseDirDerivedFromScriptsWhenNoRootFiles() {
-        // Arrange
-        Skill skill = Skill.builder().name("alert-analysis")
-                .metadata(SkillMetadata.builder().name("alert-analysis").description("Analyzes alerts").build())
-                .content(SkillContent.of("Body")).putScript("run.py", "/skills/alert-analysis/scripts/run.py").build();
-        mockRegistry.addSkill(skill);
-
-        final RenderContext[] capturedContext = new RenderContext[1];
-        SkillContentRenderer capturingRenderer = (s, a, c) -> {
-            capturedContext[0] = c;
-            return s.getContent().getInstructions();
-        };
-        SkillTool tool = new SkillTool(mockRegistry, capturingRenderer);
-
-        // Act
-        tool.execute(ToolInput.of(Map.of("skill", "alert-analysis")), emptyContext);
-
-        // Assert — the skill root, not the scripts/ directory the script sits in
-        assertThat(capturedContext[0].getSkillBaseDir()).contains("/skills/alert-analysis");
+        assertThat(capturedContext[0].getSkillBaseDir()).isEmpty();
     }
 
     @Test
@@ -437,14 +426,17 @@ class SkillToolTest {
         assertThat(result.isError()).isFalse();
         assertThat(result.getContent()).contains("Available Files:");
         assertThat(result.getContent()).contains("Root:");
-        assertThat(result.getContent()).contains("config.yaml → skills/file-skill/config.yaml");
-        assertThat(result.getContent()).contains("helper.py → skills/file-skill/helper.py");
+        // Not staged (hand-built skill, no environment): each file is listed relative to the skill directory. The
+        // repository's own paths never reach the model (execution-environment design §4.4).
+        assertThat(result.getContent()).contains("config.yaml → config.yaml");
+        assertThat(result.getContent()).contains("helper.py → helper.py");
         assertThat(result.getContent()).contains("Scripts:");
-        assertThat(result.getContent()).contains("analyze.py → skills/file-skill/scripts/analyze.py");
+        assertThat(result.getContent()).contains("analyze.py → scripts/analyze.py");
         assertThat(result.getContent()).contains("References:");
-        assertThat(result.getContent()).contains("api.md → skills/file-skill/references/api.md");
+        assertThat(result.getContent()).contains("api.md → references/api.md");
         assertThat(result.getContent()).contains("Assets:");
-        assertThat(result.getContent()).contains("loader.json → skills/file-skill/assets/loader.json");
+        assertThat(result.getContent()).contains("loader.json → assets/loader.json");
+        assertThat(result.getContent()).doesNotContain("skills/file-skill");
     }
 
     @Test
@@ -466,7 +458,7 @@ class SkillToolTest {
         assertThat(result.isError()).isFalse();
         assertThat(result.getContent()).contains("Available Files:");
         assertThat(result.getContent()).contains("Root:");
-        assertThat(result.getContent()).contains("config.yaml → skills/root-files-skill/config.yaml");
+        assertThat(result.getContent()).contains("config.yaml → config.yaml");
         assertThat(result.getContent()).doesNotContain("Scripts:");
         assertThat(result.getContent()).doesNotContain("References:");
         assertThat(result.getContent()).doesNotContain("Assets:");
@@ -926,7 +918,8 @@ class SkillToolTest {
         assertThat(result.isError()).isFalse();
         assertThat(result.getContent()).contains("Available Files:");
         assertThat(result.getContent()).contains("Other Files:");
-        assertThat(result.getContent()).contains("templates/report.md → /skills/template-skill/templates/report.md");
+        assertThat(result.getContent()).contains("templates/report.md → templates/report.md");
+        assertThat(result.getContent()).doesNotContain("/skills/template-skill");
         assertThat(result.getContent()).doesNotContain("Root:");
         assertThat(result.getContent()).doesNotContain("Scripts:");
         assertThat(result.getContent()).doesNotContain("References:");
@@ -954,48 +947,191 @@ class SkillToolTest {
     }
 
     @Test
-    void testExecute_SkillWithBaseDir_DefaultRendererResolvesSkillDirPlaceholder() {
-        // Arrange — skill body references ${AIMON_SKILL_DIR}; baseDir is set explicitly
+    void testExecute_StagedSkill_SkillDirIsTheStageResultAndFilesAreListedUnderIt() {
+        // Arrange — a registry-loaded skill carries a StagedResource; the environment decides where it lands
+        StagedResource resource = StagedResource.builder().sourceFileSystem(new NoFileSystemStub())
+                .sourceDir("skills/dir-skill").contentKey("k1").name("dir-skill")
+                .files(List.of("SKILL.md", "templates/report.md", "scripts/run.py")).build();
         Skill skill = Skill.builder().name("dir-skill")
-                .metadata(SkillMetadata.builder().name("dir-skill").description("A skill with a base dir").build())
+                .metadata(SkillMetadata.builder().name("dir-skill").description("A staged skill").build())
                 .content(SkillContent.of("See ${AIMON_SKILL_DIR}/templates/report.md for details"))
-                .baseDir("/skills/dir-skill").build();
+                .putScript("run.py", "skills/dir-skill/scripts/run.py")
+                .putFile("scripts/run.py", "skills/dir-skill/scripts/run.py")
+                .putFile("templates/report.md", "skills/dir-skill/templates/report.md")
+                .putFile("big/asset.bin", "skills/dir-skill/big/asset.bin").stagedResource(resource).build();
         mockRegistry.addSkill(skill);
+        StagingEnvironment environment = new StagingEnvironment("/ws/.aimon-staged/dir-skill/k1");
+        ToolContext context = ToolContext.builder().put(ToolContextKeys.EXECUTION_ENVIRONMENT, environment).build();
 
         SkillTool toolWithDefaultRenderer = new SkillTool(mockRegistry, new DefaultSkillContentRenderer());
 
-        Map<String, Object> input = Map.of("skill", "dir-skill");
-
         // Act
-        ToolResult result = toolWithDefaultRenderer.execute(ToolInput.of(input), emptyContext);
+        ToolResult result = toolWithDefaultRenderer.execute(ToolInput.of(Map.of("skill", "dir-skill")), context);
 
-        // Assert
+        // Assert — ${AIMON_SKILL_DIR} is exactly what stage() returned, and the listing is rebased onto it
         assertThat(result.isError()).isFalse();
-        assertThat(result.getContent()).contains("/skills/dir-skill/templates/report.md");
+        assertThat(environment.staged).containsExactly(resource);
+        assertThat(result.getContent()).contains("See /ws/.aimon-staged/dir-skill/k1/templates/report.md for details");
         assertThat(result.getContent()).doesNotContain("${AIMON_SKILL_DIR}");
+        assertThat(result.getContent()).contains("run.py → /ws/.aimon-staged/dir-skill/k1/scripts/run.py");
+        assertThat(result.getContent())
+                .contains("templates/report.md → /ws/.aimon-staged/dir-skill/k1/templates/report.md");
+        // big/asset.bin was never staged (.stageignore, say), so it is not listed; no repository path leaks
+        assertThat(result.getContent()).doesNotContain("big/asset.bin");
+        assertThat(result.getContent()).doesNotContain("skills/dir-skill");
     }
 
     @Test
-    void testExecute_SkillWithBaseDirAndDivergentResourcePath_PrefersExplicitBaseDir() {
-        // Arrange — explicit baseDir differs from the parent of the only resource path. The explicit baseDir must win
-        // over the derived fallback, pinning the getBaseDir().or(deriveSkillBaseDir(...)) precedence so an inversion is
-        // caught.
-        Skill skill = Skill.builder().name("precedence-skill")
-                .metadata(SkillMetadata.builder().name("precedence-skill").description("base dir precedence").build())
-                .content(SkillContent.of("Load ${AIMON_SKILL_DIR}/templates/report.md"))
-                .baseDir("/skills/precedence-skill").putRootFile("SKILL.md", "/other/loc/SKILL.md").build();
+    void testExecute_HandBuiltSkillWithoutStagedResource_SkillDirRendersEmpty() {
+        // Arrange — no StagedResource: there is no repository path to fall back to
+        Skill skill = Skill.builder().name("bare-skill")
+                .metadata(SkillMetadata.builder().name("bare-skill").description("hand built").build())
+                .content(SkillContent.of("Load [${AIMON_SKILL_DIR}]/templates/report.md"))
+                .putRootFile("SKILL.md", "/other/loc/SKILL.md").build();
         mockRegistry.addSkill(skill);
+        StagingEnvironment environment = new StagingEnvironment("/never");
+        ToolContext context = ToolContext.builder().put(ToolContextKeys.EXECUTION_ENVIRONMENT, environment).build();
 
         SkillTool toolWithDefaultRenderer = new SkillTool(mockRegistry, new DefaultSkillContentRenderer());
 
         // Act
-        ToolResult result = toolWithDefaultRenderer.execute(ToolInput.of(Map.of("skill", "precedence-skill")),
-                emptyContext);
+        ToolResult result = toolWithDefaultRenderer.execute(ToolInput.of(Map.of("skill", "bare-skill")), context);
 
-        // Assert — resolves to the explicit baseDir, not the derived parent "/other/loc"
+        // Assert
         assertThat(result.isError()).isFalse();
-        assertThat(result.getContent()).contains("/skills/precedence-skill/templates/report.md");
-        assertThat(result.getContent()).doesNotContain("/other/loc/templates/report.md");
+        assertThat(environment.staged).isEmpty();
+        assertThat(result.getContent()).contains("Load []/templates/report.md");
+        assertThat(result.getContent()).doesNotContain("/other/loc");
+    }
+
+    @Test
+    void testExecute_StagingFails_ReturnsError() {
+        StagedResource resource = StagedResource.builder().sourceFileSystem(new NoFileSystemStub())
+                .sourceDir("skills/big").contentKey("k1").name("big").totalBytes(1).build();
+        Skill skill = Skill.builder().name("big")
+                .metadata(SkillMetadata.builder().name("big").description("too big").build())
+                .content(SkillContent.of("x")).stagedResource(resource).build();
+        mockRegistry.addSkill(skill);
+        ToolContext context = ToolContext.builder()
+                .put(ToolContextKeys.EXECUTION_ENVIRONMENT, UnavailableExecutionEnvironment.of("sandbox is down"))
+                .build();
+
+        ToolResult result = skillTool.execute(ToolInput.of(Map.of("skill", "big")), context);
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).contains("Failed to stage skill 'big'").contains("sandbox is down");
+    }
+
+    /** An environment whose stage() returns a fixed path and records what it was asked to stage. */
+    private static final class StagingEnvironment implements ExecutionEnvironment {
+        private final String stagedPath;
+        private final List<StagedResource> staged = new ArrayList<>();
+
+        StagingEnvironment(String stagedPath) {
+            this.stagedPath = stagedPath;
+        }
+
+        @Override
+        public VirtualFileSystem fileSystem() {
+            return new NoFileSystemStub();
+        }
+
+        @Override
+        public VirtualShell shell() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public EnvironmentDescriptor descriptor() {
+            return EnvironmentDescriptor.builder().workingDirectory("/ws").build();
+        }
+
+        @Override
+        public String stage(StagedResource resource) {
+            staged.add(resource);
+            return stagedPath;
+        }
+    }
+
+    /** A filesystem the skill tool must never touch directly. */
+    private static final class NoFileSystemStub implements VirtualFileSystem {
+        @Override
+        public void write(String path, java.io.InputStream content, long contentLength) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public java.io.InputStream read(String path) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void delete(String path) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean exists(String path) {
+            return false;
+        }
+
+        @Override
+        public boolean isDirectory(String path) {
+            return false;
+        }
+
+        @Override
+        public FileMetadata getMetadata(String path) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public List<String> list(String directory) {
+            return List.of();
+        }
+
+        @Override
+        public List<String> listRecursive(String directory) {
+            return List.of();
+        }
+
+        @Override
+        public void copy(String sourcePath, String destinationPath, boolean overwrite) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void move(String sourcePath, String destinationPath, boolean overwrite) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public java.io.OutputStream openOutputStream(String path) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public java.io.InputStream openInputStream(String path) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public String getWorkingDirectory() {
+            return "/control";
+        }
+
+        @Override
+        public void initialize() {
+        }
+
+        @Override
+        public BackendStatus getStatus() {
+            return BackendStatus.unknown(BackendType.LOCAL);
+        }
+
+        @Override
+        public void close() {
+        }
     }
 
     /**

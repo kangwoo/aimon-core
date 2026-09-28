@@ -11,6 +11,11 @@ import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.base.Principal;
+import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.environment.StagedResource;
+import at.aimon.core.environment.TestExecutionEnvironments;
+import at.aimon.core.environment.UnavailableExecutionEnvironment;
+import at.aimon.core.environment.exception.ExecutionEnvironmentUnavailableException;
 import at.aimon.core.skill.Skill;
 import at.aimon.core.skill.SkillContent;
 import at.aimon.core.skill.SkillMetadata;
@@ -20,22 +25,46 @@ import at.aimon.core.skill.render.RenderContext;
 class SkillRenderContextAccessTest {
 
     @Test
-    @DisplayName("copies the ToolContext ids and principal and sets the resolved base directory")
+    @DisplayName("copies the ToolContext ids and principal and sets the skill directory to what the environment staged")
     void shouldPopulateFromToolContextAndSkill() {
         Principal principal = Principal.user("alice", "Alice");
-        ToolContext context = ToolContext.builder()
+        ExecutionEnvironment environment = TestExecutionEnvironments.builder().workingDirectory("/ws").build();
+        ToolContext context = ToolContext.builder().put(ToolContextKeys.EXECUTION_ENVIRONMENT, environment)
                 .put(ToolContextKeys.AGENT_RUNTIME_ID, AgentRuntimeId.fromName("ops"))
                 .put(ToolContextKeys.SESSION_ID, SessionId.of("conv-1")).put(ToolContextKeys.PRINCIPAL, principal)
                 .build();
 
-        RenderContext rc = SkillRenderContextAccess.builderFor(skill("s").baseDir("/skills/s").build(), context)
-                .build();
+        // The test environment's stage() answers with the resource's source directory.
+        RenderContext rc = SkillRenderContextAccess
+                .builderFor(skill("s").stagedResource(resource("/ws/.aimon-staged/s/k1")).build(), context).build();
 
         assertThat(rc.getAgentRuntimeId()).contains("agent:ops");
         assertThat(rc.getSessionId()).contains("conv-1");
         assertThat(rc.getExecutionId()).isEmpty();
         assertThat(rc.getPrincipal()).contains(principal);
-        assertThat(rc.getSkillBaseDir()).contains("/skills/s");
+        assertThat(rc.getSkillBaseDir()).contains("/ws/.aimon-staged/s/k1");
+    }
+
+    @Test
+    @DisplayName("leaves the skill directory unset when there is no environment to stage into")
+    void shouldLeaveSkillDirUnsetWithoutEnvironment() {
+        RenderContext rc = SkillRenderContextAccess
+                .builderFor(skill("s").stagedResource(resource("/ws/.aimon-staged/s/k1")).build(), ToolContext.empty())
+                .build();
+
+        assertThat(rc.getSkillBaseDir()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("propagates a staging failure to the caller, which turns it into an error")
+    void shouldPropagateStagingFailure() {
+        ToolContext context = ToolContext.builder()
+                .put(ToolContextKeys.EXECUTION_ENVIRONMENT, UnavailableExecutionEnvironment.of("sandbox is down"))
+                .build();
+        Skill skill = skill("s").stagedResource(resource("/ws/.aimon-staged/s/k1")).build();
+
+        assertThatThrownBy(() -> SkillRenderContextAccess.builderFor(skill, context))
+                .isInstanceOf(ExecutionEnvironmentUnavailableException.class).hasMessageContaining("sandbox is down");
     }
 
     @Test
@@ -67,6 +96,11 @@ class SkillRenderContextAccessTest {
                 .isInstanceOf(NullPointerException.class);
         assertThatThrownBy(() -> SkillRenderContextAccess.builderFor(skill, null))
                 .isInstanceOf(NullPointerException.class);
+    }
+
+    private static StagedResource resource(String sourceDir) {
+        return StagedResource.builder().sourceFileSystem(TestExecutionEnvironments.builder().build().fileSystem())
+                .sourceDir(sourceDir).contentKey("k1").name("s").build();
     }
 
     private static Skill.Builder skill(String name) {

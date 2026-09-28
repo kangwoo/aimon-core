@@ -63,8 +63,13 @@ import at.aimon.core.subagent.task.codec.SessionSnapshotCodec;
  */
 public final class VfsSessionSnapshotStore implements SessionSnapshotStore {
 
-    /** Default base directory for per-task session snapshot objects. */
-    public static final String DEFAULT_BASE_DIR = ".aimon/task-snapshot";
+    /**
+     * Default base directory for per-task session snapshot objects, relative to the root of the filesystem the store is
+     * built over — the
+     * <b>control</b> store, whose root is {@code {project}/.aimon/} in a local assembly, so the physical location is
+     * {@code {project}/.aimon/task-snapshot} as before the control store was split from the workspace.
+     */
+    public static final String DEFAULT_BASE_DIR = "task-snapshot";
 
     private static final Logger log = LoggerFactory.getLogger(VfsSessionSnapshotStore.class);
 

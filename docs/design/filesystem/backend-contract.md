@@ -130,6 +130,20 @@ id 를 스냅샷하고(그 뒤에 찍으면 방금 쓴 리비전이 목록에 �
 
 ---
 
+### 4.2 `getMetadata` 는 내용이 바뀌면 달라진다
+
+파일 도구의 낡은 쓰기 방지([`../tool/execution-environment.md`](../tool/execution-environment.md) §7)는 `Read`
+시점과 수정 시점의 `FileMetadata` 를 비교한다. 그래서 계약에 한 줄이 있다 — **내용이 바뀌면 `modifiedAt` 또는
+`getEtag()` 중 하나가 반드시 바뀐다.** 둘 다 있으면 비교는 etag 를 우선한다.
+
+| 백엔드 | etag | 근거 |
+|--------|------|------|
+| S3 | `ETag` (`HeadObject` 응답) | 내용이 바뀌면 바뀐다 |
+| GridFS | 파일 문서의 `ObjectId` hex | 쓰기마다 새 문서를 올리므로 다시 쓰면 바뀐다. 드라이버 5.x 에는 md5 가 없다. 같은 내용을 다시 써도 바뀌는 것은 안전한 쪽의 오탐이다 |
+| 로컬 | 없음 | nanosecond mtime + 크기로 판정. 초 단위 mtime 파일 시스템(HFS+, 일부 네트워크 마운트)에서 같은 초·같은 크기의 재작성은 놓칠 수 있다 |
+
+감싸는 데코레이터(`ScopedVirtualFileSystem`, `PathRuleVirtualFileSystem`)는 etag 를 그대로 전달한다.
+
 ## 5. 최대 파일 크기 — 로컬 전용 설정에서 전 백엔드 계약으로
 
 `maxFileSize` 는 원래 `LocalFileSystemConfig` 의 필드였다. 같은 에이전트를 GridFS 나 S3 로 옮기면 그

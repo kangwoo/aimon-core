@@ -26,8 +26,6 @@ import at.aimon.core.agent.impl.AgentBundle;
 import at.aimon.core.agent.impl.orca.command.OrcaCommandProvider;
 import at.aimon.core.agent.impl.orca.command.OrcaCommandProviderContext;
 import at.aimon.core.agent.impl.orca.command.OrcaSystemCommandProvider;
-import at.aimon.core.agent.impl.orca.environment.LocalShells;
-import at.aimon.core.agent.impl.orca.environment.WorktreeToolEnvironmentFactory;
 import at.aimon.core.agent.impl.orca.tool.OrcaBashToolProvider;
 import at.aimon.core.agent.impl.orca.tool.OrcaFileToolProvider;
 import at.aimon.core.agent.impl.orca.tool.OrcaSchedulingToolProvider;
@@ -44,6 +42,7 @@ import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.command.DefaultCommandRegistry;
 import at.aimon.core.command.SystemCommand;
 import at.aimon.core.credential.CredentialStore;
+import at.aimon.core.environment.ExecutionEnvironmentProvider;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
@@ -58,7 +57,6 @@ import at.aimon.core.mcp.McpClientManager;
 import at.aimon.core.mcp.McpServerConfigProvider;
 import at.aimon.core.mcp.orca.OrcaMcpToolProvider;
 import at.aimon.core.scheduling.ScheduledTaskManager;
-import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.skill.CompositeSkillRegistry;
 import at.aimon.core.skill.DefaultSkillRegistry;
 import at.aimon.core.skill.SkillRegistry;
@@ -85,7 +83,6 @@ import at.aimon.core.tools.session.SessionHistoryTool;
 import at.aimon.core.workflow.WorkflowRunner;
 import at.aimon.core.workflow.WorkflowRunnerOptions;
 import at.aimon.core.workflow.WorkflowRunners;
-import at.aimon.core.workflow.WorktreeEnvironmentFactory;
 
 /**
  * Factory for creating {@link OrcaAgentRuntime} instances.
@@ -103,7 +100,7 @@ import at.aimon.core.workflow.WorktreeEnvironmentFactory;
  *     OrcaAgentRuntimeFactory factory = new OrcaAgentRuntimeFactory();
  *     AgentBundle bundle = agentBundleLoader.load("default");
  *     OrcaAgentRuntime context = factory.create(agentRuntimeId, executor, scheduledTaskManager, bundle,
- *             fileSystem, credentialStore, OrcaAgentRuntimeFactory.defaultToolProviders(),
+ *             controlFileSystem, credentialStore, OrcaAgentRuntimeFactory.defaultToolProviders(),
  *             OrcaAgentRuntimeFactory.defaultCommandProviders());
  * }
  * </pre>
@@ -119,11 +116,28 @@ import at.aimon.core.workflow.WorktreeEnvironmentFactory;
  *     List<OrcaCommandProvider> customCommandProviders = List.of(new OrcaSystemCommandProvider(),
  *             new CustomCommandProvider());
  *     OrcaAgentRuntime context = factory.create(agentRuntimeId, executor, scheduledTaskManager, bundle,
- *             fileSystem, credentialStore, customToolProviders, customCommandProviders);
+ *             controlFileSystem, credentialStore, customToolProviders, customCommandProviders);
  * }
  * </pre>
  */
 public class OrcaAgentRuntimeFactory {
+
+    /**
+     * Default directory of command definitions, relative to the <b>control</b> filesystem root. With the control root
+     * at {@code {project}/.aimon/} this is physically {@code {project}/.aimon/commands}, as before the control store
+     * was split from the workspace.
+     */
+    public static final String DEFAULT_COMMANDS_DIRECTORY = "commands";
+
+    /** Default directory of subagent definitions, relative to the control filesystem root. */
+    public static final String DEFAULT_AGENTS_DIRECTORY = "agents";
+
+    /** Default directory of user skill definitions, relative to the control filesystem root. */
+    public static final String DEFAULT_SKILLS_DIRECTORY = "skills";
+
+    private static final String NO_PROVIDER_MESSAGE = "No ExecutionEnvironmentProvider configured: call "
+            + "withExecutionEnvironmentProvider(...) or withExecutionEnvironmentProviderFactory(...) on the "
+            + "OrcaAgentRuntimeFactory";
 
     /**
      * Returns the default tool providers.
@@ -195,10 +209,11 @@ public class OrcaAgentRuntimeFactory {
     private SkillInvocationPolicy skillInvocationPolicy;
     private SkillRegistry preBuiltSkillRegistry;
     private List<ToolContextEnricher> toolContextEnrichers = List.of();
-    // TCH-01: the shell that command-executing tools run through. Null => each context builds its own local shell and
-    // owns it (OrcaAgentRuntime.ownedShell). Supplied => the assembly owns it and closes it; that is how a sandboxed
-    // (Docker/Kubernetes) shell gets wired in, and how one shell comes to be shared with the skill hooks.
-    private VirtualShell shell;
+    // Execution-environment design §4.3/§9: the provider each created runtime resolves its executions' environments
+    // from — the filesystem the model's tools see and the shell Bash runs in. Keyed by runtime id so an assembly can
+    // hand each runtime its own provider (bootstrap does) or all of them one. Required: create(...) refuses without
+    // it. The runtime borrows the provider and never closes it; the assembly that built it does.
+    private Function<AgentRuntimeId, ExecutionEnvironmentProvider> executionEnvironmentProviderFactory;
     private RewakeService rewakeService;
     // Code-defined subagents: composed as the highest-priority (authoritative) subagent layer. When non-null this
     // registry is layered after the bundled and user (agents/*.md) registries so code definitions cannot be shadowed
@@ -222,12 +237,6 @@ public class OrcaAgentRuntimeFactory {
     // and closes it. Off by default — no hosting pool is created and the tool's background mode reports unavailable.
     // Note: enabling this for many agents/discriminators multiplies the per-context hosting + fan-out pools.
     private boolean workflowRunnerEnabled;
-    // Design §6.3 — bootstrap override for the worktree isolation factory wired into each per-context
-    // workflow runner, expressed (like the store factories above) as a factory over the context's
-    // VirtualFileSystem. Null => the built-in WorktreeToolEnvironmentFactory, which rebinds the file tools to a
-    // branch-scoped VFS. A bootstrap supplies an alternative implementation for e.g. Bash-inclusive isolation or
-    // overlay read-through without touching buildWorkflowRunner.
-    private Function<VirtualFileSystem, WorktreeEnvironmentFactory> worktreeEnvironmentFactoryFactory;
     // Context-engine design §10: the engine an agent gets when its AGENT.md does not name one, and the session log
     // format this node writes. The two meet at runtime creation: rolling keeps its summary span in the view state,
     // which a version-1 record cannot store, so asking for it on a version-1 node fails there (session-log §7.3).
@@ -240,7 +249,7 @@ public class OrcaAgentRuntimeFactory {
      * Creates a factory with default configuration.
      */
     public OrcaAgentRuntimeFactory() {
-        this("1.0.0", ".aimon/commands", ".aimon/agents", ".aimon/skills", null);
+        this("1.0.0", DEFAULT_COMMANDS_DIRECTORY, DEFAULT_AGENTS_DIRECTORY, DEFAULT_SKILLS_DIRECTORY, null);
     }
 
     /**
@@ -412,21 +421,30 @@ public class OrcaAgentRuntimeFactory {
     }
 
     /**
-     * TCH-01: supplies the {@link VirtualShell} that command-executing tools run through, so an assembly can swap in a
-     * sandboxed (Docker/Kubernetes) shell — or hand over the shell it already builds for the skill hooks, letting both
-     * share one instance ({@code VirtualShell} implementations are required to be thread-safe).
+     * Supplies the {@link ExecutionEnvironmentProvider} every created runtime resolves its executions' environments
+     * from (execution-environment design §4). The provider owns the filesystem the model's tools see and the shell
+     * {@code Bash} runs in; the runtime only borrows it and never closes it — the caller does.
      *
-     * <p>
-     * <b>Ownership follows creation.</b> A shell passed here belongs to the caller, which closes it; the created
-     * runtime only borrows it. When this is left unset each context builds its own local shell instead and closes that
-     * one on {@link OrcaAgentRuntime#close()}.
-     *
-     * @param shell
-     *            the shell to share (may be {@code null} to fall back to a per-context local shell)
+     * @param provider
+     *            the provider shared by every runtime this factory creates (may be {@code null} to clear)
      * @return this factory (for chaining)
      */
-    public OrcaAgentRuntimeFactory withShell(VirtualShell shell) {
-        this.shell = shell;
+    public OrcaAgentRuntimeFactory withExecutionEnvironmentProvider(ExecutionEnvironmentProvider provider) {
+        this.executionEnvironmentProviderFactory = provider == null ? null : id -> provider;
+        return this;
+    }
+
+    /**
+     * Supplies a per-runtime {@link ExecutionEnvironmentProvider}: {@code create(...)} asks the function once with the
+     * runtime id. Bootstrap uses this to give each runtime a provider over its own workspace.
+     *
+     * @param factory
+     *            maps a runtime id to its provider (may be {@code null} to clear)
+     * @return this factory (for chaining)
+     */
+    public OrcaAgentRuntimeFactory withExecutionEnvironmentProviderFactory(
+            Function<AgentRuntimeId, ExecutionEnvironmentProvider> factory) {
+        this.executionEnvironmentProviderFactory = factory;
         return this;
     }
 
@@ -583,26 +601,6 @@ public class OrcaAgentRuntimeFactory {
     }
 
     /**
-     * Design §6.3 — overrides how each per-context workflow runner's
-     * {@link WorktreeEnvironmentFactory} is built from the context's {@link VirtualFileSystem}. When {@code null}
-     * (the default) the built-in {@link WorktreeToolEnvironmentFactory} is used, which rebinds the file tools to a
-     * branch-scoped filesystem view for {@code isolate=true} steps. Supply a factory to install an alternative
-     * isolation strategy (e.g. Bash-inclusive isolation via a scoped working directory, or overlay read-through)
-     * without touching {@link #buildWorkflowRunner}. Only consulted when
-     * {@link #withWorkflowRunnerEnabled(boolean)} is on.
-     *
-     * @param factory
-     *            builds the worktree environment factory from the context's file system (may be {@code null} to
-     *            restore the default)
-     * @return this factory (for chaining)
-     */
-    public OrcaAgentRuntimeFactory withWorktreeEnvironmentFactory(
-            Function<VirtualFileSystem, WorktreeEnvironmentFactory> factory) {
-        this.worktreeEnvironmentFactoryFactory = factory;
-        return this;
-    }
-
-    /**
      * Builds the composite {@link SkillRegistry} layered as bundled (low priority) + user (high priority), matching
      * what {@link #doCreate} constructs internally. Exposed so AgentSetupFactory (or analogous bootstrap code) can
      * pre-build the registry and share the same instance with both the executor's pre-flight scanner and this
@@ -739,8 +737,9 @@ public class OrcaAgentRuntimeFactory {
      *            the scheduled task manager (may be null)
      * @param agentBundle
      *            the agent bundle containing agent and optional registries
-     * @param fileSystem
-     *            the virtual file system
+     * @param controlFileSystem
+     *            the control store (agent, skill and command definitions, task outputs, snapshots); never shown to
+     *            the model's file tools, which work in the execution environment instead
      * @param credentialStore
      *            the credential store for reference-based credential resolution (may be null)
      * @param toolProviders
@@ -754,11 +753,11 @@ public class OrcaAgentRuntimeFactory {
     // Context creation requires the full irreducible collaborator set (parity with sibling create()/doCreate()).
     @SuppressWarnings("checkstyle:ParameterNumber")
     public OrcaAgentRuntime create(AgentRuntimeId agentRuntimeId, OrcaAgentExecutor agentExecutor,
-            ScheduledTaskManager scheduledTaskManager, AgentBundle agentBundle, VirtualFileSystem fileSystem,
+            ScheduledTaskManager scheduledTaskManager, AgentBundle agentBundle, VirtualFileSystem controlFileSystem,
             CredentialStore credentialStore, List<OrcaToolProvider> toolProviders,
             List<OrcaCommandProvider> commandProviders) {
-        return doCreate(agentRuntimeId, agentExecutor, scheduledTaskManager, agentBundle, fileSystem, credentialStore,
-                toolProviders, commandProviders, null);
+        return doCreate(agentRuntimeId, agentExecutor, scheduledTaskManager, agentBundle, controlFileSystem,
+                credentialStore, toolProviders, commandProviders, null);
     }
 
     /**
@@ -775,8 +774,9 @@ public class OrcaAgentRuntimeFactory {
      *            the scheduled task manager (may be null)
      * @param agent
      *            the agent
-     * @param fileSystem
-     *            the virtual file system
+     * @param controlFileSystem
+     *            the control store (agent, skill and command definitions, task outputs, snapshots); never shown to
+     *            the model's file tools, which work in the execution environment instead
      * @param credentialStore
      *            the credential store for reference-based credential resolution (may be null)
      * @param toolProviders
@@ -790,13 +790,13 @@ public class OrcaAgentRuntimeFactory {
     // Context creation requires the full irreducible collaborator set (parity with sibling create()/doCreate()).
     @SuppressWarnings("checkstyle:ParameterNumber")
     public OrcaAgentRuntime create(AgentRuntimeId agentRuntimeId, OrcaAgentExecutor agentExecutor,
-            ScheduledTaskManager scheduledTaskManager, Agent agent, VirtualFileSystem fileSystem,
+            ScheduledTaskManager scheduledTaskManager, Agent agent, VirtualFileSystem controlFileSystem,
             CredentialStore credentialStore, List<OrcaToolProvider> toolProviders,
             List<OrcaCommandProvider> commandProviders) {
         Objects.requireNonNull(agent, "agent must not be null");
 
         final AgentBundle bundle = AgentBundle.builder().agent(agent).build();
-        return create(agentRuntimeId, agentExecutor, scheduledTaskManager, bundle, fileSystem, credentialStore,
+        return create(agentRuntimeId, agentExecutor, scheduledTaskManager, bundle, controlFileSystem, credentialStore,
                 toolProviders, commandProviders);
     }
 
@@ -816,8 +816,9 @@ public class OrcaAgentRuntimeFactory {
      *            the scheduled task manager (may be null)
      * @param agentBundle
      *            the agent bundle containing agent and optional registries
-     * @param fileSystem
-     *            the virtual file system
+     * @param controlFileSystem
+     *            the control store (agent, skill and command definitions, task outputs, snapshots); never shown to
+     *            the model's file tools, which work in the execution environment instead
      * @param credentialStore
      *            the credential store for reference-based credential resolution (may be null)
      * @param toolProviders
@@ -834,7 +835,7 @@ public class OrcaAgentRuntimeFactory {
      */
     @SuppressWarnings("checkstyle:ParameterNumber")
     public OrcaAgentRuntime create(AgentRuntimeId agentRuntimeId, OrcaAgentExecutor agentExecutor,
-            ScheduledTaskManager scheduledTaskManager, AgentBundle agentBundle, VirtualFileSystem fileSystem,
+            ScheduledTaskManager scheduledTaskManager, AgentBundle agentBundle, VirtualFileSystem controlFileSystem,
             CredentialStore credentialStore, List<OrcaToolProvider> toolProviders,
             List<OrcaCommandProvider> commandProviders, McpClientFactory mcpClientFactory,
             McpServerConfigProvider mcpServerConfigProvider) {
@@ -850,7 +851,7 @@ public class OrcaAgentRuntimeFactory {
             allProviders.add(new OrcaMcpToolProvider(mcpServerConfigProvider, mcpClientManager));
 
             // 3. Delegate to internal create with mcpClientManager for lifecycle management
-            return doCreate(agentRuntimeId, agentExecutor, scheduledTaskManager, agentBundle, fileSystem,
+            return doCreate(agentRuntimeId, agentExecutor, scheduledTaskManager, agentBundle, controlFileSystem,
                     credentialStore, allProviders, commandProviders, mcpClientManager);
         } catch (Exception e) {
             // Clean up McpClientManager if context creation fails to prevent resource leak
@@ -862,19 +863,20 @@ public class OrcaAgentRuntimeFactory {
     // deprecation: the version-1 compaction SPI (the guard) is carried through on purpose
     @SuppressWarnings({"checkstyle:ParameterNumber", "deprecation"})
     private OrcaAgentRuntime doCreate(AgentRuntimeId agentRuntimeId, OrcaAgentExecutor agentExecutor,
-            ScheduledTaskManager scheduledTaskManager, AgentBundle agentBundle, VirtualFileSystem fileSystem,
+            ScheduledTaskManager scheduledTaskManager, AgentBundle agentBundle, VirtualFileSystem controlFileSystem,
             CredentialStore credentialStore, List<OrcaToolProvider> toolProviders,
             List<OrcaCommandProvider> commandProviders, McpClientManager mcpClientManager) {
         Objects.requireNonNull(agentRuntimeId, "agentRuntimeId must not be null");
         Objects.requireNonNull(agentExecutor, "agentExecutor must not be null");
         Objects.requireNonNull(agentBundle, "agentBundle must not be null");
-        Objects.requireNonNull(fileSystem, "fileSystem must not be null");
+        Objects.requireNonNull(controlFileSystem, "controlFileSystem must not be null");
         Objects.requireNonNull(toolProviders, "toolProviders must not be null");
         Objects.requireNonNull(commandProviders, "commandProviders must not be null");
+        final ExecutionEnvironmentProvider executionEnvironmentProvider = resolveEnvironmentProvider(agentRuntimeId);
 
         final Agent agent = agentBundle.getAgent();
         final SubagentExecutionManager subagentExecutionManager = agentExecutor.getSubagentExecutionManager();
-        final Environment environment = Environment.createWithWorkingDirectory(fileSystem.getWorkingDirectory());
+        final Environment environment = Environment.createDefault();
 
         // Initialize registries
         final ToolRegistry toolRegistry = new DefaultToolRegistry();
@@ -882,7 +884,7 @@ public class OrcaAgentRuntimeFactory {
 
         // Initialize subagent registry: bundled (low) < user (mid) < code (high, authoritative). The optional code
         // layer carries programmatically-defined subagents (withCodeSubagentRegistry) and is placed last so it wins.
-        final SubagentRegistry userSubagentRegistry = new DefaultSubagentRegistry(fileSystem, agentsDirectory);
+        final SubagentRegistry userSubagentRegistry = new DefaultSubagentRegistry(controlFileSystem, agentsDirectory);
         final SubagentRegistry subagentRegistry = buildCompositeSubagentRegistry(agentBundle.getSubagentRegistry(),
                 userSubagentRegistry, preBuiltCodeSubagentRegistry);
 
@@ -892,13 +894,13 @@ public class OrcaAgentRuntimeFactory {
         // the same instance.
         final SkillRegistry skillRegistry = preBuiltSkillRegistry != null
                 ? preBuiltSkillRegistry
-                : buildSkillRegistry(agentBundle, fileSystem, skillsDirectory);
+                : buildSkillRegistry(agentBundle, controlFileSystem, skillsDirectory);
 
         // Initialize command registry: system > skill-backed. The legacy .aimon/commands directory is scanned for
         // migration enforcement (SK-08-F) — initialize() throws if any *.md files remain. Cross-source name conflicts
         // are rejected here too.
         final DefaultCommandRegistry commandRegistry = new DefaultCommandRegistry(List.<SystemCommand>of(),
-                skillRegistry, fileSystem, commandsDirectory);
+                skillRegistry, controlFileSystem, commandsDirectory);
         commandRegistry.initialize();
 
         // Build conversation-compaction collaborators. The engine pulls the LlmClient and HookExecutionManager from
@@ -927,8 +929,8 @@ public class OrcaAgentRuntimeFactory {
         // reconstruct the log from the shared file system. Best-effort: append/read failures degrade to a no-op sink.
         // Subagent §5: a bootstrap may override the store factory (e.g. a different base dir / backend); default VFS.
         final TaskOutputStore taskOutputStore = taskOutputStoreFactory != null
-                ? taskOutputStoreFactory.apply(fileSystem)
-                : new VfsTaskOutputStore(fileSystem);
+                ? taskOutputStoreFactory.apply(controlFileSystem)
+                : new VfsTaskOutputStore(controlFileSystem);
 
         // Persist finished subagents' session snapshots so a later Task(resume=<taskId>) continues the prior
         // transcript. The default store is in-memory and agent-scoped (lives as long as this agent runtime), so
@@ -937,7 +939,7 @@ public class OrcaAgentRuntimeFactory {
         // each snapshot as a single JSON object via the JsonSessionSnapshotCodec, so a GridFS/S3 backing file
         // system lets any node reload it. The default stays in-memory to avoid a serialization cost when scale-out off.
         final SessionSnapshotStore sessionSnapshotStore = sessionSnapshotStoreFactory != null
-                ? sessionSnapshotStoreFactory.apply(fileSystem)
+                ? sessionSnapshotStoreFactory.apply(controlFileSystem)
                 : new InMemorySessionSnapshotStore();
 
         // Persist what each background task finally produced, so AgentOutput reads a store rather than a node-local
@@ -946,7 +948,7 @@ public class OrcaAgentRuntimeFactory {
         // task settle can always read why. Default in-memory and agent-scoped, matching the snapshot store above;
         // withDistributedTaskResultStore()/withTaskResultStoreFactory(...) swaps in the VFS-backed store.
         final TaskResultStore taskResultStore = taskResultStoreFactory != null
-                ? taskResultStoreFactory.apply(fileSystem)
+                ? taskResultStoreFactory.apply(controlFileSystem)
                 : new InMemoryTaskResultStore();
 
         // Build shared provider dependencies once
@@ -969,19 +971,14 @@ public class OrcaAgentRuntimeFactory {
         // invoking execution's principal or trace attribution.
         final WorkflowRunner workflowRunner = workflowRunnerEnabled
                 ? buildWorkflowRunner(agentRuntimeId, agent, subagentRegistry, toolRegistry, hookRegistry, environment,
-                        subagentExecutionManager, toolContextEnrichers, fileSystem)
+                        subagentExecutionManager, toolContextEnrichers, executionEnvironmentProvider)
                 : null;
 
-        // TCH-01: tools consume the shell through the context, never by constructing one (ArchUnit confines
-        // at.aimon.core.shell.impl to the shell tree and the in-core assembler package that LocalShells lives in).
-        // When the assembly supplied no shell we build the default here and hand it to the runtime as ownedShell, so
-        // whoever created it is the one who closes it.
-        final VirtualShell ownedShell = shell == null ? LocalShells.create() : null;
-        final VirtualShell effectiveShell = shell != null ? shell : ownedShell;
-
-        // Create tool provider context (null-safe: scheduledTaskManager may be null if scheduling is not configured)
-        final OrcaToolProviderContext context = OrcaToolProviderContext.builder().fileSystem(fileSystem)
-                .shell(effectiveShell).environment(environment).agent(agent).dependencies(providerDependencies)
+        // Create tool provider context (null-safe: scheduledTaskManager may be null if scheduling is not configured).
+        // It carries the control store but no working filesystem or shell: tools read those from the execution's
+        // environment on every call, so no provider can capture them at registration time (design §6).
+        final OrcaToolProviderContext context = OrcaToolProviderContext.builder().controlFileSystem(controlFileSystem)
+                .environment(environment).agent(agent).dependencies(providerDependencies)
                 .toolContextEnrichers(toolContextEnrichers).workflowRunner(workflowRunner).build();
 
         // Register tools via providers
@@ -1005,13 +1002,39 @@ public class OrcaAgentRuntimeFactory {
 
         return OrcaAgentRuntime.builder().id(agentRuntimeId).agent(agent).toolRegistry(toolRegistry)
                 .hookRegistry(hookRegistry).commandRegistry(commandRegistry).subagentRegistry(subagentRegistry)
-                .skillRegistry(skillRegistry).fileSystem(fileSystem).environment(environment)
+                .skillRegistry(skillRegistry).controlFileSystem(controlFileSystem).environment(environment)
                 .mcpClientManager(mcpClientManager).knowledgeStore(knowledgeStore).compactionEngine(compactionEngine)
                 .compactionGuard(compactionGuard)
                 // Still exposed on its own for callers that read it; the executor consults it through the engine.
                 .promptSizeRecoveryStrategy(recoveryStrategy).contextEngine(contextEngine)
-                .toolContextEnrichers(toolContextEnrichers).workflowRunner(workflowRunner).ownedShell(ownedShell)
-                .build();
+                .toolContextEnrichers(toolContextEnrichers).workflowRunner(workflowRunner)
+                .executionEnvironmentProvider(executionEnvironmentProvider).build();
+    }
+
+    /**
+     * Fails fast when no provider is configured, so an assembly that holds this factory (such as
+     * {@link OrcaAgentRuntimeManager.Builder#build()}) refuses at startup rather than at the first {@code create(...)}.
+     *
+     * @throws IllegalStateException
+     *             if neither {@link #withExecutionEnvironmentProvider} nor
+     *             {@link #withExecutionEnvironmentProviderFactory} has supplied one
+     */
+    void requireExecutionEnvironmentProvider() {
+        if (executionEnvironmentProviderFactory == null) {
+            throw new IllegalStateException(NO_PROVIDER_MESSAGE);
+        }
+    }
+
+    /**
+     * Returns the provider the runtime's executions resolve their environment from. A factory without one refuses to
+     * build a runtime: the model's tools would otherwise run somewhere nobody chose.
+     */
+    private ExecutionEnvironmentProvider resolveEnvironmentProvider(AgentRuntimeId agentRuntimeId) {
+        if (executionEnvironmentProviderFactory == null) {
+            throw new IllegalStateException(NO_PROVIDER_MESSAGE + " (runtime " + agentRuntimeId + ")");
+        }
+        return Objects.requireNonNull(executionEnvironmentProviderFactory.apply(agentRuntimeId),
+                "ExecutionEnvironmentProvider factory returned null for " + agentRuntimeId);
     }
 
     /**
@@ -1046,15 +1069,15 @@ public class OrcaAgentRuntimeFactory {
     /**
      * Builds the per-context (agent-scoped) {@link WorkflowRunner}. It borrows this context's registries /
      * manager through a base {@link SubagentExecutionEnvironment} (never owning or closing them) and is configured with
-     * an in-memory resume step cache; the run store and background hosting pool take their in-memory defaults. The
-     * worktree isolation factory defaults to {@link WorktreeToolEnvironmentFactory} unless overridden via
-     * {@link #withWorktreeEnvironmentFactory(Function)}.
+     * an in-memory resume step cache; the run store and background hosting pool take their in-memory defaults. The base
+     * environment carries the runtime's execution environment provider but no parent environment — there is no
+     * calling execution — so an isolated step resolves one and derives its branch with {@code isolate()}.
      */
     @SuppressWarnings("checkstyle:ParameterNumber")
     private WorkflowRunner buildWorkflowRunner(AgentRuntimeId agentRuntimeId, Agent agent,
             SubagentRegistry subagentRegistry, ToolRegistry toolRegistry, HookRegistry hookRegistry,
             Environment environment, SubagentExecutionManager subagentExecutionManager,
-            List<ToolContextEnricher> toolContextEnrichers, VirtualFileSystem fileSystem) {
+            List<ToolContextEnricher> toolContextEnrichers, ExecutionEnvironmentProvider executionEnvironmentProvider) {
         // No invokingSessionId here, deliberately: this runner is agent-scoped and outlives every session
         // that uses it, so there is no one session whose skill approvals it could inherit. The per-call runners
         // built inside WorkflowTool / GraalJsWorkflowTool do carry it, because those are built per invocation from the
@@ -1065,16 +1088,10 @@ public class OrcaAgentRuntimeFactory {
         final SubagentExecutionEnvironment baseEnv = SubagentExecutionEnvironment.builder()
                 .agentRuntimeId(agentRuntimeId).subagentRegistry(subagentRegistry).toolRegistry(toolRegistry)
                 .hookRegistry(hookRegistry).environment(environment).defaultModel(agent.getMetadata().getModel())
-                .toolContextEnrichers(toolContextEnrichers).callerAllowedTools(agent.getAllowedTools()).build();
-        // Wire the worktree environment factory so an `isolate=true` workflow step gets a per-branch scoped
-        // filesystem view (it fails loud if a script requests isolation and none is wired). Isolation stays
-        // opt-in per AgentTask; wiring the factory only makes it available. A bootstrap may swap the built-in
-        // file-tool rebinding implementation via withWorktreeEnvironmentFactory(...) (design §4.3d/§4.3f).
-        final WorktreeEnvironmentFactory worktreeFactory = worktreeEnvironmentFactoryFactory != null
-                ? worktreeEnvironmentFactoryFactory.apply(fileSystem)
-                : new WorktreeToolEnvironmentFactory(fileSystem);
-        return WorkflowRunners.create(subagentExecutionManager, baseEnv, WorkflowRunnerOptions.builder()
-                .stepResultCache(WorkflowRunners.inMemoryStepResultCache()).worktreeFactory(worktreeFactory).build());
+                .toolContextEnrichers(toolContextEnrichers).callerAllowedTools(agent.getAllowedTools())
+                .executionEnvironmentProvider(executionEnvironmentProvider).build();
+        return WorkflowRunners.create(subagentExecutionManager, baseEnv,
+                WorkflowRunnerOptions.builder().stepResultCache(WorkflowRunners.inMemoryStepResultCache()).build());
     }
 
     /**

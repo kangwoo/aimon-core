@@ -8,11 +8,14 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
+import at.aimon.core.environment.StagedResource;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.skill.exception.SkillNotFoundException;
+import at.aimon.core.skill.exception.SkillRepositoryException;
 import at.aimon.core.skill.parser.MarkdownSkillParser;
 import at.aimon.core.skill.parser.SkillParser;
 import at.aimon.core.skill.repository.SkillRepository;
+import at.aimon.core.skill.repository.SkillSource;
 import at.aimon.core.skill.repository.VfsSkillRepository;
 
 /**
@@ -60,6 +63,9 @@ import at.aimon.core.skill.repository.VfsSkillRepository;
  * </pre>
  */
 public class DefaultSkillRegistry implements SkillRegistry {
+
+    /** The file whose presence makes a directory a skill. */
+    private static final String SKILL_FILE = "SKILL.md";
 
     private final SkillRepository repository;
     private final SkillParser parser;
@@ -129,13 +135,15 @@ public class DefaultSkillRegistry implements SkillRegistry {
     }
 
     /**
-     * Loads a skill and enriches it with all of its bundled files and base directory.
+     * Loads a skill and enriches it with all of its bundled files and its staging resource.
      *
      * <p>
      * Returns empty when the repository has no SKILL.md for {@code skillName}. The returned skill carries the
      * three conventional file categories (rootFiles, scripts, references, assets), the comprehensive {@code files} map
-     * (covering arbitrary sub-directories such as {@code templates/}), and the base directory when the repository can
-     * resolve one.
+     * (covering arbitrary sub-directories such as {@code templates/}), and the {@link StagedResource} its directory is
+     * staged from. The resource is scanned — listed, {@code .stageignore}d and hashed — here, once per (re)load, so
+     * staging never re-reads the directory to decide whether a copy exists (execution-environment design §4.4). A
+     * repository that finds the skill but gives no staging source is defective, and the skill does not load.
      *
      * @param skillName
      *            the skill name (must not be null)
@@ -157,12 +165,46 @@ public class DefaultSkillRegistry implements SkillRegistry {
         final Map<String, String> assets = repository.findAssets(skillName);
         final Map<String, String> files = repository.findAllFiles(skillName);
 
-        // Build complete skill with all files and the resolved base directory
+        // Build complete skill with all files and the scanned staging resource
         final Skill.Builder builder = Skill.builder().name(skill.getName()).metadata(skill.getMetadata())
                 .content(skill.getContent()).rootFiles(rootFiles).scripts(scripts).references(references).assets(assets)
-                .files(files);
-        repository.resolveBaseDir(skillName).ifPresent(builder::baseDir);
+                .files(files).stagedResource(scanSource(skillName));
         return Optional.of(builder.build());
+    }
+
+    private StagedResource scanSource(String skillName) {
+        final SkillSource source = repository.resolveSource(skillName)
+                .orElseThrow(() -> new SkillRepositoryException(repository.getClass().getName()
+                        + " returned no staging source for existing skill '" + skillName + "'"));
+        final StagedResource resource;
+        try {
+            resource = StagedResource.scan(source.getFileSystem(), source.getDirectory(), skillName);
+        } catch (RuntimeException e) {
+            throw new SkillRepositoryException(
+                    String.format("Failed to scan skill '%s' for staging: %s", skillName, e.getMessage()), e);
+        }
+        // A source directory that holds SKILL.md but scans to no file at all could not see its own contents (a link
+        // it did not follow, say). Staging it would serve an empty copy under ${AIMON_SKILL_DIR} with nothing
+        // reporting it; fail here instead (design §4.4, the link rule).
+        if (resource.getFiles().isEmpty() && holdsSkillFile(source)) {
+            throw new SkillRepositoryException(String.format(
+                    "Skill '%s' holds SKILL.md but its directory '%s' scanned to zero files; refusing to stage an"
+                            + " empty copy",
+                    skillName, source.getDirectory()));
+        }
+        return resource;
+    }
+
+    private static boolean holdsSkillFile(SkillSource source) {
+        final String directory = source.getDirectory().replaceAll("/+$", "");
+        final String skillFile = directory.isEmpty() || ".".equals(directory)
+                ? SKILL_FILE
+                : directory + "/" + SKILL_FILE;
+        try {
+            return source.getFileSystem().exists(skillFile);
+        } catch (RuntimeException e) {
+            throw new SkillRepositoryException("Failed to check " + skillFile + " of a scanned skill", e);
+        }
     }
 
     @Override

@@ -19,7 +19,6 @@ import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.subagent.SubagentExecutionManager;
 import at.aimon.core.subagent.SubagentRegistry;
-import at.aimon.core.workflow.WorktreeEnvironmentFactory;
 import at.aimon.workflow.graaljs.GraalJsEngineHolder;
 import at.aimon.workflow.graaljs.GraalJsWorkflowTool;
 
@@ -28,7 +27,7 @@ import at.aimon.workflow.graaljs.GraalJsWorkflowTool;
  * {@code WorkflowJs} tool.
  *
  * <p>
- * The {@link GraalJsEngineHolder} and {@link WorktreeEnvironmentFactory} are mocked (Mockito 5 mocks the final holder
+ * The {@link GraalJsEngineHolder} is mocked (Mockito 5 mocks the final holder
  * without spinning up a real GraalVM engine): the provider only stores the references and hands them to the tool
  * builder, so no engine method runs during registration.
  */
@@ -53,22 +52,9 @@ class GraalJsWorkflowToolProviderTest {
     }
 
     @Test
-    void registerTools_registersWorkflowJsTool_withoutWorktreeFactory() {
-        final GraalJsWorkflowToolProvider provider = new GraalJsWorkflowToolProvider(mock(GraalJsEngineHolder.class),
-                null);
-        final ToolRegistry registry = new DefaultToolRegistry();
-
-        provider.registerTools(registry, newContext());
-
-        assertThat(registry.findByName(GraalJsWorkflowTool.TOOL_NAME)).isPresent();
-        assertThat(registry.size()).isEqualTo(1);
-    }
-
-    @Test
-    void registerTools_registersWorkflowJsTool_withWorktreeFactory() {
-        // A non-null worktree factory exercises the worktree-builder branch (isolation:'worktree' descriptors).
-        final GraalJsWorkflowToolProvider provider = new GraalJsWorkflowToolProvider(mock(GraalJsEngineHolder.class),
-                mock(WorktreeEnvironmentFactory.class));
+    void registerTools_registersWorkflowJsTool() {
+        // No worktree factory any more: an isolated step derives its branch from the execution environment.
+        final GraalJsWorkflowToolProvider provider = new GraalJsWorkflowToolProvider(mock(GraalJsEngineHolder.class));
         final ToolRegistry registry = new DefaultToolRegistry();
 
         provider.registerTools(registry, newContext());
@@ -79,13 +65,12 @@ class GraalJsWorkflowToolProviderTest {
 
     @Test
     void constructor_rejectsNullEngines() {
-        assertThatNullPointerException().isThrownBy(() -> new GraalJsWorkflowToolProvider(null, null));
+        assertThatNullPointerException().isThrownBy(() -> new GraalJsWorkflowToolProvider(null));
     }
 
     @Test
     void registerTools_rejectsNullArguments() {
-        final GraalJsWorkflowToolProvider provider = new GraalJsWorkflowToolProvider(mock(GraalJsEngineHolder.class),
-                null);
+        final GraalJsWorkflowToolProvider provider = new GraalJsWorkflowToolProvider(mock(GraalJsEngineHolder.class));
 
         // registry is null-checked first, before the context is ever read, so a bare context mock suffices here.
         assertThatNullPointerException()

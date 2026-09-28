@@ -27,6 +27,8 @@ import at.aimon.core.agent.impl.AgentBundle;
 import at.aimon.core.agent.impl.orca.OrcaAgentRuntime;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.base.Principal;
+import at.aimon.core.environment.EnvironmentRequest;
+import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.LlmModel;
@@ -417,12 +419,19 @@ class AimonStackTenantRuntimeTest {
         disposition.getFuture().toCompletableFuture().get(30, TimeUnit.SECONDS);
     }
 
+    /** The workspace the tenant's executions work in — its execution environment's filesystem. */
     private static VirtualFileSystem fileSystemOf(AgentRuntimeLease lease) {
-        return ((OrcaAgentRuntime) lease.runtime()).getFileSystem();
+        return environmentOf(lease).fileSystem();
     }
 
     private static String workingDirectoryOf(AgentRuntimeLease lease) {
-        return fileSystemOf(lease).getWorkingDirectory();
+        return environmentOf(lease).descriptor().workingDirectory();
+    }
+
+    private static ExecutionEnvironment environmentOf(AgentRuntimeLease lease) {
+        final OrcaAgentRuntime runtime = (OrcaAgentRuntime) lease.runtime();
+        return runtime.getExecutionEnvironmentProvider().resolve(
+                EnvironmentRequest.builder().agentRuntimeId(runtime.getId()).agent(runtime.getAgent()).build());
     }
 
     private static List<String> toolNames(AgentRuntime runtime) {

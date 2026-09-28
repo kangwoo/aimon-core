@@ -17,6 +17,7 @@ import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.transcript.DefaultTranscriptManager;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.command.DefaultCommandExecutionManager;
+import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
 import at.aimon.core.hook.DefaultHookExecutionManager;
@@ -50,8 +51,9 @@ class OrcaAgentRuntimeFactoryPromptRecoveryTest {
                 .systemPrompt("You are a test agent").build();
         final OrcaAgentExecutor executor = createExecutor();
 
-        final OrcaAgentRuntime context = new OrcaAgentRuntimeFactory().create(AgentRuntimeId.from(agent), executor,
-                null, agent, fileSystem, null, List.of(), List.of());
+        final OrcaAgentRuntime context = new OrcaAgentRuntimeFactory()
+                .withExecutionEnvironmentProvider(TestExecutionEnvironments.provider(fileSystem))
+                .create(AgentRuntimeId.from(agent), executor, null, agent, fileSystem, null, List.of(), List.of());
 
         assertThat(context.getPromptSizeRecoveryStrategy()).isPresent().get()
                 .isInstanceOf(DefaultPromptSizeRecoveryStrategy.class);

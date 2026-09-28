@@ -22,6 +22,7 @@ import org.junit.jupiter.api.io.TempDir;
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.filesystem.VirtualFileSystem;
+import at.aimon.core.filesystem.impl.ScopedVirtualFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
 import at.aimon.core.workflow.RunId;
@@ -45,7 +46,9 @@ class VfsStepResultCacheTest {
         root = tempDir;
         fileSystem = new LocalFileSystem(new LocalFileSystemConfig(tempDir.toString()));
         fileSystem.initialize();
-        cache = new VfsStepResultCache(fileSystem);
+        // Built over the control store — the workspace's .aimon/ — as the default base dir is control-root relative
+        // (execution-environment design §9.2); the physical layout this test asserts stays .aimon/step-cache.
+        cache = new VfsStepResultCache(new ScopedVirtualFileSystem(fileSystem, ".aimon"));
     }
 
     private static StepOutcome outcome() {
@@ -75,7 +78,7 @@ class VfsStepResultCacheTest {
     void crossNodeReload() {
         cache.save(KEY, outcome());
 
-        final VfsStepResultCache otherNode = new VfsStepResultCache(fileSystem);
+        final VfsStepResultCache otherNode = new VfsStepResultCache(new ScopedVirtualFileSystem(fileSystem, ".aimon"));
         assertThat(otherNode.load(KEY)).contains(outcome());
     }
 

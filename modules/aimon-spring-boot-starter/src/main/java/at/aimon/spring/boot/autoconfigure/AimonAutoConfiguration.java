@@ -26,6 +26,7 @@ import at.aimon.bootstrap.spec.AgentRuntimeSpec;
 import at.aimon.bootstrap.spec.AgentSpec;
 import at.aimon.bootstrap.spec.AimonAgentCustomizer;
 import at.aimon.bootstrap.spec.CredentialStoreFactory;
+import at.aimon.bootstrap.spec.ExecutionEnvironmentSpec;
 import at.aimon.bootstrap.spec.ExecutorSpec;
 import at.aimon.bootstrap.spec.FileSystemSpec;
 import at.aimon.bootstrap.spec.LlmSpec;
@@ -41,6 +42,7 @@ import at.aimon.core.agent.context.RollingContextEngine;
 import at.aimon.core.agent.queue.MessageQueueRepository;
 import at.aimon.core.credential.CredentialStore;
 import at.aimon.core.credential.InMemoryCredentialStore;
+import at.aimon.core.environment.ExecutionEnvironmentProvider;
 import at.aimon.core.knowledge.KnowledgeStore;
 import at.aimon.core.llm.LlmClient;
 import at.aimon.core.skill.policy.agent.AgentApprovalStore;
@@ -367,6 +369,20 @@ public class AimonAutoConfiguration {
         }
 
         /**
+         * The application's own {@link ExecutionEnvironmentProvider} bean when there is one — shared by every runtime
+         * and closed by Spring, never by the stack — otherwise the local provider per runtime, tuned by
+         * {@code aimon.environment.*}.
+         */
+        private static ExecutionEnvironmentSpec toExecutionEnvironmentSpec(
+                AimonProperties.EnvironmentProperties properties, ExecutionEnvironmentProvider provider) {
+            if (provider != null) {
+                return ExecutionEnvironmentSpec.shared(provider);
+            }
+            return ExecutionEnvironmentSpec.builder().maxStagedBytes(properties.getStaging().getMaxBytes())
+                    .controlWritable(properties.isControlWritable()).build();
+        }
+
+        /**
          * Collects the slices' contributions into the immutable spec the stack is built from.
          *
          * <p>
@@ -399,11 +415,14 @@ public class AimonAutoConfiguration {
          * captured, and a deployment that set {@code payload-capture=none} would otherwise still find response
          * text in its LLM spans.
          */
+        // One parameter per contribution that must stay a plain dependency edge (see above); the provider is the
+        // eighth.
+        @SuppressWarnings("checkstyle:ParameterNumber")
         @Bean
         @ConditionalOnMissingBean
         AimonStackSpec aimonStackSpec(AimonProperties properties, LlmClient llmClient, FileSystemSpec fileSystemSpec,
                 SessionSpec sessionSpec, SchedulingSpec schedulingSpec, ApplicationContributions contributions,
-                SliceContributions slices) {
+                SliceContributions slices, ObjectProvider<ExecutionEnvironmentProvider> executionEnvironmentProvider) {
             final Tracer tracer = contributions.getTracer();
             final TracePayloadPolicy payloadPolicy = properties.getTracing().toPayloadPolicy();
             final AimonStackSpec.Builder builder = AimonStackSpec.builder()
@@ -419,7 +438,10 @@ public class AimonAutoConfiguration {
                     .agentRuntimes(toAgentRuntimeSpec(properties.getAgentRuntime()))
                     .agentCustomizers(contributions.getAgentCustomizers())
                     .defaultBudget(toBudget(properties.getBudget()))
-                    .tools(ToolSpec.builder().bashEnabled(properties.getTools().getBash().isEnabled()).build())
+                    .tools(ToolSpec.builder().bashEnabled(properties.getTools().getBash().isEnabled())
+                            .artifactPolicy(properties.getTools().getArtifact().toPolicy()).build())
+                    .executionEnvironment(toExecutionEnvironmentSpec(properties.getEnvironment(),
+                            executionEnvironmentProvider.getIfAvailable()))
                     .messageQueueRepository(contributions.getMessageQueueRepository()).skillApproval(
                             toSkillApproval(properties.getSkill().getApproval(), contributions.getApprovalChannel(),
                                     contributions.getApprovalChannelFactory(), contributions));

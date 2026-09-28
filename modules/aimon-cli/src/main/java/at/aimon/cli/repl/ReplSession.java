@@ -262,7 +262,7 @@ public class ReplSession {
     // Package-private so ReplSessionBannerTest can check that the banner prints its lines, without the terminal
     // start() opens.
     void displayAgentInfo() {
-        formatter.displayInfo("Working Directory: " + agentRuntime.getEnvironment().getWorkingDirectory());
+        formatter.displayInfo("Working Directory: " + AgentSetupFactory.workingDirectoryOf(agentRuntime));
         agentBundleLine(agentBundleName, agent).ifPresent(formatter::displayInfo);
         formatter.displayInfo(providerLine(agentExecutor.getLlmClient(), agent));
         formatter.displayInfo("Available tools: " + agentRuntime.getToolRegistry().size() + " tools(s)");

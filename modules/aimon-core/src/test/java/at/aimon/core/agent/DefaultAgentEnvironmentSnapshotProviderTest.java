@@ -30,7 +30,7 @@ class DefaultAgentEnvironmentSnapshotProviderTest {
 
     private static AgentEnvironmentSnapshot newSession() {
         return AgentEnvironmentSnapshot.builder().workingDirectory("/wd").currentDate(Instant.now())
-                .environment(Environment.createWithWorkingDirectory("/wd")).build();
+                .environment(Environment.createDefault()).build();
     }
 
     @Test

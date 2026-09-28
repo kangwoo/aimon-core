@@ -1,12 +1,14 @@
 package at.aimon.core.tools.file;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -16,10 +18,14 @@ import org.junit.jupiter.api.io.TempDir;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.environment.TestExecutionEnvironments;
+import at.aimon.core.environment.UnavailableExecutionEnvironment;
+import at.aimon.core.filesystem.FileMetadata;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
 import at.aimon.core.llm.ToolDefinition;
+import at.aimon.core.tools.ToolContextKeys;
 
 /** Unit tests for {@link WriteTool}. */
 class WriteToolTest {
@@ -35,7 +41,19 @@ class WriteToolTest {
         final LocalFileSystemConfig config = new LocalFileSystemConfig(tempDir.toString());
         fileSystem = new LocalFileSystem(config);
         fileSystem.initialize();
-        writeTool = new WriteTool(fileSystem);
+        writeTool = new WriteTool();
+    }
+
+    /**
+     * A context with an environment but no read-stamp map: {@code Write} then performs no stale-write check, which is
+     * the behaviour these older cases exercise. The stamp cases below use {@link #stampedContext()}.
+     */
+    private ToolContext legacyContext() {
+        return TestExecutionEnvironments.withoutStamps(TestExecutionEnvironments.of(fileSystem));
+    }
+
+    private ToolContext stampedContext() {
+        return TestExecutionEnvironments.context(fileSystem);
     }
 
     @AfterEach
@@ -48,15 +66,135 @@ class WriteToolTest {
     // Constructor tests
 
     @Test
-    void testConstructor_NullFileSystem_ThrowsException() {
-        assertThatThrownBy(() -> new WriteTool(null)).isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("File system cannot be null");
+    void testExecute_NoEnvironment_ReturnsErrorWithoutThrowing() {
+        final ToolResult result = writeTool.execute(
+                ToolInput.of(Map.of("file_path", tempDir.resolve("a.txt").toString(), "content", "x")),
+                ToolContext.empty());
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).contains("No execution environment");
     }
 
     @Test
-    void testConstructor_ValidFileSystem_Success() {
-        final WriteTool tool = new WriteTool(fileSystem);
-        assertThat(tool).isNotNull();
+    void testExecute_UnavailableEnvironment_ErrorCarriesCause() {
+        final ToolContext context = ToolContext.builder()
+                .put(ToolContextKeys.EXECUTION_ENVIRONMENT, UnavailableExecutionEnvironment.of("sandbox is down"))
+                .build();
+
+        final ToolResult result = writeTool.execute(ToolInput.of(Map.of("file_path", "a.txt", "content", "x")),
+                context);
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).contains("sandbox is down");
+    }
+
+    @Test
+    void testExecute_RelativeDisplay_IsRelativeToEnvironmentWorkingDirectory() {
+        final ToolResult result = new WriteTool().execute(
+                ToolInput.of(Map.of("file_path", tempDir.resolve("sub/a.txt").toString(), "content", "x")),
+                legacyContext());
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.getContent()).endsWith(" to sub/a.txt");
+    }
+
+    @Test
+    void testExecute_AbsoluteDisplay_ShowsPathAsGiven() {
+        final String path = tempDir.resolve("a.txt").toString();
+
+        final ToolResult result = new WriteTool(false).execute(ToolInput.of(Map.of("file_path", path, "content", "x")),
+                legacyContext());
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.getContent()).endsWith(" to " + path);
+    }
+
+    // stale-write protection (execution-environment design §7)
+
+    @Test
+    void testExecute_NewFile_NeedsNoRead() {
+        final ToolResult result = writeTool.execute(ToolInput.of(Map.of("file_path", "new.txt", "content", "x")),
+                stampedContext());
+
+        assertThat(result.isSuccess()).isTrue();
+    }
+
+    @Test
+    void testExecute_OverwriteWithoutRead_IsRefused() throws IOException {
+        Files.writeString(tempDir.resolve("a.txt"), "old");
+
+        final ToolResult result = writeTool.execute(ToolInput.of(Map.of("file_path", "a.txt", "content", "new")),
+                stampedContext());
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).contains("Read the file before modifying it");
+        assertThat(Files.readString(tempDir.resolve("a.txt"))).isEqualTo("old");
+    }
+
+    @Test
+    void testExecute_OverwriteAfterRead_SucceedsAndRefreshesStamp() throws IOException {
+        Files.writeString(tempDir.resolve("a.txt"), "old");
+        final ToolContext context = stampedContext();
+        assertThat(new ReadTool().execute(ToolInput.of(Map.of("file_path", "a.txt")), context).isSuccess()).isTrue();
+
+        final ToolResult first = writeTool.execute(
+                ToolInput.of(Map.of("file_path", tempDir.resolve("a.txt").toString(), "content", "newer")), context);
+        final ToolResult second = writeTool.execute(ToolInput.of(Map.of("file_path", "./a.txt", "content", "newest")),
+                context);
+
+        assertThat(first.isSuccess()).isTrue();
+        assertThat(second.isSuccess()).isTrue();
+        assertThat(Files.readString(tempDir.resolve("a.txt"))).isEqualTo("newest");
+    }
+
+    @Test
+    void testExecute_OverwriteAfterExternalChange_IsRefused() throws IOException {
+        final Path file = tempDir.resolve("a.txt");
+        Files.writeString(file, "old");
+        final ToolContext context = stampedContext();
+        new ReadTool().execute(ToolInput.of(Map.of("file_path", "a.txt")), context);
+        Files.writeString(file, "changed by someone else, longer");
+
+        final ToolResult result = writeTool.execute(ToolInput.of(Map.of("file_path", "a.txt", "content", "x")),
+                context);
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).contains("File changed since it was read; Read it again");
+    }
+
+    @Test
+    void testExecute_EtagOnlyDifference_IsRefused() throws IOException {
+        Files.writeString(tempDir.resolve("a.txt"), "old");
+        final AtomicReference<String> etag = new AtomicReference<>("v1");
+        final VirtualFileSystem etagFs = withEtag(fileSystem, etag);
+        final ToolContext context = TestExecutionEnvironments.contextBuilder(etagFs).build();
+        new ReadTool().execute(ToolInput.of(Map.of("file_path", "a.txt")), context);
+        etag.set("v2"); // same size and mtime, different content version
+
+        final ToolResult result = writeTool.execute(ToolInput.of(Map.of("file_path", "a.txt", "content", "x")),
+                context);
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).contains("File changed since it was read");
+    }
+
+    /** A view of {@code delegate} whose metadata carries the current value of {@code etag}. */
+    static VirtualFileSystem withEtag(VirtualFileSystem delegate, AtomicReference<String> etag) {
+        return (VirtualFileSystem) Proxy.newProxyInstance(VirtualFileSystem.class.getClassLoader(),
+                new Class<?>[]{VirtualFileSystem.class}, (proxy, method, args) -> {
+                    try {
+                        final Object value = method.invoke(delegate, args);
+                        if ("getMetadata".equals(method.getName())) {
+                            final FileMetadata m = (FileMetadata) value;
+                            return FileMetadata.builder().path(m.getPath()).size(m.getSize())
+                                    .createdAt(m.getCreatedAt()).modifiedAt(m.getModifiedAt())
+                                    .directory(m.isDirectory()).etag(etag.get()).build();
+                        }
+                        return value;
+                    } catch (InvocationTargetException e) {
+                        throw e.getCause();
+                    }
+                });
     }
 
     // getDefinition tests
@@ -104,7 +242,7 @@ class WriteToolTest {
         final Map<String, Object> toolUse = Map.of("file_path", testFile.toString(), "content", content);
 
         // Act
-        final ToolResult result = writeTool.execute(ToolInput.of(toolUse), ToolContext.empty());
+        final ToolResult result = writeTool.execute(ToolInput.of(toolUse), legacyContext());
 
         // Assert
         assertThat(result.isSuccess()).isTrue();
@@ -123,7 +261,7 @@ class WriteToolTest {
         final Map<String, Object> toolUse = Map.of("file_path", testFile.toString(), "content", content);
 
         // Act
-        final ToolResult result = writeTool.execute(ToolInput.of(toolUse), ToolContext.empty());
+        final ToolResult result = writeTool.execute(ToolInput.of(toolUse), legacyContext());
 
         // Assert
         assertThat(result.isSuccess()).isTrue();
@@ -140,7 +278,7 @@ class WriteToolTest {
         final Map<String, Object> toolUse = Map.of("file_path", testFile.toString(), "content", content);
 
         // Act
-        final ToolResult result = writeTool.execute(ToolInput.of(toolUse), ToolContext.empty());
+        final ToolResult result = writeTool.execute(ToolInput.of(toolUse), legacyContext());
 
         // Assert
         assertThat(result.isSuccess()).isTrue();
@@ -157,7 +295,7 @@ class WriteToolTest {
         final Map<String, Object> toolUse = Map.of("file_path", testFile.toString(), "content", content);
 
         // Act
-        final ToolResult result = writeTool.execute(ToolInput.of(toolUse), ToolContext.empty());
+        final ToolResult result = writeTool.execute(ToolInput.of(toolUse), legacyContext());
 
         // Assert
         assertThat(result.isSuccess()).isTrue();
@@ -174,7 +312,7 @@ class WriteToolTest {
         final Map<String, Object> toolUse = Map.of("file_path", testFile.toString(), "content", content);
 
         // Act
-        final ToolResult result = writeTool.execute(ToolInput.of(toolUse), ToolContext.empty());
+        final ToolResult result = writeTool.execute(ToolInput.of(toolUse), legacyContext());
 
         // Assert
         assertThat(result.isSuccess()).isTrue();
@@ -191,7 +329,7 @@ class WriteToolTest {
         final Map<String, Object> toolUse = Map.of("file_path", testFile.toString(), "content", content);
 
         // Act
-        final ToolResult result = writeTool.execute(ToolInput.of(toolUse), ToolContext.empty());
+        final ToolResult result = writeTool.execute(ToolInput.of(toolUse), legacyContext());
 
         // Assert
         assertThat(result.isSuccess()).isTrue();
@@ -209,7 +347,7 @@ class WriteToolTest {
         final Map<String, Object> toolUse = Map.of("file_path", testFile.toString(), "content", newContent);
 
         // Act
-        final ToolResult result = writeTool.execute(ToolInput.of(toolUse), ToolContext.empty());
+        final ToolResult result = writeTool.execute(ToolInput.of(toolUse), legacyContext());
 
         // Assert
         assertThat(result.isSuccess()).isTrue();
@@ -229,7 +367,7 @@ class WriteToolTest {
         final Map<String, Object> toolUse = Map.of("file_path", testFile.toString(), "content", content);
 
         // Act
-        final ToolResult result = writeTool.execute(ToolInput.of(toolUse), ToolContext.empty());
+        final ToolResult result = writeTool.execute(ToolInput.of(toolUse), legacyContext());
 
         // Assert
         assertThat(result.isSuccess()).isTrue();
@@ -252,7 +390,7 @@ class WriteToolTest {
         final Map<String, Object> toolUse = Map.of("file_path", testFile.toString(), "content", content);
 
         // Act
-        final ToolResult result = writeTool.execute(ToolInput.of(toolUse), ToolContext.empty());
+        final ToolResult result = writeTool.execute(ToolInput.of(toolUse), legacyContext());
 
         // Assert
         assertThat(result.isSuccess()).isTrue();
@@ -268,7 +406,7 @@ class WriteToolTest {
         final Map<String, Object> toolUse = Map.of("content", "Some content");
 
         // Act
-        final ToolResult result = writeTool.execute(ToolInput.of(toolUse), ToolContext.empty());
+        final ToolResult result = writeTool.execute(ToolInput.of(toolUse), legacyContext());
 
         // Assert
         assertThat(result.isError()).isTrue();
@@ -282,7 +420,7 @@ class WriteToolTest {
         final Map<String, Object> toolUse = Map.of("file_path", testFile.toString());
 
         // Act
-        final ToolResult result = writeTool.execute(ToolInput.of(toolUse), ToolContext.empty());
+        final ToolResult result = writeTool.execute(ToolInput.of(toolUse), legacyContext());
 
         // Assert
         assertThat(result.isError()).isTrue();
@@ -298,7 +436,7 @@ class WriteToolTest {
         final Map<String, Object> toolUse = Map.of("file_path", directory.toString(), "content", "Some content");
 
         // Act
-        final ToolResult result = writeTool.execute(ToolInput.of(toolUse), ToolContext.empty());
+        final ToolResult result = writeTool.execute(ToolInput.of(toolUse), legacyContext());
 
         // Assert
         assertThat(result.isError()).isTrue();
@@ -311,7 +449,7 @@ class WriteToolTest {
         final Map<String, Object> toolUse = Map.of("content", "Some content");
 
         // Act
-        final ToolResult result = writeTool.execute(ToolInput.of(toolUse), ToolContext.empty());
+        final ToolResult result = writeTool.execute(ToolInput.of(toolUse), legacyContext());
 
         // Assert
         assertThat(result.isError()).isTrue();
@@ -325,7 +463,7 @@ class WriteToolTest {
         final Map<String, Object> toolUse = Map.of("file_path", testFile.toString());
 
         // Act
-        final ToolResult result = writeTool.execute(ToolInput.of(toolUse), ToolContext.empty());
+        final ToolResult result = writeTool.execute(ToolInput.of(toolUse), legacyContext());
 
         // Assert
         assertThat(result.isError()).isTrue();
@@ -343,7 +481,7 @@ class WriteToolTest {
         final Map<String, Object> writeUse = Map.of("file_path", testFile.toString(), "content", originalContent);
 
         // Act - Write
-        final ToolResult writeResult = writeTool.execute(ToolInput.of(writeUse), ToolContext.empty());
+        final ToolResult writeResult = writeTool.execute(ToolInput.of(writeUse), legacyContext());
 
         // Assert - Write succeeded
         assertThat(writeResult.isSuccess()).isTrue();
@@ -362,12 +500,10 @@ class WriteToolTest {
         final String content3 = "Third content";
 
         // Act - Write three times
-        writeTool.execute(ToolInput.of(Map.of("file_path", testFile.toString(), "content", content1)),
-                ToolContext.empty());
-        writeTool.execute(ToolInput.of(Map.of("file_path", testFile.toString(), "content", content2)),
-                ToolContext.empty());
-        final ToolResult result3 = writeTool.execute(
-                ToolInput.of(Map.of("file_path", testFile.toString(), "content", content3)), ToolContext.empty());
+        writeTool.execute(ToolInput.of(Map.of("file_path", testFile.toString(), "content", content1)), legacyContext());
+        writeTool.execute(ToolInput.of(Map.of("file_path", testFile.toString(), "content", content2)), legacyContext());
+        final ToolResult result3 = writeTool
+                .execute(ToolInput.of(Map.of("file_path", testFile.toString(), "content", content3)), legacyContext());
 
         // Assert
         assertThat(result3.isSuccess()).isTrue();
@@ -384,12 +520,12 @@ class WriteToolTest {
         final Path file3 = tempDir.resolve("file3.txt");
 
         // Act
-        final ToolResult result1 = writeTool.execute(
-                ToolInput.of(Map.of("file_path", file1.toString(), "content", "Content 1")), ToolContext.empty());
-        final ToolResult result2 = writeTool.execute(
-                ToolInput.of(Map.of("file_path", file2.toString(), "content", "Content 2")), ToolContext.empty());
-        final ToolResult result3 = writeTool.execute(
-                ToolInput.of(Map.of("file_path", file3.toString(), "content", "Content 3")), ToolContext.empty());
+        final ToolResult result1 = writeTool
+                .execute(ToolInput.of(Map.of("file_path", file1.toString(), "content", "Content 1")), legacyContext());
+        final ToolResult result2 = writeTool
+                .execute(ToolInput.of(Map.of("file_path", file2.toString(), "content", "Content 2")), legacyContext());
+        final ToolResult result3 = writeTool
+                .execute(ToolInput.of(Map.of("file_path", file3.toString(), "content", "Content 3")), legacyContext());
 
         // Assert
         assertThat(result1.isSuccess()).isTrue();
@@ -412,7 +548,7 @@ class WriteToolTest {
         final Map<String, Object> toolUse = Map.of("file_path", testFile.toString(), "content", content);
 
         // Act
-        final ToolResult result = writeTool.execute(ToolInput.of(toolUse), ToolContext.empty());
+        final ToolResult result = writeTool.execute(ToolInput.of(toolUse), legacyContext());
 
         // Assert
         assertThat(result.isSuccess()).isTrue();

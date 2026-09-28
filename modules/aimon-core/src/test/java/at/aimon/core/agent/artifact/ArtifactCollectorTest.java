@@ -138,6 +138,35 @@ class ArtifactCollectorTest {
                 .isInstanceOf(UnsupportedOperationException.class);
     }
 
+    @Test
+    @DisplayName("a collector without an explicit key gets a fresh archive key that is not a turn or session id")
+    void defaultArchiveKey() {
+        final ArtifactCollector first = new ArtifactCollector();
+        final ArtifactCollector second = new ArtifactCollector();
+        assertThat(first.getArchiveKey()).startsWith("archive").doesNotContain("turn");
+        assertThat(first.getArchiveKey()).isNotEqualTo(second.getArchiveKey());
+    }
+
+    @Test
+    @DisplayName("an explicit archive key is kept, and null is rejected")
+    void explicitArchiveKey() {
+        assertThat(new ArtifactCollector("subagent:x:1").getArchiveKey()).isEqualTo("subagent:x:1");
+        assertThatThrownBy(() -> new ArtifactCollector(null)).isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    @DisplayName("totalBytes sums the sizes of one storage only")
+    void totalBytesByStorage() {
+        final ArtifactCollector collector = new ArtifactCollector();
+        collector.add(FileArtifact.builder().path("/w/a").fileName("a").size(10).build());
+        collector.add(FileArtifact.builder().path("artifacts/k/b").fileName("b").size(20)
+                .storage(ArtifactStorage.CONTROL).build());
+        collector.add(FileArtifact.builder().path("artifacts/k/c").fileName("c").size(5)
+                .storage(ArtifactStorage.CONTROL).build());
+        assertThat(collector.totalBytes(ArtifactStorage.WORKSPACE)).isEqualTo(10);
+        assertThat(collector.totalBytes(ArtifactStorage.CONTROL)).isEqualTo(25);
+    }
+
     private static FileArtifact createArtifact(String path, String fileName) {
         return FileArtifact.builder().path(path).fileName(fileName).size(1024).build();
     }

@@ -23,6 +23,7 @@ import at.aimon.core.agent.session.transcript.DefaultTranscriptManager;
 import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.command.DefaultCommandExecutionManager;
+import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
 import at.aimon.core.hook.DefaultHookExecutionManager;
@@ -54,8 +55,8 @@ class OrcaAgentRuntimeFactoryContextEngineTest {
     }
 
     private OrcaAgentRuntime create(OrcaAgentRuntimeFactory factory, Agent agent) {
-        return factory.create(AgentRuntimeId.from(agent), createExecutor(), null, agent, fileSystem, null, List.of(),
-                List.of());
+        return factory.withExecutionEnvironmentProvider(TestExecutionEnvironments.provider(fileSystem)).create(
+                AgentRuntimeId.from(agent), createExecutor(), null, agent, fileSystem, null, List.of(), List.of());
     }
 
     private static Agent agent(ContextEngineKind kind) {

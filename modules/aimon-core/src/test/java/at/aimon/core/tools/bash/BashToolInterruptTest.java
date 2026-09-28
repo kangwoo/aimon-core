@@ -24,6 +24,7 @@ import at.aimon.core.agent.tool.InterruptToolKeys;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.shell.ExecutionOptions;
 import at.aimon.core.shell.ShellCommand;
 import at.aimon.core.shell.ShellCommandResult;
@@ -59,7 +60,7 @@ class BashToolInterruptTest {
     @BeforeEach
     void setUp() {
         shell = new RecordingShell();
-        bashTool = new BashTool(shell);
+        bashTool = new BashTool(null);
     }
 
     @AfterEach
@@ -67,6 +68,11 @@ class BashToolInterruptTest {
         if (bashTool != null) {
             bashTool.shutdown();
         }
+    }
+
+    /** A context builder carrying the execution environment whose shell is the recording shell. */
+    private ToolContext.Builder shellContextBuilder() {
+        return TestExecutionEnvironments.contextBuilder(TestExecutionEnvironments.ofShell(shell));
     }
 
     @Test
@@ -80,7 +86,7 @@ class BashToolInterruptTest {
     void threadInterruptAbortsTheInFlightCommand() throws Exception {
         try (DefaultInterruptCoordinator coordinator = new DefaultInterruptCoordinator();
                 TerminatorRegistrar registrar = coordinator.newTerminatorRegistrar()) {
-            final ToolContext context = ToolContext.builder()
+            final ToolContext context = shellContextBuilder()
                     .put(InterruptToolKeys.CANCELLATION_SIGNAL, coordinator.getSignal())
                     .put(InterruptToolKeys.TERMINATOR_REGISTRAR, registrar).build();
 
@@ -118,7 +124,7 @@ class BashToolInterruptTest {
         try (DefaultInterruptCoordinator coordinator = new DefaultInterruptCoordinator();
                 TerminatorRegistrar registrar = coordinator.newTerminatorRegistrar()) {
             final CountingRegistrar spy = new CountingRegistrar(registrar);
-            final ToolContext context = ToolContext.builder()
+            final ToolContext context = shellContextBuilder()
                     .put(InterruptToolKeys.CANCELLATION_SIGNAL, coordinator.getSignal())
                     .put(InterruptToolKeys.TERMINATOR_REGISTRAR, spy).build();
 
@@ -137,7 +143,7 @@ class BashToolInterruptTest {
     @Test
     @DisplayName("executes normally when no registrar is present in context (cooperative/test callers)")
     void noRegistrarStillExecutes() {
-        final ToolContext context = ToolContext.empty();
+        final ToolContext context = shellContextBuilder().build();
         shell.setNextOutput("hello");
 
         final ToolResult result = bashTool.execute(ToolInput.of(Map.of("command", "echo hello")), context);
