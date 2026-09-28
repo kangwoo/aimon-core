@@ -178,7 +178,7 @@ lettuce = "7.8.0.RELEASE"
 # Utilities
 guava = "33.7.1-jre"
 commons-lang3 = "3.20.0"
-jackson = "2.22.2"
+jackson = "2.22.3"
 snakeyaml = "2.7"
 cron-utils = "9.2.1"
 mustache = "0.9.14"
@@ -208,7 +208,7 @@ opensearch = "2.20.0"
 opensearch-rest-client = "2.18.0"
 
 # Logging
-slf4j = "2.0.19"
+slf4j = "2.0.20"
 # The Logback aimon-cli ships, and the Logback the unpublished aimon-sample-app packs, whose build script sets Spring
 # Boot's `logback.version` from this entry (#129); every other module names it at test scope, or, for the unpublished
 # aimon-session-testkit, on a classpath that only ever joins a consumer's tests. 1.6.3 (#114), the one release past
@@ -226,7 +226,7 @@ slf4j = "2.0.19"
 # aimon-session-testkit's shipped and tested versions part again (backlog D-2); below it, aimon-sample-app would pack
 # an older Logback than Boot manages. logback-classic 1.6.3 builds against slf4j 2.0.18, the version above;
 # logback-core follows logback-classic.
-logback = "1.6.3"
+logback = "1.6.4"
 
 # Code quality tools
 checkstyle = "10.12.5"
