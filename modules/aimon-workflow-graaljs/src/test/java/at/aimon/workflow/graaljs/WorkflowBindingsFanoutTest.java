@@ -99,12 +99,30 @@ class WorkflowBindingsFanoutTest extends AbstractGraalJsRunTest {
 
         run("agent({ agentType: 'builder', goal: 'solo' });\n" + "await parallel([\n"
                 + "  { agentType: 'reviewer', goal: 'p0', attributes: { sandbox: { profile: 'ro' } } },\n"
-                + "  { agentType: 'builder', goal: 'p1', attributes: { 'sandbox.slot': 'test' } },\n" + "]);\n"
+                + "  { agentType: 'builder', goal: 'p1', attributes: { 'sandbox.profile': 'rw' } },\n" + "]);\n"
                 + "return 'done';", SubagentResolver.inline(registry));
 
         assertThat(seen.get("solo")).containsExactly(Map.entry("sandbox.slot", "build"));
         assertThat(seen.get("p0")).containsExactly(Map.entry("sandbox.profile", "ro"));
-        assertThat(seen.get("p1")).containsExactly(Map.entry("sandbox.slot", "test"));
+        assertThat(seen.get("p1")).containsExactly(Map.entry("sandbox.slot", "build"),
+                Map.entry("sandbox.profile", "rw"));
+    }
+
+    @Test
+    @DisplayName("a script overriding a registered definition's attribute fails the run (registered keys are pinned)")
+    void overridingRegisteredAttributeFailsRun() {
+        final InMemorySubagentRegistry registry = new InMemorySubagentRegistry();
+        registry.register(Subagent.builder().name("untrusted-runner").systemPrompt("unused")
+                .attributes(Map.of("sandbox.slot", "isolated")).build());
+
+        assertThatThrownBy(
+                () -> run(
+                        "return agent({ agentType: 'untrusted-runner', goal: 'g',"
+                                + " attributes: { 'sandbox.slot': 'privileged' } }).text;",
+                        SubagentResolver.inline(registry)))
+                .isInstanceOf(JsScriptException.class).hasMessageContaining("workflow script rejected")
+                .hasMessageContaining("agent 'untrusted-runner'").hasMessageContaining("'sandbox.slot'")
+                .hasMessageContaining("'isolated'").hasMessageContaining("'privileged'");
     }
 
     @Test

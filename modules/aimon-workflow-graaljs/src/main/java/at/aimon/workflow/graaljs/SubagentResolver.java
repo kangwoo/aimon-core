@@ -37,7 +37,9 @@ public interface SubagentResolver {
 
     /**
      * The default inline resolver that also copies the attributes of the subagent registered under a step's
-     * {@code agentType}, with the descriptor's own attributes winning on the same key.
+     * {@code agentType} and adds the descriptor's own. The registered keys are pinned: a descriptor value for one of
+     * them fails with a {@code JsScriptException} unless it is identical, so a script cannot move a registered
+     * subagent to another placement; keys the registered definition does not set may be added.
      *
      * @param registry
      *            the registry looked up by {@code agentType} (must not be null)

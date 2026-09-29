@@ -132,6 +132,23 @@ class MarshallingUnitTest {
                 .hasMessageContaining("'sandbox' is both a value and a group");
     }
 
+    @Test
+    @DisplayName("attributes: a non-finite number (NaN, ±Infinity) is rejected with its key")
+    void attributesRejectNonFiniteNumbers() {
+        for (String js : new String[]{"NaN", "Infinity", "-Infinity", "0/0"}) {
+            final Value descriptor = context.eval("js",
+                    "({ agentType: 'a', goal: 'g', attributes: { sandbox: { cpus: " + js + " } } })");
+            assertThatThrownBy(() -> AgentTaskMarshaller.toTask(descriptor, SubagentResolver.inline())).as(js)
+                    .isInstanceOf(JsScriptException.class)
+                    .hasMessageContaining("attribute 'sandbox.cpus' must be a finite number");
+        }
+        // A large but finite number is still an ordinary value.
+        assertThat(AgentTaskMarshaller
+                .toTask(context.eval("js", "({ agentType: 'a', goal: 'g', attributes: { big: 1.5e300 } })"),
+                        SubagentResolver.inline())
+                .getSubagent().getMetadata().getAttributes()).containsKey("big");
+    }
+
     private static void assertNoPolyglotTypes(Object value) {
         if (value == null) {
             return;

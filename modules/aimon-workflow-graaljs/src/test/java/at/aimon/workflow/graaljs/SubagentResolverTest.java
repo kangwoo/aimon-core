@@ -24,7 +24,7 @@ import at.aimon.workflow.graaljs.exception.JsScriptException;
 /**
  * Deterministic-name synthesis tests for the inline resolver. Names must be stable across resolves (and
  * across JVMs) so shared/persistent resume caches replay without spurious misses. Also the EE-42 attribute rules:
- * a registered {@code agentType}'s attributes, overlaid by the descriptor's own.
+ * a registered {@code agentType}'s attributes plus the descriptor's own, with the registered keys pinned.
  */
 @DisplayName("InlineSubagentResolver — deterministic, cross-JVM-stable names")
 class SubagentResolverTest {
@@ -112,12 +112,31 @@ class SubagentResolverTest {
         }
 
         @Test
-        @DisplayName("registered agentType, explicit attributes: registered overlaid, explicit wins per key")
-        void registeredOverlaidByExplicit() {
-            final Subagent subagent = withRegistry
-                    .resolve(type("builder").attributes(Map.of("sandbox.slot", "test", "gpu", "true")).build());
+        @DisplayName("registered agentType: a script value for a registered key is rejected (keys are pinned)")
+        void registeredKeyOverrideIsRejected() {
+            assertThatThrownBy(() -> withRegistry
+                    .resolve(type("builder").attributes(Map.of("sandbox.slot", "privileged")).build()))
+                    .isInstanceOf(JsScriptException.class).hasMessageContaining("agent 'builder'")
+                    .hasMessageContaining("'sandbox.slot'").hasMessageContaining("'build'")
+                    .hasMessageContaining("'privileged'").hasMessageContaining("pinned");
+        }
 
-            assertThat(subagent.getMetadata().getAttributes()).containsExactly(Map.entry("sandbox.slot", "test"),
+        @Test
+        @DisplayName("registered agentType: the identical value for a registered key is accepted as a no-op")
+        void registeredKeyIdenticalValueIsAccepted() {
+            final Subagent subagent = withRegistry
+                    .resolve(type("builder").attributes(Map.of("sandbox.slot", "build")).build());
+
+            assertThat(subagent.getMetadata().getAttributes()).containsExactly(Map.entry("sandbox.slot", "build"),
+                    Map.entry("sandbox.profile", "rw"));
+        }
+
+        @Test
+        @DisplayName("registered agentType: a key the registered definition does not set is added")
+        void registeredPlusNewKey() {
+            final Subagent subagent = withRegistry.resolve(type("builder").attributes(Map.of("gpu", "true")).build());
+
+            assertThat(subagent.getMetadata().getAttributes()).containsExactly(Map.entry("sandbox.slot", "build"),
                     Map.entry("sandbox.profile", "rw"), Map.entry("gpu", "true"));
         }
 

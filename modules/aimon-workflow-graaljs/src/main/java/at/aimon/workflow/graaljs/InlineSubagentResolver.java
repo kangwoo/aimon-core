@@ -26,8 +26,13 @@ import at.aimon.workflow.graaljs.exception.JsScriptException;
  * avoiding {@code Subagent.hashCode}'s identity caveat.
  * <li>systemPrompt = the explicit prompt, else a synthesized {@code "You are the \"<agentType>\" subagent."}.
  * <li>attributes = those of the subagent registered under {@code agentType} (when there is a registry and one is
- * registered), overlaid key by key by the descriptor's own ({@link DefinitionAttributes#overlay(Map, Map)}). Nothing
- * else is taken from the registered definition.
+ * registered), plus the descriptor's own ({@link DefinitionAttributes#overlay(Map, Map)}). The registered definition's
+ * keys are <b>pinned</b>: a descriptor attribute whose key the registered definition already sets is rejected with a
+ * {@link JsScriptException} unless its value is identical (then it is a no-op). A script is model-authored, and letting
+ * it override an operator-registered key would let it move a step out of the placement the operator chose (for example
+ * {@code sandbox.slot: isolated} → {@code privileged}). Keys the registered definition does not set may still be added.
+ * An unregistered (or absent) {@code agentType} has nothing to pin, so its descriptor attributes are taken as they are
+ * — whether a script may set attributes at all is backlog EE-45. Nothing else is taken from the registered definition.
  * <li>Requires at least one of {@code systemPrompt}/{@code agentType} — otherwise a loud {@link JsScriptException}.
  * </ul>
  */
@@ -68,12 +73,31 @@ final class InlineSubagentResolver implements SubagentResolver {
             builder.tools(descriptor.tools());
         }
         descriptor.maxIterations().ifPresent(builder::maxIterations);
+        final Map<String, String> registered = registeredAttributes(agentType);
+        rejectPinnedOverrides(agentType, registered, descriptor.attributes());
         try {
-            builder.attributes(DefinitionAttributes.overlay(registeredAttributes(agentType), descriptor.attributes()));
+            builder.attributes(DefinitionAttributes.overlay(registered, descriptor.attributes()));
         } catch (IllegalArgumentException e) {
             throw new JsScriptException("agent '" + (agentType != null ? agentType : name) + "': " + e.getMessage(), e);
         }
         return builder.build();
+    }
+
+    /**
+     * Rejects a script attribute that would change a key the registered definition sets. An identical value is accepted
+     * (the overlay leaves it unchanged).
+     */
+    private static void rejectPinnedOverrides(String agentType, Map<String, String> registered,
+            Map<String, String> scriptAttributes) {
+        for (Map.Entry<String, String> entry : scriptAttributes.entrySet()) {
+            final String registeredValue = registered.get(entry.getKey());
+            if (registeredValue != null && !registeredValue.equals(entry.getValue())) {
+                throw new JsScriptException("agent '" + agentType + "': attribute '" + entry.getKey()
+                        + "' is set by the registered subagent definition ('" + registeredValue
+                        + "') and cannot be overridden by the script ('" + entry.getValue()
+                        + "'); registered attributes are pinned");
+            }
+        }
     }
 
     /** The attributes of the subagent registered under {@code agentType}, or none. */

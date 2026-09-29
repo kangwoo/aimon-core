@@ -1405,12 +1405,18 @@ attributes were always empty. EE-42 fills them without touching `EnvironmentRequ
 
 - **`SubagentResolver.resolve(SubagentDescriptor)`** replaces the five-argument method (`aimon-workflow-graaljs`, a
   public-SPI break under the `0.x` policy). `SubagentResolver.inline(SubagentRegistry)` copies the attributes of the
-  subagent registered under a step's `agentType`, and the script's own `attributes` overlay them key by key.
+  subagent registered under a step's `agentType`, and the script's own `attributes` may add keys to them. The
+  registered keys are pinned: a script value for one of them fails the script unless it is identical, so a
+  model-written script cannot move an operator-registered subagent to another slot. An unregistered `agentType` has
+  nothing to pin, and its script attributes are used as they are — EE-45 decides whether scripts may set them at all.
   `GraalJsWorkflowTool` uses that resolver over its own registry by default.
-- **`DefinitionAttributes.overlay(base, override)`** is the one merge rule, and re-checks the merged map for a key
-  that is both a value and a group.
+- **`DefinitionAttributes.overlay(base, override)`** is the one merge rule — generic, the override winning per key —
+  and re-checks the merged map for a key that is both a value and a group. The pinning above is the graaljs
+  resolver's check before it calls `overlay`, not a rule of `overlay`.
 - **`WorkflowTool`** looks its five roles up as `workflow-perspective`, `workflow-synthesizer`, `workflow-candidate`,
-  `workflow-judge` and `workflow-skeptic`, and copies only their attributes.
+  `workflow-judge` and `workflow-skeptic`, once per role at the start of a run, and copies only their attributes. A
+  registry that throws is logged and leaves that role's steps without attributes — unlike graaljs, which fails the
+  script.
 
 The approved design and where the build departed from it are in
 [`execution-environment-ee42-workflow-attributes.md`](execution-environment-ee42-workflow-attributes.md).

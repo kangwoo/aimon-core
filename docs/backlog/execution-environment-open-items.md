@@ -703,17 +703,24 @@ PR #195 리뷰 1 이 **macOS 에도 별칭이 있음**을 재현했다 — APFS 
 
 `SubagentResolver.resolve` 는 이제 `SubagentDescriptor`(불변 클래스 + 빌더) 하나를 받는다. 기본 해석기
 `SubagentResolver.inline(SubagentRegistry)` 는 `agentType` 과 같은 이름으로 등록된 서브에이전트의 속성을 복사하고,
-스크립트가 `agent({..., attributes})` 로 준 속성을 그 위에 키 단위로 덮는다 — 같은 키는 스크립트가 이기고, 등록된 키를
-지울 수는 없다(`DefinitionAttributes.overlay`). 스크립트의 `attributes` 는 정의 파일의 블록과 같은 규칙으로 읽는다(중첩과
-점 표기가 같은 속성, 스칼라는 글자, 리스트·`null`·값이면서 그룹인 키는 스크립트 실패). 등록된 정의에서 가져오는 것은 속성뿐이고
+스크립트가 `agent({..., attributes})` 로 준 속성을 더한다(`DefinitionAttributes.overlay`). 등록된 정의가 정한 키는
+**고정된다** — 스크립트가 그 키에 다른 값을 주면 `agentType`·키·두 값을 적은 `JsScriptException` 으로 스크립트가 실패하고,
+같은 값이면 아무 일도 없다. 스크립트가 더할 수 있는 것은 등록된 정의가 정하지 않은 키뿐이고, 등록된 키를 지울 수도 없다.
+`overlay` 자체는 코어의 일반 규칙(같은 키는 덮는 쪽이 이긴다)으로 남고, 고정 검사는 graaljs 해석기가 `overlay` 를 부르기
+전에 한다. 처음 구현은 스크립트가 같은 키를 이기게 했으나, 리뷰에서 모델이 쓴 스크립트가 운영자가 격리 슬롯으로 등록한
+서브에이전트를 특권 슬롯으로 옮길 수 있다는 지적을 받아 고쳤다(EE-45 참고). 스크립트의 `attributes` 는 정의 파일의 블록과
+같은 규칙으로 읽는다(중첩과 점 표기가 같은 속성, 스칼라는 글자, 리스트·값이 `null` 인 항목·값이면서 그룹인 키·유한하지 않은
+수는 스크립트 실패). 등록된 정의에서 가져오는 것은 속성뿐이고
 이름(`graaljs:<agentType>`)·프롬프트·도구는 그대로다. `GraalJsWorkflowTool` 은 자기 레지스트리로 이 해석기를 기본으로 쓴다.
 내장 `Workflow` 도구의 단계는 역할마다 정해진 이름(`workflow-perspective` · `workflow-synthesizer` · `workflow-candidate` ·
-`workflow-judge` · `workflow-skeptic`)으로 등록된 서브에이전트의 속성을 복사한다. **운영자 주의:** 그 이름의 정의는
+`workflow-judge` · `workflow-skeptic`)으로 등록된 서브에이전트의 속성을, 실행마다 역할당 한 번 조회해 복사한다(팬아웃
+도중 레지스트리가 바뀌어도 형제 단계가 서로 다른 슬롯에 가지 않는다). 조회가 실패하면 WARN 을 남기고 그 역할의 단계를
+속성 없이(기본 배치로) 돌린다 — 스크립트를 실패시키는 graaljs 와 반대다. **운영자 주의:** 그 이름의 정의는
 `Workflow` 에게는 속성만 주지만, 보통의 서브에이전트이기도 해서 모델이 목록에서 보고 `Task` 로 부를 수 있다 — 그때는
 정의의 프롬프트가 쓰인다(EE-44). `EnvironmentRequest` 는 바뀌지 않았다. 테스트는 `DefinitionAttributesTest`,
 `WorkflowToolAttributesTest`(실제 포크 실행기를 거쳐 `EnvironmentRequest.definitionAttributes()` 까지), `SubagentResolverTest`,
 `SubagentDescriptorTest`, `MarshallingUnitTest`, `WorkflowBindingsFanoutTest`, `GraalJsWorkflowToolTest`,
-`GraalJsEnvironmentRequestTest`(실제 실행 관리자로 `agent()`·`parallel()` 단계의 요청까지). 설계와 구현이 달라진 점은 설계
+`GraalJsEnvironmentRequestTest`(실제 실행 관리자로 `agent()`·`parallel()`·`pipeline()` 단계의 요청까지). 설계와 구현이 달라진 점은 설계
 문서 §8 에 있다.
 
 ## EE-43 — 속성이 빈 포크를 제공자가 어디에 두는지 정해지지 않았다 · **열림**
@@ -752,13 +759,19 @@ PR #195 리뷰 1 이 **macOS 에도 별칭이 있음**을 재현했다 — APFS 
 
 ## EE-45 — `WorkflowJs` 스크립트의 `attributes` 로 모델이 배치를 고를 수 있다 · **열림**
 
-**무엇을.** GraalJS 단계의 스크립트 `attributes` 를 누가 쓸 수 있어야 하는지 정한다. 선택지는 (a) 그대로 둔다, (b) 레지스트리에
-있는 키만 덮게 한다, (c) `GraalJsWorkflowTool` 빌더에 허용 키 목록(또는 끄는 스위치)을 둔다.
+**무엇을.** 모델이 쓴 GraalJS 스크립트가 `attributes` 를 아예 쓸 수 있어야 하는지 정한다. 절반은 이미 닫혔다 — 등록된
+`agentType` 의 키는 고정되어 스크립트가 덮을 수 없다(EE-42 리뷰 반영). 남은 절반은 **등록되지 않은 `agentType`(또는
+`agentType` 없는 단계)** 이다. 거기에는 고정할 키가 없어서 스크립트가 `sandbox.slot` 을 비롯해 아무 속성이나 적을 수 있다.
+선택지는 (a) 그대로 둔다, (b) 등록된 `agentType` 에만 `attributes` 를 허용한다(새 키를 더하는 것까지 포함할지도 정한다),
+(c) `GraalJsWorkflowTool` 빌더에 허용 키 목록(또는 끄는 스위치)을 둔다.
 
 **왜.** EE-42 설계는 내장 `Workflow` 의 입력에 `attributes` 를 두지 않았다 — 코드가 어디서 돌지는 운영자 정책이지 모델이
 고를 일이 아니라는 이유였다(기각안 D). 그런데 `WorkflowJs` 의 스크립트는 모델이 쓴다. 스크립트 `attributes` 는 백로그 항목이
-요구한 기능이라 넣었지만, 모델이 `sandbox.slot` 을 적으면 같은 논리가 뚫린다. 구현은 도구 설명에 `attributes` 를 광고하지
-않는 데서 멈췄다(EE-42 설계 §8).
+요구한 기능이라 넣었지만, 모델이 `sandbox.slot` 을 적으면 같은 논리가 뚫린다. 운영자가 `untrusted-runner` 를
+`sandbox.slot: isolated` 로 등록해도, 스크립트가 `agentType` 을 등록되지 않은 이름으로 바꾸거나 빼고 `privileged` 를 적으면
+그 정의를 거치지 않고 특권 슬롯을 요청할 수 있다 — 고정은 등록된 정의를 **덮는** 길만 막는다. 구현은 도구 설명에
+`attributes` 를 광고하지 않는 데서 멈췄다(EE-42 설계 §8). 제공자가 슬롯을 속성만 보고 고르지 않고 자기 정책으로 거르면
+(예: 허용 목록) 이 틈은 제공자 쪽에서 닫힌다.
 
 **어디.** `modules/aimon-workflow-graaljs/src/main/java/at/aimon/workflow/graaljs/AgentTaskMarshaller.java`,
 `InlineSubagentResolver.java`, `GraalJsWorkflowTool.java`(2026-09-29).

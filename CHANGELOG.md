@@ -26,16 +26,26 @@ always had empty attributes and a provider that picks a slot from them placed ev
   maxIterations)` in `aimon-workflow-graaljs`. `SubagentDescriptor` is a new immutable value with a builder; a custom
   resolver moves its arguments onto it. No deprecated overload (`docs/project/api-stability.md` §5).
 - **GraalJS `agent({...})` accepts `attributes`**, read like a definition file's `attributes:` block (nested and dotted
-  keys are the same attribute; numbers and booleans become text; anything a definition file rejects fails the script).
-  `SubagentResolver.inline(SubagentRegistry)` copies the attributes of the subagent registered under the step's
-  `agentType` and lays the step's own over them key by key; only attributes are taken, and the step keeps its
-  `graaljs:<agentType>` name. `GraalJsWorkflowTool` uses it over its own registry by default; `SubagentResolver.inline()`
+  keys are the same attribute; numbers and booleans become text; anything a definition file rejects, and a non-finite
+  number such as `NaN`, fails the script). `SubagentResolver.inline(SubagentRegistry)` copies the attributes of the
+  subagent registered under the step's `agentType` and adds the step's own; only attributes are taken, and the step
+  keeps its `graaljs:<agentType>` name. **The registered definition's keys are pinned:** a step giving one of them a
+  different value fails the script (the message names the `agentType`, the key and both values), so a model-written
+  script cannot move an operator-registered subagent to another slot; an identical value is a no-op, and keys the
+  definition does not set may be added. An unregistered `agentType` has nothing to pin — whether scripts may set
+  `attributes` at all is backlog EE-45. `GraalJsWorkflowTool` uses it over its own registry by default; `SubagentResolver.inline()`
   still looks nothing up.
 - **`Workflow` built-in steps** copy the attributes of the subagents registered as `workflow-perspective`,
-  `workflow-synthesizer`, `workflow-candidate`, `workflow-judge` and `workflow-skeptic`, when those exist. Such a
-  definition is also an ordinary, `Task`-callable subagent.
+  `workflow-synthesizer`, `workflow-candidate`, `workflow-judge` and `workflow-skeptic`, when those exist, looked up
+  once per role at the start of each run. A registry that throws is logged at WARN and those steps run without
+  attributes (default placement) — unlike GraalJS, where a registry failure fails the script. Such a definition is
+  also an ordinary, `Task`-callable subagent.
 - **`DefinitionAttributes.overlay(base, override)`** merges two attribute maps, the override winning per key, and
-  rejects a merged key that is both a value and a group.
+  rejects a merged key that is both a value and a group. It stays generic; the pinning of registered keys above is a
+  check the GraalJS resolver makes before calling it.
+- **A rejected GraalJS run reports a host exception's message**, not only its type (`JsResultMarshaller`). This applies
+  to every error a binding throws inside the script — a bad descriptor field, a pinned attribute, a failed registry
+  lookup — and the message reaches the model as the tool's error text.
 
 ### Added: what an out-of-core execution environment provider needs (EE-18, EE-40, EE-41)
 

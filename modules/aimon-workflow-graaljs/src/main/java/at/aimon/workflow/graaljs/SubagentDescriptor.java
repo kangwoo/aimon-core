@@ -91,6 +91,10 @@ public final class SubagentDescriptor {
         return Objects.hash(agentType, systemPrompt, model, tools, maxIterations, attributes);
     }
 
+    /**
+     * Omits {@code systemPrompt} on purpose: a script's prompt can be long and may carry sensitive content, and this
+     * string ends up in logs and assertion messages. Use {@link #systemPrompt()} when the prompt itself is needed.
+     */
     @Override
     public String toString() {
         return "SubagentDescriptor{agentType=" + agentType + ", model=" + model + ", tools=" + tools

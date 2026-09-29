@@ -352,7 +352,8 @@ public interface ExecutionEnvironmentProvider {
   `8`, `on` → `true`) 평범한 텍스트가 아닌 값은 따옴표로 감싼다. 워크플로 단계도 포크이므로 같은 값을 싣는다(EE-42).
   단계의 서브에이전트는 등록된 정의가 아니라 인라인으로 만들어지므로, 속성은 이렇게 채운다 — GraalJS 의
   `agent({...})` 단계는 `agentType` 과 같은 이름으로 등록된 서브에이전트의 속성을 복사하고, 스크립트가 준
-  `attributes` 가 그 위에 키 단위로 덮인다(같은 키는 스크립트가 이기고, 키를 지울 수는 없다). 내장 `Workflow` 도구의
+  `attributes` 는 등록된 정의가 정하지 않은 키만 더할 수 있다(등록된 키는 고정되어 다른 값을 주면 스크립트가 실패하고,
+  키를 지울 수도 없다. 등록되지 않은 `agentType` 에는 고정할 키가 없다 — EE-45). 내장 `Workflow` 도구의
   단계는 역할마다 정해진 이름(`workflow-perspective` · `workflow-synthesizer` · `workflow-candidate` · `workflow-judge` ·
   `workflow-skeptic`)으로 등록된 서브에이전트의 속성을 복사한다. 어느 쪽이든 등록된 정의에서 가져오는 것은 속성뿐이고,
   이름·프롬프트·도구는 단계의 것 그대로다. 속성이 비면 제공자는 위의 기본(부모와 같은 샌드박스)을 따른다. 설계와

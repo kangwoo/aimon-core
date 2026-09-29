@@ -2,6 +2,8 @@ package at.aimon.core.tools.workflow;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
@@ -96,6 +98,37 @@ class WorkflowToolAttributesTest {
 
         assertThat(result.isSuccess()).as(result.getContent()).isTrue();
         assertThat(seen.get("workflow:skeptic")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("role attributes are resolved once per run: a registry change mid-fan-out does not split siblings")
+    @SuppressWarnings("unchecked")
+    void roleAttributesResolvedOncePerRun() {
+        final SubagentRegistry registry = mock(SubagentRegistry.class);
+        // Each lookup answers differently, standing in for a registry reloaded between sibling thunks.
+        when(registry.getSubagent(WorkflowTool.ROLE_PERSPECTIVE)).thenReturn(
+                Optional.of(roleDefinition(WorkflowTool.ROLE_PERSPECTIVE, Map.of("sandbox.slot", "first"))),
+                Optional.of(roleDefinition(WorkflowTool.ROLE_PERSPECTIVE, Map.of("sandbox.slot", "second"))),
+                Optional.of(roleDefinition(WorkflowTool.ROLE_PERSPECTIVE, Map.of("sandbox.slot", "third"))));
+        when(registry.getAllSubagents()).thenReturn(List.of());
+        final Map<String, Map<String, String>> seen = new ConcurrentHashMap<>();
+        final InMemorySubagentBehaviorRegistry behaviors = new InMemorySubagentBehaviorRegistry();
+        for (String angle : List.of("a", "b", "c")) {
+            final String name = "workflow:perspective:" + angle;
+            behaviors.register(name, (c, r, s) -> {
+                seen.put(name, c.getSubagent().getMetadata().getAttributes());
+                return s.success(angle + " analysis");
+            });
+        }
+
+        final ToolResult result = newTool(registry, behaviors).execute(
+                ToolInput.of(Map.of("prompt", "ship?", "perspectives", "a,b,c", "synthesize", Boolean.FALSE)),
+                context(null));
+
+        assertThat(result.isSuccess()).as(result.getContent()).isTrue();
+        assertThat(seen).hasSize(3).allSatisfy(
+                (name, attributes) -> assertThat(attributes).as(name).isEqualTo(Map.of("sandbox.slot", "first")));
+        verify(registry, times(1)).getSubagent(WorkflowTool.ROLE_PERSPECTIVE);
     }
 
     @Test

@@ -91,7 +91,9 @@ final class AgentTaskMarshaller {
 
     /**
      * Reads {@code attributes}: absent or null means none; anything but an object, or an entry a definition file could
-     * not hold either, is a loud {@link JsScriptException} naming the key.
+     * not hold either, is a loud {@link JsScriptException} naming the key. A non-finite number ({@code NaN},
+     * {@code ±Infinity}) is rejected too: YAML could not have produced it, and its text form ({@code "NaN"},
+     * {@code "Infinity"}) is almost certainly an arithmetic bug in the script rather than an intended value.
      */
     private static Map<String, String> attributes(Value opts) {
         final Value v = member(opts, "attributes");
@@ -101,10 +103,23 @@ final class AgentTaskMarshaller {
         if (v.hasArrayElements() || !v.hasMembers() || v.canExecute()) {
             throw new JsScriptException("'attributes' must be an object, got: " + v);
         }
+        final Object detached = JsMarshalling.deepDetach(v);
+        rejectNonFinite(detached, "");
         try {
-            return DefinitionAttributes.fromFrontmatter(JsMarshalling.deepDetach(v));
+            return DefinitionAttributes.fromFrontmatter(detached);
         } catch (IllegalArgumentException e) {
             throw new JsScriptException(e.getMessage(), e);
+        }
+    }
+
+    private static void rejectNonFinite(Object value, String path) {
+        if (value instanceof Map<?, ?> map) {
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                rejectNonFinite(entry.getValue(),
+                        path.isEmpty() ? String.valueOf(entry.getKey()) : path + "." + entry.getKey());
+            }
+        } else if (value instanceof Double d && !Double.isFinite(d) || value instanceof Float f && !Float.isFinite(f)) {
+            throw new JsScriptException("attribute '" + path + "' must be a finite number, got: " + value);
         }
     }
 

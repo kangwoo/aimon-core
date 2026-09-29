@@ -63,6 +63,43 @@ class GraalJsEnvironmentRequestTest {
     @Test
     @DisplayName("agent() gets the registered definition's attributes; parallel() descriptors each get their own")
     void environmentRequestsCarryStepAttributes() {
+        final String js = "agent({ agentType: 'builder', goal: 'compile' });\n" + "await parallel([\n"
+                + "  { agentType: 'reviewer', goal: 'r', attributes: { sandbox: { profile: 'ro' } } },\n"
+                + "  { agentType: 'builder', goal: 't', attributes: { 'sandbox.profile': 'rw' } },\n" + "]);\n"
+                + "return 'done';";
+
+        final List<EnvironmentRequest> requests = run(js);
+
+        assertThat(requests).hasSize(3).allSatisfy(request -> assertThat(request.fork()).isPresent());
+        assertThat(requests).extracting(request -> request.fork().get().name() + " " + request.definitionAttributes())
+                .containsExactlyInAnyOrder("graaljs:builder {sandbox.slot=build}",
+                        "graaljs:reviewer {sandbox.profile=ro}",
+                        "graaljs:builder {sandbox.slot=build, sandbox.profile=rw}");
+    }
+
+    @Test
+    @DisplayName("pipeline() stage descriptors carry their attributes, registered ones included, for every item")
+    void pipelineStagesCarryAttributes() {
+        final String js = "await pipeline(['x', 'y'],\n"
+                + "  (prev, item) => ({ agentType: 'finder', goal: 'find ' + item,"
+                + " attributes: { sandbox: { slot: 'ro' } } }),\n"
+                + "  (prev, item) => ({ agentType: 'builder', goal: 'fix ' + item, attributes: { gpu: true } })\n"
+                + ");\n" + "return 'done';";
+
+        final List<EnvironmentRequest> requests = run(js);
+
+        assertThat(requests).hasSize(4).allSatisfy(request -> assertThat(request.fork()).isPresent());
+        assertThat(requests).extracting(request -> request.fork().get().name() + " " + request.definitionAttributes())
+                .containsExactlyInAnyOrder("graaljs:finder {sandbox.slot=ro}", "graaljs:finder {sandbox.slot=ro}",
+                        "graaljs:builder {sandbox.slot=build, gpu=true}",
+                        "graaljs:builder {sandbox.slot=build, gpu=true}");
+    }
+
+    /**
+     * Runs {@code js} over a registry holding {@code builder} ({@code sandbox.slot: build}) and returns the requests
+     * the provider saw.
+     */
+    private List<EnvironmentRequest> run(String js) {
         final InMemorySubagentRegistry registry = new InMemorySubagentRegistry();
         registry.register(Subagent.builder().name("builder").systemPrompt("unused")
                 .attributes(Map.of("sandbox.slot", "build")).build());
@@ -71,11 +108,6 @@ class GraalJsEnvironmentRequestTest {
             requests.add(request);
             return UnavailableExecutionEnvironment.of("not needed");
         };
-
-        final String js = "agent({ agentType: 'builder', goal: 'compile' });\n" + "await parallel([\n"
-                + "  { agentType: 'reviewer', goal: 'r', attributes: { sandbox: { profile: 'ro' } } },\n"
-                + "  { agentType: 'builder', goal: 't', attributes: { 'sandbox.slot': 'test' } },\n" + "]);\n"
-                + "return 'done';";
         final GraalJsWorkflowScript script = new GraalJsWorkflowScript(js, Map.of(), JsSandboxConfig.defaults(),
                 engines, SubagentResolver.inline(registry), null);
         final DefaultSubagentExecutionManager manager = new DefaultSubagentExecutionManager(new DefaultSubagentExecutor(
@@ -84,11 +116,7 @@ class GraalJsEnvironmentRequestTest {
                 WorkflowRunnerOptions.defaults())) {
             assertThat(runner.run(script, RunId.from("ee42-run"))).isEqualTo("done");
         }
-
-        assertThat(requests).hasSize(3).allSatisfy(request -> assertThat(request.fork()).isPresent());
-        assertThat(requests).extracting(request -> request.fork().get().name() + " " + request.definitionAttributes())
-                .containsExactlyInAnyOrder("graaljs:builder {sandbox.slot=build}",
-                        "graaljs:reviewer {sandbox.profile=ro}", "graaljs:builder {sandbox.slot=test}");
+        return requests;
     }
 
     private static SubagentExecutionEnvironment env(InMemorySubagentRegistry registry,

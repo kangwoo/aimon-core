@@ -6,7 +6,8 @@
 > reviewed; the `design/` directory is not a translation target (`docs/project/documentation-guide.md` §5.1).
 >
 > Two things were added. §8 records where the implementation departed from this design, and why — including which
-> review notes were applied. The open questions in §7 whose consequences reach beyond this change are tracked in
+> review notes were applied. Note in particular §8.3: registered keys are now pinned, which replaces the
+> "explicit wins on the same key" rule of §2.1 step 4 and §4 for graaljs steps. The open questions in §7 whose consequences reach beyond this change are tracked in
 > [`../../backlog/execution-environment-open-items.md`](../../backlog/execution-environment-open-items.md) (EE-43 ← Q2,
 > EE-44 ← Q5, EE-45 ← §8), which is the canonical open/closed list. The spec this extends is
 > [`execution-environment.md`](execution-environment.md) §5.2.
@@ -243,7 +244,8 @@ Docs: the three `scripts/check-*.py`.
 ## 8. Where the implementation departed from this design
 
 Everything not listed here was built as §2–§6 describe. Each entry says what the design said, what was done instead,
-and why. The first group is the design review's non-blocking notes; the second is what came up in the code.
+and why. The first group is the design review's non-blocking notes; the second is what came up in the code; the third
+is what the review of the implementation changed.
 
 ### 8.1 Review notes applied
 
@@ -298,3 +300,29 @@ and why. The first group is the design review's non-blocking notes; the second i
 - **Q1, Q3 and Q4 were not promoted to the backlog.** Their consequences stay inside this change's surface: Q1 (full
   definition reuse) would change graaljs step semantics only, Q3 (clearing a key) is a rule of `overlay`, and Q4
   (unregistered `agentType`) is a log level. They remain here as the record.
+
+### 8.3 Implementation review fixes
+
+- **Registered keys are pinned; the script no longer wins per key.** §2.1 step 4 and the §4 table say
+  `effective = registered ⊕ explicit` with the explicit value winning on the same key. The implementation review
+  showed why that is unsafe: an operator registers `untrusted-runner` with `sandbox.slot: isolated`, and a
+  model-written script passes `attributes: { 'sandbox.slot': 'privileged' }` to escape to the privileged slot. Now a
+  script attribute whose key the registered definition already sets fails the script with a `JsScriptException`
+  naming the `agentType`, the key, the registered value and the script's value; an identical value is accepted as a
+  no-op, and keys the registered definition does not set may still be added. The check lives in
+  `InlineSubagentResolver`, before it calls `overlay`. `DefinitionAttributes.overlay` keeps its generic
+  override-wins semantics (§3.1) — the pinning is a graaljs policy about who wrote the override, not a merge rule.
+  The residual gap is recorded in EE-45: an **unregistered** `agentType` (or none) has nothing to pin, so a script
+  can still request any attributes that way; whether model-written scripts may set `attributes` at all is still open.
+- **`WorkflowTool` resolves role attributes once per run.** §3.1 said roles are looked up "per run", but the lookup
+  sat in the subagent factories, which the perspectives fan-out called inside each thunk on a worker thread — a
+  registry reload mid-fan-out could give sibling perspectives different slots. Each built-in script now resolves the
+  roles it uses at its start, on the script thread, and hands the maps to the factories.
+  `WorkflowToolAttributesTest.roleAttributesResolvedOncePerRun` pins it.
+- **The failing-registry contrast is documented.** `WorkflowTool` logs a failing registry and runs that role's steps
+  without attributes (default placement); graaljs fails the script. The behaviour is unchanged (8.2); the class and
+  `roleAttributes` Javadoc now say so and why the two frontends differ.
+- **Non-finite numbers are rejected as attribute values.** `NaN` and `±Infinity` would have become the text `"NaN"` /
+  `"Infinity"`; YAML cannot produce them, so they fail the script naming the key. Large finite doubles are unchanged.
+- **Tests.** `pipeline()` stages are now covered end to end (`GraalJsEnvironmentRequestTest`), next to `agent()` and
+  `parallel()`; the tests that relied on a script overriding a registered key now add a new key instead.

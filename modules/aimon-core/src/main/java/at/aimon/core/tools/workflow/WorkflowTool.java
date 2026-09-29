@@ -62,9 +62,20 @@ import at.aimon.core.workflow.WorkflowScript;
  * {@linkplain at.aimon.core.base.DefinitionAttributes attributes} (a {@code sandbox.slot}, say), register a subagent
  * under that role's lookup name — {@value #ROLE_PERSPECTIVE}, {@value #ROLE_SYNTHESIZER}, {@value #ROLE_CANDIDATE},
  * {@value #ROLE_JUDGE} or {@value #ROLE_SKEPTIC}, one per role and not per angle. Only that definition's attributes
- * are copied, when the workflow runs; its prompt, tools and model are ignored by this tool, and the step names
- * ({@code workflow:judge} …) do not change. Note that such a definition is also an ordinary registered subagent: the
- * model sees it and can call it through {@code Task}, where — and only where — its own prompt is used.
+ * are copied, once per role at the start of each run (so every step of one role in a run — the perspectives of one
+ * fan-out, say — gets the same attributes even if the registry is reloaded mid-run); its prompt, tools and model are
+ * ignored by this tool, and the step names ({@code workflow:judge} …) do not change. Note that such a definition is
+ * also an ordinary registered subagent: the model sees it and can call it through {@code Task}, where — and only
+ * where — its own prompt is used.
+ *
+ * <p>
+ * <b>A failing registry does not fail the run.</b> If the role lookup throws, a WARN is logged and that role's steps
+ * run with no attributes — that is, wherever the execution environment provider places a step it has no hint for
+ * (default placement). The built-in steps are fixed code, not model-authored, and the attributes are an optional
+ * placement hint, so the user's workflow is not failed for them. This deliberately differs from the GraalJS workflow
+ * frontend, where a registry failure while resolving an {@code agentType}'s attributes fails the script with a
+ * {@code JsScriptException}: there the attributes come from a definition the script named explicitly, and silently
+ * dropping them could run the step outside the placement the operator pinned for that definition.
  */
 public class WorkflowTool extends GenericTool<WorkflowInput, String> {
 
@@ -305,10 +316,15 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
     /** The default multi-perspective workflow: fan out to angle sub-agents, then optionally synthesize. */
     private WorkflowScript<String> perspectivesScript(String prompt, List<String> perspectives, boolean synthesize) {
         return ctx -> {
+            // Resolved once per run, before the fan-out: every perspective gets the same attributes even if the
+            // registry changes while the thunks run on worker threads.
+            final Map<String, String> perspectiveAttributes = roleAttributes(ROLE_PERSPECTIVE);
+            final Map<String, String> synthesizerAttributes = roleAttributes(ROLE_SYNTHESIZER);
             ctx.phase("Perspectives");
             final List<Supplier<AgentStepResult>> thunks = new ArrayList<>(perspectives.size());
             for (final String perspective : perspectives) {
-                thunks.add(() -> ctx.agent(perspectiveSubagent(perspective), prompt));
+                final Subagent subagent = perspectiveSubagent(perspective, perspectiveAttributes);
+                thunks.add(() -> ctx.agent(subagent, prompt));
             }
             final List<AgentStepResult> analyses = ctx.parallel(thunks);
             final String combined = combine(perspectives, analyses);
@@ -316,7 +332,7 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
                 return combined;
             }
             ctx.phase("Synthesize");
-            return ctx.agent(synthesizerSubagent(), combined).text();
+            return ctx.agent(synthesizerSubagent(synthesizerAttributes), combined).text();
         };
     }
 
@@ -325,14 +341,17 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
      */
     private WorkflowScript<String> judgePanelScript(String prompt, List<String> perspectives) {
         return ctx -> {
+            final Map<String, String> candidateAttributes = roleAttributes(ROLE_CANDIDATE);
+            final Subagent judge = judgeSubagent(roleAttributes(ROLE_JUDGE));
+            final Subagent synthesizer = synthesizerSubagent(roleAttributes(ROLE_SYNTHESIZER));
             ctx.phase("Candidates");
             final List<AgentTask> attempts = new ArrayList<>(perspectives.size());
             for (final String perspective : perspectives) {
-                attempts.add(AgentTask.of(candidateSubagent(perspective), prompt));
+                attempts.add(AgentTask.of(candidateSubagent(perspective, candidateAttributes), prompt));
             }
             ctx.phase("Judge");
-            final JudgedResult judged = WorkflowPatterns.judgePanel(ctx, attempts, judgeSubagent(), JUDGE_PANEL_SIZE,
-                    synthesizerSubagent(), SCORE_SCHEMA);
+            final JudgedResult judged = WorkflowPatterns.judgePanel(ctx, attempts, judge, JUDGE_PANEL_SIZE, synthesizer,
+                    SCORE_SCHEMA);
             return renderJudged(judged, perspectives);
         };
     }
@@ -341,8 +360,9 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
     private WorkflowScript<String> adversarialScript(String prompt) {
         return ctx -> {
             ctx.phase("Adversarial verify");
-            final Verdict verdict = WorkflowPatterns.adversarialVerify(ctx, prompt, skepticSubagent(),
-                    ADVERSARIAL_SKEPTICS, ADVERSARIAL_QUORUM, REFUTE_SCHEMA);
+            final Verdict verdict = WorkflowPatterns.adversarialVerify(ctx, prompt,
+                    skepticSubagent(roleAttributes(ROLE_SKEPTIC)), ADVERSARIAL_SKEPTICS, ADVERSARIAL_QUORUM,
+                    REFUTE_SCHEMA);
             return renderVerdict(verdict);
         };
     }
@@ -385,44 +405,50 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
                 + (verdict.getTotal() - verdict.getValidVotes()) + " abstained (quorum " + verdict.getQuorum() + ").";
     }
 
-    private Subagent perspectiveSubagent(String perspective) {
+    private static Subagent perspectiveSubagent(String perspective, Map<String, String> attributes) {
         return Subagent.builder().name(PERSPECTIVE_PREFIX + perspective)
                 .systemPrompt("You analyze the user's request strictly from the \"" + perspective + "\" perspective. "
                         + "Give a focused, specific analysis from that angle only. Be concise.")
-                .attributes(roleAttributes(ROLE_PERSPECTIVE)).build();
+                .attributes(attributes).build();
     }
 
-    private Subagent synthesizerSubagent() {
+    private static Subagent synthesizerSubagent(Map<String, String> attributes) {
         return Subagent.builder().name(SYNTHESIZER_NAME)
                 .systemPrompt("You are given several labeled perspective analyses of a request. Produce one coherent, "
                         + "non-redundant synthesis that integrates them. Be concise.")
-                .attributes(roleAttributes(ROLE_SYNTHESIZER)).build();
+                .attributes(attributes).build();
     }
 
-    private Subagent candidateSubagent(String angle) {
+    private static Subagent candidateSubagent(String angle, Map<String, String> attributes) {
         return Subagent.builder().name(CANDIDATE_PREFIX + angle)
                 .systemPrompt("You produce a complete, standalone candidate answer to the user's request, "
                         + "emphasizing the \"" + angle + "\" angle. Be concrete and self-contained.")
-                .attributes(roleAttributes(ROLE_CANDIDATE)).build();
+                .attributes(attributes).build();
     }
 
-    private Subagent judgeSubagent() {
+    private static Subagent judgeSubagent(Map<String, String> attributes) {
         return Subagent.builder().name(JUDGE_NAME)
                 .systemPrompt("You are a strict evaluator. Score the given candidate answer for quality, correctness, "
                         + "and completeness. Respond with the requested JSON only.")
-                .attributes(roleAttributes(ROLE_JUDGE)).build();
+                .attributes(attributes).build();
     }
 
-    private Subagent skepticSubagent() {
+    private static Subagent skepticSubagent(Map<String, String> attributes) {
         return Subagent.builder().name(SKEPTIC_NAME)
                 .systemPrompt("You are a rigorous skeptic. Independently try to REFUTE the given claim, and report "
                         + "whether it is refuted. Respond with the requested JSON only.")
-                .attributes(roleAttributes(ROLE_SKEPTIC)).build();
+                .attributes(attributes).build();
     }
 
     /**
-     * The attributes of the subagent registered under a built-in role's lookup name, or none. A registry that fails is
-     * logged and treated as holding nothing: an optional placement hint must not fail the user's workflow.
+     * The attributes of the subagent registered under a built-in role's lookup name, or none. Called once per role at
+     * the start of a run, on the thread that runs the script — never from inside a fan-out thunk.
+     *
+     * <p>
+     * A registry that throws is logged at WARN and treated as holding nothing, so that role's steps run with no
+     * attributes and are placed by default: an optional placement hint must not fail the user's workflow. This is the
+     * opposite of the GraalJS frontend, which fails the script when the registry lookup for an {@code agentType}
+     * throws (see the class description for why the two differ).
      */
     private Map<String, String> roleAttributes(String role) {
         try {

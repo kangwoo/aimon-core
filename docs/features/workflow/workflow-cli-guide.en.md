@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/workflow/workflow-cli-guide.md
-source_commit: eec9ccd
+source_commit: 837e4be
 ---
 
 # Workflow CLI Guide (the aimon-cli view)
@@ -178,11 +178,19 @@ At least one of `agentType` and `systemPrompt` is required.
 
 `attributes` are read by the provider that decides which execution environment (a sandbox slot, say) the step runs in.
 If a subagent is registered under the same name as `agentType`, that definition's `attributes` are laid down first and
-the step's `attributes` overlay them key by key — the step wins on the same key, and it cannot delete a registered key.
-Only attributes are taken from the registered definition. The step is still named `graaljs:<agentType>`, and the
-prompt and tools are still the step's own. The reading rules are those of a definition file's `attributes` block:
-`{ sandbox: { slot: "build" } }` and `{ "sandbox.slot": "build" }` are the same attribute, numbers and booleans become
-text (`1.0` becomes `"1"`), and a non-object value, an array, `null`, or a key that is both a value and a group fails the script.
+the step's `attributes` **may only add keys the registered definition does not set.** The keys the registered definition
+sets are pinned — a step that gives one of them a different value fails the script (the message names the `agentType`,
+the key, the registered value and the script's value), and a step that gives the same value changes nothing. Scripts are
+written by the model, so this keeps a script from moving a subagent the operator registered with `sandbox.slot: isolated`
+to `privileged`. A step cannot delete a registered key either. An unregistered `agentType` (or a step with no
+`agentType`) has no keys to pin, so the step's `attributes` are used as they are — whether a model-written script may
+set `attributes` at all is not decided yet (backlog EE-45). Only attributes are taken from the registered definition.
+The step is still named `graaljs:<agentType>`, and the prompt and tools are still the step's own. The reading rules are
+those of a definition file's `attributes` block: `{ sandbox: { slot: "build" } }` and `{ "sandbox.slot": "build" }` are
+the same attribute, numbers and booleans become text (`1.0` becomes `"1"`), and a non-object value, an array, an entry
+whose value is `null`, a key that is both a value and a group, or a non-finite number (`NaN`, `Infinity`) fails the
+script. Leaving `attributes` out, or giving `attributes: null`, means no attributes.
+
 Supply a `schema` and `agent(...)` returns the **structured object** as it is. Without one it returns a result view:
 
 ```js
