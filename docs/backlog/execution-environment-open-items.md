@@ -1,4 +1,4 @@
-# 실행 환경 — 등록 항목 47건 (열림 37, 그중 결정됨 5 · 닫힘 10)
+# 실행 환경 — 등록 항목 47건 (열림 37 · 닫힘 10)
 
 출처는 `ExecutionEnvironment` 구현 작업이다. 설계는 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md)
 이고, 구현 계획(승인본)과 구현이 그 계획에서 벗어난 점은
