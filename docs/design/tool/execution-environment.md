@@ -153,8 +153,11 @@ public interface ExecutionEnvironment {
     /** Makes control-plane files readable from this environment's shell and file tools; returns the path (§4.4). */
     String stage(StagedResource resource);
 
-    /** A derived environment whose writes are isolated under branchKey, or empty if unsupported. */
+    /** A derived environment whose writes are isolated under branchKey; empty = no isolation, throw = refused (why). */
     default Optional<ExecutionEnvironment> isolate(String branchKey) { return Optional.empty(); }
+
+    /** The environment this branch was isolated from, if it declares its lineage (WorktreeMerge checks it). */
+    default Optional<ExecutionEnvironment> isolatedFrom() { return Optional.empty(); }
 }
 
 public interface ExecutionEnvironmentProvider {
@@ -196,7 +199,12 @@ public interface ExecutionEnvironmentProvider {
   모든 명령의 기본 cwd 를 브랜치 루트로 바꿀 뿐이다. 절대 경로 쓰기까지 막지는 못한다. 로컬 격리가 "파일
   도구 + 기본 cwd" 수준이라는 것을 javadoc 에 적는다. 지금은 셸 쪽 격리가 아예 없으니 그보다는 낫다.
   파생 환경은 `durable() == false` 를 돌려준다 — 브랜치 디렉터리는 병합 뒤나 폐기 시 사라지므로 그 안의 경로를
-  artifact 로 등록하면 안 된다(§9.3)
+  artifact 로 등록하면 안 된다(§9.3). 브랜치는 부모의 경로 규칙을 **브랜치 루트 기준으로 한 번 더** 건다(§9.2) —
+  브랜치의 `.aimon/` 도 루트의 것처럼 보이지 않는다. 브랜치는 `isolatedFrom()` 으로 부모를 밝히고, 다시
+  `isolate()` 하면 이유를 담은 `UnsupportedOperationException` 을 던진다(중첩 격리 없음 —
+  [`workflow-isolation-hardening.md`](workflow-isolation-hardening.md) §1.4). 키는 대소문자만 다른 두 값을 구분하지
+  못한다 — 대소문자를 구분하지 않는 디스크에서 `a` 와 `A` 는 한 디렉터리다. 러너가 만드는 키는 소문자뿐이라
+  부딪히지 않는다
 
 ### 4.3 수명
 
@@ -360,11 +368,20 @@ public interface ExecutionEnvironmentProvider {
   구현이 달라진 점은 [`execution-environment-ee42-workflow-attributes.md`](execution-environment-ee42-workflow-attributes.md)
 - **워크플로 격리 브랜치** — 러너는 `parentEnv.isolate(branchKey)` 를 부른다. 비어 있으면(격리를 지원하지 않는
   환경) 브랜치를 격리 없이 돌리지 않고 **실행을 거부**한다. 격리를 요청한 스크립트가 격리 없이 돌면 병렬 브랜치가
-  서로의 파일을 덮는다
+  서로의 파일을 덮는다. `isolate()` 가 던지면(격리를 여기서 거절한다 — 사용 불가 환경, 이미 브랜치인 환경) 러너는
+  그 메시지를 오류에 싣고 예외를 원인으로 잇는다. 사용 불가 환경은 빈 값이 아니라 자기 원인(제공자 없음, 샌드박스
+  다운)을 담은 `ExecutionEnvironmentUnavailableException` 을 던진다
 - `SubagentExecutionEnvironment.toolRegistry` 는 부모 레지스트리 그대로다. 브랜치별 레지스트리가 없어진다
 - `WorktreeMerge.promote(baseVfs, branchKeys, policy)` 는 지금 베이스 VFS 하나와 브랜치 키 목록을 받아
   `.worktrees/{key}/` 를 스스로 찾아간다. 브랜치 위치를 아는 것이 환경이 되므로, 부모 환경과 브랜치 환경 목록을
   받는 형태로 바뀐다. 동작(브랜치 간 충돌을 먼저 훑고 `Policy` 로 고른 뒤 VFS 복사로 올리는 병합)은 그대로다.
+  `promote` 는 파일을 읽거나 쓰기 전에 브랜치의 소속을 확인한다 — 부모 자신, 부모의 파일 시스템을 공유하는 환경,
+  두 번 넘긴 같은 브랜치, `isolatedFrom()` 이 다른 부모를 가리키는 브랜치는 `IllegalArgumentException` 이다. 이 검사도
+  각 환경의 `fileSystem()` 은 부르므로, 입출력이 전혀 없는 것은 로컬 제공자뿐이다(다른 제공자는 첫 호출에
+  프로비저닝할 수 있다, §13). 계보를 밝히지 않는 브랜치는 나머지 검사만으로 받는다. 그다음 두 가지를 먼저 확인하고,
+  하나라도 걸리면 아무것도 올리지 않고 멈춘다 — 올릴 곳이 부모의 경로 규칙에 막히는지(부모의 파일 시스템이
+  `withPathRules` 로 만든 것일 때만 미리 알 수 있다, `VirtualFileSystems.pathRules`), 올릴 파일의 메타데이터를 읽을 수
+  있는지(셸이 만든 심볼릭 링크).
   **병합은 명시적이다** — 러너는 병합하지 않고, 조립 코드가 `promote` 를 부른다(workflow.md §6.3). 그래서 병합 방식은
   SPI 가 아니라 호출자의 선택이다. `promote` 는 파일 시스템만 쓰므로 어떤 환경에서도 동작한다. git worktree 로 격리하는
   환경(샌드박스)은 git 병합을 **자기 모듈의 API** 로 따로 줄 수 있고, 그것을 쓸지는 조립 코드가 고른다. 코어는
@@ -511,6 +528,19 @@ CLI 처럼 "사용자 프로젝트 디렉터리에서 돈다"는 배치에서는
 스테이징 영역을 `.aimon/` 아래에 두지 않는 것은 이 두 규칙이 겹치지 않게 하려는 것이다. `.aimon-staged/` 는 사본일
 뿐이므로 CLI 의 프로젝트 초기화가 `.gitignore` 에 넣는다.
 
+격리 브랜치(§4.2)는 이 규칙을 **브랜치 루트 기준으로 다시 건다** — `.aimon` 은 `.worktrees/{key}/.aimon` 이
+된다. 규칙은 부모의 것을 옮긴 것이지 새로 정한 것이 아니므로, 규칙을 비운 어셈블리의 브랜치에도 규칙이 없다. 이
+규칙 층은 `ScopedVirtualFileSystem` **아래**에 둔다. 위에 두면 스코프의 작업 디렉터리(`"."`) 기준으로 경로를
+풀어서 절대 경로가 규칙을 비껴간다. 아래에서는 브랜치 경로의 표기 — 브랜치 기준 상대 경로, 워크스페이스나 브랜치
+루트 아래의 절대 경로(`./`·`//` 가 섞이거나 브랜치 키의 대소문자가 달라도) — 가 모두 `.worktrees/{key}/` 아래의 한
+위임 경로로 줄어든 뒤다(나머지 세그먼트의 대소문자는 규칙이 무시한다). 줄지 않는 것은 브랜치 안에서 `.worktrees/`
+를 가리키는 경로다 — `.worktrees/other/x` 나 상대 경로로 쓴 `.worktrees/{key}/x` 는 브랜치 안에 중첩되어 규칙 밖에
+놓이고, 병합이 그 디렉터리로 올린다(백로그 EE-46). 브랜치가 공유하는 스테이징 접두어도 대소문자를 무시하고 맞추므로,
+`.AIMON-STAGED/x` 쓰기는 브랜치 안에 떨어지지 않고 부모의 `READ_ONLY` 규칙에 걸린다. 셸이 브랜치 루트에 만든
+스테이징 디렉터리는 어떤 표기로도 닿지 않으므로(모두 부모의 것으로 간다) 브랜치 목록에서 빠지고, 병합이 올리지
+않는다. 이것은 부모가 스테이징 영역을 지킨다는 전제 위에 있다 — 그 규칙을 뺀 어셈블리의 브랜치는 루트 스테이징
+영역에 그대로 쓴다.
+
 셸은 `.aimon/` 을 여전히 읽을 수 있다. 로컬에는 셸 경로의 격리가 없기 때문이다(§2 비목표). 이 설정이 막는 것은
 "모델이 파일 도구로 무심코 자기 정의를 고치는 일"이지, 악의적인 셸 명령이 아니다. 그것을 막으려면 샌드박스
 제공자를 쓴다.
@@ -611,6 +641,7 @@ aimon-sandbox 는 `ExecutionEnvironmentProvider` 를 구현한다. 이 문서가
 | 스킬을 렌더하는 모든 경로에서 `stage()` 를 거친다(§4.4) | `stage()` 는 마커를 대상에서 확인하고, 재생성 뒤에는 다시 복사한다. `stagingRoot` 는 git worktree 밖이며 `isolate()` 파생 환경과 공유한다 |
 | 서술자를 프롬프트에 렌더한다 — `resolve()` 직후, 첫 도구 호출 전에 | 서술자는 이미지의 실제 platform·OS 다. 원격 자원 없이 알 수 있어야 하므로 설정(프로파일)에 선언한 값이고, 프로비저닝 때 실제 이미지와 대조한다. 같은 세션에서는 재생성을 넘어 같은 값을 돌려준다(프롬프트 캐시, §10) |
 | 스테이징 영역을 파일 도구에 읽기 전용으로 둔다(§4.4) — 경로 규칙으로. 로컬 제공자와 외부 제공자가 같은 공개 팩토리 `VirtualFileSystems.withPathRules` 를 쓴다 | 샌드박스의 스테이징 영역도 파일 도구에 읽기 전용이다. 셸은 쓸 수 있다 |
+| `WorktreeMerge.promote` 는 부모 자신·중복·부모와 파일 시스템을 공유하는 브랜치를 거부하고, `isolatedFrom()` 이 밝힌 계보가 다르면 거부한다(§5.2) | (권장) `isolate()` 가 만든 브랜치는 `isolatedFrom()` 으로 부모를 밝히고, 부모의 경로 규칙을 브랜치 루트 기준으로 `VirtualFileSystems.withPathRules` 로 건다(§9.2). 사용 불가이거나 이미 브랜치여서 격리를 거절할 때는 빈 값이 아니라 이유를 담은 예외를 던진다 |
 | `resolve()` 실패 시 호스트로 되돌아가지 않는다 | 실패를 예외로 알린다 |
 | 프롬프트 조립이 `fileSystem()` 을 읽을 수 있다(옵트인 컨텍스트 제공자, §5.1) | 그 읽기가 프로비저닝을 일으킨다는 것을 문서에 밝힌다 |
 
@@ -619,6 +650,11 @@ aimon-sandbox 는 `ExecutionEnvironmentProvider` 를 구현한다. 이 문서가
 ---
 
 ## 14. 열린 질문
+
+> 이 절은 설계 시점의 기록이다. 다섯 질문 가운데 셋 — `Environment` 의 남은 필드, 스킬 선언 훅의 셸, 백그라운드 명령을
+> 끝낼 수단 — 은 2026-09-29 에 결정되었고, 결정문과 착수 범위는 백로그의 EE-14 · EE-12 · EE-13 에 있다
+> ([`execution-environment-open-items.md`](../../backlog/execution-environment-open-items.md)). 나머지 둘(artifact 를 늘 복사할지,
+> `contentSearch` 결과 형식)은 아직 열려 있다.
 
 - **`Environment` 의 남은 필드** — `platform`/`osVersion`/`workingDirectory` 가 서술자로 가면 `timeZone` 만 남는다.
   `UserLocale` 같은 이름으로 옮기고 `Environment` 를 없앨지
@@ -648,7 +684,7 @@ aimon-sandbox 는 `ExecutionEnvironmentProvider` 를 구현한다. 이 문서가
 - **제어 저장소를 파일 도구에 노출하지 말 것.** 스킬 파일은 `stage()` 를 거친다(§9)
 - **"이미 스테이징했다"를 제공자 메모리로 판단하지 말 것.** 대상의 마커를 본다(§4.4)
 - **`${AIMON_SKILL_DIR}` 를 `stage()` 밖에서 채우지 말 것.** 커맨드·포크 경로도 같다(§4.4)
-- **`isolate()` 가 비었을 때 격리 없이 브랜치를 돌리지 말 것**(§5.2)
+- **`isolate()` 가 비었거나 던졌을 때 격리 없이 브랜치를 돌리지 말 것**(§5.2). 던진 이유는 버리지 말고 싣는다
 - **비영속 환경의 경로를 artifact 로 등록하지 말 것.** 복사 후 제어 저장소 경로를 등록한다(§9.3)
 
 ---

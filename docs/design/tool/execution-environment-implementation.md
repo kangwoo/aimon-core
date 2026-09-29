@@ -880,7 +880,7 @@ spec §4.4 rule and the skill guide);
   - `branch.fileSystem().write(path + "/y", …)` throws, because READ_ONLY applies to the real staging area.
   - `branch.fileSystem().listRecursive(".")` does not list staged files, and a `WorktreeMerge.promote` of that branch
     does not promote them.
-- **Branch-local `.aimon/` is not denied** (review 3). A branch file written as `.aimon/x` lands at
+- ~~**Branch-local `.aimon/` is not denied**~~ *(reversed later — §10.9)* (review 3). A branch file written as `.aimon/x` lands at
   `.worktrees/{key}/.aimon/x` on the parent's path-rule fs:
   - through the branch fs it can be written, read, listed and deleted;
   - `parent.fileSystem().read(".worktrees/{key}/.aimon/x")` also succeeds;
@@ -1420,3 +1420,31 @@ attributes were always empty. EE-42 fills them without touching `EnvironmentRequ
 
 The approved design and where the build departed from it are in
 [`execution-environment-ee42-workflow-attributes.md`](execution-environment-ee42-workflow-attributes.md).
+
+### 10.9 Workflow isolation, hardened after the fact (EE-8, EE-25, EE-27, EE-28, EE-29)
+
+A later change closed five backlog items that this plan's Stage 4 had left behind. Its approved design, and where the
+build departed from it, are in [`workflow-isolation-hardening.md`](workflow-isolation-hardening.md). Against this
+plan:
+
+- **The pinned test in Stage 4 is reversed.** "Branch-local `.aimon/` is not denied" pinned the rules as root-anchored
+  and treated the merge-time `DENY` as the guard. That guard left a half-merge (no rollback), so a branch now applies
+  the parent's rules re-anchored at its own root, through a second `VirtualFileSystems.withPathRules` layer placed
+  *below* the `ScopedVirtualFileSystem`. The branch's `.aimon/` is refused at write time and hidden from listings, so
+  a merge never meets one. The rules are still anchored, not "match `.aimon/` at any depth" — only the branch root is
+  added. `LocalIsolatedEnvironmentTest.branchLocalControlDirectoryIsDenied` replaces the old test.
+- **`isolate()` can throw.** The plan's SPI returned empty for "unsupported". Empty still means "this kind of
+  environment has no isolation"; throwing means "refused here, and the message is why".
+  `UnavailableExecutionEnvironment.isolate` throws its `ExecutionEnvironmentUnavailableException`, and
+  `LocalIsolatedEnvironment.isolate` throws `UnsupportedOperationException` (no nested isolation). The runner chains
+  the exception as the `WorkflowException`'s cause.
+- **New SPI method `isolatedFrom()`**, default empty. `WorktreeMerge.promote` uses it, together with identity checks,
+  to refuse branches that do not belong to the parent, and it reads every promoted file's metadata before the first
+  write. After the build review it also checks every destination against the parent's path rules first, read through
+  the new `VirtualFileSystems.pathRules` (the local parent's filesystem is the path-rule layer; other filesystems
+  answer empty and are checked only on write).
+- **Branch host paths and shell-made staging copies (build review).** `ScopedVirtualFileSystem` matches an absolute
+  `{base}/.worktrees/{key}/…` after normalisation and ignoring case, so `./`, `//` and a case variant of the key no
+  longer nest the branch inside itself past its rules. It also leaves out of its listings any branch-local entry under
+  a shared prefix — a staging directory a shell made in the branch root, which no caller path reaches.
+- **The shared staging prefix matches ignoring case**, like the path rules it sits beside.

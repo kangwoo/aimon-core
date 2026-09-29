@@ -6,13 +6,16 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.filesystem.FileMetadata;
+import at.aimon.core.filesystem.PathRule;
 import at.aimon.core.filesystem.VirtualFileSystem;
+import at.aimon.core.filesystem.VirtualFileSystems;
 import at.aimon.core.filesystem.exception.VirtualFileSystemException;
 
 /**
@@ -34,8 +37,9 @@ import at.aimon.core.filesystem.exception.VirtualFileSystemException;
  * example from listing {@code .worktrees/} — rebuilds each branch with
  * {@code parent.isolate(key).orElseThrow()}: isolation is deterministic on the key, so this is the same view the run
  * used. Staged skill copies are shared with the parent and never appear in a branch listing, so they are never
- * promoted; a file a branch wrote under its own {@code .aimon/} is promoted to the root {@code .aimon/}, where the
- * parent's path rules refuse it (the control store is not writable through a merge).
+ * promoted — nor is a branch-local staging directory a shell made, which the branch listing leaves out too; a branch
+ * cannot write under its own {@code .aimon/} (the parent's path rules apply at the branch root), so a merge never
+ * meets one.
  */
 public final class WorktreeMerge {
 
@@ -62,17 +66,35 @@ public final class WorktreeMerge {
      * mid-merge, the partial progress (files promoted and conflicts so far) is logged at WARN and included in the
      * message of the {@link VirtualFileSystemException} that propagates. Already-promoted files stay in place on the
      * canonical filesystem (their branch sources already deleted); per-file promotion is idempotent, so the merge can
-     * simply be re-run after the underlying failure is resolved.
+     * simply be re-run after the underlying failure is resolved. Three failures are caught before anything is written:
+     * a branch that does not belong to {@code parent} (below); a destination the parent's path rules refuse — for
+     * example a file a shell wrote under a {@code READ_ONLY} directory of the branch — when the parent's filesystem is
+     * a {@link VirtualFileSystems#withPathRules path-rule filesystem} (the local provider's is; for any other, such a
+     * destination still fails when it is written); and a branch file whose metadata cannot be read — for example a
+     * symbolic link a shell made in the branch, which the local filesystem refuses.
+     *
+     * <p>
+     * <b>Ownership.</b> Each branch must be a distinct environment derived from {@code parent}: not {@code parent}
+     * itself, not sharing its filesystem (promoting it would copy each file onto itself and then delete it), not listed
+     * twice, and — when it declares its {@link ExecutionEnvironment#isolatedFrom() lineage} — isolated from this very
+     * instance. Pass the same environment instance the branches were isolated from, and each branch once: two objects
+     * for one key are not detected and would report every file of that key as a conflict. A branch that declares no
+     * lineage is accepted on the other checks alone.
      *
      * @param parent
-     *            the environment the branches were isolated from (must not be null)
+     *            the environment the branches were isolated from — the same instance (must not be null)
      * @param branches
-     *            the branch environments to promote, in precedence order (must not be null)
+     *            the branch environments to promote, in precedence order, each once (must not be null)
      * @param policy
      *            how to resolve a canonical path written by more than one branch (must not be null)
      * @return the merge report (promoted paths + collisions); a conflict under {@link Policy#FAIL} promotes nothing
+     * @throws IllegalArgumentException
+     *             if a branch is {@code parent} itself, shares its filesystem, is listed twice, or was isolated from
+     *             another environment; no file has been read or written
      * @throws VirtualFileSystemException
-     *             if a promotion step fails mid-merge; the message carries the partial progress (no rollback)
+     *             if a destination is refused by the parent's path rules or a branch file's metadata cannot be read
+     *             (nothing has been promoted), or a promotion step fails mid-merge; the message carries the partial
+     *             progress (no rollback)
      */
     public static MergeReport promote(ExecutionEnvironment parent, List<ExecutionEnvironment> branches, Policy policy) {
         Objects.requireNonNull(parent, "parent cannot be null");
@@ -81,6 +103,7 @@ public final class WorktreeMerge {
         for (final ExecutionEnvironment branch : branches) {
             Objects.requireNonNull(branch, "branches must not contain null");
         }
+        validateBranches(parent, branches);
 
         // Pre-scan: canonical path -> indexes of the branches that wrote it, in precedence order.
         final Map<String, List<Integer>> canonicalToBranches = new LinkedHashMap<>();
@@ -104,12 +127,38 @@ public final class WorktreeMerge {
             return new MergeReport(List.of(), conflicts);
         }
 
+        // Pre-flight 1: no destination may be refused by the parent's path rules, or nothing is promoted. Only a
+        // path-rule filesystem answers ahead of time; any other refuses when it is written (mid-merge, no rollback).
+        final List<PathRule> parentRules = VirtualFileSystems.pathRules(parent.fileSystem());
+        for (final Map.Entry<String, List<Integer>> entry : canonicalToBranches.entrySet()) {
+            final String canonical = entry.getKey();
+            final Optional<PathRule> refusing = parentRules.stream().filter(rule -> rule.covers(canonical)).findFirst();
+            if (refusing.isPresent()) {
+                throw new VirtualFileSystemException(
+                        "Worktree promotion aborted before promoting anything: '" + canonical + "' (branch #"
+                                + winner(entry.getValue(), policy) + ") would land under '" + refusing.get().getPrefix()
+                                + "', which the parent's path rules make " + refusing.get().getAccess());
+            }
+        }
+
+        // Pre-flight 2: every file about to be promoted must be readable as a file, or nothing is promoted. Metadata
+        // is read again right before each copy, so a file changed in between is copied with its current length.
+        for (final Map.Entry<String, List<Integer>> entry : canonicalToBranches.entrySet()) {
+            final int winner = winner(entry.getValue(), policy);
+            try {
+                branches.get(winner).fileSystem().getMetadata(entry.getKey());
+            } catch (final RuntimeException e) {
+                throw new VirtualFileSystemException("Worktree promotion aborted before promoting anything: '"
+                        + entry.getKey() + "' (branch #" + winner + ") cannot be read: " + e.getMessage(), e);
+            }
+        }
+
         final VirtualFileSystem canonicalFs = parent.fileSystem();
         final List<String> promoted = new ArrayList<>();
         for (final Map.Entry<String, List<Integer>> entry : canonicalToBranches.entrySet()) {
             final String canonical = entry.getKey();
             final List<Integer> writers = entry.getValue();
-            final int winner = policy == Policy.LAST_WINS ? writers.get(writers.size() - 1) : writers.get(0);
+            final int winner = winner(writers, policy);
             final VirtualFileSystem branchFs = branches.get(winner).fileSystem();
             try {
                 // copy -> verify -> delete (idempotent, retry-safe; never a bare move).
@@ -134,5 +183,40 @@ public final class WorktreeMerge {
             }
         }
         return new MergeReport(promoted, conflicts);
+    }
+
+    /** The index of the branch whose copy of a path is promoted, among the branches that wrote it. */
+    private static int winner(List<Integer> writers, Policy policy) {
+        return policy == Policy.LAST_WINS ? writers.get(writers.size() - 1) : writers.get(0);
+    }
+
+    /**
+     * Refuses branches that do not belong to {@code parent}, before any file is read or written. Identity, not
+     * equality: the local provider hands out one environment instance, and its branches hold that instance. The check
+     * does call each environment's {@code fileSystem()}: the local provider's answers without I/O, while another
+     * provider's may provision on first use (execution-environment design §13).
+     */
+    private static void validateBranches(ExecutionEnvironment parent, List<ExecutionEnvironment> branches) {
+        for (int i = 0; i < branches.size(); i++) {
+            final ExecutionEnvironment branch = branches.get(i);
+            if (branch == parent) {
+                throw new IllegalArgumentException("branches[" + i + "] is the parent environment itself");
+            }
+            if (branch.fileSystem() == parent.fileSystem()) {
+                throw new IllegalArgumentException("branches[" + i + "] shares the parent's filesystem; promoting it"
+                        + " would copy each file onto itself and then delete it");
+            }
+            final ExecutionEnvironment origin = branch.isolatedFrom().orElse(null);
+            if (origin != null && origin != parent) {
+                throw new IllegalArgumentException(
+                        "branches[" + i + "] was isolated from " + origin + ", not from " + parent);
+            }
+            for (int j = 0; j < i; j++) {
+                if (branches.get(j) == branch) {
+                    throw new IllegalArgumentException(
+                            "branches[" + j + "] and branches[" + i + "] are the same environment");
+                }
+            }
+        }
     }
 }

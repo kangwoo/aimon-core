@@ -26,7 +26,6 @@ import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.StagedResource;
 import at.aimon.core.filesystem.VirtualFileSystems;
 import at.aimon.core.filesystem.exception.FileAccessDeniedException;
-import at.aimon.core.filesystem.exception.VirtualFileSystemException;
 import at.aimon.core.shell.ExecutionOptions;
 import at.aimon.core.shell.ShellCommandResult;
 
@@ -126,33 +125,109 @@ class LocalIsolatedEnvironmentTest {
     }
 
     /**
-     * Path rules are root-anchored: a branch's own {@code .aimon/} is ordinary branch content. Promoting it would
-     * write the control store, which the parent's DENY rule refuses — a branch cannot reach the control store through a
-     * merge.
+     * The parent's path rules apply at the branch root too: the branch's own {@code .aimon/} is refused at write time
+     * under every spelling, so a merge never meets one (EE-8).
      */
     @Test
-    @DisplayName("a branch-local .aimon/ is not denied, but promoting it into the root .aimon/ is")
-    void branchLocalControlDirectoryIsNotDenied() throws IOException {
-        branch.fileSystem().write(".aimon/x", "branch-local");
+    @DisplayName("a branch's own .aimon/ is refused under every spelling, as the root's is")
+    void branchLocalControlDirectoryIsDenied() {
+        final String ws = workspace.toAbsolutePath().normalize().toString();
+        for (final String path : List.of(".aimon/x", ".AIMON/x", "./a/../.aimon/x", ws + "/.worktrees/k/.aimon/x",
+                ws + "/.aimon/x", ws + "/./.worktrees/k/.aimon/x", ws + "//.worktrees/k/.aimon/x",
+                ws + "/.worktrees/K/.aimon/x")) {
+            assertThatThrownBy(() -> branch.fileSystem().write(path, "branch-local")).as(path)
+                    .isInstanceOf(FileAccessDeniedException.class);
+        }
 
-        assertThat(read(branch, ".aimon/x")).isEqualTo("branch-local");
-        assertThat(branch.fileSystem().listRecursive(".")).containsExactly(".aimon/x");
-        assertThat(read(parent, ".worktrees/k/.aimon/x")).isEqualTo("branch-local");
+        assertThat(workspace.resolve(".worktrees/k/.aimon")).doesNotExist();
+        assertThat(workspace.resolve(".worktrees/k/.worktrees")).doesNotExist();
+        assertThat(branch.fileSystem().exists(".aimon")).isFalse();
+    }
 
-        Files.createDirectories(workspace.resolve(".aimon"));
-        Files.writeString(workspace.resolve(".aimon/x"), "control");
-        assertThat(parent.fileSystem().exists(".aimon/x")).isFalse();
-        assertThatThrownBy(() -> read(parent, ".aimon/x")).isInstanceOf(FileAccessDeniedException.class);
-        // From the branch the root .aimon/ is out of reach altogether: a canonical absolute path maps into the branch.
-        assertThat(read(branch, workspace.toAbsolutePath().normalize() + "/.aimon/x")).isEqualTo("branch-local");
+    @Test
+    @DisplayName("a shell-written file under the branch's .aimon/ is not listed, so a merge leaves it and the root alone")
+    void shellWrittenControlFileIsNeverPromoted() throws IOException {
+        Files.createDirectories(workspace.resolve(".worktrees/k/.aimon"));
+        Files.writeString(workspace.resolve(".worktrees/k/.aimon/y"), "shell-written");
+        branch.fileSystem().write("result.txt", "done");
 
-        assertThatThrownBy(() -> WorktreeMerge.promote(parent, List.of(branch), WorktreeMerge.Policy.FAIL))
-                .isInstanceOf(VirtualFileSystemException.class).hasMessageContaining(".aimon/x")
-                .hasRootCauseInstanceOf(FileAccessDeniedException.class);
-        assertThat(workspace.resolve(".aimon/x")).hasContent("control");
+        assertThat(branch.fileSystem().listRecursive(".")).containsExactly("result.txt");
+        final MergeReport report = WorktreeMerge.promote(parent, List.of(branch), WorktreeMerge.Policy.FAIL);
 
-        branch.fileSystem().delete(".aimon/x");
-        assertThat(workspace.resolve(".worktrees/k/.aimon/x")).doesNotExist();
+        assertThat(report.promoted()).containsExactly("result.txt");
+        assertThat(workspace.resolve("result.txt")).hasContent("done");
+        assertThat(workspace.resolve(".aimon/y")).doesNotExist();
+        assertThat(workspace.resolve(".worktrees/k/.aimon/y")).hasContent("shell-written");
+    }
+
+    @Test
+    @DisplayName("a staging directory a shell made in the branch is not listed, so a merge leaves it and staging alone")
+    void shellWrittenStagingCopyIsNeverPromoted() throws IOException {
+        Files.createDirectories(workspace.resolve(".worktrees/k/.aimon-staged"));
+        Files.writeString(workspace.resolve(".worktrees/k/.aimon-staged/x"), "shell copy");
+        Files.createDirectories(workspace.resolve(".worktrees/k/.Aimon-Staged"));
+        Files.writeString(workspace.resolve(".worktrees/k/.Aimon-Staged/y"), "shell copy");
+        branch.fileSystem().write("result.txt", "done");
+
+        assertThat(branch.fileSystem().listRecursive(".")).containsExactly("result.txt");
+        final MergeReport report = WorktreeMerge.promote(parent, List.of(branch), WorktreeMerge.Policy.FAIL);
+
+        assertThat(report.promoted()).containsExactly("result.txt");
+        assertThat(workspace.resolve("result.txt")).hasContent("done");
+        assertThat(workspace.resolve(".aimon-staged/x")).doesNotExist();
+        assertThat(workspace.resolve(".aimon-staged/y")).doesNotExist();
+        assertThat(workspace.resolve(".worktrees/k/.aimon-staged/x")).hasContent("shell copy");
+    }
+
+    @Test
+    @DisplayName("the branch rules follow the parent's: with no path rules, the branch's .aimon/ is writable")
+    void branchRulesFollowTheParent(@TempDir Path unguarded) throws IOException {
+        try (LocalExecutionEnvironmentProvider open = LocalExecutionEnvironmentProvider.builder()
+                .workspaceRoot(unguarded).pathRules(List.of()).contentSearch(false).build()) {
+            final ExecutionEnvironment openBranch = open
+                    .resolve(EnvironmentRequest.builder().agentRuntimeId(AgentRuntimeId.fromName("open")).build())
+                    .isolate("k").orElseThrow();
+
+            openBranch.fileSystem().write(".aimon/x", "branch-local");
+
+            assertThat(read(openBranch, ".aimon/x")).isEqualTo("branch-local");
+            assertThat(unguarded.resolve(".worktrees/k/.aimon/x")).hasContent("branch-local");
+        }
+    }
+
+    @Test
+    @DisplayName("a branch write to the staging area in another letter case is refused, not kept in the branch")
+    void stagingInAnotherCaseIsReadOnly() {
+        assertThatThrownBy(() -> branch.fileSystem().write(".AIMON-STAGED/x", "tamper"))
+                .isInstanceOf(FileAccessDeniedException.class);
+
+        assertThat(workspace.resolve(".worktrees/k/.AIMON-STAGED")).doesNotExist();
+    }
+
+    @Test
+    @DisplayName("the branch cannot delete itself through its own filesystem; the parent can")
+    void branchRootDeletedOnlyThroughTheParent() {
+        branch.fileSystem().write("out.txt", "branch");
+
+        assertThatThrownBy(() -> branch.fileSystem().deleteRecursive(".")).isInstanceOf(FileAccessDeniedException.class)
+                .hasMessageContaining(".aimon");
+        parent.fileSystem().deleteRecursive(".worktrees/k");
+
+        assertThat(workspace.resolve(".worktrees/k")).doesNotExist();
+    }
+
+    @Test
+    @DisplayName("a branch refuses to be isolated again, naming itself and the reason")
+    void nestedIsolationIsRefused() {
+        assertThatThrownBy(() -> branch.isolate("x")).isInstanceOf(UnsupportedOperationException.class)
+                .hasMessageContaining("nested isolation is not supported").hasMessageContaining("'k'");
+    }
+
+    @Test
+    @DisplayName("a branch declares the environment it was isolated from; the parent declares none")
+    void branchDeclaresItsLineage() {
+        assertThat(branch.isolatedFrom()).containsSame(parent);
+        assertThat(parent.isolatedFrom()).isEmpty();
     }
 
     private static String read(ExecutionEnvironment env, String path) throws IOException {

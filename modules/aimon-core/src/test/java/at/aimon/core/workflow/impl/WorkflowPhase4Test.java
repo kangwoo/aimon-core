@@ -9,6 +9,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -27,6 +28,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.Environment;
@@ -38,9 +40,12 @@ import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.environment.EnvironmentDescriptor;
+import at.aimon.core.environment.EnvironmentRequest;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.StagedResource;
 import at.aimon.core.environment.TestExecutionEnvironments;
+import at.aimon.core.environment.exception.ExecutionEnvironmentUnavailableException;
+import at.aimon.core.environment.impl.LocalExecutionEnvironmentProvider;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.llm.LlmModel;
@@ -111,7 +116,46 @@ class WorkflowPhase4Test {
 
         assertThatThrownBy(
                 () -> runner.run(ctx -> ctx.agent(AgentTask.builder().subagent(sub).goal("g").isolate(true).build())))
-                .isInstanceOf(WorkflowException.class);
+                .isInstanceOf(WorkflowException.class)
+                .hasMessageContaining("no ExecutionEnvironmentProvider is configured")
+                .hasCauseInstanceOf(ExecutionEnvironmentUnavailableException.class);
+    }
+
+    @Test
+    @DisplayName("C30: a provider that fails is reported with its reason, not as 'does not support isolation'")
+    void isolateOnFailingProviderReportsTheReason() {
+        final DefaultWorkflowRunner runner = DefaultWorkflowRunner
+                .builder(manager, env.toBuilder().executionEnvironmentProvider(request -> {
+                    throw new IllegalStateException("sandbox down");
+                }).build()).build();
+        runners.add(runner);
+
+        assertThatThrownBy(
+                () -> runner.run(ctx -> ctx.agent(AgentTask.builder().subagent(sub).goal("g").isolate(true).build())))
+                .isInstanceOf(WorkflowException.class).hasMessageContaining("sandbox down")
+                .hasMessageNotContaining("does not support isolation")
+                .hasCauseInstanceOf(ExecutionEnvironmentUnavailableException.class).hasRootCauseMessage("sandbox down");
+        assertThat(executeCount.get()).isZero();
+    }
+
+    @Test
+    @DisplayName("C30: an isolated step inside an isolated branch is refused with the reason, and never runs")
+    void nestedIsolationIsRunFatalWithTheReason(@TempDir Path workspace) {
+        try (LocalExecutionEnvironmentProvider provider = LocalExecutionEnvironmentProvider.builder()
+                .workspaceRoot(workspace).contentSearch(false).build()) {
+            final ExecutionEnvironment branch = provider
+                    .resolve(EnvironmentRequest.builder().agentRuntimeId(AgentRuntimeId.fromName("nested")).build())
+                    .isolate("k").orElseThrow();
+            final DefaultWorkflowRunner runner = DefaultWorkflowRunner
+                    .builder(manager, env.toBuilder().executionEnvironment(branch).build()).build();
+            runners.add(runner);
+
+            assertThatThrownBy(() -> runner
+                    .run(ctx -> ctx.agent(AgentTask.builder().subagent(sub).goal("g").isolate(true).build())))
+                    .isInstanceOf(WorkflowException.class).hasMessageContaining("nested isolation is not supported")
+                    .hasMessageContaining("'k'").hasCauseInstanceOf(UnsupportedOperationException.class);
+            assertThat(executeCount.get()).isZero();
+        }
     }
 
     @Test

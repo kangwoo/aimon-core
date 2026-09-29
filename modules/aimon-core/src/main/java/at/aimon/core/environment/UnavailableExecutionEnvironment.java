@@ -3,6 +3,7 @@ package at.aimon.core.environment;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Proxy;
 import java.util.Objects;
+import java.util.Optional;
 
 import at.aimon.core.environment.exception.ExecutionEnvironmentUnavailableException;
 import at.aimon.core.filesystem.VirtualFileSystem;
@@ -13,7 +14,8 @@ import at.aimon.core.shell.VirtualShell;
  *
  * <p>
  * Every filesystem and shell call throws {@link ExecutionEnvironmentUnavailableException} carrying the cause, and so
- * does {@link #stage}; tools turn it into a {@code ToolResult.error}. The {@link #descriptor()} does not throw: its
+ * do {@link #stage} and {@link #isolate}; tools turn it into a {@code ToolResult.error}, and a workflow runner quotes
+ * it when it refuses an isolated step. The {@link #descriptor()} does not throw: its
  * {@code notes} say "execution environment unavailable: {cause}", so the model learns why before its first tool
  * call. A turn that needs no files or shell is unaffected. There is no path back to the host environment.
  */
@@ -73,6 +75,18 @@ public final class UnavailableExecutionEnvironment implements ExecutionEnvironme
 
     @Override
     public String stage(StagedResource resource) {
+        throw unavailable();
+    }
+
+    /**
+     * Throws rather than answering empty: whether an unavailable environment could isolate is unknown, and "no
+     * isolation" would hide the reason the caller actually needs.
+     *
+     * @throws ExecutionEnvironmentUnavailableException
+     *             always, carrying the cause
+     */
+    @Override
+    public Optional<ExecutionEnvironment> isolate(String branchKey) {
         throw unavailable();
     }
 
