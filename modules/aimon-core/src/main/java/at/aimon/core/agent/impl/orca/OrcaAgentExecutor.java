@@ -2113,6 +2113,12 @@ public class OrcaAgentExecutor
             final ToolContext.Builder commandContextBuilder = ToolContext.builder();
             // The command renders skills, which stage their files through this execution's environment (§4.4).
             putExecutionEnvironment(commandContextBuilder, scope);
+            // The caller's identity, published by hand for the same reason as the keys below: a `/my-skill` fork
+            // resolves its execution environment under this principal, and without it the fork's shell and file
+            // tools were refused as "not permitted" while the Skill tool-call path (createToolContext) worked.
+            if (scope.getPrincipal() != null) {
+                commandContextBuilder.put(ToolContextKeys.PRINCIPAL, scope.getPrincipal());
+            }
             final ToolContext commandToolContext = commandContextBuilder
                     .put(ToolContextKeys.AGENT_RUNTIME_ID, agentRuntime.getId())
                     // The session id belongs here too: a `/my-skill` invocation of a fork-mode skill spawns a
