@@ -1,40 +1,49 @@
 package at.aimon.workflow.graaljs;
 
-import java.util.List;
+import java.util.Objects;
 
 import at.aimon.core.subagent.Subagent;
+import at.aimon.core.subagent.SubagentRegistry;
 
 /**
- * Resolves a JS agent descriptor's identity fields ({@code agentType}/{@code systemPrompt}/{@code model}/
- * {@code tools}/{@code maxIterations}) into a core {@link Subagent}.
+ * Resolves a JS agent descriptor's identity fields ({@link SubagentDescriptor}) into a core {@link Subagent}.
  *
  * <p>
- * {@code AgentTask} carries an <b>inline</b> subagent only (no named-registry lookup — a documented non-goal), and
- * {@code Subagent.builder} requires {@code name} + {@code systemPrompt}. Implementations therefore synthesize a
- * <b>deterministic, cross-JVM-stable</b> name so shared/persistent resume caches replay without spurious misses.
+ * {@code AgentTask} carries an <b>inline</b> subagent, and {@code Subagent.builder} requires {@code name} +
+ * {@code systemPrompt}. Implementations therefore synthesize a <b>deterministic, cross-JVM-stable</b> name so
+ * shared/persistent resume caches replay without spurious misses. A registered subagent of the same
+ * {@code agentType} is not used in place of the inline one: the default resolver consults the registry for its
+ * {@code attributes} only (EE-42), so that an execution environment provider can place the step as it would place that
+ * subagent.
  */
 public interface SubagentResolver {
 
     /**
-     * Builds an inline {@link Subagent} from descriptor fields. Any argument except a usable identity source may be
-     * {@code null}.
+     * Builds an inline {@link Subagent} from a descriptor.
      *
-     * @param agentType
-     *            optional logical type; basis for the synthesized name and a default system prompt
-     * @param systemPrompt
-     *            optional explicit system prompt; when absent, one is synthesized from {@code agentType}
-     * @param model
-     *            optional model override
-     * @param tools
-     *            optional flat tool-name allow-list
-     * @param maxIterations
-     *            optional iteration cap (core default applies when {@code null})
+     * @param descriptor
+     *            the step's identity fields (never null); must carry an {@code agentType} or a {@code systemPrompt}
      * @return an inline subagent (never {@code null})
      */
-    Subagent resolve(String agentType, String systemPrompt, String model, List<String> tools, Integer maxIterations);
+    Subagent resolve(SubagentDescriptor descriptor);
 
-    /** The default inline resolver with deterministic SHA-256-derived names. */
+    /**
+     * The default inline resolver with deterministic SHA-256-derived names and no registry: a step's attributes are
+     * only the ones its descriptor gives.
+     */
     static SubagentResolver inline() {
-        return new InlineSubagentResolver();
+        return new InlineSubagentResolver(null);
+    }
+
+    /**
+     * The default inline resolver that also copies the attributes of the subagent registered under a step's
+     * {@code agentType}, with the descriptor's own attributes winning on the same key.
+     *
+     * @param registry
+     *            the registry looked up by {@code agentType} (must not be null)
+     * @return the resolver
+     */
+    static SubagentResolver inline(SubagentRegistry registry) {
+        return new InlineSubagentResolver(Objects.requireNonNull(registry, "registry must not be null"));
     }
 }

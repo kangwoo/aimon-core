@@ -102,4 +102,62 @@ class DefinitionAttributesTest {
         assertThatThrownBy(() -> DefinitionAttributes.copyOf(Map.of("slot", "a")).put("x", "y"))
                 .isInstanceOf(UnsupportedOperationException.class);
     }
+
+    @Test
+    @DisplayName("overlay merges disjoint keys, keeping base order and appending the override's new keys")
+    void overlayMergesDisjoint() {
+        final Map<String, String> base = new LinkedHashMap<>();
+        base.put("sandbox.slot", "build");
+        base.put("gpu", "false");
+
+        assertThat(DefinitionAttributes.overlay(base, Map.of("sandbox.profile", "ro"))).containsExactly(
+                Map.entry("sandbox.slot", "build"), Map.entry("gpu", "false"), Map.entry("sandbox.profile", "ro"));
+    }
+
+    @Test
+    @DisplayName("overlay lets the override win on the same key, in the base's position")
+    void overlayOverrideWins() {
+        final Map<String, String> base = new LinkedHashMap<>();
+        base.put("sandbox.slot", "build");
+        base.put("gpu", "false");
+
+        assertThat(DefinitionAttributes.overlay(base, Map.of("sandbox.slot", "test")))
+                .containsExactly(Map.entry("sandbox.slot", "test"), Map.entry("gpu", "false"));
+    }
+
+    @Test
+    @DisplayName("overlay of two empty maps is empty and unmodifiable")
+    void overlayEmpty() {
+        final Map<String, String> merged = DefinitionAttributes.overlay(Map.of(), Map.of());
+
+        assertThat(merged).isEmpty();
+        assertThatThrownBy(() -> merged.put("x", "y")).isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test
+    @DisplayName("overlay rejects a value/group clash that only appears across base and override")
+    void overlayRejectsClashAcross() {
+        assertThatThrownBy(() -> DefinitionAttributes.overlay(Map.of("sandbox.slot", "build"), Map.of("sandbox", "x")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("'sandbox' is both a value and a group (of 'sandbox.slot')")
+                .hasMessageContaining("between the base and override");
+    }
+
+    @Test
+    @DisplayName("overlay says when the clash lies inside the base alone")
+    void overlayRejectsClashWithinBase() {
+        final Map<String, String> base = new LinkedHashMap<>();
+        base.put("sandbox", "x");
+        base.put("sandbox.slot", "build");
+
+        assertThatThrownBy(() -> DefinitionAttributes.overlay(base, Map.of()))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("within the base attributes");
+    }
+
+    @Test
+    @DisplayName("overlay rejects null maps")
+    void overlayRejectsNull() {
+        assertThatThrownBy(() -> DefinitionAttributes.overlay(null, Map.of())).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> DefinitionAttributes.overlay(Map.of(), null)).isInstanceOf(NullPointerException.class);
+    }
 }

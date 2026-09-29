@@ -7,6 +7,7 @@ import java.util.Objects;
 
 import org.graalvm.polyglot.Value;
 
+import at.aimon.core.base.DefinitionAttributes;
 import at.aimon.core.subagent.Subagent;
 import at.aimon.core.workflow.AgentTask;
 import at.aimon.workflow.graaljs.exception.JsScriptException;
@@ -19,7 +20,10 @@ import at.aimon.workflow.graaljs.exception.JsScriptException;
  *
  * <p>
  * Descriptor shape: {@code {agentType?, systemPrompt?, goal|prompt, schema?, isolation?, label?, phase?, model?,
- * tools?, maxIterations?}}.
+ * tools?, maxIterations?, attributes?}}. The identity fields go to the {@link SubagentResolver} as one
+ * {@link SubagentDescriptor}; {@code attributes} is read the way an {@code attributes} block of a definition file is
+ * ({@link DefinitionAttributes#fromFrontmatter(Object)}), so {@code {sandbox: {slot: 'build'}}} and
+ * {@code {'sandbox.slot': 'build'}} are the same attribute and numbers or booleans become their text.
  */
 final class AgentTaskMarshaller {
 
@@ -50,8 +54,10 @@ final class AgentTaskMarshaller {
             throw new JsScriptException("agent requires a non-empty 'goal' (or 'prompt')");
         }
 
-        final Subagent subagent = resolver.resolve(string(opts, "agentType"), string(opts, "systemPrompt"),
-                string(opts, "model"), stringList(opts, "tools"), integer(opts, "maxIterations"));
+        final Subagent subagent = resolver.resolve(SubagentDescriptor.builder().agentType(string(opts, "agentType"))
+                .systemPrompt(string(opts, "systemPrompt")).model(string(opts, "model"))
+                .tools(stringList(opts, "tools")).maxIterations(integer(opts, "maxIterations"))
+                .attributes(attributes(opts)).build());
 
         final AgentTask.Builder builder = AgentTask.builder().subagent(subagent).goal(goal);
 
@@ -81,6 +87,25 @@ final class AgentTaskMarshaller {
         @SuppressWarnings("unchecked")
         final Map<String, Object> map = (Map<String, Object>) detached;
         return map;
+    }
+
+    /**
+     * Reads {@code attributes}: absent or null means none; anything but an object, or an entry a definition file could
+     * not hold either, is a loud {@link JsScriptException} naming the key.
+     */
+    private static Map<String, String> attributes(Value opts) {
+        final Value v = member(opts, "attributes");
+        if (v == null || v.isNull()) {
+            return Map.of();
+        }
+        if (v.hasArrayElements() || !v.hasMembers() || v.canExecute()) {
+            throw new JsScriptException("'attributes' must be an object, got: " + v);
+        }
+        try {
+            return DefinitionAttributes.fromFrontmatter(JsMarshalling.deepDetach(v));
+        } catch (IllegalArgumentException e) {
+            throw new JsScriptException(e.getMessage(), e);
+        }
     }
 
     // ---- descriptor field readers (null-safe over a possibly-null opts Value) ----

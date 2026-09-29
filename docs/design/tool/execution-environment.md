@@ -349,8 +349,14 @@ public interface ExecutionEnvironmentProvider {
   `EnvironmentRequest.definitionAttributes()` 다 — 포크면 포크의 것, 아니면 에이전트의 것, 둘 다 없으면 빈 맵. 제공자는
   이것을 읽는다(`agent()` 만 읽으면 모든 포크가 메인 턴의 슬롯에 들어가는데 아무것도 실패하지 않는다). 코어는 속성을
   싣기만 하고 읽지 않는다 — 키 이름은 제공자가 정한다. 따옴표 없는 값은 YAML 1.1 이 먼저 타입을 입히므로(`010` →
-  `8`, `on` → `true`) 평범한 텍스트가 아닌 값은 따옴표로 감싼다. 워크플로 스크립트의 인라인 서브에이전트는 아직
-  속성을 싣지 못한다(EE-42)
+  `8`, `on` → `true`) 평범한 텍스트가 아닌 값은 따옴표로 감싼다. 워크플로 단계도 포크이므로 같은 값을 싣는다(EE-42).
+  단계의 서브에이전트는 등록된 정의가 아니라 인라인으로 만들어지므로, 속성은 이렇게 채운다 — GraalJS 의
+  `agent({...})` 단계는 `agentType` 과 같은 이름으로 등록된 서브에이전트의 속성을 복사하고, 스크립트가 준
+  `attributes` 가 그 위에 키 단위로 덮인다(같은 키는 스크립트가 이기고, 키를 지울 수는 없다). 내장 `Workflow` 도구의
+  단계는 역할마다 정해진 이름(`workflow-perspective` · `workflow-synthesizer` · `workflow-candidate` · `workflow-judge` ·
+  `workflow-skeptic`)으로 등록된 서브에이전트의 속성을 복사한다. 어느 쪽이든 등록된 정의에서 가져오는 것은 속성뿐이고,
+  이름·프롬프트·도구는 단계의 것 그대로다. 속성이 비면 제공자는 위의 기본(부모와 같은 샌드박스)을 따른다. 설계와
+  구현이 달라진 점은 [`execution-environment-ee42-workflow-attributes.md`](execution-environment-ee42-workflow-attributes.md)
 - **워크플로 격리 브랜치** — 러너는 `parentEnv.isolate(branchKey)` 를 부른다. 비어 있으면(격리를 지원하지 않는
   환경) 브랜치를 격리 없이 돌리지 않고 **실행을 거부**한다. 격리를 요청한 스크립트가 격리 없이 돌면 병렬 브랜치가
   서로의 파일을 덮는다

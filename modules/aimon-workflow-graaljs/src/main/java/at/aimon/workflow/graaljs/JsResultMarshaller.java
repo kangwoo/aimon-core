@@ -65,8 +65,7 @@ final class JsResultMarshaller {
         }
         if (wasRejected[0]) {
             final Value reason = rejected[0];
-            final String detail = reason == null || reason.isNull() ? "(no reason)" : reason.toString();
-            throw new JsScriptException("workflow script rejected: " + detail);
+            throw new JsScriptException("workflow script rejected: " + describe(reason));
         }
         return fulfilled[0];
     }
@@ -91,6 +90,20 @@ final class JsResultMarshaller {
             return JsMarshalling.toJson(detached);
         }
         return String.valueOf(detached);
+    }
+
+    /**
+     * Describes a rejection reason. A host exception a binding threw inside the async body (a bad descriptor field,
+     * say) arrives as a host object whose guest {@code toString()} is only its type, so its message is read instead.
+     */
+    private static String describe(Value reason) {
+        if (reason == null || reason.isNull()) {
+            return "(no reason)";
+        }
+        if (reason.isHostObject() && reason.asHostObject() instanceof Throwable thrown && thrown.getMessage() != null) {
+            return thrown.getMessage();
+        }
+        return reason.toString();
     }
 
     private static boolean isThenable(Value value) {

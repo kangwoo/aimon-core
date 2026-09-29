@@ -98,6 +98,11 @@ cli:
 **`adversarial_verify`** — 프롬프트를 **주장으로 보고** 회의론자 3명이 각자 반증을 시도한다.
 2명 이상이 반박하면 기각, 아니면 생존 판정이 나온다. 사실 확인·리스크 검증용이다.
 
+내장 전략의 스텝을 특정 실행 환경에 두려면, 역할마다 정해진 이름 — `workflow-perspective` · `workflow-synthesizer` ·
+`workflow-candidate` · `workflow-judge` · `workflow-skeptic` — 으로 서브에이전트를 정의하고 `attributes` 를 적는다.
+`Workflow` 는 그 정의의 `attributes` 만 가져오고 프롬프트·도구·모델은 쓰지 않는다. 다만 그 정의도 보통의 서브에이전트라
+모델이 목록에서 보고 `Task` 로 부를 수 있으며, 그때는 정의의 프롬프트가 쓰인다.
+
 ### 예시
 
 ```
@@ -158,11 +163,19 @@ cli:
   phase: "Review",             // 이벤트 그룹
   model: "...",                // 모델 오버라이드
   tools: ["Read", "Grep"],     // 도구 허용 목록
-  maxIterations: 10
+  maxIterations: 10,
+  attributes: { sandbox: { slot: "build" } }  // 실행 환경 제공자가 읽는 속성
 }
 ```
 
 `agentType` 또는 `systemPrompt` 중 최소 하나는 필요하다.
+
+`attributes` 는 이 스텝을 어느 실행 환경(샌드박스 슬롯 등)에서 돌릴지 정하는 제공자가 읽는 값이다.
+`agentType` 과 같은 이름의 서브에이전트가 등록되어 있으면 그 정의의 `attributes` 가 먼저 깔리고, 스텝의
+`attributes` 가 그 위에 키 단위로 덮인다 — 같은 키는 스텝이 이기고, 등록된 키를 지울 수는 없다. 등록된 정의에서
+가져오는 것은 속성뿐이다. 스텝의 이름은 여전히 `graaljs:<agentType>` 이고 프롬프트·도구도 스텝의 것이다. 읽는 규칙은
+정의 파일의 `attributes` 블록과 같다: `{ sandbox: { slot: "build" } }` 와 `{ "sandbox.slot": "build" }` 는 같은 속성이고,
+숫자·불리언은 글자가 되며(`1.0` 은 `"1"`), 객체가 아닌 값·배열·`null`·값이면서 그룹인 키는 스크립트를 실패시킨다.
 `schema`를 주면 `agent(...)`가 **구조화된 객체**를 그대로 반환한다. 주지 않으면 결과 뷰를 반환한다:
 
 ```js

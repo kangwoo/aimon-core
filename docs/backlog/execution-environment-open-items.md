@@ -1,4 +1,4 @@
-# 실행 환경 — 등록 항목 42건 (열림 38 · 닫힘 4)
+# 실행 환경 — 등록 항목 45건 (열림 40 · 닫힘 5)
 
 출처는 `ExecutionEnvironment` 구현 작업이다. 설계는 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md)
 이고, 구현 계획(승인본)과 구현이 그 계획에서 벗어난 점은
@@ -18,7 +18,9 @@ EE-16 도 닫았다. 테스트 Javadoc 이 낡았다는 지적도 이 변경에�
 EE-33 의 범위를 넓혔으므로 두 항목의 본문도 고쳤다. EE-40 · EE-41 은 aimon-sandbox 의 워크스페이스 샌드박스 설계를 이 구현에
 대조한 리뷰에서 2026-09-29 에 옮긴 것이고, 같은 리뷰가 EE-1 · EE-18 · EE-30 의 본문에 샌드박스 쪽 영향을 더했다. 그
 리뷰가 샌드박스 구현 순서의 선행 조건으로 꼽은 셋(EE-18 · EE-40 · EE-41)은 2026-09-29 에 한 변경(PR #196)에서 닫았고,
-EE-42 는 그 PR 의 리뷰가 남긴 것이다.
+EE-42 는 그 PR 의 리뷰가 남긴 것이고 2026-09-29 에 닫았다. EE-43~EE-45 는 EE-42 의 승인된 설계
+([`../design/tool/execution-environment-ee42-workflow-attributes.md`](../design/tool/execution-environment-ee42-workflow-attributes.md))가
+남긴 열린 질문 가운데 이 변경 밖으로 결과가 번지는 것이다.
 
 ---
 
@@ -679,7 +681,7 @@ PR #195 리뷰 1 이 **macOS 에도 별칭이 있음**을 재현했다 — APFS 
 경로가 코어 안팎에서 하나가 되었다. 결과는 위임 대상을 빌린다(`close()` 가 위임 대상을 닫지 않는다). 테스트는
 `VirtualFileSystemsTest`.
 
-## EE-42 — 워크플로 스크립트의 인라인 서브에이전트가 속성을 싣지 못한다 · **열림**
+## EE-42 — 워크플로 스크립트의 인라인 서브에이전트가 속성을 싣지 못한다 · **닫힘** *(2026-09-29)*
 
 **무엇을.** GraalJS 워크플로의 `agent({...})` 단계와 `WorkflowTool` 의 내장 단계가 만드는 서브에이전트에 속성을 실을 길을
 둔다. `agentType` 으로 등록된 서브에이전트를 가리키면 그 정의의 속성을 복사하고, 스크립트가 속성을 직접 줄 수도 있게 한다.
@@ -696,3 +698,71 @@ PR #195 리뷰 1 이 **macOS 에도 별칭이 있음**을 재현했다 — APFS 
 **언제 다시 볼까.** 워크스페이스 샌드박스 구현 순서 4단계(멀티 슬롯)에서 워크플로 단계를 슬롯에 나눠 둬야 할 때.
 
 출처: PR #196 리뷰(2026-09-29).
+
+### 닫힘 (2026-09-29)
+
+`SubagentResolver.resolve` 는 이제 `SubagentDescriptor`(불변 클래스 + 빌더) 하나를 받는다. 기본 해석기
+`SubagentResolver.inline(SubagentRegistry)` 는 `agentType` 과 같은 이름으로 등록된 서브에이전트의 속성을 복사하고,
+스크립트가 `agent({..., attributes})` 로 준 속성을 그 위에 키 단위로 덮는다 — 같은 키는 스크립트가 이기고, 등록된 키를
+지울 수는 없다(`DefinitionAttributes.overlay`). 스크립트의 `attributes` 는 정의 파일의 블록과 같은 규칙으로 읽는다(중첩과
+점 표기가 같은 속성, 스칼라는 글자, 리스트·`null`·값이면서 그룹인 키는 스크립트 실패). 등록된 정의에서 가져오는 것은 속성뿐이고
+이름(`graaljs:<agentType>`)·프롬프트·도구는 그대로다. `GraalJsWorkflowTool` 은 자기 레지스트리로 이 해석기를 기본으로 쓴다.
+내장 `Workflow` 도구의 단계는 역할마다 정해진 이름(`workflow-perspective` · `workflow-synthesizer` · `workflow-candidate` ·
+`workflow-judge` · `workflow-skeptic`)으로 등록된 서브에이전트의 속성을 복사한다. **운영자 주의:** 그 이름의 정의는
+`Workflow` 에게는 속성만 주지만, 보통의 서브에이전트이기도 해서 모델이 목록에서 보고 `Task` 로 부를 수 있다 — 그때는
+정의의 프롬프트가 쓰인다(EE-44). `EnvironmentRequest` 는 바뀌지 않았다. 테스트는 `DefinitionAttributesTest`,
+`WorkflowToolAttributesTest`(실제 포크 실행기를 거쳐 `EnvironmentRequest.definitionAttributes()` 까지), `SubagentResolverTest`,
+`SubagentDescriptorTest`, `MarshallingUnitTest`, `WorkflowBindingsFanoutTest`, `GraalJsWorkflowToolTest`,
+`GraalJsEnvironmentRequestTest`(실제 실행 관리자로 `agent()`·`parallel()` 단계의 요청까지). 설계와 구현이 달라진 점은 설계
+문서 §8 에 있다.
+
+## EE-43 — 속성이 빈 포크를 제공자가 어디에 두는지 정해지지 않았다 · **열림**
+
+**무엇을.** 속성이 빈 포크(속성을 적지 않은 서브에이전트, 역할 정의가 없는 `Workflow` 단계)에 대해 제공자가 "부모와 같은
+샌드박스"(설계 §5.2 의 기본)를 따르는지 "전역 기본 슬롯"을 쓰는지를 워크스페이스 샌드박스 제공자 쪽에서 확정한다. 후자라면
+워크플로 단계가 **호출한 실행의 속성을 물려받는** 경로(EE-42 설계의 기각안 C — 메인·포크 실행기가 한 번 쓰기 키로 자기
+정의의 속성을 게시)를 다시 검토한다.
+
+**왜.** EE-42 는 단계에 속성을 실을 길만 열었다. 역할 정의나 `attributes` 가 없는 단계는 여전히 빈 속성으로 요청되고, 그때의
+배치는 제공자의 바인딩 정책이 정한다. 설계 §5.2 대로 부모를 따르면 문제가 없지만, 부모를 무시하는 정책이면 슬롯 X 의 포크가
+부른 `Workflow` 의 단계가 조용히 기본 슬롯으로 간다.
+
+**어디.** aimon-sandbox 의 바인딩 정책. 코어 쪽은 `DefaultSubagentExecutor.resolveExecutionEnvironment`,
+`modules/aimon-core/src/main/java/at/aimon/core/tools/workflow/WorkflowTool.java` 의 `roleAttributes`(2026-09-29).
+
+**언제 다시 볼까.** 워크스페이스 샌드박스 구현 순서 4단계(멀티 슬롯)의 바인딩 정책을 정할 때.
+
+출처: EE-42 설계 §7 Q2.
+
+## EE-44 — `Workflow` 역할 정의가 모델에게 `Task` 서브에이전트로도 보인다 · **열림**
+
+**무엇을.** 내장 단계를 배치하려고 `workflow-judge` 같은 이름으로 정의한 서브에이전트를 모델의 서브에이전트 목록에서 숨길
+수단을 둔다 — 레지스트리의 "숨김" 표시, 또는 역할 → 속성을 레지스트리가 아닌 도구 설정(맵)으로 받는 방식.
+
+**왜.** 서브에이전트 레지스트리에는 숨김 표시가 없다. 역할 정의는 `Workflow` 에게 속성만 주려고 만든 것인데, 모델은 그것을
+보통의 서브에이전트로 보고 `Task` 로 부를 수 있고, 그때는 아무도 쓸 생각이 없던 정의의 프롬프트로 돈다. 지금은 문서
+(`WorkflowTool` Javadoc, 워크플로 CLI 가이드)로만 경고한다.
+
+**어디.** `modules/aimon-core/src/main/java/at/aimon/core/subagent/SubagentRegistry.java`, `SubagentMetadata`,
+`modules/aimon-core/src/main/java/at/aimon/core/tools/workflow/WorkflowTool.java`(2026-09-29).
+
+**언제 다시 볼까.** 운영자가 역할 정의를 실제로 두기 시작할 때, 또는 서브에이전트에 노출 범위 속성을 두는 작업이 생길 때.
+
+출처: EE-42 설계 §7 Q5.
+
+## EE-45 — `WorkflowJs` 스크립트의 `attributes` 로 모델이 배치를 고를 수 있다 · **열림**
+
+**무엇을.** GraalJS 단계의 스크립트 `attributes` 를 누가 쓸 수 있어야 하는지 정한다. 선택지는 (a) 그대로 둔다, (b) 레지스트리에
+있는 키만 덮게 한다, (c) `GraalJsWorkflowTool` 빌더에 허용 키 목록(또는 끄는 스위치)을 둔다.
+
+**왜.** EE-42 설계는 내장 `Workflow` 의 입력에 `attributes` 를 두지 않았다 — 코드가 어디서 돌지는 운영자 정책이지 모델이
+고를 일이 아니라는 이유였다(기각안 D). 그런데 `WorkflowJs` 의 스크립트는 모델이 쓴다. 스크립트 `attributes` 는 백로그 항목이
+요구한 기능이라 넣었지만, 모델이 `sandbox.slot` 을 적으면 같은 논리가 뚫린다. 구현은 도구 설명에 `attributes` 를 광고하지
+않는 데서 멈췄다(EE-42 설계 §8).
+
+**어디.** `modules/aimon-workflow-graaljs/src/main/java/at/aimon/workflow/graaljs/AgentTaskMarshaller.java`,
+`InlineSubagentResolver.java`, `GraalJsWorkflowTool.java`(2026-09-29).
+
+**언제 다시 볼까.** 슬롯마다 권한이나 비용이 다른 제공자가 생길 때.
+
+출처: EE-42 구현(설계 §8 의 차이 목록).

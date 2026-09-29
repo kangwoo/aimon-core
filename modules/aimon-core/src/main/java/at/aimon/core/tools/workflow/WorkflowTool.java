@@ -55,6 +55,16 @@ import at.aimon.core.workflow.WorkflowScript;
  * {@link WorkflowScript} rather than a caller-supplied script. Each perspective is an inline
  * {@link Subagent} whose system prompt scopes it to one angle; the sub-agents run through the same
  * {@link SubagentExecutionManager} (and therefore the same LLM) as the main agent's tools.
+ *
+ * <p>
+ * <b>Placing the built-in steps.</b> Each step's subagent is built here, not taken from the registry, so it has no
+ * definition of its own for an execution environment provider to read. To give one role's steps
+ * {@linkplain at.aimon.core.base.DefinitionAttributes attributes} (a {@code sandbox.slot}, say), register a subagent
+ * under that role's lookup name — {@value #ROLE_PERSPECTIVE}, {@value #ROLE_SYNTHESIZER}, {@value #ROLE_CANDIDATE},
+ * {@value #ROLE_JUDGE} or {@value #ROLE_SKEPTIC}, one per role and not per angle. Only that definition's attributes
+ * are copied, when the workflow runs; its prompt, tools and model are ignored by this tool, and the step names
+ * ({@code workflow:judge} …) do not change. Note that such a definition is also an ordinary registered subagent: the
+ * model sees it and can call it through {@code Task}, where — and only where — its own prompt is used.
  */
 public class WorkflowTool extends GenericTool<WorkflowInput, String> {
 
@@ -69,6 +79,16 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
     private static final String SYNTHESIZER_NAME = "workflow:synthesizer";
     private static final String JUDGE_NAME = "workflow:judge";
     private static final String SKEPTIC_NAME = "workflow:skeptic";
+
+    /**
+     * Registry names looked up for each built-in role's attributes (see the class description). One per role: angles
+     * are free text from the model, so they never become part of a lookup name.
+     */
+    static final String ROLE_PERSPECTIVE = "workflow-perspective";
+    static final String ROLE_SYNTHESIZER = "workflow-synthesizer";
+    static final String ROLE_CANDIDATE = "workflow-candidate";
+    static final String ROLE_JUDGE = "workflow-judge";
+    static final String ROLE_SKEPTIC = "workflow-skeptic";
 
     private static final List<String> DEFAULT_PERSPECTIVES = List.of("technical", "risk", "user_impact");
 
@@ -116,7 +136,8 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
      * @param defaultModel
      *            the default model for sub-agents (must not be null)
      * @param subagentRegistry
-     *            the subagent registry forwarded to the execution environment (must not be null)
+     *            the subagent registry forwarded to the execution environment, and looked up for the built-in roles'
+     *            attributes (must not be null)
      * @param toolRegistry
      *            the tool registry forwarded to the execution environment (must not be null)
      * @param hookRegistry
@@ -141,7 +162,8 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
      * @param defaultModel
      *            the default model for sub-agents (must not be null)
      * @param subagentRegistry
-     *            the subagent registry forwarded to the execution environment (must not be null)
+     *            the subagent registry forwarded to the execution environment, and looked up for the built-in roles'
+     *            attributes (must not be null)
      * @param toolRegistry
      *            the tool registry forwarded to the execution environment (must not be null)
      * @param hookRegistry
@@ -363,39 +385,52 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
                 + (verdict.getTotal() - verdict.getValidVotes()) + " abstained (quorum " + verdict.getQuorum() + ").";
     }
 
-    private static Subagent perspectiveSubagent(String perspective) {
+    private Subagent perspectiveSubagent(String perspective) {
         return Subagent.builder().name(PERSPECTIVE_PREFIX + perspective)
                 .systemPrompt("You analyze the user's request strictly from the \"" + perspective + "\" perspective. "
                         + "Give a focused, specific analysis from that angle only. Be concise.")
-                .build();
+                .attributes(roleAttributes(ROLE_PERSPECTIVE)).build();
     }
 
-    private static Subagent synthesizerSubagent() {
+    private Subagent synthesizerSubagent() {
         return Subagent.builder().name(SYNTHESIZER_NAME)
                 .systemPrompt("You are given several labeled perspective analyses of a request. Produce one coherent, "
                         + "non-redundant synthesis that integrates them. Be concise.")
-                .build();
+                .attributes(roleAttributes(ROLE_SYNTHESIZER)).build();
     }
 
-    private static Subagent candidateSubagent(String angle) {
+    private Subagent candidateSubagent(String angle) {
         return Subagent.builder().name(CANDIDATE_PREFIX + angle)
                 .systemPrompt("You produce a complete, standalone candidate answer to the user's request, "
                         + "emphasizing the \"" + angle + "\" angle. Be concrete and self-contained.")
-                .build();
+                .attributes(roleAttributes(ROLE_CANDIDATE)).build();
     }
 
-    private static Subagent judgeSubagent() {
+    private Subagent judgeSubagent() {
         return Subagent.builder().name(JUDGE_NAME)
                 .systemPrompt("You are a strict evaluator. Score the given candidate answer for quality, correctness, "
                         + "and completeness. Respond with the requested JSON only.")
-                .build();
+                .attributes(roleAttributes(ROLE_JUDGE)).build();
     }
 
-    private static Subagent skepticSubagent() {
+    private Subagent skepticSubagent() {
         return Subagent.builder().name(SKEPTIC_NAME)
                 .systemPrompt("You are a rigorous skeptic. Independently try to REFUTE the given claim, and report "
                         + "whether it is refuted. Respond with the requested JSON only.")
-                .build();
+                .attributes(roleAttributes(ROLE_SKEPTIC)).build();
+    }
+
+    /**
+     * The attributes of the subagent registered under a built-in role's lookup name, or none. A registry that fails is
+     * logged and treated as holding nothing: an optional placement hint must not fail the user's workflow.
+     */
+    private Map<String, String> roleAttributes(String role) {
+        try {
+            return subagentRegistry.getSubagent(role).map(s -> s.getMetadata().getAttributes()).orElse(Map.of());
+        } catch (RuntimeException e) {
+            log.warn("Workflow: attribute lookup for role '{}' failed; running it without attributes", role, e);
+            return Map.of();
+        }
     }
 
     /** Joins the per-perspective results into a single labeled document, null-safe on isolated failures. */
