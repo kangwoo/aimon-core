@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/workflow/workflow-usage-guide.md
-source_commit: eec9ccd
+source_commit: 79d78a7
 ---
 
 # Workflow Usage Guide (the library view)
@@ -565,11 +565,17 @@ AgentTask.builder().subagent(migrator).goal(...).isolate(true).build();
   `.worktrees/<branchKey>/`, and `Bash`'s default working directory is that branch root too (absolute paths inside
   a command are not blocked). A sandbox uses git worktrees.
 - Promote a branch's files to the parent with `WorktreeMerge.promote(parent, branches, policy)`. Assembly code that
-  knows only the keys gets the same branches back with `parent.isolate(key).orElseThrow()`. Files a branch wrote
-  under its own `.aimon/` fail promotion on the parent's control-store protection.
+  knows only the keys gets the same branches back with `parent.isolate(key).orElseThrow()`. A branch cannot write
+  under its own `.aimon/` — the parent's control-store protection applies at the branch root too and refuses the
+  write when it happens, so a merge never meets such a file. Pass `promote` **the very parent instance** the branches
+  were isolated from, and each branch once — the parent itself, another parent's branch or a duplicate is an
+  `IllegalArgumentException`.
 - `isolate(true)` cannot be cached (side effects cannot be replayed).
 - **An `isolate` step in an execution environment that does not support isolation is a run-fatal failure (C30).** It
   never runs unisolated. There is nothing to inject — the old `worktreeFactory` / `WorktreeEnvironmentFactory` are gone.
+  When the execution environment is unavailable (no provider, sandbox down), the error carries that cause. An
+  `isolate` step in a workflow that is itself running inside an isolated branch is run-fatal too — nested isolation
+  is not supported, and the error says so.
 
 If the parallel steps touch nothing but distinct files, isolation is unnecessary. Turn it on only when they contend for the same file.
 

@@ -427,6 +427,8 @@ return baseEnv.toBuilder().executionEnvironment(branch).build();
   `ScopedVirtualFileSystem`(부모의 경로 규칙 위)과, 기본 cwd 를 브랜치 루트로 바꾸는 셸 뷰를 준다. 그래서 이제
   `Bash` 도 기본 cwd 만큼은 격리된다 — 명령 안의 절대 경로까지 막지는 않는다("파일 도구 + 기본 cwd" 수준). 파생
   환경은 `durable() == false` 다. 스테이징 영역(`.aimon-staged/`)은 부모와 공유되어 브랜치 목록에 나오지 않는다.
+  부모의 경로 규칙은 브랜치 루트 기준으로 한 번 더 걸린다 — 브랜치 안의 `.aimon/` 쓰기는 쓰는 시점에 거절되고,
+  목록에도 나오지 않는다. 브랜치를 다시 `isolate()` 하면 이유를 담은 오류다(중첩 격리 없음).
 - **disjoint 서브트리** — 구축상 zero-clobber, zero-copy 이며 Local/S3/GridFS 에 균일하게 적용된다.
   `ScopedVirtualFileSystem` 은 `list`/`listRecursive`/`search` **셋 다 결과에서 prefix 를 균일 strip**
   해 round-trip 불변식을 지키고, 파일 툴이 넘기는 **절대 경로 입력**(브랜치 루트의 호스트 경로 포함)도 브랜치
@@ -435,8 +437,9 @@ return baseEnv.toBuilder().executionEnvironment(branch).build();
   브랜치 teardown 이나 `runner.close()` 는 부모의 파일 시스템·셸을 절대 close 하지 않는다 — 소유자는 제공자다.
 - **결정적 브랜치 이름** — 브랜치 키는 결정적 구조 step-path 에서 명명되므로(`[A-Za-z0-9_]+`) 형제/동일-입력
   브랜치가 서브트리를 공유하지 않고 재실행·cross-node 에서 안정적이다. 같은 키로 `isolate` 하면 같은 뷰가 나온다.
-- **격리 착시 없음** — 환경이 `isolate()` 를 지원하지 않으면 `isolate = true` 는 첫 사용 시 run-fatal
-  `WorkflowException` 이다. 스크립트가 격리를 요청했는데 unscoped 로 실행하지 않는다.
+- **격리 착시 없음** — 환경이 `isolate()` 를 지원하지 않거나 거절하면 `isolate = true` 는 첫 사용 시 run-fatal
+  `WorkflowException` 이다. 스크립트가 격리를 요청했는데 unscoped 로 실행하지 않는다. 거절에 이유가 있으면(사용
+  불가 환경의 원인, 이미 격리 브랜치 안이라는 것) 오류 메시지가 그것을 싣고 원인 예외로 잇는다.
 
 **캐시와의 상호작용이 load-bearing 하다.** `StepOutcome` 은 transcript-free 라 캐시 HIT 가 파일 델타를
 재생하지 못한다 → base VFS 를 변조하는 스텝이 캐시되면 쓰기가 조용히 사라진다. 그래서
@@ -448,8 +451,10 @@ return baseEnv.toBuilder().executionEnvironment(branch).build();
 
 **병합은 명시적·비자동이다.** `WorktreeMerge.promote(parent, branches, policy)` 가 브랜치 환경 목록을 받아 충돌을
 먼저 훑고 `Policy` 로 고른 뒤 브랜치 파일을 부모로 복사한다. 키만 아는 조립 코드는 `parent.isolate(key).orElseThrow()`
-로 같은 브랜치를 다시 얻는다. 브랜치가 자기 `.aimon/` 아래에 쓴 파일은 부모의 제어 저장소(`DENY`) 에 막혀 승격이
-실패한다 — 병합을 통해 제어 평면을 쓰는 통로는 없다. N-way 자동병합은 last-writer-wins 은닉과 snapshot 일관성 규칙을
+로 같은 브랜치를 다시 얻는다. 브랜치는 자기 `.aimon/` 아래에 쓸 수 없으므로(쓰는 시점에 거절) 병합이 그런 파일을
+만나지 않는다 — 병합을 통해 제어 평면을 쓰는 통로는 없다. `promote` 는 입출력 전에 브랜치의 소속을 확인해 부모
+자신·다른 부모의 브랜치·중복을 `IllegalArgumentException` 으로 거부하고, 올릴 파일의 메타데이터를 먼저 모두 읽어
+실패하면 아무것도 올리지 않는다. N-way 자동병합은 last-writer-wins 은닉과 snapshot 일관성 규칙을
 요구하므로 과도하다고 판단했다. 복구 가능한 worktree/병합 실패는 `WorkflowException` 을 **절대 상속하지
 않는다** — 실패 `AgentStepResult` 또는 merge-report 데이터로 표현한다. `WorkflowException` 은 진짜
 run-fatal 전용이며, `BoundedFanoutDispatcher` 가 그것만 재-throw 해 run 을 abort 하기 때문이다.

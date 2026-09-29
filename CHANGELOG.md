@@ -7,6 +7,29 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Changed: workflow isolation refuses bad input where it starts, and says why (EE-8, EE-25, EE-27, EE-28, EE-29)
+
+Design and departures: `docs/design/tool/workflow-isolation-hardening.md`.
+
+- **A branch's own `.aimon/` is refused at write time.** A local isolated branch applies the parent's path rules again,
+  anchored at `.worktrees/{key}/`. Before, the write succeeded, and the merge later failed on the root's `DENY` after
+  other files had already been promoted, leaving a half-merge. The rules follow the parent's: an assembly that set
+  `pathRules(List.of())` leaves its branches unguarded too. A branch can no longer `deleteRecursive(".")` itself
+  through its own filesystem; delete `.worktrees/{key}` through the parent.
+- **`ExecutionEnvironment.isolate` may throw, with the reason.** Empty still means "this kind of environment has no
+  isolation". `UnavailableExecutionEnvironment.isolate` now throws its `ExecutionEnvironmentUnavailableException` (no
+  provider, provider failure), and a local branch's `isolate` throws `UnsupportedOperationException` (nested
+  isolation is not supported). The workflow runner's run-fatal `WorkflowException` quotes the reason and chains it as
+  the cause, where it used to say "does not support isolation".
+- **New default SPI method `ExecutionEnvironment.isolatedFrom()`**, empty by default; a local branch returns its parent.
+- **`WorktreeMerge.promote` checks the branches before any I/O.** The parent itself, a branch sharing the parent's
+  filesystem, the same branch twice, or a branch whose `isolatedFrom()` names another environment is an
+  `IllegalArgumentException`. Before, the first two copied each file onto itself and then deleted it. It also reads
+  every promoted file's metadata first, so a shell-made symlink in a branch aborts the merge before anything is
+  promoted.
+- **A branch's shared staging prefix matches ignoring case**, like the path rules: `.AIMON-STAGED/x` from a branch
+  meets the parent's read-only rule instead of landing in the branch.
+
 ### Changed: `main` carries a `-SNAPSHOT` version between releases
 
 `VERSION_NAME` on `main` is now `0.3.1-SNAPSHOT`, the next patch release, rather than the last released `0.3.0`. A

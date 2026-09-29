@@ -277,6 +277,19 @@ class ScopedVirtualFileSystemTest {
     }
 
     @Test
+    @DisplayName("a shared prefix matches ignoring case, like the path rules: .AIMON-STAGED/ reaches the delegate's")
+    void sharedPrefixMatchesIgnoringCase(@TempDir Path tempDir) {
+        final VirtualFileSystem vfs = sharing(tempDir);
+
+        for (final String prefix : List.of(".AIMON-STAGED", ".Aimon-Staged", ".aimon-\u017Ftaged")) {
+            vfs.write(prefix + "/y.txt", "routed");
+
+            assertThat(base.exists(prefix + "/y.txt")).as(prefix).isTrue();
+            assertThat(base.exists(".worktrees/k/" + prefix)).as(prefix).isFalse();
+        }
+    }
+
+    @Test
     @DisplayName("escaping above the root from a shared path is still rejected")
     void sharedPrefixEscapeRejected(@TempDir Path tempDir) {
         final VirtualFileSystem vfs = sharing(tempDir);

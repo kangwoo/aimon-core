@@ -140,7 +140,7 @@ public final class LocalExecutionEnvironmentProvider implements ExecutionEnviron
                     ? Optional.ofNullable(builder.ripgrepExecutable).or(RipgrepContentSearch::probe)
                             .map(rg -> new RipgrepContentSearch(rg, hostRoot, hiddenPrefixes(rules))).orElse(null)
                     : null;
-            this.environment = new LocalExecutionEnvironment(toolFileSystem, shell, staging, contentSearch,
+            this.environment = new LocalExecutionEnvironment(toolFileSystem, rules, shell, staging, contentSearch,
                     workingDirectory);
         } catch (RuntimeException | Error e) {
             // Nobody else holds what was built so far: close it here, or a failed build leaks the shell.

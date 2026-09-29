@@ -1,6 +1,7 @@
 package at.aimon.core.environment.impl;
 
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
@@ -10,6 +11,7 @@ import at.aimon.core.environment.ContentSearch;
 import at.aimon.core.environment.EnvironmentDescriptor;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.StagedResource;
+import at.aimon.core.filesystem.PathRule;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.shell.VirtualShell;
 
@@ -26,14 +28,16 @@ final class LocalExecutionEnvironment implements ExecutionEnvironment {
     private static final Pattern BRANCH_KEY_SHAPE = Pattern.compile("[A-Za-z0-9_]+");
 
     private final VirtualFileSystem toolFileSystem;
+    private final List<PathRule> pathRules;
     private final VirtualShell shell;
     private final EnvironmentDescriptor descriptor;
     private final LocalStaging staging;
     private final RipgrepContentSearch contentSearch;
 
-    LocalExecutionEnvironment(VirtualFileSystem toolFileSystem, VirtualShell shell, LocalStaging staging,
-            RipgrepContentSearch contentSearch, String workingDirectory) {
+    LocalExecutionEnvironment(VirtualFileSystem toolFileSystem, List<PathRule> pathRules, VirtualShell shell,
+            LocalStaging staging, RipgrepContentSearch contentSearch, String workingDirectory) {
         this.toolFileSystem = Objects.requireNonNull(toolFileSystem, "toolFileSystem must not be null");
+        this.pathRules = List.copyOf(Objects.requireNonNull(pathRules, "pathRules must not be null"));
         this.shell = Objects.requireNonNull(shell, "shell must not be null");
         this.staging = Objects.requireNonNull(staging, "staging must not be null");
         this.contentSearch = contentSearch;
@@ -70,6 +74,11 @@ final class LocalExecutionEnvironment implements ExecutionEnvironment {
      * {@code .worktrees/{branchKey}/}. Deterministic on the key: isolating the same key again yields the same view,
      * which is how a merge rebuilds the branches of a finished run.
      *
+     * <p>
+     * Two keys that differ only in case name one directory on a case-insensitive store ({@code a} and {@code A} share
+     * {@code .worktrees/a}). The workflow runner never derives such a pair — its keys come from lowercase step-path
+     * segments and indexes — so only a caller that picks its own keys has to keep them case-unique.
+     *
      * @throws IllegalArgumentException
      *             if the key does not match {@code [A-Za-z0-9_]+}
      */
@@ -80,6 +89,11 @@ final class LocalExecutionEnvironment implements ExecutionEnvironment {
                     "branchKey must match [A-Za-z0-9_]+ (the framework-derived branch key shape), got: " + branchKey);
         }
         return Optional.of(new LocalIsolatedEnvironment(this, branchKey));
+    }
+
+    /** The path rules the tool filesystem applies at the workspace root; a branch re-anchors them at its own root. */
+    List<PathRule> pathRules() {
+        return pathRules;
     }
 
     VirtualShell rawShell() {

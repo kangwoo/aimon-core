@@ -71,14 +71,31 @@ public interface ExecutionEnvironment {
     String stage(StagedResource resource);
 
     /**
-     * Returns a derived environment whose writes are isolated under {@code branchKey}, or empty if this environment
-     * does not support isolation. A workflow runner refuses to run an isolated branch unscoped when this is empty.
+     * Returns a derived environment whose writes are isolated under {@code branchKey}. The two ways to say no mean
+     * different things: <b>empty</b> means this kind of environment has no isolation at all; <b>throwing</b> means
+     * isolation is refused here, and the exception message is the reason — the environment is unavailable, or it is
+     * already a branch that cannot be isolated again. A workflow runner refuses to run an isolated branch unscoped in
+     * either case, and reports the reason when there is one.
      *
      * @param branchKey
      *            the branch key ({@code [A-Za-z0-9_]+})
-     * @return the isolated environment, or empty if unsupported
+     * @return the isolated environment, or empty if this kind of environment does not support isolation
+     * @throws RuntimeException
+     *             if isolation is refused here; the message says why
      */
     default Optional<ExecutionEnvironment> isolate(String branchKey) {
+        return Optional.empty();
+    }
+
+    /**
+     * Returns the environment this one was {@linkplain #isolate(String) isolated} from, if it is a branch that
+     * declares its lineage. {@code WorktreeMerge} uses it to refuse promoting a branch into an environment it does not
+     * belong to; a branch that declares nothing is accepted on the weaker checks alone.
+     *
+     * @return the parent environment (the same instance {@code isolate} was called on), or empty if this is not a
+     *         branch or it does not declare its lineage
+     */
+    default Optional<ExecutionEnvironment> isolatedFrom() {
         return Optional.empty();
     }
 

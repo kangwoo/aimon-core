@@ -52,8 +52,10 @@ import at.aimon.core.filesystem.exception.InvalidPathException;
  * branch root as a shell working in it sees it — is stripped to its branch-relative remainder <em>before</em> the base
  * itself is stripped, so the file tools accept the same absolute path the shell uses.</li>
  * <li><b>Shared prefixes.</b> A path whose branch-relative form lies under one of the {@code sharedPrefixes} (whole
- * segments, after normalisation) is passed to the delegate <em>without</em> the branch prefix: the branch sees the
- * parent's directory there. The local execution environment shares its staging area this way, so a staged skill copy
+ * segments, ignoring case as the delegate's path rules do, after normalisation) is passed to the delegate
+ * <em>without</em> the branch prefix: the branch sees the parent's directory there, so a write in any letter case meets
+ * the parent's rule for it instead of landing in the branch. The local execution environment shares its staging area
+ * this way, so a staged skill copy
  * is reachable from every branch, is never copied per branch, and never appears in a branch listing (so a merge never
  * promotes it).</li>
  * <li><b>{@code getUsageSummary()}</b> reports the branch subtree, by delegating to the path-scoped overload with the
@@ -137,7 +139,7 @@ public final class ScopedVirtualFileSystem implements VirtualFileSystem {
             throw new InvalidPathException(path, "escapes the worktree branch prefix '" + prefix + "'");
         }
         for (String shared : sharedPrefixes) {
-            if (VfsPaths.isUnder(normalizedRel, shared)) {
+            if (VfsPaths.isUnderIgnoreCase(normalizedRel, shared)) {
                 return normalizedRel;
             }
         }

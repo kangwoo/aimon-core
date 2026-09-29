@@ -170,7 +170,8 @@ public final class DefaultWorkflowContext implements WorkflowContext {
      * §5.2) — the parent's environment when the run has one, else one resolved from the runtime's provider (a
      * runtime-level runner has no calling execution). The branch environment becomes the step's parent environment,
      * which the fork's provider hands back unchanged; the tool registry and the cancellation signal are the base
-     * env's. An environment that cannot isolate fails the run rather than running the branch unscoped (C30).
+     * env's. An environment that cannot isolate fails the run rather than running the branch unscoped (C30); when it
+     * refuses with a reason (unavailable, already a branch), the reason is quoted and chained as the cause.
      * Independent of cache state so isolation holds under {@code NO_OP}.
      */
     private SubagentExecutionEnvironment resolveEnv(AgentTask task, String path) {
@@ -189,7 +190,7 @@ public final class DefaultWorkflowContext implements WorkflowContext {
         } catch (RuntimeException e) {
             throw new WorkflowException("agent task requested isolation (isolate=true) but the execution environment "
                     + "could not isolate branch '" + branchKey + "': " + e.getMessage()
-                    + " — refusing to run unscoped");
+                    + " — refusing to run unscoped (C30)", e);
         }
         if (branch.isEmpty()) {
             throw new WorkflowException("agent task requested isolation (isolate=true) but the execution environment "

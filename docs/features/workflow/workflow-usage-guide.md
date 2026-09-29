@@ -559,11 +559,15 @@ AgentTask.builder().subagent(migrator).goal(...).isolate(true).build();
   파생한 환경이다. 로컬 환경에서는 파일 도구가 `.worktrees/<branchKey>/` 아래로 스코프되고, `Bash` 도 기본
   작업 디렉터리가 그 브랜치 루트가 된다(명령 안의 절대 경로까지 막지는 않는다). 샌드박스는 git worktree 를 쓴다.
 - 브랜치의 파일은 `WorktreeMerge.promote(parent, branches, policy)` 로 부모에 올린다. 키만 아는 조립 코드는
-  `parent.isolate(key).orElseThrow()` 로 같은 브랜치를 다시 얻는다. 브랜치 안의 `.aimon/` 파일은 부모의 제어
-  저장소 보호에 걸려 승격이 실패한다.
+  `parent.isolate(key).orElseThrow()` 로 같은 브랜치를 다시 얻는다. 브랜치 안에서는 `.aimon/` 에 쓸 수 없다 —
+  부모의 제어 저장소 보호가 브랜치 루트에도 걸려 쓰는 시점에 거절되므로, 병합이 그런 파일을 만나지 않는다.
+  `promote` 에는 브랜치를 만든 **그 부모 인스턴스**와 각 브랜치를 한 번씩 넘긴다 — 부모 자신, 다른 부모의 브랜치,
+  중복은 `IllegalArgumentException` 이다.
 - `isolate(true)`는 캐시 불가다 (부수효과 재생 불가).
 - **격리를 지원하지 않는 실행 환경에서 `isolate` 스텝을 만나면 런 치명적 실패(C30)** 다. 격리 없이 돌리지
   않는다. 따로 주입할 옵션은 없다 — 예전의 `worktreeFactory` / `WorktreeEnvironmentFactory` 는 없어졌다.
+  실행 환경이 사용 불가이면(제공자 없음, 샌드박스 다운) 오류가 그 원인을 싣는다. 격리 브랜치 안에서 돌고 있는
+  워크플로의 `isolate` 스텝도 런 치명적 실패다 — 중첩 격리는 지원하지 않으며, 오류가 그렇게 말한다.
 
 병렬 스텝이 서로 다른 파일만 건드린다면 격리는 불필요하다. 같은 파일을 다투는 경우에만 켠다.
 

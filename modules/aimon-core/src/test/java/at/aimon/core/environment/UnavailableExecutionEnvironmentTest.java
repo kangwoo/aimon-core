@@ -58,6 +58,16 @@ class UnavailableExecutionEnvironmentTest {
     }
 
     @Test
+    @DisplayName("isolate throws with the cause rather than answering 'no isolation'")
+    void isolateThrowsWithTheCause() {
+        assertThatThrownBy(() -> env.isolate("k")).isInstanceOf(ExecutionEnvironmentUnavailableException.class)
+                .hasMessageContaining("sandbox down").hasCause(cause);
+        assertThatThrownBy(() -> UnavailableExecutionEnvironment.of("no provider").isolate("k"))
+                .isInstanceOf(ExecutionEnvironmentUnavailableException.class).hasMessageContaining("no provider")
+                .hasNoCause();
+    }
+
+    @Test
     @DisplayName("a string cause works without an exception")
     void stringCause() {
         final ExecutionEnvironment unavailable = UnavailableExecutionEnvironment.of("no provider");

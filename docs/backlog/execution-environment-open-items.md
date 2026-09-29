@@ -1,4 +1,4 @@
-# 실행 환경 — 등록 항목 42건 (열림 38, 그중 결정됨 6 · 닫힘 4)
+# 실행 환경 — 등록 항목 44건 (열림 35 · 닫힘 9)
 
 출처는 `ExecutionEnvironment` 구현 작업이다. 설계는 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md)
 이고, 구현 계획(승인본)과 구현이 그 계획에서 벗어난 점은
@@ -21,6 +21,11 @@ EE-33 의 범위를 넓혔으므로 두 항목의 본문도 고쳤다. EE-40 · 
 EE-42 는 그 PR 의 리뷰가 남긴 것이다. 결정 항목 여섯(EE-6 · EE-7 · EE-8 · EE-12 · EE-13 · EE-14)은 2026-09-29 에 메인테이너가
 결정했다. 결정은 남은 일을 없애지 않고 확정할 뿐이므로(`README.md` 규칙 넷) 여섯 다 열림으로 센다. 결정 전에 전제를 소스로
 확인했고, 그중 셋(EE-7 · EE-12 · EE-13)은 착수 범위가 항목의 서술보다 크다는 것이 드러나 각 결정문에 적었다.
+워크플로 격리 브랜치를 다룬 다섯(EE-8 · EE-25 · EE-27 · EE-28 · EE-29)은 2026-09-29 에 한 변경에서 닫았다. 그중 EE-8 이
+결정 항목이었으므로 결정됨이되 열린 항목은 이제 다섯이다. 그 변경의 설계와 구현이 설계에서 벗어난 점은
+[`../design/tool/workflow-isolation-hardening.md`](../design/tool/workflow-isolation-hardening.md) 에 있다. EE-46 · EE-47 는
+그 설계의 열린 질문(Q5, Q1 · Q4) 가운데 이 변경 밖으로 결과가 번지는 것을 옮긴 것이다. EE-43~EE-45 는 같은 시기에
+EE-42 를 다룬 변경이 먼저 썼으므로 이 둘은 EE-46 부터 번호를 받았다.
 
 ---
 
@@ -160,7 +165,7 @@ GridFS etag 가 설계 §7 의 "GridFS(md5)" 와 다르다는 점은 빌드 리�
 그래서 착수 범위는 셋이다 — 제공자가 요청에서 런타임별 워크스페이스를 고르기, 축출 훅, 백그라운드 작업 목록의 수명
 상향. EE-13 의 종료 도구도 같은 작업 목록에서 작업을 찾으므로 함께 설계한다.
 
-## EE-8 — 워크플로 브랜치가 쓴 `.aimon/` 파일은 병합에서 거절된다 · **열림 · 결정됨** *(2026-09-29)*
+## EE-8 — 워크플로 브랜치가 쓴 `.aimon/` 파일은 병합에서 거절된다 · **닫힘** *(2026-09-29)*
 
 **무엇을.** 이 동작을 확정하거나(문서화), 병합 전에 걸러낼지 정한다.
 
@@ -186,6 +191,23 @@ GridFS etag 가 설계 §7 의 "GridFS(md5)" 와 다르다는 점은 빌드 리�
 구현은 브랜치 파일 시스템에 부모와 같은 경로 규칙을 브랜치 루트 기준으로 한 번 더 거는 것이다. 샌드박스는 git worktree 로
 격리하므로 같은 규칙이 코어 밖에서도 필요하다 — EE-41 의 공개 팩토리(`VirtualFileSystems.withPathRules`)로 표현되는지
 착수할 때 확인한다.
+
+### 닫힘 (2026-09-29)
+
+결정대로 쓰는 시점에 거절한다. `LocalIsolatedEnvironment` 가 부모의 경로 규칙을 브랜치 루트 기준으로 옮겨
+(`.aimon` → `.worktrees/{key}/.aimon`) `VirtualFileSystems.withPathRules` 로 한 번 더 건다 — EE-41 의 팩토리로 표현된다.
+규칙은 부모의 것을 옮긴 것이라 규칙을 비운 어셈블리의 브랜치에는 규칙이 없다. 테스트는
+`LocalIsolatedEnvironmentTest.branchLocalControlDirectoryIsDenied`·`shellWrittenControlFileIsNeverPromoted`·
+`branchRulesFollowTheParent`.
+
+착수해 보니 적힌 것과 달랐던 점이 셋이다. (1) **규칙 층을 어디 두느냐가 처방의 전부였다.** 스코프 **위**에 두면
+스코프의 작업 디렉터리가 `"."` 이라 절대 경로(`{ws}/.aimon/x`, `{ws}/.worktrees/k/.aimon/x`)가 규칙을 비껴간다. 그래서
+규칙 층은 스코프 **아래**, 경로가 이미 한 위임 경로로 줄어든 자리에 있다. "같은 규칙을 한 번 더 건다" 는 서술만으로는
+우회되는 구현이 나온다. (2) 적용되는 것은 "쓰기 거절" 보다 넓은 `DENY` 다 — 브랜치의 `.aimon/` 은 루트의 것처럼 보이지도
+않는다. 그래서 셸이 거기 쓴 파일은 목록에 나오지 않아 **승격되지 않고 보고되지도 않은 채** 브랜치 디렉터리에 남는다.
+루트 `.aimon/` 에 셸이 쓴 파일과 같은 처지이고, 기각한 "조용히 걸러내기" 와 다른 점은 파일 도구가 그 파일을 모델에게
+애초에 보여 주지 않는다는 것이다. (3) 브랜치 파일 시스템으로 브랜치 자신을 `deleteRecursive(".")` 할 수 없게 되었다(보호
+디렉터리를 품은 트리) — 브랜치 정리는 부모를 거친다. main 코드에 그렇게 지우는 곳은 없다.
 
 ## EE-9 — 훅 컨텍스트 대부분에 실행 환경 서술자가 없다 · **열림**
 
@@ -469,7 +491,7 @@ Javadoc 을 실제 동작에 맞춘다.
 
 출처: 빌드 리뷰 3.
 
-## EE-25 — 워크플로 격리 오류가 실제 원인을 가린다 · **열림**
+## EE-25 — 워크플로 격리 오류가 실제 원인을 가린다 · **닫힘** *(2026-09-29)*
 
 **무엇을.** 부모 환경이 사용 불가일 때 그 원인을 오류에 싣는다.
 
@@ -480,6 +502,20 @@ Javadoc 을 실제 동작에 맞춘다.
 **언제 다시 볼까.** 격리 워크플로가 실패했다는 보고에서 원인을 찾기 어려울 때.
 
 출처: 빌드 리뷰 3.
+
+### 닫힘 (2026-09-29)
+
+`ExecutionEnvironment.isolate` 의 계약에 두 대답을 나눴다 — **빈 값**은 "이런 환경에는 격리가 없다", **던짐**은 "여기서
+격리를 거절한다, 메시지가 그 이유다". `UnavailableExecutionEnvironment.isolate` 는 파일 시스템·셸·`stage()` 처럼 자기
+`ExecutionEnvironmentUnavailableException`(원인을 담은)을 던진다. `resolveEnv` 는 원래 던짐을 잡아 메시지를 싣고
+있었으므로, 바꾼 것은 그 예외를 `WorkflowException` 의 원인으로 잇는 것뿐이다. 이제 오류는 "could not isolate branch
+'…': Execution environment unavailable: no ExecutionEnvironmentProvider is configured — refusing to run unscoped (C30)"
+처럼 읽힌다. 테스트는 `UnavailableExecutionEnvironmentTest.isolateThrowsWithTheCause`,
+`WorkflowPhase4Test.isolateWithoutEnvironmentIsRunFatal`·`isolateOnFailingProviderReportsTheReason`.
+
+**어디가 달랐다.** 항목은 `resolveEnv` 를 가리켰지만 원인이 사라지는 자리는 환경 쪽이었다 — 사용 불가 환경이 원인을
+들고 있으면서 `isolate()` 에만 빈 값을 돌려줬다. `resolveEnv` 에서 `instanceof UnavailableExecutionEnvironment` 를 보는
+처방은 ArchUnit 의 `workflow` 허용 목록을 넓혀야 했고, `isolate()` 를 부르는 다른 코드는 여전히 빈 값을 받았을 것이다.
 
 ## EE-26 — 워크스페이스 안 스킬의 스테이징 경로를 격리 브랜치가 쓸 수 없다 · **열림**
 
@@ -498,7 +534,7 @@ Javadoc 을 실제 동작에 맞춘다.
 
 출처: 빌드 리뷰 4.
 
-## EE-27 — 브랜치의 공유 접두어 검사는 대소문자를 구분한다 · **열림**
+## EE-27 — 브랜치의 공유 접두어 검사는 대소문자를 구분한다 · **닫힘** *(2026-09-29)*
 
 **무엇을.** `ScopedVirtualFileSystem` 의 공유 접두어 검사를 경로 규칙과 같은 `VfsPaths.isUnderIgnoreCase` 로 맞춘다.
 
@@ -514,7 +550,21 @@ Javadoc 을 실제 동작에 맞춘다.
 
 출처: 빌드 리뷰 4.
 
-## EE-28 — `WorktreeMerge.promote` 가 브랜치의 소속을 확인하지 않는다 · **열림**
+### 닫힘 (2026-09-29)
+
+적힌 처방대로 `VfsPaths.isUnderIgnoreCase` 로 바꿨다. 브랜치의 `.AIMON-STAGED/x` 쓰기는 이제 부모의 스테이징 영역으로
+가서 부모의 `READ_ONLY` 규칙(대소문자 무시)에 쓰는 시점에 걸린다 — 브랜치 안에 떨어지지 않고 병합까지 가지 않는다.
+테스트는 `ScopedVirtualFileSystemTest.sharedPrefixMatchesIgnoringCase`,
+`LocalIsolatedEnvironmentTest.stagingInAnotherCaseIsReadOnly`.
+
+**고치지 않은 것: 브랜치 키 `a` 와 `A` 의 충돌.** 러너가 만드는 키는 구조 경로의 소문자 조각과 인덱스뿐이라 대소문자만
+다른 두 키가 나오지 않는다 — 설계 리뷰가 소스로 확인했다. 충돌할 수 있는 것은 키를 직접 고르는 `isolate()` 호출자뿐이고,
+막으려면 환경마다 발급한 키를 기억해야 한다(멀티 인스턴스라면 저장소까지). 가설적 호출자에게 그 값은 과하다고 보고
+`LocalExecutionEnvironment.isolate` 의 javadoc 에 한계로 적었다. **새로 드러난 전제:** 이 라우팅이 안전한 것은 부모가
+스테이징 영역을 `READ_ONLY` 로 지키기 때문이다. 그 규칙을 뺀 어셈블리에서는 어떤 표기로든 브랜치가 루트 스테이징 영역에
+그대로 쓴다(정확한 표기로는 이전부터 그랬다). 설계 §9.2 에 적었다.
+
+## EE-28 — `WorktreeMerge.promote` 가 브랜치의 소속을 확인하지 않는다 · **닫힘** *(2026-09-29)*
 
 **무엇을.** `promote(parent, branches, policy)` 에 동일성·소유 검사를 둔다 — `parent` 자신이나 다른 부모의 브랜치가
 `branches` 에 섞이면 거부한다.
@@ -529,7 +579,21 @@ Javadoc 을 실제 동작에 맞춘다.
 
 출처: 빌드 리뷰 4.
 
-## EE-29 — 격리 브랜치 안에서 다시 격리할 수 없다 · **열림**
+### 닫힘 (2026-09-29)
+
+`promote` 가 입출력 전에 브랜치를 검사해 `IllegalArgumentException` 으로 거부한다 — 부모 자신, 부모의 파일 시스템을
+공유하는 환경(자기 위로 복사한 뒤 지우는 데이터 손실의 직접 원인), 두 번 넘긴 같은 브랜치, 새 SPI 메서드
+`ExecutionEnvironment.isolatedFrom()` 이 다른 부모를 가리키는 브랜치. 비교는 동일성이다. 계보를 밝히지 않는 브랜치
+(외부 제공자)는 나머지 검사만으로 받는다 — 그 느슨함은 EE-47 로 옮겼다. 심볼릭 링크의 반쯤 된 병합도 닫았다 — 올릴
+파일의 메타데이터를 먼저 모두 읽어 보고, 하나라도 실패하면 아무것도 올리지 않는다. 테스트는 `WorktreeMergeTest` 의
+소속 검사 다섯 건과 `unreadableBranchFileAbortsBeforePromoting`.
+
+**확인한 것.** 항목의 "`getMetadata` 가 던진다" 는 참이다. 실제 심볼릭 링크로 돌려 봤다 — 로컬 `listRecursive` 는 파일을
+가리키는 링크를 목록에 넣고(`Files.isRegularFile` 이 링크를 따라간다), `getMetadata` 와 `openInputStream` 은 둘 다
+`PathValidator` 의 링크 검사에서 거절한다. `getMetadata` 가 그중 먼저 불리므로 사전 점검은 그것으로 충분하다. 자기 위로
+복사한 뒤 지우는 손실은 코드를 읽어 확인했고 돌려 보지는 않았다 — 새 테스트는 거부만 확인한다.
+
+## EE-29 — 격리 브랜치 안에서 다시 격리할 수 없다 · **닫힘** *(2026-09-29)*
 
 **무엇을.** `LocalIsolatedEnvironment` 가 `isolate()` 를 재정의해 중첩 격리를 지원하거나, 지원하지 않는다는 것을 원인과 함께
 보고한다.
@@ -542,6 +606,20 @@ Javadoc 을 실제 동작에 맞춘다.
 **언제 다시 볼까.** 중첩 워크플로에서 격리 단계를 쓰려 할 때.
 
 출처: 빌드 리뷰 4.
+
+### 닫힘 (2026-09-29)
+
+두 번째 길 — 지원하지 않는다는 것을 원인과 함께 보고한다. `LocalIsolatedEnvironment.isolate` 가 "nested isolation is
+not supported: this environment is already the isolated workflow branch 'k' (.worktrees/k); …" 를 담은
+`UnsupportedOperationException` 을 던지고, EE-25 의 경로로 러너의 run-fatal 오류에 실린다. 빈 값을 돌려주지 않은 것은
+그러면 EE-25 의 증상("does not support isolation")이 그대로 재현되기 때문이다. 테스트는
+`LocalIsolatedEnvironmentTest.nestedIsolationIsRefused`, `WorkflowPhase4Test.nestedIsolationIsRunFatalWithTheReason`.
+
+**지원하지 않은 근거**(설계 §1.4). 스코프 위의 스코프는 작업 디렉터리가 `"."` 이라 절대 경로를 잃는다. 바깥 브랜치를
+병합하면 안쪽 브랜치의 미병합 디렉터리가 루트의 `.worktrees/` 로, 곧 **다른 브랜치의 디렉터리로** 올라간다. EE-28 의
+소속 검사는 계보 사슬이 필요해진다. 샌드박스의 git worktree 안 worktree 는 코어가 시험할 수 없는 약속이다.
+**착수해 보니 더 큰 것:** 둘째 위험은 중첩과 무관하게 **지금도** 있다 — 브랜치가 `.worktrees/other/x` 에 쓰면 그것이
+병합에서 다른 브랜치의 디렉터리로 올라간다. EE-46 으로 옮겼다.
 
 ## EE-30 — 백그라운드 워크플로가 호출자의 실행 환경을 잃는다 · **열림**
 
@@ -774,3 +852,48 @@ PR #195 리뷰 1 이 **macOS 에도 별칭이 있음**을 재현했다 — APFS 
 **언제 다시 볼까.** 워크스페이스 샌드박스 구현 순서 4단계(멀티 슬롯)에서 워크플로 단계를 슬롯에 나눠 둬야 할 때.
 
 출처: PR #196 리뷰(2026-09-29).
+
+## EE-46 — 브랜치가 `.worktrees/` 아래에 쓴 파일은 다른 브랜치의 디렉터리로 승격된다 · **열림**
+
+**무엇을.** 브랜치 안의 `.worktrees/` 를 브랜치 목록에서 빼거나 쓰는 시점에 거절한다. 같은 수정이 대소문자만 다른
+브랜치 호스트 경로(`{ws}/.worktrees/K/…`, 브랜치 `k` 에서)도 다뤄야 한다.
+
+**왜.** 브랜치 `k` 가 `.worktrees/other/x` 에 쓰면 `.worktrees/k/.worktrees/other/x` 에 놓이고, 병합은 그것을 루트의
+`.worktrees/other/x` — 브랜치 `other` 의 디렉터리 — 로 올린다. 부모의 규칙은 `.worktrees/` 를 지키지 않고, 브랜치 규칙
+(EE-8)은 부모의 것을 옮긴 것이라 역시 지키지 않는다. 대소문자 변형은 이렇다 — 파일 도구가 넘긴 `{ws}/.worktrees/K/.aimon/x`
+는 브랜치 루트 벗기기(대소문자 구분)에 걸리지 않아 `.worktrees/k/.worktrees/K/.aimon/x` 가 되고, 브랜치 규칙이 덮지
+않으며, 병합이 다른 브랜치의 디렉터리로 올린다. 그리고 러너가 만드는 키는 실행마다 같으므로(모든 실행의 첫 격리 단계가
+`a0`) 동시에 또는 잇달아 도는 두 실행이 `.worktrees/a0` 을 나눠 쓴다 — EE-28 의 소속 검사도 이것은 잡지 못한다. 셋 다
+코드를 읽어 확인했고 돌려 보지는 않았다.
+
+**어디.** `modules/aimon-core/src/main/java/at/aimon/core/environment/impl/LocalIsolatedEnvironment.java` 의 브랜치 규칙
+(61~72행, 2026-09-29), `filesystem/impl/ScopedVirtualFileSystem.java` 의 `toBranchRelative`(162행, 2026-09-29),
+`workflow/impl/DefaultWorkflowContext.java` 의 `sanitizeBranchKey`.
+
+**언제 다시 볼까.** 중첩 격리를 지원하려 할 때(바깥 브랜치 목록에서 `.worktrees/` 를 숨기는 것이 그 선행 조건이다), 한
+워크스페이스에서 격리 워크플로를 동시에 둘 이상 돌릴 때, 또는 병합이 엉뚱한 브랜치 디렉터리에 파일을 남겼다는 보고가 나올
+때. 가장 싼 처방 — 브랜치 규칙에 `DENY {branchPrefix}/.worktrees` 를 더하는 것 — 은 "브랜치 규칙은 부모의 것" 이라는
+불변식을 깨므로 설계가 기본값으로 고르지 않았다.
+
+출처: [`../design/tool/workflow-isolation-hardening.md`](../design/tool/workflow-isolation-hardening.md) §7 Q5 와 그 설계
+리뷰(2026-09-29).
+
+## EE-47 — `WorktreeMerge.promote` 는 계보를 밝히지 않는 브랜치를 약한 검사로만 받는다 · **열림**
+
+**무엇을.** 외부 제공자(aimon-sandbox)의 `isolate()` 가 `isolatedFrom()` 으로 부모를 밝히게 한 뒤, `promote` 가 계보를
+밝히지 않는 브랜치를 거부할지 정한다. 같은 키로 두 번 `isolate()` 한 서로 다른 두 객체를 한 번에 넘기는 경우도 함께 본다.
+
+**왜.** `promote` 의 소속 검사(EE-28)는 `isolatedFrom()` 이 빈 브랜치를 부모 자신·파일 시스템 공유·중복 검사만으로
+받는다 — 지금의 샌드박스 제공자가 계보를 밝힐 수 없고, 설계 §13 은 `promote` 가 그 환경에서도 동작하라고 요구하기
+때문이다. 그래서 다른 부모의 샌드박스 브랜치는 걸러지지 않는다. 그리고 한 키의 두 객체는 동일성 비교에 걸리지 않아
+`FAIL` 정책에서 그 키의 모든 파일을 충돌로 보고한다(데이터 손실은 없다). 지금은 javadoc 에 "각 브랜치를 한 번씩" 이라고만
+적혀 있다.
+
+**어디.** `modules/aimon-core/src/main/java/at/aimon/core/agent/impl/orca/environment/WorktreeMerge.java` 의
+`validateBranches`(175행, 2026-09-29), 설계 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md)
+§13 의 권장 행, aimon-sandbox 의 `isolate()` 구현.
+
+**언제 다시 볼까.** aimon-sandbox 가 `isolate()` 를 구현하거나 `isolatedFrom()` 을 밝힐 때, 또는 `promote` 를 워크플로
+엔진 밖에서 부르는 코드가 생길 때.
+
+출처: [`../design/tool/workflow-isolation-hardening.md`](../design/tool/workflow-isolation-hardening.md) §7 Q1 · Q4.
