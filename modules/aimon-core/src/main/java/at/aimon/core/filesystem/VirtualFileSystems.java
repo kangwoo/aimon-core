@@ -3,6 +3,7 @@ package at.aimon.core.filesystem;
 import java.nio.file.Path;
 import java.util.Collection;
 import java.util.List;
+import java.util.Objects;
 
 import at.aimon.core.filesystem.impl.PathRuleVirtualFileSystem;
 import at.aimon.core.filesystem.impl.local.ReadOnlyLocalFileSystem;
@@ -65,5 +66,22 @@ public final class VirtualFileSystems {
      */
     public static VirtualFileSystem withPathRules(VirtualFileSystem delegate, List<PathRule> rules) {
         return new PathRuleVirtualFileSystem(delegate, rules);
+    }
+
+    /**
+     * Returns the rules a filesystem built by {@link #withPathRules} applies, so a caller can tell ahead of time
+     * whether a write would be refused — {@code WorktreeMerge} checks every destination before it promotes the first
+     * file. Only the outermost layer is seen: a filesystem that is not a path-rule filesystem itself (another
+     * decorator around one, or any other backend) answers empty, and its writes are only checked when they happen.
+     * Each rule {@linkplain PathRule#covers covers} a normalised path relative to the filesystem's working directory,
+     * and the first covering rule decides.
+     *
+     * @param fileSystem
+     *            the filesystem (must not be null)
+     * @return its rules, or an empty list when it is not a path-rule filesystem
+     */
+    public static List<PathRule> pathRules(VirtualFileSystem fileSystem) {
+        Objects.requireNonNull(fileSystem, "fileSystem cannot be null");
+        return fileSystem instanceof PathRuleVirtualFileSystem guarded ? guarded.getRules() : List.of();
     }
 }

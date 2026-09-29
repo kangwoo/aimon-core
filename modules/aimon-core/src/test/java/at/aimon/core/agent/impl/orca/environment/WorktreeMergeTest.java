@@ -26,6 +26,7 @@ import at.aimon.core.environment.StagedResource;
 import at.aimon.core.environment.impl.LocalExecutionEnvironmentProvider;
 import at.aimon.core.filesystem.BackendStatus;
 import at.aimon.core.filesystem.FileMetadata;
+import at.aimon.core.filesystem.PathRule;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.filesystem.exception.VirtualFileSystemException;
 import at.aimon.core.shell.VirtualShell;
@@ -197,10 +198,34 @@ class WorktreeMergeTest {
         assertThat(parent.fileSystem().exists(".worktrees/a/a.txt")).isTrue();
     }
 
+    @Test
+    @DisplayName("a destination the parent's path rules make read-only aborts before anything is promoted")
+    void readOnlyDestinationAbortsBeforePromoting() throws IOException {
+        provider = LocalExecutionEnvironmentProvider.builder().workspaceRoot(tempDir).pathRules(
+                List.of(PathRule.deny(".aimon"), PathRule.readOnly(".aimon-staged"), PathRule.readOnly("vendor")))
+                .contentSearch(false).build();
+        parent = provider
+                .resolve(EnvironmentRequest.builder().agentRuntimeId(AgentRuntimeId.fromName("merge")).build());
+        branch("a").fileSystem().write("a.txt", "one");
+        // The branch's file tools cannot write vendor/ (the rule is re-anchored at the branch root); a shell can.
+        Files.createDirectories(tempDir.resolve(".worktrees/a/vendor"));
+        Files.writeString(tempDir.resolve(".worktrees/a/vendor/lib.txt"), "shell-written");
+        branch("a").fileSystem().write("z.txt", "two");
+
+        assertThatThrownBy(() -> WorktreeMerge.promote(parent, List.of(branch("a")), WorktreeMerge.Policy.FIRST_WINS))
+                .isInstanceOf(VirtualFileSystemException.class).hasMessageContaining("before promoting anything")
+                .hasMessageContaining("vendor/lib.txt").hasMessageContaining("READ_ONLY");
+
+        assertThat(parent.fileSystem().exists("a.txt")).isFalse();
+        assertThat(parent.fileSystem().exists("z.txt")).isFalse();
+        assertThat(parent.fileSystem().exists(".worktrees/a/a.txt")).isTrue();
+        assertThat(tempDir.resolve("vendor")).doesNotExist();
+    }
+
     // --- ownership: every branch must be a distinct branch of this parent (EE-28) --------------------------------
 
     @Test
-    @DisplayName("the parent itself is refused as a branch, before any I/O")
+    @DisplayName("the parent itself is refused as a branch, before any file is read or written")
     void parentAsItsOwnBranchIsRefused() {
         setUp();
         parent.fileSystem().write("keep.txt", "canonical");

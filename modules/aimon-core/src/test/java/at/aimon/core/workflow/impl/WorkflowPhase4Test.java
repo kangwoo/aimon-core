@@ -133,7 +133,8 @@ class WorkflowPhase4Test {
         assertThatThrownBy(
                 () -> runner.run(ctx -> ctx.agent(AgentTask.builder().subagent(sub).goal("g").isolate(true).build())))
                 .isInstanceOf(WorkflowException.class).hasMessageContaining("sandbox down")
-                .hasMessageNotContaining("does not support isolation");
+                .hasMessageNotContaining("does not support isolation")
+                .hasCauseInstanceOf(ExecutionEnvironmentUnavailableException.class).hasRootCauseMessage("sandbox down");
         assertThat(executeCount.get()).isZero();
     }
 

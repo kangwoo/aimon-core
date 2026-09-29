@@ -1416,5 +1416,11 @@ plan:
   the exception as the `WorkflowException`'s cause.
 - **New SPI method `isolatedFrom()`**, default empty. `WorktreeMerge.promote` uses it, together with identity checks,
   to refuse branches that do not belong to the parent, and it reads every promoted file's metadata before the first
-  write.
+  write. After the build review it also checks every destination against the parent's path rules first, read through
+  the new `VirtualFileSystems.pathRules` (the local parent's filesystem is the path-rule layer; other filesystems
+  answer empty and are checked only on write).
+- **Branch host paths and shell-made staging copies (build review).** `ScopedVirtualFileSystem` matches an absolute
+  `{base}/.worktrees/{key}/…` after normalisation and ignoring case, so `./`, `//` and a case variant of the key no
+  longer nest the branch inside itself past its rules. It also leaves out of its listings any branch-local entry under
+  a shared prefix — a staging directory a shell made in the branch root, which no caller path reaches.
 - **The shared staging prefix matches ignoring case**, like the path rules it sits beside.

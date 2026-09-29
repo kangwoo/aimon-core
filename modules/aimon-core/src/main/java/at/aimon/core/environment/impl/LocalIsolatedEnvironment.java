@@ -32,7 +32,8 @@ import at.aimon.core.shell.VirtualShell;
  * The descriptor's working directory is the branch root's host path — the shell's default cwd — and the file tools
  * accept absolute paths under it. The staging area is shared with the parent: {@link #stage} returns the parent's
  * copy, the branch filesystem routes {@code .aimon-staged/} to the parent's (read-only) directory, and staged files
- * never appear in a branch listing, so a merge never promotes them. {@link #durable()} is {@code false}: the branch
+ * never appear in a branch listing, so a merge never promotes them — nor does a staging directory a shell made inside
+ * the branch root, which the listing leaves out as unreachable. {@link #durable()} is {@code false}: the branch
  * directory disappears after a merge or a discard, so artifacts written here are archived into the control store.
  * Sharing the staging prefix assumes the parent guards it: with the default rules a branch write there is refused
  * (read-only, in any letter case); an assembly whose rules leave it unguarded lets a branch write it at the root.
@@ -41,9 +42,14 @@ import at.aimon.core.shell.VirtualShell;
  * <b>The parent's path rules, anchored at the branch root.</b> Between the scope and the parent's filesystem sits a
  * second {@link VirtualFileSystems#withPathRules path-rule} layer holding the parent's own rules re-anchored under
  * {@code .worktrees/{branchKey}/}, so the branch's {@code .aimon/} is as hidden as the root's and a merge never meets
- * one. It sits <em>below</em> the scope on purpose: there every spelling — relative, absolute, any case — has already
- * been reduced to one delegate path, while a layer above would see the branch's {@code "."} working directory and
- * miss absolute paths. The rules follow the parent: an assembly that dropped them leaves its branches unguarded too.
+ * one. It sits <em>below</em> the scope on purpose: there every spelling of a branch path — relative to the branch,
+ * absolute under the workspace or under the branch root (with {@code ./}, {@code //} or the branch key in another
+ * letter case) — has already been reduced to one delegate path under {@code .worktrees/{branchKey}/}, up to the letter
+ * case of its own segments, which the rules fold. A layer above would see the branch's {@code "."} working directory
+ * and miss absolute paths. What the scope does not reduce is a path that names {@code .worktrees/} from inside the
+ * branch — {@code .worktrees/other/x}, or {@code .worktrees/k/x} written relative: it lands nested in the branch,
+ * outside its rules, and a merge promotes it into that directory (backlog EE-46). The rules follow the parent: an
+ * assembly that dropped them leaves its branches unguarded too.
  *
  * <p>
  * <b>No nesting.</b> {@link #isolate} throws: a branch cannot be isolated again (a scope over a scope loses absolute

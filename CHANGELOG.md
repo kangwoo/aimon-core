@@ -22,13 +22,21 @@ Design and departures: `docs/design/tool/workflow-isolation-hardening.md`.
   isolation is not supported). The workflow runner's run-fatal `WorkflowException` quotes the reason and chains it as
   the cause, where it used to say "does not support isolation".
 - **New default SPI method `ExecutionEnvironment.isolatedFrom()`**, empty by default; a local branch returns its parent.
-- **`WorktreeMerge.promote` checks the branches before any I/O.** The parent itself, a branch sharing the parent's
-  filesystem, the same branch twice, or a branch whose `isolatedFrom()` names another environment is an
-  `IllegalArgumentException`. Before, the first two copied each file onto itself and then deleted it. It also reads
-  every promoted file's metadata first, so a shell-made symlink in a branch aborts the merge before anything is
-  promoted.
+- **`WorktreeMerge.promote` checks the branches before it reads or writes any file.** The parent itself, a branch
+  sharing the parent's filesystem, the same branch twice, or a branch whose `isolatedFrom()` names another environment
+  is an `IllegalArgumentException`. Before, the first two copied each file onto itself and then deleted it. (The
+  check calls each environment's `fileSystem()`, which is free for the local provider but may provision elsewhere.)
+  Before promoting anything it then checks every destination against the parent's path rules, so a file a shell wrote
+  under a `READ_ONLY` directory aborts the merge instead of half-failing it, and reads every promoted file's metadata,
+  so a shell-made symlink in a branch aborts it too.
+- **New `VirtualFileSystems.pathRules(VirtualFileSystem)`** returns the rules of a filesystem `withPathRules` built,
+  and an empty list for any other.
 - **A branch's shared staging prefix matches ignoring case**, like the path rules: `.AIMON-STAGED/x` from a branch
-  meets the parent's read-only rule instead of landing in the branch.
+  meets the parent's read-only rule instead of landing in the branch. A staging directory a shell made inside the
+  branch root, which no file-tool path reaches, is left out of the branch's listings and so never promoted.
+- **The branch root's absolute path is matched after normalisation and ignoring case.** `{ws}/./.worktrees/k/x`,
+  `{ws}//.worktrees/k/x` and `{ws}/.worktrees/K/x` are the branch's `x`; they used to nest as
+  `.worktrees/k/.worktrees/k/x`, past the branch's rules.
 
 ### Changed: `main` carries a `-SNAPSHOT` version between releases
 

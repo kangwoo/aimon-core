@@ -452,9 +452,9 @@ return baseEnv.toBuilder().executionEnvironment(branch).build();
 **병합은 명시적·비자동이다.** `WorktreeMerge.promote(parent, branches, policy)` 가 브랜치 환경 목록을 받아 충돌을
 먼저 훑고 `Policy` 로 고른 뒤 브랜치 파일을 부모로 복사한다. 키만 아는 조립 코드는 `parent.isolate(key).orElseThrow()`
 로 같은 브랜치를 다시 얻는다. 브랜치는 자기 `.aimon/` 아래에 쓸 수 없으므로(쓰는 시점에 거절) 병합이 그런 파일을
-만나지 않는다 — 병합을 통해 제어 평면을 쓰는 통로는 없다. `promote` 는 입출력 전에 브랜치의 소속을 확인해 부모
-자신·다른 부모의 브랜치·중복을 `IllegalArgumentException` 으로 거부하고, 올릴 파일의 메타데이터를 먼저 모두 읽어
-실패하면 아무것도 올리지 않는다. N-way 자동병합은 last-writer-wins 은닉과 snapshot 일관성 규칙을
+만나지 않는다 — 병합을 통해 제어 평면을 쓰는 통로는 없다. `promote` 는 파일을 읽거나 쓰기 전에 브랜치의 소속을
+확인해 부모 자신·다른 부모의 브랜치·중복을 `IllegalArgumentException` 으로 거부하고, 올릴 곳이 부모의 경로 규칙에
+막히거나 올릴 파일의 메타데이터를 읽을 수 없으면 아무것도 올리지 않는다. N-way 자동병합은 last-writer-wins 은닉과 snapshot 일관성 규칙을
 요구하므로 과도하다고 판단했다. 복구 가능한 worktree/병합 실패는 `WorkflowException` 을 **절대 상속하지
 않는다** — 실패 `AgentStepResult` 또는 merge-report 데이터로 표현한다. `WorkflowException` 은 진짜
 run-fatal 전용이며, `BoundedFanoutDispatcher` 가 그것만 재-throw 해 run 을 abort 하기 때문이다.

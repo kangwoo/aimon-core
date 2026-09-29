@@ -133,12 +133,14 @@ class LocalIsolatedEnvironmentTest {
     void branchLocalControlDirectoryIsDenied() {
         final String ws = workspace.toAbsolutePath().normalize().toString();
         for (final String path : List.of(".aimon/x", ".AIMON/x", "./a/../.aimon/x", ws + "/.worktrees/k/.aimon/x",
-                ws + "/.aimon/x")) {
+                ws + "/.aimon/x", ws + "/./.worktrees/k/.aimon/x", ws + "//.worktrees/k/.aimon/x",
+                ws + "/.worktrees/K/.aimon/x")) {
             assertThatThrownBy(() -> branch.fileSystem().write(path, "branch-local")).as(path)
                     .isInstanceOf(FileAccessDeniedException.class);
         }
 
         assertThat(workspace.resolve(".worktrees/k/.aimon")).doesNotExist();
+        assertThat(workspace.resolve(".worktrees/k/.worktrees")).doesNotExist();
         assertThat(branch.fileSystem().exists(".aimon")).isFalse();
     }
 
@@ -156,6 +158,25 @@ class LocalIsolatedEnvironmentTest {
         assertThat(workspace.resolve("result.txt")).hasContent("done");
         assertThat(workspace.resolve(".aimon/y")).doesNotExist();
         assertThat(workspace.resolve(".worktrees/k/.aimon/y")).hasContent("shell-written");
+    }
+
+    @Test
+    @DisplayName("a staging directory a shell made in the branch is not listed, so a merge leaves it and staging alone")
+    void shellWrittenStagingCopyIsNeverPromoted() throws IOException {
+        Files.createDirectories(workspace.resolve(".worktrees/k/.aimon-staged"));
+        Files.writeString(workspace.resolve(".worktrees/k/.aimon-staged/x"), "shell copy");
+        Files.createDirectories(workspace.resolve(".worktrees/k/.Aimon-Staged"));
+        Files.writeString(workspace.resolve(".worktrees/k/.Aimon-Staged/y"), "shell copy");
+        branch.fileSystem().write("result.txt", "done");
+
+        assertThat(branch.fileSystem().listRecursive(".")).containsExactly("result.txt");
+        final MergeReport report = WorktreeMerge.promote(parent, List.of(branch), WorktreeMerge.Policy.FAIL);
+
+        assertThat(report.promoted()).containsExactly("result.txt");
+        assertThat(workspace.resolve("result.txt")).hasContent("done");
+        assertThat(workspace.resolve(".aimon-staged/x")).doesNotExist();
+        assertThat(workspace.resolve(".aimon-staged/y")).doesNotExist();
+        assertThat(workspace.resolve(".worktrees/k/.aimon-staged/x")).hasContent("shell copy");
     }
 
     @Test

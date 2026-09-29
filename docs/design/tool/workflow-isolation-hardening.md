@@ -2,7 +2,8 @@
 
 > Status: **IMPLEMENTED** — `aimon-core` (`ExecutionEnvironment.isolate` / `isolatedFrom`,
 > `UnavailableExecutionEnvironment`, `LocalExecutionEnvironment(Provider)`, `LocalIsolatedEnvironment`,
-> `ScopedVirtualFileSystem`, `WorktreeMerge`, `DefaultWorkflowContext.resolveEnv`) and the records:
+> `ScopedVirtualFileSystem`, `WorktreeMerge`, `DefaultWorkflowContext.resolveEnv`, and after review 2
+> `VirtualFileSystems.pathRules`) and the records:
 > [`execution-environment.md`](execution-environment.md) §4.1, §4.2, §5.2, §9.2, §13 and §15,
 > [`execution-environment-implementation.md`](execution-environment-implementation.md) §10.8,
 > [`../workflow/workflow.md`](../workflow/workflow.md) §6.3, the workflow usage guide, and backlog EE-8, EE-25, EE-27,
@@ -395,8 +396,8 @@ notes, and what was measured while building.*
 
 **No decision in §1 changed.** The branch rules sit below the scope and follow the parent's (§1.1); the shared-prefix
 check folds case (§1.2); `UnavailableExecutionEnvironment.isolate` throws and the runner chains the cause (§1.3); a
-branch refuses nested isolation with its reason (§1.4); `promote` checks ownership before any I/O and pre-flights
-metadata (§1.5). Q2 was kept (the pre-flight is in). What departed is below.
+branch refuses nested isolation with its reason (§1.4); `promote` checks ownership before it reads or writes any
+file and pre-flights metadata (§1.5; "before any I/O" there holds for the local provider only, see DV-9). Q2 was kept (the pre-flight is in). What departed is below.
 
 ### 8.1 Where the build departed from the body
 
@@ -456,3 +457,55 @@ metadata (§1.5). Q2 was kept (the pre-flight is in). What departed is below.
 **Backlog numbering.** The items were first registered as EE-43 and EE-44, the next free numbers on this branch. The
 concurrent EE-42 branch had already taken EE-43 to EE-45, so before merging they were renumbered to EE-46 and EE-47.
 On this branch alone, the register therefore skips EE-43 to EE-45; the merge fills the gap.
+
+### 8.4 Review 2 — what the build review changed
+
+*Appended 2026-09-29, after an independent review of the build (no blocking findings, two should-fix, four nits).
+All six were taken; the review's point about environment `toString()` in ownership messages was left, as
+acceptable.*
+
+- **DV-6 — a branch-local directory under a shared prefix is left out of branch listings.** A shell in branch `k` can
+  run `mkdir .aimon-staged && cp …` (or `.Aimon-Staged/…`, since EE-27 folds case). The re-anchored rule for it,
+  `.worktrees/k/.aimon-staged`, is `READ_ONLY`, not `DENY`, so `listRecursive(".")` listed `.aimon-staged/x`. But
+  `scope()` routes every spelling of that path to the root staging area, so the merge then read the root's file (or
+  none, aborting the pre-flight) and wrote the root's `READ_ONLY` directory — EE-8's half-merge by another route.
+  Two fixes were possible: filter the listing in `ScopedVirtualFileSystem`, or make the re-anchored copy of each
+  shared prefix `DENY`. **The filter was chosen.** The listing is where the class's own invariant ("staged files never
+  appear in a branch listing") is stated, and the entry is dropped for the reason that holds whatever the rules are:
+  no caller path reaches it. A `DENY` would only work while the parent's rules cover the staging prefix, and it would
+  make the branch rules differ from the parent's — the invariant §1.1 keeps and EE-46 declines to break for the same
+  reason. The filter drops only entries under the branch prefix; a listing of `.aimon-staged` itself still shows the
+  parent's staged copies. As with a shell-made `.aimon/` (EE-8, closing note 2), the directory stays in the branch
+  unpromoted and unreported. Tests: `ScopedVirtualFileSystemTest.branchLocalSharedDirectoryIsNotListed` and
+  `LocalIsolatedEnvironmentTest.shellWrittenStagingCopyIsNeverPromoted`, which write straight to the host directory
+  and merge without touching the staging area.
+- **DV-7 — the branch host path is matched after normalisation and ignoring case.** `toBranchRelative` compared
+  `{base}/{prefix}` literally, before normalising and with case. `{ws}/./.worktrees/k/.aimon/x`,
+  `{ws}//.worktrees/k/.aimon/x` and `{ws}/.worktrees/K/.aimon/x` therefore became `.worktrees/k/.worktrees/k/.aimon/x`,
+  past the branch rules, and a merge promoted them to the root's `.worktrees/k/.aimon/x` — branch `k`'s own hidden
+  directory. (The third is the case variant §8.3 registered under Q5 as part of EE-46.) Now the remainder below the base is normalised first, and the branch prefix is stripped when the leading
+  segments equal it ignoring case (compared with `VfsPaths.isUnderIgnoreCase` both ways, since case folding may change
+  a string's length). A relative path is left alone: it is already branch-relative. So "every spelling reduces to one
+  delegate path", which §1.1 and the docs claimed, is now true of every spelling of a *branch* path; what it is still
+  not true of — a path that names `.worktrees/` from inside the branch — is EE-46, whose text was rewritten to say
+  exactly what remains. Side effect: `{ws}/.worktrees/k/../../x` is now the base path `{ws}/x` (the branch's `x`)
+  rather than an escape error, as the same input without the detour already was. Tests:
+  `ScopedVirtualFileSystemTest.branchHostPathMatchesEverySpelling` / `branchHostPathClimbingOutIsABasePath` and the
+  three spellings added to `LocalIsolatedEnvironmentTest.branchLocalControlDirectoryIsDenied`.
+- **DV-8 — the pre-flight also checks destinations.** The metadata pre-flight proved each source readable, not each
+  destination writable, so a file a shell wrote under a custom `READ_ONLY` directory of a branch (`vendor/`) still
+  half-failed a merge. `promote` now checks every destination against the parent's rules before its metadata
+  pre-flight. `WorktreeMerge` lives in `agent.impl.orca.environment` and may not import `filesystem.impl` (ArchUnit),
+  so the rules are read through a new neutral accessor, `VirtualFileSystems.pathRules(VirtualFileSystem)`, which
+  returns the rules of a filesystem `withPathRules` built and an empty list for anything else. **Its limit:** only the
+  outermost layer is seen. The local provider's parent filesystem *is* that layer; a provider that wraps it in another
+  decorator, or guards writes some other way, is checked only when each file is written, as before. Test:
+  `WorktreeMergeTest.readOnlyDestinationAbortsBeforePromoting`.
+- **DV-9 — "before any I/O" holds for the local provider only.** The ownership checks call each environment's
+  `fileSystem()`, and §13 of the environment design allows a provider to provision on first use. The wording is now
+  "before any file is read or written" in the `promote` javadoc, the CHANGELOG, the environment and workflow designs
+  and the EE-28 closing note. The body above (§1.5, §4) is left as approved.
+- **Nits.** Javadoc lines in `ScopedVirtualFileSystem` that the formatter had broken mid-sentence (the class
+  javadoc's list and a constructor parameter) were reflowed. `WorkflowPhase4Test.isolateOnFailingProviderReportsTheReason` now also asserts that the cause is the
+  `ExecutionEnvironmentUnavailableException` and that the root cause's message is the provider's own
+  (`"sandbox down"`); both held.
