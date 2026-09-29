@@ -81,12 +81,15 @@ Maven Central에 업로드하기 전에 로컬 Maven 저장소에 먼저 퍼블�
 
 ### 2. 버전 설정
 
-루트 `gradle.properties`에서 버전을 릴리스 버전으로 변경한다:
+`main` 의 `gradle.properties` 는 릴리스 사이에 **다음 릴리스 버전 + `-SNAPSHOT`** 을 들고 있다
+(`0.3.0` 을 낸 뒤라면 `0.3.1-SNAPSHOT`). 발행 직전에 접미사를 떼서 릴리스 버전으로 바꾼다:
 
 ```properties
 # SNAPSHOT 제거
-VERSION_NAME=0.0.1
+VERSION_NAME=0.3.1
 ```
+
+발행과 태그가 끝나면 다음 패치의 `-SNAPSHOT`(`0.3.2-SNAPSHOT`) 으로 올려 커밋한다.
 
 ### 3. Maven Central에 퍼블리싱
 
@@ -129,9 +132,14 @@ POM_DESCRIPTION=Core framework for AIMON intelligent agent
 
 ```bash
 scripts/release.sh --dry-run     # 게이트까지만 돌려 보고 멈춘다
-scripts/release.sh patch         # 0.2.2 → 0.2.3
-scripts/release.sh minor         # 0.2.2 → 0.3.0
+scripts/release.sh patch         # 0.3.1-SNAPSHOT → 0.3.1, 이후 main 은 0.3.2-SNAPSHOT
+scripts/release.sh minor         # 0.3.1-SNAPSHOT → 0.4.0, 이후 main 은 0.4.1-SNAPSHOT
 ```
+
+`X.Y.Z-SNAPSHOT` 의 `X.Y.Z` 는 **아직 나가지 않은** 다음 버전이다. 그래서 `patch` 는 그 버전을 그대로
+내고, `minor` · `major` 는 그 이상인 가장 작은 해당 종류의 버전을 낸다 — `0.4.0-SNAPSHOT` 에서
+`minor` 는 `0.4.0` 이다. 접미사 없는 `X.Y.Z`(0.3.0 까지의 형태)는 이미 나간 버전을 뜻하므로 예전처럼
+그 다음으로 올린다.
 
 스크립트가 강제하는 것들:
 
@@ -142,7 +150,7 @@ scripts/release.sh minor         # 0.2.2 → 0.3.0
 | 크리덴셜 | Sonatype·GPG 설정 **이름만** 확인 (값은 절대 출력하지 않는다) |
 | 품질 게이트 | `checkAll integrationTest packagingTest jacocoTestCoverageVerification` — 한 번의 Gradle 호출로 돈다. CI 는 **같은** 태스크를 `build` · `integration` · `coverage` 잡의 스텝으로 나눠 돌고, 빌드를 실패시키지 않는 보고서 태스크 `jacocoTestReport` 를 하나 더 돈다. pre-flight 가 Docker 데몬을 확인하는 것은 `integrationTest` 때문이다 |
 | 확인 | 버전 문자열을 직접 타이핑해야 진행 (`--yes` 로 생략) |
-| 발행 → 커밋 → 태그 → 푸시 | **이 순서** |
+| 발행 → 커밋 → 태그 → 다음 `-SNAPSHOT` 커밋 → 푸시 | **이 순서**. 스냅샷 커밋은 태그 **뒤**라서 태그가 가리키는 트리의 `VERSION_NAME` 은 릴리스 버전 그대로다 — `release.yml` 이 그 둘을 대조한다 |
 
 ### 순서가 그 순서인 이유
 
