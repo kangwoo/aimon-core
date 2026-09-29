@@ -1396,3 +1396,27 @@ These are intended by the spec, and the tests that pinned the old behaviour were
   instead.
 - A hand-built skill without a `StagedResource` renders `${AIMON_SKILL_DIR}` empty. Before, its directory was derived
   from a resource path (`SkillBackedCommandExecutorTest`, `SkillToolTest`).
+
+### 10.8 Later: workflow steps carry definition attributes (EE-42)
+
+Not part of this plan; recorded here so the fork-definition story in spec §5.2 has one place to point at. EE-40 put a
+`ForkDefinition` on every fork's `EnvironmentRequest`, but workflow steps build their subagent inline, so its
+attributes were always empty. EE-42 fills them without touching `EnvironmentRequest`:
+
+- **`SubagentResolver.resolve(SubagentDescriptor)`** replaces the five-argument method (`aimon-workflow-graaljs`, a
+  public-SPI break under the `0.x` policy). `SubagentResolver.inline(SubagentRegistry)` copies the attributes of the
+  subagent registered under a step's `agentType`, and the script's own `attributes` may add keys to them. The
+  registered keys are pinned: a script value for one of them fails the script unless it is identical, so a
+  model-written script cannot move an operator-registered subagent to another slot. An unregistered `agentType` has
+  nothing to pin, and its script attributes are used as they are — EE-45 decides whether scripts may set them at all.
+  `GraalJsWorkflowTool` uses that resolver over its own registry by default.
+- **`DefinitionAttributes.overlay(base, override)`** is the one merge rule — generic, the override winning per key —
+  and re-checks the merged map for a key that is both a value and a group. The pinning above is the graaljs
+  resolver's check before it calls `overlay`, not a rule of `overlay`.
+- **`WorkflowTool`** looks its five roles up as `workflow-perspective`, `workflow-synthesizer`, `workflow-candidate`,
+  `workflow-judge` and `workflow-skeptic`, once per role at the start of a run, and copies only their attributes. A
+  registry that throws is logged and leaves that role's steps without attributes — unlike graaljs, which fails the
+  script.
+
+The approved design and where the build departed from it are in
+[`execution-environment-ee42-workflow-attributes.md`](execution-environment-ee42-workflow-attributes.md).

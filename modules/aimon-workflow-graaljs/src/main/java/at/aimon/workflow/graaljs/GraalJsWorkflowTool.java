@@ -101,7 +101,9 @@ public final class GraalJsWorkflowTool extends AbstractTool {
                 : List.of();
         this.engines = Objects.requireNonNull(builder.engines, "engines must not be null");
         this.sandbox = builder.sandbox != null ? builder.sandbox : JsSandboxConfig.defaults();
-        this.subagentResolver = builder.subagentResolver != null ? builder.subagentResolver : SubagentResolver.inline();
+        this.subagentResolver = builder.subagentResolver != null
+                ? builder.subagentResolver
+                : SubagentResolver.inline(subagentRegistry);
         this.backgroundRunner = builder.backgroundRunner; // nullable
     }
 
@@ -343,7 +345,11 @@ public final class GraalJsWorkflowTool extends AbstractTool {
             return this;
         }
 
-        /** Optional resolver; defaults to {@link SubagentResolver#inline()}. */
+        /**
+         * Optional resolver; defaults to {@link SubagentResolver#inline(SubagentRegistry)} over this tool's
+         * {@code subagentRegistry}, so a step whose {@code agentType} names a registered subagent carries that
+         * subagent's attributes.
+         */
         public Builder subagentResolver(SubagentResolver subagentResolver) {
             this.subagentResolver = subagentResolver;
             return this;
