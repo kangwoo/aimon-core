@@ -391,9 +391,9 @@ class PackageDependencyArchitectureTest {
             + " wires the concrete filesystems the tools work in. Other consumers (core.tools.*, external modules) must"
             + " depend on the VirtualFileSystem SPI in at.aimon.core.filesystem.")
     void filesystemImplMustNotLeakOutsideFilesystemTree() {
-        // Carve-out: LocalExecutionEnvironmentProvider is the one in-core assembler that constructs LocalFileSystem,
-        // PathRuleVirtualFileSystem and ScopedVirtualFileSystem for tools (execution-environment design §4.2). Code
-        // that needs a read-only view of a host directory uses the VirtualFileSystems factory instead.
+        // Carve-out: LocalExecutionEnvironmentProvider is the one in-core assembler that constructs LocalFileSystem
+        // and ScopedVirtualFileSystem for tools (execution-environment design §4.2). Code that needs a read-only view
+        // of a host directory, or path rules over a filesystem, uses the VirtualFileSystems factory instead.
         ArchRule rule = noClasses().that().resideOutsideOfPackage(PKG_FILESYSTEM_CORE).and()
                 .resideOutsideOfPackage(PKG_ENVIRONMENT_IMPL).should().dependOnClassesThat()
                 .resideInAPackage("at.aimon.core.filesystem.impl..");

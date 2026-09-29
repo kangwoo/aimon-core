@@ -21,6 +21,7 @@ import at.aimon.core.agent.definition.AgentDefinition;
 import at.aimon.core.agent.definition.exception.AgentDefinitionParseException;
 import at.aimon.core.agent.tool.exception.InvalidToolSpecException;
 import at.aimon.core.agent.tool.permission.AllowedTool;
+import at.aimon.core.base.DefinitionAttributes;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.ReasoningEffort;
 
@@ -46,6 +47,9 @@ import at.aimon.core.llm.ReasoningEffort;
  *   - java
  * allowed-tools: Read, Grep, Bash(git:*)
  * context-engine: rolling
+ * attributes:
+ *   sandbox:
+ *     slot: build
  * variables:
  *   language: Java
  * ---
@@ -117,9 +121,11 @@ public final class MarkdownAgentDefinitionParser implements AgentDefinitionParse
 
             final ContextEngineKind contextEngine = extractContextEngine(frontmatter);
 
+            final Map<String, String> attributes = extractAttributes(frontmatter);
+
             return AgentDefinition.builder().name(name).version(version).model(model).maxIterations(maxIterations)
                     .systemPrompt(body).tags(tags).variables(variables).allowedTools(allowedTools)
-                    .contextEngine(contextEngine).build();
+                    .contextEngine(contextEngine).attributes(attributes).build();
         } catch (AgentDefinitionParseException e) {
             throw e;
         } catch (Exception e) {
@@ -154,6 +160,19 @@ public final class MarkdownAgentDefinitionParser implements AgentDefinitionParse
             return ContextEngineKind.fromConfig(text);
         } catch (IllegalArgumentException e) {
             throw new AgentDefinitionParseException("Invalid 'context-engine' value: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Extracts the free-form {@code attributes} block, flattened to dotted keys by {@link DefinitionAttributes}.
+     *
+     * @return the attributes (never null; empty when the key is absent)
+     */
+    private Map<String, String> extractAttributes(Map<String, Object> frontmatter) {
+        try {
+            return DefinitionAttributes.fromFrontmatter(frontmatter.get(DefinitionAttributes.FRONTMATTER_KEY));
+        } catch (IllegalArgumentException e) {
+            throw new AgentDefinitionParseException(e.getMessage(), e);
         }
     }
 

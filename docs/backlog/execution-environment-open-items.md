@@ -1,4 +1,4 @@
-# 실행 환경 — 등록 항목 39건 (열림 38 · 닫힘 1)
+# 실행 환경 — 등록 항목 42건 (열림 38 · 닫힘 4)
 
 출처는 `ExecutionEnvironment` 구현 작업이다. 설계는 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md)
 이고, 구현 계획(승인본)과 구현이 그 계획에서 벗어난 점은
@@ -15,7 +15,10 @@
 EE-16 도 닫았다. 테스트 Javadoc 이 낡았다는 지적도 이 변경에서 고쳤다. EE-35~EE-39 는 PR #195 의 리뷰 1 에서 나온 비차단
 지적 가운데 고치지 않은 것을 2026-09-29 에 옮긴 것이다. 같은 리뷰의 차단 지적(링크 규칙이 거부한 스킬 하나가 스킬 목록
 전체와 `Skill` 도구를 무너뜨림)과 비차단 지적 여덟 건은 고쳤고, 그 내용은 구현 문서 §10 에 있다. 그 리뷰가 EE-27 과
-EE-33 의 범위를 넓혔으므로 두 항목의 본문도 고쳤다.
+EE-33 의 범위를 넓혔으므로 두 항목의 본문도 고쳤다. EE-40 · EE-41 은 aimon-sandbox 의 워크스페이스 샌드박스 설계를 이 구현에
+대조한 리뷰에서 2026-09-29 에 옮긴 것이고, 같은 리뷰가 EE-1 · EE-18 · EE-30 의 본문에 샌드박스 쪽 영향을 더했다. 그
+리뷰가 샌드박스 구현 순서의 선행 조건으로 꼽은 셋(EE-18 · EE-40 · EE-41)은 2026-09-29 에 한 변경(PR #196)에서 닫았고,
+EE-42 는 그 PR 의 리뷰가 남긴 것이다.
 
 ---
 
@@ -25,7 +28,9 @@ EE-33 의 범위를 넓혔으므로 두 항목의 본문도 고쳤다.
 
 **왜.** 둘 다 `OrcaToolProviderContext.getFileSystem()`(브라우저는 `getCredentialStore()` 와 함께)을 읽는데, 이 메서드는
 삭제되었다(설계 §6). 다음 코어 릴리스를 올리는 순간 두 저장소의 빌드가 깨진다. 샌드박스는 워크스페이스 샌드박스 설계에서
-도구 자체가 사라지고, 브라우저는 산출 파일을 `env.fileSystem()` 에, artifact 는 §9.3 경로로 보내야 한다.
+샌드박스 전용 실행 도구가 모두 없어지고(명령·파일은 코어 도구가 샌드박스 환경에서 처리한다) 슬롯 수명을 다루는
+오케스트레이터 도구(`SandboxList`·`SandboxStart`·`SandboxStop`)만 남아 실행마다
+`EXECUTION_ENVIRONMENT` 에서 바인딩을 꺼내고, 브라우저는 산출 파일을 `env.fileSystem()` 에, artifact 는 §9.3 경로로 보내야 한다.
 
 **어디.** 두 외부 저장소. 코어 쪽 SPI 는 `modules/aimon-core/src/main/java/at/aimon/core/agent/orca/tool/OrcaToolProviderContext.java`.
 
@@ -276,7 +281,7 @@ SubagentStart/Stop, PermissionRequest/Denied 컨텍스트에도 채운다.
 
 출처: 빌드 리뷰 3.
 
-## EE-18 — 백그라운드 `Bash` 가 사용 불가 환경과 notice 를 다루지 않는다 · **열림**
+## EE-18 — 백그라운드 `Bash` 가 사용 불가 환경과 notice 를 다루지 않는다 · **닫힘** *(2026-09-29)*
 
 **무엇을.** 백그라운드 `Bash` 가 사용 불가 환경에서 오류를 내고, `ShellCommandResult.notices()` 를 결과에 싣게 한다.
 
@@ -286,9 +291,23 @@ SubagentStart/Stop, PermissionRequest/Denied 컨텍스트에도 채운다.
 **어디.** `modules/aimon-core/src/main/java/at/aimon/core/tools/bash/BashTool.java` 의 백그라운드 분기,
 `BackgroundBashTask.java`.
 
-**언제 다시 볼까.** 샌드박스 제공자를 붙일 때(notice 를 처음 내는 셸), 또는 EE-13 을 다룰 때.
+**언제 다시 볼까.** 샌드박스 제공자를 붙일 때(notice 를 처음 내는 셸), 또는 EE-13 을 다룰 때. 워크스페이스
+샌드박스 설계의 구현 순서 3단계(OpenSandbox 제공자)가 이 항목을 선행 조건으로 둔다 — 샌드박스 셸은 세션 재생성·샌드박스
+소실을 notice 로만 알리므로, 백그라운드 경로가 그것을 버리면 모델은 cwd 가 초기화된 것을 모른다.
 
 출처: 빌드 리뷰 1 · 3.
+
+### 닫힘 (2026-09-29)
+
+세 가지를 모두 고쳤다. (1) 백그라운드 분기는 셸을 부르기 전에 환경이 `UnavailableExecutionEnvironment` 인지 보고, 그렇다면
+포그라운드와 같은 문구(`UnavailableExecutionEnvironment.message()`)의 오류를 돌려준다 — "Background task started" 를 보고하지
+않는다. (2) `BackgroundBashTask` 가 결과의 notice 를 보관하고 `BashOutput` 이 완료·실패 보고의 출력 앞에
+`[environment] ...` 줄로 싣는다. 출력과 같은 한 번 읽기 계약이고(`takeNotices()`), `filter` 정규식은 notice 에 적용되지 않는다.
+PR #196 의 리뷰가 찾은 경합도 고쳤다 — `BashOutput` 의 대기가 원시 future 에 걸려 있어 완료 핸들러가 결과를
+기록하기 전에 깨어나면 exit code·출력·notice 없이 "Failed" 를 보고할 수 있었다. 이제 대기와 상태는 기록된 결과만
+보고(`settled`), `BashOutput` 은 상태를 먼저 읽고 출력을 읽는다. (3) timeout·실행 실패 경로에도 notice 가 실리도록 `ShellExecutionException`(과 `ShellTimeoutException`)에 `notices()` 와 그것을
+받는 생성자를 더했다. 포그라운드 `Bash` 의 timeout·실패 오류도 이제 notice 를 앞에 싣는다. 셸 구현(샌드박스 셸)이 새 생성자로
+notice 를 넘겨야 실제로 보인다. 테스트는 `BashToolTest` 와 `BashOutputToolTest` 의 notice·사용 불가 환경 케이스.
 
 ## EE-19 — artifact 보관이 이름 충돌·중복 집계·조용한 실패를 낸다 · **열림**
 
@@ -457,7 +476,9 @@ Javadoc 을 실제 동작에 맞춘다.
 **어디.** `modules/aimon-core/src/main/java/at/aimon/core/agent/impl/orca/OrcaAgentRuntimeFactory.java` 의 에이전트 범위
 `WorkflowRunners.create` 호출(1088~1092행, 2026-09-29).
 
-**언제 다시 볼까.** 격리 브랜치 안에서 백그라운드 워크플로를 돌릴 때.
+**언제 다시 볼까.** 격리 브랜치 안에서 백그라운드 워크플로를 돌릴 때, 또는 샌드박스 제공자를 붙일 때. 부모 환경 없이
+해석하는 그 요청에는 에이전트 런타임 id 와 주체만 실리고 세션·실행 id·에이전트가 없다. 워크스페이스 샌드박스의 바인딩
+정책은 그런 요청으로 워크스페이스를 정할 수 없으므로 사용 불가 환경을 돌려주고, 그 러너의 격리 단계는 C30 으로 실패한다.
 
 출처: 빌드 리뷰 4.
 
@@ -599,3 +620,79 @@ PR #195 리뷰 1 이 **macOS 에도 별칭이 있음**을 재현했다 — APFS 
 **언제 다시 볼까.** `search` 를 결과 개수에 기대는 도구가 쓰게 될 때.
 
 출처: PR #195 리뷰 1.
+
+## EE-40 — 포크의 환경 요청에 포크 자신의 정의가 없고, 에이전트 정의에 임의 속성이 없다 · **닫힘** *(2026-09-29)*
+
+**무엇을.** 두 가지다. (1) `DefaultSubagentExecutor` 가 만드는 `EnvironmentRequest` 에 포크 자신의 정의(서브에이전트 이름과
+메타데이터)를 싣는다. (2) `AgentMetadata`·`SubagentMetadata` 에 제공자가 읽을 수 있는 임의 속성 맵(`attributes`,
+`Map<String, String>`)을 두고, 에이전트·서브에이전트 정의 파일의 front matter 에서 채운다.
+
+**왜.** 설계 §5.2 는 포크가 어느 샌드박스(슬롯)에서 돌지를 제공자의 바인딩 정책이 정하게 한다. 워크스페이스 샌드박스
+설계의 기본 정책은 그 값을 정의의 `sandbox.slot`·`sandbox.profile` 에서 읽는다. 지금은 둘 다 불가능하다 — 포크의 요청에는
+`agent` 가 비어 있고(`agentRuntimeId`·`executionId`·`invokingSessionId`·`principal`·`parent` 만 싣는다), 메인 턴의 요청에
+실리는 `Agent` 도 메타데이터에 임의 키가 없다(`tags` 는 `Set<String>` 이고 `SubagentMetadata` 에는 그것도 없다). 슬롯이
+하나뿐인 동안(워크스페이스 샌드박스 구현 순서 2·3단계)은 필요 없다.
+
+**어디.** `modules/aimon-core/src/main/java/at/aimon/core/subagent/execution/DefaultSubagentExecutor.java` 의
+`resolveExecutionEnvironment`(656~670행, 2026-09-29), `EnvironmentRequest` 에 서브에이전트를 실을 자리,
+`agent/AgentMetadata.java`, `subagent/SubagentMetadata.java` 와 두 파서.
+
+**언제 다시 볼까.** 워크스페이스 샌드박스 구현 순서 4단계(멀티 슬롯)를 시작할 때. 그 단계의 선행 조건이다.
+
+출처: 워크스페이스 샌드박스 설계 리뷰(2026-09-29).
+
+### 닫힘 (2026-09-29)
+
+(1) `EnvironmentRequest.fork()` 가 `ForkDefinition`(서브에이전트 이름과 속성)을 싣고, `DefaultSubagentExecutor` 가 포크마다
+채운다. 제공자가 읽을 값은 `EnvironmentRequest.definitionAttributes()` 한 곳이다(포크면 포크의 것, 아니면 에이전트의 것). `Subagent` 를 그대로 싣지 않은 것은 `subagent` 패키지가 이미 `environment` 를 의존하기 때문이다 — 반대 방향을 더하면
+패키지 순환이 생겨 ArchUnit 의 순환 검사가 막는다. (2) `AgentMetadata`·`SubagentMetadata`(그리고 `AgentDefinition`)에
+`getAttributes()`(`Map<String, String>`)를 두었다. 두 정의 파일 모두 front matter 의 `attributes:` 블록에서 채우고, 읽는 규칙은
+`at.aimon.core.base.DefinitionAttributes` 한 곳이다 — 중첩 맵은 점 표기 키로 펼친다(`sandbox: {slot: build}` 와
+`sandbox.slot: build` 는 같은 속성). 스칼라는 문자열이 되고, 리스트·빈 값·빈 중첩 맵·빈 키, 같은 키를 중첩과 점 표기로
+두 번 쓴 것, 값이면서 그룹인 키(`sandbox: x` 와 `sandbox.slot: y`)는 키를 밝힌 파싱 오류다. 같은 수준에서 같은 키를 두 번
+쓴 것은 YAML 기본값대로 뒤의 것이 이긴다. 따옴표 없는 값은 YAML 1.1 이 먼저 타입을 입힌다(`010` → `8`) — 평범한 텍스트가
+아니면 따옴표로 감싼다. 속성은 `AgentDefinitionVersion` 의 해시에도 들어가(있을 때만 — 없는 정의의 해시는 그대로다)
+스케줄된 루틴의 슬롯이 바뀌면 정의 변경으로 보고된다. 코어는 이 값을 싣기만 하고
+읽지 않는다 — 키 이름(`sandbox.*`)은 제공자가 정한다. 테스트는 `DefinitionAttributesTest`, 두 파서 테스트,
+`DefaultSubagentExecutorTest.environmentRequestCarriesForkDefinition`.
+
+## EE-41 — 경로 규칙 파일 시스템을 코어 밖에서 만들 수 없다 · **닫힘** *(2026-09-29)*
+
+**무엇을.** `VirtualFileSystems` 에 `withPathRules(VirtualFileSystem, List<PathRule>)` 같은 공개 팩토리를 둔다.
+
+**왜.** 설계 §4.4·§13 은 스테이징 영역을 파일 도구에 읽기 전용으로 두라고 **모든 제공자**에게 요구한다. 로컬 제공자는
+`PathRuleVirtualFileSystem` 으로 그렇게 하지만, 그 클래스는 `filesystem.impl` 에 있어 외부 제공자(aimon-sandbox)가 쓸
+공개 경로가 없다. `PathRule` 은 공개인데 규칙을 적용할 수단이 없는 셈이다. 외부 제공자가 검사를 따로 구현하면 경로
+정규화와 대소문자·유니코드 접기(구현 문서 §10.2)가 두 벌이 된다.
+
+**어디.** `modules/aimon-core/src/main/java/at/aimon/core/filesystem/VirtualFileSystems.java`,
+`filesystem/impl/PathRuleVirtualFileSystem.java`.
+
+**언제 다시 볼까.** 워크스페이스 샌드박스 구현 순서 2단계(`SandboxFileSystem`)를 시작할 때. 그 단계의 선행 조건이다.
+
+출처: 워크스페이스 샌드박스 설계 리뷰(2026-09-29).
+
+### 닫힘 (2026-09-29)
+
+`VirtualFileSystems.withPathRules(VirtualFileSystem, List<PathRule>)` 를 더했다. `PathRuleVirtualFileSystem` 을 감싸 돌려줄 뿐이라
+경로 정규화와 대소문자·유니코드 접기는 로컬 제공자와 한 벌이다. 로컬 제공자도 이 팩토리를 거치도록 바꿔, 규칙을 적용하는
+경로가 코어 안팎에서 하나가 되었다. 결과는 위임 대상을 빌린다(`close()` 가 위임 대상을 닫지 않는다). 테스트는
+`VirtualFileSystemsTest`.
+
+## EE-42 — 워크플로 스크립트의 인라인 서브에이전트가 속성을 싣지 못한다 · **열림**
+
+**무엇을.** GraalJS 워크플로의 `agent({...})` 단계와 `WorkflowTool` 의 내장 단계가 만드는 서브에이전트에 속성을 실을 길을
+둔다. `agentType` 으로 등록된 서브에이전트를 가리키면 그 정의의 속성을 복사하고, 스크립트가 속성을 직접 줄 수도 있게 한다.
+
+**왜.** EE-40 으로 포크의 요청에 서브에이전트의 속성이 실리지만, 워크플로 단계는 서브에이전트를 등록된 정의에서 가져오지
+않고 이름(`graaljs:<agentType>`)부터 새로 만든다. 그래서 속성이 늘 비고, 슬롯을 속성으로 고르는 제공자는 워크플로 단계를
+조용히 기본 슬롯에 둔다. `SubagentResolver.resolve` 는 위치 인자를 받는 공개 인터페이스라, 인자를 하나 더하면 구현체가
+깨진다 — 작은 서술자 객체를 받도록 바꾸는 편이 낫다.
+
+**어디.** `modules/aimon-workflow-graaljs/src/main/java/at/aimon/workflow/graaljs/InlineSubagentResolver.java`(37~50행,
+2026-09-29), `SubagentResolver.java`, `modules/aimon-core/src/main/java/at/aimon/core/tools/workflow/WorkflowTool.java`
+(367~395행).
+
+**언제 다시 볼까.** 워크스페이스 샌드박스 구현 순서 4단계(멀티 슬롯)에서 워크플로 단계를 슬롯에 나눠 둬야 할 때.
+
+출처: PR #196 리뷰(2026-09-29).

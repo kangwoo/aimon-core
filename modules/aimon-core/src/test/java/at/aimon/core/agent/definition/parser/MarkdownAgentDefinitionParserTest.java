@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Map;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -557,6 +558,65 @@ class MarkdownAgentDefinitionParserTest {
         void shouldRejectCamelCase() {
             assertThatThrownBy(() -> parser.parse(stream(withContextEngine("contextEngine: rolling"))))
                     .isInstanceOf(AgentDefinitionParseException.class).hasMessageContaining("context-engine");
+        }
+    }
+
+    @Nested
+    @DisplayName("attributes parsing")
+    class AttributesParsing {
+
+        @Test
+        @DisplayName("Should flatten nested maps to dotted keys and keep scalars as text, in the order written")
+        void shouldFlattenNestedAttributes() {
+            final String content = """
+                    ---
+                    name: test
+                    attributes:
+                      sandbox:
+                        slot: build
+                        profile: large
+                      team: infra
+                      replicas: 2
+                      gpu: true
+                    ---
+                    body""";
+
+            final AgentDefinition definition = parser.parse(stream(content));
+
+            assertThat(definition.getAttributes()).containsExactly(Map.entry("sandbox.slot", "build"),
+                    Map.entry("sandbox.profile", "large"), Map.entry("team", "infra"), Map.entry("replicas", "2"),
+                    Map.entry("gpu", "true"));
+        }
+
+        @Test
+        @DisplayName("Should return empty attributes when the key is missing")
+        void shouldReturnEmptyWhenMissing() {
+            final AgentDefinition definition = parser.parse(stream("---\nname: test\n---\nbody"));
+
+            assertThat(definition.getAttributes()).isEmpty();
+        }
+
+        @Test
+        @DisplayName("Should reject a list value, naming the attribute")
+        void shouldRejectListValue() {
+            final String content = """
+                    ---
+                    name: test
+                    attributes:
+                      sandbox:
+                        slot: [a, b]
+                    ---
+                    body""";
+
+            assertThatThrownBy(() -> parser.parse(stream(content))).isInstanceOf(AgentDefinitionParseException.class)
+                    .hasMessageContaining("sandbox.slot").hasMessageContaining("list");
+        }
+
+        @Test
+        @DisplayName("Should reject an attributes value that is not a map")
+        void shouldRejectNonMap() {
+            assertThatThrownBy(() -> parser.parse(stream("---\nname: test\nattributes: build\n---\nbody")))
+                    .isInstanceOf(AgentDefinitionParseException.class).hasMessageContaining("attributes");
         }
     }
 }

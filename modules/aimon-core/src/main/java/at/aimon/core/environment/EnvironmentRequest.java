@@ -1,5 +1,6 @@
 package at.aimon.core.environment;
 
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -15,7 +16,8 @@ import at.aimon.core.base.Principal;
  * <p>
  * Only {@link #agentRuntimeId()} is required. A main turn and a scheduled routine carry the {@link Agent}; forks and
  * workflow runs do not (they know their runtime id and their {@link #parent()} instead). A fork carries its parent's
- * environment so a provider can answer with the same place — the local provider returns the parent as-is.
+ * environment so a provider can answer with the same place — the local provider returns the parent as-is — and its
+ * own {@link #fork() definition}, so a provider can answer with a different place per subagent instead.
  */
 public final class EnvironmentRequest {
 
@@ -27,6 +29,7 @@ public final class EnvironmentRequest {
     private final Principal principal;
     private final ExecutionEnvironment parent;
     private final String branchKey;
+    private final ForkDefinition fork;
 
     private EnvironmentRequest(Builder builder) {
         this.agentRuntimeId = Objects.requireNonNull(builder.agentRuntimeId, "agentRuntimeId must not be null");
@@ -37,6 +40,7 @@ public final class EnvironmentRequest {
         this.principal = builder.principal;
         this.parent = builder.parent;
         this.branchKey = builder.branchKey;
+        this.fork = builder.fork;
     }
 
     /** @return the agent runtime the execution belongs to */
@@ -79,6 +83,28 @@ public final class EnvironmentRequest {
         return Optional.ofNullable(branchKey);
     }
 
+    /**
+     * @return the subagent definition a fork runs — its name and attributes — when the request is for a fork (design
+     *         §5.2)
+     */
+    public Optional<ForkDefinition> fork() {
+        return Optional.ofNullable(fork);
+    }
+
+    /**
+     * Returns the attributes of the definition this execution runs: the fork's subagent when the request is for a fork,
+     * otherwise the agent's, otherwise none. The one lookup every provider's binding policy needs — a provider that
+     * read only {@link #agent()} would place every fork where its main turn runs, and nothing would fail.
+     *
+     * @return the attributes (never null; unmodifiable; empty when neither is present)
+     */
+    public Map<String, String> definitionAttributes() {
+        if (fork != null) {
+            return fork.attributes();
+        }
+        return agent != null ? agent.getAttributes() : Map.of();
+    }
+
     /** @return a new builder */
     public static Builder builder() {
         return new Builder();
@@ -87,7 +113,8 @@ public final class EnvironmentRequest {
     @Override
     public String toString() {
         return "EnvironmentRequest{agentRuntimeId=" + agentRuntimeId + ", sessionId=" + sessionId + ", executionId="
-                + executionId + ", parent=" + (parent != null) + ", branchKey=" + branchKey + '}';
+                + executionId + ", parent=" + (parent != null) + ", branchKey=" + branchKey
+                + (fork != null ? ", fork=" + fork.name() : "") + '}';
     }
 
     /** Builder for {@link EnvironmentRequest}. */
@@ -100,6 +127,7 @@ public final class EnvironmentRequest {
         private Principal principal;
         private ExecutionEnvironment parent;
         private String branchKey;
+        private ForkDefinition fork;
 
         private Builder() {
         }
@@ -181,6 +209,16 @@ public final class EnvironmentRequest {
          */
         public Builder branchKey(String branchKey) {
             this.branchKey = branchKey;
+            return this;
+        }
+
+        /**
+         * @param fork
+         *            the subagent definition the fork runs, or null
+         * @return this builder
+         */
+        public Builder fork(ForkDefinition fork) {
+            this.fork = fork;
             return this;
         }
 

@@ -322,7 +322,7 @@ All tools obtain the environment with `ExecutionEnvironmentAccess.require(contex
 | `GrepTool` | `()` | `env.fileSystem()`. From stage 5, `env.contentSearch()` is tried first. |
 | `ArtifactAwareWriteTool` / `ArtifactAwareEditTool` | `()` until stage 3, then `(ArtifactArchive)` | delegate plus registration; the §9.3 copy lands in stage 3 |
 | `BashTool` | `(BackgroundBashManager)` | `env.shell()`. The background path sets `ExecutionOptions.background(true)` and captures that shell in the submitted future (§5.3). From stage 5, notices are prefixed as `[environment] …`. |
-| `BashOutputTool` | unchanged | unchanged |
+| `BashOutputTool` | unchanged | unchanged. *Later (EE-18):* reports a finished background task's notices once, ahead of its output |
 | `WikiIngestTool` | unchanged | `env.fileSystem()` instead of `VIRTUAL_FILE_SYSTEM` |
 | `SkillTool` | unchanged | via `SkillRenderContextAccess.builderFor(skill, ctx)`. **Stage 2:** no skill-side change. `${AIMON_SKILL_DIR}` keeps today's `SkillRenderContexts.resolveSkillBaseDir` value, because `Skill.getStagedResource()` does not exist yet and there is nothing to pass to `stage()`. In stage 2 that value is still a path on the one shared VFS, so it resolves as it does today. **Stage 3:** `skillBaseDir = env.stage(resource)` for every loaded skill, and from then on the §15 rule "`${AIMON_SKILL_DIR}` only from `stage()`" holds. The "Available Files" listing is rebased onto that directory (§1.12). |
 
@@ -822,7 +822,8 @@ that test only checks names.
   updated to construct the store over a `ScopedVirtualFileSystem(fs, ".aimon")`, so the physical path they assert is
   unchanged.
 - ArchUnit: `PathRuleVirtualFileSystem` is constructed only in `environment.impl`, which the existing
-  `filesystemImplMustNotLeak…` rule already enforces. `VfsPaths` is in `filesystem` core and depends only on `java`.
+  `filesystemImplMustNotLeak…` rule already enforces. *Later (EE-41):* it is constructed only by the public factory
+  `VirtualFileSystems.withPathRules`, which the local provider now calls too. `VfsPaths` is in `filesystem` core and depends only on `java`.
 
 **Commits**: `feat(filesystem): path-rule VFS wrapper (DENY / READ_ONLY)` (+ `ReadOnlyLocalFileSystem`,
 `VirtualFileSystems.readOnlyLocal`);
@@ -957,6 +958,8 @@ spec §4.4 rule and the skill guide);
 - `ShellCommandResult.notices()`.
 - `BashTool` prefixes `"[environment] " + notice` lines before stdout, and never puts them into stderr.
 - Tests use a fake shell that returns notices, and check the order and that stderr is untouched.
+- *Later (EE-18):* `ShellExecutionException` / `ShellTimeoutException` carry `notices()` too, so the timeout and
+  failure paths report them, and background tasks keep them for `BashOutput`.
 
 **5d Descriptor (§10)**
 - `SystemPromptRenderer.buildEnvironmentBlock(EnvironmentDescriptor)`, `EnvironmentContextProvider`, and the

@@ -1,6 +1,7 @@
 package at.aimon.core.agent;
 
 import java.util.List;
+import java.util.Map;
 
 import at.aimon.core.agent.tool.permission.AllowedTool;
 
@@ -35,6 +36,17 @@ public interface Agent {
      */
     default String getName() {
         return getMetadata().getName();
+    }
+
+    /**
+     * Gets the free-form attributes of the agent's definition, flattened to dotted keys (see
+     * {@link AgentMetadata#getAttributes()}). A convenience that lets a reader holding only an {@code Agent} — an
+     * execution environment provider — reach them without depending on {@link AgentMetadata}.
+     *
+     * @return an unmodifiable map (never null, may be empty)
+     */
+    default Map<String, String> getAttributes() {
+        return getMetadata().getAttributes();
     }
 
     /**

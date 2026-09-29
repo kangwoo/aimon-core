@@ -7,6 +7,33 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Added: what an out-of-core execution environment provider needs (EE-18, EE-40, EE-41)
+
+Closes the three items `docs/backlog/execution-environment-open-items.md` lists as prerequisites of the workspace
+sandbox provider. Additive only — existing constructors and builders keep working.
+
+- **Path rules outside the core** (EE-41). `VirtualFileSystems.withPathRules(VirtualFileSystem, List<PathRule>)` wraps a
+  file system in the same path-rule guard the local provider uses (one implementation of path normalisation and
+  case/Unicode folding). The result borrows its delegate. The local provider now goes through it too.
+- **Background `Bash` and environment notices** (EE-18). A background command in an `UnavailableExecutionEnvironment`
+  is an error up front instead of "Background task started" (`UnavailableExecutionEnvironment.message()`).
+  `BashOutput` reports a finished task's notices once, ahead of its output and outside `filter`. A blocking
+  `BashOutput` no longer reports a task as finished before its exit code, output and notices are recorded.
+  `ShellExecutionException` and `ShellTimeoutException` gain `notices()` and constructors taking them, so a shell can
+  report a recreated session on a timed-out or failed command; `Bash` prints them ahead of the error.
+- **Definition attributes and the fork's definition** (EE-40). `agent.md` and `agents/*.md` accept an `attributes:`
+  block, flattened to dotted keys (`sandbox: {slot: build}` → `sandbox.slot=build`) by
+  `at.aimon.core.base.DefinitionAttributes`, and exposed as `AgentDefinition` / `AgentMetadata` /
+  `SubagentMetadata.getAttributes()` and `Agent.getAttributes()` (builders: `attributes(Map<String, String>)`, also on
+  `DefaultAgent.Builder` and `Subagent.Builder`). A list, empty value, empty nested map, blank key, a key written both
+  nested and dotted, or a key that is both a value and a group is a parse error; the same key twice at one level keeps
+  YAML's last-wins. Quote values that are not plain text — YAML 1.1 retypes `010` and `on`. The core carries
+  attributes and never reads them. `EnvironmentRequest.fork()` carries a `ForkDefinition` (subagent name and
+  attributes) for every subagent fork, and `EnvironmentRequest.definitionAttributes()` gives a provider the fork's
+  attributes, else the agent's. Attributes are part of `AgentDefinitionVersion` when present, so a scheduled routine
+  reports a slot change as a definition change; definitions without attributes keep their digest. Workflow-script
+  steps do not carry attributes yet (EE-42).
+
 ### Changed (breaking): tools run in a per-execution `ExecutionEnvironment`, and the control store is split out
 
 Design: `docs/design/tool/execution-environment.md` (implementation plan and departures:
