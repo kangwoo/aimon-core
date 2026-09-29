@@ -629,7 +629,9 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
                     .defaultModel(env.getDefaultModel()).modelOverride(env.getModelOverride().orElse(null))
                     .parentCancellationSignal(cancellationSignal).knowledgeStore(env.getKnowledgeStore().orElse(null))
                     .knowledgeScope(env.getKnowledgeScope().orElse(null))
-                    .toolContextEnrichers(env.getToolContextEnrichers()).outputSink(outputSink).build();
+                    .toolContextEnrichers(env.getToolContextEnrichers()).outputSink(outputSink)
+                    .executionEnvironment(env.getExecutionEnvironment().orElse(null))
+                    .executionEnvironmentProvider(env.getExecutionEnvironmentProvider().orElse(null)).build();
 
             // Build execution request (what to execute). The parent's LLM call metadata is forwarded so the subagent
             // executor can merge it with subagent-derived defaults (component/feature) and emit attributed usage. The

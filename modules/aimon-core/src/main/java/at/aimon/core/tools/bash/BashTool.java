@@ -28,11 +28,13 @@ import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.agent.tool.permission.PermissionSubject;
 import at.aimon.core.agent.tool.permission.ToolPattern;
 import at.aimon.core.agent.tool.permission.ToolPermissionSubjectAware;
+import at.aimon.core.environment.exception.ExecutionEnvironmentUnavailableException;
 import at.aimon.core.shell.ExecutionOptions;
 import at.aimon.core.shell.ShellCommandResult;
 import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.shell.exception.ShellExecutionException;
 import at.aimon.core.shell.exception.ShellTimeoutException;
+import at.aimon.core.tools.ExecutionEnvironmentAccess;
 
 /**
  * Tool for executing bash commands in a shell environment.
@@ -81,9 +83,9 @@ import at.aimon.core.shell.exception.ShellTimeoutException;
  * <pre>
  * {
  *     &#64;code
- *     VirtualShell shell = // supplied by the assembly, e.g. OrcaToolProviderContext.getShell()
- *     BashTool bashTool = new BashTool(shell);
- *     ToolContext context = ToolContext.empty();
+ *     BashTool bashTool = new BashTool();
+ *     // the shell comes from the execution's environment, read on every call
+ *     ToolContext context = ToolContext.builder().put(ToolContextKeys.EXECUTION_ENVIRONMENT, env).build();
  *
  *     // Execute git command
  *     ToolInput gitInput = ToolInput.of(Map.of("command", "git status", "description", "Check git status"));
@@ -147,7 +149,9 @@ public class BashTool extends AbstractTool implements ToolPermissionSubjectAware
     static final String CAPTURE_TRUNCATION_NOTICE = "[Output truncated: the shell reached its capture limit, "
             + "so some output was discarded and is not recoverable]";
 
-    private final VirtualShell shell;
+    /** Prefix of each {@link ShellCommandResult#notices() environment notice} line placed before the output. */
+    static final String ENVIRONMENT_NOTICE_PREFIX = "[environment] ";
+
     private final ExecutorService executorService;
     private final BackgroundBashManager backgroundManager;
 
@@ -162,31 +166,24 @@ public class BashTool extends AbstractTool implements ToolPermissionSubjectAware
      * <li>Required parameter: "command" (string) - The bash command to execute
      * <li>Optional parameters: description, timeout, run_in_background
      * </ul>
-     *
-     * @param shell
-     *            The shell to run commands through (must not be null)
-     * @throws NullPointerException
-     *             if shell is null
      */
-    public BashTool(VirtualShell shell) {
-        this(shell, null);
+    public BashTool() {
+        this(null);
     }
 
     /**
      * Creates a new BashTool with optional background execution support.
      *
      * <p>
-     * The shell is <b>borrowed</b>: this tool never closes it. It is typically shared with other tools and with the
-     * skill hooks, and closing it here would tear it out from under them.
+     * The tool holds no shell. Each call runs in the shell of the execution's environment
+     * ({@code ToolContextKeys.EXECUTION_ENVIRONMENT}); a background command captures that shell when it starts and
+     * keeps it for its whole run (execution-environment design §5.3). The shell is <b>borrowed</b> — its provider
+     * owns and closes it — so this tool never closes it.
      *
-     * @param shell
-     *            The shell to run commands through (must not be null)
      * @param backgroundManager
      *            The manager for background tasks, or null to disable background execution
-     * @throws NullPointerException
-     *             if shell is null
      */
-    public BashTool(VirtualShell shell, BackgroundBashManager backgroundManager) {
+    public BashTool(BackgroundBashManager backgroundManager) {
         super(TOOL_NAME, "Executes bash commands in a shell environment. "
                 + "CRITICAL: This tools is for terminal operations like git, npm, docker, etc. "
                 + "DO NOT use it for file operations. "
@@ -194,7 +191,6 @@ public class BashTool extends AbstractTool implements ToolPermissionSubjectAware
                 + "Edit for editing files, and Write for writing files. "
                 + "Provides timeout control (default 120s, max 600s) and output truncation at 30,000 characters.",
                 ToolCategories.EXECUTION, createInputSchema());
-        this.shell = Objects.requireNonNull(shell, "Shell cannot be null");
         this.backgroundManager = backgroundManager;
         // Carries background tasks only. The foreground path no longer submits anything here: it blocks in the shell,
         // which owns the timeout and the process teardown.
@@ -279,13 +275,21 @@ public class BashTool extends AbstractTool implements ToolPermissionSubjectAware
             final int timeout = Math.min(Math.max(rawTimeout, MIN_TIMEOUT_MS), MAX_TIMEOUT_MS);
             final boolean runInBackground = input.getBoolean("run_in_background", false);
 
+            final VirtualShell shell;
+            try {
+                shell = ExecutionEnvironmentAccess.require(context).shell();
+            } catch (IllegalStateException e) {
+                log.warn("No execution environment: {}", e.getMessage());
+                return ToolResult.error(e.getMessage());
+            }
+
             // Handle background execution
             if (runInBackground) {
                 if (backgroundManager == null) {
                     return ToolResult
                             .error("Background execution is not supported. BackgroundBashManager was not provided.");
                 }
-                return executeInBackground(command);
+                return executeInBackground(shell, command);
             }
 
             // Execute the command. No future wrapper: the shell enforces the timeout and destroys the process tree,
@@ -302,6 +306,9 @@ public class BashTool extends AbstractTool implements ToolPermissionSubjectAware
                 // build that hung on step 9 of 10 indistinguishable from one that never started.
                 return ToolResult.error(renderBody(mergeStreams(e.stdout(), e.stderr()),
                         "[timed out after " + timeout + "ms]", e.outputTruncated()));
+            } catch (ExecutionEnvironmentUnavailableException e) {
+                log.warn("Execution environment unavailable: {}", e.getMessage());
+                return ToolResult.error(e.getMessage());
             } catch (ShellExecutionException e) {
                 if (e.getCause() instanceof InterruptedException) {
                     // The shell restores the interrupt flag before throwing; report the reason from the signal.
@@ -316,7 +323,8 @@ public class BashTool extends AbstractTool implements ToolPermissionSubjectAware
 
             // An exit code is a value, not an exception. The shell reports every code — including 0 — the same way,
             // and this is the only place that decides what a code means to the model.
-            final String body = renderBody(mergeStreams(result.stdout(), result.stderr()),
+            final String body = renderNotices(result.notices()) + renderBody(
+                    mergeStreams(result.stdout(), result.stderr()),
                     result.isSuccess() ? null : "[exit code: " + result.exitCode() + "]", result.outputTruncated());
 
             if (result.isFailure()) {
@@ -339,11 +347,17 @@ public class BashTool extends AbstractTool implements ToolPermissionSubjectAware
     /**
      * Executes a command in the background.
      *
+     * <p>
+     * The shell is captured here, when the task starts, and the future keeps it: the task may outlive the execution
+     * that started it, and the shell's lifetime is its provider's, not the execution's (design §5.3).
+     *
+     * @param shell
+     *            The execution environment's shell
      * @param command
      *            The command to execute
      * @return A ToolResult with the task ID
      */
-    private ToolResult executeInBackground(String command) {
+    private ToolResult executeInBackground(VirtualShell shell, String command) {
         // Generate task ID
         final String taskId = "bash_" + UUID.randomUUID().toString().substring(0, 8);
 
@@ -385,12 +399,34 @@ public class BashTool extends AbstractTool implements ToolPermissionSubjectAware
      *
      * <p>
      * Identical to {@link #foregroundOptions(long)} except for the timeout, which is the whole point: a background
-     * command must not inherit the foreground ceiling, and must not run without one either.
+     * command must not inherit the foreground ceiling, and must not run without one either — and for
+     * {@link ExecutionOptions#isBackground()}, which tells a shell with a persistent session not to let this command
+     * hold it.
      *
      * @return the execution options
      */
     private static ExecutionOptions backgroundOptions() {
-        return foregroundOptions(BACKGROUND_TIMEOUT_MS);
+        return foregroundOptions(BACKGROUND_TIMEOUT_MS).toBuilder().background(true).build();
+    }
+
+    /**
+     * Renders the environment's notices as {@code [environment] ...} lines placed before the command's output. They
+     * are never mixed into the output itself: stderr is what the command printed, and the model reads it as the
+     * command's own errors.
+     *
+     * @param notices
+     *            the notices of the result
+     * @return the rendered lines, each ending in a newline, or an empty string
+     */
+    private static String renderNotices(List<String> notices) {
+        if (notices.isEmpty()) {
+            return "";
+        }
+        final StringBuilder sb = new StringBuilder();
+        for (String notice : notices) {
+            sb.append(ENVIRONMENT_NOTICE_PREFIX).append(notice).append('\n');
+        }
+        return sb.toString();
     }
 
     /**

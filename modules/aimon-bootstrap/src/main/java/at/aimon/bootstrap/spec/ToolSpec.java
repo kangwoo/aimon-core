@@ -7,10 +7,12 @@ import java.util.Optional;
 
 import at.aimon.core.agent.impl.orca.OrcaAgentRuntimeFactory;
 import at.aimon.core.agent.impl.orca.tool.OrcaBashToolProvider;
+import at.aimon.core.agent.impl.orca.tool.OrcaFileToolProvider;
 import at.aimon.core.agent.orca.tool.OrcaToolProvider;
 import at.aimon.core.agent.tool.ToolContextEnricher;
 import at.aimon.core.mcp.McpClientFactory;
 import at.aimon.core.mcp.McpServerConfigProvider;
+import at.aimon.core.tools.artifact.ArtifactPolicy;
 
 /**
  * Declares which tools the stack's agent runtimes register.
@@ -50,6 +52,7 @@ import at.aimon.core.mcp.McpServerConfigProvider;
 public final class ToolSpec {
 
     private final boolean bashEnabled;
+    private final ArtifactPolicy artifactPolicy;
     private final boolean workflowToolEnabled;
     private final boolean workflowRunnerEnabled;
     private final List<OrcaToolProvider> additionalProviders;
@@ -59,6 +62,7 @@ public final class ToolSpec {
 
     private ToolSpec(Builder builder) {
         this.bashEnabled = builder.bashEnabled;
+        this.artifactPolicy = builder.artifactPolicy;
         this.workflowToolEnabled = builder.workflowToolEnabled;
         this.workflowRunnerEnabled = (builder.workflowRunnerEnabled == null)
                 ? builder.workflowToolEnabled
@@ -121,8 +125,24 @@ public final class ToolSpec {
         if (!bashEnabled) {
             providers.removeIf(OrcaBashToolProvider.class::isInstance);
         }
+        if (artifactPolicy.isEnabled()) {
+            providers.replaceAll(provider -> provider instanceof OrcaFileToolProvider
+                    ? new OrcaFileToolProvider(artifactPolicy)
+                    : provider);
+        }
         providers.addAll(additionalProviders);
         return List.copyOf(providers);
+    }
+
+    /**
+     * Returns the artifact policy of the file tools (execution-environment design §9.3): whether {@code Write} and
+     * {@code Edit} register what they write as downloadable artifacts, and how much a non-durable environment may
+     * archive into the control store.
+     *
+     * @return the policy, disabled by default
+     */
+    public ArtifactPolicy getArtifactPolicy() {
+        return artifactPolicy;
     }
 
     /**
@@ -208,6 +228,7 @@ public final class ToolSpec {
     public static final class Builder {
 
         private boolean bashEnabled = true;
+        private ArtifactPolicy artifactPolicy = ArtifactPolicy.disabled();
         private boolean workflowToolEnabled;
         private Boolean workflowRunnerEnabled;
         private final List<OrcaToolProvider> additionalProviders = new ArrayList<>();
@@ -227,6 +248,18 @@ public final class ToolSpec {
          */
         public Builder bashEnabled(boolean bashEnabled) {
             this.bashEnabled = bashEnabled;
+            return this;
+        }
+
+        /**
+         * Sets the file tools' artifact policy (default: disabled).
+         *
+         * @param artifactPolicy
+         *            the policy (must not be null)
+         * @return this builder
+         */
+        public Builder artifactPolicy(ArtifactPolicy artifactPolicy) {
+            this.artifactPolicy = Objects.requireNonNull(artifactPolicy, "artifactPolicy must not be null");
             return this;
         }
 

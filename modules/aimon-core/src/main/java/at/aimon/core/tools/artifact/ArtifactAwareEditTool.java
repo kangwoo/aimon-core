@@ -9,7 +9,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import at.aimon.core.agent.artifact.ArtifactCollector;
-import at.aimon.core.agent.artifact.ArtifactFileNames;
 import at.aimon.core.agent.artifact.FileArtifact;
 import at.aimon.core.agent.tool.AbstractTool;
 import at.aimon.core.agent.tool.ToolCategories;
@@ -18,9 +17,6 @@ import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.agent.tool.permission.PermissionSubject;
 import at.aimon.core.agent.tool.permission.ToolPermissionSubjectAware;
-import at.aimon.core.filesystem.FileMetadata;
-import at.aimon.core.filesystem.VirtualFileSystem;
-import at.aimon.core.tools.ToolContextKeys;
 import at.aimon.core.tools.file.EditTool;
 
 /**
@@ -42,11 +38,10 @@ import at.aimon.core.tools.file.EditTool;
  * {
  *     &#64;code
  *     // For environments that need artifact support (Web API)
- *     VirtualFileSystem vfs = new LocalFileSystem("/base/path");
- *     Tool editTool = new ArtifactAwareEditTool(vfs);
+ *     Tool editTool = new ArtifactAwareEditTool(new ArtifactArchive(controlFileSystem, policy));
  *
  *     // For environments without artifact needs (CLI)
- *     Tool editTool = new EditTool(vfs);
+ *     Tool editTool = new EditTool();
  * }
  * </pre>
  *
@@ -62,17 +57,19 @@ public class ArtifactAwareEditTool extends AbstractTool implements ToolPermissio
 
     private final EditTool delegate;
 
-    private final VirtualFileSystem fileSystem;
+    private final ArtifactArchive archive;
 
     /**
      * Creates a new artifact-aware EditTool.
      *
-     * @param fileSystem
-     *            The virtual file system for file operations and metadata retrieval (must not be null)
-     * @throws NullPointerException
-     *             if fileSystem is null
+     * <p>
+     * The tool holds no working filesystem: the delegate writes through the execution environment's, and the
+     * archive registers the result — copying it into the control store first when the environment is not durable.
+     *
+     * @param archive
+     *            registers written files as artifacts (must not be null)
      */
-    public ArtifactAwareEditTool(VirtualFileSystem fileSystem) {
+    public ArtifactAwareEditTool(ArtifactArchive archive) {
         super(TOOL_NAME,
                 "Performs exact string replacements in files. Enables precise, surgical modifications "
                         + "to existing files by replacing specific text patterns with new content while preserving "
@@ -80,8 +77,8 @@ public class ArtifactAwareEditTool extends AbstractTool implements ToolPermissio
                         + "editing a file. The old_string must match EXACTLY (including whitespace). If replace_all "
                         + "is false (default), old_string must be unique in the file.",
                 ToolCategories.FILESYSTEM, createInputSchema());
-        this.delegate = new EditTool(Objects.requireNonNull(fileSystem, "File system cannot be null"));
-        this.fileSystem = fileSystem;
+        this.delegate = new EditTool();
+        this.archive = Objects.requireNonNull(archive, "archive cannot be null");
     }
 
     private static Map<String, Object> createInputSchema() {
@@ -127,7 +124,10 @@ public class ArtifactAwareEditTool extends AbstractTool implements ToolPermissio
 
         if (result.isSuccess() && isArtifact) {
             final String filePath = input.getRequiredString("file_path");
-            registerArtifact(filePath, context);
+            final Optional<String> note = archive.register(context, filePath, 0);
+            if (note.isPresent()) {
+                return ToolResult.success(result.getContent() + "\n" + note.get());
+            }
         }
 
         return result;
@@ -140,39 +140,6 @@ public class ArtifactAwareEditTool extends AbstractTool implements ToolPermissio
             log.warn("Ignoring non-boolean 'artifact' value; defaulting to true ({})", e.getMessage());
             return true;
         }
-    }
-
-    /**
-     * Registers a file artifact in the ArtifactCollector.
-     *
-     * <p>
-     * On failure, logs a warning only. The file edit has already succeeded, so artifact metadata retrieval failure must
-     * not change the tool result to an error.
-     *
-     * <p>
-     * Unlike {@link ArtifactAwareWriteTool}, there is no content parameter available for a byte-length fallback. If
-     * {@code fileSystem.getMetadata()} fails, size defaults to {@code 0}.
-     */
-    private void registerArtifact(String filePath, ToolContext context) {
-        context.get(ToolContextKeys.ARTIFACT_COLLECTOR).ifPresent(collector -> {
-            try {
-                String mimeType = null;
-                long size = 0;
-                try {
-                    final FileMetadata metadata = fileSystem.getMetadata(filePath);
-                    mimeType = metadata.getMimeType().orElse(null);
-                    size = metadata.getSize();
-                } catch (Exception e) {
-                    log.warn("Failed to get metadata for artifact: {}", filePath, e);
-                }
-
-                collector.add(FileArtifact.builder().path(filePath).size(size).mimeType(mimeType)
-                        .fileName(ArtifactFileNames.extractFileName(filePath))
-                        .toolUseId(context.get(ToolContextKeys.CURRENT_TOOL_USE_ID_KEY).orElse(null)).build());
-            } catch (Exception e) {
-                log.warn("Failed to register artifact: {}", filePath, e);
-            }
-        });
     }
 
     /**

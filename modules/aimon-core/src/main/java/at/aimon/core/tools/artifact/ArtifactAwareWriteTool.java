@@ -10,7 +10,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import at.aimon.core.agent.artifact.ArtifactCollector;
-import at.aimon.core.agent.artifact.ArtifactFileNames;
 import at.aimon.core.agent.artifact.FileArtifact;
 import at.aimon.core.agent.tool.AbstractTool;
 import at.aimon.core.agent.tool.ToolCategories;
@@ -19,9 +18,6 @@ import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.agent.tool.permission.PermissionSubject;
 import at.aimon.core.agent.tool.permission.ToolPermissionSubjectAware;
-import at.aimon.core.filesystem.FileMetadata;
-import at.aimon.core.filesystem.VirtualFileSystem;
-import at.aimon.core.tools.ToolContextKeys;
 import at.aimon.core.tools.file.WriteTool;
 
 /**
@@ -43,11 +39,10 @@ import at.aimon.core.tools.file.WriteTool;
  * {
  *     &#64;code
  *     // For environments that need artifact support (Web API)
- *     VirtualFileSystem vfs = new LocalFileSystem("/base/path");
- *     Tool writeTool = new ArtifactAwareWriteTool(vfs);
+ *     Tool writeTool = new ArtifactAwareWriteTool(new ArtifactArchive(controlFileSystem, policy));
  *
  *     // For environments without artifact needs (CLI)
- *     Tool writeTool = new WriteTool(vfs);
+ *     Tool writeTool = new WriteTool();
  * }
  * </pre>
  *
@@ -63,17 +58,19 @@ public class ArtifactAwareWriteTool extends AbstractTool implements ToolPermissi
 
     private final WriteTool delegate;
 
-    private final VirtualFileSystem fileSystem;
+    private final ArtifactArchive archive;
 
     /**
      * Creates a new artifact-aware WriteTool.
      *
-     * @param fileSystem
-     *            The virtual file system for file operations and metadata retrieval (must not be null)
-     * @throws NullPointerException
-     *             if fileSystem is null
+     * <p>
+     * The tool holds no working filesystem: the delegate writes through the execution environment's, and the
+     * archive registers the result — copying it into the control store first when the environment is not durable.
+     *
+     * @param archive
+     *            registers written files as artifacts (must not be null)
      */
-    public ArtifactAwareWriteTool(VirtualFileSystem fileSystem) {
+    public ArtifactAwareWriteTool(ArtifactArchive archive) {
         super(TOOL_NAME,
                 "Write content to a file in the filesystem. Creates new files or overwrites existing files completely. "
                         + "CRITICAL: This will overwrite existing files without warning. "
@@ -81,8 +78,8 @@ public class ArtifactAwareWriteTool extends AbstractTool implements ToolPermissi
                         + "Parent directories may be created automatically if supported by backend. "
                         + "The file_path must be an absolute path, not a relative path.",
                 ToolCategories.FILESYSTEM, createInputSchema());
-        this.delegate = new WriteTool(Objects.requireNonNull(fileSystem, "File system cannot be null"));
-        this.fileSystem = fileSystem;
+        this.delegate = new WriteTool();
+        this.archive = Objects.requireNonNull(archive, "archive cannot be null");
     }
 
     private static Map<String, Object> createInputSchema() {
@@ -123,7 +120,11 @@ public class ArtifactAwareWriteTool extends AbstractTool implements ToolPermissi
         if (result.isSuccess() && isArtifact) {
             final String filePath = input.getRequiredString("file_path");
             final String content = input.getRequiredString("content");
-            registerArtifact(filePath, content, context);
+            final Optional<String> note = archive.register(context, filePath,
+                    content.getBytes(StandardCharsets.UTF_8).length);
+            if (note.isPresent()) {
+                return ToolResult.success(result.getContent() + "\n" + note.get());
+            }
         }
 
         return result;
@@ -136,40 +137,6 @@ public class ArtifactAwareWriteTool extends AbstractTool implements ToolPermissi
             log.warn("Ignoring non-boolean 'artifact' value; defaulting to true ({})", e.getMessage());
             return true;
         }
-    }
-
-    /**
-     * Registers a file artifact in the ArtifactCollector.
-     *
-     * <p>
-     * On failure, logs a warning only. The file write has already succeeded, so artifact metadata retrieval failure
-     * must not change the tool result to an error.
-     *
-     * <p>
-     * The {@code content} parameter is kept as a String and only converted to bytes as a fallback when
-     * {@code fileSystem.getMetadata()} fails, avoiding an unnecessary byte array allocation in the normal path.
-     */
-    private void registerArtifact(String filePath, String content, ToolContext context) {
-        context.get(ToolContextKeys.ARTIFACT_COLLECTOR).ifPresent(collector -> {
-            try {
-                String mimeType = null;
-                long size;
-                try {
-                    final FileMetadata metadata = fileSystem.getMetadata(filePath);
-                    mimeType = metadata.getMimeType().orElse(null);
-                    size = metadata.getSize();
-                } catch (Exception e) {
-                    log.warn("Failed to get metadata for artifact: {}", filePath, e);
-                    size = content.getBytes(StandardCharsets.UTF_8).length;
-                }
-
-                collector.add(FileArtifact.builder().path(filePath).size(size).mimeType(mimeType)
-                        .fileName(ArtifactFileNames.extractFileName(filePath))
-                        .toolUseId(context.get(ToolContextKeys.CURRENT_TOOL_USE_ID_KEY).orElse(null)).build());
-            } catch (Exception e) {
-                log.warn("Failed to register artifact: {}", filePath, e);
-            }
-        });
     }
 
     /**

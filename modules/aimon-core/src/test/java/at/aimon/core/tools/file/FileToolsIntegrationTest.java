@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Set;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -16,6 +15,7 @@ import org.junit.jupiter.api.io.TempDir;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
@@ -44,11 +44,13 @@ class FileToolsIntegrationTest {
         fileSystem = new LocalFileSystem(config);
         fileSystem.initialize();
 
-        readTool = new ReadTool(fileSystem);
-        writeTool = new WriteTool(fileSystem);
-        editTool = new EditTool(fileSystem);
-        grepTool = new GrepTool(fileSystem);
-        context = ToolContext.empty();
+        readTool = new ReadTool();
+        writeTool = new WriteTool();
+        editTool = new EditTool();
+        grepTool = new GrepTool();
+        // One execution's context, as an executor builds it: the environment plus a read-stamp map shared by
+        // every call of the execution.
+        context = TestExecutionEnvironments.context(fileSystem);
     }
 
     @AfterEach
@@ -59,10 +61,11 @@ class FileToolsIntegrationTest {
     }
 
     /**
-     * Helper method to create a ToolContext with a file marked as read.
+     * The execution's context, in which the file was read by an earlier Read call of the same workflow — the stamp
+     * Read recorded is what Edit checks.
      */
     private ToolContext createContextWithReadFile(String filePath) {
-        return ToolContext.builder().put(ReadTool.READ_FILES_KEY, Set.of(filePath)).build();
+        return context;
     }
 
     // Write -> Read -> Edit -> Read workflow

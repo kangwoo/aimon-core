@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Set;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -240,6 +241,80 @@ class ScopedVirtualFileSystemTest {
                         throw e.getCause();
                     }
                 });
+    }
+
+    // --- shared prefixes and branch host paths (execution-environment design §4.2, stage 4) --------------------
+
+    private VirtualFileSystem sharing(Path tempDir) {
+        this.basePath = tempDir.toString();
+        this.base = new LocalFileSystem(new LocalFileSystemConfig(basePath));
+        base.initialize();
+        base.write(".aimon-staged/n/k/x.sh", "echo staged");
+        return new ScopedVirtualFileSystem(base, ".worktrees/k", Set.of(".aimon-staged"));
+    }
+
+    @Test
+    @DisplayName("a shared prefix reaches the delegate's own directory in relative, ./, absolute and a/.. forms")
+    void sharedPrefixRoutesToTheDelegate(@TempDir Path tempDir) {
+        final VirtualFileSystem vfs = sharing(tempDir);
+
+        for (final String path : List.of(".aimon-staged/n/k/x.sh", "./.aimon-staged/n/k/x.sh",
+                basePath + "/.aimon-staged/n/k/x.sh", "a/../.aimon-staged/n/k/x.sh")) {
+            assertThat(new String(readAll(vfs.read(path)))).as(path).isEqualTo("echo staged");
+        }
+        assertThat(base.exists(".worktrees/k/.aimon-staged")).isFalse();
+    }
+
+    @Test
+    @DisplayName("a shared prefix matches whole segments only: .aimon-staged2/ is scoped into the branch")
+    void sharedPrefixMatchesWholeSegments(@TempDir Path tempDir) {
+        final VirtualFileSystem vfs = sharing(tempDir);
+
+        vfs.write(".aimon-staged2/y.txt", "branch");
+
+        assertThat(base.exists(".worktrees/k/.aimon-staged2/y.txt")).isTrue();
+        assertThat(base.exists(".aimon-staged2/y.txt")).isFalse();
+    }
+
+    @Test
+    @DisplayName("escaping above the root from a shared path is still rejected")
+    void sharedPrefixEscapeRejected(@TempDir Path tempDir) {
+        final VirtualFileSystem vfs = sharing(tempDir);
+
+        assertThatThrownBy(() -> vfs.read(".aimon-staged/../../outside.txt")).isInstanceOf(InvalidPathException.class);
+    }
+
+    @Test
+    @DisplayName("staged files never show up in a branch listing")
+    void sharedPrefixIsNotListedFromTheBranchRoot(@TempDir Path tempDir) {
+        final VirtualFileSystem vfs = sharing(tempDir);
+        vfs.write("mine.txt", "x");
+
+        assertThat(vfs.listRecursive(".")).containsExactly("mine.txt");
+    }
+
+    @Test
+    @DisplayName("the constructor without shared prefixes shares nothing")
+    void noSharedPrefixesByDefault(@TempDir Path tempDir) {
+        final VirtualFileSystem vfs = scoped(tempDir);
+
+        vfs.write(".aimon-staged/z.txt", "branch");
+
+        assertThat(base.exists(".worktrees/branch0/.aimon-staged/z.txt")).isTrue();
+        assertThat(base.exists(".aimon-staged/z.txt")).isFalse();
+    }
+
+    @Test
+    @DisplayName("the branch root's host path is accepted: {base}/.worktrees/k/a is the branch's a")
+    void branchHostPathMapsIntoTheBranch(@TempDir Path tempDir) {
+        final VirtualFileSystem vfs = sharing(tempDir);
+
+        vfs.write(basePath + "/.worktrees/k/a.txt", "via host path");
+
+        assertThat(base.exists(".worktrees/k/a.txt")).isTrue();
+        assertThat(base.exists(".worktrees/k/.worktrees/k/a.txt")).isFalse();
+        assertThat(new String(readAll(vfs.read("a.txt")))).isEqualTo("via host path");
+        assertThat(vfs.exists(basePath + "/.worktrees/k")).isTrue();
     }
 
     private static byte[] readAll(java.io.InputStream in) {

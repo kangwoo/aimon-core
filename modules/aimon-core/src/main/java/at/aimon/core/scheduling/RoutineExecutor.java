@@ -51,6 +51,12 @@ import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.base.ExternallyManaged;
+import at.aimon.core.environment.EnvironmentProviding;
+import at.aimon.core.environment.EnvironmentRequest;
+import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.environment.ExecutionEnvironmentProvider;
+import at.aimon.core.environment.ExecutionEnvironments;
+import at.aimon.core.environment.UnavailableExecutionEnvironment;
 import at.aimon.core.scheduling.event.ScheduledTaskEventPublisher;
 import at.aimon.core.scheduling.event.StepCompletedEvent;
 import at.aimon.core.scheduling.event.StepFailedEvent;
@@ -430,11 +436,44 @@ public class RoutineExecutor {
      * what that grant is documented to mean: agent-wide, no TTL, not cleared by {@code /clear}. Narrow it with
      * {@code /revoke}, or approve per-session instead.
      */
-    private static ToolContext buildToolContext(ScheduledTask task, CancellationSignal signal) {
-        return ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, task.getBoundRuntimeId())
-                .put(ToolContextKeys.PRINCIPAL, task.getOwner())
-                .put(ToolContextKeys.EXECUTION_ID, ExecutionId.generate("routine:" + task.getId()))
-                .put(InterruptToolKeys.CANCELLATION_SIGNAL, signal).build();
+    private ToolContext buildToolContext(ScheduledTask task, CancellationSignal signal) {
+        final ExecutionId executionId = ExecutionId.generate("routine:" + task.getId());
+        final ToolContext.Builder builder = ToolContext.builder()
+                .put(ToolContextKeys.AGENT_RUNTIME_ID, task.getBoundRuntimeId())
+                .put(ToolContextKeys.PRINCIPAL, task.getOwner()).put(ToolContextKeys.EXECUTION_ID, executionId)
+                .put(InterruptToolKeys.CANCELLATION_SIGNAL, signal);
+        putExecutionEnvironment(builder, task, executionId);
+        return builder.build();
+    }
+
+    /**
+     * Resolves the run's execution environment once, from the bound runtime's provider, so a routine's
+     * {@code Bash}/{@code Read} steps run where the agent's executions do (execution-environment design §5.1). A
+     * runtime that is not registered, or that carries no provider, yields an unavailable environment whose tools fail
+     * with the cause — a routine never falls back to the host.
+     */
+    private void putExecutionEnvironment(ToolContext.Builder builder, ScheduledTask task, ExecutionId executionId) {
+        final Optional<AgentRuntime> runtime = agentRuntimeRegistry.get(task.getBoundRuntimeId());
+        final ExecutionEnvironmentProvider provider = runtime.filter(EnvironmentProviding.class::isInstance)
+                .map(EnvironmentProviding.class::cast).map(EnvironmentProviding::getExecutionEnvironmentProvider)
+                .orElse(null);
+        final ExecutionEnvironment environment;
+        if (runtime.isEmpty()) {
+            environment = UnavailableExecutionEnvironment
+                    .of("no agent runtime registered for " + task.getBoundRuntimeId());
+        } else if (provider == null) {
+            environment = UnavailableExecutionEnvironment.of("agent runtime " + runtime.get().getClass().getName()
+                    + " provides no ExecutionEnvironmentProvider");
+        } else {
+            environment = ExecutionEnvironments.resolveOrUnavailable(provider,
+                    EnvironmentRequest.builder().agentRuntimeId(task.getBoundRuntimeId())
+                            .agent(runtime.get().getAgent()).executionId(executionId).principal(task.getOwner())
+                            .build());
+        }
+        builder.put(ToolContextKeys.EXECUTION_ENVIRONMENT, environment);
+        if (provider != null) {
+            builder.put(ToolContextKeys.EXECUTION_ENVIRONMENT_PROVIDER, provider);
+        }
     }
 
     /**

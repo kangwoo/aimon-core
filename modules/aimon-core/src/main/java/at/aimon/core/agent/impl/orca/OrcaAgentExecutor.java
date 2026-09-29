@@ -106,6 +106,11 @@ import at.aimon.core.base.Principal;
 import at.aimon.core.command.CommandExecutionManager;
 import at.aimon.core.command.execution.CommandExecutionResult;
 import at.aimon.core.command.execution.ExecutionMetadata;
+import at.aimon.core.environment.EnvironmentDescriptor;
+import at.aimon.core.environment.EnvironmentRequest;
+import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.environment.ExecutionEnvironmentProvider;
+import at.aimon.core.environment.ExecutionEnvironments;
 import at.aimon.core.hook.HookExecutionManager;
 import at.aimon.core.hook.HookFeedback;
 import at.aimon.core.hook.HookRegistry;
@@ -863,12 +868,12 @@ public class OrcaAgentExecutor
         builder.put(ToolContextKeys.ARTIFACT_COLLECTOR, scope.artifactCollector);
         builder.put(TodoWriteTool.CONTEXT_ID_KEY, scope.transcriptBuffer.getSessionId().value());
 
-        // PAR-05: inject a thread-safe, turn-scoped read-tracking set. This serves two purposes: (1) it backs
-        // EditTool's read-before-edit guard (previously a no-op in production because no executor injected the set),
-        // and (2) it is concurrency-safe so parallel CONCURRENT_SAFE Read tools can record reads without racing. The
-        // set is created once per turn (createToolContext is called once before the iteration loop), so reads persist
-        // across iterations.
-        builder.put(ReadTool.READ_FILES_KEY, ConcurrentHashMap.newKeySet());
+        // PAR-05 / execution-environment §7: inject a thread-safe, execution-scoped map of read stamps. It backs the
+        // stale-write guard of Edit (and of Write over an existing file), and it is concurrency-safe so parallel
+        // CONCURRENT_SAFE Read tools can record stamps without racing. It is created once per execution
+        // (createToolContext is called once before the iteration loop), so reads persist across iterations but not
+        // across turns — a file read in an earlier turn must be read again before it is modified.
+        builder.put(ReadTool.FILE_STAMPS_KEY, new ConcurrentHashMap<>());
 
         // Publish the turn-scoped signal so cooperative tools can poll it through InterruptAccess#signalOf.
         builder.put(InterruptToolKeys.CANCELLATION_SIGNAL, cancellationSignal);
@@ -897,9 +902,24 @@ public class OrcaAgentExecutor
                     scope.getAgent().getMetadata().getName(), scope.agentRuntime.getId().value()));
         });
 
+        putExecutionEnvironment(builder, scope);
+
         applyEnrichers(builder, scope);
 
         return builder.build();
+    }
+
+    /**
+     * Publishes the execution's environment and the provider it came from. Both keys are write-once and are put
+     * before the enrichers run, so an enricher that writes either throws inside its own try/catch and the environment
+     * stays the one the provider resolved (design §5.1).
+     */
+    private static void putExecutionEnvironment(ToolContext.Builder builder, ExecutionScope scope) {
+        builder.put(ToolContextKeys.EXECUTION_ENVIRONMENT, scope.executionEnvironment);
+        final ExecutionEnvironmentProvider provider = scope.agentRuntime.getExecutionEnvironmentProvider();
+        if (provider != null) {
+            builder.put(ToolContextKeys.EXECUTION_ENVIRONMENT_PROVIDER, provider);
+        }
     }
 
     /**
@@ -1038,19 +1058,28 @@ public class OrcaAgentExecutor
 
         final Agent agent = agentRuntime.getAgent();
 
+        // Resolve the execution environment once, before prompt assembly and before any tool runs (design §5.1): the
+        // environment the prompt describes and the one the tools use are then the same value. A failing or missing
+        // provider yields an unavailable environment whose tools fail with the cause — never the host.
+        final ExecutionEnvironment executionEnvironment = ExecutionEnvironments.resolveOrUnavailable(
+                agentRuntime.getExecutionEnvironmentProvider(),
+                EnvironmentRequest.builder().agentRuntimeId(agentRuntime.getId()).agent(agent)
+                        .sessionId(executionRequest.getSessionId())
+                        .principal(executionRequest.getPrincipal().orElse(null)).build());
+
         // Assemble the runtime context blocks once at turn start. Empty under the NOOP assembler, so the prompt
         // shape is unchanged unless an assembler is wired. SYSTEM blocks fold into the system prompt; USER_PREPEND /
         // ATTACHMENT blocks are injected as synthetic user-role <system-reminder> messages below.
-        final List<ContextBlock> assembledContext = assembleContext(agentRuntime, agent);
+        final List<ContextBlock> assembledContext = assembleContext(agent, executionEnvironment);
 
         // Build dynamic system prompt as structured parts (CTX-05). The concatenated() form is stored in
         // TranscriptBuffer to preserve the on-disk/session representation, while the parts form is passed
         // directly to the parts-aware LlmClient.sendMessage overload inside the ReAct loop.
         final SystemPromptParts systemPromptParts = systemPromptRenderer.buildSystemPromptParts(agent.getContent(),
-                executionRequest.getSystemPromptVariables(), agentRuntime.getEnvironment(), assembledContext,
+                executionRequest.getSystemPromptVariables(), executionEnvironment.descriptor(), assembledContext,
                 buildMemoryContextRequest(executionRequest));
         final String systemPrompt = systemPromptRenderer.renderSystemPromptString(systemPromptParts, agent.getContent(),
-                executionRequest.getSystemPromptVariables(), agentRuntime.getEnvironment());
+                executionRequest.getSystemPromptVariables(), executionEnvironment.descriptor());
 
         // Initialize transcript buffer before try-finally so it is always saved,
         // even when OnStart hooks block the execution.
@@ -1074,7 +1103,8 @@ public class OrcaAgentExecutor
         transcriptBuffer.beginTurn(executionRequest.getUserInput(), executionRequest.getSubmitOptions());
         // Same position, same fragility: a replaceWith between here and the finally invalidates both marks together.
         transcriptBuffer.markIngestPoint();
-        maybeInjectUserContextMessage(agentRuntime, executionRequest, transcriptBuffer);
+        maybeInjectUserContextMessage(agentRuntime, executionRequest, transcriptBuffer,
+                executionEnvironment.descriptor().workingDirectory());
         // Inject the assembled USER_PREPEND / ATTACHMENT blocks (if any) as a synthetic <system-reminder> user
         // message, after the legacy user-context block and before the real user message. No-op when the assembler
         // contributed no such blocks (always the case under the NOOP default).
@@ -1110,7 +1140,7 @@ public class OrcaAgentExecutor
                 executionRequest.getBudget().orElseGet(ExecutionBudget::unlimited));
 
         final ExecutionScope scope = new ExecutionScope(agentRuntime, executionRequest, transcriptBuffer,
-                systemPromptParts, effectiveMetadata, budgetTracker);
+                systemPromptParts, effectiveMetadata, budgetTracker, executionEnvironment);
         // TRACE-01: the turn span is the active parent until the ReAct loop swaps in per-iteration spans.
         scope.activeSpan = turnSpan;
 
@@ -1363,9 +1393,12 @@ public class OrcaAgentExecutor
      *            the request carrying the opt-out flag (must not be null)
      * @param transcriptBuffer
      *            the freshly initialised memory to append the synthetic block to (must not be null)
+     * @param executionWorkingDirectory
+     *            the working directory of this execution's environment, which replaces the snapshot's
      */
     private void maybeInjectUserContextMessage(OrcaAgentRuntime agentRuntime,
-            OrcaAgentExecutionRequest executionRequest, TranscriptBuffer transcriptBuffer) {
+            OrcaAgentExecutionRequest executionRequest, TranscriptBuffer transcriptBuffer,
+            String executionWorkingDirectory) {
         if (!executionRequest.isUserContextInjectionEnabled()) {
             log.debug("User-context injection disabled for this request");
             return;
@@ -1382,7 +1415,7 @@ public class OrcaAgentExecutor
         }
 
         final AgentEnvironmentSnapshot agentEnvironmentSnapshot = agentEnvironmentSnapshotProvider.get(agentRuntime);
-        final var synthetic = UserContextMessageBuilder.build(agentEnvironmentSnapshot);
+        final var synthetic = UserContextMessageBuilder.build(agentEnvironmentSnapshot, executionWorkingDirectory);
         if (synthetic.isEmpty()) {
             log.debug("AgentEnvironmentSnapshot yielded no reminder entries; skipping user-context injection");
             return;
@@ -1400,21 +1433,20 @@ public class OrcaAgentExecutor
      * assembler is wired. The call is snapshotted once (the field is {@code volatile}) and guarded defensively: the
      * assembler's contract already forbids throwing, but a misbehaving custom assembler must never break the turn.
      *
-     * @param agentRuntime
-     *            the agent runtime supplying the filesystem and environment (must not be null)
      * @param agent
      *            the invoking agent (must not be null)
+     * @param executionEnvironment
+     *            the execution's environment, which the providers read the filesystem and descriptor from
      * @return the assembled blocks in injection order; never null, empty when nothing applies
      */
-    private List<ContextBlock> assembleContext(OrcaAgentRuntime agentRuntime, Agent agent) {
+    private List<ContextBlock> assembleContext(Agent agent, ExecutionEnvironment executionEnvironment) {
         final ContextAssembler assembler = contextAssembler;
         if (assembler == ContextAssembler.NOOP) {
             return List.of();
         }
         try {
             final ContextAssemblyRequest request = ContextAssemblyRequest.builder()
-                    .environment(agentRuntime.getEnvironment()).fileSystem(agentRuntime.getFileSystem())
-                    .agentName(agent.getName()).iteration(0).build();
+                    .executionEnvironment(executionEnvironment).agentName(agent.getName()).iteration(0).build();
             final List<ContextBlock> blocks = assembler.assemble(request);
             return blocks == null ? List.of() : blocks;
         } catch (RuntimeException e) {
@@ -2078,7 +2110,10 @@ public class OrcaAgentExecutor
             final SkillForkExecutor skillForkExecutor = OrcaSkillForkExecutorResolver.resolve(agentRuntime.getAgent(),
                     agentRuntime.getSubagentRegistry(), agentRuntime.getToolRegistry(), agentRuntime.getHookRegistry(),
                     agentRuntime.getEnvironment(), subagentExecutionManager);
-            final ToolContext commandToolContext = ToolContext.builder()
+            final ToolContext.Builder commandContextBuilder = ToolContext.builder();
+            // The command renders skills, which stage their files through this execution's environment (§4.4).
+            putExecutionEnvironment(commandContextBuilder, scope);
+            final ToolContext commandToolContext = commandContextBuilder
                     .put(ToolContextKeys.AGENT_RUNTIME_ID, agentRuntime.getId())
                     // The session id belongs here too: a `/my-skill` invocation of a fork-mode skill spawns a
                     // subagent, and the spawn site reads this key to tell the fork which session it acts for.
@@ -2919,11 +2954,11 @@ public class OrcaAgentExecutor
      * @param systemPromptVariables
      *            the system prompt variables (must not be null, may be empty)
      * @param environment
-     *            the runtime environment, or {@code null} to omit the environment segment
+     *            the execution environment's descriptor, or {@code null} to omit the environment segment
      * @return the structured prompt; never {@code null}
      */
     SystemPromptParts buildSystemPromptParts(AgentContent agentContent, Map<String, Object> systemPromptVariables,
-            Environment environment) {
+            EnvironmentDescriptor environment) {
         return systemPromptRenderer.buildSystemPromptParts(agentContent, systemPromptVariables, environment);
     }
 
@@ -3454,6 +3489,12 @@ public class OrcaAgentExecutor
         final List<CompactionMetadata> compactionEvents = new ArrayList<>();
 
         /**
+         * The execution's environment, resolved once at the top of {@code execute()} before prompt assembly. Published
+         * to tools under the write-once {@code EXECUTION_ENVIRONMENT} key by both context-building sites.
+         */
+        final ExecutionEnvironment executionEnvironment;
+
+        /**
          * H1: per-execution event sink. The streaming surfaces ({@link #events} / {@link #executeAsync}) register
          * their listener HERE rather than on the executor-wide shared {@code eventEmitter}, so an agent-scoped
          * executor that serves multiple concurrent sessions never fans one turn's token/tool events out to
@@ -3503,8 +3544,9 @@ public class OrcaAgentExecutor
 
         ExecutionScope(OrcaAgentRuntime agentRuntime, OrcaAgentExecutionRequest executionRequest,
                 TranscriptBuffer transcriptBuffer, SystemPromptParts systemPromptParts, LlmCallMetadata llmCallMetadata,
-                BudgetTracker budgetTracker) {
+                BudgetTracker budgetTracker, ExecutionEnvironment executionEnvironment) {
             this.agentRuntime = agentRuntime;
+            this.executionEnvironment = executionEnvironment;
             this.executionRequest = executionRequest;
             this.transcriptBuffer = transcriptBuffer;
             this.systemPromptParts = systemPromptParts;

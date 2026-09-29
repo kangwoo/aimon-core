@@ -23,7 +23,6 @@ import at.aimon.core.agent.tool.search.ToolSearchCatalog;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.scheduling.ScheduledTaskManager;
-import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.skill.SkillRegistry;
 import at.aimon.core.subagent.SubagentExecutionManager;
 import at.aimon.core.subagent.SubagentRegistry;
@@ -50,39 +49,20 @@ class OrcaToolProvidersTest {
                 .build();
     }
 
-    private OrcaToolProviderContext contextWithShell(VirtualShell shell) {
-        return OrcaToolProviderContext.builder().dependencies(OrcaProviderDependencies.builder().build()).shell(shell)
-                .build();
-    }
-
     // ---- OrcaBashToolProvider ---------------------------------------------------------------------
 
     @Test
-    void bashProviderRegistersBashAndBashOutputTools() {
+    void bashProviderRegistersBashAndBashOutputToolsWithoutAnyShell() {
         OrcaBashToolProvider provider = new OrcaBashToolProvider();
         ToolRegistry registry = new DefaultToolRegistry();
 
-        // The shell now arrives through the context — the provider can no longer build one, because
-        // at.aimon.core.shell.impl is off-limits to it. A mock suffices: registration is all this asserts, and no
-        // command is ever run.
-        provider.registerTools(registry, contextWithShell(mock(VirtualShell.class)));
+        // No shell exists at registration time any more: Bash runs in the shell of each execution's environment
+        // (execution-environment design §6). So the tools are always registered, and an execution whose environment
+        // has no usable shell gets an error from the call instead of a missing tool.
+        provider.registerTools(registry, context(OrcaProviderDependencies.builder().build()));
 
         assertThat(registry.findByName(BashTool.TOOL_NAME)).isPresent();
         assertThat(registry.findByName(BashOutputTool.TOOL_NAME)).isPresent();
-    }
-
-    @Test
-    void bashProviderRegistersNothingWhenTheContextHasNoShell() {
-        OrcaBashToolProvider provider = new OrcaBashToolProvider();
-        ToolRegistry registry = new DefaultToolRegistry();
-
-        provider.registerTools(registry, context(OrcaProviderDependencies.builder().build()));
-
-        // Registering nothing beats failing the assembly: an agent with no shell is still a usable agent, whereas a
-        // Bash tool with no way to run commands is a tool the model will call and that can only ever error. Pinned
-        // here so a future "just throw" does not silently take out every shell-less assembly.
-        assertThat(registry.findByName(BashTool.TOOL_NAME)).isEmpty();
-        assertThat(registry.findByName(BashOutputTool.TOOL_NAME)).isEmpty();
     }
 
     @Test

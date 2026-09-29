@@ -34,9 +34,14 @@ import at.aimon.core.llm.Message;
  *
  * <h2>Wiring</h2>
  *
+ * <p>
+ * {@code Read} takes its filesystem from the execution environment in its {@link ToolContext}
+ * ({@code ToolContextKeys.EXECUTION_ENVIRONMENT}), not from its constructor, so the hook is given the context its
+ * reads run with — one that carries the environment the files were read in.
+ *
  * <pre>{@code
- * Tool readTool = new ReadTool(virtualFileSystem);
- * RecentFilesRestoreHook hook = new RecentFilesRestoreHook(readTool, 5);
+ * ToolContext readContext = ToolContext.builder().put(ToolContextKeys.EXECUTION_ENVIRONMENT, environment).build();
+ * RecentFilesRestoreHook hook = new RecentFilesRestoreHook(new ReadTool(), 5, readContext);
  * hookRegistry.register(PostCompactHook.class, hook);
  * }</pre>
  *
@@ -56,15 +61,18 @@ public final class RecentFilesRestoreHook implements PostCompactHook {
 
     private final Tool readTool;
     private final int maxFiles;
+    private final ToolContext readContext;
 
     /**
      * Creates a hook that re-attaches up to {@link #DEFAULT_MAX_FILES} files using the supplied {@code Read} tool.
      *
      * @param readTool
      *            the {@code Read} tool used to fetch file contents (must not be null)
+     * @param readContext
+     *            the tool context the reads run with; it must carry the execution environment (must not be null)
      */
-    public RecentFilesRestoreHook(Tool readTool) {
-        this(readTool, DEFAULT_MAX_FILES);
+    public RecentFilesRestoreHook(Tool readTool, ToolContext readContext) {
+        this(readTool, DEFAULT_MAX_FILES, readContext);
     }
 
     /**
@@ -74,11 +82,14 @@ public final class RecentFilesRestoreHook implements PostCompactHook {
      *            the {@code Read} tool used to fetch file contents (must not be null)
      * @param maxFiles
      *            maximum number of recent files to re-attach (must be &gt;= 1)
+     * @param readContext
+     *            the tool context the reads run with; it must carry the execution environment (must not be null)
      * @throws IllegalArgumentException
      *             if {@code maxFiles < 1}
      */
-    public RecentFilesRestoreHook(Tool readTool, int maxFiles) {
+    public RecentFilesRestoreHook(Tool readTool, int maxFiles, ToolContext readContext) {
         this.readTool = Objects.requireNonNull(readTool, "readTool must not be null");
+        this.readContext = Objects.requireNonNull(readContext, "readContext must not be null");
         if (maxFiles < 1) {
             throw new IllegalArgumentException("maxFiles must be >= 1, got: " + maxFiles);
         }
@@ -119,7 +130,7 @@ public final class RecentFilesRestoreHook implements PostCompactHook {
         final List<ReadOutcome> outcomes = new ArrayList<>(paths.size());
         for (String path : paths) {
             try {
-                final ToolResult result = readTool.execute(ToolInput.of("file_path", path), ToolContext.empty());
+                final ToolResult result = readTool.execute(ToolInput.of("file_path", path), readContext);
                 if (result.isError()) {
                     log.warn("Skipping re-attach for {} — Read returned error: {}", path, result.getContent());
                     continue;

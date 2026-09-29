@@ -16,7 +16,8 @@ import at.aimon.core.agent.tool.ToolContextKey;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.agent.tool.search.ToolSearchRegistry;
 import at.aimon.core.base.Principal;
-import at.aimon.core.filesystem.VirtualFileSystem;
+import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.environment.ExecutionEnvironmentProvider;
 import at.aimon.core.knowledge.KnowledgeScope;
 import at.aimon.core.knowledge.KnowledgeStore;
 import at.aimon.core.knowledge.wiki.WikiKnowledgeBase;
@@ -51,6 +52,31 @@ import at.aimon.core.skill.fork.SkillForkExecutor;
 public final class ToolContextKeys {
 
     // ── Typed keys (preferred) ──────────────────────────────────────────────────
+
+    /**
+     * Typed, <b>write-once</b> key for the execution's {@link ExecutionEnvironment} — the filesystem, shell and
+     * descriptor its tools run against.
+     *
+     * <p>
+     * Executors resolve the environment once per execution through the runtime's {@link ExecutionEnvironmentProvider}
+     * and put it here before any {@code ToolContextEnricher} runs. A second write of this name — an enricher trying
+     * to replace it — throws {@code IllegalStateException}. Tools read it with
+     * {@link ExecutionEnvironmentAccess#require(ToolContext)}.
+     */
+    public static final ToolContextKey<ExecutionEnvironment> EXECUTION_ENVIRONMENT = ToolContextKey
+            .writeOnce("executionEnvironment", ExecutionEnvironment.class);
+
+    /**
+     * Typed, <b>write-once</b> key for the {@link ExecutionEnvironmentProvider} that resolved
+     * {@link #EXECUTION_ENVIRONMENT}.
+     *
+     * <p>
+     * Tools that spawn a fork (Task, Workflow, a forked skill) copy it onto the fork's environment together with the
+     * parent environment, so the fork resolves its own environment from the same per-runtime provider without any
+     * registration-time handle to an environment source.
+     */
+    public static final ToolContextKey<ExecutionEnvironmentProvider> EXECUTION_ENVIRONMENT_PROVIDER = ToolContextKey
+            .writeOnce("executionEnvironmentProvider", ExecutionEnvironmentProvider.class);
 
     /**
      * Typed key for {@link Environment} information.
@@ -216,16 +242,6 @@ public final class ToolContextKeys {
      */
     public static final ToolContextKey<KnowledgeScope> KNOWLEDGE_SCOPE = ToolContextKey.of("knowledgeScope",
             KnowledgeScope.class);
-
-    /**
-     * Typed key for the {@link VirtualFileSystem}.
-     *
-     * <p>
-     * Provides access to the agent's virtual file system, used by tools that need to read from or write to the VFS
-     * (e.g., wiki ingestion).
-     */
-    public static final ToolContextKey<VirtualFileSystem> VIRTUAL_FILE_SYSTEM = ToolContextKey.of("virtualFileSystem",
-            VirtualFileSystem.class);
 
     /**
      * Typed key for the {@link WikiKnowledgeBase}.

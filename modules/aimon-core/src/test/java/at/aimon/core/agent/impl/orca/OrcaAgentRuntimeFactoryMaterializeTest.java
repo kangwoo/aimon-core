@@ -68,7 +68,7 @@ class OrcaAgentRuntimeFactoryMaterializeTest {
     }
 
     @Test
-    void buildMaterializedSkillRegistry_demoSkill_baseDirPointsToBundledSkillsDir() {
+    void buildMaterializedSkillRegistry_demoSkill_stagesFromBundledSkillsDir() {
         AgentBundle bundle = minimalBundle();
         ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
         MarkdownSkillParser skillParser = new MarkdownSkillParser();
@@ -77,8 +77,12 @@ class OrcaAgentRuntimeFactoryMaterializeTest {
                 USER_SKILLS_DIR, BUNDLED_SKILLS_DIR, CLASSPATH_SKILLS_BASE, classLoader, skillParser);
 
         Skill demo = registry.getSkill("demo").orElseThrow();
-        assertThat(demo.getBaseDir()).isPresent();
-        assertThat(demo.getBaseDir().get()).isEqualTo(BUNDLED_SKILLS_DIR + "/demo");
+        // The materialized copy is the staging source: ${AIMON_SKILL_DIR} is whatever an environment's stage()
+        // returns for it, never this control-store path itself (execution-environment design §4.4).
+        assertThat(demo.getStagedResource()).isPresent();
+        assertThat(demo.getStagedResource().get().getSourceFileSystem()).isSameAs(fileSystem);
+        assertThat(demo.getStagedResource().get().getSourceDir()).isEqualTo(BUNDLED_SKILLS_DIR + "/demo");
+        assertThat(demo.getStagedResource().get().getFiles()).contains("SKILL.md");
     }
 
     @Test

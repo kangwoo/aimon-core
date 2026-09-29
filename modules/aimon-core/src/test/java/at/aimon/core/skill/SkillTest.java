@@ -2,11 +2,15 @@ package at.aimon.core.skill;
 
 import static org.assertj.core.api.Assertions.*;
 
+import java.nio.file.Path;
 import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
-/** Unit tests for the new baseDir and files API on {@link Skill}. */
+import at.aimon.core.environment.StagedResource;
+import at.aimon.core.filesystem.VirtualFileSystems;
+
+/** Unit tests for the staged-resource and files API on {@link Skill}. */
 class SkillTest {
 
     private static final String SKILL_NAME = "test-skill";
@@ -17,29 +21,35 @@ class SkillTest {
         return Skill.builder().name(SKILL_NAME).metadata(metadata).content(content);
     }
 
+    private static StagedResource resource(String dir, String contentKey) {
+        return StagedResource.builder().sourceFileSystem(VirtualFileSystems.readOnlyLocal(Path.of("/skills")))
+                .sourceDir(dir).contentKey(contentKey).name(SKILL_NAME).build();
+    }
+
     // -------------------------------------------------------------------------
-    // baseDir
+    // stagedResource
     // -------------------------------------------------------------------------
 
     @Test
-    void testGetBaseDir_WhenNotSet_ReturnsEmpty() {
+    void testGetStagedResource_WhenNotSet_ReturnsEmpty() {
         Skill skill = baseBuilder().build();
 
-        assertThat(skill.getBaseDir()).isEmpty();
+        assertThat(skill.getStagedResource()).isEmpty();
     }
 
     @Test
-    void testGetBaseDir_WhenSet_ReturnsPresentOptional() {
-        Skill skill = baseBuilder().baseDir("/skills/test-skill").build();
+    void testGetStagedResource_WhenSet_ReturnsPresentOptional() {
+        StagedResource resource = resource("test-skill", "abcdef0123456789");
+        Skill skill = baseBuilder().stagedResource(resource).build();
 
-        assertThat(skill.getBaseDir()).isPresent().hasValue("/skills/test-skill");
+        assertThat(skill.getStagedResource()).containsSame(resource);
     }
 
     @Test
-    void testGetBaseDir_WhenSetToNull_ReturnsEmpty() {
-        Skill skill = baseBuilder().baseDir(null).build();
+    void testGetStagedResource_WhenSetToNull_ReturnsEmpty() {
+        Skill skill = baseBuilder().stagedResource(null).build();
 
-        assertThat(skill.getBaseDir()).isEmpty();
+        assertThat(skill.getStagedResource()).isEmpty();
     }
 
     // -------------------------------------------------------------------------
@@ -118,37 +128,31 @@ class SkillTest {
     }
 
     // -------------------------------------------------------------------------
-    // equals / hashCode — baseDir
+    // equals / hashCode — stagedResource
     // -------------------------------------------------------------------------
 
     @Test
-    void testEquals_IdenticalSkillsWithBaseDir_AreEqual() {
-        Skill skill1 = baseBuilder().baseDir("/skills/test-skill").build();
-        Skill skill2 = baseBuilder().baseDir("/skills/test-skill").build();
+    void testEquals_IdenticalSkillsWithSameStagedResource_AreEqual() {
+        StagedResource resource = resource("test-skill", "abcdef0123456789");
+        Skill skill1 = baseBuilder().stagedResource(resource).build();
+        Skill skill2 = baseBuilder().stagedResource(resource).build();
 
         assertThat(skill1).isEqualTo(skill2);
-    }
-
-    @Test
-    void testHashCode_IdenticalSkillsWithBaseDir_HaveSameHashCode() {
-        Skill skill1 = baseBuilder().baseDir("/skills/test-skill").build();
-        Skill skill2 = baseBuilder().baseDir("/skills/test-skill").build();
-
         assertThat(skill1.hashCode()).isEqualTo(skill2.hashCode());
     }
 
     @Test
-    void testEquals_SkillsDifferingOnlyInBaseDir_AreNotEqual() {
-        Skill withBaseDir = baseBuilder().baseDir("/skills/test-skill").build();
-        Skill withoutBaseDir = baseBuilder().build();
+    void testEquals_SkillsDifferingOnlyInStagedResource_AreNotEqual() {
+        Skill withResource = baseBuilder().stagedResource(resource("test-skill", "abcdef0123456789")).build();
+        Skill withoutResource = baseBuilder().build();
 
-        assertThat(withBaseDir).isNotEqualTo(withoutBaseDir);
+        assertThat(withResource).isNotEqualTo(withoutResource);
     }
 
     @Test
-    void testEquals_SkillsWithDifferentBaseDirs_AreNotEqual() {
-        Skill skill1 = baseBuilder().baseDir("/skills/test-skill").build();
-        Skill skill2 = baseBuilder().baseDir("/other/path").build();
+    void testEquals_SkillsWithDifferentStagedResources_AreNotEqual() {
+        Skill skill1 = baseBuilder().stagedResource(resource("test-skill", "abcdef0123456789")).build();
+        Skill skill2 = baseBuilder().stagedResource(resource("other", "0123456789abcdef")).build();
 
         assertThat(skill1).isNotEqualTo(skill2);
     }
@@ -194,18 +198,17 @@ class SkillTest {
     // -------------------------------------------------------------------------
 
     @Test
-    void testToString_ContainsBaseDir() {
-        Skill skill = baseBuilder().baseDir("/skills/test-skill").build();
+    void testToString_ContainsStagedResource() {
+        Skill skill = baseBuilder().stagedResource(resource("test-skill", "abcdef0123456789")).build();
 
-        assertThat(skill.toString()).contains("/skills/test-skill");
+        assertThat(skill.toString()).contains("stagedResource=").contains("abcdef0123456789");
     }
 
     @Test
-    void testToString_WhenBaseDirNotSet_ContainsNullRepresentation() {
+    void testToString_WhenStagedResourceNotSet_ContainsNullRepresentation() {
         Skill skill = baseBuilder().build();
 
-        // toString renders the literal baseDir='null' when not set (matches the production format baseDir='<value>')
-        assertThat(skill.toString()).contains("baseDir='null'");
+        assertThat(skill.toString()).contains("stagedResource=null");
     }
 
     @Test

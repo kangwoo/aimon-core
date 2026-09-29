@@ -33,6 +33,7 @@ import at.aimon.core.subagent.SubagentExecutionEnvironment;
 import at.aimon.core.subagent.SubagentExecutionManager;
 import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.tools.CallerAllowedTools;
+import at.aimon.core.tools.ExecutionEnvironmentAccess;
 import at.aimon.core.tools.InvokingSessionAccess;
 import at.aimon.core.tools.ToolContextKeys;
 import at.aimon.core.workflow.AgentStepResult;
@@ -450,6 +451,10 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
                 .defaultModel(defaultModel).executionAttributes(executionAttributes)
                 .parentLlmCallMetadata(parentMetadata).cancellationSignal(parentSignal).principal(principal)
                 .toolContextEnrichers(toolContextEnrichers).callerAllowedTools(CallerAllowedTools.of(context))
-                .invokingSessionId(InvokingSessionAccess.idToPropagate(context).orElse(null)).build();
+                .invokingSessionId(InvokingSessionAccess.idToPropagate(context).orElse(null))
+                // The fork resolves its own environment from the spawning runtime's provider, with this execution's
+                // environment as its parent (execution-environment design §5.2).
+                .executionEnvironment(ExecutionEnvironmentAccess.of(context).orElse(null))
+                .executionEnvironmentProvider(ExecutionEnvironmentAccess.providerOf(context).orElse(null)).build();
     }
 }

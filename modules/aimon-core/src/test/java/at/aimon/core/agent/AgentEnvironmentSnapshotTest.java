@@ -15,15 +15,14 @@ class AgentEnvironmentSnapshotTest {
 
     private static AgentEnvironmentSnapshot.Builder validBuilder() {
         return AgentEnvironmentSnapshot.builder().workingDirectory("/workspace/project")
-                .currentDate(Instant.parse("2026-04-23T00:00:00Z"))
-                .environment(Environment.createWithWorkingDirectory("/workspace/project"));
+                .currentDate(Instant.parse("2026-04-23T00:00:00Z")).environment(Environment.createDefault());
     }
 
     @Test
     @DisplayName("Builder produces instance with all fields populated")
     void build_withAllFields() {
         Instant now = Instant.parse("2026-04-23T12:34:56Z");
-        Environment env = Environment.createWithWorkingDirectory("/wd");
+        Environment env = Environment.createDefault();
         Map<String, String> extensions = Map.of("branch", "main", "user", "alice");
 
         AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder().workingDirectory("/wd").currentDate(now)
@@ -47,7 +46,7 @@ class AgentEnvironmentSnapshotTest {
     @DisplayName("build() throws NPE when workingDirectory is missing")
     void build_missingWorkingDirectory_throwsNPE() {
         AgentEnvironmentSnapshot.Builder b = AgentEnvironmentSnapshot.builder().currentDate(Instant.now())
-                .environment(Environment.createWithWorkingDirectory("/wd"));
+                .environment(Environment.createDefault());
 
         assertThatThrownBy(b::build).isInstanceOf(NullPointerException.class).hasMessageContaining("workingDirectory");
     }
@@ -56,7 +55,7 @@ class AgentEnvironmentSnapshotTest {
     @DisplayName("build() throws NPE when currentDate is missing")
     void build_missingCurrentDate_throwsNPE() {
         AgentEnvironmentSnapshot.Builder b = AgentEnvironmentSnapshot.builder().workingDirectory("/wd")
-                .environment(Environment.createWithWorkingDirectory("/wd"));
+                .environment(Environment.createDefault());
 
         assertThatThrownBy(b::build).isInstanceOf(NullPointerException.class).hasMessageContaining("currentDate");
     }
@@ -113,7 +112,7 @@ class AgentEnvironmentSnapshotTest {
     @DisplayName("equals and hashCode reflect all fields")
     void equalsAndHashCode() {
         Instant fixed = Instant.parse("2026-04-23T00:00:00Z");
-        Environment env = Environment.createWithWorkingDirectory("/wd");
+        Environment env = Environment.createDefault();
 
         AgentEnvironmentSnapshot a = AgentEnvironmentSnapshot.builder().workingDirectory("/wd").currentDate(fixed)
                 .environment(env).extensions(Map.of("x", "1")).build();
@@ -133,8 +132,8 @@ class AgentEnvironmentSnapshotTest {
     void toString_containsKeyData() {
         Instant fixed = Instant.parse("2026-04-23T00:00:00Z");
         AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder().workingDirectory("/wd")
-                .currentDate(fixed).environment(Environment.createWithWorkingDirectory("/wd"))
-                .extensions(Map.of("branch", "main")).build();
+                .currentDate(fixed).environment(Environment.createDefault()).extensions(Map.of("branch", "main"))
+                .build();
 
         String s = snapshot.toString();
 

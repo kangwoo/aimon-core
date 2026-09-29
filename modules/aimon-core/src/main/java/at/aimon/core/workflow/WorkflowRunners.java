@@ -98,8 +98,7 @@ public final class WorkflowRunners {
         Objects.requireNonNull(options, "options cannot be null");
         return DefaultWorkflowRunner.builder(manager, baseEnv).concurrency(options.concurrency())
                 .eventSink(options.eventSink()).budget(options.budget()).stepResultCache(options.stepResultCache())
-                .runStore(options.runStore()).backgroundConfig(options.backgroundConfig())
-                .worktreeFactory(options.worktreeFactory()).build();
+                .runStore(options.runStore()).backgroundConfig(options.backgroundConfig()).build();
     }
 
     /**

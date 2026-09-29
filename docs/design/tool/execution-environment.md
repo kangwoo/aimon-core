@@ -1,6 +1,10 @@
 # 실행 환경 — 도구가 쓰는 파일 시스템과 셸을 실행마다 고른다
 
-> Status: **PROPOSED** — 구현 전 설계. 하위 호환은 목표가 아니다. 공개 SPI(`OrcaToolProviderContext`,
+> Status: **IMPLEMENTED** (§11 의 1–5단계). 코드 위치·단계별 결정과 이 문서에서 벗어난 점은
+> [`execution-environment-implementation.md`](execution-environment-implementation.md) 에 있다 — 그 문서 끝의
+> "구현이 계획과 달라진 점" 절이 이 문서에 대한 차이도 함께 적는다. 남은 열린 항목의 정본은
+> [`../../backlog/execution-environment-open-items.md`](../../backlog/execution-environment-open-items.md) 다.
+> 하위 호환은 목표가 아니다. 공개 SPI(`OrcaToolProviderContext`,
 > 도구 생성자, `ToolContextKeys`, `at.aimon.core.workflow.WorktreeEnvironmentFactory` 와
 > `OrcaAgentRuntimeFactory.withWorktreeEnvironmentFactory(...)`, `withShell(...)`)가 바뀌며, 이행 계층은 두지 않는다
 > ([`api-stability.md`](../../project/api-stability.md) §5 의 `0.x` 정책).
@@ -163,7 +167,7 @@ public interface ExecutionEnvironmentProvider {
 | `EnvironmentDescriptor` | `workingDirectory` · `platform` · `osVersion` · `shellName` · `notes`(자유 텍스트 한두 줄, e.g. "isolated sandbox; network restricted"). 불변 + 빌더 |
 | `EnvironmentRequest` | `Agent` · `AgentRuntimeId` · `SessionId`? · `ExecutionId`? · `invokingSessionId`? · `Principal`? · `parent`(`ExecutionEnvironment`?, 포크의 부모 환경) · `branchKey`? |
 | `ContentSearch` | `search(ContentQuery) → ContentSearchResult`. `GrepTool` 의 입력(패턴 · 경로 · glob · 대소문자 · 컨텍스트 줄 · 출력 모드 · head limit)을 그대로 옮긴 값 |
-| `StagedResource` | 제어 저장소 쪽 파일 묶음 — `sourceFileSystem` · `sourceDir` · `contentKey`(디렉터리 해시, 사본 경로의 일부, §4.4) · `name` |
+| `StagedResource` | 제어 저장소 쪽 파일 묶음 — `sourceFileSystem` · `sourceDir` · `contentKey`(디렉터리 해시, 사본 경로의 일부, §4.4) · `name`. 스킬의 것은 `SkillRepository.resolveSource` 가 낸다 |
 | `FileStamp` | `size` · `modifiedAt` · `etag`? (§7) |
 
 `ExecutionEnvironment` 가 `Closeable` 이 아닌 것은 의도다. 환경은 실행마다 만들어지는 **뷰**이고, 그 뒤의
@@ -250,6 +254,38 @@ public interface ExecutionEnvironmentProvider {
 환경이 필요하므로 뒤쪽, `SkillRenderContextAccess` 에서 `EXECUTION_ENVIRONMENT` 를 꺼내 `resolveSkillBaseDir`
 의 결과(제어 저장소 쪽 경로) 대신 `env.stage(...)` 의 반환값을 `skillBaseDir` 로 넣으면 된다. `skill.render` 는
 환경을 모르는 채로 남는다.
+
+**모든 스킬 저장소가 스테이징 소스를 낸다.** `SkillRepository` 는 스킬마다 `stage()` 에 넘길 소스 — 읽기만 하는
+`VirtualFileSystem` 과 그 안의 스킬 디렉터리 — 를 돌려준다(`resolveSource`). VFS 저장소는 자기 VFS 를, 호스트
+경로 저장소(`PathSkillRepository`)는 그 루트 위의 읽기 전용 로컬 파일 시스템(`ReadOnlyLocalFileSystem`)을, 클래스패스 저장소
+(`ClasspathSkillRepository`)는 번들 스킬 머티리얼라이즈와 같은 방식으로 트리를 걷는 읽기 전용 클래스패스 VFS 를
+낸다. 그래서 스킬이 어디서 왔든 레지스트리가 `StagedResource` 를 싣고, `${AIMON_SKILL_DIR}` 는 언제나
+`stage()` 의 반환값이다 — 호스트 경로 스킬이라고 그 호스트 경로를 그대로 넣지 않는다(비로컬 제공자에서는 그
+경로가 없다). 소스는 선택 사항이 아니다: 스킬을 찾았는데 소스가 비었으면 저장소 결함으로 보고 적재가 실패한다.
+클래스패스 배치를 열거할 수 없으면(지원하지 않는 URL 프로토콜) 소스에는 `SKILL.md` 만 보이고 경고가 남는다 —
+스킬은 쓸 수 있고, 다른 파일은 지금처럼 닿지 않는다. 레지스트리를 거치지 않고 손으로 조립한 `Skill` 처럼
+`StagedResource` 가 없는 스킬은 `${AIMON_SKILL_DIR}` 를 빈 문자열로 렌더하고 경고한다 — 저장소 경로로 되돌아가지
+않는다. 스킬 도구가 모델에게 보여 주는 파일 목록도 같은 스테이징 경로 기준이다.
+
+**심볼릭 링크는 루트 안에서만 따라간다.** 호스트 경로 저장소의 소스(`ReadOnlyLocalFileSystem`)가 스킬 디렉터리를
+훑거나 읽을 때, 링크는 그 **실제 경로(real path)** 가 스킬 저장소 루트 안이거나 운영자가 명시한 허용 루트 안일 때만
+따라간다. 스킬 디렉터리 자체가 링크인 경우(`skills/foo -> ../shared/foo` 로 설치·공유한 스킬)와 스킬 안의 하위
+디렉터리·파일이 링크인 경우에 똑같이 적용된다 — 훑는 동안 만나는 모든 항목의 실제 경로를 검사한다. 두 경우가 아니면
+건너뛰지 않고 링크와 그 실제 경로를 밝힌 오류로 스캔을 거부하므로, 그 스킬은 적재되지 않는다. 조용히 빠진 파일로 만든
+사본이 `${AIMON_SKILL_DIR}` 에 놓이는 것보다 적재 실패가 낫다. 읽을 수 없는 파일도 같다 — `.stageignore` 로 빼지 않은
+항목을 스캔이 읽지 못하면 그 파일을 건너뛰지 않고 스캔이 실패한다. 적재되지 않는 것은 **그 스킬 하나**다. 스킬 목록
+(`getAllSkills`, `reloadAll`)은 그 스킬을 경고 로그와 함께 빼고 나머지를 돌려주므로, 목록으로 만드는 `Skill` 도구의
+정의, `/skills`, 스킬 기반 슬래시 커맨드, REPL 배너는 그대로 뜬다. 그 스킬을 이름으로 부르면(`getSkill`) 같은 오류가
+난다. 허용 루트는
+`PathSkillRepository.builder(root).allowedLinkRoot(...)` 로 정하고, 기본값은 비어 있어 저장소 루트만 허용한다. 조상으로
+되돌아가는 링크는 경고와 함께 건너뛰고, 끊긴 링크는 일반 파일이 아니므로 목록에 없다. 마지막 안전망으로, 소스에서
+`SKILL.md` 가 보이는 디렉터리가 파일 0개로 스캔되고 소스의 목록에도 아무 파일이 없으면 레지스트리가 적재를 실패시킨다 —
+소스가 디렉터리 안을 보지 못한 것이고, 그대로 두면 빈 사본이 스테이징된다. 목록에는 파일이 있는데 `.stageignore` 가 전부
+뺀 경우는 작성자가 원한 것이므로 빈 사본으로 적재된다. 이 규칙은 **읽는 쪽**의 것이다. 로컬 제공자의 시작 스윕은
+**지우는 쪽**이라 반대로 링크를 전혀 따라가지 않는다(링크된 스테이징 루트는 건너뛰고, 이름·사본 수준에서
+`NOFOLLOW_LINKS`). 스윕은 또 작업 트리 루트 자체는 훑지 않고, 이름이 `contentKey` 모양(정확히 16자리 소문자 16진수)인 사본 디렉터리만
+지운다. `stagingRoot` 는 작업 트리 아래 디렉터리 이름 하나여야 하고(`.`·`..`·구분자 불가) 제어 저장소일 수 없으며,
+로컬 제공자는 이를 `build()` 에서 검사한다 — 잘못 설정된 스테이징 루트가 사용자의 디렉터리를 지우게 두지 않는다.
 
 ---
 
@@ -573,7 +609,8 @@ aimon-sandbox 는 `ExecutionEnvironmentProvider` 를 구현한다. 이 문서가
 ## 관련 문서
 
 - [워크스페이스 샌드박스](https://github.com/kangwoo/aimon-sandbox/blob/main/docs/design/workspace-sandbox.md) — 이 SPI 의 첫 외부 구현
-- [`../workflow/workflow.md`](../workflow/workflow.md) §6.3 — 지금의 worktree 격리
+- [`execution-environment-implementation.md`](execution-environment-implementation.md) — 이 설계의 구현 계획(승인본)과 구현이 그 계획에서 벗어난 점
+- [`../workflow/workflow.md`](../workflow/workflow.md) §6.3 — worktree 격리
 - [`../agent-execution/artifact.md`](../agent-execution/artifact.md) — `ArtifactCollector`
 - [`../filesystem/backend-contract.md`](../filesystem/backend-contract.md) — VFS 백엔드 계약 (§7 의 `getMetadata` 조항이 들어갈 자리)
 - [`parallel-execution.md`](parallel-execution.md) — 병렬 도구 디스패치와 실행 단위 컨텍스트 값

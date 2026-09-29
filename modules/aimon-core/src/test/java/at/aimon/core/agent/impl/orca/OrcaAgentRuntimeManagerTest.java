@@ -40,6 +40,7 @@ import at.aimon.core.agent.impl.AgentBundle;
 import at.aimon.core.agent.impl.orca.command.OrcaCommandProvider;
 import at.aimon.core.agent.orca.tool.OrcaToolProvider;
 import at.aimon.core.credential.CredentialStore;
+import at.aimon.core.environment.ExecutionEnvironmentProvider;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.scheduling.ScheduledTaskManager;
@@ -107,19 +108,18 @@ class OrcaAgentRuntimeManagerTest {
         }
 
         @Test
-        @DisplayName("Should use default agentRuntimeFactory when not specified")
-        void shouldUseDefaultContextFactoryWhenNotSpecified() {
-            OrcaAgentRuntimeManager defaultManager = OrcaAgentRuntimeManager.builder().agentExecutor(agentExecutor)
-                    .agentRuntimeRegistry(agentRuntimeRegistry).build();
-
-            assertThat(defaultManager).isNotNull();
+        @DisplayName("Should refuse to build without an agentRuntimeFactory (no default workspace)")
+        void shouldRefuseWithoutContextFactory() {
+            assertThatThrownBy(() -> OrcaAgentRuntimeManager.builder().agentExecutor(agentExecutor)
+                    .agentRuntimeRegistry(agentRuntimeRegistry).build()).isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("agentRuntimeFactory is required");
         }
 
         @Test
-        @DisplayName("Should use all defaults when only agentExecutor is specified")
-        void shouldUseAllDefaultsWhenOnlyAgentExecutorSpecified() {
+        @DisplayName("Should use the remaining defaults when only agentExecutor and the factory are specified")
+        void shouldUseAllDefaultsWhenOnlyAgentExecutorAndFactorySpecified() {
             OrcaAgentRuntimeManager defaultManager = OrcaAgentRuntimeManager.builder().agentExecutor(agentExecutor)
-                    .build();
+                    .agentRuntimeFactory(agentRuntimeFactory).build();
 
             assertThat(defaultManager).isNotNull();
         }
@@ -777,6 +777,8 @@ class OrcaAgentRuntimeManagerTest {
 
         private GatedRuntimeFactory(List<OrcaAgentRuntime> handouts) {
             this.handouts = handouts;
+            // create(...) is overridden and never resolves it, but the manager's builder checks one is configured.
+            withExecutionEnvironmentProvider(mock(ExecutionEnvironmentProvider.class));
         }
 
         @Override

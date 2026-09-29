@@ -1,11 +1,13 @@
 package at.aimon.core.agent.impl.orca;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -23,6 +25,7 @@ import at.aimon.core.agent.session.transcript.DefaultTranscriptManager;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.command.DefaultCommandExecutionManager;
+import at.aimon.core.environment.impl.LocalExecutionEnvironmentProvider;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
 import at.aimon.core.hook.DefaultHookExecutionManager;
@@ -36,60 +39,80 @@ import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.subagent.DefaultSubagentExecutionManager;
 
 /**
- * TCH-01: guards the shell wiring — a {@link VirtualShell} must reach tool providers through
- * {@link OrcaToolProviderContext#getShell()} rather than being constructed inside a provider (which ArchUnit forbids,
- * since {@code at.aimon.core.shell.impl} is reachable only from the shell tree and the in-core assembler package).
+ * Pins how {@link OrcaAgentRuntimeFactory} wires the execution environment (execution-environment design §4.3, §6).
  *
  * <p>
- * The other half of what these tests pin is <b>ownership</b>: whoever creates the shell closes it. An assembly that
- * passes one through {@code withShell(...)} keeps it — the runtime must not close it out from under a shell that is
- * also serving the skill hooks. When no shell is supplied, core builds the default and takes on that duty instead
- * (verified from the closing side by {@code OrcaAgentRuntimeCloseTest}).
+ * Tool providers get no working filesystem and no shell at registration time — only the control store — so no tool
+ * can capture an environment in its constructor. The runtime borrows the provider it is given and never closes it or
+ * the shell behind it: shell ownership has one rule now, "the provider owns it", where it used to depend on whether
+ * {@code withShell(...)} had been called. And a factory without a provider refuses to build a runtime rather than
+ * letting the model's tools run somewhere nobody chose.
  */
-@DisplayName("OrcaAgentRuntimeFactory shell wiring and ownership (TCH-01)")
-class OrcaAgentRuntimeFactoryShellWiringTest {
+@DisplayName("OrcaAgentRuntimeFactory execution environment wiring")
+class OrcaAgentRuntimeFactoryEnvironmentWiringTest {
 
     @TempDir
     Path tempDir;
 
     @Test
-    @DisplayName("a shell supplied via withShell(...) reaches the providers and is NOT closed by the runtime")
-    void assemblySuppliedShellIsBorrowedNotOwned() throws Exception {
-        final VirtualShell assemblyShell = mock(VirtualShell.class);
+    @DisplayName("create(...) without an ExecutionEnvironmentProvider throws")
+    void createWithoutProviderThrows() {
         final CapturingToolProvider provider = new CapturingToolProvider();
 
-        final OrcaAgentRuntime runtime = createRuntime(new OrcaAgentRuntimeFactory().withShell(assemblyShell),
-                provider);
-
-        assertThat(provider.captured()).isNotNull();
-        assertThat(provider.captured().getShell()).as("providers see exactly the shell the assembly supplied")
-                .isSameAs(assemblyShell);
-
-        runtime.close();
-
-        // Borrowed collaborators are not closed (docs/overview/scope-model.md §2). Closing this one would also break
-        // the assembly's own users of it — the skill hooks share this instance in the bootstrap and CLI paths.
-        verify(assemblyShell, never()).close();
+        assertThatThrownBy(() -> createRuntime(new OrcaAgentRuntimeFactory(), provider))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("ExecutionEnvironmentProvider");
     }
 
     @Test
-    @DisplayName("with no shell supplied, core builds a default and hands it to the providers")
-    void defaultShellIsBuiltWhenTheAssemblySuppliesNone() throws Exception {
+    @DisplayName("providers see the control store and no working filesystem or shell; the runtime borrows the provider")
+    void providerIsBorrowedAndToolProvidersSeeOnlyTheControlStore() throws Exception {
+        final VirtualShell providerShell = mock(VirtualShell.class);
+        final LocalFileSystem workspace = new LocalFileSystem(
+                new LocalFileSystemConfig(tempDir.resolve("workspace").toString()));
+        workspace.initialize();
+        final LocalExecutionEnvironmentProvider environmentProvider = LocalExecutionEnvironmentProvider.builder()
+                .fileSystem(workspace).shell(providerShell).contentSearch(false).build();
         final CapturingToolProvider provider = new CapturingToolProvider();
 
-        final OrcaAgentRuntime runtime = createRuntime(new OrcaAgentRuntimeFactory(), provider);
+        final OrcaAgentRuntime runtime = createRuntime(
+                new OrcaAgentRuntimeFactory().withExecutionEnvironmentProvider(environmentProvider), provider);
 
         assertThat(provider.captured()).isNotNull();
-        assertThat(provider.captured().getShell()).as("a provider that needs a shell must not have to build one")
-                .isNotNull();
+        assertThat(provider.captured().getControlFileSystem()).isSameAs(runtime.getControlFileSystem());
+        assertThat(runtime.getExecutionEnvironmentProvider()).isSameAs(environmentProvider);
 
-        // Core owns this one, so closing the runtime closes it too; LocalShell.close() holds no resources today, so
-        // the observable assertion is only that teardown stays clean.
         runtime.close();
+
+        // Borrowed collaborators are not closed (docs/overview/scope-model.md §2): a background command may still run
+        // in this shell after the runtime is evicted.
+        verify(providerShell, never()).close();
+    }
+
+    @Test
+    @DisplayName("withExecutionEnvironmentProviderFactory(...) is asked once per runtime id")
+    void perRuntimeProviderFactory() {
+        final LocalFileSystem workspace = new LocalFileSystem(
+                new LocalFileSystemConfig(tempDir.resolve("workspace").toString()));
+        workspace.initialize();
+        final LocalExecutionEnvironmentProvider environmentProvider = LocalExecutionEnvironmentProvider.builder()
+                .fileSystem(workspace).contentSearch(false).build();
+        final List<AgentRuntimeId> asked = new ArrayList<>();
+
+        final OrcaAgentRuntime runtime = createRuntime(
+                new OrcaAgentRuntimeFactory().withExecutionEnvironmentProviderFactory(id -> {
+                    asked.add(id);
+                    return environmentProvider;
+                }), new CapturingToolProvider());
+
+        assertThat(asked).containsExactly(runtime.getId());
+        assertThat(runtime.getExecutionEnvironmentProvider()).isSameAs(environmentProvider);
+        runtime.close();
+        environmentProvider.close();
     }
 
     private OrcaAgentRuntime createRuntime(OrcaAgentRuntimeFactory factory, OrcaToolProvider provider) {
-        final LocalFileSystem fileSystem = new LocalFileSystem(new LocalFileSystemConfig(tempDir.toString()));
+        final LocalFileSystem fileSystem = new LocalFileSystem(
+                new LocalFileSystemConfig(tempDir.resolve("control").toString()));
         fileSystem.initialize();
 
         final Agent agent = DefaultAgent.builder().name("ShellWiringAgent").maxIterations(10)

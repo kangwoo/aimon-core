@@ -4,6 +4,8 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -14,6 +16,8 @@ import java.util.stream.Stream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import at.aimon.core.filesystem.VirtualFileSystem;
+import at.aimon.core.filesystem.VirtualFileSystems;
 import at.aimon.core.skill.exception.SkillRepositoryException;
 
 /**
@@ -52,6 +56,21 @@ import at.aimon.core.skill.exception.SkillRepositoryException;
  *     // → reads /path/to/skills/commit/SKILL.md
  * }
  * </pre>
+ *
+ * <p>
+ * <b>Symbolic links when staging</b> (execution-environment design §4.4). A skill directory, or anything inside it,
+ * may be a symbolic link. Staging follows it when its real path lies inside {@code skillsBasePath} or inside one of
+ * the {@linkplain Builder#allowedLinkRoot allowed link roots}; a link that resolves anywhere else makes the skill fail
+ * to load with an error naming the link, rather than stage without the files behind it. By default there are no
+ * allowed link roots, so only links within the skills directory are followed:
+ *
+ * <pre>
+ * {
+ *     &#64;code
+ *     SkillRepository repository = PathSkillRepository.builder(Path.of("/opt/aimon/skills"))
+ *             .allowedLinkRoot(Path.of("/opt/shared-skills")).build();
+ * }
+ * </pre>
  */
 public class PathSkillRepository implements SkillRepository {
 
@@ -62,6 +81,10 @@ public class PathSkillRepository implements SkillRepository {
 
     private final Path skillsBasePath;
 
+    // The staging source (execution-environment design §4.4): a read-only filesystem over the skills directory. Built
+    // once and without I/O, so a missing or read-only skills directory behaves exactly as it did before.
+    private final VirtualFileSystem sourceFileSystem;
+
     /**
      * Creates a new PathSkillRepository.
      *
@@ -71,8 +94,25 @@ public class PathSkillRepository implements SkillRepository {
      *             if skillsBasePath is null
      */
     public PathSkillRepository(Path skillsBasePath) {
+        this(skillsBasePath, List.of());
+    }
+
+    private PathSkillRepository(Path skillsBasePath, List<Path> allowedLinkRoots) {
         this.skillsBasePath = Objects.requireNonNull(skillsBasePath, "Skills base path cannot be null").toAbsolutePath()
                 .normalize();
+        this.sourceFileSystem = VirtualFileSystems.readOnlyLocal(this.skillsBasePath, allowedLinkRoots);
+    }
+
+    /**
+     * Returns a builder for a repository over {@code skillsBasePath}, for when symbolic links must be allowed to
+     * resolve outside it.
+     *
+     * @param skillsBasePath
+     *            the base directory path containing skill directories (must not be null)
+     * @return a new builder
+     */
+    public static Builder builder(Path skillsBasePath) {
+        return new Builder(skillsBasePath);
     }
 
     @Override
@@ -191,14 +231,14 @@ public class PathSkillRepository implements SkillRepository {
     }
 
     @Override
-    public Optional<String> resolveBaseDir(String skillName) {
+    public Optional<SkillSource> resolveSource(String skillName) {
         Objects.requireNonNull(skillName, "Skill name cannot be null");
 
         final Path skillDir = resolveSafely(skillName);
         if (skillDir == null || !Files.isDirectory(skillDir)) {
             return Optional.empty();
         }
-        return Optional.of(skillDir.toAbsolutePath().toString());
+        return Optional.of(SkillSource.of(sourceFileSystem, skillsBasePath.relativize(skillDir).toString()));
     }
 
     @Override
@@ -264,5 +304,45 @@ public class PathSkillRepository implements SkillRepository {
             return null;
         }
         return resolved;
+    }
+
+    /** Builder for {@link PathSkillRepository}. */
+    public static final class Builder {
+        private final Path skillsBasePath;
+        private final List<Path> allowedLinkRoots = new ArrayList<>();
+
+        private Builder(Path skillsBasePath) {
+            this.skillsBasePath = Objects.requireNonNull(skillsBasePath, "Skills base path cannot be null");
+        }
+
+        /**
+         * Allows a symbolic link in the skills directory to resolve into {@code root} when a skill is staged. The
+         * skills directory itself is always allowed.
+         *
+         * @param root
+         *            the directory a link may resolve into (must not be null)
+         * @return this builder
+         */
+        public Builder allowedLinkRoot(Path root) {
+            allowedLinkRoots.add(Objects.requireNonNull(root, "Allowed link root cannot be null"));
+            return this;
+        }
+
+        /**
+         * Adds several {@linkplain #allowedLinkRoot allowed link roots}.
+         *
+         * @param roots
+         *            the directories links may resolve into (must not be null)
+         * @return this builder
+         */
+        public Builder allowedLinkRoots(Collection<Path> roots) {
+            Objects.requireNonNull(roots, "Allowed link roots cannot be null").forEach(this::allowedLinkRoot);
+            return this;
+        }
+
+        /** @return the repository */
+        public PathSkillRepository build() {
+            return new PathSkillRepository(skillsBasePath, List.copyOf(allowedLinkRoots));
+        }
     }
 }

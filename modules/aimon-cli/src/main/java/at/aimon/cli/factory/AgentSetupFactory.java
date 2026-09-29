@@ -23,6 +23,7 @@ import at.aimon.bootstrap.AimonStackBuilder;
 import at.aimon.bootstrap.AimonStackSpec;
 import at.aimon.bootstrap.TeardownPhase;
 import at.aimon.bootstrap.spec.AgentSpec;
+import at.aimon.bootstrap.spec.ExecutionEnvironmentSpec;
 import at.aimon.bootstrap.spec.ExecutorSpec;
 import at.aimon.bootstrap.spec.FileSystemSpec;
 import at.aimon.bootstrap.spec.LlmSpec;
@@ -55,7 +56,6 @@ import at.aimon.core.agent.impl.AgentBundle;
 import at.aimon.core.agent.impl.AgentBundleLoader;
 import at.aimon.core.agent.impl.orca.OrcaAgentExecutor;
 import at.aimon.core.agent.impl.orca.OrcaAgentRuntime;
-import at.aimon.core.agent.impl.orca.environment.WorktreeToolEnvironmentFactory;
 import at.aimon.core.agent.queue.MessageQueueManager;
 import at.aimon.core.agent.session.DefaultLiveSession;
 import at.aimon.core.agent.session.LiveSession;
@@ -71,6 +71,9 @@ import at.aimon.core.agent.session.transcript.SessionLogReader;
 import at.aimon.core.base.Principal;
 import at.aimon.core.config.hook.HookHotReloadBootstrap;
 import at.aimon.core.config.hook.ReloadInvoker;
+import at.aimon.core.environment.EnvironmentRequest;
+import at.aimon.core.environment.ExecutionEnvironments;
+import at.aimon.core.environment.impl.LocalExecutionEnvironmentProvider;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
 import at.aimon.core.hook.HookEventType;
@@ -592,8 +595,14 @@ public class AgentSetupFactory {
 
         final AimonStackSpec spec = AimonStackSpec.builder().llm(LlmSpec.of(effectiveLlmClient))
                 // Supplied, not stack-owned: the REPL keeps a LocalFileSystem-typed handle and today's CLI never
-                // closes it, so enrolling it in AGENT_RESOURCES would change shutdown behaviour.
-                .fileSystem(FileSystemSpec.supplied(fileSystem)).skillParser(skillParser)
+                // closes it, so enrolling it in AGENT_RESOURCES would change shutdown behaviour. Its .aimon/ subtree
+                // is the control store; the model works in the project directory through a local provider that owns
+                // its own view of it (execution-environment design §9.2) — the control store hidden from the file
+                // tools, skills staged into .aimon-staged/, superseded copies swept at startup.
+                .fileSystem(FileSystemSpec.supplied(fileSystem))
+                .executionEnvironment(ExecutionEnvironmentSpec.factory(id -> LocalExecutionEnvironmentProvider
+                        .builder().workspaceRoot(Path.of(fileSystem.getWorkingDirectory())).build()))
+                .skillParser(skillParser)
                 .agent(AgentSpec.builder().bundle(agentBundle)
                         .addCustomizer(runtime -> configureHooks(runtime, outputFormatter))
                         .addCustomizer(runtime -> registerCliTools(runtime, outputFormatter)).build())
@@ -661,7 +670,7 @@ public class AgentSetupFactory {
                         stack.sessionRecordStore()));
         enrollMemorySubsystem(stack, config, cli);
         reportAgentModelMismatch(config, agentBundle, agentRuntime::getSubagentRegistry,
-                () -> agentRuntime.getEnvironment().getWorkingDirectory(), cli.outputFormatter);
+                () -> workingDirectoryOf(agentRuntime), cli.outputFormatter);
 
         return AgentSetup.builder().stack(stack).agentExecutor(agentExecutor).agent(agentBundle.getAgent())
                 .agentRuntime(agentRuntime).agentBundleName(extractAgentName(config))
@@ -778,11 +787,9 @@ public class AgentSetupFactory {
                 .workflowRunnerEnabled(settings.isEnableWorkflow() || settings.isEnableWorkflowJs());
         if (graalJsEngines != null) {
             // Core cannot register this tool itself (it must not depend on the aimon-workflow-graaljs impl module),
-            // so the assembly layer adds it. The worktree factory is built here — the sanctioned assembler may touch
-            // agent.impl.orca.environment — and handed over as the neutral WorktreeEnvironmentFactory, so the SPI
-            // provider stays impl-free.
-            builder.addProvider(
-                    new GraalJsWorkflowToolProvider(graalJsEngines, new WorktreeToolEnvironmentFactory(fileSystem)));
+            // so the assembly layer adds it. Worktree isolation needs nothing here: an isolated step derives its
+            // branch from the execution environment (ExecutionEnvironment.isolate).
+            builder.addProvider(new GraalJsWorkflowToolProvider(graalJsEngines));
         }
         final McpConfig mcpConfig = config.getMcpConfig();
         if (mcpConfig != null && mcpConfig.hasServers()) {
@@ -1529,6 +1536,21 @@ public class AgentSetupFactory {
     }
 
     /**
+     * The directory the runtime's executions work in — its environment's working directory, which is what the model
+     * is told and where {@code Bash} runs (execution-environment design §10).
+     *
+     * @param runtime
+     *            the runtime
+     * @return the working directory, or an empty string when the runtime has no usable environment
+     */
+    public static String workingDirectoryOf(OrcaAgentRuntime runtime) {
+        return ExecutionEnvironments
+                .resolveOrUnavailable(runtime.getExecutionEnvironmentProvider(),
+                        EnvironmentRequest.builder().agentRuntimeId(runtime.getId()).agent(runtime.getAgent()).build())
+                .descriptor().workingDirectory();
+    }
+
+    /**
      * Creates a wiki knowledge store whose VFS is resolved lazily from the Orca agent runtime registered for each
      * scope.
      *
@@ -1549,7 +1571,7 @@ public class AgentSetupFactory {
         final WikiPageGenerator pageGenerator = LlmWikiPageGenerator.builder().llmClient(llmClient).build();
         return new WikiKnowledgeStore(new DefaultWikiKnowledgeBase(
                 ContextResolvingWikiStorageLocator.defaultLayout(id -> agentRuntimeRegistry
-                        .getAs(id, OrcaAgentRuntime.class).map(OrcaAgentRuntime::getFileSystem), ".aimon/wiki"),
+                        .getAs(id, OrcaAgentRuntime.class).map(OrcaAgentRuntime::getControlFileSystem), "wiki"),
                 pageGenerator));
     }
 

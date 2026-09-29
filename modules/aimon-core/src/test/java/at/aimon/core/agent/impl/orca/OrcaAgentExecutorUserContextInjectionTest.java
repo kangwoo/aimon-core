@@ -32,6 +32,7 @@ import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.command.DefaultCommandExecutionManager;
 import at.aimon.core.command.DefaultCommandRegistry;
+import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
 import at.aimon.core.hook.DefaultHookExecutionManager;
@@ -83,9 +84,11 @@ class OrcaAgentExecutorUserContextInjectionTest {
         // First call should contain two USER messages in order: synthetic context, then the real user input.
         assertThat(firstCall).hasSize(2);
         assertThat(firstCall.get(0).getRole()).isEqualTo(Role.USER);
+        // The working directory is the execution environment's, not the per-agent snapshot's "/workspace/proj":
+        // the snapshot is collected once per agent and cannot know where this execution runs (design §10).
         assertThat(firstCall.get(0).getContent()).contains("<system-reminder key=\"working-directory\">")
-                .contains("/workspace/proj").contains("<system-reminder key=\"current-date\">")
-                .contains("2026-04-23T12:34:56Z");
+                .contains(tempDir.toString()).doesNotContain("/workspace/proj")
+                .contains("<system-reminder key=\"current-date\">").contains("2026-04-23T12:34:56Z");
 
         assertThat(firstCall.get(1).getRole()).isEqualTo(Role.USER);
         assertThat(firstCall.get(1).getContent()).isEqualTo("Hello");
@@ -194,7 +197,8 @@ class OrcaAgentExecutorUserContextInjectionTest {
                 .toolRegistry(toolRegistry).hookRegistry(new DefaultHookRegistry())
                 .commandRegistry(new DefaultCommandRegistry(fileSystem, ".aimon/commands"))
                 .subagentRegistry(new DefaultSubagentRegistry(fileSystem, ".aimon/agents"))
-                .skillRegistry(new DefaultSkillRegistry(fileSystem, ".aimon/skills")).fileSystem(fileSystem)
+                .skillRegistry(new DefaultSkillRegistry(fileSystem, ".aimon/skills")).controlFileSystem(fileSystem)
+                .executionEnvironmentProvider(TestExecutionEnvironments.provider(fileSystem))
                 .environment(Environment.createDefault()).build();
     }
 

@@ -341,6 +341,15 @@ aimon:
   tools:
     bash:
       enabled: false                # 기본값 — 서버에서는 셸을 명시적으로 켜야 한다
+    artifact:
+      enabled: false                # Write/Edit 결과를 다운로드용 아티팩트로 등록
+      max-file-bytes: 52428800      # 비영속 환경의 파일을 제어 저장소로 보관할 때 파일당 상한
+      max-execution-bytes: 104857600
+
+  environment:                      # 도구가 도는 곳 — ExecutionEnvironmentProvider 빈이 있으면 그것을 쓴다
+    staging:
+      max-bytes: 52428800           # 스킬 디렉터리 하나를 작업 공간에 스테이징할 때의 상한
+    control-writable: false         # true 면 워크스페이스의 .aimon/(제어 저장소)을 파일 도구에 연다
 
   knowledge:
     backend: none                   # none(기본) | keyword | supplied
@@ -1293,23 +1302,34 @@ public final class MinimalEmbeddingExample {
         AgentRegistry agentRegistry = new DefaultAgentRegistry();
         agentRegistry.register(agent);
 
-        VirtualFileSystem fileSystem = /* LocalFileSystem or GridFs... */;
+        // 2) 도구가 도는 곳(작업 환경)과 프레임워크 상태가 사는 곳(제어 루트)
+        //    제공자는 앱이 소유한다 — runtime 은 빌려 쓰기만 하므로 종료 시 앱이 close() 한다.
+        Path workspace = Path.of("/srv/agent-workspace");
+        ExecutionEnvironmentProvider environments = LocalExecutionEnvironmentProvider.builder()
+                .workspaceRoot(workspace)
+                .build();
+        // 로컬 스택의 제어 루트는 {workspace}/.aimon 이다 — skills/, agents/, commands/, task-output/ 이 그 아래에 있다.
+        VirtualFileSystem controlFileSystem = new LocalFileSystem(
+                new LocalFileSystemConfig(workspace.resolve(".aimon").toString()));
+        controlFileSystem.initialize();
         CredentialStore credentialStore = /* InMemoryCredentialStore */;
         ScheduledTaskManager scheduledTaskManager = /* ... */;
 
         // 부트스트랩 1회: agent별 runtime 등록 (AgentRuntimeId = "agent:<name>")
+        // 팩토리에 제공자가 없으면 build() 가 IllegalStateException 을 던진다 — 기본 작업 공간은 없다.
         OrcaAgentRuntimeManager manager = OrcaAgentRuntimeManager.builder()
                 .agentExecutor(executor)
                 .scheduledTaskManager(scheduledTaskManager)
-                .agentRuntimeFactory(new OrcaAgentRuntimeFactory())
+                .agentRuntimeFactory(new OrcaAgentRuntimeFactory().withExecutionEnvironmentProvider(environments))
                 .build();
         AgentBundle bundle = AgentBundle.builder().agent(agent).build();
-        manager.getOrCreateRuntime(bundle, fileSystem, credentialStore);
+        manager.getOrCreateRuntime(bundle, controlFileSystem, credentialStore);
 
         // contextBuilder 는 멱등해야 한다 — 세션마다 새 runtime 을 만들면 안 되고,
         // 이미 등록된 agent-scoped runtime 을 되돌려줘야 한다.
         LiveSessionFactory factory = new LiveSessionFactory(agentRegistry,
-                a -> manager.getOrCreateRuntime(AgentBundle.builder().agent(a).build(), fileSystem, credentialStore),
+                a -> manager.getOrCreateRuntime(AgentBundle.builder().agent(a).build(), controlFileSystem,
+                        credentialStore),
                 executor,
                 sessionRecords);
 
@@ -1324,6 +1344,14 @@ public final class MinimalEmbeddingExample {
     }
 }
 ```
+
+> **`getOrCreateRuntime` 의 `VirtualFileSystem` 은 제어 루트다.** 예전에는 워크스페이스 VFS 를 넘겼고
+> 프레임워크가 그 아래 `.aimon/skills`·`.aimon/agents`·`.aimon/commands` 를 읽었다. 이제 기본 디렉터리는
+> 제어 루트 기준(`skills`·`agents`·`commands`·`task-output`)이므로, 워크스페이스 VFS 를 그대로 넘기면
+> 기존 `{workspace}/.aimon/…` 를 찾지 못하고 task 출력도 워크스페이스로 옮겨 간다. 위처럼
+> `{workspace}/.aimon` 을 넘기면 물리 경로는 예전과 같다. 모델의 파일 도구와 `Bash` 는
+> `ExecutionEnvironmentProvider` 가 준 작업 공간에서 돈다
+> ([`docs/design/tool/execution-environment.md`](../design/tool/execution-environment.md)).
 
 > `LiveSessionFactory` 의 3-인자 생성자는 `SessionRecordStore` 없이 세션을 엽니다 — 그러면
 > `SessionTotals` 와 budget override 가 **핸들과 함께 사라져** 재개 후 복원되지 않습니다. 위처럼
@@ -1400,15 +1428,33 @@ public class AgentConfiguration {
         return new DefaultAgentRuntimeRegistry();
     }
 
+    @Bean(destroyMethod = "close")
+    public ExecutionEnvironmentProvider executionEnvironmentProvider(AgentProperties props) {
+        // 도구(Read/Write/Bash …)가 도는 작업 공간. runtime 은 빌려 쓰기만 하고, 닫는 것은 이 빈이다.
+        return LocalExecutionEnvironmentProvider.builder()
+                .workspaceRoot(props.getWorkspace())
+                .build();
+    }
+
+    @Bean(initMethod = "initialize", destroyMethod = "close")
+    public VirtualFileSystem controlFileSystem(AgentProperties props) {
+        // 제어 루트 — 스킬·에이전트·명령·task 출력. 로컬 스택은 {workspace}/.aimon 이다.
+        return new LocalFileSystem(
+                new LocalFileSystemConfig(props.getWorkspace().resolve(".aimon").toString()));
+    }
+
     @Bean
     public OrcaAgentRuntimeManager agentRuntimeManager(OrcaAgentExecutor executor,
             ScheduledTaskManager scheduledTaskManager,
-            AgentRuntimeRegistry agentRuntimeRegistry) {
+            AgentRuntimeRegistry agentRuntimeRegistry,
+            ExecutionEnvironmentProvider executionEnvironmentProvider) {
         // registry 는 스케줄링 엔진과 공유해야 하므로 반드시 명시해서 같은 인스턴스를 넘긴다.
+        // 팩토리에는 제공자가 필수다 — 없으면 build() 가 거부한다.
         return OrcaAgentRuntimeManager.builder()
                 .agentExecutor(executor)
                 .scheduledTaskManager(scheduledTaskManager)
-                .agentRuntimeFactory(new OrcaAgentRuntimeFactory())
+                .agentRuntimeFactory(new OrcaAgentRuntimeFactory()
+                        .withExecutionEnvironmentProvider(executionEnvironmentProvider))
                 .agentRuntimeRegistry(agentRuntimeRegistry)
                 .build();
     }
@@ -1417,11 +1463,11 @@ public class AgentConfiguration {
     public ApplicationRunner registerAgentRuntimes(OrcaAgentRuntimeManager manager,
             AgentBundleLoader loader,
             AgentProperties props,
-            VirtualFileSystem fileSystem,
+            VirtualFileSystem controlFileSystem,
             CredentialStore credentialStore) {
         return args -> {
             for (String name : props.getAgents()) {
-                manager.getOrCreateRuntime(loader.load(name), fileSystem, credentialStore);
+                manager.getOrCreateRuntime(loader.load(name), controlFileSystem, credentialStore);
                 // → AgentRuntimeId = "agent:<name>"
             }
         };
@@ -1432,11 +1478,11 @@ public class AgentConfiguration {
             OrcaAgentRuntimeManager manager,
             OrcaAgentExecutor executor,
             SessionRecordStore sessionRecordStore,
-            VirtualFileSystem fileSystem,
+            VirtualFileSystem controlFileSystem,
             CredentialStore credentialStore) {
         return new LiveSessionFactory(agentRegistry,
                 agent -> manager.getOrCreateRuntime(
-                        AgentBundle.builder().agent(agent).build(), fileSystem, credentialStore),
+                        AgentBundle.builder().agent(agent).build(), controlFileSystem, credentialStore),
                 executor,
                 sessionRecordStore);
     }

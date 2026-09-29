@@ -527,34 +527,32 @@ class VfsSkillRepositoryTest {
                 .hasMessageContaining("Skill name cannot be null");
     }
 
-    // --- resolveBaseDir tests ---
+    // --- resolveSource tests ---
 
     @Test
-    void testResolveBaseDir_SkillDirExists_ReturnsSkillsSlashName() throws IOException {
+    void testResolveSource_SkillDirExists_ReturnsOwnFileSystemAndSkillsSlashName() throws IOException {
         // Arrange
         String skillName = "my-skill";
         createSkill(skillName, "---\nname: my-skill\n---\nContent");
 
         // Act
-        Optional<String> result = repository.resolveBaseDir(skillName);
+        Optional<SkillSource> result = repository.resolveSource(skillName);
 
         // Assert
         assertThat(result).isPresent();
-        assertThat(result.get()).isEqualTo("skills/my-skill");
+        assertThat(result.get().getDirectory()).isEqualTo("skills/my-skill");
+        assertThat(result.get().getFileSystem().listRecursive(result.get().getDirectory()))
+                .contains("skills/my-skill/SKILL.md");
     }
 
     @Test
-    void testResolveBaseDir_NonExistentSkill_ReturnsEmpty() {
-        // Act
-        Optional<String> result = repository.resolveBaseDir("does-not-exist");
-
-        // Assert
-        assertThat(result).isEmpty();
+    void testResolveSource_NonExistentSkill_ReturnsEmpty() {
+        assertThat(repository.resolveSource("does-not-exist")).isEmpty();
     }
 
     @Test
-    void testResolveBaseDir_NullSkillName_ThrowsException() {
-        assertThatThrownBy(() -> repository.resolveBaseDir(null)).isInstanceOf(NullPointerException.class)
+    void testResolveSource_NullSkillName_ThrowsException() {
+        assertThatThrownBy(() -> repository.resolveSource(null)).isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("Skill name cannot be null");
     }
 

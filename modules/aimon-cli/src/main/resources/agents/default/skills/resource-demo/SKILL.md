@@ -9,7 +9,7 @@ allowed-tools: "Read, Bash"
 
 This skill proves that a **bundled skill can load its own files at runtime**. Every file
 referenced below lives next to this `SKILL.md` and is addressed through `${AIMON_SKILL_DIR}`,
-which resolves to this skill's directory in the workspace (it is materialized there on startup).
+which resolves to a read-only copy of this skill's directory that is staged into the workspace on first use.
 
 The report topic is `$1` (default to `sample` if empty).
 

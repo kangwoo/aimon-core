@@ -126,17 +126,23 @@ discriminator 는 non-blank 이며 콜론을 포함할 수 없다(`IllegalArgume
 // OrcaAgentRuntime.close()
 mcpClientManager  → close
 workflowRunner    → close
-ownedShell        → close   // 어셈블리가 withShell(...) 로 주지 않아 런타임이 직접 만든 경우에만
+// executionEnvironmentProvider 는 닫지 않는다 — 빌려 쓴 것이다
 ```
 
-세 개 모두 예외를 삼키고 다음으로 넘어간다 — 하나가 실패해도 나머지 정리를 막지 않는다.
+둘 다 예외를 삼키고 다음으로 넘어간다 — 하나가 실패해도 나머지 정리를 막지 않는다.
 네이티브 자원을 쥔 agent-scoped 컴포넌트를 새로 추가한다면 이 목록에 **직접 한 줄을 넣어야** 한다.
 마커를 붙이는 것만으로는 아무 일도 일어나지 않는다.
 
-목록이 하나에서 셋으로 늘어난 과정이 그 규칙의 증거다. 자동 fan-out 을 쓰지 않은 이유는 순서다 —
-닫는 순서가 자원마다 다르고(`ownedShell` 은 마지막), 스캔은 순서를 표현하지 못한다. 그 순서가
-아직 완결되지 않은 지점(`BackgroundBashManager`)은 `OrcaAgentRuntime.close()` 의 주석과
-[`tool/contract-hardening.md`](../tool/contract-hardening.md) 에 기록되어 있다.
+목록은 한때 셋이었다 — 셋째가 어셈블리가 `withShell(...)` 로 셸을 주지 않았을 때 런타임이 직접 만든
+`ownedShell` 이다. 실행 환경 설계([`tool/execution-environment.md`](../tool/execution-environment.md) §4.3)
+가 셸과 작업 파일 시스템의 소유자를 `ExecutionEnvironmentProvider` 하나로 정하면서 빠졌다. 런타임은
+제공자(`OrcaAgentRuntime.getExecutionEnvironmentProvider()`)를 빌려 쓰기만 하고, 제공자는 그것을 만든
+어셈블리가 닫는다 — bootstrap 은 런타임별 teardown sink 로. 그래서 런타임 뒤에서 백그라운드 `Bash`
+작업이 쥔 셸이 `close()` 로 끊기는 일도 없다. 옛 런타임 VFS 는 `controlFileSystem`
+(`getControlFileSystem()`)으로 이름이 바뀌어 제어 저장소만 가리킨다.
+
+자동 fan-out 을 쓰지 않은 이유는 순서다 — 닫는 순서가 자원마다 다르고, 스캔은 순서를 표현하지
+못한다.
 
 ### 3.4 누가 닫으면 안 되는가
 

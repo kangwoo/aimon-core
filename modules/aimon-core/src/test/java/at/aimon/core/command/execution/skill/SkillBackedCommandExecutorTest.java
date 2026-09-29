@@ -3,6 +3,7 @@ package at.aimon.core.command.execution.skill;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -25,8 +26,16 @@ import at.aimon.core.command.execution.CommandExecutionContext;
 import at.aimon.core.command.execution.CommandExecutionRequest;
 import at.aimon.core.command.execution.CommandExecutionResult;
 import at.aimon.core.command.skill.SkillBackedCommand;
+import at.aimon.core.environment.EnvironmentDescriptor;
+import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.environment.StagedResource;
+import at.aimon.core.environment.TestExecutionEnvironments;
+import at.aimon.core.environment.UnavailableExecutionEnvironment;
+import at.aimon.core.filesystem.VirtualFileSystem;
+import at.aimon.core.filesystem.VirtualFileSystems;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.TokenUsage;
+import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.skill.Skill;
 import at.aimon.core.skill.SkillContent;
 import at.aimon.core.skill.SkillMetadata;
@@ -207,32 +216,65 @@ class SkillBackedCommandExecutorTest {
     /**
      * Regression: the command path used to leave the request's render context at {@link RenderContext#empty()}, so a
      * command-invoked body rendered {@code bash ${AIMON_SKILL_DIR}/scripts/x.sh} as {@code bash /scripts/x.sh}. The
-     * stub renders with the real renderer so the assertion is on the text the skill would actually run.
+     * stub renders with the real renderer so the assertion is on the text the skill would actually run. The directory
+     * is where the run's execution environment staged the skill (execution-environment design §4.4) — never a
+     * repository path.
      */
     @Test
-    @DisplayName("renders ${AIMON_SKILL_DIR} as the skill's explicit base directory")
-    void shouldRenderSkillDirFromExplicitBaseDir() {
-        Skill skill = skillBuilder("deploy", "bash ${AIMON_SKILL_DIR}/scripts/x.sh").baseDir("/skills/deploy").build();
+    @DisplayName("renders ${AIMON_SKILL_DIR} as the path the run's environment staged the skill to")
+    void shouldRenderSkillDirFromStagedPath() {
+        Skill skill = skillBuilder("deploy", "bash ${AIMON_SKILL_DIR}/scripts/x.sh").stagedResource(resource("deploy"))
+                .build();
+        ToolContext toolContext = ToolContext.builder()
+                .put(ToolContextKeys.EXECUTION_ENVIRONMENT, stagingTo("/ws/.aimon-staged/deploy/k1")).build();
 
         String rendered = renderViaCommand(skill,
                 CommandExecutionContext.builder().command(new SkillBackedCommand(skill))
-                        .defaultModel(LlmModel.builder().build()).toolRegistry(new DefaultToolRegistry()).build(),
+                        .defaultModel(LlmModel.builder().build()).toolRegistry(new DefaultToolRegistry())
+                        .toolContext(toolContext).build(),
                 CommandExecutionRequest.builder().build());
 
-        assertThat(rendered).isEqualTo("bash /skills/deploy/scripts/x.sh");
+        assertThat(rendered).isEqualTo("bash /ws/.aimon-staged/deploy/k1/scripts/x.sh");
+    }
+
+    /**
+     * Behaviour change (execution-environment design §4.4, §15): a skill that was never scanned into a staged resource
+     * no longer has its directory derived from a repository resource path — that path lives in the control store,
+     * which the model's shell may not see. It renders empty.
+     */
+    @Test
+    @DisplayName("a skill without a staged resource renders ${AIMON_SKILL_DIR} empty, never a repository path")
+    void shouldNotDeriveSkillDirFromResourcePath() {
+        Skill skill = skillBuilder("deploy", "bash ${AIMON_SKILL_DIR}/scripts/x.sh")
+                .putRootFile("SKILL.md", "/skills/deploy/SKILL.md").build();
+        ToolContext toolContext = ToolContext.builder()
+                .put(ToolContextKeys.EXECUTION_ENVIRONMENT, stagingTo("/ws/unused")).build();
+
+        String rendered = renderViaCommand(skill,
+                CommandExecutionContext.builder().command(new SkillBackedCommand(skill))
+                        .defaultModel(LlmModel.builder().build()).toolRegistry(new DefaultToolRegistry())
+                        .toolContext(toolContext).build(),
+                CommandExecutionRequest.builder().build());
+
+        assertThat(rendered).isEqualTo("bash /scripts/x.sh");
     }
 
     @Test
-    @DisplayName("renders ${AIMON_SKILL_DIR} derived from a resource path when the skill has no explicit base directory")
-    void shouldRenderSkillDirDerivedFromResourcePath() {
-        Skill skill = skillBuilder("deploy", "bash ${AIMON_SKILL_DIR}/scripts/x.sh")
-                .putRootFile("SKILL.md", "/skills/deploy/SKILL.md").build();
+    @DisplayName("a staging failure is the command's error, not a crash")
+    void shouldReportStagingFailureAsCommandError() {
+        Skill skill = skillBuilder("deploy", "bash ${AIMON_SKILL_DIR}/scripts/x.sh").stagedResource(resource("deploy"))
+                .build();
+        ToolContext toolContext = ToolContext.builder()
+                .put(ToolContextKeys.EXECUTION_ENVIRONMENT, UnavailableExecutionEnvironment.of("provider down"))
+                .build();
 
-        String rendered = renderViaCommand(skill, buildContext(new SkillBackedCommand(skill)),
-                CommandExecutionRequest.builder().build());
+        CommandExecutionResult result = new SkillBackedCommandExecutor((c, r) -> SkillExecutionResult.success("ok"))
+                .execute(CommandExecutionContext.builder().command(new SkillBackedCommand(skill))
+                        .defaultModel(LlmModel.builder().build()).toolRegistry(new DefaultToolRegistry())
+                        .toolContext(toolContext).build(), CommandExecutionRequest.builder().build());
 
-        // Parent of the first resource path — the same fallback the Skill tool applies.
-        assertThat(rendered).isEqualTo("bash /skills/deploy/scripts/x.sh");
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.getError().orElseThrow().getMessage()).contains("provider down");
     }
 
     @Test
@@ -338,6 +380,37 @@ class SkillBackedCommandExecutorTest {
                 .toolRegistry(new DefaultToolRegistry()).toolContext(toolContext).build();
         new SkillBackedCommandExecutor(stub).execute(context, request);
         return seenRequest.get().getRenderContext();
+    }
+
+    private static StagedResource resource(String name) {
+        return StagedResource.builder().sourceFileSystem(VirtualFileSystems.readOnlyLocal(Path.of("/skills")))
+                .sourceDir(name).contentKey("0123456789abcdef").name(name).build();
+    }
+
+    /** An environment whose {@code stage()} answers with a fixed directory, so the rendered path is provably its. */
+    private static ExecutionEnvironment stagingTo(String stagedDir) {
+        ExecutionEnvironment base = TestExecutionEnvironments.builder().build();
+        return new ExecutionEnvironment() {
+            @Override
+            public VirtualFileSystem fileSystem() {
+                return base.fileSystem();
+            }
+
+            @Override
+            public VirtualShell shell() {
+                return base.shell();
+            }
+
+            @Override
+            public EnvironmentDescriptor descriptor() {
+                return base.descriptor();
+            }
+
+            @Override
+            public String stage(StagedResource resource) {
+                return stagedDir;
+            }
+        };
     }
 
     private static Skill.Builder skillBuilder(String name, String body) {
