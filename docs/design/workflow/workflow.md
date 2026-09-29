@@ -96,7 +96,7 @@ at.aimon.workflow.graaljs/             # 별도 모듈 aimon-workflow-graaljs
 ├── GraalJsWorkflowScript              # 유일 seam: JS 소스 → WorkflowScript<String>
 ├── JsContextFactory / JsSandboxConfig / GraalJsEngineHolder / CancellationWatchdog
 ├── WorkflowBindings / AgentTaskMarshaller / JsResultMarshaller / JsMarshalling
-├── AgentResultView / SubagentResolver / InlineSubagentResolver / RunFatalCapture
+├── AgentResultView / SubagentResolver / SubagentDescriptor / InlineSubagentResolver / RunFatalCapture
 └── GraalJsWorkflowTool
 ```
 
@@ -331,9 +331,12 @@ resume 의 정의는 단순하다: **동일 스크립트를 동일 구조로 재
   `parallel(...)` → `…/p1/…`.
 
 **(b) 입력 해시는 검증용** — `inputHash = hash(goal + inline subagent 정의(systemPrompt+model+tools+
-allowedTools) + resultSchema)`. 키는 **위치**로 식별하고, 로드한 엔트리의 `inputHash` 가 다르면 캐시
+allowedTools+attributes) + resultSchema)`. 키는 **위치**로 식별하고, 로드한 엔트리의 `inputHash` 가 다르면 캐시
 miss 로 간주해 stale 재생을 막는다. subagent **정의 전체**를 해싱한다 — 이름만으로는 서로 다른 subagent
-가 같은 위치에서 충돌한다.
+가 같은 위치에서 충돌한다. `attributes` 도 정의에 든다: 워크플로 스텝이 속성을 싣게 된 뒤로(EE-42) 속성이 바뀌면
+스텝이 다른 실행 환경(슬롯)에 놓이므로, 해시가 그것을 빼면 다른 슬롯에서 계산된 결과를 재생한다. 2026-09-29 현재
+이 해시를 **계산하는** 코드는 main 소스에 없다 — `StepOutcome.inputHash` 는 저장된 값을 디코드할 때만 채워진다
+(`StepOutcomeCodec`). 계산을 붙이는 쪽이 이 목록을 지켜야 한다.
 
 **(c) transcript-free 값** — `StepOutcome` 은 text/structured/totalTokens/costMicros/completionReason/
 inputHash/structureFingerprint 만 담는다. `SessionSnapshot`/`Message`/inline `Subagent` 를

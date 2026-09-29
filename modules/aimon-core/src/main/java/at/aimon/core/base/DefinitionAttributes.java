@@ -69,14 +69,9 @@ public final class DefinitionAttributes {
         }
         final Map<String, String> flattened = new LinkedHashMap<>();
         flatten("", block, flattened);
-        for (String key : flattened.keySet()) {
-            for (int dot = key.indexOf('.'); dot >= 0; dot = key.indexOf('.', dot + 1)) {
-                final String group = key.substring(0, dot);
-                if (flattened.containsKey(group)) {
-                    throw new IllegalArgumentException("Invalid '" + FRONTMATTER_KEY + "' entry: '" + group
-                            + "' is both a value and a group (of '" + key + "')");
-                }
-            }
+        final String clash = valueGroupClash(flattened);
+        if (clash != null) {
+            throw new IllegalArgumentException("Invalid '" + FRONTMATTER_KEY + "' entry: " + clash);
         }
         return Collections.unmodifiableMap(flattened);
     }
@@ -108,6 +103,54 @@ public final class DefinitionAttributes {
             copy.put(key, value);
         });
         return Collections.unmodifiableMap(copy);
+    }
+
+    /**
+     * Lays {@code override} over {@code base} key by key: a key in both takes the override's value, a key only in
+     * {@code base} keeps its value, and a key only in {@code override} is appended. The result keeps {@code base}'s
+     * order, overridden values in place, then the override's new keys in its order.
+     *
+     * <p>
+     * An override can replace a value but cannot delete a key — there is no null value to write. The merged map is
+     * checked for a key that is both a value and a group ({@code sandbox} beside {@code sandbox.slot}), because
+     * {@link #copyOf(Map)} does not make that check and two maps that are each fine can clash once merged. The message
+     * says whether the clash lies inside {@code base} alone or only appears across the two.
+     *
+     * @param base
+     *            the attributes laid down first, such as a registered definition's (must not be null)
+     * @param override
+     *            the attributes that win on the same key, such as ones a workflow script gives (must not be null)
+     * @return the merged attributes (never null; unmodifiable)
+     * @throws NullPointerException
+     *             if either map, a key or a value is null
+     * @throws IllegalArgumentException
+     *             if a key breaks {@link #copyOf(Map)}'s rules, or the merged map holds a key that is both a value and
+     *             a group; the message names both keys
+     */
+    public static Map<String, String> overlay(Map<String, String> base, Map<String, String> override) {
+        final Map<String, String> merged = new LinkedHashMap<>(copyOf(base));
+        merged.putAll(copyOf(override));
+        final String clash = valueGroupClash(merged);
+        if (clash != null) {
+            final String where = valueGroupClash(base) != null
+                    ? " within the base attributes themselves"
+                    : " between the base and override attributes";
+            throw new IllegalArgumentException("Invalid merged attributes: " + clash + where);
+        }
+        return Collections.unmodifiableMap(merged);
+    }
+
+    /** Describes the first key that is both a value and a group ({@code 'a' ... (of 'a.b')}), or null if none. */
+    private static String valueGroupClash(Map<String, String> flat) {
+        for (String key : flat.keySet()) {
+            for (int dot = key.indexOf('.'); dot >= 0; dot = key.indexOf('.', dot + 1)) {
+                final String group = key.substring(0, dot);
+                if (flat.containsKey(group)) {
+                    return "'" + group + "' is both a value and a group (of '" + key + "')";
+                }
+            }
+        }
+        return null;
     }
 
     private static void flatten(String prefix, Map<?, ?> block, Map<String, String> into) {

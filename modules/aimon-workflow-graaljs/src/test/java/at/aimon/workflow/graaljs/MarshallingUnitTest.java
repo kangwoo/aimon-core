@@ -1,6 +1,7 @@
 package at.aimon.workflow.graaljs;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.List;
 import java.util.Map;
@@ -13,6 +14,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.workflow.AgentTask;
+import at.aimon.workflow.graaljs.exception.JsScriptException;
 
 /**
  * Marshalling unit tests: a JS descriptor with a nested schema marshals to an {@link AgentTask} that
@@ -74,6 +76,77 @@ class MarshallingUnitTest {
         assertThat(task.getGoal()).isEqualTo("do it");
         assertThat(task.getLabel()).isEqualTo("L");
         assertThat(task.getSubagent().getName()).isEqualTo("graaljs:w");
+    }
+
+    @Test
+    @DisplayName("attributes: nested and dotted spellings are the same attribute; scalars become text")
+    void attributesNestedAndDottedAreEquivalent() {
+        final AgentTask nested = AgentTaskMarshaller.toTask(context.eval("js",
+                "({ agentType: 'a', goal: 'g', attributes: { sandbox: { slot: 'build', cpus: 4 }, gpu: false } })"),
+                SubagentResolver.inline());
+        final AgentTask dotted = AgentTaskMarshaller.toTask(context.eval("js",
+                "({ agentType: 'a', goal: 'g', attributes: { 'sandbox.slot': 'build', 'sandbox.cpus': 4.0, gpu: false } })"),
+                SubagentResolver.inline());
+
+        assertThat(nested.getSubagent().getMetadata().getAttributes()).containsExactly(
+                Map.entry("sandbox.slot", "build"), Map.entry("sandbox.cpus", "4"), Map.entry("gpu", "false"));
+        assertThat(dotted.getSubagent().getMetadata().getAttributes())
+                .isEqualTo(nested.getSubagent().getMetadata().getAttributes());
+    }
+
+    @Test
+    @DisplayName("attributes: absent or null means none")
+    void attributesAbsentOrNullAreEmpty() {
+        assertThat(AgentTaskMarshaller
+                .toTask(context.eval("js", "({ agentType: 'a', goal: 'g' })"), SubagentResolver.inline()).getSubagent()
+                .getMetadata().getAttributes()).isEmpty();
+        assertThat(AgentTaskMarshaller.toTask(context.eval("js", "({ agentType: 'a', goal: 'g', attributes: null })"),
+                SubagentResolver.inline()).getSubagent().getMetadata().getAttributes()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("attributes: a non-object is rejected loudly")
+    void attributesMustBeAnObject() {
+        for (String js : new String[]{"'build'", "['a']", "42", "(() => 1)"}) {
+            final Value descriptor = context.eval("js", "({ agentType: 'a', goal: 'g', attributes: " + js + " })");
+            assertThatThrownBy(() -> AgentTaskMarshaller.toTask(descriptor, SubagentResolver.inline())).as(js)
+                    .isInstanceOf(JsScriptException.class).hasMessageContaining("'attributes' must be an object");
+        }
+    }
+
+    @Test
+    @DisplayName("attributes: an entry a definition file could not hold is rejected with its key")
+    void attributesEntryRulesMatchDefinitionFiles() {
+        assertThatThrownBy(() -> AgentTaskMarshaller.toTask(
+                context.eval("js", "({ agentType: 'a', goal: 'g', attributes: { slots: ['a', 'b'] } })"),
+                SubagentResolver.inline())).isInstanceOf(JsScriptException.class)
+                .hasMessageContaining("'slots' is a list");
+        assertThatThrownBy(() -> AgentTaskMarshaller.toTask(
+                context.eval("js", "({ agentType: 'a', goal: 'g', attributes: { slot: null } })"),
+                SubagentResolver.inline())).isInstanceOf(JsScriptException.class)
+                .hasMessageContaining("'slot' has no value");
+        assertThatThrownBy(() -> AgentTaskMarshaller.toTask(
+                context.eval("js",
+                        "({ agentType: 'a', goal: 'g', attributes: { sandbox: 'x', 'sandbox.slot': 'y' } })"),
+                SubagentResolver.inline())).isInstanceOf(JsScriptException.class)
+                .hasMessageContaining("'sandbox' is both a value and a group");
+    }
+
+    @Test
+    @DisplayName("attributes: a non-finite number (NaN, ±Infinity) is rejected with its key")
+    void attributesRejectNonFiniteNumbers() {
+        for (String js : new String[]{"NaN", "Infinity", "-Infinity", "0/0"}) {
+            final Value descriptor = context.eval("js",
+                    "({ agentType: 'a', goal: 'g', attributes: { sandbox: { cpus: " + js + " } } })");
+            assertThatThrownBy(() -> AgentTaskMarshaller.toTask(descriptor, SubagentResolver.inline())).as(js)
+                    .isInstanceOf(JsScriptException.class)
+                    .hasMessageContaining("attribute 'sandbox.cpus' must be a finite number");
+        }
+        // A large but finite number is still an ordinary value.
+        assertThat(AgentTaskMarshaller
+                .toTask(context.eval("js", "({ agentType: 'a', goal: 'g', attributes: { big: 1.5e300 } })"),
+                        SubagentResolver.inline())
+                .getSubagent().getMetadata().getAttributes()).containsKey("big");
     }
 
     private static void assertNoPolyglotTypes(Object value) {

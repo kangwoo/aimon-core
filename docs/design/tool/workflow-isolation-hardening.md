@@ -5,7 +5,7 @@
 > `ScopedVirtualFileSystem`, `WorktreeMerge`, `DefaultWorkflowContext.resolveEnv`, and after review 2
 > `VirtualFileSystems.pathRules`) and the records:
 > [`execution-environment.md`](execution-environment.md) §4.1, §4.2, §5.2, §9.2, §13 and §15,
-> [`execution-environment-implementation.md`](execution-environment-implementation.md) §10.8,
+> [`execution-environment-implementation.md`](execution-environment-implementation.md) §10.9,
 > [`../workflow/workflow.md`](../workflow/workflow.md) §6.3, the workflow usage guide, and backlog EE-8, EE-25, EE-27,
 > EE-28 and EE-29 (closed) plus EE-46 and EE-47 (opened) in
 > [`../../backlog/execution-environment-open-items.md`](../../backlog/execution-environment-open-items.md).
@@ -456,7 +456,8 @@ file and pre-flights metadata (§1.5; "before any I/O" there holds for the local
 
 **Backlog numbering.** The items were first registered as EE-43 and EE-44, the next free numbers on this branch. The
 concurrent EE-42 branch had already taken EE-43 to EE-45, so before merging they were renumbered to EE-46 and EE-47.
-On this branch alone, the register therefore skips EE-43 to EE-45; the merge fills the gap.
+On this branch alone, the register therefore skips EE-43 to EE-45; the merge fills the gap. The same merge moved this change's
+section of the implementation plan from §10.8 to §10.9, since EE-42 had taken §10.8.
 
 ### 8.4 Review 2 — what the build review changed
 
