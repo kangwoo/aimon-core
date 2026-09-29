@@ -613,6 +613,11 @@ aimon-sandbox 는 `ExecutionEnvironmentProvider` 를 구현한다. 이 문서가
 
 ## 14. 열린 질문
 
+> 이 절은 설계 시점의 기록이다. 다섯 질문 가운데 셋 — `Environment` 의 남은 필드, 스킬 선언 훅의 셸, 백그라운드 명령을
+> 끝낼 수단 — 은 2026-09-29 에 결정되었고, 결정문과 착수 범위는 백로그의 EE-14 · EE-12 · EE-13 에 있다
+> ([`execution-environment-open-items.md`](../../backlog/execution-environment-open-items.md)). 나머지 둘(artifact 를 늘 복사할지,
+> `contentSearch` 결과 형식)은 아직 열려 있다.
+
 - **`Environment` 의 남은 필드** — `platform`/`osVersion`/`workingDirectory` 가 서술자로 가면 `timeZone` 만 남는다.
   `UserLocale` 같은 이름으로 옮기고 `Environment` 를 없앨지
 - **스킬 선언 훅의 셸 액션**(`at.aimon.core.skill.hook.declarative.ShellActionExecutor`) — 운영자 설정이 아니라
