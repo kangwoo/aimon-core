@@ -1,4 +1,4 @@
-package at.aimon.core.agent;
+package at.aimon.core.base;
 
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -22,9 +22,23 @@ import java.util.Objects;
  * </pre>
  *
  * <p>
- * Scalar values (text, numbers, booleans) become their text. A list, a null value, a blank key, or two spellings that
- * land on the same dotted key are errors rather than dropped: an attribute is read by something that is not here to
- * complain, so one silently lost would surface as a sandbox picked by default with nobody knowing why.
+ * Scalar values (text, numbers, booleans) become their text. A list, a null value, an empty nested map, a blank key,
+ * the same key written both nested and dotted, and a key that is both a value and a group ({@code sandbox: x} beside
+ * {@code sandbox.slot: y}) are errors rather than dropped or kept ambiguous: an attribute is read by something that is
+ * not here to
+ * complain, so one silently lost would surface as a sandbox picked by default with nobody knowing why. The same key
+ * written twice at one level is not caught here — the definition parsers keep YAML's default of letting the last one
+ * win.
+ *
+ * <p>
+ * <b>Quote values that are not plain text.</b> The parsers read YAML 1.1, which types unquoted scalars before this
+ * class sees them: {@code on} becomes {@code true}, {@code 010} becomes {@code 8}, and a date such as
+ * {@code 2026-01-01} is not a scalar this class accepts. {@code "on"}, {@code "010"} and {@code "2026-01-01"} arrive as
+ * written.
+ *
+ * <p>
+ * Keys are trimmed when read from frontmatter; a key handed to {@link #copyOf(Map)} with surrounding whitespace is
+ * rejected rather than trimmed, so a code-built definition cannot hold a key a file-built one could never produce.
  */
 public final class DefinitionAttributes {
 
@@ -55,6 +69,15 @@ public final class DefinitionAttributes {
         }
         final Map<String, String> flattened = new LinkedHashMap<>();
         flatten("", block, flattened);
+        for (String key : flattened.keySet()) {
+            for (int dot = key.indexOf('.'); dot >= 0; dot = key.indexOf('.', dot + 1)) {
+                final String group = key.substring(0, dot);
+                if (flattened.containsKey(group)) {
+                    throw new IllegalArgumentException("Invalid '" + FRONTMATTER_KEY + "' entry: '" + group
+                            + "' is both a value and a group (of '" + key + "')");
+                }
+            }
+        }
         return Collections.unmodifiableMap(flattened);
     }
 
@@ -68,7 +91,7 @@ public final class DefinitionAttributes {
      * @throws NullPointerException
      *             if the map, a key or a value is null
      * @throws IllegalArgumentException
-     *             if a key is blank
+     *             if a key is blank or has surrounding whitespace
      */
     public static Map<String, String> copyOf(Map<String, String> attributes) {
         Objects.requireNonNull(attributes, "attributes cannot be null");
@@ -78,6 +101,9 @@ public final class DefinitionAttributes {
             Objects.requireNonNull(value, "value of attribute '" + key + "' cannot be null");
             if (key.isBlank()) {
                 throw new IllegalArgumentException("attribute key cannot be blank");
+            }
+            if (!key.equals(key.trim())) {
+                throw new IllegalArgumentException("attribute key '" + key + "' has surrounding whitespace");
             }
             copy.put(key, value);
         });
@@ -95,6 +121,10 @@ public final class DefinitionAttributes {
             final String key = prefix.isEmpty() ? segment : prefix + '.' + segment;
             final Object value = entry.getValue();
             if (value instanceof Map<?, ?> nested) {
+                if (nested.isEmpty()) {
+                    throw new IllegalArgumentException(
+                            "Invalid '" + FRONTMATTER_KEY + "' entry: '" + key + "' is an empty map");
+                }
                 flatten(key, nested, into);
             } else if (value instanceof String || value instanceof Number || value instanceof Boolean) {
                 if (into.putIfAbsent(key, value.toString()) != null) {
@@ -108,8 +138,9 @@ public final class DefinitionAttributes {
                 throw new IllegalArgumentException("Invalid '" + FRONTMATTER_KEY + "' entry: '" + key
                         + "' is a list; an attribute value must be a single text, number or boolean");
             } else {
-                throw new IllegalArgumentException("Invalid '" + FRONTMATTER_KEY + "' entry: '" + key
-                        + "' has an unsupported value of type " + value.getClass().getSimpleName());
+                throw new IllegalArgumentException(
+                        "Invalid '" + FRONTMATTER_KEY + "' entry: '" + key + "' has an unsupported value of type "
+                                + value.getClass().getSimpleName() + "; quote it to keep it as text");
             }
         }
     }

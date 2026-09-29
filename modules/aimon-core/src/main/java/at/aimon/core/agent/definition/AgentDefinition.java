@@ -10,9 +10,9 @@ import java.util.Optional;
 import java.util.Set;
 
 import at.aimon.core.agent.ContextEngineKind;
-import at.aimon.core.agent.DefinitionAttributes;
 import at.aimon.core.agent.Version;
 import at.aimon.core.agent.tool.permission.AllowedTool;
+import at.aimon.core.base.DefinitionAttributes;
 import at.aimon.core.llm.LlmModel;
 
 /**

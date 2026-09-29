@@ -198,12 +198,12 @@ public class BashOutputTool extends AbstractTool {
                 }
             }
 
-            // Read new output. The environment's notices are taken in the finished branches below: they arrive with
-            // the result, and taking them before the status says so could consume them without showing them.
-            final String output = task.readNewOutput(filter);
-
-            // Format result based on status
+            // Status first, then output. The completion handler appends all output before it marks the task done, so a
+            // task read as finished here already has all of it; reading output first could return nothing from a task
+            // that finishes before the status is read, leaving its output for a poll the model has no reason to make.
+            // The environment's notices are taken in the finished branches below, for the same reason.
             final BashTaskStatus status = task.getStatus();
+            final String output = task.readNewOutput(filter);
             final StringBuilder result = new StringBuilder();
 
             switch (status) {

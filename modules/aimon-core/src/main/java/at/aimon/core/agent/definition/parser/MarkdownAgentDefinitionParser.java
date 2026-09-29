@@ -16,12 +16,12 @@ import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.constructor.SafeConstructor;
 
 import at.aimon.core.agent.ContextEngineKind;
-import at.aimon.core.agent.DefinitionAttributes;
 import at.aimon.core.agent.Version;
 import at.aimon.core.agent.definition.AgentDefinition;
 import at.aimon.core.agent.definition.exception.AgentDefinitionParseException;
 import at.aimon.core.agent.tool.exception.InvalidToolSpecException;
 import at.aimon.core.agent.tool.permission.AllowedTool;
+import at.aimon.core.base.DefinitionAttributes;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.ReasoningEffort;
 

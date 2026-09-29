@@ -4,7 +4,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-import at.aimon.core.agent.DefinitionAttributes;
+import at.aimon.core.base.DefinitionAttributes;
 
 /**
  * Result of parsing subagent content including metadata and system prompt.

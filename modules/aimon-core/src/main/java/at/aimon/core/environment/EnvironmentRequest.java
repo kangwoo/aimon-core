@@ -1,5 +1,6 @@
 package at.aimon.core.environment;
 
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -88,6 +89,20 @@ public final class EnvironmentRequest {
      */
     public Optional<ForkDefinition> fork() {
         return Optional.ofNullable(fork);
+    }
+
+    /**
+     * Returns the attributes of the definition this execution runs: the fork's subagent when the request is for a fork,
+     * otherwise the agent's, otherwise none. The one lookup every provider's binding policy needs — a provider that
+     * read only {@link #agent()} would place every fork where its main turn runs, and nothing would fail.
+     *
+     * @return the attributes (never null; unmodifiable; empty when neither is present)
+     */
+    public Map<String, String> definitionAttributes() {
+        if (fork != null) {
+            return fork.attributes();
+        }
+        return agent != null ? agent.getAttributes() : Map.of();
     }
 
     /** @return a new builder */

@@ -11,7 +11,7 @@ import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.constructor.SafeConstructor;
 
-import at.aimon.core.agent.DefinitionAttributes;
+import at.aimon.core.base.DefinitionAttributes;
 
 /**
  * Parses subagent content including YAML frontmatter and markdown body.

@@ -11,6 +11,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import at.aimon.core.agent.tool.permission.AllowedTool;
+import at.aimon.core.base.DefinitionAttributes;
 import at.aimon.core.llm.LlmModel;
 
 /**

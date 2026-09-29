@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -196,6 +197,7 @@ class BashOutputToolTest {
 
         assertThat(first.getContent()).contains("[environment] shell session was recreated; cwd was reset\n")
                 .contains("build ok");
+        assertThat(first.getContent().indexOf("[environment]")).isLessThan(first.getContent().indexOf("Output:"));
         assertThat(second.getContent()).doesNotContain("[environment]");
     }
 
@@ -211,6 +213,24 @@ class BashOutputToolTest {
 
         assertThat(result.getContent()).contains("Status: Failed").contains("[environment] sandbox was recreated\n")
                 .contains("partial output");
+    }
+
+    @Test
+    void testExecute_BlockingPollAfterFailure_SeesTheRecordedOutcome() throws Exception {
+        // A poller woken by the raw future could read the task before the completion handler recorded the exit code,
+        // output and notices. It must wait for the recorded outcome instead.
+        CompletableFuture<ShellCommandResult> future = new CompletableFuture<>();
+        backgroundManager.registerTask("task_123", "make", future);
+        CompletableFuture<ToolResult> poll = CompletableFuture.supplyAsync(() -> bashOutputTool
+                .execute(ToolInput.of(Map.of("taskId", "task_123", "block", true, "wait_up_to", 10)), context));
+
+        Thread.sleep(50);
+        future.completeExceptionally(new CompletionException(new ShellTimeoutException("timed out",
+                Duration.ofSeconds(1), "partial output", "", false, List.of("sandbox was recreated"))));
+
+        String content = poll.get(10, TimeUnit.SECONDS).getContent();
+        assertThat(content).contains("Status: Failed").contains("Exit Code: 1")
+                .contains("[environment] sandbox was recreated").contains("partial output");
     }
 
     @Test

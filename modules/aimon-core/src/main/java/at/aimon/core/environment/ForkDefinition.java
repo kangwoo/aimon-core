@@ -1,9 +1,9 @@
 package at.aimon.core.environment;
 
-import java.util.Collections;
-import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
+
+import at.aimon.core.base.DefinitionAttributes;
 
 /**
  * What an {@link ExecutionEnvironmentProvider} is told about the subagent definition a fork runs (execution-environment
@@ -22,7 +22,7 @@ public final class ForkDefinition {
 
     private ForkDefinition(Builder builder) {
         this.name = Objects.requireNonNull(builder.name, "name must not be null");
-        this.attributes = Collections.unmodifiableMap(new LinkedHashMap<>(builder.attributes));
+        this.attributes = builder.attributes;
     }
 
     /** @return the subagent's name, as the {@code Task} tool resolved it */
@@ -83,16 +83,11 @@ public final class ForkDefinition {
 
         /**
          * @param attributes
-         *            the definition's attributes (must not be null, nor contain null keys or values)
+         *            the definition's attributes, validated and copied by {@link DefinitionAttributes#copyOf(Map)}
          * @return this builder
          */
         public Builder attributes(Map<String, String> attributes) {
-            Objects.requireNonNull(attributes, "attributes must not be null");
-            attributes.forEach((key, value) -> {
-                Objects.requireNonNull(key, "attribute key must not be null");
-                Objects.requireNonNull(value, "attribute value must not be null");
-            });
-            this.attributes = attributes;
+            this.attributes = DefinitionAttributes.copyOf(attributes);
             return this;
         }
 

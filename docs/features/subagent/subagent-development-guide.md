@@ -161,7 +161,9 @@ Subagent.builder().name("plain").systemPrompt("You are a plain agent.").build();
 You are a plain agent.
 ```
 
-둘 다 `maxIterations=1000`, `model=null`, `whenToUse=null`, 도구 제한 없음이 됩니다.
+둘 다 `maxIterations=1000`, `model=null`, `whenToUse=null`, 도구 제한 없음, 속성 없음(빈 `attributes`)이 됩니다.
+마크다운의 `attributes:` 블록(예: `attributes:` 아래 `sandbox:` → `slot: build`)은 코드의
+`.attributes(Map.of("sandbox.slot", "build"))` 와 같습니다.
 
 ---
 

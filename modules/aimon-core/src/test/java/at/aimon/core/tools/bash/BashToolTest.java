@@ -121,6 +121,7 @@ class BashToolTest {
             assertThat(result.isError()).isTrue();
             assertThat(result.getContent()).isEqualTo("Execution environment unavailable: sandbox is down")
                     .doesNotContain("Background task started");
+            assertThat(manager.getActiveTaskCount()).isZero();
         } finally {
             tool.shutdown();
         }

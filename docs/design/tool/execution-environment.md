@@ -310,11 +310,12 @@ public interface ExecutionEnvironmentProvider {
 `agentRuntime.getFileSystem()` 은 없어진다. 한 실행 안에서 프롬프트가 묘사하는 환경과 도구가 쓰는 환경이 다를 수
 없게 하는 것이 목적이다.
 
-`resolve()` 를 부르는 곳은 넷이다 — `OrcaAgentExecutor.execute()` 의 시작(메인 턴과 슬래시 커맨드 흐름이 같은 값을
-쓴다. 커맨드 흐름은 ReAct 루프 대신 도는 같은 실행의 분기이지 별도 실행이 아니다), `DefaultSubagentExecutor`(포크),
-`RoutineExecutor`(스케줄 루틴), 그리고 부모 환경이 없는 워크플로 러너의 격리 단계(`DefaultWorkflowContext`, 런타임
-범위 러너 — 이 요청에는 에이전트 런타임 id 와 주체만 실린다. EE-30). 이 밖에 `ToolContext` 를 손으로 조립하는 경로는 `resolve()` 를 다시 부르지 않고, 이미
-해석된 실행의 환경을 싣는다. 한 실행에서 두 번 부르면 한 실행에 환경이 둘이 된다.
+실행마다 `resolve()` 를 부르는 곳은 셋이다 — `OrcaAgentExecutor.execute()` 의 시작(메인 턴과 슬래시 커맨드 흐름이
+같은 값을 쓴다. 커맨드 흐름은 ReAct 루프 대신 도는 같은 실행의 분기이지 별도 실행이 아니다), `DefaultSubagentExecutor`
+(포크 — 워크플로 단계도 포크로 돈다), `RoutineExecutor`(스케줄 루틴). 실행 밖의 호출이 하나 더 있다: CLI 의
+`AgentSetupFactory.workingDirectoryOf` 가 부트스트랩 때 작업 디렉터리를 알아내려고 한 번 부른다. 어떤 실행에도 속하지
+않으므로 "실행당 한 번" 규칙과 부딪히지 않는다. 이 밖에 `ToolContext` 를 손으로 조립하는 경로는 `resolve()` 를 다시
+부르지 않고, 이미 해석된 실행의 환경을 싣는다. 한 실행에서 두 번 부르면 한 실행에 환경이 둘이 된다.
 
 **프롬프트 조립이 환경을 읽으면 게으른 제공자는 그때 원격 자원을 만든다.** 서술자(§10)는 `resolve()` 가 돌려준
 값이라 괜찮지만, `GitStatusContextProvider`·`DirectorySummaryContextProvider` 는 매 턴 `fileSystem()` 을 읽는다
@@ -344,8 +345,12 @@ public interface ExecutionEnvironmentProvider {
   `SubagentExecutionEnvironment` 에 부모 `ExecutionEnvironment` 필드를 더한다. 포크의 요청에는 포크 자신의 정의도
   실린다 — `EnvironmentRequest.fork()` 가 서브에이전트 이름과 정의 파일의 `attributes`(점 표기로 펼친
   `Map<String, String>`, 예: `sandbox.slot`)를 담은 `ForkDefinition` 을 준다. 제공자가 포크마다 다른 슬롯을 고르는
-  근거가 이것이다. 메인 턴은 `agent()` 의 `AgentMetadata.getAttributes()` 에서 같은 값을 읽는다. 코어는 속성을 싣기만
-  하고 읽지 않는다 — 키 이름은 제공자가 정한다
+  근거가 이것이다. 메인 턴은 `agent()` 의 `getAttributes()` 에서 같은 값을 읽는다. 두 경우를 한 번에 푸는 것이
+  `EnvironmentRequest.definitionAttributes()` 다 — 포크면 포크의 것, 아니면 에이전트의 것, 둘 다 없으면 빈 맵. 제공자는
+  이것을 읽는다(`agent()` 만 읽으면 모든 포크가 메인 턴의 슬롯에 들어가는데 아무것도 실패하지 않는다). 코어는 속성을
+  싣기만 하고 읽지 않는다 — 키 이름은 제공자가 정한다. 따옴표 없는 값은 YAML 1.1 이 먼저 타입을 입히므로(`010` →
+  `8`, `on` → `true`) 평범한 텍스트가 아닌 값은 따옴표로 감싼다. 워크플로 스크립트의 인라인 서브에이전트는 아직
+  속성을 싣지 못한다(EE-42)
 - **워크플로 격리 브랜치** — 러너는 `parentEnv.isolate(branchKey)` 를 부른다. 비어 있으면(격리를 지원하지 않는
   환경) 브랜치를 격리 없이 돌리지 않고 **실행을 거부**한다. 격리를 요청한 스크립트가 격리 없이 돌면 병렬 브랜치가
   서로의 파일을 덮는다

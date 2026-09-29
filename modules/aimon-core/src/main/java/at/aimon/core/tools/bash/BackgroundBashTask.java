@@ -66,6 +66,12 @@ public class BackgroundBashTask {
     private final String taskId;
     private final String command;
     private final CompletableFuture<ShellCommandResult> future;
+    /**
+     * Completes after the completion handler has recorded the outcome. Waiters join this, not {@link #future}: a thread
+     * joined on the raw future can be woken before the handler runs, and would then read a task with no exit code, no
+     * output and no notices.
+     */
+    private final CompletableFuture<ShellCommandResult> settled;
     private final List<String> outputLines;
     private final AtomicInteger lastReadLine;
     private final Object stateLock = new Object();
@@ -98,7 +104,7 @@ public class BackgroundBashTask {
         failed = false;
 
         // Set up completion handler
-        future.whenComplete((result, error) -> {
+        settled = future.whenComplete((result, error) -> {
             synchronized (stateLock) {
                 if (error != null) {
                     failed = true;
@@ -203,37 +209,35 @@ public class BackgroundBashTask {
     /**
      * Gets the current status of the task.
      *
+     * <p>
+     * Derived from the recorded outcome only, never from the future: the future is done a moment before the completion
+     * handler records the exit code, output and notices, and a status read in that window would report a finished
+     * task with none of them.
+     *
      * @return The task status
      */
     public BashTaskStatus getStatus() {
         synchronized (stateLock) {
-            if (!completed && !future.isDone()) {
+            if (!completed) {
                 return BashTaskStatus.RUNNING;
             }
-
-            if (failed || future.isCompletedExceptionally()) {
-                return BashTaskStatus.FAILED;
-            }
-
-            if (completed) {
-                return BashTaskStatus.COMPLETED;
-            }
-
-            return BashTaskStatus.RUNNING;
+            return failed ? BashTaskStatus.FAILED : BashTaskStatus.COMPLETED;
         }
     }
 
     /**
-     * Waits for the task to complete.
+     * Waits for the task to complete and for its outcome to be recorded.
      *
      * @return true if completed successfully, false if failed
      */
     public boolean awaitCompletion() {
         try {
-            future.join();
-            return !failed;
+            settled.handle((result, error) -> null).join();
         } catch (Exception e) {
             return false;
+        }
+        synchronized (stateLock) {
+            return !failed;
         }
     }
 

@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/subagent/subagent-development-guide.md
-source_commit: 43c8949
+source_commit: 56930f5
 ---
 
 # Subagent Development Guide
@@ -168,7 +168,9 @@ Subagent.builder().name("plain").systemPrompt("You are a plain agent.").build();
 You are a plain agent.
 ```
 
-Both end up with `maxIterations=1000`, `model=null`, `whenToUse=null` and no tool restriction.
+Both end up with `maxIterations=1000`, `model=null`, `whenToUse=null`, no tool restriction and no attributes (an empty
+`attributes`). A markdown `attributes:` block (e.g. `sandbox:` → `slot: build` under `attributes:`) is the same as
+`.attributes(Map.of("sandbox.slot", "build"))` in code.
 
 ---
 

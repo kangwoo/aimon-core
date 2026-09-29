@@ -5,8 +5,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
-import at.aimon.core.agent.DefinitionAttributes;
 import at.aimon.core.agent.tool.permission.AllowedTool;
+import at.aimon.core.base.DefinitionAttributes;
 
 /**
  * Subagent metadata including description, tools, model, permissions.

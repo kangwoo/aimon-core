@@ -1,10 +1,12 @@
-package at.aimon.core.agent;
+package at.aimon.core.base;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.Date;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import org.junit.jupiter.api.DisplayName;
@@ -48,6 +50,46 @@ class DefinitionAttributesTest {
     void blankKeyRejected() {
         assertThatThrownBy(() -> DefinitionAttributes.fromFrontmatter(Map.of("sandbox", Map.of(" ", "x"))))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("blank key under 'sandbox'");
+    }
+
+    @Test
+    @DisplayName("an empty nested map is an error rather than no attribute")
+    void emptyNestedMapRejected() {
+        assertThatThrownBy(() -> DefinitionAttributes.fromFrontmatter(Map.of("sandbox", Map.of())))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("'sandbox' is an empty map");
+    }
+
+    @Test
+    @DisplayName("a key that is both a value and a group is an error")
+    void valueAndGroupRejected() {
+        final Map<String, Object> raw = new LinkedHashMap<>();
+        raw.put("sandbox", "x");
+        raw.put("sandbox.slot", "y");
+
+        assertThatThrownBy(() -> DefinitionAttributes.fromFrontmatter(raw)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("'sandbox' is both a value and a group");
+    }
+
+    @Test
+    @DisplayName("a list value is an error naming the key")
+    void listRejected() {
+        assertThatThrownBy(() -> DefinitionAttributes.fromFrontmatter(Map.of("sandbox", Map.of("slot", List.of("a")))))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("'sandbox.slot' is a list");
+    }
+
+    @Test
+    @DisplayName("a YAML-typed scalar such as a date is refused with a hint to quote it")
+    void dateRejectedWithQuotingHint() {
+        assertThatThrownBy(() -> DefinitionAttributes.fromFrontmatter(Map.of("since", new Date(0))))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("'since'")
+                .hasMessageContaining("quote it");
+    }
+
+    @Test
+    @DisplayName("copyOf rejects a key with surrounding whitespace instead of trimming it")
+    void copyOfRejectsUntrimmedKey() {
+        assertThatThrownBy(() -> DefinitionAttributes.copyOf(Map.of("sandbox.slot ", "b")))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("surrounding whitespace");
     }
 
     @Test
