@@ -24,6 +24,7 @@ import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.permission.AllowedTool;
+import at.aimon.core.base.Principal;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmModel;
@@ -175,6 +176,24 @@ class SubagentBackedSkillForkExecutorTest {
     @Test
     void fork_WithoutACallerAllowList_ImposesNoCeiling() {
         assertThat(captureEnvFor(contextWithExecutionId("ctx-42")).getCallerAllowedTools()).isEmpty();
+    }
+
+    @Test
+    void fork_ForwardsTheCallersPrincipal() {
+        // The fork resolves its execution environment under this principal; without it a fork-mode skill's Bash was
+        // refused as "not permitted" while the same skill ran inline.
+        final Principal alice = Principal.user("alice");
+
+        final SubagentExecutionEnvironment env = captureEnvFor(
+                ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, AgentRuntimeIds.testCtx("ctx-42"))
+                        .put(ToolContextKeys.PRINCIPAL, alice).build());
+
+        assertThat(env.getPrincipal()).contains(alice);
+    }
+
+    @Test
+    void fork_WithoutAPrincipal_ForwardsNone() {
+        assertThat(captureEnvFor(contextWithExecutionId("ctx-42")).getPrincipal()).isEmpty();
     }
 
     /** Runs a successful fork against the given context and returns the environment the manager was handed. */

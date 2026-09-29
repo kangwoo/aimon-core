@@ -23,8 +23,11 @@ import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.transcript.DefaultTranscriptManager;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
+import at.aimon.core.base.Principal;
 import at.aimon.core.command.DefaultCommandExecutionManager;
 import at.aimon.core.command.DefaultCommandRegistry;
+import at.aimon.core.environment.EnvironmentRequest;
+import at.aimon.core.environment.ExecutionEnvironmentProvider;
 import at.aimon.core.environment.StagedResource;
 import at.aimon.core.environment.impl.LocalExecutionEnvironmentProvider;
 import at.aimon.core.filesystem.VirtualFileSystems;
@@ -197,7 +200,37 @@ class SlashSkillForkE2EIntegrationTest {
         assertThat(llmClient.callCount()).isZero();
     }
 
+    /**
+     * Regression (N1): the slash path's hand-built tool context carried no principal, so the fork resolved its
+     * execution environment anonymously and its Bash was refused as "not permitted". Asserts on the request the
+     * provider actually receives for the fork, since that is where the principal decides what the fork may do.
+     */
+    @Test
+    @DisplayName("forwards the caller's principal to the fork's execution environment on the slash path")
+    void slashForkSkill_ResolvesTheForksEnvironmentUnderTheCallersPrincipal() {
+        skillForkRegistryFixture();
+        final Principal alice = Principal.user("alice");
+        final List<EnvironmentRequest> requests = new ArrayList<>();
+
+        final OrcaAgentExecutionResult result = executor.execute(createContext(requests), OrcaAgentExecutionRequest
+                .builder().userInput("/review Foo.java").sessionId(SessionId.generate()).principal(alice).build());
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(requests).filteredOn(r -> r.fork().isPresent()).singleElement()
+                .satisfies(r -> assertThat(r.principal()).contains(alice));
+    }
+
+    private void skillForkRegistryFixture() {
+        skillRegistry.add(forkSkill("review", "code-reviewer", "Review the following: $ARGUMENTS"));
+        subagentRegistry.add(simpleSubagent("code-reviewer"));
+    }
+
     private OrcaAgentRuntime createContext() {
+        return createContext(new ArrayList<>());
+    }
+
+    /** Builds the runtime, recording every environment request its provider receives into {@code requests}. */
+    private OrcaAgentRuntime createContext(List<EnvironmentRequest> requests) {
         environmentProvider = LocalExecutionEnvironmentProvider.builder().workspaceRoot(tempDir.resolve("workspace"))
                 .contentSearch(false).build();
         final LocalFileSystem fileSystem = new LocalFileSystem(new LocalFileSystemConfig(tempDir.toString()));
@@ -211,7 +244,14 @@ class SlashSkillForkE2EIntegrationTest {
                         .model(LlmModel.builder().name("gpt-4").build()).build())
                 .toolRegistry(toolRegistry).hookRegistry(new DefaultHookRegistry()).commandRegistry(commandRegistry)
                 .subagentRegistry(subagentRegistry).skillRegistry(skillRegistry).controlFileSystem(fileSystem)
-                .environment(Environment.createDefault()).executionEnvironmentProvider(environmentProvider).build();
+                .environment(Environment.createDefault()).executionEnvironmentProvider(recording(requests)).build();
+    }
+
+    private ExecutionEnvironmentProvider recording(List<EnvironmentRequest> requests) {
+        return request -> {
+            requests.add(request);
+            return environmentProvider.resolve(request);
+        };
     }
 
     private static OrcaAgentExecutionRequest createRequest(String userInput) {
