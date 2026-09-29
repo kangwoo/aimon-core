@@ -10,6 +10,7 @@ import java.util.Optional;
 import java.util.Set;
 
 import at.aimon.core.agent.ContextEngineKind;
+import at.aimon.core.agent.DefinitionAttributes;
 import at.aimon.core.agent.Version;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.llm.LlmModel;
@@ -64,6 +65,7 @@ public final class AgentDefinition {
     private final Map<String, Object> variables;
     private final List<AllowedTool> allowedTools;
     private final ContextEngineKind contextEngine;
+    private final Map<String, String> attributes;
 
     /**
      * AgentDefinition을 생성한다.
@@ -81,6 +83,7 @@ public final class AgentDefinition {
         variables = builder.variables != null ? Map.copyOf(builder.variables) : Map.of();
         allowedTools = builder.allowedTools != null ? List.copyOf(builder.allowedTools) : List.of();
         contextEngine = builder.contextEngine;
+        attributes = builder.attributes != null ? DefinitionAttributes.copyOf(builder.attributes) : Map.of();
     }
 
     /**
@@ -178,6 +181,17 @@ public final class AgentDefinition {
     }
 
     /**
+     * Returns the free-form attributes from the {@code attributes} frontmatter, flattened to dotted keys. The framework
+     * carries them and never reads them — they are for a component it does not know about, such as an execution
+     * environment provider (see {@link DefinitionAttributes}).
+     *
+     * @return an unmodifiable map (never null, may be empty)
+     */
+    public Map<String, String> getAttributes() {
+        return attributes;
+    }
+
+    /**
      * Builder for constructing {@link AgentDefinition} instances.
      *
      * <p>
@@ -193,6 +207,19 @@ public final class AgentDefinition {
         private Map<String, Object> variables;
         private List<AllowedTool> allowedTools;
         private ContextEngineKind contextEngine;
+        private Map<String, String> attributes;
+
+        /**
+         * Sets the free-form attributes.
+         *
+         * @param attributes
+         *            the attributes, already flat (null means none)
+         * @return This builder for method chaining
+         */
+        public Builder attributes(Map<String, String> attributes) {
+            this.attributes = attributes;
+            return this;
+        }
 
         /**
          * Sets the context engine the agent asks for.

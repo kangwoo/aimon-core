@@ -177,4 +177,47 @@ class SubagentContentParserTest {
         assertThatThrownBy(() -> parser.parse(content)).isInstanceOf(SubagentParseException.class)
                 .hasMessageContaining("Failed to parse YAML frontmatter");
     }
+
+    @Test
+    void parse_Attributes_FlattenedToDottedKeys() {
+        String content = """
+                ---
+                description: Builder
+                attributes:
+                  sandbox:
+                    slot: build
+                  sandbox.profile: large
+                ---
+
+                You build things.
+                """;
+
+        SubagentContentResult result = new SubagentContentParser().parse(content);
+
+        assertThat(result.getAttributes()).containsExactly(entry("sandbox.slot", "build"),
+                entry("sandbox.profile", "large"));
+    }
+
+    @Test
+    void parse_NoAttributes_ReturnsEmpty() {
+        SubagentContentResult result = new SubagentContentParser().parse("---\ndescription: d\n---\nbody");
+
+        assertThat(result.getAttributes()).isEmpty();
+    }
+
+    @Test
+    void parse_AttributeWrittenNestedAndDotted_Throws() {
+        String content = """
+                ---
+                attributes:
+                  sandbox:
+                    slot: a
+                  sandbox.slot: b
+                ---
+                body
+                """;
+
+        assertThatThrownBy(() -> new SubagentContentParser().parse(content)).isInstanceOf(SubagentParseException.class)
+                .hasMessageContaining("sandbox.slot").hasMessageContaining("twice");
+    }
 }

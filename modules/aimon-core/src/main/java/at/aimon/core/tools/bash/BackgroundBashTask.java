@@ -72,6 +72,7 @@ public class BackgroundBashTask {
     private boolean completed;
     private boolean failed;
     private boolean outputTruncated;
+    private List<String> notices = List.of();
     private Integer exitCode;
     private String errorMessage;
 
@@ -112,6 +113,7 @@ public class BackgroundBashTask {
                         appendLines(shellFailure.stdout());
                         appendLines(shellFailure.stderr());
                         outputTruncated = shellFailure.outputTruncated();
+                        notices = shellFailure.notices();
                     }
                 } else if (result != null) {
                     appendLines(result.stdout());
@@ -123,6 +125,7 @@ public class BackgroundBashTask {
                     failed = result.isFailure();
                     exitCode = result.exitCode();
                     outputTruncated = result.outputTruncated();
+                    notices = result.notices();
                 }
                 completed = true;
             }
@@ -310,6 +313,25 @@ public class BackgroundBashTask {
     public boolean isOutputTruncated() {
         synchronized (stateLock) {
             return outputTruncated;
+        }
+    }
+
+    /**
+     * Returns the environment's notices for this task and clears them, so each is reported once — the same read-once
+     * contract as {@link #readNewOutput(String)}. A notice such as "the shell session was recreated" describes the
+     * run, not the present, and repeating it on every later poll would read as a new event each time.
+     *
+     * <p>
+     * Kept apart from the output buffer for the reason {@link #isOutputTruncated()} gives: the caller's {@code filter}
+     * regex applies to buffered lines and would drop a notice that does not match it.
+     *
+     * @return the notices not yet taken (never null; empty until the task completes)
+     */
+    public List<String> takeNotices() {
+        synchronized (stateLock) {
+            final List<String> taken = notices;
+            notices = List.of();
+            return taken;
         }
     }
 }

@@ -4,6 +4,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -41,6 +42,7 @@ public final class AgentMetadata {
     private final Set<String> tags;
     private final List<AllowedTool> allowedTools;
     private final ContextEngineKind contextEngine;
+    private final Map<String, String> attributes;
 
     private AgentMetadata(Builder builder) {
         this.name = Objects.requireNonNull(builder.name, "Agent name cannot be null");
@@ -52,6 +54,7 @@ public final class AgentMetadata {
         this.tags = Collections.unmodifiableSet(new LinkedHashSet<>(builder.tags));
         this.allowedTools = List.copyOf(builder.allowedTools);
         this.contextEngine = builder.contextEngine;
+        this.attributes = DefinitionAttributes.copyOf(builder.attributes);
     }
 
     /**
@@ -133,6 +136,17 @@ public final class AgentMetadata {
         return Optional.ofNullable(contextEngine);
     }
 
+    /**
+     * Returns the free-form attributes from the definition's {@code attributes} frontmatter, flattened to dotted keys
+     * ({@code sandbox.slot}). The framework carries them and never reads them: they are for a component it does not
+     * know about, such as an execution environment provider picking a sandbox (see {@link DefinitionAttributes}).
+     *
+     * @return an unmodifiable map (never null, may be empty)
+     */
+    public Map<String, String> getAttributes() {
+        return attributes;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -144,19 +158,20 @@ public final class AgentMetadata {
         AgentMetadata that = (AgentMetadata) o;
         return name.equals(that.name) && maxIterations == that.maxIterations && model.equals(that.model)
                 && tags.equals(that.tags) && allowedTools.equals(that.allowedTools)
-                && contextEngine == that.contextEngine;
+                && contextEngine == that.contextEngine && attributes.equals(that.attributes);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(name, maxIterations, model, tags, allowedTools, contextEngine);
+        return Objects.hash(name, maxIterations, model, tags, allowedTools, contextEngine, attributes);
     }
 
     @Override
     public String toString() {
         return "AgentMetadata{" + "name='" + name + "', maxIterations=" + maxIterations + ", model=" + model + ", tags="
                 + tags + ", allowedTools=" + allowedTools
-                + (contextEngine != null ? ", contextEngine=" + contextEngine.configValue() : "") + '}';
+                + (contextEngine != null ? ", contextEngine=" + contextEngine.configValue() : "")
+                + (attributes.isEmpty() ? "" : ", attributes=" + attributes) + '}';
     }
 
     /** Builder for AgentMetadata. */
@@ -167,8 +182,23 @@ public final class AgentMetadata {
         private Set<String> tags = new LinkedHashSet<>();
         private List<AllowedTool> allowedTools = List.of();
         private ContextEngineKind contextEngine;
+        private Map<String, String> attributes = Map.of();
 
         private Builder() {
+        }
+
+        /**
+         * Sets the free-form attributes.
+         *
+         * @param attributes
+         *            the attributes, already flat (must not be null, nor contain null keys or values)
+         * @return This builder
+         * @throws NullPointerException
+         *             if the map, a key or a value is null
+         */
+        public Builder attributes(Map<String, String> attributes) {
+            this.attributes = DefinitionAttributes.copyOf(attributes);
+            return this;
         }
 
         /**

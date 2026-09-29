@@ -165,7 +165,7 @@ public interface ExecutionEnvironmentProvider {
 | 타입 | 내용 |
 |------|------|
 | `EnvironmentDescriptor` | `workingDirectory` · `platform` · `osVersion` · `shellName` · `notes`(자유 텍스트 한두 줄, e.g. "isolated sandbox; network restricted"). 불변 + 빌더 |
-| `EnvironmentRequest` | `Agent` · `AgentRuntimeId` · `SessionId`? · `ExecutionId`? · `invokingSessionId`? · `Principal`? · `parent`(`ExecutionEnvironment`?, 포크의 부모 환경) · `branchKey`? |
+| `EnvironmentRequest` | `Agent` · `AgentRuntimeId` · `SessionId`? · `ExecutionId`? · `invokingSessionId`? · `Principal`? · `parent`(`ExecutionEnvironment`?, 포크의 부모 환경) · `branchKey`? · `fork`(`ForkDefinition`?, 포크가 도는 서브에이전트의 이름과 `attributes`) |
 | `ContentSearch` | `search(ContentQuery) → ContentSearchResult`. `GrepTool` 의 입력(패턴 · 경로 · glob · 대소문자 · 컨텍스트 줄 · 출력 모드 · head limit)을 그대로 옮긴 값 |
 | `StagedResource` | 제어 저장소 쪽 파일 묶음 — `sourceFileSystem` · `sourceDir` · `contentKey`(디렉터리 해시, 사본 경로의 일부, §4.4) · `name`. 스킬의 것은 `SkillRepository.resolveSource` 가 낸다 |
 | `FileStamp` | `size` · `modifiedAt` · `etag`? (§7) |
@@ -310,6 +310,18 @@ public interface ExecutionEnvironmentProvider {
 `agentRuntime.getFileSystem()` 은 없어진다. 한 실행 안에서 프롬프트가 묘사하는 환경과 도구가 쓰는 환경이 다를 수
 없게 하는 것이 목적이다.
 
+`resolve()` 를 부르는 곳은 넷이다 — `OrcaAgentExecutor.execute()` 의 시작(메인 턴과 슬래시 커맨드 흐름이 같은 값을
+쓴다. 커맨드 흐름은 ReAct 루프 대신 도는 같은 실행의 분기이지 별도 실행이 아니다), `DefaultSubagentExecutor`(포크),
+`RoutineExecutor`(스케줄 루틴), 그리고 부모 환경이 없는 워크플로 러너의 격리 단계(`DefaultWorkflowContext`, 런타임
+범위 러너 — 이 요청에는 에이전트 런타임 id 와 주체만 실린다. EE-30). 이 밖에 `ToolContext` 를 손으로 조립하는 경로는 `resolve()` 를 다시 부르지 않고, 이미
+해석된 실행의 환경을 싣는다. 한 실행에서 두 번 부르면 한 실행에 환경이 둘이 된다.
+
+**프롬프트 조립이 환경을 읽으면 게으른 제공자는 그때 원격 자원을 만든다.** 서술자(§10)는 `resolve()` 가 돌려준
+값이라 괜찮지만, `GitStatusContextProvider`·`DirectorySummaryContextProvider` 는 매 턴 `fileSystem()` 을 읽는다
+(`.git/HEAD`, 루트 목록). 두 제공자는 옵트인이라 기본 조립에는 없다. 샌드박스처럼 첫 파일 접근에서 프로비저닝하는
+제공자와 함께 쓰면 "명령을 한 번도 실행하지 않는 턴"도 샌드박스를 띄우고, 일시 정지된 샌드박스를 매 턴 깨운다.
+그 조합을 쓸지는 어셈블리가 정한다 — 코어는 두 제공자에게 환경의 준비 상태를 알리는 수단을 두지 않는다.
+
 `resolve()` 가 예외를 던지면 실행을 실패시키지 않고 `UnavailableExecutionEnvironment` 를 넣는다. 이 환경은
 파일 시스템·셸의 모든 호출에서 원인을 담은 예외를 던지고, 도구는 그것을 `ToolResult.error` 로 바꾼다. 서술자는
 던지지 않는다 — `notes` 에 "execution environment unavailable: {원인}" 을 싣고 나머지 필드는 비워, 모델이 첫
@@ -324,9 +336,16 @@ public interface ExecutionEnvironmentProvider {
 ### 5.2 포크와 워크플로
 
 - **서브에이전트·스킬 포크** — `EnvironmentRequest.parent` 에 부모 환경을 싣는다. 로컬 제공자는 `parent` 를 그대로
-  돌려주고(부모가 격리 브랜치면 그 브랜치 환경이지 베이스가 아니다),
-  샌드박스 제공자는 같은 샌드박스에 셸 키만 다른 환경을 돌려준다. `SubagentExecutionEnvironment` 에 부모
-  `ExecutionEnvironment` 필드를 더한다
+  돌려준다(부모가 격리 브랜치면 그 브랜치 환경이지 베이스가 아니다). 샌드박스 제공자는 **부모와 같은 워크스페이스**
+  안의 환경을 돌려주되, 셸은 새로 잡고, 어느 샌드박스(슬롯)에서 돌지는 자기 바인딩 정책으로 정한다 — 기본은 부모와
+  같은 샌드박스다. 코어가 약속하는 것은 "포크는 부모의 격리 단위(작업 공간) 밖으로 나가지 않는다"이고, "부모와
+  같은 파일 시스템"은 기본 제공자의 성질이지 계약이 아니다. 부모가 사용 불가 환경이면 제공자는 포크도 사용 불가로
+  돌려줘야 한다 — 부모를 만들지 못한 이유(주체 거부 등)를 포크가 새 해석으로 우회하면 안 된다.
+  `SubagentExecutionEnvironment` 에 부모 `ExecutionEnvironment` 필드를 더한다. 포크의 요청에는 포크 자신의 정의도
+  실린다 — `EnvironmentRequest.fork()` 가 서브에이전트 이름과 정의 파일의 `attributes`(점 표기로 펼친
+  `Map<String, String>`, 예: `sandbox.slot`)를 담은 `ForkDefinition` 을 준다. 제공자가 포크마다 다른 슬롯을 고르는
+  근거가 이것이다. 메인 턴은 `agent()` 의 `AgentMetadata.getAttributes()` 에서 같은 값을 읽는다. 코어는 속성을 싣기만
+  하고 읽지 않는다 — 키 이름은 제공자가 정한다
 - **워크플로 격리 브랜치** — 러너는 `parentEnv.isolate(branchKey)` 를 부른다. 비어 있으면(격리를 지원하지 않는
   환경) 브랜치를 격리 없이 돌리지 않고 **실행을 거부**한다. 격리를 요청한 스크립트가 격리 없이 돌면 병렬 브랜치가
   서로의 파일을 덮는다
@@ -334,7 +353,10 @@ public interface ExecutionEnvironmentProvider {
 - `WorktreeMerge.promote(baseVfs, branchKeys, policy)` 는 지금 베이스 VFS 하나와 브랜치 키 목록을 받아
   `.worktrees/{key}/` 를 스스로 찾아간다. 브랜치 위치를 아는 것이 환경이 되므로, 부모 환경과 브랜치 환경 목록을
   받는 형태로 바뀐다. 동작(브랜치 간 충돌을 먼저 훑고 `Policy` 로 고른 뒤 VFS 복사로 올리는 병합)은 그대로다.
-  git 기반 병합은 그것을 지원하는 환경(샌드박스)이 `isolate` 와 짝으로 제공한다(§13)
+  **병합은 명시적이다** — 러너는 병합하지 않고, 조립 코드가 `promote` 를 부른다(workflow.md §6.3). 그래서 병합 방식은
+  SPI 가 아니라 호출자의 선택이다. `promote` 는 파일 시스템만 쓰므로 어떤 환경에서도 동작한다. git worktree 로 격리하는
+  환경(샌드박스)은 git 병합을 **자기 모듈의 API** 로 따로 줄 수 있고, 그것을 쓸지는 조립 코드가 고른다. 코어는
+  `ExecutionEnvironment` 에 병합 메서드를 두지 않는다
 
 ### 5.3 백그라운드 명령
 
@@ -350,6 +372,10 @@ public interface ExecutionEnvironmentProvider {
 명령이 세션을 쥐면 그 셸의 다음 명령이 모두 기다린다. 그래서 `ExecutionOptions` 에 `background`(기본 false)를
 더하고 `BashTool` 이 백그라운드 경로에서 켠다. 켜진 명령을 어떻게 돌릴지(샌드박스는 세션 cwd 를 넘긴 one-shot)는
 셸 구현이 정하고, 로컬 셸은 무시한다.
+
+백그라운드 경로는 셸 호출을 미루므로, 사용 불가 환경(§5.1)은 **시작하기 전에** 확인해 포그라운드와 같은 오류를
+돌려준다 — "시작했다"고 보고한 뒤 조회 때 실패하지 않는다. 명령의 notice(§8)는 `BackgroundBashTask` 가 보관했다가
+`BashOutput` 의 완료·실패 보고에 한 번 싣는다.
 
 ---
 
@@ -376,7 +402,11 @@ public interface ExecutionEnvironmentProvider {
 §1.1 을 다시 만든다. `getEnvironment()` 는 §10 이후 `timeZone` 만 남은 값을 돌려주게 되므로 그 결정(§14)을
 따른다. 외부 소비자 둘의 영향:
 
-- `OrcaSandboxToolProvider`(aimon-sandbox) — 워크스페이스 샌드박스 설계에서 도구 자체가 사라진다
+- `OrcaSandboxToolProvider`(aimon-sandbox) — 워크스페이스 샌드박스 설계에서 샌드박스 전용 실행 도구는 모두
+  없어진다. 명령과 파일은 코어의 `Bash`·파일 도구가 샌드박스 환경에서 처리한다. 남는 것은 슬롯의 수명을 다루는
+  오케스트레이터 도구(`SandboxList`·`SandboxStart`·`SandboxStop`)뿐이고, 명시적으로 허용된 에이전트에게만 등록된다. 이 도구들은 파일 시스템을
+  생성자로 받지 않고, 실행마다 `EXECUTION_ENVIRONMENT` 에서 샌드박스 환경의 바인딩을 꺼내 호출자의 워크스페이스를
+  안다
 - `OrcaBrowserToolProvider`(aimon-browser) — 스크린숏 등 산출 파일은 `env.fileSystem()` 에, artifact 는 §9 경로로.
   그 저장소의 변경이 필요하다
 
@@ -427,7 +457,10 @@ stamp 맵의 키는 모델이 넘긴 문자열이 아니라 **환경의 파일 �
 
 `ShellCommandResult` 에 `List<String> notices()`(기본 빈 목록)를 더한다. 환경이 모델에게 알려야 하는 사실 —
 "셸 세션이 새로 열려 cwd·환경 변수가 초기화되었다", "환경이 재생성되어 작업 디렉터리가 비었다" — 을 싣는다.
-`BashTool` 은 notice 가 있으면 `[environment] …` 줄로 출력 앞에 붙인다.
+`BashTool` 은 notice 가 있으면 `[environment] …` 줄로 출력 앞에 붙인다. 명령이 timeout 되거나 실패해도 환경은
+바뀌었을 수 있으므로 `ShellExecutionException`(과 `ShellTimeoutException`)도 같은 `notices()` 를 싣고, `BashTool` 은
+그 오류 앞에도 notice 를 붙인다. 백그라운드 명령은 `BashOutput` 이 싣는다(§5.3). 어느 경우든 notice 는 `filter`
+정규식이나 출력 잘림의 대상이 아니다.
 
 stderr 에 섞지 않는다. stderr 는 명령이 낸 것이고, 모델은 그것을 명령의 오류로 해석한다. 로컬 셸은 notice 를
 만들 일이 없다.
@@ -557,15 +590,17 @@ aimon-sandbox 는 `ExecutionEnvironmentProvider` 를 구현한다. 이 문서가
 | 코어가 보장 | 샌드박스가 보장 |
 |------------|---------------|
 | 실행마다 `resolve()` 를 한 번, 도구 호출 전에 부른다 | `resolve()` 는 원격 자원을 만들지 않는다(게으른 프로비저닝) — 파일·셸을 처음 쓸 때 만든다 |
-| 포크에 `parent` 를 싣는다 | `parent` 와 같은 샌드박스, 다른 셸 키를 돌려준다 |
-| 워크플로 브랜치는 `isolate()` 로만 만든다 | `isolate()` 는 git worktree 를 쓰고, 병합은 `WorktreeMerge` 가 아니라 git 이다 |
+| 포크에 `parent` 를 싣는다 | `parent` 와 같은 워크스페이스, 새 셸을 돌려준다. 슬롯은 바인딩 정책이 정하고 기본은 부모와 같은 샌드박스다. 부모가 사용 불가면 포크도 사용 불가다(§5.2) |
+| 워크플로 브랜치는 `isolate()` 로만 만든다. 병합은 하지 않는다 — 조립 코드가 고른다(§5.2) | `isolate()` 는 git worktree 를 쓴다. 파일 복사 병합(`WorktreeMerge.promote`)이 그 환경에서도 동작해야 하고, git 병합은 자기 모듈 API 로 따로 준다 |
 | `durable() == false` 면 artifact 를 복사한다 | `/workspace` 에 대해 `durable() == false` 를 돌려준다 |
 | `notices()` 를 모델에게 보인다 | 셸 세션·샌드박스 재생성 시 notice 를 싣는다 |
 | 백그라운드 명령에 `ExecutionOptions.background` 를 켠다(§5.3) | 켜진 명령은 지속 셸 세션을 쥐지 않는다 |
 | artifact 복사 경로와 상한을 정한다(§9.3) | 복사 대상 경로를 따로 정하지 않는다 — 코어의 artifact 도구가 복사한다 |
 | 스킬을 렌더하는 모든 경로에서 `stage()` 를 거친다(§4.4) | `stage()` 는 마커를 대상에서 확인하고, 재생성 뒤에는 다시 복사한다. `stagingRoot` 는 git worktree 밖이며 `isolate()` 파생 환경과 공유한다 |
-| 서술자를 프롬프트에 렌더한다 | 서술자는 이미지의 실제 platform·OS 다. 같은 세션에서는 재생성을 넘어 같은 값을 돌려준다(프롬프트 캐시, §10) |
+| 서술자를 프롬프트에 렌더한다 — `resolve()` 직후, 첫 도구 호출 전에 | 서술자는 이미지의 실제 platform·OS 다. 원격 자원 없이 알 수 있어야 하므로 설정(프로파일)에 선언한 값이고, 프로비저닝 때 실제 이미지와 대조한다. 같은 세션에서는 재생성을 넘어 같은 값을 돌려준다(프롬프트 캐시, §10) |
+| 스테이징 영역을 파일 도구에 읽기 전용으로 둔다(§4.4) — 경로 규칙으로. 로컬 제공자와 외부 제공자가 같은 공개 팩토리 `VirtualFileSystems.withPathRules` 를 쓴다 | 샌드박스의 스테이징 영역도 파일 도구에 읽기 전용이다. 셸은 쓸 수 있다 |
 | `resolve()` 실패 시 호스트로 되돌아가지 않는다 | 실패를 예외로 알린다 |
+| 프롬프트 조립이 `fileSystem()` 을 읽을 수 있다(옵트인 컨텍스트 제공자, §5.1) | 그 읽기가 프로비저닝을 일으킨다는 것을 문서에 밝힌다 |
 
 워크스페이스 샌드박스 설계 문서의 §7 이 이 표를 샌드박스 쪽 구현으로 풀어 적는다.
 

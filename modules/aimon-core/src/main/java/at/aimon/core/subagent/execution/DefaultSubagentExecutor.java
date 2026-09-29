@@ -64,6 +64,7 @@ import at.aimon.core.environment.EnvironmentDescriptor;
 import at.aimon.core.environment.EnvironmentRequest;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.ExecutionEnvironments;
+import at.aimon.core.environment.ForkDefinition;
 import at.aimon.core.environment.UnavailableExecutionEnvironment;
 import at.aimon.core.hook.HookExecutionManager;
 import at.aimon.core.hook.HookFeedback;
@@ -651,7 +652,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
 
     /**
      * Resolves the fork's execution environment through the provider forwarded from the spawning execution, passing
-     * the spawner's environment as the parent.
+     * the spawner's environment as the parent and the fork's own definition, so a provider can place each subagent
+     * differently (design §5.2).
      */
     private static ExecutionEnvironment resolveExecutionEnvironment(SubagentExecutionContext context,
             SubagentExecutionRequest request, ExecutionId executionId) {
@@ -659,6 +661,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 .agentRuntimeId(context.getAgentRuntimeId()).executionId(executionId)
                 .invokingSessionId(request.getInvokingSessionId().orElse(null))
                 .principal(request.getPrincipal().orElse(null)).parent(context.getExecutionEnvironment().orElse(null))
+                .fork(ForkDefinition.builder().name(context.getSubagent().getName())
+                        .attributes(context.getSubagent().getMetadata().getAttributes()).build())
                 .build();
         if (context.getExecutionEnvironmentProvider().isEmpty()) {
             log.warn("No ExecutionEnvironmentProvider forwarded to fork '{}'; its file and shell tools will fail",

@@ -11,6 +11,8 @@ import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.constructor.SafeConstructor;
 
+import at.aimon.core.agent.DefinitionAttributes;
+
 /**
  * Parses subagent content including YAML frontmatter and markdown body.
  *
@@ -25,6 +27,8 @@ import org.yaml.snakeyaml.constructor.SafeConstructor;
  * <li>model: Optional model id, sent to the configured provider as written — no alias is resolved. When absent, the
  * subagent runs on its parent's model
  * <li>max-iterations: Optional positive integer cap on the ReAct loop (defaults applied downstream)
+ * <li>attributes: Optional free-form map the framework carries but never reads, flattened to dotted keys by
+ * {@link DefinitionAttributes} (e.g. {@code sandbox.slot} for an execution environment provider)
  * </ul>
  *
  * <p>
@@ -149,7 +153,14 @@ public class SubagentContentParser {
         final Object toolsObj = yamlData.get("allowed-tools");
         final List<String> tools = parseList(toolsObj, "allowed-tools");
 
-        return new SubagentContentResult(description, whenToUse, tools, model, maxIterations, systemPrompt);
+        final Map<String, String> attributes;
+        try {
+            attributes = DefinitionAttributes.fromFrontmatter(yamlData.get(DefinitionAttributes.FRONTMATTER_KEY));
+        } catch (IllegalArgumentException e) {
+            throw new SubagentParseException(e.getMessage(), e);
+        }
+
+        return new SubagentContentResult(description, whenToUse, tools, model, maxIterations, systemPrompt, attributes);
     }
 
     /**

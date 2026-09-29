@@ -198,7 +198,8 @@ public class BashOutputTool extends AbstractTool {
                 }
             }
 
-            // Read new output
+            // Read new output. The environment's notices are taken in the finished branches below: they arrive with
+            // the result, and taking them before the status says so could consume them without showing them.
             final String output = task.readNewOutput(filter);
 
             // Format result based on status
@@ -220,6 +221,7 @@ public class BashOutputTool extends AbstractTool {
                     result.append("Status: Completed\n");
                     result.append("Exit Code: ").append(task.getExitCode()).append('\n');
                     result.append("Command: ").append(task.getCommand()).append("\n\n");
+                    result.append(BashTool.renderNotices(task.takeNotices()));
                     if (output.isEmpty()) {
                         result.append("No new output available");
                     } else {
@@ -231,6 +233,7 @@ public class BashOutputTool extends AbstractTool {
                     result.append("Status: Failed\n");
                     result.append("Exit Code: ").append(task.getExitCode()).append('\n');
                     result.append("Command: ").append(task.getCommand()).append("\n\n");
+                    result.append(BashTool.renderNotices(task.takeNotices()));
                     if (task.getErrorMessage() != null) {
                         result.append("Error: ").append(task.getErrorMessage()).append("\n\n");
                     }

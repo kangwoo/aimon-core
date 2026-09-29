@@ -141,6 +141,7 @@ Subagent dbTriage = Subagent.builder()
 | `tools(List<String>)` | | 빈 목록 → `hasToolRestrictions() == false` (도구 제한 없음) |
 | `model(String)` | | `null` (실행기 기본 모델) |
 | `maxIterations(int)` | | `1000` |
+| `attributes(Map<String, String>)` | | 빈 맵 (마크다운 `attributes:` 블록을 점 표기 키로 펼친 것과 같다 — 예: `sandbox.slot`. 코어는 싣기만 하고, 실행 환경 제공자 같은 외부 구성 요소가 읽는다) |
 
 > **도구 문자열 포맷**은 마크다운 `allowed-tools` 와 동일하다: `"Read"`, `"Bash(git:*)"`, `"Bash(npm install)"` 등.
 > 내부적으로 `AllowedTool.parse(...)`를 거치므로 파싱 로직이 중복되지 않는다.

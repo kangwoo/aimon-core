@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -47,6 +48,17 @@ class FileSystemAgentBundleLoaderTest {
         assertEquals("test-agent", bundle.getAgent().getName());
         assertTrue(bundle.getSubagentRegistry().isPresent());
         assertTrue(bundle.getSkillRegistry().isPresent());
+    }
+
+    @Test
+    void load_agentAttributesReachTheAgentMetadata() throws IOException {
+        final Path agentDir = Files.createDirectories(tempDir.resolve("attributed"));
+        Files.writeString(agentDir.resolve("agent.md"),
+                "---\nname: attributed\nattributes:\n  sandbox:\n    slot: build\n---\nYou are a test agent.\n");
+
+        final AgentBundle bundle = loader.load("attributed");
+
+        assertEquals(Map.of("sandbox.slot", "build"), bundle.getAgent().getMetadata().getAttributes());
     }
 
     @Test

@@ -51,6 +51,17 @@ class SubagentToolScopeTest {
     }
 
     @Test
+    @DisplayName("withAllowedTools keeps the subagent's attributes")
+    void withAllowedToolsKeepsAttributes() {
+        final Subagent subagent = Subagent.builder().name("builder").systemPrompt("p")
+                .attributes(Map.of("sandbox.slot", "build")).build();
+
+        final Subagent rebased = SubagentToolScope.withAllowedTools(subagent, List.of());
+
+        assertThat(rebased.getMetadata().getAttributes()).isEqualTo(Map.of("sandbox.slot", "build"));
+    }
+
+    @Test
     @DisplayName("admits every tool when the subagent declares no restrictions")
     void admitsEverythingWithoutRestrictions() {
         final Subagent subagent = subagentAllowing(List.of());

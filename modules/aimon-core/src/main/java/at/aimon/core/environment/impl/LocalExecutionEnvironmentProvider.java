@@ -24,7 +24,7 @@ import at.aimon.core.environment.ExecutionEnvironmentProvider;
 import at.aimon.core.filesystem.PathRule;
 import at.aimon.core.filesystem.VfsPaths;
 import at.aimon.core.filesystem.VirtualFileSystem;
-import at.aimon.core.filesystem.impl.PathRuleVirtualFileSystem;
+import at.aimon.core.filesystem.VirtualFileSystems;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
 import at.aimon.core.shell.VirtualShell;
@@ -47,7 +47,8 @@ import at.aimon.core.shell.impl.local.LocalShell;
  * </ul>
  *
  * <p>
- * <b>Path rules</b> (§9.2). The file tools see the workspace through a {@link PathRuleVirtualFileSystem}; by default
+ * <b>Path rules</b> (§9.2). The file tools see the workspace through a {@linkplain VirtualFileSystems#withPathRules
+ * path-rule filesystem}; by default
  * the control store {@code .aimon/} is hidden and the staging area {@code .aimon-staged/} is read-only. An assembly
  * that wants the model to edit its own skills passes other rules explicitly. The shell is not restricted (§2).
  *
@@ -126,7 +127,7 @@ public final class LocalExecutionEnvironmentProvider implements ExecutionEnviron
                     : defaultPathRules(builder.stagingRoot);
             final VirtualFileSystem toolFileSystem = rules.isEmpty()
                     ? rawFileSystem
-                    : new PathRuleVirtualFileSystem(rawFileSystem, rules);
+                    : VirtualFileSystems.withPathRules(rawFileSystem, rules);
 
             if (ownedRoot != null) {
                 sweepStaging(ownedRoot, ownedRoot.resolve(builder.stagingRoot), builder.stagingSweepGrace,

@@ -76,8 +76,18 @@ public final class UnavailableExecutionEnvironment implements ExecutionEnvironme
         throw unavailable();
     }
 
+    /**
+     * Returns the message every call on this environment throws with, for a caller that must report the failure
+     * before it makes a call — a background command, which would otherwise only fail after it was reported started.
+     *
+     * @return the message, {@code "Execution environment unavailable: {cause}"}
+     */
+    public String message() {
+        return "Execution environment unavailable: " + cause;
+    }
+
     private ExecutionEnvironmentUnavailableException unavailable() {
-        return new ExecutionEnvironmentUnavailableException("Execution environment unavailable: " + cause, throwable);
+        return new ExecutionEnvironmentUnavailableException(message(), throwable);
     }
 
     private <T> T throwingProxy(Class<T> type) {

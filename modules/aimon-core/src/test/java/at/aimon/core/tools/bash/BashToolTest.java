@@ -107,6 +107,25 @@ class BashToolTest {
         }
     }
 
+    @Test
+    void testExecute_BackgroundInUnavailableEnvironment_ErrorsInsteadOfReportingStarted() {
+        BackgroundBashManager manager = new BackgroundBashManager();
+        BashTool tool = new BashTool(manager);
+        ToolContext unavailable = ToolContext.builder()
+                .put(ToolContextKeys.EXECUTION_ENVIRONMENT, UnavailableExecutionEnvironment.of("sandbox is down"))
+                .build();
+        try {
+            ToolResult result = tool.execute(ToolInput.of(Map.of("command", "sleep 1", "run_in_background", true)),
+                    unavailable);
+
+            assertThat(result.isError()).isTrue();
+            assertThat(result.getContent()).isEqualTo("Execution environment unavailable: sandbox is down")
+                    .doesNotContain("Background task started");
+        } finally {
+            tool.shutdown();
+        }
+    }
+
     // Environment notices (execution-environment design §8)
 
     @Test
@@ -119,6 +138,29 @@ class BashToolTest {
         assertThat(result.isSuccess()).isTrue();
         assertThat(result.getContent()).isEqualTo("[environment] shell session was reopened; cwd was reset\n"
                 + "[environment] environment was recreated\n" + "out\n");
+    }
+
+    @Test
+    void testExecute_TimeoutNotices_ArePrefixedBeforePartialOutput() {
+        stubShell.setNextException(new ShellTimeoutException("timed out", Duration.ofMillis(1000), "partial\n", "",
+                false, List.of("shell session was recreated; cwd was reset")));
+
+        ToolResult result = bashTool.execute(ToolInput.of(Map.of("command", "make")), context);
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).startsWith("[environment] shell session was recreated; cwd was reset\n")
+                .contains("partial").contains("[timed out after");
+    }
+
+    @Test
+    void testExecute_ShellFailureNotices_ArePrefixedBeforeTheFailure() {
+        stubShell.setNextException(
+                new ShellExecutionException("sandbox lost", null, "", "", false, List.of("sandbox was recreated")));
+
+        ToolResult result = bashTool.execute(ToolInput.of(Map.of("command", "ls")), context);
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).isEqualTo("[environment] sandbox was recreated\nCommand failed: sandbox lost");
     }
 
     @Test

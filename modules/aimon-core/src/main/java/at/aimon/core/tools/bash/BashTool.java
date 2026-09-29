@@ -28,6 +28,8 @@ import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.agent.tool.permission.PermissionSubject;
 import at.aimon.core.agent.tool.permission.ToolPattern;
 import at.aimon.core.agent.tool.permission.ToolPermissionSubjectAware;
+import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.environment.UnavailableExecutionEnvironment;
 import at.aimon.core.environment.exception.ExecutionEnvironmentUnavailableException;
 import at.aimon.core.shell.ExecutionOptions;
 import at.aimon.core.shell.ShellCommandResult;
@@ -275,19 +277,27 @@ public class BashTool extends AbstractTool implements ToolPermissionSubjectAware
             final int timeout = Math.min(Math.max(rawTimeout, MIN_TIMEOUT_MS), MAX_TIMEOUT_MS);
             final boolean runInBackground = input.getBoolean("run_in_background", false);
 
-            final VirtualShell shell;
+            final ExecutionEnvironment environment;
             try {
-                shell = ExecutionEnvironmentAccess.require(context).shell();
+                environment = ExecutionEnvironmentAccess.require(context);
             } catch (IllegalStateException e) {
                 log.warn("No execution environment: {}", e.getMessage());
                 return ToolResult.error(e.getMessage());
             }
+            final VirtualShell shell = environment.shell();
 
             // Handle background execution
             if (runInBackground) {
                 if (backgroundManager == null) {
                     return ToolResult
                             .error("Background execution is not supported. BackgroundBashManager was not provided.");
+                }
+                // Checked here because the background path defers the shell call: without it an unavailable
+                // environment would be reported as "Background task started" and fail only when polled. The
+                // foreground path needs no check — its shell call throws right away.
+                if (environment instanceof UnavailableExecutionEnvironment unavailable) {
+                    log.warn("Execution environment unavailable: {}", unavailable.message());
+                    return ToolResult.error(unavailable.message());
                 }
                 return executeInBackground(shell, command);
             }
@@ -304,7 +314,7 @@ public class BashTool extends AbstractTool implements ToolPermissionSubjectAware
                 // Whatever the command printed before the shell killed it is the only diagnostic there will ever be,
                 // and the exception already carries it. The adapter this tool replaced threw it away, which made a
                 // build that hung on step 9 of 10 indistinguishable from one that never started.
-                return ToolResult.error(renderBody(mergeStreams(e.stdout(), e.stderr()),
+                return ToolResult.error(renderNotices(e.notices()) + renderBody(mergeStreams(e.stdout(), e.stderr()),
                         "[timed out after " + timeout + "ms]", e.outputTruncated()));
             } catch (ExecutionEnvironmentUnavailableException e) {
                 log.warn("Execution environment unavailable: {}", e.getMessage());
@@ -318,7 +328,7 @@ public class BashTool extends AbstractTool implements ToolPermissionSubjectAware
                 log.warn("Bash command failed to execute: {}", e.getMessage());
                 // The one outcome with no exit status to report: the command never ran, so there is no output to
                 // carry either. Everything else goes through renderBody.
-                return ToolResult.error("Command failed: " + e.getMessage());
+                return ToolResult.error(renderNotices(e.notices()) + "Command failed: " + e.getMessage());
             }
 
             // An exit code is a value, not an exception. The shell reports every code — including 0 — the same way,
@@ -412,13 +422,13 @@ public class BashTool extends AbstractTool implements ToolPermissionSubjectAware
     /**
      * Renders the environment's notices as {@code [environment] ...} lines placed before the command's output. They
      * are never mixed into the output itself: stderr is what the command printed, and the model reads it as the
-     * command's own errors.
+     * command's own errors. Shared with {@link BashOutputTool} so a background command's notices read the same.
      *
      * @param notices
      *            the notices of the result
      * @return the rendered lines, each ending in a newline, or an empty string
      */
-    private static String renderNotices(List<String> notices) {
+    static String renderNotices(List<String> notices) {
         if (notices.isEmpty()) {
             return "";
         }

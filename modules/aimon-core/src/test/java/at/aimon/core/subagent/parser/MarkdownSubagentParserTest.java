@@ -71,4 +71,22 @@ class MarkdownSubagentParserTest {
 
         assertThat(subagent.getMetadata().getWhenToUse()).isNull();
     }
+
+    @Test
+    void parse_AttributesFrontmatter_FlowsIntoMetadata() {
+        String md = """
+                ---
+                description: Builder
+                attributes:
+                  sandbox:
+                    slot: build
+                ---
+
+                You build things.
+                """;
+
+        Subagent subagent = parser.parse("builder", md);
+
+        assertThat(subagent.getMetadata().getAttributes()).containsExactly(entry("sandbox.slot", "build"));
+    }
 }
