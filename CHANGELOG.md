@@ -7,6 +7,15 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Changed: `main` carries a `-SNAPSHOT` version between releases
+
+`VERSION_NAME` on `main` is now `0.3.1-SNAPSHOT`, the next patch release, rather than the last released `0.3.0`. A
+build of `main` no longer claims to be a version that is already on Maven Central. `scripts/release.sh` handles the
+suffix: from `X.Y.Z-SNAPSHOT`, `patch` releases `X.Y.Z` itself, and `minor` / `major` release the smallest version of
+that kind at or above it (`0.4.0-SNAPSHOT` + `minor` → `0.4.0`, `0.3.1-SNAPSHOT` + `minor` → `0.4.0`). After tagging,
+the script commits `chore(release): prepare next development version X.Y.(Z+1)-SNAPSHOT` and pushes both commits
+with the tag. A bare `X.Y.Z` is still accepted and bumps past it as before.
+
 ### Added: what an out-of-core execution environment provider needs (EE-18, EE-40, EE-41)
 
 Closes the three items `docs/backlog/execution-environment-open-items.md` lists as prerequisites of the workspace
