@@ -361,7 +361,8 @@ class TaskToolTest {
         assertThat(result.isSuccess()).isTrue();
         assertThat(result.getContent()).contains("Subagent Task Result").contains("Subagent: Explore")
                 .contains("Status: SUCCESS").contains("done");
-        verify(executionManager, times(1)).execute(any(), anyString(), eq("Explore"), eq("Find auth files"), eq("auth"));
+        verify(executionManager, times(1)).execute(any(), anyString(), eq("Explore"), eq("Find auth files"),
+                eq("auth"));
     }
 
     @Test

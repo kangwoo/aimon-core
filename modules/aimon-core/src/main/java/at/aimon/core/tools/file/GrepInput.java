@@ -89,5 +89,5 @@ public record GrepInput(
 
         @ToolParam(name = "head_limit", description = "Limit output to first N lines/entries") Integer headLimit,
 
-        @ToolParam(description = "Skip first N lines/entries before applying head_limit. Default: 0") Integer offset){
+        @ToolParam(description = "Skip first N lines/entries before applying head_limit. Default: 0") Integer offset) {
 }
