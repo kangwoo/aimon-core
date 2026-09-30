@@ -1,20 +1,18 @@
-import java.io.File
-
-import org.gradle.api.publish.maven.tasks.PublishToMavenLocal
-import org.gradle.api.publish.maven.tasks.PublishToMavenRepository
-
 import com.vanniktech.maven.publish.JavaLibrary
 import com.vanniktech.maven.publish.JavaPlatform
 import com.vanniktech.maven.publish.JavadocJar
 import com.vanniktech.maven.publish.MavenPublishBaseExtension
-import com.vanniktech.maven.publish.SonatypeHost
+import com.vanniktech.maven.publish.SourcesJar
 
 plugins {
     id("com.vanniktech.maven.publish")
 }
 
 configure<MavenPublishBaseExtension> {
-    publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL)
+    // Central Portal is the only destination the plugin still knows. Releasing stays manual (the default,
+    // `mavenCentralAutomaticPublishing=false`), and the upload now waits until the Portal has *validated* the
+    // deployment — so a bundle Central rejects fails `scripts/release.sh` before it commits or tags anything.
+    publishToMavenCentral()
     signAllPublications()
 }
 
@@ -27,7 +25,7 @@ plugins.withId("java-library") {
         configure(
             JavaLibrary(
                 javadocJar = JavadocJar.Javadoc(),
-                sourcesJar = true,
+                sourcesJar = SourcesJar.Sources(),
             ),
         )
     }
@@ -41,39 +39,11 @@ plugins.withId("java-platform") {
     }
 }
 
-// Gradle writes a checksum next to every file it publishes, and "every file" includes each `.asc`
-// signature. Central does not need those, and Sonatype names them specifically as a Gradle-shaped way file
-// counts inflate (https://central.sonatype.org/publish/reducing-publishing-usage/). After
-// gradle.properties drops SHA256/SHA512 they are still a third of what a module contributes to the bundle:
-// 30 files become 20.
-//
-// No API suppresses them, so they are deleted once the publication has been staged. That works because
-// `SonatypeHost.CENTRAL_PORTAL` publishes into a local directory and zips it at the end of the build — the
-// deletion lands before the bundle is assembled. The `file` guard is what keeps that true: against a remote
-// repository the checksums are already uploaded and there would be nothing left to delete.
-tasks.withType<PublishToMavenRepository>()
-    // `PublishToMavenLocal` is a subtype with no repository at all, and the local cache gets no checksums.
-    .matching { it !is PublishToMavenLocal }
-    .configureEach {
-        doLast {
-            val repositoryUrl = repository.url
-            if (!repositoryUrl.scheme.equals("file", ignoreCase = true)) {
-                return@doLast
-            }
-
-            val moduleDirectory = File(repositoryUrl)
-                .resolve(publication.groupId.replace('.', '/'))
-                .resolve(publication.artifactId)
-                .resolve(publication.version)
-            val signatureChecksums = listOf(".asc.md5", ".asc.sha1", ".asc.sha256", ".asc.sha512")
-            val removed = moduleDirectory.listFiles()
-                .orEmpty()
-                .filter { file -> signatureChecksums.any { file.name.endsWith(it) } }
-                .count { it.delete() }
-
-            logger.info("Removed {} signature checksums from {}", removed, moduleDirectory)
-        }
-    }
+// Gradle writes a checksum next to every file it publishes, including each `.asc` signature and a SHA256/SHA512
+// pair Central never reads. Sonatype names these as a Gradle-shaped way file counts inflate
+// (https://central.sonatype.org/publish/reducing-publishing-usage/). The plugin leaves them out of the
+// Central bundle by default since 0.37 — only md5/sha1, and none for signatures — so nothing here has to.
+// `mavenCentralChecksums` / `mavenCentralExcludeSignatureChecksums` are the knobs if that ever needs to change.
 
 // Applying this plugin to anything else would produce a publication with nothing in it, and the first
 // evidence of that would be an empty artifact on Central. Say it here instead.
