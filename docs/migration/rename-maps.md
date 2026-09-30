@@ -287,12 +287,38 @@ as the process and are never stored.
 
 ---
 
+## `SessionRewindPoint` holds a seq, not a message count
+
+The mistake being corrected is a name that described a **position** while the thing being described is an
+**address**. The session transcript became a seq-addressed log (design:
+[`session-log.md`](../design/session/session-log.md) §3.1): every entry has a seq that is never reused, and a rewind
+point is the seq of the interrupted turn's first entry. A message count is an index, and an index stops pointing at the
+same entry the moment anything before it leaves the record — which sealing (§5) will make routine.
+
+| Old | New | Value |
+|-----|-----|-------|
+| `SessionRewindPoint.getMessageCount()` (`aimon-core`) | `SessionRewindPoint.getSeq()` | `int` count → `long` seq |
+| `SessionRewindPoint.of(int messageCount, …)` | `SessionRewindPoint.of(long seq, …)` | same arguments, now a seq |
+
+The factory keeps its name, so a caller passing an `int` still compiles — and on a log that was never cleared,
+compacted or rewound the seq and the old count are the same number. They diverge after `/clear` (seqs continue from
+where they were) and after a rewind (cut seqs are not handed out again). There is no adapter for the accessor: a
+getter that answered with a count would reintroduce the index the change exists to remove.
+
+**The stored form did not change for version-1 documents.** A version-1 transcript still stores
+`rewindPoint.messageCount`; the codec converts at the boundary. A version-2 document (`JsonSessionSnapshotCodec`
+`version: 2`) stores `rewindPoint.seq`. Every build that knows `SessionLogState` reads both; which one it writes is
+`SessionLogFormat` — version 1 by default, version 2 when the write switch says so or the record was read as
+version 2.
+
+---
+
 ## `ModelCapabilities.lowestReasoningEffort()` becomes `acceptedReasoningEfforts()`
 
 The mistake being corrected is a name that described a **boundary** while the thing being described is
 a **set**. It cost an HTTP 400: `gpt-5.6-terra` rejects `minimal` and accepts `none`, so its ladder has
 a gap in the middle and no single floor states it. Design:
-[`reasoning-effort-config-surface.md`](../design/llm/reasoning-effort-config-surface.md).
+[`request-parameters.md` §4.2](../design/llm/request-parameters.md#42-ladder-는-집합이다--acceptedreasoningefforts-를-읽는-법).
 
 | Old | New | Value |
 |-----|-----|-------|
@@ -346,6 +372,70 @@ rather than pre-empting it, is in that design document's §4.2.
 the JSON Lines format, the field names inside each record, the sidecar `<log>.lock`, and the compaction
 temp-file swap are all identical. That is the usual rule here -- see
 [`frozen-names.md`](frozen-names.md) -- applied to a file format instead of a DDL.
+
+---
+
+## aimon-browser-playwright moved to its own repository
+
+Same shape as the sandbox section below, one module instead of three. `aimon-browser-playwright` is alive in
+[aimon-browser](https://github.com/kangwoo/aimon-browser) with every `.java` file byte for byte, the package
+still `at.aimon.browser.playwright.*`, and the `Browser` tool keeping its name, input schema, `ToolContext`
+keys and permission rule. Only the Maven coordinate changed.
+
+| Through 0.2.4 | From now |
+|-----|-----|
+| `at.aimon.core:aimon-browser-playwright` | `at.aimon.browser:aimon-browser-playwright` |
+
+`at.aimon.core:aimon-browser-playwright:0.2.4` stays on Central and keeps resolving; it receives no further
+releases. Nothing migrates — the module stores nothing.
+
+**What did not move is the part worth knowing about.** `SsrfGuard` (`at.aimon.core.tools.web.security`) and
+`ContentExtractor` (`at.aimon.core.tools.web.fetch`) stay here, shared between `WebFetchTool` and the browser
+tool. Both are public API by the package rule in [`../project/api-stability.md`](../project/api-stability.md)
+§2, so the browser repository depends on them legitimately. But `SsrfGuard` is a security control, and the
+split turned an in-repository shared class into a cross-repository contract: a hole fixed here reaches the
+browser tool only after a release of this repository, and until that repository raises its `aimon-core` line
+the two run different SSRF defences. **Do not fork the guard** — a second copy of an SSRF allowlist is a
+second copy that goes stale silently.
+
+The browser tier moved with the module, and that was the point: `playwrightTest` was a CI step and a release
+gate task here, carrying a browser cache, a version-resolution guard and a 94-second cold Chromium install for
+a module nothing in this build depended on. `scripts/release.sh` now asks for a Docker daemon and nothing else.
+
+---
+
+## The sandbox modules moved to their own repository
+
+Searching for `aimon-sandbox` in this build finds nothing, and unlike the two rows below that is **not**
+because anything was deleted. All three modules — `aimon-sandbox`, `aimon-sandbox-docker`,
+`aimon-sandbox-kubernetes` — are alive in [aimon-sandbox](https://github.com/kangwoo/aimon-sandbox), with
+every `.java` file byte for byte as it was. The Java package did not move: it is still `at.aimon.sandbox.*`,
+the `SandboxBackend` SPI keeps every signature, and the four tools keep their names, their input schemas and
+their `ToolContext` keys. Only the Maven coordinate changed.
+
+| Through 0.2.4 | From now |
+|-----|-----|
+| `at.aimon.core:aimon-sandbox` | `at.aimon.sandbox:aimon-sandbox` |
+| `at.aimon.core:aimon-sandbox-docker` | `at.aimon.sandbox:aimon-sandbox-docker` |
+| `at.aimon.core:aimon-sandbox-kubernetes` | `at.aimon.sandbox:aimon-sandbox-kubernetes` |
+
+IMPORTANT: this is **neither a rename nor a removal**, and the difference matters in both directions. The old
+coordinates are not withdrawn — `at.aimon.core:aimon-sandbox:0.2.4` and its two backends stay on Central and
+keep resolving — so a build that never updates keeps working; they simply receive no further releases. And
+nothing needs migrating, because there is nothing stored: unlike the memory modules below, these three own no
+tables, no collections and no file format. Moving is one line per dependency, and the version restarts at
+`0.1.0` because the new group id has no release history of its own.
+
+The aimon-core BOM no longer manages these three, which follows from how it is built rather than from a
+decision about them: it derives its constraints from the subprojects of this build that publish. A consumer
+that took their version from the BOM now writes it out, or takes it from the new repository — which publishes
+no BOM, on the grounds that three coordinates, two of which carry the third on `api`, do not earn one.
+
+What stayed behind is one line of enforcement. `at.aimon.sandbox..` is still in the forbidden-package list of
+`ArchitectureRulesTest.coreHasNoSiblingModuleDependencies`, beside `at.aimon.memory..`, so the dependency
+cannot start running the other way now that satisfying it would only take a coordinate from Central. The
+design document went with the code, from `docs/design/integration/sandbox.md` to
+[`docs/design/sandbox.md`](https://github.com/kangwoo/aimon-sandbox/blob/main/docs/design/sandbox.md) there.
 
 ## Two memory backend modules were removed, not renamed
 

@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/glossary.md
-source_commit: eec9ccd
+source_commit: 8c8de45
 ---
 
 # Glossary
@@ -103,7 +103,7 @@ from this word alone, without context.
 | `LiveSession` (`aimon-core`) | the node-local handle running turns for that one session | open ~ `close()` |
 | a `LiveSessionCache` entry (`aimon-session-routing`) | the `LiveSession` above, cached by the multi-node routing and caching layer (`SessionRouter`) | until idle TTL or `maxEntries` eviction |
 | `ReplSession` (`aimon-cli`) | one interactive run of the CLI process | CLI start ~ exit |
-| `BrowserSession` (`aimon-browser-playwright`) | a Playwright `BrowserContext` plus the active Page | the browser context's lifetime |
+| `BrowserSession` (`aimon-browser-playwright`, a separate repository) | a Playwright `BrowserContext` plus the active Page | the browser context's lifetime |
 
 It is precisely this ambiguity that makes bare `Session` and `AgentSession` unusable as type
 names — neither tells you which of the five rows above it is.

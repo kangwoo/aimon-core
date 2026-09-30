@@ -7,9 +7,9 @@ import java.nio.file.Path;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.springframework.boot.actuate.health.HealthIndicator;
-import org.springframework.boot.actuate.health.Status;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.health.contributor.HealthIndicator;
+import org.springframework.boot.health.contributor.Status;
 import org.springframework.boot.test.context.FilteredClassLoader;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
@@ -105,7 +105,7 @@ class AimonObservabilitySliceTest {
             // UP with the reason attached, not DOWN: the in-memory session store is a degradation this stack
             // always carries, and a starter whose health endpoint is red on the documented minimum would train
             // every operator to ignore it.
-            final org.springframework.boot.actuate.health.Health health = ctx.getBean(AimonHealthIndicator.class)
+            final org.springframework.boot.health.contributor.Health health = ctx.getBean(AimonHealthIndicator.class)
                     .health();
             assertThat(health.getStatus()).isEqualTo(Status.UP);
             assertThat(health.getDetails()).containsKey("degradations");

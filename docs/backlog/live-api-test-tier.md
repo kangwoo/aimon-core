@@ -1,4 +1,4 @@
-# 라이브 API 테스트 계층 — 등록 항목 2건 (열림 1 · 닫힘 1)
+# 라이브 API 테스트 계층 — 등록 항목 2건 (닫힘 1 · 해소 1)
 
 출처는 [#81](https://github.com/kangwoo/aimon-core/issues/81) 이고, 2026-09-10 의 작업이다. 이 문서는
 **결정 항목 하나**를 적는다 — 프로바이더 키에 게이트가 걸린 라이브 API 테스트 계층에 CI 신호를 줄
@@ -203,7 +203,24 @@ R-1 이 두 태그 계층을 두고 적은 문장 — *"그 차이는 양이 아
 신호를 주기로 해도 그대로이므로, 그 신호를 내는 명령에도 §0.3 을 먼저 대 본다 — 아무것도 돌리지 않고 초록이
 되는지.
 
-### LA-2 — 릴리스 스크립트는 프로바이더 키만 거부하고, 같은 모양으로 게이트가 걸린 클래스 둘은 그대로 물려받는다 · **열림** *(2026-09-11, #98)*
+### LA-2 — 릴리스 스크립트는 프로바이더 키만 거부하고, 같은 모양으로 게이트가 걸린 클래스 둘은 그대로 물려받는다 · **해소** *(2026-09-11 등록, 2026-09-16 해소)*
+
+> **해소 — 결정할 대상이 이 저장소에서 없어졌다** *(2026-09-16)*
+>
+> `AIMON_DOCKER_IT` 와 `AIMON_KUBERNETES_IT` 가 게이트하던 두 클래스
+> (`DockerSandboxBackendIntegrationTest` · `KubernetesSandboxBackendIntegrationTest`)는 샌드박스 세 모듈이
+> [aimon-sandbox](https://github.com/kangwoo/aimon-sandbox) 로 분리되면서 함께 나갔다. 그래서 이 항목의
+> **왜** 가 적은 결과 — *"둘 중 하나를 `true` 로 export 한 셸에서 릴리스를 자르면 게이트가 CI 가 한 번도
+> 돌리지 않는 클래스를 돌린다"* — 는 더 이상 이 저장소에서 일어날 수 없다. `scripts/release.sh` 와
+> `ReleaseGateMatchesCiGateTest` 의 이 항목을 가리키던 주석도 같은 변경에서 걷어 냈다.
+>
+> **거부하기로 하지도, 거부하지 않기로 하지도 않았으므로 닫힘이 아니라 해소다.** 닫힘으로 세면 다음
+> 사람이 "결정이 내려졌다" 로 읽는데, 내려진 것은 없다. 청구되지 않는 변수를 릴리스 게이트가 거부해야
+> 하는가라는 물음 자체는 살아 있고, **이 저장소에 그런 변수가 다시 생기면 그때 처음부터 물어야 한다** —
+> 여기 적힌 "거부할 이유 / 거부하지 않을 이유" 는 그때의 출발점으로 쓸 수 있지만 결론이 아니다.
+>
+> 아래 본문은 등록 시점(2026-09-11)의 기록으로 둔다. `modules/aimon-sandbox-*/README.md` 를 가리키는
+> **어디** 의 마지막 줄을 포함해, 지금은 이 저장소에 없는 경로를 가리키는 곳이 있다.
 
 **무엇** — `scripts/release.sh` 가 `AIMON_DOCKER_IT` 와 `AIMON_KUBERNETES_IT` 도 거부할 것인가. §0.1 표의 마지막 두
 줄이다. [#98](https://github.com/kangwoo/aimon-core/issues/98) 은 두 프로바이더 키 중 하나라도 환경에 있으면 스크립트가
@@ -241,7 +258,7 @@ CI 밖에 있는 이유가 "CI 에 데몬이나 클러스터가 없어서" 뿐�
   새로 읽게 된 테스트 소스만 바뀐 로컬 빌드가 인구조사를 `UP-TO-DATE` 로 건너뛴다.)*
 - 두 클래스의 클래스 선언, 그리고 `modules/aimon-sandbox-docker/README.md` · `modules/aimon-sandbox-kubernetes/README.md` 의
   통합 테스트 실행 명령
-- 설계: [`provider-key-release-gate.md`](../design/llm/provider-key-release-gate.md) §2 D5 · §7 질문 2 · §9
+- 설계: [`release-gate-provider-keys.md`](../design/testing/release-gate-provider-keys.md) §5(인구조사) · §10(남은 것) — 옛 `provider-key-release-gate.md` §2 D5 · §7 질문 2 · §9
 
 **언제 다시 볼까.** 둘 다 [`README.md`](README.md) 규칙 일곱의 물음에 대고 골랐고, 둘 다 **조건부로만** 통과한다.
 
@@ -256,7 +273,7 @@ CI 밖에 있는 이유가 "CI 에 데몬이나 클러스터가 없어서" 뿐�
 
 - [#81](https://github.com/kangwoo/aimon-core/issues/81) — 이 결정의 출처. 두 선택지와 세 발견의 원문
 - [#98](https://github.com/kangwoo/aimon-core/issues/98) — `LA-2` 의 출처. 퀵스타트의 export 와 릴리스 게이트가 물려받던 키
-- [`../design/llm/provider-key-release-gate.md`](../design/llm/provider-key-release-gate.md) — 릴리스 스크립트의 키 거부와,
+- [`../design/testing/release-gate-provider-keys.md`](../design/testing/release-gate-provider-keys.md) — 릴리스 스크립트의 키 거부와,
   그 거부를 샌드박스에서 실제로 돌려 붙드는 테스트의 설계
 - [`CONTRIBUTING.md`](../../CONTRIBUTING.md#live-api-tests) — 이 계층을 돌리는 방법
 - [`llm-config-surface-open-items.md`](llm-config-surface-open-items.md) — `L-12` 가 여기서 닫혔다

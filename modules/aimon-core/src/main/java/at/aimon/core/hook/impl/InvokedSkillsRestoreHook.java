@@ -11,6 +11,7 @@ import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.hook.event.PostCompactContext;
 import at.aimon.core.hook.event.PostCompactHook;
 import at.aimon.core.hook.execution.HookResult;
+import at.aimon.core.llm.Message;
 
 /**
  * {@link PostCompactHook} that re-attaches the list of {@code Skill} invocations from the compacted segment so the
@@ -80,7 +81,7 @@ public final class InvokedSkillsRestoreHook implements PostCompactHook {
 
             final String body = formatRestoreMessage(selected);
             final TranscriptBuffer memory = context.getTranscriptBuffer();
-            memory.addUserMessage(body);
+            context.addSyntheticMessage(Message.user(body));
             log.info("Re-attached {} invoked-skill record(s) after compaction (session={})", selected.size(),
                     memory.getSessionId());
             return HookResult.success();

@@ -99,8 +99,10 @@ L1 이 그 다음인 이유는 사용자가 명시적으로 요구한 "기본 �
 다음이 필요해지면 그때 `aimon-integration-tests` 모듈을 만든다 — 지금은 해당 없음.
 
 - **여러 구현 모듈을 동시에 조립**해야 할 때. 예: 실제 `aimon-llm-anthropic` + `aimon-session-redis` +
-  `aimon-sandbox-docker` 를 한 시나리오에 물려 돌리는 종단 테스트. 이건 `aimon-core` 테스트 소스가
+  `aimon-filesystem-s3` 를 한 시나리오에 물려 돌리는 종단 테스트. 이건 `aimon-core` 테스트 소스가
   가질 수 없는 의존성이므로(코어가 구현 모듈에 의존하게 됨) 반드시 별도 모듈이어야 한다.
+  (세 번째 자리에 원래 `aimon-sandbox-docker` 를 적었는데, 그 모듈은 별도 저장소로 분리되어 이제
+  이 빌드의 모듈이 아니다. 논지는 그대로다 — 바뀐 것은 예시뿐이다.)
 - CLI 부트스트랩(`AgentSetupFactory`)까지 포함한 **어셈블리 종단 테스트**를 코어 밖에서 돌려야 할 때.
 
 ## 5. 하네스 계약

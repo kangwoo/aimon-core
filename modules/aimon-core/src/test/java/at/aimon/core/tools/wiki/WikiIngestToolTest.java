@@ -21,6 +21,8 @@ import org.junit.jupiter.api.Test;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.environment.TestExecutionEnvironments;
+import at.aimon.core.environment.UnavailableExecutionEnvironment;
 import at.aimon.core.filesystem.BackendStatus;
 import at.aimon.core.filesystem.FileMetadata;
 import at.aimon.core.filesystem.VirtualFileSystem;
@@ -51,7 +53,8 @@ class WikiIngestToolTest {
         wikiKnowledgeBase = new StubWikiKnowledgeBase();
         vfs = new StubVirtualFileSystem();
         context = ToolContext.builder().put(ToolContextKeys.WIKI_KNOWLEDGE_BASE, wikiKnowledgeBase)
-                .put(ToolContextKeys.WIKI_SCOPE, SCOPE).put(ToolContextKeys.VIRTUAL_FILE_SYSTEM, vfs).build();
+                .put(ToolContextKeys.WIKI_SCOPE, SCOPE)
+                .put(ToolContextKeys.EXECUTION_ENVIRONMENT, TestExecutionEnvironments.of(vfs)).build();
     }
 
     @Nested
@@ -67,6 +70,7 @@ class WikiIngestToolTest {
             final ToolResult result = tool.execute(ToolInput.of("source_directory", "/raw/articles"), context);
 
             assertThat(result.isSuccess()).isTrue();
+            assertThat(wikiKnowledgeBase.getLastSource().getFileSystem()).isSameAs(vfs);
             assertThat(result.getContent()).contains("Wiki ingest completed");
             assertThat(result.getContent()).contains("/raw/articles");
             assertThat(result.getContent()).contains("3");
@@ -116,7 +120,7 @@ class WikiIngestToolTest {
         @DisplayName("No wiki knowledge base in context returns error")
         void noWikiKnowledgeBaseReturnsError() {
             final ToolContext noWikiContext = ToolContext.builder().put(ToolContextKeys.WIKI_SCOPE, SCOPE)
-                    .put(ToolContextKeys.VIRTUAL_FILE_SYSTEM, vfs).build();
+                    .put(ToolContextKeys.EXECUTION_ENVIRONMENT, TestExecutionEnvironments.of(vfs)).build();
 
             final ToolResult result = tool.execute(ToolInput.of("source_directory", "/raw"), noWikiContext);
 
@@ -129,7 +133,7 @@ class WikiIngestToolTest {
         void noWikiScopeReturnsError() {
             final ToolContext noScopeContext = ToolContext.builder()
                     .put(ToolContextKeys.WIKI_KNOWLEDGE_BASE, wikiKnowledgeBase)
-                    .put(ToolContextKeys.VIRTUAL_FILE_SYSTEM, vfs).build();
+                    .put(ToolContextKeys.EXECUTION_ENVIRONMENT, TestExecutionEnvironments.of(vfs)).build();
 
             final ToolResult result = tool.execute(ToolInput.of("source_directory", "/raw"), noScopeContext);
 
@@ -138,8 +142,8 @@ class WikiIngestToolTest {
         }
 
         @Test
-        @DisplayName("No VirtualFileSystem in context returns error")
-        void noVirtualFileSystemReturnsError() {
+        @DisplayName("No execution environment in context returns error")
+        void noExecutionEnvironmentReturnsError() {
             final ToolContext noVfsContext = ToolContext.builder()
                     .put(ToolContextKeys.WIKI_KNOWLEDGE_BASE, wikiKnowledgeBase).put(ToolContextKeys.WIKI_SCOPE, SCOPE)
                     .build();
@@ -147,7 +151,22 @@ class WikiIngestToolTest {
             final ToolResult result = tool.execute(ToolInput.of("source_directory", "/raw"), noVfsContext);
 
             assertThat(result.isError()).isTrue();
-            assertThat(result.getContent()).contains("No virtual file system configured");
+            assertThat(result.getContent()).contains("No execution environment");
+        }
+
+        @Test
+        @DisplayName("Unavailable execution environment returns an error and never ingests")
+        void unavailableEnvironmentReturnsError() {
+            final ToolContext unavailable = ToolContext.builder()
+                    .put(ToolContextKeys.WIKI_KNOWLEDGE_BASE, wikiKnowledgeBase).put(ToolContextKeys.WIKI_SCOPE, SCOPE)
+                    .put(ToolContextKeys.EXECUTION_ENVIRONMENT, UnavailableExecutionEnvironment.of("sandbox is down"))
+                    .build();
+
+            final ToolResult result = tool.execute(ToolInput.of("source_directory", "/raw"), unavailable);
+
+            assertThat(result.isError()).isTrue();
+            assertThat(result.getContent()).contains("sandbox is down").doesNotContain("Wiki ingest completed");
+            assertThat(wikiKnowledgeBase.getLastSource()).isNull();
         }
 
         @Test
@@ -184,6 +203,7 @@ class WikiIngestToolTest {
 
         private IngestResult result = IngestResult.builder().build();
         private IngestOptions lastOptions;
+        private WikiSource lastSource;
 
         void setResult(IngestResult result) {
             this.result = result;
@@ -193,9 +213,14 @@ class WikiIngestToolTest {
             return lastOptions;
         }
 
+        WikiSource getLastSource() {
+            return lastSource;
+        }
+
         @Override
         public IngestResult ingest(WikiScope scope, WikiSource source, IngestOptions options) {
             this.lastOptions = options;
+            this.lastSource = source;
             return result;
         }
 

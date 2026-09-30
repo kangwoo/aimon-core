@@ -3,10 +3,12 @@ package at.aimon.core.hook.event;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.environment.EnvironmentDescriptor;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.execution.HookContext;
 import at.aimon.core.llm.ToolUse;
@@ -53,6 +55,7 @@ public final class PostToolContext implements HookContext {
     private final String invokerName;
     private final HookRegistry hookRegistry;
     private final Environment environment;
+    private final EnvironmentDescriptor environmentDescriptor;
     private final ToolUse toolUse;
     private final ToolUseResult originalToolUseResult;
     private final ToolUseResult currentToolUseResult;
@@ -65,6 +68,7 @@ public final class PostToolContext implements HookContext {
         invokerName = Objects.requireNonNull(builder.invokerName, "Executor name cannot be null");
         hookRegistry = Objects.requireNonNull(builder.hookRegistry, "Hook registry cannot be null");
         environment = Objects.requireNonNull(builder.environment, "Environment cannot be null");
+        environmentDescriptor = builder.environmentDescriptor;
         toolUse = Objects.requireNonNull(builder.toolUse, "Tool use cannot be null");
         originalToolUseResult = Objects.requireNonNull(builder.toolUseResult, "Tool use result cannot be null");
         currentToolUseResult = builder.currentToolUseResult != null
@@ -93,6 +97,11 @@ public final class PostToolContext implements HookContext {
     @Override
     public Environment getEnvironment() {
         return environment;
+    }
+
+    @Override
+    public Optional<EnvironmentDescriptor> getEnvironmentDescriptor() {
+        return Optional.ofNullable(environmentDescriptor);
     }
 
     /**
@@ -185,8 +194,9 @@ public final class PostToolContext implements HookContext {
                 ? ToolUseResult.error(toolUse.getId(), newOutput.getContent())
                 : ToolUseResult.success(toolUse.getId(), newOutput.getContent());
         final Builder b = new Builder().executorType(invokerType).invokerName(invokerName).hookRegistry(hookRegistry)
-                .environment(environment).toolUse(toolUse).toolUseResult(originalToolUseResult)
-                .iterationCount(iterationCount).timestamp(timestamp).executionAttributes(executionAttributes);
+                .environment(environment).environmentDescriptor(environmentDescriptor).toolUse(toolUse)
+                .toolUseResult(originalToolUseResult).iterationCount(iterationCount).timestamp(timestamp)
+                .executionAttributes(executionAttributes);
         b.currentToolUseResult = rebuilt;
         return new PostToolContext(b);
     }
@@ -205,6 +215,7 @@ public final class PostToolContext implements HookContext {
         private String invokerName;
         private HookRegistry hookRegistry;
         private Environment environment;
+        private EnvironmentDescriptor environmentDescriptor;
         private ToolUse toolUse;
         private ToolUseResult toolUseResult;
         private ToolUseResult currentToolUseResult;
@@ -260,6 +271,18 @@ public final class PostToolContext implements HookContext {
          */
         public Builder environment(Environment environment) {
             this.environment = environment;
+            return this;
+        }
+
+        /**
+         * Sets the descriptor of the execution environment the tool runs in.
+         *
+         * @param environmentDescriptor
+         *            the descriptor (nullable)
+         * @return This builder
+         */
+        public Builder environmentDescriptor(EnvironmentDescriptor environmentDescriptor) {
+            this.environmentDescriptor = environmentDescriptor;
             return this;
         }
 

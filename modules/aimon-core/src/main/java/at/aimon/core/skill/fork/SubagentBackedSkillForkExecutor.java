@@ -1,7 +1,9 @@
 package at.aimon.core.skill.fork;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 
 import org.slf4j.Logger;
@@ -11,14 +13,21 @@ import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolRegistry;
+import at.aimon.core.agent.tool.permission.AllowedTool;
+import at.aimon.core.agent.tool.permission.AllowedTools;
+import at.aimon.core.base.Principal;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.skill.Skill;
+import at.aimon.core.subagent.Subagent;
 import at.aimon.core.subagent.SubagentExecutionEnvironment;
 import at.aimon.core.subagent.SubagentExecutionManager;
 import at.aimon.core.subagent.SubagentRegistry;
+import at.aimon.core.subagent.SubagentToolScope;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
+import at.aimon.core.tools.CallerAllowedTools;
+import at.aimon.core.tools.ExecutionEnvironmentAccess;
 import at.aimon.core.tools.InvokingSessionAccess;
 import at.aimon.core.tools.ToolContextKeys;
 
@@ -88,10 +97,28 @@ public final class SubagentBackedSkillForkExecutor implements SkillForkExecutor 
 
         // Fail fast when the target subagent does not exist; otherwise the executor would surface a less specific
         // SubagentNotFoundException nested inside a generic execution failure.
-        if (subagentRegistry.getSubagent(agentName).isEmpty()) {
+        final Subagent target = subagentRegistry.getSubagent(agentName).orElse(null);
+        if (target == null) {
             return SkillForkOutcome
                     .failure(String.format("Skill '%s' references unknown subagent '%s'", skill.getName(), agentName));
         }
+
+        // Carry the skill's own allow-list into the fork. Without this the fork runs under the target subagent's list
+        // alone, so `allowed-tools` is enforced on a skill's inline path (LlmSkillExecutor) and not at all here — the
+        // looser of the two paths being the one the skill author did not pick. The two lists apply together: the
+        // result never permits what either refuses.
+        final List<AllowedTool> skillAllowed = skill.getMetadata().getAllowedTools();
+        final Optional<List<AllowedTool>> effective = AllowedTools.intersect(skillAllowed,
+                target.getMetadata().getAllowedTools());
+        if (effective.isEmpty()) {
+            // Empty means "nothing in common", which an allow-list cannot express — an empty list reads as
+            // unrestricted. Refusing is the only safe reading, and it names both sides so the mismatch is fixable.
+            return SkillForkOutcome.failure(String.format(
+                    "Skill '%s' cannot fork to subagent '%s': their allowed-tools have nothing in common "
+                            + "(skill allows %s, subagent allows %s)",
+                    skill.getName(), agentName, skillAllowed, target.getMetadata().getAllowedTools()));
+        }
+        final Subagent effectiveTarget = SubagentToolScope.withAllowedTools(target, effective.get());
 
         final AgentRuntimeId agentRuntimeId = toolContext.get(ToolContextKeys.AGENT_RUNTIME_ID).orElse(null);
         if (agentRuntimeId == null) {
@@ -108,18 +135,28 @@ public final class SubagentBackedSkillForkExecutor implements SkillForkExecutor 
             return LlmCallMetadata.empty();
         });
 
+        // Forward the caller's principal the same way TaskTool and WorkflowTool do. The fork resolves its execution
+        // environment with this principal (DefaultSubagentExecutor), so dropping it here left the fork's file and shell
+        // tools refused as "not permitted" even though the same skill ran inline without trouble.
+        final Principal principal = toolContext.get(ToolContextKeys.PRINCIPAL).orElse(null);
+
         final SubagentExecutionEnvironment env = SubagentExecutionEnvironment.builder().agentRuntimeId(agentRuntimeId)
                 .subagentRegistry(subagentRegistry).toolRegistry(toolRegistry).hookRegistry(hookRegistry)
                 .environment(environment).defaultModel(defaultModel).executionAttributes(executionAttributes)
-                .parentLlmCallMetadata(parentMetadata)
-                .invokingSessionId(InvokingSessionAccess.idToPropagate(toolContext).orElse(null)).build();
+                .parentLlmCallMetadata(parentMetadata).principal(principal)
+                .callerAllowedTools(CallerAllowedTools.of(toolContext))
+                .invokingSessionId(InvokingSessionAccess.idToPropagate(toolContext).orElse(null))
+                // The fork resolves its own environment from the spawning runtime's provider, with this execution's
+                // environment as its parent (execution-environment design §5.2).
+                .executionEnvironment(ExecutionEnvironmentAccess.of(toolContext).orElse(null))
+                .executionEnvironmentProvider(ExecutionEnvironmentAccess.providerOf(toolContext).orElse(null)).build();
 
         final String taskId = UUID.randomUUID().toString();
         final String description = "skill:" + skill.getName();
 
         try {
-            final SubagentExecutionResult result = subagentExecutionManager.execute(env, taskId, agentName, goal,
-                    description);
+            final SubagentExecutionResult result = subagentExecutionManager.executeInline(env, taskId, effectiveTarget,
+                    goal, description);
             if (result.isSuccess()) {
                 return SkillForkOutcome.success(result.getFinalAnswer());
             }

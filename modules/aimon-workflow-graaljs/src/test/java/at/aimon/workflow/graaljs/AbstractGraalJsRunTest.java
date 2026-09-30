@@ -69,8 +69,16 @@ abstract class AbstractGraalJsRunTest {
     }
 
     protected String run(String js, Map<String, Object> args, JsSandboxConfig config) {
-        final GraalJsWorkflowScript script = new GraalJsWorkflowScript(js, args, config, engines,
-                SubagentResolver.inline(), null);
+        return run(js, args, config, SubagentResolver.inline());
+    }
+
+    /** Runs with a given resolver — e.g. {@link SubagentResolver#inline(at.aimon.core.subagent.SubagentRegistry)}. */
+    protected String run(String js, SubagentResolver resolver) {
+        return run(js, Map.of(), JsSandboxConfig.defaults(), resolver);
+    }
+
+    protected String run(String js, Map<String, Object> args, JsSandboxConfig config, SubagentResolver resolver) {
+        final GraalJsWorkflowScript script = new GraalJsWorkflowScript(js, args, config, engines, resolver, null);
         try (WorkflowRunner runner = WorkflowRunners.create(manager, env(), WorkflowRunnerOptions.defaults())) {
             return runner.run(script, RunId.from("test-run"));
         }

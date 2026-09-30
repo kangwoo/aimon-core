@@ -1,9 +1,17 @@
 package at.aimon.workflow.graaljs;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+
+import at.aimon.core.subagent.InMemorySubagentRegistry;
+import at.aimon.core.subagent.Subagent;
+import at.aimon.workflow.graaljs.exception.JsScriptException;
 
 /**
  * Fan-out marshalling tests over the real engine: deep-detach parallel with nested schemas, null-isolation
@@ -75,5 +83,53 @@ class WorkflowBindingsFanoutTest extends AbstractGraalJsRunTest {
                 java.util.Map.of("name", "world", "nested", java.util.Map.of("x", 1), "arr", java.util.List.of(7, 8)),
                 JsSandboxConfig.defaults());
         assertThat(out).isEqualTo("top:blocked|nested:1|arr:7");
+    }
+
+    @Test
+    @DisplayName("agent() and parallel() steps carry registered and per-descriptor attributes (EE-42)")
+    void stepsCarryAttributes() {
+        final InMemorySubagentRegistry registry = new InMemorySubagentRegistry();
+        registry.register(Subagent.builder().name("builder").systemPrompt("unused")
+                .attributes(Map.of("sandbox.slot", "build")).build());
+        final Map<String, Map<String, String>> seen = new ConcurrentHashMap<>();
+        behavior = (subagent, goal) -> {
+            seen.put(goal, subagent.getMetadata().getAttributes());
+            return "ok";
+        };
+
+        run("agent({ agentType: 'builder', goal: 'solo' });\n" + "await parallel([\n"
+                + "  { agentType: 'reviewer', goal: 'p0', attributes: { sandbox: { profile: 'ro' } } },\n"
+                + "  { agentType: 'builder', goal: 'p1', attributes: { 'sandbox.profile': 'rw' } },\n" + "]);\n"
+                + "return 'done';", SubagentResolver.inline(registry));
+
+        assertThat(seen.get("solo")).containsExactly(Map.entry("sandbox.slot", "build"));
+        assertThat(seen.get("p0")).containsExactly(Map.entry("sandbox.profile", "ro"));
+        assertThat(seen.get("p1")).containsExactly(Map.entry("sandbox.slot", "build"),
+                Map.entry("sandbox.profile", "rw"));
+    }
+
+    @Test
+    @DisplayName("a script overriding a registered definition's attribute fails the run (registered keys are pinned)")
+    void overridingRegisteredAttributeFailsRun() {
+        final InMemorySubagentRegistry registry = new InMemorySubagentRegistry();
+        registry.register(Subagent.builder().name("untrusted-runner").systemPrompt("unused")
+                .attributes(Map.of("sandbox.slot", "isolated")).build());
+
+        assertThatThrownBy(
+                () -> run(
+                        "return agent({ agentType: 'untrusted-runner', goal: 'g',"
+                                + " attributes: { 'sandbox.slot': 'privileged' } }).text;",
+                        SubagentResolver.inline(registry)))
+                .isInstanceOf(JsScriptException.class).hasMessageContaining("workflow script rejected")
+                .hasMessageContaining("agent 'untrusted-runner'").hasMessageContaining("'sandbox.slot'")
+                .hasMessageContaining("'isolated'").hasMessageContaining("'privileged'");
+    }
+
+    @Test
+    @DisplayName("an invalid 'attributes' fails the run loudly")
+    void invalidAttributesFailRun() {
+        assertThatThrownBy(() -> run("return agent({ agentType: 'a', goal: 'g', attributes: 'build' }).text;"))
+                .isInstanceOf(JsScriptException.class).hasMessageContaining("workflow script rejected")
+                .hasMessageContaining("'attributes' must be an object");
     }
 }

@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-development-guide.md
-source_commit: eec9ccd
+source_commit: 6df9672
 ---
 
 # Hook Development Guide
@@ -291,6 +291,21 @@ Each hook receives the context object that matches its firing point. Every conte
 | `isSuccess()` | `boolean` | Whether the turn succeeded |
 | `getFinalAnswer()` | `String` | The final answer |
 | `getMetadata()` | `ExecutionMetadata` | Execution metadata such as the iteration count |
+
+### `PostCompactContext`
+
+| Accessor | Type | Description |
+|--------|------|------|
+| `getCompactionMetadata()` | `CompactionMetadata` | Metadata of the compaction that just finished |
+| `getRecentReadFilePaths()` / `getInvokedSkills()` | `List<…>` | Files read and skills invoked in the compacted range (a pre-compaction snapshot) |
+| `getTranscriptBuffer()` | `TranscriptBuffer` | The transcript after compaction. On a version-2 log the compaction is recorded in the view state, so the log (`getMessages()`) still holds the originals |
+| `addSyntheticMessage(Message)` | — | Attaches a restorative message as `LogOrigin.SYNTHETIC` |
+
+To attach a restorative message after compaction — a file list, a skill list — use **`addSyntheticMessage(...)`**,
+not `getTranscriptBuffer().addMessage(...)`. The buffer's plain `addMessage`/`addUserMessage` records
+`LogOrigin.CONVERSATION`, so a message the runtime attached would be treated as conversation — memory ingest and
+history recall would read it as something the user said. The built-in hooks `RecentFilesRestoreHook` and
+`InvokedSkillsRestoreHook` go through this path too.
 
 The contexts for the remaining events follow the same rule — common fields plus event-specific
 fields, all immutable.

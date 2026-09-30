@@ -11,6 +11,7 @@ import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import at.aimon.bootstrap.assemble.SegmentSweepSchedule;
 import at.aimon.bootstrap.runtime.AgentRuntimeResolver;
 import at.aimon.bootstrap.runtime.SchedulingLifecycle;
 import at.aimon.bootstrap.spec.AgentDescriptor;
@@ -77,6 +78,8 @@ public final class AimonStack implements AutoCloseable {
     private final MessageQueueManager messageQueueManager;
     private final PendingTurnRegistry pendingTurnRegistry;
     private final PendingTurnReaper pendingTurnReaper;
+    /** The store-wide orphan segment sweep, or null when the spec leaves it off. Closed on the teardown plan. */
+    private final SegmentSweepSchedule segmentSweep;
     private final Map<AgentRuntimeId, VirtualFileSystem> fileSystems;
     private final AgentRuntimeId primaryRuntimeId;
     private final Map<AgentRuntimeId, OrcaAgentRuntime> runtimes;
@@ -93,7 +96,7 @@ public final class AimonStack implements AutoCloseable {
             PendingTurnReaper pendingTurnReaper, Map<AgentRuntimeId, VirtualFileSystem> fileSystems,
             AgentRuntimeId primaryRuntimeId, Map<AgentRuntimeId, OrcaAgentRuntime> runtimes,
             List<AgentDescriptor> agentDescriptors, AgentRuntimeResolver agentRuntimeResolver,
-            RuntimeDegradations degradations) {
+            SegmentSweepSchedule segmentSweep, RuntimeDegradations degradations) {
         this.spec = Objects.requireNonNull(spec, "spec must not be null");
         this.teardown = Objects.requireNonNull(teardown, "teardown must not be null");
         this.sessionRouter = Objects.requireNonNull(sessionRouter, "sessionRouter must not be null");
@@ -105,6 +108,7 @@ public final class AimonStack implements AutoCloseable {
         this.messageQueueManager = Objects.requireNonNull(messageQueueManager, "messageQueueManager must not be null");
         this.pendingTurnRegistry = Objects.requireNonNull(pendingTurnRegistry, "pendingTurnRegistry must not be null");
         this.pendingTurnReaper = Objects.requireNonNull(pendingTurnReaper, "pendingTurnReaper must not be null");
+        this.segmentSweep = segmentSweep; // nullable — the sweep is opt-in
         this.fileSystems = Map.copyOf(Objects.requireNonNull(fileSystems, "fileSystems must not be null"));
         this.primaryRuntimeId = Objects.requireNonNull(primaryRuntimeId, "primaryRuntimeId must not be null");
         this.runtimes = Map.copyOf(runtimes);
@@ -362,11 +366,15 @@ public final class AimonStack implements AutoCloseable {
             return this;
         }
         runtimes.values().forEach(agentRuntimeRegistry::register);
-        // Both are daemon sweepers belonging to the serving tier rather than to scheduling: the reaper expires
-        // turns parked on an approval prompt, and the resolver's sweeper reclaims idle tenant runtimes. Neither
-        // has anything to do until a turn has run, so they start with the runtimes and not before them.
+        // All three are daemon sweepers belonging to the serving tier rather than to scheduling: the reaper expires
+        // turns parked on an approval prompt, the resolver's sweeper reclaims idle tenant runtimes, and the segment
+        // sweep (when configured) deletes orphan log segments. None has anything to do until a turn has run, so they
+        // start with the runtimes and not before them.
         pendingTurnReaper.start();
         agentRuntimeResolver.start();
+        if (segmentSweep != null) {
+            segmentSweep.start();
+        }
         log.info("AIMON stack started: agent runtime(s) {} registered", runtimes.keySet());
         return this;
     }

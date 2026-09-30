@@ -1,7 +1,10 @@
 package at.aimon.core.subagent.parser;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+
+import at.aimon.core.base.DefinitionAttributes;
 
 /**
  * Result of parsing subagent content including metadata and system prompt.
@@ -22,6 +25,7 @@ public final class SubagentContentResult {
     private final String model;
     private final Integer maxIterations;
     private final String systemPrompt;
+    private final Map<String, String> attributes;
 
     /**
      * Creates a new SubagentContentResult.
@@ -41,6 +45,30 @@ public final class SubagentContentResult {
      */
     public SubagentContentResult(String description, String whenToUse, List<String> tools, String model,
             Integer maxIterations, String systemPrompt) {
+        this(description, whenToUse, tools, model, maxIterations, systemPrompt, Map.of());
+    }
+
+    /**
+     * Creates a new SubagentContentResult that carries the definition's free-form attributes.
+     *
+     * @param description
+     *            The subagent description including when to use (may be null)
+     * @param whenToUse
+     *            The trigger conditions for selecting this subagent (may be null)
+     * @param tools
+     *            The list of allowed tools (must not be null)
+     * @param model
+     *            The model to use (may be null)
+     * @param maxIterations
+     *            The maximum ReAct loop iterations, or null to use the default (may be null)
+     * @param systemPrompt
+     *            The system prompt (must not be null)
+     * @param attributes
+     *            The flattened {@code attributes} block (must not be null; may be empty)
+     */
+    public SubagentContentResult(String description, String whenToUse, List<String> tools, String model,
+            Integer maxIterations, String systemPrompt, Map<String, String> attributes) {
+        this.attributes = DefinitionAttributes.copyOf(Objects.requireNonNull(attributes, "Attributes cannot be null"));
         this.description = description;
         this.whenToUse = whenToUse;
         this.tools = Objects.requireNonNull(tools, "Tools cannot be null");
@@ -78,6 +106,15 @@ public final class SubagentContentResult {
         return systemPrompt;
     }
 
+    /**
+     * Returns the flattened {@code attributes} block.
+     *
+     * @return the attributes (never null; empty when the frontmatter had none)
+     */
+    public Map<String, String> getAttributes() {
+        return attributes;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -89,12 +126,13 @@ public final class SubagentContentResult {
         final SubagentContentResult that = (SubagentContentResult) o;
         return Objects.equals(description, that.description) && Objects.equals(whenToUse, that.whenToUse)
                 && Objects.equals(tools, that.tools) && Objects.equals(model, that.model)
-                && Objects.equals(maxIterations, that.maxIterations) && Objects.equals(systemPrompt, that.systemPrompt);
+                && Objects.equals(maxIterations, that.maxIterations) && Objects.equals(systemPrompt, that.systemPrompt)
+                && attributes.equals(that.attributes);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(description, whenToUse, tools, model, maxIterations, systemPrompt);
+        return Objects.hash(description, whenToUse, tools, model, maxIterations, systemPrompt, attributes);
     }
 
     @Override

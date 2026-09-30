@@ -11,6 +11,8 @@ import at.aimon.core.agent.interrupt.NoopCancellationSignal;
 import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolContextEnricher;
 import at.aimon.core.agent.tool.ToolRegistry;
+import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.environment.ExecutionEnvironmentProvider;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.knowledge.KnowledgeScope;
 import at.aimon.core.knowledge.KnowledgeStore;
@@ -78,6 +80,8 @@ public final class SubagentExecutionContext {
     private final KnowledgeScope knowledgeScope;
     private final List<ToolContextEnricher> toolContextEnrichers;
     private final SubagentOutputSink outputSink;
+    private final ExecutionEnvironment executionEnvironment;
+    private final ExecutionEnvironmentProvider executionEnvironmentProvider;
 
     private SubagentExecutionContext(Builder builder) {
         this.agentRuntimeId = Objects.requireNonNull(builder.agentRuntimeId, "Agent runtime ID cannot be null");
@@ -96,6 +100,8 @@ public final class SubagentExecutionContext {
                 ? List.copyOf(builder.toolContextEnrichers)
                 : List.of();
         this.outputSink = builder.outputSink != null ? builder.outputSink : SubagentOutputSink.NO_OP;
+        this.executionEnvironment = builder.executionEnvironment;
+        this.executionEnvironmentProvider = builder.executionEnvironmentProvider;
     }
 
     /**
@@ -229,6 +235,24 @@ public final class SubagentExecutionContext {
     }
 
     /**
+     * Returns the spawning execution's environment, passed to the provider as {@code EnvironmentRequest.parent}.
+     *
+     * @return the parent environment, or empty
+     */
+    public Optional<ExecutionEnvironment> getExecutionEnvironment() {
+        return Optional.ofNullable(executionEnvironment);
+    }
+
+    /**
+     * Returns the provider the fork resolves its execution environment from.
+     *
+     * @return the provider, or empty (the fork then runs with an unavailable environment)
+     */
+    public Optional<ExecutionEnvironmentProvider> getExecutionEnvironmentProvider() {
+        return Optional.ofNullable(executionEnvironmentProvider);
+    }
+
+    /**
      * Gets the available tools from the tool handler's registry.
      *
      * @return An immutable list of available tools (never null)
@@ -250,6 +274,8 @@ public final class SubagentExecutionContext {
         private KnowledgeScope knowledgeScope;
         private List<ToolContextEnricher> toolContextEnrichers;
         private SubagentOutputSink outputSink;
+        private ExecutionEnvironment executionEnvironment;
+        private ExecutionEnvironmentProvider executionEnvironmentProvider;
 
         /** agentRuntimeId를 설정한다. */
         public Builder agentRuntimeId(AgentRuntimeId agentRuntimeId) {
@@ -357,6 +383,30 @@ public final class SubagentExecutionContext {
          */
         public Builder outputSink(SubagentOutputSink outputSink) {
             this.outputSink = outputSink;
+            return this;
+        }
+
+        /**
+         * Sets the spawning execution's environment.
+         *
+         * @param executionEnvironment
+         *            the parent environment, or null
+         * @return this builder
+         */
+        public Builder executionEnvironment(ExecutionEnvironment executionEnvironment) {
+            this.executionEnvironment = executionEnvironment;
+            return this;
+        }
+
+        /**
+         * Sets the provider the fork resolves its execution environment from.
+         *
+         * @param executionEnvironmentProvider
+         *            the provider, or null
+         * @return this builder
+         */
+        public Builder executionEnvironmentProvider(ExecutionEnvironmentProvider executionEnvironmentProvider) {
+            this.executionEnvironmentProvider = executionEnvironmentProvider;
             return this;
         }
 

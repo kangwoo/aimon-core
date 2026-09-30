@@ -66,7 +66,10 @@ public final class GraalJsWorkflowScript implements WorkflowScript<String> {
         this(source, args, sandbox, engines, subagents, signal, null);
     }
 
-    /** Convenience constructor with default {@link SubagentResolver#inline()} and no cancellation signal. */
+    /**
+     * Convenience constructor with default {@link SubagentResolver#inline()} and no cancellation signal. There is no
+     * registry here, so a step carries only the attributes its own descriptor gives.
+     */
     public GraalJsWorkflowScript(String source, Map<String, Object> args, JsSandboxConfig sandbox,
             GraalJsEngineHolder engines) {
         this(source, args, sandbox, engines, SubagentResolver.inline(), null);

@@ -113,6 +113,17 @@ class ClasspathAgentBundleLoaderTest {
     class LoadNoBundledTests {
 
         @Test
+        @DisplayName("Should carry the definition's attributes into the agent metadata")
+        void shouldCarryAttributes() {
+            ClasspathAgentBundleLoader loader = new ClasspathAgentBundleLoader("agents");
+
+            AgentBundle bundle = loader.load("agent-attributed");
+
+            assertThat(bundle.getAgent().getMetadata().getAttributes())
+                    .containsExactly(Map.entry("sandbox.slot", "build"));
+        }
+
+        @Test
         @DisplayName("Should load agent without bundled subagents or skills")
         void shouldLoadAgentWithoutBundled() {
             ClasspathAgentBundleLoader loader = new ClasspathAgentBundleLoader("agents");

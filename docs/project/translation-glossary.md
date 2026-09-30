@@ -41,13 +41,13 @@
 블록 전체를 그대로 두라는 뜻이 아니다. 경계는 **실행되는 것과 읽히는 것** 사이에 있다.
 
 ```java
-// 만든 쪽이 닫는다 — 어셈블리가 셸을 줬다면 런타임은 손대지 않는다
-if (ownedShell != null) {
-    ownedShell.close();
+// 만든 쪽이 닫는다 — MCP 가 설정되지 않았다면 닫을 것이 없다
+if (mcpClientManager != null) {
+    mcpClientManager.close();
 }
 ```
 
-위 블록에서 번역 대상은 주석 한 줄뿐이다. `ownedShell` 도 `close()` 도 건드리지 않는다.
+위 블록에서 번역 대상은 주석 한 줄뿐이다. `mcpClientManager` 도 `close()` 도 건드리지 않는다.
 
 ---
 

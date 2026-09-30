@@ -12,7 +12,6 @@ import at.aimon.core.credential.CredentialStore;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.scheduling.ScheduledTaskManager;
-import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.skill.SkillRegistry;
 import at.aimon.core.skill.policy.SkillInvocationPolicy;
 import at.aimon.core.subagent.SubagentExecutionManager;
@@ -31,7 +30,15 @@ import at.aimon.core.workflow.WorkflowRunner;
  *
  * <p>
  * Common registry dependencies are held via {@link OrcaProviderDependencies} (composition), while tool-specific fields
- * ({@code fileSystem}, {@code environment}, {@code agent}) are held directly.
+ * ({@code controlFileSystem}, {@code environment}, {@code agent}) are held directly.
+ *
+ * <p>
+ * <b>No working filesystem, no shell.</b> This context deliberately offers no handle to the filesystem the model's
+ * tools work in or to the shell {@code Bash} runs in: tools read both from the execution's
+ * {@code ExecutionEnvironment} ({@code ToolContextKeys.EXECUTION_ENVIRONMENT}) on every call. A registration-time
+ * handle would let a provider put them into a tool constructor and fix one environment per agent again
+ * (execution-environment design §1.1, §6). {@link #getControlFileSystem()} is the framework's control store, which is
+ * never exposed to the model's file tools.
  *
  * <p>
  * Example usage:
@@ -39,7 +46,7 @@ import at.aimon.core.workflow.WorkflowRunner;
  * <pre>
  * {
  *     &#64;code
- *     OrcaToolProviderContext context = OrcaToolProviderContext.builder().fileSystem(fileSystem)
+ *     OrcaToolProviderContext context = OrcaToolProviderContext.builder().controlFileSystem(controlFileSystem)
  *             .environment(environment).agent(agent).dependencies(deps).build();
  * }
  * </pre>
@@ -68,8 +75,9 @@ import at.aimon.core.workflow.WorkflowRunner;
  * <li><b>four use none of it</b> — {@code OrcaKnowledgeToolProvider}, {@code OrcaMemoryToolProvider},
  * {@code OrcaTodoToolProvider}, {@code OrcaMcpToolProvider} take their collaborators through the constructor instead;
  * <li><b>the two that live outside {@code aimon-core}</b> — the very modules this SPI exists for — use one and two:
- * {@code OrcaSandboxToolProvider} reads {@code getFileSystem()}, {@code OrcaBrowserToolProvider} that plus
- * {@code getCredentialStore()};
+ * {@code OrcaSandboxToolProvider} read {@code getFileSystem()}, {@code OrcaBrowserToolProvider} that plus
+ * {@code getCredentialStore()} — both counts predate the removal of {@code getFileSystem()}/{@code getShell()}
+ * (execution-environment design §6), which those two modules have to follow;
  * <li>three reach double digits or close to it ({@code OrcaSubagentToolProvider} 11, {@code OrcaSkillToolProvider} and
  * {@code GraalJsWorkflowToolProvider} 8 each), and they are what the width is actually for — a subagent tool needs the
  * registry, the execution manager, three task stores and the enrichers at once.
@@ -99,8 +107,7 @@ public final class OrcaToolProviderContext {
         return new Builder();
     }
 
-    private final VirtualFileSystem fileSystem;
-    private final VirtualShell shell;
+    private final VirtualFileSystem controlFileSystem;
     private final Environment environment;
     private final Agent agent;
     private final OrcaProviderDependencies dependencies;
@@ -108,8 +115,7 @@ public final class OrcaToolProviderContext {
     private final WorkflowRunner workflowRunner;
 
     private OrcaToolProviderContext(Builder builder) {
-        fileSystem = builder.fileSystem;
-        shell = builder.shell;
+        controlFileSystem = builder.controlFileSystem;
         environment = builder.environment;
         agent = builder.agent;
         dependencies = Objects.requireNonNull(builder.dependencies, "dependencies must not be null");
@@ -120,25 +126,14 @@ public final class OrcaToolProviderContext {
     }
 
     /**
-     * Returns the virtual file system.
+     * Returns the control store — agent, skill and command definitions, task outputs, snapshots, archived artifacts.
+     * Framework state, not the model's workspace: a provider must not hand it to a tool the model drives as a working
+     * filesystem.
      *
-     * @return the virtual file system, may be null
+     * @return the control filesystem, may be null
      */
-    public VirtualFileSystem getFileSystem() {
-        return fileSystem;
-    }
-
-    /**
-     * Returns the shell that command-executing tools run through.
-     *
-     * <p>
-     * Deliberately <b>not</b> required: providers that need no shell must still be able to assemble a context. A
-     * provider that does need one checks for null and skips registering its tool rather than risking a runtime NPE.
-     *
-     * @return the shell, may be null when neither the assembly nor the runtime factory supplied one
-     */
-    public VirtualShell getShell() {
-        return shell;
+    public VirtualFileSystem getControlFileSystem() {
+        return controlFileSystem;
     }
 
     /**
@@ -288,8 +283,7 @@ public final class OrcaToolProviderContext {
      * Builder for {@link OrcaToolProviderContext}.
      */
     public static final class Builder {
-        private VirtualFileSystem fileSystem;
-        private VirtualShell shell;
+        private VirtualFileSystem controlFileSystem;
         private Environment environment;
         private Agent agent;
         private OrcaProviderDependencies dependencies;
@@ -300,26 +294,14 @@ public final class OrcaToolProviderContext {
         }
 
         /**
-         * Sets the virtual file system.
+         * Sets the control store.
          *
-         * @param fileSystem
-         *            the virtual file system
+         * @param controlFileSystem
+         *            the control filesystem
          * @return this builder
          */
-        public Builder fileSystem(VirtualFileSystem fileSystem) {
-            this.fileSystem = fileSystem;
-            return this;
-        }
-
-        /**
-         * Sets the shell that command-executing tools run through.
-         *
-         * @param shell
-         *            the shell (nullable; a provider that needs one skips registering its tool when it is absent)
-         * @return this builder
-         */
-        public Builder shell(VirtualShell shell) {
-            this.shell = shell;
+        public Builder controlFileSystem(VirtualFileSystem controlFileSystem) {
+            this.controlFileSystem = controlFileSystem;
             return this;
         }
 

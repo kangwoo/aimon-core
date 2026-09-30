@@ -16,6 +16,7 @@ import at.aimon.core.agent.session.idempotency.IdempotencyStore;
 import at.aimon.core.agent.session.inbox.SessionInbox;
 import at.aimon.core.agent.session.signal.SessionSignalBus;
 import at.aimon.core.agent.session.store.SessionLeaseStore;
+import at.aimon.core.agent.session.store.SessionLogSegmentStore;
 import at.aimon.core.agent.session.store.SessionRecordStore;
 import at.aimon.session.routing.DeploymentMode;
 
@@ -63,7 +64,7 @@ import at.aimon.session.routing.DeploymentMode;
 public class AimonSessionAutoConfiguration {
 
     /**
-     * Name of the bean this slice publishes, which the five SPIs below are made dependencies of.
+     * Name of the bean this slice publishes, which the six SPIs below are made dependencies of.
      *
      * <p>
      * A constant so the {@code @Bean} and the edges registered against it cannot drift apart.
@@ -71,10 +72,15 @@ public class AimonSessionAutoConfiguration {
     static final String SESSION_SPEC_BEAN = "aimonSessionSpec";
 
     /**
-     * Gathers the five session SPIs, each of which the application publishes or does not.
+     * Gathers the six session SPIs, each of which the application publishes or does not.
      *
      * <p>
-     * All five go through {@link ApplicationBeans#resolve}, which registers the destruction edge an
+     * The sixth, {@link SessionLogSegmentStore}, is where a version-2 log seals the ranges its view hides
+     * (session-log §5). It is optional in every mode: without it a supplied record store seals nothing and the stack
+     * records a {@code session-log-sealing} degradation when the write format is {@code v2}.
+     *
+     * <p>
+     * All six go through {@link ApplicationBeans#resolve}, which registers the destruction edge an
      * {@code ObjectProvider} does not. This slice is where that matters most concretely: a
      * {@link SessionRecordStore} under {@code store=postgres} is a connection, and the stack writes transcripts
      * into it throughout its own ordered teardown.
@@ -91,6 +97,8 @@ public class AimonSessionAutoConfiguration {
      *            the inbox, when the application published one
      * @param idempotencyStores
      *            the idempotency store, when the application published one
+     * @param segmentStores
+     *            the log segment store, when the application published one
      * @param beanFactory
      *            the context's bean factory, used to register the destruction edges
      * @return the spec
@@ -101,11 +109,13 @@ public class AimonSessionAutoConfiguration {
     SessionSpec aimonSessionSpec(AimonProperties properties, ObjectProvider<SessionRecordStore> recordStores,
             ObjectProvider<SessionLeaseStore> leaseStores, ObjectProvider<SessionSignalBus> signalBuses,
             ObjectProvider<SessionInbox> inboxes, ObjectProvider<IdempotencyStore> idempotencyStores,
-            ConfigurableListableBeanFactory beanFactory) {
+            ObjectProvider<SessionLogSegmentStore> segmentStores, ConfigurableListableBeanFactory beanFactory) {
         final AimonProperties.SessionProperties session = properties.getSession();
         final SessionSpec.Builder builder = SessionSpec.builder().drainTimeout(session.getShutdownDrainTimeout())
                 .idleTtl(session.getCache().getIdleTtl()).maxCachedSessions(session.getCache().getMaxEntries())
-                .mode(session.getMode()).nodeId(session.getNodeId());
+                .mode(session.getMode()).nodeId(session.getNodeId()).logWriteFormat(session.getLogWriteFormat())
+                .segmentSweepInterval(session.getSegmentSweepInterval())
+                .segmentSweepGrace(session.getSegmentSweepGrace());
 
         final SessionRecordStore supplied = ApplicationBeans.resolve(recordStores, SessionRecordStore.class,
                 beanFactory, SESSION_SPEC_BEAN);
@@ -132,6 +142,8 @@ public class AimonSessionAutoConfiguration {
         final IdempotencyStore idempotencyStore = ApplicationBeans.resolve(idempotencyStores, IdempotencyStore.class,
                 beanFactory, SESSION_SPEC_BEAN);
         builder.leaseStore(leaseStore).signalBus(signalBus).inbox(inbox).idempotencyStore(idempotencyStore);
+        builder.segmentStore(
+                ApplicationBeans.resolve(segmentStores, SessionLogSegmentStore.class, beanFactory, SESSION_SPEC_BEAN));
 
         if (session.getMode() == DeploymentMode.DISTRIBUTED) {
             final List<String> missing = describeMissing(leaseStore, signalBus, inbox, idempotencyStore);

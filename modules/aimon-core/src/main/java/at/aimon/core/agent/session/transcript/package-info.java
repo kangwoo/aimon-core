@@ -24,8 +24,11 @@
  * <h3>SessionTranscript — the stored value</h3>
  *
  * <p>
- * {@link at.aimon.core.agent.session.transcript.SessionTranscript} is the immutable pair of system prompt plus messages
- * that a record holds as one field. Immutability is what lets record copies share it by reference instead of
+ * {@link at.aimon.core.agent.session.transcript.SessionTranscript} is the immutable pair of system prompt plus
+ * {@link at.aimon.core.agent.session.transcript.SessionLogState} that a record holds as one field. The log state is the
+ * seq-addressed session log — entries of {@code (seq, message, origin)}, {@code nextSeq}, {@code floorSeq}, the rewind
+ * point and the format it must be written in — and it crosses every hop of the load and save chains whole. Immutability
+ * is what lets record copies share it by reference instead of
  * duplicating
  * the message list:
  *

@@ -14,16 +14,19 @@ import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.compact.CompactionEngine;
 import at.aimon.core.agent.compact.CompactionGuard;
 import at.aimon.core.agent.compact.PromptSizeRecoveryStrategy;
+import at.aimon.core.agent.context.ContextEngine;
+import at.aimon.core.agent.context.DefaultContextEngine;
 import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolContextEnricher;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.command.CommandRegistry;
+import at.aimon.core.environment.EnvironmentProviding;
+import at.aimon.core.environment.ExecutionEnvironmentProvider;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.rewake.RewakeCapableRuntime;
 import at.aimon.core.knowledge.KnowledgeStore;
 import at.aimon.core.mcp.McpClientManager;
-import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.skill.SkillRegistry;
 import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.workflow.WorkflowRunner;
@@ -53,7 +56,8 @@ import at.aimon.core.workflow.WorkflowRunner;
  * }
  * </pre>
  */
-public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntime, AutoCloseable {
+@SuppressWarnings("deprecation") // the version-1 compaction SPI is carried through on purpose
+public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntime, EnvironmentProviding, AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(OrcaAgentRuntime.class);
 
@@ -69,27 +73,29 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
     private final CommandRegistry commandRegistry;
     private final SubagentRegistry subagentRegistry;
     private final SkillRegistry skillRegistry;
-    private final VirtualFileSystem fileSystem;
+    private final VirtualFileSystem controlFileSystem;
     private final Environment environment;
     private final McpClientManager mcpClientManager; // nullable - only present when MCP is configured
     private final KnowledgeStore knowledgeStore; // nullable - only present when knowledge directory is configured
     private final CompactionEngine compactionEngine; // nullable - opt-in conversation compaction
     private final CompactionGuard compactionGuard; // nullable - paired with compactionEngine; defaults to NoOp upstream
     private final PromptSizeRecoveryStrategy promptSizeRecoveryStrategy; // nullable - defaults to NoOp upstream
+    private final ContextEngine contextEngine; // never null - derived from the three above when not set explicitly
     private final List<ToolContextEnricher> toolContextEnrichers;
     private final WorkflowRunner workflowRunner; // nullable - only present when background runs are enabled
-    // TCH-01: non-null ONLY when core built the default shell itself. A shell handed in via
-    // OrcaAgentRuntimeFactory.withShell(...) belongs to the assembly and is not stored here — borrowed things are not
-    // closed (docs/overview/scope-model.md §2).
-    private final VirtualShell ownedShell;
+    // Borrowed, never closed: the provider owns the shells and filesystems behind the environments it resolves
+    // (design execution-environment §4.3), and the assembly that built it closes it. Nullable — a runtime built
+    // without one gives every execution an unavailable environment rather than a host fallback.
+    private final ExecutionEnvironmentProvider executionEnvironmentProvider;
 
     @SuppressWarnings("checkstyle:ParameterNumber")
     private OrcaAgentRuntime(AgentRuntimeId id, Agent agent, ToolRegistry toolRegistry, HookRegistry hookRegistry,
             CommandRegistry commandRegistry, SubagentRegistry subagentRegistry, SkillRegistry skillRegistry,
-            VirtualFileSystem fileSystem, Environment environment, McpClientManager mcpClientManager,
+            VirtualFileSystem controlFileSystem, Environment environment, McpClientManager mcpClientManager,
             KnowledgeStore knowledgeStore, CompactionEngine compactionEngine, CompactionGuard compactionGuard,
-            PromptSizeRecoveryStrategy promptSizeRecoveryStrategy, List<ToolContextEnricher> toolContextEnrichers,
-            WorkflowRunner workflowRunner, VirtualShell ownedShell) {
+            PromptSizeRecoveryStrategy promptSizeRecoveryStrategy, ContextEngine contextEngine,
+            List<ToolContextEnricher> toolContextEnrichers, WorkflowRunner workflowRunner,
+            ExecutionEnvironmentProvider executionEnvironmentProvider) {
         this.id = Objects.requireNonNull(id, "ID cannot be null");
         this.agent = Objects.requireNonNull(agent, "Agent cannot be null");
         this.toolRegistry = Objects.requireNonNull(toolRegistry, "Tool registry cannot be null");
@@ -97,17 +103,18 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
         this.commandRegistry = Objects.requireNonNull(commandRegistry, "Command registry cannot be null");
         this.subagentRegistry = Objects.requireNonNull(subagentRegistry, "Subagent registry cannot be null");
         this.skillRegistry = Objects.requireNonNull(skillRegistry, "Skill registry cannot be null");
-        this.fileSystem = Objects.requireNonNull(fileSystem, "File system cannot be null");
+        this.controlFileSystem = Objects.requireNonNull(controlFileSystem, "Control file system cannot be null");
         this.environment = Objects.requireNonNull(environment, "Environment cannot be null");
         this.mcpClientManager = mcpClientManager; // nullable
         this.knowledgeStore = knowledgeStore; // nullable
         this.compactionEngine = compactionEngine; // nullable
         this.compactionGuard = compactionGuard; // nullable
         this.promptSizeRecoveryStrategy = promptSizeRecoveryStrategy; // nullable
+        this.contextEngine = Objects.requireNonNull(contextEngine, "contextEngine cannot be null");
         this.toolContextEnrichers = List
                 .copyOf(Objects.requireNonNull(toolContextEnrichers, "toolContextEnrichers cannot be null"));
         this.workflowRunner = workflowRunner; // nullable
-        this.ownedShell = ownedShell; // nullable
+        this.executionEnvironmentProvider = executionEnvironmentProvider; // nullable
     }
 
     @Override
@@ -152,12 +159,24 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
     }
 
     /**
-     * Gets the virtual file system.
+     * Returns the control store: agent, skill and command definitions, task outputs and results, snapshots and
+     * archived artifacts. The model's file tools never see it; they work in the execution environment instead (design
+     * execution-environment §9).
      *
-     * @return The virtual file system (never null)
+     * @return the control filesystem (never null)
      */
-    public VirtualFileSystem getFileSystem() {
-        return fileSystem;
+    public VirtualFileSystem getControlFileSystem() {
+        return controlFileSystem;
+    }
+
+    /**
+     * Returns the provider that resolves each execution's environment. Borrowed: the runtime never closes it.
+     *
+     * @return the provider, or {@code null} when the runtime was built without one
+     */
+    @Override
+    public ExecutionEnvironmentProvider getExecutionEnvironmentProvider() {
+        return executionEnvironmentProvider;
     }
 
     /**
@@ -228,6 +247,21 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
     }
 
     /**
+     * Returns the engine that decides what every LLM call of this agent is sent &mdash; the compaction gate,
+     * prompt-too-long recovery and {@code /compact} all go through it.
+     *
+     * <p>
+     * When none was set explicitly, this is a {@link DefaultContextEngine} over {@link #getCompactionGuard()},
+     * {@link #getPromptSizeRecoveryStrategy()} and {@link #getCompactionEngine()}, each defaulting to its no-op, so a
+     * runtime configured through those three setters behaves as it did before the engine existed.
+     *
+     * @return the context engine (never null)
+     */
+    public ContextEngine getContextEngine() {
+        return contextEngine;
+    }
+
+    /**
      * Returns the registered {@link ToolContextEnricher enrichers} that should be invoked before each tool call.
      *
      * @return an immutable list of enrichers (never null; possibly empty)
@@ -283,19 +317,9 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
                 log.warn("Failed to close WorkflowRunner: {}", e.getMessage(), e);
             }
         }
-        // TCH-01. This position in the list is NOT a solved teardown order — the risk is acknowledged and recorded,
-        // not fixed. A background Bash task still using the shell when it closes would fail, but there is nothing to
-        // order against: BackgroundBashManager has neither close() nor shutdown(), it is a local variable in
-        // OrcaBashToolProvider that the runtime cannot reach, and it was never in this list. The way out is for the
-        // assembly to own the shell via withShell(...) — then ownedShell is null here and teardown order is the
-        // assembly's, which already runs the shell last. See docs/overview/scope-model.md §2.
-        if (ownedShell != null) {
-            try {
-                ownedShell.close();
-            } catch (Exception e) {
-                log.warn("Failed to close VirtualShell: {}", e.getMessage(), e);
-            }
-        }
+        // The execution environment provider is deliberately absent from this list: it is borrowed, and the shells
+        // and filesystems behind it belong to it, not to the runtime (design execution-environment §4.3). A background
+        // Bash task that outlives an execution keeps its captured shell for as long as the provider lives.
     }
 
     @Override
@@ -328,16 +352,17 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
         private CommandRegistry commandRegistry;
         private SubagentRegistry subagentRegistry;
         private SkillRegistry skillRegistry;
-        private VirtualFileSystem fileSystem;
+        private VirtualFileSystem controlFileSystem;
         private Environment environment;
         private McpClientManager mcpClientManager;
         private KnowledgeStore knowledgeStore;
         private CompactionEngine compactionEngine;
         private CompactionGuard compactionGuard;
         private PromptSizeRecoveryStrategy promptSizeRecoveryStrategy;
+        private ContextEngine contextEngine;
         private List<ToolContextEnricher> toolContextEnrichers = List.of();
         private WorkflowRunner workflowRunner;
-        private VirtualShell ownedShell;
+        private ExecutionEnvironmentProvider executionEnvironmentProvider;
 
         /**
          * ID를 설정한다. If you need a discriminator-scoped id, set it explicitly via {@code id(...)}; otherwise the
@@ -385,8 +410,8 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
         }
 
         /** VirtualFileSystem을 설정한다. */
-        public Builder fileSystem(VirtualFileSystem fileSystem) {
-            this.fileSystem = fileSystem;
+        public Builder controlFileSystem(VirtualFileSystem controlFileSystem) {
+            this.controlFileSystem = controlFileSystem;
             return this;
         }
 
@@ -429,6 +454,15 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
         }
 
         /**
+         * ContextEngine을 설정한다 (nullable). 설정하지 않으면 build() 가 compactionGuard · promptSizeRecoveryStrategy ·
+         * compactionEngine 으로 {@link DefaultContextEngine} 을 만든다.
+         */
+        public Builder contextEngine(ContextEngine contextEngine) {
+            this.contextEngine = contextEngine;
+            return this;
+        }
+
+        /**
          * ToolContextEnricher 목록을 설정한다. null이면 빈 목록으로 처리된다.
          */
         public Builder toolContextEnrichers(List<ToolContextEnricher> toolContextEnrichers) {
@@ -443,11 +477,11 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
         }
 
         /**
-         * core 가 직접 만든 기본 셸을 설정한다 — 이 런타임이 소유하고 {@link OrcaAgentRuntime#close()} 에서 닫는다.
-         * 조립이 {@code withShell(...)} 로 넘긴 셸은 조립 소유이므로 여기 넣지 않는다 (nullable).
+         * 실행마다 실행 환경을 해석할 제공자를 설정한다. 런타임은 빌려 쓸 뿐 닫지 않는다 — 셸과 파일 시스템은 제공자
+         * 소유다 (nullable; 없으면 모든 실행이 사용 불가 환경을 받는다).
          */
-        public Builder ownedShell(VirtualShell ownedShell) {
-            this.ownedShell = ownedShell;
+        public Builder executionEnvironmentProvider(ExecutionEnvironmentProvider executionEnvironmentProvider) {
+            this.executionEnvironmentProvider = executionEnvironmentProvider;
             return this;
         }
 
@@ -457,9 +491,14 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
                 Objects.requireNonNull(agent, "Agent must be set before build() can derive an id");
                 id = AgentRuntimeId.from(agent);
             }
+            final ContextEngine effectiveEngine = contextEngine != null
+                    ? contextEngine
+                    : DefaultContextEngine.builder().compactionGuard(compactionGuard)
+                            .recoveryStrategy(promptSizeRecoveryStrategy).compactionEngine(compactionEngine).build();
             return new OrcaAgentRuntime(id, agent, toolRegistry, hookRegistry, commandRegistry, subagentRegistry,
-                    skillRegistry, fileSystem, environment, mcpClientManager, knowledgeStore, compactionEngine,
-                    compactionGuard, promptSizeRecoveryStrategy, toolContextEnrichers, workflowRunner, ownedShell);
+                    skillRegistry, controlFileSystem, environment, mcpClientManager, knowledgeStore, compactionEngine,
+                    compactionGuard, promptSizeRecoveryStrategy, effectiveEngine, toolContextEnrichers, workflowRunner,
+                    executionEnvironmentProvider);
         }
     }
 

@@ -16,6 +16,7 @@ import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.compact.CompactionMetadata;
 import at.aimon.core.agent.compact.CompactionTrigger;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.transcript.LogOrigin;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolContext;
@@ -44,14 +45,17 @@ class RecentFilesRestoreHookTest {
 
     @Test
     void constructorRejectsNullToolAndNonPositiveMaxFiles() {
-        assertThatThrownBy(() -> new RecentFilesRestoreHook(null)).isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> new RecentFilesRestoreHook(readTool, 0)).isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new RecentFilesRestoreHook(readTool, -1)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new RecentFilesRestoreHook(null, ToolContext.empty()))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new RecentFilesRestoreHook(readTool, 0, ToolContext.empty()))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new RecentFilesRestoreHook(readTool, -1, ToolContext.empty()))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void executeRejectsNullContext() {
-        RecentFilesRestoreHook hook = new RecentFilesRestoreHook(readTool);
+        RecentFilesRestoreHook hook = new RecentFilesRestoreHook(readTool, ToolContext.empty());
         assertThatThrownBy(() -> hook.execute(null)).isInstanceOf(NullPointerException.class);
     }
 
@@ -61,7 +65,8 @@ class RecentFilesRestoreHookTest {
         memory.addUserMessage("pre-existing");
         int before = memory.size();
 
-        HookResult result = new RecentFilesRestoreHook(readTool).execute(contextFor(memory, List.of()));
+        HookResult result = new RecentFilesRestoreHook(readTool, ToolContext.empty())
+                .execute(contextFor(memory, List.of()));
 
         assertThat(result.getStatus()).isEqualTo(HookStatus.SUCCESS);
         assertThat(memory.size()).isEqualTo(before);
@@ -75,7 +80,7 @@ class RecentFilesRestoreHookTest {
         readTool.responses.put("/b", "beta-content");
         readTool.responses.put("/c", "gamma-content");
 
-        HookResult result = new RecentFilesRestoreHook(readTool, 2)
+        HookResult result = new RecentFilesRestoreHook(readTool, 2, ToolContext.empty())
                 .execute(contextFor(memory, List.of("/a", "/b", "/c")));
 
         assertThat(result.getStatus()).isEqualTo(HookStatus.SUCCESS);
@@ -84,6 +89,8 @@ class RecentFilesRestoreHookTest {
         Message appended = memory.getLastMessage();
         assertThat(appended.getContent()).contains("[System note: re-attaching").contains("=== /b ===")
                 .contains("beta-content").contains("=== /c ===").contains("gamma-content").doesNotContain("=== /a ===");
+        // Re-attached files are the runtime's doing, not conversation: memory ingest and recall must skip them.
+        assertThat(memory.getLogState().getEntries().get(memory.size() - 1).getOrigin()).isEqualTo(LogOrigin.SYNTHETIC);
     }
 
     @Test
@@ -93,7 +100,8 @@ class RecentFilesRestoreHookTest {
         readTool.errorPaths.add("/b");
         readTool.responses.put("/c", "gamma");
 
-        HookResult result = new RecentFilesRestoreHook(readTool).execute(contextFor(memory, List.of("/a", "/b", "/c")));
+        HookResult result = new RecentFilesRestoreHook(readTool, ToolContext.empty())
+                .execute(contextFor(memory, List.of("/a", "/b", "/c")));
 
         assertThat(result.getStatus()).isEqualTo(HookStatus.SUCCESS);
         assertThat(readTool.invocations).containsExactly("/a", "/b", "/c");
@@ -109,7 +117,8 @@ class RecentFilesRestoreHookTest {
         readTool.responses.put("/a", "alpha");
         readTool.exceptionPaths.add("/b");
 
-        HookResult result = new RecentFilesRestoreHook(readTool).execute(contextFor(memory, List.of("/a", "/b")));
+        HookResult result = new RecentFilesRestoreHook(readTool, ToolContext.empty())
+                .execute(contextFor(memory, List.of("/a", "/b")));
 
         assertThat(result.getStatus()).isEqualTo(HookStatus.SUCCESS);
         Message appended = memory.getLastMessage();
@@ -124,7 +133,8 @@ class RecentFilesRestoreHookTest {
         readTool.errorPaths.add("/a");
         readTool.errorPaths.add("/b");
 
-        HookResult result = new RecentFilesRestoreHook(readTool).execute(contextFor(memory, List.of("/a", "/b")));
+        HookResult result = new RecentFilesRestoreHook(readTool, ToolContext.empty())
+                .execute(contextFor(memory, List.of("/a", "/b")));
 
         assertThat(result.getStatus()).isEqualTo(HookStatus.SUCCESS);
         assertThat(memory.size()).isEqualTo(before);

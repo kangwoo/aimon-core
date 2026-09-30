@@ -1,5 +1,6 @@
 package at.aimon.core.agent.session.store;
 
+import java.time.Duration;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Objects;
@@ -67,11 +68,11 @@ import at.aimon.core.agent.session.transcript.TranscriptBuffer;
  */
 public final class SessionCheckpointMailbox implements AutoCloseable {
     /**
-     * How long {@link #flush} waits for the writer thread to reach its barrier, and how long {@link #close} waits for
-     * the writer thread to finish draining. Both are bounds on an already-degenerate situation (a store call that
-     * never returns), not a normal-path timeout.
+     * The default for how long {@link #drain} waits for the writer thread to reach its barrier, and how long
+     * {@link #close} waits for the writer thread to finish draining. Both are bounds on an already-degenerate situation
+     * (a store call that never returns), not a normal-path timeout.
      */
-    private static final long DRAIN_TIMEOUT_SECONDS = 5L;
+    public static final Duration DEFAULT_DRAIN_TIMEOUT = Duration.ofSeconds(5);
 
     /**
      * How often a {@link #flush} caller re-checks that the writer thread is still alive while waiting for its barrier.
@@ -99,8 +100,13 @@ public final class SessionCheckpointMailbox implements AutoCloseable {
     /** Null when checkpointing is disabled — the only two fields that differ between the two modes. */
     private final BlockingQueue<Runnable> queue;
     private final Thread writer;
+    private final Duration drainTimeout;
 
-    private SessionCheckpointMailbox(boolean enabled) {
+    private SessionCheckpointMailbox(boolean enabled, Duration drainTimeout) {
+        this.drainTimeout = Objects.requireNonNull(drainTimeout, "drainTimeout cannot be null");
+        if (drainTimeout.isZero() || drainTimeout.isNegative()) {
+            throw new IllegalArgumentException("drainTimeout must be positive, got " + drainTimeout);
+        }
         if (!enabled) {
             this.queue = null;
             this.writer = null;
@@ -119,7 +125,21 @@ public final class SessionCheckpointMailbox implements AutoCloseable {
      * @return a started mailbox (never null)
      */
     public static SessionCheckpointMailbox background() {
-        return new SessionCheckpointMailbox(true);
+        return background(DEFAULT_DRAIN_TIMEOUT);
+    }
+
+    /**
+     * Creates a mailbox with a single daemon writer thread and a chosen drain timeout.
+     *
+     * @param drainTimeout
+     *            how long {@link #drain} and {@link #close} wait for the writer thread (must be positive; default
+     *            {@link #DEFAULT_DRAIN_TIMEOUT})
+     * @return a started mailbox (never null)
+     * @throws IllegalArgumentException
+     *             if {@code drainTimeout} is not positive
+     */
+    public static SessionCheckpointMailbox background(Duration drainTimeout) {
+        return new SessionCheckpointMailbox(true, drainTimeout);
     }
 
     /**
@@ -130,7 +150,7 @@ public final class SessionCheckpointMailbox implements AutoCloseable {
      * @return a mailbox that never writes (never null)
      */
     public static SessionCheckpointMailbox disabled() {
-        return new SessionCheckpointMailbox(false);
+        return new SessionCheckpointMailbox(false, DEFAULT_DRAIN_TIMEOUT);
     }
 
     /**
@@ -180,14 +200,8 @@ public final class SessionCheckpointMailbox implements AutoCloseable {
      * with the authoritative write, which is a concurrent-turn bug of its own.
      *
      * <p>
-     * No-op when the session has no pending checkpoint or the mailbox is disabled. If the writer thread does not
-     * reach the barrier within {@value #DRAIN_TIMEOUT_SECONDS} seconds (a store call that never returns), this logs and
-     * gives up rather than blocking the ReAct thread forever. If the caller is interrupted while waiting, the interrupt
-     * flag is restored and the method returns.
-     *
-     * <p>
-     * After {@link #close} this returns immediately instead of waiting: no live writer will ever reach a barrier
-     * offered then, so the wait could only stall the caller for the full timeout without buying it any ordering.
+     * The same as {@link #drain} with the answer dropped. A caller that deletes anything after its authoritative write
+     * wants {@link #drain}: when the drain gave up, a write of older state may still land afterwards.
      *
      * @param sessionId
      *            the session to drain (must not be null)
@@ -195,45 +209,79 @@ public final class SessionCheckpointMailbox implements AutoCloseable {
      *             if sessionId is null
      */
     public void flush(SessionId sessionId) {
+        drain(sessionId);
+    }
+
+    /**
+     * Drains the pending checkpoint for {@code sessionId}, if any, and says whether a write of this session's older
+     * state can still land after this returns.
+     *
+     * <p>
+     * No-op when the session has no pending checkpoint or the mailbox is disabled. If the writer thread does not
+     * reach the barrier within the drain timeout (a store call that never returns), this logs and gives up rather than
+     * blocking the ReAct thread forever. If the caller is interrupted while waiting, the interrupt flag is restored and
+     * the method returns.
+     *
+     * <p>
+     * After {@link #close} this returns immediately instead of waiting: no live writer will ever reach a barrier
+     * offered then, so the wait could only stall the caller for the full timeout without buying it any ordering.
+     *
+     * <p>
+     * The answer matters to a caller that deletes after its authoritative write — a {@code /clear} deleting the
+     * segments the cleared record no longer names, garbage collection deleting orphans. A checkpoint whose snapshot was
+     * taken before that write and is still inside the store call when the drain gives up lands afterwards, and puts the
+     * older manifest back; deleting what it names would turn the reads of that record into gaps (session-log §12.4).
+     *
+     * @param sessionId
+     *            the session to drain (must not be null)
+     * @return {@code true} when no checkpoint of this session is queued or in flight any more — the mailbox is
+     *         disabled, nothing was pending, the barrier was reached, or the writer thread has stopped;
+     *         {@code false} when the drain gave up (timeout, interrupt) or a closed mailbox abandoned a writer that is
+     *         still alive
+     * @throws NullPointerException
+     *             if sessionId is null
+     */
+    public boolean drain(SessionId sessionId) {
         Objects.requireNonNull(sessionId, "sessionId cannot be null");
         if (queue == null) {
-            return;
+            return true;
         }
         if (closed.get()) {
             // Nothing will ever reach a barrier offered now: the writer thread has either finished draining or been
             // abandoned inside a store call that never returned, and no new checkpoint can be raised either. Waiting
-            // out the timeout would stall the caller's authoritative write for DRAIN_TIMEOUT_SECONDS and tell it
-            // nothing — and that write cannot be overtaken by older state anyway, because a checkpoint an abandoned
-            // writer eventually completes snapshots the same memory at write time, not at checkpoint time.
+            // out the timeout would stall the caller's authoritative write and tell it nothing. What the caller can
+            // still learn is whether that abandoned writer is alive — if it is, its write may yet land.
             log.debug("Checkpoint drain for {} skipped: the mailbox is closed", sessionId.value());
-            return;
+            return !writer.isAlive();
         }
         final Slot slot = slots.get(sessionId);
-        if (slot == null) {
-            return;
+        if (slot == null && !sessionId.equals(inFlightWrite)) {
+            return true;
         }
         final CountDownLatch barrier = new CountDownLatch(1);
         queue.offer(barrier::countDown);
         try {
             if (!awaitBarrier(barrier)) {
                 if (writer.isAlive()) {
-                    log.warn("Checkpoint drain for {} did not complete within {}s", sessionId.value(),
-                            DRAIN_TIMEOUT_SECONDS);
-                } else {
-                    // close() raced this call and won: the writer exited before taking our barrier, so nothing of this
-                    // session is in flight either. Not a warning — the caller's write is still the last one.
-                    log.debug("Checkpoint drain for {} skipped: the writer thread has stopped", sessionId.value());
+                    log.warn("Checkpoint drain for {} did not complete within {}", sessionId.value(), drainTimeout);
+                    return false;
                 }
-                return;
+                // close() raced this call and won: the writer exited before taking our barrier, so nothing of this
+                // session is in flight either. Not a warning — the caller's write is still the last one.
+                log.debug("Checkpoint drain for {} skipped: the writer thread has stopped", sessionId.value());
+                return true;
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return;
+            return false;
         }
         // Drop the slot so an idle session stops holding its memory. A checkpoint that arrives after the barrier
         // installs a fresh slot; one that is already queued against this slot becomes a no-op, which is what the
         // authoritative write about to happen makes correct.
-        slots.remove(sessionId, slot);
+        if (slot != null) {
+            slots.remove(sessionId, slot);
+        }
+        return true;
     }
 
     /**
@@ -241,7 +289,7 @@ public final class SessionCheckpointMailbox implements AutoCloseable {
      * Idempotent.
      *
      * <p>
-     * If the drain does not finish within {@value #DRAIN_TIMEOUT_SECONDS} seconds the writer is abandoned rather than
+     * If the drain does not finish within the drain timeout the writer is abandoned rather than
      * interrupted, and the checkpoints it never reached are <b>kept</b> — {@link #pendingCheckpointSessionIds} names
      * them, together with the session whose write the abandoned thread is parked inside. Discarding them here would
      * silently drop exactly the writes this timeout branch exists to bound.
@@ -253,7 +301,7 @@ public final class SessionCheckpointMailbox implements AutoCloseable {
         }
         queue.offer(POISON);
         try {
-            writer.join(TimeUnit.SECONDS.toMillis(DRAIN_TIMEOUT_SECONDS));
+            writer.join(drainTimeout.toMillis());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
@@ -266,8 +314,8 @@ public final class SessionCheckpointMailbox implements AutoCloseable {
             // whose write the thread is parked inside, which no longer counts as queued but is the one write we know
             // did not complete.
             final Set<SessionId> pending = pendingCheckpointSessionIds();
-            log.warn("Checkpoint writer did not finish draining within {}s; abandoning it with {} unwritten"
-                    + " checkpoint(s): {}", DRAIN_TIMEOUT_SECONDS, pending.size(), pending);
+            log.warn("Checkpoint writer did not finish draining within {}; abandoning it with {} unwritten"
+                    + " checkpoint(s): {}", drainTimeout, pending.size(), pending);
         }
     }
 
@@ -311,7 +359,7 @@ public final class SessionCheckpointMailbox implements AutoCloseable {
      * result already known.
      */
     private boolean awaitBarrier(CountDownLatch barrier) throws InterruptedException {
-        final long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(DRAIN_TIMEOUT_SECONDS);
+        final long deadlineNanos = System.nanoTime() + drainTimeout.toNanos();
         while (!barrier.await(DRAIN_POLL_MILLIS, TimeUnit.MILLISECONDS)) {
             if (!writer.isAlive()) {
                 // Nobody else can count the barrier down now, so its count is a final answer: the writer may have

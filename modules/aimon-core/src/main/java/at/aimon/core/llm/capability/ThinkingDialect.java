@@ -56,7 +56,8 @@ public enum ThinkingDialect {
      * there and needs no policy for the ordinary case: a caller who <em>named</em> a shape gets the shape they named,
      * unchanged and unreported, because translating a working, explicitly requested request would be a substitution
      * with nothing to justify it. The one case that needs a choice is a mode that asked the table to decide, and that
-     * choice is a client policy rather than a fact about the model — so it lives in the client, with its citation,
+     * choice is a client policy rather than a fact about the model — so it lives in the client's resolver, with its
+     * citation,
      * and not on this enum. Neither vendor preference nor the client's pick is expressible here, deliberately.
      *
      * <p>

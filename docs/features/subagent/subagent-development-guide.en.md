@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/subagent/subagent-development-guide.md
-source_commit: eec9ccd
+source_commit: 56930f5
 ---
 
 # Subagent Development Guide
@@ -98,6 +98,24 @@ Since the consumers (`TaskTool`, the executor, `/agents`, a skill fork) see noth
 `SubagentRegistry` abstraction, whatever you define in code is exposed, executed and listed automatically,
 **with no change to the calling layer's code**.
 
+### Where a tool restriction takes effect
+
+`allowed-tools` (markdown) and `.tools(...)` (code) are the same allow-list, and it acts at **two points**
+during a run. Both read the one `Subagent.getAllowedTools()`, so the two cannot disagree.
+
+| Point | What it does |
+|-------|---------------|
+| The prompt | A tool whose **name** is absent from the allow-list is left out of the tool definitions sent to the LLM — the model cannot pick it in the first place |
+| `ToolSearch` | It is subject to the allow-list too. In a deployment using deferred tools, an allow-list that omits `ToolSearch` leaves **no route** to them |
+| Dispatch | A call made anyway is refused with `ToolPermissionViolationException` |
+
+A **pattern entry such as `Bash(git:*)` still offers its tool.** A list of tools cannot say "which arguments" —
+`Bash` stays visible to the model, and a command that is not `git` is refused at dispatch.
+
+If an allow-list **matches no registered tool at all** — a typo, a tool from a module that is not wired, a missing
+`ToolSearch` — the subagent answers with no tools, and that execution is still recorded as a success. A warning is
+logged when it happens, so start there if a subagent returns an answer without acting.
+
 ---
 
 ## Using Subagent.builder()
@@ -129,6 +147,7 @@ Subagent dbTriage = Subagent.builder()
 | `tools(List<String>)` | | an empty list → `hasToolRestrictions() == false` (no tool restriction) |
 | `model(String)` | | `null` (the executor's default model) |
 | `maxIterations(int)` | | `1000` |
+| `attributes(Map<String, String>)` | | Empty map (the same as a markdown `attributes:` block flattened to dotted keys — e.g. `sandbox.slot`. The core only carries it; an outside component such as an execution environment provider reads it) |
 
 > **The tool string format** is the same as markdown's `allowed-tools`: `"Read"`, `"Bash(git:*)"`, `"Bash(npm install)"`
 > and so on. Internally it goes through `AllowedTool.parse(...)`, so the parsing logic is not duplicated.
@@ -149,7 +168,9 @@ Subagent.builder().name("plain").systemPrompt("You are a plain agent.").build();
 You are a plain agent.
 ```
 
-Both end up with `maxIterations=1000`, `model=null`, `whenToUse=null` and no tool restriction.
+Both end up with `maxIterations=1000`, `model=null`, `whenToUse=null`, no tool restriction and no attributes (an empty
+`attributes`). A markdown `attributes:` block (e.g. `sandbox:` → `slot: build` under `attributes:`) is the same as
+`.attributes(Map.of("sandbox.slot", "build"))` in code.
 
 ---
 

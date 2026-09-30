@@ -51,8 +51,13 @@ import at.aimon.core.filesystem.VirtualFileSystem;
  */
 public final class VfsTaskOutputStore implements TaskOutputStore {
 
-    /** Default base directory for task output segment logs. */
-    public static final String DEFAULT_BASE_DIR = ".aimon/task-output";
+    /**
+     * Default base directory for task output segment logs, relative to the root of the filesystem the store is built
+     * over — the
+     * <b>control</b> store, whose root is {@code {project}/.aimon/} in a local assembly, so the physical location is
+     * {@code {project}/.aimon/task-output} as before the control store was split from the workspace.
+     */
+    public static final String DEFAULT_BASE_DIR = "task-output";
 
     private static final Logger log = LoggerFactory.getLogger(VfsTaskOutputStore.class);
 

@@ -179,18 +179,18 @@ public class VfsSkillRepository implements SkillRepository {
     }
 
     @Override
-    public Optional<String> resolveBaseDir(String skillName) {
+    public Optional<SkillSource> resolveSource(String skillName) {
         Objects.requireNonNull(skillName, "Skill name cannot be null");
 
         final String skillDir = skillsBasePath + '/' + skillName;
         try {
             if (fileSystem.exists(skillDir) && fileSystem.isDirectory(skillDir)) {
-                return Optional.of(skillDir);
+                return Optional.of(SkillSource.of(fileSystem, skillDir));
             }
             return Optional.empty();
         } catch (Exception e) {
             throw new SkillRepositoryException(
-                    String.format("Failed to resolve base directory for skill '%s'", skillName), e);
+                    String.format("Failed to resolve the staging source for skill '%s'", skillName), e);
         }
     }
 

@@ -4,9 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -180,6 +182,55 @@ class BashOutputToolTest {
         assertThat(result.getContent()).contains("Status: Failed");
         // Whatever the process printed before it was killed is the only explanation the model gets for a timeout.
         assertThat(result.getContent()).contains("partial output");
+    }
+
+    @Test
+    void testExecute_CompletedNotices_ShownOnceAndNotSubjectToFilter() {
+        // Notices describe the run (the shell session was recreated, so cwd was reset). They sit outside the filtered
+        // output — a filter that matches none of them must not hide them — and are reported once, like output.
+        backgroundManager.registerTask("task_123", "make", CompletableFuture.completedFuture(new ShellCommandResult(0,
+                "build ok\n", "", Duration.ofMillis(5), false, List.of("shell session was recreated; cwd was reset"))));
+
+        ToolResult first = bashOutputTool
+                .execute(ToolInput.of(Map.of("taskId", "task_123", "block", false, "filter", "ok")), context);
+        ToolResult second = bashOutputTool.execute(ToolInput.of(Map.of("taskId", "task_123", "block", false)), context);
+
+        assertThat(first.getContent()).contains("[environment] shell session was recreated; cwd was reset\n")
+                .contains("build ok");
+        assertThat(first.getContent().indexOf("[environment]")).isLessThan(first.getContent().indexOf("Output:"));
+        assertThat(second.getContent()).doesNotContain("[environment]");
+    }
+
+    @Test
+    void testExecute_TimeoutNotices_ShownOnFailedTask() {
+        // The timeout path used to have no notices at all: they now ride on the exception.
+        CompletableFuture<ShellCommandResult> future = new CompletableFuture<>();
+        future.completeExceptionally(new CompletionException(new ShellTimeoutException("timed out",
+                Duration.ofSeconds(1), "partial output", "", false, List.of("sandbox was recreated"))));
+        backgroundManager.registerTask("task_123", "sleep 100", future);
+
+        ToolResult result = bashOutputTool.execute(ToolInput.of(Map.of("taskId", "task_123", "block", false)), context);
+
+        assertThat(result.getContent()).contains("Status: Failed").contains("[environment] sandbox was recreated\n")
+                .contains("partial output");
+    }
+
+    @Test
+    void testExecute_BlockingPollAfterFailure_SeesTheRecordedOutcome() throws Exception {
+        // A poller woken by the raw future could read the task before the completion handler recorded the exit code,
+        // output and notices. It must wait for the recorded outcome instead.
+        CompletableFuture<ShellCommandResult> future = new CompletableFuture<>();
+        backgroundManager.registerTask("task_123", "make", future);
+        CompletableFuture<ToolResult> poll = CompletableFuture.supplyAsync(() -> bashOutputTool
+                .execute(ToolInput.of(Map.of("taskId", "task_123", "block", true, "wait_up_to", 10)), context));
+
+        Thread.sleep(50);
+        future.completeExceptionally(new CompletionException(new ShellTimeoutException("timed out",
+                Duration.ofSeconds(1), "partial output", "", false, List.of("sandbox was recreated"))));
+
+        String content = poll.get(10, TimeUnit.SECONDS).getContent();
+        assertThat(content).contains("Status: Failed").contains("Exit Code: 1")
+                .contains("[environment] sandbox was recreated").contains("partial output");
     }
 
     @Test

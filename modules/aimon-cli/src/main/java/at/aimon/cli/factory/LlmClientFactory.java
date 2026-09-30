@@ -253,7 +253,7 @@ public class LlmClientFactory {
      * yaml 한 항목을 중립 선언으로 옮긴다. 키마다 한 줄씩 손으로 적는 자리라서, 한 줄이 빠지면 운영자가 적은 키가 바인딩되고도
      * 선언에 실리지 않는다 — {@code ModelCapabilityConfigBindingTest} 가 모든 키에 대해 그것을 확인한다(#82). package-private 인
      * 이유는 {@link #openAiConfig} 와 같다 — 테스트가 잡아야 하는 것은 조립된 결과이고, 그것을 테스트 편의로 공개하는 것은
-     * {@code model-capability-config-key.md} R13 이 거절한 일이다.
+     * {@code docs/design/llm/configuration-surface.md} §9.1 이 기각한 일이다.
      *
      * @param name
      *            yaml 맵의 모델 이름 — 예외 메시지의 키 경로에만 쓰인다

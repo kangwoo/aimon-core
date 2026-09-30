@@ -159,11 +159,11 @@ public final class ModelCapabilities {
      * This one is endpoint-flavoured: it means "on the request surface the resolving client uses". The framework's
      * built-in table describes OpenAI's <em>Chat Completions</em> endpoint, and that is now stated rather than
      * implied: {@code aimon-llm-openai} reads this flag only on that path. A model whose answer is {@code false}
-     * still reasons on a tool-less call — a provider clamps to {@link at.aimon.core.llm.ReasoningEffort#NONE} only
-     * when tools are actually present — and on an endpoint where tools and reasoning coexist the flag is not read at
-     * all. {@code gpt-5} is exactly that case: it answers {@code false} here, and in the shipped default
-     * configuration it no longer reaches this path because {@link #supportsReasoningTraceRoundTrip()} routes it to a
-     * surface with no such conflict. The flag stays reachable, and stays correct, the moment that route is turned off.
+     * still reasons on a tool-less call: on a request that carries tools the client omits the effort and reports the
+     * omission rather than sending {@link at.aimon.core.llm.ReasoningEffort#NONE}, which the measured models reject,
+     * and on an endpoint where tools and reasoning coexist the flag is not read at all. Every reasoning row the
+     * built-in table ships answers {@code true}, so the rule fires only where a caller or a configured declaration
+     * states {@code false}.
      *
      * @return {@code true} when tools and reasoning may be combined
      */

@@ -40,7 +40,7 @@ import java.util.Objects;
  * <b>One constant is not an argument for a boolean.</b> The accepted set is the server's to widen — the sibling ask on
  * the other provider already carries three grains ({@code auto}/{@code concise}/{@code detailed}) — and widening a
  * shipped boolean configuration key into an enum is a breaking type change, the failure mode
- * {@code reasoning-delta-stream.md} §3.4 names. An enum of one extends additively; a boolean does not.
+ * {@code docs/design/llm/streaming.md} §5.6 names. An enum of one extends additively; a boolean does not.
  *
  * <p>
  * <b>The budgeted dialect does not take this field.</b> {@code ThinkingConfigEnabled} carries {@code budget_tokens}

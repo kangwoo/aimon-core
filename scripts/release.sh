@@ -5,13 +5,16 @@
 # Usage:
 #   scripts/release.sh [patch|minor|major] [--yes] [--dry-run]
 #
-#   patch|minor|major   semantic bump of VERSION_NAME in gradle.properties (default: patch)
+#   patch|minor|major   semantic bump of VERSION_NAME in gradle.properties (default: patch).
+#                       From X.Y.Z-SNAPSHOT the release is the smallest version of that kind at or
+#                       above X.Y.Z — so `patch` releases X.Y.Z itself (see §3)
 #   --yes, -y           skip the interactive "type the version" confirmation (for automation)
 #   --dry-run           run all checks + the quality gate, then stop before any mutation/publish
 #
 # Order of operations (publish is irreversible, so git history is only pushed AFTER a successful
 # publish; on failure the only side effect is an uncommitted gradle.properties bump, easily reverted):
-#   provider-key check → pre-flight → quality gate → confirm → bump (uncommitted) → publish → commit + tag → push
+#   provider-key check → pre-flight → quality gate → confirm → bump (uncommitted) → publish → commit + tag
+#   → next -SNAPSHOT commit → push
 #
 set -euo pipefail
 
@@ -49,9 +52,9 @@ fail() {
 # Refuse rather than unset. The key stays exported in the shell this script was started from, and every later
 # `./gradlew test` or `checkAll` there bills the same way (CONTRIBUTING.md › Live-API tests); unsetting it in
 # here would fix one command of that shell and tell the operator nothing. A key set to the empty string is
-# refused too: the check asks whether the variable exists, and it never expands the value. AIMON_DOCKER_IT and
-# AIMON_KUBERNETES_IT gate two more classes the same way but bill nothing, and are not refused; whether the
-# release gate should inherit them is backlog LA-2 (docs/backlog/live-api-test-tier.md).
+# refused too: the check asks whether the variable exists, and it never expands the value. Two more variables,
+# AIMON_DOCKER_IT and AIMON_KUBERNETES_IT, used to gate classes here the same way while billing nothing; they
+# left with the sandbox modules, so every gate this script has to reason about now bills.
 #
 # This runs first. It needs nothing from the repository; a shell about to be refused should not trigger
 # `git fetch` or `docker info` first; and a refusal is not a failed release, so the EXIT trap's
@@ -152,24 +155,51 @@ fi
 ok "Credentials present"
 
 # ── 3. compute next version ─────────────────────────────────────────────────
+# Between releases main carries X.Y.Z-SNAPSHOT, where X.Y.Z is the NEXT patch release, not the last one.
+# So from a snapshot the bump is "the smallest version of this kind that is not below X.Y.Z": `patch`
+# releases X.Y.Z as-is, `minor` releases X.Y.0 when Z is already 0 and X.(Y+1).0 otherwise, and likewise
+# for `major`. A bare X.Y.Z (the form every release before 0.3.1 was cut from) keeps the old meaning —
+# it names a version already released, so every bump moves past it.
 CURRENT="$(grep '^VERSION_NAME=' gradle.properties | head -1 | cut -d= -f2 | tr -d '[:space:]')"
-[[ "$CURRENT" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || fail "VERSION_NAME='$CURRENT' is not in X.Y.Z form"
+[[ "$CURRENT" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(-SNAPSHOT)?$ ]] \
+    || fail "VERSION_NAME='$CURRENT' is not in X.Y.Z or X.Y.Z-SNAPSHOT form"
 MAJ="${BASH_REMATCH[1]}"
 MIN="${BASH_REMATCH[2]}"
 PAT="${BASH_REMATCH[3]}"
-case "$BUMP" in
-    major)
-        MAJ=$((MAJ + 1))
-        MIN=0
-        PAT=0
-        ;;
-    minor)
-        MIN=$((MIN + 1))
-        PAT=0
-        ;;
-    patch) PAT=$((PAT + 1)) ;;
-esac
+if [ -n "${BASH_REMATCH[4]}" ]; then
+    case "$BUMP" in
+        major)
+            if [ "$MIN" -ne 0 ] || [ "$PAT" -ne 0 ]; then
+                MAJ=$((MAJ + 1))
+                MIN=0
+                PAT=0
+            fi
+            ;;
+        minor)
+            if [ "$PAT" -ne 0 ]; then
+                MIN=$((MIN + 1))
+                PAT=0
+            fi
+            ;;
+        patch) ;;
+    esac
+else
+    case "$BUMP" in
+        major)
+            MAJ=$((MAJ + 1))
+            MIN=0
+            PAT=0
+            ;;
+        minor)
+            MIN=$((MIN + 1))
+            PAT=0
+            ;;
+        patch) PAT=$((PAT + 1)) ;;
+    esac
+fi
 NEXT="${MAJ}.${MIN}.${PAT}"
+# What main moves to once NEXT is tagged: the next patch, as a snapshot.
+DEV_NEXT="${MAJ}.${MIN}.$((PAT + 1))-SNAPSHOT"
 TAG="v${NEXT}"
 log "Version bump (${BUMP}): ${CURRENT} → ${NEXT}   (tag ${TAG})"
 git rev-parse "$TAG" >/dev/null 2>&1 && fail "Tag ${TAG} already exists"
@@ -185,9 +215,10 @@ if ! grep -q "^## \[${NEXT}\]" CHANGELOG.md; then
 fi
 
 # ── 4. quality gate ─────────────────────────────────────────────────────────
-# This is deliberately the SAME task CI runs (.github/workflows/build.yml) — a release must not pass a
-# gate narrower than the one every PR already clears. `checkAll` = checkFormat + checkStyle + every
-# module's `test` + the BOM's `verifyBom`.
+# These are deliberately the SAME verification tasks CI runs (.github/workflows/build.yml), which splits
+# them across three jobs and adds the report-only `jacocoTestReport` — a release must not pass a gate
+# narrower than the one every PR already clears. `checkAll` = checkFormat + checkStyle + every module's
+# `test` + the BOM's `verifyBom`.
 #
 # It once read `test spotlessCheck` with a note that checkstyle had "pre-existing warnings"; that was
 # never true of this build — checkstyle here is severity=error with maxErrors=0 and an empty
@@ -212,34 +243,30 @@ fi
 # only verification any module has; it is the only one that can see a fat jar at all. Packaging turns
 # resource lookup into jar-entry enumeration, and when that breaks the skill list comes back silently short
 # instead of failing — a regression this framework has actually shipped. Every other test here runs off a
-# directory class path, where that code path does not exist. The task builds both fat jars itself and costs
+# directory class path, where that code path does not exist. The task builds the fat jar itself and costs
 # under a minute, which is why it is gated on the same line rather than argued about.
+#
+# It built two until the Boot 4 baseline, the second with Boot's pre-3.2 "classic" loader, so the enumeration
+# was checked under both of Boot's URL schemes. Boot 4 removed that loader and the second jar went with it --
+# see FatJarPackagingTest's class javadoc for what the tier no longer covers.
 #
 # `jacocoTestCoverageVerification` is here rather than exempted because it can fail a build, and the rule
 # this script is held to is that a release passes no narrower a gate than a pull request. It costs nothing
 # extra: unlike CI, where the tiers run in separate jobs and a third job reassembles their execution data,
 # everything above already ran in THIS workspace, so the floor is checked against the complete picture.
 #
-# `playwrightTest` (@Tag("playwright")) joined last, on integrationTest's argument rather than packagingTest's:
-# aimon-browser-playwright is published, and these four tests are the only ones in it that start a real browser.
-# PlaywrightLifecycleManager -- which owns the browser process, the daemon worker thread and the shutdown ordering
-# -- measures 9% line without them and 57% with them. The tier had never actually run anywhere: its Gradle task was
-# missing `testClassesDirs` and `classpath`, so it reported NO-SOURCE and went green in 650ms.
-#
-# THIS MEANS A RELEASE NOW DOWNLOADS CHROMIUM ONCE, if the machine has no browser cache: 280 MB over the wire, 94s,
-# 520 MB unpacked (measured 2026-09-05). Afterwards the tier costs about twenty seconds. That is a smaller demand
-# than the Docker daemon integrationTest already made of this script, and it is made safely -- the task installs
-# the browser as a build step, so a cold machine is slow rather than red. Before that, Playwright.create() did the
-# download inline inside PlaywrightLifecycleManager's 30-second init timeout and every test failed.
+# There was a fourth task here, `playwrightTest`, and cutting a release used to download Chromium once on a
+# machine with no browser cache -- 280 MB, 94s. It left with aimon-browser-playwright when that module moved to
+# its own repository, and so did the demand: this script now asks for a Docker daemon and nothing else.
 #
 # No tier is opt-in any more. Every @Tag in this build is a CI step and a gate task.
-log "Quality gate: checkAll + integrationTest + packagingTest + playwrightTest + coverage floor"
-$GRADLE checkAll integrationTest packagingTest playwrightTest jacocoTestCoverageVerification
+log "Quality gate: checkAll + integrationTest + packagingTest + coverage floor"
+$GRADLE checkAll integrationTest packagingTest jacocoTestCoverageVerification
 ok "Quality gate passed"
 
 if [ "$DRY_RUN" = 1 ]; then
     echo ""
-    ok "Dry run complete. Would: bump to ${NEXT}, publish to Maven Central, commit, tag ${TAG}, push."
+    ok "Dry run complete. Would: bump to ${NEXT}, publish to Maven Central, commit, tag ${TAG}, move main to ${DEV_NEXT}, push."
     exit 0
 fi
 
@@ -264,10 +291,16 @@ git add gradle.properties
 git commit -q -m "chore(release): bump version to ${NEXT}"
 git tag -a "$TAG" -m "Release ${NEXT}"
 
-log "Pushing commit + tag to origin"
+# After the tag, so the tagged tree still says NEXT — release.yml cross-checks the two.
+log "Moving main to the next development version ${DEV_NEXT}"
+perl -i -pe "s{^VERSION_NAME=.*}{VERSION_NAME=${DEV_NEXT}}" gradle.properties
+git add gradle.properties
+git commit -q -m "chore(release): prepare next development version ${DEV_NEXT}"
+
+log "Pushing commits + tag to origin"
 git push origin main
 git push origin "$TAG"
 
 echo ""
-ok "Released ${NEXT}. Central Portal may take a few minutes to validate and release the deployment."
+ok "Released ${NEXT}; main is now ${DEV_NEXT}. Central Portal may take a few minutes to validate and release the deployment."
 echo "  The pushed tag triggers .github/workflows/release.yml, which creates the GitHub Release."

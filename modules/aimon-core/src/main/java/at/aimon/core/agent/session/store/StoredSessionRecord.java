@@ -6,6 +6,7 @@ import java.util.Optional;
 
 import at.aimon.core.agent.budget.ExecutionBudget;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.transcript.SessionLogState;
 import at.aimon.core.agent.session.transcript.SessionRewindPoint;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.llm.Message;
@@ -30,22 +31,20 @@ public final class StoredSessionRecord implements SessionRecordView {
 
     private final SessionId id;
     private final String systemPrompt;
-    private final List<Message> messages;
+    private final SessionLogState logState;
     private final String agentRef;
     private final int compactionFailureCount;
     private final SessionTotals sessionTotals;
     private final ExecutionBudget budgetOverride;
-    private final SessionRewindPoint rewindPoint;
 
     private StoredSessionRecord(Builder builder) {
         this.id = Objects.requireNonNull(builder.id, "Session id cannot be null");
         this.systemPrompt = builder.systemPrompt;
-        this.messages = builder.messages == null ? List.of() : List.copyOf(builder.messages);
+        this.logState = builder.logState == null ? SessionLogState.empty() : builder.logState;
         this.agentRef = builder.agentRef;
         this.compactionFailureCount = Math.max(0, builder.compactionFailureCount);
         this.sessionTotals = builder.sessionTotals == null ? SessionTotals.empty() : builder.sessionTotals;
         this.budgetOverride = builder.budgetOverride;
-        this.rewindPoint = builder.rewindPoint;
     }
 
     /**
@@ -88,7 +87,12 @@ public final class StoredSessionRecord implements SessionRecordView {
 
     @Override
     public List<Message> getMessages() {
-        return messages;
+        return logState.getMessages();
+    }
+
+    @Override
+    public SessionLogState getLogState() {
+        return logState;
     }
 
     @Override
@@ -113,12 +117,12 @@ public final class StoredSessionRecord implements SessionRecordView {
 
     @Override
     public Optional<SessionRewindPoint> getRewindPoint() {
-        return Optional.ofNullable(rewindPoint);
+        return logState.getRewindPoint();
     }
 
     @Override
     public String toString() {
-        return "StoredSessionRecord{id=" + id + ", messages=" + messages.size() + ", agentRef=" + agentRef
+        return "StoredSessionRecord{id=" + id + ", messages=" + logState.getMessages().size() + ", agentRef=" + agentRef
                 + ", compactionFailureCount=" + compactionFailureCount + '}';
     }
 
@@ -127,20 +131,18 @@ public final class StoredSessionRecord implements SessionRecordView {
 
         private final SessionId id;
         private String systemPrompt;
-        private List<Message> messages;
+        private SessionLogState logState;
         private String agentRef;
         private int compactionFailureCount;
         private SessionTotals sessionTotals;
         private ExecutionBudget budgetOverride;
-
-        private SessionRewindPoint rewindPoint;
 
         private Builder(SessionId id) {
             this.id = Objects.requireNonNull(id, "Session id cannot be null");
         }
 
         /**
-         * Takes the system prompt and messages from a decoded transcript.
+         * Takes the system prompt and the whole log from a decoded transcript.
          *
          * @param snapshot
          *            the decoded transcript (must not be null)
@@ -149,10 +151,9 @@ public final class StoredSessionRecord implements SessionRecordView {
         public Builder transcript(SessionSnapshot snapshot) {
             Objects.requireNonNull(snapshot, "Snapshot cannot be null");
             this.systemPrompt = snapshot.getSystemPrompt();
-            this.messages = snapshot.getConversationHistory();
-            // Taken here rather than through a setter of its own: the point counts these messages, so the two arrive
-            // and are replaced together. A backend that set them separately could get them out of step.
-            this.rewindPoint = snapshot.getRewindPoint().orElse(null);
+            // The log is taken whole — entries, seqs, rewind point, format. Picking fields out of it here is how a
+            // value added to it later would be lost at this hop without anyone noticing.
+            this.logState = snapshot.getLogState();
             return this;
         }
 
@@ -167,12 +168,14 @@ public final class StoredSessionRecord implements SessionRecordView {
         }
 
         /**
+         * Replaces the log with the version-1 log {@code messages} migrate to — no rewind point.
+         *
          * @param messages
          *            the message history (may be null, treated as empty)
          * @return this builder
          */
         public Builder messages(List<Message> messages) {
-            this.messages = messages;
+            this.logState = messages == null ? null : SessionLogState.ofMessages(messages);
             return this;
         }
 

@@ -55,7 +55,7 @@ If you're new and want a place to start, look for issues labeled `good first iss
 ### Test
 
 ```bash
-./gradlew test                                                        # All unit tests (excludes @Tag("docker"), @Tag("packaging") and @Tag("playwright"))
+./gradlew test                                                        # All unit tests (excludes @Tag("docker") and @Tag("packaging"))
 ./gradlew :aimon-core:test                                            # Single module
 ./gradlew :aimon-core:test --tests "at.aimon.core.agent.tool.*Test"   # Glob pattern
 ./gradlew :aimon-core:test --tests "at.aimon.core.agent.tool.ToolInputTest"  # Single class
@@ -63,15 +63,17 @@ If you're new and want a place to start, look for issues labeled `good first iss
 
 ### Live-API tests
 
-Four test classes call a provider's real API, and each one is gated on that provider's key with
+Six test classes call a provider's real API, and each one is gated on that provider's key with
 `@EnabledIfEnvironmentVariable`:
 
 | Class | Module | Key |
 |-------|--------|-----|
 | `AnthropicThinkingLiveTest` | `aimon-llm-anthropic` | `ANTHROPIC_KEY` |
 | `AnthropicLlmClientIntegrationTest` | `aimon-llm-anthropic` | `ANTHROPIC_KEY` |
+| `AnthropicContextEngineLiveTest` | `aimon-llm-anthropic` | `ANTHROPIC_KEY` |
 | `OpenAIReasoningLiveTest` | `aimon-llm-openai` | `OPENAI_KEY` |
 | `OpenAILlmClientIntegrationTest` | `aimon-llm-openai` | `OPENAI_KEY` |
+| `OpenAIContextEngineLiveTest` | `aimon-llm-openai` | `OPENAI_KEY` |
 
 **This tier has no CI signal at all.** No workflow supplies either key, so wherever the keys are
 absent — CI included — each of these classes reports `SKIPPED` and `checkAll` stays green. The
@@ -82,10 +84,22 @@ ANTHROPIC_KEY=... OPENAI_KEY=... \
 ./gradlew :aimon-llm-anthropic:test --rerun \
               --tests 'at.aimon.core.llms.anthropic.AnthropicThinkingLiveTest' \
               --tests 'at.aimon.core.llms.anthropic.AnthropicLlmClientIntegrationTest' \
+              --tests 'at.aimon.core.llms.anthropic.AnthropicContextEngineLiveTest' \
           :aimon-llm-openai:test --rerun \
               --tests 'at.aimon.core.llms.openai.OpenAIReasoningLiveTest' \
-              --tests 'at.aimon.core.llms.openai.OpenAILlmClientIntegrationTest'
+              --tests 'at.aimon.core.llms.openai.OpenAILlmClientIntegrationTest' \
+              --tests 'at.aimon.core.llms.openai.OpenAIContextEngineLiveTest'
 ```
+
+The two `*ContextEngineLiveTest` classes drive the context engines through the real executor with a
+deliberately small context window, so a rolling cycle comes every few turns: a fact is planted in a large
+tool result, filler turns push the session through rolling cycles, the fact is asked for, and the session
+is reloaded through the version-2 codec and continued. The Anthropic class also runs the rolling scenario
+under extended thinking — where a summary request that ended on an assistant message would be refused as
+a prefill — and a forced `/compact` on the default engine in view mode. Together they make about 40 calls
+on `claude-haiku-4-5` and `gpt-4o-mini`. Each has a keyless twin, `ContextEngineLiveRigTest`, which runs
+the same scenario against a scripted model in every ordinary build, so a change that stops the scenario
+reaching its rolling cycles is caught without a key.
 
 **Every run costs money** — these are billed calls on the account the keys belong to. Never commit a
 key, and redact it from any failure output you paste into an issue or a pull request.
@@ -93,8 +107,7 @@ key, and redact it from any failure output you paste into an issue or a pull req
 **The gate works in the other direction too, and that is why the command above scopes the keys to
 itself.** The environment variable is the only thing keeping these classes out of an ordinary build: they
 carry no tag, and the only exclusions in a module's `test` task are by tag: `docker` and `packaging`,
-which the conventions plugin excludes in every module, and `playwright`, which `aimon-browser-playwright`
-excludes as well. So while a key is exported in a shell — for this tier, or to run the CLI — every
+which the conventions plugin excludes in every module. So while a key is exported in a shell — for this tier, or to run the CLI — every
 `./gradlew test` and `checkAll` in that shell runs that provider's live classes as well, not only the
 command above. That happens each time the module's `test` task executes rather than reporting
 `UP-TO-DATE` — for example the first build, a build after `clean` or `cleanTest`, and any build after a
@@ -121,15 +134,15 @@ Before pushing:
 
 ```bash
 ./gradlew format     # Apply Spotless (Eclipse formatter)
-./gradlew checkAll   # checkFormat + checkStyle + every module's unit tests
+./gradlew checkAll   # checkFormat + checkStyle + every module's unit tests + the BOM's verifyBom
 ```
 
-`checkAll` is the single gate: it runs the format check, Checkstyle, **and** each module's `test`
-task. A separate `./gradlew test` is no longer needed. Three tagged tiers stay out of it, because
-`test` excludes them: `@Tag("docker")` (Docker/Testcontainers) and `@Tag("packaging")` (fat-jar
-launches), which the conventions plugin excludes in every module, and `@Tag("playwright")` (a real
-browser), which `aimon-browser-playwright` excludes as well. They run via `./gradlew integrationTest`,
-`./gradlew packagingTest` and `./gradlew playwrightTest`, and CI and the release gate run all three.
+`checkAll` is the single gate: it runs the format check, Checkstyle, each module's `test` task **and** the
+BOM's `verifyBom`. A separate `./gradlew test` is no longer needed. Two tagged tiers stay out of it, because
+`test` excludes them: `@Tag("docker")` (Docker/Testcontainers) and `@Tag("packaging")` (fat-jar launches),
+both excluded by the conventions plugin in every module. They run via `./gradlew integrationTest` and
+`./gradlew packagingTest`, and CI and the release gate run both. (There was a third, `@Tag("playwright")`,
+until aimon-browser-playwright moved to its own repository and took the tier with it.)
 
 When a check fails, the HTML reports say why:
 
@@ -139,7 +152,9 @@ modules/<module>/build/reports/tests/test/index.html  # Test failures
 modules/<module>/build/reports/jacoco/                # Coverage
 ```
 
-CI (GitHub Actions) runs `./gradlew checkAll` on every PR — broken builds will be flagged automatically. See `.github/workflows/build.yml`.
+CI (GitHub Actions) runs `./gradlew checkAll` on every PR, and the tagged tiers beside it: `packagingTest` in
+the same job, `integrationTest` in its own, and `jacocoTestReport` + `jacocoTestCoverageVerification` in a
+third. The release gate runs the same four verification tasks in one invocation. Broken builds will be flagged automatically. See `.github/workflows/build.yml`.
 
 Documentation has its own gates, which `checkAll` does not cover:
 
@@ -228,10 +243,6 @@ modules/
 ├── aimon-filesystem-s3          # AWS S3 VFS
 ├── aimon-filesystem-testkit     # Shared VirtualFileSystem contract tests
 │
-├── aimon-sandbox                # Sandbox abstraction
-├── aimon-sandbox-docker         # Docker backend
-├── aimon-sandbox-kubernetes     # Kubernetes backend
-│
 ├── aimon-session-routing        # Multi-node session routing (SPIs live in aimon-core)
 ├── aimon-session-testkit        # Shared multi-node session contract tests
 ├── aimon-session-redis          # Redis session store
@@ -244,7 +255,6 @@ modules/
 ├── aimon-scheduling-quartz      # Distributed cron scheduler
 ├── aimon-workflow-graaljs       # GraalJS-scripted subagent workflow
 ├── aimon-rewake-webhook         # HMAC-verified HTTP endpoint that fires rewake
-└── aimon-browser-playwright     # Playwright browser automation
 
 samples/
 ├── aimon-sample-app             # Minimal embedding example

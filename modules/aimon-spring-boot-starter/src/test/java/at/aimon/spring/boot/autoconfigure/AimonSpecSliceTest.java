@@ -30,6 +30,7 @@ import at.aimon.core.agent.session.inbox.SessionInbox;
 import at.aimon.core.agent.session.signal.SessionSignalBus;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.store.SessionLeaseStore;
+import at.aimon.core.agent.session.store.SessionLogSegmentStore;
 import at.aimon.core.agent.session.store.SessionRecordStore;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.scheduling.repository.InMemoryScheduledTaskRepository;
@@ -320,6 +321,18 @@ class AimonSpecSliceTest {
     }
 
     @Test
+    @DisplayName("an application segment store is adopted beside the record store")
+    void applicationSegmentStoreIsAdopted(@TempDir Path workspace) {
+        // Without it a durable v2 deployment never seals — the record would carry every entry of the session forever.
+        sessionRunner(workspace).withPropertyValues("aimon.session.store=postgres")
+                .withUserConfiguration(ApplicationRecordStoreConfiguration.class,
+                        ApplicationSegmentStoreConfiguration.class)
+                .run(ctx -> assertThat(ctx.getBean(SessionSpec.class).getSegmentStore())
+                        .contains(ApplicationSegmentStoreConfiguration.INSTANCE));
+        sessionRunner(workspace).run(ctx -> assertThat(ctx.getBean(SessionSpec.class).getSegmentStore()).isEmpty());
+    }
+
+    @Test
     @DisplayName("cache properties reach the spec")
     void cachePropertiesReachTheSpec(@TempDir Path workspace) {
         sessionRunner(workspace).withPropertyValues("aimon.session.cache.max-entries=7",
@@ -439,6 +452,17 @@ class AimonSpecSliceTest {
 
         @Bean
         SessionRecordStore applicationRecordStore() {
+            return INSTANCE;
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    static class ApplicationSegmentStoreConfiguration {
+
+        static final SessionLogSegmentStore INSTANCE = mock(SessionLogSegmentStore.class);
+
+        @Bean
+        SessionLogSegmentStore applicationSegmentStore() {
             return INSTANCE;
         }
     }

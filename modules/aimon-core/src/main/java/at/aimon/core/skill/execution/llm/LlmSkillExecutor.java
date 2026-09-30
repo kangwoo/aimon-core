@@ -5,6 +5,7 @@ import static at.aimon.core.agent.tool.execution.ToolExecutionResultConverter.to
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -14,6 +15,8 @@ import org.slf4j.LoggerFactory;
 import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.budget.StalledIterationGuard;
 import at.aimon.core.agent.budget.TruncatedResponses;
+import at.aimon.core.agent.context.ContextEngine;
+import at.aimon.core.agent.context.ContextRequest;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.tool.SideEffectLevel;
@@ -24,6 +27,7 @@ import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.exception.ToolPermissionViolationException;
 import at.aimon.core.agent.tool.execution.ToolExecutionResult;
 import at.aimon.core.agent.tool.permission.AllowedTool;
+import at.aimon.core.agent.tool.permission.AllowedTools;
 import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.Message;
@@ -43,6 +47,7 @@ import at.aimon.core.skill.fork.NoOpSkillForkExecutor;
 import at.aimon.core.skill.fork.SkillForkExecutor;
 import at.aimon.core.skill.fork.SkillForkOutcome;
 import at.aimon.core.skill.render.SkillContentRenderer;
+import at.aimon.core.tools.CallerAllowedTools;
 import at.aimon.core.tools.ToolContextKeys;
 
 /**
@@ -104,6 +109,9 @@ import at.aimon.core.tools.ToolContextKeys;
 public class LlmSkillExecutor implements SkillExecutor {
 
     private static final Logger log = LoggerFactory.getLogger(LlmSkillExecutor.class);
+
+    /** The skill loop never shrinks its view (context-engine design §3.2): its scratch buffer stays short. */
+    private static final ContextEngine CONTEXT_ENGINE = ContextEngine.passthrough();
 
     private final LlmClient llmClient;
     private final SkillContentRenderer renderer;
@@ -180,7 +188,13 @@ public class LlmSkillExecutor implements SkillExecutor {
                 return executeFork(skill, renderedBody, context.getToolContext(), startTime, accumulatedTokens);
             }
 
-            final List<AllowedTool> allowedTools = skill.getMetadata().getAllowedTools();
+            final List<AllowedTool> callerAllowed = CallerAllowedTools.of(context.getToolContext());
+            final List<AllowedTool> declaredTools = skill.getMetadata().getAllowedTools();
+            final Optional<List<AllowedTool>> bounded = AllowedTools.intersect(callerAllowed, declaredTools);
+            if (bounded.isEmpty()) {
+                return disjointAllowLists(skill, callerAllowed, declaredTools, accumulatedTokens, startTime);
+            }
+            final List<AllowedTool> allowedTools = bounded.get();
             final String systemPrompt = systemPromptBuilder.build(allowedTools);
 
             final TranscriptBuffer transcriptBuffer = new TranscriptBuffer(
@@ -191,8 +205,19 @@ public class LlmSkillExecutor implements SkillExecutor {
             // rather than configured here on purpose: the filter and the refusal then cannot disagree, and a skill
             // offered a tool above the ceiling would spend an iteration picking it and reading the refusal.
             final SideEffectLevel ceiling = toolExecutionManager.getMaxSideEffectLevel();
-            final List<ToolDefinition> filteredTools = filterTools(skill, context.getAvailableTools()).stream()
+            final List<ToolDefinition> filteredTools = filterTools(allowedTools, context.getAvailableTools()).stream()
                     .filter(tool -> ceiling.permits(tool.getSideEffectLevel())).map(Tool::getDefinition).toList();
+            if (filteredTools.isEmpty() && !allowedTools.isEmpty()) {
+                // Either filter alone leaves something; together they can leave nothing — a misspelled allowed-tools
+                // entry, or one naming only tools above the ceiling. No provider rejects an empty tools field (all
+                // omit it), so the model answers from prose and the skill reports a clean result: an answer that looks
+                // like work that was never done. The outcome is left alone — a skill that legitimately needs no tool
+                // exists — but it is not left silent.
+                log.warn(
+                        "Skill '{}' is offered no tools: its allowed-tools names {} and the side-effect ceiling is "
+                                + "{}, leaving nothing from the {} available tool(s). It will answer without acting.",
+                        skill.getName(), allowedTools, ceiling, context.getAvailableTools().size());
+            }
 
             // Prefer the per-execution dispatcher the agent executor binds into the command tool context: it runs each
             // call through the same SingleToolInvoker pipeline the ReAct loop uses, so a skill cannot reach a tool by
@@ -201,8 +226,13 @@ public class LlmSkillExecutor implements SkillExecutor {
             final SkillToolDispatcher toolDispatcher = context.getToolContext()
                     .get(ToolContextKeys.SKILL_TOOL_DISPATCHER_KEY).orElse(this::dispatchWithoutHooks);
 
-            LlmResponse currentResponse = llmClient.sendMessage(systemPrompt, transcriptBuffer.getMessages(),
-                    filteredTools, context.getDefaultModel());
+            // The skill loop compacts nothing: it runs on a fresh scratch buffer per execution that never grows long
+            // enough to need it. It still asks the engine for the view, so no LLM call reads the transcript directly.
+            final ContextRequest contextRequest = ContextRequest.builder().transcriptBuffer(transcriptBuffer)
+                    .model(context.getDefaultModel()).build();
+            LlmResponse currentResponse = llmClient.sendMessage(systemPrompt,
+                    CONTEXT_ENGINE.prepare(contextRequest).getView().getMessages(), filteredTools,
+                    context.getDefaultModel());
             accumulatedTokens = accumulatedTokens.add(currentResponse.getTokenUsage());
 
             int iterationCount = 0;
@@ -245,7 +275,8 @@ public class LlmSkillExecutor implements SkillExecutor {
                 }
 
                 currentResponse = llmClient.sendMessage(transcriptBuffer.getSystemPrompt(),
-                        transcriptBuffer.getMessages(), filteredTools, context.getDefaultModel());
+                        CONTEXT_ENGINE.prepare(contextRequest).getView().getMessages(), filteredTools,
+                        context.getDefaultModel());
                 accumulatedTokens = accumulatedTokens.add(currentResponse.getTokenUsage());
                 iterationCount++;
             }
@@ -419,12 +450,42 @@ public class LlmSkillExecutor implements SkillExecutor {
         return SkillExecutionResult.failure(message, new IllegalStateException(message), metadata);
     }
 
-    private static List<Tool> filterTools(Skill skill, List<Tool> availableTools) {
-        if (!skill.hasToolRestrictions()) {
+    /**
+     * The refusal when a skill's allow-list and its caller's admit nothing in common.
+     *
+     * <p>
+     * An empty list reads as <em>unrestricted</em> everywhere in {@code at.aimon.core.agent.tool.permission}, so
+     * carrying on with the empty intersection would invert the strictest possible pairing into the loosest — the
+     * reason {@link AllowedTools#intersect} answers with an {@link Optional} rather than a list. The message names
+     * both sides, because the mismatch is a configuration error and fixing it means seeing them together.
+     */
+    private SkillExecutionResult disjointAllowLists(Skill skill, List<AllowedTool> callerAllowed,
+            List<AllowedTool> declaredTools, TokenUsage accumulatedTokens, Instant startTime) {
+        final String message = String
+                .format("Skill '%s' cannot run: its allowed-tools and the caller's have nothing in common "
+                        + "(caller allows %s, skill allows %s)", skill.getName(), callerAllowed, declaredTools);
+        return SkillExecutionResult.failure(message, new IllegalStateException(message),
+                buildMetadata(0, accumulatedTokens, startTime));
+    }
+
+    /**
+     * Narrows the offer to the names the <b>effective</b> allow-list admits — the skill's own list already
+     * intersected with its caller's, so the offer and the dispatch that follows are bounded by one value and cannot
+     * disagree.
+     *
+     * <p>
+     * The caller's half is what stops an agent's allow-list from ending at a skill: without it, {@code /my-skill} —
+     * or a model call to {@code Skill} — runs that skill's tools under the skill's list alone, so a skill naming
+     * {@code Bash} reaches {@code Bash} inside an agent narrowed to {@code Read, Grep}. It arrives through the tool
+     * context, published by {@code SingleToolInvoker} on the tool-call path and by the agent executor's command tool
+     * context on the user-slash path; absent, it is empty and imposes nothing.
+     */
+    private static List<Tool> filterTools(List<AllowedTool> allowedTools, List<Tool> availableTools) {
+        if (allowedTools.isEmpty()) {
             return availableTools;
         }
-        final Set<String> allowedToolNames = skill.getMetadata().getAllowedTools().stream()
-                .map(AllowedTool::getToolName).collect(Collectors.toSet());
+        final Set<String> allowedToolNames = allowedTools.stream().map(AllowedTool::getToolName)
+                .collect(Collectors.toSet());
         return availableTools.stream().filter(tool -> allowedToolNames.contains(tool.getDefinition().getName()))
                 .toList();
     }

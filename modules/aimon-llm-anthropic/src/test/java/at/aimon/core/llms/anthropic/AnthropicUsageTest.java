@@ -30,12 +30,20 @@ import at.aimon.core.llm.streaming.ChunkAggregator;
 import at.aimon.core.llm.streaming.LlmStreamSink;
 
 /**
- * The fourth token counter, read untyped because this SDK version does not model it.
+ * The fourth token counter, read through the SDK's raw accessors rather than its typed ones.
  *
  * <p>
- * These tests prove the parser, not the field name: {@code output_tokens_details.thinking_tokens} comes from the
- * vendor's documentation and has not been seen on a live response in this run. If the name is wrong the counter reads
- * zero and nothing else changes, which is the property the degradation cases below pin.
+ * The field name is no longer this suite's variable. SDK 2.13.0 modelled neither the breakdown nor the counter, so
+ * {@code output_tokens_details.thinking_tokens} was a name taken from the vendor's documentation and these cases
+ * pinned the parser against the possibility that it was wrong. Since 2.62.0 the SDK models both, the name is the
+ * SDK's, and what is left to pin is the shape: that the reader keeps answering {@code 0} where the typed accessors
+ * ({@code outputTokensDetails()}, {@code thinkingTokens()}) would have raised {@code AnthropicInvalidDataException}
+ * instead.
+ *
+ * <p>
+ * That is what the fixtures below are for. Every one of them still deserializes — the mismatched shapes reach the
+ * reader as raw JSON on a modelled field, which is why the degradation cases can assert a return value at all rather
+ * than a thrown exception at parse time.
  */
 @DisplayName("AnthropicUsages - the thinking token counter")
 @ExtendWith(MockitoExtension.class)

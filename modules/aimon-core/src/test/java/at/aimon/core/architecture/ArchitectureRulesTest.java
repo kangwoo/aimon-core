@@ -27,6 +27,13 @@ class ArchitectureRulesTest {
     private static final JavaClasses CORE_MAIN = new ClassFileImporter()
             .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS).importPackages("at.aimon.core");
 
+    /**
+     * Two of the packages below — {@code at.aimon.memory..} and {@code at.aimon.sandbox..} — no longer belong to a
+     * sibling module in this build; both now live in repositories of their own. They stay listed because the rule is
+     * about what core may depend on, not about what happens to sit next to it: an implementation package that left
+     * is one core may depend on even less than before, and a coordinate resolved from Central would satisfy this
+     * import as readily as a project dependency did.
+     */
     @Test
     @DisplayName("aimon-core does not depend on any sibling aimon module")
     void coreHasNoSiblingModuleDependencies() {

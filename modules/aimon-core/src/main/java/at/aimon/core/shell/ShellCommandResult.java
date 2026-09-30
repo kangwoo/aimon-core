@@ -1,6 +1,7 @@
 package at.aimon.core.shell;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -33,6 +34,7 @@ public final class ShellCommandResult {
     private final String stderr;
     private final Duration duration;
     private final boolean outputTruncated;
+    private final List<String> notices;
 
     /**
      * Creates a new shell command result whose captured output is complete.
@@ -75,11 +77,48 @@ public final class ShellCommandResult {
      *             if duration is null
      */
     public ShellCommandResult(int exitCode, String stdout, String stderr, Duration duration, boolean outputTruncated) {
+        this(exitCode, stdout, stderr, duration, outputTruncated, List.of());
+    }
+
+    /**
+     * Creates a new shell command result that carries environment notices.
+     *
+     * @param exitCode
+     *            the exit code of the command
+     * @param stdout
+     *            the standard output, null will be converted to empty string
+     * @param stderr
+     *            the standard error output, null will be converted to empty string
+     * @param duration
+     *            the execution duration, must not be null
+     * @param outputTruncated
+     *            true if the captured output may be incomplete
+     * @param notices
+     *            facts the environment tells the model, see {@link #notices()} (null means none)
+     * @throws NullPointerException
+     *             if duration is null
+     */
+    public ShellCommandResult(int exitCode, String stdout, String stderr, Duration duration, boolean outputTruncated,
+            List<String> notices) {
         this.exitCode = exitCode;
         this.stdout = stdout == null ? "" : stdout;
         this.stderr = stderr == null ? "" : stderr;
         this.duration = Objects.requireNonNull(duration, "duration");
         this.outputTruncated = outputTruncated;
+        this.notices = notices == null ? List.of() : List.copyOf(notices);
+    }
+
+    /**
+     * Returns facts the environment wants the model to know about this command's run, separate from what the command
+     * printed — "the shell session was reopened; cwd and environment variables were reset", "the environment was
+     * recreated; the working directory is empty". {@code Bash} shows them as {@code [environment] ...} lines before
+     * the output, never mixed into stderr, which the model reads as the command's own errors. A local shell has none
+     * (execution-environment design §8).
+     *
+     * @return the notices (never null; empty by default)
+     */
+    public List<String> notices() {
+        return notices;
     }
 
     /**
@@ -164,12 +203,12 @@ public final class ShellCommandResult {
         ShellCommandResult that = (ShellCommandResult) o;
         return exitCode == that.exitCode && outputTruncated == that.outputTruncated
                 && Objects.equals(stdout, that.stdout) && Objects.equals(stderr, that.stderr)
-                && Objects.equals(duration, that.duration);
+                && Objects.equals(duration, that.duration) && Objects.equals(notices, that.notices);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(exitCode, stdout, stderr, duration, outputTruncated);
+        return Objects.hash(exitCode, stdout, stderr, duration, outputTruncated, notices);
     }
 
     @Override

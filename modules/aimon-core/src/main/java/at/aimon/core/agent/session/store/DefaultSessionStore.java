@@ -1,6 +1,7 @@
 package at.aimon.core.agent.session.store;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -44,7 +45,8 @@ public final class DefaultSessionStore implements SessionStore {
     private final SessionLeaseStore leaseStore;
     private final SessionRecordStore repository;
     private final ConcurrentMap<SessionId, SessionLease> held = new ConcurrentHashMap<>();
-    private final SessionRecordStore fencedRecords = new FencedRecords();
+    private final SessionRecordStore fencedRecords = new FencedRecords(this::requireHeld);
+    private final SessionRecordStore lenientRecords = new FencedRecords(this::requireNotHeldElsewhere);
 
     /**
      * @param leaseStore
@@ -173,13 +175,81 @@ public final class DefaultSessionStore implements SessionStore {
         return fencedRecords;
     }
 
+    @Override
+    public SessionRecordStore records(SessionFence fence) {
+        return switch (Objects.requireNonNull(fence, "fence must not be null")) {
+            case HOLDER_ONLY -> fencedRecords;
+            case UNLESS_HELD_ELSEWHERE -> lenientRecords;
+        };
+    }
+
     /**
      * Drops local holdership of {@code lease}, matched on the fencing token rather than on object identity so a
      * reconstructed-but-equivalent lease still works. A newer lease for the same session is left alone.
      */
+    @Override
+    public SessionLogSegmentStore segments(SessionLogSegmentStore raw) {
+        return segments(raw, SessionFence.HOLDER_ONLY);
+    }
+
+    @Override
+    public SessionLogSegmentStore segments(SessionLogSegmentStore raw, SessionFence fence) {
+        Objects.requireNonNull(raw, "raw must not be null");
+        return switch (Objects.requireNonNull(fence, "fence must not be null")) {
+            case HOLDER_ONLY -> new FencedSegments(raw, this::requireHeld);
+            case UNLESS_HELD_ELSEWHERE -> new FencedSegments(raw, this::requireNotHeldElsewhere);
+        };
+    }
+
+    private void requireHeld(SessionId sessionId, String operation) {
+        Objects.requireNonNull(sessionId, "sessionId must not be null");
+
+        final SessionLease lease = held.get(sessionId);
+        if (lease == null) {
+            throw new SessionNotHeldException("Refusing " + operation + " for session " + sessionId.value()
+                    + ": this node holds no lease for it.");
+        }
+        final Optional<LeaseHolder> holder = leaseStore.findHolder(sessionId);
+        if (holder.isEmpty() || holder.get().getFencingToken() != lease.getFencingToken()
+                || !holder.get().getHolderId().equals(lease.getHolderId())) {
+            forget(lease);
+            throw new SessionNotHeldException("Refusing " + operation + " for session " + sessionId.value()
+                    + ": lease (token=" + lease.getFencingToken() + ") is no longer current, observed holder is "
+                    + holder.map(LeaseHolder::toString).orElse("none") + '.');
+        }
+    }
+
+    /**
+     * The {@link SessionFence#UNLESS_HELD_ELSEWHERE} check: passes when the authority names nobody, or names exactly
+     * the lease this node holds; refuses when it names anybody else. A local lease the authority no longer confirms is
+     * forgotten either way, as {@link #requireHeld} does.
+     */
+    private void requireNotHeldElsewhere(SessionId sessionId, String operation) {
+        Objects.requireNonNull(sessionId, "sessionId must not be null");
+
+        final SessionLease lease = held.get(sessionId);
+        final Optional<LeaseHolder> holder = leaseStore.findHolder(sessionId);
+        final boolean ours = lease != null && holder.isPresent()
+                && holder.get().getFencingToken() == lease.getFencingToken()
+                && holder.get().getHolderId().equals(lease.getHolderId());
+        if (lease != null && !ours) {
+            forget(lease);
+        }
+        if (holder.isPresent() && !ours) {
+            throw new SessionNotHeldException("Refusing " + operation + " for session " + sessionId.value()
+                    + ": it is held elsewhere, by " + holder.get() + '.');
+        }
+    }
+
     private void forget(SessionLease lease) {
         held.computeIfPresent(lease.getSessionId(),
                 (id, current) -> current.getFencingToken() == lease.getFencingToken() ? null : current);
+    }
+
+    /** Re-proves the right to mutate one session, or throws {@link SessionNotHeldException}. */
+    @FunctionalInterface
+    private interface Guard {
+        void check(SessionId sessionId, String operation);
     }
 
     /**
@@ -196,43 +266,93 @@ public final class DefaultSessionStore implements SessionStore {
      * backing implementation does so with an atomic primitive. Fencing and then delegating adds holdership to that
      * guarantee; expressing any of these as a read followed by a write here would spend it.
      */
+    private final class FencedSegments implements SessionLogSegmentStore {
+
+        private final SessionLogSegmentStore raw;
+        private final Guard guard;
+
+        private FencedSegments(SessionLogSegmentStore raw, Guard guard) {
+            this.raw = raw;
+            this.guard = guard;
+        }
+
+        @Override
+        public void put(SessionLogSegment segment) {
+            // Not fenced: a late segment is harmless until a manifest names it, and only the holder writes manifests.
+            raw.put(segment);
+        }
+
+        @Override
+        public Optional<SessionLogSegment> get(SessionId sessionId, SegmentId id) {
+            return raw.get(sessionId, id);
+        }
+
+        @Override
+        public List<SegmentInfo> list(SessionId sessionId) {
+            return raw.list(sessionId);
+        }
+
+        @Override
+        public SegmentScanPage scanSessions(Instant createdBefore, String cursor, int limit) {
+            return raw.scanSessions(createdBefore, cursor, limit);
+        }
+
+        @Override
+        public void delete(SessionId sessionId, SegmentId id) {
+            guard.check(sessionId, "segment delete");
+            raw.delete(sessionId, id);
+        }
+
+        @Override
+        public void deleteAll(SessionId sessionId) {
+            guard.check(sessionId, "segment deleteAll");
+            raw.deleteAll(sessionId);
+        }
+    }
+
     private final class FencedRecords implements SessionRecordStore {
+
+        private final Guard guard;
+
+        private FencedRecords(Guard guard) {
+            this.guard = guard;
+        }
 
         @Override
         public void mergeFromSnapshot(SessionSnapshot snapshot) {
             Objects.requireNonNull(snapshot, "snapshot must not be null");
-            requireHeld(snapshot.getSessionId(), "mergeFromSnapshot");
+            guard.check(snapshot.getSessionId(), "mergeFromSnapshot");
             repository.mergeFromSnapshot(snapshot);
         }
 
         @Override
         public SessionRecordView provision(SessionId sessionId, String agentRef) {
-            requireHeld(sessionId, "provision");
+            guard.check(sessionId, "provision");
             return repository.provision(sessionId, agentRef);
         }
 
         @Override
         public void setTotalsAndBudgetOverride(SessionId sessionId, SessionTotals totals,
                 ExecutionBudget budgetOverride) {
-            requireHeld(sessionId, "setTotalsAndBudgetOverride");
+            guard.check(sessionId, "setTotalsAndBudgetOverride");
             repository.setTotalsAndBudgetOverride(sessionId, totals, budgetOverride);
         }
 
         @Override
         public int incrementCompactionFailureCount(SessionId sessionId) {
-            requireHeld(sessionId, "incrementCompactionFailureCount");
+            guard.check(sessionId, "incrementCompactionFailureCount");
             return repository.incrementCompactionFailureCount(sessionId);
         }
 
         @Override
         public void resetCompactionFailureCount(SessionId sessionId) {
-            requireHeld(sessionId, "resetCompactionFailureCount");
+            guard.check(sessionId, "resetCompactionFailureCount");
             repository.resetCompactionFailureCount(sessionId);
         }
 
         @Override
         public void delete(SessionId sessionId) {
-            requireHeld(sessionId, "delete");
+            guard.check(sessionId, "delete");
             repository.delete(sessionId);
         }
 
@@ -263,22 +383,5 @@ public final class DefaultSessionStore implements SessionStore {
                             + "sessions at once. Use the underlying SessionRecordStore directly.");
         }
 
-        private void requireHeld(SessionId sessionId, String operation) {
-            Objects.requireNonNull(sessionId, "sessionId must not be null");
-
-            final SessionLease lease = held.get(sessionId);
-            if (lease == null) {
-                throw new SessionNotHeldException("Refusing " + operation + " for session " + sessionId.value()
-                        + ": this node holds no lease for it.");
-            }
-            final Optional<LeaseHolder> holder = leaseStore.findHolder(sessionId);
-            if (holder.isEmpty() || holder.get().getFencingToken() != lease.getFencingToken()
-                    || !holder.get().getHolderId().equals(lease.getHolderId())) {
-                forget(lease);
-                throw new SessionNotHeldException("Refusing " + operation + " for session " + sessionId.value()
-                        + ": lease (token=" + lease.getFencingToken() + ") is no longer current, observed holder is "
-                        + holder.map(LeaseHolder::toString).orElse("none") + '.');
-            }
-        }
     }
 }

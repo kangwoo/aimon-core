@@ -10,12 +10,13 @@ import org.slf4j.LoggerFactory;
 
 import at.aimon.core.agent.AgentContent;
 import at.aimon.core.agent.AgentContentRenderer;
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.context.ContextBlock;
 import at.aimon.core.agent.context.ContextBlockKind;
+import at.aimon.core.agent.context.EnvironmentBlocks;
 import at.aimon.core.agent.prompt.Staticness;
 import at.aimon.core.agent.prompt.SystemPromptPart;
 import at.aimon.core.agent.prompt.SystemPromptParts;
+import at.aimon.core.environment.EnvironmentDescriptor;
 import at.aimon.core.memory.MemoryContextProvider;
 import at.aimon.core.memory.MemoryContextRequest;
 
@@ -73,11 +74,11 @@ final class SystemPromptRenderer {
      * @param systemPromptVariables
      *            the system prompt variables (can be empty)
      * @param environment
-     *            the runtime environment (can be null)
+     *            the execution environment's descriptor (can be null)
      * @return the system prompt with dynamically injected information
      */
     String renderSystemPromptString(SystemPromptParts systemPromptParts, AgentContent agentContent,
-            Map<String, Object> systemPromptVariables, Environment environment) {
+            Map<String, Object> systemPromptVariables, EnvironmentDescriptor environment) {
         // Edge case: when the rendered agent content is empty, the previous implementation produced
         // "\n\n" + envBlock (empty template joined to env with a blank-line separator). Preserve that
         // by checking the rendered content here rather than relying on SystemPromptParts.concatenated(),
@@ -102,17 +103,18 @@ final class SystemPromptRenderer {
      * @param systemPromptVariables
      *            the system prompt variables (must not be null, may be empty)
      * @param environment
-     *            the runtime environment, or {@code null} to omit the environment segment
+     *            the execution environment's descriptor, or {@code null} to omit the environment segment
      * @return the structured prompt; never {@code null}
      */
     SystemPromptParts buildSystemPromptParts(AgentContent agentContent, Map<String, Object> systemPromptVariables,
-            Environment environment) {
+            EnvironmentDescriptor environment) {
         return buildSystemPromptParts(agentContent, systemPromptVariables, environment, List.of(),
                 MemoryContextRequest.empty());
     }
 
     /**
-     * Overload of {@link #buildSystemPromptParts(AgentContent, Map, Environment)} that additionally appends the
+     * Overload of {@link #buildSystemPromptParts(AgentContent, Map, EnvironmentDescriptor)} that additionally appends
+     * the
      * {@link ContextBlockKind#SYSTEM SYSTEM}-kind blocks assembled by the wired context assembler.
      *
      * <p>
@@ -126,7 +128,7 @@ final class SystemPromptRenderer {
      * @param systemPromptVariables
      *            the system prompt variables (must not be null, may be empty)
      * @param environment
-     *            the runtime environment, or {@code null} to omit the environment segment
+     *            the execution environment's descriptor, or {@code null} to omit the environment segment
      * @param assembledContext
      *            the blocks assembled for this turn (must not be null; SYSTEM blocks are appended, others ignored)
      * @param memoryContextRequest
@@ -135,7 +137,8 @@ final class SystemPromptRenderer {
      * @return the structured prompt; never {@code null}
      */
     SystemPromptParts buildSystemPromptParts(AgentContent agentContent, Map<String, Object> systemPromptVariables,
-            Environment environment, List<ContextBlock> assembledContext, MemoryContextRequest memoryContextRequest) {
+            EnvironmentDescriptor environment, List<ContextBlock> assembledContext,
+            MemoryContextRequest memoryContextRequest) {
         Objects.requireNonNull(agentContent, "Agent content cannot be null");
         Objects.requireNonNull(systemPromptVariables, "System prompt variables cannot be null");
         Objects.requireNonNull(assembledContext, "Assembled context cannot be null");
@@ -179,12 +182,16 @@ final class SystemPromptRenderer {
     }
 
     /**
-     * Builds the verbatim environment block, identical to the block the pre-CTX-04 {@link StringBuilder}-based
-     * implementation appended.
+     * Builds the environment block from the <b>execution's</b> descriptor — where its commands actually run, not the
+     * JVM host (execution-environment design §10). On a local environment the text is identical to the block the
+     * pre-CTX-04 {@link StringBuilder}-based implementation appended. A field the descriptor does not know is left out,
+     * and its notes (e.g. why the environment is unavailable) follow as one more line.
+     *
+     * @param descriptor
+     *            the execution environment's descriptor
+     * @return the block
      */
-    private static String buildEnvironmentBlock(Environment environment) {
-        return "Here is useful information about the environment you are running in:\n\n" + "**Environment:**\n"
-                + "```\n" + "Working directory: " + environment.getWorkingDirectory() + '\n' + "Platform: "
-                + environment.getPlatform() + '\n' + "OS Version: " + environment.getOsVersion() + '\n' + "```";
+    private static String buildEnvironmentBlock(EnvironmentDescriptor descriptor) {
+        return EnvironmentBlocks.render(descriptor);
     }
 }

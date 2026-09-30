@@ -10,6 +10,8 @@ paths:
 - **Never throw exceptions from `execute()`** — Always return `ToolResult.error()`
 - **Use type-safe accessors** — `input.getRequiredString()`, `input.getInteger("key", defaultValue)`, `input.getStringOrNull()`
 - **Stateless design** — No mutable state between executions
+- **No filesystem or shell in constructors** — read them per call with `ExecutionEnvironmentAccess.require(context)` (`ToolContextKeys.EXECUTION_ENVIRONMENT`, write-once: enrichers may read it, never replace it). Catch `IllegalStateException` / `ExecutionEnvironmentUnavailableException` and return `ToolResult.error`; never fall back to a default environment. `OrcaToolProviderContext` offers only `getControlFileSystem()` (framework state — not a working filesystem for model-driven tools). ArchUnit `toolsHoldNoFileSystemOrShellFields` enforces it
+- **Stale writes** — tools that modify existing files check `ReadTool.FILE_STAMPS_KEY` stamps ("Read the file before modifying it" / "File changed since it was read; Read it again"); `READ_FILES_KEY` is gone
 - **Immutable I/O** — ToolInput, ToolResult, ToolContext are all immutable
 
 ## Tool Structure

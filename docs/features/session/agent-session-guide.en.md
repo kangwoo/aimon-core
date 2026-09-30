@@ -442,10 +442,14 @@ public class AgentConfig {
     public OrcaAgentRuntimeManager agentRuntimeManager(
             OrcaAgentExecutor executor,
             ScheduledTaskManager scheduledTaskManager,
-            AgentRuntimeRegistry agentRuntimeRegistry) {
+            AgentRuntimeRegistry agentRuntimeRegistry,
+            ExecutionEnvironmentProvider executionEnvironmentProvider) {
+        // The factory must carry an ExecutionEnvironmentProvider — build() refuses without one.
         return OrcaAgentRuntimeManager.builder()
                 .agentExecutor(executor)
                 .scheduledTaskManager(scheduledTaskManager)
+                .agentRuntimeFactory(new OrcaAgentRuntimeFactory()
+                        .withExecutionEnvironmentProvider(executionEnvironmentProvider))
                 .agentRuntimeRegistry(agentRuntimeRegistry)
                 .build();
     }
@@ -455,11 +459,12 @@ public class AgentConfig {
     public ApplicationRunner registerAgentRuntimes(
             OrcaAgentRuntimeManager manager,
             List<AgentBundle> bundles,
-            VirtualFileSystem fileSystem,
+            VirtualFileSystem controlFileSystem,
             CredentialStore credentialStore) {
+        // controlFileSystem is the control root ({workspace}/.aimon for a local stack)
         return args -> {
             for (AgentBundle bundle : bundles) {
-                manager.getOrCreateRuntime(bundle, fileSystem, credentialStore);
+                manager.getOrCreateRuntime(bundle, controlFileSystem, credentialStore);
                 // → runtimeId = "agent:<name>"  (the simple case, with no discriminator)
             }
         };
@@ -471,11 +476,11 @@ public class AgentConfig {
             OrcaAgentRuntimeManager manager,
             OrcaAgentExecutor executor,
             SessionRecordStore sessionRecordStore,
-            VirtualFileSystem fileSystem,
+            VirtualFileSystem controlFileSystem,
             CredentialStore credentialStore) {
         // the agent runtime is already in the registry, so it is reused when a session is opened
         return new LiveSessionFactory(agentRegistry,
-                agent -> manager.getOrCreateRuntime(AgentBundle.builder().agent(agent).build(), fileSystem,
+                agent -> manager.getOrCreateRuntime(AgentBundle.builder().agent(agent).build(), controlFileSystem,
                         credentialStore),
                 executor,
                 sessionRecordStore);

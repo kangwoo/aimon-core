@@ -3,19 +3,15 @@ package at.aimon.core.subagent.behavior;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
-import java.util.stream.Collectors;
 
 import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
-import at.aimon.core.agent.tool.DefaultToolRegistry;
-import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolRegistry;
-import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.invoke.LlmCallGateway;
 import at.aimon.core.subagent.Subagent;
+import at.aimon.core.subagent.SubagentToolScope;
 import at.aimon.core.subagent.execution.SubagentExecutionContext;
 import at.aimon.core.subagent.execution.SubagentExecutionRequest;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
@@ -52,7 +48,7 @@ final class DefaultSubagentBehaviorSupport implements SubagentBehaviorSupport {
                 request.getLlmCallMetadata());
         this.resolvedModel = SubagentLlmDefaults.resolveModel(subagent, executionContext.getDefaultModel(),
                 executionContext.getModelOverride().orElse(null));
-        this.scopedToolRegistry = scope(executionContext.getToolRegistry(), subagent);
+        this.scopedToolRegistry = SubagentToolScope.scope(executionContext.getToolRegistry(), subagent);
     }
 
     @Override
@@ -93,26 +89,5 @@ final class DefaultSubagentBehaviorSupport implements SubagentBehaviorSupport {
     @Override
     public ToolRegistry scopedToolRegistry() {
         return scopedToolRegistry;
-    }
-
-    /**
-     * Returns a registry containing only the subagent's allowed tools (matched by name), or the full registry when the
-     * subagent declares no tool restrictions. This exposes — but does not enforce — the same allow-list the ReAct path
-     * applies at dispatch; a behavior is trusted code and may still reach the full registry via
-     * {@code context.getToolRegistry()}.
-     */
-    private static ToolRegistry scope(ToolRegistry full, Subagent subagent) {
-        if (!subagent.hasToolRestrictions()) {
-            return full;
-        }
-        final Set<String> allowedNames = subagent.getAllowedTools().stream().map(AllowedTool::getToolName)
-                .collect(Collectors.toUnmodifiableSet());
-        final DefaultToolRegistry scoped = new DefaultToolRegistry();
-        for (Tool tool : full.findAll()) {
-            if (allowedNames.contains(tool.getDefinition().getName())) {
-                scoped.register(tool);
-            }
-        }
-        return scoped;
     }
 }

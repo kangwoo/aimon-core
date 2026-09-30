@@ -33,6 +33,10 @@ ensureCollection("background_task");
 // same — MongoSchemaFreezeTest pins it, because from the first deployment there is data behind it.
 ensureCollection("session_records");
 
+// session_log_segments holds the sealed ranges of session logs, one document per segment. Named for the
+// session for the same reason as session_records, and frozen from its first deployment on.
+ensureCollection("session_log_segments");
+
 // --- indexes -----------------------------------------------------------------
 //
 // createIndex is idempotent when the spec + name match; we always pass an explicit
@@ -64,6 +68,13 @@ target.background_task.createIndex(
 target.background_task.createIndex(
     { contextId: 1 },
     { name: "by_context" }
+);
+
+// session_log_segments: every read, list and delete is scoped by sessionId.
+
+target.session_log_segments.createIndex(
+    { sessionId: 1 },
+    { name: "by_session" }
 );
 
 // --- replica-set sanity check -----------------------------------------------

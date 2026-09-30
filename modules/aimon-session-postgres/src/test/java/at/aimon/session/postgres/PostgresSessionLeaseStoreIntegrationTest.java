@@ -18,7 +18,11 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.store.InMemorySessionLogSegmentStore;
+import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
+import at.aimon.core.agent.session.store.LeaseHolder;
 import at.aimon.core.agent.session.store.SessionLease;
+import at.aimon.core.agent.session.transcript.SessionLogSegmentSweeper;
 
 /**
  * Integration tests for {@link PostgresSessionLeaseStore} against a real Postgres container.
@@ -33,6 +37,72 @@ class PostgresSessionLeaseStoreIntegrationTest {
     void setUp() {
         PostgresTestSupport.truncateAll();
         lock = new PostgresSessionLeaseStore(PostgresTestSupport.dataSource());
+    }
+
+    @Test
+    @DisplayName("the segment sweep's reserved id takes an ordinary lease: one holder, the rest refused until it lapses")
+    void sweepLeaseIdIsAnOrdinaryLease() {
+        final SessionId id = SessionLogSegmentSweeper.SWEEP_LEASE_ID;
+        assertThat(lock.tryAcquire(id, "node-A", Duration.ofSeconds(10))).isPresent();
+        assertThat(lock.tryAcquire(id, "node-B", Duration.ofSeconds(10))).isEmpty();
+        assertThat(lock.findHolder(id)).get().extracting(LeaseHolder::getHolderId).isEqualTo("node-A");
+    }
+
+    @Test
+    @DisplayName("sweep lease: the holder's consecutive passes both run by extending its lease; another node is refused")
+    void sweepHolderExtendsItsOwnLeaseAcrossPasses() {
+        final SessionLogSegmentSweeper nodeA = sweeper("node-A", Duration.ofSeconds(30));
+        final SessionLogSegmentSweeper nodeB = sweeper("node-B", Duration.ofSeconds(30));
+
+        assertThat(nodeA.sweepIfClaimed()).isPresent();
+        final long first = sweepToken();
+        // The lease is still live here, so an acquire from node-A itself would be refused: only the extend runs it.
+        assertThat(nodeA.sweepIfClaimed()).as("the holder's second pass").isPresent();
+        assertThat(sweepToken()).as("extended, not reacquired").isEqualTo(first);
+        assertThat(nodeB.sweepIfClaimed()).as("the other node").isEmpty();
+        assertThat(lock.findHolder(SessionLogSegmentSweeper.SWEEP_LEASE_ID)).get().extracting(LeaseHolder::getHolderId)
+                .isEqualTo("node-A");
+    }
+
+    @Test
+    @DisplayName("sweep lease: the holder's extend revives its lapsed lease when nobody took over; the other node is refused")
+    void sweepHolderKeepsSweepingAfterItsLeaseLapsed() throws InterruptedException {
+        final SessionLogSegmentSweeper nodeA = sweeper("node-A", Duration.ofSeconds(1));
+        final SessionLogSegmentSweeper nodeB = sweeper("node-B", Duration.ofSeconds(1));
+
+        assertThat(nodeA.sweepIfClaimed()).isPresent();
+        final long first = sweepToken();
+        Thread.sleep(1_500);
+
+        assertThat(nodeA.sweepIfClaimed()).as("the holder's pass after its lease lapsed").isPresent();
+        // This backend keeps the lapsed lease until someone takes it over, so the holder's extend revives it.
+        assertThat(sweepToken()).as("extended, not reacquired").isEqualTo(first);
+        assertThat(nodeB.sweepIfClaimed()).as("the other node").isEmpty();
+    }
+
+    @Test
+    @DisplayName("sweep lease: once another node took the lapsed lease over, the old holder's extend and acquire fail")
+    void sweepHolderYieldsToATakeover() throws InterruptedException {
+        final SessionLogSegmentSweeper nodeA = sweeper("node-A", Duration.ofSeconds(1));
+        final SessionLogSegmentSweeper nodeB = sweeper("node-B", Duration.ofSeconds(1));
+
+        assertThat(nodeA.sweepIfClaimed()).isPresent();
+        Thread.sleep(1_500);
+
+        assertThat(nodeB.sweepIfClaimed()).as("node-A stopped ticking; node-B takes over").isPresent();
+        assertThat(nodeA.sweepIfClaimed()).as("the old holder").isEmpty();
+        assertThat(lock.findHolder(SessionLogSegmentSweeper.SWEEP_LEASE_ID)).get().extracting(LeaseHolder::getHolderId)
+                .isEqualTo("node-B");
+    }
+
+    /** A coordinated sweeper over empty in-memory stores: the pass itself is trivial, the lease is what is tested. */
+    private SessionLogSegmentSweeper sweeper(String node, Duration lease) {
+        return SessionLogSegmentSweeper.builder(new InMemorySessionLogSegmentStore(), new InMemorySessionRecordStore())
+                .coordination(lock, node, lease).build();
+    }
+
+    private long sweepToken() {
+        return lock.findHolder(SessionLogSegmentSweeper.SWEEP_LEASE_ID).orElseThrow().getFencingToken();
     }
 
     @Test

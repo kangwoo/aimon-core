@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/README.md
-source_commit: eec9ccd
+source_commit: 8c8de45
 ---
 
 # Feature Documentation (Features)
@@ -21,12 +21,14 @@ The ReAct loop, turn handling, interruption, the input queue.
 | [`command-queue-guide.en.md`](agent-execution/command-queue-guide.en.md) | How user input that arrives mid-turn is queued and handled |
 | [`interruptible-tools-guide.en.md`](agent-execution/interruptible-tools-guide.en.md) | External interruption — Ctrl+C, NOW priority input — and `InterruptBehavior` |
 | [`system-reminder-convention.en.md`](agent-execution/system-reminder-convention.en.md) | The convention for injecting `<system-reminder>` synthetic context |
+| [`context-engine-guide.en.md`](agent-execution/context-engine-guide.en.md) | Choosing the engine that shrinks a long conversation's context — `default` / `rolling`, the `SessionHistory` tool |
 
 Design rationale: [`agent-runtime-scope.md`](../design/agent-execution/agent-runtime-scope.md) ·
 [`orca-executor.md`](../design/agent-execution/orca-executor.md) ·
 [`interceptor.md`](../design/agent-execution/interceptor.md) ·
 [`interrupt.md`](../design/agent-execution/interrupt.md) ·
 [`compaction.md`](../design/agent-execution/compaction.md) ·
+[`context-engine.md`](../design/agent-execution/context-engine.md) ·
 [`artifact.md`](../design/agent-execution/artifact.md)
 
 ## [`session/`](session/) — sessions
@@ -56,7 +58,7 @@ The unit through which an agent interacts with the outside world.
 |------|------|
 | [`tool-development-guide.en.md`](tool/tool-development-guide.en.md) | **The canonical text for building a new tool** — the `Tool` contract, schemas, error handling, permissions |
 | [`parallel-tool-execution-guide.en.md`](tool/parallel-tool-execution-guide.en.md) | Running tools in parallel within one batch (`ConcurrencyBehavior`) |
-| [`browser-tool-guide.en.md`](tool/browser-tool-guide.en.md) | Configuring and using the Playwright-backed `Browser` tool |
+| [`browser-tool-guide.en.md`](https://github.com/kangwoo/aimon-browser/blob/main/docs/browser-tool-guide.en.md) | Configuring and using the Playwright-backed `Browser` tool. **Not in this repository** — it moved to [aimon-browser](https://github.com/kangwoo/aimon-browser) with the module |
 
 Design rationale: [`parallel-execution.md`](../design/tool/parallel-execution.md) ·
 [`tool-search.md`](../design/tool/tool-search.md)
@@ -180,7 +182,7 @@ Features that are in the catalogue but have no separate guide document. For now 
 | Area | Where to look for now |
 |------|-----------|
 | MCP integration | [`mcp-tool.md`](../design/integration/mcp-tool.md) |
-| Sandboxes | [`sandbox.md`](../design/integration/sandbox.md) · `modules/aimon-sandbox/README.md` |
+| Sandboxes | [the aimon-sandbox repository](https://github.com/kangwoo/aimon-sandbox) — the design document (`docs/design/sandbox.md`) and the module READMEs moved there |
 | Filesystem / shell | the `package-info.java` of `at.aimon.core.filesystem` · `at.aimon.core.shell` |
 | Commands (`/compact` and the rest) | [`command-unification.md`](../design/skill/command-unification.md) |
 | Permissions / credentials | [`tool-development-guide.en.md` › the permission system](tool/tool-development-guide.en.md) |

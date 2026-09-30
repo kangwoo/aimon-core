@@ -18,6 +18,8 @@ import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolExecutionManager;
 import at.aimon.core.agent.tool.ToolInput;
+import at.aimon.core.environment.EnvironmentDescriptor;
+import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookExecutionManager;
 import at.aimon.core.hook.HookFeedback;
 import at.aimon.core.hook.event.PermissionDeniedContext;
@@ -28,6 +30,7 @@ import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.llm.ToolUse;
 import at.aimon.core.llm.ToolUseResult;
 import at.aimon.core.toolinvocation.approval.SideEffectApprovalGate;
+import at.aimon.core.tools.ExecutionEnvironmentAccess;
 import at.aimon.core.tools.ToolContextKeys;
 
 /**
@@ -158,9 +161,13 @@ public final class SingleToolInvoker {
 
         final TerminatorRegistrar registrar = needsRegistrar ? spec.getCoordinator().newTerminatorRegistrar() : null;
         try {
-            // Enrich tool context with current toolUseId and, when applicable, the per-tool terminator registrar.
+            // Enrich tool context with current toolUseId, the allow-list this invocation is held to, and, when
+            // applicable, the per-tool terminator registrar. The allow-list is published from the same value handed
+            // to the execution manager below, so a tool that spawns work (Task, the workflow tools, a skill fork)
+            // can bound that work by what its own caller may do without a second, drifting source for it.
             final ToolContext.Builder enrichedBuilder = ToolContext.builder().putAll(spec.getToolContext().getContext())
-                    .put(ToolContextKeys.CURRENT_TOOL_USE_ID_KEY, toolUse.getId());
+                    .put(ToolContextKeys.CURRENT_TOOL_USE_ID_KEY, toolUse.getId())
+                    .put(ToolContextKeys.CALLER_ALLOWED_TOOLS, spec.getAllowedTools());
             if (registrar != null) {
                 enrichedBuilder.put(InterruptToolKeys.TERMINATOR_REGISTRAR, registrar);
             }
@@ -203,8 +210,9 @@ public final class SingleToolInvoker {
                 // Execute PreTool hooks
                 final PreToolContext preToolContext = PreToolContext.builder().executorType(spec.getInvokerType())
                         .invokerName(spec.getInvokerName()).hookRegistry(spec.getHookRegistry())
-                        .environment(spec.getEnvironment()).toolUse(toolUse).iterationCount(spec.getIterationCount())
-                        .executionAttributes(spec.getExecutionAttributes()).build();
+                        .environment(spec.getEnvironment()).environmentDescriptor(descriptorOf(spec)).toolUse(toolUse)
+                        .iterationCount(spec.getIterationCount()).executionAttributes(spec.getExecutionAttributes())
+                        .build();
                 final List<HookResult> preToolResults = hookExecutionManager.executePreTool(preToolContext);
                 feedback.addAll(HookFeedback.collectAdvisory(preToolResults));
 
@@ -247,6 +255,11 @@ public final class SingleToolInvoker {
                 registrar.close();
             }
         }
+    }
+
+    /** The descriptor of the execution environment the tool runs in, for the tool hooks (design §10). */
+    private static EnvironmentDescriptor descriptorOf(ToolInvocationSpec spec) {
+        return ExecutionEnvironmentAccess.of(spec.getToolContext()).map(ExecutionEnvironment::descriptor).orElse(null);
     }
 
     /**
@@ -303,9 +316,9 @@ public final class SingleToolInvoker {
         try {
             final PostToolContext postToolContext = PostToolContext.builder().executorType(spec.getInvokerType())
                     .invokerName(spec.getInvokerName()).hookRegistry(spec.getHookRegistry())
-                    .environment(spec.getEnvironment()).toolUse(effectiveToolUse).toolUseResult(toolUseResult)
-                    .iterationCount(spec.getIterationCount()).executionAttributes(spec.getExecutionAttributes())
-                    .build();
+                    .environment(spec.getEnvironment()).environmentDescriptor(descriptorOf(spec))
+                    .toolUse(effectiveToolUse).toolUseResult(toolUseResult).iterationCount(spec.getIterationCount())
+                    .executionAttributes(spec.getExecutionAttributes()).build();
             final List<HookResult> postToolResults = hookExecutionManager.executePostTool(postToolContext);
             feedback.addAll(HookFeedback.collectAdvisory(postToolResults));
             // PostTool hooks may have rewritten the output (e.g. masking sensitive data). The LLM sees the accumulated,

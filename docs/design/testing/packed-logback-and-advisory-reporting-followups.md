@@ -7,14 +7,14 @@
 > `@Suppress("UnstableApiUsage")` removed from `buildSrc`, backlog D-2's sentence, the six citations #134 item 5 lists,
 > §14 and the §4.10 correction mark of
 > [`shipped-logback-and-test-classpath-followups.md`](shipped-logback-and-test-classpath-followups.md), §14 and the §2.5
-> correction mark of [`../llm/openai-model-capabilities.md`](../llm/openai-model-capabilities.md), and the section of
+> correction mark of [`../llm/openai-model-capabilities.md`](../llm/model-capabilities.md), and the section of
 > `CHANGELOG.md` that opens "Dependencies: the sample app packs Logback 1.6.3". Sources: issues
 > [#129](https://github.com/kangwoo/aimon-core/issues/129) and [#134](https://github.com/kangwoo/aimon-core/issues/134).
 >
 > **[§11](#11-after-the-build--departures-and-corrections), appended after the build, is where this document departs
 > from what was built.** Everything between this header and §11 is the body as approved in design review round 1, kept
 > byte-exact rather than corrected — the house habit in this directory, for the reason
-> [`../llm/model-capability-binding-round-trip.md`](../llm/model-capability-binding-round-trip.md) gives. Its
+> [`../llm/model-capability-binding-round-trip.md`](../README.md#34-승인된-설계를-그대로-커밋한-기록) gives. Its
 > `file:line` citations are at `main` `2eddf3d`. The run records it cites (`TASK.md`, `review-1.md`,
 > `$RUN_DIR/design/probe/`, `$RUN_DIR/build/`) are not in the repository; §11 reproduces the measurements that matter.
 >
@@ -268,6 +268,19 @@ what the existing note at `:49-53` records: classic from the catalog, core from 
   without a second place to update.
 - If a later catalog bump brings a Logback that Boot 3.5.x cannot start, CI's `build` job fails: its
   `Fat-jar packaging tests` step launches both fat jars.
+
+> **Boundary — two details of this section changed with the Spring Boot 4 baseline (D6).** The mechanism
+> and the conclusion hold: `extra["logback.version"]` is still read, re-measured on 4.1.1 as
+> `logback-core 1.6.3 (selected by rule)` with `logback-classic 1.5.38 -> 1.6.3`. What changed is the
+> arithmetic around it. Boot now manages **1.5.38**, not 1.5.34, which is past CVE-2026-13006 — so of the
+> two CVEs this document weighs, only CVE-2026-19880 still argues for the override. And the packaging step
+> launches **one** fat jar, not two: Boot 4 removed the classic loader, so the second jar no longer exists
+> (`FatJarPackagingTest`'s class javadoc records what that costs). The guard in row 2 of the failure-mode
+> table below still fires; it just has one jar to fire on.
+>
+> The body above is left as written per [`../../project/documentation-guide.md`](../../project/documentation-guide.md)
+> §7 — true when written, falsified by a later change, so it gets a superseding statement rather than an
+> in-place edit. The change's own record is in `CHANGELOG.md` under the Boot 4 entry.
 
 **Why not the options the issue lists as alternatives.**
 - **Keep 1.5.34 and record why.** It is defensible on reachability: no Janino on the sample's class path, and no

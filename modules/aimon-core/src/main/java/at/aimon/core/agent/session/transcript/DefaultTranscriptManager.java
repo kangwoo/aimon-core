@@ -1,5 +1,6 @@
 package at.aimon.core.agent.session.transcript;
 
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -7,6 +8,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.exception.SessionNotHeldException;
+import at.aimon.core.agent.session.store.SegmentId;
 import at.aimon.core.agent.session.store.SessionCheckpointMailbox;
 import at.aimon.core.agent.session.store.SessionRecordStore;
 import at.aimon.core.agent.session.store.SessionRecordView;
@@ -22,6 +25,13 @@ import at.aimon.core.agent.session.store.SessionRecordView;
  * <li>Creating a fresh transcript with a system prompt
  * <li>Persisting the transcript safely
  * </ul>
+ *
+ * <p>
+ * <b>Sealing.</b> Given a {@link SessionLogStorage}, the manager also keeps the record small on a version-2 log: the
+ * turn-end save seals what the view no longer shows verbatim before it writes ({@link #seal(TranscriptBuffer)} does
+ * the same mid-turn when the executor asks), and after a successful save it deletes the segments a {@code /clear}
+ * cut loose and collects orphans (session-log §5.3, §5.4, §6.2). All of it runs on the thread that saves the turn.
+ * Without one, the whole log stays in the record.
  *
  * <p>
  * Thread-safe if the provided SessionRecordStore is thread-safe.
@@ -50,6 +60,10 @@ public class DefaultTranscriptManager implements TranscriptManager {
 
     private final SessionRecordStore repository;
     private final SessionCheckpointMailbox mailbox;
+    private final SessionLogFormat writeFormat;
+    private final SessionLogSealer sealer;
+    private final SessionLogGarbageCollector garbageCollector;
+    private final SessionLogReader logReader;
 
     /**
      * Creates a new TranscriptManager without mid-turn checkpointing — the transcript is persisted only at the end of
@@ -78,8 +92,66 @@ public class DefaultTranscriptManager implements TranscriptManager {
      *             if any parameter is null
      */
     public DefaultTranscriptManager(SessionRecordStore repository, SessionCheckpointMailbox mailbox) {
+        this(repository, mailbox, SessionLogFormat.V1);
+    }
+
+    /**
+     * Creates a new TranscriptManager that writes the transcripts it hands out in at least {@code writeFormat}.
+     *
+     * <p>
+     * This is the node's write-format switch. It defaults to {@link SessionLogFormat#V1}, and a cluster turns it to
+     * {@link SessionLogFormat#V2} only once every node reads version 2 (see {@link SessionLogFormat}). It can only
+     * raise a buffer's format: a record read as version 2 is written as version 2 on a node still set to version 1.
+     *
+     * @param repository
+     *            The session record store used to load and save the transcript (must not be null)
+     * @param mailbox
+     *            The checkpoint mailbox (must not be null; use {@link SessionCheckpointMailbox#disabled()} to
+     *            persist only at end of turn)
+     * @param writeFormat
+     *            The format this node writes transcripts in (must not be null)
+     * @throws NullPointerException
+     *             if any parameter is null
+     */
+    public DefaultTranscriptManager(SessionRecordStore repository, SessionCheckpointMailbox mailbox,
+            SessionLogFormat writeFormat) {
+        this(repository, mailbox, writeFormat, null);
+    }
+
+    /**
+     * Creates a new TranscriptManager that seals logs into {@code storage}'s segment store.
+     *
+     * @param repository
+     *            The session record store used to load and save the transcript (must not be null)
+     * @param mailbox
+     *            The checkpoint mailbox (must not be null)
+     * @param writeFormat
+     *            The format this node writes transcripts in (must not be null)
+     * @param storage
+     *            where and how to seal, or null to keep the whole log in the record
+     * @throws NullPointerException
+     *             if any required parameter is null
+     */
+    public DefaultTranscriptManager(SessionRecordStore repository, SessionCheckpointMailbox mailbox,
+            SessionLogFormat writeFormat, SessionLogStorage storage) {
         this.repository = Objects.requireNonNull(repository, "Repository cannot be null");
         this.mailbox = Objects.requireNonNull(mailbox, "Mailbox cannot be null");
+        this.writeFormat = Objects.requireNonNull(writeFormat, "Write format cannot be null");
+        this.sealer = storage == null ? null : new SessionLogSealer(storage);
+        this.garbageCollector = storage == null ? null : new SessionLogGarbageCollector(storage);
+        this.logReader = storage == null
+                ? null
+                : new SessionLogReader(repository, storage.getSegmentStore(), storage.getMaxReadTokens(),
+                        storage.getTokenEstimator());
+    }
+
+    /**
+     * Returns the format this manager writes transcripts in at least.
+     *
+     * @return the write format (never null)
+     */
+    public SessionLogFormat getWriteFormat() {
+        return writeFormat;
     }
 
     /**
@@ -115,6 +187,7 @@ public class DefaultTranscriptManager implements TranscriptManager {
             log.debug("Creating new session: {}", sessionId.value());
             memory = new TranscriptBuffer(sessionId, systemPrompt);
         }
+        memory.requireFormat(writeFormat);
 
         memory.setDirtyListener(m -> mailbox.checkpoint(m, this::persistSnapshotQuietly));
         return memory;
@@ -124,7 +197,8 @@ public class DefaultTranscriptManager implements TranscriptManager {
      * Saves the transcript to the repository.
      *
      * <p>
-     * Drains any pending mid-turn checkpoint first, so this write is the last one for the session. The predecessor
+     * Seals first, then drains any pending mid-turn checkpoint — including the one a landed seal raises — so this write
+     * is the last one for the session. The predecessor
      * of {@link SessionCheckpointMailbox} only drained on the {@link #saveSilently} path, which left this one
      * racing a late background write.
      *
@@ -143,12 +217,57 @@ public class DefaultTranscriptManager implements TranscriptManager {
     @Override
     public void save(TranscriptBuffer memory) {
         Objects.requireNonNull(memory, "Transcript buffer cannot be null");
-        mailbox.flush(memory.getSessionId());
-        persist(memory);
+        // Seal BEFORE the flush: a seal that lands marks the buffer dirty, and the checkpoint that raises must be
+        // drained by the barrier below — raised after it, it would be written after this save (session-log §5.3).
+        seal(memory);
+        final boolean drained = mailbox.drain(memory.getSessionId());
+        final SessionSnapshot saved = memory.toSnapshot();
+        persistSnapshot(saved);
+        afterSave(memory, saved, drained);
     }
 
-    private void persist(TranscriptBuffer memory) {
-        persistSnapshot(memory.toSnapshot());
+    @Override
+    public void seal(TranscriptBuffer memory) {
+        Objects.requireNonNull(memory, "Transcript buffer cannot be null");
+        if (sealer != null) {
+            sealer.seal(memory);
+        }
+    }
+
+    @Override
+    public Optional<SessionLogReader> getLogReader() {
+        return Optional.ofNullable(logReader);
+    }
+
+    /**
+     * Runs once the record is saved, on the saving thread: the segments a {@code /clear} cut loose go first — the saved
+     * record no longer names them — then orphans past the grace period.
+     *
+     * <p>
+     * Nothing is deleted when the checkpoint drain before the save gave up ({@code drained} false). A checkpoint whose
+     * snapshot predates this save may then still be inside its store call, and when it lands it puts the older manifest
+     * back — deleting the segments that manifest names would turn its reads into gaps (session-log §12.4).
+     *
+     * <p>
+     * The {@code /clear} deletions stay pending on this buffer and are retried only by a later save of the same buffer
+     * whose drain completes. A later turn builds a new buffer from the record and does not carry them: by then the
+     * segments are either named again by the manifest the late checkpoint put back, and kept, or orphans that a later
+     * collection or the store-wide sweep deletes after the grace.
+     */
+    private void afterSave(TranscriptBuffer memory, SessionSnapshot saved, boolean drained) {
+        if (garbageCollector == null) {
+            return;
+        }
+        if (!drained) {
+            log.info("Segment deletes for session {} deferred: a checkpoint written before this save may still land",
+                    memory.getSessionId().value());
+            return;
+        }
+        final List<SegmentId> cleared = memory.pendingSegmentDeletions();
+        if (!cleared.isEmpty()) {
+            memory.forgetSegmentDeletions(garbageCollector.deleteCleared(memory.getSessionId(), cleared));
+        }
+        garbageCollector.collect(memory.getSessionId(), saved.getLogState());
     }
 
     private void persistSnapshot(SessionSnapshot snapshot) {
@@ -161,6 +280,11 @@ public class DefaultTranscriptManager implements TranscriptManager {
     private void persistSnapshotQuietly(SessionSnapshot snapshot) {
         try {
             persistSnapshot(snapshot);
+        } catch (SessionNotHeldException e) {
+            // Expected once the lease is gone, and repeated for every checkpoint until the turn ends: the turn-end save
+            // reports it once at WARN.
+            log.debug("Mid-turn checkpoint for {} refused by the lease fence: {}", snapshot.getSessionId().value(),
+                    e.getMessage());
         } catch (Exception e) {
             log.warn("Mid-turn checkpoint failed for {}: {}", snapshot.getSessionId().value(), e.getMessage());
         }
@@ -181,16 +305,32 @@ public class DefaultTranscriptManager implements TranscriptManager {
     @Override
     public void saveSilently(TranscriptBuffer memory) {
         Objects.requireNonNull(memory, "Transcript buffer cannot be null");
+        // Sealed before the save rather than after, so this very write already leaves the sealed ranges out — and
+        // before the flush, because a seal that lands marks the buffer dirty: the checkpoint that raises has to be
+        // behind the barrier below, not queued after it where it would overtake this save.
+        seal(memory);
         // Drain the mailbox BEFORE the authoritative persist so an in-flight checkpoint (holding an older snapshot)
         // cannot land in the repository after our write returns.
-        mailbox.flush(memory.getSessionId());
+        final boolean drained = mailbox.drain(memory.getSessionId());
+        final SessionSnapshot saved;
         try {
-            persist(memory);
+            saved = memory.toSnapshot();
+            persistSnapshot(saved);
+        } catch (SessionNotHeldException e) {
+            // The lease fence refused the write: another node holds this session now, or this node's lease lapsed. The
+            // record the holder writes is the one to keep, so this turn's tail is dropped rather than written over it —
+            // the loss a lost lease already implies. Nothing is deleted either: the manifest this node would collect
+            // against is not the one in the record.
+            log.warn("Session {} was not saved: this node no longer holds it, so the current holder's record is kept"
+                    + " ({})", memory.getSessionId().value(), e.getMessage());
+            return;
         } catch (Exception e) {
             // saveSilently is the no-throw end-of-turn path; a persistence failure here is an expected operational
             // error (disk full, network partition), so log at WARN to mirror the checkpoint failure level.
             log.warn("Failed to save session {}: {}", memory.getSessionId().value(), e.getMessage());
             // Do not throw to preserve the original execution flow
+            return;
         }
+        afterSave(memory, saved, drained);
     }
 }

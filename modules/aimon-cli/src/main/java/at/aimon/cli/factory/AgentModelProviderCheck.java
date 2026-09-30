@@ -51,8 +51,8 @@ import at.aimon.core.subagent.SubagentRegistry;
  * {@code AgentSetupFactoryAgentModelCheckTest} builds the real stack to fail first when it does.
  *
  * <p>
- * Design, the alternatives rejected and where the implementation departed from it:
- * {@code docs/design/llm/provider-switch-agent-model-check.md}.
+ * Design and the alternatives rejected:
+ * {@code docs/design/llm/model-name-resolution.md} §7.
  */
 final class AgentModelProviderCheck {
 
@@ -335,9 +335,11 @@ final class AgentModelProviderCheck {
     /**
      * {@code <working directory>/.aimon/agents}, the directory the runtime's user layer resolved — or the relative
      * directory when the working directory is null, blank or not a path, so a bad path string never costs the warning.
+     * {@link StackPaths#AGENTS_DIRECTORY} is relative to the control store, whose root is the working directory's
+     * {@link StackPaths#CONTROL_DIRECTORY}; this is a host path, so both segments are spelled out.
      */
     private static Path userSubagentDirectory(String workingDirectory) {
-        final Path relative = Path.of(StackPaths.AGENTS_DIRECTORY);
+        final Path relative = Path.of(StackPaths.CONTROL_DIRECTORY, StackPaths.AGENTS_DIRECTORY);
         if (workingDirectory == null || workingDirectory.isBlank()) {
             return relative;
         }

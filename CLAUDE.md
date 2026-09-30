@@ -7,14 +7,14 @@ AIMON is a ReAct (Reasoning and Acting) agent framework for IT operations automa
 ```bash
 ./gradlew build                    # Build entire project
 ./gradlew :aimon-core:build        # Build specific module
-./gradlew test                     # Run all unit tests (excludes @Tag("docker"), @Tag("packaging") and @Tag("playwright"))
+./gradlew test                     # Run all unit tests (excludes @Tag("docker") and @Tag("packaging"))
 ./gradlew :aimon-core:test         # Run tests for specific module
 ./gradlew :aimon-core:test --tests "at.aimon.core.agent.tool.ToolInputTest"  # Single test class
 ./gradlew integrationTest          # Run Docker/Testcontainers integration tests (@Tag("docker")) — needs a Docker daemon
 ./gradlew format                   # Apply formatting (Spotless)
 ./gradlew checkFormat              # Check formatting only
 ./gradlew checkStyle               # Checkstyle (main source only, not tests)
-./gradlew checkAll                 # Run all quality checks (format check + style + unit tests)
+./gradlew checkAll                 # Run all quality checks (format check + style + unit tests + the BOM's verifyBom)
 ./gradlew :aimon-cli:run           # Run CLI application
 ```
 
@@ -48,7 +48,7 @@ aggregator tasks; module-side build files only declare module-specific dependenc
   - 예외는 하나뿐: **`GenericTool` 의 입력 DTO** (`at.aimon.core.agent.tool.generic`) 는 `record` 로 쓴다. 컴포넌트마다 붙는 `@ToolParam` 이 JSON Schema 생성과 `ToolInput` 바인딩의 **단일 출처**이기 때문이다. 도메인 타입·값 객체·설정 객체는 예외에 포함되지 않는다. 빌더 규칙과 충돌하지 않는 이유("역직렬화 대상은 빌더 면제", 선례 `Todo.java:44-46`)는 `.claude/rules/immutability-pattern.md` 에 있다
 - **Import order**: java, javax, jakarta, org, com, (blank line), project imports
 - **Formatting**: Eclipse Formatter (`config/eclipse/eclipse-formatter.xml`) via Spotless — run `./gradlew format` before committing
-- Follow SOLID principles per @docs/project/solid-principles.md
+- Follow SOLID principles per `docs/project/solid-principles.md`
 - Use `at.aimon.core.base.Principal` for identity representation (user, group, system, service)
 
 ## Design Principles
@@ -71,10 +71,6 @@ modules/
 ├── aimon-filesystem-gridfs          # MongoDB GridFS virtual filesystem
 ├── aimon-filesystem-s3              # AWS S3 virtual filesystem
 │
-├── aimon-sandbox                    # Sandbox abstraction (interface)
-├── aimon-sandbox-docker             # Docker sandbox implementation
-├── aimon-sandbox-kubernetes         # Kubernetes sandbox implementation
-│
 ├── aimon-session-mongodb            # MongoDB-backed session store
 ├── aimon-session-postgres           # PostgreSQL-backed session store
 ├── aimon-session-redis              # Redis-backed session store
@@ -85,9 +81,17 @@ modules/
 ├── aimon-knowledge-opensearch       # OpenSearch knowledge store
 ├── aimon-scheduling-quartz          # Quartz-based task scheduler (clustered/distributed)
 ├── aimon-workflow-graaljs           # GraalJS frontend: JS-scripted subagent workflow
-├── aimon-rewake-webhook             # Javalin HTTP endpoint that fires rewake (HMAC-verified)
-└── aimon-browser-playwright         # Playwright-based browser automation
+└── aimon-rewake-webhook             # Javalin HTTP endpoint that fires rewake (HMAC-verified)
 ```
+
+NOTE: 샌드박스는 **이 빌드에 없다.** `aimon-sandbox` · `aimon-sandbox-docker` ·
+`aimon-sandbox-kubernetes` 는 별도 저장소 [aimon-sandbox](https://github.com/kangwoo/aimon-sandbox) 로
+**분리되었다** — 제거(aimon-memory-*)도 병합(aimon-memory-file)도 아니고, 코드가 한 글자도 바뀌지 않은 채
+저장소만 옮겨 간 것이다. 좌표는 바뀌었다: `at.aimon.core:aimon-sandbox*` 는 0.2.4 까지이며 그 아티팩트는
+Central 에 그대로 남아 있고, 이후로는 `at.aimon.sandbox:*` 다. 분리의 근거는 하나다 — 그 셋은 **어떤 모듈도
+의존하지 않는 잎(leaf)** 이었고(역의존 0건), 코어에서 쓰는 것은 공개 SPI 뿐이라 경계가 이미 그어져 있었다.
+반대 방향의 의존은 생기지 않는다: `at.aimon.sandbox..` 는 `ArchitectureRulesTest` 의 금지 패키지 목록에
+`at.aimon.memory..` 와 나란히 남아 있다. 설계 문서도 함께 옮겨 갔다(옛 `docs/design/integration/sandbox.md`).
 
 NOTE: `aimon-session-routing` has been renamed twice — `aimon-session-web` → `aimon-session-base`
 → `aimon-session-routing`. The first rename only said what the module *was not* (not a web-only
@@ -105,7 +109,7 @@ NOTE: 메모리는 이제 **코어 + 원격 서비스** 두 조각이다. `aimon
 두 줄이다 — `aimon-core` 가 `PeerMemory` SPI 와 노드 로컬 기본 백엔드(in-memory + file)를 갖고,
 분산 메모리는 별도 저장소의 [aimon-memory](https://github.com/kangwoo/aimon-memory) 서비스가
 `RemotePeerMemory` 로 그 SPI 를 구현한다. `aimon-memory-testkit` 은 그 계약을 두 저장소가 공유하기
-위해 **배포 대상이 되었다**. 근거는 @docs/design/memory/pluggable-memory-backend.md §4.2·§4.3.
+위해 **배포 대상이 되었다**. 근거는 `docs/design/memory/pluggable-memory-backend.md` §4.2·§4.3.
 
 ## Package Conventions
 
@@ -118,7 +122,7 @@ Within `aimon-core`, top-level packages follow a domain + impl split:
   ArchUnit. External modules and other core packages must depend on neutral SPI packages instead.
 - **`at.aimon.core.agent.orca`** — public Orca tool-provider SPI surface
   (`OrcaToolProvider`, `OrcaToolProviderContext`, `OrcaProviderDependencies`). External modules
-  (`aimon-sandbox`, `aimon-browser-playwright`, ...) and other core packages
+  (the external `aimon-sandbox` and `aimon-browser-playwright`, ...) and other core packages
   (`mcp.orca`, `tools.*`, ...) implement these interfaces — they must NOT import from
   `at.aimon.core.agent.impl..`.
 
@@ -131,7 +135,7 @@ Other rules:
 
 ## Scope & Scheduling Lifecycle
 
-IMPORTANT: 수명·소유권·소멸 책임의 전체 규칙은 @docs/overview/scope-model.md 에 있다. 새 타입을 만들거나
+IMPORTANT: 수명·소유권·소멸 책임의 전체 규칙은 `docs/overview/scope-model.md` 에 있다. 새 타입을 만들거나
 `close()` 를 호출하기 전에 그 문서를 기준으로 삼는다. 아래는 그중 자주 어기는 항목만 요약한 것이다.
 
 컴포넌트 수명은 4단계다 — **Application** (`SchedulingEngine`, `ScheduledTaskManager`, `RoutineExecutor`,
@@ -146,7 +150,7 @@ IMPORTANT (turn ≠ iteration ≠ execution): **턴**은 세션에 들어온 사
 rewake 리플레이, 스케줄 루틴 — 정체성은 `SessionId` 가 아니라 `ExecutionId`). 턴은 실행의 한 종류이므로,
 두 경로가 공유하는 것(취소 신호, `BudgetTracker`)을 설명할 때는 `turn` 이 아니라 `execution` 이라고 쓴다.
 예외는 `assistant turn` / `user turn` 뿐이다 — 한정어가 붙어 LLM 메시지 role 어휘가 되기 때문이며,
-맨 `turn` 은 언제나 첫 번째 뜻이다. 전체 규칙은 @docs/overview/glossary.md §4 › 실행 단위.
+맨 `turn` 은 언제나 첫 번째 뜻이다. 전체 규칙은 `docs/overview/glossary.md` §4 › 실행 단위.
 
 IMPORTANT (session ≠ live session): **1 SessionRecord : 0..N LiveSession** 의 비대칭 관계다. `SessionRecord` 는
 `SessionId` 로 식별되는 영속 애그리게이트이고, `LiveSession` 은 그 세션에 대해 턴을 실행하는 노드 로컬
@@ -177,11 +181,11 @@ web `LiveSessionOpener`)에서 1회 수행하고, 종료는 앱 shutdown 또는 
 
 이름의 유래: 이 타입은 `AgentExecutionContext` 였고 `AgentRuntime` 으로 개명되었다 — "context" 가 실행마다 새로
 생기는 값처럼 읽혔지만 실제로는 agent 당 하나 살아 있는 장수명 런타임이기 때문이다. 옛 이름으로 검색하면
-@docs/migration/rename-maps.md 의 매핑 표를 볼 것.
+`docs/migration/rename-maps.md` 의 매핑 표를 볼 것.
 
 ## Tool Development
 
-IMPORTANT: Tools must follow these rules. See @docs/features/tool/tool-development-guide.md for details.
+IMPORTANT: Tools must follow these rules. See `docs/features/tool/tool-development-guide.md` for details.
 
 1. **Never throw exceptions from `execute()`** — Always return `ToolResult.error()`
 2. **Use type-safe accessors** — `input.getRequiredString()`, `input.getInteger("key", defaultValue)`
@@ -209,7 +213,7 @@ IMPORTANT: **문서를 고칠 때는 번역본이 있는지 먼저 확인한다.
 아니다. **낡음(stale)은 빌드를 실패시키지 않지만 해석 불가(unresolvable)한 `source_commit` 은
 실패시킨다** — 전자는 검사가 낸 나쁜 답이고 후자는 답이 없는 것이다.
 
-번역 규칙 전문은 @docs/project/translation-glossary.md 와 @docs/project/documentation-guide.md 에
+번역 규칙 전문은 `docs/project/translation-glossary.md` 와 `docs/project/documentation-guide.md` 에
 있다. 자주 어기는 것만:
 
 - **구조를 정확히 맞춘다** — 제목 개수, 표의 행 수, 코드 블록 개수가 같아야 한다.

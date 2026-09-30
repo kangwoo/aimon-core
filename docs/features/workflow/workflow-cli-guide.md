@@ -98,6 +98,11 @@ cli:
 **`adversarial_verify`** — 프롬프트를 **주장으로 보고** 회의론자 3명이 각자 반증을 시도한다.
 2명 이상이 반박하면 기각, 아니면 생존 판정이 나온다. 사실 확인·리스크 검증용이다.
 
+내장 전략의 스텝을 특정 실행 환경에 두려면, 역할마다 정해진 이름 — `workflow-perspective` · `workflow-synthesizer` ·
+`workflow-candidate` · `workflow-judge` · `workflow-skeptic` — 으로 서브에이전트를 정의하고 `attributes` 를 적는다.
+`Workflow` 는 그 정의의 `attributes` 만 가져오고 프롬프트·도구·모델은 쓰지 않는다. 다만 그 정의도 보통의 서브에이전트라
+모델이 목록에서 보고 `Task` 로 부를 수 있으며, 그때는 정의의 프롬프트가 쓰인다.
+
 ### 예시
 
 ```
@@ -158,11 +163,26 @@ cli:
   phase: "Review",             // 이벤트 그룹
   model: "...",                // 모델 오버라이드
   tools: ["Read", "Grep"],     // 도구 허용 목록
-  maxIterations: 10
+  maxIterations: 10,
+  attributes: { sandbox: { slot: "build" } }  // 실행 환경 제공자가 읽는 속성
 }
 ```
 
 `agentType` 또는 `systemPrompt` 중 최소 하나는 필요하다.
+
+`attributes` 는 이 스텝을 어느 실행 환경(샌드박스 슬롯 등)에서 돌릴지 정하는 제공자가 읽는 값이다.
+`agentType` 과 같은 이름의 서브에이전트가 등록되어 있으면 그 정의의 `attributes` 가 먼저 깔리고, 스텝의
+`attributes` 는 **등록된 정의가 정하지 않은 키만 더할 수 있다.** 등록된 정의가 이미 정한 키는 고정된다 — 스텝이
+그 키에 다른 값을 주면 스크립트가 실패하고(메시지에 `agentType`·키·등록된 값·스크립트 값이 나온다), 같은 값을 주면
+아무 일도 없다. 스크립트는 모델이 쓰는 것이므로, 운영자가 `sandbox.slot: isolated` 로 등록한 서브에이전트를
+스크립트가 `privileged` 로 옮기지 못하게 하려는 것이다. 등록된 키를 지울 수도 없다. 등록되지 않은 `agentType`
+(또는 `agentType` 없는 스텝)에는 고정할 키가 없으므로 스텝의 `attributes` 가 그대로 쓰인다 — 모델이 쓴 스크립트가
+`attributes` 를 아예 쓸 수 있어야 하는지는 아직 정하지 않았다(백로그 EE-45). 등록된 정의에서 가져오는 것은
+속성뿐이다. 스텝의 이름은 여전히 `graaljs:<agentType>` 이고 프롬프트·도구도 스텝의 것이다. 읽는 규칙은 정의 파일의
+`attributes` 블록과 같다: `{ sandbox: { slot: "build" } }` 와 `{ "sandbox.slot": "build" }` 는 같은 속성이고,
+숫자·불리언은 글자가 되며(`1.0` 은 `"1"`), 객체가 아닌 값·배열·값이 `null` 인 항목·값이면서 그룹인 키·유한하지
+않은 수(`NaN`, `Infinity`)는 스크립트를 실패시킨다. `attributes` 자체를 빼거나 `null` 로 주면 속성이 없는 것이다.
+
 `schema`를 주면 `agent(...)`가 **구조화된 객체**를 그대로 반환한다. 주지 않으면 결과 뷰를 반환한다:
 
 ```js

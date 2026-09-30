@@ -21,11 +21,18 @@ import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.store.SessionRecord;
+import at.aimon.core.agent.session.store.SessionTotals;
 import at.aimon.core.agent.session.transcript.DefaultTranscriptManager;
+import at.aimon.core.agent.session.transcript.LogOrigin;
+import at.aimon.core.agent.session.transcript.SessionLogEntry;
+import at.aimon.core.agent.session.transcript.SessionLogFormat;
+import at.aimon.core.agent.session.transcript.SessionLogState;
+import at.aimon.core.agent.session.transcript.SessionTranscript;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.command.DefaultCommandExecutionManager;
 import at.aimon.core.command.DefaultCommandRegistry;
+import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
 import at.aimon.core.hook.DefaultHookExecutionManager;
@@ -77,9 +84,11 @@ class OrcaAgentExecutorUserContextInjectionTest {
         // First call should contain two USER messages in order: synthetic context, then the real user input.
         assertThat(firstCall).hasSize(2);
         assertThat(firstCall.get(0).getRole()).isEqualTo(Role.USER);
+        // The working directory is the execution environment's, not the per-agent snapshot's "/workspace/proj":
+        // the snapshot is collected once per agent and cannot know where this execution runs (design §10).
         assertThat(firstCall.get(0).getContent()).contains("<system-reminder key=\"working-directory\">")
-                .contains("/workspace/proj").contains("<system-reminder key=\"current-date\">")
-                .contains("2026-04-23T12:34:56Z");
+                .contains(tempDir.toString()).doesNotContain("/workspace/proj")
+                .contains("<system-reminder key=\"current-date\">").contains("2026-04-23T12:34:56Z");
 
         assertThat(firstCall.get(1).getRole()).isEqualTo(Role.USER);
         assertThat(firstCall.get(1).getContent()).isEqualTo("Hello");
@@ -126,6 +135,45 @@ class OrcaAgentExecutorUserContextInjectionTest {
     }
 
     @Test
+    @DisplayName("the injected block is logged as SYNTHETIC, the user's input and the answer as CONVERSATION")
+    void injectedBlockIsLoggedAsSynthetic() {
+        final SessionId sessionId = SessionId.generate();
+        final OrcaAgentExecutor executor = createExecutor(llmClient, repository, fixedProvider("/workspace/proj"));
+
+        executor.execute(createContext(),
+                OrcaAgentExecutionRequest.builder().userInput("Hello").sessionId(sessionId).build());
+
+        assertThat(repository.load(sessionId).orElseThrow().getLogState().getEntries())
+                .extracting(SessionLogEntry::getOrigin)
+                .containsExactly(LogOrigin.SYNTHETIC, LogOrigin.CONVERSATION, LogOrigin.CONVERSATION);
+    }
+
+    /**
+     * "Resumed" means the session holds conversation. A record whose only user-role entry is a synthetic block — or
+     * one whose first turn was interrupted and rewound, which has handed out seqs but holds nothing — is still new, and
+     * the retry must get its user-context block like the first attempt did.
+     */
+    @Test
+    @DisplayName("a session holding only synthetic entries, with seqs already used, still gets the block")
+    void aSessionWithOnlySyntheticEntriesIsNotResumed() {
+        final SessionId sessionId = SessionId.generate();
+        final SessionLogState syntheticOnly = SessionLogState.builder().entries(List
+                .of(SessionLogEntry.of(2, Message.user("<system-reminder>old</system-reminder>"), LogOrigin.SYNTHETIC)))
+                .nextSeq(3).format(SessionLogFormat.V2).build();
+        repository.save(new SessionRecord(sessionId, SessionTranscript.fromLog("prior", syntheticOnly), 0, null,
+                SessionTotals.empty(), null));
+        final OrcaAgentExecutor executor = createExecutor(llmClient, repository, fixedProvider("/workspace/proj"));
+
+        executor.execute(createContext(),
+                OrcaAgentExecutionRequest.builder().userInput("Hello").sessionId(sessionId).build());
+
+        final List<Message> firstCall = llmClient.capturedMessages.get(0);
+        assertThat(firstCall).hasSize(3);
+        assertThat(firstCall.get(1).getContent()).contains("<system-reminder key=\"working-directory\">");
+        assertThat(firstCall.get(2).getContent()).isEqualTo("Hello");
+    }
+
+    @Test
     @DisplayName("no provider configured: injection is skipped even on fresh conversations")
     void noProviderSkipsInjection() {
         // Note: deliberately passing null as the provider here.
@@ -149,7 +197,8 @@ class OrcaAgentExecutorUserContextInjectionTest {
                 .toolRegistry(toolRegistry).hookRegistry(new DefaultHookRegistry())
                 .commandRegistry(new DefaultCommandRegistry(fileSystem, ".aimon/commands"))
                 .subagentRegistry(new DefaultSubagentRegistry(fileSystem, ".aimon/agents"))
-                .skillRegistry(new DefaultSkillRegistry(fileSystem, ".aimon/skills")).fileSystem(fileSystem)
+                .skillRegistry(new DefaultSkillRegistry(fileSystem, ".aimon/skills")).controlFileSystem(fileSystem)
+                .executionEnvironmentProvider(TestExecutionEnvironments.provider(fileSystem))
                 .environment(Environment.createDefault()).build();
     }
 

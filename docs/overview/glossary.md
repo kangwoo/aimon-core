@@ -93,7 +93,7 @@ sticky routing 없이 멀티 노드로 확장할 수 있는 근거도 이 비대
 | `LiveSession` (`aimon-core`) | 그 세션 하나에 대해 턴을 실행하는 노드 로컬 핸들 | 열기 ~ `close()` |
 | `LiveSessionCache` 항목 (`aimon-session-routing`) | 멀티 노드 라우팅·캐싱 계층(`SessionRouter`)이 캐시한 위 `LiveSession` | idle TTL 또는 `maxEntries` 축출까지 |
 | `ReplSession` (`aimon-cli`) | CLI 프로세스 한 번의 대화형 실행 | CLI 실행 ~ 종료 |
-| `BrowserSession` (`aimon-browser-playwright`) | Playwright `BrowserContext` + 활성 Page | 브라우저 컨텍스트 수명 |
+| `BrowserSession` (`aimon-browser-playwright`, 별도 저장소) | Playwright `BrowserContext` + 활성 Page | 브라우저 컨텍스트 수명 |
 
 바로 이 다의성 때문에 **맨 `Session` 과 `AgentSession` 은 타입 이름으로 쓸 수 없다** — 둘 다 위 다섯 줄
 중 어느 것인지 말해 주지 않는다. `SessionNamingArchitectureTest` 가 강제한다.

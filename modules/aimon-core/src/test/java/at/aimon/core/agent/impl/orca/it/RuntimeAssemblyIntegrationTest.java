@@ -101,7 +101,8 @@ class RuntimeAssemblyIntegrationTest {
         assertThat(runtime.getCommandRegistry()).isNotNull();
         assertThat(runtime.getSubagentRegistry()).isNotNull();
         assertThat(runtime.getSkillRegistry()).isNotNull();
-        assertThat(runtime.getFileSystem()).isNotNull();
+        assertThat(runtime.getControlFileSystem()).isNotNull();
+        assertThat(runtime.getExecutionEnvironmentProvider()).isNotNull();
         assertThat(runtime.getEnvironment()).isNotNull();
 
         // Compaction is assembled unconditionally by doCreate() — an absent engine or guard would silently disable

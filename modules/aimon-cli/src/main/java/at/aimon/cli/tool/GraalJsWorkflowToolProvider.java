@@ -10,7 +10,6 @@ import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.subagent.SubagentExecutionManager;
 import at.aimon.core.subagent.SubagentRegistry;
-import at.aimon.core.workflow.WorktreeEnvironmentFactory;
 import at.aimon.workflow.graaljs.GraalJsEngineHolder;
 import at.aimon.workflow.graaljs.GraalJsWorkflowTool;
 
@@ -26,12 +25,10 @@ import at.aimon.workflow.graaljs.GraalJsWorkflowTool;
  *
  * <p>
  * As an {@code OrcaToolProvider} SPI implementor, this class depends only on the neutral SPI surface
- * ({@code at.aimon.core.agent.orca..}) and core interfaces — never on {@code at.aimon.core.agent.impl..}. The optional
- * worktree factory (for {@code isolation:'worktree'} descriptors) is therefore not constructed here from the context's
- * filesystem; instead the sanctioned assembler ({@code AgentSetupFactory}) builds the concrete
- * {@code WorktreeToolEnvironmentFactory} and injects it through this constructor as the neutral
- * {@link WorktreeEnvironmentFactory} interface — mirroring how {@code engines} is injected. When it is {@code null}
- * (no filesystem available) such descriptors are run-fatal by design.
+ * ({@code at.aimon.core.agent.orca..}) and core interfaces — never on {@code at.aimon.core.agent.impl..}.
+ * {@code isolation:'worktree'} descriptors need no wiring here: an isolated step derives its branch from the calling
+ * execution's environment ({@code ExecutionEnvironment.isolate}), and a run whose environment cannot isolate is
+ * refused.
  *
  * <p>
  * The provider is only added to the tool-provider list when {@code cli.enableWorkflowJs} is set (see
@@ -44,22 +41,16 @@ import at.aimon.workflow.graaljs.GraalJsWorkflowTool;
 public final class GraalJsWorkflowToolProvider implements OrcaToolProvider {
 
     private final GraalJsEngineHolder engines;
-    private final WorktreeEnvironmentFactory worktreeFactory;
 
     /**
      * @param engines
      *            the application-scoped shared GraalJS engine holder (must not be null); owned by the caller
      *            ({@code AgentSetup}) and closed at app shutdown
-     * @param worktreeFactory
-     *            the neutral worktree environment factory enabling {@code isolation:'worktree'} descriptors, or
-     *            {@code null} when no filesystem is available (in which case such descriptors are run-fatal by design).
-     *            Built by the assembler so this SPI provider never imports {@code at.aimon.core.agent.impl..}.
      * @throws NullPointerException
      *             if {@code engines} is null
      */
-    public GraalJsWorkflowToolProvider(GraalJsEngineHolder engines, WorktreeEnvironmentFactory worktreeFactory) {
+    public GraalJsWorkflowToolProvider(GraalJsEngineHolder engines) {
         this.engines = Objects.requireNonNull(engines, "engines must not be null");
-        this.worktreeFactory = worktreeFactory; // nullable: no worktree isolation when absent
     }
 
     @Override
@@ -89,12 +80,6 @@ public final class GraalJsWorkflowToolProvider implements OrcaToolProvider {
                 // Background mode reuses the same per-context runner as the Java WorkflowTool (null when neither
                 // enableWorkflow nor enableWorkflowJs is set, in which case background mode returns a graceful error).
                 .backgroundRunner(context.getWorkflowRunner());
-
-        // Enable isolation:'worktree' descriptors when the assembler injected a worktree factory. Built there (not
-        // here) so this SPI provider stays free of any at.aimon.core.agent.impl.. import.
-        if (worktreeFactory != null) {
-            builder.worktreeFactory(worktreeFactory);
-        }
 
         registry.register(builder.build());
     }

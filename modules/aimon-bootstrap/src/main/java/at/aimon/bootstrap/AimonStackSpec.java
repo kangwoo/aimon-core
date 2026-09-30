@@ -9,6 +9,7 @@ import at.aimon.bootstrap.spec.AgentRuntimeSpec;
 import at.aimon.bootstrap.spec.AgentSpec;
 import at.aimon.bootstrap.spec.AimonAgentCustomizer;
 import at.aimon.bootstrap.spec.CredentialStoreFactory;
+import at.aimon.bootstrap.spec.ExecutionEnvironmentSpec;
 import at.aimon.bootstrap.spec.ExecutorSpec;
 import at.aimon.bootstrap.spec.FileSystemSpec;
 import at.aimon.bootstrap.spec.KnowledgeStoreFactory;
@@ -64,6 +65,7 @@ public final class AimonStackSpec {
     private final LlmSpec llm;
     private final List<AgentSpec> agents;
     private final FileSystemSpec fileSystem;
+    private final ExecutionEnvironmentSpec executionEnvironment;
     private final CredentialStore credentialStore;
     private final CredentialStoreFactory credentialStoreFactory;
     private final List<AimonAgentCustomizer> agentCustomizers;
@@ -141,6 +143,9 @@ public final class AimonStackSpec {
             }
             this.fileSystem = FileSystemSpec.localAt(this.workspaceRoot);
         }
+        this.executionEnvironment = builder.executionEnvironment != null
+                ? builder.executionEnvironment
+                : ExecutionEnvironmentSpec.defaults();
         rejectDuplicateRuntimeIdentities(this.agents);
     }
 
@@ -207,6 +212,15 @@ public final class AimonStackSpec {
      */
     public FileSystemSpec getFileSystem() {
         return fileSystem;
+    }
+
+    /**
+     * Returns where each runtime's executions run — defaulted to a local provider per runtime over its workspace.
+     *
+     * @return the spec, never null
+     */
+    public ExecutionEnvironmentSpec getExecutionEnvironment() {
+        return executionEnvironment;
     }
 
     /**
@@ -382,6 +396,7 @@ public final class AimonStackSpec {
         private LlmSpec llm;
         private final List<AgentSpec> agents = new ArrayList<>();
         private FileSystemSpec fileSystem;
+        private ExecutionEnvironmentSpec executionEnvironment;
         private CredentialStore credentialStore;
         private CredentialStoreFactory credentialStoreFactory;
         private final List<AimonAgentCustomizer> agentCustomizers = new ArrayList<>();
@@ -559,6 +574,19 @@ public final class AimonStackSpec {
          */
         public Builder fileSystem(FileSystemSpec fileSystem) {
             this.fileSystem = fileSystem;
+            return this;
+        }
+
+        /**
+         * Overrides where each runtime's executions run (the filesystem the tools see, the shell {@code Bash} runs
+         * in, how skills are staged).
+         *
+         * @param executionEnvironment
+         *            the spec
+         * @return this builder
+         */
+        public Builder executionEnvironment(ExecutionEnvironmentSpec executionEnvironment) {
+            this.executionEnvironment = executionEnvironment;
             return this;
         }
 

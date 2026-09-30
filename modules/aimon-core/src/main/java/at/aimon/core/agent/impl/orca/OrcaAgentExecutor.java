@@ -18,6 +18,7 @@ import java.util.concurrent.Flow;
 import java.util.concurrent.SubmissionPublisher;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 import org.slf4j.Logger;
@@ -40,17 +41,17 @@ import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.budget.ExecutionBudget;
 import at.aimon.core.agent.budget.StalledIterationGuard;
 import at.aimon.core.agent.budget.TruncatedResponses;
-import at.aimon.core.agent.compact.CompactionDecision;
-import at.aimon.core.agent.compact.CompactionGuard;
+import at.aimon.core.agent.compact.CompactionKind;
 import at.aimon.core.agent.compact.CompactionMetadata;
-import at.aimon.core.agent.compact.NoOpCompactionGuard;
-import at.aimon.core.agent.compact.NoOpPromptSizeRecoveryStrategy;
-import at.aimon.core.agent.compact.PromptSizeRecoveryDecision;
-import at.aimon.core.agent.compact.PromptSizeRecoveryStrategy;
 import at.aimon.core.agent.context.ContextAssembler;
 import at.aimon.core.agent.context.ContextAssemblyRequest;
 import at.aimon.core.agent.context.ContextBlock;
 import at.aimon.core.agent.context.ContextBlockKind;
+import at.aimon.core.agent.context.ContextCaller;
+import at.aimon.core.agent.context.ContextDecision;
+import at.aimon.core.agent.context.ContextEngine;
+import at.aimon.core.agent.context.ContextRequest;
+import at.aimon.core.agent.context.ContextView;
 import at.aimon.core.agent.exception.ContextWindowExceededException;
 import at.aimon.core.agent.impl.orca.tool.OrcaSkillForkExecutorResolver;
 import at.aimon.core.agent.interrupt.CancellationSignal;
@@ -70,6 +71,9 @@ import at.aimon.core.agent.prompt.UserContextMessageBuilder;
 import at.aimon.core.agent.queue.MessageQueueManager;
 import at.aimon.core.agent.queue.QueuedInput;
 import at.aimon.core.agent.queue.QueuedInputPriority;
+import at.aimon.core.agent.session.transcript.LogOrigin;
+import at.aimon.core.agent.session.transcript.SessionLogReader;
+import at.aimon.core.agent.session.transcript.SessionLogSource;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.session.transcript.TranscriptManager;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
@@ -95,12 +99,18 @@ import at.aimon.core.agent.tool.ToolContextEnricher;
 import at.aimon.core.agent.tool.ToolContextEnrichmentInfo;
 import at.aimon.core.agent.tool.ToolExecutionManager;
 import at.aimon.core.agent.tool.ToolRegistry;
+import at.aimon.core.agent.tool.permission.AllowedTools;
 import at.aimon.core.agent.tool.search.ToolSearchCatalog;
 import at.aimon.core.agent.tool.search.ToolSearchRegistry;
 import at.aimon.core.base.Principal;
 import at.aimon.core.command.CommandExecutionManager;
 import at.aimon.core.command.execution.CommandExecutionResult;
 import at.aimon.core.command.execution.ExecutionMetadata;
+import at.aimon.core.environment.EnvironmentDescriptor;
+import at.aimon.core.environment.EnvironmentRequest;
+import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.environment.ExecutionEnvironmentProvider;
+import at.aimon.core.environment.ExecutionEnvironments;
 import at.aimon.core.hook.HookExecutionManager;
 import at.aimon.core.hook.HookFeedback;
 import at.aimon.core.hook.HookRegistry;
@@ -150,6 +160,7 @@ import at.aimon.core.toolinvocation.ToolInvocationSpec;
 import at.aimon.core.toolinvocation.approval.SideEffectApprovalGate;
 import at.aimon.core.tools.ToolContextKeys;
 import at.aimon.core.tools.file.ReadTool;
+import at.aimon.core.tools.session.SessionHistoryTool;
 import at.aimon.core.tools.todo.TodoWriteTool;
 import at.aimon.core.tracing.SpanContext;
 import at.aimon.core.tracing.SpanType;
@@ -832,11 +843,13 @@ public class OrcaAgentExecutor
      * @param agentEventSink
      *            A bound reference to this executor's event emitter (never null). Published so the {@code Task}
      *            tool can forward it to a background subagent for best-effort {@code SubagentTaskCompleted} emission.
+     * @param logReader
+     *            reads the session's sealed ranges, or {@code null} when the transcript manager seals nothing
      * @return The tool context (never null)
      */
     private static ToolContext createToolContext(ExecutionScope scope, ToolRegistry sessionRegistry,
             CancellationSignal cancellationSignal, MessageQueueManager messageQueueManager,
-            Consumer<AgentExecutionEvent> agentEventSink) {
+            Consumer<AgentExecutionEvent> agentEventSink, SessionLogReader logReader) {
         final ToolContext.Builder builder = ToolContext.builder();
         builder.put(ToolContextKeys.AGENT_RUNTIME_ID, scope.agentRuntime.getId());
         builder.put(ToolContextKeys.SESSION_ID, scope.transcriptBuffer.getSessionId());
@@ -855,12 +868,12 @@ public class OrcaAgentExecutor
         builder.put(ToolContextKeys.ARTIFACT_COLLECTOR, scope.artifactCollector);
         builder.put(TodoWriteTool.CONTEXT_ID_KEY, scope.transcriptBuffer.getSessionId().value());
 
-        // PAR-05: inject a thread-safe, turn-scoped read-tracking set. This serves two purposes: (1) it backs
-        // EditTool's read-before-edit guard (previously a no-op in production because no executor injected the set),
-        // and (2) it is concurrency-safe so parallel CONCURRENT_SAFE Read tools can record reads without racing. The
-        // set is created once per turn (createToolContext is called once before the iteration loop), so reads persist
-        // across iterations.
-        builder.put(ReadTool.READ_FILES_KEY, ConcurrentHashMap.newKeySet());
+        // PAR-05 / execution-environment §7: inject a thread-safe, execution-scoped map of read stamps. It backs the
+        // stale-write guard of Edit (and of Write over an existing file), and it is concurrency-safe so parallel
+        // CONCURRENT_SAFE Read tools can record stamps without racing. It is created once per execution
+        // (createToolContext is called once before the iteration loop), so reads persist across iterations but not
+        // across turns — a file read in an earlier turn must be read again before it is modified.
+        builder.put(ReadTool.FILE_STAMPS_KEY, new ConcurrentHashMap<>());
 
         // Publish the turn-scoped signal so cooperative tools can poll it through InterruptAccess#signalOf.
         builder.put(InterruptToolKeys.CANCELLATION_SIGNAL, cancellationSignal);
@@ -872,6 +885,10 @@ public class OrcaAgentExecutor
             builder.put(ToolContextKeys.MESSAGE_QUEUE_MANAGER, messageQueueManager);
         }
         builder.put(ToolContextKeys.AGENT_EVENT_SINK, agentEventSink);
+
+        // The running session's log — this turn's buffer plus its sealed ranges — for SessionHistory, which reads back
+        // what the context engine no longer shows. Read through the buffer, not the record: the record lags a turn.
+        builder.put(SessionHistoryTool.LOG_SOURCE_KEY, SessionLogSource.of(scope.transcriptBuffer, logReader));
 
         // Inject per-session ToolSearchRegistry if applicable
         if (sessionRegistry instanceof ToolSearchRegistry searchRegistry) {
@@ -885,9 +902,24 @@ public class OrcaAgentExecutor
                     scope.getAgent().getMetadata().getName(), scope.agentRuntime.getId().value()));
         });
 
+        putExecutionEnvironment(builder, scope);
+
         applyEnrichers(builder, scope);
 
         return builder.build();
+    }
+
+    /**
+     * Publishes the execution's environment and the provider it came from. Both keys are write-once and are put
+     * before the enrichers run, so an enricher that writes either throws inside its own try/catch and the environment
+     * stays the one the provider resolved (design §5.1).
+     */
+    private static void putExecutionEnvironment(ToolContext.Builder builder, ExecutionScope scope) {
+        builder.put(ToolContextKeys.EXECUTION_ENVIRONMENT, scope.executionEnvironment);
+        final ExecutionEnvironmentProvider provider = scope.agentRuntime.getExecutionEnvironmentProvider();
+        if (provider != null) {
+            builder.put(ToolContextKeys.EXECUTION_ENVIRONMENT_PROVIDER, provider);
+        }
     }
 
     /**
@@ -1026,19 +1058,28 @@ public class OrcaAgentExecutor
 
         final Agent agent = agentRuntime.getAgent();
 
+        // Resolve the execution environment once, before prompt assembly and before any tool runs (design §5.1): the
+        // environment the prompt describes and the one the tools use are then the same value. A failing or missing
+        // provider yields an unavailable environment whose tools fail with the cause — never the host.
+        final ExecutionEnvironment executionEnvironment = ExecutionEnvironments.resolveOrUnavailable(
+                agentRuntime.getExecutionEnvironmentProvider(),
+                EnvironmentRequest.builder().agentRuntimeId(agentRuntime.getId()).agent(agent)
+                        .sessionId(executionRequest.getSessionId())
+                        .principal(executionRequest.getPrincipal().orElse(null)).build());
+
         // Assemble the runtime context blocks once at turn start. Empty under the NOOP assembler, so the prompt
         // shape is unchanged unless an assembler is wired. SYSTEM blocks fold into the system prompt; USER_PREPEND /
         // ATTACHMENT blocks are injected as synthetic user-role <system-reminder> messages below.
-        final List<ContextBlock> assembledContext = assembleContext(agentRuntime, agent);
+        final List<ContextBlock> assembledContext = assembleContext(agent, executionEnvironment);
 
         // Build dynamic system prompt as structured parts (CTX-05). The concatenated() form is stored in
         // TranscriptBuffer to preserve the on-disk/session representation, while the parts form is passed
         // directly to the parts-aware LlmClient.sendMessage overload inside the ReAct loop.
         final SystemPromptParts systemPromptParts = systemPromptRenderer.buildSystemPromptParts(agent.getContent(),
-                executionRequest.getSystemPromptVariables(), agentRuntime.getEnvironment(), assembledContext,
+                executionRequest.getSystemPromptVariables(), executionEnvironment.descriptor(), assembledContext,
                 buildMemoryContextRequest(executionRequest));
         final String systemPrompt = systemPromptRenderer.renderSystemPromptString(systemPromptParts, agent.getContent(),
-                executionRequest.getSystemPromptVariables(), agentRuntime.getEnvironment());
+                executionRequest.getSystemPromptVariables(), executionEnvironment.descriptor());
 
         // Initialize transcript buffer before try-finally so it is always saved,
         // even when OnStart hooks block the execution.
@@ -1062,7 +1103,8 @@ public class OrcaAgentExecutor
         transcriptBuffer.beginTurn(executionRequest.getUserInput(), executionRequest.getSubmitOptions());
         // Same position, same fragility: a replaceWith between here and the finally invalidates both marks together.
         transcriptBuffer.markIngestPoint();
-        maybeInjectUserContextMessage(agentRuntime, executionRequest, transcriptBuffer);
+        maybeInjectUserContextMessage(agentRuntime, executionRequest, transcriptBuffer,
+                executionEnvironment.descriptor().workingDirectory());
         // Inject the assembled USER_PREPEND / ATTACHMENT blocks (if any) as a synthetic <system-reminder> user
         // message, after the legacy user-context block and before the real user message. No-op when the assembler
         // contributed no such blocks (always the case under the NOOP default).
@@ -1098,7 +1140,7 @@ public class OrcaAgentExecutor
                 executionRequest.getBudget().orElseGet(ExecutionBudget::unlimited));
 
         final ExecutionScope scope = new ExecutionScope(agentRuntime, executionRequest, transcriptBuffer,
-                systemPromptParts, effectiveMetadata, budgetTracker);
+                systemPromptParts, effectiveMetadata, budgetTracker, executionEnvironment);
         // TRACE-01: the turn span is the active parent until the ReAct loop swaps in per-iteration spans.
         scope.activeSpan = turnSpan;
 
@@ -1245,9 +1287,11 @@ public class OrcaAgentExecutor
      * the flag.
      *
      * <p>
-     * The delta comes from the mark set at the top of {@code execute()}, and is empty when the history was rewritten
-     * underneath the execution — see {@link TranscriptBuffer#messagesSinceIngestMark()} for why that execution is
-     * skipped rather than re-sent. The sink is contracted to swallow its own failures; the catch here is for a sink
+     * The delta comes from the mark set at the top of {@code execute()}: the conversation entries added since, without
+     * what the runtime injected. On a version-2 log compaction leaves the log alone, so a compacted execution is fed
+     * as it was said; only in the version-1 write mode is it empty when the history was rewritten underneath the
+     * execution — see {@link TranscriptBuffer#messagesSinceIngestMark()} for why that execution is skipped rather than
+     * re-sent. The sink is contracted to swallow its own failures; the catch here is for a sink
      * that is wrong about that, because nothing in memory is worth throwing out of a finally block that has already
      * saved the transcript.
      */
@@ -1349,9 +1393,12 @@ public class OrcaAgentExecutor
      *            the request carrying the opt-out flag (must not be null)
      * @param transcriptBuffer
      *            the freshly initialised memory to append the synthetic block to (must not be null)
+     * @param executionWorkingDirectory
+     *            the working directory of this execution's environment, which replaces the snapshot's
      */
     private void maybeInjectUserContextMessage(OrcaAgentRuntime agentRuntime,
-            OrcaAgentExecutionRequest executionRequest, TranscriptBuffer transcriptBuffer) {
+            OrcaAgentExecutionRequest executionRequest, TranscriptBuffer transcriptBuffer,
+            String executionWorkingDirectory) {
         if (!executionRequest.isUserContextInjectionEnabled()) {
             log.debug("User-context injection disabled for this request");
             return;
@@ -1360,19 +1407,21 @@ public class OrcaAgentExecutor
             log.debug("No AgentEnvironmentSnapshotProvider configured; skipping user-context injection");
             return;
         }
-        if (transcriptBuffer.countUserMessages() > 0) {
+        // "Resumed" means the session has conversation, not merely user-role entries: the synthetic blocks this very
+        // method injects are user-role too, and a first turn that was interrupted and rewound leaves none behind.
+        if (transcriptBuffer.hasConversation()) {
             log.debug("Conversation resumed (existing user messages present); skipping user-context injection");
             return;
         }
 
         final AgentEnvironmentSnapshot agentEnvironmentSnapshot = agentEnvironmentSnapshotProvider.get(agentRuntime);
-        final var synthetic = UserContextMessageBuilder.build(agentEnvironmentSnapshot);
+        final var synthetic = UserContextMessageBuilder.build(agentEnvironmentSnapshot, executionWorkingDirectory);
         if (synthetic.isEmpty()) {
             log.debug("AgentEnvironmentSnapshot yielded no reminder entries; skipping user-context injection");
             return;
         }
 
-        transcriptBuffer.addMessage(synthetic.get());
+        transcriptBuffer.addMessage(synthetic.get(), LogOrigin.SYNTHETIC);
         log.debug("Injected synthetic user-context message as messages[0]");
     }
 
@@ -1384,21 +1433,20 @@ public class OrcaAgentExecutor
      * assembler is wired. The call is snapshotted once (the field is {@code volatile}) and guarded defensively: the
      * assembler's contract already forbids throwing, but a misbehaving custom assembler must never break the turn.
      *
-     * @param agentRuntime
-     *            the agent runtime supplying the filesystem and environment (must not be null)
      * @param agent
      *            the invoking agent (must not be null)
+     * @param executionEnvironment
+     *            the execution's environment, which the providers read the filesystem and descriptor from
      * @return the assembled blocks in injection order; never null, empty when nothing applies
      */
-    private List<ContextBlock> assembleContext(OrcaAgentRuntime agentRuntime, Agent agent) {
+    private List<ContextBlock> assembleContext(Agent agent, ExecutionEnvironment executionEnvironment) {
         final ContextAssembler assembler = contextAssembler;
         if (assembler == ContextAssembler.NOOP) {
             return List.of();
         }
         try {
             final ContextAssemblyRequest request = ContextAssemblyRequest.builder()
-                    .environment(agentRuntime.getEnvironment()).fileSystem(agentRuntime.getFileSystem())
-                    .agentName(agent.getName()).iteration(0).build();
+                    .executionEnvironment(executionEnvironment).agentName(agent.getName()).iteration(0).build();
             final List<ContextBlock> blocks = assembler.assemble(request);
             return blocks == null ? List.of() : blocks;
         } catch (RuntimeException e) {
@@ -1438,7 +1486,7 @@ public class OrcaAgentExecutor
         }
         try {
             final String body = SystemReminderFormatter.wrapMany(entries);
-            transcriptBuffer.addMessage(Message.user(body));
+            transcriptBuffer.addMessage(Message.user(body), LogOrigin.SYNTHETIC);
             log.debug("Injected {} assembled user-context block(s) as a synthetic reminder message", entries.size());
         } catch (RuntimeException e) {
             log.warn("Failed to inject assembled user-context blocks; skipping: {}", e.getMessage());
@@ -1470,7 +1518,7 @@ public class OrcaAgentExecutor
                     blockReasons);
         }
         HookFeedback.toReminderBlock(HookFeedback.collectAdvisory(onStartResults))
-                .ifPresent(block -> scope.transcriptBuffer.addMessage(Message.user(block)));
+                .ifPresent(block -> scope.transcriptBuffer.addMessage(Message.user(block), LogOrigin.SYNTHETIC));
     }
 
     /**
@@ -1494,15 +1542,18 @@ public class OrcaAgentExecutor
         final ExecutionMetadata metadata = commandExecutionResult.getMetadata()
                 .orElseGet(() -> buildExecutionMetadata(0, TokenUsage.empty(), scope.startTime));
 
-        // Attach any artifacts produced during command execution to the assistant message
+        // Attach any artifacts produced during command execution to the assistant message. The reply is the command's,
+        // not the model's, so it goes into the log as a runtime injection.
         final List<FileArtifact> commandArtifacts = scope.artifactCollector.getArtifacts();
         if (commandArtifacts.isEmpty()) {
-            scope.transcriptBuffer.addMessage(Message.assistant(commandExecutionResult.getResponse()));
+            scope.transcriptBuffer.addMessage(Message.assistant(commandExecutionResult.getResponse()),
+                    LogOrigin.SYNTHETIC);
         } else {
             final List<MessageArtifact> messageArtifacts = commandArtifacts.stream()
                     .map(FileArtifact::toMessageArtifact).toList();
-            scope.transcriptBuffer
-                    .addMessage(Message.assistant(commandExecutionResult.getResponse(), List.of(), messageArtifacts));
+            scope.transcriptBuffer.addMessage(
+                    Message.assistant(commandExecutionResult.getResponse(), List.of(), messageArtifacts),
+                    LogOrigin.SYNTHETIC);
         }
 
         invokeOnStop(scope, commandExecutionResult.isSuccess(), commandExecutionResult.getResponse(), metadata);
@@ -1556,7 +1607,8 @@ public class OrcaAgentExecutor
             scope.executionRequest.getBudgetObserver().accept(scope.budgetTracker);
 
             final ToolContext toolContext = createToolContext(scope, sessionRegistry, cancellationSignal,
-                    messageQueueManager, event -> scope.eventDispatcher.dispatch(event));
+                    messageQueueManager, event -> scope.eventDispatcher.dispatch(event),
+                    transcriptManager.getLogReader().orElse(null));
 
             TokenUsage accumulatedTokens = TokenUsage.empty();
             // Model name for cost attribution — constant for the whole execution, resolved once. Empty (null) when
@@ -1573,11 +1625,16 @@ public class OrcaAgentExecutor
             // iteration to tag its LoopTransition as QUEUED_INPUT (observation-only; never drives control flow).
             int injectedLastTail = 0;
             final int maxIterations = scope.getAgent().getMetadata().getMaxIterations();
+            // The agent's own allow-list, reduced to a name-admission predicate once per execution: the list is fixed
+            // for the execution, while the registry it filters is re-read every iteration for newly activated
+            // deferred tools. An agent that declares nothing admits everything, which is what it did before the
+            // declaration existed.
+            final Predicate<Tool> agentAdmits = AllowedTools.admissionFilter(scope.getAgent().getAllowedTools());
 
-            // CONV-COMPACT-01: resolve the compaction guard once per ReAct loop. NoOpCompactionGuard is the framework
-            // default — behaviour is unchanged unless the caller wires a real guard via the agent runtime.
-            final CompactionGuard compactionGuard = scope.agentRuntime.getCompactionGuard()
-                    .orElse(NoOpCompactionGuard.instance());
+            // CONV-COMPACT-01: resolve the context engine once per ReAct loop. It is the one place the LLM view is
+            // shrunk — the compaction gate below and the prompt-too-long recovery in invokeGateway both go through it.
+            // A runtime configured with no guard and no recovery strategy yields an engine that does neither.
+            final ContextEngine contextEngine = scope.agentRuntime.getContextEngine();
 
             try {
                 while (iterationCount < maxIterations) {
@@ -1611,20 +1668,17 @@ public class OrcaAgentExecutor
                     scope.budgetTracker.recordIteration();
                     log.debug("Starting iteration {} of {}", iterationCount, maxIterations);
 
-                    // CONV-COMPACT-01: AUTO compaction gate. Evaluates the conversation against per-model thresholds
-                    // and may rewrite memory in place before the next LLM call. When the budget tracker requested
-                    // proactive compaction, forceCompact lowers the effective trigger to the warning band.
-                    // Snapshot the message count BEFORE the guard runs — it rewrites memory in place, so this is
-                    // the
-                    // only point where the pre-compaction size is observable for the CompactBoundary event below.
+                    // CONV-COMPACT-01: AUTO compaction gate. The engine evaluates the conversation against per-model
+                    // thresholds, may compact it before the next LLM call, and returns the view that call is sent.
+                    // When the budget tracker requested proactive compaction, the request's budgetForced flag lowers
+                    // the effective trigger to the warning band.
+                    // Snapshot the message count BEFORE the engine runs — in place, the engine rewrites memory, so
+                    // this is the only point where the pre-compaction size is observable for the CompactBoundary
+                    // event below. An engine that reports the view's own sizes wins: with an append-only log the
+                    // log does not shrink, only the view does (context-engine §10).
                     final int messagesBeforeCompaction = scope.transcriptBuffer.size();
-                    final CompactionDecision compactionDecision = budgetForcedCompaction
-                            ? compactionGuard.forceCompact(scope.transcriptBuffer,
-                                    scope.getAgent().getMetadata().getModel(), scope.getHookRegistry(),
-                                    scope.getEnvironment())
-                            : compactionGuard.maybeCompact(scope.transcriptBuffer,
-                                    scope.getAgent().getMetadata().getModel(), scope.getHookRegistry(),
-                                    scope.getEnvironment());
+                    final ContextRequest contextRequest = contextRequest(scope, budgetForcedCompaction);
+                    final ContextDecision compactionDecision = contextEngine.prepare(contextRequest);
                     switch (compactionDecision.getAction()) {
                         case BLOCK :
                             log.error("Compaction guard blocked iteration {}: {}", iterationCount,
@@ -1634,17 +1688,29 @@ public class OrcaAgentExecutor
                         case COMPACT :
                             log.info("Compaction performed before iteration {}: {}", iterationCount,
                                     compactionDecision.getReason());
-                            compactionDecision.getCompactionResult()
-                                    .ifPresent(r -> scope.compactionEvents.add(r.getMetadata()));
+                            compactionDecision.getCompactionMetadata().ifPresent(scope.compactionEvents::add);
                             // Publish the compaction-boundary observability event. Emitted here (not at the
                             // iteration tail) so it is ordered immediately before this iteration's IterationStarted,
                             // reflecting that the compaction happened just before the LLM call it precedes.
-                            scope.eventDispatcher.emitCompactBoundary(iterationCount, messagesBeforeCompaction,
-                                    scope.transcriptBuffer.size());
+                            final boolean viewSized = compactionDecision.getViewSizeBefore().isPresent();
+                            scope.eventDispatcher.emitCompactBoundary(iterationCount,
+                                    compactionDecision.getViewSizeBefore().orElse(messagesBeforeCompaction),
+                                    viewSized
+                                            ? compactionDecision.getView().getMessages().size()
+                                            : scope.transcriptBuffer.size());
+                            // What the view stopped showing verbatim can leave the record now, on this thread, so a
+                            // long turn's mid-turn checkpoints do not keep rewriting it (session-log §5.3). Runs after
+                            // the boundary event, which may still read the buffer's size.
+                            transcriptManager.seal(scope.transcriptBuffer);
                             break;
                         case WARN :
                             log.warn("Compaction guard warning at iteration {}: {}", iterationCount,
                                     compactionDecision.getReason());
+                            // A rolling engine that could not bring the view down says so as a FALLBACK record: it
+                            // belongs with the compactions in the result, not only in the log (context-engine §5.6).
+                            compactionDecision.getCompactionMetadata()
+                                    .filter(m -> m.getKind() == CompactionKind.FALLBACK)
+                                    .ifPresent(scope.compactionEvents::add);
                             break;
                         case NONE :
                         default :
@@ -1670,11 +1736,14 @@ public class OrcaAgentExecutor
                     try {
 
                         // Query available tools each iteration so newly activated deferred tools are included.
-                        // Tools exceeding the side-effect ceiling are withheld so the LLM never proposes a call the
-                        // execution manager would refuse.
+                        // Two axes are withheld, and each reads its bound from the same value the refusal reads, so a
+                        // filter and a refusal cannot disagree: the side-effect ceiling, and the agent's own
+                        // allow-list (the same list dispatchSingleTool hands the execution manager). A tool the model
+                        // could only pick to read a refusal costs it an iteration.
                         final List<ToolDefinition> availableTools = sessionRegistry.findAll().stream()
-                                .filter(t -> maxSideEffectLevel.permits(t.getSideEffectLevel()))
+                                .filter(t -> maxSideEffectLevel.permits(t.getSideEffectLevel())).filter(agentAdmits)
                                 .map(Tool::getDefinition).toList();
+                        warnOnEmptyToolOffer(scope, availableTools, sessionRegistry, iterationCount);
 
                         // Streaming-tool overlap (design §11): when the executor streams AND the dispatcher
                         // supports eager dispatch (parallel + the streamingOverlap opt-in, pool open), install a
@@ -1691,8 +1760,8 @@ public class OrcaAgentExecutor
 
                         final LlmResponse response;
                         try {
-                            response = invokeGateway(scope, iterationCount, availableTools, cancellationSignal,
-                                    llmCancellation);
+                            response = invokeGateway(scope, contextEngine, contextRequest, compactionDecision.getView(),
+                                    iterationCount, availableTools, cancellationSignal, llmCancellation);
                         } finally {
                             // LLM-CANCEL: drop the just-finished call's abort lever so a trip landing while the next
                             // tools run cannot invoke a stale (already-closed) stream. Idempotent close() makes this
@@ -2041,7 +2110,16 @@ public class OrcaAgentExecutor
             final SkillForkExecutor skillForkExecutor = OrcaSkillForkExecutorResolver.resolve(agentRuntime.getAgent(),
                     agentRuntime.getSubagentRegistry(), agentRuntime.getToolRegistry(), agentRuntime.getHookRegistry(),
                     agentRuntime.getEnvironment(), subagentExecutionManager);
-            final ToolContext commandToolContext = ToolContext.builder()
+            final ToolContext.Builder commandContextBuilder = ToolContext.builder();
+            // The command renders skills, which stage their files through this execution's environment (§4.4).
+            putExecutionEnvironment(commandContextBuilder, scope);
+            // The caller's identity, published by hand for the same reason as the keys below: a `/my-skill` fork
+            // resolves its execution environment under this principal, and without it the fork's shell and file
+            // tools were refused as "not permitted" while the Skill tool-call path (createToolContext) worked.
+            if (scope.getPrincipal() != null) {
+                commandContextBuilder.put(ToolContextKeys.PRINCIPAL, scope.getPrincipal());
+            }
+            final ToolContext commandToolContext = commandContextBuilder
                     .put(ToolContextKeys.AGENT_RUNTIME_ID, agentRuntime.getId())
                     // The session id belongs here too: a `/my-skill` invocation of a fork-mode skill spawns a
                     // subagent, and the spawn site reads this key to tell the fork which session it acts for.
@@ -2051,6 +2129,12 @@ public class OrcaAgentExecutor
                     .put(ToolContextKeys.EXECUTION_ATTRIBUTES_KEY, scope.getExecutionAttributes())
                     .put(ToolContextKeys.LLM_CALL_METADATA_KEY, scope.llmCallMetadata)
                     .put(ToolContextKeys.SKILL_FORK_EXECUTOR_KEY, skillForkExecutor)
+                    // The agent's allow-list, as the ceiling on everything this command causes. This context is
+                    // hand-built rather than enriched by SingleToolInvoker — the slash path has no tool call above
+                    // it — so it is the one place the key has to be published by hand, and without it a user-typed
+                    // /my-skill would run a skill's tools, and spawn a fork-mode skill's subagent, unbounded by the
+                    // restriction the agent itself is under.
+                    .put(ToolContextKeys.CALLER_ALLOWED_TOOLS, agentRuntime.getAgent().getAllowedTools())
                     .put(ToolContextKeys.SKILL_TOOL_DISPATCHER_KEY, commandToolDispatcher(scope, commandCoordinator))
                     .build();
             return commandExecutionManager.execute(executionRequest, transcriptBuffer,
@@ -2074,8 +2158,9 @@ public class OrcaAgentExecutor
      *
      * <p>
      * The invocation is stamped {@code MAIN_AGENT}: a skill is not a subagent, it is the agent doing what the user
-     * asked. The skill's own {@code allowed-tools} list arrives per call from {@code LlmSkillExecutor} and narrows
-     * dispatch further, which is the one thing the loop's own dispatch does not do (it passes an empty list).
+     * asked. The list arrives per call from {@code LlmSkillExecutor}, which hands over the skill's own
+     * {@code allowed-tools} already intersected with the agent's — the ceiling published into this command's tool
+     * context — so the two bounds reach dispatch as one value.
      *
      * @param scope
      *            the execution scope supplying the agent runtime and execution attributes (must not be null)
@@ -2490,15 +2575,55 @@ public class OrcaAgentExecutor
             int iterationCount, Map<String, Object> executionAttributes, InterruptCoordinator coordinator,
             ToolRegistry sessionRegistry) {
         // Delegate the interrupt-registrar + PermissionRequest/PreTool/execute/PostTool sequence to the shared
-        // pipeline. The main-agent variance is the MAIN_AGENT invoker identity and an empty allow-list (unrestricted).
+        // pipeline. The main-agent variance is the MAIN_AGENT invoker identity and the agent's own allow-list — the
+        // same list the offer filter reads, so the two cannot disagree about what this agent may call. An agent that
+        // declares none hands over an empty list, which every validator reads as unrestricted.
         final Agent agent = agentRuntime.getAgent();
         final ToolInvocationSpec spec = ToolInvocationSpec.builder().invokerType(InvokerType.MAIN_AGENT)
                 .invokerName(agent.getName()).hookRegistry(agentRuntime.getHookRegistry())
                 .environment(agentRuntime.getEnvironment()).executionAttributes(executionAttributes)
-                .toolRegistry(agentRuntime.getToolRegistry()).sessionRegistry(sessionRegistry).allowedTools(List.of())
-                .coordinator(coordinator).toolContext(toolContext).toolUse(toolUse).iterationCount(iterationCount)
-                .build();
+                .toolRegistry(agentRuntime.getToolRegistry()).sessionRegistry(sessionRegistry)
+                .allowedTools(agent.getAllowedTools()).coordinator(coordinator).toolContext(toolContext)
+                .toolUse(toolUse).iterationCount(iterationCount).build();
         return singleToolInvoker.invoke(spec);
+    }
+
+    /**
+     * Warns once when an execution's tool offer is empty while the agent declares an allow-list.
+     *
+     * <p>
+     * Either filter alone always left something; together they can leave nothing — an allow-list of misspelled names,
+     * one naming only tools above the side-effect ceiling, or one omitting {@code ToolSearch} in a deployment whose
+     * tools are all deferred. Every provider omits an empty {@code tools} field rather than rejecting it, so the model
+     * answers from prose and the turn completes cleanly: an answer that looks like work that was never done. The
+     * outcome is deliberately unchanged — an agent that legitimately needs no tool exists — but it is not left silent.
+     *
+     * <p>
+     * Logging on the first iteration only, and not as a sample: both bounds are fixed for the execution, and the
+     * registry it draws from grows rather than shrinks on the path that motivates re-reading it at all (a
+     * {@code ToolSearchRegistry} refuses {@code unregister}). A plain registry can be emptied mid-execution by a
+     * hook or an embedder, in which case the warning is missed — the cost of that is a missing log line, not a
+     * missing bound.
+     *
+     * @param scope
+     *            the running execution's scope
+     * @param offered
+     *            the definitions about to be sent to the LLM
+     * @param sessionRegistry
+     *            the registry the offer was drawn from, named in the message for its size
+     * @param iterationCount
+     *            the 1-based iteration about to call the LLM
+     */
+    private void warnOnEmptyToolOffer(ExecutionScope scope, List<ToolDefinition> offered, ToolRegistry sessionRegistry,
+            int iterationCount) {
+        final Agent agent = scope.getAgent();
+        if (!offered.isEmpty() || iterationCount != 1 || !agent.hasToolRestrictions()) {
+            return;
+        }
+        log.warn(
+                "Agent '{}' is offered no tools: its allowed-tools names {} and the side-effect ceiling is {}, "
+                        + "leaving nothing from the {} registered tool(s). It will answer without acting.",
+                agent.getName(), agent.getAllowedTools(), maxSideEffectLevel, sessionRegistry.findAll().size());
     }
 
     /**
@@ -2835,11 +2960,11 @@ public class OrcaAgentExecutor
      * @param systemPromptVariables
      *            the system prompt variables (must not be null, may be empty)
      * @param environment
-     *            the runtime environment, or {@code null} to omit the environment segment
+     *            the execution environment's descriptor, or {@code null} to omit the environment segment
      * @return the structured prompt; never {@code null}
      */
     SystemPromptParts buildSystemPromptParts(AgentContent agentContent, Map<String, Object> systemPromptVariables,
-            Environment environment) {
+            EnvironmentDescriptor environment) {
         return systemPromptRenderer.buildSystemPromptParts(agentContent, systemPromptVariables, environment);
     }
 
@@ -3039,40 +3164,50 @@ public class OrcaAgentExecutor
      *            the turn-scoped cancellation signal polled from inside the streaming sink
      * @return the aggregated LLM response
      */
-    private LlmResponse invokeGateway(ExecutionScope scope, int iteration, List<ToolDefinition> availableTools,
-            CancellationSignal cancellationSignal, SignalBackedLlmCancellation llmCancellation) {
+    @SuppressWarnings("checkstyle:ParameterNumber")
+    private LlmResponse invokeGateway(ExecutionScope scope, ContextEngine contextEngine, ContextRequest contextRequest,
+            ContextView view, int iteration, List<ToolDefinition> availableTools, CancellationSignal cancellationSignal,
+            SignalBackedLlmCancellation llmCancellation) {
         try {
-            return invokeGatewayOnce(scope, iteration, availableTools, cancellationSignal, llmCancellation);
+            return invokeGatewayOnce(scope, view, iteration, availableTools, cancellationSignal, llmCancellation);
         } catch (LlmPromptTooLongException e) {
-            // Post-call prompt-too-long fallback. Consult the recovery strategy to drop the
-            // oldest non-protected message and retry once. If the strategy declines (NONE) or the retry itself fails,
-            // the original behaviour resumes — the exception propagates to the ReAct loop's error path.
-            final PromptSizeRecoveryStrategy strategy = scope.agentRuntime.getPromptSizeRecoveryStrategy()
-                    .orElse(NoOpPromptSizeRecoveryStrategy.instance());
-            final List<Message> currentMessages = scope.transcriptBuffer.getMessages();
-            final PromptSizeRecoveryDecision decision = strategy.recover(currentMessages, e);
-            if (decision.getAction() != PromptSizeRecoveryDecision.Action.RETRY) {
-                log.warn("Prompt-too-long recovery declined at iteration {} ({}); rethrowing", iteration,
-                        decision.getReason());
+            // Post-call prompt-too-long fallback. The context engine shrinks the view (the default engine drops the
+            // oldest non-protected user message) and the call is retried once. If the engine cannot shrink it or the
+            // retry itself fails, the original behaviour resumes — the exception propagates to the ReAct loop's error
+            // path.
+            final Optional<ContextView> recovered = contextEngine.recover(contextRequest, e);
+            if (recovered.isEmpty()) {
+                log.warn("Prompt-too-long recovery declined at iteration {}; rethrowing", iteration);
                 throw e;
             }
-            final List<Message> recovered = decision.getRecoveredMessages()
-                    .orElseThrow(() -> new IllegalStateException("RETRY decision must carry recoveredMessages"));
-            log.warn("Prompt-too-long recovery applied at iteration {}: {}", iteration, decision.getReason());
-            scope.transcriptBuffer.replaceWith(recovered);
-            return invokeGatewayOnce(scope, iteration, availableTools, cancellationSignal, llmCancellation);
+            log.warn("Prompt-too-long recovery applied at iteration {}", iteration);
+            return invokeGatewayOnce(scope, recovered.get(), iteration, availableTools, cancellationSignal,
+                    llmCancellation);
         }
     }
 
-    private LlmResponse invokeGatewayOnce(ExecutionScope scope, int iteration, List<ToolDefinition> availableTools,
-            CancellationSignal cancellationSignal, SignalBackedLlmCancellation llmCancellation) {
+    /**
+     * Builds the {@link ContextRequest} of one iteration's LLM call. Carries no execution id: the main loop runs a
+     * session's turn, so the buffer's session id is the identity a compaction's hooks are given.
+     */
+    private static ContextRequest contextRequest(ExecutionScope scope, boolean budgetForced) {
+        return ContextRequest.builder().transcriptBuffer(scope.transcriptBuffer)
+                .model(scope.getAgent().getMetadata().getModel()).hookRegistry(scope.getHookRegistry())
+                .environment(scope.getEnvironment())
+                .caller(ContextCaller.builder().principal(scope.getPrincipal()).build()).budgetForced(budgetForced)
+                .build();
+    }
+
+    private LlmResponse invokeGatewayOnce(ExecutionScope scope, ContextView view, int iteration,
+            List<ToolDefinition> availableTools, CancellationSignal cancellationSignal,
+            SignalBackedLlmCancellation llmCancellation) {
         // TRACE-01: attribute this LLM call to the active span (the current ITERATION span, or the turn span outside
         // the loop). enrich(...) is a no-op under Tracer.noop(), so the metadata is unchanged when tracing is off.
         final LlmCallMetadata callMetadata = scope.activeSpan.enrich(scope.llmCallMetadata);
         if (!useStreaming) {
             try {
-                return gateway.sendMessage(scope.systemPromptParts, scope.transcriptBuffer.getMessages(),
-                        availableTools, scope.getAgent().getMetadata().getModel(), callMetadata, llmCancellation);
+                return gateway.sendMessage(scope.systemPromptParts, view.getMessages(), availableTools,
+                        scope.getAgent().getMetadata().getModel(), callMetadata, llmCancellation);
             } catch (LlmCallCancelledException e) {
                 // Two sources can raise this on the blocking path: the gateway's pre-attempt short-circuit, and a
                 // genuine in-flight abort — a cancellable token (isSupported()) makes the provider reroute the blocking
@@ -3095,9 +3230,8 @@ public class OrcaAgentExecutor
         try {
             final LlmStreamTarget streamTarget = LlmStreamTarget.builder().options(streamingOptions).sink(sink)
                     .retryListener(sink::onRetry).build();
-            return gateway.sendMessageStreaming(scope.systemPromptParts, scope.transcriptBuffer.getMessages(),
-                    availableTools, scope.getAgent().getMetadata().getModel(), callMetadata, streamTarget,
-                    llmCancellation);
+            return gateway.sendMessageStreaming(scope.systemPromptParts, view.getMessages(), availableTools,
+                    scope.getAgent().getMetadata().getModel(), callMetadata, streamTarget, llmCancellation);
         } catch (CancelledExecutionException e) {
             // The turn is being cancelled mid-stream — drop any eager tool work (side-effect-free, so safe to
             // discard) before preserving the streamed prefix.
@@ -3361,6 +3495,12 @@ public class OrcaAgentExecutor
         final List<CompactionMetadata> compactionEvents = new ArrayList<>();
 
         /**
+         * The execution's environment, resolved once at the top of {@code execute()} before prompt assembly. Published
+         * to tools under the write-once {@code EXECUTION_ENVIRONMENT} key by both context-building sites.
+         */
+        final ExecutionEnvironment executionEnvironment;
+
+        /**
          * H1: per-execution event sink. The streaming surfaces ({@link #events} / {@link #executeAsync}) register
          * their listener HERE rather than on the executor-wide shared {@code eventEmitter}, so an agent-scoped
          * executor that serves multiple concurrent sessions never fans one turn's token/tool events out to
@@ -3410,8 +3550,9 @@ public class OrcaAgentExecutor
 
         ExecutionScope(OrcaAgentRuntime agentRuntime, OrcaAgentExecutionRequest executionRequest,
                 TranscriptBuffer transcriptBuffer, SystemPromptParts systemPromptParts, LlmCallMetadata llmCallMetadata,
-                BudgetTracker budgetTracker) {
+                BudgetTracker budgetTracker, ExecutionEnvironment executionEnvironment) {
             this.agentRuntime = agentRuntime;
+            this.executionEnvironment = executionEnvironment;
             this.executionRequest = executionRequest;
             this.transcriptBuffer = transcriptBuffer;
             this.systemPromptParts = systemPromptParts;

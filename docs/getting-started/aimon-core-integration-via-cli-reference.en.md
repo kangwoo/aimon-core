@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/aimon-core-integration-via-cli-reference.md
-source_commit: e69999a
+source_commit: f651622
 ---
 
 # aimon-core integration guide — following aimon-cli as the reference
@@ -141,8 +141,8 @@ dependencies {
 | `aimon-filesystem-s3` | S3/MinIO as the backend |
 | `aimon-scheduling-quartz` | If you need task scheduling |
 | `aimon-knowledge-opensearch` | A vector-search-backed KnowledgeStore |
-| `aimon-sandbox-docker` / `aimon-sandbox-kubernetes` | If you need isolated shell execution |
-| `aimon-browser-playwright` | If you need browser automation tools |
+| `at.aimon.sandbox:aimon-sandbox-docker` / `-kubernetes` ([separate repository](https://github.com/kangwoo/aimon-sandbox)) | If you need **tools** that run commands isolated in a container/pod |
+| `at.aimon.browser:aimon-browser-playwright` ([separate repository](https://github.com/kangwoo/aimon-browser)) | If you need browser automation tools |
 
 > **Module dependency rule** (.claude/rules/architecture.md): implementation modules reference the core only through `implementation(project(":aimon-core"))`. They do not expose it with `api()` — that would leak core types as a transitive dependency.
 
@@ -480,7 +480,7 @@ with the CLI sets `maxTokens: 40000`, so none of them meets this. There are two 
 definition's `model.maxTokens`, or lower `llm.reasoningEffort` above to `low` (2048) or `minimal` (1024) (or the
 agent definition's `model.reasoningEffort`, if it sets one). **The warning names only the first.** This is a
 decision, not an oversight; the reasons and the alternatives refused are in
-[`thinking-reporting-and-dialect-records.md` §16](../design/llm/thinking-reporting-and-dialect-records.md#16-the-auto-budget-policy-decided-83-2026-09-10).
+[`anthropic-thinking.md` §6.2](../design/llm/anthropic-thinking.md#62-auto-예산-정책--1토큰-답도-그대로-둔다).
 
 **The two dialects are mutually exclusive per model and sending the wrong one is an HTTP 400.** That is why
 `auto` exists, and it is also `auto`'s limit — **against a model the table cannot name it sends nothing and
@@ -608,7 +608,9 @@ final AgentBundle agentBundle = effectiveBundleLoader.load(extractAgentName(conf
 
 **Your adaptation points:**
 - If you want to build agent definitions dynamically from code or a database, build the `AgentBundle` yourself and inject it through `AgentSetupFactory`'s package-private constructor.
-- To isolate shell execution in a container, swap in the `VirtualShell` implementation from `aimon-sandbox-docker` / `aimon-sandbox-kubernetes`.
+- To isolate shell execution itself in a container, **implement `VirtualShell` yourself** — `LocalShell` is the only
+  built-in implementation, and the sandbox modules do not implement this SPI. What they isolate is four tools
+  (`RunSandbox` and friends), not the shell.
 
 ### 4.3 Session record store, transcript manager, message queue, filesystem (line 726-733)
 
@@ -618,6 +620,9 @@ final InMemorySessionRecordStore sessionRecordStore = new InMemorySessionRecordS
 final TranscriptManager transcriptManager = createTranscriptManager(sessionRecordStore, sessionCheckpoints);
 final MessageQueueManager messageQueueManager = createMessageQueueManager();
 final LocalFileSystem fileSystem = createFileSystem();
+final Path projectDir = Path.of(fileSystem.getWorkingDirectory());
+// The control store ({project}/.aimon/) — definitions and task outputs. Invisible to the model's file tools.
+final VirtualFileSystem controlFileSystem = new ScopedVirtualFileSystem(fileSystem, ".aimon");
 ```
 
 The default implementations (`AgentSetupFactory.java:1033, 1044, 1076, 1083`):
@@ -684,10 +689,13 @@ final PendingTurnReaper pendingTurnReaper = createPendingTurnReaper(pendingTurnR
 // the narrow one (the session) first.
 final AgentApprovalStore agentApprovalStore = new InMemoryAgentApprovalStore();
 final SessionApprovalStore sessionApprovalStore = new InMemorySessionApprovalStore();
-// Materialise bundled (classpath) skills into the working VFS so that their attached files
-// (scripts, references, templates) become real files the agent can read and ${AIMON_SKILL_DIR} resolves.
+// Materialise bundled (classpath) skills into the control store ({project}/.aimon/). The agent does not
+// read this copy directly — .aimon/ is invisible to the file tools. ${AIMON_SKILL_DIR} is the path the
+// execution environment returns after copying the skill into the workspace's .aimon-staged/ on first use
+// (ExecutionEnvironment.stage). The directories are relative to the control root — physically still
+// .aimon/skills and .aimon/bundled-skills.
 final SkillRegistry skillRegistry = OrcaAgentRuntimeFactory.buildMaterializedSkillRegistry(
-        agentBundle, fileSystem, ".aimon/skills", ".aimon/bundled-skills",
+        agentBundle, controlFileSystem, "skills", "bundled-skills",
         DEFAULT_AGENT_BUNDLE_BASE_PATH + "/" + extractAgentName(config) + "/skills",
         Thread.currentThread().getContextClassLoader(), skillParser);
 final SkillInvocationPolicy skillInvocationPolicy =
@@ -776,10 +784,13 @@ exists for documentation, but by convention it marks something **that class must
 final OrcaAgentRuntimeFactory agentRuntimeFactory =
     new OrcaAgentRuntimeFactory(
         "1.0.0",
-        ".aimon/commands",
-        ".aimon/agents",
-        ".aimon/skills",
+        "commands",   // relative to the control root (OrcaAgentRuntimeFactory.DEFAULT_*_DIRECTORY)
+        "agents",
+        "skills",
         createWikiKnowledgeStore(agentRuntimeRegistry, llmClient))
+        // Where the model's tools work — the file system and the shell. create(...) refuses without it.
+        .withExecutionEnvironmentProvider(LocalExecutionEnvironmentProvider.builder()
+                .workspaceRoot(projectDir).build())
         .withSkillRegistry(skillRegistry)
         .withCodeSubagentRegistry(codeSubagentRegistry)
         .withPendingTurnRegistry(pendingTurnRegistry)
@@ -793,7 +804,7 @@ final OrcaAgentRuntimeFactory agentRuntimeFactory =
 // AgentRuntimeId is not an argument — it is derived from the agent inside createAgentRuntime.
 final OrcaAgentRuntime agentRuntime = createAgentRuntime(
     agentRuntimeFactory, agentExecutor,
-    schedulingEngine.getTaskManager(), agentBundle, fileSystem,
+    schedulingEngine.getTaskManager(), agentBundle, controlFileSystem,
     config, graalJsEngines);
 
 configureHooks(agentRuntime, outputFormatter);
@@ -895,7 +906,7 @@ this in your own shell, preserve those four pairs.
 |-----------|----------------------|----------------------------------------|
 | `LlmClient` | An OpenAI or Anthropic SDK wrapper | Your own implementation wrapping an in-house LLM gateway |
 | `VirtualFileSystem` | `LocalFileSystem` (relative to the jar directory) | `GridFSFileSystem` / `S3FileSystem` / a per-user isolated instance |
-| `VirtualShell` | `LocalShell` | The container-isolated shell from `aimon-sandbox-docker` |
+| `VirtualShell` | `LocalShell` | Implement it yourself — there is no container-isolated **shell** in the framework (the sandbox modules isolate tools instead) |
 | `SessionRecordStore` | `InMemorySessionRecordStore` | A persistent implementation from `aimon-session-mongodb` / `-postgres` / `-redis` |
 | `TranscriptManager` | `DefaultTranscriptManager` (+ the background checkpoint mailbox) | Usually unchanged — what you swap is the `SessionRecordStore` underneath |
 | `MessageQueueManager` | in-memory | A distributed queue backend |
@@ -942,11 +953,11 @@ Created **once per agent** and shared by every session of that agent. Not closed
 Create and look up with `OrcaAgentRuntimeManager.getOrCreateRuntime(bundle, ...)` — as the name says, an existing one is reused. Tear down only with `destroyRuntime`, on application shutdown or explicit agent removal.
 
 > **`OrcaAgentRuntime.close()` does not scan for `AgentScoped` implementations** — it closes a hardcoded
-> list only (`mcpClientManager`, `workflowRunner`, `ownedShell`). If you add a new agent-scoped component
+> list only (`mcpClientManager`, `workflowRunner`). If you add a new agent-scoped component
 > holding a native resource (a connection pool, a watcher thread), you have to add it to that list yourself.
-> The marker interface is documentation, not automatic teardown. `ownedShell` is the only conditional one of
-> the three — it is null when an assembly handed in a shell with `withShell(...)`, and closing that shell is
-> then the giver's job.
+> The marker interface is documentation, not automatic teardown. The shell and the working file system are
+> not on the list — the `ExecutionEnvironmentProvider` handed in through `withExecutionEnvironmentProvider(...)`
+> owns them, and closing it is the giver's job.
 
 ### Session scope (`SessionId` lifetime — **persistent**)
 
@@ -1253,13 +1264,16 @@ public OrcaAgentRuntimeManager agentRuntimeManager(
         SkillInvocationPolicy skillPolicy, SessionApprovalStore sessionApprovals,
         AgentApprovalStore agentApprovals, PendingTurnRegistry pendingTurnRegistry) {
 
-    // withSkillRegistry() is deliberately not called — the VFS differs per user, so the skill
+    // withSkillRegistry() is deliberately not called — the control store differs per user, so the skill
     // registry has to differ per runtime too. Omit it and the factory builds a fresh one per
-    // runtime from (agentBundle, fileSystem).
+    // runtime from (agentBundle, controlFileSystem).
+    // The execution environment provider is per user too — withExecutionEnvironmentProviderFactory(id -> ...)
+    // gives each runtime its own workspace.
     OrcaAgentRuntimeFactory runtimeFactory =
         new OrcaAgentRuntimeFactory("1.0.0",
-            ".aimon/commands", ".aimon/agents", ".aimon/skills",
+            "commands", "agents", "skills",
             /* knowledgeStore */ null)
+            .withExecutionEnvironmentProviderFactory(id -> providerFor(id))
             .withSessionApprovalStore(sessionApprovals)
             .withAgentApprovalStore(agentApprovals)
             .withPendingTurnRegistry(pendingTurnRegistry)

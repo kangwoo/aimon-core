@@ -18,12 +18,14 @@ ReAct 루프, 턴 처리, 중단, 입력 큐.
 | [`command-queue-guide.md`](agent-execution/command-queue-guide.md) | 턴 도중 들어온 사용자 입력을 큐에 넣고 처리하는 방법 |
 | [`interruptible-tools-guide.md`](agent-execution/interruptible-tools-guide.md) | Ctrl+C, NOW priority 입력 등 외부 중단 처리와 `InterruptBehavior` |
 | [`system-reminder-convention.md`](agent-execution/system-reminder-convention.md) | `<system-reminder>` 합성 컨텍스트를 넣는 규약 |
+| [`context-engine-guide.md`](agent-execution/context-engine-guide.md) | 긴 대화의 컨텍스트를 줄이는 engine 고르기 — `default` / `rolling`, `SessionHistory` 도구 |
 
 설계 근거: [`agent-runtime-scope.md`](../design/agent-execution/agent-runtime-scope.md) ·
 [`orca-executor.md`](../design/agent-execution/orca-executor.md) ·
 [`interceptor.md`](../design/agent-execution/interceptor.md) ·
 [`interrupt.md`](../design/agent-execution/interrupt.md) ·
 [`compaction.md`](../design/agent-execution/compaction.md) ·
+[`context-engine.md`](../design/agent-execution/context-engine.md) ·
 [`artifact.md`](../design/agent-execution/artifact.md)
 
 ## [`session/`](session/) — 세션
@@ -53,7 +55,7 @@ IMPORTANT: 세션(`SessionRecord`)과 라이브 세션(`LiveSession`)의 차이�
 |------|------|
 | [`tool-development-guide.md`](tool/tool-development-guide.md) | **새 도구를 만들 때의 정본** — `Tool` 계약, 스키마, 에러 처리, 권한 |
 | [`parallel-tool-execution-guide.md`](tool/parallel-tool-execution-guide.md) | 같은 배치 내 도구 병렬 실행 (`ConcurrencyBehavior`) |
-| [`browser-tool-guide.md`](tool/browser-tool-guide.md) | Playwright 기반 `Browser` 도구 설정·사용 |
+| [`browser-tool-guide.md`](https://github.com/kangwoo/aimon-browser/blob/main/docs/browser-tool-guide.md) | Playwright 기반 `Browser` 도구 설정·사용. **이 저장소에 없다** — 모듈과 함께 [aimon-browser](https://github.com/kangwoo/aimon-browser) 로 옮겨 갔다 |
 
 설계 근거: [`parallel-execution.md`](../design/tool/parallel-execution.md) ·
 [`tool-search.md`](../design/tool/tool-search.md)
@@ -177,7 +179,7 @@ cron/일회성 예약 실행과 루틴.
 | 영역 | 지금 볼 곳 |
 |------|-----------|
 | MCP 연동 | [`mcp-tool.md`](../design/integration/mcp-tool.md) |
-| 샌드박스 | [`sandbox.md`](../design/integration/sandbox.md) · `modules/aimon-sandbox/README.md` |
+| 샌드박스 | [aimon-sandbox 저장소](https://github.com/kangwoo/aimon-sandbox) — 설계 문서(`docs/design/sandbox.md`)와 모듈 README 가 그쪽으로 옮겨 갔다 |
 | 파일시스템 / 셸 | `at.aimon.core.filesystem` · `at.aimon.core.shell` 의 `package-info.java` |
 | 명령 (`/compact` 등) | [`command-unification.md`](../design/skill/command-unification.md) |
 | 권한 / 자격증명 | [`tool-development-guide.md` › 권한 시스템](tool/tool-development-guide.md) |

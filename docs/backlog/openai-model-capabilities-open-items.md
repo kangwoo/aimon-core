@@ -6,7 +6,7 @@
 측정했다.** 그것이 아래 L-1 이다.
 
 **열림/닫힘의 정본은 이 문서다.** 설계 문서
-[`design/llm/openai-model-capabilities.md`](../design/llm/openai-model-capabilities.md) 의 §12 · §13
+옛 `design/llm/openai-model-capabilities.md`(지금은 [`design/llm/model-capabilities.md`](../design/llm/model-capabilities.md)) 의 §12 · §13
 표는 **설계 시점의 기록**으로 동결되어 있다([`README.md`](README.md) 규칙 하나). 그 §13.4 가 이 결함을
 자세히 적고 있지만, 거기에만 적어 두면 열린 항목으로 세어지지 않으므로 여기에 등록한다.
 
@@ -57,7 +57,7 @@ rung(`minimal`)을 보낸다. 앞의 것은 보고된 누락으로 끝나고 뒤
   — `lowestReasoningEffort()` 와 `unknown()` 의 javadoc. 바닥 하나로 모델링한다는 결정이 여기 있다
 - `modules/aimon-llm-openai/src/main/java/at/aimon/core/llms/openai/OpenAiRequestParameters.java`
   — `maySendEffort`, 두 엔드포인트가 함께 부르는 유일한 판정 지점
-- [`design/llm/openai-model-capabilities.md`](../design/llm/openai-model-capabilities.md) §13.4
+- 옛 `design/llm/openai-model-capabilities.md` §13.4 — 지금은 [`design/llm/model-capabilities.md` §6.1](../design/llm/model-capabilities.md#61-openai-행)
   — 측정값·재현·왜 미뤘는지. §12.2 의 표 마지막 두 행이 그 결함을 표 안에서 보여 준다
 
 **심각도 — 오늘 얼마나 물리는가** ([`README.md`](README.md) 규칙 셋 · 여섯). **설정으로는 도달할 수
@@ -89,7 +89,7 @@ rung(`minimal`)을 보낸다. 앞의 것은 보고된 누락으로 끝나고 뒤
 
 #### 닫음 (2026-09-10, 이슈 #61 · 라운드 9)
 
-설계는 [`design/llm/reasoning-effort-config-surface.md`](../design/llm/reasoning-effort-config-surface.md).
+설계는 옛 `design/llm/reasoning-effort-config-surface.md` — 지금은 [`design/llm/request-parameters.md` §4.2](../design/llm/request-parameters.md#42-ladder-는-집합이다--acceptedreasoningefforts-를-읽는-법).
 규칙 둘·셋·다섯대로, 닫았다는 사실만이 아니라 **착수해 보니 무엇이 달랐는지**를 함께 적는다.
 
 **트리거는 발화했다 — 다만 위에 적힌 형태 그대로는 아니다.** 위 확인 방법은 그 grep 이 *"0건이
@@ -153,7 +153,7 @@ config 로 옮기는 네 줄이다. 세려면 이렇게 좁힌다 —
 - **`o1-pro` · `o4-mini-deep-research` 를 측정하는 것** — 라운드 8 의 비용 규칙이 금지했다. 이것은
   열린 *항목*이 아니라 예산이 붙은 별도 프로브이며, 그때까지 그 이름들은 prefix 행을 통해
   `supportsReasoningTraceRoundTrip=false` 를 유지하고 **이유가 적힌 채로** 남는다.
-  [`design/llm/openai-model-capabilities.md`](../design/llm/openai-model-capabilities.md) §13.7
-- **라운드 8 이 재지 못한 나머지** — 같은 §13.7 이 목록이다. 미측정은 열린 작업이 아니라 **비어 있는
+  [`design/llm/model-capabilities.md` §6.4](../design/llm/model-capabilities.md#64-미측정-칸)(옛 `openai-model-capabilities.md` §13.7)
+- **라운드 8 이 재지 못한 나머지** — 같은 §6.4 가 목록이다. 미측정은 열린 작업이 아니라 **비어 있는
   칸**이므로 항목으로 등록하지 않는다. 이 구분은 이 저장소의 규율이다: 실측하지 않은 것은 실측하지
   않았다고 적는다

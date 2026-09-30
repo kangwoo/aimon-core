@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/workflow/workflow-usage-guide.md
-source_commit: eec9ccd
+source_commit: 79d78a7
 ---
 
 # Workflow Usage Guide (the library view)
@@ -148,7 +148,6 @@ WorkflowRunnerOptions options = WorkflowRunnerOptions.builder()
         .stepResultCache(WorkflowRunners.inMemoryStepResultCache())
         .runStore(myRunStore)                    // the background run control-plane store
         .backgroundConfig(WorkflowBackgroundConfig.of(4))
-        .worktreeFactory(worktreeFactory)        // only when you use isolate=true steps
         .build();
 ```
 
@@ -160,18 +159,17 @@ WorkflowRunnerOptions options = WorkflowRunnerOptions.builder()
 | `stepResultCache` | `StepResultCache.NO_OP` (no resume) | Skipping past cache hits when re-running an interrupted run |
 | `runStore` | in-memory | Sharing the run list and statuses across instances |
 | `backgroundConfig` | `WorkflowBackgroundConfig.defaults()` | The number of concurrent background runs, the queue capacity |
-| `worktreeFactory` | absent → an `isolate` step is a run-fatal failure | Isolating parallel steps that mutate files |
 
 ### How the core assembles it (for reference)
 
 `OrcaAgentRuntimeFactory#buildWorkflowRunner` is the standard assembly example.
-It creates one runner per context and attaches an in-memory step cache and a worktree factory.
+It creates one runner per context and attaches an in-memory step cache. There is no option for isolation — an
+`isolate` step derives its branch from the execution environment (see "Worktree isolation" below).
 
 ```java
 return WorkflowRunners.create(subagentExecutionManager, baseEnv,
         WorkflowRunnerOptions.builder()
                 .stepResultCache(WorkflowRunners.inMemoryStepResultCache())
-                .worktreeFactory(worktreeFactory)
                 .build());
 ```
 
@@ -562,11 +560,22 @@ Use it only when you have to run file-mutating steps in parallel.
 AgentTask.builder().subagent(migrator).goal(...).isolate(true).build();
 ```
 
-- Each step runs in **its own git worktree**. That costs something (setup plus disk, per step).
-- Where nothing changed, the worktree is cleaned up automatically.
+- Each step runs in **its own isolated branch** — an environment the runner derives with the execution
+  environment's `ExecutionEnvironment.isolate(branchKey)`. In the local environment the file tools are scoped under
+  `.worktrees/<branchKey>/`, and `Bash`'s default working directory is that branch root too (absolute paths inside
+  a command are not blocked). A sandbox uses git worktrees.
+- Promote a branch's files to the parent with `WorktreeMerge.promote(parent, branches, policy)`. Assembly code that
+  knows only the keys gets the same branches back with `parent.isolate(key).orElseThrow()`. A branch cannot write
+  under its own `.aimon/` — the parent's control-store protection applies at the branch root too and refuses the
+  write when it happens, so a merge never meets such a file. Pass `promote` **the very parent instance** the branches
+  were isolated from, and each branch once — the parent itself, another parent's branch or a duplicate is an
+  `IllegalArgumentException`.
 - `isolate(true)` cannot be cached (side effects cannot be replayed).
-- **An `isolate` step met by a runner with no `worktreeFactory` injected is a run-fatal failure (C30).**
-  Be sure to put a `WorktreeEnvironmentFactory` in the options.
+- **An `isolate` step in an execution environment that does not support isolation is a run-fatal failure (C30).** It
+  never runs unisolated. There is nothing to inject — the old `worktreeFactory` / `WorktreeEnvironmentFactory` are gone.
+  When the execution environment is unavailable (no provider, sandbox down), the error carries that cause. An
+  `isolate` step in a workflow that is itself running inside an isolated branch is run-fatal too — nested isolation
+  is not supported, and the error says so.
 
 If the parallel steps touch nothing but distinct files, isolation is unnecessary. Turn it on only when they contend for the same file.
 
@@ -604,7 +613,7 @@ The background path, by contrast, reuses the injected context-scoped runner. Fol
 - [ ] You want resume — are you using `DEFAULT_RUN_ID`? (it is not cached)
 - [ ] Did you set `perBatchMax` on a shared runner?
 - [ ] Is the event sink thread-safe?
-- [ ] You use `isolate(true)` — did you inject a `worktreeFactory`?
+- [ ] You use `isolate(true)` — does the runner's execution environment support `isolate()`?
 - [ ] Do you close a runner you created per call? Do you leave a borrowed manager unclosed?
 - [ ] In a `loopUntilDry`-style loop, does the dedup key on "everything seen" rather than "the confirmed set"?
 - [ ] If you bounded coverage (top-N, sampling), did you record what you dropped with `ctx.log`?

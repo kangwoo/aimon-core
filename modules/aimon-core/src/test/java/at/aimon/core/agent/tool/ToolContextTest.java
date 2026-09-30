@@ -11,6 +11,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
+import at.aimon.core.environment.TestExecutionEnvironments;
+import at.aimon.core.tools.ToolContextKeys;
+
 @DisplayName("ToolContext Tests")
 class ToolContextTest {
 
@@ -246,6 +249,69 @@ class ToolContextTest {
             ToolContext context = ToolContext.empty();
             assertThatThrownBy(() -> context.containsKey((ToolContextKey<?>) null))
                     .isInstanceOf(NullPointerException.class);
+        }
+    }
+
+    @Nested
+    @DisplayName("Write-once keys")
+    class WriteOnce {
+
+        private final ToolContextKey<String> writeOnce = ToolContextKey.writeOnce("test.writeOnce", String.class);
+
+        @Test
+        @DisplayName("a second put through the key throws")
+        void secondPutThroughKeyThrows() {
+            assertThat(ToolContextKeys.EXECUTION_ENVIRONMENT.isWriteOnce()).isTrue();
+            ToolContext.Builder builder = ToolContext.builder().put(writeOnce, "a");
+            assertThatThrownBy(() -> builder.put(writeOnce, "b")).isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("test.writeOnce");
+        }
+
+        @Test
+        @DisplayName("a second put through the string name throws")
+        void secondPutThroughNameThrows() {
+            assertThat(ToolContextKey.isWriteOnceName(ToolContextKeys.EXECUTION_ENVIRONMENT.name())).isTrue();
+            ToolContext.Builder builder = ToolContext.builder().put(writeOnce, "a");
+            assertThatThrownBy(() -> builder.put("test.writeOnce", "b")).isInstanceOf(IllegalStateException.class);
+        }
+
+        @Test
+        @DisplayName("a second write through putAll throws")
+        void secondWriteThroughPutAllThrows() {
+            assertThat(ToolContextKeys.EXECUTION_ENVIRONMENT).isNotNull();
+            ToolContext.Builder builder = ToolContext.builder().put(writeOnce, "a");
+            assertThatThrownBy(() -> builder.putAll(Map.of("test.writeOnce", "b")))
+                    .isInstanceOf(IllegalStateException.class);
+        }
+
+        @Test
+        @DisplayName("a putAll copy into a fresh builder is accepted, a later put of the same name is not")
+        void copyIsProtected() {
+            assertThat(ToolContextKeys.EXECUTION_ENVIRONMENT).isNotNull();
+            ToolContext original = ToolContext.builder().put(writeOnce, "a").build();
+            ToolContext.Builder copy = ToolContext.builder().putAll(original.getContext());
+            assertThat(copy.build().get(writeOnce)).contains("a");
+            assertThatThrownBy(() -> copy.put(writeOnce, "b")).isInstanceOf(IllegalStateException.class);
+        }
+
+        @Test
+        @DisplayName("a string put of executionEnvironment followed by the key put throws")
+        void stringThenKeyThrows() {
+            ToolContextKey<?> key = ToolContextKeys.EXECUTION_ENVIRONMENT;
+            ToolContext.Builder builder = ToolContext.builder().put(key.name(), "sneaky");
+            assertThatThrownBy(
+                    () -> builder.put(ToolContextKeys.EXECUTION_ENVIRONMENT, TestExecutionEnvironments.of(null)))
+                    .isInstanceOf(IllegalStateException.class).hasMessageContaining("executionEnvironment");
+        }
+
+        @Test
+        @DisplayName("ordinary keys still overwrite")
+        void ordinaryKeysOverwrite() {
+            assertThat(ToolContextKeys.EXECUTION_ENVIRONMENT).isNotNull();
+            ToolContextKey<String> plain = ToolContextKey.of("test.plain", String.class);
+            assertThat(plain.isWriteOnce()).isFalse();
+            ToolContext context = ToolContext.builder().put(plain, "a").put(plain, "b").put("test.plain", "c").build();
+            assertThat(context.get(plain)).contains("c");
         }
     }
 }
