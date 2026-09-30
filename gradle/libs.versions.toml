@@ -170,7 +170,7 @@ opentelemetry = "1.34.1"
 quartz = "2.5.2"
 
 # Caching
-caffeine = "3.2.4"
+caffeine = "3.3.0"
 
 # Redis
 lettuce = "7.8.0.RELEASE"
