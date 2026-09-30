@@ -204,8 +204,7 @@ jtokkit = "1.1.0"
 graaljs = "25.4.4.1.1"
 
 # Search
-opensearch = "2.20.0"
-opensearch-rest-client = "2.18.0"
+opensearch = "3.10.0"
 
 # Logging
 slf4j = "2.0.20"
@@ -352,7 +351,6 @@ graaljs-js = { module = "org.graalvm.js:js", version.ref = "graaljs" }
 
 # Search
 opensearch-client = { module = "org.opensearch.client:opensearch-java", version.ref = "opensearch" }
-opensearch-rest-client = { module = "org.opensearch.client:opensearch-rest-client", version.ref = "opensearch-rest-client" }
 
 # Logging
 slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }

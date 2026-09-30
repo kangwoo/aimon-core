@@ -63,7 +63,7 @@ final class VectorSearchStrategy implements OpenSearchSearchStrategy {
         final float[] queryVector = embeddingResult.getVector();
 
         final KnnQuery.Builder knnBuilder = new KnnQuery.Builder().field(OpenSearchDocumentMapper.FIELD_EMBEDDING)
-                .vector(queryVector).k(query.getMaxResults());
+                .vector(toFloatList(queryVector)).k(query.getMaxResults());
 
         // Apply combined scope + file pattern filter
         final BoolQuery.Builder filterBuilder = new BoolQuery.Builder();
@@ -112,5 +112,17 @@ final class VectorSearchStrategy implements OpenSearchSearchStrategy {
 
         log.debug("Vector search returned {} results", results.size());
         return Collections.unmodifiableList(results);
+    }
+
+    /**
+     * Boxes an embedding for the 3.x {@code KnnQuery} builder, which takes {@code List<Float>} instead of
+     * {@code float[]}.
+     */
+    static List<Float> toFloatList(float[] vector) {
+        final List<Float> boxed = new ArrayList<>(vector.length);
+        for (float value : vector) {
+            boxed.add(value);
+        }
+        return boxed;
     }
 }
