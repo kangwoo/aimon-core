@@ -23,15 +23,15 @@ import at.aimon.core.agent.session.store.StoredAgentExecutionResult;
  *
  * <pre>{@code
  * {
- *   "key": "...",
- *   "conversationId": "...",
- *   "inputHash": "...",
- *   "status": "IN_FLIGHT" | "DONE",
- *   "holderId": "..." | null,
- *   "createdAt": "ISO-8601",
- *   "lastTouchedAt": "ISO-8601",
- *   "ttlMillis": <long>,
- *   "result": { "success": ..., "finalAnswer": ..., ... } | null
+ * "key": "...",
+ * "conversationId": "...",
+ * "inputHash": "...",
+ * "status": "IN_FLIGHT" | "DONE",
+ * "holderId": "..." | null,
+ * "createdAt": "ISO-8601",
+ * "lastTouchedAt": "ISO-8601",
+ * "ttlMillis": <long>,
+ * "result": { "success": ..., "finalAnswer": ..., ... } | null
  * }
  * }</pre>
  *

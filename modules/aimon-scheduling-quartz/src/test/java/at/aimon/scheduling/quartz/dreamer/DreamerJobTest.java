@@ -103,7 +103,8 @@ class DreamerJobTest {
         when(workspaceStore.findById(WORKSPACE_ID)).thenReturn(Optional.of(WORKSPACE));
         when(dreamerEngine.consolidate(WORKSPACE)).thenThrow(new RuntimeException("LLM down"));
 
-        Throwable thrown = catchThrowable(() -> job.execute(jobContextWith(WORKSPACE_ID, workspaceStore, dreamerEngine)));
+        Throwable thrown = catchThrowable(
+                () -> job.execute(jobContextWith(WORKSPACE_ID, workspaceStore, dreamerEngine)));
 
         assertThat(thrown).isInstanceOf(JobExecutionException.class).hasMessageContaining(WORKSPACE_ID);
         assertThat(thrown.getCause()).isInstanceOf(RuntimeException.class).hasMessage("LLM down");

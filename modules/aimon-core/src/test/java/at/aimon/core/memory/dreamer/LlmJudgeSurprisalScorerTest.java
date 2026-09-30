@@ -127,8 +127,8 @@ class LlmJudgeSurprisalScorerTest {
     @Test
     @DisplayName("trailing tokens after the JSON object are rejected → 1.0")
     void trailingTokensRejected() {
-        when(llmClient.sendMessage(anyString(), anyList(), anyList(), any(), any())).thenReturn(
-                LlmResponse.text("{\"similarity\": 0.9} but actually I think these are unrelated."));
+        when(llmClient.sendMessage(anyString(), anyList(), anyList(), any(), any()))
+                .thenReturn(LlmResponse.text("{\"similarity\": 0.9} but actually I think these are unrelated."));
         LlmJudgeSurprisalScorer scorer = new LlmJudgeSurprisalScorer(llmClient, "test-model");
 
         double score = scorer.score(observation("obs-1", "x"), List.of(observation("obs-2", "y")));
@@ -177,7 +177,8 @@ class LlmJudgeSurprisalScorerTest {
     @Test
     @DisplayName("blank LLM response → 1.0")
     void blankResponseFailsClosed() {
-        when(llmClient.sendMessage(anyString(), anyList(), anyList(), any(), any())).thenReturn(LlmResponse.text("   "));
+        when(llmClient.sendMessage(anyString(), anyList(), anyList(), any(), any()))
+                .thenReturn(LlmResponse.text("   "));
         LlmJudgeSurprisalScorer scorer = new LlmJudgeSurprisalScorer(llmClient, "test-model");
 
         double score = scorer.score(observation("obs-1", "x"), List.of(observation("obs-2", "y")));

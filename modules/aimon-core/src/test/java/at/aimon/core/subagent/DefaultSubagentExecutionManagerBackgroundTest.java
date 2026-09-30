@@ -114,8 +114,8 @@ class DefaultSubagentExecutionManagerBackgroundTest {
         when(reactExecutor.execute(any(), any())).thenReturn(reactResult("done"));
         DefaultSubagentExecutionManager manager = newManager(Executors.newSingleThreadExecutor());
 
-        SubagentExecutionResult result = manager.executeInBackground(envBuilder(registryWithExplore()).build(), "t1",
-                SUBAGENT, "go", "desc").join();
+        SubagentExecutionResult result = manager
+                .executeInBackground(envBuilder(registryWithExplore()).build(), "t1", SUBAGENT, "go", "desc").join();
 
         assertThat(result.isSuccess()).isTrue();
         assertThat(result.getFinalAnswer()).isEqualTo("done");
@@ -284,8 +284,8 @@ class DefaultSubagentExecutionManagerBackgroundTest {
         List<AgentExecutionEvent> events = new CopyOnWriteArrayList<>();
 
         manager.executeInBackground(
-                envBuilder(registryWithExplore()).messageQueueManager(queue).parentEventSink(events::add).build(),
-                "t1", SUBAGENT, "go", "").join();
+                envBuilder(registryWithExplore()).messageQueueManager(queue).parentEventSink(events::add).build(), "t1",
+                SUBAGENT, "go", "").join();
         awaitTerminal(manager, "t1");
         awaitAtLeast(() -> queue.snapshot().size(), 1);
         awaitAtLeast(events::size, 1);
@@ -320,8 +320,8 @@ class DefaultSubagentExecutionManagerBackgroundTest {
         List<AgentExecutionEvent> events = new CopyOnWriteArrayList<>();
 
         manager.executeInBackground(
-                envBuilder(registryWithExplore()).messageQueueManager(queue).parentEventSink(events::add).build(),
-                "t1", SUBAGENT, "go", "").join();
+                envBuilder(registryWithExplore()).messageQueueManager(queue).parentEventSink(events::add).build(), "t1",
+                SUBAGENT, "go", "").join();
         awaitTerminal(manager, "t1");
         awaitAtLeast(() -> queue.snapshot().size(), 1);
         awaitAtLeast(events::size, 1);

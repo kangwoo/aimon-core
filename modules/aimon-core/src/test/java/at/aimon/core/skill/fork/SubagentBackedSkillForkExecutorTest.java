@@ -119,8 +119,7 @@ class SubagentBackedSkillForkExecutorTest {
 
         ArgumentCaptor<SubagentExecutionEnvironment> envCaptor = ArgumentCaptor
                 .forClass(SubagentExecutionEnvironment.class);
-        verify(subagentExecutionManager).executeInline(envCaptor.capture(), any(), any(), eq("rendered body"),
-                any());
+        verify(subagentExecutionManager).executeInline(envCaptor.capture(), any(), any(), eq("rendered body"), any());
         assertThat(envCaptor.getValue().getAgentRuntimeId()).isEqualTo(AgentRuntimeIds.testCtx("ctx-42"));
     }
 
@@ -201,17 +200,16 @@ class SubagentBackedSkillForkExecutorTest {
         when(subagentRegistry.getSubagent("code-reviewer")).thenReturn(Optional.of(subagent("code-reviewer")));
         when(subagentExecutionManager.executeInline(any(SubagentExecutionEnvironment.class), any(), any(),
                 eq("rendered body"), any()))
-                        .thenReturn(SubagentExecutionResult.success("LGTM",
-                                SessionSnapshot.of(SessionId.generate(), "sys", List.of()),
-                                ExecutionMetadata.builder().iterationCount(1).tokenUsage(TokenUsage.empty())
-                                        .timestamps(Instant.now(), Instant.now()).build()));
+                .thenReturn(SubagentExecutionResult.success("LGTM",
+                        SessionSnapshot.of(SessionId.generate(), "sys", List.of()),
+                        ExecutionMetadata.builder().iterationCount(1).tokenUsage(TokenUsage.empty())
+                                .timestamps(Instant.now(), Instant.now()).build()));
 
         executor.fork(forkSkill("code-reviewer"), "rendered body", context);
 
         final ArgumentCaptor<SubagentExecutionEnvironment> captor = ArgumentCaptor
                 .forClass(SubagentExecutionEnvironment.class);
-        verify(subagentExecutionManager).executeInline(captor.capture(), any(), any(), eq("rendered body"),
-                any());
+        verify(subagentExecutionManager).executeInline(captor.capture(), any(), any(), eq("rendered body"), any());
         return captor.getValue();
     }
 
@@ -219,9 +217,8 @@ class SubagentBackedSkillForkExecutorTest {
     void fork_PropagatesSubagentFailureMessage() {
         when(subagentRegistry.getSubagent("code-reviewer")).thenReturn(Optional.of(subagent("code-reviewer")));
         SubagentExecutionResult failure = SubagentExecutionResult.failure("subagent crashed",
-                SessionSnapshot.of(SessionId.generate()),
-                ExecutionMetadata.builder().iterationCount(0).tokenUsage(TokenUsage.empty())
-                        .timestamps(Instant.now(), Instant.now()).build());
+                SessionSnapshot.of(SessionId.generate()), ExecutionMetadata.builder().iterationCount(0)
+                        .tokenUsage(TokenUsage.empty()).timestamps(Instant.now(), Instant.now()).build());
         when(subagentExecutionManager.executeInline(any(), any(), any(), any(), any())).thenReturn(failure);
 
         SkillForkOutcome outcome = executor.fork(forkSkill("code-reviewer"), "goal", contextWithExecutionId("ctx-1"));
@@ -262,7 +259,8 @@ class SubagentBackedSkillForkExecutorTest {
         SkillForkOutcome outcome = executor.fork(forkSkill("code-reviewer"), "goal", contextWithExecutionId("ctx-1"));
 
         assertThat(outcome.isSuccess()).isFalse();
-        assertThat(outcome.getErrorMessage()).get().asString().contains("Fork execution failed").contains("network down");
+        assertThat(outcome.getErrorMessage()).get().asString().contains("Fork execution failed")
+                .contains("network down");
     }
 
     /** A real, unrestricted subagent — a bare mock returns null metadata, which {@code Subagent.of} forbids. */
@@ -277,9 +275,8 @@ class SubagentBackedSkillForkExecutorTest {
     /** Runs a fork against the given target and returns the definition the manager was actually handed. */
     private Subagent captureForkedSubagent(Subagent target, Skill skill) {
         when(subagentRegistry.getSubagent(target.getName())).thenReturn(Optional.of(target));
-        when(subagentExecutionManager.executeInline(any(), any(), any(), any(), any()))
-                .thenReturn(SubagentExecutionResult.success("LGTM",
-                        SessionSnapshot.of(SessionId.generate(), "sys", List.of()),
+        when(subagentExecutionManager.executeInline(any(), any(), any(), any(), any())).thenReturn(
+                SubagentExecutionResult.success("LGTM", SessionSnapshot.of(SessionId.generate(), "sys", List.of()),
                         ExecutionMetadata.builder().iterationCount(1).tokenUsage(TokenUsage.empty())
                                 .timestamps(Instant.now(), Instant.now()).build()));
 
