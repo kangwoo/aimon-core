@@ -207,7 +207,7 @@ class ToolSchemaGeneratorTest {
         @Test
         void aDeclaredAllowedSetBecomesTheEnum() {
             record Declared(@ToolParam(allowed = {
-                    "content", "count"}) String mode){
+                    "content", "count"}) String mode) {
             }
 
             assertThat(propertyOf(Declared.class, "mode")).containsEntry("enum", List.of("content", "count"));

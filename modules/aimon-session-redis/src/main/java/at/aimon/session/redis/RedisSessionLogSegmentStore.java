@@ -47,13 +47,15 @@ import io.lettuce.core.cluster.api.sync.RedisClusterCommands;
  * the tag to {@code s:} plus the id's prefix, and both keys share that tag. A custom prefix must not contain
  * {@code '{'}, or it would become the tag and put every session in one slot.
  *
- * <p>
+ *
+<p>
  * The second hash is what {@link #list} reads, so garbage collection lists a session without pulling every payload
  * over the wire. Both hashes change together in one Lua script — {@link #put} refuses an id that already exists
  * rather than overwriting it, and {@link #delete} removes the field from both — so they cannot disagree. A session
  * delete drops both keys.
  *
- * <p>
+ *
+<p>
  * {@link #scanSessions} walks the {@code :created} keys with {@code SCAN}, so no index key has to be kept in step with
  * the per-session keys — an index would sit in its own cluster slot and could not change atomically with them.
  * {@code SCAN} only walks the node it is sent to. Over a standalone connection that node is the whole keyspace; over a
@@ -61,7 +63,8 @@ import io.lettuce.core.cluster.api.sync.RedisClusterCommands;
  * master is reported. A topology change during a pass can still hide keys from that pass — {@code SCAN}'s own caveat
  * — and the next pass sees them.
  *
- * <p>
+ *
+<p>
  * Keys carry no TTL: a segment lives as long as the record's manifest names it, and garbage collection decides when
  * it goes. Not fenced, like the record store: deletes are fenced when reached through
  * {@code SessionStore.segments(...)}.

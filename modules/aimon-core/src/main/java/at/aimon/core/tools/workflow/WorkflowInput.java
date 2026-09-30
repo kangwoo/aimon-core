@@ -52,5 +52,5 @@ public record WorkflowInput(
         @ToolParam(description = "Run mode: 'foreground' (default) blocks and returns the answer; "
                 + "'background' returns immediately with a run id "
                 + "you can track via the /runs command.", allowed = {WorkflowTool.MODE_FOREGROUND,
-                        WorkflowTool.MODE_BACKGROUND}) String mode){
+                        WorkflowTool.MODE_BACKGROUND}) String mode) {
 }

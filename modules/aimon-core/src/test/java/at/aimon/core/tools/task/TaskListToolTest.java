@@ -48,8 +48,8 @@ class TaskListToolTest {
     @Test
     @DisplayName("no filter lists all tasks and renders their ids and count")
     void listsAllTasks() {
-        when(controller.list(any())).thenReturn(List.of(task("a", BackgroundTaskState.RUNNING),
-                task("b", BackgroundTaskState.COMPLETED)));
+        when(controller.list(any()))
+                .thenReturn(List.of(task("a", BackgroundTaskState.RUNNING), task("b", BackgroundTaskState.COMPLETED)));
 
         ToolResult result = tool.execute(ToolInput.of(), ToolContext.empty());
 

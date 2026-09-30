@@ -182,8 +182,7 @@ class OpenAIResponsesErrorEventTest {
         final OpenAILlmClient client = createClientWithMock();
 
         assertThatThrownBy(() -> client.sendMessage("sys", List.of(Message.user("hi")), Collections.emptyList(),
-                LlmModel.builder().build())).isInstanceOf(LlmClientException.class)
-                        .hasMessageContaining("cancelled");
+                LlmModel.builder().build())).isInstanceOf(LlmClientException.class).hasMessageContaining("cancelled");
     }
 
     @Test

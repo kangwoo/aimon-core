@@ -40,13 +40,13 @@ import at.aimon.session.mongodb.internal.DocumentKeys;
  *
  * <pre>{@code
  * {
- *   "_id":                    "<sessionId>",
- *   "transcript":             "<encoded string>",   // absent until the first merge
- *   "agentRef":               "<agent>",            // absent while unbound
- *   "compactionFailureCount": <int>,                // absent until the first increment
- *   "sessionTotals":          { ... },              // absent until the first turn ends
- *   "budgetOverride":         { ... },              // absent when there is no override
- *   "updatedAt":              ISODate
+ * "_id": "<sessionId>",
+ * "transcript": "<encoded string>", // absent until the first merge
+ * "agentRef": "<agent>", // absent while unbound
+ * "compactionFailureCount": <int>, // absent until the first increment
+ * "sessionTotals": { ... }, // absent until the first turn ends
+ * "budgetOverride": { ... }, // absent when there is no override
+ * "updatedAt": ISODate
  * }
  * }</pre>
  *

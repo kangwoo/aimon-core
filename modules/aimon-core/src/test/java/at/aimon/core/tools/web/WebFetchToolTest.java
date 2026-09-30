@@ -115,8 +115,8 @@ class WebFetchToolTest {
         void testSuccessfulFetch() throws Exception {
             when(ssrfGuard.isSafe(anyString())).thenReturn(true);
             when(cache.get(anyString())).thenReturn(Optional.empty());
-            when(fetcher.fetch("https://example.com"))
-                    .thenReturn(FetchResult.builder().body("<html>content</html>").statusCode(200).contentType("text/html").build());
+            when(fetcher.fetch("https://example.com")).thenReturn(FetchResult.builder().body("<html>content</html>")
+                    .statusCode(200).contentType("text/html").build());
             when(contentExtractor.extract(anyString(), eq("https://example.com"), eq("markdown")))
                     .thenReturn("Extracted markdown content");
 
@@ -134,10 +134,9 @@ class WebFetchToolTest {
         void testTextMode() throws Exception {
             when(ssrfGuard.isSafe(anyString())).thenReturn(true);
             when(cache.get(anyString())).thenReturn(Optional.empty());
-            when(fetcher.fetch(anyString()))
-                    .thenReturn(FetchResult.builder().body("<html>content</html>").statusCode(200).contentType("text/html").build());
-            when(contentExtractor.extract(anyString(), anyString(), eq("text")))
-                    .thenReturn("Plain text content");
+            when(fetcher.fetch(anyString())).thenReturn(FetchResult.builder().body("<html>content</html>")
+                    .statusCode(200).contentType("text/html").build());
+            when(contentExtractor.extract(anyString(), anyString(), eq("text"))).thenReturn("Plain text content");
 
             ToolInput input = ToolInput.of(Map.of("url", "https://example.com", "extract_mode", "text"));
             ToolResult result = tool.execute(input, ToolContext.empty());
@@ -151,14 +150,13 @@ class WebFetchToolTest {
         void testTruncation() throws Exception {
             when(ssrfGuard.isSafe(anyString())).thenReturn(true);
             when(cache.get(anyString())).thenReturn(Optional.empty());
-            when(fetcher.fetch(anyString()))
-                    .thenReturn(FetchResult.builder().body("<html>large</html>").statusCode(200).contentType("text/html").build());
-            when(contentExtractor.extract(anyString(), anyString(), anyString()))
-                    .thenReturn("x".repeat(1000));
+            when(fetcher.fetch(anyString())).thenReturn(
+                    FetchResult.builder().body("<html>large</html>").statusCode(200).contentType("text/html").build());
+            when(contentExtractor.extract(anyString(), anyString(), anyString())).thenReturn("x".repeat(1000));
 
             ToolInput input = ToolInput.of(Map.of("url", "https://example.com", "max_chars", 100));
-            WebFetchTool smallTool = new WebFetchTool(fetcher, contentExtractor, cache,
-                    ssrfGuard, Duration.ofMinutes(15), 100);
+            WebFetchTool smallTool = new WebFetchTool(fetcher, contentExtractor, cache, ssrfGuard,
+                    Duration.ofMinutes(15), 100);
             ToolResult result = smallTool.execute(input, ToolContext.empty());
 
             assertThat(result.isSuccess()).isTrue();
@@ -172,8 +170,7 @@ class WebFetchToolTest {
             when(cache.get(anyString())).thenReturn(Optional.empty());
             when(fetcher.fetch(anyString()))
                     .thenReturn(FetchResult.builder().body("html").statusCode(200).contentType("text/html").build());
-            when(contentExtractor.extract(anyString(), anyString(), anyString()))
-                    .thenReturn("content");
+            when(contentExtractor.extract(anyString(), anyString(), anyString())).thenReturn("content");
 
             ToolInput input = ToolInput.of("url", "https://example.com");
             tool.execute(input, ToolContext.empty());
