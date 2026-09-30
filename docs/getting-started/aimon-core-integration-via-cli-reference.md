@@ -1231,6 +1231,7 @@ public OrcaAgentRuntimeManager agentRuntimeManager(
     // withSkillRegistry()는 일부러 부르지 않는다 — 사용자마다 제어 저장소가 다르므로 스킬 레지스트리도
     // runtime 별로 달라야 한다. 생략하면 팩토리가 (agentBundle, controlFileSystem)에서 runtime마다 새로 만든다.
     // 실행 환경 제공자도 사용자마다 — withExecutionEnvironmentProviderFactory(id -> ...) 로 runtime 별 작업 공간을 준다.
+    // 함수가 돌려준 제공자는 그 runtime 이 소유하고 닫으므로, 호출마다 새 제공자를 돌려줘야 한다.
     OrcaAgentRuntimeFactory runtimeFactory =
         new OrcaAgentRuntimeFactory("1.0.0",
             "commands", "agents", "skills",

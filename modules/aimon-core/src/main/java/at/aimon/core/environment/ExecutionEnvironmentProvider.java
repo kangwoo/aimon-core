@@ -7,7 +7,9 @@ package at.aimon.core.environment;
  * Executors call {@link #resolve} <b>once at the start of each execution</b>, before prompt assembly and before any
  * tool call. A provider owns the shells, filesystems and connections behind the environments it returns and decides
  * their lifetime; an {@code AgentRuntime} never closes them. A provider that also implements {@link AutoCloseable} is
- * closed by whoever assembled it.
+ * closed by whoever assembled it — which is the runtime itself only when the runtime was built from a per-runtime
+ * provider function ({@code OrcaAgentRuntimeFactory.withExecutionEnvironmentProviderFactory}), since that caller has
+ * no other moment to close it.
  *
  * <p>
  * A provider must not fall back to a host environment when it cannot answer: it throws, and the executor publishes an

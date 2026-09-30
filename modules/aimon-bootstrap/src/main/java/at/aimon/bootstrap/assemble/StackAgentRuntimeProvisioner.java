@@ -129,6 +129,10 @@ public final class StackAgentRuntimeProvisioner implements AgentRuntimeProvision
      * runtime. Nothing shared reaches the sink: a supplied file system is used by every runtime, and closing it
      * with any one of them would leave the rest writing to a closed handle.
      *
+     * <p>
+     * The sink hears of them only once the runtime is complete. If building fails part-way, this closes the runtime
+     * (when it got that far) and every resource it created, and rethrows; the sink is never called.
+     *
      * @param agentRuntimeId
      *            the id to build (must not be null)
      * @param sink
@@ -153,27 +157,78 @@ public final class StackAgentRuntimeProvisioner implements AgentRuntimeProvision
         final List<AimonAgentCustomizer> applicable = agentCustomizers.stream().filter(c -> c.supports(descriptor))
                 .toList();
 
-        final Stores stores = createStores(agentRuntimeId, sink);
-        final VirtualFileSystem controlFileSystem = stores.controlFileSystem;
-        final SkillRegistry skillRegistry = OrcaAgentRuntimeFactory.buildMaterializedSkillRegistry(template.getBundle(),
-                controlFileSystem, StackPaths.USER_SKILLS_DIRECTORY, StackPaths.BUNDLED_SKILLS_DIRECTORY,
-                StackPaths.AGENT_BUNDLE_BASE_PATH + "/" + template.getBundleName() + "/skills",
-                Thread.currentThread().getContextClassLoader(), skillParser);
+        // Held back from the sink until the runtime is complete (EE-23). A failure part-way leaves no runtime for the
+        // caller to close — a tenant's resources would travel in a ProvisionedAgentRuntime that is never built — so
+        // what was created is closed here instead, and the sink never hears of it, which is also what keeps the
+        // startup path from closing the same resource twice.
+        final List<OwnedResource> created = new ArrayList<>();
+        OrcaAgentRuntime runtime = null;
+        try {
+            final Stores stores = createStores(agentRuntimeId,
+                    (label, resource) -> created.add(new OwnedResource(label, resource)));
+            final VirtualFileSystem controlFileSystem = stores.controlFileSystem;
+            final SkillRegistry skillRegistry = OrcaAgentRuntimeFactory.buildMaterializedSkillRegistry(
+                    template.getBundle(), controlFileSystem, StackPaths.USER_SKILLS_DIRECTORY,
+                    StackPaths.BUNDLED_SKILLS_DIRECTORY,
+                    StackPaths.AGENT_BUNDLE_BASE_PATH + "/" + template.getBundleName() + "/skills",
+                    Thread.currentThread().getContextClassLoader(), skillParser);
 
-        final OrcaAgentRuntime runtime = instantiate(agentRuntimeId, template.getBundle(), controlFileSystem,
-                stores.environmentProvider, skillRegistry, descriptor, applicable);
+            runtime = instantiate(agentRuntimeId, template.getBundle(), controlFileSystem, stores.environmentProvider,
+                    skillRegistry, descriptor, applicable);
 
-        // Agent-level contributions first, then the ones attached to this one spec. Both land here — after the
-        // registries exist, before the runtime is reachable. Registering a tool after publication races a
-        // scheduled task resolving the runtime and starting a turn against a half-configured registry.
-        for (AimonAgentCustomizer customizer : applicable) {
-            customizer.registerHooks(descriptor, runtime.getHookRegistry());
+            // Agent-level contributions first, then the ones attached to this one spec. Both land here — after the
+            // registries exist, before the runtime is reachable. Registering a tool after publication races a
+            // scheduled task resolving the runtime and starting a turn against a half-configured registry.
+            for (AimonAgentCustomizer customizer : applicable) {
+                customizer.registerHooks(descriptor, runtime.getHookRegistry());
+            }
+            // Front-end contributions (terminal tools, display hooks).
+            for (AgentRuntimeCustomizer customizer : template.getCustomizers()) {
+                customizer.customize(runtime);
+            }
+            final Assembly assembly = new Assembly(runtime, stores.fileSystem);
+            created.forEach(owned -> sink.own(owned.label, owned.resource));
+            return assembly;
+        } catch (RuntimeException | Error e) {
+            rollBack(agentRuntimeId, runtime, created, e);
+            throw e;
         }
-        // Front-end contributions (terminal tools, display hooks).
-        for (AgentRuntimeCustomizer customizer : template.getCustomizers()) {
-            customizer.customize(runtime);
+    }
+
+    /**
+     * Closes what a failed {@link #createRuntime} built, runtime first and then its resources newest-first — the same
+     * order the teardown plan would have used. Close failures are attached to {@code cause} rather than thrown: the
+     * build failure is what the caller needs to see.
+     */
+    private static void rollBack(AgentRuntimeId agentRuntimeId, OrcaAgentRuntime runtime, List<OwnedResource> created,
+            Throwable cause) {
+        log.warn("Building {} failed; closing the runtime and {} resource(s) created for it", agentRuntimeId,
+                created.size());
+        if (runtime != null) {
+            closeInto(runtime, cause);
         }
-        return new Assembly(runtime, stores.fileSystem);
+        for (int i = created.size() - 1; i >= 0; i--) {
+            closeInto(created.get(i).resource, cause);
+        }
+    }
+
+    private static void closeInto(AutoCloseable resource, Throwable cause) {
+        try {
+            resource.close();
+        } catch (Exception closeFailure) {
+            cause.addSuppressed(closeFailure);
+        }
+    }
+
+    /** A resource {@link #createRuntime} made, held until the runtime is complete. */
+    private static final class OwnedResource {
+        private final String label;
+        private final AutoCloseable resource;
+
+        OwnedResource(String label, AutoCloseable resource) {
+            this.label = label;
+            this.resource = resource;
+        }
     }
 
     // The provider and the control store are per-runtime inputs of the one shared factory, so they are set and read

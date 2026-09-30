@@ -83,10 +83,12 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
     private final ContextEngine contextEngine; // never null - derived from the three above when not set explicitly
     private final List<ToolContextEnricher> toolContextEnrichers;
     private final WorkflowRunner workflowRunner; // nullable - only present when background runs are enabled
-    // Borrowed, never closed: the provider owns the shells and filesystems behind the environments it resolves
-    // (design execution-environment §4.3), and the assembly that built it closes it. Nullable — a runtime built
-    // without one gives every execution an unavailable environment rather than a host fallback.
+    // The provider owns the shells and filesystems behind the environments it resolves (design execution-environment
+    // §4.3). Borrowed by default, and then the assembly that built it closes it; owned only when the factory asked a
+    // per-runtime function for it (EE-21), because that caller has no other moment to close it. Nullable — a runtime
+    // built without one gives every execution an unavailable environment rather than a host fallback.
     private final ExecutionEnvironmentProvider executionEnvironmentProvider;
+    private final boolean executionEnvironmentProviderOwned;
 
     @SuppressWarnings("checkstyle:ParameterNumber")
     private OrcaAgentRuntime(AgentRuntimeId id, Agent agent, ToolRegistry toolRegistry, HookRegistry hookRegistry,
@@ -95,7 +97,7 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
             KnowledgeStore knowledgeStore, CompactionEngine compactionEngine, CompactionGuard compactionGuard,
             PromptSizeRecoveryStrategy promptSizeRecoveryStrategy, ContextEngine contextEngine,
             List<ToolContextEnricher> toolContextEnrichers, WorkflowRunner workflowRunner,
-            ExecutionEnvironmentProvider executionEnvironmentProvider) {
+            ExecutionEnvironmentProvider executionEnvironmentProvider, boolean executionEnvironmentProviderOwned) {
         this.id = Objects.requireNonNull(id, "ID cannot be null");
         this.agent = Objects.requireNonNull(agent, "Agent cannot be null");
         this.toolRegistry = Objects.requireNonNull(toolRegistry, "Tool registry cannot be null");
@@ -115,6 +117,7 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
                 .copyOf(Objects.requireNonNull(toolContextEnrichers, "toolContextEnrichers cannot be null"));
         this.workflowRunner = workflowRunner; // nullable
         this.executionEnvironmentProvider = executionEnvironmentProvider; // nullable
+        this.executionEnvironmentProviderOwned = executionEnvironmentProviderOwned;
     }
 
     @Override
@@ -170,7 +173,9 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
     }
 
     /**
-     * Returns the provider that resolves each execution's environment. Borrowed: the runtime never closes it.
+     * Returns the provider that resolves each execution's environment. Borrowed unless the runtime was built from a
+     * per-runtime provider function ({@code OrcaAgentRuntimeFactory.withExecutionEnvironmentProviderFactory}), in which
+     * case {@link #close()} closes it.
      *
      * @return the provider, or {@code null} when the runtime was built without one
      */
@@ -317,9 +322,17 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
                 log.warn("Failed to close WorkflowRunner: {}", e.getMessage(), e);
             }
         }
-        // The execution environment provider is deliberately absent from this list: it is borrowed, and the shells
-        // and filesystems behind it belong to it, not to the runtime (design execution-environment §4.3). A background
-        // Bash task that outlives an execution keeps its captured shell for as long as the provider lives.
+        // The execution environment provider is closed only when this runtime owns it, and last, after the workflow
+        // runner that resolves environments from it. A borrowed one is the assembly's to close (design
+        // execution-environment §4.3): a background Bash task that outlives an execution keeps its captured shell
+        // for as long as the provider lives.
+        if (executionEnvironmentProviderOwned && executionEnvironmentProvider instanceof AutoCloseable closeable) {
+            try {
+                closeable.close();
+            } catch (Exception e) {
+                log.warn("Failed to close ExecutionEnvironmentProvider of {}: {}", id, e.getMessage(), e);
+            }
+        }
     }
 
     @Override
@@ -363,6 +376,7 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
         private List<ToolContextEnricher> toolContextEnrichers = List.of();
         private WorkflowRunner workflowRunner;
         private ExecutionEnvironmentProvider executionEnvironmentProvider;
+        private boolean executionEnvironmentProviderOwned;
 
         /**
          * ID를 설정한다. If you need a discriminator-scoped id, set it explicitly via {@code id(...)}; otherwise the
@@ -477,11 +491,22 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
         }
 
         /**
-         * 실행마다 실행 환경을 해석할 제공자를 설정한다. 런타임은 빌려 쓸 뿐 닫지 않는다 — 셸과 파일 시스템은 제공자
-         * 소유다 (nullable; 없으면 모든 실행이 사용 불가 환경을 받는다).
+         * 실행마다 실행 환경을 해석할 제공자를 설정한다. 셸과 파일 시스템은 제공자 소유다. 런타임은
+         * {@link #ownsExecutionEnvironmentProvider(boolean)} 가 {@code true} 일 때만 제공자를 닫는다 (nullable; 없으면 모든
+         * 실행이 사용 불가 환경을 받는다).
          */
         public Builder executionEnvironmentProvider(ExecutionEnvironmentProvider executionEnvironmentProvider) {
             this.executionEnvironmentProvider = executionEnvironmentProvider;
+            return this;
+        }
+
+        /**
+         * 런타임이 실행 환경 제공자를 소유하는지 설정한다. {@code true} 면 {@link OrcaAgentRuntime#close()} 가 제공자를
+         * ({@link AutoCloseable} 일 때) 닫는다. 기본값 {@code false} — 빌려 쓴다. 팩토리는 런타임별 제공자 함수로 받은
+         * 제공자에만 {@code true} 를 준다(EE-21).
+         */
+        public Builder ownsExecutionEnvironmentProvider(boolean owned) {
+            this.executionEnvironmentProviderOwned = owned;
             return this;
         }
 
@@ -498,7 +523,7 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
             return new OrcaAgentRuntime(id, agent, toolRegistry, hookRegistry, commandRegistry, subagentRegistry,
                     skillRegistry, controlFileSystem, environment, mcpClientManager, knowledgeStore, compactionEngine,
                     compactionGuard, promptSizeRecoveryStrategy, effectiveEngine, toolContextEnrichers, workflowRunner,
-                    executionEnvironmentProvider);
+                    executionEnvironmentProvider, executionEnvironmentProviderOwned);
         }
     }
 

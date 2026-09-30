@@ -1268,7 +1268,8 @@ public OrcaAgentRuntimeManager agentRuntimeManager(
     // registry has to differ per runtime too. Omit it and the factory builds a fresh one per
     // runtime from (agentBundle, controlFileSystem).
     // The execution environment provider is per user too — withExecutionEnvironmentProviderFactory(id -> ...)
-    // gives each runtime its own workspace.
+    // gives each runtime its own workspace. The runtime owns and closes what the function returns, so return a new
+    // provider on every call.
     OrcaAgentRuntimeFactory runtimeFactory =
         new OrcaAgentRuntimeFactory("1.0.0",
             "commands", "agents", "skills",
