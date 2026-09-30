@@ -19,16 +19,16 @@ import at.aimon.core.subagent.task.BackgroundTaskState;
  *
  * <pre>{@code
  * {
- *   "_id": "<taskId>",
- *   "subagentName": "<name>",
- *   "description": "<text>",           // never null, may be ""
- *   "state": "PENDING" | "RUNNING" | "COMPLETED" | "FAILED" | "KILLED",
- *   "startTime": ISODate,
- *   "endTime": ISODate,                // omitted while non-terminal
- *   "outputOffset": <long>,
- *   "owner": { "type": "USER", "id": "...", "displayName": "..." }, // omitted when absent
- *   "contextId": "agent:<name>",       // omitted when absent
- *   "lastHeartbeat": ISODate           // omitted when absent
+ * "_id": "<taskId>",
+ * "subagentName": "<name>",
+ * "description": "<text>", // never null, may be ""
+ * "state": "PENDING" | "RUNNING" | "COMPLETED" | "FAILED" | "KILLED",
+ * "startTime": ISODate,
+ * "endTime": ISODate, // omitted while non-terminal
+ * "outputOffset": <long>,
+ * "owner": { "type": "USER", "id": "...", "displayName": "..." }, // omitted when absent
+ * "contextId": "agent:<name>", // omitted when absent
+ * "lastHeartbeat": ISODate // omitted when absent
  * }
  * }</pre>
  *

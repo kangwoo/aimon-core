@@ -203,8 +203,8 @@ class DefaultWorkflowRunnerTest {
         // third crosses to 300, and the fourth is refused (post-hoc: the crosser completes, the next is stopped).
         when(manager.execute(any(SubagentExecutionEnvironment.class), any(Subagent.class), anyString()))
                 .thenAnswer(invocation -> successWithTokens("ans:" + invocation.getArgument(2, String.class), 100));
-        final DefaultWorkflowRunner runner = runner(WorkflowConcurrencyConfig.disabled(),
-                WorkflowEventSink.NO_OP, WorkflowBudget.of(1000, 250));
+        final DefaultWorkflowRunner runner = runner(WorkflowConcurrencyConfig.disabled(), WorkflowEventSink.NO_OP,
+                WorkflowBudget.of(1000, 250));
 
         assertThatThrownBy(() -> runner.run(ctx -> {
             for (int i = 0; i < 10; i++) {
@@ -222,8 +222,8 @@ class DefaultWorkflowRunnerTest {
         // ceiling).
         when(manager.execute(any(SubagentExecutionEnvironment.class), any(Subagent.class), anyString()))
                 .thenAnswer(invocation -> successWithCost("ans:" + invocation.getArgument(2, String.class), 0.001));
-        final DefaultWorkflowRunner runner = runner(WorkflowConcurrencyConfig.disabled(),
-                WorkflowEventSink.NO_OP, WorkflowBudget.of(1000, 0, 0.0025));
+        final DefaultWorkflowRunner runner = runner(WorkflowConcurrencyConfig.disabled(), WorkflowEventSink.NO_OP,
+                WorkflowBudget.of(1000, 0, 0.0025));
 
         assertThatThrownBy(() -> runner.run(ctx -> {
             for (int i = 0; i < 10; i++) {

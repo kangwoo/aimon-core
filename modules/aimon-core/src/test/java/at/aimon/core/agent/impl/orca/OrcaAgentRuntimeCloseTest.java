@@ -86,11 +86,10 @@ class OrcaAgentRuntimeCloseTest {
     private OrcaAgentRuntime newContext(McpClientManager mcp, WorkflowRunner runner,
             ExecutionEnvironmentProvider provider) {
         when(agent.getName()).thenReturn("close-test");
-        final OrcaAgentRuntime.Builder builder = OrcaAgentRuntime.builder()
-                .id(AgentRuntimeId.from(agent)).agent(agent).toolRegistry(toolRegistry)
-                .hookRegistry(hookRegistry).commandRegistry(commandRegistry).subagentRegistry(subagentRegistry)
-                .skillRegistry(skillRegistry).controlFileSystem(fileSystem).environment(Environment.createDefault())
-                .knowledgeStore(knowledgeStore);
+        final OrcaAgentRuntime.Builder builder = OrcaAgentRuntime.builder().id(AgentRuntimeId.from(agent)).agent(agent)
+                .toolRegistry(toolRegistry).hookRegistry(hookRegistry).commandRegistry(commandRegistry)
+                .subagentRegistry(subagentRegistry).skillRegistry(skillRegistry).controlFileSystem(fileSystem)
+                .environment(Environment.createDefault()).knowledgeStore(knowledgeStore);
         if (mcp != null) {
             builder.mcpClientManager(mcp);
         }
@@ -107,11 +106,11 @@ class OrcaAgentRuntimeCloseTest {
     @DisplayName("close() does NOT close the application-scoped KnowledgeStore")
     void close_doesNotCloseKnowledgeStore() {
         when(agent.getName()).thenReturn("close-test");
-        OrcaAgentRuntime context = OrcaAgentRuntime.builder()
-                .id(AgentRuntimeId.from(agent)).agent(agent).toolRegistry(toolRegistry)
-                .hookRegistry(hookRegistry).commandRegistry(commandRegistry).subagentRegistry(subagentRegistry)
-                .skillRegistry(skillRegistry).controlFileSystem(fileSystem).environment(Environment.createDefault())
-                .mcpClientManager(mcpClientManager).knowledgeStore(knowledgeStore).build();
+        OrcaAgentRuntime context = OrcaAgentRuntime.builder().id(AgentRuntimeId.from(agent)).agent(agent)
+                .toolRegistry(toolRegistry).hookRegistry(hookRegistry).commandRegistry(commandRegistry)
+                .subagentRegistry(subagentRegistry).skillRegistry(skillRegistry).controlFileSystem(fileSystem)
+                .environment(Environment.createDefault()).mcpClientManager(mcpClientManager)
+                .knowledgeStore(knowledgeStore).build();
 
         context.close();
 
@@ -122,11 +121,11 @@ class OrcaAgentRuntimeCloseTest {
     @DisplayName("close() closes the agent-scoped McpClientManager")
     void close_closesMcpClientManager() {
         when(agent.getName()).thenReturn("close-test");
-        OrcaAgentRuntime context = OrcaAgentRuntime.builder()
-                .id(AgentRuntimeId.from(agent)).agent(agent).toolRegistry(toolRegistry)
-                .hookRegistry(hookRegistry).commandRegistry(commandRegistry).subagentRegistry(subagentRegistry)
-                .skillRegistry(skillRegistry).controlFileSystem(fileSystem).environment(Environment.createDefault())
-                .mcpClientManager(mcpClientManager).knowledgeStore(knowledgeStore).build();
+        OrcaAgentRuntime context = OrcaAgentRuntime.builder().id(AgentRuntimeId.from(agent)).agent(agent)
+                .toolRegistry(toolRegistry).hookRegistry(hookRegistry).commandRegistry(commandRegistry)
+                .subagentRegistry(subagentRegistry).skillRegistry(skillRegistry).controlFileSystem(fileSystem)
+                .environment(Environment.createDefault()).mcpClientManager(mcpClientManager)
+                .knowledgeStore(knowledgeStore).build();
 
         context.close();
 
@@ -137,11 +136,11 @@ class OrcaAgentRuntimeCloseTest {
     @DisplayName("close() closes McpClientManager exactly once and never closes KnowledgeStore (regression guard)")
     void close_closesMcpButNotKnowledgeStore() {
         when(agent.getName()).thenReturn("close-test");
-        OrcaAgentRuntime context = OrcaAgentRuntime.builder()
-                .id(AgentRuntimeId.from(agent)).agent(agent).toolRegistry(toolRegistry)
-                .hookRegistry(hookRegistry).commandRegistry(commandRegistry).subagentRegistry(subagentRegistry)
-                .skillRegistry(skillRegistry).controlFileSystem(fileSystem).environment(Environment.createDefault())
-                .mcpClientManager(mcpClientManager).knowledgeStore(knowledgeStore).build();
+        OrcaAgentRuntime context = OrcaAgentRuntime.builder().id(AgentRuntimeId.from(agent)).agent(agent)
+                .toolRegistry(toolRegistry).hookRegistry(hookRegistry).commandRegistry(commandRegistry)
+                .subagentRegistry(subagentRegistry).skillRegistry(skillRegistry).controlFileSystem(fileSystem)
+                .environment(Environment.createDefault()).mcpClientManager(mcpClientManager)
+                .knowledgeStore(knowledgeStore).build();
 
         context.close();
 
@@ -153,11 +152,10 @@ class OrcaAgentRuntimeCloseTest {
     @DisplayName("close() is a no-op when McpClientManager is absent (no NPE)")
     void close_noopWhenMcpClientManagerAbsent() {
         when(agent.getName()).thenReturn("close-test");
-        OrcaAgentRuntime context = OrcaAgentRuntime.builder()
-                .id(AgentRuntimeId.from(agent)).agent(agent).toolRegistry(toolRegistry)
-                .hookRegistry(hookRegistry).commandRegistry(commandRegistry).subagentRegistry(subagentRegistry)
-                .skillRegistry(skillRegistry).controlFileSystem(fileSystem).environment(Environment.createDefault())
-                .knowledgeStore(knowledgeStore).build();
+        OrcaAgentRuntime context = OrcaAgentRuntime.builder().id(AgentRuntimeId.from(agent)).agent(agent)
+                .toolRegistry(toolRegistry).hookRegistry(hookRegistry).commandRegistry(commandRegistry)
+                .subagentRegistry(subagentRegistry).skillRegistry(skillRegistry).controlFileSystem(fileSystem)
+                .environment(Environment.createDefault()).knowledgeStore(knowledgeStore).build();
 
         context.close();
 

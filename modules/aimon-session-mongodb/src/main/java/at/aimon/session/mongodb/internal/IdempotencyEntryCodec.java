@@ -20,15 +20,15 @@ import at.aimon.core.agent.session.store.StoredAgentExecutionResult;
  *
  * <pre>{@code
  * {
- *   "_id": "<idempotency-key>",
- *   "conversationId": "<conv-id>",
- *   "inputHash": "<sha-256>",
- *   "status": "IN_FLIGHT" | "DONE",
- *   "holderId": "<node>/..." | null,
- *   "createdAt": ISODate,
- *   "lastTouchedAt": ISODate,
- *   "expiresAt": ISODate,        // TTL-index target (set by caller, server $$NOW for in-place updates)
- *   "result": { ... } | null     // StoredAgentExecutionResult projection
+ * "_id": "<idempotency-key>",
+ * "conversationId": "<conv-id>",
+ * "inputHash": "<sha-256>",
+ * "status": "IN_FLIGHT" | "DONE",
+ * "holderId": "<node>/..." | null,
+ * "createdAt": ISODate,
+ * "lastTouchedAt": ISODate,
+ * "expiresAt": ISODate, // TTL-index target (set by caller, server $$NOW for in-place updates)
+ * "result": { ... } | null // StoredAgentExecutionResult projection
  * }
  * }</pre>
  *

@@ -525,8 +525,7 @@ class AnthropicLlmClientTest {
 
             // When/Then: Should be wrapped as project's AnthropicException
             assertThatThrownBy(() -> client.sendMessage("system", List.of(Message.user("test")),
-                    Collections.emptyList(), LlmModel.builder().build()))
-                    .isExactlyInstanceOf(AnthropicException.class)
+                    Collections.emptyList(), LlmModel.builder().build())).isExactlyInstanceOf(AnthropicException.class)
                     .hasMessageContaining("Anthropic API call failed")
                     .hasCauseInstanceOf(com.anthropic.errors.AnthropicException.class);
         }
@@ -542,10 +541,8 @@ class AnthropicLlmClientTest {
 
             // When/Then: Should be wrapped as LlmClientException
             assertThatThrownBy(() -> client.sendMessage("system", List.of(Message.user("test")),
-                    Collections.emptyList(), LlmModel.builder().build()))
-                    .isExactlyInstanceOf(LlmClientException.class)
-                    .hasMessageContaining("Anthropic API call failed")
-                    .hasCauseInstanceOf(RuntimeException.class);
+                    Collections.emptyList(), LlmModel.builder().build())).isExactlyInstanceOf(LlmClientException.class)
+                    .hasMessageContaining("Anthropic API call failed").hasCauseInstanceOf(RuntimeException.class);
         }
     }
 
