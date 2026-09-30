@@ -474,6 +474,12 @@ suppressed · 공유 제공자는 닫지 않음)이며, 앞의 셋은 수정 전
 `WorkflowRunner`(자기 풀을 가진다)를 도구 제공자 등록 **전에** 만들므로, 등록이 던지면 그 러너도 닫을 주인이 없었다. 이제
 등록 단계가 실패하면 러너를 닫는다. 테스트는 같은 클래스의 `failedCreateClosesWorkflowRunner` 이고, 역시 수정 전에 실패한다.
 
+PR #202 의 리뷰가 둘을 더 찾았다. (1) `OrcaAgentRuntimeManager.getOrCreateInternal` 은 `create(...)` 가 성공한 뒤 훅 등록기나
+레지스트리 등록이 던지면 런타임을 닫지 않았다 — 제공자 함수 경로에서는 소유한 제공자까지 샌다. 이제 닫고 다시 던진다.
+그 누수를 특성화해 두었던 `OrcaAgentRuntimeManagerTest` 의 행을 `verify(newContext).close()` 로 뒤집었다. (2) 런타임이 바깥
+자원(소유한 제공자)을 닫게 되었으므로 `OrcaAgentRuntime.close()` 를 멱등으로 만들었다. `docs/overview/scope-model.md` 의 §2 표와
+§3 문단, 시작 가이드의 `close()` 안내(두 문서 모두 한/영)에도 이 예외를 적었다.
+
 ## EE-22 — `AimonStack.fileSystem(id)` 가 제어 저장소를 돌려줄 수 있다 · **열림**
 
 **무엇을.** 로컬이 아닌 팩토리나 공유 제공자(Spring 빈) 배치에서도 `fileSystem(id)` 가 워크스페이스를 돌려주게 하거나,

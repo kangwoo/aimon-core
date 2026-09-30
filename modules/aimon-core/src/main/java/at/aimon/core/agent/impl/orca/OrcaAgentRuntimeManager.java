@@ -172,11 +172,21 @@ public final class OrcaAgentRuntimeManager {
             OrcaAgentRuntime newContext = agentRuntimeFactory.create(agentRuntimeId, agentExecutor,
                     scheduledTaskManager, agentBundle, fileSystem, credentialStore, toolProviders, commandProviders);
 
-            for (AgentRuntimeHookRegistrar registrar : hookRegistrars) {
-                registrar.register(newContext.getHookRegistry());
+            try {
+                for (AgentRuntimeHookRegistrar registrar : hookRegistrars) {
+                    registrar.register(newContext.getHookRegistry());
+                }
+                agentRuntimeRegistry.register(newContext);
+            } catch (RuntimeException | Error e) {
+                // Nothing can reach the runtime yet, so nobody else will close it — and with it the MCP clients, the
+                // workflow runner and a provider it owns (EE-21).
+                try {
+                    newContext.close();
+                } catch (RuntimeException closeFailure) {
+                    e.addSuppressed(closeFailure);
+                }
+                throw e;
             }
-
-            agentRuntimeRegistry.register(newContext);
 
             log.debug("Agent runtime created and registered: {}", agentRuntimeId);
             return newContext;

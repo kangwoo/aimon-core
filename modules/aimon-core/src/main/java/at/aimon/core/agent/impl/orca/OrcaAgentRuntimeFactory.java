@@ -884,7 +884,8 @@ public class OrcaAgentRuntimeFactory {
         Objects.requireNonNull(controlFileSystem, "controlFileSystem must not be null");
         Objects.requireNonNull(toolProviders, "toolProviders must not be null");
         Objects.requireNonNull(commandProviders, "commandProviders must not be null");
-        // Read together with the provider: bootstrap swaps the provider between calls under the factory lock.
+        // Read together with the provider. The pair is consistent only while the caller keeps other threads from
+        // reconfiguring the factory mid-create — bootstrap does, under its lock on this factory.
         final boolean providerOwned = executionEnvironmentProviderOwned;
         final ExecutionEnvironmentProvider executionEnvironmentProvider = resolveEnvironmentProvider(agentRuntimeId);
         try {

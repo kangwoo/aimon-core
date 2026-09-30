@@ -1236,8 +1236,9 @@ and why. Entries marked **(open)** are also tracked in
   leaves `logs/2024/01` alone (PR review 2). `stage()` validates a hand-built key against the same shape.
 - **A failed provider build closes what it built (PR review 1).** When a step of the constructor throws after the
   owned `LocalFileSystem` or `LocalShell` exists, both are closed before the exception propagates. The package-private
-  `Builder.ownedResourceDecorator(...)` lets a test see it. The bootstrap level (EE-23) is closed too: `StackAgentRuntimeProvisioner.createRuntime` holds what it creates
-  back from the sink until the runtime is complete, and on failure closes the runtime and those resources itself.
+  `Builder.ownedResourceDecorator(...)` lets a test see it. The bootstrap level (EE-23) is closed too:
+  `StackAgentRuntimeProvisioner.createRuntime` holds what it creates back from the sink until the runtime is
+  complete, and on failure closes the runtime and those resources itself.
 
 ### 10.3 Executors, runtime, factory
 

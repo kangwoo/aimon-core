@@ -3,6 +3,7 @@ package at.aimon.core.agent.impl.orca;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -89,6 +90,7 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
     // built without one gives every execution an unavailable environment rather than a host fallback.
     private final ExecutionEnvironmentProvider executionEnvironmentProvider;
     private final boolean executionEnvironmentProviderOwned;
+    private final AtomicBoolean closed = new AtomicBoolean();
 
     @SuppressWarnings("checkstyle:ParameterNumber")
     private OrcaAgentRuntime(AgentRuntimeId id, Agent agent, ToolRegistry toolRegistry, HookRegistry hookRegistry,
@@ -297,7 +299,10 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
      *
      * <p>
      * Closes the {@link McpClientManager} (agent-scoped under the {@code AgentScoped} marker) so MCP server
-     * connections / spawned stdio processes are released. {@link KnowledgeStore} is <b>application-scoped</b> and is
+     * connections / spawned stdio processes are released, then the agent-scoped {@link WorkflowRunner}, then — only
+     * when this runtime owns it (built from {@code withExecutionEnvironmentProviderFactory}) — the
+     * {@link ExecutionEnvironmentProvider}. A borrowed provider is left open. A second call does nothing.
+     * {@link KnowledgeStore} is <b>application-scoped</b> and is
      * deliberately <i>not</i> closed here — closing it would violate the {@code ApplicationScoped} marker contract on
      * {@code KnowledgeStore} and break the store for any other agent that shares it.
      *
@@ -307,6 +312,10 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
      */
     @Override
     public void close() {
+        // Idempotent: an owned provider is outside this object, and a second close would reach it again.
+        if (!closed.compareAndSet(false, true)) {
+            return;
+        }
         if (mcpClientManager != null) {
             try {
                 mcpClientManager.close();

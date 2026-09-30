@@ -117,6 +117,10 @@ class OrcaAgentRuntimeFactoryEnvironmentWiringTest {
 
         // EE-21: nobody else knows when this runtime goes away, so the runtime closes what the function gave it.
         assertThat(environmentProvider.closed()).isOne();
+
+        // Idempotent: the provider lives outside the runtime, and a second close must not reach it again.
+        runtime.close();
+        assertThat(environmentProvider.closed()).isOne();
     }
 
     @Test

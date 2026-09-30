@@ -243,23 +243,43 @@ class OrcaAgentRuntimeCloseTest {
         verify(workflowRunner).close();
     }
 
+    @Test
+    @DisplayName("close() closes an owned provider last, after the MCP clients and the workflow runner")
+    void close_closesAnOwnedProviderLast() throws Exception {
+        final ClosableProvider provider = org.mockito.Mockito.mock(ClosableProvider.class);
+        when(agent.getName()).thenReturn("close-test");
+        final OrcaAgentRuntime context = OrcaAgentRuntime.builder().id(AgentRuntimeId.from(agent)).agent(agent)
+                .toolRegistry(toolRegistry).hookRegistry(hookRegistry).commandRegistry(commandRegistry)
+                .subagentRegistry(subagentRegistry).skillRegistry(skillRegistry).controlFileSystem(fileSystem)
+                .environment(Environment.createDefault()).mcpClientManager(mcpClientManager)
+                .workflowRunner(workflowRunner).executionEnvironmentProvider(provider)
+                .ownsExecutionEnvironmentProvider(true).build();
+
+        context.close();
+
+        // The runner resolves environments from the provider, so the provider must outlive it.
+        final InOrder order = inOrder(mcpClientManager, workflowRunner, provider);
+        order.verify(mcpClientManager).close();
+        order.verify(workflowRunner).close();
+        order.verify(provider).close();
+    }
+
     /** A provider that owns resources, as the local one does. */
     interface ClosableProvider extends ExecutionEnvironmentProvider, AutoCloseable {
     }
 
     @Test
-    @DisplayName("close() called twice does not throw and delegates each time (close is pass-through, not latched)")
-    void close_calledTwiceDelegatesEachTime() {
+    @DisplayName("close() called twice does not throw and reaches the delegates only once (close is latched)")
+    void close_calledTwiceClosesOnce() {
         final OrcaAgentRuntime context = newContext(mcpClientManager, workflowRunner);
 
         context.close();
         assertThatCode(context::close).doesNotThrowAnyException();
 
-        // Characterisation: close() holds no "already closed" latch, so a double close reaches the delegates twice.
-        // Both delegates document an idempotent close, so this is safe today — but it means the context relies on
-        // that guarantee. If close() is ever made latching, update these counts deliberately rather than by accident.
-        verify(mcpClientManager, org.mockito.Mockito.times(2)).close();
-        verify(workflowRunner, org.mockito.Mockito.times(2)).close();
+        // Latched since EE-21: close() may now reach an owned execution environment provider, which lives outside this
+        // object and need not tolerate a second close, so the context no longer relies on its delegates' idempotence.
+        verify(mcpClientManager).close();
+        verify(workflowRunner).close();
         verify(knowledgeStore, never()).close();
     }
 }

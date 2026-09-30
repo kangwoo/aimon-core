@@ -640,9 +640,9 @@ class OrcaAgentRuntimeManagerTest {
 
     /**
      * Creation is a three-step sequence — {@code factory.create} → run every {@code hookRegistrar} → {@code
-     * registry.register} — with no rollback between the steps. These tests pin what an application observes when one
-     * of the steps blows up, because the failure mode differs sharply by step: a factory failure leaves nothing behind,
-     * whereas a registrar failure abandons a fully-constructed context that owns live resources.
+     * registry.register}. These tests pin what an application observes when one of the steps blows up: a factory
+     * failure leaves nothing behind (the factory cleans up after itself), and a registrar failure closes the
+     * fully-constructed context before rethrowing, since nothing else holds a reference to it (EE-21).
      */
     @Nested
     @DisplayName("Creation failure paths")
@@ -656,7 +656,7 @@ class OrcaAgentRuntimeManagerTest {
         }
 
         /**
-         * Like {@link #createMockContext} but lenient: on the failure paths the context is abandoned before
+         * Like {@link #createMockContext} but lenient: on the failure paths the context is closed before
          * registration, so {@code getId()} is legitimately never called.
          */
         private OrcaAgentRuntime abandonableContext(AgentRuntimeId agentRuntimeId) {
@@ -687,9 +687,8 @@ class OrcaAgentRuntimeManagerTest {
         }
 
         @Test
-        @DisplayName("A hook-registrar failure propagates, and the constructed context is neither registered nor "
-                + "closed — it is abandoned with its agent-scoped resources still open")
-        void hookRegistrarFailureAbandonsTheConstructedContext() {
+        @DisplayName("A hook-registrar failure propagates, and the constructed context is closed, not registered")
+        void hookRegistrarFailureClosesTheConstructedContext() {
             AgentRuntimeId agentRuntimeId = expectedId();
             OrcaAgentRuntime newContext = abandonableContext(agentRuntimeId);
             stubFactory(agentRuntimeId, newContext);
@@ -703,12 +702,9 @@ class OrcaAgentRuntimeManagerTest {
             assertThat(agentRuntimeRegistry.get(agentRuntimeId))
                     .as("a context that failed registration must not be published").isEmpty();
 
-            // Characterisation of a real leak: getOrCreateInternal has already built the context (which by then owns an
-            // McpClientManager and possibly a WorkflowRunner with live thread pools) but the registrar loop throws
-            // before registration, so no one holds a reference and close() is never reached. The caller cannot clean up
-            // either — it only sees the exception, never the orphaned instance. Wrapping the registrar loop in a
-            // try/catch that closes newContext before rethrowing would flip this to verify(newContext).close().
-            verify(newContext, never()).close();
+            // The context already owns an McpClientManager, possibly a WorkflowRunner and an execution environment
+            // provider; the caller only sees the exception, so the manager is the last one who can close it.
+            verify(newContext).close();
         }
 
         @Test

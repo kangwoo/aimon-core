@@ -924,7 +924,9 @@ final LiveSession liveSession = new DefaultLiveSession(
 > (`mcpClientManager`, `workflowRunner`)만 닫는다. 네이티브 자원(커넥션 풀, 워처 스레드)을 쥔
 > agent 스코프 컴포넌트를 새로 얹는다면 그 목록에 직접 추가해야 한다. 마커 인터페이스는 문서일 뿐 자동
 > 소멸이 아니다. 셸과 작업 파일 시스템은 이 목록에 없다 — `withExecutionEnvironmentProvider(...)`로 준
-> `ExecutionEnvironmentProvider`가 소유하고, 그것을 닫는 것은 준 쪽의 몫이다.
+> `ExecutionEnvironmentProvider`가 소유하고, 그것을 닫는 것은 준 쪽의 몫이다. 단,
+> `withExecutionEnvironmentProviderFactory(id -> ...)` 함수가 돌려준 제공자는 runtime 이 소유하므로 `close()`가
+> 마지막에 닫는다 — 준 쪽이 다시 닫으면 안 된다.
 
 ### 세션 스코프 (`SessionId` 수명 — **영속**)
 

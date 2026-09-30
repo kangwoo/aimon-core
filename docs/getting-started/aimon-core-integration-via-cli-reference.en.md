@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/aimon-core-integration-via-cli-reference.md
-source_commit: f651622
+source_commit: f4869a9
 ---
 
 # aimon-core integration guide — following aimon-cli as the reference
@@ -957,7 +957,9 @@ Create and look up with `OrcaAgentRuntimeManager.getOrCreateRuntime(bundle, ...)
 > holding a native resource (a connection pool, a watcher thread), you have to add it to that list yourself.
 > The marker interface is documentation, not automatic teardown. The shell and the working file system are
 > not on the list — the `ExecutionEnvironmentProvider` handed in through `withExecutionEnvironmentProvider(...)`
-> owns them, and closing it is the giver's job.
+> owns them, and closing it is the giver's job. A provider returned by a
+> `withExecutionEnvironmentProviderFactory(id -> ...)` function is the exception: the runtime owns it and `close()`
+> closes it last, so the giver must not close it again.
 
 ### Session scope (`SessionId` lifetime — **persistent**)
 
