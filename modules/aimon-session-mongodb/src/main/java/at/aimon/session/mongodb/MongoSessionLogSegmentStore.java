@@ -29,13 +29,13 @@ import at.aimon.session.mongodb.internal.DocumentKeys;
  *
  * <pre>{@code
  * {
- *   "_id":        { "sessionId": "<sessionId>", "segmentId": "<segmentId>" },
- *   "sessionId":  "<sessionId>",       // indexed — list and deleteAll are scoped by it
- *   "fromSeq":    <long>,
- *   "toSeq":      <long>,
- *   "entryCount": <int>,
- *   "payload":    "<encoded entries>", // a string, for the reason the record's transcript is one
- *   "createdAt":  ISODate               // the sealing node's clock, compared with the GC grace period
+ * "_id": { "sessionId": "<sessionId>", "segmentId": "<segmentId>" },
+ * "sessionId": "<sessionId>", // indexed — list and deleteAll are scoped by it
+ * "fromSeq": <long>,
+ * "toSeq": <long>,
+ * "entryCount": <int>,
+ * "payload": "<encoded entries>", // a string, for the reason the record's transcript is one
+ * "createdAt": ISODate // the sealing node's clock, compared with the GC grace period
  * }
  * }</pre>
  *

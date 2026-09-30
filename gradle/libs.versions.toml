@@ -195,7 +195,7 @@ javalin = "7.2.3"
 
 # AI & LLM
 openai = "4.69.2"
-anthropic = "2.62.0"
+anthropic = "2.65.0"
 jtokkit = "1.1.0"
 
 # GraalJS (Phase 5 workflow frontend). JDK-17 line: 23.0.x is the last GraalVM-for-JDK-17
@@ -231,7 +231,7 @@ logback = "1.6.4"
 checkstyle = "10.12.5"
 spotbugs = "6.5.11"
 jacoco = "0.8.11"
-spotless = "6.25.0"
+spotless = "8.10.2"
 
 # Publishing
 # 0.32.0 rather than 0.30.0 because 0.30.0 refuses to publish a snapshot at all when the host is the Central

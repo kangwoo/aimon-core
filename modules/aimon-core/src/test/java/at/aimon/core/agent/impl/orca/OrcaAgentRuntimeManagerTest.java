@@ -667,8 +667,8 @@ class OrcaAgentRuntimeManagerTest {
         }
 
         private void stubFactory(AgentRuntimeId agentRuntimeId, OrcaAgentRuntime context) {
-            when(agentRuntimeFactory.create(eq(agentRuntimeId), eq(agentExecutor), eq(scheduledTaskManager), eq(agentBundle),
-                    eq(fileSystem), any(), any(), any())).thenReturn(context);
+            when(agentRuntimeFactory.create(eq(agentRuntimeId), eq(agentExecutor), eq(scheduledTaskManager),
+                    eq(agentBundle), eq(fileSystem), any(), any(), any())).thenReturn(context);
         }
 
         @Test

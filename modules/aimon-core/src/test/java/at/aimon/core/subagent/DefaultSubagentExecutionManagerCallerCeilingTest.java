@@ -66,8 +66,7 @@ class DefaultSubagentExecutionManagerCallerCeilingTest {
     void theEffectiveListIsTheIntersection() {
         when(reactExecutor.execute(any(), any())).thenReturn(reactResult("ok"));
 
-        newManager().execute(envAllowing(List.of("Read", "Grep")),
-                subagent("explorer", List.of("Read", "Bash")), "go");
+        newManager().execute(envAllowing(List.of("Read", "Grep")), subagent("explorer", List.of("Read", "Bash")), "go");
 
         assertThat(effectiveAllowedToolNames()).containsExactly("Read");
     }

@@ -58,8 +58,7 @@ class RandomWalkDreamerTest {
     @Test
     @DisplayName("less than 2 observations → empty plan, no LLM call")
     void notEnoughObservations() {
-        when(observationStore.findBySubject(SUBJECT, 8))
-                .thenReturn(List.of(observation("obs-1", "alpha", 0.8d)));
+        when(observationStore.findBySubject(SUBJECT, 8)).thenReturn(List.of(observation("obs-1", "alpha", 0.8d)));
 
         ConsolidationPlan plan = newDreamer().plan(WS, SUBJECT);
 

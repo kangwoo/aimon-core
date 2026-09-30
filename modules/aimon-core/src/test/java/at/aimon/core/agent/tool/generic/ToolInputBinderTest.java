@@ -51,7 +51,7 @@ class ToolInputBinderTest {
     }
 
     record Allowed(@ToolParam(allowed = {
-            "content", "count"}) String mode){
+            "content", "count"}) String mode) {
     }
 
     record Collections(List<String> names, Set<Integer> numbers, String[] array) {

@@ -38,11 +38,11 @@ import at.aimon.session.mongodb.internal.DocumentKeys;
  *
  * <pre>{@code
  * {
- *   "_id":            "<conversationId>",
- *   "holderId":       "<node>/<thread>/<turnSeq>",
- *   "fencingToken":   <long>,
- *   "leaseExpiresAt": ISODate,
- *   "acquiredAt":     ISODate
+ * "_id": "<conversationId>",
+ * "holderId": "<node>/<thread>/<turnSeq>",
+ * "fencingToken": <long>,
+ * "leaseExpiresAt": ISODate,
+ * "acquiredAt": ISODate
  * }
  * }</pre>
  *
