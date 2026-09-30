@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.compact.CompactionEngine;
 import at.aimon.core.agent.compact.CompactionGuard;
+import at.aimon.core.agent.context.ContextEngine;
 import at.aimon.core.command.CommandRegistry;
 import at.aimon.core.command.MutableCommandRegistry;
 import at.aimon.core.command.system.AgentListCommand;
@@ -138,7 +139,16 @@ public class OrcaSystemCommandProvider implements OrcaCommandProvider {
                 new ApproveTurnCommand(pendingTurnRegistry, sessionApprovalStore, agentApprovalStore));
     }
 
+    @SuppressWarnings("deprecation") // the version-1 compaction SPI is carried through on purpose
     private void registerCompactCommand(MutableCommandRegistry registry, OrcaCommandProviderContext context) {
+        final ContextEngine contextEngine = context.getContextEngine();
+        if (contextEngine != null && context.getHookRegistry() != null && context.getHookExecutionManager() != null
+                && context.getEnvironment() != null) {
+            // The engine owns /compact: the summary, the transcript change and the circuit-breaker reset.
+            registry.registerSystemCommand(new CompactCommand(contextEngine, context.getHookRegistry(),
+                    context.getHookExecutionManager(), context.getEnvironment()));
+            return;
+        }
         final CompactionEngine engine = context.getCompactionEngine();
         final CompactionGuard guard = context.getCompactionGuard();
         final HookRegistry hooks = context.getHookRegistry();

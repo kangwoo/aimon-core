@@ -6,12 +6,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 
 import at.aimon.core.agent.tool.AbstractTool;
 import at.aimon.core.agent.tool.ToolCategories;
@@ -20,9 +18,13 @@ import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.agent.tool.permission.PermissionSubject;
 import at.aimon.core.agent.tool.permission.ToolPermissionSubjectAware;
+import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.environment.exception.ExecutionEnvironmentUnavailableException;
 import at.aimon.core.filesystem.VirtualFileSystem;
+import at.aimon.core.filesystem.exception.FileAccessDeniedException;
 import at.aimon.core.filesystem.exception.FileNotFoundException;
 import at.aimon.core.filesystem.exception.InvalidPathException;
+import at.aimon.core.tools.ExecutionEnvironmentAccess;
 
 /**
  * Tool for performing exact string replacements in files.
@@ -44,8 +46,14 @@ import at.aimon.core.filesystem.exception.InvalidPathException;
  *
  * <p>
  * <strong>CRITICAL REQUIREMENT</strong>: The file MUST be read using Read tools before editing. This ensures the agent
- * understands current file content and can construct accurate old_string values. The set of read files should be
- * provided in the {@link ToolContext} using the key {@link ReadTool#READ_FILES_KEY}.
+ * understands current file content and can construct accurate old_string values. The read is recorded as a
+ * {@code FileStamp} in the {@link ToolContext} under {@link ReadTool#FILE_STAMPS_KEY}; an edit is refused when no
+ * stamp was recorded in this execution or when the file's current stamp differs from it (it changed since it was
+ * read — through a tool, the shell or a person; execution-environment design §7).
+ *
+ * <p>
+ * The tool holds no filesystem: it edits through the execution environment's filesystem
+ * ({@code ToolContextKeys.EXECUTION_ENVIRONMENT}), read on every call.
  *
  * <p>
  * This tools is stateless and thread-safe. All execution state (including read files tracking) is managed through
@@ -57,9 +65,9 @@ import at.aimon.core.filesystem.exception.InvalidPathException;
  * <pre>
  * {
  *     &#64;code
- *     VirtualFileSystem vfs = new LocalFileSystem("/base/path");
- *     Tool editTool = new EditTool(vfs);
- *     ToolContext context = ToolContext.empty();
+ *     Tool editTool = new EditTool();
+ *     ToolContext context = ToolContext.builder().put(ToolContextKeys.EXECUTION_ENVIRONMENT, env)
+ *             .put(ReadTool.FILE_STAMPS_KEY, stampsRecordedByRead).build();
  *
  *     // Basic replacement
  *     ToolInput input1 = ToolInput.of(Map.of("file_path", "/path/to/file.java", "old_string",
@@ -77,8 +85,6 @@ public class EditTool extends AbstractTool implements ToolPermissionSubjectAware
 
     public static final String TOOL_NAME = "Edit";
 
-    private final VirtualFileSystem fileSystem;
-
     /**
      * Creates a new EditTool.
      *
@@ -92,13 +98,8 @@ public class EditTool extends AbstractTool implements ToolPermissionSubjectAware
      * <li>Required parameter: "new_string" (string) - The text to replace it with
      * <li>Optional parameter: "replace_all" (boolean) - Replace all occurrences (default: false)
      * </ul>
-     *
-     * @param fileSystem
-     *            The virtual file system to use for file operations (must not be null)
-     * @throws NullPointerException
-     *             if fileSystem is null
      */
-    public EditTool(VirtualFileSystem fileSystem) {
+    public EditTool() {
         super(TOOL_NAME,
                 "Performs exact string replacements in files. Enables precise, surgical modifications "
                         + "to existing files by replacing specific text patterns with new content while preserving "
@@ -106,7 +107,6 @@ public class EditTool extends AbstractTool implements ToolPermissionSubjectAware
                         + "editing a file. The old_string must match EXACTLY (including whitespace). If replace_all "
                         + "is false (default), old_string must be unique in the file.",
                 ToolCategories.FILESYSTEM, createInputSchema());
-        this.fileSystem = Objects.requireNonNull(fileSystem, "File system cannot be null");
     }
 
     /**
@@ -143,9 +143,9 @@ public class EditTool extends AbstractTool implements ToolPermissionSubjectAware
      * </ol>
      *
      * <p>
-     * <strong>CRITICAL</strong>: The file must have been read using Read tools before editing. The set of read files
-     * must be provided in the context using {@link ReadTool#READ_FILES_KEY}. This prevents blind modifications and
-     * ensures accurate replacements.
+     * <strong>CRITICAL</strong>: The file must have been read using Read tools before editing. Its stamp must be
+     * recorded in the context under {@link ReadTool#FILE_STAMPS_KEY} and still match the file. This prevents blind
+     * modifications and edits based on stale content.
      *
      * @param input
      *            The input parameters containing file_path, old_string, new_string, and optional replace_all
@@ -165,15 +165,14 @@ public class EditTool extends AbstractTool implements ToolPermissionSubjectAware
             // Extract file_path parameter
             final String filePath = input.getRequiredString("file_path");
 
-            // Retrieve read files from context
-            final Set<String> readFiles = context.get(ReadTool.READ_FILES_KEY).orElse(Collections.emptySet());
+            final ExecutionEnvironment env = ExecutionEnvironmentAccess.require(context);
+            final VirtualFileSystem fileSystem = env.fileSystem();
 
-            // CRITICAL: Check if file was read before editing
-            if (!readFiles.contains(filePath)) {
-                return ToolResult
-                        .error("File has not been read yet. You MUST use the Read tools before editing a file. "
-                                + "This ensures you understand the current file content "
-                                + "and can construct accurate old_string values.");
+            // CRITICAL: the file must have been read in this execution and must not have changed since (design §7)
+            final Optional<String> staleEdit = FileStamps.checkBeforeModify(context, env, filePath, true);
+            if (staleEdit.isPresent()) {
+                return ToolResult.error(staleEdit.get() + ": " + filePath + ". You MUST use the Read tool before "
+                        + "editing a file, so that old_string is built from the current content.");
             }
 
             // Extract old_string and new_string parameters
@@ -189,7 +188,7 @@ public class EditTool extends AbstractTool implements ToolPermissionSubjectAware
             final boolean replaceAll = input.getBoolean("replace_all", false);
 
             // Read current file content
-            final String fileContent = readFileContent(filePath);
+            final String fileContent = readFileContent(fileSystem, filePath);
 
             // Check if old_string exists in file
             if (!fileContent.contains(oldString)) {
@@ -223,7 +222,8 @@ public class EditTool extends AbstractTool implements ToolPermissionSubjectAware
             }
 
             // Write modified content back to file
-            writeFileContent(filePath, newContent);
+            writeFileContent(fileSystem, filePath, newContent);
+            FileStamps.refresh(context, env, filePath);
 
             // Return success message
             final String message = replaceAll
@@ -234,6 +234,11 @@ public class EditTool extends AbstractTool implements ToolPermissionSubjectAware
 
         } catch (IllegalArgumentException e) {
             return ToolResult.error("Invalid parameter: " + e.getMessage());
+        } catch (IllegalStateException | ExecutionEnvironmentUnavailableException e) {
+            return ToolResult.error(e.getMessage());
+        } catch (FileAccessDeniedException e) {
+            // A path rule refused it: an expected answer, not a failure of the tool.
+            return ToolResult.error(e.getMessage());
         } catch (FileNotFoundException e) {
             return ToolResult.error("File not found: " + e.getMessage());
         } catch (InvalidPathException e) {
@@ -248,13 +253,15 @@ public class EditTool extends AbstractTool implements ToolPermissionSubjectAware
     /**
      * Reads the complete file content as a string.
      *
+     * @param fileSystem
+     *            The execution environment's filesystem
      * @param filePath
      *            The file path to read
      * @return The file content as a string
      * @throws IOException
      *             if an I/O error occurs
      */
-    private String readFileContent(String filePath) throws IOException {
+    private String readFileContent(VirtualFileSystem fileSystem, String filePath) throws IOException {
         final StringBuilder content = new StringBuilder();
 
         try (InputStream inputStream = fileSystem.read(filePath);
@@ -278,6 +285,8 @@ public class EditTool extends AbstractTool implements ToolPermissionSubjectAware
     /**
      * Writes the content to a file.
      *
+     * @param fileSystem
+     *            The execution environment's filesystem
      * @param filePath
      *            The file path to write
      * @param content
@@ -285,7 +294,7 @@ public class EditTool extends AbstractTool implements ToolPermissionSubjectAware
      * @throws IOException
      *             if an I/O error occurs
      */
-    private void writeFileContent(String filePath, String content) throws IOException {
+    private void writeFileContent(VirtualFileSystem fileSystem, String filePath, String content) throws IOException {
         final byte[] contentBytes = content.getBytes(StandardCharsets.UTF_8);
         try (InputStream contentStream = new ByteArrayInputStream(contentBytes)) {
             fileSystem.write(filePath, contentStream, contentBytes.length);
@@ -341,7 +350,7 @@ public class EditTool extends AbstractTool implements ToolPermissionSubjectAware
      *
      * <p>
      * Only the file being edited is judged; {@code old_string} and {@code new_string} are content, not targets. Empty
-     * when the call cannot be judged: no {@code file_path}, or a relative one with no {@code Environment} in the
+     * when the call cannot be judged: no {@code file_path}, or a relative one with no execution environment in the
      * context to resolve it against.
      */
     @Override

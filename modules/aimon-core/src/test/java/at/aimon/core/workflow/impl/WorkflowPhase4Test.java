@@ -9,6 +9,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -27,6 +28,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.Environment;
@@ -37,9 +39,18 @@ import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.command.execution.ExecutionMetadata;
+import at.aimon.core.environment.EnvironmentDescriptor;
+import at.aimon.core.environment.EnvironmentRequest;
+import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.environment.StagedResource;
+import at.aimon.core.environment.TestExecutionEnvironments;
+import at.aimon.core.environment.exception.ExecutionEnvironmentUnavailableException;
+import at.aimon.core.environment.impl.LocalExecutionEnvironmentProvider;
+import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.TokenUsage;
+import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.subagent.InMemorySubagentRegistry;
 import at.aimon.core.subagent.Subagent;
 import at.aimon.core.subagent.SubagentExecutionEnvironment;
@@ -55,7 +66,6 @@ import at.aimon.core.workflow.StepResultCache;
 import at.aimon.core.workflow.WorkflowConcurrencyConfig;
 import at.aimon.core.workflow.WorkflowRun;
 import at.aimon.core.workflow.WorkflowRunState;
-import at.aimon.core.workflow.WorktreeEnvironmentFactory;
 import at.aimon.core.workflow.exception.WorkflowException;
 
 @DisplayName("Workflow Phase 4 — nested parallel, worktree isolation, non-cacheable, structure guard")
@@ -85,29 +95,117 @@ class WorkflowPhase4Test {
     }
 
     @Test
-    @DisplayName("Isolate=true resolves a scoped env even under NO_OP (default run)")
+    @DisplayName("Isolate=true derives a branch with ExecutionEnvironment.isolate even under NO_OP (default run)")
     void isolateResolvesScopedEnvUnderNoOp() {
-        final RecordingFactory factory = new RecordingFactory();
-        final DefaultWorkflowRunner runner = DefaultWorkflowRunner.builder(manager, env).worktreeFactory(factory)
-                .build();
+        final RecordingEnvironment isolating = new RecordingEnvironment();
+        final DefaultWorkflowRunner runner = DefaultWorkflowRunner.builder(manager, isolating.attachTo(env)).build();
         runners.add(runner);
 
-        // run() uses DEFAULT_RUN_ID → NO_OP cache. Isolation must still route through the factory (env resolution is
-        // independent of cache state).
+        // run() uses DEFAULT_RUN_ID → NO_OP cache. Isolation must still route through ExecutionEnvironment.isolate
+        // (env resolution is independent of cache state).
         runner.run(ctx -> ctx.agent(AgentTask.builder().subagent(sub).goal("g").isolate(true).build()));
 
-        assertThat(factory.branchKeys).hasSize(1);
+        assertThat(isolating.branchKeys).hasSize(1);
     }
 
     @Test
-    @DisplayName("C30: isolate=true with no factory is run-fatal, even under NO_OP")
-    void isolateWithoutFactoryIsRunFatal() {
+    @DisplayName("C30: isolate=true with no execution environment at all is run-fatal, even under NO_OP")
+    void isolateWithoutEnvironmentIsRunFatal() {
         final DefaultWorkflowRunner runner = DefaultWorkflowRunner.builder(manager, env).build();
         runners.add(runner);
 
         assertThatThrownBy(
                 () -> runner.run(ctx -> ctx.agent(AgentTask.builder().subagent(sub).goal("g").isolate(true).build())))
-                .isInstanceOf(WorkflowException.class);
+                .isInstanceOf(WorkflowException.class)
+                .hasMessageContaining("no ExecutionEnvironmentProvider is configured")
+                .hasCauseInstanceOf(ExecutionEnvironmentUnavailableException.class);
+    }
+
+    @Test
+    @DisplayName("C30: a provider that fails is reported with its reason, not as 'does not support isolation'")
+    void isolateOnFailingProviderReportsTheReason() {
+        final DefaultWorkflowRunner runner = DefaultWorkflowRunner
+                .builder(manager, env.toBuilder().executionEnvironmentProvider(request -> {
+                    throw new IllegalStateException("sandbox down");
+                }).build()).build();
+        runners.add(runner);
+
+        assertThatThrownBy(
+                () -> runner.run(ctx -> ctx.agent(AgentTask.builder().subagent(sub).goal("g").isolate(true).build())))
+                .isInstanceOf(WorkflowException.class).hasMessageContaining("sandbox down")
+                .hasMessageNotContaining("does not support isolation")
+                .hasCauseInstanceOf(ExecutionEnvironmentUnavailableException.class).hasRootCauseMessage("sandbox down");
+        assertThat(executeCount.get()).isZero();
+    }
+
+    @Test
+    @DisplayName("C30: an isolated step inside an isolated branch is refused with the reason, and never runs")
+    void nestedIsolationIsRunFatalWithTheReason(@TempDir Path workspace) {
+        try (LocalExecutionEnvironmentProvider provider = LocalExecutionEnvironmentProvider.builder()
+                .workspaceRoot(workspace).contentSearch(false).build()) {
+            final ExecutionEnvironment branch = provider
+                    .resolve(EnvironmentRequest.builder().agentRuntimeId(AgentRuntimeId.fromName("nested")).build())
+                    .isolate("k").orElseThrow();
+            final DefaultWorkflowRunner runner = DefaultWorkflowRunner
+                    .builder(manager, env.toBuilder().executionEnvironment(branch).build()).build();
+            runners.add(runner);
+
+            assertThatThrownBy(() -> runner
+                    .run(ctx -> ctx.agent(AgentTask.builder().subagent(sub).goal("g").isolate(true).build())))
+                    .isInstanceOf(WorkflowException.class).hasMessageContaining("nested isolation is not supported")
+                    .hasMessageContaining("'k'").hasCauseInstanceOf(UnsupportedOperationException.class);
+            assertThat(executeCount.get()).isZero();
+        }
+    }
+
+    @Test
+    @DisplayName("C30: an environment that cannot isolate refuses the step — it never runs unscoped")
+    void isolateOnNonIsolatingEnvironmentIsRunFatal() {
+        final DefaultWorkflowRunner runner = DefaultWorkflowRunner
+                .builder(manager,
+                        env.toBuilder().executionEnvironment(TestExecutionEnvironments.builder().build()).build())
+                .build();
+        runners.add(runner);
+
+        assertThatThrownBy(
+                () -> runner.run(ctx -> ctx.agent(AgentTask.builder().subagent(sub).goal("g").isolate(true).build())))
+                .isInstanceOf(WorkflowException.class).hasMessageContaining("does not support isolation");
+        assertThat(executeCount.get()).isZero();
+    }
+
+    @Test
+    @DisplayName("The isolated leaf gets the branch environment, the same tool registry and the run's signal")
+    void isolatedLeafRunsInTheBranchEnvironment() {
+        final AtomicReference<SubagentExecutionEnvironment> seen = new AtomicReference<>();
+        when(manager.execute(any(SubagentExecutionEnvironment.class), any(Subagent.class), anyString()))
+                .thenAnswer(invocation -> {
+                    seen.set(invocation.getArgument(0));
+                    return success("ok");
+                });
+        final RecordingEnvironment isolating = new RecordingEnvironment();
+        final SubagentExecutionEnvironment base = isolating.attachTo(env);
+        final DefaultWorkflowRunner runner = DefaultWorkflowRunner.builder(manager, base).build();
+        runners.add(runner);
+
+        runner.run(ctx -> ctx.agent(AgentTask.builder().subagent(sub).goal("g").isolate(true).build()));
+
+        assertThat(seen.get().getExecutionEnvironment()).containsSame(isolating.branches.peek());
+        assertThat(seen.get().getToolRegistry()).isSameAs(base.getToolRegistry());
+        assertThat(seen.get().getAgentRuntimeId()).isEqualTo(base.getAgentRuntimeId());
+        assertThat(seen.get().getCancellationSignal()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("A runtime-level runner with no parent environment resolves one from the provider, then isolates it")
+    void isolateResolvesParentFromProviderWhenAbsent() {
+        final RecordingEnvironment isolating = new RecordingEnvironment();
+        final DefaultWorkflowRunner runner = DefaultWorkflowRunner
+                .builder(manager, env.toBuilder().executionEnvironmentProvider(request -> isolating).build()).build();
+        runners.add(runner);
+
+        runner.run(ctx -> ctx.agent(AgentTask.builder().subagent(sub).goal("g").isolate(true).build()));
+
+        assertThat(isolating.branchKeys).hasSize(1);
     }
 
     @Test
@@ -249,8 +347,8 @@ class WorkflowPhase4Test {
     @Test
     @DisplayName("An isolate=true step is never replayed — it re-executes and re-derives its worktree")
     void isolateNeverReplayedEndToEnd() {
-        final RecordingFactory factory = new RecordingFactory();
-        final DefaultWorkflowRunner runner = DefaultWorkflowRunner.builder(manager, env).worktreeFactory(factory)
+        final RecordingEnvironment isolating = new RecordingEnvironment();
+        final DefaultWorkflowRunner runner = DefaultWorkflowRunner.builder(manager, isolating.attachTo(env))
                 .stepResultCache(new InMemoryStepResultCache()).build();
         runners.add(runner);
         final RunId id = RunId.of("run:iso-resume");
@@ -261,14 +359,14 @@ class WorkflowPhase4Test {
         // isolate implies nonCacheable: even under an ACTIVE cache and the same run id, both runs execute and
         // both derive a scoped env — a replay would skip the subagent entirely, silently dropping its worktree writes.
         assertThat(executeCount.get()).isEqualTo(2);
-        assertThat(factory.branchKeys).hasSize(2);
+        assertThat(isolating.branchKeys).hasSize(2);
     }
 
     @Test
     @DisplayName("Flipping an upstream sibling's isolate flag diverges the downstream sibling's fingerprint")
     void structureGuardDivergesOnIsolateFlagFlip() {
-        final RecordingFactory factory = new RecordingFactory();
-        final DefaultWorkflowRunner runner = DefaultWorkflowRunner.builder(manager, env).worktreeFactory(factory)
+        final RecordingEnvironment isolating = new RecordingEnvironment();
+        final DefaultWorkflowRunner runner = DefaultWorkflowRunner.builder(manager, isolating.attachTo(env))
                 .stepResultCache(new InMemoryStepResultCache()).build();
         runners.add(runner);
         final RunId id = RunId.of("run:flip");
@@ -289,7 +387,7 @@ class WorkflowPhase4Test {
         }, id);
 
         assertThat(executeCount.get()).isEqualTo(4); // a fingerprint-blind cache would replay B (count 3)
-        assertThat(factory.branchKeys).hasSize(1); // only run 1's A derived a worktree
+        assertThat(isolating.branchKeys).hasSize(1); // only run 1's A derived a worktree
     }
 
     @Test
@@ -307,7 +405,7 @@ class WorkflowPhase4Test {
         // default is NoopCancellationSignal, whose isCancelled() is constant false and can never catch a regression.
         final SubagentExecutionEnvironment realSignalBase = env.toBuilder()
                 .cancellationSignal(new DefaultInterruptCoordinator().getSignal()).build();
-        // No worktree factory wired, so the second step below is run-fatal (C30).
+        // No execution environment to isolate, so the second step below is run-fatal (C30).
         final DefaultWorkflowRunner runner = DefaultWorkflowRunner.builder(manager, realSignalBase).build();
         runners.add(runner);
 
@@ -335,7 +433,7 @@ class WorkflowPhase4Test {
                             .set(invocation.getArgument(0, SubagentExecutionEnvironment.class).getCancellationSignal());
                     return success("ok");
                 });
-        // No worktree factory wired, so the isolate step below is run-fatal (C30).
+        // No execution environment to isolate, so the isolate step below is run-fatal (C30).
         final DefaultWorkflowRunner runner = DefaultWorkflowRunner.builder(manager, env).build();
         runners.add(runner);
         final RunId id = RunId.of("run:bg-fatal");
@@ -422,14 +520,42 @@ class WorkflowPhase4Test {
                 .defaultModel(LlmModel.builder().name("gpt-4").build()).build();
     }
 
-    /** Records the branch keys it is asked to derive, and returns an env sharing all borrowed collaborators. */
-    private static final class RecordingFactory implements WorktreeEnvironmentFactory {
+    /** An execution environment that records the branch keys it is asked to isolate, answering with a fresh branch. */
+    private static final class RecordingEnvironment implements ExecutionEnvironment {
+        private final ExecutionEnvironment delegate = TestExecutionEnvironments.builder().build();
         private final ConcurrentLinkedQueue<String> branchKeys = new ConcurrentLinkedQueue<>();
+        private final ConcurrentLinkedQueue<ExecutionEnvironment> branches = new ConcurrentLinkedQueue<>();
+
+        SubagentExecutionEnvironment attachTo(SubagentExecutionEnvironment base) {
+            return base.toBuilder().executionEnvironment(this).build();
+        }
 
         @Override
-        public SubagentExecutionEnvironment derive(SubagentExecutionEnvironment baseEnv, String branchKey) {
+        public VirtualFileSystem fileSystem() {
+            return delegate.fileSystem();
+        }
+
+        @Override
+        public VirtualShell shell() {
+            return delegate.shell();
+        }
+
+        @Override
+        public EnvironmentDescriptor descriptor() {
+            return delegate.descriptor();
+        }
+
+        @Override
+        public String stage(StagedResource resource) {
+            return delegate.stage(resource);
+        }
+
+        @Override
+        public Optional<ExecutionEnvironment> isolate(String branchKey) {
             branchKeys.add(branchKey);
-            return baseEnv.toBuilder().build();
+            final ExecutionEnvironment branch = TestExecutionEnvironments.builder().durable(false).build();
+            branches.add(branch);
+            return Optional.of(branch);
         }
     }
 

@@ -1,5 +1,7 @@
 package at.aimon.core.agent.session.transcript;
 
+import java.util.Optional;
+
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.store.SessionRecordStore;
 
@@ -101,4 +103,27 @@ public interface TranscriptManager {
      *             if memory is null
      */
     void saveSilently(TranscriptBuffer memory);
+
+    /**
+     * Seals the ranges of the buffer's log the view no longer shows verbatim into segments (session-log §5.3).
+     *
+     * <p>
+     * Called by the executor on the thread running the turn, right after a compaction changed the view. The turn-end
+     * save seals too, on its own. Never throws for a storage failure. The default does nothing: a manager with no
+     * segment store keeps the whole log in the record.
+     *
+     * @param memory
+     *            the turn's buffer (must not be null)
+     */
+    default void seal(TranscriptBuffer memory) {
+    }
+
+    /**
+     * Returns a reader over the whole log of this manager's sessions, sealed ranges included.
+     *
+     * @return the reader, or empty when this manager has none (never null)
+     */
+    default Optional<SessionLogReader> getLogReader() {
+        return Optional.empty();
+    }
 }

@@ -6,10 +6,10 @@ import at.aimon.core.llm.Message;
 import at.aimon.core.llm.exception.LlmPromptTooLongException;
 
 /**
- * Last-resort fallback consulted by {@link at.aimon.core.agent.impl.orca.OrcaAgentExecutor} when the LLM provider
- * rejects a
- * request with {@link LlmPromptTooLongException} despite all upstream compaction safeguards (the last net in the
- * conversation compaction design doc §10.3).
+ * Last-resort fallback consulted when the LLM provider rejects a request with {@link LlmPromptTooLongException} despite
+ * all upstream compaction safeguards (the last net in the conversation compaction design doc §10.3). The executor
+ * reaches it through {@link at.aimon.core.agent.context.DefaultContextEngine#recover}, which installs the shortened
+ * list and hands back the view to retry with.
  *
  * <p>
  * The strategy receives the rejected prompt's message list and the exception, and returns a
@@ -18,7 +18,7 @@ import at.aimon.core.llm.exception.LlmPromptTooLongException;
  *
  * <p>
  * The framework default is {@link NoOpPromptSizeRecoveryStrategy} (always {@code NONE}); callers opt in to recovery by
- * wiring {@link DefaultPromptSizeRecoveryStrategy} via the agent runtime.
+ * wiring {@link DefaultPromptSizeRecoveryStrategy} via the agent runtime or its context engine.
  */
 public interface PromptSizeRecoveryStrategy {
 

@@ -1,11 +1,15 @@
 package at.aimon.core.tools.file;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.spy;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 import org.junit.jupiter.api.AfterEach;
@@ -16,10 +20,17 @@ import org.junit.jupiter.api.io.TempDir;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.environment.ContentQuery;
+import at.aimon.core.environment.ContentSearch;
+import at.aimon.core.environment.ContentSearchResult;
+import at.aimon.core.environment.TestExecutionEnvironments;
+import at.aimon.core.environment.UnavailableExecutionEnvironment;
+import at.aimon.core.environment.exception.ExecutionEnvironmentUnavailableException;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
 import at.aimon.core.llm.ToolDefinition;
+import at.aimon.core.tools.ToolContextKeys;
 
 /**
  * Unit tests for {@link GrepTool}.
@@ -41,8 +52,8 @@ class GrepToolTest {
         LocalFileSystemConfig config = new LocalFileSystemConfig(tempDir.toString());
         fileSystem = new LocalFileSystem(config);
         fileSystem.initialize();
-        grepTool = new GrepTool(fileSystem);
-        context = ToolContext.empty();
+        grepTool = new GrepTool();
+        context = TestExecutionEnvironments.context(fileSystem);
 
         // Create test files
         createTestFiles();
@@ -81,15 +92,118 @@ class GrepToolTest {
     // Constructor tests
 
     @Test
-    void testConstructor_NullFileSystem_ThrowsException() {
-        assertThatThrownBy(() -> new GrepTool(null)).isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("File system cannot be null");
+    void testExecute_NoEnvironment_ReturnsErrorWithoutThrowing() {
+        ToolResult result = grepTool.execute(ToolInput.of(Map.of("pattern", "x")), ToolContext.empty());
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).contains("No execution environment");
     }
 
     @Test
-    void testConstructor_ValidFileSystem_Success() {
-        GrepTool tool = new GrepTool(fileSystem);
-        assertThat(tool).isNotNull();
+    void testExecute_UnavailableEnvironment_ErrorCarriesCause() {
+        ToolContext unavailable = ToolContext.builder()
+                .put(ToolContextKeys.EXECUTION_ENVIRONMENT, UnavailableExecutionEnvironment.of("sandbox is down"))
+                .build();
+
+        ToolResult result = grepTool.execute(ToolInput.of(Map.of("pattern", "x")), unavailable);
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).contains("sandbox is down");
+    }
+
+    @Test
+    void testExecute_UnavailableEnvironmentWithExplicitPath_IsAnErrorNotNoMatches() {
+        ToolContext unavailable = ToolContext.builder()
+                .put(ToolContextKeys.EXECUTION_ENVIRONMENT, UnavailableExecutionEnvironment.of("sandbox is down"))
+                .build();
+
+        for (String path : List.of("src", ".", "/proj/src", "Main.java")) {
+            ToolResult result = grepTool.execute(ToolInput.of(Map.of("pattern", "x", "path", path)), unavailable);
+
+            assertThat(result.isError()).as(path).isTrue();
+            assertThat(result.getContent()).as(path).contains("sandbox is down").doesNotContain("No matches found");
+        }
+    }
+
+    @Test
+    void testExecute_EnvironmentLostDuringTheWalk_IsAnErrorNotAPartialAnswer() {
+        VirtualFileSystem dying = spy(fileSystem);
+        doThrow(new ExecutionEnvironmentUnavailableException("sandbox went away", null)).when(dying).read(anyString());
+        ToolContext ctx = TestExecutionEnvironments.context(dying);
+
+        ToolResult result = grepTool.execute(ToolInput.of(Map.of("pattern", "TODO", "path", ".")), ctx);
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).contains("sandbox went away").doesNotContain("No matches found");
+    }
+
+    // content search delegation (execution-environment design §4.1, §6)
+
+    @Test
+    void testExecute_ContentSearchPresent_IsUsedAndFormattedLikeTheWalk() {
+        Map<String, Object> input = Map.of("pattern", "authenticate\\(String user", "output_mode", "content");
+        ToolResult walked = grepTool.execute(ToolInput.of(input), context);
+
+        List<ContentQuery> queries = new ArrayList<>();
+        ContentSearch search = query -> {
+            queries.add(query);
+            return ContentSearchResult
+                    .of(List.of(ContentSearchResult.FileMatches.of("Main.java", List.of(ContentSearchResult.Match.of(5,
+                            "    public void authenticate(String user, String password) {", List.of(), List.of())))));
+        };
+        ToolContext searching = TestExecutionEnvironments
+                .contextBuilder(
+                        TestExecutionEnvironments.builder().fileSystem(fileSystem).contentSearch(search).build())
+                .build();
+        ToolResult delegated = grepTool.execute(ToolInput.of(input), searching);
+
+        assertThat(queries).hasSize(1);
+        assertThat(queries.get(0).getPattern()).isEqualTo("authenticate\\(String user");
+        assertThat(queries.get(0).getPath()).isEqualTo(fileSystem.getWorkingDirectory());
+        assertThat(walked.isSuccess()).isTrue();
+        assertThat(delegated.getContent()).isEqualTo(walked.getContent());
+    }
+
+    @Test
+    void testExecute_ContentSearchFails_FallsBackToTheWalk() {
+        Map<String, Object> input = Map.of("pattern", "TODO", "output_mode", "count");
+        ToolResult walked = grepTool.execute(ToolInput.of(input), context);
+        ContentSearch broken = query -> {
+            throw new IllegalStateException("rg crashed");
+        };
+        ToolContext searching = TestExecutionEnvironments
+                .contextBuilder(
+                        TestExecutionEnvironments.builder().fileSystem(fileSystem).contentSearch(broken).build())
+                .build();
+
+        ToolResult result = grepTool.execute(ToolInput.of(input), searching);
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.getContent()).isEqualTo(walked.getContent());
+    }
+
+    @Test
+    void testExecute_ContentSearch_ReceivesTypeExtensionsAndContext() {
+        List<ContentQuery> queries = new ArrayList<>();
+        ContentSearch search = query -> {
+            queries.add(query);
+            return ContentSearchResult.of(List.of());
+        };
+        ToolContext searching = TestExecutionEnvironments
+                .contextBuilder(
+                        TestExecutionEnvironments.builder().fileSystem(fileSystem).contentSearch(search).build())
+                .build();
+
+        grepTool.execute(ToolInput.of(Map.of("pattern", "x", "type", "java", "-i", true, "-C", 2, "glob", "*.java")),
+                searching);
+
+        assertThat(queries).hasSize(1);
+        ContentQuery query = queries.get(0);
+        assertThat(query.getExtensions()).containsExactly(".java");
+        assertThat(query.isCaseInsensitive()).isTrue();
+        assertThat(query.getBeforeContext()).isEqualTo(2);
+        assertThat(query.getAfterContext()).isEqualTo(2);
+        assertThat(query.getGlob()).contains("*.java");
     }
 
     // getDefinition tests

@@ -15,6 +15,7 @@ import at.aimon.core.agent.session.signal.SessionSignalBus;
 import at.aimon.core.agent.session.store.DefaultSessionStore;
 import at.aimon.core.agent.session.store.InMemorySessionLeaseStore;
 import at.aimon.core.agent.session.store.SessionLeaseStore;
+import at.aimon.core.agent.session.store.SessionLogSegmentStore;
 import at.aimon.core.agent.session.store.SessionRecordStore;
 import at.aimon.core.agent.session.store.SessionStore;
 import at.aimon.core.skill.policy.session.SessionApprovalStore;
@@ -122,6 +123,7 @@ public final class SessionRouterBuilder {
     private SessionMetrics metrics = SessionMetrics.NOOP;
     private boolean statusBroadcast;
     private SessionApprovalStore sessionApprovalStore;
+    private SessionLogSegmentStore sessionLogSegmentStore;
 
     /**
      * Configures the manager with a stateless {@link LiveSessionFactory}. Mutually exclusive with
@@ -464,6 +466,23 @@ public final class SessionRouterBuilder {
     }
 
     /**
+     * Sets the store holding the sealed segments of session logs (session-log §5.6).
+     *
+     * <p>
+     * Pass the same instance the transcript manager seals into. A session delete removes the record first and then
+     * every segment of the session, through the store's fenced delete view; a failure between the two leaves segments
+     * no record points at, which nothing reads.
+     *
+     * @param v
+     *            the store, or {@code null} when nothing is sealed
+     * @return this builder
+     */
+    public SessionRouterBuilder sessionLogSegmentStore(SessionLogSegmentStore v) {
+        this.sessionLogSegmentStore = v;
+        return this;
+    }
+
+    /**
      * Validates configuration and constructs a {@link SessionRouter}. In
      * {@link DeploymentMode#DISTRIBUTED} mode, fails fast if any SPI or {@code nodeId} is missing.
      *
@@ -526,7 +545,8 @@ public final class SessionRouterBuilder {
                 .statusHeartbeatInterval(statusHeartbeatInterval).holderLossSweepInterval(holderLossSweepInterval)
                 .idempotencyPrimaryTtl(idempotencyPrimaryTtl).idempotencySecondaryTtl(idempotencySecondaryTtl)
                 .idempotencyForwardTtl(idempotencyForwardTtl).releaseInterruptTimeout(releaseInterruptTimeout)
-                .metrics(metrics).sessionApprovalStore(sessionApprovalStore).build();
+                .metrics(metrics).sessionApprovalStore(sessionApprovalStore).segmentStore(sessionLogSegmentStore)
+                .build();
 
         final DefaultSessionRouter manager;
         if (sessionOpener != null) {

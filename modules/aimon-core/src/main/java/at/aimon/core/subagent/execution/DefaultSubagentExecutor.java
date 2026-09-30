@@ -7,6 +7,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Predicate;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,9 +22,15 @@ import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.budget.ExecutionBudget;
 import at.aimon.core.agent.budget.StalledIterationGuard;
 import at.aimon.core.agent.budget.TruncatedResponses;
-import at.aimon.core.agent.compact.CompactionDecision;
 import at.aimon.core.agent.compact.CompactionGuard;
 import at.aimon.core.agent.compact.NoOpCompactionGuard;
+import at.aimon.core.agent.context.ContextCaller;
+import at.aimon.core.agent.context.ContextDecision;
+import at.aimon.core.agent.context.ContextEngine;
+import at.aimon.core.agent.context.ContextRequest;
+import at.aimon.core.agent.context.ContextView;
+import at.aimon.core.agent.context.DefaultContextEngine;
+import at.aimon.core.agent.context.EnvironmentBlocks;
 import at.aimon.core.agent.exception.ContextWindowExceededException;
 import at.aimon.core.agent.exception.MaxIterationsExceededException;
 import at.aimon.core.agent.interrupt.CancellationSignal;
@@ -38,6 +45,7 @@ import at.aimon.core.agent.prompt.Staticness;
 import at.aimon.core.agent.prompt.SystemPromptPart;
 import at.aimon.core.agent.prompt.SystemPromptParts;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.transcript.LogOrigin;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.tool.DefaultParallelToolDispatcher;
 import at.aimon.core.agent.tool.InterruptToolKeys;
@@ -52,6 +60,12 @@ import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.search.ToolSearchCatalog;
 import at.aimon.core.agent.tool.search.ToolSearchRegistry;
 import at.aimon.core.command.execution.ExecutionMetadata;
+import at.aimon.core.environment.EnvironmentDescriptor;
+import at.aimon.core.environment.EnvironmentRequest;
+import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.environment.ExecutionEnvironments;
+import at.aimon.core.environment.ForkDefinition;
+import at.aimon.core.environment.UnavailableExecutionEnvironment;
 import at.aimon.core.hook.HookExecutionManager;
 import at.aimon.core.hook.HookFeedback;
 import at.aimon.core.hook.HookRegistry;
@@ -74,6 +88,7 @@ import at.aimon.core.llm.exception.LlmCallCancelledException;
 import at.aimon.core.llm.exception.LlmClientException;
 import at.aimon.core.llm.invoke.LlmCallGateway;
 import at.aimon.core.subagent.Subagent;
+import at.aimon.core.subagent.SubagentToolScope;
 import at.aimon.core.toolinvocation.SingleToolInvoker;
 import at.aimon.core.toolinvocation.ToolInvocationSpec;
 import at.aimon.core.toolinvocation.approval.SideEffectApprovalGate;
@@ -108,7 +123,7 @@ import at.aimon.core.tools.todo.TodoWriteTool;
  *
  * <p>
  * Thread-safe if the supplied {@link LlmCallGateway}, {@link ToolExecutionManager}, {@link HookExecutionManager} and
- * {@link CompactionGuard} are thread-safe.
+ * {@link ContextEngine} are thread-safe.
  *
  * <p>
  * Example usage:
@@ -142,7 +157,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
     private final LlmCallGateway<TranscriptBuffer> gateway;
     private final ToolExecutionManager toolExecutionManager;
     private final HookExecutionManager hookExecutionManager;
-    private final CompactionGuard compactionGuard;
+    private final ContextEngine contextEngine;
 
     /**
      * Shared per-tool invocation pipeline; identical logic drives the main-agent {@code OrcaAgentExecutor}.
@@ -179,7 +194,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      *
      * <p>
      * The client is auto-wrapped in a pass-through {@link LlmCallGateway} (default retry policy, no fallback, no
-     * prompt-too-long handler) and compaction is disabled ({@link NoOpCompactionGuard}). This preserves the legacy
+     * prompt-too-long handler) and compaction is disabled ({@link ContextEngine#passthrough()}). This preserves the
+     * legacy
      * single-client construction path used by callers and tests.
      *
      * @param llmClient
@@ -194,14 +210,14 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
     public DefaultSubagentExecutor(LlmClient llmClient, ToolExecutionManager toolExecutionManager,
             HookExecutionManager hookExecutionManager) {
         this(LlmCallGateway.<TranscriptBuffer>withDefaultRetry(llmClient), toolExecutionManager, hookExecutionManager,
-                NoOpCompactionGuard.instance());
+                ContextEngine.passthrough());
     }
 
     /**
      * Creates a new DefaultSubagentExecutor backed by a pre-configured {@link LlmCallGateway}.
      *
      * <p>
-     * Compaction is disabled ({@link NoOpCompactionGuard}).
+     * Compaction is disabled ({@link ContextEngine#passthrough()}).
      *
      * @param gateway
      *            The LLM call gateway wrapping the underlying client with retry/fallback semantics (must not be null)
@@ -214,11 +230,12 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      */
     public DefaultSubagentExecutor(LlmCallGateway<TranscriptBuffer> gateway, ToolExecutionManager toolExecutionManager,
             HookExecutionManager hookExecutionManager) {
-        this(gateway, toolExecutionManager, hookExecutionManager, NoOpCompactionGuard.instance());
+        this(gateway, toolExecutionManager, hookExecutionManager, ContextEngine.passthrough());
     }
 
     /**
-     * Primary constructor.
+     * Creates a DefaultSubagentExecutor whose AUTO compaction is decided by a bare {@link CompactionGuard}, wrapped in
+     * a {@link DefaultContextEngine}.
      *
      * @param gateway
      *            The LLM call gateway wrapping the underlying client with retry/fallback semantics (must not be null)
@@ -231,14 +248,40 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * @throws NullPointerException
      *             if any parameter is null
      */
+    @SuppressWarnings("deprecation") // the version-1 compaction SPI is carried through on purpose
     public DefaultSubagentExecutor(LlmCallGateway<TranscriptBuffer> gateway, ToolExecutionManager toolExecutionManager,
             HookExecutionManager hookExecutionManager, CompactionGuard compactionGuard) {
+        this(gateway, toolExecutionManager, hookExecutionManager, DefaultContextEngine.builder()
+                .compactionGuard(Objects.requireNonNull(compactionGuard, "Compaction guard cannot be null")).build());
+    }
+
+    /**
+     * Primary constructor.
+     *
+     * <p>
+     * A fork has no session, so whatever view state the engine keeps lives on the fork's own buffer and is never
+     * persisted.
+     *
+     * @param gateway
+     *            The LLM call gateway wrapping the underlying client with retry/fallback semantics (must not be null)
+     * @param toolExecutionManager
+     *            The tool execution manager (must not be null)
+     * @param hookExecutionManager
+     *            The hook execution manager (must not be null)
+     * @param contextEngine
+     *            The engine deciding what each of the fork's LLM calls is sent; use {@link ContextEngine#passthrough()}
+     *            to disable compaction (must not be null)
+     * @throws NullPointerException
+     *             if any parameter is null
+     */
+    public DefaultSubagentExecutor(LlmCallGateway<TranscriptBuffer> gateway, ToolExecutionManager toolExecutionManager,
+            HookExecutionManager hookExecutionManager, ContextEngine contextEngine) {
         this.gateway = Objects.requireNonNull(gateway, "gateway cannot be null");
         this.toolExecutionManager = Objects.requireNonNull(toolExecutionManager,
                 "Tool execution manager cannot be null");
         this.hookExecutionManager = Objects.requireNonNull(hookExecutionManager,
                 "Hook execution manager cannot be null");
-        this.compactionGuard = Objects.requireNonNull(compactionGuard, "Compaction guard cannot be null");
+        this.contextEngine = Objects.requireNonNull(contextEngine, "Context engine cannot be null");
         this.singleToolInvoker = new SingleToolInvoker(toolExecutionManager, hookExecutionManager);
     }
 
@@ -297,23 +340,32 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
 
         final Subagent subagent = context.getSubagent();
 
+        // The fork's run identity. Deliberately not a SessionId: one of those means a durable record plus a
+        // cluster-unique lease, and a fork is entitled to neither — it used to mint one anyway, which is the defect
+        // this removes. A resumed run keeps the identity of the run it continues (the snapshot's label) so per-run
+        // tool state — the todo list, for one — survives the suspend/resume boundary exactly as it did while that
+        // label was a minted session id.
+        final TranscriptBuffer resumedBuffer = request.getPreviousSnapshot().map(TranscriptBuffer::fromSnapshot)
+                .orElse(null);
+        final ExecutionId executionId = resumedBuffer != null
+                ? ExecutionId.of(resumedBuffer.getSessionId().value())
+                : ExecutionId.generate("subagent:" + subagent.getName());
+
+        // Resolve the execution environment once, before the prompt is built and before any tool runs (design §5.1).
+        // The parent environment rides along so the local provider can answer with it unchanged (§5.2); a fork that
+        // was handed no provider gets an unavailable environment naming the wiring gap, never the host.
+        final ExecutionEnvironment executionEnvironment = resolveExecutionEnvironment(context, request, executionId);
+
         // Build dynamic system prompt with environment information
         final String systemPrompt = buildDynamicSystemPrompt(subagent.getContent().getSystemPrompt(),
-                context.getEnvironment());
+                executionEnvironment.descriptor());
 
-        // Create conversation context, and with it the fork's run identity. Deliberately not a SessionId: one of those
-        // means a durable record plus a cluster-unique lease, and a fork is entitled to neither — it used to mint one
-        // anyway, which is the defect this removes. A resumed run keeps the identity of the run it continues (the
-        // snapshot's label) so per-run tool state — the todo list, for one — survives the suspend/resume boundary
-        // exactly as it did while that label was a minted session id.
+        // Create conversation context.
         final TranscriptBuffer transcriptBuffer;
-        final ExecutionId executionId;
-        if (request.getPreviousSnapshot().isPresent()) {
-            transcriptBuffer = TranscriptBuffer.fromSnapshot(request.getPreviousSnapshot().get());
+        if (resumedBuffer != null) {
+            transcriptBuffer = resumedBuffer;
             transcriptBuffer.setSystemPrompt(systemPrompt);
-            executionId = ExecutionId.of(transcriptBuffer.getSessionId().value());
         } else {
-            executionId = ExecutionId.generate("subagent:" + subagent.getName());
             transcriptBuffer = new TranscriptBuffer(forkTranscriptLabel(executionId), systemPrompt);
         }
 
@@ -348,9 +400,11 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 // Per-execution artifact collector so artifact-producing subagent tools have the context key (parity
                 // with the main-agent executor). Surfacing collected artifacts on SubagentExecutionResult is a
                 // follow-up.
-                final ArtifactCollector artifactCollector = new ArtifactCollector();
+                // Archived artifacts of this fork land under its own execution id (execution-environment §9.3).
+                final ArtifactCollector artifactCollector = new ArtifactCollector(executionId.value());
                 final ToolContext toolContext = createToolContext(context, request, sessionRegistry,
-                        coordinator.getSignal(), effectiveMetadata, executionId, artifactCollector);
+                        coordinator.getSignal(), effectiveMetadata, executionId, artifactCollector,
+                        executionEnvironment);
 
                 final LoopContext lc = LoopContext.builder().context(context).transcriptBuffer(transcriptBuffer)
                         .executionId(executionId).systemPromptParts(systemPromptParts)
@@ -406,16 +460,13 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 lc.budgetTracker.recordIteration();
                 stream(lc, "\n[iteration " + iterationCount + "]\n");
 
-                // AUTO compaction gate. NoOpCompactionGuard returns NONE, leaving behavior unchanged.
-                applyCompactionGate(lc, iterationCount);
+                // AUTO compaction gate. The passthrough engine returns NONE, leaving behavior unchanged; either way the
+                // engine returns the view this iteration's call is sent.
+                final ContextView view = applyCompactionGate(lc, iterationCount);
 
-                // Query available tools each iteration so newly activated deferred tools are included, and withhold
-                // whatever the tool execution manager would refuse anyway — a fork shown a tool above the ceiling
-                // would spend an iteration picking it and reading the refusal. The ceiling is read from the manager
-                // rather than configured here on purpose: the filter and the refusal then cannot disagree.
-                final SideEffectLevel ceiling = toolExecutionManager.getMaxSideEffectLevel();
-                final List<ToolDefinition> availableTools = lc.sessionRegistry.findAll().stream()
-                        .filter(tool -> ceiling.permits(tool.getSideEffectLevel())).map(Tool::getDefinition).toList();
+                // Re-read every iteration so newly activated deferred tools are included. See the method for the
+                // two things it withholds and why.
+                final List<ToolDefinition> availableTools = availableToolDefinitions(lc, iterationCount);
 
                 // Send message to LLM via the gateway (retry/fallback aware, metadata-carrying parts overload). The
                 // LlmCancellation lets a trip abort the in-flight call; clear the per-call abort lever in a finally
@@ -423,8 +474,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 // stale abort.
                 final LlmResponse response;
                 try {
-                    response = gateway.sendMessage(lc.systemPromptParts, lc.transcriptBuffer.getMessages(),
-                            availableTools, lc.modelConfig, lc.effectiveMetadata, llmCancellation);
+                    response = gateway.sendMessage(lc.systemPromptParts, view.getMessages(), availableTools,
+                            lc.modelConfig, lc.effectiveMetadata, llmCancellation);
                 } finally {
                     llmCancellation.clearAbort();
                 }
@@ -541,28 +592,31 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 .userMessage(lc.goal).executionAttributes(lc.executionAttributes).build();
         final List<HookResult> onStartResults = hookExecutionManager.executeOnStart(onStartContext);
         HookFeedback.toReminderBlock(HookFeedback.collectAdvisory(onStartResults))
-                .ifPresent(lc.transcriptBuffer::addUserMessage);
+                .ifPresent(block -> lc.transcriptBuffer.addMessage(Message.user(block), LogOrigin.SYNTHETIC));
     }
 
     /**
-     * Evaluates the AUTO compaction guard for the upcoming LLM call and applies its decision (BLOCK throws, COMPACT and
-     * WARN log, NONE is a no-op).
+     * Asks the context engine for the upcoming LLM call's view and applies its decision (BLOCK throws, COMPACT and WARN
+     * log, NONE is a no-op).
      *
      * @param lc
      *            the loop context
      * @param iterationCount
      *            the current iteration count (for logging)
+     * @return the view to send (never null)
      * @throws ContextWindowExceededException
-     *             if the guard blocks the iteration
+     *             if the engine blocks the iteration
      */
-    private void applyCompactionGate(LoopContext lc, int iterationCount) {
-        // Hand the guard this fork's run identity. Without it the compaction engine has only the transcript label to
+    private ContextView applyCompactionGate(LoopContext lc, int iterationCount) {
+        // Hand the engine this fork's run identity. Without it the compaction engine has only the transcript label to
         // go on, and that label is a SessionId wrapping this very execution id — so a PreCompact hook would be told the
         // fork had a session, and told an execution id as its name. The two are tied together at both entries into
         // execute(): a fresh fork derives the label from the id (forkTranscriptLabel), a resume derives the id back out
         // of the restored label (ExecutionId.of), which is why the round trip has to survive the snapshot.
-        final CompactionDecision decision = compactionGuard.maybeCompact(lc.transcriptBuffer, lc.modelConfig,
-                lc.hookRegistry(), lc.environment(), lc.executionId);
+        final ContextDecision decision = contextEngine
+                .prepare(ContextRequest.builder().transcriptBuffer(lc.transcriptBuffer).model(lc.modelConfig)
+                        .hookRegistry(lc.hookRegistry()).environment(lc.environment())
+                        .caller(ContextCaller.builder().executionId(lc.executionId).build()).build());
         switch (decision.getAction()) {
             case BLOCK :
                 log.error("Compaction guard blocked subagent iteration {}: {}", iterationCount, decision.getReason());
@@ -578,6 +632,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
             default :
                 break;
         }
+        return decision.getView();
     }
 
     /**
@@ -593,6 +648,29 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      */
     private static boolean isCancelledOrInterrupted(CancellationSignal cancellationSignal) {
         return SubagentInterrupts.isCancelledOrInterrupted(cancellationSignal);
+    }
+
+    /**
+     * Resolves the fork's execution environment through the provider forwarded from the spawning execution, passing
+     * the spawner's environment as the parent and the fork's own definition, so a provider can place each subagent
+     * differently (design §5.2).
+     */
+    private static ExecutionEnvironment resolveExecutionEnvironment(SubagentExecutionContext context,
+            SubagentExecutionRequest request, ExecutionId executionId) {
+        final EnvironmentRequest environmentRequest = EnvironmentRequest.builder()
+                .agentRuntimeId(context.getAgentRuntimeId()).executionId(executionId)
+                .invokingSessionId(request.getInvokingSessionId().orElse(null))
+                .principal(request.getPrincipal().orElse(null)).parent(context.getExecutionEnvironment().orElse(null))
+                .fork(ForkDefinition.builder().name(context.getSubagent().getName())
+                        .attributes(context.getSubagent().getMetadata().getAttributes()).build())
+                .build();
+        if (context.getExecutionEnvironmentProvider().isEmpty()) {
+            log.warn("No ExecutionEnvironmentProvider forwarded to fork '{}'; its file and shell tools will fail",
+                    context.getSubagent().getName());
+            return UnavailableExecutionEnvironment.of("no ExecutionEnvironmentProvider forwarded to this fork");
+        }
+        return ExecutionEnvironments.resolveOrUnavailable(context.getExecutionEnvironmentProvider().get(),
+                environmentRequest);
     }
 
     /**
@@ -632,11 +710,15 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      *            this fork's run identity (published to tools, and the key per-run state partitions on)
      * @param artifactCollector
      *            the per-execution artifact collector exposed to artifact-producing tools
+     * @param executionEnvironment
+     *            the fork's execution environment, published under the write-once key before the enrichers run
      * @return the tool context (never null)
      */
+    // Every argument is a distinct per-execution value the context publishes; bundling them would only move the list.
+    @SuppressWarnings("checkstyle:ParameterNumber")
     private ToolContext createToolContext(SubagentExecutionContext context, SubagentExecutionRequest request,
             ToolRegistry sessionRegistry, CancellationSignal cancellationSignal, LlmCallMetadata effectiveMetadata,
-            ExecutionId executionId, ArtifactCollector artifactCollector) {
+            ExecutionId executionId, ArtifactCollector artifactCollector, ExecutionEnvironment executionEnvironment) {
         final ToolContext.Builder builder = ToolContext.builder();
         builder.put(ToolContextKeys.AGENT_RUNTIME_ID, context.getAgentRuntimeId());
         // No SESSION_ID: this run is not a session's turn. The fork used to publish the id it had minted for its own
@@ -660,9 +742,9 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         builder.put(ToolContextKeys.ARTIFACT_COLLECTOR, artifactCollector);
         builder.put(TodoWriteTool.CONTEXT_ID_KEY, executionId.value());
 
-        // PAR-05: inject a thread-safe, execution-scoped read-tracking set (parity with the main-agent executor). Backs
-        // EditTool's read-before-edit guard and lets parallel CONCURRENT_SAFE Read tools record reads without racing.
-        builder.put(ReadTool.READ_FILES_KEY, ConcurrentHashMap.newKeySet());
+        // PAR-05 / execution-environment §7: inject a thread-safe, execution-scoped map of read stamps (parity with
+        // the main-agent executor). A fresh map, not the parent's: a fork does not inherit its parent's reads.
+        builder.put(ReadTool.FILE_STAMPS_KEY, new ConcurrentHashMap<>());
 
         // Publish the execution-scoped signal so cooperative subagent tools can poll it through
         // InterruptAccess#signalOf.
@@ -689,6 +771,13 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         if (sessionRegistry instanceof ToolSearchRegistry searchRegistry) {
             builder.put(ToolContextKeys.TOOL_SEARCH_REGISTRY, searchRegistry);
         }
+
+        // The execution's environment and the provider it came from, before the enrichers: both keys are write-once,
+        // so an enricher that tries to replace either fails (and is logged) instead of silently swapping the
+        // filesystem and shell under the fork's tools.
+        builder.put(ToolContextKeys.EXECUTION_ENVIRONMENT, executionEnvironment);
+        context.getExecutionEnvironmentProvider()
+                .ifPresent(p -> builder.put(ToolContextKeys.EXECUTION_ENVIRONMENT_PROVIDER, p));
 
         // Apply forwarded ToolContextEnrichers last, mirroring the main-agent executor, so module-supplied keys are
         // present for subagent tools.
@@ -736,6 +825,63 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
     }
 
     /**
+     * Builds the tool definitions offered to this fork's LLM, withholding whatever the tool execution manager would
+     * refuse anyway — a fork shown a tool it cannot use spends an iteration picking it and reading the refusal.
+     *
+     * <p>
+     * Two axes are withheld, and each reads its bound from the same place the refusal does, so a filter and a refusal
+     * cannot disagree:
+     *
+     * <ul>
+     * <li>The <b>side-effect ceiling</b>, read from the {@link ToolExecutionManager} rather than configured here.
+     * <li>The <b>subagent's allow-list</b>, read through {@link SubagentToolScope} from the same
+     * {@code getAllowedTools()} handed to that manager at dispatch. Only a tool whose <i>name</i> the allow-list never
+     * mentions is withheld: a pattern entry such as {@code Bash(git:*)} keeps {@code Bash} on offer, because a tool
+     * list cannot say which arguments are allowed, and an out-of-pattern call is still refused at dispatch.
+     * </ul>
+     *
+     * <p>
+     * <b>Only the definitions are narrowed; {@code lc.sessionRegistry} is left alone.</b> Not because dispatch
+     * resolves against it — it does not, on either path: {@link SingleToolInvoker} passes the context's full registry
+     * to the execution manager and reads the session registry only for interrupt behaviour, and the parallel
+     * dispatcher reads it only to decide whether to parallelize before handing the call to that same invoker. The
+     * reasons are that this registry may be the {@link ToolSearchRegistry} carrying the fork's activation state, which
+     * a narrowed copy would discard along with the only route to a deferred tool; and that narrowing it would couple
+     * an allow-list to two unrelated mechanisms, forcing any batch naming a withheld tool to run sequentially and
+     * resolving that tool as {@code NON_INTERRUPTIBLE}.
+     *
+     * <p>
+     * <b>An empty result is logged.</b> Either filter alone always left something; together they can leave nothing —
+     * an allow-list of misspelled names, one naming only tools above the ceiling, or one omitting
+     * {@code ToolSearch} in a deployment whose tools are all deferred. Every provider omits an empty {@code tools}
+     * field rather than rejecting it, so the model answers from prose and the fork reports a clean success. The
+     * warning is what makes that diagnosable. Logging on the first iteration is enough and not a sample:
+     * {@code findAll()} only ever grows, and both bounds are fixed for the execution, so an offer empty here is empty
+     * for every later iteration.
+     *
+     * @param lc
+     *            the loop context of the running fork
+     * @param iterationCount
+     *            the 1-based iteration about to call the LLM
+     * @return the definitions to send with the next LLM call
+     */
+    private List<ToolDefinition> availableToolDefinitions(LoopContext lc, int iterationCount) {
+        final SideEffectLevel ceiling = toolExecutionManager.getMaxSideEffectLevel();
+        final Subagent subagent = lc.subagent();
+        final Predicate<Tool> admitted = SubagentToolScope.admissionFilter(subagent);
+        final List<ToolDefinition> definitions = lc.sessionRegistry.findAll().stream()
+                .filter(tool -> ceiling.permits(tool.getSideEffectLevel())).filter(admitted).map(Tool::getDefinition)
+                .toList();
+        if (definitions.isEmpty() && iterationCount == 1 && subagent.hasToolRestrictions()) {
+            log.warn(
+                    "Subagent '{}' is offered no tools: its allowed-tools names {} and the side-effect ceiling is {}, "
+                            + "leaving nothing from the {} registered tool(s). It will answer without acting.",
+                    subagent.getName(), subagent.getAllowedTools(), ceiling, lc.sessionRegistry.findAll().size());
+        }
+        return definitions;
+    }
+
+    /**
      * Creates a per-session tool registry. If the underlying registry is a {@link ToolSearchCatalog}, a new
      * {@link ToolSearchRegistry} is created for session-scoped tool activation. Otherwise the original registry is
      * returned unchanged.
@@ -752,29 +898,16 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
     }
 
     /**
-     * Builds a dynamic system prompt by injecting environment details.
+     * Builds a dynamic system prompt by injecting the execution environment's description.
      *
      * @param baseSystemPrompt
      *            The base system prompt from Subagent configuration
-     * @param environment
-     *            The runtime environment (may be null)
+     * @param descriptor
+     *            The fork's execution environment descriptor
      * @return The system prompt with dynamically injected environment information
      */
-    private String buildDynamicSystemPrompt(String baseSystemPrompt, Environment environment) {
-        final StringBuilder promptBuilder = new StringBuilder(baseSystemPrompt);
-
-        if (environment != null) {
-            promptBuilder.append("\n\n");
-            promptBuilder.append("Here is useful information about the environment you are running in:\n\n");
-            promptBuilder.append("**Environment:**\n");
-            promptBuilder.append("```\n");
-            promptBuilder.append("Working directory: ").append(environment.getWorkingDirectory()).append('\n');
-            promptBuilder.append("Platform: ").append(environment.getPlatform()).append('\n');
-            promptBuilder.append("OS Version: ").append(environment.getOsVersion()).append('\n');
-            promptBuilder.append("```");
-        }
-
-        return promptBuilder.toString();
+    private String buildDynamicSystemPrompt(String baseSystemPrompt, EnvironmentDescriptor descriptor) {
+        return baseSystemPrompt + "\n\n" + EnvironmentBlocks.render(descriptor);
     }
 
     /**

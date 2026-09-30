@@ -2,7 +2,6 @@ package at.aimon.core.agent.impl.orca;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 
@@ -12,7 +11,6 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 import at.aimon.core.agent.AgentContent;
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.prompt.Staticness;
 import at.aimon.core.agent.prompt.SystemPromptPart;
 import at.aimon.core.agent.prompt.SystemPromptParts;
@@ -20,6 +18,7 @@ import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.transcript.DefaultTranscriptManager;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.command.DefaultCommandExecutionManager;
+import at.aimon.core.environment.EnvironmentDescriptor;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.llm.LlmClient;
 import at.aimon.core.subagent.DefaultSubagentExecutionManager;
@@ -54,8 +53,8 @@ class OrcaAgentExecutorSystemPromptTest {
     void concatenated_matchesGolden_withEnvironment() {
         final AgentContent content = AgentContent.builder().systemPrompt("You are {{name}}, a helpful assistant.")
                 .variables(Map.of("name", "Aimon")).build();
-        final Environment environment = Environment.builder().workingDirectory("/tmp/wd").platform("linux-test")
-                .osVersion("1.0-test").timeZone(ZoneId.systemDefault()).build();
+        final EnvironmentDescriptor environment = EnvironmentDescriptor.builder().workingDirectory("/tmp/wd")
+                .platform("linux-test").osVersion("1.0-test").build();
 
         // Golden value captured from the pre-CTX-04 StringBuilder implementation.
         final String expected = "You are Aimon, a helpful assistant." + "\n\n"
@@ -73,8 +72,8 @@ class OrcaAgentExecutorSystemPromptTest {
     void concatenated_matchesGolden_withOverrideVariables() {
         final AgentContent content = AgentContent.builder().systemPrompt("You are {{name}}, version {{v}}")
                 .variables(Map.of("name", "base", "v", "1")).build();
-        final Environment environment = Environment.builder().workingDirectory("/work").platform("mac").osVersion("42")
-                .timeZone(ZoneId.systemDefault()).build();
+        final EnvironmentDescriptor environment = EnvironmentDescriptor.builder().workingDirectory("/work")
+                .platform("mac").osVersion("42").build();
 
         // Override takes precedence over base variables (same rule as AgentContentRenderer).
         final Map<String, Object> overrides = Map.of("name", "override");
@@ -103,8 +102,8 @@ class OrcaAgentExecutorSystemPromptTest {
     @DisplayName("parts structure includes agent-content and environment parts with appropriate kinds")
     void parts_structure_exposesNonStaticKindLabels() {
         final AgentContent content = AgentContent.builder().systemPrompt("Hello").build();
-        final Environment environment = Environment.builder().workingDirectory("/x").platform("p").osVersion("o")
-                .timeZone(ZoneId.systemDefault()).build();
+        final EnvironmentDescriptor environment = EnvironmentDescriptor.builder().workingDirectory("/x").platform("p")
+                .osVersion("o").build();
 
         final SystemPromptParts parts = executor.buildSystemPromptParts(content, Map.of(), environment);
 
@@ -127,8 +126,8 @@ class OrcaAgentExecutorSystemPromptTest {
     @DisplayName("at least one part uses a non-STATIC kind label when environment is present")
     void parts_nonStaticKindPresent() {
         final AgentContent content = AgentContent.builder().systemPrompt("Hello").build();
-        final Environment environment = Environment.builder().workingDirectory("/x").platform("p").osVersion("o")
-                .timeZone(ZoneId.systemDefault()).build();
+        final EnvironmentDescriptor environment = EnvironmentDescriptor.builder().workingDirectory("/x").platform("p")
+                .osVersion("o").build();
 
         final SystemPromptParts parts = executor.buildSystemPromptParts(content, Map.of(), environment);
 

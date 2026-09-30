@@ -22,5 +22,16 @@
  * Everything is opt-in. The framework default {@link at.aimon.core.agent.context.ContextAssembler#NOOP} assembles
  * nothing, so wiring nothing leaves the prompt shape unchanged. Assembly is defensive by contract — a failing provider
  * is skipped, never propagated, so context assembly can never break a turn.
+ *
+ * <p>
+ * The package also holds the {@link at.aimon.core.agent.context.ContextEngine} SPI — the one place that decides what
+ * the
+ * LLM sees of the session log ({@link at.aimon.core.agent.context.ContextRequest},
+ * {@link at.aimon.core.agent.context.ContextDecision}, {@link at.aimon.core.agent.context.ContextView}) — with its two
+ * engines ({@link at.aimon.core.agent.context.DefaultContextEngine},
+ * {@link at.aimon.core.agent.context.RollingContextEngine}) and the deterministic
+ * {@link at.aimon.core.agent.context.ViewProjection}. Those implementations sit beside the SPI rather than under an
+ * {@code impl} package, as {@code DefaultContextAssembler} does; design:
+ * {@code docs/design/agent-execution/context-engine.md}.
  */
 package at.aimon.core.agent.context;

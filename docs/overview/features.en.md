@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/features.md
-source_commit: 8c8de45
+source_commit: bc8715e
 ---
 
 # Feature Catalog
@@ -88,6 +88,7 @@ feed turns in through a [session](#2-sessions).
 - [command queue guide](../features/agent-execution/command-queue-guide.en.md)
 - [interruptible tools guide](../features/agent-execution/interruptible-tools-guide.en.md)
 - [the system-reminder convention](../features/agent-execution/system-reminder-convention.en.md)
+- [the context engine guide](../features/agent-execution/context-engine-guide.en.md) — the compaction policy for long conversations (`default` / `rolling`)
 
 ---
 
@@ -146,6 +147,7 @@ The unit through which an agent interacts with the outside world. The contract i
 | tool permission checking | `agent.tool.permission`, `ToolPermissionSubjectAware` | core |
 | declaring interrupt behaviour | `InterruptBehavior`, `InterruptAccess` | core |
 | invoking a tool directly, once | `SingleToolInvoker` | core |
+| the tools' execution environment (file system and shell per execution, skill staging, isolation) | `ExecutionEnvironment`, `ExecutionEnvironmentProvider`, `LocalExecutionEnvironmentProvider` | core |
 
 ### 3.2 Built-in tools
 
@@ -282,7 +284,7 @@ from calling a subagent by itself.
 | judgement patterns (judge panels and the like) | `JudgedResult`, `Verdict`, `WorkflowPatterns` | core |
 | run handles · resumption | `RunHandle`, `RunId`, `RunStore`, `StepResultCache` | core |
 | budget / concurrency limits | `WorkflowBudget`, `WorkflowConcurrencyConfig` | core |
-| running isolated in a git worktree | `WorktreeEnvironmentFactory` | core |
+| running isolated in a worktree | `ExecutionEnvironment.isolate()` · `WorktreeMerge` | core |
 | the JS scripting frontend | the `WorkflowJs` tool | `aimon-workflow-graaljs` |
 
 **When you use it.** When coverage demands sweeping in parallel (an audit, a migration), when

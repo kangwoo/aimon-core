@@ -131,23 +131,24 @@ public interface SkillRepository {
     Map<String, String> findAssets(String skillName);
 
     /**
-     * Resolves the base directory of a skill.
+     * Resolves where a skill's files can be read from to stage them into an execution environment
+     * (execution-environment design §4.4): a read-only view of a filesystem and the skill's directory on it.
      *
      * <p>
-     * Directory-backed repositories return the storage path of the skill's directory so that callers can anchor the
-     * skill's own relative file references (for example via the {@code ${AIMON_SKILL_DIR}} render variable). The
-     * default implementation returns empty for repositories that have no addressable directory (such as classpath
-     * repositories that have not been materialized to a filesystem).
+     * Every repository must answer for every skill it has: {@code ${AIMON_SKILL_DIR}} is always the path
+     * {@code ExecutionEnvironment.stage(...)} returns for this source, never a repository path, because that path does
+     * not exist wherever the model's shell runs. A VFS repository returns its own filesystem, a host-path repository a
+     * read-only filesystem over its root, a classpath repository a read-only view of the class path walked the way the
+     * bundled-skill materializer walks it. The registry treats "skill found, no source" as a repository defect and
+     * refuses to load the skill.
      *
      * @param skillName
      *            The skill name (must not be null)
-     * @return The skill's base directory, or empty if not applicable
+     * @return The skill's source, or empty only when the skill does not exist
      * @throws SkillRepositoryException
      *             if an I/O error occurs
      */
-    default Optional<String> resolveBaseDir(String skillName) {
-        return Optional.empty();
-    }
+    Optional<SkillSource> resolveSource(String skillName);
 
     /**
      * Finds every bundled file for a skill.

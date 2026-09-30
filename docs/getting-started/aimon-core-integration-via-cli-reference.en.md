@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/aimon-core-integration-via-cli-reference.md
-source_commit: 8c8de45
+source_commit: f651622
 ---
 
 # aimon-core integration guide — following aimon-cli as the reference
@@ -620,6 +620,9 @@ final InMemorySessionRecordStore sessionRecordStore = new InMemorySessionRecordS
 final TranscriptManager transcriptManager = createTranscriptManager(sessionRecordStore, sessionCheckpoints);
 final MessageQueueManager messageQueueManager = createMessageQueueManager();
 final LocalFileSystem fileSystem = createFileSystem();
+final Path projectDir = Path.of(fileSystem.getWorkingDirectory());
+// The control store ({project}/.aimon/) — definitions and task outputs. Invisible to the model's file tools.
+final VirtualFileSystem controlFileSystem = new ScopedVirtualFileSystem(fileSystem, ".aimon");
 ```
 
 The default implementations (`AgentSetupFactory.java:1033, 1044, 1076, 1083`):
@@ -686,10 +689,13 @@ final PendingTurnReaper pendingTurnReaper = createPendingTurnReaper(pendingTurnR
 // the narrow one (the session) first.
 final AgentApprovalStore agentApprovalStore = new InMemoryAgentApprovalStore();
 final SessionApprovalStore sessionApprovalStore = new InMemorySessionApprovalStore();
-// Materialise bundled (classpath) skills into the working VFS so that their attached files
-// (scripts, references, templates) become real files the agent can read and ${AIMON_SKILL_DIR} resolves.
+// Materialise bundled (classpath) skills into the control store ({project}/.aimon/). The agent does not
+// read this copy directly — .aimon/ is invisible to the file tools. ${AIMON_SKILL_DIR} is the path the
+// execution environment returns after copying the skill into the workspace's .aimon-staged/ on first use
+// (ExecutionEnvironment.stage). The directories are relative to the control root — physically still
+// .aimon/skills and .aimon/bundled-skills.
 final SkillRegistry skillRegistry = OrcaAgentRuntimeFactory.buildMaterializedSkillRegistry(
-        agentBundle, fileSystem, ".aimon/skills", ".aimon/bundled-skills",
+        agentBundle, controlFileSystem, "skills", "bundled-skills",
         DEFAULT_AGENT_BUNDLE_BASE_PATH + "/" + extractAgentName(config) + "/skills",
         Thread.currentThread().getContextClassLoader(), skillParser);
 final SkillInvocationPolicy skillInvocationPolicy =
@@ -778,10 +784,13 @@ exists for documentation, but by convention it marks something **that class must
 final OrcaAgentRuntimeFactory agentRuntimeFactory =
     new OrcaAgentRuntimeFactory(
         "1.0.0",
-        ".aimon/commands",
-        ".aimon/agents",
-        ".aimon/skills",
+        "commands",   // relative to the control root (OrcaAgentRuntimeFactory.DEFAULT_*_DIRECTORY)
+        "agents",
+        "skills",
         createWikiKnowledgeStore(agentRuntimeRegistry, llmClient))
+        // Where the model's tools work — the file system and the shell. create(...) refuses without it.
+        .withExecutionEnvironmentProvider(LocalExecutionEnvironmentProvider.builder()
+                .workspaceRoot(projectDir).build())
         .withSkillRegistry(skillRegistry)
         .withCodeSubagentRegistry(codeSubagentRegistry)
         .withPendingTurnRegistry(pendingTurnRegistry)
@@ -795,7 +804,7 @@ final OrcaAgentRuntimeFactory agentRuntimeFactory =
 // AgentRuntimeId is not an argument — it is derived from the agent inside createAgentRuntime.
 final OrcaAgentRuntime agentRuntime = createAgentRuntime(
     agentRuntimeFactory, agentExecutor,
-    schedulingEngine.getTaskManager(), agentBundle, fileSystem,
+    schedulingEngine.getTaskManager(), agentBundle, controlFileSystem,
     config, graalJsEngines);
 
 configureHooks(agentRuntime, outputFormatter);
@@ -944,11 +953,11 @@ Created **once per agent** and shared by every session of that agent. Not closed
 Create and look up with `OrcaAgentRuntimeManager.getOrCreateRuntime(bundle, ...)` — as the name says, an existing one is reused. Tear down only with `destroyRuntime`, on application shutdown or explicit agent removal.
 
 > **`OrcaAgentRuntime.close()` does not scan for `AgentScoped` implementations** — it closes a hardcoded
-> list only (`mcpClientManager`, `workflowRunner`, `ownedShell`). If you add a new agent-scoped component
+> list only (`mcpClientManager`, `workflowRunner`). If you add a new agent-scoped component
 > holding a native resource (a connection pool, a watcher thread), you have to add it to that list yourself.
-> The marker interface is documentation, not automatic teardown. `ownedShell` is the only conditional one of
-> the three — it is null when an assembly handed in a shell with `withShell(...)`, and closing that shell is
-> then the giver's job.
+> The marker interface is documentation, not automatic teardown. The shell and the working file system are
+> not on the list — the `ExecutionEnvironmentProvider` handed in through `withExecutionEnvironmentProvider(...)`
+> owns them, and closing it is the giver's job.
 
 ### Session scope (`SessionId` lifetime — **persistent**)
 
@@ -1255,13 +1264,16 @@ public OrcaAgentRuntimeManager agentRuntimeManager(
         SkillInvocationPolicy skillPolicy, SessionApprovalStore sessionApprovals,
         AgentApprovalStore agentApprovals, PendingTurnRegistry pendingTurnRegistry) {
 
-    // withSkillRegistry() is deliberately not called — the VFS differs per user, so the skill
+    // withSkillRegistry() is deliberately not called — the control store differs per user, so the skill
     // registry has to differ per runtime too. Omit it and the factory builds a fresh one per
-    // runtime from (agentBundle, fileSystem).
+    // runtime from (agentBundle, controlFileSystem).
+    // The execution environment provider is per user too — withExecutionEnvironmentProviderFactory(id -> ...)
+    // gives each runtime its own workspace.
     OrcaAgentRuntimeFactory runtimeFactory =
         new OrcaAgentRuntimeFactory("1.0.0",
-            ".aimon/commands", ".aimon/agents", ".aimon/skills",
+            "commands", "agents", "skills",
             /* knowledgeStore */ null)
+            .withExecutionEnvironmentProviderFactory(id -> providerFor(id))
             .withSessionApprovalStore(sessionApprovals)
             .withAgentApprovalStore(agentApprovals)
             .withPendingTurnRegistry(pendingTurnRegistry)

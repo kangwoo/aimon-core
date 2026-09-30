@@ -1,6 +1,7 @@
 package at.aimon.core.subagent;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 import at.aimon.core.agent.tool.permission.AllowedTool;
@@ -156,6 +157,7 @@ public final class Subagent {
         private List<String> tools;
         private String model;
         private Integer maxIterations;
+        private Map<String, String> attributes;
 
         private Builder() {
         }
@@ -211,6 +213,15 @@ public final class Subagent {
             return this;
         }
 
+        /**
+         * Sets the free-form attributes, the code equivalent of the markdown {@code attributes} block after flattening
+         * (see {@link SubagentMetadata#getAttributes()}). When unset, there are none.
+         */
+        public Builder attributes(Map<String, String> attributes) {
+            this.attributes = attributes;
+            return this;
+        }
+
         /** Sets the maximum ReAct loop iterations. When unset, defaults to 1000 (markdown parity). */
         public Builder maxIterations(int maxIterations) {
             this.maxIterations = maxIterations;
@@ -243,6 +254,9 @@ public final class Subagent {
             }
             if (maxIterations != null) {
                 metadataBuilder.maxIterations(maxIterations);
+            }
+            if (attributes != null) {
+                metadataBuilder.attributes(attributes);
             }
             return new Subagent(name, metadataBuilder.build(), SubagentContent.of(systemPrompt));
         }

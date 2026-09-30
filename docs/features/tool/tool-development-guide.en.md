@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/tool/tool-development-guide.md
-source_commit: 8c8de45
+source_commit: cb1b23b
 ---
 
 # Tool Development Guide
@@ -39,6 +39,7 @@ A Tool is the core component that lets an LLM agent interact with external syste
 | **Immutability** | ToolInput, ToolResult and ToolContext are immutable objects |
 | **Type Safety** | Use ToolInput's type-safe accessors |
 | **Stateless** | A Tool keeps no state between executions |
+| **Environment from context** | Never take a file system or shell in the constructor. Read them per `execute()` from the execution's environment with `ExecutionEnvironmentAccess.require(context)` |
 
 ### Package structure
 
@@ -383,8 +384,10 @@ ToolContext is the **immutable** container holding runtime context information.
 // returns an Optional
 Optional<Object> value = context.get("key");
 
-// type-safe access
-Optional<VirtualFileSystem> vfs = context.get("fileSystem", VirtualFileSystem.class);
+// type-safe access — this execution's file system and shell come from the execution environment
+ExecutionEnvironment env = ExecutionEnvironmentAccess.require(context);   // IllegalStateException when absent
+VirtualFileSystem vfs = env.fileSystem();
+VirtualShell shell = env.shell();
 
 // check for presence
 if (context.containsKey("environment")) {
@@ -399,10 +402,23 @@ Map<String, Object> all = context.getContext();
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `fileSystem` | `VirtualFileSystem` | the filesystem instance |
+| `executionEnvironment` (`ToolContextKeys.EXECUTION_ENVIRONMENT`) | `ExecutionEnvironment` | this execution's file system, shell and descriptor. **Write-once** — the executor puts it; an enricher may read it but not replace it (a second write throws `IllegalStateException`) |
 | `environment` | `Environment` | the environment configuration |
 | `executorType` | `InvokerType` | the kind of invoker (MAIN_AGENT, SUBAGENT …) |
-| `read_tool.read_files` | `Set<String>` | the list of files that were read (set by ReadTool) |
+| `read_tool.file_stamps` (`ReadTool.FILE_STAMPS_KEY`) | `Map<String, FileStamp>` | stamps of the files read in this execution (recorded by ReadTool, checked by Edit/Write) |
+
+**The execution environment lives in the context only.** The `OrcaToolProviderContext` a tool provider
+receives has no `getFileSystem()`/`getShell()` — it offers the control store (`getControlFileSystem()`: agent
+and skill definitions, task outputs), which must not be handed to a model-driven tool as its working file
+system. In an execution whose environment is missing or unavailable (`UnavailableExecutionEnvironment` — its
+file and shell calls throw `ExecutionEnvironmentUnavailableException`), catch `IllegalStateException` /
+`ExecutionEnvironmentUnavailableException` and return `ToolResult.error`. There is no path back to the host
+environment (design: [`design/tool/execution-environment.md`](../../design/tool/execution-environment.md)).
+
+**Stale-write protection.** A tool that modifies an existing file checks the stamp in
+`ReadTool.FILE_STAMPS_KEY`. Not read in this execution → `"Read the file before modifying it"`; changed since it
+was read → `"File changed since it was read; Read it again"`. The key is the environment-normalised path, so
+`a.txt`, `./a.txt` and the absolute path are one entry.
 
 ### Creating a context (for tests/initialisation)
 
@@ -412,7 +428,7 @@ ToolContext empty = ToolContext.empty();
 
 // the builder pattern
 ToolContext context = ToolContext.builder()
-    .put("fileSystem", vfs)
+    .put(ToolContextKeys.EXECUTION_ENVIRONMENT, env)
     .put("environment", env)
     .put("executorType", InvokerType.MAIN_AGENT)
     .build();
@@ -736,6 +752,34 @@ A caution — **a name-only entry is not an unrestricted allow once it is mixed 
 
 And **a pattern that cannot be interpreted is a denial**. If a pattern is configured for a tool that has neither a subject nor a rule, that call is denied — this position used to be an unrestricted allow, which meant the strictest-looking configuration produced the weakest enforcement.
 
+### Where an allow-list is declared — four surfaces, and their ceiling
+
+An allow-list is declared in four places, and the key is spelled **`allowed-tools` in all four**.
+
+| Surface | Markdown | Code |
+|---------|----------|------|
+| **Agent** (main) | `agent.md` | `DefaultAgent.builder().tools(...)` |
+| **Subagent** | `agents/*.md` | `Subagent.builder().tools(...)` |
+| **Skill** | `SKILL.md` | — |
+| **Command** | the command file | — |
+
+Every other key in `agent.md` is camelCase (`maxIterations`) and this one alone is kebab, deliberately — it is the Agent Skills specification's name, and the other three surfaces already spell it that way. In exchange, writing `allowedTools` **fails the parse rather than being ignored in silence**: an unknown key is otherwise dropped, which would leave an unrestricted agent behind while its author believes they restricted it.
+
+A declared list acts at **two points**, and both read the one same value, so they cannot disagree.
+
+| Point | What it does |
+|-------|--------------|
+| The prompt | a tool whose **name** the list never mentions is dropped from the definitions sent to the LLM — the model cannot pick it at all |
+| Execution | naming it anyway is refused. Not "unknown tool" but "not allowed", which is exactly why the registry is left unnarrowed |
+
+**A pattern entry still offers its tool.** `Bash(git:*)` does not remove `Bash` from the offer — a tool list cannot say which arguments are allowed, so the argument is judged at the point of execution instead.
+
+IMPORTANT: **nothing exceeds its caller's list.** A run spawned as a subagent, a workflow step or a skill fork is bound by its own list **and by its caller's**, and so are the tools a skill uses in its own ReAct loop — whether the model calls `Skill` or the user types `/my-skill`. When the two have nothing in common the run is **refused**: an empty list reads everywhere as *unrestricted*, so passing on an empty intersection as an empty list would invert the strictest possible pairing into the loosest.
+
+And **a name-only entry is not unrestricted once a pattern entry for the same name sits beside it.** Writing both `Read` and `Read(/tmp/**)` means `/tmp` only, and the intersection carries that pattern through — otherwise a fork would come out wider than the run that spawned it.
+
+Finally, **an offer left with no tools at all is logged**. A misspelled name does that, so does a list naming only tools above the side-effect ceiling, and so does one omitting `ToolSearch` in a deployment whose tools are deferred. No provider rejects an empty `tools` field, so the model answers from prose and the run finishes cleanly — work never done, looking like work done.
+
 ---
 
 <!-- anchor alias: an untranslated Korean design doc links to the canonical heading id -->
@@ -771,8 +815,8 @@ Before declaring `CONCURRENT_SAFE`, confirm all of the following. If even one is
       (read-only, or the same input gives the same result). Mutating tools such as `Edit`/`Write`/`Bash`/
       `TodoWrite` must be `SEQUENTIAL`.
 - [ ] **Does it touch shared mutable state only in a thread-safe way?** If the tool mutates a mutable object
-      passed through the `ToolContext`, that object must be thread-safe. For example, the `READ_FILES_KEY` Set
-      that `ReadTool` mutates is injected by the executor as `ConcurrentHashMap.newKeySet()`. **If a new tool
+      passed through the `ToolContext`, that object must be thread-safe. For example, the `FILE_STAMPS_KEY` map
+      that `ReadTool` mutates is injected by the executor, per execution, as `new ConcurrentHashMap<>()`. **If a new tool
       puts mutable state into the `ToolContext` and mutates it, it must be declared `SEQUENTIAL`** or use a
       thread-safe data structure.
 - [ ] **Is its InterruptBehavior `NON_INTERRUPTIBLE` or `COOPERATIVE`?** A `THREAD_INTERRUPT`/
@@ -837,7 +881,6 @@ import java.io.InputStreamReader;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -846,60 +889,52 @@ import at.aimon.core.agent.tool.AbstractTool;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.environment.FileStamp;
+import at.aimon.core.environment.exception.ExecutionEnvironmentUnavailableException;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.filesystem.exception.FileNotFoundException;
 import at.aimon.core.filesystem.exception.InvalidPathException;
+import at.aimon.core.tools.ExecutionEnvironmentAccess;
 
 /**
- * A Tool that reads the contents of a file.
+ * A Tool that reads file contents.
  *
- * Capabilities:
+ * Features:
  * - partial reads (offset, limit)
  * - line numbers (cat -n format)
- * - truncation of long lines (2000 characters)
+ * - truncating long lines (2000 characters)
+ * - the file system comes from the execution environment, not the constructor
  */
 public class ReadTool extends AbstractTool {
 
-    // the constants
+    // constants
     public static final String TOOL_NAME = "Read";
-    public static final String READ_FILES_KEY = "read_tool.read_files";
 
     private static final Logger log = LoggerFactory.getLogger(ReadTool.class);
     private static final int DEFAULT_LIMIT = 2000;
     private static final int MAX_LINE_LENGTH = 2000;
     private static final String LINE_NUMBER_FORMAT = "%6d→";
 
-    // the dependencies
-    private final VirtualFileSystem fileSystem;
-
-    public ReadTool(VirtualFileSystem fileSystem) {
+    // takes neither a file system nor a shell — both come from the execution environment in the context, per call
+    public ReadTool() {
         super(TOOL_NAME,
                 "Read file contents from the filesystem. " +
                         "Returns file content with line numbers in cat -n format. " +
                         "Supports partial reading for large files using offset and limit parameters. " +
                         "By default, reads first 2000 lines. Lines longer than 2000 characters are truncated.",
                 createInputSchema());
-        this.fileSystem = Objects.requireNonNull(fileSystem, "File system cannot be null");
     }
 
     private static Map<String, Object> createInputSchema() {
         return Map.of(
                 "type", "object",
+                "additionalProperties", false,
                 "properties", Map.of(
-                        "file_path", Map.of(
-                                "type", "string",
-                                "description", "The path to the file to read"
-                        ),
-                        "offset", Map.of(
-                                "type", "number",
-                                "description", "The line number to start reading from (1-based). " +
-                                        "Only provide if the file is too large to read at once"
-                        ),
-                        "limit", Map.of(
-                                "type", "number",
-                                "description", "The number of lines to read. " +
-                                        "Only provide if the file is too large to read at once"
-                        )
+                        "file_path", Map.of("type", "string", "description", "The path to the file to read"),
+                        "offset", Map.of("type", "integer", "description",
+                                "The line number to start reading from (1-based)"),
+                        "limit", Map.of("type", "integer", "description", "The number of lines to read")
                 ),
                 "required", List.of("file_path")
         );
@@ -913,60 +948,56 @@ public class ReadTool extends AbstractTool {
         try {
             // 1. extract the parameters
             final String filePath = input.getRequiredString("file_path");
-            log.debug("Reading file: {}", filePath);
 
-            // 2. validate
+            // 2. this execution's environment — IllegalStateException when there is none
+            final ExecutionEnvironment env = ExecutionEnvironmentAccess.require(context);
+            final VirtualFileSystem fileSystem = env.fileSystem();
+
+            // 3. validate
             if (fileSystem.isDirectory(filePath)) {
-                return ToolResult.error(
-                        "Cannot read directory: " + filePath +
-                                ". Use 'ls' command to list directory contents."
-                );
+                return ToolResult.error("Cannot read directory: " + filePath);
             }
 
-            // 3. extract the optional parameters (with defaults)
+            // 4. extract optional parameters (with defaults)
             final int offset = input.getInteger("offset", 1);
-            if (offset < 1) {
-                return ToolResult.error("offset must be >= 1, got: " + offset);
-            }
-
             final int limit = input.getInteger("limit", DEFAULT_LIMIT);
-            if (limit < 1) {
-                return ToolResult.error("limit must be >= 1, got: " + limit);
+            if (offset < 1 || limit < 1) {
+                return ToolResult.error("offset and limit must be >= 1");
             }
 
-            // 4. perform the core work
-            final String content = readFileContent(filePath, offset, limit);
+            // 5. stamp before reading — the next Edit/Write catches a change made while reading
+            final FileStamp stamp = FileStamps.current(env, filePath);
 
-            // 5. update the context (for other Tools to build on)
-            markFileAsRead(context, filePath);
+            // 6. do the core work
+            final String content = readFileContent(fileSystem, filePath, offset, limit);
 
-            // 6. return the result
-            if (content.isEmpty()) {
-                return ToolResult.success("[System Warning: This file is empty]");
-            }
+            // 7. update the context (feeds the stale-write check of Edit/Write)
+            FileStamps.record(context, env, filePath, stamp);
 
-            log.debug("Successfully read file: {}", filePath);
-            return ToolResult.success(content);
+            // 8. return the result
+            return content.isEmpty()
+                    ? ToolResult.success("[System Warning: This file is empty]")
+                    : ToolResult.success(content);
 
         } catch (IllegalArgumentException e) {
             log.warn("Invalid parameter: {}", e.getMessage());
             return ToolResult.error("Invalid parameter: " + e.getMessage());
+        } catch (IllegalStateException | ExecutionEnvironmentUnavailableException e) {
+            // no environment, or an unavailable one — never fall back to a default environment; return an error
+            log.warn("No usable execution environment: {}", e.getMessage());
+            return ToolResult.error(e.getMessage());
         } catch (FileNotFoundException e) {
-            log.warn("File not found: {}", e.getMessage());
             return ToolResult.error("File not found: " + e.getMessage());
         } catch (InvalidPathException e) {
-            log.warn("Invalid path: {}", e.getMessage());
             return ToolResult.error("Invalid path: " + e.getMessage());
-        } catch (IOException e) {
-            log.error("Failed to read file: {}", e.getMessage(), e);
-            return ToolResult.error("Failed to read file: " + e.getMessage());
         } catch (Exception e) {
             log.error("Unexpected error reading file: {}", e.getMessage(), e);
             return ToolResult.error("Unexpected error: " + e.getMessage());
         }
     }
 
-    private String readFileContent(String filePath, int offset, int limit) throws IOException {
+    private String readFileContent(VirtualFileSystem fileSystem, String filePath, int offset, int limit)
+            throws IOException {
         final StringBuilder result = new StringBuilder();
 
         try (InputStream inputStream = fileSystem.read(filePath);
@@ -977,7 +1008,7 @@ public class ReadTool extends AbstractTool {
             String line;
 
             while ((line = reader.readLine()) != null) {
-                // skip up to the offset
+                // skip until the offset
                 if (currentLine < offset) {
                     currentLine++;
                     continue;
@@ -989,15 +1020,12 @@ public class ReadTool extends AbstractTool {
                 }
 
                 // truncate long lines
-                String displayLine = line;
-                if (line.length() > MAX_LINE_LENGTH) {
-                    displayLine = line.substring(0, MAX_LINE_LENGTH) + "...";
-                }
+                final String displayLine = line.length() > MAX_LINE_LENGTH
+                        ? line.substring(0, MAX_LINE_LENGTH) + "..."
+                        : line;
 
-                // emit in cat -n format
-                result.append(String.format(LINE_NUMBER_FORMAT, currentLine))
-                        .append(displayLine)
-                        .append('\n');
+                // output in cat -n format
+                result.append(String.format(LINE_NUMBER_FORMAT, currentLine)).append(displayLine).append('\n');
 
                 currentLine++;
                 linesRead++;
@@ -1005,14 +1033,6 @@ public class ReadTool extends AbstractTool {
         }
 
         return result.toString();
-    }
-
-    private void markFileAsRead(ToolContext context, String filePath) {
-        @SuppressWarnings("unchecked") final Set<String> readFiles = context.get(READ_FILES_KEY, Set.class).orElse(null);
-        if (readFiles != null) {
-            readFiles.add(filePath);
-            log.debug("Marked file as read: {}", filePath);
-        }
     }
 }
 ```
@@ -1030,6 +1050,7 @@ Check the following items when developing a new Tool.
 - [ ] Does the constructor call `super(name, description, schema)`?
 - [ ] Does `execute()` null-check with `Objects.requireNonNull()`?
 - [ ] Does `execute()` never throw?
+- [ ] Are there no `VirtualFileSystem`/`VirtualShell` constructor parameters or fields? (ArchUnit `toolsHoldNoFileSystemOrShellFields` checks it)
 - [ ] Is every error returned as `ToolResult.error()`?
 - [ ] Is the JSON Schema defined correctly?
 - [ ] Are the required parameters listed in `required`?

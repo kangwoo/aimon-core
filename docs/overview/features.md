@@ -82,6 +82,7 @@
 - [명령 큐 가이드](../features/agent-execution/command-queue-guide.md)
 - [중단 가능 도구 가이드](../features/agent-execution/interruptible-tools-guide.md)
 - [system-reminder 규약](../features/agent-execution/system-reminder-convention.md)
+- [Context Engine 가이드](../features/agent-execution/context-engine-guide.md) — 긴 대화의 압축 정책 (`default` / `rolling`)
 
 ---
 
@@ -137,6 +138,7 @@ IMPORTANT: **세션(`SessionRecord`)과 라이브 세션(`LiveSession`)은 다�
 | 도구 권한 검사 | `agent.tool.permission`, `ToolPermissionSubjectAware` | core |
 | 중단 동작 선언 | `InterruptBehavior`, `InterruptAccess` | core |
 | 단발 도구 직접 호출 | `SingleToolInvoker` | core |
+| 도구의 실행 환경 (파일 시스템·셸을 실행마다, 스킬 스테이징, 격리) | `ExecutionEnvironment`, `ExecutionEnvironmentProvider`, `LocalExecutionEnvironmentProvider` | core |
 
 ### 3.2 내장 도구
 
@@ -268,7 +270,7 @@ IMPORTANT (알려진 오칭): `OnSessionStartHook` / `OnSessionEndHook` 은 세�
 | 판정 패턴 (judge panel 등) | `JudgedResult`, `Verdict`, `WorkflowPatterns` | core |
 | 실행 핸들 · 재개 | `RunHandle`, `RunId`, `RunStore`, `StepResultCache` | core |
 | 예산 / 동시성 제한 | `WorkflowBudget`, `WorkflowConcurrencyConfig` | core |
-| git worktree 격리 실행 | `WorktreeEnvironmentFactory` | core |
+| 워크트리 격리 실행 | `ExecutionEnvironment.isolate()` · `WorktreeMerge` | core |
 | JS 스크립트 프론트엔드 | `WorkflowJs` 도구 | `aimon-workflow-graaljs` |
 
 **언제 쓰나.** 커버리지를 위해 병렬로 훑어야 하거나(감사·마이그레이션), 독립적 관점의 교차 검증이

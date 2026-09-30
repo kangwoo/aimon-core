@@ -1,15 +1,15 @@
 package at.aimon.core.agent.impl.orca.tool;
 
 import java.util.Objects;
-import java.util.Set;
 
 import at.aimon.core.agent.orca.tool.OrcaToolProvider;
 import at.aimon.core.agent.orca.tool.OrcaToolProviderContext;
 import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolRegistry;
-import at.aimon.core.filesystem.VirtualFileSystem;
+import at.aimon.core.tools.artifact.ArtifactArchive;
 import at.aimon.core.tools.artifact.ArtifactAwareEditTool;
 import at.aimon.core.tools.artifact.ArtifactAwareWriteTool;
+import at.aimon.core.tools.artifact.ArtifactPolicy;
 import at.aimon.core.tools.file.EditTool;
 import at.aimon.core.tools.file.GrepTool;
 import at.aimon.core.tools.file.ReadTool;
@@ -28,43 +28,34 @@ import at.aimon.core.tools.file.WriteTool;
  * <li>{@link GrepTool} - Search file contents
  * </ul>
  *
+ * <p>
+ * None of the tools is given a filesystem: each reads the execution's environment from its {@code ToolContext} on
+ * every call (execution-environment design §6). The only branch left here is the artifact one. The artifact-aware
+ * variants archive into the context's control store when an environment is not durable (§9.3).
+ *
  * @see OrcaToolProvider
  */
 public class OrcaFileToolProvider implements OrcaToolProvider {
 
-    /**
-     * Canonical, immutable set of the VFS-backed file-tool names registered by {@link #registerTools}
-     * ({@code Read}/{@code Write}/{@code Edit}/{@code Grep}).
-     *
-     * <p>
-     * Lockstep contract (design §6.3):
-     * {@link at.aimon.core.agent.impl.orca.environment.WorktreeToolEnvironmentFactory} consumes this set to decide
-     * which tools to exclude from the base-registry carry-over and rebind to a branch-scoped filesystem when deriving
-     * an isolated worktree environment. Any new VFS-backed tool added to {@link #registerTools} MUST be added here
-     * (and given a rebinding branch in that factory) in the same change — otherwise the new tool would be carried
-     * over still bound to the base filesystem, silently defeating isolation.
-     */
-    public static final Set<String> FILE_TOOL_NAMES = Set.of(ReadTool.TOOL_NAME, WriteTool.TOOL_NAME,
-            EditTool.TOOL_NAME, GrepTool.TOOL_NAME);
-
-    private final boolean artifactEnabled;
+    private final ArtifactPolicy artifactPolicy;
 
     /**
      * Creates an OrcaFileToolProvider with artifact support disabled.
      */
     public OrcaFileToolProvider() {
-        this(false);
+        this(ArtifactPolicy.disabled());
     }
 
     /**
      * Creates an OrcaFileToolProvider.
      *
-     * @param artifactEnabled
-     *            {@code true}이면 파일 쓰기/편집 시 아티팩트를 자동 등록하는 {@link ArtifactAwareWriteTool},
-     *            {@link ArtifactAwareEditTool}을 사용한다
+     * @param artifactPolicy
+     *            {@linkplain ArtifactPolicy#isEnabled() 활성}이면 파일 쓰기/편집 시 아티팩트를 자동 등록하는
+     *            {@link ArtifactAwareWriteTool}, {@link ArtifactAwareEditTool}을 사용하고, 비영속 환경의 파일을 제어
+     *            저장소로 옮길 때 이 정책의 상한을 따른다 (must not be null)
      */
-    public OrcaFileToolProvider(boolean artifactEnabled) {
-        this.artifactEnabled = artifactEnabled;
+    public OrcaFileToolProvider(ArtifactPolicy artifactPolicy) {
+        this.artifactPolicy = Objects.requireNonNull(artifactPolicy, "artifactPolicy must not be null");
     }
 
     @Override
@@ -72,15 +63,20 @@ public class OrcaFileToolProvider implements OrcaToolProvider {
         Objects.requireNonNull(registry, "registry must not be null");
         Objects.requireNonNull(context, "context must not be null");
 
-        final VirtualFileSystem fileSystem = context.getFileSystem();
-        Objects.requireNonNull(fileSystem, "fileSystem must not be null in context");
+        final Tool writeTool;
+        final Tool editTool;
+        if (artifactPolicy.isEnabled()) {
+            final ArtifactArchive archive = new ArtifactArchive(context.getControlFileSystem(), artifactPolicy);
+            writeTool = new ArtifactAwareWriteTool(archive);
+            editTool = new ArtifactAwareEditTool(archive);
+        } else {
+            writeTool = new WriteTool();
+            editTool = new EditTool();
+        }
 
-        final Tool writeTool = artifactEnabled ? new ArtifactAwareWriteTool(fileSystem) : new WriteTool(fileSystem);
-        final Tool editTool = artifactEnabled ? new ArtifactAwareEditTool(fileSystem) : new EditTool(fileSystem);
-
-        registry.register(new ReadTool(fileSystem));
+        registry.register(new ReadTool());
         registry.register(writeTool);
         registry.register(editTool);
-        registry.register(new GrepTool(fileSystem));
+        registry.register(new GrepTool());
     }
 }

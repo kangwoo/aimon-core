@@ -14,13 +14,17 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import at.aimon.bootstrap.runtime.AgentRuntimeEviction;
 import at.aimon.bootstrap.spec.AgentRuntimeSpec;
+import at.aimon.bootstrap.spec.ExecutionEnvironmentSpec;
 import at.aimon.bootstrap.spec.SessionSpec;
+import at.aimon.core.agent.ContextEngineKind;
+import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.knowledge.SimpleDocumentChunker;
 import at.aimon.core.llm.ReasoningEffort;
 import at.aimon.core.llm.capability.InMemoryModelCapabilityRegistry;
 import at.aimon.core.llm.capability.ModelCapabilityDeclaration;
 import at.aimon.core.llm.capability.ThinkingDialect;
 import at.aimon.core.memory.MemoryInjectionMode;
+import at.aimon.core.tools.artifact.ArtifactPolicy;
 import at.aimon.core.tracing.TracePayloadPolicy;
 import at.aimon.core.tracing.impl.InMemoryTraceSpanStore;
 import at.aimon.session.routing.DeploymentMode;
@@ -244,6 +248,9 @@ public class AimonProperties implements InitializingBean {
     /** Engine that runs scheduled tasks. */
     public static final String SCHEDULING_BACKEND = PREFIX + ".scheduling.backend";
 
+    /** Prefix of the rolling context engine's tuning properties. */
+    public static final String CONTEXT_ROLLING = PREFIX + ".context.rolling";
+
     /** Whether the scheduling engine starts with the application context. */
     public static final String SCHEDULING_AUTO_STARTUP = PREFIX + ".scheduling.auto-startup";
 
@@ -370,7 +377,11 @@ public class AimonProperties implements InitializingBean {
 
     private final SessionProperties session = new SessionProperties();
 
+    private final ContextProperties context = new ContextProperties();
+
     private final Tools tools = new Tools();
+
+    private final EnvironmentProperties environment = new EnvironmentProperties();
 
     private final Skill skill = new Skill();
 
@@ -840,6 +851,22 @@ public class AimonProperties implements InitializingBean {
         requirePositive(agentRuntime.getSweepInterval(), AGENT_RUNTIME_SWEEP_INTERVAL);
         requirePositive(skill.getApproval().getPendingTurnTtl(), SKILL_APPROVAL_PENDING_TURN_TTL);
         requireNoBlankEntry(skill.getApproval().getAllow(), SKILL_APPROVAL_ALLOW);
+        // Checked here, not only when a rolling runtime is built: an agent can pick rolling in its AGENT.md later,
+        // and a bad ratio should not wait for that agent to be the one that fails.
+        final ContextProperties.Rolling rolling = context.getRolling();
+        requireRatio(rolling.getAutoCompactRatio(), CONTEXT_ROLLING + ".auto-compact-ratio");
+        requireRatio(rolling.getHeadTokenRatio(), CONTEXT_ROLLING + ".head-token-ratio");
+        requireRatio(rolling.getTailTokenRatio(), CONTEXT_ROLLING + ".tail-token-ratio");
+        requireRatio(rolling.getSummaryTokenRatio(), CONTEXT_ROLLING + ".summary-token-ratio");
+        requireRatio(rolling.getMinTailRatio(), CONTEXT_ROLLING + ".min-tail-ratio");
+        requireAtLeastOne(rolling.getPruneMinTokens(), CONTEXT_ROLLING + ".prune-min-tokens");
+    }
+
+    private static void requireRatio(Double value, String property) {
+        if (value != null && !(value > 0.0 && value <= 1.0)) {
+            throw new IllegalStateException(property + "=" + value + " must be in (0, 1] — a fraction of the"
+                    + " model's effective context window.");
+        }
     }
 
     private static void requireAtLeastOne(Integer value, String property) {
@@ -1034,12 +1061,20 @@ public class AimonProperties implements InitializingBean {
         return budget;
     }
 
+    public ContextProperties getContext() {
+        return context;
+    }
+
     public SessionProperties getSession() {
         return session;
     }
 
     public Tools getTools() {
         return tools;
+    }
+
+    public EnvironmentProperties getEnvironment() {
+        return environment;
     }
 
     public Skill getSkill() {
@@ -1789,6 +1824,116 @@ public class AimonProperties implements InitializingBean {
     }
 
     /**
+     * {@code aimon.context.*} — how an agent's LLM view is shrunk as a conversation grows.
+     */
+    public static class ContextProperties {
+
+        /**
+         * The context engine agents get when their AGENT.md names none ({@code context-engine}): {@code default}
+         * compacts the whole view into one summary near the model's limit; {@code rolling} keeps the start and the
+         * recent end verbatim, summarizes the middle earlier and in smaller steps, and registers the
+         * {@code SessionHistory} tool. {@code rolling} requires {@code aimon.session.log-write-format=v2}; startup
+         * fails otherwise.
+         */
+        private ContextEngineKind engine = ContextEngineKind.DEFAULT;
+
+        /**
+         * {@code aimon.context.rolling.*} — thresholds of the rolling engine, for every agent that runs it (chosen
+         * here or in its AGENT.md). An unset value keeps the engine default. The summary model is not a property; set
+         * it through {@code ExecutorSpec.rollingContextEngineCustomizer}.
+         */
+        private final Rolling rolling = new Rolling();
+
+        public ContextEngineKind getEngine() {
+            return engine;
+        }
+
+        public void setEngine(ContextEngineKind engine) {
+            this.engine = engine;
+        }
+
+        public Rolling getRolling() {
+            return rolling;
+        }
+
+        /** The rolling engine's thresholds; ratios are fractions of the model's effective window, in (0, 1]. */
+        public static class Rolling {
+
+            /** Where rolling compaction starts (engine default 0.6). */
+            private Double autoCompactRatio;
+
+            /** Cap on the head's conversation tokens (engine default 0.05). */
+            private Double headTokenRatio;
+
+            /** Budget of the verbatim tail (engine default 0.20). */
+            private Double tailTokenRatio;
+
+            /** Summary length asked of the model (engine default 0.08). */
+            private Double summaryTokenRatio;
+
+            /** Smallest tail rolling must be able to keep, else a call falls back to the default engine (0.05). */
+            private Double minTailRatio;
+
+            /** Smallest tool result, in tokens, worth eliding before summarizing (engine default 500). */
+            private Integer pruneMinTokens;
+
+            public Double getAutoCompactRatio() {
+                return autoCompactRatio;
+            }
+
+            public void setAutoCompactRatio(Double autoCompactRatio) {
+                this.autoCompactRatio = autoCompactRatio;
+            }
+
+            public Double getHeadTokenRatio() {
+                return headTokenRatio;
+            }
+
+            public void setHeadTokenRatio(Double headTokenRatio) {
+                this.headTokenRatio = headTokenRatio;
+            }
+
+            public Double getTailTokenRatio() {
+                return tailTokenRatio;
+            }
+
+            public void setTailTokenRatio(Double tailTokenRatio) {
+                this.tailTokenRatio = tailTokenRatio;
+            }
+
+            public Double getSummaryTokenRatio() {
+                return summaryTokenRatio;
+            }
+
+            public void setSummaryTokenRatio(Double summaryTokenRatio) {
+                this.summaryTokenRatio = summaryTokenRatio;
+            }
+
+            public Double getMinTailRatio() {
+                return minTailRatio;
+            }
+
+            public void setMinTailRatio(Double minTailRatio) {
+                this.minTailRatio = minTailRatio;
+            }
+
+            public Integer getPruneMinTokens() {
+                return pruneMinTokens;
+            }
+
+            public void setPruneMinTokens(Integer pruneMinTokens) {
+                this.pruneMinTokens = pruneMinTokens;
+            }
+
+            /** Whether any threshold is set. */
+            public boolean isTuned() {
+                return autoCompactRatio != null || headTokenRatio != null || tailTokenRatio != null
+                        || summaryTokenRatio != null || minTailRatio != null || pruneMinTokens != null;
+            }
+        }
+    }
+
+    /**
      * Session storage and cache tuning.
      *
      * <p>
@@ -1824,6 +1969,30 @@ public class AimonProperties implements InitializingBean {
         /** How long shutdown waits for in-flight turns to finish before abandoning them. */
         private Duration shutdownDrainTimeout = SessionSpec.DEFAULT_DRAIN_TIMEOUT;
 
+        /**
+         * The session log format this node writes: {@code v1} (default) or {@code v2}. Every build reads both;
+         * switch a cluster to {@code v2} only once every node runs a build that reads it. {@code v2} keeps the log
+         * append-only and is what {@code aimon.context.engine=rolling} requires.
+         */
+        private SessionLogFormat logWriteFormat = SessionLogFormat.V1;
+
+        /**
+         * How often this node sweeps the segment store for orphan log segments — the ones per-session garbage
+         * collection never reaches because nobody resumes their session. Unset (the default) leaves the sweep off.
+         * Needs a segment store: an in-memory record store brings one, a supplied record store needs a
+         * {@code SessionLogSegmentStore} bean. Safe on every node of a cluster at once, and cheap there too: with a
+         * {@code SessionLeaseStore} bean the nodes take the pass in turns through a sweep lease, so the cluster scans
+         * the store once per interval rather than once per node.
+         */
+        private Duration segmentSweepInterval;
+
+        /**
+         * How old an orphan segment must be before the sweep deletes it. Unset means 24 hours. Setting it without
+         * {@code segment-sweep-interval} is refused at startup rather than ignored — a grace with no sweep to apply it
+         * to is a configuration that does nothing.
+         */
+        private Duration segmentSweepGrace;
+
         private final Cache cache = new Cache();
 
         public SessionStoreType getStore() {
@@ -1852,6 +2021,30 @@ public class AimonProperties implements InitializingBean {
 
         public Duration getShutdownDrainTimeout() {
             return shutdownDrainTimeout;
+        }
+
+        public SessionLogFormat getLogWriteFormat() {
+            return logWriteFormat;
+        }
+
+        public void setLogWriteFormat(SessionLogFormat logWriteFormat) {
+            this.logWriteFormat = logWriteFormat;
+        }
+
+        public Duration getSegmentSweepInterval() {
+            return segmentSweepInterval;
+        }
+
+        public void setSegmentSweepInterval(Duration segmentSweepInterval) {
+            this.segmentSweepInterval = segmentSweepInterval;
+        }
+
+        public Duration getSegmentSweepGrace() {
+            return segmentSweepGrace;
+        }
+
+        public void setSegmentSweepGrace(Duration segmentSweepGrace) {
+            this.segmentSweepGrace = segmentSweepGrace;
         }
 
         public void setShutdownDrainTimeout(Duration shutdownDrainTimeout) {
@@ -1894,8 +2087,61 @@ public class AimonProperties implements InitializingBean {
 
         private final Bash bash = new Bash();
 
+        private final Artifact artifact = new Artifact();
+
         public Bash getBash() {
             return bash;
+        }
+
+        public Artifact getArtifact() {
+            return artifact;
+        }
+
+        /**
+         * Whether {@code Write}/{@code Edit} register what they write as downloadable artifacts, and how much an
+         * execution whose environment is not durable may archive into the control store (execution-environment
+         * design §9.3).
+         */
+        public static class Artifact {
+
+            /** Off by default, as before: a server that offers no download endpoint has no use for artifacts. */
+            private boolean enabled;
+
+            /** The largest single file archived from a non-durable environment (default 50 MB). */
+            private long maxFileBytes = ArtifactPolicy.DEFAULT_MAX_FILE_BYTES;
+
+            /** The most one execution archives from a non-durable environment in total (default 100 MB). */
+            private long maxExecutionBytes = ArtifactPolicy.DEFAULT_MAX_EXECUTION_BYTES;
+
+            public boolean isEnabled() {
+                return enabled;
+            }
+
+            public void setEnabled(boolean enabled) {
+                this.enabled = enabled;
+            }
+
+            public long getMaxFileBytes() {
+                return maxFileBytes;
+            }
+
+            public void setMaxFileBytes(long maxFileBytes) {
+                this.maxFileBytes = maxFileBytes;
+            }
+
+            public long getMaxExecutionBytes() {
+                return maxExecutionBytes;
+            }
+
+            public void setMaxExecutionBytes(long maxExecutionBytes) {
+                this.maxExecutionBytes = maxExecutionBytes;
+            }
+
+            /** @return the policy these properties describe */
+            public ArtifactPolicy toPolicy() {
+                return ArtifactPolicy.builder().enabled(enabled).maxFileBytes(maxFileBytes)
+                        .maxExecutionBytes(maxExecutionBytes).build();
+            }
         }
 
         /** The shell tool. */
@@ -1913,6 +2159,52 @@ public class AimonProperties implements InitializingBean {
 
             public void setEnabled(boolean enabled) {
                 this.enabled = enabled;
+            }
+        }
+    }
+
+    /**
+     * Where the agents' executions run: the filesystem their file tools see and the shell {@code Bash} runs in
+     * (execution-environment design §4, §9.2). A bean of type {@code ExecutionEnvironmentProvider} replaces the local
+     * default for every runtime.
+     */
+    public static class EnvironmentProperties {
+
+        private final Staging staging = new Staging();
+
+        /**
+         * Whether the control store ({@code .aimon/} of each workspace — skill, agent and command definitions, task
+         * outputs) is visible and writable to the file tools. Off by default: the model does not edit its own skills
+         * by accident. Turning it on is the explicit opt-in.
+         */
+        private boolean controlWritable;
+
+        public Staging getStaging() {
+            return staging;
+        }
+
+        public boolean isControlWritable() {
+            return controlWritable;
+        }
+
+        public void setControlWritable(boolean controlWritable) {
+            this.controlWritable = controlWritable;
+        }
+
+        /** Skill files staged into the workspace for the model's shell and file tools. */
+        public static class Staging {
+
+            /**
+             * The limit on one skill directory's staged size (default 50 MB); exclude large files with .stageignore.
+             */
+            private long maxBytes = ExecutionEnvironmentSpec.DEFAULT_MAX_STAGED_BYTES;
+
+            public long getMaxBytes() {
+                return maxBytes;
+            }
+
+            public void setMaxBytes(long maxBytes) {
+                this.maxBytes = maxBytes;
             }
         }
     }

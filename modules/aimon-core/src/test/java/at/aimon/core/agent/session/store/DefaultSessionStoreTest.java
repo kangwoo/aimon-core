@@ -4,6 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 import static org.assertj.core.api.Assertions.assertThatNullPointerException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.CALLS_REAL_METHODS;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.mock;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -488,6 +491,150 @@ class DefaultSessionStoreTest {
     void constructorRejectsNulls() {
         assertThatNullPointerException().isThrownBy(() -> new DefaultSessionStore(null, repository));
         assertThatNullPointerException().isThrownBy(() -> new DefaultSessionStore(leases, null));
+    }
+
+    @Nested
+    @DisplayName("segments — the fenced delete view")
+    class Segments {
+
+        private final InMemorySessionLogSegmentStore raw = new InMemorySessionLogSegmentStore();
+
+        private SessionLogSegment segment() {
+            return SessionLogSegment.builder().sessionId(conv).id(SegmentId.generate()).fromSeq(0).toSeq(1)
+                    .entryCount(1).payload("p").createdAt(clock.instant()).build();
+        }
+
+        @Test
+        @DisplayName("the holder deletes; a node that does not hold the session cannot")
+        void deletesAreFenced() {
+            final SessionLogSegment segment = segment();
+            nodeB.segments(raw).put(segment);
+            nodeA.acquire(conv, "node-A", LEASE).orElseThrow();
+
+            assertThatExceptionOfType(SessionNotHeldException.class)
+                    .isThrownBy(() -> nodeB.segments(raw).delete(conv, segment.getId()));
+            assertThatExceptionOfType(SessionNotHeldException.class)
+                    .isThrownBy(() -> nodeB.segments(raw).deleteAll(conv));
+            assertThat(raw.get(conv, segment.getId())).isPresent();
+
+            nodeA.segments(raw).delete(conv, segment.getId());
+            assertThat(raw.get(conv, segment.getId())).isEmpty();
+        }
+
+        @Test
+        @DisplayName("writes and reads are not fenced")
+        void writesAndReadsPassThrough() {
+            final SessionLogSegment segment = segment();
+
+            nodeB.segments(raw).put(segment);
+
+            assertThat(nodeB.segments(raw).get(conv, segment.getId())).contains(segment);
+            assertThat(nodeB.segments(raw).list(conv)).hasSize(1);
+        }
+    }
+
+    @Nested
+    @DisplayName("the UNLESS_HELD_ELSEWHERE fence")
+    class UnlessHeldElsewhere {
+
+        private final InMemorySessionLogSegmentStore raw = new InMemorySessionLogSegmentStore();
+
+        private SessionRecordStore lenient(DefaultSessionStore node) {
+            return node.records(SessionFence.UNLESS_HELD_ELSEWHERE);
+        }
+
+        @Test
+        @DisplayName("HOLDER_ONLY is records(); the default store answers the same instance")
+        void holderOnlyIsRecords() {
+            assertThat(nodeA.records(SessionFence.HOLDER_ONLY)).isSameAs(nodeA.records());
+            assertThatNullPointerException().isThrownBy(() -> nodeA.records(null));
+        }
+
+        @Test
+        @DisplayName("a session nobody holds is written — the shape of a live session opened outside the router")
+        void unheldSessionPasses() {
+            lenient(nodeA).mergeFromSnapshot(SessionSnapshot.of(conv, "prompt", List.of()));
+
+            assertThat(repository.load(conv).orElseThrow().getSystemPrompt()).isEqualTo("prompt");
+            assertThatExceptionOfType(SessionNotHeldException.class).as("the strict view still refuses it")
+                    .isThrownBy(() -> nodeA.records().mergeFromSnapshot(SessionSnapshot.of(conv, "x", List.of())));
+        }
+
+        @Test
+        @DisplayName("the holder is written through its own lease")
+        void holderPasses() {
+            nodeA.claim(conv, AGENT, "node-A", LEASE);
+
+            lenient(nodeA).mergeFromSnapshot(SessionSnapshot.of(conv, "prompt", List.of()));
+
+            assertThat(repository.load(conv).orElseThrow().getSystemPrompt()).isEqualTo("prompt");
+        }
+
+        @Test
+        @DisplayName("a session another node holds is refused, and a superseded holder forgets its lease")
+        void heldElsewhereIsRefused() {
+            nodeA.claim(conv, AGENT, "node-A", LEASE);
+            clock.advance(LEASE);
+            final SessionLease bLease = ((ClaimResult.Acquired) nodeB.claim(conv, AGENT, "node-B", LEASE)).getLease();
+
+            assertThatExceptionOfType(SessionNotHeldException.class)
+                    .isThrownBy(() -> lenient(nodeA).mergeFromSnapshot(SessionSnapshot.of(conv, "stale", List.of())))
+                    .withMessageContaining("held elsewhere");
+            assertThat(repository.load(conv).orElseThrow().getSystemPrompt()).isNotEqualTo("stale");
+
+            // Once nodeB lets go the session is unheld, so nodeA passes the lenient fence — but its forgotten lease
+            // does not make it a holder again for the strict one.
+            nodeB.release(bLease);
+            lenient(nodeA).setTotalsAndBudgetOverride(conv, SessionTotals.empty(), null);
+            assertThatExceptionOfType(SessionNotHeldException.class)
+                    .isThrownBy(() -> nodeA.records().setTotalsAndBudgetOverride(conv, SessionTotals.empty(), null));
+        }
+
+        @Test
+        @DisplayName("a lapsed lease nobody took over still passes")
+        void lapsedLeaseNobodyTookPasses() {
+            nodeA.claim(conv, AGENT, "node-A", LEASE);
+            clock.advance(LEASE);
+
+            lenient(nodeA).mergeFromSnapshot(SessionSnapshot.of(conv, "late", List.of()));
+
+            assertThat(repository.load(conv).orElseThrow().getSystemPrompt()).isEqualTo("late");
+        }
+
+        @Test
+        @DisplayName("segment deletes follow the same rule")
+        void segmentDeletes() {
+            final SessionLogSegment segment = SessionLogSegment.builder().sessionId(conv).id(SegmentId.generate())
+                    .fromSeq(0).toSeq(1).entryCount(1).payload("p").createdAt(clock.instant()).build();
+            raw.put(segment);
+            nodeB.acquire(conv, "node-B", LEASE).orElseThrow();
+
+            assertThatExceptionOfType(SessionNotHeldException.class).isThrownBy(
+                    () -> nodeA.segments(raw, SessionFence.UNLESS_HELD_ELSEWHERE).delete(conv, segment.getId()));
+            nodeB.segments(raw, SessionFence.UNLESS_HELD_ELSEWHERE).delete(conv, segment.getId());
+            assertThat(raw.get(conv, segment.getId())).isEmpty();
+
+            final SessionId unheld = SessionId.of("conv-unheld");
+            raw.put(SessionLogSegment.builder().sessionId(unheld).id(SegmentId.generate()).fromSeq(0).toSeq(1)
+                    .entryCount(1).payload("p").createdAt(clock.instant()).build());
+            nodeA.segments(raw, SessionFence.UNLESS_HELD_ELSEWHERE).deleteAll(unheld);
+            assertThat(raw.list(unheld)).isEmpty();
+        }
+    }
+
+    @Test
+    @DisplayName("a SessionStore that predates the fence policy answers HOLDER_ONLY and refuses the other")
+    void interfaceDefaultRefusesTheLooserFence() {
+        final SessionStore legacy = mock(SessionStore.class, CALLS_REAL_METHODS);
+        final SessionRecordStore strict = repository;
+        doReturn(strict).when(legacy).records();
+
+        assertThat(legacy.records(SessionFence.HOLDER_ONLY)).isSameAs(strict);
+        assertThatThrownBy(() -> legacy.records(SessionFence.UNLESS_HELD_ELSEWHERE))
+                .isInstanceOf(UnsupportedOperationException.class);
+        assertThatThrownBy(
+                () -> legacy.segments(new InMemorySessionLogSegmentStore(), SessionFence.UNLESS_HELD_ELSEWHERE))
+                .isInstanceOf(UnsupportedOperationException.class);
     }
 
     /** A clock the test moves by hand, so lease expiry needs no sleeping. */

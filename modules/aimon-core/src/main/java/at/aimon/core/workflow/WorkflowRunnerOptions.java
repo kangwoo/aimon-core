@@ -39,7 +39,6 @@ public final class WorkflowRunnerOptions {
     private final StepResultCache stepResultCache;
     private final RunStore runStore;
     private final WorkflowBackgroundConfig backgroundConfig;
-    private final WorktreeEnvironmentFactory worktreeFactory;
 
     private WorkflowRunnerOptions(Builder builder) {
         this.concurrency = builder.concurrency;
@@ -48,7 +47,6 @@ public final class WorkflowRunnerOptions {
         this.stepResultCache = builder.stepResultCache;
         this.runStore = builder.runStore;
         this.backgroundConfig = builder.backgroundConfig;
-        this.worktreeFactory = builder.worktreeFactory;
     }
 
     /** @return the fan-out concurrency config, or null for the runner default */
@@ -81,11 +79,6 @@ public final class WorkflowRunnerOptions {
         return backgroundConfig;
     }
 
-    /** @return the worktree environment factory (design §6.3), or null when isolation is unavailable */
-    public WorktreeEnvironmentFactory worktreeFactory() {
-        return worktreeFactory;
-    }
-
     /** Builder for {@link WorkflowRunnerOptions}. */
     public static final class Builder {
         private WorkflowConcurrencyConfig concurrency;
@@ -94,7 +87,6 @@ public final class WorkflowRunnerOptions {
         private StepResultCache stepResultCache;
         private RunStore runStore;
         private WorkflowBackgroundConfig backgroundConfig;
-        private WorktreeEnvironmentFactory worktreeFactory;
 
         private Builder() {
         }
@@ -132,12 +124,6 @@ public final class WorkflowRunnerOptions {
         /** Sets the run-hosting pool config (null = default). */
         public Builder backgroundConfig(WorkflowBackgroundConfig backgroundConfig) {
             this.backgroundConfig = backgroundConfig;
-            return this;
-        }
-
-        /** Sets the worktree environment factory for isolated steps (design §6.3; null = isolation unavailable). */
-        public Builder worktreeFactory(WorktreeEnvironmentFactory worktreeFactory) {
-            this.worktreeFactory = worktreeFactory;
             return this;
         }
 

@@ -17,7 +17,7 @@ import java.util.Optional;
  * {
  *     &#64;code
  *     MutableCommandRegistry registry = new DefaultCommandRegistry(systemCommands, skillRegistry, fileSystem,
- *             ".aimon/commands");
+ *             "commands");
  *     registry.initialize();
  *
  *     // Register additional system commands at runtime

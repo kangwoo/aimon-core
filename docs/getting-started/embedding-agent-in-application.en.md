@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/embedding-agent-in-application.md
-source_commit: 2328822
+source_commit: 47acded
 ---
 
 # Embedding an AIMON agent in your application
@@ -49,7 +49,7 @@ go, the more you have to assemble yourself.
 
 | Path | When | What you do yourself |
 |------|------|----------------------|
-| **Starter** — `aimon-spring-boot-starter` | A Spring Boot 3 application | Three properties + `LlmClient` credentials. Auto-configuration does the rest |
+| **Starter** — `aimon-spring-boot-starter` | A Spring Boot 4 application | Three properties + `LlmClient` credentials. Auto-configuration does the rest |
 | **Bootstrap** — `aimon-bootstrap` | A JVM host that is not Spring (Quarkus / Micronaut / plain `main` / batch) | Build an `AimonStackSpec` by hand and close the `AimonStack` (§14) |
 | **Manual wiring** — `aimon-core` directly | When you have to change the shape of the assembly itself | Everything — executor, registries, factories, teardown order (Appendix A) |
 
@@ -144,8 +144,8 @@ application from an IDE.
 | Shape | Supported | Verified by |
 |-------|-----------|-------------|
 | Spring Boot executable jar — nested loader (`jar:nested:`, Boot 3.2+) | ✅ | `FatJarPackagingTest` launches a real JVM and checks |
-| Spring Boot executable jar — classic loader (`jar:file:`) | ✅ | the same test repeats the same assertions on a second jar |
-| Directory (exploded) classpath — development and IDE | ✅ | the same test checks with a third process |
+| Spring Boot executable jar — classic loader (`jar:file:`) | ⚠️ | **No longer verified** — Boot 4 removed that loader, so there is no such jar to launch |
+| Directory (exploded) classpath — development and IDE | ✅ | the same test checks with a second process |
 | A WAR deployed into a servlet container | ❌ | — |
 | `jlink` runtime image (`jrt:`) | ❌ | — |
 | GraalVM native image | ❌ | — |
@@ -320,9 +320,17 @@ aimon:
     mode: single-node               # single-node (default) | distributed
     node-id: ${HOSTNAME}
     shutdown-drain-timeout: 30s
+    log-write-format: v1            # v1 (default) | v2 — switch to v2 only once every node reads it
+    segment-sweep-interval: 1h      # unset means off (default) — clears orphan segments of sessions nobody reopens
+    segment-sweep-grace: 24h        # 24h by default — only segments older than this, named by no record, are deleted
     cache:
       max-entries: 1000
       idle-ttl: 30m
+
+  context:
+    engine: default                 # default (default) | rolling — rolling needs session.log-write-format: v2
+    rolling:                        # optional — the rolling engine's thresholds. Unset values keep the engine default
+      auto-compact-ratio: 0.6       # every ratio is in (0, 1] — the other keys: context-engine guide §4
 
   skill:
     approval:
@@ -349,6 +357,15 @@ aimon:
   tools:
     bash:
       enabled: false                # the default — on a server the shell must be turned on explicitly
+    artifact:
+      enabled: false                # register Write/Edit results as downloadable artifacts
+      max-file-bytes: 52428800      # per-file limit when archiving files of a non-durable environment
+      max-execution-bytes: 104857600
+
+  environment:                      # where the tools run — an ExecutionEnvironmentProvider bean replaces this
+    staging:
+      max-bytes: 52428800           # limit on staging one skill directory into the workspace
+    control-writable: false         # true opens the workspace's .aimon/ (the control store) to the file tools
 
   knowledge:
     backend: none                   # none (default) | keyword | supplied
@@ -1354,23 +1371,34 @@ public final class MinimalEmbeddingExample {
         AgentRegistry agentRegistry = new DefaultAgentRegistry();
         agentRegistry.register(agent);
 
-        VirtualFileSystem fileSystem = /* LocalFileSystem or GridFs... */;
+        // 2) Where the tools run (the execution environment) and where framework state lives (the control root)
+        //    The application owns the provider — the runtime only borrows it, so the application close()s it.
+        Path workspace = Path.of("/srv/agent-workspace");
+        ExecutionEnvironmentProvider environments = LocalExecutionEnvironmentProvider.builder()
+                .workspaceRoot(workspace)
+                .build();
+        // A local stack keeps the control root at {workspace}/.aimon — skills/, agents/, commands/, task-output/.
+        VirtualFileSystem controlFileSystem = new LocalFileSystem(
+                new LocalFileSystemConfig(workspace.resolve(".aimon").toString()));
+        controlFileSystem.initialize();
         CredentialStore credentialStore = /* InMemoryCredentialStore */;
         ScheduledTaskManager scheduledTaskManager = /* ... */;
 
         // Once at bootstrap: register a runtime per agent (AgentRuntimeId = "agent:<name>")
+        // Without a provider on the factory, build() throws IllegalStateException — there is no default workspace.
         OrcaAgentRuntimeManager manager = OrcaAgentRuntimeManager.builder()
                 .agentExecutor(executor)
                 .scheduledTaskManager(scheduledTaskManager)
-                .agentRuntimeFactory(new OrcaAgentRuntimeFactory())
+                .agentRuntimeFactory(new OrcaAgentRuntimeFactory().withExecutionEnvironmentProvider(environments))
                 .build();
         AgentBundle bundle = AgentBundle.builder().agent(agent).build();
-        manager.getOrCreateRuntime(bundle, fileSystem, credentialStore);
+        manager.getOrCreateRuntime(bundle, controlFileSystem, credentialStore);
 
         // contextBuilder must be idempotent — it must not create a new runtime per session,
         // it must return the already-registered agent-scoped runtime.
         LiveSessionFactory factory = new LiveSessionFactory(agentRegistry,
-                a -> manager.getOrCreateRuntime(AgentBundle.builder().agent(a).build(), fileSystem, credentialStore),
+                a -> manager.getOrCreateRuntime(AgentBundle.builder().agent(a).build(), controlFileSystem,
+                        credentialStore),
                 executor,
                 sessionRecords);
 
@@ -1386,6 +1414,14 @@ public final class MinimalEmbeddingExample {
     }
 }
 ```
+
+> **The `VirtualFileSystem` passed to `getOrCreateRuntime` is the control root.** It used to be the workspace
+> VFS, and the framework read `.aimon/skills`, `.aimon/agents` and `.aimon/commands` under it. The default
+> directories are now relative to the control root (`skills`, `agents`, `commands`, `task-output`), so passing
+> the workspace VFS unchanged misses the existing `{workspace}/.aimon/…` and moves task output into the
+> workspace. Passing `{workspace}/.aimon`, as above, keeps the physical paths as they were. The model's file
+> tools and `Bash` run in the workspace the `ExecutionEnvironmentProvider` supplies
+> ([`docs/design/tool/execution-environment.md`](../design/tool/execution-environment.md)).
 
 > The 3-argument constructor of `LiveSessionFactory` opens sessions without a `SessionRecordStore` — and
 > then `SessionTotals` and the budget override **vanish with the handle** and are not restored on resume.
@@ -1462,15 +1498,33 @@ public class AgentConfiguration {
         return new DefaultAgentRuntimeRegistry();
     }
 
+    @Bean(destroyMethod = "close")
+    public ExecutionEnvironmentProvider executionEnvironmentProvider(AgentProperties props) {
+        // The workspace the tools (Read/Write/Bash …) run in. Runtimes only borrow it; this bean closes it.
+        return LocalExecutionEnvironmentProvider.builder()
+                .workspaceRoot(props.getWorkspace())
+                .build();
+    }
+
+    @Bean(initMethod = "initialize", destroyMethod = "close")
+    public VirtualFileSystem controlFileSystem(AgentProperties props) {
+        // The control root — skills, agents, commands, task output. A local stack keeps it at {workspace}/.aimon.
+        return new LocalFileSystem(
+                new LocalFileSystemConfig(props.getWorkspace().resolve(".aimon").toString()));
+    }
+
     @Bean
     public OrcaAgentRuntimeManager agentRuntimeManager(OrcaAgentExecutor executor,
             ScheduledTaskManager scheduledTaskManager,
-            AgentRuntimeRegistry agentRuntimeRegistry) {
+            AgentRuntimeRegistry agentRuntimeRegistry,
+            ExecutionEnvironmentProvider executionEnvironmentProvider) {
         // The registry has to be shared with the scheduling engine, so pass the same instance explicitly.
+        // The factory must carry a provider — build() refuses without one.
         return OrcaAgentRuntimeManager.builder()
                 .agentExecutor(executor)
                 .scheduledTaskManager(scheduledTaskManager)
-                .agentRuntimeFactory(new OrcaAgentRuntimeFactory())
+                .agentRuntimeFactory(new OrcaAgentRuntimeFactory()
+                        .withExecutionEnvironmentProvider(executionEnvironmentProvider))
                 .agentRuntimeRegistry(agentRuntimeRegistry)
                 .build();
     }
@@ -1479,11 +1533,11 @@ public class AgentConfiguration {
     public ApplicationRunner registerAgentRuntimes(OrcaAgentRuntimeManager manager,
             AgentBundleLoader loader,
             AgentProperties props,
-            VirtualFileSystem fileSystem,
+            VirtualFileSystem controlFileSystem,
             CredentialStore credentialStore) {
         return args -> {
             for (String name : props.getAgents()) {
-                manager.getOrCreateRuntime(loader.load(name), fileSystem, credentialStore);
+                manager.getOrCreateRuntime(loader.load(name), controlFileSystem, credentialStore);
                 // → AgentRuntimeId = "agent:<name>"
             }
         };
@@ -1494,11 +1548,11 @@ public class AgentConfiguration {
             OrcaAgentRuntimeManager manager,
             OrcaAgentExecutor executor,
             SessionRecordStore sessionRecordStore,
-            VirtualFileSystem fileSystem,
+            VirtualFileSystem controlFileSystem,
             CredentialStore credentialStore) {
         return new LiveSessionFactory(agentRegistry,
                 agent -> manager.getOrCreateRuntime(
-                        AgentBundle.builder().agent(agent).build(), fileSystem, credentialStore),
+                        AgentBundle.builder().agent(agent).build(), controlFileSystem, credentialStore),
                 executor,
                 sessionRecordStore);
     }

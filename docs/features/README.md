@@ -18,12 +18,14 @@ ReAct 루프, 턴 처리, 중단, 입력 큐.
 | [`command-queue-guide.md`](agent-execution/command-queue-guide.md) | 턴 도중 들어온 사용자 입력을 큐에 넣고 처리하는 방법 |
 | [`interruptible-tools-guide.md`](agent-execution/interruptible-tools-guide.md) | Ctrl+C, NOW priority 입력 등 외부 중단 처리와 `InterruptBehavior` |
 | [`system-reminder-convention.md`](agent-execution/system-reminder-convention.md) | `<system-reminder>` 합성 컨텍스트를 넣는 규약 |
+| [`context-engine-guide.md`](agent-execution/context-engine-guide.md) | 긴 대화의 컨텍스트를 줄이는 engine 고르기 — `default` / `rolling`, `SessionHistory` 도구 |
 
 설계 근거: [`agent-runtime-scope.md`](../design/agent-execution/agent-runtime-scope.md) ·
 [`orca-executor.md`](../design/agent-execution/orca-executor.md) ·
 [`interceptor.md`](../design/agent-execution/interceptor.md) ·
 [`interrupt.md`](../design/agent-execution/interrupt.md) ·
 [`compaction.md`](../design/agent-execution/compaction.md) ·
+[`context-engine.md`](../design/agent-execution/context-engine.md) ·
 [`artifact.md`](../design/agent-execution/artifact.md)
 
 ## [`session/`](session/) — 세션

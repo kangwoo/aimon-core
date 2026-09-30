@@ -34,6 +34,7 @@ Tool은 LLM Agent가 외부 시스템과 상호작용할 수 있게 해주는 �
 | **Immutability** | ToolInput, ToolResult, ToolContext는 불변 객체 |
 | **Type Safety** | ToolInput의 타입 안전 접근자 활용 |
 | **Stateless** | Tool은 실행 간 상태를 유지하지 않음 |
+| **Environment from context** | 파일 시스템·셸을 생성자로 받지 않는다. `execute()` 마다 `ExecutionEnvironmentAccess.require(context)` 로 그 실행의 환경에서 꺼낸다 |
 
 ### 패키지 구조
 
@@ -381,8 +382,10 @@ ToolContext는 런타임 컨텍스트 정보를 담는 **불변** 컨테이너�
 // Optional 반환
 Optional<Object> value = context.get("key");
 
-// 타입 안전 접근
-Optional<VirtualFileSystem> vfs = context.get("fileSystem", VirtualFileSystem.class);
+// 타입 안전 접근 — 이 실행의 파일 시스템·셸은 실행 환경에서 꺼낸다
+ExecutionEnvironment env = ExecutionEnvironmentAccess.require(context);   // 없으면 IllegalStateException
+VirtualFileSystem vfs = env.fileSystem();
+VirtualShell shell = env.shell();
 
 // 존재 여부 확인
 if (context.containsKey("environment")) {
@@ -397,10 +400,23 @@ Map<String, Object> all = context.getContext();
 
 | 키 | 타입 | 설명 |
 |----|------|------|
-| `fileSystem` | `VirtualFileSystem` | 파일 시스템 인스턴스 |
+| `executionEnvironment` (`ToolContextKeys.EXECUTION_ENVIRONMENT`) | `ExecutionEnvironment` | 이 실행의 파일 시스템·셸·서술자. **write-once** — 실행기가 넣고, enricher 는 읽을 수 있지만 바꿀 수 없다(두 번째 쓰기는 `IllegalStateException`) |
 | `environment` | `Environment` | 환경 설정 |
 | `executorType` | `InvokerType` | 실행자 유형 (MAIN_AGENT, SUBAGENT 등) |
-| `read_tool.read_files` | `Set<String>` | 읽은 파일 목록 (ReadTool에서 설정) |
+| `read_tool.file_stamps` (`ReadTool.FILE_STAMPS_KEY`) | `Map<String, FileStamp>` | 이 실행에서 읽은 파일의 stamp (ReadTool 이 기록, Edit/Write 가 대조) |
+
+**실행 환경은 컨텍스트에만 있다.** 도구 프로바이더가 받는 `OrcaToolProviderContext` 에는
+`getFileSystem()`/`getShell()` 이 없다 — 있는 것은 제어 저장소(`getControlFileSystem()`: 에이전트·스킬 정의,
+태스크 출력)뿐이고, 그것을 모델이 쓰는 도구에 작업 파일 시스템으로 넘기면 안 된다. 환경이 없거나 사용할 수
+없는 실행(`UnavailableExecutionEnvironment` — 파일·셸 호출이 `ExecutionEnvironmentUnavailableException` 을
+던진다)에서는 `IllegalStateException`/`ExecutionEnvironmentUnavailableException` 을 잡아
+`ToolResult.error` 로 돌려준다. 호스트 환경으로 되돌아가는 경로는 두지 않는다
+(설계: [`design/tool/execution-environment.md`](../../design/tool/execution-environment.md)).
+
+**낡은 쓰기 방지.** 기존 파일을 고치는 도구는 `ReadTool.FILE_STAMPS_KEY` 의 stamp 를 대조한다. 이번
+실행에서 읽지 않았으면 `"Read the file before modifying it"`, 읽은 뒤 바뀌었으면
+`"File changed since it was read; Read it again"` 을 낸다. 키는 환경이 정규화한 경로라 `a.txt`·`./a.txt`·
+절대 경로가 같은 항목이다.
 
 ### 컨텍스트 생성 (테스트/초기화용)
 
@@ -410,7 +426,7 @@ ToolContext empty = ToolContext.empty();
 
 // Builder 패턴
 ToolContext context = ToolContext.builder()
-    .put("fileSystem", vfs)
+    .put(ToolContextKeys.EXECUTION_ENVIRONMENT, env)
     .put("environment", env)
     .put("executorType", InvokerType.MAIN_AGENT)
     .build();
@@ -758,6 +774,45 @@ PATH 패턴:       "Read(/tmp/**)"
 거부된다 — 예전에는 이 자리가 무제한 허용이었고, 그래서 가장 엄격해 보이는 설정이 가장 약한 강제를
 만들었다.
 
+### 어디에 선언하는가 — 네 표면과 그 천장
+
+허용 목록은 네 곳에서 선언하며, 키 이름은 **네 곳 모두 `allowed-tools`** 다.
+
+| 표면 | 마크다운 | 코드 |
+|------|----------|------|
+| **에이전트**(메인) | `agent.md` | `DefaultAgent.builder().tools(...)` |
+| **서브에이전트** | `agents/*.md` | `Subagent.builder().tools(...)` |
+| **스킬** | `SKILL.md` | — |
+| **커맨드** | 커맨드 파일 | — |
+
+`agent.md` 의 다른 키는 camelCase(`maxIterations`)인데 이 키만 kebab 인 것은 의도다 — Agent Skills 스펙의
+이름이고 나머지 세 표면이 이미 그 철자를 쓴다. 대신 `allowedTools` 라고 적으면 **조용히 무시되지 않고 파싱이
+실패한다**: 미지의 키는 원래 무시되므로, 무시하면 제한했다고 믿는 채 무제한으로 도는 에이전트가 남는다.
+
+선언한 목록은 **두 지점**에서 작동하며, 둘 다 같은 값 하나를 읽으므로 서로 어긋날 수 없다.
+
+| 지점 | 무엇을 하는가 |
+|------|---------------|
+| 프롬프트 | 목록에 **이름이 없는** 도구는 LLM 에 보내는 도구 정의에서 빠진다 — 모델이 애초에 고를 수 없다 |
+| 실행 | 그래도 이름을 부르면 거부된다. "모르는 도구" 가 아니라 "허용되지 않음" 이며, 레지스트리를 좁히지 않는 이유가 그것이다 |
+
+**패턴 항목은 그 도구를 계속 제안한다.** `Bash(git:*)` 는 `Bash` 를 제안 목록에서 빼지 않는다 — 도구 목록은
+어떤 인자가 허용되는지 말할 수 없기 때문이며, 인자 판정은 실행 지점이 한다.
+
+IMPORTANT: **호출자의 목록을 넘지 못한다.** 서브에이전트·워크플로·스킬 포크로 띄운 실행은 물론, 스킬이
+자기 ReAct 루프에서 쓰는 도구도 자기 목록과 **호출자의 목록 둘 다**에 묶인다 — 모델이 `Skill` 을 부르든
+사용자가 `/my-skill` 을 타이핑하든 같다. 두 목록에 공통 항목이 하나도 없으면 그 실행은 **거부된다**:
+빈 목록은 어디서나 "무제한" 으로 읽히므로, 교집합이 비었다고 빈 목록을 넘기면 가장 엄격한 짝이 가장
+느슨한 것으로 뒤집힌다.
+
+그리고 **이름만 적은 항목은 같은 이름의 패턴 항목이 옆에 있으면 "무제한" 이 아니다.** `Read` 와
+`Read(/tmp/**)` 를 함께 적으면 그 목록은 `/tmp` 만 뜻하고, 교집합도 그 패턴을 살려서 내려보낸다 — 그러지
+않으면 포크가 자기를 띄운 실행보다 넓어진다.
+
+마지막으로 **도구가 하나도 남지 않으면 경고를 남긴다.** 오타 난 이름, 부수효과 천장 위의 도구만 적은 목록,
+deferred 도구 배포에서 `ToolSearch` 를 빠뜨린 목록이 그렇게 된다. 어떤 프로바이더도 빈 `tools` 필드를 거부하지
+않으므로 모델은 산문으로 답하고 실행은 깨끗하게 끝난다 — 하지 않은 일이 된 일처럼 보인다.
+
 ---
 
 ## 동시 실행 안전성 (ConcurrencyBehavior)
@@ -793,8 +848,8 @@ public ConcurrencyBehavior getConcurrencyBehavior() {
 - [ ] **부수효과가 없거나 멱등인가?** 파일/샌드박스/외부 상태를 변조하지 않는다 (읽기 전용 또는 동일 입력에
       동일 결과). `Edit`/`Write`/`Bash`/`TodoWrite`처럼 변조하는 도구는 반드시 `SEQUENTIAL`.
 - [ ] **공유 가변 상태를 thread-safe 하게만 만지는가?** `ToolContext`로 전달되는 값 중 도구가 변조하는
-      가변 객체가 있다면 thread-safe 여야 한다. 예: `ReadTool`이 변조하는 `READ_FILES_KEY` Set은 executor가
-      `ConcurrentHashMap.newKeySet()`으로 주입한다. **새 도구가 mutable 상태를 `ToolContext`에 넣고
+      가변 객체가 있다면 thread-safe 여야 한다. 예: `ReadTool`이 변조하는 `FILE_STAMPS_KEY` 맵은 executor가
+      실행마다 `new ConcurrentHashMap<>()`으로 주입한다. **새 도구가 mutable 상태를 `ToolContext`에 넣고
       변조한다면 반드시 `SEQUENTIAL`로 선언**하거나 thread-safe 자료구조를 사용해야 한다.
 - [ ] **InterruptBehavior가 `NON_INTERRUPTIBLE` 또는 `COOPERATIVE`인가?** `THREAD_INTERRUPT`/
       `EXTERNALLY_TERMINATED` 도구는 실행 스레드 기준으로 terminator를 등록하므로 공유 worker 스레드에서
@@ -859,7 +914,6 @@ import java.io.InputStreamReader;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -868,9 +922,13 @@ import at.aimon.core.agent.tool.AbstractTool;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.environment.FileStamp;
+import at.aimon.core.environment.exception.ExecutionEnvironmentUnavailableException;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.filesystem.exception.FileNotFoundException;
 import at.aimon.core.filesystem.exception.InvalidPathException;
+import at.aimon.core.tools.ExecutionEnvironmentAccess;
 
 /**
  * 파일 내용을 읽는 Tool.
@@ -879,49 +937,37 @@ import at.aimon.core.filesystem.exception.InvalidPathException;
  * - 부분 읽기 (offset, limit)
  * - 라인 번호 표시 (cat -n 형식)
  * - 긴 라인 자르기 (2000자)
+ * - 파일 시스템은 생성자가 아니라 실행 환경에서 얻는다
  */
 public class ReadTool extends AbstractTool {
 
     // 상수 정의
     public static final String TOOL_NAME = "Read";
-    public static final String READ_FILES_KEY = "read_tool.read_files";
 
     private static final Logger log = LoggerFactory.getLogger(ReadTool.class);
     private static final int DEFAULT_LIMIT = 2000;
     private static final int MAX_LINE_LENGTH = 2000;
     private static final String LINE_NUMBER_FORMAT = "%6d→";
 
-    // 의존성
-    private final VirtualFileSystem fileSystem;
-
-    public ReadTool(VirtualFileSystem fileSystem) {
+    // 파일 시스템도 셸도 받지 않는다 — 실행마다 컨텍스트의 실행 환경에서 꺼낸다
+    public ReadTool() {
         super(TOOL_NAME,
                 "Read file contents from the filesystem. " +
                         "Returns file content with line numbers in cat -n format. " +
                         "Supports partial reading for large files using offset and limit parameters. " +
                         "By default, reads first 2000 lines. Lines longer than 2000 characters are truncated.",
                 createInputSchema());
-        this.fileSystem = Objects.requireNonNull(fileSystem, "File system cannot be null");
     }
 
     private static Map<String, Object> createInputSchema() {
         return Map.of(
                 "type", "object",
+                "additionalProperties", false,
                 "properties", Map.of(
-                        "file_path", Map.of(
-                                "type", "string",
-                                "description", "The path to the file to read"
-                        ),
-                        "offset", Map.of(
-                                "type", "number",
-                                "description", "The line number to start reading from (1-based). " +
-                                        "Only provide if the file is too large to read at once"
-                        ),
-                        "limit", Map.of(
-                                "type", "number",
-                                "description", "The number of lines to read. " +
-                                        "Only provide if the file is too large to read at once"
-                        )
+                        "file_path", Map.of("type", "string", "description", "The path to the file to read"),
+                        "offset", Map.of("type", "integer", "description",
+                                "The line number to start reading from (1-based)"),
+                        "limit", Map.of("type", "integer", "description", "The number of lines to read")
                 ),
                 "required", List.of("file_path")
         );
@@ -935,60 +981,56 @@ public class ReadTool extends AbstractTool {
         try {
             // 1. 파라미터 추출
             final String filePath = input.getRequiredString("file_path");
-            log.debug("Reading file: {}", filePath);
 
-            // 2. 유효성 검사
+            // 2. 이 실행의 환경 — 없으면 IllegalStateException
+            final ExecutionEnvironment env = ExecutionEnvironmentAccess.require(context);
+            final VirtualFileSystem fileSystem = env.fileSystem();
+
+            // 3. 유효성 검사
             if (fileSystem.isDirectory(filePath)) {
-                return ToolResult.error(
-                        "Cannot read directory: " + filePath +
-                                ". Use 'ls' command to list directory contents."
-                );
+                return ToolResult.error("Cannot read directory: " + filePath);
             }
 
-            // 3. 선택적 파라미터 추출 (기본값 포함)
+            // 4. 선택적 파라미터 추출 (기본값 포함)
             final int offset = input.getInteger("offset", 1);
-            if (offset < 1) {
-                return ToolResult.error("offset must be >= 1, got: " + offset);
-            }
-
             final int limit = input.getInteger("limit", DEFAULT_LIMIT);
-            if (limit < 1) {
-                return ToolResult.error("limit must be >= 1, got: " + limit);
+            if (offset < 1 || limit < 1) {
+                return ToolResult.error("offset and limit must be >= 1");
             }
 
-            // 4. 핵심 작업 수행
-            final String content = readFileContent(filePath, offset, limit);
+            // 5. stamp 는 읽기 전에 — 읽는 동안의 변경을 다음 Edit/Write 가 잡는다
+            final FileStamp stamp = FileStamps.current(env, filePath);
 
-            // 5. 컨텍스트 업데이트 (다른 Tool과의 연계)
-            markFileAsRead(context, filePath);
+            // 6. 핵심 작업 수행
+            final String content = readFileContent(fileSystem, filePath, offset, limit);
 
-            // 6. 결과 반환
-            if (content.isEmpty()) {
-                return ToolResult.success("[System Warning: This file is empty]");
-            }
+            // 7. 컨텍스트 업데이트 (Edit/Write 의 낡은 쓰기 검사와 연계)
+            FileStamps.record(context, env, filePath, stamp);
 
-            log.debug("Successfully read file: {}", filePath);
-            return ToolResult.success(content);
+            // 8. 결과 반환
+            return content.isEmpty()
+                    ? ToolResult.success("[System Warning: This file is empty]")
+                    : ToolResult.success(content);
 
         } catch (IllegalArgumentException e) {
             log.warn("Invalid parameter: {}", e.getMessage());
             return ToolResult.error("Invalid parameter: " + e.getMessage());
+        } catch (IllegalStateException | ExecutionEnvironmentUnavailableException e) {
+            // 환경이 없거나 사용할 수 없다 — 기본 환경으로 되돌아가지 않고 에러로 돌려준다
+            log.warn("No usable execution environment: {}", e.getMessage());
+            return ToolResult.error(e.getMessage());
         } catch (FileNotFoundException e) {
-            log.warn("File not found: {}", e.getMessage());
             return ToolResult.error("File not found: " + e.getMessage());
         } catch (InvalidPathException e) {
-            log.warn("Invalid path: {}", e.getMessage());
             return ToolResult.error("Invalid path: " + e.getMessage());
-        } catch (IOException e) {
-            log.error("Failed to read file: {}", e.getMessage(), e);
-            return ToolResult.error("Failed to read file: " + e.getMessage());
         } catch (Exception e) {
             log.error("Unexpected error reading file: {}", e.getMessage(), e);
             return ToolResult.error("Unexpected error: " + e.getMessage());
         }
     }
 
-    private String readFileContent(String filePath, int offset, int limit) throws IOException {
+    private String readFileContent(VirtualFileSystem fileSystem, String filePath, int offset, int limit)
+            throws IOException {
         final StringBuilder result = new StringBuilder();
 
         try (InputStream inputStream = fileSystem.read(filePath);
@@ -1011,15 +1053,12 @@ public class ReadTool extends AbstractTool {
                 }
 
                 // 긴 라인 자르기
-                String displayLine = line;
-                if (line.length() > MAX_LINE_LENGTH) {
-                    displayLine = line.substring(0, MAX_LINE_LENGTH) + "...";
-                }
+                final String displayLine = line.length() > MAX_LINE_LENGTH
+                        ? line.substring(0, MAX_LINE_LENGTH) + "..."
+                        : line;
 
                 // cat -n 형식으로 출력
-                result.append(String.format(LINE_NUMBER_FORMAT, currentLine))
-                        .append(displayLine)
-                        .append('\n');
+                result.append(String.format(LINE_NUMBER_FORMAT, currentLine)).append(displayLine).append('\n');
 
                 currentLine++;
                 linesRead++;
@@ -1027,14 +1066,6 @@ public class ReadTool extends AbstractTool {
         }
 
         return result.toString();
-    }
-
-    private void markFileAsRead(ToolContext context, String filePath) {
-        @SuppressWarnings("unchecked") final Set<String> readFiles = context.get(READ_FILES_KEY, Set.class).orElse(null);
-        if (readFiles != null) {
-            readFiles.add(filePath);
-            log.debug("Marked file as read: {}", filePath);
-        }
     }
 }
 ```
@@ -1052,6 +1083,7 @@ public class ReadTool extends AbstractTool {
 - [ ] 생성자에서 `super(name, description, schema)`를 호출하였는가?
 - [ ] `execute()` 메서드에서 `Objects.requireNonNull()`로 null 검사를 수행하는가?
 - [ ] `execute()` 메서드가 절대 예외를 던지지 않는가?
+- [ ] 생성자와 필드에 `VirtualFileSystem`/`VirtualShell` 이 없는가? (ArchUnit `toolsHoldNoFileSystemOrShellFields` 가 검사한다)
 - [ ] 모든 에러를 `ToolResult.error()`로 반환하는가?
 - [ ] JSON Schema가 올바르게 정의되었는가?
 - [ ] 필수 파라미터가 `required` 목록에 포함되었는가?

@@ -3,6 +3,7 @@ package at.aimon.core.skill.repository;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -80,6 +81,9 @@ public class ClasspathSkillRepository implements SkillRepository {
 
     private final String basePath;
     private final ClassLoader classLoader;
+    // The staging source (execution-environment design §4.4): the class path walked the way the bundled-skill
+    // materializer walks it, so a classpath skill stages exactly the files a materialized copy would hold.
+    private final ClasspathSkillSourceFileSystem sourceFileSystem;
     private final ClasspathIndexReader indexReader;
 
     /**
@@ -108,6 +112,7 @@ public class ClasspathSkillRepository implements SkillRepository {
         this.basePath = Objects.requireNonNull(basePath, "Base path cannot be null");
         this.classLoader = Objects.requireNonNull(classLoader, "ClassLoader cannot be null");
         this.indexReader = new ClasspathIndexReader(this.classLoader, log);
+        this.sourceFileSystem = new ClasspathSkillSourceFileSystem(this.classLoader, this.basePath);
     }
 
     @Override
@@ -162,6 +167,32 @@ public class ClasspathSkillRepository implements SkillRepository {
     public Map<String, String> findAssets(String skillName) {
         Objects.requireNonNull(skillName, "Skill name cannot be null");
         return Map.of();
+    }
+
+    @Override
+    public Optional<SkillSource> resolveSource(String skillName) {
+        Objects.requireNonNull(skillName, "Skill name cannot be null");
+        return exists(skillName) ? Optional.of(SkillSource.of(sourceFileSystem, skillName)) : Optional.empty();
+    }
+
+    /**
+     * Lists every file of the skill except {@code SKILL.md}, keyed by its path relative to the skill directory, with
+     * the classpath resource path as the value — the same walk the staging source uses.
+     */
+    @Override
+    public Map<String, String> findAllFiles(String skillName) {
+        Objects.requireNonNull(skillName, "Skill name cannot be null");
+        if (!exists(skillName)) {
+            return Map.of();
+        }
+        final Map<String, String> files = new LinkedHashMap<>();
+        for (String path : sourceFileSystem.listRecursive(skillName)) {
+            final String relative = path.substring(skillName.length() + 1);
+            if (!SKILL_FILE_NAME.equals(relative)) {
+                files.put(relative, basePath + "/" + path);
+            }
+        }
+        return files;
     }
 
     private Optional<String> readResource(String resourcePath) {

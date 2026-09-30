@@ -5,7 +5,9 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.slices;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
 
@@ -16,17 +18,27 @@ import org.junit.jupiter.api.Test;
 import com.tngtech.archunit.core.domain.Dependency;
 import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaClasses;
+import com.tngtech.archunit.core.domain.JavaConstructor;
+import com.tngtech.archunit.core.domain.JavaField;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.lang.ArchRule;
 
+import at.aimon.core.agent.Agent;
 import at.aimon.core.agent.AgentCorePackage;
 import at.aimon.core.agent.AgentRuntimeId;
+import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.impl.AgentImplPackage;
+import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.base.BasePackage;
 import at.aimon.core.command.execution.ExecutionMetadata;
+import at.aimon.core.environment.EnvironmentRequest;
+import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.environment.ExecutionEnvironmentProvider;
+import at.aimon.core.environment.ExecutionEnvironments;
 import at.aimon.core.filesystem.FileSystemCorePackage;
+import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.hook.HookExecutionManager;
 import at.aimon.core.hook.HookFeedback;
 import at.aimon.core.hook.HookRegistry;
@@ -38,6 +50,7 @@ import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.llm.LlmCorePackage;
 import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.shell.ShellCorePackage;
+import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.subagent.Subagent;
 import at.aimon.core.subagent.SubagentExecutionEnvironment;
 import at.aimon.core.subagent.SubagentExecutionManager;
@@ -67,16 +80,24 @@ class PackageDependencyArchitectureTest {
      * it whenever a cycle is broken — the test fails if an entry here has become untrue.
      *
      * <p>
-     * Two things are worth reading off the list rather than counting it. Nine of the thirteen involve {@code agent}
+     * Two things are worth reading off the list rather than counting it. Ten of the fourteen involve {@code agent}
      * or {@code command}, which is what "the executor is the hub" looks like from the package graph. And the four
      * {@code ↔ tools} entries are a different shape: a tool has to reach the subsystem it exposes
      * ({@code scheduling}, {@code skill}, {@code subagent}) while that subsystem names the tool that fronts it, so
      * those close through the built-in tool set rather than through the executor.
+     *
+     * <p>
+     * {@code agent <-> environment} comes from the execution-environment design itself. The request a provider
+     * answers names agent identities ({@code Agent}, {@code AgentRuntimeId}, {@code SessionId}, {@code ExecutionId};
+     * §4.1), and prompt assembly renders the execution's {@code EnvironmentDescriptor} (§10). Two guard rules keep it
+     * from growing: {@link #environmentSpiDependenciesAreCurated()} bounds the environment side to those identity
+     * types, and {@link #onlyAgentContextAndCompactMayReachEnvironmentFromAgentTree()} bounds the agent side to prompt
+     * assembly ({@code agent.context}) and compaction ({@code agent.compact}).
      */
     private static final Set<String> BASELINE_TOP_LEVEL_CYCLES = Set.of("agent <-> hook", "agent <-> llm",
             "agent <-> scheduling", "agent <-> skill", "agent <-> subagent", "agent <-> workflow", "command <-> hook",
             "command <-> skill", "command <-> subagent", "command <-> tools", "scheduling <-> tools", "skill <-> tools",
-            "subagent <-> tools");
+            "subagent <-> tools", "agent <-> environment");
 
     // Package markers for type-safe package references
     private static final String PKG_CORE = BasePackage.class.getPackageName() + "..";
@@ -94,6 +115,16 @@ class PackageDependencyArchitectureTest {
     // restoration. Hook contexts (PreCompactContext, PostCompactContext) in turn reference compaction value types
     // (CompactionTrigger, CompactionMetadata), so the coupling is bidirectional and intentional.
     private static final String PKG_AGENT_COMPACT = AgentCorePackage.class.getPackageName() + ".compact..";
+    // Narrow carve-out: the ContextEngine SPI (context-engine design §3) lives under agent.context. Its request carries
+    // the HookRegistry a compacting engine hands to PreCompact / PostCompact hooks, so the package may reference that
+    // one hook type and nothing else from at.aimon.core.hook.
+    private static final String PKG_AGENT_CONTEXT = AgentCorePackage.class.getPackageName() + ".context..";
+    // The execution-environment SPI (docs/design/tool/execution-environment.md). Its neutral packages are named
+    // exactly — not with ".." — wherever another package may use them, so environment.impl stays out of reach.
+    private static final String PKG_ENVIRONMENT = "at.aimon.core.environment..";
+    private static final String PKG_ENVIRONMENT_SPI = "at.aimon.core.environment";
+    private static final String PKG_ENVIRONMENT_EXCEPTION = "at.aimon.core.environment.exception";
+    private static final String PKG_ENVIRONMENT_IMPL = "at.aimon.core.environment.impl..";
     // Narrow carve-out: at.aimon.core.agent.orca holds the public Orca tool-provider SPIs (OrcaToolProvider,
     // OrcaToolProviderContext, OrcaProviderDependencies). They aggregate dependencies from cross-cutting
     // registries (subagent, skill, scheduling, credential, hook, mcp, ...) by design — this is the SPI surface
@@ -175,11 +206,11 @@ class PackageDependencyArchitectureTest {
         // The SK-11 SkillTurnSuspendedEvent (in agent.stream) references PendingTurnId / PendingSkillRequest from the
         // ext.skill.policy.pending DTO package — see PKG_EXT_SKILL_PENDING carve-out comment.
         ArchRule rule = classes().that().resideInAPackage(PKG_AGENT_CORE).and()
-                .resideOutsideOfPackage(PKG_AGENT_COMPACT).and().resideOutsideOfPackage(PKG_AGENT_ORCA).and()
-                .resideOutsideOfPackage(PKG_AGENT_SESSION).and().resideOutsideOfPackage(PKG_AGENTS).should()
-                .onlyDependOnClassesThat().resideInAnyPackage(PKG_AGENT_CORE, PKG_CORE, PKG_LLM_CORE,
-                        PKG_FILESYSTEM_CORE, PKG_SHELL_CORE, PKG_AGENTS, PKG_SKILL_POLICY_PENDING, PKG_JAVA, PKG_SLF4J,
-                        PKG_SNAKEYAML, PKG_JACKSON, PKG_MUSTACHE);
+                .resideOutsideOfPackage(PKG_AGENT_COMPACT).and().resideOutsideOfPackage(PKG_AGENT_CONTEXT).and()
+                .resideOutsideOfPackage(PKG_AGENT_ORCA).and().resideOutsideOfPackage(PKG_AGENT_SESSION).and()
+                .resideOutsideOfPackage(PKG_AGENTS).should().onlyDependOnClassesThat().resideInAnyPackage(
+                        PKG_AGENT_CORE, PKG_CORE, PKG_LLM_CORE, PKG_FILESYSTEM_CORE, PKG_SHELL_CORE, PKG_AGENTS,
+                        PKG_SKILL_POLICY_PENDING, PKG_JAVA, PKG_SLF4J, PKG_SNAKEYAML, PKG_JACKSON, PKG_MUSTACHE);
 
         rule.check(classes);
     }
@@ -209,6 +240,25 @@ class PackageDependencyArchitectureTest {
     }
 
     @Test
+    @DisplayName("at.aimon.core.agent.context may depend only on HookRegistry from at.aimon.core.hook — the registry a"
+            + " compacting ContextEngine forwards to PreCompact / PostCompact hooks — and on the neutral"
+            + " execution-environment SPI whose filesystem and descriptor prompt assembly reads")
+    void agentContextMayDependOnHookRegistryOnly() {
+        // Narrow carve-out: see PKG_AGENT_CONTEXT. Everything else agent.context needs is in the agent core allow-list.
+        // Second carve-out: ContextAssemblyRequest carries the execution's ExecutionEnvironment, and the environment
+        // block renders its EnvironmentDescriptor (execution-environment §5.1, §10). Exact packages, not "..", so
+        // environment.impl stays forbidden.
+        ArchRule rule = classes().that().resideInAPackage(PKG_AGENT_CONTEXT).should()
+                .onlyDependOnClassesThat(JavaClass.Predicates.belongToAnyOf(HookRegistry.class)
+                        .or(JavaClass.Predicates.resideInAnyPackage(PKG_AGENT_CORE, PKG_CORE, PKG_LLM_CORE,
+                                PKG_FILESYSTEM_CORE, PKG_SHELL_CORE, PKG_AGENTS, PKG_SKILL_POLICY_PENDING,
+                                PKG_ENVIRONMENT_SPI, PKG_ENVIRONMENT_EXCEPTION, PKG_JAVA, PKG_SLF4J, PKG_SNAKEYAML,
+                                PKG_JACKSON, PKG_MUSTACHE)));
+
+        rule.check(classes);
+    }
+
+    @Test
     @DisplayName("at.aimon.core.agent.session may depend only on five specific hook types"
             + " (HookRegistry, HookExecutionManager, HookResult, OnSessionStartContext, OnSessionEndContext)"
             + " for the WI-3.3.d session-lifecycle hook firing — not on the at.aimon.core.hook package as a whole —"
@@ -232,8 +282,9 @@ class PackageDependencyArchitectureTest {
 
     @Test
     @DisplayName("at.aimon.core.workflow may depend only on the subagent SPI types (SubagentExecutionManager,"
-            + " SubagentExecutionEnvironment, Subagent, SubagentExecutionResult) — not on the Default* impls that share"
-            + " the subagent package (WU-6, subagent-workflow design §3.3 / B4)")
+            + " SubagentExecutionEnvironment, Subagent, SubagentExecutionResult) and the execution-environment SPI"
+            + " types it isolates branches with — not on the Default* impls that share the subagent package (WU-6,"
+            + " subagent-workflow design §3.3 / B4)")
     void workflowMayDependOnlyOnSubagentSpiTypes() {
         // Type allow-list rather than package rule: SPI-only cannot be expressed at package granularity because
         // DefaultSubagentExecutionManager / DefaultSubagentExecutor live in the same packages as the SPI types
@@ -248,11 +299,14 @@ class PackageDependencyArchitectureTest {
         // Phase 3 addition: VfsStepResultCache depends on the VirtualFileSystem SPI
         // (at.aimon.core.filesystem) for the shared/persistent step cache, mirroring VfsSessionSnapshotStore. The
         // separate filesystemImplMustNotLeak rule still bars workflow from at.aimon.core.filesystem.impl.
-        ArchRule rule = classes().that().resideInAPackage(PKG_WORKFLOW).should()
-                .onlyDependOnClassesThat(JavaClass.Predicates
-                        .belongToAnyOf(SubagentExecutionManager.class, SubagentExecutionEnvironment.class,
-                                Subagent.class, SubagentExecutionResult.class, CompletionReason.class,
-                                ExecutionMetadata.class, TokenUsage.class, AgentRuntimeId.class)
+        // Execution-environment addition: an isolated step derives its branch with ExecutionEnvironment.isolate(),
+        // resolving the parent environment through the run's provider when the run has none (§5.2) — the SPI types
+        // and the resolve helper, never environment.impl.
+        ArchRule rule = classes().that().resideInAPackage(PKG_WORKFLOW).should().onlyDependOnClassesThat(
+                JavaClass.Predicates.belongToAnyOf(SubagentExecutionManager.class, SubagentExecutionEnvironment.class,
+                        Subagent.class, SubagentExecutionResult.class, CompletionReason.class, ExecutionMetadata.class,
+                        TokenUsage.class, AgentRuntimeId.class, ExecutionEnvironment.class,
+                        ExecutionEnvironmentProvider.class, EnvironmentRequest.class, ExecutionEnvironments.class)
                         .or(JavaClass.Predicates.resideInAnyPackage(PKG_WORKFLOW, PKG_CORE, PKG_FILESYSTEM_CORE,
                                 PKG_AGENT_INTERRUPT, PKG_LLM_COST, PKG_JAVA, PKG_SLF4J, PKG_JACKSON)));
 
@@ -333,15 +387,15 @@ class PackageDependencyArchitectureTest {
 
     @Test
     @DisplayName("at.aimon.core.filesystem.impl must not be referenced from outside the at.aimon.core.filesystem.*"
-            + " tree, except by the in-core assembler at at.aimon.core.agent.impl.orca.environment which wires"
-            + " concrete LocalFileSystem instances. Other consumers (core.tools.*, external modules) must depend"
-            + " on the VirtualFileSystem SPI in at.aimon.core.filesystem.")
+            + " tree, except by the local execution environment provider in at.aimon.core.environment.impl, which"
+            + " wires the concrete filesystems the tools work in. Other consumers (core.tools.*, external modules) must"
+            + " depend on the VirtualFileSystem SPI in at.aimon.core.filesystem.")
     void filesystemImplMustNotLeakOutsideFilesystemTree() {
-        // Carve-out: at.aimon.core.agent.impl.orca.environment.LocalExecutionEnvironment is the canonical
-        // in-core assembler that constructs LocalFileSystem + LocalShell for the default Orca runtime. The
-        // assembler boundary is allowed to import concrete impls; everything else must use the SPI.
+        // Carve-out: LocalExecutionEnvironmentProvider is the one in-core assembler that constructs LocalFileSystem
+        // and ScopedVirtualFileSystem for tools (execution-environment design §4.2). Code that needs a read-only view
+        // of a host directory, or path rules over a filesystem, uses the VirtualFileSystems factory instead.
         ArchRule rule = noClasses().that().resideOutsideOfPackage(PKG_FILESYSTEM_CORE).and()
-                .resideOutsideOfPackage("at.aimon.core.agent.impl.orca.environment..").should().dependOnClassesThat()
+                .resideOutsideOfPackage(PKG_ENVIRONMENT_IMPL).should().dependOnClassesThat()
                 .resideInAPackage("at.aimon.core.filesystem.impl..");
 
         rule.check(classes);
@@ -349,15 +403,95 @@ class PackageDependencyArchitectureTest {
 
     @Test
     @DisplayName("at.aimon.core.shell.impl must not be referenced from outside the at.aimon.core.shell.* tree,"
-            + " except by the in-core assembler at at.aimon.core.agent.impl.orca.environment which wires"
-            + " concrete LocalShell instances. Other consumers must depend on the VirtualShell SPI in"
-            + " at.aimon.core.shell.")
+            + " except by the local execution environment provider in at.aimon.core.environment.impl, which wires"
+            + " the concrete LocalShell. Other consumers must depend on the VirtualShell SPI in at.aimon.core.shell.")
     void shellImplMustNotLeakOutsideShellTree() {
         ArchRule rule = noClasses().that().resideOutsideOfPackage(PKG_SHELL_CORE).and()
-                .resideOutsideOfPackage("at.aimon.core.agent.impl.orca.environment..").should().dependOnClassesThat()
+                .resideOutsideOfPackage(PKG_ENVIRONMENT_IMPL).should().dependOnClassesThat()
                 .resideInAPackage("at.aimon.core.shell.impl..");
 
         rule.check(classes);
+    }
+
+    @Test
+    @DisplayName("at.aimon.core.environment.impl must not be referenced from outside the at.aimon.core.environment.*"
+            + " tree — executors, tools and assemblies depend on the neutral ExecutionEnvironment SPI")
+    void environmentImplMustNotLeakOutsideEnvironmentTree() {
+        ArchRule rule = noClasses().that().resideOutsideOfPackage(PKG_ENVIRONMENT).should().dependOnClassesThat()
+                .resideInAPackage(PKG_ENVIRONMENT_IMPL);
+
+        rule.check(classes);
+    }
+
+    @Test
+    @DisplayName("The execution-environment SPI depends only on core, filesystem and shell SPIs and on four agent"
+            + " identity types (Agent, AgentRuntimeId, SessionId, ExecutionId); its local implementation may also use"
+            + " the filesystem and shell implementations and Jackson")
+    void environmentSpiDependenciesAreCurated() {
+        // Bounds the environment -> agent half of the agent <-> environment baseline cycle to the identities an
+        // EnvironmentRequest names (§4.1). environment never depends on tools or agent.tool: reading the environment
+        // out of a ToolContext lives in at.aimon.core.tools.ExecutionEnvironmentAccess.
+        ArchRule spi = classes().that().resideInAnyPackage(PKG_ENVIRONMENT_SPI, PKG_ENVIRONMENT_EXCEPTION).should()
+                .onlyDependOnClassesThat(JavaClass.Predicates
+                        .belongToAnyOf(Agent.class, AgentRuntimeId.class, SessionId.class, ExecutionId.class)
+                        .or(JavaClass.Predicates.resideInAnyPackage(PKG_ENVIRONMENT_SPI, PKG_ENVIRONMENT_EXCEPTION,
+                                PKG_CORE, PKG_FILESYSTEM_CORE, PKG_SHELL_CORE, PKG_JAVA, PKG_SLF4J)));
+        ArchRule impl = classes().that().resideInAPackage(PKG_ENVIRONMENT_IMPL).should()
+                .onlyDependOnClassesThat(JavaClass.Predicates
+                        .belongToAnyOf(Agent.class, AgentRuntimeId.class, SessionId.class, ExecutionId.class)
+                        .or(JavaClass.Predicates.resideInAnyPackage(PKG_ENVIRONMENT, PKG_CORE, PKG_FILESYSTEM_CORE,
+                                PKG_SHELL_CORE, PKG_JAVA, PKG_SLF4J, PKG_JACKSON)));
+
+        spi.check(classes);
+        impl.check(classes);
+    }
+
+    @Test
+    @DisplayName("Within the agent core, only prompt assembly (agent.context) and compaction (agent.compact) may"
+            + " reach the execution-environment packages")
+    void onlyAgentContextAndCompactMayReachEnvironmentFromAgentTree() {
+        // Bounds the agent -> environment half of the agent <-> environment baseline cycle. AgentRuntime stays
+        // untouched — OrcaAgentRuntime (agent.impl) implements EnvironmentProviding instead — and the user-context
+        // builder takes the working directory as a String.
+        ArchRule rule = noClasses().that().resideInAPackage(PKG_AGENT_CORE).and()
+                .resideOutsideOfPackage(PKG_AGENT_CONTEXT).and().resideOutsideOfPackage(PKG_AGENT_COMPACT).and()
+                .resideOutsideOfPackage(PKG_AGENTS).should().dependOnClassesThat().resideInAPackage(PKG_ENVIRONMENT);
+
+        rule.check(classes);
+    }
+
+    @Test
+    @DisplayName("No built-in tool holds a VirtualFileSystem or VirtualShell in a field or constructor parameter —"
+            + " tools read both from the execution environment on every call (execution-environment design §15)")
+    void toolsHoldNoFileSystemOrShellFields() {
+        // One exception, by name: ArtifactArchive holds the control store (not the model's workspace) to archive
+        // artifacts written in a non-durable environment (§9.3). The tools that use it still take their working
+        // filesystem from the context.
+        final Set<String> exempt = Set.of("at.aimon.core.tools.artifact.ArtifactArchive");
+        final List<String> violations = new ArrayList<>();
+        for (JavaClass javaClass : classes) {
+            if (!javaClass.getPackageName().startsWith("at.aimon.core.tools") || exempt.contains(javaClass.getName())) {
+                continue;
+            }
+            for (JavaField field : javaClass.getFields()) {
+                if (isFileSystemOrShell(field.getRawType())) {
+                    violations.add(javaClass.getName() + "." + field.getName());
+                }
+            }
+            for (JavaConstructor constructor : javaClass.getConstructors()) {
+                for (JavaClass parameter : constructor.getRawParameterTypes()) {
+                    if (isFileSystemOrShell(parameter)) {
+                        violations.add(constructor.getFullName());
+                    }
+                }
+            }
+        }
+        assertThat(violations).withFailMessage("Tools must not hold a filesystem or shell (read the execution"
+                + " environment from the ToolContext instead): %s", violations).isEmpty();
+    }
+
+    private static boolean isFileSystemOrShell(JavaClass type) {
+        return type.isAssignableTo(VirtualFileSystem.class) || type.isAssignableTo(VirtualShell.class);
     }
 
     @Test

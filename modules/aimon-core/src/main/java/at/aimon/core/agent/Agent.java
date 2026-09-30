@@ -1,5 +1,10 @@
 package at.aimon.core.agent;
 
+import java.util.List;
+import java.util.Map;
+
+import at.aimon.core.agent.tool.permission.AllowedTool;
+
 /**
  * Agent definition interface.
  *
@@ -13,8 +18,8 @@ package at.aimon.core.agent;
  * <pre>
  * {
  *     &#64;code
- *     Agent agent = DefaultAgent.builder().name("MyAgent").metadata(AgentMetadata.of(10))
- *             .content(AgentContent.of("You are helpful...", modelConfig)).build();
+ *     Agent agent = DefaultAgent.builder().name("MyAgent").maxIterations(10)
+ *             .systemPrompt("You are helpful...").build();
  *
  *     String name = agent.getName();
  *     int maxIterations = agent.getMaxIterations(); // convenience method
@@ -34,6 +39,17 @@ public interface Agent {
     }
 
     /**
+     * Gets the free-form attributes of the agent's definition, flattened to dotted keys (see
+     * {@link AgentMetadata#getAttributes()}). A convenience that lets a reader holding only an {@code Agent} — an
+     * execution environment provider — reach them without depending on {@link AgentMetadata}.
+     *
+     * @return an unmodifiable map (never null, may be empty)
+     */
+    default Map<String, String> getAttributes() {
+        return getMetadata().getAttributes();
+    }
+
+    /**
      * Gets the agent metadata.
      *
      * @return The agent metadata (never null)
@@ -46,5 +62,27 @@ public interface Agent {
      * @return The agent content (never null)
      */
     AgentContent getContent();
+
+    /**
+     * Gets the allow-list bounding every tool call this agent makes.
+     *
+     * <p>
+     * <b>An empty list means unrestricted</b>, which is both the default and what every validator in
+     * {@code at.aimon.core.agent.tool.permission} does with one.
+     *
+     * @return An immutable list of allowed tools (never null, may be empty)
+     */
+    default List<AllowedTool> getAllowedTools() {
+        return getMetadata().getAllowedTools();
+    }
+
+    /**
+     * Gets whether this agent declares any tool restriction at all.
+     *
+     * @return true when the allow-list is non-empty
+     */
+    default boolean hasToolRestrictions() {
+        return getMetadata().hasToolRestrictions();
+    }
 
 }

@@ -282,6 +282,20 @@ registry.register(HookEventType.PRE_TOOL, rateLimitHook);
 | `getFinalAnswer()` | `String` | 최종 응답 |
 | `getMetadata()` | `ExecutionMetadata` | iteration 수 등 실행 메타데이터 |
 
+### `PostCompactContext`
+
+| 접근자 | 타입 | 설명 |
+|--------|------|------|
+| `getCompactionMetadata()` | `CompactionMetadata` | 방금 끝난 압축의 메타데이터 |
+| `getRecentReadFilePaths()` / `getInvokedSkills()` | `List<…>` | 압축된 구간에서 읽은 파일·부른 스킬 (압축 전 스냅샷) |
+| `getTranscriptBuffer()` | `TranscriptBuffer` | 압축 뒤의 transcript. 버전 2 로그에서는 압축이 뷰 상태에 기록되므로 로그(`getMessages()`)는 원문 그대로다 |
+| `addSyntheticMessage(Message)` | — | 복원 메시지를 `LogOrigin.SYNTHETIC` 으로 붙인다 |
+
+압축 뒤 파일 목록·스킬 목록 같은 복원 메시지를 붙일 때는 `getTranscriptBuffer().addMessage(...)` 가 아니라
+**`addSyntheticMessage(...)`** 를 쓴다. 버퍼의 평범한 `addMessage`/`addUserMessage` 는 `LogOrigin.CONVERSATION` 으로
+기록하므로, 런타임이 붙인 복원 메시지가 대화로 취급된다 — 메모리 ingest 와 기록 되찾기가 그것을 사용자가 한 말로 읽는다.
+기본 훅 `RecentFilesRestoreHook`·`InvokedSkillsRestoreHook` 도 이 경로를 쓴다.
+
 나머지 이벤트의 Context 도 같은 규칙을 따릅니다 — 공통 필드 + 이벤트 고유 필드, 전부 immutable.
 
 ---

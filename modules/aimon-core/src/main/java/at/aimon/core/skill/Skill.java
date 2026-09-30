@@ -5,6 +5,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
+import at.aimon.core.environment.StagedResource;
+
 /**
  * Immutable representation of an Agent Skill.
  *
@@ -64,7 +66,7 @@ public final class Skill {
     private final Map<String, String> references; // filename -> VFS full path
     private final Map<String, String> assets; // filename -> VFS full path
     private final Map<String, String> files; // relative path (from skill dir) -> VFS full path; excludes SKILL.md
-    private final String baseDir; // VFS directory of the skill; null when not loaded from a directory-backed repository
+    private final StagedResource stagedResource; // null only for skills assembled by hand, never via the registry
 
     private Skill(Builder builder) {
         name = Objects.requireNonNull(builder.name, "Name cannot be null");
@@ -75,7 +77,7 @@ public final class Skill {
         references = builder.references.isEmpty() ? Map.of() : Map.copyOf(builder.references);
         assets = builder.assets.isEmpty() ? Map.of() : Map.copyOf(builder.assets);
         files = builder.files.isEmpty() ? Map.of() : Map.copyOf(builder.files);
-        baseDir = builder.baseDir;
+        stagedResource = builder.stagedResource;
 
         // Validate that metadata name matches skill name
         if (!name.equals(metadata.getName())) {
@@ -164,17 +166,19 @@ public final class Skill {
     }
 
     /**
-     * Gets the skill's base directory on the virtual filesystem.
+     * Gets the skill's directory as a stageable resource (execution-environment design §4.4): where its files are read
+     * from, the exact file set, and the content hash that names the staged copy. {@code ${AIMON_SKILL_DIR}} is always
+     * the path an execution environment's {@code stage(...)} returns for it.
      *
      * <p>
-     * When present, this is the authoritative anchor for resolving the skill's own relative file references (for
-     * example via the {@code ${AIMON_SKILL_DIR}} render variable). It is populated by directory-backed repositories;
-     * skills assembled in-memory or loaded from a classpath repository without materialization return empty.
+     * Every skill {@code DefaultSkillRegistry} loads has one, whatever repository it came from. Only a skill
+     * assembled by hand (a test, a custom registry) may lack it; such a skill renders {@code ${AIMON_SKILL_DIR}}
+     * empty.
      *
-     * @return The skill base directory, or empty if not applicable
+     * @return The staged resource, or empty for a hand-built skill
      */
-    public Optional<String> getBaseDir() {
-        return Optional.ofNullable(baseDir);
+    public Optional<StagedResource> getStagedResource() {
+        return Optional.ofNullable(stagedResource);
     }
 
     /**
@@ -199,17 +203,17 @@ public final class Skill {
                 && Objects.equals(content, skill.content) && Objects.equals(rootFiles, skill.rootFiles)
                 && Objects.equals(scripts, skill.scripts) && Objects.equals(references, skill.references)
                 && Objects.equals(assets, skill.assets) && Objects.equals(files, skill.files)
-                && Objects.equals(baseDir, skill.baseDir);
+                && Objects.equals(stagedResource, skill.stagedResource);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(name, metadata, content, rootFiles, scripts, references, assets, files, baseDir);
+        return Objects.hash(name, metadata, content, rootFiles, scripts, references, assets, files, stagedResource);
     }
 
     @Override
     public String toString() {
-        return "Skill{" + "name='" + name + '\'' + ", metadata=" + metadata + ", baseDir='" + baseDir + '\''
+        return "Skill{" + "name='" + name + '\'' + ", metadata=" + metadata + ", stagedResource=" + stagedResource
                 + ", rootFiles=" + rootFiles.keySet() + ", scripts=" + scripts.keySet() + ", references="
                 + references.keySet() + ", assets=" + assets.keySet() + ", files=" + files.keySet() + '}';
     }
@@ -224,7 +228,7 @@ public final class Skill {
         private Map<String, String> references = Map.of();
         private Map<String, String> assets = Map.of();
         private Map<String, String> files = Map.of();
-        private String baseDir;
+        private StagedResource stagedResource;
 
         private Builder() {
         }
@@ -437,14 +441,14 @@ public final class Skill {
         }
 
         /**
-         * Sets the skill's base directory on the virtual filesystem.
+         * Sets the skill's directory as a stageable resource.
          *
-         * @param baseDir
-         *            The base directory (may be null)
+         * @param stagedResource
+         *            The staged resource (may be null)
          * @return This builder
          */
-        public Builder baseDir(String baseDir) {
-            this.baseDir = baseDir;
+        public Builder stagedResource(StagedResource stagedResource) {
+            this.stagedResource = stagedResource;
             return this;
         }
 

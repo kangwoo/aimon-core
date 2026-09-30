@@ -35,6 +35,7 @@ public final class PostgresTestSupport {
         PG = new PostgreSQLContainer<>(DockerImageName.parse("postgres:16-alpine"));
         PG.start();
         applySchema(PG, "/db/postgres/V1__init.sql");
+        applySchema(PG, "/db/postgres/V2__session_log_segment.sql");
         SHARED = buildHikari(PG, 8);
     }
 
@@ -65,7 +66,8 @@ public final class PostgresTestSupport {
     public static void truncateAll() {
         try (Connection c = SHARED.getConnection(); Statement s = c.createStatement()) {
             s.execute("TRUNCATE conversation_lock, conversation_lock_fence, conversation_signal, "
-                    + "conversation_inbox, idempotency_entry, background_task, session_record RESTART IDENTITY");
+                    + "conversation_inbox, idempotency_entry, background_task, session_record, "
+                    + "session_log_segment RESTART IDENTITY");
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to truncate test tables", e);
         }

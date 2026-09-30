@@ -32,11 +32,12 @@ public class CliConfigLoader {
      */
     CliConfigLoader(Function<String, String> envVarResolver) {
         // ACCEPT_CASE_INSENSITIVE_ENUMS so that `lowestReasoningEffort: low` works as well as `LOW`, matching what the
-        // starter's relaxed binding already accepts. It widens five keys across two enums. Four are ReasoningEffort:
+        // starter's relaxed binding already accepts. It widens six keys across three enums. Four are ReasoningEffort:
         // llm.reasoningEffort, and the three capability spellings of a model's ladder (lowestReasoningEffort, and
         // each element of acceptedReasoningEfforts). The fifth is ThinkingDialect, on
-        // llm.modelCapabilities.<model>.thinkingDialect -- added by #69, and the reason this census says "two enums"
-        // rather than "the same enum". Three other fields look like they would reach this feature and none does. Two
+        // llm.modelCapabilities.<model>.thinkingDialect -- added by #69. The sixth is SessionLogFormat, on
+        // cli.sessionLogWriteFormat, so `v2` binds as the starter's aimon.session.log-write-format=v2 does. Three
+        // other fields look like they would reach this feature and none does. Two
         // are not enums at all: MemoryDreamerConfig.ScorerConfig.type is a
         // String routed
         // through ScorerType.fromString (which already folds case itself), and McpServerEntry.transportType is a String

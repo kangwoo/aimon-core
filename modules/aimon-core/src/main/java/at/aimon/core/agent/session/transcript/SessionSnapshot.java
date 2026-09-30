@@ -13,8 +13,9 @@ import at.aimon.core.llm.Message;
  * Represents a snapshot of a session's transcript at a specific point in time.
  *
  * <p>
- * Contains the system prompt that was in force and the complete conversation history — every message exchanged
- * between the user, the assistant, and tool results.
+ * Contains the system prompt that was in force and the session log as one {@link SessionLogState} — its entries,
+ * seqs, rewind point and format, handed on whole rather than field by field. {@link #getConversationHistory()} is the
+ * messages of the entries the snapshot carries.
  *
  * <p>
  * This snapshot is immutable and captures the exact state of the transcript at the time of execution, including the
@@ -56,8 +57,7 @@ import at.aimon.core.llm.Message;
 public final class SessionSnapshot {
     private final SessionId sessionId;
     private final String systemPrompt;
-    private final List<Message> conversationHistory;
-    private final SessionRewindPoint rewindPoint;
+    private final SessionLogState logState;
 
     /**
      * Creates a new SessionSnapshot.
@@ -66,18 +66,22 @@ public final class SessionSnapshot {
      *            The session id (must not be null)
      * @param systemPrompt
      *            The system prompt in force for this session (may be null)
-     * @param conversationHistory
-     *            The conversation history (must not be null)
+     * @param logState
+     *            The log (must not be null)
      * @throws NullPointerException
-     *             if sessionId or conversationHistory is null
+     *             if sessionId or logState is null
      */
-    private SessionSnapshot(SessionId sessionId, String systemPrompt, List<Message> conversationHistory,
-            SessionRewindPoint rewindPoint) {
+    private SessionSnapshot(SessionId sessionId, String systemPrompt, SessionLogState logState) {
         this.sessionId = Objects.requireNonNull(sessionId, "Session id cannot be null");
         this.systemPrompt = systemPrompt;
-        this.conversationHistory = List
-                .copyOf(Objects.requireNonNull(conversationHistory, "Conversation history cannot be null"));
-        this.rewindPoint = rewindPoint;
+        this.logState = Objects.requireNonNull(logState, "Log state cannot be null");
+    }
+
+    private static SessionLogState migrate(List<Message> conversationHistory, SessionRewindPoint rewindPoint) {
+        // List.copyOf keeps the rejection of null elements this factory has always had.
+        return SessionLogState.ofMessages(
+                List.copyOf(Objects.requireNonNull(conversationHistory, "Conversation history cannot be null")),
+                rewindPoint);
     }
 
     /**
@@ -94,7 +98,7 @@ public final class SessionSnapshot {
      *             if sessionId or conversationHistory is null
      */
     public static SessionSnapshot of(SessionId sessionId, String systemPrompt, List<Message> conversationHistory) {
-        return new SessionSnapshot(sessionId, systemPrompt, conversationHistory, null);
+        return new SessionSnapshot(sessionId, systemPrompt, migrate(conversationHistory, null));
     }
 
     /**
@@ -107,14 +111,17 @@ public final class SessionSnapshot {
      * @param conversationHistory
      *            The conversation history (must not be null)
      * @param rewindPoint
-     *            Where the last turn began if it was interrupted (may be null)
+     *            Where the last turn began if it was interrupted (may be null). The history becomes a log with seqs
+     *            {@code 0..n-1}, so the point's seq is a position in {@code conversationHistory}.
      * @return A new SessionSnapshot
      * @throws NullPointerException
      *             if sessionId or conversationHistory is null
+     * @throws IllegalArgumentException
+     *             if {@code rewindPoint} points past the end of the history
      */
     public static SessionSnapshot of(SessionId sessionId, String systemPrompt, List<Message> conversationHistory,
             SessionRewindPoint rewindPoint) {
-        return new SessionSnapshot(sessionId, systemPrompt, conversationHistory, rewindPoint);
+        return new SessionSnapshot(sessionId, systemPrompt, migrate(conversationHistory, rewindPoint));
     }
 
     /**
@@ -127,7 +134,24 @@ public final class SessionSnapshot {
      *             if sessionId is null
      */
     public static SessionSnapshot of(SessionId sessionId) {
-        return new SessionSnapshot(sessionId, null, List.of(), null);
+        return new SessionSnapshot(sessionId, null, SessionLogState.empty());
+    }
+
+    /**
+     * Creates a new SessionSnapshot around a whole log.
+     *
+     * @param sessionId
+     *            The session id (must not be null)
+     * @param systemPrompt
+     *            The system prompt in force for this session (may be null)
+     * @param logState
+     *            The log (must not be null)
+     * @return A new SessionSnapshot
+     * @throws NullPointerException
+     *             if sessionId or logState is null
+     */
+    public static SessionSnapshot fromLog(SessionId sessionId, String systemPrompt, SessionLogState logState) {
+        return new SessionSnapshot(sessionId, systemPrompt, logState);
     }
 
     /**
@@ -140,7 +164,8 @@ public final class SessionSnapshot {
      * this package deliberately does not depend on the mutable record (design §3.4 rule 3).
      *
      * <p>
-     * Only the transcript is carried over. The record's side fields — {@code compactionFailureCount},
+     * Only the transcript is carried over, and the log goes across whole — {@link SessionRecordView#getLogState()}.
+     * The record's side fields — {@code compactionFailureCount},
      * {@code agentRef}, {@code sessionTotals}, {@code budgetOverride} — stay behind on the record, where their
      * writers keep them; see {@link SessionRecordStore#mergeFromSnapshot(SessionSnapshot)}.
      *
@@ -152,17 +177,25 @@ public final class SessionSnapshot {
      */
     public static SessionSnapshot from(SessionRecordView record) {
         Objects.requireNonNull(record, "Record cannot be null");
-        return new SessionSnapshot(record.getId(), record.getSystemPrompt(), record.getMessages(),
-                record.getRewindPoint().orElse(null));
+        return new SessionSnapshot(record.getId(), record.getSystemPrompt(), record.getLogState());
     }
 
     /**
-     * Gets the session id.
+     * Gets where the last turn began, when that turn was interrupted.
      *
      * @return where the last turn began if it was interrupted, or empty (never null)
      */
     public Optional<SessionRewindPoint> getRewindPoint() {
-        return Optional.ofNullable(rewindPoint);
+        return logState.getRewindPoint();
+    }
+
+    /**
+     * Gets the log, whole.
+     *
+     * @return the log state (never null)
+     */
+    public SessionLogState getLogState() {
+        return logState;
     }
 
     /**
@@ -191,7 +224,8 @@ public final class SessionSnapshot {
      * Gets the conversation history.
      *
      * <p>
-     * Contains all messages exchanged during the conversation, including:
+     * The messages of the log entries this snapshot carries — the part of the session log held in the record. Until
+     * sealing moves part of the log out of the record, that is every message exchanged, including:
      *
      * <ul>
      * <li>User messages
@@ -203,7 +237,7 @@ public final class SessionSnapshot {
      * @return An immutable list of messages (never null)
      */
     public List<Message> getConversationHistory() {
-        return conversationHistory;
+        return logState.getMessages();
     }
 
     @Override
@@ -216,12 +250,12 @@ public final class SessionSnapshot {
         }
         SessionSnapshot that = (SessionSnapshot) o;
         return sessionId.equals(that.sessionId) && Objects.equals(systemPrompt, that.systemPrompt)
-                && conversationHistory.equals(that.conversationHistory);
+                && getConversationHistory().equals(that.getConversationHistory());
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(sessionId, systemPrompt, conversationHistory);
+        return Objects.hash(sessionId, systemPrompt, getConversationHistory());
     }
 
     @Override
@@ -233,6 +267,6 @@ public final class SessionSnapshot {
             promptPreview = systemPrompt.length() > 50 ? systemPrompt.substring(0, 50) + "...'" : systemPrompt + "'";
         }
         return "SessionSnapshot{" + "sessionId=" + sessionId + ", systemPrompt='" + promptPreview + ", messageCount="
-                + conversationHistory.size() + '}';
+                + getConversationHistory().size() + '}';
     }
 }

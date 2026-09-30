@@ -21,12 +21,14 @@ The ReAct loop, turn handling, interruption, the input queue.
 | [`command-queue-guide.en.md`](agent-execution/command-queue-guide.en.md) | How user input that arrives mid-turn is queued and handled |
 | [`interruptible-tools-guide.en.md`](agent-execution/interruptible-tools-guide.en.md) | External interruption — Ctrl+C, NOW priority input — and `InterruptBehavior` |
 | [`system-reminder-convention.en.md`](agent-execution/system-reminder-convention.en.md) | The convention for injecting `<system-reminder>` synthetic context |
+| [`context-engine-guide.en.md`](agent-execution/context-engine-guide.en.md) | Choosing the engine that shrinks a long conversation's context — `default` / `rolling`, the `SessionHistory` tool |
 
 Design rationale: [`agent-runtime-scope.md`](../design/agent-execution/agent-runtime-scope.md) ·
 [`orca-executor.md`](../design/agent-execution/orca-executor.md) ·
 [`interceptor.md`](../design/agent-execution/interceptor.md) ·
 [`interrupt.md`](../design/agent-execution/interrupt.md) ·
 [`compaction.md`](../design/agent-execution/compaction.md) ·
+[`context-engine.md`](../design/agent-execution/context-engine.md) ·
 [`artifact.md`](../design/agent-execution/artifact.md)
 
 ## [`session/`](session/) — sessions

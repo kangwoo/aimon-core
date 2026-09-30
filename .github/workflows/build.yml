@@ -114,8 +114,12 @@ jobs:
       # What it guards is narrow and nothing else can see it. Packaging turns resource lookup into jar-entry
       # enumeration, and when that breaks the skill list comes back silently short rather than failing -- a
       # regression this framework has actually shipped. Every other test in the build runs off a directory class
-      # path, where that code path does not exist. The task builds both fat jars itself (Boot's current loader
-      # and its classic one) and launches each in a child JVM.
+      # path, where that code path does not exist. The task builds the fat jar itself and launches it, and the
+      # exploded layout, in a child JVM each.
+      #
+      # It built two fat jars until the Boot 4 baseline, the second with Boot's pre-3.2 "classic" loader, so that
+      # the jar-entry enumeration was exercised under both URL schemes. Boot 4 removed that loader, so the
+      # comparison went with it -- see FatJarPackagingTest's class javadoc for what that costs.
       - name: Fat-jar packaging tests
         run: ./gradlew --no-daemon packagingTest
 

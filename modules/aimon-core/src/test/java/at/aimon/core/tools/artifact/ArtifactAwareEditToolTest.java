@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -18,10 +19,14 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import at.aimon.core.agent.artifact.ArtifactCollector;
+import at.aimon.core.agent.artifact.ArtifactStorage;
 import at.aimon.core.agent.artifact.FileArtifact;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.environment.FileStamp;
+import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
@@ -37,6 +42,8 @@ class ArtifactAwareEditToolTest {
 
     private VirtualFileSystem fileSystem;
 
+    private VirtualFileSystem controlFileSystem;
+
     private ArtifactAwareEditTool editTool;
 
     @BeforeEach
@@ -44,7 +51,10 @@ class ArtifactAwareEditToolTest {
         final LocalFileSystemConfig config = new LocalFileSystemConfig(tempDir.toString());
         fileSystem = new LocalFileSystem(config);
         fileSystem.initialize();
-        editTool = new ArtifactAwareEditTool(fileSystem);
+        controlFileSystem = new LocalFileSystem(new LocalFileSystemConfig(tempDir.resolve("control").toString()));
+        controlFileSystem.initialize();
+        editTool = new ArtifactAwareEditTool(
+                new ArtifactArchive(controlFileSystem, ArtifactPolicy.enabledWithDefaults()));
     }
 
     @AfterEach
@@ -52,25 +62,40 @@ class ArtifactAwareEditToolTest {
         if (fileSystem != null) {
             fileSystem.close();
         }
+        if (controlFileSystem != null) {
+            controlFileSystem.close();
+        }
     }
 
     /**
      * Creates a ToolContext with the given file marked as read. EditTool requires files to be read before editing.
      */
     private ToolContext createContextWithReadFile(String filePath) {
-        final Set<String> readFiles = new HashSet<>();
-        readFiles.add(filePath);
-        return ToolContext.builder().put(ReadTool.READ_FILES_KEY, readFiles).build();
+        return readContextBuilder(Set.of(filePath)).build();
+    }
+
+    /**
+     * A context builder carrying a durable execution environment and the read stamps a {@code Read} of each existing
+     * file would have recorded, keyed by the path relative to the workspace root as the tools key them.
+     */
+    private ToolContext.Builder readContextBuilder(Set<String> readFiles) {
+        final ExecutionEnvironment env = TestExecutionEnvironments.of(fileSystem);
+        final Map<String, FileStamp> stamps = new ConcurrentHashMap<>();
+        for (String path : readFiles) {
+            if (fileSystem.exists(path)) {
+                stamps.put(tempDir.relativize(Path.of(path)).toString().replace('\\', '/'),
+                        FileStamp.of(fileSystem.getMetadata(path)));
+            }
+        }
+        return ToolContext.builder().put(ToolContextKeys.EXECUTION_ENVIRONMENT, env).put(ReadTool.FILE_STAMPS_KEY,
+                stamps);
     }
 
     /**
      * Creates a ToolContext with the given file marked as read and an ArtifactCollector.
      */
     private ToolContext createContextWithCollector(String filePath, ArtifactCollector collector) {
-        final Set<String> readFiles = new HashSet<>();
-        readFiles.add(filePath);
-        return ToolContext.builder().put(ReadTool.READ_FILES_KEY, readFiles)
-                .put(ToolContextKeys.ARTIFACT_COLLECTOR, collector).build();
+        return readContextBuilder(Set.of(filePath)).put(ToolContextKeys.ARTIFACT_COLLECTOR, collector).build();
     }
 
     @Nested
@@ -78,17 +103,21 @@ class ArtifactAwareEditToolTest {
     class Constructor {
 
         @Test
-        @DisplayName("Should throw NullPointerException when fileSystem is null")
-        void shouldThrowOnNullFileSystem() {
+        @DisplayName("Should throw NullPointerException when the archive is null")
+        void shouldThrowOnNullArchive() {
             assertThatThrownBy(() -> new ArtifactAwareEditTool(null)).isInstanceOf(NullPointerException.class)
-                    .hasMessageContaining("File system cannot be null");
+                    .hasMessageContaining("archive cannot be null");
         }
 
         @Test
-        @DisplayName("Should create tool with valid fileSystem")
-        void shouldCreateWithValidFileSystem() {
-            final ArtifactAwareEditTool tool = new ArtifactAwareEditTool(fileSystem);
-            assertThat(tool).isNotNull();
+        @DisplayName("No execution environment: error, no throw")
+        void noEnvironmentIsAnError() {
+            final ToolResult result = editTool.execute(
+                    ToolInput.of(Map.of("file_path", "a.txt", "old_string", "a", "new_string", "b")),
+                    ToolContext.empty());
+
+            assertThat(result.isError()).isTrue();
+            assertThat(result.getContent()).contains("No execution environment");
         }
 
     }
@@ -148,7 +177,7 @@ class ArtifactAwareEditToolTest {
         void shouldReturnErrorForMissingFilePath() {
             final ToolInput input = ToolInput.of(Map.of("old_string", "old", "new_string", "new"));
 
-            final ToolResult result = editTool.execute(input, ToolContext.empty());
+            final ToolResult result = editTool.execute(input, readContextBuilder(Set.of()).build());
 
             assertThat(result.isError()).isTrue();
             assertThat(result.getContent()).contains("Missing required parameter: file_path");
@@ -162,10 +191,10 @@ class ArtifactAwareEditToolTest {
             final ToolInput input = ToolInput
                     .of(Map.of("file_path", testFile.toString(), "old_string", "content", "new_string", "modified"));
 
-            final ToolResult result = editTool.execute(input, ToolContext.empty());
+            final ToolResult result = editTool.execute(input, readContextBuilder(Set.of()).build());
 
             assertThat(result.isError()).isTrue();
-            assertThat(result.getContent()).contains("has not been read yet");
+            assertThat(result.getContent()).contains("Read the file before modifying it");
         }
 
         @Test
@@ -285,8 +314,7 @@ class ArtifactAwareEditToolTest {
             final ArtifactCollector collector = new ArtifactCollector();
             final Set<String> readFiles = new HashSet<>();
             readFiles.add(testFile.toString());
-            final ToolContext context = ToolContext.builder().put(ReadTool.READ_FILES_KEY, readFiles)
-                    .put(ToolContextKeys.ARTIFACT_COLLECTOR, collector)
+            final ToolContext context = readContextBuilder(readFiles).put(ToolContextKeys.ARTIFACT_COLLECTOR, collector)
                     .put(ToolContextKeys.CURRENT_TOOL_USE_ID_KEY, "toolu_abc123").build();
             final ToolInput input = ToolInput.of(Map.of("file_path", testFile.toString(), "old_string", "old",
                     "new_string", "new", "artifact", true));
@@ -390,8 +418,8 @@ class ArtifactAwareEditToolTest {
             Files.writeString(internalFile, "old3 internal");
             readFiles.add(internalFile.toString());
 
-            final ToolContext context = ToolContext.builder().put(ReadTool.READ_FILES_KEY, readFiles)
-                    .put(ToolContextKeys.ARTIFACT_COLLECTOR, collector).build();
+            final ToolContext context = readContextBuilder(readFiles).put(ToolContextKeys.ARTIFACT_COLLECTOR, collector)
+                    .build();
 
             editTool.execute(ToolInput.of(Map.of("file_path", file1.toString(), "old_string", "old1", "new_string",
                     "new1", "artifact", true)), context);
@@ -436,11 +464,58 @@ class ArtifactAwareEditToolTest {
         void shouldReturnDelegateErrorResult() {
             final ToolInput input = ToolInput.of(Map.of("old_string", "old", "new_string", "new", "artifact", true));
 
-            final ToolResult result = editTool.execute(input, ToolContext.empty());
+            final ToolResult result = editTool.execute(input, readContextBuilder(Set.of()).build());
 
             assertThat(result.isError()).isTrue();
         }
 
     }
 
+    @Nested
+    @DisplayName("Execution environment (execution-environment design §9.3)")
+    class ExecutionEnvironmentDurability {
+
+        @Test
+        @DisplayName("Non-durable environment: the edited file is archived into the control store as CONTROL")
+        void nonDurableArchivesIntoControlStore() throws IOException {
+            final Path testFile = tempDir.resolve("report.csv");
+            Files.writeString(testFile, "old,data");
+            final ArtifactCollector collector = new ArtifactCollector("fork-7");
+            final ToolContext context = ToolContext.builder()
+                    .put(ToolContextKeys.EXECUTION_ENVIRONMENT,
+                            TestExecutionEnvironments.builder().fileSystem(fileSystem).durable(false).build())
+                    .put(ReadTool.FILE_STAMPS_KEY,
+                            new ConcurrentHashMap<>(
+                                    Map.of("report.csv", FileStamp.of(fileSystem.getMetadata(testFile.toString())))))
+                    .put(ToolContextKeys.ARTIFACT_COLLECTOR, collector).build();
+
+            final ToolResult result = editTool.execute(
+                    ToolInput.of(Map.of("file_path", testFile.toString(), "old_string", "old", "new_string", "new")),
+                    context);
+
+            assertThat(result.isSuccess()).isTrue();
+            assertThat(collector.getArtifacts()).singleElement().satisfies(artifact -> {
+                assertThat(artifact.getPath()).isEqualTo("artifacts/fork-7/report.csv");
+                assertThat(artifact.getStorage()).isEqualTo(ArtifactStorage.CONTROL);
+            });
+            assertThat(Files.readString(tempDir.resolve("control/artifacts/fork-7/report.csv"))).isEqualTo("new,data");
+        }
+
+        @Test
+        @DisplayName("Durable environment: the workspace path is registered as WORKSPACE")
+        void durableRegistersWorkspacePath() throws IOException {
+            final Path testFile = tempDir.resolve("report.csv");
+            Files.writeString(testFile, "old,data");
+            final ArtifactCollector collector = new ArtifactCollector();
+
+            editTool.execute(
+                    ToolInput.of(Map.of("file_path", testFile.toString(), "old_string", "old", "new_string", "new")),
+                    createContextWithCollector(testFile.toString(), collector));
+
+            assertThat(collector.getArtifacts()).singleElement().satisfies(artifact -> {
+                assertThat(artifact.getPath()).isEqualTo(testFile.toString());
+                assertThat(artifact.getStorage()).isEqualTo(ArtifactStorage.WORKSPACE);
+            });
+        }
+    }
 }

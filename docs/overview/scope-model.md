@@ -57,8 +57,9 @@ AIMON 컴포넌트의 **수명(lifetime)**, **소유권(ownership)**, **소멸 �
 | `McpClientManager` | `AgentRuntime` 생성 시 | `OrcaAgentRuntime.close()` 가 명시적으로 닫음 |
 | `WorkflowRunner` (agent-scoped 변형) | `OrcaAgentRuntimeFactory` — `workflowRunnerEnabled` 일 때만 | `OrcaAgentRuntime.close()` |
 | `WorkflowRunner` (call-scoped 변형) | `WorkflowTool` / `GraalJsWorkflowTool` 이 호출마다 | 각자의 try-with-resources |
-| `VirtualShell` (core 기본값) | `OrcaAgentRuntimeFactory` — 어셈블리가 `withShell(...)` 로 주지 **않았을 때만** `LocalShells.create()` | `OrcaAgentRuntime.close()` (`ownedShell` 필드) |
-| `VirtualShell` (어셈블리가 준 것) | 샌드박스 어셈블리 등 호출자 | **그 호출자** — `ownedShell` 은 null 이므로 런타임은 손대지 않는다 |
+| `ExecutionEnvironmentProvider` 와 그것이 쥔 셸·작업 파일 시스템 | 어셈블리 — bootstrap 은 런타임마다 하나(`LocalExecutionEnvironmentProvider`), 스타터는 `ExecutionEnvironmentProvider` 빈이 있으면 그것 하나 | 만든 쪽 — bootstrap 은 런타임의 teardown sink(축출·스택 종료 시), 빈은 Spring. **`OrcaAgentRuntime.close()` 는 닫지 않는다** |
+| `ExecutionEnvironment` | 실행마다 제공자의 `resolve()` (실행 시작에 1회) | 없음 — 뷰일 뿐 `Closeable` 이 아니다. `ToolContext` 와 함께 버려진다 |
+| `controlFileSystem` (제어 저장소, 옛 런타임 VFS) | 어셈블리 | 어셈블리 |
 | `LiveSession` | `LiveSessionFactory` / opener | `LiveSession.close()` — **핸들 자원만** |
 | `SchedulingEngine` / `ScheduledTaskManager` / `RoutineExecutor` | 애플리케이션 부트스트랩 | 앱 shutdown |
 | `AgentRuntimeRegistry` | `SchedulingEngine` **바깥**에서 생성해 빌더로 주입 | 앱 shutdown (`SchedulingEngine` 이 소유하지 않음) |
@@ -77,13 +78,14 @@ AIMON 컴포넌트의 **수명(lifetime)**, **소유권(ownership)**, **소멸 �
 | `ApplicationScoped` | 앱 시작 ~ 종료. `AgentRuntime` 소멸과 함께 닫으면 안 됨 |
 
 IMPORTANT: **마커에 대한 fan-out 은 없다.** `OrcaAgentRuntime.close()` 는
-`AgentScoped` 구현체를 스캔하지 않고 **하드코딩된 목록**(`mcpClientManager`, `workflowRunner`,
-`ownedShell`)만 닫는다. 네이티브 자원(커넥션 풀, 워처 스레드)을 쥔 agent-scoped 컴포넌트를 새로
+`AgentScoped` 구현체를 스캔하지 않고 **하드코딩된 목록**(`mcpClientManager`, `workflowRunner`)만
+닫는다. 네이티브 자원(커넥션 풀, 워처 스레드)을 쥔 agent-scoped 컴포넌트를 새로
 추가한다면 그 목록에 **직접 추가**해야 한다. 그러지 않으면 영원히 닫히지 않는다.
 
-목록이 둘에서 셋으로 늘어난 것이 이 규칙의 실사례다 — `ownedShell` 은 마커를 달아서가 아니라
-`close()` 본문에 한 줄이 추가되어서 닫힌다. 셋 중 `ownedShell` 만 **조건부**로, 즉 어셈블리가
-셸을 주지 않아 런타임이 직접 만든 경우에만 닫는다(§2 표).
+이 목록에는 한때 `ownedShell` 이 셋째로 있었다 — 어셈블리가 셸을 주지 않았을 때 런타임이 직접 만든
+셸이다. 실행 환경 설계([`design/tool/execution-environment.md`](../design/tool/execution-environment.md)
+§4.3)로 셸과 작업 파일 시스템의 소유자가 `ExecutionEnvironmentProvider` 하나가 되면서 빠졌다. 런타임은
+제공자를 빌려 쓸 뿐이므로, 목록에 올리는 것이 오히려 잘못이다(§2 표).
 
 마커를 붙이지 않아도 수명은 그대로다. `ToolRegistry` / `HookRegistry` 는 agent-scoped 이지만
 닫을 자원이 없어 `AgentScoped` 를 구현하지 않는다.

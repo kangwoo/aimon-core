@@ -97,7 +97,8 @@ public final class AgentTask {
 
     /**
      * @return {@code true} if this step runs against an isolated per-branch filesystem view (worktree isolation,
-     *         design §6.3). Requires a {@code WorktreeEnvironmentFactory} to be wired, else the step is run-fatal.
+     *         design §6.3). Requires an execution environment that supports {@code isolate()}, else the step is
+     *         run-fatal.
      *         Implies {@link #isNonCacheable()}.
      */
     public boolean isIsolate() {
@@ -189,7 +190,8 @@ public final class AgentTask {
         /**
          * @param isolate
          *            whether the step runs against an isolated per-branch filesystem view (design §6.3). Implies
-         *            {@code nonCacheable}. Requires a {@code WorktreeEnvironmentFactory}; unset factory ⇒ run-fatal.
+         *            {@code nonCacheable}. Requires an execution environment that supports {@code isolate()}; otherwise
+         *            the run fails.
          * @return this builder
          */
         public Builder isolate(boolean isolate) {

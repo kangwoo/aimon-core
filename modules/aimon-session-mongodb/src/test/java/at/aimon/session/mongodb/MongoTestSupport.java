@@ -61,7 +61,8 @@ public final class MongoTestSupport {
     public static void dropAndApplyDdl() {
         final MongoDatabase db = sharedDatabase();
         for (String name : List.of(DocumentKeys.COLL_LOCKS, DocumentKeys.COLL_INBOX, DocumentKeys.COLL_IDEMPOTENCY,
-                DocumentKeys.COLL_SIGNALS, DocumentKeys.COLL_BACKGROUND_TASK, DocumentKeys.COLL_SESSION_RECORDS)) {
+                DocumentKeys.COLL_SIGNALS, DocumentKeys.COLL_BACKGROUND_TASK, DocumentKeys.COLL_SESSION_RECORDS,
+                DocumentKeys.COLL_SESSION_LOG_SEGMENTS)) {
             try {
                 db.getCollection(name).drop();
             } catch (RuntimeException ignored) {
@@ -78,6 +79,10 @@ public final class MongoTestSupport {
         // No index: every access is by _id, and listSessionIds is a full scan either way. init.js creates it for the
         // same reason it creates the others — so an operator sees the collection before the first session lands in it.
         db.createCollection(DocumentKeys.COLL_SESSION_RECORDS);
+        db.createCollection(DocumentKeys.COLL_SESSION_LOG_SEGMENTS);
+        // Spelled out for the same reason as the inbox index below.
+        db.getCollection(DocumentKeys.COLL_SESSION_LOG_SEGMENTS).createIndex(Indexes.ascending("sessionId"),
+                new IndexOptions().name("by_session"));
 
         final MongoCollection<Document> inbox = db.getCollection(DocumentKeys.COLL_INBOX);
         // Spelled out rather than built from DocumentKeys: this index mirrors the one operators applied from init.js,

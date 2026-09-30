@@ -46,7 +46,13 @@ import at.aimon.core.llm.ToolUseResult;
  * <p>
  * Stateless after construction; thread-safe (the only mutable state lives in the {@link TranscriptBuffer} passed in,
  * whose own thread-safety contract is documented on that class).
+ *
+ * @deprecated Rewrites tool results in the log, which a version-2 (append-only) log does not allow, and has no
+ *             production wiring. A context engine hides a tool result body with
+ *             {@link TranscriptBuffer#elideInView(long, String)} instead (session-log §3.3).
  */
+@Deprecated
+@SuppressWarnings("deprecation") // rewrites through the deprecated replaceMessageAt, which is what it does
 public final class TimeBasedMicrocompact {
 
     /** Replacement body used for cleared tool-result content. */

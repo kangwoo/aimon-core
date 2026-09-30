@@ -28,6 +28,7 @@ import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.command.DefaultCommandExecutionManager;
 import at.aimon.core.command.DefaultCommandRegistry;
+import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
 import at.aimon.core.hook.DefaultHookExecutionManager;
@@ -43,6 +44,7 @@ import at.aimon.core.skill.DefaultSkillRegistry;
 import at.aimon.core.subagent.DefaultSubagentExecutionManager;
 import at.aimon.core.subagent.DefaultSubagentRegistry;
 import at.aimon.core.tools.ToolContextKeys;
+import at.aimon.core.tools.session.SessionHistoryTool;
 
 @DisplayName("OrcaAgentExecutor Artifact Integration Tests")
 class OrcaAgentExecutorArtifactIntegrationTest {
@@ -80,7 +82,8 @@ class OrcaAgentExecutorArtifactIntegrationTest {
                 .toolRegistry(toolRegistry).hookRegistry(new DefaultHookRegistry())
                 .commandRegistry(new DefaultCommandRegistry(fileSystem, ".aimon/commands"))
                 .subagentRegistry(new DefaultSubagentRegistry(fileSystem, ".aimon/agents"))
-                .skillRegistry(new DefaultSkillRegistry(fileSystem, ".aimon/skills")).fileSystem(fileSystem)
+                .skillRegistry(new DefaultSkillRegistry(fileSystem, ".aimon/skills")).controlFileSystem(fileSystem)
+                .executionEnvironmentProvider(TestExecutionEnvironments.provider(fileSystem))
                 .environment(Environment.createDefault()).build();
     }
 
@@ -112,6 +115,33 @@ class OrcaAgentExecutorArtifactIntegrationTest {
 
             assertThat(capturedContext.get()).isNotNull();
             assertThat(capturedContext.get().get(ToolContextKeys.ARTIFACT_COLLECTOR)).isPresent();
+        }
+    }
+
+    @Nested
+    @DisplayName("Session log injection")
+    class SessionLogInjection {
+
+        @Test
+        @DisplayName("Tool should receive the running session's log, as the buffer holds it now")
+        void toolShouldReceiveTheRunningSessionsLog() {
+            AtomicReference<ToolContext> capturedContext = new AtomicReference<>();
+            toolRegistry.register(new ContextCaptureTool(capturedContext));
+
+            List<LlmResponse> responses = new ArrayList<>();
+            responses.add(LlmResponse.of("Checking.", List.of(ToolUse.of("toolu_log", "capture_context", Map.of())),
+                    TokenUsage.empty()));
+            responses.add(LlmResponse.text("Done."));
+            MockLlmClient llmClient = new MockLlmClient(responses);
+            executor = createExecutor(llmClient);
+
+            executor.execute(createContext(llmClient), createRequest("remember the canary"));
+
+            assertThat(capturedContext.get().get(SessionHistoryTool.LOG_SOURCE_KEY)).hasValueSatisfying(source -> {
+                assertThat(source.getSessionId()).isNotNull();
+                assertThat(source.currentLog().getMessages()).extracting(Message::getContent)
+                        .contains("remember the canary");
+            });
         }
     }
 

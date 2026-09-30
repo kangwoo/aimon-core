@@ -39,8 +39,13 @@ import at.aimon.core.tools.todo.TodoStatus;
  * The distinction matters and is the whole reason this file can exist. There is no native build in this
  * repository, and for a long time that was recorded as "no way to verify the hints". It is not: hints are a
  * declaration, {@code RuntimeHintsPredicates} reads that declaration with the same matching logic the native
- * build ships (Spring writes {@code ResourcePatternHint#toRegex()} straight into {@code resource-config.json}),
- * and that is how Spring Boot verifies its own. What a predicate test cannot tell us is whether the declared set
+ * build ships ({@code ResourcePatternHint#matches(String)} is what both the predicate and the generated native
+ * configuration go through), and that is how Spring Boot verifies its own. That shared matcher is the reason
+ * these tests earn their keep: Spring Framework 7 changed it from regex semantics — where {@code *} became
+ * {@code .*} and crossed {@code /}, which is what {@code ResourcePatternHint#toRegex()} used to emit into
+ * {@code resource-config.json} before Framework 7 removed that method — to GraalVM glob semantics, where only
+ * {@code **} descends. These tests are what caught the registrar's pattern being silently narrowed by that
+ * change. What a predicate test cannot tell us is whether the declared set
  * is <em>sufficient</em> — only a real image can say that. So these tests are worth exactly this much: the
  * registrar declares what we meant it to declare, and it stays wired to something that is always active.
  */
@@ -98,9 +103,13 @@ class AimonRuntimeHintsTest {
             assertThat(RuntimeHintsPredicates.reflection()
                     .onConstructor(Todo.class.getDeclaredConstructor(String.class, TodoStatus.class, String.class))
                     .invoke()).accepts(hints);
-            assertThat(RuntimeHintsPredicates.reflection().onType(Todo.class)
-                    .withMemberCategories(MemberCategory.DECLARED_FIELDS, MemberCategory.INVOKE_DECLARED_CONSTRUCTORS))
-                    .accepts(hints);
+            // ACCESS_DECLARED_FIELDS, not DECLARED_FIELDS: Spring Framework 7 added the ACCESS_* field
+            // categories and BindingReflectionHintsRegistrar now registers those. The registrar under test
+            // delegates to Spring's, on purpose (see AimonRuntimeHints), so this assertion tracks Spring's
+            // choice rather than fixing one of our own — it is here to catch the delegation silently
+            // registering nothing, which is why it names categories at all.
+            assertThat(RuntimeHintsPredicates.reflection().onType(Todo.class).withMemberCategories(
+                    MemberCategory.ACCESS_DECLARED_FIELDS, MemberCategory.INVOKE_DECLARED_CONSTRUCTORS)).accepts(hints);
         }
 
         @Test

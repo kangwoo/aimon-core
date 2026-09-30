@@ -30,7 +30,7 @@ class SessionRewindPointTest {
     }
 
     /**
-     * A point counting more messages than exist would rewind to a position that is not in the transcript, so the pair
+     * A point past the log's {@code nextSeq} would rewind to a seq that is not in the transcript, so the pair
      * is rejected where it is assembled rather than where it is used — by which time the caller has no way to tell a
      * corrupt record from an empty one.
      */
@@ -40,10 +40,10 @@ class SessionRewindPointTest {
 
         assertThatIllegalArgumentException()
                 .isThrownBy(() -> SessionTranscript.of("prompt", messages, SessionRewindPoint.of(3, ASK_INPUT)))
-                .withMessageContaining("holds 2");
+                .withMessageContaining("lies outside [floorSeq=0, nextSeq=2]");
         assertThatIllegalArgumentException().isThrownBy(
                 () -> SessionTranscript.of("prompt", messages).withRewindPoint(SessionRewindPoint.of(3, ASK_INPUT)))
-                .withMessageContaining("holds 2");
+                .withMessageContaining("lies outside [floorSeq=0, nextSeq=2]");
     }
 
     /** A point exactly at the end is the ordinary case: a turn interrupted before it appended anything. */

@@ -38,7 +38,6 @@ import at.aimon.core.workflow.WorkflowRun;
 import at.aimon.core.workflow.WorkflowRunState;
 import at.aimon.core.workflow.WorkflowRunner;
 import at.aimon.core.workflow.WorkflowScript;
-import at.aimon.core.workflow.WorktreeEnvironmentFactory;
 
 /**
  * Default {@link WorkflowRunner}. Application-scoped: constructed once at bootstrap with borrowed collaborators (a
@@ -155,10 +154,9 @@ public final class DefaultWorkflowRunner implements WorkflowRunner {
         // unchanged; an explicit perBatchMax >= maxConcurrency is rejected).
         this.fanout = new BoundedFanoutDispatcher(this.concurrency.forSharedPool(bg.getMaxConcurrentRuns()));
         // The global leaf ceiling and the nesting depth are sourced from the ORIGINAL config (not the forSharedPool
-        // derivation, which only re-derives perBatchMax), so they never silently revert (§6.2). worktreeFactory
-        // is nullable — isolation is unavailable when unset (fails loud).
+        // derivation, which only re-derives perBatchMax), so they never silently revert (§6.2).
         this.executionOptions = new ContextExecutionOptions(
-                new LeafConcurrencyLimiter(this.concurrency.getMaxConcurrency()), b.worktreeFactory,
+                new LeafConcurrencyLimiter(this.concurrency.getMaxConcurrency()),
                 this.concurrency.getMaxNestingDepth());
         this.runHostingExecutor = newRunHostingExecutor(bg);
         this.shutdownDrain = bg.getShutdownDrain();
@@ -407,7 +405,6 @@ public final class DefaultWorkflowRunner implements WorkflowRunner {
         private StepResultCache stepResultCache;
         private RunStore runStore;
         private WorkflowBackgroundConfig backgroundConfig;
-        private WorktreeEnvironmentFactory worktreeFactory;
 
         private Builder(SubagentExecutionManager manager, SubagentExecutionEnvironment baseEnv) {
             this.manager = manager;
@@ -447,15 +444,6 @@ public final class DefaultWorkflowRunner implements WorkflowRunner {
         /** Sets the run-hosting pool config (default {@link WorkflowBackgroundConfig#defaults()}). */
         public Builder backgroundConfig(WorkflowBackgroundConfig backgroundConfig) {
             this.backgroundConfig = backgroundConfig;
-            return this;
-        }
-
-        /**
-         * Sets the caller-injected worktree environment factory (design §6.3). When unset, {@code isolate=true} tasks
-         * are run-fatal. Nullable.
-         */
-        public Builder worktreeFactory(WorktreeEnvironmentFactory worktreeFactory) {
-            this.worktreeFactory = worktreeFactory;
             return this;
         }
 

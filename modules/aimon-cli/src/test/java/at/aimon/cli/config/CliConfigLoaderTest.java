@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.cli.exception.ConfigurationException;
+import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.llm.ReasoningEffort;
 import at.aimon.core.llm.capability.ThinkingDialect;
 import at.aimon.core.llms.anthropic.AnthropicThinkingDisplay;
@@ -100,6 +101,40 @@ class CliConfigLoaderTest {
             assertThat(config.getLlmConfig().getProvider()).isEqualTo("openai");
             assertThat(config.getLlmConfig().getApiKey()).isEqualTo("test-api-key");
             assertThat(config.getLlmConfig().getModel()).isEqualTo("gpt-4");
+        }
+
+        @Test
+        @DisplayName("cli.sessionLogWriteFormat binds v2 in any case, and defaults to v1")
+        void sessionLogWriteFormatBinds() throws IOException {
+            final Path configFile = tempDir.resolve("format.yaml");
+            Files.writeString(configFile, """
+                    llm:
+                      provider: "openai"
+                      apiKey: "test-api-key"
+                    cli:
+                      sessionLogWriteFormat: v2
+                    """);
+            assertThat(loader.load(configFile.toString()).getCliSettings().getSessionLogWriteFormat())
+                    .isEqualTo(SessionLogFormat.V2);
+
+            Files.writeString(configFile, """
+                    llm:
+                      provider: "openai"
+                      apiKey: "test-api-key"
+                    cli:
+                      streaming: false
+                    """);
+            assertThat(loader.load(configFile.toString()).getCliSettings().getSessionLogWriteFormat())
+                    .isEqualTo(SessionLogFormat.V1);
+
+            Files.writeString(configFile, """
+                    llm:
+                      provider: "openai"
+                      apiKey: "test-api-key"
+                    cli:
+                      sessionLogWriteFormat: v3
+                    """);
+            assertThatThrownBy(() -> loader.load(configFile.toString())).isInstanceOf(ConfigurationException.class);
         }
 
         @Test

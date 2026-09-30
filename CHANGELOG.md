@@ -7,6 +7,621 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Changed: workflow isolation refuses bad input where it starts, and says why (EE-8, EE-25, EE-27, EE-28, EE-29)
+
+Design and departures: `docs/design/tool/workflow-isolation-hardening.md`.
+
+- **A branch's own `.aimon/` is refused at write time.** A local isolated branch applies the parent's path rules again,
+  anchored at `.worktrees/{key}/`. Before, the write succeeded, and the merge later failed on the root's `DENY` after
+  other files had already been promoted, leaving a half-merge. The rules follow the parent's: an assembly that set
+  `pathRules(List.of())` leaves its branches unguarded too. A branch can no longer `deleteRecursive(".")` itself
+  through its own filesystem; delete `.worktrees/{key}` through the parent.
+- **`ExecutionEnvironment.isolate` may throw, with the reason.** Empty still means "this kind of environment has no
+  isolation". `UnavailableExecutionEnvironment.isolate` now throws its `ExecutionEnvironmentUnavailableException` (no
+  provider, provider failure), and a local branch's `isolate` throws `UnsupportedOperationException` (nested
+  isolation is not supported). The workflow runner's run-fatal `WorkflowException` quotes the reason and chains it as
+  the cause, where it used to say "does not support isolation".
+- **New default SPI method `ExecutionEnvironment.isolatedFrom()`**, empty by default; a local branch returns its parent.
+- **`WorktreeMerge.promote` checks the branches before it reads or writes any file.** The parent itself, a branch
+  sharing the parent's filesystem, the same branch twice, or a branch whose `isolatedFrom()` names another environment
+  is an `IllegalArgumentException`. Before, the first two copied each file onto itself and then deleted it. (The
+  check calls each environment's `fileSystem()`, which is free for the local provider but may provision elsewhere.)
+  Before promoting anything it then checks every destination against the parent's path rules, so a file a shell wrote
+  under a `READ_ONLY` directory aborts the merge instead of half-failing it, and reads every promoted file's metadata,
+  so a shell-made symlink in a branch aborts it too.
+- **New `VirtualFileSystems.pathRules(VirtualFileSystem)`** returns the rules of a filesystem `withPathRules` built,
+  and an empty list for any other.
+- **A branch's shared staging prefix matches ignoring case**, like the path rules: `.AIMON-STAGED/x` from a branch
+  meets the parent's read-only rule instead of landing in the branch. A staging directory a shell made inside the
+  branch root, which no file-tool path reaches, is left out of the branch's listings and so never promoted.
+- **The branch root's absolute path is matched after normalisation and ignoring case.** `{ws}/./.worktrees/k/x`,
+  `{ws}//.worktrees/k/x` and `{ws}/.worktrees/K/x` are the branch's `x`; they used to nest as
+  `.worktrees/k/.worktrees/k/x`, past the branch's rules.
+
+### Changed: `main` carries a `-SNAPSHOT` version between releases
+
+`VERSION_NAME` on `main` is now `0.3.1-SNAPSHOT`, the next patch release, rather than the last released `0.3.0`. A
+build of `main` no longer claims to be a version that is already on Maven Central. `scripts/release.sh` handles the
+suffix: from `X.Y.Z-SNAPSHOT`, `patch` releases `X.Y.Z` itself, and `minor` / `major` release the smallest version of
+that kind at or above it (`0.4.0-SNAPSHOT` + `minor` → `0.4.0`, `0.3.1-SNAPSHOT` + `minor` → `0.4.0`). After tagging,
+the script commits `chore(release): prepare next development version X.Y.(Z+1)-SNAPSHOT` and pushes both commits
+with the tag. A bare `X.Y.Z` is still accepted and bumps past it as before.
+
+### Changed (breaking): workflow steps carry definition attributes (EE-42)
+
+Workflow steps are forks, but they build their subagent inline, so the `ForkDefinition` on their `EnvironmentRequest`
+always had empty attributes and a provider that picks a slot from them placed every step by its default. Design:
+`docs/design/tool/execution-environment-ee42-workflow-attributes.md`.
+
+- **`SubagentResolver.resolve(SubagentDescriptor)`** replaces `resolve(agentType, systemPrompt, model, tools,
+  maxIterations)` in `aimon-workflow-graaljs`. `SubagentDescriptor` is a new immutable value with a builder; a custom
+  resolver moves its arguments onto it. No deprecated overload (`docs/project/api-stability.md` §5).
+- **GraalJS `agent({...})` accepts `attributes`**, read like a definition file's `attributes:` block (nested and dotted
+  keys are the same attribute; numbers and booleans become text; anything a definition file rejects, and a non-finite
+  number such as `NaN`, fails the script). `SubagentResolver.inline(SubagentRegistry)` copies the attributes of the
+  subagent registered under the step's `agentType` and adds the step's own; only attributes are taken, and the step
+  keeps its `graaljs:<agentType>` name. **The registered definition's keys are pinned:** a step giving one of them a
+  different value fails the script (the message names the `agentType`, the key and both values), so a model-written
+  script cannot move an operator-registered subagent to another slot; an identical value is a no-op, and keys the
+  definition does not set may be added. An unregistered `agentType` has nothing to pin — whether scripts may set
+  `attributes` at all is backlog EE-45. `GraalJsWorkflowTool` uses it over its own registry by default; `SubagentResolver.inline()`
+  still looks nothing up.
+- **`Workflow` built-in steps** copy the attributes of the subagents registered as `workflow-perspective`,
+  `workflow-synthesizer`, `workflow-candidate`, `workflow-judge` and `workflow-skeptic`, when those exist, looked up
+  once per role at the start of each run. A registry that throws is logged at WARN and those steps run without
+  attributes (default placement) — unlike GraalJS, where a registry failure fails the script. Such a definition is
+  also an ordinary, `Task`-callable subagent.
+- **`DefinitionAttributes.overlay(base, override)`** merges two attribute maps, the override winning per key, and
+  rejects a merged key that is both a value and a group. It stays generic; the pinning of registered keys above is a
+  check the GraalJS resolver makes before calling it.
+- **A rejected GraalJS run reports a host exception's message**, not only its type (`JsResultMarshaller`). This applies
+  to every error a binding throws inside the script — a bad descriptor field, a pinned attribute, a failed registry
+  lookup — and the message reaches the model as the tool's error text.
+
+### Added: what an out-of-core execution environment provider needs (EE-18, EE-40, EE-41)
+
+Closes the three items `docs/backlog/execution-environment-open-items.md` lists as prerequisites of the workspace
+sandbox provider. Additive only — existing constructors and builders keep working.
+
+- **Path rules outside the core** (EE-41). `VirtualFileSystems.withPathRules(VirtualFileSystem, List<PathRule>)` wraps a
+  file system in the same path-rule guard the local provider uses (one implementation of path normalisation and
+  case/Unicode folding). The result borrows its delegate. The local provider now goes through it too.
+- **Background `Bash` and environment notices** (EE-18). A background command in an `UnavailableExecutionEnvironment`
+  is an error up front instead of "Background task started" (`UnavailableExecutionEnvironment.message()`).
+  `BashOutput` reports a finished task's notices once, ahead of its output and outside `filter`. A blocking
+  `BashOutput` no longer reports a task as finished before its exit code, output and notices are recorded.
+  `ShellExecutionException` and `ShellTimeoutException` gain `notices()` and constructors taking them, so a shell can
+  report a recreated session on a timed-out or failed command; `Bash` prints them ahead of the error.
+- **Definition attributes and the fork's definition** (EE-40). `agent.md` and `agents/*.md` accept an `attributes:`
+  block, flattened to dotted keys (`sandbox: {slot: build}` → `sandbox.slot=build`) by
+  `at.aimon.core.base.DefinitionAttributes`, and exposed as `AgentDefinition` / `AgentMetadata` /
+  `SubagentMetadata.getAttributes()` and `Agent.getAttributes()` (builders: `attributes(Map<String, String>)`, also on
+  `DefaultAgent.Builder` and `Subagent.Builder`). A list, empty value, empty nested map, blank key, a key written both
+  nested and dotted, or a key that is both a value and a group is a parse error; the same key twice at one level keeps
+  YAML's last-wins. Quote values that are not plain text — YAML 1.1 retypes `010` and `on`. The core carries
+  attributes and never reads them. `EnvironmentRequest.fork()` carries a `ForkDefinition` (subagent name and
+  attributes) for every subagent fork, and `EnvironmentRequest.definitionAttributes()` gives a provider the fork's
+  attributes, else the agent's. Attributes are part of `AgentDefinitionVersion` when present, so a scheduled routine
+  reports a slot change as a definition change; definitions without attributes keep their digest. Workflow steps
+  carry attributes too — see the EE-42 entry above.
+
+### Changed (breaking): tools run in a per-execution `ExecutionEnvironment`, and the control store is split out
+
+Design: `docs/design/tool/execution-environment.md` (implementation plan and departures:
+`execution-environment-implementation.md`; open items: `docs/backlog/execution-environment-open-items.md`). No
+compatibility layer (`docs/project/api-stability.md` §5).
+
+- **New SPI `at.aimon.core.environment`.** `ExecutionEnvironment` (file system, shell, `EnvironmentDescriptor`,
+  `stage`, `isolate`, `contentSearch`, `durable`) and `ExecutionEnvironmentProvider`. Both executors and scheduled
+  routines resolve one environment per execution, before prompt assembly, and publish it under the **write-once**
+  `ToolContextKeys.EXECUTION_ENVIRONMENT` (with `EXECUTION_ENVIRONMENT_PROVIDER` for forks). A second write of a
+  write-once name — including an enricher's — throws. A failing or missing provider yields an
+  `UnavailableExecutionEnvironment` whose file and shell calls fail with the cause. There is no host fallback. The
+  local implementation is `environment.impl.LocalExecutionEnvironmentProvider`.
+- **Tools hold no file system or shell.** `ReadTool()`, `WriteTool()` / `WriteTool(boolean)`, `EditTool()`,
+  `GrepTool()`, `BashTool(BackgroundBashManager)`, `ArtifactAwareWriteTool/EditTool(ArtifactArchive)`. `WikiIngest` and
+  `Skill` read the environment too. Removed: `OrcaToolProviderContext.getFileSystem()` / `getShell()` (use
+  `getControlFileSystem()`), `ToolContextKeys.VIRTUAL_FILE_SYSTEM`, `OrcaAgentRuntimeFactory.withShell(...)`,
+  `OrcaAgentRuntime.ownedShell`, and `agent.impl.orca.environment.{VirtualExecutionEnvironment,
+  LocalExecutionEnvironment, LocalShells}`. `OrcaAgentRuntimeFactory.create(...)` now requires
+  `withExecutionEnvironmentProvider(...)`. `Bash` runs in the workspace root, not the JVM's working directory.
+- **Control store.** The runtime's file system is now `getControlFileSystem()`. Skill, agent and command definitions,
+  task output, task results, snapshots, the CLI wiki and archived artifacts live there. Default directories are
+  relative to the control root (`skills`, `agents`, `commands`, `task-output`, `task-result`, `task-snapshot`,
+  `step-cache`, `bundled-skills`), and a local stack keeps the control root at `{workspace}/.aimon/`, so physical paths
+  are unchanged. The file tools cannot see `.aimon/` (DENY) and cannot modify `.aimon-staged/` (READ_ONLY). The opt-out
+  is `aimon.environment.control-writable=true`. The path rules resolve a path the way the backend does, so
+  `../<workspace-name>/.aimon/…` and `{workspace}/../<workspace-name>/.aimon/…` are caught; they match ignoring case
+  (`.AIMON/` is caught on a case-insensitive store); and a path that leaves the workspace is refused rather than passed
+  through.
+- **Relocation for direct-core embedders.** The `VirtualFileSystem` passed to
+  `OrcaAgentRuntimeFactory.create(...)` / `OrcaAgentRuntimeManager.getOrCreateRuntime(...)` is now the **control
+  root**, and the factory's default directories moved with it: `.aimon/skills` → `skills`, `.aimon/agents` → `agents`,
+  `.aimon/commands` → `commands`, `.aimon/task-output` → `task-output` (likewise the task-result and snapshot stores).
+  An embedder that keeps passing its workspace VFS no longer finds `{workspace}/.aimon/skills|agents|commands`, and
+  task output moves into the workspace. Pass `{workspace}/.aimon` instead to keep the physical paths. Likewise a
+  `VfsStepResultCache` built over a whole workspace VFS now writes to `{vfs}/step-cache`; build it over the control
+  store. Bootstrap, the starter and the CLI already do this.
+- **`OrcaAgentRuntimeManager.Builder.build()` requires a factory with a provider.** It no longer defaults to
+  `new OrcaAgentRuntimeFactory()` (which could not create a runtime without an `ExecutionEnvironmentProvider`): a
+  missing factory, or one without `withExecutionEnvironmentProvider(...)` /
+  `withExecutionEnvironmentProviderFactory(...)`, throws `IllegalStateException` at build time. See
+  `docs/getting-started/embedding-agent-in-application.md` §A.
+- **`${AIMON_SKILL_DIR}` is always a staged copy.** Every `SkillRepository` implements the new abstract
+  `resolveSource(String)`, which replaces `resolveBaseDir` (removed with `Skill.getBaseDir()`). The registry scans each
+  skill into a `StagedResource`, and rendering calls `env.stage(...)`, which makes a content-addressed, read-only copy
+  under `{workspace}/.aimon-staged/{name}/{contentKey}/`. `.stageignore` excludes files. The staging limit is
+  `aimon.environment.staging.max-bytes` (default 50 MB).
+- **Workflow isolation is `ExecutionEnvironment.isolate(branchKey)`.** Removed: `WorktreeEnvironmentFactory`,
+  `WorktreeToolEnvironmentFactory`, `worktreeFactory` on `WorkflowRunnerOptions` / `DefaultWorkflowRunner.Builder` /
+  `GraalJsWorkflowTool.Builder`, `withWorktreeEnvironmentFactory`, and the second argument of
+  `GraalJsWorkflowToolProvider`. `WorktreeMerge.promote(ExecutionEnvironment parent, List<ExecutionEnvironment>
+  branches, Policy)`. Bash commands in a branch default to the branch root.
+- **Stale-write protection.** `ReadTool.FILE_STAMPS_KEY` (read stamps: size + mtime, or `FileMetadata.getEtag()` when
+  the backend has one — S3 ETag, GridFS file id) replaces `READ_FILES_KEY`. `Edit`, and `Write` over an existing file,
+  refuse with "Read the file before modifying it" or "File changed since it was read; Read it again". A file read in an
+  earlier turn must be read again.
+- **Prompt and hooks describe the execution's environment.** The environment block renders the
+  `EnvironmentDescriptor`. `Environment` keeps only `timeZone`: `workingDirectory`, `platform`, `osVersion` and
+  `createWithWorkingDirectory` are removed. `ContextAssemblyRequest` carries `executionEnvironment` in place of
+  `environment` / `fileSystem`. Pre/PostTool hook contexts expose `getEnvironmentDescriptor()`.
+- **Smaller additions.** `ExecutionOptions.background`, `ShellCommandResult.notices()` (shown by `Bash` as
+  `[environment] …` lines), `ContentSearch` (`Grep` delegates to `rg` when it is on the `PATH`, and matching files are
+  now listed in path order), `FileArtifact.getStorage()` (`WORKSPACE` / `CONTROL`) with `ArtifactPolicy` and the
+  starter's `aimon.tools.artifact.*`, bootstrap `ExecutionEnvironmentSpec` / `ToolSpec.artifactPolicy`, and
+  `RecentFilesRestoreHook(..., ToolContext readContext)`.
+- **External modules** `aimon-sandbox` (`OrcaSandboxToolProvider`) and `aimon-browser` (`OrcaBrowserToolProvider`)
+  read `getFileSystem()` and must move to the new SPI (backlog EE-1).
+
+### Added: the rolling context engine and `SessionHistory`
+
+- **`RollingContextEngine`** (`at.aimon.core.agent.context`) keeps the head (up to the first conversation user message)
+  and a recent tail verbatim and summarizes the middle into one span that only widens; each compaction updates the
+  previous summary instead of re-summarizing it (`SummaryRequest.rolling` / `previousSummary` /
+  `targetSummaryTokens`, `SummaryPromptTemplate.buildRollingSystemPrompt`). It compacts at
+  `min(0.6 × effective window, auto-compact threshold)`, tries eliding large tool results first (`[tool result elided:
+  seq=N]`), retreats from the tail budget to half of it to the last legal cut, warns instead of compacting when no cut
+  helps, and absorbs the head only at the blocking limit. Where a model and system prompt cannot sustain rolling, or
+  the log is version 1, a call is served by the default engine. `/compact` fails with the new
+  `CompactionContendedException` when another compaction of the session is running. Design:
+  `docs/design/agent-execution/context-engine.md` §5.
+- **`SessionHistoryTool`** (`at.aimon.core.tools.session`, tool name `SessionHistory`) reads back the current session's
+  conversation entries by `seq` or by case-insensitive search, sealed ranges included. Registered only when the rolling
+  engine is wired. The executor publishes the running log to tools as `SessionLogSource` (`SessionHistoryTool.LOG_SOURCE_KEY`).
+  A message longer than one result is returned in parts: pass `offset` with `seq` to read the next one.
+- **What the model has not answered yet is never compacted away.** The rolling engine's cuts — tail budget, its
+  half, the last legal cut, the blocking limit's head-absorbing cut, and the region L0 prune elides — all stop at the
+  view's unread part: what follows the last assistant message (`ViewProjection.firstUnreadPosition()`). A fresh tool
+  result larger than the tail budget used to be elided before the model had read it, and reading it back through
+  `SessionHistory` could be elided again. When the unread part alone keeps the view over the threshold the engine warns
+  (`FALLBACK`); at the blocking limit it summarizes everything before it and sends the view even if still over, with a
+  WARN and a `COMPACT` decision whose reason carries `RollingContextEngine.STILL_OVER_BLOCKING`, and blocks
+  (`ContextWindowExceededException`) when nothing is left to absorb. The execution result tells that case apart
+  without the model's limits: every rolling compaction record carries `CompactionMetadata.getBlockingLimit()`, and
+  `isOverBlockingLimit()` is true on the one sent over it. Manual `/compact` stops at the same place: after an
+  interrupted turn it summarizes only what precedes the unanswered user message, and a view that is nothing but
+  unanswered input fails with "nothing to compact". Prompt-too-long recovery refuses a strategy answer that drops an
+  unread message, in both engines. A `SessionHistory` search result stops adding matches
+  at `SEARCH_RESULT_PARTS` (10) × `maxResultChars` characters and says so.
+- **Choosing the engine.** Spring `aimon.context.engine` (`default` | `rolling`), AGENT.md frontmatter
+  `context-engine` (a camelCase `contextEngine` fails parsing), `ExecutorSpec.contextEngine(...)`,
+  `OrcaAgentRuntimeFactory.withContextEngine(...)`; the agent's own value wins. New `ContextEngineKind`,
+  `AgentMetadata.getContextEngine()`, `AgentDefinition.getContextEngine()`.
+- **The write-format switch is exposed**: Spring `aimon.session.log-write-format` (`v1` default | `v2`),
+  `SessionSpec.logWriteFormat(...)`, `OrcaAgentRuntimeFactory.withSessionLogWriteFormat(...)`. A runtime asking for
+  `rolling` on a version-1 node fails to build — for a declared agent, at startup. With `v2` the runtime factory builds
+  the default engine with `writeFormat(V2)`. The CLI has its own key, `cli.sessionLogWriteFormat` (`v1` default |
+  `v2`); with `v2` it also pairs an in-memory segment store with its in-memory records, so a `context-engine: rolling`
+  agent runs under the CLI.
+- **`CompactionMetadata`** gained `getKind()` (`CompactionKind`: `PRUNE` / `ROLLING` / `FULL` / `FALLBACK`; `FULL`
+  unless set), the view's head / span / tail tokens, the summary tokens and the absorbed seq range; `equals` and
+  `hashCode` include them. A rolling `FALLBACK` decision (no cut can bring the view down) is recorded in
+  `OrcaAgentExecutionResult.getCompactionEvents()`, once per iteration that decided so.
+- **The in-place fallback no longer erases a version-2 view.** An engine that cannot serve view mode (a custom
+  `CompactionGuard`, a `CompactionEngine` without `summarize`) meeting a version-2 buffer that carries a view state or
+  sealed ranges now sends the projected view and does not compact it; `compactNow` fails and recovery drops from the
+  view. `ContextEngine.passthrough()` sends such a buffer as its projected view too.
+- **Live tests for the context engines.** `AnthropicContextEngineLiveTest` and `OpenAIContextEngineLiveTest` run the
+  rolling engine through the real executor against the real API, gated on the existing `ANTHROPIC_KEY` /
+  `OPENAI_KEY` like the other live classes: a fact planted in a pruned tool result is recovered after several rolling
+  cycles, every summary request is accepted (on Anthropic also under extended thinking), sealing happens, and the
+  session survives a version-2 codec round trip. The Anthropic class also forces a `/compact` on the default engine in
+  view mode. A keyless twin, `ContextEngineLiveRigTest`, runs the same scenario against a scripted model in every
+  build. How to run them and what they cost is under
+  [`CONTRIBUTING.md` › Live-API tests](CONTRIBUTING.md#live-api-tests).
+
+### Added: tuning the rolling engine without assembling a runtime by hand
+
+- The guide pointed at `RollingContextEngine.builder()` for changing rolling's ratios, but no assembly path took a
+  built engine: the factory, `AimonStackSpec` and the starter accepted only a `ContextEngineKind`. The thresholds can
+  now be set at each layer — `OrcaAgentRuntimeFactory.withRollingContextEngineCustomizer(Consumer<RollingContextEngine.Builder>)`,
+  `ExecutorSpec.Builder.rollingContextEngineCustomizer(...)`, and the starter's `aimon.context.rolling.*`
+  (`auto-compact-ratio`, `head-token-ratio`, `tail-token-ratio`, `summary-token-ratio`, `min-tail-ratio`,
+  `prune-min-tokens`). The customizer runs before the factory wires the engine's collaborators, so it tunes the engine
+  but cannot replace its compaction engine, estimator or write format. The starter refuses an out-of-range ratio at
+  startup even when no agent runs rolling yet. `RollingContextEngine` exposes the tuned values through getters.
+  Guide: `docs/features/agent-execution/context-engine-guide.md` §4.
+
+### Added: sealing — ranges the view no longer shows leave the record
+
+- **`SessionLogSegmentStore`** (`at.aimon.core.agent.session.store`) holds sealed ranges of session logs outside the
+  records; `SessionLogState` carries a manifest of `SessionLogManifestEntry` lines (range, fresh `SegmentId`, content
+  hash, entry count) in the `version: 2` document. A segment exists only while a manifest names it. Implementations:
+  `InMemorySessionLogSegmentStore`, `MongoSessionLogSegmentStore` (collection `session_log_segments`, index
+  `by_session` in `init.js`), `PostgresSessionLogSegmentStore` (table `session_log_segment`, new operator file
+  `V2__session_log_segment.sql` — apply it after `V1__init.sql`; the unshipped future index file is now named
+  `V3__indexes.sql`), `RedisSessionLogSegmentStore` (prefix `aimon:session:segment`, keys
+  `<prefix>:{s:<sessionId>}:data` / `<prefix>:{s:<sessionId>}:created` — one Redis Cluster slot per session; a prefix
+  containing `{` is refused; it takes a standalone `StatefulRedisConnection` or a `StatefulRedisClusterConnection`).
+  The Mongo `_id` is the `{sessionId, segmentId}` pair. Design:
+  `docs/design/session/session-log.md` §5.
+- **`DefaultTranscriptManager` seals** when given a `SessionLogStorage` (`minSealTokens` 32K, `segmentGcGrace` 1h —
+  never zero —, `maxReadTokens` 32K): the executor seals right after a compaction and the turn-end save seals before it
+  writes, on the turn's thread; runs are split at the rewind point. After a successful save it deletes the segments
+  `/clear` cut loose and collects orphans older than the grace period. `TranscriptManager` gained default
+  `seal(...)` and `getLogReader()`.
+- **`SessionLogReader`** reads the whole log, sealed ranges included, a page at a time (pages end at legal cuts), and
+  reports a missing or mismatched segment as a `[history unavailable: seq a..b]` gap instead of failing. The CLI's
+  session-end derivation reads through it. A page reaching twice `maxReadTokens` is cut even with a `tool_use` left
+  unanswered by a crash. `SessionLogReadCache` lets one operation load each segment once across many reads.
+- **`SessionStore.segments(raw)`** returns the fenced delete view (new abstract method; `DefaultSessionStore`
+  implements it). `SessionRouterBuilder.sessionLogSegmentStore(...)` makes a session delete remove the session's
+  segments after its record. `SessionSpec.segmentStore(...)` wires a store into the stack; without one an in-memory
+  record store gets an in-memory segment store and a supplied record store seals nothing.
+- **The stack's record writes and segment deletes are fenced by the lease.** The transcript manager's turn-end saves
+  and checkpoints, the live sessions' totals / budget / persisted-rewind writes, and the turn-end GC and `/clear`
+  deletes go through the router's fenced views — new `SessionRouter.fencedRecordStore(SessionFence)` and
+  `fencedSegmentStore(SessionFence)` (defaults: empty), over the new `SessionStore.records(SessionFence)` /
+  `segments(raw, SessionFence)` (default methods: `HOLDER_ONLY` only). New enum `SessionFence`: `HOLDER_ONLY` in
+  `DeploymentMode.DISTRIBUTED`, so a node that lost a session's lease can neither overwrite the new holder's record nor
+  delete segments its manifest names; `UNLESS_HELD_ELSEWHERE` for a single-node stack given a lease store, which
+  refuses only sessions another node holds and still lets a live session opened outside the router (the CLI's) save and
+  collect; no fence on a single-node stack with the default lease store. **Behaviour change in distributed mode:** a
+  live session opened outside the router holds no lease, so all of its saves are refused — open every session through
+  the router. A refused turn-end save logs one WARN and skips that save's GC; refused checkpoints and fenced GC deletes
+  log at DEBUG.
+- **A `/clear` no longer leaves a gap behind a late checkpoint.** `SessionCheckpointMailbox.drain(SessionId)` (new;
+  `flush` is the same drain without the answer) reports whether a checkpoint of older state can still land, and the
+  transcript manager deletes nothing — neither `/clear`'s segments nor orphans — after a save whose drain gave up. The
+  `/clear` deletes stay pending on that turn's transcript buffer and are retried only by a later save of the same
+  buffer whose drain completes; once the turn ends they are not retried as such — the segments are either named again
+  by the manifest the late checkpoint resurrected (and kept), or left as orphans that turn-end GC or the store-wide
+  sweep collects after the grace. New
+  `SessionCheckpointMailbox.background(Duration drainTimeout)` (default `DEFAULT_DRAIN_TIMEOUT`, 5s).
+- **Store-wide orphan sweep** (opt-in): `SessionLogSegmentSweeper` (`at.aimon.core.agent.session.transcript`) walks the
+  whole segment store and deletes segments older than a grace (24h by default) that the session's record, read after
+  the listing, does not name — the orphans of sessions nobody reopens, which turn-end GC never reaches. Wired with
+  `SessionSpec.segmentSweepInterval(...)` / `segmentSweepGrace(...)` or Spring `aimon.session.segment-sweep-interval` /
+  `aimon.session.segment-sweep-grace`; off unless the interval is set, and refused at startup without a segment store.
+  Safe on every node at once, and run once per cluster per interval when the stack has a lease store: the sweeper's new
+  `Builder.coordination(leaseStore, holderId, lease)` makes `sweepIfClaimed()` take a sweep lease on the reserved id
+  `aimon:segment-sweep` (`SWEEP_LEASE_ID`) for one interval, renewed page by page and kept after the pass, and skip the
+  pass when another node holds it. The holding node's next pass extends the lease it last won instead of acquiring it
+  again, so its own tick never loses a race against that lease's expiry. **SPI addition:**
+  `SessionLogSegmentStore.scanSessions(createdBefore, cursor, limit)` returning `SegmentScanPage` — a full pass must not
+  miss a session holding an old segment, and may over-report or repeat (Redis walks its `:created` keys with `SCAN`,
+  every master in turn on a cluster connection). A custom backend implements it.
+- **Meaning changes** (session-log §10): once a range is sealed, `TranscriptBuffer.getMessages()`,
+  `AgentExecutionResult.getConversationHistory()` and `SessionSnapshot.getConversationHistory()` no longer return it;
+  `liveEntryCount()` (and `/clear`'s "Removed N messages") and `hasConversation()` count sealed ranges. Nothing seals
+  until the version-2 write mode is turned on.
+
+### Changed: on a version-2 log, compaction changes the view, not the log
+
+- **`SessionViewState` keeps what the LLM view leaves out.** It is part of `SessionLogState` and persisted with it in
+  the `version: 2` document: one `SummarySpan` (a seq range shown as the boundary / summary marker pair, with the
+  summary text and boundary metadata stored), dropped seq ranges, and elided tool results. It is changed only by
+  `SessionLogState.summarize` / `drop` / `elide` (and `TranscriptBuffer.summarizeView` / `dropFromView` /
+  `elideInView`), each of which refuses a cut that splits a `tool_use` from its `tool_result` (`LegalCuts`). A rewind
+  and `/clear` clean up whatever pointed at the seqs they cut. Design: `docs/design/session/session-log.md` §4, §6.
+- **`DefaultContextEngine` has a view mode**, chosen per transcript by its log format. On a version-2 log the model is
+  sent exactly what the in-place mode sent — the `[boundary, summary]` pair after a compaction, the view minus the
+  oldest user message after a prompt-too-long recovery — but the log keeps every message: the summary is recorded as
+  the view state's span, recovery as `drop(s, s + 1)`, and the view is projected deterministically from the log and
+  the view state (`ViewProjection`). A version-1 log is still compacted in place. Design:
+  `docs/design/agent-execution/context-engine.md` §4, §8.2.
+- **SPI additions.** `CompactionEngine.summaryInstalled(...)` fires the PostCompact hooks for a summary the caller
+  installed; `DefaultCompactionGuard.decide(...)` takes the guard's decision over a caller's view and leaves the
+  compaction to the caller; `ContextDecision.getViewSizeBefore()` makes the executor's compaction-boundary event report
+  view sizes; `DefaultContextEngine.Builder.writeFormat(V2)` refuses, at build time, a custom `CompactionGuard` or a
+  `CompactionEngine` that cannot `summarize`.
+- **Deprecated** (context-engine §8.2, session-log §3.3): `CompactionGuard`, `CompactionEngine.compact(...)`,
+  `TranscriptBuffer.replaceWith(...)` / `replaceMessageAt(...)`, `TimeBasedMicrocompact`. All keep working for the
+  version-1 write mode.
+- **Every summary request ends on the user side.** `DefaultCompactionEngine` appends a synthetic user instruction
+  (`SUMMARIZE_NOTE`) to a summary call's input that would otherwise end on an assistant message — the normal shape
+  between turns. Anthropic answers such a request as a prefill of a finished answer, with no content blocks, which
+  failed `/compact` in view mode against the real provider; the in-place (version-1) and AUTO summaries had the same
+  shape. The note goes to the summary call only, never to the log, the view or the buffer. The Anthropic client's
+  `No content blocks` error now names the stop reason and whether the request ended on an assistant message. Design:
+  `docs/design/agent-execution/context-engine.md` §13.9.
+- **Memory ingest reads the log as it was said.** `TranscriptBuffer.messagesSinceIngestMark()` and the CLI's
+  session-end derivation (`getConversationMessages()`) leave out `SYNTHETIC` entries; on a version-2 log a compacted
+  execution is no longer skipped. Ingest is sent in chunks of `IngestChunks.DEFAULT_MAX_INGEST_TOKENS` (32K estimated
+  tokens) cut at legal cuts — `IngestingExecutionMemorySink` gained a constructor taking the budget.
+
+### Changed: the session transcript is a seq-addressed log (`SessionLogState`)
+
+- **One value crosses the load and save chains whole.** `SessionLogState` (`at.aimon.core.agent.session.transcript`)
+  holds the log entries — each `(seq, message, origin)` — plus `nextSeq`, `floorSeq`, the rewind point and the format.
+  `SessionTranscript`, `SessionSnapshot`, `SessionRecord`, `StoredSessionRecord` and `TranscriptBuffer` hand it on
+  instead of copying messages and rewind point field by field. `SessionRecordView` gained a `default getLogState()`.
+  Design: `docs/design/session/session-log.md` §2, §7.2.
+- **Seqs are never reused.** A rewind cuts the log with `SessionLogState.truncateFrom(seq)` and `/clear` raises
+  `floorSeq` to `nextSeq`; neither moves `nextSeq`. `SessionRewindPoint` now holds a seq — `getMessageCount()` became
+  `getSeq()` ([`rename-maps.md`](docs/migration/rename-maps.md)).
+- **Entries record their origin.** `TranscriptBuffer.addMessage(Message, LogOrigin)` is new; the plain appenders mean
+  `CONVERSATION`. The user-context block, assembled reminders, OnStart advisory feedback, a command's reply and the
+  post-compaction restore hooks now append `SYNTHETIC` — hooks through the new `PostCompactContext.addSyntheticMessage`.
+  Whether a turn is a resumption is `hasConversation()` (a live `CONVERSATION` user entry), not a user-message count.
+- **`JsonSessionSnapshotCodec` reads `version: 2`, and still writes `version: 1`.** Version 2 carries the whole log
+  state. The write format is `SessionLogFormat` — `V1` by default, switched per node with the new
+  `DefaultTranscriptManager(store, mailbox, SessionLogFormat)` or `JsonSessionSnapshotCodec(SessionLogFormat)` once
+  every node reads version 2. The upgrade is sticky: a record read as version 2 is written as version 2 even by a node
+  still set to version 1. A binary older than this one cannot read version 2.
+- **Meaning changes.** `TranscriptBuffer.getMessages()`, `SessionSnapshot.getConversationHistory()` and
+  `AgentExecutionResult.getConversationHistory()` are "the log entries the record carries". Today that is still every
+  message; once sealing moves part of the log out of the record it will not be. `ClearCommand`'s "Removed N messages"
+  counts live entries.
+
+### Changed: the Spring Boot baseline is 4.1, and D6 was reversed to get there
+
+- **`aimon-spring-boot-starter` now compiles against Spring Boot 4.1.1** (Spring Framework 7.0.9), up from 3.5.16.
+  One version ref moves the libraries, `spring-boot-starter-test` on every module's test classpath, and the Boot
+  Gradle plugin. `docs/design/integration/spring-boot-starter.md` **D6 was rewritten**, not amended: it had fixed the
+  baseline at 3.5 deliberately, for the support window rather than the API, and that reasoning is not wrong now —
+  3.5 is supported commercially to 2032-06-30 where 4.1 ends 2028-07-31. **This release gives up roughly four years
+  of consumer support window.** D6 records what was bought with it.
+- **Java 17 is unchanged.** Boot 4 does not require Java 21, contrary to the common expectation:
+  `spring-boot-4.1.1`'s `SpringApplication.class` is class-file major version 61. The `java` entry in the version
+  catalog did not move.
+- **The autoconfiguration surface did not move at all.** `@AutoConfiguration`, every `@ConditionalOn*`,
+  `@ConfigurationProperties`, `EnableConfigurationProperties`, the `…AutoConfiguration.imports` mechanism,
+  `SanitizingFunction`, and the `ApplicationContextRunner` / `FilteredClassLoader` / `AutoConfigurations` test
+  surface are all where they were, as are the fourteen Spring Framework types the starter names.
+- **Boot 3 applications lose the health indicator.** Four things moved, and this is the one a consumer feels.
+  `org.springframework.boot.actuate.health.{HealthIndicator,Health,Status}` became
+  `org.springframework.boot.health.contributor.*` in the separate `spring-boot-health` artifact, so the health
+  branch's `@ConditionalOnClass` now names a Boot 4 type. On a Boot 3.5 class path that condition does not match,
+  the branch backs off, the context still starts, and `/actuator/health/aimon` is simply absent. That is the same
+  loss this starter previously inflicted on Boot 4 applications, with the direction reversed, and it is what "one
+  artifact does not serve two majors" means concretely. The other four moves are internal: the metrics
+  autoconfiguration names in `afterName` (`…actuate.autoconfigure.metrics.*` → `…micrometer.metrics.autoconfigure.*`);
+  `WebServerInitializedEvent` / `WebServerGracefulShutdownLifecycle` (`…web.context.*` → `…web.server.context.*`,
+  now in `spring-boot-web-server`, which the starter names at test scope for one constant); and Spring Framework
+  7's new `MemberCategory.ACCESS_*` field constants, which `BindingReflectionHintsRegistrar` now registers in
+  place of `DECLARED_FIELDS` — visible only to `AimonRuntimeHintsTest`, which asserts the categories Spring's
+  registrar chooses and had to follow it.
+
+### Fixed: a skill run as a slash command rendered `${AIMON_SKILL_DIR}` as an empty string
+
+- **`SkillBackedCommandExecutor` never set a render context on the `SkillExecutionRequest`**, so the request fell back
+  to `RenderContext.empty()` and every `AIMON_*` variable in a command-invoked skill body rendered empty with a WARN:
+  `bash ${AIMON_SKILL_DIR}/scripts/x.sh` became `bash /scripts/x.sh`. Only the `Skill` tool built a context. Both
+  paths now build it through **`SkillRenderContextAccess.builderFor(Skill, ToolContext)`** (`at.aimon.core.tools`),
+  which copies the agent runtime id, session id, execution id and principal from the tool context on top of
+  **`SkillRenderContexts.builderFor(Skill)`** (`at.aimon.core.skill.render`), which sets the base directory. The split
+  keeps `skill.render` free of the tool layer.
+- **The command path adds two values the tool path does not have.** The command request's principal, when present,
+  wins over the tool context's — the command flow's tool context carries none, so it is the only source of
+  `${AIMON_USER}` there. And a command run whose tool context names neither a session nor an execution renders
+  `${AIMON_EXECUTION_ID}` as the command's own generated execution id; it is never set beside a session id.
+- **A skill with no explicit base directory and no root files derived `${AIMON_SKILL_DIR}` one level too deep.** The
+  fallback took the parent of the first script (or reference, or asset), so a scripts-only skill resolved to
+  `…/scripts` and `${AIMON_SKILL_DIR}/scripts/x.sh` pointed at `…/scripts/scripts/x.sh`; with a nested key such as
+  `lib/y.sh` it was deeper still, and which one won depended on map order. It now strips the resource's key and its
+  category directory, giving the skill root. Reached by hand-assembled skills and by any `SkillRepository` that does
+  not override `resolveBaseDir`; `Vfs`/`PathSkillRepository` set the base directory explicitly and are unaffected.
+  This changes the `Skill` tool's output for such skills too.
+
+### Fixed: the native-image resource hint covered nothing below `agents/`
+
+- **`AimonRuntimeHints` registered `agents/*`, which stopped matching when Spring Framework 7 changed what `*`
+  means.** Framework 6 expanded it to `.*` and crossed directory separators; Framework 7 uses GraalVM glob
+  semantics, where `*` stops at a `/` and only `**` descends. Measured on both, with
+  `RuntimeHintsPredicates.resource().forResource(…)`: `agents/*` against `agents/p/agent.md` is `true` on 6.2.19 and
+  **`false` on 7.0.9**. Left alone, a native image built on Boot 4 would have carried no bundled skill body, no agent
+  definition and no payload file, and would have failed only at runtime in a native build, as a file that is not
+  there. The pattern is now `agents/**`, which matches on both versions and is the spelling that was always meant.
+  `AimonRuntimeHintsTest`'s drift guard is what caught this.
+- **This supersedes the `AimonRuntimeHints` bullet in [0.2.4]**, which states that bundle resources are registered
+  as `agents/*` because `ResourcePatternHint#toRegex()` maps `*` to `.*` and crosses separators. That was true of
+  the Spring Framework the starter compiled against when it was written; Framework 7 removed `toRegex()` and changed
+  the matcher, and the sentence became false rather than merely dated.
+
+### Removed: the classic fat-jar loader comparison
+
+- **`aimon-sample-app` no longer builds a second fat jar with Boot's pre-3.2 loader**, and
+  `FatJarPackagingTest.bothBootLoadersAgree` is gone with it. This is a **loss of coverage, not a cleanup**: Boot 4
+  removed the classic loader, so there is nothing to build. `LoaderImplementation` is not in
+  `spring-boot-loader-tools` 4.1.1 and `BootJar` has no `loaderImplementation` property. The comparison existed
+  because AIMON reads skill trees by casting a resource URL's connection to `JarURLConnection`, and that cast is now
+  exercised under one loader scheme only; the packaged-versus-exploded comparison is what still keeps it honest. The
+  packaging tier is now one fat jar and two JVMs instead of two and three.
+
+### Changed: Jackson 3 reaches the sample app, and nothing else
+
+- **The starter was already immune**, which is D6's side decision earning its keep: the starter builds its own
+  `ObjectMapper` rather than injecting the application's, and its main sources contain **zero** Jackson references.
+  Boot 4 defaulting to Jackson 3 (`tools.jackson`) therefore does not reach it. `aimon-core` continues to ship
+  Jackson 2, and the two majors coexist in one JVM because their package names differ — `packagingTest` starts the
+  Boot 4 fat jar and introspects it over HTTP, which is where that stops being a claim.
+- **One test helper moved.** `SampleAppProcess` parsed the running app's JSON replies with Jackson 2 taken
+  transitively from `spring-boot-starter-web`; Boot 4's web starter no longer carries it. The helper now uses
+  `tools.jackson`, declared explicitly and without a version so the sample takes Jackson's version from Boot's
+  dependency management, as an application does.
+
+### Fixed: a version-catalog instruction its own value had already violated
+
+- **The `junit` note said "keep it equal to the JUnit that `spring-boot` resolves to (today 5.12.2)" while the line
+  below it read `6.1.3`.** Dependabot #161 moved the value on 2026-09-16 and left the sentence. The consequence was
+  invisible and material: the `junit-bom` platform is `api` on four testkits, so **11 of this build's projects
+  already resolved JUnit 6.1.3 on Boot 3.5, and 8 of them ran tests on it** — the seven modules that take a
+  testkit (`aimon-core`, `aimon-cli`, `aimon-spring-boot-starter`, `aimon-filesystem-gridfs`,
+  `aimon-session-{mongodb,postgres,redis}`) plus `aimon-llm-capability-testkit`, the one testkit with test
+  sources of its own; the other three testkits resolve it for their main sources and publish it, but run
+  nothing. Everything else stayed on 5.13.4 or 5.14.4. Measured by
+  pinning `spring-boot` back to 3.5.16 and reading `dependencyInsight` on each, not inferred. The note now says
+  "at or above", explains which direction is safe, and records that this is why the Boot 4 move did not have to
+  pay for a JUnit 6 jump — it had already been paid, across half the build, with nothing saying so. This also
+  retires one of old D6's two stated grounds for rejecting a Boot 4 baseline.
+- **The Boot 4 move finished that migration rather than starting it.** `spring-boot-starter-test` 4.1.1 asks for
+  JUnit 6.0.3, so the modules the testkit platform does not reach moved off JUnit 5 as well. Every project in
+  this build now resolves JUnit 6 — 6.1.3 or 6.0.3, measured across all 23. Nothing is on JUnit 5 any more.
+- **The floor's own verification was repeated, and the script for it is now stored.** `aimon-memory-testkit`
+  publishes `junit-bom` as a platform, so the catalog's `junit` entry is a constraint on consumers rather than
+  just a number this build runs — and nothing in an ordinary build exercises it, because a consumer's JUnit
+  wins by conflict resolution. The note beside it said to re-run the contract suite pinned to the floor
+  whenever that number changed; it had lapsed twice. Re-run on 6.1.3: **21 tests, 0 failed, 0 skipped**, every
+  Jupiter and Platform jar at 6.1.3 (JUnit 6 folded the `1.x` platform line into one version). The pin now
+  lives in `scripts/verify-junit-floor.init.gradle.kts` — deliberately not wired into any task, because
+  re-deriving the pin was the cost that made it skippable, not running it.
+
+
+## [0.3.0] - 2026-09-20
+
+### Added: the main agent can declare `allowed-tools`, and a delegation cannot exceed it
+
+- **An agent now declares its own allow-list**, the surface a subagent, a skill and a command each already had and
+  the agent itself did not. `OrcaAgentExecutor` hard-coded an empty list at dispatch — the spelling of *unrestricted*
+  — so the only argument-aware control on the main path was a hand-written `PermissionRequestHook`, which is code
+  rather than a declaration. The allow-list is where `toolinvocation/approval`'s own package documentation already
+  pointed for risk that depends on the argument rather than the tool (`Bash(git:*)`), and the main agent could not
+  reach it.
+- **Declared as `allowed-tools`** in an `agent.md` frontmatter, or through `DefaultAgent.builder().tools(...)` /
+  `AgentMetadata.Builder.allowedTools(...)`. The key is kebab while every other key in that file is camelCase, which
+  is deliberate: it is the Agent Skills specification's name and the three sibling surfaces already spell it that
+  way. `allowedTools` is therefore **rejected by name** rather than ignored — an unknown key is otherwise dropped in
+  silence, which would hand back an unrestricted agent while its author believes they restricted it.
+- **The value is comma-or-list**, matching `agents/*.md`. A `SKILL.md` allow-list is *space*-delimited, so a list
+  copied from one would otherwise parse as a single oddly-named tool and leave the agent matching nothing; a tool
+  name containing whitespace is rejected, naming the separator to use. The check is on the name rather than the
+  whole entry because a pattern may legitimately contain a space — `Bash(npm install)`. A non-scalar list element is
+  refused too, rather than becoming a tool called `{Read=yes}`.
+- **`DefaultAgent.Builder` refuses an ambiguous spec.** `metadata(...)` and the convenience setters
+  (`name`/`model`/`maxIterations`/`tools`/`allowedTools`) are two ways to say the same thing, and combining them
+  discarded one of them in whichever order they were called — `metadata(...)` clears the builder, and the builder is
+  only consulted when `metadata` is absent. Tolerable while the droppable fields were a name and an iteration cap;
+  not once one of them is an allow-list, because what goes missing is a restriction and it goes missing *fail-open*.
+  Both combinations now throw. The same guard covers `content(...)` against its own setters. No in-tree caller mixed
+  the two; the `Agent` Javadoc example did, and also named an `AgentMetadata.of(int)` factory that does not exist.
+- **It acts at the same two points a subagent's does**, reading one value so the two cannot disagree: names absent
+  from the list are withheld from the definitions sent to the LLM, and naming one anyway is refused at dispatch as
+  *not allowed* rather than *unknown tool*. Only the definitions are narrowed, never the registry, which may carry
+  the `ToolSearch` activation state. A pattern entry still offers its tool — a tool list cannot say which arguments
+  are allowed.
+- **An empty offer is logged**, as it already is for a subagent and a skill: a misspelled name, a list naming only
+  tools above the side-effect ceiling, or one omitting `ToolSearch` where the tools are deferred can leave nothing,
+  and no provider rejects an empty `tools` field, so the model answers from prose and the turn completes cleanly.
+- **Default unchanged.** An agent that declares nothing has an empty list, which every validator reads as
+  unrestricted; no existing deployment behaves differently.
+
+### Added: a spawned run is bound by its caller's allow-list as well as its own
+
+- **Delegation is no longer an escalation.** A subagent's, a workflow step's and a skill fork's `allowed-tools` bound
+  the spawned run alone, so an agent narrowed to `Read, Grep` reached `Bash` by launching a subagent that names it —
+  the narrowing described what the agent did with its own hands rather than what it could cause. Without this the
+  new agent allow-list would have been a tool-offer convenience rather than a boundary.
+- **The caller's list travels on the tool context.** `SingleToolInvoker` publishes the list it hands the
+  `ToolExecutionManager` under `ToolContextKeys.CALLER_ALLOWED_TOOLS`; `Task`, both workflow tools and the skill fork
+  executor put it on the `SubagentExecutionEnvironment` they build. Because every run republishes its own effective
+  list, the ceiling follows nesting to any depth without a spawn site knowing how deep it is — the property
+  `InvokingSessionAccess.idToPropagate` already gives the invoking session. Read it with `CallerAllowedTools.of`, so
+  an absent key and an empty list cannot be told apart: both mean unrestricted.
+- **Enforced in one place**, `DefaultSubagentExecutionManager` where a resolved subagent becomes an execution
+  context. That is the single point both execution branches pass through, so no spawn site can forget to apply it and
+  a registered code behavior is handed the same narrowed definition as the ReAct loop. *Handed*, not bound: a
+  behavior is trusted code and reaches the full registry through its execution context, exactly as it could before —
+  `SubagentToolScope` has always said its registry shape "exposes the allow-list without enforcing it". The ceiling
+  binds what runs through `ToolExecutionManager`, which is every tool call the ReAct loop makes.
+- **No overlap refuses the run** rather than running it, for the reason `AllowedTools.intersect` returns an
+  `Optional`: an empty list reads as unrestricted everywhere in the permission package, so passing on an empty
+  intersection would invert the strictest possible pairing into the loosest. The message names both lists.
+- **New**: `AllowedTools.admissionFilter(List<AllowedTool>)`, now the one implementation of name-level narrowing that
+  the agent and subagent paths share, and `SubagentToolScope.withAllowedTools`, promoted from a private helper in
+  `SubagentBackedSkillForkExecutor`. `SubagentExecutionEnvironment.callerAllowedTools` defaults to an empty list, so
+  an environment built as before imposes no ceiling.
+- **A skill is bound by its caller too**, on both paths into it. `LlmSkillExecutor` intersected nothing: a skill's
+  own `allowed-tools` was the only bound on the tools it ran, so a skill naming `Bash` reached `Bash` inside an agent
+  narrowed to `Read, Grep` — by a model call to `Skill` or by a user typing `/my-skill`. It now intersects the
+  caller's list in once, which bounds the offer, the dispatch and the empty-offer warning from one value. The
+  user-slash path additionally needs the key published by hand (`OrcaAgentExecutor`'s command tool context is
+  hand-built, with no tool call above it to enrich it), and that also gives a fork-mode skill spawned from a slash
+  command the ceiling it was missing.
+
+### Fixed: `AllowedTools.intersect` read a bare name beside a pattern as unrestricted
+
+- **A name-only entry does not remove that tool's other constraints** (#172 regression, promoted in severity here).
+  `DefaultToolPermissionValidator` grants a name outright only when *no* entry for it carries a pattern
+  (`noneMatch(hasPattern)`) — `Read, Read(/tmp/**)` means `/tmp` only, which the tool guide states. `intersect` asked
+  the opposite question (`anyMatch(!hasPattern)`) and treated that side as imposing no constraint on `Read`, handing
+  the other side's entries through unchanged.
+- **What that cost.** `intersect([Read, Read(/tmp/**)], [Read])` returned `[Read]`, and
+  `intersect([Read, Read(/tmp/**)], [Read(/etc/**)])` returned `[Read(/etc/**)]` — a spawned run reading `/etc` that
+  its caller is denied. It was also order-dependent, and the ceiling call site used the looser order. Reachable
+  before this release only for a fork-mode skill against its target subagent; this release makes the same function
+  the enforcement behind every `Task`, workflow and skill-fork spawn, which is why it is fixed here rather than
+  noted.
+- Two sentences of `intersect`'s own Javadoc were false and are corrected: the precondition is the absence of every
+  pattern for that name, not the presence of one entry without one. The result is now order-independent.
+
+### Fixed: a fork-mode skill's `allowed-tools` reached the fork, and a tool-less skill says so
+
+- **A skill's own allow-list now binds its fork** (#172). `SubagentBackedSkillForkExecutor` handed the target
+  subagent's name to the execution manager and nothing else, so a fork ran under that subagent's `allowed-tools`
+  alone and the skill's own list stopped at the fork boundary. `allowed-tools: Read` therefore bound a skill on its
+  inline path (`LlmSkillExecutor`) and **not at all** on its fork path — the looser of the two being the one the
+  skill author did not choose. The two lists now apply together.
+- **Together, not either-or.** `AllowedTools.intersect` returns the narrowest list that is a subset of both, and it
+  is exact wherever it can be: an empty side restricts nothing so the other governs; a name only one side mentions
+  is dropped; a side naming a tool with no pattern yields to the other's pattern, so a skill's `Bash` against a
+  subagent's `Bash(git:*)` forks as `Bash(git:*)`. Two *different* patterns are dropped rather than approximated —
+  the intersection of two globs is not computable in general, and guessing wide would grant what one side refused.
+- **No overlap refuses the fork instead of running it.** This is the reason `intersect` returns an `Optional` rather
+  than a list: an empty allow-list means *unrestricted* to every validator in that package, so handing on the
+  intersection of two disjoint lists as an empty list would invert the strictest pairing into the loosest. The fork
+  fails with a message naming both lists.
+- **New `SubagentExecutionManager.executeInline(env, taskId, subagent, goal, description)`** carries the adjusted
+  definition with the task id and description the name-based method puts into hooks and task records. Deliberately
+  not an overload of `execute`: a name and a definition are not interchangeable, and overloading them made a call
+  with a matcher in that position ambiguous to the compiler as well.
+- **A skill offered no tools is logged**, the counterpart of the subagent warning above: its allow-list and the
+  side-effect ceiling can compose to nothing, and the model then answers from prose while the skill reports a clean
+  result. The outcome is unchanged; it is no longer silent.
+
+### Changed: a subagent is no longer offered tools its own allow-list forbids
+
+- **A fork's tool definitions are now filtered by its `allowed-tools`, not just by the side-effect ceiling** (#172).
+  `DefaultSubagentExecutor` built the definition list it sends to the LLM from the whole registry, so a subagent
+  declaring `allowed-tools: Read, Grep` was still shown `Bash` — and could pick it, spend an iteration, and read
+  a permission refusal. Enforcement was never missing; the allow-list reached `ToolExecutionManager` all along.
+  What was missing was withholding the offer.
+- **This is the second axis of a rule the same statement already applied.** The line above it filters by the
+  ceiling read from the `ToolExecutionManager`, for the stated reason that "a fork shown a tool above the ceiling
+  would spend an iteration picking it and reading the refusal" and that reading the ceiling from the manager keeps
+  "the filter and the refusal" from disagreeing. The new filter reads `Subagent.getAllowedTools()` — the same value
+  passed to the manager for the refusal — so it satisfies that second clause too.
+- **A pattern entry still offers its tool, deliberately.** `Bash(git:*)` keeps `Bash` on offer, because a list of
+  tools cannot express *which arguments* are allowed; narrowing on the pattern would hide calls that are in fact
+  permitted. What is withheld is a tool whose **name** appears nowhere in the allow-list — already a denial before
+  any pattern is consulted, which is also why the filter can never withhold something that would have been allowed.
+- **Only the definitions are narrowed; the registry is left alone.** Not because dispatch resolves against it — it
+  does not, `SingleToolInvoker` hands the execution manager the context's full registry and reads the session registry
+  only for interrupt behaviour, so a forbidden name still reports a permission denial rather than `"Unknown tool: …"`
+  either way. The reason is that the session registry may be the `ToolSearchRegistry` carrying the execution's
+  activation state, which a narrowed copy would discard along with the only route to a deferred tool.
+- **A fork offered nothing is now logged.** Either filter alone always left something; together they can leave
+  nothing — an allow-list of misspelled names, one naming only tools above the side-effect ceiling, or one omitting
+  `ToolSearch` where every tool is deferred. No provider rejects an empty `tools` field (all three omit it), so the
+  model answers from prose and the fork reports `COMPLETED`: a fabricated answer a parent reads as clean. The outcome
+  is unchanged — changing it is a behaviour change of its own — but it is no longer silent. `ToolSearch` being subject
+  to the allow-list is the documented control (`docs/design/tool/tool-search.md` §7), and the subagent guide now says
+  what omitting it costs.
+- **Nothing changes for a subagent that declares no restrictions**, which is the default for both markdown and
+  `Subagent.builder()`: `hasToolRestrictions()` is false and every tool stays on offer. New shared helper
+  `at.aimon.core.subagent.SubagentToolScope` now holds the name-matching both execution paths use —
+  `DefaultSubagentBehaviorSupport` had a private copy of it and delegates instead.
+
 ### Dependencies: the Anthropic SDK reaches 2.62.0, and the thinking-token counter moves onto its typed field
 
 - **`com.anthropic:anthropic-java` goes from 2.13.0 to 2.62.0** (#166). The bump needs exactly one source change,

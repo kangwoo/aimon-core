@@ -35,6 +35,8 @@ import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
 import at.aimon.core.agent.stream.SubagentTaskCompleted;
 import at.aimon.core.agent.tool.ToolExecutionManager;
+import at.aimon.core.agent.tool.permission.AllowedTool;
+import at.aimon.core.agent.tool.permission.AllowedTools;
 import at.aimon.core.hook.HookExecutionManager;
 import at.aimon.core.hook.event.SubagentStartContext;
 import at.aimon.core.hook.event.SubagentStopContext;
@@ -44,6 +46,7 @@ import at.aimon.core.subagent.behavior.SubagentBehaviorRegistry;
 import at.aimon.core.subagent.behavior.SubagentBehaviorRunner;
 import at.aimon.core.subagent.exception.SubagentException;
 import at.aimon.core.subagent.exception.SubagentNotFoundException;
+import at.aimon.core.subagent.exception.SubagentSpawnException;
 import at.aimon.core.subagent.execution.DefaultSubagentExecutor;
 import at.aimon.core.subagent.execution.SubagentExecutionContext;
 import at.aimon.core.subagent.execution.SubagentExecutionRequest;
@@ -550,6 +553,21 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
                 SubagentOutputSink.NO_OP);
     }
 
+    @Override
+    public SubagentExecutionResult executeInline(SubagentExecutionEnvironment env, String taskId, Subagent subagent,
+            String goal, String description) {
+        Objects.requireNonNull(env, "Execution environment cannot be null");
+        Objects.requireNonNull(taskId, "Task id cannot be null");
+        Objects.requireNonNull(subagent, "Subagent cannot be null");
+        Objects.requireNonNull(goal, "Goal cannot be null");
+        Objects.requireNonNull(description, "Description cannot be null");
+        // The name-based foreground path with the lookup already done: same signal, same no-op sink, same taskId and
+        // description into hooks and task records. Only the resolution differs, which is the point — the caller hands
+        // over a definition it has already adjusted.
+        return runExecute(env, taskId, SubagentTarget.inline(subagent), goal, description, env.getCancellationSignal(),
+                SubagentOutputSink.NO_OP);
+    }
+
     /**
      * Shared execution body for the foreground and background paths. The effective cancellation signal is injected as
      * the subagent's parent signal: foreground passes the environment's signal; background passes the per-task
@@ -588,10 +606,17 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
             // Resolve the subagent: an inline (code-defined) subagent is used as-is; otherwise look it up by name in
             // the environment's registry. The lookup stays inside this try so an unknown name still yields a failure
             // result with SubagentStart/Stop hooks fired around it (unchanged registry-path behaviour).
-            final Subagent subagent = target.inline() != null
+            final Subagent resolved = target.inline() != null
                     ? target.inline()
                     : env.getSubagentRegistry().getSubagent(subagentName)
                             .orElseThrow(() -> new SubagentNotFoundException(subagentName));
+
+            // Impose the spawning run's allow-list as a ceiling. Without this a delegation is an escalation: an agent
+            // narrowed to Read, Grep could reach Bash by launching a subagent that names it, and the narrowing would
+            // describe only what the agent does itself rather than what it can cause. Applied here rather than at
+            // either branch below because this is the one place both of them pass through — the ReAct loop and a
+            // registered code behavior receive the same narrowed definition.
+            final Subagent subagent = applyCallerCeiling(env, resolved);
 
             // Build execution context (how to execute). The effective cancellation signal is forwarded so a
             // parent-initiated (or per-task stop) cancel cascades into the subagent's ReAct loop and its cooperative
@@ -604,7 +629,9 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
                     .defaultModel(env.getDefaultModel()).modelOverride(env.getModelOverride().orElse(null))
                     .parentCancellationSignal(cancellationSignal).knowledgeStore(env.getKnowledgeStore().orElse(null))
                     .knowledgeScope(env.getKnowledgeScope().orElse(null))
-                    .toolContextEnrichers(env.getToolContextEnrichers()).outputSink(outputSink).build();
+                    .toolContextEnrichers(env.getToolContextEnrichers()).outputSink(outputSink)
+                    .executionEnvironment(env.getExecutionEnvironment().orElse(null))
+                    .executionEnvironmentProvider(env.getExecutionEnvironmentProvider().orElse(null)).build();
 
             // Build execution request (what to execute). The parent's LLM call metadata is forwarded so the subagent
             // executor can merge it with subagent-derived defaults (component/feature) and emit attributed usage. The
@@ -637,6 +664,44 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
 
         fireSubagentStop(env, taskId, subagentName, result);
         return result;
+    }
+
+    /**
+     * Narrows a resolved subagent by the allow-list of the run spawning it, refusing the run when the two lists admit
+     * nothing in common.
+     *
+     * <p>
+     * The refusal is the reason {@link AllowedTools#intersect} returns an {@link Optional} rather than a list: an
+     * empty allow-list reads as <em>unrestricted</em> everywhere in the permission package, so handing on the
+     * intersection of two disjoint lists as an empty list would invert the strictest possible pairing into the
+     * loosest. It names both lists, because the mismatch is a configuration error and fixing it means seeing both
+     * sides.
+     *
+     * <p>
+     * A caller that imposes no ceiling leaves the subagent exactly as resolved, which is what every caller did before
+     * the ceiling existed.
+     *
+     * @param env
+     *            the execution environment carrying the caller's allow-list
+     * @param subagent
+     *            the resolved subagent
+     * @return the subagent bound by both lists
+     * @throws SubagentSpawnException
+     *             if the two allow-lists have nothing in common
+     */
+    private Subagent applyCallerCeiling(SubagentExecutionEnvironment env, Subagent subagent) {
+        final List<AllowedTool> ceiling = env.getCallerAllowedTools();
+        if (ceiling.isEmpty()) {
+            return subagent;
+        }
+        final List<AllowedTool> own = subagent.getAllowedTools();
+        final Optional<List<AllowedTool>> effective = AllowedTools.intersect(ceiling, own);
+        if (effective.isEmpty()) {
+            throw new SubagentSpawnException(
+                    String.format("Subagent '%s' cannot run: its allowed-tools and the caller's have nothing in common "
+                            + "(caller allows %s, subagent allows %s)", subagent.getName(), ceiling, own));
+        }
+        return SubagentToolScope.withAllowedTools(subagent, effective.get());
     }
 
     /**

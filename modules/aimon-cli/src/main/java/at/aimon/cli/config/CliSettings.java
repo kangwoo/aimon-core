@@ -2,6 +2,8 @@ package at.aimon.cli.config;
 
 import java.util.Objects;
 
+import at.aimon.core.agent.session.transcript.SessionLogFormat;
+
 public class CliSettings {
     private String prompt;
     private boolean colorOutput = true;
@@ -27,6 +29,11 @@ public class CliSettings {
     // several sub-agent LLM calls. Enable via `cli.enableWorkflowJs: true`. Independent of enableWorkflow, but either
     // flag enables the per-context WorkflowRunner used by both tools' background mode.
     private boolean enableWorkflowJs = false;
+    // The session log format the CLI writes (session-log §7.3): v1 (default) or v2. v2 keeps the log append-only and
+    // is what an agent with `context-engine: rolling` needs; set `cli.sessionLogWriteFormat: v2` to run one. The CLI
+    // keeps sessions in memory, so there is no older node that could fail to read v2 — the switch exists only so the
+    // default stays the format every other assembly defaults to.
+    private SessionLogFormat sessionLogWriteFormat = SessionLogFormat.V1;
 
     /** CliSettings를 생성한다. */
     public CliSettings() {
@@ -112,6 +119,18 @@ public class CliSettings {
         this.enableWorkflowJs = enableWorkflowJs;
     }
 
+    public SessionLogFormat getSessionLogWriteFormat() {
+        return sessionLogWriteFormat;
+    }
+
+    /**
+     * @param sessionLogWriteFormat
+     *            the format; null restores the default {@link SessionLogFormat#V1}
+     */
+    public void setSessionLogWriteFormat(SessionLogFormat sessionLogWriteFormat) {
+        this.sessionLogWriteFormat = sessionLogWriteFormat == null ? SessionLogFormat.V1 : sessionLogWriteFormat;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -125,13 +144,14 @@ public class CliSettings {
                 && showToolCalls == that.showToolCalls && streaming == that.streaming && tracing == that.tracing
                 && tracingCaptureContent == that.tracingCaptureContent
                 && tracingMaxPayloadChars == that.tracingMaxPayloadChars && enableWorkflow == that.enableWorkflow
-                && enableWorkflowJs == that.enableWorkflowJs && Objects.equals(prompt, that.prompt);
+                && enableWorkflowJs == that.enableWorkflowJs && sessionLogWriteFormat == that.sessionLogWriteFormat
+                && Objects.equals(prompt, that.prompt);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(prompt, colorOutput, showIterations, showToolCalls, streaming, tracing,
-                tracingCaptureContent, tracingMaxPayloadChars, enableWorkflow, enableWorkflowJs);
+                tracingCaptureContent, tracingMaxPayloadChars, enableWorkflow, enableWorkflowJs, sessionLogWriteFormat);
     }
 
     @Override
@@ -140,6 +160,6 @@ public class CliSettings {
                 + showIterations + ", showToolCalls=" + showToolCalls + ", streaming=" + streaming + ", tracing="
                 + tracing + ", tracingCaptureContent=" + tracingCaptureContent + ", tracingMaxPayloadChars="
                 + tracingMaxPayloadChars + ", enableWorkflow=" + enableWorkflow + ", enableWorkflowJs="
-                + enableWorkflowJs + '}';
+                + enableWorkflowJs + ", sessionLogWriteFormat=" + sessionLogWriteFormat + '}';
     }
 }

@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Supplier;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -59,6 +60,7 @@ import at.aimon.core.llm.token.TokenEstimator;
  * multi-instance ordering is the responsibility of the supplied {@link CompactionFailureStore} and whatever durable
  * store it is built on.
  */
+@SuppressWarnings("deprecation") // the version-1 compaction SPI is carried through on purpose
 public class DefaultCompactionGuard implements CompactionGuard {
 
     public static final int DEFAULT_MAX_CONSECUTIVE_FAILURES = 3;
@@ -190,6 +192,63 @@ public class DefaultCompactionGuard implements CompactionGuard {
         Objects.requireNonNull(environment, "environment cannot be null");
 
         final SessionId sessionId = memory.getSessionId();
+        return serialized(sessionId, () -> evaluate(memory.getSystemPrompt(), memory.getMessages(), model, sessionId,
+                budgetForced,
+                forced -> invokeEngine(memory, model, hookRegistry, environment, sessionId, executionId, forced)));
+    }
+
+    /**
+     * Takes the same decision as {@link #maybeCompact} / {@link #forceCompact} over a view the caller computed, and
+     * leaves the compaction itself to the caller.
+     *
+     * <p>
+     * Everything else is this guard's: the per-session lock (a {@code tryLock}, so a concurrent attempt answers
+     * {@code NONE}), the threshold ladder (blocking → circuit breaker → auto → warning), the precondition, and the
+     * circuit breaker's bookkeeping around the {@code compactor}'s result. This is how a context engine that keeps
+     * the log append-only reuses today's decision rules without the guard's {@link CompactionEngine} rewriting the
+     * transcript (context-engine §4).
+     *
+     * @param sessionId
+     *            the session the lock and the circuit breaker are keyed on (must not be null)
+     * @param systemPrompt
+     *            counted in the size estimate, as the provider counts it (may be null)
+     * @param view
+     *            the messages the next call would be sent (must not be null)
+     * @param model
+     *            the model the next call goes to — drives threshold resolution (must not be null)
+     * @param budgetForced
+     *            {@code true} lowers the effective auto-compact trigger to the warning band
+     * @param compactor
+     *            performs the compaction when the ladder calls for one; its argument is whether the blocking limit
+     *            forced it (must not be null)
+     * @return the decision (never null)
+     */
+    public CompactionDecision decide(SessionId sessionId, String systemPrompt, List<Message> view, LlmModel model,
+            boolean budgetForced, Compactor compactor) {
+        Objects.requireNonNull(sessionId, "sessionId cannot be null");
+        Objects.requireNonNull(view, "view cannot be null");
+        Objects.requireNonNull(model, "model cannot be null");
+        Objects.requireNonNull(compactor, "compactor cannot be null");
+        return serialized(sessionId, () -> evaluate(systemPrompt, view, model, sessionId, budgetForced,
+                forced -> runCompactor(compactor, forced, sessionId)));
+    }
+
+    /**
+     * Performs the compaction {@link #decide} calls for. A thrown exception is treated as a failed compaction, as
+     * the guard treats an engine that throws.
+     */
+    @FunctionalInterface
+    public interface Compactor {
+
+        /**
+         * @param forced
+         *            whether the blocking limit forced this compaction
+         * @return the outcome (must not be null)
+         */
+        CompactionResult compact(boolean forced);
+    }
+
+    private CompactionDecision serialized(SessionId sessionId, Supplier<CompactionDecision> evaluation) {
         final ReentrantLock lock;
         synchronized (sessionLocks) {
             lock = sessionLocks.computeIfAbsent(sessionId, id -> new ReentrantLock());
@@ -198,21 +257,20 @@ public class DefaultCompactionGuard implements CompactionGuard {
             return CompactionDecision.none("concurrent compaction in progress");
         }
         try {
-            return evaluate(memory, model, hookRegistry, environment, sessionId, executionId, budgetForced);
+            return evaluation.get();
         } finally {
             lock.unlock();
         }
     }
 
-    private CompactionDecision evaluate(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry,
-            Environment environment, SessionId sessionId, ExecutionId executionId, boolean budgetForced) {
+    private CompactionDecision evaluate(String systemPrompt, List<Message> messages, LlmModel model,
+            SessionId sessionId, boolean budgetForced, Compactor compactor) {
         final String modelName = model.getName().orElseGet(() -> {
             log.debug("Model name absent for session {}; falling back to default ModelContextLimits", sessionId);
             return "";
         });
         final ModelContextLimits limits = modelContextWindowRegistry.resolve(modelName);
-        final List<Message> messages = memory.getMessages();
-        final int estimated = tokenEstimator.estimate(memory.getSystemPrompt(), messages);
+        final int estimated = tokenEstimator.estimate(systemPrompt, messages);
 
         final int autoCompactThreshold = limits.getAutoCompactThreshold();
         final int warningThreshold = limits.getWarningThreshold();
@@ -228,8 +286,7 @@ public class DefaultCompactionGuard implements CompactionGuard {
                 return CompactionDecision.warn("blocking-limit reached but precondition unmet; deferring", estimated,
                         blockingLimit);
             }
-            final CompactionResult result = invokeEngine(memory, model, hookRegistry, environment, sessionId,
-                    executionId, true);
+            final CompactionResult result = compactor.compact(true);
             if (result.isSuccess()) {
                 resetFailures(sessionId);
                 return CompactionDecision.compact(result, "blocking-limit forced compaction", estimated, blockingLimit);
@@ -246,8 +303,7 @@ public class DefaultCompactionGuard implements CompactionGuard {
 
         // 3) auto compact
         if (estimated >= effectiveAutoThreshold && preconditionMet) {
-            final CompactionResult result = invokeEngine(memory, model, hookRegistry, environment, sessionId,
-                    executionId, false);
+            final CompactionResult result = compactor.compact(false);
             if (result.isSuccess()) {
                 resetFailures(sessionId);
                 final String reason = budgetForced
@@ -280,6 +336,17 @@ public class DefaultCompactionGuard implements CompactionGuard {
         } catch (RuntimeException e) {
             log.error("CompactionEngine threw unexpected exception for session {}: {}", sessionId, e.getMessage(), e);
             // Defensive: engines should never escape exceptions, but if they do, surface as failure.
+            final CompactionMetadata metadata = CompactionMetadata.builder().trigger(CompactionTrigger.AUTO)
+                    .startedAt(Instant.now()).completedAt(Instant.now()).build();
+            return CompactionResult.failure(e, metadata);
+        }
+    }
+
+    private static CompactionResult runCompactor(Compactor compactor, boolean forced, SessionId sessionId) {
+        try {
+            return Objects.requireNonNull(compactor.compact(forced), "compactor returned null");
+        } catch (RuntimeException e) {
+            log.error("Compaction threw unexpected exception for session {}: {}", sessionId, e.getMessage(), e);
             final CompactionMetadata metadata = CompactionMetadata.builder().trigger(CompactionTrigger.AUTO)
                     .startedAt(Instant.now()).completedAt(Instant.now()).build();
             return CompactionResult.failure(e, metadata);

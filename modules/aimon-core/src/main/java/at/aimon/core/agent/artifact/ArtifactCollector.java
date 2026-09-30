@@ -4,6 +4,8 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
 
+import at.aimon.core.agent.ExecutionId;
+
 /**
  * Collects file artifacts generated during a single agent execution request.
  *
@@ -50,6 +52,48 @@ import java.util.concurrent.CopyOnWriteArrayList;
 public class ArtifactCollector {
 
     private final List<FileArtifact> artifacts = new CopyOnWriteArrayList<>();
+    private final String archiveKey;
+
+    /**
+     * Creates a collector whose archive key is a fresh, unpublished {@code archive:...} id. Used for a turn, which has
+     * no execution id of its own (and must not publish one).
+     */
+    public ArtifactCollector() {
+        this(ExecutionId.generate("archive").value());
+    }
+
+    /**
+     * Creates a collector with the given archive key — a fork passes its execution id's value.
+     *
+     * @param archiveKey
+     *            the key under which this execution's archived artifacts are stored (must not be null)
+     */
+    public ArtifactCollector(String archiveKey) {
+        this.archiveKey = Objects.requireNonNull(archiveKey, "archiveKey cannot be null");
+    }
+
+    /**
+     * Returns the key that names this execution's directory in the control store's artifact area
+     * ({@code /artifacts/{archiveKey}/{fileName}}), used when an artifact-aware tool archives a file written in a
+     * non-durable environment (execution-environment design §9.3).
+     *
+     * @return the archive key (never null)
+     */
+    public String getArchiveKey() {
+        return archiveKey;
+    }
+
+    /**
+     * Returns the total size of the artifacts collected so far in one storage — the per-execution budget the archive
+     * limit is checked against.
+     *
+     * @param storage
+     *            the storage to sum
+     * @return the total size in bytes
+     */
+    public long totalBytes(ArtifactStorage storage) {
+        return artifacts.stream().filter(a -> a.getStorage() == storage).mapToLong(FileArtifact::getSize).sum();
+    }
 
     /**
      * Adds a file artifact to this collector.

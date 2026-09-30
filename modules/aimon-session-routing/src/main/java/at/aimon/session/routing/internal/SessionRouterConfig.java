@@ -5,6 +5,7 @@ import java.time.Duration;
 import at.aimon.core.agent.session.idempotency.IdempotencyStore;
 import at.aimon.core.agent.session.inbox.SessionInbox;
 import at.aimon.core.agent.session.signal.SessionSignalBus;
+import at.aimon.core.agent.session.store.SessionLogSegmentStore;
 import at.aimon.core.agent.session.store.SessionStore;
 import at.aimon.core.skill.policy.session.SessionApprovalStore;
 import at.aimon.session.routing.metrics.SessionMetrics;
@@ -36,6 +37,7 @@ public final class SessionRouterConfig {
     private final Duration releaseInterruptTimeout;
     private final SessionMetrics metrics;
     private final SessionApprovalStore sessionApprovalStore;
+    private final SessionLogSegmentStore segmentStore;
 
     private SessionRouterConfig(Builder builder) {
         this.store = builder.store;
@@ -55,6 +57,7 @@ public final class SessionRouterConfig {
         this.releaseInterruptTimeout = builder.releaseInterruptTimeout;
         this.metrics = builder.metrics;
         this.sessionApprovalStore = builder.sessionApprovalStore;
+        this.segmentStore = builder.segmentStore;
     }
 
     public static Builder builder() {
@@ -156,6 +159,16 @@ public final class SessionRouterConfig {
         return sessionApprovalStore;
     }
 
+    /**
+     * The store holding the sealed segments of session logs, whose segments a session delete removes after the record,
+     * or {@code null} when the deployment seals nothing.
+     *
+     * @return the store, or {@code null}
+     */
+    public SessionLogSegmentStore segmentStore() {
+        return segmentStore;
+    }
+
     public static final class Builder {
 
         private SessionStore store;
@@ -175,6 +188,7 @@ public final class SessionRouterConfig {
         private Duration releaseInterruptTimeout;
         private SessionMetrics metrics;
         private SessionApprovalStore sessionApprovalStore;
+        private SessionLogSegmentStore segmentStore;
 
         private Builder() {
         }
@@ -261,6 +275,11 @@ public final class SessionRouterConfig {
 
         public Builder sessionApprovalStore(SessionApprovalStore sessionApprovalStore) {
             this.sessionApprovalStore = sessionApprovalStore;
+            return this;
+        }
+
+        public Builder segmentStore(SessionLogSegmentStore segmentStore) {
+            this.segmentStore = segmentStore;
             return this;
         }
 

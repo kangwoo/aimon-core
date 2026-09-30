@@ -65,11 +65,29 @@ public final class UserContextMessageBuilder {
      *             if {@code agentEnvironmentSnapshot} is null
      */
     public static Optional<Message> build(AgentEnvironmentSnapshot agentEnvironmentSnapshot) {
+        return build(agentEnvironmentSnapshot, null);
+    }
+
+    /**
+     * As {@link #build(AgentEnvironmentSnapshot)}, but with the working directory of the execution that is running —
+     * the directory its environment's shell and file tools resolve against — in place of the snapshot's, which is
+     * collected once per agent and cannot know where a given execution runs (execution-environment design §10).
+     *
+     * @param agentEnvironmentSnapshot
+     *            the session context to materialise into a user message (must not be null)
+     * @param executionWorkingDirectory
+     *            the execution's working directory, or null/blank to use the snapshot's
+     * @return the synthetic user-context message, or {@link Optional#empty()} if no entry would be emitted
+     */
+    public static Optional<Message> build(AgentEnvironmentSnapshot agentEnvironmentSnapshot,
+            String executionWorkingDirectory) {
         Objects.requireNonNull(agentEnvironmentSnapshot, "agentEnvironmentSnapshot must not be null");
 
         final Map<String, String> entries = new LinkedHashMap<>();
 
-        final String workingDirectory = agentEnvironmentSnapshot.getWorkingDirectory();
+        final String workingDirectory = executionWorkingDirectory != null && !executionWorkingDirectory.isBlank()
+                ? executionWorkingDirectory
+                : agentEnvironmentSnapshot.getWorkingDirectory();
         if (workingDirectory != null && !workingDirectory.isBlank()) {
             entries.put(KEY_WORKING_DIRECTORY, workingDirectory);
         }

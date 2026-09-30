@@ -88,6 +88,36 @@ public interface SubagentExecutionManager extends SubagentTaskController {
     SubagentExecutionResult execute(SubagentExecutionEnvironment env, Subagent subagent, String goal);
 
     /**
+     * Executes a pre-resolved {@link Subagent} in the foreground with a caller-supplied task id and description.
+     *
+     * <p>
+     * Same as {@link #execute(SubagentExecutionEnvironment, String, String, String, String)} in every respect except
+     * that the subagent is supplied rather than looked up, so the environment's {@link SubagentRegistry} is
+     * <em>not</em> consulted. It exists for a caller that must adjust the definition before it runs — narrowing its
+     * allow-list to the caller's own, say — and still wants the task id and description the name-based method carries
+     * into hooks and task records. Behaviour lookup is by name and so is unaffected.
+     *
+     * <p>
+     * Deliberately <b>not</b> an overload of {@code execute}: a name and a definition are not interchangeable, and
+     * overloading them reads as though they were — besides making a call with a {@code null} or a matcher in that
+     * position ambiguous to the compiler.
+     *
+     * @param env
+     *            The execution environment (must not be null)
+     * @param taskId
+     *            Caller-supplied task id for hook and attribution tracking (must not be null)
+     * @param subagent
+     *            The subagent definition to run (must not be null)
+     * @param goal
+     *            The goal handed to the subagent (must not be null)
+     * @param description
+     *            Short description for hooks and task records (must not be null)
+     * @return The execution result
+     */
+    SubagentExecutionResult executeInline(SubagentExecutionEnvironment env, String taskId, Subagent subagent,
+            String goal, String description);
+
+    /**
      * Executes a subagent in the background.
      *
      * @param env

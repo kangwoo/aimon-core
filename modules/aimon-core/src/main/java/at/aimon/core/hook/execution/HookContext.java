@@ -2,9 +2,11 @@ package at.aimon.core.hook.execution;
 
 import java.time.Instant;
 import java.util.Map;
+import java.util.Optional;
 
 import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.environment.EnvironmentDescriptor;
 import at.aimon.core.hook.HookRegistry;
 
 /**
@@ -51,6 +53,17 @@ public interface HookContext {
      * @return The environment (never null)
      */
     Environment getEnvironment();
+
+    /**
+     * Describes where the execution's commands run — its execution environment's descriptor, not the JVM host
+     * (execution-environment design §10). A hook that reasons about platform or paths reads this rather than
+     * assuming the host.
+     *
+     * @return the descriptor, or empty for an event with no execution environment in reach
+     */
+    default Optional<EnvironmentDescriptor> getEnvironmentDescriptor() {
+        return Optional.empty();
+    }
 
     /**
      * Gets the timestamp when this event occurred.

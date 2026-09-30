@@ -1,6 +1,6 @@
 ---
 translated_from: CONTRIBUTING.md
-source_commit: fe70d5d
+source_commit: f651622
 ---
 
 # AIMON Core 기여 가이드
@@ -68,15 +68,17 @@ source_commit: fe70d5d
 
 ### 라이브 API 테스트
 
-실제 프로바이더 API 를 호출하는 테스트 클래스가 넷 있고, 각각 그 프로바이더의 키로
+실제 프로바이더 API 를 호출하는 테스트 클래스가 여섯 있고, 각각 그 프로바이더의 키로
 `@EnabledIfEnvironmentVariable` 게이트가 걸려 있습니다.
 
 | 클래스 | 모듈 | 키 |
 |--------|------|-----|
 | `AnthropicThinkingLiveTest` | `aimon-llm-anthropic` | `ANTHROPIC_KEY` |
 | `AnthropicLlmClientIntegrationTest` | `aimon-llm-anthropic` | `ANTHROPIC_KEY` |
+| `AnthropicContextEngineLiveTest` | `aimon-llm-anthropic` | `ANTHROPIC_KEY` |
 | `OpenAIReasoningLiveTest` | `aimon-llm-openai` | `OPENAI_KEY` |
 | `OpenAILlmClientIntegrationTest` | `aimon-llm-openai` | `OPENAI_KEY` |
+| `OpenAIContextEngineLiveTest` | `aimon-llm-openai` | `OPENAI_KEY` |
 
 **이 계층에는 CI 신호가 전혀 없습니다.** 어느 워크플로도 두 키를 주지 않으므로, 키가 없는 곳에서는 —
 CI 를 포함해 — 이 클래스들이 각각 `SKIPPED` 로 보고되고 `checkAll` 은 초록으로 남습니다.
@@ -87,10 +89,21 @@ ANTHROPIC_KEY=... OPENAI_KEY=... \
 ./gradlew :aimon-llm-anthropic:test --rerun \
               --tests 'at.aimon.core.llms.anthropic.AnthropicThinkingLiveTest' \
               --tests 'at.aimon.core.llms.anthropic.AnthropicLlmClientIntegrationTest' \
+              --tests 'at.aimon.core.llms.anthropic.AnthropicContextEngineLiveTest' \
           :aimon-llm-openai:test --rerun \
               --tests 'at.aimon.core.llms.openai.OpenAIReasoningLiveTest' \
-              --tests 'at.aimon.core.llms.openai.OpenAILlmClientIntegrationTest'
+              --tests 'at.aimon.core.llms.openai.OpenAILlmClientIntegrationTest' \
+              --tests 'at.aimon.core.llms.openai.OpenAIContextEngineLiveTest'
 ```
+
+두 `*ContextEngineLiveTest` 클래스는 일부러 작게 잡은 컨텍스트 창으로 실제 실행기를 거쳐 컨텍스트 엔진을
+돌리므로, 몇 턴마다 롤링 사이클이 한 번씩 옵니다. 큰 도구 결과 안에 사실 하나를 심고, 채움 턴으로 세션을
+롤링 사이클 너머로 밀고, 그 사실을 묻고, 세션을 버전 2 코덱으로 다시 읽어 들여 한 턴 더 이어 갑니다.
+Anthropic 클래스는 롤링 시나리오를 extended thinking 아래에서도 돌리고 — assistant 메시지로 끝나는 요약
+요청은 거기서 prefill 로 읽혀 거절됩니다 — 기본 엔진의 view mode 에서 강제 `/compact` 도 한 번 돌립니다.
+둘을 합쳐 `claude-haiku-4-5` 와 `gpt-4o-mini` 에 대략 40번 호출합니다. 각 클래스에는 키가 필요 없는 쌍둥이
+`ContextEngineLiveRigTest` 가 있어서 같은 시나리오를 스크립트로 짠 모델에 대해 모든 평범한 빌드에서 돌리므로,
+시나리오가 롤링 사이클에 닿지 못하게 만드는 변경은 키 없이도 잡힙니다.
 
 **돌릴 때마다 돈이 듭니다** — 키 주인의 계정에 청구되는 실제 호출입니다. 키를 커밋하지 말고, 이슈나
 풀 리퀘스트에 붙이는 실패 출력에서는 키를 가리세요.

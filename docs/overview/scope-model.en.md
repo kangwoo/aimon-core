@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/scope-model.md
-source_commit: a56317a
+source_commit: 54936a4
 ---
 
 # Scope Model
@@ -66,8 +66,9 @@ rules see the `TurnId` entry in [`glossary.en.md` §4](glossary.en.md).
 | `McpClientManager` | when the `AgentRuntime` is created | closed explicitly by `OrcaAgentRuntime.close()` |
 | `WorkflowRunner` (agent-scoped variant) | `OrcaAgentRuntimeFactory` — only when `workflowRunnerEnabled` | `OrcaAgentRuntime.close()` |
 | `WorkflowRunner` (call-scoped variant) | `WorkflowTool` / `GraalJsWorkflowTool`, per call | each one's own try-with-resources |
-| `VirtualShell` (the core default) | `OrcaAgentRuntimeFactory` — via `LocalShells.create()`, **only when** the assembly did not supply one through `withShell(...)` | `OrcaAgentRuntime.close()` (the `ownedShell` field) |
-| `VirtualShell` (supplied by the assembly) | the caller, e.g. a sandbox assembly | **that caller** — `ownedShell` is null, so the runtime does not touch it |
+| `ExecutionEnvironmentProvider` and the shell and working file system it holds | the assembly — bootstrap builds one per runtime (`LocalExecutionEnvironmentProvider`); the starter uses a single `ExecutionEnvironmentProvider` bean when one exists | whoever built it — bootstrap's per-runtime teardown sink (on eviction or stack shutdown), Spring for a bean. **`OrcaAgentRuntime.close()` does not close it** |
+| `ExecutionEnvironment` | the provider's `resolve()`, once at the start of each execution | nothing — it is a view, not `Closeable`, and is dropped with the `ToolContext` |
+| `controlFileSystem` (the control store, formerly the runtime's VFS) | the assembly | the assembly |
 | `LiveSession` | `LiveSessionFactory` / the opener | `LiveSession.close()` — **handle resources only** |
 | `SchedulingEngine` / `ScheduledTaskManager` / `RoutineExecutor` | application bootstrap | app shutdown |
 | `AgentRuntimeRegistry` | created **outside** `SchedulingEngine` and injected through the builder | app shutdown (`SchedulingEngine` does not own it) |
@@ -87,14 +88,15 @@ There are two empty markers in `at.aimon.core.base`.
 
 IMPORTANT: **there is no fan-out over the markers.** `OrcaAgentRuntime.close()` does not scan for
 `AgentScoped` implementations; it closes only a **hardcoded list** (`mcpClientManager`,
-`workflowRunner`, `ownedShell`). If you add a new agent-scoped component holding a native
+`workflowRunner`). If you add a new agent-scoped component holding a native
 resource (a connection pool, a watcher thread), you must **add it to that list yourself**.
 Otherwise it is never closed.
 
-That the list grew from two to three is this rule's live example — `ownedShell` gets closed not
-because it carries a marker but because a line was added to the body of `close()`. Of the three,
-only `ownedShell` is closed **conditionally**: only when the assembly supplied no shell and the
-runtime therefore built one itself (§2's table).
+The list once had a third entry, `ownedShell` — the shell the runtime built itself when the
+assembly supplied none. It left when the execution-environment design
+([`design/tool/execution-environment.md`](../design/tool/execution-environment.md) §4.3) made the
+`ExecutionEnvironmentProvider` the single owner of shells and working file systems. The runtime
+only borrows the provider, so putting it on the list would be the mistake (§2's table).
 
 Not attaching a marker does not change a lifetime. `ToolRegistry` / `HookRegistry` are
 agent-scoped but have no resource to close, so they do not implement `AgentScoped`.

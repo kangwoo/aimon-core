@@ -4,7 +4,6 @@ import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.Optional;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.permission.PermissionSubject;
@@ -28,8 +27,10 @@ import at.aimon.core.tools.ToolContextKeys;
  * first is also what makes {@code /allowed/../secrets} a denial rather than a match on the {@code /allowed} prefix.
  *
  * <p>
- * A relative path is resolved against the {@link Environment}'s working directory, and only that: with no environment
- * in the context there is no answer, and the subject is empty. Falling back to the process CWD would make the verdict
+ * A relative path is resolved against the working directory of the execution's environment — its
+ * {@code EnvironmentDescriptor}, the directory the shell and the file tools agree on (in an isolated workflow branch,
+ * the branch root) — and only that: with no environment in the context there is no answer, and the subject is empty.
+ * Falling back to the process CWD would make the verdict
  * depend on where the JVM was started, which the person writing the pattern cannot see.
  *
  * <h2>Lexical only</h2>
@@ -58,7 +59,7 @@ final class FilePathSubjects {
      * @param context
      *            The runtime context, consulted for the working directory (must not be null)
      * @return The subject, or empty when the call cannot be judged — no {@code file_path}, a string this platform
-     *         cannot read as a path, or a relative path with no {@link Environment} to resolve it against
+     *         cannot read as a path, or a relative path with no execution environment to resolve it against
      */
     static Optional<PermissionSubject> filePathSubject(ToolInput input, ToolContext context) {
         // Read the raw value rather than ToolInput#getStringOrNull: that accessor throws when the key holds a
@@ -78,7 +79,7 @@ final class FilePathSubjects {
         if (path.isAbsolute()) {
             return Optional.of(path.normalize().toString());
         }
-        return context.get(ToolContextKeys.ENVIRONMENT_KEY).map(Environment::getWorkingDirectory)
+        return context.get(ToolContextKeys.EXECUTION_ENVIRONMENT).map(env -> env.descriptor().workingDirectory())
                 .flatMap(workingDirectory -> resolveAgainst(workingDirectory, path));
     }
 

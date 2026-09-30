@@ -16,10 +16,13 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import at.aimon.bootstrap.AimonStack;
+import at.aimon.bootstrap.assemble.StackPaths;
 import at.aimon.bootstrap.spec.AgentDescriptor;
 import at.aimon.core.agent.AgentExecutionResult;
 import at.aimon.core.agent.impl.orca.OrcaAgentRuntime;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.environment.EnvironmentRequest;
+import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.skill.Skill;
 import at.aimon.core.subagent.Subagent;
 import at.aimon.spring.boot.AimonSessions;
@@ -44,7 +47,8 @@ public class IntrospectionController {
 
     private static final String AGENT_MD_RESOURCE = "agents/sample/agent.md";
     private static final String SKILL_INDEX_RESOURCE = "agents/sample/skills/index";
-    private static final String BUNDLED_SKILLS_DIR = ".aimon/bundled-skills";
+    // Bundled skills are materialised into the control store, whose root is the workspace's .aimon/ directory.
+    private static final String BUNDLED_SKILLS_DIR = "bundled-skills";
 
     private final AimonStack stack;
     private final AimonSessions sessions;
@@ -120,7 +124,9 @@ public class IntrospectionController {
         view.put("skills", runtime.getSkillRegistry().getAllSkills().stream().map(Skill::getName).sorted().toList());
         view.put("subagents",
                 runtime.getSubagentRegistry().getAllSubagents().stream().map(Subagent::getName).sorted().toList());
-        view.put("workspaceRoot", runtime.getFileSystem().getWorkingDirectory());
+        view.put("workspaceRoot", runtime.getExecutionEnvironmentProvider()
+                .resolve(EnvironmentRequest.builder().agentRuntimeId(runtime.getId()).agent(runtime.getAgent()).build())
+                .descriptor().workingDirectory());
         view.put("materializedFiles", materializedFiles(runtime));
         return view;
     }
@@ -136,10 +142,15 @@ public class IntrospectionController {
      */
     private List<String> materializedFiles(OrcaAgentRuntime runtime) {
         try {
-            if (!runtime.getFileSystem().exists(BUNDLED_SKILLS_DIR)) {
+            final VirtualFileSystem control = runtime.getControlFileSystem();
+            if (!control.exists(BUNDLED_SKILLS_DIR)) {
                 return List.of();
             }
-            final List<String> files = new ArrayList<>(runtime.getFileSystem().listRecursive(BUNDLED_SKILLS_DIR));
+            // Reported relative to the workspace, as the files physically sit: {workspace}/.aimon/bundled-skills/...
+            final List<String> files = new ArrayList<>();
+            for (String file : control.listRecursive(BUNDLED_SKILLS_DIR)) {
+                files.add(StackPaths.CONTROL_DIRECTORY + "/" + file);
+            }
             files.sort(Comparator.naturalOrder());
             return files;
         } catch (RuntimeException e) {

@@ -3,11 +3,16 @@ package at.aimon.core.agent.definition;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
+import at.aimon.core.agent.ContextEngineKind;
 import at.aimon.core.agent.Version;
+import at.aimon.core.agent.tool.permission.AllowedTool;
+import at.aimon.core.base.DefinitionAttributes;
 import at.aimon.core.llm.LlmModel;
 
 /**
@@ -58,6 +63,9 @@ public final class AgentDefinition {
     private final String systemPrompt;
     private final Set<String> tags;
     private final Map<String, Object> variables;
+    private final List<AllowedTool> allowedTools;
+    private final ContextEngineKind contextEngine;
+    private final Map<String, String> attributes;
 
     /**
      * AgentDefinition을 생성한다.
@@ -73,6 +81,9 @@ public final class AgentDefinition {
         systemPrompt = Objects.requireNonNull(builder.systemPrompt, "AgentDefinition: System prompt cannot be null");
         tags = builder.tags != null ? Collections.unmodifiableSet(new LinkedHashSet<>(builder.tags)) : Set.of();
         variables = builder.variables != null ? Map.copyOf(builder.variables) : Map.of();
+        allowedTools = builder.allowedTools != null ? List.copyOf(builder.allowedTools) : List.of();
+        contextEngine = builder.contextEngine;
+        attributes = builder.attributes != null ? DefinitionAttributes.copyOf(builder.attributes) : Map.of();
     }
 
     /**
@@ -148,6 +159,39 @@ public final class AgentDefinition {
     }
 
     /**
+     * Returns the allow-list declared by this definition's {@code allowed-tools} frontmatter.
+     *
+     * <p>
+     * <b>An empty list means unrestricted</b>, the reading every validator in
+     * {@code at.aimon.core.agent.tool.permission} gives one, and the default for a definition that omits the key.
+     *
+     * @return An immutable list of allowed tools (never null, may be empty)
+     */
+    public List<AllowedTool> getAllowedTools() {
+        return allowedTools;
+    }
+
+    /**
+     * Returns the context engine the frontmatter asks for ({@code context-engine}).
+     *
+     * @return the engine, or empty to leave it to the deployment's default
+     */
+    public Optional<ContextEngineKind> getContextEngine() {
+        return Optional.ofNullable(contextEngine);
+    }
+
+    /**
+     * Returns the free-form attributes from the {@code attributes} frontmatter, flattened to dotted keys. The framework
+     * carries them and never reads them — they are for a component it does not know about, such as an execution
+     * environment provider (see {@link DefinitionAttributes}).
+     *
+     * @return an unmodifiable map (never null, may be empty)
+     */
+    public Map<String, String> getAttributes() {
+        return attributes;
+    }
+
+    /**
      * Builder for constructing {@link AgentDefinition} instances.
      *
      * <p>
@@ -161,6 +205,33 @@ public final class AgentDefinition {
         private String systemPrompt;
         private Set<String> tags;
         private Map<String, Object> variables;
+        private List<AllowedTool> allowedTools;
+        private ContextEngineKind contextEngine;
+        private Map<String, String> attributes;
+
+        /**
+         * Sets the free-form attributes.
+         *
+         * @param attributes
+         *            the attributes, already flat (null means none)
+         * @return This builder for method chaining
+         */
+        public Builder attributes(Map<String, String> attributes) {
+            this.attributes = attributes;
+            return this;
+        }
+
+        /**
+         * Sets the context engine the agent asks for.
+         *
+         * @param contextEngine
+         *            the engine, or {@code null} for the deployment's default
+         * @return This builder for method chaining
+         */
+        public Builder contextEngine(ContextEngineKind contextEngine) {
+            this.contextEngine = contextEngine;
+            return this;
+        }
 
         /**
          * Sets the agent name.
@@ -251,6 +322,18 @@ public final class AgentDefinition {
          */
         public Builder variables(Map<String, Object> variables) {
             this.variables = variables;
+            return this;
+        }
+
+        /**
+         * Sets the allow-list bounding every tool call the agent makes.
+         *
+         * @param allowedTools
+         *            The allowed tools (optional, defaults to an empty list meaning unrestricted)
+         * @return This builder for method chaining
+         */
+        public Builder allowedTools(List<AllowedTool> allowedTools) {
+            this.allowedTools = allowedTools;
             return this;
         }
 

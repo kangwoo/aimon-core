@@ -4,12 +4,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 
+import java.time.Duration;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.session.idempotency.IdempotencyStore;
 import at.aimon.core.agent.session.inbox.SessionInbox;
 import at.aimon.core.agent.session.signal.SessionSignalBus;
+import at.aimon.core.agent.session.store.InMemorySessionLogSegmentStore;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.store.SessionLeaseStore;
 import at.aimon.core.agent.session.store.SessionRecordStore;
@@ -126,5 +129,32 @@ class SessionSpecTest {
         assertThat(spec.getMode()).isEqualTo(DeploymentMode.SINGLE_NODE);
         assertThat(spec.getLeaseStore()).contains(leaseStore);
         assertThat(spec.getSignalBus()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("the segment sweep is off by default and on with an interval")
+    void segmentSweepDefaultsOff() {
+        assertThat(SessionSpec.defaults().getSegmentSweepInterval()).isEmpty();
+        final SessionSpec on = SessionSpec.builder().segmentSweepInterval(Duration.ofHours(1))
+                .segmentSweepGrace(Duration.ofHours(48)).build();
+        assertThat(on.getSegmentSweepInterval()).contains(Duration.ofHours(1));
+        assertThat(on.getSegmentSweepGrace()).contains(Duration.ofHours(48));
+        assertThat(SessionSpec.builder().recordStore(DURABLE_STORE).segmentStore(new InMemorySessionLogSegmentStore())
+                .segmentSweepInterval(Duration.ofHours(1)).build().getSegmentSweepInterval()).isPresent();
+    }
+
+    @Test
+    @DisplayName("a sweep that could never run is refused")
+    void segmentSweepThatCannotRunIsRefused() {
+        assertThatThrownBy(() -> SessionSpec.builder().segmentSweepInterval(Duration.ZERO).build())
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("segmentSweepInterval");
+        assertThatThrownBy(() -> SessionSpec.builder().segmentSweepInterval(Duration.ofHours(1))
+                .segmentSweepGrace(Duration.ofSeconds(-1)).build()).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("segmentSweepGrace");
+        assertThatThrownBy(() -> SessionSpec.builder().segmentSweepGrace(Duration.ofHours(1)).build())
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("never runs");
+        assertThatThrownBy(() -> SessionSpec.builder().recordStore(DURABLE_STORE)
+                .segmentSweepInterval(Duration.ofHours(1)).build()).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("nothing to sweep");
     }
 }

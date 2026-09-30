@@ -94,8 +94,8 @@
  * <li>Creating custom tool providers that implement {@link at.aimon.core.agent.orca.tool.OrcaToolProvider}
  * <li>Creating custom command providers that implement
  * {@link at.aimon.core.agent.impl.orca.command.OrcaCommandProvider}
- * <li>Implementing custom execution environments that implement
- * {@link at.aimon.core.agent.impl.orca.environment.VirtualExecutionEnvironment}
+ * <li>Supplying an execution environment provider that implements
+ * {@link at.aimon.core.environment.ExecutionEnvironmentProvider}
  * <li>Extending the factory classes to provide custom default implementations
  * </ul>
  *
