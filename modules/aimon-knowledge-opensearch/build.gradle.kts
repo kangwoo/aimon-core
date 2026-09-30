@@ -6,9 +6,8 @@ plugins {
 dependencies {
     implementation(project(":aimon-core"))
 
-    // OpenSearch Java client
+    // OpenSearch Java client (3.x ships its own Apache HttpClient 5 transport — no low-level rest client)
     implementation(libs.opensearch.client)
-    implementation(libs.opensearch.rest.client)
 
     // Logging
     implementation(libs.slf4j.api)

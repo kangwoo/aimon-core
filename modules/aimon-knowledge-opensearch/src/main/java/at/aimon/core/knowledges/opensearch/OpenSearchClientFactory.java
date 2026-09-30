@@ -2,23 +2,26 @@ package at.aimon.core.knowledges.opensearch;
 
 import java.util.Objects;
 
-import org.apache.http.HttpHost;
-import org.apache.http.auth.AuthScope;
-import org.apache.http.auth.UsernamePasswordCredentials;
-import org.apache.http.conn.ssl.NoopHostnameVerifier;
-import org.apache.http.impl.client.BasicCredentialsProvider;
-import org.apache.http.impl.nio.client.HttpAsyncClientBuilder;
-import org.apache.http.impl.nio.client.HttpAsyncClients;
-import org.opensearch.client.RestClient;
+import javax.net.ssl.SSLContext;
+
+import org.apache.hc.client5.http.auth.AuthScope;
+import org.apache.hc.client5.http.auth.UsernamePasswordCredentials;
+import org.apache.hc.client5.http.impl.auth.BasicCredentialsProvider;
+import org.apache.hc.client5.http.impl.nio.PoolingAsyncClientConnectionManagerBuilder;
+import org.apache.hc.client5.http.ssl.ClientTlsStrategyBuilder;
+import org.apache.hc.client5.http.ssl.NoopHostnameVerifier;
+import org.apache.hc.core5.http.HttpHost;
+import org.apache.hc.core5.http.nio.ssl.TlsStrategy;
 import org.opensearch.client.json.jackson.JacksonJsonpMapper;
 import org.opensearch.client.opensearch.OpenSearchClient;
-import org.opensearch.client.transport.rest_client.RestClientTransport;
+import org.opensearch.client.transport.OpenSearchTransport;
+import org.opensearch.client.transport.httpclient5.ApacheHttpClient5TransportBuilder;
 
 /**
  * Factory for creating {@link OpenSearchClient} instances from {@link OpenSearchConfig}.
  *
  * <p>
- * Simplifies client creation by encapsulating the low-level REST client and transport setup.
+ * Simplifies client creation by encapsulating the Apache HttpClient 5 transport setup.
  *
  * <pre>{@code
  * OpenSearchConfig config = OpenSearchConfig.builder()
@@ -53,35 +56,39 @@ public final class OpenSearchClientFactory {
     public static OpenSearchClient create(OpenSearchConfig config) {
         Objects.requireNonNull(config, "config must not be null");
 
-        final HttpHost host = new HttpHost(config.getHost(), config.getPort(), config.getScheme());
+        final HttpHost host = new HttpHost(config.getScheme(), config.getHost(), config.getPort());
+        final SSLContext sslContext = "https".equals(config.getScheme()) ? trustAllSslContext() : null;
 
-        final HttpAsyncClientBuilder httpClientBuilder = HttpAsyncClients.custom();
+        final OpenSearchTransport transport = ApacheHttpClient5TransportBuilder.builder(host)
+                .setMapper(new JacksonJsonpMapper()).setHttpClientConfigCallback(httpClientBuilder -> {
+                    if (config.hasCredentials()) {
+                        final BasicCredentialsProvider credentialsProvider = new BasicCredentialsProvider();
+                        credentialsProvider.setCredentials(new AuthScope(host), new UsernamePasswordCredentials(
+                                config.getUsername(), config.getPassword().toCharArray()));
+                        httpClientBuilder.setDefaultCredentialsProvider(credentialsProvider);
+                    }
 
-        if (config.hasCredentials()) {
-            final BasicCredentialsProvider credentialsProvider = new BasicCredentialsProvider();
-            credentialsProvider.setCredentials(AuthScope.ANY,
-                    new UsernamePasswordCredentials(config.getUsername(), config.getPassword()));
-            httpClientBuilder.setDefaultCredentialsProvider(credentialsProvider);
-        }
-
-        // Trust all certificates for development — production should use proper TLS configuration
-        if ("https".equals(config.getScheme())) {
-            try {
-                final javax.net.ssl.SSLContext sslContext = javax.net.ssl.SSLContext.getInstance("TLS");
-                sslContext.init(null, new javax.net.ssl.TrustManager[]{new TrustAllManager()}, null);
-                httpClientBuilder.setSSLContext(sslContext);
-                httpClientBuilder.setSSLHostnameVerifier(NoopHostnameVerifier.INSTANCE);
-            } catch (Exception e) {
-                throw new IllegalStateException("Failed to configure SSL context", e);
-            }
-        }
-
-        final RestClient restClient = RestClient.builder(host).setHttpClientConfigCallback(b -> httpClientBuilder)
-                .build();
-
-        final RestClientTransport transport = new RestClientTransport(restClient, new JacksonJsonpMapper());
+                    // Trust all certificates for development — production should use proper TLS configuration
+                    if (sslContext != null) {
+                        final TlsStrategy tlsStrategy = ClientTlsStrategyBuilder.create().setSslContext(sslContext)
+                                .setHostnameVerifier(NoopHostnameVerifier.INSTANCE).buildAsync();
+                        httpClientBuilder.setConnectionManager(PoolingAsyncClientConnectionManagerBuilder.create()
+                                .setTlsStrategy(tlsStrategy).build());
+                    }
+                    return httpClientBuilder;
+                }).build();
 
         return new OpenSearchClient(transport);
+    }
+
+    private static SSLContext trustAllSslContext() {
+        try {
+            final SSLContext sslContext = SSLContext.getInstance("TLS");
+            sslContext.init(null, new javax.net.ssl.TrustManager[]{new TrustAllManager()}, null);
+            return sslContext;
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to configure SSL context", e);
+        }
     }
 
     /**
