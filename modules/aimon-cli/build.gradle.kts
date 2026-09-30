@@ -94,6 +94,10 @@ tasks.jar {
     )
 
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+
+    // The merged runtime classpath passed the classic zip limit of 65535 entries, so the archive needs zip64.
+    // CI's checkAll never assembles this jar; only a local `./gradlew build` (or :aimon-cli:jar) reaches it.
+    isZip64 = true
 }
 
 // Create distribution with scripts

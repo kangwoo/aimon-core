@@ -7,6 +7,13 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Fixed: `./gradlew build` failed assembling the CLI jar
+
+- **`:aimon-cli:jar` is written as zip64.** The CLI jar merges the whole runtime classpath, which passed the classic
+  zip limit of 65535 entries (now about 73,700), so the task failed with "Archive contains more than 65535 entries".
+  CI's `checkAll` never assembles the jar, so only a local `./gradlew build` or `:aimon-cli:jar` hit it. The jar is
+  not published; `java -jar` reads zip64 archives.
+
 ### Changed: workflow isolation refuses bad input where it starts, and says why (EE-8, EE-25, EE-27, EE-28, EE-29)
 
 Design and departures: `docs/design/tool/workflow-isolation-hardening.md`.
