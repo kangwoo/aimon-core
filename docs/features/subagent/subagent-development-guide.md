@@ -92,6 +92,24 @@ at.aimon.core.subagent/
 소비자(`TaskTool`, 실행기, `/agents`, skill fork)는 읽기 전용 `SubagentRegistry` 추상화만 보므로, 코드 정의분이
 **호출 계층 코드 변경 없이** 자동으로 노출·실행·목록에 포함됩니다.
 
+### 도구 제한이 적용되는 지점
+
+`allowed-tools`(마크다운)와 `.tools(...)`(코드)는 같은 허용목록이며, 실행 중 **두 지점**에서 작동합니다.
+둘 다 `Subagent.getAllowedTools()` 하나를 읽으므로 서로 어긋날 수 없습니다.
+
+| 지점 | 무엇을 하는가 |
+|------|---------------|
+| 프롬프트 | 허용목록에 **이름이 없는** 도구는 LLM 에 보내는 도구 정의 목록에서 빠진다 — 모델이 애초에 고를 수 없다 |
+| `ToolSearch` | 이 도구도 허용목록의 적용을 받는다. 지연(deferred) 도구를 쓰는 배포에서 허용목록에 `ToolSearch` 를 넣지 않으면 그 도구들에 **닿을 길이 없어진다** |
+| 디스패치 | 그래도 불린 호출은 `ToolPermissionViolationException` 으로 거부된다 |
+
+`Bash(git:*)` 같은 **패턴 항목은 그 도구를 계속 노출합니다.** "어떤 인자를 허용하는가" 는 도구 목록으로
+표현할 수 없기 때문입니다 — `Bash` 는 모델에게 보이고, `git` 이 아닌 명령이 디스패치에서 거부됩니다.
+
+허용목록이 **등록된 도구를 하나도 가리키지 않으면**(오타, 배선되지 않은 모듈의 도구, `ToolSearch` 누락)
+서브에이전트는 도구 없이 답합니다 — 그리고 그 실행은 성공으로 기록됩니다. 그때 경고 로그가 남으므로,
+서브에이전트가 아무것도 하지 않고 답만 내놓는다면 그 로그부터 봅니다.
+
 ---
 
 ## Subagent.builder() 사용법
@@ -123,6 +141,7 @@ Subagent dbTriage = Subagent.builder()
 | `tools(List<String>)` | | 빈 목록 → `hasToolRestrictions() == false` (도구 제한 없음) |
 | `model(String)` | | `null` (실행기 기본 모델) |
 | `maxIterations(int)` | | `1000` |
+| `attributes(Map<String, String>)` | | 빈 맵 (마크다운 `attributes:` 블록을 점 표기 키로 펼친 것과 같다 — 예: `sandbox.slot`. 코어는 싣기만 하고, 실행 환경 제공자 같은 외부 구성 요소가 읽는다) |
 
 > **도구 문자열 포맷**은 마크다운 `allowed-tools` 와 동일하다: `"Read"`, `"Bash(git:*)"`, `"Bash(npm install)"` 등.
 > 내부적으로 `AllowedTool.parse(...)`를 거치므로 파싱 로직이 중복되지 않는다.
@@ -142,7 +161,9 @@ Subagent.builder().name("plain").systemPrompt("You are a plain agent.").build();
 You are a plain agent.
 ```
 
-둘 다 `maxIterations=1000`, `model=null`, `whenToUse=null`, 도구 제한 없음이 됩니다.
+둘 다 `maxIterations=1000`, `model=null`, `whenToUse=null`, 도구 제한 없음, 속성 없음(빈 `attributes`)이 됩니다.
+마크다운의 `attributes:` 블록(예: `attributes:` 아래 `sandbox:` → `slot: build`)은 코드의
+`.attributes(Map.of("sandbox.slot", "build"))` 와 같습니다.
 
 ---
 

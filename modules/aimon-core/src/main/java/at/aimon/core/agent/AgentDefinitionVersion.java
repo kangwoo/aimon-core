@@ -126,6 +126,11 @@ public final class AgentDefinitionVersion {
         for (Map.Entry<String, Object> variable : new TreeMap<>(content.getVariables()).entrySet()) {
             lines.add("var." + variable.getKey() + "=" + variable.getValue());
         }
+        // Attributes can decide where a routine runs (a sandbox slot), so a change to them is a definition change. Only
+        // written when present, so every definition that has none keeps the digest it had before attributes existed.
+        for (Map.Entry<String, String> attribute : new TreeMap<>(metadata.getAttributes()).entrySet()) {
+            lines.add("attr." + attribute.getKey() + "=" + attribute.getValue());
+        }
         lines.add("systemPrompt=" + content.getSystemPrompt());
 
         return String.join("\n", lines);

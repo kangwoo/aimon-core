@@ -26,10 +26,15 @@ package at.aimon.core.agent.tool;
  * execution's own thread before any tool is dispatched. Any <em>value</em> they
  * write, however, must be safe for concurrent reads and mutation by tools
  * running under {@code ParallelToolDispatcher} — which is why the executor
- * injects {@code ConcurrentHashMap.newKeySet()} for
- * {@code ReadTool.READ_FILES_KEY}. Enrichers should write only via the supplied
- * {@link ToolContext.Builder}; they must not retain a reference to the builder
- * after returning.
+ * injects a {@code ConcurrentHashMap} for {@code ReadTool.FILE_STAMPS_KEY}.
+ * Enrichers should write only via the supplied {@link ToolContext.Builder}; they
+ * must not retain a reference to the builder after returning.
+ *
+ * <p>
+ * Enrichers run after the execution's environment is published under the
+ * write-once {@code ToolContextKeys.EXECUTION_ENVIRONMENT}, and cannot replace it:
+ * writing that name again throws {@link IllegalStateException}, which the
+ * executor logs, skipping that enricher.
  */
 public interface ToolContextEnricher {
 

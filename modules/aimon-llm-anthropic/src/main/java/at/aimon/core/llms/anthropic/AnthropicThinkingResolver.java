@@ -32,8 +32,8 @@ import at.aimon.core.llm.capability.ThinkingDialect;
  *
  * <p>
  * The mode × dialect table it implements is
- * {@code docs/design/llm/reasoning-model-enablement.md} §3.3, and the reporting contract is §3.1/§3.2 of
- * {@code docs/design/llm/thinking-reporting-and-dialect-records.md}.
+ * {@code docs/design/llm/anthropic-thinking.md} §4.1, and the reporting contract is §8.1/§8.3 of
+ * the same document.
  */
 final class AnthropicThinkingResolver {
 

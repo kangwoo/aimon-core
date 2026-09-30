@@ -623,7 +623,8 @@ Step 1 이 빨간 빌드로 끝난다.
 | **`RedactingPeerMemory`** (§6.2 가 필수로 만든 래퍼) | Application | `MemoryAssembly` | **자기 자원이 없다.** teardown 에 올리는 것은 **감싼 delegate** 이며, 그것이 조립이 만든 것일 때만이다 |
 | 티어 구현체 (어댑터가 소유한 HTTP 클라이언트) | Application | `PeerMemory` 구현체 | 그 `PeerMemory` 의 `close()` |
 
-`VirtualShell` 의 `ownedShell` 과 정확히 같은 모양이다 — 조립이 만들었을 때만 닫는다. `PeerMemory` 는
+`LocalExecutionEnvironmentProvider` 가 셸·파일 시스템을 다루는 방식과 정확히 같은 모양이다 — 자기가 만든
+것만 닫고, 빌려 온 것(주입받은 셸·파일 시스템)은 닫지 않는다. `PeerMemory` 는
 `ApplicationScoped` 마커를 구현하되 `AutoCloseable` 을 **강제하지 않는다**: 자원을 쥔 어댑터만 스스로
 `AutoCloseable` 을 구현하고, 조립이 `instanceof` 로 확인해 teardown 에 올린다.
 

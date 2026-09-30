@@ -28,10 +28,12 @@ import at.aimon.core.llm.invoke.PromptTooLongHandler;
  * <h2>Scope (RETRY-05)</h2>
  *
  * <p>
- * RETRY-05 introduces only this stub. Wiring the handler into the gateway default or into Orca is intentionally left to
- * RETRY-04; this class does not install itself anywhere. The real compaction-driven handler (tentatively named
- * {@code CompactionTriggeringHandler}) is tracked in the transcript-compaction design document and will supersede
- * this class once that work lands.
+ * RETRY-05 introduces only this stub; this class does not install itself anywhere. The compaction-driven handler it
+ * was meant to be superseded by was never built as a gateway handler: prompt-too-long recovery for the Orca loops is
+ * {@link at.aimon.core.agent.context.ContextEngine#recover}, which the executor consults after the gateway call fails.
+ * A handler that rewrote the transcript inside the gateway would be a second party shrinking the view, which the engine
+ * exists to rule out (context-engine design §8.2) &mdash; so Orca wires no handler, and this one remains only for
+ * gateway users outside it.
  *
  * <h2>Usage</h2>
  *

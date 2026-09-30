@@ -15,6 +15,7 @@ import at.aimon.core.agent.compact.CompactionMetadata;
 import at.aimon.core.agent.compact.CompactionTrigger;
 import at.aimon.core.agent.compact.InvokedSkillRecord;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.transcript.LogOrigin;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
@@ -71,6 +72,7 @@ class InvokedSkillsRestoreHookTest {
         assertThat(result.getStatus()).isEqualTo(HookStatus.SUCCESS);
         Message appended = memory.getLastMessage();
         assertThat(appended.getRole()).isEqualTo(Role.USER);
+        assertThat(memory.getLogState().getEntries().get(memory.size() - 1).getOrigin()).isEqualTo(LogOrigin.SYNTHETIC);
         // Names appear in order; only entries with args carry the args= segment.
         assertThat(appended.getContent()).contains("[System note: skills invoked before conversation compaction]")
                 .contains("\n- commit\n").contains("- summarize args=\"the meeting notes\"")

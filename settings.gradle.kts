@@ -9,7 +9,6 @@ include(
     "aimon-bootstrap",
     "aimon-cli",
     "aimon-spring-boot-starter",
-    "aimon-browser-playwright",
     "aimon-filesystem-gridfs",
     "aimon-filesystem-s3",
     // The shared VirtualFileSystem contract test. Not published — it exists so each backend is checked against
@@ -23,9 +22,6 @@ include(
     // the rule rather than two copies of it. Not published, like `aimon-filesystem-testkit` above: every subject it
     // checks is in this repository.
     "aimon-llm-capability-testkit",
-    "aimon-sandbox",
-    "aimon-sandbox-docker",
-    "aimon-sandbox-kubernetes",
     "aimon-rewake-webhook",
     "aimon-scheduling-quartz",
     "aimon-session-routing",
@@ -55,7 +51,6 @@ project(":aimon-core").projectDir = file("modules/aimon-core")
 project(":aimon-bootstrap").projectDir = file("modules/aimon-bootstrap")
 project(":aimon-cli").projectDir = file("modules/aimon-cli")
 project(":aimon-spring-boot-starter").projectDir = file("modules/aimon-spring-boot-starter")
-project(":aimon-browser-playwright").projectDir = file("modules/aimon-browser-playwright")
 project(":aimon-filesystem-gridfs").projectDir = file("modules/aimon-filesystem-gridfs")
 project(":aimon-filesystem-s3").projectDir = file("modules/aimon-filesystem-s3")
 project(":aimon-filesystem-testkit").projectDir = file("modules/aimon-filesystem-testkit")
@@ -63,9 +58,6 @@ project(":aimon-knowledge-opensearch").projectDir = file("modules/aimon-knowledg
 project(":aimon-llm-anthropic").projectDir = file("modules/aimon-llm-anthropic")
 project(":aimon-llm-openai").projectDir = file("modules/aimon-llm-openai")
 project(":aimon-llm-capability-testkit").projectDir = file("modules/aimon-llm-capability-testkit")
-project(":aimon-sandbox").projectDir = file("modules/aimon-sandbox")
-project(":aimon-sandbox-docker").projectDir = file("modules/aimon-sandbox-docker")
-project(":aimon-sandbox-kubernetes").projectDir = file("modules/aimon-sandbox-kubernetes")
 project(":aimon-rewake-webhook").projectDir = file("modules/aimon-rewake-webhook")
 project(":aimon-scheduling-quartz").projectDir = file("modules/aimon-scheduling-quartz")
 project(":aimon-session-routing").projectDir = file("modules/aimon-session-routing")

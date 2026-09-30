@@ -1,13 +1,12 @@
 package at.aimon.core.tools.file;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
-import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -17,10 +16,16 @@ import org.junit.jupiter.api.io.TempDir;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.environment.TestExecutionEnvironments;
+import at.aimon.core.environment.UnavailableExecutionEnvironment;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
 import at.aimon.core.llm.ToolDefinition;
+import at.aimon.core.shell.impl.local.LocalShell;
+import at.aimon.core.tools.ExecutionEnvironmentAccess;
+import at.aimon.core.tools.ToolContextKeys;
 
 /** Unit tests for {@link EditTool}. */
 class EditToolTest {
@@ -37,8 +42,9 @@ class EditToolTest {
         LocalFileSystemConfig config = new LocalFileSystemConfig(tempDir.toString());
         fileSystem = new LocalFileSystem(config);
         fileSystem.initialize();
-        editTool = new EditTool(fileSystem);
-        context = ToolContext.empty();
+        editTool = new EditTool();
+        // An environment and no read stamps at all: Edit treats that as "not read".
+        context = TestExecutionEnvironments.withoutStamps(TestExecutionEnvironments.of(fileSystem));
     }
 
     @AfterEach
@@ -56,21 +62,37 @@ class EditToolTest {
      * @return A ToolContext with the file marked as read
      */
     private ToolContext createContextWithReadFile(String filePath) {
-        return ToolContext.builder().put(ReadTool.READ_FILES_KEY, Set.of(filePath)).build();
+        final ToolContext readContext = TestExecutionEnvironments.context(fileSystem);
+        final ExecutionEnvironment env = ExecutionEnvironmentAccess.require(readContext);
+        if (Files.exists(Path.of(filePath))) {
+            readContext.get(ReadTool.FILE_STAMPS_KEY).orElseThrow().put(FileStamps.key(env, filePath),
+                    FileStamps.current(env, filePath));
+        }
+        return readContext;
     }
 
     // Constructor tests
 
     @Test
-    void testConstructor_NullFileSystem_ThrowsException() {
-        assertThatThrownBy(() -> new EditTool(null)).isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("File system cannot be null");
+    void testExecute_NoEnvironment_ReturnsErrorWithoutThrowing() {
+        ToolResult result = editTool.execute(ToolInput.of("file_path", "a.txt", "old_string", "a", "new_string", "b"),
+                ToolContext.empty());
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).contains("No execution environment");
     }
 
     @Test
-    void testConstructor_ValidFileSystem_Success() {
-        EditTool tool = new EditTool(fileSystem);
-        assertThat(tool).isNotNull();
+    void testExecute_UnavailableEnvironment_ErrorCarriesCause() {
+        ToolContext unavailable = ToolContext.builder()
+                .put(ToolContextKeys.EXECUTION_ENVIRONMENT, UnavailableExecutionEnvironment.of("sandbox is down"))
+                .put(ReadTool.FILE_STAMPS_KEY, new ConcurrentHashMap<>()).build();
+
+        ToolResult result = editTool.execute(ToolInput.of("file_path", "a.txt", "old_string", "a", "new_string", "b"),
+                unavailable);
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).contains("sandbox is down");
     }
 
     // getDefinition tests
@@ -117,8 +139,8 @@ class EditToolTest {
         ToolResult result = editTool.execute(toolInput, context);
 
         assertThat(result.isError()).isTrue();
-        assertThat(result.getContent()).contains("has not been read yet");
-        assertThat(result.getContent()).contains("Read tools");
+        assertThat(result.getContent()).contains("Read the file before modifying it");
+        assertThat(result.getContent()).contains("Read tool");
     }
 
     @Test
@@ -364,5 +386,81 @@ class EditToolTest {
         ToolResult result = editTool.execute(toolInput, createContextWithReadFile(file.toString()));
 
         assertThat(result.isSuccess()).isTrue();
+    }
+
+    // stale-write protection (execution-environment design §7)
+
+    @Test
+    void testExecute_WithoutRead_IsRefused() throws IOException {
+        Files.writeString(tempDir.resolve("a.txt"), "hello");
+
+        ToolResult result = editTool.execute(
+                ToolInput.of("file_path", "a.txt", "old_string", "hello", "new_string", "bye"),
+                TestExecutionEnvironments.context(fileSystem));
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).contains("Read the file before modifying it");
+    }
+
+    @Test
+    void testExecute_ChangedAfterRead_IsRefused() throws IOException {
+        Path file = tempDir.resolve("a.txt");
+        Files.writeString(file, "hello");
+        ToolContext context = TestExecutionEnvironments.context(fileSystem);
+        new ReadTool().execute(ToolInput.of("file_path", "a.txt"), context);
+        fileSystem.write("a.txt", "hello, rewritten by another execution");
+
+        ToolResult result = editTool
+                .execute(ToolInput.of("file_path", "a.txt", "old_string", "hello", "new_string", "bye"), context);
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).contains("File changed since it was read; Read it again");
+    }
+
+    @Test
+    void testExecute_ChangedByShellAfterRead_IsRefused() throws Exception {
+        Path file = tempDir.resolve("a.txt");
+        Files.writeString(file, "hello");
+        ToolContext context = TestExecutionEnvironments.context(fileSystem);
+        new ReadTool().execute(ToolInput.of("file_path", "a.txt"), context);
+        new LocalShell(tempDir).execute(() -> "printf 'hello from sed, longer' > a.txt");
+
+        ToolResult result = editTool
+                .execute(ToolInput.of("file_path", "a.txt", "old_string", "hello", "new_string", "bye"), context);
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).contains("File changed since it was read");
+    }
+
+    @Test
+    void testExecute_ReadAndEditUnderDifferentSpellings_ShareOneStamp() throws IOException {
+        Files.writeString(tempDir.resolve("a.txt"), "one two three");
+        ToolContext context = TestExecutionEnvironments.context(fileSystem);
+        new ReadTool().execute(ToolInput.of("file_path", "a.txt"), context);
+
+        ToolResult first = editTool
+                .execute(ToolInput.of("file_path", "./a.txt", "old_string", "one", "new_string", "1"), context);
+        ToolResult second = editTool.execute(
+                ToolInput.of("file_path", tempDir.resolve("a.txt").toString(), "old_string", "two", "new_string", "2"),
+                context);
+
+        assertThat(first.isSuccess()).isTrue();
+        assertThat(second.isSuccess()).isTrue();
+        assertThat(Files.readString(tempDir.resolve("a.txt"))).isEqualTo("1 2 three");
+    }
+
+    @Test
+    void testExecute_ForkDoesNotInheritParentStamps() throws IOException {
+        Files.writeString(tempDir.resolve("a.txt"), "hello");
+        ToolContext parent = TestExecutionEnvironments.context(fileSystem);
+        new ReadTool().execute(ToolInput.of("file_path", "a.txt"), parent);
+        // A fork gets a fresh stamp map from its executor, never the parent's.
+        ToolContext fork = TestExecutionEnvironments.context(fileSystem);
+
+        ToolResult result = editTool
+                .execute(ToolInput.of("file_path", "a.txt", "old_string", "hello", "new_string", "bye"), fork);
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).contains("Read the file before modifying it");
     }
 }

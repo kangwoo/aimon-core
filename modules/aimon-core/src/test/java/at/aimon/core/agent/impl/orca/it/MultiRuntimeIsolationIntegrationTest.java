@@ -106,12 +106,14 @@ class MultiRuntimeIsolationIntegrationTest {
         // repeat the earlier ones, since each call re-sends the accumulated transcript.
         final List<String> observations = llm.lastCallFor(reading.value()).observations();
         assertThat(observations).hasSize(4).noneMatch(text -> text.contains("AGENT-A-ONLY-3d71"));
-        // The bare name is a plain miss inside agent-b's own root; the two escapes are refused as traversal, which is
-        // the security property rather than an accident of where the temp directories happen to sit.
+        // The bare name is a plain miss inside agent-b's own root; the two escapes are refused as leaving the
+        // workspace, which is the security property rather than an accident of where the temp directories happen to
+        // sit. The environment's path-rule guard refuses them first ("outside this filesystem"), before the local
+        // backend's own traversal check would.
         assertThat(observations.get(0)).contains("File not found");
-        assertThat(observations.get(1)).contains("Path traversal detected");
+        assertThat(observations.get(1)).contains("outside this filesystem");
         assertThat(observations.get(2)).doesNotContain("Error");
-        assertThat(observations.get(3)).contains("Path traversal detected");
+        assertThat(observations.get(3)).contains("outside this filesystem");
         assertThat(agentB.fileExists("secret.txt")).isFalse();
         assertThat(agentB.readFile("mine.txt")).contains("AGENT-B-OWN");
     }

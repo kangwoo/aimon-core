@@ -29,7 +29,7 @@ class AnthropicConfigTest {
         assertThat(config.getApiKey()).isEqualTo(apiKey);
         assertThat(config.getModel()).isEqualTo("claude-sonnet-4-5");
         // Unset, not 0.0. A manufactured default would be sent on every request, and 0.0 is the one value the
-        // current Claude generation refuses -- see docs/design/llm/anthropic-sampling-capabilities.md section 2.6.
+        // current Claude generation refuses -- see docs/design/llm/request-parameters.md section 2.2.
         assertThat(config.getTemperature()).isEmpty();
         assertThat(config.getMaxTokens()).isEqualTo(4096);
         assertThat(config.getTimeout()).isEqualTo(Duration.ofSeconds(60));

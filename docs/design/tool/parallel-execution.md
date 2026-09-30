@@ -141,6 +141,10 @@ builder.put(ReadTool.READ_FILES_KEY, ConcurrentHashMap.newKeySet());
 
 `OrcaAgentExecutor.java:833`, `DefaultSubagentExecutor.java:637`.
 
+> 이후 바뀌었다: [`execution-environment.md`](execution-environment.md) §7 로 이 set 은 read stamp 맵
+> `ReadTool.FILE_STAMPS_KEY`(`Map<String, FileStamp>`, 실행마다 `new ConcurrentHashMap<>()`)으로 대체되었다.
+> thread-safety 논리는 그대로다.
+
 이것은 "caller 가 넘기던 plain `HashSet` 을 교체" 한 것이 **아니다**. 그전까지 두 실행기 중 어느 쪽도
 이 키를 주입하지 않았고 오직 테스트만 넣고 있었다. 그래서 이 주입은 신규 추가이고, 부수 효과로
 **그동안 프로덕션에서 한 번도 동작하지 않던 `EditTool` 의 read-before-edit 가드가 비로소 작동한다** —
@@ -161,7 +165,7 @@ iteration 에 걸쳐 정상 동작한다.
 
 | 도구 | InterruptBehavior | 근거 |
 |------|-------------------|------|
-| `ReadTool` | `NON_INTERRUPTIBLE` | 읽기 전용. 유일한 공유 가변 상태인 `READ_FILES_KEY` set 은 §5 로 thread-safe |
+| `ReadTool` | `NON_INTERRUPTIBLE` | 읽기 전용. 유일한 공유 가변 상태인 stamp 맵(옛 `READ_FILES_KEY` set)은 §5 로 thread-safe |
 | `GrepTool` | `COOPERATIVE` | 읽기 전용 |
 | `WebFetchTool` | `COOPERATIVE` | 외부 GET, 멱등, 캐시 동기화됨 |
 | `TaskListTool` | (기본) `NON_INTERRUPTIBLE` | thread-safe 스토어에 대한 읽기 전용 |

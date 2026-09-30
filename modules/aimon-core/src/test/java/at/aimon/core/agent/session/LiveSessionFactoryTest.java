@@ -24,6 +24,7 @@ import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.command.DefaultCommandExecutionManager;
 import at.aimon.core.command.DefaultCommandRegistry;
+import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
 import at.aimon.core.hook.DefaultHookExecutionManager;
@@ -187,7 +188,7 @@ class LiveSessionFactoryTest {
             // Context registries / filesystem are still wired and accessible from the cached instance.
             final OrcaAgentRuntime ctx = cache.get(agent);
             assertThat(ctx).isNotNull();
-            assertThat(ctx.getFileSystem()).isNotNull();
+            assertThat(ctx.getControlFileSystem()).isNotNull();
             assertThat(ctx.getToolRegistry()).isNotNull();
         } finally {
             s2.close();
@@ -281,7 +282,8 @@ class LiveSessionFactoryTest {
                 .toolRegistry(new DefaultToolRegistry()).hookRegistry(new DefaultHookRegistry())
                 .commandRegistry(new DefaultCommandRegistry(fileSystem, ".aimon/commands"))
                 .subagentRegistry(new DefaultSubagentRegistry(fileSystem, ".aimon/agents"))
-                .skillRegistry(new DefaultSkillRegistry(fileSystem, ".aimon/skills")).fileSystem(fileSystem)
+                .skillRegistry(new DefaultSkillRegistry(fileSystem, ".aimon/skills")).controlFileSystem(fileSystem)
+                .executionEnvironmentProvider(TestExecutionEnvironments.provider(fileSystem))
                 .environment(Environment.createDefault()).build();
     }
 

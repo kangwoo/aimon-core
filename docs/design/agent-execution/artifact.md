@@ -168,14 +168,27 @@ INTERRUPTED, SUSPENDED, MAX_ITERATIONS, 그리고 커맨드 처리 경로. 실�
 
 ## 7. 켜는 방법
 
-기본은 **꺼져 있다**. `new OrcaFileToolProvider()` 는 `artifactEnabled=false` 이고 평범한
+기본은 **꺼져 있다**. `new OrcaFileToolProvider()` 는 `ArtifactPolicy.disabled()` 이고 평범한
 `WriteTool`/`EditTool` 을 등록한다. 아티팩트가 필요한 어셈블리(Web API 등)가
-`new OrcaFileToolProvider(true)` 를 커스텀 프로바이더로 넘겨 켠다. 아티팩트를 쓸 일이 없는 CLI 는
+`new OrcaFileToolProvider(ArtifactPolicy.enabledWithDefaults())` 를 넘기거나, bootstrap 의
+`ToolSpec.artifactPolicy(...)`, 스타터의 `aimon.tools.artifact.enabled=true` 로 켠다. 아티팩트를 쓸 일이 없는 CLI 는
 `artifact` 파라미터가 스키마에 나타나지 않으므로 모델이 볼 일도 없다.
 
-`OrcaFileToolProvider.FILE_TOOL_NAMES` 는 워크트리 격리와 락스텝이다. VFS 를 쓰는 도구를
-`registerTools` 에 추가하면 이 집합에도 넣어야 하며, 그러지 않으면
-`WorktreeToolEnvironmentFactory` 가 그 도구를 베이스 파일시스템에 묶인 채 넘겨 격리를 조용히 무력화한다.
+**비영속 환경에서는 보관 사본을 등록한다**([`../tool/execution-environment.md`](../tool/execution-environment.md)
+§9.3). 도구가 쓴 실행 환경이 `durable() == false` 이면(샌드박스 작업 공간, 워크플로 격리 브랜치) 그 경로는 실행
+뒤 사라질 수 있다. 그래서 `ArtifactArchive` 가 등록 전에 파일을 제어 저장소의
+`artifacts/{archiveKey}/{fileName}` 로 복사하고 **그 경로**를 등록한다. `archiveKey` 는 `ArtifactCollector` 가 실행마다
+갖는 값이다 — 포크는 자기 `ExecutionId`, 턴은 게시하지 않는 `archive:…` 값. 디렉터리 이름으로 쓸 때는
+`ArtifactArchive.directoryName` 이 `[A-Za-z0-9._-]` 밖의 문자를 `_` 로 바꾼다(`:` 를 거부하는 로컬 저장소 때문).
+복사 자체가 실패해도 등록하지 않고 결과에 한 줄을 덧붙인다. 그러면 경로가 가리키는 저장소가 둘이
+되므로 `FileArtifact.getStorage()` 가 `WORKSPACE`(작업 환경 경로) 와 `CONTROL`(제어 저장소 경로) 을 구분하고,
+다운로드 계층은 그에 따라 연다. 복사 상한은 `ArtifactPolicy` 가 갖는다 — 파일당 50 MB, 실행당 총 100 MB(스타터
+`aimon.tools.artifact.max-file-bytes` / `max-execution-bytes`). 넘으면 쓰기는 성공한 채 등록하지 않고 도구 결과에
+그 사실을 한 줄 덧붙인다.
+
+도구가 생성자에서 파일 시스템을 받지 않으므로(실행 환경에서 꺼낸다), 워크트리 격리 브랜치에서도 같은
+도구 인스턴스가 브랜치의 파일 시스템을 본다. 격리를 위해 파일 도구를 재바인딩하던 `WorktreeToolEnvironmentFactory`
+와 그 락스텝 집합 `OrcaFileToolProvider.FILE_TOOL_NAMES` 는 없어졌다.
 
 ---
 
@@ -245,7 +258,7 @@ INTERRUPTED, SUSPENDED, MAX_ITERATIONS, 그리고 커맨드 처리 경로. 실�
 | 파일명 추출 | [`ArtifactFileNames.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/artifact/ArtifactFileNames.java) |
 | 쓰기 데코레이터 | [`ArtifactAwareWriteTool.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/tools/artifact/ArtifactAwareWriteTool.java) |
 | 편집 데코레이터 | [`ArtifactAwareEditTool.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/tools/artifact/ArtifactAwareEditTool.java) |
-| 스크린샷 데코레이터 | [`ArtifactAwareBrowserTool.java`](../../../modules/aimon-browser-playwright/src/main/java/at/aimon/browser/playwright/artifact/ArtifactAwareBrowserTool.java) |
+| 스크린샷 데코레이터 | [`ArtifactAwareBrowserTool.java`](https://github.com/kangwoo/aimon-browser/blob/main/modules/aimon-browser-playwright/src/main/java/at/aimon/browser/playwright/artifact/ArtifactAwareBrowserTool.java) — 별도 저장소 |
 | 등록 스위치 | [`OrcaFileToolProvider.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/impl/orca/tool/OrcaFileToolProvider.java) |
 | 컨텍스트 키 | [`ToolContextKeys.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/tools/ToolContextKeys.java) |
 | 결과 부착 | [`OrcaAgentExecutionResult.java`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/impl/orca/OrcaAgentExecutionResult.java) |

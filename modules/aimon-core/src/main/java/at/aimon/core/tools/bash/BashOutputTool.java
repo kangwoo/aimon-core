@@ -198,11 +198,12 @@ public class BashOutputTool extends AbstractTool {
                 }
             }
 
-            // Read new output
-            final String output = task.readNewOutput(filter);
-
-            // Format result based on status
+            // Status first, then output. The completion handler appends all output before it marks the task done, so a
+            // task read as finished here already has all of it; reading output first could return nothing from a task
+            // that finishes before the status is read, leaving its output for a poll the model has no reason to make.
+            // The environment's notices are taken in the finished branches below, for the same reason.
             final BashTaskStatus status = task.getStatus();
+            final String output = task.readNewOutput(filter);
             final StringBuilder result = new StringBuilder();
 
             switch (status) {
@@ -220,6 +221,7 @@ public class BashOutputTool extends AbstractTool {
                     result.append("Status: Completed\n");
                     result.append("Exit Code: ").append(task.getExitCode()).append('\n');
                     result.append("Command: ").append(task.getCommand()).append("\n\n");
+                    result.append(BashTool.renderNotices(task.takeNotices()));
                     if (output.isEmpty()) {
                         result.append("No new output available");
                     } else {
@@ -231,6 +233,7 @@ public class BashOutputTool extends AbstractTool {
                     result.append("Status: Failed\n");
                     result.append("Exit Code: ").append(task.getExitCode()).append('\n');
                     result.append("Command: ").append(task.getCommand()).append("\n\n");
+                    result.append(BashTool.renderNotices(task.takeNotices()));
                     if (task.getErrorMessage() != null) {
                         result.append("Error: ").append(task.getErrorMessage()).append("\n\n");
                     }

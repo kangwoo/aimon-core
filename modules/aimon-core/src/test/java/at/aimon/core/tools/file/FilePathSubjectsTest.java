@@ -10,10 +10,10 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.permission.PermissionSubject;
+import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
 import at.aimon.core.tools.ToolContextKeys;
@@ -29,8 +29,8 @@ class FilePathSubjectsTest {
     }
 
     private static ToolContext withWorkingDirectory(String workingDirectory) {
-        return ToolContext.builder()
-                .put(ToolContextKeys.ENVIRONMENT_KEY, Environment.createWithWorkingDirectory(workingDirectory)).build();
+        return ToolContext.builder().put(ToolContextKeys.EXECUTION_ENVIRONMENT,
+                TestExecutionEnvironments.builder().workingDirectory(workingDirectory).build()).build();
     }
 
     @Test
@@ -58,7 +58,7 @@ class FilePathSubjectsTest {
     }
 
     @Test
-    @DisplayName("Should resolve a relative path against the environment's working directory")
+    @DisplayName("Should resolve a relative path against the execution environment's working directory")
     void shouldResolveRelativeAgainstWorkingDirectory() {
         ToolContext context = withWorkingDirectory("/work");
 
@@ -123,9 +123,9 @@ class FilePathSubjectsTest {
         LocalFileSystem fileSystem = new LocalFileSystem(config);
         fileSystem.initialize();
 
-        ReadTool readTool = new ReadTool(fileSystem);
-        EditTool editTool = new EditTool(fileSystem);
-        WriteTool writeTool = new WriteTool(fileSystem);
+        ReadTool readTool = new ReadTool();
+        EditTool editTool = new EditTool();
+        WriteTool writeTool = new WriteTool();
         ToolInput input = input("/tmp/../tmp/a.txt");
 
         assertThat(readTool.permissionSubject(input, ToolContext.empty()))

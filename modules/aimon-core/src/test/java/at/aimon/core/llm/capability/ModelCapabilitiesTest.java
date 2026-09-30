@@ -28,7 +28,7 @@ class ModelCapabilitiesTest {
         // Round 2 re-grounded this sentence: it used to say "the request this framework produced before
         // capabilities existed", which stopped being true when the client's DEFAULT_TEMPERATURE fallback was
         // removed by maintainer ruling (issue #43). The three values did not change, and the new grounding
-        // re-derives all three -- see docs/design/llm/openai-model-capabilities.md section 9.1.
+        // re-derives all three -- see docs/design/llm/model-capabilities.md section 3.2.
         final ModelCapabilities unknown = ModelCapabilities.unknown();
 
         assertThat(unknown.supportsSamplingParameters()).isTrue();

@@ -34,9 +34,13 @@ import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.agent.tool.execution.ToolExecutionResult;
 import at.aimon.core.agent.tool.permission.AllowedTool;
+import at.aimon.core.environment.EnvironmentDescriptor;
+import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.hook.HookExecutionManager;
 import at.aimon.core.hook.HookFeedback;
 import at.aimon.core.hook.HookRegistry;
+import at.aimon.core.hook.event.PostToolContext;
+import at.aimon.core.hook.event.PreToolContext;
 import at.aimon.core.hook.execution.AskPromptHandler;
 import at.aimon.core.hook.execution.Decision;
 import at.aimon.core.hook.execution.HookResult;
@@ -44,6 +48,7 @@ import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.llm.ToolUse;
 import at.aimon.core.llm.ToolUseResult;
 import at.aimon.core.toolinvocation.approval.SideEffectApprovalGate;
+import at.aimon.core.tools.CallerAllowedTools;
 import at.aimon.core.tools.ToolContextKeys;
 
 /**
@@ -115,6 +120,33 @@ class SingleToolInvokerTest {
     // --- tests ------------------------------------------------------------------------------------------------------
 
     @Test
+    @DisplayName("pre/post tool hooks see the descriptor of the execution's environment, not the host (design §10)")
+    void toolHooksCarryTheExecutionEnvironmentDescriptor() {
+        givenToolBehavior(InterruptBehavior.NON_INTERRUPTIBLE);
+        when(toolExecutionManager.execute(any(), any(), any(), any()))
+                .thenReturn(ToolExecutionResult.of(TOOL_USE_ID, ToolResult.success("done")));
+        final EnvironmentDescriptor descriptor = EnvironmentDescriptor.builder().workingDirectory("/workspace")
+                .platform("linux").build();
+        final ToolContext context = ToolContext.builder()
+                .put(ToolContextKeys.EXECUTION_ENVIRONMENT, TestExecutionEnvironments.withDescriptor(descriptor))
+                .build();
+        final ToolInvocationSpec spec = ToolInvocationSpec.builder().invokerType(InvokerType.MAIN_AGENT)
+                .invokerName("agent").hookRegistry(hookRegistry).environment(mock(Environment.class))
+                .executionAttributes(Map.of()).toolRegistry(toolRegistry).sessionRegistry(sessionRegistry)
+                .allowedTools(List.of()).coordinator(coordinator).toolContext(context)
+                .toolUse(toolUse(Map.of("file_path", "/x"))).iterationCount(1).build();
+
+        invoker.invoke(spec);
+
+        final ArgumentCaptor<PreToolContext> pre = ArgumentCaptor.forClass(PreToolContext.class);
+        final ArgumentCaptor<PostToolContext> post = ArgumentCaptor.forClass(PostToolContext.class);
+        verify(hookExecutionManager).executePreTool(pre.capture());
+        verify(hookExecutionManager).executePostTool(post.capture());
+        assertThat(pre.getValue().getEnvironmentDescriptor()).contains(descriptor);
+        assertThat(post.getValue().getEnvironmentDescriptor()).contains(descriptor);
+    }
+
+    @Test
     @DisplayName("normal path executes the tool and fires permission/pre/post hooks")
     void invoke_normalPath_executesToolAndReturnsSuccess() {
         givenToolBehavior(InterruptBehavior.NON_INTERRUPTIBLE);
@@ -145,6 +177,27 @@ class SingleToolInvokerTest {
         final ArgumentCaptor<ToolContext> ctxCaptor = ArgumentCaptor.forClass(ToolContext.class);
         verify(toolExecutionManager).execute(any(), ctxCaptor.capture(), eq(toolRegistry), eq(allowList));
         assertThat(ctxCaptor.getValue().get(ToolContextKeys.CURRENT_TOOL_USE_ID_KEY)).contains(TOOL_USE_ID);
+        // The same list is also published for the tool to read, which is how a tool that spawns work (Task, the
+        // workflow tools, a skill fork) bounds that work by what its own caller may do. Publishing it here rather
+        // than at each spawn site is what makes the ceiling follow nesting to any depth.
+        assertThat(CallerAllowedTools.of(ctxCaptor.getValue())).isEqualTo(allowList);
+    }
+
+    @Test
+    @DisplayName("an unrestricted caller publishes an empty list, which reads the same as no ceiling at all")
+    void invoke_unrestrictedCallerPublishesAnEmptyList() {
+        givenToolBehavior(InterruptBehavior.NON_INTERRUPTIBLE);
+        when(toolExecutionManager.execute(any(), any(), any(), any()))
+                .thenReturn(ToolExecutionResult.of(TOOL_USE_ID, ToolResult.success("ok")));
+
+        invoker.invoke(spec(toolUse(Map.of()), List.of()));
+
+        final ArgumentCaptor<ToolContext> ctxCaptor = ArgumentCaptor.forClass(ToolContext.class);
+        verify(toolExecutionManager).execute(any(), ctxCaptor.capture(), eq(toolRegistry), eq(List.of()));
+        // On the key, not through CallerAllowedTools.of — that reads an absent key as an empty list too, so
+        // asserting the accessor here would pass with the publication deleted. What is worth pinning is that the
+        // unrestricted case publishes, rather than leaving a spawn site to infer "no ceiling" from silence.
+        assertThat(ctxCaptor.getValue().get(ToolContextKeys.CALLER_ALLOWED_TOOLS)).contains(List.of());
     }
 
     @Test

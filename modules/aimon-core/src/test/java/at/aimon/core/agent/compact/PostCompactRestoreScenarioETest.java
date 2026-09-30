@@ -15,6 +15,7 @@ import org.junit.jupiter.api.io.TempDir;
 import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
+import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
@@ -67,7 +68,8 @@ class PostCompactRestoreScenarioETest {
         hookExecutionManager = new DefaultHookExecutionManager();
         environment = Environment.createDefault();
 
-        hookRegistry.register(HookEventType.POST_COMPACT, new RecentFilesRestoreHook(new ReadTool(fileSystem), 5));
+        hookRegistry.register(HookEventType.POST_COMPACT,
+                new RecentFilesRestoreHook(new ReadTool(), 5, TestExecutionEnvironments.context(fileSystem)));
         engine = DefaultCompactionEngine.withDefaults(new StubSummaryClient(), new HeuristicTokenEstimator(),
                 hookExecutionManager);
     }

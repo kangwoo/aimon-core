@@ -35,6 +35,24 @@ class AgentDefinitionVersionTest {
     }
 
     @Test
+    void changedAttributeChangesVersion() {
+        final Agent build = DefaultAgent.builder().name("a").systemPrompt("p")
+                .attributes(Map.of("sandbox.slot", "build")).build();
+        final Agent test = DefaultAgent.builder().name("a").systemPrompt("p").attributes(Map.of("sandbox.slot", "test"))
+                .build();
+
+        assertThat(AgentDefinitionVersion.from(build)).isNotEqualTo(AgentDefinitionVersion.from(test));
+    }
+
+    @Test
+    void noAttributesKeepsTheDigestOfADefinitionWrittenBeforeAttributesExisted() {
+        final Agent none = DefaultAgent.builder().name("a").systemPrompt("p").build();
+        final Agent empty = DefaultAgent.builder().name("a").systemPrompt("p").attributes(Map.of()).build();
+
+        assertThat(AgentDefinitionVersion.from(none)).isEqualTo(AgentDefinitionVersion.from(empty));
+    }
+
+    @Test
     void changedMaxIterationsChangesVersion() {
         final Agent base = DefaultAgent.builder().name("a").systemPrompt("p").maxIterations(5).build();
         final Agent more = DefaultAgent.builder().name("a").systemPrompt("p").maxIterations(6).build();

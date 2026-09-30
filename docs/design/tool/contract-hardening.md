@@ -94,6 +94,11 @@ BashTool ──► VirtualShell#execute(ShellCommand, ExecutionOptions)   ← TC
 실패시키지 않고 Bash·BashOutput 을 등록하지 않는다**(`:48-57`). 셸 없는 에이전트는 쓸 수 있는
 에이전트이지만, 명령이 사라진 채 도는 에이전트는 아니기 때문이다.
 
+> 이후 바뀌었다: [`execution-environment.md`](execution-environment.md) 로 `BashTool` 은 셸을 생성자로 받지 않고
+> 실행마다 `ExecutionEnvironment.shell()` 에서 꺼낸다. `OrcaToolProviderContext.getShell()`,
+> `OrcaAgentRuntimeFactory.withShell(...)`, `LocalShells` 는 삭제되었고, `Bash`·`BashOutput` 은 늘 등록된다 —
+> 셸을 쓸 수 없는 실행은 호출이 에러를 낸다. 위 문단은 이 문서가 결정한 시점의 기록이다.
+
 포그라운드 실행에는 **future 래퍼가 없다**. 도구 스레드가 `shell.execute(...)` 안에서 그대로 블록하고,
 타임아웃 감시와 프로세스 종료는 셸이 한다 (`BashTool.java:295-297`).
 
@@ -382,7 +387,7 @@ IMPORTANT: **권한 시스템을 격리 경계로 쓰면 안 된다.** 권한 �
 | 항목 | 상태 |
 |---|---|
 | `SchemaValidationMode` 를 `ENFORCE` 로 승격 | 열림 — `WARN` 로그 한 사이클이 "보고되는 위반이 정말로 모델의 실수"임을 보인 뒤에 올린다 |
-| `ToolContextKeys.VIRTUAL_FILE_SYSTEM` 의 producer | 열림 — 키는 있는데 채우는 곳이 없다. **소비자는 이미 소스에 있고 죽어 있다**(`WikiIngestTool.java:92`). 진짜 비용은 경로가 느는 것이 아니라, 생성자 주입(`Read`/`Edit`/`Write`)과 컨텍스트 조회 중 어느 쪽이 정본인지 정하지 않은 채 양쪽을 살려 두는 것이다 |
+| `ToolContextKeys.VIRTUAL_FILE_SYSTEM` 의 producer | **닫힘** — 키를 지웠다. 파일 도구·`WikiIngest` 모두 실행 환경(`EXECUTION_ENVIRONMENT`)에서 파일 시스템을 꺼낸다([`execution-environment.md`](execution-environment.md) §1.6). 당시 기록: 키는 있는데 채우는 곳이 없다. **소비자는 이미 소스에 있고 죽어 있다**(`WikiIngestTool.java:92`). 진짜 비용은 경로가 느는 것이 아니라, 생성자 주입(`Read`/`Edit`/`Write`)과 컨텍스트 조회 중 어느 쪽이 정본인지 정하지 않은 채 양쪽을 살려 두는 것이다 |
 | 프로세스 그룹 종료 (`setsid` + `kill(-pgid)`) | 열림 — 플랫폼 의존적이라 `VirtualShell` 구현 단위의 선택 사항으로 둔다 |
 | exit code 허용목록 | 보류 (§6.2) — 모델이 무매치를 실패로 오해하는 것이 관측되면 재검토 |
 | 중첩 스키마 재귀 검증 | 열림 — `$ref`/`oneOf` 까지 다루려면 JSON Schema 구현체를 들여야 하고, 그때는 자체 검증기를 버리는 결정이 함께 온다 |
@@ -397,7 +402,7 @@ IMPORTANT: **권한 시스템을 격리 경계로 쓰면 안 된다.** 권한 �
 | 항목 | 파일 |
 |---|---|
 | Bash 도구 | `at/aimon/core/tools/bash/BashTool.java` |
-| 기본 배선 | `at/aimon/core/agent/impl/orca/tool/OrcaBashToolProvider.java`, `…/environment/LocalShells.java` |
+| 기본 배선 | `at/aimon/core/agent/impl/orca/tool/OrcaBashToolProvider.java`, `at/aimon/core/environment/impl/LocalExecutionEnvironmentProvider.java` (옛 `…/environment/LocalShells.java` 는 삭제) |
 | 셸 구현 | `at/aimon/core/shell/impl/local/LocalShell.java`, `at/aimon/core/shell/{VirtualShell,ExecutionOptions,ShellCommandResult}.java` |
 | 입력 정규화 | `at/aimon/core/agent/tool/ToolInput.java`, `at/aimon/core/base/NullSafeMaps.java` |
 | 스키마 검증 | `at/aimon/core/agent/tool/schema/` (`ToolInputSchemaValidator`, `DefaultToolInputSchemaValidator`, `SchemaValidationMode`, `SchemaValidationResult`, `ViolationMessages`) |

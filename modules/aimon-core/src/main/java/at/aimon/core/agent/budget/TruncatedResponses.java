@@ -106,7 +106,7 @@ public final class TruncatedResponses {
      * <p>
      * Numbers only, with no inference drawn from them. Reasoning counts against the same output allowance, so a large
      * share points at a thinking budget that left the answer little room — but there is no share past which "reasoning
-     * used most of it" could be asserted, and {@code docs/design/llm/thinking-reporting-and-dialect-records.md} §16.8
+     * used most of it" could be asserted, and {@code docs/design/llm/anthropic-thinking.md} §6.4
      * refuses to choose that number. The operator reads both counts. The wording does not say "of", because
      * {@link TokenUsage} does not require the reasoning count to be at most the output count.
      *

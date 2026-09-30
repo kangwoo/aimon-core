@@ -20,6 +20,8 @@ import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.subagent.InMemorySubagentRegistry;
+import at.aimon.core.subagent.Subagent;
+import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.tools.ToolContextKeys;
 import at.aimon.core.workflow.WorkflowBackgroundConfig;
 import at.aimon.core.workflow.WorkflowRunner;
@@ -38,8 +40,13 @@ class GraalJsWorkflowToolTest extends AbstractGraalJsRunTest {
     }
 
     private GraalJsWorkflowTool tool(WorkflowRunner backgroundRunner, JsSandboxConfig sandbox) {
+        return tool(backgroundRunner, sandbox, new InMemorySubagentRegistry());
+    }
+
+    private GraalJsWorkflowTool tool(WorkflowRunner backgroundRunner, JsSandboxConfig sandbox,
+            SubagentRegistry registry) {
         final GraalJsWorkflowTool.Builder builder = GraalJsWorkflowTool.builder()
-                .defaultModel(LlmModel.builder().name("gpt-4").build()).subagentRegistry(new InMemorySubagentRegistry())
+                .defaultModel(LlmModel.builder().name("gpt-4").build()).subagentRegistry(registry)
                 .toolRegistry(new DefaultToolRegistry()).hookRegistry(new DefaultHookRegistry())
                 .environment(Environment.createDefault()).subagentExecutionManager(manager).engines(engines)
                 .backgroundRunner(backgroundRunner);
@@ -60,6 +67,22 @@ class GraalJsWorkflowToolTest extends AbstractGraalJsRunTest {
                 ToolInput.of(Map.of("script", "return agent({ agentType: 'a', goal: 'g' }).text;")), contextWithId());
         assertThat(result.isSuccess()).isTrue();
         assertThat(result.getContent()).isEqualTo("ans:g");
+    }
+
+    @Test
+    @DisplayName("by default a step's agentType is looked up in the tool's subagent registry for attributes (EE-42)")
+    void defaultResolverUsesToolRegistry() {
+        final InMemorySubagentRegistry registry = new InMemorySubagentRegistry();
+        registry.register(Subagent.builder().name("builder").systemPrompt("unused")
+                .attributes(Map.of("sandbox.slot", "build")).build());
+        behavior = (subagent, goal) -> subagent.getName() + " " + subagent.getMetadata().getAttributes();
+
+        final ToolResult result = tool(null, null, registry).execute(
+                ToolInput.of(Map.of("script", "return agent({ agentType: 'builder', goal: 'g' }).text;")),
+                contextWithId());
+
+        assertThat(result.isSuccess()).as(result.getContent()).isTrue();
+        assertThat(result.getContent()).isEqualTo("graaljs:builder {sandbox.slot=build}");
     }
 
     @Test

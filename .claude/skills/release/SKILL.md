@@ -20,6 +20,11 @@ only invokes it — never reproduce the release steps by hand and never bypass t
 
 Map the argument to `<bump>` (`patch` | `minor` | `major`, default `patch`).
 
+Between releases `main` carries `X.Y.Z-SNAPSHOT`, where `X.Y.Z` is the next release. From a snapshot,
+`patch` releases `X.Y.Z` itself, and `minor` / `major` release the smallest version of that kind at or
+above it (`0.3.1-SNAPSHOT` + `minor` → `0.4.0`, `0.4.0-SNAPSHOT` + `minor` → `0.4.0`). Always read the
+`current → next` line from the dry run rather than computing it yourself.
+
 ## Steps
 
 1. **Preview (dry run)** — runs all pre-flight checks + the quality gate, then stops before any
@@ -57,7 +62,9 @@ Map the argument to `<bump>` (`patch` | `minor` | `major`, default `patch`).
    scripts/release.sh <bump> --yes
    ```
    The script bumps `gradle.properties`, runs the quality gate, publishes to Maven Central, commits
-   `chore(release): bump version to X`, tags `vX`, and pushes the commit + tag to origin.
+   `chore(release): bump version to X`, tags `vX`, then commits
+   `chore(release): prepare next development version X'-SNAPSHOT` (the next patch) and pushes both
+   commits + the tag to origin.
 
 5. **Verify the GitHub Release.** The pushed tag triggers `.github/workflows/release.yml`, which cuts
    the `## [X.Y.Z]` section into a Release body. It runs *after* the Central publish, so a failure
@@ -83,12 +90,7 @@ Map the argument to `<bump>` (`patch` | `minor` | `major`, default `patch`).
   call.
 - **Docker must be running.** The gate includes `integrationTest` (Testcontainers), so the script
   fails fast on a missing daemon rather than discovering it minutes in.
-- **A browser cache, or network to fetch one.** The gate includes `playwrightTest`, whose Gradle task
-  installs Chromium first. On a machine that already has it the step costs seconds; on one that does
-  not it downloads ~280 MB (~95s) into `~/.cache/ms-playwright` (`~/Library/Caches/ms-playwright` on
-  macOS) before the tests run. Unlike Docker this cannot be checked up front, so it shows up as a slow
-  first gate rather than a fast failure.
-- Quality gate = `checkAll integrationTest packagingTest playwrightTest jacocoTestCoverageVerification` — the same
+- Quality gate = `checkAll integrationTest packagingTest jacocoTestCoverageVerification` — the same
   set `.github/workflows/build.yml` runs, so a release never passes a narrower gate than a PR.
   `ReleaseGateMatchesCiGateTest` enforces the match, because the two lists drifted once already.
   No tier in this build is opt-in any more: every `@Tag` is a CI step and a gate task.

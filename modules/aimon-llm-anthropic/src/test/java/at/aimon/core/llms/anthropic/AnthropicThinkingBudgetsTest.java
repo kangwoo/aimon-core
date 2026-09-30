@@ -75,7 +75,7 @@ class AnthropicThinkingBudgetsTest {
         assertThat(AnthropicThinkingBudgets.budgetFor(ReasoningEffort.HIGH, null, 4096)).hasValue(4095);
         assertThat(AnthropicThinkingBudgets.budgetFor(ReasoningEffort.HIGH, null, 8000)).hasValue(7999);
         // So does an unset effort, whose middle rung is exactly 4096 -- the request #83 decided to leave as it is
-        // (docs/design/llm/thinking-reporting-and-dialect-records.md section 16).
+        // (docs/design/llm/anthropic-thinking.md section 6.2).
         assertThat(AnthropicThinkingBudgets.budgetFor(null, null, 4096)).hasValue(4095);
     }
 
@@ -91,7 +91,7 @@ class AnthropicThinkingBudgetsTest {
     void aBudgetUnderMaxTokensIsSentAsAskedAndOneAtMaxTokensIsClamped() {
         // The other half of budgetIsClampedBelowMaxTokens, on #89's rows. The first three are sent as asked however
         // little they leave the answer -- one token, four, one -- and only the last is a clamp, so only it is warned
-        // about (docs/design/llm/thinking-reporting-and-dialect-records.md section 16.8).
+        // about (docs/design/llm/anthropic-thinking.md section 6.4).
         assertThat(AnthropicThinkingBudgets.budgetFor(null, null, 4097)).hasValue(4096);
         assertThat(AnthropicThinkingBudgets.budgetFor(null, null, 4100)).hasValue(4096);
         assertThat(AnthropicThinkingBudgets.budgetFor(null, 8000, 8001)).hasValue(8000);

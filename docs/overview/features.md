@@ -82,6 +82,7 @@
 - [명령 큐 가이드](../features/agent-execution/command-queue-guide.md)
 - [중단 가능 도구 가이드](../features/agent-execution/interruptible-tools-guide.md)
 - [system-reminder 규약](../features/agent-execution/system-reminder-convention.md)
+- [Context Engine 가이드](../features/agent-execution/context-engine-guide.md) — 긴 대화의 압축 정책 (`default` / `rolling`)
 
 ---
 
@@ -137,6 +138,7 @@ IMPORTANT: **세션(`SessionRecord`)과 라이브 세션(`LiveSession`)은 다�
 | 도구 권한 검사 | `agent.tool.permission`, `ToolPermissionSubjectAware` | core |
 | 중단 동작 선언 | `InterruptBehavior`, `InterruptAccess` | core |
 | 단발 도구 직접 호출 | `SingleToolInvoker` | core |
+| 도구의 실행 환경 (파일 시스템·셸을 실행마다, 스킬 스테이징, 격리) | `ExecutionEnvironment`, `ExecutionEnvironmentProvider`, `LocalExecutionEnvironmentProvider` | core |
 
 ### 3.2 내장 도구
 
@@ -157,12 +159,12 @@ IMPORTANT: **세션(`SessionRecord`)과 라이브 세션(`LiveSession`)은 다�
 | 워크플로 | `Workflow` | core |
 | 워크플로 (JS 스크립트) | `WorkflowJs` | `aimon-workflow-graaljs` |
 | 브라우저 | `Browser` | `aimon-browser-playwright` |
-| 샌드박스 | `RunSandbox`, `CopyToSandbox`, `RestartSandbox`, `DeleteSandbox` | `aimon-sandbox-*` |
+| 샌드박스 | `RunSandbox`, `CopyToSandbox`, `RestartSandbox`, `DeleteSandbox` | `at.aimon.sandbox:*` (별도 저장소) |
 
 **관련 문서**
 - [도구 개발 가이드](../features/tool/tool-development-guide.md) — 새 도구를 만들 때의 정본
 - [도구 병렬 실행 가이드](../features/tool/parallel-tool-execution-guide.md)
-- [브라우저 도구 가이드](../features/tool/browser-tool-guide.md)
+- [브라우저 도구 가이드](https://github.com/kangwoo/aimon-browser/blob/main/docs/browser-tool-guide.md) (별도 저장소)
 
 ---
 
@@ -268,7 +270,7 @@ IMPORTANT (알려진 오칭): `OnSessionStartHook` / `OnSessionEndHook` 은 세�
 | 판정 패턴 (judge panel 등) | `JudgedResult`, `Verdict`, `WorkflowPatterns` | core |
 | 실행 핸들 · 재개 | `RunHandle`, `RunId`, `RunStore`, `StepResultCache` | core |
 | 예산 / 동시성 제한 | `WorkflowBudget`, `WorkflowConcurrencyConfig` | core |
-| git worktree 격리 실행 | `WorktreeEnvironmentFactory` | core |
+| 워크트리 격리 실행 | `ExecutionEnvironment.isolate()` · `WorktreeMerge` | core |
 | JS 스크립트 프론트엔드 | `WorkflowJs` 도구 | `aimon-workflow-graaljs` |
 
 **언제 쓰나.** 커버리지를 위해 병렬로 훑어야 하거나(감사·마이그레이션), 독립적 관점의 교차 검증이
@@ -435,14 +437,14 @@ cron 이 재발화해도 런타임이 resolve 된다. 이 때문에 `AgentRuntim
 
 | 기능 | 진입점 | 위치 |
 |------|--------|------|
-| 샌드박스 추상화 | 샌드박스 SPI | `aimon-sandbox` |
-| Docker 구현 | — | `aimon-sandbox-docker` |
-| Kubernetes 구현 | — | `aimon-sandbox-kubernetes` |
-| 샌드박스 도구 | `RunSandbox`, `CopyToSandbox`, `RestartSandbox`, `DeleteSandbox` | `aimon-sandbox-*` |
-| 브라우저 자동화 | `Browser` 도구, `BrowserSession` | `aimon-browser-playwright` |
+| 샌드박스 추상화 | 샌드박스 SPI | `at.aimon.sandbox:aimon-sandbox` |
+| Docker 구현 | — | `at.aimon.sandbox:aimon-sandbox-docker` |
+| Kubernetes 구현 | — | `at.aimon.sandbox:aimon-sandbox-kubernetes` |
+| 샌드박스 도구 | `RunSandbox`, `CopyToSandbox`, `RestartSandbox`, `DeleteSandbox` | `at.aimon.sandbox:*` |
+| 브라우저 자동화 | `Browser` 도구, `BrowserSession` | `at.aimon.browser:aimon-browser-playwright` (별도 저장소) |
 
 **관련 문서**
-- [브라우저 도구 가이드](../features/tool/browser-tool-guide.md)
+- [브라우저 도구 가이드](https://github.com/kangwoo/aimon-browser/blob/main/docs/browser-tool-guide.md) (별도 저장소)
 
 ---
 

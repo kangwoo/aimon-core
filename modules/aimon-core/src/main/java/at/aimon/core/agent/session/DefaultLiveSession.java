@@ -1,6 +1,5 @@
 package at.aimon.core.agent.session;
 
-import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -32,6 +31,7 @@ import at.aimon.core.agent.queue.QueuedInputPriority;
 import at.aimon.core.agent.session.store.SessionRecordStore;
 import at.aimon.core.agent.session.store.SessionRecordView;
 import at.aimon.core.agent.session.store.SessionTotals;
+import at.aimon.core.agent.session.transcript.SessionLogState;
 import at.aimon.core.agent.session.transcript.SessionRewindPoint;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
@@ -39,7 +39,6 @@ import at.aimon.core.agent.stream.StreamingAgentExecutor;
 import at.aimon.core.hook.HookExecutionManager;
 import at.aimon.core.hook.event.OnSessionEndContext;
 import at.aimon.core.hook.event.OnSessionStartContext;
-import at.aimon.core.llm.Message;
 
 /**
  * Default {@link LiveSession} implementation that wraps an {@link OrcaAgentRuntime} and an
@@ -519,8 +518,8 @@ public final class DefaultLiveSession implements LiveSession {
         // then starts from the same place as this one did, instead of stacking a second partial trail on the first.
         rewindPersistedTranscript(record, point);
 
-        log.debug("Rewound the interrupted turn of session {} to message {} (inputType={})", sessionId,
-                point.getMessageCount(), point.getUserInput().getType());
+        log.debug("Rewound the interrupted turn of session {} to seq {} (inputType={})", sessionId, point.getSeq(),
+                point.getUserInput().getType());
         return Optional.of(RewoundTurn.of(point.getUserInput(), point.getSubmitOptions()));
     }
 
@@ -532,10 +531,15 @@ public final class DefaultLiveSession implements LiveSession {
      * one write that replaces a transcript wholesale while leaving the side fields to their own writers — which is
      * exactly what a rewind is. The point is written out as absent in the same document, so the shortened history and
      * "there is nothing left to retry" land together or not at all.
+     *
+     * <p>
+     * The cut is {@link SessionLogState#truncateFrom(long)} on the stored log, taken whole — the same operation the
+     * buffer's own rewind performs. Rebuilding a snapshot from the message list by index would lose the seqs, the
+     * origins and the format, and an index stops being a position the moment anything before it leaves the record.
      */
     private void rewindPersistedTranscript(SessionRecordView record, SessionRewindPoint point) {
-        final List<Message> kept = List.copyOf(record.getMessages().subList(0, point.getMessageCount()));
-        sessionRecords.mergeFromSnapshot(SessionSnapshot.of(sessionId, record.getSystemPrompt(), kept, null));
+        final SessionLogState rewound = record.getLogState().truncateFrom(point.getSeq());
+        sessionRecords.mergeFromSnapshot(SessionSnapshot.fromLog(sessionId, record.getSystemPrompt(), rewound));
     }
 
     /**

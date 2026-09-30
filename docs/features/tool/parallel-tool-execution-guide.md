@@ -160,7 +160,7 @@ public ConcurrencyBehavior getConcurrencyBehavior() {
 
 | 도구 | InterruptBehavior | 근거 |
 |------|-------------------|------|
-| `ReadTool` | NON_INTERRUPTIBLE | 읽기 전용. 유일한 공유 상태(`READ_FILES_KEY` Set)는 executor가 thread-safe set으로 주입(§5) |
+| `ReadTool` | NON_INTERRUPTIBLE | 읽기 전용. 유일한 공유 상태(`FILE_STAMPS_KEY` 맵)는 executor가 thread-safe 맵으로 주입(§5) |
 | `GrepTool` | COOPERATIVE | 읽기 전용. 모든 가변 상태를 호출별 로컬에 할당 |
 | `WebFetchTool` | COOPERATIVE | 멱등 외부 GET. 캐시는 synchronized. 동일 URL 동시 페치는 각자 미스할 수 있으나(중복 요청) 멱등이라 무해 |
 
@@ -175,16 +175,17 @@ public ConcurrencyBehavior getConcurrencyBehavior() {
 `ToolContext`는 구조적으로 불변(맵 자체는 unmodifiable)이지만, **저장된 값**은 deep-copy되지 않는다.
 병렬 실행 시 도구가 `ToolContext`의 가변 값을 변조하면 레이스가 발생한다.
 
-프레임워크가 식별한 유일한 가변 값은 `ReadTool.READ_FILES_KEY` Set이다. 두 executor는 `createToolContext`
-시점에 이를 **thread-safe set으로 주입**한다:
+프레임워크가 식별한 유일한 가변 값은 `ReadTool.FILE_STAMPS_KEY` 맵(`Map<String, FileStamp>`)이다. 두
+executor는 `createToolContext` 시점에 이를 **thread-safe 맵으로 주입**한다:
 
 ```java
-builder.put(ReadTool.READ_FILES_KEY, ConcurrentHashMap.newKeySet());
+builder.put(ReadTool.FILE_STAMPS_KEY, new ConcurrentHashMap<>());
 ```
 
-- 이 set은 turn 당 1회 생성되어 iteration 사이에 유지된다(read-before-edit가 여러 iteration에 걸쳐 동작).
-- (부수 효과) 이 주입 이전에는 프로덕션에서 `READ_FILES_KEY`가 전혀 주입되지 않아 `EditTool`의
-  read-before-edit 가드가 사실상 no-op이었다 — 이 변경으로 비로소 동작한다.
+- 이 맵은 실행(execution) 당 1회 생성되어 iteration 사이에 유지된다(낡은 쓰기 검사가 여러 iteration에 걸쳐
+  동작). 포크는 부모의 stamp 를 물려받지 않는다.
+- (이력) 옛 `READ_FILES_KEY` Set 은 경로만 기억해 "읽었는가"만 볼 수 있었다. stamp 는 읽은 **뒤** 파일이
+  바뀌었는지도 본다 — [`design/tool/execution-environment.md`](../../design/tool/execution-environment.md) §7.
 
 > **신규 도구 주의:** mutable 상태를 `ToolContext`에 넣고 변조하는 도구는 반드시 `SEQUENTIAL`로 선언하거나
 > thread-safe 자료구조를 사용해야 한다.

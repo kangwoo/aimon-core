@@ -1,5 +1,6 @@
 package at.aimon.bootstrap.assemble;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -7,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Consumer;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,6 +22,7 @@ import at.aimon.bootstrap.spec.AgentSpec;
 import at.aimon.bootstrap.spec.AgentWorkspaceLayout;
 import at.aimon.bootstrap.spec.AimonAgentCustomizer;
 import at.aimon.bootstrap.spec.CredentialStoreFactory;
+import at.aimon.bootstrap.spec.ExecutionEnvironmentSpec;
 import at.aimon.bootstrap.spec.FileSystemSpec;
 import at.aimon.bootstrap.spec.ToolSpec;
 import at.aimon.core.agent.AgentRuntimeId;
@@ -31,7 +34,11 @@ import at.aimon.core.agent.impl.orca.command.OrcaCommandProvider;
 import at.aimon.core.agent.impl.orca.tool.OrcaKnowledgeToolProvider;
 import at.aimon.core.agent.orca.tool.OrcaToolProvider;
 import at.aimon.core.credential.CredentialStore;
+import at.aimon.core.environment.ExecutionEnvironmentProvider;
+import at.aimon.core.environment.impl.LocalExecutionEnvironmentProvider;
+import at.aimon.core.filesystem.PathRule;
 import at.aimon.core.filesystem.VirtualFileSystem;
+import at.aimon.core.filesystem.impl.ScopedVirtualFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
 import at.aimon.core.scheduling.ScheduledTaskManager;
@@ -71,6 +78,7 @@ public final class StackAgentRuntimeProvisioner implements AgentRuntimeProvision
 
     private final Map<String, AgentTemplate> templates;
     private final FileSystemSpec fileSystemSpec;
+    private final ExecutionEnvironmentSpec executionEnvironmentSpec;
     private final ToolSpec toolSpec;
     private final OrcaAgentRuntimeFactory runtimeFactory;
     private final OrcaAgentExecutor agentExecutor;
@@ -85,6 +93,9 @@ public final class StackAgentRuntimeProvisioner implements AgentRuntimeProvision
     private StackAgentRuntimeProvisioner(Builder builder) {
         this.templates = Map.copyOf(builder.templates);
         this.fileSystemSpec = Objects.requireNonNull(builder.fileSystemSpec, "fileSystemSpec must not be null");
+        this.executionEnvironmentSpec = builder.executionEnvironmentSpec != null
+                ? builder.executionEnvironmentSpec
+                : ExecutionEnvironmentSpec.defaults();
         this.toolSpec = Objects.requireNonNull(builder.toolSpec, "toolSpec must not be null");
         this.runtimeFactory = Objects.requireNonNull(builder.runtimeFactory, "runtimeFactory must not be null");
         this.agentExecutor = Objects.requireNonNull(builder.agentExecutor, "agentExecutor must not be null");
@@ -142,14 +153,15 @@ public final class StackAgentRuntimeProvisioner implements AgentRuntimeProvision
         final List<AimonAgentCustomizer> applicable = agentCustomizers.stream().filter(c -> c.supports(descriptor))
                 .toList();
 
-        final VirtualFileSystem fileSystem = createFileSystem(agentRuntimeId, sink);
+        final Stores stores = createStores(agentRuntimeId, sink);
+        final VirtualFileSystem controlFileSystem = stores.controlFileSystem;
         final SkillRegistry skillRegistry = OrcaAgentRuntimeFactory.buildMaterializedSkillRegistry(template.getBundle(),
-                fileSystem, StackPaths.USER_SKILLS_DIRECTORY, StackPaths.BUNDLED_SKILLS_DIRECTORY,
+                controlFileSystem, StackPaths.USER_SKILLS_DIRECTORY, StackPaths.BUNDLED_SKILLS_DIRECTORY,
                 StackPaths.AGENT_BUNDLE_BASE_PATH + "/" + template.getBundleName() + "/skills",
                 Thread.currentThread().getContextClassLoader(), skillParser);
 
-        final OrcaAgentRuntime runtime = instantiate(agentRuntimeId, template.getBundle(), fileSystem, skillRegistry,
-                descriptor, applicable);
+        final OrcaAgentRuntime runtime = instantiate(agentRuntimeId, template.getBundle(), controlFileSystem,
+                stores.environmentProvider, skillRegistry, descriptor, applicable);
 
         // Agent-level contributions first, then the ones attached to this one spec. Both land here — after the
         // registries exist, before the runtime is reachable. Registering a tool after publication races a
@@ -161,12 +173,15 @@ public final class StackAgentRuntimeProvisioner implements AgentRuntimeProvision
         for (AgentRuntimeCustomizer customizer : template.getCustomizers()) {
             customizer.customize(runtime);
         }
-        return new Assembly(runtime, fileSystem);
+        return new Assembly(runtime, stores.fileSystem);
     }
 
+    // The provider and the control store are per-runtime inputs of the one shared factory, so they are set and read
+    // under the same lock as the skill registry.
+    @SuppressWarnings("checkstyle:ParameterNumber")
     private OrcaAgentRuntime instantiate(AgentRuntimeId agentRuntimeId, AgentBundle bundle,
-            VirtualFileSystem fileSystem, SkillRegistry skillRegistry, AgentDescriptor descriptor,
-            List<AimonAgentCustomizer> applicable) {
+            VirtualFileSystem controlFileSystem, ExecutionEnvironmentProvider environmentProvider,
+            SkillRegistry skillRegistry, AgentDescriptor descriptor, List<AimonAgentCustomizer> applicable) {
         // The base list is the one every runtime gets; a customizer appends to it and cannot take anything out of
         // it. That asymmetry is the point — "agent A also has the ticketing tools" is a contribution, while
         // "agent A does not have Bash" is a stack-wide decision (ToolSpec) that one agent must not make for the
@@ -204,12 +219,13 @@ public final class StackAgentRuntimeProvisioner implements AgentRuntimeProvision
         // prevent.
         synchronized (runtimeFactory) {
             runtimeFactory.withSkillRegistry(skillRegistry);
+            runtimeFactory.withExecutionEnvironmentProvider(environmentProvider);
             return toolSpec.isMcpEnabled()
-                    ? runtimeFactory.create(agentRuntimeId, agentExecutor, taskManager, bundle, fileSystem, credentials,
-                            toolProviders, commandProviders, toolSpec.getMcpClientFactory().orElseThrow(),
+                    ? runtimeFactory.create(agentRuntimeId, agentExecutor, taskManager, bundle, controlFileSystem,
+                            credentials, toolProviders, commandProviders, toolSpec.getMcpClientFactory().orElseThrow(),
                             toolSpec.getMcpServerConfigProvider().orElseThrow())
-                    : runtimeFactory.create(agentRuntimeId, agentExecutor, taskManager, bundle, fileSystem, credentials,
-                            toolProviders, commandProviders);
+                    : runtimeFactory.create(agentRuntimeId, agentExecutor, taskManager, bundle, controlFileSystem,
+                            credentials, toolProviders, commandProviders);
         }
     }
 
@@ -228,29 +244,96 @@ public final class StackAgentRuntimeProvisioner implements AgentRuntimeProvision
         return credentialStoreFactory.create(agentRuntimeId.discriminator().orElse(null));
     }
 
-    private VirtualFileSystem createFileSystem(AgentRuntimeId agentRuntimeId, ResourceSink sink) {
-        if (fileSystemSpec.getInstance().isPresent()) {
+    /**
+     * Creates what a runtime reads and writes: its workspace file system, the control store beside it, and the
+     * execution environment provider its executions resolve their environment from (execution-environment design
+     * §9.2). Everything created here goes to {@code sink}; a caller-supplied shared file system does not.
+     *
+     * <p>
+     * Local shape: the provider owns the workspace at the runtime's directory, and the control store is a separate
+     * local file system at its {@code .aimon/} — the same physical paths as before the split, hidden from the file
+     * tools. Supplied or factory shape: one file system serves both, the control store as its {@code .aimon/} subtree
+     * and the workspace behind the provider's path rules, so {@code .aimon/} stays hidden from the tools there too.
+     */
+    private Stores createStores(AgentRuntimeId agentRuntimeId, ResourceSink sink) {
+        final VirtualFileSystem fileSystem;
+        final boolean shared = fileSystemSpec.getInstance().isPresent();
+        if (shared) {
             // Caller-owned and shared by every runtime: used, never closed, and never given to the sink — doing
             // so would close it when the first tenant is evicted, for everyone. AimonStack records a degradation
             // when more than one runtime ends up here.
-            return fileSystemSpec.getInstance().get();
-        }
-        final VirtualFileSystem fileSystem;
-        if (fileSystemSpec.getFactory().isPresent()) {
+            fileSystem = fileSystemSpec.getInstance().get();
+        } else if (fileSystemSpec.getFactory().isPresent()) {
             fileSystem = Objects.requireNonNull(fileSystemSpec.getFactory().get().create(agentRuntimeId),
                     "The file system factory returned null for " + agentRuntimeId);
         } else {
-            // Per runtime, under the workspace root — see AgentWorkspaceLayout for why the discriminator is in
-            // the path and why an unusable segment throws instead of being rewritten.
-            final LocalFileSystem local = new LocalFileSystem(new LocalFileSystemConfig(
-                    AgentWorkspaceLayout.resolve(fileSystemSpec.getWorkspaceRoot().orElseThrow(), agentRuntimeId)));
-            local.initialize();
-            fileSystem = local;
+            return createLocalStores(agentRuntimeId, sink);
         }
-        // Recorded, not closed here: AgentRuntime.close() has no fan-out to the file system it was built with, so
-        // an unrecorded instance is a handle held until the process exits — once per evicted tenant.
-        sink.own("fileSystem(" + agentRuntimeId + ")", fileSystem);
-        return fileSystem;
+        if (!shared) {
+            // Recorded, not closed here: AgentRuntime.close() has no fan-out to the file system it was built with,
+            // so an unrecorded instance is a handle held until the process exits — once per evicted tenant.
+            sink.own("fileSystem(" + agentRuntimeId + ")", fileSystem);
+        }
+        final VirtualFileSystem controlFileSystem = new ScopedVirtualFileSystem(fileSystem,
+                StackPaths.CONTROL_DIRECTORY);
+        final ExecutionEnvironmentProvider provider = createProvider(agentRuntimeId, sink,
+                builder -> builder.fileSystem(fileSystem));
+        return new Stores(fileSystem, controlFileSystem, provider);
+    }
+
+    private Stores createLocalStores(AgentRuntimeId agentRuntimeId, ResourceSink sink) {
+        // Per runtime, under the workspace root — see AgentWorkspaceLayout for why the discriminator is in the path
+        // and why an unusable segment throws instead of being rewritten.
+        final Path workspace = Path
+                .of(AgentWorkspaceLayout.resolve(fileSystemSpec.getWorkspaceRoot().orElseThrow(), agentRuntimeId));
+        final LocalFileSystem control = new LocalFileSystem(
+                new LocalFileSystemConfig(workspace.resolve(StackPaths.CONTROL_DIRECTORY).toString()));
+        control.initialize();
+        sink.own("controlFileSystem(" + agentRuntimeId + ")", control);
+        final ExecutionEnvironmentProvider provider = createProvider(agentRuntimeId, sink,
+                builder -> builder.workspaceRoot(workspace));
+        final VirtualFileSystem workspaceFileSystem = provider instanceof LocalExecutionEnvironmentProvider local
+                ? local.fileSystem()
+                : control;
+        return new Stores(workspaceFileSystem, control, provider);
+    }
+
+    private ExecutionEnvironmentProvider createProvider(AgentRuntimeId agentRuntimeId, ResourceSink sink,
+            Consumer<LocalExecutionEnvironmentProvider.Builder> workspace) {
+        final ExecutionEnvironmentProvider provider;
+        if (executionEnvironmentSpec.getFactory().isPresent()) {
+            provider = Objects.requireNonNull(executionEnvironmentSpec.getFactory().get().apply(agentRuntimeId),
+                    "The execution environment factory returned null for " + agentRuntimeId);
+        } else {
+            final LocalExecutionEnvironmentProvider.Builder builder = LocalExecutionEnvironmentProvider.builder()
+                    .maxStagedBytes(executionEnvironmentSpec.getMaxStagedBytes())
+                    .contentSearch(executionEnvironmentSpec.isContentSearch());
+            if (executionEnvironmentSpec.isControlWritable()) {
+                builder.pathRules(List.of(PathRule.readOnly(LocalExecutionEnvironmentProvider.DEFAULT_STAGING_ROOT)));
+            }
+            workspace.accept(builder);
+            provider = builder.build();
+        }
+        // Owned by the runtime's teardown, never by AgentRuntime.close(): the provider's shell may still run a
+        // background command the runtime no longer tracks, and it is closed with the runtime's other resources.
+        if (!executionEnvironmentSpec.isCallerOwned() && provider instanceof AutoCloseable closeable) {
+            sink.own("executionEnvironment(" + agentRuntimeId + ")", closeable);
+        }
+        return provider;
+    }
+
+    /** What {@link #createStores} produced for one runtime. */
+    private static final class Stores {
+        private final VirtualFileSystem fileSystem;
+        private final VirtualFileSystem controlFileSystem;
+        private final ExecutionEnvironmentProvider environmentProvider;
+
+        Stores(VirtualFileSystem fileSystem, VirtualFileSystem controlFileSystem,
+                ExecutionEnvironmentProvider environmentProvider) {
+            this.fileSystem = fileSystem;
+            this.controlFileSystem = controlFileSystem;
+            this.environmentProvider = environmentProvider;
+        }
     }
 
     /**
@@ -321,8 +404,9 @@ public final class StackAgentRuntimeProvisioner implements AgentRuntimeProvision
         }
 
         /**
-         * Returns the file system the runtime was built with — shared with every other runtime when the caller
-         * supplied one, private to this runtime otherwise.
+         * Returns the workspace file system the runtime's executions work in — shared with every other runtime when
+         * the caller supplied one, private to this runtime otherwise. The control store is
+         * {@link OrcaAgentRuntime#getControlFileSystem()}.
          *
          * @return the file system, never null
          */
@@ -432,6 +516,7 @@ public final class StackAgentRuntimeProvisioner implements AgentRuntimeProvision
 
         private final Map<String, AgentTemplate> templates = new LinkedHashMap<>();
         private FileSystemSpec fileSystemSpec;
+        private ExecutionEnvironmentSpec executionEnvironmentSpec;
         private ToolSpec toolSpec;
         private OrcaAgentRuntimeFactory runtimeFactory;
         private OrcaAgentExecutor agentExecutor;
@@ -473,6 +558,18 @@ public final class StackAgentRuntimeProvisioner implements AgentRuntimeProvision
          */
         public Builder fileSystemSpec(FileSystemSpec fileSystemSpec) {
             this.fileSystemSpec = fileSystemSpec;
+            return this;
+        }
+
+        /**
+         * Sets where each runtime's executions run (default: a local provider per runtime).
+         *
+         * @param executionEnvironmentSpec
+         *            the spec, or null for the default
+         * @return this builder
+         */
+        public Builder executionEnvironmentSpec(ExecutionEnvironmentSpec executionEnvironmentSpec) {
+            this.executionEnvironmentSpec = executionEnvironmentSpec;
             return this;
         }
 

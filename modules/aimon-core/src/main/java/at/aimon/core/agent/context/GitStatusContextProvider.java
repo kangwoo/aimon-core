@@ -7,6 +7,7 @@ import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.filesystem.VirtualFileSystem;
 
 /**
@@ -36,7 +37,8 @@ public final class GitStatusContextProvider implements ContextProvider {
 
     @Override
     public List<ContextBlock> provide(ContextAssemblyRequest request) {
-        final VirtualFileSystem fileSystem = request.getFileSystem().orElse(null);
+        final VirtualFileSystem fileSystem = request.getExecutionEnvironment().map(ExecutionEnvironment::fileSystem)
+                .orElse(null);
         if (fileSystem == null) {
             return List.of();
         }

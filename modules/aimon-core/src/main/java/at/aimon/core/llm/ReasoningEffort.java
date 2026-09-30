@@ -36,9 +36,10 @@ public enum ReasoningEffort {
      * Disable reasoning for this call.
      *
      * <p>
-     * Not merely "the lowest rung" — it is the level some endpoints require when tools are present, so a provider may
-     * send it explicitly rather than omitting the parameter (see
-     * {@link at.aimon.core.llm.capability.ModelCapabilities#supportsToolsWithReasoning()}).
+     * Not merely "the lowest rung" — it is a rung a model may or may not accept, and the measured OpenAI models
+     * reject it. A provider therefore omits the effort parameter and reports the omission rather than sending this
+     * value to a model whose ladder lacks it (see
+     * {@link at.aimon.core.llm.capability.ModelCapabilities#acceptedReasoningEfforts()}).
      */
     NONE,
 

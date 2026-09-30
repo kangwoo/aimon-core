@@ -58,14 +58,15 @@ tasks.register("checkStyle") {
     dependsOn(codeSubprojects().map { it.tasks.named("checkstyleMain") })
 }
 
-// `test` here is each module's own test task, which excludes the `@Tag("docker")` integration tests
-// (see the aimon.java-conventions plugin). Those run under `integrationTest`, which `checkAll` does not
-// aggregate but CI and the release gate both name -- out of this aggregate is not out of the gates.
+// `test` here is each module's own test task, which excludes `@Tag("docker")` and `@Tag("packaging")` in every
+// module (see the aimon.java-conventions plugin). Those tiers run under `integrationTest` and `packagingTest`,
+// which `checkAll` does not aggregate but CI and the release gate both name -- out of this aggregate is not out
+// of the gates. (There was a third, `playwrightTest`, until aimon-browser-playwright moved to its own repository.)
 //
 // The BOM has no tests, but it does have a claim that can be wrong — that it manages exactly the modules
 // this build publishes — so `checkAll` picks up its `verifyBom` in place of the test task it lacks.
 tasks.register("checkAll") {
-    description = "Run all code quality checks (Spotless + Checkstyle + unit tests)"
+    description = "Run all code quality checks (Spotless + Checkstyle + unit tests + the BOM's verifyBom)"
     group = "verification"
     dependsOn("checkFormat", "checkStyle")
     dependsOn(codeSubprojects().map { it.tasks.named("test") })

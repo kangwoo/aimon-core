@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/architecture.md
-source_commit: 53d14a1
+source_commit: f651622
 ---
 
 # Architecture
@@ -65,6 +65,7 @@ at.aimon.core/
 ├── tracing/        execution tracing
 ├── filesystem/     the virtual filesystem
 ├── shell/          the virtual shell
+├── environment/    execution environment — picks the filesystem and shell tools use, per execution
 ├── credential/     the credential store
 ├── status/         system status reports
 ├── config/         configuration (hook hot reload)
@@ -103,7 +104,7 @@ Each layer depends only on the layers below it.
 │ Implementation                                                │
 │   built in: ReadTool, BashTool, LocalFileSystem, LocalShell   │
 │   external: aimon-llm-*, aimon-filesystem-*, aimon-session-*, │
-│             aimon-memory-*, aimon-sandbox-*, …                │
+│             aimon-knowledge-*, aimon-browser-*, …             │
 └───────────────────────────────────────────────────────────────┘
 ```
 
@@ -364,8 +365,16 @@ public interface VirtualShell extends AutoCloseable {
 ```
 
 `ShellCommandResult` holds the exit code, stdout, stderr and elapsed time.
-The sandbox modules (`aimon-sandbox-docker`, `aimon-sandbox-kubernetes`) provide isolated
-execution implementations.
+There is exactly **one** implementation, `LocalShell` (`shell.impl.local`) — the sandbox modules do
+not implement this interface. What they isolate is not the shell but four tools (`RunSandbox` ·
+`CopyToSandbox` · `RestartSandbox` · `DeleteSandbox`), so a container-isolated **shell** is something
+you implement yourself.
+
+Tools hold neither a shell nor a file system. In `at.aimon.core.environment`, an `ExecutionEnvironmentProvider`
+yields an `ExecutionEnvironment` (file system · shell · descriptor · staging · isolation) for each execution, and the
+executor puts it in `ToolContextKeys.EXECUTION_ENVIRONMENT`. The default is `LocalExecutionEnvironmentProvider` — it
+hides the workspace's `.aimon/` (the control store) from the file tools and stages skill files into
+`.aimon-staged/`. The design is [`design/tool/execution-environment.md`](../design/tool/execution-environment.md).
 
 ### 4.7 Session
 
@@ -519,7 +528,7 @@ decisions follow it, the id of the session that launched it is passed separately
 Weaves several subagents together with **deterministic control flow**. You create a runner with
 `WorkflowRunners`, assemble it from `Pipeline` / `Stage` / `AgentTask`, and can resume through
 `RunHandle` and `RunStore`. Budgets are handled by `WorkflowBudget`, concurrency by
-`WorkflowConcurrencyConfig`, and git isolation by `WorktreeEnvironmentFactory`. The JS scripting
+`WorkflowConcurrencyConfig`, and isolation by the execution environment's `ExecutionEnvironment.isolate()`. The JS scripting
 frontend is `aimon-workflow-graaljs`.
 
 IMPORTANT (teardown responsibility): `WorkflowRunner` has two variants — the agent-scoped variant
@@ -615,7 +624,7 @@ budget is per **execution unit** rather than per session becomes visible.
 | a bundle of Orca tools | `OrcaToolProvider` | implement the `at.aimon.core.agent.orca` SPI |
 | an LLM provider | `LlmClient` | implement in a separate module |
 | a file backend | `VirtualFileSystem` | implement (see GridFS, S3) |
-| a shell backend | `VirtualShell` | implement (see the sandbox modules) |
+| a shell backend | `VirtualShell` | implement (`LocalShell` is the only built-in one — the sandbox modules do not implement this SPI) |
 | a lifecycle hook | the 13 interfaces in `hook.event` | `HookRegistry.register(HookEventType, hook)` |
 | a skill | `Skill` | write a SKILL.md per the Agent Skills standard |
 | a subagent | `Subagent` | the code builder, or a Markdown definition |
@@ -665,7 +674,7 @@ the code and these tests are not.
 | `YamlParserInstanceArchitectureTest` | No `Yaml` field anywhere in main sources (one per parse call). Reflection over field declarations rather than a source grep, so it also catches one reached through a wrapper |
 | `PublishedModuleApiScopeTest` | Only a facade declares a sibling module on `api`; every other published module uses `implementation` |
 | `PublishedModuleLoggingBindingTest` | A published library logs through the SLF4J API and does not choose the binding for its consumers |
-| `ReleaseGateMatchesCiGateTest` | `scripts/release.sh` runs the **same** Gradle task the CI workflow does, and refuses to start while a provider API key is in its environment — the second checked by running the script in a sandbox |
+| `ReleaseGateMatchesCiGateTest` | `scripts/release.sh` runs the **same verification tasks** the CI workflow does (`checkAll`, `integrationTest`, `packagingTest` and `jacocoTestCoverageVerification`) in one invocation, and refuses to start while a provider API key is in its environment — the second checked by running the script in a sandbox |
 | `ExternalSchedulerWiringTest` | Performs the external-scheduler wiring from a different package, so `executeTask`'s visibility cannot quietly narrow |
 | `SessionNamingArchitectureTest` | The bare names `Session` and `AgentSession` cannot be used as type names (`aimon-session-routing`) |
 | `SessionRecordSoleWriterArchitectureTest` | No production code outside `agent.session.store` depends on the mutable `SessionRecord` (`aimon-session-routing`) |

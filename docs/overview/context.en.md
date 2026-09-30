@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/context.md
-source_commit: ab8fe3e
+source_commit: 8c8de45
 ---
 
 # Context & Scope
@@ -92,9 +92,9 @@ the process starts with every other row missing.
 | **Memory** | Accumulating observations, promoting long-term memory | both ways | Built into the core (in-memory, `at.aimon.core.memory.file`); multiple instances need a remote `PeerMemory` backend — [aimon-memory](https://github.com/kangwoo/aimon-memory) | The memory feature is off |
 | **Knowledge store** | RAG search, wiki | both ways | `aimon-knowledge-opensearch` | `KeywordKnowledgeStore` (core) gives keyword search only |
 | **File storage** | The file world the agent sees | both ways | `aimon-filesystem-gridfs` · `aimon-filesystem-s3` | Local disk (`filesystem.impl.local`) |
-| **Sandbox runtime** | Isolated command execution | outbound | `aimon-sandbox-docker` · `aimon-sandbox-kubernetes` | `LocalShell` — commands run with the host process's own privileges |
+| **Sandbox runtime** | Isolated command execution | outbound | `at.aimon.sandbox:aimon-sandbox-docker` · `-kubernetes` (separate repository) | `LocalShell` — commands run with the host process's own privileges |
 | **MCP server** | Joining external tools | outbound (stdio · HTTP) | core (`at.aimon.core.mcp`) | Built-in tools only |
-| **Browser** | Web automation | outbound | `aimon-browser-playwright` | There is no `Browser` tool |
+| **Browser** | Web automation | outbound | `at.aimon.browser:aimon-browser-playwright` (separate repository) | There is no `Browser` tool |
 | **Public web / search** | `WebSearch` · `WebFetch` | outbound (HTTPS) | core (`at.aimon.core.tools.web`) | Those two tools fail. The SSRF guard is in the core |
 | **Scheduler store** | The cluster lock and recovery for cron | both ways (JDBC) | `aimon-scheduling-quartz` | `InMemoryTaskScheduler` — on multiple nodes **cron fires once per node** |
 | **External event source** | Waking an agent by webhook | **inbound** (HTTP) | `aimon-rewake-webhook` | The host has to wire rewake itself |

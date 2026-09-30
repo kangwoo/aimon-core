@@ -14,22 +14,26 @@ import at.aimon.core.agent.tool.ToolCategories;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.environment.exception.ExecutionEnvironmentUnavailableException;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.knowledge.wiki.IngestOptions;
 import at.aimon.core.knowledge.wiki.IngestResult;
 import at.aimon.core.knowledge.wiki.WikiKnowledgeBase;
 import at.aimon.core.knowledge.wiki.WikiScope;
 import at.aimon.core.knowledge.wiki.WikiSource;
+import at.aimon.core.tools.ExecutionEnvironmentAccess;
 import at.aimon.core.tools.ToolContextKeys;
 
 /**
  * Tool that ingests documents from a VFS directory into the agent's wiki knowledge base.
  *
  * <p>
- * Reads raw source documents from the specified directory on the configured {@link VirtualFileSystem}, processes them,
+ * Reads raw source documents from the specified directory on the execution environment's {@link VirtualFileSystem},
+ * processes them,
  * and indexes them in the {@link WikiKnowledgeBase}. The wiki knowledge base and scope are obtained from the
  * {@link ToolContext} using {@link ToolContextKeys#WIKI_KNOWLEDGE_BASE} and {@link ToolContextKeys#WIKI_SCOPE}.
- * The file system is obtained from {@link ToolContextKeys#VIRTUAL_FILE_SYSTEM}.
+ * The file system is the one the model's other file tools use: the execution environment's, obtained from
+ * {@link ToolContextKeys#EXECUTION_ENVIRONMENT} on every call.
  *
  * <p>
  * Usage by LLM:
@@ -89,9 +93,11 @@ public class WikiIngestTool extends AbstractTool {
                 return ToolResult.error("No wiki scope configured for this agent");
             }
 
-            final VirtualFileSystem vfs = context.get(ToolContextKeys.VIRTUAL_FILE_SYSTEM).orElse(null);
-            if (vfs == null) {
-                return ToolResult.error("No virtual file system configured for this agent");
+            final VirtualFileSystem vfs;
+            try {
+                vfs = ExecutionEnvironmentAccess.require(context).fileSystem();
+            } catch (IllegalStateException e) {
+                return ToolResult.error(e.getMessage());
             }
 
             final String sourceDirectory = input.getRequiredString("source_directory");
@@ -110,6 +116,10 @@ public class WikiIngestTool extends AbstractTool {
                 }
             }
 
+            // Probe the source before ingesting: the wiki treats a listing failure as "nothing to ingest", which would
+            // turn an unavailable environment into a successful empty ingest.
+            vfs.isDirectory(sourceDirectory);
+
             final WikiSource source = WikiSource.builder().fileSystem(vfs).directory(sourceDirectory).build();
             final IngestOptions options = optionsBuilder.build();
 
@@ -118,6 +128,8 @@ public class WikiIngestTool extends AbstractTool {
             log.debug("Wiki ingest completed: {}", result);
             return ToolResult.success(formatResult(sourceDirectory, result));
 
+        } catch (ExecutionEnvironmentUnavailableException e) {
+            return ToolResult.error(e.getMessage());
         } catch (IllegalArgumentException e) {
             log.warn("Invalid parameter: {}", e.getMessage());
             return ToolResult.error("Invalid parameter: " + e.getMessage());

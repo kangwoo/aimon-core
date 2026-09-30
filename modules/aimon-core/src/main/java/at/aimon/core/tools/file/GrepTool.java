@@ -8,14 +8,17 @@ import java.nio.file.FileSystems;
 import java.nio.file.PathMatcher;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 import java.util.stream.Collectors;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.interrupt.InterruptBehavior;
@@ -28,7 +31,13 @@ import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.agent.tool.exception.ToolExecutionException;
 import at.aimon.core.agent.tool.generic.GenericTool;
+import at.aimon.core.environment.ContentQuery;
+import at.aimon.core.environment.ContentSearch;
+import at.aimon.core.environment.ContentSearchResult;
+import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.environment.exception.ExecutionEnvironmentUnavailableException;
 import at.aimon.core.filesystem.VirtualFileSystem;
+import at.aimon.core.tools.ExecutionEnvironmentAccess;
 
 /**
  * Tool for searching file content using regular expressions.
@@ -63,9 +72,8 @@ import at.aimon.core.filesystem.VirtualFileSystem;
  * <pre>
  * {
  *     &#64;code
- *     VirtualFileSystem vfs = new LocalFileSystem("/base/path");
- *     Tool grepTool = new GrepTool(vfs);
- *     ToolContext context = ToolContext.empty();
+ *     Tool grepTool = new GrepTool();
+ *     ToolContext context = ToolContext.builder().put(ToolContextKeys.EXECUTION_ENVIRONMENT, env).build();
  *
  *     // Basic search - find files containing pattern
  *     ToolInput input1 = ToolInput.of(Map.of("pattern", "authenticate"));
@@ -85,10 +93,18 @@ import at.aimon.core.filesystem.VirtualFileSystem;
  * Parameters are declared by {@link GrepInput} and bound by {@link GenericTool}; there is no hand-written schema and
  * no hand-written extraction. With thirteen parameters, twelve of them optional and five spelled as grep flags that
  * are not Java identifiers, this is the shape the two-copy approach went wrong on most easily.
+ *
+ * <p>
+ * The tool holds no filesystem: it searches the execution environment's filesystem
+ * ({@code ToolContextKeys.EXECUTION_ENVIRONMENT}), read on every call. When the environment offers a
+ * {@link ContentSearch} (the local one does when {@code rg} is on the {@code PATH}), the search is delegated to it and
+ * the answer is formatted by the same code as the tool's own walk; if it is absent or fails, the tool walks the
+ * filesystem itself. Matching files are listed in path order either way, so both paths print the same text.
  */
 public class GrepTool extends GenericTool<GrepInput, String> {
 
     public static final String TOOL_NAME = "Grep";
+    private static final Logger log = LoggerFactory.getLogger(GrepTool.class);
     // File type to extension mappings (common types)
     private static final Map<String, List<String>> FILE_TYPE_EXTENSIONS = Map.ofEntries(
             Map.entry("java", List.of(".java")), Map.entry("py", List.of(".py")),
@@ -102,9 +118,6 @@ public class GrepTool extends GenericTool<GrepInput, String> {
 
     private static final int MAX_PATTERN_LENGTH = 500;
 
-    private final VirtualFileSystem fileSystem;
-    private final String workingDirectory;
-
     /**
      * Creates a new GrepTool.
      *
@@ -112,13 +125,8 @@ public class GrepTool extends GenericTool<GrepInput, String> {
      * The schema is derived from {@link GrepInput}: {@code pattern} is required and the other twelve parameters
      * ({@code path}, {@code output_mode}, {@code type}, {@code glob}, {@code -i}, {@code -n}, {@code -A}, {@code -B},
      * {@code -C}, {@code multiline}, {@code head_limit}, {@code offset}) are optional.
-     *
-     * @param fileSystem
-     *            The virtual file system to use for file operations (must not be null)
-     * @throws NullPointerException
-     *             if fileSystem is null
      */
-    public GrepTool(VirtualFileSystem fileSystem) {
+    public GrepTool() {
         super(TOOL_NAME,
                 "A powerful search tools that searches file content using regular expressions. "
                         + "Provides fast, flexible content searching with multiple output modes, "
@@ -131,8 +139,6 @@ public class GrepTool extends GenericTool<GrepInput, String> {
                         + "Supports file type filtering (type parameter), glob patterns, case-insensitive search (-i), "
                         + "line numbers (-n), context lines (-A, -B, -C), and multiline mode.",
                 ToolCategories.FILESYSTEM, GrepInput.class);
-        this.fileSystem = Objects.requireNonNull(fileSystem, "File system cannot be null");
-        workingDirectory = fileSystem.getWorkingDirectory();
     }
 
     /**
@@ -169,8 +175,16 @@ public class GrepTool extends GenericTool<GrepInput, String> {
                         + " characters (maximum: " + MAX_PATTERN_LENGTH + ")");
             }
 
+            final ExecutionEnvironment env;
+            try {
+                env = ExecutionEnvironmentAccess.require(context);
+            } catch (IllegalStateException e) {
+                throw new ToolExecutionException(e.getMessage());
+            }
+            final VirtualFileSystem fileSystem = env.fileSystem();
+
             // Apply the defaults the schema documents. Absent stays distinguishable from zero for -A / -B / -C.
-            final String path = orDefault(input.path(), workingDirectory);
+            final String path = orDefault(input.path(), fileSystem.getWorkingDirectory());
             final String outputMode = orDefault(input.outputMode(), "files_with_matches");
             final boolean caseInsensitive = orDefault(input.caseInsensitive(), false);
             final boolean showLineNumbers = orDefault(input.showLineNumbers(), true);
@@ -194,22 +208,29 @@ public class GrepTool extends GenericTool<GrepInput, String> {
                 throw interrupted(signal);
             }
 
-            // Discover files
-            List<String> files = discoverFiles(path);
-
-            // Apply filters
-            if (input.type() != null) {
-                files = applyFileTypeFilter(files, input.type());
-            }
-            if (input.glob() != null) {
-                files = applyGlobFilter(files, input.glob());
-            }
-
-            // Search files
             final SearchOptions options = new SearchOptions(outputMode, showLineNumbers, input.beforeContext(),
                     input.afterContext(), input.bothContext(), multiline);
 
-            final List<SearchResult> results = searchFiles(files, pattern, options, signal);
+            // Delegate to the environment's content search when it has one; fall back to the walk below when it has
+            // none or cannot answer this query.
+            List<SearchResult> results = env.contentSearch()
+                    .flatMap(search -> searchWith(search, input, path, caseInsensitive, options, signal)).orElse(null);
+            if (results == null) {
+                // Discover files
+                List<String> files = discoverFiles(fileSystem, path);
+
+                // Apply filters
+                if (input.type() != null) {
+                    files = applyFileTypeFilter(files, input.type());
+                }
+                if (input.glob() != null) {
+                    files = applyGlobFilter(files, input.glob());
+                }
+                files = files.stream().sorted().toList();
+
+                // Search files
+                results = searchFiles(fileSystem, files, pattern, options, signal);
+            }
             if (signal.isCancelled()) {
                 throw interrupted(signal);
             }
@@ -230,6 +251,8 @@ public class GrepTool extends GenericTool<GrepInput, String> {
 
         } catch (ToolExecutionException e) {
             throw e;
+        } catch (ExecutionEnvironmentUnavailableException e) {
+            throw new ToolExecutionException(e.getMessage(), e);
         } catch (Exception e) {
             throw new ToolExecutionException("Grep search failed: " + e.getMessage(), e);
         }
@@ -263,8 +286,54 @@ public class GrepTool extends GenericTool<GrepInput, String> {
         return value != null ? value : fallback;
     }
 
-    /** Discovers all files in the given path using VirtualFileSystem. */
-    private List<String> discoverFiles(String path) {
+    /**
+     * Runs the query through the environment's {@link ContentSearch}. Empty when it fails — the caller then walks the
+     * filesystem, so a missing or crashing search program never changes what the model sees.
+     */
+    private static Optional<List<SearchResult>> searchWith(ContentSearch search, GrepInput input, String path,
+            boolean caseInsensitive, SearchOptions options, CancellationSignal signal) {
+        final int before = options.bothContext != null
+                ? options.bothContext
+                : (options.beforeContext != null ? options.beforeContext : 0);
+        final int after = options.bothContext != null
+                ? options.bothContext
+                : (options.afterContext != null ? options.afterContext : 0);
+        final List<String> extensions = input.type() == null
+                ? List.of()
+                : FILE_TYPE_EXTENSIONS.getOrDefault(input.type().toLowerCase(), List.of());
+        final ContentQuery query = ContentQuery.builder().pattern(input.pattern()).path(path).extensions(extensions)
+                .glob(input.glob()).caseInsensitive(caseInsensitive).beforeContext(before).afterContext(after)
+                .multiline(options.multiline).cancellation(signal::isCancelled).build();
+        try {
+            final ContentSearchResult answer = search.search(query);
+            final List<SearchResult> results = new ArrayList<>();
+            for (ContentSearchResult.FileMatches file : answer.getFiles()) {
+                final List<MatchedLine> matches = new ArrayList<>();
+                for (ContentSearchResult.Match match : file.getMatches()) {
+                    matches.add(new MatchedLine(match.getLineNumber(), match.getLine(),
+                            match.getBefore().isEmpty() ? null : match.getBefore(),
+                            match.getAfter().isEmpty() ? null : match.getAfter()));
+                }
+                if (!matches.isEmpty()) {
+                    results.add(new SearchResult(file.getPath(), matches));
+                }
+            }
+            results.sort(Comparator.comparing(r -> r.filePath));
+            return Optional.of(results);
+        } catch (RuntimeException e) {
+            log.debug("Content search failed; walking the filesystem instead: {}", e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * Discovers all files in the given path using VirtualFileSystem.
+     *
+     * <p>
+     * An unavailable environment is not a failed listing: it propagates, so the model is told why instead of being
+     * told that nothing matched (execution-environment design §5.1).
+     */
+    private List<String> discoverFiles(VirtualFileSystem fileSystem, String path) {
         try {
             if (fileSystem.isDirectory(path)) {
                 return fileSystem.listRecursive(path);
@@ -273,10 +342,14 @@ public class GrepTool extends GenericTool<GrepInput, String> {
             } else {
                 return List.of();
             }
+        } catch (ExecutionEnvironmentUnavailableException e) {
+            throw e;
         } catch (Exception e) {
             // If error, assume it's current directory
             try {
                 return fileSystem.listRecursive(".");
+            } catch (ExecutionEnvironmentUnavailableException e2) {
+                throw e2;
             } catch (Exception e2) {
                 return List.of();
             }
@@ -309,8 +382,8 @@ public class GrepTool extends GenericTool<GrepInput, String> {
      * Searches all files for pattern matches. Polls the cancellation signal between files so a trip lands on
      * the next file boundary rather than waiting until the entire scan completes.
      */
-    private List<SearchResult> searchFiles(List<String> files, Pattern pattern, SearchOptions options,
-            CancellationSignal signal) {
+    private List<SearchResult> searchFiles(VirtualFileSystem fileSystem, List<String> files, Pattern pattern,
+            SearchOptions options, CancellationSignal signal) {
         final List<SearchResult> results = new ArrayList<>();
 
         for (String file : files) {
@@ -318,7 +391,9 @@ public class GrepTool extends GenericTool<GrepInput, String> {
                 break;
             }
             try {
-                searchFile(file, pattern, options).ifPresent(results::add);
+                searchFile(fileSystem, file, pattern, options).ifPresent(results::add);
+            } catch (ExecutionEnvironmentUnavailableException e) {
+                throw e;
             } catch (Exception e) {
                 // Skip files that can't be read
                 continue;
@@ -329,13 +404,13 @@ public class GrepTool extends GenericTool<GrepInput, String> {
     }
 
     /** Searches a single file for pattern matches. */
-    private Optional<SearchResult> searchFile(String filePath, Pattern pattern, SearchOptions options)
-            throws IOException {
+    private Optional<SearchResult> searchFile(VirtualFileSystem fileSystem, String filePath, Pattern pattern,
+            SearchOptions options) throws IOException {
         List<MatchedLine> matches = new ArrayList<>();
 
         if (options.multiline) {
             // Multiline search - read entire file
-            final String content = readFileContent(filePath);
+            final String content = readFileContent(fileSystem, filePath);
             final Matcher matcher = pattern.matcher(content);
 
             int lineNumber = 1;
@@ -354,7 +429,7 @@ public class GrepTool extends GenericTool<GrepInput, String> {
             }
         } else {
             // Line-by-line search
-            matches = searchFileByLines(filePath, pattern, options);
+            matches = searchFileByLines(fileSystem, filePath, pattern, options);
         }
 
         if (matches.isEmpty()) {
@@ -365,8 +440,8 @@ public class GrepTool extends GenericTool<GrepInput, String> {
     }
 
     /** Searches a file line by line for pattern matches. */
-    private List<MatchedLine> searchFileByLines(String filePath, Pattern pattern, SearchOptions options)
-            throws IOException {
+    private List<MatchedLine> searchFileByLines(VirtualFileSystem fileSystem, String filePath, Pattern pattern,
+            SearchOptions options) throws IOException {
         final List<MatchedLine> matches = new ArrayList<>();
         final List<String> allLines = new ArrayList<>();
         final List<Integer> matchedLineNumbers = new ArrayList<>();
@@ -419,7 +494,7 @@ public class GrepTool extends GenericTool<GrepInput, String> {
     }
 
     /** Reads entire file content as string. */
-    private String readFileContent(String filePath) throws IOException {
+    private String readFileContent(VirtualFileSystem fileSystem, String filePath) throws IOException {
         try (InputStream is = fileSystem.read(filePath);
                 BufferedReader reader = new BufferedReader(new InputStreamReader(is))) {
             return reader.lines().collect(Collectors.joining("\n"));

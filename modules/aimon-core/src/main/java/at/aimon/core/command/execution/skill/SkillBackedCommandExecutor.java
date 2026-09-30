@@ -4,6 +4,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 import at.aimon.core.agent.ExecutionId;
+import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.command.Command;
 import at.aimon.core.command.execution.CommandExecutionContext;
 import at.aimon.core.command.execution.CommandExecutionRequest;
@@ -11,11 +12,17 @@ import at.aimon.core.command.execution.CommandExecutionResult;
 import at.aimon.core.command.execution.CommandExecutor;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.command.skill.SkillBackedCommand;
+import at.aimon.core.environment.exception.ExecutionEnvironmentUnavailableException;
+import at.aimon.core.environment.exception.StagingException;
+import at.aimon.core.skill.Skill;
 import at.aimon.core.skill.execution.SkillExecutionContext;
 import at.aimon.core.skill.execution.SkillExecutionMetadata;
 import at.aimon.core.skill.execution.SkillExecutionRequest;
 import at.aimon.core.skill.execution.SkillExecutionResult;
 import at.aimon.core.skill.execution.SkillExecutor;
+import at.aimon.core.skill.render.RenderContext;
+import at.aimon.core.tools.SkillRenderContextAccess;
+import at.aimon.core.tools.ToolContextKeys;
 
 /**
  * {@link CommandExecutor} that routes a {@link SkillBackedCommand} through the user-invocation
@@ -66,18 +73,54 @@ public final class SkillBackedCommandExecutor implements CommandExecutor {
         // must not share per-run state. Hence generate(prefix) rather than of(name) — the prefix is for whoever reads
         // the log, the random tail is what keeps the runs apart. This run has no session of its own; the session it
         // acts for is already carried by the forwarded ToolContext.
-        final SkillExecutionContext skillContext = SkillExecutionContext.builder().skill(skillBacked.getSkill())
+        final Skill skill = skillBacked.getSkill();
+        final ExecutionId executionId = ExecutionId.generate("skill:" + skill.getName());
+        final SkillExecutionContext skillContext = SkillExecutionContext.builder().skill(skill)
                 .defaultModel(context.getDefaultModel()).toolRegistry(context.getToolRegistry())
-                .executionId(ExecutionId.generate("skill:" + skillBacked.getSkill().getName()))
-                .transcriptBuffer(context.getTranscriptBuffer()).toolContext(context.getToolContext()).build();
+                .executionId(executionId).transcriptBuffer(context.getTranscriptBuffer())
+                .toolContext(context.getToolContext()).build();
 
+        // Staging the skill into the run's environment (${AIMON_SKILL_DIR}) can fail — over the size limit, the
+        // source changed since it was loaded, no usable environment. That is this command's error, not a crash.
+        final RenderContext renderContext;
+        try {
+            renderContext = buildRenderContext(skill, context.getToolContext(), request, executionId);
+        } catch (StagingException | ExecutionEnvironmentUnavailableException e) {
+            return CommandExecutionResult.failure("Failed to stage skill '" + skill.getName() + "': " + e.getMessage(),
+                    e);
+        }
         final SkillExecutionRequest skillRequest = SkillExecutionRequest.builder()
                 .rawArguments(request.getRawArguments()).arguments(request.getArguments())
                 .principal(request.getPrincipal().orElse(null))
-                .previousSnapshot(request.getPreviousSnapshot().orElse(null)).build();
+                .previousSnapshot(request.getPreviousSnapshot().orElse(null)).renderContext(renderContext).build();
 
         final SkillExecutionResult skillResult = skillExecutor.execute(skillContext, skillRequest);
         return toCommandResult(skillResult);
+    }
+
+    /**
+     * Builds the {@link RenderContext} the skill body is rendered with — the one the {@code Skill} tool builds for
+     * this skill and tool context, so {@code ${AIMON_SKILL_DIR}} and the other {@code AIMON_*} variables expand
+     * identically whichever way the skill was invoked. Without it the request falls back to
+     * {@link RenderContext#empty()} and a body such as {@code bash ${AIMON_SKILL_DIR}/scripts/x.sh} renders as
+     * {@code bash /scripts/x.sh}.
+     *
+     * <p>
+     * Two values are more specific here than in the tool context. The request's principal is the caller of this
+     * command, so it wins when present. And the run's identity: when the forwarded tool context names neither a session
+     * nor an execution — a command run outside any session — this run's own execution id fills the
+     * {@code ${AIMON_EXECUTION_ID}} half of the exclusive pair. It is never set alongside a session id, which would
+     * make the pair ambiguous.
+     */
+    private static RenderContext buildRenderContext(Skill skill, ToolContext toolContext,
+            CommandExecutionRequest request, ExecutionId executionId) {
+        final RenderContext.Builder builder = SkillRenderContextAccess.builderFor(skill, toolContext);
+        request.getPrincipal().ifPresent(builder::principal);
+        if (toolContext.get(ToolContextKeys.SESSION_ID).isEmpty()
+                && toolContext.get(ToolContextKeys.EXECUTION_ID).isEmpty()) {
+            builder.executionId(executionId.value());
+        }
+        return builder.build();
     }
 
     private static CommandExecutionResult toCommandResult(SkillExecutionResult skillResult) {

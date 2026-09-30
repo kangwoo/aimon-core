@@ -14,6 +14,7 @@ import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.tools.artifact.ArtifactAwareEditTool;
 import at.aimon.core.tools.artifact.ArtifactAwareWriteTool;
+import at.aimon.core.tools.artifact.ArtifactPolicy;
 import at.aimon.core.tools.file.EditTool;
 import at.aimon.core.tools.file.WriteTool;
 
@@ -22,7 +23,7 @@ class OrcaFileToolProviderTest {
     private final VirtualFileSystem fileSystem = mock(VirtualFileSystem.class);
 
     private OrcaToolProviderContext createContext() {
-        return OrcaToolProviderContext.builder().fileSystem(fileSystem)
+        return OrcaToolProviderContext.builder().controlFileSystem(fileSystem)
                 .dependencies(OrcaProviderDependencies.builder().build()).build();
     }
 
@@ -41,7 +42,7 @@ class OrcaFileToolProviderTest {
 
     @Test
     void shouldRegisterBaseWriteToolWhenArtifactDisabled() {
-        OrcaFileToolProvider provider = new OrcaFileToolProvider(false);
+        OrcaFileToolProvider provider = new OrcaFileToolProvider(ArtifactPolicy.disabled());
         ToolRegistry registry = new DefaultToolRegistry();
 
         provider.registerTools(registry, createContext());
@@ -52,7 +53,7 @@ class OrcaFileToolProviderTest {
 
     @Test
     void shouldRegisterBaseEditToolWhenArtifactDisabled() {
-        OrcaFileToolProvider provider = new OrcaFileToolProvider(false);
+        OrcaFileToolProvider provider = new OrcaFileToolProvider(ArtifactPolicy.disabled());
         ToolRegistry registry = new DefaultToolRegistry();
 
         provider.registerTools(registry, createContext());
@@ -63,7 +64,7 @@ class OrcaFileToolProviderTest {
 
     @Test
     void shouldRegisterArtifactAwareWriteToolWhenArtifactEnabled() {
-        OrcaFileToolProvider provider = new OrcaFileToolProvider(true);
+        OrcaFileToolProvider provider = new OrcaFileToolProvider(ArtifactPolicy.enabledWithDefaults());
         ToolRegistry registry = new DefaultToolRegistry();
 
         provider.registerTools(registry, createContext());
@@ -74,7 +75,7 @@ class OrcaFileToolProviderTest {
 
     @Test
     void shouldRegisterArtifactAwareEditToolWhenArtifactEnabled() {
-        OrcaFileToolProvider provider = new OrcaFileToolProvider(true);
+        OrcaFileToolProvider provider = new OrcaFileToolProvider(ArtifactPolicy.enabledWithDefaults());
         ToolRegistry registry = new DefaultToolRegistry();
 
         provider.registerTools(registry, createContext());
@@ -113,13 +114,21 @@ class OrcaFileToolProviderTest {
     }
 
     @Test
-    void shouldThrowWhenFileSystemIsNull() {
-        OrcaFileToolProvider provider = new OrcaFileToolProvider();
+    void shouldRegisterFileToolsWithoutAnyFileSystemInTheContext() {
+        // The tools read the execution's environment on every call; registration needs no working filesystem.
+        OrcaFileToolProvider provider = new OrcaFileToolProvider(ArtifactPolicy.enabledWithDefaults());
         ToolRegistry registry = new DefaultToolRegistry();
         OrcaToolProviderContext context = OrcaToolProviderContext.builder()
                 .dependencies(OrcaProviderDependencies.builder().build()).build();
 
-        assertThatThrownBy(() -> provider.registerTools(registry, context)).isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("fileSystem");
+        provider.registerTools(registry, context);
+
+        assertThat(registry.findByName("Read")).isPresent();
+        assertThat(registry.findByName("Write")).containsInstanceOf(ArtifactAwareWriteTool.class);
+    }
+
+    @Test
+    void shouldRejectNullPolicy() {
+        assertThatThrownBy(() -> new OrcaFileToolProvider(null)).isInstanceOf(NullPointerException.class);
     }
 }

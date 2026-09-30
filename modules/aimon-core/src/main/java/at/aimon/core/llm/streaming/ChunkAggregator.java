@@ -91,7 +91,7 @@ public final class ChunkAggregator {
                     reasoningBuffer.append(delta);
                 }
                 case TOOL_USE_READY -> {
-                    // Overlap signal (design §4.1): a completed tool_use block is surfaced to the sink for early
+                    // Overlap signal (design §3): a completed tool_use block is surfaced to the sink for early
                     // execution. This slot's arguments are already held here (appended via appendToolCallDelta), and
                     // toLlmResponse() remains the source of truth for the final response — nothing to accumulate.
                 }
@@ -260,7 +260,7 @@ public final class ChunkAggregator {
      * aggregator or mutating any state.
      *
      * <p>
-     * Used by provider mappers to surface a completed tool_use block early (design §4.1, streaming-tool overlap) once
+     * Used by provider mappers to surface a completed tool_use block early (design §3, streaming-tool overlap) once
      * that slot's argument stream has ended, so a side-effect-free tool can start executing while the rest of the
      * response is still streaming. {@link #toLlmResponse()} stays the authoritative builder of the final response — it
      * re-parses the same (now identical) argument buffer at stream end.

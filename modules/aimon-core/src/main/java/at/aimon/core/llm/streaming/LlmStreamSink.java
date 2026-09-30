@@ -22,7 +22,7 @@ package at.aimon.core.llm.streaming;
  * <p>
  * Implementations <b>must</b> be safe to call from any thread, though providers typically invoke the sink from a single
  * thread per call. Backpressure is out of scope for the current design; see
- * {@code docs/design/llm/streaming.md} §9 for the future {@code Flow.Publisher}
+ * {@code docs/design/llm/streaming.md} §12 for the future {@code Flow.Publisher}
  * migration path.
  */
 @FunctionalInterface

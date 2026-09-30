@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/features.md
-source_commit: 53d14a1
+source_commit: bc8715e
 ---
 
 # Feature Catalog
@@ -88,6 +88,7 @@ feed turns in through a [session](#2-sessions).
 - [command queue guide](../features/agent-execution/command-queue-guide.en.md)
 - [interruptible tools guide](../features/agent-execution/interruptible-tools-guide.en.md)
 - [the system-reminder convention](../features/agent-execution/system-reminder-convention.en.md)
+- [the context engine guide](../features/agent-execution/context-engine-guide.en.md) — the compaction policy for long conversations (`default` / `rolling`)
 
 ---
 
@@ -146,6 +147,7 @@ The unit through which an agent interacts with the outside world. The contract i
 | tool permission checking | `agent.tool.permission`, `ToolPermissionSubjectAware` | core |
 | declaring interrupt behaviour | `InterruptBehavior`, `InterruptAccess` | core |
 | invoking a tool directly, once | `SingleToolInvoker` | core |
+| the tools' execution environment (file system and shell per execution, skill staging, isolation) | `ExecutionEnvironment`, `ExecutionEnvironmentProvider`, `LocalExecutionEnvironmentProvider` | core |
 
 ### 3.2 Built-in tools
 
@@ -166,12 +168,12 @@ The unit through which an agent interacts with the outside world. The contract i
 | workflow | `Workflow` | core |
 | workflow (JS script) | `WorkflowJs` | `aimon-workflow-graaljs` |
 | browser | `Browser` | `aimon-browser-playwright` |
-| sandbox | `RunSandbox`, `CopyToSandbox`, `RestartSandbox`, `DeleteSandbox` | `aimon-sandbox-*` |
+| sandbox | `RunSandbox`, `CopyToSandbox`, `RestartSandbox`, `DeleteSandbox` | `at.aimon.sandbox:*` (separate repository) |
 
 **Related documents**
 - [tool development guide](../features/tool/tool-development-guide.en.md) — the canonical document for writing a new tool
 - [parallel tool execution guide](../features/tool/parallel-tool-execution-guide.en.md)
-- [browser tool guide](../features/tool/browser-tool-guide.en.md)
+- [browser tool guide](https://github.com/kangwoo/aimon-browser/blob/main/docs/browser-tool-guide.en.md) (separate repository)
 
 ---
 
@@ -282,7 +284,7 @@ from calling a subagent by itself.
 | judgement patterns (judge panels and the like) | `JudgedResult`, `Verdict`, `WorkflowPatterns` | core |
 | run handles · resumption | `RunHandle`, `RunId`, `RunStore`, `StepResultCache` | core |
 | budget / concurrency limits | `WorkflowBudget`, `WorkflowConcurrencyConfig` | core |
-| running isolated in a git worktree | `WorktreeEnvironmentFactory` | core |
+| running isolated in a worktree | `ExecutionEnvironment.isolate()` · `WorktreeMerge` | core |
 | the JS scripting frontend | the `WorkflowJs` tool | `aimon-workflow-graaljs` |
 
 **When you use it.** When coverage demands sweeping in parallel (an audit, a migration), when
@@ -453,14 +455,14 @@ environment can be swapped in for the local disk.
 
 | Feature | Entry point | Where |
 |------|--------|------|
-| the sandbox abstraction | the sandbox SPI | `aimon-sandbox` |
-| the Docker implementation | — | `aimon-sandbox-docker` |
-| the Kubernetes implementation | — | `aimon-sandbox-kubernetes` |
-| the sandbox tools | `RunSandbox`, `CopyToSandbox`, `RestartSandbox`, `DeleteSandbox` | `aimon-sandbox-*` |
-| browser automation | the `Browser` tool, `BrowserSession` | `aimon-browser-playwright` |
+| the sandbox abstraction | the sandbox SPI | `at.aimon.sandbox:aimon-sandbox` |
+| the Docker implementation | — | `at.aimon.sandbox:aimon-sandbox-docker` |
+| the Kubernetes implementation | — | `at.aimon.sandbox:aimon-sandbox-kubernetes` |
+| the sandbox tools | `RunSandbox`, `CopyToSandbox`, `RestartSandbox`, `DeleteSandbox` | `at.aimon.sandbox:*` |
+| browser automation | the `Browser` tool, `BrowserSession` | `at.aimon.browser:aimon-browser-playwright` (separate repository) |
 
 **Related documents**
-- [browser tool guide](../features/tool/browser-tool-guide.en.md)
+- [browser tool guide](https://github.com/kangwoo/aimon-browser/blob/main/docs/browser-tool-guide.en.md) (separate repository)
 
 ---
 

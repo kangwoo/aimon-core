@@ -34,6 +34,9 @@ import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.base.Principal;
+import at.aimon.core.environment.EnvironmentRequest;
+import at.aimon.core.environment.ExecutionEnvironmentProvider;
+import at.aimon.core.environment.UnavailableExecutionEnvironment;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.knowledge.KnowledgeScope;
@@ -250,6 +253,35 @@ class DefaultSubagentExecutorTest {
 
         assertThat(result.isSuccess()).isTrue();
         assertThat(probe.captured.get().get(enrichedKey)).contains("ctx:agent:test-1");
+    }
+
+    @Test
+    @DisplayName("포크의 EnvironmentRequest 에는 서브에이전트 이름과 attributes 가 ForkDefinition 으로 실린다")
+    void environmentRequestCarriesForkDefinition() {
+        final StubLlmClient llm = new StubLlmClient();
+        llm.responses.add(LlmResponse.text("done"));
+
+        final AtomicReference<EnvironmentRequest> captured = new AtomicReference<>();
+        final ExecutionEnvironmentProvider provider = environmentRequest -> {
+            captured.set(environmentRequest);
+            return UnavailableExecutionEnvironment.of("not needed");
+        };
+        final Subagent builder = Subagent.of("builder", SubagentMetadata.builder().description("d").maxIterations(5)
+                .attributes(Map.of("sandbox.slot", "build")).build(), SubagentContent.of("you are builder"));
+        final SubagentExecutionContext context = SubagentExecutionContext.builder()
+                .agentRuntimeId(AgentRuntimeId.of("agent:test-1")).subagent(builder)
+                .defaultModel(LlmModel.builder().name("gpt-4").build()).toolRegistry(new DefaultToolRegistry())
+                .hookRegistry(new DefaultHookRegistry()).environment(Environment.createDefault())
+                .executionEnvironmentProvider(provider).build();
+
+        newExecutor(llm).execute(context, request("build it"));
+
+        assertThat(captured.get()).isNotNull();
+        assertThat(captured.get().agent()).isEmpty();
+        assertThat(captured.get().fork()).hasValueSatisfying(fork -> {
+            assertThat(fork.name()).isEqualTo("builder");
+            assertThat(fork.attributes()).containsExactly(Map.entry("sandbox.slot", "build"));
+        });
     }
 
     @Test

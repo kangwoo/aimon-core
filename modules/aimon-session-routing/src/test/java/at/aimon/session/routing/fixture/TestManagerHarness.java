@@ -17,6 +17,7 @@ import at.aimon.core.agent.session.store.DefaultSessionStore;
 import at.aimon.core.agent.session.store.InMemorySessionLeaseStore;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.store.SessionLeaseStore;
+import at.aimon.core.agent.session.store.SessionLogSegmentStore;
 import at.aimon.core.agent.session.store.SessionRecordStore;
 import at.aimon.core.agent.session.store.SessionStore;
 import at.aimon.core.skill.policy.session.SessionApprovalStore;
@@ -158,6 +159,7 @@ public final class TestManagerHarness implements AutoCloseable {
         private String nodeId = "test-node";
         private SessionMetrics metrics = SessionMetrics.NOOP;
         private SessionApprovalStore sessionApprovals;
+        private SessionLogSegmentStore segmentStore;
 
         private Builder() {
         }
@@ -304,6 +306,11 @@ public final class TestManagerHarness implements AutoCloseable {
          *            the store (may be null)
          * @return this builder
          */
+        public Builder segmentStore(SessionLogSegmentStore v) {
+            this.segmentStore = v;
+            return this;
+        }
+
         public Builder sessionApprovals(SessionApprovalStore v) {
             this.sessionApprovals = v;
             return this;
@@ -323,7 +330,7 @@ public final class TestManagerHarness implements AutoCloseable {
                     .statusHeartbeatInterval(statusHeartbeatInterval).holderLossSweepInterval(holderLossSweepInterval)
                     .idempotencyPrimaryTtl(idempotencyPrimaryTtl).idempotencySecondaryTtl(idempotencySecondaryTtl)
                     .idempotencyForwardTtl(idempotencyForwardTtl).releaseInterruptTimeout(releaseInterruptTimeout)
-                    .metrics(metrics).sessionApprovalStore(sessionApprovals).build();
+                    .metrics(metrics).sessionApprovalStore(sessionApprovals).segmentStore(segmentStore).build();
             final SessionRouter manager = new DefaultSessionRouter(opener, config);
             return new TestManagerHarness(manager, leaseStore, signalBus, inbox, idempotencyStore, repository,
                     sessionApprovals, sessions, openedRuntimeIds);

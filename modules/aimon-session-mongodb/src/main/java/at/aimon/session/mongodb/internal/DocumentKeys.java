@@ -63,6 +63,13 @@ public final class DocumentKeys {
      */
     public static final String COLL_SESSION_RECORDS = "session_records";
 
+    /**
+     * Default collection holding the sealed segments of session logs, one document per segment (session-log §5.6).
+     * Named for the session like {@link #COLL_SESSION_RECORDS}, for the same reason, and frozen from its first
+     * deployment on — pinned by {@code MongoSchemaFreezeTest}.
+     */
+    public static final String COLL_SESSION_LOG_SEGMENTS = "session_log_segments";
+
     /** Mongo {@code _id} field name. */
     public static final String F_ID = "_id";
 
@@ -193,6 +200,36 @@ public final class DocumentKeys {
 
     /** Session-record document — server-side timestamp of the last write, for operator triage only. */
     public static final String F_UPDATED_AT = "updatedAt";
+
+    /**
+     * Segment document — the owning session. Indexed: every query is scoped by it. Also the first field of the
+     * compound {@code _id}, whose second is {@link #F_SEGMENT_ID}.
+     */
+    public static final String F_SEGMENT_SESSION_ID = "sessionId";
+
+    /**
+     * Segment document — the segment id, second field of the compound {@code _id}. The id is scoped by session, so
+     * {@code _id} is {@code {sessionId, segmentId}} rather than the segment id alone.
+     */
+    public static final String F_SEGMENT_ID = "segmentId";
+
+    /** Segment document — first sealed seq. */
+    public static final String F_SEGMENT_FROM_SEQ = "fromSeq";
+
+    /** Segment document — first seq after the sealed range. */
+    public static final String F_SEGMENT_TO_SEQ = "toSeq";
+
+    /** Segment document — number of entries in the range. */
+    public static final String F_SEGMENT_ENTRY_COUNT = "entryCount";
+
+    /**
+     * Segment document — the encoded entries, a string for the reason {@link #F_TRANSCRIPT} is one. Hashed by the
+     * record's manifest, so it is stored and returned byte for byte.
+     */
+    public static final String F_SEGMENT_PAYLOAD = "payload";
+
+    /** Segment document — when the sealing node wrote it; garbage collection compares it with its grace period. */
+    public static final String F_SEGMENT_CREATED_AT = "createdAt";
 
     private DocumentKeys() {
     }

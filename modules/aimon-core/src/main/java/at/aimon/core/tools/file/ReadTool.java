@@ -8,7 +8,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,15 +23,21 @@ import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.agent.tool.permission.PermissionSubject;
 import at.aimon.core.agent.tool.permission.ToolPermissionSubjectAware;
+import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.environment.FileStamp;
+import at.aimon.core.environment.exception.ExecutionEnvironmentUnavailableException;
 import at.aimon.core.filesystem.VirtualFileSystem;
+import at.aimon.core.filesystem.exception.FileAccessDeniedException;
 import at.aimon.core.filesystem.exception.FileNotFoundException;
 import at.aimon.core.filesystem.exception.InvalidPathException;
+import at.aimon.core.tools.ExecutionEnvironmentAccess;
 
 /**
  * Tool for reading file contents with advanced features.
  *
  * <p>
- * This tools allows the LLM to read files from a VirtualFileSystem with support for:
+ * This tools allows the LLM to read files from the execution environment's filesystem
+ * ({@code ToolContextKeys.EXECUTION_ENVIRONMENT}, read on every call) with support for:
  *
  * <ul>
  * <li>Partial reading (offset and limit)
@@ -50,9 +55,9 @@ import at.aimon.core.filesystem.exception.InvalidPathException;
  * <pre>
  * {
  *     &#64;code
- *     VirtualFileSystem vfs = new LocalFileSystem("/base/path");
- *     Tool readTool = new ReadTool(vfs);
- *     ToolContext context = ToolContext.empty();
+ *     Tool readTool = new ReadTool();
+ *     ToolContext context = ToolContext.builder().put(ToolContextKeys.EXECUTION_ENVIRONMENT, env)
+ *             .put(ReadTool.FILE_STAMPS_KEY, new ConcurrentHashMap<>()).build();
  *
  *     // Read entire file (first 2000 lines)
  *     ToolInput input1 = ToolInput.of(Map.of("file_path", "/path/to/file.txt"));
@@ -68,36 +73,25 @@ public class ReadTool extends AbstractTool implements ToolPermissionSubjectAware
     public static final String TOOL_NAME = "Read";
 
     /**
-     * Typed key for the set of files that have been read during execution.
+     * Typed key for the {@link FileStamp}s of the files read during this execution (execution-environment design §7).
      *
      * <p>
-     * Used by {@code ReadTool} to track which files have been read and by {@code EditTool} to verify that a file has
-     * been read before allowing edits.
+     * {@code Read} records each file's stamp under its environment-normalised path; {@code Edit}, and {@code Write}
+     * over an existing file, refuse to modify a file that was not read in this execution or whose stamp has changed
+     * since — whether another execution, the shell or a person changed it.
      *
      * <p>
-     * The agent executors inject this set into every {@link ToolContext} as a thread-safe set
-     * ({@code ConcurrentHashMap.newKeySet()}) so {@code Read} (which is {@link ConcurrencyBehavior#CONCURRENT_SAFE})
-     * can
-     * record reads concurrently. Callers building a context by hand should do the same:
-     *
-     * <pre>
-     * {@code
-     * Set<String> readFiles = ConcurrentHashMap.newKeySet();
-     * ToolContext context = ToolContext.builder()
-     *         .put(ReadTool.READ_FILES_KEY, readFiles)
-     *         .build();
-     * }
-     * </pre>
+     * The agent executors inject a fresh {@link java.util.concurrent.ConcurrentHashMap} into every execution's
+     * {@link ToolContext} so {@code Read} (which is {@link ConcurrencyBehavior#CONCURRENT_SAFE}) can record stamps
+     * concurrently. A fork does not inherit its parent's stamps. A context without this key performs no check.
      */
     @SuppressWarnings("unchecked")
-    public static final ToolContextKey<Set<String>> READ_FILES_KEY = ToolContextKey.of("read_tool.read_files",
-            (Class<Set<String>>) (Class<?>) Set.class);
+    public static final ToolContextKey<Map<String, FileStamp>> FILE_STAMPS_KEY = ToolContextKey
+            .of("read_tool.file_stamps", (Class<Map<String, FileStamp>>) (Class<?>) Map.class);
     private static final Logger log = LoggerFactory.getLogger(ReadTool.class);
     private static final int DEFAULT_LIMIT = 2000;
     private static final int MAX_LINE_LENGTH = 2000;
     private static final String LINE_NUMBER_FORMAT = "%6d→";
-
-    private final VirtualFileSystem fileSystem;
 
     /**
      * Creates a new ReadTool.
@@ -112,18 +106,15 @@ public class ReadTool extends AbstractTool implements ToolPermissionSubjectAware
      * <li>Optional parameter: "limit" (number) - The number of lines to read
      * </ul>
      *
-     * @param fileSystem
-     *            The virtual file system to use for file operations (must not be null)
-     * @throws NullPointerException
-     *             if fileSystem is null
+     * <p>
+     * The tool holds no filesystem: it reads the execution's environment from the {@link ToolContext} on every call.
      */
-    public ReadTool(VirtualFileSystem fileSystem) {
+    public ReadTool() {
         super(TOOL_NAME,
                 "Read file contents from the filesystem. Returns file content with line numbers in cat -n format. "
                         + "Supports partial reading for large files using offset and limit parameters. "
                         + "By default, reads first 2000 lines. Lines longer than 2000 characters are truncated.",
                 ToolCategories.FILESYSTEM, createInputSchema());
-        this.fileSystem = Objects.requireNonNull(fileSystem, "File system cannot be null");
     }
 
     /**
@@ -189,6 +180,9 @@ public class ReadTool extends AbstractTool implements ToolPermissionSubjectAware
 
             log.debug("Reading file: {}", filePath);
 
+            final ExecutionEnvironment env = ExecutionEnvironmentAccess.require(context);
+            final VirtualFileSystem fileSystem = env.fileSystem();
+
             // Check if path is a directory
             if (fileSystem.isDirectory(filePath)) {
                 return ToolResult
@@ -207,11 +201,15 @@ public class ReadTool extends AbstractTool implements ToolPermissionSubjectAware
                 return ToolResult.error("limit must be >= 1, got: " + limit);
             }
 
-            // Read file content
-            final String content = readFileContent(filePath, offset, limit);
+            // Stamp before reading: a change that lands while the content is read then shows up as a mismatch at the
+            // next Edit/Write instead of being silently absorbed into the recorded stamp.
+            final FileStamp stamp = FileStamps.current(env, filePath);
 
-            // Mark file as read in context (if readFiles Set is present)
-            markFileAsRead(context, filePath);
+            // Read file content
+            final String content = readFileContent(fileSystem, filePath, offset, limit);
+
+            // Record the stamp (if the context tracks stamps)
+            FileStamps.record(context, env, filePath, stamp);
 
             // Check if file is empty
             if (content.isEmpty()) {
@@ -224,6 +222,13 @@ public class ReadTool extends AbstractTool implements ToolPermissionSubjectAware
         } catch (IllegalArgumentException e) {
             log.warn("Invalid parameter: {}", e.getMessage());
             return ToolResult.error("Invalid parameter: " + e.getMessage());
+        } catch (IllegalStateException | ExecutionEnvironmentUnavailableException e) {
+            log.warn("No usable execution environment: {}", e.getMessage());
+            return ToolResult.error(e.getMessage());
+        } catch (FileAccessDeniedException e) {
+            // A path rule refused it: an expected answer, not a failure of the tool.
+            log.warn("{}", e.getMessage());
+            return ToolResult.error(e.getMessage());
         } catch (FileNotFoundException e) {
             log.warn("File not found: {}", e.getMessage());
             return ToolResult.error("File not found: " + e.getMessage());
@@ -242,6 +247,8 @@ public class ReadTool extends AbstractTool implements ToolPermissionSubjectAware
     /**
      * Reads file content with line numbering and optional offset/limit.
      *
+     * @param fileSystem
+     *            The execution environment's filesystem
      * @param filePath
      *            The file path to read
      * @param offset
@@ -252,7 +259,8 @@ public class ReadTool extends AbstractTool implements ToolPermissionSubjectAware
      * @throws IOException
      *             if an I/O error occurs
      */
-    private String readFileContent(String filePath, int offset, int limit) throws IOException {
+    private String readFileContent(VirtualFileSystem fileSystem, String filePath, int offset, int limit)
+            throws IOException {
         final StringBuilder result = new StringBuilder();
 
         try (InputStream inputStream = fileSystem.read(filePath);
@@ -296,7 +304,7 @@ public class ReadTool extends AbstractTool implements ToolPermissionSubjectAware
      * at most {@value #DEFAULT_LIMIT} lines through a single {@code InputStream} — so the benefit of inserting a
      * per-line checkpoint is too small to justify the added complexity. If a future use case loads huge files it
      * can be promoted to {@link InterruptBehavior#COOPERATIVE} with a periodic line-count checkpoint inside
-     * {@link #readFileContent(String, int, int)}.
+     * {@link #readFileContent(VirtualFileSystem, String, int, int)}.
      */
     @Override
     public InterruptBehavior getInterruptBehavior() {
@@ -305,8 +313,8 @@ public class ReadTool extends AbstractTool implements ToolPermissionSubjectAware
 
     /**
      * Declares {@link ConcurrencyBehavior#CONCURRENT_SAFE}. {@code Read} is a read-only operation; the only shared
-     * mutable state it touches is the {@link #READ_FILES_KEY} set, which the executor injects as a thread-safe set
-     * ({@code ConcurrentHashMap.newKeySet()}) so concurrent reads can record themselves without racing.
+     * mutable state it touches is the {@link #FILE_STAMPS_KEY} map, which the executor injects as a
+     * {@code ConcurrentHashMap} so concurrent reads can record their stamps without racing.
      */
     @Override
     public ConcurrencyBehavior getConcurrencyBehavior() {
@@ -315,8 +323,9 @@ public class ReadTool extends AbstractTool implements ToolPermissionSubjectAware
 
     /**
      * Declares {@link SideEffectLevel#READ_ONLY}. {@code Read} opens the file for reading and never writes through
-     * the {@link VirtualFileSystem}. The one write it does perform — recording the path in the {@link #READ_FILES_KEY}
-     * set — is execution-scoped bookkeeping that {@code EditTool} consults, and is expressly exempt (see
+     * the {@link VirtualFileSystem}. The one write it does perform — recording the stamp in the
+     * {@link #FILE_STAMPS_KEY}
+     * map — is execution-scoped bookkeeping that {@code EditTool} consults, and is expressly exempt (see
      * {@link SideEffectLevel#READ_ONLY}).
      */
     @Override
@@ -329,35 +338,12 @@ public class ReadTool extends AbstractTool implements ToolPermissionSubjectAware
      * matched against.
      *
      * <p>
-     * Empty when the call cannot be judged: no {@code file_path}, or a relative one with no {@code Environment} in the
+     * Empty when the call cannot be judged: no {@code file_path}, or a relative one with no execution environment in
+     * the
      * context to resolve it against. A configured pattern then denies the call rather than guessing.
      */
     @Override
     public Optional<PermissionSubject> permissionSubject(ToolInput input, ToolContext context) {
         return FilePathSubjects.filePathSubject(input, context);
-    }
-
-    /**
-     * Marks a file as read in the context by adding it to the read files set.
-     *
-     * <p>
-     * This method retrieves the mutable Set from the context (if present) and adds the file path to it. This allows
-     * EditTool to verify that a file has been read before allowing edits.
-     *
-     * <p>
-     * If the read files Set is not present in the context, this method does nothing. The Set can be provided at the
-     * application level if this validation is desired.
-     *
-     * @param context
-     *            The tools context containing the read files Set
-     * @param filePath
-     *            The absolute path of the file that was successfully read
-     */
-    private void markFileAsRead(ToolContext context, String filePath) {
-        final Set<String> readFiles = context.get(READ_FILES_KEY).orElse(null);
-        if (readFiles != null) {
-            readFiles.add(filePath);
-            log.debug("Marked file as read: {}", filePath);
-        }
     }
 }

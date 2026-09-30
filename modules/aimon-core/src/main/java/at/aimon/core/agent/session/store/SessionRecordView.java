@@ -5,6 +5,7 @@ import java.util.Optional;
 
 import at.aimon.core.agent.budget.ExecutionBudget;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.transcript.SessionLogState;
 import at.aimon.core.agent.session.transcript.SessionRewindPoint;
 import at.aimon.core.llm.Message;
 
@@ -54,7 +55,12 @@ public interface SessionRecordView {
     String getSystemPrompt();
 
     /**
-     * Gets all messages in the transcript as an immutable copy.
+     * Gets the messages of the log entries the record carries, as an immutable copy.
+     *
+     * <p>
+     * That is the part of the session log held in the record itself — until sealing moves part of the log out of the
+     * record, every message of the session. It is neither what the model is sent (a context engine decides that) nor a
+     * promise of the whole history.
      *
      * @return an immutable list of messages (never null, may be empty)
      */
@@ -117,5 +123,19 @@ public interface SessionRecordView {
      */
     default Optional<SessionRewindPoint> getRewindPoint() {
         return Optional.empty();
+    }
+
+    /**
+     * Gets the session log — entries, seqs, rewind point and format — as one value.
+     *
+     * <p>
+     * This is what the load chain hands on: {@code SessionSnapshot.from(view)} takes it whole, so nothing is picked
+     * apart and dropped on the way to the buffer. The default suits a view that only knows messages and a rewind
+     * point: it builds the version-1 log those two migrate to.
+     *
+     * @return the log state (never null)
+     */
+    default SessionLogState getLogState() {
+        return SessionLogState.ofMessages(getMessages(), getRewindPoint().orElse(null));
     }
 }

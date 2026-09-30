@@ -17,8 +17,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * A running copy of the sample application in a JVM of its own, and the two questions worth asking it.
@@ -185,6 +186,14 @@ final class SampleAppProcess implements AutoCloseable {
     }
 
     private Map<String, Object> send(HttpRequest.Builder builder) {
+        // The transport and the parse are two try blocks rather than one, because under Jackson 3 they no
+        // longer share an exception type. Jackson 2's JacksonException extended java.io.IOException, so an
+        // unparseable reply fell into the IOException branch below and was rewrapped with the label and the
+        // child's captured output; Jackson 3's extends java.lang.RuntimeException (both measured), so folded
+        // into one block it would leave here bare — no label, no log — which is the one thing this class
+        // exists to guarantee on every failure path. The success path is identical under both majors, so
+        // nothing but a genuinely broken reply during a failing run would ever have shown it.
+        final String body;
         try {
             final HttpResponse<String> response = http.send(builder.timeout(REQUEST_TIMEOUT).build(),
                     HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
@@ -192,13 +201,22 @@ final class SampleAppProcess implements AutoCloseable {
                 throw new IllegalStateException("The sample application (" + label + ") answered "
                         + response.statusCode() + ": " + response.body() + "\nOutput:\n" + output);
             }
-            return MAPPER.readValue(response.body(), JSON_OBJECT);
+            body = response.body();
         } catch (IOException e) {
             throw new UncheckedIOException(
                     "Request to the sample application (" + label + ") failed. Output:\n" + output, e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("Interrupted while calling the sample application (" + label + ")", e);
+        }
+
+        try {
+            return MAPPER.readValue(body, JSON_OBJECT);
+        } catch (JacksonException e) {
+            // Not an UncheckedIOException like the branch above: that type requires an IOException cause and
+            // this one is not, which is the whole reason this block had to be split out.
+            throw new IllegalStateException("The sample application (" + label
+                    + ") answered 200 with a body that is not a JSON object: " + body + "\nOutput:\n" + output, e);
         }
     }
 

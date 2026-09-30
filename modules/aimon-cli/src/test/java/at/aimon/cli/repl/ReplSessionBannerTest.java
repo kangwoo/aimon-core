@@ -15,8 +15,8 @@ import org.junit.jupiter.api.Test;
 import at.aimon.cli.config.CliSettings;
 import at.aimon.cli.factory.AgentSetupFactory;
 import at.aimon.core.agent.Agent;
+import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.DefaultAgent;
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.impl.orca.OrcaAgentExecutor;
 import at.aimon.core.agent.impl.orca.OrcaAgentRuntime;
 import at.aimon.core.agent.queue.DefaultMessageQueueManager;
@@ -24,6 +24,8 @@ import at.aimon.core.agent.queue.InMemoryMessageQueueRepository;
 import at.aimon.core.agent.session.LiveSession;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.command.CommandRegistry;
+import at.aimon.core.environment.EnvironmentDescriptor;
+import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.LlmResponse;
@@ -158,7 +160,12 @@ class ReplSessionBannerTest {
     private static ReplSession session(String bundleName, Agent agent, LlmClient client, OutputFormatter formatter) {
         final OrcaAgentRuntime runtime = mock(OrcaAgentRuntime.class);
         when(runtime.getWorkflowRunner()).thenReturn(Optional.empty());
-        when(runtime.getEnvironment()).thenReturn(Environment.createWithWorkingDirectory("/work"));
+        // The banner shows the working directory of the runtime's execution environment — where Bash runs.
+        final ExecutionEnvironment environment = mock(ExecutionEnvironment.class);
+        when(environment.descriptor())
+                .thenReturn(EnvironmentDescriptor.builder().workingDirectory("/work").platform("linux").build());
+        when(runtime.getId()).thenReturn(AgentRuntimeId.of("agent:banner"));
+        when(runtime.getExecutionEnvironmentProvider()).thenReturn(request -> environment);
         when(runtime.getToolRegistry()).thenReturn(mock(ToolRegistry.class));
         when(runtime.getCommandRegistry()).thenReturn(mock(CommandRegistry.class));
         when(runtime.getSubagentRegistry()).thenReturn(mock(SubagentRegistry.class));

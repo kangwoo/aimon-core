@@ -307,9 +307,11 @@ public final class GridFSFileSystem implements VirtualFileSystem {
         try {
             GridFSFile file = findFile(path);
             if (file != null) {
+                // Every write uploads a new GridFS document, so its id changes with each rewrite — an etag the file
+                // tools' read stamps can rely on (execution-environment design §7; md5 is gone from driver 5.x).
                 return FileMetadata.builder().path(path).size(file.getLength())
                         .createdAt(file.getUploadDate().toInstant()).modifiedAt(file.getUploadDate().toInstant())
-                        .mimeType(detectMimeType(path)).build();
+                        .mimeType(detectMimeType(path)).etag(file.getObjectId().toHexString()).build();
             }
 
             // A directory: created explicitly (a marker) or implied by something stored under it.

@@ -364,7 +364,9 @@ B-6 이 그렇게 어긋나 있었다. §7 은 그 항목을 "MCP 를 실제로 
 | [`llm-config-surface-open-items.md`](llm-config-surface-open-items.md) | `docs/design/llm/model-capability-config-key.md` §9 (#46) | 27 | 14 | 13 | 0 |
 | [`reasoning-delta-stream-open-items.md`](reasoning-delta-stream-open-items.md) | `docs/design/llm/reasoning-delta-stream.md` §11 (#62) | 9 | 7 | 2 | 0 |
 | [`config-value-expansion-open-items.md`](config-value-expansion-open-items.md) | `docs/design/integration/config-value-expansion-and-frontmatter-strictness.md` §9 (#53) | 2 | 2 | 0 | 0 |
-| [`live-api-test-tier.md`](live-api-test-tier.md) | 라이브 API 테스트 계층의 CI 신호 결정 — #81 (2026-09-10) | 2 | 1 | 1 | 0 |
+| [`live-api-test-tier.md`](live-api-test-tier.md) | 라이브 API 테스트 계층의 CI 신호 결정 — #81 (2026-09-10) | 2 | 0 | 1 | 1 |
+| [`session-log-open-items.md`](session-log-open-items.md) | `docs/design/session/session-log.md` §12 · `docs/design/agent-execution/context-engine.md` §13 (2026-09-24 · 2026-09-25) | 6 | 1 | 5 | 0 |
+| [`execution-environment-open-items.md`](execution-environment-open-items.md) | `docs/design/tool/execution-environment-implementation.md` §9 · §10 · `docs/design/tool/execution-environment.md` §14 (2026-09-28) · 빌드 리뷰 4 · PR #195 리뷰 1 · 워크스페이스 샌드박스 설계 리뷰 (2026-09-29) · PR #196 리뷰 · EE-42 설계 §7 · §8 (2026-09-29) · `docs/design/tool/workflow-isolation-hardening.md` §7 | 47 | 37 | 10 | 0 |
 
 > **2026-09-10 — 위 표의 두 칸을 세어서 고쳤다. 규칙 일곱의 두 번째 사례이고, 둘 다 같은 모양이다:
 > 본문을 고친 사람이 색인을 세지 않았다.**

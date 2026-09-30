@@ -136,8 +136,8 @@ dependencies {
 | `aimon-filesystem-s3` | S3/MinIO를 백엔드로 |
 | `aimon-scheduling-quartz` | 작업 스케줄링이 필요하면 |
 | `aimon-knowledge-opensearch` | 벡터 검색 기반 KnowledgeStore |
-| `aimon-sandbox-docker` / `aimon-sandbox-kubernetes` | 격리된 셸 실행이 필요하면 |
-| `aimon-browser-playwright` | 브라우저 자동화 도구가 필요하면 |
+| `at.aimon.sandbox:aimon-sandbox-docker` / `-kubernetes` ([별도 저장소](https://github.com/kangwoo/aimon-sandbox)) | 컨테이너/파드에 격리된 명령 실행 **도구**가 필요하면 |
+| `at.aimon.browser:aimon-browser-playwright` ([별도 저장소](https://github.com/kangwoo/aimon-browser)) | 브라우저 자동화 도구가 필요하면 |
 
 > **모듈 의존성 규칙** (.claude/rules/architecture.md): 구현 모듈은 `implementation(project(":aimon-core"))`로만 코어를 참조한다. `api()`로 노출하지 않는다 — 코어 타입이 트랜지티브 의존성으로 새는 것을 막기 위해.
 
@@ -460,7 +460,7 @@ llm:
 `llm.reasoningEffort` 를 `low`(2048) 나 `minimal`(1024) 로 내린다(에이전트 정의에 `model.reasoningEffort` 가
 있으면 그쪽을). **경고가 말하는 처방은 앞의 것 하나뿐이다.** 이것은 빠뜨린 것이 아니라 결정이며, 근거와 기각한
 대안은
-[`thinking-reporting-and-dialect-records.md` §16](../design/llm/thinking-reporting-and-dialect-records.md#16-the-auto-budget-policy-decided-83-2026-09-10)
+[`anthropic-thinking.md` §6.2](../design/llm/anthropic-thinking.md#62-auto-예산-정책--1토큰-답도-그대로-둔다)
 에 있다.
 
 **두 방언은 모델마다 배타적이고 틀린 쪽을 보내면 HTTP 400 이다.** 그것이 `auto` 가 있는 이유이며, 동시에
@@ -584,7 +584,8 @@ final AgentBundle agentBundle = effectiveBundleLoader.load(extractAgentName(conf
 
 **여러분의 적응 포인트:**
 - Agent 정의를 코드/DB에서 동적으로 만들고 싶으면 `AgentBundle`을 직접 빌드해서 `AgentSetupFactory`의 패키지-프라이빗 생성자로 주입한다.
-- 셸 실행을 컨테이너에 격리하려면 `aimon-sandbox-docker`/`aimon-sandbox-kubernetes`의 `VirtualShell` 구현체로 교체.
+- 셸 실행 자체를 컨테이너에 격리하려면 `VirtualShell` 을 **직접 구현한다** — 내장 구현은 `LocalShell` 하나뿐이고,
+  샌드박스 모듈은 이 SPI 를 구현하지 않는다. 그쪽이 주는 격리는 셸 교체가 아니라 `RunSandbox` 등 도구 4종이다.
 
 ### 4.3 세션 레코드 저장소, 트랜스크립트 매니저, 메시지 큐, 파일 시스템 (line 726-733)
 
@@ -594,6 +595,9 @@ final InMemorySessionRecordStore sessionRecordStore = new InMemorySessionRecordS
 final TranscriptManager transcriptManager = createTranscriptManager(sessionRecordStore, sessionCheckpoints);
 final MessageQueueManager messageQueueManager = createMessageQueueManager();
 final LocalFileSystem fileSystem = createFileSystem();
+final Path projectDir = Path.of(fileSystem.getWorkingDirectory());
+// 제어 저장소({project}/.aimon/) — 정의·태스크 출력. 모델의 파일 도구에게는 보이지 않는다.
+final VirtualFileSystem controlFileSystem = new ScopedVirtualFileSystem(fileSystem, ".aimon");
 ```
 
 기본 구현 (`AgentSetupFactory.java:1033, 1044, 1076, 1083`):
@@ -658,10 +662,12 @@ final PendingTurnReaper pendingTurnReaper = createPendingTurnReaper(pendingTurnR
 // 명시한 답만 agent 단위 저장소로 간다. 정책 체인은 좁은 쪽(세션)을 먼저 본다.
 final AgentApprovalStore agentApprovalStore = new InMemoryAgentApprovalStore();
 final SessionApprovalStore sessionApprovalStore = new InMemorySessionApprovalStore();
-// 번들(클래스패스) 스킬을 작업 VFS로 실체화해서 부속 파일(스크립트·레퍼런스·템플릿)이
-// 에이전트가 읽을 수 있는 진짜 파일이 되고 ${AIMON_SKILL_DIR}가 resolve 되게 한다.
+// 번들(클래스패스) 스킬을 제어 저장소({project}/.aimon/)로 실체화한다. 이 사본은 에이전트가 직접
+// 읽지 않는다 — 파일 도구에게 .aimon/ 은 보이지 않는다. ${AIMON_SKILL_DIR} 는 실행 환경이 스킬을
+// 처음 쓸 때 작업 공간의 .aimon-staged/ 로 복사해 돌려주는 경로다(ExecutionEnvironment.stage).
+// 디렉터리는 제어 저장소 루트 기준이다 — 물리 경로는 예전처럼 .aimon/skills, .aimon/bundled-skills.
 final SkillRegistry skillRegistry = OrcaAgentRuntimeFactory.buildMaterializedSkillRegistry(
-        agentBundle, fileSystem, ".aimon/skills", ".aimon/bundled-skills",
+        agentBundle, controlFileSystem, "skills", "bundled-skills",
         DEFAULT_AGENT_BUNDLE_BASE_PATH + "/" + extractAgentName(config) + "/skills",
         Thread.currentThread().getContextClassLoader(), skillParser);
 final SkillInvocationPolicy skillInvocationPolicy =
@@ -749,10 +755,13 @@ private static SchedulingEngine createSchedulingEngine(AgentRuntimeRegistry agen
 final OrcaAgentRuntimeFactory agentRuntimeFactory =
     new OrcaAgentRuntimeFactory(
         "1.0.0",
-        ".aimon/commands",
-        ".aimon/agents",
-        ".aimon/skills",
+        "commands",   // 제어 저장소 루트 기준 (OrcaAgentRuntimeFactory.DEFAULT_*_DIRECTORY)
+        "agents",
+        "skills",
         createWikiKnowledgeStore(agentRuntimeRegistry, llmClient))
+        // 모델의 도구가 일하는 곳 — 파일 시스템과 셸. 없으면 create(...) 가 거부한다.
+        .withExecutionEnvironmentProvider(LocalExecutionEnvironmentProvider.builder()
+                .workspaceRoot(projectDir).build())
         .withSkillRegistry(skillRegistry)
         .withCodeSubagentRegistry(codeSubagentRegistry)
         .withPendingTurnRegistry(pendingTurnRegistry)
@@ -766,7 +775,7 @@ final OrcaAgentRuntimeFactory agentRuntimeFactory =
 // AgentRuntimeId는 인자가 아니다 — createAgentRuntime 내부에서 agent로부터 유도된다.
 final OrcaAgentRuntime agentRuntime = createAgentRuntime(
     agentRuntimeFactory, agentExecutor,
-    schedulingEngine.getTaskManager(), agentBundle, fileSystem,
+    schedulingEngine.getTaskManager(), agentBundle, controlFileSystem,
     config, graalJsEngines);
 
 configureHooks(agentRuntime, outputFormatter);
@@ -865,7 +874,7 @@ final LiveSession liveSession = new DefaultLiveSession(
 |---------|----------------|----------------------|
 | `LlmClient` | OpenAI 또는 Anthropic SDK 래퍼 | 사내 LLM 게이트웨이를 감싼 자체 구현 |
 | `VirtualFileSystem` | `LocalFileSystem` (jar 디렉터리 기준) | `GridFSFileSystem` / `S3FileSystem` / 사용자별 격리된 인스턴스 |
-| `VirtualShell` | `LocalShell` | `aimon-sandbox-docker` 컨테이너 격리 셸 |
+| `VirtualShell` | `LocalShell` | 직접 구현 — 컨테이너 격리 **셸**은 프레임워크에 없다 (샌드박스 모듈은 도구로 격리한다) |
 | `SessionRecordStore` | `InMemorySessionRecordStore` | `aimon-session-mongodb` / `-postgres` / `-redis` 영속 구현 |
 | `TranscriptManager` | `DefaultTranscriptManager` (+ 백그라운드 체크포인트 우편함) | 대개 그대로 — 갈아끼울 것은 그 아래 `SessionRecordStore`다 |
 | `MessageQueueManager` | in-memory | 분산 큐 백엔드 |
@@ -912,10 +921,10 @@ final LiveSession liveSession = new DefaultLiveSession(
 생성·조회는 `OrcaAgentRuntimeManager.getOrCreateRuntime(bundle, ...)`로 한다 — 이름이 말하듯 이미 있으면 재사용한다. 해체는 앱 종료 또는 명시적 agent 제거 시 `destroyRuntime`으로만.
 
 > **`OrcaAgentRuntime.close()`는 `AgentScoped` 구현체를 스캔하지 않는다** — 하드코딩된 목록
-> (`mcpClientManager`, `workflowRunner`, `ownedShell`)만 닫는다. 네이티브 자원(커넥션 풀, 워처 스레드)을 쥔
+> (`mcpClientManager`, `workflowRunner`)만 닫는다. 네이티브 자원(커넥션 풀, 워처 스레드)을 쥔
 > agent 스코프 컴포넌트를 새로 얹는다면 그 목록에 직접 추가해야 한다. 마커 인터페이스는 문서일 뿐 자동
-> 소멸이 아니다. `ownedShell`은 셋 중 유일하게 조건부다 — `withShell(...)`로 셸을 직접 준 어셈블리에서는
-> null이고, 그때 셸을 닫는 것은 준 쪽의 몫이다.
+> 소멸이 아니다. 셸과 작업 파일 시스템은 이 목록에 없다 — `withExecutionEnvironmentProvider(...)`로 준
+> `ExecutionEnvironmentProvider`가 소유하고, 그것을 닫는 것은 준 쪽의 몫이다.
 
 ### 세션 스코프 (`SessionId` 수명 — **영속**)
 
@@ -1219,12 +1228,14 @@ public OrcaAgentRuntimeManager agentRuntimeManager(
         SkillInvocationPolicy skillPolicy, SessionApprovalStore sessionApprovals,
         AgentApprovalStore agentApprovals, PendingTurnRegistry pendingTurnRegistry) {
 
-    // withSkillRegistry()는 일부러 부르지 않는다 — 사용자마다 VFS가 다르므로 스킬 레지스트리도
-    // runtime 별로 달라야 한다. 생략하면 팩토리가 (agentBundle, fileSystem)에서 runtime마다 새로 만든다.
+    // withSkillRegistry()는 일부러 부르지 않는다 — 사용자마다 제어 저장소가 다르므로 스킬 레지스트리도
+    // runtime 별로 달라야 한다. 생략하면 팩토리가 (agentBundle, controlFileSystem)에서 runtime마다 새로 만든다.
+    // 실행 환경 제공자도 사용자마다 — withExecutionEnvironmentProviderFactory(id -> ...) 로 runtime 별 작업 공간을 준다.
     OrcaAgentRuntimeFactory runtimeFactory =
         new OrcaAgentRuntimeFactory("1.0.0",
-            ".aimon/commands", ".aimon/agents", ".aimon/skills",
+            "commands", "agents", "skills",
             /* knowledgeStore */ null)
+            .withExecutionEnvironmentProviderFactory(id -> providerFor(id))
             .withSessionApprovalStore(sessionApprovals)
             .withAgentApprovalStore(agentApprovals)
             .withPendingTurnRegistry(pendingTurnRegistry)

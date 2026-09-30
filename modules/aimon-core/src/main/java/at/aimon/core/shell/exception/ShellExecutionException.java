@@ -1,6 +1,7 @@
 package at.aimon.core.shell.exception;
 
 import java.io.Serial;
+import java.util.List;
 
 import at.aimon.core.shell.ShellCommandResult;
 
@@ -27,6 +28,7 @@ public class ShellExecutionException extends Exception {
     private final String stdout;
     private final String stderr;
     private final boolean outputTruncated;
+    private final List<String> notices;
 
     /**
      * Creates a new shell execution exception with the specified message and no captured output.
@@ -39,6 +41,7 @@ public class ShellExecutionException extends Exception {
         this.stdout = "";
         this.stderr = "";
         this.outputTruncated = false;
+        this.notices = List.of();
     }
 
     /**
@@ -54,6 +57,7 @@ public class ShellExecutionException extends Exception {
         this.stdout = "";
         this.stderr = "";
         this.outputTruncated = false;
+        this.notices = List.of();
     }
 
     /**
@@ -73,10 +77,32 @@ public class ShellExecutionException extends Exception {
      */
     public ShellExecutionException(String message, Throwable cause, String stdout, String stderr,
             boolean outputTruncated) {
+        this(message, cause, stdout, stderr, outputTruncated, null);
+    }
+
+    /**
+     * Creates a new shell execution exception carrying partial output and the environment's notices.
+     *
+     * @param message
+     *            the error message
+     * @param cause
+     *            the underlying cause, or null
+     * @param stdout
+     *            the partial standard output, null will be converted to empty string
+     * @param stderr
+     *            the partial standard error output, null will be converted to empty string
+     * @param outputTruncated
+     *            true if the captured partial output may itself be incomplete; see {@link #outputTruncated()}
+     * @param notices
+     *            facts the environment tells the model, see {@link #notices()} (null means none)
+     */
+    public ShellExecutionException(String message, Throwable cause, String stdout, String stderr,
+            boolean outputTruncated, List<String> notices) {
         super(message, cause);
         this.stdout = stdout == null ? "" : stdout;
         this.stderr = stderr == null ? "" : stderr;
         this.outputTruncated = outputTruncated;
+        this.notices = notices == null ? List.of() : List.copyOf(notices);
     }
 
     /**
@@ -92,10 +118,30 @@ public class ShellExecutionException extends Exception {
      *            true if the captured partial output may itself be incomplete; see {@link #outputTruncated()}
      */
     protected ShellExecutionException(String message, String stdout, String stderr, boolean outputTruncated) {
+        this(message, stdout, stderr, outputTruncated, null);
+    }
+
+    /**
+     * Creates a new shell execution exception carrying partial output and the environment's notices, but no cause.
+     *
+     * @param message
+     *            the error message
+     * @param stdout
+     *            the partial standard output, null will be converted to empty string
+     * @param stderr
+     *            the partial standard error output, null will be converted to empty string
+     * @param outputTruncated
+     *            true if the captured partial output may itself be incomplete; see {@link #outputTruncated()}
+     * @param notices
+     *            facts the environment tells the model, see {@link #notices()} (null means none)
+     */
+    protected ShellExecutionException(String message, String stdout, String stderr, boolean outputTruncated,
+            List<String> notices) {
         super(message);
         this.stdout = stdout == null ? "" : stdout;
         this.stderr = stderr == null ? "" : stderr;
         this.outputTruncated = outputTruncated;
+        this.notices = notices == null ? List.of() : List.copyOf(notices);
     }
 
     /**
@@ -128,5 +174,17 @@ public class ShellExecutionException extends Exception {
      */
     public boolean outputTruncated() {
         return outputTruncated;
+    }
+
+    /**
+     * Returns the facts the environment tells the model about this call, the same as
+     * {@link ShellCommandResult#notices()} on a result — for instance that the shell session was
+     * recreated before the command ran, so the working directory is back at its start. A command that failed or timed
+     * out may still have run in a changed environment, and the model needs to know that as much as after a success.
+     *
+     * @return the notices (never null; empty by default)
+     */
+    public List<String> notices() {
+        return notices;
     }
 }

@@ -3,7 +3,6 @@ package at.aimon.core.agent.impl.orca;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Path;
-import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -15,7 +14,6 @@ import org.junit.jupiter.api.io.TempDir;
 import org.mockito.Mockito;
 
 import at.aimon.core.agent.AgentContent;
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.prompt.Staticness;
 import at.aimon.core.agent.prompt.SystemPromptPart;
 import at.aimon.core.agent.prompt.SystemPromptParts;
@@ -26,6 +24,7 @@ import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.base.Principal;
 import at.aimon.core.command.DefaultCommandExecutionManager;
+import at.aimon.core.environment.EnvironmentDescriptor;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.invoke.LlmCallGateway;
@@ -76,9 +75,8 @@ class OrcaAgentExecutorMemoryInjectionTest {
         return AgentContent.builder().systemPrompt("Hello").build();
     }
 
-    private Environment env() {
-        return Environment.builder().workingDirectory("/x").platform("p").osVersion("o")
-                .timeZone(ZoneId.systemDefault()).build();
+    private EnvironmentDescriptor env() {
+        return EnvironmentDescriptor.builder().workingDirectory("/x").platform("p").osVersion("o").build();
     }
 
     @Test

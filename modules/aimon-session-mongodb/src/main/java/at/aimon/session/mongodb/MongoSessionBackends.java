@@ -10,6 +10,7 @@ import at.aimon.core.agent.session.idempotency.IdempotencyStore;
 import at.aimon.core.agent.session.inbox.SessionInbox;
 import at.aimon.core.agent.session.signal.SessionSignalBus;
 import at.aimon.core.agent.session.store.SessionLeaseStore;
+import at.aimon.core.agent.session.store.SessionLogSegmentStore;
 import at.aimon.core.agent.session.store.SessionRecordStore;
 
 /**
@@ -54,6 +55,7 @@ public final class MongoSessionBackends implements AutoCloseable {
     private final MongoIdempotencyStore idempotencyStore;
     private final MongoSessionSignalBus signalBus;
     private final MongoSessionRecordStore recordStore;
+    private final MongoSessionLogSegmentStore segmentStore;
 
     private MongoSessionBackends(Builder b) {
         this.lock = b.lock;
@@ -61,6 +63,7 @@ public final class MongoSessionBackends implements AutoCloseable {
         this.idempotencyStore = b.idempotencyStore;
         this.signalBus = b.signalBus;
         this.recordStore = b.recordStore;
+        this.segmentStore = b.segmentStore;
     }
 
     public static Builder builder() {
@@ -97,6 +100,13 @@ public final class MongoSessionBackends implements AutoCloseable {
         return recordStore;
     }
 
+    /**
+     * @return the store sealed session-log segments go to, in the same database as the records
+     */
+    public SessionLogSegmentStore segmentStore() {
+        return segmentStore;
+    }
+
     /** Closes the change-stream watcher; the {@code MongoClient} owner is responsible for closing the client. */
     @Override
     public void close() {
@@ -112,6 +122,7 @@ public final class MongoSessionBackends implements AutoCloseable {
         private String idempotencyCollection;
         private String signalsCollection;
         private String sessionRecordsCollection;
+        private String sessionLogSegmentsCollection;
         private Duration idempotencyDoneTtl = Duration.ofHours(24);
         private Clock clock = Clock.systemUTC();
 
@@ -120,6 +131,7 @@ public final class MongoSessionBackends implements AutoCloseable {
         private MongoIdempotencyStore idempotencyStore;
         private MongoSessionSignalBus signalBus;
         private MongoSessionRecordStore recordStore;
+        private MongoSessionLogSegmentStore segmentStore;
 
         private Builder() {
         }
@@ -159,6 +171,11 @@ public final class MongoSessionBackends implements AutoCloseable {
             return this;
         }
 
+        public Builder sessionLogSegmentsCollection(String v) {
+            this.sessionLogSegmentsCollection = v;
+            return this;
+        }
+
         public Builder idempotencyDoneTtl(Duration v) {
             this.idempotencyDoneTtl = v;
             return this;
@@ -194,6 +211,10 @@ public final class MongoSessionBackends implements AutoCloseable {
                     : at.aimon.session.mongodb.internal.DocumentKeys.COLL_SESSION_RECORDS;
             this.signalBus = new MongoSessionSignalBus(database, signals, nodeId);
             this.recordStore = new MongoSessionRecordStore(database, records);
+            this.segmentStore = new MongoSessionLogSegmentStore(database,
+                    sessionLogSegmentsCollection != null
+                            ? sessionLogSegmentsCollection
+                            : at.aimon.session.mongodb.internal.DocumentKeys.COLL_SESSION_LOG_SEGMENTS);
             return new MongoSessionBackends(this);
         }
     }

@@ -11,7 +11,7 @@
 > where the build departs from this document.** Everything between this header and §11 is the body as approved in
 > design review round 2 (PASS, no blocking findings, four non-blocking notes), kept byte-exact rather than corrected —
 > the house habit in this directory, for the reason
-> [`../llm/model-capability-binding-round-trip.md`](../llm/model-capability-binding-round-trip.md) gives. Its
+> [`../llm/model-capability-binding-round-trip.md`](../README.md#34-승인된-설계를-그대로-커밋한-기록) gives. Its
 > `file:line` citations are at `main` `c561e17`. The review transcripts (`review-1.md`, `review-2.md`) and the run
 > records the body names (`TASK.md`, `$RUN_DIR/build/`) are not in the repository; §11 reproduces what was measured.
 >

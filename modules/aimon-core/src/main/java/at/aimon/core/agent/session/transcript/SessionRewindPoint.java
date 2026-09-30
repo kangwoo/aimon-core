@@ -18,7 +18,8 @@ import at.aimon.core.agent.input.UserInput;
  *
  * <p>
  * So the trail is removed only when someone asks to retry, and this is the record of how far back to go.
- * {@link #getMessageCount()} is the transcript's size <em>before</em> the turn added anything, and
+ * {@link #getSeq()} is the seq the turn's first entry received — the log's {@code nextSeq} <em>before</em> the turn
+ * added anything — and
  * {@link #getUserInput()} is what started it, kept here rather than looked up by index because the messages in between
  * are not all distinguishable by role — the injected context blocks carry the user role too.
  *
@@ -38,10 +39,12 @@ import at.aimon.core.agent.input.UserInput;
  * same reason it keeps the input: a retry is meant to be the turn again, not a turn like it.
  *
  * <p>
- * <b>Lives with the transcript, not beside it.</b> The count is an index into a specific message list, so it is stored
- * inside {@link SessionTranscript} and travels with it through {@link SessionSnapshot} to the record. Held as a
- * side field of the record instead, it would survive writes that replaced the messages it counts — compaction being
- * the obvious one — and point into a history that no longer exists.
+ * <b>A seq, not a count.</b> It used to be a message count, which is an index, and an index moves whenever anything
+ * before it leaves the list. A seq is the address of a log entry and is never reused (see {@link SessionLogState}),
+ * so the point means the same entry however the record around it changes. It is stored inside
+ * {@link SessionLogState} and travels with it through {@link SessionSnapshot} to the record, and it is checked there
+ * to lie in {@code [floorSeq, nextSeq]}. A version-1 document still stores it as a count; the codec converts at the
+ * boundary.
  *
  * <p>
  * At most one is held at a time, and it describes the most recent turn only: a turn that ends any other way clears it.
@@ -52,12 +55,12 @@ import at.aimon.core.agent.input.UserInput;
  */
 public final class SessionRewindPoint {
 
-    private final int messageCount;
+    private final long seq;
     private final UserInput userInput;
     private final SubmitOptions submitOptions;
 
-    private SessionRewindPoint(int messageCount, UserInput userInput, SubmitOptions submitOptions) {
-        this.messageCount = messageCount;
+    private SessionRewindPoint(long seq, UserInput userInput, SubmitOptions submitOptions) {
+        this.seq = seq;
         this.userInput = userInput;
         this.submitOptions = submitOptions;
     }
@@ -65,25 +68,25 @@ public final class SessionRewindPoint {
     /**
      * Creates a rewind point for a turn submitted without per-turn options.
      *
-     * @param messageCount
-     *            the number of messages the transcript held before the turn began (must not be negative)
+     * @param seq
+     *            the seq of the turn's first entry (must not be negative)
      * @param userInput
      *            the input the turn was submitted with (must not be null)
      * @return a new rewind point (never null)
      * @throws IllegalArgumentException
-     *             if {@code messageCount} is negative
+     *             if {@code seq} is negative
      * @throws NullPointerException
      *             if {@code userInput} is null
      */
-    public static SessionRewindPoint of(int messageCount, UserInput userInput) {
-        return of(messageCount, userInput, SubmitOptions.empty());
+    public static SessionRewindPoint of(long seq, UserInput userInput) {
+        return of(seq, userInput, SubmitOptions.empty());
     }
 
     /**
      * Creates a rewind point.
      *
-     * @param messageCount
-     *            the number of messages the transcript held before the turn began (must not be negative)
+     * @param seq
+     *            the seq of the turn's first entry (must not be negative)
      * @param userInput
      *            the input the turn was submitted with (must not be null)
      * @param submitOptions
@@ -91,25 +94,25 @@ public final class SessionRewindPoint {
      *            {@link SubmitOptions#empty()} when there were none)
      * @return a new rewind point (never null)
      * @throws IllegalArgumentException
-     *             if {@code messageCount} is negative
+     *             if {@code seq} is negative
      * @throws NullPointerException
      *             if {@code userInput} or {@code submitOptions} is null
      */
-    public static SessionRewindPoint of(int messageCount, UserInput userInput, SubmitOptions submitOptions) {
-        if (messageCount < 0) {
-            throw new IllegalArgumentException("messageCount cannot be negative, got: " + messageCount);
+    public static SessionRewindPoint of(long seq, UserInput userInput, SubmitOptions submitOptions) {
+        if (seq < 0) {
+            throw new IllegalArgumentException("seq cannot be negative, got: " + seq);
         }
-        return new SessionRewindPoint(messageCount, Objects.requireNonNull(userInput, "userInput cannot be null"),
+        return new SessionRewindPoint(seq, Objects.requireNonNull(userInput, "userInput cannot be null"),
                 Objects.requireNonNull(submitOptions, "submitOptions cannot be null"));
     }
 
     /**
-     * Returns the transcript size to truncate back to.
+     * Returns the seq to cut the log back from: the seq of the turn's first entry.
      *
-     * @return the message count before the turn began (never negative)
+     * @return the seq (never negative)
      */
-    public int getMessageCount() {
-        return messageCount;
+    public long getSeq() {
+        return seq;
     }
 
     /**
@@ -138,17 +141,17 @@ public final class SessionRewindPoint {
         if (!(o instanceof SessionRewindPoint other)) {
             return false;
         }
-        return messageCount == other.messageCount && Objects.equals(userInput, other.userInput)
+        return seq == other.seq && Objects.equals(userInput, other.userInput)
                 && Objects.equals(submitOptions, other.submitOptions);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(messageCount, userInput, submitOptions);
+        return Objects.hash(seq, userInput, submitOptions);
     }
 
     @Override
     public String toString() {
-        return "SessionRewindPoint{messageCount=" + messageCount + ", inputType=" + userInput.getType() + "}";
+        return "SessionRewindPoint{seq=" + seq + ", inputType=" + userInput.getType() + "}";
     }
 }

@@ -21,19 +21,15 @@ import at.aimon.core.agent.session.SessionId;
  * L1 — {@code Bash} and {@code BashOutput} through an assembled runtime.
  *
  * <p>
- * <b>Bash is the one tool that is not confined to the node.</b> {@code OrcaBashToolProvider} wires the
- * {@code VirtualShell} from the {@code OrcaToolProviderContext}, which for a default assembly is
- * {@code LocalShells.create()} — a {@code LocalShell} with no default working directory. Commands therefore inherit
- * the <em>JVM's</em> current directory rather than the node's {@code VirtualFileSystem} root. The provider takes the
- * shell from the context but still never consults the context's file system, so nothing ties the two roots together.
+ * <b>Bash runs in the execution environment's shell.</b> The tool takes its {@code VirtualShell} from the
+ * {@code ExecutionEnvironment} of the execution (execution-environment design §4.2, §6), the same environment its file
+ * tools read and write, so the shell's default working directory is the workspace root — here the node's
+ * {@code VirtualFileSystem} root — not the JVM's current directory. {@link #bashRunsInTheNodeRoot} pins that.
  *
  * <p>
- * That is a real property of the assembly, not a gap in this test, and it is why
- * {@link #bashIsNotConfinedToTheNodeRoot}
- * pins it rather than asserting the confinement one might expect. Every other tool in this suite is isolated per node;
- * Bash is a shared surface across every agent in the process. The multi-runtime isolation suite therefore claims
- * nothing about Bash, and a future change that <em>does</em> confine it will fail that test loudly — which is the point
- * of pinning it.
+ * The shell is still not confined by the {@code VirtualFileSystem}: a command given an absolute path writes wherever
+ * the process may write, past the file tools' path rules. {@link #bashWritesBypassTheVirtualFileSystem} pins that half,
+ * and it is why the multi-runtime isolation suite claims nothing about Bash.
  */
 @DisplayName("RT-IT-L1: Bash through an assembled runtime")
 class BashToolTurnIntegrationTest {
@@ -98,8 +94,8 @@ class BashToolTurnIntegrationTest {
     }
 
     @Test
-    @DisplayName("Bash runs in the JVM working directory, NOT the node's file system root")
-    void bashIsNotConfinedToTheNodeRoot() {
+    @DisplayName("Bash runs in the execution environment's working directory — the node's file system root")
+    void bashRunsInTheNodeRoot() throws Exception {
         final SessionId sessionId = OrcaRuntimeItSupport.newSession();
         llm.script(sessionId.value(), ScriptedLlmClient.callTool("Bash", Map.of("command", "pwd")),
                 ScriptedLlmClient.text("done"));
@@ -110,10 +106,11 @@ class BashToolTurnIntegrationTest {
                 .filter(observation -> observation.startsWith("/")).findFirst()
                 .orElseThrow(() -> new AssertionError("pwd produced no path-looking observation"));
 
-        // Pinned, not wished for: the tool reports the JVM's directory and knows nothing about node.root(). Assert
-        // both halves so the pin still fails if either the confinement appears or the inheritance disappears.
-        assertThat(reported.trim()).isEqualTo(System.getProperty("user.dir"));
-        assertThat(reported.trim()).isNotEqualTo(node.root().toString());
+        // Behaviour change (execution-environment design §1.6/§4.2): the shell and the file tools come from one
+        // environment and see the same files, so the default cwd is the workspace root, not the JVM's directory.
+        // Compared as real paths — macOS reports /private/var for a /var temp dir.
+        assertThat(Path.of(reported.trim()).toRealPath()).isEqualTo(node.root().toRealPath());
+        assertThat(reported.trim()).isNotEqualTo(System.getProperty("user.dir"));
     }
 
     @Test

@@ -34,6 +34,7 @@ public final class ExecutionOptions {
     private final String unixShell;
     private final Long maxCaptureBytes;
     private final String stdin;
+    private final boolean background;
 
     private ExecutionOptions(Builder builder) {
         this.timeout = builder.timeout;
@@ -44,6 +45,7 @@ public final class ExecutionOptions {
         this.unixShell = builder.unixShell;
         this.maxCaptureBytes = builder.maxCaptureBytes;
         this.stdin = builder.stdin;
+        this.background = builder.background;
     }
 
     /**
@@ -161,6 +163,36 @@ public final class ExecutionOptions {
     }
 
     /**
+     * Whether the command was started in the background ({@code Bash(run_in_background=true)}) and may outlive the
+     * call that started it.
+     *
+     * <p>
+     * A shell that runs one command at a time in a persistent session (a sandbox) must not let such a command hold
+     * that session, or every later command in it waits; it runs it as a one-shot instead. A shell that starts a new
+     * process per command — {@code LocalShell} — ignores the flag (execution-environment design §5.3).
+     *
+     * @return {@code true} for a background command
+     */
+    public boolean isBackground() {
+        return background;
+    }
+
+    /**
+     * Returns a builder seeded with every option of this instance, for deriving a variant.
+     *
+     * @return a pre-populated builder
+     */
+    public Builder toBuilder() {
+        final Builder builder = new Builder().timeout(timeout).environment(environment)
+                .workingDirectory(workingDirectory).charset(charset).redirectErrorStream(redirectErrorStream)
+                .unixShell(unixShell).stdin(stdin).background(background);
+        if (maxCaptureBytes != null) {
+            builder.maxCaptureBytes(maxCaptureBytes);
+        }
+        return builder;
+    }
+
+    /**
      * Builder for constructing {@link ExecutionOptions} instances.
      */
     public static final class Builder {
@@ -172,6 +204,7 @@ public final class ExecutionOptions {
         private String unixShell;
         private Long maxCaptureBytes;
         private String stdin;
+        private boolean background;
 
         private Builder() {
         }
@@ -278,6 +311,19 @@ public final class ExecutionOptions {
          */
         public Builder stdin(String stdin) {
             this.stdin = stdin;
+            return this;
+        }
+
+        /**
+         * Marks the command as started in the background (default {@code false}).
+         *
+         * @param background
+         *            whether the command runs in the background
+         * @return this builder
+         * @see ExecutionOptions#isBackground()
+         */
+        public Builder background(boolean background) {
+            this.background = background;
             return this;
         }
 

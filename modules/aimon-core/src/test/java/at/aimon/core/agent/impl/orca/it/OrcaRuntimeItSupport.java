@@ -32,6 +32,7 @@ import at.aimon.core.agent.session.transcript.DefaultTranscriptManager;
 import at.aimon.core.agent.session.transcript.TranscriptManager;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.command.DefaultCommandExecutionManager;
+import at.aimon.core.environment.impl.LocalExecutionEnvironmentProvider;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
 import at.aimon.core.hook.DefaultHookExecutionManager;
@@ -166,6 +167,11 @@ final class OrcaRuntimeItSupport implements AutoCloseable {
             factory.withSkillInvocationPolicy(options.skillInvocationPolicy);
         }
         factory.withWorkflowRunnerEnabled(options.workflowRunnerEnabled);
+        // One filesystem serves as both the control store (its .aimon/ directories) and, behind the provider's path
+        // rules, the workspace the tools see — the "supplied file system" shape. rg is left out so Grep takes the same
+        // path on every machine.
+        factory.withExecutionEnvironmentProvider(
+                LocalExecutionEnvironmentProvider.builder().fileSystem(fileSystem).contentSearch(false).build());
 
         // scheduledTaskManager and credentialStore are null on purpose: neither is required to assemble a runtime, and
         // leaving them out proves the factory's null-safe paths (the scheduling provider skips registration) stay

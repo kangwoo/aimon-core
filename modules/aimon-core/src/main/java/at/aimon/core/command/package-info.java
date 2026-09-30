@@ -55,7 +55,7 @@
  *     &#64;code
  *     // Create registry
  *     CommandRegistry registry = new DefaultCommandRegistry(systemCommands, skillRegistry, fileSystem,
- *             ".aimon/commands");
+ *             "commands");
  *
  *     // Get and execute command
  *     Command command = registry.getCommandOrThrow("commit");

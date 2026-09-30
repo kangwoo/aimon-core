@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/workflow/workflow-cli-guide.md
-source_commit: eec9ccd
+source_commit: 837e4be
 ---
 
 # Workflow CLI Guide (the aimon-cli view)
@@ -103,6 +103,12 @@ The `perspectives` values are used as the angles the candidates are generated fr
 **`adversarial_verify`** — **reads the prompt as a claim** and has three skeptics each try to refute it.
 Two or more rebuttals means it is rejected; otherwise the verdict is that it survived. This is for fact-checking and risk verification.
 
+To place a built-in strategy's steps in a particular execution environment, define a subagent under the role's fixed
+name — `workflow-perspective`, `workflow-synthesizer`, `workflow-candidate`, `workflow-judge` or `workflow-skeptic` —
+and give it `attributes`. `Workflow` takes only that definition's `attributes` and uses none of its prompt, tools or
+model. That definition is still an ordinary subagent, though: the model sees it in the list and can call it through
+`Task`, and then the definition's prompt is used.
+
 ### Examples
 
 ```
@@ -163,11 +169,28 @@ A top-level `return` and `await` are both legal (the script is wrapped in an asy
   phase: "Review",             // the event group
   model: "...",                // a model override
   tools: ["Read", "Grep"],     // the tool allow-list
-  maxIterations: 10
+  maxIterations: 10,
+  attributes: { sandbox: { slot: "build" } }  // attributes an execution environment provider reads
 }
 ```
 
 At least one of `agentType` and `systemPrompt` is required.
+
+`attributes` are read by the provider that decides which execution environment (a sandbox slot, say) the step runs in.
+If a subagent is registered under the same name as `agentType`, that definition's `attributes` are laid down first and
+the step's `attributes` **may only add keys the registered definition does not set.** The keys the registered definition
+sets are pinned — a step that gives one of them a different value fails the script (the message names the `agentType`,
+the key, the registered value and the script's value), and a step that gives the same value changes nothing. Scripts are
+written by the model, so this keeps a script from moving a subagent the operator registered with `sandbox.slot: isolated`
+to `privileged`. A step cannot delete a registered key either. An unregistered `agentType` (or a step with no
+`agentType`) has no keys to pin, so the step's `attributes` are used as they are — whether a model-written script may
+set `attributes` at all is not decided yet (backlog EE-45). Only attributes are taken from the registered definition.
+The step is still named `graaljs:<agentType>`, and the prompt and tools are still the step's own. The reading rules are
+those of a definition file's `attributes` block: `{ sandbox: { slot: "build" } }` and `{ "sandbox.slot": "build" }` are
+the same attribute, numbers and booleans become text (`1.0` becomes `"1"`), and a non-object value, an array, an entry
+whose value is `null`, a key that is both a value and a group, or a non-finite number (`NaN`, `Infinity`) fails the
+script. Leaving `attributes` out, or giving `attributes: null`, means no attributes.
+
 Supply a `schema` and `agent(...)` returns the **structured object** as it is. Without one it returns a result view:
 
 ```js

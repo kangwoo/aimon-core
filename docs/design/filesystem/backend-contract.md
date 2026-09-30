@@ -11,7 +11,7 @@
 > [`.claude/rules/testing.md`](../../../.claude/rules/testing.md)
 >
 > 관련 문서: [`../agent-execution/artifact.md`](../agent-execution/artifact.md) (VFS 에 쌓인 파일이
-> 사용자에게 건네지는 경로), [`../integration/sandbox.md`](../integration/sandbox.md),
+> 사용자에게 건네지는 경로), [aimon-sandbox 의 `sandbox.md`](https://github.com/kangwoo/aimon-sandbox/blob/main/docs/design/sandbox.md),
 > [`../../overview/architecture.md`](../../overview/architecture.md)
 
 ---
@@ -129,6 +129,20 @@ id 를 스냅샷하고(그 뒤에 찍으면 방금 쓴 리비전이 목록에 �
 디렉토리 수가 0 이 되어, `list` 가 보여 주는 것과 요약이 서로 다른 말을 하게 된다.
 
 ---
+
+### 4.2 `getMetadata` 는 내용이 바뀌면 달라진다
+
+파일 도구의 낡은 쓰기 방지([`../tool/execution-environment.md`](../tool/execution-environment.md) §7)는 `Read`
+시점과 수정 시점의 `FileMetadata` 를 비교한다. 그래서 계약에 한 줄이 있다 — **내용이 바뀌면 `modifiedAt` 또는
+`getEtag()` 중 하나가 반드시 바뀐다.** 둘 다 있으면 비교는 etag 를 우선한다.
+
+| 백엔드 | etag | 근거 |
+|--------|------|------|
+| S3 | `ETag` (`HeadObject` 응답) | 내용이 바뀌면 바뀐다 |
+| GridFS | 파일 문서의 `ObjectId` hex | 쓰기마다 새 문서를 올리므로 다시 쓰면 바뀐다. 드라이버 5.x 에는 md5 가 없다. 같은 내용을 다시 써도 바뀌는 것은 안전한 쪽의 오탐이다 |
+| 로컬 | 없음 | nanosecond mtime + 크기로 판정. 초 단위 mtime 파일 시스템(HFS+, 일부 네트워크 마운트)에서 같은 초·같은 크기의 재작성은 놓칠 수 있다 |
+
+감싸는 데코레이터(`ScopedVirtualFileSystem`, `PathRuleVirtualFileSystem`)는 etag 를 그대로 전달한다.
 
 ## 5. 최대 파일 크기 — 로컬 전용 설정에서 전 백엔드 계약으로
 
@@ -305,5 +319,5 @@ GFS-07 은 배선 기본값 하나다. `FileSystemFactory.createFromEnvironment(
 - [`../../overview/architecture.md`](../../overview/architecture.md) — `VirtualFileSystem` 이 놓인 자리
 - [`../../overview/scope-model.md`](../../overview/scope-model.md) — 만든 쪽이 닫는다 (§6 의 `ownsClient`)
 - [`../agent-execution/artifact.md`](../agent-execution/artifact.md) — VFS 에 쌓인 파일이 사용자에게 건네지는 경로
-- [`../integration/sandbox.md`](../integration/sandbox.md) — 격리 실행 환경과 파일시스템의 경계
+- [aimon-sandbox 의 `sandbox.md`](https://github.com/kangwoo/aimon-sandbox/blob/main/docs/design/sandbox.md) — 격리 실행 환경과 파일시스템의 경계 (별도 저장소)
 - [`../../features/tool/tool-development-guide.md`](../../features/tool/tool-development-guide.md) — `Read`/`Write`/`Edit` 가 이 계약 위에 선다

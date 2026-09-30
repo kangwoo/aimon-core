@@ -59,6 +59,7 @@ at.aimon.core/
 ├── tracing/        실행 트레이싱
 ├── filesystem/     가상 파일시스템
 ├── shell/          가상 셸
+├── environment/    실행 환경 — 도구가 쓰는 파일시스템·셸을 실행마다 고른다
 ├── credential/     자격증명 저장소
 ├── status/         시스템 상태 리포트
 ├── config/         설정 (훅 핫리로드)
@@ -95,7 +96,7 @@ IMPORTANT (패키지 규약): `at.aimon.core.<domain>` 은 인터페이스와 �
 │ Implementation                                                 │
 │   내장: ReadTool, BashTool, LocalFileSystem, LocalShell, …      │
 │   외부 모듈: aimon-llm-*, aimon-filesystem-*, aimon-session-*,   │
-│             aimon-memory-*, aimon-sandbox-*, …                  │
+│             aimon-knowledge-*, aimon-browser-*, …               │
 └───────────────────────────────────────────────────────────────┘
 ```
 
@@ -348,7 +349,15 @@ public interface VirtualShell extends AutoCloseable {
 ```
 
 `ShellCommandResult` 는 exit code, stdout, stderr, 소요 시간을 담는다.
-샌드박스 모듈(`aimon-sandbox-docker`, `aimon-sandbox-kubernetes`)이 격리 실행 구현을 제공한다.
+구현은 `LocalShell`(`shell.impl.local`) **하나뿐**이다 — 샌드박스 모듈은 이 인터페이스를 구현하지 않는다.
+그쪽의 격리는 셸을 갈아 끼우는 것이 아니라 도구 4종(`RunSandbox` · `CopyToSandbox` · `RestartSandbox` ·
+`DeleteSandbox`)으로 주어지므로, 컨테이너에 격리된 **셸**이 필요하면 직접 구현한다.
+
+도구는 셸도 파일 시스템도 직접 쥐지 않는다. `at.aimon.core.environment` 의 `ExecutionEnvironmentProvider` 가
+실행마다 `ExecutionEnvironment`(파일 시스템 · 셸 · 서술자 · 스테이징 · 격리)를 내고, 실행기가 그것을
+`ToolContextKeys.EXECUTION_ENVIRONMENT` 에 넣는다. 기본 구현은 `LocalExecutionEnvironmentProvider` 다 —
+작업 공간의 `.aimon/`(제어 저장소)은 파일 도구에게 숨기고, 스킬 파일은 `.aimon-staged/` 로 스테이징한다.
+설계는 [`design/tool/execution-environment.md`](../design/tool/execution-environment.md).
 
 ### 4.7 Session
 
@@ -493,8 +502,8 @@ id 를 `invokingSessionId` 로 별도 전달한다.
 
 여러 서브에이전트를 **결정론적 제어 흐름**으로 엮는다. `WorkflowRunners` 로 러너를 만들고
 `Pipeline` / `Stage` / `AgentTask` 로 조립하며, `RunHandle` 과 `RunStore` 로 재개할 수 있다.
-예산은 `WorkflowBudget`, 동시성은 `WorkflowConcurrencyConfig`, git 격리는
-`WorktreeEnvironmentFactory` 가 담당한다. JS 스크립트 프론트엔드는 `aimon-workflow-graaljs`.
+예산은 `WorkflowBudget`, 동시성은 `WorkflowConcurrencyConfig`, 격리는
+실행 환경의 `ExecutionEnvironment.isolate()` 가 담당한다. JS 스크립트 프론트엔드는 `aimon-workflow-graaljs`.
 
 IMPORTANT (소멸 책임): `WorkflowRunner` 에는 두 변형이 있다 — agent-scoped 변형은
 `OrcaAgentRuntimeFactory` 가 만들고 `OrcaAgentRuntime.close()` 가 닫으며, call-scoped 변형은
@@ -586,7 +595,7 @@ Orca는 도구를 도메인별 프로바이더로 조립한다. 외부 모듈은
 | Orca 도구 묶음 | `OrcaToolProvider` | `at.aimon.core.agent.orca` SPI 구현 |
 | LLM 프로바이더 | `LlmClient` | 별도 모듈에서 구현 |
 | 파일 백엔드 | `VirtualFileSystem` | 구현 (GridFS, S3 참조) |
-| 셸 백엔드 | `VirtualShell` | 구현 (샌드박스 모듈 참조) |
+| 셸 백엔드 | `VirtualShell` | 구현 (내장 구현은 `LocalShell` 하나뿐 — 샌드박스 모듈은 이 SPI 를 구현하지 않는다) |
 | 라이프사이클 훅 | `hook.event` 의 13개 인터페이스 | `HookRegistry.register(HookEventType, hook)` |
 | 스킬 | `Skill` | Agent Skills 표준의 SKILL.md 작성 |
 | 서브에이전트 | `Subagent` | 코드 빌더 또는 Markdown 정의 |
@@ -635,7 +644,7 @@ Orca는 도구를 도메인별 프로바이더로 조립한다. 외부 모듈은
 | `YamlParserInstanceArchitectureTest` | main 소스 어디에도 `Yaml` 필드가 없다 (파스마다 새로 만든다). 소스 grep 이 아니라 필드 선언 리플렉션이라 래퍼를 거친 것도 잡는다 |
 | `PublishedModuleApiScopeTest` | 형제 모듈을 `api` 로 선언하는 것은 파사드뿐, 나머지 published 모듈은 `implementation` |
 | `PublishedModuleLoggingBindingTest` | published 라이브러리는 SLF4J API 로만 로깅하고 바인딩을 소비자 대신 고르지 않는다 |
-| `ReleaseGateMatchesCiGateTest` | `scripts/release.sh` 가 CI 워크플로와 **같은** Gradle 태스크를 돌리고, 프로바이더 API 키가 환경에 있으면 시작하지 않는다 — 뒤의 것은 스크립트를 샌드박스에서 실제로 돌려 확인한다 |
+| `ReleaseGateMatchesCiGateTest` | `scripts/release.sh` 가 CI 워크플로와 **같은 검증 태스크**(`checkAll` · `integrationTest` · `packagingTest` · `jacocoTestCoverageVerification`)를 한 번의 호출로 돌리고, 프로바이더 API 키가 환경에 있으면 시작하지 않는다 — 뒤의 것은 스크립트를 샌드박스에서 실제로 돌려 확인한다 |
 | `ExternalSchedulerWiringTest` | 외부 스케줄러 결선을 다른 패키지에서 수행해 `executeTask` 의 가시성이 조용히 좁아지지 못하게 한다 |
 | `SessionNamingArchitectureTest` | 맨 `Session` · `AgentSession` 을 타입 이름으로 쓸 수 없다 (`aimon-session-routing`) |
 | `SessionRecordSoleWriterArchitectureTest` | 가변 `SessionRecord` 에 의존하는 production 코드는 `agent.session.store` 밖에 없다 (`aimon-session-routing`) |

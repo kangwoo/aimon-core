@@ -16,7 +16,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
-import org.springframework.boot.web.context.WebServerGracefulShutdownLifecycle;
+import org.springframework.boot.web.server.context.WebServerGracefulShutdownLifecycle;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;

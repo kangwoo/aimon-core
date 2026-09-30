@@ -38,6 +38,7 @@
 | [`interrupt.md`](agent-execution/interrupt.md) | `InterruptBehavior` 4종, capability 와 coordinator 분리, 도구를 안전하게 끊는 경로 |
 | [`interceptor.md`](agent-execution/interceptor.md) | `AgentExecutionInterceptor` — `execute()` 경계를 가로채는 동기 체인 |
 | [`compaction.md`](agent-execution/compaction.md) | 컨텍스트가 차기 전 대화 요약. 트리거 조건, 실패 처리, `/compact` |
+| [`context-engine.md`](agent-execution/context-engine.md) | (IMPLEMENTED, 차이는 §13) LLM 에 보낼 뷰를 정하는 `ContextEngine` — 판정·복구·`/compact` 를 한 자리에, 장기 대화용 롤링 engine |
 | [`artifact.md`](agent-execution/artifact.md) | 에이전트가 만든 파일을 사용자에게 건네는 경로 |
 | [`integration-test-layers.md`](agent-execution/integration-test-layers.md) | `OrcaAgentRuntime` 통합 테스트의 계층 구분과 무엇을 어디서 검증하는가 |
 | [`max-tokens-truncation-reporting.md`](agent-execution/max-tokens-truncation-reporting.md) | `max_tokens` 에서 잘린 응답에 두 ReAct 루프가 같은 답을 주는 자리 — 잘린 도구 호출을 실행하지 않고 거절하는 이유, 포크의 `TRUNCATED`, 추론 토큰을 숫자로만 붙이는 WARN, thinking 기록 §16.8 과 백로그 L-16 의 정정 |
@@ -52,6 +53,7 @@
 | [`routing.md`](session/routing.md) | sticky 라우팅 없이 세션당 턴을 직렬화하는 멀티 노드 계층 |
 | [`backends.md`](session/backends.md) | PostgreSQL · MongoDB · Redis 세 백엔드의 스키마와 보장 차이 |
 | [`inbox-collect-durability.md`](session/inbox-collect-durability.md) | 인박스 `collect` 가 한 항목의 디코드 실패로 배치를 잃지 않게 — 후보 셋의 백엔드별 비용과 기각 사유 |
+| [`session-log.md`](session/session-log.md) | (IMPLEMENTED, 차이는 §12) transcript 를 append-only 로그 + 뷰 상태로 분리. seq 주소, 봉인, `/clear`·rewind, v1 이행 |
 
 ### tool — 도구 계약
 
@@ -61,6 +63,10 @@
 | [`side-effect-axes.md`](tool/side-effect-axes.md) | 부작용을 하나의 등급이 아니라 축으로 나눈 이유 |
 | [`parallel-execution.md`](tool/parallel-execution.md) | `ConcurrencyBehavior` 와 2단 게이트(모델 의도 + 프레임워크 안전성) |
 | [`tool-search.md`](tool/tool-search.md) | 도구가 많아졌을 때 스키마를 지연 로드하는 검색 계층 |
+| [`execution-environment.md`](tool/execution-environment.md) | (IMPLEMENTED) 도구의 파일 시스템·셸을 실행마다 고르는 `ExecutionEnvironment` — 제어 저장소 분리, 격리를 환경 기능으로, 파일 stamp |
+| [`execution-environment-implementation.md`](tool/execution-environment-implementation.md) | 위 설계의 구현 계획(승인본, 영어) — 코드 위치·단계·ArchUnit 변경·테스트, 그리고 구현이 계획에서 벗어난 점(§10) |
+| [`execution-environment-ee42-workflow-attributes.md`](tool/execution-environment-ee42-workflow-attributes.md) | (IMPLEMENTED) 워크플로 단계가 정의의 `attributes` 를 싣게 한 EE-42 설계(승인본, 영어) — `SubagentDescriptor`, 등록 정의 위에 덮는 병합 규칙, `Workflow` 역할 이름, 그리고 구현이 설계에서 벗어난 점(§8) |
+| [`workflow-isolation-hardening.md`](tool/workflow-isolation-hardening.md) | (IMPLEMENTED, 승인본, 영어, 차이는 §8) 워크플로 격리 브랜치를 다듬은 설계 — 브랜치 루트에 다시 거는 경로 규칙(스코프 **아래**에 두는 이유), 격리 거절의 이유를 싣는 `isolate()`, 중첩 격리를 거절한 근거, `WorktreeMerge.promote` 의 소속 검사와 메타데이터 사전 점검 |
 
 ### skill · hook · subagent · workflow — 확장점
 
@@ -79,26 +85,16 @@
 
 | 문서 | 무엇이 있나 |
 |------|------------|
-| [`streaming.md`](llm/streaming.md) | 부분 텍스트 스트리밍 — 청크 타입과 싱크 계약 |
+| [`streaming.md`](llm/streaming.md) | LLM 응답을 provider 중립 청크로 흘리는 전송 — 청크 kind 와 싱크 계약, 게이트웨이 재시도와 reset, 실행기 이벤트와 프리픽스 보존, 전사에 답으로 남지 않는 추론 델타 채널 |
 | [`cancellation.md`](llm/cancellation.md) | 진행 중인 LLM 호출을 끊는 경로 |
 | [`multimodal-content.md`](llm/multimodal-content.md) | 이미지·문서를 메시지에 싣는 콘텐츠 모델 |
-| [`openai-model-capabilities.md`](llm/openai-model-capabilities.md) | 모델별로 요청에 실을 수 있는 파라미터 — 교체 가능하고 fail-open 인 능력 레지스트리, 그리고 gpt-5.x 도구 호출 |
-| [`model-capability-config-key.md`](llm/model-capability-config-key.md) | 그 능력 표를 **설정에서** 확장하는 키 — CLI yaml 과 스타터 프로퍼티, 부분 선언의 기본값, 게이트웨이가 개명한 모델 |
-| [`model-capability-binding-round-trip.md`](llm/model-capability-binding-round-trip.md) | 그 키가 바인딩될 뿐 아니라 **값이 선언까지 옮겨지는지** 모든 키에 대해 확인하는 가드 — 이름이 아니라 왕복을 보는 이유, 두 표면이 복사본 둘이 아니라 계약 하나를 돌리는 이유 |
-| [`openai-responses-path.md`](llm/openai-responses-path.md) | `/v1/responses` 경로 — 턴을 넘어 살아남는 추론 페이로드 슬롯, 엔드포인트를 모델별로 고르는 seam, 네 번째 토큰 카운터 |
-| [`anthropic-thinking-traces.md`](llm/anthropic-thinking-traces.md) | Anthropic 의 `thinking` / `redacted_thinking` 블록이 그 슬롯을 채우는 경로 — 두 갈래 thinking 요청 방언, effort→budget 사다리, thinking 과 충돌하는 샘플링 파라미터 |
-| [`anthropic-sampling-capabilities.md`](llm/anthropic-sampling-capabilities.md) | 그 샘플링 파라미터를 **모델별로** 끄는 경로 — 능력 표가 두 벤더를 서술하게 되는 자리, 지어낸 `temperature` 의 폐기, 두 설정 표면의 Anthropic 분기 |
-| [`reasoning-model-enablement.md`](llm/reasoning-model-enablement.md) | reasoning 모델을 실제로 쓰기까지 남은 것 — 실행기가 이미 하고 있는 것의 감사, thinking 방언을 모델별 사실로 만드는 세 번째 값, effort·thinking 설정 키, 사용자에게 보이는 thinking 스트림 |
-| [`anthropic-thinking-config-surface.md`](llm/anthropic-thinking-config-surface.md) | 그 thinking 노브 셋의 설정 표면 — 벤더 네임스페이스로 처음 내려간 키들, 모드×예산이 한 설정인 이유, 두 표면이 `off` 에 다르게 답하는 자리 |
-| [`reasoning-effort-config-surface.md`](llm/reasoning-effort-config-surface.md) | `reasoningEffort` 의 설정 표면 — 같은 기준이 공통 네임스페이스로 답하는 자리, 바닥이 아니라 rung **집합**이 된 능력, exact 행이 prefix override 를 가리는 약속의 축소 |
-| [`reasoning-delta-stream.md`](llm/reasoning-delta-stream.md) | 사람이 볼 수 있는 추론 스트림 — 네 번째 chunk kind 와 열여섯 번째 sealed 서브타입, 숙고가 전사에 답으로 남지 않게 하는 두 번째 버퍼, 압박 아래 무엇을 먼저 버리는가의 세 등급, 두 벤더의 서로 다른 "요청" |
-| [`provider-switch-agent-model-check.md`](llm/provider-switch-agent-model-check.md) | CLI 에서 `llm.provider` 만 바꾸면 에이전트가 다른 벤더의 모델 이름을 계속 보내는 문제 — 두 관문(엔드포인트 · 모델 계열)으로 거짓 경보를 막는 기동 경고, 인스턴스 동일성으로 가리는 파일 출처, 무언가를 실제로 바꾸는 처방만 내놓는 규칙 |
-| [`model-names-sent-and-shown.md`](llm/model-names-sent-and-shown.md) | 그 기동 경고 뒤에 남은, CLI 가 보내고 보여 주는 모델 이름이 실제로 도는 것과 어긋나던 자리 — 모델을 적지 않은 부품은 지어낸 이름이 아니라 클라이언트의 기본 모델로 돈다는 한 원칙, 번들 `explore` 의 `haiku` 를 지운 이유, 모델을 권하지 않는 `Task` 도구 설명, 이름을 바꾸지 않고 번들을 구별하는 배너 |
-| [`model-alias-docs-followups.md`](llm/model-alias-docs-followups.md) | 그 원칙이 코어 javadoc 에 닿은 뒤에도 서브에이전트의 `model` 을 별칭으로 가르치던 두 기능 가이드와 #125 가 남긴 후속 — 예시가 모델 id 도 placeholder 도 아닌, 모델을 적지 않는 모양을 고른 이유(provider 중립, 낡는 리터럴, 쓰인 그대로 나가는 placeholder), 호출별 override 를 쓰인 그대로 보내는 모델 이름이라 부르는 javadoc, 기본값이 없는 `temperature`, 등록 문장을 고치지 않고 L-19 · L-27 을 정정하는 자리 |
-| [`thinking-reporting-and-dialect-records.md`](llm/thinking-reporting-and-dialect-records.md) | thinking 경로가 운영자에게 무엇을 말하는가 — 조립 중에는 아무것도 보고하지 않는 계약과 로거 없는 resolver, `UNKNOWN` 이 하던 두 일을 쪼갠 네 번째 방언 상수, 방언 census 의 원자료 |
-| [`provider-key-release-gate.md`](llm/provider-key-release-gate.md) | export 된 프로바이더 키가 평범한 빌드를 청구되는 라이브 API 실행으로 바꾸는 문제 — 키를 명령 앞에 붙이는 퀵스타트, 키가 환경에 있으면 시작하지 않는 릴리스 스크립트(unset 이 아니라 거부인 이유), 스크립트를 읽지 않고 샌드박스에서 돌려 순서까지 붙드는 테스트, 거부 목록을 프로바이더 모듈의 키 게이트와 대조하는 인구조사 |
-| [`provider-key-census-claim-and-inputs.md`](llm/provider-key-census-claim-and-inputs.md) | 그 거부 뒤에 남은 두 결정과 기록 정정 — 테스트가 붙드는 것이 거부 목록과 게이트의 같음이 아니라 포함이어서 문장을 "적어도" 로 고친 이유(같음을 붙들면 `LA-2` 를 테스트가 정하게 된다), 인구조사가 읽는 프로바이더 모듈 테스트 소스를 `aimon-core` 의 `test` 입력으로 선언하고 태그 스캔은 선언하지 않은 이유와 그 비용 |
-| [`release-gate-docs-and-skill-input.md`](llm/release-gate-docs-and-skill-input.md) | 그 선언 뒤에 남은 여섯 가지 — 두 가드가 읽는 `/release` 스킬을 `aimon-core` 의 `test` 입력으로 선언한 이유(스킬만 고친 로컬 빌드는 두 가드를 돌리지 않았다)와 그 비용, 게이트를 `checkAll` 하나로 적던 퍼블리싱 가이드의 행, 틀린 기록을 대체하지 않고 제자리에서 고치는 기준(그 문장이 쓰일 때부터 틀렸는가, 뒤의 변경이 사실을 바꿨는가) |
+| [`model-capabilities.md`](llm/model-capabilities.md) | "이 모델이 무엇을 받는가" 를 조회할 수 있는 사실로 만드는 능력 기술자와 레지스트리 — fail-open 의 정의, 모델 이름을 스니핑하지 않는 이유, 내장 표의 행과 그 측정 근거 |
+| [`request-parameters.md`](llm/request-parameters.md) | 두 provider 가 와이어 요청을 조립할 때 함께 지키는 규칙 — 값을 지어내지 않는 우선순위, 샘플링 파라미터의 생략, reasoning effort ladder, 요청과 모델이 어긋날 때의 보고 |
+| [`reasoning-traces.md`](llm/reasoning-traces.md) | provider 의 불투명 추론 payload 를 도구 호출 너머로 되싣는 코어 슬롯 — 부착·영속 규칙, 두 provider 의 캡처와 재전송, 드롭과 보고, reasoning 토큰 회계 |
+| [`openai-responses-path.md`](llm/openai-responses-path.md) | OpenAI 클라이언트가 요청마다 Chat Completions 와 Responses 중 하나로 가는 이음매 — 라우팅 술어, Responses 요청·변환·오류, reasoning summary |
+| [`anthropic-thinking.md`](llm/anthropic-thinking.md) | Anthropic thinking 요청의 해석 — 모드 × 모델 방언, 예산 사다리와 clamp, `AUTO` 정책, display, 조립 중에는 보고하지 않는 보고 계약 |
+| [`configuration-surface.md`](llm/configuration-surface.md) | LLM 설정의 세 표면(CLI · 스타터 · frontmatter) — 공통과 벤더 네임스페이스를 가르는 규칙, 능력 선언 키, 바인딩 불변식, 값이 선언까지 옮겨지는지 보는 왕복 가드 |
+| [`model-name-resolution.md`](llm/model-name-resolution.md) | 요청에 실리는 모델 이름과 CLI 가 보여 주는 이름 — 모델을 적지 않은 부품은 클라이언트의 기본 모델로 돈다는 원칙, 쓰인 그대로 보내는 이름, provider 전환 기동 검사 |
 
 ### 상태를 갖는 서브시스템
 
@@ -116,7 +112,7 @@
 | 문서 | 무엇이 있나 |
 |------|------------|
 | [`spring-boot-starter.md`](integration/spring-boot-starter.md) | 조립 지식을 프레임워크 중립 층(`aimon-bootstrap`)으로 꺼내고 그 위에 얹은 자동설정 |
-| [`sandbox.md`](integration/sandbox.md) | 격리 실행 환경을 identifier 로 재사용하는 추상화와 Docker·Kubernetes 구현 |
+| [`sandbox.md`](https://github.com/kangwoo/aimon-sandbox/blob/main/docs/design/sandbox.md) | 격리 실행 환경을 identifier 로 재사용하는 추상화와 Docker·Kubernetes 구현. **이 저장소에 없다** — 모듈과 함께 [aimon-sandbox](https://github.com/kangwoo/aimon-sandbox) 로 옮겨 갔다 |
 | [`mcp-tool.md`](integration/mcp-tool.md) | MCP 서버의 도구를 로컬 도구와 구분되지 않게 만드는 어댑터 |
 | [`config-value-expansion-and-frontmatter-strictness.md`](integration/config-value-expansion-and-frontmatter-strictness.md) | 작성자가 적은 설정 값이 말없이 버려지던 두 자리 — 필드 목록 대신 토큰 스트림 위의 일반 확장, 바인딩 전에 풀면서도 원문 스칼라를 잃지 않는 자리, 프론트매터가 못 읽는 값을 보고하게 만든 규칙 |
 
@@ -143,6 +139,7 @@
 | [`testing/test-classpath-shipped-versions.md`](testing/test-classpath-shipped-versions.md) | 테스트 클래스패스가 발행 버전과 어긋난 아홉 자리를 출처별로 맞추거나 받아들인 결정 — `aimon-cli` 의 두 테스트 클래스패스만 런타임과 일관되게 해석하는 이유, 주석 jar 두 출처를 받아들인 근거, 발행되는 메모리 테스트킷의 JUnit 바닥, 크기를 재서 기각한 대안들 |
 | [`testing/shipped-logback-and-test-classpath-followups.md`](testing/shipped-logback-and-test-classpath-followups.md) | CLI 배포본이 싣는 Logback 을 1.5.13 에서 1.6.3 으로 올린 결정 — 1.5.x 의 어느 버전도 아닌 이유(CVE-2026-19880 은 1.6.3 에서만 고쳐졌다), 권고를 id 로 찾지 않고 검색하는 이유, 모듈 빌드 스크립트가 `@Incubating` Gradle API 를 부르는 조건과 조용히 지나갈 수 있는 절반, 메모리 계약 스위트를 JUnit 바닥에서 한 번 돌린 기록, #111 이 남긴 기록 넷의 정리 |
 | [`testing/packed-logback-and-advisory-reporting-followups.md`](testing/packed-logback-and-advisory-reporting-followups.md) | 발행되지 않는 샘플 앱이 싣는 Logback 을 Spring Boot 의 `logback.version` 으로 카탈로그의 1.6.3 에 맞춘 결정 — 권고 범위 안의 버전을 알리는 스캐너를 두지 않고 읽기에 기댄다고 적은 이유(GitHub 과 OSV 가 두 CVE 를 어떤 패키지에도 잇지 않는다), Dependabot 의 열린 PR 한도를 5 에서 50 으로 올린 이유, CLI 가 시작할 때 Logback 상태를 찍게 하던 참조되지 않은 appender, #127 의 기록이 GitHub 권고 데이터베이스와 Dependabot 에 대해 틀린 자리의 정정 |
+| [`testing/release-gate-provider-keys.md`](testing/release-gate-provider-keys.md) | export 된 프로바이더 키가 평범한 빌드를 과금되는 라이브 API 실행으로 바꾸는 문제 — 키가 환경에 있으면 시작하지 않는 릴리스 스크립트, 거부 목록을 키 게이트와 대조하는 인구조사, 가드가 읽는 파일을 테스트 입력으로 선언하는 규칙 |
 
 ### backlog — 아직 결정하지 않은 것
 
@@ -302,12 +299,31 @@
 | `agent-execution-tracing-design.md` | [`observability/tracing.md`](observability/tracing.md) |
 | `trace-payload-capture-design.md` | [`observability/tracing.md`](observability/tracing.md) |
 | `spring-boot-starter-design.md` | [`integration/spring-boot-starter.md`](integration/spring-boot-starter.md) |
-| `implemented/sandbox.md` | [`integration/sandbox.md`](integration/sandbox.md) |
+| `implemented/sandbox.md` · `integration/sandbox.md` | [aimon-sandbox 의 `docs/design/sandbox.md`](https://github.com/kangwoo/aimon-sandbox/blob/main/docs/design/sandbox.md) — 모듈이 분리되면서 문서도 따라갔다 |
 | `implemented/mcp-tool-design.md` | [`integration/mcp-tool.md`](integration/mcp-tool.md) |
+| `llm/openai-model-capabilities.md` | [`llm/model-capabilities.md`](llm/model-capabilities.md) · [`llm/request-parameters.md`](llm/request-parameters.md) · [`llm/openai-responses-path.md`](llm/openai-responses-path.md) · [`llm/model-name-resolution.md`](llm/model-name-resolution.md) — 마지막 판본 `378cb6e` |
+| `llm/anthropic-thinking-traces.md` | [`llm/reasoning-traces.md`](llm/reasoning-traces.md) · [`llm/anthropic-thinking.md`](llm/anthropic-thinking.md) · [`llm/request-parameters.md`](llm/request-parameters.md) · [`llm/model-capabilities.md`](llm/model-capabilities.md) — 마지막 판본 `3a41fcd` |
+| `llm/anthropic-sampling-capabilities.md` | [`llm/request-parameters.md`](llm/request-parameters.md) · [`llm/model-capabilities.md`](llm/model-capabilities.md) · [`llm/configuration-surface.md`](llm/configuration-surface.md) — 마지막 판본 `320fbbc` |
+| `llm/model-capability-config-key.md` | [`llm/configuration-surface.md`](llm/configuration-surface.md) · [`llm/model-capabilities.md`](llm/model-capabilities.md) — 마지막 판본 `078ccd1` |
+| `llm/model-capability-binding-round-trip.md` | [`llm/configuration-surface.md`](llm/configuration-surface.md) — 마지막 판본 `e62db03` |
+| `llm/anthropic-thinking-config-surface.md` | [`llm/configuration-surface.md`](llm/configuration-surface.md) · [`llm/anthropic-thinking.md`](llm/anthropic-thinking.md) — 마지막 판본 `3f6c65b` |
+| `llm/reasoning-model-enablement.md` | [`llm/anthropic-thinking.md`](llm/anthropic-thinking.md) · [`llm/model-capabilities.md`](llm/model-capabilities.md) · [`llm/configuration-surface.md`](llm/configuration-surface.md) · [`llm/streaming.md`](llm/streaming.md) — 마지막 판본 `7690737` |
+| `llm/reasoning-effort-config-surface.md` | [`llm/request-parameters.md`](llm/request-parameters.md) · [`llm/configuration-surface.md`](llm/configuration-surface.md) · [`llm/anthropic-thinking.md`](llm/anthropic-thinking.md) · [`llm/model-capabilities.md`](llm/model-capabilities.md) — 마지막 판본 `6210326` |
+| `llm/reasoning-delta-stream.md` | [`llm/streaming.md`](llm/streaming.md) · [`llm/openai-responses-path.md`](llm/openai-responses-path.md) · [`llm/anthropic-thinking.md`](llm/anthropic-thinking.md) · [`llm/configuration-surface.md`](llm/configuration-surface.md) — 마지막 판본 `eedaa8f` |
+| `llm/thinking-reporting-and-dialect-records.md` | [`llm/anthropic-thinking.md`](llm/anthropic-thinking.md) · [`llm/model-capabilities.md`](llm/model-capabilities.md) — 마지막 판본 `8b5a7b9` |
+| `llm/provider-switch-agent-model-check.md` | [`llm/model-name-resolution.md`](llm/model-name-resolution.md) — 마지막 판본 `eefb3da` |
+| `llm/model-names-sent-and-shown.md` | [`llm/model-name-resolution.md`](llm/model-name-resolution.md) — 마지막 판본 `e69999a` |
+| `llm/model-alias-docs-followups.md` | [`llm/model-name-resolution.md`](llm/model-name-resolution.md) — 마지막 판본 `0da239c` |
+| `llm/provider-key-release-gate.md` | [`testing/release-gate-provider-keys.md`](testing/release-gate-provider-keys.md) — 마지막 판본 `784ae2f` |
+| `llm/provider-key-census-claim-and-inputs.md` | [`testing/release-gate-provider-keys.md`](testing/release-gate-provider-keys.md) — 마지막 판본 `5da3475` |
+| `llm/release-gate-docs-and-skill-input.md` | [`testing/release-gate-provider-keys.md`](testing/release-gate-provider-keys.md) — 마지막 판본 `d0a0046` |
 
 병합된 문서(세션 3종 → `session-model.md`, 워크플로 4종 → `workflow.md`, 지식 2종 →
-`knowledge-and-rag.md`, 트레이싱 2종 → `tracing.md`, 세션 백엔드 2종 → `backends.md`)는 **절 번호가
-보존되지 않는다.** 옛 문서의 `§N` 을 인용하던 링크는 대상 문서의 목차에서 다시 찾아야 한다.
+`knowledge-and-rag.md`, 트레이싱 2종 → `tracing.md`, 세션 백엔드 2종 → `backends.md`, llm 20종 → 개념별 10종과
+`testing/release-gate-provider-keys.md`)는 **절 번호가 보존되지 않는다.** 옛 문서의 `§N` 을 인용하던 링크는 대상 문서의 목차에서 다시 찾아야 한다.
+llm 의 옛 기록 16종은 트리에서 지웠다 — 원문은 표의 마지막 판본 커밋에서 `git show <커밋>:docs/design/llm/<파일>` 로 읽는다.
+경로가 그대로인 `streaming.md` · `cancellation.md` · `multimodal-content.md` · `openai-responses-path.md` 도 내용이 다시 쓰여
+옛 절 번호가 맞지 않는다.
 
 ---
 

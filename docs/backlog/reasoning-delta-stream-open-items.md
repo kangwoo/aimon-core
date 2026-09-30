@@ -2,7 +2,7 @@
 
 출처는 #62 다 — 모델의 숙고를 사용자가 볼 수 있게 만든 작업(`LlmStreamChunk.Kind.REASONING_DELTA` ·
 `AssistantReasoningDelta` · 양쪽 provider 의 opt-in 키). 설계는
-[`../design/llm/reasoning-delta-stream.md`](../design/llm/reasoning-delta-stream.md) 이고, 그 문서 §11 의
+옛 `reasoning-delta-stream.md`(지금은 [`../design/llm/streaming.md` §5](../design/llm/streaming.md#5-추론-델타-채널--숙고는-답이-아니다)) 이고, 그 문서 §11 의
 미해결 항목 중 **이 국면 밖으로 결과가 나가는 것**과 §10 이 "고치지 말고 파일하라" 고 적은 것이
 여기로 올라왔다. 나머지는 설계 문서에 그대로 남는다 — O-4(노드 경계를 넘길 것인가)와 O-6(`[thinking]`
 문구)은 이 작업 안에서 답이 나왔고, O-5(`reasoningBuffer` 의 프로덕션 독자 부재)는 설계가 저울에 올려
@@ -75,7 +75,7 @@
 
 **고친 방법 — `OMITTED` 로 개명하지 않고 상수를 뺐다.** `omitted` 은 실재하는 값이므로 기계적인 수정은
 `UPDATES("updates")` → `OMITTED("omitted")` 였지만, 그렇게 하지 않았다. 이유 셋과 enum-대-boolean 재검토는
-[`../design/llm/reasoning-delta-stream.md`](../design/llm/reasoning-delta-stream.md) §12.2 에 있다. 요지는
+옛 `reasoning-delta-stream.md` §12.2(지금은 [`../design/llm/anthropic-thinking.md` §7.2](../design/llm/anthropic-thinking.md#72-모양--summarized-하나-부재가-off))에 있다. 요지는
 `omitted` 이 **부재와 동작이 같은 데다**, 이 키의 나머지 절반이 흘려보내기 게이트를 열기 때문에
 (`AnthropicLlmClient` 가 `getThinkingDisplay().isPresent()` 를 `AnthropicStreamingMapper` 에 넘긴다)
 `thinkingDisplay: omitted` 이 **"채널을 열고 아무것도 담지 말라"** 라는 자기모순 상태가 된다는 것이다.

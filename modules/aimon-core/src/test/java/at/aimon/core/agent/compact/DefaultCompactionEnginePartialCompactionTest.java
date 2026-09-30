@@ -63,8 +63,9 @@ class DefaultCompactionEnginePartialCompactionTest {
         assertThat(result.isSuccess()).isTrue();
         assertThat(memory.getMessages()).hasSize(2); // boundary + summary
         assertThat(result.getMetadata().getMessagesSummarized()).isEqualTo(4);
-        // LLM saw all 4 messages.
-        assertThat(llmClient.lastMessages.get()).hasSize(4);
+        // LLM saw all 4 messages, closed on the user side because the conversation ends on the assistant.
+        assertThat(llmClient.lastMessages.get()).hasSize(5);
+        assertThat(llmClient.lastMessages.get().get(4).getContent()).isEqualTo(DefaultCompactionEngine.SUMMARIZE_NOTE);
     }
 
     @Test
@@ -89,9 +90,10 @@ class DefaultCompactionEnginePartialCompactionTest {
         assertThat(after.get(2).getContent()).isEqualTo("u2");
         assertThat(after.get(3).getContent()).isEqualTo("a2");
         // LLM only saw the in-range portion.
-        assertThat(llmClient.lastMessages.get()).hasSize(2);
+        assertThat(llmClient.lastMessages.get()).hasSize(3);
         assertThat(llmClient.lastMessages.get().get(0).getContent()).isEqualTo("u1");
         assertThat(llmClient.lastMessages.get().get(1).getContent()).isEqualTo("a1");
+        assertThat(llmClient.lastMessages.get().get(2).getContent()).isEqualTo(DefaultCompactionEngine.SUMMARIZE_NOTE);
     }
 
     @Test
