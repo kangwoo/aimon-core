@@ -128,7 +128,8 @@ configured for this agent"` 에러를 낸다. 그런데 이 저장소의 main �
 6. **프롬프트의 환경 블록은 `EnvironmentDescriptor` 에서 나온다.** 호스트 JVM 값이 아니다
 7. **파일 stamp 로 낡은 쓰기를 막는다.** `Edit` 과 기존 파일을 덮어쓰는 `Write` 는, 읽은 시점의 stamp 와 지금
    stamp 가 다르면 거부한다
-8. **셸과 파일 시스템의 소유자는 환경 제공자다.** 런타임은 아무것도 닫지 않는다
+8. **셸과 파일 시스템의 소유자는 환경 제공자다.** 런타임은 그것들을 직접 닫지 않는다. 제공자 자체를 닫는 것은
+   만든 쪽이고, 런타임이 닫는 경우는 런타임별 제공자 함수가 돌려준 제공자 하나뿐이다(§4.3)
 
 ---
 
@@ -210,13 +211,22 @@ public interface ExecutionEnvironmentProvider {
 
 | 대상 | 수명 | 소유·종료 |
 |------|------|----------|
-| `ExecutionEnvironmentProvider` | Application | 어셈블리가 만들고 앱 shutdown 에 닫는다(`AutoCloseable` 구현은 선택) |
+| `ExecutionEnvironmentProvider` | Application — 런타임별 제공자 함수가 만든 것은 Agent | 어셈블리가 만들고 앱 shutdown 에 닫는다(`AutoCloseable` 구현은 선택). 런타임별 함수가 돌려준 것은 런타임이 소유한다 — 아래 |
 | 제공자가 쥔 셸·파일 시스템·원격 연결 | Application (또는 제공자가 정한 수명) | 제공자 |
 | `ExecutionEnvironment` | Execution | `ToolContext` 와 함께 버려진다. 닫을 것이 없다 |
 | `controlFileSystem` | Application | 어셈블리 |
 
 `OrcaAgentRuntime` 의 `ownedShell` 과 "withShell 이면 어셈블리 소유, 아니면 런타임 소유"의 두 갈래 규칙은
-없어진다. 런타임은 환경의 어떤 자원도 소유하지 않는다.
+없어진다. 런타임은 셸·파일 시스템을 소유하지 않는다.
+
+**예외 하나 — 런타임별 제공자 함수.** `OrcaAgentRuntimeFactory.withExecutionEnvironmentProviderFactory(id -> ...)` 가
+돌려준 제공자는 그 런타임이 소유한다. `OrcaAgentRuntime.close()` 가 닫고(다른 자원을 다 닫은 뒤 마지막으로),
+`create(...)` 가 함수의 답을 받은 뒤 실패하면 `create(...)` 가 닫는다. 그 함수를 넘긴 호출자는 런타임이 언제
+사라지는지도, 생성이 실패했는지도 알 수 없으므로 닫을 시점이 없다 — 원칙대로 두면 테넌트마다 제공자(와 그 뒤의 셸
+프로세스)가 샌다(EE-21). 그래서 함수는 그 런타임 전용 제공자를 돌려줘야 하고, 여러 런타임이 나눠 쓰는 제공자는
+`withExecutionEnvironmentProvider(p)` 로 준다 — 이쪽은 계속 빌린다. 소유가 설정에 따라 갈린다는 점은 옛 `ownedShell`
+과 같지만, 갈리는 기준이 "어느 API 로 넘겼는가" 하나이고 둘 다 제공자 단위다. 부트스트랩은 이 함수를 쓰지 않는다 —
+제공자를 직접 만들어 `withExecutionEnvironmentProvider` 로 넘기고 teardown 계획에 올린다.
 
 ### 4.4 스테이징
 

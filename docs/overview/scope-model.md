@@ -57,7 +57,7 @@ AIMON 컴포넌트의 **수명(lifetime)**, **소유권(ownership)**, **소멸 �
 | `McpClientManager` | `AgentRuntime` 생성 시 | `OrcaAgentRuntime.close()` 가 명시적으로 닫음 |
 | `WorkflowRunner` (agent-scoped 변형) | `OrcaAgentRuntimeFactory` — `workflowRunnerEnabled` 일 때만 | `OrcaAgentRuntime.close()` |
 | `WorkflowRunner` (call-scoped 변형) | `WorkflowTool` / `GraalJsWorkflowTool` 이 호출마다 | 각자의 try-with-resources |
-| `ExecutionEnvironmentProvider` 와 그것이 쥔 셸·작업 파일 시스템 | 어셈블리 — bootstrap 은 런타임마다 하나(`LocalExecutionEnvironmentProvider`), 스타터는 `ExecutionEnvironmentProvider` 빈이 있으면 그것 하나 | 만든 쪽 — bootstrap 은 런타임의 teardown sink(축출·스택 종료 시), 빈은 Spring. **`OrcaAgentRuntime.close()` 는 닫지 않는다** |
+| `ExecutionEnvironmentProvider` 와 그것이 쥔 셸·작업 파일 시스템 | 어셈블리 — bootstrap 은 런타임마다 하나(`LocalExecutionEnvironmentProvider`), 스타터는 `ExecutionEnvironmentProvider` 빈이 있으면 그것 하나 | 만든 쪽 — bootstrap 은 런타임의 teardown sink(축출·스택 종료 시), 빈은 Spring. **`OrcaAgentRuntime.close()` 는 닫지 않는다** — 예외: `withExecutionEnvironmentProviderFactory` 함수가 돌려준 제공자는 그 런타임이 소유하고 `close()` 가 닫는다(생성 실패 시엔 `create(...)` 가 닫는다) |
 | `ExecutionEnvironment` | 실행마다 제공자의 `resolve()` (실행 시작에 1회) | 없음 — 뷰일 뿐 `Closeable` 이 아니다. `ToolContext` 와 함께 버려진다 |
 | `controlFileSystem` (제어 저장소, 옛 런타임 VFS) | 어셈블리 | 어셈블리 |
 | `LiveSession` | `LiveSessionFactory` / opener | `LiveSession.close()` — **핸들 자원만** |
@@ -85,7 +85,10 @@ IMPORTANT: **마커에 대한 fan-out 은 없다.** `OrcaAgentRuntime.close()` �
 이 목록에는 한때 `ownedShell` 이 셋째로 있었다 — 어셈블리가 셸을 주지 않았을 때 런타임이 직접 만든
 셸이다. 실행 환경 설계([`design/tool/execution-environment.md`](../design/tool/execution-environment.md)
 §4.3)로 셸과 작업 파일 시스템의 소유자가 `ExecutionEnvironmentProvider` 하나가 되면서 빠졌다. 런타임은
-제공자를 빌려 쓸 뿐이므로, 목록에 올리는 것이 오히려 잘못이다(§2 표).
+제공자를 빌려 쓸 뿐이므로, 목록에 올리는 것이 오히려 잘못이다(§2 표). 예외는 하나다 — 런타임별 제공자 함수
+(`withExecutionEnvironmentProviderFactory`)가 돌려준 제공자는 그 함수를 넘긴 쪽이 닫을 시점을 알 수 없으므로
+런타임이 소유하고, `close()` 가 목록의 다른 항목을 닫은 뒤 마지막으로 닫는다. 그 함수는 호출마다 그 런타임 전용
+제공자를 돌려줘야 한다.
 
 마커를 붙이지 않아도 수명은 그대로다. `ToolRegistry` / `HookRegistry` 는 agent-scoped 이지만
 닫을 자원이 없어 `AgentScoped` 를 구현하지 않는다.

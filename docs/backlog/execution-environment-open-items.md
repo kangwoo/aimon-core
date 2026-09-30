@@ -1,4 +1,4 @@
-# 실행 환경 — 등록 항목 47건 (열림 37 · 닫힘 10)
+# 실행 환경 — 등록 항목 47건 (열림 35 · 닫힘 12)
 
 출처는 `ExecutionEnvironment` 구현 작업이다. 설계는 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md)
 이고, 구현 계획(승인본)과 구현이 그 계획에서 벗어난 점은
@@ -27,7 +27,8 @@ EE-14)은 2026-09-29 에 메인테이너가 결정했다. 결정은 남은 일�
 결정 항목이었으므로 결정됨이되 열린 항목은 이제 다섯이다. 그 변경의 설계와 구현이 설계에서 벗어난 점은
 [`../design/tool/workflow-isolation-hardening.md`](../design/tool/workflow-isolation-hardening.md) 에 있다. EE-46 · EE-47 는
 그 설계의 열린 질문(Q5, Q1 · Q4) 가운데 이 변경 밖으로 결과가 번지는 것을 옮긴 것이다. EE-43~EE-45 는 같은 시기에
-EE-42 를 다룬 변경이 먼저 썼으므로 이 둘은 EE-46 부터 번호를 받았다.
+EE-42 를 다룬 변경이 먼저 썼으므로 이 둘은 EE-46 부터 번호를 받았다. 프로비저닝 실패 경로의 누수 둘(EE-21 · EE-23)은
+2026-09-30 에 한 변경에서 닫았다.
 
 ---
 
@@ -442,7 +443,7 @@ notice 를 넘겨야 실제로 보인다. 테스트는 `BashToolTest` 와 `BashO
 
 출처: 빌드 리뷰 3.
 
-## EE-21 — 제공자 팩토리로 만든 제공자는 소유자가 없다 · **열림**
+## EE-21 — 제공자 팩토리로 만든 제공자는 소유자가 없다 · **닫힘** *(2026-09-30)*
 
 **무엇을.** `OrcaAgentRuntimeFactory.withExecutionEnvironmentProviderFactory` 로 만든 제공자를 누가 닫는지 정하고 Javadoc 을
 고친다.
@@ -456,6 +457,28 @@ this" 라고 하지만 부트스트랩은 `withExecutionEnvironmentProvider` 를
 **언제 다시 볼까.** 이 팩토리 경로를 쓰는 조립이 처음 생길 때.
 
 출처: 빌드 리뷰 3.
+
+### 닫힘 (2026-09-30)
+
+**런타임이 소유한다**(메인테이너 결정). 호출자에게 맡기는 쪽은 처방이 될 수 없었다 — 함수를 넘긴 호출자는 런타임이 닫히는
+시점도 `create(...)` 가 실패한 사실도 알 수 없다. 그래서 `withExecutionEnvironmentProviderFactory` 가 돌려준 제공자는
+`OrcaAgentRuntime.close()` 가 (다른 자원 뒤에) 닫고, `doCreate` 가 함수의 답을 받은 뒤 실패하면 그 자리에서 닫는다 — 닫기
+실패는 원래 예외에 suppressed 로 붙는다. `withExecutionEnvironmentProvider(p)` 로 준 공유 제공자는 계속 빌린다. 둘 중 나중에
+부른 것이 소유 여부까지 정한다. 이것은 설계 §4.3 원칙 8("런타임은 아무것도 닫지 않는다")을 좁히는 결정이므로 설계 §4.3 에
+예외로 적었다. "Bootstrap uses this" 라는 Javadoc 도 고쳤다 — 부트스트랩은 공유 경로를 쓰고 제공자를 teardown 계획에 올린다.
+코드: `OrcaAgentRuntimeFactory`(`doCreate` → `assemble`), `OrcaAgentRuntime.Builder.ownsExecutionEnvironmentProvider`.
+테스트는 `OrcaAgentRuntimeFactoryEnvironmentWiringTest` 의 네 행(런타임이 닫음 · 실패한 create 가 닫음 · 닫기 실패는
+suppressed · 공유 제공자는 닫지 않음)이며, 앞의 셋은 수정 전 코드에서 실패하는 것을 확인했다.
+
+같은 실패 경로의 누수 하나를 함께 닫았다 — `withWorkflowRunnerEnabled(true)` 면 `doCreate` 가 에이전트 범위
+`WorkflowRunner`(자기 풀을 가진다)를 도구 제공자 등록 **전에** 만들므로, 등록이 던지면 그 러너도 닫을 주인이 없었다. 이제
+등록 단계가 실패하면 러너를 닫는다. 테스트는 같은 클래스의 `failedCreateClosesWorkflowRunner` 이고, 역시 수정 전에 실패한다.
+
+PR #202 의 리뷰가 둘을 더 찾았다. (1) `OrcaAgentRuntimeManager.getOrCreateInternal` 은 `create(...)` 가 성공한 뒤 훅 등록기나
+레지스트리 등록이 던지면 런타임을 닫지 않았다 — 제공자 함수 경로에서는 소유한 제공자까지 샌다. 이제 닫고 다시 던진다.
+그 누수를 특성화해 두었던 `OrcaAgentRuntimeManagerTest` 의 행을 `verify(newContext).close()` 로 뒤집었다. (2) 런타임이 바깥
+자원(소유한 제공자)을 닫게 되었으므로 `OrcaAgentRuntime.close()` 를 멱등으로 만들었다. `docs/overview/scope-model.md` 의 §2 표와
+§3 문단, 시작 가이드의 `close()` 안내(두 문서 모두 한/영)에도 이 예외를 적었다.
 
 ## EE-22 — `AimonStack.fileSystem(id)` 가 제어 저장소를 돌려줄 수 있다 · **열림**
 
@@ -471,7 +494,7 @@ Javadoc 을 실제 동작에 맞춘다.
 
 출처: 빌드 리뷰 3.
 
-## EE-23 — 프로비저닝이 중간에 실패하면 자원이 샌다 · **열림**
+## EE-23 — 프로비저닝이 중간에 실패하면 자원이 샌다 · **닫힘** *(2026-09-30)*
 
 **무엇을.** `createStores` 이후 `createRuntime` 이 던지면 이미 만든 제어 파일 시스템과 제공자(파일 시스템·셸)를 닫는다.
 
@@ -483,6 +506,17 @@ Javadoc 을 실제 동작에 맞춘다.
 **언제 다시 볼까.** 런타임 생성 실패가 반복되는 배포에서 파일 핸들이나 셸 프로세스가 쌓일 때.
 
 출처: 빌드 리뷰 3.
+
+### 닫힘 (2026-09-30)
+
+실제 범위는 항목의 서술보다 넓었다. 새는 것은 `createStores` 뒤 `createRuntime` 의 실패만이 아니라, 런타임을 만든 뒤
+커스터마이저가 던지는 경우(런타임의 MCP 클라이언트·워크플로 러너까지)도였다. 그리고 두 호출 경로의 사정이 달랐다 —
+시작 경로는 싱크가 teardown 계획이라 스택 빌드 실패 때 계획이 이미 닫아 주었고, **새는 것은 테넌트 경로**였다
+(`provision()` 의 로컬 목록은 예외와 함께 버려진다). 그래서 `StackAgentRuntimeProvisioner.createRuntime` 이 자원을
+로컬에 모았다가 **런타임이 완성된 뒤에야** 싱크에 넘기고, 실패하면 런타임(만들어졌다면)과 자원을 만든 역순으로 닫고
+다시 던진다. 싱크는 실패를 전혀 보지 못하므로 시작 경로에서 같은 자원을 두 번 닫지 않는다. 테스트는
+`AimonStackProvisioningRollbackTest` — 테넌트 행은 수정 전 코드에서 실패하는 것을 확인했고, 시작 경로 행은 한 번만
+닫는다는 것을 고정한다(수정 전에도 통과한다 — 거기서는 누수가 아니었으므로).
 
 ## EE-24 — 사용 불가 환경의 사용자 컨텍스트가 호스트 디렉터리를 보여 줄 수 있다 · **열림**
 

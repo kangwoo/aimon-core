@@ -7,6 +7,21 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Changed: a runtime owns the provider its per-runtime function returned (EE-21, EE-23)
+
+- **`OrcaAgentRuntimeFactory.withExecutionEnvironmentProviderFactory(id -> ...)` hands ownership to the runtime.**
+  `OrcaAgentRuntime.close()` now closes the returned provider (if it is `AutoCloseable`), last, and `create(...)`
+  closes it when the build fails after the function answered. Before, nothing closed it. **Migration:** return a new
+  provider on every call. If you shared or cached one across runtimes, pass it through
+  `withExecutionEnvironmentProvider(p)` instead, which the runtime still only borrows. If you closed your per-runtime
+  providers yourself, stop, or they are closed twice.
+- **`OrcaAgentRuntime.close()` is idempotent.** A second call does nothing.
+- **Failed builds no longer leak.** `create(...)` closes the agent-scoped `WorkflowRunner` when tool or command
+  registration fails. `OrcaAgentRuntimeManager` closes a runtime whose hook registrar or registry registration
+  throws. `aimon-bootstrap`'s `StackAgentRuntimeProvisioner` closes the runtime and every resource created for it
+  (control store, execution environment provider, file system) when a tenant or startup build fails part-way.
+  Before, a failed tenant build left them open until the process exited.
+
 ### Fixed: `./gradlew build` failed assembling the CLI jar
 
 - **`:aimon-cli:jar` is written as zip64.** The CLI jar merges the whole runtime classpath, which passed the classic

@@ -212,8 +212,10 @@ public class OrcaAgentRuntimeFactory {
     // Execution-environment design §4.3/§9: the provider each created runtime resolves its executions' environments
     // from — the filesystem the model's tools see and the shell Bash runs in. Keyed by runtime id so an assembly can
     // hand each runtime its own provider (bootstrap does) or all of them one. Required: create(...) refuses without
-    // it. The runtime borrows the provider and never closes it; the assembly that built it does.
+    // it. A shared provider (withExecutionEnvironmentProvider) is borrowed and closed by the assembly that built it;
+    // one the factory function returns belongs to the runtime it was asked for (EE-21), hence the flag.
     private Function<AgentRuntimeId, ExecutionEnvironmentProvider> executionEnvironmentProviderFactory;
+    private boolean executionEnvironmentProviderOwned;
     private RewakeService rewakeService;
     // Code-defined subagents: composed as the highest-priority (authoritative) subagent layer. When non-null this
     // registry is layered after the bundled and user (agents/*.md) registries so code definitions cannot be shadowed
@@ -431,20 +433,30 @@ public class OrcaAgentRuntimeFactory {
      */
     public OrcaAgentRuntimeFactory withExecutionEnvironmentProvider(ExecutionEnvironmentProvider provider) {
         this.executionEnvironmentProviderFactory = provider == null ? null : id -> provider;
+        this.executionEnvironmentProviderOwned = false;
         return this;
     }
 
     /**
      * Supplies a per-runtime {@link ExecutionEnvironmentProvider}: {@code create(...)} asks the function once with the
-     * runtime id. Bootstrap uses this to give each runtime a provider over its own workspace.
+     * runtime id — for example to give each tenant a provider over its own workspace.
+     *
+     * <p>
+     * <b>The runtime owns what the function returns.</b> A provider that implements {@link AutoCloseable} is closed by
+     * {@link OrcaAgentRuntime#close()}, and by {@code create(...)} itself when building the runtime fails after the
+     * function answered. The function must therefore return a provider dedicated to that runtime, never one shared
+     * with other runtimes — share a provider through {@link #withExecutionEnvironmentProvider} instead, which the
+     * runtime only borrows. (Execution-environment design §4.3; this is the one case where a runtime closes its
+     * provider, because the caller has no other moment at which to do it.)
      *
      * @param factory
-     *            maps a runtime id to its provider (may be {@code null} to clear)
+     *            maps a runtime id to a provider the created runtime takes ownership of (may be {@code null} to clear)
      * @return this factory (for chaining)
      */
     public OrcaAgentRuntimeFactory withExecutionEnvironmentProviderFactory(
             Function<AgentRuntimeId, ExecutionEnvironmentProvider> factory) {
         this.executionEnvironmentProviderFactory = factory;
+        this.executionEnvironmentProviderOwned = factory != null;
         return this;
     }
 
@@ -872,8 +884,31 @@ public class OrcaAgentRuntimeFactory {
         Objects.requireNonNull(controlFileSystem, "controlFileSystem must not be null");
         Objects.requireNonNull(toolProviders, "toolProviders must not be null");
         Objects.requireNonNull(commandProviders, "commandProviders must not be null");
+        // Read together with the provider. The pair is consistent only while the caller keeps other threads from
+        // reconfiguring the factory mid-create — bootstrap does, under its lock on this factory.
+        final boolean providerOwned = executionEnvironmentProviderOwned;
         final ExecutionEnvironmentProvider executionEnvironmentProvider = resolveEnvironmentProvider(agentRuntimeId);
+        try {
+            return assemble(agentRuntimeId, agentExecutor, scheduledTaskManager, agentBundle, controlFileSystem,
+                    credentialStore, toolProviders, commandProviders, mcpClientManager, executionEnvironmentProvider,
+                    providerOwned);
+        } catch (RuntimeException | Error e) {
+            // A provider this factory asked for belongs to the runtime being built; with no runtime, nobody else
+            // would close it (EE-21). A shared provider is the caller's and is left alone.
+            if (providerOwned) {
+                closeOwnedProvider(executionEnvironmentProvider, e);
+            }
+            throw e;
+        }
+    }
 
+    // deprecation: the version-1 compaction SPI (the guard) is carried through on purpose
+    @SuppressWarnings({"checkstyle:ParameterNumber", "deprecation"})
+    private OrcaAgentRuntime assemble(AgentRuntimeId agentRuntimeId, OrcaAgentExecutor agentExecutor,
+            ScheduledTaskManager scheduledTaskManager, AgentBundle agentBundle, VirtualFileSystem controlFileSystem,
+            CredentialStore credentialStore, List<OrcaToolProvider> toolProviders,
+            List<OrcaCommandProvider> commandProviders, McpClientManager mcpClientManager,
+            ExecutionEnvironmentProvider executionEnvironmentProvider, boolean providerOwned) {
         final Agent agent = agentBundle.getAgent();
         final SubagentExecutionManager subagentExecutionManager = agentExecutor.getSubagentExecutionManager();
         final Environment environment = Environment.createDefault();
@@ -973,7 +1008,34 @@ public class OrcaAgentRuntimeFactory {
                 ? buildWorkflowRunner(agentRuntimeId, agent, subagentRegistry, toolRegistry, hookRegistry, environment,
                         subagentExecutionManager, toolContextEnrichers, executionEnvironmentProvider)
                 : null;
+        try {
+            return register(agentRuntimeId, agent, toolRegistry, hookRegistry, commandRegistry, subagentRegistry,
+                    skillRegistry, controlFileSystem, environment, mcpClientManager, compactionEngine, compactionGuard,
+                    recoveryStrategy, engineKind, contextEngine, providerDependencies, toolProviders, commandProviders,
+                    workflowRunner, executionEnvironmentProvider, providerOwned);
+        } catch (RuntimeException | Error e) {
+            // The runner owns its pools and no runtime exists yet to close it; a failed registration would leak them.
+            if (workflowRunner != null) {
+                try {
+                    workflowRunner.close();
+                } catch (RuntimeException closeFailure) {
+                    e.addSuppressed(closeFailure);
+                }
+            }
+            throw e;
+        }
+    }
 
+    // deprecation: the version-1 compaction SPI (the guard) is carried through on purpose
+    @SuppressWarnings({"checkstyle:ParameterNumber", "deprecation"})
+    private OrcaAgentRuntime register(AgentRuntimeId agentRuntimeId, Agent agent, ToolRegistry toolRegistry,
+            HookRegistry hookRegistry, DefaultCommandRegistry commandRegistry, SubagentRegistry subagentRegistry,
+            SkillRegistry skillRegistry, VirtualFileSystem controlFileSystem, Environment environment,
+            McpClientManager mcpClientManager, CompactionEngine compactionEngine, CompactionGuard compactionGuard,
+            PromptSizeRecoveryStrategy recoveryStrategy, ContextEngineKind engineKind, ContextEngine contextEngine,
+            OrcaProviderDependencies providerDependencies, List<OrcaToolProvider> toolProviders,
+            List<OrcaCommandProvider> commandProviders, WorkflowRunner workflowRunner,
+            ExecutionEnvironmentProvider executionEnvironmentProvider, boolean providerOwned) {
         // Create tool provider context (null-safe: scheduledTaskManager may be null if scheduling is not configured).
         // It carries the control store but no working filesystem or shell: tools read those from the execution's
         // environment on every call, so no provider can capture them at registration time (design §6).
@@ -1008,7 +1070,19 @@ public class OrcaAgentRuntimeFactory {
                 // Still exposed on its own for callers that read it; the executor consults it through the engine.
                 .promptSizeRecoveryStrategy(recoveryStrategy).contextEngine(contextEngine)
                 .toolContextEnrichers(toolContextEnrichers).workflowRunner(workflowRunner)
-                .executionEnvironmentProvider(executionEnvironmentProvider).build();
+                .executionEnvironmentProvider(executionEnvironmentProvider)
+                .ownsExecutionEnvironmentProvider(providerOwned).build();
+    }
+
+    private static void closeOwnedProvider(ExecutionEnvironmentProvider provider, Throwable cause) {
+        if (provider instanceof AutoCloseable closeable) {
+            try {
+                closeable.close();
+            } catch (Exception closeFailure) {
+                // The build failure is what the caller needs; the close failure rides along.
+                cause.addSuppressed(closeFailure);
+            }
+        }
     }
 
     /**

@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/scope-model.md
-source_commit: 54936a4
+source_commit: 79d78a7
 ---
 
 # Scope Model
@@ -66,7 +66,7 @@ rules see the `TurnId` entry in [`glossary.en.md` §4](glossary.en.md).
 | `McpClientManager` | when the `AgentRuntime` is created | closed explicitly by `OrcaAgentRuntime.close()` |
 | `WorkflowRunner` (agent-scoped variant) | `OrcaAgentRuntimeFactory` — only when `workflowRunnerEnabled` | `OrcaAgentRuntime.close()` |
 | `WorkflowRunner` (call-scoped variant) | `WorkflowTool` / `GraalJsWorkflowTool`, per call | each one's own try-with-resources |
-| `ExecutionEnvironmentProvider` and the shell and working file system it holds | the assembly — bootstrap builds one per runtime (`LocalExecutionEnvironmentProvider`); the starter uses a single `ExecutionEnvironmentProvider` bean when one exists | whoever built it — bootstrap's per-runtime teardown sink (on eviction or stack shutdown), Spring for a bean. **`OrcaAgentRuntime.close()` does not close it** |
+| `ExecutionEnvironmentProvider` and the shell and working file system it holds | the assembly — bootstrap builds one per runtime (`LocalExecutionEnvironmentProvider`); the starter uses a single `ExecutionEnvironmentProvider` bean when one exists | whoever built it — bootstrap's per-runtime teardown sink (on eviction or stack shutdown), Spring for a bean. **`OrcaAgentRuntime.close()` does not close it** — exception: a provider returned by the `withExecutionEnvironmentProviderFactory` function belongs to that runtime and `close()` closes it (`create(...)` closes it if the build fails) |
 | `ExecutionEnvironment` | the provider's `resolve()`, once at the start of each execution | nothing — it is a view, not `Closeable`, and is dropped with the `ToolContext` |
 | `controlFileSystem` (the control store, formerly the runtime's VFS) | the assembly | the assembly |
 | `LiveSession` | `LiveSessionFactory` / the opener | `LiveSession.close()` — **handle resources only** |
@@ -96,7 +96,10 @@ The list once had a third entry, `ownedShell` — the shell the runtime built it
 assembly supplied none. It left when the execution-environment design
 ([`design/tool/execution-environment.md`](../design/tool/execution-environment.md) §4.3) made the
 `ExecutionEnvironmentProvider` the single owner of shells and working file systems. The runtime
-only borrows the provider, so putting it on the list would be the mistake (§2's table).
+only borrows the provider, so putting it on the list would be the mistake (§2's table). There is one
+exception: a provider returned by a per-runtime provider function (`withExecutionEnvironmentProviderFactory`)
+belongs to the runtime, because whoever passed the function has no moment at which to close it. `close()` closes
+it last, after the other entries. That function must return a provider dedicated to the runtime on every call.
 
 Not attaching a marker does not change a lifetime. `ToolRegistry` / `HookRegistry` are
 agent-scoped but have no resource to close, so they do not implement `AgentScoped`.
