@@ -13,7 +13,7 @@ import java.util.List;
 import org.jline.reader.LineReader;
 import org.jline.reader.LineReaderBuilder;
 import org.jline.terminal.Terminal;
-import org.jline.terminal.TerminalBuilder;
+import org.jline.terminal.impl.DumbTerminal;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -245,8 +245,12 @@ class InteractiveSkillApprovalChannelTest {
 
     private static Terminal newDumbTerminal(String input) throws IOException {
         // A dumb terminal driven from a fixed input stream — LineReader.readLine() consumes one line per call.
+        // Constructed directly rather than via TerminalBuilder: since JLine 4 a non-system builder terminal is routed
+        // through a native provider and comes back as a PosixPtyTerminal whose input pump closes the pty as soon as
+        // the source stream hits EOF, so readLine() throws EndOfFileException before the buffered answer is read.
+        // dumb(true) no longer forces a dumb terminal on that path.
         final InputStream in = new ByteArrayInputStream(input.getBytes(StandardCharsets.UTF_8));
-        return TerminalBuilder.builder().system(false).streams(in, new ByteArrayOutputStream()).dumb(true).build();
+        return new DumbTerminal("test", Terminal.TYPE_DUMB, in, new ByteArrayOutputStream(), StandardCharsets.UTF_8);
     }
 
     private static LineReader newLineReader(Terminal terminal) {
