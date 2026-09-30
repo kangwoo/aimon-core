@@ -52,6 +52,7 @@ import at.aimon.core.subagent.task.SessionSnapshotStore;
 import at.aimon.core.subagent.task.TaskOutputStore;
 import at.aimon.core.subagent.task.TaskResultStore;
 import at.aimon.core.tools.CallerAllowedTools;
+import at.aimon.core.tools.ExecutionEnvironmentAccess;
 import at.aimon.core.tools.InvokingSessionAccess;
 import at.aimon.core.tools.ToolContextKeys;
 
@@ -558,7 +559,11 @@ public class TaskTool extends AbstractTool {
                 .taskResultStore(taskResultStore).sessionSnapshotStore(sessionSnapshotStore)
                 .previousSnapshot(previousSnapshot).messageQueueManager(messageQueueManager)
                 .parentEventSink(parentEventSink).callerAllowedTools(CallerAllowedTools.of(context))
-                .invokingSessionId(InvokingSessionAccess.idToPropagate(context).orElse(null)).build();
+                .invokingSessionId(InvokingSessionAccess.idToPropagate(context).orElse(null))
+                // The fork resolves its own environment from the spawning runtime's provider, with this execution's
+                // environment as its parent (execution-environment design §5.2).
+                .executionEnvironment(ExecutionEnvironmentAccess.of(context).orElse(null))
+                .executionEnvironmentProvider(ExecutionEnvironmentAccess.providerOf(context).orElse(null)).build();
     }
 
     /**

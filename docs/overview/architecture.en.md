@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/architecture.md
-source_commit: 8c8de45
+source_commit: f651622
 ---
 
 # Architecture
@@ -65,6 +65,7 @@ at.aimon.core/
 ├── tracing/        execution tracing
 ├── filesystem/     the virtual filesystem
 ├── shell/          the virtual shell
+├── environment/    execution environment — picks the filesystem and shell tools use, per execution
 ├── credential/     the credential store
 ├── status/         system status reports
 ├── config/         configuration (hook hot reload)
@@ -369,6 +370,12 @@ not implement this interface. What they isolate is not the shell but four tools 
 `CopyToSandbox` · `RestartSandbox` · `DeleteSandbox`), so a container-isolated **shell** is something
 you implement yourself.
 
+Tools hold neither a shell nor a file system. In `at.aimon.core.environment`, an `ExecutionEnvironmentProvider`
+yields an `ExecutionEnvironment` (file system · shell · descriptor · staging · isolation) for each execution, and the
+executor puts it in `ToolContextKeys.EXECUTION_ENVIRONMENT`. The default is `LocalExecutionEnvironmentProvider` — it
+hides the workspace's `.aimon/` (the control store) from the file tools and stages skill files into
+`.aimon-staged/`. The design is [`design/tool/execution-environment.md`](../design/tool/execution-environment.md).
+
 ### 4.7 Session
 
 **Package**: `at.aimon.core.agent.session` (+ `.store`, `.transcript`)
@@ -521,7 +528,7 @@ decisions follow it, the id of the session that launched it is passed separately
 Weaves several subagents together with **deterministic control flow**. You create a runner with
 `WorkflowRunners`, assemble it from `Pipeline` / `Stage` / `AgentTask`, and can resume through
 `RunHandle` and `RunStore`. Budgets are handled by `WorkflowBudget`, concurrency by
-`WorkflowConcurrencyConfig`, and git isolation by `WorktreeEnvironmentFactory`. The JS scripting
+`WorkflowConcurrencyConfig`, and isolation by the execution environment's `ExecutionEnvironment.isolate()`. The JS scripting
 frontend is `aimon-workflow-graaljs`.
 
 IMPORTANT (teardown responsibility): `WorkflowRunner` has two variants — the agent-scoped variant

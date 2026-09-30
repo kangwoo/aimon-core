@@ -44,16 +44,19 @@ import at.aimon.core.scheduling.ScheduledTaskManager;
  * <pre>
  * {
  *     &#64;code
+ *     // The factory must carry the provider the runtime's executions resolve their environment from.
+ *     OrcaAgentRuntimeFactory factory = new OrcaAgentRuntimeFactory().withExecutionEnvironmentProvider(
+ *             LocalExecutionEnvironmentProvider.builder().workspaceRoot(workspace).build());
  *     OrcaAgentRuntimeManager manager = OrcaAgentRuntimeManager.builder()
  *             .agentExecutor(executor).agentRuntimeRegistry(registry).agentRuntimeFactory(factory)
  *             .toolProviders(OrcaAgentRuntimeFactory.defaultToolProviders())
  *             .commandProviders(OrcaAgentRuntimeFactory.defaultCommandProviders()).build();
  *
- *     // Single AEC per agent
- *     OrcaAgentRuntime context = manager.getOrCreateRuntime(bundle, fileSystem, credentialStore);
+ *     // Single runtime per agent; controlFileSystem is the control root ({workspace}/.aimon for a local stack)
+ *     OrcaAgentRuntime context = manager.getOrCreateRuntime(bundle, controlFileSystem, credentialStore);
  *
  *     // Or split a single agent definition by tenant / environment / user
- *     OrcaAgentRuntime acmeContext = manager.getOrCreateRuntime(bundle, "acme", fileSystem, credentialStore);
+ *     OrcaAgentRuntime acmeContext = manager.getOrCreateRuntime(bundle, "acme", controlFileSystem, credentialStore);
  * }
  * </pre>
  */
@@ -327,7 +330,11 @@ public final class OrcaAgentRuntimeManager {
             return this;
         }
 
-        /** OrcaAgentRuntimeFactory를 설정한다. */
+        /**
+         * OrcaAgentRuntimeFactory를 설정한다. 필수이며, {@code withExecutionEnvironmentProvider(...)} 또는
+         * {@code withExecutionEnvironmentProviderFactory(...)} 로 제공자를 받은 팩토리여야 한다 — 없으면
+         * {@link #build()} 가 {@link IllegalStateException} 을 던진다.
+         */
         public Builder agentRuntimeFactory(OrcaAgentRuntimeFactory agentRuntimeFactory) {
             this.agentRuntimeFactory = agentRuntimeFactory;
             return this;
@@ -362,9 +369,14 @@ public final class OrcaAgentRuntimeManager {
             if (agentRuntimeRegistry == null) {
                 agentRuntimeRegistry = new DefaultAgentRuntimeRegistry();
             }
+            // There is no default factory: a factory needs an ExecutionEnvironmentProvider (execution-environment
+            // design §4), and choosing one here would pick a workspace nobody chose. Refuse at build time, not at the
+            // first getOrCreateRuntime(...).
             if (agentRuntimeFactory == null) {
-                agentRuntimeFactory = new OrcaAgentRuntimeFactory();
+                throw new IllegalStateException("agentRuntimeFactory is required: pass an OrcaAgentRuntimeFactory "
+                        + "configured with withExecutionEnvironmentProvider(...)");
             }
+            agentRuntimeFactory.requireExecutionEnvironmentProvider();
             if (hookRegistrars == null) {
                 hookRegistrars = List.of();
             }

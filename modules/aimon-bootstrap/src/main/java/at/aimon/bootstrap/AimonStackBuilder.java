@@ -451,9 +451,10 @@ public final class AimonStackBuilder {
         final Map<AgentRuntimeId, AgentSpec> declared = new LinkedHashMap<>();
         final List<AgentDescriptor> agentDescriptors = new ArrayList<>();
         final StackAgentRuntimeProvisioner.Builder provisionerBuilder = StackAgentRuntimeProvisioner.builder()
-                .fileSystemSpec(spec.getFileSystem()).toolSpec(toolSpec).runtimeFactory(runtimeFactory)
-                .knowledgeToolsEnabled(knowledgeStore != null).memoryToolProvider(memory.getToolProvider().orElse(null))
-                .agentExecutor(agentExecutor).taskManager(taskManager).skillParser(skillParser)
+                .fileSystemSpec(spec.getFileSystem()).executionEnvironmentSpec(spec.getExecutionEnvironment())
+                .toolSpec(toolSpec).runtimeFactory(runtimeFactory).knowledgeToolsEnabled(knowledgeStore != null)
+                .memoryToolProvider(memory.getToolProvider().orElse(null)).agentExecutor(agentExecutor)
+                .taskManager(taskManager).skillParser(skillParser)
                 .credentialStore(spec.getCredentialStore().orElse(null))
                 .credentialStoreFactory(spec.getCredentialStoreFactory().orElse(null))
                 .agentCustomizers(spec.getAgentCustomizers());

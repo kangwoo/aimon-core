@@ -435,10 +435,14 @@ public class AgentConfig {
     public OrcaAgentRuntimeManager agentRuntimeManager(
             OrcaAgentExecutor executor,
             ScheduledTaskManager scheduledTaskManager,
-            AgentRuntimeRegistry agentRuntimeRegistry) {
+            AgentRuntimeRegistry agentRuntimeRegistry,
+            ExecutionEnvironmentProvider executionEnvironmentProvider) {
+        // 팩토리에는 ExecutionEnvironmentProvider 가 필수다 — 없으면 build() 가 거부한다.
         return OrcaAgentRuntimeManager.builder()
                 .agentExecutor(executor)
                 .scheduledTaskManager(scheduledTaskManager)
+                .agentRuntimeFactory(new OrcaAgentRuntimeFactory()
+                        .withExecutionEnvironmentProvider(executionEnvironmentProvider))
                 .agentRuntimeRegistry(agentRuntimeRegistry)
                 .build();
     }
@@ -448,11 +452,12 @@ public class AgentConfig {
     public ApplicationRunner registerAgentRuntimes(
             OrcaAgentRuntimeManager manager,
             List<AgentBundle> bundles,
-            VirtualFileSystem fileSystem,
+            VirtualFileSystem controlFileSystem,
             CredentialStore credentialStore) {
+        // controlFileSystem 은 제어 루트다 (로컬 스택은 {workspace}/.aimon)
         return args -> {
             for (AgentBundle bundle : bundles) {
-                manager.getOrCreateRuntime(bundle, fileSystem, credentialStore);
+                manager.getOrCreateRuntime(bundle, controlFileSystem, credentialStore);
                 // → runtimeId = "agent:<name>"  (discriminator 없는 단순 케이스)
             }
         };
@@ -464,11 +469,11 @@ public class AgentConfig {
             OrcaAgentRuntimeManager manager,
             OrcaAgentExecutor executor,
             SessionRecordStore sessionRecordStore,
-            VirtualFileSystem fileSystem,
+            VirtualFileSystem controlFileSystem,
             CredentialStore credentialStore) {
         // agent runtime은 이미 registry에 등록되어 있으므로 세션 open 시 재사용된다
         return new LiveSessionFactory(agentRegistry,
-                agent -> manager.getOrCreateRuntime(AgentBundle.builder().agent(agent).build(), fileSystem,
+                agent -> manager.getOrCreateRuntime(AgentBundle.builder().agent(agent).build(), controlFileSystem,
                         credentialStore),
                 executor,
                 sessionRecordStore);

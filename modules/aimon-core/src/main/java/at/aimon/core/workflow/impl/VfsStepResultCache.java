@@ -47,8 +47,15 @@ import at.aimon.core.workflow.StepResultCache;
  */
 public final class VfsStepResultCache implements StepResultCache {
 
-    /** Default base directory for per-step cache objects. */
-    public static final String DEFAULT_BASE_DIR = ".aimon/step-cache";
+    /**
+     * Default base directory for per-step cache objects, relative to the root of the filesystem the store is built over
+     * — the
+     * <b>control</b> store, whose root is {@code {project}/.aimon/} in a local assembly, so the physical location is
+     * {@code {project}/.aimon/step-cache} as before the control store was split from the workspace. Construct it over
+     * the control store: this is framework state (resume points), not files the
+     * model works on.
+     */
+    public static final String DEFAULT_BASE_DIR = "step-cache";
 
     private static final Logger log = LoggerFactory.getLogger(VfsStepResultCache.class);
 

@@ -273,10 +273,13 @@ public final class ToolContext {
          * @return this builder
          * @throws NullPointerException
          *             if key or value is null
+         * @throws IllegalStateException
+         *             if the key is write-once and already set in this builder
          */
         public Builder put(String key, Object value) {
             Objects.requireNonNull(key, "key must not be null");
             Objects.requireNonNull(value, "value must not be null");
+            checkWriteOnce(key);
             this.context.put(key, value);
             return this;
         }
@@ -297,6 +300,7 @@ public final class ToolContext {
         public <T> Builder put(ToolContextKey<T> key, T value) {
             Objects.requireNonNull(key, "key must not be null");
             Objects.requireNonNull(value, "value must not be null");
+            checkWriteOnce(key.name());
             this.context.put(key.name(), value);
             return this;
         }
@@ -318,6 +322,16 @@ public final class ToolContext {
             Objects.requireNonNull(context, "context must not be null");
             context.forEach(this::put);
             return this;
+        }
+
+        /**
+         * The single write-once check every put path goes through: a name registered by
+         * {@link ToolContextKey#writeOnce(String, Class)} accepts one write per builder.
+         */
+        private void checkWriteOnce(String name) {
+            if (ToolContextKey.isWriteOnceName(name) && this.context.containsKey(name)) {
+                throw new IllegalStateException("ToolContext key '" + name + "' is write-once");
+            }
         }
 
         /**

@@ -292,9 +292,9 @@ AdaptiveAgentBundleLoader
     └── SkillRegistry ← ClasspathSkillRepository (index 파일 필요)
 ```
 
-> 로더가 만든 번들 SkillRegistry 는 SKILL.md 본문만 신뢰성 있게 제공한다(`ClasspathSkillRepository` 는 부가
-> 파일을 빈 맵으로 반환하고, `PathSkillRepository` 는 워크스페이스 밖 OS 절대경로를 가리킨다). 그래서 부트스트랩은
-> 번들 스킬 트리를 workspace VFS 로 한 번 복사한 뒤 그 위에서 VFS 기반 레지스트리를 다시 빌드한다 — 아래
+> 부트스트랩은 번들 스킬 트리를 제어 저장소로 한 번 복사한 뒤 그 위에서 VFS 기반 레지스트리를 다시 빌드한다.
+> 로더가 만든 번들 레지스트리(`ClasspathSkillRepository` / `PathSkillRepository`)는 복사가 건너뛴 스킬의 폴백으로
+> 남으며, 어느 쪽이든 부가 파일은 `${AIMON_SKILL_DIR}` 스테이징으로 모델에게 닿는다 — 아래
 > [번들 스킬 리소스 materialization](#번들-스킬-리소스-materialization) 참고.
 
 ### AgentBundle 레지스트리
@@ -342,8 +342,9 @@ CompositeSubagentRegistry / CompositeSkillRegistry
 ```
 
 부가 파일(`scripts/`, `references/`, `assets/`, 그리고 `templates/` 같은 임의 디렉터리)은 부트스트랩 시
-workspace VFS(`.aimon/bundled-skills/<name>/`)로 **materialize(복사)** 되므로, FileSystem/JAR 로더 어느 쪽으로
-번들을 로드하든 Agent 의 `Read`/`Bash` 도구로 접근할 수 있다. 자세한 동작은 아래
+제어 저장소(`.aimon/bundled-skills/<name>/`)로 **materialize(복사)** 되고, 스킬을 쓸 때 작업 공간의
+`.aimon-staged/` 로 스테이징되므로, FileSystem/JAR 로더 어느 쪽으로 번들을 로드하든 Agent 의 `Read`/`Bash`
+도구로 접근할 수 있다. 자세한 동작은 아래
 [번들 스킬 리소스 materialization](#번들-스킬-리소스-materialization) 참고.
 
 ### 클래스패스 리소스 위치
@@ -373,30 +374,45 @@ modules/aimon-core/src/main/resources/
 `VirtualFileSystem` 으로는 접근할 수 없다 — JAR 엔트리는 파일이 아니고, 펼쳐진 리소스는 워크스페이스 샌드박스
 밖의 OS 절대경로로 resolve 되기 때문이다.
 
-이를 해결하기 위해 부트스트랩(`AgentSetupFactory`)은 `BundledSkillMaterializer` 로 번들 스킬 트리를 workspace VFS
-의 `.aimon/bundled-skills/<skill-name>/` 로 복사한다.
+부트스트랩은 `BundledSkillMaterializer` 로 번들 스킬 트리를 **제어 저장소**의 `bundled-skills/<skill-name>/`
+(로컬에서는 `{workspace}/.aimon/bundled-skills/`)로 복사한다. 제어 저장소는 모델의 파일 도구에게 보이지 않으므로,
+이 사본은 에이전트가 직접 읽는 파일이 아니라 다음 절의 스테이징이 읽는 원본이다.
 
 - **로딩 무관**: `ClasspathResourceTreeWalker` 가 `file:`/`jar:` URL 을 모두 처리하므로 IDE/`gradle run`/패키징된
   JAR 어디서 실행하든 동일하게 동작한다.
-- **부팅 시 덮어쓰기**: 매 부팅마다 대상 디렉터리를 비우고 다시 복사하므로 workspace 사본은 항상 배포된 클래스패스
-  내용과 일치한다.
+- **부팅 시 덮어쓰기**: 매 부팅마다 대상 디렉터리를 비우고 다시 복사하므로 제어 저장소 사본은 항상 배포된
+  클래스패스 내용과 일치한다.
 - **레지스트리 우선순위**: 최종 `CompositeSkillRegistry` 는 `[클래스패스 번들(폴백) < materialize 된 VFS 번들 <
   사용자 .aimon/skills]` 순으로 합성된다. materialize 된 VFS 레이어가 같은 이름의 클래스패스 레이어를 가리고,
   사용자 스킬이 그 위를 가린다. materialize 가 실패한 스킬은 클래스패스 폴백이 본문만이라도 계속 제공한다.
 
 ### `${AIMON_SKILL_DIR}` 로 자기 파일 참조
 
-materialize 후 각 스킬은 신뢰 가능한 base 디렉터리(`Skill#getBaseDir()`)를 가진다. 스킬 본문에서 자기 디렉터리
-기준 파일을 참조할 때는 `${AIMON_SKILL_DIR}` 변수를 쓰는 것을 권장한다:
+스킬 본문에서 자기 디렉터리 기준 파일을 참조할 때는 `${AIMON_SKILL_DIR}` 변수를 쓰는 것을 권장한다:
 
 ```markdown
 이 스킬의 템플릿을 로드한다: @${AIMON_SKILL_DIR}/templates/report.md
 헬퍼 실행: !`python ${AIMON_SKILL_DIR}/scripts/run.py`
 ```
 
-렌더러(`DefaultSkillContentRenderer`)가 `${AIMON_SKILL_DIR}` 를 스킬의 base 디렉터리로 치환한다. 또한 스킬을
-활성화하면 ToolResult 의 `Available Files` 섹션에 모든 부가 파일이 `이름 → VFS 풀경로` 형태로 함께 제공되므로
-(임의 디렉터리는 `Other Files` 로 노출), 모델이 풀경로로 직접 `Read` 할 수도 있다.
+`${AIMON_SKILL_DIR}` 는 언제나 **실행 환경이 스킬을 스테이징하고 돌려준 경로**다(`ExecutionEnvironment.stage`,
+설계 [`design/tool/execution-environment.md`](../../design/tool/execution-environment.md) §4.4). 스킬을 처음
+쓸 때 스킬 디렉터리가 작업 공간의 `{workspace}/.aimon-staged/<skill-name>/<contentKey>/` 로 복사되고, 렌더러
+(`DefaultSkillContentRenderer`)가 그 경로로 치환한다. 스킬이 어느 저장소에서 왔든 — 사용자 스킬(VFS), 호스트 경로
+(`PathSkillRepository`, 읽기 전용 로컬 VFS 로 읽는다), 클래스패스 — 같다. 그래서 모델의 셸과 파일 도구가 같은
+경로를 본다. 스킬을 활성화하면 ToolResult 의 `Available Files` 섹션에 부가 파일이 `이름 → 스테이징 경로` 형태로
+함께 제공되므로(임의 디렉터리는 `Other Files` 로 노출), 모델이 그 경로로 직접 `Read` 할 수도 있다.
+
+- **읽기 전용 사본이다.** 파일 도구는 `.aimon-staged/` 에 쓸 수 없다. 사본에는 실행 비트가 없으므로 스크립트는
+  `bash x.sh` · `python3 x.py` 처럼 인터프리터로 실행한다(`./x.sh` 는 안 된다).
+- **내용 주소다.** `contentKey` 는 스킬 디렉터리 전체의 해시라, 내용이 같으면 경로가 같고 바뀌면 새 경로가 된다.
+  해시는 레지스트리가 스킬을 읽을 때 한 번 계산한다 — 그래서 시작 시 모든 스킬 파일을 한 번씩 읽는다.
+- **디스크에서 스킬을 고친 뒤**에는 레지스트리를 다시 읽거나(reload) 앱을 재시작하기 전까지 그 스킬의 스테이징이
+  실패한다. 적재된 버전과 디스크 내용이 어긋난 채로 복사하지 않기 위해서다.
+- **`.stageignore`** (gitignore 문법의 부분집합: glob, `dir/`, `!`, `#`)를 스킬 디렉터리에 두면 큰 에셋을 복사
+  대상에서 뺄 수 있다. 스킬 디렉터리 하나의 스테이징 총량은 기본 50 MB 로 제한된다(스타터 속성
+  `aimon.environment.staging.max-bytes`).
+- `.aimon-staged/` 는 사본일 뿐이므로 프로젝트의 `.gitignore` 에 넣는 것을 권장한다.
 
 ### 스킬 본문 렌더 변수 (`${AIMON_*}`)
 
@@ -406,7 +422,7 @@ materialize 후 각 스킬은 신뢰 가능한 base 디렉터리(`Skill#getBaseD
 
 | 변수 | 값 | 범위 |
 |------|----|------|
-| `${AIMON_SKILL_DIR}` | 스킬 base 디렉터리(`Skill#getBaseDir()`) | 스킬 단위 |
+| `${AIMON_SKILL_DIR}` | 스킬 디렉터리를 이 실행의 환경에 스테이징한 경로(`ExecutionEnvironment.stage`) | 스킬 단위 |
 | `${AIMON_AGENT_RUNTIME_ID}` | `AgentRuntimeId` 값 — `agent:<name>` 또는 `agent:<name>:<discriminator>` | **에이전트 단위** |
 | `${AIMON_SESSION_ID}` | `SessionId` 값. 렌더하는 실행이 **세션의 턴일 때만** 채워진다 | **세션 단위** |
 | `${AIMON_EXECUTION_ID}` | `ExecutionId` 값 — 자기 세션이 없는 실행(서브에이전트 포크, 스킬 포크, 스케줄 루틴)의 신원. 노드 로컬이고, **어떤 영속 저장소도 이 id 로 키잉되지 않는다** — 포크의 transcript 라벨로 적혀 재시작을 넘어가긴 하지만 그 스냅샷은 task id 로 찾으므로, 남는 것은 키가 아니라 이름이다. 실행이 세션의 턴이면 **비어 있다** | **실행 단위** |
@@ -439,7 +455,7 @@ IMPORTANT: 세 id 변수는 **수명이 다르므로 서로 대체되지 않는�
 > 그 deprecation 을 **완료**했다 — 별칭 분기는 삭제되었고 리터럴은 이름이 처음부터 약속한 세션 id 에 묶였다.
 > WARN 을 무시하고 별칭을 계속 쓴 본문은 이제 *다른 값*을 받는다.
 
-NOTE (현재 한계): `RenderContext` 를 실제로 채우는 프로덕션 경로는 `SkillTool`(모델이 도구로 스킬을 호출하는
-경로) **하나뿐**이다. `/skill-name` 슬래시 호출(`SkillBackedCommandExecutor`)과 루틴 스텝(`RoutineExecutor`)
-은 빈 컨텍스트로 렌더하므로 위 5개 변수가 모두 `""` 로 치환된다 — `${AIMON_SKILL_DIR}` 도 예외가 아니다.
-이 경로들에 컨텍스트를 연결하는 것은 별도 작업이다.
+NOTE: `RenderContext` 는 스킬을 호출한 실행의 툴 컨텍스트에서 채워진다(`SkillRenderContextAccess`). 모델이
+도구로 부르는 `SkillTool` 과 `/skill-name` 슬래시 호출(`SkillBackedCommandExecutor`)이 같은 헬퍼를 거치므로 두
+경로의 치환 결과가 같다. 슬래시 호출에는 세션 id 가 실리고, `${AIMON_USER}` 는 명령을 친 호출자의 `Principal` 이다.
+루틴 스텝에서 `Skill` 도구를 부르면 스텝의 툴 컨텍스트(`AGENT_RUNTIME_ID` · `PRINCIPAL` · `EXECUTION_ID`)로 렌더된다.

@@ -96,7 +96,8 @@ public final class BundledSkillMaterializer {
      * @param fileSystem
      *            The destination virtual filesystem (must not be null)
      * @param targetDir
-     *            The destination directory on {@code fileSystem} (e.g. {@code ".aimon/bundled-skills"}); must not be
+     *            The destination directory on {@code fileSystem} (e.g. {@code "bundled-skills"} on the control store);
+     *            must not be
      *            null
      * @return The names of the skills that were materialized (i.e. that contained a {@code SKILL.md})
      * @throws NullPointerException

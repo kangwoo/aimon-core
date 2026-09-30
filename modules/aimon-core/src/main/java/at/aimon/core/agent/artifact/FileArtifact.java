@@ -41,6 +41,7 @@ public final class FileArtifact implements ArtifactMetadata {
     private final String fileName;
     private final String toolUseId;
     private final String downloadToken;
+    private final ArtifactStorage storage;
 
     private FileArtifact(Builder builder) {
         this.path = requireNonBlank(builder.path, "Path cannot be null or blank");
@@ -52,6 +53,7 @@ public final class FileArtifact implements ArtifactMetadata {
         this.mimeType = builder.mimeType;
         this.toolUseId = builder.toolUseId;
         this.downloadToken = builder.downloadToken;
+        this.storage = Objects.requireNonNull(builder.storage, "Storage cannot be null");
     }
 
     private static String requireNonBlank(String value, String message) {
@@ -136,6 +138,15 @@ public final class FileArtifact implements ArtifactMetadata {
                 .toolUseId(toolUseId).downloadToken(downloadToken).build();
     }
 
+    /**
+     * Returns which store {@link #getPath()} points into.
+     *
+     * @return the storage ({@link ArtifactStorage#WORKSPACE} unless the file was archived into the control store)
+     */
+    public ArtifactStorage getStorage() {
+        return storage;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -147,19 +158,19 @@ public final class FileArtifact implements ArtifactMetadata {
         final FileArtifact that = (FileArtifact) o;
         return size == that.size && path.equals(that.path) && Objects.equals(mimeType, that.mimeType)
                 && fileName.equals(that.fileName) && Objects.equals(toolUseId, that.toolUseId)
-                && Objects.equals(downloadToken, that.downloadToken);
+                && Objects.equals(downloadToken, that.downloadToken) && storage == that.storage;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(path, size, mimeType, fileName, toolUseId, downloadToken);
+        return Objects.hash(path, size, mimeType, fileName, toolUseId, downloadToken, storage);
     }
 
     @Override
     public String toString() {
         return "FileArtifact{" + "path='" + path + '\'' + ", size=" + size + ", mimeType='" + mimeType + '\''
                 + ", fileName='" + fileName + '\'' + ", toolUseId='" + toolUseId + '\'' + ", downloadToken='"
-                + downloadToken + '\'' + '}';
+                + downloadToken + '\'' + ", storage=" + storage + '}';
     }
 
     /**
@@ -176,6 +187,7 @@ public final class FileArtifact implements ArtifactMetadata {
         private String fileName;
         private String toolUseId;
         private String downloadToken;
+        private ArtifactStorage storage = ArtifactStorage.WORKSPACE;
 
         private Builder() {
         }
@@ -249,6 +261,18 @@ public final class FileArtifact implements ArtifactMetadata {
          */
         public Builder downloadToken(String downloadToken) {
             this.downloadToken = downloadToken;
+            return this;
+        }
+
+        /**
+         * Sets which store the path points into (default {@link ArtifactStorage#WORKSPACE}).
+         *
+         * @param storage
+         *            The storage (must not be null)
+         * @return This builder
+         */
+        public Builder storage(ArtifactStorage storage) {
+            this.storage = Objects.requireNonNull(storage, "Storage cannot be null");
             return this;
         }
 

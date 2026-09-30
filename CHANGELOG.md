@@ -7,6 +7,172 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Changed: workflow isolation refuses bad input where it starts, and says why (EE-8, EE-25, EE-27, EE-28, EE-29)
+
+Design and departures: `docs/design/tool/workflow-isolation-hardening.md`.
+
+- **A branch's own `.aimon/` is refused at write time.** A local isolated branch applies the parent's path rules again,
+  anchored at `.worktrees/{key}/`. Before, the write succeeded, and the merge later failed on the root's `DENY` after
+  other files had already been promoted, leaving a half-merge. The rules follow the parent's: an assembly that set
+  `pathRules(List.of())` leaves its branches unguarded too. A branch can no longer `deleteRecursive(".")` itself
+  through its own filesystem; delete `.worktrees/{key}` through the parent.
+- **`ExecutionEnvironment.isolate` may throw, with the reason.** Empty still means "this kind of environment has no
+  isolation". `UnavailableExecutionEnvironment.isolate` now throws its `ExecutionEnvironmentUnavailableException` (no
+  provider, provider failure), and a local branch's `isolate` throws `UnsupportedOperationException` (nested
+  isolation is not supported). The workflow runner's run-fatal `WorkflowException` quotes the reason and chains it as
+  the cause, where it used to say "does not support isolation".
+- **New default SPI method `ExecutionEnvironment.isolatedFrom()`**, empty by default; a local branch returns its parent.
+- **`WorktreeMerge.promote` checks the branches before it reads or writes any file.** The parent itself, a branch
+  sharing the parent's filesystem, the same branch twice, or a branch whose `isolatedFrom()` names another environment
+  is an `IllegalArgumentException`. Before, the first two copied each file onto itself and then deleted it. (The
+  check calls each environment's `fileSystem()`, which is free for the local provider but may provision elsewhere.)
+  Before promoting anything it then checks every destination against the parent's path rules, so a file a shell wrote
+  under a `READ_ONLY` directory aborts the merge instead of half-failing it, and reads every promoted file's metadata,
+  so a shell-made symlink in a branch aborts it too.
+- **New `VirtualFileSystems.pathRules(VirtualFileSystem)`** returns the rules of a filesystem `withPathRules` built,
+  and an empty list for any other.
+- **A branch's shared staging prefix matches ignoring case**, like the path rules: `.AIMON-STAGED/x` from a branch
+  meets the parent's read-only rule instead of landing in the branch. A staging directory a shell made inside the
+  branch root, which no file-tool path reaches, is left out of the branch's listings and so never promoted.
+- **The branch root's absolute path is matched after normalisation and ignoring case.** `{ws}/./.worktrees/k/x`,
+  `{ws}//.worktrees/k/x` and `{ws}/.worktrees/K/x` are the branch's `x`; they used to nest as
+  `.worktrees/k/.worktrees/k/x`, past the branch's rules.
+
+### Changed: `main` carries a `-SNAPSHOT` version between releases
+
+`VERSION_NAME` on `main` is now `0.3.1-SNAPSHOT`, the next patch release, rather than the last released `0.3.0`. A
+build of `main` no longer claims to be a version that is already on Maven Central. `scripts/release.sh` handles the
+suffix: from `X.Y.Z-SNAPSHOT`, `patch` releases `X.Y.Z` itself, and `minor` / `major` release the smallest version of
+that kind at or above it (`0.4.0-SNAPSHOT` + `minor` → `0.4.0`, `0.3.1-SNAPSHOT` + `minor` → `0.4.0`). After tagging,
+the script commits `chore(release): prepare next development version X.Y.(Z+1)-SNAPSHOT` and pushes both commits
+with the tag. A bare `X.Y.Z` is still accepted and bumps past it as before.
+
+### Changed (breaking): workflow steps carry definition attributes (EE-42)
+
+Workflow steps are forks, but they build their subagent inline, so the `ForkDefinition` on their `EnvironmentRequest`
+always had empty attributes and a provider that picks a slot from them placed every step by its default. Design:
+`docs/design/tool/execution-environment-ee42-workflow-attributes.md`.
+
+- **`SubagentResolver.resolve(SubagentDescriptor)`** replaces `resolve(agentType, systemPrompt, model, tools,
+  maxIterations)` in `aimon-workflow-graaljs`. `SubagentDescriptor` is a new immutable value with a builder; a custom
+  resolver moves its arguments onto it. No deprecated overload (`docs/project/api-stability.md` §5).
+- **GraalJS `agent({...})` accepts `attributes`**, read like a definition file's `attributes:` block (nested and dotted
+  keys are the same attribute; numbers and booleans become text; anything a definition file rejects, and a non-finite
+  number such as `NaN`, fails the script). `SubagentResolver.inline(SubagentRegistry)` copies the attributes of the
+  subagent registered under the step's `agentType` and adds the step's own; only attributes are taken, and the step
+  keeps its `graaljs:<agentType>` name. **The registered definition's keys are pinned:** a step giving one of them a
+  different value fails the script (the message names the `agentType`, the key and both values), so a model-written
+  script cannot move an operator-registered subagent to another slot; an identical value is a no-op, and keys the
+  definition does not set may be added. An unregistered `agentType` has nothing to pin — whether scripts may set
+  `attributes` at all is backlog EE-45. `GraalJsWorkflowTool` uses it over its own registry by default; `SubagentResolver.inline()`
+  still looks nothing up.
+- **`Workflow` built-in steps** copy the attributes of the subagents registered as `workflow-perspective`,
+  `workflow-synthesizer`, `workflow-candidate`, `workflow-judge` and `workflow-skeptic`, when those exist, looked up
+  once per role at the start of each run. A registry that throws is logged at WARN and those steps run without
+  attributes (default placement) — unlike GraalJS, where a registry failure fails the script. Such a definition is
+  also an ordinary, `Task`-callable subagent.
+- **`DefinitionAttributes.overlay(base, override)`** merges two attribute maps, the override winning per key, and
+  rejects a merged key that is both a value and a group. It stays generic; the pinning of registered keys above is a
+  check the GraalJS resolver makes before calling it.
+- **A rejected GraalJS run reports a host exception's message**, not only its type (`JsResultMarshaller`). This applies
+  to every error a binding throws inside the script — a bad descriptor field, a pinned attribute, a failed registry
+  lookup — and the message reaches the model as the tool's error text.
+
+### Added: what an out-of-core execution environment provider needs (EE-18, EE-40, EE-41)
+
+Closes the three items `docs/backlog/execution-environment-open-items.md` lists as prerequisites of the workspace
+sandbox provider. Additive only — existing constructors and builders keep working.
+
+- **Path rules outside the core** (EE-41). `VirtualFileSystems.withPathRules(VirtualFileSystem, List<PathRule>)` wraps a
+  file system in the same path-rule guard the local provider uses (one implementation of path normalisation and
+  case/Unicode folding). The result borrows its delegate. The local provider now goes through it too.
+- **Background `Bash` and environment notices** (EE-18). A background command in an `UnavailableExecutionEnvironment`
+  is an error up front instead of "Background task started" (`UnavailableExecutionEnvironment.message()`).
+  `BashOutput` reports a finished task's notices once, ahead of its output and outside `filter`. A blocking
+  `BashOutput` no longer reports a task as finished before its exit code, output and notices are recorded.
+  `ShellExecutionException` and `ShellTimeoutException` gain `notices()` and constructors taking them, so a shell can
+  report a recreated session on a timed-out or failed command; `Bash` prints them ahead of the error.
+- **Definition attributes and the fork's definition** (EE-40). `agent.md` and `agents/*.md` accept an `attributes:`
+  block, flattened to dotted keys (`sandbox: {slot: build}` → `sandbox.slot=build`) by
+  `at.aimon.core.base.DefinitionAttributes`, and exposed as `AgentDefinition` / `AgentMetadata` /
+  `SubagentMetadata.getAttributes()` and `Agent.getAttributes()` (builders: `attributes(Map<String, String>)`, also on
+  `DefaultAgent.Builder` and `Subagent.Builder`). A list, empty value, empty nested map, blank key, a key written both
+  nested and dotted, or a key that is both a value and a group is a parse error; the same key twice at one level keeps
+  YAML's last-wins. Quote values that are not plain text — YAML 1.1 retypes `010` and `on`. The core carries
+  attributes and never reads them. `EnvironmentRequest.fork()` carries a `ForkDefinition` (subagent name and
+  attributes) for every subagent fork, and `EnvironmentRequest.definitionAttributes()` gives a provider the fork's
+  attributes, else the agent's. Attributes are part of `AgentDefinitionVersion` when present, so a scheduled routine
+  reports a slot change as a definition change; definitions without attributes keep their digest. Workflow steps
+  carry attributes too — see the EE-42 entry above.
+
+### Changed (breaking): tools run in a per-execution `ExecutionEnvironment`, and the control store is split out
+
+Design: `docs/design/tool/execution-environment.md` (implementation plan and departures:
+`execution-environment-implementation.md`; open items: `docs/backlog/execution-environment-open-items.md`). No
+compatibility layer (`docs/project/api-stability.md` §5).
+
+- **New SPI `at.aimon.core.environment`.** `ExecutionEnvironment` (file system, shell, `EnvironmentDescriptor`,
+  `stage`, `isolate`, `contentSearch`, `durable`) and `ExecutionEnvironmentProvider`. Both executors and scheduled
+  routines resolve one environment per execution, before prompt assembly, and publish it under the **write-once**
+  `ToolContextKeys.EXECUTION_ENVIRONMENT` (with `EXECUTION_ENVIRONMENT_PROVIDER` for forks). A second write of a
+  write-once name — including an enricher's — throws. A failing or missing provider yields an
+  `UnavailableExecutionEnvironment` whose file and shell calls fail with the cause. There is no host fallback. The
+  local implementation is `environment.impl.LocalExecutionEnvironmentProvider`.
+- **Tools hold no file system or shell.** `ReadTool()`, `WriteTool()` / `WriteTool(boolean)`, `EditTool()`,
+  `GrepTool()`, `BashTool(BackgroundBashManager)`, `ArtifactAwareWriteTool/EditTool(ArtifactArchive)`. `WikiIngest` and
+  `Skill` read the environment too. Removed: `OrcaToolProviderContext.getFileSystem()` / `getShell()` (use
+  `getControlFileSystem()`), `ToolContextKeys.VIRTUAL_FILE_SYSTEM`, `OrcaAgentRuntimeFactory.withShell(...)`,
+  `OrcaAgentRuntime.ownedShell`, and `agent.impl.orca.environment.{VirtualExecutionEnvironment,
+  LocalExecutionEnvironment, LocalShells}`. `OrcaAgentRuntimeFactory.create(...)` now requires
+  `withExecutionEnvironmentProvider(...)`. `Bash` runs in the workspace root, not the JVM's working directory.
+- **Control store.** The runtime's file system is now `getControlFileSystem()`. Skill, agent and command definitions,
+  task output, task results, snapshots, the CLI wiki and archived artifacts live there. Default directories are
+  relative to the control root (`skills`, `agents`, `commands`, `task-output`, `task-result`, `task-snapshot`,
+  `step-cache`, `bundled-skills`), and a local stack keeps the control root at `{workspace}/.aimon/`, so physical paths
+  are unchanged. The file tools cannot see `.aimon/` (DENY) and cannot modify `.aimon-staged/` (READ_ONLY). The opt-out
+  is `aimon.environment.control-writable=true`. The path rules resolve a path the way the backend does, so
+  `../<workspace-name>/.aimon/…` and `{workspace}/../<workspace-name>/.aimon/…` are caught; they match ignoring case
+  (`.AIMON/` is caught on a case-insensitive store); and a path that leaves the workspace is refused rather than passed
+  through.
+- **Relocation for direct-core embedders.** The `VirtualFileSystem` passed to
+  `OrcaAgentRuntimeFactory.create(...)` / `OrcaAgentRuntimeManager.getOrCreateRuntime(...)` is now the **control
+  root**, and the factory's default directories moved with it: `.aimon/skills` → `skills`, `.aimon/agents` → `agents`,
+  `.aimon/commands` → `commands`, `.aimon/task-output` → `task-output` (likewise the task-result and snapshot stores).
+  An embedder that keeps passing its workspace VFS no longer finds `{workspace}/.aimon/skills|agents|commands`, and
+  task output moves into the workspace. Pass `{workspace}/.aimon` instead to keep the physical paths. Likewise a
+  `VfsStepResultCache` built over a whole workspace VFS now writes to `{vfs}/step-cache`; build it over the control
+  store. Bootstrap, the starter and the CLI already do this.
+- **`OrcaAgentRuntimeManager.Builder.build()` requires a factory with a provider.** It no longer defaults to
+  `new OrcaAgentRuntimeFactory()` (which could not create a runtime without an `ExecutionEnvironmentProvider`): a
+  missing factory, or one without `withExecutionEnvironmentProvider(...)` /
+  `withExecutionEnvironmentProviderFactory(...)`, throws `IllegalStateException` at build time. See
+  `docs/getting-started/embedding-agent-in-application.md` §A.
+- **`${AIMON_SKILL_DIR}` is always a staged copy.** Every `SkillRepository` implements the new abstract
+  `resolveSource(String)`, which replaces `resolveBaseDir` (removed with `Skill.getBaseDir()`). The registry scans each
+  skill into a `StagedResource`, and rendering calls `env.stage(...)`, which makes a content-addressed, read-only copy
+  under `{workspace}/.aimon-staged/{name}/{contentKey}/`. `.stageignore` excludes files. The staging limit is
+  `aimon.environment.staging.max-bytes` (default 50 MB).
+- **Workflow isolation is `ExecutionEnvironment.isolate(branchKey)`.** Removed: `WorktreeEnvironmentFactory`,
+  `WorktreeToolEnvironmentFactory`, `worktreeFactory` on `WorkflowRunnerOptions` / `DefaultWorkflowRunner.Builder` /
+  `GraalJsWorkflowTool.Builder`, `withWorktreeEnvironmentFactory`, and the second argument of
+  `GraalJsWorkflowToolProvider`. `WorktreeMerge.promote(ExecutionEnvironment parent, List<ExecutionEnvironment>
+  branches, Policy)`. Bash commands in a branch default to the branch root.
+- **Stale-write protection.** `ReadTool.FILE_STAMPS_KEY` (read stamps: size + mtime, or `FileMetadata.getEtag()` when
+  the backend has one — S3 ETag, GridFS file id) replaces `READ_FILES_KEY`. `Edit`, and `Write` over an existing file,
+  refuse with "Read the file before modifying it" or "File changed since it was read; Read it again". A file read in an
+  earlier turn must be read again.
+- **Prompt and hooks describe the execution's environment.** The environment block renders the
+  `EnvironmentDescriptor`. `Environment` keeps only `timeZone`: `workingDirectory`, `platform`, `osVersion` and
+  `createWithWorkingDirectory` are removed. `ContextAssemblyRequest` carries `executionEnvironment` in place of
+  `environment` / `fileSystem`. Pre/PostTool hook contexts expose `getEnvironmentDescriptor()`.
+- **Smaller additions.** `ExecutionOptions.background`, `ShellCommandResult.notices()` (shown by `Bash` as
+  `[environment] …` lines), `ContentSearch` (`Grep` delegates to `rg` when it is on the `PATH`, and matching files are
+  now listed in path order), `FileArtifact.getStorage()` (`WORKSPACE` / `CONTROL`) with `ArtifactPolicy` and the
+  starter's `aimon.tools.artifact.*`, bootstrap `ExecutionEnvironmentSpec` / `ToolSpec.artifactPolicy`, and
+  `RecentFilesRestoreHook(..., ToolContext readContext)`.
+- **External modules** `aimon-sandbox` (`OrcaSandboxToolProvider`) and `aimon-browser` (`OrcaBrowserToolProvider`)
+  read `getFileSystem()` and must move to the new SPI (backlog EE-1).
+
 ### Added: the rolling context engine and `SessionHistory`
 
 - **`RollingContextEngine`** (`at.aimon.core.agent.context`) keeps the head (up to the first conversation user message)
@@ -226,6 +392,27 @@ Central is versioned independently).
   7's new `MemberCategory.ACCESS_*` field constants, which `BindingReflectionHintsRegistrar` now registers in
   place of `DECLARED_FIELDS` — visible only to `AimonRuntimeHintsTest`, which asserts the categories Spring's
   registrar chooses and had to follow it.
+
+### Fixed: a skill run as a slash command rendered `${AIMON_SKILL_DIR}` as an empty string
+
+- **`SkillBackedCommandExecutor` never set a render context on the `SkillExecutionRequest`**, so the request fell back
+  to `RenderContext.empty()` and every `AIMON_*` variable in a command-invoked skill body rendered empty with a WARN:
+  `bash ${AIMON_SKILL_DIR}/scripts/x.sh` became `bash /scripts/x.sh`. Only the `Skill` tool built a context. Both
+  paths now build it through **`SkillRenderContextAccess.builderFor(Skill, ToolContext)`** (`at.aimon.core.tools`),
+  which copies the agent runtime id, session id, execution id and principal from the tool context on top of
+  **`SkillRenderContexts.builderFor(Skill)`** (`at.aimon.core.skill.render`), which sets the base directory. The split
+  keeps `skill.render` free of the tool layer.
+- **The command path adds two values the tool path does not have.** The command request's principal, when present,
+  wins over the tool context's — the command flow's tool context carries none, so it is the only source of
+  `${AIMON_USER}` there. And a command run whose tool context names neither a session nor an execution renders
+  `${AIMON_EXECUTION_ID}` as the command's own generated execution id; it is never set beside a session id.
+- **A skill with no explicit base directory and no root files derived `${AIMON_SKILL_DIR}` one level too deep.** The
+  fallback took the parent of the first script (or reference, or asset), so a scripts-only skill resolved to
+  `…/scripts` and `${AIMON_SKILL_DIR}/scripts/x.sh` pointed at `…/scripts/scripts/x.sh`; with a nested key such as
+  `lib/y.sh` it was deeper still, and which one won depended on map order. It now strips the resource's key and its
+  category directory, giving the skill root. Reached by hand-assembled skills and by any `SkillRepository` that does
+  not override `resolveBaseDir`; `Vfs`/`PathSkillRepository` set the base directory explicitly and are unaffected.
+  This changes the `Skill` tool's output for such skills too.
 
 ### Fixed: the native-image resource hint covered nothing below `agents/`
 

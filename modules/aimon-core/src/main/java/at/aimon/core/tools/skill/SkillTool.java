@@ -12,16 +12,15 @@ import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.Constants;
-import at.aimon.core.agent.ExecutionId;
-import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.tool.AbstractTool;
 import at.aimon.core.agent.tool.ToolCategories;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
-import at.aimon.core.base.Principal;
+import at.aimon.core.environment.StagedResource;
+import at.aimon.core.environment.exception.ExecutionEnvironmentUnavailableException;
+import at.aimon.core.environment.exception.StagingException;
 import at.aimon.core.llm.DynamicToolDefinitionProvider;
 import at.aimon.core.skill.ExecutionMode;
 import at.aimon.core.skill.Skill;
@@ -41,6 +40,7 @@ import at.aimon.core.skill.render.NoOpSkillContentRenderer;
 import at.aimon.core.skill.render.RenderContext;
 import at.aimon.core.skill.render.SkillContentRenderer;
 import at.aimon.core.tools.InvokingSessionAccess;
+import at.aimon.core.tools.SkillRenderContextAccess;
 import at.aimon.core.tools.ToolContextKeys;
 
 /**
@@ -348,10 +348,18 @@ public class SkillTool extends AbstractTool {
             // fork-mode) the spawned subagent's lifetime — so hooks registered here observe tool calls made by the
             // forked agent. For inline mode the scope only covers rendering, which is documented behaviour.
             try (SkillHookScope ignored = hookActivator.activate(skill)) {
-                // Render instructions through the configured renderer (no-op by default)
+                // Stage the skill into this execution's environment (${AIMON_SKILL_DIR}), then render the
+                // instructions through the configured renderer (no-op by default).
+                final RenderContext renderContext;
+                try {
+                    renderContext = SkillRenderContextAccess.builderFor(skill, context).build();
+                } catch (StagingException | ExecutionEnvironmentUnavailableException e) {
+                    log.warn("Failed to stage skill '{}': {}", skill.getName(), e.getMessage());
+                    return ToolResult.error("Failed to stage skill '" + skill.getName() + "': " + e.getMessage());
+                }
                 final String renderedInstructions;
                 try {
-                    renderedInstructions = renderer.render(skill, args, buildRenderContext(skill, context));
+                    renderedInstructions = renderer.render(skill, args, renderContext);
                 } catch (RuntimeException e) {
                     log.error("Failed to render skill '{}': {}", skill.getName(), e.getMessage(), e);
                     return ToolResult.error("Failed to render skill: " + e.getMessage());
@@ -370,7 +378,8 @@ public class SkillTool extends AbstractTool {
                 }
 
                 // Format result with skill information (inline mode)
-                final String formattedResult = formatSkillResult(skill, renderedInstructions);
+                final String formattedResult = formatSkillResult(skill, renderedInstructions,
+                        renderContext.getSkillBaseDir().orElse(null));
 
                 return ToolResult.success(formattedResult);
             }
@@ -399,76 +408,6 @@ public class SkillTool extends AbstractTool {
     }
 
     /**
-     * Builds a {@link RenderContext} for rendering the given skill.
-     *
-     * <p>
-     * Populates the context with the agent runtime identifier, the identity of the run doing the rendering, principal,
-     * and skill base directory derived from the active {@link ToolContext} and the resource paths registered on the
-     * skill. Missing values are simply omitted; the renderer is expected to handle absent fields gracefully.
-     *
-     * <p>
-     * The three ids address different lifetimes. The runtime id is <b>agent-scoped</b>: every session served by this
-     * agent renders the same value, so a skill body must not treat {@code ${AIMON_AGENT_RUNTIME_ID}} as a per-run
-     * uniqueness discriminator. The other two are the exclusive pair that names the run itself —
-     * {@code ${AIMON_SESSION_ID}} when the run is a session's turn, {@code ${AIMON_EXECUTION_ID}} when it is not
-     * (a skill invoked from inside a subagent fork or a scheduled routine). Both are copied straight across rather
-     * than merged: the session key is empty in a fork precisely so a body cannot mistake a run identity for a
-     * session, and collapsing them here would undo that.
-     *
-     * @param skill
-     *            The skill being rendered (must not be null)
-     * @param context
-     *            The tool context (must not be null)
-     * @return A render context (never null)
-     */
-    private RenderContext buildRenderContext(Skill skill, ToolContext context) {
-        Objects.requireNonNull(skill, "Skill cannot be null");
-        Objects.requireNonNull(context, "Context cannot be null");
-
-        final RenderContext.Builder builder = RenderContext.builder();
-        context.get(ToolContextKeys.AGENT_RUNTIME_ID).map(AgentRuntimeId::value).ifPresent(builder::agentRuntimeId);
-        context.get(ToolContextKeys.SESSION_ID).map(SessionId::value).ifPresent(builder::sessionId);
-        context.get(ToolContextKeys.EXECUTION_ID).map(ExecutionId::value).ifPresent(builder::executionId);
-        context.get(ToolContextKeys.PRINCIPAL).ifPresent((Principal p) -> builder.principal(p));
-        // Prefer the authoritative base directory carried by the skill; fall back to deriving it from a resource path
-        // for skills assembled without an explicit base directory (backwards compatibility).
-        skill.getBaseDir().or(() -> deriveSkillBaseDir(skill)).ifPresent(builder::skillBaseDir);
-        return builder.build();
-    }
-
-    /**
-     * Derives the skill's base directory from any of its registered resource paths.
-     *
-     * <p>
-     * Used as a fallback only when a skill carries no explicit {@link Skill#getBaseDir() base directory}. Skills that
-     * ship with at least one root file, script, reference, or asset can have their base directory inferred by stripping
-     * the filename from the resource's full virtual filesystem path. Skills with no resources return empty, in which
-     * case downstream consumers (renderer) may emit a warning when the corresponding placeholder is referenced.
-     *
-     * @param skill
-     *            The skill to inspect (must not be null)
-     * @return The base directory if derivable, otherwise empty
-     */
-    private static Optional<String> deriveSkillBaseDir(Skill skill) {
-        return firstResourcePath(skill).map(SkillTool::parentPath);
-    }
-
-    private static Optional<String> firstResourcePath(Skill skill) {
-        return Optional.<String>empty().or(() -> skill.getRootFiles().values().stream().findFirst())
-                .or(() -> skill.getScripts().values().stream().findFirst())
-                .or(() -> skill.getReferences().values().stream().findFirst())
-                .or(() -> skill.getAssets().values().stream().findFirst());
-    }
-
-    private static String parentPath(String fullPath) {
-        final int slash = fullPath.lastIndexOf('/');
-        if (slash <= 0) {
-            return "";
-        }
-        return fullPath.substring(0, slash);
-    }
-
-    /**
      * Formats the skill result for display.
      *
      * <p>
@@ -486,9 +425,11 @@ public class SkillTool extends AbstractTool {
      *            The skill to format
      * @param renderedInstructions
      *            The instructions text produced by the renderer
+     * @param stagedDir
+     *            The directory the skill was staged to (its {@code ${AIMON_SKILL_DIR}}), or null when it was not staged
      * @return A formatted string representation
      */
-    private String formatSkillResult(Skill skill, String renderedInstructions) {
+    private String formatSkillResult(Skill skill, String renderedInstructions, String stagedDir) {
         final StringBuilder output = new StringBuilder();
 
         output.append("=== Skill Activated ===").append(Constants.NEWLINE);
@@ -505,42 +446,24 @@ public class SkillTool extends AbstractTool {
             output.append("Allowed Tools: No restrictions").append(Constants.DOUBLE_NEWLINE);
         }
 
-        // Include available files if present
-        if (!skill.getRootFiles().isEmpty() || !skill.getScripts().isEmpty() || !skill.getReferences().isEmpty()
-                || !skill.getAssets().isEmpty() || !skill.getFiles().isEmpty()) {
+        // Include available files if present. Every path is under the staged copy — the directory the execution's
+        // shell and file tools can both read (execution-environment design §4.4) — never the repository's own path,
+        // which lives in the control store. A file .stageignore excluded was never copied and is not listed.
+        final Map<String, String> rootFiles = stagedPaths(skill, stagedDir, skill.getRootFiles(), "");
+        final Map<String, String> scripts = stagedPaths(skill, stagedDir, skill.getScripts(), "scripts/");
+        final Map<String, String> references = stagedPaths(skill, stagedDir, skill.getReferences(), "references/");
+        final Map<String, String> assets = stagedPaths(skill, stagedDir, skill.getAssets(), "assets/");
+        final Map<String, String> others = otherFiles(skill, stagedDir);
+        if (!rootFiles.isEmpty() || !scripts.isEmpty() || !references.isEmpty() || !assets.isEmpty()
+                || !others.isEmpty()) {
 
             output.append("Available Files:").append(Constants.NEWLINE);
-
-            // Root files (same directory as SKILL.md)
-            if (!skill.getRootFiles().isEmpty()) {
-                output.append("Root:").append(Constants.NEWLINE);
-                skill.getRootFiles().forEach((name, path) -> output.append("  - ").append(name).append(" → ")
-                        .append(path).append(Constants.NEWLINE));
-            }
-
-            // Scripts
-            if (!skill.getScripts().isEmpty()) {
-                output.append("Scripts:").append(Constants.NEWLINE);
-                skill.getScripts().forEach((name, path) -> output.append("  - ").append(name).append(" → ").append(path)
-                        .append(Constants.NEWLINE));
-            }
-
-            // References
-            if (!skill.getReferences().isEmpty()) {
-                output.append("References:").append(Constants.NEWLINE);
-                skill.getReferences().forEach((name, path) -> output.append("  - ").append(name).append(" → ")
-                        .append(path).append(Constants.NEWLINE));
-            }
-
-            // Assets
-            if (!skill.getAssets().isEmpty()) {
-                output.append("Assets:").append(Constants.NEWLINE);
-                skill.getAssets().forEach((name, path) -> output.append("  - ").append(name).append(" → ").append(path)
-                        .append(Constants.NEWLINE));
-            }
-
+            appendCategory(output, "Root:", rootFiles);
+            appendCategory(output, "Scripts:", scripts);
+            appendCategory(output, "References:", references);
+            appendCategory(output, "Assets:", assets);
             // Other files (arbitrary sub-directories such as templates/) not covered by the conventional categories.
-            appendOtherFiles(output, skill);
+            appendCategory(output, "Other Files:", others);
 
             output.append(Constants.NEWLINE);
         }
@@ -551,21 +474,34 @@ public class SkillTool extends AbstractTool {
         return output.toString();
     }
 
-    /**
-     * Appends the bundled files that are not already covered by the conventional categories (root files, scripts,
-     * references, assets). This surfaces files in arbitrary sub-directories — such as {@code templates/} — so the model
-     * learns their resolvable VFS paths.
-     *
-     * @param output
-     *            The buffer to append to
-     * @param skill
-     *            The skill being formatted
-     */
-    private static void appendOtherFiles(StringBuilder output, Skill skill) {
-        if (skill.getFiles().isEmpty()) {
+    private static void appendCategory(StringBuilder output, String heading, Map<String, String> entries) {
+        if (entries.isEmpty()) {
             return;
         }
+        output.append(heading).append(Constants.NEWLINE);
+        entries.forEach((name, path) -> output.append("  - ").append(name).append(" → ").append(path)
+                .append(Constants.NEWLINE));
+    }
 
+    /**
+     * Maps one file category onto the staged copy: {@code name → {stagedDir}/{category}{name}}. Without a staged
+     * directory the value is the path relative to the skill directory. Files the staged copy does not hold
+     * ({@code .stageignore}d, unreadable) are left out.
+     */
+    private static Map<String, String> stagedPaths(Skill skill, String stagedDir, Map<String, String> category,
+            String categoryPrefix) {
+        final Map<String, String> result = new TreeMap<>();
+        category.keySet().forEach(
+                name -> stagedPath(skill, stagedDir, categoryPrefix + name).ifPresent(path -> result.put(name, path)));
+        return result;
+    }
+
+    /**
+     * The bundled files not already covered by the conventional categories (root files, scripts, references, assets)
+     * — files in arbitrary sub-directories such as {@code templates/} — keyed by their path relative to the skill
+     * directory.
+     */
+    private static Map<String, String> otherFiles(Skill skill, String stagedDir) {
         final Set<String> categorized = new HashSet<>();
         categorized.addAll(skill.getRootFiles().values());
         categorized.addAll(skill.getScripts().values());
@@ -575,17 +511,18 @@ public class SkillTool extends AbstractTool {
         final Map<String, String> others = new TreeMap<>();
         skill.getFiles().forEach((relativePath, path) -> {
             if (!categorized.contains(path)) {
-                others.put(relativePath, path);
+                stagedPath(skill, stagedDir, relativePath).ifPresent(staged -> others.put(relativePath, staged));
             }
         });
+        return others;
+    }
 
-        if (others.isEmpty()) {
-            return;
+    private static Optional<String> stagedPath(Skill skill, String stagedDir, String relativePath) {
+        final Optional<StagedResource> resource = skill.getStagedResource();
+        if (resource.isPresent() && !resource.get().getFiles().contains(relativePath)) {
+            return Optional.empty();
         }
-
-        output.append("Other Files:").append(Constants.NEWLINE);
-        others.forEach((name, path) -> output.append("  - ").append(name).append(" → ").append(path)
-                .append(Constants.NEWLINE));
+        return Optional.of(stagedDir == null || stagedDir.isEmpty() ? relativePath : stagedDir + "/" + relativePath);
     }
 
     /**

@@ -681,10 +681,13 @@ class AimonStackBuilderTest {
         for (AgentRuntimeId id : ids) {
             assertThat(stack.agentRuntimeRegistry().get(id)).isEmpty();
         }
-        // Each runtime's file system is a separate teardown entry, because AgentRuntime.close() does not reach
-        // it — one entry for two runtimes would leak one workspace handle per tenant ever created.
-        assertThat(stack.teardownPlan()).anyMatch(line -> line.contains("fileSystem(agent:ops)"))
-                .anyMatch(line -> line.contains("fileSystem(agent:audit)"));
+        // Each runtime's file systems are separate teardown entries, because AgentRuntime.close() does not reach
+        // them — one entry for two runtimes would leak one workspace handle per tenant ever created. The workspace
+        // belongs to the runtime's execution environment provider, the control store (.aimon/) is its own entry.
+        assertThat(stack.teardownPlan()).anyMatch(line -> line.contains("executionEnvironment(agent:ops)"))
+                .anyMatch(line -> line.contains("executionEnvironment(agent:audit)"))
+                .anyMatch(line -> line.contains("controlFileSystem(agent:ops)"))
+                .anyMatch(line -> line.contains("controlFileSystem(agent:audit)"));
     }
 
     @Test

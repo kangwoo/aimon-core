@@ -1,6 +1,7 @@
 package at.aimon.core.agent;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 import at.aimon.core.agent.tool.permission.AllowedTool;
@@ -221,6 +222,19 @@ public final class DefaultAgent implements Agent {
         public Builder contextEngine(ContextEngineKind contextEngine) {
             ensureMetadataBuilder();
             this.metadataBuilder.contextEngine(contextEngine);
+            return this;
+        }
+
+        /**
+         * Sets the free-form attributes (see {@link AgentMetadata#getAttributes()}).
+         *
+         * @param attributes
+         *            the attributes, already flat (must not be null)
+         * @return This builder
+         */
+        public Builder attributes(Map<String, String> attributes) {
+            ensureMetadataBuilder();
+            this.metadataBuilder.attributes(attributes);
             return this;
         }
 

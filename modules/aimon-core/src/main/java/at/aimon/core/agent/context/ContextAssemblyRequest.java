@@ -3,30 +3,32 @@ package at.aimon.core.agent.context;
 import java.util.Objects;
 import java.util.Optional;
 
-import at.aimon.core.agent.Environment;
-import at.aimon.core.filesystem.VirtualFileSystem;
+import at.aimon.core.environment.ExecutionEnvironment;
 
 /**
  * The read-only inputs a {@link ContextProvider} may consult when producing {@link ContextBlock context blocks}.
  *
  * <p>
- * All fields are optional so providers can be composed freely: a provider that needs a {@link VirtualFileSystem} simply
- * yields nothing when none is present, rather than failing. The request carries no mutable state and does not itself
- * touch the filesystem or environment — it merely hands references to the providers.
+ * All fields are optional so providers can be composed freely: a provider that needs a filesystem simply yields nothing
+ * when no environment is present, rather than failing. The request carries no mutable state and does not itself touch
+ * the filesystem or environment — it merely hands references to the providers.
+ *
+ * <p>
+ * The environment is the <b>execution's</b> {@link ExecutionEnvironment}, the same value the execution's tools receive
+ * (execution-environment design §5.1): the directory summary, the git branch and the environment block all describe
+ * where the tools actually run.
  *
  * <p>
  * Instances are immutable and thread-safe (as immutable as the references they hold).
  */
 public final class ContextAssemblyRequest {
 
-    private final Environment environment;
-    private final VirtualFileSystem fileSystem;
+    private final ExecutionEnvironment executionEnvironment;
     private final String agentName;
     private final int iteration;
 
     private ContextAssemblyRequest(Builder builder) {
-        this.environment = builder.environment;
-        this.fileSystem = builder.fileSystem;
+        this.executionEnvironment = builder.executionEnvironment;
         this.agentName = builder.agentName;
         this.iteration = builder.iteration;
         if (iteration < 0) {
@@ -35,17 +37,10 @@ public final class ContextAssemblyRequest {
     }
 
     /**
-     * @return the runtime environment, or empty when none is bound
+     * @return the execution's environment, or empty when none is bound
      */
-    public Optional<Environment> getEnvironment() {
-        return Optional.ofNullable(environment);
-    }
-
-    /**
-     * @return the session's virtual filesystem, or empty when none is bound
-     */
-    public Optional<VirtualFileSystem> getFileSystem() {
-        return Optional.ofNullable(fileSystem);
+    public Optional<ExecutionEnvironment> getExecutionEnvironment() {
+        return Optional.ofNullable(executionEnvironment);
     }
 
     /**
@@ -72,8 +67,7 @@ public final class ContextAssemblyRequest {
 
     /** Builder for {@link ContextAssemblyRequest} instances. */
     public static final class Builder {
-        private Environment environment;
-        private VirtualFileSystem fileSystem;
+        private ExecutionEnvironment executionEnvironment;
         private String agentName;
         private int iteration;
 
@@ -81,22 +75,12 @@ public final class ContextAssemblyRequest {
         }
 
         /**
-         * @param environment
-         *            the runtime environment (may be null)
+         * @param executionEnvironment
+         *            the execution's environment (may be null)
          * @return this builder
          */
-        public Builder environment(Environment environment) {
-            this.environment = environment;
-            return this;
-        }
-
-        /**
-         * @param fileSystem
-         *            the session's virtual filesystem (may be null)
-         * @return this builder
-         */
-        public Builder fileSystem(VirtualFileSystem fileSystem) {
-            this.fileSystem = fileSystem;
+        public Builder executionEnvironment(ExecutionEnvironment executionEnvironment) {
+            this.executionEnvironment = executionEnvironment;
             return this;
         }
 
@@ -132,8 +116,7 @@ public final class ContextAssemblyRequest {
 
     @Override
     public String toString() {
-        return "ContextAssemblyRequest{environment=" + environment + ", fileSystem="
-                + (fileSystem == null ? "null" : fileSystem.getClass().getSimpleName()) + ", agentName='" + agentName
+        return "ContextAssemblyRequest{executionEnvironment=" + executionEnvironment + ", agentName='" + agentName
                 + '\'' + ", iteration=" + iteration + '}';
     }
 
@@ -146,12 +129,12 @@ public final class ContextAssemblyRequest {
             return false;
         }
         final ContextAssemblyRequest that = (ContextAssemblyRequest) o;
-        return iteration == that.iteration && Objects.equals(environment, that.environment)
-                && Objects.equals(fileSystem, that.fileSystem) && Objects.equals(agentName, that.agentName);
+        return iteration == that.iteration && Objects.equals(executionEnvironment, that.executionEnvironment)
+                && Objects.equals(agentName, that.agentName);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(environment, fileSystem, agentName, iteration);
+        return Objects.hash(executionEnvironment, agentName, iteration);
     }
 }

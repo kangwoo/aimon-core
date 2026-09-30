@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
 
@@ -27,7 +28,7 @@ class DirectorySummaryContextProviderTest {
     }
 
     private ContextAssemblyRequest requestWith(LocalFileSystem fs) {
-        return ContextAssemblyRequest.builder().fileSystem(fs).build();
+        return ContextAssemblyRequest.builder().executionEnvironment(TestExecutionEnvironments.of(fs)).build();
     }
 
     @Nested

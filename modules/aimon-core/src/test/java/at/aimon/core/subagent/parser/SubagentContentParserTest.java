@@ -177,4 +177,70 @@ class SubagentContentParserTest {
         assertThatThrownBy(() -> parser.parse(content)).isInstanceOf(SubagentParseException.class)
                 .hasMessageContaining("Failed to parse YAML frontmatter");
     }
+
+    @Test
+    void parse_Attributes_FlattenedToDottedKeys() {
+        String content = """
+                ---
+                description: Builder
+                attributes:
+                  sandbox:
+                    slot: build
+                  sandbox.profile: large
+                ---
+
+                You build things.
+                """;
+
+        SubagentContentResult result = new SubagentContentParser().parse(content);
+
+        assertThat(result.getAttributes()).containsExactly(entry("sandbox.slot", "build"),
+                entry("sandbox.profile", "large"));
+    }
+
+    @Test
+    void parse_NoAttributes_ReturnsEmpty() {
+        SubagentContentResult result = new SubagentContentParser().parse("---\ndescription: d\n---\nbody");
+
+        assertThat(result.getAttributes()).isEmpty();
+    }
+
+    @Test
+    void parse_UnquotedYamlScalarsAreRetyped_QuotedOnesArriveAsWritten() {
+        // YAML 1.1 types unquoted scalars before DefinitionAttributes sees them; quoting keeps the text. Pinned so the
+        // documented advice ("quote values that are not plain text") stays true.
+        SubagentContentResult result = new SubagentContentParser()
+                .parse("---\nattributes:\n  a: 010\n  b: on\n  c: \"010\"\n  d: \"on\"\n---\nbody");
+
+        assertThat(result.getAttributes()).containsExactly(entry("a", "8"), entry("b", "true"), entry("c", "010"),
+                entry("d", "on"));
+    }
+
+    @Test
+    void parse_AttributeListValue_Throws() {
+        assertThatThrownBy(() -> new SubagentContentParser().parse("---\nattributes:\n  slot: [a, b]\n---\nbody"))
+                .isInstanceOf(SubagentParseException.class).hasMessageContaining("'slot' is a list");
+    }
+
+    @Test
+    void parse_AttributesNotAMap_Throws() {
+        assertThatThrownBy(() -> new SubagentContentParser().parse("---\nattributes: build\n---\nbody"))
+                .isInstanceOf(SubagentParseException.class).hasMessageContaining("expected a map");
+    }
+
+    @Test
+    void parse_AttributeWrittenNestedAndDotted_Throws() {
+        String content = """
+                ---
+                attributes:
+                  sandbox:
+                    slot: a
+                  sandbox.slot: b
+                ---
+                body
+                """;
+
+        assertThatThrownBy(() -> new SubagentContentParser().parse(content)).isInstanceOf(SubagentParseException.class)
+                .hasMessageContaining("sandbox.slot").hasMessageContaining("twice");
+    }
 }

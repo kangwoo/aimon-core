@@ -20,6 +20,7 @@ import at.aimon.core.agent.tool.InterruptToolKeys;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
@@ -50,7 +51,7 @@ class GrepToolInterruptTest {
     void setUp() throws IOException {
         fileSystem = new LocalFileSystem(new LocalFileSystemConfig(tempDir.toString()));
         fileSystem.initialize();
-        grepTool = new GrepTool(fileSystem);
+        grepTool = new GrepTool();
 
         // Seed a handful of files so the scan has real work to do.
         Files.writeString(tempDir.resolve("a.txt"), "needle here\n");
@@ -76,7 +77,7 @@ class GrepToolInterruptTest {
     void preTrippedSignalShortCircuits() throws Exception {
         try (DefaultInterruptCoordinator coordinator = new DefaultInterruptCoordinator()) {
             coordinator.requestInterrupt(InterruptReason.USER_SIGINT);
-            final ToolContext context = ToolContext.builder()
+            final ToolContext context = TestExecutionEnvironments.contextBuilder(fileSystem)
                     .put(InterruptToolKeys.CANCELLATION_SIGNAL, coordinator.getSignal()).build();
 
             final ToolResult result = grepTool
@@ -91,7 +92,7 @@ class GrepToolInterruptTest {
     @DisplayName("untripped signal path behaves like pre-IRQ normal execution")
     void untrippedSignalPathIsNormal() throws Exception {
         try (DefaultInterruptCoordinator coordinator = new DefaultInterruptCoordinator()) {
-            final ToolContext context = ToolContext.builder()
+            final ToolContext context = TestExecutionEnvironments.contextBuilder(fileSystem)
                     .put(InterruptToolKeys.CANCELLATION_SIGNAL, coordinator.getSignal()).build();
 
             final ToolResult result = grepTool
@@ -103,10 +104,10 @@ class GrepToolInterruptTest {
     }
 
     @Test
-    @DisplayName("empty ToolContext (no signal wired) still executes normally")
+    @DisplayName("ToolContext with no signal wired still executes normally")
     void noSignalStillExecutes() {
         final ToolResult result = grepTool.execute(ToolInput.of(Map.of("pattern", "needle", "output_mode", "content")),
-                ToolContext.empty());
+                TestExecutionEnvironments.context(fileSystem));
 
         assertThat(result.isSuccess()).isTrue();
         assertThat(result.getContent()).contains("needle");

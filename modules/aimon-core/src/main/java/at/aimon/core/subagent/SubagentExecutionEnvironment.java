@@ -18,6 +18,8 @@ import at.aimon.core.agent.tool.ToolContextEnricher;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.base.Principal;
+import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.environment.ExecutionEnvironmentProvider;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.knowledge.KnowledgeScope;
 import at.aimon.core.knowledge.KnowledgeStore;
@@ -92,6 +94,8 @@ public final class SubagentExecutionEnvironment {
     private final MessageQueueManager messageQueueManager;
     private final Consumer<AgentExecutionEvent> parentEventSink;
     private final List<AllowedTool> callerAllowedTools;
+    private final ExecutionEnvironment executionEnvironment;
+    private final ExecutionEnvironmentProvider executionEnvironmentProvider;
 
     private SubagentExecutionEnvironment(Builder builder) {
         agentRuntimeId = Objects.requireNonNull(builder.agentRuntimeId, "Agent runtime ID cannot be null");
@@ -122,6 +126,8 @@ public final class SubagentExecutionEnvironment {
         messageQueueManager = builder.messageQueueManager;
         parentEventSink = builder.parentEventSink;
         callerAllowedTools = List.copyOf(builder.callerAllowedTools);
+        executionEnvironment = builder.executionEnvironment;
+        executionEnvironmentProvider = builder.executionEnvironmentProvider;
     }
 
     /**
@@ -391,6 +397,28 @@ public final class SubagentExecutionEnvironment {
     }
 
     /**
+     * Returns the spawning execution's environment, which the fork's provider receives as
+     * {@code EnvironmentRequest.parent} (design §5.2). The local provider answers with it unchanged, so a fork of an
+     * isolated workflow branch works in that branch.
+     *
+     * @return the parent execution environment, or empty when the spawner has none (a runtime-level runner)
+     */
+    public Optional<ExecutionEnvironment> getExecutionEnvironment() {
+        return Optional.ofNullable(executionEnvironment);
+    }
+
+    /**
+     * Returns the provider the fork resolves its execution environment from — the spawning runtime's provider,
+     * forwarded from {@code ToolContextKeys.EXECUTION_ENVIRONMENT_PROVIDER}. A fork without one runs with an
+     * unavailable environment rather than falling back to the host.
+     *
+     * @return the provider, or empty
+     */
+    public Optional<ExecutionEnvironmentProvider> getExecutionEnvironmentProvider() {
+        return Optional.ofNullable(executionEnvironmentProvider);
+    }
+
+    /**
      * Returns a builder seeded with every field of this environment, for deriving a variant that shares all borrowed
      * collaborators (registries, stores, model, ...) but overrides selected fields.
      *
@@ -412,7 +440,8 @@ public final class SubagentExecutionEnvironment {
                 .taskOutputStore(taskOutputStore).taskResultStore(taskResultStore)
                 .sessionSnapshotStore(sessionSnapshotStore).previousSnapshot(previousSnapshot)
                 .messageQueueManager(messageQueueManager).parentEventSink(parentEventSink)
-                .callerAllowedTools(callerAllowedTools);
+                .callerAllowedTools(callerAllowedTools).executionEnvironment(executionEnvironment)
+                .executionEnvironmentProvider(executionEnvironmentProvider);
     }
 
     @Override
@@ -447,6 +476,8 @@ public final class SubagentExecutionEnvironment {
         private MessageQueueManager messageQueueManager;
         private Consumer<AgentExecutionEvent> parentEventSink;
         private List<AllowedTool> callerAllowedTools = List.of();
+        private ExecutionEnvironment executionEnvironment;
+        private ExecutionEnvironmentProvider executionEnvironmentProvider;
 
         private Builder() {
         }
@@ -734,6 +765,30 @@ public final class SubagentExecutionEnvironment {
         public Builder callerAllowedTools(List<AllowedTool> callerAllowedTools) {
             this.callerAllowedTools = List
                     .copyOf(Objects.requireNonNull(callerAllowedTools, "Caller allowed tools cannot be null"));
+            return this;
+        }
+
+        /**
+         * Sets the spawning execution's environment (the fork's {@code EnvironmentRequest.parent}).
+         *
+         * @param executionEnvironment
+         *            the parent environment, or null
+         * @return this builder
+         */
+        public Builder executionEnvironment(ExecutionEnvironment executionEnvironment) {
+            this.executionEnvironment = executionEnvironment;
+            return this;
+        }
+
+        /**
+         * Sets the provider the fork resolves its execution environment from.
+         *
+         * @param executionEnvironmentProvider
+         *            the provider, or null
+         * @return this builder
+         */
+        public Builder executionEnvironmentProvider(ExecutionEnvironmentProvider executionEnvironmentProvider) {
+            this.executionEnvironmentProvider = executionEnvironmentProvider;
             return this;
         }
 

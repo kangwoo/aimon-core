@@ -31,7 +31,7 @@ import at.aimon.core.command.exception.CommandNotFoundException;
  * {
  *     &#64;code
  *     CommandRegistry registry = new DefaultCommandRegistry(systemCommands, skillRegistry, fileSystem,
- *             ".aimon/commands");
+ *             "commands");
  *     registry.initialize();
  *
  *     Optional<Command> help = registry.getCommand("help");

@@ -14,6 +14,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import at.aimon.bootstrap.runtime.AgentRuntimeEviction;
 import at.aimon.bootstrap.spec.AgentRuntimeSpec;
+import at.aimon.bootstrap.spec.ExecutionEnvironmentSpec;
 import at.aimon.bootstrap.spec.SessionSpec;
 import at.aimon.core.agent.ContextEngineKind;
 import at.aimon.core.agent.session.transcript.SessionLogFormat;
@@ -23,6 +24,7 @@ import at.aimon.core.llm.capability.InMemoryModelCapabilityRegistry;
 import at.aimon.core.llm.capability.ModelCapabilityDeclaration;
 import at.aimon.core.llm.capability.ThinkingDialect;
 import at.aimon.core.memory.MemoryInjectionMode;
+import at.aimon.core.tools.artifact.ArtifactPolicy;
 import at.aimon.core.tracing.TracePayloadPolicy;
 import at.aimon.core.tracing.impl.InMemoryTraceSpanStore;
 import at.aimon.session.routing.DeploymentMode;
@@ -378,6 +380,8 @@ public class AimonProperties implements InitializingBean {
     private final ContextProperties context = new ContextProperties();
 
     private final Tools tools = new Tools();
+
+    private final EnvironmentProperties environment = new EnvironmentProperties();
 
     private final Skill skill = new Skill();
 
@@ -1067,6 +1071,10 @@ public class AimonProperties implements InitializingBean {
 
     public Tools getTools() {
         return tools;
+    }
+
+    public EnvironmentProperties getEnvironment() {
+        return environment;
     }
 
     public Skill getSkill() {
@@ -2079,8 +2087,61 @@ public class AimonProperties implements InitializingBean {
 
         private final Bash bash = new Bash();
 
+        private final Artifact artifact = new Artifact();
+
         public Bash getBash() {
             return bash;
+        }
+
+        public Artifact getArtifact() {
+            return artifact;
+        }
+
+        /**
+         * Whether {@code Write}/{@code Edit} register what they write as downloadable artifacts, and how much an
+         * execution whose environment is not durable may archive into the control store (execution-environment
+         * design §9.3).
+         */
+        public static class Artifact {
+
+            /** Off by default, as before: a server that offers no download endpoint has no use for artifacts. */
+            private boolean enabled;
+
+            /** The largest single file archived from a non-durable environment (default 50 MB). */
+            private long maxFileBytes = ArtifactPolicy.DEFAULT_MAX_FILE_BYTES;
+
+            /** The most one execution archives from a non-durable environment in total (default 100 MB). */
+            private long maxExecutionBytes = ArtifactPolicy.DEFAULT_MAX_EXECUTION_BYTES;
+
+            public boolean isEnabled() {
+                return enabled;
+            }
+
+            public void setEnabled(boolean enabled) {
+                this.enabled = enabled;
+            }
+
+            public long getMaxFileBytes() {
+                return maxFileBytes;
+            }
+
+            public void setMaxFileBytes(long maxFileBytes) {
+                this.maxFileBytes = maxFileBytes;
+            }
+
+            public long getMaxExecutionBytes() {
+                return maxExecutionBytes;
+            }
+
+            public void setMaxExecutionBytes(long maxExecutionBytes) {
+                this.maxExecutionBytes = maxExecutionBytes;
+            }
+
+            /** @return the policy these properties describe */
+            public ArtifactPolicy toPolicy() {
+                return ArtifactPolicy.builder().enabled(enabled).maxFileBytes(maxFileBytes)
+                        .maxExecutionBytes(maxExecutionBytes).build();
+            }
         }
 
         /** The shell tool. */
@@ -2098,6 +2159,52 @@ public class AimonProperties implements InitializingBean {
 
             public void setEnabled(boolean enabled) {
                 this.enabled = enabled;
+            }
+        }
+    }
+
+    /**
+     * Where the agents' executions run: the filesystem their file tools see and the shell {@code Bash} runs in
+     * (execution-environment design §4, §9.2). A bean of type {@code ExecutionEnvironmentProvider} replaces the local
+     * default for every runtime.
+     */
+    public static class EnvironmentProperties {
+
+        private final Staging staging = new Staging();
+
+        /**
+         * Whether the control store ({@code .aimon/} of each workspace — skill, agent and command definitions, task
+         * outputs) is visible and writable to the file tools. Off by default: the model does not edit its own skills
+         * by accident. Turning it on is the explicit opt-in.
+         */
+        private boolean controlWritable;
+
+        public Staging getStaging() {
+            return staging;
+        }
+
+        public boolean isControlWritable() {
+            return controlWritable;
+        }
+
+        public void setControlWritable(boolean controlWritable) {
+            this.controlWritable = controlWritable;
+        }
+
+        /** Skill files staged into the workspace for the model's shell and file tools. */
+        public static class Staging {
+
+            /**
+             * The limit on one skill directory's staged size (default 50 MB); exclude large files with .stageignore.
+             */
+            private long maxBytes = ExecutionEnvironmentSpec.DEFAULT_MAX_STAGED_BYTES;
+
+            public long getMaxBytes() {
+                return maxBytes;
+            }
+
+            public void setMaxBytes(long maxBytes) {
+                this.maxBytes = maxBytes;
             }
         }
     }

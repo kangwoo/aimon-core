@@ -152,7 +152,7 @@ public ConcurrencyBehavior getConcurrencyBehavior() {
 
 | Tool | InterruptBehavior | Rationale |
 |------|-------------------|-----------|
-| `ReadTool` | NON_INTERRUPTIBLE | Read-only. Its only shared state (the `READ_FILES_KEY` Set) is injected by the executor as a thread-safe set (§5) |
+| `ReadTool` | NON_INTERRUPTIBLE | Read-only. Its only shared state (the `FILE_STAMPS_KEY` map) is injected by the executor as a thread-safe map (§5) |
 | `GrepTool` | COOPERATIVE | Read-only. Allocates all mutable state per call, locally |
 | `WebFetchTool` | COOPERATIVE | Idempotent external GET. The cache is synchronized. Concurrent fetches of the same URL may each miss (a duplicate request), which is harmless because it is idempotent |
 
@@ -166,14 +166,14 @@ public ConcurrencyBehavior getConcurrencyBehavior() {
 
 `ToolContext` is structurally immutable (the map itself is unmodifiable), but **the stored values** are not deep-copied. Under parallel execution, a tool that mutates a mutable value in `ToolContext` produces a race.
 
-The only mutable value the framework identified is the `ReadTool.READ_FILES_KEY` Set. Both executors **inject it as a thread-safe set** at `createToolContext` time:
+The only mutable value the framework identified is the `ReadTool.FILE_STAMPS_KEY` map (`Map<String, FileStamp>`). Both executors **inject it as a thread-safe map** at `createToolContext` time:
 
 ```java
-builder.put(ReadTool.READ_FILES_KEY, ConcurrentHashMap.newKeySet());
+builder.put(ReadTool.FILE_STAMPS_KEY, new ConcurrentHashMap<>());
 ```
 
-- This set is created once per turn and kept across iterations (so read-before-edit works across several iterations).
-- (A side effect) Before this injection, `READ_FILES_KEY` was never injected in production at all, so `EditTool`'s read-before-edit guard was effectively a no-op — this change is what makes it work at last.
+- This map is created once per execution and kept across iterations (so the stale-write check works across several iterations). A fork does not inherit its parent's stamps.
+- (History) The old `READ_FILES_KEY` Set remembered paths only, so it could tell only whether a file had been read. A stamp also tells whether the file changed **after** it was read — [`design/tool/execution-environment.md`](../../design/tool/execution-environment.md) §7.
 
 > **A caution for new tools:** a tool that puts mutable state into `ToolContext` and mutates it must either declare `SEQUENTIAL` or use a thread-safe data structure.
 

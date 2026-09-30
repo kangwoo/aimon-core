@@ -36,6 +36,7 @@ import at.aimon.core.agent.stream.StreamingAgentExecutor;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.command.DefaultCommandRegistry;
 import at.aimon.core.command.execution.ExecutionMetadata;
+import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
 import at.aimon.core.hook.DefaultHookRegistry;
@@ -208,7 +209,8 @@ class DefaultLiveSessionTurnIdTest {
                 .toolRegistry(new DefaultToolRegistry()).hookRegistry(new DefaultHookRegistry())
                 .commandRegistry(new DefaultCommandRegistry(fileSystem, ".aimon/commands"))
                 .subagentRegistry(new DefaultSubagentRegistry(fileSystem, ".aimon/agents"))
-                .skillRegistry(new DefaultSkillRegistry(fileSystem, ".aimon/skills")).fileSystem(fileSystem)
+                .skillRegistry(new DefaultSkillRegistry(fileSystem, ".aimon/skills")).controlFileSystem(fileSystem)
+                .executionEnvironmentProvider(TestExecutionEnvironments.provider(fileSystem))
                 .environment(Environment.createDefault()).build();
     }
 

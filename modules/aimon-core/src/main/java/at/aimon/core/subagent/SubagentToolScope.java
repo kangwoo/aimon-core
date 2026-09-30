@@ -124,7 +124,7 @@ public final class SubagentToolScope {
         return Subagent.of(subagent.getName(),
                 SubagentMetadata.builder().description(metadata.getDescription()).whenToUse(metadata.getWhenToUse())
                         .model(metadata.getModel()).maxIterations(metadata.getMaxIterations())
-                        .allowedTools(allowedTools).build(),
+                        .attributes(metadata.getAttributes()).allowedTools(allowedTools).build(),
                 subagent.getContent());
     }
 }

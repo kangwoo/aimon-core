@@ -1,6 +1,8 @@
 package at.aimon.core.agent.tool;
 
 import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * A typed key for accessing values in {@link ToolContext}.
@@ -23,18 +25,30 @@ import java.util.Objects;
  *         "read_tool.read_files", (Class<Set<String>>) (Class<?>) Set.class);
  * }</pre>
  *
+ * <p>
+ * <b>Write-once keys.</b> A key created with {@link #writeOnce(String, Class)} may be written at most once into a
+ * {@link ToolContext.Builder}: a second write of the same <em>name</em> — through the key, through the string
+ * {@code put(String, Object)} or through {@code putAll} — throws. The names live in a registry owned by this class
+ * rather than in any one builder, so a context copied with {@code builder().putAll(ctx.getContext())} stays
+ * protected: the copy is the first write into the new builder, and any later write of that name throws. The registry
+ * is filled when the class declaring the constant is initialised.
+ *
  * @param <T>
  *            the value type associated with this key
  * @see ToolContext
  */
 public final class ToolContextKey<T> {
 
+    private static final Set<String> WRITE_ONCE_NAMES = ConcurrentHashMap.newKeySet();
+
     private final String name;
     private final Class<? super T> type;
+    private final boolean writeOnce;
 
-    private ToolContextKey(String name, Class<? super T> type) {
+    private ToolContextKey(String name, Class<? super T> type, boolean writeOnce) {
         this.name = Objects.requireNonNull(name, "name must not be null");
         this.type = Objects.requireNonNull(type, "type must not be null");
+        this.writeOnce = writeOnce;
     }
 
     /**
@@ -51,7 +65,45 @@ public final class ToolContextKey<T> {
      *             if {@code name} or {@code type} is null
      */
     public static <T> ToolContextKey<T> of(String name, Class<T> type) {
-        return new ToolContextKey<>(name, type);
+        return new ToolContextKey<>(name, type, false);
+    }
+
+    /**
+     * Creates a write-once key and records its name in the write-once registry, so that no builder accepts a second
+     * write of that name.
+     *
+     * @param name
+     *            the string key name (must not be null)
+     * @param type
+     *            the value type class (must not be null)
+     * @param <T>
+     *            the value type
+     * @return a new write-once {@code ToolContextKey}
+     */
+    public static <T> ToolContextKey<T> writeOnce(String name, Class<T> type) {
+        final ToolContextKey<T> key = new ToolContextKey<>(name, type, true);
+        WRITE_ONCE_NAMES.add(name);
+        return key;
+    }
+
+    /**
+     * Whether a key name was declared write-once by any {@link #writeOnce(String, Class)} key.
+     *
+     * @param name
+     *            the key name
+     * @return {@code true} if a second write of that name must be rejected
+     */
+    public static boolean isWriteOnceName(String name) {
+        return WRITE_ONCE_NAMES.contains(name);
+    }
+
+    /**
+     * Whether this key is write-once.
+     *
+     * @return {@code true} if created with {@link #writeOnce(String, Class)}
+     */
+    public boolean isWriteOnce() {
+        return writeOnce;
     }
 
     /**

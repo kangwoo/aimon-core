@@ -2,6 +2,7 @@ package at.aimon.core.shell.exception;
 
 import java.io.Serial;
 import java.time.Duration;
+import java.util.List;
 
 /**
  * Exception thrown when a shell command execution exceeds the configured timeout.
@@ -71,7 +72,28 @@ public final class ShellTimeoutException extends ShellExecutionException {
      */
     public ShellTimeoutException(String message, Duration timeout, String stdout, String stderr,
             boolean outputTruncated) {
-        super(message, stdout, stderr, outputTruncated);
+        this(message, timeout, stdout, stderr, outputTruncated, null);
+    }
+
+    /**
+     * Creates a new shell timeout exception that carries the environment's notices.
+     *
+     * @param message
+     *            the error message
+     * @param timeout
+     *            the timeout duration that was exceeded
+     * @param stdout
+     *            the partial standard output produced before timeout, null will be converted to empty string
+     * @param stderr
+     *            the partial standard error output produced before timeout, null will be converted to empty string
+     * @param outputTruncated
+     *            true if even the captured partial output may itself be incomplete; see {@link #outputTruncated()}
+     * @param notices
+     *            facts the environment tells the model, see {@link #notices()} (null means none)
+     */
+    public ShellTimeoutException(String message, Duration timeout, String stdout, String stderr,
+            boolean outputTruncated, List<String> notices) {
+        super(message, stdout, stderr, outputTruncated, notices);
         this.timeout = timeout;
     }
 

@@ -78,16 +78,12 @@
  *             Objects.requireNonNull(registry, "registry must not be null");
  *             Objects.requireNonNull(context, "context must not be null");
  *
- *             // Get dependencies from context
- *             VirtualFileSystem fileSystem = context.getFileSystem();
- *             Environment environment = context.getEnvironment();
- *
- *             // Validate dependencies
- *             Objects.requireNonNull(fileSystem, "fileSystem must not be null in context");
- *             Objects.requireNonNull(environment, "environment must not be null in context");
+ *             // Get registration-time dependencies from context. The working filesystem and shell are NOT
+ *             // among them: a tool reads those from ToolContextKeys.EXECUTION_ENVIRONMENT on every call.
+ *             CredentialStore credentialStore = context.getCredentialStore();
  *
  *             // Register custom tools
- *             registry.register(new MyCustomTool(fileSystem, environment));
+ *             registry.register(new MyCustomTool(credentialStore));
  *         }
  *     }
  * }

@@ -21,6 +21,7 @@ import at.aimon.core.agent.orca.tool.OrcaToolProvider;
 import at.aimon.core.agent.orca.tool.OrcaToolProviderContext;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.command.MutableCommandRegistry;
+import at.aimon.core.environment.TestExecutionEnvironments;
 
 /**
  * Context creation registers tools and commands by walking two provider lists, and neither loop guards an individual
@@ -64,8 +65,10 @@ class OrcaAgentRuntimeFactoryProviderFailureTest {
     }
 
     private OrcaAgentRuntime create(List<OrcaToolProvider> toolProviders, List<OrcaCommandProvider> commandProviders) {
-        return new OrcaAgentRuntimeFactory().create(AgentRuntimeId.of("agent:provider-failure"), agentExecutor, null,
-                agentBundle, support.fileSystem(), null, toolProviders, commandProviders);
+        return new OrcaAgentRuntimeFactory()
+                .withExecutionEnvironmentProvider(TestExecutionEnvironments.provider(support.fileSystem()))
+                .create(AgentRuntimeId.of("agent:provider-failure"), agentExecutor, null, agentBundle,
+                        support.fileSystem(), null, toolProviders, commandProviders);
     }
 
     @Test

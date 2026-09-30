@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/subagent/subagent-development-guide.md
-source_commit: 43c8949
+source_commit: 56930f5
 ---
 
 # Subagent Development Guide
@@ -147,6 +147,7 @@ Subagent dbTriage = Subagent.builder()
 | `tools(List<String>)` | | an empty list → `hasToolRestrictions() == false` (no tool restriction) |
 | `model(String)` | | `null` (the executor's default model) |
 | `maxIterations(int)` | | `1000` |
+| `attributes(Map<String, String>)` | | Empty map (the same as a markdown `attributes:` block flattened to dotted keys — e.g. `sandbox.slot`. The core only carries it; an outside component such as an execution environment provider reads it) |
 
 > **The tool string format** is the same as markdown's `allowed-tools`: `"Read"`, `"Bash(git:*)"`, `"Bash(npm install)"`
 > and so on. Internally it goes through `AllowedTool.parse(...)`, so the parsing logic is not duplicated.
@@ -167,7 +168,9 @@ Subagent.builder().name("plain").systemPrompt("You are a plain agent.").build();
 You are a plain agent.
 ```
 
-Both end up with `maxIterations=1000`, `model=null`, `whenToUse=null` and no tool restriction.
+Both end up with `maxIterations=1000`, `model=null`, `whenToUse=null`, no tool restriction and no attributes (an empty
+`attributes`). A markdown `attributes:` block (e.g. `sandbox:` → `slot: build` under `attributes:`) is the same as
+`.attributes(Map.of("sandbox.slot", "build"))` in code.
 
 ---
 

@@ -30,6 +30,7 @@ import at.aimon.core.agent.context.ContextEngine;
 import at.aimon.core.agent.context.ContextRequest;
 import at.aimon.core.agent.context.ContextView;
 import at.aimon.core.agent.context.DefaultContextEngine;
+import at.aimon.core.agent.context.EnvironmentBlocks;
 import at.aimon.core.agent.exception.ContextWindowExceededException;
 import at.aimon.core.agent.exception.MaxIterationsExceededException;
 import at.aimon.core.agent.interrupt.CancellationSignal;
@@ -59,6 +60,12 @@ import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.search.ToolSearchCatalog;
 import at.aimon.core.agent.tool.search.ToolSearchRegistry;
 import at.aimon.core.command.execution.ExecutionMetadata;
+import at.aimon.core.environment.EnvironmentDescriptor;
+import at.aimon.core.environment.EnvironmentRequest;
+import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.environment.ExecutionEnvironments;
+import at.aimon.core.environment.ForkDefinition;
+import at.aimon.core.environment.UnavailableExecutionEnvironment;
 import at.aimon.core.hook.HookExecutionManager;
 import at.aimon.core.hook.HookFeedback;
 import at.aimon.core.hook.HookRegistry;
@@ -333,23 +340,32 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
 
         final Subagent subagent = context.getSubagent();
 
+        // The fork's run identity. Deliberately not a SessionId: one of those means a durable record plus a
+        // cluster-unique lease, and a fork is entitled to neither — it used to mint one anyway, which is the defect
+        // this removes. A resumed run keeps the identity of the run it continues (the snapshot's label) so per-run
+        // tool state — the todo list, for one — survives the suspend/resume boundary exactly as it did while that
+        // label was a minted session id.
+        final TranscriptBuffer resumedBuffer = request.getPreviousSnapshot().map(TranscriptBuffer::fromSnapshot)
+                .orElse(null);
+        final ExecutionId executionId = resumedBuffer != null
+                ? ExecutionId.of(resumedBuffer.getSessionId().value())
+                : ExecutionId.generate("subagent:" + subagent.getName());
+
+        // Resolve the execution environment once, before the prompt is built and before any tool runs (design §5.1).
+        // The parent environment rides along so the local provider can answer with it unchanged (§5.2); a fork that
+        // was handed no provider gets an unavailable environment naming the wiring gap, never the host.
+        final ExecutionEnvironment executionEnvironment = resolveExecutionEnvironment(context, request, executionId);
+
         // Build dynamic system prompt with environment information
         final String systemPrompt = buildDynamicSystemPrompt(subagent.getContent().getSystemPrompt(),
-                context.getEnvironment());
+                executionEnvironment.descriptor());
 
-        // Create conversation context, and with it the fork's run identity. Deliberately not a SessionId: one of those
-        // means a durable record plus a cluster-unique lease, and a fork is entitled to neither — it used to mint one
-        // anyway, which is the defect this removes. A resumed run keeps the identity of the run it continues (the
-        // snapshot's label) so per-run tool state — the todo list, for one — survives the suspend/resume boundary
-        // exactly as it did while that label was a minted session id.
+        // Create conversation context.
         final TranscriptBuffer transcriptBuffer;
-        final ExecutionId executionId;
-        if (request.getPreviousSnapshot().isPresent()) {
-            transcriptBuffer = TranscriptBuffer.fromSnapshot(request.getPreviousSnapshot().get());
+        if (resumedBuffer != null) {
+            transcriptBuffer = resumedBuffer;
             transcriptBuffer.setSystemPrompt(systemPrompt);
-            executionId = ExecutionId.of(transcriptBuffer.getSessionId().value());
         } else {
-            executionId = ExecutionId.generate("subagent:" + subagent.getName());
             transcriptBuffer = new TranscriptBuffer(forkTranscriptLabel(executionId), systemPrompt);
         }
 
@@ -384,9 +400,11 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 // Per-execution artifact collector so artifact-producing subagent tools have the context key (parity
                 // with the main-agent executor). Surfacing collected artifacts on SubagentExecutionResult is a
                 // follow-up.
-                final ArtifactCollector artifactCollector = new ArtifactCollector();
+                // Archived artifacts of this fork land under its own execution id (execution-environment §9.3).
+                final ArtifactCollector artifactCollector = new ArtifactCollector(executionId.value());
                 final ToolContext toolContext = createToolContext(context, request, sessionRegistry,
-                        coordinator.getSignal(), effectiveMetadata, executionId, artifactCollector);
+                        coordinator.getSignal(), effectiveMetadata, executionId, artifactCollector,
+                        executionEnvironment);
 
                 final LoopContext lc = LoopContext.builder().context(context).transcriptBuffer(transcriptBuffer)
                         .executionId(executionId).systemPromptParts(systemPromptParts)
@@ -633,6 +651,29 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
     }
 
     /**
+     * Resolves the fork's execution environment through the provider forwarded from the spawning execution, passing
+     * the spawner's environment as the parent and the fork's own definition, so a provider can place each subagent
+     * differently (design §5.2).
+     */
+    private static ExecutionEnvironment resolveExecutionEnvironment(SubagentExecutionContext context,
+            SubagentExecutionRequest request, ExecutionId executionId) {
+        final EnvironmentRequest environmentRequest = EnvironmentRequest.builder()
+                .agentRuntimeId(context.getAgentRuntimeId()).executionId(executionId)
+                .invokingSessionId(request.getInvokingSessionId().orElse(null))
+                .principal(request.getPrincipal().orElse(null)).parent(context.getExecutionEnvironment().orElse(null))
+                .fork(ForkDefinition.builder().name(context.getSubagent().getName())
+                        .attributes(context.getSubagent().getMetadata().getAttributes()).build())
+                .build();
+        if (context.getExecutionEnvironmentProvider().isEmpty()) {
+            log.warn("No ExecutionEnvironmentProvider forwarded to fork '{}'; its file and shell tools will fail",
+                    context.getSubagent().getName());
+            return UnavailableExecutionEnvironment.of("no ExecutionEnvironmentProvider forwarded to this fork");
+        }
+        return ExecutionEnvironments.resolveOrUnavailable(context.getExecutionEnvironmentProvider().get(),
+                environmentRequest);
+    }
+
+    /**
      * Labels a fork's transcript buffer with the fork's run identity.
      *
      * <p>
@@ -669,11 +710,15 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      *            this fork's run identity (published to tools, and the key per-run state partitions on)
      * @param artifactCollector
      *            the per-execution artifact collector exposed to artifact-producing tools
+     * @param executionEnvironment
+     *            the fork's execution environment, published under the write-once key before the enrichers run
      * @return the tool context (never null)
      */
+    // Every argument is a distinct per-execution value the context publishes; bundling them would only move the list.
+    @SuppressWarnings("checkstyle:ParameterNumber")
     private ToolContext createToolContext(SubagentExecutionContext context, SubagentExecutionRequest request,
             ToolRegistry sessionRegistry, CancellationSignal cancellationSignal, LlmCallMetadata effectiveMetadata,
-            ExecutionId executionId, ArtifactCollector artifactCollector) {
+            ExecutionId executionId, ArtifactCollector artifactCollector, ExecutionEnvironment executionEnvironment) {
         final ToolContext.Builder builder = ToolContext.builder();
         builder.put(ToolContextKeys.AGENT_RUNTIME_ID, context.getAgentRuntimeId());
         // No SESSION_ID: this run is not a session's turn. The fork used to publish the id it had minted for its own
@@ -697,9 +742,9 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         builder.put(ToolContextKeys.ARTIFACT_COLLECTOR, artifactCollector);
         builder.put(TodoWriteTool.CONTEXT_ID_KEY, executionId.value());
 
-        // PAR-05: inject a thread-safe, execution-scoped read-tracking set (parity with the main-agent executor). Backs
-        // EditTool's read-before-edit guard and lets parallel CONCURRENT_SAFE Read tools record reads without racing.
-        builder.put(ReadTool.READ_FILES_KEY, ConcurrentHashMap.newKeySet());
+        // PAR-05 / execution-environment §7: inject a thread-safe, execution-scoped map of read stamps (parity with
+        // the main-agent executor). A fresh map, not the parent's: a fork does not inherit its parent's reads.
+        builder.put(ReadTool.FILE_STAMPS_KEY, new ConcurrentHashMap<>());
 
         // Publish the execution-scoped signal so cooperative subagent tools can poll it through
         // InterruptAccess#signalOf.
@@ -726,6 +771,13 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         if (sessionRegistry instanceof ToolSearchRegistry searchRegistry) {
             builder.put(ToolContextKeys.TOOL_SEARCH_REGISTRY, searchRegistry);
         }
+
+        // The execution's environment and the provider it came from, before the enrichers: both keys are write-once,
+        // so an enricher that tries to replace either fails (and is logged) instead of silently swapping the
+        // filesystem and shell under the fork's tools.
+        builder.put(ToolContextKeys.EXECUTION_ENVIRONMENT, executionEnvironment);
+        context.getExecutionEnvironmentProvider()
+                .ifPresent(p -> builder.put(ToolContextKeys.EXECUTION_ENVIRONMENT_PROVIDER, p));
 
         // Apply forwarded ToolContextEnrichers last, mirroring the main-agent executor, so module-supplied keys are
         // present for subagent tools.
@@ -846,29 +898,16 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
     }
 
     /**
-     * Builds a dynamic system prompt by injecting environment details.
+     * Builds a dynamic system prompt by injecting the execution environment's description.
      *
      * @param baseSystemPrompt
      *            The base system prompt from Subagent configuration
-     * @param environment
-     *            The runtime environment (may be null)
+     * @param descriptor
+     *            The fork's execution environment descriptor
      * @return The system prompt with dynamically injected environment information
      */
-    private String buildDynamicSystemPrompt(String baseSystemPrompt, Environment environment) {
-        final StringBuilder promptBuilder = new StringBuilder(baseSystemPrompt);
-
-        if (environment != null) {
-            promptBuilder.append("\n\n");
-            promptBuilder.append("Here is useful information about the environment you are running in:\n\n");
-            promptBuilder.append("**Environment:**\n");
-            promptBuilder.append("```\n");
-            promptBuilder.append("Working directory: ").append(environment.getWorkingDirectory()).append('\n');
-            promptBuilder.append("Platform: ").append(environment.getPlatform()).append('\n');
-            promptBuilder.append("OS Version: ").append(environment.getOsVersion()).append('\n');
-            promptBuilder.append("```");
-        }
-
-        return promptBuilder.toString();
+    private String buildDynamicSystemPrompt(String baseSystemPrompt, EnvironmentDescriptor descriptor) {
+        return baseSystemPrompt + "\n\n" + EnvironmentBlocks.render(descriptor);
     }
 
     /**

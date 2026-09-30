@@ -59,6 +59,7 @@ at.aimon.core/
 ├── tracing/        실행 트레이싱
 ├── filesystem/     가상 파일시스템
 ├── shell/          가상 셸
+├── environment/    실행 환경 — 도구가 쓰는 파일시스템·셸을 실행마다 고른다
 ├── credential/     자격증명 저장소
 ├── status/         시스템 상태 리포트
 ├── config/         설정 (훅 핫리로드)
@@ -352,6 +353,12 @@ public interface VirtualShell extends AutoCloseable {
 그쪽의 격리는 셸을 갈아 끼우는 것이 아니라 도구 4종(`RunSandbox` · `CopyToSandbox` · `RestartSandbox` ·
 `DeleteSandbox`)으로 주어지므로, 컨테이너에 격리된 **셸**이 필요하면 직접 구현한다.
 
+도구는 셸도 파일 시스템도 직접 쥐지 않는다. `at.aimon.core.environment` 의 `ExecutionEnvironmentProvider` 가
+실행마다 `ExecutionEnvironment`(파일 시스템 · 셸 · 서술자 · 스테이징 · 격리)를 내고, 실행기가 그것을
+`ToolContextKeys.EXECUTION_ENVIRONMENT` 에 넣는다. 기본 구현은 `LocalExecutionEnvironmentProvider` 다 —
+작업 공간의 `.aimon/`(제어 저장소)은 파일 도구에게 숨기고, 스킬 파일은 `.aimon-staged/` 로 스테이징한다.
+설계는 [`design/tool/execution-environment.md`](../design/tool/execution-environment.md).
+
 ### 4.7 Session
 
 **패키지**: `at.aimon.core.agent.session` (+ `.store`, `.transcript`)
@@ -495,8 +502,8 @@ id 를 `invokingSessionId` 로 별도 전달한다.
 
 여러 서브에이전트를 **결정론적 제어 흐름**으로 엮는다. `WorkflowRunners` 로 러너를 만들고
 `Pipeline` / `Stage` / `AgentTask` 로 조립하며, `RunHandle` 과 `RunStore` 로 재개할 수 있다.
-예산은 `WorkflowBudget`, 동시성은 `WorkflowConcurrencyConfig`, git 격리는
-`WorktreeEnvironmentFactory` 가 담당한다. JS 스크립트 프론트엔드는 `aimon-workflow-graaljs`.
+예산은 `WorkflowBudget`, 동시성은 `WorkflowConcurrencyConfig`, 격리는
+실행 환경의 `ExecutionEnvironment.isolate()` 가 담당한다. JS 스크립트 프론트엔드는 `aimon-workflow-graaljs`.
 
 IMPORTANT (소멸 책임): `WorkflowRunner` 에는 두 변형이 있다 — agent-scoped 변형은
 `OrcaAgentRuntimeFactory` 가 만들고 `OrcaAgentRuntime.close()` 가 닫으며, call-scoped 변형은

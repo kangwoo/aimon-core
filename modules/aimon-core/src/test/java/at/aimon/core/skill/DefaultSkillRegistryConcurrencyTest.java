@@ -3,6 +3,11 @@ package at.aimon.core.skill;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -19,9 +24,12 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
+import at.aimon.core.filesystem.VirtualFileSystem;
+import at.aimon.core.filesystem.VirtualFileSystems;
 import at.aimon.core.skill.exception.SkillNotFoundException;
 import at.aimon.core.skill.parser.MarkdownSkillParser;
 import at.aimon.core.skill.repository.SkillRepository;
+import at.aimon.core.skill.repository.SkillSource;
 
 /**
  * Regression tests for B-27: the concurrency the class javadoc promises.
@@ -177,6 +185,12 @@ class DefaultSkillRegistryConcurrencyTest {
      * <p>
      * Only {@link #findByName(String)} is instrumented: it is the one call every load makes exactly once, so its count
      * <em>is</em> the load count.
+     *
+     * <p>
+     * {@link #resolveSource(String)} answers deliberately — a read-only filesystem over a temp directory holding each
+     * skill's {@code SKILL.md} — rather than empty: the registry refuses a skill without a staging source, which would
+     * make every load throw and stop this test measuring concurrency. The staging scan runs inside the same
+     * {@code computeIfAbsent} as the load it measures, so the load counts are unaffected.
      */
     private static final class FakeSkillRepository implements SkillRepository {
 
@@ -187,8 +201,31 @@ class DefaultSkillRegistryConcurrencyTest {
         };
         private volatile long loadDelayMillis;
 
+        private final VirtualFileSystem sourceFileSystem;
+
         private FakeSkillRepository(String... skillNames) {
             names.addAll(List.of(skillNames));
+            try {
+                final Path root = Files.createTempDirectory("fake-skills");
+                root.toFile().deleteOnExit();
+                for (String name : skillNames) {
+                    final Path dir = Files.createDirectories(root.resolve(name));
+                    dir.toFile().deleteOnExit();
+                    final Path skillFile = Files.writeString(dir.resolve("SKILL.md"), skillSource(name),
+                            StandardCharsets.UTF_8);
+                    skillFile.toFile().deleteOnExit();
+                }
+                sourceFileSystem = VirtualFileSystems.readOnlyLocal(root);
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        }
+
+        @Override
+        public Optional<SkillSource> resolveSource(String skillName) {
+            return names.contains(skillName)
+                    ? Optional.of(SkillSource.of(sourceFileSystem, skillName))
+                    : Optional.empty();
         }
 
         @Override

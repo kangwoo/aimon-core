@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/skill/builtin-agent-skill-guide.md
-source_commit: a039699
+source_commit: 6869884
 ---
 
 # Built-in Agent/Skill Guide
@@ -297,10 +297,10 @@ AdaptiveAgentBundleLoader
     └── SkillRegistry ← ClasspathSkillRepository (an index file is required)
 ```
 
-> The bundled SkillRegistry a loader produces reliably provides nothing but the SKILL.md body (`ClasspathSkillRepository`
-> returns an empty map for the supporting files, and `PathSkillRepository` points at an OS absolute path outside the
-> workspace). So the bootstrap copies the bundled skill tree into the workspace VFS once and rebuilds the VFS-based
-> registry on top of that — see [Materializing bundled skill resources](#materializing-bundled-skill-resources) below.
+> The bootstrap copies the bundled skill tree into the control store once and rebuilds the VFS-based registry on top of
+> that. The bundle registry a loader produces (`ClasspathSkillRepository` / `PathSkillRepository`) stays as the fallback
+> for skills the copy skipped, and either way the supporting files reach the model through `${AIMON_SKILL_DIR}`
+> staging — see [Materializing bundled skill resources](#materializing-bundled-skill-resources) below.
 
 ### The AgentBundle registry
 
@@ -347,8 +347,9 @@ Each Agent bundle follows this directory structure:
 ```
 
 The supporting files (`scripts/`, `references/`, `assets/`, and an arbitrary directory such as `templates/`) are
-**materialized (copied)** into the workspace VFS (`.aimon/bundled-skills/<name>/`) at bootstrap, so the Agent's `Read`
-and `Bash` tools can reach them whichever loader — FileSystem or JAR — brought the bundle in. For how that works, see
+**materialized (copied)** into the control store (`.aimon/bundled-skills/<name>/`) at bootstrap and staged into the
+workspace's `.aimon-staged/` when the skill is used, so the Agent's `Read` and `Bash` tools can reach them whichever
+loader — FileSystem or JAR — brought the bundle in. For how that works, see
 [Materializing bundled skill resources](#materializing-bundled-skill-resources) below.
 
 ### Where the classpath resources live
@@ -378,12 +379,14 @@ directories) live on the classpath — inside a JAR, or in the `build/resources`
 the workspace `VirtualFileSystem` the Agent's `Read` and `Bash` tools see: a JAR entry is not a file, and an unpacked
 resource resolves to an OS absolute path outside the workspace sandbox.
 
-To solve it, the bootstrap (`AgentSetupFactory`) uses `BundledSkillMaterializer` to copy the bundled skill tree into
-the workspace VFS at `.aimon/bundled-skills/<skill-name>/`.
+The bootstrap uses `BundledSkillMaterializer` to copy the bundled skill tree into the **control store** at
+`bundled-skills/<skill-name>/` (locally `{workspace}/.aimon/bundled-skills/`). The control store is invisible to the
+model's file tools, so this copy is not a file the agent reads directly — it is the source the staging of the next
+section reads from.
 
 - **Independent of how it was loaded**: `ClasspathResourceTreeWalker` handles both `file:` and `jar:` URLs, so it
   behaves identically whether you run from an IDE, from `gradle run`, or from a packaged JAR.
-- **Overwritten at boot**: every boot empties the target directory and copies again, so the workspace copy always
+- **Overwritten at boot**: every boot empties the target directory and copies again, so the control-store copy always
   matches the deployed classpath contents.
 - **Registry priority**: the final `CompositeSkillRegistry` is composed in the order
   `[the classpath bundle (fallback) < the materialized VFS bundle < the user's .aimon/skills]`. The materialized VFS
@@ -392,18 +395,33 @@ the workspace VFS at `.aimon/bundled-skills/<skill-name>/`.
 
 ### Referring to a skill's own files with `${AIMON_SKILL_DIR}`
 
-After materialization each skill has a trustworthy base directory (`Skill#getBaseDir()`). When a skill body refers to a
-file relative to its own directory, using the `${AIMON_SKILL_DIR}` variable is recommended:
+When a skill body refers to a file relative to its own directory, using the `${AIMON_SKILL_DIR}` variable is
+recommended:
 
 ```markdown
 Load this skill's template: @${AIMON_SKILL_DIR}/templates/report.md
 Run the helper: !`python ${AIMON_SKILL_DIR}/scripts/run.py`
 ```
 
-The renderer (`DefaultSkillContentRenderer`) substitutes `${AIMON_SKILL_DIR}` with the skill's base directory. And
-activating a skill also lists every supporting file in the ToolResult's `Available Files` section as
-`name → full VFS path` (an arbitrary directory is exposed under `Other Files`), so the model can `Read` one directly by
-its full path as well.
+`${AIMON_SKILL_DIR}` is always **the path the execution environment returned when it staged the skill**
+(`ExecutionEnvironment.stage`, design [`design/tool/execution-environment.md`](../../design/tool/execution-environment.md)
+§4.4). On the skill's first use its directory is copied into the workspace at
+`{workspace}/.aimon-staged/<skill-name>/<contentKey>/`, and the renderer (`DefaultSkillContentRenderer`) substitutes that
+path. It is the same whichever repository the skill came from — a user skill (VFS), a host path
+(`PathSkillRepository`, read through a read-only local VFS), or the classpath — so the model's shell and file tools
+see the same path. Activating a skill also lists its supporting files in the ToolResult's `Available Files` section as
+`name → staged path` (an arbitrary directory is exposed under `Other Files`), so the model can `Read` one directly by
+that path as well.
+
+- **A read-only copy.** The file tools cannot write under `.aimon-staged/`. The copy carries no execute bit, so run
+  scripts through an interpreter — `bash x.sh`, `python3 x.py` (not `./x.sh`).
+- **Content-addressed.** `contentKey` hashes the whole skill directory: the same content gives the same path, a change
+  gives a new one. The hash is computed once when the registry reads the skill — so startup reads every skill file once.
+- **After editing a skill on disk**, staging that skill fails until the registry is reloaded or the application is
+  restarted, so that files never get copied out of step with the version that was loaded.
+- **`.stageignore`** (a gitignore subset: globs, `dir/`, `!`, `#`) in the skill directory keeps large assets out of the
+  copy. One skill directory stages at most 50 MB by default (starter property `aimon.environment.staging.max-bytes`).
+- `.aimon-staged/` holds copies only; adding it to the project's `.gitignore` is recommended.
 
 ### The skill body's render variables (`${AIMON_*}`)
 
@@ -413,7 +431,7 @@ injected into declarative hooks (`SkillHookEnv`'s `AIMON_*`) — the renderer ne
 
 | Variable | Value | Scope |
 |------|----|------|
-| `${AIMON_SKILL_DIR}` | The skill's base directory (`Skill#getBaseDir()`) | Per skill |
+| `${AIMON_SKILL_DIR}` | The path the skill directory was staged to in this execution's environment (`ExecutionEnvironment.stage`) | Per skill |
 | `${AIMON_AGENT_RUNTIME_ID}` | The `AgentRuntimeId` value — `agent:<name>` or `agent:<name>:<discriminator>` | **Per agent** |
 | `${AIMON_SESSION_ID}` | The `SessionId` value. Filled in **only when the rendering execution is a session's turn** | **Per session** |
 | `${AIMON_EXECUTION_ID}` | The `ExecutionId` value — the identity of an execution with no session of its own (a subagent fork, a skill fork, a scheduled routine). It is node-local, and **no persistent store is keyed by this id** — it is written as a fork's transcript label and so does survive a restart, but that snapshot is looked up by task id, so what remains is a name, not a key. **Empty** when the execution is a session's turn | **Per execution** |
@@ -448,8 +466,8 @@ Working directory: /tmp/work/${AIMON_SESSION_ID}${AIMON_EXECUTION_ID}
 > overhaul **completed** that deprecation — the alias branch was deleted, and the literal is bound to the session id its
 > name promised from the start. A body that ignored the WARN and went on using the alias now receives *a different value*.
 
-NOTE (a current limitation): the production path that actually fills `RenderContext` is `SkillTool` (the path where the
-model invokes a skill as a tool) and **that one alone**. The `/skill-name` slash invocation
-(`SkillBackedCommandExecutor`) and a routine step (`RoutineExecutor`) render with an empty context, so all five
-variables above are substituted with `""` — `${AIMON_SKILL_DIR}` is no exception. Connecting a context to those paths is
-separate work.
+NOTE: `RenderContext` is filled from the tool context of the run that invoked the skill (`SkillRenderContextAccess`).
+`SkillTool`, which the model calls as a tool, and the `/skill-name` slash invocation (`SkillBackedCommandExecutor`) go
+through the same helper, so the two paths substitute the same values. A slash invocation carries the session id, and
+`${AIMON_USER}` is the `Principal` of the caller who typed the command. A routine step that calls the `Skill` tool
+renders with the step's tool context (`AGENT_RUNTIME_ID` · `PRINCIPAL` · `EXECUTION_ID`).

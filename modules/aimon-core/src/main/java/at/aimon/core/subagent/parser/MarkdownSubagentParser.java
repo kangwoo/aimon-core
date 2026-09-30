@@ -70,7 +70,8 @@ public class MarkdownSubagentParser implements SubagentParser {
 
         // Build metadata. max-iterations is only forwarded when present so the metadata default (1000) stays intact.
         final SubagentMetadata.Builder metadataBuilder = SubagentMetadata.builder().description(result.getDescription())
-                .whenToUse(result.getWhenToUse()).tools(result.getTools()).model(result.getModel());
+                .whenToUse(result.getWhenToUse()).tools(result.getTools()).model(result.getModel())
+                .attributes(result.getAttributes());
         if (result.getMaxIterations() != null) {
             metadataBuilder.maxIterations(result.getMaxIterations());
         }

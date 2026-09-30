@@ -1,5 +1,7 @@
 # Gradle
 .gradle/
+# Kotlin compiler session/error cache (buildSrc's Kotlin DSL plugins)
+.kotlin/
 build/
 out/
 bin/
