@@ -109,9 +109,14 @@ VERSION_NAME=0.3.1
 
 이 프로젝트는 [vanniktech/gradle-maven-publish-plugin](https://github.com/vanniktech/gradle-maven-publish-plugin)을 사용한다.
 
-주요 설정은 루트 `build.gradle.kts`에 정의되어 있다:
+주요 설정은 `buildSrc/src/main/kotlin/aimon.publishable.gradle.kts` 에 정의되어 있다:
 
-- **퍼블리싱 대상**: `SonatypeHost.CENTRAL_PORTAL` (Sonatype Central Portal)
+- **퍼블리싱 대상**: `publishToMavenCentral()` — Sonatype Central Portal. 0.34 부터 플러그인이 아는 목적지는
+  이것뿐이라 `SonatypeHost` 인자가 없다
+- **릴리스**: 자동 공개하지 않는다(`mavenCentralAutomaticPublishing` 기본값 `false`). 업로드 태스크는 Portal 이
+  배포를 **검증(VALIDATED)** 할 때까지 기다리므로, Central 이 거부하는 번들은 발행 태스크를 실패시킨다
+- **체크섬**: 번들에는 md5·sha1 만 넣고 `.asc` 서명의 체크섬은 뺀다 — 0.37 의 플러그인 기본값이다
+  (`mavenCentralChecksums` · `mavenCentralExcludeSignatureChecksums` 로 바꿀 수 있다)
 - **서명**: 모든 퍼블리케이션에 GPG 서명 적용
 - **아티팩트**: 소스 JAR + Javadoc JAR 포함
 

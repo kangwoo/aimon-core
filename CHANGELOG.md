@@ -38,6 +38,19 @@ Design and departures: `docs/design/tool/workflow-isolation-hardening.md`.
   `{ws}//.worktrees/k/x` and `{ws}/.worktrees/K/x` are the branch's `x`; they used to nest as
   `.worktrees/k/.worktrees/k/x`, past the branch's rules.
 
+### Dependencies: the Maven Central publishing plugin reaches 0.37.0
+
+- **`com.vanniktech.maven.publish` goes from 0.32.0 to 0.37.0** (#143). `SonatypeHost` is gone from the DSL, so
+  `aimon.publishable` calls `publishToMavenCentral()`, which is the Central Portal. Releasing stays manual.
+- **The release waits for Central to validate the bundle.** Since 0.36 the upload task blocks until the Portal
+  reports the deployment `VALIDATED`, so a bundle Central rejects now fails `scripts/release.sh` before it commits or
+  tags, instead of surfacing later in the Portal UI.
+- **The bundle's checksum trimming moved into the plugin.** 0.37 drops the `.asc` checksums and the SHA256/SHA512 pair
+  from the Central bundle by default, so the `doLast` that deleted signature checksums and the
+  `org.gradle.internal.publish.checksums.insecure` system property in `gradle.properties` are removed. The published
+  POMs, `.module` files, jars and signatures are unchanged: compared file by file against a 0.32.0
+  `publishToMavenLocal`.
+
 ### Changed: `main` carries a `-SNAPSHOT` version between releases
 
 `VERSION_NAME` on `main` is now `0.3.1-SNAPSHOT`, the next patch release, rather than the last released `0.3.0`. A
