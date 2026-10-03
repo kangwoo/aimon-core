@@ -159,10 +159,16 @@ public interface ExecutionEnvironment {
 
     /** The environment this branch was isolated from, if it declares its lineage (WorktreeMerge checks it). */
     default Optional<ExecutionEnvironment> isolatedFrom() { return Optional.empty(); }
+
+    /** The longest a background command may run here; empty = the caller's default of 24 hours (§5.3). */
+    default Optional<Duration> backgroundCommandTimeout() { return Optional.empty(); }
 }
 
 public interface ExecutionEnvironmentProvider {
     ExecutionEnvironment resolve(EnvironmentRequest request);   // once per execution
+
+    /** Called by the assembly per runtime it builds; closing the handle says that runtime is gone (§4.3). */
+    default RuntimeBinding bindRuntime(AgentRuntimeId agentRuntimeId) { return RuntimeBinding.NONE; }
 }
 ```
 
@@ -173,6 +179,7 @@ public interface ExecutionEnvironmentProvider {
 | `ContentSearch` | `search(ContentQuery) → ContentSearchResult`. `GrepTool` 의 입력(패턴 · 경로 · glob · 대소문자 · 컨텍스트 줄 · 출력 모드 · head limit)을 그대로 옮긴 값 |
 | `StagedResource` | 제어 저장소 쪽 파일 묶음 — `sourceFileSystem` · `sourceDir` · `contentKey`(디렉터리 해시, 사본 경로의 일부, §4.4) · `name`. 스킬의 것은 `SkillRepository.resolveSource` 가 낸다 |
 | `FileStamp` | `size` · `modifiedAt` · `etag`? (§7) |
+| `RuntimeBinding` | `close()` 하나짜리 핸들(`NONE` 포함). 제공자가 런타임 하나를 위해 쥔 것을 놓는다 — 멱등이고 던지지 않으며, **도는 명령은 멈추지 않는다**(§4.3) |
 
 `ExecutionEnvironment` 가 `Closeable` 이 아닌 것은 의도다. 환경은 실행마다 만들어지는 **뷰**이고, 그 뒤의
 자원(로컬 셸 프로세스 풀, 원격 연결)은 제공자가 소유한다. 실행이 끝났다고 셸을 닫으면 같은 셸을 쓰는 다른
@@ -212,7 +219,10 @@ public interface ExecutionEnvironmentProvider {
 | 대상 | 수명 | 소유·종료 |
 |------|------|----------|
 | `ExecutionEnvironmentProvider` | Application — 런타임별 제공자 함수가 만든 것은 Agent | 어셈블리가 만들고 앱 shutdown 에 닫는다(`AutoCloseable` 구현은 선택). 런타임별 함수가 돌려준 것은 런타임이 소유한다 — 아래 |
-| 제공자가 쥔 셸·파일 시스템·원격 연결 | Application (또는 제공자가 정한 수명) | 제공자 |
+| `RuntimeBinding` | Agent — 런타임 인스턴스 하나 | 런타임을 만든 어셈블리가 `bindRuntime` 으로 얻어 그 런타임과 함께 닫는다. 런타임 자신은 닫지 않는다 |
+| 제공자가 쥔 셸·파일 시스템·원격 연결 | Application (또는 제공자가 정한 수명) | 제공자. 런타임 하나의 몫은 그 바인딩이 닫힐 때 놓는다 |
+| `BackgroundBashManager` (작업 목록 · 노드 로컬 핸들 · 실행 스레드) | 부트스트랩 스택에서는 Application. 코어만 쓰는 조립의 기본은 도구 레지스트리마다 하나(Agent) | 만든 쪽. 스택은 `TeardownPhase.BACKGROUND_COMMANDS` 에서 닫는다(§5.3) |
+| `BackgroundBashStore` (작업의 메타데이터) | Application | 넘겨준 쪽. 기본은 매니저가 만든 in-memory |
 | `ExecutionEnvironment` | Execution | `ToolContext` 와 함께 버려진다. 닫을 것이 없다 |
 | `controlFileSystem` | Application | 어셈블리 |
 
@@ -227,6 +237,30 @@ public interface ExecutionEnvironmentProvider {
 `withExecutionEnvironmentProvider(p)` 로 준다 — 이쪽은 계속 빌린다. 소유가 설정에 따라 갈린다는 점은 옛 `ownedShell`
 과 같지만, 갈리는 기준이 "어느 API 로 넘겼는가" 하나이고 둘 다 제공자 단위다. 부트스트랩은 이 함수를 쓰지 않는다 —
 제공자를 직접 만들어 `withExecutionEnvironmentProvider` 로 넘기고 teardown 계획에 올린다.
+
+**부트스트랩의 제공자는 스택당 하나다 (EE-7).** 제공자가 런타임마다 하나였을 때는 테넌트 런타임이 축출되면 제공자도
+닫혔다. 닫힘이 실제 동작인 셸(샌드박스)에서는 그 런타임이 띄워 둔 백그라운드 명령이 끊기고, 로컬에서는 명령은 남되
+작업 목록이 사라져 아무도 추적하지 못한다. 그래서 제공자를 표의 첫 행대로 Application 수명에 두고, 런타임별 정리는
+**바인딩**으로 받는다.
+
+- 제공자는 `request.agentRuntimeId()` 로 워크스페이스를 고른다. 로컬 기본값은 `PerRuntimeLocalEnvironmentProvider`
+  (`at.aimon.core.environment.impl`) — 런타임 id 별 슬롯에 `LocalExecutionEnvironmentProvider` 를 하나씩 둔다
+- 어셈블리는 런타임을 만들 때 `bindRuntime(id)` 를 **가장 먼저** 부르고, 돌려받은 `RuntimeBinding` 을 그 런타임의
+  자원으로 올린다. 그래서 런타임 → 제어 저장소 → 바인딩 순으로 닫힌다. 만들다 실패하면 EE-23 의 되감기가 바인딩도 닫는다
+- 훅이 `onRuntimeEvicted(id)` 같은 id 콜백이 아니라 핸들인 것은, **같은 id 의 런타임 둘이 잠시 함께 살 수 있기**
+  때문이다. `AgentRuntimeResolver.invalidate` 는 id 를 즉시 내리고 옛 런타임은 마지막 보유자가 놓을 때 닫는다. 그 사이의
+  요청이 새 런타임을 만든다. id 콜백이면 옛 런타임의 늦은 close 가 새 런타임이 쓰는 몫을 정리한다. 로컬 슬롯은 바인딩
+  수가 0 이 될 때만 닫힌다
+- 바인딩을 닫는 것은 **도는 명령을 멈추지 않는다.** 놓을 수 없는 것은 명령이 끝날 때나 제공자의 `close()` 때 놓는다.
+  로컬 슬롯이 이 계약을 그냥 닫는 것으로 지킬 수 있는 까닭은 `LocalShell` 이 명령에 대해 아무것도 쥐지 않기 때문이고
+  (명령마다 프로세스), 그래서 슬롯 함수의 반환 타입이 인터페이스가 아니라 `LocalExecutionEnvironmentProvider` 다
+- 런타임은 바인딩하지 않는다. "런타임은 아무것도 닫지 않는다" 는 원칙과 위의 예외 하나는 그대로다. 그래서 부트스트랩을
+  거치지 않는 조립은 `bindRuntime` 을 스스로 불러야 한다(EE-56)
+
+`ExecutionEnvironmentSpec` 의 모양도 이에 맞춰 바뀌었다 — 런타임마다 제공자를 돌려주던 `factory(Function)` 은 없어지고,
+스택이 한 번 불러 얻은 하나를 소유하는 `provider(Supplier)` 와 호출자가 소유하는 `shared(provider)` 가 남는다. 설계와
+구현이 설계에서 벗어난 점은 [`execution-environment-ee13-ee7-background-lifecycle.md`](execution-environment-ee13-ee7-background-lifecycle.md)
+에 있다.
 
 ### 4.4 스테이징
 
@@ -399,11 +433,44 @@ public interface ExecutionEnvironmentProvider {
 
 ### 5.3 백그라운드 명령
 
-`Bash(run_in_background=true)` 는 작업을 시작하는 순간 `env.shell()` 을 `BackgroundBashTask` 에 캡처한다.
-`BackgroundBashManager` 는 여전히 `OrcaBashToolProvider` 가 만들어 `Bash`·`BashOutput` 이 공유하는 agent-scoped
-객체이고 노드 로컬이다. 바뀌는 것은 "어느 셸에서 도는가"를 작업마다 기억한다는 점뿐이다. 작업은 시작한 실행보다
-오래 살 수 있으므로, 캡처한 셸은 실행이 아니라 제공자의 수명에 기대야 한다 — §4.3 에서 셸을 제공자가 소유하는
-이유가 여기서도 쓰인다.
+`Bash(run_in_background=true)` 는 작업을 시작하는 순간 `env.shell()` 을 `BackgroundBashManager.start(...)` 에 넘기고,
+도는 명령이 그 셸을 붙잡는다(작업 객체는 셸을 필드로 쥐지 않는다 — §15). 작업은 시작한 실행보다, 그리고 **런타임보다**
+오래 살 수 있으므로, 캡처한 셸은 실행이 아니라 제공자의 수명에 기대야 한다 — §4.3 에서 셸을 제공자가 소유하는 이유가
+여기서도 쓰인다.
+
+**작업 목록은 런타임보다 오래 산다 (EE-7).** `BackgroundBashManager` 는 `Bash` · `BashOutput` · `KillShell` 이 나눠 쓰는
+작업 목록이고, 명령을 돌리는 스레드도 이제 여기 있다(도구 인스턴스가 쥔 풀에서 돌면 축출된 런타임의 것에 기대게 된다).
+부트스트랩 스택은 매니저를 **하나** 만들어 모든 런타임의 세 도구에 넘긴다 — `OrcaBashToolProvider(BackgroundBashManager)`.
+그래서 축출 뒤 다시 만들어진 런타임의 `BashOutput` 이 옛 task id 를 찾는다. 인자 없는 `OrcaBashToolProvider()` 는 전처럼
+도구 레지스트리마다 매니저를 만든다(코어만 쓰는 조립의 기본 — EE-56).
+
+- **저장소와 핸들을 가른다.** 누가 시작했고 어느 노드에서 도는가 하는 메타데이터(`BackgroundBashRecord`)는
+  `BackgroundBashStore` 에 들어간다 — 인터페이스이고 기본은 `InMemoryBackgroundBashStore` 다. future · 취소 신호 · 출력
+  버퍼는 그 노드의 매니저가 메모리에 든다(`BackgroundBashTask`). 프로세스가 그 노드에만 있으므로 옮길 수 없다
+- **조회 결과는 셋 중 하나** — 이 노드의 핸들 / 저장소에만 있는 레코드 / 없음. 둘째가 "다른 노드에서 도는 작업"(또는
+  이 노드가 재시작으로 잃은 작업) 보고이고, 그 출력을 읽거나 명령을 멈출 수는 없다(EE-53)
+- **소유 범위.** 한 목록을 모든 테넌트가 보게 되므로, 작업은 시작한 실행의 `ToolContextKeys.AGENT_RUNTIME_ID` 를
+  소유자로 기록하고 도구는 자기 컨텍스트의 id 와 같을 때만 찾는다. 다른 런타임의 task id 는 "없음" 이다. task id 는
+  32비트라 경계가 될 수 없다. 같은 런타임의 다른 세션은 전처럼 볼 수 있고 — 이제 **멈출 수도 있다**
+- **보존.** 끝난 지 보존 기간(기본 24시간)이 지난 작업은 다음 `start` 때 레코드와 함께 치운다. 전에는 런타임과 함께
+  GC 되었다
+
+**끝낼 수단 (EE-13).** 셸 SPI 에 명령 단위 취소 신호가 있다 — `ExecutionOptions.getCancellation()`
+(`ShellCancellation`, 거는 쪽은 `ShellCancellationSource`). `ShellFeature.CANCELLATION` 을 선언한 셸은 신호가 걸리면
+명령과 그 명령이 띄운 것 전부를 멈추고 그 `execute` 가 `ShellCancelledException` 을 던지게 한다. 이미 걸린 신호로
+불리면 명령을 **띄우지 않는다**. 선언하지 않은 셸은 신호를 무시한다. 매니저는 셸이 선언했을 때만 작업마다 신호를
+만들어 옵션에 싣는다. `KillShell(taskId)` 가 그 신호를 건다 — 취소된 작업은 `KILLED` 로 정착하고 죽기 전까지의 출력은
+`BashOutput` 으로 읽는다. 취소를 선언하지 않은 셸에서 돈 작업은 `KillShell` 이 오류로 답하고, `Bash` 의 시작 응답이
+미리 그렇게 말한다.
+
+**상한.** 모델이 끝내기를 잊은 명령의 안전장치는 `ExecutionEnvironment.backgroundCommandTimeout()` 이다. `BashTool` 은
+백그라운드 경로에서 이 값을 timeout 으로 쓰고, 환경이 정하지 않으면 24시간이다. 환경의 값이 **양방향으로** 이긴다
+(24시간보다 길어도 된다). 0 이하는 받지 않는다 — 셸이 "무한" 으로 읽는다. 서술자가 아니라 환경에 실은 것은 서술자가
+프롬프트에 렌더되고 `equals` 가 프롬프트 캐시에 쓰이기 때문이다. 환경이 정한 값이면 시작 응답이 모델에게 알린다.
+
+**스택이 닫히면 도는 명령을 멈춘다.** `BACKGROUND_COMMANDS` 단계가 `AGENT_RUNTIMES` 뒤(마지막으로 배출되는 실행이 아직
+명령을 시작할 수 있다), `AGENT_RESOURCES` 앞(취소는 제공자의 셸을 거쳐 나간다)에 있다. 테넌트의 바인딩은 그보다 먼저
+닫히지만 바인딩은 도는 명령을 건드리지 않으므로(§4.3) 순서가 성립한다.
 
 **셸은 지금 백그라운드 명령을 알아볼 수 없다.** `BashTool` 의 `backgroundOptions()` 는 `foregroundOptions()` 에
 긴 타임아웃만 준 것이고, 둘 다 같은 `VirtualShell.execute(command, options)` 로 들어간다. 로컬 셸은 명령마다
@@ -657,6 +724,9 @@ aimon-sandbox 는 `ExecutionEnvironmentProvider` 를 구현한다. 이 문서가
 | `durable() == false` 면 artifact 를 복사한다 | `/workspace` 에 대해 `durable() == false` 를 돌려준다 |
 | `notices()` 를 모델에게 보인다 | 셸 세션·샌드박스 재생성 시 notice 를 싣는다 |
 | 백그라운드 명령에 `ExecutionOptions.background` 를 켠다(§5.3) | 켜진 명령은 지속 셸 세션을 쥐지 않는다 |
+| 셸이 `ShellFeature.CANCELLATION` 을 선언하면 백그라운드 명령마다 `ExecutionOptions.getCancellation()` 에 신호를 싣고, `KillShell` 과 스택 종료가 그 신호를 건다(§5.3) | 선언했다면 신호가 걸릴 때 원격 명령과 그 명령이 띄운 것을 멈추고 그 `execute` 가 `ShellCancelledException` 을 던진다(멈춤을 요청만 하고 돌아와도 된다). 이미 걸린 신호면 명령을 띄우지 않는다. 옵션을 파생하는 래퍼는 신호를 넘긴다. 선언하지 않으면 `KillShell` 은 오류로 답한다 |
+| 백그라운드 명령의 timeout 으로 `backgroundCommandTimeout()` 을 쓴다. 비어 있으면 24시간(§5.3) | 도는 명령이 슬롯을 깨워 두는 배치라면 감당할 수 있는 상한을 돌려준다. 0 이하는 무시된다 |
+| 런타임을 만들 때마다 `bindRuntime(id)` 를 부르고, 그 런타임이 사라질 때 핸들을 닫는다. 제공자 자체는 스택이 끝날 때 닫는다(§4.3) | 런타임별 자원을 쥔다면 `bindRuntime` 으로 통지를 받는다. 핸들이 닫혀도 **도는 명령은 멈추지 않고**, 같은 id 의 다른 바인딩이 쓰는 것은 놓지 않는다. 바인딩되지 않은 id 의 `resolve` 도 답한다 |
 | artifact 복사 경로와 상한을 정한다(§9.3) | 복사 대상 경로를 따로 정하지 않는다 — 코어의 artifact 도구가 복사한다 |
 | 스킬을 렌더하는 모든 경로에서 `stage()` 를 거친다(§4.4) | `stage()` 는 마커를 대상에서 확인하고, 재생성 뒤에는 다시 복사한다. `stagingRoot` 는 git worktree 밖이며 `isolate()` 파생 환경과 공유한다 |
 | 서술자를 프롬프트에 렌더한다 — `resolve()` 직후, 첫 도구 호출 전에 | 서술자는 이미지의 실제 platform·OS 다. 원격 자원 없이 알 수 있어야 하므로 설정(프로파일)에 선언한 값이고, 프로비저닝 때 실제 이미지와 대조한다. 같은 세션에서는 재생성을 넘어 같은 값을 돌려준다(프롬프트 캐시, §10) |
@@ -677,7 +747,8 @@ aimon-sandbox 는 `ExecutionEnvironmentProvider` 를 구현한다. 이 문서가
 > ([`execution-environment-open-items.md`](../../backlog/execution-environment-open-items.md)). 그중 **스킬 선언 훅의 셸은
 > 2026-10-03 에 닫혔다**(EE-12, 선행 조건 EE-9 와 함께) — 아래 불릿의 "`AimonStackBuilder` 가 전용 `skillHookShell` 로
 > 돌린다" 는 더는 사실이 아니고, 지금의 동작은 §10 에 있다. 나머지 둘(artifact 를 늘 복사할지, `contentSearch` 결과
-> 형식)은 아직 열려 있다.
+> 형식)은 아직 열려 있다. **백그라운드 명령을 끝낼 수단도 2026-10-03 에 닫혔다**(EE-13, 작업 목록의 수명을 다룬 EE-7 과
+> 함께) — 아래 불릿의 "끝내는 도구가 없다" 는 더는 사실이 아니고, 지금의 동작은 §5.3 에 있다.
 
 - **`Environment` 의 남은 필드** — `platform`/`osVersion`/`workingDirectory` 가 서술자로 가면 `timeZone` 만 남는다.
   `UserLocale` 같은 이름으로 옮기고 `Environment` 를 없앨지
@@ -708,6 +779,14 @@ aimon-sandbox 는 `ExecutionEnvironmentProvider` 를 구현한다. 이 문서가
   에서 셸을 얻는다(§10). 스킬을 파싱할 때 묶은 셸은 호스트의 것이다. 예외는 운영자가 쓴 `hooks.json` 전용
   `HostShellActionExecutor` 하나이고, 그것을 스킬 파서에 넘기면 안 된다. `PackageDependencyArchitectureTest.skillHooksHoldNoShell`
   이 강제한다
+- **런타임이 사라질 때 제공자를 닫지 말 것.** 닫는 것은 그 런타임의 `RuntimeBinding` 이다. 제공자는 다른 런타임과, 사라진
+  런타임이 띄워 둔 백그라운드 명령이 계속 쓴다(§4.3)
+- **`RuntimeBinding.close()` 에서 도는 명령을 멈추지 말 것.** 축출은 종료 요청이 아니다. 멈추는 것은 `KillShell`, 상한,
+  스택 종료 셋뿐이다(§5.3)
+- **옵션을 파생하는 셸 래퍼에서 취소 신호를 떨구지 말 것.** `ExecutionOptions.toBuilder()` 가 신호를 넘긴다. 새 옵션을
+  빌더로 처음부터 만들면 취소가 **조용히** 사라진다(§5.3)
+- **백그라운드 작업이 셸을 필드로 쥐지 말 것.** 셸은 `BackgroundBashManager.start(...)` 의 인자로만 받고 도는 명령이
+  붙잡는다(§5.3). `toolsHoldNoFileSystemOrShellFields` 가 강제한다
 - **제어 저장소를 파일 도구에 노출하지 말 것.** 스킬 파일은 `stage()` 를 거친다(§9)
 - **"이미 스테이징했다"를 제공자 메모리로 판단하지 말 것.** 대상의 마커를 본다(§4.4)
 - **`${AIMON_SKILL_DIR}` 를 `stage()` 밖에서 채우지 말 것.** 커맨드·포크 경로도 같다(§4.4)
@@ -721,6 +800,7 @@ aimon-sandbox 는 `ExecutionEnvironmentProvider` 를 구현한다. 이 문서가
 - [워크스페이스 샌드박스](https://github.com/kangwoo/aimon-sandbox/blob/main/docs/design/workspace-sandbox.md) — 이 SPI 의 첫 외부 구현
 - [`execution-environment-implementation.md`](execution-environment-implementation.md) — 이 설계의 구현 계획(승인본)과 구현이 그 계획에서 벗어난 점
 - [`execution-environment-ee9-ee12-hook-environment.md`](execution-environment-ee9-ee12-hook-environment.md) — 훅 컨텍스트에 실행 환경을 싣고 스킬 선언 훅의 셸을 실행 환경으로 옮긴 설계(EE-9 · EE-12)
+- [`execution-environment-ee13-ee7-background-lifecycle.md`](execution-environment-ee13-ee7-background-lifecycle.md) — 백그라운드 `Bash` 종료(`KillShell`, 셸 취소 계약, 환경이 정하는 상한)와 제공자 · 작업 목록의 수명 상향 설계(EE-13 · EE-7)
 - [`../workflow/workflow.md`](../workflow/workflow.md) §6.3 — worktree 격리
 - [`../agent-execution/artifact.md`](../agent-execution/artifact.md) — `ArtifactCollector`
 - [`../filesystem/backend-contract.md`](../filesystem/backend-contract.md) — VFS 백엔드 계약 (§7 의 `getMetadata` 조항이 들어갈 자리)

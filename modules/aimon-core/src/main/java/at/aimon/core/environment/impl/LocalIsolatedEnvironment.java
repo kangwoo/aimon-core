@@ -1,6 +1,7 @@
 package at.aimon.core.environment.impl;
 
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -120,6 +121,12 @@ final class LocalIsolatedEnvironment implements ExecutionEnvironment {
     @Override
     public Optional<ContentSearch> contentSearch() {
         return Optional.ofNullable(contentSearch);
+    }
+
+    /** The parent's: a branch runs its commands in the parent's shell, so the same ceiling applies. */
+    @Override
+    public Optional<Duration> backgroundCommandTimeout() {
+        return parent.backgroundCommandTimeout();
     }
 
     /**

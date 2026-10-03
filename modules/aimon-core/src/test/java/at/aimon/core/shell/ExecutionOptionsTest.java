@@ -69,6 +69,28 @@ class ExecutionOptionsTest {
     }
 
     @Test
+    @DisplayName("Cancellation defaults to none() and null is rejected")
+    void cancellation_defaultsToNone() {
+        assertThat(ExecutionOptions.defaults().getCancellation()).isSameAs(ShellCancellation.none());
+        assertThatThrownBy(() -> ExecutionOptions.builder().cancellation(null))
+                .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    @DisplayName("toBuilder() carries the cancellation signal, so a wrapping shell cannot drop it silently")
+    void toBuilder_keepsCancellation() {
+        ShellCancellation signal = ShellCancellationSource.create().token();
+        ExecutionOptions options = ExecutionOptions.builder().timeout(Duration.ofSeconds(5)).background(true)
+                .cancellation(signal).build();
+
+        ExecutionOptions derived = options.toBuilder().workingDirectory("/tmp").build();
+
+        assertThat(derived.getCancellation()).isSameAs(signal);
+        assertThat(derived.isBackground()).isTrue();
+        assertThat(derived.getTimeout()).isEqualTo(Duration.ofSeconds(5));
+    }
+
+    @Test
     @DisplayName("Negative maxCaptureBytes should be rejected (fail-fast)")
     void negativeMaxCaptureBytes_rejected() {
         assertThatThrownBy(() -> ExecutionOptions.builder().maxCaptureBytes(-1))

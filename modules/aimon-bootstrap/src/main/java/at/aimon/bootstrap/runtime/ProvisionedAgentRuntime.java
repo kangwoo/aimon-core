@@ -14,8 +14,9 @@ import at.aimon.core.agent.AgentRuntime;
  *
  * <p>
  * This type exists because {@code AgentRuntime.close()} does not fan out. It closes what the runtime itself owns
- * — its MCP client manager, its agent-scoped workflow runner — and nothing else. The file system the runtime was
- * built with, and any {@link AutoCloseable} tool a provider contributed, are not reached by it.
+ * — its MCP client manager, its agent-scoped workflow runner — and nothing else. The control store the runtime was
+ * built with, its binding to the stack's execution environment provider, and any {@link AutoCloseable} tool a
+ * provider contributed, are not reached by it.
  *
  * <p>
  * For the agents enumerated at startup that gap is invisible: they live as long as the process, and the stack's
@@ -25,6 +26,12 @@ import at.aimon.core.agent.AgentRuntime;
  *
  * <p>
  * So a provisioner returns the runtime <b>and</b> its dependents, and eviction closes the pair.
+ *
+ * <p>
+ * The execution environment provider is not among them. It belongs to the stack and outlives every tenant; what a
+ * runtime owns is its {@code RuntimeBinding} to that provider, and closing the binding is how the provider learns
+ * that this runtime is gone and releases the runtime's share — without stopping the background commands the runtime
+ * left running.
  */
 public final class ProvisionedAgentRuntime implements AutoCloseable {
 

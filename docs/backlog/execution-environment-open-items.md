@@ -1,4 +1,4 @@
-# 실행 환경 — 등록 항목 52건 (열림 38 · 닫힘 14)
+# 실행 환경 — 등록 항목 59건 (열림 43 · 닫힘 16)
 
 출처는 `ExecutionEnvironment` 구현 작업이다. 설계는 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md)
 이고, 구현 계획(승인본)과 구현이 그 계획에서 벗어난 점은
@@ -32,6 +32,11 @@ EE-42 를 다룬 변경이 먼저 썼으므로 이 둘은 EE-46 부터 번호를
 항목이었으므로 결정됨이되 열린 항목은 이제 넷이다. 그 변경의 설계와 구현이 설계에서 벗어난 점은
 [`../design/tool/execution-environment-ee9-ee12-hook-environment.md`](../design/tool/execution-environment-ee9-ee12-hook-environment.md)
 에 있다. EE-48~EE-52 는 그 설계의 §8 과 열린 질문(Q1 · Q2 · Q3) 가운데 이 변경 밖으로 결과가 번지는 것을 옮긴 것이다.
+백그라운드 명령의 종료와 수명을 다룬 둘(EE-7 · EE-13)은 2026-10-03 에 한 변경에서 닫았다. 둘 다 결정 항목이었으므로
+결정됨이되 열린 항목은 이제 둘(EE-6 · EE-14)이다. 그 변경의 설계와 구현이 설계에서 벗어난 점은
+[`../design/tool/execution-environment-ee13-ee7-background-lifecycle.md`](../design/tool/execution-environment-ee13-ee7-background-lifecycle.md)
+에 있다. EE-53~EE-59 는 그 설계의 §8(EE-53~EE-56), 설계 리뷰(EE-57), 열린 질문(Q4 → EE-58, Q5 · Q1 → EE-59) 가운데 이
+변경 밖으로 결과가 번지는 것을 옮긴 것이다. aimon-sandbox 에 미치는 영향은 EE-59 에 모았다.
 
 ---
 
@@ -139,7 +144,7 @@ GridFS etag 가 설계 §7 의 "GridFS(md5)" 와 다르다는 점은 빌드 리�
 것뿐이고, 없애는 쪽은 부트스트랩 레이어 구성 · `StackPaths` · `AimonRuntimeHints` · 문서화된 디렉터리 배치를 함께 바꾼다.
 재검토 트리거(시작 시간 · 제어 저장소 용량)는 그대로 둔다 — 결정되었지만 그 트리거를 지키는 자리로 열려 있다.
 
-## EE-7 — 부트스트랩의 제공자는 런타임마다 하나이고, 축출과 함께 닫힌다 · **열림 · 결정됨** *(2026-09-29)*
+## EE-7 — 부트스트랩의 제공자는 런타임마다 하나이고, 축출과 함께 닫힌다 · **닫힘** *(2026-10-03)*
 
 **무엇을.** 제공자를 애플리케이션 수명으로 두고 런타임별 축출 훅을 붙일지 정한다.
 
@@ -170,6 +175,66 @@ GridFS etag 가 설계 §7 의 "GridFS(md5)" 와 다르다는 점은 빌드 리�
 
 그래서 착수 범위는 셋이다 — 제공자가 요청에서 런타임별 워크스페이스를 고르기, 축출 훅, 백그라운드 작업 목록의 수명
 상향. EE-13 의 종료 도구도 같은 작업 목록에서 작업을 찾으므로 함께 설계한다.
+
+### 닫힘 (2026-10-03)
+
+결정대로 고쳤다. 부트스트랩의 `ExecutionEnvironmentProvider` 는 **스택당 하나**이고 스택이 끝날 때 닫힌다
+(`AGENT_RESOURCES` 의 마지막). 런타임 축출이 닫는 것은 제공자가 아니라 그 런타임의 **바인딩**이다.
+
+- **워크스페이스를 요청의 런타임으로 고른다.** 로컬 기본값은 새 `PerRuntimeLocalEnvironmentProvider`
+  (`at.aimon.core.environment.impl`) — `request.agentRuntimeId()` 별 슬롯에 `LocalExecutionEnvironmentProvider` 를 하나씩
+  둔다. 포크는 부모 환경 그대로다.
+- **축출 훅은 핸들이다.** `ExecutionEnvironmentProvider.bindRuntime(AgentRuntimeId)`(기본 `RuntimeBinding.NONE`)를 어셈블리가
+  런타임을 만들 때 가장 먼저 부르고, 돌려받은 `RuntimeBinding` 을 그 런타임의 자원으로 올린다(런타임 → 제어 저장소 →
+  바인딩 순으로 닫힌다). 계약은 "그 바인딩만의 몫을 놓고, **도는 명령은 멈추지 않는다**" 다. 로컬 슬롯은 바인딩 수가 0 이
+  될 때 닫힌다.
+- **작업 목록이 런타임보다 오래 산다.** 스택이 `BackgroundBashManager` 를 하나 만들어 모든 런타임의 `Bash` · `BashOutput` ·
+  `KillShell` 에 넘긴다(`OrcaBashToolProvider(BackgroundBashManager)`). 저장소는 `BackgroundBashStore`(인터페이스) +
+  `InMemoryBackgroundBashStore`(기본)이고 메타데이터만 든다. future · 취소 신호 · 출력은 노드 로컬 핸들이다. 다른 노드의
+  작업은 "다른 노드에서 도는 작업" 으로 보고한다(→ EE-53). `ToolSpec.Builder.backgroundBashStore(...)` 와 스타터의
+  `BackgroundBashStore` 빈으로 바꿔 끼운다.
+- **부트스트랩 SPI 의 모양이 바뀌었다.** `ExecutionEnvironmentSpec.factory(Function<AgentRuntimeId, …>)` 는 **없어졌고**,
+  스택이 한 번 불러 얻은 하나를 소유하는 `provider(Supplier)` 가 생겼다. `shared(provider)` 는 그대로이고 이제 `bindRuntime`
+  통지도 받는다. EE-21 의 닫힘 절이 정한 계약(코어의 `withExecutionEnvironmentProviderFactory` 는 런타임 전용 제공자를
+  돌려준다)은 손대지 않았다 — 부트스트랩은 그 경로를 쓰지 않는다.
+
+착수해 보니 결정문의 전제와 달랐던 것은 넷이다.
+
+1. **이 항목의 "왜" 는 로컬 제공자에서 일어나지 않는다.** "축출된 테넌트의 백그라운드 작업은 셸을 잃고 `BashOutput` 이
+   셸이 닫혔다는 오류를 보고한다" 고 적었지만, `LocalShell.close()` 는 본문이 비어 있고 닫힘 상태가 없다. 축출 뒤에도 명령은
+   **계속 돈다.** 실제 증상은 둘이었다 — 새 런타임의 `BashOutput` 이 `Shell not found` 를 돌려주고(작업 목록이 사라졌으므로),
+   명령은 아무도 추적하지 못한 채 상한까지 남는다. 로컬에서 끊기는 것은 셸이 아니라 **작업 목록**이다. "셸이 닫혔다" 는
+   닫힘이 실제 동작인 셸(샌드박스)에서만 참일 수 있다. **읽어서가 아니라 돌려서 확인했다**(규칙 셋): 구현 전 코드에서
+   `AimonStackBackgroundBashLifecycleTest.evictedRuntimesTaskIsFoundByItsSuccessor` 는 축출 뒤 pid 가 살아 있다는 단언을
+   통과하고 그다음 줄에서 `Shell not found: bash_…` 로 실패했다.
+2. **같은 `AgentRuntimeId` 의 런타임 둘이 잠시 함께 살 수 있다.** `AgentRuntimeResolver.invalidate` 는 id 를 즉시 내리고 옛
+   런타임은 마지막 보유자가 놓을 때 닫는다. 그 사이의 요청은 새 런타임을 만든다. 그래서 축출 훅을 `onRuntimeEvicted(id)`
+   같은 id 콜백으로 만들면 옛 런타임의 늦은 close 가 **새 런타임이 쓰는 몫을 정리한다.** 훅이 핸들인 이유이고, 파일 시스템
+   팩토리가 만든 파일 시스템을 런타임의 싱크가 아니라 **슬롯이** 소유하게 된 이유다.
+3. **작업 목록을 올리면 암묵적인 격리가 사라진다.** 매니저가 런타임마다 하나였을 때는 다른 런타임의 task id 를 조회할 길이
+   없었다. 한 목록을 모든 테넌트가 보게 되었고 task id 는 32비트라 경계가 될 수 없으므로, 작업은 시작한 실행의
+   `AGENT_RUNTIME_ID` 를 소유자로 기록하고 도구는 자기 컨텍스트의 id 와 같을 때만 찾는다. 세션으로 좁히지는 않았다(→ EE-58).
+4. **올리면 쌓인다.** 끝난 작업은 영영 남되 런타임과 함께 GC 되었다. 이제는 프로세스 수명 동안 쌓이므로 끝난 지 보존
+   기간(기본 24시간)이 지난 작업을 `start` 때마다 치운다. 그만큼 **끝난 작업을 조회할 수 있는 기간이 유한해졌다.**
+
+다른 행동 변화. 다른 런타임의 task id 는 `Shell not found` 다. 실행 스레드 풀이 `BashTool` 에서 매니저로 옮겨 갔다
+(`BashTool.close()` · `shutdown()` 은 아무것도 하지 않는다). 그리고 스택이 닫힐 때 도는 백그라운드 명령이 **멈춘다** — 새
+단계 `TeardownPhase.BACKGROUND_COMMANDS`(`AGENT_RUNTIMES` 뒤, `AGENT_RESOURCES` 앞). 전에는 스택이 닫혀도 남았다.
+
+남긴 것: 부트스트랩을 거치지 않는 조립은 기본이 여전히 agent-scoped 매니저이고 `bindRuntime` 도 스스로 불러야 한다(→
+EE-56). 저장소에는 죽은 노드의 레코드를 치울 수단이 없다(→ EE-57). 외부 제공자가 따라와야 하는 것은 → EE-59.
+
+테스트: `AimonStackBackgroundBashLifecycleTest`(★ 축출 뒤 다시 만든 런타임에서 `BashOutput` 과 `KillShell` 이 옛 task id 를
+찾는다 / A 를 축출해도 A 의 명령과 B 의 셸·작업·워크스페이스가 그대로이고 A 의 워크스페이스만 놓인다, 그리고 B 는 A 의
+작업을 읽지도 멈추지도 못한다 / `invalidate` 로 같은 id 가 겹칠 때 옛 런타임의 close 가 새 런타임의 워크스페이스를 깨지
+않는다 / 스택을 닫으면 테넌트의 도는 명령이 죽는다), `PerRuntimeLocalEnvironmentProviderTest`(바인딩 둘 중 하나를 닫아도
+슬롯이 남는다, 다른 id 는 영향 없음, 바인딩 없는 `resolve`, 닫힌 뒤 `resolve`, 핸들의 멱등), `BackgroundBashManagerTest`
+(소유 범위, id 충돌 재시도, 보존 기간, 다른 노드·잃은 작업·만료된 레코드, 저장소 실패 세 경로, `close()`),
+`BackgroundBashStoreContractTest`(추상 계약 — `InMemoryBackgroundBashStoreTest` 가 확장), `AimonStackProvisioningRollbackTest`
+(실패한 프로비저닝이 바인딩을 닫는다, `provider(...)` 는 스택이 닫고 `shared(...)` 는 닫지 않는다), `AimonStackBuilderTest`
+(계획에 제공자가 하나이고 모든 바인딩 뒤에 닫힌다, `BACKGROUND_COMMANDS` 의 자리).
+
+설계와 구현이 설계에서 벗어난 점: [`../design/tool/execution-environment-ee13-ee7-background-lifecycle.md`](../design/tool/execution-environment-ee13-ee7-background-lifecycle.md).
 
 ## EE-8 — 워크플로 브랜치가 쓴 `.aimon/` 파일은 병합에서 거절된다 · **닫힘** *(2026-09-29)*
 
@@ -397,7 +462,7 @@ EE-12 의 결정문대로 **서술자가 아니라 환경 자체**를 실었다.
 `DefaultSkillRegistryParseIsolationTest`(깨진 스킬 하나 + 멀쩡한 둘), `AimonStackExtensionPointTest`·`AimonStackBuilderTest`
 (계획에 셸이 없고 마지막 단계가 `HOOK_EXECUTOR`), `AgentSetupFactorySkillHookShellTest`.
 
-## EE-13 — 백그라운드 명령을 끝낼 수단이 없다 · **열림 · 결정됨** *(2026-09-29)*
+## EE-13 — 백그라운드 명령을 끝낼 수단이 없다 · **닫힘** *(2026-10-03)*
 
 **무엇을.** 백그라운드 `Bash` 를 끝내는 도구를 코어에 둘지, 환경이 상한을 정하게 할지 정한다.
 
@@ -423,6 +488,59 @@ EE-12 의 결정문대로 **서술자가 아니라 환경 자체**를 실었다.
 
 (2) 는 실행 환경(또는 서술자)에 백그라운드 상한을 싣고 `BashTool` 이 `BACKGROUND_TIMEOUT_MS`(132행) 대신 그 값을 쓰게 하는
 것이다. 환경이 정하지 않으면 지금의 24시간이다. 작업 목록의 수명은 EE-7 의 결정과 얽힌다.
+
+### 닫힘 (2026-10-03)
+
+결정대로 둘 다 했다.
+
+**(1) 끝내는 도구 `KillShell`.** 입력은 `taskId` 하나이고 `BashOutput` 의 짝이다. `OrcaBashToolProvider` 가 `Bash` ·
+`BashOutput` 과 함께 등록한다. 셸 SPI 에 취소가 들어갔다 — `ExecutionOptions.getCancellation()`(`ShellCancellation`, 거는
+쪽은 `ShellCancellationSource`), `ShellFeature.CANCELLATION`, `ShellCancelledException`. 두 선택지 가운데 **옵션에 신호를
+싣는 쪽**을 골랐다: `VirtualShell` 에 메서드가 늘지 않아 옵션을 그대로 넘기는 래퍼는 고칠 것이 없고, 지원하지 않는 셸은
+무시하면 된다. `LocalShell` 은 신호가 걸리면 프로세스 트리를 죽이고 `ShellCancelledException` 을 던진다. 취소된 작업은
+새 상태 `BashTaskStatus.KILLED` 로 정착하고 죽기 전까지의 출력은 `BashOutput` 으로 읽는다. 취소를 선언하지 않은 셸에서 돈
+작업에는 `KillShell` 이 `ToolResult.error` 로 답하고(상한을 말한다), `Bash` 의 시작 응답이 미리 그렇게 알린다.
+
+**(2) 환경이 정하는 상한.** `ExecutionEnvironment.backgroundCommandTimeout()`(기본 비어 있음 → 24시간). 서술자가 아니라
+환경에 실었다 — 서술자는 프롬프트에 렌더되고 `equals` 가 프롬프트 캐시에 쓰인다. 값을 채우는 길은
+`LocalExecutionEnvironmentProvider.Builder` → `ExecutionEnvironmentSpec.Builder` → 스타터의
+`aimon.environment.background-command-timeout` 이다. 환경이 정한 값이면 시작 응답이 모델에게 알린다.
+
+착수해 보니 결정문의 전제와 달랐던 것은 셋이다. 전제 자체(`CompletableFuture.cancel` 은 스레드를 인터럽트하지 않는다,
+`VirtualShell` 에 취소가 없다)는 적힌 대로였다.
+
+1. **`LocalShell` 은 프로세스 트리를 죽이는 코드를 이미 갖고 있었다.** timeout 과 스레드 인터럽트 두 경로가
+   `destroyForciblyQuietly(Process)` 로 자손 스냅숏 → SIGTERM → 200ms → SIGKILL 을 한다. 종료 도구가 로컬에서 새로 필요로 한
+   것은 죽이는 방법이 아니라 **그것을 바깥에서 부를 계약**이었다. 그래서 자손 스냅숏이 경합한다는 기존 한계도 그대로
+   물려받았고, timeout 때만 보이던 그 한계가 이제 모델의 요청으로도 보인다(→ EE-55).
+2. **"시작 전에 걸린 신호" 와 "끝난 뒤에 걸린 신호" 가 계약에 들어가야 했다.** 신호는 명령과 따로 살기 때문이다. 이미
+   걸린 신호로 불리면 명령을 **띄우지 않는다**(띄우고 죽이면 부작용이 있는 명령이 그동안 돈다). 프로세스가 이미 끝난 뒤에
+   걸리면 정상 결과다 — 정상 종료한 명령이 `KILLED` 로 보고되지 않는다.
+3. **상한은 한 방향이 아니다.** 결정문은 "환경이 정하지 않으면 24시간" 이라고만 했다. 환경의 값이 **양방향으로 이긴다**고
+   읽었다(24시간보다 길어도 된다). 그 귀결로 로컬 제공자의 스테이징 스윕 유예(기본 24시간 — 근거가 "백그라운드 명령이 살
+   수 있는 가장 긴 시간" 이다)는 상한이 그보다 길면 상한으로 끌어올려진다. 0 이하는 받지 않는다 — 셸이 "무한" 으로 읽는다.
+
+다른 행동 변화. `ShellFeature` 에 상수가 하나 늘었다 — `default` 없는 `switch` 식으로 다루는 외부 코드는 다시 컴파일하면
+오류이고 옛 바이너리는 새 상수에서 런타임 오류다. 도구 허용 목록에 `BashOutput` 만 적은 에이전트·스킬은 `KillShell` 을
+쓰지 못한다(상한이 안전장치다). 같은 런타임의 어느 세션이든 다른 세션이 띄운 명령을 **멈출 수 있다**(→ EE-58).
+
+남긴 것: 포그라운드 `Bash` 는 여전히 스레드 인터럽트에 기댄다(→ EE-54). 다른 노드의 작업은 멈출 수 없다(→ EE-53).
+샌드박스 셸이 취소와 상한을 구현하는 일은 그쪽 저장소의 것이다(→ EE-59) — **그때까지 샌드박스의 백그라운드 명령은
+`KillShell` 로 멈출 수 없고, 이 항목의 "왜"(도는 명령이 슬롯을 하루 동안 깨워 둔다)는 그쪽이 상한을 돌려줄 때 풀린다.**
+
+빌드가 강제하는 것: `toolsHoldNoFileSystemOrShellFields` — 백그라운드 작업은 셸을 필드나 생성자 인자로 쥘 수 없다. 셸은
+`BackgroundBashManager.start(...)` 의 인자로만 받고 도는 명령이 붙잡는다.
+
+테스트: `LocalShellCancellationTest`(취소하면 `ShellCancelledException` 이고 **부모와 자식 pid 가 모두 죽어 있다**, 죽기 전
+출력이 예외에 실린다, 시작 전 취소는 명령을 띄우지 않는다, 끝난 뒤의 취소는 결과를 바꾸지 않는다, 캡처 파일이 남지
+않는다), `ShellCancellationSourceTest`, `ExecutionOptionsTest`(**`toBuilder()` 가 신호를 보존한다**),
+`LocalIsolatedEnvironmentTest.branchShellHonoursCancellation`(격리 브랜치의 `WorkingDirectoryShell` 을 거친 취소),
+`KillShellToolTest`(다섯 답 + 던지지 않는다), `BashToolTest`(환경의 상한이 timeout 으로 간다 / 없으면 24시간 / 0 이하면
+24시간 / 시작 응답 문구 / 닫힌 매니저), `BashOutputToolTest`(`Killed` 렌더, 다른 런타임의 작업은 not found, 다른 노드
+보고), `BashToolTurnIntegrationTest.backgroundCommandIsStoppedByKillShell`(한 턴에서 `Bash` → `KillShell` → `BashOutput`),
+`LocalExecutionEnvironmentProviderStagingTest.sweepGraceFollowsALongerBackgroundCeiling`.
+
+설계와 구현이 설계에서 벗어난 점: [`../design/tool/execution-environment-ee13-ee7-background-lifecycle.md`](../design/tool/execution-environment-ee13-ee7-background-lifecycle.md).
 
 ## EE-14 — `Environment` 에는 `timeZone` 만 남았다 · **열림 · 결정됨** *(2026-09-29)*
 
@@ -1242,3 +1360,138 @@ PR #195 리뷰 1 이 **macOS 에도 별칭이 있음**을 재현했다 — APFS 
 
 출처: [`../design/tool/execution-environment-ee9-ee12-hook-environment.md`](../design/tool/execution-environment-ee9-ee12-hook-environment.md)
 §9 Q3.
+
+## EE-53 — 백그라운드 `Bash` 를 다른 노드에서 읽거나 멈출 수 없다 · **열림**
+
+**무엇을.** 다른 노드에서 도는 백그라운드 명령의 출력을 읽고 멈출 수단을 둔다 — 종료는 노드 사이의 신호 SPI 로(서브에이전트의
+`TaskStopSignal` 같은 것), 출력은 공유 저장소로 보내거나 그 노드에 물어서.
+
+**왜.** EE-7 은 작업 목록의 **메타데이터**만 저장소(`BackgroundBashStore`)로 갈랐다. 프로세스 · 취소 신호 · 출력 버퍼는
+명령을 띄운 노드의 메모리에 있다. 그래서 세션이 다른 노드에서 다시 열리면 `BashOutput` 과 `KillShell` 은 "다른 노드에서 도는
+작업" 이라고 답할 뿐이다 — 모델은 명령이 돈다는 것만 알고 결과를 읽지도 멈추지도 못한다. 그 명령은 상한에 끝난다. 공유
+저장소를 꽂지 않은 배포(기본 in-memory)에서는 그 보고조차 없이 `Shell not found` 다. 출력을 저장소에 넣지 않은 이유는
+스트림당 최대 1MB 이고 한 번 읽기 커서가 원자적 "가져가기" 를 요구하기 때문이다.
+
+**어디.** `modules/aimon-core/src/main/java/at/aimon/core/tools/bash/BackgroundBashManager.java` 의 `find` · `kill`(`ELSEWHERE`
+분기), `BackgroundBashStore.java`(2026-10-03). 선례: `at.aimon.core.subagent` 의 `BackgroundTaskStore` + `TaskStopSignal`.
+
+**언제 다시 볼까.** 세션이 노드를 옮겨 다니는 배포에서 백그라운드 `Bash` 를 쓸 때.
+
+출처: [`../design/tool/execution-environment-ee13-ee7-background-lifecycle.md`](../design/tool/execution-environment-ee13-ee7-background-lifecycle.md) §3.4 · §8.
+
+## EE-54 — 포그라운드 `Bash` 는 여전히 스레드 인터럽트에 기댄다 · **열림**
+
+**무엇을.** 포그라운드 `Bash` 의 중단도 셸의 취소 신호(`ExecutionOptions.getCancellation()`)로 보낸다.
+
+**왜.** EE-13 이 들인 취소 신호를 싣는 호출자는 백그라운드 `Bash` 뿐이다. 포그라운드 경로는 전처럼
+`InterruptBehavior.THREAD_INTERRUPT` — 코디네이터가 도구 스레드를 인터럽트하고 셸이 그 인터럽트에 반응해 프로세스를
+죽인다 — 에 기댄다. `LocalShell` 은 반응한다. 원격 셸의 블로킹 호출은 인터럽트에 반응한다는 보장이 없고, 반응해도 원격
+명령은 계속 돈다. 그 셸에서는 사용자가 턴을 중단해도 명령이 남는다. 계약은 이미 포그라운드에도 실을 수 있게 적혀 있다.
+
+**어디.** `modules/aimon-core/src/main/java/at/aimon/core/tools/bash/BashTool.java` 의 `foregroundOptions` 와
+`getInterruptBehavior`(2026-10-03), 실행 단위 신호와 잇는 자리는 `at.aimon.core.agent.tool.InterruptAccess`.
+
+**언제 다시 볼까.** 인터럽트에 반응하지 않는 셸(샌드박스)을 붙일 때.
+
+출처: [`../design/tool/execution-environment-ee13-ee7-background-lifecycle.md`](../design/tool/execution-environment-ee13-ee7-background-lifecycle.md) §3.1 · §8.
+
+## EE-55 — `LocalShell` 의 트리 종료는 스냅숏 뒤에 태어난 손자를 놓친다 · **열림**
+
+**무엇을.** 명령을 프로세스 그룹으로 띄우고 그룹째 죽인다(`setsid` + `kill(-pgid)`), 또는 죽인 뒤 자손을 다시 훑는다.
+
+**왜.** `destroyForciblyQuietly` 는 자손을 한 번 스냅숏해서 죽인다. 스냅숏 뒤에 태어난 손자는 열거되지 않아 남는다 —
+Javadoc 이 전부터 적어 둔 한계다. 전에는 timeout 과 인터럽트 때만 드러났는데, `KillShell` 과 스택 종료가 같은 코드를 타게
+되어 **모델이 "멈췄다" 는 답을 받은 뒤에도 프로세스가 남는** 경우가 생겼다. 스냅숏에 든 프로세스는 이제 확실히 죽는다 —
+PR #205 의 리뷰 뒤로 유예가 끝났을 때 살아 있는 핸들은 부모의 생사와 상관없이 하나하나 SIGKILL 한다(전에는 부모가 유예를
+넘겼을 때만 올렸으므로 SIGTERM 을 무시하는 자식이 남았다). 남은 틈은 스냅숏 뒤에 태어났거나 트리를 벗어난(`nohup` ·
+`setsid` · 이중 fork) 프로세스뿐이다. `KillShell` 의 답("the command and the processes it was running were terminated")도
+그만큼만 말한다. 프로세스 그룹은 플랫폼에 따라 다르고 `ProcessBuilder` 로는 닿지 않는다.
+
+**어디.** `modules/aimon-core/src/main/java/at/aimon/core/shell/impl/local/LocalShell.java` 의 `destroyForciblyQuietly` ·
+`snapshotDescendants`(2026-10-03).
+
+**언제 다시 볼까.** `KillShell` 뒤에 포트나 파일을 쥔 프로세스가 남았다는 보고가 있을 때.
+
+출처: [`../design/tool/execution-environment-ee13-ee7-background-lifecycle.md`](../design/tool/execution-environment-ee13-ee7-background-lifecycle.md) §2-2 · §6 · §8.
+
+## EE-56 — 부트스트랩을 거치지 않는 조립은 작업 목록과 바인딩을 스스로 챙겨야 한다 · **열림**
+
+**무엇을.** `OrcaAgentRuntimeManager` 나 `OrcaAgentRuntimeFactory` 를 직접 쓰는 조립에서도 백그라운드 작업 목록이 런타임보다
+오래 살고 런타임 소멸이 제공자에 통지되게 할지 정한다 — 팩토리에 매니저를 받는 자리를 두거나, 런타임이 스스로 바인딩하게
+하거나, 문서로 남기거나.
+
+**왜.** EE-7 의 배선은 부트스트랩(`StackAgentRuntimeProvisioner`)에 있다. 코어만 쓰는 조립의 기본 도구 제공자는 인자 없는
+`OrcaBashToolProvider()` 이고, 이것은 전처럼 **도구 레지스트리마다** `BackgroundBashManager` 를 만든다 — 런타임을 다시 만들면
+옛 task id 를 잃는다. 매니저를 직접 나눠 쓰게 하는 조립은 도구 컨텍스트에 `AGENT_RUNTIME_ID` 를 실어야 한다 — 없으면
+작업에 소유자가 없고, 같은 처지의 모든 호출자가 그 작업을 보고 멈춘다(Orca 실행기는 싣는다). `bindRuntime` 도 어셈블리가 부르는 것이므로 그 조립은 직접 불러야 한다. 런타임이 스스로 바인딩하게
+하지 않은 이유는 부트스트랩이 런타임을 만들기 **전에** 슬롯이 필요하고(제어 저장소), "런타임은 아무것도 닫지 않는다" 는
+원칙(설계 §4.3)에 예외가 하나 더 생기기 때문이다.
+
+**어디.** `modules/aimon-core/src/main/java/at/aimon/core/agent/impl/orca/OrcaAgentRuntimeFactory.java` 의
+`defaultToolProviders`, `agent/impl/orca/tool/OrcaBashToolProvider.java`(2026-10-03).
+
+**언제 다시 볼까.** 부트스트랩 없이 여러 런타임을 만들고 없애는 임베더가 생길 때.
+
+출처: [`../design/tool/execution-environment-ee13-ee7-background-lifecycle.md`](../design/tool/execution-environment-ee13-ee7-background-lifecycle.md) §3.3 · §3.4 · §8.
+
+## EE-57 — `BackgroundBashStore` 에는 레코드를 열거하거나 만료시킬 수단이 없다 · **열림**
+
+**무엇을.** 저장소 SPI 에 만료된 레코드를 치우는 길을 둔다 — `removeExpired(Instant)` 같은 메서드, 또는 구현이 TTL 로
+스스로 치운다는 계약.
+
+**왜.** SPI 는 `putIfAbsent` · `find` · `settle` · `remove` 넷이다. 레코드가 지워지는 경로는 둘뿐이다 — 그 작업을 띄운 노드가
+보존 기간 뒤에 치우거나, 누군가 그 task id 를 `expiresAt` 뒤에 **조회**하거나. 노드가 죽으면 첫째는 없고, 아무도 조회하지
+않으면 둘째도 없다. in-memory 기본값에서는 프로세스와 함께 사라지므로 문제가 없지만, 영속 저장소에서는 그 행이 영영
+쌓인다. 메서드를 나중에 더하면 SPI 변경이다 — 멀티 인스턴스 원칙이 피하려는 것이다. 지금 넣지 않은 이유는 소비자(영속
+구현)가 없어 모양을 추측해야 하기 때문이다.
+
+**어디.** `modules/aimon-core/src/main/java/at/aimon/core/tools/bash/BackgroundBashStore.java`,
+`BackgroundBashManager.java` 의 `sweepFinished` 와 `find` 의 만료 분기(2026-10-03).
+
+**언제 다시 볼까.** `BackgroundBashStore` 의 영속 구현을 처음 만들 때.
+
+출처: [`../design/tool/execution-environment-ee13-ee7-background-lifecycle.md`](../design/tool/execution-environment-ee13-ee7-background-lifecycle.md) 의 설계 리뷰 · §10.3.
+
+## EE-58 — 백그라운드 작업의 가시 범위가 런타임이라 다른 세션의 명령을 멈출 수 있다 · **열림**
+
+**무엇을.** 백그라운드 작업을 읽고 멈출 수 있는 범위를 런타임으로 둘지 세션으로 좁힐지 정한다. 좁힌다면 세션이 없는
+실행(포크 · 루틴 · rewake 리플레이)이 띄운 작업의 주인을 정한다.
+
+**왜.** 작업은 시작한 실행의 `AGENT_RUNTIME_ID` 만 소유자로 기록한다. 전에도 같은 런타임의 어느 세션이든 task id 를 알면
+출력을 읽을 수 있었다 — 그 범위를 그대로 유지했다. 그런데 `KillShell` 이 그 범위를 **파괴적**으로 만들었다: 한 테넌트
+런타임 안의 다른 사용자가 32비트 id 를 알면(또는 맞히면) 남의 명령을 멈춘다. `TaskStop` 은 같은 이유로
+`ScopedSubagentTaskController` 로 좁힌다. 세션으로 좁히면 포크가 띄운 작업을 부모 세션이 읽지 못하게 되는 쪽의 문제가
+생기므로(`INVOKING_SESSION_ID` 로 이을지) 한 줄로 끝나지 않는다.
+
+**어디.** `modules/aimon-core/src/main/java/at/aimon/core/tools/bash/BackgroundBashManager.java` 의 `find`(소유자 비교),
+`BashTool.executeInBackground` 의 소유자 기록, `BackgroundBashRecord.ownerRuntimeId`(2026-10-03).
+
+**언제 다시 볼까.** 한 런타임을 서로 신뢰하지 않는 여러 사용자가 나눠 쓰는 배포에서 Bash 를 켤 때.
+
+출처: [`../design/tool/execution-environment-ee13-ee7-background-lifecycle.md`](../design/tool/execution-environment-ee13-ee7-background-lifecycle.md) §9 Q4 · 설계 리뷰.
+
+## EE-59 — aimon-sandbox 가 취소 · 상한 · 바인딩을 구현해야 한다 · **열림**
+
+**무엇을.** aimon-sandbox 의 셸과 제공자를 EE-13 · EE-7 의 계약에 맞춘다 — 셸이 `ShellFeature.CANCELLATION` 을 선언하고 원격
+명령 종료와 `ShellCancelledException` 을 구현한다, 환경이 `backgroundCommandTimeout()` 을 돌려준다, 런타임별 자원을 쥔다면
+`bindRuntime` 을 구현한다. 그리고 그쪽 문서 · 예제가 `ExecutionEnvironmentSpec.factory` 를 쓰는지 확인해 `provider` 또는
+`shared` 로 옮긴다.
+
+**왜.** 새 SPI 는 모두 기본 메서드이거나 옵션의 새 필드라 **그대로 두어도 컴파일된다.** 예외는 `ShellFeature` 를 `default`
+없이 `switch` 하는 코드와 `factory` 를 부르는 코드다. 그런데 그대로 두면 EE-13 이 풀려던 문제가 샌드박스에서는 풀리지
+않는다 — 샌드박스의 백그라운드 명령은 `KillShell` 이 오류로 답하고, 도는 명령은 전처럼 슬롯을 하루 동안 깨워 둔다. 코어는
+이제 환경이 돌려준 상한을 **쓰지만** 돌려주는 것은 그쪽의 일이다. 바인딩 계약의 요점은 "핸들이 닫혀도 도는 명령은 멈추지
+않는다" 이고, 이것을 어기면 `TeardownPhase.BACKGROUND_COMMANDS` 가 이미 사라진 셸에 신호를 건다. 명세 §13 의 계약 표에 세
+행이 더해졌으므로 그쪽 설계 문서 §7 도 따라와야 한다.
+
+**이 항목은 추론이다.** 구현할 때 aimon-sandbox 의 체크아웃이 없었다. 위 목록은 코어의 SPI 에서 끌어낸 것이고 그쪽 소스로
+확인한 것이 아니다(규칙 둘). `factory` 를 없앤 결정(설계 Q1)도 그쪽이 그것을 쓰는지 모르는 채 내렸다 — 쓴다면 0.x 정책상
+허용되는 깨짐이지만, 릴리스 전에 확인할 값이다.
+
+**어디.** 외부 저장소. 코어 쪽 계약은 `modules/aimon-core/src/main/java/at/aimon/core/shell/VirtualShell.java`(취소 절),
+`environment/ExecutionEnvironment.java` · `ExecutionEnvironmentProvider.java` · `RuntimeBinding.java`,
+[`../design/tool/execution-environment.md`](../design/tool/execution-environment.md) §13.
+
+**언제 다시 볼까.** 이 변경이 들어간 코어를 aimon-sandbox 가 처음 의존할 때 — EE-1 과 같은 시점이다.
+
+출처: [`../design/tool/execution-environment-ee13-ee7-background-lifecycle.md`](../design/tool/execution-environment-ee13-ee7-background-lifecycle.md) §8 · §9 Q1 · Q5.

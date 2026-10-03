@@ -83,6 +83,7 @@ fail-closed 라는 것과, 그래서 결과가 권한 상승이 아니라 마찰
 |----|-----|----------|---------------|
 | 세션 레코드·리스·인박스·신호·멱등 | `SessionRecordStore` · `SessionLeaseStore` · `SessionInbox` · `SessionSignalBus` · `IdempotencyStore` | **Redis · Postgres · Mongo** | `SessionSpec` |
 | 배경 작업 | `BackgroundTaskStore` | **Redis · Postgres · Mongo** | `SessionSpec` |
+| 백그라운드 `Bash` 작업 목록 (2026-10-03 추가) | `BackgroundBashStore` — **메타데이터만**. 프로세스 · 취소 신호 · 출력은 명령을 띄운 노드의 것이다 | 없음 — 다른 노드의 작업은 보고만 한다(EE-53), 만료 수단도 없다(EE-57) | `ToolSpec.backgroundBashStore` · 스타터의 `BackgroundBashStore` 빈 |
 | 메모리 | `PeerMemory` (다섯 티어). 저장소 SPI 셋은 기본 백엔드의 재료로 격하됨 | **없음** — `aimon-memory-{postgres,mongodb}` 제거됨. 분산 메모리는 이 저장소 밖의 원격 `PeerMemory` 백엔드다 | `MemorySpec` |
 | 지식 | `KnowledgeStore` | **OpenSearch** | `AimonStackSpec.getKnowledgeStore` |
 | 자격증명 | `CredentialStore` | 없음 | `AimonStackSpec.getCredentialStore` |

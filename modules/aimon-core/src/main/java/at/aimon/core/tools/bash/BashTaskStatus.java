@@ -11,6 +11,9 @@ public enum BashTaskStatus {
     /** Task failed with an error. */
     FAILED,
 
+    /** Task was stopped through its cancellation signal ({@code KillShell}, or the task list closing). */
+    KILLED,
+
     /** Task was not found. */
     NOT_FOUND
 }

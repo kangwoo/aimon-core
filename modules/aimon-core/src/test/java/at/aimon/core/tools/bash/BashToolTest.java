@@ -6,17 +6,23 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.environment.EnvironmentDescriptor;
+import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.environment.StagedResource;
 import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.environment.UnavailableExecutionEnvironment;
+import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.shell.ExecutionOptions;
 import at.aimon.core.shell.ShellCommand;
@@ -541,6 +547,151 @@ class BashToolTest {
         bashToolWithManager.shutdown();
     }
 
+    // execute tests - the background ceiling (EE-13)
+
+    private static ToolContext contextWithCeiling(VirtualShell shell, Duration ceiling) {
+        final ExecutionEnvironment plain = TestExecutionEnvironments.ofShell(shell);
+        return TestExecutionEnvironments.withoutStamps(new ExecutionEnvironment() {
+            @Override
+            public VirtualFileSystem fileSystem() {
+                return plain.fileSystem();
+            }
+
+            @Override
+            public VirtualShell shell() {
+                return shell;
+            }
+
+            @Override
+            public EnvironmentDescriptor descriptor() {
+                return plain.descriptor();
+            }
+
+            @Override
+            public String stage(StagedResource resource) {
+                return plain.stage(resource);
+            }
+
+            @Override
+            public Optional<Duration> backgroundCommandTimeout() {
+                return Optional.ofNullable(ceiling);
+            }
+        });
+    }
+
+    private ToolResult startInBackground(BackgroundBashManager manager, ToolContext toolContext) {
+        return new BashTool(manager).execute(ToolInput.of(Map.of("command", "echo x", "run_in_background", true)),
+                toolContext);
+    }
+
+    @Test
+    void testExecute_Background_NoEnvironmentCeiling_UsesTwentyFourHours() throws Exception {
+        try (BackgroundBashManager manager = new BackgroundBashManager()) {
+            ToolResult result = startInBackground(manager, context);
+
+            awaitShellCall();
+            assertThat(result.isSuccess()).isTrue();
+            assertThat(stubShell.lastOptions().getTimeout()).isEqualTo(Duration.ofHours(24));
+        }
+    }
+
+    @Test
+    void testExecute_Background_EnvironmentCeiling_ReplacesTheDefaultAndIsTold() throws Exception {
+        try (BackgroundBashManager manager = new BackgroundBashManager()) {
+            ToolResult shorter = startInBackground(manager, contextWithCeiling(stubShell, Duration.ofMinutes(30)));
+            awaitShellCall();
+            assertThat(stubShell.lastOptions().getTimeout()).isEqualTo(Duration.ofMinutes(30));
+            assertThat(shorter.getContent()).contains("30 minutes");
+
+            // The environment's value wins in both directions: a longer ceiling is not capped at the default.
+            stubShell.clearLastOptions();
+            startInBackground(manager, contextWithCeiling(stubShell, Duration.ofHours(48)));
+            awaitShellCall();
+            assertThat(stubShell.lastOptions().getTimeout()).isEqualTo(Duration.ofHours(48));
+        }
+    }
+
+    @Test
+    void testExecute_Background_NonPositiveCeiling_FallsBackToTwentyFourHours() throws Exception {
+        try (BackgroundBashManager manager = new BackgroundBashManager()) {
+            // The shell reads a zero or negative timeout as "wait forever" — the opposite of a ceiling.
+            startInBackground(manager, contextWithCeiling(stubShell, Duration.ZERO));
+            awaitShellCall();
+            assertThat(stubShell.lastOptions().getTimeout()).isEqualTo(Duration.ofHours(24));
+
+            stubShell.clearLastOptions();
+            startInBackground(manager, contextWithCeiling(stubShell, Duration.ofSeconds(-5)));
+            awaitShellCall();
+            assertThat(stubShell.lastOptions().getTimeout()).isEqualTo(Duration.ofHours(24));
+
+            // A ceiling too long to count in milliseconds is still a ceiling, not an error.
+            stubShell.clearLastOptions();
+            ToolResult huge = startInBackground(manager,
+                    contextWithCeiling(stubShell, Duration.ofSeconds(Long.MAX_VALUE)));
+            awaitShellCall();
+            assertThat(huge.isSuccess()).as(huge.getContent()).isTrue();
+            assertThat(stubShell.lastOptions().getTimeout()).isEqualTo(Duration.ofMillis(Long.MAX_VALUE));
+
+            // And the foreground floor applies: a ceiling under a second is raised to it.
+            stubShell.clearLastOptions();
+            startInBackground(manager, contextWithCeiling(stubShell, Duration.ofMillis(10)));
+            awaitShellCall();
+            assertThat(stubShell.lastOptions().getTimeout()).isEqualTo(Duration.ofSeconds(1));
+        }
+    }
+
+    @Test
+    void testExecute_Background_StartMessage_SaysHowToStopIt() throws Exception {
+        try (BackgroundBashManager manager = new BackgroundBashManager()) {
+            ControllableShell stoppable = ControllableShell.cancellable();
+            ToolResult withKill = startInBackground(manager, shellContext(stoppable));
+            assertThat(withKill.getContent()).contains("Use KillShell(taskId=\"bash_")
+                    // The default ceiling is not news, so it is not mentioned.
+                    .doesNotContain("stops it after").doesNotContain("cannot stop");
+
+            // A shell that cannot cancel: no KillShell hint, and the model is told what will end the command.
+            ToolResult withoutKill = startInBackground(manager, context);
+            assertThat(withoutKill.getContent()).doesNotContain("KillShell").contains("cannot stop a running command")
+                    .contains("24 hours");
+        }
+    }
+
+    @Test
+    void testExecute_Background_OwnerIsTheContextRuntime() {
+        try (BackgroundBashManager manager = new BackgroundBashManager()) {
+            AgentRuntimeId acme = AgentRuntimeId.fromName("ops", "acme");
+            ToolContext owned = TestExecutionEnvironments.contextBuilder(TestExecutionEnvironments.ofShell(stubShell))
+                    .put(ToolContextKeys.AGENT_RUNTIME_ID, acme).build();
+
+            ToolResult result = startInBackground(manager, owned);
+            String taskId = result.getContent().substring(result.getContent().indexOf("bash_")).split("\\s")[0];
+
+            assertThat(manager.find(acme, taskId).kind()).isEqualTo(BackgroundBashLookup.Kind.LOCAL);
+            assertThat(manager.find(null, taskId).kind()).isEqualTo(BackgroundBashLookup.Kind.NOT_FOUND);
+        }
+    }
+
+    @Test
+    void testExecute_Background_ClosedManager_ReturnsError() {
+        BackgroundBashManager manager = new BackgroundBashManager();
+        manager.close();
+
+        ToolResult result = startInBackground(manager, context);
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).contains("Background command was not started").contains("closed");
+        assertThat(stubShell.lastOptions()).as("no command reached the shell").isNull();
+    }
+
+    /** The background command reaches the shell on the manager's thread, a moment after the tool returns. */
+    private void awaitShellCall() throws InterruptedException {
+        final long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+        while (stubShell.lastOptions() == null) {
+            assertThat(System.nanoTime()).as("the background command never reached the shell").isLessThan(deadline);
+            Thread.sleep(5);
+        }
+    }
+
     // Integration tests against a real shell.
     //
     // These use LocalShell directly, which production code outside the shell tree may not do (ArchUnit's
@@ -621,6 +772,10 @@ class BashToolTest {
 
         ExecutionOptions lastOptions() {
             return lastOptions.get();
+        }
+
+        void clearLastOptions() {
+            lastOptions.set(null);
         }
 
         @Override

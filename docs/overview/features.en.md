@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/features.md
-source_commit: bc8715e
+source_commit: 79d78a7
 ---
 
 # Feature Catalog
@@ -154,7 +154,7 @@ The unit through which an agent interacts with the outside world. The contract i
 | Category | Tool names | Where |
 |------|----------|------|
 | file | `Read`, `Write`, `Edit`, `Grep` | core |
-| shell | `Bash`, `BashOutput` (including background) | core |
+| shell | `Bash`, `BashOutput`, `KillShell` (including background) | core |
 | web | `WebSearch`, `WebFetch` | core |
 | to-do | `TodoWrite` | core |
 | delegation | `Task`, `TaskList`, `TaskStop`, `AgentOutput` | core |

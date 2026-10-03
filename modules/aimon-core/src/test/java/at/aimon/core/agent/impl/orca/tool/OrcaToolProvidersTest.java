@@ -5,7 +5,10 @@ import static org.assertj.core.api.Assertions.assertThatNullPointerException;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import java.time.Duration;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 import org.junit.jupiter.api.Test;
 
@@ -17,17 +20,23 @@ import at.aimon.core.agent.orca.OrcaProviderDependencies;
 import at.aimon.core.agent.orca.tool.OrcaToolProvider;
 import at.aimon.core.agent.orca.tool.OrcaToolProviderContext;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
+import at.aimon.core.agent.tool.ToolContext;
+import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolRegistry;
+import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.agent.tool.search.KeywordToolSearchStrategy;
 import at.aimon.core.agent.tool.search.ToolSearchCatalog;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.scheduling.ScheduledTaskManager;
+import at.aimon.core.shell.ShellCommandResult;
 import at.aimon.core.skill.SkillRegistry;
 import at.aimon.core.subagent.SubagentExecutionManager;
 import at.aimon.core.subagent.SubagentRegistry;
+import at.aimon.core.tools.bash.BackgroundBashManager;
 import at.aimon.core.tools.bash.BashOutputTool;
 import at.aimon.core.tools.bash.BashTool;
+import at.aimon.core.tools.bash.KillShellTool;
 import at.aimon.core.tools.knowledge.KnowledgeSearchTool;
 import at.aimon.core.tools.scheduling.CancelScheduledTaskTool;
 import at.aimon.core.tools.scheduling.ListScheduledTasksTool;
@@ -63,6 +72,44 @@ class OrcaToolProvidersTest {
 
         assertThat(registry.findByName(BashTool.TOOL_NAME)).isPresent();
         assertThat(registry.findByName(BashOutputTool.TOOL_NAME)).isPresent();
+        assertThat(registry.findByName(KillShellTool.TOOL_NAME)).isPresent();
+    }
+
+    @Test
+    void bashProviderOverASharedManagerGivesEveryRegistryTheSameTaskList() {
+        try (BackgroundBashManager shared = new BackgroundBashManager()) {
+            OrcaBashToolProvider provider = new OrcaBashToolProvider(shared);
+            ToolRegistry evicted = new DefaultToolRegistry();
+            ToolRegistry rebuilt = new DefaultToolRegistry();
+            provider.registerTools(evicted, context(OrcaProviderDependencies.builder().build()));
+            provider.registerTools(rebuilt, context(OrcaProviderDependencies.builder().build()));
+            shared.registerTask("bash_shared01", "sleep 1", CompletableFuture
+                    .completedFuture(new ShellCommandResult(0, "from the shared list", "", Duration.ofMillis(1))));
+
+            // A task the first registry's tools know is one the second registry's tools find: the list is the
+            // provider's manager, not the registry's.
+            for (ToolRegistry registry : List.of(evicted, rebuilt)) {
+                ToolResult output = registry.findByName(BashOutputTool.TOOL_NAME).orElseThrow()
+                        .execute(ToolInput.of(Map.of("taskId", "bash_shared01", "block", false)), ToolContext.empty());
+                assertThat(output.isSuccess()).as(output.getContent()).isTrue();
+                ToolResult kill = registry.findByName(KillShellTool.TOOL_NAME).orElseThrow()
+                        .execute(ToolInput.of(Map.of("taskId", "bash_shared01")), ToolContext.empty());
+                assertThat(kill.getContent()).contains("is not running");
+            }
+        }
+    }
+
+    @Test
+    void bashProviderWithoutAManagerGivesEachRegistryItsOwnTaskList() {
+        OrcaBashToolProvider provider = new OrcaBashToolProvider();
+        ToolRegistry first = new DefaultToolRegistry();
+        ToolRegistry second = new DefaultToolRegistry();
+        provider.registerTools(first, context(OrcaProviderDependencies.builder().build()));
+        provider.registerTools(second, context(OrcaProviderDependencies.builder().build()));
+
+        assertThat(first.findByName(BashOutputTool.TOOL_NAME).orElseThrow())
+                .isNotSameAs(second.findByName(BashOutputTool.TOOL_NAME).orElseThrow());
+        assertThatNullPointerException().isThrownBy(() -> new OrcaBashToolProvider(null));
     }
 
     @Test

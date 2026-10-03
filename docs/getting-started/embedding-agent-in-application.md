@@ -350,6 +350,7 @@ aimon:
     staging:
       max-bytes: 52428800           # 스킬 디렉터리 하나를 작업 공간에 스테이징할 때의 상한
     control-writable: false         # true 면 워크스페이스의 .aimon/(제어 저장소)을 파일 도구에 연다
+    # background-command-timeout: 12h  # 백그라운드 Bash 명령의 상한. 미설정이면 24시간. 모델은 KillShell 로 먼저 끝낼 수 있다
 
   knowledge:
     backend: none                   # none(기본) | keyword | supplied

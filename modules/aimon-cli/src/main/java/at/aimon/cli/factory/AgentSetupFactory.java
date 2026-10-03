@@ -602,9 +602,11 @@ public class AgentSetupFactory {
                 // closes it, so enrolling it in AGENT_RESOURCES would change shutdown behaviour. Its .aimon/ subtree
                 // is the control store; the model works in the project directory through a local provider that owns
                 // its own view of it (execution-environment design §9.2) — the control store hidden from the file
-                // tools, skills staged into .aimon-staged/, superseded copies swept at startup.
+                // tools, skills staged into .aimon-staged/, superseded copies swept at startup. One provider for the
+                // stack, built and closed by it: the workspace is the one project directory whatever the runtime, so
+                // there is nothing to route per runtime id.
                 .fileSystem(FileSystemSpec.supplied(fileSystem))
-                .executionEnvironment(ExecutionEnvironmentSpec.factory(id -> LocalExecutionEnvironmentProvider
+                .executionEnvironment(ExecutionEnvironmentSpec.provider(() -> LocalExecutionEnvironmentProvider
                         .builder().workspaceRoot(Path.of(fileSystem.getWorkingDirectory())).build()))
                 .skillParser(skillParser)
                 .agent(AgentSpec.builder().bundle(agentBundle)

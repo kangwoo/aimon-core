@@ -145,8 +145,10 @@
  * </ol>
  *
  * <p>
- * The same path runs when the calling thread is interrupted. A timeout that killed only the direct child would leave
- * the work running with nobody waiting on it, which is what the descendant sweep exists to prevent.
+ * The same path runs when the calling thread is interrupted, and when the command's cancellation signal
+ * ({@code ExecutionOptions.getCancellation()}) is tripped — that call throws
+ * {@link at.aimon.core.shell.exception.ShellCancelledException} instead. A timeout that killed only the direct child
+ * would leave the work running with nobody waiting on it, which is what the descendant sweep exists to prevent.
  *
  * <h2>Resource Cleanup</h2>
  *
@@ -229,6 +231,11 @@
  * <td>INTERACTIVE</td>
  * <td>✗ No</td>
  * <td>PTY/pseudo-terminal not supported (requires pty library)</td>
+ * </tr>
+ * <tr>
+ * <td>CANCELLATION</td>
+ * <td>✓ Yes</td>
+ * <td>A tripped cancellation signal terminates the process and its descendants</td>
  * </tr>
  * </table>
  *

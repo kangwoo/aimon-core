@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/architecture.md
-source_commit: f651622
+source_commit: 79d78a7
 ---
 
 # Architecture
@@ -589,7 +589,7 @@ Orca assembles its tools from per-domain providers. An external module joins in 
 | Provider | Tools supplied |
 |-----------|----------|
 | `OrcaFileToolProvider` | `Read`, `Write`, `Edit`, `Grep` |
-| `OrcaBashToolProvider` | `Bash`, `BashOutput` |
+| `OrcaBashToolProvider` | `Bash`, `BashOutput`, `KillShell` |
 | `OrcaSkillToolProvider` | `Skill` |
 | `OrcaSubagentToolProvider` | `Task`, `TaskList`, `TaskStop`, `AgentOutput` |
 | `OrcaTodoToolProvider` | `TodoWrite` |

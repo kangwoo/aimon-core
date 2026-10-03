@@ -25,6 +25,7 @@ import at.aimon.bootstrap.spec.MemorySpec;
 import at.aimon.bootstrap.spec.SchedulingSpec;
 import at.aimon.bootstrap.spec.SessionSpec;
 import at.aimon.bootstrap.spec.SkillApprovalSpec;
+import at.aimon.bootstrap.spec.ToolSpec;
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.ContextEngineKind;
 import at.aimon.core.agent.DefaultAgent;
@@ -689,13 +690,54 @@ class AimonStackBuilderTest {
         for (AgentRuntimeId id : ids) {
             assertThat(stack.agentRuntimeRegistry().get(id)).isEmpty();
         }
-        // Each runtime's file systems are separate teardown entries, because AgentRuntime.close() does not reach
+        // Each runtime's share is its own pair of teardown entries, because AgentRuntime.close() does not reach
         // them — one entry for two runtimes would leak one workspace handle per tenant ever created. The workspace
-        // belongs to the runtime's execution environment provider, the control store (.aimon/) is its own entry.
-        assertThat(stack.teardownPlan()).anyMatch(line -> line.contains("executionEnvironment(agent:ops)"))
-                .anyMatch(line -> line.contains("executionEnvironment(agent:audit)"))
+        // belongs to the stack's execution environment provider, which releases it when the runtime's binding
+        // closes; the control store (.aimon/) is its own entry.
+        final List<String> plan = stack.teardownPlan();
+        assertThat(plan).anyMatch(line -> line.contains("environmentBinding(agent:ops)"))
+                .anyMatch(line -> line.contains("environmentBinding(agent:audit)"))
                 .anyMatch(line -> line.contains("controlFileSystem(agent:ops)"))
                 .anyMatch(line -> line.contains("controlFileSystem(agent:audit)"));
+        // One provider for the stack, closed after every binding made on it.
+        assertThat(plan).filteredOn(line -> line.contains("executionEnvironmentProvider")).hasSize(1);
+        assertThat(lineOf(plan, "executionEnvironmentProvider"))
+                .isGreaterThan(lineOf(plan, "environmentBinding(agent:ops)"))
+                .isGreaterThan(lineOf(plan, "environmentBinding(agent:audit)"));
+    }
+
+    @Test
+    @DisplayName("background commands are stopped after the runtimes close and before the environment provider does")
+    void backgroundCommandsCloseBetweenRuntimesAndResources(@TempDir Path workspace) {
+        try (AimonStack stack = AimonStackBuilder.build(specFor(workspace, "ops").build())) {
+            final List<String> plan = stack.teardownPlan();
+
+            // After the runtimes: the last execution to drain can still start a background command. Before the
+            // resources: stopping one goes through the provider's shell.
+            assertThat(indexOfPhase(plan, TeardownPhase.BACKGROUND_COMMANDS))
+                    .isGreaterThan(lineOf(plan, "runtime(agent:ops)"))
+                    .isLessThan(lineOf(plan, "executionEnvironmentProvider"));
+            assertThat(TeardownPhase.AGENT_RUNTIMES.ordinal()).isLessThan(TeardownPhase.BACKGROUND_COMMANDS.ordinal());
+            assertThat(TeardownPhase.BACKGROUND_COMMANDS.ordinal()).isLessThan(TeardownPhase.AGENT_RESOURCES.ordinal());
+        }
+    }
+
+    @Test
+    @DisplayName("a stack without Bash has no background command list to close")
+    void noBackgroundCommandListWithoutBash(@TempDir Path workspace) {
+        final AimonStackSpec spec = specFor(workspace, "ops").tools(ToolSpec.serverDefaults()).build();
+        try (AimonStack stack = AimonStackBuilder.build(spec)) {
+            assertThat(stack.teardownPlan()).noneMatch(line -> line.contains(TeardownPhase.BACKGROUND_COMMANDS.name()));
+        }
+    }
+
+    private static int lineOf(List<String> plan, String label) {
+        for (int i = 0; i < plan.size(); i++) {
+            if (plan.get(i).contains(label)) {
+                return i;
+            }
+        }
+        throw new AssertionError("no teardown entry '" + label + "' in " + plan);
     }
 
     @Test

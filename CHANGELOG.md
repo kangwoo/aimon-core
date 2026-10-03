@@ -7,6 +7,85 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Added: `KillShell` stops a background `Bash` command, and the environment sets its ceiling (EE-13)
+
+- **New tool `KillShell(taskId)`**, registered by `OrcaBashToolProvider` next to `Bash` and `BashOutput`. It stops a
+  running background command and everything the command started; a process that ignores the polite termination
+  request is killed forcibly after a short grace period, even when the command's own shell has already exited. The task then reports `Status: Killed`
+  (`BashTaskStatus.KILLED`, no exit code), and what the command printed before it was stopped stays readable through
+  `BashOutput`. An agent or skill whose tool allow-list names `BashOutput` only does not get `KillShell`; add it.
+- **`KillShell` acts for the runtime, not the session.** Like `BashOutput`, it finds a task by the runtime that started
+  it, so any session of one runtime can stop a command another session of that runtime started (EE-58).
+- **The shell SPI has a cancellation contract.** `ExecutionOptions.getCancellation()` carries a `ShellCancellation`
+  (tripped through `ShellCancellationSource`); `toBuilder()` carries it over. A shell that declares the new
+  `ShellFeature.CANCELLATION` stops the command and what it started when the signal is tripped and throws the new
+  `ShellCancelledException` (a `ShellExecutionException` carrying the output so far); a signal that is already
+  tripped means the command is not started. A shell that does not declare it ignores the signal, and `KillShell`
+  answers with an error that names the ceiling the command runs to. `LocalShell` declares it and kills the process
+  tree. On cancellation, timeout and interrupt alike it now kills forcibly every process of that tree still alive
+  after the 200 ms grace period; before, it did so only when the command's own shell outlived the grace, so a child
+  that ignored SIGTERM survived. **Possibly breaking:** code that `switch`es over `ShellFeature` without a `default`
+  branch no longer compiles, and a binary built against the old enum throws on the new constant.
+- **`ExecutionEnvironment.backgroundCommandTimeout()`** is the longest a background command may run in that
+  environment. `Bash` uses it as the command's timeout in place of its own 24 hours — a smaller or a larger value —
+  and tells the model when the environment set one. Empty (the default) keeps 24 hours; zero or negative is ignored
+  with a WARN. For the local provider: `LocalExecutionEnvironmentProvider.Builder.backgroundCommandTimeout`,
+  `ExecutionEnvironmentSpec.Builder.backgroundCommandTimeout`, starter property
+  `aimon.environment.background-command-timeout` (these three reject a non-positive value). A ceiling longer than the
+  staging sweep grace raises that grace to match.
+- **aimon-sandbox** compiles unchanged unless it `switch`es over `ShellFeature` without a `default`, but its background
+  commands cannot be stopped by `KillShell` until its shell declares `CANCELLATION`, and they keep a slot awake for a
+  day until its environment returns a ceiling (EE-59). This is inferred from the SPI; that repository was not checked.
+
+### Changed: one execution environment provider and one background task list per stack (EE-7)
+
+- **Breaking: `ExecutionEnvironmentSpec.factory(Function<AgentRuntimeId, ExecutionEnvironmentProvider>)` is removed**,
+  with `Builder.factory(...)` and `getFactory()`. A stack now has **one** provider for all its runtimes.
+  **Migration:** `ExecutionEnvironmentSpec.provider(Supplier)` for a provider the stack builds once, owns and closes
+  when it closes, or `shared(provider)` for one the caller closes. Either way the provider picks the workspace from
+  `EnvironmentRequest.agentRuntimeId()` instead of being built for one runtime.
+- **`AimonStack.fileSystem(id)` with a caller-supplied provider over `FileSystemSpec.localAt(...)` now returns the
+  runtime's `.aimon/` control store**, whatever the provider's class. Before, a `factory` that returned a
+  `LocalExecutionEnvironmentProvider` made it return that provider's workspace file system. **Migration:** read the
+  workspace from your own provider (`PerRuntimeLocalEnvironmentProvider.workspace(id).fileSystem()`, say), or leave
+  `ExecutionEnvironmentSpec` at its default so the stack builds the provider and answers with the workspace.
+- **Evicting a tenant runtime no longer closes a provider.** It closes the runtime's `RuntimeBinding` — the handle
+  the stack gets from the new `ExecutionEnvironmentProvider.bindRuntime(AgentRuntimeId)` (default: a no-op) when it
+  builds the runtime. A provider that holds something per runtime releases it there; it must not stop a background
+  command the runtime left running. The stack-owned provider closes at stack shutdown, last in `AGENT_RESOURCES`.
+  `shared(...)` providers are bound the same way and still never closed by the stack.
+- **The stack's default provider is `PerRuntimeLocalEnvironmentProvider`** (new, `at.aimon.core.environment.impl`):
+  one local workspace per runtime id, closed when the last runtime of that id is gone. Workspace paths are unchanged.
+  It builds a workspace outside its own lock, so one tenant's slow workspace (a remote file system connecting, say)
+  does not hold up other tenants' turns; concurrent first requests for an id share one build, and a failed build is
+  retried by the next request.
+  With `FileSystemSpec.factory`, the file system the factory makes now belongs to that per-id slot rather than to the
+  runtime instance, so an invalidated runtime closing late cannot close the file system its successor uses.
+- **A background `Bash` task outlives the runtime that started it.** The stack builds one `BackgroundBashManager` and
+  every runtime's `Bash`, `BashOutput` and `KillShell` share it, so the runtime rebuilt after an eviction finds the
+  task id its predecessor handed out. Before, `BashOutput` answered `Shell not found` while the command ran on,
+  untracked, to its ceiling. A core-only assembly that uses `new OrcaBashToolProvider()` keeps a task list per tool
+  registry; pass a manager to `new OrcaBashToolProvider(manager)` to share one (EE-56).
+- **Task metadata sits behind `BackgroundBashStore`** (default `InMemoryBackgroundBashStore`); replace it with
+  `ToolSpec.Builder.backgroundBashStore(...)` or a `BackgroundBashStore` bean in the starter. A record
+  (`BackgroundBashRecord`) holds the task id, owner runtime, node, timestamps and outcome — never the command text or
+  its output, which may carry secrets. The process, its cancellation signal, the command and its output stay on the
+  node that started the command: a task known only from the store is reported as running on another node and can be
+  neither read nor stopped from here (EE-53).
+- **Behaviour change: a task is visible only to the runtime that started it.** Another runtime's task id answers
+  `Shell not found`. Sessions of one runtime still share its tasks. A task started from a tool context without
+  `ToolContextKeys.AGENT_RUNTIME_ID` has no owner and is visible to every caller without one, so an assembly that
+  shares one manager between runtimes must set that key (the Orca executor does).
+- **Behaviour change: a finished task is forgotten 24 hours after it ended** (`BackgroundBashManager.Builder.retention`).
+  It used to stay for as long as its runtime lived.
+- **Behaviour change: closing the stack stops the background commands still running.** The new
+  `TeardownPhase.BACKGROUND_COMMANDS` sits between `AGENT_RUNTIMES` and `AGENT_RESOURCES`. Before, a command the model
+  started survived the stack — exiting the CLI now also ends a server the model left running. A command whose shell
+  cannot cancel is interrupted instead, which a local shell also answers by killing it.
+- **`BashTool` no longer owns a thread pool.** Background commands run on the `BackgroundBashManager`'s daemon
+  threads. `BashTool.close()` and `shutdown()` remain and do nothing. `BackgroundBashManager` is now `AutoCloseable`
+  and has `start`, `find` and `kill`; its existing id-only methods are unchanged.
+
 ### Changed: skill-declared hook shell actions run in the execution environment, not on the host (EE-9, EE-12)
 
 - **A skill hook's `shell` action runs in the shell of the execution it fires in.** Before, every skill hook command

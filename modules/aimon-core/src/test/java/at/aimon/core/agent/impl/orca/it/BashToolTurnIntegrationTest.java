@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -18,7 +19,7 @@ import at.aimon.core.agent.impl.orca.OrcaAgentExecutionResult;
 import at.aimon.core.agent.session.SessionId;
 
 /**
- * L1 — {@code Bash} and {@code BashOutput} through an assembled runtime.
+ * L1 — {@code Bash}, {@code BashOutput} and {@code KillShell} through an assembled runtime.
  *
  * <p>
  * <b>Bash runs in the execution environment's shell.</b> The tool takes its {@code VirtualShell} from the
@@ -151,6 +152,32 @@ class BashToolTurnIntegrationTest {
         // second call would report "Shell not found" instead of the output.
         assertThat(llm.lastCallFor(sessionId.value()).observations())
                 .anyMatch(observation -> observation.contains("SENTINEL-BG-6b02"));
+    }
+
+    @Test
+    @DisplayName("a background command is stopped by KillShell, and BashOutput then reports it killed")
+    void backgroundCommandIsStoppedByKillShell() {
+        final SessionId sessionId = OrcaRuntimeItSupport.newSession();
+        final AtomicReference<String> taskId = new AtomicReference<>();
+        llm.scriptDynamic(sessionId.value(),
+                call -> ScriptedLlmClient.callTool("Bash",
+                        Map.of("command", "echo SENTINEL-KILL-41c7; exec sleep 120", "run_in_background", true)),
+                call -> {
+                    taskId.set(taskIdFrom(call.lastObservation()));
+                    return ScriptedLlmClient.callTool("KillShell", Map.of("taskId", taskId.get()));
+                }, call -> ScriptedLlmClient.callTool("BashOutput", Map.of("taskId", taskId.get(), "wait_up_to", 10)),
+                call -> ScriptedLlmClient.text("stopped"));
+
+        final OrcaAgentExecutionResult result = node.run(sessionId, "start a server, then stop it");
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.getFinalAnswer()).isEqualTo("stopped");
+        // Three tools, one task list, and the runtime id the executor put in the tool context as the owner on every
+        // call: if any of that came apart, KillShell or BashOutput would answer "Shell not found".
+        final List<String> observations = llm.lastCallFor(sessionId.value()).observations();
+        assertThat(observations).anyMatch(observation -> observation.contains("KillShell(taskId="));
+        assertThat(observations).anyMatch(observation -> observation.contains("Status: Killed"));
+        assertThat(observations).noneMatch(observation -> observation.contains("Shell not found"));
     }
 
     @Test

@@ -145,7 +145,7 @@ IMPORTANT: **세션(`SessionRecord`)과 라이브 세션(`LiveSession`)은 다�
 | 분류 | 도구 이름 | 위치 |
 |------|----------|------|
 | 파일 | `Read`, `Write`, `Edit`, `Grep` | core |
-| 셸 | `Bash`, `BashOutput` (백그라운드 포함) | core |
+| 셸 | `Bash`, `BashOutput`, `KillShell` (백그라운드 포함) | core |
 | 웹 | `WebSearch`, `WebFetch` | core |
 | 할 일 | `TodoWrite` | core |
 | 작업 위임 | `Task`, `TaskList`, `TaskStop`, `AgentOutput` | core |

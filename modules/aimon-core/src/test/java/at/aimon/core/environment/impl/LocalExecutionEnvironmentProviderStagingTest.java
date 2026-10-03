@@ -264,6 +264,24 @@ class LocalExecutionEnvironmentProviderStagingTest {
     }
 
     @Test
+    @DisplayName("a background ceiling longer than the sweep grace keeps copies a running command may still read")
+    void sweepGraceFollowsALongerBackgroundCeiling() throws Exception {
+        final Instant now = Instant.parse("2026-09-28T12:00:00Z");
+        final Path report = workspace.resolve(".aimon-staged/report");
+        stagedCopy(report, "00000000000e0e0e", now.minus(Duration.ofHours(1)));
+        final Path withinCeiling = stagedCopy(report, "00000000000d0d0d", now.minus(Duration.ofHours(48)));
+        final Path beyondCeiling = stagedCopy(report, "00000000000c0c0c", now.minus(Duration.ofHours(80)));
+
+        // A command started 48 hours ago may still be running under a 72-hour ceiling, from the copy it was staged
+        // with. The default 24-hour grace would delete that copy from under it.
+        ownedEnv(LocalExecutionEnvironmentProvider.builder().clock(Clock.fixed(now, ZoneOffset.UTC))
+                .stagingSweepGrace(Duration.ofHours(24)).backgroundCommandTimeout(Duration.ofHours(72)));
+
+        assertThat(withinCeiling).exists();
+        assertThat(beyondCeiling).doesNotExist();
+    }
+
+    @Test
     @DisplayName("the sweep does nothing when the staging directory is a symbolic link, even into the workspace")
     void sweepSkipsSymlinkedStagingRoot() throws Exception {
         final Instant now = Instant.parse("2026-09-28T12:00:00Z");

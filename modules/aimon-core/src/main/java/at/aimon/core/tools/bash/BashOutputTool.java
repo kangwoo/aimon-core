@@ -1,15 +1,20 @@
 package at.aimon.core.tools.bash;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.tool.AbstractTool;
 import at.aimon.core.agent.tool.ToolCategories;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.tools.ToolContextKeys;
 
 /**
  * Tool for retrieving output from background bash shells.
@@ -41,6 +46,11 @@ import at.aimon.core.agent.tool.ToolResult;
  * all means blocking, or polling until the status flips.
  *
  * <p>
+ * <b>Whose tasks.</b> A task is found only by an execution of the runtime that started it
+ * ({@code ToolContextKeys.AGENT_RUNTIME_ID}); another runtime's task id reads as not found. A task that only the
+ * shared store knows — it runs on another node — is reported as such: its output is on that node.
+ *
+ * <p>
  * Thread-safe for concurrent access.
  *
  * <p>
@@ -66,6 +76,7 @@ import at.aimon.core.agent.tool.ToolResult;
 public class BashOutputTool extends AbstractTool {
 
     public static final String TOOL_NAME = "BashOutput";
+    private static final Logger log = LoggerFactory.getLogger(BashOutputTool.class);
     private static final int DEFAULT_WAIT_UP_TO = 150; // 150 seconds (2.5 minutes)
     private static final int MAX_WAIT_UP_TO = 300; // 300 seconds (5 minutes)
 
@@ -143,7 +154,7 @@ public class BashOutputTool extends AbstractTool {
      * @param input
      *            The input parameters containing taskId and optional parameters
      * @param context
-     *            The execution context (currently unused)
+     *            The execution context; its {@code AGENT_RUNTIME_ID} is the runtime whose tasks can be read
      * @return A success result with output and status if task exists, or an error result if the task is not found or
      *         parameters are invalid
      * @throws NullPointerException
@@ -163,12 +174,20 @@ public class BashOutputTool extends AbstractTool {
                 return ToolResult.error("Task ID cannot be empty");
             }
 
-            // Check if task exists
-            if (!backgroundManager.hasTask(taskId)) {
-                // No command lists background shells, so do not send the model looking for one. The id it needs was
-                // handed to it by the Bash call that started the task.
-                return ToolResult.error("Shell not found: " + taskId + "\n\n" + "The specified shell ID doesn't exist. "
-                        + "Use the ID returned by the Bash call that started the background task.");
+            // Check if task exists — for this execution's runtime. Another runtime's task is "not found" as well.
+            final AgentRuntimeId owner = context.get(ToolContextKeys.AGENT_RUNTIME_ID).orElse(null);
+            final BackgroundBashLookup lookup;
+            try {
+                lookup = backgroundManager.find(owner, taskId);
+            } catch (RuntimeException e) {
+                log.warn("Could not look up background task {}: {}", taskId, e.toString());
+                return ToolResult.error("Could not look up shell " + taskId + ": " + e.getMessage());
+            }
+            if (lookup.kind() == BackgroundBashLookup.Kind.NOT_FOUND) {
+                return notFound(taskId);
+            }
+            if (lookup.kind() == BackgroundBashLookup.Kind.ELSEWHERE) {
+                return ToolResult.error(describeElsewhere(lookup) + " Its output cannot be read from here.");
             }
 
             // Extract optional parameters
@@ -176,17 +195,11 @@ public class BashOutputTool extends AbstractTool {
             final int waitUpTo = extractWaitUpTo(input);
             final String filter = input.getStringOrNull("filter");
 
-            // Get task
-            final Optional<BackgroundBashTask> taskOpt = backgroundManager.getTask(taskId);
-            if (taskOpt.isEmpty()) {
-                return ToolResult.error("Task not found: " + taskId);
-            }
-
-            final BackgroundBashTask task = taskOpt.get();
+            final BackgroundBashTask task = lookup.task().orElseThrow();
 
             // If blocking, wait for completion
             if (block) {
-                final boolean completed = backgroundManager.awaitCompletion(taskId, waitUpTo);
+                final boolean completed = task.awaitCompletion(Duration.ofSeconds(waitUpTo));
                 if (!completed && task.getStatus() == BashTaskStatus.RUNNING) {
                     // Timeout - read partial output
                     final String partialOutput = task.readNewOutput(filter);
@@ -242,6 +255,19 @@ public class BashOutputTool extends AbstractTool {
                     }
                     break;
 
+                case KILLED :
+                    // No exit code: the command did not end, it was ended. What it printed before that is all there
+                    // is, and it is reported like any other output.
+                    result.append("Status: Killed\n");
+                    result.append("Command: ").append(task.getCommand()).append("\n\n");
+                    result.append(BashTool.renderNotices(task.takeNotices()));
+                    if (output.isEmpty()) {
+                        result.append("No new output available");
+                    } else {
+                        result.append("Output:\n").append(output);
+                    }
+                    break;
+
                 case NOT_FOUND :
                     return ToolResult.error("Task not found: " + taskId);
                 default :
@@ -262,6 +288,53 @@ public class BashOutputTool extends AbstractTool {
         } catch (Exception e) {
             return ToolResult.error("Unexpected error: " + e.getMessage());
         }
+    }
+
+    /**
+     * The answer for an id this execution's runtime has no task under. Shared with {@link KillShellTool}: the same
+     * condition should read the same way from both.
+     *
+     * @param taskId
+     *            the id that was asked for
+     * @return the error result
+     */
+    static ToolResult notFound(String taskId) {
+        // No command lists background shells, so do not send the model looking for one. The id it needs was
+        // handed to it by the Bash call that started the task.
+        return ToolResult.error("Shell not found: " + taskId + "\n\n" + "The specified shell ID doesn't exist. "
+                + "Use the ID returned by the Bash call that started the background task.");
+    }
+
+    /**
+     * Says what is known about a task whose handle is not on this node — one sentence, the same from
+     * {@code BashOutput} and {@code KillShell}; each adds what it could not do.
+     *
+     * @param lookup
+     *            a lookup of kind {@code ELSEWHERE}
+     * @return the sentence
+     */
+    static String describeElsewhere(BackgroundBashLookup lookup) {
+        final BackgroundBashRecord record = lookup.record().orElseThrow();
+        final String shell = "Shell " + record.getTaskId();
+        if (record.getStatus() != BashTaskStatus.RUNNING) {
+            final String ended = switch (record.getStatus()) {
+                case COMPLETED -> "completed";
+                case KILLED -> "was killed";
+                default -> "failed";
+            };
+            return shell + " " + ended + record.getExitCode().map(code -> " (exit code " + code + ")").orElse("")
+                    + (lookup.lostByThisNode() ? " before this node restarted." : " on another node.");
+        }
+        if (lookup.expired()) {
+            return shell + " was started on "
+                    + (lookup.lostByThisNode() ? "this node before it restarted" : "another" + " node")
+                    + " and its time limit has passed without its end being reported, so its outcome is" + " unknown.";
+        }
+        if (lookup.lostByThisNode()) {
+            return shell + " was started on this node before it restarted, and the node no longer tracks it.";
+        }
+        // The node id is the deployment's internal name; it means nothing to the model and is not for it to see.
+        return shell + " is running on another node.";
     }
 
     /**

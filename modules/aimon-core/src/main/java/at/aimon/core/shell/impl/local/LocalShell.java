@@ -13,15 +13,18 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import at.aimon.core.shell.ExecutionOptions;
+import at.aimon.core.shell.ShellCancellation;
 import at.aimon.core.shell.ShellCommand;
 import at.aimon.core.shell.ShellCommandResult;
 import at.aimon.core.shell.ShellFeature;
 import at.aimon.core.shell.VirtualShell;
+import at.aimon.core.shell.exception.ShellCancelledException;
 import at.aimon.core.shell.exception.ShellExecutionException;
 import at.aimon.core.shell.exception.ShellTimeoutException;
 
@@ -36,6 +39,8 @@ import at.aimon.core.shell.exception.ShellTimeoutException;
  * <li>Configurable timeout support
  * <li>Working directory and environment variable control
  * <li>Bounded in-memory capture with truncation reporting
+ * <li>Cancellation of a running command ({@link ShellFeature#CANCELLATION}): the process and its descendants are
+ * terminated the same way a timeout terminates them
  * </ul>
  *
  * <p>
@@ -149,6 +154,13 @@ public final class LocalShell implements VirtualShell {
      * ({@code sleep 30 &}, a spawned server) running past the timeout that was supposed to stop them.
      *
      * <p>
+     * Every process in the tree first gets a polite termination request, then shares one grace period
+     * ({@link #PROCESS_DESTROY_TIMEOUT}). Whatever is still alive when it runs out is killed forcibly &mdash; each
+     * handle on its own, <em>not</em> only when the parent outlived the grace. A child that ignores SIGTERM
+     * ({@code trap '' TERM}) under a parent that honours it would otherwise survive the parent and keep running after
+     * the caller was told the command stopped.
+     *
+     * <p>
      * The descendant snapshot is inherently racy: a grandchild born after the snapshot is not enumerated and survives.
      * Closing that gap needs a process group ({@code setsid} + {@code kill(-pgid)}), which is platform-specific and out
      * of {@link ProcessBuilder}'s reach.
@@ -163,15 +175,13 @@ public final class LocalShell implements VirtualShell {
         descendants.forEach(LocalShell::destroyQuietly);
         try {
             p.destroy();
-            if (!p.waitFor(PROCESS_DESTROY_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)) {
-                destroyForciblyAll(descendants, p);
-            }
+            awaitGrace(descendants, p);
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
-            destroyForciblyAll(descendants, p);
         } catch (Exception ignored) {
-            destroyForciblyAll(descendants, p);
+            // Fall through to the forcible sweep
         }
+        destroyForciblyAll(descendants, p);
     }
 
     private static void destroyForciblyQuietly(ProcessHandle handle) {
@@ -179,6 +189,30 @@ public final class LocalShell implements VirtualShell {
             handle.destroyForcibly();
         } catch (Exception ignored) {
             // Best effort - the handle may already refer to a process that exited
+        }
+    }
+
+    /**
+     * Waits until every process in the snapshot (and the parent) has exited, or until the one shared grace period
+     * runs out, whichever comes first.
+     */
+    private static void awaitGrace(List<ProcessHandle> descendants, Process p) throws InterruptedException {
+        final long deadline = System.nanoTime() + PROCESS_DESTROY_TIMEOUT.toNanos();
+        p.waitFor(PROCESS_DESTROY_TIMEOUT.toNanos(), TimeUnit.NANOSECONDS);
+        for (ProcessHandle handle : descendants) {
+            final long remaining = deadline - System.nanoTime();
+            if (remaining <= 0) {
+                return;
+            }
+            if (handle.isAlive()) {
+                try {
+                    handle.onExit().get(remaining, TimeUnit.NANOSECONDS);
+                } catch (InterruptedException ie) {
+                    throw ie;
+                } catch (Exception ignored) {
+                    // Timed out or not observable: the forcible sweep decides
+                }
+            }
         }
     }
 
@@ -195,13 +229,27 @@ public final class LocalShell implements VirtualShell {
         }
     }
 
+    /**
+     * Forcibly kills every handle of the snapshot, and the parent, that is still alive. {@link ProcessHandle#isAlive()}
+     * also guards against a recycled pid: a handle whose process exited does not report a newer process as alive.
+     */
     private static void destroyForciblyAll(List<ProcessHandle> descendants, Process p) {
-        descendants.forEach(LocalShell::destroyForciblyQuietly);
+        descendants.stream().filter(LocalShell::isAliveQuietly).forEach(LocalShell::destroyForciblyQuietly);
         try {
-            p.destroyForcibly();
+            if (p.isAlive()) {
+                p.destroyForcibly();
+            }
         } catch (Exception ignored) {
             // Best effort cleanup - no action needed
             // Process cleanup failed, but we can't do anything about it
+        }
+    }
+
+    private static boolean isAliveQuietly(ProcessHandle handle) {
+        try {
+            return handle.isAlive();
+        } catch (Exception e) {
+            return false;
         }
     }
 
@@ -276,6 +324,13 @@ public final class LocalShell implements VirtualShell {
         Objects.requireNonNull(command, "command");
         Objects.requireNonNull(options, "options");
 
+        // A signal tripped before the call means the command must not run at all — not "start it and kill it", which
+        // would let a command with side effects run for as long as the kill takes.
+        final ShellCancellation cancellation = options.getCancellation();
+        if (cancellation.isCancelled()) {
+            throw new ShellCancelledException("Cancelled before the process started: " + safe(command));
+        }
+
         // Unix shell: use option first, then default
         final String shellToUse = options.getUnixShell() != null ? options.getUnixShell() : defaultUnixShell;
         final List<String> cmdline = buildPlatformCommandLine(command, shellToUse);
@@ -334,6 +389,17 @@ public final class LocalShell implements VirtualShell {
                 throw new ShellExecutionException("Failed to start process: " + safe(command), e);
             }
 
+            // Registered once the process exists, so the listener has something to kill; a signal tripped between the
+            // check above and this line runs the listener right here. The flag is set before the kill and only while
+            // the process is still alive: a command that had already exited when the signal arrived keeps its normal
+            // result instead of being reported as cancelled.
+            final AtomicBoolean cancelled = new AtomicBoolean();
+            final ShellCancellation.Registration registration = cancellation.onCancel(() -> {
+                if (p.isAlive() && cancelled.compareAndSet(false, true)) {
+                    destroyForciblyQuietly(p);
+                }
+            });
+
             final boolean finished;
             try {
                 final Duration timeout = options.getTimeout();
@@ -344,6 +410,7 @@ public final class LocalShell implements VirtualShell {
                     finished = p.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS);
                 }
             } catch (InterruptedException ie) {
+                registration.remove();
                 // Order matters: clean up *before* restoring the interrupt flag. destroyForciblyQuietly's SIGTERM
                 // grace period is itself a waitFor(200ms), which throws immediately on an already-interrupted
                 // thread — restoring the flag first would turn every interrupt into an instant SIGKILL.
@@ -355,6 +422,20 @@ public final class LocalShell implements VirtualShell {
                 Thread.currentThread().interrupt();
                 throw new ShellExecutionException("Interrupted while waiting for process: " + safe(command), ie,
                         out.content(), err.content(), out.truncated() || err.truncated());
+            }
+            registration.remove();
+
+            if (cancelled.get()) {
+                // The listener killed the tree (or is finishing the forcible sweep of its descendants). Destroying
+                // again here covers the one case it does not: a timeout that fired in the same instant, where the
+                // parent is still on its SIGTERM grace.
+                if (!finished) {
+                    destroyForciblyQuietly(p);
+                }
+                final Capture out = readCapped(outFile, charset, maxCaptureBytes);
+                final Capture err = mergeErr ? Capture.EMPTY : readCapped(errFile, charset, maxCaptureBytes);
+                throw new ShellCancelledException("Process cancelled: " + safe(command), out.content(), err.content(),
+                        out.truncated() || err.truncated());
             }
 
             if (!finished) {
@@ -393,7 +474,7 @@ public final class LocalShell implements VirtualShell {
     public boolean supports(ShellFeature feature) {
         // Local shell generally supports these, but "INTERACTIVE" is tricky without PTY handling.
         return switch (feature) {
-            case PIPE, REDIRECTION -> true;
+            case PIPE, REDIRECTION, CANCELLATION -> true;
             case INTERACTIVE -> false;
         };
     }

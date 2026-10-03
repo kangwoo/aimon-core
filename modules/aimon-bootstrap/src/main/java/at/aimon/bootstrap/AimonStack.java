@@ -235,6 +235,11 @@ public final class AimonStack implements AutoCloseable {
      * that form records a degradation once more than one runtime exists.
      *
      * <p>
+     * With {@code FileSystemSpec.localAt} and a caller-supplied execution environment provider
+     * ({@code ExecutionEnvironmentSpec.provider} or {@code shared}) the stack does not know that provider's workspace,
+     * and answers with the runtime's {@code .aimon/} control store instead; read the workspace from the provider.
+     *
+     * <p>
      * Whether the stack closes these depends on how they were specified: a supplied instance stays the caller's,
      * and ones the stack created are closed during teardown.
      *

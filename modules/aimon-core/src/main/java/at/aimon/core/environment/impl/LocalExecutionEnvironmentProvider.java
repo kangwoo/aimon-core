@@ -43,7 +43,8 @@ import at.aimon.core.shell.impl.local.LocalShell;
  * <li>{@link Builder#fileSystem(VirtualFileSystem)} — a <b>borrowed</b> filesystem (possibly remote, e.g. GridFS/S3)
  * with an owned {@code LocalShell} rooted at the filesystem's working directory when that is a local path, and at no
  * particular directory otherwise. There the host shell cannot see remote files — the long-standing limit of that
- * deployment.</li>
+ * deployment. {@link Builder#ownedFileSystem(VirtualFileSystem)} is the same shape with the filesystem handed over:
+ * {@link #close()} closes it.</li>
  * </ul>
  *
  * <p>
@@ -56,8 +57,10 @@ import at.aimon.core.shell.impl.local.LocalShell;
  * <b>Staging</b> (§4.4) copies into {@code {workspace}/.aimon-staged/{name}/{contentKey}/}. In owned
  * {@code workspaceRoot} mode — a directory private to this provider — building the provider sweeps copies that are
  * neither the newest for their name nor younger than {@link Builder#stagingSweepGrace(Duration)} (24 hours by
- * default, the longest a background command can outlive the execution that started it), and marker-less directories
- * older than that (interrupted copies). A borrowed, possibly shared filesystem is never swept: another runtime may be
+ * default, the longest a background command can outlive the execution that started it — and raised to
+ * {@link Builder#backgroundCommandTimeout(Duration)} when that is longer, for the same reason), and marker-less
+ * directories older than that (interrupted copies). A borrowed, possibly shared filesystem is never swept: another
+ * runtime may be
  * using any copy on it. Copies there accumulate, bounded by the number of distinct skill versions.
  *
  * <p>
@@ -108,6 +111,9 @@ public final class LocalExecutionEnvironmentProvider implements ExecutionEnviron
                 ownedRoot = null;
                 this.rawFileSystem = Objects.requireNonNull(builder.fileSystem,
                         "workspaceRoot or fileSystem is required");
+                if (builder.fileSystemOwned) {
+                    ownedResources.add(builder.ownedResourceDecorator.apply(rawFileSystem::close));
+                }
             }
             final String workingDirectory = rawFileSystem.getWorkingDirectory();
             final Path hostRoot = LocalExecutionEnvironment.localPathOf(workingDirectory);
@@ -130,8 +136,7 @@ public final class LocalExecutionEnvironmentProvider implements ExecutionEnviron
                     : VirtualFileSystems.withPathRules(rawFileSystem, rules);
 
             if (ownedRoot != null) {
-                sweepStaging(ownedRoot, ownedRoot.resolve(builder.stagingRoot), builder.stagingSweepGrace,
-                        builder.clock);
+                sweepStaging(ownedRoot, ownedRoot.resolve(builder.stagingRoot), sweepGrace(builder), builder.clock);
             }
 
             final LocalStaging staging = new LocalStaging(rawFileSystem, toolFileSystem, builder.stagingRoot,
@@ -141,12 +146,23 @@ public final class LocalExecutionEnvironmentProvider implements ExecutionEnviron
                             .map(rg -> new RipgrepContentSearch(rg, hostRoot, hiddenPrefixes(rules))).orElse(null)
                     : null;
             this.environment = new LocalExecutionEnvironment(toolFileSystem, rules, shell, staging, contentSearch,
-                    workingDirectory);
+                    workingDirectory, builder.backgroundCommandTimeout);
         } catch (RuntimeException | Error e) {
             // Nobody else holds what was built so far: close it here, or a failed build leaks the shell.
             closeAll(ownedResources, e);
             throw e;
         }
+    }
+
+    /**
+     * A staged copy must outlive every command that may still be reading it, so a background ceiling longer than the
+     * configured grace pulls the grace up with it.
+     */
+    private static Duration sweepGrace(Builder builder) {
+        final Duration ceiling = builder.backgroundCommandTimeout;
+        return ceiling != null && ceiling.compareTo(builder.stagingSweepGrace) > 0
+                ? ceiling
+                : builder.stagingSweepGrace;
     }
 
     private static void closeAll(List<AutoCloseable> resources, Throwable cause) {
@@ -192,6 +208,17 @@ public final class LocalExecutionEnvironmentProvider implements ExecutionEnviron
     }
 
     /**
+     * Returns the workspace filesystem <b>without</b> the path rules — what the provider itself reads and writes when
+     * it stages. For an assembly that keeps its control store on the same filesystem ({@code .aimon/}, which the rules
+     * hide from {@link #fileSystem()}); never for a model-driven tool.
+     *
+     * @return the unguarded filesystem
+     */
+    public VirtualFileSystem rawFileSystem() {
+        return rawFileSystem;
+    }
+
+    /**
      * Returns the workspace directory the environment describes.
      *
      * @return the working directory
@@ -201,7 +228,9 @@ public final class LocalExecutionEnvironmentProvider implements ExecutionEnviron
     }
 
     /**
-     * Closes the filesystem and shell this provider owns. A borrowed filesystem or shell is left open.
+     * Closes the filesystem and shell this provider owns. A borrowed filesystem or shell is left open. A command
+     * still running in the owned local shell is not stopped by this: it is a process of its own, and the shell holds
+     * nothing of it.
      */
     @Override
     public void close() {
@@ -303,11 +332,13 @@ public final class LocalExecutionEnvironmentProvider implements ExecutionEnviron
     public static final class Builder {
         private Path workspaceRoot;
         private VirtualFileSystem fileSystem;
+        private boolean fileSystemOwned;
         private VirtualShell shell;
         private List<PathRule> pathRules;
         private String stagingRoot = DEFAULT_STAGING_ROOT;
         private long maxStagedBytes = DEFAULT_MAX_STAGED_BYTES;
         private Duration stagingSweepGrace = DEFAULT_STAGING_SWEEP_GRACE;
+        private Duration backgroundCommandTimeout;
         private Clock clock = Clock.systemUTC();
         private boolean contentSearch = true;
         private Path ripgrepExecutable;
@@ -338,6 +369,22 @@ public final class LocalExecutionEnvironmentProvider implements ExecutionEnviron
          */
         public Builder fileSystem(VirtualFileSystem fileSystem) {
             this.fileSystem = fileSystem;
+            this.fileSystemOwned = false;
+            return this;
+        }
+
+        /**
+         * Uses a filesystem as the workspace and takes it over: {@link LocalExecutionEnvironmentProvider#close()}
+         * closes it, and so does a build that fails. Like a borrowed one, its staging area is never swept — it may be
+         * remote, and the sweep walks a local directory.
+         *
+         * @param fileSystem
+         *            the workspace filesystem, created for this provider alone
+         * @return this builder
+         */
+        public Builder ownedFileSystem(VirtualFileSystem fileSystem) {
+            this.fileSystem = fileSystem;
+            this.fileSystemOwned = true;
             return this;
         }
 
@@ -394,6 +441,27 @@ public final class LocalExecutionEnvironmentProvider implements ExecutionEnviron
          */
         public Builder stagingSweepGrace(Duration stagingSweepGrace) {
             this.stagingSweepGrace = Objects.requireNonNull(stagingSweepGrace, "stagingSweepGrace must not be null");
+            return this;
+        }
+
+        /**
+         * Sets the longest a background command may run in this environment
+         * ({@link ExecutionEnvironment#backgroundCommandTimeout()}). Unset, {@code Bash} uses its own default of 24
+         * hours. A value longer than {@link #stagingSweepGrace(Duration)} raises that grace to match.
+         *
+         * @param backgroundCommandTimeout
+         *            the ceiling (must be positive), or null to leave it unset
+         * @return this builder
+         * @throws IllegalArgumentException
+         *             if the value is zero or negative — a shell reads such a timeout as "wait forever"
+         */
+        public Builder backgroundCommandTimeout(Duration backgroundCommandTimeout) {
+            if (backgroundCommandTimeout != null
+                    && (backgroundCommandTimeout.isZero() || backgroundCommandTimeout.isNegative())) {
+                throw new IllegalArgumentException(
+                        "backgroundCommandTimeout must be positive, got: " + backgroundCommandTimeout);
+            }
+            this.backgroundCommandTimeout = backgroundCommandTimeout;
             return this;
         }
 

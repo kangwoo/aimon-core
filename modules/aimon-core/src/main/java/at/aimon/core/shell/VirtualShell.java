@@ -13,6 +13,30 @@ import at.aimon.core.shell.exception.ShellExecutionException;
  * Implementations must be thread-safe and should properly manage resources. Use try-with-resources or explicitly call
  * {@link #close()} to release resources.
  *
+ * <h2>Cancellation</h2>
+ *
+ * <p>
+ * Every {@code execute} call carries a {@link ShellCancellation} in its {@link ExecutionOptions}. What a shell does
+ * with it is decided by {@link ShellFeature#CANCELLATION}:
+ * <ul>
+ * <li><b>A shell that supports it</b> stops the command and everything the command started (the process tree for a
+ * local shell, the remote command for a remote one) when the signal is tripped while the command runs, and that
+ * {@code execute} call throws {@link at.aimon.core.shell.exception.ShellCancelledException} carrying the output
+ * captured so far. A signal that is already tripped when {@code execute} is called means the command is not started
+ * at all, and the same exception is thrown. A signal tripped after the command ended changes nothing.</li>
+ * <li><b>Listeners run on the cancelling thread.</b> The shell registers its stop action with
+ * {@link ShellCancellation#onCancel(Runnable)}; that action must be thread-safe and idempotent and must not throw,
+ * and the shell removes it when the command ends. {@link ShellCancellationSource#cancel()} returns once the stop has
+ * been <em>requested</em> — a remote shell may return as soon as the request is sent, without waiting for the command
+ * to die.</li>
+ * <li><b>A shell that does not support it</b> ignores the signal. The command runs to its end or its timeout, so a
+ * caller that needs to stop commands asks {@link #supports(ShellFeature)} first.</li>
+ * </ul>
+ *
+ * <p>
+ * A shell that wraps another must hand the signal on. {@link ExecutionOptions#toBuilder()} carries it, so a wrapper
+ * that derives its options that way needs nothing more.
+ *
  * <p>
  * Example usage:
  *
@@ -50,7 +74,8 @@ public interface VirtualShell extends AutoCloseable {
      *            the execution options (timeout, environment, working directory, etc.), must not be null
      * @return the execution result containing exit code, stdout, stderr, and duration
      * @throws ShellExecutionException
-     *             if command execution fails
+     *             if command execution fails; {@link at.aimon.core.shell.exception.ShellCancelledException} when the
+     *             command was stopped through {@link ExecutionOptions#getCancellation()} (see the class javadoc)
      */
     ShellCommandResult execute(ShellCommand command, ExecutionOptions options) throws ShellExecutionException;
 

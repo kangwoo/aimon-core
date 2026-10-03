@@ -32,5 +32,17 @@ public enum ShellFeature {
      * Shells that support this feature can redirect input/output using operators like {@code >}, {@code <}, {@code >>},
      * {@code 2>}, etc.
      */
-    REDIRECTION
+    REDIRECTION,
+
+    /**
+     * Stopping a running command through its {@link ExecutionOptions#getCancellation() cancellation signal}.
+     *
+     * <p>
+     * A shell that supports this feature stops the command <em>and everything the command started</em> when the
+     * signal is tripped — the process tree for a local shell, the remote command for a remote one — and makes the
+     * {@code execute} call that is running it throw
+     * {@link at.aimon.core.shell.exception.ShellCancelledException}. A shell that does not support it ignores the
+     * signal, and the command runs to its end or its timeout. The full contract is on {@link VirtualShell}.
+     */
+    CANCELLATION
 }

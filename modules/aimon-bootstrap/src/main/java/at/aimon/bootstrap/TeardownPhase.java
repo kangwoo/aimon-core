@@ -23,13 +23,14 @@ package at.aimon.bootstrap;
  *
  * <p>
  * The sequence is the CLI's 14-step {@code AgentSetup#close()} order, with one substitution and three
- * additions required by a multi-session deployment:
+ * additions required by a multi-session, multi-tenant deployment:
  *
  * <ul>
  * <li><b>substitution</b> — {@link #SESSIONS} drains a whole {@code SessionRouter} rather than closing the
  * CLI's single {@code LiveSession}.
- * <li><b>additions</b> — {@link #SESSION_TRANSPORT} (distributed signal bus / inbox), {@link #AGENT_RESOURCES}
- * (per-runtime file systems and closeable tools), both of which the single-process CLI never owned.
+ * <li><b>additions</b> — {@link #SESSION_TRANSPORT} (distributed signal bus / inbox), {@link #BACKGROUND_COMMANDS}
+ * (the application-scoped list of background commands) and {@link #AGENT_RESOURCES} (per-runtime file systems,
+ * closeable tools and the execution environment provider), none of which the single-process CLI ever owned.
  * </ul>
  *
  * <p>
@@ -155,8 +156,33 @@ public enum TeardownPhase {
     AGENT_RUNTIMES,
 
     /**
+     * Closes the application-scoped list of background {@code Bash} commands: refuses new ones and stops every
+     * command still running on this node that its shell can stop.
+     *
+     * <p>
+     * An <b>addition</b> against the CLI order, where the list was each runtime's own and a command simply outlived
+     * the process. This is a change in observable shutdown behaviour: a command the model left running no longer
+     * survives the stack — see {@code CHANGELOG.md}.
+     *
+     * <p>
+     * After {@link #AGENT_RUNTIMES} because the last executions to drain can still start a background command, and a
+     * list closed before them would refuse it. Before {@link #AGENT_RESOURCES} because stopping a command goes
+     * through the shell it runs in, which the execution environment provider owns and that phase closes.
+     *
+     * <p>
+     * That is only half of why the order is safe. A <i>tenant</i> runtime's binding to the provider is closed
+     * earlier still — with the runtime, in {@link #AGENT_RUNTIMES} — while its commands are still running. Stopping
+     * them here works because of what a binding is allowed to release: {@code RuntimeBinding.close()} must not stop
+     * a running command or take away what it holds. A provider that broke that contract would leave this phase
+     * signalling commands whose shell is already gone.
+     */
+    BACKGROUND_COMMANDS,
+
+    /**
      * Closes resources that belong to a runtime but that the runtime does not close itself: the per-runtime
-     * {@code VirtualFileSystem} and any {@code AutoCloseable} tool registered into it.
+     * {@code VirtualFileSystem}, the runtime's binding to the execution environment provider, and any
+     * {@code AutoCloseable} tool registered into it — and, last, the stack-owned execution environment provider
+     * those bindings were made on.
      *
      * <p>
      * An <b>addition</b> against the CLI order, where a single process-wide file system outlived everything
@@ -260,9 +286,10 @@ public enum TeardownPhase {
      *
      * <p>
      * Skill-declared hooks are not served by it: their shell actions run in the execution environment's shell, which
-     * the environment's provider owns (closed with {@link #AGENT_RESOURCES}). A skill hook that fires after that
-     * phase finds its shell closed and is skipped with a WARN, exactly as a tool call in that execution would fail.
-     * (Scheduled routines are not such a path: {@code RoutineExecutor} calls its tools directly and fires no hooks.)
+     * the stack's environment provider owns (closed at the end of {@link #AGENT_RESOURCES}). A skill hook that fires
+     * after that phase finds its shell closed and is skipped with a WARN, exactly as a tool call in that execution
+     * would fail. (Scheduled routines are not such a path: {@code RoutineExecutor} calls its tools directly and fires
+     * no hooks.)
      *
      * <p>
      * Last because it is the deepest leaf: {@code hooks.json} hooks fire from hook registries (closed with their

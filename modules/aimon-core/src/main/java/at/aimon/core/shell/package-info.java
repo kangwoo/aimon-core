@@ -50,6 +50,7 @@
  * <li>Character encoding configuration
  * <li>Stream redirection options
  * <li>Unix shell selection (bash, sh, zsh, etc.)
+ * <li>A cancellation signal that stops the command while it runs ({@link at.aimon.core.shell.ShellCancellation})
  * </ul>
  *
  * <p>
@@ -70,17 +71,20 @@
  * <li><strong>INTERACTIVE:</strong> PTY/pseudo-terminal support for interactive commands
  * <li><strong>PIPE:</strong> Command chaining with pipes (command1 | command2)
  * <li><strong>REDIRECTION:</strong> I/O redirection (&gt;, &lt;, &gt;&gt;, 2&gt;)
+ * <li><strong>CANCELLATION:</strong> Stopping a running command through the cancellation signal in its options
  * </ul>
  *
  * <h2>Exception Hierarchy</h2>
  *
  * <pre>
  * ShellExecutionException (checked)
- *   └── ShellTimeoutException
+ *   ├── ShellTimeoutException
+ *   └── ShellCancelledException
  * </pre>
  *
  * <p>
- * <strong>Important:</strong> These exceptions indicate <em>execution failures</em> (process startup errors, timeouts),
+ * <strong>Important:</strong> These exceptions indicate <em>execution failures</em> (process startup errors, timeouts,
+ * cancellation),
  * NOT command failures. Commands that run but return non-zero exit codes complete successfully and return a
  * {@link at.aimon.core.shell.ShellCommandResult} with {@code isFailure() == true}.
  *

@@ -5,6 +5,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import java.nio.file.Path;
+import java.time.Duration;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -39,6 +40,8 @@ import at.aimon.core.skill.policy.pending.InMemoryPendingTurnRegistry;
 import at.aimon.core.skill.policy.pending.PendingTurnRegistry;
 import at.aimon.core.skill.policy.session.InMemorySessionApprovalStore;
 import at.aimon.core.skill.policy.session.SessionApprovalStore;
+import at.aimon.core.tools.bash.BackgroundBashStore;
+import at.aimon.core.tools.bash.InMemoryBackgroundBashStore;
 
 /**
  * What {@code aimonApplicationContributions} owes the beans it resolves: an order to be destroyed in, and a
@@ -212,6 +215,41 @@ class AimonApplicationContributionsTest {
         minimal(workspace).withUserConfiguration(PrimaryRegistryConfiguration.class)
                 .run(ctx -> assertThat(ctx.getBean(AimonStackSpec.class).getSkillApproval().getPendingTurnRegistry())
                         .contains(PrimaryRegistryConfiguration.PREFERRED));
+    }
+
+    @Test
+    @DisplayName("a BackgroundBashStore bean and the background command ceiling reach the stack spec")
+    void backgroundCommandSettingsReachTheSpec(@TempDir Path workspace) {
+        minimal(workspace).withUserConfiguration(BackgroundBashStoreConfiguration.class)
+                .withPropertyValues("aimon.environment.background-command-timeout=45m").run(ctx -> {
+                    final AimonStackSpec spec = ctx.getBean(AimonStackSpec.class);
+                    assertThat(spec.getTools().getBackgroundBashStore())
+                            .containsSame(BackgroundBashStoreConfiguration.STORE);
+                    assertThat(spec.getExecutionEnvironment().getBackgroundCommandTimeout())
+                            .contains(Duration.ofMinutes(45));
+                });
+    }
+
+    @Test
+    @DisplayName("without either, the stack keeps its in-memory task list and Bash's own ceiling")
+    void backgroundCommandDefaults(@TempDir Path workspace) {
+        minimal(workspace).run(ctx -> {
+            final AimonStackSpec spec = ctx.getBean(AimonStackSpec.class);
+            assertThat(spec.getTools().getBackgroundBashStore()).isEmpty();
+            assertThat(spec.getExecutionEnvironment().getBackgroundCommandTimeout()).isEmpty();
+        });
+    }
+
+    /** Stands in for an application that shares the background task list between nodes. */
+    @Configuration(proxyBeanMethods = false)
+    static class BackgroundBashStoreConfiguration {
+
+        static final BackgroundBashStore STORE = new InMemoryBackgroundBashStore();
+
+        @Bean
+        BackgroundBashStore backgroundBashStore() {
+            return STORE;
+        }
     }
 
     /** Stands in for an application that backs the four stores with shared infrastructure. */

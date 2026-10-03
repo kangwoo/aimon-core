@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -176,6 +177,52 @@ class LocalExecutionEnvironmentProviderTest {
             assertThatThrownBy(() -> env.isolate("../x")).isInstanceOf(IllegalArgumentException.class);
             assertThat(env.isolate("step_1")).isPresent();
         }
+    }
+
+    @Test
+    @DisplayName("an owned filesystem is closed with the provider; a borrowed one is not")
+    void ownedFileSystemIsClosed(@TempDir Path ownedRoot, @TempDir Path borrowedRoot) {
+        final LocalFileSystem owned = new LocalFileSystem(new LocalFileSystemConfig(ownedRoot.toString()));
+        owned.initialize();
+        final LocalFileSystem borrowed = new LocalFileSystem(new LocalFileSystemConfig(borrowedRoot.toString()));
+        borrowed.initialize();
+        try {
+            final LocalExecutionEnvironmentProvider owning = LocalExecutionEnvironmentProvider.builder()
+                    .ownedFileSystem(owned).contentSearch(false).build();
+            final LocalExecutionEnvironmentProvider borrowing = LocalExecutionEnvironmentProvider.builder()
+                    .fileSystem(borrowed).contentSearch(false).build();
+            // The unguarded view is the filesystem itself — what an assembly puts its control store on.
+            assertThat(owning.rawFileSystem()).isSameAs(owned);
+            assertThat(owning.fileSystem()).isNotSameAs(owned);
+
+            owning.close();
+            borrowing.close();
+
+            assertThat(owned.getStatus().isAvailable()).isFalse();
+            assertThat(borrowed.getStatus().isAvailable()).isTrue();
+        } finally {
+            borrowed.close();
+        }
+    }
+
+    @Test
+    @DisplayName("the background command ceiling is the environment's, unset by default, and must be positive")
+    void backgroundCommandTimeout(@TempDir Path root) {
+        final EnvironmentRequest request = EnvironmentRequest.builder().agentRuntimeId(AgentRuntimeId.fromName("a"))
+                .build();
+        try (LocalExecutionEnvironmentProvider unset = LocalExecutionEnvironmentProvider.builder().workspaceRoot(root)
+                .contentSearch(false).build()) {
+            assertThat(unset.resolve(request).backgroundCommandTimeout()).isEmpty();
+        }
+        try (LocalExecutionEnvironmentProvider limited = LocalExecutionEnvironmentProvider.builder().workspaceRoot(root)
+                .contentSearch(false).backgroundCommandTimeout(Duration.ofMinutes(45)).build()) {
+            assertThat(limited.resolve(request).backgroundCommandTimeout()).contains(Duration.ofMinutes(45));
+        }
+        assertThatThrownBy(() -> LocalExecutionEnvironmentProvider.builder().backgroundCommandTimeout(Duration.ZERO))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("positive");
+        assertThatThrownBy(
+                () -> LocalExecutionEnvironmentProvider.builder().backgroundCommandTimeout(Duration.ofSeconds(-1)))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     private static final class CountingShell implements VirtualShell {
