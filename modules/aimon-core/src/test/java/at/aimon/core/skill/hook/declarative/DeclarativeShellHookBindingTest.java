@@ -386,8 +386,8 @@ class DeclarativeShellHookBindingTest {
      * Executor stub that records the environment each hook exports and always reports a clean exit.
      *
      * <p>
-     * It overrides the three-argument {@code run} on purpose: the default implementation of that overload returns
-     * {@link ShellHookOutcome#notObserved()}, which would make every outcome-sensitive assertion vacuous.
+     * It reports a clean exit rather than {@link ShellHookOutcome#notObserved()}, which would make every
+     * outcome-sensitive assertion vacuous.
      */
     private static final class RecordingExecutor implements ShellActionExecutor {
 
@@ -403,12 +403,13 @@ class DeclarativeShellHookBindingTest {
         }
 
         @Override
-        public void run(ShellAction action, Map<String, String> environmentOverrides) {
-            run(action, environmentOverrides, null);
+        public boolean requiresExecutionEnvironment() {
+            return false;
         }
 
         @Override
-        public ShellHookOutcome run(ShellAction action, Map<String, String> environmentOverrides, String stdinPayload) {
+        public ShellHookOutcome run(ShellAction action, HookContext context, Map<String, String> environmentOverrides,
+                String stdinPayload) {
             envs.add(new LinkedHashMap<>(environmentOverrides));
             return ShellHookOutcome.of(0, "", "");
         }

@@ -15,6 +15,7 @@ import at.aimon.core.agent.InvokerType;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.event.PreToolContext;
+import at.aimon.core.hook.execution.HookContext;
 import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.hook.execution.HookStatus;
 import at.aimon.core.llm.ToolUse;
@@ -66,12 +67,14 @@ class DeclarativePreToolHookTest {
         RecordingExecutor exec = new RecordingExecutor();
         ShellAction action = new ShellAction("echo hi", Duration.ofSeconds(2));
         DeclarativePreToolHook hook = new DeclarativePreToolHook("my-skill", NameOnlyPredicate.ANY, action, exec);
+        PreToolContext context = contextFor("Bash");
 
-        HookResult result = hook.execute(contextFor("Bash"));
+        HookResult result = hook.execute(context);
 
         assertThat(result.getStatus()).isEqualTo(HookStatus.SUCCESS);
         assertThat(exec.calls).hasSize(1);
         assertThat(exec.calls.get(0).action).isSameAs(action);
+        assertThat(exec.calls.get(0).context).isSameAs(context);
         Map<String, String> env = exec.calls.get(0).env;
         assertThat(env).containsEntry(SkillHookEnv.AIMON_HOOK_EVENT, "preTool")
                 .containsEntry(SkillHookEnv.AIMON_SKILL_NAME, "my-skill")
@@ -89,9 +92,16 @@ class DeclarativePreToolHookTest {
             }
 
             @Override
-            public void run(ShellAction action, Map<String, String> env) {
+            public boolean requiresExecutionEnvironment() {
+                return false;
+            }
+
+            @Override
+            public ShellHookOutcome run(ShellAction action, HookContext context, Map<String, String> env,
+                    String stdinPayload) {
                 // Contract: must not throw. Implementations that violate should never make HookResult fail.
                 // Here we exercise the "compliant" path; a separate test exercises null safety.
+                return ShellHookOutcome.notObserved();
             }
         };
 
@@ -140,11 +150,18 @@ class DeclarativePreToolHookTest {
         }
 
         @Override
-        public void run(ShellAction action, Map<String, String> environmentOverrides) {
-            calls.add(new Call(action, Map.copyOf(environmentOverrides)));
+        public boolean requiresExecutionEnvironment() {
+            return false;
         }
 
-        record Call(ShellAction action, Map<String, String> env) {
+        @Override
+        public ShellHookOutcome run(ShellAction action, HookContext context, Map<String, String> environmentOverrides,
+                String stdinPayload) {
+            calls.add(new Call(action, context, Map.copyOf(environmentOverrides)));
+            return ShellHookOutcome.notObserved();
+        }
+
+        record Call(ShellAction action, HookContext context, Map<String, String> env) {
         }
     }
 

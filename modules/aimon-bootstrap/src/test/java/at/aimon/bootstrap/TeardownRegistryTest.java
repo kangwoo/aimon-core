@@ -55,7 +55,7 @@ class TeardownRegistryTest {
         final TeardownRegistry teardown = new TeardownRegistry();
 
         // Registered in deliberately scrambled phase order: the plan must not follow this.
-        teardown.own(TeardownPhase.SKILL_HOOK_SHELL, "shell", new RecordingResource(closed, "shell"));
+        teardown.own(TeardownPhase.HOOK_CONFIG_SHELL, "shell", new RecordingResource(closed, "shell"));
         teardown.own(TeardownPhase.SESSIONS, "router", new RecordingResource(closed, "router"));
         teardown.own(TeardownPhase.SCHEDULING, "scheduler", new RecordingResource(closed, "scheduler"));
         teardown.own(TeardownPhase.CHECKPOINTS, "checkpoints", new RecordingResource(closed, "checkpoints"));
@@ -92,7 +92,7 @@ class TeardownRegistryTest {
         teardown.own(TeardownPhase.SESSIONS, "router", new RecordingResource(closed, "router"));
         teardown.own(TeardownPhase.SCHEDULING, "scheduler",
                 new RecordingResource(closed, "scheduler", new IllegalStateException("scheduler is wedged")));
-        teardown.own(TeardownPhase.SKILL_HOOK_SHELL, "shell", new RecordingResource(closed, "shell"));
+        teardown.own(TeardownPhase.HOOK_CONFIG_SHELL, "shell", new RecordingResource(closed, "shell"));
 
         assertThatThrownBy(teardown::closeAll).isInstanceOf(AimonTeardownException.class);
 

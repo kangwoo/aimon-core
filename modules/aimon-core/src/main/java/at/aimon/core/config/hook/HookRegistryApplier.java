@@ -165,7 +165,7 @@ public final class HookRegistryApplier {
             // cancellation.
             final String discriminator = event + "[" + idx + "][" + handlerIdx + "]";
             final DeclarativeHookOptions options = DeclarativeHookOptions.builder().hookIdDiscriminator(discriminator)
-                    .rewakeSpec(toRewakeSpec(spec, mhe, event)).build();
+                    .rewakeSpec(toRewakeSpec(spec, mhe, event, action)).build();
             switch (event) {
                 case DeclarativePreToolHook.EVENT_NAME ->
                     registry.register(HookEventType.PRE_TOOL, new DeclarativePreToolHook(pseudoSkillName, predicate,
@@ -192,6 +192,14 @@ public final class HookRegistryApplier {
                                 mhe.getSource());
                         continue;
                     }
+                    if (!shellExecutor.canRunOn(binding.getEventType())) {
+                        // Only reachable when an embedder wires an environment-bound executor into hooks.json: the
+                        // event has no execution environment, so the command would be skipped on every firing.
+                        log.warn("hooks: 'command' on {} ({}) cannot run: the event fires outside any execution and"
+                                + " the configured shell executor only runs in an execution environment; skipping",
+                                event, mhe.getSource());
+                        continue;
+                    }
                     register(registry, binding, pseudoSkillName, shell, options);
                 }
             }
@@ -208,9 +216,20 @@ public final class HookRegistryApplier {
      * would emit it on every fire and the listener would discard every one of them, which is silently broken config
      * rather than a working feature. A malformed block is likewise dropped with a WARN, keeping {@code hooks.json}
      * fail-soft — one bad rewake block must not take down the whole hook.
+     *
+     * <p>
+     * A rewake on a shell action is also dropped when the shell executor
+     * {@linkplain ShellActionExecutor#requiresExecutionEnvironment() needs an execution environment}: the replay
+     * rebuilds its context outside the execution that first fired the hook, so every replay would be skipped.
      */
-    private RewakeSpec toRewakeSpec(HookHandlerSpec spec, MergedHookEntry mhe, String event) {
+    private RewakeSpec toRewakeSpec(HookHandlerSpec spec, MergedHookEntry mhe, String event, HookAction action) {
         if (spec.getAsyncRewake() == null) {
+            return null;
+        }
+        if (action instanceof ShellAction && shellExecutor.requiresExecutionEnvironment()) {
+            log.warn("hooks: 'asyncRewake' on a 'command' handler is ignored on event '{}' ({}): a rewake replay"
+                    + " fires outside the execution, and the configured shell executor only runs in an execution"
+                    + " environment", event, mhe.getSource());
             return null;
         }
         if (!REWAKEABLE_EVENTS.contains(event)) {

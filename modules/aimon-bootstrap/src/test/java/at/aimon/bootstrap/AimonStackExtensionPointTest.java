@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -492,22 +493,16 @@ class AimonStackExtensionPointTest {
     // --- Supplied skill parser ------------------------------------------------------------------------------
 
     @Test
-    @DisplayName("a supplied skill parser means the stack opens no shell of its own")
-    void suppliedSkillParserSkipsTheStacksOwnShell(@TempDir Path workspace) {
+    @DisplayName("the stack opens no shell for skill hooks, with or without a supplied skill parser")
+    void theStackOpensNoSkillHookShell(@TempDir Path workspace) {
+        // Skill-declared shell actions run in the execution environment's shell, which the environment's provider
+        // owns. A shell on this plan would be a host shell a skill author could reach.
         try (AimonStack stack = AimonStackBuilder
                 .build(specFor(workspace).skillParser(new MarkdownSkillParser()).build())) {
-            // The shell is what the entry stands for: a second one would be a second process pool that nothing
-            // on this plan ever closes.
-            assertThat(stack.teardownPlan()).noneMatch(line -> line.contains("skillHookShell"));
+            assertThat(stack.teardownPlan()).noneMatch(line -> line.toLowerCase(Locale.ROOT).contains("shell"));
         }
-    }
-
-    @Test
-    @DisplayName("without one, the stack owns its shell and closes it last")
-    void withoutASuppliedParserTheStackOwnsTheShell(@TempDir Path workspace) {
         try (AimonStack stack = AimonStackBuilder.build(specFor(workspace).build())) {
-            assertThat(stack.teardownPlan()).anyMatch(line -> line.contains("skillHookShell"));
-            assertThat(stack.teardownPlan().get(stack.teardownPlan().size() - 1)).contains("skillHookShell");
+            assertThat(stack.teardownPlan()).noneMatch(line -> line.toLowerCase(Locale.ROOT).contains("shell"));
         }
     }
 

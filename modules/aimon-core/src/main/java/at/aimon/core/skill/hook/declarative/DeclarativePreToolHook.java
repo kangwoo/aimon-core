@@ -180,7 +180,7 @@ public final class DeclarativePreToolHook implements PreToolHook {
         }
         if (action instanceof ShellAction shell) {
             final Map<String, String> env = buildShellEnv(context, toolName);
-            final ShellHookOutcome outcome = shellExecutor.run(shell, env,
+            final ShellHookOutcome outcome = shellExecutor.run(shell, context, env,
                     ShellHookPayload.render(env, toolInput.toMap()));
             if (outcome.isDenied()) {
                 log.info("Skill '{}' preTool shell hook vetoed tool '{}' (exit {}): {}", skillName, toolName,

@@ -1,4 +1,4 @@
-# 실행 환경 — 등록 항목 47건 (열림 35 · 닫힘 12)
+# 실행 환경 — 등록 항목 52건 (열림 38 · 닫힘 14)
 
 출처는 `ExecutionEnvironment` 구현 작업이다. 설계는 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md)
 이고, 구현 계획(승인본)과 구현이 그 계획에서 벗어난 점은
@@ -28,7 +28,10 @@ EE-14)은 2026-09-29 에 메인테이너가 결정했다. 결정은 남은 일�
 [`../design/tool/workflow-isolation-hardening.md`](../design/tool/workflow-isolation-hardening.md) 에 있다. EE-46 · EE-47 는
 그 설계의 열린 질문(Q5, Q1 · Q4) 가운데 이 변경 밖으로 결과가 번지는 것을 옮긴 것이다. EE-43~EE-45 는 같은 시기에
 EE-42 를 다룬 변경이 먼저 썼으므로 이 둘은 EE-46 부터 번호를 받았다. 프로비저닝 실패 경로의 누수 둘(EE-21 · EE-23)은
-2026-09-30 에 한 변경에서 닫았다.
+2026-09-30 에 한 변경에서 닫았다. 훅을 다룬 둘(EE-9 · EE-12)은 2026-10-03 에 한 변경에서 닫았다. 그중 EE-12 가 결정
+항목이었으므로 결정됨이되 열린 항목은 이제 넷이다. 그 변경의 설계와 구현이 설계에서 벗어난 점은
+[`../design/tool/execution-environment-ee9-ee12-hook-environment.md`](../design/tool/execution-environment-ee9-ee12-hook-environment.md)
+에 있다. EE-48~EE-52 는 그 설계의 §8 과 열린 질문(Q1 · Q2 · Q3) 가운데 이 변경 밖으로 결과가 번지는 것을 옮긴 것이다.
 
 ---
 
@@ -217,7 +220,7 @@ GridFS etag 가 설계 §7 의 "GridFS(md5)" 와 다르다는 점은 빌드 리�
 애초에 보여 주지 않는다는 것이다. (3) 브랜치 파일 시스템으로 브랜치 자신을 `deleteRecursive(".")` 할 수 없게 되었다(보호
 디렉터리를 품은 트리) — 브랜치 정리는 부모를 거친다. main 코드에 그렇게 지우는 곳은 없다.
 
-## EE-9 — 훅 컨텍스트 대부분에 실행 환경 서술자가 없다 · **열림**
+## EE-9 — 훅 컨텍스트 대부분에 실행 환경 서술자가 없다 · **닫힘** *(2026-10-03)*
 
 **무엇을.** `HookContext.getEnvironmentDescriptor()` 를 PreCompact/PostCompact(`CompactionRequest` 경유), OnStart/OnStop,
 SubagentStart/Stop, PermissionRequest/Denied 컨텍스트에도 채운다.
@@ -231,6 +234,61 @@ SubagentStart/Stop, PermissionRequest/Denied 컨텍스트에도 채운다.
 **언제 다시 볼까.** 서술자를 읽는 훅이 처음 생길 때, 또는 샌드박스 제공자를 붙일 때.
 
 출처: 계획 §10 차이 목록.
+
+### 닫힘 (2026-10-03)
+
+EE-12 의 결정문대로 **서술자가 아니라 환경 자체**를 실었다. `HookContext.getExecutionEnvironment()` 가 생겼고
+`getEnvironmentDescriptor()` 는 거기서 파생된다 — 컨텍스트는 환경 하나만 들어 출처가 둘이 되지 않는다
+(`PreToolContext`/`PostToolContext` 빌더의 `environmentDescriptor(...)` 는 삭제했다). 사용 불가 환경은 빈 값으로 바꾸지 않고
+그대로 싣는다.
+
+이벤트별 분류는 소스로 셌다 — main 소스의 `*Context.builder()` 호출 지점 전부다(2026-10-03, 경로는
+`modules/aimon-core/src/main/java/at/aimon/core/` 기준). 분류의 단일 출처는 `HookEventType.firesInsideExecution()` 이다.
+
+| 이벤트 | 발화 지점 | 실행 안인가 | 환경의 출처 |
+|---|---|---|---|
+| `preTool` / `postTool` / `permissionRequest` / `permissionDenied` | `toolinvocation/SingleToolInvoker` | 안 | 그 호출의 `ToolContext` 에 든 `EXECUTION_ENVIRONMENT` — 도구가 쓰는 바로 그 인스턴스. 스킬 커맨드 디스패처(`OrcaAgentExecutor.commandToolDispatcher`)도 이 경로를 탄다. `RoutineExecutor` 는 타지 않는다 — 도구를 직접 부르고(`tool.execute`) 훅을 하나도 발화하지 않는다 |
+| `onStart` / `onStop` | `agent/impl/orca/OrcaAgentExecutor`(`invokeOnStart`·`invokeOnStop`), `subagent/execution/DefaultSubagentExecutor`, `command/system/CompactCommand` | 안 | 턴은 `ExecutionScope.executionEnvironment`, 포크는 **포크 자신이** 해석한 환경(`LoopContext.executionEnvironment()`), `/compact` 는 커맨드 `ToolContext` 의 값 |
+| `subagentStart` / `subagentStop` | `subagent/DefaultSubagentExecutionManager` | 안 (스폰한 쪽 실행) | `SubagentExecutionEnvironment.getExecutionEnvironment()` — **스폰한 실행의** 환경(→ EE-52). 런타임 수준 러너가 스폰하면 비어 있다 |
+| `preCompact` / `postCompact` | `agent/compact/DefaultCompactionEngine` | 안 | `ContextRequest` → `CompactionGuardRequest` → `CompactionRequest` \| `SummaryRequest` 로 흘러온 값 |
+| `onSessionStart` / `onSessionEnd` | `agent/session/DefaultLiveSession` | **밖** | 없음. 빌더에 넣을 메서드가 없다 |
+| `onConfigReload` | `config/hook/HookRegistryReloader` | **밖** | 없음 |
+| rewake 리플레이 | `hook/rewake/impl/DefaultRewakeFireListener` | **밖** | 없음. `preTool`·`preCompact` 의 리플레이도 환경 없이 발화한다 |
+
+착수해 보니 항목의 서술과 달랐던 것은 넷이다.
+
+1. **실행 밖 이벤트는 다섯이 아니라 셋이다.** EE-12 의 결정문은 `OnStart` · `OnStop` 도 실행 밖에서 발화할 수 있다고
+   적었지만 두 이벤트의 발화 지점은 전부 실행 스코프를 가진 자리다. 유일하게 의심스러웠던 `CompactCommand` 의 `onStop` 도
+   실행기의 커맨드 흐름 안이다.
+2. **"실행 안 이벤트" 여도 환경이 없을 수 있다.** rewake 리플레이, 손으로 만든 `ToolContext`, 런타임 수준 러너가 스폰한
+   서브에이전트, 그리고 새 요청 객체 진입점을 재정의하지 않은 서드파티 `CompactionGuard`(환경을 떨군다). 그래서
+   `firesInsideExecution()` 은 라이브 발화 지점의 **분류**이지 개별 컨텍스트에 대한 보장이 아니고, 읽는 쪽은 빈 값을
+   다뤄야 한다.
+3. **압축 경로에는 환경이 지나갈 길이 없었다.** 항목은 "`CompactionRequest` 경유" 라고만 적었지만 AUTO 압축은
+   `CompactionGuard` 를 거치고, 그 인터페이스는 위치 인자 × 오버로드 넷이었다. 한 축을 더하면 여덟이 되므로 요청 객체
+   `CompactionGuardRequest` 와 `maybeCompact(CompactionGuardRequest)` 하나를 더했다(기본 구현은 기존 네 메서드 가운데
+   하나로 위임한다). `SummaryRequest`(view 모드)와 `ContextRequest` 에도 같은 필드가 들어갔다.
+4. **`agent.compact` 는 `environment` SPI 를 볼 수 없었다.** ArchUnit 의 허용 목록에 `ExecutionEnvironment` 한 타입을
+   이름으로 더했다 — compact 는 참조를 훅 컨텍스트로 옮기기만 한다.
+
+테스트: `HookEventTypeTest`(열셋의 분류 고정, 실행 밖 컨텍스트 빌더에는 환경을 넣을 메서드가 없음),
+`SingleToolInvokerTest`(네 이벤트가 `ToolContext` 의 환경과 같은 인스턴스, 없으면 빈 값),
+`HookFiringIntegrationTest.inExecutionHooksCarryTheTurnsExecutionEnvironment`(실제 턴 하나에서 `onStart`·
+`permissionRequest`·`preTool`·`postTool`·`onStop` 이 같은 인스턴스, `onSessionStart` 는 빈 값),
+`DefaultSubagentExecutorHookEnvironmentTest`(포크의 `onStart` 와 `onStop` 세 경로가 포크의 환경),
+`DefaultSubagentExecutionManagerTest`(`subagentStart`/`Stop` 이 스폰한 쪽 환경, 없으면 빈 값),
+`ContextEngineExecutionEnvironmentTest`(AUTO·MANUAL × 제자리·view 모드에서 pre/post 압축 훅),
+`RollingContextEngineTest`, `CompactCommandTest`, `DefaultRewakeFireListenerTest`(리플레이는 빈 값),
+`DefaultCompactionEngineRunIdentityTest`(위치 메서드만 구현한 가드가 요청 객체 진입점에서도 낮춘 밴드를 유지),
+`HookFiringIntegrationTest.onStopOfAFailedTurnCarriesTheTurnsExecutionEnvironment`(예외로 끝난 턴의 `onStop`),
+`CompactionTurnIntegrationTest.autoCompactionHooksCarryTheTurnsExecutionEnvironment`(메인 루프 AUTO 압축의
+`preCompact`·`postCompact` 가 턴의 환경), `AgentSetupFactoryHookConfigShellTest`(CLI 가 `hooks.json` 에 호스트 셸
+실행기를 배선함 — EE-48).
+
+(정정. PR #204 의 첫 판은 위 표에 "`RoutineExecutor` 도 이 경로를 탄다" 고 적었다. 리뷰에서 틀린 것이 드러났다 —
+`RoutineExecutor` 는 `timeoutExecutor.submit(() -> tool.execute(input, stepContext))` 로 도구를 직접 부르고
+`SingleToolInvoker` 를 거치지 않으므로 루틴의 도구 단계에서는 `preTool`·`postTool` 을 포함해 어떤 훅도 발화하지 않는다.
+같은 문장이 설계 문서 §4.2, `TeardownPhase.HOOK_CONFIG_SHELL` 의 Javadoc, `CHANGELOG.md` 에도 들어가 있어 함께 고쳤다.)
 
 ## EE-10 — `AgentEnvironmentSnapshot` 이 작업 디렉터리를 여전히 든다 · **열림**
 
@@ -260,7 +318,7 @@ SubagentStart/Stop, PermissionRequest/Denied 컨텍스트에도 채운다.
 
 출처: 계획 §10 차이 목록.
 
-## EE-12 — 스킬 선언 훅의 셸은 여전히 호스트다 · **열림 · 결정됨** *(2026-09-29)*
+## EE-12 — 스킬 선언 훅의 셸은 여전히 호스트다 · **닫힘** *(2026-10-03)*
 
 **무엇을.** 스킬 파일이 선언한 훅의 셸 액션을 실행 환경의 셸로 보낼지, 호스트에 두고 신뢰된 스킬에만 허용할지 정한다.
 
@@ -292,6 +350,52 @@ SubagentStart/Stop, PermissionRequest/Denied 컨텍스트에도 채운다.
 
 그래서 EE-9 가 이 항목의 선행 조건이 된다. 다만 서술자가 아니라 환경을 훅 컨텍스트에 싣는 쪽으로 넓혀야 한다. 실행 밖
 이벤트에 셸 액션을 쓴 기존 스킬은 깨진다(0.x 정책상 허용한다).
+
+### 닫힘 (2026-10-03)
+
+결정대로 고쳤다. `ShellActionExecutor.run` 이 발화 컨텍스트를 받고, 스킬 파서가 쓰는 `DefaultShellActionExecutor` 는 **셸을
+쥐지 않는다** — 인자 없는 생성자이고, 발화할 때 `HookContext.getExecutionEnvironment()` 의 `shell()` 로 명령을 돌린다.
+`AimonStackBuilder` 는 스킬 훅용 셸을 만들지 않고(`skillHookShell` 과 `TeardownPhase.SKILL_HOOK_SHELL` 이 없어졌다), CLI 의
+`AgentSetupFactory` 도 스킬 파서에 셸을 넘기지 않는다. 포크 모드 스킬의 훅은 **포크의** 환경에서 돈다 — 활성화 시점이
+아니라 발화 시점의 컨텍스트에서 셸을 얻기 때문이다.
+
+착수해 보니 결정문의 전제와 달랐던 것은 다섯이다.
+
+1. **실행 밖 이벤트는 셋뿐이고, 스킬 frontmatter 는 그 셋을 이미 거부하고 있었다.** `onSessionStart` · `onSessionEnd` ·
+   `onConfigReload` 는 `SkillHookSet.supportedEvents()` 에 없어 `SkillHookSetParser` 가 "unknown event" 로 던진다 — 셸
+   액션만이 아니라 이벤트째로. 그래서 "실행 밖 이벤트의 셸 액션을 파싱 시점에 거부" 는 새 거부 규칙이 아니라 **있던
+   화이트리스트를 불변식으로 못 박는 일**이었다: `ShellActionExecutor.canRunOn(HookEventType)` 한 줄을 파서가 셸 액션마다
+   검사하고(누가 `supportedEvents()` 에 실행 밖 이벤트를 더하는 순간 막힌다), unknown-event 메시지가 이유를 말한다.
+   **"기존 스킬이 깨진다" 던 우려는 실현되지 않았다** — 지금 로드되는 스킬 가운데 이 변경으로 거부되는 것은 없다.
+2. **호스트 셸 갈래는 둘이 아니라 셋이었다.** CLI 는 같은 셸을 `hooks.json` 핫리로드에도 넘긴다. `hooks.json` 은 스킬
+   선언이 아니라 운영자 설정이고 실행 밖 이벤트 셋을 선언할 수 있는 유일한 자리이므로 **호스트에 남겼다** — 새
+   `HostShellActionExecutor(VirtualShell)` 과 `TeardownPhase.HOOK_CONFIG_SHELL` 이다(→ EE-48). 결정의 주어는 "스킬 선언
+   훅" 이다.
+3. **파싱으로 못 막는 경우가 남는다.** 실행 안 이벤트여도 발화 시점에 환경이 없거나(EE-9 닫힘 절 2번) 사용 불가일 수
+   있다. 그때 명령은 **돌지 않고** WARN 이 남으며 결과는 `notObserved()` 다 — 호스트로 되돌아가지 않는다. 가드 훅이면
+   fail-open 이다(→ EE-51).
+4. **스킬 하나의 파싱 실패가 스킬 목록 전체를 무너뜨리는 구멍이 있었다.** `DefaultSkillRegistry.getAllSkills()` 와
+   `reloadAll()` 은 `SkillRepositoryException` 만 잡았는데 파서는 형제 타입 `SkillParseException` 을 던진다. PR #195 가
+   고친 것은 링크 규칙 쪽뿐이었다. 두 메서드가 이제 둘 다 잡아 그 스킬만 건너뛴다. 이름으로 지목한
+   `getSkill` / `reloadSkill` 은 지금처럼 던진다.
+5. **로컬에서도 행동이 바뀐다.** 스킬 훅의 명령은 호스트 JVM 의 cwd 가 아니라 실행 환경의 셸 — 로컬 제공자에서는
+   워크스페이스가 cwd 인 셸 — 에서 돈다. 상대 경로로 스크립트를 부르던 스킬 훅은 조용히 다른 곳을 본다(→ EE-50).
+
+다른 행동 변화 둘. 종료할 때 스킬 훅 셸은 환경 제공자의 것이라 `AGENT_RESOURCES` 에서 닫히므로, 그 뒤 단계에서 아직 도는
+루틴의 스킬 셸 훅은 닫힌 셸을 만나 WARN 으로 끝난다(도구도 같은 처지다). 그리고 임베더가 환경 실행기를 `hooks.json` 에
+물리면 `HookRegistryApplier` 가 실행 밖 이벤트의 셸 핸들러를 WARN 후 건너뛰고, 셸 핸들러의 `asyncRewake` 를 떨군다
+(리플레이에는 환경이 없다).
+
+빌드가 강제하는 것: `PackageDependencyArchitectureTest.skillHooksHoldNoShell` — 스킬 훅·스킬 파서 패키지의 어떤 클래스도
+`VirtualShell` 을 필드나 생성자 인자로 갖지 못한다(예외는 이름으로 `HostShellActionExecutor` 하나).
+
+테스트: `DefaultShellActionExecutorTest`(컨텍스트의 환경 셸이 명령·env·stdin·timeout 을 받는다, 환경 없음 → 셸 호출 0회 +
+`notObserved`, 사용 불가·닫힌 셸 → 던지지 않음, exit 2 → 거부), `HostShellActionExecutorTest`(컨텍스트에 환경이 있어도
+고정 셸), `DefaultSubagentExecutorHookEnvironmentTest.aSkillShellHookRunsInTheForksShell`(스폰한 쪽 셸은 건드리지 않는다),
+`HookFiringIntegrationTest.aSkillShellHookRunsInTheExecutionEnvironmentsShell`(실제 셸로, 파일이 워크스페이스에 생긴다),
+`SkillHookSetParserTest`(세 이벤트가 이유를 담은 메시지로 거부, `requireRunnableOn`), `HookRegistryApplierTest`,
+`DefaultSkillRegistryParseIsolationTest`(깨진 스킬 하나 + 멀쩡한 둘), `AimonStackExtensionPointTest`·`AimonStackBuilderTest`
+(계획에 셸이 없고 마지막 단계가 `HOOK_EXECUTOR`), `AgentSetupFactorySkillHookShellTest`.
 
 ## EE-13 — 백그라운드 명령을 끝낼 수단이 없다 · **열림 · 결정됨** *(2026-09-29)*
 
@@ -1043,3 +1147,98 @@ PR #195 리뷰 1 이 **macOS 에도 별칭이 있음**을 재현했다 — APFS 
 엔진 밖에서 부르는 코드가 생길 때.
 
 출처: [`../design/tool/workflow-isolation-hardening.md`](../design/tool/workflow-isolation-hardening.md) §7 Q1 · Q4.
+
+## EE-48 — `hooks.json` 선언 훅의 셸은 여전히 호스트다 · **열림**
+
+**무엇을.** 운영자가 `hooks.json` 에 쓴 셸(`command`) 핸들러를 실행 환경의 셸로 보낼지, 호스트에 둘지 정한다. 보낸다면
+실행 밖 이벤트(`onSessionStart` · `onSessionEnd` · `onConfigReload`)의 핸들러를 어디서 돌릴지도 함께 정한다.
+
+**왜.** EE-12 의 결정은 "스킬 선언 훅" 을 주어로 했고 그 범위만 고쳤다. CLI 는 `hooks.json` 핫리로드용으로 호스트
+`LocalShell` 을 계속 만들어 `HostShellActionExecutor` 로 감싼다. 그래서 샌드박스 제공자를 붙이면 운영자 훅은 호스트에서,
+도구와 스킬 훅은 샌드박스에서 도는 비대칭이 남는다 — 운영자 훅이 `preTool` 에서 워크스페이스 파일을 검사하려 해도
+호스트에서는 그 파일이 보이지 않는다. 반대로 전부 환경 셸로 옮기면 실행 밖 이벤트의 훅은 돌 곳이 없다.
+
+**어디.** `modules/aimon-cli/src/main/java/at/aimon/cli/factory/AgentSetupFactory.java` 의 `hookConfigShell` 과
+`setupHookHotReload`(2026-10-03), `modules/aimon-core/src/main/java/at/aimon/core/skill/hook/declarative/HostShellActionExecutor.java`,
+`modules/aimon-bootstrap/src/main/java/at/aimon/bootstrap/TeardownPhase.java` 의 `HOOK_CONFIG_SHELL`.
+
+**언제 다시 볼까.** 샌드박스 제공자를 붙일 때.
+
+출처: [`../design/tool/execution-environment-ee9-ee12-hook-environment.md`](../design/tool/execution-environment-ee9-ee12-hook-environment.md)
+§3.3 · §9 Q1.
+
+## EE-49 — 스킬 훅은 에이전트 단위 레지스트리에 등록되어 다른 실행에서도 발화한다 · **열림**
+
+**무엇을.** 스킬이 활성인 동안 그 스킬의 훅이 어느 실행의 이벤트에 반응해야 하는지 정하고, 활성화한 실행(과 그 포크)으로
+좁힌다.
+
+**왜.** `RegistryBackedSkillHookActivator` 는 스킬 훅을 **런타임의** `HookRegistry` 에 등록한다. `AgentRuntime` 은 agent-scoped
+이므로 스킬이 활성인 동안 같은 에이전트의 다른 세션이 낸 이벤트도 그 훅을 친다. EE-12 전에는 어느 쪽이든 호스트에서
+돌았지만, 이제는 **그 다른 실행의 환경**에서 돈다 — 세션마다 샌드박스가 다른 제공자에서는 세션 A 가 활성화한 스킬의 훅
+명령이 세션 B 의 샌드박스에서 실행된다. 결함은 전부터 있었고 EE-12 가 결과를 바꿨다.
+
+**어디.** `modules/aimon-core/src/main/java/at/aimon/core/skill/hook/RegistryBackedSkillHookActivator.java`,
+`modules/aimon-core/src/main/java/at/aimon/core/agent/impl/orca/tool/OrcaSkillToolProvider.java` 의 활성화 배선(2026-10-03).
+
+**언제 다시 볼까.** 샌드박스 제공자를 붙이기 **전**. 세션마다 환경이 다른 제공자가 생기는 순간 격리 경계를 넘는다.
+
+출처: [`../design/tool/execution-environment-ee9-ee12-hook-environment.md`](../design/tool/execution-environment-ee9-ee12-hook-environment.md)
+§8.
+
+## EE-50 — 스킬 훅 명령에는 `${AIMON_SKILL_DIR}` 가 없다 · **열림**
+
+**무엇을.** 스킬 훅의 셸 액션이 자기 스킬 디렉터리의 스크립트를 경로로 부를 수 있게, 스테이징된 경로를 훅의 환경 변수로
+준다.
+
+**왜.** `SkillHookEnv` 에는 그 변수가 없다. 훅이 호스트에서 돌 때는 호스트 경로를 하드코딩하거나 호스트 cwd 기준 상대
+경로로 우회할 수 있었다. EE-12 뒤로 명령은 실행 환경의 셸에서 돌고 cwd 는 워크스페이스다 — 로컬 제공자에서도 상대 경로의
+기준이 바뀌었고, 샌드박스에서는 호스트 경로가 아예 없다. 스킬 본문은 `stage()` 를 거친 `${AIMON_SKILL_DIR}` 를 받는데 같은
+스킬의 훅은 받지 못한다. 포크가 다른 환경에 놓이면 스테이징 사본도 스폰한 쪽에만 있다.
+
+**어디.** `modules/aimon-core/src/main/java/at/aimon/core/skill/hook/declarative/SkillHookEnv.java`, 스킬 활성화 경로의
+`stage()` 호출(설계 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md) §4.4).
+
+**언제 다시 볼까.** 스크립트를 부르는 스킬 훅을 처음 쓸 때, 또는 샌드박스 제공자를 붙일 때.
+
+출처: [`../design/tool/execution-environment-ee9-ee12-hook-environment.md`](../design/tool/execution-environment-ee9-ee12-hook-environment.md)
+§8.
+
+## EE-51 — 환경이 없거나 사용 불가면 스킬 가드 훅이 통과로 바뀐다 · **열림**
+
+**무엇을.** 스킬의 `preTool` · `onStart` · `preCompact` · `permissionRequest` 셸 훅이 **명령을 돌리지 못했을 때** 통과시킬지
+(fail-open, 지금) 막을지(fail-closed) 정한다.
+
+**왜.** 기존 계약은 "종료 코드를 내지 못한 명령은 거부로 읽지 않는다" 이고 timeout 도 그렇게 처리된다. EE-12 는 그 계약을
+바꾸지 않았지만 **적용 범위를 넓혔다**: 환경 제공자가 실패하면(`resolveOrUnavailable`) 그 실행의 **모든** 스킬 셸 가드가
+돌지 않고 통과로 바뀐다. 그런데 환경을 쓰지 않는 도구(MCP · 웹 · `Task` 등)는 그대로 실행된다. 전에는 호스트 셸이 그
+가드를 돌렸다. 지금은 WARN 만 남는다. 가드 용도라면 fail-closed 가 맞을 수 있고, 관찰 용도라면 지금이 맞다 — 훅마다
+다를 수 있으므로 선언에 옵션을 두는 쪽도 있다.
+
+**어디.** `modules/aimon-core/src/main/java/at/aimon/core/skill/hook/declarative/DefaultShellActionExecutor.java` 의 환경 없음
+분기와 `ShellActionRunner` 의 `ExecutionEnvironmentUnavailableException` 분기(2026-10-03),
+`ShellHookOutcome.notObserved()` 를 읽는 `DeclarativePreToolHook` · `AbstractDeclarativeShellHook`.
+
+**언제 다시 볼까.** 스킬 셸 훅을 보안 가드로 쓰는 배포가 생길 때, 또는 샌드박스 제공자를 붙일 때(환경이 사용 불가가 되는
+일이 흔해진다).
+
+출처: [`../design/tool/execution-environment-ee9-ee12-hook-environment.md`](../design/tool/execution-environment-ee9-ee12-hook-environment.md)
+§9 Q2 · 설계 리뷰.
+
+## EE-52 — `subagentStart` / `subagentStop` 훅은 스폰한 쪽의 환경을 싣는다 · **열림**
+
+**무엇을.** 두 서브에이전트 훅이 싣는 환경을 스폰한 실행의 것으로 둘지, `subagentStop` 만이라도 포크의 것으로 바꿀지 정한다.
+
+**왜.** 두 훅은 스폰한 실행의 레지스트리에서 발화하고, `subagentStart` 시점에는 포크의 환경이 아직 해석되지 않았다. 그래서
+둘 다 `SubagentExecutionEnvironment.getExecutionEnvironment()` — 스폰한 쪽 환경 — 을 싣는다. 로컬 제공자에서는 두 환경이
+같아 차이가 없다. 포크마다 다른 샌드박스를 주는 제공자에서는 "서브에이전트가 끝난 뒤 그 결과물을 검사" 하려는
+`subagentStop` 셸 훅이 포크의 워크스페이스가 아니라 스폰한 쪽의 것을 본다. 포크 **안에서** 발화하는 `onStart` / `onStop` 은
+포크의 환경을 싣는다.
+
+**어디.** `modules/aimon-core/src/main/java/at/aimon/core/subagent/DefaultSubagentExecutionManager.java` 의
+`fireSubagentStart` · `fireSubagentStop`(2026-10-03), 포크의 환경을 해석하는
+`subagent/execution/DefaultSubagentExecutor.java` 의 `resolveExecutionEnvironment`.
+
+**언제 다시 볼까.** 포크에 부모와 다른 환경을 주는 제공자가 생길 때.
+
+출처: [`../design/tool/execution-environment-ee9-ee12-hook-environment.md`](../design/tool/execution-environment-ee9-ee12-hook-environment.md)
+§9 Q3.

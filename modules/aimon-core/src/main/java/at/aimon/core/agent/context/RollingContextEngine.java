@@ -562,10 +562,11 @@ public final class RollingContextEngine implements ContextEngine {
                 .executionId(call.request.getCaller().getExecutionId().orElse(null)).trigger(trigger)
                 .model(summaryModel != null ? summaryModel : call.request.getModel())
                 .hookRegistry(call.request.getHookRegistry().orElseThrow())
-                .environment(call.request.getEnvironment().orElseThrow()).customInstructions(instructions)
-                .callMetadata(call.request.getCallMetadata().orElse(null)).rolling(true)
-                .previousSummary(held != null ? held.getSummaryText() : null).targetSummaryTokens(call.summaryBudget)
-                .build();
+                .environment(call.request.getEnvironment().orElseThrow())
+                .executionEnvironment(call.request.getExecutionEnvironment().orElse(null))
+                .customInstructions(instructions).callMetadata(call.request.getCallMetadata().orElse(null))
+                .rolling(true).previousSummary(held != null ? held.getSummaryText() : null)
+                .targetSummaryTokens(call.summaryBudget).build();
         final CompactionResult summarized;
         try {
             summarized = compactionEngine.summarize(summaryRequest);

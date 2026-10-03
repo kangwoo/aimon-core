@@ -240,9 +240,9 @@ public enum TeardownPhase {
      * {@link #SESSIONS}, registries with {@link #AGENT_RUNTIMES} — so this phase only retires the workers.
      *
      * <p>
-     * Before {@link #SKILL_HOOK_SHELL} for the direction this enum uses throughout: a declarative shell hook runs
-     * <i>on this pool</i> and calls into that shell, so the caller stops before the callee. The reverse order
-     * would leave a live pool able to invoke a closed shell.
+     * Before {@link #HOOK_CONFIG_SHELL} for the direction this enum uses throughout: a declarative shell hook
+     * declared in {@code hooks.json} runs <i>on this pool</i> and calls into that shell, so the caller stops before
+     * the callee. The reverse order would leave a live pool able to invoke a closed shell.
      *
      * <p>
      * The pool's threads are daemons and it retires idle workers by itself, so a stack that never reaches this
@@ -252,13 +252,23 @@ public enum TeardownPhase {
     HOOK_EXECUTOR,
 
     /**
-     * Closes the shell backing declarative skill hook actions.
+     * Closes the host shell backing the shell actions declared in {@code hooks.json}.
      *
      * <p>
-     * Last because it is the deepest leaf: skill hooks fire from hook registries (closed with their runtimes
-     * in {@link #AGENT_RUNTIMES}) and from hot-reloaded declarations ({@link #HOOK_HOT_RELOAD}). Once both
+     * The stack does not create this shell. An assembly that wires {@code hooks.json} hot reload (the CLI) opens it
+     * and enrolls it here with {@code own}; a stack without such an assembly has nothing in this phase.
+     *
+     * <p>
+     * Skill-declared hooks are not served by it: their shell actions run in the execution environment's shell, which
+     * the environment's provider owns (closed with {@link #AGENT_RESOURCES}). A skill hook that fires after that
+     * phase finds its shell closed and is skipped with a WARN, exactly as a tool call in that execution would fail.
+     * (Scheduled routines are not such a path: {@code RoutineExecutor} calls its tools directly and fires no hooks.)
+     *
+     * <p>
+     * Last because it is the deepest leaf: {@code hooks.json} hooks fire from hook registries (closed with their
+     * runtimes in {@link #AGENT_RUNTIMES}) and from hot-reloaded declarations ({@link #HOOK_HOT_RELOAD}). Once both
      * are gone nothing can invoke a shell action, so this is the earliest point at which closing the shell
      * cannot break a caller.
      */
-    SKILL_HOOK_SHELL
+    HOOK_CONFIG_SHELL
 }

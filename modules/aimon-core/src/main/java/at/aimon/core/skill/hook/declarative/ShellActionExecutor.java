@@ -2,18 +2,25 @@ package at.aimon.core.skill.hook.declarative;
 
 import java.util.Map;
 
+import at.aimon.core.hook.HookEventType;
+import at.aimon.core.hook.execution.HookContext;
 import at.aimon.core.skill.hook.action.ShellAction;
 
 /**
- * Strategy seam (AIMON extension, SK-13) for running a {@link ShellAction} attached to a declarative skill hook.
+ * Strategy seam (AIMON extension, SK-13) for running a {@link ShellAction} attached to a declarative hook.
  *
  * <p>
- * Implementations decide whether shell-based hooks are even allowed in the host environment:
+ * An executor does not hold a shell of its own choosing on behalf of skills: <em>which</em> shell a command runs in is
+ * decided when the hook fires, from the firing {@link HookContext}. The implementations differ in where they look:
  * <ul>
+ * <li>{@link DefaultShellActionExecutor} — runs the command in the shell of the firing execution's
+ * {@linkplain HookContext#getExecutionEnvironment() execution environment}. This is what skill-declared hooks use, so
+ * a skill's hook command runs where the same skill's {@code Bash} calls run (execution-environment design §10).
+ * <li>{@link HostShellActionExecutor} — runs the command in one fixed shell and ignores the context. Reserved for
+ * operator-authored {@code hooks.json}, the only place that can declare events firing outside any execution.
  * <li>{@link NoOpShellActionExecutor} — refuses; intended for default {@code MarkdownSkillParser} wirings that have
  * not opted in to shell hooks. The parser uses {@link #isShellSupported()} to fail fast at parse time so the
  * configuration error is caught at skill-load time, not at the first hook firing.
- * <li>{@link DefaultShellActionExecutor} — runs the command via a {@link at.aimon.core.shell.VirtualShell}.
  * </ul>
  *
  * <p>
@@ -38,27 +45,40 @@ public interface ShellActionExecutor {
     boolean isShellSupported();
 
     /**
-     * Runs the given action as a fire-and-forget side-effect.
+     * Returns whether this executor can only run a command inside the firing context's execution environment.
      *
      * <p>
-     * Must not throw under any circumstance — exceptions, non-zero exit codes, and timeouts are all handled internally
-     * (logged at WARN) so that the hook can return {@code HookResult.success()}.
+     * When true, a context without an environment means the command does not run at all — there is no host fallback.
+     * Because that failure is swallowed at fire time, the front-ends refuse up front to bind such an executor to an
+     * event that never has an environment: see {@link #canRunOn(HookEventType)}.
      *
-     * @param action
-     *            The action to execute (must not be null)
-     * @param environmentOverrides
-     *            Extra environment variables provided by the firing hook (never null; may be empty). Implementations
-     *            merge these on top of any inherited environment.
+     * @return true when the executor needs {@link HookContext#getExecutionEnvironment()} to be present
      */
-    void run(ShellAction action, Map<String, String> environmentOverrides);
+    boolean requiresExecutionEnvironment();
+
+    /**
+     * Returns whether a shell action declared on the given event could ever run through this executor.
+     *
+     * <p>
+     * The single rule both front-ends ({@code SkillHookSetParser}, {@code HookRegistryApplier}) apply before accepting
+     * a shell action: an executor that needs an execution environment cannot serve an event that fires outside every
+     * execution. Rejecting at declaration time is the point — the same mismatch at fire time is logged and swallowed.
+     *
+     * @param eventType
+     *            the event the action is declared on (must not be null)
+     * @return false when the action would be skipped on every firing
+     */
+    default boolean canRunOn(HookEventType<?> eventType) {
+        return !requiresExecutionEnvironment() || eventType.firesInsideExecution();
+    }
 
     /**
      * Runs the given action with a JSON document on standard input and reports what it did.
      *
      * <p>
-     * This is the entry point every declarative hook uses. It exists because two things cannot travel through
-     * {@link #run(ShellAction, Map)}:
+     * This is the one entry point every declarative hook uses. It carries three things:
      * <ul>
+     * <li>the <b>firing context</b>, from which an environment-bound executor takes the shell to run in;
      * <li>the <b>stdin payload</b>, which carries the nested tool input that will not fit in the environment block
      * (see {@code ShellHookPayload});
      * <li>the <b>outcome</b>, which lets a {@code preTool} hook honour the exit-code veto contract (see
@@ -66,25 +86,21 @@ public interface ShellActionExecutor {
      * </ul>
      *
      * <p>
-     * The default implementation delegates to {@link #run(ShellAction, Map)} and returns
-     * {@link ShellHookOutcome#notObserved()}, so an executor written before this method existed keeps working — it
-     * simply drops the payload and can never deny. Implementations that can capture the process result should
-     * override this and implement {@link #run(ShellAction, Map)} in terms of it.
-     *
-     * <p>
-     * Like {@link #run(ShellAction, Map)}, this must <strong>never</strong> throw.
+     * Must not throw under any circumstance — exceptions, non-zero exit codes, timeouts and a missing or unavailable
+     * execution environment are all handled internally (logged at WARN). A run that produced no exit status reports
+     * {@link ShellHookOutcome#notObserved()}, which no caller reads as a veto.
      *
      * @param action
      *            The action to execute (must not be null)
+     * @param context
+     *            The context of the hook firing the action (must not be null)
      * @param environmentOverrides
-     *            Extra environment variables provided by the firing hook (never null; may be empty)
+     *            Extra environment variables provided by the firing hook (never null; may be empty). Implementations
+     *            merge these on top of any inherited environment.
      * @param stdinPayload
      *            JSON document to feed the command on standard input, or null to leave stdin empty
-     * @return what the command did (never null); {@link ShellHookOutcome#notObserved()} when this executor cannot
-     *         report a status
+     * @return what the command did (never null); {@link ShellHookOutcome#notObserved()} when no status was produced
      */
-    default ShellHookOutcome run(ShellAction action, Map<String, String> environmentOverrides, String stdinPayload) {
-        run(action, environmentOverrides);
-        return ShellHookOutcome.notObserved();
-    }
+    ShellHookOutcome run(ShellAction action, HookContext context, Map<String, String> environmentOverrides,
+            String stdinPayload);
 }

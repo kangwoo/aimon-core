@@ -139,13 +139,17 @@ action-def := { type: "deny", reason: string }
   - 이 표기는 **후크 매처**에만 해당하는 보류다. 도구 권한 쪽 인자 패턴(`AllowedTool`)은 보류가 아니라 동작하며, 경로 패턴까지 포함한다 — [도구 개발 가이드 › 권한 시스템](../features/tool/tool-development-guide.md) 참조.
 - `action.type: deny` — `preTool` 에서만 허용된다. `reason` 문자열은 LLM이 보는 차단 메시지가 되며 비어 있을 수 없다. `postTool` / `onStart` / `onStop` 은 인터페이스 계약상 비차단이라 `deny` 를 두면 파서가 거부한다.
 - `action.type: shell`
-  - `command` 는 비어 있지 않은 단일 문자열이며, 그대로 호스트 셸에 전달된다(아래 "셸 실행 시맨틱" 참고).
+  - `command` 는 비어 있지 않은 단일 문자열이며, 그대로 **실행 환경의 셸**에 전달된다(아래 "셸 실행 시맨틱" 참고).
   - `timeoutMs` 는 양의 정수(밀리초)다. 생략하면 실행자(`ShellActionExecutor`)의 기본값을 따른다.
   - 로딩 단계에서 `ShellActionExecutor.isShellSupported()` 가 `false` 인 환경(기본 와이어링)에서는 `shell` 액션이 선언된 SKILL 은 **parse 단계에서 실패**한다 — 런타임 첫 발화가 아니라 스킬 로드 시점에 즉시 명확한 에러로 surface 된다.
 
 ### 셸 실행 시맨틱
 
 - 모든 셸 액션은 동일 스킬 호출 안에서 **동기·순차** 실행된다(병렬 발화 없음).
+- **어디서 도는가.** 명령은 호스트 JVM 이 아니라 **hook 이 발화한 실행의 실행 환경**(`HookContext.getExecutionEnvironment()`)의 셸에서 돈다 — 같은 스킬의 `Bash` 호출이 도는 바로 그 셸이다. fork 모드에서는 **fork 자신의** 환경이다. 실행자(`DefaultShellActionExecutor`)는 셸을 쥐지 않고 발화할 때마다 컨텍스트에서 얻는다.
+  - **작업 디렉터리는 워크스페이스다.** 로컬 환경에서도 그렇다 — 예전에는 호스트 JVM 의 작업 디렉터리였다. 상대 경로로 스크립트를 부르는 명령은 워크스페이스 기준으로 풀린다. hook 명령에는 `${AIMON_SKILL_DIR}` 가 주어지지 않는다(백로그 EE-50).
+  - **실행 환경이 없거나 사용 불가면 명령은 돌지 않는다.** 호스트로 되돌아가지 않는다. WARN 로그가 남고 hook 은 성공으로 끝난다 — `preTool` 가드 훅이라면 **통과**(fail-open)다. timeout 과 같은 처리이고, 가드로 쓰는 훅이라면 알아 둘 것(백로그 EE-51).
+  - 그래서 실행 밖에서 발화하는 이벤트(`onSessionStart` · `onSessionEnd` · `onConfigReload`)는 스킬 frontmatter 에 선언할 수 없다 — 실행 환경이 없어 셸 액션이 돌 곳이 없다. 파서가 스킬 로드 시점에 이유와 함께 거부한다. 그 이벤트는 `hooks.json` 에 선언한다(운영자 설정이며 호스트 셸에서 돈다).
 - `preTool` 발화 결과가 비-zero exit 이거나 timeout 이면 도구 실행이 차단되고 에러 메시지가 LLM 로 surface 된다(`deny` 와 같은 경로).
 - `postTool` / `onStart` / `onStop` 은 비차단 — 비-zero / timeout 은 경고 로그로만 기록되고 메인 흐름에 영향이 없다.
 - 환경 변수가 매 발화마다 주입된다. 아래 표는 `SkillHookEnv` 상수와 1:1 대응한다(이름을 바꾸는 것은 break change).
@@ -168,7 +172,7 @@ action-def := { type: "deny", reason: string }
 - **fork 모드**에서만 실질적으로 의미가 있다 — scope 가 spawn 된 SubAgent 의 lifetime 을 감싸므로 forked agent 의 tool 호출이 hook 을 관측한다.
 - **inline 모드**에서는 scope 가 렌더링 단계에만 걸쳐 있어 hook 이 사실상 발화하지 않는다(의도된 동작; `SkillHookActivator` 인터페이스 Javadoc 참고).
 - HookRegistry 와이어링: `OrcaSkillToolProvider` 가 컨텍스트에 `HookRegistry` 가 있으면 `RegistryBackedSkillHookActivator` 를, 없으면 `NoOpSkillHookActivator` 를 자동으로 결정한다.
-- 셸 와이어링: `MarkdownSkillParser` 의 기본 생성자는 `NoOpShellActionExecutor` 를 사용해 `shell` 액션을 거부한다. `aimon-cli` 의 `AgentSetupFactory` 는 `LocalShell` 을 띄우고 `DefaultShellActionExecutor` 로 감싼 파서를 모든 스킬 로더(번들/사용자 정의)에 주입하므로, CLI 환경에서는 `shell` 액션이 그대로 동작한다. 다른 호스트는 `MarkdownSkillParser(ShellArgumentTokenizer, SkillHookSetParser(executor))` 와 `DefaultSkillRegistry(fs, dir, parser)` / `*AgentBundleLoader(..., parser)` 4-arg 오버로드를 사용해 동일한 파서를 주입한다.
+- 셸 와이어링: `MarkdownSkillParser` 의 기본 생성자는 `NoOpShellActionExecutor` 를 사용해 `shell` 액션을 거부한다. `aimon-cli` 의 `AgentSetupFactory` 와 `aimon-bootstrap` 의 `AimonStackBuilder` 는 `DefaultShellActionExecutor`(인자 없음 — 셸을 쥐지 않는다)로 만든 파서를 모든 스킬 로더(번들/사용자 정의)에 주입하므로, 그 환경에서는 `shell` 액션이 그대로 동작한다. 스킬 hook 용 호스트 셸은 어디에도 없다. 다른 호스트는 `MarkdownSkillParser(ShellArgumentTokenizer, SkillHookSetParser(executor))` 와 `DefaultSkillRegistry(fs, dir, parser)` / `*AgentBundleLoader(..., parser)` 4-arg 오버로드를 사용해 동일한 파서를 주입한다.
 - 부분 등록 안전성: 등록 도중 RuntimeException 이 발생하면 이미 성공한 등록은 LIFO 로 즉시 롤백된 뒤 예외가 그대로 전파된다 — leak 없이 호출이 실패한다.
 
 ### 프로그래매틱 hook (옵션)

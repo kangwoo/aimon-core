@@ -53,6 +53,22 @@ class OnSessionContextsTest {
         assertThat(end.getExecutionId()).contains(run);
     }
 
+    /** Session-lifecycle events fire outside any execution, so there is no execution environment to report. */
+    @Test
+    void onSessionContextsCarryNoExecutionEnvironment() {
+        final HookRegistry registry = new DefaultHookRegistry();
+
+        final OnSessionStartContext start = OnSessionStartContext.builder().invokerType(InvokerType.MAIN_AGENT)
+                .invokerName("main").hookRegistry(registry).environment(ENV).sessionId(CID).build();
+        assertThat(start.getExecutionEnvironment()).isEmpty();
+        assertThat(start.getEnvironmentDescriptor()).isEmpty();
+
+        final OnSessionEndContext end = OnSessionEndContext.builder().invokerType(InvokerType.MAIN_AGENT)
+                .invokerName("main").hookRegistry(registry).environment(ENV).sessionId(CID).build();
+        assertThat(end.getExecutionEnvironment()).isEmpty();
+        assertThat(end.getEnvironmentDescriptor()).isEmpty();
+    }
+
     @Test
     void onSessionContextsCarryNoExecutionIdWhenSessionBacked() {
         final HookRegistry registry = new DefaultHookRegistry();

@@ -567,8 +567,8 @@ llm:
 
 ```java
 final OutputFormatter outputFormatter = createOutputFormatter(config);
-final LocalShell skillHookShell = new LocalShell();
-final SkillParser skillParser = createShellAwareSkillParser(skillHookShell);
+final SkillParser skillParser = createShellAwareSkillParser();
+final LocalShell hookConfigShell = new LocalShell();
 final AgentBundleLoader effectiveBundleLoader = (this.agentBundleLoader != null)
         ? this.agentBundleLoader
         : new AdaptiveAgentBundleLoader(DEFAULT_AGENT_BUNDLE_BASE_PATH,
@@ -578,8 +578,8 @@ final AgentBundle agentBundle = effectiveBundleLoader.load(extractAgentName(conf
 ```
 
 - **`OutputFormatter`** — 콘솔 색상/포매팅 담당. 자신의 앱에서는 SSE 스트리머, 로그 어펜더, WebSocket 송신기 등으로 대체한다.
-- **`LocalShell`** — 스킬 frontmatter의 `shell` 액션을 실행할 셸. `AutoCloseable`로 `AgentSetup.close()`에서 정리된다.
-- **`SkillParser`** — 마크다운 스킬 정의 파서. `LocalShell`을 주입해서 `shell` 훅이 실제 실행되게 한다.
+- **`LocalShell`** — `hooks.json` 에 선언한 `command` 핸들러를 돌리는 **호스트 셸**이다(`HostShellActionExecutor` 로 감싸 핫리로드에 넘긴다). 스킬 훅용이 아니다. `AutoCloseable`로 `AgentSetup.close()`에서 정리된다.
+- **`SkillParser`** — 마크다운 스킬 정의 파서. `DefaultShellActionExecutor`(인자 없음)를 물려 `shell` 훅을 받아들이되 **셸은 주입하지 않는다** — 스킬 훅의 셸 액션은 훅이 발화한 실행의 실행 환경 셸에서 돈다.
 - **`AgentBundleLoader`** — `agents/<name>/agent.md`와 그 하위의 서브에이전트, 스킬을 한 번에 로드한다. 클래스패스에서 읽으므로 jar로 패키징된다.
 
 **여러분의 적응 포인트:**
@@ -852,8 +852,8 @@ final LiveSession liveSession = new DefaultLiveSession(
 10. schedulingEngine.close()         // (CLI 한정 — 임베딩에서는 분리해야 함)
 11. rewakeService.close()
 12. pendingTurnReaper.close()
-13. hookHotReload.close()            // skillHookShell보다 먼저 — reload 콜백이 셸을 쓴다
-14. skillHookShell.close()
+13. hookHotReload.close()            // hookConfigShell보다 먼저 — reload 콜백이 셸을 쓴다
+14. hookConfigShell.close()          // hooks.json 훅용 호스트 셸. 스킬 훅의 셸은 실행 환경의 것이라 여기 없다
 ```
 
 순서에 이유가 붙은 자리가 네 곳 있고, 전부 코드 주석에 근거가 남아 있다: **파생 작업 → 저장소**(2가 3·4보다
@@ -1087,7 +1087,7 @@ AgentExecutionResult result = stage.toCompletableFuture().get();
 | `AgentRuntimeRegistry` | 앱 | `@Bean` 싱글톤 | `SchedulingEngine`이 lazy lookup용으로 사용 |
 | `AgentBundleLoader`, `AgentBundle` | 앱 | `@Bean` 싱글톤 | 정의가 정적이면 한 번만 로드 |
 | `PendingTurnReaper` | 앱 | `@Bean(initMethod = "start", destroyMethod = "close")` | 데몬 스레드 한 개로 충분 |
-| `LocalShell` (skill 훅용) | 앱 | `@Bean(destroyMethod = "close")` | I/O 스레드풀 공유 |
+| `LocalShell` (`hooks.json` 훅용) | 앱 | `@Bean(destroyMethod = "close")` | `hooks.json` 핫리로드를 물릴 때만 필요. 스킬 훅은 실행 환경의 셸을 쓴다 |
 | `SessionRecordStore` | 앱 | `@Bean` 싱글톤 | **항목은 세션 단위, 인스턴스는 앱 스코프.** 멀티 인스턴스에서는 Mongo/Postgres/Redis 영속 구현 필수 |
 | `TranscriptManager` | 앱 | `@Bean` 싱글톤 | 위 저장소를 감싼 디폴트 구현 |
 | `PendingTurnRegistry`, `AgentApprovalStore`, `SessionApprovalStore` | 앱 | `@Bean` 싱글톤 | 항목의 키는 각각 pending turn / `AgentRuntimeId` / `SessionId` 지만 **인스턴스는 앱 스코프**다. 클러스터에서 라우팅이 안 보장되면 분산 백엔드로 |
@@ -1159,16 +1159,12 @@ public class AimonAppConfig {
             .create(llmClient, transcriptManager);
     }
 
-    @Bean(destroyMethod = "close")
-    public VirtualShell skillHookShell() {
-        return new LocalShell();
-    }
-
+    // 스킬 훅용 셸 빈은 없다 — 셸 액션은 훅이 발화한 실행의 실행 환경 셸에서 돈다.
     @Bean
-    public SkillParser skillParser(VirtualShell skillHookShell) {
+    public SkillParser skillParser() {
         return new MarkdownSkillParser(
             new ShellArgumentTokenizer(),
-            new SkillHookSetParser(new DefaultShellActionExecutor(skillHookShell)));
+            new SkillHookSetParser(new DefaultShellActionExecutor()));
     }
 
     @Bean

@@ -219,7 +219,8 @@ class PackageDependencyArchitectureTest {
     @DisplayName("at.aimon.core.agent.compact may depend only on six specific hook types"
             + " (HookRegistry, HookExecutionManager, HookResult, HookFeedback, PreCompactContext, PostCompactContext)"
             + " for the L3 compaction hook integration (CONV-COMPACT-01) — not on the at.aimon.core.hook"
-            + " package as a whole")
+            + " package as a whole — and on ExecutionEnvironment alone from the execution-environment SPI, which it"
+            + " carries to those hooks")
     void agentCompactMayDependOnExtHook() {
         // Narrow carve-out: agent.compact reaches into at.aimon.core.hook only for the six types listed below.
         // PreCompactContext / PostCompactContext are compaction-specific value types that themselves reference
@@ -228,10 +229,14 @@ class PackageDependencyArchitectureTest {
         // (registry/manager/result/feedback) that any hook caller needs. HookFeedback is a stateless static
         // helper: the engine calls collectAdvisory(...) so that only ADVISORY notes reach the summarization
         // prompt — a PreCompact deny reason must not be spliced in as a custom instruction.
+        // Second carve-out (EE-9): the compaction requests carry the execution's ExecutionEnvironment so the engine
+        // can put it on the PreCompact / PostCompact hook contexts. compact only passes the reference along — it
+        // never reads the filesystem, shell or descriptor — so the one type is allowed by name, not the SPI package.
         ArchRule rule = classes().that().resideInAPackage(PKG_AGENT_COMPACT).should()
                 .onlyDependOnClassesThat(JavaClass.Predicates
                         .belongToAnyOf(HookRegistry.class, HookExecutionManager.class, HookResult.class,
-                                HookFeedback.class, PreCompactContext.class, PostCompactContext.class)
+                                HookFeedback.class, PreCompactContext.class, PostCompactContext.class,
+                                ExecutionEnvironment.class)
                         .or(JavaClass.Predicates.resideInAnyPackage(PKG_AGENT_CORE, PKG_CORE, PKG_LLM_CORE,
                                 PKG_FILESYSTEM_CORE, PKG_SHELL_CORE, PKG_AGENTS, PKG_JAVA, PKG_SLF4J, PKG_SNAKEYAML,
                                 PKG_JACKSON, PKG_MUSTACHE)));
@@ -488,6 +493,39 @@ class PackageDependencyArchitectureTest {
         }
         assertThat(violations).withFailMessage("Tools must not hold a filesystem or shell (read the execution"
                 + " environment from the ToolContext instead): %s", violations).isEmpty();
+    }
+
+    @Test
+    @DisplayName("No skill hook or skill parser class holds a VirtualShell in a field or constructor parameter — a"
+            + " skill-declared shell action takes its shell from the firing hook context's execution environment"
+            + " (execution-environment design §15)")
+    void skillHooksHoldNoShell() {
+        // A shell bound when a skill is parsed is the host's, and outlives every execution it is then used in
+        // (EE-12). One exception, by name: HostShellActionExecutor is the fixed-shell executor for operator-authored
+        // hooks.json, which can declare events that fire outside any execution.
+        final Set<String> exempt = Set.of("at.aimon.core.skill.hook.declarative.HostShellActionExecutor");
+        final List<String> violations = new ArrayList<>();
+        for (JavaClass javaClass : classes) {
+            final String packageName = javaClass.getPackageName();
+            if (!(packageName.startsWith("at.aimon.core.skill.hook")
+                    || packageName.startsWith("at.aimon.core.skill.parser")) || exempt.contains(javaClass.getName())) {
+                continue;
+            }
+            for (JavaField field : javaClass.getFields()) {
+                if (field.getRawType().isAssignableTo(VirtualShell.class)) {
+                    violations.add(javaClass.getName() + "." + field.getName());
+                }
+            }
+            for (JavaConstructor constructor : javaClass.getConstructors()) {
+                for (JavaClass parameter : constructor.getRawParameterTypes()) {
+                    if (parameter.isAssignableTo(VirtualShell.class)) {
+                        violations.add(constructor.getFullName());
+                    }
+                }
+            }
+        }
+        assertThat(violations).withFailMessage("Skill hooks must not hold a shell (run the action in the firing hook"
+                + " context's execution environment instead): %s", violations).isEmpty();
     }
 
     private static boolean isFileSystemOrShell(JavaClass type) {

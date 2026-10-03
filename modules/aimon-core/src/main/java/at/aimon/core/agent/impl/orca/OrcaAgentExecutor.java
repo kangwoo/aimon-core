@@ -2638,8 +2638,8 @@ public class OrcaAgentExecutor
     private List<HookResult> invokeOnStart(ExecutionScope scope, String userMessage) {
         final OnStartContext onStartContext = OnStartContext.builder().executorType(InvokerType.MAIN_AGENT)
                 .invokerName(scope.getAgent().getName()).hookRegistry(scope.getHookRegistry())
-                .environment(scope.getEnvironment()).userMessage(userMessage)
-                .executionAttributes(scope.getExecutionAttributes()).build();
+                .environment(scope.getEnvironment()).executionEnvironment(scope.executionEnvironment)
+                .userMessage(userMessage).executionAttributes(scope.getExecutionAttributes()).build();
         return hookExecutionManager.executeOnStart(onStartContext);
     }
 
@@ -2665,8 +2665,9 @@ public class OrcaAgentExecutor
         consumeLingeringInterrupt(scope, "OnStop");
         final OnStopContext onStopContext = OnStopContext.builder().executorType(InvokerType.MAIN_AGENT)
                 .invokerName(scope.getAgent().getName()).hookRegistry(scope.getHookRegistry())
-                .environment(scope.getEnvironment()).success(success).finalAnswer(finalAnswer).metadata(metadata)
-                .executionAttributes(scope.getExecutionAttributes()).build();
+                .environment(scope.getEnvironment()).executionEnvironment(scope.executionEnvironment).success(success)
+                .finalAnswer(finalAnswer).metadata(metadata).executionAttributes(scope.getExecutionAttributes())
+                .build();
         hookExecutionManager.executeOnStop(onStopContext);
     }
 
@@ -3193,7 +3194,7 @@ public class OrcaAgentExecutor
     private static ContextRequest contextRequest(ExecutionScope scope, boolean budgetForced) {
         return ContextRequest.builder().transcriptBuffer(scope.transcriptBuffer)
                 .model(scope.getAgent().getMetadata().getModel()).hookRegistry(scope.getHookRegistry())
-                .environment(scope.getEnvironment())
+                .environment(scope.getEnvironment()).executionEnvironment(scope.executionEnvironment)
                 .caller(ContextCaller.builder().principal(scope.getPrincipal()).build()).budgetForced(budgetForced)
                 .build();
     }

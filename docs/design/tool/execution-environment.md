@@ -588,6 +588,16 @@ CLI 처럼 "사용자 프로젝트 디렉터리에서 돈다"는 배치에서는
 `workingDirectory` 를 쓰는지 2단계 PR 에서 전수 확인하고, 쓰는 곳은 실행의 서술자를 받게 바꾼다. 특히 훅은 "명령이
 어디서 도는가"를 알아야 하는 소비자라 호스트 값을 계속 주면 §1.4 가 훅 쪽에서 재발한다.
 
+훅이 받는 것은 서술자만이 아니라 **실행 환경 자체**다 — `HookContext.getExecutionEnvironment()`. 실행 안에서 발화하는 열
+이벤트(`preTool`·`postTool`·`permissionRequest`·`permissionDenied`·`onStart`·`onStop`·`subagentStart`·`subagentStop`·
+`preCompact`·`postCompact`)의 컨텍스트가 그 실행의 환경을 싣고, `getEnvironmentDescriptor()` 는 거기서 파생된다(컨텍스트는
+환경 하나만 든다 — 출처가 둘이 되지 않게). 실행 밖에서 발화하는 셋(`onSessionStart`·`onSessionEnd`·`onConfigReload`)은
+비어 있는 것이 정답이고, 그 분류의 단일 출처는 `HookEventType.firesInsideExecution()` 이다. 사용 불가 환경은 빈 값으로
+바꾸지 않고 그대로 싣는다(§15). **스킬 파일이 선언한 훅의 셸 액션은 이 환경의 셸에서 돈다** — 실행기
+(`DefaultShellActionExecutor`)는 셸을 쥐지 않고 발화 시점의 컨텍스트에서 얻는다. 컨텍스트에 환경이 없으면 명령을 돌리지
+않는다(호스트로 되돌아가지 않는다). 설계와 이벤트별 발화 지점은
+[`execution-environment-ee9-ee12-hook-environment.md`](execution-environment-ee9-ee12-hook-environment.md) 에 있다.
+
 프롬프트 캐시에 대한 영향: 서술자는 환경마다 한 번 정해지고 한 세션 안에서는 바뀌지 않는다(샌드박스가 재생성되어도
 이미지가 같으면 같다). 따라서 세션 단위 캐시 접두부는 안정적이다. 서술자가 에이전트 단위로 캐시되던 자리
 (`AgentEnvironmentSnapshot`)에서 빠져 실행 단위 조립으로 옮겨 가는 것이 이 변경의 비용이다.
@@ -653,6 +663,7 @@ aimon-sandbox 는 `ExecutionEnvironmentProvider` 를 구현한다. 이 문서가
 | 스테이징 영역을 파일 도구에 읽기 전용으로 둔다(§4.4) — 경로 규칙으로. 로컬 제공자와 외부 제공자가 같은 공개 팩토리 `VirtualFileSystems.withPathRules` 를 쓴다 | 샌드박스의 스테이징 영역도 파일 도구에 읽기 전용이다. 셸은 쓸 수 있다 |
 | `WorktreeMerge.promote` 는 부모 자신·중복·부모와 파일 시스템을 공유하는 브랜치를 거부하고, `isolatedFrom()` 이 밝힌 계보가 다르면 거부한다(§5.2) | (권장) `isolate()` 가 만든 브랜치는 `isolatedFrom()` 으로 부모를 밝히고, 부모의 경로 규칙을 브랜치 루트 기준으로 `VirtualFileSystems.withPathRules` 로 건다(§9.2). 사용 불가이거나 이미 브랜치여서 격리를 거절할 때는 빈 값이 아니라 이유를 담은 예외를 던진다 |
 | `resolve()` 실패 시 호스트로 되돌아가지 않는다 | 실패를 예외로 알린다 |
+| 스킬 선언 훅의 셸 액션을 그 실행의 `shell().execute` 로 돌린다 — `ExecutionOptions` 에 `timeout`·`environment`(`AIMON_*` 변수)·`stdin`(JSON 페이로드)을 싣는다(§10) | 셸이 `environment` 와 `stdin` 옵션을 받는다. 받지 못하면 그 훅은 돌지 않은 것으로 처리된다(WARN, 거부로 읽지 않는다) |
 | 프롬프트 조립이 `fileSystem()` 을 읽을 수 있다(옵트인 컨텍스트 제공자, §5.1) | 그 읽기가 프로비저닝을 일으킨다는 것을 문서에 밝힌다 |
 
 워크스페이스 샌드박스 설계 문서의 §7 이 이 표를 샌드박스 쪽 구현으로 풀어 적는다.
@@ -663,8 +674,10 @@ aimon-sandbox 는 `ExecutionEnvironmentProvider` 를 구현한다. 이 문서가
 
 > 이 절은 설계 시점의 기록이다. 다섯 질문 가운데 셋 — `Environment` 의 남은 필드, 스킬 선언 훅의 셸, 백그라운드 명령을
 > 끝낼 수단 — 은 2026-09-29 에 결정되었고, 결정문과 착수 범위는 백로그의 EE-14 · EE-12 · EE-13 에 있다
-> ([`execution-environment-open-items.md`](../../backlog/execution-environment-open-items.md)). 나머지 둘(artifact 를 늘 복사할지,
-> `contentSearch` 결과 형식)은 아직 열려 있다.
+> ([`execution-environment-open-items.md`](../../backlog/execution-environment-open-items.md)). 그중 **스킬 선언 훅의 셸은
+> 2026-10-03 에 닫혔다**(EE-12, 선행 조건 EE-9 와 함께) — 아래 불릿의 "`AimonStackBuilder` 가 전용 `skillHookShell` 로
+> 돌린다" 는 더는 사실이 아니고, 지금의 동작은 §10 에 있다. 나머지 둘(artifact 를 늘 복사할지, `contentSearch` 결과
+> 형식)은 아직 열려 있다.
 
 - **`Environment` 의 남은 필드** — `platform`/`osVersion`/`workingDirectory` 가 서술자로 가면 `timeZone` 만 남는다.
   `UserLocale` 같은 이름으로 옮기고 `Environment` 를 없앨지
@@ -691,6 +704,10 @@ aimon-sandbox 는 `ExecutionEnvironmentProvider` 를 구현한다. 이 문서가
 - **환경을 얻지 못했을 때 기본 환경으로 되돌아가지 말 것.** `UnavailableExecutionEnvironment` 가 에러를 낸다(§5.1)
 - **enricher 에서 `EXECUTION_ENVIRONMENT` 를 덮어쓰지 말 것.** write-once 이며 제공자만 쓴다(§5.1)
 - **실행이 끝날 때 환경의 셸·파일 시스템을 닫지 말 것.** 제공자 소유다(§4.3)
+- **훅 실행기가 셸을 생성자로 쥐지 말 것.** 스킬 선언 훅의 셸 액션은 발화 시점의 `HookContext.getExecutionEnvironment()`
+  에서 셸을 얻는다(§10). 스킬을 파싱할 때 묶은 셸은 호스트의 것이다. 예외는 운영자가 쓴 `hooks.json` 전용
+  `HostShellActionExecutor` 하나이고, 그것을 스킬 파서에 넘기면 안 된다. `PackageDependencyArchitectureTest.skillHooksHoldNoShell`
+  이 강제한다
 - **제어 저장소를 파일 도구에 노출하지 말 것.** 스킬 파일은 `stage()` 를 거친다(§9)
 - **"이미 스테이징했다"를 제공자 메모리로 판단하지 말 것.** 대상의 마커를 본다(§4.4)
 - **`${AIMON_SKILL_DIR}` 를 `stage()` 밖에서 채우지 말 것.** 커맨드·포크 경로도 같다(§4.4)
@@ -703,6 +720,7 @@ aimon-sandbox 는 `ExecutionEnvironmentProvider` 를 구현한다. 이 문서가
 
 - [워크스페이스 샌드박스](https://github.com/kangwoo/aimon-sandbox/blob/main/docs/design/workspace-sandbox.md) — 이 SPI 의 첫 외부 구현
 - [`execution-environment-implementation.md`](execution-environment-implementation.md) — 이 설계의 구현 계획(승인본)과 구현이 그 계획에서 벗어난 점
+- [`execution-environment-ee9-ee12-hook-environment.md`](execution-environment-ee9-ee12-hook-environment.md) — 훅 컨텍스트에 실행 환경을 싣고 스킬 선언 훅의 셸을 실행 환경으로 옮긴 설계(EE-9 · EE-12)
 - [`../workflow/workflow.md`](../workflow/workflow.md) §6.3 — worktree 격리
 - [`../agent-execution/artifact.md`](../agent-execution/artifact.md) — `ArtifactCollector`
 - [`../filesystem/backend-contract.md`](../filesystem/backend-contract.md) — VFS 백엔드 계약 (§7 의 `getMetadata` 조항이 들어갈 자리)

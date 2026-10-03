@@ -1,7 +1,12 @@
 package at.aimon.core.config.hook;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
@@ -9,8 +14,20 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
+import at.aimon.core.agent.Environment;
+import at.aimon.core.agent.InvokerType;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
+import at.aimon.core.hook.event.OnSessionStartContext;
+import at.aimon.core.hook.event.PreToolContext;
+import at.aimon.core.hook.execution.HookResult;
+import at.aimon.core.llm.ToolUse;
+import at.aimon.core.shell.ExecutionOptions;
+import at.aimon.core.shell.ShellCommand;
+import at.aimon.core.shell.ShellCommandResult;
+import at.aimon.core.shell.VirtualShell;
+import at.aimon.core.skill.hook.declarative.DefaultShellActionExecutor;
+import at.aimon.core.skill.hook.declarative.HostShellActionExecutor;
 import at.aimon.core.skill.hook.declarative.NoOpShellActionExecutor;
 
 @DisplayName("HookRegistryApplier")
@@ -93,6 +110,95 @@ class HookRegistryApplierTest {
         bootstrap().apply(merged, registry);
 
         assertThat(registry.getHooks(HookEventType.ON_START)).hasSize(1);
+    }
+
+    // --- which shell a hooks.json command runs in (EE-12) -----------------------------------------------------------
+
+    private static final String SESSION_AND_CONFIG_COMMANDS = """
+            {"hooks":{
+              "onSessionStart":[{"hooks":[{"type":"command","command":"echo start"}]}],
+              "onSessionEnd":[{"hooks":[{"type":"command","command":"echo end"}]}],
+              "onConfigReload":[{"hooks":[{"type":"command","command":"echo reload"}]}],
+              "onStart":[{"hooks":[{"type":"command","command":"echo hi"}]}]
+            }}""";
+
+    private MergedHookConfig merged(String json) {
+        return merger.merge(LayeredHookConfig.builder().put(HookConfigSource.PROJECT, parser.parse(json)).build());
+    }
+
+    @Test
+    @DisplayName("a host shell executor registers commands on events that fire outside any execution")
+    void hostExecutorRegistersOutOfExecutionCommands() throws Exception {
+        final VirtualShell hostShell = mock(VirtualShell.class);
+        when(hostShell.execute(any(ShellCommand.class), any(ExecutionOptions.class)))
+                .thenReturn(new ShellCommandResult(0, "", "", Duration.ofMillis(1)));
+        final DefaultHookRegistry registry = new DefaultHookRegistry();
+
+        new HookRegistryApplier(new HostShellActionExecutor(hostShell), null, null, Map.of())
+                .apply(merged(SESSION_AND_CONFIG_COMMANDS), registry);
+
+        assertThat(registry.getHooks(HookEventType.ON_SESSION_START)).hasSize(1);
+        assertThat(registry.getHooks(HookEventType.ON_SESSION_END)).hasSize(1);
+        assertThat(registry.getHooks(HookEventType.ON_CONFIG_RELOAD)).hasSize(1);
+        assertThat(registry.getHooks(HookEventType.ON_START)).hasSize(1);
+
+        // And it actually runs there: the session-start context has no execution environment, yet the command fires.
+        registry.getHooks(HookEventType.ON_SESSION_START).get(0)
+                .execute(OnSessionStartContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("agent")
+                        .hookRegistry(registry).environment(Environment.createDefault()).build());
+        verify(hostShell).execute(any(ShellCommand.class), any(ExecutionOptions.class));
+    }
+
+    @Test
+    @DisplayName("an environment-bound executor skips commands on events that have no execution environment")
+    void environmentBoundExecutorSkipsOutOfExecutionCommands() {
+        // Not the CLI's wiring — an embedder's. Registering these would yield hooks that are skipped on every firing
+        // with nothing but a WARN each time; refusing at apply time says so once.
+        final DefaultHookRegistry registry = new DefaultHookRegistry();
+
+        new HookRegistryApplier(new DefaultShellActionExecutor(), null, null, Map.of())
+                .apply(merged(SESSION_AND_CONFIG_COMMANDS), registry);
+
+        assertThat(registry.getHooks(HookEventType.ON_SESSION_START)).isEmpty();
+        assertThat(registry.getHooks(HookEventType.ON_SESSION_END)).isEmpty();
+        assertThat(registry.getHooks(HookEventType.ON_CONFIG_RELOAD)).isEmpty();
+        // An in-execution event in the same document is unaffected.
+        assertThat(registry.getHooks(HookEventType.ON_START)).hasSize(1);
+    }
+
+    private static final String PRE_TOOL_COMMAND_WITH_REWAKE = """
+            {"hooks":{"preTool":[{"hooks":[{"type":"command","command":"x",
+              "asyncRewake":{"trigger":{"delay":"5m"},"maxAttempts":2,"reason":"retry"}}]}]}}""";
+
+    private static PreToolContext preToolContext(DefaultHookRegistry registry) {
+        return PreToolContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("agent").hookRegistry(registry)
+                .environment(Environment.createDefault()).toolUse(ToolUse.of("call-1", "Bash", Map.of()))
+                .iterationCount(1).build();
+    }
+
+    @Test
+    @DisplayName("a host shell executor keeps a command's asyncRewake")
+    void hostExecutorKeepsCommandRewake() {
+        final DefaultHookRegistry registry = new DefaultHookRegistry();
+        new HookRegistryApplier(new HostShellActionExecutor(mock(VirtualShell.class)), null, null, Map.of())
+                .apply(merged(PRE_TOOL_COMMAND_WITH_REWAKE), registry);
+
+        final HookResult result = registry.getHooks(HookEventType.PRE_TOOL).get(0).execute(preToolContext(registry));
+
+        assertThat(result.getRewakeSpecs()).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("an environment-bound executor drops a command's asyncRewake: the replay has no environment")
+    void environmentBoundExecutorDropsCommandRewake() {
+        final DefaultHookRegistry registry = new DefaultHookRegistry();
+        new HookRegistryApplier(new DefaultShellActionExecutor(), null, null, Map.of())
+                .apply(merged(PRE_TOOL_COMMAND_WITH_REWAKE), registry);
+
+        // The hook itself still registers — preTool fires inside an execution — but it schedules no replay.
+        assertThat(registry.getHooks(HookEventType.PRE_TOOL)).hasSize(1);
+        final HookResult result = registry.getHooks(HookEventType.PRE_TOOL).get(0).execute(preToolContext(registry));
+        assertThat(result.getRewakeSpecs()).isEmpty();
     }
 
     @Test

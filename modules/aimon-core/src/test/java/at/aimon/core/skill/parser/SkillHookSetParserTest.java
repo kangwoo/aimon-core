@@ -29,12 +29,8 @@ import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.event.OnStartContext;
 import at.aimon.core.hook.event.OnStopContext;
 import at.aimon.core.hook.execution.ExecutionHook;
+import at.aimon.core.hook.execution.HookContext;
 import at.aimon.core.hook.execution.HookResult;
-import at.aimon.core.shell.ExecutionOptions;
-import at.aimon.core.shell.ShellCommand;
-import at.aimon.core.shell.ShellCommandResult;
-import at.aimon.core.shell.ShellFeature;
-import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.skill.hook.SkillHookSet;
 import at.aimon.core.skill.hook.action.ShellAction;
 import at.aimon.core.skill.hook.declarative.DeclarativeOnStartHook;
@@ -55,8 +51,7 @@ import at.aimon.core.skill.hook.declarative.ShellHookOutcome;
 class SkillHookSetParserTest {
 
     private final SkillHookSetParser denyOnlyParser = new SkillHookSetParser();
-    private final SkillHookSetParser shellParser = new SkillHookSetParser(
-            new DefaultShellActionExecutor(new StubShell()));
+    private final SkillHookSetParser shellParser = new SkillHookSetParser(new DefaultShellActionExecutor());
 
     @Test
     void parse_nullHooksNode_returnsEmpty() {
@@ -398,7 +393,39 @@ class SkillHookSetParserTest {
                 List.of(Map.of("action", Map.of("type", "shell", "command", "echo"))));
 
         assertThatThrownBy(() -> shellParser.parse("s", hooks)).isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining(eventName).hasMessageContaining("hooks.json");
+                .hasMessageContaining(eventName).hasMessageContaining("hooks.json")
+                .hasMessageContaining("outside any execution").hasMessageContaining("execution environment");
+    }
+
+    @Test
+    void supportedEvents_allFireInsideAnExecution() {
+        // The invariant the shell check below rests on: frontmatter accepts no event without an execution environment.
+        assertThat(SkillHookSet.supportedEvents()).allMatch(HookEventType::firesInsideExecution);
+    }
+
+    @Test
+    void requireRunnableOn_environmentBoundExecutor_rejectsEventsOutsideAnExecution() {
+        // Unreachable through parse() today (the unknown-event check fires first); exercised directly so the rule is
+        // in place the day SkillHookSet.supportedEvents() grows such an event.
+        final DefaultShellActionExecutor environmentBound = new DefaultShellActionExecutor();
+        for (HookEventType<?> type : HookEventType.values()) {
+            if (type.firesInsideExecution()) {
+                SkillHookSetParser.requireRunnableOn(environmentBound, type, "hooks." + type.name() + "[0]");
+            } else {
+                assertThatThrownBy(() -> SkillHookSetParser.requireRunnableOn(environmentBound, type,
+                        "hooks." + type.name() + "[0]")).isInstanceOf(IllegalArgumentException.class)
+                        .hasMessageContaining("hooks." + type.name() + "[0].action").hasMessageContaining(type.name())
+                        .hasMessageContaining("outside any execution").hasMessageContaining("execution environment");
+            }
+        }
+    }
+
+    @Test
+    void requireRunnableOn_executorThatNeedsNoEnvironment_acceptsEveryEvent() {
+        final RecordingShellExecutor hostLike = new RecordingShellExecutor();
+        for (HookEventType<?> type : HookEventType.values()) {
+            SkillHookSetParser.requireRunnableOn(hostLike, type, "hooks." + type.name() + "[0]");
+        }
     }
 
     @ParameterizedTest(name = "{0}")
@@ -488,40 +515,14 @@ class SkillHookSetParserTest {
         }
 
         @Override
-        public void run(ShellAction action, Map<String, String> environmentOverrides) {
-            run(action, environmentOverrides, null);
-        }
-
-        @Override
-        public ShellHookOutcome run(ShellAction action, Map<String, String> environmentOverrides, String stdinPayload) {
-            return ShellHookOutcome.of(0, "", "");
-        }
-    }
-
-    /** Test stub — never actually executes. Only used so DefaultShellActionExecutor reports isShellSupported=true. */
-    private static final class StubShell implements VirtualShell {
-        @Override
-        public ShellCommandResult execute(ShellCommand command) {
-            return null;
-        }
-
-        @Override
-        public ShellCommandResult execute(ShellCommand command, ExecutionOptions options) {
-            return null;
-        }
-
-        @Override
-        public String getWorkingDirectory() {
-            return null;
-        }
-
-        @Override
-        public boolean supports(ShellFeature feature) {
+        public boolean requiresExecutionEnvironment() {
             return false;
         }
 
         @Override
-        public void close() {
+        public ShellHookOutcome run(ShellAction action, HookContext context, Map<String, String> environmentOverrides,
+                String stdinPayload) {
+            return ShellHookOutcome.of(0, "", "");
         }
     }
 }

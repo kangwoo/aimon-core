@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -14,8 +16,12 @@ import org.junit.jupiter.api.io.TempDir;
 import at.aimon.core.agent.budget.ExecutionBudget;
 import at.aimon.core.agent.compact.CompactBoundary;
 import at.aimon.core.agent.compact.CompactionMetadata;
+import at.aimon.core.agent.compact.CompactionTrigger;
 import at.aimon.core.agent.impl.orca.OrcaAgentExecutionResult;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.hook.HookEventType;
+import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.llm.InMemoryModelContextWindowRegistry;
 import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.ModelContextLimits;
@@ -145,6 +151,46 @@ class CompactionTurnIntegrationTest {
         assertThat(afterCompaction.observations()).isEmpty();
         // The sentinel's absence is a rewrite rather than an observation that never reached the model: the negative
         // control below runs this same script and fixture, and its last call does carry it.
+    }
+
+    /**
+     * EE-9 on the main loop's AUTO path. The compaction hooks are fired by the engine, several calls below the turn;
+     * the only way the turn's execution environment reaches them is the {@code ContextRequest} the executor builds for
+     * each iteration. Both hooks must see the same instance {@code onStart} saw — that is, the turn's own environment,
+     * not an empty value and not one minted somewhere along the way.
+     */
+    @Test
+    @DisplayName("an AUTO compaction mid-turn hands the turn's execution environment to preCompact and postCompact")
+    void autoCompactionHooksCarryTheTurnsExecutionEnvironment() {
+        final SessionId sessionId = OrcaRuntimeItSupport.newSession();
+        scriptReadThenAnswer(sessionId, ScriptedLlmClient.text("answered"));
+        llm.script(ScriptedLlmClient.compactionRoute(sessionId.value()), ScriptedLlmClient.text(SUMMARY_SENTINEL));
+        final Map<String, Optional<ExecutionEnvironment>> seen = new ConcurrentHashMap<>();
+        final Map<String, CompactionTrigger> triggers = new ConcurrentHashMap<>();
+        node.hookRegistry().register(HookEventType.ON_START, ctx -> {
+            seen.put("onStart", ctx.getExecutionEnvironment());
+            return HookResult.success();
+        });
+        node.hookRegistry().register(HookEventType.PRE_COMPACT, ctx -> {
+            seen.put("preCompact", ctx.getExecutionEnvironment());
+            triggers.put("preCompact", ctx.getTrigger());
+            return HookResult.success();
+        });
+        node.hookRegistry().register(HookEventType.POST_COMPACT, ctx -> {
+            seen.put("postCompact", ctx.getExecutionEnvironment());
+            triggers.put("postCompact", ctx.getTrigger());
+            return HookResult.success();
+        });
+
+        final OrcaAgentExecutionResult result = node.run(sessionId, "read the big file", compactionHintBudget());
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.getCompactionEvents()).hasSize(1);
+        assertThat(triggers).containsEntry("preCompact", CompactionTrigger.AUTO).containsEntry("postCompact",
+                CompactionTrigger.AUTO);
+        final ExecutionEnvironment turnEnvironment = seen.get("onStart").orElseThrow();
+        assertThat(seen.get("preCompact").orElseThrow()).isSameAs(turnEnvironment);
+        assertThat(seen.get("postCompact").orElseThrow()).isSameAs(turnEnvironment);
     }
 
     /**

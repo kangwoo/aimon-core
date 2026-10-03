@@ -26,6 +26,10 @@ import at.aimon.core.hook.execution.HookContext;
  * the empty case rather than assume one.
  *
  * <p>
+ * Fires outside any execution, so it carries no execution environment — {@link #getExecutionEnvironment()} is empty
+ * by design and the builder has no way to set one.
+ *
+ * <p>
  * Immutable value object. Use {@link #builder()} to create instances.
  */
 public final class OnSessionStartContext implements HookContext {

@@ -3,10 +3,12 @@ package at.aimon.core.hook.event;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.command.execution.ExecutionMetadata;
+import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.execution.HookContext;
 
@@ -45,6 +47,7 @@ public final class OnStopContext implements HookContext {
     private final String invokerName;
     private final HookRegistry hookRegistry;
     private final Environment environment;
+    private final ExecutionEnvironment executionEnvironment;
     private final boolean success;
     private final String finalAnswer;
     private final ExecutionMetadata metadata;
@@ -56,6 +59,7 @@ public final class OnStopContext implements HookContext {
         invokerName = Objects.requireNonNull(builder.invokerName, "Executor name cannot be null");
         hookRegistry = Objects.requireNonNull(builder.hookRegistry, "Hook registry cannot be null");
         environment = Objects.requireNonNull(builder.environment, "Environment cannot be null");
+        executionEnvironment = builder.executionEnvironment;
         success = builder.success;
         finalAnswer = builder.finalAnswer;
         metadata = Objects.requireNonNull(builder.metadata, "Metadata cannot be null");
@@ -81,6 +85,11 @@ public final class OnStopContext implements HookContext {
     @Override
     public Environment getEnvironment() {
         return environment;
+    }
+
+    @Override
+    public Optional<ExecutionEnvironment> getExecutionEnvironment() {
+        return Optional.ofNullable(executionEnvironment);
     }
 
     /**
@@ -133,6 +142,7 @@ public final class OnStopContext implements HookContext {
         private String invokerName;
         private HookRegistry hookRegistry;
         private Environment environment;
+        private ExecutionEnvironment executionEnvironment;
         private boolean success;
         private String finalAnswer;
         private ExecutionMetadata metadata;
@@ -187,6 +197,18 @@ public final class OnStopContext implements HookContext {
          */
         public Builder environment(Environment environment) {
             this.environment = environment;
+            return this;
+        }
+
+        /**
+         * Sets the execution environment the firing execution runs in.
+         *
+         * @param executionEnvironment
+         *            the environment (nullable — absent when the firing site has none in reach)
+         * @return This builder
+         */
+        public Builder executionEnvironment(ExecutionEnvironment executionEnvironment) {
+            this.executionEnvironment = executionEnvironment;
             return this;
         }
 

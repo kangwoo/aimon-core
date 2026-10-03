@@ -253,6 +253,8 @@ registry.register(HookEventType.PRE_TOOL, rateLimitHook);
 | `getInvokerName()` | `String` | 실행자 이름 |
 | `getHookRegistry()` | `HookRegistry` | Hook 레지스트리 |
 | `getEnvironment()` | `Environment` | 환경 설정 |
+| `getExecutionEnvironment()` | `Optional<ExecutionEnvironment>` | 훅이 발화한 실행의 실행 환경 — 그 실행의 도구가 쓰는 파일 시스템·셸. 실행 밖에서 발화하는 이벤트(`onSessionStart` · `onSessionEnd` · `onConfigReload`)와 rewake 리플레이에서는 비어 있다. 비어 있을 때 호스트로 되돌아가지 말 것 |
+| `getEnvironmentDescriptor()` | `Optional<EnvironmentDescriptor>` | 위 환경의 서술자(작업 디렉터리 · platform · OS). 명령이 **어디서 도는지**는 호스트가 아니라 이것으로 판단한다 |
 | `getTimestamp()` | `Instant` | 타임스탬프 |
 | `getExecutionAttributes()` | `Map<String, Object>` | 실행 부가 정보 |
 

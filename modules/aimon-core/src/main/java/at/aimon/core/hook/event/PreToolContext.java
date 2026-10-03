@@ -8,7 +8,7 @@ import java.util.Optional;
 import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.tool.ToolInput;
-import at.aimon.core.environment.EnvironmentDescriptor;
+import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.execution.HookContext;
 import at.aimon.core.llm.ToolUse;
@@ -53,7 +53,7 @@ public final class PreToolContext implements HookContext {
     private final String invokerName;
     private final HookRegistry hookRegistry;
     private final Environment environment;
-    private final EnvironmentDescriptor environmentDescriptor;
+    private final ExecutionEnvironment executionEnvironment;
     private final ToolUse originalToolUse;
     private final ToolUse currentToolUse;
     private final int iterationCount;
@@ -65,7 +65,7 @@ public final class PreToolContext implements HookContext {
         invokerName = Objects.requireNonNull(builder.invokerName, "Executor name cannot be null");
         hookRegistry = Objects.requireNonNull(builder.hookRegistry, "Hook registry cannot be null");
         environment = Objects.requireNonNull(builder.environment, "Environment cannot be null");
-        environmentDescriptor = builder.environmentDescriptor;
+        executionEnvironment = builder.executionEnvironment;
         originalToolUse = Objects.requireNonNull(builder.toolUse, "Tool use cannot be null");
         currentToolUse = builder.currentToolUse != null ? builder.currentToolUse : originalToolUse;
         iterationCount = builder.iterationCount;
@@ -94,8 +94,8 @@ public final class PreToolContext implements HookContext {
     }
 
     @Override
-    public Optional<EnvironmentDescriptor> getEnvironmentDescriptor() {
-        return Optional.ofNullable(environmentDescriptor);
+    public Optional<ExecutionEnvironment> getExecutionEnvironment() {
+        return Optional.ofNullable(executionEnvironment);
     }
 
     /**
@@ -173,7 +173,7 @@ public final class PreToolContext implements HookContext {
         Objects.requireNonNull(newInput, "newInput cannot be null");
         final ToolUse rebuilt = ToolUse.of(originalToolUse.getId(), originalToolUse.getName(), newInput.toMap());
         final Builder b = new Builder().executorType(invokerType).invokerName(invokerName).hookRegistry(hookRegistry)
-                .environment(environment).environmentDescriptor(environmentDescriptor).toolUse(originalToolUse)
+                .environment(environment).executionEnvironment(executionEnvironment).toolUse(originalToolUse)
                 .iterationCount(iterationCount).timestamp(timestamp).executionAttributes(executionAttributes);
         b.currentToolUse = rebuilt;
         return new PreToolContext(b);
@@ -192,7 +192,7 @@ public final class PreToolContext implements HookContext {
         private String invokerName;
         private HookRegistry hookRegistry;
         private Environment environment;
-        private EnvironmentDescriptor environmentDescriptor;
+        private ExecutionEnvironment executionEnvironment;
         private ToolUse toolUse;
         private ToolUse currentToolUse;
         private int iterationCount;
@@ -251,14 +251,14 @@ public final class PreToolContext implements HookContext {
         }
 
         /**
-         * Sets the descriptor of the execution environment the tool runs in.
+         * Sets the execution environment the firing execution runs in.
          *
-         * @param environmentDescriptor
-         *            the descriptor (nullable)
+         * @param executionEnvironment
+         *            the environment (nullable — absent when the firing site has none in reach)
          * @return This builder
          */
-        public Builder environmentDescriptor(EnvironmentDescriptor environmentDescriptor) {
-            this.environmentDescriptor = environmentDescriptor;
+        public Builder executionEnvironment(ExecutionEnvironment executionEnvironment) {
+            this.executionEnvironment = executionEnvironment;
             return this;
         }
 

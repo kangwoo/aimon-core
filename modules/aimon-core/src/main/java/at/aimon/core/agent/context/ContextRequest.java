@@ -5,6 +5,7 @@ import java.util.Optional;
 
 import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
+import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmModel;
@@ -29,6 +30,7 @@ public final class ContextRequest {
     private final LlmModel model;
     private final HookRegistry hookRegistry;
     private final Environment environment;
+    private final ExecutionEnvironment executionEnvironment;
     private final ContextCaller caller;
     private final boolean budgetForced;
     private final LlmCallMetadata callMetadata;
@@ -39,6 +41,7 @@ public final class ContextRequest {
         this.model = Objects.requireNonNull(builder.model, "model cannot be null");
         this.hookRegistry = builder.hookRegistry;
         this.environment = builder.environment;
+        this.executionEnvironment = builder.executionEnvironment;
         this.caller = builder.caller != null ? builder.caller : ContextCaller.session();
         this.budgetForced = builder.budgetForced;
         this.callMetadata = builder.callMetadata;
@@ -74,6 +77,14 @@ public final class ContextRequest {
         return Optional.ofNullable(environment);
     }
 
+    /**
+     * The execution environment of the execution this call belongs to, handed on to the PreCompact / PostCompact
+     * hooks a compaction fires. Empty when the caller has none in reach.
+     */
+    public Optional<ExecutionEnvironment> getExecutionEnvironment() {
+        return Optional.ofNullable(executionEnvironment);
+    }
+
     /** Who the call is made on behalf of. Never null; defaults to {@link ContextCaller#session()}. */
     public ContextCaller getCaller() {
         return caller;
@@ -102,6 +113,7 @@ public final class ContextRequest {
         private LlmModel model;
         private HookRegistry hookRegistry;
         private Environment environment;
+        private ExecutionEnvironment executionEnvironment;
         private ContextCaller caller;
         private boolean budgetForced;
         private LlmCallMetadata callMetadata;
@@ -136,6 +148,16 @@ public final class ContextRequest {
 
         public Builder environment(Environment environment) {
             this.environment = environment;
+            return this;
+        }
+
+        /**
+         * @param executionEnvironment
+         *            the execution's environment for the compaction hooks, or {@code null} when there is none
+         * @return this builder
+         */
+        public Builder executionEnvironment(ExecutionEnvironment executionEnvironment) {
+            this.executionEnvironment = executionEnvironment;
             return this;
         }
 

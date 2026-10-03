@@ -15,6 +15,7 @@ import at.aimon.core.agent.InvokerType;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.event.PostToolContext;
+import at.aimon.core.hook.execution.HookContext;
 import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.hook.execution.HookStatus;
 import at.aimon.core.llm.ToolUse;
@@ -33,10 +34,13 @@ class DeclarativePostToolHookTest {
         ShellAction action = new ShellAction("echo done", Duration.ofSeconds(1));
         DeclarativePostToolHook hook = new DeclarativePostToolHook("my-skill", NameOnlyPredicate.ANY, action, exec);
 
-        HookResult result = hook.execute(contextFor("Read", ToolUseResult.success("call-1", "ok")));
+        PostToolContext context = contextFor("Read", ToolUseResult.success("call-1", "ok"));
+
+        HookResult result = hook.execute(context);
 
         assertThat(result.getStatus()).isEqualTo(HookStatus.SUCCESS);
         assertThat(exec.calls).hasSize(1);
+        assertThat(exec.calls.get(0).context).isSameAs(context);
         Map<String, String> env = exec.calls.get(0).env;
         assertThat(env).containsEntry(SkillHookEnv.AIMON_HOOK_EVENT, "postTool")
                 .containsEntry(SkillHookEnv.AIMON_SKILL_NAME, "my-skill")
@@ -109,11 +113,18 @@ class DeclarativePostToolHookTest {
         }
 
         @Override
-        public void run(ShellAction action, Map<String, String> environmentOverrides) {
-            calls.add(new Call(action, Map.copyOf(environmentOverrides)));
+        public boolean requiresExecutionEnvironment() {
+            return false;
         }
 
-        record Call(ShellAction action, Map<String, String> env) {
+        @Override
+        public ShellHookOutcome run(ShellAction action, HookContext context, Map<String, String> environmentOverrides,
+                String stdinPayload) {
+            calls.add(new Call(action, context, Map.copyOf(environmentOverrides)));
+            return ShellHookOutcome.notObserved();
+        }
+
+        record Call(ShellAction action, HookContext context, Map<String, String> env) {
         }
     }
 }

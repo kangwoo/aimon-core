@@ -21,6 +21,10 @@ import at.aimon.core.hook.execution.HookContext;
  * reload, the watcher rejects the nested invocation when {@code depth > 1} (R4 in the design plan).
  *
  * <p>
+ * Fires outside any execution, so it carries no execution environment — {@link #getExecutionEnvironment()} is empty
+ * by design and the builder has no way to set one.
+ *
+ * <p>
  * Immutable value object. Use {@link #builder()} to create instances.
  */
 public final class OnConfigReloadContext implements HookContext {

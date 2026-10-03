@@ -241,6 +241,12 @@ type usable on every event** (`http` / `mcp` are `preTool`/`postTool`-only and `
 }
 ```
 
+**Where it runs.** A `hooks.json` command runs on the **host shell** — the file is operator configuration, and it is
+the only place that can declare the events that fire outside any execution (`onSessionStart`, `onSessionEnd`,
+`onConfigReload`) (`HostShellActionExecutor`). A `shell` action declared by a skill's frontmatter is different: it
+runs in the **execution environment's shell** of the execution the hook fires in, which is why it cannot be declared
+on an event outside an execution.
+
 **How input is passed.** The command string is **not template-rendered** — it goes to the shell
 verbatim, so writing `${tool_input.x}` in a command gives you an (empty) shell variable rather
 than a placeholder. That is deliberate: untrusted tool input must never end up on a command

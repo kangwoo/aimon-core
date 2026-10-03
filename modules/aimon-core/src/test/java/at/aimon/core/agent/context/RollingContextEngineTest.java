@@ -36,6 +36,8 @@ import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.agent.session.transcript.SessionLogManifestEntry;
 import at.aimon.core.agent.session.transcript.SummarySpan;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
+import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.llm.InMemoryModelContextWindowRegistry;
 import at.aimon.core.llm.LlmModel;
@@ -59,6 +61,8 @@ import at.aimon.core.llm.token.TokenEstimator;
 class RollingContextEngineTest {
 
     private static final LlmModel MODEL = LlmModel.builder().name("tiny").build();
+    private static final ExecutionEnvironment EXECUTION_ENVIRONMENT = TestExecutionEnvironments.builder()
+            .workingDirectory("/workspace").build();
 
     private static final ModelContextLimits LIMITS = ModelContextLimits.builder().contextWindow(1200)
             .reservedOutputTokens(200).autoCompactBuffer(100).warningBuffer(100).blockingBuffer(50).build();
@@ -89,7 +93,7 @@ class RollingContextEngineTest {
     private ContextRequest request(String systemPrompt, boolean budgetForced) {
         return ContextRequest.builder().transcriptBuffer(buffer).systemPrompt(systemPrompt).model(MODEL)
                 .hookRegistry(new DefaultHookRegistry()).environment(Environment.createDefault())
-                .budgetForced(budgetForced).build();
+                .executionEnvironment(EXECUTION_ENVIRONMENT).budgetForced(budgetForced).build();
     }
 
     /** seq 0 = "goal", then {@code count} messages of {@code size} characters, alternating assistant / user. */
@@ -143,6 +147,8 @@ class RollingContextEngineTest {
 
             final SummaryRequest summary = summarizer.summarized.get(0);
             assertThat(summary.isRolling()).isTrue();
+            // EE-9: the request's execution environment rides along to the summary request, for the compaction hooks.
+            assertThat(summary.getExecutionEnvironment().orElseThrow()).isSameAs(EXECUTION_ENVIRONMENT);
             assertThat(summary.getPreviousSummary()).isEmpty();
             assertThat(summary.getTargetSummaryTokens()).isEqualTo(80);
             assertThat(summary.getTrigger()).isEqualTo(CompactionTrigger.AUTO);

@@ -100,7 +100,7 @@ public abstract class AbstractDeclarativeShellHook<C extends HookContext> implem
         env.put(SkillHookEnv.AIMON_INVOKER_TYPE, context.getInvokerType().name());
         contributeEnv(context, env);
 
-        final ShellHookOutcome outcome = shellExecutor.run(action, env,
+        final ShellHookOutcome outcome = shellExecutor.run(action, context, env,
                 ShellHookPayload.render(env, payloadToolInput(context).orElse(null)));
 
         // Re-attached on every fire: the chain is bounded by RewakeSpec#getMaxAttempts(), so this yields

@@ -75,6 +75,10 @@ class DefaultRewakeFireListenerTest {
         assertThat(seen.get().getCurrentToolUse().getInput()).containsEntry("command", "ls -la");
         assertThat(seen.get().getInvokerName()).isEqualTo("agent-x");
         assertThat(seen.get().getHookRegistry()).isSameAs(registry);
+        // A replay fires outside the execution that scheduled it: there is no execution environment to hand over,
+        // even though preTool is an in-execution event on its live path.
+        assertThat(seen.get().getExecutionEnvironment()).isEmpty();
+        assertThat(seen.get().getEnvironmentDescriptor()).isEmpty();
     }
 
     @Test
@@ -210,6 +214,7 @@ class DefaultRewakeFireListenerTest {
         assertThat(seen.get().getInvokerName()).isEqualTo("agent-x");
         assertThat(seen.get().getSessionIdValue()).isEmpty();
         assertThat(seen.get().getExecutionId()).contains(ExecutionId.of("rewake:env-1:1"));
+        assertThat(seen.get().getExecutionEnvironment()).isEmpty();
     }
 
     @Test

@@ -17,7 +17,6 @@ import org.junit.jupiter.api.io.TempDir;
 import at.aimon.core.agent.definition.exception.AgentDefinitionLoadException;
 import at.aimon.core.agent.definition.exception.AgentDefinitionNotFoundException;
 import at.aimon.core.agent.definition.parser.MarkdownAgentDefinitionParser;
-import at.aimon.core.shell.impl.local.LocalShell;
 import at.aimon.core.skill.Skill;
 import at.aimon.core.skill.exception.SkillParseException;
 import at.aimon.core.skill.hook.declarative.DefaultShellActionExecutor;
@@ -120,19 +119,18 @@ class FileSystemAgentBundleLoaderTest {
         createAgentDefinition("agent-shell-hook");
         createSkillWithShellHook("agent-shell-hook", "echo-skill");
 
-        try (LocalShell shell = new LocalShell()) {
-            final SkillParser shellAwareParser = new MarkdownSkillParser(new ShellArgumentTokenizer(),
-                    new SkillHookSetParser(new DefaultShellActionExecutor(shell)));
-            final FileSystemAgentBundleLoader shellAwareLoader = new FileSystemAgentBundleLoader(tempDir,
-                    new MarkdownAgentDefinitionParser(), shellAwareParser);
+        // No shell is opened to parse a shell hook: the action runs in the firing execution's environment.
+        final SkillParser shellAwareParser = new MarkdownSkillParser(new ShellArgumentTokenizer(),
+                new SkillHookSetParser(new DefaultShellActionExecutor()));
+        final FileSystemAgentBundleLoader shellAwareLoader = new FileSystemAgentBundleLoader(tempDir,
+                new MarkdownAgentDefinitionParser(), shellAwareParser);
 
-            final AgentBundle bundle = shellAwareLoader.load("agent-shell-hook");
+        final AgentBundle bundle = shellAwareLoader.load("agent-shell-hook");
 
-            assertTrue(bundle.getSkillRegistry().isPresent());
-            final Skill skill = bundle.getSkillRegistry().get().getSkill("echo-skill").orElseThrow();
-            assertEquals("echo-skill", skill.getName());
-            assertEquals(1, skill.getMetadata().getHooks().getOnStartHooks().size());
-        }
+        assertTrue(bundle.getSkillRegistry().isPresent());
+        final Skill skill = bundle.getSkillRegistry().get().getSkill("echo-skill").orElseThrow();
+        assertEquals("echo-skill", skill.getName());
+        assertEquals(1, skill.getMetadata().getHooks().getOnStartHooks().size());
     }
 
     @Test

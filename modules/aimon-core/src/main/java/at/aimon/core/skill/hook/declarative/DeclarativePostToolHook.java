@@ -181,7 +181,7 @@ public final class DeclarativePostToolHook implements PostToolHook {
         if (action instanceof ShellAction shell) {
             final Map<String, String> env = buildShellEnv(context, toolName);
             // The outcome is deliberately ignored: postTool cannot block, so an exit code carries no decision here.
-            shellExecutor.run(shell, env, ShellHookPayload.render(env, toolInput.toMap()));
+            shellExecutor.run(shell, context, env, ShellHookPayload.render(env, toolInput.toMap()));
             return HookResult.success();
         }
         if (action instanceof HttpAction http) {

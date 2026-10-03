@@ -286,7 +286,7 @@ ScheduledTaskManager.register(...)
   memoryFinalDerivation.run() → memoryQueue.stop() → dreamer → maintenance
     → liveSession → sessionCheckpoints → agentRuntime → graalJsEngines
     → registry.unregister → schedulingEngine → rewakeService
-    → pendingTurnReaper → hookHotReload → skillHookShell
+    → pendingTurnReaper → hookHotReload → hookConfigShell
   ```
 
   인접 쌍마다 이유가 있다.
@@ -299,7 +299,9 @@ ScheduledTaskManager.register(...)
   - `sessionCheckpoints` 는 라이브 세션 **뒤** — 마지막 end-of-turn 저장이 이미 mailbox 를 드레인했도록.
   - `graalJsEngines` 는 `agentRuntime` **뒤** — 반쯤 닫힌 엔진에 WorkflowJs 스크립트가 resolve 하지
     못하도록.
-  - `hookHotReload` 는 `skillHookShell` **앞** — 그 사이에 debounce 된 reload 가 발화하면 닫힌 셸을 친다.
+  - `hookHotReload` 는 `hookConfigShell` **앞** — 그 사이에 debounce 된 reload 가 발화하면 닫힌 셸을 친다.
+    이 셸은 `hooks.json` 훅용 호스트 셸이고(옛 이름 `skillHookShell`), 핫리로드를 물리는 어셈블리만 만든다.
+    스킬 선언 훅의 셸은 실행 환경의 것이라 이 순서에 없다(2026-10-03, EE-12).
 
   **이 총순서의 대부분은 의존 간선이 없다.** Spring 의 역-의존 소멸 순서는 이것을 재현하지 못한다.
   그리고 첫 두 단계만으로도 Spring 의 기본 종료 phase 타임아웃(30초)을 넘길 수 있다. 이것이 §6 D4
@@ -1481,7 +1483,7 @@ SIGTERM
        → sessionCheckpoints → agentRuntimes (등록된 전부 — eager N개 + 살아 있는 테넌트 런타임)
        → graalJsEngines
        → registry.unregister → schedulingEngine → rewakeService
-       → pendingTurnReaper → hookHotReload → skillHookShell
+       → pendingTurnReaper → hookHotReload → hookConfigShell (hooks.json 핫리로드를 물렸을 때만)
        → signalBus / inbox (분산 모드)
        → 런타임별 VirtualFileSystem, AutoCloseable 도구  ← 런타임 수만큼 (§4.11)
   └ 빌린 빈(DataSource, Scheduler, MongoDatabase)은 건드리지 않는다

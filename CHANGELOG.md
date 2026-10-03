@@ -7,6 +7,65 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Changed: skill-declared hook shell actions run in the execution environment, not on the host (EE-9, EE-12)
+
+- **A skill hook's `shell` action runs in the shell of the execution it fires in.** Before, every skill hook command
+  ran on one host `LocalShell` that was bound when the skill was parsed. With a sandbox provider the same skill's
+  script ran in the sandbox through `Bash` and on the host through its hook, which gave a skill author a host shell.
+  Now the command goes to `ExecutionEnvironment.shell()` of the firing execution — for a fork-mode skill, the fork's
+  own environment.
+- **The working directory of a skill hook command changes, also with the local provider.** It was the JVM's working
+  directory; it is now the workspace. A hook command that calls a script by relative path resolves it against the
+  workspace. Hook commands are not given `${AIMON_SKILL_DIR}` (EE-50).
+- **A skill hook does not run when there is no usable execution environment.** If the hook context carries no
+  environment, or the environment is unavailable (its provider failed) or its shell is already closed, the command is
+  skipped with a WARN and never falls back to the host. The hook then reports success, so a `preTool`, `onStart`,
+  `preCompact` or `permissionRequest` guard written as a shell hook is **fail-open** in that case (EE-51). Tools that
+  do not use the environment (MCP, web, `Task`) still run.
+- **`ShellActionExecutor` is a breaking SPI change.** `run(action, env)` and `run(action, env, stdin)` are replaced by
+  `run(action, hookContext, env, stdin)`, and `requiresExecutionEnvironment()` is new. **Migration:** implementers add
+  the context parameter and the new method (`false` keeps today's behaviour for an executor that holds its own shell).
+- **`DefaultShellActionExecutor` no longer takes a shell.** `new DefaultShellActionExecutor(shell)` does not compile;
+  use `new DefaultShellActionExecutor()` for a skill parser. The old behaviour (one fixed shell, context ignored) is
+  `new HostShellActionExecutor(shell)`, which is meant for `hooks.json` only — do not hand it to a skill parser.
+- **`AimonStackBuilder` opens no skill hook shell**, and `TeardownPhase.SKILL_HOOK_SHELL` is renamed
+  `HOOK_CONFIG_SHELL`. The stack puts nothing in that phase; an assembly that wires `hooks.json` hot reload (the CLI)
+  enrolls its host shell there. The last phase of a plain stack is now `HOOK_EXECUTOR`. A skill hook that fires after
+  `AGENT_RESOURCES` meets a closed environment shell and is skipped with a WARN. (Scheduled routines fire no hooks:
+  `RoutineExecutor` calls its tools directly, not through the tool-hook path.)
+- **`hooks.json` commands still run on the host shell** (EE-48). An embedder who wires an environment-bound executor
+  into `HookRegistryApplier` gets `command` handlers on `onSessionStart`, `onSessionEnd` and `onConfigReload` skipped
+  with a WARN at apply time, and `asyncRewake` dropped from `command` handlers, because neither has an environment to
+  run in.
+- **Every hook that fires inside an execution carries the execution environment.**
+  `HookContext.getExecutionEnvironment()` is new and is set on the `preTool`, `postTool`, `permissionRequest`,
+  `permissionDenied`, `onStart`, `onStop`, `subagentStart`, `subagentStop`, `preCompact` and `postCompact` contexts.
+  `getEnvironmentDescriptor()` is now derived from it and so is filled on all ten, not only on the tool pair.
+  `onSessionStart`, `onSessionEnd` and `onConfigReload` fire outside any execution and stay empty, as does a rewake
+  replay. `subagentStart` / `subagentStop` carry the spawning execution's environment (EE-52).
+  `HookEventType.firesInsideExecution()` names the split. **Migration:**
+  `PreToolContext.Builder.environmentDescriptor(...)` and `PostToolContext.Builder.environmentDescriptor(...)` are
+  removed; call `executionEnvironment(...)`.
+- **`ContextRequest`, `CompactionRequest` and `SummaryRequest` carry an optional `ExecutionEnvironment`**, and
+  `CompactionGuard.maybeCompact(CompactionGuardRequest)` is the entry point that passes it on. A custom
+  `CompactionGuard` that does not override it keeps working through the four positional methods, but its compaction
+  hooks see no environment.
+- **`DefaultContextEngine` now calls only `maybeCompact(CompactionGuardRequest)`.** A subclass of
+  `DefaultCompactionGuard` that overrides one of the positional `maybeCompact(...)` / `forceCompact(...)` methods is
+  no longer reached through that override, because `DefaultCompactionGuard` implements the request-object method
+  itself. **Migration:** move the override to `maybeCompact(CompactionGuardRequest)` (the request carries the
+  execution id, the execution environment and `isBudgetForced()`, which is what selected `forceCompact` before).
+- **Skill frontmatter still rejects `onSessionStart`, `onSessionEnd` and `onConfigReload`**; the error now says why
+  (no execution environment for a shell action to run in). No skill that loads today is newly rejected.
+
+### Fixed: one skill that fails to parse no longer breaks the skill list
+
+- **`DefaultSkillRegistry.getAllSkills()` and `reloadAll()` skip a skill whose file does not parse.** They caught
+  `SkillRepositoryException` only, and the parser throws the sibling type `SkillParseException`, so one skill with a
+  rejected frontmatter (a hook the parser refuses, for instance) took down the `Skill` tool definition, the command
+  list and the banner. The skill is now left out with a WARN. `getSkill(name)` and `reloadSkill(name)` still throw for
+  that skill.
+
 ### Fixed: MongoDB pipeline updates evaluated stored data as expressions, dropping or refusing turns
 
 - **`MongoSessionInbox.deliver` wraps the payload in `$literal`.** It writes through a pipeline update so `deliveredAt`
