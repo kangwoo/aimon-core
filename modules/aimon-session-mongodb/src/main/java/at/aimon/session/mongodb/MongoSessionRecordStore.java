@@ -130,7 +130,10 @@ public final class MongoSessionRecordStore implements SessionRecordStore {
         // Names the transcript and nothing else. Everything the snapshot cannot carry — the binding, the counter, the
         // totals, the override — is simply not in the update, so it survives by not being mentioned rather than by
         // being read and written back.
-        final Document set = new Document(DocumentKeys.F_TRANSCRIPT, SessionRecordCodec.encodeTranscript(snapshot))
+        // $literal: upsert writes through a pipeline $set (for $$NOW), which evaluates its values. The encoded
+        // transcript is JSON and cannot begin with "$" today; the wrapper keeps that from being load-bearing.
+        final Document set = new Document(DocumentKeys.F_TRANSCRIPT,
+                new Document("$literal", SessionRecordCodec.encodeTranscript(snapshot)))
                 .append(DocumentKeys.F_UPDATED_AT, "$$NOW");
         upsert(id, set, "mergeFromSnapshot");
     }

@@ -7,7 +7,7 @@ Central is versioned independently).
 
 ## [Unreleased]
 
-### Fixed: the MongoDB inbox stored payloads as expressions, dropping or refusing turns
+### Fixed: MongoDB pipeline updates evaluated stored data as expressions, dropping or refusing turns
 
 - **`MongoSessionInbox.deliver` wraps the payload in `$literal`.** It writes through a pipeline update so `deliveredAt`
   can be stamped with the server's `$$NOW`, and a pipeline `$set` evaluates every value as an aggregation expression.
@@ -20,8 +20,13 @@ Central is versioned independently).
   in `$literal`, you can go back to `MongoSessionInbox`.
 - **`MongoSessionRecordStore.provision` binds an `agentRef` beginning with `$` as given.** The value sits inside an
   `$ifNull` expression and was read as a field path, so `provision(id, "$_id")` bound the session to its own id.
+- **`MongoSessionLeaseStore.tryAcquire` stores a `holderId` beginning with `$` as given** when it takes over an expired
+  or released lease. It was read as a field path, so the stored holder differed from the returned lease and that
+  lease's `extend` and `release` matched nothing. `MongoSessionRecordStore.mergeFromSnapshot` wraps the transcript the
+  same way; the encoded JSON cannot begin with `$`, so that one changes nothing today.
 - **The `aimon-session-mongodb` integration tests run on MongoDB 6.0**, not 7.0. 7.0 accepts the empty subdocument
-  that 6.0 rejects, which is how the first failure went unnoticed.
+  that 6.0 rejects, which is how the first failure went unnoticed: on 6.0, the existing multi-node forwarding tests
+  fail without this fix.
 
 ### Changed: a runtime owns the provider its per-runtime function returned (EE-21, EE-23)
 
