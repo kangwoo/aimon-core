@@ -34,10 +34,9 @@ import at.aimon.core.agent.tool.ToolInput;
  * <p>
  * An empty result means <b>this call cannot be judged</b>: the input field is missing, or a relative path arrived with
  * no execution environment in the context to resolve it against. If a pattern is configured for this tool, the
- * validator
- * denies the call. That is deliberate — the alternative is guessing (resolving against the process CWD, say), which
- * makes the outcome depend on where the JVM happened to start and leaves the person who wrote the pattern unable to
- * predict it.
+ * validator denies the call. That is deliberate — the alternative is guessing (resolving against the process CWD,
+ * say), which makes the outcome depend on where the JVM happened to start and leaves the person who wrote the pattern
+ * unable to predict it.
  *
  * <p>
  * The one exception is a tool that also carries a {@link CustomToolPermissionAware} rule: there, an empty subject means

@@ -471,6 +471,7 @@ word "environment" beside `ExecutionEnvironment`, and `HookContext` ended up wit
 | `ToolContextKeys.ENVIRONMENT_KEY`, key name `"environment"` | `ToolContextKeys.USER_LOCALE`, key name `"userLocale"` |
 | constructor and method parameters `Environment environment` | `UserLocale userLocale`, same position |
 | message `"Environment cannot be null"` | `"UserLocale cannot be null"` |
+| messages `"environment cannot be null"` / `"environment must not be null"` / `"environment must not be null in context"` | `"userLocale cannot be null"` / `"userLocale must not be null"` / `"userLocale must not be null in context"` |
 
 `X` is every type that carried the value: `HookContext` and its thirteen event contexts, `RewakeCapableRuntime`,
 `OrcaToolProviderContext`, `OrcaProviderDependencies`, `OrcaCommandProviderContext`, `OrcaAgentRuntime`,
@@ -490,7 +491,7 @@ set of overloads on thirty-five types would have doubled the name the change exi
 | `ExecutionOptions.getEnvironment()` / `Builder.environment(Map)` | a shell command's environment variables |
 | `AimonProperties.getEnvironment()`, `aimon.environment.*` | the starter's execution-environment settings -- no configuration key changed |
 | `EnvironmentBlocks`, `EnvironmentContextProvider`, the `"environment"` prompt block | the prompt's description of the execution environment |
-| `SubagentExecutionEnvironment`, `AgentEnvironmentSnapshot`, `AgentEnvironmentSnapshotProvider` | type names unchanged; only their `getEnvironment()` accessor became `getUserLocale()` |
+| `SubagentExecutionEnvironment`, `AgentEnvironmentSnapshot` | type names unchanged; only their `getEnvironment()` accessor became `getUserLocale()` |
 
 **Not a data migration, and no frozen name moved.** The type never reached a wire or stored format: no session
 record, transcript, subagent task codec or shell-hook payload carries it, and the `ToolContext` key name is a key of

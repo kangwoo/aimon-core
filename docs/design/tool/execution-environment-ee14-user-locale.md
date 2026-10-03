@@ -219,8 +219,8 @@ public final class UserLocale {
   **설정 키는 하나도 바뀌지 않는다.**
 - `EnvironmentBlocks`, `EnvironmentContextProvider`(`BLOCK_KEY = "environment"`), `SystemPromptPart` 의
   `kind("environment")` — 프롬프트의 환경 블록.
-- `SubagentExecutionEnvironment`, `AgentEnvironmentSnapshot`, `AgentEnvironmentSnapshotProvider` 의 **타입 이름**
-  (접근자 `getEnvironment()` 만 바뀐다).
+- `SubagentExecutionEnvironment`, `AgentEnvironmentSnapshot` 의 **타입 이름**(접근자 `getEnvironment()` 만 바뀐다)과
+  `AgentEnvironmentSnapshotProvider`(`get(AgentRuntime)` 하나뿐이라 바뀌는 것이 없다).
 - Spring 의 `org.springframework.core.env.Environment`.
 
 ### 4.4 와이어·영속
@@ -503,8 +503,9 @@ at\.aimon\.core\.agent\.Environment\b
   `Pacific/Kiritimati`)으로 턴을 돌리고 **`LlmClient` 가 실제로 받은** 시스템 프롬프트와 메시지를 비교한다. 스냅숏
   제공자도 런타임의 `UserLocale` 을 스냅숏에 싣게 해서, 값이 프롬프트로 가는 길이 생기면 이 테스트가 깨지게 했다.
 - **메인 실행의 키 테스트(§8.3)** 는 같은 클래스에 두었다. `USER_LOCALE` 과 문자열 `"userLocale"` 양쪽으로 **같은
-  인스턴스**가 나오고 `"environment"` 키가 없음을 본다. 포크 쪽은 `DefaultSubagentExecutorTest` 의 기존 단언이 이름만
-  바뀌었다.
+  인스턴스**가 나오고 `"environment"` 키가 없음을 본다. 포크 쪽은 `DefaultSubagentExecutorTest` 의 기존 단언을 넓혀,
+  `USER_LOCALE` 과 문자열 `"userLocale"` 양쪽으로 부모 컨텍스트와 **같은 인스턴스**가 나오는지 본다. `"environment"` 키가
+  없다는 단언은 포크 쪽에는 두지 않았다.
 
 ### 11.3 설계가 꼽지 않았는데 고친 것
 

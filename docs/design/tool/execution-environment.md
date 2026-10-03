@@ -197,8 +197,9 @@ public interface ExecutionEnvironmentProvider {
 (지금 `at.aimon.core.agent.impl.orca.environment..`)를 `at.aimon.core.environment.impl..` 로 옮긴다 — 로컬
 제공자가 `LocalFileSystem`·`ScopedVirtualFileSystem` 을 직접 만드는 유일한 조립 지점이 되기 때문이다.
 
-- `descriptor()` — 지금의 `Environment.createDefault()` 값(호스트 platform·OS). 로컬에서는 호스트가 곧
-  실행 환경이므로 참이다
+- `descriptor()` — 호스트를 읽어 만든 `EnvironmentDescriptor`(작업 디렉터리·platform·OS 버전·셸 이름). 로컬에서는
+  호스트가 곧 실행 환경이므로 참이다. 이 설계를 쓸 때는 같은 값을 옛 `Environment.createDefault()` 가 들고 있었고,
+  그 타입은 그 뒤 시간대만 든 `UserLocale` 이 되었다(EE-14)
 - `contentSearch()` — `rg` 가 PATH 에 있으면 그것을, 없으면 비어 있음(→ `GrepTool` 이 기존 방식으로 돈다)
 - `stage()` — 소스가 작업 환경과 **같은 `VirtualFileSystem` 인스턴스**면(제어 저장소를 가르기 전인 §11 1·2단계)
   그 경로를 그대로 돌려준다. 아니면 §4.4 의 규칙대로 작업 환경의 스테이징 영역에 복사한다. 스테이징 영역은 파일

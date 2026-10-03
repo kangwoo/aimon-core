@@ -36,6 +36,8 @@ Central is versioned independently).
 - **Ships with the release that carries the `OrcaToolProviderContext` break (EE-1)**, so the two external tool
   providers are rebuilt once. In local checkouts, aimon-sandbox uses `Environment.createDefault()` in one test
   (`OrcaRuntimeSandboxE2ETest`) and aimon-browser and aimon-memory do not use the type; their remotes were not checked.
+  aimon-ops uses it in two tests (`RenderPayloadCollectorHookTest`, `SlackTodoStatusHookTest`), but it is pinned to
+  aimon-core 0.1.18, so it breaks only when it upgrades.
 - Old name → new name, and the names that must not be touched:
   [`docs/migration/rename-maps.md`](docs/migration/rename-maps.md).
 

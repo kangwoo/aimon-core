@@ -1,4 +1,4 @@
-# 실행 환경 — 등록 항목 61건 (열림 44 · 닫힘 17)
+# 실행 환경 — 등록 항목 62건 (열림 45 · 닫힘 17)
 
 출처는 `ExecutionEnvironment` 구현 작업이다. 설계는 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md)
 이고, 구현 계획(승인본)과 구현이 그 계획에서 벗어난 점은
@@ -41,7 +41,8 @@ EE-14 는 2026-10-03 에 닫았다. 결정 항목이었으므로 결정됨이되
 설계에서 벗어난 점은
 [`../design/tool/execution-environment-ee14-user-locale.md`](../design/tool/execution-environment-ee14-user-locale.md)
 에 있다. EE-60 · EE-61 은 그 설계가 드러낸 사실(§2.3)과 열린 질문(Q1 → EE-60, Q7 → EE-61) 가운데 이 변경 밖으로 결과가
-번지는 것을 옮긴 것이고, 외부 저장소에 미치는 영향은 EE-1 에 더했다.
+번지는 것을 옮긴 것이고, 외부 저장소에 미치는 영향은 EE-1 에 더했다. EE-62 는 PR #206 의 리뷰가 짚은, 이 변경 전부터 있던 문서
+공백이다.
 
 ---
 
@@ -59,7 +60,9 @@ EE-14 는 2026-10-03 에 닫았다. 결정 항목이었으므로 결정됨이되
 `getEnvironment()` / `ENVIRONMENT_KEY` 도 `UserLocale` / `getUserLocale()` / `USER_LOCALE` 로 함께 고친다. 로컬 체크아웃에서
 확인한 범위에서(aimon-sandbox `bb6c877` 2026-09-30, aimon-browser `d590703` 2026-09-16, aimon-memory `784bfeb` 2026-09-21)
 aimon-sandbox 는 테스트 `OrcaRuntimeSandboxE2ETest` 한 곳에서 `Environment.createDefault()` 를 쓰고(main 에는 없다),
-aimon-browser 와 aimon-memory 는 쓰지 않는다. **원격의 최신 상태와 열린 브랜치는 확인하지 못했다.** 그 테스트 한 줄을 누가
+aimon-browser 와 aimon-memory 는 쓰지 않는다. aimon-ops(`22576b7a` 2026-07-08)는 테스트 둘
+(`RenderPayloadCollectorHookTest`, `SlackTodoStatusHookTest`)에서 쓰지만 aimon-core 0.1.18 에 고정되어 있어, 코어를
+올릴 때에야 깨진다. **원격의 최신 상태와 열린 브랜치는 확인하지 못했다.** 그 테스트 한 줄을 누가
 언제 고치는지는 이 저장소에서 정할 수 없다. 옛 코어로 빌드된 jar 를 새 코어와 함께 돌리면 `NoClassDefFoundError` /
 `NoSuchMethodError` 다.
 
@@ -1612,3 +1615,20 @@ environment" 라고 부른다(`DefaultSubagentExecutionManager`, `TaskTool`). `E
 **언제 다시 볼까.** 서브에이전트 SPI 를 다음에 깨뜨릴 때.
 
 출처: [`../design/tool/execution-environment-ee14-user-locale.md`](../design/tool/execution-environment-ee14-user-locale.md) §3.4 · §10 Q7.
+
+## EE-62 — 지식 저장소 가이드의 런타임 예제에 실행 환경 제공자가 없다 · **열림**
+
+**무엇을.** `opensearch-knowledge-store-guide.md` 의 `OrcaAgentRuntime.builder()` 예제에
+`.executionEnvironmentProvider(…)` 를 넣거나, 그 예제가 일부만 보여 준다는 것을 적는다. 번역본
+`opensearch-knowledge-store-guide.en.md` 도 함께 고친다.
+
+**왜.** 예제는 `controlFileSystem` · `userLocale` · `knowledgeStore` 까지 채우지만 `executionEnvironmentProvider` 는 부르지 않는다.
+빌더는 그것을 nullable 로 받고, 없으면 모든 실행이 사용 불가 환경을 받는다(`OrcaAgentRuntime.Builder.executionEnvironmentProvider`
+Javadoc). 예제를 그대로 옮긴 사용자는 빌드는 되지만 셸 · 파일 도구가 실행마다 실패하는 런타임을 얻는다. 이 공백은 EE-14 가
+아니라 실행 환경 도입 때부터 있던 것이다 — EE-14 는 같은 예제의 `.environment(…)` 를 `.userLocale(…)` 로 바꾸기만 했다.
+
+**어디.** `docs/features/knowledge/opensearch-knowledge-store-guide.md` 264–275행, `.en.md` 269–279행(2026-10-03).
+
+**언제 다시 볼까.** 지식 저장소 가이드를 다음에 고칠 때, 또는 기능 가이드의 런타임 조립 예제를 한꺼번에 점검할 때.
+
+출처: PR #206 리뷰.
