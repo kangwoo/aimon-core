@@ -25,8 +25,12 @@ import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.command.execution.ExecutionMetadata;
+import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookExecutionManager;
+import at.aimon.core.hook.event.SubagentStartContext;
+import at.aimon.core.hook.event.SubagentStopContext;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.TokenUsage;
@@ -273,6 +277,56 @@ class DefaultSubagentExecutionManagerTest {
         return SubagentExecutionResult.success(answer, SessionSnapshot.of(SessionId.generate(), "sys", List.of()),
                 ExecutionMetadata.builder().iterationCount(1).tokenUsage(TokenUsage.empty())
                         .timestamps(Instant.now(), Instant.now()).build());
+    }
+
+    @Test
+    @DisplayName("SubagentStart/Stop hooks carry the spawning execution's environment (EE-9)")
+    void subagentHooksCarryTheSpawnersExecutionEnvironment() {
+        InMemorySubagentRegistry dataRegistry = new InMemorySubagentRegistry();
+        dataRegistry.register(Subagent.builder().name("clock").systemPrompt("(code)").build());
+        InMemorySubagentBehaviorRegistry behaviorRegistry = new InMemorySubagentBehaviorRegistry();
+        behaviorRegistry.register("clock", (ctx, req, support) -> support.success("tick"));
+        HookExecutionManager hooks = mock(HookExecutionManager.class);
+        DefaultSubagentExecutionManager manager = new DefaultSubagentExecutionManager(reactExecutor, bgPool, hooks,
+                behaviorRegistry);
+        // Both hooks fire in the spawner's registry, and at subagentStart the fork's own environment does not exist
+        // yet — so what they carry is the spawner's.
+        ExecutionEnvironment spawner = TestExecutionEnvironments.builder().workingDirectory("/spawner").build();
+        SubagentExecutionEnvironment env = SubagentExecutionEnvironment.builder()
+                .agentRuntimeId(AgentRuntimeId.of("agent:test")).subagentRegistry(dataRegistry)
+                .toolRegistry(new DefaultToolRegistry()).hookRegistry(new DefaultHookRegistry())
+                .environment(Environment.createDefault()).defaultModel(LlmModel.builder().name("gpt-4").build())
+                .executionEnvironment(spawner).build();
+
+        manager.execute(env, "task-1", "clock", "go", "");
+
+        ArgumentCaptor<SubagentStartContext> start = ArgumentCaptor.forClass(SubagentStartContext.class);
+        ArgumentCaptor<SubagentStopContext> stop = ArgumentCaptor.forClass(SubagentStopContext.class);
+        verify(hooks).executeSubagentStart(start.capture());
+        verify(hooks).executeSubagentStop(stop.capture());
+        assertThat(start.getValue().getExecutionEnvironment().orElseThrow()).isSameAs(spawner);
+        assertThat(stop.getValue().getExecutionEnvironment().orElseThrow()).isSameAs(spawner);
+    }
+
+    @Test
+    @DisplayName("SubagentStart/Stop hooks carry no environment when a runtime-level runner spawned the fork")
+    void subagentHooksAreEmptyWhenTheSpawnerHasNoEnvironment() {
+        InMemorySubagentRegistry dataRegistry = new InMemorySubagentRegistry();
+        dataRegistry.register(Subagent.builder().name("clock").systemPrompt("(code)").build());
+        InMemorySubagentBehaviorRegistry behaviorRegistry = new InMemorySubagentBehaviorRegistry();
+        behaviorRegistry.register("clock", (ctx, req, support) -> support.success("tick"));
+        HookExecutionManager hooks = mock(HookExecutionManager.class);
+        DefaultSubagentExecutionManager manager = new DefaultSubagentExecutionManager(reactExecutor, bgPool, hooks,
+                behaviorRegistry);
+
+        manager.execute(env(dataRegistry), "task-1", "clock", "go", "");
+
+        ArgumentCaptor<SubagentStartContext> start = ArgumentCaptor.forClass(SubagentStartContext.class);
+        ArgumentCaptor<SubagentStopContext> stop = ArgumentCaptor.forClass(SubagentStopContext.class);
+        verify(hooks).executeSubagentStart(start.capture());
+        verify(hooks).executeSubagentStop(stop.capture());
+        assertThat(start.getValue().getExecutionEnvironment()).isEmpty();
+        assertThat(stop.getValue().getExecutionEnvironment()).isEmpty();
     }
 
     private DefaultSubagentExecutionManager newManager(InMemorySubagentBehaviorRegistry behaviorRegistry) {

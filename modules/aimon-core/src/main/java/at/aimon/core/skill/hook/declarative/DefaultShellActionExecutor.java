@@ -1,53 +1,50 @@
 package at.aimon.core.skill.hook.declarative;
 
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import at.aimon.core.shell.ExecutionOptions;
-import at.aimon.core.shell.ShellCommandResult;
+import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.environment.exception.ExecutionEnvironmentUnavailableException;
+import at.aimon.core.hook.execution.HookContext;
 import at.aimon.core.shell.VirtualShell;
-import at.aimon.core.shell.exception.ShellExecutionException;
-import at.aimon.core.shell.exception.ShellTimeoutException;
 import at.aimon.core.skill.hook.action.ShellAction;
 
 /**
- * Default {@link ShellActionExecutor} (AIMON extension, SK-13) that delegates command execution to a
- * {@link VirtualShell} (typically a {@code LocalShell}).
+ * Default {@link ShellActionExecutor} (AIMON extension, SK-13): runs the command in the shell of the firing
+ * execution's {@linkplain HookContext#getExecutionEnvironment() execution environment}.
  *
  * <p>
- * Implements the fail-soft contract of the interface: timeouts and unexpected exceptions are logged at WARN level and
- * swallowed so that the calling hook can stay non-blocking. Such a run reports {@link ShellHookOutcome#notObserved()}
- * — no exit status was produced, so nothing can be inferred from it.
+ * The executor holds no shell. It is handed to the skill parser when a skill is <em>parsed</em>, long before any
+ * execution exists and shared across all of them, so a shell bound here would be the wrong one — the host's. Taking
+ * it from the context at fire time is what makes a skill's hook command run where that execution's tools run, forked
+ * skills included (the fork's own environment, not the spawner's).
  *
  * <p>
- * When the command does run to completion its exit code is reported back through {@link ShellHookOutcome}. Only
- * {@code preTool} hooks act on it (exit {@value ShellHookOutcome#DENY_EXIT_CODE} vetoes the dispatch); every other
- * event stays fire-and-forget regardless of what the command returned.
+ * When the context carries no environment the command is <b>not run</b>: there is no host fallback
+ * (execution-environment design §15). The skip is logged at WARN and reported as
+ * {@link ShellHookOutcome#notObserved()}, as is an environment that is present but unavailable. Such a run can never
+ * veto, so a guard hook is fail-open in that case — the same stance the executor takes for a timeout.
  *
  * <p>
- * Thread-safe as long as the supplied {@link VirtualShell} is thread-safe (the in-tree {@code LocalShell} is).
+ * Otherwise implements the fail-soft contract of the interface: timeouts and unexpected exceptions are logged at WARN
+ * level and swallowed so that the calling hook can stay non-blocking. When the command does run to completion its exit
+ * code is reported back through {@link ShellHookOutcome}. Only the blocking chains act on it (exit
+ * {@value ShellHookOutcome#DENY_EXIT_CODE} vetoes); every other event stays fire-and-forget regardless of what the
+ * command returned.
+ *
+ * <p>
+ * Stateless and thread-safe.
  */
 public final class DefaultShellActionExecutor implements ShellActionExecutor {
 
     private static final Logger log = LoggerFactory.getLogger(DefaultShellActionExecutor.class);
 
-    private final VirtualShell shell;
-
-    /**
-     * Creates a new executor backed by the given shell.
-     *
-     * @param shell
-     *            The shell used to execute commands (must not be null). Typically a long-lived shared instance — the
-     *            executor does not own its lifecycle.
-     * @throws NullPointerException
-     *             if shell is null
-     */
-    public DefaultShellActionExecutor(VirtualShell shell) {
-        this.shell = Objects.requireNonNull(shell, "Shell cannot be null");
+    /** Creates an executor that runs each action in the firing context's execution environment. */
+    public DefaultShellActionExecutor() {
     }
 
     @Override
@@ -56,49 +53,38 @@ public final class DefaultShellActionExecutor implements ShellActionExecutor {
     }
 
     @Override
-    public void run(ShellAction action, Map<String, String> environmentOverrides) {
-        run(action, environmentOverrides, null);
+    public boolean requiresExecutionEnvironment() {
+        return true;
     }
 
     @Override
-    public ShellHookOutcome run(ShellAction action, Map<String, String> environmentOverrides, String stdinPayload) {
+    public ShellHookOutcome run(ShellAction action, HookContext context, Map<String, String> environmentOverrides,
+            String stdinPayload) {
         Objects.requireNonNull(action, "Action cannot be null");
+        Objects.requireNonNull(context, "Context cannot be null");
         Objects.requireNonNull(environmentOverrides, "Environment overrides cannot be null");
 
-        final ExecutionOptions options = ExecutionOptions.builder().timeout(action.getTimeout())
-                .environment(new HashMap<>(environmentOverrides)).stdin(stdinPayload).build();
-
+        final Optional<ExecutionEnvironment> executionEnvironment = context.getExecutionEnvironment();
+        if (executionEnvironment.isEmpty()) {
+            log.warn(
+                    "Skill hook shell action not run: no execution environment in hook context (skill={}, event={},"
+                            + " command={})",
+                    environmentOverrides.get(SkillHookEnv.AIMON_SKILL_NAME),
+                    environmentOverrides.get(SkillHookEnv.AIMON_HOOK_EVENT), action.getCommand());
+            return ShellHookOutcome.notObserved();
+        }
+        final VirtualShell shell;
         try {
-            final ShellCommandResult result = shell.execute(action::getCommand, options);
-            if (result.isFailure()) {
-                log.warn("Skill hook shell action exited with code {} (command={}, stderr={})", result.exitCode(),
-                        action.getCommand(), summarise(result.stderr()));
-            } else {
-                log.debug("Skill hook shell action ok (command={}, duration={}ms)", action.getCommand(),
-                        result.duration().toMillis());
-            }
-            return ShellHookOutcome.of(result.exitCode(), result.stdout(), result.stderr());
-        } catch (ShellTimeoutException e) {
-            log.warn("Skill hook shell action timed out after {} (command={})", action.getTimeout(),
-                    action.getCommand());
-        } catch (ShellExecutionException e) {
-            log.warn("Skill hook shell action failed (command={}): {}", action.getCommand(), e.getMessage());
+            shell = executionEnvironment.get().shell();
+        } catch (ExecutionEnvironmentUnavailableException e) {
+            log.warn("Skill hook shell action not run: the execution environment is unavailable (command={}): {}",
+                    action.getCommand(), e.getMessage());
+            return ShellHookOutcome.notObserved();
         } catch (RuntimeException e) {
-            log.warn("Skill hook shell action threw unexpected error (command={}): {}", action.getCommand(),
-                    e.getMessage(), e);
+            log.warn("Skill hook shell action not run: the execution environment gave no shell (command={}): {}",
+                    action.getCommand(), e.getMessage(), e);
+            return ShellHookOutcome.notObserved();
         }
-        // A command that never produced an exit status cannot be read as a veto — fail soft and let the tool run.
-        return ShellHookOutcome.notObserved();
-    }
-
-    private static String summarise(String text) {
-        if (text == null || text.isEmpty()) {
-            return "(empty)";
-        }
-        final String trimmed = text.strip();
-        if (trimmed.length() <= 200) {
-            return trimmed;
-        }
-        return trimmed.substring(0, 200) + "...";
+        return ShellActionRunner.run(shell, action, environmentOverrides, stdinPayload);
     }
 }

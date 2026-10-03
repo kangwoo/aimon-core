@@ -636,7 +636,9 @@ private <T> T withRuntimeLock(AgentRuntimeId agentRuntimeId, Supplier<T> action)
 
 단계 위치는 `HOOK_HOT_RELOAD` **다음**, `SKILL_HOOK_SHELL` **앞**이다. 앞의 것은 훅을 새로 꽂을 수
 있는 마지막 경로를 끊고, 뒤의 것은 이 풀 위에서 도는 선언적 셸 훅이 부르는 대상이다 —
-이 enum 이 지키는 "부르는 쪽이 먼저 멈춘다" 방향 그대로다.
+이 enum 이 지키는 "부르는 쪽이 먼저 멈춘다" 방향 그대로다. (2026-10-03: `SKILL_HOOK_SHELL` 은 `HOOK_CONFIG_SHELL` 로
+개명되었고 스택은 그 단계에 아무것도 넣지 않는다 — 스킬 선언 훅의 셸이 실행 환경으로 옮겨 갔기 때문이다.
+`execution-environment-open-items.md` 의 EE-12. `HOOK_EXECUTOR` 의 위치와 이유는 그대로다.)
 
 - **닫힌 근거**: `DefaultHookExecutorTest` 3건(자기 풀 종료 · 주입 풀 보존 · 멱등 + 이후 훅의 정책
   매핑), `DefaultHookExecutionManagerCloseTest` 3건(빌더 기본값 소유 · 주입분 비소유 ·

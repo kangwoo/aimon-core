@@ -38,7 +38,7 @@ import at.aimon.core.skill.hook.action.ShellAction;
  * <p>
  * <b>Scope: HTTP and MCP actions only.</b> {@code HttpActionExecutor} renders headers / body and
  * {@code McpActionExecutor} renders the args template. A {@link ShellAction#getCommand() shell-action command} is
- * <b>never</b> passed through this renderer &mdash; it reaches the host shell verbatim, so a {@code ${tool_input.x}}
+ * <b>never</b> passed through this renderer &mdash; it reaches the shell verbatim, so a {@code ${tool_input.x}}
  * written into a command is not a placeholder at all but an ordinary (unset) shell variable. That is deliberate: it
  * keeps untrusted tool input out of the command line entirely. Shell hooks receive the same data as a JSON document on
  * standard input (see {@code ShellHookPayload}) plus the {@code AIMON_*} environment variables, neither of which the

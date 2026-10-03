@@ -13,7 +13,9 @@ import org.slf4j.LoggerFactory;
 
 import at.aimon.core.environment.StagedResource;
 import at.aimon.core.filesystem.VirtualFileSystem;
+import at.aimon.core.skill.exception.SkillException;
 import at.aimon.core.skill.exception.SkillNotFoundException;
+import at.aimon.core.skill.exception.SkillParseException;
 import at.aimon.core.skill.exception.SkillRepositoryException;
 import at.aimon.core.skill.parser.MarkdownSkillParser;
 import at.aimon.core.skill.parser.SkillParser;
@@ -235,7 +237,7 @@ public class DefaultSkillRegistry implements SkillRegistry {
         for (String skillName : skillNames) {
             try {
                 getSkill(skillName).ifPresent(skills::add);
-            } catch (SkillRepositoryException e) {
+            } catch (SkillRepositoryException | SkillParseException e) {
                 logSkipped(skillName, e);
             }
         }
@@ -265,7 +267,7 @@ public class DefaultSkillRegistry implements SkillRegistry {
         for (String skillName : repository.findAllNames()) {
             try {
                 loadComplete(skillName).ifPresent(skill -> reloaded.put(skillName, skill));
-            } catch (SkillRepositoryException e) {
+            } catch (SkillRepositoryException | SkillParseException e) {
                 logSkipped(skillName, e);
             }
         }
@@ -275,9 +277,11 @@ public class DefaultSkillRegistry implements SkillRegistry {
     /**
      * A skill that fails to load is left out of a listing rather than failing it: the tool definition, the command
      * list and the banner are all built from {@link #getAllSkills()}. It is not cached, so {@link #getSkill(String)}
-     * reports the same error to whoever asks for it by name.
+     * reports the same error to whoever asks for it by name. A skill file that does not parse is skipped the same way
+     * as one that cannot be read — a rejected frontmatter (a hook the parser refuses, say) is that one skill's
+     * problem, not the listing's.
      */
-    private static void logSkipped(String skillName, SkillRepositoryException e) {
+    private static void logSkipped(String skillName, SkillException e) {
         log.warn("Skill '{}' is not loaded: {}", skillName, e.getMessage());
     }
 }

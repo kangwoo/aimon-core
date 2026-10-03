@@ -144,7 +144,11 @@ public final class HookHotReloadBootstrap {
             return this;
         }
 
-        /** Shell executor used by {@link HookRegistryApplier}. Required. */
+        /**
+         * Shell executor used by {@link HookRegistryApplier}. Required. {@code hooks.json} can declare events that fire
+         * outside any execution, so this is normally a {@code HostShellActionExecutor}; an executor that needs an
+         * execution environment has its shell handlers on those events skipped at apply time.
+         */
         public Builder shellExecutor(ShellActionExecutor shellExecutor) {
             this.shellExecutor = shellExecutor;
             return this;

@@ -500,9 +500,11 @@ class AimonStackBuilderTest {
             final List<String> plan = stack.teardownPlan();
 
             assertThat(plan).isNotEmpty();
-            // Sessions drain first and the skill hook shell dies last, whatever was registered in between.
+            // Sessions drain first and the hook executor dies last, whatever was registered in between. The stack
+            // opens no shell for skill hooks — those run in the execution environment's shell — so nothing follows it.
             assertThat(plan.get(0)).contains(TeardownPhase.SESSIONS.name());
-            assertThat(plan.get(plan.size() - 1)).contains(TeardownPhase.SKILL_HOOK_SHELL.name());
+            assertThat(plan.get(plan.size() - 1)).contains(TeardownPhase.HOOK_EXECUTOR.name());
+            assertThat(plan).noneMatch(line -> line.contains(TeardownPhase.HOOK_CONFIG_SHELL.name()));
         }
     }
 
@@ -512,7 +514,7 @@ class AimonStackBuilderTest {
      * at assembly. Without this entry nothing in the process holds a handle able to stop that pool.
      */
     @Test
-    @DisplayName("the teardown plan retires the hook executor before the skill hook shell")
+    @DisplayName("the teardown plan retires the hook executor before an assembly's hooks.json shell")
     void teardownPlanClosesTheHookExecutionManager(@TempDir Path workspace) {
         try (AimonStack stack = AimonStackBuilder.build(specFor(workspace, "ops").build())) {
             final List<String> plan = stack.teardownPlan();
@@ -520,8 +522,14 @@ class AimonStackBuilderTest {
             final int hookExecutor = indexOfPhase(plan, TeardownPhase.HOOK_EXECUTOR);
             assertThat(hookExecutor).as("plan was %s", plan).isNotNegative();
             assertThat(plan.get(hookExecutor)).contains("hookExecutionManager");
-            // A hook body runs on this pool and may call into the shell, so the caller stops before the callee.
-            assertThat(hookExecutor).isLessThan(indexOfPhase(plan, TeardownPhase.SKILL_HOOK_SHELL));
+            // The stack itself has no hooks.json shell; an assembly that wires hot reload enrolls one. A hook body
+            // runs on this pool and may call into that shell, so the caller stops before the callee.
+            stack.own(TeardownPhase.HOOK_CONFIG_SHELL, "hookConfigShell", () -> {
+            });
+            final List<String> withShell = stack.teardownPlan();
+            assertThat(indexOfPhase(withShell, TeardownPhase.HOOK_EXECUTOR))
+                    .isLessThan(indexOfPhase(withShell, TeardownPhase.HOOK_CONFIG_SHELL));
+            assertThat(withShell.get(withShell.size() - 1)).contains("hookConfigShell");
         }
     }
 

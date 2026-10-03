@@ -63,7 +63,6 @@ import at.aimon.core.knowledge.KnowledgeStore;
 import at.aimon.core.llm.cost.TablePricedCostEstimator;
 import at.aimon.core.scheduling.ScheduledTaskManager;
 import at.aimon.core.scheduling.SchedulingEngineBuilder;
-import at.aimon.core.shell.impl.local.LocalShell;
 import at.aimon.core.skill.hook.declarative.DefaultShellActionExecutor;
 import at.aimon.core.skill.parser.MarkdownSkillParser;
 import at.aimon.core.skill.parser.SkillHookSetParser;
@@ -256,17 +255,12 @@ public final class AimonStackBuilder {
     private static AimonStack assemble(AimonStackSpec spec, TeardownRegistry teardown,
             RuntimeDegradations.Collector degradations) {
 
-        // --- Skill hook shell -----------------------------------------------------------------------------
-        // Closed last of everything: a declarative skill hook can run a shell action during any later phase's
-        // teardown, and a shell closed early turns that into a failure inside shutdown itself. Skipped entirely
-        // when the caller supplies a parser — a second shell would be a second process pool, and only one of
-        // them would be on the teardown plan.
-        final SkillParser skillParser = spec.getSkillParser().orElseGet(() -> {
-            final LocalShell skillHookShell = teardown.own(TeardownPhase.SKILL_HOOK_SHELL, "skillHookShell",
-                    new LocalShell());
-            return new MarkdownSkillParser(new ShellArgumentTokenizer(),
-                    new SkillHookSetParser(new DefaultShellActionExecutor(skillHookShell)));
-        });
+        // --- Skill parser ---------------------------------------------------------------------------------
+        // The stack opens no shell for skill hooks: a skill-declared shell action runs in the shell of the
+        // execution environment the hook fires in, which the environment's provider owns and closes.
+        final SkillParser skillParser = spec.getSkillParser()
+                .orElseGet(() -> new MarkdownSkillParser(new ShellArgumentTokenizer(),
+                        new SkillHookSetParser(new DefaultShellActionExecutor())));
 
         // --- Session storage ------------------------------------------------------------------------------
         // The mailbox owns a background thread that writes transcript checkpoints. It is closed after the

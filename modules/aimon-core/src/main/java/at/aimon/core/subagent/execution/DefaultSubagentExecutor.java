@@ -589,7 +589,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
     private void fireOnStart(LoopContext lc) {
         final OnStartContext onStartContext = OnStartContext.builder().executorType(InvokerType.SUBAGENT)
                 .invokerName(lc.subagent().getName()).hookRegistry(lc.hookRegistry()).environment(lc.environment())
-                .userMessage(lc.goal).executionAttributes(lc.executionAttributes).build();
+                .executionEnvironment(lc.executionEnvironment()).userMessage(lc.goal)
+                .executionAttributes(lc.executionAttributes).build();
         final List<HookResult> onStartResults = hookExecutionManager.executeOnStart(onStartContext);
         HookFeedback.toReminderBlock(HookFeedback.collectAdvisory(onStartResults))
                 .ifPresent(block -> lc.transcriptBuffer.addMessage(Message.user(block), LogOrigin.SYNTHETIC));
@@ -613,10 +614,10 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         // fork had a session, and told an execution id as its name. The two are tied together at both entries into
         // execute(): a fresh fork derives the label from the id (forkTranscriptLabel), a resume derives the id back out
         // of the restored label (ExecutionId.of), which is why the round trip has to survive the snapshot.
-        final ContextDecision decision = contextEngine
-                .prepare(ContextRequest.builder().transcriptBuffer(lc.transcriptBuffer).model(lc.modelConfig)
-                        .hookRegistry(lc.hookRegistry()).environment(lc.environment())
-                        .caller(ContextCaller.builder().executionId(lc.executionId).build()).build());
+        final ContextDecision decision = contextEngine.prepare(ContextRequest.builder()
+                .transcriptBuffer(lc.transcriptBuffer).model(lc.modelConfig).hookRegistry(lc.hookRegistry())
+                .environment(lc.environment()).executionEnvironment(lc.executionEnvironment())
+                .caller(ContextCaller.builder().executionId(lc.executionId).build()).build());
         switch (decision.getAction()) {
             case BLOCK :
                 log.error("Compaction guard blocked subagent iteration {}: {}", iterationCount, decision.getReason());
@@ -1064,8 +1065,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         final ExecutionMetadata metadata = buildMetadata(lc, iterationCount, accumulatedTokens);
         final OnStopContext onStopContext = OnStopContext.builder().executorType(InvokerType.SUBAGENT)
                 .invokerName(lc.subagent().getName()).hookRegistry(lc.hookRegistry()).environment(lc.environment())
-                .success(true).finalAnswer(finalAnswer).metadata(metadata).executionAttributes(lc.executionAttributes)
-                .build();
+                .executionEnvironment(lc.executionEnvironment()).success(true).finalAnswer(finalAnswer)
+                .metadata(metadata).executionAttributes(lc.executionAttributes).build();
         hookExecutionManager.executeOnStop(onStopContext);
         // Stream the full final answer plus a terminal boundary so a background tail sees the complete result and knows
         // the task finished.
@@ -1106,8 +1107,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         final ExecutionMetadata metadata = buildMetadata(lc, iterationCount, accumulatedTokens);
         final OnStopContext onStopContext = OnStopContext.builder().executorType(InvokerType.SUBAGENT)
                 .invokerName(lc.subagent().getName()).hookRegistry(lc.hookRegistry()).environment(lc.environment())
-                .success(true).finalAnswer(flaggedAnswer).metadata(metadata).executionAttributes(lc.executionAttributes)
-                .build();
+                .executionEnvironment(lc.executionEnvironment()).success(true).finalAnswer(flaggedAnswer)
+                .metadata(metadata).executionAttributes(lc.executionAttributes).build();
         hookExecutionManager.executeOnStop(onStopContext);
         // The same terminal boundary a success streams, naming why the answer is incomplete.
         stream(lc, "\n[final answer]\n" + flaggedAnswer + "\n[completed: TRUNCATED at max_tokens after "
@@ -1174,8 +1175,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         final ExecutionMetadata metadata = buildMetadata(lc, iterationCount, accumulatedTokens);
         final OnStopContext onStopContext = OnStopContext.builder().executorType(InvokerType.SUBAGENT)
                 .invokerName(lc.subagent().getName()).hookRegistry(lc.hookRegistry()).environment(lc.environment())
-                .success(false).finalAnswer(errorMessage).metadata(metadata).executionAttributes(lc.executionAttributes)
-                .build();
+                .executionEnvironment(lc.executionEnvironment()).success(false).finalAnswer(errorMessage)
+                .metadata(metadata).executionAttributes(lc.executionAttributes).build();
         hookExecutionManager.executeOnStop(onStopContext);
         // Terminal boundary so a background tail observes that the task ended (and why).
         stream(lc, "\n[ended: " + errorMessage + "]\n");
@@ -1251,6 +1252,14 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
 
         private Environment environment() {
             return context.getEnvironment();
+        }
+
+        /**
+         * The fork's own execution environment — the instance its tools reach, read back from the tool context it was
+         * published in so the hooks and the tools cannot be handed different ones.
+         */
+        private ExecutionEnvironment executionEnvironment() {
+            return toolContext.get(ToolContextKeys.EXECUTION_ENVIRONMENT).orElse(null);
         }
 
         private SubagentOutputSink outputSink() {

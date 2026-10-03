@@ -3,9 +3,12 @@ package at.aimon.core.agent.impl.orca.it;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import org.junit.jupiter.api.AfterEach;
@@ -20,10 +23,15 @@ import at.aimon.core.agent.session.DefaultLiveSession;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookEventType;
 import at.aimon.core.hook.event.OnSessionEndContext;
 import at.aimon.core.hook.event.OnSessionStartContext;
 import at.aimon.core.hook.execution.HookResult;
+import at.aimon.core.skill.hook.action.ShellAction;
+import at.aimon.core.skill.hook.declarative.DeclarativePreToolHook;
+import at.aimon.core.skill.hook.declarative.DefaultShellActionExecutor;
+import at.aimon.core.skill.hook.declarative.predicate.NameOnlyPredicate;
 
 /**
  * L3 — <b>when</b> each hook fires, which is the part of the hook contract no unit test can settle.
@@ -292,5 +300,97 @@ class HookFiringIntegrationTest {
         assertThat(result.isSuccess()).isTrue();
         assertThat(llm.lastCallFor(sessionId.value()).lastObservation()).isEqualTo("[redacted]");
         assertThat(node.readFile(NOTE)).isEqualTo("seeded");
+    }
+
+    /**
+     * EE-9. Every hook that fires <em>inside</em> a turn is handed the turn's execution environment — the same
+     * instance for all of them, which is the instance the turn's tools run in — and the hooks that fire outside any
+     * execution are handed none. Asserted on one turn so that "the same instance" is a claim about a single execution.
+     */
+    @Test
+    @DisplayName("every in-execution hook of a turn carries that turn's execution environment; session hooks carry none")
+    void inExecutionHooksCarryTheTurnsExecutionEnvironment() {
+        final SessionId sessionId = OrcaRuntimeItSupport.newSession();
+        scriptReadThenAnswer(sessionId);
+        final Map<String, Optional<ExecutionEnvironment>> seen = new ConcurrentHashMap<>();
+        node.hookRegistry().register(HookEventType.ON_SESSION_START, (OnSessionStartContext ctx) -> {
+            seen.put("onSessionStart", ctx.getExecutionEnvironment());
+            return HookResult.success();
+        });
+        node.hookRegistry().register(HookEventType.ON_START, ctx -> {
+            seen.put("onStart", ctx.getExecutionEnvironment());
+            return HookResult.success();
+        });
+        node.hookRegistry().register(HookEventType.PERMISSION_REQUEST, ctx -> {
+            seen.put("permissionRequest", ctx.getExecutionEnvironment());
+            return HookResult.success();
+        });
+        node.hookRegistry().register(HookEventType.PRE_TOOL, ctx -> {
+            seen.put("preTool", ctx.getExecutionEnvironment());
+            return HookResult.success();
+        });
+        node.hookRegistry().register(HookEventType.POST_TOOL, ctx -> {
+            seen.put("postTool", ctx.getExecutionEnvironment());
+            return HookResult.success();
+        });
+        node.hookRegistry().register(HookEventType.ON_STOP, ctx -> {
+            seen.put("onStop", ctx.getExecutionEnvironment());
+            return HookResult.success();
+        });
+
+        final DefaultLiveSession session = node.openLiveSession(sessionId);
+        session.submit("read the note", SubmitOptions.empty());
+
+        assertThat(seen.get("onSessionStart")).isEmpty();
+        final ExecutionEnvironment turnEnvironment = seen.get("onStart").orElseThrow();
+        assertThat(seen.get("permissionRequest").orElseThrow()).isSameAs(turnEnvironment);
+        assertThat(seen.get("preTool").orElseThrow()).isSameAs(turnEnvironment);
+        assertThat(seen.get("postTool").orElseThrow()).isSameAs(turnEnvironment);
+        assertThat(seen.get("onStop").orElseThrow()).isSameAs(turnEnvironment);
+        // And it is the workspace the tools act on, not wherever the JVM happens to run.
+        assertThat(Path.of(turnEnvironment.descriptor().workingDirectory()).toAbsolutePath().normalize())
+                .isEqualTo(node.root().toAbsolutePath().normalize());
+    }
+
+    /**
+     * EE-12, by its effect. A skill-declared shell hook is built at parse time around an executor that holds no shell;
+     * the command must still run, and run in the execution environment's shell. The command writes a file by relative
+     * path, so where the file lands is where the shell was — the node's workspace, not the JVM's working directory.
+     */
+    @Test
+    @DisplayName("a skill-style preTool shell hook runs in the execution environment's shell")
+    void aSkillShellHookRunsInTheExecutionEnvironmentsShell() {
+        final SessionId sessionId = OrcaRuntimeItSupport.newSession();
+        scriptReadThenAnswer(sessionId);
+        node.hookRegistry().register(HookEventType.PRE_TOOL,
+                new DeclarativePreToolHook("audit-skill", NameOnlyPredicate.ANY,
+                        new ShellAction("printf '%s' \"$AIMON_TOOL_NAME\" > hook-ran.txt", Duration.ofSeconds(10)),
+                        new DefaultShellActionExecutor()));
+
+        final OrcaAgentExecutionResult result = node.run(sessionId, "read the note");
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(node.fileExists("hook-ran.txt")).as("the hook's command ran in the workspace").isTrue();
+        assertThat(node.readFile("hook-ran.txt")).isEqualTo("Read");
+    }
+
+    /** The exit-2 veto contract survives the move: the guard's verdict comes from the environment's shell. */
+    @Test
+    @DisplayName("a skill-style preTool shell hook that exits 2 in the environment's shell blocks the tool")
+    void aSkillShellHookVetoBlocksTheTool() {
+        final SessionId sessionId = OrcaRuntimeItSupport.newSession();
+        llm.script(sessionId.value(),
+                ScriptedLlmClient.callTool("Write", Map.of("file_path", "blocked.txt", "content", "should not land")),
+                ScriptedLlmClient.text("acknowledged"));
+        node.hookRegistry().register(HookEventType.PRE_TOOL,
+                new DeclarativePreToolHook("guard-skill", NameOnlyPredicate.ANY,
+                        new ShellAction("echo 'writes are not allowed here' >&2; exit 2", Duration.ofSeconds(10)),
+                        new DefaultShellActionExecutor()));
+
+        final OrcaAgentExecutionResult result = node.run(sessionId, "write a file");
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(node.fileExists("blocked.txt")).isFalse();
+        assertThat(llm.lastCallFor(sessionId.value()).lastObservation()).contains("writes are not allowed here");
     }
 }

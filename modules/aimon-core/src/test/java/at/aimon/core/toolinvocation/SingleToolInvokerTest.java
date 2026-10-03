@@ -35,10 +35,13 @@ import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.agent.tool.execution.ToolExecutionResult;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.environment.EnvironmentDescriptor;
+import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.hook.HookExecutionManager;
 import at.aimon.core.hook.HookFeedback;
 import at.aimon.core.hook.HookRegistry;
+import at.aimon.core.hook.event.PermissionDeniedContext;
+import at.aimon.core.hook.event.PermissionRequestContext;
 import at.aimon.core.hook.event.PostToolContext;
 import at.aimon.core.hook.event.PreToolContext;
 import at.aimon.core.hook.execution.AskPromptHandler;
@@ -144,6 +147,84 @@ class SingleToolInvokerTest {
         verify(hookExecutionManager).executePostTool(post.capture());
         assertThat(pre.getValue().getEnvironmentDescriptor()).contains(descriptor);
         assertThat(post.getValue().getEnvironmentDescriptor()).contains(descriptor);
+    }
+
+    @Test
+    @DisplayName("all four tool-scoped hook chains carry the execution environment the tool itself runs in (EE-9)")
+    void toolScopedHooksCarryTheToolContextsExecutionEnvironment() {
+        givenToolBehavior(InterruptBehavior.NON_INTERRUPTIBLE);
+        when(toolExecutionManager.execute(any(), any(), any(), any()))
+                .thenReturn(ToolExecutionResult.of(TOOL_USE_ID, ToolResult.success("done")));
+        final ExecutionEnvironment environment = TestExecutionEnvironments.builder().workingDirectory("/workspace")
+                .build();
+
+        invoker.invoke(specIn(TestExecutionEnvironments.withoutStamps(environment)));
+
+        final ArgumentCaptor<PermissionRequestContext> permission = ArgumentCaptor
+                .forClass(PermissionRequestContext.class);
+        final ArgumentCaptor<PreToolContext> pre = ArgumentCaptor.forClass(PreToolContext.class);
+        final ArgumentCaptor<PostToolContext> post = ArgumentCaptor.forClass(PostToolContext.class);
+        verify(hookExecutionManager).executePermissionRequest(permission.capture());
+        verify(hookExecutionManager).executePreTool(pre.capture());
+        verify(hookExecutionManager).executePostTool(post.capture());
+        // The same instance, not a look-alike: a hook's shell action must land in the shell the tool would use.
+        assertThat(permission.getValue().getExecutionEnvironment().orElseThrow()).isSameAs(environment);
+        assertThat(pre.getValue().getExecutionEnvironment().orElseThrow()).isSameAs(environment);
+        assertThat(post.getValue().getExecutionEnvironment().orElseThrow()).isSameAs(environment);
+        // The descriptor is derived from the environment, never carried separately.
+        assertThat(pre.getValue().getEnvironmentDescriptor()).contains(environment.descriptor());
+        // A PreTool input rewrite threads a copied context; the environment must survive the copy.
+        assertThat(pre.getValue().withCurrentInput(ToolInput.of(Map.of("file_path", "/y"))).getExecutionEnvironment()
+                .orElseThrow()).isSameAs(environment);
+        assertThat(
+                post.getValue().withCurrentOutput(ToolResult.success("masked")).getExecutionEnvironment().orElseThrow())
+                .isSameAs(environment);
+    }
+
+    @Test
+    @DisplayName("a permission denial's advisory chain carries the execution environment too")
+    void permissionDeniedHookCarriesTheExecutionEnvironment() {
+        givenToolBehavior(InterruptBehavior.NON_INTERRUPTIBLE);
+        when(hookExecutionManager.hasBlockedResult(any())).thenReturn(true);
+        when(hookExecutionManager.collectBlockedReasons(any())).thenReturn(List.of("not allowed"));
+        final ExecutionEnvironment environment = TestExecutionEnvironments.builder().workingDirectory("/workspace")
+                .build();
+
+        invoker.invoke(specIn(TestExecutionEnvironments.withoutStamps(environment)));
+
+        final ArgumentCaptor<PermissionDeniedContext> denied = ArgumentCaptor.forClass(PermissionDeniedContext.class);
+        verify(hookExecutionManager).executePermissionDenied(denied.capture());
+        assertThat(denied.getValue().getExecutionEnvironment().orElseThrow()).isSameAs(environment);
+    }
+
+    @Test
+    @DisplayName("a tool context without an execution environment leaves the hook contexts empty, not host-backed")
+    void toolScopedHooksAreEmptyWhenTheToolContextHasNoEnvironment() {
+        givenToolBehavior(InterruptBehavior.NON_INTERRUPTIBLE);
+        when(toolExecutionManager.execute(any(), any(), any(), any()))
+                .thenReturn(ToolExecutionResult.of(TOOL_USE_ID, ToolResult.success("done")));
+
+        invoker.invoke(specIn(ToolContext.empty()));
+
+        final ArgumentCaptor<PermissionRequestContext> permission = ArgumentCaptor
+                .forClass(PermissionRequestContext.class);
+        final ArgumentCaptor<PreToolContext> pre = ArgumentCaptor.forClass(PreToolContext.class);
+        final ArgumentCaptor<PostToolContext> post = ArgumentCaptor.forClass(PostToolContext.class);
+        verify(hookExecutionManager).executePermissionRequest(permission.capture());
+        verify(hookExecutionManager).executePreTool(pre.capture());
+        verify(hookExecutionManager).executePostTool(post.capture());
+        assertThat(permission.getValue().getExecutionEnvironment()).isEmpty();
+        assertThat(pre.getValue().getExecutionEnvironment()).isEmpty();
+        assertThat(pre.getValue().getEnvironmentDescriptor()).isEmpty();
+        assertThat(post.getValue().getExecutionEnvironment()).isEmpty();
+    }
+
+    private ToolInvocationSpec specIn(ToolContext context) {
+        return ToolInvocationSpec.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("agent")
+                .hookRegistry(hookRegistry).environment(mock(Environment.class)).executionAttributes(Map.of())
+                .toolRegistry(toolRegistry).sessionRegistry(sessionRegistry).allowedTools(List.of())
+                .coordinator(coordinator).toolContext(context).toolUse(toolUse(Map.of("file_path", "/x")))
+                .iterationCount(1).build();
     }
 
     @Test

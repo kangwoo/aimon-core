@@ -53,6 +53,9 @@ class OnConfigReloadContextTest {
         assertThat(ctx.isSuccessful()).isTrue();
         assertThat(ctx.getFailureReason()).isEmpty();
         assertThat(ctx.getTimestamp()).isEqualTo(ts);
+        // Fires from the config watcher, outside any execution: no execution environment, by design.
+        assertThat(ctx.getExecutionEnvironment()).isEmpty();
+        assertThat(ctx.getEnvironmentDescriptor()).isEmpty();
     }
 
     @Test

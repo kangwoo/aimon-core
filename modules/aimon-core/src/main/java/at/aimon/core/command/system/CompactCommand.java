@@ -26,10 +26,12 @@ import at.aimon.core.command.execution.CommandExecutionResult;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.command.execution.direct.DirectCommandExecutionRequest;
 import at.aimon.core.command.execution.direct.DirectExecutable;
+import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookExecutionManager;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.event.OnStopContext;
 import at.aimon.core.llm.LlmCallMetadata;
+import at.aimon.core.tools.ExecutionEnvironmentAccess;
 
 /**
  * Built-in command that performs a MANUAL conversation compaction.
@@ -142,9 +144,13 @@ public final class CompactCommand extends SystemCommand implements DirectExecuta
                 .orElse(null);
 
         final Principal principal = request.getPrincipal().orElse(null);
+        // /compact runs inside the executor's command flow, so the command's tool context carries the execution's
+        // environment; the compaction hooks and the OnStop hooks below are handed the same one.
+        final ExecutionEnvironment executionEnvironment = ExecutionEnvironmentAccess.of(context.getToolContext())
+                .orElse(null);
         final ContextRequest contextRequest = ContextRequest.builder().transcriptBuffer(memory)
                 .model(context.getDefaultModel()).hookRegistry(hookRegistry).environment(environment)
-                .caller(ContextCaller.builder().principal(principal).build())
+                .executionEnvironment(executionEnvironment).caller(ContextCaller.builder().principal(principal).build())
                 .callMetadata(buildCallMetadata(memory, principal)).build();
 
         final Instant startedAt = Instant.now();
@@ -160,7 +166,7 @@ public final class CompactCommand extends SystemCommand implements DirectExecuta
         final Instant completedAt = Instant.now();
 
         final CommandExecutionResult commandResult = buildCommandResult(result, unexpected);
-        invokeOnStop(commandResult, startedAt, completedAt);
+        invokeOnStop(commandResult, executionEnvironment, startedAt, completedAt);
         return commandResult;
     }
 
@@ -194,14 +200,15 @@ public final class CompactCommand extends SystemCommand implements DirectExecuta
         return builder.build();
     }
 
-    private void invokeOnStop(CommandExecutionResult commandResult, Instant startedAt, Instant completedAt) {
+    private void invokeOnStop(CommandExecutionResult commandResult, ExecutionEnvironment executionEnvironment,
+            Instant startedAt, Instant completedAt) {
         try {
             final ExecutionMetadata metadata = ExecutionMetadata.simple(safeDuration(startedAt, completedAt), startedAt,
                     completedAt);
             final OnStopContext onStopContext = OnStopContext.builder().executorType(InvokerType.mainAgent())
                     .invokerName(ON_STOP_INVOKER_NAME).hookRegistry(hookRegistry).environment(environment)
-                    .success(commandResult.isSuccess()).finalAnswer(commandResult.getResponse()).metadata(metadata)
-                    .timestamp(completedAt).build();
+                    .executionEnvironment(executionEnvironment).success(commandResult.isSuccess())
+                    .finalAnswer(commandResult.getResponse()).metadata(metadata).timestamp(completedAt).build();
             hookExecutionManager.executeOnStop(onStopContext);
         } catch (RuntimeException e) {
             // OnStopHooks are observability-only; never let them break a /compact response.

@@ -18,7 +18,6 @@ import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolExecutionManager;
 import at.aimon.core.agent.tool.ToolInput;
-import at.aimon.core.environment.EnvironmentDescriptor;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookExecutionManager;
 import at.aimon.core.hook.HookFeedback;
@@ -187,8 +186,9 @@ public final class SingleToolInvoker {
                 final PermissionRequestContext permissionRequestContext = PermissionRequestContext.builder()
                         .invokerType(spec.getInvokerType()).invokerName(spec.getInvokerName())
                         .hookRegistry(spec.getHookRegistry()).environment(spec.getEnvironment())
-                        .toolName(toolUse.getName()).toolInput(ToolInput.of(toolUse.getInput()))
-                        .executionAttributes(spec.getExecutionAttributes()).build();
+                        .executionEnvironment(environmentOf(spec)).toolName(toolUse.getName())
+                        .toolInput(ToolInput.of(toolUse.getInput())).executionAttributes(spec.getExecutionAttributes())
+                        .build();
                 final List<HookResult> permissionResults = hookExecutionManager
                         .executePermissionRequest(permissionRequestContext);
                 feedback.addAll(HookFeedback.collectAdvisory(permissionResults));
@@ -210,7 +210,7 @@ public final class SingleToolInvoker {
                 // Execute PreTool hooks
                 final PreToolContext preToolContext = PreToolContext.builder().executorType(spec.getInvokerType())
                         .invokerName(spec.getInvokerName()).hookRegistry(spec.getHookRegistry())
-                        .environment(spec.getEnvironment()).environmentDescriptor(descriptorOf(spec)).toolUse(toolUse)
+                        .environment(spec.getEnvironment()).executionEnvironment(environmentOf(spec)).toolUse(toolUse)
                         .iterationCount(spec.getIterationCount()).executionAttributes(spec.getExecutionAttributes())
                         .build();
                 final List<HookResult> preToolResults = hookExecutionManager.executePreTool(preToolContext);
@@ -257,9 +257,12 @@ public final class SingleToolInvoker {
         }
     }
 
-    /** The descriptor of the execution environment the tool runs in, for the tool hooks (design §10). */
-    private static EnvironmentDescriptor descriptorOf(ToolInvocationSpec spec) {
-        return ExecutionEnvironmentAccess.of(spec.getToolContext()).map(ExecutionEnvironment::descriptor).orElse(null);
+    /**
+     * The execution environment the tool runs in, for the four tool-scoped hook chains (design §10). Null when the
+     * tool context carries none — the hooks then see an empty environment rather than the host.
+     */
+    private static ExecutionEnvironment environmentOf(ToolInvocationSpec spec) {
+        return ExecutionEnvironmentAccess.of(spec.getToolContext()).orElse(null);
     }
 
     /**
@@ -293,7 +296,8 @@ public final class SingleToolInvoker {
         try {
             final PermissionDeniedContext deniedContext = PermissionDeniedContext.builder()
                     .invokerType(spec.getInvokerType()).invokerName(spec.getInvokerName())
-                    .hookRegistry(spec.getHookRegistry()).environment(spec.getEnvironment()).toolName(toolUse.getName())
+                    .hookRegistry(spec.getHookRegistry()).environment(spec.getEnvironment())
+                    .executionEnvironment(environmentOf(spec)).toolName(toolUse.getName())
                     .toolInput(ToolInput.of(toolUse.getInput())).denyReason(combinedReason)
                     .executionAttributes(spec.getExecutionAttributes()).build();
             hookExecutionManager.executePermissionDenied(deniedContext);
@@ -316,7 +320,7 @@ public final class SingleToolInvoker {
         try {
             final PostToolContext postToolContext = PostToolContext.builder().executorType(spec.getInvokerType())
                     .invokerName(spec.getInvokerName()).hookRegistry(spec.getHookRegistry())
-                    .environment(spec.getEnvironment()).environmentDescriptor(descriptorOf(spec))
+                    .environment(spec.getEnvironment()).executionEnvironment(environmentOf(spec))
                     .toolUse(effectiveToolUse).toolUseResult(toolUseResult).iterationCount(spec.getIterationCount())
                     .executionAttributes(spec.getExecutionAttributes()).build();
             final List<HookResult> postToolResults = hookExecutionManager.executePostTool(postToolContext);

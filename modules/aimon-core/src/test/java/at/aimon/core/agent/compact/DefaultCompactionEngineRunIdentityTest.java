@@ -3,6 +3,7 @@ package at.aimon.core.agent.compact;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -177,6 +178,34 @@ class DefaultCompactionEngineRunIdentityTest {
         assertThat(legacy.calls).isEqualTo(1);
     }
 
+    /**
+     * The request-object entry point is a {@code default} too, and it must select the same positional method the
+     * caller would have reached before it existed — so a guard that lowered its band only on the four-argument
+     * {@code forceCompact} keeps that band when called through {@link CompactionGuardRequest}.
+     */
+    @Test
+    void guardImplementingOnlyThePositionalContractStillAnswersTheRequestObject() {
+        final ExecutionId executionId = ExecutionId.generate("subagent:researcher");
+        final TranscriptBuffer memory = memoryLabelled(SessionId.generate());
+
+        for (boolean budgetForced : new boolean[]{false, true}) {
+            for (ExecutionId id : new ExecutionId[]{null, executionId}) {
+                final LegacyFourArgGuard legacy = new LegacyFourArgGuard();
+                final LegacyForceBandGuard forceBand = new LegacyForceBandGuard();
+                final CompactionGuardRequest request = CompactionGuardRequest.builder().transcriptBuffer(memory)
+                        .model(model()).hookRegistry(hookRegistry).environment(environment).executionId(id)
+                        .budgetForced(budgetForced).build();
+
+                assertThat(legacy.maybeCompact(request).getAction()).isEqualTo(CompactionDecision.Action.NONE);
+                assertThat(legacy.calls).isEqualTo(1);
+
+                forceBand.maybeCompact(request);
+                assertThat(forceBand.calls).as("budgetForced=%s, executionId=%s", budgetForced, id)
+                        .containsExactly(budgetForced ? "forceCompact" : "maybeCompact");
+            }
+        }
+    }
+
     private CompactionRequest.Builder baseRequest(TranscriptBuffer memory) {
         return CompactionRequest.builder().transcriptBuffer(memory).trigger(CompactionTrigger.AUTO).model(model())
                 .hookRegistry(hookRegistry).environment(environment);
@@ -251,6 +280,25 @@ class DefaultCompactionEngineRunIdentityTest {
                 Environment environment) {
             calls++;
             return CompactionDecision.none("legacy guard");
+        }
+    }
+
+    /** A downstream guard that lowered its band by overriding only the four-argument {@code forceCompact}. */
+    private static final class LegacyForceBandGuard implements CompactionGuard {
+        private final List<String> calls = new ArrayList<>();
+
+        @Override
+        public CompactionDecision maybeCompact(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry,
+                Environment environment) {
+            calls.add("maybeCompact");
+            return CompactionDecision.none("legacy guard");
+        }
+
+        @Override
+        public CompactionDecision forceCompact(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry,
+                Environment environment) {
+            calls.add("forceCompact");
+            return CompactionDecision.none("legacy guard, lowered band");
         }
     }
 

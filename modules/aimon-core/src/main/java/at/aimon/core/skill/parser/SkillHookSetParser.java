@@ -71,7 +71,8 @@ import at.aimon.core.skill.hook.declarative.predicate.PredicateParser;
  * <p>
  * Accepted events are exactly {@link SkillHookSet#supportedEvents()}. {@code onSessionStart}, {@code onSessionEnd} and
  * {@code onConfigReload} are rejected here on purpose: they fire on the session / application lifecycle, outside any
- * skill invocation, so a per-skill registration for them could never fire. Declare those in {@code hooks.json}.
+ * execution, so a per-skill registration for them could never fire and a shell action would have no execution
+ * environment to run in. Declare those in {@code hooks.json}.
  *
  * <p>
  * Rules enforced at parse time:
@@ -84,7 +85,8 @@ import at.aimon.core.skill.hook.declarative.predicate.PredicateParser;
  * <li>Every event except {@code preTool} / {@code postTool} accepts {@code action.type: shell} only &mdash; those two
  * are the only ones carrying a tool input for an HTTP / MCP payload to template against.
  * <li>{@code action.type: shell} requires the supplied {@link ShellActionExecutor} to report
- * {@link ShellActionExecutor#isShellSupported()} as {@code true}.
+ * {@link ShellActionExecutor#isShellSupported()} as {@code true}, and to be able to
+ * {@linkplain ShellActionExecutor#canRunOn(HookEventType) run on} the event it is declared under.
  * <li>{@code action.type: http} / {@code mcp} only parse when the matching executor was supplied; otherwise the
  * parser fails with a clear message so misconfigurations surface at skill-load time.
  * </ul>
@@ -189,8 +191,9 @@ public final class SkillHookSetParser {
             final String event = requireString("hooks", entry.getKey());
             if (!KNOWN_EVENTS.contains(event)) {
                 throw new IllegalArgumentException("Field 'hooks' has unknown event: '" + event + "' (allowed: "
-                        + KNOWN_EVENTS + "). Session- and config-lifecycle events fire outside any skill invocation,"
-                        + " so they can only be declared in hooks.json.");
+                        + KNOWN_EVENTS + "). Session- and config-lifecycle events (onSessionStart, onSessionEnd,"
+                        + " onConfigReload) fire outside any execution, so there is no execution environment for a"
+                        + " skill hook's shell action to run in; they can only be declared in hooks.json.");
             }
             final List<?> defs = requireList("hooks." + event, entry.getValue());
             for (int i = 0; i < defs.size(); i++) {
@@ -289,8 +292,9 @@ public final class SkillHookSetParser {
                 if (!shellExecutor.isShellSupported()) {
                     throw new IllegalArgumentException(path + ".action: shell hooks are not supported in this"
                             + " configuration. Wire SkillHookSetParser with a DefaultShellActionExecutor to enable"
-                            + " them.");
+                            + " them (they then run in the execution environment's shell).");
                 }
+                requireRunnableOn(event, path);
                 final String command = requireString(path + ".action.command", actionMap.get("command"));
                 final Duration timeout = parseTimeout(path + ".action.timeoutMs", actionMap.get("timeoutMs"));
                 return new ShellAction(command, timeout);
@@ -312,6 +316,45 @@ public final class SkillHookSetParser {
             default -> throw new IllegalArgumentException(
                     path + ".action.type unknown: '" + type + "' (allowed: deny, shell, http, mcp)");
         }
+    }
+
+    /**
+     * Rejects a shell action on an event the wired executor could never run it for.
+     *
+     * <p>
+     * A skill hook's shell action runs in the firing execution's environment and nowhere else, so on an event that
+     * fires outside every execution it would be skipped on each firing — and that skip is only a WARN, because the
+     * executor never throws. Failing the parse is what makes the mistake visible. Today the unknown-event check
+     * above already keeps such events out of frontmatter; this holds the line if {@link SkillHookSet#supportedEvents()}
+     * ever grows one.
+     */
+    private void requireRunnableOn(String event, String path) {
+        requireRunnableOn(shellExecutor, eventType(event), path);
+    }
+
+    /**
+     * The check behind {@link #requireRunnableOn(String, String)}, separated from the event-name lookup so it can be
+     * exercised for events frontmatter does not accept.
+     *
+     * @throws IllegalArgumentException
+     *             if the executor needs an execution environment and the event never has one
+     */
+    static void requireRunnableOn(ShellActionExecutor shellExecutor, HookEventType<?> eventType, String path) {
+        if (!shellExecutor.canRunOn(eventType)) {
+            throw new IllegalArgumentException(path + ".action: 'shell' is not valid for " + eventType.name()
+                    + " hooks in a skill. " + eventType.name() + " fires outside any execution, so there is no"
+                    + " execution environment, and a skill hook's shell action only runs in the execution"
+                    + " environment's shell.");
+        }
+    }
+
+    private static HookEventType<?> eventType(String event) {
+        for (HookEventType<?> type : SkillHookSet.supportedEvents()) {
+            if (type.name().equals(event)) {
+                return type;
+            }
+        }
+        throw new IllegalStateException("Unhandled event: " + event);
     }
 
     private static HttpAction parseHttpAction(Map<?, ?> actionMap, String path) {

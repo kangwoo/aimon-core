@@ -14,6 +14,7 @@ import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
+import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookExecutionManager;
 import at.aimon.core.hook.HookFeedback;
 import at.aimon.core.hook.HookRegistry;
@@ -178,10 +179,10 @@ public class DefaultCompactionEngine implements CompactionEngine {
 
             // 1)-4) PreCompact hooks, strip, summary prompt and the summary LLM call — the half summarize() shares.
             final SummaryAttempt attempt = generateSummary(request.getTrigger(), request.getHookRegistry(),
-                    request.getEnvironment(), request.getExecutionId().orElse(null), memory.getSessionId(),
-                    originalMessages.size(), preTokenCount, inRangeMessages, discoveredToolNames,
-                    request.getCustomInstructions().orElse(null), request.getCallMetadata().orElse(null),
-                    request.getModel(), startedAt, null);
+                    request.getEnvironment(), request.getExecutionEnvironment().orElse(null),
+                    request.getExecutionId().orElse(null), memory.getSessionId(), originalMessages.size(),
+                    preTokenCount, inRangeMessages, discoveredToolNames, request.getCustomInstructions().orElse(null),
+                    request.getCallMetadata().orElse(null), request.getModel(), startedAt, null);
             if (attempt.failure != null) {
                 return attempt.failure;
             }
@@ -212,6 +213,7 @@ public class DefaultCompactionEngine implements CompactionEngine {
             try {
                 final PostCompactContext postContext = PostCompactContext.builder().invokerType(InvokerType.mainAgent())
                         .invokerName("compaction-engine").hookRegistry(registry).environment(request.getEnvironment())
+                        .executionEnvironment(request.getExecutionEnvironment().orElse(null))
                         .trigger(request.getTrigger()).compactionMetadata(metadata).compactSummary(summaryText)
                         .transcriptBuffer(memory).recentReadFilePaths(recentReadFilePaths).invokedSkills(invokedSkills)
                         .timestamp(Instant.now()).build();
@@ -253,10 +255,11 @@ public class DefaultCompactionEngine implements CompactionEngine {
             final int preTokenCount = tokenEstimator.estimate(request.getSystemPrompt(), messages);
             final List<String> discoveredToolNames = CompactionScans.discoveredToolNames(messages);
             final SummaryAttempt attempt = generateSummary(request.getTrigger(), request.getHookRegistry(),
-                    request.getEnvironment(), request.getExecutionId().orElse(null), request.getSessionId(),
-                    messages.size(), preTokenCount, messages, discoveredToolNames,
-                    request.getCustomInstructions().orElse(null), request.getCallMetadata().orElse(null),
-                    request.getModel(), startedAt, request.isRolling() ? request : null);
+                    request.getEnvironment(), request.getExecutionEnvironment().orElse(null),
+                    request.getExecutionId().orElse(null), request.getSessionId(), messages.size(), preTokenCount,
+                    messages, discoveredToolNames, request.getCustomInstructions().orElse(null),
+                    request.getCallMetadata().orElse(null), request.getModel(), startedAt,
+                    request.isRolling() ? request : null);
             if (attempt.failure != null) {
                 return attempt.failure;
             }
@@ -288,7 +291,8 @@ public class DefaultCompactionEngine implements CompactionEngine {
         try {
             final PostCompactContext postContext = PostCompactContext.builder().invokerType(InvokerType.mainAgent())
                     .invokerName("compaction-engine").hookRegistry(request.getHookRegistry())
-                    .environment(request.getEnvironment()).trigger(request.getTrigger())
+                    .environment(request.getEnvironment())
+                    .executionEnvironment(request.getExecutionEnvironment().orElse(null)).trigger(request.getTrigger())
                     .compactionMetadata(installed.getMetadata()).compactSummary(installed.getSummaryText().orElse(""))
                     .transcriptBuffer(transcriptBuffer)
                     .recentReadFilePaths(CompactionScans.recentReadFilePaths(request.getMessages()))
@@ -305,6 +309,9 @@ public class DefaultCompactionEngine implements CompactionEngine {
      * {@link #summarize(SummaryRequest)}: PreCompact hooks, non-text stripping, the summary prompt and the summary LLM
      * call. Runs with the reentrancy flag already set by the caller.
      *
+     * @param executionEnvironment
+     *            the execution's environment for the PreCompact hook context, or {@code null} when the request carried
+     *            none
      * @param hookMessageCount
      *            the message count PreCompact hooks are shown &mdash; the whole conversation for {@code compact}
      * @param preTokenCount
@@ -317,15 +324,16 @@ public class DefaultCompactionEngine implements CompactionEngine {
      */
     @SuppressWarnings("checkstyle:ParameterNumber")
     private SummaryAttempt generateSummary(CompactionTrigger trigger, HookRegistry registry, Environment environment,
-            ExecutionId executionId, SessionId sessionId, int hookMessageCount, int preTokenCount,
-            List<Message> inRangeMessages, List<String> discoveredToolNames, String customInstructions,
-            LlmCallMetadata callerMetadata, LlmModel model, Instant startedAt, SummaryRequest rolling) {
+            ExecutionEnvironment executionEnvironment, ExecutionId executionId, SessionId sessionId,
+            int hookMessageCount, int preTokenCount, List<Message> inRangeMessages, List<String> discoveredToolNames,
+            String customInstructions, LlmCallMetadata callerMetadata, LlmModel model, Instant startedAt,
+            SummaryRequest rolling) {
         // 1) PreCompact hooks
-        final PreCompactContext preContext = applyIdentity(
-                PreCompactContext.builder().invokerType(InvokerType.mainAgent()).invokerName("compaction-engine")
-                        .hookRegistry(registry).environment(environment).trigger(trigger).messageCount(hookMessageCount)
-                        .estimatedTokens(preTokenCount).timestamp(startedAt),
-                executionId, sessionId).build();
+        final PreCompactContext preContext = applyIdentity(PreCompactContext.builder()
+                .invokerType(InvokerType.mainAgent()).invokerName("compaction-engine").hookRegistry(registry)
+                .environment(environment).executionEnvironment(executionEnvironment).trigger(trigger)
+                .messageCount(hookMessageCount).estimatedTokens(preTokenCount).timestamp(startedAt), executionId,
+                sessionId).build();
         final List<HookResult> preResults = hookExecutionManager.executePreCompact(preContext);
         // Advisory only: a blocked result's feedback IS its deny reason, and the block paths below already report
         // it (AUTO through CompactionBlockedByHookException, MANUAL through the downgrade warning). Collecting it

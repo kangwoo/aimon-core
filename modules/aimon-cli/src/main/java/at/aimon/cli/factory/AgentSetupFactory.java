@@ -129,6 +129,7 @@ import at.aimon.core.scheduling.SchedulingEngine;
 import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.shell.impl.local.LocalShell;
 import at.aimon.core.skill.hook.declarative.DefaultShellActionExecutor;
+import at.aimon.core.skill.hook.declarative.HostShellActionExecutor;
 import at.aimon.core.skill.parser.MarkdownSkillParser;
 import at.aimon.core.skill.parser.SkillHookSetParser;
 import at.aimon.core.skill.parser.SkillParser;
@@ -467,8 +468,8 @@ public class AgentSetupFactory {
      * Creates an AgentSetupFactory with default implementations.
      *
      * <p>
-     * The bundle loader is built lazily inside {@link #create(CliConfig)} so it can be wired with a SK-13 shell-aware
-     * skill parser whose lifecycle (a {@link LocalShell}) is owned by the resulting {@link AgentSetup}.
+     * The bundle loader is built lazily inside {@link #create(CliConfig)} so it can be wired with the same SK-13
+     * shell-aware skill parser the stack uses.
      */
     public AgentSetupFactory() {
         this(new LlmClientFactory(), null);
@@ -538,11 +539,13 @@ public class AgentSetupFactory {
         // #105: the one model name every peer-memory component runs on, decided before the shell, the queue or the
         // stack starts, so a refusal leaves none of them running. Null when memory is off.
         final String memoryModelName = memoryModelName(config, llmClient, outputFormatter);
-        // SK-13: build the LocalShell + shell-aware skill parser here rather than letting the stack default them, so
-        // the bundle loader below shares the same parser. Supplying a parser is also what tells AimonStackBuilder not
-        // to open a second shell of its own.
-        final LocalShell skillHookShell = new LocalShell();
-        final SkillParser skillParser = createShellAwareSkillParser(skillHookShell);
+        // SK-13: build the shell-aware skill parser here rather than letting the stack default it, so the bundle
+        // loader below shares the same parser. It holds no shell — a skill hook's shell action runs in the execution
+        // environment it fires in.
+        final SkillParser skillParser = createShellAwareSkillParser();
+        // The host shell is for hooks.json only: operator configuration, and the one place that can declare events
+        // firing outside any execution, where there is no execution environment to run in.
+        final LocalShell hookConfigShell = new LocalShell();
         final AgentBundleLoader effectiveBundleLoader = (this.agentBundleLoader != null)
                 ? this.agentBundleLoader
                 : new AdaptiveAgentBundleLoader(DEFAULT_AGENT_BUNDLE_BASE_PATH, new MarkdownAgentDefinitionParser(),
@@ -627,7 +630,7 @@ public class AgentSetupFactory {
             // memory backend and had to be built ahead of MemorySpec: buildDerivationQueue starts its worker pool, so
             // a boot that fails here would otherwise leave one running for the life of the process.
             closeSuppressing(graalJsEngines, e);
-            closeSuppressing(skillHookShell, e);
+            closeSuppressing(hookConfigShell, e);
             if (memoryQueue != null) {
                 // Guarded rather than left to closeSuppressing's null check, for the reason enrollMemorySubsystem
                 // gives: a method reference on a null receiver throws before the call is ever made.
@@ -635,7 +638,7 @@ public class AgentSetupFactory {
             }
             throw e;
         }
-        return decorate(config, stack, agentBundle, fileSystem, skillHookShell, graalJsEngines,
+        return decorate(config, stack, agentBundle, fileSystem, hookConfigShell, graalJsEngines,
                 new CliDecorations(outputFormatter, approvalChannel.get(), traceSpanStore, llmClient,
                         new CliMemoryDecorations(memoryWiring, representationStore, observationStore, memoryQueue,
                                 memoryModelName)));
@@ -646,19 +649,19 @@ public class AgentSetupFactory {
      * stack's teardown plan so shutdown stays a single ordered sequence.
      */
     private AgentSetup decorate(CliConfig config, AimonStack stack, AgentBundle agentBundle, LocalFileSystem fileSystem,
-            LocalShell skillHookShell, GraalJsEngineHolder graalJsEngines, CliDecorations cli) {
+            LocalShell hookConfigShell, GraalJsEngineHolder graalJsEngines, CliDecorations cli) {
         // Closed after the agent runtime, so no WorkflowJs script can still be resolving against a
         // half-closed engine. TeardownPhase, not this call order, is what puts it there.
         stack.own(TeardownPhase.SCRIPT_ENGINES, "graalJsEngines", graalJsEngines);
-        stack.own(TeardownPhase.SKILL_HOOK_SHELL, "skillHookShell", skillHookShell);
+        stack.own(TeardownPhase.HOOK_CONFIG_SHELL, "hookConfigShell", hookConfigShell);
 
         final OrcaAgentExecutor agentExecutor = stack.agentExecutor();
         final OrcaAgentRuntime agentRuntime = stack.runtime(stack.primaryRuntimeId()).orElseThrow(
                 () -> new IllegalStateException("Stack published no runtime for " + stack.primaryRuntimeId()));
-        // Closed before skillHookShell: the reload callback fires shell-backed declarative hooks, so a debounced
+        // Closed before hookConfigShell: the reload callback fires shell-backed declarative hooks, so a debounced
         // reload landing between the two closes would otherwise hit a closed shell.
         stack.own(TeardownPhase.HOOK_HOT_RELOAD, "hookHotReload", setupHookHotReload(agentRuntime, agentExecutor,
-                skillHookShell, fileSystem, agentBundle.getAgent().getName()));
+                hookConfigShell, fileSystem, agentBundle.getAgent().getName()));
         stack.schedulingEngine().ifPresent(
                 engine -> engine.addEventListener(new ScheduledTaskEventDisplayListener(config.getCliSettings())));
 
@@ -964,11 +967,12 @@ public class AgentSetupFactory {
     /**
      * Builds the {@link MarkdownSkillParser} used for both bundled and user skills. Wiring a
      * {@link DefaultShellActionExecutor} here is what activates the SK-13 frontmatter {@code shell} action type — the
-     * default zero-arg parser falls back to a no-op executor that fails such declarations at parse time.
+     * default zero-arg parser falls back to a no-op executor that fails such declarations at parse time. The executor
+     * takes no shell: each action runs in the shell of the execution environment its hook fires in.
      */
-    private static SkillParser createShellAwareSkillParser(VirtualShell shell) {
+    static SkillParser createShellAwareSkillParser() {
         return new MarkdownSkillParser(new ShellArgumentTokenizer(),
-                new SkillHookSetParser(new DefaultShellActionExecutor(shell)));
+                new SkillHookSetParser(new DefaultShellActionExecutor()));
     }
 
     /**
@@ -1020,15 +1024,20 @@ public class AgentSetupFactory {
      * registry without restarting the CLI. Delegates to {@link HookHotReloadBootstrap} so web bootstraps that adopt the
      * helper get the same wiring shape.
      *
+     * <p>
+     * {@code hooks.json} shell actions run on the host shell through a {@link HostShellActionExecutor}, unlike
+     * skill-declared ones: the file is operator configuration and can declare session- and config-lifecycle events,
+     * which have no execution environment.
+     *
      * @return the {@link HookHotReloadBootstrap.Started} handle owned by {@code AgentSetup}; closed during
      *         {@link AgentSetup#close()}
      */
     private HookHotReloadBootstrap.Started setupHookHotReload(OrcaAgentRuntime agentRuntime,
-            OrcaAgentExecutor agentExecutor, VirtualShell skillHookShell, LocalFileSystem fileSystem,
+            OrcaAgentExecutor agentExecutor, VirtualShell hookConfigShell, LocalFileSystem fileSystem,
             String agentName) {
         return HookHotReloadBootstrap.builder().userHome(Paths.get(System.getProperty("user.home")))
                 .projectRoot(Paths.get(fileSystem.getWorkingDirectory()))
-                .shellExecutor(new DefaultShellActionExecutor(skillHookShell)).processEnv(System.getenv())
+                .shellExecutor(new HostShellActionExecutor(hookConfigShell)).processEnv(System.getenv())
                 .registry(agentRuntime.getHookRegistry()).executionManager(agentExecutor.getHookExecutionManager())
                 .invoker(new ReloadInvoker(InvokerType.MAIN_AGENT, agentName, Environment.createDefault())).start();
     }

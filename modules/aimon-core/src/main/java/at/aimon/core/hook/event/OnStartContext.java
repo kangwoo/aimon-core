@@ -3,9 +3,11 @@ package at.aimon.core.hook.event;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.execution.HookContext;
 
@@ -44,6 +46,7 @@ public final class OnStartContext implements HookContext {
     private final String invokerName;
     private final HookRegistry hookRegistry;
     private final Environment environment;
+    private final ExecutionEnvironment executionEnvironment;
     private final String userMessage;
     private final Instant timestamp;
     private final Map<String, Object> executionAttributes;
@@ -53,6 +56,7 @@ public final class OnStartContext implements HookContext {
         invokerName = Objects.requireNonNull(builder.invokerName, "Executor name cannot be null");
         hookRegistry = Objects.requireNonNull(builder.hookRegistry, "Hook registry cannot be null");
         environment = Objects.requireNonNull(builder.environment, "Environment cannot be null");
+        executionEnvironment = builder.executionEnvironment;
         userMessage = Objects.requireNonNull(builder.userMessage, "User message cannot be null");
         timestamp = Objects.requireNonNull(builder.timestamp, "Timestamp cannot be null");
         executionAttributes = builder.executionAttributes != null ? Map.copyOf(builder.executionAttributes) : Map.of();
@@ -76,6 +80,11 @@ public final class OnStartContext implements HookContext {
     @Override
     public Environment getEnvironment() {
         return environment;
+    }
+
+    @Override
+    public Optional<ExecutionEnvironment> getExecutionEnvironment() {
+        return Optional.ofNullable(executionEnvironment);
     }
 
     /**
@@ -110,6 +119,7 @@ public final class OnStartContext implements HookContext {
         private String invokerName;
         private HookRegistry hookRegistry;
         private Environment environment;
+        private ExecutionEnvironment executionEnvironment;
         private String userMessage;
         private Instant timestamp = Instant.now();
         private Map<String, Object> executionAttributes;
@@ -162,6 +172,18 @@ public final class OnStartContext implements HookContext {
          */
         public Builder environment(Environment environment) {
             this.environment = environment;
+            return this;
+        }
+
+        /**
+         * Sets the execution environment the firing execution runs in.
+         *
+         * @param executionEnvironment
+         *            the environment (nullable — absent when the firing site has none in reach)
+         * @return This builder
+         */
+        public Builder executionEnvironment(ExecutionEnvironment executionEnvironment) {
+            this.executionEnvironment = executionEnvironment;
             return this;
         }
 

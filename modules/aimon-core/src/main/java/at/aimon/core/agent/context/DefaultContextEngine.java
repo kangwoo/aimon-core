@@ -15,6 +15,7 @@ import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.compact.CompactionDecision;
 import at.aimon.core.agent.compact.CompactionEngine;
 import at.aimon.core.agent.compact.CompactionGuard;
+import at.aimon.core.agent.compact.CompactionGuardRequest;
 import at.aimon.core.agent.compact.CompactionMetadata;
 import at.aimon.core.agent.compact.CompactionRequest;
 import at.aimon.core.agent.compact.CompactionResult;
@@ -168,16 +169,13 @@ public final class DefaultContextEngine implements ContextEngine {
         }
         final int sizeBefore = buffer.size();
 
-        final CompactionDecision decision;
-        if (executionId == null) {
-            decision = request.isBudgetForced()
-                    ? compactionGuard.forceCompact(buffer, request.getModel(), hookRegistry, environment)
-                    : compactionGuard.maybeCompact(buffer, request.getModel(), hookRegistry, environment);
-        } else {
-            decision = request.isBudgetForced()
-                    ? compactionGuard.forceCompact(buffer, request.getModel(), hookRegistry, environment, executionId)
-                    : compactionGuard.maybeCompact(buffer, request.getModel(), hookRegistry, environment, executionId);
-        }
+        // One request-object call rather than a branch per overload: it is the only entry point that can carry the
+        // execution environment to the compaction hooks, and its default still selects the positional method a
+        // guard written against those expects.
+        final CompactionDecision decision = compactionGuard.maybeCompact(CompactionGuardRequest.builder()
+                .transcriptBuffer(buffer).model(request.getModel()).hookRegistry(hookRegistry).environment(environment)
+                .executionId(executionId).executionEnvironment(request.getExecutionEnvironment().orElse(null))
+                .budgetForced(request.isBudgetForced()).build());
         // Read after the guard: a compaction rewrote the buffer in place, and the view is what it left behind.
         return ContextDecision.from(decision, viewOf(request), sizeBefore);
     }
@@ -324,7 +322,8 @@ public final class DefaultContextEngine implements ContextEngine {
         }
         final CompactionRequest compactionRequest = CompactionRequest.builder().transcriptBuffer(buffer)
                 .trigger(CompactionTrigger.MANUAL).model(request.getModel()).hookRegistry(requireHookRegistry(request))
-                .environment(requireEnvironment(request)).customInstructions(instructions)
+                .environment(requireEnvironment(request))
+                .executionEnvironment(request.getExecutionEnvironment().orElse(null)).customInstructions(instructions)
                 .callMetadata(request.getCallMetadata().orElse(null))
                 .executionId(request.getCaller().getExecutionId().orElse(null)).build();
         final CompactionResult result = compactionEngine.compact(compactionRequest);
@@ -372,7 +371,8 @@ public final class DefaultContextEngine implements ContextEngine {
                 .systemPrompt(request.getSystemPrompt()).sessionId(buffer.getSessionId())
                 .executionId(request.getCaller().getExecutionId().orElse(null)).trigger(trigger)
                 .model(request.getModel()).hookRegistry(requireHookRegistry(request))
-                .environment(requireEnvironment(request)).customInstructions(instructions)
+                .environment(requireEnvironment(request))
+                .executionEnvironment(request.getExecutionEnvironment().orElse(null)).customInstructions(instructions)
                 .callMetadata(request.getCallMetadata().orElse(null)).build();
         final CompactionResult summarized = compactionEngine.summarize(summaryRequest);
         if (summarized == null) {

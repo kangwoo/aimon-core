@@ -105,6 +105,41 @@ public interface CompactionGuard {
     }
 
     /**
+     * Evaluates one AUTO compaction pass described by a request object &mdash; the entry point for a caller that has
+     * the execution's {@linkplain CompactionGuardRequest#getExecutionEnvironment() environment} to pass on to the
+     * compaction hooks.
+     *
+     * <p>
+     * The default delegates to whichever of the four positional methods the request's {@code budgetForced} and
+     * {@code executionId} select, so a guard written against those keeps its behaviour, including a lowered band it
+     * implemented only on the four-argument {@code forceCompact}. The positional methods cannot carry the execution
+     * environment, though: a guard that does not override this drops it, and the PreCompact / PostCompact hooks it
+     * fires see none. {@link DefaultCompactionGuard} overrides it.
+     *
+     * @param request
+     *            the pass to evaluate (must not be null)
+     * @return a {@link CompactionDecision} describing the outcome (never null)
+     * @throws NullPointerException
+     *             if request is null
+     */
+    default CompactionDecision maybeCompact(CompactionGuardRequest request) {
+        Objects.requireNonNull(request, "request cannot be null");
+        final ExecutionId executionId = request.getExecutionId().orElse(null);
+        if (executionId == null) {
+            return request.isBudgetForced()
+                    ? forceCompact(request.getTranscriptBuffer(), request.getModel(), request.getHookRegistry(),
+                            request.getEnvironment())
+                    : maybeCompact(request.getTranscriptBuffer(), request.getModel(), request.getHookRegistry(),
+                            request.getEnvironment());
+        }
+        return request.isBudgetForced()
+                ? forceCompact(request.getTranscriptBuffer(), request.getModel(), request.getHookRegistry(),
+                        request.getEnvironment(), executionId)
+                : maybeCompact(request.getTranscriptBuffer(), request.getModel(), request.getHookRegistry(),
+                        request.getEnvironment(), executionId);
+    }
+
+    /**
      * Proactively compacts the conversation in response to an external hint (e.g. a
      * {@link at.aimon.core.agent.budget.BudgetDecision#SHOULD_COMPACT} signal from the budget tracker), rather than
      * waiting for the model's own auto-compact threshold.

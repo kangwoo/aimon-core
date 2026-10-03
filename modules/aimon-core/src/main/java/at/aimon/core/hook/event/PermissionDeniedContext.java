@@ -9,6 +9,7 @@ import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.base.Principal;
+import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.execution.HookContext;
 
@@ -38,6 +39,7 @@ public final class PermissionDeniedContext implements HookContext {
     private final String invokerName;
     private final HookRegistry hookRegistry;
     private final Environment environment;
+    private final ExecutionEnvironment executionEnvironment;
     private final String toolName;
     private final ToolInput toolInput;
     private final Principal principal;
@@ -50,6 +52,7 @@ public final class PermissionDeniedContext implements HookContext {
         invokerName = Objects.requireNonNull(builder.invokerName, "Invoker name cannot be null");
         hookRegistry = Objects.requireNonNull(builder.hookRegistry, "Hook registry cannot be null");
         environment = Objects.requireNonNull(builder.environment, "Environment cannot be null");
+        executionEnvironment = builder.executionEnvironment;
         toolName = Objects.requireNonNull(builder.toolName, "Tool name cannot be null");
         toolInput = Objects.requireNonNull(builder.toolInput, "Tool input cannot be null");
         principal = builder.principal;
@@ -76,6 +79,11 @@ public final class PermissionDeniedContext implements HookContext {
     @Override
     public Environment getEnvironment() {
         return environment;
+    }
+
+    @Override
+    public Optional<ExecutionEnvironment> getExecutionEnvironment() {
+        return Optional.ofNullable(executionEnvironment);
     }
 
     /**
@@ -137,6 +145,7 @@ public final class PermissionDeniedContext implements HookContext {
         private String invokerName;
         private HookRegistry hookRegistry;
         private Environment environment;
+        private ExecutionEnvironment executionEnvironment;
         private String toolName;
         private ToolInput toolInput;
         private Principal principal;
@@ -192,6 +201,18 @@ public final class PermissionDeniedContext implements HookContext {
          */
         public Builder environment(Environment environment) {
             this.environment = environment;
+            return this;
+        }
+
+        /**
+         * Sets the execution environment the firing execution runs in.
+         *
+         * @param executionEnvironment
+         *            the environment (nullable — absent when the firing site has none in reach)
+         * @return This builder
+         */
+        public Builder executionEnvironment(ExecutionEnvironment executionEnvironment) {
+            this.executionEnvironment = executionEnvironment;
             return this;
         }
 

@@ -7,6 +7,7 @@ import java.util.Optional;
 import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.environment.EnvironmentDescriptor;
+import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookRegistry;
 
 /**
@@ -55,14 +56,41 @@ public interface HookContext {
     Environment getEnvironment();
 
     /**
+     * The execution environment the firing execution runs in — the same instance its tools reach through
+     * {@code ToolContext} (execution-environment design §10). A hook that runs a command or touches a file on the
+     * execution's behalf goes through this rather than the JVM host.
+     *
+     * <p>
+     * Events that fire outside any execution ({@code onSessionStart}, {@code onSessionEnd}, {@code onConfigReload})
+     * have no environment, and empty is the correct answer for them — see
+     * {@link at.aimon.core.hook.HookEventType#firesInsideExecution()}. An event that fires inside an execution can
+     * still arrive empty (a rewake replay, a hand-built context, a firing site that was never handed one), so callers
+     * must handle both.
+     *
+     * <p>
+     * An <em>unavailable</em> environment is carried as-is, not replaced by empty: its {@code descriptor()} still
+     * answers, and its {@code shell()} / {@code fileSystem()} throw on use. A hook must not fall back to the host when
+     * it meets one.
+     *
+     * @return the environment, or empty for an event with no execution environment in reach
+     */
+    default Optional<ExecutionEnvironment> getExecutionEnvironment() {
+        return Optional.empty();
+    }
+
+    /**
      * Describes where the execution's commands run — its execution environment's descriptor, not the JVM host
      * (execution-environment design §10). A hook that reasons about platform or paths reads this rather than
      * assuming the host.
      *
+     * <p>
+     * Derived from {@link #getExecutionEnvironment()}; a context carries the environment only, so the two can never
+     * disagree.
+     *
      * @return the descriptor, or empty for an event with no execution environment in reach
      */
     default Optional<EnvironmentDescriptor> getEnvironmentDescriptor() {
-        return Optional.empty();
+        return getExecutionEnvironment().map(ExecutionEnvironment::descriptor);
     }
 
     /**

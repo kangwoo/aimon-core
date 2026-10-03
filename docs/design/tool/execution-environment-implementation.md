@@ -1258,10 +1258,18 @@ and why. Entries marked **(open)** are also tracked in
   the snapshot. Instead, `UserContextMessageBuilder.build(snapshot, executionWorkingDirectory)` lets the execution's
   descriptor win, and the snapshot's value is used only when the descriptor has none. This avoided churning every
   snapshot collector.
-- **Hook contexts (open, EE-9).** `HookContext.getEnvironmentDescriptor()` exists (default empty) and is filled for
-  `PreToolContext` and `PostToolContext` (from the tool context in `SingleToolInvoker`). `CompactionRequest` did not
-  gain a descriptor, and the compaction, lifecycle, subagent and permission contexts stay empty, so
+- **Hook contexts (closed 2026-10-03, EE-9).** `HookContext.getEnvironmentDescriptor()` exists (default empty) and is
+  filled for `PreToolContext` and `PostToolContext` (from the tool context in `SingleToolInvoker`). `CompactionRequest`
+  did not gain a descriptor, and the compaction, lifecycle, subagent and permission contexts stay empty, so
   `agentCompactMayDependOnExtHook` did not need its stage-5 row.
+
+  *Since closed.* A later change (EE-9 with EE-12) filled the rest, and with the environment itself rather than its
+  descriptor: `HookContext.getExecutionEnvironment()` is set on all ten contexts that fire inside an execution, and
+  `getEnvironmentDescriptor()` is derived from it. `CompactionRequest`, `SummaryRequest` and `ContextRequest` carry an
+  `ExecutionEnvironment` (not the `Optional<EnvironmentDescriptor>` of the §3 table), and
+  `agentCompactMayDependOnExtHook` gained the stage-5 row after all — for the single type `ExecutionEnvironment`. The
+  skill-declared hook shell of §9 Q12 moved off the host in the same change: `skillHookShell` no longer exists. See
+  [`execution-environment-ee9-ee12-hook-environment.md`](execution-environment-ee9-ee12-hook-environment.md).
 - **One shared renderer for the environment block.** `agent.context.EnvironmentBlocks.render(EnvironmentDescriptor)` is
   used by the system prompt, the fork prompt and `EnvironmentContextProvider`, instead of three copies. A field the
   descriptor lacks is left out, and `notes` are rendered as `Notes: …`, so a local environment's text is unchanged. The

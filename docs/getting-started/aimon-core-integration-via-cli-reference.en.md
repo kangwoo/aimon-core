@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/aimon-core-integration-via-cli-reference.md
-source_commit: f4869a9
+source_commit: 95ff295
 ---
 
 # aimon-core integration guide — following aimon-cli as the reference
@@ -591,8 +591,8 @@ span context, so wrapping them would not produce spans anyway.
 
 ```java
 final OutputFormatter outputFormatter = createOutputFormatter(config);
-final LocalShell skillHookShell = new LocalShell();
-final SkillParser skillParser = createShellAwareSkillParser(skillHookShell);
+final SkillParser skillParser = createShellAwareSkillParser();
+final LocalShell hookConfigShell = new LocalShell();
 final AgentBundleLoader effectiveBundleLoader = (this.agentBundleLoader != null)
         ? this.agentBundleLoader
         : new AdaptiveAgentBundleLoader(DEFAULT_AGENT_BUNDLE_BASE_PATH,
@@ -602,8 +602,8 @@ final AgentBundle agentBundle = effectiveBundleLoader.load(extractAgentName(conf
 ```
 
 - **`OutputFormatter`** — owns console colouring and formatting. In your own application, replace it with an SSE streamer, a log appender, a WebSocket sender, ...
-- **`LocalShell`** — the shell that runs the `shell` action in a skill's frontmatter. It is `AutoCloseable` and is cleaned up in `AgentSetup.close()`.
-- **`SkillParser`** — the markdown skill definition parser. Injecting `LocalShell` is what makes `shell` hooks actually run.
+- **`LocalShell`** — the **host shell** that runs the `command` handlers declared in `hooks.json` (wrapped in a `HostShellActionExecutor` and handed to hot reload). It is not for skill hooks. It is `AutoCloseable` and is cleaned up in `AgentSetup.close()`.
+- **`SkillParser`** — the markdown skill definition parser. It is wired with a `DefaultShellActionExecutor` (no arguments) so that `shell` hooks are accepted, but **no shell is injected** — a skill hook's shell action runs in the execution environment's shell of the execution the hook fires in.
 - **`AgentBundleLoader`** — loads `agents/<name>/agent.md` together with the subagents and skills underneath it. It reads from the classpath, so it packages into a jar.
 
 **Your adaptation points:**
@@ -882,8 +882,8 @@ for example, and `offerAsync` never queues — it always returns `SubmitOutcome.
 10. schedulingEngine.close()         // (CLI only — an embedding must separate this)
 11. rewakeService.close()
 12. pendingTurnReaper.close()
-13. hookHotReload.close()            // before skillHookShell — reload callbacks use the shell
-14. skillHookShell.close()
+13. hookHotReload.close()            // before hookConfigShell — reload callbacks use the shell
+14. hookConfigShell.close()          // the host shell for hooks.json hooks. A skill hook's shell belongs to the execution environment and is not here
 ```
 
 Four places in that order have a reason behind them, and every one is backed by a code comment:
@@ -1122,7 +1122,7 @@ For a **more aggressive embedding** (swapping in your own components), move the 
 | `AgentRuntimeRegistry` | app | `@Bean` singleton | Used by `SchedulingEngine` for lazy lookup |
 | `AgentBundleLoader`, `AgentBundle` | app | `@Bean` singleton | Load once if the definition is static |
 | `PendingTurnReaper` | app | `@Bean(initMethod = "start", destroyMethod = "close")` | One daemon thread is enough |
-| `LocalShell` (for skill hooks) | app | `@Bean(destroyMethod = "close")` | Shares an I/O thread pool |
+| `LocalShell` (for `hooks.json` hooks) | app | `@Bean(destroyMethod = "close")` | Needed only when you wire `hooks.json` hot reload. Skill hooks use the execution environment's shell |
 | `SessionRecordStore` | app | `@Bean` singleton | **Entries are per-session, the instance is app-scoped.** A persistent Mongo/Postgres/Redis implementation is mandatory across multiple instances |
 | `TranscriptManager` | app | `@Bean` singleton | The default implementation wrapping the store above |
 | `PendingTurnRegistry`, `AgentApprovalStore`, `SessionApprovalStore` | app | `@Bean` singleton | Entries are keyed by pending turn / `AgentRuntimeId` / `SessionId` respectively, but **the instances are app-scoped**. Use distributed backends if routing is not guaranteed in a cluster |
@@ -1195,16 +1195,12 @@ public class AimonAppConfig {
             .create(llmClient, transcriptManager);
     }
 
-    @Bean(destroyMethod = "close")
-    public VirtualShell skillHookShell() {
-        return new LocalShell();
-    }
-
+    // There is no shell bean for skill hooks — a shell action runs in the execution environment's shell of the execution the hook fires in.
     @Bean
-    public SkillParser skillParser(VirtualShell skillHookShell) {
+    public SkillParser skillParser() {
         return new MarkdownSkillParser(
             new ShellArgumentTokenizer(),
-            new SkillHookSetParser(new DefaultShellActionExecutor(skillHookShell)));
+            new SkillHookSetParser(new DefaultShellActionExecutor()));
     }
 
     @Bean

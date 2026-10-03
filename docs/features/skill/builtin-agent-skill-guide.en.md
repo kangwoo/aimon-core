@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/skill/builtin-agent-skill-guide.md
-source_commit: 6869884
+source_commit: 79d78a7
 ---
 
 # Built-in Agent/Skill Guide
@@ -199,7 +199,7 @@ hooks:
 Review the following: $1
 ```
 
-> The `shell` action only works in an environment where the host has wired `DefaultShellActionExecutor` (aimon-cli, for instance). For the available environment variables and the action semantics, see [AIMON Skill Extensions / hooks](../../references/aimon-skill-extensions.md#hooks--스킬-단위-hook-스코프).
+> The `shell` action only works in an environment where the host has wired `DefaultShellActionExecutor` (aimon-cli, for instance). The command runs not on the host but in **the execution environment's shell of the execution the hook fires in** — where the same skill's `Bash` calls run, with the workspace as its working directory. For the available environment variables and the action semantics, see [AIMON Skill Extensions / hooks](../../references/aimon-skill-extensions.md#hooks--스킬-단위-hook-스코프).
 
 ## Invoking a fork-mode skill
 

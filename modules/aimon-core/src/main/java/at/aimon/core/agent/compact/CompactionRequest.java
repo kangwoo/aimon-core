@@ -6,6 +6,7 @@ import java.util.Optional;
 import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
+import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmModel;
@@ -23,6 +24,7 @@ public final class CompactionRequest {
     private final LlmModel model;
     private final HookRegistry hookRegistry;
     private final Environment environment;
+    private final ExecutionEnvironment executionEnvironment;
     private final String customInstructions;
     private final boolean forced;
     private final LlmCallMetadata callMetadata;
@@ -35,6 +37,7 @@ public final class CompactionRequest {
         this.model = Objects.requireNonNull(builder.model, "Model cannot be null");
         this.hookRegistry = Objects.requireNonNull(builder.hookRegistry, "HookRegistry cannot be null");
         this.environment = Objects.requireNonNull(builder.environment, "Environment cannot be null");
+        this.executionEnvironment = builder.executionEnvironment;
         this.customInstructions = builder.customInstructions;
         this.forced = builder.forced;
         this.callMetadata = builder.callMetadata;
@@ -64,6 +67,14 @@ public final class CompactionRequest {
 
     public Environment getEnvironment() {
         return environment;
+    }
+
+    /**
+     * The execution environment of the execution being compacted, carried into the PreCompact / PostCompact hook
+     * contexts. Empty when the caller had none in reach.
+     */
+    public Optional<ExecutionEnvironment> getExecutionEnvironment() {
+        return Optional.ofNullable(executionEnvironment);
     }
 
     public Optional<String> getCustomInstructions() {
@@ -129,6 +140,7 @@ public final class CompactionRequest {
         private LlmModel model;
         private HookRegistry hookRegistry;
         private Environment environment;
+        private ExecutionEnvironment executionEnvironment;
         private String customInstructions;
         private boolean forced;
         private LlmCallMetadata callMetadata;
@@ -160,6 +172,11 @@ public final class CompactionRequest {
 
         public Builder environment(Environment environment) {
             this.environment = environment;
+            return this;
+        }
+
+        public Builder executionEnvironment(ExecutionEnvironment executionEnvironment) {
+            this.executionEnvironment = executionEnvironment;
             return this;
         }
 

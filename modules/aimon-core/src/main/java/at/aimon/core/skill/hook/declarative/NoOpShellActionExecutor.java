@@ -3,6 +3,7 @@ package at.aimon.core.skill.hook.declarative;
 import java.util.Map;
 import java.util.Objects;
 
+import at.aimon.core.hook.execution.HookContext;
 import at.aimon.core.skill.hook.action.ShellAction;
 
 /**
@@ -29,9 +30,17 @@ public final class NoOpShellActionExecutor implements ShellActionExecutor {
     }
 
     @Override
-    public void run(ShellAction action, Map<String, String> environmentOverrides) {
+    public boolean requiresExecutionEnvironment() {
+        return false;
+    }
+
+    @Override
+    public ShellHookOutcome run(ShellAction action, HookContext context, Map<String, String> environmentOverrides,
+            String stdinPayload) {
         Objects.requireNonNull(action, "Action cannot be null");
+        Objects.requireNonNull(context, "Context cannot be null");
         Objects.requireNonNull(environmentOverrides, "Environment overrides cannot be null");
         // Intentionally no-op. Shell actions should have been rejected at parse time.
+        return ShellHookOutcome.notObserved();
     }
 }

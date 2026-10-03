@@ -23,6 +23,7 @@ import at.aimon.core.hook.event.PermissionRequestContext;
 import at.aimon.core.hook.event.PreCompactContext;
 import at.aimon.core.hook.event.SubagentStopContext;
 import at.aimon.core.hook.execution.Decision;
+import at.aimon.core.hook.execution.HookContext;
 import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.hook.execution.HookStatus;
 import at.aimon.core.skill.hook.action.ShellAction;
@@ -32,9 +33,8 @@ import at.aimon.core.skill.hook.action.ShellAction;
  *
  * <p>
  * This is the security-relevant mapping: which events turn an exit-{@value ShellHookOutcome#DENY_EXIT_CODE} veto into
- * an actual block/deny, and which ones are advisory and must swallow it. The stub executor deliberately overrides the
- * <em>three-argument</em> {@code run} — the two-argument overload never reports an outcome, so a stub that only
- * implements it can never reach the veto branch at all.
+ * an actual block/deny, and which ones are advisory and must swallow it. The stub executor reports a real outcome
+ * from {@code run} — one that answered {@link ShellHookOutcome#notObserved()} could never reach the veto branch at all.
  */
 class AbstractDeclarativeShellHookTest {
 
@@ -54,6 +54,19 @@ class AbstractDeclarativeShellHookTest {
         assertThat(result.getStatus()).isEqualTo(HookStatus.BLOCKED);
         assertThat(result.getDecision()).isEqualTo(Decision.DENY);
         assertThat(result.getFeedback()).contains("start gate refused: repo is dirty");
+    }
+
+    @Test
+    void execute_handsTheFiringContextToTheExecutor() {
+        // The executor picks its shell from this context, so the hook must pass the one it was fired with.
+        RecordingExecutor exec = RecordingExecutor.exiting(0, "");
+        DeclarativeOnStartHook hook = new DeclarativeOnStartHook("my-skill", ACTION, exec);
+        OnStartContext context = onStartContext();
+
+        hook.execute(context);
+
+        assertThat(exec.calls).hasSize(1);
+        assertThat(exec.calls.get(0).context()).isSameAs(context);
     }
 
     @Test
@@ -234,11 +247,6 @@ class AbstractDeclarativeShellHookTest {
 
     /**
      * Executor stub that reports a real exit status.
-     *
-     * <p>
-     * It overrides the three-argument {@code run} on purpose: the default implementation of that overload delegates to
-     * the two-argument one and returns {@link ShellHookOutcome#notObserved()}, which can never deny — a stub that only
-     * overrides the two-argument overload would silently pass every veto test.
      */
     private static final class RecordingExecutor implements ShellActionExecutor {
 
@@ -261,17 +269,18 @@ class AbstractDeclarativeShellHookTest {
         }
 
         @Override
-        public void run(ShellAction action, Map<String, String> environmentOverrides) {
-            run(action, environmentOverrides, null);
+        public boolean requiresExecutionEnvironment() {
+            return false;
         }
 
         @Override
-        public ShellHookOutcome run(ShellAction action, Map<String, String> environmentOverrides, String stdinPayload) {
-            calls.add(new Call(action, Map.copyOf(environmentOverrides), stdinPayload));
+        public ShellHookOutcome run(ShellAction action, HookContext context, Map<String, String> environmentOverrides,
+                String stdinPayload) {
+            calls.add(new Call(action, context, Map.copyOf(environmentOverrides), stdinPayload));
             return ShellHookOutcome.of(exitCode, "", stderr);
         }
 
-        record Call(ShellAction action, Map<String, String> env, String stdinPayload) {
+        record Call(ShellAction action, HookContext context, Map<String, String> env, String stdinPayload) {
         }
     }
 }

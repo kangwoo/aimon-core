@@ -24,6 +24,8 @@ import at.aimon.core.command.CommandType;
 import at.aimon.core.command.execution.CommandExecutionContext;
 import at.aimon.core.command.execution.CommandExecutionResult;
 import at.aimon.core.command.execution.direct.DirectCommandExecutionRequest;
+import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
@@ -225,6 +227,36 @@ class CompactCommandTest {
         assertThat(stopContext.getInvokerName()).isEqualTo(CompactCommand.ON_STOP_INVOKER_NAME);
         assertThat(stopContext.getFinalAnswer()).contains("Conversation compacted");
         assertThat(stopContext.getMetadata().getDuration().isNegative()).isFalse();
+    }
+
+    @Test
+    void carriesTheCommandToolContextsExecutionEnvironmentToTheCompactionAndTheOnStopHook() {
+        // /compact runs inside the executor's command flow; the execution's environment reaches it on the tool context.
+        TranscriptBuffer memory = memoryWith("hello");
+        engine.setNextResult(successResult(100, 50));
+        ExecutionEnvironment executionEnvironment = TestExecutionEnvironments.builder().workingDirectory("/workspace")
+                .build();
+        CommandExecutionContext context = CommandExecutionContext.builder().command(command)
+                .defaultModel(LlmModel.builder().name("test-model").build()).toolRegistry(new DefaultToolRegistry())
+                .transcriptBuffer(memory).toolContext(TestExecutionEnvironments.withoutStamps(executionEnvironment))
+                .build();
+
+        command.execute(context, DirectCommandExecutionRequest.of(""));
+
+        // The compaction request is what the engine puts on the PreCompact / PostCompact hook contexts.
+        assertThat(engine.lastRequest.get().getExecutionEnvironment().orElseThrow()).isSameAs(executionEnvironment);
+        assertThat(capturedOnStop.get().getExecutionEnvironment().orElseThrow()).isSameAs(executionEnvironment);
+    }
+
+    @Test
+    void leavesTheExecutionEnvironmentEmptyWhenTheToolContextHasNone() {
+        TranscriptBuffer memory = memoryWith("hello");
+        engine.setNextResult(successResult(100, 50));
+
+        command.execute(contextWithMemory(memory), DirectCommandExecutionRequest.of(""));
+
+        assertThat(engine.lastRequest.get().getExecutionEnvironment()).isEmpty();
+        assertThat(capturedOnStop.get().getExecutionEnvironment()).isEmpty();
     }
 
     @Test

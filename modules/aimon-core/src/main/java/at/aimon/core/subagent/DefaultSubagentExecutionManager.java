@@ -768,6 +768,9 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
         });
     }
 
+    // Both subagent hooks fire in the spawning execution's registry, so the environment they carry is the spawner's
+    // (SubagentExecutionEnvironment#getExecutionEnvironment), not the fork's — at subagentStart the fork's has not been
+    // resolved yet. Empty when a runtime-level runner spawned the fork.
     private void fireSubagentStart(SubagentExecutionEnvironment env, String taskId, String subagentName, String goal,
             String description) {
         if (hookExecutionManager == null) {
@@ -776,7 +779,8 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
         try {
             final SubagentStartContext ctx = SubagentStartContext.builder().invokerType(InvokerType.MAIN_AGENT)
                     .invokerName(subagentName).hookRegistry(env.getHookRegistry()).environment(env.getEnvironment())
-                    .subagentName(subagentName).taskId(taskId).goal(goal).description(description)
+                    .executionEnvironment(env.getExecutionEnvironment().orElse(null)).subagentName(subagentName)
+                    .taskId(taskId).goal(goal).description(description)
                     .executionAttributes(env.getExecutionAttributes()).build();
             hookExecutionManager.executeSubagentStart(ctx);
         } catch (Exception e) {
@@ -793,7 +797,8 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
         try {
             final SubagentStopContext ctx = SubagentStopContext.builder().invokerType(InvokerType.MAIN_AGENT)
                     .invokerName(subagentName).hookRegistry(env.getHookRegistry()).environment(env.getEnvironment())
-                    .subagentName(subagentName).taskId(taskId).success(result.isSuccess())
+                    .executionEnvironment(env.getExecutionEnvironment().orElse(null)).subagentName(subagentName)
+                    .taskId(taskId).success(result.isSuccess())
                     .errorMessage(result.isSuccess() ? null : result.getErrorMessage())
                     .executionAttributes(env.getExecutionAttributes()).build();
             hookExecutionManager.executeSubagentStop(ctx);

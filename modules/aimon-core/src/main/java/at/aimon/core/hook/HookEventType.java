@@ -41,52 +41,53 @@ import at.aimon.core.hook.execution.ExecutionHook;
 public final class HookEventType<H extends ExecutionHook<?>> {
 
     /** Pre-tool admission event. */
-    public static final HookEventType<PreToolHook> PRE_TOOL = new HookEventType<>("preTool", PreToolHook.class);
+    public static final HookEventType<PreToolHook> PRE_TOOL = new HookEventType<>("preTool", PreToolHook.class, true);
 
     /** Post-tool observation event. */
-    public static final HookEventType<PostToolHook> POST_TOOL = new HookEventType<>("postTool", PostToolHook.class);
+    public static final HookEventType<PostToolHook> POST_TOOL = new HookEventType<>("postTool", PostToolHook.class,
+            true);
 
     /** Agent-start lifecycle event. */
-    public static final HookEventType<OnStartHook> ON_START = new HookEventType<>("onStart", OnStartHook.class);
+    public static final HookEventType<OnStartHook> ON_START = new HookEventType<>("onStart", OnStartHook.class, true);
 
     /** Agent-stop lifecycle event. */
-    public static final HookEventType<OnStopHook> ON_STOP = new HookEventType<>("onStop", OnStopHook.class);
+    public static final HookEventType<OnStopHook> ON_STOP = new HookEventType<>("onStop", OnStopHook.class, true);
 
     /** Pre-compaction event (may block AUTO compaction). */
     public static final HookEventType<PreCompactHook> PRE_COMPACT = new HookEventType<>("preCompact",
-            PreCompactHook.class);
+            PreCompactHook.class, true);
 
     /** Post-compaction event (non-blocking). */
     public static final HookEventType<PostCompactHook> POST_COMPACT = new HookEventType<>("postCompact",
-            PostCompactHook.class);
+            PostCompactHook.class, true);
 
     /** Permission-request event. */
     public static final HookEventType<PermissionRequestHook> PERMISSION_REQUEST = new HookEventType<>(
-            "permissionRequest", PermissionRequestHook.class);
+            "permissionRequest", PermissionRequestHook.class, true);
 
     /** Permission-denied audit event. */
     public static final HookEventType<PermissionDeniedHook> PERMISSION_DENIED = new HookEventType<>("permissionDenied",
-            PermissionDeniedHook.class);
+            PermissionDeniedHook.class, true);
 
     /** Subagent-start lifecycle event. */
     public static final HookEventType<SubagentStartHook> SUBAGENT_START = new HookEventType<>("subagentStart",
-            SubagentStartHook.class);
+            SubagentStartHook.class, true);
 
     /** Subagent-stop lifecycle event. */
     public static final HookEventType<SubagentStopHook> SUBAGENT_STOP = new HookEventType<>("subagentStop",
-            SubagentStopHook.class);
+            SubagentStopHook.class, true);
 
     /** Session-start lifecycle event. */
     public static final HookEventType<OnSessionStartHook> ON_SESSION_START = new HookEventType<>("onSessionStart",
-            OnSessionStartHook.class);
+            OnSessionStartHook.class, false);
 
     /** Session-end lifecycle event. */
     public static final HookEventType<OnSessionEndHook> ON_SESSION_END = new HookEventType<>("onSessionEnd",
-            OnSessionEndHook.class);
+            OnSessionEndHook.class, false);
 
     /** Config-reload event (fires after a hooks.json reload completes). */
     public static final HookEventType<OnConfigReloadHook> ON_CONFIG_RELOAD = new HookEventType<>("onConfigReload",
-            OnConfigReloadHook.class);
+            OnConfigReloadHook.class, false);
 
     private static final List<HookEventType<?>> ALL = List.of(PRE_TOOL, POST_TOOL, ON_START, ON_STOP, PRE_COMPACT,
             POST_COMPACT, PERMISSION_REQUEST, PERMISSION_DENIED, SUBAGENT_START, SUBAGENT_STOP, ON_SESSION_START,
@@ -94,10 +95,12 @@ public final class HookEventType<H extends ExecutionHook<?>> {
 
     private final String name;
     private final Class<H> hookClass;
+    private final boolean firesInsideExecution;
 
-    private HookEventType(String name, Class<H> hookClass) {
+    private HookEventType(String name, Class<H> hookClass, boolean firesInsideExecution) {
         this.name = Objects.requireNonNull(name, "name cannot be null");
         this.hookClass = Objects.requireNonNull(hookClass, "hookClass cannot be null");
+        this.firesInsideExecution = firesInsideExecution;
     }
 
     /**
@@ -116,6 +119,28 @@ public final class HookEventType<H extends ExecutionHook<?>> {
      */
     public Class<H> hookClass() {
         return hookClass;
+    }
+
+    /**
+     * Returns whether every live firing site of this event sits inside an agent execution, and so has an execution
+     * environment to hand the hook context.
+     *
+     * <p>
+     * Three events do not: {@code onSessionStart} and {@code onSessionEnd} fire from the live session, before and
+     * after any turn, and {@code onConfigReload} fires from the config watcher. Their contexts carry no
+     * {@linkplain at.aimon.core.hook.execution.HookContext#getExecutionEnvironment() execution environment}, and an
+     * action that can only run in one (a skill hook's shell action) is rejected for them when it is parsed.
+     *
+     * <p>
+     * This classifies the <em>live</em> firing sites and is not a guarantee about any one context: a rewake replay
+     * rebuilds a {@code preTool} / {@code preCompact} context outside the execution that first fired it, and a
+     * hand-built context may leave the environment out. Whatever runs at fire time must still handle an absent
+     * environment.
+     *
+     * @return true when the event fires inside an execution
+     */
+    public boolean firesInsideExecution() {
+        return firesInsideExecution;
     }
 
     /**

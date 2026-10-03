@@ -15,6 +15,7 @@ import at.aimon.core.agent.InvokerType;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.event.OnStartContext;
+import at.aimon.core.hook.execution.HookContext;
 import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.hook.execution.HookStatus;
 import at.aimon.core.skill.hook.action.ShellAction;
@@ -89,8 +90,15 @@ class DeclarativeOnStartHookTest {
         }
 
         @Override
-        public void run(ShellAction action, Map<String, String> environmentOverrides) {
+        public boolean requiresExecutionEnvironment() {
+            return false;
+        }
+
+        @Override
+        public ShellHookOutcome run(ShellAction action, HookContext context, Map<String, String> environmentOverrides,
+                String stdinPayload) {
             calls.add(new Call(action, Map.copyOf(environmentOverrides)));
+            return ShellHookOutcome.notObserved();
         }
 
         record Call(ShellAction action, Map<String, String> env) {
