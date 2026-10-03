@@ -65,6 +65,9 @@ The distribution will be created in `build/install/aimon-cli/`.
 ./gradlew :aimon-cli:run --args="chat --interactive"
 ```
 
+Exiting the CLI stops the background commands the agent started with `Bash` (`run_in_background`) that are still
+running — a dev server the model left up ends with the session. Run such a server yourself if it must outlive the CLI.
+
 #### Send Single Message
 
 ```bash

@@ -677,3 +677,40 @@ BackgroundBashKill kill(AgentRuntimeId owner, String taskId);        // REQUESTE
 
 리뷰가 함께 꼽은 `docs/features/skill/builtin-agent-skill-guide.md` 는 고치지 않았다. 그 문서가 적는 것은
 `aimon.environment.staging.max-bytes` 하나이고 스테이징 설명의 일부다 — 백그라운드 상한이 들어갈 자리가 아니다.
+
+### 10.7 PR #205 리뷰에서 고친 것
+
+본문(§3 · §4 · §6)은 승인본이라 그대로 두고, 리뷰가 찾아 고친 것을 여기 적는다.
+
+- **SIGTERM 을 무시하는 자식도 죽인다.** `LocalShell.destroyForciblyQuietly` 는 SIGKILL 로 올리는 조건이 "부모가 200ms
+  유예 뒤에도 살아 있다" 하나였다. 부모 셸은 SIGTERM 에 곧바로 죽고 자식은 `trap '' TERM` 으로 버티면, 자식이 살아남은 채
+  `KillShell` 이 "stopped" 라고 답했다. 이제 스냅숏의 모든 핸들과 부모가 **한 유예를 나눠 쓰고**, 유예가 끝났을 때 아직
+  살아 있는 것은 부모의 생사와 상관없이 하나하나 SIGKILL 한다. timeout · 인터럽트 · 취소가 같은 코드를 타므로 셋 다
+  바뀐다. `LocalShellCancellationTest.cancelKillsAChildThatIgnoresTerm` 이 고정한다. 스냅숏 뒤에 태어난 손자(EE-55)는 여전히
+  남는다. `KillShell` 의 답은 "stopped: the command and the processes it was running were terminated" 로, §6 표의 "stop
+  requested 이상을 약속하지 않는다" 보다 한 걸음 더 말한다 — 열거한 트리는 이제 확실히 죽기 때문이다.
+- **슬롯 생성이 제공자 전체의 락 밖에서 돈다.** `PerRuntimeLocalEnvironmentProvider` 는 워크스페이스 함수(디렉터리 생성,
+  스테이징 스윕, 호출자의 `FileSystemSpec.factory` 와 그 원격 연결)를 `synchronized (lock)` 안에서 불렀고, 모든 실행의
+  `resolve()` 가 같은 락을 잡았다. 한 테넌트의 느린 생성이 다른 모든 테넌트의 턴을 막았고, 다른 스레드의 `workspace()` 를
+  기다리는 함수는 교착했다. 이제 id 별 진행 중 빌드(`CompletableFuture`)를 락 아래에서 하나만 등록하고 함수는 락 없이
+  부른다. 같은 id 의 동시 첫 요청은 그 빌드를 기다려 같은 슬롯을 받고, 실패한 빌드는 지워져 다음 요청이 다시 짓는다. 슬롯
+  맵과 바인딩 수는 여전히 락 아래에서만 바뀐다. 짓는 사이에 `close()` 가 돌면 지은 것을 닫고 "closed" 로 던진다. 같은 id 의
+  `workspace()` 를 기다리는 함수는 여전히 교착한다 — 자기 자신을 기다리는 초기화이고, 다른 id 는 영향이 없다.
+  `PerRuntimeLocalEnvironmentProviderTest` 의 네 테스트(느린 생성이 다른 id 를 막지 않음, 동시 첫 요청은 빌드 한 번, 실패한
+  빌드의 재시도, 생성 중 `close()`)가 고정한다. 바인딩 없이 슬롯이 생기면(축출 뒤 늦게 온 `resolve` 포함) DEBUG 로 남긴다.
+- **레코드에서 `command` 를 뺐다.** §4.3 은 `BackgroundBashRecord` 에 명령 문자열을 넣었지만 읽는 곳이 없었다. 명령줄에는
+  자격 증명이 들어갈 수 있고(`curl -H "Authorization: …"`, `PGPASSWORD=… psql`), 공유 저장소에 넣으면 프로세스보다 오래
+  남는다. 아직 릴리스되지 않은 SPI 라 지금 뺐다. `BackgroundBashStore` 의 Javadoc 이 "레코드에 명령 문자열이나 출력을 싣지
+  않는다" 를 계약으로 적는다. 명령은 그 노드의 `BackgroundBashTask` 에만 있다.
+- **닫히는 중에 시작된 작업.** `start` 가 `ensureOpen()` 을 통과한 뒤 `close()` 가 돌면 `close()` 의 신호 순회가 그 작업을
+  놓칠 수 있었다(5초 뒤 `shutdownNow` 의 인터럽트에 기댐). 이제 `start` 가 작업을 넣은 뒤 `closed` 를 다시 보고 그 자리에서
+  신호를 건다. 경합 창을 결정적으로 재현할 갈고리가 없어 테스트는 더하지 않았다.
+- **소유자 없는 작업의 가시 범위를 적었다.** `AGENT_RUNTIME_ID` 가 없는 컨텍스트에서 시작한 작업은 소유자가 없고, 그런
+  컨텍스트의 모든 호출자가 보고 멈출 수 있다. `OrcaBashToolProvider(BackgroundBashManager)` · `BackgroundBashManager.find`
+  의 Javadoc 과 CHANGELOG 에 적었다.
+- **모델에게 노드 id 를 보이지 않는다.** `BashOutput` · `KillShell` 의 "다른 노드에서 도는 작업" 답에서 노드 id 를 뺐다.
+  배포의 내부 이름이고 모델에게는 뜻이 없다.
+- **CHANGELOG 와 CLI 문서.** 호출자 제공자 + `FileSystemSpec.localAt` 조합에서 `AimonStack.fileSystem(id)` 가 이제 `.aimon/`
+  제어 저장소를 돌려준다는 이전 줄을 더했다(전에는 `LocalExecutionEnvironmentProvider` 를 돌려주는 `factory` 면 그 작업
+  공간이었다 — `StackAgentRuntimeProvisioner.createLocalStores`). `modules/aimon-cli/README.md` 에 CLI 를 끝내면 모델이 띄운
+  백그라운드 명령도 끝난다는 줄을 더했다.

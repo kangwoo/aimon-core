@@ -42,7 +42,8 @@ Central is versioned independently).
 ### Added: `KillShell` stops a background `Bash` command, and the environment sets its ceiling (EE-13)
 
 - **New tool `KillShell(taskId)`**, registered by `OrcaBashToolProvider` next to `Bash` and `BashOutput`. It stops a
-  running background command and everything the command started. The task then reports `Status: Killed`
+  running background command and everything the command started; a process that ignores the polite termination
+  request is killed forcibly after a short grace period, even when the command's own shell has already exited. The task then reports `Status: Killed`
   (`BashTaskStatus.KILLED`, no exit code), and what the command printed before it was stopped stays readable through
   `BashOutput`. An agent or skill whose tool allow-list names `BashOutput` only does not get `KillShell`; add it.
 - **`KillShell` acts for the runtime, not the session.** Like `BashOutput`, it finds a task by the runtime that started
@@ -53,8 +54,10 @@ Central is versioned independently).
   `ShellCancelledException` (a `ShellExecutionException` carrying the output so far); a signal that is already
   tripped means the command is not started. A shell that does not declare it ignores the signal, and `KillShell`
   answers with an error that names the ceiling the command runs to. `LocalShell` declares it and kills the process
-  tree. **Possibly breaking:** code that `switch`es over `ShellFeature` without a `default` branch no longer compiles,
-  and a binary built against the old enum throws on the new constant.
+  tree. On cancellation, timeout and interrupt alike it now kills forcibly every process of that tree still alive
+  after the 200 ms grace period; before, it did so only when the command's own shell outlived the grace, so a child
+  that ignored SIGTERM survived. **Possibly breaking:** code that `switch`es over `ShellFeature` without a `default`
+  branch no longer compiles, and a binary built against the old enum throws on the new constant.
 - **`ExecutionEnvironment.backgroundCommandTimeout()`** is the longest a background command may run in that
   environment. `Bash` uses it as the command's timeout in place of its own 24 hours — a smaller or a larger value —
   and tells the model when the environment set one. Empty (the default) keeps 24 hours; zero or negative is ignored
@@ -73,6 +76,11 @@ Central is versioned independently).
   **Migration:** `ExecutionEnvironmentSpec.provider(Supplier)` for a provider the stack builds once, owns and closes
   when it closes, or `shared(provider)` for one the caller closes. Either way the provider picks the workspace from
   `EnvironmentRequest.agentRuntimeId()` instead of being built for one runtime.
+- **`AimonStack.fileSystem(id)` with a caller-supplied provider over `FileSystemSpec.localAt(...)` now returns the
+  runtime's `.aimon/` control store**, whatever the provider's class. Before, a `factory` that returned a
+  `LocalExecutionEnvironmentProvider` made it return that provider's workspace file system. **Migration:** read the
+  workspace from your own provider (`PerRuntimeLocalEnvironmentProvider.workspace(id).fileSystem()`, say), or leave
+  `ExecutionEnvironmentSpec` at its default so the stack builds the provider and answers with the workspace.
 - **Evicting a tenant runtime no longer closes a provider.** It closes the runtime's `RuntimeBinding` — the handle
   the stack gets from the new `ExecutionEnvironmentProvider.bindRuntime(AgentRuntimeId)` (default: a no-op) when it
   builds the runtime. A provider that holds something per runtime releases it there; it must not stop a background
@@ -80,6 +88,9 @@ Central is versioned independently).
   `shared(...)` providers are bound the same way and still never closed by the stack.
 - **The stack's default provider is `PerRuntimeLocalEnvironmentProvider`** (new, `at.aimon.core.environment.impl`):
   one local workspace per runtime id, closed when the last runtime of that id is gone. Workspace paths are unchanged.
+  It builds a workspace outside its own lock, so one tenant's slow workspace (a remote file system connecting, say)
+  does not hold up other tenants' turns; concurrent first requests for an id share one build, and a failed build is
+  retried by the next request.
   With `FileSystemSpec.factory`, the file system the factory makes now belongs to that per-id slot rather than to the
   runtime instance, so an invalidated runtime closing late cannot close the file system its successor uses.
 - **A background `Bash` task outlives the runtime that started it.** The stack builds one `BackgroundBashManager` and
@@ -88,11 +99,15 @@ Central is versioned independently).
   untracked, to its ceiling. A core-only assembly that uses `new OrcaBashToolProvider()` keeps a task list per tool
   registry; pass a manager to `new OrcaBashToolProvider(manager)` to share one (EE-56).
 - **Task metadata sits behind `BackgroundBashStore`** (default `InMemoryBackgroundBashStore`); replace it with
-  `ToolSpec.Builder.backgroundBashStore(...)` or a `BackgroundBashStore` bean in the starter. The process, its
-  cancellation signal and its output stay on the node that started the command: a task known only from the store is
-  reported as running on another node and can be neither read nor stopped from here (EE-53).
+  `ToolSpec.Builder.backgroundBashStore(...)` or a `BackgroundBashStore` bean in the starter. A record
+  (`BackgroundBashRecord`) holds the task id, owner runtime, node, timestamps and outcome — never the command text or
+  its output, which may carry secrets. The process, its cancellation signal, the command and its output stay on the
+  node that started the command: a task known only from the store is reported as running on another node and can be
+  neither read nor stopped from here (EE-53).
 - **Behaviour change: a task is visible only to the runtime that started it.** Another runtime's task id answers
-  `Shell not found`. Sessions of one runtime still share its tasks.
+  `Shell not found`. Sessions of one runtime still share its tasks. A task started from a tool context without
+  `ToolContextKeys.AGENT_RUNTIME_ID` has no owner and is visible to every caller without one, so an assembly that
+  shares one manager between runtimes must set that key (the Orca executor does).
 - **Behaviour change: a finished task is forgotten 24 hours after it ended** (`BackgroundBashManager.Builder.retention`).
   It used to stay for as long as its runtime lived.
 - **Behaviour change: closing the stack stops the background commands still running.** The new
@@ -127,7 +142,8 @@ Central is versioned independently).
 - **`AimonStackBuilder` opens no skill hook shell**, and `TeardownPhase.SKILL_HOOK_SHELL` is renamed
   `HOOK_CONFIG_SHELL`. The stack puts nothing in that phase; an assembly that wires `hooks.json` hot reload (the CLI)
   enrolls its host shell there. The last phase of a plain stack is now `HOOK_EXECUTOR`. A skill hook that fires after
-  `AGENT_RESOURCES` (from a routine still draining) meets a closed environment shell and is skipped with a WARN.
+  `AGENT_RESOURCES` meets a closed environment shell and is skipped with a WARN. (Scheduled routines fire no hooks:
+  `RoutineExecutor` calls its tools directly, not through the tool-hook path.)
 - **`hooks.json` commands still run on the host shell** (EE-48). An embedder who wires an environment-bound executor
   into `HookRegistryApplier` gets `command` handlers on `onSessionStart`, `onSessionEnd` and `onConfigReload` skipped
   with a WARN at apply time, and `asyncRewake` dropped from `command` handlers, because neither has an environment to
@@ -145,6 +161,11 @@ Central is versioned independently).
   `CompactionGuard.maybeCompact(CompactionGuardRequest)` is the entry point that passes it on. A custom
   `CompactionGuard` that does not override it keeps working through the four positional methods, but its compaction
   hooks see no environment.
+- **`DefaultContextEngine` now calls only `maybeCompact(CompactionGuardRequest)`.** A subclass of
+  `DefaultCompactionGuard` that overrides one of the positional `maybeCompact(...)` / `forceCompact(...)` methods is
+  no longer reached through that override, because `DefaultCompactionGuard` implements the request-object method
+  itself. **Migration:** move the override to `maybeCompact(CompactionGuardRequest)` (the request carries the
+  execution id, the execution environment and `isBudgetForced()`, which is what selected `forceCompact` before).
 - **Skill frontmatter still rejects `onSessionStart`, `onSessionEnd` and `onConfigReload`**; the error now says why
   (no execution environment for a shell action to run in). No skill that loads today is newly rejected.
 

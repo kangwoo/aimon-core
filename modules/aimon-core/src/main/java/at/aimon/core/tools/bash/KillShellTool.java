@@ -158,7 +158,11 @@ public class KillShellTool extends AbstractTool {
                 return ToolResult.success("Shell " + taskId + " ended before it could be stopped (status: "
                         + statusName(task.getStatus()) + ")." + readOutput);
             }
-            return ToolResult.success("Shell " + taskId + " stopped." + readOutput);
+            // The shell reported the command cancelled. A local shell has by then terminated the process tree it could
+            // enumerate (forcibly, for anything that ignored the polite request); a process the command detached
+            // from that tree (nohup, setsid, a double fork) is outside its reach, so say what was stopped, no more.
+            return ToolResult.success("Shell " + taskId
+                    + " stopped: the command and the processes it was running were terminated." + readOutput);
 
         } catch (IllegalArgumentException e) {
             log.warn("Invalid parameter: {}", e.getMessage());

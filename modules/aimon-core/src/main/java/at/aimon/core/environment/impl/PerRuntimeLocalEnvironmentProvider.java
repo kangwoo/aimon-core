@@ -5,6 +5,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 
@@ -37,6 +39,14 @@ import at.aimon.core.environment.RuntimeBinding;
  *
  * <p>
  * A request for an id nobody bound still resolves: the slot is created on the spot and stays until {@link #close()}.
+ *
+ * <p>
+ * <b>Concurrency.</b> The workspace function runs <em>outside</em> the provider-wide lock: creating a directory,
+ * sweeping its staging area or connecting a remote file system for one tenant must not hold up every other tenant's
+ * {@link #resolve}. Concurrent first requests for the same id share one build (the function is called once); a build
+ * that fails is forgotten, so the next request tries again. The lock guards only the bookkeeping (the slot map, the
+ * in-flight builds and the binding counts). A workspace function that itself waits for {@link #workspace} of the
+ * <em>same</em> id deadlocks, as any self-dependent initialisation would; other ids are unaffected.
  */
 public final class PerRuntimeLocalEnvironmentProvider implements ExecutionEnvironmentProvider, AutoCloseable {
 
@@ -45,6 +55,7 @@ public final class PerRuntimeLocalEnvironmentProvider implements ExecutionEnviro
     private final Function<AgentRuntimeId, LocalExecutionEnvironmentProvider> workspaces;
     private final Object lock = new Object();
     private final Map<AgentRuntimeId, Slot> slots = new HashMap<>();
+    private final Map<AgentRuntimeId, CompletableFuture<Void>> building = new HashMap<>();
     private boolean closed;
 
     /**
@@ -68,11 +79,7 @@ public final class PerRuntimeLocalEnvironmentProvider implements ExecutionEnviro
     @Override
     public RuntimeBinding bindRuntime(AgentRuntimeId agentRuntimeId) {
         Objects.requireNonNull(agentRuntimeId, "agentRuntimeId must not be null");
-        final Slot slot;
-        synchronized (lock) {
-            slot = slotLocked(agentRuntimeId);
-            slot.bindings++;
-        }
+        final Slot slot = slot(agentRuntimeId, true);
         final AtomicBoolean released = new AtomicBoolean();
         return () -> {
             if (released.compareAndSet(false, true)) {
@@ -93,23 +100,109 @@ public final class PerRuntimeLocalEnvironmentProvider implements ExecutionEnviro
      */
     public LocalExecutionEnvironmentProvider workspace(AgentRuntimeId agentRuntimeId) {
         Objects.requireNonNull(agentRuntimeId, "agentRuntimeId must not be null");
-        synchronized (lock) {
-            return slotLocked(agentRuntimeId).provider;
+        return slot(agentRuntimeId, false).provider;
+    }
+
+    /**
+     * Returns the id's slot, building it first if there is none, and counts a binding on it when {@code bind}. The
+     * workspace function runs with no lock held; the slot map and the binding count change only under the lock, so a
+     * slot is never handed out after its last binding closed it.
+     */
+    private Slot slot(AgentRuntimeId agentRuntimeId, boolean bind) {
+        while (true) {
+            final CompletableFuture<Void> inFlight;
+            final boolean builder;
+            synchronized (lock) {
+                checkOpen(agentRuntimeId);
+                final Slot slot = slots.get(agentRuntimeId);
+                if (slot != null) {
+                    if (bind) {
+                        slot.bindings++;
+                    }
+                    return slot;
+                }
+                final CompletableFuture<Void> existing = building.get(agentRuntimeId);
+                builder = existing == null;
+                inFlight = builder ? new CompletableFuture<>() : existing;
+                if (builder) {
+                    building.put(agentRuntimeId, inFlight);
+                }
+            }
+            if (builder) {
+                build(agentRuntimeId, bind, inFlight);
+            } else {
+                awaitBuild(agentRuntimeId, inFlight);
+            }
+            // Look again under the lock: the slot may already be gone (its last binding closed, or the provider
+            // closed) between the build finishing and this thread getting here. The loop then builds a fresh one or
+            // reports the provider closed.
         }
     }
 
-    private Slot slotLocked(AgentRuntimeId agentRuntimeId) {
+    private void build(AgentRuntimeId agentRuntimeId, boolean bind, CompletableFuture<Void> inFlight) {
+        final LocalExecutionEnvironmentProvider provider;
+        try {
+            provider = Objects.requireNonNull(workspaces.apply(agentRuntimeId),
+                    () -> "The workspace function returned null for " + agentRuntimeId);
+        } catch (RuntimeException | Error e) {
+            synchronized (lock) {
+                building.remove(agentRuntimeId, inFlight);
+            }
+            inFlight.completeExceptionally(e);
+            throw e;
+        }
+        final boolean closedMeanwhile;
+        synchronized (lock) {
+            building.remove(agentRuntimeId, inFlight);
+            closedMeanwhile = closed;
+            if (!closedMeanwhile) {
+                slots.put(agentRuntimeId, new Slot(provider));
+            }
+        }
+        if (closedMeanwhile) {
+            // close() ran while the function was building: nothing else will ever close what it built.
+            provider.close();
+            final IllegalStateException e = closedException(agentRuntimeId);
+            inFlight.completeExceptionally(e);
+            throw e;
+        }
+        if (!bind) {
+            log.debug(
+                    "Created the workspace of {} with no runtime bound to it; it stays until the provider closes"
+                            + " (a request that arrived after the runtime was evicted re-creates it the same way)",
+                    agentRuntimeId);
+        }
+        inFlight.complete(null);
+    }
+
+    private static void awaitBuild(AgentRuntimeId agentRuntimeId, CompletableFuture<Void> inFlight) {
+        try {
+            inFlight.get();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while the workspace of " + agentRuntimeId + " was built", e);
+        } catch (ExecutionException e) {
+            // The building thread already forgot the failed build; the next request tries again.
+            final Throwable cause = e.getCause();
+            if (cause instanceof RuntimeException re) {
+                throw re;
+            }
+            if (cause instanceof Error err) {
+                throw err;
+            }
+            throw new IllegalStateException("Building the workspace of " + agentRuntimeId + " failed", cause);
+        }
+    }
+
+    private void checkOpen(AgentRuntimeId agentRuntimeId) {
         if (closed) {
-            throw new IllegalStateException(
-                    "The execution environment provider is closed; no workspace for " + agentRuntimeId);
+            throw closedException(agentRuntimeId);
         }
-        Slot slot = slots.get(agentRuntimeId);
-        if (slot == null) {
-            slot = new Slot(Objects.requireNonNull(workspaces.apply(agentRuntimeId),
-                    () -> "The workspace function returned null for " + agentRuntimeId));
-            slots.put(agentRuntimeId, slot);
-        }
-        return slot;
+    }
+
+    private static IllegalStateException closedException(AgentRuntimeId agentRuntimeId) {
+        return new IllegalStateException(
+                "The execution environment provider is closed; no workspace for " + agentRuntimeId);
     }
 
     private void release(AgentRuntimeId agentRuntimeId, Slot slot) {

@@ -163,7 +163,8 @@ CLI 는 `hooks.json` 핫리로드용으로 호스트 `LocalShell` 을 **계속**
 ### 4.2 발화 지점
 
 - `toolinvocation/SingleToolInvoker.java` — `descriptorOf(spec)` → `environmentOf(spec)`(`ExecutionEnvironmentAccess.of(...)
-  .orElse(null)`). 네 컨텍스트 모두에 싣는다. `RoutineExecutor` 와 스킬 커맨드 디스패처는 이 경로를 타므로 따로 손대지 않는다.
+  .orElse(null)`). 네 컨텍스트 모두에 싣는다. 스킬 커맨드 디스패처는 이 경로를 타므로 따로 손대지 않는다. `RoutineExecutor` 는
+  도구를 직접 부르고 훅을 발화하지 않으므로 손댈 것이 없다(첫 판은 이것도 이 경로를 탄다고 잘못 적었다).
 - `agent/impl/orca/OrcaAgentExecutor.java` — `invokeOnStart`/`invokeOnStop` 에 `scope.executionEnvironment`,
   `contextRequest(scope, …)`(3194)에도.
 - `subagent/execution/DefaultSubagentExecutor.java` — `fireOnStart` 와 `onStop` 세 곳, 617 의 `ContextRequest`. 환경은

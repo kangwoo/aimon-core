@@ -49,6 +49,12 @@ public class OrcaBashToolProvider implements OrcaToolProvider {
     /**
      * Creates a provider whose tools all use one caller-owned manager, in every registry it registers into.
      *
+     * <p>
+     * The tools tell one runtime's tasks from another's by the {@code ToolContextKeys.AGENT_RUNTIME_ID} of the calling
+     * execution. A task started from a context without it has no owner and is visible to — and can be stopped by —
+     * every other caller without one. An assembly that shares one manager across runtimes must therefore run its tools
+     * with that key set (the Orca executor sets it).
+     *
      * @param backgroundManager
      *            the manager; the caller closes it (must not be null)
      */

@@ -77,6 +77,32 @@ class LocalShellCancellationTest {
     }
 
     @Test
+    @DisplayName("a child that ignores SIGTERM is killed even when its parent honours SIGTERM and exits first")
+    void cancelKillsAChildThatIgnoresTerm(@TempDir Path dir) throws Exception {
+        final ShellCancellationSource source = ShellCancellationSource.create();
+        final Path childPid = dir.resolve("child.pid");
+        final Path grandchildPid = dir.resolve("grandchild.pid");
+        // The inner shell ignores TERM, and so does its sleep (an ignored signal stays ignored across exec). The
+        // outer shell honours TERM, so it exits inside the grace period and leaves the TERM-proof pair behind unless
+        // they are killed on their own account. The child pid is written last, so both are running when it appears.
+        final String command = "bash -c 'trap \"\" TERM; sleep 999 & echo $! > " + grandchildPid + "; echo $$ > "
+                + childPid + "; wait' & wait";
+
+        final CompletableFuture<Throwable> outcome = CompletableFuture
+                .supplyAsync(() -> catchThrowable(() -> shell.execute(() -> command, options(source))));
+        final long child = awaitPid(childPid);
+        final long grandchild = awaitPid(grandchildPid);
+        assertThat(alive(child)).isTrue();
+        assertThat(alive(grandchild)).isTrue();
+
+        assertThat(source.cancel()).isTrue();
+
+        assertThat(outcome.get(10, TimeUnit.SECONDS)).isInstanceOf(ShellCancelledException.class);
+        awaitDead(child);
+        awaitDead(grandchild);
+    }
+
+    @Test
     @DisplayName("a signal tripped before the call means the command never starts")
     void cancelledBeforeStartDoesNotRunTheCommand(@TempDir Path dir) {
         final ShellCancellationSource source = ShellCancellationSource.create();

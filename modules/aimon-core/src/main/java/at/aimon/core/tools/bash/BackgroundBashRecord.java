@@ -10,13 +10,17 @@ import at.aimon.core.agent.AgentRuntimeId;
  * What a {@link BackgroundBashStore} keeps about one background command: who started it, on which node it runs and how
  * it ended. This is the part of a background task that nodes can share. The process, its cancellation handle and its
  * output stay on the node that started it ({@link BackgroundBashTask}).
+ *
+ * <p>
+ * It deliberately carries no command text: a command line can hold a credential ({@code curl -H "Authorization: ..."},
+ * {@code PGPASSWORD=... psql}), and a shared store is a place it would outlive the process in. The node that runs the
+ * command keeps the text in its {@link BackgroundBashTask}.
  */
 public final class BackgroundBashRecord {
 
     private final String taskId;
     private final AgentRuntimeId ownerRuntimeId;
     private final String nodeId;
-    private final String command;
     private final Instant startedAt;
     private final Instant expiresAt;
     private final BashTaskStatus status;
@@ -27,7 +31,6 @@ public final class BackgroundBashRecord {
         this.taskId = Objects.requireNonNull(builder.taskId, "taskId must not be null");
         this.ownerRuntimeId = builder.ownerRuntimeId;
         this.nodeId = Objects.requireNonNull(builder.nodeId, "nodeId must not be null");
-        this.command = Objects.requireNonNull(builder.command, "command must not be null");
         this.startedAt = Objects.requireNonNull(builder.startedAt, "startedAt must not be null");
         this.expiresAt = builder.expiresAt;
         this.status = Objects.requireNonNull(builder.status, "status must not be null");
@@ -42,8 +45,8 @@ public final class BackgroundBashRecord {
 
     /** @return a builder seeded with every field of this record */
     public Builder toBuilder() {
-        return new Builder().taskId(taskId).ownerRuntimeId(ownerRuntimeId).nodeId(nodeId).command(command)
-                .startedAt(startedAt).expiresAt(expiresAt).status(status).exitCode(exitCode).finishedAt(finishedAt);
+        return new Builder().taskId(taskId).ownerRuntimeId(ownerRuntimeId).nodeId(nodeId).startedAt(startedAt)
+                .expiresAt(expiresAt).status(status).exitCode(exitCode).finishedAt(finishedAt);
     }
 
     /** @return the task id the model was given */
@@ -62,11 +65,6 @@ public final class BackgroundBashRecord {
     /** @return the node whose process runs the command */
     public String getNodeId() {
         return nodeId;
-    }
-
-    /** @return the command */
-    public String getCommand() {
-        return command;
     }
 
     /** @return when the command was started */
@@ -108,7 +106,6 @@ public final class BackgroundBashRecord {
         private String taskId;
         private AgentRuntimeId ownerRuntimeId;
         private String nodeId;
-        private String command;
         private Instant startedAt;
         private Instant expiresAt;
         private BashTaskStatus status = BashTaskStatus.RUNNING;
@@ -145,16 +142,6 @@ public final class BackgroundBashRecord {
          */
         public Builder nodeId(String nodeId) {
             this.nodeId = nodeId;
-            return this;
-        }
-
-        /**
-         * @param command
-         *            the command (required)
-         * @return this builder
-         */
-        public Builder command(String command) {
-            this.command = command;
             return this;
         }
 

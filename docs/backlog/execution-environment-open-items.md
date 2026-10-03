@@ -325,7 +325,7 @@ EE-12 의 결정문대로 **서술자가 아니라 환경 자체**를 실었다.
 
 | 이벤트 | 발화 지점 | 실행 안인가 | 환경의 출처 |
 |---|---|---|---|
-| `preTool` / `postTool` / `permissionRequest` / `permissionDenied` | `toolinvocation/SingleToolInvoker` | 안 | 그 호출의 `ToolContext` 에 든 `EXECUTION_ENVIRONMENT` — 도구가 쓰는 바로 그 인스턴스. `RoutineExecutor` 와 스킬 커맨드 디스패처도 이 경로를 탄다 |
+| `preTool` / `postTool` / `permissionRequest` / `permissionDenied` | `toolinvocation/SingleToolInvoker` | 안 | 그 호출의 `ToolContext` 에 든 `EXECUTION_ENVIRONMENT` — 도구가 쓰는 바로 그 인스턴스. 스킬 커맨드 디스패처(`OrcaAgentExecutor.commandToolDispatcher`)도 이 경로를 탄다. `RoutineExecutor` 는 타지 않는다 — 도구를 직접 부르고(`tool.execute`) 훅을 하나도 발화하지 않는다 |
 | `onStart` / `onStop` | `agent/impl/orca/OrcaAgentExecutor`(`invokeOnStart`·`invokeOnStop`), `subagent/execution/DefaultSubagentExecutor`, `command/system/CompactCommand` | 안 | 턴은 `ExecutionScope.executionEnvironment`, 포크는 **포크 자신이** 해석한 환경(`LoopContext.executionEnvironment()`), `/compact` 는 커맨드 `ToolContext` 의 값 |
 | `subagentStart` / `subagentStop` | `subagent/DefaultSubagentExecutionManager` | 안 (스폰한 쪽 실행) | `SubagentExecutionEnvironment.getExecutionEnvironment()` — **스폰한 실행의** 환경(→ EE-52). 런타임 수준 러너가 스폰하면 비어 있다 |
 | `preCompact` / `postCompact` | `agent/compact/DefaultCompactionEngine` | 안 | `ContextRequest` → `CompactionGuardRequest` → `CompactionRequest` \| `SummaryRequest` 로 흘러온 값 |
@@ -357,7 +357,16 @@ EE-12 의 결정문대로 **서술자가 아니라 환경 자체**를 실었다.
 `DefaultSubagentExecutionManagerTest`(`subagentStart`/`Stop` 이 스폰한 쪽 환경, 없으면 빈 값),
 `ContextEngineExecutionEnvironmentTest`(AUTO·MANUAL × 제자리·view 모드에서 pre/post 압축 훅),
 `RollingContextEngineTest`, `CompactCommandTest`, `DefaultRewakeFireListenerTest`(리플레이는 빈 값),
-`DefaultCompactionEngineRunIdentityTest`(위치 메서드만 구현한 가드가 요청 객체 진입점에서도 낮춘 밴드를 유지).
+`DefaultCompactionEngineRunIdentityTest`(위치 메서드만 구현한 가드가 요청 객체 진입점에서도 낮춘 밴드를 유지),
+`HookFiringIntegrationTest.onStopOfAFailedTurnCarriesTheTurnsExecutionEnvironment`(예외로 끝난 턴의 `onStop`),
+`CompactionTurnIntegrationTest.autoCompactionHooksCarryTheTurnsExecutionEnvironment`(메인 루프 AUTO 압축의
+`preCompact`·`postCompact` 가 턴의 환경), `AgentSetupFactoryHookConfigShellTest`(CLI 가 `hooks.json` 에 호스트 셸
+실행기를 배선함 — EE-48).
+
+(정정. PR #204 의 첫 판은 위 표에 "`RoutineExecutor` 도 이 경로를 탄다" 고 적었다. 리뷰에서 틀린 것이 드러났다 —
+`RoutineExecutor` 는 `timeoutExecutor.submit(() -> tool.execute(input, stepContext))` 로 도구를 직접 부르고
+`SingleToolInvoker` 를 거치지 않으므로 루틴의 도구 단계에서는 `preTool`·`postTool` 을 포함해 어떤 훅도 발화하지 않는다.
+같은 문장이 설계 문서 §4.2, `TeardownPhase.HOOK_CONFIG_SHELL` 의 Javadoc, `CHANGELOG.md` 에도 들어가 있어 함께 고쳤다.)
 
 ## EE-10 — `AgentEnvironmentSnapshot` 이 작업 디렉터리를 여전히 든다 · **열림**
 
@@ -1471,8 +1480,11 @@ PR #195 리뷰 1 이 **macOS 에도 별칭이 있음**을 재현했다 — APFS 
 
 **왜.** `destroyForciblyQuietly` 는 자손을 한 번 스냅숏해서 죽인다. 스냅숏 뒤에 태어난 손자는 열거되지 않아 남는다 —
 Javadoc 이 전부터 적어 둔 한계다. 전에는 timeout 과 인터럽트 때만 드러났는데, `KillShell` 과 스택 종료가 같은 코드를 타게
-되어 **모델이 "멈췄다" 는 답을 받은 뒤에도 프로세스가 남는** 경우가 생겼다. `KillShell` 은 그래서 "stop requested" 이상을
-약속하지 않는다. 프로세스 그룹은 플랫폼에 따라 다르고 `ProcessBuilder` 로는 닿지 않는다.
+되어 **모델이 "멈췄다" 는 답을 받은 뒤에도 프로세스가 남는** 경우가 생겼다. 스냅숏에 든 프로세스는 이제 확실히 죽는다 —
+PR #205 의 리뷰 뒤로 유예가 끝났을 때 살아 있는 핸들은 부모의 생사와 상관없이 하나하나 SIGKILL 한다(전에는 부모가 유예를
+넘겼을 때만 올렸으므로 SIGTERM 을 무시하는 자식이 남았다). 남은 틈은 스냅숏 뒤에 태어났거나 트리를 벗어난(`nohup` ·
+`setsid` · 이중 fork) 프로세스뿐이다. `KillShell` 의 답("the command and the processes it was running were terminated")도
+그만큼만 말한다. 프로세스 그룹은 플랫폼에 따라 다르고 `ProcessBuilder` 로는 닿지 않는다.
 
 **어디.** `modules/aimon-core/src/main/java/at/aimon/core/shell/impl/local/LocalShell.java` 의 `destroyForciblyQuietly` ·
 `snapshotDescendants`(2026-10-03).
@@ -1489,7 +1501,8 @@ Javadoc 이 전부터 적어 둔 한계다. 전에는 timeout 과 인터럽트 �
 
 **왜.** EE-7 의 배선은 부트스트랩(`StackAgentRuntimeProvisioner`)에 있다. 코어만 쓰는 조립의 기본 도구 제공자는 인자 없는
 `OrcaBashToolProvider()` 이고, 이것은 전처럼 **도구 레지스트리마다** `BackgroundBashManager` 를 만든다 — 런타임을 다시 만들면
-옛 task id 를 잃는다. `bindRuntime` 도 어셈블리가 부르는 것이므로 그 조립은 직접 불러야 한다. 런타임이 스스로 바인딩하게
+옛 task id 를 잃는다. 매니저를 직접 나눠 쓰게 하는 조립은 도구 컨텍스트에 `AGENT_RUNTIME_ID` 를 실어야 한다 — 없으면
+작업에 소유자가 없고, 같은 처지의 모든 호출자가 그 작업을 보고 멈춘다(Orca 실행기는 싣는다). `bindRuntime` 도 어셈블리가 부르는 것이므로 그 조립은 직접 불러야 한다. 런타임이 스스로 바인딩하게
 하지 않은 이유는 부트스트랩이 런타임을 만들기 **전에** 슬롯이 필요하고(제어 저장소), "런타임은 아무것도 닫지 않는다" 는
 원칙(설계 §4.3)에 예외가 하나 더 생기기 때문이다.
 

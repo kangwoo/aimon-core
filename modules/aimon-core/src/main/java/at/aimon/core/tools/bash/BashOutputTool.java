@@ -333,7 +333,8 @@ public class BashOutputTool extends AbstractTool {
         if (lookup.lostByThisNode()) {
             return shell + " was started on this node before it restarted, and the node no longer tracks it.";
         }
-        return shell + " is running on another node (" + record.getNodeId() + ").";
+        // The node id is the deployment's internal name; it means nothing to the model and is not for it to see.
+        return shell + " is running on another node.";
     }
 
     /**
