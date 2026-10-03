@@ -353,6 +353,38 @@ class HookFiringIntegrationTest {
     }
 
     /**
+     * EE-9 on the error path. A turn that dies on an exception ends in {@code handleExecutionError}, a different
+     * {@code onStop} call site from the success path above; an {@code onStop} hook — the one a cleanup hook would use —
+     * must still be handed the turn's environment there.
+     */
+    @Test
+    @DisplayName("onStop of a turn that fails on an exception still carries that turn's execution environment")
+    void onStopOfAFailedTurnCarriesTheTurnsExecutionEnvironment() {
+        final SessionId sessionId = OrcaRuntimeItSupport.newSession();
+        llm.scriptDynamic(sessionId.value(), call -> ScriptedLlmClient.callTool("Read", Map.of("file_path", NOTE)),
+                call -> {
+                    throw new IllegalStateException("provider unreachable");
+                });
+        final Map<String, Optional<ExecutionEnvironment>> seen = new ConcurrentHashMap<>();
+        final List<Boolean> stopSuccess = new CopyOnWriteArrayList<>();
+        node.hookRegistry().register(HookEventType.ON_START, ctx -> {
+            seen.put("onStart", ctx.getExecutionEnvironment());
+            return HookResult.success();
+        });
+        node.hookRegistry().register(HookEventType.ON_STOP, ctx -> {
+            seen.put("onStop", ctx.getExecutionEnvironment());
+            stopSuccess.add(ctx.isSuccess());
+            return HookResult.success();
+        });
+
+        final OrcaAgentExecutionResult result = node.run(sessionId, "read the note");
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(stopSuccess).containsExactly(false);
+        assertThat(seen.get("onStop").orElseThrow()).isSameAs(seen.get("onStart").orElseThrow());
+    }
+
+    /**
      * EE-12, by its effect. A skill-declared shell hook is built at parse time around an executor that holds no shell;
      * the command must still run, and run in the execution environment's shell. The command writes a file by relative
      * path, so where the file lands is where the shell was — the node's workspace, not the JVM's working directory.

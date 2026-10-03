@@ -31,7 +31,8 @@ Central is versioned independently).
 - **`AimonStackBuilder` opens no skill hook shell**, and `TeardownPhase.SKILL_HOOK_SHELL` is renamed
   `HOOK_CONFIG_SHELL`. The stack puts nothing in that phase; an assembly that wires `hooks.json` hot reload (the CLI)
   enrolls its host shell there. The last phase of a plain stack is now `HOOK_EXECUTOR`. A skill hook that fires after
-  `AGENT_RESOURCES` (from a routine still draining) meets a closed environment shell and is skipped with a WARN.
+  `AGENT_RESOURCES` meets a closed environment shell and is skipped with a WARN. (Scheduled routines fire no hooks:
+  `RoutineExecutor` calls its tools directly, not through the tool-hook path.)
 - **`hooks.json` commands still run on the host shell** (EE-48). An embedder who wires an environment-bound executor
   into `HookRegistryApplier` gets `command` handlers on `onSessionStart`, `onSessionEnd` and `onConfigReload` skipped
   with a WARN at apply time, and `asyncRewake` dropped from `command` handlers, because neither has an environment to
@@ -49,6 +50,11 @@ Central is versioned independently).
   `CompactionGuard.maybeCompact(CompactionGuardRequest)` is the entry point that passes it on. A custom
   `CompactionGuard` that does not override it keeps working through the four positional methods, but its compaction
   hooks see no environment.
+- **`DefaultContextEngine` now calls only `maybeCompact(CompactionGuardRequest)`.** A subclass of
+  `DefaultCompactionGuard` that overrides one of the positional `maybeCompact(...)` / `forceCompact(...)` methods is
+  no longer reached through that override, because `DefaultCompactionGuard` implements the request-object method
+  itself. **Migration:** move the override to `maybeCompact(CompactionGuardRequest)` (the request carries the
+  execution id, the execution environment and `isBudgetForced()`, which is what selected `forceCompact` before).
 - **Skill frontmatter still rejects `onSessionStart`, `onSessionEnd` and `onConfigReload`**; the error now says why
   (no execution environment for a shell action to run in). No skill that loads today is newly rejected.
 

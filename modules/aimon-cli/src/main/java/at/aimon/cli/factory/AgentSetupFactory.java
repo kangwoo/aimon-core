@@ -130,6 +130,7 @@ import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.shell.impl.local.LocalShell;
 import at.aimon.core.skill.hook.declarative.DefaultShellActionExecutor;
 import at.aimon.core.skill.hook.declarative.HostShellActionExecutor;
+import at.aimon.core.skill.hook.declarative.ShellActionExecutor;
 import at.aimon.core.skill.parser.MarkdownSkillParser;
 import at.aimon.core.skill.parser.SkillHookSetParser;
 import at.aimon.core.skill.parser.SkillParser;
@@ -1037,9 +1038,18 @@ public class AgentSetupFactory {
             String agentName) {
         return HookHotReloadBootstrap.builder().userHome(Paths.get(System.getProperty("user.home")))
                 .projectRoot(Paths.get(fileSystem.getWorkingDirectory()))
-                .shellExecutor(new HostShellActionExecutor(hookConfigShell)).processEnv(System.getenv())
+                .shellExecutor(createHookConfigShellExecutor(hookConfigShell)).processEnv(System.getenv())
                 .registry(agentRuntime.getHookRegistry()).executionManager(agentExecutor.getHookExecutionManager())
                 .invoker(new ReloadInvoker(InvokerType.MAIN_AGENT, agentName, Environment.createDefault())).start();
+    }
+
+    /**
+     * The executor for {@code hooks.json} shell actions: a {@link HostShellActionExecutor} over the CLI's host shell
+     * (EE-48). Not a {@link DefaultShellActionExecutor} — that one runs in the firing execution's environment, and
+     * {@code hooks.json} can declare session- and config-lifecycle events that fire outside any execution.
+     */
+    static ShellActionExecutor createHookConfigShellExecutor(VirtualShell hookConfigShell) {
+        return new HostShellActionExecutor(hookConfigShell);
     }
 
     /**

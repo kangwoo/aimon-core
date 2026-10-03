@@ -247,7 +247,7 @@ EE-12 의 결정문대로 **서술자가 아니라 환경 자체**를 실었다.
 
 | 이벤트 | 발화 지점 | 실행 안인가 | 환경의 출처 |
 |---|---|---|---|
-| `preTool` / `postTool` / `permissionRequest` / `permissionDenied` | `toolinvocation/SingleToolInvoker` | 안 | 그 호출의 `ToolContext` 에 든 `EXECUTION_ENVIRONMENT` — 도구가 쓰는 바로 그 인스턴스. `RoutineExecutor` 와 스킬 커맨드 디스패처도 이 경로를 탄다 |
+| `preTool` / `postTool` / `permissionRequest` / `permissionDenied` | `toolinvocation/SingleToolInvoker` | 안 | 그 호출의 `ToolContext` 에 든 `EXECUTION_ENVIRONMENT` — 도구가 쓰는 바로 그 인스턴스. 스킬 커맨드 디스패처(`OrcaAgentExecutor.commandToolDispatcher`)도 이 경로를 탄다. `RoutineExecutor` 는 타지 않는다 — 도구를 직접 부르고(`tool.execute`) 훅을 하나도 발화하지 않는다 |
 | `onStart` / `onStop` | `agent/impl/orca/OrcaAgentExecutor`(`invokeOnStart`·`invokeOnStop`), `subagent/execution/DefaultSubagentExecutor`, `command/system/CompactCommand` | 안 | 턴은 `ExecutionScope.executionEnvironment`, 포크는 **포크 자신이** 해석한 환경(`LoopContext.executionEnvironment()`), `/compact` 는 커맨드 `ToolContext` 의 값 |
 | `subagentStart` / `subagentStop` | `subagent/DefaultSubagentExecutionManager` | 안 (스폰한 쪽 실행) | `SubagentExecutionEnvironment.getExecutionEnvironment()` — **스폰한 실행의** 환경(→ EE-52). 런타임 수준 러너가 스폰하면 비어 있다 |
 | `preCompact` / `postCompact` | `agent/compact/DefaultCompactionEngine` | 안 | `ContextRequest` → `CompactionGuardRequest` → `CompactionRequest` \| `SummaryRequest` 로 흘러온 값 |
@@ -279,7 +279,16 @@ EE-12 의 결정문대로 **서술자가 아니라 환경 자체**를 실었다.
 `DefaultSubagentExecutionManagerTest`(`subagentStart`/`Stop` 이 스폰한 쪽 환경, 없으면 빈 값),
 `ContextEngineExecutionEnvironmentTest`(AUTO·MANUAL × 제자리·view 모드에서 pre/post 압축 훅),
 `RollingContextEngineTest`, `CompactCommandTest`, `DefaultRewakeFireListenerTest`(리플레이는 빈 값),
-`DefaultCompactionEngineRunIdentityTest`(위치 메서드만 구현한 가드가 요청 객체 진입점에서도 낮춘 밴드를 유지).
+`DefaultCompactionEngineRunIdentityTest`(위치 메서드만 구현한 가드가 요청 객체 진입점에서도 낮춘 밴드를 유지),
+`HookFiringIntegrationTest.onStopOfAFailedTurnCarriesTheTurnsExecutionEnvironment`(예외로 끝난 턴의 `onStop`),
+`CompactionTurnIntegrationTest.autoCompactionHooksCarryTheTurnsExecutionEnvironment`(메인 루프 AUTO 압축의
+`preCompact`·`postCompact` 가 턴의 환경), `AgentSetupFactoryHookConfigShellTest`(CLI 가 `hooks.json` 에 호스트 셸
+실행기를 배선함 — EE-48).
+
+(정정. PR #204 의 첫 판은 위 표에 "`RoutineExecutor` 도 이 경로를 탄다" 고 적었다. 리뷰에서 틀린 것이 드러났다 —
+`RoutineExecutor` 는 `timeoutExecutor.submit(() -> tool.execute(input, stepContext))` 로 도구를 직접 부르고
+`SingleToolInvoker` 를 거치지 않으므로 루틴의 도구 단계에서는 `preTool`·`postTool` 을 포함해 어떤 훅도 발화하지 않는다.
+같은 문장이 설계 문서 §4.2, `TeardownPhase.HOOK_CONFIG_SHELL` 의 Javadoc, `CHANGELOG.md` 에도 들어가 있어 함께 고쳤다.)
 
 ## EE-10 — `AgentEnvironmentSnapshot` 이 작업 디렉터리를 여전히 든다 · **열림**
 

@@ -261,8 +261,8 @@ public enum TeardownPhase {
      * <p>
      * Skill-declared hooks are not served by it: their shell actions run in the execution environment's shell, which
      * the environment's provider owns (closed with {@link #AGENT_RESOURCES}). A skill hook that fires after that
-     * phase — from a routine still draining in {@link #SCHEDULING}, say — finds its shell closed and is skipped with
-     * a WARN, exactly as a tool call in that execution would fail.
+     * phase finds its shell closed and is skipped with a WARN, exactly as a tool call in that execution would fail.
+     * (Scheduled routines are not such a path: {@code RoutineExecutor} calls its tools directly and fires no hooks.)
      *
      * <p>
      * Last because it is the deepest leaf: {@code hooks.json} hooks fire from hook registries (closed with their
