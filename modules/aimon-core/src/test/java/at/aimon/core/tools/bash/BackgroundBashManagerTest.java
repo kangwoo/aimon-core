@@ -208,8 +208,7 @@ class BackgroundBashManagerTest {
         void recordThisNodeLost() {
             final InMemoryBackgroundBashStore durable = new InMemoryBackgroundBashStore();
             durable.putIfAbsent(BackgroundBashRecord.builder().taskId("bash_0000aaaa").ownerRuntimeId(ACME).nodeId("a")
-                    .command("npm run dev").startedAt(Instant.now()).expiresAt(Instant.now().plusSeconds(3600))
-                    .build());
+                    .startedAt(Instant.now()).expiresAt(Instant.now().plusSeconds(3600)).build());
             final BackgroundBashManager restarted = manager(BackgroundBashManager.builder().store(durable).nodeId("a"));
 
             final BackgroundBashLookup lookup = restarted.find(ACME, "bash_0000aaaa");
@@ -223,9 +222,8 @@ class BackgroundBashManagerTest {
         void expiredRecordIsDropped() {
             final InMemoryBackgroundBashStore shared = new InMemoryBackgroundBashStore();
             final Instant started = Instant.parse("2026-10-01T00:00:00Z");
-            shared.putIfAbsent(
-                    BackgroundBashRecord.builder().taskId("bash_0000bbbb").ownerRuntimeId(ACME).nodeId("gone")
-                            .command("npm run dev").startedAt(started).expiresAt(started.plusSeconds(3600)).build());
+            shared.putIfAbsent(BackgroundBashRecord.builder().taskId("bash_0000bbbb").ownerRuntimeId(ACME)
+                    .nodeId("gone").startedAt(started).expiresAt(started.plusSeconds(3600)).build());
             final BackgroundBashManager manager = manager(BackgroundBashManager.builder().store(shared).nodeId("b")
                     .clock(Clock.fixed(started.plusSeconds(7200), ZoneOffset.UTC)));
 

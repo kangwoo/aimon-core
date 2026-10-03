@@ -430,14 +430,13 @@ class BashOutputToolTest {
     void testExecute_TaskOnAnotherNode_ReportsWhereItRuns() {
         InMemoryBackgroundBashStore shared = new InMemoryBackgroundBashStore();
         shared.putIfAbsent(BackgroundBashRecord.builder().taskId("bash_0000eeee").nodeId("node-b")
-                .command("npm run dev").startedAt(java.time.Instant.now())
-                .expiresAt(java.time.Instant.now().plusSeconds(3600)).build());
+                .startedAt(java.time.Instant.now()).expiresAt(java.time.Instant.now().plusSeconds(3600)).build());
         try (BackgroundBashManager nodeA = BackgroundBashManager.builder().store(shared).nodeId("node-a").build()) {
             ToolResult result = new BashOutputTool(nodeA).execute(ToolInput.of(Map.of("taskId", "bash_0000eeee")),
                     context);
 
             assertThat(result.isError()).isTrue();
-            assertThat(result.getContent()).contains("running on another node (node-b)")
+            assertThat(result.getContent()).contains("running on another node.").doesNotContain("node-b")
                     .contains("cannot be read from here").doesNotContain("Shell not found");
         }
     }
@@ -446,8 +445,7 @@ class BashOutputToolTest {
     void testExecute_TaskThisNodeLost_SaysSo() {
         InMemoryBackgroundBashStore durable = new InMemoryBackgroundBashStore();
         durable.putIfAbsent(BackgroundBashRecord.builder().taskId("bash_0000ffff").nodeId("node-a")
-                .command("npm run dev").startedAt(java.time.Instant.now())
-                .expiresAt(java.time.Instant.now().plusSeconds(3600)).build());
+                .startedAt(java.time.Instant.now()).expiresAt(java.time.Instant.now().plusSeconds(3600)).build());
         try (BackgroundBashManager restarted = BackgroundBashManager.builder().store(durable).nodeId("node-a")
                 .build()) {
             ToolResult result = new BashOutputTool(restarted).execute(ToolInput.of(Map.of("taskId", "bash_0000ffff")),

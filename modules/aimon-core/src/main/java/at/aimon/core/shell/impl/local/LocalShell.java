@@ -154,6 +154,13 @@ public final class LocalShell implements VirtualShell {
      * ({@code sleep 30 &}, a spawned server) running past the timeout that was supposed to stop them.
      *
      * <p>
+     * Every process in the tree first gets a polite termination request, then shares one grace period
+     * ({@link #PROCESS_DESTROY_TIMEOUT}). Whatever is still alive when it runs out is killed forcibly &mdash; each
+     * handle on its own, <em>not</em> only when the parent outlived the grace. A child that ignores SIGTERM
+     * ({@code trap '' TERM}) under a parent that honours it would otherwise survive the parent and keep running after
+     * the caller was told the command stopped.
+     *
+     * <p>
      * The descendant snapshot is inherently racy: a grandchild born after the snapshot is not enumerated and survives.
      * Closing that gap needs a process group ({@code setsid} + {@code kill(-pgid)}), which is platform-specific and out
      * of {@link ProcessBuilder}'s reach.
@@ -168,15 +175,13 @@ public final class LocalShell implements VirtualShell {
         descendants.forEach(LocalShell::destroyQuietly);
         try {
             p.destroy();
-            if (!p.waitFor(PROCESS_DESTROY_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)) {
-                destroyForciblyAll(descendants, p);
-            }
+            awaitGrace(descendants, p);
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
-            destroyForciblyAll(descendants, p);
         } catch (Exception ignored) {
-            destroyForciblyAll(descendants, p);
+            // Fall through to the forcible sweep
         }
+        destroyForciblyAll(descendants, p);
     }
 
     private static void destroyForciblyQuietly(ProcessHandle handle) {
@@ -184,6 +189,30 @@ public final class LocalShell implements VirtualShell {
             handle.destroyForcibly();
         } catch (Exception ignored) {
             // Best effort - the handle may already refer to a process that exited
+        }
+    }
+
+    /**
+     * Waits until every process in the snapshot (and the parent) has exited, or until the one shared grace period
+     * runs out, whichever comes first.
+     */
+    private static void awaitGrace(List<ProcessHandle> descendants, Process p) throws InterruptedException {
+        final long deadline = System.nanoTime() + PROCESS_DESTROY_TIMEOUT.toNanos();
+        p.waitFor(PROCESS_DESTROY_TIMEOUT.toNanos(), TimeUnit.NANOSECONDS);
+        for (ProcessHandle handle : descendants) {
+            final long remaining = deadline - System.nanoTime();
+            if (remaining <= 0) {
+                return;
+            }
+            if (handle.isAlive()) {
+                try {
+                    handle.onExit().get(remaining, TimeUnit.NANOSECONDS);
+                } catch (InterruptedException ie) {
+                    throw ie;
+                } catch (Exception ignored) {
+                    // Timed out or not observable: the forcible sweep decides
+                }
+            }
         }
     }
 
@@ -200,13 +229,27 @@ public final class LocalShell implements VirtualShell {
         }
     }
 
+    /**
+     * Forcibly kills every handle of the snapshot, and the parent, that is still alive. {@link ProcessHandle#isAlive()}
+     * also guards against a recycled pid: a handle whose process exited does not report a newer process as alive.
+     */
     private static void destroyForciblyAll(List<ProcessHandle> descendants, Process p) {
-        descendants.forEach(LocalShell::destroyForciblyQuietly);
+        descendants.stream().filter(LocalShell::isAliveQuietly).forEach(LocalShell::destroyForciblyQuietly);
         try {
-            p.destroyForcibly();
+            if (p.isAlive()) {
+                p.destroyForcibly();
+            }
         } catch (Exception ignored) {
             // Best effort cleanup - no action needed
             // Process cleanup failed, but we can't do anything about it
+        }
+    }
+
+    private static boolean isAliveQuietly(ProcessHandle handle) {
+        try {
+            return handle.isAlive();
+        } catch (Exception e) {
+            return false;
         }
     }
 

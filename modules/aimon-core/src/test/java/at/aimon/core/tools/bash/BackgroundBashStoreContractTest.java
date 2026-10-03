@@ -26,8 +26,7 @@ public abstract class BackgroundBashStoreContractTest {
 
     private static BackgroundBashRecord running(String taskId) {
         return BackgroundBashRecord.builder().taskId(taskId).ownerRuntimeId(AgentRuntimeId.fromName("ops", "acme"))
-                .nodeId("node-a").command("npm run dev").startedAt(STARTED).expiresAt(STARTED.plusSeconds(3600))
-                .build();
+                .nodeId("node-a").startedAt(STARTED).expiresAt(STARTED.plusSeconds(3600)).build();
     }
 
     @Test
@@ -41,7 +40,6 @@ public abstract class BackgroundBashStoreContractTest {
             assertThat(record.getTaskId()).isEqualTo("bash_00000001");
             assertThat(record.getOwnerRuntimeId()).contains(AgentRuntimeId.fromName("ops", "acme"));
             assertThat(record.getNodeId()).isEqualTo("node-a");
-            assertThat(record.getCommand()).isEqualTo("npm run dev");
             assertThat(record.getStartedAt()).isEqualTo(STARTED);
             assertThat(record.getExpiresAt()).contains(STARTED.plusSeconds(3600));
             assertThat(record.getStatus()).isEqualTo(BashTaskStatus.RUNNING);
@@ -55,8 +53,8 @@ public abstract class BackgroundBashStoreContractTest {
     @DisplayName("a record without an owner or an expiry is stored as such")
     void optionalFieldsStayEmpty() {
         final BackgroundBashStore store = createStore();
-        store.putIfAbsent(BackgroundBashRecord.builder().taskId("bash_00000002").nodeId("node-a").command("true")
-                .startedAt(STARTED).build());
+        store.putIfAbsent(
+                BackgroundBashRecord.builder().taskId("bash_00000002").nodeId("node-a").startedAt(STARTED).build());
 
         assertThat(store.find("bash_00000002")).hasValueSatisfying(record -> {
             assertThat(record.getOwnerRuntimeId()).isEmpty();
@@ -70,11 +68,10 @@ public abstract class BackgroundBashStoreContractTest {
         final BackgroundBashStore store = createStore();
         store.putIfAbsent(running("bash_00000003"));
 
-        final boolean stored = store
-                .putIfAbsent(running("bash_00000003").toBuilder().command("something else").nodeId("node-b").build());
+        final boolean stored = store.putIfAbsent(running("bash_00000003").toBuilder().nodeId("node-b").build());
 
         assertThat(stored).isFalse();
-        assertThat(store.find("bash_00000003").orElseThrow().getCommand()).isEqualTo("npm run dev");
+        assertThat(store.find("bash_00000003").orElseThrow().getNodeId()).isEqualTo("node-a");
     }
 
     @Test

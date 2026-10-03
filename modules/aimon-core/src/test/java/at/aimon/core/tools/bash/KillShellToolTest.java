@@ -79,7 +79,7 @@ class KillShellToolTest {
         ToolResult result = kill(ACME, task.getTaskId());
 
         assertThat(result.isSuccess()).as(result.getContent()).isTrue();
-        assertThat(result.getContent()).contains("Shell " + task.getTaskId() + " stopped.")
+        assertThat(result.getContent()).contains("Shell " + task.getTaskId() + " stopped:")
                 .contains("BashOutput(taskId=\"" + task.getTaskId() + "\")");
         assertThat(task.getStatus()).isEqualTo(BashTaskStatus.KILLED);
 
@@ -123,12 +123,12 @@ class KillShellToolTest {
     @DisplayName("a command on another node is an error: only that node can stop it")
     void testExecute_OtherNode_ReturnsError() {
         store.putIfAbsent(BackgroundBashRecord.builder().taskId("bash_0000cccc").ownerRuntimeId(ACME).nodeId("node-b")
-                .command("npm run dev").startedAt(Instant.now()).expiresAt(Instant.now().plusSeconds(3600)).build());
+                .startedAt(Instant.now()).expiresAt(Instant.now().plusSeconds(3600)).build());
 
         ToolResult result = kill(ACME, "bash_0000cccc");
 
         assertThat(result.isError()).isTrue();
-        assertThat(result.getContent()).contains("running on another node (node-b)")
+        assertThat(result.getContent()).contains("running on another node.").doesNotContain("node-b")
                 .contains("cannot be stopped from here");
     }
 

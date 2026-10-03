@@ -1401,8 +1401,11 @@ PR #195 리뷰 1 이 **macOS 에도 별칭이 있음**을 재현했다 — APFS 
 
 **왜.** `destroyForciblyQuietly` 는 자손을 한 번 스냅숏해서 죽인다. 스냅숏 뒤에 태어난 손자는 열거되지 않아 남는다 —
 Javadoc 이 전부터 적어 둔 한계다. 전에는 timeout 과 인터럽트 때만 드러났는데, `KillShell` 과 스택 종료가 같은 코드를 타게
-되어 **모델이 "멈췄다" 는 답을 받은 뒤에도 프로세스가 남는** 경우가 생겼다. `KillShell` 은 그래서 "stop requested" 이상을
-약속하지 않는다. 프로세스 그룹은 플랫폼에 따라 다르고 `ProcessBuilder` 로는 닿지 않는다.
+되어 **모델이 "멈췄다" 는 답을 받은 뒤에도 프로세스가 남는** 경우가 생겼다. 스냅숏에 든 프로세스는 이제 확실히 죽는다 —
+PR #205 의 리뷰 뒤로 유예가 끝났을 때 살아 있는 핸들은 부모의 생사와 상관없이 하나하나 SIGKILL 한다(전에는 부모가 유예를
+넘겼을 때만 올렸으므로 SIGTERM 을 무시하는 자식이 남았다). 남은 틈은 스냅숏 뒤에 태어났거나 트리를 벗어난(`nohup` ·
+`setsid` · 이중 fork) 프로세스뿐이다. `KillShell` 의 답("the command and the processes it was running were terminated")도
+그만큼만 말한다. 프로세스 그룹은 플랫폼에 따라 다르고 `ProcessBuilder` 로는 닿지 않는다.
 
 **어디.** `modules/aimon-core/src/main/java/at/aimon/core/shell/impl/local/LocalShell.java` 의 `destroyForciblyQuietly` ·
 `snapshotDescendants`(2026-10-03).
@@ -1419,7 +1422,8 @@ Javadoc 이 전부터 적어 둔 한계다. 전에는 timeout 과 인터럽트 �
 
 **왜.** EE-7 의 배선은 부트스트랩(`StackAgentRuntimeProvisioner`)에 있다. 코어만 쓰는 조립의 기본 도구 제공자는 인자 없는
 `OrcaBashToolProvider()` 이고, 이것은 전처럼 **도구 레지스트리마다** `BackgroundBashManager` 를 만든다 — 런타임을 다시 만들면
-옛 task id 를 잃는다. `bindRuntime` 도 어셈블리가 부르는 것이므로 그 조립은 직접 불러야 한다. 런타임이 스스로 바인딩하게
+옛 task id 를 잃는다. 매니저를 직접 나눠 쓰게 하는 조립은 도구 컨텍스트에 `AGENT_RUNTIME_ID` 를 실어야 한다 — 없으면
+작업에 소유자가 없고, 같은 처지의 모든 호출자가 그 작업을 보고 멈춘다(Orca 실행기는 싣는다). `bindRuntime` 도 어셈블리가 부르는 것이므로 그 조립은 직접 불러야 한다. 런타임이 스스로 바인딩하게
 하지 않은 이유는 부트스트랩이 런타임을 만들기 **전에** 슬롯이 필요하고(제어 저장소), "런타임은 아무것도 닫지 않는다" 는
 원칙(설계 §4.3)에 예외가 하나 더 생기기 때문이다.
 

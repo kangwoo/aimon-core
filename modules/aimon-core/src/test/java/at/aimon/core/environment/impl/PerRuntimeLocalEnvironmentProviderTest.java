@@ -2,10 +2,17 @@ package at.aimon.core.environment.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -170,5 +177,144 @@ class PerRuntimeLocalEnvironmentProviderTest {
         assertThatThrownBy(() -> failing.bindRuntime(ACME)).hasMessageContaining("cannot create the workspace");
         assertThatThrownBy(() -> failing.resolve(request(ACME))).hasMessageContaining("cannot create the workspace");
         failing.close();
+    }
+
+    private LocalExecutionEnvironmentProvider local(AgentRuntimeId id) {
+        return LocalExecutionEnvironmentProvider.builder()
+                .workspaceRoot(root.resolve(id.discriminator().orElse("default"))).contentSearch(false).build();
+    }
+
+    /**
+     * A workspace function that blocks on {@code release} for {@code slowId} only, after counting down {@code entered}.
+     */
+    private Function<AgentRuntimeId, LocalExecutionEnvironmentProvider> slowFor(AgentRuntimeId slowId,
+            CountDownLatch entered, CountDownLatch release, AtomicInteger calls) {
+        return id -> {
+            calls.incrementAndGet();
+            if (id.equals(slowId)) {
+                entered.countDown();
+                try {
+                    if (!release.await(10, TimeUnit.SECONDS)) {
+                        throw new IllegalStateException("test latch never released");
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(e);
+                }
+            }
+            return local(id);
+        };
+    }
+
+    @Test
+    @DisplayName("a slow workspace build for one id does not hold up resolve for an id already built")
+    void slowBuildDoesNotBlockOtherIds() throws Exception {
+        final CountDownLatch entered = new CountDownLatch(1);
+        final CountDownLatch release = new CountDownLatch(1);
+        final PerRuntimeLocalEnvironmentProvider concurrent = new PerRuntimeLocalEnvironmentProvider(
+                slowFor(ACME, entered, release, new AtomicInteger()));
+        try {
+            final ExecutionEnvironment globex = concurrent.resolve(request(GLOBEX));
+            final CompletableFuture<ExecutionEnvironment> acme = CompletableFuture
+                    .supplyAsync(() -> concurrent.resolve(request(ACME)));
+            assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
+
+            // ACME's build is parked inside the workspace function. Under a provider-wide lock this would block.
+            final ExecutionEnvironment again = CompletableFuture.supplyAsync(() -> concurrent.resolve(request(GLOBEX)))
+                    .get(5, TimeUnit.SECONDS);
+            assertThat(again).isSameAs(globex);
+            final RuntimeBinding binding = CompletableFuture.supplyAsync(() -> concurrent.bindRuntime(GLOBEX)).get(5,
+                    TimeUnit.SECONDS);
+            binding.close();
+            assertThat(acme).isNotDone();
+
+            release.countDown();
+            assertThat(available(acme.get(10, TimeUnit.SECONDS))).isTrue();
+        } finally {
+            release.countDown();
+            concurrent.close();
+        }
+    }
+
+    @Test
+    @DisplayName("concurrent first requests for one id build exactly one workspace and share it")
+    void concurrentFirstRequestsShareOneBuild() throws Exception {
+        final CountDownLatch entered = new CountDownLatch(1);
+        final CountDownLatch release = new CountDownLatch(1);
+        final AtomicInteger calls = new AtomicInteger();
+        final PerRuntimeLocalEnvironmentProvider concurrent = new PerRuntimeLocalEnvironmentProvider(
+                slowFor(ACME, entered, release, calls));
+        try {
+            final List<CompletableFuture<ExecutionEnvironment>> requests = new ArrayList<>();
+            requests.add(CompletableFuture.supplyAsync(() -> concurrent.resolve(request(ACME))));
+            assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
+            for (int i = 0; i < 4; i++) {
+                requests.add(CompletableFuture.supplyAsync(() -> concurrent.resolve(request(ACME))));
+            }
+            final CompletableFuture<RuntimeBinding> binding = CompletableFuture
+                    .supplyAsync(() -> concurrent.bindRuntime(ACME));
+
+            release.countDown();
+
+            final ExecutionEnvironment first = requests.get(0).get(10, TimeUnit.SECONDS);
+            for (CompletableFuture<ExecutionEnvironment> request : requests) {
+                assertThat(request.get(10, TimeUnit.SECONDS)).isSameAs(first);
+            }
+            assertThat(calls).hasValue(1);
+            // The binding counted on the one shared slot: closing it closes the workspace every request got.
+            binding.get(10, TimeUnit.SECONDS).close();
+            assertThat(available(first)).isFalse();
+        } finally {
+            release.countDown();
+            concurrent.close();
+        }
+    }
+
+    @Test
+    @DisplayName("a failed build is forgotten: the next request for the id builds again and succeeds")
+    void failedBuildCanBeRetried() {
+        final AtomicInteger calls = new AtomicInteger();
+        final PerRuntimeLocalEnvironmentProvider flaky = new PerRuntimeLocalEnvironmentProvider(id -> {
+            if (calls.incrementAndGet() == 1) {
+                throw new IllegalStateException("remote file system not reachable yet");
+            }
+            return local(id);
+        });
+        try {
+            assertThatThrownBy(() -> flaky.resolve(request(ACME))).hasMessageContaining("not reachable yet");
+
+            final ExecutionEnvironment acme = flaky.resolve(request(ACME));
+
+            assertThat(available(acme)).isTrue();
+            assertThat(calls).hasValue(2);
+        } finally {
+            flaky.close();
+        }
+    }
+
+    @Test
+    @DisplayName("closing the provider while a workspace is being built closes what the build returns")
+    void closeDuringBuild() throws Exception {
+        final CountDownLatch entered = new CountDownLatch(1);
+        final CountDownLatch release = new CountDownLatch(1);
+        final List<LocalExecutionEnvironmentProvider> returned = new CopyOnWriteArrayList<>();
+        final Function<AgentRuntimeId, LocalExecutionEnvironmentProvider> slow = slowFor(ACME, entered, release,
+                new AtomicInteger());
+        final PerRuntimeLocalEnvironmentProvider concurrent = new PerRuntimeLocalEnvironmentProvider(id -> {
+            final LocalExecutionEnvironmentProvider built = slow.apply(id);
+            returned.add(built);
+            return built;
+        });
+        final CompletableFuture<Throwable> acme = CompletableFuture
+                .supplyAsync(() -> catchThrowable(() -> concurrent.resolve(request(ACME))));
+        assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
+
+        concurrent.close();
+        release.countDown();
+
+        assertThat(acme.get(10, TimeUnit.SECONDS)).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("closed");
+        assertThat(returned).hasSize(1);
+        assertThat(returned.get(0).fileSystem().getStatus().isAvailable()).isFalse();
     }
 }

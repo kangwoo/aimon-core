@@ -15,6 +15,10 @@ import java.util.Optional;
  * found".
  *
  * <p>
+ * A record must not carry command text or command output, and an implementation must not add either: both may
+ * contain secrets, and a shared store keeps them beyond the node and the process they belong to.
+ *
+ * <p>
  * Implementations must be thread-safe. A method that fails throws an unchecked exception: the manager refuses to start
  * a command it could not record, and otherwise carries on with what it knows locally.
  */

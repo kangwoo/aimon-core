@@ -184,7 +184,7 @@ public class BackgroundBashManager implements AutoCloseable {
 
         // The record goes in before the command starts: a command the store could not record must not run, because
         // nothing but this node would ever know it exists.
-        final String taskId = recordNewTask(owner, command, timeout);
+        final String taskId = recordNewTask(owner, timeout);
         final CompletableFuture<ShellCommandResult> future = new CompletableFuture<>();
         final BackgroundBashTask task = new BackgroundBashTask(taskId, command, future, owner, cancellation, timeout,
                 clock);
@@ -196,6 +196,12 @@ public class BackgroundBashManager implements AutoCloseable {
             tasks.remove(taskId, task);
             removeRecordQuietly(taskId);
             throw new IllegalStateException(closedMessage(), e);
+        }
+        if (closed.get()) {
+            // close() ran between ensureOpen() above and tasks.put(): its sweep of running tasks may have missed this
+            // one, which would then run until close()'s thread interrupt, five seconds on. Stop it here instead; a
+            // signal tripped before the shell starts the command means the command never starts.
+            task.requestCancel();
         }
         return task;
     }
@@ -209,7 +215,7 @@ public class BackgroundBashManager implements AutoCloseable {
         }
     }
 
-    private String recordNewTask(AgentRuntimeId owner, String command, Duration timeout) {
+    private String recordNewTask(AgentRuntimeId owner, Duration timeout) {
         final Instant now = clock.instant();
         for (int attempt = 0; attempt < MAX_ID_ATTEMPTS; attempt++) {
             final String taskId = TASK_ID_PREFIX + UUID.randomUUID().toString().substring(0, TASK_ID_LENGTH);
@@ -217,8 +223,7 @@ public class BackgroundBashManager implements AutoCloseable {
                 continue;
             }
             final BackgroundBashRecord record = BackgroundBashRecord.builder().taskId(taskId).ownerRuntimeId(owner)
-                    .nodeId(nodeId).command(command).startedAt(now)
-                    .expiresAt(timeout != null ? now.plus(timeout) : null).build();
+                    .nodeId(nodeId).startedAt(now).expiresAt(timeout != null ? now.plus(timeout) : null).build();
             if (store.putIfAbsent(record)) {
                 return taskId;
             }
@@ -259,6 +264,12 @@ public class BackgroundBashManager implements AutoCloseable {
 
     /**
      * Looks a task up on behalf of a runtime.
+     *
+     * <p>
+     * A task started without an owner runtime id is found by every caller that has none either — owner matching is the
+     * only boundary. An assembly that shares one manager between runtimes must therefore put
+     * {@code ToolContextKeys.AGENT_RUNTIME_ID} in every tool context, as the Orca executor does; a context without it
+     * sees, and can stop, every other owner-less task on the node.
      *
      * @param owner
      *            the calling execution's runtime, or null for none; a task is found only by the owner it was started
