@@ -54,26 +54,25 @@ final class ShellActionRunner {
         try {
             final ShellCommandResult result = shell.execute(action::getCommand, options);
             if (result.isFailure()) {
-                log.warn("Skill hook shell action exited with code {} (command={}, stderr={})", result.exitCode(),
+                log.warn("Hook shell action exited with code {} (command={}, stderr={})", result.exitCode(),
                         action.getCommand(), summarise(result.stderr()));
             } else {
-                log.debug("Skill hook shell action ok (command={}, duration={}ms)", action.getCommand(),
+                log.debug("Hook shell action ok (command={}, duration={}ms)", action.getCommand(),
                         result.duration().toMillis());
             }
             return ShellHookOutcome.of(result.exitCode(), result.stdout(), result.stderr());
         } catch (ShellTimeoutException e) {
-            log.warn("Skill hook shell action timed out after {} (command={})", action.getTimeout(),
-                    action.getCommand());
+            log.warn("Hook shell action timed out after {} (command={})", action.getTimeout(), action.getCommand());
         } catch (ExecutionEnvironmentUnavailableException e) {
             // The environment is there but cannot be used. Not a reason to reach for another shell: the command is
             // skipped, exactly as a tool call in the same execution would fail.
-            log.warn("Skill hook shell action not run: the execution environment is unavailable (command={}): {}",
+            log.warn("Hook shell action not run: the execution environment is unavailable (command={}): {}",
                     action.getCommand(), e.getMessage());
         } catch (ShellExecutionException e) {
-            log.warn("Skill hook shell action failed (command={}): {}", action.getCommand(), e.getMessage());
+            log.warn("Hook shell action failed (command={}): {}", action.getCommand(), e.getMessage());
         } catch (RuntimeException e) {
-            log.warn("Skill hook shell action threw unexpected error (command={}): {}", action.getCommand(),
-                    e.getMessage(), e);
+            log.warn("Hook shell action threw unexpected error (command={}): {}", action.getCommand(), e.getMessage(),
+                    e);
         }
         // A command that never produced an exit status cannot be read as a veto — fail soft and let the tool run.
         return ShellHookOutcome.notObserved();
