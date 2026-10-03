@@ -48,12 +48,13 @@ class MongoSessionInboxDurabilityContractTest extends AbstractSessionInboxDurabi
                 .append("turnId", turnId).append("idempotencyKey", idempotencyKey)
                 .append("deliveredAt", java.util.Date.from(java.time.Instant.parse("2026-04-27T10:00:00Z")))
                 .append("initiator", new Document("type", "ROBOT").append("id", "u-9").append("displayName", "bad"));
-        // $$NOW, exactly as deliver does it: the sort axis is deliveredAt, so a planted entry stamped from a client
-        // clock could be re-ordered against the deliveries around it by skew alone.
+        // $$NOW and $literal, exactly as deliver does it: the sort axis is deliveredAt, so a planted entry stamped
+        // from a client clock could be re-ordered against the deliveries around it by skew alone.
         final ObjectId planted = new ObjectId();
         final Document setStage = new Document("$set",
                 new Document(DocumentKeys.F_CONVERSATION_ID, id.value()).append(DocumentKeys.F_PRIORITY, tier.ordinal())
-                        .append(DocumentKeys.F_DELIVERED_AT, "$$NOW").append(DocumentKeys.F_PAYLOAD, payload));
+                        .append(DocumentKeys.F_DELIVERED_AT, "$$NOW")
+                        .append(DocumentKeys.F_PAYLOAD, new Document("$literal", payload)));
         db.getCollection(DocumentKeys.COLL_INBOX).findOneAndUpdate(Filters.eq(DocumentKeys.F_ID, planted),
                 List.of(setStage), new FindOneAndUpdateOptions().upsert(true).returnDocument(ReturnDocument.AFTER));
         return InboundMessageId.of(planted.toHexString());

@@ -141,9 +141,11 @@ public final class MongoSessionRecordStore implements SessionRecordStore {
         final Document set = new Document(DocumentKeys.F_UPDATED_AT, "$$NOW");
         if (agentRef != null) {
             // $ifNull, not a plain assignment: an existing binding wins. A node that wanted a different agent finds
-            // that out from the returned record and refuses, instead of having already stolen the session.
-            set.append(DocumentKeys.F_AGENT_REF,
-                    new Document("$ifNull", List.of("$" + DocumentKeys.F_AGENT_REF, agentRef)));
+            // that out from the returned record and refuses, instead of having already stolen the session. The
+            // fallback is $literal because it sits inside an expression: an agentRef beginning with "$" would
+            // otherwise be read as a field path.
+            set.append(DocumentKeys.F_AGENT_REF, new Document("$ifNull",
+                    List.of("$" + DocumentKeys.F_AGENT_REF, new Document("$literal", agentRef))));
         }
         final Document after = provisionOnce(sessionId, set);
         return after == null ? StoredSessionRecord.empty(sessionId, agentRef) : toRecord(sessionId, after);

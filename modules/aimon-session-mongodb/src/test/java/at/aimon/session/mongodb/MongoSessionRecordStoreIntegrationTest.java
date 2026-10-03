@@ -68,6 +68,16 @@ class MongoSessionRecordStoreIntegrationTest {
     }
 
     @Test
+    @DisplayName("provision stores an agentRef beginning with $ as data, not as a field path")
+    void provisionBindsDollarPrefixedAgentRef() {
+        final SessionId id = SessionId.of("rec-provision-dollar");
+
+        // "$_id" read as a field path would bind the session to its own id instead of the agent.
+        assertThat(store.provision(id, "$_id").getAgentRef()).contains("$_id");
+        assertThat(store.load(id).orElseThrow().getAgentRef()).contains("$_id");
+    }
+
+    @Test
     @DisplayName("provision without a binding materializes an unbound record")
     void provisionWithoutBinding() {
         final SessionId id = SessionId.of("rec-unbound");

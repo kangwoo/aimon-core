@@ -11,8 +11,10 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
+import at.aimon.core.agent.SubmitOptions;
 import at.aimon.core.agent.queue.QueuedInputPriority;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.inbox.CollectedBatch;
 import at.aimon.core.agent.session.inbox.InboundMessage;
 import at.aimon.core.agent.session.inbox.InboundMessageId;
 import at.aimon.core.base.Principal;
@@ -121,6 +123,74 @@ class MongoSessionInboxIntegrationTest {
         inbox.purge(id);
         assertThat(inbox.isEmpty(id)).isTrue();
         assertThat(inbox.collect(id, QueuedInputPriority.LATER).getMessages()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("an envelope with no metadata and default SubmitOptions round-trips exactly")
+    void emptyMetadataAndDefaultOptionsRoundTrip() {
+        // The shape a forwarding router delivers: it never sets metadata, so the codec writes an empty subdocument,
+        // which a pipeline $set on MongoDB 6 rejects unless the payload is wrapped in $literal.
+        final SessionId id = SessionId.of("c-inbox-literal-1");
+        final InboundMessage sent = InboundMessage.builder().sessionId(id).agentRef("agent-x").userInput("hello")
+                .priority(QueuedInputPriority.NEXT).initiator(Principal.user("u-1"))
+                .deliveredAt(Instant.parse("2025-01-01T00:00:00Z")).build();
+        final InboundMessageId returnedId = inbox.deliver(sent);
+
+        final List<InboundMessage> collected = inbox.collect(id, QueuedInputPriority.LATER).getMessages();
+        assertThat(collected).hasSize(1);
+        final InboundMessage got = collected.get(0);
+        assertThat(got.getId()).hasValue(returnedId);
+        assertThat(got.getSessionId()).isEqualTo(id);
+        assertThat(got.getAgentRef()).isEqualTo("agent-x");
+        assertThat(got.getUserInput().asText()).isEqualTo("hello");
+        assertThat(got.getPriority()).isEqualTo(QueuedInputPriority.NEXT);
+        assertThat(got.getInitiator()).isEqualTo(Principal.user("u-1"));
+        assertThat(got.getDeliveredAt()).isEqualTo(Instant.parse("2025-01-01T00:00:00Z"));
+        assertThat(got.getMetadata()).isEmpty();
+        assertThat(got.getSubmitOptions()).isEqualTo(SubmitOptions.empty());
+        assertThat(got.getTurnId()).isEmpty();
+        assertThat(got.getIdempotencyKey()).isEmpty();
+        assertThat(got.getContextDiscriminator()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a nested empty map inside execution attributes is stored as data")
+    void nestedEmptyExecutionAttributeRoundTrips() {
+        final SessionId id = SessionId.of("c-inbox-literal-2");
+        final SubmitOptions options = SubmitOptions.builder()
+                .executionAttributes(Map.of("empty", Map.of(), "nested", Map.of("inner", Map.of()))).build();
+        inbox.deliver(InboundMessage.builder().sessionId(id).agentRef("agent-x").userInput("hello")
+                .priority(QueuedInputPriority.NEXT).initiator(Principal.user("u-1"))
+                .deliveredAt(Instant.parse("2025-01-01T00:00:00Z")).submitOptions(options).build());
+
+        final List<InboundMessage> collected = inbox.collect(id, QueuedInputPriority.LATER).getMessages();
+        assertThat(collected).hasSize(1);
+        assertThat(collected.get(0).getSubmitOptions().getExecutionAttributes())
+                .isEqualTo(Map.of("empty", Map.of(), "nested", Map.of("inner", Map.of())));
+    }
+
+    @Test
+    @DisplayName("strings beginning with $ are stored as data, not read as field paths or variables")
+    void dollarPrefixedStringsRoundTrip() {
+        // Without $literal, "$priority" resolves to the document's own priority field and "$$NOW" to the server
+        // clock; the stored entry then fails to decode and its turn is dropped after findOneAndDelete removed it.
+        final SessionId id = SessionId.of("c-inbox-literal-3");
+        final SubmitOptions options = SubmitOptions.builder().executionAttribute("path", "$HOME")
+                .systemPromptVariables(Map.of("var", "$$NOW")).build();
+        inbox.deliver(InboundMessage.builder().sessionId(id).agentRef("agent-x").userInput("$priority")
+                .priority(QueuedInputPriority.NEXT).initiator(Principal.user("u-1"))
+                .deliveredAt(Instant.parse("2025-01-01T00:00:00Z")).metadata(Map.of("k", "$conversationId"))
+                .idempotencyKey("$idem").submitOptions(options).build());
+
+        final CollectedBatch batch = inbox.collect(id, QueuedInputPriority.LATER);
+        assertThat(batch.getUnreadable()).isEmpty();
+        assertThat(batch.getMessages()).hasSize(1);
+        final InboundMessage got = batch.getMessages().get(0);
+        assertThat(got.getUserInput().asText()).isEqualTo("$priority");
+        assertThat(got.getMetadata()).containsExactlyEntriesOf(Map.of("k", "$conversationId"));
+        assertThat(got.getIdempotencyKey()).hasValue("$idem");
+        assertThat(got.getSubmitOptions().getExecutionAttributes()).containsExactlyEntriesOf(Map.of("path", "$HOME"));
+        assertThat(got.getSubmitOptions().getSystemPromptVariables()).containsExactlyEntriesOf(Map.of("var", "$$NOW"));
     }
 
     private static InboundMessage message(SessionId id, QueuedInputPriority priority, String text) {

@@ -72,12 +72,19 @@ public final class MongoSessionInbox implements SessionInbox {
             // Server-side time: stamp deliveredAt via $$NOW so FIFO ordering inside a priority bucket does not depend
             // on cross-node application clock sync. We pre-allocate the ObjectId so we can return it without a second
             // round-trip to read back the upserted document.
+            //
+            // $$NOW is only available in a pipeline update, and a pipeline $set evaluates every value it is given as
+            // an aggregation expression. The payload is data, not an expression, so it goes in under $literal:
+            // without it a user input such as "$HOME" is read as a field path (the entry is stored with the wrong
+            // value, fails to decode, and its turn is dropped), and an empty subdocument such as metadata with no
+            // entries is rejected outright by MongoDB 6 (code 40180).
             final ObjectId id = new ObjectId();
             final Document payload = codec.encodePayload(message);
             final Document setStage = new Document("$set",
                     new Document(DocumentKeys.F_CONVERSATION_ID, message.getSessionId().value())
                             .append(DocumentKeys.F_PRIORITY, message.getPriority().ordinal())
-                            .append(DocumentKeys.F_DELIVERED_AT, "$$NOW").append(DocumentKeys.F_PAYLOAD, payload));
+                            .append(DocumentKeys.F_DELIVERED_AT, "$$NOW")
+                            .append(DocumentKeys.F_PAYLOAD, new Document("$literal", payload)));
             collection.findOneAndUpdate(Filters.eq(DocumentKeys.F_ID, id), List.of(setStage),
                     new FindOneAndUpdateOptions().upsert(true).returnDocument(ReturnDocument.AFTER));
             log.debug("Delivered to inbox conv={} id={}", message.getSessionId(), id);
