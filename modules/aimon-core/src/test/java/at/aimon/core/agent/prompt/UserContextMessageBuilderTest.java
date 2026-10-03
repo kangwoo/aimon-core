@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.AgentEnvironmentSnapshot;
-import at.aimon.core.agent.Environment;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.Role;
 
@@ -44,7 +44,7 @@ class UserContextMessageBuilderTest {
         void happyPathEmitsRequiredReminders() {
             final AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder()
                     .workingDirectory("/workspace/project").currentDate(FIXED_INSTANT)
-                    .environment(Environment.createDefault()).build();
+                    .userLocale(UserLocale.createDefault()).build();
 
             final Optional<Message> result = UserContextMessageBuilder.build(snapshot);
 
@@ -64,7 +64,7 @@ class UserContextMessageBuilderTest {
             extensions.put("git-branch", "main");
 
             final AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder().workingDirectory("/ws")
-                    .currentDate(FIXED_INSTANT).environment(Environment.createDefault()).extensions(extensions).build();
+                    .currentDate(FIXED_INSTANT).userLocale(UserLocale.createDefault()).extensions(extensions).build();
 
             final Optional<Message> result = UserContextMessageBuilder.build(snapshot);
 
@@ -80,7 +80,7 @@ class UserContextMessageBuilderTest {
         @DisplayName("skips blank working directory but still emits current-date reminder")
         void blankWorkingDirectorySkipped() {
             final AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder().workingDirectory("   ")
-                    .currentDate(FIXED_INSTANT).environment(Environment.createDefault()).build();
+                    .currentDate(FIXED_INSTANT).userLocale(UserLocale.createDefault()).build();
 
             final Optional<Message> result = UserContextMessageBuilder.build(snapshot);
 
@@ -102,7 +102,7 @@ class UserContextMessageBuilderTest {
             extensions.put("   ", "blank-key-skipped");
 
             final AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder().workingDirectory("/ws")
-                    .currentDate(FIXED_INSTANT).environment(Environment.createDefault()).extensions(extensions).build();
+                    .currentDate(FIXED_INSTANT).userLocale(UserLocale.createDefault()).extensions(extensions).build();
 
             final Optional<Message> result = UserContextMessageBuilder.build(snapshot);
 

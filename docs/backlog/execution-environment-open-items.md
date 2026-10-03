@@ -1,4 +1,4 @@
-# 실행 환경 — 등록 항목 59건 (열림 43 · 닫힘 16)
+# 실행 환경 — 등록 항목 61건 (열림 44 · 닫힘 17)
 
 출처는 `ExecutionEnvironment` 구현 작업이다. 설계는 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md)
 이고, 구현 계획(승인본)과 구현이 그 계획에서 벗어난 점은
@@ -36,7 +36,12 @@ EE-42 를 다룬 변경이 먼저 썼으므로 이 둘은 EE-46 부터 번호를
 결정됨이되 열린 항목은 이제 둘(EE-6 · EE-14)이다. 그 변경의 설계와 구현이 설계에서 벗어난 점은
 [`../design/tool/execution-environment-ee13-ee7-background-lifecycle.md`](../design/tool/execution-environment-ee13-ee7-background-lifecycle.md)
 에 있다. EE-53~EE-59 는 그 설계의 §8(EE-53~EE-56), 설계 리뷰(EE-57), 열린 질문(Q4 → EE-58, Q5 · Q1 → EE-59) 가운데 이
-변경 밖으로 결과가 번지는 것을 옮긴 것이다. aimon-sandbox 에 미치는 영향은 EE-59 에 모았다.
+변경 밖으로 결과가 번지는 것을 옮긴 것이다. aimon-sandbox 에 미치는 영향은 EE-59 에 모았다. `Environment` 를 없앤
+EE-14 는 2026-10-03 에 닫았다. 결정 항목이었으므로 결정됨이되 열린 항목은 이제 하나(EE-6)다. 그 변경의 설계와 구현이
+설계에서 벗어난 점은
+[`../design/tool/execution-environment-ee14-user-locale.md`](../design/tool/execution-environment-ee14-user-locale.md)
+에 있다. EE-60 · EE-61 은 그 설계가 드러낸 사실(§2.3)과 열린 질문(Q1 → EE-60, Q7 → EE-61) 가운데 이 변경 밖으로 결과가
+번지는 것을 옮긴 것이고, 외부 저장소에 미치는 영향은 EE-1 에 더했다.
 
 ---
 
@@ -49,6 +54,14 @@ EE-42 를 다룬 변경이 먼저 썼으므로 이 둘은 EE-46 부터 번호를
 샌드박스 전용 실행 도구가 모두 없어지고(명령·파일은 코어 도구가 샌드박스 환경에서 처리한다) 슬롯 수명을 다루는
 오케스트레이터 도구(`SandboxList`·`SandboxStart`·`SandboxStop`)만 남아 실행마다
 `EXECUTION_ENVIRONMENT` 에서 바인딩을 꺼내고, 브라우저는 산출 파일을 `env.fileSystem()` 에, artifact 는 §9.3 경로로 보내야 한다.
+
+**`Environment` 삭제(EE-14)도 같은 릴리스에 실린다** *(2026-10-03 추가)*. 두 저장소가 새 코어로 올라올 때 `Environment` /
+`getEnvironment()` / `ENVIRONMENT_KEY` 도 `UserLocale` / `getUserLocale()` / `USER_LOCALE` 로 함께 고친다. 로컬 체크아웃에서
+확인한 범위에서(aimon-sandbox `bb6c877` 2026-09-30, aimon-browser `d590703` 2026-09-16, aimon-memory `784bfeb` 2026-09-21)
+aimon-sandbox 는 테스트 `OrcaRuntimeSandboxE2ETest` 한 곳에서 `Environment.createDefault()` 를 쓰고(main 에는 없다),
+aimon-browser 와 aimon-memory 는 쓰지 않는다. **원격의 최신 상태와 열린 브랜치는 확인하지 못했다.** 그 테스트 한 줄을 누가
+언제 고치는지는 이 저장소에서 정할 수 없다. 옛 코어로 빌드된 jar 를 새 코어와 함께 돌리면 `NoClassDefFoundError` /
+`NoSuchMethodError` 다.
 
 **어디.** 두 외부 저장소. 코어 쪽 SPI 는 `modules/aimon-core/src/main/java/at/aimon/core/agent/orca/tool/OrcaToolProviderContext.java`.
 
@@ -533,7 +546,7 @@ EE-12 의 결정문대로 **서술자가 아니라 환경 자체**를 실었다.
 
 설계와 구현이 설계에서 벗어난 점: [`../design/tool/execution-environment-ee13-ee7-background-lifecycle.md`](../design/tool/execution-environment-ee13-ee7-background-lifecycle.md).
 
-## EE-14 — `Environment` 에는 `timeZone` 만 남았다 · **열림 · 결정됨** *(2026-09-29)*
+## EE-14 — `Environment` 에는 `timeZone` 만 남았다 · **닫힘** *(2026-10-03)*
 
 **무엇을.** `Environment` 를 `UserLocale` 같은 이름으로 옮기고 없앨지 정한다.
 
@@ -552,6 +565,72 @@ EE-12 의 결정문대로 **서술자가 아니라 환경 자체**를 실었다.
 **결정 전에 확인한 전제.** 서술대로다 — `Environment` 의 필드는 `timeZone` 하나다. 다만 파급은 서술이 암시하는 것보다 넓다.
 `at.aimon.core.agent.Environment` 를 import 하는 파일이 main 에 46개, 테스트를 포함하면 170개다(2026-09-29). `HookContext` 의
 Javadoc 은 아직 `Environment` 를 "working directory, platform, OS version" 으로 적는다(21행) — 옮길 때 같이 고친다.
+
+### 닫힘 (2026-10-03)
+
+결정대로 했다. `at.aimon.core.agent.Environment` 를 지우고 `timeZone` 을 새 타입 **`at.aimon.core.base.UserLocale`** 로 옮겼다
+(불변 class + builder, 계약은 그대로 — 널 금지, 기본값 `ZoneId.systemDefault()`, `createDefault()`). 유예용 별칭은 두지 않았다.
+
+착수할 때 확정하기로 한 것 셋.
+
+- **이름은 `UserLocale`.** 결정문과 설계 §14 가 이미 쓰던 이름이라 옛 문서로 찾아오는 사람이 그대로 닿고, "환경" 계열
+  단어를 피한다. 알고 고른 약점 둘은 타입 Javadoc 에 적었다 — `java.util.Locale` 과 다르다(그쪽은 시간대를 들지 않는다),
+  값의 출처가 JVM 기본 시간대라 다중 사용자 서버에서는 "사용자의" 값이 아니다.
+- **패키지는 `at.aimon.core.base`.** `Principal` 과 같은 층이다(둘 다 사용자의 속성이고 `ToolContextKeys` 에서도 나란히
+  놓인다). 모든 코어 패키지가 `base` 에 의존할 수 있어 ArchUnit 규칙을 넓힌 곳이 없다.
+- **접근자 · 빌더 · 키도 같이 바꿨다.** `getEnvironment()` → `getUserLocale()`, `environment(…)` → `userLocale(…)`,
+  `ToolContextKeys.ENVIRONMENT_KEY`(`"environment"`) → `ToolContextKeys.USER_LOCALE`(`"userLocale"`). 혼동이 실제로 일어나던
+  자리가 타입 이름보다 `HookContext` 의 `getEnvironment()` / `getExecutionEnvironment()` / `getEnvironmentDescriptor()`
+  였기 때문이다. 타입이 사라져 호출부가 어차피 전부 깨지므로 접근자를 남겨도 사용자가 아끼는 것이 없었다.
+
+**동작은 바꾸지 않았다.** 값을 만드는 곳(`OrcaAgentRuntimeFactory.assemble`, CLI `AgentSetupFactory` 의 리로드 훅)과
+흘러가는 곳은 그대로다. 설정 키는 하나도 바뀌지 않았다(`aimon.environment.*` 는 실행 환경 설정이고 이 타입과 무관하다).
+
+착수해 보니 항목의 서술과 달랐던 것은 넷이다. 전제 자체(`Environment` 의 필드는 `timeZone` 하나)는 적힌 대로였다.
+
+1. **파급은 47 / 180 이었다**(결정 시점 46 / 170). 그리고 import 로는 세어지지 않는 파일이 더 있었다 — 같은 패키지라
+   import 가 없는 것(`AgentEnvironmentSnapshot` 과 테스트 셋)과, 타입 이름 없이 `getEnvironment()` / `.environment(…)` 만
+   부르는 여덟(`SingleToolInvoker`, `DefaultLiveSession`, `HookRegistryReloader`, `DefaultSubagentExecutionManager`,
+   `DefaultRewakeFireListener`, `OrcaSkillToolProvider`, `RollingContextEngine`, `SubagentBehavior` 의 Javadoc).
+2. **`timeZone` 을 읽는 운영 코드가 없다.** `getTimeZone()` 호출은 저장소 전체에서 이 타입의 단위 테스트뿐이다. 프롬프트의
+   환경 블록은 `EnvironmentDescriptor` 로 만들어지고 시간대를 싣지 않으며, 사용자 컨텍스트의 `current-date` 는 `Instant` 의
+   UTC ISO-8601 문자열이다. 항목은 "남은 값의 이름이 틀렸다" 로 적었지만 더 정확히는 **"소비자가 없는 값이 47개 파일을
+   지난다"** 였다. 이름을 고친 것으로 혼동은 사라졌으나 값의 쓸모는 그대로 0 이다(→ EE-60). 그래서 "프롬프트에 시간대를
+   싣는 경로의 출력이 바뀌지 않음" 은 확인할 경로가 없었고, 대신 "프롬프트가 시간대에 의존하지 않는다" 를 테스트로 고정했다.
+3. **낡은 Javadoc 은 `HookContext` 한 곳이 아니었다.** 같은 "working directory, platform, OS" 서술이
+   `ToolContextKeys`(키 Javadoc 이 "작업 디렉터리와 환경 변수에 접근한다" 고 적었다), `agent/package-info.java`,
+   `ToolPermissionSubjectAware`(경로 주체를 `Environment` 에 대해 푼다고 적었다 — 실제로는
+   `ToolContextKeys.EXECUTION_ENVIRONMENT` 의 서술자가 말하는 작업 디렉터리이고, `FilePathSubjects` 에서 확인했다)에
+   있었고, `ToolContext` 계열 Javadoc 넷은 `put("environment", …)` 예제를 싣고 있었다. 같은 문장이 가이드
+   (`tool-development-guide.md`)와 설계(`contract-hardening.md`)에도 있어 함께 고쳤다. 가이드의 예제 하나는
+   `ExecutionEnvironment` 변수를 `"environment"` 키에 넣는 **전부터 틀린** 예제였다.
+4. **와이어 · 영속 포맷에는 나타나지 않는다.** `Environment` 를 필드로 가진 main 타입 가운데 Jackson 이나 `Serializable`
+   을 쓰는 것이 없고, 세션 레코드 · 트랜스크립트 · 서브에이전트 태스크 코덱 · 셸 훅 payload 에 참조가 없으며, 설정 · AOT
+   힌트 파일에도 없다. 문자열로 새던 것은 `toString()` 뿐이다. 데이터 이행이 아니고 동결 이름
+   (`docs/migration/frozen-names.md`)도 바뀌지 않았다. `ToolContext` 키 문자열은 프로세스 안 맵의 키다.
+
+심각도(규칙 셋)는 적힌 것보다 가볍다. 헷갈리는 이름이 **틀린 값을 읽게 만든 사례는 없었다** — 읽는 코드가 없었으므로.
+무거운 쪽은 문서였다: 위 3 의 Javadoc 과 가이드는 도구 · 훅 작성자에게 "작업 디렉터리는 여기서 읽는다" 고 말하고 있었다.
+
+다른 행동 변화. `ToolContext` 에서 문자열 `"environment"` 로 값을 꺼내던 외부 도구는 타입을 적지 않았다면 컴파일되고
+**조용히 빈 값**을 받는다. 예외 메시지와 `toString()` 의 단어가 바뀌었다(`"UserLocale cannot be null"`, `userLocale=…`).
+
+남긴 것: 값의 공급 경로와 소비자(→ EE-60), 마지막 동음이의 `SubagentExecutionEnvironment`(→ EE-61), 외부 저장소의
+사용처(→ EE-1 에 적었다). "EE-1 과 같은 릴리스에 싣는다" 는 결정을 **강제하는 장치는 저장소에 없다** — `CHANGELOG.md` 의
+`[Unreleased]` 와 이 문서에 적혀 있을 뿐이다.
+
+빌드가 강제하는 것: 없다(새 규칙을 더하지 않았다). `coreShouldNotDependOnOtherAimonPackages` 가 `base` 의 새 타입이 다른
+AIMON 패키지에 기대지 못하게 하는 것은 전부터 있던 규칙이다. Javadoc 의 낡은 `{@link}` 는 빌드가 잡지 못한다
+(`Xdoclint:none`) — 잔재는 grep 으로 확인했고 그 패턴은 설계 문서 §8.4 · §11 에 있다.
+
+테스트: `UserLocaleTest`(기본값, 빌더, 널 거부, 동등성, `toString`), `OrcaAgentExecutorUserLocaleTest`(**`UTC` ·
+`Asia/Seoul` · `Pacific/Kiritimati` 세 시간대에서 모델에게 보낸 시스템 프롬프트와 메시지가 문자 단위로 같다** — EE-60 이
+시간대를 싣기로 하면 의도적으로 깨질 자리다 / 메인 실행의 `ToolContext` 가 런타임의 `UserLocale` 을 `USER_LOCALE` 과
+문자열 `"userLocale"` 양쪽으로 싣고 `"environment"` 키는 없다), `DefaultSubagentExecutorTest`(포크 쪽 같은 키).
+프롬프트 전문을 단언하던 기존 테스트(`OrcaAgentExecutorSystemPromptTest`, `UserContextMessageBuilderTest`,
+`EnvironmentContextProviderTest`)의 기대 문자열은 한 글자도 고치지 않았다.
+
+설계와 구현이 설계에서 벗어난 점: [`../design/tool/execution-environment-ee14-user-locale.md`](../design/tool/execution-environment-ee14-user-locale.md).
 
 ## EE-15 — 스킬 명령 경로는 스테이징 예외 두 종류만 잡는다 · **열림**
 
@@ -1482,3 +1561,41 @@ Javadoc 이 전부터 적어 둔 한계다. 전에는 timeout 과 인터럽트 �
 **언제 다시 볼까.** 이 변경이 들어간 코어를 aimon-sandbox 가 처음 의존할 때 — EE-1 과 같은 시점이다.
 
 출처: [`../design/tool/execution-environment-ee13-ee7-background-lifecycle.md`](../design/tool/execution-environment-ee13-ee7-background-lifecycle.md) §8 · §9 Q1 · Q5.
+
+## EE-60 — `UserLocale.timeZone` 은 공급 경로도 소비자도 없다 · **열림**
+
+**무엇을.** 시간대를 프롬프트(또는 다른 소비자)에 실을지 정하고, 싣는다면 값의 출처를 정한다 — 에이전트 정의, 스타터
+속성, `Principal` 별. 싣지 않기로 하면 값과 그 배관을 지운다.
+
+**왜.** 값은 언제나 JVM 기본 시간대다 — 만드는 곳이 `UserLocale.createDefault()` 둘뿐이고(`OrcaAgentRuntimeFactory.assemble`,
+CLI `AgentSetupFactory` 의 리로드 훅) 설정으로 줄 길이 없다. 그리고 읽는 곳이 없다: `getTimeZone()` 호출은 단위 테스트뿐이다.
+모델이 받는 날짜는 사용자 컨텍스트의 `current-date` 하나이고 그것은 `Instant` 의 UTC ISO-8601 문자열이다
+(`UserContextMessageBuilder`). 그래서 서울의 사용자가 오전 8시에 "오늘" 을 물으면 모델은 UTC 의 전날 23시를 받는다. 한편
+값은 훅 컨텍스트 열셋, 도구 컨텍스트, 압축 요청, 서브에이전트 실행 컨텍스트를 지나 main 47개 파일의 시그니처에 실려 있다 —
+아무도 읽지 않는 값의 유지 비용이다. 다중 사용자 서버에서는 이름과 달리 "사용자의" 값도 아니다.
+
+**어디.** `modules/aimon-core/src/main/java/at/aimon/core/base/UserLocale.java`,
+`agent/impl/orca/OrcaAgentRuntimeFactory.java` 914행 · `modules/aimon-cli/src/main/java/at/aimon/cli/factory/AgentSetupFactory.java`
+1044행(2026-10-03), `agent/prompt/UserContextMessageBuilder.java`. 지금의 동작을 고정한 테스트는
+`OrcaAgentExecutorUserLocaleTest.promptDoesNotDependOnTheTimeZone` 이다 — 시간대를 싣기로 하면 이 테스트를 고친다.
+
+**언제 다시 볼까.** 날짜 · 시각을 사용자의 시간대로 말해야 한다는 요구가 처음 나올 때, 또는 다음 공개 SPI 정리 때.
+
+출처: [`../design/tool/execution-environment-ee14-user-locale.md`](../design/tool/execution-environment-ee14-user-locale.md) §2.3 · §10 Q1.
+
+## EE-61 — `SubagentExecutionEnvironment` 는 실행 환경이 아니다 · **열림**
+
+**무엇을.** `SubagentExecutionEnvironment` 의 이름을 그것이 실제로 무엇인지 말하는 이름으로 바꿀지 정한다.
+
+**왜.** 이 타입은 서브에이전트를 띄울 때 필요한 협력자 묶음(런타임 id, 레지스트리 셋, `UserLocale`, 기본 모델, 실행 속성,
+부모 `ExecutionEnvironment` 와 제공자 …)인데 이름이 `ExecutionEnvironment` 를 통째로 포함한다. 한 클래스 안에
+`SubagentExecutionEnvironment` 와 그것이 든 `getParentExecutionEnvironment()` 가 함께 나오고, 코드 주석은 둘 다 "the
+environment" 라고 부른다(`DefaultSubagentExecutionManager`, `TaskTool`). `Environment` 가 사라진 뒤 남은 마지막 동음이의다.
+관측 가능한 잘못은 아직 없다 — 타입이 달라 컴파일러가 섞이는 것을 막는다. 비용은 읽는 쪽에 있다.
+
+**어디.** `modules/aimon-core/src/main/java/at/aimon/core/subagent/SubagentExecutionEnvironment.java`(2026-10-03). 공개 SPI 다 —
+`SubagentExecutionManager` 의 메서드 인자이고 `aimon-workflow-graaljs` 와 CLI 가 빌더를 부른다.
+
+**언제 다시 볼까.** 서브에이전트 SPI 를 다음에 깨뜨릴 때.
+
+출처: [`../design/tool/execution-environment-ee14-user-locale.md`](../design/tool/execution-environment-ee14-user-locale.md) §3.4 · §10 Q7.

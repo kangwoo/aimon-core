@@ -336,7 +336,7 @@ public interface SubagentBehavior {
 - `support`(`SubagentBehaviorSupport`)는 취소 신호와 결과 빌더를 제공한다: `cancellationSignal()`,
   `isCancelledOrInterrupted()`, `success(finalAnswer)`, `failure(errorMessage)` — conversation snapshot/metadata를
   직접 구성할 필요가 없다.
-- 구현체는 `context.getToolRegistry()`/`getEnvironment()` 등으로 도구·LLM을 **선택적으로** 쓸 수 있으나, 기본
+- 구현체는 `context.getToolRegistry()`/`getUserLocale()` 등으로 도구·LLM을 **선택적으로** 쓸 수 있으나, 기본
   기대값은 순수 코드다. `Tool.execute()`처럼 throw 대신 `support.failure(...)` 반환을 권장한다(러너가 throw/null도
   failure로 셰이핑하는 안전망 제공).
 

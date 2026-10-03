@@ -4,10 +4,10 @@ import java.util.List;
 import java.util.Objects;
 
 import at.aimon.core.agent.Agent;
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.orca.OrcaProviderDependencies;
 import at.aimon.core.agent.tool.ToolContextEnricher;
 import at.aimon.core.agent.tool.ToolRegistry;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.credential.CredentialStore;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.hook.HookRegistry;
@@ -30,7 +30,7 @@ import at.aimon.core.workflow.WorkflowRunner;
  *
  * <p>
  * Common registry dependencies are held via {@link OrcaProviderDependencies} (composition), while tool-specific fields
- * ({@code controlFileSystem}, {@code environment}, {@code agent}) are held directly.
+ * ({@code controlFileSystem}, {@code userLocale}, {@code agent}) are held directly.
  *
  * <p>
  * <b>No working filesystem, no shell.</b> This context deliberately offers no handle to the filesystem the model's
@@ -47,7 +47,7 @@ import at.aimon.core.workflow.WorkflowRunner;
  * {
  *     &#64;code
  *     OrcaToolProviderContext context = OrcaToolProviderContext.builder().controlFileSystem(controlFileSystem)
- *             .environment(environment).agent(agent).dependencies(deps).build();
+ *             .userLocale(userLocale).agent(agent).dependencies(deps).build();
  * }
  * </pre>
  *
@@ -108,7 +108,7 @@ public final class OrcaToolProviderContext {
     }
 
     private final VirtualFileSystem controlFileSystem;
-    private final Environment environment;
+    private final UserLocale userLocale;
     private final Agent agent;
     private final OrcaProviderDependencies dependencies;
     private final List<ToolContextEnricher> toolContextEnrichers;
@@ -116,7 +116,7 @@ public final class OrcaToolProviderContext {
 
     private OrcaToolProviderContext(Builder builder) {
         controlFileSystem = builder.controlFileSystem;
-        environment = builder.environment;
+        userLocale = builder.userLocale;
         agent = builder.agent;
         dependencies = Objects.requireNonNull(builder.dependencies, "dependencies must not be null");
         toolContextEnrichers = builder.toolContextEnrichers != null
@@ -137,12 +137,12 @@ public final class OrcaToolProviderContext {
     }
 
     /**
-     * Returns the environment.
+     * Returns the user locale.
      *
-     * @return the environment, may be null
+     * @return the user locale, may be null
      */
-    public Environment getEnvironment() {
-        return environment;
+    public UserLocale getUserLocale() {
+        return userLocale;
     }
 
     /**
@@ -284,7 +284,7 @@ public final class OrcaToolProviderContext {
      */
     public static final class Builder {
         private VirtualFileSystem controlFileSystem;
-        private Environment environment;
+        private UserLocale userLocale;
         private Agent agent;
         private OrcaProviderDependencies dependencies;
         private List<ToolContextEnricher> toolContextEnrichers;
@@ -306,14 +306,14 @@ public final class OrcaToolProviderContext {
         }
 
         /**
-         * Sets the environment.
+         * Sets the user locale.
          *
-         * @param environment
-         *            the environment
+         * @param userLocale
+         *            the user locale
          * @return this builder
          */
-        public Builder environment(Environment environment) {
-            this.environment = environment;
+        public Builder userLocale(UserLocale userLocale) {
+            this.userLocale = userLocale;
             return this;
         }
 

@@ -7,6 +7,38 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Changed (breaking): `Environment` is gone; its time zone lives in `UserLocale` (EE-14)
+
+- **`at.aimon.core.agent.Environment` is removed.** Its one remaining field, `timeZone`, is now on
+  `at.aimon.core.base.UserLocale` (same `createDefault()`, `builder()`, `getTimeZone()`). There is no deprecated
+  alias. The name said "environment" for a property of the user, beside `ExecutionEnvironment`, which is where
+  commands run.
+- **Accessors and builders are renamed with it**: `getEnvironment()` → `getUserLocale()` and
+  `Builder.environment(Environment)` → `Builder.userLocale(UserLocale)` on `HookContext` and every hook event
+  context, `RewakeCapableRuntime`, `OrcaToolProviderContext`, `OrcaProviderDependencies`, `OrcaCommandProviderContext`,
+  `OrcaAgentRuntime`, `ContextRequest`, `CompactionRequest`, `CompactionGuardRequest`, `SummaryRequest`,
+  `SubagentExecutionEnvironment`, `SubagentExecutionContext`, `AgentEnvironmentSnapshot`, `ToolInvocationSpec` and
+  `ReloadInvoker`. The `Environment` parameter of `CompactionGuard`'s deprecated overloads and of the `TaskTool`,
+  `WorkflowTool`, `SubagentBackedSkillForkExecutor` and `CompactCommand` constructors is a `UserLocale`, and
+  `GraalJsWorkflowTool.Builder.environment(…)` (`aimon-workflow-graaljs`) is `userLocale(…)`. A custom
+  `HookContext`, `RewakeCapableRuntime` or `CompactionGuard` implementation has to rename its method or parameter.
+- **`ToolContextKeys.ENVIRONMENT_KEY` is `ToolContextKeys.USER_LOCALE`, and the key's name is `"userLocale"`**, no
+  longer `"environment"`. A tool that looked the value up by string — `context.get("environment", …)` or
+  `containsKey("environment")` — compiles if it never named the type, and then finds nothing.
+- **Not renamed**, though they share the word: `ExecutionEnvironment`, `EnvironmentDescriptor`,
+  `HookContext.getExecutionEnvironment()` / `getEnvironmentDescriptor()`, `ExecutionOptions.getEnvironment()` (a
+  command's environment variables), the type names `SubagentExecutionEnvironment` and `AgentEnvironmentSnapshot`, and
+  every `aimon.environment.*` property. No configuration key changed.
+- **No behaviour and no stored data changed.** The value is built where it was (the JVM's default time zone, once per
+  runtime) and handed to the same places. It never reached a session record, a transcript, a task codec or a hook
+  payload, and the prompt carried no time zone before and carries none now. Nothing in the framework reads
+  `getTimeZone()` yet (EE-60).
+- **Ships with the release that carries the `OrcaToolProviderContext` break (EE-1)**, so the two external tool
+  providers are rebuilt once. In local checkouts, aimon-sandbox uses `Environment.createDefault()` in one test
+  (`OrcaRuntimeSandboxE2ETest`) and aimon-browser and aimon-memory do not use the type; their remotes were not checked.
+- Old name → new name, and the names that must not be touched:
+  [`docs/migration/rename-maps.md`](docs/migration/rename-maps.md).
+
 ### Added: `KillShell` stops a background `Bash` command, and the environment sets its ceiling (EE-13)
 
 - **New tool `KillShell(taskId)`**, registered by `OrcaBashToolProvider` next to `Bash` and `BashOutput`. It stops a
@@ -335,8 +367,9 @@ compatibility layer (`docs/project/api-stability.md` §5).
   refuse with "Read the file before modifying it" or "File changed since it was read; Read it again". A file read in an
   earlier turn must be read again.
 - **Prompt and hooks describe the execution's environment.** The environment block renders the
-  `EnvironmentDescriptor`. `Environment` keeps only `timeZone`: `workingDirectory`, `platform`, `osVersion` and
-  `createWithWorkingDirectory` are removed. `ContextAssemblyRequest` carries `executionEnvironment` in place of
+  `EnvironmentDescriptor`. `Environment` loses `workingDirectory`, `platform`, `osVersion` and
+  `createWithWorkingDirectory`; the `timeZone` that was left moved to `UserLocale` and the type itself is gone
+  (EE-14, above). `ContextAssemblyRequest` carries `executionEnvironment` in place of
   `environment` / `fileSystem`. Pre/PostTool hook contexts expose `getEnvironmentDescriptor()`.
 - **Smaller additions.** `ExecutionOptions.background`, `ShellCommandResult.notices()` (shown by `Bash` as
   `[environment] …` lines), `ContentSearch` (`Grep` delegates to `rg` when it is on the `PATH`, and matching files are

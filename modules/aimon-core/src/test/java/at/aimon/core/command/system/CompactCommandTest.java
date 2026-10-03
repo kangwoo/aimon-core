@@ -9,7 +9,6 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.compact.CompactionEngine;
 import at.aimon.core.agent.compact.CompactionGuard;
 import at.aimon.core.agent.compact.CompactionMetadata;
@@ -20,6 +19,7 @@ import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.base.Principal;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.CommandType;
 import at.aimon.core.command.execution.CommandExecutionContext;
 import at.aimon.core.command.execution.CommandExecutionResult;
@@ -43,7 +43,7 @@ class CompactCommandTest {
     private HookRegistry hookRegistry;
     private HookExecutionManager hookExecutionManager;
     private AtomicReference<OnStopContext> capturedOnStop;
-    private Environment environment;
+    private UserLocale userLocale;
     private CompactCommand command;
 
     @BeforeEach
@@ -57,8 +57,8 @@ class CompactCommandTest {
             capturedOnStop.set(context);
             return HookResult.success();
         });
-        environment = Environment.createDefault();
-        command = new CompactCommand(engine, guard, hookRegistry, hookExecutionManager, environment);
+        userLocale = UserLocale.createDefault();
+        command = new CompactCommand(engine, guard, hookRegistry, hookExecutionManager, userLocale);
     }
 
     @Test
@@ -70,13 +70,13 @@ class CompactCommandTest {
 
     @Test
     void constructorRejectsNullCollaborators() {
-        assertThatThrownBy(() -> new CompactCommand(null, guard, hookRegistry, hookExecutionManager, environment))
+        assertThatThrownBy(() -> new CompactCommand(null, guard, hookRegistry, hookExecutionManager, userLocale))
                 .isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> new CompactCommand(engine, null, hookRegistry, hookExecutionManager, environment))
+        assertThatThrownBy(() -> new CompactCommand(engine, null, hookRegistry, hookExecutionManager, userLocale))
                 .isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> new CompactCommand(engine, guard, null, hookExecutionManager, environment))
+        assertThatThrownBy(() -> new CompactCommand(engine, guard, null, hookExecutionManager, userLocale))
                 .isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> new CompactCommand(engine, guard, hookRegistry, null, environment))
+        assertThatThrownBy(() -> new CompactCommand(engine, guard, hookRegistry, null, userLocale))
                 .isInstanceOf(NullPointerException.class);
         assertThatThrownBy(() -> new CompactCommand(engine, guard, hookRegistry, hookExecutionManager, null))
                 .isInstanceOf(NullPointerException.class);
@@ -130,7 +130,7 @@ class CompactCommandTest {
         assertThat(captured).isNotNull();
         assertThat(captured.getTrigger()).isEqualTo(CompactionTrigger.MANUAL);
         assertThat(captured.getTranscriptBuffer()).isSameAs(memory);
-        assertThat(captured.getEnvironment()).isSameAs(environment);
+        assertThat(captured.getUserLocale()).isSameAs(userLocale);
         assertThat(captured.getHookRegistry()).isSameAs(hookRegistry);
         assertThat(captured.getCustomInstructions()).isEmpty();
 
@@ -371,7 +371,7 @@ class CompactCommandTest {
 
         @Override
         public at.aimon.core.agent.compact.CompactionDecision maybeCompact(TranscriptBuffer memory, LlmModel model,
-                HookRegistry hookRegistry, Environment environment) {
+                HookRegistry hookRegistry, UserLocale userLocale) {
             return at.aimon.core.agent.compact.CompactionDecision.none();
         }
 

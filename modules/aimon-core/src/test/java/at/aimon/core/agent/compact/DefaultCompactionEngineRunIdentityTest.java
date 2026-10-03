@@ -10,10 +10,10 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
@@ -52,7 +52,7 @@ class DefaultCompactionEngineRunIdentityTest {
 
     private DefaultHookRegistry hookRegistry;
     private DefaultHookExecutionManager hookExecutionManager;
-    private Environment environment;
+    private UserLocale userLocale;
     private DefaultCompactionEngine engine;
     private CapturingPreCompactHook capturedPreCompact;
 
@@ -60,7 +60,7 @@ class DefaultCompactionEngineRunIdentityTest {
     void setUp() {
         hookRegistry = new DefaultHookRegistry();
         hookExecutionManager = new DefaultHookExecutionManager();
-        environment = Environment.createDefault();
+        userLocale = UserLocale.createDefault();
         capturedPreCompact = new CapturingPreCompactHook();
         hookRegistry.register(HookEventType.PRE_COMPACT, capturedPreCompact);
         engine = DefaultCompactionEngine.withDefaults(new StubSummaryClient(), new HeuristicTokenEstimator(),
@@ -114,7 +114,7 @@ class DefaultCompactionEngineRunIdentityTest {
         ExecutionId executionId = ExecutionId.generate("subagent:researcher");
         TranscriptBuffer memory = memoryLabelled(SessionId.of(executionId.value()));
 
-        CompactionDecision decision = guard.maybeCompact(memory, model(), hookRegistry, environment, executionId);
+        CompactionDecision decision = guard.maybeCompact(memory, model(), hookRegistry, userLocale, executionId);
 
         assertThat(decision.getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
         assertThat(recordingEngine.require().getExecutionId()).hasValue(executionId);
@@ -126,7 +126,7 @@ class DefaultCompactionEngineRunIdentityTest {
         DefaultCompactionGuard guard = newGuard(recordingEngine);
 
         CompactionDecision decision = guard.maybeCompact(memoryLabelled(SessionId.generate()), model(), hookRegistry,
-                environment);
+                userLocale);
 
         assertThat(decision.getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
         assertThat(recordingEngine.require().getExecutionId()).isEmpty();
@@ -139,7 +139,7 @@ class DefaultCompactionEngineRunIdentityTest {
         ExecutionId executionId = ExecutionId.generate("subagent:researcher");
         TranscriptBuffer memory = memoryLabelled(SessionId.of(executionId.value()));
 
-        CompactionDecision decision = guard.forceCompact(memory, model(), hookRegistry, environment, executionId);
+        CompactionDecision decision = guard.forceCompact(memory, model(), hookRegistry, userLocale, executionId);
 
         assertThat(decision.getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
         assertThat(recordingEngine.require().getExecutionId()).hasValue(executionId);
@@ -156,7 +156,7 @@ class DefaultCompactionEngineRunIdentityTest {
         LegacyFourArgGuard legacy = new LegacyFourArgGuard();
         TranscriptBuffer memory = memoryLabelled(SessionId.generate());
 
-        CompactionDecision decision = legacy.maybeCompact(memory, model(), hookRegistry, environment,
+        CompactionDecision decision = legacy.maybeCompact(memory, model(), hookRegistry, userLocale,
                 ExecutionId.generate("subagent:researcher"));
 
         assertThat(decision.getAction()).isEqualTo(CompactionDecision.Action.NONE);
@@ -171,7 +171,7 @@ class DefaultCompactionEngineRunIdentityTest {
         LegacyFourArgGuard legacy = new LegacyFourArgGuard();
         TranscriptBuffer memory = memoryLabelled(SessionId.generate());
 
-        CompactionDecision decision = legacy.forceCompact(memory, model(), hookRegistry, environment,
+        CompactionDecision decision = legacy.forceCompact(memory, model(), hookRegistry, userLocale,
                 ExecutionId.generate("subagent:researcher"));
 
         assertThat(decision.getAction()).isEqualTo(CompactionDecision.Action.NONE);
@@ -193,7 +193,7 @@ class DefaultCompactionEngineRunIdentityTest {
                 final LegacyFourArgGuard legacy = new LegacyFourArgGuard();
                 final LegacyForceBandGuard forceBand = new LegacyForceBandGuard();
                 final CompactionGuardRequest request = CompactionGuardRequest.builder().transcriptBuffer(memory)
-                        .model(model()).hookRegistry(hookRegistry).environment(environment).executionId(id)
+                        .model(model()).hookRegistry(hookRegistry).userLocale(userLocale).executionId(id)
                         .budgetForced(budgetForced).build();
 
                 assertThat(legacy.maybeCompact(request).getAction()).isEqualTo(CompactionDecision.Action.NONE);
@@ -208,7 +208,7 @@ class DefaultCompactionEngineRunIdentityTest {
 
     private CompactionRequest.Builder baseRequest(TranscriptBuffer memory) {
         return CompactionRequest.builder().transcriptBuffer(memory).trigger(CompactionTrigger.AUTO).model(model())
-                .hookRegistry(hookRegistry).environment(environment);
+                .hookRegistry(hookRegistry).userLocale(userLocale);
     }
 
     /**
@@ -277,7 +277,7 @@ class DefaultCompactionEngineRunIdentityTest {
 
         @Override
         public CompactionDecision maybeCompact(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry,
-                Environment environment) {
+                UserLocale userLocale) {
             calls++;
             return CompactionDecision.none("legacy guard");
         }
@@ -289,14 +289,14 @@ class DefaultCompactionEngineRunIdentityTest {
 
         @Override
         public CompactionDecision maybeCompact(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry,
-                Environment environment) {
+                UserLocale userLocale) {
             calls.add("maybeCompact");
             return CompactionDecision.none("legacy guard");
         }
 
         @Override
         public CompactionDecision forceCompact(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry,
-                Environment environment) {
+                UserLocale userLocale) {
             calls.add("forceCompact");
             return CompactionDecision.none("legacy guard, lowered band");
         }

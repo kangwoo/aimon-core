@@ -11,12 +11,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 import at.aimon.core.agent.AgentRuntimeId;
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.interrupt.InterruptBehavior;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.subagent.InMemorySubagentRegistry;
@@ -48,7 +48,7 @@ class GraalJsWorkflowToolTest extends AbstractGraalJsRunTest {
         final GraalJsWorkflowTool.Builder builder = GraalJsWorkflowTool.builder()
                 .defaultModel(LlmModel.builder().name("gpt-4").build()).subagentRegistry(registry)
                 .toolRegistry(new DefaultToolRegistry()).hookRegistry(new DefaultHookRegistry())
-                .environment(Environment.createDefault()).subagentExecutionManager(manager).engines(engines)
+                .userLocale(UserLocale.createDefault()).subagentExecutionManager(manager).engines(engines)
                 .backgroundRunner(backgroundRunner);
         if (sandbox != null) {
             builder.sandbox(sandbox);

@@ -11,6 +11,10 @@
 > 로 옮겼다(EE-48 ← Q1, EE-51 ← Q2, EE-52 ← Q3; EE-49 · EE-50 ← §8). 열림/닫힘의 정본은 그 문서다. 이 설계가 확장하는
 > 명세는 [`execution-environment.md`](execution-environment.md) §10 · §13 · §15 다.
 
+> **덧붙임 (2026-10-03, EE-14).** 이 문서가 말하는 `Environment`(`agent.Environment`)는 이제 없다. 하나 남았던 필드는
+> `at.aimon.core.base.UserLocale` 로 옮겨 갔다. 본문은 승인본 그대로 두었고, 대응표는
+> [`../../migration/rename-maps.md`](../../migration/rename-maps.md) 에 있다.
+
 기준 커밋 `7915560` (`main`). 줄 번호는 모두 2026-10-03 에 이 워크트리에서 확인한 것이다.
 경로는 따로 적지 않으면 `modules/aimon-core/src/main/java/at/aimon/core/` 기준이다.
 

@@ -14,8 +14,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
 import at.aimon.core.hook.event.OnSessionStartContext;
@@ -145,7 +145,7 @@ class HookRegistryApplierTest {
         // And it actually runs there: the session-start context has no execution environment, yet the command fires.
         registry.getHooks(HookEventType.ON_SESSION_START).get(0)
                 .execute(OnSessionStartContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("agent")
-                        .hookRegistry(registry).environment(Environment.createDefault()).build());
+                        .hookRegistry(registry).userLocale(UserLocale.createDefault()).build());
         verify(hostShell).execute(any(ShellCommand.class), any(ExecutionOptions.class));
     }
 
@@ -172,7 +172,7 @@ class HookRegistryApplierTest {
 
     private static PreToolContext preToolContext(DefaultHookRegistry registry) {
         return PreToolContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("agent").hookRegistry(registry)
-                .environment(Environment.createDefault()).toolUse(ToolUse.of("call-1", "Bash", Map.of()))
+                .userLocale(UserLocale.createDefault()).toolUse(ToolUse.of("call-1", "Bash", Map.of()))
                 .iterationCount(1).build();
     }
 

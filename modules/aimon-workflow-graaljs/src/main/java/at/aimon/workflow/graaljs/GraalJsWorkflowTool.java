@@ -14,7 +14,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import at.aimon.core.agent.AgentRuntimeId;
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.interrupt.DefaultInterruptCoordinator;
 import at.aimon.core.agent.interrupt.InterruptBehavior;
@@ -29,6 +28,7 @@ import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.base.Principal;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmModel;
@@ -73,7 +73,7 @@ public final class GraalJsWorkflowTool extends AbstractTool {
     private final SubagentRegistry subagentRegistry;
     private final ToolRegistry toolRegistry;
     private final HookRegistry hookRegistry;
-    private final Environment environment;
+    private final UserLocale userLocale;
     private final SubagentExecutionManager subagentExecutionManager;
     private final List<ToolContextEnricher> toolContextEnrichers;
 
@@ -93,7 +93,7 @@ public final class GraalJsWorkflowTool extends AbstractTool {
         this.subagentRegistry = Objects.requireNonNull(builder.subagentRegistry, "subagentRegistry must not be null");
         this.toolRegistry = Objects.requireNonNull(builder.toolRegistry, "toolRegistry must not be null");
         this.hookRegistry = Objects.requireNonNull(builder.hookRegistry, "hookRegistry must not be null");
-        this.environment = Objects.requireNonNull(builder.environment, "environment must not be null");
+        this.userLocale = Objects.requireNonNull(builder.userLocale, "userLocale must not be null");
         this.subagentExecutionManager = Objects.requireNonNull(builder.subagentExecutionManager,
                 "subagentExecutionManager must not be null");
         this.toolContextEnrichers = builder.toolContextEnrichers != null
@@ -249,10 +249,10 @@ public final class GraalJsWorkflowTool extends AbstractTool {
         final Principal principal = context.get(ToolContextKeys.PRINCIPAL).orElse(null);
 
         return SubagentExecutionEnvironment.builder().agentRuntimeId(agentRuntimeId).subagentRegistry(subagentRegistry)
-                .toolRegistry(toolRegistry).hookRegistry(hookRegistry).environment(environment)
-                .defaultModel(defaultModel).executionAttributes(executionAttributes)
-                .parentLlmCallMetadata(parentMetadata).cancellationSignal(parentSignal).principal(principal)
-                .toolContextEnrichers(toolContextEnrichers).callerAllowedTools(CallerAllowedTools.of(context))
+                .toolRegistry(toolRegistry).hookRegistry(hookRegistry).userLocale(userLocale).defaultModel(defaultModel)
+                .executionAttributes(executionAttributes).parentLlmCallMetadata(parentMetadata)
+                .cancellationSignal(parentSignal).principal(principal).toolContextEnrichers(toolContextEnrichers)
+                .callerAllowedTools(CallerAllowedTools.of(context))
                 .invokingSessionId(InvokingSessionAccess.idToPropagate(context).orElse(null))
                 // The fork resolves its own environment from the spawning runtime's provider, with this execution's
                 // environment as its parent (execution-environment design §5.2).
@@ -288,7 +288,7 @@ public final class GraalJsWorkflowTool extends AbstractTool {
         private SubagentRegistry subagentRegistry;
         private ToolRegistry toolRegistry;
         private HookRegistry hookRegistry;
-        private Environment environment;
+        private UserLocale userLocale;
         private SubagentExecutionManager subagentExecutionManager;
         private List<ToolContextEnricher> toolContextEnrichers;
         private GraalJsEngineHolder engines;
@@ -319,8 +319,8 @@ public final class GraalJsWorkflowTool extends AbstractTool {
             return this;
         }
 
-        public Builder environment(Environment environment) {
-            this.environment = environment;
+        public Builder userLocale(UserLocale userLocale) {
+            this.userLocale = userLocale;
             return this;
         }
 

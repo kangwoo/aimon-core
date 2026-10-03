@@ -248,8 +248,8 @@ BashTool ──► VirtualShell#execute(ShellCommand, ExecutionOptions)   ← TC
 거부된다. 추측해서 통과시키는 쪽(상대 경로를 프로세스 CWD 로 푸는 식)은 JVM 이 어디서 떴는지에 따라
 결과가 달라져 패턴을 쓴 사람이 예측할 수 없다.
 
-`PATH` 주체는 절대 경로 + **어휘적** 정규화를 거친다. 파일 도구는 상대 경로를 `Environment` 의 작업
-디렉토리로 풀고 `..` 을 접은 뒤 내놓으므로 `/tmp/../etc/passwd` 는 `Read(/tmp/**)` 를 통과하지 못한다.
+`PATH` 주체는 절대 경로 + **어휘적** 정규화를 거친다. 파일 도구는 상대 경로를 그 실행의
+`ExecutionEnvironment` 서술자가 말하는 작업 디렉토리로 풀고 `..` 을 접은 뒤 내놓으므로 `/tmp/../etc/passwd` 는 `Read(/tmp/**)` 를 통과하지 못한다.
 심볼릭 링크는 풀지 않는다(§8).
 
 ### 4.4 `GenericTool<I, O>` (TCH-07)

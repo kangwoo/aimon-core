@@ -48,7 +48,6 @@ import at.aimon.cli.skill.InteractiveSkillApprovalChannel;
 import at.aimon.cli.tool.GraalJsWorkflowToolProvider;
 import at.aimon.core.agent.Agent;
 import at.aimon.core.agent.AgentRuntimeRegistry;
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.definition.parser.MarkdownAgentDefinitionParser;
 import at.aimon.core.agent.impl.AdaptiveAgentBundleLoader;
@@ -69,6 +68,7 @@ import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.agent.session.transcript.SessionLogPage;
 import at.aimon.core.agent.session.transcript.SessionLogReader;
 import at.aimon.core.base.Principal;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.config.hook.HookHotReloadBootstrap;
 import at.aimon.core.config.hook.ReloadInvoker;
 import at.aimon.core.environment.EnvironmentRequest;
@@ -1041,7 +1041,7 @@ public class AgentSetupFactory {
                 .projectRoot(Paths.get(fileSystem.getWorkingDirectory()))
                 .shellExecutor(new HostShellActionExecutor(hookConfigShell)).processEnv(System.getenv())
                 .registry(agentRuntime.getHookRegistry()).executionManager(agentExecutor.getHookExecutionManager())
-                .invoker(new ReloadInvoker(InvokerType.MAIN_AGENT, agentName, Environment.createDefault())).start();
+                .invoker(new ReloadInvoker(InvokerType.MAIN_AGENT, agentName, UserLocale.createDefault())).start();
     }
 
     /**

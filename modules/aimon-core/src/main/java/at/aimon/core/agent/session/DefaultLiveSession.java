@@ -363,7 +363,7 @@ public final class DefaultLiveSession implements LiveSession {
         try {
             final OnSessionStartContext ctx = OnSessionStartContext.builder().invokerType(InvokerType.MAIN_AGENT)
                     .invokerName(sessionId.toString()).hookRegistry(agentRuntime.getHookRegistry())
-                    .environment(agentRuntime.getEnvironment()).sessionId(sessionId)
+                    .userLocale(agentRuntime.getUserLocale()).sessionId(sessionId)
                     .agentRuntimeId(agentRuntime.getId() != null ? agentRuntime.getId().value() : "").build();
             hookExecutionManager.executeOnSessionStart(ctx);
         } catch (Exception e) {
@@ -378,7 +378,7 @@ public final class DefaultLiveSession implements LiveSession {
         try {
             final OnSessionEndContext ctx = OnSessionEndContext.builder().invokerType(InvokerType.MAIN_AGENT)
                     .invokerName(sessionId.toString()).hookRegistry(agentRuntime.getHookRegistry())
-                    .environment(agentRuntime.getEnvironment()).sessionId(sessionId)
+                    .userLocale(agentRuntime.getUserLocale()).sessionId(sessionId)
                     .agentRuntimeId(agentRuntime.getId() != null ? agentRuntime.getId().value() : "").clean(true)
                     .build();
             hookExecutionManager.executeOnSessionEnd(ctx);

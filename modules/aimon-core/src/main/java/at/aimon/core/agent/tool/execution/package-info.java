@@ -24,7 +24,7 @@
  *
  *     // Create execution request
  *     ToolInput input = ToolInput.of(Map.of("command", "ls -la"));
- *     ToolContext toolContext = ToolContext.builder().put("environment", env).build();
+ *     ToolContext toolContext = ToolContext.builder().put(ToolContextKeys.USER_LOCALE, userLocale).build();
  *     ToolExecutionRequest request = ToolExecutionRequest.of("tool_123", input, toolContext);
  *
  *     // Execute

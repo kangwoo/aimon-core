@@ -20,12 +20,12 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.AgentRuntimeId;
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.EnvironmentRequest;
 import at.aimon.core.environment.ExecutionEnvironmentProvider;
 import at.aimon.core.environment.UnavailableExecutionEnvironment;
@@ -145,7 +145,7 @@ class WorkflowToolAttributesTest {
         final SubagentExecutor executor = new DefaultSubagentExecutor(new DoneLlmClient(),
                 new DefaultToolExecutionManager(), new DefaultHookExecutionManager());
         final WorkflowTool tool = new WorkflowTool(LlmModel.builder().name("gpt-4").build(), registry,
-                new DefaultToolRegistry(), new DefaultHookRegistry(), Environment.createDefault(),
+                new DefaultToolRegistry(), new DefaultHookRegistry(), UserLocale.createDefault(),
                 new DefaultSubagentExecutionManager(executor, pool), List.of());
 
         final ToolResult result = tool.execute(
@@ -165,7 +165,7 @@ class WorkflowToolAttributesTest {
         final SubagentExecutionManager manager = new DefaultSubagentExecutionManager(mock(SubagentExecutor.class), pool,
                 null, behaviors);
         return new WorkflowTool(LlmModel.builder().name("gpt-4").build(), registry, new DefaultToolRegistry(),
-                new DefaultHookRegistry(), Environment.createDefault(), manager, List.of());
+                new DefaultHookRegistry(), UserLocale.createDefault(), manager, List.of());
     }
 
     /** Code behaviors for every built-in step name the tests reach, each recording its subagent's attributes. */

@@ -6,8 +6,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.base.UserLocale;
 
 /**
  * Provides contextual information for tool execution.
@@ -30,12 +30,12 @@ import at.aimon.core.agent.InvokerType;
  * {
  *     &#64;code
  *     // Create context with builder
- *     ToolContext context = ToolContext.builder().put("fileSystem", virtualFileSystem).put("environment", environment)
- *             .put("executorType", InvokerType.MAIN_AGENT).build();
+ *     ToolContext context = ToolContext.builder().put("fileSystem", virtualFileSystem)
+ *             .put(ToolContextKeys.USER_LOCALE, userLocale).put("executorType", InvokerType.MAIN_AGENT).build();
  *
  *     // Type-safe retrieval
  *     Optional<VirtualFileSystem> fs = context.get("fileSystem", VirtualFileSystem.class);
- *     Optional<Environment> env = context.get("environment", Environment.class);
+ *     Optional<UserLocale> userLocale = context.get(ToolContextKeys.USER_LOCALE);
  *
  *     // Check for presence
  *     if (context.containsKey("executorType")) {
@@ -52,7 +52,7 @@ import at.aimon.core.agent.InvokerType;
  * thread safety.
  *
  * @see Tool
- * @see Environment
+ * @see UserLocale
  * @see InvokerType
  */
 public final class ToolContext {
@@ -156,8 +156,8 @@ public final class ToolContext {
      * <pre>
      * {
      *     &#64;code
-     *     ToolContextKey<Environment> ENV_KEY = ToolContextKey.of("environment", Environment.class);
-     *     Optional<Environment> env = context.get(ENV_KEY);
+     *     ToolContextKey<UserLocale> USER_LOCALE = ToolContextKey.of("userLocale", UserLocale.class);
+     *     Optional<UserLocale> userLocale = context.get(USER_LOCALE);
      * }
      * </pre>
      *

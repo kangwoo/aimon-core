@@ -19,7 +19,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.interrupt.InterruptBehavior;
 import at.aimon.core.agent.interrupt.InterruptCoordinator;
@@ -34,6 +33,7 @@ import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.agent.tool.execution.ToolExecutionResult;
 import at.aimon.core.agent.tool.permission.AllowedTool;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.EnvironmentDescriptor;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.TestExecutionEnvironments;
@@ -111,7 +111,7 @@ class SingleToolInvokerTest {
     private ToolInvocationSpec spec(InvokerType invokerType, String invokerName, ToolUse toolUse,
             List<AllowedTool> allowedTools) {
         return ToolInvocationSpec.builder().invokerType(invokerType).invokerName(invokerName).hookRegistry(hookRegistry)
-                .environment(mock(Environment.class)).executionAttributes(Map.of()).toolRegistry(toolRegistry)
+                .userLocale(mock(UserLocale.class)).executionAttributes(Map.of()).toolRegistry(toolRegistry)
                 .sessionRegistry(sessionRegistry).allowedTools(allowedTools).coordinator(coordinator)
                 .toolContext(ToolContext.empty()).toolUse(toolUse).iterationCount(1).build();
     }
@@ -134,7 +134,7 @@ class SingleToolInvokerTest {
                 .put(ToolContextKeys.EXECUTION_ENVIRONMENT, TestExecutionEnvironments.withDescriptor(descriptor))
                 .build();
         final ToolInvocationSpec spec = ToolInvocationSpec.builder().invokerType(InvokerType.MAIN_AGENT)
-                .invokerName("agent").hookRegistry(hookRegistry).environment(mock(Environment.class))
+                .invokerName("agent").hookRegistry(hookRegistry).userLocale(mock(UserLocale.class))
                 .executionAttributes(Map.of()).toolRegistry(toolRegistry).sessionRegistry(sessionRegistry)
                 .allowedTools(List.of()).coordinator(coordinator).toolContext(context)
                 .toolUse(toolUse(Map.of("file_path", "/x"))).iterationCount(1).build();
@@ -221,7 +221,7 @@ class SingleToolInvokerTest {
 
     private ToolInvocationSpec specIn(ToolContext context) {
         return ToolInvocationSpec.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("agent")
-                .hookRegistry(hookRegistry).environment(mock(Environment.class)).executionAttributes(Map.of())
+                .hookRegistry(hookRegistry).userLocale(mock(UserLocale.class)).executionAttributes(Map.of())
                 .toolRegistry(toolRegistry).sessionRegistry(sessionRegistry).allowedTools(List.of())
                 .coordinator(coordinator).toolContext(context).toolUse(toolUse(Map.of("file_path", "/x")))
                 .iterationCount(1).build();

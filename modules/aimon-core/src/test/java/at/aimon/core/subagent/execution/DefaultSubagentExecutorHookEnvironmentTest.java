@@ -20,7 +20,6 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import at.aimon.core.agent.AgentRuntimeId;
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.interrupt.NoopCancellationSignal;
 import at.aimon.core.agent.tool.AbstractTool;
@@ -29,6 +28,7 @@ import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.ExecutionEnvironmentProvider;
 import at.aimon.core.environment.TestExecutionEnvironments;
@@ -207,7 +207,7 @@ class DefaultSubagentExecutorHookEnvironmentTest {
         final SubagentExecutionContext context = SubagentExecutionContext.builder()
                 .agentRuntimeId(AgentRuntimeId.of("agent:test-1")).subagent(subagent)
                 .defaultModel(LlmModel.builder().name("gpt-4").build()).toolRegistry(registry)
-                .hookRegistry(hookRegistry).environment(Environment.createDefault())
+                .hookRegistry(hookRegistry).userLocale(UserLocale.createDefault())
                 .executionEnvironment(spawnerEnvironment).executionEnvironmentProvider(provider)
                 .parentCancellationSignal(NoopCancellationSignal.INSTANCE).build();
         return new DefaultSubagentExecutor(llm, new DefaultToolExecutionManager(), new DefaultHookExecutionManager())

@@ -388,7 +388,7 @@ VirtualFileSystem vfs = env.fileSystem();
 VirtualShell shell = env.shell();
 
 // 존재 여부 확인
-if (context.containsKey("environment")) {
+if (context.containsKey("userLocale")) {
     // 처리
 }
 
@@ -401,7 +401,7 @@ Map<String, Object> all = context.getContext();
 | 키 | 타입 | 설명 |
 |----|------|------|
 | `executionEnvironment` (`ToolContextKeys.EXECUTION_ENVIRONMENT`) | `ExecutionEnvironment` | 이 실행의 파일 시스템·셸·서술자. **write-once** — 실행기가 넣고, enricher 는 읽을 수 있지만 바꿀 수 없다(두 번째 쓰기는 `IllegalStateException`) |
-| `environment` | `Environment` | 환경 설정 |
+| `userLocale` (`ToolContextKeys.USER_LOCALE`) | `UserLocale` | 사용자 로케일 (시간대). 작업 디렉토리·플랫폼은 여기가 아니라 `executionEnvironment` 의 서술자에 있다 |
 | `executorType` | `InvokerType` | 실행자 유형 (MAIN_AGENT, SUBAGENT 등) |
 | `read_tool.file_stamps` (`ReadTool.FILE_STAMPS_KEY`) | `Map<String, FileStamp>` | 이 실행에서 읽은 파일의 stamp (ReadTool 이 기록, Edit/Write 가 대조) |
 
@@ -427,7 +427,7 @@ ToolContext empty = ToolContext.empty();
 // Builder 패턴
 ToolContext context = ToolContext.builder()
     .put(ToolContextKeys.EXECUTION_ENVIRONMENT, env)
-    .put("environment", env)
+    .put(ToolContextKeys.USER_LOCALE, UserLocale.createDefault())
     .put("executorType", InvokerType.MAIN_AGENT)
     .build();
 ```
@@ -718,8 +718,8 @@ public class BashTool extends AbstractTool implements ToolPermissionSubjectAware
 (`;` `|` `&` `` ` `` `$` `>` `<` `(` `)`)가 있으면 거부하는데, 이는 `bash -c` 로 향하는 문자열에는 맞는
 방어지만 경로에 적용하면 `report(1).csv` 같은 평범한 파일이 영영 닿지 않는다.
 
-`PATH` 주체는 **절대 경로 + 렉시컬 정규화** 된 값이어야 한다. 파일 도구는 상대 경로를 `Environment` 의
-작업 디렉토리로 풀고 `..` 을 접은 뒤 내놓으므로, `/tmp/../etc/passwd` 는 `Read(/tmp/**)` 를 통과하지
+`PATH` 주체는 **절대 경로 + 렉시컬 정규화** 된 값이어야 한다. 파일 도구는 상대 경로를 그 실행의
+`ExecutionEnvironment` 서술자가 말하는 작업 디렉토리로 풀고 `..` 을 접은 뒤 내놓으므로, `/tmp/../etc/passwd` 는 `Read(/tmp/**)` 를 통과하지
 못한다. 다만 심볼릭 링크는 풀지 않는다 — 권한 패턴은 에이전트가 **무엇을 요청할 수 있는지**를 좁히는
 것이고, 격리는 샌드박스의 일이다.
 

@@ -9,9 +9,9 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
@@ -38,7 +38,7 @@ class DefaultCompactionEnginePartialCompactionTest {
     private RecordingLlmClient llmClient;
     private DefaultHookExecutionManager hookExecutionManager;
     private HookRegistry hookRegistry;
-    private Environment environment;
+    private UserLocale userLocale;
     private DefaultCompactionEngine engine;
 
     @BeforeEach
@@ -46,7 +46,7 @@ class DefaultCompactionEnginePartialCompactionTest {
         llmClient = new RecordingLlmClient("partial summary");
         hookExecutionManager = new DefaultHookExecutionManager();
         hookRegistry = new DefaultHookRegistry();
-        environment = Environment.createDefault();
+        userLocale = UserLocale.createDefault();
         engine = DefaultCompactionEngine.withDefaults(llmClient, new HeuristicTokenEstimator(), hookExecutionManager);
     }
 
@@ -245,8 +245,7 @@ class DefaultCompactionEnginePartialCompactionTest {
 
     private CompactionRequest.Builder baseRequest(TranscriptBuffer memory) {
         return CompactionRequest.builder().transcriptBuffer(memory).trigger(CompactionTrigger.MANUAL)
-                .model(LlmModel.builder().name("test-model").build()).hookRegistry(hookRegistry)
-                .environment(environment);
+                .model(LlmModel.builder().name("test-model").build()).hookRegistry(hookRegistry).userLocale(userLocale);
     }
 
     private static final class RecordingLlmClient implements LlmClient {

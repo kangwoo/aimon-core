@@ -5,10 +5,10 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.base.Principal;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.execution.HookContext;
@@ -40,7 +40,7 @@ public final class PermissionRequestContext implements HookContext {
     private final InvokerType invokerType;
     private final String invokerName;
     private final HookRegistry hookRegistry;
-    private final Environment environment;
+    private final UserLocale userLocale;
     private final ExecutionEnvironment executionEnvironment;
     private final String toolName;
     private final ToolInput toolInput;
@@ -52,7 +52,7 @@ public final class PermissionRequestContext implements HookContext {
         invokerType = Objects.requireNonNull(builder.invokerType, "Invoker type cannot be null");
         invokerName = Objects.requireNonNull(builder.invokerName, "Invoker name cannot be null");
         hookRegistry = Objects.requireNonNull(builder.hookRegistry, "Hook registry cannot be null");
-        environment = Objects.requireNonNull(builder.environment, "Environment cannot be null");
+        userLocale = Objects.requireNonNull(builder.userLocale, "UserLocale cannot be null");
         executionEnvironment = builder.executionEnvironment;
         toolName = Objects.requireNonNull(builder.toolName, "Tool name cannot be null");
         toolInput = Objects.requireNonNull(builder.toolInput, "Tool input cannot be null");
@@ -77,8 +77,8 @@ public final class PermissionRequestContext implements HookContext {
     }
 
     @Override
-    public Environment getEnvironment() {
-        return environment;
+    public UserLocale getUserLocale() {
+        return userLocale;
     }
 
     @Override
@@ -134,7 +134,7 @@ public final class PermissionRequestContext implements HookContext {
         private InvokerType invokerType;
         private String invokerName;
         private HookRegistry hookRegistry;
-        private Environment environment;
+        private UserLocale userLocale;
         private ExecutionEnvironment executionEnvironment;
         private String toolName;
         private ToolInput toolInput;
@@ -182,14 +182,14 @@ public final class PermissionRequestContext implements HookContext {
         }
 
         /**
-         * Sets the environment.
+         * Sets the user locale.
          *
-         * @param environment
-         *            the environment (must not be null)
+         * @param userLocale
+         *            the user locale (must not be null)
          * @return this builder
          */
-        public Builder environment(Environment environment) {
-            this.environment = environment;
+        public Builder userLocale(UserLocale userLocale) {
+            this.userLocale = userLocale;
             return this;
         }
 

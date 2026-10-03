@@ -20,8 +20,8 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
@@ -491,7 +491,7 @@ class SkillHookSetParserTest {
 
     private static OnStartContext onStartContext() {
         return OnStartContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("default-agent")
-                .hookRegistry(REGISTRY).environment(ENVIRONMENT).userMessage("go").build();
+                .hookRegistry(REGISTRY).userLocale(ENVIRONMENT).userMessage("go").build();
     }
 
     private static OnStopContext onStopContext() {
@@ -499,12 +499,12 @@ class SkillHookSetParserTest {
         final ExecutionMetadata metadata = ExecutionMetadata.builder().iterationCount(1).duration(Duration.ofMillis(5))
                 .startTime(now.minusMillis(5)).endTime(now).build();
         return OnStopContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("default-agent")
-                .hookRegistry(REGISTRY).environment(ENVIRONMENT).success(true).finalAnswer("done").metadata(metadata)
+                .hookRegistry(REGISTRY).userLocale(ENVIRONMENT).success(true).finalAnswer("done").metadata(metadata)
                 .build();
     }
 
     private static final HookRegistry REGISTRY = new DefaultHookRegistry();
-    private static final Environment ENVIRONMENT = Environment.createDefault();
+    private static final UserLocale ENVIRONMENT = UserLocale.createDefault();
 
     /** Shell executor stub that reports a clean exit so parsed hooks can actually be fired. */
     private static final class RecordingShellExecutor implements ShellActionExecutor {

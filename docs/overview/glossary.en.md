@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/glossary.md
-source_commit: 8c8de45
+source_commit: f651622
 ---
 
 # Glossary
@@ -166,7 +166,7 @@ the rule fallback's `ASK`, and a fork has no channel to ask on, which makes it e
   re-fire or a different node produces the same value. Issued via `from(Agent)` / `from(Agent, String)`;
   `generate()` does not exist.
 - **`discriminator`** — a string appended to the context id when you want to split the same `Agent` definition by tenant, user and so on.
-- **`AgentEnvironmentSnapshot`** — an immutable value holding the working directory, the snapshot time, the `Environment`, and a user extension map.
+- **`AgentEnvironmentSnapshot`** — an immutable value holding the working directory, the snapshot time, the `UserLocale`, and a user extension map.
   Memoized by `AgentRuntimeId`, so it is **agent-scoped** (not re-collected per session).
   `AgentEnvironmentSnapshotProvider` guarantees collect-once.
 - **`AgentExecutor`** — the executor that takes a context plus a request and runs the ReAct loop. The default implementation is `OrcaAgentExecutor`.

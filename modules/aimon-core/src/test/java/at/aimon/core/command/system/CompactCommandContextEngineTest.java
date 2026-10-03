@@ -9,7 +9,6 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.compact.CompactionMetadata;
 import at.aimon.core.agent.compact.CompactionResult;
 import at.aimon.core.agent.compact.CompactionTrigger;
@@ -21,6 +20,7 @@ import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.base.Principal;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.execution.CommandExecutionContext;
 import at.aimon.core.command.execution.CommandExecutionResult;
 import at.aimon.core.command.execution.direct.DirectCommandExecutionRequest;
@@ -38,13 +38,13 @@ class CompactCommandContextEngineTest {
     private static final LlmModel MODEL = LlmModel.builder().name("test-model").build();
 
     private final DefaultHookRegistry hookRegistry = new DefaultHookRegistry();
-    private final Environment environment = Environment.createDefault();
+    private final UserLocale userLocale = UserLocale.createDefault();
 
     @Test
     void compactsThroughTheEngineWithTheCallersAttribution() {
         final RecordingEngine engine = new RecordingEngine(success());
         final CompactCommand command = new CompactCommand(engine, hookRegistry, new DefaultHookExecutionManager(),
-                environment);
+                userLocale);
         final TranscriptBuffer memory = new TranscriptBuffer(SessionId.of("s-1"));
         memory.addUserMessage("hello");
 
@@ -58,7 +58,7 @@ class CompactCommandContextEngineTest {
         assertThat(seen.getTranscriptBuffer()).isSameAs(memory);
         assertThat(seen.getModel()).isSameAs(MODEL);
         assertThat(seen.getHookRegistry()).containsSame(hookRegistry);
-        assertThat(seen.getEnvironment()).containsSame(environment);
+        assertThat(seen.getUserLocale()).containsSame(userLocale);
         assertThat(seen.getCaller().getPrincipal()).hasValue(Principal.user("u-1", "Alice"));
         assertThat(seen.getCallMetadata().orElseThrow().getComponent()).hasValue(CompactCommand.COMPONENT_NAME);
         assertThat(seen.getCallMetadata().orElseThrow().getTraceId()).hasValue("s-1");
@@ -67,7 +67,7 @@ class CompactCommandContextEngineTest {
     @Test
     void reportsAnEngineThatCannotCompact() {
         final CompactCommand command = new CompactCommand(ContextEngine.passthrough(), hookRegistry,
-                new DefaultHookExecutionManager(), environment);
+                new DefaultHookExecutionManager(), userLocale);
         final TranscriptBuffer memory = new TranscriptBuffer(SessionId.of("s-1"));
         memory.addUserMessage("hello");
 
@@ -81,7 +81,7 @@ class CompactCommandContextEngineTest {
     @Test
     void rejectsANullEngine() {
         assertThatThrownBy(() -> new CompactCommand((ContextEngine) null, hookRegistry,
-                new DefaultHookExecutionManager(), environment)).isInstanceOf(NullPointerException.class);
+                new DefaultHookExecutionManager(), userLocale)).isInstanceOf(NullPointerException.class);
     }
 
     private static CommandExecutionContext context(CompactCommand command, TranscriptBuffer memory) {

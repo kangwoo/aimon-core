@@ -79,7 +79,7 @@ delivery 이지 보장 배달이 아니다.
 
 ### 3.1 `RewakeCapableRuntime` — 베이스 인터페이스를 부풀리지 않기 위한 opt-in
 
-재발화에는 `HookRegistry`(원 훅 찾기)와 `Environment`(컨텍스트 재구성)가 더 필요하다. 이 둘을 베이스
+재발화에는 `HookRegistry`(원 훅 찾기)와 `UserLocale`(컨텍스트 재구성)이 더 필요하다. 이 둘을 베이스
 `AgentRuntime` 에 올리면 모든 구현체와 테스트 스텁이 따라 커진다. 대신 **마커 SPI** 를 두고 리스너가
 `getAs(...)` 로 물어보며, 구현하지 않은 스텁의 발화는 그냥 드롭한다.
 
@@ -228,7 +228,7 @@ teardown 순서상 rewake 는 스케줄링 다음이다 — 스케줄된 루틴�
 | 머지에서 rewake spec dedup | 같은 훅 id 충돌은 허용 가능하다. 필요해지면 서비스 계층이 하는 편이 맞다 |
 | envelope 에 살아 있는 컨텍스트 참조 저장 | 직렬화 불가이고 JVM 을 넘지 못한다. 정체성만 싣고 재해석한다 |
 | 실행별 id 로 런타임 참조 | 다운타임을 넘긴 발화가 아무것도 resolve 하지 못한다. `AgentRuntimeId` 는 결정론적이다 |
-| `HookRegistry`/`Environment` 를 `AgentRuntime` 베이스에 올리기 | 모든 구현체·테스트 스텁이 따라 커진다. opt-in `RewakeCapableRuntime` 로 충분하다 |
+| `HookRegistry`/`UserLocale` 을 `AgentRuntime` 베이스에 올리기 | 모든 구현체·테스트 스텁이 따라 커진다. opt-in `RewakeCapableRuntime` 로 충분하다 |
 | 권한 이벤트도 rewake 허용 | 도구가 이미 디스패치된 뒤 도착하는 권한 결정은 아무것도 막지 못한다 |
 | `TaskQuotaManager` 재사용 | `Principal` 로 키잉되는데 rewake 는 발화 시점에 principal 이 없다 |
 | `DefaultRewakeService` 에 cron 파서 내장 | cron 방언이 둘이 된다. cron 은 Quartz 전용 능력으로 둔다 |

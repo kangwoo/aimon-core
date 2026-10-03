@@ -3,10 +3,10 @@ package at.aimon.core.agent.impl.orca.tool;
 import java.util.Objects;
 
 import at.aimon.core.agent.Agent;
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.orca.tool.OrcaToolProvider;
 import at.aimon.core.agent.orca.tool.OrcaToolProviderContext;
 import at.aimon.core.agent.tool.ToolRegistry;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.subagent.SubagentExecutionManager;
 import at.aimon.core.subagent.SubagentRegistry;
@@ -66,7 +66,7 @@ public class OrcaSubagentToolProvider implements OrcaToolProvider {
         final SubagentRegistry subagentRegistry = context.getSubagentRegistry();
         final ToolRegistry toolRegistry = context.getToolRegistry();
         final HookRegistry hookRegistry = context.getHookRegistry();
-        final Environment environment = context.getEnvironment();
+        final UserLocale userLocale = context.getUserLocale();
         final SubagentExecutionManager subagentExecutionManager = context.getSubagentExecutionManager();
         // Optional live-output store. When configured, background subagents record their progress log to it so the
         // AgentOutput tool can tail incrementally; both TaskTool and AgentOutputTool degrade gracefully when it's null.
@@ -83,13 +83,13 @@ public class OrcaSubagentToolProvider implements OrcaToolProvider {
         Objects.requireNonNull(subagentRegistry, "subagentRegistry must not be null in context");
         Objects.requireNonNull(toolRegistry, "toolRegistry must not be null in context");
         Objects.requireNonNull(hookRegistry, "hookRegistry must not be null in context");
-        Objects.requireNonNull(environment, "environment must not be null in context");
+        Objects.requireNonNull(userLocale, "userLocale must not be null in context");
         Objects.requireNonNull(subagentExecutionManager, "subagentExecutionManager must not be null in context");
 
         // Forward the agent runtime's tool-context enrichers so subagent tools receive the same
         // module-supplied context keys as the main-agent tools.
         final TaskTool taskTool = new TaskTool(agent.getMetadata().getModel(), subagentRegistry, toolRegistry,
-                hookRegistry, environment, subagentExecutionManager, context.getToolContextEnrichers(), taskOutputStore,
+                hookRegistry, userLocale, subagentExecutionManager, context.getToolContextEnrichers(), taskOutputStore,
                 sessionSnapshotStore, taskResultStore);
         registry.register(taskTool);
 
@@ -107,11 +107,11 @@ public class OrcaSubagentToolProvider implements OrcaToolProvider {
 
         // Workflow consumer (opt-in): a built-in multi-perspective workflow that fans the prompt out to
         // perspective sub-agents in parallel and synthesizes them, driven by the WorkflowRunner over the same
-        // execution manager. Same collaborators as TaskTool (model, registries, environment, manager, enrichers).
+        // execution manager. Same collaborators as TaskTool (model, registries, user locale, manager, enrichers).
         // Disabled by default because it adds a tool to every agent and each call spends several sub-agent LLM calls.
         if (workflowToolEnabled) {
             registry.register(new WorkflowTool(agent.getMetadata().getModel(), subagentRegistry, toolRegistry,
-                    hookRegistry, environment, subagentExecutionManager, context.getToolContextEnrichers(),
+                    hookRegistry, userLocale, subagentExecutionManager, context.getToolContextEnrichers(),
                     context.getWorkflowRunner()));
         }
     }

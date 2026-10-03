@@ -7,7 +7,6 @@ import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.compact.CompactionEngine;
 import at.aimon.core.agent.compact.CompactionGuard;
@@ -20,6 +19,7 @@ import at.aimon.core.agent.context.ContextRequest;
 import at.aimon.core.agent.context.DefaultContextEngine;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.base.Principal;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.SystemCommand;
 import at.aimon.core.command.execution.CommandExecutionContext;
 import at.aimon.core.command.execution.CommandExecutionResult;
@@ -79,7 +79,7 @@ public final class CompactCommand extends SystemCommand implements DirectExecuta
     private final ContextEngine contextEngine;
     private final HookRegistry hookRegistry;
     private final HookExecutionManager hookExecutionManager;
-    private final Environment environment;
+    private final UserLocale userLocale;
 
     /**
      * Creates a new CompactCommand over a bare {@link CompactionEngine} and {@link CompactionGuard}, wrapped in a
@@ -94,16 +94,16 @@ public final class CompactCommand extends SystemCommand implements DirectExecuta
      *            the hook registry consulted for PreCompact / PostCompact hooks (must not be null)
      * @param hookExecutionManager
      *            invoked to fire {@code OnStopHook} after the compaction completes (must not be null)
-     * @param environment
-     *            the runtime environment forwarded to hook contexts (must not be null)
+     * @param userLocale
+     *            the user locale forwarded to hook contexts (must not be null)
      */
     @SuppressWarnings("deprecation") // the version-1 compaction SPI is carried through on purpose
     public CompactCommand(CompactionEngine compactionEngine, CompactionGuard compactionGuard, HookRegistry hookRegistry,
-            HookExecutionManager hookExecutionManager, Environment environment) {
+            HookExecutionManager hookExecutionManager, UserLocale userLocale) {
         this(DefaultContextEngine.builder()
                 .compactionEngine(Objects.requireNonNull(compactionEngine, "compactionEngine cannot be null"))
                 .compactionGuard(Objects.requireNonNull(compactionGuard, "compactionGuard cannot be null")).build(),
-                hookRegistry, hookExecutionManager, environment);
+                hookRegistry, hookExecutionManager, userLocale);
     }
 
     /**
@@ -115,16 +115,16 @@ public final class CompactCommand extends SystemCommand implements DirectExecuta
      *            the hook registry consulted for PreCompact / PostCompact hooks (must not be null)
      * @param hookExecutionManager
      *            invoked to fire {@code OnStopHook} after the compaction completes (must not be null)
-     * @param environment
-     *            the runtime environment forwarded to hook contexts (must not be null)
+     * @param userLocale
+     *            the user locale forwarded to hook contexts (must not be null)
      */
     public CompactCommand(ContextEngine contextEngine, HookRegistry hookRegistry,
-            HookExecutionManager hookExecutionManager, Environment environment) {
+            HookExecutionManager hookExecutionManager, UserLocale userLocale) {
         super(COMMAND_NAME, "Manually compact the current conversation");
         this.contextEngine = Objects.requireNonNull(contextEngine, "contextEngine cannot be null");
         this.hookRegistry = Objects.requireNonNull(hookRegistry, "hookRegistry cannot be null");
         this.hookExecutionManager = Objects.requireNonNull(hookExecutionManager, "hookExecutionManager cannot be null");
-        this.environment = Objects.requireNonNull(environment, "environment cannot be null");
+        this.userLocale = Objects.requireNonNull(userLocale, "userLocale cannot be null");
     }
 
     @Override
@@ -149,7 +149,7 @@ public final class CompactCommand extends SystemCommand implements DirectExecuta
         final ExecutionEnvironment executionEnvironment = ExecutionEnvironmentAccess.of(context.getToolContext())
                 .orElse(null);
         final ContextRequest contextRequest = ContextRequest.builder().transcriptBuffer(memory)
-                .model(context.getDefaultModel()).hookRegistry(hookRegistry).environment(environment)
+                .model(context.getDefaultModel()).hookRegistry(hookRegistry).userLocale(userLocale)
                 .executionEnvironment(executionEnvironment).caller(ContextCaller.builder().principal(principal).build())
                 .callMetadata(buildCallMetadata(memory, principal)).build();
 
@@ -206,7 +206,7 @@ public final class CompactCommand extends SystemCommand implements DirectExecuta
             final ExecutionMetadata metadata = ExecutionMetadata.simple(safeDuration(startedAt, completedAt), startedAt,
                     completedAt);
             final OnStopContext onStopContext = OnStopContext.builder().executorType(InvokerType.mainAgent())
-                    .invokerName(ON_STOP_INVOKER_NAME).hookRegistry(hookRegistry).environment(environment)
+                    .invokerName(ON_STOP_INVOKER_NAME).hookRegistry(hookRegistry).userLocale(userLocale)
                     .executionEnvironment(executionEnvironment).success(commandResult.isSuccess())
                     .finalAnswer(commandResult.getResponse()).metadata(metadata).timestamp(completedAt).build();
             hookExecutionManager.executeOnStop(onStopContext);

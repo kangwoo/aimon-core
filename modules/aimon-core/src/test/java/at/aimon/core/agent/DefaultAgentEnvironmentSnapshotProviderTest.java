@@ -19,6 +19,8 @@ import java.util.function.Function;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import at.aimon.core.base.UserLocale;
+
 @DisplayName("DefaultAgentEnvironmentSnapshotProvider Tests")
 class DefaultAgentEnvironmentSnapshotProviderTest {
 
@@ -30,7 +32,7 @@ class DefaultAgentEnvironmentSnapshotProviderTest {
 
     private static AgentEnvironmentSnapshot newSession() {
         return AgentEnvironmentSnapshot.builder().workingDirectory("/wd").currentDate(Instant.now())
-                .environment(Environment.createDefault()).build();
+                .userLocale(UserLocale.createDefault()).build();
     }
 
     @Test

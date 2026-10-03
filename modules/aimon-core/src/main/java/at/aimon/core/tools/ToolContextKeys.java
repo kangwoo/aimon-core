@@ -5,7 +5,6 @@ import java.util.Map;
 import java.util.function.Consumer;
 
 import at.aimon.core.agent.AgentRuntimeId;
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.artifact.ArtifactCollector;
 import at.aimon.core.agent.queue.MessageQueueManager;
@@ -16,6 +15,7 @@ import at.aimon.core.agent.tool.ToolContextKey;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.agent.tool.search.ToolSearchRegistry;
 import at.aimon.core.base.Principal;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.ExecutionEnvironmentProvider;
 import at.aimon.core.knowledge.KnowledgeScope;
@@ -40,14 +40,14 @@ import at.aimon.core.skill.fork.SkillForkExecutor;
  * <pre>
  * {
  *     &#64;code
- *     Optional<Environment> env = context.get(ToolContextKeys.ENVIRONMENT_KEY);
+ *     Optional<UserLocale> userLocale = context.get(ToolContextKeys.USER_LOCALE);
  *     Optional<Principal> principal = context.get(ToolContextKeys.PRINCIPAL);
  * }
  * </pre>
  *
  * @see ToolContext
  * @see ToolContextKey
- * @see Environment
+ * @see UserLocale
  */
 public final class ToolContextKeys {
 
@@ -79,14 +79,14 @@ public final class ToolContextKeys {
             .writeOnce("executionEnvironmentProvider", ExecutionEnvironmentProvider.class);
 
     /**
-     * Typed key for {@link Environment} information.
+     * Typed key for the {@link UserLocale} — the user- and application-side settings, today the time zone.
      *
      * <p>
-     * The environment provides access to the working directory and environment variables for the current execution
-     * context.
+     * It carries no working directory and no environment variables: where this execution's commands run is
+     * {@link #EXECUTION_ENVIRONMENT}. The name follows {@link #PRINCIPAL}, the other property of the user, rather than
+     * the {@code _KEY}-suffixed constants.
      */
-    public static final ToolContextKey<Environment> ENVIRONMENT_KEY = ToolContextKey.of("environment",
-            Environment.class);
+    public static final ToolContextKey<UserLocale> USER_LOCALE = ToolContextKey.of("userLocale", UserLocale.class);
 
     /**
      * Typed key for {@link Principal} identity.

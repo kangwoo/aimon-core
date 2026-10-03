@@ -12,7 +12,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.compact.CompactionDecision;
 import at.aimon.core.agent.compact.CompactionEngine;
@@ -25,6 +24,7 @@ import at.aimon.core.agent.compact.PromptSizeRecoveryDecision;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.base.Principal;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmCallMetadata;
@@ -43,7 +43,7 @@ class DefaultContextEngineTest {
 
     private TranscriptBuffer buffer;
     private HookRegistry hookRegistry;
-    private Environment environment;
+    private UserLocale userLocale;
 
     @BeforeEach
     void setUp() {
@@ -52,12 +52,12 @@ class DefaultContextEngineTest {
         buffer.addAssistantMessage("one");
         buffer.addUserMessage("second");
         hookRegistry = new DefaultHookRegistry();
-        environment = Environment.createDefault();
+        userLocale = UserLocale.createDefault();
     }
 
     private ContextRequest.Builder request() {
         return ContextRequest.builder().transcriptBuffer(buffer).model(MODEL).hookRegistry(hookRegistry)
-                .environment(environment);
+                .userLocale(userLocale);
     }
 
     @Nested
@@ -159,11 +159,11 @@ class DefaultContextEngineTest {
             final DefaultContextEngine engine = DefaultContextEngine.builder().build();
 
             assertThatThrownBy(() -> engine.prepare(
-                    ContextRequest.builder().transcriptBuffer(buffer).model(MODEL).environment(environment).build()))
+                    ContextRequest.builder().transcriptBuffer(buffer).model(MODEL).userLocale(userLocale).build()))
                     .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("HookRegistry");
             assertThatThrownBy(() -> engine.prepare(
                     ContextRequest.builder().transcriptBuffer(buffer).model(MODEL).hookRegistry(hookRegistry).build()))
-                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Environment");
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("UserLocale");
         }
     }
 
@@ -234,7 +234,7 @@ class DefaultContextEngineTest {
             assertThat(seen.getTranscriptBuffer()).isSameAs(buffer);
             assertThat(seen.getModel()).isSameAs(MODEL);
             assertThat(seen.getHookRegistry()).isSameAs(hookRegistry);
-            assertThat(seen.getEnvironment()).isSameAs(environment);
+            assertThat(seen.getUserLocale()).isSameAs(userLocale);
             assertThat(seen.getCustomInstructions()).hasValue("focus on the api");
             assertThat(seen.getCallMetadata()).hasValue(callMetadata);
             assertThat(seen.getExecutionId()).isEmpty();
@@ -332,7 +332,7 @@ class DefaultContextEngineTest {
 
         @Override
         public CompactionDecision maybeCompact(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry,
-                Environment environment) {
+                UserLocale userLocale) {
             calls.add("maybeCompact");
             onCall(memory);
             return decision;
@@ -340,7 +340,7 @@ class DefaultContextEngineTest {
 
         @Override
         public CompactionDecision maybeCompact(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry,
-                Environment environment, ExecutionId executionId) {
+                UserLocale userLocale, ExecutionId executionId) {
             calls.add("maybeCompact+id");
             lastExecutionId.set(executionId);
             onCall(memory);
@@ -349,7 +349,7 @@ class DefaultContextEngineTest {
 
         @Override
         public CompactionDecision forceCompact(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry,
-                Environment environment) {
+                UserLocale userLocale) {
             calls.add("forceCompact");
             onCall(memory);
             return decision;
@@ -357,7 +357,7 @@ class DefaultContextEngineTest {
 
         @Override
         public CompactionDecision forceCompact(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry,
-                Environment environment, ExecutionId executionId) {
+                UserLocale userLocale, ExecutionId executionId) {
             calls.add("forceCompact+id");
             lastExecutionId.set(executionId);
             onCall(memory);

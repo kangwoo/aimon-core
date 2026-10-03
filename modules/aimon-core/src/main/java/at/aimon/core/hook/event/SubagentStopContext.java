@@ -5,8 +5,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.execution.HookContext;
@@ -35,7 +35,7 @@ public final class SubagentStopContext implements HookContext {
     private final InvokerType invokerType;
     private final String invokerName;
     private final HookRegistry hookRegistry;
-    private final Environment environment;
+    private final UserLocale userLocale;
     private final ExecutionEnvironment executionEnvironment;
     private final String subagentName;
     private final String taskId;
@@ -48,7 +48,7 @@ public final class SubagentStopContext implements HookContext {
         invokerType = Objects.requireNonNull(builder.invokerType, "Invoker type cannot be null");
         invokerName = Objects.requireNonNull(builder.invokerName, "Invoker name cannot be null");
         hookRegistry = Objects.requireNonNull(builder.hookRegistry, "Hook registry cannot be null");
-        environment = Objects.requireNonNull(builder.environment, "Environment cannot be null");
+        userLocale = Objects.requireNonNull(builder.userLocale, "UserLocale cannot be null");
         executionEnvironment = builder.executionEnvironment;
         subagentName = Objects.requireNonNull(builder.subagentName, "Subagent name cannot be null");
         taskId = Objects.requireNonNull(builder.taskId, "Task id cannot be null");
@@ -74,8 +74,8 @@ public final class SubagentStopContext implements HookContext {
     }
 
     @Override
-    public Environment getEnvironment() {
-        return environment;
+    public UserLocale getUserLocale() {
+        return userLocale;
     }
 
     @Override
@@ -141,7 +141,7 @@ public final class SubagentStopContext implements HookContext {
         private InvokerType invokerType;
         private String invokerName;
         private HookRegistry hookRegistry;
-        private Environment environment;
+        private UserLocale userLocale;
         private ExecutionEnvironment executionEnvironment;
         private String subagentName;
         private String taskId;
@@ -190,14 +190,14 @@ public final class SubagentStopContext implements HookContext {
         }
 
         /**
-         * Sets the environment.
+         * Sets the user locale.
          *
-         * @param environment
-         *            the environment (must not be null)
+         * @param userLocale
+         *            the user locale (must not be null)
          * @return this builder
          */
-        public Builder environment(Environment environment) {
-            this.environment = environment;
+        public Builder userLocale(UserLocale userLocale) {
+            this.userLocale = userLocale;
             return this;
         }
 

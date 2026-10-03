@@ -6,9 +6,9 @@ import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.tool.ToolInput;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.ToolUse;
@@ -17,9 +17,9 @@ class PreToolContextTest {
 
     private static PreToolContext newContext(ToolUse toolUse) {
         final HookRegistry registry = new DefaultHookRegistry();
-        final Environment env = Environment.createDefault();
+        final UserLocale env = UserLocale.createDefault();
         return PreToolContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("agent").hookRegistry(registry)
-                .environment(env).toolUse(toolUse).iterationCount(1).build();
+                .userLocale(env).toolUse(toolUse).iterationCount(1).build();
     }
 
     @Test

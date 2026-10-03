@@ -7,7 +7,6 @@ import java.util.Optional;
 import java.util.function.Consumer;
 
 import at.aimon.core.agent.AgentRuntimeId;
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.interrupt.NoopCancellationSignal;
 import at.aimon.core.agent.queue.MessageQueueManager;
@@ -18,6 +17,7 @@ import at.aimon.core.agent.tool.ToolContextEnricher;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.base.Principal;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.ExecutionEnvironmentProvider;
 import at.aimon.core.hook.HookRegistry;
@@ -42,7 +42,7 @@ import at.aimon.core.subagent.task.TaskResultStore;
  * <ul>
  * <li>Agent runtime ID for tracking the parent runtime
  * <li>Registries for subagents, tools, and hooks
- * <li>Runtime environment
+ * <li>User locale
  * <li>Default LLM model configuration
  * <li>Execution attributes for propagation
  * </ul>
@@ -58,7 +58,7 @@ import at.aimon.core.subagent.task.TaskResultStore;
  *     &#64;code
  *     SubagentExecutionEnvironment env = SubagentExecutionEnvironment.builder().agentRuntimeId(agentRuntimeId)
  *             .subagentRegistry(subagentRegistry).toolRegistry(toolRegistry).hookRegistry(hookRegistry)
- *             .environment(environment).defaultModel(defaultModel).executionAttributes(attributes).build();
+ *             .userLocale(userLocale).defaultModel(defaultModel).executionAttributes(attributes).build();
  * }
  * </pre>
  */
@@ -76,7 +76,7 @@ public final class SubagentExecutionEnvironment {
     private final SubagentRegistry subagentRegistry;
     private final ToolRegistry toolRegistry;
     private final HookRegistry hookRegistry;
-    private final Environment environment;
+    private final UserLocale userLocale;
     private final LlmModel defaultModel;
     private final String modelOverride;
     private final Map<String, Object> executionAttributes;
@@ -102,7 +102,7 @@ public final class SubagentExecutionEnvironment {
         subagentRegistry = Objects.requireNonNull(builder.subagentRegistry, "Subagent registry cannot be null");
         toolRegistry = Objects.requireNonNull(builder.toolRegistry, "Tool registry cannot be null");
         hookRegistry = Objects.requireNonNull(builder.hookRegistry, "Hook registry cannot be null");
-        environment = Objects.requireNonNull(builder.environment, "Environment cannot be null");
+        userLocale = Objects.requireNonNull(builder.userLocale, "UserLocale cannot be null");
         defaultModel = Objects.requireNonNull(builder.defaultModel, "Default model cannot be null");
         modelOverride = builder.modelOverride;
         executionAttributes = builder.executionAttributes != null ? Map.copyOf(builder.executionAttributes) : Map.of();
@@ -167,12 +167,12 @@ public final class SubagentExecutionEnvironment {
     }
 
     /**
-     * Gets the runtime environment.
+     * Gets the user locale.
      *
-     * @return The environment (never null)
+     * @return The user locale (never null)
      */
-    public Environment getEnvironment() {
-        return environment;
+    public UserLocale getUserLocale() {
+        return userLocale;
     }
 
     /**
@@ -432,8 +432,8 @@ public final class SubagentExecutionEnvironment {
      */
     public Builder toBuilder() {
         return new Builder().agentRuntimeId(agentRuntimeId).subagentRegistry(subagentRegistry)
-                .toolRegistry(toolRegistry).hookRegistry(hookRegistry).environment(environment)
-                .defaultModel(defaultModel).modelOverride(modelOverride).executionAttributes(executionAttributes)
+                .toolRegistry(toolRegistry).hookRegistry(hookRegistry).userLocale(userLocale).defaultModel(defaultModel)
+                .modelOverride(modelOverride).executionAttributes(executionAttributes)
                 .parentLlmCallMetadata(parentLlmCallMetadata).cancellationSignal(cancellationSignal)
                 .principal(principal).invokingSessionId(invokingSessionId).knowledgeStore(knowledgeStore)
                 .knowledgeScope(knowledgeScope).toolContextEnrichers(toolContextEnrichers)
@@ -448,7 +448,7 @@ public final class SubagentExecutionEnvironment {
     public String toString() {
         return "SubagentExecutionEnvironment{" + "agentRuntimeId=" + agentRuntimeId + ", subagentRegistry="
                 + subagentRegistry + ", toolRegistry=" + toolRegistry + ", hookRegistry=" + hookRegistry
-                + ", environment=" + environment + ", defaultModel=" + defaultModel + ", executionAttributes="
+                + ", userLocale=" + userLocale + ", defaultModel=" + defaultModel + ", executionAttributes="
                 + executionAttributes + '}';
     }
 
@@ -458,7 +458,7 @@ public final class SubagentExecutionEnvironment {
         private SubagentRegistry subagentRegistry;
         private ToolRegistry toolRegistry;
         private HookRegistry hookRegistry;
-        private Environment environment;
+        private UserLocale userLocale;
         private LlmModel defaultModel;
         private String modelOverride;
         private Map<String, Object> executionAttributes;
@@ -531,14 +531,14 @@ public final class SubagentExecutionEnvironment {
         }
 
         /**
-         * Sets the runtime environment.
+         * Sets the user locale.
          *
-         * @param environment
-         *            The environment (must not be null)
+         * @param userLocale
+         *            the user locale (must not be null)
          * @return This builder
          */
-        public Builder environment(Environment environment) {
-            this.environment = environment;
+        public Builder userLocale(UserLocale userLocale) {
+            this.userLocale = userLocale;
             return this;
         }
 

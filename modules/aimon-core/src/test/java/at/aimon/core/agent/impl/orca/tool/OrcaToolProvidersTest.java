@@ -14,7 +14,6 @@ import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.Agent;
 import at.aimon.core.agent.AgentMetadata;
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.impl.orca.OrcaAgentRuntimeFactory;
 import at.aimon.core.agent.orca.OrcaProviderDependencies;
 import at.aimon.core.agent.orca.tool.OrcaToolProvider;
@@ -26,6 +25,7 @@ import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.agent.tool.search.KeywordToolSearchStrategy;
 import at.aimon.core.agent.tool.search.ToolSearchCatalog;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.scheduling.ScheduledTaskManager;
@@ -54,7 +54,7 @@ class OrcaToolProvidersTest {
     }
 
     private OrcaToolProviderContext context(OrcaProviderDependencies deps, Agent agent) {
-        return OrcaToolProviderContext.builder().agent(agent).environment(deps.getEnvironment()).dependencies(deps)
+        return OrcaToolProviderContext.builder().agent(agent).userLocale(deps.getUserLocale()).dependencies(deps)
                 .build();
     }
 
@@ -259,7 +259,7 @@ class OrcaToolProvidersTest {
 
         OrcaProviderDependencies deps = OrcaProviderDependencies.builder()
                 .subagentRegistry(mock(SubagentRegistry.class)).toolRegistry(mock(ToolRegistry.class))
-                .hookRegistry(mock(HookRegistry.class)).environment(mock(Environment.class))
+                .hookRegistry(mock(HookRegistry.class)).userLocale(mock(UserLocale.class))
                 .subagentExecutionManager(execMgr).build();
 
         OrcaSubagentToolProvider provider = new OrcaSubagentToolProvider();
@@ -282,7 +282,7 @@ class OrcaToolProvidersTest {
 
         OrcaProviderDependencies deps = OrcaProviderDependencies.builder()
                 .subagentRegistry(mock(SubagentRegistry.class)).toolRegistry(mock(ToolRegistry.class))
-                .hookRegistry(mock(HookRegistry.class)).environment(mock(Environment.class))
+                .hookRegistry(mock(HookRegistry.class)).userLocale(mock(UserLocale.class))
                 .subagentExecutionManager(execMgr).build();
 
         ToolRegistry registry = new DefaultToolRegistry();
@@ -301,7 +301,7 @@ class OrcaToolProvidersTest {
         SubagentExecutionManager execMgr = mock(SubagentExecutionManager.class);
         OrcaProviderDependencies deps = OrcaProviderDependencies.builder()
                 .subagentRegistry(mock(SubagentRegistry.class)).toolRegistry(mock(ToolRegistry.class))
-                .hookRegistry(mock(HookRegistry.class)).environment(mock(Environment.class))
+                .hookRegistry(mock(HookRegistry.class)).userLocale(mock(UserLocale.class))
                 .subagentExecutionManager(execMgr).build();
         OrcaToolProviderContext ctx = context(deps, agent);
 
@@ -323,7 +323,7 @@ class OrcaToolProvidersTest {
     void subagentProviderRequiresAgentInContext() {
         OrcaProviderDependencies deps = OrcaProviderDependencies.builder()
                 .subagentRegistry(mock(SubagentRegistry.class)).toolRegistry(mock(ToolRegistry.class))
-                .hookRegistry(mock(HookRegistry.class)).environment(mock(Environment.class))
+                .hookRegistry(mock(HookRegistry.class)).userLocale(mock(UserLocale.class))
                 .subagentExecutionManager(mock(SubagentExecutionManager.class)).build();
 
         OrcaSubagentToolProvider provider = new OrcaSubagentToolProvider();
@@ -338,7 +338,7 @@ class OrcaToolProvidersTest {
         Agent agent = stubAgent();
         OrcaProviderDependencies deps = OrcaProviderDependencies.builder()
                 .subagentRegistry(mock(SubagentRegistry.class)).toolRegistry(mock(ToolRegistry.class))
-                .hookRegistry(mock(HookRegistry.class)).environment(mock(Environment.class)).build();
+                .hookRegistry(mock(HookRegistry.class)).userLocale(mock(UserLocale.class)).build();
 
         OrcaSubagentToolProvider provider = new OrcaSubagentToolProvider();
         ToolRegistry registry = new DefaultToolRegistry();

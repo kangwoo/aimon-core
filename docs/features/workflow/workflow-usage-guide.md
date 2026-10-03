@@ -74,11 +74,11 @@ import at.aimon.core.workflow.WorkflowRunners;
 
 // 1) 서브에이전트가 실행될 기반 환경 (모든 스텝이 이 환경을 상속한다)
 SubagentExecutionEnvironment baseEnv = SubagentExecutionEnvironment.builder()
-        .contextId(contextId)                 // AgentRuntimeId
+        .agentRuntimeId(agentRuntimeId)       // AgentRuntimeId
         .subagentRegistry(subagentRegistry)
         .toolRegistry(toolRegistry)
         .hookRegistry(hookRegistry)
-        .environment(environment)
+        .userLocale(userLocale)
         .defaultModel(agent.getMetadata().getModel())
         .build();
 

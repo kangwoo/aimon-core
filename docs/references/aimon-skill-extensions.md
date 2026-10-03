@@ -91,7 +91,7 @@ Fork 시맨틱은 두 호출 경로 모두에 적용된다:
 
 ### Fork executor 와이어링
 
-두 경로 모두 동일한 `OrcaSkillForkExecutorResolver`를 거쳐 fork executor를 결정한다. 다음 6가지(`Agent`, `SubagentRegistry`, `ToolRegistry`, `HookRegistry`, `Environment`, `SubagentExecutionManager`)가 모두 있으면 `SubagentBackedSkillForkExecutor`가 와이어링되고, 하나라도 없으면 `NoOpSkillForkExecutor`로 폴백한다. NoOp 폴백 상태에서 fork-mode 스킬을 호출하면 `Skill 'X' declares execution.mode=fork but fork execution is not configured`로 실패한다 — 인라인 전용 배포를 가능하게 하기 위한 의도된 동작이다.
+두 경로 모두 동일한 `OrcaSkillForkExecutorResolver`를 거쳐 fork executor를 결정한다. 다음 6가지(`Agent`, `SubagentRegistry`, `ToolRegistry`, `HookRegistry`, `UserLocale`, `SubagentExecutionManager`)가 모두 있으면 `SubagentBackedSkillForkExecutor`가 와이어링되고, 하나라도 없으면 `NoOpSkillForkExecutor`로 폴백한다. NoOp 폴백 상태에서 fork-mode 스킬을 호출하면 `Skill 'X' declares execution.mode=fork but fork execution is not configured`로 실패한다 — 인라인 전용 배포를 가능하게 하기 위한 의도된 동작이다.
 
 - **LLM tool-call 경로** — `OrcaSkillToolProvider`가 `SkillTool` 등록 시점에 resolver를 호출해 fork executor를 `SkillTool` 생성자에 주입한다.
 - **User-slash 경로** — `OrcaAgentExecutor.executeCommand`가 매 슬래시 호출마다 resolver를 호출하고, 결과를 `ToolContext`의 `ExtToolContextKeys.SKILL_FORK_EXECUTOR_KEY`에 실어서 `LlmSkillExecutor`에 전달한다. `LlmSkillExecutor`는 `ToolContext`에 키가 있으면 그 executor를 우선 사용하고, 없으면 생성자에서 받은 fallback(보통 NoOp)을 쓴다. 따라서 `OrcaAgentExecutor` 경유 호출은 LLM tool-call 경로와 동일한 SubagentBacked 와이어링을 자동으로 받는다.

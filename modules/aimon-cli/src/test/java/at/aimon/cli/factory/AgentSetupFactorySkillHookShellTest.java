@@ -6,8 +6,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.event.OnStartContext;
 import at.aimon.core.hook.execution.HookStatus;
@@ -48,7 +48,7 @@ class AgentSetupFactorySkillHookShellTest {
         // exit 2 on onStart is a block. With no environment the command is not run, so nothing can block.
         assertThat(parsed.getMetadata().getHooks().getOnStartHooks().get(0)
                 .execute(OnStartContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("agent")
-                        .hookRegistry(new DefaultHookRegistry()).environment(Environment.createDefault())
+                        .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault())
                         .userMessage("hi").build())
                 .getStatus()).isEqualTo(HookStatus.SUCCESS);
     }

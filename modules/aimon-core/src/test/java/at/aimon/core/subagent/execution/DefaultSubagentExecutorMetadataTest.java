@@ -10,9 +10,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.AgentRuntimeId;
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.llm.LlmCallMetadata;
@@ -101,7 +101,7 @@ class DefaultSubagentExecutorMetadataTest {
                 SubagentContent.of("you are " + subagentName));
         return SubagentExecutionContext.builder().agentRuntimeId(AgentRuntimeId.of("agent:test-1")).subagent(subagent)
                 .defaultModel(LlmModel.builder().name("gpt-4").build()).toolRegistry(new DefaultToolRegistry())
-                .hookRegistry(new DefaultHookRegistry()).environment(Environment.createDefault()).build();
+                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault()).build();
     }
 
     private static final class CapturingLlmClient implements LlmClient {

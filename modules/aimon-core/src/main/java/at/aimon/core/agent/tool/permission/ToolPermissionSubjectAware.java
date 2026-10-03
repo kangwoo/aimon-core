@@ -33,7 +33,8 @@ import at.aimon.core.agent.tool.ToolInput;
  *
  * <p>
  * An empty result means <b>this call cannot be judged</b>: the input field is missing, or a relative path arrived with
- * no {@code Environment} in the context to resolve it against. If a pattern is configured for this tool, the validator
+ * no execution environment in the context to resolve it against. If a pattern is configured for this tool, the
+ * validator
  * denies the call. That is deliberate — the alternative is guessing (resolving against the process CWD, say), which
  * makes the outcome depend on where the JVM happened to start and leaves the person who wrote the pattern unable to
  * predict it.
@@ -77,7 +78,8 @@ public interface ToolPermissionSubjectAware {
      * @param input
      *            The tool call's arguments (must not be null)
      * @param context
-     *            The runtime context — carries the {@code Environment} a path subject needs (must not be null)
+     *            The runtime context — carries the execution environment whose working directory a
+     *            relative path subject is resolved against (must not be null)
      * @return The subject, or empty if this call cannot be judged (see the class javadoc: empty means deny when a
      *         pattern is configured)
      */

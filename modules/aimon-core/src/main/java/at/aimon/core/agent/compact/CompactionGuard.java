@@ -2,10 +2,10 @@ package at.aimon.core.agent.compact;
 
 import java.util.Objects;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmModel;
 
@@ -30,7 +30,7 @@ import at.aimon.core.llm.LlmModel;
  * {@link NoOpCompactionGuard} preserves pre-compaction behaviour and is the framework default.
  *
  * <p>
- * <b>Which overload to implement.</b> {@link #maybeCompact(TranscriptBuffer, LlmModel, HookRegistry, Environment)} is
+ * <b>Which overload to implement.</b> {@link #maybeCompact(TranscriptBuffer, LlmModel, HookRegistry, UserLocale)} is
  * the single abstract method and remains so; the {@link ExecutionId}-carrying overloads are {@code default} methods
  * that delegate to their four-argument counterparts. The delegation runs in that direction, and not the other way
  * round, so that an implementor that only knows the four-argument contract still compiles and still behaves exactly as
@@ -62,17 +62,17 @@ public interface CompactionGuard {
      * @param hookRegistry
      *            the registry whose PreCompact / PostCompact hooks will be invoked if compaction proceeds (must not be
      *            null)
-     * @param environment
-     *            the active environment (must not be null)
+     * @param userLocale
+     *            the user locale (must not be null)
      * @return a {@link CompactionDecision} describing the outcome (never null)
      * @throws NullPointerException
      *             if any argument is null
      */
     CompactionDecision maybeCompact(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry,
-            Environment environment);
+            UserLocale userLocale);
 
     /**
-     * Same as {@link #maybeCompact(TranscriptBuffer, LlmModel, HookRegistry, Environment)}, for a run that has no
+     * Same as {@link #maybeCompact(TranscriptBuffer, LlmModel, HookRegistry, UserLocale)}, for a run that has no
      * session of its own &mdash; a subagent fork, for instance.
      *
      * <p>
@@ -89,8 +89,8 @@ public interface CompactionGuard {
      * @param hookRegistry
      *            the registry whose PreCompact / PostCompact hooks will be invoked if compaction proceeds (must not be
      *            null)
-     * @param environment
-     *            the active environment (must not be null)
+     * @param userLocale
+     *            the user locale (must not be null)
      * @param executionId
      *            the identity of the session-less run being compacted (must not be null — a run that <em>has</em> a
      *            session calls the four-argument overload instead)
@@ -99,9 +99,9 @@ public interface CompactionGuard {
      *             if any argument is null
      */
     default CompactionDecision maybeCompact(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry,
-            Environment environment, ExecutionId executionId) {
+            UserLocale userLocale, ExecutionId executionId) {
         Objects.requireNonNull(executionId, "executionId cannot be null");
-        return maybeCompact(memory, model, hookRegistry, environment);
+        return maybeCompact(memory, model, hookRegistry, userLocale);
     }
 
     /**
@@ -128,15 +128,15 @@ public interface CompactionGuard {
         if (executionId == null) {
             return request.isBudgetForced()
                     ? forceCompact(request.getTranscriptBuffer(), request.getModel(), request.getHookRegistry(),
-                            request.getEnvironment())
+                            request.getUserLocale())
                     : maybeCompact(request.getTranscriptBuffer(), request.getModel(), request.getHookRegistry(),
-                            request.getEnvironment());
+                            request.getUserLocale());
         }
         return request.isBudgetForced()
                 ? forceCompact(request.getTranscriptBuffer(), request.getModel(), request.getHookRegistry(),
-                        request.getEnvironment(), executionId)
+                        request.getUserLocale(), executionId)
                 : maybeCompact(request.getTranscriptBuffer(), request.getModel(), request.getHookRegistry(),
-                        request.getEnvironment(), executionId);
+                        request.getUserLocale(), executionId);
     }
 
     /**
@@ -157,20 +157,20 @@ public interface CompactionGuard {
      * @param hookRegistry
      *            the registry whose PreCompact / PostCompact hooks will be invoked if compaction proceeds (must not be
      *            null)
-     * @param environment
-     *            the active environment (must not be null)
+     * @param userLocale
+     *            the user locale (must not be null)
      * @return a {@link CompactionDecision} describing the outcome (never null)
      * @throws NullPointerException
      *             if any argument is null
      */
     default CompactionDecision forceCompact(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry,
-            Environment environment) {
-        return maybeCompact(memory, model, hookRegistry, environment);
+            UserLocale userLocale) {
+        return maybeCompact(memory, model, hookRegistry, userLocale);
     }
 
     /**
-     * Same as {@link #forceCompact(TranscriptBuffer, LlmModel, HookRegistry, Environment)}, for a run that has no
-     * session of its own. See {@link #maybeCompact(TranscriptBuffer, LlmModel, HookRegistry, Environment, ExecutionId)}
+     * Same as {@link #forceCompact(TranscriptBuffer, LlmModel, HookRegistry, UserLocale)}, for a run that has no
+     * session of its own. See {@link #maybeCompact(TranscriptBuffer, LlmModel, HookRegistry, UserLocale, ExecutionId)}
      * for why the id has to be passed explicitly.
      *
      * <p>
@@ -184,8 +184,8 @@ public interface CompactionGuard {
      * @param hookRegistry
      *            the registry whose PreCompact / PostCompact hooks will be invoked if compaction proceeds (must not be
      *            null)
-     * @param environment
-     *            the active environment (must not be null)
+     * @param userLocale
+     *            the user locale (must not be null)
      * @param executionId
      *            the identity of the session-less run being compacted (must not be null)
      * @return a {@link CompactionDecision} describing the outcome (never null)
@@ -193,9 +193,9 @@ public interface CompactionGuard {
      *             if any argument is null
      */
     default CompactionDecision forceCompact(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry,
-            Environment environment, ExecutionId executionId) {
+            UserLocale userLocale, ExecutionId executionId) {
         Objects.requireNonNull(executionId, "executionId cannot be null");
-        return forceCompact(memory, model, hookRegistry, environment);
+        return forceCompact(memory, model, hookRegistry, userLocale);
     }
 
     /**

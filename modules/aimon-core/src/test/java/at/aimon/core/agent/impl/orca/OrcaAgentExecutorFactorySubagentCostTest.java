@@ -8,10 +8,10 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.AgentRuntimeId;
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.interrupt.NoopCancellationSignal;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.llm.LlmCallMetadata;
@@ -68,7 +68,7 @@ class OrcaAgentExecutorFactorySubagentCostTest {
                 .subagent(Subagent.of("explorer", SubagentMetadata.builder().description("d").maxIterations(3).build(),
                         SubagentContent.of("you are explorer")))
                 .defaultModel(LlmModel.builder().name("gpt-4o").build()).toolRegistry(new DefaultToolRegistry())
-                .hookRegistry(new DefaultHookRegistry()).environment(Environment.createDefault())
+                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault())
                 .parentCancellationSignal(NoopCancellationSignal.INSTANCE).build();
         final SubagentExecutionRequest request = SubagentExecutionRequest.builder().taskId("t").goal("do it").build();
 

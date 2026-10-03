@@ -63,7 +63,7 @@
  *     &#64;code
  *     ToolExecutionManager manager = new DefaultToolExecutionManager();
  *     ToolUse toolUse = ToolUse.of("tool_123", "bash", Map.of("command", "ls -la"));
- *     ToolContext context = ToolContext.builder().put("environment", environment).build();
+ *     ToolContext context = ToolContext.builder().put(ToolContextKeys.USER_LOCALE, userLocale).build();
  *
  *     // Execute with permission restrictions
  *     List<AllowedTool> allowedTools = List.of(AllowedTool.of("bash", Map.of("command", "ls*")));
@@ -119,12 +119,12 @@
  * <pre>
  * {
  *     &#64;code
- *     ToolContext context = ToolContext.builder().put("fileSystem", virtualFileSystem).put("environment", environment)
- *             .put("executorType", InvokerType.MAIN_AGENT).build();
+ *     ToolContext context = ToolContext.builder().put("fileSystem", virtualFileSystem)
+ *             .put(ToolContextKeys.USER_LOCALE, userLocale).put("executorType", InvokerType.MAIN_AGENT).build();
  *
  *     // Type-safe retrieval
  *     Optional<VirtualFileSystem> fs = context.get("fileSystem", VirtualFileSystem.class);
- *     Optional<Environment> env = context.get("environment", Environment.class);
+ *     Optional<UserLocale> userLocale = context.get(ToolContextKeys.USER_LOCALE);
  * }
  * </pre>
  *

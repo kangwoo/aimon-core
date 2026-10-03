@@ -2,12 +2,12 @@ package at.aimon.core.agent.impl.orca.command;
 
 import java.util.Objects;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.compact.CompactionEngine;
 import at.aimon.core.agent.compact.CompactionGuard;
 import at.aimon.core.agent.context.ContextEngine;
 import at.aimon.core.agent.orca.OrcaProviderDependencies;
 import at.aimon.core.agent.tool.ToolRegistry;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.CommandRegistry;
 import at.aimon.core.credential.CredentialStore;
 import at.aimon.core.hook.HookExecutionManager;
@@ -167,12 +167,12 @@ public final class OrcaCommandProviderContext {
     }
 
     /**
-     * Returns the runtime environment.
+     * Returns the user locale.
      *
-     * @return the environment, may be null
+     * @return the user locale, may be null
      */
-    public Environment getEnvironment() {
-        return dependencies.getEnvironment();
+    public UserLocale getUserLocale() {
+        return dependencies.getUserLocale();
     }
 
     /**

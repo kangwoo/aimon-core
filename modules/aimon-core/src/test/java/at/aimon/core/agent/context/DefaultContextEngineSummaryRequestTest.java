@@ -10,7 +10,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.compact.CompactionEngine;
 import at.aimon.core.agent.compact.CompactionResult;
 import at.aimon.core.agent.compact.DefaultCompactionEngine;
@@ -18,6 +17,7 @@ import at.aimon.core.agent.compact.DefaultCompactionGuard;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.llm.InMemoryModelContextWindowRegistry;
@@ -62,7 +62,7 @@ class DefaultContextEngineSummaryRequestTest {
 
     private static ContextRequest request(TranscriptBuffer buffer) {
         return ContextRequest.builder().transcriptBuffer(buffer).systemPrompt("system prompt").model(MODEL)
-                .hookRegistry(new DefaultHookRegistry()).environment(Environment.createDefault()).build();
+                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault()).build();
     }
 
     private static TranscriptBuffer twoCompletedTurns(SessionLogFormat format) {

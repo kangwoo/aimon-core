@@ -506,7 +506,8 @@ public interface ExecutionEnvironmentProvider {
 `OrcaToolProviderContext` 에서 `getFileSystem()` 과 `getShell()` 을 **삭제**하고 `getControlFileSystem()` 을
 더한다. 도구 등록 시점에 작업 환경을 붙잡을 수 있는 통로를 남겨 두면, 외부 프로바이더가 그것을 생성자에 넣어
 §1.1 을 다시 만든다. `getEnvironment()` 는 §10 이후 `timeZone` 만 남은 값을 돌려주게 되므로 그 결정(§14)을
-따른다. 외부 소비자 둘의 영향:
+따른다 — 그 결정은 내려졌고(EE-14), 지금 이 접근자는 `getUserLocale()` 이며 `at.aimon.core.base.UserLocale` 을
+돌려준다. 외부 소비자 둘의 영향:
 
 - `OrcaSandboxToolProvider`(aimon-sandbox) — 워크스페이스 샌드박스 설계에서 샌드박스 전용 실행 도구는 모두
   없어진다. 명령과 파일은 코어의 `Bash`·파일 도구가 샌드박스 환경에서 처리한다. 남는 것은 슬롯의 수명을 다루는
@@ -650,6 +651,13 @@ CLI 처럼 "사용자 프로젝트 디렉터리에서 돈다"는 배치에서는
 `Environment.createWithWorkingDirectory(fileSystem.getWorkingDirectory())` 호출은 삭제한다. `timeZone` 은 환경이
 아니라 사용자·애플리케이션의 속성이므로 `Environment` 에 남긴다(→ 이름을 바꿀지는 §14).
 
+이 문단과 아래 문단의 `Environment` 는 그 뒤 **없어졌다**(EE-14). `timeZone` 은 `at.aimon.core.base.UserLocale` 로 옮겨
+갔고, 훅 컨텍스트 · 도구 프로바이더 컨텍스트 · 런타임의 접근자는 `getUserLocale()`, `ToolContext` 의 키는
+`ToolContextKeys.USER_LOCALE`(`"userLocale"`)이다. 옮긴 것은 이름과 위치뿐이다 — 프롬프트는 전에도 지금도 시간대를 싣지
+않고, `timeZone` 을 읽는 운영 코드는 없다(백로그 EE-60). 옛 이름과 새 이름의 대응은
+[`../../migration/rename-maps.md`](../../migration/rename-maps.md), 설계는
+[`execution-environment-ee14-user-locale.md`](execution-environment-ee14-user-locale.md) 에 있다.
+
 `Environment` 는 프롬프트 밖에서도 읽힌다 — 훅 컨텍스트(`SingleToolInvoker`·`DefaultCompactionEngine` 이
 `HookContext` 에 싣는다), `OrcaSkillToolProvider`, `OrcaSystemCommandProvider`. 이들이 `platform`/`osVersion`/
 `workingDirectory` 를 쓰는지 2단계 PR 에서 전수 확인하고, 쓰는 곳은 실행의 서술자를 받게 바꾼다. 특히 훅은 "명령이
@@ -748,7 +756,10 @@ aimon-sandbox 는 `ExecutionEnvironmentProvider` 를 구현한다. 이 문서가
 > 2026-10-03 에 닫혔다**(EE-12, 선행 조건 EE-9 와 함께) — 아래 불릿의 "`AimonStackBuilder` 가 전용 `skillHookShell` 로
 > 돌린다" 는 더는 사실이 아니고, 지금의 동작은 §10 에 있다. 나머지 둘(artifact 를 늘 복사할지, `contentSearch` 결과
 > 형식)은 아직 열려 있다. **백그라운드 명령을 끝낼 수단도 2026-10-03 에 닫혔다**(EE-13, 작업 목록의 수명을 다룬 EE-7 과
-> 함께) — 아래 불릿의 "끝내는 도구가 없다" 는 더는 사실이 아니고, 지금의 동작은 §5.3 에 있다.
+> 함께) — 아래 불릿의 "끝내는 도구가 없다" 는 더는 사실이 아니고, 지금의 동작은 §5.3 에 있다. **`Environment` 의 남은 필드도
+> 2026-10-03 에 닫혔다**(EE-14) — 아래 불릿의 "옮기고 없앨지" 는 더는 질문이 아니다. `Environment` 는 없어졌고 `timeZone` 은
+> `at.aimon.core.base.UserLocale` 에 있다. 지금의 이름은 §10 에, 설계는
+> [`execution-environment-ee14-user-locale.md`](execution-environment-ee14-user-locale.md) 에 있다.
 
 - **`Environment` 의 남은 필드** — `platform`/`osVersion`/`workingDirectory` 가 서술자로 가면 `timeZone` 만 남는다.
   `UserLocale` 같은 이름으로 옮기고 `Environment` 를 없앨지
@@ -801,6 +812,7 @@ aimon-sandbox 는 `ExecutionEnvironmentProvider` 를 구현한다. 이 문서가
 - [`execution-environment-implementation.md`](execution-environment-implementation.md) — 이 설계의 구현 계획(승인본)과 구현이 그 계획에서 벗어난 점
 - [`execution-environment-ee9-ee12-hook-environment.md`](execution-environment-ee9-ee12-hook-environment.md) — 훅 컨텍스트에 실행 환경을 싣고 스킬 선언 훅의 셸을 실행 환경으로 옮긴 설계(EE-9 · EE-12)
 - [`execution-environment-ee13-ee7-background-lifecycle.md`](execution-environment-ee13-ee7-background-lifecycle.md) — 백그라운드 `Bash` 종료(`KillShell`, 셸 취소 계약, 환경이 정하는 상한)와 제공자 · 작업 목록의 수명 상향 설계(EE-13 · EE-7)
+- [`execution-environment-ee14-user-locale.md`](execution-environment-ee14-user-locale.md) — `Environment` 를 없애고 `timeZone` 을 `UserLocale` 로 옮긴 설계(EE-14)
 - [`../workflow/workflow.md`](../workflow/workflow.md) §6.3 — worktree 격리
 - [`../agent-execution/artifact.md`](../agent-execution/artifact.md) — `ArtifactCollector`
 - [`../filesystem/backend-contract.md`](../filesystem/backend-contract.md) — VFS 백엔드 계약 (§7 의 `getMetadata` 조항이 들어갈 자리)
