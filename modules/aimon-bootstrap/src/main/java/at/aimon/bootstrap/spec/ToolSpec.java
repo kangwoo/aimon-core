@@ -13,6 +13,7 @@ import at.aimon.core.agent.tool.ToolContextEnricher;
 import at.aimon.core.mcp.McpClientFactory;
 import at.aimon.core.mcp.McpServerConfigProvider;
 import at.aimon.core.tools.artifact.ArtifactPolicy;
+import at.aimon.core.tools.bash.BackgroundBashStore;
 
 /**
  * Declares which tools the stack's agent runtimes register.
@@ -59,6 +60,7 @@ public final class ToolSpec {
     private final List<ToolContextEnricher> contextEnrichers;
     private final McpClientFactory mcpClientFactory;
     private final McpServerConfigProvider mcpServerConfigProvider;
+    private final BackgroundBashStore backgroundBashStore;
 
     private ToolSpec(Builder builder) {
         this.bashEnabled = builder.bashEnabled;
@@ -71,6 +73,7 @@ public final class ToolSpec {
         this.contextEnrichers = List.copyOf(builder.contextEnrichers);
         this.mcpClientFactory = builder.mcpClientFactory;
         this.mcpServerConfigProvider = builder.mcpServerConfigProvider;
+        this.backgroundBashStore = builder.backgroundBashStore;
 
         if ((this.mcpClientFactory == null) != (this.mcpServerConfigProvider == null)) {
             throw new IllegalArgumentException(
@@ -155,6 +158,15 @@ public final class ToolSpec {
     }
 
     /**
+     * Returns the store the stack's background-command task list records its tasks in.
+     *
+     * @return the store, or empty for an in-memory one — correct for a single node
+     */
+    public Optional<BackgroundBashStore> getBackgroundBashStore() {
+        return Optional.ofNullable(backgroundBashStore);
+    }
+
+    /**
      * Returns whether the opt-in {@code Workflow} tool is registered alongside the subagent tools.
      *
      * @return {@code true} when the Workflow tool is registered
@@ -235,6 +247,7 @@ public final class ToolSpec {
         private final List<ToolContextEnricher> contextEnrichers = new ArrayList<>();
         private McpClientFactory mcpClientFactory;
         private McpServerConfigProvider mcpServerConfigProvider;
+        private BackgroundBashStore backgroundBashStore;
 
         private Builder() {
         }
@@ -248,6 +261,21 @@ public final class ToolSpec {
          */
         public Builder bashEnabled(boolean bashEnabled) {
             this.bashEnabled = bashEnabled;
+            return this;
+        }
+
+        /**
+         * Sets where the stack's background-command task list ({@code Bash(run_in_background)}, {@code BashOutput},
+         * {@code KillShell}) records its tasks. The default is in memory. A store shared between nodes lets a session
+         * reopened on another node be told its task runs elsewhere instead of "not found" — the command itself, its
+         * output and the means to stop it stay on the node that started it. Unused when Bash is disabled.
+         *
+         * @param backgroundBashStore
+         *            the store, or null for the in-memory default
+         * @return this builder
+         */
+        public Builder backgroundBashStore(BackgroundBashStore backgroundBashStore) {
+            this.backgroundBashStore = backgroundBashStore;
             return this;
         }
 

@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/embedding-agent-in-application.md
-source_commit: 47acded
+source_commit: 79d78a7
 ---
 
 # Embedding an AIMON agent in your application
@@ -366,6 +366,7 @@ aimon:
     staging:
       max-bytes: 52428800           # limit on staging one skill directory into the workspace
     control-writable: false         # true opens the workspace's .aimon/ (the control store) to the file tools
+    # background-command-timeout: 12h  # ceiling for a background Bash command. Unset, 24 hours. The model can stop one earlier with KillShell
 
   knowledge:
     backend: none                   # none (default) | keyword | supplied

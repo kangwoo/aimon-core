@@ -791,7 +791,9 @@ aimon:
     staging:
       max-bytes: 52428800             # 스킬 디렉터리 하나의 스테이징 상한
     control-writable: false           # true 면 .aimon/ 을 파일 도구에 연다(명시적 opt-in)
+    # background-command-timeout: 12h # execution-environment §5.3 — 백그라운드 Bash 의 상한. 미설정이면 24시간
     # ExecutionEnvironmentProvider 빈이 있으면 모든 런타임이 그것을 공유한다(Spring 이 닫는다)
+    # BackgroundBashStore 빈이 있으면 백그라운드 작업 목록의 메타데이터를 거기 둔다(기본 in-memory)
   skill:
     approval:
       mode: deny                      # deny | allow-list | suspend | channel   ← 선택자

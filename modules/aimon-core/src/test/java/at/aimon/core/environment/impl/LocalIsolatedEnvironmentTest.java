@@ -2,13 +2,17 @@ package at.aimon.core.environment.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -27,7 +31,10 @@ import at.aimon.core.environment.StagedResource;
 import at.aimon.core.filesystem.VirtualFileSystems;
 import at.aimon.core.filesystem.exception.FileAccessDeniedException;
 import at.aimon.core.shell.ExecutionOptions;
+import at.aimon.core.shell.ShellCancellationSource;
 import at.aimon.core.shell.ShellCommandResult;
+import at.aimon.core.shell.ShellFeature;
+import at.aimon.core.shell.exception.ShellCancelledException;
 
 @DisplayName("LocalIsolatedEnvironment — isolate() of the local environment (execution-environment design §4.2)")
 @DisabledOnOs(OS.WINDOWS)
@@ -53,6 +60,47 @@ class LocalIsolatedEnvironmentTest {
     @AfterEach
     void tearDown() {
         provider.close();
+    }
+
+    @Test
+    @DisplayName("a command in the branch shell is stopped by its cancellation signal, like one in the parent's")
+    void branchShellHonoursCancellation() throws Exception {
+        assertThat(branch.shell().supports(ShellFeature.CANCELLATION)).isTrue();
+        final ShellCancellationSource source = ShellCancellationSource.create();
+        final ExecutionOptions options = ExecutionOptions.builder().timeout(Duration.ofMinutes(5))
+                .cancellation(source.token()).build();
+
+        // The branch shell derives its options to set the working directory; a derivation that dropped the signal
+        // would leave this command running until its timeout with nothing to say why.
+        final CompletableFuture<Throwable> outcome = CompletableFuture.supplyAsync(
+                () -> catchThrowable(() -> branch.shell().execute(() -> "echo $$ > pid; exec sleep 120", options)));
+        final Path pidFile = workspace.resolve(".worktrees/k/pid");
+        final long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+        while (!(Files.exists(pidFile) && !Files.readString(pidFile).isBlank())) {
+            assertThat(System.nanoTime()).as("the command never started").isLessThan(deadline);
+            Thread.sleep(20);
+        }
+        final long pid = Long.parseLong(Files.readString(pidFile).trim());
+
+        source.cancel();
+
+        assertThat(outcome.get(10, TimeUnit.SECONDS)).isInstanceOf(ShellCancelledException.class);
+        assertThat(ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false)).isFalse();
+    }
+
+    @Test
+    @DisplayName("a branch reports its parent's background command ceiling")
+    void branchInheritsTheBackgroundCeiling(@TempDir Path other) {
+        assertThat(branch.backgroundCommandTimeout()).isEmpty();
+
+        try (LocalExecutionEnvironmentProvider limited = LocalExecutionEnvironmentProvider.builder()
+                .workspaceRoot(other).contentSearch(false).backgroundCommandTimeout(Duration.ofMinutes(10)).build()) {
+            final ExecutionEnvironment root = limited
+                    .resolve(EnvironmentRequest.builder().agentRuntimeId(AgentRuntimeId.fromName("iso")).build());
+
+            assertThat(root.backgroundCommandTimeout()).contains(Duration.ofMinutes(10));
+            assertThat(root.isolate("k").orElseThrow().backgroundCommandTimeout()).contains(Duration.ofMinutes(10));
+        }
     }
 
     @Test

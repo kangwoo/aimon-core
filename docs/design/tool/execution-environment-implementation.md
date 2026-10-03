@@ -1382,6 +1382,10 @@ and why. Entries marked **(open)** are also tracked in
 - **`ExecutionEnvironmentSpec`** has `factory(Function)`, `shared(provider)` (caller-owned and never closed by the
   stack), `maxStagedBytes`, `controlWritable` and `contentSearch`. The starter maps an `ExecutionEnvironmentProvider`
   bean to `shared(...)`, so Spring closes it and the stack does not.
+  *(Changed since, by EE-7: `factory(Function)` is gone. The stack now has one provider —
+  `provider(Supplier)` or `shared(provider)` — and a runtime's eviction closes its `RuntimeBinding`, not a provider. The
+  CLI line below reads `provider(...)` today. See
+  [`execution-environment-ee13-ee7-background-lifecycle.md`](execution-environment-ee13-ee7-background-lifecycle.md).)*
 - **The CLI keeps `FileSystemSpec.supplied(jarDirFs)` and adds `ExecutionEnvironmentSpec.factory(workspaceRoot(jarDir))`.**
   Its control store is `ScopedVirtualFileSystem(jarDirFs, ".aimon")` (the supplied-VFS path in bootstrap), not a
   separate `LocalFileSystem(jarDir/.aimon)`. The physical paths are the same, and the provider still owns its workspace,

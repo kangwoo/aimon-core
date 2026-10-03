@@ -146,6 +146,7 @@
  * <ul>
  * <li><b>BashTool</b> - Execute bash commands with optional background execution
  * <li><b>BashOutputTool</b> - Monitor and retrieve output from background bash processes
+ * <li><b>KillShellTool</b> - Stop a background bash process
  * <li><b>ReadTool</b> - Read file contents from VirtualFileSystem
  * <li><b>WriteTool</b> - Write files to VirtualFileSystem
  * <li><b>EditTool</b> - Edit existing files with find-and-replace operations

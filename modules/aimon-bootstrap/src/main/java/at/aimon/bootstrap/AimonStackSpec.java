@@ -215,7 +215,7 @@ public final class AimonStackSpec {
     }
 
     /**
-     * Returns where each runtime's executions run — defaulted to a local provider per runtime over its workspace.
+     * Returns where the runtimes' executions run — defaulted to one local provider with a workspace per runtime.
      *
      * @return the spec, never null
      */

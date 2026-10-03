@@ -85,6 +85,7 @@ import at.aimon.core.skill.policy.session.SessionScopedSkillInvocationPolicy;
 import at.aimon.core.skill.render.ShellArgumentTokenizer;
 import at.aimon.core.subagent.InMemorySubagentRegistry;
 import at.aimon.core.subagent.behavior.InMemorySubagentBehaviorRegistry;
+import at.aimon.core.tools.bash.BackgroundBashManager;
 import at.aimon.session.routing.DeploymentMode;
 import at.aimon.session.routing.SessionRouter;
 import at.aimon.session.routing.builder.SessionRouterBuilder;
@@ -444,11 +445,18 @@ public final class AimonStackBuilder {
         // agent:ops:acme when that tenant first appears, so the two can never drift apart.
         final Map<AgentRuntimeId, AgentSpec> declared = new LinkedHashMap<>();
         final List<AgentDescriptor> agentDescriptors = new ArrayList<>();
+        // One list of background commands for the whole stack, so a task outlives the tenant runtime that started it
+        // (EE-7). Built only when there is a Bash to start one.
+        final BackgroundBashManager backgroundBashManager = toolSpec.isBashEnabled()
+                ? teardown.own(TeardownPhase.BACKGROUND_COMMANDS, "backgroundBashManager",
+                        BackgroundBashManager.builder().store(toolSpec.getBackgroundBashStore().orElse(null))
+                                .nodeId(spec.getSession().getNodeId().orElse(null)).build())
+                : null;
         final StackAgentRuntimeProvisioner.Builder provisionerBuilder = StackAgentRuntimeProvisioner.builder()
                 .fileSystemSpec(spec.getFileSystem()).executionEnvironmentSpec(spec.getExecutionEnvironment())
-                .toolSpec(toolSpec).runtimeFactory(runtimeFactory).knowledgeToolsEnabled(knowledgeStore != null)
-                .memoryToolProvider(memory.getToolProvider().orElse(null)).agentExecutor(agentExecutor)
-                .taskManager(taskManager).skillParser(skillParser)
+                .toolSpec(toolSpec).backgroundBashManager(backgroundBashManager).runtimeFactory(runtimeFactory)
+                .knowledgeToolsEnabled(knowledgeStore != null).memoryToolProvider(memory.getToolProvider().orElse(null))
+                .agentExecutor(agentExecutor).taskManager(taskManager).skillParser(skillParser)
                 .credentialStore(spec.getCredentialStore().orElse(null))
                 .credentialStoreFactory(spec.getCredentialStoreFactory().orElse(null))
                 .agentCustomizers(spec.getAgentCustomizers());
@@ -478,6 +486,10 @@ public final class AimonStackBuilder {
             agentDescriptors.add(template.describe(runtimeId));
         }
         final StackAgentRuntimeProvisioner provisioner = provisionerBuilder.build();
+        // Enrolled before any runtime is built, so within AGENT_RESOURCES it closes last: after every startup
+        // runtime's binding and control store. Tenant bindings close earlier still, with their runtimes.
+        provisioner.ownedEnvironmentProvider().ifPresent(
+                provider -> teardown.own(TeardownPhase.AGENT_RESOURCES, "executionEnvironmentProvider", provider));
 
         final Map<AgentRuntimeId, OrcaAgentRuntime> runtimes = new LinkedHashMap<>();
         final Map<AgentRuntimeId, VirtualFileSystem> fileSystems = new LinkedHashMap<>();

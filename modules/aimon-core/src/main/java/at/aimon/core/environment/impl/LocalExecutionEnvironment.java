@@ -1,6 +1,7 @@
 package at.aimon.core.environment.impl;
 
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -33,14 +34,17 @@ final class LocalExecutionEnvironment implements ExecutionEnvironment {
     private final EnvironmentDescriptor descriptor;
     private final LocalStaging staging;
     private final RipgrepContentSearch contentSearch;
+    private final Duration backgroundCommandTimeout;
 
     LocalExecutionEnvironment(VirtualFileSystem toolFileSystem, List<PathRule> pathRules, VirtualShell shell,
-            LocalStaging staging, RipgrepContentSearch contentSearch, String workingDirectory) {
+            LocalStaging staging, RipgrepContentSearch contentSearch, String workingDirectory,
+            Duration backgroundCommandTimeout) {
         this.toolFileSystem = Objects.requireNonNull(toolFileSystem, "toolFileSystem must not be null");
         this.pathRules = List.copyOf(Objects.requireNonNull(pathRules, "pathRules must not be null"));
         this.shell = Objects.requireNonNull(shell, "shell must not be null");
         this.staging = Objects.requireNonNull(staging, "staging must not be null");
         this.contentSearch = contentSearch;
+        this.backgroundCommandTimeout = backgroundCommandTimeout;
         this.descriptor = hostDescriptor(workingDirectory);
     }
 
@@ -67,6 +71,11 @@ final class LocalExecutionEnvironment implements ExecutionEnvironment {
     @Override
     public Optional<ContentSearch> contentSearch() {
         return Optional.ofNullable(contentSearch);
+    }
+
+    @Override
+    public Optional<Duration> backgroundCommandTimeout() {
+        return Optional.ofNullable(backgroundCommandTimeout);
     }
 
     /**

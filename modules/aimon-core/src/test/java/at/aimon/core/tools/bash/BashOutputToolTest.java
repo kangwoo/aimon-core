@@ -13,12 +13,14 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.shell.ShellCommandResult;
 import at.aimon.core.shell.exception.ShellTimeoutException;
+import at.aimon.core.tools.ToolContextKeys;
 
 /** Unit tests for {@link BashOutputTool}. */
 class BashOutputToolTest {
@@ -383,6 +385,78 @@ class BashOutputToolTest {
     }
 
     // Integration test with BackgroundBashManager
+
+    // Ownership and other nodes (EE-7)
+
+    @Test
+    void testExecute_KilledTask_ReportsKilledWithItsOutput() throws Exception {
+        ControllableShell shell = ControllableShell.cancellable();
+        BackgroundBashTask task = backgroundManager.start(null, "npm run dev", shell,
+                at.aimon.core.shell.ExecutionOptions.defaults());
+        shell.awaitStarted();
+        backgroundManager.kill(null, task.getTaskId());
+
+        ToolResult result = bashOutputTool.execute(ToolInput.of(Map.of("taskId", task.getTaskId())), context);
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.getContent()).contains("Status: Killed").contains("Command: npm run dev")
+                .contains(ControllableShell.PARTIAL_OUTPUT).doesNotContain("Exit Code");
+    }
+
+    @Test
+    void testExecute_TaskOfAnotherRuntime_ReturnsNotFound() {
+        AgentRuntimeId acme = AgentRuntimeId.fromName("ops", "acme");
+        AgentRuntimeId globex = AgentRuntimeId.fromName("ops", "globex");
+        ControllableShell shell = ControllableShell.cancellable();
+        String taskId = backgroundManager
+                .start(acme, "cat secrets", shell, at.aimon.core.shell.ExecutionOptions.defaults()).getTaskId();
+        shell.finish("acme only");
+
+        ToolResult foreign = bashOutputTool.execute(ToolInput.of(Map.of("taskId", taskId)),
+                ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, globex).build());
+        ToolResult noRuntime = bashOutputTool.execute(ToolInput.of(Map.of("taskId", taskId)), context);
+        ToolResult owner = bashOutputTool.execute(ToolInput.of(Map.of("taskId", taskId)),
+                ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, acme).build());
+
+        // The id is 32 random bits and the list is the whole application's: the owner check is the boundary.
+        assertThat(foreign.isError()).isTrue();
+        assertThat(foreign.getContent()).contains("Shell not found").doesNotContain("acme only");
+        assertThat(noRuntime.isError()).isTrue();
+        assertThat(owner.isSuccess()).isTrue();
+        assertThat(owner.getContent()).contains("acme only");
+    }
+
+    @Test
+    void testExecute_TaskOnAnotherNode_ReportsWhereItRuns() {
+        InMemoryBackgroundBashStore shared = new InMemoryBackgroundBashStore();
+        shared.putIfAbsent(BackgroundBashRecord.builder().taskId("bash_0000eeee").nodeId("node-b")
+                .command("npm run dev").startedAt(java.time.Instant.now())
+                .expiresAt(java.time.Instant.now().plusSeconds(3600)).build());
+        try (BackgroundBashManager nodeA = BackgroundBashManager.builder().store(shared).nodeId("node-a").build()) {
+            ToolResult result = new BashOutputTool(nodeA).execute(ToolInput.of(Map.of("taskId", "bash_0000eeee")),
+                    context);
+
+            assertThat(result.isError()).isTrue();
+            assertThat(result.getContent()).contains("running on another node (node-b)")
+                    .contains("cannot be read from here").doesNotContain("Shell not found");
+        }
+    }
+
+    @Test
+    void testExecute_TaskThisNodeLost_SaysSo() {
+        InMemoryBackgroundBashStore durable = new InMemoryBackgroundBashStore();
+        durable.putIfAbsent(BackgroundBashRecord.builder().taskId("bash_0000ffff").nodeId("node-a")
+                .command("npm run dev").startedAt(java.time.Instant.now())
+                .expiresAt(java.time.Instant.now().plusSeconds(3600)).build());
+        try (BackgroundBashManager restarted = BackgroundBashManager.builder().store(durable).nodeId("node-a")
+                .build()) {
+            ToolResult result = new BashOutputTool(restarted).execute(ToolInput.of(Map.of("taskId", "bash_0000ffff")),
+                    context);
+
+            assertThat(result.isError()).isTrue();
+            assertThat(result.getContent()).contains("before it restarted");
+        }
+    }
 
     @Test
     void testIntegration_WithBackgroundBashManager() throws InterruptedException {

@@ -1,10 +1,10 @@
 package at.aimon.bootstrap.spec;
 
+import java.time.Duration;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.function.Function;
+import java.util.function.Supplier;
 
-import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.environment.ExecutionEnvironmentProvider;
 
 /**
@@ -12,78 +12,109 @@ import at.aimon.core.environment.ExecutionEnvironmentProvider;
  * in (execution-environment design §4, §9).
  *
  * <p>
- * By default the stack builds a local provider per runtime over that runtime's workspace (see {@link FileSystemSpec}):
- * the control store sits at the workspace's {@code .aimon/} and is hidden from the file tools, and skill files are
- * staged into {@code .aimon-staged/}. {@link #factory(Function)} replaces that with a caller-supplied provider per
- * runtime — a sandbox, for instance; the control store is then still the one {@link FileSystemSpec} describes. A
- * provider the factory returns that is {@link AutoCloseable} is owned by the runtime's teardown, like the file system.
- * {@link #shared(ExecutionEnvironmentProvider)} hands every runtime one caller-owned provider, which the stack never
- * closes ("whoever creates it closes it").
+ * <b>One provider per stack.</b> Every runtime of the stack resolves its environment from the same provider, which
+ * lives as long as the stack and picks the workspace from the request's runtime id. It is not closed when a tenant
+ * runtime is evicted — a background command that runtime started may still be running in its shell. What the provider
+ * holds for one runtime it releases when the stack closes the handle it got from
+ * {@link ExecutionEnvironmentProvider#bindRuntime}, which the stack calls for each runtime it builds.
+ *
+ * <p>
+ * By default that provider is a local one with a workspace per runtime (see {@link FileSystemSpec}): the control
+ * store sits at the workspace's {@code .aimon/} and is hidden from the file tools, and skill files are staged into
+ * {@code .aimon-staged/}. {@link #provider(Supplier)} replaces it with a caller-supplied provider — a sandbox, for
+ * instance — that the stack builds once, owns, and closes when it closes; the control store is then still the one
+ * {@link FileSystemSpec} describes. {@link #shared(ExecutionEnvironmentProvider)} is the same with the ownership
+ * left with the caller: the stack uses the provider, binds its runtimes to it, and never closes it ("whoever creates
+ * it closes it").
  */
 public final class ExecutionEnvironmentSpec {
 
     /** Default limit on one skill directory's staged size: 50 MB. */
     public static final long DEFAULT_MAX_STAGED_BYTES = 50L * 1024 * 1024;
 
-    private final Function<AgentRuntimeId, ExecutionEnvironmentProvider> factory;
-    private final boolean callerOwned;
+    private final Supplier<ExecutionEnvironmentProvider> providerSupplier;
+    private final ExecutionEnvironmentProvider sharedProvider;
     private final long maxStagedBytes;
     private final boolean controlWritable;
     private final boolean contentSearch;
+    private final Duration backgroundCommandTimeout;
 
     private ExecutionEnvironmentSpec(Builder builder) {
-        this.factory = builder.factory;
-        this.callerOwned = builder.callerOwned;
+        this.providerSupplier = builder.providerSupplier;
+        this.sharedProvider = builder.sharedProvider;
         if (builder.maxStagedBytes < 0) {
             throw new IllegalArgumentException("maxStagedBytes must be >= 0, got: " + builder.maxStagedBytes);
         }
         this.maxStagedBytes = builder.maxStagedBytes;
         this.controlWritable = builder.controlWritable;
         this.contentSearch = builder.contentSearch;
+        this.backgroundCommandTimeout = builder.backgroundCommandTimeout;
     }
 
-    /** @return the default: a local provider per runtime */
+    /** @return the default: one local provider with a workspace per runtime */
     public static ExecutionEnvironmentSpec defaults() {
         return builder().build();
     }
 
     /**
-     * A caller-supplied provider per runtime.
+     * One caller-supplied provider for every runtime, built and owned by the stack.
      *
-     * @param factory
-     *            maps a runtime id to its provider (must not be null; must not return null)
+     * <p>
+     * The supplier is called once, when the stack is assembled. The provider it returns picks each execution's
+     * workspace from {@code EnvironmentRequest.agentRuntimeId()}, learns of runtimes coming and going through
+     * {@code bindRuntime}, and — when it is {@link AutoCloseable} — is closed when the stack closes.
+     *
+     * @param provider
+     *            builds the provider (must not be null; must not return null)
      * @return the spec
      */
-    public static ExecutionEnvironmentSpec factory(Function<AgentRuntimeId, ExecutionEnvironmentProvider> factory) {
-        return builder().factory(Objects.requireNonNull(factory, "factory must not be null")).build();
+    public static ExecutionEnvironmentSpec provider(Supplier<ExecutionEnvironmentProvider> provider) {
+        final Builder builder = builder();
+        builder.providerSupplier = Objects.requireNonNull(provider, "provider must not be null");
+        return builder.build();
     }
 
     /**
-     * One caller-owned provider for every runtime. The stack uses it and never closes it.
+     * One caller-owned provider for every runtime. The stack uses it, binds its runtimes to it, and never closes it.
      *
      * @param provider
      *            the provider (must not be null)
      * @return the spec
      */
     public static ExecutionEnvironmentSpec shared(ExecutionEnvironmentProvider provider) {
-        Objects.requireNonNull(provider, "provider must not be null");
-        final Builder builder = builder().factory(id -> provider);
-        builder.callerOwned = true;
+        final Builder builder = builder();
+        builder.sharedProvider = Objects.requireNonNull(provider, "provider must not be null");
         return builder.build();
     }
 
     /**
-     * Whether the providers come from the caller and stay the caller's to close ({@link #shared}).
+     * Whether the provider comes from the caller and stays the caller's to close ({@link #shared}).
      *
-     * @return {@code true} if the stack must not close the providers
+     * @return {@code true} if the stack must not close the provider
      */
     public boolean isCallerOwned() {
-        return callerOwned;
+        return sharedProvider != null;
     }
 
-    /** @return the caller's provider factory, or empty for the local default */
-    public Optional<Function<AgentRuntimeId, ExecutionEnvironmentProvider>> getFactory() {
-        return Optional.ofNullable(factory);
+    /** @return the supplier of the stack-owned provider ({@link #provider}), or empty */
+    public Optional<Supplier<ExecutionEnvironmentProvider>> getProviderSupplier() {
+        return Optional.ofNullable(providerSupplier);
+    }
+
+    /** @return the caller-owned provider ({@link #shared}), or empty */
+    public Optional<ExecutionEnvironmentProvider> getSharedProvider() {
+        return Optional.ofNullable(sharedProvider);
+    }
+
+    /**
+     * The longest a background command may run in the local provider's environments
+     * ({@code ExecutionEnvironment.backgroundCommandTimeout()}). A caller-supplied provider answers for its own
+     * environments; this setting does not reach it.
+     *
+     * @return the ceiling, or empty to leave it at {@code Bash}'s default of 24 hours
+     */
+    public Optional<Duration> getBackgroundCommandTimeout() {
+        return Optional.ofNullable(backgroundCommandTimeout);
     }
 
     /** @return the local provider's limit on one skill directory's staged size */
@@ -113,29 +144,22 @@ public final class ExecutionEnvironmentSpec {
 
     @Override
     public String toString() {
-        return "ExecutionEnvironmentSpec{factory=" + (factory != null) + ", maxStagedBytes=" + maxStagedBytes
-                + ", controlWritable=" + controlWritable + ", contentSearch=" + contentSearch + '}';
+        return "ExecutionEnvironmentSpec{provider="
+                + (sharedProvider != null ? "shared" : providerSupplier != null ? "supplied" : "local")
+                + ", maxStagedBytes=" + maxStagedBytes + ", controlWritable=" + controlWritable + ", contentSearch="
+                + contentSearch + ", backgroundCommandTimeout=" + backgroundCommandTimeout + '}';
     }
 
     /** Builder for {@link ExecutionEnvironmentSpec}. */
     public static final class Builder {
-        private Function<AgentRuntimeId, ExecutionEnvironmentProvider> factory;
-        private boolean callerOwned;
+        private Supplier<ExecutionEnvironmentProvider> providerSupplier;
+        private ExecutionEnvironmentProvider sharedProvider;
         private long maxStagedBytes = DEFAULT_MAX_STAGED_BYTES;
         private boolean controlWritable;
         private boolean contentSearch = true;
+        private Duration backgroundCommandTimeout;
 
         private Builder() {
-        }
-
-        /**
-         * @param factory
-         *            a caller-supplied provider per runtime, or null for the local default
-         * @return this builder
-         */
-        public Builder factory(Function<AgentRuntimeId, ExecutionEnvironmentProvider> factory) {
-            this.factory = factory;
-            return this;
         }
 
         /**
@@ -165,6 +189,24 @@ public final class ExecutionEnvironmentSpec {
          */
         public Builder contentSearch(boolean contentSearch) {
             this.contentSearch = contentSearch;
+            return this;
+        }
+
+        /**
+         * @param backgroundCommandTimeout
+         *            the longest a background command may run in the local provider's environments (must be
+         *            positive), or null for {@code Bash}'s default of 24 hours
+         * @return this builder
+         * @throws IllegalArgumentException
+         *             if the value is zero or negative
+         */
+        public Builder backgroundCommandTimeout(Duration backgroundCommandTimeout) {
+            if (backgroundCommandTimeout != null
+                    && (backgroundCommandTimeout.isZero() || backgroundCommandTimeout.isNegative())) {
+                throw new IllegalArgumentException(
+                        "backgroundCommandTimeout must be positive, got: " + backgroundCommandTimeout);
+            }
+            this.backgroundCommandTimeout = backgroundCommandTimeout;
             return this;
         }
 

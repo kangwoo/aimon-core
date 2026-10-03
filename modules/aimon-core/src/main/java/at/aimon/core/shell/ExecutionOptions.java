@@ -35,6 +35,7 @@ public final class ExecutionOptions {
     private final Long maxCaptureBytes;
     private final String stdin;
     private final boolean background;
+    private final ShellCancellation cancellation;
 
     private ExecutionOptions(Builder builder) {
         this.timeout = builder.timeout;
@@ -46,6 +47,7 @@ public final class ExecutionOptions {
         this.maxCaptureBytes = builder.maxCaptureBytes;
         this.stdin = builder.stdin;
         this.background = builder.background;
+        this.cancellation = Objects.requireNonNull(builder.cancellation, "cancellation");
     }
 
     /**
@@ -61,6 +63,7 @@ public final class ExecutionOptions {
      * <li>Error stream not redirected (stderr separate from stdout)
      * <li>No Unix shell override (uses shell default, typically "bash")
      * <li>No capture-limit override (implementation default is used)
+     * <li>No cancellation ({@link ShellCancellation#none()})
      * </ul>
      *
      * @return default execution options
@@ -178,6 +181,20 @@ public final class ExecutionOptions {
     }
 
     /**
+     * Returns the signal that stops this command while it runs.
+     *
+     * <p>
+     * A shell that declares {@link ShellFeature#CANCELLATION} honours it as {@link VirtualShell} describes; any other
+     * shell ignores it, so a caller that needs the command to stop asks {@link VirtualShell#supports(ShellFeature)}
+     * first. A wrapper that derives new options must carry the signal over — {@link #toBuilder()} does.
+     *
+     * @return the cancellation signal, never null ({@link ShellCancellation#none()} by default)
+     */
+    public ShellCancellation getCancellation() {
+        return cancellation;
+    }
+
+    /**
      * Returns a builder seeded with every option of this instance, for deriving a variant.
      *
      * @return a pre-populated builder
@@ -185,7 +202,7 @@ public final class ExecutionOptions {
     public Builder toBuilder() {
         final Builder builder = new Builder().timeout(timeout).environment(environment)
                 .workingDirectory(workingDirectory).charset(charset).redirectErrorStream(redirectErrorStream)
-                .unixShell(unixShell).stdin(stdin).background(background);
+                .unixShell(unixShell).stdin(stdin).background(background).cancellation(cancellation);
         if (maxCaptureBytes != null) {
             builder.maxCaptureBytes(maxCaptureBytes);
         }
@@ -205,6 +222,7 @@ public final class ExecutionOptions {
         private Long maxCaptureBytes;
         private String stdin;
         private boolean background;
+        private ShellCancellation cancellation = ShellCancellation.none();
 
         private Builder() {
         }
@@ -324,6 +342,21 @@ public final class ExecutionOptions {
          */
         public Builder background(boolean background) {
             this.background = background;
+            return this;
+        }
+
+        /**
+         * Sets the signal that stops the command while it runs (default {@link ShellCancellation#none()}).
+         *
+         * @param cancellation
+         *            the cancellation signal, must not be null
+         * @return this builder
+         * @throws NullPointerException
+         *             if cancellation is null
+         * @see ExecutionOptions#getCancellation()
+         */
+        public Builder cancellation(ShellCancellation cancellation) {
+            this.cancellation = Objects.requireNonNull(cancellation, "cancellation");
             return this;
         }
 

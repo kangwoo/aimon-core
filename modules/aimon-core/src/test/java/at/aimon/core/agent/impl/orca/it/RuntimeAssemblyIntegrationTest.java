@@ -45,7 +45,7 @@ class RuntimeAssemblyIntegrationTest {
      * assembly test. Scheduling tools are absent because the harness passes a null manager (see below).
      */
     private static final List<String> EXPECTED_DEFAULT_TOOLS = List.of("AgentOutput", "Bash", "BashOutput", "Edit",
-            "Grep", "Read", "Skill", "Task", "TaskList", "TaskStop", "TodoWrite", "Write");
+            "Grep", "KillShell", "Read", "Skill", "Task", "TaskList", "TaskStop", "TodoWrite", "Write");
 
     @TempDir
     Path tempDir;

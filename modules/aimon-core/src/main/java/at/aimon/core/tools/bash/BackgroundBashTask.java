@@ -1,15 +1,25 @@
 package at.aimon.core.tools.bash;
 
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
 
+import at.aimon.core.agent.AgentRuntimeId;
+import at.aimon.core.shell.ShellCancellationSource;
 import at.aimon.core.shell.ShellCommandResult;
+import at.aimon.core.shell.exception.ShellCancelledException;
 import at.aimon.core.shell.exception.ShellExecutionException;
 
 /**
@@ -19,7 +29,7 @@ import at.aimon.core.shell.exception.ShellExecutionException;
  * This class manages:
  *
  * <ul>
- * <li>Task execution state (running, completed, failed)
+ * <li>Task execution state (running, completed, failed, killed)
  * <li>Read-once consumption of the output buffer
  * <li>Output filtering with regex patterns
  * <li>Exit code tracking
@@ -31,6 +41,13 @@ import at.aimon.core.shell.exception.ShellExecutionException;
  * read-<em>once</em> rather than incremental: it hands back what has not been consumed yet and advances the cursor,
  * which is what makes repeated polling safe, not a claim that output streams in. The shell that produces these results
  * captures to a file and reads it after the process exits, so there is no incremental source to expose.
+ *
+ * <p>
+ * <b>Node-local.</b> A task is the handle of a command running in a process of this node: the future, the signal that
+ * stops it, the output. What can be shared with other nodes is its {@link BackgroundBashRecord}. A task started by
+ * {@link BackgroundBashManager#start} knows the runtime that owns it and, when the shell supports cancellation, how
+ * to stop the command; one built from a bare future ({@link #BackgroundBashTask(String, String, CompletableFuture)})
+ * has no owner and cannot be stopped.
  *
  * <p>
  * Thread-safe for concurrent access.
@@ -72,11 +89,17 @@ public class BackgroundBashTask {
      * output and no notices.
      */
     private final CompletableFuture<ShellCommandResult> settled;
+    private final AgentRuntimeId ownerRuntimeId;
+    private final ShellCancellationSource cancellation;
+    private final Duration timeout;
+    private final Instant startedAt;
     private final List<String> outputLines;
     private final AtomicInteger lastReadLine;
     private final Object stateLock = new Object();
     private boolean completed;
     private boolean failed;
+    private boolean killed;
+    private Instant finishedAt;
     private boolean outputTruncated;
     private List<String> notices = List.of();
     private Integer exitCode;
@@ -95,6 +118,29 @@ public class BackgroundBashTask {
      *             if any parameter is null
      */
     public BackgroundBashTask(String taskId, String command, CompletableFuture<ShellCommandResult> future) {
+        this(taskId, command, future, null, null, null, Clock.systemUTC());
+    }
+
+    /**
+     * Creates a task for a command the manager started.
+     *
+     * @param ownerRuntimeId
+     *            the runtime whose execution started the command, or null for none
+     * @param cancellation
+     *            the source whose signal the command runs with, or null when the shell cannot stop it
+     * @param timeout
+     *            the timeout the command runs with, or null for none
+     * @param clock
+     *            the clock start and end are stamped with
+     */
+    @SuppressWarnings("checkstyle:ParameterNumber")
+    BackgroundBashTask(String taskId, String command, CompletableFuture<ShellCommandResult> future,
+            AgentRuntimeId ownerRuntimeId, ShellCancellationSource cancellation, Duration timeout, Clock clock) {
+        Objects.requireNonNull(clock, "Clock cannot be null");
+        this.ownerRuntimeId = ownerRuntimeId;
+        this.cancellation = cancellation;
+        this.timeout = timeout;
+        this.startedAt = clock.instant();
         this.taskId = Objects.requireNonNull(taskId, "Task ID cannot be null");
         this.command = Objects.requireNonNull(command, "Command cannot be null");
         this.future = Objects.requireNonNull(future, "Future cannot be null");
@@ -110,7 +156,10 @@ public class BackgroundBashTask {
                     failed = true;
                     final Throwable cause = unwrap(error);
                     errorMessage = cause.getMessage();
-                    exitCode = ERROR_EXIT_CODE;
+                    // A command stopped on request did not fail on its own account and has no exit status worth
+                    // reporting: it is KILLED, with the output it had printed.
+                    killed = cause instanceof ShellCancelledException;
+                    exitCode = killed ? null : ERROR_EXIT_CODE;
 
                     // A shell failure still carries whatever the process managed to print — a command killed at its
                     // timeout usually explains itself in that partial output. Dropping it would make the new
@@ -133,6 +182,7 @@ public class BackgroundBashTask {
                     outputTruncated = result.outputTruncated();
                     notices = result.notices();
                 }
+                finishedAt = clock.instant();
                 completed = true;
             }
         });
@@ -221,6 +271,9 @@ public class BackgroundBashTask {
             if (!completed) {
                 return BashTaskStatus.RUNNING;
             }
+            if (killed) {
+                return BashTaskStatus.KILLED;
+            }
             return failed ? BashTaskStatus.FAILED : BashTaskStatus.COMPLETED;
         }
     }
@@ -238,6 +291,94 @@ public class BackgroundBashTask {
         }
         synchronized (stateLock) {
             return !failed;
+        }
+    }
+
+    /**
+     * Waits up to {@code wait} for the task to complete and for its outcome to be recorded.
+     *
+     * @param wait
+     *            how long to wait (must not be null)
+     * @return true if the outcome is recorded, false if the command is still running after the wait
+     */
+    public boolean awaitCompletion(Duration wait) {
+        Objects.requireNonNull(wait, "Wait cannot be null");
+        try {
+            settled.handle((result, error) -> null).get(wait.toMillis(), TimeUnit.MILLISECONDS);
+            return true;
+        } catch (TimeoutException e) {
+            return false;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        } catch (ExecutionException e) {
+            return false;
+        }
+    }
+
+    /** Runs {@code action} once the outcome is recorded — at once if it already is. Failures are the caller's. */
+    void onSettled(Runnable action) {
+        settled.handle((result, error) -> null).thenRun(action);
+    }
+
+    /**
+     * Trips the command's cancellation signal. Returns once the shell has asked the command to stop, which is before
+     * this task reports {@link BashTaskStatus#KILLED}.
+     *
+     * @return true if a signal was sent by this call or an earlier one, false if this task cannot be stopped
+     */
+    boolean requestCancel() {
+        if (cancellation == null) {
+            return false;
+        }
+        cancellation.cancel();
+        return true;
+    }
+
+    /**
+     * Returns the runtime whose execution started the command.
+     *
+     * @return the owner, or empty for a task started outside any runtime
+     */
+    public Optional<AgentRuntimeId> getOwnerRuntimeId() {
+        return Optional.ofNullable(ownerRuntimeId);
+    }
+
+    /**
+     * Whether the command can be stopped: its shell declared {@code ShellFeature.CANCELLATION} when the task started.
+     *
+     * @return true if the command can be stopped
+     */
+    public boolean isCancellable() {
+        return cancellation != null;
+    }
+
+    /**
+     * Returns the timeout the command runs with — the ceiling that ends it if nothing else does.
+     *
+     * @return the timeout, or empty if the task was not started by the manager
+     */
+    public Optional<Duration> getTimeout() {
+        return Optional.ofNullable(timeout);
+    }
+
+    /**
+     * Returns when the task was created.
+     *
+     * @return the start time
+     */
+    public Instant getStartedAt() {
+        return startedAt;
+    }
+
+    /**
+     * Returns when the outcome was recorded.
+     *
+     * @return the end time, or empty while the command runs
+     */
+    public Optional<Instant> getFinishedAt() {
+        synchronized (stateLock) {
+            return Optional.ofNullable(finishedAt);
         }
     }
 
@@ -262,7 +403,7 @@ public class BackgroundBashTask {
     /**
      * Gets the exit code if the task has completed.
      *
-     * @return The exit code, or null if not yet completed
+     * @return The exit code, or null if not yet completed or if the command was killed
      */
     public Integer getExitCode() {
         synchronized (stateLock) {

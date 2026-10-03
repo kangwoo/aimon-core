@@ -67,6 +67,7 @@
 | [`execution-environment-implementation.md`](tool/execution-environment-implementation.md) | 위 설계의 구현 계획(승인본, 영어) — 코드 위치·단계·ArchUnit 변경·테스트, 그리고 구현이 계획에서 벗어난 점(§10) |
 | [`execution-environment-ee42-workflow-attributes.md`](tool/execution-environment-ee42-workflow-attributes.md) | (IMPLEMENTED) 워크플로 단계가 정의의 `attributes` 를 싣게 한 EE-42 설계(승인본, 영어) — `SubagentDescriptor`, 등록 정의 위에 덮는 병합 규칙, `Workflow` 역할 이름, 그리고 구현이 설계에서 벗어난 점(§8) |
 | [`execution-environment-ee9-ee12-hook-environment.md`](tool/execution-environment-ee9-ee12-hook-environment.md) | (IMPLEMENTED) 훅 컨텍스트에 실행 환경을 싣고 스킬 선언 훅의 셸을 실행 환경으로 옮긴 EE-9 · EE-12 설계(승인본) — 이벤트별 발화 지점, `ShellActionExecutor` 가 발화 컨텍스트를 받는 모양, 파싱 시점 거부, 그리고 구현이 설계에서 벗어난 점(§10) |
+| [`execution-environment-ee13-ee7-background-lifecycle.md`](tool/execution-environment-ee13-ee7-background-lifecycle.md) | (IMPLEMENTED) 백그라운드 `Bash` 를 끝내는 `KillShell` 과 셸 SPI 의 취소 계약, 환경이 정하는 상한, 그리고 제공자와 작업 목록(`BackgroundBashManager` · `BackgroundBashStore`)을 애플리케이션 수명으로 올린 EE-13 · EE-7 설계(승인본) — 축출 훅이 id 콜백이 아니라 `RuntimeBinding` 핸들인 이유, 기각한 대안, 그리고 구현이 설계에서 벗어난 점(§10) |
 | [`workflow-isolation-hardening.md`](tool/workflow-isolation-hardening.md) | (IMPLEMENTED, 승인본, 영어, 차이는 §8) 워크플로 격리 브랜치를 다듬은 설계 — 브랜치 루트에 다시 거는 경로 규칙(스코프 **아래**에 두는 이유), 격리 거절의 이유를 싣는 `isolate()`, 중첩 격리를 거절한 근거, `WorktreeMerge.promote` 의 소속 검사와 메타데이터 사전 점검 |
 
 ### skill · hook · subagent · workflow — 확장점

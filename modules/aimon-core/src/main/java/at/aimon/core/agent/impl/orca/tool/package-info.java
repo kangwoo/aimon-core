@@ -52,6 +52,7 @@
  * <ul>
  * <li>{@link at.aimon.core.tools.bash.BashTool} - Execute bash commands (foreground or background)
  * <li>{@link at.aimon.core.tools.bash.BashOutputTool} - Monitor and retrieve output from background bash processes
+ * <li>{@link at.aimon.core.tools.bash.KillShellTool} - Stop a background bash process
  * </ul>
  * <li>{@link at.aimon.core.agent.impl.orca.tool.OrcaSubagentToolProvider} - Subagent management tools
  * <ul>

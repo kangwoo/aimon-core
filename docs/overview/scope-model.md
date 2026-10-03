@@ -17,7 +17,7 @@ AIMON 컴포넌트의 **수명(lifetime)**, **소유권(ownership)**, **소멸 �
 
 | Scope | 대표 컴포넌트 | 식별자 | Lifetime |
 |-------|--------------|--------|----------|
-| **Application** | `SchedulingEngine`, `ScheduledTaskManager`, `RoutineExecutor`, `AgentRuntimeRegistry`, `SessionRecordStore`, `SessionLeaseStore`, `SessionInbox`, `SessionSignalBus`, `IdempotencyStore`, `KnowledgeStore`, `CredentialStore` | — | 앱 시작 ~ 종료 |
+| **Application** | `SchedulingEngine`, `ScheduledTaskManager`, `RoutineExecutor`, `AgentRuntimeRegistry`, `SessionRecordStore`, `SessionLeaseStore`, `SessionInbox`, `SessionSignalBus`, `IdempotencyStore`, `KnowledgeStore`, `CredentialStore`, `BackgroundBashManager`, `BackgroundBashStore` | — | 앱 시작 ~ 종료 |
 | **Agent** | `AgentRuntime` 과 그것이 소유한 `ToolRegistry` / `HookRegistry` / `McpClientManager`, `AgentEnvironmentSnapshot` | `AgentRuntimeId` (`agent:<name>[:<discriminator>]`) | `(Agent, discriminator)` 단위, 세션들을 가로질러 유지 |
 | **Session** | `SessionRecord`, `SessionTotals`, `budgetOverride`, `SessionTranscript` | `SessionId` | 세션이 존재하는 동안 — **영속** |
 | **Live session** | `LiveSession`, 메시지 큐, 이벤트 publisher | (바인딩된 `SessionId` 참조) | 노드 로컬, **일시적** (열기 ~ `close()`) |
@@ -57,7 +57,9 @@ AIMON 컴포넌트의 **수명(lifetime)**, **소유권(ownership)**, **소멸 �
 | `McpClientManager` | `AgentRuntime` 생성 시 | `OrcaAgentRuntime.close()` 가 명시적으로 닫음 |
 | `WorkflowRunner` (agent-scoped 변형) | `OrcaAgentRuntimeFactory` — `workflowRunnerEnabled` 일 때만 | `OrcaAgentRuntime.close()` |
 | `WorkflowRunner` (call-scoped 변형) | `WorkflowTool` / `GraalJsWorkflowTool` 이 호출마다 | 각자의 try-with-resources |
-| `ExecutionEnvironmentProvider` 와 그것이 쥔 셸·작업 파일 시스템 | 어셈블리 — bootstrap 은 런타임마다 하나(`LocalExecutionEnvironmentProvider`), 스타터는 `ExecutionEnvironmentProvider` 빈이 있으면 그것 하나 | 만든 쪽 — bootstrap 은 런타임의 teardown sink(축출·스택 종료 시), 빈은 Spring. **`OrcaAgentRuntime.close()` 는 닫지 않는다** — 예외: `withExecutionEnvironmentProviderFactory` 함수가 돌려준 제공자는 그 런타임이 소유하고 `close()` 가 닫는다(생성 실패 시엔 `create(...)` 가 닫는다) |
+| `ExecutionEnvironmentProvider` 와 그것이 쥔 셸·작업 파일 시스템 | 어셈블리 — bootstrap 은 **스택당 하나**(기본은 런타임 id 별 워크스페이스를 고르는 `PerRuntimeLocalEnvironmentProvider`), 스타터는 `ExecutionEnvironmentProvider` 빈이 있으면 그것 하나 | 만든 쪽 — bootstrap 은 스택 종료 시(`AGENT_RESOURCES` 의 마지막), 빈은 Spring. **런타임 축출은 제공자를 닫지 않는다** — 닫는 것은 아래의 바인딩이다. **`OrcaAgentRuntime.close()` 도 닫지 않는다** — 예외: `withExecutionEnvironmentProviderFactory` 함수가 돌려준 제공자는 그 런타임이 소유하고 `close()` 가 닫는다(생성 실패 시엔 `create(...)` 가 닫는다) |
+| `RuntimeBinding` (제공자가 런타임 하나를 위해 쥔 몫) | 어셈블리가 런타임을 만들 때 `provider.bindRuntime(id)` 로 — 런타임 자신은 바인딩하지 않는다 | 런타임을 만든 쪽이 그 런타임과 함께(축출·스택 종료 시, 런타임과 제어 저장소 다음에). 닫아도 **도는 백그라운드 명령은 멈추지 않는다**. 같은 id 의 런타임 둘이 겹칠 수 있으므로 id 콜백이 아니라 핸들이다 |
+| `BackgroundBashManager` (백그라운드 `Bash` 작업 목록) 와 `BackgroundBashStore` | bootstrap 은 스택당 하나(Bash 가 켜져 있을 때) — 모든 런타임의 `Bash` · `BashOutput` · `KillShell` 이 나눠 쓴다. 코어만 쓰는 조립의 기본(`OrcaBashToolProvider()`)은 도구 레지스트리마다 하나 | bootstrap 은 스택 종료 시 `BACKGROUND_COMMANDS` 단계 — 도는 명령을 멈춘다. **런타임 축출은 작업을 건드리지 않는다.** 레지스트리별 매니저는 아무도 닫지 않는다(데몬 스레드) |
 | `ExecutionEnvironment` | 실행마다 제공자의 `resolve()` (실행 시작에 1회) | 없음 — 뷰일 뿐 `Closeable` 이 아니다. `ToolContext` 와 함께 버려진다 |
 | `controlFileSystem` (제어 저장소, 옛 런타임 VFS) | 어셈블리 | 어셈블리 |
 | `LiveSession` | `LiveSessionFactory` / opener | `LiveSession.close()` — **핸들 자원만** |

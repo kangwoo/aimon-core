@@ -29,8 +29,13 @@
  * <h2>Background execution</h2>
  *
  * <p>
- * {@link at.aimon.core.tools.bash.BackgroundBashManager} tracks commands that outlive the turn that started them, and
- * {@link at.aimon.core.tools.bash.BashOutputTool} reads them back. Output is <em>not</em> streamed — a task's buffer is
+ * {@link at.aimon.core.tools.bash.BackgroundBashManager} starts and tracks commands that outlive the turn that started
+ * them, {@link at.aimon.core.tools.bash.BashOutputTool} reads them back and
+ * {@link at.aimon.core.tools.bash.KillShellTool} stops them. The manager is the one stateful piece here and its storage
+ * is split accordingly: a task's metadata lives behind {@link at.aimon.core.tools.bash.BackgroundBashStore} (in memory
+ * by default, shareable between nodes), while the process, its cancellation signal and its output stay with the node
+ * that started it. A task belongs to the runtime that started it and is invisible to every other. Output is
+ * <em>not</em> streamed — a task's buffer is
  * filled in one batch when the command finishes — so polling a running task reports its status and nothing else. See
  * {@link at.aimon.core.tools.bash.BackgroundBashTask} for why, and for the two things that must be kept out of that
  * buffer: the truncation notice and the exit status.

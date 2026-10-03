@@ -2179,8 +2179,24 @@ public class AimonProperties implements InitializingBean {
          */
         private boolean controlWritable;
 
+        /**
+         * The longest a background command ({@code Bash} with {@code run_in_background}) may run before the shell
+         * stops it — the backstop for a command the model never stops with {@code KillShell}. Unset, it is 24 hours.
+         * Applies to the local provider; an {@code ExecutionEnvironmentProvider} bean answers for its own
+         * environments.
+         */
+        private Duration backgroundCommandTimeout;
+
         public Staging getStaging() {
             return staging;
+        }
+
+        public Duration getBackgroundCommandTimeout() {
+            return backgroundCommandTimeout;
+        }
+
+        public void setBackgroundCommandTimeout(Duration backgroundCommandTimeout) {
+            this.backgroundCommandTimeout = backgroundCommandTimeout;
         }
 
         public boolean isControlWritable() {

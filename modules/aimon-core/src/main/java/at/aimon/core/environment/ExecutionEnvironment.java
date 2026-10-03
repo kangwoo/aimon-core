@@ -1,5 +1,6 @@
 package at.aimon.core.environment;
 
+import java.time.Duration;
 import java.util.Optional;
 
 import at.aimon.core.filesystem.VirtualFileSystem;
@@ -105,6 +106,22 @@ public interface ExecutionEnvironment {
      * @return the content search, or empty to let {@code Grep} walk the filesystem itself
      */
     default Optional<ContentSearch> contentSearch() {
+        return Optional.empty();
+    }
+
+    /**
+     * Returns the longest a background command ({@code Bash(run_in_background=true)}) may run in this environment —
+     * the backstop for a command the model never stops. {@code Bash} gives the command this timeout in place of its own
+     * default of 24 hours, in either direction: an environment that cannot afford a day of an abandoned command (a
+     * sandbox slot it keeps awake) says less, one whose commands legitimately run longer says more.
+     *
+     * <p>
+     * A value that is zero or negative is not a ceiling — a shell reads such a timeout as "wait forever" — so
+     * {@code Bash} ignores it and uses its default.
+     *
+     * @return the ceiling, or empty to leave it to the caller's default
+     */
+    default Optional<Duration> backgroundCommandTimeout() {
         return Optional.empty();
     }
 }

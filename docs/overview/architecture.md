@@ -561,7 +561,7 @@ Orca는 도구를 도메인별 프로바이더로 조립한다. 외부 모듈은
 | 프로바이더 | 제공 도구 |
 |-----------|----------|
 | `OrcaFileToolProvider` | `Read`, `Write`, `Edit`, `Grep` |
-| `OrcaBashToolProvider` | `Bash`, `BashOutput` |
+| `OrcaBashToolProvider` | `Bash`, `BashOutput`, `KillShell` |
 | `OrcaSkillToolProvider` | `Skill` |
 | `OrcaSubagentToolProvider` | `Task`, `TaskList`, `TaskStop`, `AgentOutput` |
 | `OrcaTodoToolProvider` | `TodoWrite` |

@@ -6,16 +6,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.interrupt.InterruptBehavior;
 import at.aimon.core.agent.interrupt.InterruptReason;
@@ -33,10 +28,12 @@ import at.aimon.core.environment.UnavailableExecutionEnvironment;
 import at.aimon.core.environment.exception.ExecutionEnvironmentUnavailableException;
 import at.aimon.core.shell.ExecutionOptions;
 import at.aimon.core.shell.ShellCommandResult;
+import at.aimon.core.shell.ShellFeature;
 import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.shell.exception.ShellExecutionException;
 import at.aimon.core.shell.exception.ShellTimeoutException;
 import at.aimon.core.tools.ExecutionEnvironmentAccess;
+import at.aimon.core.tools.ToolContextKeys;
 
 /**
  * Tool for executing bash commands in a shell environment.
@@ -121,13 +118,15 @@ public class BashTool extends AbstractTool implements ToolPermissionSubjectAware
     private static final int MIN_TIMEOUT_MS = 1_000;
 
     /**
-     * Ceiling for background commands, deliberately far above {@link #MAX_TIMEOUT_MS}.
+     * Default ceiling for background commands, deliberately far above {@link #MAX_TIMEOUT_MS}. The execution's
+     * environment replaces it when it states its own ({@link ExecutionEnvironment#backgroundCommandTimeout()}).
      *
      * <p>
      * Background execution exists for work that outlives a foreground turn, so it cannot share the 10-minute cap. It
-     * cannot be unbounded either: passing no timeout would reintroduce the very leak this tool is being changed to
-     * fix, and there is no kill tool in this codebase for a background task. A day is effectively unlimited while
-     * still guaranteeing the shell eventually reaps the process.
+     * cannot be unbounded either: passing no timeout would reintroduce the very leak this tool was changed to fix.
+     * {@code KillShell} stops a command the model remembers; the ceiling is for the one it forgets, and for shells
+     * that cannot stop a command at all. A day is effectively unlimited while still guaranteeing the shell eventually
+     * reaps the process.
      */
     private static final long BACKGROUND_TIMEOUT_MS = Duration.ofHours(24).toMillis();
 
@@ -154,7 +153,6 @@ public class BashTool extends AbstractTool implements ToolPermissionSubjectAware
     /** Prefix of each {@link ShellCommandResult#notices() environment notice} line placed before the output. */
     static final String ENVIRONMENT_NOTICE_PREFIX = "[environment] ";
 
-    private final ExecutorService executorService;
     private final BackgroundBashManager backgroundManager;
 
     /**
@@ -180,7 +178,8 @@ public class BashTool extends AbstractTool implements ToolPermissionSubjectAware
      * The tool holds no shell. Each call runs in the shell of the execution's environment
      * ({@code ToolContextKeys.EXECUTION_ENVIRONMENT}); a background command captures that shell when it starts and
      * keeps it for its whole run (execution-environment design §5.3). The shell is <b>borrowed</b> — its provider
-     * owns and closes it — so this tool never closes it.
+     * owns and closes it — so this tool never closes it. It holds no thread pool either: a background command runs
+     * on the manager's threads, because the command may outlive the runtime this tool instance was registered in.
      *
      * @param backgroundManager
      *            The manager for background tasks, or null to disable background execution
@@ -194,16 +193,6 @@ public class BashTool extends AbstractTool implements ToolPermissionSubjectAware
                 + "Provides timeout control (default 120s, max 600s) and output truncation at 30,000 characters.",
                 ToolCategories.EXECUTION, createInputSchema());
         this.backgroundManager = backgroundManager;
-        // Carries background tasks only. The foreground path no longer submits anything here: it blocks in the shell,
-        // which owns the timeout and the process teardown.
-        //
-        // Daemon threads: the context-scoped ToolRegistry does not close AutoCloseable tools on agent teardown, so a
-        // non-daemon pool here would keep its threads alive and could block JVM shutdown. Daemon threads never do.
-        executorService = Executors.newCachedThreadPool(r -> {
-            final Thread t = new Thread(r, "bash-tool");
-            t.setDaemon(true);
-            return t;
-        });
     }
 
     /**
@@ -221,10 +210,9 @@ public class BashTool extends AbstractTool implements ToolPermissionSubjectAware
                                 Map.of("type", "number", "description",
                                         "Optional timeout in milliseconds (min 1000, max 600000)", "minimum",
                                         MIN_TIMEOUT_MS, "maximum", MAX_TIMEOUT_MS)),
-                        Map.entry("run_in_background",
-                                Map.of("type", "boolean", "description",
-                                        "Set to true to run this command in the background. "
-                                                + "Use BashOutput to read the output later.")))),
+                        Map.entry("run_in_background", Map.of("type", "boolean", "description",
+                                "Set to true to run this command in the background. "
+                                        + "Use BashOutput to read the output later " + "and KillShell to stop it.")))),
                 Map.entry("required", List.of("command")));
     }
 
@@ -299,7 +287,7 @@ public class BashTool extends AbstractTool implements ToolPermissionSubjectAware
                     log.warn("Execution environment unavailable: {}", unavailable.message());
                     return ToolResult.error(unavailable.message());
                 }
-                return executeInBackground(shell, command);
+                return executeInBackground(environment, shell, command, context);
             }
 
             // Execute the command. No future wrapper: the shell enforces the timeout and destroys the process tree,
@@ -358,34 +346,109 @@ public class BashTool extends AbstractTool implements ToolPermissionSubjectAware
      * Executes a command in the background.
      *
      * <p>
-     * The shell is captured here, when the task starts, and the future keeps it: the task may outlive the execution
-     * that started it, and the shell's lifetime is its provider's, not the execution's (design §5.3).
+     * The shell is captured here, when the task starts, and the running command keeps it: the task may outlive the
+     * execution that started it — and the runtime — and the shell's lifetime is its provider's, not the execution's
+     * (design §5.3). The manager runs the command and owns the task, recorded under the runtime that started it.
      *
+     * @param environment
+     *            The execution environment, asked for its background ceiling
      * @param shell
      *            The execution environment's shell
      * @param command
      *            The command to execute
+     * @param context
+     *            The execution context, read for the owning runtime
      * @return A ToolResult with the task ID
      */
-    private ToolResult executeInBackground(VirtualShell shell, String command) {
-        // Generate task ID
-        final String taskId = "bash_" + UUID.randomUUID().toString().substring(0, 8);
+    private ToolResult executeInBackground(ExecutionEnvironment environment, VirtualShell shell, String command,
+            ToolContext context) {
+        final Optional<Duration> ceiling = backgroundCeiling(environment);
+        final long timeoutMs = ceiling.map(BashTool::saturatedMillis).orElse(BACKGROUND_TIMEOUT_MS);
+        final AgentRuntimeId owner = context.get(ToolContextKeys.AGENT_RUNTIME_ID).orElse(null);
 
-        // Create future for background execution
-        final CompletableFuture<ShellCommandResult> future = CompletableFuture.supplyAsync(() -> {
-            try {
-                return shell.execute(() -> command, backgroundOptions());
-            } catch (ShellExecutionException e) {
-                throw new CompletionException(e);
+        final BackgroundBashTask task;
+        try {
+            task = backgroundManager.start(owner, command, shell, backgroundOptions(timeoutMs));
+        } catch (RuntimeException e) {
+            // The task list is closed, or its store could not record the task. Either way no command was started.
+            log.warn("Background command was not started: {}", e.getMessage());
+            return ToolResult.error("Background command was not started: " + e.getMessage());
+        }
+        final String taskId = task.getTaskId();
+
+        final StringBuilder started = new StringBuilder("Background task started with ID: ").append(taskId).append('\n')
+                .append("Command: ").append(command).append("\n\n").append("Use BashOutput(taskId=\"").append(taskId)
+                .append("\") to check progress and retrieve output.");
+        final boolean stoppable = shell.supports(ShellFeature.CANCELLATION);
+        if (stoppable) {
+            started.append('\n').append("Use ").append(KillShellTool.TOOL_NAME).append("(taskId=\"").append(taskId)
+                    .append("\") to stop it.");
+        }
+        // Said only when it is news: the default ceiling is a day, which no model plans around. A ceiling the
+        // environment chose, or a command nothing can stop early, is something it should know before it relies on
+        // the command still being there — or on being able to end it.
+        if (ceiling.isPresent() || !stoppable) {
+            started.append('\n');
+            if (!stoppable) {
+                started.append("This environment's shell cannot stop a running command: it runs until it ends");
+                started.append(" or is stopped at its limit of ").append(describe(timeoutMs)).append('.');
+            } else {
+                started.append("The environment stops it after ").append(describe(timeoutMs))
+                        .append(" if it is still running.");
             }
-        }, executorService);
+        }
+        return ToolResult.success(started.toString());
+    }
 
-        // Register task
-        backgroundManager.registerTask(taskId, command, future);
+    /**
+     * Reads the environment's ceiling for background commands.
+     *
+     * <p>
+     * A zero or negative value is refused, not passed on: the shell reads it as "wait forever", which is the opposite
+     * of what a ceiling is for. The floor is the foreground one, for the same reason it exists there.
+     *
+     * @param environment
+     *            the execution environment
+     * @return the ceiling the environment sets, or empty to use {@link #BACKGROUND_TIMEOUT_MS}
+     */
+    private static Optional<Duration> backgroundCeiling(ExecutionEnvironment environment) {
+        final Optional<Duration> stated = environment.backgroundCommandTimeout();
+        if (stated.isEmpty()) {
+            return Optional.empty();
+        }
+        final Duration ceiling = stated.get();
+        if (ceiling.isZero() || ceiling.isNegative()) {
+            log.warn("Ignoring the execution environment's background command timeout {}: it is not positive."
+                    + " Using the default of {}ms.", ceiling, BACKGROUND_TIMEOUT_MS);
+            return Optional.empty();
+        }
+        return Optional.of(Duration.ofMillis(Math.max(saturatedMillis(ceiling), MIN_TIMEOUT_MS)));
+    }
 
-        // Return task ID
-        return ToolResult.success("Background task started with ID: " + taskId + '\n' + "Command: " + command + "\n\n"
-                + "Use BashOutput(taskId=\"" + taskId + "\") to check progress and retrieve output.");
+    /** A duration too long to count in milliseconds is, for a timeout, simply the longest one there is. */
+    private static long saturatedMillis(Duration duration) {
+        try {
+            return duration.toMillis();
+        } catch (ArithmeticException e) {
+            return Long.MAX_VALUE;
+        }
+    }
+
+    /** {@link #describe(Duration)} for a ceiling held in milliseconds. */
+    static String describe(long timeoutMs) {
+        return describe(Duration.ofMillis(timeoutMs));
+    }
+
+    /** Renders a ceiling the way the model reads it: whole seconds, with larger units when they divide evenly. */
+    static String describe(Duration duration) {
+        if (duration.toSecondsPart() == 0 && duration.toMillisPart() == 0) {
+            if (duration.toMinutesPart() == 0) {
+                return duration.toHours() + (duration.toHours() == 1 ? " hour" : " hours");
+            }
+            return duration.toMinutes() + (duration.toMinutes() == 1 ? " minute" : " minutes");
+        }
+        final long seconds = Math.max(1, duration.toSeconds());
+        return seconds + (seconds == 1 ? " second" : " seconds");
     }
 
     /**
@@ -411,12 +474,14 @@ public class BashTool extends AbstractTool implements ToolPermissionSubjectAware
      * Identical to {@link #foregroundOptions(long)} except for the timeout, which is the whole point: a background
      * command must not inherit the foreground ceiling, and must not run without one either — and for
      * {@link ExecutionOptions#isBackground()}, which tells a shell with a persistent session not to let this command
-     * hold it.
+     * hold it. The cancellation signal is not set here: the manager adds one per task when the shell can honour it.
      *
+     * @param timeoutMs
+     *            the ceiling in milliseconds — the environment's, or the default
      * @return the execution options
      */
-    private static ExecutionOptions backgroundOptions() {
-        return foregroundOptions(BACKGROUND_TIMEOUT_MS).toBuilder().background(true).build();
+    private static ExecutionOptions backgroundOptions(long timeoutMs) {
+        return foregroundOptions(timeoutMs).toBuilder().background(true).build();
     }
 
     /**
@@ -590,29 +655,19 @@ public class BashTool extends AbstractTool implements ToolPermissionSubjectAware
     }
 
     /**
-     * Closes this tool by shutting down the executor service.
-     *
-     * <p>
-     * This method implements {@link AutoCloseable} to enable try-with-resources usage. Equivalent to calling
-     * {@link #shutdown()}.
+     * Does nothing: this tool holds no resource. Background commands run on the {@link BackgroundBashManager}'s
+     * threads, and closing that manager is what ends them. Kept so that code written against the tool that owned a
+     * thread pool still compiles.
      */
     @Override
     public void close() {
-        shutdown();
+        // Nothing to release.
     }
 
     /**
-     * Shuts down the executor service. Call this when the tools is no longer needed to release resources.
+     * Does nothing; see {@link #close()}.
      */
     public void shutdown() {
-        executorService.shutdown();
-        try {
-            if (!executorService.awaitTermination(5, TimeUnit.SECONDS)) {
-                executorService.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            executorService.shutdownNow();
-            Thread.currentThread().interrupt();
-        }
+        // Nothing to release.
     }
 }
