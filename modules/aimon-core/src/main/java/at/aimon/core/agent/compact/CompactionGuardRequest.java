@@ -3,9 +3,9 @@ package at.aimon.core.agent.compact;
 import java.util.Objects;
 import java.util.Optional;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmModel;
@@ -27,7 +27,7 @@ public final class CompactionGuardRequest {
     private final TranscriptBuffer transcriptBuffer;
     private final LlmModel model;
     private final HookRegistry hookRegistry;
-    private final Environment environment;
+    private final UserLocale userLocale;
     private final ExecutionId executionId;
     private final ExecutionEnvironment executionEnvironment;
     private final boolean budgetForced;
@@ -36,7 +36,7 @@ public final class CompactionGuardRequest {
         this.transcriptBuffer = Objects.requireNonNull(builder.transcriptBuffer, "transcriptBuffer cannot be null");
         this.model = Objects.requireNonNull(builder.model, "model cannot be null");
         this.hookRegistry = Objects.requireNonNull(builder.hookRegistry, "hookRegistry cannot be null");
-        this.environment = Objects.requireNonNull(builder.environment, "environment cannot be null");
+        this.userLocale = Objects.requireNonNull(builder.userLocale, "userLocale cannot be null");
         this.executionId = builder.executionId;
         this.executionEnvironment = builder.executionEnvironment;
         this.budgetForced = builder.budgetForced;
@@ -61,8 +61,8 @@ public final class CompactionGuardRequest {
         return hookRegistry;
     }
 
-    public Environment getEnvironment() {
-        return environment;
+    public UserLocale getUserLocale() {
+        return userLocale;
     }
 
     /**
@@ -94,7 +94,7 @@ public final class CompactionGuardRequest {
         private TranscriptBuffer transcriptBuffer;
         private LlmModel model;
         private HookRegistry hookRegistry;
-        private Environment environment;
+        private UserLocale userLocale;
         private ExecutionId executionId;
         private ExecutionEnvironment executionEnvironment;
         private boolean budgetForced;
@@ -117,8 +117,8 @@ public final class CompactionGuardRequest {
             return this;
         }
 
-        public Builder environment(Environment environment) {
-            this.environment = environment;
+        public Builder userLocale(UserLocale userLocale) {
+            this.userLocale = userLocale;
             return this;
         }
 

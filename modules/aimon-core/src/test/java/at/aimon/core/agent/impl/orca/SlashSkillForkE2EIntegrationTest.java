@@ -17,13 +17,13 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import at.aimon.core.agent.DefaultAgent;
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.transcript.DefaultTranscriptManager;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.base.Principal;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.DefaultCommandExecutionManager;
 import at.aimon.core.command.DefaultCommandRegistry;
 import at.aimon.core.environment.EnvironmentRequest;
@@ -244,7 +244,7 @@ class SlashSkillForkE2EIntegrationTest {
                         .model(LlmModel.builder().name("gpt-4").build()).build())
                 .toolRegistry(toolRegistry).hookRegistry(new DefaultHookRegistry()).commandRegistry(commandRegistry)
                 .subagentRegistry(subagentRegistry).skillRegistry(skillRegistry).controlFileSystem(fileSystem)
-                .environment(Environment.createDefault()).executionEnvironmentProvider(recording(requests)).build();
+                .userLocale(UserLocale.createDefault()).executionEnvironmentProvider(recording(requests)).build();
     }
 
     private ExecutionEnvironmentProvider recording(List<EnvironmentRequest> requests) {

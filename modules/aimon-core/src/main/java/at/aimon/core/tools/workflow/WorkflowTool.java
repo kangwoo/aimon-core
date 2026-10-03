@@ -14,7 +14,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import at.aimon.core.agent.AgentRuntimeId;
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.interrupt.NoopCancellationSignal;
 import at.aimon.core.agent.tool.InterruptToolKeys;
@@ -25,6 +24,7 @@ import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.agent.tool.exception.ToolExecutionException;
 import at.aimon.core.agent.tool.generic.GenericTool;
 import at.aimon.core.base.Principal;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmModel;
@@ -135,7 +135,7 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
     private final SubagentRegistry subagentRegistry;
     private final ToolRegistry toolRegistry;
     private final HookRegistry hookRegistry;
-    private final Environment environment;
+    private final UserLocale userLocale;
     private final SubagentExecutionManager subagentExecutionManager;
     private final List<ToolContextEnricher> toolContextEnrichers;
     private final WorkflowRunner backgroundRunner;
@@ -153,17 +153,17 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
      *            the tool registry forwarded to the execution environment (must not be null)
      * @param hookRegistry
      *            the hook registry forwarded to the execution environment (must not be null)
-     * @param environment
-     *            the runtime environment forwarded to sub-agents (must not be null)
+     * @param userLocale
+     *            the user locale forwarded to sub-agents (must not be null)
      * @param subagentExecutionManager
      *            the borrowed subagent execution manager (must not be null)
      * @param toolContextEnrichers
      *            the tool-context enrichers forwarded to sub-agent tools (nullable; treated as empty)
      */
     public WorkflowTool(LlmModel defaultModel, SubagentRegistry subagentRegistry, ToolRegistry toolRegistry,
-            HookRegistry hookRegistry, Environment environment, SubagentExecutionManager subagentExecutionManager,
+            HookRegistry hookRegistry, UserLocale userLocale, SubagentExecutionManager subagentExecutionManager,
             List<ToolContextEnricher> toolContextEnrichers) {
-        this(defaultModel, subagentRegistry, toolRegistry, hookRegistry, environment, subagentExecutionManager,
+        this(defaultModel, subagentRegistry, toolRegistry, hookRegistry, userLocale, subagentExecutionManager,
                 toolContextEnrichers, null);
     }
 
@@ -179,8 +179,8 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
      *            the tool registry forwarded to the execution environment (must not be null)
      * @param hookRegistry
      *            the hook registry forwarded to the execution environment (must not be null)
-     * @param environment
-     *            the runtime environment forwarded to sub-agents (must not be null)
+     * @param userLocale
+     *            the user locale forwarded to sub-agents (must not be null)
      * @param subagentExecutionManager
      *            the borrowed subagent execution manager (must not be null)
      * @param toolContextEnrichers
@@ -191,7 +191,7 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
      */
     @SuppressWarnings("checkstyle:ParameterNumber")
     public WorkflowTool(LlmModel defaultModel, SubagentRegistry subagentRegistry, ToolRegistry toolRegistry,
-            HookRegistry hookRegistry, Environment environment, SubagentExecutionManager subagentExecutionManager,
+            HookRegistry hookRegistry, UserLocale userLocale, SubagentExecutionManager subagentExecutionManager,
             List<ToolContextEnricher> toolContextEnrichers, WorkflowRunner backgroundRunner) {
         super(TOOL_NAME,
                 "Run a workflow that fans several sub-agents out on a prompt in parallel, choosing a strategy: "
@@ -205,7 +205,7 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
         this.subagentRegistry = Objects.requireNonNull(subagentRegistry, "subagentRegistry must not be null");
         this.toolRegistry = Objects.requireNonNull(toolRegistry, "toolRegistry must not be null");
         this.hookRegistry = Objects.requireNonNull(hookRegistry, "hookRegistry must not be null");
-        this.environment = Objects.requireNonNull(environment, "environment must not be null");
+        this.userLocale = Objects.requireNonNull(userLocale, "userLocale must not be null");
         this.subagentExecutionManager = Objects.requireNonNull(subagentExecutionManager,
                 "subagentExecutionManager must not be null");
         this.toolContextEnrichers = toolContextEnrichers != null ? List.copyOf(toolContextEnrichers) : List.of();
@@ -508,10 +508,10 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
         final Principal principal = context.get(ToolContextKeys.PRINCIPAL).orElse(null);
 
         return SubagentExecutionEnvironment.builder().agentRuntimeId(agentRuntimeId).subagentRegistry(subagentRegistry)
-                .toolRegistry(toolRegistry).hookRegistry(hookRegistry).environment(environment)
-                .defaultModel(defaultModel).executionAttributes(executionAttributes)
-                .parentLlmCallMetadata(parentMetadata).cancellationSignal(parentSignal).principal(principal)
-                .toolContextEnrichers(toolContextEnrichers).callerAllowedTools(CallerAllowedTools.of(context))
+                .toolRegistry(toolRegistry).hookRegistry(hookRegistry).userLocale(userLocale).defaultModel(defaultModel)
+                .executionAttributes(executionAttributes).parentLlmCallMetadata(parentMetadata)
+                .cancellationSignal(parentSignal).principal(principal).toolContextEnrichers(toolContextEnrichers)
+                .callerAllowedTools(CallerAllowedTools.of(context))
                 .invokingSessionId(InvokingSessionAccess.idToPropagate(context).orElse(null))
                 // The fork resolves its own environment from the spawning runtime's provider, with this execution's
                 // environment as its parent (execution-environment design §5.2).

@@ -5,10 +5,10 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.compact.CompactionTrigger;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.execution.HookContext;
@@ -36,7 +36,7 @@ public final class PreCompactContext implements HookContext {
     private final InvokerType invokerType;
     private final String invokerName;
     private final HookRegistry hookRegistry;
-    private final Environment environment;
+    private final UserLocale userLocale;
     private final ExecutionEnvironment executionEnvironment;
     private final CompactionTrigger trigger;
     private final String sessionIdValue;
@@ -50,7 +50,7 @@ public final class PreCompactContext implements HookContext {
         invokerType = Objects.requireNonNull(builder.invokerType, "Invoker type cannot be null");
         invokerName = Objects.requireNonNull(builder.invokerName, "Invoker name cannot be null");
         hookRegistry = Objects.requireNonNull(builder.hookRegistry, "Hook registry cannot be null");
-        environment = Objects.requireNonNull(builder.environment, "Environment cannot be null");
+        userLocale = Objects.requireNonNull(builder.userLocale, "UserLocale cannot be null");
         executionEnvironment = builder.executionEnvironment;
         trigger = Objects.requireNonNull(builder.trigger, "Trigger cannot be null");
         sessionIdValue = builder.sessionIdValue != null ? builder.sessionIdValue : "";
@@ -77,8 +77,8 @@ public final class PreCompactContext implements HookContext {
     }
 
     @Override
-    public Environment getEnvironment() {
-        return environment;
+    public UserLocale getUserLocale() {
+        return userLocale;
     }
 
     @Override
@@ -139,7 +139,7 @@ public final class PreCompactContext implements HookContext {
         private InvokerType invokerType;
         private String invokerName;
         private HookRegistry hookRegistry;
-        private Environment environment;
+        private UserLocale userLocale;
         private ExecutionEnvironment executionEnvironment;
         private CompactionTrigger trigger;
         private String sessionIdValue;
@@ -167,8 +167,8 @@ public final class PreCompactContext implements HookContext {
             return this;
         }
 
-        public Builder environment(Environment environment) {
-            this.environment = environment;
+        public Builder userLocale(UserLocale userLocale) {
+            this.userLocale = userLocale;
             return this;
         }
 

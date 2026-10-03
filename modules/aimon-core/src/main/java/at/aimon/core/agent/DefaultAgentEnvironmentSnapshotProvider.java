@@ -24,7 +24,7 @@ import java.util.function.Function;
  * <pre>{@code
  * Function<AgentRuntime, AgentEnvironmentSnapshot> collector = ctx -> AgentEnvironmentSnapshot.builder()
  *         .workingDirectory(System.getProperty("user.dir")).currentDate(Instant.now())
- *         .environment(Environment.createDefault()).build();
+ *         .userLocale(UserLocale.createDefault()).build();
  *
  * AgentEnvironmentSnapshotProvider provider = new DefaultAgentEnvironmentSnapshotProvider(collector);
  * AgentEnvironmentSnapshot snapshot = provider.get(agentRuntime);

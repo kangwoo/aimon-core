@@ -1,10 +1,10 @@
 package at.aimon.core.agent.orca;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.compact.CompactionEngine;
 import at.aimon.core.agent.compact.CompactionGuard;
 import at.aimon.core.agent.context.ContextEngine;
 import at.aimon.core.agent.tool.ToolRegistry;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.credential.CredentialStore;
 import at.aimon.core.hook.HookExecutionManager;
 import at.aimon.core.hook.HookRegistry;
@@ -40,7 +40,7 @@ import at.aimon.core.subagent.task.TaskResultStore;
  *     OrcaProviderDependencies deps = OrcaProviderDependencies.builder().subagentRegistry(subagentRegistry)
  *             .subagentExecutionManager(subagentExecutionManager).skillRegistry(skillRegistry)
  *             .toolRegistry(toolRegistry).hookRegistry(hookRegistry).scheduledTaskManager(scheduledTaskManager)
- *             .credentialStore(credentialStore).environment(environment).compactionEngine(engine)
+ *             .credentialStore(credentialStore).userLocale(userLocale).compactionEngine(engine)
  *             .compactionGuard(guard).build();
  * }
  * </pre>
@@ -68,7 +68,7 @@ public final class OrcaProviderDependencies {
     private final HookExecutionManager hookExecutionManager;
     private final ScheduledTaskManager scheduledTaskManager;
     private final CredentialStore credentialStore;
-    private final Environment environment;
+    private final UserLocale userLocale;
     private final CompactionEngine compactionEngine;
     private final CompactionGuard compactionGuard;
     private final ContextEngine contextEngine;
@@ -90,7 +90,7 @@ public final class OrcaProviderDependencies {
         hookExecutionManager = builder.hookExecutionManager;
         scheduledTaskManager = builder.scheduledTaskManager;
         credentialStore = builder.credentialStore;
-        environment = builder.environment;
+        userLocale = builder.userLocale;
         compactionEngine = builder.compactionEngine;
         compactionGuard = builder.compactionGuard;
         contextEngine = builder.contextEngine;
@@ -205,12 +205,12 @@ public final class OrcaProviderDependencies {
     }
 
     /**
-     * Returns the runtime environment.
+     * Returns the user locale.
      *
-     * @return the environment, may be null
+     * @return the user locale, may be null
      */
-    public Environment getEnvironment() {
-        return environment;
+    public UserLocale getUserLocale() {
+        return userLocale;
     }
 
     /**
@@ -317,7 +317,7 @@ public final class OrcaProviderDependencies {
         private HookExecutionManager hookExecutionManager;
         private ScheduledTaskManager scheduledTaskManager;
         private CredentialStore credentialStore;
-        private Environment environment;
+        private UserLocale userLocale;
         private CompactionEngine compactionEngine;
         private CompactionGuard compactionGuard;
         private ContextEngine contextEngine;
@@ -463,14 +463,14 @@ public final class OrcaProviderDependencies {
         }
 
         /**
-         * Sets the runtime environment.
+         * Sets the user locale.
          *
-         * @param environment
-         *            the environment
+         * @param userLocale
+         *            the user locale
          * @return this builder
          */
-        public Builder environment(Environment environment) {
-            this.environment = environment;
+        public Builder userLocale(UserLocale userLocale) {
+            this.userLocale = userLocale;
             return this;
         }
 

@@ -10,7 +10,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.compact.CompactionDecision;
 import at.aimon.core.agent.compact.CompactionEngine;
@@ -31,6 +30,7 @@ import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.agent.session.transcript.SessionLogState;
 import at.aimon.core.agent.session.transcript.SummarySpan;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.exception.LlmPromptTooLongException;
@@ -159,7 +159,7 @@ public final class DefaultContextEngine implements ContextEngine {
         Objects.requireNonNull(request, "request cannot be null");
         final TranscriptBuffer buffer = request.getTranscriptBuffer();
         final HookRegistry hookRegistry = requireHookRegistry(request);
-        final Environment environment = requireEnvironment(request);
+        final UserLocale userLocale = requireUserLocale(request);
         final ExecutionId executionId = request.getCaller().getExecutionId().orElse(null);
         if (inViewMode(buffer)) {
             return prepareView(request);
@@ -173,7 +173,7 @@ public final class DefaultContextEngine implements ContextEngine {
         // execution environment to the compaction hooks, and its default still selects the positional method a
         // guard written against those expects.
         final CompactionDecision decision = compactionGuard.maybeCompact(CompactionGuardRequest.builder()
-                .transcriptBuffer(buffer).model(request.getModel()).hookRegistry(hookRegistry).environment(environment)
+                .transcriptBuffer(buffer).model(request.getModel()).hookRegistry(hookRegistry).userLocale(userLocale)
                 .executionId(executionId).executionEnvironment(request.getExecutionEnvironment().orElse(null))
                 .budgetForced(request.isBudgetForced()).build());
         // Read after the guard: a compaction rewrote the buffer in place, and the view is what it left behind.
@@ -322,7 +322,7 @@ public final class DefaultContextEngine implements ContextEngine {
         }
         final CompactionRequest compactionRequest = CompactionRequest.builder().transcriptBuffer(buffer)
                 .trigger(CompactionTrigger.MANUAL).model(request.getModel()).hookRegistry(requireHookRegistry(request))
-                .environment(requireEnvironment(request))
+                .userLocale(requireUserLocale(request))
                 .executionEnvironment(request.getExecutionEnvironment().orElse(null)).customInstructions(instructions)
                 .callMetadata(request.getCallMetadata().orElse(null))
                 .executionId(request.getCaller().getExecutionId().orElse(null)).build();
@@ -371,7 +371,7 @@ public final class DefaultContextEngine implements ContextEngine {
                 .systemPrompt(request.getSystemPrompt()).sessionId(buffer.getSessionId())
                 .executionId(request.getCaller().getExecutionId().orElse(null)).trigger(trigger)
                 .model(request.getModel()).hookRegistry(requireHookRegistry(request))
-                .environment(requireEnvironment(request))
+                .userLocale(requireUserLocale(request))
                 .executionEnvironment(request.getExecutionEnvironment().orElse(null)).customInstructions(instructions)
                 .callMetadata(request.getCallMetadata().orElse(null)).build();
         final CompactionResult summarized = compactionEngine.summarize(summaryRequest);
@@ -432,9 +432,9 @@ public final class DefaultContextEngine implements ContextEngine {
                 .orElseThrow(() -> new IllegalArgumentException("DefaultContextEngine requires a HookRegistry"));
     }
 
-    private static Environment requireEnvironment(ContextRequest request) {
-        return request.getEnvironment()
-                .orElseThrow(() -> new IllegalArgumentException("DefaultContextEngine requires an Environment"));
+    private static UserLocale requireUserLocale(ContextRequest request) {
+        return request.getUserLocale()
+                .orElseThrow(() -> new IllegalArgumentException("DefaultContextEngine requires a UserLocale"));
     }
 
     @Override

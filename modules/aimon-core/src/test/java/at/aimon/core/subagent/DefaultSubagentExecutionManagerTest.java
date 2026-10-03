@@ -18,12 +18,12 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import at.aimon.core.agent.AgentRuntimeId;
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.impl.orca.OrcaAgentExecutionRequest;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.TestExecutionEnvironments;
@@ -295,7 +295,7 @@ class DefaultSubagentExecutionManagerTest {
         SubagentExecutionEnvironment env = SubagentExecutionEnvironment.builder()
                 .agentRuntimeId(AgentRuntimeId.of("agent:test")).subagentRegistry(dataRegistry)
                 .toolRegistry(new DefaultToolRegistry()).hookRegistry(new DefaultHookRegistry())
-                .environment(Environment.createDefault()).defaultModel(LlmModel.builder().name("gpt-4").build())
+                .userLocale(UserLocale.createDefault()).defaultModel(LlmModel.builder().name("gpt-4").build())
                 .executionEnvironment(spawner).build();
 
         manager.execute(env, "task-1", "clock", "go", "");
@@ -336,7 +336,7 @@ class DefaultSubagentExecutionManagerTest {
     private static SubagentExecutionEnvironment env(SubagentRegistry subagentRegistry) {
         return SubagentExecutionEnvironment.builder().agentRuntimeId(AgentRuntimeId.of("agent:test"))
                 .subagentRegistry(subagentRegistry).toolRegistry(new DefaultToolRegistry())
-                .hookRegistry(new DefaultHookRegistry()).environment(Environment.createDefault())
+                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault())
                 .defaultModel(LlmModel.builder().name("gpt-4").build()).build();
     }
 
@@ -344,7 +344,7 @@ class DefaultSubagentExecutionManagerTest {
             SessionSnapshotStore snapshotStore, SessionSnapshot previousSnapshot) {
         return SubagentExecutionEnvironment.builder().agentRuntimeId(AgentRuntimeId.of("agent:test"))
                 .subagentRegistry(subagentRegistry).toolRegistry(new DefaultToolRegistry())
-                .hookRegistry(new DefaultHookRegistry()).environment(Environment.createDefault())
+                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault())
                 .defaultModel(LlmModel.builder().name("gpt-4").build()).sessionSnapshotStore(snapshotStore)
                 .previousSnapshot(previousSnapshot).build();
     }

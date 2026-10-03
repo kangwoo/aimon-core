@@ -103,7 +103,7 @@ class RuntimeAssemblyIntegrationTest {
         assertThat(runtime.getSkillRegistry()).isNotNull();
         assertThat(runtime.getControlFileSystem()).isNotNull();
         assertThat(runtime.getExecutionEnvironmentProvider()).isNotNull();
-        assertThat(runtime.getEnvironment()).isNotNull();
+        assertThat(runtime.getUserLocale()).isNotNull();
 
         // Compaction is assembled unconditionally by doCreate() — an absent engine or guard would silently disable
         // transcript compaction for every session on this agent.

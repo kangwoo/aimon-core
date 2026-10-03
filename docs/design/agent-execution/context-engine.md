@@ -103,7 +103,7 @@ public interface ContextEngine {
 
 | 값 | 내용 |
 |----|------|
-| `ContextRequest` | `TranscriptBuffer`, 시스템 프롬프트, 모델, `HookRegistry`, `Environment`, `ContextCaller(executionId, principal)`, `budgetForced` |
+| `ContextRequest` | `TranscriptBuffer`, 시스템 프롬프트, 모델, `HookRegistry`, `UserLocale`, `ContextCaller(executionId, principal)`, `budgetForced` |
 | `ContextDecision` | `ContextView` + 액션(`NONE`/`WARN`/`COMPACT`/`BLOCK`) + `CompactionMetadata`(있으면) |
 | `ContextView` | 보낼 `List<Message>`, 추정 토큰(시스템 프롬프트 포함) |
 

@@ -6,13 +6,15 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 
+import at.aimon.core.base.UserLocale;
+
 /**
  * Immutable snapshot of the ambient environment an agent executes in, collected once per
  * {@link AgentRuntime}.
  *
  * <p>
  * An {@code AgentEnvironmentSnapshot} captures facts that are stable for the lifetime of the agent's execution
- * context: the working directory, the instant the snapshot was taken, the runtime {@link Environment}, and an optional
+ * context: the working directory, the instant the snapshot was taken, the {@link UserLocale}, and an optional
  * map of user-defined extensions. Because these values do not change between ReAct turns, they are collected exactly
  * once by an {@link AgentEnvironmentSnapshotProvider} and reused across iterations instead of being re-derived every
  * turn.
@@ -33,7 +35,7 @@ import java.util.Objects;
  * {
  *     &#64;code
  *     AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder().workingDirectory("/workspace/project")
- *             .currentDate(Instant.now()).environment(Environment.createDefault())
+ *             .currentDate(Instant.now()).userLocale(UserLocale.createDefault())
  *             .extensions(Map.of("gitBranch", "main")).build();
  * }
  * </pre>
@@ -44,13 +46,13 @@ public final class AgentEnvironmentSnapshot {
 
     private final String workingDirectory;
     private final Instant currentDate;
-    private final Environment environment;
+    private final UserLocale userLocale;
     private final Map<String, String> extensions;
 
     private AgentEnvironmentSnapshot(Builder builder) {
         this.workingDirectory = Objects.requireNonNull(builder.workingDirectory, "workingDirectory must not be null");
         this.currentDate = Objects.requireNonNull(builder.currentDate, "currentDate must not be null");
-        this.environment = Objects.requireNonNull(builder.environment, "environment must not be null");
+        this.userLocale = Objects.requireNonNull(builder.userLocale, "userLocale must not be null");
         this.extensions = builder.extensions != null
                 ? Collections.unmodifiableMap(new LinkedHashMap<>(builder.extensions))
                 : Map.of();
@@ -87,12 +89,12 @@ public final class AgentEnvironmentSnapshot {
     }
 
     /**
-     * Gets the runtime environment captured when the snapshot was taken.
+     * Gets the user locale captured when the snapshot was taken.
      *
-     * @return the environment (never null)
+     * @return the user locale (never null)
      */
-    public Environment getEnvironment() {
-        return environment;
+    public UserLocale getUserLocale() {
+        return userLocale;
     }
 
     /**
@@ -114,25 +116,25 @@ public final class AgentEnvironmentSnapshot {
         }
         AgentEnvironmentSnapshot that = (AgentEnvironmentSnapshot) o;
         return workingDirectory.equals(that.workingDirectory) && currentDate.equals(that.currentDate)
-                && environment.equals(that.environment) && extensions.equals(that.extensions);
+                && userLocale.equals(that.userLocale) && extensions.equals(that.extensions);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(workingDirectory, currentDate, environment, extensions);
+        return Objects.hash(workingDirectory, currentDate, userLocale, extensions);
     }
 
     @Override
     public String toString() {
         return "AgentEnvironmentSnapshot{" + "workingDirectory='" + workingDirectory + '\'' + ", currentDate="
-                + currentDate + ", environment=" + environment + ", extensions=" + extensions + '}';
+                + currentDate + ", userLocale=" + userLocale + ", extensions=" + extensions + '}';
     }
 
     /** Builder for {@link AgentEnvironmentSnapshot}. */
     public static final class Builder {
         private String workingDirectory;
         private Instant currentDate;
-        private Environment environment;
+        private UserLocale userLocale;
         private Map<String, String> extensions;
 
         private Builder() {
@@ -167,16 +169,16 @@ public final class AgentEnvironmentSnapshot {
         }
 
         /**
-         * Sets the runtime environment.
+         * Sets the user locale.
          *
-         * @param environment
-         *            the environment (must not be null)
+         * @param userLocale
+         *            the user locale (must not be null)
          * @return this builder
          * @throws NullPointerException
-         *             if {@code environment} is null
+         *             if {@code userLocale} is null
          */
-        public Builder environment(Environment environment) {
-            this.environment = Objects.requireNonNull(environment, "environment must not be null");
+        public Builder userLocale(UserLocale userLocale) {
+            this.userLocale = Objects.requireNonNull(userLocale, "userLocale must not be null");
             return this;
         }
 
@@ -210,7 +212,7 @@ public final class AgentEnvironmentSnapshot {
          *
          * @return a new {@link AgentEnvironmentSnapshot}
          * @throws NullPointerException
-         *             if any required field ({@code workingDirectory}, {@code currentDate}, {@code environment}) is
+         *             if any required field ({@code workingDirectory}, {@code currentDate}, {@code userLocale}) is
          *             unset
          */
         public AgentEnvironmentSnapshot build() {

@@ -15,9 +15,9 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.InMemoryModelContextWindowRegistry;
@@ -69,14 +69,14 @@ class CompactionConcurrencyScenarioHTest {
 
     private ExecutorService executor;
     private HookRegistry hookRegistry;
-    private Environment environment;
+    private UserLocale userLocale;
     private ModelContextWindowRegistry modelContextWindowRegistry;
 
     @BeforeEach
     void setUp() {
         executor = Executors.newCachedThreadPool();
         hookRegistry = new DefaultHookRegistry();
-        environment = Environment.createDefault();
+        userLocale = UserLocale.createDefault();
         // Tiny limits so the fixed-cost stub estimator easily clears the auto-compact threshold.
         modelContextWindowRegistry = InMemoryModelContextWindowRegistry.builder()
                 .defaultLimits(ModelContextLimits.builder().contextWindow(1000).reservedOutputTokens(200)
@@ -96,12 +96,12 @@ class CompactionConcurrencyScenarioHTest {
         TranscriptBuffer memory = freshMemoryAboveThreshold();
 
         Future<CompactionDecision> first = executor
-                .submit(() -> guard.maybeCompact(memory, model(), hookRegistry, environment));
+                .submit(() -> guard.maybeCompact(memory, model(), hookRegistry, userLocale));
         assertThat(engine.entered.await(ASSERTION_BUDGET_SECONDS, TimeUnit.SECONDS))
                 .as("engine should be entered by first thread").isTrue();
 
         // Second concurrent caller on the same session sees the lock held → NONE("concurrent compaction in progress").
-        CompactionDecision second = guard.maybeCompact(memory, model(), hookRegistry, environment);
+        CompactionDecision second = guard.maybeCompact(memory, model(), hookRegistry, userLocale);
         assertThat(second.getAction()).isEqualTo(CompactionDecision.Action.NONE);
         assertThat(second.getReason()).contains("concurrent compaction in progress");
 
@@ -120,9 +120,9 @@ class CompactionConcurrencyScenarioHTest {
         TranscriptBuffer memoryB = freshMemoryAboveThreshold();
 
         Future<CompactionDecision> futureA = executor
-                .submit(() -> guard.maybeCompact(memoryA, model(), hookRegistry, environment));
+                .submit(() -> guard.maybeCompact(memoryA, model(), hookRegistry, userLocale));
         Future<CompactionDecision> futureB = executor
-                .submit(() -> guard.maybeCompact(memoryB, model(), hookRegistry, environment));
+                .submit(() -> guard.maybeCompact(memoryB, model(), hookRegistry, userLocale));
 
         // Both threads must enter the engine before either is released — proves the locks are independent.
         assertThat(engine.entered.await(ASSERTION_BUDGET_SECONDS, TimeUnit.SECONDS))
@@ -144,14 +144,14 @@ class CompactionConcurrencyScenarioHTest {
         TranscriptBuffer memory = freshMemoryAboveThreshold();
 
         Future<CompactionDecision> first = executor
-                .submit(() -> guard.maybeCompact(memory, model(), hookRegistry, environment));
+                .submit(() -> guard.maybeCompact(memory, model(), hookRegistry, userLocale));
         assertThat(engine.entered.await(ASSERTION_BUDGET_SECONDS, TimeUnit.SECONDS)).isTrue();
         engine.release.countDown();
         assertThat(first.get(ASSERTION_BUDGET_SECONDS, TimeUnit.SECONDS).getAction())
                 .isEqualTo(CompactionDecision.Action.COMPACT);
 
         // Lock has been released; second call (after replaceWith) below threshold → NONE without re-running engine.
-        CompactionDecision second = guard.maybeCompact(memory, model(), hookRegistry, environment);
+        CompactionDecision second = guard.maybeCompact(memory, model(), hookRegistry, userLocale);
         assertThat(second.getAction()).isEqualTo(CompactionDecision.Action.NONE);
         // Engine should NOT have been invoked a second time — the post-compaction memory is small.
         assertThat(engine.callCount.get()).isEqualTo(1);

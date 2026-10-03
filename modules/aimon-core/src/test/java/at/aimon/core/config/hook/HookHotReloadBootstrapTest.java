@@ -10,8 +10,8 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
@@ -27,7 +27,7 @@ import at.aimon.core.skill.hook.declarative.NoOpShellActionExecutor;
 class HookHotReloadBootstrapTest {
 
     private static final ReloadInvoker INVOKER = new ReloadInvoker(InvokerType.MAIN_AGENT, "main",
-            Environment.createDefault());
+            UserLocale.createDefault());
 
     @TempDir
     Path userDir;

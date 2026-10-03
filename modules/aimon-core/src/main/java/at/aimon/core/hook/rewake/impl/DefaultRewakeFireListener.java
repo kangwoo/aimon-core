@@ -292,14 +292,14 @@ public final class DefaultRewakeFireListener implements RewakeFireListener {
         final ToolUse tu = ToolUse.of("rewake:" + envelope.getEnvelopeId(), toolName, toolInput.toMap());
         return PreToolContext.builder().executorType(InvokerType.MAIN_AGENT)
                 .invokerName(envelope.getAgentRuntimeId().agentName()).hookRegistry(registry)
-                .environment(capable.getEnvironment()).toolUse(tu).iterationCount(0).timestamp(Instant.now()).build();
+                .userLocale(capable.getUserLocale()).toolUse(tu).iterationCount(0).timestamp(Instant.now()).build();
     }
 
     private OnConfigReloadContext buildOnConfigReloadContext(RewakeEnvelope envelope, RewakeCapableRuntime capable,
             HookRegistry registry) {
         return OnConfigReloadContext.builder().invokerType(InvokerType.MAIN_AGENT)
                 .invokerName(envelope.getAgentRuntimeId().agentName()).hookRegistry(registry)
-                .environment(capable.getEnvironment()).reloadCounter(0L).configSource("rewake").successful(true)
+                .userLocale(capable.getUserLocale()).reloadCounter(0L).configSource("rewake").successful(true)
                 .timestamp(Instant.now()).build();
     }
 
@@ -329,7 +329,7 @@ public final class DefaultRewakeFireListener implements RewakeFireListener {
             HookRegistry registry) {
         return PreCompactContext.builder().invokerType(InvokerType.MAIN_AGENT)
                 .invokerName(envelope.getAgentRuntimeId().agentName()).hookRegistry(registry)
-                .environment(capable.getEnvironment()).trigger(CompactionTrigger.MANUAL)
+                .userLocale(capable.getUserLocale()).trigger(CompactionTrigger.MANUAL)
                 .executionId(executionIdOf(envelope)).messageCount(0).estimatedTokens(0).timestamp(Instant.now())
                 .build();
     }
@@ -338,7 +338,7 @@ public final class DefaultRewakeFireListener implements RewakeFireListener {
             HookRegistry registry) {
         return OnSessionStartContext.builder().invokerType(InvokerType.MAIN_AGENT)
                 .invokerName(envelope.getAgentRuntimeId().agentName()).hookRegistry(registry)
-                .environment(capable.getEnvironment()).executionId(executionIdOf(envelope))
+                .userLocale(capable.getUserLocale()).executionId(executionIdOf(envelope))
                 .agentRuntimeId(envelope.getAgentRuntimeId().value()).timestamp(Instant.now()).build();
     }
 
@@ -346,7 +346,7 @@ public final class DefaultRewakeFireListener implements RewakeFireListener {
             HookRegistry registry) {
         return OnSessionEndContext.builder().invokerType(InvokerType.MAIN_AGENT)
                 .invokerName(envelope.getAgentRuntimeId().agentName()).hookRegistry(registry)
-                .environment(capable.getEnvironment()).executionId(executionIdOf(envelope))
+                .userLocale(capable.getUserLocale()).executionId(executionIdOf(envelope))
                 .agentRuntimeId(envelope.getAgentRuntimeId().value()).clean(true).timestamp(Instant.now()).build();
     }
 }

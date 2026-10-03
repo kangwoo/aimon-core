@@ -14,13 +14,13 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import at.aimon.core.agent.DefaultAgent;
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.transcript.DefaultTranscriptManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.base.Principal;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.DefaultCommandRegistry;
 import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
@@ -209,7 +209,7 @@ class OrcaAgentExecutorMemoryIngestTest {
                 .subagentRegistry(new DefaultSubagentRegistry(fileSystem, ".aimon/agents"))
                 .skillRegistry(new DefaultSkillRegistry(fileSystem, ".aimon/skills")).controlFileSystem(fileSystem)
                 .executionEnvironmentProvider(TestExecutionEnvironments.provider(fileSystem))
-                .environment(Environment.createDefault()).build();
+                .userLocale(UserLocale.createDefault()).build();
     }
 
     /**

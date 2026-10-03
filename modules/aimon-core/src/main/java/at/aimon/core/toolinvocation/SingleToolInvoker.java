@@ -185,7 +185,7 @@ public final class SingleToolInvoker {
                 // PermissionDenied advisory chain — PreTool/tool execution is skipped.
                 final PermissionRequestContext permissionRequestContext = PermissionRequestContext.builder()
                         .invokerType(spec.getInvokerType()).invokerName(spec.getInvokerName())
-                        .hookRegistry(spec.getHookRegistry()).environment(spec.getEnvironment())
+                        .hookRegistry(spec.getHookRegistry()).userLocale(spec.getUserLocale())
                         .executionEnvironment(environmentOf(spec)).toolName(toolUse.getName())
                         .toolInput(ToolInput.of(toolUse.getInput())).executionAttributes(spec.getExecutionAttributes())
                         .build();
@@ -210,7 +210,7 @@ public final class SingleToolInvoker {
                 // Execute PreTool hooks
                 final PreToolContext preToolContext = PreToolContext.builder().executorType(spec.getInvokerType())
                         .invokerName(spec.getInvokerName()).hookRegistry(spec.getHookRegistry())
-                        .environment(spec.getEnvironment()).executionEnvironment(environmentOf(spec)).toolUse(toolUse)
+                        .userLocale(spec.getUserLocale()).executionEnvironment(environmentOf(spec)).toolUse(toolUse)
                         .iterationCount(spec.getIterationCount()).executionAttributes(spec.getExecutionAttributes())
                         .build();
                 final List<HookResult> preToolResults = hookExecutionManager.executePreTool(preToolContext);
@@ -296,7 +296,7 @@ public final class SingleToolInvoker {
         try {
             final PermissionDeniedContext deniedContext = PermissionDeniedContext.builder()
                     .invokerType(spec.getInvokerType()).invokerName(spec.getInvokerName())
-                    .hookRegistry(spec.getHookRegistry()).environment(spec.getEnvironment())
+                    .hookRegistry(spec.getHookRegistry()).userLocale(spec.getUserLocale())
                     .executionEnvironment(environmentOf(spec)).toolName(toolUse.getName())
                     .toolInput(ToolInput.of(toolUse.getInput())).denyReason(combinedReason)
                     .executionAttributes(spec.getExecutionAttributes()).build();
@@ -320,7 +320,7 @@ public final class SingleToolInvoker {
         try {
             final PostToolContext postToolContext = PostToolContext.builder().executorType(spec.getInvokerType())
                     .invokerName(spec.getInvokerName()).hookRegistry(spec.getHookRegistry())
-                    .environment(spec.getEnvironment()).executionEnvironment(environmentOf(spec))
+                    .userLocale(spec.getUserLocale()).executionEnvironment(environmentOf(spec))
                     .toolUse(effectiveToolUse).toolUseResult(toolUseResult).iterationCount(spec.getIterationCount())
                     .executionAttributes(spec.getExecutionAttributes()).build();
             final List<HookResult> postToolResults = hookExecutionManager.executePostTool(postToolContext);

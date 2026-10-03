@@ -453,6 +453,54 @@ running on the last release that contained it, or starts empty on the service.
 
 ---
 
+## `Environment` → `UserLocale`
+
+The mistake being corrected is a name that outlived what it named. `at.aimon.core.agent.Environment` once described
+the host -- working directory, platform, OS version. Those moved to the execution's `EnvironmentDescriptor`, and
+what was left was a time zone: a property of the user and the application, not of where commands run. It kept the
+word "environment" beside `ExecutionEnvironment`, and `HookContext` ended up with `getEnvironment()`,
+`getExecutionEnvironment()` and `getEnvironmentDescriptor()` side by side, three different things sharing one word.
+(Design: [`execution-environment-ee14-user-locale.md`](../design/tool/execution-environment-ee14-user-locale.md).)
+
+| Old | New |
+|-----|-----|
+| `at.aimon.core.agent.Environment` | `at.aimon.core.base.UserLocale` |
+| `Environment.createDefault()` / `builder()` / `getTimeZone()` | the same names on `UserLocale` |
+| `X.getEnvironment()` returning `Environment` or `Optional<Environment>` | `X.getUserLocale()` |
+| `X.Builder.environment(Environment)` | `X.Builder.userLocale(UserLocale)` |
+| `ToolContextKeys.ENVIRONMENT_KEY`, key name `"environment"` | `ToolContextKeys.USER_LOCALE`, key name `"userLocale"` |
+| constructor and method parameters `Environment environment` | `UserLocale userLocale`, same position |
+| message `"Environment cannot be null"` | `"UserLocale cannot be null"` |
+| messages `"environment cannot be null"` / `"environment must not be null"` / `"environment must not be null in context"` | `"userLocale cannot be null"` / `"userLocale must not be null"` / `"userLocale must not be null in context"` |
+
+`X` is every type that carried the value: `HookContext` and its thirteen event contexts, `RewakeCapableRuntime`,
+`OrcaToolProviderContext`, `OrcaProviderDependencies`, `OrcaCommandProviderContext`, `OrcaAgentRuntime`,
+`ContextRequest`, `CompactionRequest`, `CompactionGuardRequest`, `SummaryRequest`, `CompactionGuard` (the deprecated
+overloads' parameter type), `SubagentExecutionEnvironment`, `SubagentExecutionContext`, `AgentEnvironmentSnapshot`,
+`ToolInvocationSpec`, `ReloadInvoker`, and the constructors of `TaskTool`, `WorkflowTool`, `GraalJsWorkflowTool`
+(its builder), `SubagentBackedSkillForkExecutor` and `CompactCommand`.
+
+There is no deprecated alias. Both types are `final` value objects, so no inheritance bridge exists, and a second
+set of overloads on thirty-five types would have doubled the name the change exists to remove.
+
+**Same word, not renamed.** A search-and-replace must not reach these:
+
+| Name | What it is |
+|-----|-----|
+| `ExecutionEnvironment`, `EnvironmentDescriptor`, `ExecutionEnvironmentProvider`, `EnvironmentRequest`, `ToolContextKeys.EXECUTION_ENVIRONMENT*`, `HookContext.getExecutionEnvironment()` / `getEnvironmentDescriptor()` | where an execution's commands run |
+| `ExecutionOptions.getEnvironment()` / `Builder.environment(Map)` | a shell command's environment variables |
+| `AimonProperties.getEnvironment()`, `aimon.environment.*` | the starter's execution-environment settings -- no configuration key changed |
+| `EnvironmentBlocks`, `EnvironmentContextProvider`, the `"environment"` prompt block | the prompt's description of the execution environment |
+| `SubagentExecutionEnvironment`, `AgentEnvironmentSnapshot` | type names unchanged; only their `getEnvironment()` accessor became `getUserLocale()` |
+
+**Not a data migration, and no frozen name moved.** The type never reached a wire or stored format: no session
+record, transcript, subagent task codec or shell-hook payload carries it, and the `ToolContext` key name is a key of
+an in-process map that [`frozen-names.md`](frozen-names.md) never listed. The one place the old name leaked as text
+was `toString()`, which nothing parses. The prompt is also unchanged -- it did not carry the time zone before and
+does not now.
+
+---
+
 ## Related documents
 
 - [`frozen-names.md`](frozen-names.md) -- what was **not** renamed, and why that is a contract

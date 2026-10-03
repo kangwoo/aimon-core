@@ -559,15 +559,16 @@ class PackageDependencyArchitectureTest {
 
     @Test
     @DisplayName("at.aimon.core.config.hook may depend only on a curated allow-list: at.aimon.core.base,"
-            + " at.aimon.core.agent (Environment / InvokerType value types), at.aimon.core.hook (registry +"
+            + " at.aimon.core.agent (the InvokerType value type), at.aimon.core.hook (registry +"
             + " execution manager + event types), at.aimon.core.skill.hook (declarative hook builders + actions),"
             + " at.aimon.core.scheduling.exception (the cron rejection it translates), plus Java/SLF4J/Jackson."
             + " Phase 3 WI-3.5.x.")
     void configHookOutboundDependenciesAreCurated() {
         // The bootstrap/reload layer materialises hooks.json into Declarative*Hook instances and registers them
         // on the live HookRegistry. Allowed inbound references:
-        // - at.aimon.core.base — AimonException base class for HookConfigParseException
-        // - at.aimon.core.agent — Environment + InvokerType value types embedded in OnConfigReloadContext
+        // - at.aimon.core.base — AimonException base class for HookConfigParseException, and the UserLocale value type
+        // embedded in OnConfigReloadContext
+        // - at.aimon.core.agent — the InvokerType value type embedded in OnConfigReloadContext
         // - at.aimon.core.hook.. — HookRegistry + HookExecutionManager + at.aimon.core.hook.event.* hook types
         // - at.aimon.core.skill.hook — Declarative*Hook builders and HookAction value types
         // - at.aimon.core.scheduling.exception — InvalidCronExpressionException only. RewakeTriggerCron validates

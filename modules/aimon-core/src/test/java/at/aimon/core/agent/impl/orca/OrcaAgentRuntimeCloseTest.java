@@ -19,8 +19,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import at.aimon.core.agent.Agent;
 import at.aimon.core.agent.AgentRuntimeId;
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.tool.ToolRegistry;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.CommandRegistry;
 import at.aimon.core.environment.ExecutionEnvironmentProvider;
 import at.aimon.core.environment.impl.LocalExecutionEnvironmentProvider;
@@ -89,7 +89,7 @@ class OrcaAgentRuntimeCloseTest {
         final OrcaAgentRuntime.Builder builder = OrcaAgentRuntime.builder().id(AgentRuntimeId.from(agent)).agent(agent)
                 .toolRegistry(toolRegistry).hookRegistry(hookRegistry).commandRegistry(commandRegistry)
                 .subagentRegistry(subagentRegistry).skillRegistry(skillRegistry).controlFileSystem(fileSystem)
-                .environment(Environment.createDefault()).knowledgeStore(knowledgeStore);
+                .userLocale(UserLocale.createDefault()).knowledgeStore(knowledgeStore);
         if (mcp != null) {
             builder.mcpClientManager(mcp);
         }
@@ -109,7 +109,7 @@ class OrcaAgentRuntimeCloseTest {
         OrcaAgentRuntime context = OrcaAgentRuntime.builder().id(AgentRuntimeId.from(agent)).agent(agent)
                 .toolRegistry(toolRegistry).hookRegistry(hookRegistry).commandRegistry(commandRegistry)
                 .subagentRegistry(subagentRegistry).skillRegistry(skillRegistry).controlFileSystem(fileSystem)
-                .environment(Environment.createDefault()).mcpClientManager(mcpClientManager)
+                .userLocale(UserLocale.createDefault()).mcpClientManager(mcpClientManager)
                 .knowledgeStore(knowledgeStore).build();
 
         context.close();
@@ -124,7 +124,7 @@ class OrcaAgentRuntimeCloseTest {
         OrcaAgentRuntime context = OrcaAgentRuntime.builder().id(AgentRuntimeId.from(agent)).agent(agent)
                 .toolRegistry(toolRegistry).hookRegistry(hookRegistry).commandRegistry(commandRegistry)
                 .subagentRegistry(subagentRegistry).skillRegistry(skillRegistry).controlFileSystem(fileSystem)
-                .environment(Environment.createDefault()).mcpClientManager(mcpClientManager)
+                .userLocale(UserLocale.createDefault()).mcpClientManager(mcpClientManager)
                 .knowledgeStore(knowledgeStore).build();
 
         context.close();
@@ -139,7 +139,7 @@ class OrcaAgentRuntimeCloseTest {
         OrcaAgentRuntime context = OrcaAgentRuntime.builder().id(AgentRuntimeId.from(agent)).agent(agent)
                 .toolRegistry(toolRegistry).hookRegistry(hookRegistry).commandRegistry(commandRegistry)
                 .subagentRegistry(subagentRegistry).skillRegistry(skillRegistry).controlFileSystem(fileSystem)
-                .environment(Environment.createDefault()).mcpClientManager(mcpClientManager)
+                .userLocale(UserLocale.createDefault()).mcpClientManager(mcpClientManager)
                 .knowledgeStore(knowledgeStore).build();
 
         context.close();
@@ -155,7 +155,7 @@ class OrcaAgentRuntimeCloseTest {
         OrcaAgentRuntime context = OrcaAgentRuntime.builder().id(AgentRuntimeId.from(agent)).agent(agent)
                 .toolRegistry(toolRegistry).hookRegistry(hookRegistry).commandRegistry(commandRegistry)
                 .subagentRegistry(subagentRegistry).skillRegistry(skillRegistry).controlFileSystem(fileSystem)
-                .environment(Environment.createDefault()).knowledgeStore(knowledgeStore).build();
+                .userLocale(UserLocale.createDefault()).knowledgeStore(knowledgeStore).build();
 
         context.close();
 
@@ -251,7 +251,7 @@ class OrcaAgentRuntimeCloseTest {
         final OrcaAgentRuntime context = OrcaAgentRuntime.builder().id(AgentRuntimeId.from(agent)).agent(agent)
                 .toolRegistry(toolRegistry).hookRegistry(hookRegistry).commandRegistry(commandRegistry)
                 .subagentRegistry(subagentRegistry).skillRegistry(skillRegistry).controlFileSystem(fileSystem)
-                .environment(Environment.createDefault()).mcpClientManager(mcpClientManager)
+                .userLocale(UserLocale.createDefault()).mcpClientManager(mcpClientManager)
                 .workflowRunner(workflowRunner).executionEnvironmentProvider(provider)
                 .ownsExecutionEnvironmentProvider(true).build();
 

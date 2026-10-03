@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-development-guide.md
-source_commit: e24ccc3
+source_commit: 1f8b53f
 ---
 
 # Hook Development Guide
@@ -262,7 +262,7 @@ Each hook receives the context object that matches its firing point. Every conte
 | `getInvokerType()` | `InvokerType` | Invoker type (MAIN_AGENT, SUBAGENT, …) |
 | `getInvokerName()` | `String` | Invoker name |
 | `getHookRegistry()` | `HookRegistry` | The hook registry |
-| `getEnvironment()` | `Environment` | Environment configuration |
+| `getUserLocale()` | `UserLocale` | The user locale (time zone) |
 | `getExecutionEnvironment()` | `Optional<ExecutionEnvironment>` | The execution environment of the execution the hook fires in — the file system and shell that execution's tools use. Empty for events that fire outside any execution (`onSessionStart`, `onSessionEnd`, `onConfigReload`) and for a rewake replay. Do not fall back to the host when it is empty |
 | `getEnvironmentDescriptor()` | `Optional<EnvironmentDescriptor>` | The descriptor of that environment (working directory, platform, OS). Use this, not the host, to tell **where commands run** |
 | `getTimestamp()` | `Instant` | Timestamp |

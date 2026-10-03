@@ -13,7 +13,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.AgentRuntimeId;
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.interrupt.NoopCancellationSignal;
 import at.aimon.core.agent.session.SessionId;
@@ -27,6 +26,7 @@ import at.aimon.core.agent.tool.ToolContextEnrichmentInfo;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.llm.LlmCallMetadata;
@@ -301,7 +301,7 @@ class DefaultSubagentExecutorResumeTest {
         final SubagentExecutionContext context = SubagentExecutionContext.builder()
                 .agentRuntimeId(AgentRuntimeId.of("agent:test-1")).subagent(subagent())
                 .defaultModel(LlmModel.builder().name("gpt-4").build()).toolRegistry(toolRegistry)
-                .hookRegistry(new DefaultHookRegistry()).environment(Environment.createDefault())
+                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault())
                 .toolContextEnrichers(enrichers).parentCancellationSignal(NoopCancellationSignal.INSTANCE).build();
 
         final SubagentExecutionRequest request = SubagentExecutionRequest.builder().taskId("task-1").goal(goal)

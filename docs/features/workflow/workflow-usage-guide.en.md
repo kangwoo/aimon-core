@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/workflow/workflow-usage-guide.md
-source_commit: 79d78a7
+source_commit: 3e95c28
 ---
 
 # Workflow Usage Guide (the library view)
@@ -79,11 +79,11 @@ import at.aimon.core.workflow.WorkflowRunners;
 
 // 1) the base environment the subagents run in (every step inherits it)
 SubagentExecutionEnvironment baseEnv = SubagentExecutionEnvironment.builder()
-        .contextId(contextId)                 // AgentRuntimeId
+        .agentRuntimeId(agentRuntimeId)       // AgentRuntimeId
         .subagentRegistry(subagentRegistry)
         .toolRegistry(toolRegistry)
         .hookRegistry(hookRegistry)
-        .environment(environment)
+        .userLocale(userLocale)
         .defaultModel(agent.getMetadata().getModel())
         .build();
 

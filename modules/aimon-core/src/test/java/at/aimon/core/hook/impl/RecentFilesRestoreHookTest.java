@@ -11,7 +11,6 @@ import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.compact.CompactionMetadata;
 import at.aimon.core.agent.compact.CompactionTrigger;
@@ -22,6 +21,7 @@ import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.event.PostCompactContext;
@@ -34,13 +34,13 @@ class RecentFilesRestoreHookTest {
 
     private RecordingReadTool readTool;
     private HookRegistry hookRegistry;
-    private Environment environment;
+    private UserLocale userLocale;
 
     @BeforeEach
     void setUp() {
         readTool = new RecordingReadTool();
         hookRegistry = new DefaultHookRegistry();
-        environment = Environment.createDefault();
+        userLocale = UserLocale.createDefault();
     }
 
     @Test
@@ -149,7 +149,7 @@ class RecentFilesRestoreHookTest {
         CompactionMetadata metadata = CompactionMetadata.builder().trigger(CompactionTrigger.AUTO).startedAt(now)
                 .completedAt(now).build();
         return PostCompactContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("test")
-                .hookRegistry(hookRegistry).environment(environment).trigger(CompactionTrigger.AUTO)
+                .hookRegistry(hookRegistry).userLocale(userLocale).trigger(CompactionTrigger.AUTO)
                 .compactionMetadata(metadata).compactSummary("summary").transcriptBuffer(memory)
                 .recentReadFilePaths(recentPaths).timestamp(now).build();
     }

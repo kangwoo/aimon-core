@@ -8,9 +8,9 @@ import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
@@ -43,13 +43,13 @@ class PostCompactSkillRestoreScenarioTest {
     private DefaultCompactionEngine engine;
     private DefaultHookRegistry hookRegistry;
     private DefaultHookExecutionManager hookExecutionManager;
-    private Environment environment;
+    private UserLocale userLocale;
 
     @BeforeEach
     void setUp() {
         hookRegistry = new DefaultHookRegistry();
         hookExecutionManager = new DefaultHookExecutionManager();
-        environment = Environment.createDefault();
+        userLocale = UserLocale.createDefault();
 
         hookRegistry.register(HookEventType.POST_COMPACT, new InvokedSkillsRestoreHook(10));
         engine = DefaultCompactionEngine.withDefaults(new StubSummaryClient(), new HeuristicTokenEstimator(),
@@ -66,7 +66,7 @@ class PostCompactSkillRestoreScenarioTest {
 
         CompactionResult result = engine.compact(CompactionRequest.builder().transcriptBuffer(memory)
                 .trigger(CompactionTrigger.AUTO).model(LlmModel.builder().name("test-model").build())
-                .hookRegistry(hookRegistry).environment(environment).build());
+                .hookRegistry(hookRegistry).userLocale(userLocale).build());
 
         assertThat(result.isSuccess()).isTrue();
 
@@ -105,7 +105,7 @@ class PostCompactSkillRestoreScenarioTest {
 
         CompactionResult result = engine.compact(CompactionRequest.builder().transcriptBuffer(memory)
                 .trigger(CompactionTrigger.AUTO).model(LlmModel.builder().name("test-model").build())
-                .hookRegistry(hookRegistry).environment(environment).build());
+                .hookRegistry(hookRegistry).userLocale(userLocale).build());
 
         assertThat(result.isSuccess()).isTrue();
 
@@ -125,7 +125,7 @@ class PostCompactSkillRestoreScenarioTest {
 
         CompactionResult result = engine.compact(CompactionRequest.builder().transcriptBuffer(memory)
                 .trigger(CompactionTrigger.AUTO).model(LlmModel.builder().name("test-model").build())
-                .hookRegistry(hookRegistry).environment(environment).build());
+                .hookRegistry(hookRegistry).userLocale(userLocale).build());
 
         assertThat(result.isSuccess()).isTrue();
         // No Skill tool_uses → restore hook returns success without appending anything.

@@ -10,9 +10,9 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
@@ -51,7 +51,7 @@ class DefaultCompactionEngineSummarizeTest {
     private SummaryRequest.Builder request(List<Message> messages) {
         return SummaryRequest.builder().messages(messages).systemPrompt("system").sessionId(SessionId.of("s-1"))
                 .trigger(CompactionTrigger.AUTO).model(MODEL).hookRegistry(hookRegistry)
-                .environment(Environment.createDefault());
+                .userLocale(UserLocale.createDefault());
     }
 
     @Test
@@ -162,7 +162,7 @@ class DefaultCompactionEngineSummarizeTest {
         final List<Message> source = new ArrayList<>(List.of(Message.user("x")));
         final SummaryRequest request = SummaryRequest.builder().messages(source).sessionId(SessionId.of("s"))
                 .trigger(CompactionTrigger.MANUAL).model(MODEL).hookRegistry(hookRegistry)
-                .environment(Environment.createDefault()).build();
+                .userLocale(UserLocale.createDefault()).build();
         source.add(Message.user("y"));
 
         assertThat(request.getMessages()).hasSize(1);

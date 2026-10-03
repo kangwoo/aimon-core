@@ -17,7 +17,7 @@
  * The agents package follows a clear separation of concerns:
  *
  * <ul>
- * <li><b>Core Package</b> - Defines abstractions (Agent, AgentExecutor, Environment, etc.)
+ * <li><b>Core Package</b> - Defines abstractions (Agent, AgentExecutor, etc.)
  * <li><b>Agents Package</b> - Provides concrete implementations
  * <li><b>Extensions Package</b> - Provides pluggable features (commands, subagents, hooks, skills, tools)
  * </ul>

@@ -273,8 +273,8 @@ OrcaAgentRuntime context = OrcaAgentRuntime.builder()
         .commandRegistry(commandRegistry)
         .subagentRegistry(subagentRegistry)
         .skillRegistry(skillRegistry)
-        .fileSystem(fileSystem)
-        .environment(environment)
+        .controlFileSystem(controlFileSystem)
+        .userLocale(userLocale)
         .knowledgeStore(store)       // inject the KnowledgeStore
         .build();
 ```

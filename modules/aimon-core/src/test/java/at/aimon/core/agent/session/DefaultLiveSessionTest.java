@@ -29,7 +29,6 @@ import at.aimon.core.agent.AgentExecutionResult;
 import at.aimon.core.agent.AgentExecutor;
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.DefaultAgent;
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.SubmitOptions;
 import at.aimon.core.agent.budget.ExecutionBudget;
 import at.aimon.core.agent.impl.orca.OrcaAgentExecutionRequest;
@@ -49,6 +48,7 @@ import at.aimon.core.agent.stream.AgentExecutionEvent;
 import at.aimon.core.agent.stream.StreamingAgentExecutor;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.DefaultCommandExecutionManager;
 import at.aimon.core.command.DefaultCommandRegistry;
 import at.aimon.core.command.execution.ExecutionMetadata;
@@ -812,7 +812,7 @@ class DefaultLiveSessionTest {
                 .subagentRegistry(new DefaultSubagentRegistry(fileSystem, ".aimon/agents"))
                 .skillRegistry(new DefaultSkillRegistry(fileSystem, ".aimon/skills")).controlFileSystem(fileSystem)
                 .executionEnvironmentProvider(TestExecutionEnvironments.provider(fileSystem))
-                .environment(Environment.createDefault()).build();
+                .userLocale(UserLocale.createDefault()).build();
     }
 
     private OrcaAgentExecutor createExecutor(LlmClient client, InMemorySessionRecordStore repository) {

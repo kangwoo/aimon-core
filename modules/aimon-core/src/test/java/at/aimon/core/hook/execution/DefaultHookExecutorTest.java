@@ -14,10 +14,10 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.event.PostToolContext;
@@ -35,18 +35,18 @@ class DefaultHookExecutorTest {
 
     private static PreToolContext preCtx() {
         final HookRegistry registry = new DefaultHookRegistry();
-        final Environment env = Environment.createDefault();
+        final UserLocale env = UserLocale.createDefault();
         return PreToolContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("agent").hookRegistry(registry)
-                .environment(env).toolUse(ToolUse.of("id", "Bash", Map.of("command", "secret"))).iterationCount(1)
+                .userLocale(env).toolUse(ToolUse.of("id", "Bash", Map.of("command", "secret"))).iterationCount(1)
                 .build();
     }
 
     private static PostToolContext postCtx() {
         final HookRegistry registry = new DefaultHookRegistry();
-        final Environment env = Environment.createDefault();
+        final UserLocale env = UserLocale.createDefault();
         final ToolUse tu = ToolUse.of("id", "Bash", Map.of("command", "echo"));
         return PostToolContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("agent")
-                .hookRegistry(registry).environment(env).toolUse(tu)
+                .hookRegistry(registry).userLocale(env).toolUse(tu)
                 .toolUseResult(ToolUseResult.success("id", "raw-output")).iterationCount(1).build();
     }
 

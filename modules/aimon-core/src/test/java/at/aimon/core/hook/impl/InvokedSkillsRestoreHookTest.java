@@ -9,7 +9,6 @@ import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.compact.CompactionMetadata;
 import at.aimon.core.agent.compact.CompactionTrigger;
@@ -17,6 +16,7 @@ import at.aimon.core.agent.compact.InvokedSkillRecord;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.LogOrigin;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.event.PostCompactContext;
@@ -29,12 +29,12 @@ import at.aimon.core.llm.Role;
 class InvokedSkillsRestoreHookTest {
 
     private HookRegistry hookRegistry;
-    private Environment environment;
+    private UserLocale userLocale;
 
     @BeforeEach
     void setUp() {
         hookRegistry = new DefaultHookRegistry();
-        environment = Environment.createDefault();
+        userLocale = UserLocale.createDefault();
     }
 
     @Test
@@ -128,7 +128,7 @@ class InvokedSkillsRestoreHookTest {
         CompactionMetadata metadata = CompactionMetadata.builder().trigger(CompactionTrigger.AUTO).startedAt(now)
                 .completedAt(now).build();
         return PostCompactContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("test")
-                .hookRegistry(hookRegistry).environment(environment).trigger(CompactionTrigger.AUTO)
+                .hookRegistry(hookRegistry).userLocale(userLocale).trigger(CompactionTrigger.AUTO)
                 .compactionMetadata(metadata).compactSummary("summary").transcriptBuffer(memory)
                 .invokedSkills(invokedSkills).timestamp(now).build();
     }

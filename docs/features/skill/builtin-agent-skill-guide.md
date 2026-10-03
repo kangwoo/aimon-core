@@ -203,7 +203,7 @@ Review the following: $1
 ### 사전 조건
 
 1. `code-reviewer` 라는 SubAgent가 등록돼 있어야 한다 (`.aimon/agents/code-reviewer.md` 또는 빌트인 번들). 미등록이면 fork는 LLM/SubAgent 호출 없이 즉시 실패한다.
-2. 호스트가 SubAgent 인프라(6요소: `Agent`, `SubagentRegistry`, `ToolRegistry`, `HookRegistry`, `Environment`, `SubagentExecutionManager`)를 모두 와이어링해야 한다. `aimon-cli`는 기본으로 만족한다. 하나라도 빠지면 fork-mode 스킬 호출은 `fork execution is not configured` 로 실패한다 — 인라인 전용 배포를 가능하게 하려는 의도된 동작이다.
+2. 호스트가 SubAgent 인프라(6요소: `Agent`, `SubagentRegistry`, `ToolRegistry`, `HookRegistry`, `UserLocale`, `SubagentExecutionManager`)를 모두 와이어링해야 한다. `aimon-cli`는 기본으로 만족한다. 하나라도 빠지면 fork-mode 스킬 호출은 `fork execution is not configured` 로 실패한다 — 인라인 전용 배포를 가능하게 하려는 의도된 동작이다.
 
 ### fork 는 두 허용목록을 함께 적용한다
 

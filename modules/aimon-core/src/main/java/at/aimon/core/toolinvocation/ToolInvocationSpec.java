@@ -4,12 +4,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.interrupt.InterruptCoordinator;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.permission.AllowedTool;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.ToolUse;
 
@@ -33,15 +33,15 @@ import at.aimon.core.llm.ToolUse;
  * </ul>
  *
  * <p>
- * All fields are required except {@link #getEnvironment() environment}, which may be {@code null} (mirrors the existing
- * executors, which pass a possibly-null environment straight to the hook context builders).
+ * All fields are required except {@link #getUserLocale() userLocale}, which may be {@code null} (mirrors the existing
+ * executors, which pass a possibly-null user locale straight to the hook context builders).
  */
 public final class ToolInvocationSpec {
 
     private final InvokerType invokerType;
     private final String invokerName;
     private final HookRegistry hookRegistry;
-    private final Environment environment;
+    private final UserLocale userLocale;
     private final Map<String, Object> executionAttributes;
     private final ToolRegistry toolRegistry;
     private final ToolRegistry sessionRegistry;
@@ -55,7 +55,7 @@ public final class ToolInvocationSpec {
         this.invokerType = Objects.requireNonNull(builder.invokerType, "invokerType cannot be null");
         this.invokerName = Objects.requireNonNull(builder.invokerName, "invokerName cannot be null");
         this.hookRegistry = Objects.requireNonNull(builder.hookRegistry, "hookRegistry cannot be null");
-        this.environment = builder.environment;
+        this.userLocale = builder.userLocale;
         this.executionAttributes = Objects.requireNonNull(builder.executionAttributes,
                 "executionAttributes cannot be null");
         this.toolRegistry = Objects.requireNonNull(builder.toolRegistry, "toolRegistry cannot be null");
@@ -88,8 +88,8 @@ public final class ToolInvocationSpec {
     }
 
     /** @return the execution environment passed to hook contexts, or {@code null} when none is bound. */
-    public Environment getEnvironment() {
-        return environment;
+    public UserLocale getUserLocale() {
+        return userLocale;
     }
 
     /** @return the execution attributes threaded through every hook context (never null). */
@@ -140,7 +140,7 @@ public final class ToolInvocationSpec {
         private InvokerType invokerType;
         private String invokerName;
         private HookRegistry hookRegistry;
-        private Environment environment;
+        private UserLocale userLocale;
         private Map<String, Object> executionAttributes;
         private ToolRegistry toolRegistry;
         private ToolRegistry sessionRegistry;
@@ -172,8 +172,8 @@ public final class ToolInvocationSpec {
         }
 
         /** Sets the execution environment passed to hook contexts (may be null). */
-        public Builder environment(Environment environment) {
-            this.environment = environment;
+        public Builder userLocale(UserLocale userLocale) {
+            this.userLocale = userLocale;
             return this;
         }
 

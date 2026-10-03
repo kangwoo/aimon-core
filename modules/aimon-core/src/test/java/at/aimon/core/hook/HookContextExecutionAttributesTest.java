@@ -10,8 +10,8 @@ import java.util.Map;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.hook.event.OnStartContext;
 import at.aimon.core.hook.event.OnStopContext;
@@ -24,7 +24,7 @@ import at.aimon.core.llm.ToolUseResult;
 class HookContextExecutionAttributesTest {
 
     private static final HookRegistry HOOK_REGISTRY = new DefaultHookRegistry();
-    private static final Environment ENVIRONMENT = Environment.createDefault();
+    private static final UserLocale ENVIRONMENT = UserLocale.createDefault();
     private static final Instant TIMESTAMP = Instant.now();
     private static final Map<String, Object> TEST_ATTRS = Map.of("tenant", "acme", "priority", 1);
 
@@ -34,7 +34,7 @@ class HookContextExecutionAttributesTest {
         @Test
         void executionAttributes_set_returnsSetAttributes() {
             OnStartContext context = OnStartContext.builder().executorType(InvokerType.MAIN_AGENT)
-                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).environment(ENVIRONMENT).userMessage("hello")
+                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).userLocale(ENVIRONMENT).userMessage("hello")
                     .timestamp(TIMESTAMP).executionAttributes(TEST_ATTRS).build();
 
             assertThat(context.getExecutionAttributes()).isEqualTo(TEST_ATTRS);
@@ -43,7 +43,7 @@ class HookContextExecutionAttributesTest {
         @Test
         void executionAttributes_notSet_returnsEmptyMap() {
             OnStartContext context = OnStartContext.builder().executorType(InvokerType.MAIN_AGENT)
-                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).environment(ENVIRONMENT).userMessage("hello")
+                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).userLocale(ENVIRONMENT).userMessage("hello")
                     .timestamp(TIMESTAMP).build();
 
             assertThat(context.getExecutionAttributes()).isEmpty();
@@ -55,7 +55,7 @@ class HookContextExecutionAttributesTest {
             mutableMap.put("key", "value");
 
             OnStartContext context = OnStartContext.builder().executorType(InvokerType.MAIN_AGENT)
-                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).environment(ENVIRONMENT).userMessage("hello")
+                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).userLocale(ENVIRONMENT).userMessage("hello")
                     .timestamp(TIMESTAMP).executionAttributes(mutableMap).build();
 
             mutableMap.put("newKey", "newValue");
@@ -66,7 +66,7 @@ class HookContextExecutionAttributesTest {
         @Test
         void executionAttributes_returnedMapIsUnmodifiable() {
             OnStartContext context = OnStartContext.builder().executorType(InvokerType.MAIN_AGENT)
-                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).environment(ENVIRONMENT).userMessage("hello")
+                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).userLocale(ENVIRONMENT).userMessage("hello")
                     .timestamp(TIMESTAMP).executionAttributes(TEST_ATTRS).build();
 
             assertThatThrownBy(() -> context.getExecutionAttributes().put("new", "value"))
@@ -76,7 +76,7 @@ class HookContextExecutionAttributesTest {
         @Test
         void toString_containsExecutionAttributes() {
             OnStartContext context = OnStartContext.builder().executorType(InvokerType.MAIN_AGENT)
-                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).environment(ENVIRONMENT).userMessage("hello")
+                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).userLocale(ENVIRONMENT).userMessage("hello")
                     .timestamp(TIMESTAMP).executionAttributes(TEST_ATTRS).build();
 
             assertThat(context.toString()).contains("executionAttributes");
@@ -96,7 +96,7 @@ class HookContextExecutionAttributesTest {
         @Test
         void executionAttributes_set_returnsSetAttributes() {
             OnStopContext context = OnStopContext.builder().executorType(InvokerType.MAIN_AGENT)
-                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).environment(ENVIRONMENT).success(true)
+                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).userLocale(ENVIRONMENT).success(true)
                     .finalAnswer("done").metadata(createMetadata()).timestamp(TIMESTAMP).executionAttributes(TEST_ATTRS)
                     .build();
 
@@ -106,7 +106,7 @@ class HookContextExecutionAttributesTest {
         @Test
         void executionAttributes_notSet_returnsEmptyMap() {
             OnStopContext context = OnStopContext.builder().executorType(InvokerType.MAIN_AGENT)
-                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).environment(ENVIRONMENT).success(true)
+                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).userLocale(ENVIRONMENT).success(true)
                     .finalAnswer("done").metadata(createMetadata()).timestamp(TIMESTAMP).build();
 
             assertThat(context.getExecutionAttributes()).isEmpty();
@@ -118,7 +118,7 @@ class HookContextExecutionAttributesTest {
             mutableMap.put("key", "value");
 
             OnStopContext context = OnStopContext.builder().executorType(InvokerType.MAIN_AGENT)
-                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).environment(ENVIRONMENT).success(true)
+                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).userLocale(ENVIRONMENT).success(true)
                     .finalAnswer("done").metadata(createMetadata()).timestamp(TIMESTAMP).executionAttributes(mutableMap)
                     .build();
 
@@ -130,7 +130,7 @@ class HookContextExecutionAttributesTest {
         @Test
         void executionAttributes_returnedMapIsUnmodifiable() {
             OnStopContext context = OnStopContext.builder().executorType(InvokerType.MAIN_AGENT)
-                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).environment(ENVIRONMENT).success(true)
+                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).userLocale(ENVIRONMENT).success(true)
                     .finalAnswer("done").metadata(createMetadata()).timestamp(TIMESTAMP).executionAttributes(TEST_ATTRS)
                     .build();
 
@@ -141,7 +141,7 @@ class HookContextExecutionAttributesTest {
         @Test
         void toString_containsExecutionAttributes() {
             OnStopContext context = OnStopContext.builder().executorType(InvokerType.MAIN_AGENT)
-                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).environment(ENVIRONMENT).success(true)
+                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).userLocale(ENVIRONMENT).success(true)
                     .finalAnswer("done").metadata(createMetadata()).timestamp(TIMESTAMP).executionAttributes(TEST_ATTRS)
                     .build();
 
@@ -157,7 +157,7 @@ class HookContextExecutionAttributesTest {
         @Test
         void executionAttributes_set_returnsSetAttributes() {
             PreToolContext context = PreToolContext.builder().executorType(InvokerType.MAIN_AGENT)
-                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).environment(ENVIRONMENT).toolUse(TOOL_USE)
+                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).userLocale(ENVIRONMENT).toolUse(TOOL_USE)
                     .iterationCount(1).timestamp(TIMESTAMP).executionAttributes(TEST_ATTRS).build();
 
             assertThat(context.getExecutionAttributes()).isEqualTo(TEST_ATTRS);
@@ -166,7 +166,7 @@ class HookContextExecutionAttributesTest {
         @Test
         void executionAttributes_notSet_returnsEmptyMap() {
             PreToolContext context = PreToolContext.builder().executorType(InvokerType.MAIN_AGENT)
-                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).environment(ENVIRONMENT).toolUse(TOOL_USE)
+                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).userLocale(ENVIRONMENT).toolUse(TOOL_USE)
                     .iterationCount(1).timestamp(TIMESTAMP).build();
 
             assertThat(context.getExecutionAttributes()).isEmpty();
@@ -178,7 +178,7 @@ class HookContextExecutionAttributesTest {
             mutableMap.put("key", "value");
 
             PreToolContext context = PreToolContext.builder().executorType(InvokerType.MAIN_AGENT)
-                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).environment(ENVIRONMENT).toolUse(TOOL_USE)
+                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).userLocale(ENVIRONMENT).toolUse(TOOL_USE)
                     .iterationCount(1).timestamp(TIMESTAMP).executionAttributes(mutableMap).build();
 
             mutableMap.put("newKey", "newValue");
@@ -189,7 +189,7 @@ class HookContextExecutionAttributesTest {
         @Test
         void executionAttributes_returnedMapIsUnmodifiable() {
             PreToolContext context = PreToolContext.builder().executorType(InvokerType.MAIN_AGENT)
-                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).environment(ENVIRONMENT).toolUse(TOOL_USE)
+                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).userLocale(ENVIRONMENT).toolUse(TOOL_USE)
                     .iterationCount(1).timestamp(TIMESTAMP).executionAttributes(TEST_ATTRS).build();
 
             assertThatThrownBy(() -> context.getExecutionAttributes().put("new", "value"))
@@ -199,7 +199,7 @@ class HookContextExecutionAttributesTest {
         @Test
         void toString_containsExecutionAttributes() {
             PreToolContext context = PreToolContext.builder().executorType(InvokerType.MAIN_AGENT)
-                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).environment(ENVIRONMENT).toolUse(TOOL_USE)
+                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).userLocale(ENVIRONMENT).toolUse(TOOL_USE)
                     .iterationCount(1).timestamp(TIMESTAMP).executionAttributes(TEST_ATTRS).build();
 
             assertThat(context.toString()).contains("executionAttributes");
@@ -215,7 +215,7 @@ class HookContextExecutionAttributesTest {
         @Test
         void executionAttributes_set_returnsSetAttributes() {
             PostToolContext context = PostToolContext.builder().executorType(InvokerType.MAIN_AGENT)
-                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).environment(ENVIRONMENT).toolUse(TOOL_USE)
+                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).userLocale(ENVIRONMENT).toolUse(TOOL_USE)
                     .toolUseResult(TOOL_RESULT).iterationCount(1).timestamp(TIMESTAMP).executionAttributes(TEST_ATTRS)
                     .build();
 
@@ -225,7 +225,7 @@ class HookContextExecutionAttributesTest {
         @Test
         void executionAttributes_notSet_returnsEmptyMap() {
             PostToolContext context = PostToolContext.builder().executorType(InvokerType.MAIN_AGENT)
-                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).environment(ENVIRONMENT).toolUse(TOOL_USE)
+                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).userLocale(ENVIRONMENT).toolUse(TOOL_USE)
                     .toolUseResult(TOOL_RESULT).iterationCount(1).timestamp(TIMESTAMP).build();
 
             assertThat(context.getExecutionAttributes()).isEmpty();
@@ -237,7 +237,7 @@ class HookContextExecutionAttributesTest {
             mutableMap.put("key", "value");
 
             PostToolContext context = PostToolContext.builder().executorType(InvokerType.MAIN_AGENT)
-                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).environment(ENVIRONMENT).toolUse(TOOL_USE)
+                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).userLocale(ENVIRONMENT).toolUse(TOOL_USE)
                     .toolUseResult(TOOL_RESULT).iterationCount(1).timestamp(TIMESTAMP).executionAttributes(mutableMap)
                     .build();
 
@@ -249,7 +249,7 @@ class HookContextExecutionAttributesTest {
         @Test
         void executionAttributes_returnedMapIsUnmodifiable() {
             PostToolContext context = PostToolContext.builder().executorType(InvokerType.MAIN_AGENT)
-                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).environment(ENVIRONMENT).toolUse(TOOL_USE)
+                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).userLocale(ENVIRONMENT).toolUse(TOOL_USE)
                     .toolUseResult(TOOL_RESULT).iterationCount(1).timestamp(TIMESTAMP).executionAttributes(TEST_ATTRS)
                     .build();
 
@@ -260,7 +260,7 @@ class HookContextExecutionAttributesTest {
         @Test
         void toString_containsExecutionAttributes() {
             PostToolContext context = PostToolContext.builder().executorType(InvokerType.MAIN_AGENT)
-                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).environment(ENVIRONMENT).toolUse(TOOL_USE)
+                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).userLocale(ENVIRONMENT).toolUse(TOOL_USE)
                     .toolUseResult(TOOL_RESULT).iterationCount(1).timestamp(TIMESTAMP).executionAttributes(TEST_ATTRS)
                     .build();
 

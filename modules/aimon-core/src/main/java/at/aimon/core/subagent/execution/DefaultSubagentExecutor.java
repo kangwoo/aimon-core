@@ -12,7 +12,6 @@ import java.util.function.Predicate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.artifact.ArtifactCollector;
@@ -59,6 +58,7 @@ import at.aimon.core.agent.tool.ToolExecutionManager;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.search.ToolSearchCatalog;
 import at.aimon.core.agent.tool.search.ToolSearchRegistry;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.environment.EnvironmentDescriptor;
 import at.aimon.core.environment.EnvironmentRequest;
@@ -113,7 +113,7 @@ import at.aimon.core.tools.todo.TodoWriteTool;
  *
  * <p>
  * This executor mirrors the {@code OrcaAgentExecutor} ReAct loop for parity: tool execution carries the same
- * {@link ToolContext} keys (environment, LLM call metadata, artifact collector, cancellation signal, per-tool
+ * {@link ToolContext} keys (user locale, LLM call metadata, artifact collector, cancellation signal, per-tool
  * {@code toolUseId}), fires PermissionRequest/PreTool/PostTool hooks, and isolates PostTool hook failures so a hook
  * exception never discards a real tool result. A response the provider cut off at {@code max_tokens} gets the answers
  * that loop gives ({@link TruncatedResponses}): a final answer ends as {@link CompletionReason#TRUNCATED} with the
@@ -135,7 +135,7 @@ import at.aimon.core.tools.todo.TodoWriteTool;
  *
  *     SubagentExecutionContext context = SubagentExecutionContext.builder().subagent(codeReviewer)
  *             .agentRuntimeId(agentRuntimeId).defaultModel(model).toolRegistry(toolRegistry)
- *             .hookRegistry(hookRegistry).environment(environment).build();
+ *             .hookRegistry(hookRegistry).userLocale(userLocale).build();
  *
  *     SubagentExecutionRequest request = SubagentExecutionRequest.builder().taskId("task-001")
  *             .goal("Review the authentication module").build();
@@ -588,7 +588,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      */
     private void fireOnStart(LoopContext lc) {
         final OnStartContext onStartContext = OnStartContext.builder().executorType(InvokerType.SUBAGENT)
-                .invokerName(lc.subagent().getName()).hookRegistry(lc.hookRegistry()).environment(lc.environment())
+                .invokerName(lc.subagent().getName()).hookRegistry(lc.hookRegistry()).userLocale(lc.userLocale())
                 .executionEnvironment(lc.executionEnvironment()).userMessage(lc.goal)
                 .executionAttributes(lc.executionAttributes).build();
         final List<HookResult> onStartResults = hookExecutionManager.executeOnStart(onStartContext);
@@ -616,7 +616,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         // of the restored label (ExecutionId.of), which is why the round trip has to survive the snapshot.
         final ContextDecision decision = contextEngine.prepare(ContextRequest.builder()
                 .transcriptBuffer(lc.transcriptBuffer).model(lc.modelConfig).hookRegistry(lc.hookRegistry())
-                .environment(lc.environment()).executionEnvironment(lc.executionEnvironment())
+                .userLocale(lc.userLocale()).executionEnvironment(lc.executionEnvironment())
                 .caller(ContextCaller.builder().executionId(lc.executionId).build()).build());
         switch (decision.getAction()) {
             case BLOCK :
@@ -733,9 +733,9 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         // ToolContext.Builder#put rejecting nulls.
         request.getInvokingSessionId().ifPresent(id -> builder.put(ToolContextKeys.INVOKING_SESSION_ID, id));
 
-        final Environment environment = context.getEnvironment();
-        if (environment != null) {
-            builder.put(ToolContextKeys.ENVIRONMENT_KEY, environment);
+        final UserLocale userLocale = context.getUserLocale();
+        if (userLocale != null) {
+            builder.put(ToolContextKeys.USER_LOCALE, userLocale);
         }
         request.getPrincipal().ifPresent(p -> builder.put(ToolContextKeys.PRINCIPAL, p));
         builder.put(ToolContextKeys.EXECUTION_ATTRIBUTES_KEY, request.getExecutionAttributes());
@@ -1049,7 +1049,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         // Delegate the interrupt-registrar + PermissionRequest/PreTool/execute/PostTool sequence to the shared
         // pipeline. The subagent variance is the SUBAGENT invoker identity and its declared allow-list.
         final ToolInvocationSpec spec = ToolInvocationSpec.builder().invokerType(InvokerType.SUBAGENT)
-                .invokerName(subagent.getName()).hookRegistry(lc.hookRegistry()).environment(lc.environment())
+                .invokerName(subagent.getName()).hookRegistry(lc.hookRegistry()).userLocale(lc.userLocale())
                 .executionAttributes(lc.executionAttributes).toolRegistry(lc.context.getToolRegistry())
                 .sessionRegistry(lc.sessionRegistry).allowedTools(subagent.getAllowedTools())
                 .coordinator(lc.coordinator).toolContext(lc.toolContext).toolUse(toolUse).iterationCount(iterationCount)
@@ -1064,7 +1064,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
             TokenUsage accumulatedTokens) {
         final ExecutionMetadata metadata = buildMetadata(lc, iterationCount, accumulatedTokens);
         final OnStopContext onStopContext = OnStopContext.builder().executorType(InvokerType.SUBAGENT)
-                .invokerName(lc.subagent().getName()).hookRegistry(lc.hookRegistry()).environment(lc.environment())
+                .invokerName(lc.subagent().getName()).hookRegistry(lc.hookRegistry()).userLocale(lc.userLocale())
                 .executionEnvironment(lc.executionEnvironment()).success(true).finalAnswer(finalAnswer)
                 .metadata(metadata).executionAttributes(lc.executionAttributes).build();
         hookExecutionManager.executeOnStop(onStopContext);
@@ -1106,7 +1106,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 lc.subagent().getName(), iterationCount, TruncatedResponses.reasoningClause(responseUsage));
         final ExecutionMetadata metadata = buildMetadata(lc, iterationCount, accumulatedTokens);
         final OnStopContext onStopContext = OnStopContext.builder().executorType(InvokerType.SUBAGENT)
-                .invokerName(lc.subagent().getName()).hookRegistry(lc.hookRegistry()).environment(lc.environment())
+                .invokerName(lc.subagent().getName()).hookRegistry(lc.hookRegistry()).userLocale(lc.userLocale())
                 .executionEnvironment(lc.executionEnvironment()).success(true).finalAnswer(flaggedAnswer)
                 .metadata(metadata).executionAttributes(lc.executionAttributes).build();
         hookExecutionManager.executeOnStop(onStopContext);
@@ -1174,7 +1174,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
             TokenUsage accumulatedTokens, CompletionReason completionReason) {
         final ExecutionMetadata metadata = buildMetadata(lc, iterationCount, accumulatedTokens);
         final OnStopContext onStopContext = OnStopContext.builder().executorType(InvokerType.SUBAGENT)
-                .invokerName(lc.subagent().getName()).hookRegistry(lc.hookRegistry()).environment(lc.environment())
+                .invokerName(lc.subagent().getName()).hookRegistry(lc.hookRegistry()).userLocale(lc.userLocale())
                 .executionEnvironment(lc.executionEnvironment()).success(false).finalAnswer(errorMessage)
                 .metadata(metadata).executionAttributes(lc.executionAttributes).build();
         hookExecutionManager.executeOnStop(onStopContext);
@@ -1250,8 +1250,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
             return context.getHookRegistry();
         }
 
-        private Environment environment() {
-            return context.getEnvironment();
+        private UserLocale userLocale() {
+            return context.getUserLocale();
         }
 
         /**

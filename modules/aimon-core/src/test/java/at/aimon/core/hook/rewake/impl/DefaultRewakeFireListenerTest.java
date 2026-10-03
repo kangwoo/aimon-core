@@ -24,9 +24,9 @@ import org.mockito.ArgumentCaptor;
 import at.aimon.core.agent.AgentRuntime;
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.AgentRuntimeRegistry;
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.tool.ToolInput;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.HookEventType;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.event.OnConfigReloadContext;
@@ -531,7 +531,7 @@ class DefaultRewakeFireListenerTest {
 
     /** Stub context implementing both {@link AgentRuntime} and {@link RewakeCapableRuntime}. */
     private static AgentRuntime stubCapableContext(HookRegistry hookRegistry) {
-        final Environment env = Environment.createDefault();
+        final UserLocale env = UserLocale.createDefault();
         return new CapableStub(hookRegistry, env);
     }
 
@@ -556,11 +556,11 @@ class DefaultRewakeFireListenerTest {
 
     private static final class CapableStub implements AgentRuntime, RewakeCapableRuntime {
         private final HookRegistry hookRegistry;
-        private final Environment environment;
+        private final UserLocale userLocale;
 
-        CapableStub(HookRegistry hookRegistry, Environment environment) {
+        CapableStub(HookRegistry hookRegistry, UserLocale userLocale) {
             this.hookRegistry = hookRegistry;
-            this.environment = environment;
+            this.userLocale = userLocale;
         }
 
         @Override
@@ -584,8 +584,8 @@ class DefaultRewakeFireListenerTest {
         }
 
         @Override
-        public Environment getEnvironment() {
-            return environment;
+        public UserLocale getUserLocale() {
+            return userLocale;
         }
     }
 }

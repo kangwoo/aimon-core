@@ -8,8 +8,8 @@ import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.event.OnStartContext;
 import at.aimon.core.hook.execution.HookContext;
@@ -18,7 +18,7 @@ import at.aimon.core.skill.hook.action.ShellAction;
 class NoOpShellActionExecutorTest {
 
     private static final HookContext CONTEXT = OnStartContext.builder().executorType(InvokerType.MAIN_AGENT)
-            .invokerName("agent").hookRegistry(new DefaultHookRegistry()).environment(Environment.createDefault())
+            .invokerName("agent").hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault())
             .userMessage("hi").build();
 
     @Test

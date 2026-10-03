@@ -17,7 +17,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.DefaultAgent;
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.interrupt.InterruptBehavior;
 import at.aimon.core.agent.queue.MessageQueueManager;
 import at.aimon.core.agent.session.SessionId;
@@ -33,6 +32,7 @@ import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.DefaultCommandExecutionManager;
 import at.aimon.core.command.DefaultCommandRegistry;
 import at.aimon.core.environment.TestExecutionEnvironments;
@@ -173,7 +173,7 @@ final class OrcaAgentExecutorTestSupport {
                 .subagentRegistry(new DefaultSubagentRegistry(fileSystem, ".aimon/agents"))
                 .skillRegistry(new DefaultSkillRegistry(fileSystem, ".aimon/skills")).controlFileSystem(fileSystem)
                 .executionEnvironmentProvider(TestExecutionEnvironments.provider(fileSystem))
-                .environment(Environment.createDefault()).build();
+                .userLocale(UserLocale.createDefault()).build();
     }
 
     static DefaultToolRegistry registryOf(Tool... tools) {

@@ -562,7 +562,7 @@ public final class RollingContextEngine implements ContextEngine {
                 .executionId(call.request.getCaller().getExecutionId().orElse(null)).trigger(trigger)
                 .model(summaryModel != null ? summaryModel : call.request.getModel())
                 .hookRegistry(call.request.getHookRegistry().orElseThrow())
-                .environment(call.request.getEnvironment().orElseThrow())
+                .userLocale(call.request.getUserLocale().orElseThrow())
                 .executionEnvironment(call.request.getExecutionEnvironment().orElse(null))
                 .customInstructions(instructions).callMetadata(call.request.getCallMetadata().orElse(null))
                 .rolling(true).previousSummary(held != null ? held.getSummaryText() : null)
@@ -678,8 +678,8 @@ public final class RollingContextEngine implements ContextEngine {
     private static void requireHooks(ContextRequest request) {
         request.getHookRegistry()
                 .orElseThrow(() -> new IllegalArgumentException("RollingContextEngine requires a HookRegistry"));
-        request.getEnvironment()
-                .orElseThrow(() -> new IllegalArgumentException("RollingContextEngine requires an Environment"));
+        request.getUserLocale()
+                .orElseThrow(() -> new IllegalArgumentException("RollingContextEngine requires a UserLocale"));
     }
 
     @Override

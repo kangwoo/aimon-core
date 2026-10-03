@@ -31,13 +31,13 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import at.aimon.core.agent.AgentRuntimeId;
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.interrupt.DefaultInterruptCoordinator;
 import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.environment.EnvironmentDescriptor;
 import at.aimon.core.environment.EnvironmentRequest;
@@ -516,7 +516,7 @@ class WorkflowPhase4Test {
     private static SubagentExecutionEnvironment env() {
         return SubagentExecutionEnvironment.builder().agentRuntimeId(AgentRuntimeId.of("agent:test"))
                 .subagentRegistry(new InMemorySubagentRegistry()).toolRegistry(new DefaultToolRegistry())
-                .hookRegistry(new DefaultHookRegistry()).environment(Environment.createDefault())
+                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault())
                 .defaultModel(LlmModel.builder().name("gpt-4").build()).build();
     }
 

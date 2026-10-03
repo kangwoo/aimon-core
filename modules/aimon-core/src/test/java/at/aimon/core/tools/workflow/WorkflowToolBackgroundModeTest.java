@@ -11,11 +11,11 @@ import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.subagent.InMemorySubagentRegistry;
@@ -41,8 +41,7 @@ class WorkflowToolBackgroundModeTest {
     @DisplayName("background mode with no runner configured returns an error (not a throw)")
     void backgroundModeWithoutRunnerReturnsError() {
         final WorkflowTool tool = new WorkflowTool(model, new InMemorySubagentRegistry(), new DefaultToolRegistry(),
-                new DefaultHookRegistry(), Environment.createDefault(), mock(SubagentExecutionManager.class),
-                List.of());
+                new DefaultHookRegistry(), UserLocale.createDefault(), mock(SubagentExecutionManager.class), List.of());
 
         final ToolResult result = tool.execute(ToolInput.of(Map.of("prompt", "x", "mode", "background")),
                 ToolContext.empty());
@@ -114,7 +113,7 @@ class WorkflowToolBackgroundModeTest {
 
     private WorkflowTool tool(WorkflowRunner backgroundRunner) {
         return new WorkflowTool(model, new InMemorySubagentRegistry(), new DefaultToolRegistry(),
-                new DefaultHookRegistry(), Environment.createDefault(), mock(SubagentExecutionManager.class), List.of(),
+                new DefaultHookRegistry(), UserLocale.createDefault(), mock(SubagentExecutionManager.class), List.of(),
                 backgroundRunner);
     }
 

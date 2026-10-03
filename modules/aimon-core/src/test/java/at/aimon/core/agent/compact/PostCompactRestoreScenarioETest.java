@@ -12,9 +12,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
@@ -57,7 +57,7 @@ class PostCompactRestoreScenarioETest {
     private DefaultCompactionEngine engine;
     private DefaultHookRegistry hookRegistry;
     private DefaultHookExecutionManager hookExecutionManager;
-    private Environment environment;
+    private UserLocale userLocale;
 
     @BeforeEach
     void setUp() {
@@ -66,7 +66,7 @@ class PostCompactRestoreScenarioETest {
 
         hookRegistry = new DefaultHookRegistry();
         hookExecutionManager = new DefaultHookExecutionManager();
-        environment = Environment.createDefault();
+        userLocale = UserLocale.createDefault();
 
         hookRegistry.register(HookEventType.POST_COMPACT,
                 new RecentFilesRestoreHook(new ReadTool(), 5, TestExecutionEnvironments.context(fileSystem)));
@@ -99,7 +99,7 @@ class PostCompactRestoreScenarioETest {
 
         CompactionResult result = engine.compact(CompactionRequest.builder().transcriptBuffer(memory)
                 .trigger(CompactionTrigger.AUTO).model(LlmModel.builder().name("test-model").build())
-                .hookRegistry(hookRegistry).environment(environment).build());
+                .hookRegistry(hookRegistry).userLocale(userLocale).build());
 
         assertThat(result.isSuccess()).isTrue();
 
@@ -129,7 +129,7 @@ class PostCompactRestoreScenarioETest {
 
         CompactionResult result = engine.compact(CompactionRequest.builder().transcriptBuffer(memory)
                 .trigger(CompactionTrigger.AUTO).model(LlmModel.builder().name("test-model").build())
-                .hookRegistry(hookRegistry).environment(environment).build());
+                .hookRegistry(hookRegistry).userLocale(userLocale).build());
 
         assertThat(result.isSuccess()).isTrue();
         // No Read tool_uses → restore hook returns success without appending anything.

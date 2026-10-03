@@ -11,10 +11,10 @@ import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.Agent;
 import at.aimon.core.agent.AgentMetadata;
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.orca.tool.OrcaToolProviderContext;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.agent.tool.ToolRegistry;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.subagent.SubagentExecutionManager;
@@ -44,7 +44,7 @@ class GraalJsWorkflowToolProviderTest {
         when(context.getSubagentRegistry()).thenReturn(mock(SubagentRegistry.class));
         when(context.getToolRegistry()).thenReturn(mock(ToolRegistry.class));
         when(context.getHookRegistry()).thenReturn(mock(HookRegistry.class));
-        when(context.getEnvironment()).thenReturn(mock(Environment.class));
+        when(context.getUserLocale()).thenReturn(mock(UserLocale.class));
         when(context.getSubagentExecutionManager()).thenReturn(mock(SubagentExecutionManager.class));
         when(context.getToolContextEnrichers()).thenReturn(List.of());
         // getWorkflowRunner() is left at the mock default (null): background mode disabled, which the tool tolerates.

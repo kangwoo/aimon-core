@@ -10,7 +10,6 @@ import java.util.function.Function;
 import at.aimon.core.agent.Agent;
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.ContextEngineKind;
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.compact.CompactionEngine;
 import at.aimon.core.agent.compact.CompactionFailureStore;
 import at.aimon.core.agent.compact.CompactionGuard;
@@ -39,6 +38,7 @@ import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.agent.tool.ToolContextEnricher;
 import at.aimon.core.agent.tool.ToolRegistry;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.DefaultCommandRegistry;
 import at.aimon.core.command.SystemCommand;
 import at.aimon.core.credential.CredentialStore;
@@ -911,7 +911,7 @@ public class OrcaAgentRuntimeFactory {
             ExecutionEnvironmentProvider executionEnvironmentProvider, boolean providerOwned) {
         final Agent agent = agentBundle.getAgent();
         final SubagentExecutionManager subagentExecutionManager = agentExecutor.getSubagentExecutionManager();
-        final Environment environment = Environment.createDefault();
+        final UserLocale userLocale = UserLocale.createDefault();
 
         // Initialize registries
         final ToolRegistry toolRegistry = new DefaultToolRegistry();
@@ -992,7 +992,7 @@ public class OrcaAgentRuntimeFactory {
                 .taskOutputStore(taskOutputStore).taskResultStore(taskResultStore)
                 .sessionSnapshotStore(sessionSnapshotStore).skillRegistry(skillRegistry).toolRegistry(toolRegistry)
                 .hookRegistry(hookRegistry).hookExecutionManager(agentExecutor.getHookExecutionManager())
-                .scheduledTaskManager(scheduledTaskManager).credentialStore(credentialStore).environment(environment)
+                .scheduledTaskManager(scheduledTaskManager).credentialStore(credentialStore).userLocale(userLocale)
                 .compactionEngine(compactionEngine).compactionGuard(compactionGuard).contextEngine(contextEngine)
                 .pendingTurnRegistry(pendingTurnRegistry).agentApprovalStore(agentApprovalStore)
                 .sessionApprovalStore(sessionApprovalStore).skillInvocationPolicy(skillInvocationPolicy)
@@ -1005,12 +1005,12 @@ public class OrcaAgentRuntimeFactory {
         // created). Background runs are fire-and-forget: they run under this base environment and do not carry the
         // invoking execution's principal or trace attribution.
         final WorkflowRunner workflowRunner = workflowRunnerEnabled
-                ? buildWorkflowRunner(agentRuntimeId, agent, subagentRegistry, toolRegistry, hookRegistry, environment,
+                ? buildWorkflowRunner(agentRuntimeId, agent, subagentRegistry, toolRegistry, hookRegistry, userLocale,
                         subagentExecutionManager, toolContextEnrichers, executionEnvironmentProvider)
                 : null;
         try {
             return register(agentRuntimeId, agent, toolRegistry, hookRegistry, commandRegistry, subagentRegistry,
-                    skillRegistry, controlFileSystem, environment, mcpClientManager, compactionEngine, compactionGuard,
+                    skillRegistry, controlFileSystem, userLocale, mcpClientManager, compactionEngine, compactionGuard,
                     recoveryStrategy, engineKind, contextEngine, providerDependencies, toolProviders, commandProviders,
                     workflowRunner, executionEnvironmentProvider, providerOwned);
         } catch (RuntimeException | Error e) {
@@ -1030,7 +1030,7 @@ public class OrcaAgentRuntimeFactory {
     @SuppressWarnings({"checkstyle:ParameterNumber", "deprecation"})
     private OrcaAgentRuntime register(AgentRuntimeId agentRuntimeId, Agent agent, ToolRegistry toolRegistry,
             HookRegistry hookRegistry, DefaultCommandRegistry commandRegistry, SubagentRegistry subagentRegistry,
-            SkillRegistry skillRegistry, VirtualFileSystem controlFileSystem, Environment environment,
+            SkillRegistry skillRegistry, VirtualFileSystem controlFileSystem, UserLocale userLocale,
             McpClientManager mcpClientManager, CompactionEngine compactionEngine, CompactionGuard compactionGuard,
             PromptSizeRecoveryStrategy recoveryStrategy, ContextEngineKind engineKind, ContextEngine contextEngine,
             OrcaProviderDependencies providerDependencies, List<OrcaToolProvider> toolProviders,
@@ -1040,7 +1040,7 @@ public class OrcaAgentRuntimeFactory {
         // It carries the control store but no working filesystem or shell: tools read those from the execution's
         // environment on every call, so no provider can capture them at registration time (design §6).
         final OrcaToolProviderContext context = OrcaToolProviderContext.builder().controlFileSystem(controlFileSystem)
-                .environment(environment).agent(agent).dependencies(providerDependencies)
+                .userLocale(userLocale).agent(agent).dependencies(providerDependencies)
                 .toolContextEnrichers(toolContextEnrichers).workflowRunner(workflowRunner).build();
 
         // Register tools via providers
@@ -1064,7 +1064,7 @@ public class OrcaAgentRuntimeFactory {
 
         return OrcaAgentRuntime.builder().id(agentRuntimeId).agent(agent).toolRegistry(toolRegistry)
                 .hookRegistry(hookRegistry).commandRegistry(commandRegistry).subagentRegistry(subagentRegistry)
-                .skillRegistry(skillRegistry).controlFileSystem(controlFileSystem).environment(environment)
+                .skillRegistry(skillRegistry).controlFileSystem(controlFileSystem).userLocale(userLocale)
                 .mcpClientManager(mcpClientManager).knowledgeStore(knowledgeStore).compactionEngine(compactionEngine)
                 .compactionGuard(compactionGuard)
                 // Still exposed on its own for callers that read it; the executor consults it through the engine.
@@ -1150,7 +1150,7 @@ public class OrcaAgentRuntimeFactory {
     @SuppressWarnings("checkstyle:ParameterNumber")
     private WorkflowRunner buildWorkflowRunner(AgentRuntimeId agentRuntimeId, Agent agent,
             SubagentRegistry subagentRegistry, ToolRegistry toolRegistry, HookRegistry hookRegistry,
-            Environment environment, SubagentExecutionManager subagentExecutionManager,
+            UserLocale userLocale, SubagentExecutionManager subagentExecutionManager,
             List<ToolContextEnricher> toolContextEnrichers, ExecutionEnvironmentProvider executionEnvironmentProvider) {
         // No invokingSessionId here, deliberately: this runner is agent-scoped and outlives every session
         // that uses it, so there is no one session whose skill approvals it could inherit. The per-call runners
@@ -1161,7 +1161,7 @@ public class OrcaAgentRuntimeFactory {
         // spawns is a run of this agent's.
         final SubagentExecutionEnvironment baseEnv = SubagentExecutionEnvironment.builder()
                 .agentRuntimeId(agentRuntimeId).subagentRegistry(subagentRegistry).toolRegistry(toolRegistry)
-                .hookRegistry(hookRegistry).environment(environment).defaultModel(agent.getMetadata().getModel())
+                .hookRegistry(hookRegistry).userLocale(userLocale).defaultModel(agent.getMetadata().getModel())
                 .toolContextEnrichers(toolContextEnrichers).callerAllowedTools(agent.getAllowedTools())
                 .executionEnvironmentProvider(executionEnvironmentProvider).build();
         return WorkflowRunners.create(subagentExecutionManager, baseEnv,

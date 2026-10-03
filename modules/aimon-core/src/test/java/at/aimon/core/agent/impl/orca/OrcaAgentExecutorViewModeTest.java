@@ -11,7 +11,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import at.aimon.core.agent.DefaultAgent;
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.compact.CompactBoundary;
 import at.aimon.core.agent.compact.DefaultCompactionEngine;
 import at.aimon.core.agent.compact.DefaultCompactionGuard;
@@ -29,6 +28,7 @@ import at.aimon.core.agent.session.transcript.SessionLogState;
 import at.aimon.core.agent.session.transcript.SessionLogStorage;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.base.Principal;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.DefaultCommandRegistry;
 import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
@@ -179,7 +179,7 @@ class OrcaAgentExecutorViewModeTest {
                 .subagentRegistry(new DefaultSubagentRegistry(fileSystem, ".aimon/agents"))
                 .skillRegistry(new DefaultSkillRegistry(fileSystem, ".aimon/skills")).controlFileSystem(fileSystem)
                 .executionEnvironmentProvider(TestExecutionEnvironments.provider(fileSystem))
-                .environment(Environment.createDefault()).contextEngine(engine).build();
+                .userLocale(UserLocale.createDefault()).contextEngine(engine).build();
     }
 
     /** Answers from a script, in order, and records the messages of every call. */

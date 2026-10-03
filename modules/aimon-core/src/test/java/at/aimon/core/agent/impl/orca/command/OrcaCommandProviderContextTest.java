@@ -6,11 +6,11 @@ import static org.mockito.Mockito.mock;
 
 import org.junit.jupiter.api.Test;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.compact.CompactionEngine;
 import at.aimon.core.agent.compact.CompactionGuard;
 import at.aimon.core.agent.orca.OrcaProviderDependencies;
 import at.aimon.core.agent.tool.ToolRegistry;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.CommandRegistry;
 import at.aimon.core.credential.CredentialStore;
 import at.aimon.core.hook.HookExecutionManager;
@@ -52,7 +52,7 @@ class OrcaCommandProviderContextTest {
         HookExecutionManager hookExec = mock(HookExecutionManager.class);
         ScheduledTaskManager scheduledTaskManager = mock(ScheduledTaskManager.class);
         CredentialStore credentialStore = mock(CredentialStore.class);
-        Environment environment = mock(Environment.class);
+        UserLocale userLocale = mock(UserLocale.class);
         CompactionEngine compactionEngine = mock(CompactionEngine.class);
         CompactionGuard compactionGuard = mock(CompactionGuard.class);
         PendingTurnRegistry pendingTurnRegistry = mock(PendingTurnRegistry.class);
@@ -61,7 +61,7 @@ class OrcaCommandProviderContextTest {
         OrcaProviderDependencies deps = OrcaProviderDependencies.builder().subagentRegistry(subagentRegistry)
                 .subagentExecutionManager(subagentExec).skillRegistry(skillRegistry).toolRegistry(toolRegistry)
                 .hookRegistry(hookRegistry).hookExecutionManager(hookExec).scheduledTaskManager(scheduledTaskManager)
-                .credentialStore(credentialStore).environment(environment).compactionEngine(compactionEngine)
+                .credentialStore(credentialStore).userLocale(userLocale).compactionEngine(compactionEngine)
                 .compactionGuard(compactionGuard).pendingTurnRegistry(pendingTurnRegistry)
                 .agentApprovalStore(agentApprovalStore).build();
 
@@ -79,7 +79,7 @@ class OrcaCommandProviderContextTest {
         assertThat(context.getHookExecutionManager()).isSameAs(hookExec);
         assertThat(context.getScheduledTaskManager()).isSameAs(scheduledTaskManager);
         assertThat(context.getCredentialStore()).isSameAs(credentialStore);
-        assertThat(context.getEnvironment()).isSameAs(environment);
+        assertThat(context.getUserLocale()).isSameAs(userLocale);
         assertThat(context.getCompactionEngine()).isSameAs(compactionEngine);
         assertThat(context.getCompactionGuard()).isSameAs(compactionGuard);
         assertThat(context.getPendingTurnRegistry()).isSameAs(pendingTurnRegistry);
@@ -99,7 +99,7 @@ class OrcaCommandProviderContextTest {
         assertThat(context.getHookExecutionManager()).isNull();
         assertThat(context.getScheduledTaskManager()).isNull();
         assertThat(context.getCredentialStore()).isNull();
-        assertThat(context.getEnvironment()).isNull();
+        assertThat(context.getUserLocale()).isNull();
         assertThat(context.getCompactionEngine()).isNull();
         assertThat(context.getCompactionGuard()).isNull();
         assertThat(context.getPendingTurnRegistry()).isNull();

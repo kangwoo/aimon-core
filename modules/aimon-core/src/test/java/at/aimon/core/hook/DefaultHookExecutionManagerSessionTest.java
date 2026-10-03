@@ -9,9 +9,9 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.event.OnSessionEndContext;
 import at.aimon.core.hook.event.OnSessionEndHook;
 import at.aimon.core.hook.event.OnSessionStartContext;
@@ -26,7 +26,7 @@ import at.aimon.core.hook.execution.HookResult;
  */
 class DefaultHookExecutionManagerSessionTest {
 
-    private static final Environment ENV = Environment.createDefault();
+    private static final UserLocale ENV = UserLocale.createDefault();
     private static final SessionId CID = SessionId.generate();
 
     @Test
@@ -39,7 +39,7 @@ class DefaultHookExecutionManagerSessionTest {
         when(registry.getHooks(HookEventType.ON_SESSION_START)).thenReturn(List.<OnSessionStartHook>of());
 
         final OnSessionStartContext ctx = OnSessionStartContext.builder().invokerType(InvokerType.MAIN_AGENT)
-                .invokerName("main").hookRegistry(registry).environment(ENV).sessionId(CID).build();
+                .invokerName("main").hookRegistry(registry).userLocale(ENV).sessionId(CID).build();
 
         final List<HookResult> results = manager.executeOnSessionStart(ctx);
         assertThat(results).hasSize(1);
@@ -56,7 +56,7 @@ class DefaultHookExecutionManagerSessionTest {
         when(registry.getHooks(HookEventType.ON_SESSION_END)).thenReturn(List.<OnSessionEndHook>of());
 
         final OnSessionEndContext ctx = OnSessionEndContext.builder().invokerType(InvokerType.MAIN_AGENT)
-                .invokerName("main").hookRegistry(registry).environment(ENV).sessionId(CID).clean(true).build();
+                .invokerName("main").hookRegistry(registry).userLocale(ENV).sessionId(CID).clean(true).build();
 
         final List<HookResult> results = manager.executeOnSessionEnd(ctx);
         assertThat(results).hasSize(1);

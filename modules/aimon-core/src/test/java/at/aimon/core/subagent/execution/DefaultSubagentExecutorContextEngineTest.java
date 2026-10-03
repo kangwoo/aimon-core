@@ -9,7 +9,6 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.AgentRuntimeId;
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.compact.CompactionDecision;
 import at.aimon.core.agent.compact.CompactionResult;
 import at.aimon.core.agent.context.ContextDecision;
@@ -20,6 +19,7 @@ import at.aimon.core.agent.interrupt.NoopCancellationSignal;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.llm.LlmCallMetadata;
@@ -55,7 +55,7 @@ class DefaultSubagentExecutorContextEngineTest {
         assertThat(seen.getCaller().getExecutionId()).hasValueSatisfying(
                 id -> assertThat(seen.getTranscriptBuffer().getSessionId().value()).isEqualTo(id.value()));
         assertThat(seen.getHookRegistry()).isPresent();
-        assertThat(seen.getEnvironment()).isPresent();
+        assertThat(seen.getUserLocale()).isPresent();
     }
 
     @Test
@@ -91,7 +91,7 @@ class DefaultSubagentExecutorContextEngineTest {
                 .subagent(Subagent.of("worker", SubagentMetadata.builder().description("d").maxIterations(5).build(),
                         SubagentContent.of("you are worker")))
                 .defaultModel(LlmModel.builder().name("gpt-4").build()).toolRegistry(new DefaultToolRegistry())
-                .hookRegistry(new DefaultHookRegistry()).environment(Environment.createDefault())
+                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault())
                 .parentCancellationSignal(NoopCancellationSignal.INSTANCE).build();
     }
 

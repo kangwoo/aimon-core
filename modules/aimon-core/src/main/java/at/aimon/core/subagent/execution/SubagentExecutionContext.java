@@ -5,12 +5,12 @@ import java.util.Objects;
 import java.util.Optional;
 
 import at.aimon.core.agent.AgentRuntimeId;
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.interrupt.NoopCancellationSignal;
 import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolContextEnricher;
 import at.aimon.core.agent.tool.ToolRegistry;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.ExecutionEnvironmentProvider;
 import at.aimon.core.hook.HookRegistry;
@@ -33,7 +33,7 @@ import at.aimon.core.subagent.Subagent;
  * <li>Subagent configuration and definition
  * <li>Tool handler for managing tool execution
  * <li>Hook handler for managing execution hooks
- * <li>Runtime environment information
+ * <li>User locale
  * <li>Default model configuration
  * </ul>
  *
@@ -52,7 +52,7 @@ import at.aimon.core.subagent.Subagent;
  * {
  *     &#64;code
  *     SubagentExecutionContext context = SubagentExecutionContext.builder().subagent(codeReviewer)
- *             .toolHandler(toolHandler).hookHandler(hookHandler).environment(Environment.createDefault()).build();
+ *             .toolHandler(toolHandler).hookHandler(hookHandler).userLocale(UserLocale.createDefault()).build();
  *
  *     SubagentExecutionRequest request = SubagentExecutionRequest.builder().taskId("task-001")
  *             .goal("Review authentication module").build();
@@ -74,7 +74,7 @@ public final class SubagentExecutionContext {
     private final String modelOverride;
     private final ToolRegistry toolRegistry;
     private final HookRegistry hookRegistry;
-    private final Environment environment;
+    private final UserLocale userLocale;
     private final CancellationSignal parentCancellationSignal;
     private final KnowledgeStore knowledgeStore;
     private final KnowledgeScope knowledgeScope;
@@ -90,7 +90,7 @@ public final class SubagentExecutionContext {
         this.modelOverride = builder.modelOverride;
         this.toolRegistry = Objects.requireNonNull(builder.toolRegistry, "Tool registry cannot be null");
         this.hookRegistry = Objects.requireNonNull(builder.hookRegistry, "Hook registry cannot be null");
-        this.environment = Objects.requireNonNull(builder.environment, "Environment cannot be null");
+        this.userLocale = Objects.requireNonNull(builder.userLocale, "UserLocale cannot be null");
         this.parentCancellationSignal = builder.parentCancellationSignal != null
                 ? builder.parentCancellationSignal
                 : NoopCancellationSignal.INSTANCE;
@@ -165,12 +165,12 @@ public final class SubagentExecutionContext {
     }
 
     /**
-     * Gets the runtime environment.
+     * Gets the user locale.
      *
-     * @return The environment (never null)
+     * @return The user locale (never null)
      */
-    public Environment getEnvironment() {
-        return environment;
+    public UserLocale getUserLocale() {
+        return userLocale;
     }
 
     /**
@@ -268,7 +268,7 @@ public final class SubagentExecutionContext {
         private String modelOverride;
         private ToolRegistry toolRegistry;
         private HookRegistry hookRegistry;
-        private Environment environment;
+        private UserLocale userLocale;
         private CancellationSignal parentCancellationSignal;
         private KnowledgeStore knowledgeStore;
         private KnowledgeScope knowledgeScope;
@@ -320,9 +320,9 @@ public final class SubagentExecutionContext {
             return this;
         }
 
-        /** environment를 설정한다. */
-        public Builder environment(Environment environment) {
-            this.environment = environment;
+        /** UserLocale 을 설정한다. */
+        public Builder userLocale(UserLocale userLocale) {
+            this.userLocale = userLocale;
             return this;
         }
 

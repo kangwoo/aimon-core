@@ -10,9 +10,9 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.context.ContextEngine;
 import at.aimon.core.agent.orca.OrcaProviderDependencies;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.CommandRegistry;
 import at.aimon.core.command.MutableCommandRegistry;
 import at.aimon.core.command.SystemCommand;
@@ -35,7 +35,7 @@ class OrcaSystemCommandProviderContextEngineTest {
     void registersCompactOverTheContextEngineWithoutABareEngineOrGuard() {
         final OrcaProviderDependencies deps = baseDeps().contextEngine(ContextEngine.passthrough())
                 .hookRegistry(mock(HookRegistry.class)).hookExecutionManager(mock(HookExecutionManager.class))
-                .environment(mock(Environment.class)).build();
+                .userLocale(mock(UserLocale.class)).build();
 
         provider.registerCommands(registry, context(deps));
 

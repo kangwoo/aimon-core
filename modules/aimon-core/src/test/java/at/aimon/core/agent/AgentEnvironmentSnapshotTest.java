@@ -10,27 +10,29 @@ import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import at.aimon.core.base.UserLocale;
+
 @DisplayName("AgentEnvironmentSnapshot Tests")
 class AgentEnvironmentSnapshotTest {
 
     private static AgentEnvironmentSnapshot.Builder validBuilder() {
         return AgentEnvironmentSnapshot.builder().workingDirectory("/workspace/project")
-                .currentDate(Instant.parse("2026-04-23T00:00:00Z")).environment(Environment.createDefault());
+                .currentDate(Instant.parse("2026-04-23T00:00:00Z")).userLocale(UserLocale.createDefault());
     }
 
     @Test
     @DisplayName("Builder produces instance with all fields populated")
     void build_withAllFields() {
         Instant now = Instant.parse("2026-04-23T12:34:56Z");
-        Environment env = Environment.createDefault();
+        UserLocale userLocale = UserLocale.createDefault();
         Map<String, String> extensions = Map.of("branch", "main", "user", "alice");
 
         AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder().workingDirectory("/wd").currentDate(now)
-                .environment(env).extensions(extensions).build();
+                .userLocale(userLocale).extensions(extensions).build();
 
         assertThat(snapshot.getWorkingDirectory()).isEqualTo("/wd");
         assertThat(snapshot.getCurrentDate()).isEqualTo(now);
-        assertThat(snapshot.getEnvironment()).isEqualTo(env);
+        assertThat(snapshot.getUserLocale()).isEqualTo(userLocale);
         assertThat(snapshot.getExtensions()).isEqualTo(extensions);
     }
 
@@ -46,7 +48,7 @@ class AgentEnvironmentSnapshotTest {
     @DisplayName("build() throws NPE when workingDirectory is missing")
     void build_missingWorkingDirectory_throwsNPE() {
         AgentEnvironmentSnapshot.Builder b = AgentEnvironmentSnapshot.builder().currentDate(Instant.now())
-                .environment(Environment.createDefault());
+                .userLocale(UserLocale.createDefault());
 
         assertThatThrownBy(b::build).isInstanceOf(NullPointerException.class).hasMessageContaining("workingDirectory");
     }
@@ -55,18 +57,18 @@ class AgentEnvironmentSnapshotTest {
     @DisplayName("build() throws NPE when currentDate is missing")
     void build_missingCurrentDate_throwsNPE() {
         AgentEnvironmentSnapshot.Builder b = AgentEnvironmentSnapshot.builder().workingDirectory("/wd")
-                .environment(Environment.createDefault());
+                .userLocale(UserLocale.createDefault());
 
         assertThatThrownBy(b::build).isInstanceOf(NullPointerException.class).hasMessageContaining("currentDate");
     }
 
     @Test
-    @DisplayName("build() throws NPE when environment is missing")
-    void build_missingEnvironment_throwsNPE() {
+    @DisplayName("build() throws NPE when userLocale is missing")
+    void build_missingUserLocale_throwsNPE() {
         AgentEnvironmentSnapshot.Builder b = AgentEnvironmentSnapshot.builder().workingDirectory("/wd")
                 .currentDate(Instant.now());
 
-        assertThatThrownBy(b::build).isInstanceOf(NullPointerException.class).hasMessageContaining("environment");
+        assertThatThrownBy(b::build).isInstanceOf(NullPointerException.class).hasMessageContaining("userLocale");
     }
 
     @Test
@@ -78,8 +80,8 @@ class AgentEnvironmentSnapshotTest {
                 .hasMessageContaining("workingDirectory");
         assertThatThrownBy(() -> b.currentDate(null)).isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("currentDate");
-        assertThatThrownBy(() -> b.environment(null)).isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("environment");
+        assertThatThrownBy(() -> b.userLocale(null)).isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("userLocale");
         assertThatThrownBy(() -> b.extensions(null)).isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("extensions");
     }
@@ -112,14 +114,14 @@ class AgentEnvironmentSnapshotTest {
     @DisplayName("equals and hashCode reflect all fields")
     void equalsAndHashCode() {
         Instant fixed = Instant.parse("2026-04-23T00:00:00Z");
-        Environment env = Environment.createDefault();
+        UserLocale userLocale = UserLocale.createDefault();
 
         AgentEnvironmentSnapshot a = AgentEnvironmentSnapshot.builder().workingDirectory("/wd").currentDate(fixed)
-                .environment(env).extensions(Map.of("x", "1")).build();
+                .userLocale(userLocale).extensions(Map.of("x", "1")).build();
         AgentEnvironmentSnapshot b = AgentEnvironmentSnapshot.builder().workingDirectory("/wd").currentDate(fixed)
-                .environment(env).extensions(Map.of("x", "1")).build();
+                .userLocale(userLocale).extensions(Map.of("x", "1")).build();
         AgentEnvironmentSnapshot c = AgentEnvironmentSnapshot.builder().workingDirectory("/other").currentDate(fixed)
-                .environment(env).extensions(Map.of("x", "1")).build();
+                .userLocale(userLocale).extensions(Map.of("x", "1")).build();
 
         assertThat(a).isEqualTo(b).hasSameHashCodeAs(b);
         assertThat(a).isNotEqualTo(c);
@@ -132,12 +134,11 @@ class AgentEnvironmentSnapshotTest {
     void toString_containsKeyData() {
         Instant fixed = Instant.parse("2026-04-23T00:00:00Z");
         AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder().workingDirectory("/wd")
-                .currentDate(fixed).environment(Environment.createDefault()).extensions(Map.of("branch", "main"))
-                .build();
+                .currentDate(fixed).userLocale(UserLocale.createDefault()).extensions(Map.of("branch", "main")).build();
 
         String s = snapshot.toString();
 
         assertThat(s).contains("workingDirectory").contains("/wd").contains("currentDate").contains(fixed.toString())
-                .contains("environment").contains("extensions").contains("branch").contains("main");
+                .contains("userLocale").contains("extensions").contains("branch").contains("main");
     }
 }

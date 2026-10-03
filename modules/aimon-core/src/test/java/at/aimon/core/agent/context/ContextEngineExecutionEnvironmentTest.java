@@ -9,7 +9,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.compact.CompactionDecision;
 import at.aimon.core.agent.compact.CompactionEngine;
@@ -23,6 +22,7 @@ import at.aimon.core.agent.compact.DefaultCompactionGuard;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.hook.DefaultHookExecutionManager;
@@ -91,7 +91,7 @@ class ContextEngineExecutionEnvironmentTest {
 
     private ContextRequest.Builder request(TranscriptBuffer buffer) {
         return ContextRequest.builder().transcriptBuffer(buffer).systemPrompt("system prompt").model(MODEL)
-                .hookRegistry(hookRegistry).environment(Environment.createDefault());
+                .hookRegistry(hookRegistry).userLocale(UserLocale.createDefault());
     }
 
     private static TranscriptBuffer conversation(SessionLogFormat format) {
@@ -189,11 +189,11 @@ class ContextEngineExecutionEnvironmentTest {
         final CompactionGuard positionalOnly = new CompactionGuard() {
             @Override
             public CompactionDecision maybeCompact(TranscriptBuffer memory, LlmModel model, HookRegistry registry,
-                    Environment environment) {
+                    UserLocale userLocale) {
                 return CompactionDecision.compact(
                         compactionEngine.compact(
                                 CompactionRequest.builder().transcriptBuffer(memory).trigger(CompactionTrigger.AUTO)
-                                        .model(model).hookRegistry(registry).environment(environment).build()),
+                                        .model(model).hookRegistry(registry).userLocale(userLocale).build()),
                         "positional guard", 0, 0);
             }
         };
@@ -212,12 +212,12 @@ class ContextEngineExecutionEnvironmentTest {
         final DefaultCompactionGuard guard = (DefaultCompactionGuard) engine(SessionLogFormat.V1).getCompactionGuard();
 
         guard.maybeCompact(CompactionGuardRequest.builder().transcriptBuffer(conversation(SessionLogFormat.V1))
-                .model(MODEL).hookRegistry(hookRegistry).environment(Environment.createDefault())
+                .model(MODEL).hookRegistry(hookRegistry).userLocale(UserLocale.createDefault())
                 .executionEnvironment(executionEnvironment).build());
         assertThat(pre.get().getExecutionEnvironment().orElseThrow()).isSameAs(executionEnvironment);
 
         pre.set(null);
-        guard.maybeCompact(conversation(SessionLogFormat.V1), MODEL, hookRegistry, Environment.createDefault());
+        guard.maybeCompact(conversation(SessionLogFormat.V1), MODEL, hookRegistry, UserLocale.createDefault());
         assertThat(pre.get().getExecutionEnvironment()).isEmpty();
     }
 

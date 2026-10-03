@@ -624,7 +624,7 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
             // and default model. The knowledge store/scope and tool-context enrichers are forwarded so subagent tools
             // run with the same context keys as the main-agent tools.
             final SubagentExecutionContext executionContext = SubagentExecutionContext.builder()
-                    .agentRuntimeId(env.getAgentRuntimeId()).subagent(subagent).environment(env.getEnvironment())
+                    .agentRuntimeId(env.getAgentRuntimeId()).subagent(subagent).userLocale(env.getUserLocale())
                     .toolRegistry(env.getToolRegistry()).hookRegistry(env.getHookRegistry())
                     .defaultModel(env.getDefaultModel()).modelOverride(env.getModelOverride().orElse(null))
                     .parentCancellationSignal(cancellationSignal).knowledgeStore(env.getKnowledgeStore().orElse(null))
@@ -778,7 +778,7 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
         }
         try {
             final SubagentStartContext ctx = SubagentStartContext.builder().invokerType(InvokerType.MAIN_AGENT)
-                    .invokerName(subagentName).hookRegistry(env.getHookRegistry()).environment(env.getEnvironment())
+                    .invokerName(subagentName).hookRegistry(env.getHookRegistry()).userLocale(env.getUserLocale())
                     .executionEnvironment(env.getExecutionEnvironment().orElse(null)).subagentName(subagentName)
                     .taskId(taskId).goal(goal).description(description)
                     .executionAttributes(env.getExecutionAttributes()).build();
@@ -796,7 +796,7 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
         }
         try {
             final SubagentStopContext ctx = SubagentStopContext.builder().invokerType(InvokerType.MAIN_AGENT)
-                    .invokerName(subagentName).hookRegistry(env.getHookRegistry()).environment(env.getEnvironment())
+                    .invokerName(subagentName).hookRegistry(env.getHookRegistry()).userLocale(env.getUserLocale())
                     .executionEnvironment(env.getExecutionEnvironment().orElse(null)).subagentName(subagentName)
                     .taskId(taskId).success(result.isSuccess())
                     .errorMessage(result.isSuccess() ? null : result.getErrorMessage())

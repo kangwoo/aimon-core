@@ -3,8 +3,8 @@ package at.aimon.core.agent.context;
 import java.util.Objects;
 import java.util.Optional;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmCallMetadata;
@@ -15,7 +15,7 @@ import at.aimon.core.llm.LlmModel;
  * decide how to shrink it.
  *
  * <p>
- * {@link #getHookRegistry()} and {@link #getEnvironment()} are optional because not every loop has them &mdash; the
+ * {@link #getHookRegistry()} and {@link #getUserLocale()} are optional because not every loop has them &mdash; the
  * skill loop runs on a scratch buffer with neither. An engine that compacts fires PreCompact / PostCompact hooks and so
  * needs both; {@link DefaultContextEngine} refuses a request without them, while {@link ContextEngine#passthrough()}
  * never reads them.
@@ -29,7 +29,7 @@ public final class ContextRequest {
     private final String systemPrompt;
     private final LlmModel model;
     private final HookRegistry hookRegistry;
-    private final Environment environment;
+    private final UserLocale userLocale;
     private final ExecutionEnvironment executionEnvironment;
     private final ContextCaller caller;
     private final boolean budgetForced;
@@ -40,7 +40,7 @@ public final class ContextRequest {
         this.systemPrompt = builder.systemPrompt != null ? builder.systemPrompt : transcriptBuffer.getSystemPrompt();
         this.model = Objects.requireNonNull(builder.model, "model cannot be null");
         this.hookRegistry = builder.hookRegistry;
-        this.environment = builder.environment;
+        this.userLocale = builder.userLocale;
         this.executionEnvironment = builder.executionEnvironment;
         this.caller = builder.caller != null ? builder.caller : ContextCaller.session();
         this.budgetForced = builder.budgetForced;
@@ -73,8 +73,8 @@ public final class ContextRequest {
         return Optional.ofNullable(hookRegistry);
     }
 
-    public Optional<Environment> getEnvironment() {
-        return Optional.ofNullable(environment);
+    public Optional<UserLocale> getUserLocale() {
+        return Optional.ofNullable(userLocale);
     }
 
     /**
@@ -112,7 +112,7 @@ public final class ContextRequest {
         private String systemPrompt;
         private LlmModel model;
         private HookRegistry hookRegistry;
-        private Environment environment;
+        private UserLocale userLocale;
         private ExecutionEnvironment executionEnvironment;
         private ContextCaller caller;
         private boolean budgetForced;
@@ -146,8 +146,8 @@ public final class ContextRequest {
             return this;
         }
 
-        public Builder environment(Environment environment) {
-            this.environment = environment;
+        public Builder userLocale(UserLocale userLocale) {
+            this.userLocale = userLocale;
             return this;
         }
 

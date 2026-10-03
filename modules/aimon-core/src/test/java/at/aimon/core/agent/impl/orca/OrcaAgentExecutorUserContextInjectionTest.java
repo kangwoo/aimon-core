@@ -17,7 +17,6 @@ import at.aimon.core.agent.AgentEnvironmentSnapshotProvider;
 import at.aimon.core.agent.AgentRuntime;
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.DefaultAgent;
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.store.SessionRecord;
@@ -30,6 +29,7 @@ import at.aimon.core.agent.session.transcript.SessionLogState;
 import at.aimon.core.agent.session.transcript.SessionTranscript;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.DefaultCommandExecutionManager;
 import at.aimon.core.command.DefaultCommandRegistry;
 import at.aimon.core.environment.TestExecutionEnvironments;
@@ -199,7 +199,7 @@ class OrcaAgentExecutorUserContextInjectionTest {
                 .subagentRegistry(new DefaultSubagentRegistry(fileSystem, ".aimon/agents"))
                 .skillRegistry(new DefaultSkillRegistry(fileSystem, ".aimon/skills")).controlFileSystem(fileSystem)
                 .executionEnvironmentProvider(TestExecutionEnvironments.provider(fileSystem))
-                .environment(Environment.createDefault()).build();
+                .userLocale(UserLocale.createDefault()).build();
     }
 
     private OrcaAgentExecutor createExecutor(LlmClient client, InMemorySessionRecordStore repo,
@@ -216,7 +216,7 @@ class OrcaAgentExecutorUserContextInjectionTest {
 
     private static AgentEnvironmentSnapshotProvider fixedProvider(String workingDirectory) {
         final AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder().workingDirectory(workingDirectory)
-                .currentDate(FIXED_INSTANT).environment(Environment.createDefault()).build();
+                .currentDate(FIXED_INSTANT).userLocale(UserLocale.createDefault()).build();
         return new AgentEnvironmentSnapshotProvider() {
             @Override
             public AgentEnvironmentSnapshot get(AgentRuntime context) {

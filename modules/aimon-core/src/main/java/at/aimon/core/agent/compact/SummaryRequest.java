@@ -4,9 +4,9 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmCallMetadata;
@@ -34,7 +34,7 @@ public final class SummaryRequest {
     private final CompactionTrigger trigger;
     private final LlmModel model;
     private final HookRegistry hookRegistry;
-    private final Environment environment;
+    private final UserLocale userLocale;
     private final ExecutionEnvironment executionEnvironment;
     private final String customInstructions;
     private final LlmCallMetadata callMetadata;
@@ -50,7 +50,7 @@ public final class SummaryRequest {
         this.trigger = Objects.requireNonNull(builder.trigger, "trigger cannot be null");
         this.model = Objects.requireNonNull(builder.model, "model cannot be null");
         this.hookRegistry = Objects.requireNonNull(builder.hookRegistry, "hookRegistry cannot be null");
-        this.environment = Objects.requireNonNull(builder.environment, "environment cannot be null");
+        this.userLocale = Objects.requireNonNull(builder.userLocale, "userLocale cannot be null");
         this.executionEnvironment = builder.executionEnvironment;
         this.customInstructions = builder.customInstructions;
         this.callMetadata = builder.callMetadata;
@@ -113,8 +113,8 @@ public final class SummaryRequest {
         return hookRegistry;
     }
 
-    public Environment getEnvironment() {
-        return environment;
+    public UserLocale getUserLocale() {
+        return userLocale;
     }
 
     /**
@@ -165,7 +165,7 @@ public final class SummaryRequest {
         private CompactionTrigger trigger;
         private LlmModel model;
         private HookRegistry hookRegistry;
-        private Environment environment;
+        private UserLocale userLocale;
         private ExecutionEnvironment executionEnvironment;
         private String customInstructions;
         private LlmCallMetadata callMetadata;
@@ -216,8 +216,8 @@ public final class SummaryRequest {
             return this;
         }
 
-        public Builder environment(Environment environment) {
-            this.environment = environment;
+        public Builder userLocale(UserLocale userLocale) {
+            this.userLocale = userLocale;
             return this;
         }
 

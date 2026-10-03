@@ -5,9 +5,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.execution.HookContext;
@@ -36,7 +36,7 @@ import at.aimon.core.llm.ToolUseResult;
  * {
  *     &#64;code
  *     PostToolContext context = PostToolContext.builder().invokerType(InvokerType.MAIN_AGENT)
- *             .invokerName("default-agent").environment(environment).toolUse(toolUse).toolResult(toolResult)
+ *             .invokerName("default-agent").userLocale(userLocale).toolUse(toolUse).toolResult(toolResult)
  *             .iterationCount(3).build();
  * }
  * </pre>
@@ -54,7 +54,7 @@ public final class PostToolContext implements HookContext {
     private final InvokerType invokerType;
     private final String invokerName;
     private final HookRegistry hookRegistry;
-    private final Environment environment;
+    private final UserLocale userLocale;
     private final ExecutionEnvironment executionEnvironment;
     private final ToolUse toolUse;
     private final ToolUseResult originalToolUseResult;
@@ -67,7 +67,7 @@ public final class PostToolContext implements HookContext {
         invokerType = Objects.requireNonNull(builder.invokerType, "Executor type cannot be null");
         invokerName = Objects.requireNonNull(builder.invokerName, "Executor name cannot be null");
         hookRegistry = Objects.requireNonNull(builder.hookRegistry, "Hook registry cannot be null");
-        environment = Objects.requireNonNull(builder.environment, "Environment cannot be null");
+        userLocale = Objects.requireNonNull(builder.userLocale, "UserLocale cannot be null");
         executionEnvironment = builder.executionEnvironment;
         toolUse = Objects.requireNonNull(builder.toolUse, "Tool use cannot be null");
         originalToolUseResult = Objects.requireNonNull(builder.toolUseResult, "Tool use result cannot be null");
@@ -95,8 +95,8 @@ public final class PostToolContext implements HookContext {
     }
 
     @Override
-    public Environment getEnvironment() {
-        return environment;
+    public UserLocale getUserLocale() {
+        return userLocale;
     }
 
     @Override
@@ -179,7 +179,7 @@ public final class PostToolContext implements HookContext {
      * Returns a copy of this context with the given current output applied.
      *
      * <p>
-     * The original tool use result, registry, environment and timestamp are preserved. Used by the hook executor to
+     * The original tool use result, registry, user locale and timestamp are preserved. Used by the hook executor to
      * thread an updated output to subsequent PostTool hooks.
      *
      * @param newOutput
@@ -194,7 +194,7 @@ public final class PostToolContext implements HookContext {
                 ? ToolUseResult.error(toolUse.getId(), newOutput.getContent())
                 : ToolUseResult.success(toolUse.getId(), newOutput.getContent());
         final Builder b = new Builder().executorType(invokerType).invokerName(invokerName).hookRegistry(hookRegistry)
-                .environment(environment).executionEnvironment(executionEnvironment).toolUse(toolUse)
+                .userLocale(userLocale).executionEnvironment(executionEnvironment).toolUse(toolUse)
                 .toolUseResult(originalToolUseResult).iterationCount(iterationCount).timestamp(timestamp)
                 .executionAttributes(executionAttributes);
         b.currentToolUseResult = rebuilt;
@@ -214,7 +214,7 @@ public final class PostToolContext implements HookContext {
         private InvokerType invokerType;
         private String invokerName;
         private HookRegistry hookRegistry;
-        private Environment environment;
+        private UserLocale userLocale;
         private ExecutionEnvironment executionEnvironment;
         private ToolUse toolUse;
         private ToolUseResult toolUseResult;
@@ -263,14 +263,14 @@ public final class PostToolContext implements HookContext {
         }
 
         /**
-         * Sets the environment.
+         * Sets the user locale.
          *
-         * @param environment
-         *            The environment (must not be null)
+         * @param userLocale
+         *            the user locale (must not be null)
          * @return This builder
          */
-        public Builder environment(Environment environment) {
-            this.environment = environment;
+        public Builder userLocale(UserLocale userLocale) {
+            this.userLocale = userLocale;
             return this;
         }
 

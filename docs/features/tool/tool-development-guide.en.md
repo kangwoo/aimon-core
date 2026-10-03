@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/tool/tool-development-guide.md
-source_commit: cb1b23b
+source_commit: 79d78a7
 ---
 
 # Tool Development Guide
@@ -390,7 +390,7 @@ VirtualFileSystem vfs = env.fileSystem();
 VirtualShell shell = env.shell();
 
 // check for presence
-if (context.containsKey("environment")) {
+if (context.containsKey("userLocale")) {
     // handle it
 }
 
@@ -403,7 +403,7 @@ Map<String, Object> all = context.getContext();
 | Key | Type | Description |
 |-----|------|-------------|
 | `executionEnvironment` (`ToolContextKeys.EXECUTION_ENVIRONMENT`) | `ExecutionEnvironment` | this execution's file system, shell and descriptor. **Write-once** — the executor puts it; an enricher may read it but not replace it (a second write throws `IllegalStateException`) |
-| `environment` | `Environment` | the environment configuration |
+| `userLocale` (`ToolContextKeys.USER_LOCALE`) | `UserLocale` | the user locale (time zone). The working directory and platform are not here; they are on the descriptor of `executionEnvironment` |
 | `executorType` | `InvokerType` | the kind of invoker (MAIN_AGENT, SUBAGENT …) |
 | `read_tool.file_stamps` (`ReadTool.FILE_STAMPS_KEY`) | `Map<String, FileStamp>` | stamps of the files read in this execution (recorded by ReadTool, checked by Edit/Write) |
 
@@ -429,7 +429,7 @@ ToolContext empty = ToolContext.empty();
 // the builder pattern
 ToolContext context = ToolContext.builder()
     .put(ToolContextKeys.EXECUTION_ENVIRONMENT, env)
-    .put("environment", env)
+    .put(ToolContextKeys.USER_LOCALE, UserLocale.createDefault())
     .put("executorType", InvokerType.MAIN_AGENT)
     .build();
 ```
@@ -705,7 +705,7 @@ The kind cannot be recovered from the spec string. The `AllowedTool` parser only
 
 There are two matchers because one cannot do both jobs. `ToolPattern` rejects a candidate containing shell metacharacters (`;` `|` `&` `` ` `` `$` `>` `<` `(` `)`), which is the right defence for a string headed to `bash -c` but, applied to paths, would put an ordinary file like `report(1).csv` permanently out of reach.
 
-A `PATH` subject must be **absolute and lexically normalised**. File tools resolve a relative path against the `Environment`'s working directory and fold `..` before handing it out, so `/tmp/../etc/passwd` does not pass `Read(/tmp/**)`. Symbolic links are not resolved, though — a permission pattern narrows **what the agent may ask for**, and isolation is the sandbox's job.
+A `PATH` subject must be **absolute and lexically normalised**. File tools resolve a relative path against the working directory named by the descriptor of that execution's `ExecutionEnvironment` and fold `..` before handing it out, so `/tmp/../etc/passwd` does not pass `Read(/tmp/**)`. Symbolic links are not resolved, though — a permission pattern narrows **what the agent may ask for**, and isolation is the sandbox's job.
 
 ### CustomToolPermissionAware — when one value is not enough
 

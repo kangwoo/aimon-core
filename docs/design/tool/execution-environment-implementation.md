@@ -11,6 +11,11 @@
 > [`../../backlog/execution-environment-open-items.md`](../../backlog/execution-environment-open-items.md), which is
 > the canonical open/closed list. Each item there names the `Q` number or §10 entry it came from.
 
+> **Note (2026-10-03, EE-14).** The `Environment` this document names no longer exists: its one remaining field moved to
+> `at.aimon.core.base.UserLocale`, and `getEnvironment()` / `ENVIRONMENT_KEY` became `getUserLocale()` /
+> `USER_LOCALE`. The body is left as approved; the mapping is in
+> [`../../migration/rename-maps.md`](../../migration/rename-maps.md).
+
 Spec: `docs/design/tool/execution-environment.md` (580 lines, Status PROPOSED). The spec decides the behaviour; this
 document decides **where in this codebase** each piece goes, in what order, and how each stage is tested. Section
 references like "§5.1" point at the spec. Wherever this plan goes further than the spec (the spec is silent, or the

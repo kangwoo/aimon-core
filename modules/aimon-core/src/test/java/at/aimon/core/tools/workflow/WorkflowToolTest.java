@@ -18,11 +18,11 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.AgentRuntimeId;
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.subagent.DefaultSubagentExecutionManager;
@@ -71,7 +71,7 @@ class WorkflowToolTest {
         final DefaultSubagentExecutionManager manager = new DefaultSubagentExecutionManager(reactExecutor, bgPool, null,
                 behaviors);
         tool = new WorkflowTool(LlmModel.builder().name("gpt-4").build(), new InMemorySubagentRegistry(),
-                new DefaultToolRegistry(), new DefaultHookRegistry(), Environment.createDefault(), manager, List.of());
+                new DefaultToolRegistry(), new DefaultHookRegistry(), UserLocale.createDefault(), manager, List.of());
     }
 
     @AfterEach

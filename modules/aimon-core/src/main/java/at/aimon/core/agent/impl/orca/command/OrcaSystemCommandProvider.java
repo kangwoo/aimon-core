@@ -5,10 +5,10 @@ import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import at.aimon.core.agent.Environment;
 import at.aimon.core.agent.compact.CompactionEngine;
 import at.aimon.core.agent.compact.CompactionGuard;
 import at.aimon.core.agent.context.ContextEngine;
+import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.CommandRegistry;
 import at.aimon.core.command.MutableCommandRegistry;
 import at.aimon.core.command.system.AgentListCommand;
@@ -143,24 +143,24 @@ public class OrcaSystemCommandProvider implements OrcaCommandProvider {
     private void registerCompactCommand(MutableCommandRegistry registry, OrcaCommandProviderContext context) {
         final ContextEngine contextEngine = context.getContextEngine();
         if (contextEngine != null && context.getHookRegistry() != null && context.getHookExecutionManager() != null
-                && context.getEnvironment() != null) {
+                && context.getUserLocale() != null) {
             // The engine owns /compact: the summary, the transcript change and the circuit-breaker reset.
             registry.registerSystemCommand(new CompactCommand(contextEngine, context.getHookRegistry(),
-                    context.getHookExecutionManager(), context.getEnvironment()));
+                    context.getHookExecutionManager(), context.getUserLocale()));
             return;
         }
         final CompactionEngine engine = context.getCompactionEngine();
         final CompactionGuard guard = context.getCompactionGuard();
         final HookRegistry hooks = context.getHookRegistry();
         final HookExecutionManager hookExecutionManager = context.getHookExecutionManager();
-        final Environment env = context.getEnvironment();
-        if (engine == null || guard == null || hooks == null || hookExecutionManager == null || env == null) {
+        final UserLocale userLocale = context.getUserLocale();
+        if (engine == null || guard == null || hooks == null || hookExecutionManager == null || userLocale == null) {
             log.debug(
                     "Skipping /compact command registration: compaction collaborators not configured "
-                            + "(engine={}, guard={}, hookRegistry={}, hookExecutionManager={}, environment={})",
-                    engine != null, guard != null, hooks != null, hookExecutionManager != null, env != null);
+                            + "(engine={}, guard={}, hookRegistry={}, hookExecutionManager={}, userLocale={})",
+                    engine != null, guard != null, hooks != null, hookExecutionManager != null, userLocale != null);
             return;
         }
-        registry.registerSystemCommand(new CompactCommand(engine, guard, hooks, hookExecutionManager, env));
+        registry.registerSystemCommand(new CompactCommand(engine, guard, hooks, hookExecutionManager, userLocale));
     }
 }
