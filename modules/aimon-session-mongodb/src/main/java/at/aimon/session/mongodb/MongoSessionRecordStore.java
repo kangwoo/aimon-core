@@ -130,7 +130,10 @@ public final class MongoSessionRecordStore implements SessionRecordStore {
         // Names the transcript and nothing else. Everything the snapshot cannot carry — the binding, the counter, the
         // totals, the override — is simply not in the update, so it survives by not being mentioned rather than by
         // being read and written back.
-        final Document set = new Document(DocumentKeys.F_TRANSCRIPT, SessionRecordCodec.encodeTranscript(snapshot))
+        // $literal: upsert writes through a pipeline $set (for $$NOW), which evaluates its values. The encoded
+        // transcript is JSON and cannot begin with "$" today; the wrapper keeps that from being load-bearing.
+        final Document set = new Document(DocumentKeys.F_TRANSCRIPT,
+                new Document("$literal", SessionRecordCodec.encodeTranscript(snapshot)))
                 .append(DocumentKeys.F_UPDATED_AT, "$$NOW");
         upsert(id, set, "mergeFromSnapshot");
     }
@@ -141,9 +144,11 @@ public final class MongoSessionRecordStore implements SessionRecordStore {
         final Document set = new Document(DocumentKeys.F_UPDATED_AT, "$$NOW");
         if (agentRef != null) {
             // $ifNull, not a plain assignment: an existing binding wins. A node that wanted a different agent finds
-            // that out from the returned record and refuses, instead of having already stolen the session.
-            set.append(DocumentKeys.F_AGENT_REF,
-                    new Document("$ifNull", List.of("$" + DocumentKeys.F_AGENT_REF, agentRef)));
+            // that out from the returned record and refuses, instead of having already stolen the session. The
+            // fallback is $literal because it sits inside an expression: an agentRef beginning with "$" would
+            // otherwise be read as a field path.
+            set.append(DocumentKeys.F_AGENT_REF, new Document("$ifNull",
+                    List.of("$" + DocumentKeys.F_AGENT_REF, new Document("$literal", agentRef))));
         }
         final Document after = provisionOnce(sessionId, set);
         return after == null ? StoredSessionRecord.empty(sessionId, agentRef) : toRecord(sessionId, after);

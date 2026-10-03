@@ -33,7 +33,9 @@ public final class MongoTestSupport {
 
     static {
         // MongoDBContainer auto-runs `rs.initiate()` on startup, giving Change Streams what they need.
-        MONGO = new MongoDBContainer("mongo:7.0").withStartupTimeout(java.time.Duration.ofMinutes(2));
+        // 6.0 rather than a newer server on purpose: 7.0 accepts an empty subdocument in a pipeline $set where 6.0
+        // rejects it, so a 7.0-only suite hid an inbox delivery bug that broke on 6.0 deployments.
+        MONGO = new MongoDBContainer("mongo:6.0").withStartupTimeout(java.time.Duration.ofMinutes(2));
         MONGO.start();
         SHARED_CLIENT = MongoClients.create(MONGO.getReplicaSetUrl(DATABASE_NAME));
     }

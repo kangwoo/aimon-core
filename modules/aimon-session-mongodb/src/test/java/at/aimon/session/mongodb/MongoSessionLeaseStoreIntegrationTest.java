@@ -107,6 +107,22 @@ class MongoSessionLeaseStoreIntegrationTest {
     }
 
     @Test
+    @DisplayName("a holderId beginning with $ is stored as given on the steal path, so extend and release find it")
+    void dollarPrefixedHolderIdSurvivesTheStealPath() {
+        final SessionId id = SessionId.of("c-lock-dollar");
+        // Release expires the record in place, so the next tryAcquire takes the steal step (the pipeline update)
+        // rather than the cold-start insert.
+        lock.release(lock.tryAcquire(id, "node-A", Duration.ofSeconds(10)).orElseThrow());
+
+        final SessionLease stolen = lock.tryAcquire(id, "$_id", Duration.ofSeconds(10)).orElseThrow();
+
+        assertThat(lock.findHolder(id)).hasValueSatisfying(h -> assertThat(h.getHolderId()).isEqualTo("$_id"));
+        assertThat(lock.extend(stolen, Duration.ofSeconds(10))).isTrue();
+        lock.release(stolen);
+        assertThat(lock.tryAcquire(id, "node-B", Duration.ofSeconds(10))).isPresent();
+    }
+
+    @Test
     @DisplayName("tryAcquire succeeds for a fresh conversation and is rejected for the same id")
     void tryAcquireBlocksConcurrentHolder() {
         final SessionId id = SessionId.of("c-lock-1");

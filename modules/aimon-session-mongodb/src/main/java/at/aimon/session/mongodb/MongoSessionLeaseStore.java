@@ -113,15 +113,17 @@ public final class MongoSessionLeaseStore implements SessionLeaseStore {
 
         // Step 1 — steal-or-renew an existing document whose lease has already expired. No upsert, so $expr is allowed
         // here and time evaluation runs server-side against $$NOW. Update pipeline $set bumps fencingToken via $add +
-        // $ifNull, sets the new holder, and stamps acquiredAt / leaseExpiresAt in cluster time.
+        // $ifNull, sets the new holder, and stamps acquiredAt / leaseExpiresAt in cluster time. The holder is
+        // $literal because a pipeline $set evaluates its values: a holderId beginning with "$" would otherwise be read
+        // as a field path, and extend/release, which match on the holderId they were given, would never find it.
         final Document stealFilter = new Document(DocumentKeys.F_ID, id.value()).append("$expr",
                 new Document("$lte", List.of("$" + DocumentKeys.F_LEASE_EXPIRES_AT, "$$NOW")));
-        final Document setStage = new Document("$set", new Document(DocumentKeys.F_HOLDER_ID, holderId)
-                .append(DocumentKeys.F_FENCING_TOKEN,
-                        new Document("$add",
+        final Document setStage = new Document("$set",
+                new Document(DocumentKeys.F_HOLDER_ID, new Document("$literal", holderId))
+                        .append(DocumentKeys.F_FENCING_TOKEN, new Document("$add",
                                 List.of(new Document("$ifNull", List.of("$" + DocumentKeys.F_FENCING_TOKEN, 0L)), 1L)))
-                .append(DocumentKeys.F_ACQUIRED_AT, "$$NOW")
-                .append(DocumentKeys.F_LEASE_EXPIRES_AT, new Document("$add", List.of("$$NOW", lease.toMillis()))));
+                        .append(DocumentKeys.F_ACQUIRED_AT, "$$NOW").append(DocumentKeys.F_LEASE_EXPIRES_AT,
+                                new Document("$add", List.of("$$NOW", lease.toMillis()))));
 
         final Document stolen;
         try {
