@@ -1,8 +1,11 @@
 package at.aimon.core.config.hook;
 
+import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -31,14 +34,21 @@ import org.slf4j.LoggerFactory;
  * Loading policy:
  * <ul>
  * <li><b>Missing files</b> &mdash; silently skipped (DEBUG log). The corresponding source is left absent in the
- * resulting {@link LayeredHookConfig}.
- * <li><b>Non-regular files</b> (e.g. a directory at the expected path) &mdash; skipped with a WARN log.
- * <li><b>I/O errors</b> (permission denied, transient FS errors) &mdash; skipped with a WARN log; the source is
- * treated as absent. This is intentional fail-soft behaviour so a misconfigured filesystem does not block agent
- * startup; operators must scan WARN logs to detect such cases.
- * <li><b>Parse failures</b> (malformed JSON, unknown handler {@code type}) &mdash; raise
- * {@link HookConfigParseException}. The caller is expected to surface this to the user at startup so the bad
- * file can be fixed.
+ * resulting {@link LayeredHookConfig}. A path one of whose components is a regular file (e.g. {@code ~/.aimon} is a
+ * file) cannot hold the file either: skipped too, with a WARN naming that component.
+ * <li><b>Empty files</b> &mdash; a file that is empty, whitespace only or {@code null} is an empty document: the layer
+ * is present and declares no hooks.
+ * <li><b>Parse failures</b> (malformed JSON, unknown handler {@code type}, a non-positive timeout) &mdash; raise
+ * {@link HookConfigParseException}, whose message names the file, its layer and the parser's detail (line and
+ * column for malformed JSON).
+ * <li><b>Files that are there but cannot be read</b> &mdash; a non-regular file (e.g. a directory at the expected
+ * path), an I/O error (permission denied, transient FS errors), or a path whose existence cannot be determined
+ * (an unsearchable parent directory; the message carries the underlying exception class and message) &mdash; raise
+ * {@link HookConfigParseException} as well. Treating such a layer
+ * as absent would take every guard it declares off without a word, which is the failure a parse error is.
+ * <li><b>What the caller does with the exception</b> &mdash; at startup it stops the host
+ * ({@link HookRegistryReloader#bootstrap()} propagates it); on a hot reload the previous config stays in force
+ * ({@link HookRegistryReloader#reload}).
  * <li><b>A {@code failOpen} that is not a JSON boolean</b> &mdash; not a parse failure. The handler is kept with
  * {@code failOpen} read as {@code false}, so its guard stays closed, and a WARN names the file, the event and the
  * handler. Failing the parse would drop every handler in the file, i.e. take all its guards off (EE-51).
@@ -126,12 +136,13 @@ public final class HookConfigLoader {
     }
 
     /**
-     * Loads the three layered files and returns the result. Missing files, non-regular files, and unreadable files
-     * contribute an absent entry (see class-level Javadoc for the full policy).
+     * Loads the three layered files and returns the result. Only a missing file contributes an absent entry (see
+     * class-level Javadoc for the full policy).
      *
      * @return layered config (never null)
      * @throws HookConfigParseException
-     *             when any present and readable file fails to parse
+     *             when any file that is present fails to parse or cannot be read; the message names the file and its
+     *             layer
      */
     public LayeredHookConfig load() {
         final LayeredHookConfig.Builder b = LayeredHookConfig.builder();
@@ -145,23 +156,54 @@ public final class HookConfigLoader {
     }
 
     private Optional<HookConfigDocument> loadOptional(Path path, HookConfigSource source) {
-        if (!Files.exists(path)) {
+        final BasicFileAttributes attributes;
+        try {
+            attributes = Files.readAttributes(path, BasicFileAttributes.class);
+        } catch (NoSuchFileException e) {
             log.debug("hooks config not present for {} at {}", source, path);
             return Optional.empty();
+        } catch (IOException e) {
+            // A path component that is a regular file (~/.aimon is a file) means the config directory, and so the
+            // file, cannot exist: a definite absence, not a guard that cannot judge. Anything else (an unsearchable
+            // directory, an I/O error) leaves existence unknown, and an unknown layer must not read as "no hooks".
+            final Optional<Path> fileAncestor = regularFileAncestor(path);
+            if (fileAncestor.isPresent()) {
+                log.warn("hooks config not present for {} at {}: {} is a file, not a directory", source,
+                        path.toAbsolutePath(), fileAncestor.get().toAbsolutePath());
+                return Optional.empty();
+            }
+            throw new HookConfigParseException(
+                    fileLabel(path, source) + " could not be read: cannot determine whether the file exists ("
+                            + e.getClass().getName() + ": " + e.getMessage() + ")",
+                    e);
         }
-        if (!Files.isRegularFile(path)) {
-            log.warn("hooks config path for {} exists but is not a regular file: {}", source, path);
-            return Optional.empty();
+        if (!attributes.isRegularFile()) {
+            throw new HookConfigParseException(fileLabel(path, source) + " could not be read: not a regular file");
         }
         try {
             final HookConfigDocument doc = parser.parseFile(path);
             log.debug("loaded hooks config from {}: {}", path, doc);
             warnRejectedFailOpen(path, doc);
             return Optional.of(doc);
+        } catch (HookConfigParseException e) {
+            throw new HookConfigParseException(fileLabel(path, source) + " is invalid: " + e.getMessage(), e);
         } catch (UncheckedIOException e) {
-            log.warn("hooks config at {} could not be read: {}", path, e.getMessage());
-            return Optional.empty();
+            throw new HookConfigParseException(fileLabel(path, source) + " could not be read: " + e.getCause(), e);
         }
+    }
+
+    /** The nearest proper ancestor of {@code path} that is a regular file, if any. */
+    private static Optional<Path> regularFileAncestor(Path path) {
+        for (Path p = path.toAbsolutePath().getParent(); p != null; p = p.getParent()) {
+            if (Files.isRegularFile(p)) {
+                return Optional.of(p);
+            }
+        }
+        return Optional.empty();
+    }
+
+    private static String fileLabel(Path path, HookConfigSource source) {
+        return "hooks config " + path.toAbsolutePath() + " (" + source + " layer)";
     }
 
     private static void warnRejectedFailOpen(Path path, HookConfigDocument doc) {

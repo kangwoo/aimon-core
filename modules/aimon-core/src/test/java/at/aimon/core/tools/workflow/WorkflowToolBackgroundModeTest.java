@@ -146,6 +146,20 @@ class WorkflowToolBackgroundModeTest {
     }
 
     @Test
+    @DisplayName("a skill whose only hook is on onStart refuses background mode too (EE-70)")
+    void onStartOnlySkillRefusesBackgroundMode() {
+        final RecordingRunner runner = new RecordingRunner();
+        final SkillScopedHookRegistry view = new SkillScopedHookRegistry(new DefaultHookRegistry(), "gate",
+                SkillHookSet.builder().addOnStart(ctx -> HookResult.success()).build());
+
+        final ToolResult result = runInBackground(runner, insideSkill(view));
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).contains("skill 'gate'").contains("guard hooks").contains("foreground");
+        assertThat(runner.recordedRunId).as("no run was submitted").isNull();
+    }
+
+    @Test
     @DisplayName("a guard on an outer skill refuses background mode from inside a nested skill that only observes")
     void outerSkillGuardRefusesBackgroundMode() {
         final RecordingRunner runner = new RecordingRunner();

@@ -1,4 +1,4 @@
-# 실행 환경 — 등록 항목 71건 (열림 51 · 닫힘 20)
+# 실행 환경 — 등록 항목 75건 (열림 53 · 닫힘 22)
 
 출처는 `ExecutionEnvironment` 구현 작업이다. 설계는 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md)
 이고, 구현 계획(승인본)과 구현이 그 계획에서 벗어난 점은
@@ -50,6 +50,11 @@ EE-51 은 그 변경 직전에 메인테이너가 방향(fail-closed)을 정한 
 이 변경 밖으로 결과가 번지는 것을 옮긴 것이고, 외부 저장소에 미치는 영향은 EE-1 과 EE-59 에 더했다. EE-70 · EE-71 은 같은
 변경의 PR(#207) 리뷰가 짚은 것 가운데 사람의 결정이 필요해 고치지 않은 둘이다 — 포크의 `onStart` 결과를 따를지(EE-70), 시작
 시 `hooks.json` 파싱 실패로 시작을 멈출지(EE-71). 같은 리뷰의 나머지 지적은 그 PR 에서 고쳤고 설계 노트 §10.7 에 있다.
+그 둘은 2026-10-04 에 메인테이너가 **막는 쪽**으로 정했고 같은 날 한 변경에서 닫았다 — EE-51 처럼 결정과 닫힘이 한 변경
+안에 있어 "결정됨이되 열림" 구간을 지나지 않았다. 그 변경의 설계와 구현이 설계에서 벗어난 점은
+[`../design/tool/execution-environment-ee70-ee71-fail-closed.md`](../design/tool/execution-environment-ee70-ee71-fail-closed.md)
+에 있다. EE-72~EE-75 는 그 설계의 열린 질문(Q2 → EE-72, Q4 → EE-73, Q3 → EE-74, Q5 · Q6 → EE-75) 가운데 이 변경 밖으로
+결과가 번지는 것을 옮긴 것이고, 외부 저장소에 미치는 영향은 EE-1 과 EE-59 에 더했다.
 
 ---
 
@@ -82,6 +87,13 @@ aimon-browser 와 aimon-memory 는 쓰지 않는다. aimon-ops(`22576b7a` 2026-0
 (3) `ShellActionExecutor` 를 구현했다면 `ShellHookOutcome.notObserved()` 가 없어졌으므로 `notRun(cause, detail)` 로 원인을
 싣는다. (4) `BackgroundBashManager.start` · `find` · `kill` 을 직접 부르거나 `BackgroundBashStore` 를 구현했다면 EE-59 의
 덧붙임을 볼 것. **이 목록은 추론이다** — 구현할 때 두 저장소의 체크아웃을 보지 않았고 코어의 SPI 에서 끌어냈다(규칙 둘).
+
+**EE-70 · EE-71 도 같은 릴리스에 실린다** *(2026-10-04 추가)*. 시그니처는 바뀌지 않았고 따라올 것은 동작 둘이다. (1)
+`HookHotReloadBootstrap.start()` 나 `HookRegistryReloader.bootstrap()` 을 부르는 호스트는 깨졌거나 읽을 수 없는 `hooks.json`
+에서 **`HookConfigParseException` 을 받는다** — 전에는 WARN 후 파일 훅 없이 떴다. `bootstrap()` 의 `false` 나
+`isBootstrapSucceeded()` 를 검사하던 코드는 죽은 분기가 된다(EE-75). (2) 외부 도구가 스폰한 포크도 `onStart` 훅이 막으면
+시작하지 않고 실패 결과로 돌아온다 — 실패한 포크를 이미 다루고 있다면 할 일이 없다. 커스텀 `SubagentExecutor` 는 영향이
+없다(코어의 `DefaultSubagentExecutor` 만 바뀌었다). 이 덧붙임도 추론이다.
 
 **어디.** 두 외부 저장소. 코어 쪽 SPI 는 `modules/aimon-core/src/main/java/at/aimon/core/agent/orca/tool/OrcaToolProviderContext.java`.
 
@@ -1547,8 +1559,11 @@ block 을 버린다(메인 실행의 `OrcaAgentExecutor` 는 따른다). 그래�
 명령을 돌리지 못한 것도. 포크의 동작은 바꾸지 않았고(→ EE-70) 문서를 사실대로 고쳤으며, `onStart` 를 `SkillHookSet`
 의 가드 이벤트에서 빼 `onStart` 만 있는 스킬이 백그라운드 워크플로를 거절하게 하지 않는다.
 
+*(2026-10-04, EE-70 이 닫힌 뒤 정정.)* 위 문단은 이제 이력이다. 포크도 `onStart` 의 block 을 따르고(그 포크가 시작하지
+않는다), `onStart` 는 다시 `SkillHookSet` 의 가드 이벤트다. "네 이벤트" 가 포크 안에서도 넷이다.
+
 남긴 것: 훅 실행기 수준 timeout 의 `FAIL_OPEN`(→ EE-64), `http` · `mcp` 액션(→ EE-65), exit 126/127(→ EE-66), 포크의 `onStart`
-(→ EE-70), 시작 시 `hooks.json` 파싱 실패(→ EE-71). 샌드박스에서는 일시적 사용 불가가 "가드 걸린 도구가 전부 막힘" 으로
+(→ EE-70, 닫힘), 시작 시 `hooks.json` 파싱 실패(→ EE-71, 닫힘). 샌드박스에서는 일시적 사용 불가가 "가드 걸린 도구가 전부 막힘" 으로
 보인다(→ EE-59).
 
 테스트: `ShellHookOutcomeTest`, `ShellActionRunnerTest`(신규) · `DefaultShellActionExecutorTest` · `HostShellActionExecutorTest` ·
@@ -1766,6 +1781,11 @@ PR #205 의 리뷰 뒤로 유예가 끝났을 때 살아 있는 핸들은 부모
 로 보인다는 뜻이다 — 관찰 용도의 훅이라면 `failOpen: true` 를 권하는 문장이 그쪽 가이드에 있어야 한다. 이 덧붙임도 아래와
 같이 추론이다.
 
+**EE-70 이 더한 것** *(2026-10-04 추가)*. 같은 문장이 `onStart` 에도 선다: 포크의 환경 제공자가 실패한 실행에서 스킬
+frontmatter 의 `onStart` 셸 가드는 **그 포크를 시작하지 않는다**(전에는 포크가 그대로 돌았다). 샌드박스가 일시적으로 사용
+불가인 동안 `onStart` 가드가 있는 스킬은 전부 `Skill fork failed … OnStart …` 로 끝난다. `hooks.json` 의 `onStart` 는 호스트
+셸에서 돌므로 샌드박스의 가용성과 무관하다. 추론이다.
+
 **이 항목은 추론이다.** 구현할 때 aimon-sandbox 의 체크아웃이 없었다. 위 목록은 코어의 SPI 에서 끌어낸 것이고 그쪽 소스로
 확인한 것이 아니다(규칙 둘). `factory` 를 없앤 결정(설계 Q1)도 그쪽이 그것을 쓰는지 모르는 채 내렸다 — 쓴다면 0.x 정책상
 허용되는 깨짐이지만, 릴리스 전에 확인할 값이다.
@@ -1840,8 +1860,8 @@ Javadoc). 예제를 그대로 옮긴 사용자는 빌드는 되지만 셸 · 파
 
 **왜.** 백그라운드 모드는 호출 컨텍스트에서 아무 것도 물려받지 않는다. 에이전트 범위 러너의 `runInBackground(script,
 runId)` 를 부르고, 그 러너의 기반 환경은 런타임을 조립할 때 **런타임 레지스트리로 한 번** 만들어진다. EE-49 가 스킬 훅을
-런타임 레지스트리에서 뺐으므로 그 서브에이전트들은 스킬 훅을 볼 길이 없다. 그래서 지금은 (1) 가드 훅(`preTool` ·
-`preCompact` · `permissionRequest` — 포크에서 막지 못하는 `onStart` 는 빼고, EE-70)이 활성이면 background 모드를 **거절**하고 — 훅을 선언한 FORK 스킬 안에서
+런타임 레지스트리에서 뺐으므로 그 서브에이전트들은 스킬 훅을 볼 길이 없다. 그래서 지금은 (1) 가드 훅(`onStart` · `preTool` ·
+`preCompact` · `permissionRequest` — `onStart` 는 EE-70 이 닫히며 되돌아왔다)이 활성이면 background 모드를 **거절**하고 — 훅을 선언한 FORK 스킬 안에서
 백그라운드 워크플로를 쓰던 사용자에게는 기능 축소다 — (2) 관찰 전용 훅만 있으면 실행하되 그 하위 트리에서 발화하지
 않는다(WARN). 뷰를 실어 보내는 것이 한 줄로 안 끝나는 이유는 셋이다: 러너 SPI 에 호출별 환경을 받는 자리가 없고,
 `RunId` 가 요청 내용에서 나와 같은 요청이 진행 중이면 **다른 호출자의 실행에 합류**하므로 "누구의 스킬 훅" 인지 정할 수
@@ -1873,6 +1893,11 @@ runId)` 를 부르고, 그 러너의 기반 환경은 런타임을 조립할 때
 동작은 그쪽 구현에 달렸다. 정책 기본값을 `FAIL_CLOSED` 로 바꾸면 프로그램으로 등록한 모든 훅의 동작이 바뀌므로 EE-51 의
 범위 밖에 뒀다. **이 경로를 재현해 보지는 않았다** — 정책 기본값과 grace 는 설계 리뷰가 소스로 확인했고, "통과한다" 는 그
 둘에서 끌어낸 것이다(규칙 셋).
+
+**`onStart` 에도 같은 틈이 있다** *(2026-10-04 추가, EE-70)*. `onStart` 의 정책은 `continueOnExceptionAndNeverStop` 이라
+프로그램으로 등록한 `OnStartHook` 이 **던지거나** 실행기 수준 timeout 이 터지면 성공으로 읽힌다 — 메인 턴도 포크도 그대로
+시작한다. 선언 셸 훅은 닿지 않는다(던지는 실행기를 훅이 `EXECUTION_FAILED` 로 읽는다). EE-70 은 이 정책을 건드리지 않았다.
+정책을 소스로 읽은 것이고 재현하지는 않았다(규칙 셋).
 
 **어디.** `modules/aimon-core/src/main/java/at/aimon/core/hook/execution/HookExecutionPolicy.java`,
 `hook/DefaultHookExecutionManager.java` 의 기본 정책(2026-10-04).
@@ -1978,7 +2003,7 @@ WARN 후 성공("degrading to success")이고 `McpToolAction` 도 같다. 정책
 
 출처: [`../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md`](../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md) 의 설계 리뷰 2(§10.3).
 
-## EE-70 — 포크는 `onStart` 의 block 을 버린다 · **열림**
+## EE-70 — 포크는 `onStart` 의 block 을 버린다 · **닫힘** *(2026-10-04)*
 
 **무엇을.** 포크(스킬 포크 · `Task` · 워크플로 서브에이전트)에서 `onStart` 훅이 block 을 내면 그 포크를 멈출지 정한다 —
 멈추게 하든지, advisory 로 남기고 그것을 계약으로 확정하든지.
@@ -2000,7 +2025,43 @@ advisory 피드백만 대화에 붙는다. 메인 실행(`OrcaAgentExecutor`)은
 
 출처: PR #207 리뷰 S3 ([`../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md`](../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md) §10.7).
 
-## EE-71 — 시작 때 `hooks.json` 파싱이 실패하면 파일 가드가 하나도 없다 · **열림**
+### 닫힘 (2026-10-04)
+
+결정(메인테이너, 2026-10-04): **막는다.** EE-51 의 "판단하지 못한 가드는 막아야 가드다" 를 포크의 `onStart` 까지 잇는다.
+
+- **포크는 시작하지 않는다.** `DefaultSubagentExecutor.checkOnStartHooks`(옛 `fireOnStart`)가 메인 실행의 같은 이름 메서드와
+  같은 모양이 되었다 — block 이 있으면 `ExecutionBlockedByHookException(SUBAGENT, <이름>, "OnStart", 사유)` 를 던지고,
+  `runReActLoop` 의 전용 catch 가 그것을 결과로 바꾼다. LLM 호출도 도구도 없다.
+- **부모가 받는 것.** `SubagentExecutionResult.failure` — `CompletionReason.ERROR`, iteration 0, 토큰 0, 메시지
+  `Execution blocked by OnStart hook [SUBAGENT/<이름>]: <사유>`. 새 전달 경로는 없다: `Task` 는 `Status: FAILURE`, 스킬 포크는
+  `Skill fork failed for '<스킬>': …`, 백그라운드 `Task` 는 `FAILED`, 워크플로 단계는 실패. 새 `CompletionReason` 은 두지
+  않았다(→ EE-75).
+- **`onStop` 은 발화하지 않는다** — 메인 실행이 `onStart` block 에서 `onStop` 을 발화하지 않는 것과 맞췄다. 스폰한 쪽의
+  `subagentStop` 은 `success=false` 와 사유로 발화한다(`subagentStart` 가 이미 나갔다).
+- **EE-51 의 "돌리지 못함" 도 같은 통로로 막힌다.** 추가 코드가 없다 — `DeclarativeOnStartHook` 은 전부터 block 을 냈고
+  버려지던 곳이 실행기 하나였다. `failOpen: true` 면 훅이 성공을 내므로 통과한다.
+- **`hooks.json` 의 `onStart` 도 모든 포크에 걸린다.** 운영자의 기존 설정이 밟을 수 있는 동작 변경이다 — 사용자 입력을
+  검사하던 훅이 포크의 goal 에도 걸린다. 메인 턴만 겨누려면 스크립트에서 `AIMON_INVOKER_TYPE` 로 가른다(`failOpen` 은 그
+  스위치가 아니다: exit 2 는 그대로 막는다). CHANGELOG 와 훅 가이드에 적었다.
+- **`SkillHookSet.GUARD_EVENTS` 에 `ON_START` 가 돌아왔다.** `onStart` 만 선언한 스킬도 그 포크 안에서 백그라운드
+  `Workflow` · `WorkflowJs` 와 `ScheduleTask` 를 거절한다(판정 코드는 그대로). 스킬 frontmatter 의 `onStart` 항목에 쓴
+  `failOpen` 은 더 이상 "막을 수 없는 이벤트" WARN 을 내지 않는다.
+
+심각도(규칙 셋). 적힌 대로였다 — 재현 테스트에서 수정 전에는 block 을 낸 포크가 LLM 을 부르고 정상 완료했다.
+
+남긴 것: 코드 behavior 서브에이전트는 `onStart` 를 아예 발화하지 않는다(→ EE-73). 프로그램 훅이 던지면 성공으로 읽히는
+정책(→ EE-64 의 덧붙임).
+
+테스트: `DefaultSubagentExecutorOnStartBlockTest`(신규 — LLM 호출 0, `ERROR`, iteration 0, 사유, `onStop` 미발화, 종료 표지;
+여럿 중 하나만 block; advisory 는 그대로 붙음; 막힌 재개 뒤의 재개; `hooks.json` 핸들러와 스킬 frontmatter 각각; 돌리지 못함
+과 `failOpen`), `IsolationBoundaryIntegrationTest`(환경 제공자가 실패한 포크의 스킬 `onStart` 가드 · `failOpen` · 런타임
+레지스트리의 block 이 `Task` 포크를 멈추고 `subagentStop(success=false)` · 백그라운드 `Task` 는 `FAILURE`), `SkillHookSetTest`,
+`WorkflowToolBackgroundModeTest` · `ScheduleTaskToolTest` · `GraalJsWorkflowToolTest`(`onStart` 만 있는 스킬 아래에서 거절). 새
+테스트는 프로덕션 수정을 되돌려 실패하는 것을 확인했다.
+
+설계: [`../design/tool/execution-environment-ee70-ee71-fail-closed.md`](../design/tool/execution-environment-ee70-ee71-fail-closed.md).
+
+## EE-71 — 시작 때 `hooks.json` 파싱이 실패하면 파일 가드가 하나도 없다 · **닫힘** *(2026-10-04)*
 
 **무엇을.** 시작(부트스트랩) 시 `hooks.json` 의 파싱이 실패하면 시작을 멈출지, 지금처럼 WARN 후 파일 훅 없이 계속할지 정한다.
 
@@ -2018,3 +2079,119 @@ advisory 피드백만 대화에 붙는다. 메인 실행(`OrcaAgentExecutor`)은
 빼고 나머지는 적용, 또는 모든 가드 이벤트를 막는 "닫힌" 상태로 시작 — 도 같이 볼 것.
 
 출처: PR #207 리뷰 B1 ([`../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md`](../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md) §10.7).
+
+### 닫힘 (2026-10-04)
+
+결정(메인테이너, 2026-10-04): **시작을 멈춘다.** 핫 리로드의 실패는 그대로다(이전 설정 유지).
+
+- **예외가 전파된다.** `HookRegistryReloader.bootstrap()` 이 예외를 삼키지 않고, `HookHotReloadBootstrap.start()` 가 그대로
+  내보낸다. 레지스트리에는 아무 것도 등록되지 않고 감시자도 시작되지 않는다. 시그니처는 그대로다 — `bootstrap()` 의
+  `boolean` 과 `Started.isBootstrapSucceeded()` 는 이제 항상 참이다(→ EE-75).
+- **메시지에 파일 · 계층 · 원인.** `HookConfigLoader` 가 붙인다: `hooks config <절대경로> (<USER|PROJECT|LOCAL> layer) is
+  invalid: <파서 메시지 — line/column 포함>`. 로더에서 붙였으므로 리로드의 `failureReason` 에도 경로가 실린다.
+- **있지만 읽을 수 없는 파일도 같은 실패다.** 읽기 권한 없는 파일, 그 자리의 디렉터리, 검색할 수 없는 `.aimon` 디렉터리는
+  전에는 WARN 후 "없음" 이었고("intentional fail-soft"), 이제 `… could not be read: …` 로 로드를 실패시킨다. `chmod 000` 한
+  번으로 그 계층의 가드가 꺼지는 것은 이 항목과 같은 실패다. 리로드에서는 "그 계층이 조용히 빠진다" 가 "리로드 실패, 이전
+  설정 유지" 로 바뀌었다. **없는** 파일은 전처럼 정상이다(`Files.notExists` 로 "없음" 과 "알 수 없음" 을 가른다).
+- **CLI.** `AgentSetupFactory` 가 `ConfigurationException` 으로 바꿔 던지고 `AimonCli` 가 `Configuration error: …` 를 내고
+  종료 코드 1 로 끝난다. 던지기 전에 스택을 닫는다 — 전에는 `decorate` 가 던지면 정리가 없었다. 메모리 큐는 그 시점에 스택
+  소유가 아니어서(등록이 그 뒤다) 따로 멈춘다.
+- **`aimon-bootstrap` · `aimon-spring-boot-starter` 는 바뀌지 않았다.** 둘 다 `hooks.json` 을 배선하지 않는다 — 항목이 말한
+  "각 경로" 가운데 둘은 호스트가 부르는 `start()` 로만 존재한다. Spring 호스트의 `@Bean` 이 `start()` 를 부르면 그 빈이
+  실패해 컨텍스트가 뜨지 않는다(테스트로 고정).
+- **탈출구는 두지 않았다.** 설정 스위치는 이 항목이 닫는 상태(모든 계층의 가드가 꺼진 채 실행)를 한 줄로 되살린다.
+  탈출구는 파일을 고치거나 치우는 것이고, 임베딩 호스트는 예외를 코드에서 명시적으로 잡을 수 있다(→ EE-74).
+- **항목이 든 중간 선택지 둘은 기각했다.** 실패한 계층만 빼는 것은 여전히 fail-open 이고(빠진 계층이 가드를 가진 계층일 수
+  있다), "닫힌 상태로 시작" 은 원인이 기동 오류 한 줄보다 찾기 어렵고 새 상태를 만든다.
+
+심각도(규칙 셋). 적힌 것보다 넓었다 — 파싱 실패뿐 아니라 **읽지 못한 파일**도 같은 결과(가드 없이 실행)를 냈고, 그쪽은
+WARN 한 줄조차 "의도된 동작" 으로 문서화되어 있었다.
+
+남긴 것: 적용 단계의 WARN-후-건너뛰기(잘못된 핸들러 · 모르는 이벤트 이름, → EE-72).
+
+테스트: `HookConfigLoaderTest`(세 계층 × 세 원인의 메시지, 디렉터리, 읽기 권한 없는 파일, 검색할 수 없는 디렉터리),
+`HookRegistryReloaderTest`(부트스트랩이 던지고 레지스트리가 비어 있다 — 멀쩡한 다른 계층의 훅도 없다; 리로드는 이전 설정
+유지, 사유에 경로; 읽을 수 없게 된 파일의 리로드), `HookHotReloadBootstrapTest`(깨진 파일 셋으로 `start()` 가 던지고 감시자
+스레드가 없다), `AgentSetupFactoryBrokenHookConfigTest`(신규 — `ConfigurationException`, 스택 teardown, 큐 정지; 파일 없으면
+정상 기동), `HookHotReloadStartupFailureTest`(신규, 스타터 — 호스트 빈 패턴). 새 테스트는 프로덕션 수정을 되돌려 실패하는
+것을 확인했다. `AimonCli` 수준(stderr · 종료 코드)의 테스트는 없다 — `call()` 이 실제 설정 파일을 읽어 테스트 이음매가 없다.
+
+설계: [`../design/tool/execution-environment-ee70-ee71-fail-closed.md`](../design/tool/execution-environment-ee70-ee71-fail-closed.md).
+
+## EE-72 — 적용 단계에서 잘못된 `hooks.json` 핸들러는 WARN 후 조용히 빠진다 · **열림**
+
+**무엇을.** 파싱은 통과했지만 적용할 수 없는 `hooks.json` 항목 — `command` 없는 `command` 핸들러, `preTool` 밖의 `deny`,
+잘못된 URL, 모르는 이벤트 이름(`preTol`) — 을 시작 실패로 볼지, 지금처럼 WARN 후 건너뛸지 정한다.
+
+**왜.** EE-71 이 닫은 것은 **파일 단위**의 실패다. 그 아래에 **항목 단위**의 누락이 남아 있다: `HookRegistryApplier.applyEntry`
+는 잘못된 핸들러와 인식하지 못한 이벤트를, `HookConfigMerger` 는 모르는 이벤트 이름을 WARN 후 건너뛴다. 같은
+`applyEntry` 는 셸 실행기가 셸을 지원하지 않으면(`ShellActionExecutor.isShellSupported()` 가 `false`) `command` 핸들러를
+— `onStart` · `preTool` 가드라도 — WARN 하나만 남기고 뺀다. 등록하면 "실행할 수 없음" 이 block 으로 읽혀 매번 막히기
+때문이지만, 결과는 가드 하나가 빠진 채 뜨는 것이다. 운영자가
+`"preTol"` 이라고 쓴 가드는 등록되지 않고 에이전트는 뜬다 — 가드 하나가 조용히 빠지는 같은 계열이다. 한꺼번에 막지 않은
+이유는 경계가 정해져 있지 않아서다: 미지원 이벤트(`HookEventName.isUnsupported` — `Notification` 등)는 Claude Code 설정을
+그대로 가져올 수 있게 **일부러** 허용하고, 모르는 최상위 필드도 새 설정을 옛 바이너리가 읽을 수 있게 무시한다. "오타" 와
+"아직 모르는 것" 을 가르는 규칙이 먼저 있어야 한다.
+
+**어디.** `modules/aimon-core/src/main/java/at/aimon/core/config/hook/HookRegistryApplier.java` 의 `applyEntry`(셸 미지원
+`command` 건너뛰기 포함), `HookConfigMerger.java`, `HookEventName.java` 의 미지원 목록(2026-10-04).
+
+**언제 다시 볼까.** `hooks.json` 을 보안 가드로 쓰는 배포가 생길 때, 또는 오타로 가드가 빠진 사례가 보고될 때. 가드 이벤트
+(`preTool` · `onStart` · `preCompact` · `permissionRequest`)의 항목만 엄격하게 보는 길이 있다.
+
+출처: [`../design/tool/execution-environment-ee70-ee71-fail-closed.md`](../design/tool/execution-environment-ee70-ee71-fail-closed.md) §9 Q2.
+
+## EE-73 — 코드 behavior 서브에이전트는 `onStart` 를 발화하지 않는다 · **열림**
+
+**무엇을.** 이름에 `SubagentBehavior` 가 등록된 서브에이전트에도 `onStart`(와 그 block)를 적용할지 정한다.
+
+**왜.** `DefaultSubagentExecutionManager.runResolvedSubagent` 는 behavior 가 등록된 이름이면 `DefaultSubagentExecutor` 대신
+`subagentBehaviorRunner.run` 으로 간다. 그 경로는 ReAct 루프를 대체하며 `onStart` 를 발화하지 않는다(`OnStartContext.builder()`
+의 사용처는 `OrcaAgentExecutor` 와 `DefaultSubagentExecutor` 둘뿐이다). 그래서 EE-70 뒤에도 운영자의 `hooks.json` `onStart`
+가드는 그 포크에 닿지 않는다 — "모든 포크" 가 아니라 "`DefaultSubagentExecutor` 를 거치는 모든 포크" 다. behavior 는 코드라
+LLM 을 부르지 않을 수도 있고, 그 안에서 다시 스폰한 포크는 각자 `onStart` 를 맞는다. 훅 가이드에 한계로 적었다.
+`subagentStart` 는 그 경로에서도 발화한다. 발화처는 소스로 확인했고, behavior 경로를 돌려 보지는 않았다(규칙 셋).
+
+**어디.** `modules/aimon-core/src/main/java/at/aimon/core/subagent/DefaultSubagentExecutionManager.java` 의
+`runResolvedSubagent`(2026-10-04).
+
+**언제 다시 볼까.** `hooks.json` 의 `onStart` 를 "어떤 포크도 이것 없이 시작하지 않는다" 는 보장으로 읽는 배포가 생길 때,
+또는 behavior 서브에이전트가 번들 밖에서 쓰이기 시작할 때.
+
+출처: [`../design/tool/execution-environment-ee70-ee71-fail-closed.md`](../design/tool/execution-environment-ee70-ee71-fail-closed.md) §2 전제 5 · §9 Q4.
+
+## EE-74 — 깨진 `hooks.json` 으로도 띄우는 탈출구가 없다 · **열림** *(트리거 대기)*
+
+**무엇을.** 운영자가 "깨진 파일이 있어도 띄우겠다" 고 명시할 수단(빌더 옵션 · CLI 플래그)을 둘지 정한다.
+
+**왜.** EE-71 은 탈출구를 두지 않았다 — 설정 스위치는 닫으려는 상태를 한 줄로 되살리고 한번 켜지면 남는다. 탈출구는 오류
+메시지가 가리키는 파일을 고치거나 치우는 것이고, `start()` 를 부르는 호스트는 예외를 코드에서 잡을 수 있다. 그것으로 모자란
+배포가 있을 수 있다: `hooks.json` 을 컨테이너 이미지에 구워 넣어 **그 자리에서 고칠 수 없는** 경우, 깨진 파일은 재배포
+전까지 기동 불가다. 그런 요구가 지금 있는지는 알 수 없다. 나중에 빌더 옵션을 **더하는** 것은 호환 변경이다.
+
+**어디.** `modules/aimon-core/src/main/java/at/aimon/core/config/hook/HookHotReloadBootstrap.java` 의 `Builder`,
+`modules/aimon-cli/src/main/java/at/aimon/cli/factory/AgentSetupFactory.java` 의 `startHookHotReload`(2026-10-04).
+
+**언제 다시 볼까.** 파일을 바로 고칠 수 없는 배포에서 기동 불가가 보고될 때. 넣는다면 기본은 막는 쪽이고, 켜졌다는 사실이
+기동 로그에 매번 남아야 한다.
+
+출처: [`../design/tool/execution-environment-ee70-ee71-fail-closed.md`](../design/tool/execution-environment-ee70-ee71-fail-closed.md) §3.2 · §9 Q3.
+
+## EE-75 — EE-70 · EE-71 이 시그니처를 그대로 두느라 남긴 표면 · **열림** *(트리거 대기)*
+
+**무엇을.** 다음 SPI 정리 때 둘을 본다. (1) `HookRegistryReloader.bootstrap()` 의 `boolean` 과
+`HookHotReloadBootstrap.Started.isBootstrapSucceeded()` — 이제 항상 참이다. `@Deprecated` 로 표시하거나 없앤다. (2) `onStart`
+가 막은 포크의 `CompletionReason` — 지금은 `ERROR` 이고 "훅이 막았다" 는 메시지로만 구별된다.
+
+**왜.** 두 변경 모두 릴리스 직전이라 공개 표면을 넓히거나 좁히지 않았다. (1) 은 호출자에게 죽은 분기를 남긴다 — `false`
+를 검사하는 코드는 컴파일되지만 닿지 않는다. (2) `CompletionReason.BLOCKED` 는 공개 enum 에 값을 더하는 일이고
+`JsonTaskResultCodec` 이 이름으로 직렬화하므로 외부의 망라 `switch` 와 옛 노드의 역직렬화가 깨질 수 있다. 지금은 그 값으로
+분기할 독자가 없다(부모 모델은 메시지를 읽는다 — stalled guard 가 `ERROR` 를 쓴 것과 같은 판단).
+
+**어디.** `modules/aimon-core/src/main/java/at/aimon/core/config/hook/HookRegistryReloader.java` · `HookHotReloadBootstrap.java`,
+`subagent/execution/DefaultSubagentExecutor.java` 의 `createBlockedResult`, `agent/budget/CompletionReason.java`(2026-10-04).
+
+**언제 다시 볼까.** 다음 SPI 정리(0.x 의 breaking 묶음) 때, 또는 부모가 "훅이 막았다" 를 프로그램으로 구분해야 하는 독자
+(워크플로의 재시도 정책, 대시보드)가 나올 때.
+
+출처: [`../design/tool/execution-environment-ee70-ee71-fail-closed.md`](../design/tool/execution-environment-ee70-ee71-fail-closed.md) §9 Q5 · Q6.

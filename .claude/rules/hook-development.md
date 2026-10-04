@@ -105,9 +105,20 @@ for side effects only. Wiring one up is a feature, not a bug fix.
   level in `hooks.json`; only a boolean `true` opens it — a non-boolean is a parse error in
   frontmatter and is read as `false` with a WARN in `hooks.json`). The deny reason never names
   `failOpen`, the command or an exception message — only the cause and the exception's type; its
-  reader is the party the guard constrains. **Exception: `onStart` inside a fork is advisory** — the
-  subagent executor reads `onStart` results through `HookFeedback.collectAdvisory` and drops a block,
-  so a skill's `onStart` hook (and a `hooks.json` one, in a fork) cannot block there (EE-70).
+  reader is the party the guard constrains.
+- **An `onStart` block stops a fork as it stops a turn.** `DefaultSubagentExecutor.checkOnStartHooks`
+  mirrors `OrcaAgentExecutor.checkOnStartHooks`: a blocked result ends the fork before its first LLM
+  call as a failed `SubagentExecutionResult` (`CompletionReason.ERROR`, the
+  `ExecutionBlockedByHookException` message) and fires no `onStop`. So an `onStart` in `hooks.json`
+  gates every fork, not only the main turn — a script that means the user's input branches on
+  `AIMON_INVOKER_TYPE` — and `onStart` is one of `SkillHookSet.guardEvents()`. A code-behavior
+  subagent (`SubagentBehavior`) fires no `onStart` at all (EE-73).
+- **A `hooks.json` that does not load stops startup.** `HookRegistryReloader.bootstrap()` and
+  `HookHotReloadBootstrap.start()` propagate `HookConfigParseException` (file path, layer, cause) for
+  a file that does not parse *or cannot be read*; only a missing file is an absent layer. Do not
+  catch it to "start anyway" — that runs with every file guard off. A failed *reload* keeps the
+  previous config instead. Handler-level problems found at apply time (missing `command`, unknown
+  event name) are still WARN-and-skip (EE-72).
 - **Skill hooks are not registered with the runtime's `HookRegistry`.** `ScopedSkillHookActivator`
   layers them over the registry the skill's fork dispatches against (`SkillScopedHookRegistry`), so
   they fire in that fork and its descendants only. Code that spawns a fork passes

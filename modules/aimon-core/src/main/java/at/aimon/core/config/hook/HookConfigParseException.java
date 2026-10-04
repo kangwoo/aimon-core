@@ -4,7 +4,8 @@ import at.aimon.core.base.exception.AimonException;
 
 /**
  * Raised when {@link JacksonHookConfigParser} cannot turn the supplied JSON into a valid
- * {@link HookConfigDocument}.
+ * {@link HookConfigDocument}, and when {@link HookConfigLoader} finds a {@code hooks.json} it cannot read at all (a
+ * non-regular file, an I/O error). Both leave a layer's hooks unknown, so both are the same failure to a caller.
  */
 public class HookConfigParseException extends AimonException {
 

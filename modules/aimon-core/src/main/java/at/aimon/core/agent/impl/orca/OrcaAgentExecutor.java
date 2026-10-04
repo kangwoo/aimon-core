@@ -1505,8 +1505,8 @@ public class OrcaAgentExecutor
      * <p>
      * The feedback message is appended after the real user message (already in memory at this point) so the model
      * reads the note as context for the turn it is about to take, and is wrapped in a {@code <system-reminder>} block
-     * so it is not mistaken for genuine user intent. Mirrors {@code DefaultSubagentExecutor#fireOnStart} — without
-     * this the main agent silently dropped feedback that subagents surfaced.
+     * so it is not mistaken for genuine user intent. Mirrors {@code DefaultSubagentExecutor#checkOnStartHooks};
+     * without this the main agent silently dropped feedback that subagents surfaced.
      *
      * @param scope
      *            The execution scope

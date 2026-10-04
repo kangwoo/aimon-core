@@ -7,6 +7,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -18,10 +19,17 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
+import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.impl.orca.OrcaAgentExecutionResult;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.hook.HookEventType;
+import at.aimon.core.hook.event.OnStartHook;
+import at.aimon.core.hook.event.SubagentStopContext;
+import at.aimon.core.hook.event.SubagentStopHook;
+import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.skill.hook.action.ShellAction;
 import at.aimon.core.skill.hook.declarative.DeclarativeHookOptions;
 import at.aimon.core.skill.hook.declarative.DeclarativePreToolHook;
@@ -234,10 +242,15 @@ class IsolationBoundaryIntegrationTest {
      * only, the way a sandbox provider fails: by throwing, or by answering with nothing.
      */
     private OrcaRuntimeItSupport.Node nodeWithFailingForkEnvironment(String name, boolean providerThrows) {
+        return nodeWithFailingForkEnvironment(name, providerThrows,
+                "  preTool:\n    - matcher: TodoWrite\n      action: { type: shell, command: \"exit 0\" }\n");
+    }
+
+    private OrcaRuntimeItSupport.Node nodeWithFailingForkEnvironment(String name, boolean providerThrows,
+            String hooksYaml) {
         support.seedSkill(name, SHELL_GUARDED_SKILL,
-                "---\nname: " + SHELL_GUARDED_SKILL + "\ndescription: Runs in a fork with a shell guard on TodoWrite\n"
-                        + "execution:\n  mode: fork\n  agent: " + WORKER + "\nhooks:\n  preTool:\n"
-                        + "    - matcher: TodoWrite\n      action: { type: shell, command: \"exit 0\" }\n"
+                "---\nname: " + SHELL_GUARDED_SKILL + "\ndescription: Runs in a fork with a shell guard\n"
+                        + "execution:\n  mode: fork\n  agent: " + WORKER + "\nhooks:\n" + hooksYaml
                         + "---\n\nDo the guarded work.\n");
         final InMemorySubagentRegistry codeSubagents = new InMemorySubagentRegistry();
         codeSubagents.register(Subagent.builder().name(WORKER).description("Integration-test worker subagent")
@@ -255,8 +268,8 @@ class IsolationBoundaryIntegrationTest {
                 }));
     }
 
-    @org.junit.jupiter.params.ParameterizedTest(name = "provider throws: {0}")
-    @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+    @ParameterizedTest(name = "provider throws: {0}")
+    @ValueSource(booleans = {true, false})
     @DisplayName("a skill's shell guard in a fork whose environment provider failed blocks the tool, with the cause")
     void skillShellGuardBlocksWhenTheForksEnvironmentProviderFails(boolean providerThrows) {
         final OrcaRuntimeItSupport.Node failing = nodeWithFailingForkEnvironment(
@@ -286,6 +299,121 @@ class IsolationBoundaryIntegrationTest {
         // A TodoWrite that ran would answer "Todo list updated ... In Progress: Doing GUARDED-TODO-1f5a".
         assertThat(seenByFork).noneMatch(
                 observation -> observation.contains("GUARDED-TODO-1f5a") || observation.contains("Todo list updated"));
+    }
+
+    // --- EE-70 -----------------------------------------------------------------------------------------------------
+
+    @ParameterizedTest(name = "provider throws: {0}")
+    @ValueSource(booleans = {true, false})
+    @DisplayName("a skill's onStart shell guard in a fork whose environment provider failed stops the fork, with the cause")
+    void skillOnStartGuardStopsTheForkWhenItsEnvironmentProviderFails(boolean providerThrows) {
+        final OrcaRuntimeItSupport.Node failing = nodeWithFailingForkEnvironment(
+                providerThrows ? "agent-onstart-throwing" : "agent-onstart-null", providerThrows,
+                "  onStart:\n    - action: { type: shell, command: \"exit 0\" }\n");
+        final SessionId sessionId = OrcaRuntimeItSupport.newSession();
+        final String forkRoute = ScriptedLlmClient.forkRoute(sessionId.value(), WORKER);
+        llm.script(sessionId.value(), ScriptedLlmClient.callTool("Skill", Map.of("skill", SHELL_GUARDED_SKILL)),
+                ScriptedLlmClient.text("a done"));
+        llm.script(forkRoute, ScriptedLlmClient.text("FORK-RAN-6e0b"));
+
+        final OrcaAgentExecutionResult result = failing.run(sessionId, "run the shell-guarded skill");
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(llm.callCount(forkRoute)).as("the fork never reached the model").isZero();
+        // The invoking turn is told the fork was refused, by which hook, on which event, and why it could not run.
+        assertThat(llm.lastCallFor(sessionId.value()).observations())
+                .anyMatch(observation -> observation.contains("Skill fork failed for '" + SHELL_GUARDED_SKILL + "'")
+                        && observation.contains("OnStart")
+                        && observation.contains("guard hook '" + SHELL_GUARDED_SKILL + "' (onStart)")
+                        && observation.contains("execution environment unavailable")
+                        && observation.contains("fail-closed")
+                        && observation.contains(providerThrows ? PROVIDER_DOWN : "returned no execution environment"))
+                .noneMatch(observation -> observation.contains("FORK-RAN-6e0b"));
+    }
+
+    @Test
+    @DisplayName("the same onStart hook declared failOpen lets the fork run when its command cannot")
+    void failOpenOnStartHookLetsTheForkRun() {
+        final OrcaRuntimeItSupport.Node failing = nodeWithFailingForkEnvironment("agent-onstart-failopen", true,
+                "  onStart:\n    - action: { type: shell, command: \"exit 0\" }\n      failOpen: true\n");
+        final SessionId sessionId = OrcaRuntimeItSupport.newSession();
+        final String forkRoute = ScriptedLlmClient.forkRoute(sessionId.value(), WORKER);
+        llm.script(sessionId.value(), ScriptedLlmClient.callTool("Skill", Map.of("skill", SHELL_GUARDED_SKILL)),
+                ScriptedLlmClient.text("a done"));
+        llm.script(forkRoute, ScriptedLlmClient.text("FORK-RAN-6e0b"));
+
+        failing.run(sessionId, "run the shell-guarded skill");
+
+        assertThat(llm.callCount(forkRoute)).isEqualTo(1);
+        assertThat(llm.lastCallFor(sessionId.value()).observations())
+                .anyMatch(observation -> observation.contains("FORK-RAN-6e0b"));
+    }
+
+    /** An onStart gate on the runtime's registry (where {@code hooks.json} handlers live) that refuses forks only. */
+    private List<SubagentStopContext> refuseForksOnStart() {
+        node.hookRegistry().register(HookEventType.ON_START,
+                (OnStartHook) context -> context.getInvokerType() == InvokerType.SUBAGENT
+                        ? HookResult.block(GUARD_REASON)
+                        : HookResult.success());
+        final List<SubagentStopContext> stops = new CopyOnWriteArrayList<>();
+        node.hookRegistry().register(HookEventType.SUBAGENT_STOP, (SubagentStopHook) context -> {
+            stops.add(context);
+            return HookResult.success();
+        });
+        return stops;
+    }
+
+    @Test
+    @DisplayName("an onStart block on the runtime's registry stops a Task fork; the turn that spawned it goes on")
+    void runtimeOnStartBlockStopsATaskFork() {
+        final List<SubagentStopContext> stops = refuseForksOnStart();
+        final SessionId sessionId = OrcaRuntimeItSupport.newSession();
+        final String forkRoute = ScriptedLlmClient.forkRoute(sessionId.value(), WORKER);
+        llm.script(sessionId.value(), ScriptedLlmClient.callTool("Task", task(WORKER)),
+                ScriptedLlmClient.text("a done"));
+        llm.script(forkRoute, ScriptedLlmClient.text("FORK-RAN-6e0b"));
+
+        final OrcaAgentExecutionResult result = node.run(sessionId, "delegate");
+
+        // The same hook let the main turn through: it is the fork it refused.
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.getFinalAnswer()).isEqualTo("a done");
+        assertThat(llm.callCount(forkRoute)).isZero();
+        assertThat(llm.lastCallFor(sessionId.value()).observations())
+                .anyMatch(observation -> observation.contains("Status: FAILURE") && observation.contains("OnStart")
+                        && observation.contains(GUARD_REASON));
+        // The spawning side still closes the subagentStart it fired.
+        assertThat(stops).singleElement().satisfies(stop -> {
+            assertThat(stop.isSuccess()).isFalse();
+            assertThat(stop.getSubagentName()).isEqualTo(WORKER);
+            assertThat(stop.getErrorMessage().orElseThrow()).contains(GUARD_REASON);
+        });
+    }
+
+    @Test
+    @DisplayName("a background Task fork an onStart hook blocks settles as failed, with the reason")
+    void runtimeOnStartBlockFailsABackgroundTaskFork() {
+        refuseForksOnStart();
+        final SessionId sessionId = OrcaRuntimeItSupport.newSession();
+        final String forkRoute = ScriptedLlmClient.forkRoute(sessionId.value(), WORKER);
+        final Pattern backgroundTaskId = Pattern.compile("Task ID: (\\S+)");
+        llm.scriptDynamic(sessionId.value(), call -> {
+            final Map<String, Object> input = new java.util.HashMap<>(task(WORKER));
+            input.put("run_in_background", true);
+            return ScriptedLlmClient.callTool("Task", input);
+        }, call -> {
+            final Matcher matcher = backgroundTaskId.matcher(call.lastObservation());
+            assertThat(matcher.find()).as(call.lastObservation()).isTrue();
+            return ScriptedLlmClient.callTool("AgentOutput",
+                    Map.of("taskId", matcher.group(1), "block", true, "wait_up_to", GATE_TIMEOUT_SECONDS));
+        }, call -> ScriptedLlmClient.text("collected"));
+        llm.script(forkRoute, ScriptedLlmClient.text("FORK-RAN-6e0b"));
+
+        node.run(sessionId, "delegate in the background");
+
+        assertThat(llm.callCount(forkRoute)).isZero();
+        assertThat(llm.lastCallFor(sessionId.value()).lastObservation()).contains("Status: FAILURE")
+                .contains("OnStart", GUARD_REASON).doesNotContain("FORK-RAN-6e0b");
     }
 
     // --- EE-58 -----------------------------------------------------------------------------------------------------

@@ -3,6 +3,7 @@ package at.aimon.core.config.hook;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 import static org.assertj.core.api.Assertions.assertThatNullPointerException;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.atLeastOnce;
@@ -122,6 +123,51 @@ class HookRegistryReloaderTest {
     }
 
     @Test
+    void bootstrapPropagatesALoadFailureAndRegistersNothing() throws Exception {
+        // EE-71: one broken layer must not start the host with every file guard off, the valid layers' included.
+        Files.writeString(userDir.resolve("hooks.json"), "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"Bash\","
+                + "\"hooks\":[{\"type\":\"command\",\"command\":\"guard\"}]}]}}");
+        writeProjectHooks("{not valid json");
+
+        final HookRegistry registry = new DefaultHookRegistry();
+        final HookExecutionManager manager = mock(HookExecutionManager.class);
+        final HookRegistryReloader reloader = new HookRegistryReloader(loader, merger, bootstrap, registry, manager,
+                INVOKER);
+
+        assertThatThrownBy(reloader::bootstrap).isInstanceOf(HookConfigParseException.class)
+                .hasMessageContaining(projectHooksFile().toAbsolutePath().toString())
+                .hasMessageContaining("(PROJECT layer) is invalid");
+        assertThat(registry.isEmpty()).isTrue();
+        assertThat(reloader.getManagedHookCount()).isZero();
+        verify(manager, never()).executeOnConfigReload(any());
+    }
+
+    @Test
+    void reloadOfAFileThatBecameUnreadableKeepsThePreviousConfig() throws Exception {
+        writeProjectHooks("{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"Bash\",\"hooks\":["
+                + "{\"type\":\"command\",\"command\":\"first\"}]}]}}");
+        final HookRegistry registry = new DefaultHookRegistry();
+        final HookExecutionManager manager = mock(HookExecutionManager.class);
+        when(manager.executeOnConfigReload(any())).thenReturn(List.of());
+        final HookRegistryReloader reloader = new HookRegistryReloader(loader, merger, bootstrap, registry, manager,
+                INVOKER);
+        assertThat(reloader.bootstrap()).isTrue();
+        final List<PreToolHook> before = List.copyOf(registry.getHooks(HookEventType.PRE_TOOL));
+
+        // The file is replaced by a directory: there, but not readable as a config. Before EE-71 this layer was
+        // dropped and the reload "succeeded" with the guard gone.
+        Files.delete(projectHooksFile());
+        Files.createDirectory(projectHooksFile());
+
+        assertThat(reloader.reload(2L, projectHooksFile())).isFalse();
+        assertThat(registry.getHooks(HookEventType.PRE_TOOL)).isEqualTo(before);
+        final ArgumentCaptor<OnConfigReloadContext> captor = ArgumentCaptor.forClass(OnConfigReloadContext.class);
+        verify(manager, times(1)).executeOnConfigReload(captor.capture());
+        assertThat(captor.getValue().isSuccessful()).isFalse();
+        assertThat(captor.getValue().getFailureReason()).contains("could not be read");
+    }
+
+    @Test
     void reloadSwapsManagedHooksAndFiresSuccessEvent() throws Exception {
         writeProjectHooks("{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"Bash\",\"hooks\":["
                 + "{\"type\":\"command\",\"command\":\"first\"}]}]}}");
@@ -202,7 +248,8 @@ class HookRegistryReloaderTest {
         final OnConfigReloadContext ctx = captor.getValue();
         assertThat(ctx.isSuccessful()).isFalse();
         assertThat(ctx.getReloadCounter()).isEqualTo(2L);
-        assertThat(ctx.getFailureReason()).startsWith("load/merge failed");
+        assertThat(ctx.getFailureReason()).startsWith("load/merge failed")
+                .contains(projectHooksFile().toAbsolutePath().toString(), "(PROJECT layer) is invalid");
     }
 
     @Test

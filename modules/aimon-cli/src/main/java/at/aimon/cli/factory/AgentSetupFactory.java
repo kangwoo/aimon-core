@@ -69,6 +69,7 @@ import at.aimon.core.agent.session.transcript.SessionLogPage;
 import at.aimon.core.agent.session.transcript.SessionLogReader;
 import at.aimon.core.base.Principal;
 import at.aimon.core.base.UserLocale;
+import at.aimon.core.config.hook.HookConfigParseException;
 import at.aimon.core.config.hook.HookHotReloadBootstrap;
 import at.aimon.core.config.hook.ReloadInvoker;
 import at.aimon.core.environment.EnvironmentRequest;
@@ -641,10 +642,24 @@ public class AgentSetupFactory {
             }
             throw e;
         }
-        return decorate(config, stack, agentBundle, fileSystem, hookConfigShell, graalJsEngines,
-                new CliDecorations(outputFormatter, approvalChannel.get(), traceSpanStore, llmClient,
-                        new CliMemoryDecorations(memoryWiring, representationStore, observationStore, memoryQueue,
-                                memoryModelName)));
+        try {
+            return decorate(config, stack, agentBundle, fileSystem, hookConfigShell, graalJsEngines,
+                    new CliDecorations(outputFormatter, approvalChannel.get(), traceSpanStore, llmClient,
+                            new CliMemoryDecorations(memoryWiring, representationStore, observationStore, memoryQueue,
+                                    memoryModelName)));
+        } catch (RuntimeException | Error e) {
+            // decorate enrolls as it goes, so the stack's teardown plan releases whatever was built before it threw.
+            // An Error (a missing class on the hot-reload path, say) leaves the same half-built stack, so it is
+            // released too; decorate declares no checked exception, so these two cover everything it can throw.
+            // A broken hooks.json makes that an everyday path (EE-71), not a corner. The queue is stopped by hand
+            // because it is enrolled last, after the hot-reload step that throws; stop() is idempotent, so it does
+            // not matter if the stack got to it first.
+            closeSuppressing(stack, e);
+            if (memoryQueue != null) {
+                closeSuppressing(memoryQueue::stop, e);
+            }
+            throw e;
+        }
     }
 
     /**
@@ -663,7 +678,7 @@ public class AgentSetupFactory {
                 () -> new IllegalStateException("Stack published no runtime for " + stack.primaryRuntimeId()));
         // Closed before hookConfigShell: the reload callback fires shell-backed declarative hooks, so a debounced
         // reload landing between the two closes would otherwise hit a closed shell.
-        stack.own(TeardownPhase.HOOK_HOT_RELOAD, "hookHotReload", setupHookHotReload(agentRuntime, agentExecutor,
+        stack.own(TeardownPhase.HOOK_HOT_RELOAD, "hookHotReload", startHookHotReload(agentRuntime, agentExecutor,
                 hookConfigShell, fileSystem, agentBundle.getAgent().getName()));
         stack.schedulingEngine().ifPresent(
                 engine -> engine.addEventListener(new ScheduledTaskEventDisplayListener(config.getCliSettings())));
@@ -850,7 +865,7 @@ public class AgentSetupFactory {
     /**
      * Closes {@code resource} while a bootstrap failure is already in flight, attaching any close failure to it.
      */
-    private static void closeSuppressing(AutoCloseable resource, RuntimeException inFlight) {
+    private static void closeSuppressing(AutoCloseable resource, Throwable inFlight) {
         if (resource == null) {
             return;
         }
@@ -1034,6 +1049,8 @@ public class AgentSetupFactory {
      *
      * @return the {@link HookHotReloadBootstrap.Started} handle owned by {@code AgentSetup}; closed during
      *         {@link AgentSetup#close()}
+     * @throws HookConfigParseException
+     *             if a {@code hooks.json} that is present fails to parse or cannot be read
      */
     private HookHotReloadBootstrap.Started setupHookHotReload(OrcaAgentRuntime agentRuntime,
             OrcaAgentExecutor agentExecutor, VirtualShell hookConfigShell, LocalFileSystem fileSystem,
@@ -1043,6 +1060,24 @@ public class AgentSetupFactory {
                 .shellExecutor(createHookConfigShellExecutor(hookConfigShell)).processEnv(System.getenv())
                 .registry(agentRuntime.getHookRegistry()).executionManager(agentExecutor.getHookExecutionManager())
                 .invoker(new ReloadInvoker(InvokerType.MAIN_AGENT, agentName, UserLocale.createDefault())).start();
+    }
+
+    /**
+     * {@link #setupHookHotReload} with a {@code hooks.json} that does not load reported the way the CLI reports any
+     * other bad configuration file: as a {@link ConfigurationException}, which {@code AimonCli} prints as a
+     * configuration error and exits on. The message already names the file, its layer and what is wrong with it.
+     *
+     * @throws ConfigurationException
+     *             if a {@code hooks.json} that is present fails to parse or cannot be read
+     */
+    private HookHotReloadBootstrap.Started startHookHotReload(OrcaAgentRuntime agentRuntime,
+            OrcaAgentExecutor agentExecutor, VirtualShell hookConfigShell, LocalFileSystem fileSystem,
+            String agentName) {
+        try {
+            return setupHookHotReload(agentRuntime, agentExecutor, hookConfigShell, fileSystem, agentName);
+        } catch (HookConfigParseException e) {
+            throw new ConfigurationException(e.getMessage() + " - fix or remove the file and start again", e);
+        }
     }
 
     /**

@@ -186,6 +186,21 @@ class GraalJsWorkflowToolTest extends AbstractGraalJsRunTest {
     }
 
     @Test
+    @DisplayName("a skill whose only hook is on onStart refuses background mode too (EE-70)")
+    void onStartOnlySkillRefusesBackgroundMode() {
+        final WorkflowRunner backgroundRunner = mock(WorkflowRunner.class);
+        final SkillScopedHookRegistry view = new SkillScopedHookRegistry(new DefaultHookRegistry(), "gate",
+                SkillHookSet.builder().addOnStart(ctx -> HookResult.success()).build());
+
+        final ToolResult result = tool(backgroundRunner)
+                .execute(ToolInput.of(Map.of("script", "return 1;", "mode", "background")), insideSkill(view));
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).contains("skill 'gate'").contains("guard hooks").contains("foreground");
+        verifyNoInteractions(backgroundRunner);
+    }
+
+    @Test
     @DisplayName("observation-only skill hooks, a closed skill scope and a plain registry do not refuse background mode")
     void backgroundModeAllowedWithoutAnActiveGuard() {
         final SkillScopedHookRegistry observing = new SkillScopedHookRegistry(new DefaultHookRegistry(), "audit",

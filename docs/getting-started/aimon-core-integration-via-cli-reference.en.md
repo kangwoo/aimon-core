@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/aimon-core-integration-via-cli-reference.md
-source_commit: 95ff295
+source_commit: 1f8b53f
 ---
 
 # aimon-core integration guide — following aimon-cli as the reference
@@ -808,6 +808,8 @@ final OrcaAgentRuntime agentRuntime = createAgentRuntime(
     config, graalJsEngines);
 
 configureHooks(agentRuntime, outputFormatter);
+// A hooks.json that is broken or unreadable throws HookConfigParseException here - it never starts without its
+// file hooks. A missing file is fine.
 final HookHotReloadBootstrap.Started hookHotReload = setupHookHotReload(...);
 registerCliTools(agentRuntime, outputFormatter, ...);
 configureSchedulingEventListener(schedulingEngine, config);

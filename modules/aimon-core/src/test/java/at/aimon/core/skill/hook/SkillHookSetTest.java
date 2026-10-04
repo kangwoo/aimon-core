@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import org.junit.jupiter.api.Test;
 
+import at.aimon.core.hook.HookEventType;
 import at.aimon.core.hook.event.OnStartHook;
 import at.aimon.core.hook.event.OnStopHook;
 import at.aimon.core.hook.event.PostToolHook;
@@ -63,11 +64,18 @@ class SkillHookSetTest {
     }
 
     @Test
-    void hasGuards_onStartAloneGuardsNothing_preToolDoes() {
-        // A fork reads onStart results as advisory (EE-70): an onStart-only skill must not count as a guard.
-        assertThat(SkillHookSet.builder().addOnStart(ctx -> HookResult.success()).build().hasGuards()).isFalse();
-        assertThat(SkillHookSet.builder().addOnStart(ctx -> HookResult.success())
-                .addPreTool(ctx -> HookResult.success()).build().hasGuards()).isTrue();
+    void hasGuards_onStartAloneIsAGuard_advisoryEventsAreNot() {
+        // A fork does not start when an onStart hook blocks (EE-70), so an onStart-only skill holds a guard.
+        assertThat(SkillHookSet.builder().addOnStart(ctx -> HookResult.success()).build().hasGuards()).isTrue();
+        assertThat(SkillHookSet.builder().addPreTool(ctx -> HookResult.success()).build().hasGuards()).isTrue();
+        assertThat(SkillHookSet.builder().addPostTool(ctx -> HookResult.success())
+                .addOnStop(ctx -> HookResult.success()).build().hasGuards()).isFalse();
+    }
+
+    @Test
+    void guardEvents_areTheFourThatCanVetoInAFork() {
+        assertThat(SkillHookSet.guardEvents()).containsExactly(HookEventType.ON_START, HookEventType.PRE_TOOL,
+                HookEventType.PERMISSION_REQUEST, HookEventType.PRE_COMPACT);
     }
 
     @Test

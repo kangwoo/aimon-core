@@ -13,8 +13,10 @@ import at.aimon.core.skill.hook.action.ShellAction;
  * carrying this skill begins executing.
  *
  * <p>
- * onStart owns a decision channel: {@code OrcaAgentExecutor} aborts the turn with an
- * {@code ExecutionBlockedByHookException} when the ON_START chain returns {@link HookResult#block(String)}. Only
+ * onStart owns a decision channel: when the ON_START chain returns {@link HookResult#block(String)},
+ * {@code OrcaAgentExecutor} aborts the turn with an {@code ExecutionBlockedByHookException} and
+ * {@code DefaultSubagentExecutor} ends the fork, before its first LLM call, with a failed result carrying the same
+ * message. Neither fires {@code onStop}. Only
  * {@link ShellAction} is supported here and {@code deny} actions are rejected at parse time, so a declarative gate
  * expresses its veto by exiting {@value ShellHookOutcome#DENY_EXIT_CODE} — the command's stderr becomes the abort
  * reason. Any other non-zero exit is fail-soft: a crashed start-up script must not lock the agent out of every turn.

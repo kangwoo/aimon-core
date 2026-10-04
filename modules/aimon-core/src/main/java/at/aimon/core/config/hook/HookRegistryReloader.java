@@ -141,20 +141,25 @@ public final class HookRegistryReloader {
      * {@code OnConfigReload} — that event is reserved for post-startup reloads. Should be called once at application
      * startup before any agent runs.
      *
-     * @return {@code true} when the initial load succeeded; {@code false} when the load or apply step threw (in which
-     *         case the registry is left untouched).
+     * <p>
+     * A failure is not survived: an agent that started without the file hooks would run with every guard they
+     * declare off, in every layer, because one file had a typo. The exception is propagated so the host fails to
+     * start, and the registry is left untouched. (A {@linkplain #reload reload} that fails keeps the previous config
+     * instead &mdash; there is one to keep.)
+     *
+     * @return always {@code true}; the return type predates the fail-closed rule and is kept for compatibility
+     * @throws HookConfigParseException
+     *             when a {@code hooks.json} that is present fails to parse or cannot be read; the message names the
+     *             file and its layer
+     * @throws RuntimeException
+     *             when merging or applying the loaded config fails
      */
     public boolean bootstrap() {
         synchronized (swapLock) {
-            try {
-                final MergedHookConfig merged = merger.merge(loader.load());
-                applyToManagedLocked(merged);
-                log.info("Initial hooks.json bootstrap applied: {}", describeManagedCounts());
-                return true;
-            } catch (RuntimeException e) {
-                log.warn("Initial hooks.json bootstrap failed: {}", e.getMessage(), e);
-                return false;
-            }
+            final MergedHookConfig merged = merger.merge(loader.load());
+            applyToManagedLocked(merged);
+            log.info("Initial hooks.json bootstrap applied: {}", describeManagedCounts());
+            return true;
         }
     }
 
