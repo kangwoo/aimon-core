@@ -7,6 +7,8 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-04
+
 ### Changed (breaking): an `onStart` hook that blocks stops a fork, and a `hooks.json` that does not load stops startup (EE-70, EE-71)
 
 Two places where a guard that could not judge still let the work through are closed. No type, method signature or wire

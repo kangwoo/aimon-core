@@ -685,7 +685,7 @@ Javadoc 은 아직 `Environment` 를 "working directory, platform, OS version" �
 
 남긴 것: 값의 공급 경로와 소비자(→ EE-60), 마지막 동음이의 `SubagentExecutionEnvironment`(→ EE-61), 외부 저장소의
 사용처(→ EE-1 에 적었다). "EE-1 과 같은 릴리스에 싣는다" 는 결정을 **강제하는 장치는 저장소에 없다** — `CHANGELOG.md` 의
-`[Unreleased]` 와 이 문서에 적혀 있을 뿐이다.
+`[0.3.1]` 와 이 문서에 적혀 있을 뿐이다.
 
 빌드가 강제하는 것: 없다(새 규칙을 더하지 않았다). `coreShouldNotDependOnOtherAimonPackages` 가 `base` 의 새 타입이 다른
 AIMON 패키지에 기대지 못하게 하는 것은 전부터 있던 규칙이다. Javadoc 의 낡은 `{@link}` 는 빌드가 잡지 못한다
