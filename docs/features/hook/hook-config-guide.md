@@ -92,6 +92,11 @@ CLI 부트스트랩(`AgentSetupFactory`)은 `HookConfigWatcher` + `HookRegistryR
   종료한다(REPL 은 뜨지 않는다). hook 은 하나도 등록되지 않고 watcher 도 시작되지 않는다. 파일이 **없는** 것은 실패가
   아니다 — 그 계층이 없는 것으로 정상 시작한다. 깨진 파일을 안고 띄우는 설정 스위치는 없다: 파일을 고치거나 치운다.
   `start()` 를 직접 부르는 호스트가 그래도 띄우려면 그 예외를 코드에서 명시적으로 잡아야 한다.
+- **실패가 아닌 것 · 실패인 것.** 비어 있는 파일(0 바이트, 공백만, `null`)은 hook 이 없는 계층으로 읽혀 정상 시작한다.
+  경로 중간이 디렉터리가 아니라 일반 파일이면(예: `~/.aimon` 이 파일) 그 자리에 설정 파일이 있을 수 없으므로 없는 것으로
+  보고, 그 파일을 가리키는 WARN 을 남긴 채 시작한다. 반대로 존재 여부를 알 수 없으면 — 예를 들어 홈이나 `.aimon` 디렉터리를
+  검색할 권한이 없으면 — `… could not be read: cannot determine whether the file exists (java.nio.file.AccessDeniedException: …)`
+  로 시작이 멈춘다. 판단할 수 없는 계층을 "hook 없음" 으로 읽지 않는다. 리로드에서도 같은 판정이다: 실패면 이전 설정이 남는다.
 
 ### 실패 모드
 

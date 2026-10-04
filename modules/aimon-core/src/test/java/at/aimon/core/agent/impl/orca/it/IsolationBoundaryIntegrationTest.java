@@ -19,6 +19,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.impl.orca.OrcaAgentExecutionResult;
@@ -266,8 +268,8 @@ class IsolationBoundaryIntegrationTest {
                 }));
     }
 
-    @org.junit.jupiter.params.ParameterizedTest(name = "provider throws: {0}")
-    @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+    @ParameterizedTest(name = "provider throws: {0}")
+    @ValueSource(booleans = {true, false})
     @DisplayName("a skill's shell guard in a fork whose environment provider failed blocks the tool, with the cause")
     void skillShellGuardBlocksWhenTheForksEnvironmentProviderFails(boolean providerThrows) {
         final OrcaRuntimeItSupport.Node failing = nodeWithFailingForkEnvironment(
@@ -301,8 +303,8 @@ class IsolationBoundaryIntegrationTest {
 
     // --- EE-70 -----------------------------------------------------------------------------------------------------
 
-    @org.junit.jupiter.params.ParameterizedTest(name = "provider throws: {0}")
-    @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+    @ParameterizedTest(name = "provider throws: {0}")
+    @ValueSource(booleans = {true, false})
     @DisplayName("a skill's onStart shell guard in a fork whose environment provider failed stops the fork, with the cause")
     void skillOnStartGuardStopsTheForkWhenItsEnvironmentProviderFails(boolean providerThrows) {
         final OrcaRuntimeItSupport.Node failing = nodeWithFailingForkEnvironment(

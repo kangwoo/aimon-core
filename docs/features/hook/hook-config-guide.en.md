@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-config-guide.md
-source_commit: b3720aa
+source_commit: 2bfe9a9
 ---
 
 # Hook Configuration Guide (`hooks.json`)
@@ -99,6 +99,13 @@ at application scope and watches these three files for changes:
   a failure — startup proceeds with that layer absent. There is no setting that starts with a broken file: fix the
   file or remove it. A host that calls `start()` itself and still wants to come up has to catch that exception
   explicitly in code.
+- **What is and is not a failure.** An empty file (zero bytes, whitespace only, or `null`) is read as a layer with no
+  hooks, and startup proceeds. When a component of the path is a regular file rather than a directory (say `~/.aimon`
+  is a file), no config file can be there, so the layer is treated as absent and startup proceeds with a WARN naming
+  that file. When whether the file exists cannot be determined — for instance the home or `.aimon` directory cannot
+  be searched — startup stops with `… could not be read: cannot determine whether the file exists
+  (java.nio.file.AccessDeniedException: …)`. A layer that cannot be judged is never read as "no hooks". A reload
+  applies the same rules: on failure the previous configuration stays.
 
 ### Failure modes
 

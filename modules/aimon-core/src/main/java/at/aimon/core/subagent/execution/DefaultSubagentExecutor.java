@@ -45,6 +45,7 @@ import at.aimon.core.agent.prompt.SystemPromptPart;
 import at.aimon.core.agent.prompt.SystemPromptParts;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.LogOrigin;
+import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.tool.DefaultParallelToolDispatcher;
 import at.aimon.core.agent.tool.InterruptToolKeys;
@@ -442,10 +443,11 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         int iterationCount = 0;
 
         try {
-            // Add goal as user message, then fire OnStart hooks: a block ends the fork before its first LLM call,
-            // anything else is fed back into the conversation.
-            lc.transcriptBuffer.addUserMessage(lc.goal);
-            checkOnStartHooks(lc);
+            // Goal, then OnStart hooks: a block ends the fork before its first LLM call (see startFork).
+            final Optional<SubagentExecutionResult> refused = startFork(lc);
+            if (refused.isPresent()) {
+                return refused.get();
+            }
 
             while (iterationCount < lc.maxIterations()) {
                 // Honour a cancellation that landed before this iteration starts. The helper also clears the thread
@@ -550,8 +552,6 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         } catch (CancelledExecutionException e) {
             log.debug("Subagent ReAct loop cancelled: {}", e.getMessage());
             return createInterruptedResult(lc, iterationCount, accumulatedTokens);
-        } catch (ExecutionBlockedByHookException e) {
-            return createBlockedResult(lc, e, iterationCount, accumulatedTokens);
         } catch (MaxIterationsExceededException e) {
             return createFailureResult(lc, e.getMessage(), iterationCount, accumulatedTokens,
                     CompletionReason.MAX_ITERATIONS);
@@ -582,12 +582,35 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
     }
 
     /**
+     * Adds the goal as a user message and fires OnStart hooks; anything they say short of a block is fed back into the
+     * conversation.
+     *
+     * <p>
+     * The transcript is captured <b>before</b> the goal goes in, and that is what a blocked fork hands back, so a goal
+     * a
+     * guard refused is never persisted and replayed by a later resume. It is empty for a fresh fork, which therefore
+     * saves nothing and stays unresumable; for a resume it is the restored conversation, unchanged.
+     *
+     * @return the blocked result if an OnStart hook refused the fork, empty to run the loop
+     */
+    private Optional<SubagentExecutionResult> startFork(LoopContext lc) {
+        final SessionSnapshot beforeGoal = lc.transcriptBuffer.toSnapshot();
+        lc.transcriptBuffer.addUserMessage(lc.goal);
+        try {
+            checkOnStartHooks(lc);
+            return Optional.empty();
+        } catch (ExecutionBlockedByHookException e) {
+            return Optional.of(createBlockedResult(lc, e, beforeGoal, 0, TokenUsage.empty()));
+        }
+    }
+
+    /**
      * Fires OnStart hooks, throws if any hook blocks the fork, and otherwise appends any advisory hook feedback to the
      * conversation as a user message.
      *
      * <p>
      * A block is a hook that exited 2 or, unless it declares {@code failOpen: true}, one whose command could not be run
-     * at all. Either way the fork does not start: the loop's catch turns the exception into
+     * at all. Either way the fork does not start: {@link #startFork} turns the exception into
      * {@link #createBlockedResult}. The same rule as {@code OrcaAgentExecutor#checkOnStartHooks}, which stops the turn.
      *
      * <p>
@@ -1194,13 +1217,19 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * OnStop hooks do <b>not</b> fire, which is why this does not go through {@link #createFailureResult}: the fork
      * never started, and a main execution an OnStart hook blocks fires none either. {@code ERROR} rather than a reason
      * of its own for the reason {@link #createStalledResult} gives.
+     *
+     * <p>
+     * The result carries {@code beforeGoal}, the transcript as it stood before the refused goal was added, not the
+     * live buffer: a background fork persists its result's snapshot for {@code Task(resume=...)}, and a goal a guard
+     * refused must not come back as conversation history on the next resume. A fresh fork's {@code beforeGoal} is
+     * empty, so nothing is saved and its task id stays unresumable, as for any fork in which no iteration ran.
      */
     private SubagentExecutionResult createBlockedResult(LoopContext lc, ExecutionBlockedByHookException e,
-            int iterationCount, TokenUsage accumulatedTokens) {
+            SessionSnapshot beforeGoal, int iterationCount, TokenUsage accumulatedTokens) {
         log.warn("Subagent '{}' not started: {}", lc.subagent().getName(), e.getMessage());
         // Terminal boundary so a background tail observes that the task ended (and why).
         stream(lc, "\n[ended: " + e.getMessage() + "]\n");
-        return SubagentExecutionResult.failure(e.getMessage(), lc.transcriptBuffer.toSnapshot(),
+        return SubagentExecutionResult.failure(e.getMessage(), beforeGoal,
                 buildMetadata(lc, iterationCount, accumulatedTokens), CompletionReason.ERROR,
                 estimateCost(lc, accumulatedTokens));
     }

@@ -338,8 +338,9 @@ SPI 시그니처는 그대로지만 **동작 변경 둘이 breaking** 이다. `C
    `JsonParseException` 이다 — 경로를 실은 `HookConfigParseException` 은 원인 사슬의 **중간**에 있다(로더가 원인을 보존해 다시
    던지므로). 스타터 테스트는 root cause 가 아니라 사슬에서 그 예외를 찾아 단언한다.
 4. **"없음" 과 "알 수 없음" 을 가른다(§3.2 · Q1, 설계 리뷰).** 본문대로 `Files.exists` 로 시작하면 `.aimon` 디렉터리가 검색
-   불가일 때 거짓이 나와 그 계층이 "없음" 으로 읽힌다 — `chmod 000 .aimon` 이 fail-open 으로 남는다. `Files.notExists` 가 참일
-   때만 부재로 보고, 둘 다 거짓이면(판정 불가) 읽기 실패로 던진다. 대상 없는 심볼릭 링크는 전처럼 부재다.
+   불가일 때 거짓이 나와 그 계층이 "없음" 으로 읽힌다 — `chmod 000 .aimon` 이 fail-open 으로 남는다. 판정은
+   `Files.readAttributes` 의 예외로 한다(§10.6 의 3 — 처음 구현의 `notExists`/`exists` 쌍을 PR 리뷰 뒤 바꿨다):
+   `NoSuchFileException` 만 부재이고, 그 밖의 `IOException` 은 읽기 실패로 던진다. 대상 없는 심볼릭 링크는 전처럼 부재다.
 5. **CLI 메시지 끝에 한 구절이 붙는다.** `… - fix or remove the file and start again`. 탈출구가 "파일을 고치거나 치운다"
    하나이므로(§3.2) 오류가 그것을 말하게 했다. 번역은 `decorate` 안이 아니라 `setupHookHotReload` 를 감싼
    `startHookHotReload` 에서 한다.
@@ -368,7 +369,7 @@ SPI 시그니처는 그대로지만 **동작 변경 둘이 breaking** 이다. `C
 - **스킬 frontmatter 경로의 단위 테스트는 스킬 뷰를 조립하지 않는다.** `SkillHookSetParser` 가 만든 훅을 레지스트리에 직접
   등록한다. 뷰를 거치는 경로는 통합 테스트(환경 제공자가 실패한 포크의 스킬 `onStart` 가드)가 본다.
 - **막힌 재개 뒤의 재개(설계 리뷰).** 막힌 결과의 스냅샷으로 다시 재개하면 대화가 이어지고 같은 실행 id 를 쓴다는 테스트를
-  더했다.
+  더했다. PR 리뷰 뒤 그 테스트는 거부된 goal 이 다음 재개의 메시지에 **없다**는 것까지 단언한다(§10.6 의 1).
 - **검색 불가 디렉터리 · 읽기 권한 없는 파일 테스트는 권한을 바꿀 수 없는 환경에서는 건너뛴다**(`assumeTrue`). 이 저장소의
   개발 · CI 환경에서는 실행된다.
 
@@ -403,3 +404,30 @@ SPI 시그니처는 그대로지만 **동작 변경 둘이 breaking** 이다. `C
 - **Q1 은 과제의 문장("파싱 실패")보다 넓다.** 읽을 수 없는 파일과 검색할 수 없는 디렉터리까지 기동 실패다. 과제가 요구한
   것이 아니라 이 설계의 결정이므로 뒤집을 수 있다.
 - **운영자의 기존 `hooks.json` `onStart` 가 포크를 막기 시작한다**(F8). 의도한 동작 변경이고 CHANGELOG 맨 위에 있다.
+
+### 10.6 PR 리뷰(#208) 뒤 바꾼 것
+
+결정 원칙은 그대로다 — 판단할 수 없는 가드는 막는다. 다만 판단할 수 있고 해롭지 않은 상황을 기동 실패로 만들지는 않는다.
+
+1. **막힌 포크는 거부된 goal 을 저장하지 않는다.** 처음 구현의 `createBlockedResult` 는 `addUserMessage(goal)` **뒤**의
+   스냅샷을 돌려줬고, 백그라운드 포크는 비어 있지 않은 스냅샷을 `Task(resume=…)` 용으로 저장한다. 그래서 막힌 재개의 goal 이
+   대화 기록에 남아 다음 재개 때 모델에 그대로 재생됐다. 이제 결과는 goal 을 더하기 **전**의 스냅샷을 싣는다: 재개라면 복원한
+   대화 그대로, 새 포크라면 빈 기록이라 저장되지 않고 그 task id 는 재개할 수 없다("iteration 이 돌지 않은 포크" 의 기존 규칙).
+   메인 에이전트가 막힌 사용자 메시지를 어떻게 남기는지는 별도 결정이라 건드리지 않았다.
+2. **빈 `hooks.json` 은 기동 실패가 아니다.** `parse(String)` 은 공백 · `null` 을 빈 문서로 보지만 `parseFile` 은 스트림을
+   Jackson 에 바로 넘겨 0 바이트 파일에서 던졌다 — EE-71 뒤로는 기동 실패다. `parseFile` 은 이제 파일을 UTF-8 문자열로 읽어
+   `parse(String)` 으로 보낸다. 0 바이트 · 공백만 · `null` 파일은 hook 없는 계층이다. 덤으로 UTF-8 이 아닌 바이트는 "읽기
+   실패" 가 아니라 "invalid" 로 보고되고, 파서 메시지는 원문 인용 없이 줄 · 열만 붙인다(`(line: 2, column: 4)`).
+3. **존재 판정의 원인을 남기고, "디렉터리가 아님" 은 부재로 본다.** `notExists`/`exists` 쌍은 원인을 버렸고, 경로 중간이
+   일반 파일인 경우(`~/.aimon` 이 파일 — 그 자리에 설정 파일이 있을 수 없다)까지 기동 실패로 만들었다. 이제
+   `Files.readAttributes` 를 부르고: `NoSuchFileException` → 부재(DEBUG), 그 밖의 `IOException` 에서 경로의 조상 가운데
+   일반 파일이 있으면 → 부재 + 그 파일을 가리키는 WARN, 아니면(검색 불가 홈의 `AccessDeniedException` 등) → 기동 실패이고
+   메시지에 원래 예외의 클래스와 메시지가 실린다. "디렉터리가 아님" 을 알리는 예외는 OS 마다 다르고(유닉스는
+   이유 문자열이 "Not a directory" 인 `FileSystemException`) 이유 문자열은 지역화될 수 있어서, 예외 대신 조상 검사로 가른다.
+4. **자잘한 것.** `AgentSetupFactory.create` 의 `decorate` catch 가 `Error` 도 잡아 스택을 닫고 다시 던진다.
+   `LiveSessionOpener` 에 "영속 예약 작업 저장소를 쓰는 호스트는 스케줄링 시작 전에 `hooks.json` 을 올린다" 한 문장을
+   더했다 — `AimonStack.start()` 는 런타임 직후 스케줄링을 시작하고, 저장된 루틴은 그때부터 발화할 수 있다. 백로그 EE-72 에
+   `HookRegistryApplier` 의 셸 미지원 `command` 건너뛰기를 같은 계열로 더했다.
+
+손대지 않은 것: EE-75(늘 참인 `bootstrapOk`), EE-64(코드 훅 예외 매핑), 워크플로 단계의 막힌 포크 테스트, `AimonCli` stderr
+테스트.

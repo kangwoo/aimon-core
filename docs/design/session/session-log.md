@@ -489,7 +489,7 @@ v1 쓰기 모드에서 `DefaultContextEngine` 은 기록을 고쳐 쓰는 지금
 - **v1 in-place 압축의 seq.** v1 쓰기(와 [`context-engine.md` §13.2](../agent-execution/context-engine.md#132-defaultcontextengine-의-뷰-모드-4-82) 의 폴백)가 쓰는 `replaceWith` 는 교체 항목에 `nextSeq` 부터 새 seq 를 주고
   `floorSeq` 를 그 첫 seq 로 올린다. 교체된 항목과 같은 인스턴스는 origin 을 유지하고 나머지는 CONVERSATION 이다.
   manifest 는 새 floor 아래로 내려가므로 지운다 — 세그먼트는 GC 의 고아가 된다
-- **SYNTHETIC.** 서브에이전트의 OnStart advisory feedback(`DefaultSubagentExecutor.fireOnStart`)도 SYNTHETIC 으로 붙는다.
+- **SYNTHETIC.** 서브에이전트의 OnStart advisory feedback(`DefaultSubagentExecutor.checkOnStartHooks`)도 SYNTHETIC 으로 붙는다.
   §3.2 목록은 메인 루프만 적었지만 이유가 같다. 훅 개발 가이드에는 `PostCompactContext` 절이 없어서 새로 썼다
 - **공개 API 추가.** `SessionRecordView.getLogState()` 는 default 메서드이고 `SessionStore.segments(raw)` 는 **추상** 메서드다
   (트리 밖 구현은 컴파일이 깨진다 — `0.x` 에서 허용되고 CHANGELOG 에 있다)

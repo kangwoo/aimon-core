@@ -228,10 +228,68 @@ class HookConfigLoaderTest {
         try {
             assertThatThrownBy(() -> loaderOver(tmp).load()).isInstanceOf(HookConfigParseException.class)
                     .hasMessageContaining(file.toAbsolutePath().toString())
-                    .hasMessageContaining("(PROJECT layer) could not be read");
+                    .hasMessageContaining("(PROJECT layer) could not be read")
+                    .hasMessageContaining("cannot determine whether the file exists")
+                    .hasMessageContaining("java.nio.file.AccessDeniedException")
+                    .hasCauseInstanceOf(java.nio.file.AccessDeniedException.class);
         } finally {
             dir.setExecutable(true);
         }
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("emptyContents")
+    @DisplayName("an empty, whitespace-only or null file is a present layer with no hooks, not a startup failure")
+    void emptyFileIsALayerWithNoHooks(String label, String content, @TempDir Path tmp) throws IOException {
+        final Path file = fileOf(tmp, HookConfigSource.PROJECT);
+        Files.createDirectories(file.getParent());
+        Files.writeString(file, content);
+        writeHooks(fileOf(tmp, HookConfigSource.USER), "u");
+
+        final LayeredHookConfig config = loaderOver(tmp).load();
+
+        assertThat(config.get(HookConfigSource.PROJECT).getHooks()).isEmpty();
+        assertThat(config.get(HookConfigSource.USER).getHooks()).containsKey("PreToolUse");
+    }
+
+    static Stream<Arguments> emptyContents() {
+        return Stream.of(Arguments.of("zero bytes", ""), Arguments.of("whitespace only", " \n\t\r\n "),
+                Arguments.of("null", "null\n"));
+    }
+
+    @Test
+    @DisplayName("a config directory that is a regular file reads as absent with a WARN naming it")
+    void configDirectoryThatIsAFileReadsAsAbsent(@TempDir Path tmp) throws IOException {
+        final Path userDir = tmp.resolve("user");
+        Files.writeString(userDir, "not a directory");
+        writeHooks(fileOf(tmp, HookConfigSource.PROJECT), "p");
+        final ch.qos.logback.classic.Logger loaderLogger = (ch.qos.logback.classic.Logger) LoggerFactory
+                .getLogger(HookConfigLoader.class);
+        final ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        loaderLogger.addAppender(appender);
+        try {
+            final LayeredHookConfig config = loaderOver(tmp).load();
+
+            assertThat(config.layered()).containsOnlyKeys(HookConfigSource.PROJECT);
+            assertThat(appender.list).filteredOn(e -> e.getLevel() == Level.WARN)
+                    .extracting(ILoggingEvent::getFormattedMessage).singleElement()
+                    .satisfies(message -> assertThat(message).contains(userDir.toAbsolutePath().toString(),
+                            "is a file, not a directory"));
+        } finally {
+            loaderLogger.detachAppender(appender);
+        }
+    }
+
+    @Test
+    @DisplayName("a file that is not valid UTF-8 fails the load as invalid")
+    void invalidUtf8FailsTheLoad(@TempDir Path tmp) throws IOException {
+        final Path file = fileOf(tmp, HookConfigSource.LOCAL);
+        Files.createDirectories(file.getParent());
+        Files.write(file, new byte[]{'{', (byte) 0xC3, (byte) 0x28, '}'});
+
+        assertThatThrownBy(() -> loaderOver(tmp).load()).isInstanceOf(HookConfigParseException.class)
+                .hasMessageContaining("(LOCAL layer) is invalid").hasMessageContaining("not valid UTF-8");
     }
 
     private static void writeHooks(Path file, String matcher) throws IOException {

@@ -647,8 +647,10 @@ public class AgentSetupFactory {
                     new CliDecorations(outputFormatter, approvalChannel.get(), traceSpanStore, llmClient,
                             new CliMemoryDecorations(memoryWiring, representationStore, observationStore, memoryQueue,
                                     memoryModelName)));
-        } catch (RuntimeException e) {
+        } catch (RuntimeException | Error e) {
             // decorate enrolls as it goes, so the stack's teardown plan releases whatever was built before it threw.
+            // An Error (a missing class on the hot-reload path, say) leaves the same half-built stack, so it is
+            // released too; decorate declares no checked exception, so these two cover everything it can throw.
             // A broken hooks.json makes that an everyday path (EE-71), not a corner. The queue is stopped by hand
             // because it is enrolled last, after the hot-reload step that throws; stop() is idempotent, so it does
             // not matter if the stack got to it first.
@@ -863,7 +865,7 @@ public class AgentSetupFactory {
     /**
      * Closes {@code resource} while a bootstrap failure is already in flight, attaching any close failure to it.
      */
-    private static void closeSuppressing(AutoCloseable resource, RuntimeException inFlight) {
+    private static void closeSuppressing(AutoCloseable resource, Throwable inFlight) {
         if (resource == null) {
             return;
         }

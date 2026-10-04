@@ -2124,14 +2124,17 @@ WARN 한 줄조차 "의도된 동작" 으로 문서화되어 있었다.
 잘못된 URL, 모르는 이벤트 이름(`preTol`) — 을 시작 실패로 볼지, 지금처럼 WARN 후 건너뛸지 정한다.
 
 **왜.** EE-71 이 닫은 것은 **파일 단위**의 실패다. 그 아래에 **항목 단위**의 누락이 남아 있다: `HookRegistryApplier.applyEntry`
-는 잘못된 핸들러와 인식하지 못한 이벤트를, `HookConfigMerger` 는 모르는 이벤트 이름을 WARN 후 건너뛴다. 운영자가
+는 잘못된 핸들러와 인식하지 못한 이벤트를, `HookConfigMerger` 는 모르는 이벤트 이름을 WARN 후 건너뛴다. 같은
+`applyEntry` 는 셸 실행기가 셸을 지원하지 않으면(`ShellActionExecutor.isShellSupported()` 가 `false`) `command` 핸들러를
+— `onStart` · `preTool` 가드라도 — WARN 하나만 남기고 뺀다. 등록하면 "실행할 수 없음" 이 block 으로 읽혀 매번 막히기
+때문이지만, 결과는 가드 하나가 빠진 채 뜨는 것이다. 운영자가
 `"preTol"` 이라고 쓴 가드는 등록되지 않고 에이전트는 뜬다 — 가드 하나가 조용히 빠지는 같은 계열이다. 한꺼번에 막지 않은
 이유는 경계가 정해져 있지 않아서다: 미지원 이벤트(`HookEventName.isUnsupported` — `Notification` 등)는 Claude Code 설정을
 그대로 가져올 수 있게 **일부러** 허용하고, 모르는 최상위 필드도 새 설정을 옛 바이너리가 읽을 수 있게 무시한다. "오타" 와
 "아직 모르는 것" 을 가르는 규칙이 먼저 있어야 한다.
 
-**어디.** `modules/aimon-core/src/main/java/at/aimon/core/config/hook/HookRegistryApplier.java` 의 `applyEntry`,
-`HookConfigMerger.java`, `HookEventName.java` 의 미지원 목록(2026-10-04).
+**어디.** `modules/aimon-core/src/main/java/at/aimon/core/config/hook/HookRegistryApplier.java` 의 `applyEntry`(셸 미지원
+`command` 건너뛰기 포함), `HookConfigMerger.java`, `HookEventName.java` 의 미지원 목록(2026-10-04).
 
 **언제 다시 볼까.** `hooks.json` 을 보안 가드로 쓰는 배포가 생길 때, 또는 오타로 가드가 빠진 사례가 보고될 때. 가드 이벤트
 (`preTool` · `onStart` · `preCompact` · `permissionRequest`)의 항목만 엄격하게 보는 길이 있다.

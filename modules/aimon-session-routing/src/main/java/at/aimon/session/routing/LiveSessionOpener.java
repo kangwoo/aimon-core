@@ -76,7 +76,10 @@ import at.aimon.core.agent.session.SessionId;
  * application-scoped and must be closed at shutdown so the polling thread exits cleanly. CLI uses the same helper —
  * see {@code aimon-cli/AgentSetupFactory#setupHookHotReload} for a reference call shape.
  * {@code start()} throws {@code HookConfigParseException} when a {@code hooks.json} that is present does not parse or
- * cannot be read, so a host that calls it at startup does not come up with its file guards off.
+ * cannot be read, so a host that calls it at startup does not come up with its file guards off. A host whose
+ * scheduled-task repository is persistent should load {@code hooks.json} before scheduling starts &mdash; assemble the
+ * stack, call {@code start()} here, then {@code AimonStack.startScheduling()} &mdash; because a stored routine can fire
+ * as soon as the engine starts, and until the file is loaded it runs without the file's guards.
  *
  * <h2>Re-open semantics</h2>
  *

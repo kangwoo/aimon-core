@@ -3,10 +3,14 @@ package at.aimon.core.config.hook;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.Reader;
+import java.io.UncheckedIOException;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Objects;
 
+import com.fasterxml.jackson.core.JsonLocation;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -59,7 +63,12 @@ public final class JacksonHookConfigParser {
             final HookConfigDocument doc = objectMapper.readValue(json, HookConfigDocument.class);
             return doc == null ? HookConfigDocument.empty() : doc;
         } catch (JsonProcessingException e) {
-            throw new HookConfigParseException("Failed to parse hooks JSON: " + e.getOriginalMessage(), e);
+            // The original message plus the location, not getMessage(): that one quotes the source text as well.
+            final JsonLocation location = e.getLocation();
+            final String where = location == null
+                    ? ""
+                    : " (line: " + location.getLineNr() + ", column: " + location.getColumnNr() + ")";
+            throw new HookConfigParseException("Failed to parse hooks JSON: " + e.getOriginalMessage() + where, e);
         }
     }
 
@@ -104,20 +113,29 @@ public final class JacksonHookConfigParser {
     /**
      * Parses a JSON document from a filesystem path.
      *
+     * <p>
+     * The file is read whole as UTF-8 and handed to {@link #parse(String)}, so an empty, whitespace-only or
+     * {@code null} file is an empty document (no hooks) exactly as the same text is, rather than an end-of-input
+     * error.
+     *
      * @param path
      *            path to a UTF-8 JSON file (must not be null)
-     * @return parsed document (never null)
+     * @return parsed document (never null; empty when the file is blank or {@code null})
      * @throws HookConfigParseException
-     *             on parse failure
-     * @throws java.io.UncheckedIOException
+     *             on parse failure, including bytes that are not valid UTF-8
+     * @throws UncheckedIOException
      *             on IO failure (file unreadable, etc.)
      */
     public HookConfigDocument parseFile(Path path) {
         Objects.requireNonNull(path, "path cannot be null");
-        try (InputStream in = Files.newInputStream(path)) {
-            return parse(in);
+        final String json;
+        try {
+            json = Files.readString(path, StandardCharsets.UTF_8);
+        } catch (CharacterCodingException e) {
+            throw new HookConfigParseException("Failed to parse hooks JSON: the file is not valid UTF-8", e);
         } catch (IOException e) {
-            throw new java.io.UncheckedIOException("Failed to read hooks JSON file: " + path, e);
+            throw new UncheckedIOException("Failed to read hooks JSON file: " + path, e);
         }
+        return parse(json);
     }
 }

@@ -11,6 +11,8 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -49,9 +51,14 @@ import at.aimon.core.skill.hook.SkillHookSet;
 import at.aimon.core.skill.hook.declarative.DefaultShellActionExecutor;
 import at.aimon.core.skill.hook.declarative.HostShellActionExecutor;
 import at.aimon.core.skill.parser.SkillHookSetParser;
+import at.aimon.core.subagent.DefaultSubagentExecutionManager;
+import at.aimon.core.subagent.InMemorySubagentRegistry;
 import at.aimon.core.subagent.Subagent;
 import at.aimon.core.subagent.SubagentContent;
+import at.aimon.core.subagent.SubagentExecutionEnvironment;
 import at.aimon.core.subagent.SubagentMetadata;
+import at.aimon.core.subagent.behavior.InMemorySubagentBehaviorRegistry;
+import at.aimon.core.subagent.task.InMemorySessionSnapshotStore;
 
 /**
  * EE-70: an {@code onStart} hook that blocks stops the fork before its first LLM call, the way it stops a main
@@ -62,6 +69,7 @@ import at.aimon.core.subagent.SubagentMetadata;
 class DefaultSubagentExecutorOnStartBlockTest {
 
     private static final String REASON = "FORK-REFUSED-5d20";
+    private static final String REFUSED_GOAL = "REFUSED-GOAL-7a41";
 
     private final VirtualShell forkShell = mock(VirtualShell.class);
     private final ExecutionEnvironment forkEnvironment = TestExecutionEnvironments.builder().shell(forkShell)
@@ -124,27 +132,61 @@ class DefaultSubagentExecutorOnStartBlockTest {
     }
 
     @Test
-    @DisplayName("a resume is blocked too, and a later resume from the blocked result picks the conversation up")
+    @DisplayName("a blocked resume keeps the refused goal out of its snapshot, so a later resume never replays it")
     void aBlockedResumeDoesNotBreakALaterOne() {
         llm.responses.add(LlmResponse.text("first answer"));
-        final SubagentExecutionResult first = execute(null);
+        final SubagentExecutionResult first = execute(null, "first goal");
         final OnStartHook gate = context -> HookResult.block(REASON);
         hooks.register(HookEventType.ON_START, gate);
 
-        final SubagentExecutionResult blocked = execute(first.getSnapshot());
+        final SubagentExecutionResult blocked = execute(first.getSnapshot(), REFUSED_GOAL);
 
         assertThat(blocked.isSuccess()).isFalse();
         assertThat(blocked.getErrorMessage()).contains(REASON);
         assertThat(llm.calls).isEqualTo(1);
+        assertThat(blocked.getSnapshot().getConversationHistory()).extracting(Message::getContent)
+                .containsExactlyElementsOf(
+                        first.getSnapshot().getConversationHistory().stream().map(Message::getContent).toList());
 
         hooks.unregister(HookEventType.ON_START, gate);
         llm.responses.add(LlmResponse.text("second answer"));
-        final SubagentExecutionResult resumed = execute(blocked.getSnapshot());
+        final SubagentExecutionResult resumed = execute(blocked.getSnapshot(), "third goal");
 
         assertThat(resumed.isSuccess()).isTrue();
         assertThat(resumed.getSnapshot().getSessionId()).isEqualTo(first.getSnapshot().getSessionId());
-        assertThat(llm.seenMessages.get(1)).extracting(Message::getContent).containsSubsequence("go", "first answer",
-                "go", "go");
+        assertThat(llm.seenMessages.get(1)).extracting(Message::getContent)
+                .containsExactly("first goal", "first answer", "third goal")
+                .noneMatch(content -> content.contains(REFUSED_GOAL));
+    }
+
+    @Test
+    @DisplayName("a blocked fresh fork hands back an empty transcript, so a background run saves nothing to resume")
+    void aBlockedFreshForkIsNotResumable() {
+        hooks.register(HookEventType.ON_START, (OnStartHook) context -> HookResult.block(REASON));
+        final InMemorySessionSnapshotStore snapshots = new InMemorySessionSnapshotStore();
+        final InMemorySubagentRegistry subagents = new InMemorySubagentRegistry();
+        subagents.register(subagent());
+        final ExecutorService pool = Executors.newSingleThreadExecutor();
+        try {
+            final DefaultSubagentExecutionManager manager = new DefaultSubagentExecutionManager(executor(), pool,
+                    new DefaultHookExecutionManager(), new InMemorySubagentBehaviorRegistry());
+            final SubagentExecutionEnvironment env = SubagentExecutionEnvironment.builder()
+                    .agentRuntimeId(AgentRuntimeId.of("agent:test-1")).subagentRegistry(subagents)
+                    .toolRegistry(new DefaultToolRegistry()).hookRegistry(hooks).userLocale(UserLocale.createDefault())
+                    .defaultModel(LlmModel.builder().name("gpt-4").build()).executionEnvironment(forkEnvironment)
+                    .executionEnvironmentProvider(request -> forkEnvironment).sessionSnapshotStore(snapshots).build();
+
+            final SubagentExecutionResult result = manager
+                    .executeInBackground(env, "task-blocked", "explorer", REFUSED_GOAL, "").join();
+
+            assertThat(result.isSuccess()).isFalse();
+            assertThat(result.getErrorMessage()).contains(REASON);
+            assertThat(result.getSnapshot().getConversationHistory()).isEmpty();
+            assertThat(snapshots.load("task-blocked")).as("nothing ran, so there is nothing to resume").isEmpty();
+            assertThat(llm.calls).isZero();
+        } finally {
+            pool.shutdownNow();
+        }
     }
 
     @Test
@@ -214,18 +256,27 @@ class DefaultSubagentExecutorOnStartBlockTest {
     }
 
     private SubagentExecutionResult execute(SessionSnapshot previousSnapshot) {
-        final Subagent subagent = Subagent.of("explorer",
-                SubagentMetadata.builder().description("d").maxIterations(5).build(),
+        return execute(previousSnapshot, "go");
+    }
+
+    private static Subagent subagent() {
+        return Subagent.of("explorer", SubagentMetadata.builder().description("d").maxIterations(5).build(),
                 SubagentContent.of("you are explorer"));
+    }
+
+    private DefaultSubagentExecutor executor() {
+        return new DefaultSubagentExecutor(llm, new DefaultToolExecutionManager(), new DefaultHookExecutionManager());
+    }
+
+    private SubagentExecutionResult execute(SessionSnapshot previousSnapshot, String goal) {
         final SubagentExecutionContext context = SubagentExecutionContext.builder()
-                .agentRuntimeId(AgentRuntimeId.of("agent:test-1")).subagent(subagent)
+                .agentRuntimeId(AgentRuntimeId.of("agent:test-1")).subagent(subagent())
                 .defaultModel(LlmModel.builder().name("gpt-4").build()).toolRegistry(new DefaultToolRegistry())
                 .hookRegistry(hooks).userLocale(UserLocale.createDefault()).executionEnvironment(forkEnvironment)
                 .executionEnvironmentProvider(request -> forkEnvironment).outputSink(streamed::append)
                 .parentCancellationSignal(NoopCancellationSignal.INSTANCE).build();
-        return new DefaultSubagentExecutor(llm, new DefaultToolExecutionManager(), new DefaultHookExecutionManager())
-                .execute(context, SubagentExecutionRequest.builder().taskId("task-1").goal("go")
-                        .previousSnapshot(previousSnapshot).build());
+        return executor().execute(context, SubagentExecutionRequest.builder().taskId("task-1").goal(goal)
+                .previousSnapshot(previousSnapshot).build());
     }
 
     /** Returns queued responses in order, counting calls and keeping what each one was sent. */

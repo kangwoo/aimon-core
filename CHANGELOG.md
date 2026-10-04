@@ -27,6 +27,9 @@ format changes — both are **behaviour changes an operator's existing configura
   reports `Status: FAILURE`, a skill reports `Skill fork failed for '<skill>': …`, a background task settles as
   `FAILED`, a workflow step fails. The fork's `onStop` does not fire (nothing started; a main execution an `onStart`
   hook blocks fires none either); the spawning side's `subagentStop` fires with `success=false` and the reason.
+- **A refused goal is not kept for a resume.** The blocked result's snapshot is the transcript as it stood before the
+  goal: a blocked resume hands back the restored conversation unchanged, so a later `Task(resume=…)` does not replay
+  the refused goal, and a blocked fresh background fork saves nothing, so its task id is not resumable.
 - **A skill's `onStart` hook is a guard again.** `SkillHookSet.guardEvents()` is back to four (`onStart`, `preTool`,
   `permissionRequest`, `preCompact`), so a skill whose only hook is on `onStart` now makes `Workflow` / `WorkflowJs`
   background mode and `ScheduleTask` refuse inside its fork, and `failOpen` on a frontmatter `onStart` entry is
@@ -44,8 +47,12 @@ format changes — both are **behaviour changes an operator's existing configura
   error. There is deliberately no flag to start anyway.
 - **A file that is there but cannot be read is the same failure.** A `hooks.json` without read permission, a directory
   at that path, or a `.aimon` directory that cannot be searched used to be skipped with a WARN ("intentional
-  fail-soft"); each now fails the load (`… could not be read: …`). On a hot reload this turns "that layer silently
-  drops out" into "the reload fails and the previous config stays".
+  fail-soft"); each now fails the load (`… could not be read: …`). When whether the file exists cannot be determined
+  at all, the message carries the underlying exception, e.g. `cannot determine whether the file exists
+  (java.nio.file.AccessDeniedException: …)`.
+- **Two situations that are not failures.** An empty `hooks.json` — zero bytes, whitespace only, or `null` — is a layer
+  with no hooks and does not stop startup. A path one of whose components is a regular file rather than a directory (`~/.aimon` is a
+  file) cannot hold a config file, so that layer is absent, with a WARN naming the file.
 - **`HookHotReloadBootstrap.start()` and `HookRegistryReloader.bootstrap()` throw `HookConfigParseException`** instead
   of logging and carrying on; nothing is registered and no watcher is started. `bootstrap()`'s `boolean` and
   `Started.isBootstrapSucceeded()` remain and are now always `true` — code that tested them for `false` has a dead
@@ -54,7 +61,9 @@ format changes — both are **behaviour changes an operator's existing configura
   exception explicitly. Neither `aimon-bootstrap` nor `aimon-spring-boot-starter` wires `hooks.json` themselves, so
   they are unchanged.
 - **`HookConfigLoader.load()` messages name the file and its layer**, so a failed hot reload's `failureReason` does
-  too. Hot-reload behaviour is otherwise unchanged: a failed reload keeps the previous configuration.
+  too. A failed reload keeps the previous configuration, as before — and a file that is not a regular file or cannot
+  be read during a reload is now such a failure, so the previous configuration stays instead of that layer being
+  dropped from it.
 - Handler-level problems found when the config is applied — a `command` handler with no `command`, an unknown event
   name — are still skipped with a WARN (EE-72).
 
