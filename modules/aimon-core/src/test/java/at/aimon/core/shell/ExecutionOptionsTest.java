@@ -107,6 +107,17 @@ class ExecutionOptionsTest {
     }
 
     @Test
+    @DisplayName("hook and background are independent flags")
+    void hookAndBackground_independent() {
+        ExecutionOptions both = ExecutionOptions.builder().hook(true).background(true).build();
+
+        assertThat(both.isHook()).isTrue();
+        assertThat(both.isBackground()).isTrue();
+        assertThat(both.toBuilder().background(false).build().isHook()).isTrue();
+        assertThat(both.toBuilder().hook(false).build().isBackground()).isTrue();
+    }
+
+    @Test
     @DisplayName("Negative maxCaptureBytes should be rejected (fail-fast)")
     void negativeMaxCaptureBytes_rejected() {
         assertThatThrownBy(() -> ExecutionOptions.builder().maxCaptureBytes(-1))

@@ -109,6 +109,7 @@ class BashToolTest {
             assertThat(manager.readNewOutput(taskId, null))
                     .hasValueSatisfying(output -> assertThat(output).contains("from the env shell"));
             assertThat(stubShell.lastOptions().isBackground()).isTrue();
+            assertThat(stubShell.lastOptions().isHook()).isFalse();
         } finally {
             tool.shutdown();
         }
