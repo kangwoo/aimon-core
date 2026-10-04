@@ -1,4 +1,4 @@
-# 실행 환경 — 등록 항목 75건 (열림 52 · 닫힘 23)
+# 실행 환경 — 등록 항목 75건 (열림 51 · 닫힘 24)
 
 출처는 `ExecutionEnvironment` 구현 작업이다. 설계는 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md)
 이고, 구현 계획(승인본)과 구현이 그 계획에서 벗어난 점은
@@ -56,11 +56,12 @@ EE-51 은 그 변경 직전에 메인테이너가 방향(fail-closed)을 정한 
 에 있다. EE-72~EE-75 는 그 설계의 열린 질문(Q2 → EE-72, Q4 → EE-73, Q3 → EE-74, Q5 · Q6 → EE-75) 가운데 이 변경 밖으로
 결과가 번지는 것을 옮긴 것이고, 외부 저장소에 미치는 영향은 EE-1 과 EE-59 에 더했다. EE-59 는 2026-10-04 에 aimon-sandbox
 PR #6 이 그쪽 저장소에서 닫았다 — 이 문서의 서술은 추론이었고, 그쪽 소스로 확인하니 여럿이 틀렸다(EE-59 의 닫힘 절). 같은
-변경으로 EE-1 의 샌드박스 쪽도 끝났지만 aimon-browser 쪽이 남아 EE-1 은 열려 있다.
+변경으로 EE-1 의 샌드박스 쪽도 끝났고, 남은 aimon-browser · aimon-ops 쪽은 같은 날 메인테이너가 이 백로그의 범위에서
+뺐다 — EE-1 은 그 결정으로 닫혔다.
 
 ---
 
-## EE-1 — 외부 도구 제공자 둘이 컴파일되지 않는다 · **열림**
+## EE-1 — 외부 도구 제공자 둘이 컴파일되지 않는다 · **닫힘** *(2026-10-04)*
 
 **무엇을.** aimon-sandbox 의 `OrcaSandboxToolProvider` 와 aimon-browser 의 `OrcaBrowserToolProvider` 를 새 SPI 로 옮긴다.
 
@@ -109,10 +110,23 @@ aimon-browser 와 aimon-memory 는 쓰지 않는다. aimon-ops(`22576b7a` 2026-0
 `find` · `kill` 직접 호출, `BackgroundBashStore` 구현)은 그쪽에 해당하는 코드가 없다 — main 에서는 코어의
 `NoOpShellActionExecutor` 를 쓰는 곳 하나뿐이다. (4) EE-70 · EE-71 덧붙임(`HookHotReloadBootstrap` /
 `HookRegistryReloader` 호출, 외부 도구가 스폰하는 포크)도 그쪽에 해당하는 코드가 없다.
-**aimon-browser 쪽은 그대로 열려 있다**(그 저장소는 이번에 열어 보지 않았다). 이 항목은 aimon-browser 가 새 코어로 올라올
-때 닫는다. 동작 쪽 결과는 EE-59 에 있다.
+동작 쪽 결과는 EE-59 에 있다.
 
 출처: 계획 §8 "Public-SPI breaks".
+
+### 닫힘 (2026-10-04)
+
+**샌드박스 쪽은 고쳐서, 나머지는 범위에서 빼서 닫는다.** 샌드박스 쪽은 위 덧붙임대로 aimon-sandbox PR #6 이 끝냈다. 남은
+둘 — aimon-browser 를 새 코어로 옮기는 일(`OrcaBrowserToolProvider` 의 `getFileSystem()` · `getCredentialStore()`, 격리 경계와
+EE-70 의 덧붙임)과 aimon-ops 의 테스트 두 곳(`RenderPayloadCollectorHookTest` · `SlackTodoStatusHookTest` 의
+`Environment.createDefault()`) — 은 메인테이너가 2026-10-04 에 **이 백로그에서 추적하지 않기로** 했다. 코어 릴리스는 그 둘을
+기다리지 않는다.
+
+그래서 사실은 그대로 남는다: 이 변경들이 들어간 코어(0.3.1)를 aimon-browser 가 그대로 의존하면 컴파일이 깨지고, 옛 코어로
+빌드된 그 jar 를 새 코어와 함께 돌리면 `NoSuchMethodError` / `NoClassDefFoundError` 다. aimon-ops 는 aimon-core 0.1.18 에
+고정되어 있어 코어를 올리기 전까지는 영향이 없다. 위 서술(무엇을 바꿔야 하는지)은 그 저장소들이 새 코어로 올라올 때의
+참고로 남긴다 — 추론이고, 두 저장소의 소스로 확인하지 않았다. `CHANGELOG.md` `[Unreleased]` 의 외부 저장소 문장도 같은
+날 이 결정에 맞췄다.
 
 ## EE-2 — 공급 VFS 배치에서 스테이징 사본을 호스트 셸이 못 보고, 사본이 쌓인다 · **열림**
 
