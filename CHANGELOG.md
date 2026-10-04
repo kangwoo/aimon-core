@@ -140,9 +140,8 @@ change public SPI; they ship together so external repositories follow once.
   from everyone, its owner included. Records written before the upgrade carry neither and are no longer found by a
   session; they expire with the retention period, and commands already running end at their ceiling.
 
-External repositories: aimon-sandbox and aimon-browser follow with the release that carries EE-1 and EE-59 — the list
-of what each has to change is in those backlog items and is inferred from the core SPI, not checked against their
-sources. Design and deviations:
+External repositories: aimon-sandbox has followed (its PR #6, backlog EE-59). aimon-browser and aimon-ops are not
+migrated as part of this release (backlog EE-1). Design and deviations:
 `docs/design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md`.
 
 ### Changed (breaking): `Environment` is gone; its time zone lives in `UserLocale` (EE-14)
@@ -171,11 +170,8 @@ sources. Design and deviations:
   runtime) and handed to the same places. It never reached a session record, a transcript, a task codec or a hook
   payload, and the prompt carried no time zone before and carries none now. Nothing in the framework reads
   `getTimeZone()` yet (EE-60).
-- **Ships with the release that carries the `OrcaToolProviderContext` break (EE-1)**, so the two external tool
-  providers are rebuilt once. In local checkouts, aimon-sandbox uses `Environment.createDefault()` in one test
-  (`OrcaRuntimeSandboxE2ETest`) and aimon-browser and aimon-memory do not use the type; their remotes were not checked.
-  aimon-ops uses it in two tests (`RenderPayloadCollectorHookTest`, `SlackTodoStatusHookTest`), but it is pinned to
-  aimon-core 0.1.18, so it breaks only when it upgrades.
+- **Ships with the release that carries the `OrcaToolProviderContext` break (EE-1)**, so a downstream module is
+  rebuilt once. aimon-sandbox has moved to `UserLocale` (its PR #6).
 - Old name → new name, and the names that must not be touched:
   [`docs/migration/rename-maps.md`](docs/migration/rename-maps.md).
 
@@ -537,8 +533,9 @@ compatibility layer (`docs/project/api-stability.md` §5).
   now listed in path order), `FileArtifact.getStorage()` (`WORKSPACE` / `CONTROL`) with `ArtifactPolicy` and the
   starter's `aimon.tools.artifact.*`, bootstrap `ExecutionEnvironmentSpec` / `ToolSpec.artifactPolicy`, and
   `RecentFilesRestoreHook(..., ToolContext readContext)`.
-- **External modules** `aimon-sandbox` (`OrcaSandboxToolProvider`) and `aimon-browser` (`OrcaBrowserToolProvider`)
-  read `getFileSystem()` and must move to the new SPI (backlog EE-1).
+- **External modules** that read `OrcaToolProviderContext.getFileSystem()` must move to the new SPI. aimon-sandbox
+  had no such code (`OrcaSandboxToolProvider` was never implemented); aimon-browser is not migrated with this release
+  (backlog EE-1).
 
 ### Added: the rolling context engine and `SessionHistory`
 
