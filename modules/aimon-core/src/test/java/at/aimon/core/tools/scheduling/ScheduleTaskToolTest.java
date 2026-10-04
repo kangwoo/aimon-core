@@ -159,6 +159,21 @@ class ScheduleTaskToolTest {
         }
 
         @Test
+        @DisplayName("refuses under a skill whose only hook is on onStart (EE-70)")
+        void refusesUnderAnOnStartOnlySkill() {
+            at.aimon.core.skill.hook.SkillScopedHookRegistry view = new at.aimon.core.skill.hook.SkillScopedHookRegistry(
+                    runtime, "gate", at.aimon.core.skill.hook.SkillHookSet.builder()
+                            .addOnStart(ctx -> at.aimon.core.hook.execution.HookResult.success()).build());
+
+            ToolResult result = tool.execute(createValidInput(), contextWith(view));
+
+            assertThat(result.isError()).isTrue();
+            assertThat(result.getContent()).contains("skill 'gate'").contains("guard hooks")
+                    .contains("scheduled routine");
+            verify(taskManager, never()).register(any(ScheduledTask.class));
+        }
+
+        @Test
         @DisplayName("schedules once the skill's layer is closed, and when the skill only observes")
         void schedulesWithoutActiveGuards() {
             when(taskManager.register(any(ScheduledTask.class))).thenAnswer(invocation -> invocation.getArgument(0));

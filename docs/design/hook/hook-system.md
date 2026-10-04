@@ -63,7 +63,7 @@ blocked 결과를 걸러 내는 이유).
 |------|--------------|
 | `preTool` | 도구 호출이 취소되고 사유가 tool result 로 모델에 돌아간다 |
 | `permissionRequest` | 디스패치 전에 거부 |
-| `onStart` | `ExecutionBlockedByHookException` 으로 턴 자체를 중단 |
+| `onStart` | 메인 실행은 `ExecutionBlockedByHookException` 으로 턴 자체를 중단하고, 포크는 시작하지 않고 사유가 실린 실패 결과로 끝난다. 어느 쪽도 `onStop` 은 없다 |
 | `preCompact` | AUTO 컴팩션은 건너뛰고, MANUAL 은 사유를 보고 |
 
 나머지 아홉은 **advisory** 다 — `block()` 을 돌려줘도 조용히 무시된다. 새 이벤트에 거부권을 기대하는 훅을

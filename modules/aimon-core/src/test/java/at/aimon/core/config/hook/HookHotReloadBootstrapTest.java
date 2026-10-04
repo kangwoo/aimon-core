@@ -9,6 +9,8 @@ import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.base.UserLocale;
@@ -72,6 +74,38 @@ class HookHotReloadBootstrapTest {
             assertThat(started.isBootstrapSucceeded()).isTrue();
             assertThat(registry.getHooks(HookEventType.PRE_TOOL)).hasSize(1);
         }
+    }
+
+    @ParameterizedTest(name = "{1}")
+    @CsvSource(delimiter = '|', value = {"{not valid json|line: 1",
+            "{\"hooks\":{\"PreToolUse\":[{\"hooks\":[{\"type\":\"comand\",\"command\":\"c\"}]}]}}|Unknown hook handler type",
+            "{\"hooks\":{\"PreToolUse\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"c\",\"timeout\":-5}]}]}}|must be a positive number"})
+    void startWithABrokenConfigThrowsAndLeavesNothingBehind(String broken, String cause) throws Exception {
+        // EE-71. The user layer is valid and holds a guard: it must not be registered either, and the host must
+        // not come up.
+        Files.createDirectories(userDir.resolve(".aimon"));
+        Files.writeString(userDir.resolve(".aimon/hooks.json"),
+                "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"Bash\",\"hooks\":[" //
+                        + "{\"type\":\"command\",\"command\":\"guard\"}]}]}}");
+        Files.createDirectories(projectDir.resolve(".aimon"));
+        final Path brokenFile = projectDir.resolve(".aimon/hooks.json");
+        Files.writeString(brokenFile, broken);
+        final DefaultHookRegistry registry = new DefaultHookRegistry();
+        final long watchersBefore = watcherThreads();
+
+        assertThatThrownBy(() -> HookHotReloadBootstrap.builder().userHome(userDir).projectRoot(projectDir)
+                .shellExecutor(SHELL_EXECUTOR).processEnv(Map.of()).registry(registry).invoker(INVOKER).start())
+                .isInstanceOf(HookConfigParseException.class)
+                .hasMessageContaining(brokenFile.toAbsolutePath().toString())
+                .hasMessageContaining("(PROJECT layer) is invalid").hasMessageContaining(cause);
+
+        assertThat(registry.isEmpty()).isTrue();
+        assertThat(watcherThreads()).as("no watcher thread was started").isEqualTo(watchersBefore);
+    }
+
+    private static long watcherThreads() {
+        return Thread.getAllStackTraces().keySet().stream()
+                .filter(thread -> "aimon-hook-config-watcher".equals(thread.getName())).count();
     }
 
     @Test

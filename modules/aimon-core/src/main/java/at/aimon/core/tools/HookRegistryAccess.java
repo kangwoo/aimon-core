@@ -41,8 +41,8 @@ public final class HookRegistryAccess {
 
     /**
      * Returns the skills whose guard hooks are active for the calling execution — skills it is running inside the
-     * fork of, that declared a hook on an event that can veto in the fork ({@code preTool}, {@code preCompact},
-     * {@code permissionRequest}; not {@code onStart}, which a fork reads as advisory &mdash; EE-70).
+     * fork of, that declared a hook on an event that can veto in the fork ({@code onStart}, {@code preTool},
+     * {@code preCompact}, {@code permissionRequest}).
      *
      * <p>
      * This is the question to ask before starting work that cannot carry the caller's registry, such as a run on the

@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-config-guide.md
-source_commit: 4c9b3d2
+source_commit: b3720aa
 ---
 
 # Hook Configuration Guide (`hooks.json`)
@@ -92,15 +92,20 @@ at application scope and watches these three files for changes:
 - **bootstrap**: runs once at CLI start. The `OnConfigReload` event does **not** fire — by
   contract this is an initial load, not a reload.
 - **reload**: triggered by a file edit. The `OnConfigReload` event fires.
-- If bootstrap fails the CLI logs a WARN and carries on — hot reload is still attempted
-  afterwards. Until then **none** of the file's hooks are registered — no guards either.
-  Whether a parse failure at startup should abort startup instead is still open (backlog EE-71).
+- If bootstrap fails, **startup stops.** When a file in any of the three layers does not parse or cannot be read,
+  `HookHotReloadBootstrap.start()` throws `HookConfigParseException`, and the CLI prints
+  `Configuration error: hooks config /…/.aimon/hooks.json (PROJECT layer) is invalid: … line: 3, column: 5 …` and
+  exits (the REPL does not start). No hook is registered and no watcher is started. A file that is **missing** is not
+  a failure — startup proceeds with that layer absent. There is no setting that starts with a broken file: fix the
+  file or remove it. A host that calls `start()` itself and still wants to come up has to catch that exception
+  explicitly in code.
 
 ### Failure modes
 
 | Situation                         | Behaviour                                                     |
 |-----------------------------------|---------------------------------------------------------------|
-| The new `hooks.json` fails to parse | No swap. **The previous configuration stays in force** (its hooks and guards unchanged). `OnConfigReload(failed)` fires |
+| `hooks.json` fails to parse or cannot be read **at startup** | **Startup stops.** The exception message carries the file path, the layer and the cause. A sound file in another layer does not help — starting without one layer would run with that layer's guards off |
+| The new `hooks.json` fails to parse or cannot be read (reload) | No swap. **The previous configuration stays in force** (its hooks and guards unchanged). `OnConfigReload(failed)` fires, with the file path and layer in `failureReason` |
 | Some hook fails to register mid-swap | LIFO undo removes the new hooks and re-registers the previous ones in their original order |
 | A listener throws                 | Logged only; the watcher keeps running (poison-pill protection) |
 | The watcher itself fails to start | The CLI carries on without hot reload (WARN log)              |
@@ -280,13 +285,23 @@ other event leaves a WARN log and proceeds (`AbstractDeclarativeShellHook#vetoRe
 | Event                 | What exit 2 does                                                     |
 |-----------------------|----------------------------------------------------------------------|
 | `preTool`             | `block` — skips the tool call and hands stderr to the model as the tool result |
-| `onStart`             | `block` — aborts the turn itself with `ExecutionBlockedByHookException` |
+| `onStart`             | `block` — a main execution aborts the turn itself with `ExecutionBlockedByHookException`; a fork (skill fork, `Task`, workflow subagent) **does not start** and returns to its parent as a failed result carrying the reason. Neither fires `onStop` |
 | `preCompact`          | `block` — skips AUTO compaction / reports the reason for MANUAL       |
 | `permissionRequest`   | `deny` — denies before dispatch                                       |
 | The other 9 events    | Ignored (WARN log, then proceeds normally)                            |
 
 > The veto on `onStart` was added in this round of hardening. Before that, a declarative
 > `onStart` hook exiting 2 had no effect whatsoever.
+
+**An `onStart` in `hooks.json` applies to every fork as well.** `onStart` fires not only for the main turn but each time
+a fork starts, and the "user message" it sees then is the goal that fork was given. If the hook exits 2, or its command
+cannot be run, the fork ends without a single LLM call and its parent receives
+`Execution blocked by OnStart hook [SUBAGENT/<name>]: <reason>` (`Task` reports `Status: FAILURE`, a skill reports
+`Skill fork failed for '<skill>': …`, a background task settles as `FAILED`). A hook that was only meant to check user
+input should branch on `AIMON_INVOKER_TYPE` in its script — `MAIN_AGENT` for the main turn, `SUBAGENT` for a fork. That
+is the only way to exempt forks: `failOpen: true` lets a hook through **only when its command could not run**, and an
+exit 2 still blocks. One limit — a subagent whose name has a code behavior (`SubagentBehavior`) registered does not run
+the ReAct loop, so `onStart` never fires for it (backlog EE-73).
 
 **When the command could not run (fail-closed).** If a `command` handler on one of the four events above **produces no
 exit code** — a timeout, a shell failure — the hook returns that event's refusal (`preTool`, `onStart` and `preCompact`
@@ -789,6 +804,8 @@ are in [`aimon-skill-extensions.md`](../../references/aimon-skill-extensions.md)
 | Editing `hooks.json` has no effect                                        | Check which of the four layers it lives in. SKILL applies only while the skill is active. Environments other than the CLI (web) do not support hot reload — restart. |
 | Nothing happens within 2 seconds of an edit                               | Check that mtime was updated (`stat`). On a filesystem with second resolution, saving twice within the same second can make the second save invisible. |
 | `OnConfigReload` fires with `failed=true`                                | Read the parser error in `failureReason` and check the JSON syntax and required fields. The live registry keeps its previous state. |
+| Startup exits with `Configuration error: hooks config … (… layer) is invalid: …` / `… could not be read: …` | Fix the file at the position the message points to, or remove the file. Broken JSON, an unknown `type`, a `timeout` of zero or less, an unreadable file and a directory where the file should be all end up here. It never starts without its file hooks. |
+| A fork ends with `Execution blocked by OnStart hook [SUBAGENT/…]`         | An `onStart` hook in `hooks.json` (or in skill frontmatter) blocked that fork. If the hook is meant for user input, make it exit 0 when `AIMON_INVOKER_TYPE` is `SUBAGENT`. |
 | `WARN hooks: matcher '...' could not be parsed`                          | A `PredicateParser` syntax error. It is running with the name-only fallback.  |
 | `WARN hooks: invalid handler in PROJECT on event 'preTool': ...`         | A required field is missing (`command`/`url`/`server+tool`/`reason`). Only that entry is skipped. |
 | `WARN hooks: 'deny' is not valid on postTool ...`                        | `deny` is `preTool`-only. The handler is ignored on other events.             |

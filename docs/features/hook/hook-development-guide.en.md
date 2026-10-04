@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-development-guide.md
-source_commit: 93a4909
+source_commit: 4c9b3d2
 ---
 
 # Hook Development Guide
@@ -80,7 +80,7 @@ There are 13 in total:
 | `PRE_TOOL` | `PreToolHook` | Immediately before tool execution | ✅ block |
 | `POST_TOOL` | `PostToolHook` | Immediately after tool execution | ❌ |
 | `PERMISSION_DENIED` | `PermissionDeniedHook` | Post-processing after a permission denial | ❌ |
-| `ON_START` | `OnStartHook` | Turn start | ✅ block |
+| `ON_START` | `OnStartHook` | Turn start, fork start | ✅ block |
 | `ON_STOP` | `OnStopHook` | Turn end | ❌ |
 | `ON_SESSION_START` | `OnSessionStartHook` | Conversation start | ❌ |
 | `ON_SESSION_END` | `OnSessionEndHook` | Conversation end | ❌ |
@@ -95,7 +95,7 @@ There are 13 in total:
 >
 > - `PRE_TOOL` — skips the tool call and hands the reason to the model as the tool result
 > - `PERMISSION_REQUEST` — denies before dispatch
-> - `ON_START` — aborts the turn with `ExecutionBlockedByHookException`
+> - `ON_START` — a main execution aborts the turn with `ExecutionBlockedByHookException`; a fork does not start and ends as a failed result (no `ON_STOP` in either)
 > - `PRE_COMPACT` — skips AUTO compaction / reports the reason for MANUAL compaction
 >
 > Every other event is advisory. Do not design an audit or notification hook as a gate.

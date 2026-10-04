@@ -30,10 +30,15 @@ import at.aimon.core.skill.hook.declarative.ShellActionExecutor;
  * </ul>
  *
  * <p>
- * The returned {@link Started} is application-scoped — close it at shutdown so the polling thread exits cleanly. Both
- * bootstrap failure and watcher-start failure are non-fatal: the call returns a {@code Started} whose
- * {@link Started#isWatcherActive()} reports {@code false} if the watcher could not start, and a WARN is logged.
- * Callers can use {@link Started#isWatcherActive()} to decide whether to surface the degraded state.
+ * The returned {@link Started} is application-scoped — close it at shutdown so the polling thread exits cleanly.
+ *
+ * <p>
+ * <b>A broken {@code hooks.json} stops startup.</b> When the initial load fails &mdash; a file in any layer that does
+ * not parse or cannot be read &mdash; {@link Builder#start()} throws {@link HookConfigParseException} and nothing is
+ * registered or watched: letting the host run would run it with every file guard off. A missing file is not a
+ * failure. A host that would rather start without its file hooks has to say so in code, by catching the exception.
+ * Watcher-start failure stays non-fatal (the hooks are already applied): the call returns a {@code Started} whose
+ * {@link Started#isWatcherActive()} reports {@code false}, and a WARN is logged.
  *
  * <p>
  * <b>Web bootstrap usage.</b> Web entry points (those that call
@@ -90,7 +95,10 @@ public final class HookHotReloadBootstrap {
             this.bootstrapSucceeded = bootstrapSucceeded;
         }
 
-        /** True iff the initial bootstrap load applied without throwing. */
+        /**
+         * Always true: a failed initial load makes {@link Builder#start()} throw, so no {@code Started} exists for
+         * it. Kept for compatibility.
+         */
         public boolean isBootstrapSucceeded() {
             return bootstrapSucceeded;
         }
@@ -216,8 +224,13 @@ public final class HookHotReloadBootstrap {
          * Materialises the pipeline, runs the initial bootstrap, then starts the watcher.
          *
          * <p>
-         * Never throws on bootstrap or watcher-start failure: those are logged at WARN and surfaced via
-         * {@link Started#isBootstrapSucceeded()} / {@link Started#isWatcherActive()}.
+         * Watcher-start failure is logged at WARN and surfaced via {@link Started#isWatcherActive()}.
+         *
+         * @throws HookConfigParseException
+         *             when a {@code hooks.json} that is present fails to parse or cannot be read; the message names
+         *             the file and its layer. Nothing has been registered and no watcher is running
+         * @throws RuntimeException
+         *             when merging or applying the loaded config fails; the registry is rolled back
          */
         public Started start() {
             Objects.requireNonNull(userHome, "userHome");
@@ -239,9 +252,6 @@ public final class HookHotReloadBootstrap {
                     executionManager, invoker, rewakeService);
 
             final boolean bootstrapOk = reloader.bootstrap();
-            if (!bootstrapOk) {
-                log.warn("Initial hooks.json bootstrap failed; hot reload will still attempt subsequent edits");
-            }
 
             final HookConfigWatcher watcher = new HookConfigWatcher(List.of(userHookDir.resolve(HOOKS_JSON),
                     projectHookDir.resolve(HOOKS_JSON), projectHookDir.resolve(HOOKS_LOCAL_JSON)), reloader::reload);

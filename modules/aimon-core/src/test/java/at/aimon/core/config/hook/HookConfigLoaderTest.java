@@ -2,15 +2,20 @@ package at.aimon.core.config.hook;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.slf4j.LoggerFactory;
 
 import ch.qos.logback.classic.Level;
@@ -141,6 +146,92 @@ class HookConfigLoaderTest {
                 .hasMessageContaining("userHome cannot be null");
         assertThatThrownBy(() -> HookConfigLoader.createDefault(tmp, null)).isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("projectRoot cannot be null");
+    }
+
+    // --- EE-71 ----------------------------------------------------------------------------------------------------
+
+    private static final String BROKEN_JSON = "{\"hooks\":{\"PreToolUse\":[\n  {not valid json";
+    private static final String UNKNOWN_TYPE = "{\"hooks\":{\"PreToolUse\":[{\"hooks\":[{\"type\":\"comand\",\"command\":\"c\"}]}]}}";
+    private static final String NEGATIVE_TIMEOUT = "{\"hooks\":{\"PreToolUse\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"c\",\"timeout\":-5}]}]}}";
+
+    static Stream<Arguments> brokenFiles() {
+        return Stream.of(Arguments.of(HookConfigSource.USER, BROKEN_JSON, "line: 2"),
+                Arguments.of(HookConfigSource.PROJECT, UNKNOWN_TYPE, "Unknown hook handler type"),
+                Arguments.of(HookConfigSource.LOCAL, NEGATIVE_TIMEOUT, "must be a positive number"),
+                Arguments.of(HookConfigSource.PROJECT, BROKEN_JSON, "line: 2"),
+                Arguments.of(HookConfigSource.USER, NEGATIVE_TIMEOUT, "must be a positive number"),
+                Arguments.of(HookConfigSource.LOCAL, UNKNOWN_TYPE, "Unknown hook handler type"));
+    }
+
+    private static Path fileOf(Path tmp, HookConfigSource source) {
+        return switch (source) {
+            case USER -> tmp.resolve("user").resolve("hooks.json");
+            case PROJECT -> tmp.resolve("project").resolve("hooks.json");
+            case LOCAL -> tmp.resolve("project").resolve("hooks.local.json");
+            default -> throw new IllegalArgumentException(source.name());
+        };
+    }
+
+    private static HookConfigLoader loaderOver(Path tmp) {
+        return new HookConfigLoader(new JacksonHookConfigParser(), tmp.resolve("user"), tmp.resolve("project"));
+    }
+
+    @ParameterizedTest(name = "{0}: {2}")
+    @MethodSource("brokenFiles")
+    @DisplayName("a file that does not parse fails the load, naming the file, its layer and the cause (EE-71)")
+    void parseFailureNamesTheFileTheLayerAndTheCause(HookConfigSource source, String content, String cause,
+            @TempDir Path tmp) throws IOException {
+        final Path file = fileOf(tmp, source);
+        Files.createDirectories(file.getParent());
+        Files.writeString(file, content);
+
+        assertThatThrownBy(() -> loaderOver(tmp).load()).isInstanceOf(HookConfigParseException.class)
+                .hasMessageContaining("hooks config " + file.toAbsolutePath())
+                .hasMessageContaining("(" + source + " layer) is invalid").hasMessageContaining(cause)
+                .hasCauseInstanceOf(HookConfigParseException.class);
+    }
+
+    @Test
+    @DisplayName("a directory where the file should be fails the load instead of reading as absent (EE-71)")
+    void nonRegularFileFailsTheLoad(@TempDir Path tmp) throws IOException {
+        final Path file = fileOf(tmp, HookConfigSource.PROJECT);
+        Files.createDirectories(file);
+
+        assertThatThrownBy(() -> loaderOver(tmp).load()).isInstanceOf(HookConfigParseException.class)
+                .hasMessageContaining(file.toAbsolutePath().toString())
+                .hasMessageContaining("(PROJECT layer) could not be read").hasMessageContaining("not a regular file");
+    }
+
+    @Test
+    @DisplayName("a file that cannot be read fails the load instead of reading as absent (EE-71)")
+    void unreadableFileFailsTheLoad(@TempDir Path tmp) throws IOException {
+        final Path file = fileOf(tmp, HookConfigSource.USER);
+        writeHooks(file, "u");
+        assumeTrue(file.toFile().setReadable(false) && !Files.isReadable(file), "cannot revoke read permission here");
+        try {
+            assertThatThrownBy(() -> loaderOver(tmp).load()).isInstanceOf(HookConfigParseException.class)
+                    .hasMessageContaining(file.toAbsolutePath().toString())
+                    .hasMessageContaining("(USER layer) could not be read");
+        } finally {
+            file.toFile().setReadable(true);
+        }
+    }
+
+    @Test
+    @DisplayName("a config directory that cannot be searched fails the load: absent and unknowable differ (EE-71)")
+    void unsearchableDirectoryFailsTheLoad(@TempDir Path tmp) throws IOException {
+        final Path file = fileOf(tmp, HookConfigSource.PROJECT);
+        writeHooks(file, "p");
+        final java.io.File dir = file.getParent().toFile();
+        assumeTrue(dir.setExecutable(false) && !Files.exists(file) && !Files.notExists(file),
+                "cannot make the directory unsearchable here");
+        try {
+            assertThatThrownBy(() -> loaderOver(tmp).load()).isInstanceOf(HookConfigParseException.class)
+                    .hasMessageContaining(file.toAbsolutePath().toString())
+                    .hasMessageContaining("(PROJECT layer) could not be read");
+        } finally {
+            dir.setExecutable(true);
+        }
     }
 
     private static void writeHooks(Path file, String matcher) throws IOException {

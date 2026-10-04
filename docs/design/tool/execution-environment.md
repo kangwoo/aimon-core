@@ -683,7 +683,9 @@ CLI 처럼 "사용자 프로젝트 디렉터리에서 돈다"는 배치에서는
 못했을 때, 실행기는 원인을 실어 보고하고(`ShellHookOutcome.notRun(cause, detail)`) 거부 채널이 있는 네 이벤트(`preTool` ·
 `onStart` · `preCompact` · `permissionRequest`)의 훅은 그것을 **거부**로 읽는다 — 사유에 원인이 실린다. 훅이 `failOpen: true`
 를 선언했으면 통과시킨다. 나머지 이벤트는 전처럼 WARN 후 진행한다. 그래서 환경 제공자가 실패한 실행에서는 셸 가드가 걸린
-도구가 환경을 쓰지 않는 것까지 막힌다 — 가드가 꺼진 채 실행되던 것의 반대쪽이다.
+도구가 환경을 쓰지 않는 것까지 막힌다 — 가드가 꺼진 채 실행되던 것의 반대쪽이다. `onStart` 의 거부는 메인 실행에서는 턴을,
+포크에서는 **그 포크의 시작**을 막는다(EE-70) — 포크의 환경 제공자가 실패하면 스킬의 `onStart` 셸 가드는 포크를 돌리지 않는다.
+설계는 [`execution-environment-ee70-ee71-fail-closed.md`](execution-environment-ee70-ee71-fail-closed.md) 에 있다.
 
 **스킬 훅은 그 스킬의 포크에서만 발화한다 (EE-49).** 스킬이 선언한 훅은 런타임의 `HookRegistry` 에 등록되지 않고, 포크가
 디스패치하는 레지스트리 위에 얹힌다(`SkillScopedHookRegistry`). 같은 에이전트의 다른 세션이 낸 이벤트는 그 훅을 치지
@@ -840,6 +842,7 @@ aimon-sandbox 는 `ExecutionEnvironmentProvider` 를 구현한다. 이 문서가
 - [`execution-environment-ee13-ee7-background-lifecycle.md`](execution-environment-ee13-ee7-background-lifecycle.md) — 백그라운드 `Bash` 종료(`KillShell`, 셸 취소 계약, 환경이 정하는 상한)와 제공자 · 작업 목록의 수명 상향 설계(EE-13 · EE-7)
 - [`execution-environment-ee14-user-locale.md`](execution-environment-ee14-user-locale.md) — `Environment` 를 없애고 `timeZone` 을 `UserLocale` 로 옮긴 설계(EE-14)
 - [`execution-environment-ee49-ee51-ee58-isolation-boundary.md`](execution-environment-ee49-ee51-ee58-isolation-boundary.md) — 한 런타임을 나눠 쓰는 실행들 사이의 경계 셋: 스킬 훅의 발화 범위, 명령을 돌리지 못한 가드의 fail-closed, 백그라운드 작업의 가시 범위(EE-49 · EE-51 · EE-58)
+- [`execution-environment-ee70-ee71-fail-closed.md`](execution-environment-ee70-ee71-fail-closed.md) — 그 fail-closed 를 두 곳에 더 이은 설계: `onStart` 훅이 막으면 포크가 시작하지 않는다, 로드되지 않는 `hooks.json` 으로는 뜨지 않는다(EE-70 · EE-71)
 - [`../workflow/workflow.md`](../workflow/workflow.md) §6.3 — worktree 격리
 - [`../agent-execution/artifact.md`](../agent-execution/artifact.md) — `ArtifactCollector`
 - [`../filesystem/backend-contract.md`](../filesystem/backend-contract.md) — VFS 백엔드 계약 (§7 의 `getMetadata` 조항이 들어갈 자리)

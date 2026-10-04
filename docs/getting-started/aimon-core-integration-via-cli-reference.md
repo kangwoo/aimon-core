@@ -779,6 +779,7 @@ final OrcaAgentRuntime agentRuntime = createAgentRuntime(
     config, graalJsEngines);
 
 configureHooks(agentRuntime, outputFormatter);
+// hooks.json 이 깨졌거나 읽을 수 없으면 여기서 HookConfigParseException — 파일 훅 없이 뜨지 않는다. 없는 파일은 정상.
 final HookHotReloadBootstrap.Started hookHotReload = setupHookHotReload(...);
 registerCliTools(agentRuntime, outputFormatter, ...);
 configureSchedulingEventListener(schedulingEngine, config);

@@ -86,15 +86,19 @@ CLI 부트스트랩(`AgentSetupFactory`)은 `HookConfigWatcher` + `HookRegistryR
 - **bootstrap**: CLI 시작 시 1 회 실행. `OnConfigReload` 이벤트는 발사되지
   않는다 (계약상 reload 가 아니라 초기 로드).
 - **reload**: 파일 편집 트리거. `OnConfigReload` 이벤트가 발사된다.
-- bootstrap 이 실패해도 CLI 는 WARN 로그만 남기고 계속 진행 — 이후 핫리로드는
-  여전히 시도된다. 그 사이에는 파일의 hook 이 **하나도** 등록되어 있지 않다 — 가드도 없다.
-  시작 시 파싱 실패를 시작 중단으로 바꿀지는 아직 정하지 않았다(백로그 EE-71).
+- bootstrap 이 실패하면 **시작이 멈춘다.** 세 계층 가운데 한 파일이라도 파싱되지 않거나 읽히지 않으면
+  `HookHotReloadBootstrap.start()` 가 `HookConfigParseException` 을 던지고, CLI 는
+  `Configuration error: hooks config /…/.aimon/hooks.json (PROJECT layer) is invalid: … line: 3, column: 5 …` 를 내고
+  종료한다(REPL 은 뜨지 않는다). hook 은 하나도 등록되지 않고 watcher 도 시작되지 않는다. 파일이 **없는** 것은 실패가
+  아니다 — 그 계층이 없는 것으로 정상 시작한다. 깨진 파일을 안고 띄우는 설정 스위치는 없다: 파일을 고치거나 치운다.
+  `start()` 를 직접 부르는 호스트가 그래도 띄우려면 그 예외를 코드에서 명시적으로 잡아야 한다.
 
 ### 실패 모드
 
 | 상황                              | 동작                                                          |
 |-----------------------------------|---------------------------------------------------------------|
-| 새 `hooks.json` 이 파싱 실패       | swap 하지 않음. **이전 설정이 그대로 유지**된다(이전 hook · 가드 그대로). `OnConfigReload(failed)` 발사 |
+| **시작 시** `hooks.json` 이 파싱 실패 · 읽기 실패 | **시작 중단.** 예외 메시지에 파일 경로 · 계층 · 원인. 다른 계층이 멀쩡해도 뜨지 않는다 — 한 계층을 빼고 띄우면 그 계층의 가드가 꺼진 채 돈다 |
+| 새 `hooks.json` 이 파싱 실패 · 읽기 실패 (리로드) | swap 하지 않음. **이전 설정이 그대로 유지**된다(이전 hook · 가드 그대로). `OnConfigReload(failed)` 발사, `failureReason` 에 파일 경로 · 계층 |
 | swap 도중 일부 hook 등록 실패      | LIFO undo 로 새 hook 제거 + 원래 순서로 이전 hook 재등록      |
 | listener 가 예외를 던짐            | 로그만 남기고 watcher 는 계속 동작 (poison 방지)              |
 | watcher 시작 자체가 실패           | CLI 는 핫리로드 없이 계속 동작 (WARN 로그)                    |
@@ -271,13 +275,21 @@ WARN 로그만 남기고 진행한다 (`AbstractDeclarativeShellHook#vetoResult`
 | 이벤트                | exit 2 의 효과                                                       |
 |-----------------------|----------------------------------------------------------------------|
 | `preTool`             | `block` — 도구 호출을 건너뛰고 stderr 가 tool 결과로 모델에 전달된다  |
-| `onStart`             | `block` — `ExecutionBlockedByHookException` 으로 턴 자체가 중단된다   |
+| `onStart`             | `block` — 메인 실행은 `ExecutionBlockedByHookException` 으로 턴 자체가 중단되고, fork(스킬 fork · `Task` · 워크플로 SubAgent)는 **시작하지 않고** 사유가 실린 실패 결과로 부모에게 돌아간다. 어느 쪽도 `onStop` 은 발화하지 않는다 |
 | `preCompact`          | `block` — AUTO compaction 스킵 / MANUAL 은 사유 보고                  |
 | `permissionRequest`   | `deny` — 디스패치 전에 거부                                           |
 | 그 외 9개 이벤트      | 무시 (WARN 로그 후 정상 진행)                                         |
 
 > `onStart` 의 veto 는 이번 하드닝에서 추가되었다. 그 전에는 선언적 `onStart` hook 이
 > exit 2 로 끝나도 아무 일도 일어나지 않았다.
+
+**`hooks.json` 의 `onStart` 는 모든 fork 에도 걸린다.** `onStart` 는 메인 턴뿐 아니라 fork 가 시작할 때마다 발화하고, 그때의
+"사용자 메시지" 는 그 fork 가 받은 goal 이다. exit 2 를 내거나 커맨드를 돌리지 못하면 그 fork 는 LLM 을 한 번도 부르지 않고
+끝나며, 부모는 `Execution blocked by OnStart hook [SUBAGENT/<이름>]: <사유>` 를 받는다(`Task` 는 `Status: FAILURE`, 스킬은
+`Skill fork failed for '<스킬>': …`, 백그라운드 작업은 `FAILED`). 사용자 입력만 검사하려던 hook 이라면 스크립트에서
+`AIMON_INVOKER_TYPE` 로 가른다 — 메인 턴은 `MAIN_AGENT`, fork 는 `SUBAGENT` 다. fork 를 빼는 방법은 이것 하나다:
+`failOpen: true` 는 커맨드를 **돌리지 못했을 때만** 통과시키고 exit 2 는 그대로 막는다. 한계 하나 — 이름에 코드
+behavior(`SubagentBehavior`)가 등록된 SubAgent 는 ReAct 루프를 돌지 않아 `onStart` 가 아예 발화하지 않는다(백로그 EE-73).
 
 **커맨드를 돌리지 못했을 때 (fail-closed).** 위 네 이벤트의 `command` handler 가 **종료 코드를 내지 못하면** — timeout,
 셸 실패 — 그 이벤트의 거부 결과를 낸다(`preTool` · `onStart` · `preCompact` 는 block, `permissionRequest` 는 deny). 판단하지
@@ -761,6 +773,8 @@ fork 가 없어 발화하지 않는다. 전체 규칙은 [`aimon-skill-extension
 | `hooks.json` 을 수정해도 반영되지 않음                                    | 4-tier 중 어느 layer 에 있는지 확인. SKILL 은 skill 활성 시점에만 적용. CLI 외 환경(web) 은 핫리로드 미지원 — 재시작 필요. |
 | 편집 후 2 초 안에 반영되지 않음                                           | mtime 이 갱신되었는지(`stat`) 확인. 초 단위 해상도 FS 에서는 같은 초에 두 번 저장하면 두 번째가 무시될 수 있음. |
 | `OnConfigReload` 가 `failed=true` 로 발사됨                              | `failureReason` 의 파서 에러를 보고 JSON 문법/필수 필드를 검증. 라이브 registry 는 이전 상태 유지. |
+| 시작 시 `Configuration error: hooks config … (… layer) is invalid: …` / `… could not be read: …` 로 종료 | 메시지가 가리키는 파일의 그 위치를 고치거나 파일을 치운다. 깨진 JSON · 알 수 없는 `type` · 0 이하 `timeout` · 읽을 수 없는 파일 · 파일 자리에 있는 디렉터리가 모두 여기로 온다. 파일 hook 없이 뜨는 일은 없다. |
+| fork 가 `Execution blocked by OnStart hook [SUBAGENT/…]` 로 끝남          | `hooks.json`(또는 스킬 frontmatter)의 `onStart` hook 이 그 fork 를 막았다. 사용자 입력용 hook 이라면 `AIMON_INVOKER_TYPE` 이 `SUBAGENT` 일 때 exit 0 으로 빠지게 한다. |
 | `WARN hooks: matcher '...' could not be parsed`                          | `PredicateParser` 문법 오류. fallback 으로 name-only 적용 중.                 |
 | `WARN hooks: invalid handler in PROJECT on event 'preTool': ...`         | 필수 필드 누락 (`command`/`url`/`server+tool`/`reason`). 해당 entry 만 스킵. |
 | `WARN hooks: 'deny' is not valid on postTool ...`                        | `deny` 는 `preTool` 전용. 다른 이벤트에서는 handler 가 무시됨.                |

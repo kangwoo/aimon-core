@@ -75,6 +75,8 @@ import at.aimon.core.agent.session.SessionId;
  * {@code OrcaAgentRuntimeManager.getOrCreateRuntime} call. The returned {@code Started} handle is
  * application-scoped and must be closed at shutdown so the polling thread exits cleanly. CLI uses the same helper —
  * see {@code aimon-cli/AgentSetupFactory#setupHookHotReload} for a reference call shape.
+ * {@code start()} throws {@code HookConfigParseException} when a {@code hooks.json} that is present does not parse or
+ * cannot be read, so a host that calls it at startup does not come up with its file guards off.
  *
  * <h2>Re-open semantics</h2>
  *

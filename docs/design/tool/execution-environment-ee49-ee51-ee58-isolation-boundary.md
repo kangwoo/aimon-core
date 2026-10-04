@@ -11,7 +11,8 @@
 > 리뷰가 바꾼 것)을 먼저 볼 것. §9 의 열린 질문과 §8 의 새 항목 가운데 이 변경 밖으로 결과가 번지는 것은
 > [`../../backlog/execution-environment-open-items.md`](../../backlog/execution-environment-open-items.md) 로
 > 옮겼다(EE-63 ← Q8 · §8, EE-64 ← Q4 · F5, EE-65 ← §8, EE-66 ← Q3, EE-67 ← Q5, EE-68 ← §8, EE-69 ← 설계 리뷰 2,
-> EE-70 · EE-71 ← PR #207 리뷰). 열림/닫힘의 정본은 그 문서다. 이 설계가 확장하는 명세는 [`execution-environment.md`](execution-environment.md) §5.3 · §10 · §13 · §15 다.
+> EE-70 · EE-71 ← PR #207 리뷰 — 둘은 닫혔고 그 설계는
+> [`execution-environment-ee70-ee71-fail-closed.md`](execution-environment-ee70-ee71-fail-closed.md) 다). 열림/닫힘의 정본은 그 문서다. 이 설계가 확장하는 명세는 [`execution-environment.md`](execution-environment.md) §5.3 · §10 · §13 · §15 다.
 
 - 대상 브랜치: `herdr/ee49-ee51-ee58-isolation-boundary` (BASE `main`, `1d60d30`)
 - 이 문서는 설계만 담는다. 코드 조각은 모양을 보이기 위한 것이고 구현이 아니다.

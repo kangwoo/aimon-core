@@ -74,7 +74,7 @@ at.aimon.core.hook/
 | `PRE_TOOL` | `PreToolHook` | 도구 실행 직전 | ✅ block |
 | `POST_TOOL` | `PostToolHook` | 도구 실행 직후 | ❌ |
 | `PERMISSION_DENIED` | `PermissionDeniedHook` | 권한 거부 후 후처리 | ❌ |
-| `ON_START` | `OnStartHook` | 턴 시작 | ✅ block |
+| `ON_START` | `OnStartHook` | 턴 시작 · fork 시작 | ✅ block |
 | `ON_STOP` | `OnStopHook` | 턴 종료 | ❌ |
 | `ON_SESSION_START` | `OnSessionStartHook` | 대화 시작 | ❌ |
 | `ON_SESSION_END` | `OnSessionEndHook` | 대화 종료 | ❌ |
@@ -89,7 +89,7 @@ at.aimon.core.hook/
 >
 > - `PRE_TOOL` — 도구 호출을 건너뛰고 사유를 tool 결과로 모델에 전달
 > - `PERMISSION_REQUEST` — 디스패치 전에 거부
-> - `ON_START` — `ExecutionBlockedByHookException` 으로 턴 중단
+> - `ON_START` — 메인 실행은 `ExecutionBlockedByHookException` 으로 턴 중단, fork 는 시작하지 않고 실패 결과로 끝남(둘 다 `ON_STOP` 없음)
 > - `PRE_COMPACT` — AUTO compaction 스킵 / MANUAL compaction 은 사유 보고
 >
 > 나머지 이벤트는 전부 advisory 다. 감사·알림 hook 을 게이트로 설계하지 말 것.

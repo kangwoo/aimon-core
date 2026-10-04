@@ -7,6 +7,57 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Changed (breaking): an `onStart` hook that blocks stops a fork, and a `hooks.json` that does not load stops startup (EE-70, EE-71)
+
+Two places where a guard that could not judge still let the work through are closed. No type, method signature or wire
+format changes — both are **behaviour changes an operator's existing configuration can run into**.
+
+**An `onStart` hook that blocks stops the fork (EE-70).**
+
+- **An operator's `hooks.json` `onStart` now gates every fork, not only the main turn.** `onStart` fires each time a
+  fork starts — a `Task` subagent, a skill fork, a workflow subagent — with that fork's goal as the user message. Until
+  now a block there was dropped and the fork ran. Now a hook that exits 2, or whose command cannot be run (no
+  environment, an unavailable one, a timeout, a shell failure — the EE-51 rule), stops the fork before its first LLM
+  call. **A hook written to check what the user typed will start refusing forks** whose goal it does not like, or all
+  of them if it cannot run there. To keep it to the main turn, branch on `AIMON_INVOKER_TYPE` in the script
+  (`MAIN_AGENT` for the turn, `SUBAGENT` for a fork). `failOpen: true` is not that switch: it lets a hook through only
+  when its command could not run, and an exit 2 still blocks.
+- **What the parent sees.** The fork ends as a failed result — `CompletionReason.ERROR`, zero iterations, the message
+  `Execution blocked by OnStart hook [SUBAGENT/<name>]: <reasons>` — delivered the way any failed fork is: `Task`
+  reports `Status: FAILURE`, a skill reports `Skill fork failed for '<skill>': …`, a background task settles as
+  `FAILED`, a workflow step fails. The fork's `onStop` does not fire (nothing started; a main execution an `onStart`
+  hook blocks fires none either); the spawning side's `subagentStop` fires with `success=false` and the reason.
+- **A skill's `onStart` hook is a guard again.** `SkillHookSet.guardEvents()` is back to four (`onStart`, `preTool`,
+  `permissionRequest`, `preCompact`), so a skill whose only hook is on `onStart` now makes `Workflow` / `WorkflowJs`
+  background mode and `ScheduleTask` refuse inside its fork, and `failOpen` on a frontmatter `onStart` entry is
+  meaningful (it no longer logs "the event cannot block").
+- A custom `SubagentExecutor` is unaffected. A subagent whose name has a code behavior (`SubagentBehavior`) registered
+  fires no `onStart` at all, so these hooks do not reach it (EE-73).
+
+**A `hooks.json` that does not load stops startup (EE-71).**
+
+- **The CLI no longer starts with a broken `hooks.json`.** A file in any layer (`~/.aimon/hooks.json`,
+  `<project>/.aimon/hooks.json`, `<project>/.aimon/hooks.local.json`) that does not parse — broken JSON, an unknown
+  handler `type`, a `timeout` of zero or less — used to be logged at WARN and the agent ran with **no** file hooks from
+  **any** layer. Now startup fails: `Configuration error: hooks config <path> (<LAYER> layer) is invalid: <parser
+  detail, with line and column>`, and the REPL does not open. Fix the file or remove it; a missing file is not an
+  error. There is deliberately no flag to start anyway.
+- **A file that is there but cannot be read is the same failure.** A `hooks.json` without read permission, a directory
+  at that path, or a `.aimon` directory that cannot be searched used to be skipped with a WARN ("intentional
+  fail-soft"); each now fails the load (`… could not be read: …`). On a hot reload this turns "that layer silently
+  drops out" into "the reload fails and the previous config stays".
+- **`HookHotReloadBootstrap.start()` and `HookRegistryReloader.bootstrap()` throw `HookConfigParseException`** instead
+  of logging and carrying on; nothing is registered and no watcher is started. `bootstrap()`'s `boolean` and
+  `Started.isBootstrapSucceeded()` remain and are now always `true` — code that tested them for `false` has a dead
+  branch (EE-75). **A host that calls `start()` at startup now fails to start on a broken file**; in a Spring
+  application the bean fails and the context does not come up. A host that wants the old behaviour has to catch the
+  exception explicitly. Neither `aimon-bootstrap` nor `aimon-spring-boot-starter` wires `hooks.json` themselves, so
+  they are unchanged.
+- **`HookConfigLoader.load()` messages name the file and its layer**, so a failed hot reload's `failureReason` does
+  too. Hot-reload behaviour is otherwise unchanged: a failed reload keeps the previous configuration.
+- Handler-level problems found when the config is applied — a `command` handler with no `command`, an unknown event
+  name — are still skipped with a WARN (EE-72).
+
 ### Changed (breaking): skill hooks, guard hooks and background commands stay inside the execution they belong to (EE-49, EE-51, EE-58)
 
 Three boundaries that were drawn at the agent runtime are now drawn at the execution, so that a provider giving each
@@ -28,17 +79,14 @@ change public SPI; they ship together so external repositories follow once.
   must hand the fork that registry** and fall back to its own only when the context has none. One that keeps passing a
   registry captured at construction runs the fork without the skill's hooks: a guard among them is off, silently.
 - **`Workflow` and `WorkflowJs` refuse `mode: background` while a skill's guard hooks are active.** A background run
-  executes on the agent-scoped runner and cannot carry the caller's registry, so the skill's `preTool` /
-  `preCompact` / `permissionRequest` hooks would not cover it. The tool error says to run in foreground mode. Skill
+  executes on the agent-scoped runner and cannot carry the caller's registry, so the skill's `onStart` /
+  `preTool` / `preCompact` / `permissionRequest` hooks would not cover it. The tool error says to run in foreground mode. Skill
   hooks that only observe do not refuse the run and do not fire for its subagents. A custom tool that calls
   `WorkflowRunner.runInBackground` directly should check `HookRegistryAccess.activeSkillGuards(toolContext)`.
 - **`ScheduleTask` refuses for the same reason** while a skill's guard hooks are active: the routine would fire later
   on the runtime's registry, outside the skill's fork, so it could do unguarded what the guards block now. A
   background `Task` is still allowed (EE-69).
-- **A skill's `onStart` hook does not block in its fork.** The subagent executor a fork runs on reads `onStart` results
-  as advisory feedback and drops a block — for skill frontmatter and `hooks.json` alike (EE-70). It is therefore not
-  counted as a guard: a skill whose only hook is on `onStart` does not make background workflows or `ScheduleTask`
-  refuse.
+- A skill's `onStart` hook is one of those guards: it stops the skill's fork when it blocks (EE-70, above).
 
 **A guard hook whose command could not run blocks (EE-51).**
 
@@ -52,7 +100,7 @@ change public SPI; they ship together so external repositories follow once.
   key in skill frontmatter (beside `matcher` and `action`), a handler-level key in `hooks.json`. Only a boolean `true`
   opens the hook — in frontmatter anything else fails the skill's parse; in `hooks.json` `"true"`, `1` or `null` is
   read as `false` with a WARN naming the file and the handler, which stays registered with its guard closed (failing
-  the parse would leave the file's hooks unregistered at startup — every guard off; EE-71). An operator's existing
+  the parse would refuse the whole file — and, since EE-71 above, stop startup — over one mistyped flag). An operator's existing
   `command` handlers on those four events start blocking on timeout unless they declare it.
 - **A guard hook that throws instead of reporting blocks too.** A `ShellActionExecutor` that throws — or a
   `LinkageError` from a provider built against another core — is read as a command that could not run

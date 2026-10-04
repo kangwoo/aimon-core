@@ -71,6 +71,7 @@ import at.aimon.core.hook.HookFeedback;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.event.OnStartContext;
 import at.aimon.core.hook.event.OnStopContext;
+import at.aimon.core.hook.exception.ExecutionBlockedByHookException;
 import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.knowledge.KnowledgeScope;
 import at.aimon.core.llm.LlmCallMetadata;
@@ -422,7 +423,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
 
     /**
      * Runs the subagent ReAct loop: fires OnStart hooks, then iterates LLM call → tool execution until a final answer,
-     * an exhausted budget/iteration bound, a cancellation, a stall ({@link StalledIterationGuard}), or an error.
+     * an exhausted budget/iteration bound, a cancellation, a stall ({@link StalledIterationGuard}), or an error. An
+     * OnStart hook that blocks ends the fork before the first iteration ({@link #createBlockedResult}).
      *
      * @param lc
      *            the immutable per-execution loop context (must not be null)
@@ -440,9 +442,10 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         int iterationCount = 0;
 
         try {
-            // Add goal as user message, then fire OnStart hooks and feed any hook feedback back into the conversation.
+            // Add goal as user message, then fire OnStart hooks: a block ends the fork before its first LLM call,
+            // anything else is fed back into the conversation.
             lc.transcriptBuffer.addUserMessage(lc.goal);
-            fireOnStart(lc);
+            checkOnStartHooks(lc);
 
             while (iterationCount < lc.maxIterations()) {
                 // Honour a cancellation that landed before this iteration starts. The helper also clears the thread
@@ -547,6 +550,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         } catch (CancelledExecutionException e) {
             log.debug("Subagent ReAct loop cancelled: {}", e.getMessage());
             return createInterruptedResult(lc, iterationCount, accumulatedTokens);
+        } catch (ExecutionBlockedByHookException e) {
+            return createBlockedResult(lc, e, iterationCount, accumulatedTokens);
         } catch (MaxIterationsExceededException e) {
             return createFailureResult(lc, e.getMessage(), iterationCount, accumulatedTokens,
                     CompletionReason.MAX_ITERATIONS);
@@ -577,7 +582,13 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
     }
 
     /**
-     * Fires OnStart hooks and appends any advisory hook feedback to the conversation as a user message.
+     * Fires OnStart hooks, throws if any hook blocks the fork, and otherwise appends any advisory hook feedback to the
+     * conversation as a user message.
+     *
+     * <p>
+     * A block is a hook that exited 2 or, unless it declares {@code failOpen: true}, one whose command could not be run
+     * at all. Either way the fork does not start: the loop's catch turns the exception into
+     * {@link #createBlockedResult}. The same rule as {@code OrcaAgentExecutor#checkOnStartHooks}, which stops the turn.
      *
      * <p>
      * The note is wrapped in a {@code <system-reminder>} block so the model does not read it as genuine user intent,
@@ -585,13 +596,20 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      *
      * @param lc
      *            the loop context
+     * @throws ExecutionBlockedByHookException
+     *             if any OnStart hook blocks the fork
      */
-    private void fireOnStart(LoopContext lc) {
+    private void checkOnStartHooks(LoopContext lc) {
         final OnStartContext onStartContext = OnStartContext.builder().executorType(InvokerType.SUBAGENT)
                 .invokerName(lc.subagent().getName()).hookRegistry(lc.hookRegistry()).userLocale(lc.userLocale())
                 .executionEnvironment(lc.executionEnvironment()).userMessage(lc.goal)
                 .executionAttributes(lc.executionAttributes).build();
         final List<HookResult> onStartResults = hookExecutionManager.executeOnStart(onStartContext);
+        if (hookExecutionManager.hasBlockedResult(onStartResults)) {
+            final List<String> blockReasons = hookExecutionManager.collectBlockedReasons(onStartResults);
+            throw new ExecutionBlockedByHookException(InvokerType.SUBAGENT, lc.subagent().getName(), "OnStart",
+                    blockReasons);
+        }
         HookFeedback.toReminderBlock(HookFeedback.collectAdvisory(onStartResults))
                 .ifPresent(block -> lc.transcriptBuffer.addMessage(Message.user(block), LogOrigin.SYNTHETIC));
     }
@@ -1165,6 +1183,26 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 accumulatedTokens.getTotalTokens());
         return createFailureResult(lc, lc.stalledIterationGuard.stopMessage(), iterationCount, accumulatedTokens,
                 CompletionReason.ERROR);
+    }
+
+    /**
+     * Creates the result of a fork an OnStart hook blocked: {@link CompletionReason#ERROR} with the exception's
+     * message, which names the hook event and carries the hooks' reasons, so every spawn path hands the parent the
+     * refusal as it hands it any other failed fork.
+     *
+     * <p>
+     * OnStop hooks do <b>not</b> fire, which is why this does not go through {@link #createFailureResult}: the fork
+     * never started, and a main execution an OnStart hook blocks fires none either. {@code ERROR} rather than a reason
+     * of its own for the reason {@link #createStalledResult} gives.
+     */
+    private SubagentExecutionResult createBlockedResult(LoopContext lc, ExecutionBlockedByHookException e,
+            int iterationCount, TokenUsage accumulatedTokens) {
+        log.warn("Subagent '{}' not started: {}", lc.subagent().getName(), e.getMessage());
+        // Terminal boundary so a background tail observes that the task ended (and why).
+        stream(lc, "\n[ended: " + e.getMessage() + "]\n");
+        return SubagentExecutionResult.failure(e.getMessage(), lc.transcriptBuffer.toSnapshot(),
+                buildMetadata(lc, iterationCount, accumulatedTokens), CompletionReason.ERROR,
+                estimateCost(lc, accumulatedTokens));
     }
 
     /**
