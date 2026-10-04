@@ -69,6 +69,7 @@ class HostShellActionExecutorTest {
         assertThat(options.getValue().getTimeout()).isEqualTo(Duration.ofSeconds(3));
         assertThat(options.getValue().getEnvironment()).containsEntry("AIMON_HOOK_EVENT", "onStart");
         assertThat(options.getValue().getStdin()).isEqualTo("{}");
+        assertThat(options.getValue().isHook()).isTrue();
         assertThat(outcome.getExitCode()).isZero();
     }
 

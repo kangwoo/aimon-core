@@ -24,6 +24,8 @@ class ExecutionOptionsTest {
         assertThat(options.getCharset()).isEqualTo(StandardCharsets.UTF_8);
         assertThat(options.isRedirectErrorStream()).isFalse();
         assertThat(options.getUnixShell()).isNull();
+        assertThat(options.isBackground()).isFalse();
+        assertThat(options.isHook()).isFalse();
     }
 
     @Test
@@ -88,6 +90,20 @@ class ExecutionOptionsTest {
         assertThat(derived.getCancellation()).isSameAs(signal);
         assertThat(derived.isBackground()).isTrue();
         assertThat(derived.getTimeout()).isEqualTo(Duration.ofSeconds(5));
+    }
+
+    @Test
+    @DisplayName("hook is set by the builder and carried by toBuilder(), so a wrapping shell cannot drop it silently")
+    void hook_setByBuilderAndCarriedByToBuilder() {
+        ExecutionOptions options = ExecutionOptions.builder().timeout(Duration.ofSeconds(5)).hook(true).build();
+
+        ExecutionOptions derived = options.toBuilder().workingDirectory("/tmp").build();
+
+        assertThat(options.isHook()).isTrue();
+        assertThat(options.isBackground()).isFalse();
+        assertThat(derived.isHook()).isTrue();
+        assertThat(derived.getWorkingDirectory()).isEqualTo("/tmp");
+        assertThat(derived.toBuilder().hook(false).build().isHook()).isFalse();
     }
 
     @Test

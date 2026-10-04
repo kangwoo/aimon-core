@@ -36,6 +36,11 @@ final class ShellActionRunner {
     /**
      * Runs the action in the given shell. Never throws.
      *
+     * <p>
+     * The command is marked {@link ExecutionOptions#isHook() as a hook's}, so a shell with a persistent session runs it
+     * outside that session: it neither waits on the model's own command nor leaves its {@code cd}/{@code export}
+     * behind.
+     *
      * @param shell
      *            the shell to run in (never null)
      * @param action
@@ -49,7 +54,7 @@ final class ShellActionRunner {
     static ShellHookOutcome run(VirtualShell shell, ShellAction action, Map<String, String> environmentOverrides,
             String stdinPayload) {
         final ExecutionOptions options = ExecutionOptions.builder().timeout(action.getTimeout())
-                .environment(new HashMap<>(environmentOverrides)).stdin(stdinPayload).build();
+                .environment(new HashMap<>(environmentOverrides)).stdin(stdinPayload).hook(true).build();
 
         try {
             final ShellCommandResult result = shell.execute(action::getCommand, options);

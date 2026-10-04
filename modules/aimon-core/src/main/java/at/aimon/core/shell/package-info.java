@@ -51,6 +51,9 @@
  * <li>Stream redirection options
  * <li>Unix shell selection (bash, sh, zsh, etc.)
  * <li>A cancellation signal that stops the command while it runs ({@link at.aimon.core.shell.ShellCancellation})
+ * <li>Who the command is for — a background command or a hook's command — so a shell with a persistent session can
+ * keep it out of that session ({@link at.aimon.core.shell.ExecutionOptions#isBackground()},
+ * {@link at.aimon.core.shell.ExecutionOptions#isHook()})
  * </ul>
  *
  * <p>

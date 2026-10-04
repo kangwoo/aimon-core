@@ -89,6 +89,7 @@ class BashToolTest {
         bashTool.execute(ToolInput.of(Map.of("command", "echo ok")), context);
 
         assertThat(stubShell.lastOptions().isBackground()).isFalse();
+        assertThat(stubShell.lastOptions().isHook()).isFalse();
     }
 
     @Test

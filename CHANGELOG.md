@@ -7,6 +7,22 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Added: a shell can tell a hook's command from the model's (`ExecutionOptions.hook`)
+
+- **`ExecutionOptions.isHook()`** (builder: `hook(boolean)`, default `false`, carried by `toBuilder()`) marks a command
+  run on behalf of a hook — a skill-declared or `hooks.json` shell hook — rather than as a tool call of the model.
+  Every hook shell action sets it: `DefaultShellActionExecutor` and `HostShellActionExecutor` share the ladder that
+  builds the options. `Bash` never sets it.
+- **What a shell does with it.** A shell that keeps per-session state — a sandbox whose `cd`/`export` persist between
+  commands and which runs one command at a time per session — must run a hook's command outside that session: it
+  takes no session lock and saves no state, though it may start from the session's current state. Without that, a
+  `preTool` shell guard on a parallel tool call could fail on "shell is busy" and be read as a block (EE-51), and a
+  hook's `cd`/`export` was kept in the model's shell. `LocalShell` starts a process per command and ignores the flag,
+  so nothing changes for the local provider. A wrapper that derives options with `toBuilder()` carries it over;
+  `WorkingDirectoryShell` and `BackgroundBashManager` already do.
+- **aimon-sandbox** compiles unchanged; its `SandboxShell` keeps treating hook commands as the model's until it reads
+  the flag.
+
 ## [0.3.1] - 2026-10-04
 
 ### Changed (breaking): an `onStart` hook that blocks stops a fork, and a `hooks.json` that does not load stops startup (EE-70, EE-71)

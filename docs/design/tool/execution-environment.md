@@ -679,6 +679,15 @@ CLI 처럼 "사용자 프로젝트 디렉터리에서 돈다"는 배치에서는
 않는다(호스트로 되돌아가지 않는다). 설계와 이벤트별 발화 지점은
 [`execution-environment-ee9-ee12-hook-environment.md`](execution-environment-ee9-ee12-hook-environment.md) 에 있다.
 
+**훅의 명령은 모델의 셸 세션 밖에서 돈다.** 훅의 셸 액션은 `Bash` 와 같은 `VirtualShell.execute(command, options)` 로
+들어가므로, 셸은 옵션 없이는 그것을 모델의 도구 호출과 구별할 수 없다. 그래서 `ExecutionOptions` 에 `hook`(기본 false)을
+두고, 훅의 셸 액션을 돌리는 공용 사다리(`ShellActionRunner`)가 켠다 — 스킬 선언 훅(`DefaultShellActionExecutor`)과
+`hooks.json` 훅(`HostShellActionExecutor`)이 모두 그 사다리를 지난다. 세션별 상태를 지닌 셸(`cd`·`export` 가 명령 사이에
+남고 세션마다 한 번에 명령 하나만 도는 샌드박스)은 켜진 명령을 그 세션 밖에서 돌린다: 세션 잠금을 잡지 않고 상태를 저장하지
+않는다. 세션의 현재 상태에서 시작하는 것은 된다. 그렇지 않으면 병렬 도구 호출의 `preTool` 셸 가드가 모델의 명령을 기다리다
+"셸이 바쁘다" 로 실패해 **거부**로 읽히고(EE-51), 훅의 `cd`·`export` 가 모델의 셸 상태에 남는다. 명령마다 프로세스를 새로
+띄우고 상태를 남기지 않는 셸(`LocalShell`)은 무시한다.
+
 **명령을 돌리지 못한 가드는 막는다 (EE-51).** 환경이 없거나 사용 불가일 때, 그리고 timeout · 셸 실패로 종료 코드를 얻지
 못했을 때, 실행기는 원인을 실어 보고하고(`ShellHookOutcome.notRun(cause, detail)`) 거부 채널이 있는 네 이벤트(`preTool` ·
 `onStart` · `preCompact` · `permissionRequest`)의 훅은 그것을 **거부**로 읽는다 — 사유에 원인이 실린다. 훅이 `failOpen: true`
@@ -754,6 +763,7 @@ aimon-sandbox 는 `ExecutionEnvironmentProvider` 를 구현한다. 이 문서가
 | `durable() == false` 면 artifact 를 복사한다 | `/workspace` 에 대해 `durable() == false` 를 돌려준다 |
 | `notices()` 를 모델에게 보인다 | 셸 세션·샌드박스 재생성 시 notice 를 싣는다 |
 | 백그라운드 명령에 `ExecutionOptions.background` 를 켠다(§5.3) | 켜진 명령은 지속 셸 세션을 쥐지 않는다 |
+| 훅의 셸 액션(스킬 선언 훅과 `hooks.json` 훅)에 `ExecutionOptions.hook` 을 켠다(§10) | 켜진 명령은 지속 셸 세션 밖에서 돈다 — 세션 잠금을 잡지 않고 `cd`·`export` 를 세션에 저장하지 않는다. 세션의 현재 상태에서 시작해도 된다. 옵션을 파생하는 래퍼는 플래그를 넘긴다 |
 | 셸이 `ShellFeature.CANCELLATION` 을 선언하면 백그라운드 명령마다 `ExecutionOptions.getCancellation()` 에 신호를 싣고, `KillShell` 과 스택 종료가 그 신호를 건다(§5.3) | 선언했다면 신호가 걸릴 때 원격 명령과 그 명령이 띄운 것을 멈추고 그 `execute` 가 `ShellCancelledException` 을 던진다(멈춤을 요청만 하고 돌아와도 된다). 이미 걸린 신호면 명령을 띄우지 않는다. 옵션을 파생하는 래퍼는 신호를 넘긴다. 선언하지 않으면 `KillShell` 은 오류로 답한다 |
 | 백그라운드 명령의 timeout 으로 `backgroundCommandTimeout()` 을 쓴다. 비어 있으면 24시간(§5.3) | 도는 명령이 슬롯을 깨워 두는 배치라면 감당할 수 있는 상한을 돌려준다. 0 이하는 무시된다 |
 | 런타임을 만들 때마다 `bindRuntime(id)` 를 부르고, 그 런타임이 사라질 때 핸들을 닫는다. 제공자 자체는 스택이 끝날 때 닫는다(§4.3) | 런타임별 자원을 쥔다면 `bindRuntime` 으로 통지를 받는다. 핸들이 닫혀도 **도는 명령은 멈추지 않고**, 같은 id 의 다른 바인딩이 쓰는 것은 놓지 않는다. 바인딩되지 않은 id 의 `resolve` 도 답한다 |
@@ -822,8 +832,8 @@ aimon-sandbox 는 `ExecutionEnvironmentProvider` 를 구현한다. 이 문서가
   런타임이 띄워 둔 백그라운드 명령이 계속 쓴다(§4.3)
 - **`RuntimeBinding.close()` 에서 도는 명령을 멈추지 말 것.** 축출은 종료 요청이 아니다. 멈추는 것은 `KillShell`, 상한,
   스택 종료 셋뿐이다(§5.3)
-- **옵션을 파생하는 셸 래퍼에서 취소 신호를 떨구지 말 것.** `ExecutionOptions.toBuilder()` 가 신호를 넘긴다. 새 옵션을
-  빌더로 처음부터 만들면 취소가 **조용히** 사라진다(§5.3)
+- **옵션을 파생하는 셸 래퍼에서 취소 신호를 떨구지 말 것.** `ExecutionOptions.toBuilder()` 가 신호를 — `background`·`hook`
+  플래그와 함께 — 넘긴다. 새 옵션을 빌더로 처음부터 만들면 취소와 두 플래그가 **조용히** 사라진다(§5.3, §10)
 - **백그라운드 작업이 셸을 필드로 쥐지 말 것.** 셸은 `BackgroundBashManager.start(...)` 의 인자로만 받고 도는 명령이
   붙잡는다(§5.3). `toolsHoldNoFileSystemOrShellFields` 가 강제한다
 - **제어 저장소를 파일 도구에 노출하지 말 것.** 스킬 파일은 `stage()` 를 거친다(§9)

@@ -37,6 +37,17 @@ import at.aimon.core.shell.exception.ShellExecutionException;
  * A shell that wraps another must hand the signal on. {@link ExecutionOptions#toBuilder()} carries it, so a wrapper
  * that derives its options that way needs nothing more.
  *
+ * <h2>Who the command is for</h2>
+ *
+ * <p>
+ * Two flags tell a shell that keeps per-session state (a sandbox whose {@code cd}/{@code export} persist between
+ * commands and which runs one command at a time per session) that a command must not be run as an ordinary command of
+ * that session. {@link ExecutionOptions#isBackground()} marks a command that may outlive its call, so it must not hold
+ * the session. {@link ExecutionOptions#isHook()} marks a command run on behalf of a hook rather than the model, so it
+ * runs outside the session: it takes no session lock and saves no state, though it may start from the session's
+ * current state. A shell that starts a new process per command with no persisted state ignores both. A wrapper must
+ * carry them over; {@link ExecutionOptions#toBuilder()} does.
+ *
  * <p>
  * Example usage:
  *
