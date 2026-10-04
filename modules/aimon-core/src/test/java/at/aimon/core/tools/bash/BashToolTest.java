@@ -666,8 +666,10 @@ class BashToolTest {
             ToolResult result = startInBackground(manager, owned);
             String taskId = result.getContent().substring(result.getContent().indexOf("bash_")).split("\\s")[0];
 
-            assertThat(manager.find(acme, taskId).kind()).isEqualTo(BackgroundBashLookup.Kind.LOCAL);
-            assertThat(manager.find(null, taskId).kind()).isEqualTo(BackgroundBashLookup.Kind.NOT_FOUND);
+            assertThat(manager.find(BackgroundBashOwner.of(acme, null, null), taskId).kind())
+                    .isEqualTo(BackgroundBashLookup.Kind.LOCAL);
+            assertThat(manager.find(BackgroundBashOwner.none(), taskId).kind())
+                    .isEqualTo(BackgroundBashLookup.Kind.NOT_FOUND);
         }
     }
 

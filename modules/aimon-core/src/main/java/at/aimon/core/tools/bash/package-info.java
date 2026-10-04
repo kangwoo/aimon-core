@@ -34,7 +34,8 @@
  * {@link at.aimon.core.tools.bash.KillShellTool} stops them. The manager is the one stateful piece here and its storage
  * is split accordingly: a task's metadata lives behind {@link at.aimon.core.tools.bash.BackgroundBashStore} (in memory
  * by default, shareable between nodes), while the process, its cancellation signal and its output stay with the node
- * that started it. A task belongs to the runtime that started it and is invisible to every other. Output is
+ * that started it. A task belongs to the session (or session-less execution) it was started for, within its runtime,
+ * and is invisible to every other caller ({@link at.aimon.core.tools.bash.BackgroundBashOwner}). Output is
  * <em>not</em> streamed — a task's buffer is
  * filled in one batch when the command finishes — so polling a running task reports its status and nothing else. See
  * {@link at.aimon.core.tools.bash.BackgroundBashTask} for why, and for the two things that must be kept out of that

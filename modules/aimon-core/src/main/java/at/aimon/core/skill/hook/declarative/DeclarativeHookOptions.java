@@ -21,6 +21,9 @@ import at.aimon.core.hook.rewake.RewakeSpec;
  * <li><b>rewakeSpec</b> — the parsed {@code asyncRewake} block. Hooks that honour it attach the spec to every
  * {@code HookResult} they emit on a firing path, which schedules a re-fire through the async-rewake machinery. The
  * chain is bounded by {@link RewakeSpec#getMaxAttempts()}, so re-attaching on each fire terminates rather than looping.
+ * <li><b>failOpen</b> — whether a shell command that produced no exit status lets the operation proceed. Off by
+ * default: on the four events that can block ({@code preTool}, {@code onStart}, {@code preCompact},
+ * {@code permissionRequest}) a guard that could not run blocks. Only read for shell actions on those events.
  * </ul>
  *
  * <p>
@@ -39,14 +42,16 @@ public final class DeclarativeHookOptions {
 
     private final String hookIdDiscriminator;
     private final RewakeSpec rewakeSpec;
+    private final boolean failOpen;
 
     private DeclarativeHookOptions(Builder builder) {
         this.hookIdDiscriminator = builder.hookIdDiscriminator;
         this.rewakeSpec = builder.rewakeSpec;
+        this.failOpen = builder.failOpen;
     }
 
     /**
-     * Returns the shared empty instance — no discriminator, no rewake.
+     * Returns the shared empty instance — no discriminator, no rewake, fail-closed.
      *
      * @return the empty options (never null)
      */
@@ -88,6 +93,13 @@ public final class DeclarativeHookOptions {
         return Optional.ofNullable(rewakeSpec);
     }
 
+    /**
+     * @return true when the hook lets the operation proceed if its shell command produces no exit status
+     */
+    public boolean isFailOpen() {
+        return failOpen;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -97,18 +109,18 @@ public final class DeclarativeHookOptions {
             return false;
         }
         return Objects.equals(hookIdDiscriminator, that.hookIdDiscriminator)
-                && Objects.equals(rewakeSpec, that.rewakeSpec);
+                && Objects.equals(rewakeSpec, that.rewakeSpec) && failOpen == that.failOpen;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(hookIdDiscriminator, rewakeSpec);
+        return Objects.hash(hookIdDiscriminator, rewakeSpec, failOpen);
     }
 
     @Override
     public String toString() {
         return "DeclarativeHookOptions{hookIdDiscriminator='" + hookIdDiscriminator + "', rewakeSpec=" + rewakeSpec
-                + '}';
+                + ", failOpen=" + failOpen + '}';
     }
 
     /** Builder for {@link DeclarativeHookOptions}. */
@@ -116,6 +128,7 @@ public final class DeclarativeHookOptions {
 
         private String hookIdDiscriminator;
         private RewakeSpec rewakeSpec;
+        private boolean failOpen;
 
         private Builder() {
         }
@@ -137,6 +150,17 @@ public final class DeclarativeHookOptions {
          */
         public Builder rewakeSpec(RewakeSpec rewakeSpec) {
             this.rewakeSpec = rewakeSpec;
+            return this;
+        }
+
+        /**
+         * @param failOpen
+         *            true to let the operation proceed when the hook's shell command produces no exit status
+         *            (default false — a guard that cannot run blocks)
+         * @return this builder
+         */
+        public Builder failOpen(boolean failOpen) {
+            this.failOpen = failOpen;
             return this;
         }
 

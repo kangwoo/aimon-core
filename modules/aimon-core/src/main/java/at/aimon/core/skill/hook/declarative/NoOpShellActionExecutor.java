@@ -13,8 +13,10 @@ import at.aimon.core.skill.hook.action.ShellAction;
  * <p>
  * {@link #isShellSupported()} returns {@code false}, which causes {@code SkillHookSetParser} to reject any
  * frontmatter that declares a {@code type: shell} action with a clear error. {@link #run} is therefore unreachable
- * along the normal parse path; if it is reached anyway (e.g. because a hook was constructed manually) it logs nothing
- * and silently does nothing — consistent with the "fail-soft, never throw" contract of the interface.
+ * along the normal parse path — {@code HookRegistryApplier} likewise skips {@code command} handlers for such an
+ * executor. If it is reached anyway (e.g. because a hook was constructed manually) it runs nothing and reports
+ * {@link ShellHookOutcome.Unrun#SHELL_UNSUPPORTED}, which a guard event reads as a block: a guard wired to an executor
+ * that cannot run it has not decided anything.
  */
 public final class NoOpShellActionExecutor implements ShellActionExecutor {
 
@@ -40,7 +42,8 @@ public final class NoOpShellActionExecutor implements ShellActionExecutor {
         Objects.requireNonNull(action, "Action cannot be null");
         Objects.requireNonNull(context, "Context cannot be null");
         Objects.requireNonNull(environmentOverrides, "Environment overrides cannot be null");
-        // Intentionally no-op. Shell actions should have been rejected at parse time.
-        return ShellHookOutcome.notObserved();
+        // Runs nothing. Shell actions should have been rejected at parse time.
+        return ShellHookOutcome.notRun(ShellHookOutcome.Unrun.SHELL_UNSUPPORTED,
+                "no shell executor is wired for declarative hooks");
     }
 }

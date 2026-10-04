@@ -84,6 +84,11 @@ public final class DeclarativePreCompactHook extends AbstractDeclarativeShellHoo
     }
 
     @Override
+    protected boolean canVeto() {
+        return true;
+    }
+
+    @Override
     protected Optional<HookResult> vetoResult(String reason) {
         return Optional.of(HookResult.block(reason));
     }

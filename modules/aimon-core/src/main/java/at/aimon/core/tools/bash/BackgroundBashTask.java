@@ -16,7 +16,6 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
 
-import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.shell.ShellCancellationSource;
 import at.aimon.core.shell.ShellCommandResult;
 import at.aimon.core.shell.exception.ShellCancelledException;
@@ -89,7 +88,7 @@ public class BackgroundBashTask {
      * output and no notices.
      */
     private final CompletableFuture<ShellCommandResult> settled;
-    private final AgentRuntimeId ownerRuntimeId;
+    private final BackgroundBashOwner owner;
     private final ShellCancellationSource cancellation;
     private final Duration timeout;
     private final Instant startedAt;
@@ -118,14 +117,14 @@ public class BackgroundBashTask {
      *             if any parameter is null
      */
     public BackgroundBashTask(String taskId, String command, CompletableFuture<ShellCommandResult> future) {
-        this(taskId, command, future, null, null, null, Clock.systemUTC());
+        this(taskId, command, future, BackgroundBashOwner.none(), null, null, Clock.systemUTC());
     }
 
     /**
      * Creates a task for a command the manager started.
      *
-     * @param ownerRuntimeId
-     *            the runtime whose execution started the command, or null for none
+     * @param owner
+     *            who the command was started for (must not be null; {@link BackgroundBashOwner#none()} for nobody)
      * @param cancellation
      *            the source whose signal the command runs with, or null when the shell cannot stop it
      * @param timeout
@@ -135,9 +134,9 @@ public class BackgroundBashTask {
      */
     @SuppressWarnings("checkstyle:ParameterNumber")
     BackgroundBashTask(String taskId, String command, CompletableFuture<ShellCommandResult> future,
-            AgentRuntimeId ownerRuntimeId, ShellCancellationSource cancellation, Duration timeout, Clock clock) {
+            BackgroundBashOwner owner, ShellCancellationSource cancellation, Duration timeout, Clock clock) {
         Objects.requireNonNull(clock, "Clock cannot be null");
-        this.ownerRuntimeId = ownerRuntimeId;
+        this.owner = Objects.requireNonNull(owner, "Owner cannot be null");
         this.cancellation = cancellation;
         this.timeout = timeout;
         this.startedAt = clock.instant();
@@ -336,12 +335,12 @@ public class BackgroundBashTask {
     }
 
     /**
-     * Returns the runtime whose execution started the command.
+     * Returns who the command was started for. Only a caller with the same owner finds the task.
      *
-     * @return the owner, or empty for a task started outside any runtime
+     * @return the owner (never null; {@link BackgroundBashOwner#none()} for a task started outside any runtime)
      */
-    public Optional<AgentRuntimeId> getOwnerRuntimeId() {
-        return Optional.ofNullable(ownerRuntimeId);
+    public BackgroundBashOwner getOwner() {
+        return owner;
     }
 
     /**

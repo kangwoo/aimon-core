@@ -31,6 +31,7 @@ import at.aimon.core.hook.event.OnStopContext;
 import at.aimon.core.hook.execution.ExecutionHook;
 import at.aimon.core.hook.execution.HookContext;
 import at.aimon.core.hook.execution.HookResult;
+import at.aimon.core.hook.execution.HookStatus;
 import at.aimon.core.skill.hook.SkillHookSet;
 import at.aimon.core.skill.hook.action.ShellAction;
 import at.aimon.core.skill.hook.declarative.DeclarativeOnStartHook;
@@ -440,6 +441,66 @@ class SkillHookSetParserTest {
                 .hasMessageContaining(eventName).hasMessageContaining("unknown event");
     }
 
+    // --- failOpen (EE-51) -----------------------------------------------------------------------------------------
+
+    @Test
+    void parse_shellGuard_blocksWhenItCannotRun_andFailOpenLetsItPass() {
+        final ShellActionExecutor cannotRun = new RecordingShellExecutor(
+                ShellHookOutcome.notRun(ShellHookOutcome.Unrun.ENVIRONMENT_UNAVAILABLE, "sandbox is down"));
+        final Map<String, Object> hooks = Map.of("onStart",
+                List.of(Map.of("action", Map.of("type", "shell", "command", "gate.sh")),
+                        Map.of("action", Map.of("type", "shell", "command", "audit.sh"), "failOpen", true),
+                        Map.of("action", Map.of("type", "shell", "command", "gate2.sh"), "failOpen", false)));
+
+        final SkillHookSet set = new SkillHookSetParser(cannotRun).parse("deploy", hooks);
+
+        final HookResult guard = set.getOnStartHooks().get(0).execute(onStartContext());
+        assertThat(guard.getStatus()).isEqualTo(HookStatus.BLOCKED);
+        assertThat(guard.getFeedback().orElseThrow()).contains("guard hook 'deploy' (onStart)")
+                .contains("execution environment unavailable: sandbox is down");
+        assertThat(set.getOnStartHooks().get(1).execute(onStartContext()).getStatus()).isEqualTo(HookStatus.SUCCESS);
+        assertThat(set.getOnStartHooks().get(2).execute(onStartContext()).getStatus()).isEqualTo(HookStatus.BLOCKED);
+    }
+
+    @ParameterizedTest(name = "failOpen: {0}")
+    @MethodSource("nonBooleanFailOpen")
+    void parse_failOpenThatIsNotABoolean_throws(Object value) {
+        final Map<String, Object> entry = new java.util.HashMap<>();
+        entry.put("action", Map.of("type", "shell", "command", "gate.sh"));
+        entry.put("failOpen", value);
+
+        assertThatThrownBy(() -> shellParser.parse("s", Map.of("preTool", List.of(entry))))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("hooks.preTool[0].failOpen")
+                .hasMessageContaining("boolean");
+    }
+
+    static Stream<Object> nonBooleanFailOpen() {
+        // null is an explicit "failOpen:" with no value — still not a boolean.
+        return Stream.of("true", "false", 1, 0, null, List.of(true));
+    }
+
+    @Test
+    void parse_failOpenOnADenyAction_isIgnored() {
+        final Map<String, Object> hooks = Map.of("preTool",
+                List.of(Map.of("action", Map.of("type", "deny", "reason", "no"), "failOpen", true)));
+
+        final SkillHookSet set = denyOnlyParser.parse("s", hooks);
+
+        assertThat(set.getPreToolHooks()).hasSize(1);
+    }
+
+    @Test
+    void parse_failOpenOnAnAdvisoryEvent_isAcceptedAndHarmless() {
+        final ShellActionExecutor cannotRun = new RecordingShellExecutor(
+                ShellHookOutcome.notRun(ShellHookOutcome.Unrun.TIMEOUT, ""));
+        final Map<String, Object> hooks = Map.of("onStop",
+                List.of(Map.of("action", Map.of("type", "shell", "command", "bye.sh"), "failOpen", true)));
+
+        final SkillHookSet set = new SkillHookSetParser(cannotRun).parse("s", hooks);
+
+        assertThat(set.getOnStopHooks().get(0).execute(onStopContext()).getStatus()).isEqualTo(HookStatus.SUCCESS);
+    }
+
     // --- asyncRewake (B-1): declarable in hooks.json only ---------------------------------------------------------
 
     @Test
@@ -509,6 +570,16 @@ class SkillHookSetParserTest {
     /** Shell executor stub that reports a clean exit so parsed hooks can actually be fired. */
     private static final class RecordingShellExecutor implements ShellActionExecutor {
 
+        private final ShellHookOutcome outcome;
+
+        RecordingShellExecutor() {
+            this(ShellHookOutcome.of(0, "", ""));
+        }
+
+        RecordingShellExecutor(ShellHookOutcome outcome) {
+            this.outcome = outcome;
+        }
+
         @Override
         public boolean isShellSupported() {
             return true;
@@ -522,7 +593,7 @@ class SkillHookSetParserTest {
         @Override
         public ShellHookOutcome run(ShellAction action, HookContext context, Map<String, String> environmentOverrides,
                 String stdinPayload) {
-            return ShellHookOutcome.of(0, "", "");
+            return outcome;
         }
     }
 }

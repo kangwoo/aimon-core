@@ -17,9 +17,16 @@ import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
+import at.aimon.core.hook.HookEventType;
+import at.aimon.core.hook.event.PostToolHook;
+import at.aimon.core.hook.event.PreToolHook;
+import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.llm.LlmModel;
+import at.aimon.core.skill.hook.SkillHookSet;
+import at.aimon.core.skill.hook.SkillScopedHookRegistry;
 import at.aimon.core.subagent.InMemorySubagentRegistry;
 import at.aimon.core.subagent.SubagentExecutionManager;
+import at.aimon.core.tools.ToolContextKeys;
 import at.aimon.core.workflow.RunHandle;
 import at.aimon.core.workflow.RunId;
 import at.aimon.core.workflow.RunQuery;
@@ -109,6 +116,84 @@ class WorkflowToolBackgroundModeTest {
 
         assertThat(first.value()).isNotEqualTo(second.value());
         assertThat(third.value()).isEqualTo(first.value());
+    }
+
+    // --- skill hooks cannot follow a background run (EE-49) ----------------------------------------------------------
+
+    private static final PreToolHook GUARD = ctx -> HookResult.success();
+    private static final PostToolHook AUDIT = ctx -> HookResult.success();
+
+    private static ToolContext insideSkill(SkillScopedHookRegistry view) {
+        return ToolContext.builder().put(ToolContextKeys.HOOK_REGISTRY, view).build();
+    }
+
+    private ToolResult runInBackground(RecordingRunner runner, ToolContext context) {
+        return tool(runner).execute(ToolInput.of(Map.of("prompt", "should we ship?", "mode", "background")), context);
+    }
+
+    @Test
+    @DisplayName("an active skill guard refuses background mode, and the runner is never reached")
+    void activeSkillGuardRefusesBackgroundMode() {
+        final RecordingRunner runner = new RecordingRunner();
+        final SkillScopedHookRegistry view = new SkillScopedHookRegistry(new DefaultHookRegistry(), "deploy",
+                SkillHookSet.builder().addPreTool(GUARD).build());
+
+        final ToolResult result = runInBackground(runner, insideSkill(view));
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).contains("skill 'deploy'").contains("guard hooks").contains("foreground");
+        assertThat(runner.recordedRunId).as("no run was submitted").isNull();
+    }
+
+    @Test
+    @DisplayName("a guard on an outer skill refuses background mode from inside a nested skill that only observes")
+    void outerSkillGuardRefusesBackgroundMode() {
+        final RecordingRunner runner = new RecordingRunner();
+        final SkillScopedHookRegistry outer = new SkillScopedHookRegistry(new DefaultHookRegistry(), "deploy",
+                SkillHookSet.builder().addPreTool(GUARD).build());
+        final SkillScopedHookRegistry inner = new SkillScopedHookRegistry(outer, "audit",
+                SkillHookSet.builder().addPostTool(AUDIT).build());
+
+        final ToolResult result = runInBackground(runner, insideSkill(inner));
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).contains("skill 'deploy'").doesNotContain("audit");
+        assertThat(runner.recordedRunId).isNull();
+    }
+
+    @Test
+    @DisplayName("skill hooks that only observe do not refuse background mode")
+    void observationOnlySkillHooksAllowBackgroundMode() {
+        final RecordingRunner runner = new RecordingRunner();
+        final SkillScopedHookRegistry view = new SkillScopedHookRegistry(new DefaultHookRegistry(), "audit",
+                SkillHookSet.builder().addPostTool(AUDIT).build());
+
+        assertThat(runInBackground(runner, insideSkill(view)).isSuccess()).isTrue();
+        assertThat(runner.recordedRunId).isNotNull();
+    }
+
+    @Test
+    @DisplayName("once the skill has returned its guard no longer refuses background mode")
+    void closedSkillScopeAllowsBackgroundMode() {
+        final RecordingRunner runner = new RecordingRunner();
+        final SkillScopedHookRegistry view = new SkillScopedHookRegistry(new DefaultHookRegistry(), "deploy",
+                SkillHookSet.builder().addPreTool(GUARD).build());
+        view.deactivate();
+
+        assertThat(runInBackground(runner, insideSkill(view)).isSuccess()).isTrue();
+        assertThat(runner.recordedRunId).isNotNull();
+    }
+
+    @Test
+    @DisplayName("a plain runtime registry in the context changes nothing")
+    void runtimeRegistryAllowsBackgroundMode() {
+        final RecordingRunner runner = new RecordingRunner();
+        final DefaultHookRegistry runtime = new DefaultHookRegistry();
+        runtime.register(HookEventType.PRE_TOOL, GUARD);
+
+        assertThat(runInBackground(runner, ToolContext.builder().put(ToolContextKeys.HOOK_REGISTRY, runtime).build())
+                .isSuccess()).isTrue();
+        assertThat(runner.recordedRunId).isNotNull();
     }
 
     private WorkflowTool tool(WorkflowRunner backgroundRunner) {

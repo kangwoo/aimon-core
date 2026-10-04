@@ -164,8 +164,20 @@ public final class HookRegistryApplier {
             // the handlers of one entry, which would collapse their ids and break rewake routing / reload
             // cancellation.
             final String discriminator = event + "[" + idx + "][" + handlerIdx + "]";
+            if (action instanceof ShellAction && !shellExecutor.isShellSupported()) {
+                // Registering it anyway would not be harmless: the command can never run, and a guard event reads
+                // "could not run" as a block, so every matching preTool / onStart would be refused.
+                log.warn("hooks: 'command' on {} ({}) cannot run: the configured shell executor does not support"
+                        + " shell actions; skipping", event, mhe.getSource());
+                continue;
+            }
+            if (spec.isFailOpen() && !(action instanceof ShellAction)) {
+                log.warn("hooks: 'failOpen' only applies to 'command' handlers; ignored on {} ({})", event,
+                        mhe.getSource());
+            }
             final DeclarativeHookOptions options = DeclarativeHookOptions.builder().hookIdDiscriminator(discriminator)
-                    .rewakeSpec(toRewakeSpec(spec, mhe, event, action)).build();
+                    .rewakeSpec(toRewakeSpec(spec, mhe, event, action))
+                    .failOpen(spec.isFailOpen() && action instanceof ShellAction).build();
             switch (event) {
                 case DeclarativePreToolHook.EVENT_NAME ->
                     registry.register(HookEventType.PRE_TOOL, new DeclarativePreToolHook(pseudoSkillName, predicate,

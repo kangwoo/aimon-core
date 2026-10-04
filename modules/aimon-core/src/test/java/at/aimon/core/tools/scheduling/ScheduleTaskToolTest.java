@@ -134,6 +134,49 @@ class ScheduleTaskToolTest {
     }
 
     @Nested
+    @DisplayName("Inside a skill with guard hooks (review of #207 S4)")
+    class SkillGuards {
+
+        private final at.aimon.core.hook.HookRegistry runtime = new at.aimon.core.hook.DefaultHookRegistry();
+
+        private ToolContext contextWith(at.aimon.core.hook.HookRegistry registry) {
+            return ToolContext.builder().put(ToolContextKeys.HOOK_REGISTRY, registry).build();
+        }
+
+        @Test
+        @DisplayName("refuses with an error while a skill's guard hooks are active, and schedules nothing")
+        void refusesWhileGuardsAreActive() {
+            at.aimon.core.skill.hook.SkillScopedHookRegistry view = new at.aimon.core.skill.hook.SkillScopedHookRegistry(
+                    runtime, "deploy", at.aimon.core.skill.hook.SkillHookSet.builder()
+                            .addPreTool(ctx -> at.aimon.core.hook.execution.HookResult.success()).build());
+
+            ToolResult result = tool.execute(createValidInput(), contextWith(view));
+
+            assertThat(result.isError()).isTrue();
+            assertThat(result.getContent()).contains("skill 'deploy'").contains("guard hooks")
+                    .contains("scheduled routine");
+            verify(taskManager, never()).register(any(ScheduledTask.class));
+        }
+
+        @Test
+        @DisplayName("schedules once the skill's layer is closed, and when the skill only observes")
+        void schedulesWithoutActiveGuards() {
+            when(taskManager.register(any(ScheduledTask.class))).thenAnswer(invocation -> invocation.getArgument(0));
+            at.aimon.core.skill.hook.SkillScopedHookRegistry closed = new at.aimon.core.skill.hook.SkillScopedHookRegistry(
+                    runtime, "deploy", at.aimon.core.skill.hook.SkillHookSet.builder()
+                            .addPreTool(ctx -> at.aimon.core.hook.execution.HookResult.success()).build());
+            closed.deactivate();
+            at.aimon.core.skill.hook.SkillScopedHookRegistry observing = new at.aimon.core.skill.hook.SkillScopedHookRegistry(
+                    runtime, "audit", at.aimon.core.skill.hook.SkillHookSet.builder()
+                            .addPostTool(ctx -> at.aimon.core.hook.execution.HookResult.success()).build());
+
+            assertThat(tool.execute(createValidInput(), contextWith(closed)).isSuccess()).isTrue();
+            assertThat(tool.execute(createValidInput(), contextWith(observing)).isSuccess()).isTrue();
+            assertThat(tool.execute(createValidInput(), contextWith(runtime)).isSuccess()).isTrue();
+        }
+    }
+
+    @Nested
     @DisplayName("Successful Execution")
     class SuccessfulExecution {
 

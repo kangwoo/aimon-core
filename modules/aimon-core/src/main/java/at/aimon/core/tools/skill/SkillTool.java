@@ -39,6 +39,7 @@ import at.aimon.core.skill.policy.SkillInvocationRequest;
 import at.aimon.core.skill.render.NoOpSkillContentRenderer;
 import at.aimon.core.skill.render.RenderContext;
 import at.aimon.core.skill.render.SkillContentRenderer;
+import at.aimon.core.tools.HookRegistryAccess;
 import at.aimon.core.tools.InvokingSessionAccess;
 import at.aimon.core.tools.SkillRenderContextAccess;
 import at.aimon.core.tools.ToolContextKeys;
@@ -345,9 +346,10 @@ public class SkillTool extends AbstractTool {
             }
 
             // Activate any per-skill hooks for the duration of the skill body. The scope spans rendering and (for
-            // fork-mode) the spawned subagent's lifetime — so hooks registered here observe tool calls made by the
-            // forked agent. For inline mode the scope only covers rendering, which is documented behaviour.
-            try (SkillHookScope ignored = hookActivator.activate(skill)) {
+            // fork-mode) the spawned subagent's lifetime, and its hooks reach only that fork: they are layered over
+            // the registry the fork dispatches against, never registered where this execution or another session
+            // would see them. Inline mode has no fork, so there the hooks do not fire.
+            try (SkillHookScope hookScope = hookActivator.activate(skill, context)) {
                 // Stage the skill into this execution's environment (${AIMON_SKILL_DIR}), then render the
                 // instructions through the configured renderer (no-op by default).
                 final RenderContext renderContext;
@@ -369,7 +371,9 @@ public class SkillTool extends AbstractTool {
                 // inject-into-context behaviour. The rendered body is reused verbatim in both paths so
                 // $ARGUMENTS / $1..$9 substitution stays consistent regardless of how the skill is consumed.
                 if (skill.getMetadata().getExecutionMode() == ExecutionMode.FORK) {
-                    final SkillForkOutcome outcome = forkExecutor.fork(skill, renderedInstructions, context);
+                    final ToolContext forkContext = hookScope.hookRegistry()
+                            .map(registry -> HookRegistryAccess.withHookRegistry(context, registry)).orElse(context);
+                    final SkillForkOutcome outcome = forkExecutor.fork(skill, renderedInstructions, forkContext);
                     if (outcome.isSuccess()) {
                         return ToolResult.success(formatForkResult(skill, outcome.getFinalAnswer().orElse("")));
                     }

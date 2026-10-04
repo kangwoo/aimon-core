@@ -34,14 +34,20 @@ import at.aimon.core.hook.event.PreToolHook;
 import at.aimon.core.hook.execution.ExecutionHook;
 import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.hook.rewake.RewakeService;
+import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.skill.hook.declarative.DeclarativeHookId;
 import at.aimon.core.skill.hook.declarative.DeclarativePreToolHook;
-import at.aimon.core.skill.hook.declarative.NoOpShellActionExecutor;
+import at.aimon.core.skill.hook.declarative.HostShellActionExecutor;
+import at.aimon.core.skill.hook.declarative.ShellActionExecutor;
 
 /**
  * Phase 3 WI-3.4.b — verifies {@link HookRegistryReloader} bootstrap, swap, and event-firing semantics.
  */
 class HookRegistryReloaderTest {
+
+    // A shell-capable executor: one without shell support registers no command handler at all (EE-51).
+    private static final ShellActionExecutor SHELL_EXECUTOR = new HostShellActionExecutor(
+            org.mockito.Mockito.mock(VirtualShell.class));
 
     private static final UserLocale ENV = UserLocale.createDefault();
     private static final ReloadInvoker INVOKER = new ReloadInvoker(InvokerType.MAIN_AGENT, "main", ENV);
@@ -59,7 +65,7 @@ class HookRegistryReloaderTest {
     void setUp() {
         loader = new HookConfigLoader(new JacksonHookConfigParser(), userDir, projectDir);
         merger = new HookConfigMerger();
-        bootstrap = new HookRegistryApplier(NoOpShellActionExecutor.INSTANCE, null, null, Map.of());
+        bootstrap = new HookRegistryApplier(SHELL_EXECUTOR, null, null, Map.of());
     }
 
     @Test

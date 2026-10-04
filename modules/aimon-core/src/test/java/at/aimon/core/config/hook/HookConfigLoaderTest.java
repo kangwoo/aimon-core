@@ -6,10 +6,16 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.slf4j.LoggerFactory;
+
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 
 @DisplayName("HookConfigLoader")
 class HookConfigLoaderTest {
@@ -23,6 +29,40 @@ class HookConfigLoaderTest {
         final LayeredHookConfig config = loader.load();
 
         assertThat(config.layered()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a non-boolean failOpen keeps the handler closed and WARNs with the file and the handler (EE-51)")
+    void nonBooleanFailOpenIsReadAsFalseWithAWarning(@TempDir Path tmp) throws IOException {
+        final Path projDir = Files.createDirectories(tmp.resolve("project"));
+        final Path file = projDir.resolve("hooks.json");
+        Files.writeString(file,
+                "{\"hooks\":{\"PreToolUse\":[{\"hooks\":["
+                        + "{\"type\":\"command\",\"command\":\"guard.sh\",\"failOpen\":\"yes\"},"
+                        + "{\"type\":\"command\",\"command\":\"other.sh\"}]}]}}");
+        final ch.qos.logback.classic.Logger loaderLogger = (ch.qos.logback.classic.Logger) LoggerFactory
+                .getLogger(HookConfigLoader.class);
+        final ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        loaderLogger.addAppender(appender);
+        try {
+            final LayeredHookConfig config = new HookConfigLoader(new JacksonHookConfigParser(), tmp.resolve("user"),
+                    projDir).load();
+
+            // Both handlers survive — the file is not refused, so no guard is lost — and the bad one is closed.
+            assertThat(config.get(HookConfigSource.PROJECT).getHooks().get("PreToolUse").get(0).getHandlers())
+                    .extracting(HookHandlerSpec::getCommand, HookHandlerSpec::isFailOpen)
+                    .containsExactly(org.assertj.core.groups.Tuple.tuple("guard.sh", false),
+                            org.assertj.core.groups.Tuple.tuple("other.sh", false));
+            final List<ILoggingEvent> warnings = appender.list.stream().filter(e -> e.getLevel() == Level.WARN)
+                    .toList();
+            assertThat(warnings).hasSize(1);
+            assertThat(warnings.get(0).getFormattedMessage()).contains(file.toString()).contains("guard.sh")
+                    .contains("PreToolUse").contains("\"yes\"").contains("read as false");
+        } finally {
+            loaderLogger.detachAppender(appender);
+            appender.stop();
+        }
     }
 
     @Test

@@ -20,8 +20,12 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.AgentRuntimeId;
+import at.aimon.core.agent.ExecutionId;
+import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.shell.ExecutionOptions;
 import at.aimon.core.shell.ShellCancellation;
+import at.aimon.core.tools.ToolContextKeys;
 
 /**
  * {@link BackgroundBashManager} as the application-scoped task list (EE-7): who may see a task, what survives in the
@@ -29,8 +33,11 @@ import at.aimon.core.shell.ShellCancellation;
  */
 class BackgroundBashManagerTest {
 
-    private static final AgentRuntimeId ACME = AgentRuntimeId.fromName("ops", "acme");
-    private static final AgentRuntimeId GLOBEX = AgentRuntimeId.fromName("ops", "globex");
+    private static final AgentRuntimeId ACME_RUNTIME = AgentRuntimeId.fromName("ops", "acme");
+    private static final BackgroundBashOwner ACME = BackgroundBashOwner.of(ACME_RUNTIME, null, null);
+    private static final BackgroundBashOwner GLOBEX = BackgroundBashOwner.of(AgentRuntimeId.fromName("ops", "globex"),
+            null, null);
+    private static final BackgroundBashOwner NONE = BackgroundBashOwner.none();
     private static final ExecutionOptions OPTIONS = ExecutionOptions.builder().timeout(Duration.ofHours(1))
             .background(true).build();
 
@@ -66,7 +73,7 @@ class BackgroundBashManagerTest {
             assertThat(task.getTaskId()).matches("bash_[0-9a-f]{8}");
             assertThat(task.getStatus()).isEqualTo(BashTaskStatus.RUNNING);
             assertThat(task.isCancellable()).isTrue();
-            assertThat(task.getOwnerRuntimeId()).contains(ACME);
+            assertThat(task.getOwner()).isEqualTo(ACME);
             assertThat(task.getTimeout()).contains(Duration.ofHours(1));
             assertThat(shell.lastOptions().getCancellation()).isNotSameAs(ShellCancellation.none());
             // Everything else the caller asked for is passed on untouched.
@@ -99,7 +106,7 @@ class BackgroundBashManagerTest {
 
             final BackgroundBashRecord running = store.find(task.getTaskId()).orElseThrow();
             assertThat(running.getStatus()).isEqualTo(BashTaskStatus.RUNNING);
-            assertThat(running.getOwnerRuntimeId()).contains(ACME);
+            assertThat(running.owner()).isEqualTo(ACME);
             assertThat(running.getNodeId()).isEqualTo("node-a");
             assertThat(running.getExpiresAt()).contains(running.getStartedAt().plus(Duration.ofHours(1)));
 
@@ -151,6 +158,105 @@ class BackgroundBashManagerTest {
     }
 
     @Nested
+    @DisplayName("Session scope (EE-58)")
+    class SessionScope {
+
+        private final SessionId sessionA = SessionId.of("session-a");
+        private final SessionId sessionB = SessionId.of("session-b");
+        private final BackgroundBashOwner turnA = BackgroundBashOwner.of(ACME_RUNTIME, sessionA, null);
+        private final BackgroundBashOwner turnB = BackgroundBashOwner.of(ACME_RUNTIME, sessionB, null);
+
+        private BackgroundBashOwner forkOf(SessionId session, String executionId) {
+            return BackgroundBashOwner.of(ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, ACME_RUNTIME)
+                    .put(ToolContextKeys.EXECUTION_ID, ExecutionId.of(executionId))
+                    .put(ToolContextKeys.INVOKING_SESSION_ID, session).build());
+        }
+
+        @Test
+        @DisplayName("another session of the same runtime neither finds nor stops the task")
+        void otherSessionOfTheSameRuntime() throws Exception {
+            final BackgroundBashManager manager = manager();
+            final ControllableShell shell = ControllableShell.cancellable();
+            final BackgroundBashTask task = manager.start(turnA, "npm run dev", shell, OPTIONS);
+            shell.awaitStarted();
+
+            assertThat(manager.find(turnB, task.getTaskId()).kind()).isEqualTo(BackgroundBashLookup.Kind.NOT_FOUND);
+            assertThat(manager.kill(turnB, task.getTaskId()).outcome()).isEqualTo(BackgroundBashKill.Outcome.NOT_FOUND);
+            // The runtime alone is no longer enough either.
+            assertThat(manager.find(ACME, task.getTaskId()).kind()).isEqualTo(BackgroundBashLookup.Kind.NOT_FOUND);
+            assertThat(shell.lastOptions().getCancellation().isCancelled()).as("nobody reached the command").isFalse();
+            assertThat(task.getStatus()).isEqualTo(BashTaskStatus.RUNNING);
+
+            assertThat(manager.find(turnA, task.getTaskId()).kind()).isEqualTo(BackgroundBashLookup.Kind.LOCAL);
+            assertThat(manager.kill(turnA, task.getTaskId()).outcome()).isEqualTo(BackgroundBashKill.Outcome.REQUESTED);
+        }
+
+        @Test
+        @DisplayName("a session's turn and the forks spawned for it see each other's tasks")
+        void forkAndParentShareTasks() {
+            final BackgroundBashManager manager = manager();
+            final ControllableShell byFork = ControllableShell.cancellable();
+            final ControllableShell byTurn = ControllableShell.cancellable();
+            final String forkTask = manager.start(forkOf(sessionA, "fork-1"), "make", byFork, OPTIONS).getTaskId();
+            final String turnTask = manager.start(turnA, "make test", byTurn, OPTIONS).getTaskId();
+
+            assertThat(manager.find(turnA, forkTask).kind()).isEqualTo(BackgroundBashLookup.Kind.LOCAL);
+            assertThat(manager.find(forkOf(sessionA, "fork-1"), turnTask).kind())
+                    .isEqualTo(BackgroundBashLookup.Kind.LOCAL);
+            // A sibling fork of the same session acts for the same user session.
+            assertThat(manager.find(forkOf(sessionA, "fork-2"), forkTask).kind())
+                    .isEqualTo(BackgroundBashLookup.Kind.LOCAL);
+            assertThat(manager.find(forkOf(sessionB, "fork-3"), forkTask).kind())
+                    .isEqualTo(BackgroundBashLookup.Kind.NOT_FOUND);
+            byFork.finish("");
+            byTurn.finish("");
+        }
+
+        @Test
+        @DisplayName("session-less executions are isolated from each other and from sessions")
+        void sessionlessExecutionsAreIsolated() {
+            final BackgroundBashManager manager = manager();
+            final BackgroundBashOwner fire1 = BackgroundBashOwner.of(ACME_RUNTIME, null, ExecutionId.of("routine:t:1"));
+            final BackgroundBashOwner fire2 = BackgroundBashOwner.of(ACME_RUNTIME, null, ExecutionId.of("routine:t:2"));
+            final ControllableShell shell = ControllableShell.cancellable();
+            final String taskId = manager.start(fire1, "backup.sh", shell, OPTIONS).getTaskId();
+
+            assertThat(manager.find(fire1, taskId).kind()).isEqualTo(BackgroundBashLookup.Kind.LOCAL);
+            assertThat(manager.find(fire2, taskId).kind()).isEqualTo(BackgroundBashLookup.Kind.NOT_FOUND);
+            assertThat(manager.find(turnA, taskId).kind()).isEqualTo(BackgroundBashLookup.Kind.NOT_FOUND);
+            assertThat(manager.find(ACME, taskId).kind()).isEqualTo(BackgroundBashLookup.Kind.NOT_FOUND);
+            shell.finish("");
+        }
+
+        @Test
+        @DisplayName("on another node the owning session is told where the task runs and any other is told nothing")
+        void otherNodeAnswersBySession() {
+            final InMemoryBackgroundBashStore shared = new InMemoryBackgroundBashStore();
+            final BackgroundBashManager nodeA = manager(BackgroundBashManager.builder().store(shared).nodeId("a"));
+            final BackgroundBashManager nodeB = manager(BackgroundBashManager.builder().store(shared).nodeId("b"));
+            final ControllableShell shell = ControllableShell.cancellable();
+            final String taskId = nodeA.start(turnA, "npm run dev", shell, OPTIONS).getTaskId();
+
+            assertThat(nodeB.find(turnA, taskId).kind()).isEqualTo(BackgroundBashLookup.Kind.ELSEWHERE);
+            assertThat(nodeB.find(turnB, taskId).kind()).isEqualTo(BackgroundBashLookup.Kind.NOT_FOUND);
+            assertThat(nodeB.kill(turnB, taskId).outcome()).isEqualTo(BackgroundBashKill.Outcome.NOT_FOUND);
+            shell.finish("");
+        }
+
+        @Test
+        @DisplayName("a record without the session field is invisible to a caller that has a session")
+        void recordWrittenBeforeTheScopeExisted() {
+            final InMemoryBackgroundBashStore durable = new InMemoryBackgroundBashStore();
+            durable.putIfAbsent(BackgroundBashRecord.builder().taskId("bash_0000dddd").ownerRuntimeId(ACME_RUNTIME)
+                    .nodeId("a").startedAt(Instant.now()).expiresAt(Instant.now().plusSeconds(3600)).build());
+            final BackgroundBashManager manager = manager(BackgroundBashManager.builder().store(durable).nodeId("a"));
+
+            assertThat(manager.find(turnA, "bash_0000dddd").kind()).isEqualTo(BackgroundBashLookup.Kind.NOT_FOUND);
+            assertThat(durable.find("bash_0000dddd")).as("a refused lookup does not touch the record").isPresent();
+        }
+    }
+
+    @Nested
     @DisplayName("Finding")
     class Finding {
 
@@ -164,7 +270,7 @@ class BackgroundBashManagerTest {
             assertThat(manager.find(ACME, taskId).kind()).isEqualTo(BackgroundBashLookup.Kind.LOCAL);
             assertThat(manager.find(GLOBEX, taskId).kind()).isEqualTo(BackgroundBashLookup.Kind.NOT_FOUND);
             // A caller with no runtime id sees only tasks started with none — it is not a wildcard.
-            assertThat(manager.find(null, taskId).kind()).isEqualTo(BackgroundBashLookup.Kind.NOT_FOUND);
+            assertThat(manager.find(NONE, taskId).kind()).isEqualTo(BackgroundBashLookup.Kind.NOT_FOUND);
             assertThat(manager.find(ACME, "bash_ffffffff").kind()).isEqualTo(BackgroundBashLookup.Kind.NOT_FOUND);
             shell.finish("");
         }
@@ -174,9 +280,9 @@ class BackgroundBashManagerTest {
         void ownerlessTasks() {
             final BackgroundBashManager manager = manager();
             final ControllableShell shell = ControllableShell.cancellable();
-            final String taskId = manager.start(null, "true", shell, OPTIONS).getTaskId();
+            final String taskId = manager.start(NONE, "true", shell, OPTIONS).getTaskId();
 
-            assertThat(manager.find(null, taskId).kind()).isEqualTo(BackgroundBashLookup.Kind.LOCAL);
+            assertThat(manager.find(NONE, taskId).kind()).isEqualTo(BackgroundBashLookup.Kind.LOCAL);
             assertThat(manager.find(ACME, taskId).kind()).isEqualTo(BackgroundBashLookup.Kind.NOT_FOUND);
             shell.finish("");
         }
@@ -207,7 +313,7 @@ class BackgroundBashManagerTest {
         @DisplayName("a record naming this node without a task is one the node lost in a restart")
         void recordThisNodeLost() {
             final InMemoryBackgroundBashStore durable = new InMemoryBackgroundBashStore();
-            durable.putIfAbsent(BackgroundBashRecord.builder().taskId("bash_0000aaaa").ownerRuntimeId(ACME).nodeId("a")
+            durable.putIfAbsent(BackgroundBashRecord.builder().taskId("bash_0000aaaa").owner(ACME).nodeId("a")
                     .startedAt(Instant.now()).expiresAt(Instant.now().plusSeconds(3600)).build());
             final BackgroundBashManager restarted = manager(BackgroundBashManager.builder().store(durable).nodeId("a"));
 
@@ -222,8 +328,8 @@ class BackgroundBashManagerTest {
         void expiredRecordIsDropped() {
             final InMemoryBackgroundBashStore shared = new InMemoryBackgroundBashStore();
             final Instant started = Instant.parse("2026-10-01T00:00:00Z");
-            shared.putIfAbsent(BackgroundBashRecord.builder().taskId("bash_0000bbbb").ownerRuntimeId(ACME)
-                    .nodeId("gone").startedAt(started).expiresAt(started.plusSeconds(3600)).build());
+            shared.putIfAbsent(BackgroundBashRecord.builder().taskId("bash_0000bbbb").owner(ACME).nodeId("gone")
+                    .startedAt(started).expiresAt(started.plusSeconds(3600)).build());
             final BackgroundBashManager manager = manager(BackgroundBashManager.builder().store(shared).nodeId("b")
                     .clock(Clock.fixed(started.plusSeconds(7200), ZoneOffset.UTC)));
 
@@ -323,7 +429,7 @@ class BackgroundBashManagerTest {
             final BackgroundBashManager manager = manager();
             manager.registerTask("bash_legacy01", "sleep 10", new java.util.concurrent.CompletableFuture<>());
 
-            assertThat(manager.kill(null, "bash_legacy01").outcome()).isEqualTo(BackgroundBashKill.Outcome.UNSUPPORTED);
+            assertThat(manager.kill(NONE, "bash_legacy01").outcome()).isEqualTo(BackgroundBashKill.Outcome.UNSUPPORTED);
         }
     }
 

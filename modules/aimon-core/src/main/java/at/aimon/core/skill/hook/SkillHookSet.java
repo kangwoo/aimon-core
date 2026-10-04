@@ -17,8 +17,9 @@ import at.aimon.core.hook.execution.ExecutionHook;
  * Immutable, type-safe bundle of hook instances scoped to a single skill (AIMON extension).
  *
  * <p>
- * Hooks held here are active only while the skill is executing. The {@link SkillHookActivator} registers them with a
- * {@link at.aimon.core.hook.HookRegistry} on activation and unregisters them on scope close.
+ * Hooks held here are active only while the skill is executing, and only for the skill's fork: the
+ * {@link SkillHookActivator} layers them over the {@link at.aimon.core.hook.HookRegistry} that fork dispatches
+ * against and switches the layer off on scope close. They are never registered with the runtime's shared registry.
  *
  * <p>
  * Only the events in {@link #supportedEvents()} can be scoped to a skill. The three that are missing &mdash;
@@ -36,7 +37,7 @@ import at.aimon.core.hook.execution.ExecutionHook;
 public final class SkillHookSet {
 
     /**
-     * The events that can be scoped to a single skill invocation, in the order the activator registers them.
+     * The events that can be scoped to a single skill invocation, in the order the activator exposes them.
      *
      * <p>
      * The first four are the historical SK-13 set and are listed first so registration order is unchanged for skills
@@ -49,6 +50,15 @@ public final class SkillHookSet {
 
     /** The events {@link #toString()} always reports, even at zero, so the summary reads consistently. */
     private static final List<HookEventType<?>> ALWAYS_SUMMARISED = SUPPORTED_EVENTS.subList(0, 4);
+
+    /**
+     * The events whose chain a skill's fork acts on when a hook blocks or denies. {@code onStart} is not one of them:
+     * the subagent executor a fork runs on reads its {@code onStart} results as advisory feedback and drops a block
+     * (EE-70), so a skill whose only hook is on {@code onStart} guards nothing and must not make background work
+     * refuse.
+     */
+    private static final List<HookEventType<?>> GUARD_EVENTS = List.of(HookEventType.PRE_TOOL,
+            HookEventType.PERMISSION_REQUEST, HookEventType.PRE_COMPACT);
 
     private static final SkillHookSet EMPTY = builder().build();
 
@@ -88,6 +98,26 @@ public final class SkillHookSet {
      */
     public static List<HookEventType<?>> supportedEvents() {
         return SUPPORTED_EVENTS;
+    }
+
+    /**
+     * Returns the events on which a skill's hook can veto inside the skill's fork &mdash; {@code preTool},
+     * {@code permissionRequest} and {@code preCompact}. Every other event is advisory there, {@code onStart} included:
+     * the fork's executor does not act on a blocked {@code onStart} result (EE-70).
+     *
+     * @return immutable list (never null)
+     */
+    public static List<HookEventType<?>> guardEvents() {
+        return GUARD_EVENTS;
+    }
+
+    /**
+     * Returns whether the skill declared a hook on any {@linkplain #guardEvents() event that can veto}.
+     *
+     * @return true when at least one declared hook could block or deny an operation
+     */
+    public boolean hasGuards() {
+        return GUARD_EVENTS.stream().anyMatch(byEvent::containsKey);
     }
 
     /**

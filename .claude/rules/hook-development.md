@@ -96,6 +96,27 @@ for side effects only. Wiring one up is a feature, not a bug fix.
   logged and the event proceeds. Any other non-zero exit is allowed — a broken script must not become
   a silent gatekeeper. `onStart` is the newest of the four: a declarative `onStart` hook previously
   had no veto at all.
+- **No exit code is a veto too (fail-closed).** On those four events a shell handler whose command
+  never produced an exit status — no execution environment, an unavailable one, a timeout, a shell
+  failure, an executor without shell support, an executor that throws (`LinkageError` included) —
+  blocks/denies, with the cause in the reason. The executor reports it as
+  `ShellHookOutcome.notRun(cause, detail)` (there is no cause-less factory) and `ShellHookVerdicts`
+  decides. A hook opts out per declaration with `failOpen: true` (entry level in frontmatter, handler
+  level in `hooks.json`; only a boolean `true` opens it — a non-boolean is a parse error in
+  frontmatter and is read as `false` with a WARN in `hooks.json`). The deny reason never names
+  `failOpen`, the command or an exception message — only the cause and the exception's type; its
+  reader is the party the guard constrains. **Exception: `onStart` inside a fork is advisory** — the
+  subagent executor reads `onStart` results through `HookFeedback.collectAdvisory` and drops a block,
+  so a skill's `onStart` hook (and a `hooks.json` one, in a fork) cannot block there (EE-70).
+- **Skill hooks are not registered with the runtime's `HookRegistry`.** `ScopedSkillHookActivator`
+  layers them over the registry the skill's fork dispatches against (`SkillScopedHookRegistry`), so
+  they fire in that fork and its descendants only. Code that spawns a fork passes
+  `HookRegistryAccess.of(toolContext)` (the write-once `ToolContextKeys.HOOK_REGISTRY`) before any
+  registry it holds itself; a background workflow run cannot carry it, so `Workflow` / `WorkflowJs`
+  refuse background mode while a skill guard is active, and `ScheduleTask` refuses for the same
+  reason (a routine fires later on the runtime's registry). The guard check only sees the view when
+  the context's registry *is* the `SkillScopedHookRegistry` — a decorator around it disables these
+  refusals.
 - A handler's declared timeout is enforced by the action executor and, via
   `ExecutionHook#getExecutionBudget()`, widens the hook's outer net — subject to the same floor,
   +5s grace and 10-minute clamp as any other declared budget. In `hooks.json` the `timeout` field is

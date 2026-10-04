@@ -4,12 +4,15 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.JsonNode;
 
 import at.aimon.core.config.hook.rewake.RewakeSpecConfig;
 
@@ -46,6 +49,16 @@ import at.aimon.core.config.hook.rewake.RewakeSpecConfig;
  * {@link IllegalArgumentException} that the parser surfaces as a {@link HookConfigParseException}. Internally only
  * milliseconds exist: {@link #getTimeoutMs()} is the single accessor and the conversion happens at the JSON binding
  * boundary, so nothing downstream had to change.
+ *
+ * <p>
+ * <b>{@code failOpen}.</b> A {@code command} handler on an event that can block ({@code preTool}, {@code onStart},
+ * {@code preCompact}, {@code permissionRequest}) blocks when its command produces no exit status &mdash; a timeout, a
+ * shell failure. {@code "failOpen": true} lets the operation proceed instead, for handlers that only observe. The
+ * field takes a JSON boolean and nothing else: it takes a guard off, so {@code "true"} or {@code 1} is not coerced
+ * to {@code true}. A value that is not a JSON boolean is read as {@code false} &mdash; the guard stays closed &mdash;
+ * and kept in {@link #getRejectedFailOpen()} so that {@link HookConfigLoader} can WARN with the file it came from.
+ * It does <em>not</em> fail the parse: a parse failure drops every handler of the file, which would take all its
+ * guards off to punish a typo in a key that can only take one off.
  *
  * <p>
  * Immutable; thread-safe.
@@ -117,6 +130,11 @@ public final class HookHandlerSpec {
     // phase 4 — async rewake (parsed lazily by RewakeSpecParser)
     private final RewakeSpecConfig asyncRewake;
 
+    private final boolean failOpen;
+
+    // the raw JSON of a failOpen that was not a boolean, or null; read as false
+    private final String rejectedFailOpen;
+
     private HookHandlerSpec(Builder b) {
         this.type = Objects.requireNonNull(b.type, "type cannot be null");
         this.command = b.command;
@@ -131,6 +149,8 @@ public final class HookHandlerSpec {
         this.reason = b.reason;
         this.timeoutMs = b.timeoutMs;
         this.asyncRewake = b.asyncRewake;
+        this.failOpen = b.failOpen;
+        this.rejectedFailOpen = b.rejectedFailOpen;
     }
 
     /** @return the handler type discriminator (never null) */
@@ -231,6 +251,25 @@ public final class HookHandlerSpec {
     }
 
     /**
+     * @return true when the handler lets the operation proceed if its command produces no exit status; false (the
+     *         default) when a guard that cannot run blocks
+     */
+    @JsonProperty("failOpen")
+    @JsonInclude(JsonInclude.Include.NON_DEFAULT)
+    public boolean isFailOpen() {
+        return failOpen;
+    }
+
+    /**
+     * @return the raw JSON of a {@code failOpen} value that was not a JSON boolean and was therefore read as
+     *         {@code false}, or empty when the field was absent or a boolean. Not part of the wire form.
+     */
+    @JsonIgnore
+    public Optional<String> getRejectedFailOpen() {
+        return Optional.ofNullable(rejectedFailOpen);
+    }
+
+    /**
      * @return a new builder
      */
     public static Builder builder() {
@@ -269,6 +308,8 @@ public final class HookHandlerSpec {
      *            takes precedence over {@code timeoutSeconds} when both are present
      * @param asyncRewake
      *            optional {@code asyncRewake} block describing how the framework should re-fire the hook
+     * @param failOpen
+     *            optional {@code failOpen} flag; bound as a raw node so that only a JSON boolean can open it
      * @return the spec (never null)
      * @throws IllegalArgumentException
      *             if {@code typeRaw} is unknown or either timeout is not positive
@@ -283,12 +324,28 @@ public final class HookHandlerSpec {
             @JsonProperty("server") String serverName, @JsonProperty("tool") String toolName,
             @JsonProperty("args") Map<String, Object> args, @JsonProperty("reason") String reason,
             @JsonProperty("timeout") Long timeoutSeconds, @JsonProperty("timeoutMs") Long timeoutMs,
-            @JsonProperty("asyncRewake") RewakeSpecConfig asyncRewake) {
+            @JsonProperty("asyncRewake") RewakeSpecConfig asyncRewake, @JsonProperty("failOpen") JsonNode failOpen) {
         return builder().type(Type.fromJson(typeRaw)).command(command).url(url).method(method).headers(headers)
                 .bodyTemplate(body)
                 .allowedEnvVars(allowedEnvVars == null ? Set.of() : new LinkedHashSet<>(allowedEnvVars))
                 .serverName(serverName).toolName(toolName).args(args).reason(reason)
-                .timeoutMs(resolveTimeoutMs(timeoutSeconds, timeoutMs)).asyncRewake(asyncRewake).build();
+                .timeoutMs(resolveTimeoutMs(timeoutSeconds, timeoutMs)).asyncRewake(asyncRewake)
+                .failOpen(failOpen != null && failOpen.isBoolean() && failOpen.booleanValue())
+                .rejectedFailOpen(rejectedFailOpen(failOpen)).build();
+    }
+
+    /**
+     * Reads {@code failOpen} without Jackson's scalar coercion, which would bind {@code "true"} and {@code 1} to
+     * {@code true}: anything present that is not a JSON boolean &mdash; an explicit {@code null} included &mdash; is
+     * read as {@code false} (closed) and its raw JSON is returned so the loader can WARN about it.
+     *
+     * @return the raw JSON of a non-boolean value, or null when the field is absent or a boolean
+     */
+    private static String rejectedFailOpen(JsonNode failOpen) {
+        if (failOpen == null || failOpen.isBoolean()) {
+            return null;
+        }
+        return failOpen.toString();
     }
 
     /**
@@ -346,6 +403,8 @@ public final class HookHandlerSpec {
         private String reason;
         private Long timeoutMs;
         private RewakeSpecConfig asyncRewake;
+        private boolean failOpen;
+        private String rejectedFailOpen;
 
         private Builder() {
         }
@@ -425,6 +484,27 @@ public final class HookHandlerSpec {
          */
         public Builder asyncRewake(RewakeSpecConfig asyncRewake) {
             this.asyncRewake = asyncRewake;
+            return this;
+        }
+
+        /**
+         * @param failOpen
+         *            true to let the operation proceed when the handler's command produces no exit status
+         * @return this builder
+         */
+        public Builder failOpen(boolean failOpen) {
+            this.failOpen = failOpen;
+            return this;
+        }
+
+        /**
+         * @param rejectedFailOpen
+         *            raw JSON of a {@code failOpen} value that was not a boolean, or null; it does not open the
+         *            handler, it only lets the loader report the value it ignored
+         * @return this builder
+         */
+        Builder rejectedFailOpen(String rejectedFailOpen) {
+            this.rejectedFailOpen = rejectedFailOpen;
             return this;
         }
 

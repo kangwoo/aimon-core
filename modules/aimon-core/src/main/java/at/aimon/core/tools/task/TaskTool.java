@@ -53,6 +53,7 @@ import at.aimon.core.subagent.task.TaskOutputStore;
 import at.aimon.core.subagent.task.TaskResultStore;
 import at.aimon.core.tools.CallerAllowedTools;
 import at.aimon.core.tools.ExecutionEnvironmentAccess;
+import at.aimon.core.tools.HookRegistryAccess;
 import at.aimon.core.tools.InvokingSessionAccess;
 import at.aimon.core.tools.ToolContextKeys;
 
@@ -551,14 +552,17 @@ public class TaskTool extends AbstractTool {
                 .orElse(null);
 
         return SubagentExecutionEnvironment.builder().agentRuntimeId(agentRuntimeId).subagentRegistry(subagentRegistry)
-                .toolRegistry(toolRegistry).hookRegistry(hookRegistry).userLocale(userLocale).defaultModel(defaultModel)
-                .modelOverride(model).executionAttributes(executionAttributes).parentLlmCallMetadata(parentMetadata)
-                .cancellationSignal(parentSignal).principal(principal).knowledgeStore(knowledgeStore)
-                .knowledgeScope(knowledgeScope).toolContextEnrichers(toolContextEnrichers)
-                .taskOutputStore(taskOutputStore).taskResultStore(taskResultStore)
-                .sessionSnapshotStore(sessionSnapshotStore).previousSnapshot(previousSnapshot)
-                .messageQueueManager(messageQueueManager).parentEventSink(parentEventSink)
-                .callerAllowedTools(CallerAllowedTools.of(context))
+                .toolRegistry(toolRegistry)
+                // The caller's registry first: inside a forked skill it carries the skill's hooks, and a subagent
+                // started from there must stay under them.
+                .hookRegistry(HookRegistryAccess.of(context).orElse(hookRegistry)).userLocale(userLocale)
+                .defaultModel(defaultModel).modelOverride(model).executionAttributes(executionAttributes)
+                .parentLlmCallMetadata(parentMetadata).cancellationSignal(parentSignal).principal(principal)
+                .knowledgeStore(knowledgeStore).knowledgeScope(knowledgeScope)
+                .toolContextEnrichers(toolContextEnrichers).taskOutputStore(taskOutputStore)
+                .taskResultStore(taskResultStore).sessionSnapshotStore(sessionSnapshotStore)
+                .previousSnapshot(previousSnapshot).messageQueueManager(messageQueueManager)
+                .parentEventSink(parentEventSink).callerAllowedTools(CallerAllowedTools.of(context))
                 .invokingSessionId(InvokingSessionAccess.idToPropagate(context).orElse(null))
                 // The fork resolves its own environment from the spawning runtime's provider, with this execution's
                 // environment as its parent (execution-environment design §5.2).

@@ -87,13 +87,14 @@ CLI 부트스트랩(`AgentSetupFactory`)은 `HookConfigWatcher` + `HookRegistryR
   않는다 (계약상 reload 가 아니라 초기 로드).
 - **reload**: 파일 편집 트리거. `OnConfigReload` 이벤트가 발사된다.
 - bootstrap 이 실패해도 CLI 는 WARN 로그만 남기고 계속 진행 — 이후 핫리로드는
-  여전히 시도된다.
+  여전히 시도된다. 그 사이에는 파일의 hook 이 **하나도** 등록되어 있지 않다 — 가드도 없다.
+  시작 시 파싱 실패를 시작 중단으로 바꿀지는 아직 정하지 않았다(백로그 EE-71).
 
 ### 실패 모드
 
 | 상황                              | 동작                                                          |
 |-----------------------------------|---------------------------------------------------------------|
-| 새 `hooks.json` 이 파싱 실패       | swap 하지 않음. 이전 hook 유지. `OnConfigReload(failed)` 발사 |
+| 새 `hooks.json` 이 파싱 실패       | swap 하지 않음. **이전 설정이 그대로 유지**된다(이전 hook · 가드 그대로). `OnConfigReload(failed)` 발사 |
 | swap 도중 일부 hook 등록 실패      | LIFO undo 로 새 hook 제거 + 원래 순서로 이전 hook 재등록      |
 | listener 가 예외를 던짐            | 로그만 남기고 watcher 는 계속 동작 (poison 방지)              |
 | watcher 시작 자체가 실패           | CLI 는 핫리로드 없이 계속 동작 (WARN 로그)                    |
@@ -231,6 +232,7 @@ AIMON 고유 이벤트는 `hooks.json` 에 AIMON 내부 이름을 그대로 적�
   "command": "jq -r '.tool_input.file_path'",
   "timeout": 5      // 선택, 초 단위 (Claude Code parity). 미지정 시 30초
   // "timeoutMs": 500  // 대안: 밀리초 단위 별칭. 둘 다 있으면 timeoutMs 가 이긴다
+  // "failOpen": true  // 선택, 기본 false. 커맨드를 돌리지 못했을 때 막지 않고 통과시킨다 (아래 "종료 코드")
 }
 ```
 
@@ -261,6 +263,7 @@ path=$(echo "$payload" | jq -r '.tool_input.file_path')
 | `0`  | 정상 진행.                                                                        |
 | `2`  | **veto** — stderr 가 거부 사유가 된다 (Claude Code parity). 4000자를 넘으면 잘린다.  |
 | 그 외 | `WARN` 로그 + fail-soft (정상 진행). 깨진 스크립트가 조용한 게이트키퍼가 되면 안 된다. |
+| 없음 | 커맨드가 종료 코드를 내지 못했다 (timeout, 셸 실패). 결정 채널이 있는 이벤트에서는 **veto 와 같다** — 아래 "커맨드를 돌리지 못했을 때". |
 
 veto 는 **결정 채널이 있는 네 이벤트에서만** 효력이 있다. 나머지 이벤트의 exit 2 는
 WARN 로그만 남기고 진행한다 (`AbstractDeclarativeShellHook#vetoResult`).
@@ -276,6 +279,15 @@ WARN 로그만 남기고 진행한다 (`AbstractDeclarativeShellHook#vetoResult`
 > `onStart` 의 veto 는 이번 하드닝에서 추가되었다. 그 전에는 선언적 `onStart` hook 이
 > exit 2 로 끝나도 아무 일도 일어나지 않았다.
 
+**커맨드를 돌리지 못했을 때 (fail-closed).** 위 네 이벤트의 `command` handler 가 **종료 코드를 내지 못하면** — timeout,
+셸 실패 — 그 이벤트의 거부 결과를 낸다(`preTool` · `onStart` · `preCompact` 는 block, `permissionRequest` 는 deny). 판단하지
+못한 가드는 통과시키지 않는다. 사유는 `Blocked: guard hook '<source>#<n>' (<event>) could not run its command — timed out:
+…` 꼴로 원인을 싣고, 커맨드 문자열은 싣지 않는다. 가드가 아니라 **관찰** 용도의 handler(감사 로그, 메트릭)라면
+`"failOpen": true` 를 선언한다 — 그러면 WARN 만 남기고 진행한다. `failOpen` 은 exit 2 를 약하게 하지 않는다. 가드를 여는
+값은 JSON 불리언 `true` 하나뿐이다: `"true"` · `1` · `null` 같은 불리언 아닌 값은 강제 변환되지 않고 **`false` 로 읽힌다** —
+handler 는 그대로 등록되어 가드가 닫힌 채 남고, 파일 · 이벤트 · handler 를 밝힌 WARN 이 남는다(가드를 푸는 키이므로 느슨하게
+읽지 않고, 그렇다고 오타 하나로 파일의 다른 가드까지 잃지도 않는다). 나머지 9개 이벤트에서는 전처럼 WARN 후 진행한다.
+
 **`timeout` 단위 (breaking change).** `timeout` 은 Claude Code 와 동일하게 **초(seconds)**
 단위다. 밀리초가 필요하면 AIMON 고유 별칭 `timeoutMs` 를 쓴다. 둘 다 있으면 더 정밀한
 `timeoutMs` 가 이긴다. 두 값 모두 양수여야 하며, 0 이나 음수는 파싱 단계에서 거절된다.
@@ -287,8 +299,9 @@ WARN 로그만 남기고 진행한다 (`AbstractDeclarativeShellHook#vetoResult`
 
 > ⚠️ **마이그레이션.** `timeout` 은 예전에 밀리초로 읽혔다. 그 시절 설정을 그대로 두면
 > `"timeout": 5000` 이 5초가 아니라 **5000초** 로 해석된다(반대로 Claude Code 에서 가져온
-> `"timeout": 60` 은 예전 바이너리에서 60 ms 였다). hook timeout 은 fail-soft 이므로 증상이
-> 조용하다 — 기존 설정은 값을 1000 으로 나누거나 `timeoutMs` 로 키를 바꿔야 한다.
+> `"timeout": 60` 은 예전 바이너리에서 60 ms 였다). 너무 짧게 읽힌 쪽은 결정 채널이 있는
+> 이벤트에서 timeout 으로 **막히고**, 나머지 이벤트에서는 조용히 잘린다 — 기존 설정은 값을 1000
+> 으로 나누거나 `timeoutMs` 로 키를 바꿔야 한다.
 
 **`timeout` 과 hook policy.** 선언된 budget 은 executor 가 강제하며, 값이 hook policy 의
 timeout(기본 30초) **이상**이면 executor 의 바깥 그물이 그만큼 **넓어진다**(+5초 grace).
@@ -730,11 +743,14 @@ frontmatter 스키마 요약:
 | `matcher`       | `preTool` / `postTool` 에서만 허용 (생략 시 `"*"`). 다른 이벤트에 두면 파싱 실패  |
 | `action.type`   | `shell` / `deny` / `http` / `mcp`. `deny` 는 `preTool` 전용, `http`·`mcp` 는 `preTool`·`postTool` 전용 |
 | 타임아웃 필드   | `action.timeoutMs` (**밀리초**). frontmatter 에는 초 단위 `timeout` 별칭이 없다   |
+| `failOpen`      | entry 수준 키(`matcher` · `action` 과 나란히). YAML 불리언만 받고 기본 `false`. `shell` 액션이 종료 코드를 내지 못했을 때 통과시킨다 |
 
 `onSessionStart` / `onSessionEnd` / `onConfigReload` 는 skill 호출 바깥(세션·애플리케이션
 라이프사이클)에서 발사되므로 frontmatter 에서 거절된다 — `hooks.json` 에 선언한다.
 
-위 hook 은 `my-skill` 이 활성화된 동안만 적용되고 비활성 시 자동으로 unregister 된다.
+위 hook 은 `my-skill` 이 **fork 한 에이전트**(와 그 에이전트가 띄운 fork)에만 적용되고, 스킬이 답을 돌려주면 끝난다. 같은
+에이전트의 다른 세션이나 스킬을 호출한 쪽에는 발화하지 않으며, 런타임의 hook registry 에 등록되지 않는다. inline 스킬은
+fork 가 없어 발화하지 않는다. 전체 규칙은 [`aimon-skill-extensions.md`](../../references/aimon-skill-extensions.md) 에 있다.
 
 ---
 
@@ -751,6 +767,9 @@ frontmatter 스키마 요약:
 | `WARN hooks: '...' event is not supported by AIMON in this phase`        | `Notification` / `UserPromptSubmit` / `stop_hook_active` 뿐이다. 나머지는 모두 지원. |
 | `WARN hooks: unknown event '...'`                                        | 오타. [지원 이벤트 표](#지원-이벤트와-매핑)의 이름을 사용 (대소문자 무시).    |
 | `WARN hooks: only 'command' actions are valid on ...`                    | `preTool`/`postTool` 외의 이벤트는 셸 handler 전용.                          |
+| `WARN hooks: 'command' on ... cannot run: the configured shell executor does not support shell actions` | 셸을 지원하지 않는 실행기(`NoOpShellActionExecutor`)로 `hooks.json` 을 적용했다. `command` handler 는 등록되지 않는다 — `HostShellActionExecutor` 를 배선할 것. |
+| `WARN hooks config at ...: ... has a 'failOpen' that is not a JSON boolean (...); it is read as false` | `failOpen` 에 `"true"` · `1` · `null` 을 썼다. 그 handler 는 `failOpen: false` 로 등록된다(커맨드를 못 돌리면 막는다). 관찰용이라면 `true` 로 고칠 것. |
+| 도구가 `Blocked: guard hook '...' could not run its command` 로 막힘      | 결정 채널이 있는 이벤트의 `command` handler 가 종료 코드를 내지 못했다(timeout 등). 사유의 원인을 고치거나, 관찰용 handler 라면 `"failOpen": true` 를 선언. |
 | `WARN hooks: 'asyncRewake' is not supported on event '...'`              | rewake 가능한 이벤트는 `preTool`/`preCompact`/`onSessionStart`/`onSessionEnd`/`onConfigReload`. hook 자체는 정상 등록됨. |
 | 셸 hook 이 exit 2 로 끝났는데 차단되지 않음                                | 해당 이벤트에 결정 채널이 없음. veto 는 `preTool`/`onStart`/`preCompact`(block), `permissionRequest`(deny) 에서만 유효. |
 | 커맨드 안의 `${tool_input.x}` / `${tool_name}` 이 빈 문자열                | 의도된 동작. 커맨드는 렌더링되지 않는다 — stdin JSON payload 나 `AIMON_*` env(`$AIMON_TOOL_NAME` 등) 를 사용. |

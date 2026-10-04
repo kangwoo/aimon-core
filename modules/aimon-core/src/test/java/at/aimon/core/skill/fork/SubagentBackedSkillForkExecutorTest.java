@@ -26,6 +26,7 @@ import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.base.Principal;
 import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.execution.ExecutionMetadata;
+import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.TokenUsage;
@@ -38,12 +39,14 @@ import at.aimon.core.subagent.SubagentExecutionEnvironment;
 import at.aimon.core.subagent.SubagentExecutionManager;
 import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
+import at.aimon.core.tools.HookRegistryAccess;
 import at.aimon.core.tools.ToolContextKeys;
 
 class SubagentBackedSkillForkExecutorTest {
 
     private SubagentRegistry subagentRegistry;
     private SubagentExecutionManager subagentExecutionManager;
+    private HookRegistry hookRegistry;
     private SubagentBackedSkillForkExecutor executor;
 
     @BeforeEach
@@ -51,7 +54,7 @@ class SubagentBackedSkillForkExecutorTest {
         final LlmModel model = mock(LlmModel.class);
         subagentRegistry = mock(SubagentRegistry.class);
         final ToolRegistry toolRegistry = mock(ToolRegistry.class);
-        final HookRegistry hookRegistry = mock(HookRegistry.class);
+        hookRegistry = mock(HookRegistry.class);
         final UserLocale userLocale = mock(UserLocale.class);
         subagentExecutionManager = mock(SubagentExecutionManager.class);
 
@@ -193,6 +196,22 @@ class SubagentBackedSkillForkExecutorTest {
     @Test
     void fork_WithoutAPrincipal_ForwardsNone() {
         assertThat(captureEnvFor(contextWithExecutionId("ctx-42")).getPrincipal()).isEmpty();
+    }
+
+    @Test
+    void fork_DispatchesAgainstTheRegistryInTheToolContext_NotTheConstructorOne() {
+        // The context's registry is where SkillTool layers the skill's hooks; ignoring it would drop them (EE-49).
+        final HookRegistry fromContext = new DefaultHookRegistry();
+
+        final SubagentExecutionEnvironment env = captureEnvFor(
+                HookRegistryAccess.withHookRegistry(contextWithExecutionId("ctx-42"), fromContext));
+
+        assertThat(env.getHookRegistry()).isSameAs(fromContext);
+    }
+
+    @Test
+    void fork_WithoutARegistryInTheToolContext_FallsBackToTheConstructorOne() {
+        assertThat(captureEnvFor(contextWithExecutionId("ctx-42")).getHookRegistry()).isSameAs(hookRegistry);
     }
 
     /** Runs a successful fork against the given context and returns the environment the manager was handed. */

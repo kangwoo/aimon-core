@@ -1,6 +1,7 @@
 package at.aimon.core.skill.hook.declarative;
 
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Observable result of a declarative shell hook command (AIMON extension).
@@ -21,9 +22,11 @@ import java.util.Objects;
  * </ul>
  *
  * <p>
- * {@link #notObserved()} models an executor that ran the command without reporting a status (or refused to run it at
- * all). It never denies — an executor that cannot report an exit code cannot be assumed to have approved or rejected
- * anything, and allow is the fail-soft default for declarative hooks.
+ * {@link #notRun(Unrun, String)} models a command that produced no exit status at all — the executor could not run it,
+ * or it ran and never finished. It carries <em>why</em>, because the caller has to decide what the missing answer
+ * means: on an event with a decision channel a guard that could not decide blocks (fail-closed) unless the hook
+ * declared {@code failOpen}, and on an advisory event it is only logged. There is deliberately no cause-less factory —
+ * a new "could not run" branch has to name its cause, so it cannot quietly come back as a pass.
  *
  * <p>
  * Immutable; thread-safe.
@@ -44,27 +47,69 @@ public final class ShellHookOutcome {
      */
     public static final int MAX_DENY_REASON_LENGTH = 4000;
 
-    private static final ShellHookOutcome NOT_OBSERVED = new ShellHookOutcome(false, 0, "", "");
+    /** Why a command produced no exit status. */
+    public enum Unrun {
+
+        /** The firing context carried no execution environment, and the executor has no other shell. */
+        NO_ENVIRONMENT("no execution environment"),
+
+        /** The execution environment is there but could not be used (or gave no shell). */
+        ENVIRONMENT_UNAVAILABLE("execution environment unavailable"),
+
+        /** The executor does not run shell actions at all. */
+        SHELL_UNSUPPORTED("shell actions not supported"),
+
+        /** The command did not finish inside its timeout. */
+        TIMEOUT("timed out"),
+
+        /** The shell failed before the command could report an exit status. */
+        EXECUTION_FAILED("shell execution failed");
+
+        private final String description;
+
+        Unrun(String description) {
+            this.description = description;
+        }
+
+        /**
+         * @return the cause as it reads in a deny reason (never null)
+         */
+        public String description() {
+            return description;
+        }
+    }
 
     private final boolean observed;
     private final int exitCode;
     private final String stdout;
     private final String stderr;
+    private final Unrun unrunCause;
+    private final String unrunDetail;
 
-    private ShellHookOutcome(boolean observed, int exitCode, String stdout, String stderr) {
+    private ShellHookOutcome(boolean observed, int exitCode, String stdout, String stderr, Unrun unrunCause,
+            String unrunDetail) {
         this.observed = observed;
         this.exitCode = exitCode;
         this.stdout = stdout;
         this.stderr = stderr;
+        this.unrunCause = unrunCause;
+        this.unrunDetail = unrunDetail;
     }
 
     /**
-     * Returns the shared "the executor did not report a status" outcome.
+     * Creates the outcome of a command that produced no exit status.
      *
-     * @return the not-observed outcome (never null)
+     * @param cause
+     *            why there is no exit status (must not be null)
+     * @param detail
+     *            what the failure said about itself, typically the exception message (may be null or blank)
+     * @return the outcome (never null)
+     * @throws NullPointerException
+     *             if cause is null
      */
-    public static ShellHookOutcome notObserved() {
-        return NOT_OBSERVED;
+    public static ShellHookOutcome notRun(Unrun cause, String detail) {
+        return new ShellHookOutcome(false, 0, "", "", Objects.requireNonNull(cause, "cause cannot be null"),
+                detail == null ? "" : detail.strip());
     }
 
     /**
@@ -82,7 +127,7 @@ public final class ShellHookOutcome {
      */
     public static ShellHookOutcome of(int exitCode, String stdout, String stderr) {
         return new ShellHookOutcome(true, exitCode, Objects.requireNonNull(stdout, "stdout cannot be null"),
-                Objects.requireNonNull(stderr, "stderr cannot be null"));
+                Objects.requireNonNull(stderr, "stderr cannot be null"), null, "");
     }
 
     /**
@@ -114,7 +159,35 @@ public final class ShellHookOutcome {
     }
 
     /**
+     * @return why the command produced no exit status; empty when it {@linkplain #isObserved() did}
+     */
+    public Optional<Unrun> getUnrunCause() {
+        return Optional.ofNullable(unrunCause);
+    }
+
+    /**
+     * Returns why the command produced no exit status, as {@code "<cause>: <detail>"} (or just the cause when the
+     * failure said nothing about itself).
+     *
+     * <p>
+     * Capped the same way {@link #denyReason()} is, for the same reason: on a blocking chain this text is handed back
+     * to the model. It never contains the command string, which may carry secrets.
+     *
+     * @return the reason; empty when the command {@linkplain #isObserved() was observed} (never null)
+     */
+    public String unrunReason() {
+        if (unrunCause == null) {
+            return "";
+        }
+        return unrunDetail.isEmpty() ? unrunCause.description() : cap(unrunCause.description() + ": " + unrunDetail);
+    }
+
+    /**
      * Returns whether the command vetoed the tool dispatch, i.e. exited with {@value #DENY_EXIT_CODE}.
+     *
+     * <p>
+     * A command that was {@linkplain #notRun(Unrun, String) not run} is never "denied" in this sense — it said
+     * nothing. Whether its silence blocks is the caller's decision, not a property of the outcome.
      *
      * @return true when the hook should block the tool
      */
@@ -139,14 +212,18 @@ public final class ShellHookOutcome {
         if (trimmed.isEmpty()) {
             return "Blocked by a shell hook (exit code " + DENY_EXIT_CODE + ", no stderr output)";
         }
-        if (trimmed.length() <= MAX_DENY_REASON_LENGTH) {
-            return trimmed;
+        return cap(trimmed);
+    }
+
+    private static String cap(String text) {
+        if (text.length() <= MAX_DENY_REASON_LENGTH) {
+            return text;
         }
-        return trimmed.substring(0, MAX_DENY_REASON_LENGTH) + "... [truncated, " + trimmed.length() + " chars total]";
+        return text.substring(0, MAX_DENY_REASON_LENGTH) + "... [truncated, " + text.length() + " chars total]";
     }
 
     @Override
     public String toString() {
-        return observed ? "ShellHookOutcome{exitCode=" + exitCode + '}' : "ShellHookOutcome{notObserved}";
+        return observed ? "ShellHookOutcome{exitCode=" + exitCode + '}' : "ShellHookOutcome{notRun=" + unrunCause + '}';
     }
 }

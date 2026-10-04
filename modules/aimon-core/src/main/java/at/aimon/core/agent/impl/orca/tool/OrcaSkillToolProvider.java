@@ -14,7 +14,7 @@ import at.aimon.core.skill.fork.NoOpSkillForkExecutor;
 import at.aimon.core.skill.fork.SkillForkExecutor;
 import at.aimon.core.skill.fork.SubagentBackedSkillForkExecutor;
 import at.aimon.core.skill.hook.NoOpSkillHookActivator;
-import at.aimon.core.skill.hook.RegistryBackedSkillHookActivator;
+import at.aimon.core.skill.hook.ScopedSkillHookActivator;
 import at.aimon.core.skill.hook.SkillHookActivator;
 import at.aimon.core.skill.policy.AlwaysAllowSkillInvocationPolicy;
 import at.aimon.core.skill.policy.SkillInvocationPolicy;
@@ -66,8 +66,8 @@ public class OrcaSkillToolProvider implements OrcaToolProvider {
 
     /**
      * Resolves the {@link SkillHookActivator} based on what is available in the provider context. Returns
-     * {@link NoOpSkillHookActivator} when no {@link HookRegistry} is wired in; otherwise registers per-skill hooks
-     * through a {@link RegistryBackedSkillHookActivator}.
+     * {@link NoOpSkillHookActivator} when no {@link HookRegistry} is wired in; otherwise layers per-skill hooks
+     * over it through a {@link ScopedSkillHookActivator}.
      */
     private static SkillHookActivator resolveHookActivator(OrcaToolProviderContext context) {
         final HookRegistry hookRegistry = context.getHookRegistry();
@@ -75,7 +75,7 @@ public class OrcaSkillToolProvider implements OrcaToolProvider {
             log.debug("SkillTool wired with NoOpSkillHookActivator: no HookRegistry available in context");
             return new NoOpSkillHookActivator();
         }
-        return new RegistryBackedSkillHookActivator(hookRegistry);
+        return new ScopedSkillHookActivator(hookRegistry);
     }
 
     /**

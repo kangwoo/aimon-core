@@ -19,7 +19,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.shell.ExecutionOptions;
 import at.aimon.core.shell.ShellCancellationSource;
 import at.aimon.core.shell.ShellCommandResult;
@@ -34,7 +33,7 @@ import at.aimon.core.shell.VirtualShell;
  *
  * <ul>
  * <li>Starting a command in the background and tracking it ({@link #start})
- * <li>Looking a task up for the runtime that owns it ({@link #find}), and stopping it ({@link #kill})
+ * <li>Looking a task up for the owner that started it ({@link #find}), and stopping it ({@link #kill})
  * <li>Read-once output consumption
  * <li>Task status monitoring
  * <li>Output filtering with regex
@@ -55,8 +54,10 @@ import at.aimon.core.shell.VirtualShell;
  *
  * <p>
  * <b>Ownership.</b> One application-wide list is visible to every runtime, and a task id (32 random bits) is no
- * boundary. {@link #find} and {@link #kill} answer only the runtime that started the task; for any other the id does
- * not exist. Sessions of one runtime share its tasks, as they did when the list was the runtime's own. The id-only
+ * boundary. {@link #find} and {@link #kill} answer only the {@linkplain BackgroundBashOwner owner} the task was
+ * started for — the runtime and, within it, the session (a session's turns and the forks spawned for it) or the
+ * session-less execution; for any other caller the id does not exist. Two sessions of one runtime do not see each
+ * other's tasks. The id-only
  * methods ({@link #getTask}, {@link #readNewOutput} …) are not scoped — they serve callers that hold the manager
  * directly, not the tools.
  *
@@ -151,7 +152,7 @@ public class BackgroundBashManager implements AutoCloseable {
      * stop it; otherwise the command ends only by itself or at the timeout in {@code options}.
      *
      * @param owner
-     *            the runtime whose execution starts the command, or null for none — only that runtime finds the task
+     *            who the command is started for (must not be null) — only a caller with the same owner finds the task
      *            again
      * @param command
      *            the command (must not be null)
@@ -165,8 +166,9 @@ public class BackgroundBashManager implements AutoCloseable {
      * @throws RuntimeException
      *             if the store cannot record the task; the command is then not started
      */
-    public BackgroundBashTask start(AgentRuntimeId owner, String command, VirtualShell shell,
+    public BackgroundBashTask start(BackgroundBashOwner owner, String command, VirtualShell shell,
             ExecutionOptions options) {
+        Objects.requireNonNull(owner, "Owner cannot be null");
         Objects.requireNonNull(command, "Command cannot be null");
         Objects.requireNonNull(shell, "Shell cannot be null");
         Objects.requireNonNull(options, "Options cannot be null");
@@ -215,14 +217,14 @@ public class BackgroundBashManager implements AutoCloseable {
         }
     }
 
-    private String recordNewTask(AgentRuntimeId owner, Duration timeout) {
+    private String recordNewTask(BackgroundBashOwner owner, Duration timeout) {
         final Instant now = clock.instant();
         for (int attempt = 0; attempt < MAX_ID_ATTEMPTS; attempt++) {
             final String taskId = TASK_ID_PREFIX + UUID.randomUUID().toString().substring(0, TASK_ID_LENGTH);
             if (tasks.containsKey(taskId)) {
                 continue;
             }
-            final BackgroundBashRecord record = BackgroundBashRecord.builder().taskId(taskId).ownerRuntimeId(owner)
+            final BackgroundBashRecord record = BackgroundBashRecord.builder().taskId(taskId).owner(owner)
                     .nodeId(nodeId).startedAt(now).expiresAt(timeout != null ? now.plus(timeout) : null).build();
             if (store.putIfAbsent(record)) {
                 return taskId;
@@ -263,34 +265,37 @@ public class BackgroundBashManager implements AutoCloseable {
     }
 
     /**
-     * Looks a task up on behalf of a runtime.
+     * Looks a task up on behalf of its owner.
      *
      * <p>
-     * A task started without an owner runtime id is found by every caller that has none either — owner matching is the
-     * only boundary. An assembly that shares one manager between runtimes must therefore put
-     * {@code ToolContextKeys.AGENT_RUNTIME_ID} in every tool context, as the Orca executor does; a context without it
-     * sees, and can stop, every other owner-less task on the node.
+     * A task started with {@link BackgroundBashOwner#none()} is found by every caller that has no owner either — owner
+     * matching is the only boundary. An assembly that shares one manager between runtimes must therefore put
+     * {@code ToolContextKeys.AGENT_RUNTIME_ID} in every tool context, and the session or execution id with it, as the
+     * Orca executors do; a context without them sees, and can stop, every other task that is as unscoped as it is.
+     *
+     * <p>
+     * The owner is compared before anything else is decided, on the stored record as well as on this node's handle,
+     * so the answer does not depend on the node that is asked: another owner's task is not-found everywhere, and
+     * never "running on another node".
      *
      * @param owner
-     *            the calling execution's runtime, or null for none; a task is found only by the owner it was started
-     *            with (a task with no owner, only by a caller with none)
+     *            the caller's owner (must not be null); a task is found only by the owner it was started with
      * @param taskId
      *            the task id (must not be null)
      * @return the task if this node has it, the record if only the store does, or not-found
      * @throws RuntimeException
      *             if this node does not have the task and the store cannot be read
      */
-    public BackgroundBashLookup find(AgentRuntimeId owner, String taskId) {
+    public BackgroundBashLookup find(BackgroundBashOwner owner, String taskId) {
+        Objects.requireNonNull(owner, "Owner cannot be null");
         Objects.requireNonNull(taskId, "Task ID cannot be null");
 
         final BackgroundBashTask task = tasks.get(taskId);
         if (task != null) {
-            return Objects.equals(owner, task.getOwnerRuntimeId().orElse(null))
-                    ? BackgroundBashLookup.local(task)
-                    : BackgroundBashLookup.notFound();
+            return owner.equals(task.getOwner()) ? BackgroundBashLookup.local(task) : BackgroundBashLookup.notFound();
         }
         final Optional<BackgroundBashRecord> found = store.find(taskId);
-        if (found.isEmpty() || !Objects.equals(owner, found.get().getOwnerRuntimeId().orElse(null))) {
+        if (found.isEmpty() || !owner.equals(found.get().owner())) {
             return BackgroundBashLookup.notFound();
         }
         final BackgroundBashRecord record = found.get();
@@ -306,7 +311,7 @@ public class BackgroundBashManager implements AutoCloseable {
     }
 
     /**
-     * Stops a running task on behalf of a runtime.
+     * Stops a running task on behalf of its owner.
      *
      * <p>
      * Returns once the shell has been asked to stop the command, which for a local shell includes the grace period it
@@ -314,14 +319,14 @@ public class BackgroundBashManager implements AutoCloseable {
      * returned — wait on {@link BackgroundBashTask#awaitCompletion(Duration)} to see it.
      *
      * @param owner
-     *            the calling execution's runtime, or null for none (see {@link #find})
+     *            the caller's owner (must not be null; see {@link #find})
      * @param taskId
      *            the task id (must not be null)
      * @return what was done
      * @throws RuntimeException
      *             if this node does not have the task and the store cannot be read
      */
-    public BackgroundBashKill kill(AgentRuntimeId owner, String taskId) {
+    public BackgroundBashKill kill(BackgroundBashOwner owner, String taskId) {
         final BackgroundBashLookup lookup = find(owner, taskId);
         switch (lookup.kind()) {
             case NOT_FOUND :
@@ -359,7 +364,8 @@ public class BackgroundBashManager implements AutoCloseable {
         Objects.requireNonNull(command, "Command cannot be null");
         Objects.requireNonNull(future, "Future cannot be null");
 
-        final BackgroundBashTask task = new BackgroundBashTask(taskId, command, future, null, null, null, clock);
+        final BackgroundBashTask task = new BackgroundBashTask(taskId, command, future, BackgroundBashOwner.none(),
+                null, null, clock);
         tasks.put(taskId, task);
     }
 

@@ -37,6 +37,7 @@ import at.aimon.core.subagent.SubagentExecutionManager;
 import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.tools.CallerAllowedTools;
 import at.aimon.core.tools.ExecutionEnvironmentAccess;
+import at.aimon.core.tools.HookRegistryAccess;
 import at.aimon.core.tools.InvokingSessionAccess;
 import at.aimon.core.tools.ToolContextKeys;
 import at.aimon.core.workflow.RunId;
@@ -159,7 +160,7 @@ public final class GraalJsWorkflowTool extends AbstractTool {
             final Map<String, Object> args = readArgs(input);
 
             if (MODE_BACKGROUND.equalsIgnoreCase(mode)) {
-                return runBackground(source, args);
+                return runBackground(source, args, context);
             }
             return runForeground(source, args, input, context);
 
@@ -176,10 +177,22 @@ public final class GraalJsWorkflowTool extends AbstractTool {
         }
     }
 
-    private ToolResult runBackground(String source, Map<String, Object> args) {
+    private ToolResult runBackground(String source, Map<String, Object> args, ToolContext context) {
         if (backgroundRunner == null) {
             return ToolResult
                     .error("Background mode is not available: no workflow runner is configured for this agent.");
+        }
+        // The run below dispatches against the runtime's registry, so the hooks of a skill this call runs inside do
+        // not follow it. A guard that would be silently off is refused; a hook that only observes is not (mirrors
+        // WorkflowTool).
+        final List<String> guardSkills = HookRegistryAccess.activeSkillGuards(context);
+        if (!guardSkills.isEmpty()) {
+            return ToolResult.error(HookRegistryAccess.backgroundRefusal(guardSkills));
+        }
+        final List<String> hookSkills = HookRegistryAccess.activeSkillHooks(context);
+        if (!hookSkills.isEmpty()) {
+            log.warn("WorkflowJs (background): the hooks of skill(s) {} do not fire for this run's subagents",
+                    hookSkills);
         }
         // Fire-and-forget on the shared runner's own base environment and bootstrap budget: a background run does NOT
         // inherit the invoking execution's context id, principal, or cancellation signal (mirrors WorkflowTool). The
@@ -249,10 +262,13 @@ public final class GraalJsWorkflowTool extends AbstractTool {
         final Principal principal = context.get(ToolContextKeys.PRINCIPAL).orElse(null);
 
         return SubagentExecutionEnvironment.builder().agentRuntimeId(agentRuntimeId).subagentRegistry(subagentRegistry)
-                .toolRegistry(toolRegistry).hookRegistry(hookRegistry).userLocale(userLocale).defaultModel(defaultModel)
-                .executionAttributes(executionAttributes).parentLlmCallMetadata(parentMetadata)
-                .cancellationSignal(parentSignal).principal(principal).toolContextEnrichers(toolContextEnrichers)
-                .callerAllowedTools(CallerAllowedTools.of(context))
+                .toolRegistry(toolRegistry)
+                // The caller's registry first: inside a forked skill it carries the skill's hooks, and the workflow's
+                // subagents must stay under them.
+                .hookRegistry(HookRegistryAccess.of(context).orElse(hookRegistry)).userLocale(userLocale)
+                .defaultModel(defaultModel).executionAttributes(executionAttributes)
+                .parentLlmCallMetadata(parentMetadata).cancellationSignal(parentSignal).principal(principal)
+                .toolContextEnrichers(toolContextEnrichers).callerAllowedTools(CallerAllowedTools.of(context))
                 .invokingSessionId(InvokingSessionAccess.idToPropagate(context).orElse(null))
                 // The fork resolves its own environment from the spawning runtime's provider, with this execution's
                 // environment as its parent (execution-environment design §5.2).

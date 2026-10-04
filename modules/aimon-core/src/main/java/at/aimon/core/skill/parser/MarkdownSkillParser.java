@@ -5,6 +5,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import at.aimon.core.skill.ExecutionMode;
 import at.aimon.core.skill.InvokePolicy;
 import at.aimon.core.skill.Skill;
@@ -53,6 +56,8 @@ import at.aimon.core.skill.render.ShellArgumentTokenizer;
  * </pre>
  */
 public class MarkdownSkillParser implements SkillParser {
+
+    private static final Logger log = LoggerFactory.getLogger(MarkdownSkillParser.class);
 
     private final ShellArgumentTokenizer tokenizer;
     private final SkillHookSetParser hookSetParser;
@@ -132,6 +137,12 @@ public class MarkdownSkillParser implements SkillParser {
                     .argumentNames(argumentNames).invokePolicy(invokePolicy).maxIterations(maxIterations).hooks(hooks);
             applyExecution(frontmatter, metadataBuilder);
             final SkillMetadata skillMetadata = metadataBuilder.build();
+            if (skillMetadata.getExecutionMode() == ExecutionMode.INLINE && !hooks.isEmpty()) {
+                // Not rejected: the skill still works, only its hooks do nothing. A skill's hooks fire in its fork,
+                // and an INLINE skill has none (EE-49).
+                log.warn("Skill '{}' declares hooks but runs INLINE; its hooks never fire. Set 'execution.mode: fork'"
+                        + " for them to apply", skillName);
+            }
 
             // Build content
             final SkillContent skillContent = SkillContent.of(body);

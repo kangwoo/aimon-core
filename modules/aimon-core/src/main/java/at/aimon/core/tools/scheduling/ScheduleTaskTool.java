@@ -29,6 +29,7 @@ import at.aimon.core.scheduling.ScheduledTaskId;
 import at.aimon.core.scheduling.ScheduledTaskManager;
 import at.aimon.core.scheduling.exception.InvalidCronExpressionException;
 import at.aimon.core.scheduling.exception.QuotaExceededException;
+import at.aimon.core.tools.HookRegistryAccess;
 
 /**
  * Tool for scheduling a new task.
@@ -47,6 +48,11 @@ import at.aimon.core.scheduling.exception.QuotaExceededException;
  * {@link #forAgent(ScheduledTaskManager, Agent)} it therefore stamps each task with the agent's
  * {@link AgentDefinitionVersion} as of scheduling, which {@code RoutineExecutor} compares at fire time and logs. The
  * old definition is deliberately not pinned &mdash; see {@link ScheduledTask#getAgentDefinitionVersion()}.
+ *
+ * <p>
+ * Inside the fork of a skill whose guard hooks are active the tool refuses: the routine would fire on the runtime's
+ * registry, where the skill's hooks are not, so it would be a way to do later, unguarded, what the guards block now
+ * (see {@link HookRegistryAccess#activeSkillGuards(ToolContext)}).
  */
 public class ScheduleTaskTool extends AbstractTool {
 
@@ -187,6 +193,14 @@ public class ScheduleTaskTool extends AbstractTool {
     public ToolResult execute(ToolInput input, ToolContext context) {
         Objects.requireNonNull(input, "Input cannot be null");
         Objects.requireNonNull(context, "Context cannot be null");
+
+        // A routine fires later on the runtime's registry, outside this execution, so the guard hooks of a skill this
+        // call runs inside would not cover it. Refused for the same reason a background workflow run is (EE-63).
+        final List<String> guardSkills = HookRegistryAccess.activeSkillGuards(context);
+        if (!guardSkills.isEmpty()) {
+            log.warn("ScheduleTask refused: skill guard hooks are active ({})", guardSkills);
+            return ToolResult.error(HookRegistryAccess.scheduleRefusal(guardSkills));
+        }
 
         final AgentRuntimeId boundRuntimeId;
         try {

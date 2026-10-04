@@ -76,6 +76,46 @@ class JacksonHookConfigParserTest {
     }
 
     @Test
+    @DisplayName("failOpen binds from a JSON boolean and defaults to false")
+    void failOpenBindsFromABoolean() {
+        final HookConfigDocument doc = parser.parse("{\"hooks\":{\"PreToolUse\":[{\"hooks\":["
+                + "{\"type\":\"command\",\"command\":\"a\",\"failOpen\":true},"
+                + "{\"type\":\"command\",\"command\":\"b\",\"failOpen\":false},"
+                + "{\"type\":\"command\",\"command\":\"c\"}]}]}}");
+
+        assertThat(doc.getHooks().get("PreToolUse").get(0).getHandlers()).extracting(HookHandlerSpec::isFailOpen)
+                .containsExactly(true, false, false);
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest(name = "failOpen: {0}")
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"\"true\"", "\"false\"", "1", "0", "null", "[true]"})
+    @DisplayName("a failOpen that is not a JSON boolean is read as false and the handler is kept")
+    void failOpenThatIsNotABooleanIsReadAsFalse(String value) {
+        // The key takes a guard off, so "true" and 1 must not be read as true. Nor may the file be refused: a parse
+        // failure drops every handler in it, i.e. every guard. The handler is kept, closed, and the value is kept for
+        // the loader's WARN.
+        final String json = "{\"hooks\":{\"PreToolUse\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"x\","
+                + "\"failOpen\":" + value + "}]}]}}";
+
+        final HookHandlerSpec handler = parser.parse(json).getHooks().get("PreToolUse").get(0).getHandlers().get(0);
+
+        assertThat(handler.isFailOpen()).isFalse();
+        assertThat(handler.getCommand()).isEqualTo("x");
+        assertThat(handler.getRejectedFailOpen()).contains(value);
+    }
+
+    @Test
+    @DisplayName("a boolean or absent failOpen leaves nothing rejected")
+    void booleanFailOpenIsNotRejected() {
+        final HookConfigDocument doc = parser.parse("{\"hooks\":{\"PreToolUse\":[{\"hooks\":["
+                + "{\"type\":\"command\",\"command\":\"a\",\"failOpen\":true},"
+                + "{\"type\":\"command\",\"command\":\"c\"}]}]}}");
+
+        assertThat(doc.getHooks().get("PreToolUse").get(0).getHandlers())
+                .allSatisfy(h -> assertThat(h.getRejectedFailOpen()).isEmpty());
+    }
+
+    @Test
     @DisplayName("unknown handler fields are silently ignored (forwards-compat)")
     void unknownFieldsAreIgnored() {
         final String json = "{\"hooks\":{\"PreToolUse\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"x\""

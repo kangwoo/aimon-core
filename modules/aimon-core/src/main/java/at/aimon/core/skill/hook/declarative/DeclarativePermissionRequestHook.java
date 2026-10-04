@@ -91,6 +91,11 @@ public final class DeclarativePermissionRequestHook extends AbstractDeclarativeS
     }
 
     @Override
+    protected boolean canVeto() {
+        return true;
+    }
+
+    @Override
     protected Optional<HookResult> vetoResult(String reason) {
         return Optional.of(HookResult.deny(reason));
     }

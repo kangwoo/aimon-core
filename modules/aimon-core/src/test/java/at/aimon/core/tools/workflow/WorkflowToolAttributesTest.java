@@ -31,6 +31,7 @@ import at.aimon.core.environment.ExecutionEnvironmentProvider;
 import at.aimon.core.environment.UnavailableExecutionEnvironment;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
+import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.LlmResponse;
@@ -44,6 +45,7 @@ import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.subagent.behavior.InMemorySubagentBehaviorRegistry;
 import at.aimon.core.subagent.execution.DefaultSubagentExecutor;
 import at.aimon.core.subagent.execution.SubagentExecutor;
+import at.aimon.core.tools.HookRegistryAccess;
 import at.aimon.core.tools.ToolContextKeys;
 
 /**
@@ -159,6 +161,32 @@ class WorkflowToolAttributesTest {
         });
         assertThat(requests).extracting(request -> request.fork().get().name())
                 .containsExactlyInAnyOrder("workflow:perspective:risk", "workflow:perspective:cost");
+    }
+
+    @Test
+    @DisplayName("a foreground run's subagents dispatch against the caller's hook registry, not the tool's own (EE-49)")
+    void foregroundStepsUseTheCallersHookRegistry() {
+        final HookRegistry fromContext = new DefaultHookRegistry();
+        final Map<String, HookRegistry> seen = new ConcurrentHashMap<>();
+        final InMemorySubagentBehaviorRegistry behaviors = new InMemorySubagentBehaviorRegistry();
+        for (String name : List.of("workflow:candidate:a", "workflow:candidate:b", "workflow:synthesizer")) {
+            behaviors.register(name, (c, r, s) -> {
+                seen.put(name, c.getHookRegistry());
+                return s.success(name + " answer");
+            });
+        }
+        behaviors.register("workflow:judge", (c, r, s) -> {
+            seen.put("workflow:judge", c.getHookRegistry());
+            return s.success("{\"score\": 5}");
+        });
+
+        final ToolResult result = newTool(new InMemorySubagentRegistry(), behaviors).execute(
+                ToolInput.of(Map.of("prompt", "how?", "strategy", "judge_panel", "perspectives", "a,b")),
+                HookRegistryAccess.withHookRegistry(context(null), fromContext));
+
+        assertThat(result.isSuccess()).as(result.getContent()).isTrue();
+        assertThat(seen).isNotEmpty();
+        assertThat(seen.values()).allSatisfy(registry -> assertThat(registry).isSameAs(fromContext));
     }
 
     private WorkflowTool newTool(SubagentRegistry registry, InMemorySubagentBehaviorRegistry behaviors) {

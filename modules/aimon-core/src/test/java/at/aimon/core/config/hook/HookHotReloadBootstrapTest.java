@@ -15,7 +15,9 @@ import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
-import at.aimon.core.skill.hook.declarative.NoOpShellActionExecutor;
+import at.aimon.core.shell.VirtualShell;
+import at.aimon.core.skill.hook.declarative.HostShellActionExecutor;
+import at.aimon.core.skill.hook.declarative.ShellActionExecutor;
 
 /**
  * Smoke tests for {@link HookHotReloadBootstrap}.
@@ -25,6 +27,10 @@ import at.aimon.core.skill.hook.declarative.NoOpShellActionExecutor;
  * helper's own contract: required-arg validation, bootstrap success/failure surfacing, and idempotent close.
  */
 class HookHotReloadBootstrapTest {
+
+    // A shell-capable executor: one without shell support registers no command handler at all (EE-51).
+    private static final ShellActionExecutor SHELL_EXECUTOR = new HostShellActionExecutor(
+            org.mockito.Mockito.mock(VirtualShell.class));
 
     private static final ReloadInvoker INVOKER = new ReloadInvoker(InvokerType.MAIN_AGENT, "main",
             UserLocale.createDefault());
@@ -40,8 +46,8 @@ class HookHotReloadBootstrapTest {
         final DefaultHookExecutionManager executionManager = new DefaultHookExecutionManager();
 
         try (HookHotReloadBootstrap.Started started = HookHotReloadBootstrap.builder().userHome(userDir)
-                .projectRoot(projectDir).shellExecutor(NoOpShellActionExecutor.INSTANCE).processEnv(Map.of())
-                .registry(registry).executionManager(executionManager).invoker(INVOKER).start()) {
+                .projectRoot(projectDir).shellExecutor(SHELL_EXECUTOR).processEnv(Map.of()).registry(registry)
+                .executionManager(executionManager).invoker(INVOKER).start()) {
 
             // No layer files present → bootstrap is a successful no-op.
             assertThat(started.isBootstrapSucceeded()).isTrue();
@@ -60,8 +66,8 @@ class HookHotReloadBootstrapTest {
         final DefaultHookRegistry registry = new DefaultHookRegistry();
 
         try (HookHotReloadBootstrap.Started started = HookHotReloadBootstrap.builder().userHome(userDir)
-                .projectRoot(projectDir).shellExecutor(NoOpShellActionExecutor.INSTANCE).processEnv(Map.of())
-                .registry(registry).invoker(INVOKER).start()) {
+                .projectRoot(projectDir).shellExecutor(SHELL_EXECUTOR).processEnv(Map.of()).registry(registry)
+                .invoker(INVOKER).start()) {
 
             assertThat(started.isBootstrapSucceeded()).isTrue();
             assertThat(registry.getHooks(HookEventType.PRE_TOOL)).hasSize(1);
@@ -73,8 +79,8 @@ class HookHotReloadBootstrapTest {
         final DefaultHookRegistry registry = new DefaultHookRegistry();
 
         final HookHotReloadBootstrap.Started started = HookHotReloadBootstrap.builder().userHome(userDir)
-                .projectRoot(projectDir).shellExecutor(NoOpShellActionExecutor.INSTANCE).processEnv(Map.of())
-                .registry(registry).invoker(INVOKER).start();
+                .projectRoot(projectDir).shellExecutor(SHELL_EXECUTOR).processEnv(Map.of()).registry(registry)
+                .invoker(INVOKER).start();
 
         started.close();
         // Second close must not throw.
@@ -86,13 +92,12 @@ class HookHotReloadBootstrapTest {
         final DefaultHookRegistry registry = new DefaultHookRegistry();
 
         // Each required field, omitted, must throw NPE on start().
-        assertThatThrownBy(() -> HookHotReloadBootstrap.builder().projectRoot(projectDir)
-                .shellExecutor(NoOpShellActionExecutor.INSTANCE).processEnv(Map.of()).registry(registry)
-                .invoker(INVOKER).start()).isInstanceOf(NullPointerException.class).hasMessageContaining("userHome");
+        assertThatThrownBy(() -> HookHotReloadBootstrap.builder().projectRoot(projectDir).shellExecutor(SHELL_EXECUTOR)
+                .processEnv(Map.of()).registry(registry).invoker(INVOKER).start())
+                .isInstanceOf(NullPointerException.class).hasMessageContaining("userHome");
 
-        assertThatThrownBy(
-                () -> HookHotReloadBootstrap.builder().userHome(userDir).shellExecutor(NoOpShellActionExecutor.INSTANCE)
-                        .processEnv(Map.of()).registry(registry).invoker(INVOKER).start())
+        assertThatThrownBy(() -> HookHotReloadBootstrap.builder().userHome(userDir).shellExecutor(SHELL_EXECUTOR)
+                .processEnv(Map.of()).registry(registry).invoker(INVOKER).start())
                 .isInstanceOf(NullPointerException.class).hasMessageContaining("projectRoot");
 
         assertThatThrownBy(() -> HookHotReloadBootstrap.builder().userHome(userDir).projectRoot(projectDir)
@@ -100,15 +105,15 @@ class HookHotReloadBootstrapTest {
                 .isInstanceOf(NullPointerException.class).hasMessageContaining("shellExecutor");
 
         assertThatThrownBy(() -> HookHotReloadBootstrap.builder().userHome(userDir).projectRoot(projectDir)
-                .shellExecutor(NoOpShellActionExecutor.INSTANCE).registry(registry).invoker(INVOKER).start())
+                .shellExecutor(SHELL_EXECUTOR).registry(registry).invoker(INVOKER).start())
                 .isInstanceOf(NullPointerException.class).hasMessageContaining("processEnv");
 
         assertThatThrownBy(() -> HookHotReloadBootstrap.builder().userHome(userDir).projectRoot(projectDir)
-                .shellExecutor(NoOpShellActionExecutor.INSTANCE).processEnv(Map.of()).invoker(INVOKER).start())
+                .shellExecutor(SHELL_EXECUTOR).processEnv(Map.of()).invoker(INVOKER).start())
                 .isInstanceOf(NullPointerException.class).hasMessageContaining("registry");
 
         assertThatThrownBy(() -> HookHotReloadBootstrap.builder().userHome(userDir).projectRoot(projectDir)
-                .shellExecutor(NoOpShellActionExecutor.INSTANCE).processEnv(Map.of()).registry(registry).start())
+                .shellExecutor(SHELL_EXECUTOR).processEnv(Map.of()).registry(registry).start())
                 .isInstanceOf(NullPointerException.class).hasMessageContaining("invoker");
     }
 }

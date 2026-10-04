@@ -95,8 +95,11 @@ class HostShellActionExecutorTest {
         HookContext context = OnSessionStartContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("agent")
                 .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault()).build();
 
-        assertThat(new HostShellActionExecutor(fixed)
-                .run(new ShellAction("sleep 9", Duration.ofSeconds(1)), context, Map.of(), null).isObserved())
-                .isFalse();
+        ShellHookOutcome outcome = new HostShellActionExecutor(fixed)
+                .run(new ShellAction("sleep 9", Duration.ofSeconds(1)), context, Map.of(), null);
+
+        // Swallowed, but not silently: the hook that reads this decides whether the missing answer blocks.
+        assertThat(outcome.isObserved()).isFalse();
+        assertThat(outcome.getUnrunCause()).contains(ShellHookOutcome.Unrun.TIMEOUT);
     }
 }
