@@ -10,6 +10,7 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.JsonNode;
 
 import at.aimon.core.config.hook.rewake.RewakeSpecConfig;
 
@@ -46,6 +47,13 @@ import at.aimon.core.config.hook.rewake.RewakeSpecConfig;
  * {@link IllegalArgumentException} that the parser surfaces as a {@link HookConfigParseException}. Internally only
  * milliseconds exist: {@link #getTimeoutMs()} is the single accessor and the conversion happens at the JSON binding
  * boundary, so nothing downstream had to change.
+ *
+ * <p>
+ * <b>{@code failOpen}.</b> A {@code command} handler on an event that can block ({@code preTool}, {@code onStart},
+ * {@code preCompact}, {@code permissionRequest}) blocks when its command produces no exit status &mdash; a timeout, a
+ * shell failure. {@code "failOpen": true} lets the operation proceed instead, for handlers that only observe. The
+ * field takes a JSON boolean and nothing else: it takes a guard off, so {@code "true"} or {@code 1} is rejected at
+ * parse time rather than coerced, the same way a non-positive timeout is.
  *
  * <p>
  * Immutable; thread-safe.
@@ -117,6 +125,8 @@ public final class HookHandlerSpec {
     // phase 4 — async rewake (parsed lazily by RewakeSpecParser)
     private final RewakeSpecConfig asyncRewake;
 
+    private final boolean failOpen;
+
     private HookHandlerSpec(Builder b) {
         this.type = Objects.requireNonNull(b.type, "type cannot be null");
         this.command = b.command;
@@ -131,6 +141,7 @@ public final class HookHandlerSpec {
         this.reason = b.reason;
         this.timeoutMs = b.timeoutMs;
         this.asyncRewake = b.asyncRewake;
+        this.failOpen = b.failOpen;
     }
 
     /** @return the handler type discriminator (never null) */
@@ -231,6 +242,16 @@ public final class HookHandlerSpec {
     }
 
     /**
+     * @return true when the handler lets the operation proceed if its command produces no exit status; false (the
+     *         default) when a guard that cannot run blocks
+     */
+    @JsonProperty("failOpen")
+    @JsonInclude(JsonInclude.Include.NON_DEFAULT)
+    public boolean isFailOpen() {
+        return failOpen;
+    }
+
+    /**
      * @return a new builder
      */
     public static Builder builder() {
@@ -269,9 +290,11 @@ public final class HookHandlerSpec {
      *            takes precedence over {@code timeoutSeconds} when both are present
      * @param asyncRewake
      *            optional {@code asyncRewake} block describing how the framework should re-fire the hook
+     * @param failOpen
+     *            optional {@code failOpen} flag; bound as a raw node so that only a JSON boolean is accepted
      * @return the spec (never null)
      * @throws IllegalArgumentException
-     *             if {@code typeRaw} is unknown or either timeout is not positive
+     *             if {@code typeRaw} is unknown, either timeout is not positive, or {@code failOpen} is not a boolean
      */
     // Jackson @JsonCreator: each param binds a distinct wire field 1:1, so they cannot be grouped.
     @SuppressWarnings("checkstyle:ParameterNumber")
@@ -283,12 +306,29 @@ public final class HookHandlerSpec {
             @JsonProperty("server") String serverName, @JsonProperty("tool") String toolName,
             @JsonProperty("args") Map<String, Object> args, @JsonProperty("reason") String reason,
             @JsonProperty("timeout") Long timeoutSeconds, @JsonProperty("timeoutMs") Long timeoutMs,
-            @JsonProperty("asyncRewake") RewakeSpecConfig asyncRewake) {
+            @JsonProperty("asyncRewake") RewakeSpecConfig asyncRewake, @JsonProperty("failOpen") JsonNode failOpen) {
         return builder().type(Type.fromJson(typeRaw)).command(command).url(url).method(method).headers(headers)
                 .bodyTemplate(body)
                 .allowedEnvVars(allowedEnvVars == null ? Set.of() : new LinkedHashSet<>(allowedEnvVars))
                 .serverName(serverName).toolName(toolName).args(args).reason(reason)
-                .timeoutMs(resolveTimeoutMs(timeoutSeconds, timeoutMs)).asyncRewake(asyncRewake).build();
+                .timeoutMs(resolveTimeoutMs(timeoutSeconds, timeoutMs)).asyncRewake(asyncRewake)
+                .failOpen(resolveFailOpen(failOpen)).build();
+    }
+
+    /**
+     * Reads {@code failOpen} without Jackson's scalar coercion, which would bind {@code "true"} and {@code 1} to
+     * {@code true}. An absent field is the default; anything present that is not a JSON boolean &mdash; an explicit
+     * {@code null} included &mdash; is an error.
+     */
+    private static boolean resolveFailOpen(JsonNode failOpen) {
+        if (failOpen == null) {
+            return false;
+        }
+        if (!failOpen.isBoolean()) {
+            throw new IllegalArgumentException(
+                    "Hook handler 'failOpen' must be a JSON boolean (true or false), but was: " + failOpen);
+        }
+        return failOpen.booleanValue();
     }
 
     /**
@@ -346,6 +386,7 @@ public final class HookHandlerSpec {
         private String reason;
         private Long timeoutMs;
         private RewakeSpecConfig asyncRewake;
+        private boolean failOpen;
 
         private Builder() {
         }
@@ -425,6 +466,16 @@ public final class HookHandlerSpec {
          */
         public Builder asyncRewake(RewakeSpecConfig asyncRewake) {
             this.asyncRewake = asyncRewake;
+            return this;
+        }
+
+        /**
+         * @param failOpen
+         *            true to let the operation proceed when the handler's command produces no exit status
+         * @return this builder
+         */
+        public Builder failOpen(boolean failOpen) {
+            this.failOpen = failOpen;
             return this;
         }
 

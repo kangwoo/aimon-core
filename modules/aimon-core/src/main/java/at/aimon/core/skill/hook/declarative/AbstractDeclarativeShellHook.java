@@ -24,8 +24,10 @@ import at.aimon.core.skill.hook.action.ShellAction;
  * {@code permissionRequest}, {@code permissionDenied}, {@code onConfigReload}) does exactly the same three things —
  * export the shared {@code AIMON_*} environment, run the command with a JSON payload on stdin, re-attach any
  * configured rewake spec — and differs only in the event name and the handful of event-specific variables.
- * Subclasses supply those two things, plus a {@link #vetoResult(String)} override on the three that can act on an
- * exit-2 veto ({@code onStart} and {@code preCompact} block, {@code permissionRequest} denies), and nothing else.
+ * Subclasses supply those two things, plus a {@link #vetoResult(String)} override on the three that can act on a
+ * veto ({@code onStart} and {@code preCompact} block, {@code permissionRequest} denies), and nothing else. On those
+ * three a command that produced no exit status is a veto too, unless the hook declared {@code failOpen} — see
+ * {@link ShellHookVerdicts}.
  *
  * <p>
  * {@code preTool} and {@code postTool} deliberately do <b>not</b> extend this: they carry a matcher predicate and can
@@ -48,6 +50,7 @@ public abstract class AbstractDeclarativeShellHook<C extends HookContext> implem
     private final ShellAction action;
     private final ShellActionExecutor shellExecutor;
     private final RewakeSpec rewakeSpec;
+    private final boolean failOpen;
 
     /**
      * Creates a shell-backed declarative hook.
@@ -63,8 +66,9 @@ public abstract class AbstractDeclarativeShellHook<C extends HookContext> implem
      * @param shellExecutor
      *            the executor used to run the action (must not be null)
      * @param options
-     *            config-derived options: hook-id discriminator and {@code asyncRewake} spec (must not be null). The
-     *            spec is honoured for every event; the caller is responsible for only supplying one on events the
+     *            config-derived options: hook-id discriminator, {@code failOpen} and {@code asyncRewake} spec (must
+     *            not be null). The spec is honoured for every event; the caller is responsible for only supplying one
+     *            on events the
      *            rewake machinery can actually re-fire — see {@link DeclarativeHookOptions}.
      * @throws NullPointerException
      *             if any argument is null
@@ -76,6 +80,7 @@ public abstract class AbstractDeclarativeShellHook<C extends HookContext> implem
         Objects.requireNonNull(options, "Options cannot be null");
         this.hookId = DeclarativeHookId.of(hookClass, this.skillName, options.getHookIdDiscriminator());
         this.rewakeSpec = options.getRewakeSpec().orElse(null);
+        this.failOpen = options.isFailOpen();
         this.action = Objects.requireNonNull(action, "Action cannot be null");
         this.shellExecutor = Objects.requireNonNull(shellExecutor, "Shell executor cannot be null");
     }
@@ -109,6 +114,15 @@ public abstract class AbstractDeclarativeShellHook<C extends HookContext> implem
     }
 
     private HookResult interpret(ShellHookOutcome outcome) {
+        if (!outcome.isObserved()) {
+            // No exit status. An advisory event has nothing to decide (the executor already logged why); an event
+            // with a decision channel blocks unless the hook declared failOpen.
+            if (vetoResult(outcome.unrunReason()).isEmpty()) {
+                return HookResult.success();
+            }
+            return ShellHookVerdicts.guard(outcome, failOpen, skillName, eventName).flatMap(this::vetoResult)
+                    .orElseGet(HookResult::success);
+        }
         if (!outcome.isDenied()) {
             return HookResult.success();
         }
@@ -125,7 +139,9 @@ public abstract class AbstractDeclarativeShellHook<C extends HookContext> implem
     }
 
     /**
-     * Translates an exit-code-{@value ShellHookOutcome#DENY_EXIT_CODE} veto into this event's decision result.
+     * Translates a veto into this event's decision result. A veto is an exit code of
+     * {@value ShellHookOutcome#DENY_EXIT_CODE}, or — fail-closed — a command that produced no exit status on a hook
+     * that did not declare {@code failOpen}.
      *
      * <p>
      * Most lifecycle events are advisory notifications with nowhere to put a decision; for those the default applies —
@@ -137,7 +153,8 @@ public abstract class AbstractDeclarativeShellHook<C extends HookContext> implem
      * lives outside this hierarchy in {@link DeclarativePreToolHook} and applies the same exit-2 contract there.
      *
      * @param reason
-     *            the command's stderr, or a generic fallback when it wrote none (never null or blank)
+     *            the command's stderr (or a generic fallback when it wrote none), or why the command could not run
+     *            (never null or blank)
      * @return the result to return instead of success, or empty when this event cannot be vetoed
      */
     protected Optional<HookResult> vetoResult(String reason) {

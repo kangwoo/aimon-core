@@ -11,6 +11,12 @@
 > [`../../backlog/execution-environment-open-items.md`](../../backlog/execution-environment-open-items.md) 로 옮겼다
 > (EE-58 ← Q4, EE-59 ← Q5 · Q1; EE-53~EE-56 ← §8; EE-57 ← 설계 리뷰). 열림/닫힘의 정본은 그 문서다. 이 설계가 확장하는
 > 명세는 [`execution-environment.md`](execution-environment.md) §4.1 · §4.3 · §5.3 · §13 · §15 다.
+>
+> **덧붙임 (2026-10-04, EE-58).** §9 Q4 가 남긴 EE-58(백그라운드 작업의 가시 범위가 런타임이다)은 닫혔다. 작업의 소유자는
+> 이제 런타임과 **세션(세션이 없으면 실행)** 이고, 같은 런타임의 다른 세션은 작업을 읽지도 멈추지도 못한다.
+> `BackgroundBashManager.start` · `find` · `kill` 의 소유자 인자는 `AgentRuntimeId` 가 아니라 `BackgroundBashOwner` 다. 아래
+> 본문의 "같은 런타임의 어느 세션이든" 서술은 그 시점의 기록이다. 설계는
+> [`execution-environment-ee49-ee51-ee58-isolation-boundary.md`](execution-environment-ee49-ee51-ee58-isolation-boundary.md).
 
 - 대상 브랜치: `herdr/ee13-ee7-background-bash-lifecycle` (BASE `herdr/ee9-ee12-hook-env-shell`, HEAD `1f8b53f`)
 - 소스 인용은 모두 2026-10-03, `1f8b53f` 기준이다. 줄 번호 대신 심볼 이름을 주로 적었다.

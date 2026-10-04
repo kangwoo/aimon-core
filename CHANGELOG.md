@@ -7,6 +7,75 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Changed (breaking): skill hooks, guard hooks and background commands stay inside the execution they belong to (EE-49, EE-51, EE-58)
+
+Three boundaries that were drawn at the agent runtime are now drawn at the execution, so that a provider giving each
+session its own environment (a sandbox) does not have one session's hooks or commands reach into another's. All three
+change public SPI; they ship together so external repositories follow once.
+
+**Skill hooks fire in the skill's fork only (EE-49).**
+
+- **A skill's hooks are no longer registered with the runtime's `HookRegistry`.** They are layered over the registry
+  the skill's fork dispatches against (`SkillScopedHookRegistry`) and reach that fork and the forks it starts — `Task`,
+  `Workflow` / `WorkflowJs` in foreground mode, a nested skill. They no longer fire for another session of the same
+  agent, **nor for the execution that invoked the skill** (which used to see them on parallel sibling tool calls while
+  a fork-mode skill ran). An inline-mode skill has no fork; its hooks do not fire. Code that enumerated the runtime
+  registry to find skill hooks finds none.
+- **`SkillHookActivator.activate(Skill)` is `activate(Skill, ToolContext)`**, and `SkillHookScope` gains
+  `hookRegistry()`. `RegistryBackedSkillHookActivator` is renamed `ScopedSkillHookActivator`.
+- **New write-once key `ToolContextKeys.HOOK_REGISTRY`** — the registry an execution dispatches against — read with
+  `HookRegistryAccess.of(toolContext)`. **A custom `SkillForkExecutor`, and any custom tool that spawns a subagent,
+  must hand the fork that registry** and fall back to its own only when the context has none. One that keeps passing a
+  registry captured at construction runs the fork without the skill's hooks: a guard among them is off, silently.
+- **`Workflow` and `WorkflowJs` refuse `mode: background` while a skill's guard hooks are active.** A background run
+  executes on the agent-scoped runner and cannot carry the caller's registry, so the skill's `preTool` / `onStart` /
+  `preCompact` / `permissionRequest` hooks would not cover it. The tool error says to run in foreground mode. Skill
+  hooks that only observe do not refuse the run and do not fire for its subagents. A custom tool that calls
+  `WorkflowRunner.runInBackground` directly should check `HookRegistryAccess.activeSkillGuards(toolContext)`.
+
+**A guard hook whose command could not run blocks (EE-51).**
+
+- **Behaviour change, skill frontmatter and `hooks.json` alike:** on the four events that can refuse (`preTool`,
+  `onStart`, `preCompact`, `permissionRequest`) a shell hook whose command produced **no exit code** now blocks or
+  denies instead of passing — no execution environment, an unavailable one, **a timeout**, a shell failure. The reason
+  names the cause (`Blocked: guard hook '<skill>' (<event>) could not run its command — <cause>: <detail>. …`). A
+  command that did exit is read as before: 0 allows, 2 refuses, anything else allows with a WARN. Advisory events are
+  unaffected.
+- **`failOpen: true` restores the old behaviour per hook**, for hooks that observe rather than guard: an entry-level
+  key in skill frontmatter (beside `matcher` and `action`), a handler-level key in `hooks.json`. It accepts a boolean
+  only — in frontmatter anything else fails the skill's parse; in `hooks.json` `"true"`, `1` or `null` fails the parse
+  of the **whole file**, like a non-positive `timeout`. An operator's existing `command` handlers on those four events
+  start blocking on timeout unless they declare it.
+- **`ShellHookOutcome.notObserved()` is removed.** A custom `ShellActionExecutor` reports
+  `ShellHookOutcome.notRun(Unrun cause, String detail)` (`NO_ENVIRONMENT`, `ENVIRONMENT_UNAVAILABLE`,
+  `SHELL_UNSUPPORTED`, `TIMEOUT`, `EXECUTION_FAILED`); `getUnrunCause()` and `unrunReason()` read it back.
+  `DeclarativeHookOptions` gains `failOpen`.
+- **`HookRegistryApplier` no longer registers `command` handlers when the shell executor reports
+  `isShellSupported() == false`** (WARN). They used to be registered and do nothing; registered now, they would refuse
+  every matching call.
+- Not covered: the hook executor's own outer timeout still passes under the default `FAIL_OPEN` policy (EE-64), `http`
+  / `mcp` actions without a wired executor still degrade to success (EE-65), and exit 126/127 is still an exit code
+  (EE-66).
+
+**A background `Bash` command is visible to the session it was started for (EE-58).**
+
+- **Behaviour change:** `BashOutput` and `KillShell` find a task only for the session it was started for — that
+  session's turns and the forks spawned for it — or, for a command started by an execution that acts for no session (a
+  scheduled routine), for that execution. Another session of the same runtime gets the same "Shell not found" as for an
+  id that never existed, on any node. Before, any session of the runtime could read and stop it.
+- **`BackgroundBashManager.start` / `find` / `kill` take a `BackgroundBashOwner`** instead of an `AgentRuntimeId`
+  (`BackgroundBashOwner.of(toolContext)`; `none()` for a caller outside any runtime). There is no runtime-only
+  overload. `BackgroundBashTask.getOwnerRuntimeId()` is `getOwner()`.
+- **`BackgroundBashRecord` gains `ownerSessionId` and `ownerExecutionId`.** A custom `BackgroundBashStore` must store
+  and return both along with `ownerRuntimeId`: a lookup matches all three, so a store that drops one hides the task
+  from everyone, its owner included. Records written before the upgrade carry neither and are no longer found by a
+  session; they expire with the retention period, and commands already running end at their ceiling.
+
+External repositories: aimon-sandbox and aimon-browser follow with the release that carries EE-1 and EE-59 — the list
+of what each has to change is in those backlog items and is inferred from the core SPI, not checked against their
+sources. Design and deviations:
+`docs/design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md`.
+
 ### Changed (breaking): `Environment` is gone; its time zone lives in `UserLocale` (EE-14)
 
 - **`at.aimon.core.agent.Environment` is removed.** Its one remaining field, `timeZone`, is now on

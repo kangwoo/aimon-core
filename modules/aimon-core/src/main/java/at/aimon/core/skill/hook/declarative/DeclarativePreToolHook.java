@@ -31,7 +31,9 @@ import at.aimon.core.skill.hook.action.ShellAction;
  * <li>{@link ShellAction} → executed via the supplied {@link ShellActionExecutor}, with the firing context as a JSON
  * document on standard input (see {@code ShellHookPayload}). Exit code
  * {@link ShellHookOutcome#DENY_EXIT_CODE} vetoes the tool and feeds stderr back to the model as the reason; any other
- * exit code allows it (Claude Code parity).
+ * exit code allows it (Claude Code parity). A command that produced <em>no</em> exit status — no execution
+ * environment, a timeout, a shell failure — blocks the tool as well (fail-closed), unless the hook declared
+ * {@code failOpen}; see {@link ShellHookVerdicts}.
  * <li>{@link HttpAction} → request issued via {@link HttpActionExecutor}; the JSON response can carry an
  * {@code allow}/{@code deny}/{@code defer} decision and an optional {@code updatedInput}.
  * <li>{@link McpToolAction} → MCP tool call via {@link McpActionExecutor}; result content can carry the same
@@ -58,6 +60,7 @@ public final class DeclarativePreToolHook implements PreToolHook {
     private final String skillName;
     private final String hookId;
     private final RewakeSpec rewakeSpec;
+    private final boolean failOpen;
     private final ToolInputPredicate predicate;
     private final HookAction action;
     private final ShellActionExecutor shellExecutor;
@@ -135,7 +138,8 @@ public final class DeclarativePreToolHook implements PreToolHook {
      * @param processEnv
      *            process env snapshot used to populate the env whitelist for HTTP / MCP actions (must not be null)
      * @param options
-     *            config-derived options: hook-id discriminator and {@code asyncRewake} spec (must not be null)
+     *            config-derived options: hook-id discriminator, {@code failOpen} and {@code asyncRewake} spec (must
+     *            not be null)
      */
     // Declarative hooks bind one constructor parameter per config field, so they cannot be grouped.
     @SuppressWarnings("checkstyle:ParameterNumber")
@@ -147,6 +151,7 @@ public final class DeclarativePreToolHook implements PreToolHook {
         this.hookId = DeclarativeHookId.of(DeclarativePreToolHook.class, this.skillName,
                 options.getHookIdDiscriminator());
         this.rewakeSpec = options.getRewakeSpec().orElse(null);
+        this.failOpen = options.isFailOpen();
         this.predicate = Objects.requireNonNull(predicate, "Predicate cannot be null");
         this.action = Objects.requireNonNull(action, "Action cannot be null");
         this.shellExecutor = Objects.requireNonNull(shellExecutor, "Shell executor cannot be null");
@@ -186,6 +191,10 @@ public final class DeclarativePreToolHook implements PreToolHook {
                 log.info("Skill '{}' preTool shell hook vetoed tool '{}' (exit {}): {}", skillName, toolName,
                         outcome.getExitCode(), outcome.denyReason());
                 return withRewake(HookResult.block(outcome.denyReason()));
+            }
+            final Optional<String> unrun = ShellHookVerdicts.guard(outcome, failOpen, skillName, EVENT_NAME);
+            if (unrun.isPresent()) {
+                return withRewake(HookResult.block(unrun.get()));
             }
             if (outcome.isObserved() && outcome.getExitCode() != 0) {
                 // Neither success nor the deny code: the script is broken. Treated as allow so a malfunctioning

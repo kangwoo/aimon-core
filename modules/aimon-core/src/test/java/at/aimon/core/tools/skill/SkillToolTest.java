@@ -24,6 +24,11 @@ import at.aimon.core.filesystem.BackendStatus;
 import at.aimon.core.filesystem.BackendType;
 import at.aimon.core.filesystem.FileMetadata;
 import at.aimon.core.filesystem.VirtualFileSystem;
+import at.aimon.core.hook.DefaultHookRegistry;
+import at.aimon.core.hook.HookEventType;
+import at.aimon.core.hook.HookRegistry;
+import at.aimon.core.hook.event.PreToolHook;
+import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.skill.ExecutionMode;
 import at.aimon.core.skill.InvokePolicy;
@@ -34,12 +39,15 @@ import at.aimon.core.skill.SkillRegistry;
 import at.aimon.core.skill.fork.NoOpSkillForkExecutor;
 import at.aimon.core.skill.fork.SkillForkExecutor;
 import at.aimon.core.skill.fork.SkillForkOutcome;
+import at.aimon.core.skill.hook.ScopedSkillHookActivator;
 import at.aimon.core.skill.hook.SkillHookActivator;
 import at.aimon.core.skill.hook.SkillHookScope;
+import at.aimon.core.skill.hook.SkillHookSet;
 import at.aimon.core.skill.render.DefaultSkillContentRenderer;
 import at.aimon.core.skill.render.NoOpSkillContentRenderer;
 import at.aimon.core.skill.render.RenderContext;
 import at.aimon.core.skill.render.SkillContentRenderer;
+import at.aimon.core.tools.HookRegistryAccess;
 import at.aimon.core.tools.ToolContextKeys;
 
 /** Unit tests for SkillTool. */
@@ -828,6 +836,82 @@ class SkillToolTest {
                 .isInstanceOf(NullPointerException.class).hasMessageContaining("Hook activator cannot be null");
     }
 
+    // --- skill hooks reach the fork and nothing else (EE-49) -------------------------------------------------------
+
+    private static Skill skillWithGuard(String name, ExecutionMode mode, PreToolHook guard) {
+        SkillMetadata.Builder metadata = SkillMetadata.builder().name(name).description("d").executionMode(mode)
+                .hooks(SkillHookSet.builder().addPreTool(guard).build());
+        if (mode == ExecutionMode.FORK) {
+            metadata.forkAgentName("code-reviewer");
+        }
+        return Skill.builder().name(name).metadata(metadata.build()).content(SkillContent.of("body")).build();
+    }
+
+    @Test
+    void testExecute_ForkMode_SkillHooksGoToTheForkOnly_AndEndWhenTheSkillReturns() {
+        PreToolHook guard = ctx -> HookResult.success();
+        mockRegistry.addSkill(skillWithGuard("guarded", ExecutionMode.FORK, guard));
+        DefaultHookRegistry runtime = new DefaultHookRegistry();
+        ToolContext invoking = ToolContext.builder().put(ToolContextKeys.HOOK_REGISTRY, runtime)
+                .put(ToolContextKeys.SESSION_ID, SessionId.of("session-a")).build();
+        List<List<PreToolHook>> seenByFork = new ArrayList<>();
+        List<HookRegistry> forkRegistries = new ArrayList<>();
+        SkillForkExecutor fork = (skill, goal, forkContext) -> {
+            HookRegistry registry = HookRegistryAccess.of(forkContext).orElseThrow();
+            forkRegistries.add(registry);
+            seenByFork.add(registry.getHooks(HookEventType.PRE_TOOL));
+            // While the fork runs, neither the runtime's registry nor the invoking context sees the skill's hook.
+            assertThat(runtime.getHooks(HookEventType.PRE_TOOL)).isEmpty();
+            assertThat(forkContext.get(ToolContextKeys.SESSION_ID)).contains(SessionId.of("session-a"));
+            return SkillForkOutcome.success("done");
+        };
+        SkillTool tool = new SkillTool(mockRegistry, new NoOpSkillContentRenderer(), fork,
+                new ScopedSkillHookActivator(runtime));
+
+        ToolResult result = tool.execute(ToolInput.of(Map.of("skill", "guarded")), invoking);
+
+        assertThat(result.isError()).as(result.getContent()).isFalse();
+        assertThat(seenByFork).containsExactly(List.of(guard));
+        assertThat(HookRegistryAccess.of(invoking)).containsSame(runtime);
+        assertThat(runtime.isEmpty()).isTrue();
+        // Deactivated on return: a descendant still holding the fork's registry no longer sees the hook.
+        assertThat(forkRegistries.get(0).getHooks(HookEventType.PRE_TOOL)).isEmpty();
+    }
+
+    @Test
+    void testExecute_InlineMode_SkillHooksAreNotLayeredAnywhere() {
+        PreToolHook guard = ctx -> HookResult.success();
+        mockRegistry.addSkill(skillWithGuard("inline-guarded", ExecutionMode.INLINE, guard));
+        DefaultHookRegistry runtime = new DefaultHookRegistry();
+        ToolContext invoking = ToolContext.builder().put(ToolContextKeys.HOOK_REGISTRY, runtime).build();
+        RecordingForkExecutor forkExecutor = new RecordingForkExecutor();
+        SkillTool tool = new SkillTool(mockRegistry, new NoOpSkillContentRenderer(), forkExecutor,
+                new ScopedSkillHookActivator(runtime));
+
+        ToolResult result = tool.execute(ToolInput.of(Map.of("skill", "inline-guarded")), invoking);
+
+        assertThat(result.isError()).isFalse();
+        assertThat(forkExecutor.calls).isEmpty();
+        assertThat(runtime.isEmpty()).isTrue();
+        assertThat(HookRegistryAccess.of(invoking)).containsSame(runtime);
+    }
+
+    @Test
+    void testExecute_ForkMode_SkillWithoutHooks_PassesTheInvokingContextThrough() {
+        Skill skill = Skill
+                .builder().name("plain").metadata(SkillMetadata.builder().name("plain").description("d")
+                        .executionMode(ExecutionMode.FORK).forkAgentName("code-reviewer").build())
+                .content(SkillContent.of("body")).build();
+        mockRegistry.addSkill(skill);
+        RecordingForkExecutor forkExecutor = new RecordingForkExecutor();
+        SkillTool tool = new SkillTool(mockRegistry, new NoOpSkillContentRenderer(), forkExecutor,
+                new ScopedSkillHookActivator(new DefaultHookRegistry()));
+
+        tool.execute(ToolInput.of(Map.of("skill", "plain")), emptyContext);
+
+        assertThat(forkExecutor.calls.get(0).toolContext()).isSameAs(emptyContext);
+    }
+
     @Test
     void testExecute_HookActivator_ActivatedOncePerInvocationAndScopeClosed() {
         // Arrange — recording activator counts activate / close pairs
@@ -1154,7 +1238,7 @@ class SkillToolTest {
         private int closeCount;
 
         @Override
-        public SkillHookScope activate(Skill skill) {
+        public SkillHookScope activate(Skill skill, ToolContext context) {
             Objects.requireNonNull(skill, "Skill cannot be null");
             activatedSkills.add(skill.getName());
             return () -> closeCount++;

@@ -28,6 +28,7 @@ import at.aimon.core.subagent.SubagentToolScope;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
 import at.aimon.core.tools.CallerAllowedTools;
 import at.aimon.core.tools.ExecutionEnvironmentAccess;
+import at.aimon.core.tools.HookRegistryAccess;
 import at.aimon.core.tools.InvokingSessionAccess;
 import at.aimon.core.tools.ToolContextKeys;
 
@@ -141,8 +142,10 @@ public final class SubagentBackedSkillForkExecutor implements SkillForkExecutor 
         final Principal principal = toolContext.get(ToolContextKeys.PRINCIPAL).orElse(null);
 
         final SubagentExecutionEnvironment env = SubagentExecutionEnvironment.builder().agentRuntimeId(agentRuntimeId)
-                .subagentRegistry(subagentRegistry).toolRegistry(toolRegistry).hookRegistry(hookRegistry)
-                .userLocale(userLocale).defaultModel(defaultModel).executionAttributes(executionAttributes)
+                .subagentRegistry(subagentRegistry).toolRegistry(toolRegistry)
+                // The caller's registry, which for a skill with hooks is the view SkillTool layered them onto.
+                .hookRegistry(HookRegistryAccess.of(toolContext).orElse(hookRegistry)).userLocale(userLocale)
+                .defaultModel(defaultModel).executionAttributes(executionAttributes)
                 .parentLlmCallMetadata(parentMetadata).principal(principal)
                 .callerAllowedTools(CallerAllowedTools.of(toolContext))
                 .invokingSessionId(InvokingSessionAccess.idToPropagate(toolContext).orElse(null))

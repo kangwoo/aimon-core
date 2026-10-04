@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-config-guide.md
-source_commit: eec9ccd
+source_commit: 1f8b53f
 ---
 
 # Hook Configuration Guide (`hooks.json`)
@@ -238,6 +238,7 @@ type usable on every event** (`http` / `mcp` are `preTool`/`postTool`-only and `
   "command": "jq -r '.tool_input.file_path'",
   "timeout": 5      // optional, in seconds (Claude Code parity). 30 seconds if omitted
   // "timeoutMs": 500  // alternative: a millisecond alias. If both are set, timeoutMs wins
+  // "failOpen": true  // optional, default false. Let the event proceed when the command could not run (see "Exit codes")
 }
 ```
 
@@ -270,6 +271,7 @@ path=$(echo "$payload" | jq -r '.tool_input.file_path')
 | `0`  | Proceed normally.                                                                 |
 | `2`  | **veto** — stderr becomes the refusal reason (Claude Code parity). Truncated beyond 4000 characters. |
 | other | `WARN` log + fail-soft (proceeds normally). A broken script must not become a silent gatekeeper. |
+| none | The command produced no exit code (timeout, shell failure). On an event with a decision channel this **counts as a veto** — see "When the command could not run" below. |
 
 A veto takes effect **only in the four events that have a decision channel**. Exit 2 on any
 other event leaves a WARN log and proceeds (`AbstractDeclarativeShellHook#vetoResult`).
@@ -285,6 +287,15 @@ other event leaves a WARN log and proceeds (`AbstractDeclarativeShellHook#vetoRe
 > The veto on `onStart` was added in this round of hardening. Before that, a declarative
 > `onStart` hook exiting 2 had no effect whatsoever.
 
+**When the command could not run (fail-closed).** If a `command` handler on one of the four events above **produces no
+exit code** — a timeout, a shell failure — the hook returns that event's refusal (`preTool`, `onStart` and `preCompact`
+block; `permissionRequest` denies). A guard that could not decide does not let the operation through. The reason names
+the cause, in the form `Blocked: guard hook '<source>#<n>' (<event>) could not run its command — timed out: …`, and never
+contains the command string. For a handler that **observes** rather than guards (audit logging, metrics), declare
+`"failOpen": true`: it then leaves a WARN and proceeds. `failOpen` does not weaken an exit 2. The value must be a JSON
+boolean: `"true"` or `1` is not coerced and **fails the parse of the whole file** (the key takes a guard off, so it is
+not read loosely). On the other 9 events a command that could not run still leaves a WARN and proceeds, as before.
+
 **The unit of `timeout` (breaking change).** `timeout` is in **seconds**, matching Claude Code.
 When you need milliseconds, use AIMON's own alias `timeoutMs`. If both are present the more
 precise `timeoutMs` wins. Both values must be positive; zero or negative is rejected at parse
@@ -297,9 +308,9 @@ time.
 
 > ⚠️ **Migration.** `timeout` used to be read as milliseconds. Leaving an old configuration
 > untouched means `"timeout": 5000` is now read as **5000 seconds**, not 5 (and conversely a
-> `"timeout": 60` imported from Claude Code used to be 60 ms on the old binary). Hook timeouts
-> are fail-soft, so the symptom is quiet — divide existing values by 1000 or rename the key to
-> `timeoutMs`.
+> `"timeout": 60` imported from Claude Code used to be 60 ms on the old binary). A value read too
+> short now **blocks** by timeout on the events with a decision channel and is cut off quietly on
+> the others — divide existing values by 1000 or rename the key to `timeoutMs`.
 
 **`timeout` and the hook policy.** A declared budget is enforced by the executor, and when it is
 **at least** the hook policy's timeout (30 seconds by default) the executor's outer net **widens**
@@ -756,12 +767,15 @@ A summary of the frontmatter schema:
 | `matcher`       | Allowed on `preTool` / `postTool` only (`"*"` when omitted). On any other event, parsing fails |
 | `action.type`   | `shell` / `deny` / `http` / `mcp`. `deny` is `preTool`-only; `http` and `mcp` are `preTool`/`postTool`-only |
 | Timeout field   | `action.timeoutMs` (**milliseconds**). Frontmatter has no seconds-based `timeout` alias |
+| `failOpen`      | An entry-level key (beside `matcher` and `action`). YAML boolean only, default `false`. Lets the event proceed when a `shell` action produced no exit code |
 
 `onSessionStart` / `onSessionEnd` / `onConfigReload` fire outside a skill invocation (in the
 session and application lifecycles), so frontmatter rejects them — declare them in `hooks.json`.
 
-The hooks above apply only while `my-skill` is active and unregister automatically when it is
-deactivated.
+The hooks above apply only to the agent `my-skill` **forks** (and to forks that agent starts), and end when the skill
+returns its answer. They do not fire for another session of the same agent or for the caller of the skill, and they are
+not registered with the runtime's hook registry. An inline skill has no fork, so its hooks do not fire. The full rules
+are in [`aimon-skill-extensions.md`](../../references/aimon-skill-extensions.md).
 
 ---
 
@@ -778,6 +792,9 @@ deactivated.
 | `WARN hooks: '...' event is not supported by AIMON in this phase`        | Only `Notification` / `UserPromptSubmit` / `stop_hook_active`. Everything else is supported. |
 | `WARN hooks: unknown event '...'`                                        | A typo. Use a name from the [supported-events table](#supported-events-and-their-mapping) (case-insensitive). |
 | `WARN hooks: only 'command' actions are valid on ...`                    | Events other than `preTool`/`postTool` accept shell handlers only.            |
+| `WARN hooks: 'command' on ... cannot run: the configured shell executor does not support shell actions` | `hooks.json` was applied with an executor that has no shell support (`NoOpShellActionExecutor`). `command` handlers are not registered — wire a `HostShellActionExecutor`. |
+| `Failed to parse hooks JSON: ... 'failOpen' must be a JSON boolean`      | `failOpen` was written as `"true"`, `1` or `null`. Only `true` / `false` are accepted. The whole file is rejected. |
+| A tool is refused with `Blocked: guard hook '...' could not run its command` | A `command` handler on an event with a decision channel produced no exit code (a timeout, for one). Fix the cause named in the reason, or declare `"failOpen": true` if the handler only observes. |
 | `WARN hooks: 'asyncRewake' is not supported on event '...'`              | Rewake-capable events are `preTool`/`preCompact`/`onSessionStart`/`onSessionEnd`/`onConfigReload`. The hook itself registers normally. |
 | A shell hook exited 2 but nothing was blocked                             | That event has no decision channel. A veto is effective only on `preTool`/`onStart`/`preCompact` (block) and `permissionRequest` (deny). |
 | `${tool_input.x}` / `${tool_name}` inside a command is empty              | Intended behaviour. Commands are not rendered — use the stdin JSON payload or the `AIMON_*` env (`$AIMON_TOOL_NAME` and so on). |

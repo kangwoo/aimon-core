@@ -212,7 +212,8 @@ public final class SkillHookSetParser {
         // of an unchanged skill file, which is exactly what a hook id discriminator has to be: without it every
         // hook of a class would share one id, so rewake deliveries could not be routed and a reload could not tell
         // which pending rewakes belong to a hook that actually changed. See DeclarativeHookId.
-        final DeclarativeHookOptions options = DeclarativeHookOptions.ofDiscriminator(path);
+        final DeclarativeHookOptions options = DeclarativeHookOptions.builder().hookIdDiscriminator(path)
+                .failOpen(parseFailOpen(event, def, action, path)).build();
         switch (event) {
             case DeclarativePreToolHook.EVENT_NAME -> builder.addPreTool(new DeclarativePreToolHook(skillName,
                     predicate, action, shellExecutor, httpExecutor, mcpExecutor, processEnv, options));
@@ -237,6 +238,34 @@ public final class SkillHookSetParser {
             DeclarativeShellHookBinding<H> binding, String skillName, ShellAction action,
             DeclarativeHookOptions options) {
         builder.add(binding.getEventType(), binding.create(skillName, action, shellExecutor, options));
+    }
+
+    /**
+     * Reads the entry-level {@code failOpen} key: whether a shell command that produced no exit status lets the
+     * operation proceed instead of blocking it.
+     *
+     * <p>
+     * Only a YAML boolean is accepted. This key takes a guard off, so a value that merely looks true ({@code "true"},
+     * {@code 1}) is a parse error rather than a guess in either direction. Where the key cannot have an effect — a
+     * non-shell action, or an event that cannot block — it is ignored with a WARN.
+     */
+    private static boolean parseFailOpen(String event, Map<?, ?> def, HookAction action, String path) {
+        if (!def.containsKey("failOpen")) {
+            return false;
+        }
+        final Object raw = def.get("failOpen");
+        if (!(raw instanceof Boolean failOpen)) {
+            throw new IllegalArgumentException(path + ".failOpen must be a boolean (true or false), got: "
+                    + (raw == null ? "null" : raw.getClass().getSimpleName()));
+        }
+        if (!(action instanceof ShellAction)) {
+            log.warn("{}: 'failOpen' only applies to shell actions; ignored", path);
+            return false;
+        }
+        if (!SkillHookSet.guardEvents().contains(eventType(event))) {
+            log.warn("{}: 'failOpen' has no effect on {} — the event cannot block", path, event);
+        }
+        return failOpen;
     }
 
     private ToolInputPredicate parseMatcher(String event, Map<?, ?> def, String path) {

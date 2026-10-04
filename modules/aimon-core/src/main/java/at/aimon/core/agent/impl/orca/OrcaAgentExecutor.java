@@ -903,6 +903,11 @@ public class OrcaAgentExecutor
         });
 
         putExecutionEnvironment(builder, scope);
+        // The registry this execution dispatches against, for the forks its tools spawn. Write-once and before the
+        // enrichers, like the environment.
+        if (scope.getHookRegistry() != null) {
+            builder.put(ToolContextKeys.HOOK_REGISTRY, scope.getHookRegistry());
+        }
 
         applyEnrichers(builder, scope);
 

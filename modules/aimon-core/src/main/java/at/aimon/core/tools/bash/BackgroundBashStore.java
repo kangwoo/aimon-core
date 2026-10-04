@@ -19,6 +19,11 @@ import java.util.Optional;
  * contain secrets, and a shared store keeps them beyond the node and the process they belong to.
  *
  * <p>
+ * A store must return a record's three ownership fields — runtime, session, execution — exactly as they were written.
+ * A lookup matches all three against the caller, so a store that loses one does not widen who can see the task: it
+ * makes the task invisible to everyone, its owner included.
+ *
+ * <p>
  * Implementations must be thread-safe. A method that fails throws an unchecked exception: the manager refuses to start
  * a command it could not record, and otherwise carries on with what it knows locally.
  */

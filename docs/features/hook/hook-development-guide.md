@@ -96,7 +96,9 @@ at.aimon.core.hook/
 >
 > 선언적 hook (`hooks.json` / SKILL.md) 도 같은 네 체인에서만 거부할 수 있고, 거부는 셸
 > handler 의 **exit 2** 로 표현한다. `ON_START` 의 선언적 veto 는 최근에 추가되었다 —
-> 그 전에는 `onStart` 셸 hook 이 exit 2 로 끝나도 아무 일도 일어나지 않았다.
+> 그 전에는 `onStart` 셸 hook 이 exit 2 로 끝나도 아무 일도 일어나지 않았다. 그 네 체인에서는
+> 셸 handler 가 **종료 코드를 내지 못해도**(실행 환경 없음 · timeout · 셸 실패) 거부다 — 판단하지
+> 못한 가드는 막는다. 관찰용 handler 는 `failOpen: true` 로 이 규칙에서 빠진다.
 
 새 이벤트를 추가하려면 hook 인터페이스 + context 타입 + `HookEventType` 상수 +
 `HookExecutionManager` 메서드 + **발화 지점** 을 모두 추가해야 한다. 발화 지점이 없는 상수는

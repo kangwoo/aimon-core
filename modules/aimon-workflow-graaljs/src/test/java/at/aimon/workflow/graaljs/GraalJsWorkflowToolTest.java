@@ -1,6 +1,11 @@
 package at.aimon.workflow.graaljs;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import java.time.Duration;
 import java.util.List;
@@ -9,6 +14,7 @@ import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.mockito.ArgumentCaptor;
 
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.interrupt.InterruptBehavior;
@@ -18,9 +24,16 @@ import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
+import at.aimon.core.hook.HookRegistry;
+import at.aimon.core.hook.event.PostToolHook;
+import at.aimon.core.hook.event.PreToolHook;
+import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.llm.LlmModel;
+import at.aimon.core.skill.hook.SkillHookSet;
+import at.aimon.core.skill.hook.SkillScopedHookRegistry;
 import at.aimon.core.subagent.InMemorySubagentRegistry;
 import at.aimon.core.subagent.Subagent;
+import at.aimon.core.subagent.SubagentExecutionEnvironment;
 import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.tools.ToolContextKeys;
 import at.aimon.core.workflow.WorkflowBackgroundConfig;
@@ -127,6 +140,69 @@ class GraalJsWorkflowToolTest extends AbstractGraalJsRunTest {
                 "agent({ agentType: 'a', goal: '1' }); return agent({ agentType: 'a', goal: '2' }).text;", "max_agents",
                 1)), contextWithId());
         assertThat(result.isError()).isTrue();
+    }
+
+    // --- skill hooks follow a foreground run and refuse a background one (EE-49) -----------------------------------
+
+    private static final PreToolHook GUARD = ctx -> HookResult.success();
+    private static final PostToolHook AUDIT = ctx -> HookResult.success();
+
+    private static ToolContext insideSkill(HookRegistry registry) {
+        return ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, AgentRuntimeId.of("agent:test"))
+                .put(ToolContextKeys.HOOK_REGISTRY, registry).build();
+    }
+
+    @Test
+    @DisplayName("a foreground run's subagents dispatch against the caller's hook registry, not the tool's own")
+    void foregroundUsesTheCallersHookRegistry() {
+        final HookRegistry fromContext = new DefaultHookRegistry();
+
+        final ToolResult result = tool(null).execute(
+                ToolInput.of(Map.of("script", "return agent({ agentType: 'a', goal: 'g' }).text;")),
+                insideSkill(fromContext));
+
+        assertThat(result.isSuccess()).as(result.getContent()).isTrue();
+        final ArgumentCaptor<SubagentExecutionEnvironment> env = ArgumentCaptor
+                .forClass(SubagentExecutionEnvironment.class);
+        verify(manager).execute(env.capture(), any(Subagent.class), anyString());
+        assertThat(env.getValue().getHookRegistry()).isSameAs(fromContext);
+    }
+
+    @Test
+    @DisplayName("an active skill guard refuses background mode, and the runner is never reached")
+    void activeSkillGuardRefusesBackgroundMode() {
+        final WorkflowRunner backgroundRunner = mock(WorkflowRunner.class);
+        final SkillScopedHookRegistry outer = new SkillScopedHookRegistry(new DefaultHookRegistry(), "deploy",
+                SkillHookSet.builder().addPreTool(GUARD).build());
+        final SkillScopedHookRegistry inner = new SkillScopedHookRegistry(outer, "audit",
+                SkillHookSet.builder().addPostTool(AUDIT).build());
+
+        final ToolResult result = tool(backgroundRunner)
+                .execute(ToolInput.of(Map.of("script", "return 1;", "mode", "background")), insideSkill(inner));
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).contains("skill 'deploy'").contains("guard hooks").contains("foreground");
+        verifyNoInteractions(backgroundRunner);
+    }
+
+    @Test
+    @DisplayName("observation-only skill hooks, a closed skill scope and a plain registry do not refuse background mode")
+    void backgroundModeAllowedWithoutAnActiveGuard() {
+        final SkillScopedHookRegistry observing = new SkillScopedHookRegistry(new DefaultHookRegistry(), "audit",
+                SkillHookSet.builder().addPostTool(AUDIT).build());
+        final SkillScopedHookRegistry closed = new SkillScopedHookRegistry(new DefaultHookRegistry(), "deploy",
+                SkillHookSet.builder().addPreTool(GUARD).build());
+        closed.deactivate();
+
+        for (HookRegistry registry : List.of(observing, closed, new DefaultHookRegistry())) {
+            final WorkflowRunner backgroundRunner = mock(WorkflowRunner.class);
+
+            final ToolResult result = tool(backgroundRunner)
+                    .execute(ToolInput.of(Map.of("script", "return 1;", "mode", "background")), insideSkill(registry));
+
+            assertThat(result.isSuccess()).as(result.getContent()).isTrue();
+            verify(backgroundRunner).runInBackground(any(), any());
+        }
     }
 
     @Test

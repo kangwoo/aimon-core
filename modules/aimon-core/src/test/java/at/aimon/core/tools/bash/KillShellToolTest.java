@@ -15,6 +15,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.AgentRuntimeId;
+import at.aimon.core.agent.ExecutionId;
+import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
@@ -46,6 +48,10 @@ class KillShellToolTest {
         manager.close();
     }
 
+    private static BackgroundBashOwner owner(AgentRuntimeId runtimeId) {
+        return BackgroundBashOwner.of(runtimeId, null, null);
+    }
+
     private static ToolContext contextOf(AgentRuntimeId runtimeId) {
         return ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, runtimeId).build();
     }
@@ -73,7 +79,7 @@ class KillShellToolTest {
     @DisplayName("a running command whose shell can cancel is stopped, and its earlier output stays readable")
     void testExecute_RunningCancellable_Stops() throws Exception {
         ControllableShell shell = ControllableShell.cancellable();
-        BackgroundBashTask task = manager.start(ACME, "npm run dev", shell, OPTIONS);
+        BackgroundBashTask task = manager.start(owner(ACME), "npm run dev", shell, OPTIONS);
         shell.awaitStarted();
 
         ToolResult result = kill(ACME, task.getTaskId());
@@ -94,7 +100,7 @@ class KillShellToolTest {
     @DisplayName("a running command whose shell cannot cancel is an error that names the limit it runs to")
     void testExecute_RunningUncancellable_ReturnsError() throws Exception {
         ControllableShell shell = ControllableShell.uncancellable();
-        BackgroundBashTask task = manager.start(ACME, "npm run dev", shell, OPTIONS);
+        BackgroundBashTask task = manager.start(owner(ACME), "npm run dev", shell, OPTIONS);
         shell.awaitStarted();
 
         ToolResult result = kill(ACME, task.getTaskId());
@@ -109,7 +115,7 @@ class KillShellToolTest {
     @DisplayName("a command that already ended is a success that says nothing was stopped")
     void testExecute_AlreadyFinished_Success() {
         ControllableShell shell = ControllableShell.cancellable();
-        BackgroundBashTask task = manager.start(ACME, "true", shell, OPTIONS);
+        BackgroundBashTask task = manager.start(owner(ACME), "true", shell, OPTIONS);
         shell.finish("done");
         assertThat(task.awaitCompletion(Duration.ofSeconds(5))).isTrue();
 
@@ -136,7 +142,7 @@ class KillShellToolTest {
     @DisplayName("an unknown id and another runtime's task read the same: not found")
     void testExecute_UnknownOrForeign_ReturnsNotFound() throws Exception {
         ControllableShell shell = ControllableShell.cancellable();
-        BackgroundBashTask task = manager.start(ACME, "npm run dev", shell, OPTIONS);
+        BackgroundBashTask task = manager.start(owner(ACME), "npm run dev", shell, OPTIONS);
         shell.awaitStarted();
 
         ToolResult unknown = kill(ACME, "bash_ffffffff");
@@ -149,6 +155,51 @@ class KillShellToolTest {
         assertThat(foreign.getContent()).contains("Shell not found: " + task.getTaskId());
         assertThat(noRuntime.isError()).isTrue();
         assertThat(task.getStatus()).as("none of them reached the command").isEqualTo(BashTaskStatus.RUNNING);
+    }
+
+    @Test
+    @DisplayName("another session of the same runtime gets the unknown-id answer, and the command keeps running")
+    void testExecute_OtherSession_ReadsExactlyLikeAnUnknownId() throws Exception {
+        SessionId sessionA = SessionId.of("session-a");
+        ToolContext turnA = ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, ACME)
+                .put(ToolContextKeys.SESSION_ID, sessionA).build();
+        ToolContext turnB = ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, ACME)
+                .put(ToolContextKeys.SESSION_ID, SessionId.of("session-b")).build();
+        ToolContext forkOfA = ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, ACME)
+                .put(ToolContextKeys.EXECUTION_ID, ExecutionId.of("fork-1"))
+                .put(ToolContextKeys.INVOKING_SESSION_ID, sessionA).build();
+        ControllableShell shell = ControllableShell.cancellable();
+        BackgroundBashTask task = manager.start(BackgroundBashOwner.of(turnA), "npm run dev", shell, OPTIONS);
+        shell.awaitStarted();
+
+        ToolResult otherSession = tool.execute(ToolInput.of(Map.of("taskId", task.getTaskId())), turnB);
+        ToolResult unknown = tool.execute(ToolInput.of(Map.of("taskId", "bash_ffffffff")), turnB);
+
+        assertThat(otherSession.isError()).isTrue();
+        assertThat(otherSession.getContent())
+                .isEqualTo(unknown.getContent().replace("bash_ffffffff", task.getTaskId()));
+        assertThat(task.getStatus()).as("the other session did not reach the command")
+                .isEqualTo(BashTaskStatus.RUNNING);
+
+        // A fork spawned for the owning session stops it.
+        ToolResult fork = tool.execute(ToolInput.of(Map.of("taskId", task.getTaskId())), forkOfA);
+        assertThat(fork.isSuccess()).as(fork.getContent()).isTrue();
+        assertThat(task.getStatus()).isEqualTo(BashTaskStatus.KILLED);
+    }
+
+    @Test
+    @DisplayName("a command on another node is 'not found' for another session, not 'on another node'")
+    void testExecute_OtherNodeOtherSession_ReturnsNotFound() {
+        BackgroundBashOwner sessionA = BackgroundBashOwner.of(ACME, SessionId.of("session-a"), null);
+        store.putIfAbsent(BackgroundBashRecord.builder().taskId("bash_0000dddd").owner(sessionA).nodeId("node-b")
+                .startedAt(Instant.now()).expiresAt(Instant.now().plusSeconds(3600)).build());
+
+        ToolResult other = tool.execute(ToolInput.of(Map.of("taskId", "bash_0000dddd")),
+                ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, ACME)
+                        .put(ToolContextKeys.SESSION_ID, SessionId.of("session-b")).build());
+
+        assertThat(other.isError()).isTrue();
+        assertThat(other.getContent()).contains("Shell not found: bash_0000dddd").doesNotContain("another node");
     }
 
     @Test

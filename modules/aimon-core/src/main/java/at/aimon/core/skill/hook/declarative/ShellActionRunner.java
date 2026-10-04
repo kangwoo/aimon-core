@@ -19,9 +19,9 @@ import at.aimon.core.skill.hook.action.ShellAction;
  * command in the shell the executor picked, log what happened, and swallow every failure.
  *
  * <p>
- * Kept in one place so the fail-soft contract — a command that never produced an exit status reports
- * {@link ShellHookOutcome#notObserved()} and is never read as a veto — cannot drift between the executor that takes
- * its shell from the execution environment and the one that holds a fixed shell.
+ * Kept in one place so the contract — never throw, and report a command that produced no exit status as
+ * {@link ShellHookOutcome#notRun} with its cause — cannot drift between the executor that takes its shell from the
+ * execution environment and the one that holds a fixed shell.
  */
 final class ShellActionRunner {
 
@@ -63,19 +63,22 @@ final class ShellActionRunner {
             return ShellHookOutcome.of(result.exitCode(), result.stdout(), result.stderr());
         } catch (ShellTimeoutException e) {
             log.warn("Hook shell action timed out after {} (command={})", action.getTimeout(), action.getCommand());
+            return ShellHookOutcome.notRun(ShellHookOutcome.Unrun.TIMEOUT,
+                    "no exit status within " + action.getTimeout().toMillis() + "ms");
         } catch (ExecutionEnvironmentUnavailableException e) {
             // The environment is there but cannot be used. Not a reason to reach for another shell: the command is
             // skipped, exactly as a tool call in the same execution would fail.
             log.warn("Hook shell action not run: the execution environment is unavailable (command={}): {}",
                     action.getCommand(), e.getMessage());
+            return ShellHookOutcome.notRun(ShellHookOutcome.Unrun.ENVIRONMENT_UNAVAILABLE, e.getMessage());
         } catch (ShellExecutionException e) {
             log.warn("Hook shell action failed (command={}): {}", action.getCommand(), e.getMessage());
+            return ShellHookOutcome.notRun(ShellHookOutcome.Unrun.EXECUTION_FAILED, e.getMessage());
         } catch (RuntimeException e) {
             log.warn("Hook shell action threw unexpected error (command={}): {}", action.getCommand(), e.getMessage(),
                     e);
+            return ShellHookOutcome.notRun(ShellHookOutcome.Unrun.EXECUTION_FAILED, e.getMessage());
         }
-        // A command that never produced an exit status cannot be read as a veto — fail soft and let the tool run.
-        return ShellHookOutcome.notObserved();
     }
 
     private static String summarise(String text) {

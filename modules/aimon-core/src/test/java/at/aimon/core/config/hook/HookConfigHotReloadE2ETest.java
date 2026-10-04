@@ -23,7 +23,9 @@ import at.aimon.core.hook.HookEventType;
 import at.aimon.core.hook.event.OnConfigReloadContext;
 import at.aimon.core.hook.event.OnConfigReloadHook;
 import at.aimon.core.hook.execution.HookResult;
-import at.aimon.core.skill.hook.declarative.NoOpShellActionExecutor;
+import at.aimon.core.shell.VirtualShell;
+import at.aimon.core.skill.hook.declarative.HostShellActionExecutor;
+import at.aimon.core.skill.hook.declarative.ShellActionExecutor;
 
 /**
  * Phase 3 WI-3.6.x — End-to-end hot reload of {@code hooks.json}.
@@ -38,6 +40,10 @@ import at.aimon.core.skill.hook.declarative.NoOpShellActionExecutor;
  * inside the 2s SLA, with no programmatically registered hooks disturbed.
  */
 class HookConfigHotReloadE2ETest {
+
+    // A shell-capable executor: one without shell support registers no command handler at all (EE-51).
+    private static final ShellActionExecutor SHELL_EXECUTOR = new HostShellActionExecutor(
+            org.mockito.Mockito.mock(VirtualShell.class));
 
     private static final UserLocale ENV = UserLocale.createDefault();
     private static final ReloadInvoker INVOKER = new ReloadInvoker(InvokerType.MAIN_AGENT, "main", ENV);
@@ -71,8 +77,7 @@ class HookConfigHotReloadE2ETest {
 
         final HookConfigLoader loader = new HookConfigLoader(new JacksonHookConfigParser(), userDir, projectDir);
         final HookConfigMerger merger = new HookConfigMerger();
-        final HookRegistryApplier bootstrap = new HookRegistryApplier(NoOpShellActionExecutor.INSTANCE, null, null,
-                Map.of());
+        final HookRegistryApplier bootstrap = new HookRegistryApplier(SHELL_EXECUTOR, null, null, Map.of());
         final DefaultHookRegistry registry = new DefaultHookRegistry();
 
         // Capture all OnConfigReload events fired through the live execution manager.

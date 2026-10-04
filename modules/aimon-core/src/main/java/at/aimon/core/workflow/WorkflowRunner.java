@@ -73,6 +73,13 @@ public interface WorkflowRunner extends AutoCloseable, WorkflowRunController {
      * <em>different</em> result type is a caller error that surfaces as a {@code ClassCastException} where the result
      * is consumed. The typed result is owning-node only (see {@link RunHandle}).
      *
+     * <p>
+     * A background run takes nothing from the call that submitted it: its subagents dispatch against the registry of
+     * the runner's base environment. The hooks of a skill the submitting call runs inside therefore do not follow the
+     * run. A tool that submits on behalf of a tool call must check
+     * {@code HookRegistryAccess.activeSkillGuards(toolContext)} first and refuse when it is not empty, as
+     * {@code Workflow} and {@code WorkflowJs} do — otherwise those guards are off for the run without any signal.
+     *
      * @param script
      *            the script to run (must not be null)
      * @param runId

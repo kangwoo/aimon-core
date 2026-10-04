@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-development-guide.md
-source_commit: 1f8b53f
+source_commit: 93a4909
 ---
 
 # Hook Development Guide
@@ -103,6 +103,9 @@ There are 13 in total:
 > Declarative hooks (`hooks.json` / SKILL.md) can refuse in the same four chains only, and a
 > refusal is expressed as **exit 2** from the shell handler. The declarative veto on `ON_START`
 > was added recently — before that, an `onStart` shell hook exiting 2 had no effect whatsoever.
+> In those four chains a shell handler that **produces no exit code** (no execution environment,
+> a timeout, a shell failure) refuses as well — a guard that could not decide blocks. A handler
+> that only observes opts out with `failOpen: true`.
 
 Adding a new event means adding all of: the hook interface, the context type, the
 `HookEventType` constant, the `HookExecutionManager` method, and **the firing site**. A constant

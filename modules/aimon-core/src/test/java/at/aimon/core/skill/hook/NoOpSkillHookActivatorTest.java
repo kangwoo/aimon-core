@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import org.junit.jupiter.api.Test;
 
+import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.skill.Skill;
 import at.aimon.core.skill.SkillContent;
 import at.aimon.core.skill.SkillMetadata;
@@ -21,21 +22,23 @@ class NoOpSkillHookActivatorTest {
     void activate_returnsEmptyScope() {
         SkillHookActivator activator = new NoOpSkillHookActivator();
 
-        SkillHookScope scope = activator.activate(testSkill());
+        SkillHookScope scope = activator.activate(testSkill(), ToolContext.empty());
 
         assertThat(scope).isSameAs(SkillHookScope.EMPTY);
+        assertThat(scope.hookRegistry()).isEmpty();
     }
 
     @Test
     void activate_nullSkill_throws() {
         SkillHookActivator activator = new NoOpSkillHookActivator();
 
-        assertThatThrownBy(() -> activator.activate(null)).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> activator.activate(null, ToolContext.empty()))
+                .isInstanceOf(NullPointerException.class);
     }
 
     @Test
     void scopeClose_isIdempotent() {
-        SkillHookScope scope = new NoOpSkillHookActivator().activate(testSkill());
+        SkillHookScope scope = new NoOpSkillHookActivator().activate(testSkill(), ToolContext.empty());
 
         scope.close();
         scope.close(); // must not throw

@@ -34,6 +34,7 @@ import at.aimon.core.subagent.SubagentExecutionManager;
 import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.tools.CallerAllowedTools;
 import at.aimon.core.tools.ExecutionEnvironmentAccess;
+import at.aimon.core.tools.HookRegistryAccess;
 import at.aimon.core.tools.InvokingSessionAccess;
 import at.aimon.core.tools.ToolContextKeys;
 import at.aimon.core.workflow.AgentStepResult;
@@ -244,7 +245,7 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
             final String strategy = input.strategy() == null ? STRATEGY_PERSPECTIVES : input.strategy();
 
             if (MODE_BACKGROUND.equals(input.mode())) {
-                return runInBackground(prompt, perspectives, synthesize, strategy);
+                return runInBackground(prompt, perspectives, synthesize, strategy, context);
             }
 
             final AgentRuntimeId agentRuntimeId = context.get(ToolContextKeys.AGENT_RUNTIME_ID).orElse(null);
@@ -283,10 +284,22 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
     }
 
     /** Dispatches a fire-and-forget run and returns the acknowledgement the model reads. */
-    private String runInBackground(String prompt, List<String> perspectives, boolean synthesize, String strategy) {
+    private String runInBackground(String prompt, List<String> perspectives, boolean synthesize, String strategy,
+            ToolContext context) {
         if (backgroundRunner == null) {
             throw new ToolExecutionException(
                     "Background mode is not available: no workflow runner is configured for this agent.");
+        }
+        // The run below dispatches against the runtime's registry, so the hooks of a skill this call runs inside do
+        // not follow it. A guard that would be silently off is refused; a hook that only observes is not.
+        final List<String> guardSkills = HookRegistryAccess.activeSkillGuards(context);
+        if (!guardSkills.isEmpty()) {
+            throw new ToolExecutionException(HookRegistryAccess.backgroundRefusal(guardSkills));
+        }
+        final List<String> hookSkills = HookRegistryAccess.activeSkillHooks(context);
+        if (!hookSkills.isEmpty()) {
+            log.warn("Workflow (background): the hooks of skill(s) {} do not fire for this run's subagents",
+                    hookSkills);
         }
         // Fire-and-forget on the shared runner's own base environment: a background run does NOT inherit the
         // invoking execution's agent runtime id, principal, or trace attribution. The run id is derived from
@@ -508,10 +521,13 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
         final Principal principal = context.get(ToolContextKeys.PRINCIPAL).orElse(null);
 
         return SubagentExecutionEnvironment.builder().agentRuntimeId(agentRuntimeId).subagentRegistry(subagentRegistry)
-                .toolRegistry(toolRegistry).hookRegistry(hookRegistry).userLocale(userLocale).defaultModel(defaultModel)
-                .executionAttributes(executionAttributes).parentLlmCallMetadata(parentMetadata)
-                .cancellationSignal(parentSignal).principal(principal).toolContextEnrichers(toolContextEnrichers)
-                .callerAllowedTools(CallerAllowedTools.of(context))
+                .toolRegistry(toolRegistry)
+                // The caller's registry first: inside a forked skill it carries the skill's hooks, and the workflow's
+                // subagents must stay under them.
+                .hookRegistry(HookRegistryAccess.of(context).orElse(hookRegistry)).userLocale(userLocale)
+                .defaultModel(defaultModel).executionAttributes(executionAttributes)
+                .parentLlmCallMetadata(parentMetadata).cancellationSignal(parentSignal).principal(principal)
+                .toolContextEnrichers(toolContextEnrichers).callerAllowedTools(CallerAllowedTools.of(context))
                 .invokingSessionId(InvokingSessionAccess.idToPropagate(context).orElse(null))
                 // The fork resolves its own environment from the spawning runtime's provider, with this execution's
                 // environment as its parent (execution-environment design §5.2).

@@ -10,7 +10,6 @@ import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.interrupt.InterruptBehavior;
 import at.aimon.core.agent.interrupt.InterruptReason;
@@ -33,7 +32,6 @@ import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.shell.exception.ShellExecutionException;
 import at.aimon.core.shell.exception.ShellTimeoutException;
 import at.aimon.core.tools.ExecutionEnvironmentAccess;
-import at.aimon.core.tools.ToolContextKeys;
 
 /**
  * Tool for executing bash commands in a shell environment.
@@ -348,7 +346,8 @@ public class BashTool extends AbstractTool implements ToolPermissionSubjectAware
      * <p>
      * The shell is captured here, when the task starts, and the running command keeps it: the task may outlive the
      * execution that started it — and the runtime — and the shell's lifetime is its provider's, not the execution's
-     * (design §5.3). The manager runs the command and owns the task, recorded under the runtime that started it.
+     * (design §5.3). The manager runs the command and owns the task, recorded under the owner it was started for
+     * ({@link BackgroundBashOwner#of(ToolContext)}).
      *
      * @param environment
      *            The execution environment, asked for its background ceiling
@@ -357,14 +356,14 @@ public class BashTool extends AbstractTool implements ToolPermissionSubjectAware
      * @param command
      *            The command to execute
      * @param context
-     *            The execution context, read for the owning runtime
+     *            The execution context, read for the task's owner
      * @return A ToolResult with the task ID
      */
     private ToolResult executeInBackground(ExecutionEnvironment environment, VirtualShell shell, String command,
             ToolContext context) {
         final Optional<Duration> ceiling = backgroundCeiling(environment);
         final long timeoutMs = ceiling.map(BashTool::saturatedMillis).orElse(BACKGROUND_TIMEOUT_MS);
-        final AgentRuntimeId owner = context.get(ToolContextKeys.AGENT_RUNTIME_ID).orElse(null);
+        final BackgroundBashOwner owner = BackgroundBashOwner.of(context);
 
         final BackgroundBashTask task;
         try {

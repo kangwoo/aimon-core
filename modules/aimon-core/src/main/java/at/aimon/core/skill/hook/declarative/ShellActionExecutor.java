@@ -24,9 +24,10 @@ import at.aimon.core.skill.hook.action.ShellAction;
  * </ul>
  *
  * <p>
- * The contract is intentionally fail-soft: {@link #run} must <strong>never</strong> throw, since the calling hook
- * declares itself non-blocking. Any error must be logged at WARN and discarded. This keeps the trust boundary clear:
- * a misbehaving skill cannot abort the agent loop by handing the parser a broken shell command.
+ * {@link #run} must <strong>never</strong> throw. Any error must be logged at WARN and reported through the returned
+ * {@link ShellHookOutcome} — the executor says what happened, the hook decides what it means. This keeps the trust
+ * boundary clear: a misbehaving skill cannot abort the agent loop by handing the parser a broken shell command, and a
+ * guard whose command could not run is not mistaken for one that approved.
  *
  * <p>
  * Implementations must be thread-safe.
@@ -49,7 +50,7 @@ public interface ShellActionExecutor {
      *
      * <p>
      * When true, a context without an environment means the command does not run at all — there is no host fallback.
-     * Because that failure is swallowed at fire time, the front-ends refuse up front to bind such an executor to an
+     * Because that failure only shows at fire time, the front-ends refuse up front to bind such an executor to an
      * event that never has an environment: see {@link #canRunOn(HookEventType)}.
      *
      * @return true when the executor needs {@link HookContext#getExecutionEnvironment()} to be present
@@ -62,7 +63,7 @@ public interface ShellActionExecutor {
      * <p>
      * The single rule both front-ends ({@code SkillHookSetParser}, {@code HookRegistryApplier}) apply before accepting
      * a shell action: an executor that needs an execution environment cannot serve an event that fires outside every
-     * execution. Rejecting at declaration time is the point — the same mismatch at fire time is logged and swallowed.
+     * execution. Rejecting at declaration time is the point — the same mismatch at fire time is a hook that never runs.
      *
      * @param eventType
      *            the event the action is declared on (must not be null)
@@ -88,7 +89,9 @@ public interface ShellActionExecutor {
      * <p>
      * Must not throw under any circumstance — exceptions, non-zero exit codes, timeouts and a missing or unavailable
      * execution environment are all handled internally (logged at WARN). A run that produced no exit status reports
-     * {@link ShellHookOutcome#notObserved()}, which no caller reads as a veto.
+     * {@link ShellHookOutcome#notRun(ShellHookOutcome.Unrun, String)} with its cause. An event with a decision channel
+     * ({@code preTool}, {@code onStart}, {@code preCompact}, {@code permissionRequest}) reads that as a block or deny
+     * unless the hook declared {@code failOpen}; every other event only logs it.
      *
      * @param action
      *            The action to execute (must not be null)
@@ -99,7 +102,7 @@ public interface ShellActionExecutor {
      *            merge these on top of any inherited environment.
      * @param stdinPayload
      *            JSON document to feed the command on standard input, or null to leave stdin empty
-     * @return what the command did (never null); {@link ShellHookOutcome#notObserved()} when no status was produced
+     * @return what the command did (never null); {@link ShellHookOutcome#notRun} when no status was produced
      */
     ShellHookOutcome run(ShellAction action, HookContext context, Map<String, String> environmentOverrides,
             String stdinPayload);

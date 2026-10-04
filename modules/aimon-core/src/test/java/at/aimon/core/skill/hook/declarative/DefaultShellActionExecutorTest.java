@@ -20,6 +20,7 @@ import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.environment.UnavailableExecutionEnvironment;
+import at.aimon.core.environment.exception.ExecutionEnvironmentUnavailableException;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
 import at.aimon.core.hook.event.OnSessionStartContext;
@@ -142,6 +143,7 @@ class DefaultShellActionExecutorTest {
 
         assertThat(outcome.isObserved()).isFalse();
         assertThat(outcome.isDenied()).isFalse();
+        assertThat(outcome.getUnrunCause()).contains(ShellHookOutcome.Unrun.NO_ENVIRONMENT);
     }
 
     @Test
@@ -153,7 +155,7 @@ class DefaultShellActionExecutorTest {
         ShellHookOutcome outcome = executor.run(new ShellAction("true", Duration.ofSeconds(1)), context, Map.of(),
                 null);
 
-        assertThat(outcome.isObserved()).isFalse();
+        assertThat(outcome.getUnrunCause()).contains(ShellHookOutcome.Unrun.NO_ENVIRONMENT);
     }
 
     @Test
@@ -165,6 +167,33 @@ class DefaultShellActionExecutorTest {
 
         assertThat(outcome.isObserved()).isFalse();
         assertThat(outcome.isDenied()).isFalse();
+        assertThat(outcome.getUnrunCause()).contains(ShellHookOutcome.Unrun.ENVIRONMENT_UNAVAILABLE);
+        assertThat(outcome.unrunReason()).contains("sandbox is down");
+    }
+
+    @Test
+    void run_environmentThatGivesNoShell_reportsEnvironmentUnavailable() {
+        ExecutionEnvironment broken = mock(ExecutionEnvironment.class);
+        when(broken.shell()).thenThrow(new IllegalStateException("no shell here"));
+
+        ShellHookOutcome outcome = executor.run(new ShellAction("guard", Duration.ofSeconds(1)), contextIn(broken),
+                Map.of(), null);
+
+        assertThat(outcome.getUnrunCause()).contains(ShellHookOutcome.Unrun.ENVIRONMENT_UNAVAILABLE);
+        assertThat(outcome.unrunReason()).contains("no shell here");
+    }
+
+    @Test
+    void run_environmentLostWhileExecuting_reportsEnvironmentUnavailable() throws Exception {
+        VirtualShell shell = mock(VirtualShell.class);
+        when(shell.execute(any(ShellCommand.class), any(ExecutionOptions.class)))
+                .thenThrow(new ExecutionEnvironmentUnavailableException("sandbox went away", null));
+
+        ShellHookOutcome outcome = executor.run(new ShellAction("guard", Duration.ofSeconds(1)), contextIn(shell),
+                Map.of(), null);
+
+        assertThat(outcome.getUnrunCause()).contains(ShellHookOutcome.Unrun.ENVIRONMENT_UNAVAILABLE);
+        assertThat(outcome.unrunReason()).contains("sandbox went away");
     }
 
     @Test
@@ -177,7 +206,8 @@ class DefaultShellActionExecutorTest {
         ShellHookOutcome outcome = executor.run(new ShellAction("x", Duration.ofSeconds(1)), contextIn(shell), Map.of(),
                 null);
 
-        assertThat(outcome.isObserved()).isFalse();
+        assertThat(outcome.getUnrunCause()).contains(ShellHookOutcome.Unrun.EXECUTION_FAILED);
+        assertThat(outcome.unrunReason()).contains("Shell is closed");
     }
 
     @Test
@@ -200,8 +230,11 @@ class DefaultShellActionExecutorTest {
         when(shell.execute(any(ShellCommand.class), any(ExecutionOptions.class)))
                 .thenThrow(new ShellTimeoutException("timeout", Duration.ofSeconds(1), "", ""));
 
-        assertThat(executor.run(new ShellAction("sleep 999", Duration.ofSeconds(1)), contextIn(shell), Map.of(), null)
-                .isObserved()).isFalse();
+        ShellHookOutcome outcome = executor.run(new ShellAction("sleep 999", Duration.ofSeconds(1)), contextIn(shell),
+                Map.of(), null);
+
+        assertThat(outcome.getUnrunCause()).contains(ShellHookOutcome.Unrun.TIMEOUT);
+        assertThat(outcome.unrunReason()).isEqualTo("timed out: no exit status within 1000ms");
     }
 
     @Test
@@ -210,8 +243,11 @@ class DefaultShellActionExecutorTest {
         when(shell.execute(any(ShellCommand.class), any(ExecutionOptions.class)))
                 .thenThrow(new ShellExecutionException("io fail"));
 
-        assertThat(executor.run(new ShellAction("nope", Duration.ofSeconds(1)), contextIn(shell), Map.of(), null)
-                .isObserved()).isFalse();
+        ShellHookOutcome outcome = executor.run(new ShellAction("nope", Duration.ofSeconds(1)), contextIn(shell),
+                Map.of(), null);
+
+        assertThat(outcome.getUnrunCause()).contains(ShellHookOutcome.Unrun.EXECUTION_FAILED);
+        assertThat(outcome.unrunReason()).isEqualTo("shell execution failed: io fail");
     }
 
     @Test

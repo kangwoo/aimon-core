@@ -5,6 +5,8 @@ import java.util.Objects;
 import java.util.Optional;
 
 import at.aimon.core.agent.AgentRuntimeId;
+import at.aimon.core.agent.ExecutionId;
+import at.aimon.core.agent.session.SessionId;
 
 /**
  * What a {@link BackgroundBashStore} keeps about one background command: who started it, on which node it runs and how
@@ -15,11 +17,18 @@ import at.aimon.core.agent.AgentRuntimeId;
  * It deliberately carries no command text: a command line can hold a credential ({@code curl -H "Authorization: ..."},
  * {@code PGPASSWORD=... psql}), and a shared store is a place it would outlive the process in. The node that runs the
  * command keeps the text in its {@link BackgroundBashTask}.
+ *
+ * <p>
+ * <b>Ownership is three fields</b> — runtime, session, execution — and a caller finds the task only when all three
+ * match its own ({@link #owner()}). A store must hand every one of them back as written; see
+ * {@link BackgroundBashStore}.
  */
 public final class BackgroundBashRecord {
 
     private final String taskId;
     private final AgentRuntimeId ownerRuntimeId;
+    private final SessionId ownerSessionId;
+    private final ExecutionId ownerExecutionId;
     private final String nodeId;
     private final Instant startedAt;
     private final Instant expiresAt;
@@ -30,6 +39,8 @@ public final class BackgroundBashRecord {
     private BackgroundBashRecord(Builder builder) {
         this.taskId = Objects.requireNonNull(builder.taskId, "taskId must not be null");
         this.ownerRuntimeId = builder.ownerRuntimeId;
+        this.ownerSessionId = builder.ownerSessionId;
+        this.ownerExecutionId = builder.ownerExecutionId;
         this.nodeId = Objects.requireNonNull(builder.nodeId, "nodeId must not be null");
         this.startedAt = Objects.requireNonNull(builder.startedAt, "startedAt must not be null");
         this.expiresAt = builder.expiresAt;
@@ -45,8 +56,9 @@ public final class BackgroundBashRecord {
 
     /** @return a builder seeded with every field of this record */
     public Builder toBuilder() {
-        return new Builder().taskId(taskId).ownerRuntimeId(ownerRuntimeId).nodeId(nodeId).startedAt(startedAt)
-                .expiresAt(expiresAt).status(status).exitCode(exitCode).finishedAt(finishedAt);
+        return new Builder().taskId(taskId).ownerRuntimeId(ownerRuntimeId).ownerSessionId(ownerSessionId)
+                .ownerExecutionId(ownerExecutionId).nodeId(nodeId).startedAt(startedAt).expiresAt(expiresAt)
+                .status(status).exitCode(exitCode).finishedAt(finishedAt);
     }
 
     /** @return the task id the model was given */
@@ -55,11 +67,35 @@ public final class BackgroundBashRecord {
     }
 
     /**
-     * @return the runtime whose execution started the command, or empty for a command started outside any runtime;
-     *         only an execution of the same runtime may read or stop the task
+     * @return the runtime whose execution started the command, or empty for a command started outside any runtime
      */
     public Optional<AgentRuntimeId> getOwnerRuntimeId() {
         return Optional.ofNullable(ownerRuntimeId);
+    }
+
+    /**
+     * @return the session the command was started for, or empty when the starting execution acted for no session
+     */
+    public Optional<SessionId> getOwnerSessionId() {
+        return Optional.ofNullable(ownerSessionId);
+    }
+
+    /**
+     * @return the execution that started the command when it acted for no session, otherwise empty
+     */
+    public Optional<ExecutionId> getOwnerExecutionId() {
+        return Optional.ofNullable(ownerExecutionId);
+    }
+
+    /**
+     * Returns the three ownership fields as the value a lookup compares. A record written before the session and
+     * execution fields existed, or returned by a store that dropped them, reads as owned by the runtime alone — which
+     * no caller with a session or an execution matches.
+     *
+     * @return the owner (never null); never throws, whatever combination the store returned
+     */
+    public BackgroundBashOwner owner() {
+        return BackgroundBashOwner.of(ownerRuntimeId, ownerSessionId, ownerExecutionId);
     }
 
     /** @return the node whose process runs the command */
@@ -97,14 +133,16 @@ public final class BackgroundBashRecord {
 
     @Override
     public String toString() {
-        return "BackgroundBashRecord{" + taskId + ", owner=" + ownerRuntimeId + ", node=" + nodeId + ", status="
-                + status + '}';
+        return "BackgroundBashRecord{" + taskId + ", owner=" + owner() + ", node=" + nodeId + ", status=" + status
+                + '}';
     }
 
     /** Builder for {@link BackgroundBashRecord}. */
     public static final class Builder {
         private String taskId;
         private AgentRuntimeId ownerRuntimeId;
+        private SessionId ownerSessionId;
+        private ExecutionId ownerExecutionId;
         private String nodeId;
         private Instant startedAt;
         private Instant expiresAt;
@@ -133,6 +171,39 @@ public final class BackgroundBashRecord {
         public Builder ownerRuntimeId(AgentRuntimeId ownerRuntimeId) {
             this.ownerRuntimeId = ownerRuntimeId;
             return this;
+        }
+
+        /**
+         * @param ownerSessionId
+         *            the session the command was started for, or null for none
+         * @return this builder
+         */
+        public Builder ownerSessionId(SessionId ownerSessionId) {
+            this.ownerSessionId = ownerSessionId;
+            return this;
+        }
+
+        /**
+         * @param ownerExecutionId
+         *            the execution that started the command when it acted for no session, or null for none
+         * @return this builder
+         */
+        public Builder ownerExecutionId(ExecutionId ownerExecutionId) {
+            this.ownerExecutionId = ownerExecutionId;
+            return this;
+        }
+
+        /**
+         * Sets the three ownership fields from one owner.
+         *
+         * @param owner
+         *            the owner (must not be null)
+         * @return this builder
+         */
+        public Builder owner(BackgroundBashOwner owner) {
+            Objects.requireNonNull(owner, "owner must not be null");
+            return ownerRuntimeId(owner.getRuntimeId().orElse(null)).ownerSessionId(owner.getSessionId().orElse(null))
+                    .ownerExecutionId(owner.getExecutionId().orElse(null));
         }
 
         /**

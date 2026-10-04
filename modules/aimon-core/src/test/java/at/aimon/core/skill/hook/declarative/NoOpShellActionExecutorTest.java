@@ -43,9 +43,12 @@ class NoOpShellActionExecutorTest {
     void run_doesNotThrow() {
         ShellAction action = new ShellAction("echo hi", Duration.ofSeconds(1));
 
-        // Must not throw — this is the fail-soft contract.
-        assertThat(NoOpShellActionExecutor.INSTANCE.run(action, CONTEXT, Map.of("AIMON_HOOK_EVENT", "preTool"), null)
-                .isObserved()).isFalse();
+        // Must not throw. It ran nothing, and says so: a guard event reads this as a block.
+        ShellHookOutcome outcome = NoOpShellActionExecutor.INSTANCE.run(action, CONTEXT,
+                Map.of("AIMON_HOOK_EVENT", "preTool"), null);
+
+        assertThat(outcome.isObserved()).isFalse();
+        assertThat(outcome.getUnrunCause()).contains(ShellHookOutcome.Unrun.SHELL_UNSUPPORTED);
     }
 
     @Test

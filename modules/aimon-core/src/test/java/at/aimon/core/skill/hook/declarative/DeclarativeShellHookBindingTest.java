@@ -42,9 +42,11 @@ import at.aimon.core.hook.event.PostCompactContext;
 import at.aimon.core.hook.event.PreCompactContext;
 import at.aimon.core.hook.event.SubagentStartContext;
 import at.aimon.core.hook.event.SubagentStopContext;
+import at.aimon.core.hook.execution.Decision;
 import at.aimon.core.hook.execution.ExecutionHook;
 import at.aimon.core.hook.execution.HookContext;
 import at.aimon.core.hook.execution.HookResult;
+import at.aimon.core.hook.execution.HookStatus;
 import at.aimon.core.hook.rewake.RewakeSpec;
 import at.aimon.core.hook.rewake.RewakeTriggerDelay;
 import at.aimon.core.skill.hook.SkillHookSet;
@@ -261,6 +263,49 @@ class DeclarativeShellHookBindingTest {
                 DeclarativeOnSessionEndHook.EVENT_NAME, DeclarativeOnConfigReloadHook.EVENT_NAME);
     }
 
+    // --- a command that produced no exit status (EE-51) -----------------------------------------------------------
+
+    /** The three events of this table that own a decision channel; {@code preTool} is the fourth, tested apart. */
+    private static final Set<String> GUARD_EVENTS = Set.of(DeclarativeOnStartHook.EVENT_NAME,
+            DeclarativePreCompactHook.EVENT_NAME, DeclarativePermissionRequestHook.EVENT_NAME);
+
+    static Stream<Arguments> bindingsByUnrunCause() {
+        return bindings().flatMap(row -> Stream.of(ShellHookOutcome.Unrun.values())
+                .map(cause -> Arguments.of(row.get()[0], row.get()[3], cause)));
+    }
+
+    @ParameterizedTest(name = "{0} / {2}")
+    @MethodSource("bindingsByUnrunCause")
+    void create_commandThatCouldNotRun_blocksOnGuardEventsAndOnlyThere(String eventName, HookContext context,
+            ShellHookOutcome.Unrun cause) {
+        final ExecutionHook<?> hook = DeclarativeShellHookBinding.forEvent(eventName).orElseThrow().create(SKILL,
+                ACTION, RecordingExecutor.notRunning(cause), DeclarativeHookOptions.none());
+
+        final HookResult result = execute(hook, context);
+
+        if (!GUARD_EVENTS.contains(eventName)) {
+            // Advisory events have no decision channel: whatever the cause, the event proceeds.
+            assertThat(result.getStatus()).isEqualTo(HookStatus.SUCCESS);
+            return;
+        }
+        assertThat(result.getStatus()).isEqualTo(HookStatus.BLOCKED);
+        assertThat(result.getDecision()).isEqualTo(Decision.DENY);
+        assertThat(result.getFeedback().orElseThrow()).contains("guard hook '" + SKILL + "' (" + eventName + ")")
+                .contains(cause.description()).contains("detail of " + cause).contains("fail-closed")
+                // The reader of this text is the party the guard constrains; how to switch it off is not for it.
+                .doesNotContain("failOpen").doesNotContain(ACTION.getCommand());
+    }
+
+    @ParameterizedTest(name = "{0} / {2}")
+    @MethodSource("bindingsByUnrunCause")
+    void create_failOpen_letsACommandThatCouldNotRunPass(String eventName, HookContext context,
+            ShellHookOutcome.Unrun cause) {
+        final ExecutionHook<?> hook = DeclarativeShellHookBinding.forEvent(eventName).orElseThrow().create(SKILL,
+                ACTION, RecordingExecutor.notRunning(cause), DeclarativeHookOptions.builder().failOpen(true).build());
+
+        assertThat(execute(hook, context).getStatus()).isEqualTo(HookStatus.SUCCESS);
+    }
+
     // --- asyncRewake wiring --------------------------------------------------------------------------------------
 
     @Test
@@ -385,15 +430,25 @@ class DeclarativeShellHookBindingTest {
      * Executor stub that records the environment each hook exports and always reports a clean exit.
      *
      * <p>
-     * It reports a clean exit rather than {@link ShellHookOutcome#notObserved()}, which would make every
-     * outcome-sensitive assertion vacuous.
+     * It reports a clean exit unless built with {@link #notRunning}, so the outcome-sensitive assertions are not
+     * vacuous.
      */
     private static final class RecordingExecutor implements ShellActionExecutor {
 
         private final List<Map<String, String>> envs = new ArrayList<>();
 
+        private final ShellHookOutcome outcome;
+
+        private RecordingExecutor(ShellHookOutcome outcome) {
+            this.outcome = outcome;
+        }
+
         static RecordingExecutor ok() {
-            return new RecordingExecutor();
+            return new RecordingExecutor(ShellHookOutcome.of(0, "", ""));
+        }
+
+        static RecordingExecutor notRunning(ShellHookOutcome.Unrun cause) {
+            return new RecordingExecutor(ShellHookOutcome.notRun(cause, "detail of " + cause));
         }
 
         @Override
@@ -410,7 +465,7 @@ class DeclarativeShellHookBindingTest {
         public ShellHookOutcome run(ShellAction action, HookContext context, Map<String, String> environmentOverrides,
                 String stdinPayload) {
             envs.add(new LinkedHashMap<>(environmentOverrides));
-            return ShellHookOutcome.of(0, "", "");
+            return outcome;
         }
     }
 }

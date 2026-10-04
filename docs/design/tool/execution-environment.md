@@ -450,9 +450,14 @@ public interface ExecutionEnvironmentProvider {
   버퍼는 그 노드의 매니저가 메모리에 든다(`BackgroundBashTask`). 프로세스가 그 노드에만 있으므로 옮길 수 없다
 - **조회 결과는 셋 중 하나** — 이 노드의 핸들 / 저장소에만 있는 레코드 / 없음. 둘째가 "다른 노드에서 도는 작업"(또는
   이 노드가 재시작으로 잃은 작업) 보고이고, 그 출력을 읽거나 명령을 멈출 수는 없다(EE-53)
-- **소유 범위.** 한 목록을 모든 테넌트가 보게 되므로, 작업은 시작한 실행의 `ToolContextKeys.AGENT_RUNTIME_ID` 를
-  소유자로 기록하고 도구는 자기 컨텍스트의 id 와 같을 때만 찾는다. 다른 런타임의 task id 는 "없음" 이다. task id 는
-  32비트라 경계가 될 수 없다. 같은 런타임의 다른 세션은 전처럼 볼 수 있고 — 이제 **멈출 수도 있다**
+- **소유 범위 (EE-58).** 한 목록을 모든 테넌트가 보게 되므로, 작업은 소유자(`BackgroundBashOwner`)를 기록하고 도구는
+  자기 호출의 소유자와 **전부 같을 때만** 찾는다. 소유자는 런타임과, 그 안에서 작업을 띄운 호출이 **대신하는 세션**이다 —
+  `SESSION_ID`(턴), 없으면 `INVOKING_SESSION_ID`(포크). 세션을 대신하지 않는 실행(스케줄 루틴, 호출자 없는 포크)은 자기
+  `EXECUTION_ID` 가 소유자다. 그래서 세션의 턴과 그 세션을 위해 띄운 포크는 서로의 작업을 읽고 멈추고, **같은 런타임의
+  다른 세션은 그러지 못한다.** 범위 밖의 task id 는 없는 id 와 같은 "없음" 이다 — 저장소 레코드의 소유자를 "다른 노드"
+  판정보다 먼저 비교하므로 어느 노드에서 물어도 같다. task id 는 32비트라 경계가 될 수 없다. 저장소는 소유 필드
+  셋(`ownerRuntimeId` · `ownerSessionId` · `ownerExecutionId`)을 그대로 돌려줘야 한다 — 하나라도 잃으면 그 작업은 주인을
+  포함해 누구에게도 보이지 않는다
 - **보존.** 끝난 지 보존 기간(기본 24시간)이 지난 작업은 다음 `start` 때 레코드와 함께 치운다. 전에는 런타임과 함께
   GC 되었다
 
@@ -674,6 +679,20 @@ CLI 처럼 "사용자 프로젝트 디렉터리에서 돈다"는 배치에서는
 않는다(호스트로 되돌아가지 않는다). 설계와 이벤트별 발화 지점은
 [`execution-environment-ee9-ee12-hook-environment.md`](execution-environment-ee9-ee12-hook-environment.md) 에 있다.
 
+**명령을 돌리지 못한 가드는 막는다 (EE-51).** 환경이 없거나 사용 불가일 때, 그리고 timeout · 셸 실패로 종료 코드를 얻지
+못했을 때, 실행기는 원인을 실어 보고하고(`ShellHookOutcome.notRun(cause, detail)`) 거부 채널이 있는 네 이벤트(`preTool` ·
+`onStart` · `preCompact` · `permissionRequest`)의 훅은 그것을 **거부**로 읽는다 — 사유에 원인이 실린다. 훅이 `failOpen: true`
+를 선언했으면 통과시킨다. 나머지 이벤트는 전처럼 WARN 후 진행한다. 그래서 환경 제공자가 실패한 실행에서는 셸 가드가 걸린
+도구가 환경을 쓰지 않는 것까지 막힌다 — 가드가 꺼진 채 실행되던 것의 반대쪽이다.
+
+**스킬 훅은 그 스킬의 포크에서만 발화한다 (EE-49).** 스킬이 선언한 훅은 런타임의 `HookRegistry` 에 등록되지 않고, 포크가
+디스패치하는 레지스트리 위에 얹힌다(`SkillScopedHookRegistry`). 같은 에이전트의 다른 세션이 낸 이벤트는 그 훅을 치지
+않으므로, 세션마다 환경이 다른 제공자에서도 한 세션의 스킬 훅이 다른 세션의 환경에서 도는 일이 없다. 실행은 자기가
+디스패치하는 레지스트리를 `ToolContextKeys.HOOK_REGISTRY`(write-once)로 싣고, 포크를 띄우는 도구는 그 값을 포크에 넘긴다.
+두 변경의 설계는
+[`execution-environment-ee49-ee51-ee58-isolation-boundary.md`](execution-environment-ee49-ee51-ee58-isolation-boundary.md) 에
+있다.
+
 프롬프트 캐시에 대한 영향: 서술자는 환경마다 한 번 정해지고 한 세션 안에서는 바뀌지 않는다(샌드박스가 재생성되어도
 이미지가 같으면 같다). 따라서 세션 단위 캐시 접두부는 안정적이다. 서술자가 에이전트 단위로 캐시되던 자리
 (`AgentEnvironmentSnapshot`)에서 빠져 실행 단위 조립으로 옮겨 가는 것이 이 변경의 비용이다.
@@ -742,7 +761,8 @@ aimon-sandbox 는 `ExecutionEnvironmentProvider` 를 구현한다. 이 문서가
 | 스테이징 영역을 파일 도구에 읽기 전용으로 둔다(§4.4) — 경로 규칙으로. 로컬 제공자와 외부 제공자가 같은 공개 팩토리 `VirtualFileSystems.withPathRules` 를 쓴다 | 샌드박스의 스테이징 영역도 파일 도구에 읽기 전용이다. 셸은 쓸 수 있다 |
 | `WorktreeMerge.promote` 는 부모 자신·중복·부모와 파일 시스템을 공유하는 브랜치를 거부하고, `isolatedFrom()` 이 밝힌 계보가 다르면 거부한다(§5.2) | (권장) `isolate()` 가 만든 브랜치는 `isolatedFrom()` 으로 부모를 밝히고, 부모의 경로 규칙을 브랜치 루트 기준으로 `VirtualFileSystems.withPathRules` 로 건다(§9.2). 사용 불가이거나 이미 브랜치여서 격리를 거절할 때는 빈 값이 아니라 이유를 담은 예외를 던진다 |
 | `resolve()` 실패 시 호스트로 되돌아가지 않는다 | 실패를 예외로 알린다 |
-| 스킬 선언 훅의 셸 액션을 그 실행의 `shell().execute` 로 돌린다 — `ExecutionOptions` 에 `timeout`·`environment`(`AIMON_*` 변수)·`stdin`(JSON 페이로드)을 싣는다(§10) | 셸이 `environment` 와 `stdin` 옵션을 받는다. 받지 못하면 그 훅은 돌지 않은 것으로 처리된다(WARN, 거부로 읽지 않는다) |
+| 스킬 선언 훅의 셸 액션을 그 실행의 `shell().execute` 로 돌린다 — `ExecutionOptions` 에 `timeout`·`environment`(`AIMON_*` 변수)·`stdin`(JSON 페이로드)을 싣는다(§10) | 셸이 `environment` 와 `stdin` 옵션을 받는다. 받지 못하면 그 훅은 돌지 않은 것으로 처리된다 — 거부 채널이 있는 이벤트(`preTool` · `onStart` · `preCompact` · `permissionRequest`)에서는 `failOpen` 이 아닌 한 **거부**이고, 나머지는 WARN 후 진행이다. `shell()` · `execute` 가 사용 불가 예외를 던질 때도 같다(§10) |
+| 백그라운드 작업을 그것을 띄운 세션(또는 세션 없는 실행)에만 보인다. 레코드에 소유 필드 셋을 싣는다(§5.3) | `BackgroundBashStore` 를 구현한다면 소유 필드 셋을 그대로 저장하고 돌려준다 |
 | 프롬프트 조립이 `fileSystem()` 을 읽을 수 있다(옵트인 컨텍스트 제공자, §5.1) | 그 읽기가 프로비저닝을 일으킨다는 것을 문서에 밝힌다 |
 
 워크스페이스 샌드박스 설계 문서의 §7 이 이 표를 샌드박스 쪽 구현으로 풀어 적는다.
@@ -791,6 +811,11 @@ aimon-sandbox 는 `ExecutionEnvironmentProvider` 를 구현한다. 이 문서가
   에서 셸을 얻는다(§10). 스킬을 파싱할 때 묶은 셸은 호스트의 것이다. 예외는 운영자가 쓴 `hooks.json` 전용
   `HostShellActionExecutor` 하나이고, 그것을 스킬 파서에 넘기면 안 된다. `PackageDependencyArchitectureTest.skillHooksHoldNoShell`
   이 강제한다
+- **스킬 훅을 런타임의 `HookRegistry` 에 등록하지 말 것.** 그 레지스트리는 같은 에이전트의 모든 세션이 디스패치한다.
+  스킬 훅은 포크가 받는 레지스트리에 얹는다(§10). 포크를 띄우는 코드는 생성자에서 받은 레지스트리가 아니라
+  `HookRegistryAccess.of(toolContext)` 를 먼저 쓴다 — 아니면 스킬의 가드가 그 하위 트리에서 조용히 꺼진다
+- **종료 코드를 얻지 못한 셸 훅을 "통과" 로 보고하지 말 것.** `ShellActionExecutor` 는 원인을 실어 `notRun` 으로
+  보고하고, 통과시킬지는 훅의 선언(`failOpen`)이 정한다(§10)
 - **런타임이 사라질 때 제공자를 닫지 말 것.** 닫는 것은 그 런타임의 `RuntimeBinding` 이다. 제공자는 다른 런타임과, 사라진
   런타임이 띄워 둔 백그라운드 명령이 계속 쓴다(§4.3)
 - **`RuntimeBinding.close()` 에서 도는 명령을 멈추지 말 것.** 축출은 종료 요청이 아니다. 멈추는 것은 `KillShell`, 상한,
@@ -814,6 +839,7 @@ aimon-sandbox 는 `ExecutionEnvironmentProvider` 를 구현한다. 이 문서가
 - [`execution-environment-ee9-ee12-hook-environment.md`](execution-environment-ee9-ee12-hook-environment.md) — 훅 컨텍스트에 실행 환경을 싣고 스킬 선언 훅의 셸을 실행 환경으로 옮긴 설계(EE-9 · EE-12)
 - [`execution-environment-ee13-ee7-background-lifecycle.md`](execution-environment-ee13-ee7-background-lifecycle.md) — 백그라운드 `Bash` 종료(`KillShell`, 셸 취소 계약, 환경이 정하는 상한)와 제공자 · 작업 목록의 수명 상향 설계(EE-13 · EE-7)
 - [`execution-environment-ee14-user-locale.md`](execution-environment-ee14-user-locale.md) — `Environment` 를 없애고 `timeZone` 을 `UserLocale` 로 옮긴 설계(EE-14)
+- [`execution-environment-ee49-ee51-ee58-isolation-boundary.md`](execution-environment-ee49-ee51-ee58-isolation-boundary.md) — 한 런타임을 나눠 쓰는 실행들 사이의 경계 셋: 스킬 훅의 발화 범위, 명령을 돌리지 못한 가드의 fail-closed, 백그라운드 작업의 가시 범위(EE-49 · EE-51 · EE-58)
 - [`../workflow/workflow.md`](../workflow/workflow.md) §6.3 — worktree 격리
 - [`../agent-execution/artifact.md`](../agent-execution/artifact.md) — `ArtifactCollector`
 - [`../filesystem/backend-contract.md`](../filesystem/backend-contract.md) — VFS 백엔드 계약 (§7 의 `getMetadata` 조항이 들어갈 자리)

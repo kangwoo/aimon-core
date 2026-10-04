@@ -10,6 +10,7 @@ import at.aimon.core.agent.InvokerType;
 import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.event.OnStartContext;
+import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.hook.execution.HookStatus;
 import at.aimon.core.skill.Skill;
 import at.aimon.core.skill.exception.SkillParseException;
@@ -43,14 +44,33 @@ class AgentSetupFactorySkillHookShellTest {
     void parsedHookDoesNotRunWithoutAnExecutionEnvironment() {
         final SkillParser parser = AgentSetupFactory.createShellAwareSkillParser();
         final Skill parsed = parser.parse("sample",
-                skill("  onStart:\n    - action: { type: shell, command: \"exit 2\" }\n"));
+                skill("  onStart:\n    - action: { type: shell, command: \"exit 0\" }\n"));
 
-        // exit 2 on onStart is a block. With no environment the command is not run, so nothing can block.
-        assertThat(parsed.getMetadata().getHooks().getOnStartHooks().get(0)
-                .execute(OnStartContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("agent")
-                        .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault())
-                        .userMessage("hi").build())
-                .getStatus()).isEqualTo(HookStatus.SUCCESS);
+        // On the host "exit 0" would let the turn start. With no environment the command is not run at all, and a
+        // guard that could not run blocks (fail-closed) — naming the missing environment, not an exit code.
+        final HookResult result = parsed.getMetadata().getHooks().getOnStartHooks().get(0).execute(noEnvironment());
+
+        assertThat(result.getStatus()).isEqualTo(HookStatus.BLOCKED);
+        assertThat(result.getFeedback().orElseThrow()).contains("guard hook 'sample' (onStart)")
+                .contains("no execution environment");
+    }
+
+    @Test
+    @DisplayName("failOpen: true in frontmatter lets a hook that could not run pass, still without a host fallback")
+    void failOpenHookPassesWithoutAnExecutionEnvironment() {
+        final SkillParser parser = AgentSetupFactory.createShellAwareSkillParser();
+        final Skill parsed = parser.parse("sample",
+                skill("  onStart:\n    - action: { type: shell, command: \"exit 2\" }\n      failOpen: true\n"));
+
+        // On the host "exit 2" would block. It is not run, and the hook opted out of blocking when it cannot run.
+        assertThat(parsed.getMetadata().getHooks().getOnStartHooks().get(0).execute(noEnvironment()).getStatus())
+                .isEqualTo(HookStatus.SUCCESS);
+    }
+
+    private static OnStartContext noEnvironment() {
+        return OnStartContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("agent")
+                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault()).userMessage("hi")
+                .build();
     }
 
     @Test

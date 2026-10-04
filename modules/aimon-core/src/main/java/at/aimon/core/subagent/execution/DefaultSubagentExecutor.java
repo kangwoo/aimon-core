@@ -777,6 +777,9 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         // so an enricher that tries to replace either fails (and is logged) instead of silently swapping the
         // filesystem and shell under the fork's tools.
         builder.put(ToolContextKeys.EXECUTION_ENVIRONMENT, executionEnvironment);
+        // Likewise the registry this fork dispatches against, so the forks it spawns inherit it — inside a forked
+        // skill that is the view carrying the skill's hooks. Write-once for the same reason as the environment.
+        builder.put(ToolContextKeys.HOOK_REGISTRY, context.getHookRegistry());
         context.getExecutionEnvironmentProvider()
                 .ifPresent(p -> builder.put(ToolContextKeys.EXECUTION_ENVIRONMENT_PROVIDER, p));
 

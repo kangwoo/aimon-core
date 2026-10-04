@@ -76,6 +76,31 @@ class JacksonHookConfigParserTest {
     }
 
     @Test
+    @DisplayName("failOpen binds from a JSON boolean and defaults to false")
+    void failOpenBindsFromABoolean() {
+        final HookConfigDocument doc = parser.parse("{\"hooks\":{\"PreToolUse\":[{\"hooks\":["
+                + "{\"type\":\"command\",\"command\":\"a\",\"failOpen\":true},"
+                + "{\"type\":\"command\",\"command\":\"b\",\"failOpen\":false},"
+                + "{\"type\":\"command\",\"command\":\"c\"}]}]}}");
+
+        assertThat(doc.getHooks().get("PreToolUse").get(0).getHandlers()).extracting(HookHandlerSpec::isFailOpen)
+                .containsExactly(true, false, false);
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest(name = "failOpen: {0}")
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"\"true\"", "\"false\"", "1", "0", "null", "[true]"})
+    @DisplayName("a failOpen that is not a JSON boolean fails the parse instead of being coerced")
+    void failOpenThatIsNotABooleanFails(String value) {
+        // The key takes a guard off, so "true" and 1 must not be read as true — and a guard must not be dropped with
+        // only a warning either. The file is refused, the same way a negative timeout is.
+        final String json = "{\"hooks\":{\"PreToolUse\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"x\","
+                + "\"failOpen\":" + value + "}]}]}}";
+
+        assertThatThrownBy(() -> parser.parse(json)).isInstanceOf(HookConfigParseException.class)
+                .hasMessageContaining("failOpen");
+    }
+
+    @Test
     @DisplayName("unknown handler fields are silently ignored (forwards-compat)")
     void unknownFieldsAreIgnored() {
         final String json = "{\"hooks\":{\"PreToolUse\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"x\""

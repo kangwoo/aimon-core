@@ -34,6 +34,7 @@ import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.execution.ExecutionMetadata;
+import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.TokenUsage;
@@ -49,6 +50,7 @@ import at.aimon.core.subagent.task.InMemorySessionSnapshotStore;
 import at.aimon.core.subagent.task.InMemoryTaskOutputStore;
 import at.aimon.core.subagent.task.SessionSnapshotStore;
 import at.aimon.core.subagent.task.TaskOutputStore;
+import at.aimon.core.tools.HookRegistryAccess;
 import at.aimon.core.tools.ToolContextKeys;
 
 class TaskToolTest {
@@ -240,6 +242,22 @@ class TaskToolTest {
         // against a regression to null rather than a proof that TaskTool read anything; the test above is what
         // proves the read.
         assertThat(captureEnvFor(contextWithId()).getCallerAllowedTools()).isEmpty();
+    }
+
+    @Test
+    void executeHandsTheSubagentTheCallersHookRegistry() {
+        // Inside a forked skill the caller's registry carries the skill's hooks; the constructor's does not (EE-49).
+        final HookRegistry fromContext = new DefaultHookRegistry();
+
+        final SubagentExecutionEnvironment env = captureEnvFor(
+                HookRegistryAccess.withHookRegistry(contextWithId(), fromContext));
+
+        assertThat(env.getHookRegistry()).isSameAs(fromContext);
+    }
+
+    @Test
+    void executeWithoutARegistryInTheContextUsesTheConstructorOne() {
+        assertThat(captureEnvFor(contextWithId()).getHookRegistry()).isSameAs(hookRegistry);
     }
 
     /** Runs a successful foreground Task against the given context and returns the environment it built. */

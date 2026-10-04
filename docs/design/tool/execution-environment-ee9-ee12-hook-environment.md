@@ -11,6 +11,13 @@
 > 로 옮겼다(EE-48 ← Q1, EE-51 ← Q2, EE-52 ← Q3; EE-49 · EE-50 ← §8). 열림/닫힘의 정본은 그 문서다. 이 설계가 확장하는
 > 명세는 [`execution-environment.md`](execution-environment.md) §10 · §13 · §15 다.
 
+> **덧붙임 (2026-10-04, EE-49 · EE-51).** §8 이 남긴 EE-49(스킬 훅이 agent-scoped 레지스트리에 등록된다)와 §9 Q2 의
+> EE-51(환경이 없으면 가드 훅이 통과한다)은 닫혔다. 스킬 훅은 이제 그 스킬의 포크가 받는 레지스트리에만 얹히고
+> (`RegistryBackedSkillHookActivator` → `ScopedSkillHookActivator`), 명령을 돌리지 못한 가드는 **막는다** —
+> `ShellHookOutcome.notObserved()` 는 `notRun(cause, detail)` 로 바뀌었다. 아래 본문의 "통과(fail-open)" 서술은 그 시점의
+> 기록이다. 설계는
+> [`execution-environment-ee49-ee51-ee58-isolation-boundary.md`](execution-environment-ee49-ee51-ee58-isolation-boundary.md).
+>
 > **덧붙임 (2026-10-03, EE-14).** 이 문서가 말하는 `Environment`(`agent.Environment`)는 이제 없다. 하나 남았던 필드는
 > `at.aimon.core.base.UserLocale` 로 옮겨 갔다. 본문은 승인본 그대로 두었고, 대응표는
 > [`../../migration/rename-maps.md`](../../migration/rename-maps.md) 에 있다.

@@ -19,13 +19,16 @@ import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
 import at.aimon.core.hook.event.OnSessionStartContext;
+import at.aimon.core.hook.event.OnStartContext;
 import at.aimon.core.hook.event.PreToolContext;
 import at.aimon.core.hook.execution.HookResult;
+import at.aimon.core.hook.execution.HookStatus;
 import at.aimon.core.llm.ToolUse;
 import at.aimon.core.shell.ExecutionOptions;
 import at.aimon.core.shell.ShellCommand;
 import at.aimon.core.shell.ShellCommandResult;
 import at.aimon.core.shell.VirtualShell;
+import at.aimon.core.shell.exception.ShellTimeoutException;
 import at.aimon.core.skill.hook.declarative.DefaultShellActionExecutor;
 import at.aimon.core.skill.hook.declarative.HostShellActionExecutor;
 import at.aimon.core.skill.hook.declarative.NoOpShellActionExecutor;
@@ -37,7 +40,53 @@ class HookRegistryApplierTest {
     private final HookConfigMerger merger = new HookConfigMerger();
 
     private HookRegistryApplier bootstrap() {
-        return new HookRegistryApplier(NoOpShellActionExecutor.INSTANCE, null, null, Map.of());
+        return new HookRegistryApplier(new HostShellActionExecutor(mock(VirtualShell.class)), null, null, Map.of());
+    }
+
+    // --- failOpen and executors without shell support (EE-51) -------------------------------------------------------
+
+    @Test
+    @DisplayName("an executor without shell support registers no command handler, instead of one that always blocks")
+    void shellUnsupportedExecutorSkipsCommandHandlers() {
+        final DefaultHookRegistry registry = new DefaultHookRegistry();
+
+        new HookRegistryApplier(NoOpShellActionExecutor.INSTANCE, null, null, Map.of()).apply(merged("""
+                {"hooks":{
+                  "preTool":[{"hooks":[{"type":"command","command":"guard.sh"},
+                                       {"type":"deny","reason":"no"}]}],
+                  "onStart":[{"hooks":[{"type":"command","command":"gate.sh"}]}],
+                  "postTool":[{"hooks":[{"type":"command","command":"audit.sh"}]}]
+                }}"""), registry);
+
+        // Only the deny handler survives: it needs no shell.
+        assertThat(registry.getHooks(HookEventType.PRE_TOOL)).hasSize(1);
+        assertThat(registry.getHooks(HookEventType.ON_START)).isEmpty();
+        assertThat(registry.getHooks(HookEventType.POST_TOOL)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a command handler blocks when its command cannot run, unless it declares failOpen")
+    void failOpenIsPassedToTheHook() throws Exception {
+        final VirtualShell hostShell = mock(VirtualShell.class);
+        when(hostShell.execute(any(ShellCommand.class), any(ExecutionOptions.class)))
+                .thenThrow(new ShellTimeoutException("timeout", Duration.ofSeconds(1), "", ""));
+        final DefaultHookRegistry registry = new DefaultHookRegistry();
+
+        new HookRegistryApplier(new HostShellActionExecutor(hostShell), null, null, Map.of()).apply(merged("""
+                {"hooks":{"onStart":[{"hooks":[
+                  {"type":"command","command":"gate.sh"},
+                  {"type":"command","command":"audit.sh","failOpen":true}
+                ]}]}}"""), registry);
+
+        final OnStartContext context = OnStartContext.builder().executorType(InvokerType.MAIN_AGENT)
+                .invokerName("agent").hookRegistry(registry).userLocale(UserLocale.createDefault()).userMessage("hi")
+                .build();
+        final HookResult guard = registry.getHooks(HookEventType.ON_START).get(0).execute(context);
+        final HookResult audit = registry.getHooks(HookEventType.ON_START).get(1).execute(context);
+
+        assertThat(guard.getStatus()).isEqualTo(HookStatus.BLOCKED);
+        assertThat(guard.getFeedback().orElseThrow()).contains("timed out").doesNotContain("failOpen");
+        assertThat(audit.getStatus()).isEqualTo(HookStatus.SUCCESS);
     }
 
     @Test

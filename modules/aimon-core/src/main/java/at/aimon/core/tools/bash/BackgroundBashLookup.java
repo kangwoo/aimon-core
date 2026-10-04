@@ -10,7 +10,7 @@ import java.util.Optional;
  * command stopped;</li>
  * <li>{@link Kind#ELSEWHERE} — only the store's record is here. The command belongs to another node's process, or to
  * this node before a restart; either way nothing on this node can read its output or stop it;</li>
- * <li>{@link Kind#NOT_FOUND} — no such task, or it belongs to another runtime, which reads the same on purpose.</li>
+ * <li>{@link Kind#NOT_FOUND} — no such task, or it belongs to another owner, which reads the same on purpose.</li>
  * </ul>
  */
 public final class BackgroundBashLookup {

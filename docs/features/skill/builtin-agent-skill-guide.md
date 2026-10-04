@@ -194,7 +194,7 @@ hooks:
 Review the following: $1
 ```
 
-> `shell` 액션은 호스트가 `DefaultShellActionExecutor` 로 와이어된 환경(예: aimon-cli)에서만 동작한다. 명령은 호스트가 아니라 **훅이 발화한 실행의 실행 환경 셸**에서 돈다 — 같은 스킬의 `Bash` 호출이 도는 곳이고, 작업 디렉터리는 워크스페이스다. 사용 가능한 환경 변수와 액션 시맨틱은 [AIMON Skill Extensions / hooks](../../references/aimon-skill-extensions.md#hooks--스킬-단위-hook-스코프) 를 참고한다.
+> `shell` 액션은 호스트가 `DefaultShellActionExecutor` 로 와이어된 환경(예: aimon-cli)에서만 동작한다. 명령은 호스트가 아니라 **훅이 발화한 실행의 실행 환경 셸**에서 돈다 — 같은 스킬의 `Bash` 호출이 도는 곳이고, 작업 디렉터리는 워크스페이스다. 훅은 **이 스킬이 fork 한 에이전트(와 그 에이전트가 띄운 fork)에서만** 발화한다 — 같은 에이전트의 다른 세션이나 스킬을 호출한 쪽에는 발화하지 않는다. `preTool` 같은 가드 이벤트의 `shell` 훅은 명령을 **돌리지 못하면**(실행 환경 없음 · timeout · 셸 실패) 막는다. 관찰용이면 항목에 `failOpen: true` 를 둔다. 사용 가능한 환경 변수와 액션 시맨틱은 [AIMON Skill Extensions / hooks](../../references/aimon-skill-extensions.md#hooks--스킬-단위-hook-스코프) 를 참고한다.
 
 ## Fork-mode 스킬 호출하기
 

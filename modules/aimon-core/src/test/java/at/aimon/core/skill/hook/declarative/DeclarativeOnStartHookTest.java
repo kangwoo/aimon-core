@@ -98,7 +98,7 @@ class DeclarativeOnStartHookTest {
         public ShellHookOutcome run(ShellAction action, HookContext context, Map<String, String> environmentOverrides,
                 String stdinPayload) {
             calls.add(new Call(action, Map.copyOf(environmentOverrides)));
-            return ShellHookOutcome.notObserved();
+            return ShellHookOutcome.of(0, "", "");
         }
 
         record Call(ShellAction action, Map<String, String> env) {

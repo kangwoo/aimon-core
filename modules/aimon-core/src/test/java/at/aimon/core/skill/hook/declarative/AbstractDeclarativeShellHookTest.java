@@ -34,7 +34,8 @@ import at.aimon.core.skill.hook.action.ShellAction;
  * <p>
  * This is the security-relevant mapping: which events turn an exit-{@value ShellHookOutcome#DENY_EXIT_CODE} veto into
  * an actual block/deny, and which ones are advisory and must swallow it. The stub executor reports a real outcome
- * from {@code run} — one that answered {@link ShellHookOutcome#notObserved()} could never reach the veto branch at all.
+ * from {@code run}. What a command that produced no exit status means is covered per event in
+ * {@code DeclarativeShellHookBindingTest}.
  */
 class AbstractDeclarativeShellHookTest {
 

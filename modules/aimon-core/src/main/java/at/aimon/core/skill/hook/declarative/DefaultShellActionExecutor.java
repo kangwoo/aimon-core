@@ -26,15 +26,16 @@ import at.aimon.core.skill.hook.action.ShellAction;
  * <p>
  * When the context carries no environment the command is <b>not run</b>: there is no host fallback
  * (execution-environment design §15). The skip is logged at WARN and reported as
- * {@link ShellHookOutcome#notObserved()}, as is an environment that is present but unavailable. Such a run can never
- * veto, so a guard hook is fail-open in that case — the same stance the executor takes for a timeout.
+ * {@link ShellHookOutcome#notRun} with {@link ShellHookOutcome.Unrun#NO_ENVIRONMENT}; an environment that is present
+ * but unavailable reports {@link ShellHookOutcome.Unrun#ENVIRONMENT_UNAVAILABLE}. The executor does not decide what
+ * that means — on a blocking chain the hook reads it as a block unless it declared {@code failOpen}.
  *
  * <p>
- * Otherwise implements the fail-soft contract of the interface: timeouts and unexpected exceptions are logged at WARN
- * level and swallowed so that the calling hook can stay non-blocking. When the command does run to completion its exit
- * code is reported back through {@link ShellHookOutcome}. Only the blocking chains act on it (exit
- * {@value ShellHookOutcome#DENY_EXIT_CODE} vetoes); every other event stays fire-and-forget regardless of what the
- * command returned.
+ * Otherwise implements the never-throw contract of the interface: timeouts and unexpected exceptions are logged at
+ * WARN level and reported as {@code notRun} too. When the command does run to completion its exit code is reported
+ * back through {@link ShellHookOutcome}. Only the blocking chains act on either (exit
+ * {@value ShellHookOutcome#DENY_EXIT_CODE} vetoes, no exit status blocks); every other event stays fire-and-forget
+ * regardless of what the command returned.
  *
  * <p>
  * Stateless and thread-safe.
@@ -71,7 +72,8 @@ public final class DefaultShellActionExecutor implements ShellActionExecutor {
                             + " command={})",
                     environmentOverrides.get(SkillHookEnv.AIMON_SKILL_NAME),
                     environmentOverrides.get(SkillHookEnv.AIMON_HOOK_EVENT), action.getCommand());
-            return ShellHookOutcome.notObserved();
+            return ShellHookOutcome.notRun(ShellHookOutcome.Unrun.NO_ENVIRONMENT,
+                    "the hook context carries no execution environment");
         }
         final VirtualShell shell;
         try {
@@ -79,11 +81,12 @@ public final class DefaultShellActionExecutor implements ShellActionExecutor {
         } catch (ExecutionEnvironmentUnavailableException e) {
             log.warn("Skill hook shell action not run: the execution environment is unavailable (command={}): {}",
                     action.getCommand(), e.getMessage());
-            return ShellHookOutcome.notObserved();
+            return ShellHookOutcome.notRun(ShellHookOutcome.Unrun.ENVIRONMENT_UNAVAILABLE, e.getMessage());
         } catch (RuntimeException e) {
             log.warn("Skill hook shell action not run: the execution environment gave no shell (command={}): {}",
                     action.getCommand(), e.getMessage(), e);
-            return ShellHookOutcome.notObserved();
+            return ShellHookOutcome.notRun(ShellHookOutcome.Unrun.ENVIRONMENT_UNAVAILABLE,
+                    "the environment gave no shell: " + e.getMessage());
         }
         return ShellActionRunner.run(shell, action, environmentOverrides, stdinPayload);
     }

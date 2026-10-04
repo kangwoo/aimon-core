@@ -9,6 +9,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.AgentRuntimeId;
+import at.aimon.core.agent.ExecutionId;
+import at.aimon.core.agent.session.SessionId;
 
 /**
  * What every {@link BackgroundBashStore} must do, whatever it is backed by. A store implementation extends this and
@@ -58,8 +60,39 @@ public abstract class BackgroundBashStoreContractTest {
 
         assertThat(store.find("bash_00000002")).hasValueSatisfying(record -> {
             assertThat(record.getOwnerRuntimeId()).isEmpty();
+            assertThat(record.getOwnerSessionId()).isEmpty();
+            assertThat(record.getOwnerExecutionId()).isEmpty();
+            assertThat(record.owner()).isEqualTo(BackgroundBashOwner.none());
             assertThat(record.getExpiresAt()).isEmpty();
         });
+    }
+
+    @Test
+    @DisplayName("the three ownership fields come back as written, and survive settle")
+    void ownershipFieldsRoundTrip() {
+        final BackgroundBashStore store = createStore();
+        final AgentRuntimeId runtime = AgentRuntimeId.fromName("ops", "acme");
+        final BackgroundBashOwner session = BackgroundBashOwner.of(runtime, SessionId.of("session-a"), null);
+        final BackgroundBashOwner execution = BackgroundBashOwner.of(runtime, null, ExecutionId.of("routine:t:1"));
+        store.putIfAbsent(running("bash_0000000a").toBuilder().owner(session).build());
+        store.putIfAbsent(running("bash_0000000b").toBuilder().owner(execution).build());
+
+        // A lookup compares all three, so a store that drops one hides the task from its own owner.
+        assertThat(store.find("bash_0000000a")).hasValueSatisfying(record -> {
+            assertThat(record.getOwnerSessionId()).contains(SessionId.of("session-a"));
+            assertThat(record.getOwnerExecutionId()).isEmpty();
+            assertThat(record.owner()).isEqualTo(session);
+        });
+        assertThat(store.find("bash_0000000b")).hasValueSatisfying(record -> {
+            assertThat(record.getOwnerSessionId()).isEmpty();
+            assertThat(record.getOwnerExecutionId()).contains(ExecutionId.of("routine:t:1"));
+            assertThat(record.owner()).isEqualTo(execution);
+        });
+        assertThat(store.settle("bash_0000000a", BashTaskStatus.COMPLETED, 0, ENDED).orElseThrow().owner())
+                .isEqualTo(session);
+        assertThat(store.settle("bash_0000000b", BashTaskStatus.KILLED, null, ENDED).orElseThrow().owner())
+                .isEqualTo(execution);
+        assertThat(store.find("bash_0000000a").orElseThrow().owner()).isEqualTo(session);
     }
 
     @Test

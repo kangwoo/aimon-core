@@ -16,13 +16,45 @@ class ShellHookOutcomeTest {
     }
 
     @Test
-    void notObserved_isNeverDenied() {
-        ShellHookOutcome outcome = ShellHookOutcome.notObserved();
+    void notRun_isNotObservedAndNotDenied_andCarriesItsCause() {
+        ShellHookOutcome outcome = ShellHookOutcome.notRun(ShellHookOutcome.Unrun.TIMEOUT, " no exit status in 30s ");
 
         assertThat(outcome.isObserved()).isFalse();
+        // "Denied" is what an exit code says. Whether silence blocks is the reading hook's decision.
         assertThat(outcome.isDenied()).isFalse();
         assertThat(outcome.getStdout()).isEmpty();
         assertThat(outcome.getStderr()).isEmpty();
+        assertThat(outcome.getUnrunCause()).contains(ShellHookOutcome.Unrun.TIMEOUT);
+        assertThat(outcome.unrunReason()).isEqualTo("timed out: no exit status in 30s");
+        assertThat(outcome).hasToString("ShellHookOutcome{notRun=TIMEOUT}");
+    }
+
+    @Test
+    void notRun_withoutDetail_reasonIsTheCauseAlone() {
+        assertThat(ShellHookOutcome.notRun(ShellHookOutcome.Unrun.NO_ENVIRONMENT, null).unrunReason())
+                .isEqualTo("no execution environment");
+        assertThat(ShellHookOutcome.notRun(ShellHookOutcome.Unrun.SHELL_UNSUPPORTED, "  ").unrunReason())
+                .isEqualTo("shell actions not supported");
+    }
+
+    @Test
+    void notRun_longDetail_isCappedLikeADenyReason() {
+        String reason = ShellHookOutcome.notRun(ShellHookOutcome.Unrun.EXECUTION_FAILED, "x".repeat(10_000))
+                .unrunReason();
+
+        assertThat(reason).startsWith("shell execution failed: xxx").contains("... [truncated, ");
+        assertThat(reason.length()).isLessThan(ShellHookOutcome.MAX_DENY_REASON_LENGTH + 100);
+    }
+
+    @Test
+    void notRun_nullCause_throwsNpe() {
+        assertThatThrownBy(() -> ShellHookOutcome.notRun(null, "x")).isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    void observedOutcome_hasNoUnrunCause() {
+        assertThat(ShellHookOutcome.of(0, "", "").getUnrunCause()).isEmpty();
+        assertThat(ShellHookOutcome.of(2, "", "no").unrunReason()).isEmpty();
     }
 
     @Test

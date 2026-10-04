@@ -14,6 +14,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.AgentRuntimeId;
+import at.aimon.core.agent.ExecutionId;
+import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
@@ -391,10 +393,10 @@ class BashOutputToolTest {
     @Test
     void testExecute_KilledTask_ReportsKilledWithItsOutput() throws Exception {
         ControllableShell shell = ControllableShell.cancellable();
-        BackgroundBashTask task = backgroundManager.start(null, "npm run dev", shell,
+        BackgroundBashTask task = backgroundManager.start(BackgroundBashOwner.none(), "npm run dev", shell,
                 at.aimon.core.shell.ExecutionOptions.defaults());
         shell.awaitStarted();
-        backgroundManager.kill(null, task.getTaskId());
+        backgroundManager.kill(BackgroundBashOwner.none(), task.getTaskId());
 
         ToolResult result = bashOutputTool.execute(ToolInput.of(Map.of("taskId", task.getTaskId())), context);
 
@@ -408,8 +410,8 @@ class BashOutputToolTest {
         AgentRuntimeId acme = AgentRuntimeId.fromName("ops", "acme");
         AgentRuntimeId globex = AgentRuntimeId.fromName("ops", "globex");
         ControllableShell shell = ControllableShell.cancellable();
-        String taskId = backgroundManager
-                .start(acme, "cat secrets", shell, at.aimon.core.shell.ExecutionOptions.defaults()).getTaskId();
+        String taskId = backgroundManager.start(BackgroundBashOwner.of(acme, null, null), "cat secrets", shell,
+                at.aimon.core.shell.ExecutionOptions.defaults()).getTaskId();
         shell.finish("acme only");
 
         ToolResult foreign = bashOutputTool.execute(ToolInput.of(Map.of("taskId", taskId)),
@@ -424,6 +426,56 @@ class BashOutputToolTest {
         assertThat(noRuntime.isError()).isTrue();
         assertThat(owner.isSuccess()).isTrue();
         assertThat(owner.getContent()).contains("acme only");
+    }
+
+    @Test
+    void testExecute_TaskOfAnotherSession_ReadsExactlyLikeAnUnknownId() {
+        AgentRuntimeId acme = AgentRuntimeId.fromName("ops", "acme");
+        SessionId sessionA = SessionId.of("session-a");
+        ToolContext turnA = ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, acme)
+                .put(ToolContextKeys.SESSION_ID, sessionA).build();
+        ToolContext turnB = ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, acme)
+                .put(ToolContextKeys.SESSION_ID, SessionId.of("session-b")).build();
+        ToolContext forkOfA = ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, acme)
+                .put(ToolContextKeys.EXECUTION_ID, ExecutionId.of("fork-1"))
+                .put(ToolContextKeys.INVOKING_SESSION_ID, sessionA).build();
+        ControllableShell shell = ControllableShell.cancellable();
+        String taskId = backgroundManager.start(BackgroundBashOwner.of(turnA), "cat secrets", shell,
+                at.aimon.core.shell.ExecutionOptions.defaults()).getTaskId();
+        shell.finish("session a only");
+
+        ToolResult otherSession = bashOutputTool.execute(ToolInput.of(Map.of("taskId", taskId)), turnB);
+        ToolResult unknown = bashOutputTool.execute(ToolInput.of(Map.of("taskId", "bash_ffffffff")), turnB);
+        ToolResult fork = bashOutputTool.execute(ToolInput.of(Map.of("taskId", taskId)), forkOfA);
+
+        // Same runtime, other session: the answer must not differ from a task that never existed by a character
+        // other than the id itself.
+        assertThat(otherSession.isError()).isTrue();
+        assertThat(otherSession.getContent()).isEqualTo(unknown.getContent().replace("bash_ffffffff", taskId));
+        assertThat(fork.isSuccess()).as("a fork spawned for the session reads its task").isTrue();
+        assertThat(fork.getContent()).contains("session a only");
+    }
+
+    @Test
+    void testExecute_TaskOnAnotherNode_IsNotFoundForAnotherSession() {
+        AgentRuntimeId acme = AgentRuntimeId.fromName("ops", "acme");
+        ToolContext turnA = ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, acme)
+                .put(ToolContextKeys.SESSION_ID, SessionId.of("session-a")).build();
+        ToolContext turnB = ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, acme)
+                .put(ToolContextKeys.SESSION_ID, SessionId.of("session-b")).build();
+        InMemoryBackgroundBashStore shared = new InMemoryBackgroundBashStore();
+        shared.putIfAbsent(BackgroundBashRecord.builder().taskId("bash_0000abcd").owner(BackgroundBashOwner.of(turnA))
+                .nodeId("node-b").startedAt(java.time.Instant.now())
+                .expiresAt(java.time.Instant.now().plusSeconds(3600)).build());
+        try (BackgroundBashManager nodeA = BackgroundBashManager.builder().store(shared).nodeId("node-a").build()) {
+            BashOutputTool tool = new BashOutputTool(nodeA);
+
+            ToolResult owner = tool.execute(ToolInput.of(Map.of("taskId", "bash_0000abcd")), turnA);
+            ToolResult other = tool.execute(ToolInput.of(Map.of("taskId", "bash_0000abcd")), turnB);
+
+            assertThat(owner.getContent()).contains("running on another node.");
+            assertThat(other.getContent()).contains("Shell not found: bash_0000abcd").doesNotContain("another node");
+        }
     }
 
     @Test

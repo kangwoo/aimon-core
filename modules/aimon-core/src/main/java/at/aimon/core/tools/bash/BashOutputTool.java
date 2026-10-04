@@ -8,13 +8,11 @@ import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.tool.AbstractTool;
 import at.aimon.core.agent.tool.ToolCategories;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
-import at.aimon.core.tools.ToolContextKeys;
 
 /**
  * Tool for retrieving output from background bash shells.
@@ -46,8 +44,9 @@ import at.aimon.core.tools.ToolContextKeys;
  * all means blocking, or polling until the status flips.
  *
  * <p>
- * <b>Whose tasks.</b> A task is found only by an execution of the runtime that started it
- * ({@code ToolContextKeys.AGENT_RUNTIME_ID}); another runtime's task id reads as not found. A task that only the
+ * <b>Whose tasks.</b> A task is found only by its {@linkplain BackgroundBashOwner owner}: the session it was started
+ * for — that session's turns and the forks spawned for it — or, for a command a session-less execution started, that
+ * execution. Another session's task id reads as not found, exactly as an id that never existed. A task that only the
  * shared store knows — it runs on another node — is reported as such: its output is on that node.
  *
  * <p>
@@ -154,7 +153,7 @@ public class BashOutputTool extends AbstractTool {
      * @param input
      *            The input parameters containing taskId and optional parameters
      * @param context
-     *            The execution context; its {@code AGENT_RUNTIME_ID} is the runtime whose tasks can be read
+     *            The execution context; {@link BackgroundBashOwner#of(ToolContext)} of it is whose tasks can be read
      * @return A success result with output and status if task exists, or an error result if the task is not found or
      *         parameters are invalid
      * @throws NullPointerException
@@ -174,8 +173,8 @@ public class BashOutputTool extends AbstractTool {
                 return ToolResult.error("Task ID cannot be empty");
             }
 
-            // Check if task exists — for this execution's runtime. Another runtime's task is "not found" as well.
-            final AgentRuntimeId owner = context.get(ToolContextKeys.AGENT_RUNTIME_ID).orElse(null);
+            // Check if task exists — for this call's owner. Another owner's task is "not found" as well.
+            final BackgroundBashOwner owner = BackgroundBashOwner.of(context);
             final BackgroundBashLookup lookup;
             try {
                 lookup = backgroundManager.find(owner, taskId);
@@ -291,7 +290,7 @@ public class BashOutputTool extends AbstractTool {
     }
 
     /**
-     * The answer for an id this execution's runtime has no task under. Shared with {@link KillShellTool}: the same
+     * The answer for an id the caller owns no task under. Shared with {@link KillShellTool}: the same
      * condition should read the same way from both.
      *
      * @param taskId

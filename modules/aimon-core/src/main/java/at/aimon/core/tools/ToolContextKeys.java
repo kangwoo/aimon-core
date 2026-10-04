@@ -18,6 +18,7 @@ import at.aimon.core.base.Principal;
 import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.ExecutionEnvironmentProvider;
+import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.knowledge.KnowledgeScope;
 import at.aimon.core.knowledge.KnowledgeStore;
 import at.aimon.core.knowledge.wiki.WikiKnowledgeBase;
@@ -77,6 +78,24 @@ public final class ToolContextKeys {
      */
     public static final ToolContextKey<ExecutionEnvironmentProvider> EXECUTION_ENVIRONMENT_PROVIDER = ToolContextKey
             .writeOnce("executionEnvironmentProvider", ExecutionEnvironmentProvider.class);
+
+    /**
+     * Typed, <b>write-once</b> key for the {@link HookRegistry} the execution dispatches its hook events against.
+     *
+     * <p>
+     * For most executions this is the runtime's registry. Inside a forked skill it is a view that adds the skill's
+     * own hooks, and that is why it travels in the context: a tool that spawns a fork (Task, Workflow, a forked
+     * skill) hands the fork this registry rather than one captured at registration time, so the skill's hooks follow
+     * the fork's descendants and reach nobody else. Read it with {@link HookRegistryAccess#of(ToolContext)}.
+     *
+     * <p>
+     * Executors put it before any {@code ToolContextEnricher} runs; an enricher that writes it throws
+     * {@code IllegalStateException}, so it cannot swap out the registry — and with it a skill's guards — under the
+     * fork's spawn tools. The one sanctioned way to give a fork a different registry is
+     * {@link HookRegistryAccess#withHookRegistry(ToolContext, HookRegistry)}, which builds a new context.
+     */
+    public static final ToolContextKey<HookRegistry> HOOK_REGISTRY = ToolContextKey.writeOnce("hookRegistry",
+            HookRegistry.class);
 
     /**
      * Typed key for the {@link UserLocale} — the user- and application-side settings, today the time zone.
