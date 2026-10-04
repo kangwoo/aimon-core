@@ -105,8 +105,10 @@ aimon-browser 와 aimon-memory 는 쓰지 않는다. aimon-ops(`22576b7a` 2026-0
 그쪽 소스로 확인한 결과 위 서술의 샌드박스 부분은 대부분 낡은 추론이었다. (1) `OrcaSandboxToolProvider` 는 **아직 구현되지
 않았다**(그쪽 설계 §18 5단계) — `getFileSystem()` 을 읽는 코드가 없어 옮길 것이 없고, 새 SPI 에 맞춰 처음부터 쓰게 된다.
 (2) `Environment.createDefault()` 는 테스트 `OrcaRuntimeSandboxE2ETest` 한 곳뿐이었고 고쳤다. (3) 격리 경계 묶음의 덧붙임
-(서브에이전트 스폰, `SkillHookActivator` · `SkillForkExecutor` · `ShellActionExecutor` 구현, `BackgroundBashManager` /
-`BackgroundBashStore` 직접 사용)은 그쪽에 해당하는 코드가 없다 — 코어의 `NoOpShellActionExecutor` 를 쓰는 곳 하나뿐이다.
+(서브에이전트 스폰, `SkillHookActivator` · `SkillForkExecutor` · `ShellActionExecutor` 구현, `BackgroundBashManager.start` ·
+`find` · `kill` 직접 호출, `BackgroundBashStore` 구현)은 그쪽에 해당하는 코드가 없다 — main 에서는 코어의
+`NoOpShellActionExecutor` 를 쓰는 곳 하나뿐이다. (4) EE-70 · EE-71 덧붙임(`HookHotReloadBootstrap` /
+`HookRegistryReloader` 호출, 외부 도구가 스폰하는 포크)도 그쪽에 해당하는 코드가 없다.
 **aimon-browser 쪽은 그대로 열려 있다**(그 저장소는 이번에 열어 보지 않았다). 이 항목은 aimon-browser 가 새 코어로 올라올
 때 닫는다. 동작 쪽 결과는 EE-59 에 있다.
 
@@ -1815,8 +1817,9 @@ aimon-sandbox PR #6(머지 `2b70370`)이 그쪽 저장소에서 닫았다 — �
 `0.3.1-SNAPSHOT` 으로 놓고 빌드했다. 설계와 그쪽 계약 표는 aimon-sandbox 의 `docs/design/workspace-sandbox-core-031.md` 와
 `docs/design/workspace-sandbox.md` §7 · §15 · §20 에 있다.
 
-- **취소.** `SandboxShell` 이 `ShellFeature.CANCELLATION` 을 선언하고 포그라운드 · 백그라운드 모두 신호를 지킨다. 시작 전에
-  걸린 신호는 아무것도 프로비저닝하지 않고, 실행 중에 걸린 신호는 기존 `RunningCommand.kill()`(OpenSandbox `DELETE /command`)
+- **취소.** `SandboxShell` 이 `ShellFeature.CANCELLATION` 을 선언하고 포그라운드 · 백그라운드 모두 신호를 지킨다. 이미
+  걸린 신호는 아무것도 프로비저닝하지 않고, 프로비저닝이나 셸 락을 기다리는 동안 걸린 신호는 명령을 시작하지 않으며,
+  실행 중에 걸린 신호는 기존 `RunningCommand.kill()`(OpenSandbox `DELETE /command`)
   로 exec 의 프로세스 그룹을 끝내고 그때까지의 출력과 함께 `ShellCancelledException` 을 낸다. 취소 뒤에 인터럽트가 와도
   `ShellCancelledException` 이다 — 그래서 `BackgroundBashManager.close()` 의 "취소 후 5초 뒤 인터럽트" 에서도 작업은 `KILLED`
   로 남는다(PR #6 리뷰에서 고쳤다).
@@ -1835,7 +1838,7 @@ aimon-sandbox PR #6(머지 `2b70370`)이 그쪽 저장소에서 닫았다 — �
 - "원격 명령 종료를 구현한다" — **이미 있었다.** `RunningCommand.kill()` 은 그쪽 프로바이더 SPI 에서 필수다. 빠져 있던 것은
   셸이 `CANCELLATION` 을 선언하고 신호를 지키며 결과를 분류하는 일이었다.
 - "런타임별 자원을 쥔다면 `bindRuntime`" — 쥐지 않는다(그쪽 `src/main` 에 런타임 id 로 키를 잡은 상태가 없다).
-- "`factory` 를 쓰는지 확인" — 어디에도 없다. 그쪽은 `aimon-core` 에만 의존하고 `aimon-bootstrap` 에는 의존하지 않는다.
+- "`factory` 를 쓰는지 확인" — 쓰는 곳이 없다(코드 · 테스트 · 문서). 그쪽은 `aimon-core` 에만 의존하고 `aimon-bootstrap` 에는 의존하지 않는다.
   설계 Q1(`factory` 를 deprecated 없이 없앤 결정)은 그쪽을 깨지 않았다.
 - `default` 없는 `ShellFeature` switch, `BackgroundBashRecord` 의 소유자 필드 보존 — 해당하는 코드가 없다.
 
