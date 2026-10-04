@@ -74,6 +74,9 @@ class DefaultShellActionExecutorTest {
         assertThat(optsCaptor.getValue().getTimeout()).isEqualTo(Duration.ofSeconds(7));
         assertThat(optsCaptor.getValue().getEnvironment()).containsAllEntriesOf(env);
         assertThat(optsCaptor.getValue().getStdin()).isEqualTo("{\"a\":1}");
+        // Marked as a hook's command, so a shell with a persistent session runs it outside the model's session.
+        assertThat(optsCaptor.getValue().isHook()).isTrue();
+        assertThat(optsCaptor.getValue().isBackground()).isFalse();
         assertThat(outcome.getExitCode()).isZero();
         assertThat(outcome.isDenied()).isFalse();
     }

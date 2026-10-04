@@ -35,6 +35,7 @@ public final class ExecutionOptions {
     private final Long maxCaptureBytes;
     private final String stdin;
     private final boolean background;
+    private final boolean hook;
     private final ShellCancellation cancellation;
 
     private ExecutionOptions(Builder builder) {
@@ -47,6 +48,7 @@ public final class ExecutionOptions {
         this.maxCaptureBytes = builder.maxCaptureBytes;
         this.stdin = builder.stdin;
         this.background = builder.background;
+        this.hook = builder.hook;
         this.cancellation = Objects.requireNonNull(builder.cancellation, "cancellation");
     }
 
@@ -63,6 +65,8 @@ public final class ExecutionOptions {
      * <li>Error stream not redirected (stderr separate from stdout)
      * <li>No Unix shell override (uses shell default, typically "bash")
      * <li>No capture-limit override (implementation default is used)
+     * <li>Not a background command ({@link #isBackground()} is {@code false})
+     * <li>Not a hook command ({@link #isHook()} is {@code false})
      * <li>No cancellation ({@link ShellCancellation#none()})
      * </ul>
      *
@@ -181,6 +185,24 @@ public final class ExecutionOptions {
     }
 
     /**
+     * Whether the command is run on behalf of a hook — a skill-declared or configured shell hook — and not as a tool
+     * call of the model.
+     *
+     * <p>
+     * A shell that keeps per-session state (a sandbox whose {@code cd} and {@code export} persist between commands and
+     * which runs one command at a time per session) must run such a command outside that session: it takes no session
+     * lock and saves no state, though it may start from the session's current state. Otherwise a hook would wait on, or
+     * be refused by, the model's own command, and its {@code cd}/{@code export} would leak into the model's shell. A
+     * shell that starts a new process per command with no persisted state — {@code LocalShell} — ignores the flag. A
+     * wrapper that derives new options must carry it over — {@link #toBuilder()} does.
+     *
+     * @return {@code true} for a command run on behalf of a hook
+     */
+    public boolean isHook() {
+        return hook;
+    }
+
+    /**
      * Returns the signal that stops this command while it runs.
      *
      * <p>
@@ -202,7 +224,7 @@ public final class ExecutionOptions {
     public Builder toBuilder() {
         final Builder builder = new Builder().timeout(timeout).environment(environment)
                 .workingDirectory(workingDirectory).charset(charset).redirectErrorStream(redirectErrorStream)
-                .unixShell(unixShell).stdin(stdin).background(background).cancellation(cancellation);
+                .unixShell(unixShell).stdin(stdin).background(background).hook(hook).cancellation(cancellation);
         if (maxCaptureBytes != null) {
             builder.maxCaptureBytes(maxCaptureBytes);
         }
@@ -222,6 +244,7 @@ public final class ExecutionOptions {
         private Long maxCaptureBytes;
         private String stdin;
         private boolean background;
+        private boolean hook;
         private ShellCancellation cancellation = ShellCancellation.none();
 
         private Builder() {
@@ -342,6 +365,20 @@ public final class ExecutionOptions {
          */
         public Builder background(boolean background) {
             this.background = background;
+            return this;
+        }
+
+        /**
+         * Marks the command as run on behalf of a hook rather than as a tool call of the model (default
+         * {@code false}).
+         *
+         * @param hook
+         *            whether the command runs on behalf of a hook
+         * @return this builder
+         * @see ExecutionOptions#isHook()
+         */
+        public Builder hook(boolean hook) {
+            this.hook = hook;
             return this;
         }
 
