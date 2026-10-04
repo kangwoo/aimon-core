@@ -1,4 +1,4 @@
-# 실행 환경 — 등록 항목 75건 (열림 53 · 닫힘 22)
+# 실행 환경 — 등록 항목 75건 (열림 52 · 닫힘 23)
 
 출처는 `ExecutionEnvironment` 구현 작업이다. 설계는 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md)
 이고, 구현 계획(승인본)과 구현이 그 계획에서 벗어난 점은
@@ -54,7 +54,9 @@ EE-51 은 그 변경 직전에 메인테이너가 방향(fail-closed)을 정한 
 안에 있어 "결정됨이되 열림" 구간을 지나지 않았다. 그 변경의 설계와 구현이 설계에서 벗어난 점은
 [`../design/tool/execution-environment-ee70-ee71-fail-closed.md`](../design/tool/execution-environment-ee70-ee71-fail-closed.md)
 에 있다. EE-72~EE-75 는 그 설계의 열린 질문(Q2 → EE-72, Q4 → EE-73, Q3 → EE-74, Q5 · Q6 → EE-75) 가운데 이 변경 밖으로
-결과가 번지는 것을 옮긴 것이고, 외부 저장소에 미치는 영향은 EE-1 과 EE-59 에 더했다.
+결과가 번지는 것을 옮긴 것이고, 외부 저장소에 미치는 영향은 EE-1 과 EE-59 에 더했다. EE-59 는 2026-10-04 에 aimon-sandbox
+PR #6 이 그쪽 저장소에서 닫았다 — 이 문서의 서술은 추론이었고, 그쪽 소스로 확인하니 여럿이 틀렸다(EE-59 의 닫힘 절). 같은
+변경으로 EE-1 의 샌드박스 쪽도 끝났지만 aimon-browser 쪽이 남아 EE-1 은 열려 있다.
 
 ---
 
@@ -98,6 +100,17 @@ aimon-browser 와 aimon-memory 는 쓰지 않는다. aimon-ops(`22576b7a` 2026-0
 **어디.** 두 외부 저장소. 코어 쪽 SPI 는 `modules/aimon-core/src/main/java/at/aimon/core/agent/orca/tool/OrcaToolProviderContext.java`.
 
 **언제 다시 볼까.** 이 변경이 들어간 코어를 두 저장소가 처음 의존할 때.
+
+**샌드박스 쪽은 끝났다** *(2026-10-04 추가)*. aimon-sandbox PR #6(머지 `2b70370`)이 그쪽을 코어 main `61604b4` 에 맞췄다.
+그쪽 소스로 확인한 결과 위 서술의 샌드박스 부분은 대부분 낡은 추론이었다. (1) `OrcaSandboxToolProvider` 는 **아직 구현되지
+않았다**(그쪽 설계 §18 5단계) — `getFileSystem()` 을 읽는 코드가 없어 옮길 것이 없고, 새 SPI 에 맞춰 처음부터 쓰게 된다.
+(2) `Environment.createDefault()` 는 테스트 `OrcaRuntimeSandboxE2ETest` 한 곳뿐이었고 고쳤다. (3) 격리 경계 묶음의 덧붙임
+(서브에이전트 스폰, `SkillHookActivator` · `SkillForkExecutor` · `ShellActionExecutor` 구현, `BackgroundBashManager.start` ·
+`find` · `kill` 직접 호출, `BackgroundBashStore` 구현)은 그쪽에 해당하는 코드가 없다 — main 에서는 코어의
+`NoOpShellActionExecutor` 를 쓰는 곳 하나뿐이다. (4) EE-70 · EE-71 덧붙임(`HookHotReloadBootstrap` /
+`HookRegistryReloader` 호출, 외부 도구가 스폰하는 포크)도 그쪽에 해당하는 코드가 없다.
+**aimon-browser 쪽은 그대로 열려 있다**(그 저장소는 이번에 열어 보지 않았다). 이 항목은 aimon-browser 가 새 코어로 올라올
+때 닫는다. 동작 쪽 결과는 EE-59 에 있다.
 
 출처: 계획 §8 "Public-SPI breaks".
 
@@ -1757,7 +1770,7 @@ PR #205 의 리뷰 뒤로 유예가 끝났을 때 살아 있는 핸들은 부모
 
 설계와 구현이 설계에서 벗어난 점: [`../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md`](../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md).
 
-## EE-59 — aimon-sandbox 가 취소 · 상한 · 바인딩을 구현해야 한다 · **열림**
+## EE-59 — aimon-sandbox 가 취소 · 상한 · 바인딩을 구현해야 한다 · **닫힘** *(2026-10-04)*
 
 **무엇을.** aimon-sandbox 의 셸과 제공자를 EE-13 · EE-7 의 계약에 맞춘다 — 셸이 `ShellFeature.CANCELLATION` 을 선언하고 원격
 명령 종료와 `ShellCancelledException` 을 구현한다, 환경이 `backgroundCommandTimeout()` 을 돌려준다, 런타임별 자원을 쥔다면
@@ -1797,6 +1810,40 @@ frontmatter 의 `onStart` 셸 가드는 **그 포크를 시작하지 않는다**
 **언제 다시 볼까.** 이 변경이 들어간 코어를 aimon-sandbox 가 처음 의존할 때 — EE-1 과 같은 시점이다.
 
 출처: [`../design/tool/execution-environment-ee13-ee7-background-lifecycle.md`](../design/tool/execution-environment-ee13-ee7-background-lifecycle.md) §8 · §9 Q1 · Q5.
+
+### 닫힘 (2026-10-04)
+
+aimon-sandbox PR #6(머지 `2b70370`)이 그쪽 저장소에서 닫았다 — 코어 main `61604b4`(PR #204~#208)를 `~/.m2` 의
+`0.3.1-SNAPSHOT` 으로 놓고 빌드했다. 설계와 그쪽 계약 표는 aimon-sandbox 의 `docs/design/workspace-sandbox-core-031.md` 와
+`docs/design/workspace-sandbox.md` §7 · §15 · §20 에 있다.
+
+- **취소.** `SandboxShell` 이 `ShellFeature.CANCELLATION` 을 선언하고 포그라운드 · 백그라운드 모두 신호를 지킨다. 이미
+  걸린 신호는 아무것도 프로비저닝하지 않고, 프로비저닝이나 셸 락을 기다리는 동안 걸린 신호는 명령을 시작하지 않으며,
+  실행 중에 걸린 신호는 기존 `RunningCommand.kill()`(OpenSandbox `DELETE /command`)
+  로 exec 의 프로세스 그룹을 끝내고 그때까지의 출력과 함께 `ShellCancelledException` 을 낸다. 취소 뒤에 인터럽트가 와도
+  `ShellCancelledException` 이다 — 그래서 `BackgroundBashManager.close()` 의 "취소 후 5초 뒤 인터럽트" 에서도 작업은 `KILLED`
+  로 남는다(PR #6 리뷰에서 고쳤다).
+- **상한.** `SandboxProfile.backgroundCommandTimeout`(기본 `backgroundHeartbeatLimit`, 1시간)을 환경이
+  `backgroundCommandTimeout()` 으로 돌려준다. 전에는 다른 활동이 슬롯을 깨워 두는 동안 24시간까지 돌 수 있었다 — 그쪽의
+  관찰 가능한 동작 변경이며 CHANGELOG 에 있다.
+- **바인딩.** 제공자가 런타임별 자원을 쥐지 않으므로 `bindRuntime` 을 재정의하지 않는다(`RuntimeBinding.NONE`). 이유와 닫는
+  순서는 그쪽 javadoc · README · 설계 §7 에 있고 테스트가 계약을 고정한다.
+- **fail-closed 안내.** 샌드박스가 사용 불가일 때 `preTool` 셸 가드가 걸린 도구 호출과 `onStart` 가드가 있는 스킬 포크가
+  막힌다는 것, 관찰 용도 훅에는 `failOpen: true` 를 권한다는 것이 그쪽 README 에 있다.
+
+**근거가 달랐던 점(규칙 둘).** 이 항목은 그쪽 체크아웃 없이 코어 SPI 에서 끌어낸 추론이었고, 여럿이 틀렸다.
+
+- "도는 명령이 슬롯을 하루 동안 깨워 둔다" — **틀렸다.** keep-awake 는 그쪽 3단계부터 `backgroundHeartbeatLimit`(1시간)으로
+  막혀 있었다. 없던 것은 명령과 코어 작업 기록의 끝이었고, 상한이 그것을 준다.
+- "원격 명령 종료를 구현한다" — **이미 있었다.** `RunningCommand.kill()` 은 그쪽 프로바이더 SPI 에서 필수다. 빠져 있던 것은
+  셸이 `CANCELLATION` 을 선언하고 신호를 지키며 결과를 분류하는 일이었다.
+- "런타임별 자원을 쥔다면 `bindRuntime`" — 쥐지 않는다(그쪽 `src/main` 에 런타임 id 로 키를 잡은 상태가 없다).
+- "`factory` 를 쓰는지 확인" — 쓰는 곳이 없다(코드 · 테스트 · 문서). 그쪽은 `aimon-core` 에만 의존하고 `aimon-bootstrap` 에는 의존하지 않는다.
+  설계 Q1(`factory` 를 deprecated 없이 없앤 결정)은 그쪽을 깨지 않았다.
+- `default` 없는 `ShellFeature` switch, `BackgroundBashRecord` 의 소유자 필드 보존 — 해당하는 코드가 없다.
+
+남긴 것(그쪽에서 결정 대기): 취소는 exec 의 **프로세스 그룹**까지만 닿는다 — 그룹을 떠난 작업(`setsid` · `set -m`)은 샌드박스가
+사라질 때까지 남는다. 나중에 태어난 손자는 그룹에 속하므로 잡힌다는 점에서 `LocalShell` 의 한계(EE-55)와 모양이 다르다.
 
 ## EE-60 — `UserLocale.timeZone` 은 공급 경로도 소비자도 없다 · **열림**
 
