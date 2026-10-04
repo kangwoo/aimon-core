@@ -170,6 +170,23 @@ public final class DeclarativePreToolHook implements PreToolHook {
         return action.getExecutionBudget();
     }
 
+    /**
+     * Runs the shell action. An executor is contracted never to throw, but a guard that cannot judge must block: a
+     * custom executor that throws anyway, or a linkage failure from a provider built against another core, is read
+     * as {@link ShellHookOutcome.Unrun#EXECUTION_FAILED} so the fail-closed rule (and its {@code failOpen} opt-out)
+     * applies, instead of the exception reaching the hook policy, which would let the tool call through.
+     */
+    private ShellHookOutcome runShell(ShellAction shell, PreToolContext context, String toolName, ToolInput toolInput) {
+        try {
+            final Map<String, String> env = buildShellEnv(context, toolName);
+            return shellExecutor.run(shell, context, env, ShellHookPayload.render(env, toolInput.toMap()));
+        } catch (RuntimeException | LinkageError e) {
+            log.warn("Skill '{}' preTool shell hook for tool '{}' threw instead of reporting an outcome", skillName,
+                    toolName, e);
+            return ShellHookOutcome.notRun(ShellHookOutcome.Unrun.EXECUTION_FAILED, ShellActionRunner.failureDetail(e));
+        }
+    }
+
     @Override
     public HookResult execute(PreToolContext context) {
         Objects.requireNonNull(context, "Context cannot be null");
@@ -184,9 +201,7 @@ public final class DeclarativePreToolHook implements PreToolHook {
             return withRewake(HookResult.block(deny.getReason()));
         }
         if (action instanceof ShellAction shell) {
-            final Map<String, String> env = buildShellEnv(context, toolName);
-            final ShellHookOutcome outcome = shellExecutor.run(shell, context, env,
-                    ShellHookPayload.render(env, toolInput.toMap()));
+            final ShellHookOutcome outcome = runShell(shell, context, toolName, toolInput);
             if (outcome.isDenied()) {
                 log.info("Skill '{}' preTool shell hook vetoed tool '{}' (exit {}): {}", skillName, toolName,
                         outcome.getExitCode(), outcome.denyReason());

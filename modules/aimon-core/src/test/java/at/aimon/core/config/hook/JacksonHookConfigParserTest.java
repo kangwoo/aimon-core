@@ -89,15 +89,30 @@ class JacksonHookConfigParserTest {
 
     @org.junit.jupiter.params.ParameterizedTest(name = "failOpen: {0}")
     @org.junit.jupiter.params.provider.ValueSource(strings = {"\"true\"", "\"false\"", "1", "0", "null", "[true]"})
-    @DisplayName("a failOpen that is not a JSON boolean fails the parse instead of being coerced")
-    void failOpenThatIsNotABooleanFails(String value) {
-        // The key takes a guard off, so "true" and 1 must not be read as true — and a guard must not be dropped with
-        // only a warning either. The file is refused, the same way a negative timeout is.
+    @DisplayName("a failOpen that is not a JSON boolean is read as false and the handler is kept")
+    void failOpenThatIsNotABooleanIsReadAsFalse(String value) {
+        // The key takes a guard off, so "true" and 1 must not be read as true. Nor may the file be refused: a parse
+        // failure drops every handler in it, i.e. every guard. The handler is kept, closed, and the value is kept for
+        // the loader's WARN.
         final String json = "{\"hooks\":{\"PreToolUse\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"x\","
                 + "\"failOpen\":" + value + "}]}]}}";
 
-        assertThatThrownBy(() -> parser.parse(json)).isInstanceOf(HookConfigParseException.class)
-                .hasMessageContaining("failOpen");
+        final HookHandlerSpec handler = parser.parse(json).getHooks().get("PreToolUse").get(0).getHandlers().get(0);
+
+        assertThat(handler.isFailOpen()).isFalse();
+        assertThat(handler.getCommand()).isEqualTo("x");
+        assertThat(handler.getRejectedFailOpen()).contains(value);
+    }
+
+    @Test
+    @DisplayName("a boolean or absent failOpen leaves nothing rejected")
+    void booleanFailOpenIsNotRejected() {
+        final HookConfigDocument doc = parser.parse("{\"hooks\":{\"PreToolUse\":[{\"hooks\":["
+                + "{\"type\":\"command\",\"command\":\"a\",\"failOpen\":true},"
+                + "{\"type\":\"command\",\"command\":\"c\"}]}]}}");
+
+        assertThat(doc.getHooks().get("PreToolUse").get(0).getHandlers())
+                .allSatisfy(h -> assertThat(h.getRejectedFailOpen()).isEmpty());
     }
 
     @Test

@@ -85,8 +85,9 @@ public final class DefaultShellActionExecutor implements ShellActionExecutor {
         } catch (RuntimeException e) {
             log.warn("Skill hook shell action not run: the execution environment gave no shell (command={}): {}",
                     action.getCommand(), e.getMessage(), e);
+            // The type only: the message is the provider's, and the detail becomes a deny reason the model reads.
             return ShellHookOutcome.notRun(ShellHookOutcome.Unrun.ENVIRONMENT_UNAVAILABLE,
-                    "the environment gave no shell: " + e.getMessage());
+                    "the environment gave no shell (" + ShellActionRunner.failureDetail(e) + ")");
         }
         return ShellActionRunner.run(shell, action, environmentOverrides, stdinPayload);
     }

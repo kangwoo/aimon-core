@@ -174,13 +174,14 @@ class DefaultShellActionExecutorTest {
     @Test
     void run_environmentThatGivesNoShell_reportsEnvironmentUnavailable() {
         ExecutionEnvironment broken = mock(ExecutionEnvironment.class);
-        when(broken.shell()).thenThrow(new IllegalStateException("no shell here"));
+        when(broken.shell()).thenThrow(new IllegalStateException("no shell here: provider internals"));
 
         ShellHookOutcome outcome = executor.run(new ShellAction("guard", Duration.ofSeconds(1)), contextIn(broken),
                 Map.of(), null);
 
         assertThat(outcome.getUnrunCause()).contains(ShellHookOutcome.Unrun.ENVIRONMENT_UNAVAILABLE);
-        assertThat(outcome.unrunReason()).contains("no shell here");
+        // The provider's message stays in the log; the model reads only the type.
+        assertThat(outcome.unrunReason()).contains("IllegalStateException").doesNotContain("provider internals");
     }
 
     @Test
@@ -207,7 +208,7 @@ class DefaultShellActionExecutorTest {
                 null);
 
         assertThat(outcome.getUnrunCause()).contains(ShellHookOutcome.Unrun.EXECUTION_FAILED);
-        assertThat(outcome.unrunReason()).contains("Shell is closed");
+        assertThat(outcome.unrunReason()).isEqualTo("shell execution failed: IllegalStateException");
     }
 
     @Test
@@ -241,13 +242,13 @@ class DefaultShellActionExecutorTest {
     void run_executionException_doesNotThrow() throws Exception {
         VirtualShell shell = mock(VirtualShell.class);
         when(shell.execute(any(ShellCommand.class), any(ExecutionOptions.class)))
-                .thenThrow(new ShellExecutionException("io fail"));
+                .thenThrow(new ShellExecutionException("io fail: nope"));
 
         ShellHookOutcome outcome = executor.run(new ShellAction("nope", Duration.ofSeconds(1)), contextIn(shell),
                 Map.of(), null);
 
         assertThat(outcome.getUnrunCause()).contains(ShellHookOutcome.Unrun.EXECUTION_FAILED);
-        assertThat(outcome.unrunReason()).isEqualTo("shell execution failed: io fail");
+        assertThat(outcome.unrunReason()).isEqualTo("shell execution failed: ShellExecutionException");
     }
 
     @Test

@@ -5,11 +5,13 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Map;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -21,6 +23,7 @@ import at.aimon.core.shell.ShellCommandResult;
 import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.shell.exception.ShellExecutionException;
 import at.aimon.core.shell.exception.ShellTimeoutException;
+import at.aimon.core.shell.impl.local.LocalShell;
 import at.aimon.core.skill.hook.action.ShellAction;
 
 /**
@@ -37,10 +40,11 @@ class ShellActionRunnerTest {
                         ShellHookOutcome.Unrun.TIMEOUT, "no exit status within 30000ms"),
                 Arguments.of(new ExecutionEnvironmentUnavailableException("sandbox is down", null),
                         ShellHookOutcome.Unrun.ENVIRONMENT_UNAVAILABLE, "sandbox is down"),
-                Arguments.of(new ShellExecutionException("cannot fork"), ShellHookOutcome.Unrun.EXECUTION_FAILED,
-                        "cannot fork"),
+                // A shell failure's message routinely quotes the command; only its type reaches the reason.
+                Arguments.of(new ShellExecutionException("cannot fork: guard.sh"),
+                        ShellHookOutcome.Unrun.EXECUTION_FAILED, "ShellExecutionException"),
                 Arguments.of(new IllegalStateException("Shell is closed"), ShellHookOutcome.Unrun.EXECUTION_FAILED,
-                        "Shell is closed"));
+                        "IllegalStateException"));
     }
 
     @ParameterizedTest(name = "{1}")
@@ -55,6 +59,19 @@ class ShellActionRunnerTest {
         assertThat(outcome.isObserved()).isFalse();
         assertThat(outcome.getUnrunCause()).contains(cause);
         assertThat(outcome.unrunReason()).isEqualTo(cause.description() + ": " + detail);
+    }
+
+    @Test
+    void run_realShellThatCannotStart_keepsTheCommandOutOfTheReason(@TempDir Path tmp) {
+        // A real LocalShell start failure: its exception message is "Failed to start process: <command>".
+        VirtualShell shell = new LocalShell(tmp.resolve("does-not-exist"));
+        ShellAction action = new ShellAction("guard.sh --token s3cret", Duration.ofSeconds(5));
+
+        ShellHookOutcome outcome = ShellActionRunner.run(shell, action, Map.of(), null);
+
+        assertThat(outcome.getUnrunCause()).contains(ShellHookOutcome.Unrun.EXECUTION_FAILED);
+        assertThat(outcome.unrunReason()).doesNotContain("guard.sh").doesNotContain("s3cret")
+                .isEqualTo(ShellHookOutcome.Unrun.EXECUTION_FAILED.description() + ": ShellExecutionException");
     }
 
     @Test

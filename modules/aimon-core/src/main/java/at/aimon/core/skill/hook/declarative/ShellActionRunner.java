@@ -72,13 +72,27 @@ final class ShellActionRunner {
                     action.getCommand(), e.getMessage());
             return ShellHookOutcome.notRun(ShellHookOutcome.Unrun.ENVIRONMENT_UNAVAILABLE, e.getMessage());
         } catch (ShellExecutionException e) {
-            log.warn("Hook shell action failed (command={}): {}", action.getCommand(), e.getMessage());
-            return ShellHookOutcome.notRun(ShellHookOutcome.Unrun.EXECUTION_FAILED, e.getMessage());
+            // The message goes to the log only: a shell's failure message routinely quotes the command, and the
+            // detail becomes a deny reason the constrained party reads.
+            log.warn("Hook shell action failed (command={}): {}", action.getCommand(), e.getMessage(), e);
+            return ShellHookOutcome.notRun(ShellHookOutcome.Unrun.EXECUTION_FAILED, failureDetail(e));
         } catch (RuntimeException e) {
             log.warn("Hook shell action threw unexpected error (command={}): {}", action.getCommand(), e.getMessage(),
                     e);
-            return ShellHookOutcome.notRun(ShellHookOutcome.Unrun.EXECUTION_FAILED, e.getMessage());
+            return ShellHookOutcome.notRun(ShellHookOutcome.Unrun.EXECUTION_FAILED, failureDetail(e));
         }
+    }
+
+    /**
+     * The model-facing detail of a failure: the exception's type, never its message, which may carry the command
+     * or the shell's internals.
+     *
+     * @param failure
+     *            what was thrown (never null)
+     * @return the detail for {@link ShellHookOutcome#notRun} (never null)
+     */
+    static String failureDetail(Throwable failure) {
+        return failure.getClass().getSimpleName();
     }
 
     private static String summarise(String text) {

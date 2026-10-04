@@ -141,6 +141,77 @@ class DeclarativePreToolHookTest {
         assertThat(hook.execute(contextFor("Bash")).getStatus()).isEqualTo(HookStatus.BLOCKED);
     }
 
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.MethodSource("thrownByTheGuard")
+    void execute_executorThatThrows_blocksWithTheTypeOnly(Throwable thrown) throws Exception {
+        for (ShellActionExecutor executor : List.of(throwingExecutor(thrown), throwingShell(thrown))) {
+            DeclarativePreToolHook hook = new DeclarativePreToolHook("my-skill", NameOnlyPredicate.ANY,
+                    new ShellAction("guard.sh --token s3cret", Duration.ofSeconds(1)), executor);
+
+            HookResult result = hook.execute(contextFor("Bash"));
+
+            assertThat(result.getStatus()).as("%s", executor).isEqualTo(HookStatus.BLOCKED);
+            assertThat(result.getFeedback().orElseThrow())
+                    .contains(ShellHookOutcome.Unrun.EXECUTION_FAILED.description())
+                    .contains(thrown.getClass().getSimpleName()).doesNotContain("s3cret");
+        }
+    }
+
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.MethodSource("thrownByTheGuard")
+    void execute_executorThatThrows_failOpenPasses(Throwable thrown) throws Exception {
+        for (ShellActionExecutor executor : List.of(throwingExecutor(thrown), throwingShell(thrown))) {
+            DeclarativePreToolHook hook = new DeclarativePreToolHook("my-skill", NameOnlyPredicate.ANY,
+                    new ShellAction("audit.sh", Duration.ofSeconds(1)), executor, null, null, Map.of(),
+                    DeclarativeHookOptions.builder().failOpen(true).build());
+
+            assertThat(hook.execute(contextFor("Bash")).getStatus()).as("%s", executor).isEqualTo(HookStatus.SUCCESS);
+        }
+    }
+
+    // --- a guard that throws instead of reporting an outcome (fail-closed, review of #207 S1) -----------------------
+
+    static java.util.stream.Stream<Throwable> thrownByTheGuard() {
+        return java.util.stream.Stream.of(new IllegalStateException("guard.sh --token s3cret exploded"),
+                new NoSuchMethodError("at.aimon.core.shell.VirtualShell.execute(guard.sh --token s3cret)"));
+    }
+
+    private static ShellActionExecutor throwingExecutor(Throwable thrown) {
+        return new ShellActionExecutor() {
+            @Override
+            public boolean isShellSupported() {
+                return true;
+            }
+
+            @Override
+            public boolean requiresExecutionEnvironment() {
+                return false;
+            }
+
+            @Override
+            public ShellHookOutcome run(ShellAction action, HookContext context, Map<String, String> env,
+                    String stdinPayload) {
+                throw sneaky(thrown);
+            }
+        };
+    }
+
+    private static ShellActionExecutor throwingShell(Throwable thrown) throws Exception {
+        final at.aimon.core.shell.VirtualShell shell = org.mockito.Mockito.mock(at.aimon.core.shell.VirtualShell.class);
+        org.mockito.Mockito
+                .when(shell.execute(org.mockito.ArgumentMatchers.any(at.aimon.core.shell.ShellCommand.class),
+                        org.mockito.ArgumentMatchers.any(at.aimon.core.shell.ExecutionOptions.class)))
+                .thenThrow(thrown);
+        return new HostShellActionExecutor(shell);
+    }
+
+    private static RuntimeException sneaky(Throwable thrown) {
+        if (thrown instanceof RuntimeException runtime) {
+            return runtime;
+        }
+        throw (Error) thrown;
+    }
+
     private static ShellActionExecutor fixedOutcome(ShellHookOutcome outcome) {
         return new ShellActionExecutor() {
             @Override

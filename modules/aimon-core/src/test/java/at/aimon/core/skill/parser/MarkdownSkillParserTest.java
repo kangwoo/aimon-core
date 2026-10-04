@@ -286,6 +286,30 @@ class MarkdownSkillParserTest {
     }
 
     @Test
+    void parse_HooksOnAnInlineSkill_AreKeptButWarnedAbout() {
+        final String hooks = "hooks:\n" + "  preTool:\n" + "    - action: { type: deny, reason: \"no\" }\n";
+        final ch.qos.logback.classic.Logger parserLogger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory
+                .getLogger(MarkdownSkillParser.class);
+        final ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender = new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        parserLogger.addAppender(appender);
+        try {
+            final Skill inline = parser.parse("sample", skillSource(hooks));
+            parser.parse("sample", skillSource(hooks + "execution:\n  mode: fork\n  agent: worker\n"));
+            parser.parse("sample", skillSource(""));
+
+            // Not rejected — the skill still works — but the author is told its hooks never fire.
+            assertThat(inline.getMetadata().getHooks().getPreToolHooks()).hasSize(1);
+            assertThat(appender.list).filteredOn(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN).singleElement()
+                    .satisfies(e -> assertThat(e.getFormattedMessage()).contains("'sample'").contains("INLINE")
+                            .contains("never fire"));
+        } finally {
+            parserLogger.detachAppender(appender);
+            appender.stop();
+        }
+    }
+
+    @Test
     void parse_HooksDenyOnPostTool_ThrowsSkillParseException() {
         final String body = "hooks:\n" + "  postTool:\n" + "    - action: { type: deny, reason: \"x\" }\n";
 

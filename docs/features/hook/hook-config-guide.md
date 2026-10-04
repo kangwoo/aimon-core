@@ -87,13 +87,14 @@ CLI 부트스트랩(`AgentSetupFactory`)은 `HookConfigWatcher` + `HookRegistryR
   않는다 (계약상 reload 가 아니라 초기 로드).
 - **reload**: 파일 편집 트리거. `OnConfigReload` 이벤트가 발사된다.
 - bootstrap 이 실패해도 CLI 는 WARN 로그만 남기고 계속 진행 — 이후 핫리로드는
-  여전히 시도된다.
+  여전히 시도된다. 그 사이에는 파일의 hook 이 **하나도** 등록되어 있지 않다 — 가드도 없다.
+  시작 시 파싱 실패를 시작 중단으로 바꿀지는 아직 정하지 않았다(백로그 EE-71).
 
 ### 실패 모드
 
 | 상황                              | 동작                                                          |
 |-----------------------------------|---------------------------------------------------------------|
-| 새 `hooks.json` 이 파싱 실패       | swap 하지 않음. 이전 hook 유지. `OnConfigReload(failed)` 발사 |
+| 새 `hooks.json` 이 파싱 실패       | swap 하지 않음. **이전 설정이 그대로 유지**된다(이전 hook · 가드 그대로). `OnConfigReload(failed)` 발사 |
 | swap 도중 일부 hook 등록 실패      | LIFO undo 로 새 hook 제거 + 원래 순서로 이전 hook 재등록      |
 | listener 가 예외를 던짐            | 로그만 남기고 watcher 는 계속 동작 (poison 방지)              |
 | watcher 시작 자체가 실패           | CLI 는 핫리로드 없이 계속 동작 (WARN 로그)                    |
@@ -282,9 +283,10 @@ WARN 로그만 남기고 진행한다 (`AbstractDeclarativeShellHook#vetoResult`
 셸 실패 — 그 이벤트의 거부 결과를 낸다(`preTool` · `onStart` · `preCompact` 는 block, `permissionRequest` 는 deny). 판단하지
 못한 가드는 통과시키지 않는다. 사유는 `Blocked: guard hook '<source>#<n>' (<event>) could not run its command — timed out:
 …` 꼴로 원인을 싣고, 커맨드 문자열은 싣지 않는다. 가드가 아니라 **관찰** 용도의 handler(감사 로그, 메트릭)라면
-`"failOpen": true` 를 선언한다 — 그러면 WARN 만 남기고 진행한다. `failOpen` 은 exit 2 를 약하게 하지 않는다. 값은 JSON
-불리언만 받는다: `"true"` 나 `1` 은 강제 변환되지 않고 **파일 전체의 파싱 실패**다(가드를 푸는 키이므로 느슨하게 읽지
-않는다). 나머지 9개 이벤트에서는 전처럼 WARN 후 진행한다.
+`"failOpen": true` 를 선언한다 — 그러면 WARN 만 남기고 진행한다. `failOpen` 은 exit 2 를 약하게 하지 않는다. 가드를 여는
+값은 JSON 불리언 `true` 하나뿐이다: `"true"` · `1` · `null` 같은 불리언 아닌 값은 강제 변환되지 않고 **`false` 로 읽힌다** —
+handler 는 그대로 등록되어 가드가 닫힌 채 남고, 파일 · 이벤트 · handler 를 밝힌 WARN 이 남는다(가드를 푸는 키이므로 느슨하게
+읽지 않고, 그렇다고 오타 하나로 파일의 다른 가드까지 잃지도 않는다). 나머지 9개 이벤트에서는 전처럼 WARN 후 진행한다.
 
 **`timeout` 단위 (breaking change).** `timeout` 은 Claude Code 와 동일하게 **초(seconds)**
 단위다. 밀리초가 필요하면 AIMON 고유 별칭 `timeoutMs` 를 쓴다. 둘 다 있으면 더 정밀한
@@ -766,7 +768,7 @@ fork 가 없어 발화하지 않는다. 전체 규칙은 [`aimon-skill-extension
 | `WARN hooks: unknown event '...'`                                        | 오타. [지원 이벤트 표](#지원-이벤트와-매핑)의 이름을 사용 (대소문자 무시).    |
 | `WARN hooks: only 'command' actions are valid on ...`                    | `preTool`/`postTool` 외의 이벤트는 셸 handler 전용.                          |
 | `WARN hooks: 'command' on ... cannot run: the configured shell executor does not support shell actions` | 셸을 지원하지 않는 실행기(`NoOpShellActionExecutor`)로 `hooks.json` 을 적용했다. `command` handler 는 등록되지 않는다 — `HostShellActionExecutor` 를 배선할 것. |
-| `Failed to parse hooks JSON: ... 'failOpen' must be a JSON boolean`      | `failOpen` 에 `"true"` · `1` · `null` 을 썼다. `true` / `false` 만 받는다. 파일 전체가 거절된다. |
+| `WARN hooks config at ...: ... has a 'failOpen' that is not a JSON boolean (...); it is read as false` | `failOpen` 에 `"true"` · `1` · `null` 을 썼다. 그 handler 는 `failOpen: false` 로 등록된다(커맨드를 못 돌리면 막는다). 관찰용이라면 `true` 로 고칠 것. |
 | 도구가 `Blocked: guard hook '...' could not run its command` 로 막힘      | 결정 채널이 있는 이벤트의 `command` handler 가 종료 코드를 내지 못했다(timeout 등). 사유의 원인을 고치거나, 관찰용 handler 라면 `"failOpen": true` 를 선언. |
 | `WARN hooks: 'asyncRewake' is not supported on event '...'`              | rewake 가능한 이벤트는 `preTool`/`preCompact`/`onSessionStart`/`onSessionEnd`/`onConfigReload`. hook 자체는 정상 등록됨. |
 | 셸 hook 이 exit 2 로 끝났는데 차단되지 않음                                | 해당 이벤트에 결정 채널이 없음. veto 는 `preTool`/`onStart`/`preCompact`(block), `permissionRequest`(deny) 에서만 유효. |

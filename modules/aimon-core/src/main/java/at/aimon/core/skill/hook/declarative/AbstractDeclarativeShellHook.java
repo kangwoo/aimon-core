@@ -103,21 +103,35 @@ public abstract class AbstractDeclarativeShellHook<C extends HookContext> implem
         env.put(SkillHookEnv.AIMON_SKILL_NAME, skillName);
         env.put(SkillHookEnv.AIMON_INVOKER_NAME, context.getInvokerName());
         env.put(SkillHookEnv.AIMON_INVOKER_TYPE, context.getInvokerType().name());
-        contributeEnv(context, env);
-
-        final ShellHookOutcome outcome = shellExecutor.run(action, context, env,
-                ShellHookPayload.render(env, payloadToolInput(context).orElse(null)));
+        final ShellHookOutcome outcome = runShell(context, env);
 
         // Re-attached on every fire: the chain is bounded by RewakeSpec#getMaxAttempts(), so this yields
         // "re-fire up to maxAttempts times" rather than an unbounded loop.
         return DeclarativeRewake.attach(interpret(outcome), rewakeSpec);
     }
 
+    /**
+     * Runs the shell action. An executor is contracted never to throw, but a guard that cannot judge must block: a
+     * throw (or a linkage failure) is read as {@link ShellHookOutcome.Unrun#EXECUTION_FAILED} so the fail-closed rule
+     * and its {@code failOpen} opt-out apply, instead of the exception reaching the hook policy, which maps it to
+     * success on the guard events.
+     */
+    private ShellHookOutcome runShell(C context, Map<String, String> env) {
+        try {
+            contributeEnv(context, env);
+            return shellExecutor.run(action, context, env,
+                    ShellHookPayload.render(env, payloadToolInput(context).orElse(null)));
+        } catch (RuntimeException | LinkageError e) {
+            log.warn("Skill '{}' {} shell hook threw instead of reporting an outcome", skillName, eventName, e);
+            return ShellHookOutcome.notRun(ShellHookOutcome.Unrun.EXECUTION_FAILED, ShellActionRunner.failureDetail(e));
+        }
+    }
+
     private HookResult interpret(ShellHookOutcome outcome) {
         if (!outcome.isObserved()) {
             // No exit status. An advisory event has nothing to decide (the executor already logged why); an event
             // with a decision channel blocks unless the hook declared failOpen.
-            if (vetoResult(outcome.unrunReason()).isEmpty()) {
+            if (!canVeto()) {
                 return HookResult.success();
             }
             return ShellHookVerdicts.guard(outcome, failOpen, skillName, eventName).flatMap(this::vetoResult)
@@ -159,6 +173,18 @@ public abstract class AbstractDeclarativeShellHook<C extends HookContext> implem
      */
     protected Optional<HookResult> vetoResult(String reason) {
         return Optional.empty();
+    }
+
+    /**
+     * Returns whether this event has a decision channel, i.e. whether {@link #vetoResult(String)} returns a result.
+     * Lets {@link #execute} skip the fail-closed verdict (and its WARN) on advisory events without probing
+     * {@code vetoResult}.
+     *
+     * @return true for an event that can block or deny; the default is false, and the subclasses that override
+     *         {@code vetoResult} override this too
+     */
+    protected boolean canVeto() {
+        return false;
     }
 
     /**

@@ -77,6 +77,11 @@ public final class DeclarativeOnStartHook extends AbstractDeclarativeShellHook<O
     }
 
     @Override
+    protected boolean canVeto() {
+        return true;
+    }
+
+    @Override
     protected Optional<HookResult> vetoResult(String reason) {
         return Optional.of(HookResult.block(reason));
     }

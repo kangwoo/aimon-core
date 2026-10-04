@@ -1,4 +1,4 @@
-# 실행 환경 — 등록 항목 69건 (열림 49 · 닫힘 20)
+# 실행 환경 — 등록 항목 71건 (열림 51 · 닫힘 20)
 
 출처는 `ExecutionEnvironment` 구현 작업이다. 설계는 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md)
 이고, 구현 계획(승인본)과 구현이 그 계획에서 벗어난 점은
@@ -47,7 +47,9 @@ EE-51 은 그 변경 직전에 메인테이너가 방향(fail-closed)을 정한 
 열림" 구간을 지나지 않았다. 그 변경의 설계와 구현이 설계에서 벗어난 점은
 [`../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md`](../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md)
 에 있다. EE-63~EE-69 는 그 설계의 §8 과 열린 질문(Q8 → EE-63, Q4 → EE-64, Q3 → EE-66, Q5 → EE-67), 설계 리뷰(EE-69) 가운데
-이 변경 밖으로 결과가 번지는 것을 옮긴 것이고, 외부 저장소에 미치는 영향은 EE-1 과 EE-59 에 더했다.
+이 변경 밖으로 결과가 번지는 것을 옮긴 것이고, 외부 저장소에 미치는 영향은 EE-1 과 EE-59 에 더했다. EE-70 · EE-71 은 같은
+변경의 PR(#207) 리뷰가 짚은 것 가운데 사람의 결정이 필요해 고치지 않은 둘이다 — 포크의 `onStart` 결과를 따를지(EE-70), 시작
+시 `hooks.json` 파싱 실패로 시작을 멈출지(EE-71). 같은 리뷰의 나머지 지적은 그 PR 에서 고쳤고 설계 노트 §10.7 에 있다.
 
 ---
 
@@ -1507,11 +1509,15 @@ frontmatter 와 `hooks.json` 은 **같은 훅 클래스**를 쓴다. 규칙을 �
   (`NO_ENVIRONMENT` · `ENVIRONMENT_UNAVAILABLE` · `SHELL_UNSUPPORTED` · `TIMEOUT` · `EXECUTION_FAILED`). 원인 없는 팩터리를
   남기지 않은 이유: 새 "못 돌림" 분기가 원인 없이 통과 쪽으로 다시 생기지 못하게 컴파일러가 막는다.
 - **사유.** `Blocked: guard hook '<skill>' (<event>) could not run its command — <cause>: <detail>. A guard that cannot decide
-  blocks (fail-closed).` 명령 문자열은 싣지 않는다(비밀이 들어갈 수 있다). **푸는 방법도 싣지 않는다** — 그 글을 읽는 것은
+  blocks (fail-closed).` 명령 문자열은 싣지 않는다(비밀이 들어갈 수 있다). 셸 실패와 예외는 `<detail>` 에 예외의 타입 이름만
+  싣는다 — 셸의 실패 메시지가 명령을 인용하기 때문이다(PR #207 리뷰). **푸는 방법도 싣지 않는다** — 그 글을 읽는 것은
   가드를 받는 쪽이다. WARN 로그와 문서에만 있다.
+- **던지는 실행기도 막힌다.** 실행기는 던지지 않기로 되어 있지만, 던지면(`LinkageError` 포함) 훅이 그것을 `EXECUTION_FAILED`
+  로 읽는다 — 그대로 두면 훅 정책의 기본 예외 매퍼가 가드 이벤트에서 성공을 냈다(PR #207 리뷰).
 - **옵션.** 훅별 `failOpen: true`(기본 `false`). 같은 `preTool` 이 가드와 감사 두 용도로 쓰이고 선언만으로는 구별되지 않기
-  때문이다. 스킬 frontmatter 는 항목 수준 키(`matcher` · `action` 과 나란히), `hooks.json` 은 핸들러 수준 키다. **불리언만
-  받는다** — `"true"` · `1` 은 스킬에서는 파싱 오류, `hooks.json` 에서는 **파일 전체의 파싱 실패**다.
+  때문이다. 스킬 frontmatter 는 항목 수준 키(`matcher` · `action` 과 나란히), `hooks.json` 은 핸들러 수준 키다. **불리언
+  `true` 만 연다** — `"true"` · `1` 은 스킬에서는 파싱 오류, `hooks.json` 에서는 **`false` 로 읽고** 파일 · 핸들러를 밝힌
+  WARN 을 남긴다(핸들러는 닫힌 채 등록된다).
 - **종료 코드를 낸 명령은 그대로다.** exit 0 = 허용, exit 2 = 거부, 그 밖 = WARN 후 허용. `failOpen` 은 exit 2 를 약하게 하지
   않는다.
 - **관찰 전용 이벤트는 영향이 없다.** 거부 채널이 없으므로(`vetoResult` 가 빈 값) 지금처럼 WARN 후 성공이다.
@@ -1523,7 +1529,9 @@ frontmatter 와 `hooks.json` 은 **같은 훅 클래스**를 쓴다. 규칙을 �
 
 1. **`hooks.json` 의 잘못된 `failOpen` 을 "그 핸들러만 뺀다" 는 설계는 성립하지 않았다.** 값 검증이 `@JsonCreator` 안에
    있으면 예외는 파일 전체의 파싱 실패가 된다(음수 `timeout` 과 같은 경로). 그리고 핸들러만 빼는 쪽은 `"failOpen": "false"`
-   라고 잘못 쓴 진짜 가드를 WARN 한 줄과 함께 없앤다. 파일 전체 거절로 정했다 — 설계 리뷰 2 가 미리 짚은 지점이다.
+   라고 잘못 쓴 진짜 가드를 WARN 한 줄과 함께 없앤다. 처음에는 파일 전체 거절로 정했으나 PR #207 리뷰가 그것도 fail-open
+   이라는 것을 짚었다 — 시작 시 파싱 실패는 파일의 훅을 하나도 등록하지 않은 채 넘어간다. 그래서 **`false` 로 읽고 핸들러를
+   남긴다**(가드는 닫힌 채). 다른 파싱 오류가 시작 때 같은 결과를 내는 것은 전부터의 동작이라 EE-71 로 올렸다.
 2. **셸 미지원 실행기 + `hooks.json` 은 가정이 아니라 코어의 테스트 클래스 넷이 실제로 쓰던 조립이었다.** 그 테스트들은 `command`
    핸들러가 "등록은 되지만 아무 일도 안 한다" 는 데 기대고 있었다.
 3. **`aimon-cli` 의 테스트 하나가 옛 fail-open 을 "호스트로 되돌아가지 않았다" 의 증거로 썼다.** `exit 2` 훅이 성공으로
@@ -1533,16 +1541,26 @@ frontmatter 와 `hooks.json` 은 **같은 훅 클래스**를 쓴다. 규칙을 �
 가드가 꺼졌다. 옛 테스트가 그 동작을 고정하고 있었고(timeout → 성공), 지금은 런타임 통합 테스트(`sleep 20`, timeout 300ms)
 에서 도구가 실행되지 않고 사유가 모델의 관찰로 간다.
 
-남긴 것: 훅 실행기 수준 timeout 의 `FAIL_OPEN`(→ EE-64), `http` · `mcp` 액션(→ EE-65), exit 126/127(→ EE-66). 샌드박스에서는
-일시적 사용 불가가 "가드 걸린 도구가 전부 막힘" 으로 보인다(→ EE-59).
+**`onStart` 는 포크 안에서 막지 못한다 (PR #207 리뷰 뒤 정정).** 위의 "네 이벤트" 는 훅이 내는 결과의 이야기다. 스킬 훅은
+포크에서만 발화하는데, 포크가 도는 `DefaultSubagentExecutor` 는 `onStart` 결과를 `HookFeedback.collectAdvisory` 로만 읽어
+block 을 버린다(메인 실행의 `OrcaAgentExecutor` 는 따른다). 그래서 **스킬의 `onStart` 가드는 지금 막지 못한다** — exit 2 도,
+명령을 돌리지 못한 것도. 포크의 동작은 바꾸지 않았고(→ EE-70) 문서를 사실대로 고쳤으며, `onStart` 를 `SkillHookSet`
+의 가드 이벤트에서 빼 `onStart` 만 있는 스킬이 백그라운드 워크플로를 거절하게 하지 않는다.
+
+남긴 것: 훅 실행기 수준 timeout 의 `FAIL_OPEN`(→ EE-64), `http` · `mcp` 액션(→ EE-65), exit 126/127(→ EE-66), 포크의 `onStart`
+(→ EE-70), 시작 시 `hooks.json` 파싱 실패(→ EE-71). 샌드박스에서는 일시적 사용 불가가 "가드 걸린 도구가 전부 막힘" 으로
+보인다(→ EE-59).
 
 테스트: `ShellHookOutcomeTest`, `ShellActionRunnerTest`(신규) · `DefaultShellActionExecutorTest` · `HostShellActionExecutorTest` ·
 `NoOpShellActionExecutorTest`(분기별 원인), `DeclarativeShellHookBindingTest`(**모든 이벤트 × 모든 원인** — 가드 이벤트 셋은
 막고 사유에 원인 · 스킬 · 이벤트가 있고 `failOpen` 이라는 글자가 없다, 나머지는 성공; `failOpen` 이면 전부 성공),
 `DeclarativePreToolHookTest`(같은 것 + exit 0/1/126/127 은 허용 + `failOpen` 이 exit 2 를 약하게 하지 않는다),
-`SkillHookSetParserTest` · `JacksonHookConfigParserTest`(불리언 아닌 값), `HookRegistryApplierTest`(셸 미지원 실행기 · 옵션
-전달), `AgentSetupFactorySkillHookShellTest`(YAML 에서 끝까지), `IsolationBoundaryIntegrationTest`(런타임에서 도구가 막히고
-사유가 실린다 / `failOpen` 이면 돈다).
+`SkillHookSetParserTest` · `JacksonHookConfigParserTest` · `HookConfigLoaderTest`(불리언 아닌 값 — `hooks.json` 은 `false` 와
+WARN), `HookRegistryApplierTest`(셸 미지원 실행기 · 옵션 전달), `AgentSetupFactorySkillHookShellTest`(YAML 에서 끝까지),
+`IsolationBoundaryIntegrationTest`(런타임에서 도구가 막히고 사유가 실린다 / `failOpen` 이면 돈다 / 스킬 포크의 제공자가
+실패하면 스킬의 셸 가드가 원인과 함께 막는다). PR #207 리뷰 뒤: `DeclarativePreToolHookTest` · `DeclarativeOnStartHookTest`
+(던지는 실행기 · `NoSuchMethodError` 를 던지는 셸 → 막음, `failOpen` 이면 통과), `ShellActionRunnerTest`(실제 `LocalShell`
+의 시작 실패 사유에 명령이 없다).
 
 설계와 구현이 설계에서 벗어난 점: [`../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md`](../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md).
 
@@ -1823,7 +1841,7 @@ Javadoc). 예제를 그대로 옮긴 사용자는 빌드는 되지만 셸 · 파
 **왜.** 백그라운드 모드는 호출 컨텍스트에서 아무 것도 물려받지 않는다. 에이전트 범위 러너의 `runInBackground(script,
 runId)` 를 부르고, 그 러너의 기반 환경은 런타임을 조립할 때 **런타임 레지스트리로 한 번** 만들어진다. EE-49 가 스킬 훅을
 런타임 레지스트리에서 뺐으므로 그 서브에이전트들은 스킬 훅을 볼 길이 없다. 그래서 지금은 (1) 가드 훅(`preTool` ·
-`onStart` · `preCompact` · `permissionRequest`)이 활성이면 background 모드를 **거절**하고 — 훅을 선언한 FORK 스킬 안에서
+`preCompact` · `permissionRequest` — 포크에서 막지 못하는 `onStart` 는 빼고, EE-70)이 활성이면 background 모드를 **거절**하고 — 훅을 선언한 FORK 스킬 안에서
 백그라운드 워크플로를 쓰던 사용자에게는 기능 축소다 — (2) 관찰 전용 훅만 있으면 실행하되 그 하위 트리에서 발화하지
 않는다(WARN). 뷰를 실어 보내는 것이 한 줄로 안 끝나는 이유는 셋이다: 러너 SPI 에 호출별 환경을 받는 자리가 없고,
 `RunId` 가 요청 내용에서 나와 같은 요청이 진행 중이면 **다른 호출자의 실행에 합류**하므로 "누구의 스킬 훅" 인지 정할 수
@@ -1833,6 +1851,10 @@ runId)` 를 부르고, 그 러너의 기반 환경은 런타임을 조립할 때
 `modules/aimon-workflow-graaljs/src/main/java/at/aimon/workflow/graaljs/GraalJsWorkflowTool.java` 의 `runBackground`,
 `modules/aimon-core/src/main/java/at/aimon/core/tools/HookRegistryAccess.java`(판정과 거절 문구),
 `agent/impl/orca/OrcaAgentRuntimeFactory.java` 의 에이전트 범위 `WorkflowRunners.create`(2026-10-04).
+
+**같은 모양의 둘째 경로 — `ScheduleTask` (PR #207 리뷰).** 가드 스킬의 포크가 루틴을 예약하면 루틴은 나중에 런타임
+레지스트리 위에서 발화해 스킬의 가드를 맞지 않는다. 같은 이유로 그 경우도 거절한다(`ScheduleTaskTool`,
+`HookRegistryAccess.scheduleRefusal`). 이 항목을 풀 때 함께 풀린다 — 실행이 호출자의 뷰를 싣지 못하는 것이 같은 원인이다.
 
 **언제 다시 볼까.** EE-30(백그라운드 워크플로가 호출자의 실행 환경을 잃는다)을 고칠 때 — 같은 러너, 같은 원인이라 함께
 풀어야 한다. 또는 가드 스킬 안에서 백그라운드 워크플로가 필요하다는 요청이 올 때. 감사 훅을 가드만큼 무겁게 보는 배포가
@@ -1944,7 +1966,8 @@ WARN 후 성공("degrading to success")이고 `McpToolAction` 도 같다. 정책
 돌려주면 스킬은 끝나지만 그 서브에이전트는 계속 돌고, 그때부터는 런타임 훅만 본다. EE-49 전에도 같았다(닫을 때 훅을
 등록 해제했다) — 회귀가 아니다. 다만 EE-63 이 백그라운드 워크플로를 거절하는 이유 가운데 하나("실행이 스킬 수명을
 넘는다")가 여기에도 그대로 해당한다. 다르게 다룬 근거는 백그라운드 `Task` 는 스킬이 활성인 **동안은** 가드를 맞는다는
-것뿐이다.
+것뿐이다. 처음부터 가드를 맞지 않는 `ScheduleTask` 의 루틴은 PR #207 리뷰 뒤로 백그라운드 워크플로처럼 거절한다(EE-63) —
+백그라운드 `Task` 는 이 항목의 결정을 기다린다.
 
 **어디.** `modules/aimon-core/src/main/java/at/aimon/core/skill/hook/SkillScopedHookRegistry.java` 의 `deactivate`,
 `tools/skill/SkillTool.java` 의 범위, `tools/task/TaskTool.java` 의 백그라운드 경로(2026-10-04). 층이 꺼진 뒤 뷰가 기반만
@@ -1954,3 +1977,44 @@ WARN 후 성공("degrading to success")이고 `McpToolAction` 도 같다. 정책
 거절 쪽이 맞다.
 
 출처: [`../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md`](../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md) 의 설계 리뷰 2(§10.3).
+
+## EE-70 — 포크는 `onStart` 의 block 을 버린다 · **열림**
+
+**무엇을.** 포크(스킬 포크 · `Task` · 워크플로 서브에이전트)에서 `onStart` 훅이 block 을 내면 그 포크를 멈출지 정한다 —
+멈추게 하든지, advisory 로 남기고 그것을 계약으로 확정하든지.
+
+**왜.** `DefaultSubagentExecutor.fireOnStart` 는 `onStart` 결과를 `HookFeedback.collectAdvisory` 로만 읽는다 — block 은 버려지고
+advisory 피드백만 대화에 붙는다. 메인 실행(`OrcaAgentExecutor`)은 block 을 따라 턴을 끝낸다. 스킬 훅은 포크에서만 발화하므로
+(EE-49) **스킬 frontmatter 의 `onStart` 가드는 지금 막지 못한다** — exit 2 도, EE-51 의 "명령을 돌리지 못함" 도. `hooks.json`
+의 `onStart` 핸들러도 포크 안에서는 같다(모든 포크). PR #207 은 문서가 "스킬의 `onStart` 는 막는다" 고 적었던 것을 고쳤고,
+`onStart` 를 `SkillHookSet` 의 가드 이벤트에서 빼 `onStart` 만 있는 스킬이 백그라운드 워크플로 · `ScheduleTask` 를 거절하게
+하지 않는다. 포크의 동작은 바꾸지 않았다 — 운영자의 `hooks.json` `onStart` 가 모든 포크를 멈추기 시작하는 동작 변경이라 사람이
+정할 일이다.
+
+**어디.** `modules/aimon-core/src/main/java/at/aimon/core/subagent/execution/DefaultSubagentExecutor.java` 의 `fireOnStart`,
+`agent/impl/orca/OrcaAgentExecutor.java` 의 `onStart` 처리(비교 대상), `skill/hook/SkillHookSet.java` 의 `GUARD_EVENTS`
+(2026-10-04).
+
+**언제 다시 볼까.** 스킬 `onStart` 를 가드로 쓰려는 요청이 올 때, 또는 `hooks.json` 의 `onStart` 가 포크에서도 막아야 한다는
+배포가 생길 때. 고치면 `GUARD_EVENTS` 에 `onStart` 를 되돌린다.
+
+출처: PR #207 리뷰 S3 ([`../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md`](../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md) §10.7).
+
+## EE-71 — 시작 때 `hooks.json` 파싱이 실패하면 파일 가드가 하나도 없다 · **열림**
+
+**무엇을.** 시작(부트스트랩) 시 `hooks.json` 의 파싱이 실패하면 시작을 멈출지, 지금처럼 WARN 후 파일 훅 없이 계속할지 정한다.
+
+**왜.** `HookConfigLoader.load()` 는 파일 하나라도 파싱에 실패하면 `HookConfigParseException` 을 던지고,
+`HookHotReloadBootstrap` 은 그것을 WARN 한 줄로 받아 넘긴다 — 레지스트리에는 **어느 계층의** 파일 훅도 없다(한 계층의 오류가
+다른 계층까지 비운다). 가드 입장에서 fail-open 이다: 알 수 없는 `type`, 음수 `timeout`, 깨진 JSON 하나로 운영자의 모든 `preTool`
+가드가 꺼진 채 에이전트가 돈다. 핫 리로드의 실패는 이전 설정을 그대로 두므로 문제가 시작 때뿐이다. EE-51 결정("판단하지 못한
+가드는 막는다")을 따르면 시작을 멈추는 쪽이지만, 그것은 오타 하나로 CLI 가 뜨지 않게 만드는 동작 변경이라 이 변경에서
+하지 않았다. PR #207 리뷰는 불리언 아닌 `failOpen` 이 이 경로를 타던 것(첫 구현)만 고쳤다 — 지금은 `false` 로 읽힌다.
+
+**어디.** `modules/aimon-core/src/main/java/at/aimon/core/config/hook/HookConfigLoader.java` 의 `load`,
+`HookHotReloadBootstrap.java` 의 시작 경로, `HookRegistryReloader.java` 의 첫 적용(2026-10-04).
+
+**언제 다시 볼까.** `hooks.json` 을 보안 가드로 쓰는 배포가 생길 때. 중단이 너무 무겁다면 그 사이의 선택지 — 실패한 계층만
+빼고 나머지는 적용, 또는 모든 가드 이벤트를 막는 "닫힌" 상태로 시작 — 도 같이 볼 것.
+
+출처: PR #207 리뷰 B1 ([`../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md`](../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md) §10.7).

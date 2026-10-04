@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
 
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.base.UserLocale;
@@ -74,6 +75,77 @@ class DeclarativeOnStartHookTest {
                 .isInstanceOf(NullPointerException.class);
         assertThatThrownBy(() -> new DeclarativeOnStartHook("s", action, null))
                 .isInstanceOf(NullPointerException.class);
+    }
+
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.MethodSource("thrownByTheGuard")
+    void execute_executorThatThrows_blocksWithTheTypeOnly(Throwable thrown) throws Exception {
+        for (ShellActionExecutor executor : List.of(throwingExecutor(thrown), throwingShell(thrown))) {
+            DeclarativeOnStartHook hook = new DeclarativeOnStartHook("my-skill",
+                    new ShellAction("guard.sh --token s3cret", Duration.ofSeconds(1)), executor);
+
+            HookResult result = hook.execute(contextFor("hi"));
+
+            assertThat(result.getStatus()).as("%s", executor).isEqualTo(HookStatus.BLOCKED);
+            assertThat(result.getFeedback().orElseThrow())
+                    .contains(ShellHookOutcome.Unrun.EXECUTION_FAILED.description())
+                    .contains(thrown.getClass().getSimpleName()).doesNotContain("s3cret");
+        }
+    }
+
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.MethodSource("thrownByTheGuard")
+    void execute_executorThatThrows_failOpenPasses(Throwable thrown) throws Exception {
+        for (ShellActionExecutor executor : List.of(throwingExecutor(thrown), throwingShell(thrown))) {
+            DeclarativeOnStartHook hook = new DeclarativeOnStartHook("my-skill",
+                    new ShellAction("audit.sh", Duration.ofSeconds(1)), executor,
+                    DeclarativeHookOptions.builder().failOpen(true).build());
+
+            assertThat(hook.execute(contextFor("hi")).getStatus()).as("%s", executor).isEqualTo(HookStatus.SUCCESS);
+        }
+    }
+
+    // --- a guard that throws instead of reporting an outcome (fail-closed, review of #207 S1) -----------------------
+
+    static java.util.stream.Stream<Throwable> thrownByTheGuard() {
+        return java.util.stream.Stream.of(new IllegalStateException("guard.sh --token s3cret exploded"),
+                new NoSuchMethodError("at.aimon.core.shell.VirtualShell.execute(guard.sh --token s3cret)"));
+    }
+
+    private static ShellActionExecutor throwingExecutor(Throwable thrown) {
+        return new ShellActionExecutor() {
+            @Override
+            public boolean isShellSupported() {
+                return true;
+            }
+
+            @Override
+            public boolean requiresExecutionEnvironment() {
+                return false;
+            }
+
+            @Override
+            public ShellHookOutcome run(ShellAction action, HookContext context, Map<String, String> env,
+                    String stdinPayload) {
+                throw sneaky(thrown);
+            }
+        };
+    }
+
+    private static ShellActionExecutor throwingShell(Throwable thrown) throws Exception {
+        final at.aimon.core.shell.VirtualShell shell = org.mockito.Mockito.mock(at.aimon.core.shell.VirtualShell.class);
+        org.mockito.Mockito
+                .when(shell.execute(org.mockito.ArgumentMatchers.any(at.aimon.core.shell.ShellCommand.class),
+                        org.mockito.ArgumentMatchers.any(at.aimon.core.shell.ExecutionOptions.class)))
+                .thenThrow(thrown);
+        return new HostShellActionExecutor(shell);
+    }
+
+    private static RuntimeException sneaky(Throwable thrown) {
+        if (thrown instanceof RuntimeException runtime) {
+            return runtime;
+        }
+        throw (Error) thrown;
     }
 
     private static OnStartContext contextFor(String userMessage) {

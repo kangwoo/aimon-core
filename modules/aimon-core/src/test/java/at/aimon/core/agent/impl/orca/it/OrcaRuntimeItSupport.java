@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Consumer;
+import java.util.function.UnaryOperator;
 
 import at.aimon.core.agent.Agent;
 import at.aimon.core.agent.AgentRuntimeId;
@@ -32,6 +33,7 @@ import at.aimon.core.agent.session.transcript.DefaultTranscriptManager;
 import at.aimon.core.agent.session.transcript.TranscriptManager;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.command.DefaultCommandExecutionManager;
+import at.aimon.core.environment.ExecutionEnvironmentProvider;
 import at.aimon.core.environment.impl.LocalExecutionEnvironmentProvider;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
@@ -42,7 +44,11 @@ import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.cost.CostEstimator;
 import at.aimon.core.mcp.McpClientFactory;
 import at.aimon.core.mcp.McpServerConfigProvider;
+import at.aimon.core.skill.hook.declarative.DefaultShellActionExecutor;
+import at.aimon.core.skill.parser.MarkdownSkillParser;
+import at.aimon.core.skill.parser.SkillHookSetParser;
 import at.aimon.core.skill.policy.SkillInvocationPolicy;
+import at.aimon.core.skill.render.ShellArgumentTokenizer;
 import at.aimon.core.subagent.DefaultSubagentExecutionManager;
 import at.aimon.core.subagent.SubagentRegistry;
 
@@ -170,8 +176,16 @@ final class OrcaRuntimeItSupport implements AutoCloseable {
         // One filesystem serves as both the control store (its .aimon/ directories) and, behind the provider's path
         // rules, the workspace the tools see — the "supplied file system" shape. rg is left out so Grep takes the same
         // path on every machine.
-        factory.withExecutionEnvironmentProvider(
-                LocalExecutionEnvironmentProvider.builder().fileSystem(fileSystem).contentSearch(false).build());
+        factory.withExecutionEnvironmentProvider(options.environmentProviderDecorator.apply(
+                LocalExecutionEnvironmentProvider.builder().fileSystem(fileSystem).contentSearch(false).build()));
+        if (options.skillShellHooks) {
+            // What a bootstrap does to let user skills declare shell hooks: the same layered registry, parsed with a
+            // shell-capable hook parser.
+            factory.withSkillRegistry(
+                    OrcaAgentRuntimeFactory.buildSkillRegistry(AgentBundle.builder().agent(agent).build(), fileSystem,
+                            ".aimon/skills", new MarkdownSkillParser(new ShellArgumentTokenizer(),
+                                    new SkillHookSetParser(new DefaultShellActionExecutor()))));
+        }
 
         // scheduledTaskManager and credentialStore are null on purpose: neither is required to assemble a runtime, and
         // leaving them out proves the factory's null-safe paths (the scheduling provider skips registration) stay
@@ -472,6 +486,8 @@ final class OrcaRuntimeItSupport implements AutoCloseable {
         private SkillInvocationPolicy skillInvocationPolicy;
         private CostEstimator costEstimator;
         private int maxIterations = MAX_ITERATIONS;
+        private UnaryOperator<ExecutionEnvironmentProvider> environmentProviderDecorator = UnaryOperator.identity();
+        private boolean skillShellHooks;
 
         /** Appends a provider after the default ones. Use for probes that observe state production tools do not. */
         Options extraToolProvider(OrcaToolProvider provider) {
@@ -556,6 +572,24 @@ final class OrcaRuntimeItSupport implements AutoCloseable {
                 throw new IllegalArgumentException("maxIterations must be >= 1, got " + maxIterations);
             }
             this.maxIterations = maxIterations;
+            return this;
+        }
+
+        /**
+         * Wraps the node's local execution environment provider — for a test that needs the provider to fail for some
+         * executions. The production provider still answers every request the decorator passes on.
+         */
+        Options environmentProvider(UnaryOperator<ExecutionEnvironmentProvider> decorator) {
+            this.environmentProviderDecorator = Objects.requireNonNull(decorator, "decorator must not be null");
+            return this;
+        }
+
+        /**
+         * Parses user skills with a shell-capable hook parser ({@code DefaultShellActionExecutor}), as a bootstrap that
+         * allows {@code shell} hook actions does. Off by default, where a skill declaring one fails to parse.
+         */
+        Options skillShellHooks(boolean enabled) {
+            this.skillShellHooks = enabled;
             return this;
         }
 

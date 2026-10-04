@@ -6,11 +6,12 @@
 > 사실이 아니게 된 서술**이 남아 있다. 고친 것은 본문이 아니라 §10 에 적는다.
 >
 > 더한 것은 §10 하나다 — 구현이 이 설계에서 벗어난 곳과 그 이유, 반영한 리뷰 지적, 열린 질문이 어떻게 되었는지. 특히
-> §10.1(`hooks.json` 의 잘못된 `failOpen` 은 그 핸들러만 빼는 것이 아니라 **파일 전체를 거절**한다 — 본문 §4.2 · F15 · §7 과
-> 다르다)과 §10.4(사람이 뒤집을 수 있는 결정 셋)를 먼저 볼 것. §9 의 열린 질문과 §8 의 새 항목 가운데 이 변경 밖으로 결과가
-> 번지는 것은 [`../../backlog/execution-environment-open-items.md`](../../backlog/execution-environment-open-items.md) 로
-> 옮겼다(EE-63 ← Q8 · §8, EE-64 ← Q4 · F5, EE-65 ← §8, EE-66 ← Q3, EE-67 ← Q5, EE-68 ← §8, EE-69 ← 설계 리뷰 2). 열림/닫힘의
-> 정본은 그 문서다. 이 설계가 확장하는 명세는 [`execution-environment.md`](execution-environment.md) §5.3 · §10 · §13 · §15 다.
+> §10.1(`hooks.json` 의 잘못된 `failOpen` 은 그 핸들러만 빼지도, 파일 전체를 거절하지도 않고 **`false` 로 읽어 핸들러를
+> 남긴다** — 본문 §4.2 · F15 · §7 과 다르고, 첫 구현과도 다르다)과 §10.4(사람이 뒤집을 수 있는 결정 셋), §10.7(PR #207
+> 리뷰가 바꾼 것)을 먼저 볼 것. §9 의 열린 질문과 §8 의 새 항목 가운데 이 변경 밖으로 결과가 번지는 것은
+> [`../../backlog/execution-environment-open-items.md`](../../backlog/execution-environment-open-items.md) 로
+> 옮겼다(EE-63 ← Q8 · §8, EE-64 ← Q4 · F5, EE-65 ← §8, EE-66 ← Q3, EE-67 ← Q5, EE-68 ← §8, EE-69 ← 설계 리뷰 2,
+> EE-70 · EE-71 ← PR #207 리뷰). 열림/닫힘의 정본은 그 문서다. 이 설계가 확장하는 명세는 [`execution-environment.md`](execution-environment.md) §5.3 · §10 · §13 · §15 다.
 
 - 대상 브랜치: `herdr/ee49-ee51-ee58-isolation-boundary` (BASE `main`, `1d60d30`)
 - 이 문서는 설계만 담는다. 코드 조각은 모양을 보이기 위한 것이고 구현이 아니다.
@@ -544,17 +545,19 @@ BackgroundBashOwner getOwner();
 
 ### 10.1 본문과 다르게 한 것
 
-1. **`hooks.json` 의 불리언 아닌 `failOpen` 은 그 핸들러만 빼지 않고 파일 전체의 파싱을 실패시킨다** (§4.2, F15, §7 의
-   "그 핸들러 미등록"). 설계 리뷰 2 가 짚은 대로, 본문이 적은 기제는 본문이 적은 결과를 내지 못한다 —
-   `HookHandlerSpec.fromJson` 은 `@JsonCreator` 라서 거기서 던진 `IllegalArgumentException` 은 `readValue` 안에서 터져
-   `HookConfigParseException` 이 되고(`JacksonHookConfigParser`), 핸들러 단위의 "invalid handler … WARN" 경로
-   (`HookRegistryApplier` 의 `toAction` 주위 catch)에는 닿지 않는다. 둘 중 하나를 골라야 했고 **파일 전체 거절**을 골랐다.
-   이유: (a) 핸들러만 빼면 `"failOpen": "false"` 라고 잘못 쓴 **진짜 가드**가 WARN 한 줄과 함께 사라져 exit 2 조차 더는
-   막지 못한다 — "잘못 쓴 옵션이 가드를 열지 않는다" 는 본문의 주장이 성립하지 않는다. (b) 파싱 실패는 음수 `timeout` 과
-   알 수 없는 `type` 이 이미 타는 경로이고, `HookConfigLoader` 의 문서화된 정책이 "시작 때 사용자에게 드러낸다" 이다.
-   그래서 `fromJson` 은 `failOpen` 을 `JsonNode` 로 받아 `isBoolean()` 이 아니면 던진다. 명시적 `null` 도 거절한다
-   (없는 것과 다르다). 테스트는 `"true"` · `"false"` · `1` · `0` · `null` · `[true]` 를 고정한다
-   (`JacksonHookConfigParserTest.failOpenThatIsNotABooleanFails`). 스킬 frontmatter 쪽은 본문대로 파싱 오류다.
+1. **`hooks.json` 의 불리언 아닌 `failOpen` 은 그 핸들러를 빼지 않고 `false` 로 읽는다** (§4.2, F15, §7 의
+   "그 핸들러 미등록"). 본문이 적은 기제는 본문이 적은 결과를 내지 못했다(설계 리뷰 2) — `HookHandlerSpec.fromJson` 은
+   `@JsonCreator` 라서 거기서 던진 예외는 `HookConfigParseException` 이 되고 핸들러 단위의 WARN 경로에는 닿지 않는다. 그리고
+   핸들러만 빼는 쪽은 `"failOpen": "false"` 라고 잘못 쓴 **진짜 가드**를 WARN 한 줄과 함께 없앤다. 첫 구현은 그래서 **파일
+   전체 거절**을 골랐으나 PR #207 리뷰(B1)가 그것도 fail-open 이라는 것을 짚었다 — 시작 시 파싱 실패는 레지스트리를 **비운 채**
+   WARN 한 줄로 넘어가므로(`HookHotReloadBootstrap`), 키 하나의 오타가 파일의 **모든** 가드를 끈다. 메인테이너 결정("판단하지
+   못한 가드는 막는다")에 맞춰 지금은 이렇다: `fromJson` 은 `failOpen` 을 `JsonNode` 로 받아 JSON 불리언이 아니면(명시적
+   `null` 포함) **`false`** 로 읽고 원문을 `HookHandlerSpec.getRejectedFailOpen()` 에 남긴다. `HookConfigLoader` 가 파일 ·
+   이벤트 · 핸들러를 밝혀 WARN 한다. 강제 변환으로 가드가 열리지 않고, 핸들러도 가드도 사라지지 않는다. 테스트는
+   `"true"` · `"false"` · `1` · `0` · `null` · `[true]` 를 고정한다(`JacksonHookConfigParserTest
+   .failOpenThatIsNotABooleanIsReadAsFalse`, `HookConfigLoaderTest.nonBooleanFailOpenIsReadAsFalseWithAWarning`). 스킬
+   frontmatter 쪽은 본문대로 파싱 오류다(스킬 하나만 빠지고 다른 스킬의 가드는 남는다). 다른 파싱 오류가 시작 때 파일의
+   훅을 전부 비우는 것은 이 변경 전부터의 동작이라 그대로 두고 EE-71 로 올렸다.
 2. **`HookRegistryAccess.hasActiveSkillGuards` 만으로는 거절 문구를 만들 수 없어 이름을 돌려주는 메서드를 더했다** (§4.1).
    본문의 시그니처는 `boolean` 인데 거절 문구는 스킬 이름을 싣고 §7 이 그것을 단언한다(리뷰 2). 그래서
    `activeSkillGuards(ToolContext)` 가 `List<String>`(바깥 스킬부터)을 돌려주고 `hasActiveSkillGuards` 는 그것이 비었는지만
@@ -566,12 +569,15 @@ BackgroundBashOwner getOwner();
 4. **`timeout` 의 `<cause>` 는 `timed out after 30s` 가 아니라 `timed out: no exit status within 30000ms` 다** (§3.2).
    사유를 `<cause>: <detail>` 한 형식으로 맞추려고 원인 낱말(`ShellHookOutcome.Unrun#description()`)과 세부를 나눴다.
    나머지 넷의 원인 낱말은 본문 그대로다.
-5. **EE-51 의 통합 테스트는 "환경 제공자가 실패하는 실행" 이 아니라 "명령이 timeout 안에 끝나지 않는 실행" 으로 덮었다**
-   (§7). 런타임 통합 하네스(`OrcaRuntimeItSupport`)는 로컬 제공자를 고정으로 쓰고 기본 조립의 스킬 파서는 셸 액션을
-   받지 않는다. 하네스에 제공자와 파서를 갈아 끼우는 옵션을 더하는 대신, 실제 런타임 · 실제 `DefaultShellActionExecutor` ·
-   실제 로컬 셸로 `sleep 20`(timeout 300ms) 가드를 걸어 "도구가 막히고 사유가 모델의 관찰에 실린다" 와 `failOpen` 이면
-   도구가 돈다는 것을 고정했다(`IsolationBoundaryIntegrationTest`). 환경 없음 · 사용 불가 · 셸 미지원 · 실행 실패는
-   단위 테스트가 원인별로 덮는다(`DefaultShellActionExecutorTest`, `ShellActionRunnerTest`, 이벤트 × 원인 매개변수 테스트).
+5. **EE-51 의 통합 테스트는 처음에 "환경 제공자가 실패하는 실행" 이 아니라 "명령이 timeout 안에 끝나지 않는 실행" 으로
+   덮었다** (§7). 실제 런타임 · 실제 `DefaultShellActionExecutor` · 실제 로컬 셸로 `sleep 20`(timeout 300ms) 가드를 걸어
+   "도구가 막히고 사유가 모델의 관찰에 실린다" 와 `failOpen` 이면 도구가 돈다는 것을 고정했다. PR #207 리뷰(S5) 뒤로는
+   본문이 적은 모양도 있다: 하네스에 제공자 데코레이터와 셸 훅을 받는 스킬 파서 옵션을 더해, **스킬 frontmatter 의 셸
+   `preTool` 가드가 스킬 포크 안에서 돌고 그 포크의 제공자가 실패할 때**(던짐 · null — 둘 다 `resolveOrUnavailable` 경로)
+   환경이 필요 없는 도구(`TodoWrite`)가 원인을 실은 사유와 함께 막힌다
+   (`IsolationBoundaryIntegrationTest.skillShellGuardBlocksWhenTheForksEnvironmentProviderFails`). 포크의 훅 컨텍스트에
+   환경이 아예 없는 경우(`NO_ENVIRONMENT`)는 조립된 런타임에서 만들 길이 없어 — 포크는 늘 `resolveOrUnavailable` 을 거친다 —
+   단위 테스트가 덮는다(`DefaultShellActionExecutorTest`, 이벤트 × 원인 매개변수 테스트).
 6. **§7 이 `BackgroundTaskTurnIntegrationTest` 에 두라고 한 "포크가 띄운 작업을 부모 턴이 읽고 멈춘다" 는
    `IsolationBoundaryIntegrationTest` 에 있다.** 그 클래스는 백그라운드 **서브에이전트** 작업(`Task` · `AgentOutput` ·
    `TaskStop`)의 것이고 백그라운드 `Bash` 와 무관하다. 세 항목의 런타임 수준 테스트를 한 클래스에 모았다.
@@ -583,8 +589,8 @@ BackgroundBashOwner getOwner();
   `none()` 이다.
 - **`BackgroundBashRecord.Builder.owner(BackgroundBashOwner)`.** 세 필드를 한 번에 싣는다. 필드별 세터도 그대로 있다(저장소
   구현이 직렬화한 값을 되돌릴 때 쓴다).
-- **`SkillHookSet.guardEvents()` · `hasGuards()`.** "거부 채널이 있는 네 이벤트"(P7)가 세 군데(뷰의 가드 판정, 스킬 파서의
-  `failOpen` 경고, 문서)에서 필요해 한 곳에 뒀다.
+- **`SkillHookSet.guardEvents()` · `hasGuards()`.** "거부 채널이 있는 이벤트"(P7)가 세 군데(뷰의 가드 판정, 스킬 파서의
+  `failOpen` 경고, 문서)에서 필요해 한 곳에 뒀다. 처음에는 넷이었고 지금은 셋이다 — `onStart` 를 뺐다(§10.7, EE-70).
 - **`failOpen` 은 거부 채널이 있는 이벤트의 `exit 2` 를 약하게 하지 않는다.** 종료 코드를 낸 명령은 옵션과 무관하게 본문
   §3.2 의 계약대로다(테스트 `execute_failOpen_doesNotWeakenAnExitTwoVeto`).
 - **`ShellHookOutcome.unrunReason()` 의 상한은 `denyReason()` 과 같은 `MAX_DENY_REASON_LENGTH` 이고 같은 잘림 표식을 쓴다.**
@@ -597,8 +603,8 @@ BackgroundBashOwner getOwner();
 
 | 지적 | 처리 |
 |------|------|
-| `hooks.json` 의 잘못된 `failOpen` — 적힌 기제로는 계획한 테스트가 통과할 수 없다 | §10.1-1. 파일 전체 거절로 정했고 테스트의 기대값을 그쪽으로 바꿨다 |
-| "잘못 쓴 옵션이 가드를 열지 않는다" 는 핸들러 단위 탈락에서는 참이 아니다 | 같은 결정으로 풀렸다 — 파일이 거절되므로 가드가 조용히 빠지지 않는다 |
+| `hooks.json` 의 잘못된 `failOpen` — 적힌 기제로는 계획한 테스트가 통과할 수 없다 | §10.1-1. 처음에는 파일 전체 거절로 정했고, PR #207 리뷰 뒤로 `false` 로 읽어 핸들러를 남기는 쪽으로 바꿨다 |
+| "잘못 쓴 옵션이 가드를 열지 않는다" 는 핸들러 단위 탈락에서는 참이 아니다 | 지금은 참이다 — 핸들러가 닫힌 채 남는다. 파일 전체 거절은 시작 시 파일의 가드를 전부 끄므로 이 지적을 풀지 못했다(§10.7) |
 | F4 가 "모델은 사유에서 원인과 `failOpen` 을 읽는다" 고 적는다(개정 2 가 힌트를 뺐다) | 본문은 고치지 않는다. **F4 의 그 문장은 사실이 아니다** — 사유에 `failOpen` 이라는 글자는 없고 테스트가 그것을 단언한다. 여는 방법은 WARN 로그와 문서에만 있다 |
 | 가드 스킬 포크가 `run_in_background` `Task` 를 띄우고 반환하면 그 서브에이전트는 가드 없이 계속 돈다 | 문서화된 한계로 받아들이고 백로그에 올렸다(EE-69). 백그라운드 워크플로와 다르게 다루는 이유: `Task` 는 스킬이 활성인 동안은 뷰를 물려받아 가드를 맞고, 스킬이 끝난 뒤에야 벗어난다(이 변경 전과 같다). 백그라운드 워크플로는 **처음부터** 가드를 맞지 않는다 — 그래서 그쪽만 거절한다. `SkillHookActivator` javadoc 에 둘 다 적었다 |
 | `hasActiveSkillGuards` 가 이름을 돌려주지 않는다 | §10.1-2 |
@@ -657,3 +663,22 @@ BackgroundBashOwner getOwner();
   번역본.
 - 앞선 설계 노트 둘(ee9-ee12, ee13-ee7)에는 본문을 두고 머리말에 "덧붙임" 한 줄씩을 더했다.
 - `CHANGELOG.md` `[Unreleased]`, 백로그(세 항목 닫힘 · 일곱 항목 추가 · EE-1 · EE-59 보강).
+
+### 10.7 PR #207 리뷰의 지적과 처리
+
+메인테이너의 기준 결정은 EE-51 그대로다 — **판단하지 못한 가드는 막는다.** 지적마다 소스로 먼저 확인했다.
+
+| 지적 | 처리 |
+|------|------|
+| B1 — 불리언 아닌 `failOpen` 이 파일 전체의 파싱을 실패시키고, 시작 시에는 레지스트리가 빈 채 WARN 한 줄로 넘어간다(fail-open) | `false` 로 읽고 핸들러를 남긴다. 로더가 파일 · 이벤트 · 핸들러를 밝혀 WARN 한다(§10.1-1). 다른 파싱 오류가 시작 때 파일의 훅을 비우는 것은 이 변경 전부터의 동작이라 바꾸지 않았다(→ EE-71). 핫 리로드 실패가 이전 설정을 그대로 두는 것은 가이드에 적었다 |
+| S1 — 던지는 선언 가드는 통과된다(`ShellActionRunner` 는 `RuntimeException` 만 잡고, 훅 정책의 기본 예외 매퍼는 가드 이벤트에서 성공을 낸다) | `DeclarativePreToolHook` 과 `AbstractDeclarativeShellHook` 이 셸 분기를 `RuntimeException \| LinkageError` 로 감싸 `notRun(EXECUTION_FAILED, <클래스 이름>)` 으로 읽는다. 그래서 fail-closed 판정과 `failOpen` 이 그대로 적용된다. 예외 전체는 로그에만 |
+| S2 — 사유가 명령 문자열을 흘릴 수 있다(`LocalShell` 의 예외 메시지가 명령을 싣는다) | `EXECUTION_FAILED` 의 세부는 예외의 클래스 이름뿐이다. `shell()` 이 사용 불가 예외가 아닌 것을 던진 `ENVIRONMENT_UNAVAILABLE` 도 같다. `ExecutionEnvironmentUnavailableException` 의 메시지는 남겼다 — 도구가 이미 모델에게 그대로 보여 주는 값이고, 원인을 사유에 싣는다는 결정의 그 "원인" 이다. 메시지는 로그에 남는다 |
+| S3 — 스킬 frontmatter 의 `onStart` 가드는 막지 못한다(`DefaultSubagentExecutor` 가 `onStart` 결과를 advisory 로만 읽는다) | 포크의 `onStart` 동작은 바꾸지 않았다(사람의 결정). 문서를 사실대로 고쳤고, `onStart` 를 `SkillHookSet.GUARD_EVENTS` 에서 빼 `onStart` 만 있는 스킬이 백그라운드 워크플로를 거절하게 만들지 않는다(→ EE-70) |
+| S4 — 가드 스킬 포크가 `ScheduleTask` 로 루틴을 잡으면, 루틴은 나중에 런타임 레지스트리에서 스킬의 가드 없이 돈다 | 백그라운드 워크플로와 같은 이유로 `ScheduleTaskTool` 이 거절한다(`ToolResult.error`, 문구는 `HookRegistryAccess.scheduleRefusal`). 백그라운드 `Task` 는 그대로다(EE-69) |
+| S5 — 제공자가 실패하는 포크에서 스킬의 셸 가드를 돌리는 조립 테스트가 없다 | §10.1-5 |
+| `vetoResult` 를 두 번 불러 거부 채널을 탐침한다 | `canVeto()` 를 더했다 |
+| 가드 판정은 컨텍스트의 레지스트리가 `SkillScopedHookRegistry` **자신**이어야 한다 | `HookRegistryAccess` javadoc 에 적었다 — 감싸는 데코레이터는 백그라운드 거절을 끈다 |
+| 훅을 선언한 INLINE 스킬 | 거절하지 않고 로드 시 WARN 한다(훅이 발화하지 않는다) |
+
+손대지 않은 것: `HOOK_REGISTRY` 가 읽기 전용 뷰라는 점, `skill.hook` ↔ `tools` 패키지 순환(활성화기가 읽는 키 `HOOK_REGISTRY` 가 `tools.ToolContextKeys` 에 있어, 키를 옮기는 API 변경 없이는 풀리지 않는다),
+같은 세션의 형제 포크가 서로의 백그라운드 작업을 보는 것(Q6), 활성화한 실행 자신에게는 발화하지 않는 것(Q1).

@@ -55,6 +55,8 @@ class IsolationBoundaryIntegrationTest {
     private static final String GUARDED_SKILL = "it-guarded";
     private static final String GUARD_REASON = "SKILL-GUARD-7e21";
     private static final String NOTE = "note.txt";
+    private static final String SHELL_GUARDED_SKILL = "it-shell-guarded";
+    private static final String PROVIDER_DOWN = "PROVIDER-DOWN-4b1e";
 
     /** Matches the id in {@code "Background task started with ID: bash_1a2b3c4d"}, wherever it is quoted. */
     private static final Pattern TASK_ID = Pattern.compile("bash_[0-9a-f]{8}");
@@ -225,6 +227,65 @@ class IsolationBoundaryIntegrationTest {
 
         assertThat(llm.lastCallFor(sessionId.value()).observations())
                 .anyMatch(observation -> observation.contains("NOTE-BODY-3c90"));
+    }
+
+    /**
+     * A node whose skill parser accepts shell hooks and whose environment provider fails for the {@link #WORKER} fork
+     * only, the way a sandbox provider fails: by throwing, or by answering with nothing.
+     */
+    private OrcaRuntimeItSupport.Node nodeWithFailingForkEnvironment(String name, boolean providerThrows) {
+        support.seedSkill(name, SHELL_GUARDED_SKILL,
+                "---\nname: " + SHELL_GUARDED_SKILL + "\ndescription: Runs in a fork with a shell guard on TodoWrite\n"
+                        + "execution:\n  mode: fork\n  agent: " + WORKER + "\nhooks:\n  preTool:\n"
+                        + "    - matcher: TodoWrite\n      action: { type: shell, command: \"exit 0\" }\n"
+                        + "---\n\nDo the guarded work.\n");
+        final InMemorySubagentRegistry codeSubagents = new InMemorySubagentRegistry();
+        codeSubagents.register(Subagent.builder().name(WORKER).description("Integration-test worker subagent")
+                .systemPrompt("You are the integration-test worker.").maxIterations(6).build());
+        return support.newNode(name, llm, OrcaRuntimeItSupport.options().codeSubagents(codeSubagents)
+                .skillShellHooks(true).environmentProvider(local -> request -> {
+                    final boolean worker = request.fork().map(fork -> WORKER.equals(fork.name())).orElse(false);
+                    if (!worker) {
+                        return local.resolve(request);
+                    }
+                    if (providerThrows) {
+                        throw new IllegalStateException(PROVIDER_DOWN);
+                    }
+                    return null;
+                }));
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest(name = "provider throws: {0}")
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+    @DisplayName("a skill's shell guard in a fork whose environment provider failed blocks the tool, with the cause")
+    void skillShellGuardBlocksWhenTheForksEnvironmentProviderFails(boolean providerThrows) {
+        final OrcaRuntimeItSupport.Node failing = nodeWithFailingForkEnvironment(
+                providerThrows ? "agent-throwing-provider" : "agent-null-provider", providerThrows);
+        final SessionId sessionId = OrcaRuntimeItSupport.newSession();
+        final String forkRoute = ScriptedLlmClient.forkRoute(sessionId.value(), WORKER);
+        llm.script(sessionId.value(), ScriptedLlmClient.callTool("Skill", Map.of("skill", SHELL_GUARDED_SKILL)),
+                ScriptedLlmClient.text("a done"));
+        // TodoWrite needs no environment, so only the guard can stop it.
+        llm.script(forkRoute,
+                ScriptedLlmClient
+                        .callTool("TodoWrite",
+                                Map.of("todos",
+                                        List.of(Map.of("content", "GUARDED-TODO-1f5a", "status", "in_progress",
+                                                "activeForm", "Doing GUARDED-TODO-1f5a")))),
+                ScriptedLlmClient.text("fork finished"));
+
+        final OrcaAgentExecutionResult result = failing.run(sessionId, "run the shell-guarded skill");
+
+        assertThat(result.isSuccess()).isTrue();
+        final List<String> seenByFork = llm.lastCallFor(forkRoute).observations();
+        assertThat(seenByFork)
+                .anyMatch(observation -> observation.contains("guard hook '" + SHELL_GUARDED_SKILL + "' (preTool)")
+                        && observation.contains("execution environment unavailable")
+                        && observation.contains("fail-closed")
+                        && observation.contains(providerThrows ? PROVIDER_DOWN : "returned no execution environment"));
+        // A TodoWrite that ran would answer "Todo list updated ... In Progress: Doing GUARDED-TODO-1f5a".
+        assertThat(seenByFork).noneMatch(
+                observation -> observation.contains("GUARDED-TODO-1f5a") || observation.contains("Todo list updated"));
     }
 
     // --- EE-58 -----------------------------------------------------------------------------------------------------

@@ -19,8 +19,8 @@ change public SPI; they ship together so external repositories follow once.
   the skill's fork dispatches against (`SkillScopedHookRegistry`) and reach that fork and the forks it starts — `Task`,
   `Workflow` / `WorkflowJs` in foreground mode, a nested skill. They no longer fire for another session of the same
   agent, **nor for the execution that invoked the skill** (which used to see them on parallel sibling tool calls while
-  a fork-mode skill ran). An inline-mode skill has no fork; its hooks do not fire. Code that enumerated the runtime
-  registry to find skill hooks finds none.
+  a fork-mode skill ran). An inline-mode skill has no fork; its hooks do not fire, and loading one that declares hooks
+  logs a WARN. Code that enumerated the runtime registry to find skill hooks finds none.
 - **`SkillHookActivator.activate(Skill)` is `activate(Skill, ToolContext)`**, and `SkillHookScope` gains
   `hookRegistry()`. `RegistryBackedSkillHookActivator` is renamed `ScopedSkillHookActivator`.
 - **New write-once key `ToolContextKeys.HOOK_REGISTRY`** — the registry an execution dispatches against — read with
@@ -28,10 +28,17 @@ change public SPI; they ship together so external repositories follow once.
   must hand the fork that registry** and fall back to its own only when the context has none. One that keeps passing a
   registry captured at construction runs the fork without the skill's hooks: a guard among them is off, silently.
 - **`Workflow` and `WorkflowJs` refuse `mode: background` while a skill's guard hooks are active.** A background run
-  executes on the agent-scoped runner and cannot carry the caller's registry, so the skill's `preTool` / `onStart` /
+  executes on the agent-scoped runner and cannot carry the caller's registry, so the skill's `preTool` /
   `preCompact` / `permissionRequest` hooks would not cover it. The tool error says to run in foreground mode. Skill
   hooks that only observe do not refuse the run and do not fire for its subagents. A custom tool that calls
   `WorkflowRunner.runInBackground` directly should check `HookRegistryAccess.activeSkillGuards(toolContext)`.
+- **`ScheduleTask` refuses for the same reason** while a skill's guard hooks are active: the routine would fire later
+  on the runtime's registry, outside the skill's fork, so it could do unguarded what the guards block now. A
+  background `Task` is still allowed (EE-69).
+- **A skill's `onStart` hook does not block in its fork.** The subagent executor a fork runs on reads `onStart` results
+  as advisory feedback and drops a block — for skill frontmatter and `hooks.json` alike (EE-70). It is therefore not
+  counted as a guard: a skill whose only hook is on `onStart` does not make background workflows or `ScheduleTask`
+  refuse.
 
 **A guard hook whose command could not run blocks (EE-51).**
 
@@ -42,10 +49,15 @@ change public SPI; they ship together so external repositories follow once.
   command that did exit is read as before: 0 allows, 2 refuses, anything else allows with a WARN. Advisory events are
   unaffected.
 - **`failOpen: true` restores the old behaviour per hook**, for hooks that observe rather than guard: an entry-level
-  key in skill frontmatter (beside `matcher` and `action`), a handler-level key in `hooks.json`. It accepts a boolean
-  only — in frontmatter anything else fails the skill's parse; in `hooks.json` `"true"`, `1` or `null` fails the parse
-  of the **whole file**, like a non-positive `timeout`. An operator's existing `command` handlers on those four events
-  start blocking on timeout unless they declare it.
+  key in skill frontmatter (beside `matcher` and `action`), a handler-level key in `hooks.json`. Only a boolean `true`
+  opens the hook — in frontmatter anything else fails the skill's parse; in `hooks.json` `"true"`, `1` or `null` is
+  read as `false` with a WARN naming the file and the handler, which stays registered with its guard closed (failing
+  the parse would leave the file's hooks unregistered at startup — every guard off; EE-71). An operator's existing
+  `command` handlers on those four events start blocking on timeout unless they declare it.
+- **A guard hook that throws instead of reporting blocks too.** A `ShellActionExecutor` that throws — or a
+  `LinkageError` from a provider built against another core — is read as a command that could not run
+  (`EXECUTION_FAILED`), so the fail-closed rule and `failOpen` apply. The reason names only the exception's type: a
+  shell's failure message can quote the command, and goes to the log only.
 - **`ShellHookOutcome.notObserved()` is removed.** A custom `ShellActionExecutor` reports
   `ShellHookOutcome.notRun(Unrun cause, String detail)` (`NO_ENVIRONMENT`, `ENVIRONMENT_UNAVAILABLE`,
   `SHELL_UNSUPPORTED`, `TIMEOUT`, `EXECUTION_FAILED`); `getUnrunCause()` and `unrunReason()` read it back.

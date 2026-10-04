@@ -3,6 +3,8 @@ package at.aimon.core.config.hook;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -37,6 +39,9 @@ import org.slf4j.LoggerFactory;
  * <li><b>Parse failures</b> (malformed JSON, unknown handler {@code type}) &mdash; raise
  * {@link HookConfigParseException}. The caller is expected to surface this to the user at startup so the bad
  * file can be fixed.
+ * <li><b>A {@code failOpen} that is not a JSON boolean</b> &mdash; not a parse failure. The handler is kept with
+ * {@code failOpen} read as {@code false}, so its guard stays closed, and a WARN names the file, the event and the
+ * handler. Failing the parse would drop every handler in the file, i.e. take all its guards off (EE-51).
  * </ul>
  *
  * <p>
@@ -151,10 +156,34 @@ public final class HookConfigLoader {
         try {
             final HookConfigDocument doc = parser.parseFile(path);
             log.debug("loaded hooks config from {}: {}", path, doc);
+            warnRejectedFailOpen(path, doc);
             return Optional.of(doc);
         } catch (UncheckedIOException e) {
             log.warn("hooks config at {} could not be read: {}", path, e.getMessage());
             return Optional.empty();
         }
+    }
+
+    private static void warnRejectedFailOpen(Path path, HookConfigDocument doc) {
+        for (Map.Entry<String, List<HookEntry>> event : doc.getHooks().entrySet()) {
+            for (HookEntry entry : event.getValue()) {
+                for (HookHandlerSpec handler : entry.getHandlers()) {
+                    handler.getRejectedFailOpen()
+                            .ifPresent(raw -> log.warn("hooks config at {}: {} handler {} on {} has a 'failOpen' that"
+                                    + " is not a JSON boolean ({}); it is read as false, so the handler blocks when"
+                                    + " its command cannot run", path, handler.getType(), describe(handler),
+                                    event.getKey(), raw));
+                }
+            }
+        }
+    }
+
+    private static String describe(HookHandlerSpec handler) {
+        return switch (handler.getType()) {
+            case COMMAND -> "'" + handler.getCommand() + "'";
+            case HTTP -> "'" + handler.getUrl() + "'";
+            case MCP -> "'" + handler.getServerName() + "/" + handler.getToolName() + "'";
+            case DENY -> "(deny)";
+        };
     }
 }

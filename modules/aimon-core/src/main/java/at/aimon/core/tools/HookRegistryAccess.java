@@ -41,8 +41,8 @@ public final class HookRegistryAccess {
 
     /**
      * Returns the skills whose guard hooks are active for the calling execution — skills it is running inside the
-     * fork of, that declared a hook on an event that can veto ({@code preTool}, {@code onStart}, {@code preCompact},
-     * {@code permissionRequest}).
+     * fork of, that declared a hook on an event that can veto in the fork ({@code preTool}, {@code preCompact},
+     * {@code permissionRequest}; not {@code onStart}, which a fork reads as advisory &mdash; EE-70).
      *
      * <p>
      * This is the question to ask before starting work that cannot carry the caller's registry, such as a run on the
@@ -101,6 +101,21 @@ public final class HookRegistryAccess {
     }
 
     /**
+     * The error {@code ScheduleTask} answers with when it refuses to schedule a routine because skill guards are
+     * active. A routine fires later on the runtime's registry, outside the skill's fork, so none of the skill's hooks
+     * would cover it &mdash; the same reason a background workflow run is refused.
+     *
+     * @param skills
+     *            the skills holding the guards, from {@link #activeSkillGuards(ToolContext)} (must not be empty)
+     * @return the message for the model (never null)
+     */
+    public static String scheduleRefusal(List<String> skills) {
+        Objects.requireNonNull(skills, "skills must not be null");
+        return "Scheduling is not available here: skill '" + String.join("', '", skills) + "' has guard hooks"
+                + " active and a scheduled routine would not be covered by them. Schedule the task outside the skill.";
+    }
+
+    /**
      * Returns a copy of the context that carries the given registry and is otherwise unchanged.
      *
      * <p>
@@ -128,6 +143,12 @@ public final class HookRegistryAccess {
         return builder.put(ToolContextKeys.HOOK_REGISTRY, registry).build();
     }
 
+    /**
+     * Finds the skill view the execution dispatches against. The context's registry must <em>be</em> the
+     * {@link SkillScopedHookRegistry}: a registry that wraps or decorates the view is not looked through, so a custom
+     * spawn site that publishes such a decorator makes every guard question here answer "none" &mdash; and disables
+     * the background refusals (Workflow, WorkflowJs, ScheduleTask) that rely on it.
+     */
     private static Optional<SkillScopedHookRegistry> view(ToolContext context) {
         return of(context).filter(SkillScopedHookRegistry.class::isInstance).map(SkillScopedHookRegistry.class::cast);
     }

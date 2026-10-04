@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-config-guide.md
-source_commit: 1f8b53f
+source_commit: 4c9b3d2
 ---
 
 # Hook Configuration Guide (`hooks.json`)
@@ -93,13 +93,14 @@ at application scope and watches these three files for changes:
   contract this is an initial load, not a reload.
 - **reload**: triggered by a file edit. The `OnConfigReload` event fires.
 - If bootstrap fails the CLI logs a WARN and carries on — hot reload is still attempted
-  afterwards.
+  afterwards. Until then **none** of the file's hooks are registered — no guards either.
+  Whether a parse failure at startup should abort startup instead is still open (backlog EE-71).
 
 ### Failure modes
 
 | Situation                         | Behaviour                                                     |
 |-----------------------------------|---------------------------------------------------------------|
-| The new `hooks.json` fails to parse | No swap. The previous hooks stay. `OnConfigReload(failed)` fires |
+| The new `hooks.json` fails to parse | No swap. **The previous configuration stays in force** (its hooks and guards unchanged). `OnConfigReload(failed)` fires |
 | Some hook fails to register mid-swap | LIFO undo removes the new hooks and re-registers the previous ones in their original order |
 | A listener throws                 | Logged only; the watcher keeps running (poison-pill protection) |
 | The watcher itself fails to start | The CLI carries on without hot reload (WARN log)              |
@@ -292,9 +293,11 @@ exit code** — a timeout, a shell failure — the hook returns that event's ref
 block; `permissionRequest` denies). A guard that could not decide does not let the operation through. The reason names
 the cause, in the form `Blocked: guard hook '<source>#<n>' (<event>) could not run its command — timed out: …`, and never
 contains the command string. For a handler that **observes** rather than guards (audit logging, metrics), declare
-`"failOpen": true`: it then leaves a WARN and proceeds. `failOpen` does not weaken an exit 2. The value must be a JSON
-boolean: `"true"` or `1` is not coerced and **fails the parse of the whole file** (the key takes a guard off, so it is
-not read loosely). On the other 9 events a command that could not run still leaves a WARN and proceeds, as before.
+`"failOpen": true`: it then leaves a WARN and proceeds. `failOpen` does not weaken an exit 2. The only value that opens
+the guard is the JSON boolean `true`: a value that is not a boolean, such as `"true"`, `1` or `null`, is not coerced and
+**is read as `false`** — the handler is still registered with its guard closed, and a WARN names the file, the event and
+the handler (the key takes a guard off, so it is not read loosely, and a typo in it does not cost the file its other
+guards either). On the other 9 events a command that could not run still leaves a WARN and proceeds, as before.
 
 **The unit of `timeout` (breaking change).** `timeout` is in **seconds**, matching Claude Code.
 When you need milliseconds, use AIMON's own alias `timeoutMs`. If both are present the more
@@ -793,7 +796,7 @@ are in [`aimon-skill-extensions.md`](../../references/aimon-skill-extensions.md)
 | `WARN hooks: unknown event '...'`                                        | A typo. Use a name from the [supported-events table](#supported-events-and-their-mapping) (case-insensitive). |
 | `WARN hooks: only 'command' actions are valid on ...`                    | Events other than `preTool`/`postTool` accept shell handlers only.            |
 | `WARN hooks: 'command' on ... cannot run: the configured shell executor does not support shell actions` | `hooks.json` was applied with an executor that has no shell support (`NoOpShellActionExecutor`). `command` handlers are not registered — wire a `HostShellActionExecutor`. |
-| `Failed to parse hooks JSON: ... 'failOpen' must be a JSON boolean`      | `failOpen` was written as `"true"`, `1` or `null`. Only `true` / `false` are accepted. The whole file is rejected. |
+| `WARN hooks config at ...: ... has a 'failOpen' that is not a JSON boolean (...); it is read as false` | `failOpen` was written as `"true"`, `1` or `null`. The handler is registered with `failOpen: false` (it blocks when its command cannot run). If it only observes, change the value to `true`. |
 | A tool is refused with `Blocked: guard hook '...' could not run its command` | A `command` handler on an event with a decision channel produced no exit code (a timeout, for one). Fix the cause named in the reason, or declare `"failOpen": true` if the handler only observes. |
 | `WARN hooks: 'asyncRewake' is not supported on event '...'`              | Rewake-capable events are `preTool`/`preCompact`/`onSessionStart`/`onSessionEnd`/`onConfigReload`. The hook itself registers normally. |
 | A shell hook exited 2 but nothing was blocked                             | That event has no decision channel. A veto is effective only on `preTool`/`onStart`/`preCompact` (block) and `permissionRequest` (deny). |

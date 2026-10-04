@@ -63,6 +63,14 @@ class SkillHookSetTest {
     }
 
     @Test
+    void hasGuards_onStartAloneGuardsNothing_preToolDoes() {
+        // A fork reads onStart results as advisory (EE-70): an onStart-only skill must not count as a guard.
+        assertThat(SkillHookSet.builder().addOnStart(ctx -> HookResult.success()).build().hasGuards()).isFalse();
+        assertThat(SkillHookSet.builder().addOnStart(ctx -> HookResult.success())
+                .addPreTool(ctx -> HookResult.success()).build().hasGuards()).isTrue();
+    }
+
+    @Test
     void equalsAndHashCode_basedOnHookListContents() {
         OnStartHook on = ctx -> HookResult.success();
 

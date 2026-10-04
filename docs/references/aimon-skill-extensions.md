@@ -150,8 +150,9 @@ action-def := { type: "deny", reason: string }
   - **작업 디렉터리는 워크스페이스다.** 로컬 환경에서도 그렇다 — 예전에는 호스트 JVM 의 작업 디렉터리였다. 상대 경로로 스크립트를 부르는 명령은 워크스페이스 기준으로 풀린다. hook 명령에는 `${AIMON_SKILL_DIR}` 가 주어지지 않는다(백로그 EE-50).
   - **실행 환경이 없거나 사용 불가면 명령은 돌지 않는다.** 호스트로 되돌아가지 않는다. WARN 로그가 남고, 그 다음은 이벤트에 달렸다 — 아래 "명령을 돌리지 못했을 때" 를 볼 것.
   - 그래서 실행 밖에서 발화하는 이벤트(`onSessionStart` · `onSessionEnd` · `onConfigReload`)는 스킬 frontmatter 에 선언할 수 없다 — 실행 환경이 없어 셸 액션이 돌 곳이 없다. 파서가 스킬 로드 시점에 이유와 함께 거부한다. 그 이벤트는 `hooks.json` 에 선언한다(운영자 설정이며 호스트 셸에서 돈다).
-- **종료 코드의 계약.** 거부 채널이 있는 네 이벤트(`preTool` · `onStart` · `preCompact` 는 block, `permissionRequest` 는 deny)에서 **exit 2 는 거부**이고 stderr 가 사유로 LLM 에 surface 된다(`deny` 와 같은 경로). exit 0 은 허용이다. **그 밖의 종료 코드(1 · 126 · 127 …)는 허용**이다 — 깨진 스크립트가 조용한 게이트키퍼가 되면 안 되므로 WARN 만 남는다.
-- **명령을 돌리지 못했을 때 — 가드는 막는다(fail-closed).** 종료 코드를 얻지 못하면 — 실행 환경 없음, 환경 사용 불가, **timeout**, 셸 실패 — 위 네 이벤트의 hook 은 **거부**한다. 판단하지 못한 가드는 통과시키지 않는다. 사유는 `Blocked: guard hook '<skill>' (<event>) could not run its command — <cause>: <detail>. …` 꼴이고 명령 문자열은 싣지 않는다.
+- **종료 코드의 계약.** 스킬 fork 안에서 거부 채널이 있는 이벤트는 셋이다(`preTool` · `preCompact` 는 block, `permissionRequest` 는 deny). 거기서 **exit 2 는 거부**이고 stderr 가 사유로 LLM 에 surface 된다(`deny` 와 같은 경로). exit 0 은 허용이다. **그 밖의 종료 코드(1 · 126 · 127 …)는 허용**이다 — 깨진 스크립트가 조용한 게이트키퍼가 되면 안 되므로 WARN 만 남는다.
+  - **`onStart` 는 fork 안에서 막지 못한다.** hook 자체는 block 을 내지만, fork 가 도는 SubAgent 실행기는 `onStart` 결과를 advisory 로만 읽어 block 을 버린다 — exit 2 든 아래의 "돌리지 못함" 이든 fork 는 그대로 진행한다(백로그 EE-70). 스킬 hook 은 fork 에서만 발화하므로 스킬의 `onStart` hook 은 지금 관찰용이다.
+- **명령을 돌리지 못했을 때 — 가드는 막는다(fail-closed).** 종료 코드를 얻지 못하면 — 실행 환경 없음, 환경 사용 불가, **timeout**, 셸 실패, 실행기가 던진 예외 — 위 세 이벤트의 hook 은 **거부**한다. 판단하지 못한 가드는 통과시키지 않는다. 사유는 `Blocked: guard hook '<skill>' (<event>) could not run its command — <cause>: <detail>. …` 꼴이고 명령 문자열은 싣지 않는다 — 셸 실패와 예외는 `<detail>` 에 예외의 타입 이름만 싣는다(메시지는 명령을 담을 수 있어 로그에만 남는다).
   - 가드가 아니라 **관찰** 용도의 hook 이면 항목에 `failOpen: true` 를 선언한다(아래 예). 그러면 명령을 돌리지 못했을 때 WARN 만 남기고 통과한다. exit 2 는 `failOpen` 과 무관하게 여전히 거부다.
   - `failOpen` 은 YAML 불리언(`true` / `false`)만 받는다. `"true"` 나 `1` 은 스킬 로드 시점의 파싱 오류다 — 가드를 푸는 키라서 느슨하게 읽지 않는다. `shell` 이 아닌 액션에 쓰면 WARN 후 무시된다.
   - 환경 제공자가 실패한 실행에서는 가드가 걸린 도구가 **환경을 쓰지 않는 것까지** 막힌다. `preCompact` 에 관찰 hook 을 걸었다면 `failOpen: true` 를 권한다 — 아니면 환경 장애 동안 자동 compaction 이 계속 건너뛰어진다.
@@ -182,9 +183,10 @@ hooks:
 ### 적용 범위 / 호스트 와이어링
 
 - **hook 은 그 스킬의 fork 에서만 발화한다.** fork 한 SubAgent 와, 그 SubAgent 가 다시 띄운 fork(`Task` · `Workflow` · `WorkflowJs` 의 foreground · 중첩 스킬)의 이벤트에 발화한다. **같은 에이전트의 다른 세션에는 발화하지 않고, 스킬을 호출한 실행 자신에게도 발화하지 않는다.** 스킬 hook 은 런타임의 `HookRegistry` 에 등록되지 않는다 — fork 가 받는 레지스트리 위에 얹힌다(`SkillScopedHookRegistry`).
-- **inline 모드**에서는 얹을 fork 가 없어 hook 이 발화하지 않는다(의도된 동작; `SkillHookActivator` 인터페이스 Javadoc 참고).
+- **inline 모드**에서는 얹을 fork 가 없어 hook 이 발화하지 않는다(의도된 동작; `SkillHookActivator` 인터페이스 Javadoc 참고). hook 을 선언한 inline 스킬은 거부되지 않지만 로드 시 WARN 이 남는다.
 - **수명.** `Skill` 호출이 답을 돌려줄 때까지다. 그 뒤에도 도는 것 — fork 가 `run_in_background` 로 띄운 `Task` — 은 스킬이 끝난 시점부터 스킬 hook 없이 돈다(백로그 EE-69).
-- **background 워크플로 제한.** `Workflow` · `WorkflowJs` 의 `mode: background` 는 호출한 실행에서 아무 것도 물려받지 않는 에이전트 범위 러너에서 돌므로 스킬 hook 이 따라가지 못한다. 그래서 **가드 hook(`preTool` · `onStart` · `preCompact` · `permissionRequest`)이 활성인 스킬 fork 안에서는 background 모드가 거절된다** — 도구 오류가 foreground 로 실행하라고 알린다. 관찰 전용 hook 만 있으면 실행되지만 그 워크플로의 SubAgent 에는 hook 이 발화하지 않는다(백로그 EE-63).
+- **background 워크플로 제한.** `Workflow` · `WorkflowJs` 의 `mode: background` 는 호출한 실행에서 아무 것도 물려받지 않는 에이전트 범위 러너에서 돌므로 스킬 hook 이 따라가지 못한다. 그래서 **가드 hook(`preTool` · `preCompact` · `permissionRequest`)이 활성인 스킬 fork 안에서는 background 모드가 거절된다** — 도구 오류가 foreground 로 실행하라고 알린다. 관찰 전용 hook(`onStart` 만 있는 경우 포함)만 있으면 실행되지만 그 워크플로의 SubAgent 에는 hook 이 발화하지 않는다(백로그 EE-63).
+- **`ScheduleTask` 제한.** 같은 이유로 가드 hook 이 활성인 스킬 fork 안에서는 `ScheduleTask` 가 거절된다 — 루틴은 나중에 런타임 레지스트리 위에서 발화하므로 스킬의 가드가 따라가지 못한다. 스킬 밖에서 예약할 것.
 - **슬래시 명령(`/my-skill`)으로 부른 스킬은 hook 을 활성화하지 않는다**(백로그 EE-68).
 - HookRegistry 와이어링: `OrcaSkillToolProvider` 가 컨텍스트에 `HookRegistry` 가 있으면 `ScopedSkillHookActivator` 를, 없으면 `NoOpSkillHookActivator` 를 자동으로 결정한다. 사용자 정의 `SkillForkExecutor` 와 SubAgent 를 스폰하는 사용자 정의 도구는 fork 의 레지스트리를 `HookRegistryAccess.of(toolContext)` 에서 얻어야 한다 — 생성자에서 받은 런타임 레지스트리를 넘기면 그 fork 에서 스킬 hook 이 꺼진다.
 - 셸 와이어링: `MarkdownSkillParser` 의 기본 생성자는 `NoOpShellActionExecutor` 를 사용해 `shell` 액션을 거부한다. `aimon-cli` 의 `AgentSetupFactory` 와 `aimon-bootstrap` 의 `AimonStackBuilder` 는 `DefaultShellActionExecutor`(인자 없음 — 셸을 쥐지 않는다)로 만든 파서를 모든 스킬 로더(번들/사용자 정의)에 주입하므로, 그 환경에서는 `shell` 액션이 그대로 동작한다. 스킬 hook 용 호스트 셸은 어디에도 없다. 다른 호스트는 `MarkdownSkillParser(ShellArgumentTokenizer, SkillHookSetParser(executor))` 와 `DefaultSkillRegistry(fs, dir, parser)` / `*AgentBundleLoader(..., parser)` 4-arg 오버로드를 사용해 동일한 파서를 주입한다.
