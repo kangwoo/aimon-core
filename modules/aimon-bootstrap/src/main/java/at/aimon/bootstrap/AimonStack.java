@@ -238,6 +238,8 @@ public final class AimonStack implements AutoCloseable {
      * With {@code FileSystemSpec.localAt} and a caller-supplied execution environment provider
      * ({@code ExecutionEnvironmentSpec.provider} or {@code shared}) the stack does not know that provider's workspace,
      * and answers with the runtime's {@code .aimon/} control store instead; read the workspace from the provider.
+     * With a supplied or factory-made file system the answer is that file system itself, so {@code .aimon/} is not
+     * hidden from it the way it is from the runtime's file tools.
      *
      * <p>
      * Whether the stack closes these depends on how they were specified: a supplied instance stays the caller's,
