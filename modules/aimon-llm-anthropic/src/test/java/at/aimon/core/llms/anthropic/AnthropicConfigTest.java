@@ -400,4 +400,15 @@ class AnthropicConfigTest {
         assertThat(one.getModelCapabilityRegistry()).isNotSameAs(two.getModelCapabilityRegistry());
         assertThat(one).isEqualTo(two).hasSameHashCodeAs(two);
     }
+
+    @Test
+    @DisplayName("NaN is not a temperature, and neither is an infinity: refused with the range message")
+    void nanAndInfinitiesAreRefused() {
+        // NaN compares false with everything, so `x < lo || x > hi` lets it through.
+        for (double value : new double[]{Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY}) {
+            assertThatThrownBy(() -> AnthropicConfig.builder().apiKey("k").temperature(value).build())
+                    .as("temperature %s", value).isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("Temperature must be between 0.0 and 1.0");
+        }
+    }
 }

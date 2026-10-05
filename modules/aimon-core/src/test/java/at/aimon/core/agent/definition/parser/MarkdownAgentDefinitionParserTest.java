@@ -313,6 +313,21 @@ class MarkdownAgentDefinitionParserTest {
         }
 
         @Test
+        @DisplayName("Should reject .nan and .inf for a sampling key as it rejects a number outside the range")
+        void nanAndInfinityAreOutOfRange() {
+            // snakeyaml hands `.nan` over as a Double, so "Expected a number" does not catch it: the range does.
+            // The range is LlmModel's, and its refusal arrives as the cause — for 2.5 as much as for .nan.
+            for (String written : new String[]{".nan", ".NaN", ".inf", "-.inf", "2.5"}) {
+                assertThatThrownBy(() -> parser.parse(stream(withModelKey("temperature: " + written))))
+                        .as("temperature written as `%s`", written).isInstanceOf(AgentDefinitionParseException.class)
+                        .hasRootCauseMessage("Temperature must be between 0.0 and 2.0");
+                assertThatThrownBy(() -> parser.parse(stream(withModelKey("topP: " + written))))
+                        .as("topP written as `%s`", written).isInstanceOf(AgentDefinitionParseException.class)
+                        .hasRootCauseMessage("Top P must be between 0.0 and 1.0");
+            }
+        }
+
+        @Test
         @DisplayName("Should reject a topP that is not a number rather than substituting 1.0")
         void anUnparseableTopPIsAnError() {
             assertThatThrownBy(() -> parser.parse(stream(withModelKey("topP: high"))))

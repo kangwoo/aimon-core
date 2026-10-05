@@ -578,6 +578,8 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
             });
         } else {
             temperature.ifPresent(requested -> {
+                // A NaN would pass this comparison and be sent. It cannot arrive: LlmModel and AnthropicConfig, the
+                // only two sources of the value, refuse it when they are built. The same holds for topP below.
                 double clamped = requested;
                 if (clamped < 0.0 || clamped > 1.0) {
                     clamped = Math.max(0.0, Math.min(1.0, clamped));
