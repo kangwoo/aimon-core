@@ -402,10 +402,14 @@ agentExecutorFactory.withSubagentBehaviorRegistry(codeBehavior);  // OrcaAgentEx
 > `systemPrompt`는 데이터 엔트리의 필수 필드라 무엇이든 채워야 하지만, 행위가 ReAct 루프를 대체하므로 코드-행위
 > 서브에이전트에선 실제로 사용되지 않는다(플레이스홀더로 둔다).
 
-### 제한: OnStart/OnStop 훅 미발화
+### OnStart 는 가드로만 발화하고, OnStop 은 발화하지 않는다
 
-코드 경로는 ReAct 루프를 우회하므로, 루프 내부 훅인 **OnStart/OnStop은 발화되지 않는다**(OnStart의 대화-피드백
-주입은 대화 루프가 있어야 의미가 있고, OnStop 종료 신호는 SubagentStop과 중복이다). 디스패치 경계 훅인
+코드 경로는 ReAct 루프를 우회하지만 **OnStart 는 behavior 를 부르기 전에 발화한다.** block 이면 behavior 는 실행되지 않고
+ReAct 포크와 같은 실패 결과(`Execution blocked by OnStart hook [SUBAGENT/<이름>]: <사유>`)로 끝난다 — 운영자의 `hooks.json`
+`onStart` 가드가 코드 서브에이전트를 비켜 가지 않게 하기 위해서다. ReAct 포크와 다른 점은 셋이다. block 이 아닌 피드백은
+**버려진다**(대화-피드백 주입은 대화 루프가 있어야 의미가 있다). 훅이 받는 실행 환경은 포크의 것이 아니라 **스폰한 실행의
+것**이다(behavior 가 `context.getExecutionEnvironment()` 로 받는 그 환경 — 러너는 포크용 환경을 따로 만들지 않는다).
+**OnStop 은 발화하지 않는다**(종료 신호는 SubagentStop 과 중복이다). 디스패치 경계 훅인
 **SubagentStart/SubagentStop은 그대로 발화**되므로 옵저버빌리티/감사에는 손실이 없다.
 
 ### 전체 예제

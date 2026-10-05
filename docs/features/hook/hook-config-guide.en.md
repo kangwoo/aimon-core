@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-config-guide.md
-source_commit: 2bfe9a9
+source_commit: 2beae91
 ---
 
 # Hook Configuration Guide (`hooks.json`)
@@ -307,8 +307,8 @@ cannot be run, the fork ends without a single LLM call and its parent receives
 `Skill fork failed for '<skill>': …`, a background task settles as `FAILED`). A hook that was only meant to check user
 input should branch on `AIMON_INVOKER_TYPE` in its script — `MAIN_AGENT` for the main turn, `SUBAGENT` for a fork. That
 is the only way to exempt forks: `failOpen: true` lets a hook through **only when its command could not run**, and an
-exit 2 still blocks. One limit — a subagent whose name has a code behavior (`SubagentBehavior`) registered does not run
-the ReAct loop, so `onStart` never fires for it (backlog EE-73).
+exit 2 still blocks. A subagent whose name has a code behavior (`SubagentBehavior`) registered is no exception — it does
+not run the ReAct loop, but `onStart` fires before the behavior is invoked, and a block means the behavior never runs.
 
 **When the command could not run (fail-closed).** If a `command` handler on one of the four events above **produces no
 exit code** — a timeout, a shell failure — the hook returns that event's refusal (`preTool`, `onStart` and `preCompact`

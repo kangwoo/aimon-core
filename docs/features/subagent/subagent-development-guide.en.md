@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/subagent/subagent-development-guide.md
-source_commit: 26d5780
+source_commit: 93a4909
 ---
 
 # Subagent Development Guide
@@ -414,12 +414,17 @@ agentExecutorFactory.withSubagentBehaviorRegistry(codeBehavior);  // OrcaAgentEx
 > `systemPrompt` is a required field on the data entry so it has to be filled with something, but since the behaviour
 > replaces the ReAct loop it is never actually used by a code-behaviour subagent (leave it as a placeholder).
 
-### A limitation: the OnStart/OnStop hooks do not fire
+### OnStart fires as a guard only, and OnStop does not fire
 
-The code path bypasses the ReAct loop, so **OnStart and OnStop — the hooks inside the loop — do not fire** (OnStart's
-conversation-feedback injection only means anything when there is a conversation loop, and OnStop's termination signal
-duplicates SubagentStop). The dispatch-boundary hooks **SubagentStart and SubagentStop still fire as they always did**,
-so nothing is lost for observability or auditing.
+The code path bypasses the ReAct loop, but **OnStart fires before the behaviour is invoked.** A block means the
+behaviour never runs and the fork ends with the same failed result a ReAct fork gets
+(`Execution blocked by OnStart hook [SUBAGENT/<name>]: <reason>`) — so that an operator's `onStart` guard in `hooks.json`
+does not pass a code subagent by. Three things differ from a ReAct fork. Feedback that is not a block is **discarded**
+(conversation-feedback injection only means anything when there is a conversation loop). The execution environment the
+hook receives is not the fork's but **the spawning execution's** (the one the behaviour gets from
+`context.getExecutionEnvironment()` — the runner creates no environment for the fork). **OnStop does not fire** (its
+termination signal duplicates SubagentStop). The dispatch-boundary hooks **SubagentStart and SubagentStop still fire as
+they always did**, so nothing is lost for observability or auditing.
 
 ### A full example
 

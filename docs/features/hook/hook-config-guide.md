@@ -293,8 +293,9 @@ WARN 로그만 남기고 진행한다 (`AbstractDeclarativeShellHook#vetoResult`
 끝나며, 부모는 `Execution blocked by OnStart hook [SUBAGENT/<이름>]: <사유>` 를 받는다(`Task` 는 `Status: FAILURE`, 스킬은
 `Skill fork failed for '<스킬>': …`, 백그라운드 작업은 `FAILED`). 사용자 입력만 검사하려던 hook 이라면 스크립트에서
 `AIMON_INVOKER_TYPE` 로 가른다 — 메인 턴은 `MAIN_AGENT`, fork 는 `SUBAGENT` 다. fork 를 빼는 방법은 이것 하나다:
-`failOpen: true` 는 커맨드를 **돌리지 못했을 때만** 통과시키고 exit 2 는 그대로 막는다. 한계 하나 — 이름에 코드
-behavior(`SubagentBehavior`)가 등록된 SubAgent 는 ReAct 루프를 돌지 않아 `onStart` 가 아예 발화하지 않는다(백로그 EE-73).
+`failOpen: true` 는 커맨드를 **돌리지 못했을 때만** 통과시키고 exit 2 는 그대로 막는다. 이름에 코드
+behavior(`SubagentBehavior`)가 등록된 SubAgent 도 같다 — ReAct 루프를 돌지 않지만 behavior 를 부르기 전에 `onStart` 가
+발화하고, block 이면 behavior 는 실행되지 않는다.
 
 **커맨드를 돌리지 못했을 때 (fail-closed).** 위 네 이벤트의 `command` handler 가 **종료 코드를 내지 못하면** — timeout,
 셸 실패 — 그 이벤트의 거부 결과를 낸다(`preTool` · `onStart` · `preCompact` 는 block, `permissionRequest` 는 deny). 판단하지

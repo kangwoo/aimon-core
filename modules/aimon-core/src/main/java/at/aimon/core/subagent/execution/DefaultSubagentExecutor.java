@@ -70,7 +70,6 @@ import at.aimon.core.environment.UnavailableExecutionEnvironment;
 import at.aimon.core.hook.HookExecutionManager;
 import at.aimon.core.hook.HookFeedback;
 import at.aimon.core.hook.HookRegistry;
-import at.aimon.core.hook.event.OnStartContext;
 import at.aimon.core.hook.event.OnStopContext;
 import at.aimon.core.hook.exception.ExecutionBlockedByHookException;
 import at.aimon.core.hook.execution.HookResult;
@@ -611,7 +610,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * <p>
      * A block is a hook that exited 2 or, unless it declares {@code failOpen: true}, one whose command could not be run
      * at all. Either way the fork does not start: {@link #startFork} turns the exception into
-     * {@link #createBlockedResult}. The same rule as {@code OrcaAgentExecutor#checkOnStartHooks}, which stops the turn.
+     * {@link #createBlockedResult}. The same rule as {@code OrcaAgentExecutor#checkOnStartHooks}, which stops the turn,
+     * and the same gate a code-behavior fork passes ({@link SubagentOnStartGate}).
      *
      * <p>
      * The note is wrapped in a {@code <system-reminder>} block so the model does not read it as genuine user intent,
@@ -623,16 +623,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      *             if any OnStart hook blocks the fork
      */
     private void checkOnStartHooks(LoopContext lc) {
-        final OnStartContext onStartContext = OnStartContext.builder().executorType(InvokerType.SUBAGENT)
-                .invokerName(lc.subagent().getName()).hookRegistry(lc.hookRegistry()).userLocale(lc.userLocale())
-                .executionEnvironment(lc.executionEnvironment()).userMessage(lc.goal)
-                .executionAttributes(lc.executionAttributes).build();
-        final List<HookResult> onStartResults = hookExecutionManager.executeOnStart(onStartContext);
-        if (hookExecutionManager.hasBlockedResult(onStartResults)) {
-            final List<String> blockReasons = hookExecutionManager.collectBlockedReasons(onStartResults);
-            throw new ExecutionBlockedByHookException(InvokerType.SUBAGENT, lc.subagent().getName(), "OnStart",
-                    blockReasons);
-        }
+        final List<HookResult> onStartResults = SubagentOnStartGate.check(hookExecutionManager,
+                SubagentOnStartGate.context(lc.context, lc.goal, lc.executionAttributes, lc.executionEnvironment()));
         HookFeedback.toReminderBlock(HookFeedback.collectAdvisory(onStartResults))
                 .ifPresent(block -> lc.transcriptBuffer.addMessage(Message.user(block), LogOrigin.SYNTHETIC));
     }
@@ -1229,8 +1221,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         log.warn("Subagent '{}' not started: {}", lc.subagent().getName(), e.getMessage());
         // Terminal boundary so a background tail observes that the task ended (and why).
         stream(lc, "\n[ended: " + e.getMessage() + "]\n");
-        return SubagentExecutionResult.failure(e.getMessage(), beforeGoal,
-                buildMetadata(lc, iterationCount, accumulatedTokens), CompletionReason.ERROR,
+        return SubagentOnStartGate.blockedResult(e, beforeGoal, buildMetadata(lc, iterationCount, accumulatedTokens),
                 estimateCost(lc, accumulatedTokens));
     }
 

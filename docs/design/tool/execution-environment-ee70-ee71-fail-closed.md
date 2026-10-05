@@ -431,3 +431,14 @@ SPI 시그니처는 그대로지만 **동작 변경 둘이 breaking** 이다. `C
 
 손대지 않은 것: EE-75(늘 참인 `bootstrapOk`), EE-64(코드 훅 예외 매핑), 워크플로 단계의 막힌 포크 테스트, `AimonCli` stderr
 테스트.
+
+### 10.7 그 뒤 닫힌 열린 질문 (2026-10-05)
+
+본문은 그대로 두고, 그 뒤 달라진 사실만 적는다.
+
+- **Q4 (EE-73) — 코드 behavior 서브에이전트도 `onStart` 를 발화한다.** 전제 5 의 "발화하는 곳은 둘뿐" 은 이제 셋이다:
+  `SubagentBehaviorRunner` 가 behavior 를 부르기 전에 `SubagentOnStartGate` 로 발화한다. 그 클래스는 발화 · block 판정 ·
+  막힌 결과를 `DefaultSubagentExecutor` 와 함께 쓴다. block 이면 behavior 는 실행되지 않고 같은 실패 결과로 끝나며 `onStop`
+  은 없다. ReAct 포크와 다른 점은 둘이다 — behavior 포크는 자기 환경을 풀지 않으므로 훅은 **스폰한 실행의 환경**을 받고,
+  block 이 아닌 피드백은 붙일 대화가 없어 버린다. 항목이 "읽었고 돌려 보지는 않았다" 고 적은 것은 돌려서 확인했다 — 고치기
+  전에는 block 을 낸 훅 아래에서 behavior 가 실행됐다.

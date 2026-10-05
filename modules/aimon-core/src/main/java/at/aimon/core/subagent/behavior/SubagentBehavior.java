@@ -37,9 +37,11 @@ import at.aimon.core.subagent.execution.SubagentExecutionResult;
  *
  * <p>
  * <b>Lifecycle.</b> The dispatcher applies {@code SubagentStart}/{@code SubagentStop} hooks AROUND this call and shapes
- * any thrown exception into a failure result — so an implementation only replaces the LLM loop body. Note that the
- * loop-internal {@code OnStart}/{@code OnStop} hooks do NOT fire on the code path (they are tied to the ReAct
- * conversation; their feedback would have nowhere to go). Like {@code Tool.execute()}, implementations SHOULD return a
+ * any thrown exception into a failure result — so an implementation only replaces the LLM loop body. {@code OnStart}
+ * hooks fire before this call and a hook that blocks means it is never made (the fork ends as a ReAct fork a guard
+ * refused does); feedback from a hook that does not block is discarded, because there is no ReAct conversation for it
+ * to go to, and the hooks see the spawning execution's environment — the one in {@code context}. {@code OnStop} does
+ * NOT fire on the code path. Like {@code Tool.execute()}, implementations SHOULD return a
  * failure via {@link SubagentBehaviorSupport#failure(String)} rather than throwing, though the runner maps any thrown
  * exception to a failure result as a safety net.
  *
