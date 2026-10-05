@@ -58,24 +58,34 @@ public final class LlmModel {
         // deployment at startup rather than on its first LLM call. What each provider then does with a legal-but-
         // divergent value is the provider's to report, and each one must say so at a level an operator sees (see
         // AnthropicLlmClient#reportDivergence).
-        if (temperature != null && (temperature < 0.0 || temperature > 2.0)) {
+        if (outside(temperature, 0.0, 2.0)) {
             throw new IllegalArgumentException("Temperature must be between 0.0 and 2.0");
         }
         if (maxTokens != null && maxTokens <= 0) {
             throw new IllegalArgumentException("Max tokens must be positive");
         }
-        if (topP != null && (topP < 0.0 || topP > 1.0)) {
+        if (outside(topP, 0.0, 1.0)) {
             throw new IllegalArgumentException("Top P must be between 0.0 and 1.0");
         }
-        if (presencePenalty != null && (presencePenalty < -2.0 || presencePenalty > 2.0)) {
+        if (outside(presencePenalty, -2.0, 2.0)) {
             throw new IllegalArgumentException("Presence penalty must be between -2.0 and 2.0");
         }
-        if (frequencyPenalty != null && (frequencyPenalty < -2.0 || frequencyPenalty > 2.0)) {
+        if (outside(frequencyPenalty, -2.0, 2.0)) {
             throw new IllegalArgumentException("Frequency penalty must be between -2.0 and 2.0");
         }
         if (requestTimeout != null && (requestTimeout.isNegative() || requestTimeout.isZero())) {
             throw new IllegalArgumentException("Request timeout must be positive");
         }
+    }
+
+    /**
+     * Whether a value that is present lies outside {@code [low, high]}. The test is "not inside", never "below or
+     * above": {@code NaN} compares false with both bounds, so the second form lets it through, and a {@code NaN} that
+     * a configuration key or a front matter value can spell would otherwise reach a request. The infinities are
+     * outside either way.
+     */
+    private static boolean outside(Double value, double low, double high) {
+        return value != null && !(value >= low && value <= high);
     }
 
     /**

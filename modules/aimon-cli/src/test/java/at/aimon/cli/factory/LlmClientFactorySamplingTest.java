@@ -134,6 +134,36 @@ class LlmClientFactorySamplingTest {
     }
 
     @Test
+    @DisplayName("NaN, however it is spelled, fails startup naming the key — it is not in any range")
+    void nanIsRefusedByName() {
+        // `.nan` is YAML's own spelling; "NaN" in quotes is what a ${VAR} placeholder expands to, and Jackson reads
+        // that string as a double. Whichever layer refuses — the loader or the vendor's range — the key is named.
+        for (String written : new String[]{".nan", ".NaN", "\"NaN\"", "NaN"}) {
+            for (String key : new String[]{"temperature", "topP", "presencePenalty", "frequencyPenalty"}) {
+                assertThatThrownBy(() -> factory.create(openAi("  openai:\n    " + key + ": " + written + "\n")))
+                        .as("%s: %s", key, written).isInstanceOf(ConfigurationException.class)
+                        .hasMessageContaining("llm.openai." + key);
+            }
+            assertThatThrownBy(() -> factory.create(anthropic("  anthropic:\n    temperature: " + written + "\n")))
+                    .as("anthropic temperature: %s", written).isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("llm.anthropic.temperature");
+        }
+    }
+
+    @Test
+    @DisplayName("an infinity, however it is spelled, fails startup naming the key")
+    void infinityIsRefusedByName() {
+        for (String written : new String[]{".inf", "-.inf", "\"Infinity\"", "\"-Infinity\""}) {
+            assertThatThrownBy(() -> factory.create(openAi("  openai:\n    temperature: " + written + "\n")))
+                    .as("openai temperature: %s", written).isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("llm.openai.temperature");
+            assertThatThrownBy(() -> factory.create(anthropic("  anthropic:\n    temperature: " + written + "\n")))
+                    .as("anthropic temperature: %s", written).isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("llm.anthropic.temperature");
+        }
+    }
+
+    @Test
     @DisplayName("anthropic: a bad temperature beside a valid budget names the temperature, and the reverse")
     void aBadAnthropicTemperatureIsNotBlamedOnTheBudget() throws IOException {
         final LlmProviderConfig badTemperature = anthropic("""

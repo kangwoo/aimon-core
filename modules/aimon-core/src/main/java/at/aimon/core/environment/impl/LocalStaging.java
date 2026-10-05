@@ -63,6 +63,23 @@ import at.aimon.core.filesystem.VirtualFileSystem;
  * stays the loaded version until then.
  *
  * <p>
+ * <b>A resource that was over the limit when it was loaded.</b> Its recorded size refuses it before anything is
+ * copied, and the error says to exclude large files with {@code .stageignore} — which has to work without a restart.
+ * So the recorded size is not the last word either: the source's current size is taken from file metadata
+ * ({@link StagedResource#sizeOf}, no file content read), and a source now under the limit goes the way of any changed
+ * source — scanned again, staged under its own key, remembered. One still over the limit is refused with the size it
+ * has now, at the cost of a listing and one size query per file on each such call; nothing is remembered about a
+ * refusal, so the next call sees a fix. A source that cannot report sizes is scanned in full instead.
+ *
+ * <p>
+ * <b>Only a scanned resource is followed.</b> Scanning again is right when the resource's file list <em>is</em> its
+ * directory, which is what {@link StagedResource#isScanned()} says. A resource assembled by hand (SPI code, a remote
+ * repository's keys) lists what its author chose, and its directory may hold files it deliberately left out; a second
+ * scan would copy those into the staging area, where the model's file tools and shell read them. Such a resource is
+ * staged as recorded or refused with a {@link StagingException} — the changed-since-load refusal, or the read or size
+ * error that was met — and nothing but its listed files is ever written, not even to a temporary directory.
+ *
+ * <p>
  * <b>Other stagers of the same workspace (EE-17).</b> The lock here is this instance's; a second process, or a second
  * provider in this one, shares only the disk. So nothing is ever copied into the target itself: the files and the
  * marker go to a sibling {@code {contentKey}}{@value #TEMPORARY_INFIX}{@code {random}} directory, and a failed copy
@@ -197,6 +214,12 @@ final class LocalStaging {
             try {
                 return copyVerified(known, reader);
             } catch (SourceChangedException changed) {
+                if (!resource.isScanned()) {
+                    throw changed.ifUnchanged != null ? changed.ifUnchanged : changedSinceLoad(resource);
+                }
+                if (changed.recordedOverLimit) {
+                    refuseWhileOverLimit(resource, reader);
+                }
                 final StagedResource current = scanAgain(resource, known, reader, changed);
                 final String path;
                 try {
@@ -258,6 +281,37 @@ final class LocalStaging {
                         + maxStagedBytes + " bytes; exclude large files with " + StagedResource.STAGE_IGNORE_FILE);
     }
 
+    /** The refusal a source that no longer matches its key got before EE-3; still what an assembled resource gets. */
+    private static StagingException changedSinceLoad(StagedResource resource) {
+        return new StagingException("Skill '" + resource.getName() + "' changed on disk after it was loaded, so its"
+                + " files no longer match the version this session uses. Restart the application, or reload the"
+                + " skill registry, to pick up the change.");
+    }
+
+    /**
+     * Refuses a scanned resource recorded over the limit while its source still is, by the sizes its files have now —
+     * or returns, and the caller scans the source again.
+     *
+     * <p>
+     * This is what keeps a skill that is simply too large from being read in full on every call: the check lists the
+     * directory, reads {@code .stageignore} and asks for each file's size, and reads no file content. Nothing about
+     * the refusal is remembered, so the call after the user excluded or deleted the large files finds out. A source
+     * that cannot report sizes is scanned instead, which reads every file once per refused call.
+     */
+    private void refuseWhileOverLimit(StagedResource resource, VirtualFileSystem reader) {
+        final long bytes;
+        try {
+            bytes = StagedResource.sizeOf(reader, resource.getSourceDir());
+        } catch (RuntimeException e) {
+            log.debug("Could not size {} without reading it ({}); scanning it instead", resource.getSourceDir(),
+                    e.getMessage());
+            return;
+        }
+        if (bytes > maxStagedBytes) {
+            throw overLimit(resource, bytes);
+        }
+    }
+
     private static StagingException stillChanging(StagedResource resource) {
         return new StagingException("Skill '" + resource.getName() + "' is changing on disk while it is being staged,"
                 + " so no consistent copy of it could be made. Try again once its files are no longer being written.");
@@ -298,7 +352,8 @@ final class LocalStaging {
      * Stages a resource under its own content key, or reuses the copy that is there.
      *
      * @throws SourceChangedException
-     *             if the source no longer holds what the content key names; nothing is left behind
+     *             if the source no longer holds what the content key names, or the resource's recorded size is over
+     *             the limit (which the source may no longer be); nothing is left behind
      */
     private String copyVerified(StagedResource resource, VirtualFileSystem reader) {
         final String target = targetOf(resource);
@@ -317,7 +372,9 @@ final class LocalStaging {
                 log.warn("Staged copy {} does not match its content key; staging it again", target);
             }
             if (resource.getTotalBytes() > maxStagedBytes) {
-                throw overLimit(resource, resource.getTotalBytes());
+                // Nothing was read: the recorded size says so. Whether that is still true is the caller's question.
+                throw new SourceChangedException("its recorded size was over the staging limit",
+                        overLimit(resource, resource.getTotalBytes()), true);
             }
             // Never into the target: another process may be copying to, or already running from, that directory.
             final String staging = temporarySibling(target);
@@ -451,7 +508,8 @@ final class LocalStaging {
     }
 
     /**
-     * The source does not hold what the resource's content key names (EE-3). Never leaves this class: the caller scans
+     * The source does not hold what the resource's content key names, or may not (EE-3). Never leaves this class: the
+     * caller scans
      * the source again and either stages what is there or throws a {@link StagingException}.
      */
     private static final class SourceChangedException extends RuntimeException {
@@ -463,10 +521,18 @@ final class LocalStaging {
         /** What to throw when a second scan finds the source unchanged; null when that means it changed back. */
         private final transient StagingException ifUnchanged;
 
+        /** Nothing was copied: the size the resource recorded is over the limit, and the source may have shrunk. */
+        private final boolean recordedOverLimit;
+
         SourceChangedException(String what, StagingException ifUnchanged) {
+            this(what, ifUnchanged, false);
+        }
+
+        SourceChangedException(String what, StagingException ifUnchanged, boolean recordedOverLimit) {
             super(what, null, false, false);
             this.what = what;
             this.ifUnchanged = ifUnchanged;
+            this.recordedOverLimit = recordedOverLimit;
         }
     }
 

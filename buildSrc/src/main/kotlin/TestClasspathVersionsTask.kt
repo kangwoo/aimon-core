@@ -4,6 +4,7 @@ import org.gradle.api.GradleException
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier
 import org.gradle.api.artifacts.result.ResolvedComponentResult
 import org.gradle.api.artifacts.result.ResolvedDependencyResult
+import org.gradle.api.artifacts.result.UnresolvedDependencyResult
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.provider.SetProperty
@@ -104,6 +105,14 @@ object RecordedDifferences {
  *
  * Each failure prints the line to write or delete.
  *
+ * Before any of that, a fourth: **a dependency that did not resolve.** `resolutionResult.rootComponent` is lenient — it
+ * hands over the graph with an [UnresolvedDependencyResult] edge where a library could not be found, and does not
+ * throw. A walk that follows only resolved edges then compares two partial graphs, and a library that failed to
+ * resolve reads as "on neither classpath": an unresolvable dependency passed, and a version that could not be fetched
+ * on the test side turned a valid recorded line into advice to delete it. So the walk collects those edges, and when
+ * there is one the task fails naming the module, the configuration and each coordinate, and prints no line to add,
+ * rewrite or delete — nothing was compared, so nothing is known about the record.
+ *
  * `testCompileClasspath` is not compared. It differs from `runtimeClasspath` in 43 places across 17 modules today
  * (2026-10-05), 32 of them a *lower* version than the one shipped, because a compile classpath resolves a smaller
  * graph than a runtime one — a difference of kind rather than a drift, and a 43-line list of exemptions would be
@@ -136,8 +145,24 @@ abstract class TestClasspathVersionsTask : DefaultTask() {
     @TaskAction
     fun check() {
         val module = moduleName.get()
-        val ships = versions(shipped.get())
-        val tests = versions(underTest.get())
+        val shippedGraph = walk(shipped.get())
+        val underTestGraph = walk(underTest.get())
+        val unresolved = shippedGraph.unresolved.map { "runtimeClasspath: could not resolve $it" } +
+            underTestGraph.unresolved.map { "testRuntimeClasspath: could not resolve $it" }
+        if (unresolved.isNotEmpty()) {
+            // Before the report and before any advice: both are statements about a comparison, and there was none.
+            throw GradleException(
+                "$module: could not resolve every dependency; nothing was compared.\n\n" +
+                    unresolved.joinToString("\n") { "  $it" } +
+                    "\n\n  A library that does not resolve is missing from the graph, and a graph with a hole in it " +
+                    "compares as though\n  the library were on neither classpath. Nothing above says anything about " +
+                    "${RecordedDifferences.PATH}:\n  leave it as it is until this resolves.\n" +
+                    "  What was asked for and by whom: ./gradlew :$module:dependencies --configuration " +
+                    "<runtimeClasspath|testRuntimeClasspath>",
+            )
+        }
+        val ships = shippedGraph.versions
+        val tests = underTestGraph.versions
         val found = ships.keys.intersect(tests.keys).filter { ships[it] != tests[it] }.sorted()
         val recorded = RecordedDifferences.read(recordedFile.get().asFile)
             .filter { it.module == module }
@@ -190,9 +215,15 @@ abstract class TestClasspathVersionsTask : DefaultTask() {
         }
     }
 
-    /** `group:name` to version, for every external module in the graph under [root]. */
-    private fun versions(root: ResolvedComponentResult): Map<String, String> {
+    /**
+     * What one resolved graph holds: `group:name` to version for every external module in it, and every dependency
+     * that did not resolve — what was asked for, and the first line of why it failed.
+     */
+    private class Graph(val versions: Map<String, String>, val unresolved: List<String>)
+
+    private fun walk(root: ResolvedComponentResult): Graph {
         val seen = LinkedHashSet<ResolvedComponentResult>()
+        val unresolved = LinkedHashSet<String>()
         val pending = ArrayDeque(listOf(root))
         while (pending.isNotEmpty()) {
             val component = pending.removeLast()
@@ -200,12 +231,18 @@ abstract class TestClasspathVersionsTask : DefaultTask() {
                 continue
             }
             for (dependency in component.dependencies) {
-                if (dependency is ResolvedDependencyResult) {
-                    pending.add(dependency.selected)
+                when (dependency) {
+                    is ResolvedDependencyResult -> pending.add(dependency.selected)
+                    is UnresolvedDependencyResult -> {
+                        val why = dependency.failure.message?.lineSequence()?.firstOrNull()?.trim().orEmpty()
+                        unresolved += dependency.attempted.displayName + if (why.isEmpty()) "" else " ($why)"
+                    }
                 }
             }
         }
-        return seen.mapNotNull { it.id as? ModuleComponentIdentifier }.associate { "${it.group}:${it.module}" to it.version }
+        val versions = seen.mapNotNull { it.id as? ModuleComponentIdentifier }
+            .associate { "${it.group}:${it.module}" to it.version }
+        return Graph(versions, unresolved.sorted())
     }
 }
 

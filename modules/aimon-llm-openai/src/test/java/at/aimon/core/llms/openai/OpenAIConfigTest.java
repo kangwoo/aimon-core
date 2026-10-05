@@ -287,4 +287,38 @@ class OpenAIConfigTest {
                 .isResponsesApiEnabled()).isFalse();
     }
 
+    @Test
+    @DisplayName("NaN is not a sampling value: every range check refuses it, with the message an out-of-range number"
+            + " gets")
+    void nanIsRefusedByEveryRangeCheck() {
+        // NaN compares false with everything, so `x < lo || x > hi` lets it through.
+        assertThatThrownBy(() -> OpenAIConfig.builder().model("gpt-4o").apiKey("k").temperature(Double.NaN).build())
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Temperature must be between 0.0 and 2.0");
+        assertThatThrownBy(() -> OpenAIConfig.builder().model("gpt-4o").apiKey("k").topP(Double.NaN).build())
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Top P must be between 0.0 and 1.0");
+        assertThatThrownBy(() -> OpenAIConfig.builder().model("gpt-4o").apiKey("k").presencePenalty(Double.NaN).build())
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Presence penalty must be between -2.0 and 2.0");
+        assertThatThrownBy(
+                () -> OpenAIConfig.builder().model("gpt-4o").apiKey("k").frequencyPenalty(Double.NaN).build())
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Frequency penalty must be between -2.0 and 2.0");
+    }
+
+    @Test
+    @DisplayName("the infinities are out of every range, as they always were")
+    void infinitiesAreRefused() {
+        for (double infinity : new double[]{Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY}) {
+            assertThatThrownBy(() -> OpenAIConfig.builder().model("gpt-4o").apiKey("k").temperature(infinity).build())
+                    .isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> OpenAIConfig.builder().model("gpt-4o").apiKey("k").topP(infinity).build())
+                    .isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(
+                    () -> OpenAIConfig.builder().model("gpt-4o").apiKey("k").presencePenalty(infinity).build())
+                    .isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(
+                    () -> OpenAIConfig.builder().model("gpt-4o").apiKey("k").frequencyPenalty(infinity).build())
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+    }
 }

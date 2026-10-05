@@ -131,6 +131,35 @@ class AimonSamplingPropertiesTest {
     }
 
     @Test
+    @DisplayName("NaN binds as a Double and is refused naming the key — it is not in any range")
+    void nanIsRefusedByName() {
+        openAiRefused("aimon.llm.openai.temperature", "NaN", "0.0 and 2.0");
+        openAiRefused("aimon.llm.openai.top-p", "NaN", "0.0 and 1.0");
+        openAiRefused("aimon.llm.openai.presence-penalty", "NaN", "-2.0 and 2.0");
+        openAiRefused("aimon.llm.openai.frequency-penalty", "NaN", "-2.0 and 2.0");
+        anthropicRefused("NaN");
+    }
+
+    @Test
+    @DisplayName("an infinity is refused naming the key, as any number outside the range is")
+    void infinityIsRefusedByName() {
+        openAiRefused("aimon.llm.openai.temperature", "Infinity", "0.0 and 2.0");
+        openAiRefused("aimon.llm.openai.presence-penalty", "-Infinity", "-2.0 and 2.0");
+        anthropicRefused("Infinity");
+    }
+
+    private void anthropicRefused(String value) {
+        runner.withPropertyValues("aimon.llm.anthropic.temperature=" + value).run(ctx -> {
+            assertThat(ctx).hasNotFailed();
+            assertThatThrownBy(() -> AimonLlmAutoConfiguration.AnthropicConfiguration
+                    .anthropicConfig(ctx.getBean(AimonProperties.class).getLlm()))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageStartingWith("aimon.llm.anthropic.temperature=" + value)
+                    .hasMessageContaining("0.0 and 1.0");
+        });
+    }
+
+    @Test
     @DisplayName("anthropic: a bad temperature beside a valid budget names the temperature, not the budget")
     void aBadAnthropicTemperatureIsNotBlamedOnTheBudget() {
         // The config's build() can now fail for two written keys. Each has to be named for its own fault.
