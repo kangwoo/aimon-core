@@ -412,7 +412,8 @@ modules/aimon-core/src/main/resources/
 - **`.stageignore`** (gitignore 문법의 부분집합: glob, `dir/`, `!`, `#`)를 스킬 디렉터리에 두면 큰 에셋을 복사
   대상에서 뺄 수 있다. 스킬 디렉터리 하나의 스테이징 총량은 기본 50 MB 로 제한된다(스타터 속성
   `aimon.environment.staging.max-bytes`).
-- `.aimon-staged/` 는 사본일 뿐이므로 프로젝트의 `.gitignore` 에 넣는 것을 권장한다.
+- `.aimon-staged/` 는 사본일 뿐이다. 로컬 제공자가 첫 복사 때 `.aimon-staged/.gitignore`(`*`)를 써 두므로
+  프로젝트의 `.gitignore` 에 따로 넣지 않아도 된다(이미 있는 파일은 건드리지 않는다).
 
 ### 스킬 본문 렌더 변수 (`${AIMON_*}`)
 

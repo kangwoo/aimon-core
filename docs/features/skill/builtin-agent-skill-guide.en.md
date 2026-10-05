@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/skill/builtin-agent-skill-guide.md
-source_commit: 93a4909
+source_commit: 4c9b3d2
 ---
 
 # Built-in Agent/Skill Guide
@@ -421,7 +421,8 @@ that path as well.
   restarted, so that files never get copied out of step with the version that was loaded.
 - **`.stageignore`** (a gitignore subset: globs, `dir/`, `!`, `#`) in the skill directory keeps large assets out of the
   copy. One skill directory stages at most 50 MB by default (starter property `aimon.environment.staging.max-bytes`).
-- `.aimon-staged/` holds copies only; adding it to the project's `.gitignore` is recommended.
+- `.aimon-staged/` holds copies only. The local provider writes `.aimon-staged/.gitignore` (`*`) with the first
+  copy, so it does not need a line in the project's `.gitignore` (an existing file there is left alone).
 
 ### The skill body's render variables (`${AIMON_*}`)
 
