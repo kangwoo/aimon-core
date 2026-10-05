@@ -148,10 +148,19 @@ for side effects only. Wiring one up is a feature, not a bug fix.
   subagent-lifecycle sites carry none.
 - **`http` / `mcp` actions follow the same rule on `preTool`** (the only guard event they can sit on).
   `HttpActionExecutor#attempt` / `McpActionExecutor#attempt` return an `ActionCallOutcome`: a
-  *verdict* (any readable 2xx / non-error answer — only `decision: deny` blocks) or *no verdict*,
-  carried as a not-run outcome (`EXECUTOR_NOT_WIRED`, `CALL_FAILED`, `TIMEOUT`, `INVALID_RESPONSE`)
-  and judged by the same `ShellHookVerdicts`. A non-2xx status is never a verdict, whatever its body
-  says, and neither is a `decision` outside `allow` / `deny` / `defer`. `run(...)` is the advisory
+  *verdict* (any readable 2xx / non-error answer) or *no verdict*, carried as a not-run outcome
+  (`EXECUTOR_NOT_WIRED`, `CALL_FAILED`, `TIMEOUT`, `INVALID_RESPONSE`) and judged by the same
+  `ShellHookVerdicts`. A non-2xx status is never a verdict, whatever its body says. `DecisionDocument`
+  is the one reader of the answer for both transports and reads a verdict in three places: the native
+  `decision` (`allow` / `defer` / `deny`, plus `block` as deny) and the two Claude Code spellings,
+  `hookSpecificOutput.permissionDecision` (`allow` / `deny` / `ask`) and `continue: false` (deny).
+  When they disagree the strictest wins — deny > unreadable > ask > allow — and an unreadable
+  statement (any other value, `permissionDecision: defer` included) is `INVALID_RESPONSE`. `ask` is
+  `Decision.ASK`, resolved on `preTool` by the manager's `AskPromptHandler` (default deny); it is a
+  verdict, so `failOpen` does not open it. A deny reason comes from the denying statement's own reason
+  field (`reason` / `permissionDecisionReason` / `stopReason`), never from `feedback`,
+  `systemMessage` or `additionalContext`. A new spelling goes into `DecisionDocument`, not into an
+  executor. `run(...)` is the advisory
   reading (`attempt(...).orSuccess()`) and is what `postTool` calls — do not call `run` from a guard
   event. `failOpen` is read for `command`, `http` and `mcp` alike; only on `deny` is it ignored with
   a WARN — by both front-ends (`HookRegistryApplier`, `SkillHookSetParser#parseFailOpen`) and again by

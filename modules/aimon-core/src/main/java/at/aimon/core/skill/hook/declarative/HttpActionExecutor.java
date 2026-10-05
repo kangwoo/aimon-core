@@ -51,19 +51,23 @@ import at.aimon.core.skill.hook.action.HttpMethod;
  * <li>{@code {"decision":"defer"}} → {@code HookResult.success()} (delegates to the next hook)
  * <li>{@code "updatedInput": {...}} carried alongside any decision → {@code HookResult.builder().updatedInput(...)}
  * </ul>
+ * The spellings an endpoint written for Claude Code uses are read as verdicts too &mdash; {@code decision: block},
+ * {@code hookSpecificOutput.permissionDecision} and {@code continue: false}; {@link DecisionDocument} has the whole
+ * mapping and what happens when two spellings disagree.
  *
  * <p>
  * <b>Verdict or no verdict.</b> {@link #attempt} tells the two apart, because a guard has to (see
  * {@link ActionCallOutcome}):
  * <ul>
- * <li><b>Verdict</b> &mdash; any 2xx response that can be read: a JSON object with {@code decision} absent or one of
- * {@code allow} / {@code deny} / {@code defer}; an empty body; a body that is not declared as JSON and does not parse
- * as a JSON object (a webhook answering {@code ok}). Only {@code deny} blocks.
+ * <li><b>Verdict</b> &mdash; any 2xx response that can be read: a JSON object whose decision fields are absent or
+ * carry values {@link DecisionDocument} knows; an empty body; a body that is not declared as JSON and does not parse
+ * as a JSON object (a webhook answering {@code ok}). A deny blocks, and an {@code ask} is answered by the hook
+ * execution manager.
  * <li><b>No verdict</b> &mdash; a transport failure or an interrupted call ({@code CALL_FAILED}), a request that ran
  * out of {@link HttpAction#getTimeout() time} ({@code TIMEOUT}), a non-2xx status ({@code CALL_FAILED}, whatever its
  * body says &mdash; a refusal is spelled {@code decision: deny} in a 2xx), and a 2xx answer that cannot be read as a
- * decision ({@code INVALID_RESPONSE}): a body declared {@code application/json} that does not parse, a
- * {@code decision} that is not text or not one of the three values, an {@code updatedInput} that is not an object.
+ * decision ({@code INVALID_RESPONSE}): a body declared {@code application/json} that does not parse, a decision
+ * field whose value is not one {@link DecisionDocument} knows, an {@code updatedInput} that is not an object.
  * </ul>
  * {@link #run} is the advisory reading of the same call: it logs a missing verdict at WARN and returns
  * {@link HookResult#success()}, so a {@code postTool} webhook stays fail-soft for transport problems.

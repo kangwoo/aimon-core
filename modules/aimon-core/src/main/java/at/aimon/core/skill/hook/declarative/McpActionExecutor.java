@@ -31,8 +31,8 @@ import at.aimon.core.skill.hook.action.McpToolAction;
  * Resolves the target server via {@link McpClientManager} at call time, renders the args template via
  * {@link TemplateRenderer}, and invokes {@link McpClient#callTool}. The {@link McpCallResult} is mapped to a
  * {@link HookResult} using the same JSON contract as the HTTP executor &mdash; if the result content is a JSON object
- * with a {@code decision} field, decisions {@code allow}/{@code deny}/{@code defer} are honored; otherwise the call is
- * treated as side-effect only and {@link HookResult#success()} is returned.
+ * it is read by {@link DecisionDocument}, the native {@code decision} and the Claude Code spellings alike; otherwise
+ * the call is treated as side-effect only and {@link HookResult#success()} is returned.
  *
  * <p>
  * <b>Verdict or no verdict.</b> {@link #attempt} tells the two apart, because a guard has to (see
@@ -40,8 +40,8 @@ import at.aimon.core.skill.hook.action.McpToolAction;
  * that is blank, plain text or JSON that is not an object is a side-effect call (allow), and a JSON object is read
  * as a decision document. No verdict is: a server that is not registered or not connected, a transport failure or
  * any other exception from the client, a result flagged {@code isError} (all {@code CALL_FAILED}), and a decision
- * document that cannot be read ({@code INVALID_RESPONSE} &mdash; a {@code decision} that is not text or not one of
- * {@code allow} / {@code deny} / {@code defer}, an {@code updatedInput} that is not an object).
+ * document that cannot be read ({@code INVALID_RESPONSE} &mdash; a decision field whose value is not one
+ * {@link DecisionDocument} knows, an {@code updatedInput} that is not an object).
  *
  * <p>
  * {@link #run} is the advisory reading of the same call: a missing verdict is logged at WARN and returned as

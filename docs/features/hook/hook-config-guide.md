@@ -396,14 +396,25 @@ JSON 스키마를 따르면 `HookResult` 로 자동 매핑된다. `preTool` 에�
 
 | 응답 | 읽는 법 |
 |------|---------|
-| 2xx, JSON 객체, `decision` 이 `deny` | 판정: 거부 (`reason` 이 사유) |
-| 2xx, JSON 객체, `decision` 이 `allow` · `defer` 이거나 없음 | 판정: 허용 (`feedback` · `updatedInput` 은 그대로 적용) |
+| 2xx, JSON 객체, 거부를 말함 — `decision` 이 `deny` · `block`, `hookSpecificOutput.permissionDecision` 이 `deny`, `continue` 가 `false` | 판정: 거부 (사유는 차례로 `reason` · `permissionDecisionReason` · `stopReason`) |
+| 2xx, JSON 객체, `hookSpecificOutput.permissionDecision` 이 `ask` | 판정: 묻는다 — `AskPromptHandler` 가 답한다 (`permissionDecisionReason` 이 질문) |
+| 2xx, JSON 객체, `decision` 이 `allow` · `defer`, `permissionDecision` 이 `allow`, 또는 아무 결정도 없음 | 판정: 허용 (`feedback` · `updatedInput` 은 그대로 적용) |
 | 2xx, 본문이 비었거나, JSON 으로 선언되지 않은 텍스트(`ok`)이거나, 객체가 아닌 JSON | 판정: 허용 — 결정을 싣지 않는 웹훅 |
-| 2xx 인데 읽을 수 없음 — `Content-Type` 이 JSON 인데 파싱되지 않는 본문, 문자열이 아니거나 셋 중 하나가 아닌 `decision`(예: `"block"`), 객체가 아닌 `updatedInput` | **판정 없음** (`response could not be read`) |
+| 2xx 인데 읽을 수 없음 — `Content-Type` 이 JSON 인데 파싱되지 않는 본문, 문자열이 아니거나 아는 값이 아닌 `decision`(예: `"approve"`) · `permissionDecision`(예: `"defer"`), 불리언이 아닌 `continue`, 객체가 아닌 `updatedInput` | **판정 없음** (`response could not be read`) |
 | non-2xx (본문이 무엇이든) | **판정 없음** (`call failed: HTTP <status>`) — 거부는 2xx 의 `decision: deny` 로 표현한다 |
 | 연결 실패 · 전송 오류 | **판정 없음** (`call failed: <예외 타입>`) |
 | `timeout` 초과 | **판정 없음** (`timed out`) |
 | 실행기 미배선 | **판정 없음** (`action executor not wired`) |
+
+Claude Code 용으로 만든 정책 엔드포인트도 그대로 쓸 수 있다 — 결정은 `decision` 말고도 Claude Code 의 두 철자
+(`hookSpecificOutput.permissionDecision`, `continue`)로 읽는다. 한 문서에 여러 철자가 있고 서로 다르면 **가장 엄한 쪽**이
+판정이다: 거부 > 읽을 수 없음 > 묻는다 > 허용. `decision: allow` 옆에 `permissionDecision: deny` 가 있으면 거부다.
+모델에게 보이는 거부 사유는 거부한 철자의 사유 필드에서만 온다 — `feedback` · `systemMessage` · `additionalContext` 는
+사유가 되지 않는다. `ask` 는 hook 실행 관리자의 `AskPromptHandler` 가 허용 · 거부로 바꾼다: 호스트가 넣지 않았으면
+**거부**이고, 환경 변수 `AIMON_HOOK_ASK_DEFAULT=allow` 가 그 기본을 허용으로 바꾼다. `ask` 는 판정이므로 `failOpen` 이
+열지 않는다. `permissionDecision: defer` 는 `decision: defer` 와 달리 판정 없음이다 — Claude Code 의 `defer` 는 "호출한
+애플리케이션이 재개할 때까지 이 도구 호출을 보류" 라는 뜻이고 그렇게 할 수단이 없으므로, 도구를 실행하는 쪽으로 읽지
+않는다.
 
 `postTool` 에서는 판정 없음이 전처럼 WARN 후 정상 진행이다.
 
@@ -504,7 +515,8 @@ MCP 서버의 tool 을 호출한다. `McpToolAction` + `McpActionExecutor`.
 | `command` 가 그 밖의 종료 코드 (1 · 3 · 130 …) | 스크립트 오작동 | 진행 (WARN) | 진행 (WARN) |
 | `command` 가 종료 코드를 내지 못함 — timeout, 셸 실패, 실행 환경 없음 · 사용 불가, 스킬 디렉터리 스테이징 실패, 셸을 지원하지 않는 실행기, 실행기가 던진 예외 | 돌리지 못함 | **막는다** | 진행 (WARN) |
 | `deny` handler | 판정: 거부 | **막는다** | **막는다** — `deny` 에서는 `failOpen` 을 읽지 않는다(WARN). 아래 "이벤트 정책을 따른다" 세 행에서도 `deny` handler 는 기본 열대로 막는다 |
-| `http` · `mcp` 가 `decision: deny` 로 답함 | 판정: 거부 (`reason` 이 사유) | **막는다** | **막는다** |
+| `http` · `mcp` 가 거부로 답함 (`decision: deny` · `block`, `permissionDecision: deny`, `continue: false`) | 판정: 거부 (서버의 사유 필드가 사유) | **막는다** | **막는다** |
+| `http` · `mcp` 가 `permissionDecision: ask` 로 답함 | 판정: 묻는다 | `AskPromptHandler` 의 답대로 — 기본은 **막는다** | 같다 — 판정이므로 `failOpen` 과 무관 |
 | `http` · `mcp` 가 그 밖의 읽을 수 있는 답을 함 (`allow` · `defer` · 결정 없음 · 빈 본문 · 일반 텍스트) | 판정: 허용 | 진행 | 진행 |
 | `http` · `mcp` 가 판정을 받지 못함 — 연결 실패, timeout, non-2xx, MCP 서버 미등록 · 미연결 · `isError`, 읽을 수 없는 답, 실행기 미배선, 실행기가 던진 예외 | 판정 없음 | **막는다** | 진행 (WARN) |
 | handler 가 자기 timeout 을 넘겨 돌다가 hook 실행기의 바깥 그물(선언 timeout + 5초)에 끊김 | 판정 없음 | **막는다** | 이벤트 정책을 따른다 — 기본 정책은 진행 (WARN) |
@@ -516,7 +528,7 @@ MCP 서버의 tool 을 호출한다. `McpToolAction` + `McpActionExecutor`.
 `Blocked: guard hook '<이름>' (<이벤트>) could not run its command — <원인>. A guard that cannot decide blocks
 (fail-closed).` 꼴이고(`http` · `mcp` 는 `could not get a verdict from its http call` · `… its mcp call`), 커맨드 문자열 ·
 셸의 stderr · URL · 헤더 · 응답 본문 · 예외 메시지 · `failOpen` 이라는 이름은 싣지 않는다 — 그 사유를 읽는 쪽이 가드가
-제약하는 당사자이기 때문이다. `http` · `mcp` handler 는 `preTool` 과 `postTool` 에만 둘 수 있으므로, 이 표에서 그 세 행이
+제약하는 당사자이기 때문이다. `http` · `mcp` handler 는 `preTool` 과 `postTool` 에만 둘 수 있으므로, 이 표에서 그 네 행이
 해당하는 가드 이벤트는 `preTool` 하나다.
 
 풀이 받지 않은 hook 과 handler 밖에서 예외로 끝난 hook 은 바깥 그물에 끊긴 hook 과 **같은 선언**으로 막힌다 — 선언적 가드가
@@ -967,7 +979,7 @@ fork 가 없어 발화하지 않는다. 전체 규칙은 [`aimon-skill-extension
 | `WARN hooks: 'command' on ... cannot run: the configured shell executor does not support shell actions` | 셸을 지원하지 않는 실행기(`NoOpShellActionExecutor`)로 `hooks.json` 을 적용했다. 가드가 아닌 `command` handler(가드가 아닌 이벤트, 또는 `failOpen: true`)는 등록되지 않는다 — `HostShellActionExecutor` 를 배선한다. 가드 이벤트의 `command` 라면 WARN 이 아니라 시작 실패다. |
 | `WARN hooks config at ...: ... has a 'failOpen' that is not a JSON boolean (...); it is read as false` | `failOpen` 에 `"true"` · `1` · `null` 을 썼다. 그 handler 는 `failOpen: false` 로 등록된다(커맨드를 못 돌리면 막는다). 관찰용이라면 `true` 로 고칠 것. |
 | 도구가 `Blocked: guard hook '...' could not run its command` 로 막힘      | 결정 채널이 있는 이벤트의 `command` handler 가 종료 코드를 내지 못했거나(timeout 등) 셸이 커맨드를 시작하지 못했다(`command not found: exit code 127` · `command not executable: exit code 126` — 스크립트 경로와 실행 권한을 확인). 사유의 원인을 고치거나, 관찰용 handler 라면 `"failOpen": true` 를 선언. 전체 표는 [가드가 막는 경우](#가드가-막는-경우). |
-| 도구가 `Blocked: guard hook '...' could not get a verdict from its http call` (또는 `mcp call`) 로 막힘 | `preTool` 의 `http` · `mcp` handler 가 판정을 받지 못했다. 사유의 원인을 본다 — `action executor not wired`(호스트가 실행기를 배선하지 않았다 — `aimon-cli` 는 배선하므로 임베딩 호스트의 경우다), `call failed: MCP server not registered`(`server` 가 설정된 MCP 서버 이름이 아니다), `call failed: HTTP 307`(리다이렉트는 따라가지 않는다), `call failed: HTTP 503` · `call failed: ConnectException`(정책 서버), `timed out`, `response could not be read`(`decision` 값이 `allow` · `deny` · `defer` 가 아니다). 관찰용 handler 라면 `"failOpen": true`. |
+| 도구가 `Blocked: guard hook '...' could not get a verdict from its http call` (또는 `mcp call`) 로 막힘 | `preTool` 의 `http` · `mcp` handler 가 판정을 받지 못했다. 사유의 원인을 본다 — `action executor not wired`(호스트가 실행기를 배선하지 않았다 — `aimon-cli` 는 배선하므로 임베딩 호스트의 경우다), `call failed: MCP server not registered`(`server` 가 설정된 MCP 서버 이름이 아니다), `call failed: HTTP 307`(리다이렉트는 따라가지 않는다), `call failed: HTTP 503` · `call failed: ConnectException`(정책 서버), `timed out`, `response could not be read`(`decision` · `permissionDecision` 값이 아는 값이 아니다 — [http](#http) 의 표). 관찰용 handler 라면 `"failOpen": true`. |
 | `WARN hooks: 'asyncRewake' is not supported on event '...'`              | rewake 가능한 이벤트는 `preTool`/`preCompact`/`onSessionStart`/`onSessionEnd`/`onConfigReload`. hook 자체는 정상 등록됨. |
 | 셸 hook 이 exit 2 로 끝났는데 차단되지 않음                                | 해당 이벤트에 결정 채널이 없음. veto 는 `preTool`/`onStart`/`preCompact`(block), `permissionRequest`(deny) 에서만 유효. |
 | 커맨드 안의 `${tool_input.x}` / `${tool_name}` 이 빈 문자열                | 의도된 동작. 커맨드는 렌더링되지 않는다 — stdin JSON payload 나 `AIMON_*` env(`$AIMON_TOOL_NAME` 등) 를 사용. |

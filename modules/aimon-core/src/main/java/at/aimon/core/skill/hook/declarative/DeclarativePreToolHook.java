@@ -41,7 +41,8 @@ import at.aimon.core.skill.hook.action.ShellAction;
  * executable / not found) — blocks the tool as well (fail-closed), unless the hook declared {@code failOpen}; see
  * {@link ShellHookVerdicts}.
  * <li>{@link HttpAction} → request issued via {@link HttpActionExecutor}; the JSON response can carry an
- * {@code allow}/{@code deny}/{@code defer} decision and an optional {@code updatedInput}.
+ * {@code allow}/{@code deny}/{@code defer} decision &mdash; or the Claude Code spelling of one, {@code ask} included,
+ * see {@link DecisionDocument} &mdash; and an optional {@code updatedInput}.
  * <li>{@link McpToolAction} → MCP tool call via {@link McpActionExecutor}; result content can carry the same
  * decision contract.
  * </ul>

@@ -72,7 +72,7 @@ class DeclarativePreToolHookRemoteGuardTest {
         respond("/unavailable", 503, "application/json", "{\"decision\":\"allow\"}");
         respond("/forbidden", 403, "application/json", "{\"decision\":\"deny\",\"reason\":\"not a verdict\"}");
         respond("/truncated-json", 200, "application/json", "{\"decision\":\"den");
-        respond("/unknown-decision", 200, "application/json", "{\"decision\":\"block\",\"reason\":\"cc style\"}");
+        respond("/unknown-decision", 200, "application/json", "{\"decision\":\"veto\",\"reason\":\"cc style\"}");
         respond("/decision-not-text", 200, "application/json", "{\"decision\":true}");
         respond("/bad-updated-input", 200, "application/json", "{\"decision\":\"allow\",\"updatedInput\":\"x\"}");
         server.createContext("/hang", exchange -> {
@@ -245,7 +245,7 @@ class DeclarativePreToolHookRemoteGuardTest {
     }
 
     @ParameterizedTest
-    @CsvSource(delimiter = '|', value = {"{\"decision\":\"block\"}", "{\"decision\":7}",
+    @CsvSource(delimiter = '|', value = {"{\"decision\":\"veto\"}", "{\"decision\":7}",
             "{\"decision\":\"allow\",\"updatedInput\":[1]}"})
     void mcp_decisionThatCannotBeRead_blocks(String content) {
         McpClient client = connectedClient();
@@ -264,7 +264,7 @@ class DeclarativePreToolHookRemoteGuardTest {
         McpClient erroring = connectedClient();
         when(erroring.callTool(any(), any())).thenReturn(McpCallResult.error("boom"));
         McpClient unreadable = connectedClient();
-        when(unreadable.callTool(any(), any())).thenReturn(McpCallResult.success("{\"decision\":\"block\"}"));
+        when(unreadable.callTool(any(), any())).thenReturn(McpCallResult.success("{\"decision\":\"veto\"}"));
         McpClient disconnected = mock(McpClient.class);
 
         assertThat(hook(mcpAction("policy"), null, null, true).execute(contextFor("Bash")).getStatus())
