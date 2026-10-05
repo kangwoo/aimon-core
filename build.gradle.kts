@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     java
     alias(libs.plugins.spring.boot) apply false
@@ -50,6 +52,25 @@ tasks.register("checkFormat") {
     description = "Check Java code formatting using Spotless"
     group = "verification"
     dependsOn(codeSubprojects().map { it.tasks.named("spotlessCheck") })
+}
+
+// The measurement behind api-stability.md §6's "javadoc on every public API". Only published modules register
+// `javadocCoverage` (aimon.publishable), so this picks them up by what they are, the way codeSubprojects() does.
+// Prints one line per module and the total; each module's full list is in build/reports/javadoc-coverage/.
+tasks.register("javadocCoverage") {
+    description = "Count public API elements without javadoc across published modules (report only)"
+    group = "documentation"
+    val measured = subprojects.filter { it.plugins.hasPlugin("aimon.publishable") && it.plugins.hasPlugin("java-library") }
+    dependsOn(measured.map { it.tasks.named("javadocCoverage") })
+    val summaries = measured.associate { it.name to it.layout.buildDirectory.file("reports/javadoc-coverage/summary.properties") }
+    doLast {
+        val totals = summaries.mapValues { (_, f) ->
+            val file = f.get().asFile
+            if (file.exists()) Properties().apply { file.reader().use { load(it) } }.getProperty("total").toInt() else 0
+        }
+        totals.entries.sortedByDescending { it.value }.forEach { (name, n) -> println("%6d  %s".format(n, name)) }
+        println("%6d  total (%d modules)".format(totals.values.sum(), totals.size))
+    }
 }
 
 tasks.register("checkStyle") {

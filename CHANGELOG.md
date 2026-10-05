@@ -7,6 +7,17 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Build: `./gradlew javadocCoverage` counts the public API that has no javadoc
+
+- **A report-only task that measures one of the `1.0` conditions.** The published `javadoc` task runs with
+  `-Xdoclint:none`, so nothing could say how far the code was from "javadoc on every public API"
+  (`docs/project/api-stability.md` §6). Every published module now has `javadocCoverage`: it runs the toolchain's
+  `javadoc` over the module's sources outside `*.impl` with only doclint's `missing` group, writes each warning to
+  `build/reports/javadoc-coverage/warnings.txt` and the counts by kind to `summary.properties`, and never fails. The
+  root task of the same name prints one line per module and the total. The published javadoc jar is unchanged.
+- **First count: 2,737** across 16 modules — 2,237 of them in `aimon-core`; `aimon-bootstrap`, `aimon-llm-anthropic`
+  and `aimon-memory-testkit` have none.
+
 ### Fixed: a Markdown, HTML or CSV attachment no longer fails the turn on Anthropic
 
 - **`AnthropicMessageConverter` now sends every text document with `media_type: "text/plain"`.** It used to copy the

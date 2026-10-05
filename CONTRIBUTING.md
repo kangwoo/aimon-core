@@ -144,6 +144,11 @@ both excluded by the conventions plugin in every module. They run via `./gradlew
 `./gradlew packagingTest`, and CI and the release gate run both. (There was a third, `@Tag("playwright")`,
 until aimon-browser-playwright moved to its own repository and took the tier with it.)
 
+`./gradlew javadocCoverage` is not a gate. It counts the public API elements of each published module that have
+no javadoc — the `1.0` condition in [`docs/project/api-stability.md`](docs/project/api-stability.md) §6 — and
+never fails. The list for a module is in `modules/<module>/build/reports/javadoc-coverage/warnings.txt`. If you
+add public API, documenting it keeps that number from growing.
+
 When a check fails, the HTML reports say why:
 
 ```
