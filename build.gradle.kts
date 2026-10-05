@@ -73,6 +73,15 @@ tasks.register("javadocCoverage") {
     }
 }
 
+tasks.register("checkJavadocCoverage") {
+    description = "Hold every published module's undocumented public API to its baseline"
+    group = "verification"
+    dependsOn(
+        subprojects.filter { it.plugins.hasPlugin("aimon.publishable") && it.plugins.hasPlugin("java-library") }
+            .map { it.tasks.named("checkJavadocCoverage") },
+    )
+}
+
 tasks.register("checkStyle") {
     description = "Run Checkstyle on all modules"
     group = "verification"
@@ -87,9 +96,9 @@ tasks.register("checkStyle") {
 // The BOM has no tests, but it does have a claim that can be wrong — that it manages exactly the modules
 // this build publishes — so `checkAll` picks up its `verifyBom` in place of the test task it lacks.
 tasks.register("checkAll") {
-    description = "Run all code quality checks (Spotless + Checkstyle + unit tests + the BOM's verifyBom)"
+    description = "Run all code quality checks (Spotless + Checkstyle + javadoc ratchet + unit tests + the BOM's verifyBom)"
     group = "verification"
-    dependsOn("checkFormat", "checkStyle")
+    dependsOn("checkFormat", "checkStyle", "checkJavadocCoverage")
     dependsOn(codeSubprojects().map { it.tasks.named("test") })
     dependsOn(":aimon-bom:verifyBom")
 }

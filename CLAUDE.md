@@ -14,9 +14,9 @@ AIMON is a ReAct (Reasoning and Acting) agent framework for IT operations automa
 ./gradlew format                   # Apply formatting (Spotless)
 ./gradlew checkFormat              # Check formatting only
 ./gradlew checkStyle               # Checkstyle (main source only, not tests)
-./gradlew checkAll                 # Run all quality checks (format check + style + unit tests + the BOM's verifyBom)
+./gradlew checkAll                 # Run all quality checks (format check + style + javadoc ratchet + unit tests + the BOM's verifyBom)
 ./gradlew :aimon-cli:run           # Run CLI application
-./gradlew javadocCoverage          # Count public API elements without javadoc, per published module (report only)
+./gradlew javadocCoverage          # Count public API elements without javadoc, per published module (report; the ratchet is checkJavadocCoverage)
 ```
 
 ## Build Setup

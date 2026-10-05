@@ -217,8 +217,8 @@ fi
 # ── 4. quality gate ─────────────────────────────────────────────────────────
 # These are deliberately the SAME verification tasks CI runs (.github/workflows/build.yml), which splits
 # them across three jobs and adds the report-only `jacocoTestReport` — a release must not pass a gate
-# narrower than the one every PR already clears. `checkAll` = checkFormat + checkStyle + every module's
-# `test` + the BOM's `verifyBom`.
+# narrower than the one every PR already clears. `checkAll` = checkFormat + checkStyle + checkJavadocCoverage +
+# every module's `test` + the BOM's `verifyBom`.
 #
 # It once read `test spotlessCheck` with a note that checkstyle had "pre-existing warnings"; that was
 # never true of this build — checkstyle here is severity=error with maxErrors=0 and an empty

@@ -134,7 +134,7 @@ Before pushing:
 
 ```bash
 ./gradlew format     # Apply Spotless (Eclipse formatter)
-./gradlew checkAll   # checkFormat + checkStyle + every module's unit tests + the BOM's verifyBom
+./gradlew checkAll   # checkFormat + checkStyle + checkJavadocCoverage + every module's unit tests + the BOM's verifyBom
 ```
 
 `checkAll` is the single gate: it runs the format check, Checkstyle, each module's `test` task **and** the
@@ -144,10 +144,13 @@ both excluded by the conventions plugin in every module. They run via `./gradlew
 `./gradlew packagingTest`, and CI and the release gate run both. (There was a third, `@Tag("playwright")`,
 until aimon-browser-playwright moved to its own repository and took the tier with it.)
 
-`./gradlew javadocCoverage` is not a gate. It counts the public API elements of each published module that have
-no javadoc — the `1.0` condition in [`docs/project/api-stability.md`](docs/project/api-stability.md) §6 — and
-never fails. The list for a module is in `modules/<module>/build/reports/javadoc-coverage/warnings.txt`. If you
-add public API, documenting it keeps that number from growing.
+`checkAll` also holds each published module's count of public API without javadoc to its line in
+`config/javadoc/coverage-baseline.properties` — the `1.0` condition in
+[`docs/project/api-stability.md`](docs/project/api-stability.md) §6. It fails both ways. If you add public API
+without javadoc the count goes up: document it (the list for a module is in
+`modules/<module>/build/reports/javadoc-coverage/warnings.txt`). If you document existing API the count goes down:
+lower that module's line to the number the failure names. `./gradlew javadocCoverage` prints the table without
+judging it.
 
 When a check fails, the HTML reports say why:
 

@@ -34,7 +34,8 @@ plugins.withId("java-library") {
 // What is missing from the published javadoc. Registered here rather than in aimon.java-conventions because
 // "public API" is a property of what ships: the CLI, the samples and the unpublished testkits are not measured.
 // Within a module, `*.impl` is left out — api-stability.md §2 says that is internal, and a count that included it
-// would measure the wrong thing. Report-only; see JavadocCoverageTask.
+// would measure the wrong thing. `javadocCoverage` only reports; `checkJavadocCoverage` holds the count to the
+// baseline in config/javadoc/coverage-baseline.properties and is part of `checkAll` (JavadocCoverageCheckTask).
 plugins.withId("java-library") {
     val main = the<SourceSetContainer>().named("main")
     // Resolved here, not inside the task block: in there `the<...>()` looks at the task's own extensions.
@@ -47,6 +48,17 @@ plugins.withId("java-library") {
         javadocTool.set(tool)
         reportDir.set(layout.buildDirectory.dir("reports/javadoc-coverage"))
         rootDir.set(rootProject.layout.projectDirectory)
+    }
+    val moduleName = name
+    tasks.register<JavadocCoverageCheckTask>("checkJavadocCoverage") {
+        description = "Fail if this module's undocumented public API differs from its baseline"
+        group = "verification"
+        summary.set(
+            tasks.named<JavadocCoverageTask>("javadocCoverage").flatMap { it.reportDir.file("summary.properties") },
+        )
+        baselineFile.set(rootProject.layout.projectDirectory.file("config/javadoc/coverage-baseline.properties"))
+        this.moduleName.set(moduleName)
+        warningsPath.set("modules/$moduleName/build/reports/javadoc-coverage/warnings.txt")
     }
 }
 

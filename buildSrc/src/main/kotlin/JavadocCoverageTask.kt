@@ -30,8 +30,8 @@ import org.gradle.process.ExecOperations
  * the tool's output, and counting is the whole point here. And the published jar must not change because someone
  * wanted a number.
  *
- * Report-only by design: it never fails on a warning. Whether the count should become a ratchet is a separate
- * decision.
+ * It never fails on a warning: counting and judging are kept apart so `./gradlew javadocCoverage` can always print the
+ * table. The judging is [JavadocCoverageCheckTask], which holds the count to a baseline under `checkAll`.
  */
 @CacheableTask
 abstract class JavadocCoverageTask : DefaultTask() {
