@@ -1,6 +1,6 @@
 ---
 translated_from: CONTRIBUTING.md
-source_commit: b934eb6
+source_commit: 222fa46
 ---
 
 # AIMON Core 기여 가이드
@@ -137,7 +137,7 @@ export 되어 있는 동안에는 — 이 계층을 위해서든 CLI 를
 
 ```bash
 ./gradlew format     # Spotless 적용 (Eclipse formatter)
-./gradlew checkAll   # checkFormat + checkStyle + 모든 모듈의 단위 테스트 + BOM 의 verifyBom
+./gradlew checkAll   # checkFormat + checkStyle + checkJavadocCoverage + 모든 모듈의 단위 테스트 + BOM 의 verifyBom
 ```
 
 `checkAll` 이 유일한 게이트입니다. 포맷 검사, Checkstyle, 각 모듈의 `test` 태스크, **그리고** BOM 의
@@ -147,10 +147,12 @@ export 되어 있는 동안에는 — 이 계층을 위해서든 CLI 를
 돌고, CI 와 릴리스 게이트가 둘 다 돌립니다. (셋째였던 `@Tag("playwright")` 는 aimon-browser-playwright 가
 별도 저장소로 옮겨 가면서 함께 나갔습니다.)
 
-`./gradlew javadocCoverage` 는 게이트가 아닙니다. 배포되는 각 모듈의 공개 API 가운데 javadoc 이 없는 요소를
-셉니다 — [`docs/project/api-stability.md`](docs/project/api-stability.md) §6 의 `1.0` 조건입니다 — 그리고
-실패하지 않습니다. 모듈별 목록은 `modules/<module>/build/reports/javadoc-coverage/warnings.txt` 에 있습니다.
-공개 API 를 더한다면 문서를 함께 달아 그 수가 늘지 않게 해 주세요.
+`checkAll` 은 배포되는 각 모듈에서 javadoc 이 없는 공개 API 의 수를
+`config/javadoc/coverage-baseline.properties` 의 그 모듈 줄에 묶어 둡니다 —
+[`docs/project/api-stability.md`](docs/project/api-stability.md) §6 의 `1.0` 조건입니다. 양쪽으로 실패합니다.
+javadoc 없이 공개 API 를 더하면 수가 늘어납니다 — 문서를 달아 주세요(모듈별 목록은
+`modules/<module>/build/reports/javadoc-coverage/warnings.txt`). 기존 API 에 문서를 달면 수가 줄어듭니다 —
+그 모듈 줄을 실패 메시지가 알려 주는 수로 낮춰 주세요. `./gradlew javadocCoverage` 는 판정 없이 표만 출력합니다.
 
 검사가 실패하면 HTML 리포트가 이유를 말해 줍니다.
 

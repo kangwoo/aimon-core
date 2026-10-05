@@ -7,6 +7,15 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Build: `checkAll` holds undocumented public API to a per-module baseline
+
+- **New `checkJavadocCoverage`, part of `checkAll` (so of CI and the release gate).** Each published module's
+  `javadocCoverage` count must equal its line in `config/javadoc/coverage-baseline.properties`; a module with no line
+  is held to 0, so a new published module starts fully documented. It fails both ways: above the baseline, with the
+  path of the module's warning list; below it, naming the number to lower the line to, so the gain is kept in the same
+  change. The baseline starts at the first count, 2,737.
+- **What it does not catch.** It compares totals, so documenting one element and adding an undocumented one passes.
+
 ### Build: `./gradlew javadocCoverage` counts the public API that has no javadoc
 
 - **A report-only task that measures one of the `1.0` conditions.** The published `javadoc` task runs with
