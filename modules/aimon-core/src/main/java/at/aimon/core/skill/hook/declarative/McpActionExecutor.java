@@ -1,12 +1,8 @@
 package at.aimon.core.skill.hook.declarative;
 
-import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.function.Supplier;
 
 import org.slf4j.Logger;
@@ -49,7 +45,8 @@ import at.aimon.core.skill.hook.action.McpToolAction;
  *
  * <p>
  * <b>Timeout.</b> The action's {@link McpToolAction#getTimeout() timeout} bounds the call. {@link McpClient#callTool}
- * takes none, so the deadline is kept here: when it passes, the calling thread is interrupted, which is how a
+ * takes none, so the deadline is kept here ({@link CallDeadline}, the mechanism the HTTP executor uses for the same
+ * purpose): when it passes, the calling thread is interrupted, which is how a
  * request is told to stop ({@code StdioMcpTransport} polls for its response and gives up on an interrupt), and the
  * outcome is {@code TIMEOUT} &mdash; no verdict. The interrupt is this executor's own and is taken back before
  * returning, so the thread's interrupt flag is left as the call found it. No thread is created per call: the deadline
@@ -260,74 +257,6 @@ public final class McpActionExecutor {
         return DecisionDocument.read(root, objectMapper,
                 "MCP hook '" + action.getServerName() + "/" + action.getToolName() + "'",
                 "Denied by MCP hook " + action.getServerName() + "/" + action.getToolName(), false);
-    }
-
-    /**
-     * The deadline of one call, kept on the JDK's shared delay scheduler ({@link CompletableFuture#orTimeout}): when
-     * it passes while the call is still in flight, the calling thread is interrupted.
-     *
-     * <p>
-     * {@link #fire()} and {@link #disarm()} are mutually exclusive, so once {@code disarm} has returned no interrupt
-     * from this deadline can arrive any more, and one that already did is taken back there: the flag is cleared, and
-     * set again when the thread was already interrupted as the deadline was armed. Clearing can swallow an outside
-     * interrupt that landed <em>during</em> the call in the same instant the deadline fired; the call is over either
-     * way, and the caller that sent it (the hook executor's net) has already decided without this hook's result.
-     *
-     * <p>
-     * {@code disarm} belongs in a {@code finally}: a call that leaves through an {@link Error} must end its deadline
-     * too.
-     */
-    private static final class CallDeadline {
-
-        private final Thread caller = Thread.currentThread();
-        private final boolean interruptedBefore = caller.isInterrupted();
-        private final CompletableFuture<Void> timer = new CompletableFuture<>();
-        private boolean armed = true;
-        private boolean fired;
-
-        static CallDeadline arm(Duration timeout) {
-            final CallDeadline deadline = new CallDeadline();
-            deadline.timer.orTimeout(toNanosSaturating(timeout), TimeUnit.NANOSECONDS)
-                    .whenComplete((ignored, thrown) -> {
-                        if (thrown instanceof TimeoutException) {
-                            deadline.fire();
-                        }
-                    });
-            return deadline;
-        }
-
-        private synchronized void fire() {
-            if (armed) {
-                fired = true;
-                caller.interrupt();
-            }
-        }
-
-        /**
-         * Ends the deadline and reports whether it had fired.
-         *
-         * @return true when the call ran out of time (the interrupt it caused has been taken back)
-         */
-        synchronized boolean disarm() {
-            armed = false;
-            // Cancels the scheduled timeout, so a call that ended leaves nothing behind.
-            timer.complete(null);
-            if (fired) {
-                Thread.interrupted();
-                if (interruptedBefore) {
-                    caller.interrupt();
-                }
-            }
-            return fired;
-        }
-
-        private static long toNanosSaturating(Duration timeout) {
-            try {
-                return timeout.toNanos();
-            } catch (ArithmeticException e) {
-                return Long.MAX_VALUE;
-            }
-        }
     }
 
     private static String summarise(String text) {

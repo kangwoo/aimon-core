@@ -467,8 +467,9 @@ On `postTool` a missing verdict still leaves a WARN and proceeds, as before.
   verdict. Write the final address in `url`.
 - **At most 1 MiB of response body is read.** A larger one is not truncated and guessed at: it is no verdict (`response
   could not be read: response larger than 1048576 bytes`).
-- **`timeout` is measured until the response headers arrive.** If the body stalls after that, the hook executor's outer
-  net cuts it off. The connect timeout is fixed at 5 seconds.
+- **`timeout` is measured over the whole exchange — the response body included.** An endpoint that sends its headers
+  and stalls, and one that drips its body a byte at a time under 1 MiB, are both cut off at the deadline (the request in
+  flight is cancelled and its connection closed) and the result is `timed out`. The connect timeout is fixed at 5 seconds.
 - **The proxy is the JVM default** — system properties such as `https.proxyHost` apply; the `HTTPS_PROXY` environment
   variable is not read.
 - **`${env.X}` reads the host process's environment.** The names it may read are the `allowedEnvVars` the handler lists

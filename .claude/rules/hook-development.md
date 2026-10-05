@@ -234,13 +234,20 @@ for side effects only. Wiring one up is a feature, not a bug fix.
 - A handler's declared timeout is enforced by the action executor and, via
   `ExecutionHook#getExecutionBudget()`, widens the hook's outer net — subject to the same floor,
   +5s grace and 10-minute clamp as any other declared budget. "Enforced by the executor" holds for all
-  three transports: the shell's `ExecutionOptions` timeout, `HttpRequest.timeout`, and for `mcp` a
-  deadline `McpActionExecutor` keeps itself (`McpClient.callTool` takes none) by interrupting the
-  calling thread, reported as `TIMEOUT` with the interrupt cleared. The per-server `requestTimeout`
-  still bounds the request underneath, so the smaller of the two wins; an interrupt that is not the
-  executor's own is `CANCELLED`. Do not move the call to another thread to bound it — the hook already
-  runs on a pool thread whose wait the outer net bounds, and that net is the fallback for a client that
-  ignores the interrupt. In `hooks.json` the `timeout` field is
+  three transports: the shell's `ExecutionOptions` timeout, and for `http` and `mcp` one `CallDeadline`
+  the executor keeps itself, because neither transport bounds the whole call — `McpClient.callTool`
+  takes no timeout, and `HttpRequest.timeout` stops at the response headers, so a body that stalls or
+  drips under `MAX_RESPONSE_BYTES` was unbounded. `CallDeadline` interrupts the calling thread when
+  the time is up (`HttpClient.send` cancels the exchange on an interrupt, the stdio MCP transport
+  stops polling), reported as `TIMEOUT`. `arm` goes right before the call and `disarm` in a
+  `finally` — a call that leaves through an `Error` must not leave its timer to interrupt the pool
+  thread later — and `disarm` leaves the interrupt flag as the call found it. The per-server
+  `requestTimeout` (mcp) and the request timeout (http) still bound the request underneath, so the
+  smaller wins; an interrupt that is not the executor's own is `CANCELLED` and stays set. Do not move
+  the call to another thread to bound it — the hook already runs on a pool thread whose wait the
+  outer net bounds, and that net is the fallback for a client that ignores the interrupt. A new
+  remote transport uses `CallDeadline` rather than a second mechanism. In `hooks.json` the `timeout`
+  field is
   **seconds** (Claude Code parity) with `timeoutMs` as a millisecond alias that wins when both are
   present; SKILL.md frontmatter accepts `action.timeoutMs` only.
 - A declarative hook re-attaches its `asyncRewake` spec on **every** fire — `DeclarativeRewake.attach`
