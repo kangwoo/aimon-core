@@ -103,6 +103,23 @@ class AgentListCommandTest {
     }
 
     @Test
+    void shouldShowAHiddenSubagentToTheOperatorMarkedHidden() {
+        // EE-44: hidden means hidden from the model. The operator who registered it still has to be able to see it.
+        StubSubagentRegistry registry = new StubSubagentRegistry();
+        registry.addSubagent(stubSubagent("code-reviewer", "Reviews code", null));
+        registry.addSubagent(Subagent.of("workflow-judge",
+                SubagentMetadata.builder().description("Placement only").hidden(true).build(),
+                SubagentContent.of("test content")));
+
+        CommandExecutionResult result = new AgentListCommand(registry).execute(createContext(),
+                DirectCommandExecutionRequest.of(""));
+
+        assertThat(result.getResponse()).contains("  workflow-judge [hidden] - Placement only")
+                .contains("  code-reviewer - Reviews code").doesNotContain("code-reviewer [hidden]")
+                .contains("Total: 2 subagent(s), 1 hidden from the model");
+    }
+
+    @Test
     void shouldHandleSubagentWithoutDescription() {
         StubSubagentRegistry registry = new StubSubagentRegistry();
         registry.addSubagent(stubSubagent("simple-agent", null, null));

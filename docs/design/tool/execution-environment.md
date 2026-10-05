@@ -456,7 +456,8 @@ public interface ExecutionEnvironmentProvider {
   `attributes` 는 등록된 정의가 정하지 않은 키만 더할 수 있다(등록된 키는 고정되어 다른 값을 주면 스크립트가 실패하고,
   키를 지울 수도 없다. 등록되지 않은 `agentType` 에는 고정할 키가 없다 — EE-45). 내장 `Workflow` 도구의
   단계는 역할마다 정해진 이름(`workflow-perspective` · `workflow-synthesizer` · `workflow-candidate` · `workflow-judge` ·
-  `workflow-skeptic`)으로 등록된 서브에이전트의 속성을 복사한다. 어느 쪽이든 등록된 정의에서 가져오는 것은 속성뿐이고,
+  `workflow-skeptic`)으로 등록된 서브에이전트의 속성을 복사한다. 그렇게 속성만 주려고 둔 정의는 `hidden: true` 로 모델에게서
+  숨긴다 — `Task` 의 목록에 나오지 않고 모델이 이름을 대도 거절되며, 이름으로 찾는 쪽은 그대로 찾는다(EE-44). 어느 쪽이든 등록된 정의에서 가져오는 것은 속성뿐이고,
   이름·프롬프트·도구는 단계의 것 그대로다. 속성이 비면 제공자는 위의 기본(부모와 같은 샌드박스)을 따른다. 설계와
   구현이 달라진 점은 [`execution-environment-ee42-workflow-attributes.md`](execution-environment-ee42-workflow-attributes.md)
 - **워크플로 격리 브랜치** — 러너는 `parentEnv.isolate(branchKey)` 를 부른다. 비어 있으면(격리를 지원하지 않는

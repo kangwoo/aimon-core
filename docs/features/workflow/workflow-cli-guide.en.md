@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/workflow/workflow-cli-guide.md
-source_commit: 837e4be
+source_commit: 556ca5d
 ---
 
 # Workflow CLI Guide (the aimon-cli view)
@@ -106,8 +106,10 @@ Two or more rebuttals means it is rejected; otherwise the verdict is that it sur
 To place a built-in strategy's steps in a particular execution environment, define a subagent under the role's fixed
 name — `workflow-perspective`, `workflow-synthesizer`, `workflow-candidate`, `workflow-judge` or `workflow-skeptic` —
 and give it `attributes`. `Workflow` takes only that definition's `attributes` and uses none of its prompt, tools or
-model. That definition is still an ordinary subagent, though: the model sees it in the list and can call it through
-`Task`, and then the definition's prompt is used.
+model. Write `hidden: true` in that definition as well — without it the definition is an ordinary subagent: the model
+sees it in the list and can call it through `Task`, and then the definition's prompt is used. A definition with
+`hidden: true` is left out of `Task`'s list and refused if the model names it anyway, while `Workflow` and
+`WorkflowJs`'s `agentType` still find it by that name. `/agents` shows it, marked `[hidden]`.
 
 ### Examples
 

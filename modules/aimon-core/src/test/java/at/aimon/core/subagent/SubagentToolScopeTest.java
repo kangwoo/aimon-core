@@ -191,4 +191,12 @@ class SubagentToolScopeTest {
                     .isTrue();
         }
     }
+
+    @org.junit.jupiter.api.Test
+    void withAllowedToolsKeepsTheHiddenFlag() {
+        // The caller's ceiling rebuilds the definition; a hidden one must not come out visible.
+        final Subagent hidden = Subagent.builder().name("workflow-judge").systemPrompt("p").hidden(true).build();
+
+        assertThat(SubagentToolScope.withAllowedTools(hidden, java.util.List.of()).getMetadata().isHidden()).isTrue();
+    }
 }

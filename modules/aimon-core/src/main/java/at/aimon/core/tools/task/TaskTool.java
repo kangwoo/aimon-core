@@ -305,7 +305,10 @@ public class TaskTool extends AbstractTool {
     }
 
     /**
-     * Builds the tools description including available subagents.
+     * Builds the tools description including available subagents. A definition marked
+     * {@linkplain at.aimon.core.subagent.SubagentMetadata#isHidden() hidden} is left out: it is registered to be looked
+     * up by name (a
+     * {@code Workflow} role, a GraalJS {@code agentType}), not to be offered to the model.
      *
      * @param registry
      *            The subagent registry
@@ -320,7 +323,7 @@ public class TaskTool extends AbstractTool {
         desc.append("The subagent will work independently and return results when complete.")
                 .append(Constants.DOUBLE_NEWLINE);
 
-        final List<Subagent> subagents = registry.getAllSubagents();
+        final List<Subagent> subagents = visibleSubagents(registry);
         if (!subagents.isEmpty()) {
             desc.append("<available_subagents>").append(Constants.NEWLINE);
             for (Subagent subagent : subagents) {
@@ -396,6 +399,15 @@ public class TaskTool extends AbstractTool {
             final String subagentName = input.getRequiredString("subagent_name");
             final String prompt = input.getRequiredString("prompt");
             final String description = input.getRequiredString("description");
+
+            // A hidden definition is not the model's to launch. Leaving it out of the description is not enough — the
+            // model can still name it (it may have seen the name in a workflow step label or an operator's /agents
+            // output) — so the call is refused here, before a resume snapshot is loaded or anything is spawned.
+            if (isHidden(subagentName)) {
+                log.warn("Task refused: subagent '{}' is hidden from the model (hidden: true)", subagentName);
+                return ToolResult.error("Subagent not available to Task: " + subagentName + ". Available subagents: "
+                        + String.join(", ", getAvailableSubagentNames()));
+            }
 
             // Extract optional model override. When supplied it wins over the subagent's own `model` frontmatter
             // and the default model during resolution. A present-but-blank value is a caller error.
@@ -653,11 +665,22 @@ public class TaskTool extends AbstractTool {
     }
 
     /**
-     * Gets the list of available subagent names.
+     * Gets the list of available subagent names — the ones the model may launch, so hidden definitions are left out.
      *
      * @return A list of subagent names
      */
     private List<String> getAvailableSubagentNames() {
-        return subagentRegistry.getAllSubagents().stream().map(Subagent::getName).toList();
+        return visibleSubagents(subagentRegistry).stream().map(Subagent::getName).toList();
+    }
+
+    /** The registered subagents the model is shown: every definition that is not marked hidden. */
+    private static List<Subagent> visibleSubagents(SubagentRegistry registry) {
+        return registry.getAllSubagents().stream().filter(subagent -> !subagent.getMetadata().isHidden()).toList();
+    }
+
+    /** Whether {@code subagentName} resolves to a definition marked hidden. An unknown name is not hidden. */
+    private boolean isHidden(String subagentName) {
+        return subagentRegistry.getSubagent(subagentName).map(subagent -> subagent.getMetadata().isHidden())
+                .orElse(false);
     }
 }

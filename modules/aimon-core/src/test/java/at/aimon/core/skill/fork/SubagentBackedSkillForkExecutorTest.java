@@ -307,6 +307,20 @@ class SubagentBackedSkillForkExecutorTest {
     }
 
     /** A real, unrestricted subagent — a bare mock returns null metadata, which {@code Subagent.of} forbids. */
+    @Test
+    void fork_ToAHiddenSubagent_StillRuns() {
+        // EE-44: hidden means the model cannot list or launch the definition through Task. A skill's `agent:` is the
+        // skill author's choice, not the model's, so it resolves the name as before — and the definition handed to the
+        // manager is still marked hidden.
+        final Subagent hidden = Subagent.builder().name("code-reviewer").systemPrompt("you review").hidden(true)
+                .build();
+
+        final Subagent forked = captureForkedSubagent(hidden, forkSkill("code-reviewer"));
+
+        assertThat(forked.getName()).isEqualTo("code-reviewer");
+        assertThat(forked.getMetadata().isHidden()).isTrue();
+    }
+
     private static Subagent subagent(String name) {
         return Subagent.builder().name(name).systemPrompt("you are " + name).build();
     }

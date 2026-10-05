@@ -88,6 +88,22 @@ class WorkflowToolAttributesTest {
     }
 
     @Test
+    @DisplayName("EE-44: a hidden role definition still gives its role's steps their attributes")
+    void aHiddenRoleDefinitionStillPlacesItsSteps() {
+        final InMemorySubagentRegistry registry = new InMemorySubagentRegistry();
+        registry.register(Subagent.builder().name(WorkflowTool.ROLE_JUDGE).systemPrompt("placement only")
+                .attributes(JUDGE_ATTRIBUTES).hidden(true).build());
+        final Map<String, Map<String, String>> seen = new ConcurrentHashMap<>();
+
+        final ToolResult result = newTool(registry, recordingBehaviors(seen)).execute(
+                ToolInput.of(Map.of("prompt", "how?", "strategy", "judge_panel", "perspectives", "a,b")),
+                context(null));
+
+        assertThat(result.isSuccess()).as(result.getContent()).isTrue();
+        assertThat(seen.get("workflow:judge")).isEqualTo(JUDGE_ATTRIBUTES);
+    }
+
+    @Test
     @DisplayName("a registry that throws leaves the steps without attributes instead of failing the workflow")
     void failingRegistryMeansNoAttributes() {
         final SubagentRegistry registry = mock(SubagentRegistry.class);

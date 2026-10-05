@@ -158,6 +158,7 @@ public final class Subagent {
         private String model;
         private Integer maxIterations;
         private Map<String, String> attributes;
+        private boolean hidden;
 
         private Builder() {
         }
@@ -222,6 +223,20 @@ public final class Subagent {
             return this;
         }
 
+        /**
+         * Hides the subagent from the model, the code equivalent of {@code hidden: true} in markdown frontmatter (see
+         * {@link SubagentMetadata#isHidden()}): the {@code Task} tool neither lists it nor launches it, while the
+         * registry still resolves it by name. When unset, the subagent is an ordinary, visible one.
+         *
+         * @param hidden
+         *            {@code true} to hide the subagent from the model
+         * @return this builder
+         */
+        public Builder hidden(boolean hidden) {
+            this.hidden = hidden;
+            return this;
+        }
+
         /** Sets the maximum ReAct loop iterations. When unset, defaults to 1000 (markdown parity). */
         public Builder maxIterations(int maxIterations) {
             this.maxIterations = maxIterations;
@@ -258,6 +273,7 @@ public final class Subagent {
             if (attributes != null) {
                 metadataBuilder.attributes(attributes);
             }
+            metadataBuilder.hidden(hidden);
             return new Subagent(name, metadataBuilder.build(), SubagentContent.of(systemPrompt));
         }
     }

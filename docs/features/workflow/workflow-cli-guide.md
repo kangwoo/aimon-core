@@ -100,8 +100,10 @@ cli:
 
 내장 전략의 스텝을 특정 실행 환경에 두려면, 역할마다 정해진 이름 — `workflow-perspective` · `workflow-synthesizer` ·
 `workflow-candidate` · `workflow-judge` · `workflow-skeptic` — 으로 서브에이전트를 정의하고 `attributes` 를 적는다.
-`Workflow` 는 그 정의의 `attributes` 만 가져오고 프롬프트·도구·모델은 쓰지 않는다. 다만 그 정의도 보통의 서브에이전트라
-모델이 목록에서 보고 `Task` 로 부를 수 있으며, 그때는 정의의 프롬프트가 쓰인다.
+`Workflow` 는 그 정의의 `attributes` 만 가져오고 프롬프트·도구·모델은 쓰지 않는다. 그 정의에는 `hidden: true` 를 함께
+적는다 — 적지 않으면 보통의 서브에이전트라 모델이 목록에서 보고 `Task` 로 부를 수 있고, 그때는 정의의 프롬프트가 쓰인다.
+`hidden: true` 인 정의는 `Task` 의 목록에 나오지 않고 모델이 이름을 대도 거절되지만, `Workflow` 와 `WorkflowJs` 의
+`agentType` 은 전처럼 그 이름으로 찾는다. `/agents` 에는 `[hidden]` 표시와 함께 나온다.
 
 ### 예시
 

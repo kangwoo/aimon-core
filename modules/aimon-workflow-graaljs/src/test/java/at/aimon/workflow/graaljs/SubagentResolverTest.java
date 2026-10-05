@@ -84,6 +84,16 @@ class SubagentResolverTest {
         }
 
         @Test
+        @DisplayName("EE-44: a hidden registered definition still supplies its agentType's attributes")
+        void hiddenRegisteredDefinitionIsStillResolved() {
+            registry.register(Subagent.builder().name("judge").systemPrompt("placement only")
+                    .attributes(Map.of("sandbox.slot", "isolated")).hidden(true).build());
+
+            assertThat(withRegistry.resolve(type("judge").build()).getMetadata().getAttributes())
+                    .containsExactly(Map.entry("sandbox.slot", "isolated"));
+        }
+
+        @Test
         @DisplayName("unregistered agentType, no explicit attributes: none")
         void unregisteredWithoutExplicit() {
             assertThat(withRegistry.resolve(type("reviewer").build()).getMetadata().getAttributes()).isEmpty();

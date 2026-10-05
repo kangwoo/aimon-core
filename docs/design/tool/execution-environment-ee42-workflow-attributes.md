@@ -270,6 +270,8 @@ is what the review of the implementation changed.
 - **Operator warning for role definitions (Q5).** The `WorkflowTool` class Javadoc, the guide and the backlog closing
   note say plainly that a `workflow-<role>` definition gives `Workflow` its attributes only, and is also an ordinary
   `Task`-callable subagent whose own prompt is used only when the model calls it that way. Q5 itself is EE-44.
+  *(2026-10-05: EE-44 added `hidden: true` — `SubagentMetadata.isHidden()` — and the warning became an instruction to
+  set it; a hidden definition is not listed by `Task` and is refused there, and is still looked up by name here.)*
 - **§5.2 wording (Q2).** The spec's sentence that a sandbox provider's default for a fork is the parent's sandbox is
   kept; the new text adds that an empty-attributes step follows that default. Q2 itself is EE-43.
 - **Design text nits.** The registry field is at `GraalJsWorkflowTool.java:73`, not `:83`. The `WorkflowTool`
