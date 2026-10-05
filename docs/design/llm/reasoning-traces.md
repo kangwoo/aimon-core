@@ -597,7 +597,7 @@ provider 이름을 받지 않는 1인자 `convertMessages` 는 `@Deprecated` 로
 | `modules/aimon-llm-openai/…/OpenAiReasoningTraces.java` | SDK 매퍼, 빌더 재구성 금지, foreign / unparseable 판별 |
 | `modules/aimon-llm-openai/…/OpenAIResponsesMessageConverter.java` | 재전송 규칙, 캡처 스캔(첫 뒤따르는 호출), 드롭 보고 |
 | `modules/aimon-llm-openai/…/OpenAIResponsesStreamingMapper.java`, `OpenAIResponsesExchange.java` | `output_item.done` 에서 모은 항목, `encrypted_content` 없음 경고 |
-| `modules/aimon-llm-openai/…/OpenAILlmClient.java` | 요청당 provider 이름 1회 해석, 드롭 보고가 쓰는 once 집합 |
+| `modules/aimon-llm-openai/…/OpenAILlmClient.java` | 요청당 provider 이름 1회 해석, 드롭 보고가 쓰는 반복 보고 카운터(`reportRecurringDivergence`) |
 | `modules/aimon-llm-openai/…/OpenAiResponseUsages.java` | `reasoning_tokens` 읽기와 강등 |
 | `modules/aimon-llm-anthropic/…/AnthropicReasoningTraces.java` | `payloadOf`, 합집합 파싱, JSON 객체 검사 |
 | `modules/aimon-llm-anthropic/…/AnthropicOutputBlocks.java` | 캡처 규칙, 재배열되는 세 모양, 서버 측 도구 블록 사각지대 |

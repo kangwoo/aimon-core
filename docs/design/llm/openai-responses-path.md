@@ -343,8 +343,9 @@ reasoning item 은 매 응답에 나오지 않는다 — 모델이 추론할 때
 않는다.**
 
 경고하는 것은 다른 모양이다. 응답에 reasoning item 이 **있는데 그중 어느 것도** `encrypted_content` 를 싣지 않았으면, 다음
-요청에 되실을 것이 없고 기능이 조용히 아무 일도 하지 않는다. 블로킹·스트리밍 두 경로 모두 이 모양을 한 번 보고한다(배포가
-`include=reasoning.encrypted_content` 를 지키는지 확인하라는 문구).
+요청에 되실을 것이 없고 기능이 조용히 아무 일도 하지 않는다. 블로킹·스트리밍 두 경로 모두 이 모양을 보고한다(배포가
+`include=reasoning.encrypted_content` 를 지키는지 확인하라는 문구). 설정이 아니라 트래픽의 사실이므로 once 집합이 아니라
+반복 보고 카운터(1 · 10 · 100 … 번째)로 보고한다 — [`request-parameters.md`](request-parameters.md) §5.3.
 
 ---
 

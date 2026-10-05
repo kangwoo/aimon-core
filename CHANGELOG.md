@@ -14,7 +14,11 @@ Central is versioned independently).
   (`application/pdf`, `text/plain`, `text/markdown`, `text/html`, `text/csv`) and threw `IllegalArgumentException` on
   the rest, so attaching `text/yaml`, `text/xml`, `text/x-java` — or `text/plain; charset=utf-8` — failed the turn at
   conversion. The converter now asks the block (new `DocumentContentBlock.isSupportedMimeType(String)`) and degrades
-  anything else to a `TextContentBlock` with the file's UTF-8 content, the fallback non-document files already took.
+  any other `text/*` to a `TextContentBlock` with the file's UTF-8 content under a `[File: <name> (<mime>)]` header —
+  the one the provider converters put on a text document, so two such attachments stay distinguishable. The image
+  branch had the same shape: an `image/*` outside `ImageContentBlock`'s four types (`image/svg+xml`, `image/bmp`,
+  `image/heic`) threw too. It now asks `ImageContentBlock.isSupportedMimeType(String)` (new) and degrades to the
+  `[File: …]` placeholder.
 - **A provider error after reasoning-only deltas now emits the synthetic `finishReason="error"` completion.** The
   executor decided whether a subscriber had seen a stream start from the text channel's counter alone, so an attempt
   that streamed only thinking and then failed left its `AssistantReasoningDelta`s with nothing closing them — in the

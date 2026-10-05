@@ -369,6 +369,9 @@ sampling parameters; it is being omitted and the call will succeed without it."`
   두 함수를 함께 받아, 자기 파라미터 보고는 once 로, 변환기의 trace 드롭은 recurring 으로 보낸다. 보고 인터페이스
   (`AnthropicDivergenceReporter` · `OpenAIDivergenceReporter`)의 모양은 같고, 협력자는 자기가 어느 장치에 쓰는지 알
   필요가 없다.
+- **횟수는 턴이 아니라 발생을 센다.** trace 드롭은 요청마다 이력 속 trace 하나하나가 한 번씩 센다. 그래서 다른 provider 의
+  trace 를 K 개 품은 긴 세션을 넘겨받으면 첫 요청에서 이미 `occurrence 10` 이 찍힐 수 있다 — 그 줄은 "기능이 꺼져 있다"
+  보다 "이력에 되실을 수 없는 trace 가 계속 실려 간다" 로 읽어야 한다. 두 클라이언트가 같다.
 - **상한은 32 signature 다.** 두 장치 모두 클라이언트당 `MAX_REPORTED_DIVERGENCES`(32)개의 signature 를 넘으면 새
   signature 를 기록하지 않는다. signature 에 모델 이름이 들어가므로 모델 이름을 많이 바꾸는 배포는 상한에 더 빨리
   닿는다 — 두 클라이언트가 같은 노출을 갖고, 장치를 다시 설계할 만큼 넓지 않다. 상한 검사는 잠금 없이 해서 동시에 처음

@@ -88,8 +88,21 @@ public final class ImageContentBlock implements ContentBlock {
         return new ImageContentBlock(Source.URL, null, url, mimeType);
     }
 
+    /**
+     * Returns whether an image block can carry the given MIME type. Callers that route arbitrary input here should ask
+     * first rather than catch the {@link IllegalArgumentException} from the factories.
+     *
+     * @param mimeType
+     *            The MIME type to check (can be null)
+     * @return {@code true} if {@link #ofBase64(byte[], String)} and {@link #ofUrl(String, String)} accept this MIME
+     *         type
+     */
+    public static boolean isSupportedMimeType(String mimeType) {
+        return mimeType != null && SUPPORTED_MIME_TYPES.contains(mimeType);
+    }
+
     private static void validateMimeType(String mimeType) {
-        if (!SUPPORTED_MIME_TYPES.contains(mimeType)) {
+        if (!isSupportedMimeType(mimeType)) {
             throw new IllegalArgumentException(
                     "Unsupported image MIME type: " + mimeType + ". Supported types: " + SUPPORTED_MIME_TYPES);
         }

@@ -65,7 +65,8 @@ private Message(Role role, List<ContentBlock> contentBlocks, ...) {
 | `DocumentContentBlock` | `document` | `of(byte[], mime)` · `of(byte[], mime, fileName)` | `byte[]` + 선택적 파일명 | 자리표시 `[Document: <mime>[, <fileName>], <N> bytes]` |
 
 `DocumentContentBlock.isTextBased()` 는 MIME 이 `text/` 로 시작하는지 답한다. provider 변환기가 텍스트 문서와
-바이너리 문서를 가르는 기준이다(§6).
+바이너리 문서를 가르는 기준이다(§6). 블록은 허용 목록 안의 MIME 으로만 만들어지므로 이 질문이 닿는 `text/*` 는 넷뿐이다.
+변환기가 블록을 고를 때는 접두어가 아니라 각 블록의 `isSupportedMimeType` 을 묻는다(§5).
 
 ### 3.1 MIME 검증은 블록 생성 시점에
 
@@ -136,9 +137,10 @@ public byte[] getData() {
 | 최상위 `TextInput` | `Message.user(String)` — 블록 리스트를 거치지 않는 지름길 |
 | `MultimodalInput` 안의 `TextInput` | `TextContentBlock.of(asText())` |
 | `ImageInput` | `ImageContentBlock.ofBase64(data, mime)` |
-| `FileInput`, MIME 이 `text/*` 또는 `application/pdf` | `DocumentContentBlock.of(data, mime, fileName)` — 허용 목록(§3.1) 밖의 `text/*` 는 여기서 `IllegalArgumentException` |
-| `FileInput`, MIME 이 `image/*` | `ImageContentBlock.ofBase64(data, mime)` |
-| `FileInput`, 그 외 | `TextContentBlock.of(asText())` — 강등 |
+| `FileInput`, `DocumentContentBlock.isSupportedMimeType(mime)` | `DocumentContentBlock.of(data, mime, fileName)` |
+| `FileInput`, `ImageContentBlock.isSupportedMimeType(mime)` | `ImageContentBlock.ofBase64(data, mime)` |
+| `FileInput`, 허용 목록(§3.1) 밖의 `text/*` | `TextContentBlock.of("[File: <fileName> (<mime>)]\n" + asText())` — 강등. 내용은 UTF-8 로 읽고, provider 변환기가 텍스트 문서에 붙이는 것과 같은 머리말로 파일명을 남긴다 |
+| `FileInput`, 그 외(허용 목록 밖의 `image/*` 포함) | `TextContentBlock.of(asText())` — 자리표시 `[File: <fileName>, <mime>, <N> bytes]` 로 강등 |
 | `AudioInput` | `TextContentBlock.of(asText())` — 오디오 블록이 없다(§10) |
 | `MultimodalInput` | 자식들을 재귀 변환해 이어 붙인다 |
 

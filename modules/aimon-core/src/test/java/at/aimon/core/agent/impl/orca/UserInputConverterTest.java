@@ -107,6 +107,19 @@ class UserInputConverterTest {
         ContentBlock block = UserInputConverter.toSingleContentBlock(input);
 
         assertThat(block).isInstanceOf(TextContentBlock.class);
-        assertThat(block.asText()).isEqualTo("key: value");
+        // The name survives, as it does on the document path, so two such attachments stay distinguishable.
+        assertThat(block.asText()).isEqualTo("[File: config.yaml (" + mimeType + ")]\nkey: value");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"image/svg+xml", "image/bmp", "image/heic"})
+    @DisplayName("Should degrade an image the image block does not accept to a text placeholder instead of throwing")
+    void buildUserMessage_fileInput_unlistedImage_degradesToPlaceholder(String mimeType) {
+        FileInput input = FileInput.of(new byte[]{1, 2, 3}, mimeType, "logo.img");
+
+        ContentBlock block = UserInputConverter.toSingleContentBlock(input);
+
+        assertThat(block).isInstanceOf(TextContentBlock.class);
+        assertThat(block.asText()).isEqualTo("[File: logo.img, " + mimeType + ", 3 bytes]");
     }
 }
