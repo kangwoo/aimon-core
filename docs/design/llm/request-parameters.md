@@ -85,7 +85,8 @@ provider 클라이언트는 요청마다 세 입력으로 와이어 요청을 �
    `temperature: 0.0` 을 거절했고, 아무것도 보내지 않은 같은 요청은 11 모두 받았으며 그 결과는 11 모두가 받는 값이다.
 
 **대가.** temperature 를 설정하지 않은 요청은 서버 기본값(1.0)으로 샘플링된다. 다른 샘플링을 원하는 배포는 값을
-설정한다. 설정 표면에는 아직 샘플링 키가 없어 그 값은 에이전트 정의나 프로그램 조립에서만 줄 수 있다(§8, L-2).
+설정한다. 에이전트 정의의 `model.temperature` 로 주거나, 배포 기본값을 벤더 블록의 설정 키로 준다 — 그 키는 클라이언트
+설정을 채우므로 §2.1 의 둘째 단계에 선다([`configuration-surface.md`](configuration-surface.md) §3.3).
 
 ### 2.3 생략은 setter 를 부르지 않는 것이다
 
@@ -434,16 +435,19 @@ sampling parameters; it is being omitted and the call will succeed without it."`
 
 ## 8. 남은 것
 
-- **샘플링 값에 설정 표면이 없다** — 그 노브는 에이전트 정의나 프로그램 조립에서만 닿는다.
-  [`../../backlog/llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md) L-2. 같은 항목의
-  `responsesApiEnabled` 는 설정 키가 되었고, 그것이 운영자 경로로 내린 "Chat Completions 로 강제한 terra 의 `none`" 칸은
-  2026-10-05 에 쟀다(200). 그 경로의 `low` · `medium` · `high` 도 같은 날 쟀다 — 도구와 함께면 400 이다
-  ([`model-capabilities.md`](model-capabilities.md) §6.3)
+- **Anthropic 의 `topP` 에는 배포 기본값이 없다** — `AnthropicConfig` 에 필드가 없어 그 값은 요청의 `LlmModel` 에서만
+  온다(§2.1). 나머지 샘플링 값은 설정 키를 얻었다
+  ([`../../backlog/llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md) L-2,
+  [`configuration-surface.md`](configuration-surface.md) §3.3). 같은 항목의 `responsesApiEnabled` 가 운영자 경로로 내린
+  "Chat Completions 로 강제한 terra 의 `none`" 칸은 2026-10-05 에 쟀다(200). 그 경로의 `low` · `medium` · `high` 도 같은 날
+  쟀다 — 도구와 함께면 400 이다([`model-capabilities.md`](model-capabilities.md) §6.3)
 - **reasoning 모델에 effort 를 설정하지 않았을 때 명시 effort 를 늘 보낼지** — 현재는 보내지 않고 서버 기본값에 맡긴다.
   기술자에 정책 기본값을 넣는 모양은 기각했지만(§6), 명시 전송 자체를 하지 않기로 닫은 판단은 기록되지 않았다. 백로그 미등록
 - **서브에이전트 요청의 temperature `0.7`** — 메인 에이전트가 temperature 를 정하지 않으면 서브에이전트 요청에 아무도
   적지 않은 값이 실린다. 거절 모델에서는 capability 억제가 막지만, 내장 표가 모르는 거절 모델에서는 400 이다(§3.5).
-  사용자 보고가 없어 등록하지 않았다
+  **그 값은 명시값이라 배포 기본값 키(`llm.<provider>.temperature`)도 이긴다** — 운영자가 `0.2` 를 적은 배포에서 메인
+  에이전트 요청은 `0.2` 로, 서브에이전트 요청은 `0.7` 로 나간다. 운영 가이드에 그렇게 적혀 있다. 사용자 보고가 없어
+  등록하지 않았다
 - **`top_k` 는 실제 값(`5`)에서만 거절이 측정되었다** — `top_p` 처럼 존재로 거절되는지는 재지 않았다. 지금은 보낼
   경로가 없어 설계에 영향이 없지만, `LlmModel` 에 `topK` 가 생기면 "존재로 거절" 을 가정으로 물려받지 않아야 한다. 백로그 미등록
 - **미설정 temperature 가 서버 기본값(1.0)으로 샘플링되는 것이 에이전트 동작에 주는 영향은 측정되지 않았다** — 값을

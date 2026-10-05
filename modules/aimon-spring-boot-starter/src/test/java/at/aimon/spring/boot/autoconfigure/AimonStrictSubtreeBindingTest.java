@@ -145,8 +145,10 @@ class AimonStrictSubtreeBindingTest {
     void everyVendorKeyStillBinds() {
         runner.withPropertyValues("aimon.llm.anthropic.thinking-mode=extended",
                 "aimon.llm.anthropic.thinking-budget-tokens=4000", "aimon.llm.anthropic.thinking-display=summarized",
-                "aimon.llm.anthropic.replay-thinking-blocks=false", "aimon.llm.openai.reasoning-summary=auto",
-                "aimon.llm.openai.responses-api-enabled=false").run(ctx -> {
+                "aimon.llm.anthropic.replay-thinking-blocks=false", "aimon.llm.anthropic.temperature=0.3",
+                "aimon.llm.openai.reasoning-summary=auto", "aimon.llm.openai.responses-api-enabled=false",
+                "aimon.llm.openai.temperature=0.2", "aimon.llm.openai.top-p=0.9",
+                "aimon.llm.openai.presence-penalty=-0.5", "aimon.llm.openai.frequency-penalty=1.5").run(ctx -> {
                     assertThat(ctx).hasNotFailed();
                     final AimonProperties.Llm llm = ctx.getBean(AimonProperties.class).getLlm();
                     assertThat(llm.getAnthropic().getThinkingMode()).isEqualTo("extended");
@@ -155,6 +157,11 @@ class AimonStrictSubtreeBindingTest {
                     assertThat(llm.getAnthropic().getReplayThinkingBlocks()).isFalse();
                     assertThat(llm.getOpenai().getReasoningSummary()).isEqualTo("auto");
                     assertThat(llm.getOpenai().getResponsesApiEnabled()).isFalse();
+                    assertThat(llm.getAnthropic().getTemperature()).isEqualTo(0.3);
+                    assertThat(llm.getOpenai().getTemperature()).isEqualTo(0.2);
+                    assertThat(llm.getOpenai().getTopP()).isEqualTo(0.9);
+                    assertThat(llm.getOpenai().getPresencePenalty()).isEqualTo(-0.5);
+                    assertThat(llm.getOpenai().getFrequencyPenalty()).isEqualTo(1.5);
                 });
     }
 

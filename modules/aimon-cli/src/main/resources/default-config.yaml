@@ -138,6 +138,16 @@ llm:
 #    replayThinkingBlocks: true        # default true. false strips stored thinking blocks from the history
 #                                      #   -- the remedy for "Invalid signature in thinking block. The block
 #                                      #   is bound to a different conversation."
+#    temperature: 0.3                  # unset by default: no temperature is sent unless the request has one.
+#                                      #   0.0 - 1.0 (Anthropic's range; out of range fails at startup).
+#                                      #   A DEFAULT, not an override: an agent definition's
+#                                      #   `model.temperature` wins, this applies when it has none, and with
+#                                      #   neither the server's default applies. Not sent -- with one WARN --
+#                                      #   on a request that carries thinking, or to a model that takes no
+#                                      #   sampling parameters. Subagent requests carry 0.7 of their own when
+#                                      #   the parent definition sets no temperature, so this does not reach
+#                                      #   them. The only sampling key here: Anthropic has no penalties, and
+#                                      #   top_p is read from the agent definition (`model.topP`) alone.
 
 # OpenAI-only settings. The mirror of the block above and read by the openai provider alone, so writing
 # it under `provider: anthropic` fails at startup rather than being ignored. Leave it out and the request
@@ -158,6 +168,16 @@ llm:
 #                                      #   reasoningSummary above reaches nothing (a WARN says so once).
 #                                      #   On api.openai.com itself, gpt-5.6-terra then needs
 #                                      #   `reasoningEffort: none` to take tools -- see the CLI reference.
+#    temperature: 0.2                  # unset by default: nothing is sent unless the request has a value.
+#    topP: 0.9                         #   Ranges: temperature 0.0 - 2.0, topP 0.0 - 1.0, both penalties
+#    presencePenalty: 0.0              #   -2.0 - 2.0; out of range fails at startup naming the key.
+#    frequencyPenalty: 0.0             #   DEFAULTS, not overrides: the agent definition's `model.temperature`
+#                                      #   and `model.topP` win, each of these applies when the definition
+#                                      #   has none, and with neither the server's default applies. Not sent
+#                                      #   -- with one WARN -- to a model that takes no sampling parameters
+#                                      #   (gpt-5*, the o-series); the two penalties are also not sent on
+#                                      #   /v1/responses, which has no slot for them. Subagent requests carry
+#                                      #   temperature 0.7 of their own when the parent definition sets none.
 
 # Agent Configuration
 agent:

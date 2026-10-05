@@ -503,7 +503,7 @@ aimon:
   전부 떼는 것이고, 대가는 기능 자체입니다(모델이 매 턴 추론을 다시 세웁니다). **여기서는 키 이름의 오타가
   기동을 실패시킵니다** — `model-capabilities` 와 같은 장치입니다. CLI 쪽 같은 축의 키는 camelCase 입니다.
 - `aimon.llm.openai.*` 는 위 `anthropic` 블록의 짝이고 **openai 분기만 읽습니다** — `provider: anthropic`(또는
-  미지정) 아래에 적힌 이 블록은 무시되지 않고 **기동을 실패시킵니다**. 키는 둘입니다.
+  미지정) 아래에 적힌 이 블록은 무시되지 않고 **기동을 실패시킵니다**. 여기서 다루는 키는 둘이고, 샘플링 기본값은 아래 항목에 있습니다.
   `aimon.llm.openai.reasoning-summary` 는 `auto` · `concise` · `detailed` 중 하나로, 모델의 추론 요약을
   요청하고 그 텍스트를 흘려보냅니다(Responses API 전용이고, 적지 않으면 요청은 글자 하나 바뀌지 않습니다).
   `aimon.llm.openai.responses-api-enabled` 는 Responses API(`/v1/responses`) 경로를 쓸지 정하며, 적지 않으면
@@ -538,6 +538,30 @@ aimon:
   내보내기 전에 그 사실을 한 번 WARN 으로 말합니다. 에이전트 정의의
   `model.reasoningEffort` 가 프로퍼티를 이기므로 `none` 은 실제로 요청에 닿는 쪽에 적습니다. **여기서도 키
   이름의 오타는 기동을 실패시킵니다.** CLI 쪽 같은 축의 키는 camelCase 입니다(`llm.openai.responsesApiEnabled`).
+- **샘플링 기본값도 벤더 블록에 있고, 블록마다 키가 다릅니다.** `aimon.llm.openai` 에는
+  `temperature`(`0.0`–`2.0`) · `top-p`(`0.0`–`1.0`) · `presence-penalty` · `frequency-penalty`(둘 다
+  `-2.0`–`2.0`)가 있고, `aimon.llm.anthropic` 에는 `temperature`(`0.0`–`1.0`) **하나뿐입니다** — Anthropic API
+  에는 penalty 가 없고 그 클라이언트는 `top_p` 를 에이전트 정의에서만 읽으므로, 그 블록에 적은 `top-p`
+  는 모르는 키로 기동을 실패시킵니다. 범위를 벗어난 값도 그 프로퍼티의 이름으로 기동을 실패시킵니다
+  (`aimon.llm.anthropic.temperature=1.5 is invalid: Temperature must be between 0.0 and 1.0`).
+
+  ```yaml
+  aimon:
+    llm:
+      provider: openai
+      openai:
+        temperature: 0.2
+        top-p: 0.9
+  ```
+
+  **이 값들은 덮어쓰기가 아니라 기본값입니다 — 에이전트 정의 > 이 프로퍼티 > 없음.** 에이전트 정의의
+  `model.temperature` · `model.topP` 가 있으면 그것이 이기고, 없으면 이 값이 실리며, 둘 다 없으면 아무것도
+  실리지 않아 서버 기본값이 적용됩니다. 파라미터마다 따로 정해집니다. 값이 실리지 않는 요청에서는 클라이언트가
+  한 번 WARN 으로 말합니다 — 내장 capability 행이 샘플링을 받지 않는다고 적은 모델(`gpt-5*` · o-series · 일부
+  Claude 모델), thinking 파라미터가 실린 Anthropic 요청의 `temperature`, `/v1/responses` 로 가는 요청의 두
+  penalty. 같은 클라이언트를 쓰는 백그라운드 호출도 자기 값을 싣지 않았다면 이 기본값을 받습니다. **서브에이전트 요청은 예외일 수
+  있습니다**: 메인 에이전트의 정의에 `temperature` 가 없으면 프레임워크가 서브에이전트 요청에 `0.7` 을
+  명시값으로 싣고, 명시값은 이 프로퍼티를 이깁니다. CLI 쪽 같은 축의 키는 camelCase 입니다(`llm.openai.topP`).
 - `knowledge` / `memory` 의 `supplied` 는 "**여러분이 그 빈을 선언하고 스타터는 도구만 거기에 연결한다**"는
   뜻입니다. Spring 이 만들었으니 Spring 이 닫고, 스택은 빌려 쓸 뿐입니다. `knowledge.backend` 에
   **OpenSearch 값이 일부러 없는** 것도 같은 이유입니다 — `aimon-knowledge-opensearch` 는 존재하고 동작하지만

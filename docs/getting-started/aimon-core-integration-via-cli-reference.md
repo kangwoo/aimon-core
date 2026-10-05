@@ -542,7 +542,7 @@ CLI 는 이제 같은 답을 한다.
 #### OpenAI 전용 블록 — `llm.openai`
 
 `llm.anthropic` 의 짝이고 같은 규칙을 따른다. **openai 분기만 읽으므로** `provider: anthropic` 아래에
-적힌 이 블록은 무시되지 않고 기동을 실패시킨다. 키는 둘이다.
+적힌 이 블록은 무시되지 않고 기동을 실패시킨다. 여기서 다루는 키는 둘이고, 샘플링 기본값 넷은 다음 절에 있다.
 
 ```yaml
 llm:
@@ -595,6 +595,53 @@ function tools, use /v1/responses or set reasoning_effort to 'none'."* `reasonin
 거절은 서버가 한다 — 내보내기 전에 그 사실을 한 번 WARN 으로 말한다. 에이전트 정의의
 `model.reasoningEffort` 가 `llm.reasoningEffort` 를 이기므로 `none` 은 실제로 요청에 닿는 쪽에 적는다. 이것은
 그 모델 하나의 사정이다 — 게이트웨이 뒤의 모델이 무엇을 받는지는 그 게이트웨이가 정한다.
+
+#### 샘플링 기본값 — `llm.<provider>.temperature` 외
+
+에이전트 정의가 값을 적지 않은 요청에 실릴 **배포 기본값**이다. 공통 `llm.*` 이 아니라 벤더 블록에 있는 것은
+같은 키의 뜻이 벤더마다 달라서다 — 유효범위가 다르고, 한쪽에는 아예 없는 파라미터가 있다. 그래서 **블록마다
+키가 다르다.**
+
+```yaml
+llm:
+  provider: openai
+  openai:
+    temperature: 0.2
+    topP: 0.9
+    presencePenalty: 0.0
+    frequencyPenalty: 0.0
+```
+
+```yaml
+llm:
+  provider: anthropic
+  anthropic:
+    temperature: 0.3
+```
+
+| 키 | `llm.openai` | `llm.anthropic` |
+|---|---|---|
+| `temperature` | `0.0`–`2.0` | `0.0`–`1.0` |
+| `topP` | `0.0`–`1.0` | 키가 없다 — 이 클라이언트는 `top_p` 를 에이전트 정의의 `model.topP` 에서만 읽는다 |
+| `presencePenalty` · `frequencyPenalty` | `-2.0`–`2.0`. Chat Completions 로 가는 요청에만 실린다 | 키가 없다 — Anthropic API 에 대응 파라미터가 없다 |
+
+- **우선순위는 셋이다 — 에이전트 정의 > 이 키 > 없음.** 에이전트 정의의 `model.temperature` · `model.topP` 가
+  있으면 그것이 이기고, 없으면 이 키의 값이 실리며, 둘 다 없으면 **아무것도 실리지 않아** 서버 기본값이
+  적용된다. 클라이언트가 채워 넣는 세 번째 값은 없다. 파라미터마다 따로 정해지므로 정의가 `temperature` 만
+  적어도 `topP` 의 기본값은 그대로 실린다.
+- **범위를 벗어난 값은 기동을 실패시키고 키를 부른다** — ``Invalid `llm.anthropic.temperature` in the LLM
+  config: Temperature must be between 0.0 and 1.0``. `1.5` 는 `llm.openai.temperature` 로는 유효하고
+  `llm.anthropic.temperature` 로는 아니다.
+- **블록에 없는 키는 모르는 키로 거절된다.** `llm.anthropic.topP` 는 조용히 무시되지 않는다.
+- **값이 실리지 않는 요청이 있고, 그때마다 클라이언트가 한 번 WARN 으로 말한다.** 내장 capability 행이
+  샘플링을 받지 않는다고 적은 모델(`gpt-5*` · o-series · 일부 Claude 모델)에는 넷 다 실리지 않는다. Anthropic 은
+  thinking 파라미터가 실린 요청에 `temperature` 를 함께 받지 않는다. OpenAI 의 두 penalty 는 `/v1/responses`
+  에 자리가 없다.
+- **이 키가 닿는 것은 그 클라이언트가 보내는 모든 요청이다** — 에이전트 턴만이 아니라 컴팩션 요약, peer
+  memory 처럼 같은 클라이언트를 쓰는 백그라운드 호출도 자기 값을 싣지 않았다면 이 기본값을 받는다.
+- **서브에이전트 요청에는 닿지 않을 수 있다.** 메인 에이전트의 정의에 `temperature` 가 없으면 프레임워크가
+  서브에이전트 요청에 `0.7` 을 명시값으로 싣고, 명시값은 이 키를 이긴다. 서브에이전트까지 같은 값을 쓰려면
+  에이전트 정의에 `model.temperature` 를 적는다.
 
 `cli.tracing`이 켜져 있으면 그 위에 한 겹이 더 붙는다 (line 697-712) — `TracingLlmClient`가 원본 클라이언트를
 감싸고, 같은 `Tracer`가 실행기 팩토리에도 주입되어 턴/이터레이션/도구 span까지 한 트리에 모인다. 감싸는 대상은

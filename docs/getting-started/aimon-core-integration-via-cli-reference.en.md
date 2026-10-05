@@ -566,7 +566,7 @@ either — `thinkingMode` on the CLI, `thinking-mode` in the starter.
 #### The OpenAI-only block — `llm.openai`
 
 The counterpart of `llm.anthropic`, following the same rule. **The openai branch alone reads it**, so this
-block written under `provider: anthropic` fails startup rather than being ignored. It has two keys.
+block written under `provider: anthropic` fails startup rather than being ignored. Two of its keys are covered here; the four sampling defaults are in the next section.
 
 ```yaml
 llm:
@@ -621,6 +621,53 @@ a 400 with the same text, and a 200 without tools** (2026-10-05, six requests). 
 as they are and it is the server that refuses — the client says so once at WARN before sending. An agent definition's `model.reasoningEffort` wins over `llm.reasoningEffort`, so
 write `none` on whichever one actually reaches the request. This is that one model's situation — what a model
 behind a gateway accepts is the gateway's to decide.
+
+#### Sampling defaults — `llm.<provider>.temperature` and the rest
+
+The **deployment default** for a request whose agent definition states no value. They live in the vendor blocks
+rather than under the shared `llm.*` because the same key means different things per vendor — the valid range
+differs, and one vendor has parameters the other lacks entirely. So **the keys differ per block.**
+
+```yaml
+llm:
+  provider: openai
+  openai:
+    temperature: 0.2
+    topP: 0.9
+    presencePenalty: 0.0
+    frequencyPenalty: 0.0
+```
+
+```yaml
+llm:
+  provider: anthropic
+  anthropic:
+    temperature: 0.3
+```
+
+| Key | `llm.openai` | `llm.anthropic` |
+|---|---|---|
+| `temperature` | `0.0`–`2.0` | `0.0`–`1.0` |
+| `topP` | `0.0`–`1.0` | No such key — this client reads `top_p` from the agent definition's `model.topP` alone |
+| `presencePenalty` · `frequencyPenalty` | `-2.0`–`2.0`. Sent only on requests that go to Chat Completions | No such key — the Anthropic API has no counterpart |
+
+- **There are three steps of precedence — agent definition > this key > nothing.** An agent definition's
+  `model.temperature` · `model.topP` wins; without one, this key's value is sent; with neither, **nothing is
+  sent** and the server's default applies. There is no third value the client fills in. It is decided per
+  parameter, so a definition that states only `temperature` still gets the default `topP`.
+- **A value out of range fails startup and names the key** — ``Invalid `llm.anthropic.temperature` in the LLM
+  config: Temperature must be between 0.0 and 1.0``. `1.5` is valid as `llm.openai.temperature` and not as
+  `llm.anthropic.temperature`.
+- **A key the block does not have is refused as unknown.** `llm.anthropic.topP` is not silently ignored.
+- **Some requests are sent without the value, and the client says so once at WARN each time.** A model whose
+  built-in capability row says it takes no sampling parameters (`gpt-5*`, the o-series, some Claude models) gets
+  none of the four. Anthropic does not accept `temperature` on a request that carries a thinking parameter.
+  OpenAI's two penalties have no slot on `/v1/responses`.
+- **The key reaches every request that client sends** — not only agent turns: background calls on the same
+  client, such as compaction summaries and peer memory, receive this default too when they state no value.
+- **It may not reach subagent requests.** When the main agent's definition has no `temperature`, the framework
+  puts `0.7` on a subagent request explicitly, and an explicit value wins over this key. To use one value for
+  subagents as well, write `model.temperature` in the agent definition.
 
 If `cli.tracing` is on, one more layer goes on top (line 697-712) — `TracingLlmClient` wraps the original
 client, and the same `Tracer` is injected into the executor factory as well, so turn/iteration/tool spans
