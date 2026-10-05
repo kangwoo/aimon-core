@@ -385,6 +385,8 @@ class AnthropicMessageConverterTest {
         List<MessageParam> params = converter.convertMessages(List.of(message));
 
         assertThat(params).hasSize(1);
+        // A text block next to the document, through the SDK's own schema check — see the parameterised test below.
+        params.get(0).validate();
 
         String json = objectMapper.writeValueAsString(params.get(0));
         Map<String, Object> messageMap = objectMapper.readValue(json, new TypeReference<>() {
