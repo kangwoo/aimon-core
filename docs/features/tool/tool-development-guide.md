@@ -416,7 +416,9 @@ Map<String, Object> all = context.getContext();
 **낡은 쓰기 방지.** 기존 파일을 고치는 도구는 `ReadTool.FILE_STAMPS_KEY` 의 stamp 를 대조한다. 이번
 실행에서 읽지 않았으면 `"Read the file before modifying it"`, 읽은 뒤 바뀌었으면
 `"File changed since it was read; Read it again"` 을 낸다. 키는 환경이 정규화한 경로라 `a.txt`·`./a.txt`·
-절대 경로가 같은 항목이다.
+절대 경로가 같은 항목이다. 맵은 턴 · 포크 · 스케줄 루틴의 발화마다 새로 만들어진다. 그래서 루틴에서도 기존 파일을
+덮어쓰는 `Write` 단계와 `Edit` 단계 앞에는 같은 발화 안에 그 파일의 `Read` 단계가 있어야 한다. `Read` 없이 기존
+파일을 덮어쓰던 루틴은 `Read` 단계를 넣어 다시 등록한다.
 
 ### 컨텍스트 생성 (테스트/초기화용)
 

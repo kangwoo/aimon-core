@@ -65,6 +65,7 @@ import at.aimon.core.scheduling.event.TaskFailedEvent;
 import at.aimon.core.scheduling.event.TaskInterruptedEvent;
 import at.aimon.core.scheduling.event.TaskStartedEvent;
 import at.aimon.core.tools.ToolContextKeys;
+import at.aimon.core.tools.file.ReadTool;
 
 /**
  * Executes routines for scheduled tasks.
@@ -399,8 +400,8 @@ public class RoutineExecutor {
      * Builds the {@link ToolContext} shared by every step of one routine run.
      *
      * <p>
-     * Four entries are populated. The first two are taken from the task itself, so a cron re-fire long after the
-     * originating session ended still carries them:
+     * Five entries are populated, besides the execution environment. The first two are taken from the task itself, so
+     * a cron re-fire long after the originating session ended still carries them:
      *
      * <ul>
      * <li>{@link ToolContextKeys#AGENT_RUNTIME_ID} &mdash; the task's bound runtime. This is the same value the tools
@@ -418,6 +419,13 @@ public class RoutineExecutor {
      * {@link InterruptBehavior#COOPERATIVE} step can poll it and return early instead of running to completion in a
      * run that has already been stopped. Steps that ignore it are no worse off than before: they finish, and the
      * boundary gate stops the run at the next step.</li>
+     * <li>{@link ReadTool#FILE_STAMPS_KEY} &mdash; a fresh, empty read-stamp map per fire, the same thing the two
+     * agent executors put into each of their executions (execution-environment design §7). With it a routine's
+     * {@code Edit} step works after a {@code Read} step of the same run, and a {@code Write} step that overwrites an
+     * existing file is refused unless that file was read (or written) earlier in the same run. The map is created
+     * here and referenced only by this run's context: it is not kept on this executor, on the task or on the runtime,
+     * all of which outlive the run, so nothing read in one fire licenses a write in the next. A subagent a step starts
+     * gets its own map from {@code DefaultSubagentExecutor}, as a fork of a turn does.</li>
      * </ul>
      *
      * <p>
@@ -441,7 +449,8 @@ public class RoutineExecutor {
         final ToolContext.Builder builder = ToolContext.builder()
                 .put(ToolContextKeys.AGENT_RUNTIME_ID, task.getBoundRuntimeId())
                 .put(ToolContextKeys.PRINCIPAL, task.getOwner()).put(ToolContextKeys.EXECUTION_ID, executionId)
-                .put(InterruptToolKeys.CANCELLATION_SIGNAL, signal);
+                .put(InterruptToolKeys.CANCELLATION_SIGNAL, signal)
+                .put(ReadTool.FILE_STAMPS_KEY, new ConcurrentHashMap<>());
         putExecutionEnvironment(builder, task, executionId);
         return builder.build();
     }

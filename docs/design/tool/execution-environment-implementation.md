@@ -1259,10 +1259,12 @@ and why. Entries marked **(open)** are also tracked in
 - **The runtime's `Environment` is `Environment.createDefault()` from stage 3 on**, and after stage 5 `Environment` holds
   only `timeZone`, as planned. `ReplSession`, `AgentSetupFactory` and the CLI's model-mismatch hint read the working
   directory from the runtime's provider (`AgentSetupFactory.workingDirectoryOf`).
-- **Routines get no `FILE_STAMPS_KEY` (open, EE-11).** §6 stage 5a puts the stamp map into "both executors and the
-  routine context". It is in both executors, not in routines. With the map, a routine `Write` that overwrites a file
-  would start failing without a preceding `Read`, and deployed routines would break. Without it, routines behave as
-  before: `Edit` always refuses and `Write` does not check.
+- **Routines got no `FILE_STAMPS_KEY` (closed 2026-10-05, EE-11).** §6 stage 5a puts the stamp map into "both
+  executors and the routine context". The first implementation put it in both executors and not in routines, because
+  with the map a routine `Write` that overwrites a file fails without a preceding `Read`, and deployed routines would
+  break; routines kept the old behaviour (`Edit` always refused, `Write` did not check). The maintainer accepted that
+  break: `RoutineExecutor.buildToolContext` now puts a fresh map into each fire's context. The migration note is in
+  `docs/design/scheduling/llm-scheduling-agent.md` §3.2.
 - **`AgentEnvironmentSnapshot` kept `workingDirectory` (closed 2026-10-05, EE-10).** §6 stage 5d takes the working
   directory out of the snapshot. The first implementation left it in and had
   `UserContextMessageBuilder.build(snapshot, executionWorkingDirectory)` prefer the execution's descriptor, which
