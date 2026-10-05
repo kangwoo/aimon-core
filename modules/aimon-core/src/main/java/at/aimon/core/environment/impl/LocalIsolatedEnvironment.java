@@ -32,7 +32,8 @@ import at.aimon.core.shell.VirtualShell;
  * <p>
  * The descriptor's working directory is the branch root's host path — the shell's default cwd — and the file tools
  * accept absolute paths under it. The staging area is shared with the parent: {@link #stage} returns the parent's
- * copy, the branch filesystem routes {@code .aimon-staged/} to the parent's (read-only) directory, and staged files
+ * copy (always a copy, also for a resource that lives in the workspace — EE-26), the branch filesystem routes
+ * {@code .aimon-staged/} to the parent's (read-only) directory, and staged files
  * never appear in a branch listing, so a merge never promotes them — nor does a staging directory a shell made inside
  * the branch root, which the listing leaves out as unreachable. {@link #durable()} is {@code false}: the branch
  * directory disappears after a merge or a discard, so artifacts written here are archived into the control store.
@@ -113,9 +114,14 @@ final class LocalIsolatedEnvironment implements ExecutionEnvironment {
         return false;
     }
 
+    /**
+     * The parent's copy in the shared staging area. A resource that lives in the workspace is copied there too rather
+     * than answered with its own directory, as the parent does: that directory is the parent's, and this branch's
+     * file tools would look for it under the branch root (EE-26, {@link LocalStaging#stageCopy}).
+     */
     @Override
     public String stage(StagedResource resource) {
-        return parent.stage(resource);
+        return parent.staging().stageCopy(resource);
     }
 
     @Override

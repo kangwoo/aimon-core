@@ -218,7 +218,9 @@ Stage 2 deletes `VIRTUAL_FILE_SYSTEM`. Stage 5 deletes `ReadTool.READ_FILES_KEY`
   accept it because every VFS already takes absolute paths under its base. For a URI base it is root-anchored
   (`/.aimon-staged/…`), which those backends accept. The same-instance passthrough (stages 1–2, and the
   `.fileSystem(vfs)` mode when the source *is* the workspace fs) returns the source directory in that same absolute
-  form.
+  form. *(As built, EE-26: only to the parent. A branch from `isolate()` always gets a copy in the staging area, because
+  the source directory is a path in the parent's working tree that the branch's file tools map into
+  `.worktrees/{key}/`. Design §4.4 says which bytes the copy holds.)*
 - `LocalIsolatedEnvironment` (stage 4):
   - **Filesystem.** `new ScopedVirtualFileSystem(parent.toolFileSystem, ".worktrees/" + key, Set.of(stagingRoot))`.
     It sits over the parent's *path-rule-wrapped* fs, not the raw one, and takes a new constructor argument,

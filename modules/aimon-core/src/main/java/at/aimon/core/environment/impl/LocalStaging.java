@@ -132,11 +132,29 @@ final class LocalStaging {
         return stagingRoot;
     }
 
+    /** Stages for the workspace itself: a resource the file tools already see there is answered in place. */
     String stage(StagedResource resource) {
+        return stageInto(resource, true);
+    }
+
+    /**
+     * Stages for an isolated branch of the workspace: always a copy in the staging area, never the source directory
+     * (EE-26). The in-place answer is a path in the <em>parent's</em> working tree. A branch's file tools map that
+     * path into {@code .worktrees/{key}/}, where the resource is not — or where the branch has written its own files
+     * under the same names — while its shell opens the parent's; the staging area is the one directory both resolve
+     * to the same files. The copy is of the version the resource was scanned from and is checked against its content
+     * key like any other, so a workspace resource edited since it was loaded is refused here although the workspace
+     * itself, which is handed the live directory, never notices.
+     */
+    String stageCopy(StagedResource resource) {
+        return stageInto(resource, false);
+    }
+
+    private String stageInto(StagedResource resource, boolean inPlaceWhenVisible) {
         Objects.requireNonNull(resource, "resource must not be null");
         final VirtualFileSystem source = resource.getSourceFileSystem();
         final boolean inWorkspace = source == rawFileSystem || source == passthroughFileSystem;
-        if (inWorkspace && passthroughFileSystem.exists(resource.getSourceDir())) {
+        if (inPlaceWhenVisible && inWorkspace && passthroughFileSystem.exists(resource.getSourceDir())) {
             // The resource already lives in this workspace where the file tools can see it: nothing to copy, and the
             // path is valid as it is. One under a hidden prefix (the control store) is copied like any other.
             return absolute(resource.getSourceDir());
