@@ -1,7 +1,8 @@
 # 오픈소스 전환 — 체계 정리 및 문서 이중화 계획
 
-> Status: **Phase 0 ~ Phase 5 전부 완료.** 남은 것은 코드로 할 수 없는 저장소 설정뿐이다
-> (§Phase 0 의 "저장소 설정" 목록 + Pages 소스를 GitHub Actions 로 지정 + public 전환).
+> Status: **Phase 0 ~ Phase 5 전부 완료.** 남은 것은 코드로 할 수 없는 저장소 설정 둘이다
+> (§Phase 0 의 "저장소 설정" 목록 — Discussions, Private vulnerability reporting). 2026-10-05 에
+> `gh` 로 확인했다: description·topics, Pages(소스 GitHub Actions), public 전환은 끝나 있다.
 > 이 문서는 `docs/README.md` 의 규칙에 따른 **진행 추적 문서**다. 작업이 끝나면 삭제하고,
 > 남길 가치가 있는 근거는 `design/` 또는 `project/` 로 옮긴다.
 
@@ -148,12 +149,12 @@ API 안정성 정책 / 메인테이너·거버넌스 문서 / 로드맵 / 링크
 
 - [ ] **Discussions 활성화** — `CONTRIBUTING.md` 가 두 군데서 "Discussion 을 열라"고 안내하는데
       현재 비활성이다. 활성화하거나, 아니면 CONTRIBUTING 의 두 문장을 이슈 안내로 바꾼다
-- [ ] **저장소 description 과 topics 입력** — 지금 비어 있다. GitHub 검색·추천의 주 입력이다
+- [x] **저장소 description 과 topics 입력** — 2026-10-05 기준 채워져 있다. GitHub 검색·추천의 주 입력이다
 - [ ] **Private vulnerability reporting 활성화** — `SECURITY.md` 가 안내하는
       `/security/advisories/new` 경로는 이 설정이 켜져야 동작한다
-- [ ] **Pages 소스를 "GitHub Actions" 로 지정** — Phase 3 에서 넣은 `.github/workflows/docs.yml`
+- [x] **Pages 소스를 "GitHub Actions" 로 지정** — Phase 3 에서 넣은 `.github/workflows/docs.yml`
       의 배포 잡은 이 설정 없이는 실패한다. 워크플로가 있는 것과 Pages 가 켜져 있는 것은 별개다
-- [ ] (공개 전환 시점에) 저장소를 public 으로
+- [x] (공개 전환 시점에) 저장소를 public 으로
 
 ### Phase 1 — 저장소 체계 정리 `PR 2~3개`
 

@@ -9,37 +9,35 @@
 
 ---
 
-## 1. 지금 — `0.2.x`
+## 1. 지금 — `0.3.x`
 
-`0.2.2` 가 Maven Central 에 있고, 25개 모듈이 같은 버전으로 함께 나간다. 호환성 약속의 전문은
+`0.3.1` 이 Maven Central 에 있고, 17개 모듈(BOM 포함)이 같은 버전으로 함께 나간다. `0.2.x` 때보다 적은
+것은 `0.3.0` 에서 샌드박스 셋과 `aimon-browser-playwright` 가 별도 저장소로 나가고 분산 메모리 백엔드 둘이
+제거되었기 때문이다([`../../CHANGELOG.md`](../../CHANGELOG.md) 의 `[0.3.0]`). 호환성 약속의 전문은
 [`api-stability.md`](api-stability.md) 에 있다.
 
-**현재 진행 중인 유일한 작업 스트림은 오픈소스 준비다** — 기능이 아니라 저장소 체계와 문서다.
-계획은 [`../plan/open-source-readiness.md`](../plan/open-source-readiness.md) 에 있고, 그 문서는
-작업이 끝나면 삭제된다(진행 추적 문서의 수명 규칙 — [`../README.md`](../README.md)).
+**진행 중인 작업 스트림은 실행 환경(`ExecutionEnvironment`)이다** — 도구가 쓰는 파일 시스템과 셸을
+실행마다 고르는 추상이다. 설계의 1~5단계는 구현되었고, 지금은 그 작업이 남긴 열린 항목을 닫는 중이다. 무엇이 열려
+있는지의 정본은 [`../backlog/execution-environment-open-items.md`](../backlog/execution-environment-open-items.md)
+이고, 여기에 목록을 옮겨 적지 않는다(§5).
 
-| 단계 | 무엇 | 상태 |
-|------|------|------|
-| Phase 0 | 진입 장벽 제거 — 이슈/PR 템플릿, `SECURITY.md`, `CODE_OF_CONDUCT.md`, 문서 카탈로그 | ✅ 완료 |
-| Phase 1 | 저장소 체계 — `DEVELOP.md` 폐기, API 안정성 정책, 릴리스 자동화, dependabot, `MAINTAINERS.md`, 이 문서 | 진행 중 |
-| Phase 2 | 번역 전 정본 정비 — 용어표, 프론트매터, 링크 검사 CI | 대기 |
-| Phase 3 | 문서 사이트 — MkDocs Material + GitHub Pages + 한국어 검색 | 대기 |
-| Phase 4 | 영어 번역 약 14,900줄 (Tier 1 + `features/`) | 대기 |
-| Phase 5 | 번역 신선도 검사 — 정본이 바뀌었는데 번역이 안 따라온 것을 CI 가 경고 | 대기 |
+오픈소스 준비 스트림은 **코드로 할 일이 끝났다.** Phase 0~5 가 전부 완료되었고, 저장소는 public 이며
+문서 사이트가 GitHub Pages 에서 배포된다. 남은 것은 메인테이너가 저장소 설정에서 해야 하는 둘이다.
 
-문서를 기능보다 먼저 놓은 이유는 단순하다. 34,000줄이 넘는 문서가 **전부 한국어**이고, 그것이 한국어를
-읽지 못하는 사람에게는 이 프로젝트에 기여할 방법이 없다는 뜻이기 때문이다. 그 상태에서 기능을 더하면
-쓸 수 없는 기능이 는다.
+| 설정 | 왜 필요한가 |
+|------|-----------|
+| **Discussions** | 꺼져 있는데 `CONTRIBUTING.md` 가 두 곳에서 "Discussion 을 열라" 고 안내한다(`CONTRIBUTING.ko.md` 도 같다). 켜거나, 그 문장을 이슈 안내로 바꾼다 |
+| **Private vulnerability reporting** | 꺼져 있는데 `SECURITY.md` 가 `/security/advisories/new` 를 신고 경로로 안내한다. 이 설정 없이는 그 경로가 동작하지 않는다 |
+
+둘이 끝나면 [`../plan/open-source-readiness.md`](../plan/open-source-readiness.md) 는 삭제한다(진행 추적
+문서의 수명 규칙 — [`../README.md`](../README.md)).
 
 ---
 
 ## 2. 다음 — 무엇이 큐에 있는가
 
-**등록부 기준으로 지금 착수 가능한 코드 항목은 없다.**
-
-이것은 할 일이 없다는 뜻이 아니라 **남은 항목이 전부 외부 조건에 막혀 있다**는 뜻이다. Spring Boot
-starter 작업 스트림은 34건 중 25건이 닫히고 5건이 해소되어 4건이 남았는데
-([`../backlog/spring-boot-starter-open-items.md`](../backlog/spring-boot-starter-open-items.md)),
+**Spring Boot starter 작업 스트림에는 지금 착수 가능한 항목이 없다.** 34건 중 26건이 닫히고 4건이
+해소되어 4건이 남았는데([`../backlog/spring-boot-starter-open-items.md`](../backlog/spring-boot-starter-open-items.md)),
 넷 다 이 저장소가 오늘 시작할 수 있는 종류가 아니다.
 
 | 항목 | 무엇 | 무엇에 막혀 있나 |
@@ -53,6 +51,10 @@ B-23 은 로드맵 관점에서 특별하다 — `1.0` 조건 중 "외부 백엔
 (§3). 이 저장소 안에서 자기가 만든 SPI 를 자기가 구현하는 것으로는 그 SPI 가 정말 구현 가능한지 알 수
 없다.
 
+starter 밖의 등록부에는 열린 항목이 있다. 어느 등록부에 몇 건이 열려 있는지는
+[`../backlog/README.md`](../backlog/README.md) 의 목록이 정본이다 — 다만 그 수는 착수 가능한 항목의 수가
+아니다. 트리거 대기와 결정 대기가 섞여 있으므로, 착수하기 전에 항목마다 재검토 트리거를 읽는다.
+
 ---
 
 ## 3. `1.0` 까지
@@ -62,20 +64,22 @@ B-23 은 로드맵 관점에서 특별하다 — `1.0` 조건 중 "외부 백엔
 
 | 조건 | 지금 상태 |
 |------|----------|
-| 핵심 SPI 가 한 릴리스 주기 동안 무변경 | 아직 한 주기도 지나지 않았다. `0.2.x` 가 그 주기의 첫 번째다 |
-| `aimon-core` 밖에서 온 백엔드 구현이 하나 이상 | **0건.** 25개 모듈 전부 이 저장소 안에 있다. B-23 이 여기에 걸려 있다 |
-| 스코프 모델이 개명 없이 한 주기를 넘김 | 최근 두 번의 파괴적 변경이 **둘 다** 여기서 나왔다(`AgentExecutionContext` → `AgentRuntime`, `Conversation`/`AgentSession` → `SessionRecord`/`LiveSession`). 세 번째가 없어야 한다 |
+| 핵심 SPI 가 한 릴리스 주기 동안 무변경 | `0.2.x` 는 무변경 주기가 되지 못했다 — `0.3.0` 이 `LlmClient` 에 기본 메서드 `getDefaultModelName()` 을 더했다(소스 호환이지만 변경이다). `Tool` · `LlmClient` · `VirtualFileSystem` · `SessionRecordStore` · `AgentExecutor` 는 `0.3.0` 이후 바뀌지 않았으므로 지금 세는 주기는 `0.3.x` 다. 목록의 `Hook` 은 **그 이름의 타입이 없다** — 무엇을 가리키는지부터 정해야 이 조건을 셀 수 있다 |
+| `aimon-core` 밖에서 온 백엔드 구현이 하나 이상 | **0건.** `0.3.0` 이후 이 저장소 밖에도 SPI 구현이 생겼지만(`at.aimon.sandbox:*`, aimon-memory 의 `RemotePeerMemory`) 둘 다 같은 메인테이너의 저장소라, 이 조건이 묻는 것 — 남이 구현할 수 있는가 — 에는 답하지 못한다. B-23 이 여기에 걸려 있다 |
+| 스코프 모델이 개명 없이 한 주기를 넘김 | 최근 두 번의 파괴적 변경이 **둘 다** 여기서 나왔다(`AgentExecutionContext` → `AgentRuntime`, `Conversation`/`AgentSession` → `SessionRecord`/`LiveSession`). `0.3.0` · `0.3.1` 의 CHANGELOG 에는 수명 타입의 개명이 없다 — `0.3.1` 의 `Environment` → `UserLocale`(EE-14)은 수명 타입이 아니다. 세 번째가 없어야 한다 |
 | starter 미결 항목 정리 | 4건 남음 — 전부 외부 조건 대기(§2) |
 | 공개 API javadoc 완비 | **측정 장치가 없다.** 빌드는 `-Xdoclint:none` 으로 javadoc 린트를 끄고 있다(`buildSrc/src/main/kotlin/aimon.java-conventions.gradle.kts` 의 `tasks.withType<Javadoc>()` 블록). 완비 여부를 말하려면 그 스위치부터 켜야 한다 |
-| 번역 신선도 CI 동작 | Phase 5. 정본이 한국어인 프로젝트에서 번역이 조용히 낡으면 문서가 틀린 API 문서가 된다 |
+| 번역 신선도 CI 동작 | **동작한다.** `build.yml` 의 `translations` 잡이 낡은 번역은 경고로, 해석 불가한 `source_commit` 은 실패로 보고하고, 구조 검사가 함께 돈다. 다만 `api-stability.md` §6 의 문구는 번역이 **코드와** 어긋나지 않는지를 말하고, 이 잡이 보는 것은 번역이 **정본과** 어긋나는지다. 정본이 코드와 맞는지는 검사하지 않으므로 그쪽 체크박스는 비워 둔다 |
 
 **`1.0` 은 날짜가 아니라 상태다.** 위 여섯이 전부 참이 되기 전에는 올리지 않고, 참이 되면 그 이상
 기다리지 않는다.
 
 `0.x` 동안 파괴적 변경이 어떻게 다뤄지는지는 [`api-stability.md`](api-stability.md) 를 본다. 요약하면
 patch 는 호환되고, minor 는 깨질 수 있으며, 깨질 때는 옛 이름 ↔ 새 이름 매핑표가
-[`../../CHANGELOG.md`](../../CHANGELOG.md) 에 함께 들어간다. 현재 저장소에 `@Deprecated` 는 **한 개도
-없다** — `0.2.x` 로 오면서 열한 개를 전부 제거했고, 그것이 `1.0` 이전이라서 가능했던 일이다.
+[`../../CHANGELOG.md`](../../CHANGELOG.md) 에 함께 들어간다. `0.2.x` 로 오면서 `@Deprecated` 열한 개를
+전부 제거했고 — `1.0` 이전이라서 가능했던 일이다 — 지금 main 소스에는 다시 일곱 개가 있다(컴팩션
+계열 넷, `TranscriptBuffer` 둘, `AnthropicMessageConverter` 하나). `0.x` 에서 옛 이름을 남길지는 정책이 아니라 변경마다의
+선택이다.
 
 ---
 
