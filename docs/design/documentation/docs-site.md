@@ -166,6 +166,11 @@ choose either 'index.md' or 'index.md' but not both
 `design/backlog/` 는 `design/README.md` 의 해당 절을, `migration/` 과 `project/` 는 `docs/README.md` §6 을
 가리키게 했다.
 
+`migration/` 과 `project/` 의 넷(`overview/features.md` 와 `.en.md` 에 둘씩)은 그 뒤 같은 날 두 디렉토리에
+`README.md` 가 생기면서 그 색인으로 다시 옮겼다. 두 README 에는 `.en.md` 가 없다 — 그 디렉토리들이 아직 번역
+대상이 아니어서이고(`documentation-guide.md` §5.1), `features.en.md` 의 링크는 `README.md` 를 가리켜 `/en/`
+에서 한국어 색인이 나온다.
+
 **"빌드된다" 를 두 곳에서 읽는다.** 훅은 MkDocs 가 파싱한 `exclude_docs`(pathspec)를 받고, 검사는 받을 수
 없다 — `docs-links` 잡은 체크아웃 직후 `pip install` 없이 돌므로 `yaml` 도 `pathspec` 도 없다. 그래서
 `scripts/docs_tree.py` 의 `site_tree()` 가 `mkdocs.yml` 을 정규식으로 읽고, gitignore 엔진 없이 정확히 맞출
