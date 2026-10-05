@@ -124,7 +124,8 @@ public class ArtifactAwareEditTool extends AbstractTool implements ToolPermissio
 
         if (result.isSuccess() && isArtifact) {
             final String filePath = input.getRequiredString("file_path");
-            final Optional<String> note = archive.register(context, filePath, 0);
+            // Unlike Write, an edit never holds the whole content: the size is the archive's to read, or unknown.
+            final Optional<String> note = archive.register(context, filePath, -1);
             if (note.isPresent()) {
                 return ToolResult.success(result.getContent() + "\n" + note.get());
             }

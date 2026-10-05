@@ -1,6 +1,8 @@
 package at.aimon.core.agent.artifact;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -74,7 +76,7 @@ public class ArtifactCollector {
 
     /**
      * Returns the key that names this execution's directory in the control store's artifact area
-     * ({@code /artifacts/{archiveKey}/{fileName}}), used when an artifact-aware tool archives a file written in a
+     * ({@code /artifacts/{archiveKey}/{relativePath}}), used when an artifact-aware tool archives a file written in a
      * non-durable environment (execution-environment design §9.3).
      *
      * @return the archive key (never null)
@@ -84,15 +86,40 @@ public class ArtifactCollector {
     }
 
     /**
-     * Returns the total size of the artifacts collected so far in one storage — the per-execution budget the archive
+     * Returns the total size of the files collected so far in one storage — the per-execution budget the archive
      * limit is checked against.
+     *
+     * <p>
+     * A path counts once, at the size of its latest registration. One file is registered every time it is written or
+     * edited, and each registration stays in the list (an iteration reports what <em>it</em> produced, see
+     * {@link #sliceFrom(int)}), but the storage holds one copy of it.
      *
      * @param storage
      *            the storage to sum
      * @return the total size in bytes
      */
     public long totalBytes(ArtifactStorage storage) {
-        return artifacts.stream().filter(a -> a.getStorage() == storage).mapToLong(FileArtifact::getSize).sum();
+        return totalBytesExcluding(storage, null);
+    }
+
+    /**
+     * Returns {@link #totalBytes(ArtifactStorage)} without one path: what the storage would hold beside a file that
+     * is about to be registered (again) at that path.
+     *
+     * @param storage
+     *            the storage to sum
+     * @param path
+     *            the path to leave out, or null to leave nothing out
+     * @return the total size in bytes
+     */
+    public long totalBytesExcluding(ArtifactStorage storage, String path) {
+        final Map<String, Long> latest = new HashMap<>();
+        for (FileArtifact artifact : artifacts) {
+            if (artifact.getStorage() == storage && !artifact.getPath().equals(path)) {
+                latest.put(artifact.getPath(), artifact.getSize());
+            }
+        }
+        return latest.values().stream().mapToLong(Long::longValue).sum();
     }
 
     /**

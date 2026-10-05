@@ -177,10 +177,15 @@ INTERRUPTED, SUSPENDED, MAX_ITERATIONS, 그리고 커맨드 처리 경로. 실�
 **비영속 환경에서는 보관 사본을 등록한다**([`../tool/execution-environment.md`](../tool/execution-environment.md)
 §9.3). 도구가 쓴 실행 환경이 `durable() == false` 이면(샌드박스 작업 공간, 워크플로 격리 브랜치) 그 경로는 실행
 뒤 사라질 수 있다. 그래서 `ArtifactArchive` 가 등록 전에 파일을 제어 저장소의
-`artifacts/{archiveKey}/{fileName}` 로 복사하고 **그 경로**를 등록한다. `archiveKey` 는 `ArtifactCollector` 가 실행마다
+`artifacts/{archiveKey}/{relativePath}` 로 복사하고 **그 경로**를 등록한다. `archiveKey` 는 `ArtifactCollector` 가 실행마다
 갖는 값이다 — 포크는 자기 `ExecutionId`, 턴은 게시하지 않는 `archive:…` 값. 디렉터리 이름으로 쓸 때는
 `ArtifactArchive.directoryName` 이 `[A-Za-z0-9._-]` 밖의 문자를 `_` 로 바꾼다(`:` 를 거부하는 로컬 저장소 때문).
-복사 자체가 실패해도 등록하지 않고 결과에 한 줄을 덧붙인다. 그러면 경로가 가리키는 저장소가 둘이
+`relativePath` 는 실행 환경의 작업 디렉터리 기준 상대 경로다 — 파일 이름만 쓰면 `a/report.md` 와 `b/report.md` 가 한
+사본을 두고 덮어쓰기 때문이다. 작업 디렉터리 밖의 파일은 정규화한 전체 경로로 보관한다. `FileArtifact.getFileName()` 은
+여전히 파일 이름만이다. 같은 파일을 다시 등록하면(`Edit` 는 매번 그렇게 한다) 자기 사본을 덮어쓰고, 실행당 상한에는
+**한 번만**, 마지막 크기로 센다 — 등록 기록 자체는 반복마다 남는다(그 반복이 만든 것을 보고하는 창이기 때문이다).
+복사 자체가 실패해도, 크기를 읽지 못해 상한을 검사할 수 없어도, 등록 도중 다른 예외가 나도 등록하지 않고 결과에 한 줄을
+덧붙인다 — 조용히 빠지는 경로는 없다. 그러면 경로가 가리키는 저장소가 둘이
 되므로 `FileArtifact.getStorage()` 가 `WORKSPACE`(작업 환경 경로) 와 `CONTROL`(제어 저장소 경로) 을 구분하고,
 다운로드 계층은 그에 따라 연다. 복사 상한은 `ArtifactPolicy` 가 갖는다 — 파일당 50 MB, 실행당 총 100 MB(스타터
 `aimon.tools.artifact.max-file-bytes` / `max-execution-bytes`). 넘으면 쓰기는 성공한 채 등록하지 않고 도구 결과에
