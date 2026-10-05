@@ -86,6 +86,25 @@ class LocalFileSystemContentHashEtagTest {
     }
 
     @Test
+    @DisplayName("a file whose modification time is older than its creation time still has readable metadata")
+    void aModificationTimeBeforeTheCreationTimeIsReadable() throws Exception {
+        // Reproduces on a disk that keeps a birth time nothing rewrites (Linux): cp -p, an extracted archive and
+        // rsync -t all leave such files. On macOS setting the earlier time moves the birth time too, so there the
+        // test only shows the read is unaffected.
+        try (LocalFileSystem fs = open(false)) {
+            fs.write("old.txt", "carried over");
+            fs.createDirectory("old-dir");
+            final FileTime longAgo = FileTime.fromMillis(1_000_000_000_000L);
+            Files.setLastModifiedTime(root.resolve("old.txt"), longAgo);
+            Files.setLastModifiedTime(root.resolve("old-dir"), longAgo);
+
+            assertThat(fs.getMetadata("old.txt").getModifiedAt()).isEqualTo(longAgo.toInstant());
+            assertThat(fs.getMetadata("old.txt").getCreatedAt()).isBeforeOrEqualTo(longAgo.toInstant());
+            assertThat(fs.getMetadata("old-dir").getCreatedAt()).isBeforeOrEqualTo(longAgo.toInstant());
+        }
+    }
+
+    @Test
     @DisplayName("enabled, a file larger than the I/O buffer is hashed whole, and a directory has no etag")
     void enabledHashesLargeFilesAndSkipsDirectories() {
         try (LocalFileSystem fs = open(true)) {
