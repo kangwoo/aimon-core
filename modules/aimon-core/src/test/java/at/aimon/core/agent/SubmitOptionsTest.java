@@ -19,10 +19,8 @@ import at.aimon.core.llm.LlmCallMetadata;
  *
  * <p>
  * SubmitOptions exists strictly to forward per-turn metadata from the {@link LiveSession} facade through to
- * {@link at.aimon.core.agent.impl.orca.OrcaAgentExecutionRequest}; the tri-state
- * {@link SubmitOptions#getUserContextInjection()
- * getUserContextInjection()} and the "unset means executor default" semantics are part of that contract and are pinned
- * here.
+ * {@link at.aimon.core.agent.impl.orca.OrcaAgentExecutionRequest}; the "unset means executor default" semantics are
+ * part of that contract and are pinned here.
  */
 @DisplayName("SubmitOptions builder / equality / immutability")
 class SubmitOptionsTest {
@@ -32,14 +30,13 @@ class SubmitOptionsTest {
     class Defaults {
 
         @Test
-        @DisplayName("empty(): every field unset; user-context-injection override is absent")
+        @DisplayName("empty(): every field unset")
         void emptyHasNoOverrides() {
             final SubmitOptions opts = SubmitOptions.empty();
             assertThat(opts.getPrincipal()).isEmpty();
             assertThat(opts.getSystemPromptVariables()).isEmpty();
             assertThat(opts.getExecutionAttributes()).isEmpty();
             assertThat(opts.getLlmCallMetadata()).isEmpty();
-            assertThat(opts.getUserContextInjection()).isEmpty();
         }
 
         @Test
@@ -68,20 +65,12 @@ class SubmitOptionsTest {
             final Map<String, Object> attrs = Map.of("ab.x", true, "feature.y", "on");
 
             final SubmitOptions opts = SubmitOptions.builder().principal(principal).llmCallMetadata(metadata)
-                    .systemPromptVariables(systemVars).executionAttributes(attrs).userContextInjection(false).build();
+                    .systemPromptVariables(systemVars).executionAttributes(attrs).build();
 
             assertThat(opts.getPrincipal()).contains(principal);
             assertThat(opts.getLlmCallMetadata()).contains(metadata);
             assertThat(opts.getSystemPromptVariables()).containsExactlyInAnyOrderEntriesOf(systemVars);
             assertThat(opts.getExecutionAttributes()).containsExactlyInAnyOrderEntriesOf(attrs);
-            assertThat(opts.getUserContextInjection()).contains(Boolean.FALSE);
-        }
-
-        @Test
-        @DisplayName("userContextInjection(true) is preserved as Optional[true]")
-        void userContextInjectionTrueRoundTrip() {
-            final SubmitOptions opts = SubmitOptions.builder().userContextInjection(true).build();
-            assertThat(opts.getUserContextInjection()).contains(Boolean.TRUE);
         }
     }
 
@@ -171,32 +160,20 @@ class SubmitOptionsTest {
         @DisplayName("equal field-by-field options are equal")
         void equalsByValue() {
             final SubmitOptions a = SubmitOptions.builder().principal(Principal.user("u", "n"))
-                    .systemPromptVariable("k", "v").executionAttribute("a", 1).userContextInjection(false).build();
+                    .systemPromptVariable("k", "v").executionAttribute("a", 1).build();
             final SubmitOptions b = SubmitOptions.builder().principal(Principal.user("u", "n"))
-                    .systemPromptVariable("k", "v").executionAttribute("a", 1).userContextInjection(false).build();
+                    .systemPromptVariable("k", "v").executionAttribute("a", 1).build();
 
             assertThat(a).isEqualTo(b).hasSameHashCodeAs(b);
-        }
-
-        @Test
-        @DisplayName("differing user-context-injection overrides are NOT equal")
-        void unequalByUserContextInjection() {
-            final SubmitOptions on = SubmitOptions.builder().userContextInjection(true).build();
-            final SubmitOptions off = SubmitOptions.builder().userContextInjection(false).build();
-            final SubmitOptions unset = SubmitOptions.builder().build();
-
-            assertThat(on).isNotEqualTo(off);
-            assertThat(on).isNotEqualTo(unset);
-            assertThat(off).isNotEqualTo(unset);
         }
 
         @Test
         @DisplayName("toString() includes every field name")
         void toStringIncludesFields() {
             final SubmitOptions opts = SubmitOptions.builder().principal(Principal.user("u"))
-                    .systemPromptVariable("k", "v").executionAttribute("a", 1).userContextInjection(false).build();
+                    .systemPromptVariable("k", "v").executionAttribute("a", 1).build();
             assertThat(opts.toString()).contains("principal").contains("systemPromptVariables")
-                    .contains("executionAttributes").contains("llmCallMetadata").contains("userContextInjection");
+                    .contains("executionAttributes").contains("llmCallMetadata");
         }
     }
 }

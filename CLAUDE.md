@@ -142,7 +142,7 @@ IMPORTANT: 수명·소유권·소멸 책임의 전체 규칙은 `docs/overview/s
 
 컴포넌트 수명은 4단계다 — **Application** (`SchedulingEngine`, `ScheduledTaskManager`, `RoutineExecutor`,
 `AgentRuntimeRegistry`, `SessionRecordStore`, `SessionLeaseStore`) / **Agent** (`AgentRuntime` 과 그것이 소유한
-`ToolRegistry` / `HookRegistry` / `McpClientManager`, `AgentEnvironmentSnapshot`) / **Session**
+`ToolRegistry` / `HookRegistry` / `McpClientManager`) / **Session**
 (`SessionRecord`, `SessionTotals`, `budgetOverride`, `SessionTranscript`) / **Live session** (`LiveSession`,
 메시지 큐, 이벤트 publisher). 여기에 실행 단위 Execution·Turn·Iteration 이 얹힌다.
 

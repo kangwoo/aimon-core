@@ -3,7 +3,6 @@ package at.aimon.core.agent.impl.orca;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Path;
-import java.time.Instant;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
@@ -14,10 +13,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import at.aimon.core.agent.AgentEnvironmentSnapshot;
-import at.aimon.core.agent.AgentEnvironmentSnapshotProvider;
-import at.aimon.core.agent.AgentRuntime;
-import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.DefaultAgent;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
@@ -60,16 +55,14 @@ import at.aimon.core.tools.ToolContextKeys;
 @DisplayName("OrcaAgentExecutor and the runtime's UserLocale")
 class OrcaAgentExecutorUserLocaleTest {
 
-    private static final Instant FIXED_INSTANT = Instant.parse("2026-04-23T12:34:56Z");
-
     @TempDir
     Path tempDir;
 
     @Test
-    @DisplayName("the system prompt and the user-context message are the same in every time zone")
+    @DisplayName("the system prompt and the messages are the same in every time zone")
     void promptDoesNotDependOnTheTimeZone() {
-        // At 12:34:56Z it is still the 23rd in UTC, 21:34 on the 23rd in Seoul and 02:34 on the 24th on Kiritimati,
-        // so a prompt that rendered the date in the user's zone would differ between the first and the last.
+        // Three zones that are never on the same calendar day at once: a prompt that rendered the date in the user's
+        // zone would differ between the first and the last.
         final Sent utc = send(ZoneId.of("UTC"));
         final Sent seoul = send(ZoneId.of("Asia/Seoul"));
         final Sent kiritimati = send(ZoneId.of("Pacific/Kiritimati"));
@@ -80,10 +73,8 @@ class OrcaAgentExecutorUserLocaleTest {
         assertThat(kiritimati.messages).isEqualTo(utc.messages);
 
         assertThat(utc.systemPrompt).startsWith("You are a test agent").doesNotContain("UTC");
-        assertThat(utc.messages).containsExactly(
-                "<system-reminder key=\"working-directory\">\n" + tempDir + "\n" + "</system-reminder>\n" + "\n"
-                        + "<system-reminder key=\"current-date\">\n" + "2026-04-23T12:34:56Z\n" + "</system-reminder>",
-                "Hello");
+        // Nothing is put in front of the user's message: the framework injects no date of its own.
+        assertThat(utc.messages).containsExactly("Hello");
     }
 
     @Test
@@ -136,27 +127,9 @@ class OrcaAgentExecutorUserLocaleTest {
         final DefaultCommandExecutionManager commandManager = new DefaultCommandExecutionManager(client);
         final DefaultSubagentExecutionManager subagentManager = new DefaultSubagentExecutionManager(client, toolManager,
                 hookManager);
-        return new OrcaAgentExecutorFactory().withAgentEnvironmentSnapshotProvider(new SnapshotOfTheRuntime()).create(
-                client, new DefaultTranscriptManager(new InMemorySessionRecordStore()), toolManager, hookManager,
+        return new OrcaAgentExecutorFactory().create(client,
+                new DefaultTranscriptManager(new InMemorySessionRecordStore()), toolManager, hookManager,
                 commandManager, subagentManager);
-    }
-
-    /**
-     * Snapshots a fixed instant together with the runtime's own {@link UserLocale}, as the default provider does. The
-     * working directory the model is shown is not the snapshot's to give — it comes from the execution environment's
-     * descriptor.
-     */
-    private static final class SnapshotOfTheRuntime implements AgentEnvironmentSnapshotProvider {
-        @Override
-        public AgentEnvironmentSnapshot get(AgentRuntime runtime) {
-            return AgentEnvironmentSnapshot.builder().currentDate(FIXED_INSTANT)
-                    .userLocale(((OrcaAgentRuntime) runtime).getUserLocale()).build();
-        }
-
-        @Override
-        public void invalidate(AgentRuntimeId id) {
-            // nothing is cached
-        }
     }
 
     /** What one LLM call was sent. */

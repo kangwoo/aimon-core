@@ -146,8 +146,8 @@ public final class QueuedInput {
 
     /**
      * Per-turn {@link SubmitOptions} preserved on this queued input so that mid-turn drains keep the original
-     * caller-supplied executor metadata (userInfo, system prompt variables, execution attributes, LLM call metadata,
-     * user-context injection override).
+     * caller-supplied executor metadata (userInfo, system prompt variables, execution attributes, LLM call
+     * metadata).
      *
      * <p>
      * Defaults to {@link SubmitOptions#empty()} when the producer did not supply any per-turn metadata, which makes

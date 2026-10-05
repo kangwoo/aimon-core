@@ -6,8 +6,8 @@ import java.util.List;
  * Assembles the runtime context injected into a conversation each turn.
  *
  * <p>
- * This is the seam the executor talks to. It generalises the previously hard-wired environment block and the one-shot
- * {@code UserContextMessageBuilder} into a refreshable, injectable pipeline: the concrete sources live behind
+ * This is the seam the executor talks to. It generalises the previously hard-wired environment block into a
+ * refreshable, injectable pipeline: the concrete sources live behind
  * {@link ContextProvider} implementations (environment, git status, directory summary, user extensions, ...), keeping
  * the executor agnostic to what context exists and how it is derived (multi-instance friendly — swapping the assembler
  * is a wiring change, never a code change in the loop).

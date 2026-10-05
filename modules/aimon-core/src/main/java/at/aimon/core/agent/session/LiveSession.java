@@ -128,7 +128,7 @@ public interface LiveSession extends AutoCloseable {
      * <p>
      * Implementations construct the underlying {@code AgentExecutionRequest} internally — callers supply the raw user
      * text together with the per-turn options that override executor defaults (userInfo, system prompt variables,
-     * execution attributes, LLM call metadata, user-context injection). The session's default budget (from
+     * execution attributes, LLM call metadata). The session's default budget (from
      * {@link LiveSessionOptions#getBudget()}) is injected when the internally-built request does not already declare
      * one; when the options budget is unlimited (the default) the behavior is identical to the legacy unbounded
      * executor path.
@@ -576,7 +576,7 @@ public interface LiveSession extends AutoCloseable {
      *
      * <p>
      * The second attempt is submitted under the <b>same {@link SubmitOptions} as the first</b> — the same principal,
-     * system-prompt variables and user-context setting — because those are as much a part of the turn as the request
+     * system-prompt variables and execution attributes — because those are as much a part of the turn as the request
      * is. Use {@link #retryLastTurn(SubmitOptions)} to submit it under different ones.
      *
      * @return the result of the second attempt, or empty when the last turn ended some other way and there is

@@ -712,6 +712,25 @@ scaled out **could not send** multimodal — not quietly truncated, but not comp
 an image to the router was for the caller to flatten it with `image.asText()`, and then all the model
 got was the text `[Image: image/png, 41231 bytes]`. That is no longer necessary.
 
+### 6.2.2 The model does not know today's date
+
+The framework puts no date or time into the prompt. If the model needs one, the side that knows it — your
+application — hands it over on each turn. Leave a slot in the agent definition's system prompt and fill
+that variable when you submit.
+
+```java
+// The system prompt in agent.md: "Today is {{currentDate}}."
+sessions.submitAsync(
+        sessions.newRequest(sessionId, input)
+                .submitOptions(SubmitOptions.builder()
+                        .systemPromptVariable("currentDate", LocalDate.now(userZone).toString())
+                        .build())
+                .build());
+```
+
+**Which time zone and which precision is yours to decide.** A timestamp down to the second in the system
+prompt changes the prompt on every turn and breaks the prompt cache. A date alone is usually right.
+
 ### 6.3 Reading `SubmitDisposition`
 
 ```java

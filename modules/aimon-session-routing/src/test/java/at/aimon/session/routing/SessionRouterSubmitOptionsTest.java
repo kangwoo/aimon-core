@@ -44,8 +44,7 @@ class SessionRouterSubmitOptionsTest {
         final SessionId id = SessionId.of("c-opts-1");
 
         final SubmitOptions options = SubmitOptions.builder().principal(Principal.user("u-1", "alice"))
-                .systemPromptVariable("region", "eu").executionAttribute("ab.x", true).userContextInjection(false)
-                .build();
+                .systemPromptVariable("region", "eu").executionAttribute("ab.x", true).build();
 
         final SubmitRequest request = SubmitRequest.builder().sessionId(id).agentRef("alpha").userInput("hello")
                 .initiator(Principal.user("tester")).submitOptions(options).build();
@@ -79,7 +78,7 @@ class SessionRouterSubmitOptionsTest {
 
         // Second request: lands in the inbox because the session is busy.
         final SubmitOptions secondOptions = SubmitOptions.builder().principal(Principal.user("u-2", "bob"))
-                .systemPromptVariables(Map.of("trace.id", "abc-123")).userContextInjection(true).build();
+                .systemPromptVariables(Map.of("trace.id", "abc-123")).build();
         final SubmitRequest secondRequest = SubmitRequest.builder().sessionId(id).agentRef("alpha").userInput("second")
                 .initiator(Principal.user("tester")).submitOptions(secondOptions).build();
         final SubmitDisposition second = harness.manager().submit(secondRequest);

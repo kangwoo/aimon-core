@@ -70,7 +70,6 @@ public final class OrcaAgentExecutionRequest implements AgentExecutionRequest {
     private final Map<String, Object> executionAttributes;
     private final LlmCallMetadata llmCallMetadata;
     private final ExecutionBudget budget;
-    private final boolean userContextInjection;
     private final Consumer<InterruptCoordinator> interruptObserver;
     private final Consumer<BudgetTracker> budgetObserver;
 
@@ -91,7 +90,6 @@ public final class OrcaAgentExecutionRequest implements AgentExecutionRequest {
         executionAttributes = builder.executionAttributes != null ? Map.copyOf(builder.executionAttributes) : Map.of();
         llmCallMetadata = builder.llmCallMetadata != null ? builder.llmCallMetadata : LlmCallMetadata.empty();
         budget = builder.budget;
-        userContextInjection = builder.userContextInjection;
         interruptObserver = builder.interruptObserver != null ? builder.interruptObserver : c -> {
         };
         budgetObserver = builder.budgetObserver != null ? builder.budgetObserver : c -> {
@@ -103,7 +101,7 @@ public final class OrcaAgentExecutionRequest implements AgentExecutionRequest {
      *
      * <p>
      * The individual values are already spread across this request — principal, system-prompt variables, execution
-     * attributes, LLM call metadata, user-context injection — so this looks redundant, and for execution it is: no
+     * attributes, LLM call metadata — so this looks redundant, and for execution it is: no
      * code path reads it to run the turn. It is carried because those fields cannot be folded back into the options
      * they came from. Defaults have been applied by then, so an option that was never named is indistinguishable from
      * one named with the default value, and a retry rebuilt from the flattened fields would pin a component and trace
@@ -196,24 +194,6 @@ public final class OrcaAgentExecutionRequest implements AgentExecutionRequest {
     }
 
     /**
-     * Returns whether the synthetic {@code messages[0]} user-context injection is enabled for this request.
-     *
-     * <p>
-     * When {@code true} (the default), the executor injects a single synthetic user message at the start of a fresh
-     * conversation that wraps session-level context (working directory, current date, CLAUDE.md-style extensions) in
-     * {@code <system-reminder>} blocks. Resumed conversations (memory already contains a user message) skip injection
-     * regardless of this flag.
-     *
-     * <p>
-     * Set to {@code false} via {@link Builder#userContextInjection(boolean)} to fully opt out (legacy behavior).
-     *
-     * @return {@code true} when injection is enabled; {@code false} when the caller opted out
-     */
-    public boolean isUserContextInjectionEnabled() {
-        return userContextInjection;
-    }
-
-    /**
      * Returns the observer invoked with the turn's fresh {@link InterruptCoordinator} at loop entry.
      *
      * <p>
@@ -266,7 +246,6 @@ public final class OrcaAgentExecutionRequest implements AgentExecutionRequest {
                 && Objects.equals(systemPromptVariables, that.systemPromptVariables)
                 && Objects.equals(executionAttributes, that.executionAttributes)
                 && Objects.equals(llmCallMetadata, that.llmCallMetadata) && Objects.equals(budget, that.budget)
-                && userContextInjection == that.userContextInjection
                 // Part of the state even though nothing executes from it: two requests whose flattened fields agree
                 // can still have been built from options that differ in what they left unset, and those produce
                 // different rewind points, hence different retries.
@@ -276,7 +255,7 @@ public final class OrcaAgentExecutionRequest implements AgentExecutionRequest {
     @Override
     public int hashCode() {
         return Objects.hash(userInput, submitOptions, principal, sessionId, systemPromptVariables, executionAttributes,
-                llmCallMetadata, budget, userContextInjection);
+                llmCallMetadata, budget);
     }
 
     @Override
@@ -296,7 +275,6 @@ public final class OrcaAgentExecutionRequest implements AgentExecutionRequest {
         private Map<String, Object> executionAttributes;
         private LlmCallMetadata llmCallMetadata;
         private ExecutionBudget budget;
-        private boolean userContextInjection = true;
         private Consumer<InterruptCoordinator> interruptObserver;
         private Consumer<BudgetTracker> budgetObserver;
 
@@ -438,29 +416,6 @@ public final class OrcaAgentExecutionRequest implements AgentExecutionRequest {
          */
         public Builder budget(ExecutionBudget budget) {
             this.budget = budget;
-            return this;
-        }
-
-        /**
-         * Enables or disables the synthetic {@code messages[0]} user-context injection.
-         *
-         * <p>
-         * Defaults to {@code true} so fresh conversations receive a synthetic user-role message that wraps
-         * session-level
-         * context (working directory, current date, CLAUDE.md-style extensions) in {@code <system-reminder>} blocks,
-         * mirroring the reference implementation's behaviour. Resumed conversations (memory already contains user
-         * messages) skip
-         * injection regardless of this flag.
-         *
-         * <p>
-         * Set to {@code false} to fully opt out and preserve legacy behaviour (no synthetic context message).
-         *
-         * @param userContextInjection
-         *            {@code true} to enable injection (default), {@code false} to opt out
-         * @return this builder
-         */
-        public Builder userContextInjection(boolean userContextInjection) {
-            this.userContextInjection = userContextInjection;
             return this;
         }
 

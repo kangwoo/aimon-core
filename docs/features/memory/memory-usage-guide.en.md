@@ -254,7 +254,7 @@ cheaper than sending a summary as if it were conversation or re-sending messages
 [Pluggable memory backend](../../design/memory/pluggable-memory-backend.md) §7.2 and
 [Context Engine](../../design/agent-execution/context-engine.md) §7.
 
-Neither value sends what the runtime injected (`LogOrigin.SYNTHETIC` — the user-context block, assembled
+Neither value sends what the runtime injected (`LogOrigin.SYNTHETIC` — assembled
 `<system-reminder>`s, the file and skill lists a restore hook attaches). What is sent is split into chunks of about 32K
 estimated tokens (`IngestChunks.DEFAULT_MAX_INGEST_TOKENS`), cut only where no `tool_use` is separated from its
 `tool_result` — compaction no longer bounds the payload to one window.

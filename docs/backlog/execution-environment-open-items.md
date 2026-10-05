@@ -1,4 +1,4 @@
-# 실행 환경 — 등록 항목 80건 (열림 35 · 닫힘 45)
+# 실행 환경 — 등록 항목 80건 (열림 34 · 닫힘 46)
 
 출처는 `ExecutionEnvironment` 구현 작업이다. 설계는 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md)
 이고, 구현 계획(승인본)과 구현이 그 계획에서 벗어난 점은
@@ -2367,6 +2367,12 @@ CLI `AgentSetupFactory` 의 리로드 훅) 설정으로 줄 길이 없다. 그�
 > 부트스트랩 · CLI · 스타터는 그것을 설정하지 않는다. 그러니 시간대를 실을지 정하기 전에 **그 블록이 실리는가**가 먼저다.
 > 결정문을 쓸 때 두 항목을 함께 본다(규칙 넷).
 
+> **2026-10-05 (같은 날, EE-78 을 닫으며) — 그 블록은 없어졌다.** 프레임워크는 날짜를 프롬프트에 넣지 않기로 했고, 날짜가 필요한
+> 배포는 자기 시간대로 계산한 값을 시스템 프롬프트 변수로 건넨다. 그래서 이 항목의 두 갈래 가운데 "시간대를 프롬프트에
+> 싣는다" 쪽은 소비자가 사라졌고, 남은 질문은 하나다 — **읽는 곳이 없는 `UserLocale.timeZone` 과 그 배관(main 47개 파일의
+> 시그니처)을 지울 것인가.** 위 "언제 다시 볼까" 의 "다음 공개 SPI 정리 때" 가 그 자리다.
+> `OrcaAgentExecutorUserLocaleTest.promptDoesNotDependOnTheTimeZone` 은 이제 메시지가 사용자 입력 하나뿐임을 단언한다.
+
 ## EE-61 — `SubagentExecutionEnvironment` 는 실행 환경이 아니다 · **열림**
 
 **무엇을.** `SubagentExecutionEnvironment` 의 이름을 그것이 실제로 무엇인지 말하는 이름으로 바꿀지 정한다.
@@ -2880,7 +2886,7 @@ GridFS 와 같은 모양이다 — 경로를 검증·정규화하고, 디렉터�
 
 ---
 
-## EE-78 — 사용자 컨텍스트 블록은 출하되는 어떤 스택에서도 주입되지 않는다 · **열림**
+## EE-78 — 사용자 컨텍스트 블록은 출하되는 어떤 스택에서도 주입되지 않는다 · **닫힘** *(2026-10-05)*
 
 *(2026-10-05 등록. 출처는 EE-24 · EE-10 착수.)*
 
@@ -2902,6 +2908,35 @@ GridFS 와 같은 모양이다 — 경로를 검증·정규화하고, 디렉터�
 
 **언제 다시 볼까.** EE-60(시간대)을 결정할 때 — 두 항목은 같은 블록을 두고 묻는다. 또는 모델이 날짜를 틀리게 말한다는 보고가
 있을 때. 배선하기로 하면 수집기가 무엇을 모으는지(날짜를 실행마다 새로 읽는가, 프롬프트 캐시를 깨는가)가 함께 정해져야 한다.
+
+### 닫힘 (2026-10-05)
+
+**결정 — 배선하지 않고 걷어낸다. 메인테이너가 골랐다.** 날짜를 프레임워크가 넣지 않기로 하자 그 블록에 남는 것이 없었다:
+`working-directory` 는 메인 턴의 시스템 프롬프트가 환경 블록으로 이미 싣고(`SystemPromptRenderer`), `extensions` 는 채우는
+main 코드가 없고, 스냅숏의 `userLocale` 은 블록을 만드는 쪽이 읽지 않았다. 그래서 날짜 한 줄이 아니라 표면 전체를 지웠다.
+
+지운 것 — `AgentEnvironmentSnapshot` · `AgentEnvironmentSnapshotProvider` · `DefaultAgentEnvironmentSnapshotProvider` ·
+`UserContextMessageBuilder`, `OrcaAgentExecutorFactory.withAgentEnvironmentSnapshotProvider` 와 실행기 빌더의 같은 자리,
+`OrcaAgentExecutionRequest` 의 `userContextInjection` / `isUserContextInjectionEnabled()`, `SubmitOptions` 의
+`userContextInjection` / `getUserContextInjection()`. 공개 타입에서 지우는 변경이라 CHANGELOG 에 breaking 으로 적었다.
+
+착수해 보니 항목의 서술보다 넓었던 것 (규칙 여섯 — 지우기 전에 센다).
+
+1. **끄는 옵션이 저장 형식에 있었다.** 항목은 "제공자를 배선하지 않는다" 만 적었는데, 블록을 턴 단위로 끄는
+   `userContextInjection` 이 `SubmitOptions` 를 타고 세션 스냅숏과 세 인박스(Redis · Postgres · MongoDB)의 문서에 필드로
+   실린다. 그 필드는 **쓰기를 멈추고 이름을 은퇴시켰다** — 디코더는 필드를 이름으로 읽으므로 옛 문서의 그 필드는 지나친다
+   (`SubmitOptionsCodecTest.theRetiredUserContextInjectionFieldIsPassedOver`). 롤링 업그레이드 중 옛 노드가 새 노드의 문서를
+   읽으면 "설정 안 됨" 으로 읽는데, 그것이 옛 기본값이다. 이름은 다른 뜻으로 다시 쓰지 않는다(`SubmitOptionsCodec` 에 주석).
+2. **"시스템 프롬프트가 따로 날짜를 싣는지" 를 확인했다 — 싣지 않는다.** 시스템 프롬프트 조립, 번들 에이전트 정의,
+   `ContextAssembler` 경로 어디에도 날짜가 없고, `ContextAssembler` 도 부트스트랩 · CLI · 스타터에서 배선되지 않는다. 그러니
+   이 변경 전에도 뒤에도 출하되는 스택의 모델은 날짜를 받지 않는다. **동작은 바뀌지 않았다.**
+3. **"제공자를 직접 꽂은 임베더" 는 기능을 잃는다.** 저장소 안에는 없고 밖은 셀 수 없다. 대체 경로를 임베딩 가이드 §6.2.2 에
+   적었다 — 에이전트 정의의 시스템 프롬프트에 `{{currentDate}}` 를 두고 제출할 때
+   `SubmitOptions.systemPromptVariable` 로 채운다. 시간대와 정밀도는 값을 아는 앱이 정한다.
+
+**닫지 않은 것.** `TranscriptBuffer.hasConversation()` · `SessionLogState.hasConversation()` 은 그 블록이 "재개된 세션인가" 를
+묻던 메서드이고 이제 main 에 호출자가 없다. 공개 메서드라 이 변경에서 지우지 않았다. `UserLocale.timeZone` 은 여전히 읽는
+곳이 없다(EE-60).
 
 ## EE-79 — 재등록의 복사가 실패하면 이전 보관본까지 지워진다 · **닫힘** *(2026-10-05)*
 

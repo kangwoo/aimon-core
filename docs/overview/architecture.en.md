@@ -196,7 +196,6 @@ One call to this `execute` is **one turn**.
 | `AgentRuntimeRegistry` | runtime lookup | **application-scoped** |
 | `AgentExecutionRequest` / `AgentExecutionResult` | turn input / output | turn |
 | `InterceptingAgentExecutor` | the cross-cutting-concern decorator | — |
-| `AgentEnvironmentSnapshot` | environment snapshot — collection time, `UserLocale`, extension map (memoized by `AgentRuntimeId`) | agent |
 
 IMPORTANT: **do not create an `AgentRuntime` per session.** Register it once at bootstrap and
 close it only at app shutdown or on explicit agent removal. If `LiveSession.close()` calls

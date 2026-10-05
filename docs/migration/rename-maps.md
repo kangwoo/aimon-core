@@ -182,6 +182,9 @@ issued via `from(Agent)` / `from(Agent, String)`. There is still no `generate()`
 | `TaskQuery.byContext(...)` / `RunQuery.byContext(...)` | `byAgentRuntime(...)` |
 | `PendingTurnRegistry.listByContext(...)` | `listByAgentRuntime(...)` |
 
+(These three types were **removed** on 2026-10-05 together with the user-context block they fed — see the
+changelog. The mapping below is kept for anyone reading older code.)
+
 Also renamed for the same reason: `SessionContext` → **`AgentEnvironmentSnapshot`**,
 `SessionContextProvider` → `AgentEnvironmentSnapshotProvider`, `DefaultSessionContextProvider` →
 `DefaultAgentEnvironmentSnapshotProvider`, all moved from `at.aimon.core.agent.session` to

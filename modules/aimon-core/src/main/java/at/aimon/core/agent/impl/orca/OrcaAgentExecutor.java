@@ -27,8 +27,6 @@ import org.slf4j.LoggerFactory;
 import at.aimon.core.agent.Agent;
 import at.aimon.core.agent.AgentContent;
 import at.aimon.core.agent.AgentContentRenderer;
-import at.aimon.core.agent.AgentEnvironmentSnapshot;
-import at.aimon.core.agent.AgentEnvironmentSnapshotProvider;
 import at.aimon.core.agent.AgentExecutor;
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.InvokerType;
@@ -67,7 +65,6 @@ import at.aimon.core.agent.loop.LoopTransition;
 import at.aimon.core.agent.loop.LoopTransitionReason;
 import at.aimon.core.agent.prompt.SystemPromptParts;
 import at.aimon.core.agent.prompt.SystemReminderFormatter;
-import at.aimon.core.agent.prompt.UserContextMessageBuilder;
 import at.aimon.core.agent.queue.MessageQueueManager;
 import at.aimon.core.agent.queue.QueuedInput;
 import at.aimon.core.agent.queue.QueuedInputPriority;
@@ -313,13 +310,6 @@ public class OrcaAgentExecutor
     private final ExecutionMemorySink executionMemorySink;
 
     /**
-     * Optional dependency: when configured, a synthetic {@code <system-reminder>}-wrapped user-context message is
-     * injected as {@code messages[0]} for fresh conversations (CTX-06). When {@code null}, injection is skipped with
-     * a debug log.
-     */
-    private final AgentEnvironmentSnapshotProvider agentEnvironmentSnapshotProvider;
-
-    /**
      * STREAM-03: package-private fan-out helper that dispatches {@link AgentExecutionEvent}s to listeners registered
      * via {@link #addEventListener(Consumer)}. Zero listeners is the common path and incurs only a null-check plus an
      * {@code isEmpty()} read.
@@ -494,8 +484,8 @@ public class OrcaAgentExecutor
      * Creates a new OrcaAgentExecutor with an optional {@link MessageQueueManager} for CQ-03 mid-turn injection.
      *
      * <p>
-     * Convenience overload that delegates to the primary constructor passing {@code null} for
-     * {@code agentEnvironmentSnapshotProvider}. See the primary constructor for full semantics.
+     * Convenience overload that delegates to the primary constructor. See the primary constructor for full
+     * semantics.
      *
      * @param gateway
      *            The LLM call gateway wrapping the underlying {@link LlmClient} with retry/fallback/PTL semantics
@@ -548,7 +538,6 @@ public class OrcaAgentExecutor
         this.subagentExecutionManager = Objects.requireNonNull(builder.subagentExecutionManager,
                 "Subagent execution manager cannot be null");
         this.messageQueueManager = builder.messageQueueManager;
-        this.agentEnvironmentSnapshotProvider = builder.agentEnvironmentSnapshotProvider;
         this.useStreaming = builder.useStreaming;
         this.streamingOptions = builder.useStreaming && builder.streamingOptions == null
                 ? LlmStreamingOptions.defaults()
@@ -647,7 +636,6 @@ public class OrcaAgentExecutor
         private CommandExecutionManager commandExecutionManager;
         private SubagentExecutionManager subagentExecutionManager;
         private MessageQueueManager messageQueueManager;
-        private AgentEnvironmentSnapshotProvider agentEnvironmentSnapshotProvider;
         private boolean useStreaming;
         private LlmStreamingOptions streamingOptions;
         private SkillPreflightScanner skillPreflightScanner;
@@ -715,12 +703,6 @@ public class OrcaAgentExecutor
 
         public Builder messageQueueManager(MessageQueueManager messageQueueManager) {
             this.messageQueueManager = messageQueueManager;
-            return this;
-        }
-
-        public Builder agentEnvironmentSnapshotProvider(
-                AgentEnvironmentSnapshotProvider agentEnvironmentSnapshotProvider) {
-            this.agentEnvironmentSnapshotProvider = agentEnvironmentSnapshotProvider;
             return this;
         }
 
@@ -1090,10 +1072,8 @@ public class OrcaAgentExecutor
         // Initialize transcript buffer before try-finally so it is always saved,
         // even when OnStart hooks block the execution.
         //
-        // CTX-06: split the init flow into three steps so the synthetic messages[0] user-context block can be
-        // inserted BEFORE the real user message, and only for fresh conversations. A conversation is considered
-        // "resumed" when its loaded memory already contains at least one user message — in that case injection is
-        // skipped to avoid duplicating the synthetic block on every turn.
+        // The init flow is three steps (initialize, mark the turn, add the user message) so that the assembled
+        // context blocks can be inserted BEFORE the real user message.
         final Message userMessage = UserInputConverter.buildUserMessage(executionRequest.getUserInput());
         final TranscriptBuffer transcriptBuffer = transcriptManager.initialize(executionRequest.getSessionId(),
                 systemPrompt);
@@ -1109,11 +1089,9 @@ public class OrcaAgentExecutor
         transcriptBuffer.beginTurn(executionRequest.getUserInput(), executionRequest.getSubmitOptions());
         // Same position, same fragility: a replaceWith between here and the finally invalidates both marks together.
         transcriptBuffer.markIngestPoint();
-        maybeInjectUserContextMessage(agentRuntime, executionRequest, transcriptBuffer,
-                executionEnvironment.descriptor().workingDirectory());
         // Inject the assembled USER_PREPEND / ATTACHMENT blocks (if any) as a synthetic <system-reminder> user
-        // message, after the legacy user-context block and before the real user message. No-op when the assembler
-        // contributed no such blocks (always the case under the NOOP default).
+        // message before the real user message. No-op when the assembler contributed no such blocks (always the
+        // case under the NOOP default).
         injectAssembledUserContext(transcriptBuffer, assembledContext);
         transcriptBuffer.addMessage(userMessage);
 
@@ -1370,66 +1348,6 @@ public class OrcaAgentExecutor
             inputs.put("systemPrompt", policy.truncate(systemPrompt));
         }
         return inputs;
-    }
-
-    /**
-     * Injects the synthetic {@code messages[0]} user-context block for fresh conversations (CTX-06).
-     *
-     * <p>
-     * No-op when:
-     *
-     * <ul>
-     * <li>The caller opted out via {@link OrcaAgentExecutionRequest.Builder#userContextInjection(boolean)
-     * userContextInjection(false)}.
-     * <li>No {@link AgentEnvironmentSnapshotProvider} has been configured on this executor.
-     * <li>The conversation was resumed — i.e., memory already contains at least one user message. We cannot rely on
-     * "memory is non-empty" alone because systems MAY persist assistant-only turns; checking user messages is the
-     * authoritative signal that the conversation has previously carried real user input.
-     * <li>The resolved session context materialises to no reminder entries (defensive guard for degenerate inputs).
-     * </ul>
-     *
-     * <p>
-     * Otherwise, a user-role message built by
-     * {@link UserContextMessageBuilder#build(AgentEnvironmentSnapshot, String)} is appended BEFORE the real user
-     * message, so the LLM sees the synthetic block as {@code messages[0]}.
-     *
-     * @param agentRuntime
-     *            the agent runtime used to resolve the provider entry (must not be null)
-     * @param executionRequest
-     *            the request carrying the opt-out flag (must not be null)
-     * @param transcriptBuffer
-     *            the freshly initialised memory to append the synthetic block to (must not be null)
-     * @param executionWorkingDirectory
-     *            the working directory of this execution's environment; blank for an unavailable environment, and
-     *            then the block has no working-directory entry
-     */
-    private void maybeInjectUserContextMessage(OrcaAgentRuntime agentRuntime,
-            OrcaAgentExecutionRequest executionRequest, TranscriptBuffer transcriptBuffer,
-            String executionWorkingDirectory) {
-        if (!executionRequest.isUserContextInjectionEnabled()) {
-            log.debug("User-context injection disabled for this request");
-            return;
-        }
-        if (agentEnvironmentSnapshotProvider == null) {
-            log.debug("No AgentEnvironmentSnapshotProvider configured; skipping user-context injection");
-            return;
-        }
-        // "Resumed" means the session has conversation, not merely user-role entries: the synthetic blocks this very
-        // method injects are user-role too, and a first turn that was interrupted and rewound leaves none behind.
-        if (transcriptBuffer.hasConversation()) {
-            log.debug("Conversation resumed (existing user messages present); skipping user-context injection");
-            return;
-        }
-
-        final AgentEnvironmentSnapshot agentEnvironmentSnapshot = agentEnvironmentSnapshotProvider.get(agentRuntime);
-        final var synthetic = UserContextMessageBuilder.build(agentEnvironmentSnapshot, executionWorkingDirectory);
-        if (synthetic.isEmpty()) {
-            log.debug("AgentEnvironmentSnapshot yielded no reminder entries; skipping user-context injection");
-            return;
-        }
-
-        transcriptBuffer.addMessage(synthetic.get(), LogOrigin.SYNTHETIC);
-        log.debug("Injected synthetic user-context message as messages[0]");
     }
 
     /**

@@ -12,7 +12,7 @@ paths:
 | Scope | Examples | Identifier | Lifetime |
 |-------|----------|------------|----------|
 | **Application** | `SchedulingEngine`, `ScheduledTaskManager`, `RoutineExecutor`, `AgentRuntimeRegistry`, `SessionRecordStore`, `SessionLeaseStore`, `SessionInbox`, `SessionSignalBus`, `IdempotencyStore`, `KnowledgeStore`, `CredentialStore` | — | App startup → shutdown |
-| **Agent** | `AgentRuntime` and the components it owns (`ToolRegistry`, `HookRegistry`, `McpClientManager`), `AgentEnvironmentSnapshot` | `AgentRuntimeId` (`agent:<name>[:<discriminator>]`) | Per `(Agent, discriminator)`; survives across sessions |
+| **Agent** | `AgentRuntime` and the components it owns (`ToolRegistry`, `HookRegistry`, `McpClientManager`) | `AgentRuntimeId` (`agent:<name>[:<discriminator>]`) | Per `(Agent, discriminator)`; survives across sessions |
 | **Session** | `SessionRecord`, `SessionTotals`, `budgetOverride`, `SessionTranscript` | `SessionId` | Per `SessionId`; **durable** |
 | **Live session** | `LiveSession`, message queue, event publisher | (references the bound `SessionId`) | Node-local, **transient** (open → `close()`) |
 | *(unit)* **Execution** | One agent run in general — **may have no session** (subagent fork, skill fork, rewake replay, scheduled routine) | `ExecutionId` (minted for **session-less** runs only; a turn is identified by `SessionId` + `TurnId`) | Superset of a turn |

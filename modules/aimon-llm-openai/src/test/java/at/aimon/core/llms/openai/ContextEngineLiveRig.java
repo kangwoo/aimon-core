@@ -221,8 +221,8 @@ final class ContextEngineLiveRig {
 
     /** Runs one turn of this rig's session and requires it to succeed. */
     OrcaAgentExecutionResult turn(String input) {
-        final OrcaAgentExecutionResult result = executor.execute(runtime, OrcaAgentExecutionRequest.builder()
-                .sessionId(sessionId).userInput(input).userContextInjection(false).build());
+        final OrcaAgentExecutionResult result = executor.execute(runtime,
+                OrcaAgentExecutionRequest.builder().sessionId(sessionId).userInput(input).build());
         assertThat(result.isSuccess()).as("turn '%s' failed: %s", input, result.getErrorMessage()).isTrue();
         compactions.addAll(result.getCompactionEvents());
         return result;

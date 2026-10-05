@@ -23,7 +23,7 @@ stretch of running.
 | Scope | Representative components | Identifier | Lifetime |
 |-------|--------------|--------|----------|
 | **Application** | `SchedulingEngine`, `ScheduledTaskManager`, `RoutineExecutor`, `AgentRuntimeRegistry`, `SessionRecordStore`, `SessionLeaseStore`, `SessionInbox`, `SessionSignalBus`, `IdempotencyStore`, `KnowledgeStore`, `CredentialStore`, `BackgroundBashManager`, `BackgroundBashStore` | — | app start ~ shutdown |
-| **Agent** | `AgentRuntime` and what it owns — `ToolRegistry` / `HookRegistry` / `McpClientManager`, `AgentEnvironmentSnapshot` | `AgentRuntimeId` (`agent:<name>[:<discriminator>]`) | per `(Agent, discriminator)`, held across sessions |
+| **Agent** | `AgentRuntime` and what it owns — `ToolRegistry` / `HookRegistry` / `McpClientManager` | `AgentRuntimeId` (`agent:<name>[:<discriminator>]`) | per `(Agent, discriminator)`, held across sessions |
 | **Session** | `SessionRecord`, `SessionTotals`, `budgetOverride`, `SessionTranscript` | `SessionId` | as long as the session exists — **persistent** |
 | **Live session** | `LiveSession`, the message queue, the event publisher | (references the bound `SessionId`) | node-local, **transient** (open ~ `close()`) |
 | *(execution unit)* **Execution** | one unit of agent work in general — **there may be no session** (subagent fork, skill fork, rewake replay, scheduled routine) | `ExecutionId` (issued **only for sessionless executions** — a turn is identified by `SessionId` + `TurnId`) | the concept above turn |

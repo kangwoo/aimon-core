@@ -74,7 +74,11 @@ public final class SubmitOptionsCodec {
     public static final String FIELD_SYSTEM_PROMPT_VARIABLES = "systemPromptVariables";
     public static final String FIELD_EXECUTION_ATTRIBUTES = "executionAttributes";
     public static final String FIELD_LLM_CALL_METADATA = "llmCallMetadata";
-    public static final String FIELD_USER_CONTEXT_INJECTION = "userContextInjection";
+    /*
+     * Retired: "userContextInjection". It carried a per-turn opt-out of the synthetic user-context block, which no
+     * longer exists. Stored documents written before the removal may still hold it; decode() reads fields by name and
+     * so passes over it. The name is not reused for anything else.
+     */
 
     public static final String FIELD_TYPE = "type";
     public static final String FIELD_ID = "id";
@@ -88,7 +92,7 @@ public final class SubmitOptionsCodec {
 
     /** Every key {@link #encode(SubmitOptions)} can write at the top level — one per {@link SubmitOptions} property. */
     public static final Set<String> TOP_LEVEL_FIELDS = Set.of(FIELD_PRINCIPAL, FIELD_SYSTEM_PROMPT_VARIABLES,
-            FIELD_EXECUTION_ATTRIBUTES, FIELD_LLM_CALL_METADATA, FIELD_USER_CONTEXT_INJECTION);
+            FIELD_EXECUTION_ATTRIBUTES, FIELD_LLM_CALL_METADATA);
 
     /** Every key a nested {@link Principal} carries. */
     public static final Set<String> PRINCIPAL_FIELDS = Set.of(FIELD_TYPE, FIELD_ID, FIELD_DISPLAY_NAME);
@@ -152,7 +156,6 @@ public final class SubmitOptionsCodec {
         }
         options.getLlmCallMetadata()
                 .ifPresent(m -> node.set(FIELD_LLM_CALL_METADATA, encodeLlmCallMetadata(m, mapper)));
-        options.getUserContextInjection().ifPresent(b -> node.put(FIELD_USER_CONTEXT_INJECTION, b));
         return node;
     }
 
@@ -210,10 +213,6 @@ public final class SubmitOptionsCodec {
         final JsonNode metadata = node.get(FIELD_LLM_CALL_METADATA);
         if (metadata != null && metadata.isObject()) {
             builder.llmCallMetadata(decodeLlmCallMetadata(metadata));
-        }
-        final JsonNode injection = node.get(FIELD_USER_CONTEXT_INJECTION);
-        if (injection != null && injection.isBoolean()) {
-            builder.userContextInjection(injection.asBoolean());
         }
         return builder.build();
     }

@@ -17,8 +17,8 @@ public enum ContextBlockKind {
     SYSTEM,
 
     /**
-     * Belongs ahead of the first real user message as a synthetic {@code <system-reminder>} user block. Mirrors the
-     * legacy {@code UserContextMessageBuilder} path (working directory, current date, user extensions).
+     * Belongs ahead of the first real user message as a synthetic {@code <system-reminder>} user block. The
+     * place for per-conversation facts a deployment wants the model to have (the current date, user extensions).
      */
     USER_PREPEND,
 

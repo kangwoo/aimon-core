@@ -7,7 +7,6 @@ import java.util.concurrent.ExecutorService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import at.aimon.core.agent.AgentEnvironmentSnapshotProvider;
 import at.aimon.core.agent.context.ContextAssembler;
 import at.aimon.core.agent.queue.MessageQueueManager;
 import at.aimon.core.agent.session.transcript.ThrowingPromptTooLongHandler;
@@ -111,7 +110,6 @@ public class OrcaAgentExecutorFactory {
 
     private LlmCallGateway<TranscriptBuffer> gatewayOverride;
     private MessageQueueManager messageQueueManager;
-    private AgentEnvironmentSnapshotProvider agentEnvironmentSnapshotProvider;
     private boolean useStreaming;
     private LlmStreamingOptions streamingOptions;
     private SkillPreflightScanner skillPreflightScanner;
@@ -213,25 +211,6 @@ public class OrcaAgentExecutorFactory {
      */
     public OrcaAgentExecutorFactory withMessageQueueManager(MessageQueueManager messageQueueManager) {
         this.messageQueueManager = messageQueueManager;
-        return this;
-    }
-
-    /**
-     * Configures an optional {@link AgentEnvironmentSnapshotProvider} for CTX-06 synthetic {@code messages[0]}
-     * user-context
-     * injection. When set, the {@link OrcaAgentExecutor} built by this factory injects a synthetic user-role message
-     * at the head of every fresh conversation (one whose loaded memory contains no user messages yet), wrapping
-     * session-level context (working directory, current date, CLAUDE.md-style extensions) in
-     * {@code <system-reminder>} blocks. Resumed conversations always skip injection. When {@code null} (the default),
-     * injection is disabled.
-     *
-     * @param agentEnvironmentSnapshotProvider
-     *            the provider (may be {@code null} to clear the configuration)
-     * @return this factory (for chaining)
-     */
-    public OrcaAgentExecutorFactory withAgentEnvironmentSnapshotProvider(
-            AgentEnvironmentSnapshotProvider agentEnvironmentSnapshotProvider) {
-        this.agentEnvironmentSnapshotProvider = agentEnvironmentSnapshotProvider;
         return this;
     }
 
@@ -656,11 +635,10 @@ public class OrcaAgentExecutorFactory {
                 .transcriptManager(transcriptManager).toolExecutionManager(toolExecutionManager)
                 .hookExecutionManager(hookExecutionManager).commandExecutionManager(commandExecutionManager)
                 .subagentExecutionManager(subagentExecutionManager).messageQueueManager(messageQueueManager)
-                .agentEnvironmentSnapshotProvider(agentEnvironmentSnapshotProvider).useStreaming(useStreaming)
-                .streamingOptions(streamingOptions).skillPreflightScanner(skillPreflightScanner)
-                .pendingTurnRegistry(pendingTurnRegistry).pendingTurnTtl(pendingTurnTtl)
-                .memoryContextProvider(memoryContextProvider).executionMemorySink(executionMemorySink)
-                .approvalGate(approvalGate).build();
+                .useStreaming(useStreaming).streamingOptions(streamingOptions)
+                .skillPreflightScanner(skillPreflightScanner).pendingTurnRegistry(pendingTurnRegistry)
+                .pendingTurnTtl(pendingTurnTtl).memoryContextProvider(memoryContextProvider)
+                .executionMemorySink(executionMemorySink).approvalGate(approvalGate).build();
         return applyExecutorOverrides(executor);
     }
 
@@ -701,11 +679,10 @@ public class OrcaAgentExecutorFactory {
                 .transcriptManager(transcriptManager).toolExecutionManager(toolExecutionManager)
                 .hookExecutionManager(hookExecutionManager).commandExecutionManager(commandExecutionManager)
                 .subagentExecutionManager(subagentExecutionManager).messageQueueManager(messageQueueManager)
-                .agentEnvironmentSnapshotProvider(agentEnvironmentSnapshotProvider).useStreaming(useStreaming)
-                .streamingOptions(streamingOptions).skillPreflightScanner(skillPreflightScanner)
-                .pendingTurnRegistry(pendingTurnRegistry).pendingTurnTtl(pendingTurnTtl)
-                .memoryContextProvider(memoryContextProvider).executionMemorySink(executionMemorySink)
-                .approvalGate(approvalGate).build();
+                .useStreaming(useStreaming).streamingOptions(streamingOptions)
+                .skillPreflightScanner(skillPreflightScanner).pendingTurnRegistry(pendingTurnRegistry)
+                .pendingTurnTtl(pendingTurnTtl).memoryContextProvider(memoryContextProvider)
+                .executionMemorySink(executionMemorySink).approvalGate(approvalGate).build();
         return applyExecutorOverrides(executor);
     }
 

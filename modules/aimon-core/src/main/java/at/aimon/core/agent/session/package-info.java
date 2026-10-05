@@ -55,6 +55,5 @@
  * callers multiplexing a session across threads must synchronize externally.
  *
  * @see at.aimon.core.agent.session.store
- * @see at.aimon.core.agent.AgentEnvironmentSnapshot
  */
 package at.aimon.core.agent.session;

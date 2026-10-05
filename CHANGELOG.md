@@ -7,18 +7,27 @@ Central is versioned independently).
 
 ## [Unreleased]
 
-### Changed (breaking): `AgentEnvironmentSnapshot` no longer carries a working directory (EE-10, EE-24)
+### Removed (breaking): the user-context block, and the snapshot types that fed it (EE-78, EE-10, EE-24)
 
-- **Removed `AgentEnvironmentSnapshot.getWorkingDirectory()` and `AgentEnvironmentSnapshot.Builder.workingDirectory(String)`.**
-  `build()` no longer requires one (the required fields are `currentDate` and `userLocale`), and `equals`, `hashCode` and
-  `toString` no longer include it. The snapshot is collected once per agent; the working directory is a fact of one
-  execution, and lives on `ExecutionEnvironment.descriptor().workingDirectory()`. There is no replacement on the snapshot
-  — delete the builder call.
-- **The user-context block no longer falls back to the snapshot's directory.**
-  `UserContextMessageBuilder.build(snapshot, executionWorkingDirectory)` emits a `working-directory` entry only for a
-  non-blank second argument, and `build(snapshot)` never emits one. An unavailable execution environment used to show
-  whatever the snapshot held — a host path, where the embedder's provider collected `user.dir`. Sessions that already
-  stored such a `messages[0]` keep it.
+- **The framework no longer has a synthetic `messages[0]` user-context block.** It was injected only when an executor
+  was given an `AgentEnvironmentSnapshotProvider`, and no shipped assembly — bootstrap, the CLI, the starter — ever
+  gave it one, so nothing a stock `AimonStack` sends to the model changes. What it would have carried was the current
+  date (collected once per agent, as a UTC instant), a working directory the system prompt already states, and an
+  extensions map nothing filled.
+- **Removed types:** `AgentEnvironmentSnapshot`, `AgentEnvironmentSnapshotProvider`,
+  `DefaultAgentEnvironmentSnapshotProvider`, `UserContextMessageBuilder`.
+- **Removed methods:** `OrcaAgentExecutorFactory.withAgentEnvironmentSnapshotProvider`,
+  `OrcaAgentExecutor.Builder.agentEnvironmentSnapshotProvider`,
+  `OrcaAgentExecutionRequest.isUserContextInjectionEnabled()` and `Builder.userContextInjection(boolean)`,
+  `SubmitOptions.getUserContextInjection()` and `Builder.userContextInjection(boolean)`. Delete the calls.
+- **Stored data keeps decoding.** `userContextInjection` was a field of the serialized `SubmitOptions` in session
+  snapshots and in the Redis, Postgres and MongoDB inboxes. It is no longer written, the name is retired, and a
+  document that still carries it decodes to the same options without it. `SubmitOptionsCodec.FIELD_USER_CONTEXT_INJECTION`
+  is removed and `TOP_LEVEL_FIELDS` no longer lists it.
+- **If your model needs today's date, hand it over yourself**, in the time zone and precision you choose: put
+  `{{currentDate}}` in the agent definition's system prompt and fill it per turn with
+  `SubmitOptions.systemPromptVariable(...)`. The embedding guide has the example (§6.2.2). An embedder that did set a
+  snapshot provider loses the block and should move to that.
 
 ### Added: `responsesApiEnabled` is a configuration key (L-2)
 

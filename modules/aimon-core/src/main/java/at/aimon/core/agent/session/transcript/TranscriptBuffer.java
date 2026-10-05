@@ -26,7 +26,7 @@ import at.aimon.core.llm.Role;
  *
  * <p>
  * <b>Origin.</b> {@link #addMessage(Message)} and the other plain appenders record
- * {@link LogOrigin#CONVERSATION}. Anything the runtime puts into the log on its own — the user-context block, an
+ * {@link LogOrigin#CONVERSATION}. Anything the runtime puts into the log on its own — an
  * assembled reminder, hook feedback, a command's reply, a file list re-attached after compaction — goes through
  * {@link #addMessage(Message, LogOrigin)} with {@link LogOrigin#SYNTHETIC}, so that readers of the log as <em>what was
  * said</em> can tell the two apart.

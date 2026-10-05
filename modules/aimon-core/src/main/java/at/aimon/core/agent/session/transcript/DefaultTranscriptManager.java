@@ -160,7 +160,7 @@ public class DefaultTranscriptManager implements TranscriptManager {
      * <p>
      * Loads the stored transcript if one is recorded for {@code sessionId}; otherwise creates a fresh one
      * memory. In both cases, {@code systemPrompt} is applied to the returned memory. No user message is appended — the
-     * caller decides what to add next (for example, a synthetic user-context message followed by the real user
+     * caller decides what to add next (for example, an assembled context reminder followed by the real user
      * message).
      *
      * @param sessionId

@@ -18,7 +18,7 @@ AIMON 컴포넌트의 **수명(lifetime)**, **소유권(ownership)**, **소멸 �
 | Scope | 대표 컴포넌트 | 식별자 | Lifetime |
 |-------|--------------|--------|----------|
 | **Application** | `SchedulingEngine`, `ScheduledTaskManager`, `RoutineExecutor`, `AgentRuntimeRegistry`, `SessionRecordStore`, `SessionLeaseStore`, `SessionInbox`, `SessionSignalBus`, `IdempotencyStore`, `KnowledgeStore`, `CredentialStore`, `BackgroundBashManager`, `BackgroundBashStore` | — | 앱 시작 ~ 종료 |
-| **Agent** | `AgentRuntime` 과 그것이 소유한 `ToolRegistry` / `HookRegistry` / `McpClientManager`, `AgentEnvironmentSnapshot` | `AgentRuntimeId` (`agent:<name>[:<discriminator>]`) | `(Agent, discriminator)` 단위, 세션들을 가로질러 유지 |
+| **Agent** | `AgentRuntime` 과 그것이 소유한 `ToolRegistry` / `HookRegistry` / `McpClientManager` | `AgentRuntimeId` (`agent:<name>[:<discriminator>]`) | `(Agent, discriminator)` 단위, 세션들을 가로질러 유지 |
 | **Session** | `SessionRecord`, `SessionTotals`, `budgetOverride`, `SessionTranscript` | `SessionId` | 세션이 존재하는 동안 — **영속** |
 | **Live session** | `LiveSession`, 메시지 큐, 이벤트 publisher | (바인딩된 `SessionId` 참조) | 노드 로컬, **일시적** (열기 ~ `close()`) |
 | *(실행 단위)* **Execution** | 에이전트 작업 1회 일반 — **세션이 없을 수도 있다** (서브에이전트 포크, 스킬 포크, rewake 리플레이, 스케줄 루틴) | `ExecutionId` (**세션 없는 실행에만** 발급 — 턴은 `SessionId` + `TurnId` 로 식별된다) | 턴의 상위 개념 |

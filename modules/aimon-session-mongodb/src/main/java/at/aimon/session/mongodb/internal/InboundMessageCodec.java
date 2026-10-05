@@ -309,8 +309,6 @@ public final class InboundMessageCodec {
         }
         options.getLlmCallMetadata()
                 .ifPresent(m -> doc.append(SubmitOptionsCodec.FIELD_LLM_CALL_METADATA, encodeLlmCallMetadata(m)));
-        options.getUserContextInjection()
-                .ifPresent(b -> doc.append(SubmitOptionsCodec.FIELD_USER_CONTEXT_INJECTION, b));
         return doc;
     }
 
@@ -334,10 +332,6 @@ public final class InboundMessageCodec {
         final Document lcm = doc.get(SubmitOptionsCodec.FIELD_LLM_CALL_METADATA, Document.class);
         if (lcm != null) {
             b.llmCallMetadata(decodeLlmCallMetadata(lcm));
-        }
-        final Object uci = doc.get(SubmitOptionsCodec.FIELD_USER_CONTEXT_INJECTION);
-        if (uci instanceof Boolean bool) {
-            b.userContextInjection(bool);
         }
         return b.build();
     }

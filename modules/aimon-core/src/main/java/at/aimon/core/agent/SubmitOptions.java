@@ -28,9 +28,6 @@ import at.aimon.core.llm.LlmCallMetadata;
  * {@code ToolContext} and {@code HookContext} (e.g., feature flags, A/B assignments).
  * <li>{@link #getLlmCallMetadata() llmCallMetadata} — observability metadata (trace id, request id, tags) that the
  * Orca executor merges with framework-derived defaults before each LLM call.
- * <li>{@link #getUserContextInjection() userContextInjection} — tri-state override for the synthetic
- * {@code messages[0]} user-context injection. {@link Optional#empty()} means "use the executor default" (currently
- * {@code true}).
  * </ul>
  *
  * <p>
@@ -61,7 +58,6 @@ public final class SubmitOptions {
     private final Map<String, Object> systemPromptVariables;
     private final Map<String, Object> executionAttributes;
     private final LlmCallMetadata llmCallMetadata;
-    private final Boolean userContextInjection;
 
     private SubmitOptions(Builder builder) {
         this.principal = builder.principal;
@@ -72,7 +68,6 @@ public final class SubmitOptions {
                 ? Map.copyOf(builder.executionAttributes)
                 : Map.of();
         this.llmCallMetadata = builder.llmCallMetadata;
-        this.userContextInjection = builder.userContextInjection;
     }
 
     /**
@@ -129,19 +124,6 @@ public final class SubmitOptions {
         return Optional.ofNullable(llmCallMetadata);
     }
 
-    /**
-     * Returns the per-turn user-context-injection override.
-     *
-     * <p>
-     * Tri-state: {@code Optional.empty()} means "no override — executor uses its default"; otherwise the boxed value
-     * is forwarded as-is to {@code OrcaAgentExecutionRequest.Builder#userContextInjection(boolean)}.
-     *
-     * @return the override, or empty when unset
-     */
-    public Optional<Boolean> getUserContextInjection() {
-        return Optional.ofNullable(userContextInjection);
-    }
-
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -154,21 +136,18 @@ public final class SubmitOptions {
         return Objects.equals(principal, that.principal)
                 && Objects.equals(systemPromptVariables, that.systemPromptVariables)
                 && Objects.equals(executionAttributes, that.executionAttributes)
-                && Objects.equals(llmCallMetadata, that.llmCallMetadata)
-                && Objects.equals(userContextInjection, that.userContextInjection);
+                && Objects.equals(llmCallMetadata, that.llmCallMetadata);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(principal, systemPromptVariables, executionAttributes, llmCallMetadata,
-                userContextInjection);
+        return Objects.hash(principal, systemPromptVariables, executionAttributes, llmCallMetadata);
     }
 
     @Override
     public String toString() {
         return "SubmitOptions{principal=" + principal + ", systemPromptVariables=" + systemPromptVariables
-                + ", executionAttributes=" + executionAttributes + ", llmCallMetadata=" + llmCallMetadata
-                + ", userContextInjection=" + userContextInjection + '}';
+                + ", executionAttributes=" + executionAttributes + ", llmCallMetadata=" + llmCallMetadata + '}';
     }
 
     /** Builder for {@link SubmitOptions}. */
@@ -178,7 +157,6 @@ public final class SubmitOptions {
         private Map<String, Object> systemPromptVariables;
         private Map<String, Object> executionAttributes;
         private LlmCallMetadata llmCallMetadata;
-        private Boolean userContextInjection;
 
         private Builder() {
         }
@@ -272,23 +250,6 @@ public final class SubmitOptions {
          */
         public Builder llmCallMetadata(LlmCallMetadata llmCallMetadata) {
             this.llmCallMetadata = llmCallMetadata;
-            return this;
-        }
-
-        /**
-         * Overrides the executor's user-context-injection default for this turn only.
-         *
-         * <p>
-         * When this method is not called, {@link SubmitOptions#getUserContextInjection()} returns
-         * {@link Optional#empty()}
-         * and the session preserves the executor's default (currently {@code true}).
-         *
-         * @param userContextInjection
-         *            {@code true} to enable injection for this turn, {@code false} to opt out
-         * @return this builder
-         */
-        public Builder userContextInjection(boolean userContextInjection) {
-            this.userContextInjection = userContextInjection;
             return this;
         }
 

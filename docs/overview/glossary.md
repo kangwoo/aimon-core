@@ -11,7 +11,7 @@ AIMON 코드베이스에서 반복적으로 쓰이는 핵심 용어와 그 **수
 | Scope | 대표 타입 | 식별자 | Lifetime |
 |-------|----------|--------|----------|
 | **Application** | `SchedulingEngine`, `ScheduledTaskManager`, `RoutineExecutor`, `AgentRuntimeRegistry`, `SessionRecordStore`, `SessionLeaseStore`, `SessionInbox`, `SessionSignalBus`, `IdempotencyStore`, `KnowledgeStore`, `CredentialStore` | — | 앱 시작 ~ 종료 |
-| **Agent** | `AgentRuntime` 및 그것이 소유한 `ToolRegistry` / `HookRegistry` / `McpClientManager`, `AgentEnvironmentSnapshot` | `AgentRuntimeId` (`agent:<name>[:<discriminator>]`) | 세션들을 가로질러 유지 |
+| **Agent** | `AgentRuntime` 및 그것이 소유한 `ToolRegistry` / `HookRegistry` / `McpClientManager` | `AgentRuntimeId` (`agent:<name>[:<discriminator>]`) | 세션들을 가로질러 유지 |
 | **Session** | `SessionRecord`, `SessionTranscript`, `SessionTotals`, `budgetOverride` | `SessionId` | 세션이 존재하는 동안 — **영속** |
 | **Live session** | `LiveSession`, 메시지 큐, 이벤트 publisher | (bound `SessionId`) | 한 노드의 프로세스 안, **일시적** |
 | **Execution** | 에이전트 작업 1회 일반 — **세션이 없을 수도 있다** (서브에이전트 포크, 스킬 포크, rewake 리플레이, 스케줄 루틴) | `ExecutionId` (**세션 없는 실행에만** 발급 — §4) | 턴의 상위 개념 |
@@ -152,9 +152,6 @@ id 를 `invokingSessionId` 로 따로 들고 다니며 세션 정책이 그것�
   cron 재발화나 다른 노드에서도 같은 값이 나온다. `from(Agent)` / `from(Agent, String)` 으로 발급하며
   `generate()` 는 존재하지 않는다.
 - **`discriminator`** — 같은 `Agent` 정의를 테넌트/사용자 등으로 쪼개고 싶을 때 컨텍스트 id 에 덧붙이는 문자열.
-- **`AgentEnvironmentSnapshot`** — 스냅샷 시각, `UserLocale`, 사용자 확장 맵을 담은 불변 값. 작업 디렉토리는 담지 않는다 — 실행마다 다른 사실이라 실행 환경의 서술자에서 읽는다.
-  `AgentRuntimeId` 로 memoize 되므로 **agent-scoped** 다(세션마다 다시 모으지 않는다).
-  `AgentEnvironmentSnapshotProvider` 가 collect-once 를 보장한다.
 - **`AgentExecutor`** — 컨텍스트 + 요청을 받아 ReAct 루프를 도는 실행기. 기본 구현은 `OrcaAgentExecutor`.
 
 ### Session 계층 (영속)

@@ -225,7 +225,7 @@ class LiveSessionFactoryTest {
 
     @Test
     @DisplayName("Closing the first session leaves the second session's context usable (Phase 1 verification #2)")
-    void closingFirstSessionLeavesSecondAgentEnvironmentSnapshotUsable() {
+    void closingFirstSessionLeavesSecondSessionUsable() {
         final DefaultAgentRegistry registry = new DefaultAgentRegistry();
         final Agent agent = DefaultAgent.builder().name("phase1-survives").maxIterations(1).systemPrompt("x").build();
         registry.register(agent);
