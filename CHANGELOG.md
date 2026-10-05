@@ -7,6 +7,17 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Fixed: follow-ups from #225's final review
+
+- **`Edit` no longer merges a lone CR and an LF into one line break at the edge of an edit.** Deleting the text between
+  them, or inserting a break beside one, lost a line in files that mix lone CR with LF. Where an edit's edge would put a
+  CR against an LF, an LF now goes between them, so both breaks remain. (EE-76)
+- **`PathRuleVirtualFileSystem.search` refuses `maxResults < 1` itself**, as the `VirtualFileSystem` contract says,
+  instead of relying on the delegate before slicing the result. (EE-39)
+- **The CLI's configuration errors echo no value at all.** Only a property-name error keeps Jackson's wording; any
+  other mapping failure names the expected type or accepted values, or just `invalid value` — an out-of-range number
+  used to be quoted. (L-5)
+
 ### Fixed: `Edit` no longer rewrites line endings it was not asked to touch (EE-76)
 
 - **`Edit` keeps the file's bytes outside `old_string`.** It read files line by line, so every edit dropped one

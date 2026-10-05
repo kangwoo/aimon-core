@@ -556,4 +556,27 @@ class EditToolTest {
         assertThat(result.getContent()).contains("2 occurrence(s)");
         assertThat(Files.readString(file)).isEqualTo("x=3\r\ny=2\r\nx=3\r\n");
     }
+
+    // A lone CR beside an LF reads as one CRLF break. A splice must not create that pair where the two were, or are
+    // meant to be, separate breaks -- every line the folded view says is there must still be there.
+
+    @Test
+    void testExecute_AnInsertedBreakBeforeALoneLfDoesNotMergeIntoCrlf() throws IOException {
+        // Prevailing CR; the break added after z would otherwise sit against the LF that follows.
+        final String edited = editFile("cr-then-lf.txt", "x\ry\rz\nw", "z", "z\n");
+        assertThat(EditTool.LineBreakView.of(edited).text()).isEqualTo("x\ny\nz\n\nw");
+    }
+
+    @Test
+    void testExecute_ADeletionBetweenALoneCrAndALoneLfKeepsBothBreaks() throws IOException {
+        final String edited = editFile("cr-gap-lf.txt", "a\rb\nc", "b", "");
+        assertThat(EditTool.LineBreakView.of(edited).text()).isEqualTo("a\n\nc");
+    }
+
+    @Test
+    void testExecute_AReplacementStartingWithABreakAfterALoneCrKeepsBothBreaks() throws IOException {
+        // Prevailing LF; new_string opens with a break and lands right after a lone CR.
+        final String edited = editFile("cr-before-insert.txt", "p\rq\nr\ns\n", "q", "\nq");
+        assertThat(EditTool.LineBreakView.of(edited).text()).isEqualTo("p\n\nq\nr\ns\n");
+    }
 }

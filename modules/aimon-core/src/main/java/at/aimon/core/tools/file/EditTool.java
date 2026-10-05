@@ -374,19 +374,40 @@ public class EditTool extends AbstractTool implements ToolPermissionSubjectAware
             return new LineBreakView(raw, text.toString(), offsets, lineBreak);
         }
 
+        /** The folded view: every line break as {@code \n}. */
+        String text() {
+            return text;
+        }
+
         String replace(String target, String replacement, boolean all) {
             final StringBuilder out = new StringBuilder(raw.length());
             int rawCursor = 0;
             int index = text.indexOf(target);
             while (index >= 0) {
-                out.append(raw, rawCursor, rawOffset[index]).append(replacement);
+                appendAtSplice(out, raw, rawCursor, rawOffset[index]);
+                appendAtSplice(out, replacement, 0, replacement.length());
                 rawCursor = rawOffset[index + target.length()];
                 if (!all) {
                     break;
                 }
                 index = text.indexOf(target, index + target.length());
             }
-            return out.append(raw, rawCursor, raw.length()).toString();
+            appendAtSplice(out, raw, rawCursor, raw.length());
+            return out.toString();
+        }
+
+        /**
+         * Appends one chunk of the result. Chunks meet only at a splice, and there a lone CR on the left and an LF on
+         * the right would read as one CRLF break where the folded view has two (a deletion between them, or an inserted
+         * break beside one). An LF is put between them, so the CR becomes a CRLF — one break still — and the chunk's
+         * own LF stays a break of its own.
+         */
+        private static void appendAtSplice(StringBuilder out, String chunk, int start, int end) {
+            if (start < end && chunk.charAt(start) == '\n' && out.length() > 0
+                    && out.charAt(out.length() - 1) == '\r') {
+                out.append('\n');
+            }
+            out.append(chunk, start, end);
         }
     }
 }
