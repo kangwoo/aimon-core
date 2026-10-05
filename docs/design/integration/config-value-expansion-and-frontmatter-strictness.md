@@ -732,6 +732,16 @@ fixture mirroring the real config classes, including a copy of `ThinkingModeDese
 **CE-2** 로 등록했다. 같은 문서의 **CE-1** 은 §9 OQ-1(리터럴 `${` 를 적을 escape 가 없다)이 이 국면 밖으로
 나가므로 함께 올라간 것이다. 나머지 OQ 는 이 국면 안에서 끝났으므로 여기 남는다.
 
+**그 뒤 CE-2 가 결정되었다 — 거절하지 않고 WARN 으로 알린다.** 위 표의 두 번째 반쪽은 그대로다(리터럴 중복은
+여전히 통과하고 뒤엣것이 이긴다). 달라진 것은 통과시키면서 **키 경로를 대고 말한다**는 것이다:
+``Configuration key `llm.timeout` is written more than once; the earlier value is discarded and the last one is
+used.`` 거절로 가지 않은 이유는 같은 질문에 이미 답한 표면이 있기 때문이다 — 에이전트 · 서브에이전트 · 스킬
+프론트매터의 세 파서는 snakeyaml 의 `LoaderOptions` 를 기본값에 두라고 javadoc 에 적어 두었고(조이면 오늘
+적재되는 파일이 적재되지 않는다), CLI 설정만 기동을 실패시키면 두 표면이 같은 실수에 다른 답을 한다. 그래서
+네 표면이 **같은 문장으로 경고**한다. 프론트매터 쪽은 로더 옵션을 건드리지 않고 같은 텍스트를 노드 트리로 한
+번 더 읽어 찾으며(`at.aimon.core.base.text.YamlDuplicateKeys`), `Yaml.load` 호출은 그대로라 어떤 정의도 파싱
+결과가 달라지지 않는다. 확장이 만든 충돌의 **거절**은 그대로이고 메시지도 그대로다.
+
 ### 12.3 "One measured limit" 은 반대였다 — 직접 잰 결과
 
 | 적힌 것 | 확장 결과 | 실제 |

@@ -214,8 +214,12 @@ memory:
 
 The other half of the rule:
 
-- **Two sibling keys that expand to the same name are refused.** yaml stops you writing the same key twice, but it
-  cannot stop `${A}` and `${B}` from expanding to one value, and nobody reports it when the later one wins.
+- **Two sibling keys that expand to the same name are refused.** When `${A}` and `${B}` expand to one value the
+  later one replaces the earlier, and no key appears twice in the file, so reading it does not find the problem.
+  **The same key written twice, letter for letter, is not refused; it is reported at WARN** — ``Configuration key
+  `llm.timeout` is written more than once; the earlier value is discarded and the last one is used.`` The later
+  value wins as it always did; the only change is that the discarded value is mentioned. Agent, subagent and skill
+  front matter report the same case in the same sentence.
 - **Expansion is a single pass.** If a variable's value is itself `${OTHER}`, it stays literal.
 - **`$${NAME}` is the literal text `${NAME}`.** The variable is not looked up, so startup does not need it to be
   set. Use it for a placeholder that **the child process** is meant to expand, in the `args` or `env` of a stdio

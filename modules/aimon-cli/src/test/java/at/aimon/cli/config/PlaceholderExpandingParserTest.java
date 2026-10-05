@@ -390,6 +390,95 @@ class PlaceholderExpandingParserTest {
                 assertThat(tokensOf(parser)).hasSize(9);
             }
         }
+
+        @Test
+        @DisplayName("Should say which key was written twice, and that the earlier value is gone")
+        void aLiteralDuplicateIsReported() throws IOException {
+            // CE-2. Still not a failure -- see above -- but no longer silent either.
+            final List<String> warnings = warningsWhile(() -> {
+                try (PlaceholderExpandingParser parser = parse(
+                        "outer:\n  inner:\n    same: one\n    other: x\n    same: two\n    same: three\n", STUB)) {
+                    tokensOf(parser);
+                }
+            });
+
+            assertThat(warnings).containsExactly("Configuration key `outer.inner.same` is written more than once;"
+                    + " the earlier value is discarded and the last one is used.");
+        }
+
+        @Test
+        @DisplayName("Should report a duplicate at the top level and inside an array element by its own path")
+        void aLiteralDuplicateIsReportedWhereItIs() throws IOException {
+            final List<String> warnings = warningsWhile(() -> {
+                try (PlaceholderExpandingParser parser = parse(
+                        "top: 1\ntop: 2\nservers:\n  - name: a\n    name: b\n  - name: c\n", STUB)) {
+                    tokensOf(parser);
+                }
+            });
+
+            assertThat(warnings).containsExactly(
+                    "Configuration key `top` is written more than once;"
+                            + " the earlier value is discarded and the last one is used.",
+                    "Configuration key `servers[].name` is written more than once;"
+                            + " the earlier value is discarded and the last one is used.");
+        }
+
+        @Test
+        @DisplayName("Should stay silent when no key is written twice")
+        void aFileWithoutDuplicatesIsSilent() throws IOException {
+            final List<String> warnings = warningsWhile(() -> {
+                try (PlaceholderExpandingParser parser = parse(
+                        "first:\n  name: a\nsecond:\n  name: b\n  ${A}: c\n  $${A}: d\n", STUB)) {
+                    tokensOf(parser);
+                }
+            });
+
+            assertThat(warnings).isEmpty();
+        }
+
+        @Test
+        @DisplayName("Should keep refusing, not warn, when expansion is what made two keys collide")
+        void anExpansionCollisionIsStillRefusedWithItsOwnMessage() throws IOException {
+            final List<String> warnings = warningsWhile(() -> {
+                try (PlaceholderExpandingParser parser = parse("outer:\n  prod: one\n  ${P}: two\n", name -> "prod")) {
+                    assertThatThrownBy(() -> tokensOf(parser)).isInstanceOf(ConfigurationException.class)
+                            .hasMessage("Configuration keys `prod` and `${P}` both expand to `prod`, so one would"
+                                    + " silently replace the other. Keep one of them under `outer`.");
+                }
+            });
+
+            assertThat(warnings).isEmpty();
+        }
+
+        @Test
+        @DisplayName("Should keep refusing the same placeholder key written twice")
+        void theSamePlaceholderKeyTwiceIsStillRefused() throws IOException {
+            // Pinned because it is the shape nearest the warning: both spellings are identical, yet neither is the
+            // name they expand to, so this was a refusal before CE-2 and stays one.
+            try (PlaceholderExpandingParser parser = parse("outer:\n  ${P}: one\n  ${P}: two\n", name -> "prod")) {
+                assertThatThrownBy(() -> tokensOf(parser)).isInstanceOf(ConfigurationException.class)
+                        .hasMessageContaining("Configuration keys `${P}` and `${P}` both expand to `prod`");
+            }
+        }
+
+        private interface IoAction {
+            void run() throws IOException;
+        }
+
+        private List<String> warningsWhile(IoAction action) throws IOException {
+            final ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory
+                    .getLogger(PlaceholderExpandingParser.class);
+            final ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender = new ch.qos.logback.core.read.ListAppender<>();
+            appender.start();
+            logger.addAppender(appender);
+            try {
+                action.run();
+                return appender.list.stream().filter(event -> event.getLevel() == ch.qos.logback.classic.Level.WARN)
+                        .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage).toList();
+            } finally {
+                logger.detachAppender(appender);
+            }
+        }
     }
 
     @Nested

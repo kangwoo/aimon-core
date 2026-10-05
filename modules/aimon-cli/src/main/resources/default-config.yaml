@@ -4,8 +4,9 @@
 # `${NAME}` is replaced by the environment variable NAME, and a variable that is not set fails startup
 # naming the variable and the key it was written on. It works on any key, whatever the value's type --
 # a string, `llm.timeout`, an enum, an array element, a mapping key. Two keys that expand to the same
-# name are refused rather than one silently replacing the other. Expansion runs once, so a variable
-# whose value is itself `${OTHER}` stays literal.
+# name are refused rather than one silently replacing the other. (The same key written twice, letter
+# for letter, is not refused: the last value is used and a WARN names the key.) Expansion runs once,
+# so a variable whose value is itself `${OTHER}` stays literal.
 # `$${NAME}` is the literal text `${NAME}`: nothing is looked up, so NAME does not have to be set. Use it
 # for a placeholder a child process must expand itself, such as an `mcp.servers[].args` entry
 # (`"exec server --token $${TOKEN}"`). The escape exists only directly in front of a placeholder --

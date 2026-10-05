@@ -4,14 +4,19 @@ import java.io.IOException;
 import java.io.Writer;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.fasterxml.jackson.core.Base64Variant;
 import com.fasterxml.jackson.core.JsonParser;
@@ -73,8 +78,17 @@ import at.aimon.cli.exception.ConfigurationException;
  * property of every mapping. It fires only when expansion is what made the two collide — two keys written the same
  * way twice are yaml's own last-wins and are left alone, because expansion did not create that collision and this
  * class is not the place to start failing on it.
+ *
+ * <p>
+ * <b>Left alone, but not left unsaid.</b> A key written twice is logged at WARN with its path, once per key, saying
+ * the earlier value is discarded. It stays a warning because the same question has an answer elsewhere in this
+ * repository that cannot be a refusal: the agent, subagent and skill front-matter parsers keep snakeyaml's
+ * duplicate-key option at its default so that files which load today keep loading, and they report a duplicate in the
+ * same words ({@code YamlDuplicateKeys}). One answer on every surface an operator writes yaml on.
  */
 final class PlaceholderExpandingParser extends JsonParserDelegate {
+    private static final Logger log = LoggerFactory.getLogger(PlaceholderExpandingParser.class);
+
     /**
      * A placeholder and every {@code $} written directly in front of it. Group 1 is those leading dollars, group 2
      * the name. Matching the whole run at once is what makes the escape a property of the placeholder rather than of
@@ -394,6 +408,7 @@ final class PlaceholderExpandingParser extends JsonParserDelegate {
         private final boolean array;
         private String fieldName;
         private Map<String, String> writtenByExpanded;
+        private Set<String> reportedDuplicates;
 
         Level(boolean array) {
             this.array = array;
@@ -404,8 +419,22 @@ final class PlaceholderExpandingParser extends JsonParserDelegate {
                 writtenByExpanded = new LinkedHashMap<>();
             }
             final String previous = writtenByExpanded.putIfAbsent(expanded, written);
-            if (previous == null || (previous.equals(expanded) && written.equals(expanded))) {
-                // Nothing seen before, or the same key written twice — a duplicate expansion did not create.
+            if (previous == null) {
+                return;
+            }
+            if (previous.equals(expanded) && written.equals(expanded)) {
+                // The same key written twice — a duplicate expansion did not create. Jackson keeps the last value,
+                // exactly as it did before this class could see both, and startup goes on; what changed is that the
+                // discarded value is now mentioned. Once per key, however many times it is written.
+                if (reportedDuplicates == null) {
+                    reportedDuplicates = new HashSet<>();
+                }
+                if (reportedDuplicates.add(expanded)) {
+                    log.warn(
+                            "Configuration key `{}` is written more than once;"
+                                    + " the earlier value is discarded and the last one is used.",
+                            enclosingPath.isEmpty() ? expanded : enclosingPath + "." + expanded);
+                }
                 return;
             }
             throw new ConfigurationException("Configuration keys `" + previous + "` and `" + written

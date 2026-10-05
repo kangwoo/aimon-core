@@ -1,14 +1,19 @@
 package at.aimon.core.skill.parser;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.constructor.SafeConstructor;
+
+import at.aimon.core.base.text.YamlDuplicateKeys;
 
 /**
  * Parser for SKILL.md content.
@@ -46,6 +51,7 @@ import org.yaml.snakeyaml.constructor.SafeConstructor;
  * </pre>
  */
 public final class SkillContentParser {
+    private static final Logger log = LoggerFactory.getLogger(SkillContentParser.class);
 
     private static final Pattern FRONTMATTER_PATTERN = Pattern.compile("^---\\s*\n(.*?)\n---\\s*\n(.*)$",
             Pattern.DOTALL);
@@ -107,12 +113,28 @@ public final class SkillContentParser {
         return new Yaml(new SafeConstructor(new LoaderOptions()));
     }
 
+    /**
+     * Says so when the front matter writes a key twice: snakeyaml keeps the last value and the earlier one is gone
+     * before anything downstream can notice. A warning rather than a refusal for the reason {@link #newYaml()} gives —
+     * a skill file that loads today has to keep loading. Logged on every parse of such a file.
+     */
+    private static void warnAboutDuplicateKeys(Map<String, Object> frontmatter, String yaml) {
+        final List<String> duplicated = YamlDuplicateKeys.find(yaml);
+        if (!duplicated.isEmpty()) {
+            final Object name = frontmatter.get("name");
+            log.warn("{}",
+                    YamlDuplicateKeys.describe(name instanceof String ? "Skill '" + name + "'" : "Skill", duplicated));
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private static Map<String, Object> parseFrontmatter(String yaml) {
         try {
             final Object parsed = newYaml().load(yaml);
             if (parsed instanceof Map) {
-                return new HashMap<>((Map<String, Object>) parsed);
+                final Map<String, Object> frontmatter = new HashMap<>((Map<String, Object>) parsed);
+                warnAboutDuplicateKeys(frontmatter, yaml);
+                return frontmatter;
             } else {
                 throw new IllegalArgumentException("Frontmatter must be a YAML map, got: "
                         + (parsed != null ? parsed.getClass().getSimpleName() : "null"));
