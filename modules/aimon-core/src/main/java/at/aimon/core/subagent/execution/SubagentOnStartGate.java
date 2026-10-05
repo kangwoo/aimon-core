@@ -7,6 +7,7 @@ import java.util.Objects;
 
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.budget.CompletionReason;
+import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.command.execution.ExecutionMetadata;
@@ -53,11 +54,34 @@ public final class SubagentOnStartGate {
      */
     public static OnStartContext context(SubagentExecutionContext context, String goal,
             Map<String, Object> executionAttributes, ExecutionEnvironment executionEnvironment) {
+        return context(context, goal, executionAttributes, executionEnvironment, null);
+    }
+
+    /**
+     * Builds the context a fork's {@code onStart} hooks receive, carrying the fork's cancellation signal so a hook's
+     * shell command stops when the execution is interrupted (EE-80).
+     *
+     * @param context
+     *            the fork's execution context (must not be null)
+     * @param goal
+     *            the goal the fork was given, reported as the user message (must not be null)
+     * @param executionAttributes
+     *            the fork's execution attributes (nullable)
+     * @param executionEnvironment
+     *            the environment the fork runs in (nullable — a shell hook then reports that it has none)
+     * @param executionCancellation
+     *            the execution's cancellation signal (nullable — a fork that has none, such as a code-behavior fork,
+     *            leaves its hook commands bounded by their own timeout)
+     * @return the context (never null)
+     */
+    public static OnStartContext context(SubagentExecutionContext context, String goal,
+            Map<String, Object> executionAttributes, ExecutionEnvironment executionEnvironment,
+            CancellationSignal executionCancellation) {
         Objects.requireNonNull(context, "context cannot be null");
         return OnStartContext.builder().executorType(InvokerType.SUBAGENT).invokerName(context.getSubagent().getName())
                 .hookRegistry(context.getHookRegistry()).userLocale(context.getUserLocale())
-                .executionEnvironment(executionEnvironment).userMessage(goal).executionAttributes(executionAttributes)
-                .build();
+                .executionEnvironment(executionEnvironment).executionCancellation(executionCancellation)
+                .userMessage(goal).executionAttributes(executionAttributes).build();
     }
 
     /**

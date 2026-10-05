@@ -169,6 +169,35 @@ class HookExecutionPolicyTest {
     }
 
     @Test
+    void timeoutBehaviorForPrefersTheHooksDeclarationInBothDirections() {
+        final HookExecutionPolicy open = HookExecutionPolicy.continueOnExceptionButStopOnBlocked();
+        final HookExecutionPolicy closed = HookExecutionPolicy.failClosedStopOnBlocked();
+        final ExecutionHook<HookContext> silent = context -> HookResult.success();
+
+        assertThat(open.timeoutBehaviorFor(silent)).isEqualTo(TimeoutBehavior.FAIL_OPEN);
+        assertThat(closed.timeoutBehaviorFor(silent)).isEqualTo(TimeoutBehavior.FAIL_CLOSED);
+        assertThat(open.timeoutBehaviorFor(hookDeclaringBehavior(TimeoutBehavior.FAIL_CLOSED)))
+                .isEqualTo(TimeoutBehavior.FAIL_CLOSED);
+        assertThat(closed.timeoutBehaviorFor(hookDeclaringBehavior(TimeoutBehavior.FAIL_OPEN)))
+                .isEqualTo(TimeoutBehavior.FAIL_OPEN);
+        assertThatThrownBy(() -> open.timeoutBehaviorFor(null)).isInstanceOf(NullPointerException.class);
+    }
+
+    private static ExecutionHook<HookContext> hookDeclaringBehavior(TimeoutBehavior behavior) {
+        return new ExecutionHook<>() {
+            @Override
+            public HookResult execute(HookContext context) {
+                return HookResult.success();
+            }
+
+            @Override
+            public java.util.Optional<TimeoutBehavior> getTimeoutBehavior() {
+                return java.util.Optional.of(behavior);
+            }
+        };
+    }
+
+    @Test
     void timeoutForRejectsNullHook() {
         assertThatThrownBy(() -> HookExecutionPolicy.continueOnExceptionAndNeverStop().timeoutFor(null))
                 .isInstanceOf(NullPointerException.class);

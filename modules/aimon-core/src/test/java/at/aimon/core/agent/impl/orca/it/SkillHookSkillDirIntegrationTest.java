@@ -32,7 +32,8 @@ import at.aimon.core.subagent.Subagent;
  * a path relative to the skill does not resolve and a host path may not exist. Every test here declares a
  * {@code preTool} guard whose whole command is {@code bash "$AIMON_SKILL_DIR/scripts/guard.sh"} and lets the real
  * assembly — skill registry, {@code Skill} tool, fork, hook dispatch, local environment — decide whether the script
- * is found. A guard that is not found exits 127, which reads as "allow": the tool it was meant to stop runs.
+ * is found. A guard that is not found exits 127, which blocks the tool too (EE-66) — but with the "could not run"
+ * reason, never with what the script says, so the assertions here look for the script's own words.
  */
 @DisplayName("RT-IT-L2: a skill's shell hook finds its own scripts through $AIMON_SKILL_DIR")
 @DisabledOnOs(OS.WINDOWS)
@@ -127,7 +128,7 @@ class SkillHookSkillDirIntegrationTest {
         final List<String> seenByFork = runSkill(node("agent-skill-dir", HOOKS, UnaryOperator.identity()));
 
         // The script ran: its stderr is the veto the model reads. Without the variable the command is
-        // `bash "/scripts/guard.sh"`, exit 127, which allows the call.
+        // `bash "/scripts/guard.sh"`, exit 127: a block that says "command not found", not what the script says.
         assertThat(seenByFork).anyMatch(observation -> observation.contains(GUARD_SAYS));
         assertThat(seenByFork)
                 .noneMatch(observation -> observation.contains("Todo list updated") || observation.contains(TODO));

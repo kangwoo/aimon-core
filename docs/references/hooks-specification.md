@@ -69,6 +69,10 @@
 
 `notification` · `userpromptsubmit` · `stop_hook_active`
 
+`UNSUPPORTED` 에도 매핑에도 없는 이름은 "모르는 이벤트" 로 WARN 후 스킵한다. 아는 이름과 두 글자 이내로 다르면 WARN 에 가장
+가까운 이름이 붙고, 그 이름이 **가드 이벤트**면 스킵이 아니라 로드 실패다 — `preTol` 은 미래의 이벤트가 아니라 오타다
+(`HookEventName.nearest`, `NEAR_MISS_DISTANCE` = 2).
+
 여기에 없는 상류 이벤트(`PostToolUseFailure`, `TeammateIdle`, `TaskCompleted` 등)는 매핑에도
 UNSUPPORTED 에도 없으므로 **알 수 없는 이벤트로 스킵**된다.
 
@@ -146,7 +150,9 @@ tier 가 디스패치 순서에서 뒤에 서고 순서에 의존하는 결과(`
 | exit 0 | 통과 | ✔ |
 | exit 2 | **거부**, stderr 가 사유 | ✔ |
 | 그 외 non-zero | **허용** — 깨진 스크립트가 조용한 게이트키퍼가 되면 안 된다 | ✔ |
+| exit 126 · 127 (실행할 수 없음 · 찾지 못함) | 결정 채널이 있는 이벤트에서는 "종료 코드 없음" 과 같이 읽는다 — **거부**, `failOpen: true` 면 허용. 나머지 이벤트에서는 그 외 non-zero 와 같다 | AIMON 고유 (Claude Code 는 non-blocking 오류로 읽는다) |
 | 종료 코드 없음 (환경 없음 · 사용 불가 · timeout · 셸 실패) | 결정 채널이 있는 이벤트에서는 **거부**(fail-closed), 사유에 원인. 핸들러가 `failOpen: true` 면 허용 | AIMON 고유 |
+| `http` · `mcp` 핸들러가 판정을 받지 못함 (연결 실패 · timeout · non-2xx · 읽을 수 없는 답 · 실행기 미배선) | `preTool` 에서는 **거부**(fail-closed), 핸들러가 `failOpen: true` 면 허용. `postTool` 에서는 WARN 후 진행 | AIMON 고유 |
 | 사유 길이 | 4000자에서 자른다 (`MAX_DENY_REASON_LENGTH`) | AIMON 이 정한 상한 |
 
 exit 2 가 실제로 효력을 갖는 곳은 결정 채널이 있는 네 이벤트뿐이다 —

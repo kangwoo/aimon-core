@@ -146,13 +146,15 @@ public final class HookConfigLoader {
      */
     public LayeredHookConfig load() {
         final LayeredHookConfig.Builder b = LayeredHookConfig.builder();
-        loadOptional(userConfigDir.resolve(DEFAULT_FILE_NAME), HookConfigSource.USER)
-                .ifPresent(doc -> b.put(HookConfigSource.USER, doc));
-        loadOptional(projectConfigDir.resolve(DEFAULT_FILE_NAME), HookConfigSource.PROJECT)
-                .ifPresent(doc -> b.put(HookConfigSource.PROJECT, doc));
-        loadOptional(projectConfigDir.resolve(LOCAL_FILE_NAME), HookConfigSource.LOCAL)
-                .ifPresent(doc -> b.put(HookConfigSource.LOCAL, doc));
+        loadInto(b, userConfigDir.resolve(DEFAULT_FILE_NAME), HookConfigSource.USER);
+        loadInto(b, projectConfigDir.resolve(DEFAULT_FILE_NAME), HookConfigSource.PROJECT);
+        loadInto(b, projectConfigDir.resolve(LOCAL_FILE_NAME), HookConfigSource.LOCAL);
         return b.build();
+    }
+
+    /** Loads one layer and records it with its file, so later stages can name the file in what they report. */
+    private void loadInto(LayeredHookConfig.Builder builder, Path path, HookConfigSource source) {
+        loadOptional(path, source).ifPresent(doc -> builder.put(source, doc, path));
     }
 
     private Optional<HookConfigDocument> loadOptional(Path path, HookConfigSource source) {
@@ -203,7 +205,7 @@ public final class HookConfigLoader {
     }
 
     private static String fileLabel(Path path, HookConfigSource source) {
-        return "hooks config " + path.toAbsolutePath() + " (" + source + " layer)";
+        return MergedHookConfig.fileLabel(path, source);
     }
 
     private static void warnRejectedFailOpen(Path path, HookConfigDocument doc) {
@@ -213,7 +215,7 @@ public final class HookConfigLoader {
                     handler.getRejectedFailOpen()
                             .ifPresent(raw -> log.warn("hooks config at {}: {} handler {} on {} has a 'failOpen' that"
                                     + " is not a JSON boolean ({}); it is read as false, so the handler blocks when"
-                                    + " its command cannot run", path, handler.getType(), describe(handler),
+                                    + " it cannot get an answer", path, handler.getType(), describe(handler),
                                     event.getKey(), raw));
                 }
             }

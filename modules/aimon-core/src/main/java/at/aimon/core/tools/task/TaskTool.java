@@ -469,6 +469,20 @@ public class TaskTool extends AbstractTool {
             final String taskId = UUID.randomUUID().toString();
 
             if (runInBackground) {
+                // A background subagent outlives the skill whose fork starts it: the skill's hook layer goes off
+                // when the Skill tool returns and the subagent runs on under the runtime's hooks only. A guard that
+                // would silently stop applying is refused, as for a background workflow run (EE-63); a hook that
+                // only observes is not (EE-69). The judgment is HookRegistryAccess's, the same one.
+                final List<String> guardSkills = HookRegistryAccess.activeSkillGuards(context);
+                if (!guardSkills.isEmpty()) {
+                    log.warn("Task (background) refused: skill guard hooks are active ({})", guardSkills);
+                    return ToolResult.error(HookRegistryAccess.backgroundTaskRefusal(guardSkills));
+                }
+                final List<String> hookSkills = HookRegistryAccess.activeSkillHooks(context);
+                if (!hookSkills.isEmpty()) {
+                    log.warn("Task (background): the hooks of skill(s) {} stop firing for this subagent once the"
+                            + " skill returns", hookSkills);
+                }
                 // Launch subagent in background. The cancellation signal carried on env still cooperatively stops the
                 // background subagent while the parent execution is alive; once that execution ends, cancellation of
                 // the background task is owned by the execution manager's TaskStop control plane.

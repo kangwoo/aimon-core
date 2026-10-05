@@ -44,7 +44,13 @@ class ShellActionRunnerTest {
                 Arguments.of(new ShellExecutionException("cannot fork: guard.sh"),
                         ShellHookOutcome.Unrun.EXECUTION_FAILED, "ShellExecutionException"),
                 Arguments.of(new IllegalStateException("Shell is closed"), ShellHookOutcome.Unrun.EXECUTION_FAILED,
-                        "IllegalStateException"));
+                        "IllegalStateException"),
+                // Both roads an interrupt takes read the same (EE-80): the command's cancellation signal, and a
+                // shell that answers a thread interrupt (LocalShell wraps the InterruptedException).
+                Arguments.of(new at.aimon.core.shell.exception.ShellCancelledException("Process cancelled: guard.sh"),
+                        ShellHookOutcome.Unrun.CANCELLED, ""),
+                Arguments.of(new ShellExecutionException("Interrupted: guard.sh", new InterruptedException()),
+                        ShellHookOutcome.Unrun.CANCELLED, ""));
     }
 
     @ParameterizedTest(name = "{1}")
@@ -54,11 +60,12 @@ class ShellActionRunnerTest {
         VirtualShell shell = mock(VirtualShell.class);
         when(shell.execute(any(ShellCommand.class), any(ExecutionOptions.class))).thenThrow(failure);
 
-        ShellHookOutcome outcome = ShellActionRunner.run(shell, ACTION, Map.of(), null);
+        ShellHookOutcome outcome = ShellActionRunner.run(shell, ACTION, Map.of(), null, java.util.Optional.empty());
 
         assertThat(outcome.isObserved()).isFalse();
         assertThat(outcome.getUnrunCause()).contains(cause);
-        assertThat(outcome.unrunReason()).isEqualTo(cause.description() + ": " + detail);
+        assertThat(outcome.unrunReason())
+                .isEqualTo(detail.isEmpty() ? cause.description() : cause.description() + ": " + detail);
     }
 
     @Test
@@ -67,7 +74,7 @@ class ShellActionRunnerTest {
         VirtualShell shell = new LocalShell(tmp.resolve("does-not-exist"));
         ShellAction action = new ShellAction("guard.sh --token s3cret", Duration.ofSeconds(5));
 
-        ShellHookOutcome outcome = ShellActionRunner.run(shell, action, Map.of(), null);
+        ShellHookOutcome outcome = ShellActionRunner.run(shell, action, Map.of(), null, java.util.Optional.empty());
 
         assertThat(outcome.getUnrunCause()).contains(ShellHookOutcome.Unrun.EXECUTION_FAILED);
         assertThat(outcome.unrunReason()).doesNotContain("guard.sh").doesNotContain("s3cret")
@@ -80,11 +87,15 @@ class ShellActionRunnerTest {
         when(shell.execute(any(ShellCommand.class), any(ExecutionOptions.class)))
                 .thenReturn(new ShellCommandResult(127, "", "guard.sh: not found", Duration.ofMillis(3)));
 
-        ShellHookOutcome outcome = ShellActionRunner.run(shell, ACTION, Map.of(), null);
+        ShellHookOutcome outcome = ShellActionRunner.run(shell, ACTION, Map.of(), null, java.util.Optional.empty());
 
-        // An exit code — even "command not found" — is an answer; only its absence is "could not run".
+        // The runner reports the exit code as it came: it serves advisory events too, and there 127 is only logged.
         assertThat(outcome.isObserved()).isTrue();
         assertThat(outcome.getExitCode()).isEqualTo(127);
         assertThat(outcome.getUnrunCause()).isEmpty();
+        // Reading "command not found" as "could not run" is the guard events' decision (EE-66), and it never
+        // carries the shell's stderr, which quotes the command.
+        assertThat(outcome.asGuardAnswer().getUnrunCause()).contains(ShellHookOutcome.Unrun.COMMAND_NOT_FOUND);
+        assertThat(outcome.asGuardAnswer().unrunReason()).isEqualTo("command not found: exit code 127");
     }
 }

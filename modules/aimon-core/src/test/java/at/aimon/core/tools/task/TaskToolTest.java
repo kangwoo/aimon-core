@@ -400,6 +400,68 @@ class TaskToolTest {
                 eq("auth"));
     }
 
+    // --- EE-69: a background subagent outlives the skill whose fork starts it -------------------------------------
+
+    private ToolContext contextInside(HookRegistry registry) {
+        return ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, AgentRuntimeId.of("agent:test"))
+                .put(ToolContextKeys.HOOK_REGISTRY, registry).build();
+    }
+
+    private static ToolInput backgroundInput() {
+        return ToolInput.of(Map.of("subagent_name", "Explore", "prompt", "Find auth files", "description", "auth",
+                "run_in_background", true));
+    }
+
+    @Test
+    void backgroundIsRefusedWhileASkillsGuardHooksAreActive() {
+        final HookRegistry runtime = new at.aimon.core.hook.DefaultHookRegistry();
+        for (at.aimon.core.skill.hook.SkillHookSet guards : List.of(
+                at.aimon.core.skill.hook.SkillHookSet.builder()
+                        .addPreTool(ctx -> at.aimon.core.hook.execution.HookResult.success()).build(),
+                at.aimon.core.skill.hook.SkillHookSet.builder()
+                        .addOnStart(ctx -> at.aimon.core.hook.execution.HookResult.success()).build())) {
+            final at.aimon.core.skill.hook.SkillScopedHookRegistry view = new at.aimon.core.skill.hook.SkillScopedHookRegistry(
+                    runtime, "deploy", guards);
+
+            final ToolResult result = tool.execute(backgroundInput(), contextInside(view));
+
+            assertThat(result.isError()).isTrue();
+            assertThat(result.getContent()).contains("skill 'deploy'").contains("guard hooks")
+                    .contains("background subagent").contains("foreground");
+        }
+        verify(executionManager, never()).executeInBackground(any(), anyString(), anyString(), anyString(),
+                anyString());
+    }
+
+    @Test
+    void foregroundIsNotRefusedWhileASkillsGuardHooksAreActive() {
+        when(executionManager.execute(any(SubagentExecutionEnvironment.class), anyString(), eq("Explore"), anyString(),
+                anyString())).thenReturn(successResult());
+        final at.aimon.core.skill.hook.SkillScopedHookRegistry view = new at.aimon.core.skill.hook.SkillScopedHookRegistry(
+                new at.aimon.core.hook.DefaultHookRegistry(), "deploy", at.aimon.core.skill.hook.SkillHookSet.builder()
+                        .addPreTool(ctx -> at.aimon.core.hook.execution.HookResult.success()).build());
+
+        assertThat(tool.execute(validInput(), contextInside(view)).isSuccess()).isTrue();
+    }
+
+    @Test
+    void backgroundRunsOnceTheSkillsLayerIsClosed_andWhenTheSkillOnlyObserves() {
+        when(executionManager.executeInBackground(any(SubagentExecutionEnvironment.class), anyString(), eq("Explore"),
+                anyString(), anyString())).thenReturn(CompletableFuture.completedFuture(successResult()));
+        final HookRegistry runtime = new at.aimon.core.hook.DefaultHookRegistry();
+        final at.aimon.core.skill.hook.SkillScopedHookRegistry closed = new at.aimon.core.skill.hook.SkillScopedHookRegistry(
+                runtime, "deploy", at.aimon.core.skill.hook.SkillHookSet.builder()
+                        .addPreTool(ctx -> at.aimon.core.hook.execution.HookResult.success()).build());
+        closed.deactivate();
+        final at.aimon.core.skill.hook.SkillScopedHookRegistry observing = new at.aimon.core.skill.hook.SkillScopedHookRegistry(
+                runtime, "audit", at.aimon.core.skill.hook.SkillHookSet.builder()
+                        .addPostTool(ctx -> at.aimon.core.hook.execution.HookResult.success()).build());
+
+        assertThat(tool.execute(backgroundInput(), contextInside(closed)).isSuccess()).isTrue();
+        assertThat(tool.execute(backgroundInput(), contextInside(observing)).isSuccess()).isTrue();
+        assertThat(tool.execute(backgroundInput(), contextInside(runtime)).isSuccess()).isTrue();
+    }
+
     @Test
     void executeReportsInvalidParameterWhenRequiredFieldMissing() {
         ToolInput input = ToolInput.of(Map.of("subagent_name", "Explore"));

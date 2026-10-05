@@ -6,6 +6,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.ExecutionEnvironment;
@@ -54,6 +55,7 @@ public final class PreToolContext implements HookContext {
     private final HookRegistry hookRegistry;
     private final UserLocale userLocale;
     private final ExecutionEnvironment executionEnvironment;
+    private final CancellationSignal executionCancellation;
     private final ToolUse originalToolUse;
     private final ToolUse currentToolUse;
     private final int iterationCount;
@@ -66,6 +68,7 @@ public final class PreToolContext implements HookContext {
         hookRegistry = Objects.requireNonNull(builder.hookRegistry, "Hook registry cannot be null");
         userLocale = Objects.requireNonNull(builder.userLocale, "UserLocale cannot be null");
         executionEnvironment = builder.executionEnvironment;
+        executionCancellation = builder.executionCancellation;
         originalToolUse = Objects.requireNonNull(builder.toolUse, "Tool use cannot be null");
         currentToolUse = builder.currentToolUse != null ? builder.currentToolUse : originalToolUse;
         iterationCount = builder.iterationCount;
@@ -96,6 +99,11 @@ public final class PreToolContext implements HookContext {
     @Override
     public Optional<ExecutionEnvironment> getExecutionEnvironment() {
         return Optional.ofNullable(executionEnvironment);
+    }
+
+    @Override
+    public Optional<CancellationSignal> getExecutionCancellation() {
+        return Optional.ofNullable(executionCancellation);
     }
 
     /**
@@ -173,8 +181,9 @@ public final class PreToolContext implements HookContext {
         Objects.requireNonNull(newInput, "newInput cannot be null");
         final ToolUse rebuilt = ToolUse.of(originalToolUse.getId(), originalToolUse.getName(), newInput.toMap());
         final Builder b = new Builder().executorType(invokerType).invokerName(invokerName).hookRegistry(hookRegistry)
-                .userLocale(userLocale).executionEnvironment(executionEnvironment).toolUse(originalToolUse)
-                .iterationCount(iterationCount).timestamp(timestamp).executionAttributes(executionAttributes);
+                .userLocale(userLocale).executionEnvironment(executionEnvironment)
+                .executionCancellation(executionCancellation).toolUse(originalToolUse).iterationCount(iterationCount)
+                .timestamp(timestamp).executionAttributes(executionAttributes);
         b.currentToolUse = rebuilt;
         return new PreToolContext(b);
     }
@@ -193,6 +202,7 @@ public final class PreToolContext implements HookContext {
         private HookRegistry hookRegistry;
         private UserLocale userLocale;
         private ExecutionEnvironment executionEnvironment;
+        private CancellationSignal executionCancellation;
         private ToolUse toolUse;
         private ToolUse currentToolUse;
         private int iterationCount;
@@ -259,6 +269,19 @@ public final class PreToolContext implements HookContext {
          */
         public Builder executionEnvironment(ExecutionEnvironment executionEnvironment) {
             this.executionEnvironment = executionEnvironment;
+            return this;
+        }
+
+        /**
+         * Sets the cancellation signal of the execution this event fires in, so a hook's shell command stops when
+         * the execution is interrupted.
+         *
+         * @param executionCancellation
+         *            the execution's signal (nullable — absent when the firing site has none in reach)
+         * @return This builder
+         */
+        public Builder executionCancellation(CancellationSignal executionCancellation) {
+            this.executionCancellation = executionCancellation;
             return this;
         }
 

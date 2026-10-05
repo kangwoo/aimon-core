@@ -5,6 +5,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -43,9 +44,20 @@ import at.aimon.core.skill.hook.action.HttpMethod;
  * </ul>
  *
  * <p>
- * Non-2xx responses, malformed JSON and transport errors are logged at WARN level and degrade to
- * {@link HookResult#success()} — declarative hooks must remain fail-soft for transport problems. A persistent failure
- * is operator-observable through the WARN log.
+ * <b>Verdict or no verdict.</b> {@link #attempt} tells the two apart, because a guard has to (see
+ * {@link ActionCallOutcome}):
+ * <ul>
+ * <li><b>Verdict</b> &mdash; any 2xx response that can be read: a JSON object with {@code decision} absent or one of
+ * {@code allow} / {@code deny} / {@code defer}; an empty body; a body that is not declared as JSON and does not parse
+ * as a JSON object (a webhook answering {@code ok}). Only {@code deny} blocks.
+ * <li><b>No verdict</b> &mdash; a transport failure or an interrupted call ({@code CALL_FAILED}), a request that ran
+ * out of {@link HttpAction#getTimeout() time} ({@code TIMEOUT}), a non-2xx status ({@code CALL_FAILED}, whatever its
+ * body says &mdash; a refusal is spelled {@code decision: deny} in a 2xx), and a 2xx answer that cannot be read as a
+ * decision ({@code INVALID_RESPONSE}): a body declared {@code application/json} that does not parse, a
+ * {@code decision} that is not text or not one of the three values, an {@code updatedInput} that is not an object.
+ * </ul>
+ * {@link #run} is the advisory reading of the same call: it logs a missing verdict at WARN and returns
+ * {@link HookResult#success()}, so a {@code postTool} webhook stays fail-soft for transport problems.
  *
  * <p>
  * Thread-safe: the underlying {@code HttpClient} and {@code ObjectMapper} are safe to share across threads.
@@ -82,7 +94,8 @@ public final class HttpActionExecutor {
     }
 
     /**
-     * Executes the action and returns the resolved {@link HookResult}.
+     * Executes the action and returns the resolved {@link HookResult}, reading a call that produced no verdict as
+     * success. For events that cannot block; a guard uses {@link #attempt}.
      *
      * @param action
      *            the configured action (must not be null)
@@ -93,19 +106,69 @@ public final class HttpActionExecutor {
      * @param processEnv
      *            process env snapshot used to populate the whitelist; only keys present in
      *            {@link HttpAction#getAllowedEnvVars()} are forwarded (must not be null)
-     * @return the hook result (never null; success on transport failure)
+     * @return the hook result (never null; success when the call produced no verdict)
      */
     public HookResult run(HttpAction action, ToolInput toolInput, Map<String, String> contextAttributes,
+            Map<String, String> processEnv) {
+        return attempt(action, toolInput, contextAttributes, processEnv).orSuccess();
+    }
+
+    /**
+     * Executes the action and reports whether it produced a verdict. Never throws for a failed call.
+     *
+     * @param action
+     *            the configured action (must not be null)
+     * @param toolInput
+     *            tool input source for {@code ${tool_input.X}} placeholders (may be null)
+     * @param contextAttributes
+     *            context attributes for {@code ${context.X}} placeholders (must not be null)
+     * @param processEnv
+     *            process env snapshot used to populate the whitelist; only keys present in
+     *            {@link HttpAction#getAllowedEnvVars()} are forwarded (must not be null)
+     * @return the verdict, or why there is none (never null)
+     * @throws NullPointerException
+     *             if action, contextAttributes or processEnv is null
+     */
+    public ActionCallOutcome attempt(HttpAction action, ToolInput toolInput, Map<String, String> contextAttributes,
             Map<String, String> processEnv) {
         Objects.requireNonNull(action, "action cannot be null");
         Objects.requireNonNull(contextAttributes, "contextAttributes cannot be null");
         Objects.requireNonNull(processEnv, "processEnv cannot be null");
 
+        final URI url = action.getUrl();
+        final HttpRequest request;
+        try {
+            request = buildRequest(action, toolInput, contextAttributes, processEnv);
+        } catch (RuntimeException e) {
+            // A header the client rejects, a URL without a scheme: the request never left.
+            log.warn("HTTP hook to {} could not be built: {}", url, e.getMessage());
+            return ActionCallOutcome.notRun(ShellHookOutcome.Unrun.CALL_FAILED, ShellActionRunner.failureDetail(e));
+        }
+
+        try {
+            final HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            return mapResponse(action, response);
+        } catch (HttpTimeoutException e) {
+            log.warn("HTTP hook to {} timed out after {}: {}", url, action.getTimeout(), e.getMessage());
+            return ActionCallOutcome.notRun(ShellHookOutcome.Unrun.TIMEOUT,
+                    "no response within " + action.getTimeout().toMillis() + "ms");
+        } catch (IOException e) {
+            // The type only: a transport message routinely names the host and port.
+            log.warn("HTTP hook to {} failed (transport): {}", url, e.getMessage());
+            return ActionCallOutcome.notRun(ShellHookOutcome.Unrun.CALL_FAILED, ShellActionRunner.failureDetail(e));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("HTTP hook to {} interrupted", url);
+            return ActionCallOutcome.notRun(ShellHookOutcome.Unrun.CANCELLED, "");
+        }
+    }
+
+    private static HttpRequest buildRequest(HttpAction action, ToolInput toolInput,
+            Map<String, String> contextAttributes, Map<String, String> processEnv) {
         final TemplateRenderer renderer = TemplateRenderer.builder().toolInput(toolInput)
                 .envWhitelist(filterEnv(processEnv, action.getAllowedEnvVars())).context(contextAttributes).build();
 
-        final URI url = action.getUrl();
-        final HttpRequest.Builder reqBuilder = HttpRequest.newBuilder(url).timeout(action.getTimeout());
+        final HttpRequest.Builder reqBuilder = HttpRequest.newBuilder(action.getUrl()).timeout(action.getTimeout());
 
         for (Map.Entry<String, String> h : action.getHeaders().entrySet()) {
             reqBuilder.header(h.getKey(), renderer.render(h.getValue()));
@@ -116,19 +179,7 @@ public final class HttpActionExecutor {
                 ? HttpRequest.BodyPublishers.noBody()
                 : HttpRequest.BodyPublishers.ofString(renderedBody);
 
-        final HttpRequest request = applyMethod(reqBuilder, action.getMethod(), publisher).build();
-
-        try {
-            final HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            return mapResponse(action, response);
-        } catch (IOException e) {
-            log.warn("HTTP hook to {} failed (transport): {}", url, e.getMessage());
-            return HookResult.success();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            log.warn("HTTP hook to {} interrupted", url);
-            return HookResult.success();
-        }
+        return applyMethod(reqBuilder, action.getMethod(), publisher).build();
     }
 
     private static Map<String, String> filterEnv(Map<String, String> processEnv, Set<String> whitelist) {
@@ -154,90 +205,47 @@ public final class HttpActionExecutor {
         };
     }
 
-    private HookResult mapResponse(HttpAction action, HttpResponse<String> response) {
+    private ActionCallOutcome mapResponse(HttpAction action, HttpResponse<String> response) {
         final int code = response.statusCode();
         final String body = response.body() == null ? "" : response.body();
 
         if (code < 200 || code >= 300) {
+            // Not a verdict even when the body says "deny": a refusal is a 2xx carrying decision=deny. The body is not
+            // read at all, so an error page cannot pass for a decision in either direction.
             log.warn("HTTP hook to {} returned non-2xx status {} (body bytes={})", action.getUrl(), code,
                     body.length());
-            return HookResult.success();
+            return ActionCallOutcome.notRun(ShellHookOutcome.Unrun.CALL_FAILED, "HTTP " + code);
         }
 
         if (body.isBlank()) {
-            return HookResult.success();
+            return ActionCallOutcome.verdict(HookResult.success());
         }
 
         final JsonNode root;
         try {
             root = objectMapper.readTree(body);
         } catch (JsonProcessingException e) {
-            log.warn("HTTP hook to {} returned non-JSON body (status={}): {}", action.getUrl(), code, e.getMessage());
-            return HookResult.success();
+            if (declaresJson(response)) {
+                // The endpoint said it was answering in JSON and the answer does not parse (cut short, say).
+                log.warn("HTTP hook to {} returned a body declared as JSON that does not parse (status={}): {}",
+                        action.getUrl(), code, e.getOriginalMessage());
+                return ActionCallOutcome.notRun(ShellHookOutcome.Unrun.INVALID_RESPONSE, "malformed JSON body");
+            }
+            // A plain-text acknowledgement ("ok"): a side-effect endpoint, no decision intended.
+            log.debug("HTTP hook to {} returned a non-JSON body (status={}); no decision carried", action.getUrl(),
+                    code);
+            return ActionCallOutcome.verdict(HookResult.success());
         }
 
         if (root == null || !root.isObject()) {
-            return HookResult.success();
+            return ActionCallOutcome.verdict(HookResult.success());
         }
-
-        final String decision = textOrNull(root, "decision");
-        final String reason = textOrNull(root, "reason");
-        final String feedback = pickFeedback(root);
-        final ToolInput updatedInput = readUpdatedInput(root);
-
-        if ("deny".equalsIgnoreCase(decision)) {
-            return HookResult.block(reason != null ? reason : "Denied by HTTP hook");
-        }
-
-        // allow / defer / unknown / null → success, optionally with feedback / updatedInput
-        if (feedback == null && updatedInput == null) {
-            return HookResult.success();
-        }
-
-        final HookResult.Builder b = HookResult.builder();
-        if (feedback != null) {
-            b.feedback(feedback);
-        }
-        if (updatedInput != null) {
-            b.updatedInput(updatedInput);
-        }
-        return b.build();
+        return DecisionDocument.read(root, objectMapper, "HTTP hook to " + action.getUrl(), "Denied by HTTP hook",
+                true);
     }
 
-    private ToolInput readUpdatedInput(JsonNode root) {
-        final JsonNode node = root.get("updatedInput");
-        if (node == null || !node.isObject()) {
-            return null;
-        }
-        try {
-            @SuppressWarnings("unchecked")
-            final Map<String, Object> map = objectMapper.convertValue(node, Map.class);
-            return ToolInput.of(map);
-        } catch (IllegalArgumentException e) {
-            log.warn("HTTP hook returned malformed updatedInput; ignoring: {}", e.getMessage());
-            return null;
-        }
-    }
-
-    private static String pickFeedback(JsonNode root) {
-        final String f = textOrNull(root, "feedback");
-        if (f != null) {
-            return f;
-        }
-        // Claude Code-compatible alias: systemMessage and hookSpecificOutput.additionalContext
-        final String sysMsg = textOrNull(root, "systemMessage");
-        if (sysMsg != null) {
-            return sysMsg;
-        }
-        final JsonNode hso = root.get("hookSpecificOutput");
-        if (hso != null && hso.isObject()) {
-            return textOrNull(hso, "additionalContext");
-        }
-        return null;
-    }
-
-    private static String textOrNull(JsonNode root, String field) {
-        final JsonNode n = root.get(field);
-        return (n != null && n.isTextual()) ? n.asText() : null;
+    private static boolean declaresJson(HttpResponse<String> response) {
+        return response.headers().firstValue("Content-Type")
+                .map(value -> value.toLowerCase(java.util.Locale.ROOT).contains("json")).orElse(false);
     }
 }

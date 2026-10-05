@@ -490,6 +490,36 @@ class SkillHookSetParserTest {
     }
 
     @Test
+    void parse_httpAndMcpGuards_blockWithoutAVerdict_andFailOpenLetsThemPass() {
+        // The MCP server is not registered and nothing listens on the HTTP port: neither call can produce a verdict.
+        final at.aimon.core.mcp.McpClientManager noServers = org.mockito.Mockito
+                .mock(at.aimon.core.mcp.McpClientManager.class);
+        org.mockito.Mockito.when(noServers.getClient("policy")).thenReturn(java.util.Optional.empty());
+        final SkillHookSetParser parser = new SkillHookSetParser(new RecordingShellExecutor(),
+                at.aimon.core.skill.hook.declarative.HttpActionExecutor.createDefault(),
+                new at.aimon.core.skill.hook.declarative.McpActionExecutor(noServers,
+                        new com.fasterxml.jackson.databind.ObjectMapper()),
+                Map.of());
+        final Map<String, Object> http = Map.of("type", "http", "url", "http://127.0.0.1:1/policy");
+        final Map<String, Object> mcp = Map.of("type", "mcp", "server", "policy", "tool", "evaluate");
+        final Map<String, Object> hooks = Map.of("preTool",
+                List.of(Map.of("action", http), Map.of("action", http, "failOpen", true), Map.of("action", mcp),
+                        Map.of("action", mcp, "failOpen", true)));
+
+        final SkillHookSet set = parser.parse("deploy", hooks);
+
+        final at.aimon.core.hook.event.PreToolContext context = at.aimon.core.hook.event.PreToolContext.builder()
+                .executorType(at.aimon.core.agent.InvokerType.MAIN_AGENT).invokerName("agent")
+                .hookRegistry(new at.aimon.core.hook.DefaultHookRegistry())
+                .userLocale(at.aimon.core.base.UserLocale.createDefault())
+                .toolUse(at.aimon.core.llm.ToolUse.of("call-1", "Bash", Map.of())).iterationCount(1).build();
+        assertThat(set.getPreToolHooks().get(0).execute(context).getStatus()).isEqualTo(HookStatus.BLOCKED);
+        assertThat(set.getPreToolHooks().get(1).execute(context).getStatus()).isEqualTo(HookStatus.SUCCESS);
+        assertThat(set.getPreToolHooks().get(2).execute(context).getStatus()).isEqualTo(HookStatus.BLOCKED);
+        assertThat(set.getPreToolHooks().get(3).execute(context).getStatus()).isEqualTo(HookStatus.SUCCESS);
+    }
+
+    @Test
     void parse_failOpenOnAnAdvisoryEvent_isAcceptedAndHarmless() {
         final ShellActionExecutor cannotRun = new RecordingShellExecutor(
                 ShellHookOutcome.notRun(ShellHookOutcome.Unrun.TIMEOUT, ""));

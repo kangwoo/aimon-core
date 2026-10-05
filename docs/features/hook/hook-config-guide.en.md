@@ -25,10 +25,11 @@ format, so an existing Claude Code configuration file can be carried over as is.
    - [`http`](#http)
    - [`mcp`](#mcp)
    - [`deny`](#deny)
-7. [Template variables](#template-variables)
-8. [Async Rewake (`asyncRewake`)](#async-rewake-asyncrewake)
-9. [Examples](#examples)
-10. [Troubleshooting](#troubleshooting)
+7. [What a guard blocks](#what-a-guard-blocks)
+8. [Template variables](#template-variables)
+9. [Async Rewake (`asyncRewake`)](#async-rewake-asyncrewake)
+10. [Examples](#examples)
+11. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -111,8 +112,8 @@ at application scope and watches these three files for changes:
 
 | Situation                         | Behaviour                                                     |
 |-----------------------------------|---------------------------------------------------------------|
-| `hooks.json` fails to parse or cannot be read **at startup** | **Startup stops.** The exception message carries the file path, the layer and the cause. A sound file in another layer does not help — starting without one layer would run with that layer's guards off |
-| The new `hooks.json` fails to parse or cannot be read (reload) | No swap. **The previous configuration stays in force** (its hooks and guards unchanged). `OnConfigReload(failed)` fires, with the file path and layer in `failureReason` |
+| `hooks.json` fails to parse or cannot be read **at startup**, or has **an entry that cannot be applied** under a guard event | **Startup stops.** The exception message carries the file path, the layer and the cause (for an inapplicable entry, the event, the entry number and the handler number as well). A sound file in another layer does not help — starting without one layer would run with that layer's guards off |
+| The new `hooks.json` fails to parse or cannot be read, or has an entry that cannot be applied under a guard event (reload) | No swap. **The previous configuration stays in force** (its hooks and guards unchanged). `OnConfigReload(failed)` fires, with the file path and layer in `failureReason` |
 | Some hook fails to register mid-swap | LIFO undo removes the new hooks and re-registers the previous ones in their original order |
 | A listener throws                 | Logged only; the watcher keeps running (poison-pill protection) |
 | The watcher itself fails to start | The CLI carries on without hot reload (WARN log)              |
@@ -203,6 +204,13 @@ ignored — both `"onStart"` and `"onstart"` work).
 The following events are **not currently supported**; an entry for one is ignored with a WARN
 log: `Notification`, `UserPromptSubmit`, `stop_hook_active`.
 
+**An event name AIMON does not know** is ignored with a WARN as well — it may be an event of a newer AIMON or of Claude
+Code. But a name **within two letters** of a known one is read as a typo: the WARN names the closest event (`unknown
+event 'postTol' … did you mean 'postTool'?`), and when that closest event is a **guard event** (`preTool`, `PreToolUse`,
+`onStart`, `preCompact`, `permissionRequest`) it is not a WARN but a **startup failure** (`… is invalid: unknown event
+'preTol' - did you mean 'preTool'? …`). `preTol` is not a future event, and skipping it starts the host without the guard
+that was written.
+
 > The "(none)" for `permissionRequest` / `subagentStart` is copied straight from
 > `HookEventName`'s reverse mapping, but both events do exist in the upstream spec. The forward
 > resolve works fine; only the reverse direction is empty — the details are in
@@ -215,7 +223,8 @@ log: `Notification`, `UserPromptSubmit`, `stop_hook_active`.
 >
 > In a declarative hook, a refusal in those four events is expressed as **exit 2** from a
 > `command` handler (see [exit codes](#command)). `type: "deny"` is narrower still — it is
-> `preTool`-only, and placing it on another event makes the bootstrap skip the entry.
+> `preTool`-only, and on another event it is an entry that cannot be applied: a startup failure
+> under a guard event, skipped elsewhere.
 
 ---
 
@@ -232,7 +241,8 @@ tool (`NameOnlyPredicate.ANY`).
 | `Bash(command=^git\\s+push)`          | Tool name plus an input-field match (`PredicateParser`)             |
 | `Bash & input.command~^npm`           | Composition — name and input predicates joined with `&` / `\|`      |
 
-- A pattern `PredicateParser` cannot interpret falls back to `name-only` and leaves a WARN log.
+- A pattern `PredicateParser` cannot interpret falls back to `name-only` on `postTool` and leaves a WARN log.
+  On `preTool` it is a **startup failure** — the fallback matches no real tool name, so the guard would silently be off.
 - Regular expressions follow Java `Pattern` syntax.
 
 ---
@@ -243,7 +253,8 @@ tool (`NameOnlyPredicate.ANY`).
 
 Runs a shell command, handled by `ShellAction` + `ShellActionExecutor`. It is **the only handler
 type usable on every event** (`http` / `mcp` are `preTool`/`postTool`-only and `deny` is
-`preTool`-only — placing them elsewhere skips the entry with a WARN).
+`preTool`-only — elsewhere they are entries that cannot be applied: a startup failure under a guard
+event, skip + WARN on the other events. See "What stops startup" below).
 
 ```jsonc
 {
@@ -286,6 +297,7 @@ path=$(echo "$payload" | jq -r '.tool_input.file_path')
 |------|-----------------------------------------------------------------------------------|
 | `0`  | Proceed normally.                                                                 |
 | `2`  | **veto** — stderr becomes the refusal reason (Claude Code parity). Truncated beyond 4000 characters. |
+| `126` · `127` | The shell **could not start** the command (not executable · not found). On an event with a decision channel this **counts as a veto** — see "When the command could not run" below. On the other events it reads like "other". |
 | other | `WARN` log + fail-soft (proceeds normally). A broken script must not become a silent gatekeeper. |
 | none | The command produced no exit code (timeout, shell failure). On an event with a decision channel this **counts as a veto** — see "When the command could not run" below. |
 
@@ -319,7 +331,10 @@ not run the ReAct loop, but `onStart` fires before the behavior is invoked, and 
 exit code** — a timeout, a shell failure — the hook returns that event's refusal (`preTool`, `onStart` and `preCompact`
 block; `permissionRequest` denies). A guard that could not decide does not let the operation through. The reason names
 the cause, in the form `Blocked: guard hook '<source>#<n>' (<event>) could not run its command — timed out: …`, and never
-contains the command string. For a handler that **observes** rather than guards (audit logging, metrics), declare
+contains the command string. **Exit 126 and 127 are the same case** — the shell ended with "cannot execute" or "not
+found", so the guard gave no answer (`… — command not found: exit code 127`; the shell's stderr quotes the command line,
+so it is left out of the reason). A script that itself exits 126 or 127 cannot be told apart and is blocked the same
+way — a guard script reports "allow, but something went wrong" with another code, such as 1. For a handler that **observes** rather than guards (audit logging, metrics), declare
 `"failOpen": true`: it then leaves a WARN and proceeds. `failOpen` does not weaken an exit 2. The only value that opens
 the guard is the JSON boolean `true`: a value that is not a boolean, such as `"true"`, `1` or `null`, is not coerced and
 **is read as `false`** — the handler is still registered with its guard closed, and a WARN names the file, the event and
@@ -352,6 +367,14 @@ handler's own deadline. A declared budget is **clamped to 10 minutes
 (`MAX_DECLARED_BUDGET`)**, so a configuration mistake cannot hold a turn indefinitely (anything
 larger is truncated to 10 minutes after a WARN log).
 
+**When the outer net fires first.** If a handler does not keep its own timeout — a remote shell that does not implement
+cancellation, stuck I/O, an MCP call that takes no timeout — and the outer net cuts the hook off, a declarative hook on
+one of the four events with a decision channel **blocks** (`Hook timed out after …ms (limit=…ms)`). The event policy's
+`timeoutBehavior` defaults to `FAIL_OPEN`, but a declarative guard declares `FAIL_CLOSED` per hook and the executor
+follows that declaration over the policy (`ExecutionHook#getTimeoutBehavior()`). A handler with `"failOpen": true`, and
+every handler on the other 9 events, declares nothing and so follows the event policy (`FAIL_OPEN` by default — it
+proceeds). Hooks registered in code behave as they did.
+
 ### `http`
 
 Calls an HTTP webhook. `HttpAction` + `HttpActionExecutor`.
@@ -371,8 +394,28 @@ Calls an HTTP webhook. `HttpAction` + `HttpActionExecutor`.
 ```
 
 If the response body follows the JSON schema
-`{ "decision": "deny" | "allow", "reason": "...", "updatedInput": {...} }` it is mapped onto a
-`HookResult` automatically. A response that does not follow the schema simply passes.
+`{ "decision": "allow" | "deny" | "defer", "reason": "...", "feedback": "...", "updatedInput": {...} }`, it is mapped to a
+`HookResult` automatically. On `preTool` what matters is **whether a verdict came back** — a guard that got none blocks
+([What a guard blocks](#what-a-guard-blocks)). `"failOpen": true` applies to this handler exactly as it does to `command`.
+
+| Response | How it is read |
+|----------|----------------|
+| 2xx, a JSON object, `decision` is `deny` | verdict: refuse (`reason` is the reason) |
+| 2xx, a JSON object, `decision` is `allow` or `defer`, or absent | verdict: allow (`feedback` and `updatedInput` are applied as given) |
+| 2xx with an empty body, text that is not declared as JSON (`ok`), or JSON that is not an object | verdict: allow — a webhook that carries no decision |
+| 2xx that cannot be read — a body whose `Content-Type` is JSON but does not parse, a `decision` that is not a string or not one of the three (`"block"`, say), an `updatedInput` that is not an object | **no verdict** (`response could not be read`) |
+| non-2xx (whatever the body says) | **no verdict** (`call failed: HTTP <status>`) — a refusal is spelled `decision: deny` in a 2xx |
+| connection failure, transport error | **no verdict** (`call failed: <exception type>`) |
+| `timeout` exceeded | **no verdict** (`timed out`) |
+| executor not wired | **no verdict** (`action executor not wired`) |
+
+On `postTool` a missing verdict still leaves a WARN and proceeds, as before.
+
+> ⚠️ **`aimon-cli` wires no `http` or `mcp` executor.** An `http` or `mcp` handler in the CLI's `hooks.json` is never
+> called — placed on `preTool` it **keeps the CLI from starting** (`… type=http cannot run: no HttpActionExecutor is wired
+> in this assembly`; with `failOpen: true` it is registered and every call leaves a WARN and proceeds), and on `postTool`
+> it only leaves a WARN. An embedding host wires them with
+> `HookHotReloadBootstrap.builder().httpExecutor(…).mcpExecutor(…)`.
 
 > 🔒 Environment-variable references are substituted **only for keys on the whitelist
 > (`allowedEnvVars`)**. A variable that is not on it becomes an empty string, with a WARN log.
@@ -394,7 +437,13 @@ Calls a tool on an MCP server. `McpToolAction` + `McpActionExecutor`.
 }
 ```
 
-A response shaped like `{decision, reason, updatedInput}` is mapped onto a `HookResult`.
+If the response has the shape `{decision, reason, feedback, updatedInput}`, it is mapped to a `HookResult`. The line
+between a verdict and "no verdict" is the same as for `http`: a result that came back without an error is a verdict
+(empty content, plain text and JSON that is not an object allow; a JSON object is read as a decision document), while a
+server that is not registered or not connected, a transport error, an `isError` result (`call failed`), a decision
+document that cannot be read (`response could not be read`) and an executor that is not wired are **no verdict** — on
+`preTool` that blocks, and `"failOpen": true` lets it through. The `timeout` of an `mcp` handler is not applied to the
+call itself (`McpClient.callTool` takes none) — what cuts off a call that hangs is the hook executor's outer net.
 
 ### `deny`
 
@@ -407,15 +456,77 @@ A `preTool`-only short circuit. Refuses immediately, with no transport involved.
 }
 ```
 
-- Placing it on any event other than `preTool` makes the bootstrap skip the handler with a WARN
-  log.
+- On any event other than `preTool` it is an entry that cannot be applied — a startup failure under a guard event
+  (`onStart`, `preCompact`, `permissionRequest`), and elsewhere the handler is skipped with a WARN log.
 - To refuse on another event, use exit 2 from a `command` handler. But the events where exit 2
   actually leads to a decision are **only four — `preTool` / `onStart` / `preCompact` (block)
   and `permissionRequest` (deny)**. On `postTool`, `onStop`, `onSessionStart`, `onSessionEnd`,
   `subagentStart`, `subagentStop`, `postCompact`, `permissionDenied` and `onConfigReload`,
   exit 2 leaves a WARN log and is ignored — those nine events have no decision channel to carry
   a refusal at all.
-- `reason` cannot be empty (a validation failure skips the entry).
+- `reason` cannot be empty (it is a guard on `preTool`, so a validation failure is a startup failure).
+
+---
+
+## What a guard blocks
+
+One table for **what a declarative hook reads as a refusal** on the four events with a decision channel (`preTool`,
+`onStart`, `preCompact`, `permissionRequest`), and **what `failOpen: true` changes**. There is one rule — **a guard that
+could not decide blocks.** `failOpen: true` declares that the handler observes rather than guards; **it never weakens a
+verdict.** On the other 9 events no row blocks (a WARN, then the event proceeds). The table applies to hooks in
+`hooks.json` and in skill frontmatter alike.
+
+| What happened to the handler | How it is read | Default | `failOpen: true` |
+|------------------------------|----------------|---------|------------------|
+| `command` exits 0 | verdict: allow | proceeds | proceeds |
+| `command` exits 2 | verdict: refuse (stderr is the reason) | **blocks** | **blocks** |
+| `command` exits 126 or 127 (not executable · not found) | could not run | **blocks** | proceeds (WARN) |
+| `command` exits with any other code (1, 3, 130, …) | script malfunction | proceeds (WARN) | proceeds (WARN) |
+| `command` produces no exit code — a timeout, a shell failure, no execution environment or an unavailable one, a skill directory that could not be staged, an executor without shell support, an executor that throws | could not run | **blocks** | proceeds (WARN) |
+| `deny` handler | verdict: refuse | **blocks** | **blocks** |
+| `http` or `mcp` answers `decision: deny` | verdict: refuse (`reason` is the reason) | **blocks** | **blocks** |
+| `http` or `mcp` gives any other readable answer (`allow`, `defer`, no decision, an empty body, plain text) | verdict: allow | proceeds | proceeds |
+| `http` or `mcp` gets no verdict — a connection failure, a timeout, a non-2xx status, an MCP server that is not registered or not connected or answers `isError`, an answer that cannot be read, an executor that is not wired, an executor that throws | no verdict | **blocks** | proceeds (WARN) |
+| the handler runs past its own timeout and is cut off by the hook executor's outer net (declared timeout + 5 seconds) | no verdict | **blocks** | follows the event policy — the default policy proceeds (WARN) |
+| the execution is interrupted and the `command` is stopped (or the hook fires in an execution that is already cancelled) | execution cancelled | **blocks** | **blocks** — an execution that is ending does not take another step |
+
+"Blocks" is a block on `preTool`, `onStart` and `preCompact` and a deny on `permissionRequest`. The reason for a guard
+that could not run has the form `Blocked: guard hook '<name>' (<event>) could not run its command — <cause>. A guard that
+cannot decide blocks (fail-closed).` (for `http` and `mcp`: `could not get a verdict from its http call` / `… its mcp
+call`), and it never carries the command string, the shell's stderr, a URL, a header, a response body, an exception
+message or the name `failOpen` — the reader of that reason is the party the guard constrains. `http` and `mcp` handlers
+can only be placed on `preTool` and `postTool`, so the one guard event those three rows apply to is `preTool`.
+
+### What stops startup
+
+The table above is about a hook **that fired**. There is one stage before it — an entry that parses but **cannot be
+applied**. Under a guard event such an entry is not skipped: it **stops startup** (on a reload, the previous
+configuration stays). Skipping it would start the host without the guard that was written, so it fails through the same
+channel and in the same words as a broken file: `hooks config <path> (<LAYER> layer) is invalid: <event> entry #<n>,
+handler #<m>: <reason>`. The numbers count from 0 within that layer and that event. The command or URL is never in the
+message.
+
+| Entry that cannot be applied | Guard events (`preTool`, `onStart`, `preCompact`, `permissionRequest`) | Other events |
+|------------------------------|------------------------------------------------------------------------|--------------|
+| A missing required field or a bad value — a `command` with no `command`, a `deny` with no `reason`, a `url` that is not a URI, an unknown `method`, an `mcp` with no `server` or `tool` | **startup failure** | skip + WARN |
+| A handler type the event does not accept — `deny` outside `preTool`, `http` or `mcp` outside `preTool` / `postTool` | **startup failure** | skip + WARN |
+| An entry with no handlers at all | **startup failure** | skip + WARN |
+| A `matcher` that does not parse | `preTool`: **startup failure** | `postTool`: name-only fallback + WARN |
+| A handler that cannot run on this host — a `command` with an executor that has no shell support, an `http` or `mcp` whose executor is not wired | **startup failure** (a handler with `"failOpen": true` is not a guard and is handled as before — a `command` is skipped with a WARN, an `http` or `mcp` is registered) | a `command` is skipped with a WARN; an `http` or `mcp` is registered and leaves a WARN when called |
+| An event name within two letters of a guard event (`preTol`) | **startup failure** | — |
+| Any other unknown event name, or an unsupported event | — | skip + WARN (naming the closest event when there is one) |
+
+Hooks in skill frontmatter do not need this table — that parser has been strict from the start, and every case above is
+a load failure of that skill.
+
+**Interrupts.** When the user interrupts an execution, a `command` that is running is stopped **through the execution's
+cancellation signal** — so it does not run on to its own timeout even on a shell that does not answer a thread interrupt
+(a remote shell). The reason is `Blocked: hook '<name>' (<event>) was stopped — execution cancelled. An interrupted
+execution does not proceed.`, with or without `failOpen`. The events that carry the signal are `permissionRequest` and
+`preTool` (always), `postTool` and `permissionDenied` (only while the execution has not been cancelled — an audit
+command fired after the cancellation runs to its end), and a fork's `onStart`. Commands on a main turn's `onStart`, on
+`onStop`, on the compaction and subagent events and on the events outside any execution (`onSessionStart`,
+`onSessionEnd`, `onConfigReload`) get no signal and stop, as before, only if the shell answers a thread interrupt.
 
 ---
 
@@ -618,7 +729,8 @@ string — the `asyncRewake` block does not go through template rendering, so wr
             "headers": { "X-Auth": "${env.AUDIT_TOKEN}" },
             "body": "{\"cmd\":\"${tool_input.command}\",\"invoker\":\"${context.invoker_name}\",\"iteration\":\"${context.iteration}\"}",
             "allowedEnvVars": ["AUDIT_TOKEN"],
-            "timeout": 2
+            "timeout": 2,
+            "failOpen": true
           }
         ]
       }
@@ -626,6 +738,10 @@ string — the `asyncRewake` block does not go through template rendering, so wr
   }
 }
 ```
+
+An audit hook is not a guard, so it declares `"failOpen": true` — without it, `Bash` is blocked whenever the audit
+server cannot be reached ([What a guard blocks](#what-a-guard-blocks)). An `http` handler only runs on a host that wired
+its executor (`aimon-cli` does not).
 
 ### 2. Blocking a dangerous command outright
 
@@ -797,7 +913,7 @@ A summary of the frontmatter schema:
 | `matcher`       | Allowed on `preTool` / `postTool` only (`"*"` when omitted). On any other event, parsing fails |
 | `action.type`   | `shell` / `deny` / `http` / `mcp`. `deny` is `preTool`-only; `http` and `mcp` are `preTool`/`postTool`-only |
 | Timeout field   | `action.timeoutMs` (**milliseconds**). Frontmatter has no seconds-based `timeout` alias |
-| `failOpen`      | An entry-level key (beside `matcher` and `action`). YAML boolean only, default `false`. Lets the event proceed when a `shell` action produced no exit code |
+| `failOpen`      | An entry-level key (beside `matcher` and `action`). YAML boolean only, default `false`. Lets the event proceed when the action gives no answer — a `shell` action with no exit code or exit 126/127, an `http` or `mcp` action with no verdict ([What a guard blocks](#what-a-guard-blocks)) |
 
 `onSessionStart` / `onSessionEnd` / `onConfigReload` fire outside a skill invocation (in the
 session and application lifecycles), so frontmatter rejects them — declare them in `hooks.json`.
@@ -818,15 +934,17 @@ are in [`aimon-skill-extensions.md`](../../references/aimon-skill-extensions.md)
 | `OnConfigReload` fires with `failed=true`                                | Read the parser error in `failureReason` and check the JSON syntax and required fields. The live registry keeps its previous state. |
 | Startup exits with `Configuration error: hooks config … (… layer) is invalid: …` / `… could not be read: …` | Fix the file at the position the message points to, or remove the file. Broken JSON, an unknown `type`, a `timeout` of zero or less, an unreadable file and a directory where the file should be all end up here. It never starts without its file hooks. |
 | A fork ends with `Execution blocked by OnStart hook [SUBAGENT/…]`         | An `onStart` hook in `hooks.json` (or in skill frontmatter) blocked that fork. If the hook is meant for user input, make it exit 0 when `AIMON_INVOKER_TYPE` is `SUBAGENT`. |
-| `WARN hooks: matcher '...' could not be parsed`                          | A `PredicateParser` syntax error. It is running with the name-only fallback.  |
-| `WARN hooks: invalid handler in PROJECT on event 'preTool': ...`         | A required field is missing (`command`/`url`/`server+tool`/`reason`). Only that entry is skipped. |
+| The CLI does not start: `Configuration error: hooks config … is invalid: <event> entry #n, handler #m: …` | An entry under a guard event cannot be applied. Fix or remove the handler the message points at. If the handler only observes and may be left out when it cannot run, declare `"failOpen": true`. The full table is in [What stops startup](#what-stops-startup). |
+| `WARN hooks: matcher '...' could not be parsed`                          | A `PredicateParser` syntax error on `postTool`. It is running with the name-only fallback. (On `preTool` this is a startup failure.) |
+| `WARN hooks: invalid handler in PROJECT on event 'postTool': ...`        | A required field is missing (`command`/`url`/`server+tool`/`reason`) on an event that is not a guard event. Only that handler is skipped. |
 | `WARN hooks: 'deny' is not valid on postTool ...`                        | `deny` is `preTool`-only. The handler is ignored on other events.             |
 | `WARN hooks: '...' event is not supported by AIMON in this phase`        | Only `Notification` / `UserPromptSubmit` / `stop_hook_active`. Everything else is supported. |
-| `WARN hooks: unknown event '...'`                                        | A typo. Use a name from the [supported-events table](#supported-events-and-their-mapping) (case-insensitive). |
-| `WARN hooks: only 'command' actions are valid on ...`                    | Events other than `preTool`/`postTool` accept shell handlers only.            |
-| `WARN hooks: 'command' on ... cannot run: the configured shell executor does not support shell actions` | `hooks.json` was applied with an executor that has no shell support (`NoOpShellActionExecutor`). `command` handlers are not registered — wire a `HostShellActionExecutor`. |
+| `WARN hooks: unknown event '...'`                                        | A typo, or an event AIMON does not know. Use a name from the [supported-events table](#supported-events-and-their-mapping) (case-insensitive). When a known name is close, `did you mean '…'?` is appended; when that name is a guard event this is a startup failure, not a WARN. |
+| `WARN hooks: only 'command' actions are valid on ...`                    | Events other than `preTool`/`postTool` accept shell handlers only. It is a WARN only on an event that is not a guard event. |
+| `WARN hooks: 'command' on ... cannot run: the configured shell executor does not support shell actions` | `hooks.json` was applied with an executor that has no shell support (`NoOpShellActionExecutor`). A `command` handler that is not a guard (an event that is not a guard event, or `failOpen: true`) is not registered — wire a `HostShellActionExecutor`. For a `command` on a guard event this is a startup failure, not a WARN. |
 | `WARN hooks config at ...: ... has a 'failOpen' that is not a JSON boolean (...); it is read as false` | `failOpen` was written as `"true"`, `1` or `null`. The handler is registered with `failOpen: false` (it blocks when its command cannot run). If it only observes, change the value to `true`. |
-| A tool is refused with `Blocked: guard hook '...' could not run its command` | A `command` handler on an event with a decision channel produced no exit code (a timeout, for one). Fix the cause named in the reason, or declare `"failOpen": true` if the handler only observes. |
+| A tool is refused with `Blocked: guard hook '...' could not run its command` | A `command` handler on an event with a decision channel produced no exit code (a timeout, for one), or the shell could not start the command (`command not found: exit code 127`, `command not executable: exit code 126` — check the script path and its execute permission). Fix the cause named in the reason, or declare `"failOpen": true` if the handler only observes. The full table is in [What a guard blocks](#what-a-guard-blocks). |
+| A tool is refused with `Blocked: guard hook '...' could not get a verdict from its http call` (or `mcp call`) | An `http` or `mcp` handler on `preTool` got no verdict. Read the cause in the reason — `action executor not wired` (the host wired no executor; `aimon-cli` is such a host), `call failed: HTTP 503` or `call failed: ConnectException` (the policy server), `timed out`, `response could not be read` (the `decision` value is not `allow`, `deny` or `defer`). Declare `"failOpen": true` if the handler only observes. |
 | `WARN hooks: 'asyncRewake' is not supported on event '...'`              | Rewake-capable events are `preTool`/`preCompact`/`onSessionStart`/`onSessionEnd`/`onConfigReload`. The hook itself registers normally. |
 | A shell hook exited 2 but nothing was blocked                             | That event has no decision channel. A veto is effective only on `preTool`/`onStart`/`preCompact` (block) and `permissionRequest` (deny). |
 | `${tool_input.x}` / `${tool_name}` inside a command is empty              | Intended behaviour. Commands are not rendered — use the stdin JSON payload or the `AIMON_*` env (`$AIMON_TOOL_NAME` and so on). |

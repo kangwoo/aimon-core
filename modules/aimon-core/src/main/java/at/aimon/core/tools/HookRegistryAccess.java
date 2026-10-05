@@ -45,9 +45,11 @@ public final class HookRegistryAccess {
      * {@code preCompact}, {@code permissionRequest}).
      *
      * <p>
-     * This is the question to ask before starting work that cannot carry the caller's registry, such as a run on the
-     * agent-scoped background workflow runner: if the answer is not empty, that work would run without guards that
-     * are still in force, and should be refused.
+     * This is the question to ask before starting work the skill's guards would not cover to its end: work that
+     * cannot carry the caller's registry, such as a run on the agent-scoped background workflow runner or a
+     * scheduled routine, and work that carries it but outlives the skill, such as a background subagent (the layer
+     * is switched off when the skill returns). If the answer is not empty, that work would run without guards its
+     * author put in force, and should be refused.
      *
      * @param context
      *            the tool context (must not be null)
@@ -101,6 +103,24 @@ public final class HookRegistryAccess {
     }
 
     /**
+     * The error {@code Task} answers with when it refuses to start a subagent in the background because skill guards
+     * are active. Unlike a background workflow run, a background subagent does carry the caller's registry and is
+     * under the skill's guards while the skill runs &mdash; but it does not return with the skill: once the
+     * {@code Skill} tool returns, the skill's hook layer is switched off and the subagent goes on under the runtime's
+     * hooks only. A foreground {@code Task} ends before the skill does and is not refused.
+     *
+     * @param skills
+     *            the skills holding the guards, from {@link #activeSkillGuards(ToolContext)} (must not be empty)
+     * @return the message for the model (never null)
+     */
+    public static String backgroundTaskRefusal(List<String> skills) {
+        Objects.requireNonNull(skills, "skills must not be null");
+        return "Background mode is not available here: skill '" + String.join("', '", skills) + "' has guard hooks"
+                + " active and a background subagent would keep running without them once the skill returns. Run the"
+                + " task in the foreground (omit run_in_background).";
+    }
+
+    /**
      * The error {@code ScheduleTask} answers with when it refuses to schedule a routine because skill guards are
      * active. A routine fires later on the runtime's registry, outside the skill's fork, so none of the skill's hooks
      * would cover it &mdash; the same reason a background workflow run is refused.
@@ -148,7 +168,7 @@ public final class HookRegistryAccess {
      * Finds the skill view the execution dispatches against. The context's registry must <em>be</em> the
      * {@link SkillScopedHookRegistry}: a registry that wraps or decorates the view is not looked through, so a custom
      * spawn site that publishes such a decorator makes every guard question here answer "none" &mdash; and disables
-     * the background refusals (Workflow, WorkflowJs, ScheduleTask) that rely on it.
+     * the background refusals (Workflow, WorkflowJs, ScheduleTask, a background Task) that rely on it.
      */
     private static Optional<SkillScopedHookRegistry> view(ToolContext context) {
         return of(context).filter(SkillScopedHookRegistry.class::isInstance).map(SkillScopedHookRegistry.class::cast);

@@ -11,6 +11,7 @@ import org.slf4j.LoggerFactory;
 
 import at.aimon.core.hook.execution.ExecutionHook;
 import at.aimon.core.hook.execution.HookContext;
+import at.aimon.core.hook.execution.HookExecutionPolicy.TimeoutBehavior;
 import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.hook.rewake.RewakeSpec;
 import at.aimon.core.skill.hook.action.ShellAction;
@@ -96,6 +97,18 @@ public abstract class AbstractDeclarativeShellHook<C extends HookContext> implem
         return action.getExecutionBudget();
     }
 
+    /**
+     * A guard cut off by the executor's outer net blocks: on an event with a decision channel this hook declares
+     * {@link TimeoutBehavior#FAIL_CLOSED}, so a shell that does not honour its own timeout — a remote shell without
+     * cancellation, a stuck read — cannot turn the guard into a pass under the event policy's {@code FAIL_OPEN}. A
+     * hook that declared {@code failOpen}, and every hook on an advisory event, declares nothing and takes the
+     * policy's answer.
+     */
+    @Override
+    public final Optional<TimeoutBehavior> getTimeoutBehavior() {
+        return canVeto() && !failOpen ? Optional.of(TimeoutBehavior.FAIL_CLOSED) : Optional.empty();
+    }
+
     @Override
     public final HookResult execute(C context) {
         Objects.requireNonNull(context, "Context cannot be null");
@@ -133,17 +146,15 @@ public abstract class AbstractDeclarativeShellHook<C extends HookContext> implem
     }
 
     private HookResult interpret(ShellHookOutcome outcome) {
-        if (!outcome.isObserved()) {
-            // No exit status. An advisory event has nothing to decide (the executor already logged why); an event
-            // with a decision channel blocks unless the hook declared failOpen.
+        if (!outcome.isDenied()) {
+            // No veto. An advisory event has nothing more to decide (the executor already logged what happened); an
+            // event with a decision channel still blocks when the command gave no answer at all — no exit status, or
+            // the shell's "could not start it" — unless the hook declared failOpen.
             if (!canVeto()) {
                 return HookResult.success();
             }
             return ShellHookVerdicts.guard(outcome, failOpen, skillName, eventName).flatMap(this::vetoResult)
                     .orElseGet(HookResult::success);
-        }
-        if (!outcome.isDenied()) {
-            return HookResult.success();
         }
         final Optional<HookResult> veto = vetoResult(outcome.denyReason());
         if (veto.isEmpty()) {
@@ -159,8 +170,9 @@ public abstract class AbstractDeclarativeShellHook<C extends HookContext> implem
 
     /**
      * Translates a veto into this event's decision result. A veto is an exit code of
-     * {@value ShellHookOutcome#DENY_EXIT_CODE}, or — fail-closed — a command that produced no exit status on a hook
-     * that did not declare {@code failOpen}.
+     * {@value ShellHookOutcome#DENY_EXIT_CODE}, or — fail-closed — a command that produced no exit status, or that the
+     * shell could not start (exit {@value ShellHookOutcome#NOT_EXECUTABLE_EXIT_CODE} /
+     * {@value ShellHookOutcome#NOT_FOUND_EXIT_CODE}), on a hook that did not declare {@code failOpen}.
      *
      * <p>
      * Most lifecycle events are advisory notifications with nowhere to put a decision; for those the default applies —

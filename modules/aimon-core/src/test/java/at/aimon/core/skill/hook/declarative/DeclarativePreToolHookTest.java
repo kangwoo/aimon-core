@@ -86,7 +86,7 @@ class DeclarativePreToolHookTest {
     }
 
     @ParameterizedTest
-    @EnumSource(ShellHookOutcome.Unrun.class)
+    @EnumSource(value = ShellHookOutcome.Unrun.class, mode = EnumSource.Mode.EXCLUDE, names = "CANCELLED")
     void execute_shellCommandThatCouldNotRun_blocksWithTheCause(ShellHookOutcome.Unrun cause) {
         DeclarativePreToolHook hook = new DeclarativePreToolHook("my-skill", NameOnlyPredicate.ANY,
                 new ShellAction("guard.sh --token s3cret", Duration.ofSeconds(1)),
@@ -102,7 +102,7 @@ class DeclarativePreToolHookTest {
     }
 
     @ParameterizedTest
-    @EnumSource(ShellHookOutcome.Unrun.class)
+    @EnumSource(value = ShellHookOutcome.Unrun.class, mode = EnumSource.Mode.EXCLUDE, names = "CANCELLED")
     void execute_failOpen_letsAShellCommandThatCouldNotRunPass(ShellHookOutcome.Unrun cause) {
         DeclarativePreToolHook hook = new DeclarativePreToolHook("my-skill", NameOnlyPredicate.ANY,
                 new ShellAction("audit.sh", Duration.ofSeconds(1)),
@@ -123,12 +123,58 @@ class DeclarativePreToolHookTest {
 
     @Test
     void execute_exitCodesOtherThanTwo_stillAllow() {
-        for (int exit : new int[]{0, 1, 126, 127}) {
+        // 126 and 127 are not in this list: the shell reports them for a command it could not start (EE-66).
+        for (int exit : new int[]{0, 1, 3, 125, 128, 130, 255}) {
             DeclarativePreToolHook hook = new DeclarativePreToolHook("my-skill", NameOnlyPredicate.ANY,
                     new ShellAction("guard.sh", Duration.ofSeconds(1)),
                     fixedOutcome(ShellHookOutcome.of(exit, "", "boom")));
 
             assertThat(hook.execute(contextFor("Bash")).getStatus()).as("exit %d", exit).isEqualTo(HookStatus.SUCCESS);
+        }
+    }
+
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"126, command not executable", "127, command not found"})
+    void execute_commandTheShellCouldNotStart_blocksWithoutEchoingIt(int exit, String cause) {
+        DeclarativePreToolHook hook = new DeclarativePreToolHook("my-skill", NameOnlyPredicate.ANY,
+                new ShellAction("guard.sh --token s3cret", Duration.ofSeconds(1)),
+                fixedOutcome(ShellHookOutcome.of(exit, "", "sh: guard.sh --token s3cret: not found")));
+
+        HookResult result = hook.execute(contextFor("Bash"));
+
+        assertThat(result.getStatus()).isEqualTo(HookStatus.BLOCKED);
+        assertThat(result.getFeedback().orElseThrow()).contains("guard hook 'my-skill' (preTool)").contains(cause)
+                .contains("exit code " + exit).contains("fail-closed")
+                // The shell's stderr quotes the command line; neither it nor the opt-out is in the reason.
+                .doesNotContain("failOpen").doesNotContain("s3cret").doesNotContain("guard.sh");
+    }
+
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {126, 127})
+    void execute_failOpen_letsACommandTheShellCouldNotStartPass(int exit) {
+        DeclarativePreToolHook hook = new DeclarativePreToolHook("my-skill", NameOnlyPredicate.ANY,
+                new ShellAction("audit.sh", Duration.ofSeconds(1)), fixedOutcome(ShellHookOutcome.of(exit, "", "boom")),
+                null, null, Map.of(), DeclarativeHookOptions.builder().failOpen(true).build());
+
+        assertThat(hook.execute(contextFor("Bash")).getStatus()).isEqualTo(HookStatus.SUCCESS);
+    }
+
+    @Test
+    @org.junit.jupiter.api.condition.DisabledOnOs(org.junit.jupiter.api.condition.OS.WINDOWS)
+    void execute_realShell_guardScriptThatIsMissingOrNotExecutable_blocks(
+            @org.junit.jupiter.api.io.TempDir java.nio.file.Path tmp) throws Exception {
+        java.nio.file.Files.writeString(tmp.resolve("not-executable.sh"), "#!/bin/sh\nexit 0\n");
+        ShellActionExecutor realShell = new HostShellActionExecutor(new at.aimon.core.shell.impl.local.LocalShell(tmp));
+
+        for (String command : List.of("./no-such-guard.sh", "./not-executable.sh")) {
+            DeclarativePreToolHook hook = new DeclarativePreToolHook("my-skill", NameOnlyPredicate.ANY,
+                    new ShellAction(command, Duration.ofSeconds(10)), realShell);
+
+            HookResult result = hook.execute(contextFor("Bash"));
+
+            assertThat(result.getStatus()).as(command).isEqualTo(HookStatus.BLOCKED);
+            assertThat(result.getFeedback().orElseThrow()).as(command).contains("could not run its command")
+                    .doesNotContain(command);
         }
     }
 

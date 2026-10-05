@@ -132,6 +132,23 @@ class DefaultSubagentExecutorOnStartBlockTest {
     }
 
     @Test
+    @DisplayName("a fork's onStart carries the fork's cancellation signal, so a hook command stops when it is cancelled")
+    void onStartCarriesTheForksCancellationSignal() {
+        final List<java.util.Optional<at.aimon.core.agent.interrupt.CancellationSignal>> seen = new ArrayList<>();
+        hooks.register(HookEventType.ON_START, (OnStartHook) context -> {
+            seen.add(context.getExecutionCancellation());
+            return HookResult.success();
+        });
+        llm.responses.add(LlmResponse.text("done"));
+
+        assertThat(execute(null).isSuccess()).isTrue();
+
+        assertThat(seen).hasSize(1);
+        assertThat(seen.get(0)).isPresent();
+        assertThat(seen.get(0).get().isCancelled()).isFalse();
+    }
+
+    @Test
     @DisplayName("a blocked resume keeps the refused goal out of its snapshot, so a later resume never replays it")
     void aBlockedResumeDoesNotBreakALaterOne() {
         llm.responses.add(LlmResponse.text("first answer"));

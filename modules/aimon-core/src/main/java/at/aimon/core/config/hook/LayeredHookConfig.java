@@ -1,11 +1,13 @@
 package at.aimon.core.config.hook;
 
+import java.nio.file.Path;
 import java.util.Collections;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Holds the per-source {@link HookConfigDocument} produced by {@link HookConfigLoader}.
@@ -25,11 +27,33 @@ import java.util.Objects;
 public final class LayeredHookConfig {
 
     private final Map<HookConfigSource, HookConfigDocument> layered;
+    private final Map<HookConfigSource, Path> origins;
     private final Map<String, HookConfigDocument> skills;
 
     private LayeredHookConfig(Builder b) {
         this.layered = Collections.unmodifiableMap(new EnumMap<>(b.layered));
+        this.origins = Collections.unmodifiableMap(new EnumMap<>(b.origins));
         this.skills = Map.copyOf(b.skills);
+    }
+
+    /**
+     * Returns the file a layer's document was read from, so a problem found after parsing &mdash; an entry that
+     * cannot be applied &mdash; can still name the file.
+     *
+     * @param source
+     *            the layer to look up (must not be null)
+     * @return the file, or empty for a layer that is absent or was put without one (a document assembled in code)
+     */
+    public Optional<Path> origin(HookConfigSource source) {
+        Objects.requireNonNull(source, "source cannot be null");
+        return Optional.ofNullable(origins.get(source));
+    }
+
+    /**
+     * @return immutable map (USER/PROJECT/LOCAL &rarr; file) of the layers whose file is known
+     */
+    public Map<HookConfigSource, Path> origins() {
+        return origins;
     }
 
     /**
@@ -103,6 +127,7 @@ public final class LayeredHookConfig {
     /** Builder. */
     public static final class Builder {
         private final EnumMap<HookConfigSource, HookConfigDocument> layered = new EnumMap<>(HookConfigSource.class);
+        private final EnumMap<HookConfigSource, Path> origins = new EnumMap<>(HookConfigSource.class);
         private final Map<String, HookConfigDocument> skills = new LinkedHashMap<>();
 
         private Builder() {
@@ -124,6 +149,25 @@ public final class LayeredHookConfig {
                 throw new IllegalArgumentException("Use putSkill(name, doc) for SKILL-scoped configs");
             }
             this.layered.put(source, document);
+            this.origins.remove(source);
+            return this;
+        }
+
+        /**
+         * Records a layered (USER/PROJECT/LOCAL) document together with the file it was read from.
+         *
+         * @param source
+         *            the source layer (must not be null and must not be SKILL)
+         * @param document
+         *            the parsed document (must not be null)
+         * @param origin
+         *            the file the document was read from (must not be null)
+         * @return this builder
+         */
+        public Builder put(HookConfigSource source, HookConfigDocument document, Path origin) {
+            Objects.requireNonNull(origin, "origin cannot be null");
+            put(source, document);
+            this.origins.put(source, origin);
             return this;
         }
 

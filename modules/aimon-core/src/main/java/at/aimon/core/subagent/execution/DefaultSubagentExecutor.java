@@ -624,7 +624,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      */
     private void checkOnStartHooks(LoopContext lc) {
         final List<HookResult> onStartResults = SubagentOnStartGate.check(hookExecutionManager,
-                SubagentOnStartGate.context(lc.context, lc.goal, lc.executionAttributes, lc.executionEnvironment()));
+                SubagentOnStartGate.context(lc.context, lc.goal, lc.executionAttributes, lc.executionEnvironment(),
+                        lc.coordinator.getSignal()));
         HookFeedback.toReminderBlock(HookFeedback.collectAdvisory(onStartResults))
                 .ifPresent(block -> lc.transcriptBuffer.addMessage(Message.user(block), LogOrigin.SYNTHETIC));
     }

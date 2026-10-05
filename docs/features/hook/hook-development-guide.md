@@ -97,8 +97,10 @@ at.aimon.core.hook/
 > 선언적 hook (`hooks.json` / SKILL.md) 도 같은 네 체인에서만 거부할 수 있고, 거부는 셸
 > handler 의 **exit 2** 로 표현한다. `ON_START` 의 선언적 veto 는 최근에 추가되었다 —
 > 그 전에는 `onStart` 셸 hook 이 exit 2 로 끝나도 아무 일도 일어나지 않았다. 그 네 체인에서는
-> 셸 handler 가 **종료 코드를 내지 못해도**(실행 환경 없음 · timeout · 셸 실패) 거부다 — 판단하지
-> 못한 가드는 막는다. 관찰용 handler 는 `failOpen: true` 로 이 규칙에서 빠진다.
+> 셸 handler 가 **종료 코드를 내지 못해도**(실행 환경 없음 · timeout · 셸 실패), 셸이 커맨드를
+> **시작하지 못해도**(exit 126 · 127) 거부다 — 판단하지 못한 가드는 막는다. 관찰용 handler 는
+> `failOpen: true` 로 이 규칙에서 빠진다. 전체 표는
+> [hook 설정 가이드 › 가드가 막는 경우](hook-config-guide.md#가드가-막는-경우).
 
 새 이벤트를 추가하려면 hook 인터페이스 + context 타입 + `HookEventType` 상수 +
 `HookExecutionManager` 메서드 + **발화 지점** 을 모두 추가해야 한다. 발화 지점이 없는 상수는
@@ -368,7 +370,7 @@ HookResult.builder()...build();              // 여러 축을 동시에 설정
 | 항목 | 기본값 | 설명 |
 |------|--------|------|
 | `timeout` | 30초 | hook 하나당 바깥 안전망 |
-| `timeoutBehavior` | `FAIL_OPEN` | 타임아웃 시 통과(`FAIL_OPEN`) / 차단(`FAIL_CLOSED`) |
+| `timeoutBehavior` | `FAIL_OPEN` | 타임아웃 시 통과(`FAIL_OPEN`) / 차단(`FAIL_CLOSED`). 체인의 기본값이며, hook 이 직접 선언하면 그 hook 에는 선언이 이긴다 |
 | `executionMode` | `SEQUENTIAL` | 병렬 실행은 opt-in |
 | `stopOnBlocked` | 정책별 | 차단 결과가 나오면 후속 hook 단축 |
 | `dedupKeyExtractor` | 없음 | 같은 키의 중복 hook 제거 |
@@ -383,6 +385,14 @@ HookResult.builder()...build();              // 여러 축을 동시에 설정
   (`hooks.json` / frontmatter 의 `timeoutMs`) 에서 오는 검증되지 않은 값이므로, 상한이 없으면
   hook 하나가 턴을 무한정 붙잡을 수 있고 `Long.MAX_VALUE` 근처 값은 executor 의 나노초 변환에서
   오버플로합니다. 초과 시 WARN 로그를 남기고 10분으로 자릅니다.
+- **`timeoutBehaviorFor(hook)`** 이 그물이 터졌을 때 실제로 적용되는 동작입니다. hook 이
+  `getTimeoutBehavior()` 로 `FAIL_CLOSED` 나 `FAIL_OPEN` 을 선언하면 정책의 `timeoutBehavior` 보다
+  그 선언이 우선합니다. 선언적 가드 hook(`preTool` · `onStart` · `preCompact` ·
+  `permissionRequest`, `failOpen` 아님)은 `FAIL_CLOSED` 를 선언하므로 기본 정책 아래에서도
+  그물에 끊기면 막습니다. **코드로 등록한 hook 은 선언하지 않는 한 정책을 따릅니다** — 기본
+  정책에서 그물에 끊긴 `PreToolHook` · `OnStartHook` 은 통과로 읽히고, `OnStartHook` 이 던진
+  예외도 `onStart` 정책에서는 성공입니다. 거부가 목적인 hook 이라면 `getTimeoutBehavior()` 를
+  오버라이드해 `FAIL_CLOSED` 를 선언하고 예외를 직접 잡으세요.
 - **병렬 모드**에서 timeout 은 **대기를 제한할 뿐, 이미 끝난 작업을 버리지 않습니다.** 결과는 항상
   등록 순서대로 재조립됩니다.
 - **`stopOnBlocked` 는 `SEQUENTIAL` 에서만 의미가 있습니다.** `PARALLEL` 에서는 이미 제출된

@@ -148,10 +148,11 @@ public final class HookRegistryReloader {
      * instead &mdash; there is one to keep.)
      *
      * @throws HookConfigParseException
-     *             when a {@code hooks.json} that is present fails to parse or cannot be read; the message names the
-     *             file and its layer
+     *             when a {@code hooks.json} that is present fails to parse or cannot be read, when an entry under a
+     *             guard event cannot be applied, or when an event name is a near-miss of a guard event; the message
+     *             names the file and its layer
      * @throws RuntimeException
-     *             when merging or applying the loaded config fails
+     *             when merging or applying the loaded config fails for any other reason
      */
     public void loadInitial() {
         synchronized (swapLock) {
@@ -209,6 +210,13 @@ public final class HookRegistryReloader {
             }
             try {
                 applyToManagedLocked(merged);
+            } catch (HookConfigParseException e) {
+                // An entry under a guard event that cannot be applied: a config problem like a file that does not
+                // parse, found one stage later. Nothing was swapped (it is thrown while staging), so the previous
+                // config stays, and it is reported as the load failure it is.
+                log.warn("Hook config reload (counter={}) failed: {}", reloadCounter, e.getMessage());
+                fireOnConfigReload(reloadCounter, configSource, false, "load/merge failed: " + e.getMessage());
+                return false;
             } catch (RuntimeException e) {
                 log.error("Hook config reload (counter={}) failed during swap: {}", reloadCounter, e.getMessage(), e);
                 fireOnConfigReload(reloadCounter, configSource, false, "swap failed: " + e.getMessage());

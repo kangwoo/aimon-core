@@ -310,6 +310,8 @@ hooks:
   안 함" 이 "걸리는 모든 `preTool`/`onStart` 를 막음" 으로 바뀐다. 적용 시점에 `!shellExecutor.isShellSupported()` 면
   `command` 핸들러를 WARN 과 함께 건너뛴다(기존 `canRunOn` 검사 옆). 스킬 파서는 이미 파싱 오류로 막는다.
   셸 액션이 아닌 훅(`deny` · `http` · `mcp`)에 쓰면 WARN 후 무시한다 — 이 묶음은 셸 액션의 "못 돌림" 만 다룬다(§8 새 항목).
+  *(2026-10-05, EE-65 — `http` · `mcp` 에서는 이제 읽는다. `preTool` 의 두 액션은 판정을 받지 못하면 막고 `failOpen` 이면
+  통과한다. WARN 후 무시는 `deny` 에만 남았다.)*
   거부 채널이 없는 이벤트에 쓰면 조용히 무해하다(읽히지 않는다); 스킬 파서는 WARN 한 줄을 남긴다.
 
 ### 4.3 EE-58 (`tools.bash`)
@@ -524,8 +526,14 @@ BackgroundBashOwner getOwner();
   기존 계약("0 · 2 가 아니면 오작동 → 허용")이 그것을 통과시킨다. 사실상 "돌리지 못함" 이지만 스크립트 자신이 127 을 낼 수도
   있어 구별되지 않고, 계약을 바꾸면 exit 1 을 내는 기존 훅 전부에 영향이 간다. 이 묶음에서는 건드리지 않고 백로그로 남기는
   쪽을 골랐다. EE-50(`${AIMON_SKILL_DIR}` 없음)이 이 경로를 실제로 밟게 만든다(그 뒤 EE-50 이 구현되어 스킬 훅은 `AIMON_SKILL_DIR` 를 받는다).
+  *(2026-10-05, EE-66 — 이 결정은 뒤집혔다. 가드 이벤트에서 exit 126 · 127 은 "돌리지 못함" 으로 읽어 막고 `failOpen` 이면
+  통과한다. 그 밖의 non-zero 는 그대로 허용이라 exit 1 을 내는 훅은 영향이 없다. 스크립트가 스스로 126 · 127 을 내면 함께
+  막힌다 — 받아들인 비용이다.)*
 - **Q4 (EE-51) — 훅 실행기 수준 timeout 의 `FAIL_OPEN`(F5)을 이 묶음에서 닫을지.** 닫지 않는 쪽을 골랐다(정책 기본값 변경은
   프로그램으로 등록한 모든 훅에 번진다).
+  *(2026-10-05, EE-64 — 닫았다. 정책 기본값은 그대로 두고, 선언적 가드 훅이 `ExecutionHook.getTimeoutBehavior()` 로
+  `FAIL_CLOSED` 를 선언하며 실행기가 정책보다 그 선언을 따른다. §6 F5 의 "통과한다" 는 선언적 가드에 대해서는 이제 사실이
+  아니다. 프로그램으로 등록한 훅은 전과 같다.)*
 - **Q5 (EE-58) — 호출자 없는 포크가 띄운 작업은 그 포크만 본다.** 루틴이 포크를 띄우고 그 포크가 백그라운드 명령을 띄우면
   루틴은 그 작업을 읽지도 멈추지도 못한다(상한과 teardown 이 끝낸다). 잇려면 전달되는 "루트 실행" 정체성이 필요하다.
 - **Q6 (EE-58) — 같은 세션의 형제 포크는 서로의 작업을 멈출 수 있다.** 같은 사용자 세션을 대신하므로 허용했다. 포크 단위로
@@ -677,7 +685,7 @@ BackgroundBashOwner getOwner();
 | S1 — 던지는 선언 가드는 통과된다(`ShellActionRunner` 는 `RuntimeException` 만 잡고, 훅 정책의 기본 예외 매퍼는 가드 이벤트에서 성공을 낸다) | `DeclarativePreToolHook` 과 `AbstractDeclarativeShellHook` 이 셸 분기를 `RuntimeException \| LinkageError` 로 감싸 `notRun(EXECUTION_FAILED, <클래스 이름>)` 으로 읽는다. 그래서 fail-closed 판정과 `failOpen` 이 그대로 적용된다. 예외 전체는 로그에만 |
 | S2 — 사유가 명령 문자열을 흘릴 수 있다(`LocalShell` 의 예외 메시지가 명령을 싣는다) | `EXECUTION_FAILED` 의 세부는 예외의 클래스 이름뿐이다. `shell()` 이 사용 불가 예외가 아닌 것을 던진 `ENVIRONMENT_UNAVAILABLE` 도 같다. `ExecutionEnvironmentUnavailableException` 의 메시지는 남겼다 — 도구가 이미 모델에게 그대로 보여 주는 값이고, 원인을 사유에 싣는다는 결정의 그 "원인" 이다. 메시지는 로그에 남는다 |
 | S3 — 스킬 frontmatter 의 `onStart` 가드는 막지 못한다(`DefaultSubagentExecutor` 가 `onStart` 결과를 advisory 로만 읽는다) | 포크의 `onStart` 동작은 바꾸지 않았다(사람의 결정). 문서를 사실대로 고쳤고, `onStart` 를 `SkillHookSet.GUARD_EVENTS` 에서 빼 `onStart` 만 있는 스킬이 백그라운드 워크플로를 거절하게 만들지 않는다(→ EE-70) |
-| S4 — 가드 스킬 포크가 `ScheduleTask` 로 루틴을 잡으면, 루틴은 나중에 런타임 레지스트리에서 스킬의 가드 없이 돈다 | 백그라운드 워크플로와 같은 이유로 `ScheduleTaskTool` 이 거절한다(`ToolResult.error`, 문구는 `HookRegistryAccess.scheduleRefusal`). 백그라운드 `Task` 는 그대로다(EE-69) |
+| S4 — 가드 스킬 포크가 `ScheduleTask` 로 루틴을 잡으면, 루틴은 나중에 런타임 레지스트리에서 스킬의 가드 없이 돈다 | 백그라운드 워크플로와 같은 이유로 `ScheduleTaskTool` 이 거절한다(`ToolResult.error`, 문구는 `HookRegistryAccess.scheduleRefusal`). 백그라운드 `Task` 는 그대로다(EE-69) *(2026-10-05, EE-69 닫힘 — 백그라운드 `Task` 도 같은 판정으로 거절한다. 문구는 `HookRegistryAccess.backgroundTaskRefusal`. §10.3 의 "문서화된 한계로 받아들인다" 는 더 이상 사실이 아니다)* |
 | S5 — 제공자가 실패하는 포크에서 스킬의 셸 가드를 돌리는 조립 테스트가 없다 | §10.1-5 |
 | `vetoResult` 를 두 번 불러 거부 채널을 탐침한다 | `canVeto()` 를 더했다 |
 | 가드 판정은 컨텍스트의 레지스트리가 `SkillScopedHookRegistry` **자신**이어야 한다 | `HookRegistryAccess` javadoc 에 적었다 — 감싸는 데코레이터는 백그라운드 거절을 끈다 |

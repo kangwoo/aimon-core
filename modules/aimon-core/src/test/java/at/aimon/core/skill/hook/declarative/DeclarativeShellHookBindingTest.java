@@ -270,8 +270,35 @@ class DeclarativeShellHookBindingTest {
             DeclarativePreCompactHook.EVENT_NAME, DeclarativePermissionRequestHook.EVENT_NAME);
 
     static Stream<Arguments> bindingsByUnrunCause() {
+        // CANCELLED is not "the guard could not run": it has its own rule and its own test below.
         return bindings().flatMap(row -> Stream.of(ShellHookOutcome.Unrun.values())
+                .filter(cause -> cause != ShellHookOutcome.Unrun.CANCELLED)
                 .map(cause -> Arguments.of(row.get()[0], row.get()[3], cause)));
+    }
+
+    static Stream<Arguments> bindingsByFailOpen() {
+        return bindings().flatMap(
+                row -> Stream.of(false, true).map(failOpen -> Arguments.of(row.get()[0], row.get()[3], failOpen)));
+    }
+
+    @ParameterizedTest(name = "{0} / failOpen={2}")
+    @MethodSource("bindingsByFailOpen")
+    void create_commandStoppedByAnInterrupt_blocksOnGuardEventsWhateverFailOpenSays(String eventName,
+            HookContext context, boolean failOpen) {
+        final ExecutionHook<?> hook = DeclarativeShellHookBinding.forEvent(eventName).orElseThrow().create(SKILL,
+                ACTION, RecordingExecutor.notRunning(ShellHookOutcome.Unrun.CANCELLED),
+                DeclarativeHookOptions.builder().failOpen(failOpen).build());
+
+        final HookResult result = execute(hook, context);
+
+        if (!GUARD_EVENTS.contains(eventName)) {
+            assertThat(result.getStatus()).isEqualTo(HookStatus.SUCCESS);
+            return;
+        }
+        // The execution is ending: "allow and continue" is not an answer, and failOpen does not make it one (EE-80).
+        assertThat(result.getStatus()).isEqualTo(HookStatus.BLOCKED);
+        assertThat(result.getFeedback().orElseThrow()).contains("hook '" + SKILL + "' (" + eventName + ")")
+                .contains("execution cancelled").doesNotContain("failOpen").doesNotContain(ACTION.getCommand());
     }
 
     @ParameterizedTest(name = "{0} / {2}")

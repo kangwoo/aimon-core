@@ -25,7 +25,9 @@ import at.aimon.core.config.hook.MergedHookConfig.MergedHookEntry;
  * &quot;overrides&quot; outcomes that depend on order (e.g. {@code updatedInput} threading).
  * <li>SKILL entries are kept separate &mdash; they are emitted under the same event keys but tagged with the owning
  * skill so the bootstrap can attach them to the skill-scoped registry rather than the global one.
- * <li>Unknown / unsupported event names are skipped with a WARN log.
+ * <li>Unknown / unsupported event names are skipped with a WARN log, which names the nearest known event when the
+ * unknown name is a near-miss of one. A near-miss of a <em>guard</em> event is the exception: it fails the merge with
+ * a {@link HookConfigParseException} (see {@link HookEventName#nearest(String)}).
  * <li>Unknown JSON fields on {@link HookHandlerSpec} are silently dropped at parse time
  * (forwards-compat hook for fields such as {@code asyncRewake}).
  * </ul>
@@ -49,16 +51,16 @@ public final class HookConfigMerger {
         final Map<String, List<MergedHookEntry>> out = new LinkedHashMap<>();
 
         for (Map.Entry<HookConfigSource, HookConfigDocument> layer : config.layeredAscending()) {
-            mergeOne(out, layer.getKey(), null, layer.getValue());
+            mergeOne(out, layer.getKey(), null, layer.getValue(), config);
         }
         for (Map.Entry<String, HookConfigDocument> skillEntry : config.skills().entrySet()) {
-            mergeOne(out, HookConfigSource.SKILL, skillEntry.getKey(), skillEntry.getValue());
+            mergeOne(out, HookConfigSource.SKILL, skillEntry.getKey(), skillEntry.getValue(), config);
         }
-        return MergedHookConfig.of(out);
+        return MergedHookConfig.of(out, config.origins());
     }
 
     private void mergeOne(Map<String, List<MergedHookEntry>> out, HookConfigSource source, String skillName,
-            HookConfigDocument doc) {
+            HookConfigDocument doc, LayeredHookConfig config) {
         for (Map.Entry<String, List<HookEntry>> e : doc.getHooks().entrySet()) {
             final String rawEvent = e.getKey();
             if (HookEventName.isUnsupported(rawEvent)) {
@@ -68,8 +70,7 @@ public final class HookConfigMerger {
             }
             final String aimonName = HookEventName.toAimon(rawEvent).orElse(null);
             if (aimonName == null) {
-                log.warn("hooks: unknown event '{}' from {}; entries will be ignored", rawEvent,
-                        describe(source, skillName));
+                skipOrRejectUnknownEvent(rawEvent, source, skillName, config);
                 continue;
             }
             final List<MergedHookEntry> bucket = out.computeIfAbsent(aimonName, k -> new ArrayList<>());
@@ -77,6 +78,32 @@ public final class HookConfigMerger {
                 bucket.add(new MergedHookEntry(source, skillName, entry));
             }
         }
+    }
+
+    /**
+     * An event name AIMON does not know is skipped with a WARN: it may be an event a newer AIMON (or Claude Code)
+     * has. The exception is a name within {@link HookEventName#NEAR_MISS_DISTANCE} edits of a <em>guard</em> event
+     * &mdash; {@code preTol} is a typo, not a future event, and skipping it would start the host with the guard the
+     * operator wrote missing. That one fails the load, in the wording a file that does not parse gets. A near-miss of
+     * any other event is still skipped, with the likely name in the WARN.
+     */
+    private static void skipOrRejectUnknownEvent(String rawEvent, HookConfigSource source, String skillName,
+            LayeredHookConfig config) {
+        final HookEventName.Nearest nearest = HookEventName.nearest(rawEvent).orElse(null);
+        if (nearest == null) {
+            log.warn("hooks: unknown event '{}' from {}; entries will be ignored", rawEvent,
+                    describe(source, skillName));
+            return;
+        }
+        if (nearest.isGuard() && source != HookConfigSource.SKILL) {
+            throw new HookConfigParseException(MergedHookConfig.fileLabel(config.origin(source).orElse(null), source)
+                    + " is invalid: unknown event '" + rawEvent + "' - did you mean '" + nearest.getName()
+                    + "'? A name this close to an event"
+                    + " whose hooks can block is read as a typo, not as an event AIMON does not know yet:"
+                    + " skipping it would leave that guard off");
+        }
+        log.warn("hooks: unknown event '{}' from {} - did you mean '{}'? entries will be ignored", rawEvent,
+                describe(source, skillName), nearest.getName());
     }
 
     private static String describe(HookConfigSource source, String skillName) {

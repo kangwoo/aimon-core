@@ -9,10 +9,13 @@ import static org.mockito.Mockito.when;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.base.UserLocale;
@@ -21,9 +24,11 @@ import at.aimon.core.hook.HookEventType;
 import at.aimon.core.hook.event.OnSessionStartContext;
 import at.aimon.core.hook.event.OnStartContext;
 import at.aimon.core.hook.event.PreToolContext;
+import at.aimon.core.hook.event.PreToolHook;
 import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.hook.execution.HookStatus;
 import at.aimon.core.llm.ToolUse;
+import at.aimon.core.mcp.McpClientManager;
 import at.aimon.core.shell.ExecutionOptions;
 import at.aimon.core.shell.ShellCommand;
 import at.aimon.core.shell.ShellCommandResult;
@@ -31,6 +36,8 @@ import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.shell.exception.ShellTimeoutException;
 import at.aimon.core.skill.hook.declarative.DefaultShellActionExecutor;
 import at.aimon.core.skill.hook.declarative.HostShellActionExecutor;
+import at.aimon.core.skill.hook.declarative.HttpActionExecutor;
+import at.aimon.core.skill.hook.declarative.McpActionExecutor;
 import at.aimon.core.skill.hook.declarative.NoOpShellActionExecutor;
 
 @DisplayName("HookRegistryApplier")
@@ -46,15 +53,17 @@ class HookRegistryApplierTest {
     // --- failOpen and executors without shell support (EE-51) -------------------------------------------------------
 
     @Test
-    @DisplayName("an executor without shell support registers no command handler, instead of one that always blocks")
+    @DisplayName("an executor without shell support registers no command handler that is not a guard")
     void shellUnsupportedExecutorSkipsCommandHandlers() {
         final DefaultHookRegistry registry = new DefaultHookRegistry();
 
+        // The handlers that may be skipped: those on an event that cannot block, and those that declared failOpen.
+        // A command *guard* in the same position stops the load instead (EE-72, HookConfigGuardEntryStrictnessTest).
         new HookRegistryApplier(NoOpShellActionExecutor.INSTANCE, null, null, Map.of()).apply(merged("""
                 {"hooks":{
-                  "preTool":[{"hooks":[{"type":"command","command":"guard.sh"},
+                  "preTool":[{"hooks":[{"type":"command","command":"audit.sh","failOpen":true},
                                        {"type":"deny","reason":"no"}]}],
-                  "onStart":[{"hooks":[{"type":"command","command":"gate.sh"}]}],
+                  "onStart":[{"hooks":[{"type":"command","command":"note.sh","failOpen":true}]}],
                   "postTool":[{"hooks":[{"type":"command","command":"audit.sh"}]}]
                 }}"""), registry);
 
@@ -87,6 +96,36 @@ class HookRegistryApplierTest {
         assertThat(guard.getStatus()).isEqualTo(HookStatus.BLOCKED);
         assertThat(guard.getFeedback().orElseThrow()).contains("timed out").doesNotContain("failOpen");
         assertThat(audit.getStatus()).isEqualTo(HookStatus.SUCCESS);
+    }
+
+    @Test
+    @DisplayName("an http or mcp handler blocks when it gets no verdict, unless it declares failOpen (EE-65)")
+    void failOpenIsHonouredForHttpAndMcpHandlers() {
+        final McpClientManager noServers = mock(McpClientManager.class);
+        when(noServers.getClient("policy")).thenReturn(Optional.empty());
+        final DefaultHookRegistry registry = new DefaultHookRegistry();
+
+        // Nothing listens on port 1 and the MCP server is not registered: neither call can produce a verdict.
+        new HookRegistryApplier(new HostShellActionExecutor(mock(VirtualShell.class)),
+                HttpActionExecutor.createDefault(), new McpActionExecutor(noServers, new ObjectMapper()), Map.of())
+                .apply(merged("""
+                        {"hooks":{"preTool":[{"hooks":[
+                          {"type":"http","url":"http://127.0.0.1:1/policy"},
+                          {"type":"http","url":"http://127.0.0.1:1/audit","failOpen":true},
+                          {"type":"mcp","server":"policy","tool":"evaluate"},
+                          {"type":"mcp","server":"policy","tool":"audit","failOpen":true}
+                        ]}]}}"""), registry);
+
+        final List<PreToolHook> hooks = registry.getHooks(HookEventType.PRE_TOOL);
+        final PreToolContext context = preToolContext(registry);
+        assertThat(hooks).hasSize(4);
+        assertThat(hooks.get(0).execute(context).getStatus()).isEqualTo(HookStatus.BLOCKED);
+        assertThat(hooks.get(0).execute(context).getFeedback().orElseThrow())
+                .contains("could not get a verdict from its http call").doesNotContain("failOpen")
+                .doesNotContain("127.0.0.1");
+        assertThat(hooks.get(1).execute(context).getStatus()).isEqualTo(HookStatus.SUCCESS);
+        assertThat(hooks.get(2).execute(context).getStatus()).isEqualTo(HookStatus.BLOCKED);
+        assertThat(hooks.get(3).execute(context).getStatus()).isEqualTo(HookStatus.SUCCESS);
     }
 
     @Test
@@ -251,23 +290,23 @@ class HookRegistryApplierTest {
     }
 
     @Test
-    @DisplayName("empty handler list is skipped with WARN (no hooks registered)")
+    @DisplayName("empty handler list on an event that cannot block is skipped with WARN (no hooks registered)")
     void emptyHandlersSkipped() {
         final HookConfigDocument doc = parser
-                .parse("{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"Bash\",\"hooks\":[]}]}}");
+                .parse("{\"hooks\":{\"PostToolUse\":[{\"matcher\":\"Bash\",\"hooks\":[]}]}}");
         final MergedHookConfig merged = merger
                 .merge(LayeredHookConfig.builder().put(HookConfigSource.PROJECT, doc).build());
 
         final DefaultHookRegistry registry = new DefaultHookRegistry();
         bootstrap().apply(merged, registry);
 
-        assertThat(registry.getHooks(HookEventType.PRE_TOOL)).isEmpty();
+        assertThat(registry.getHooks(HookEventType.POST_TOOL)).isEmpty();
     }
 
     @Test
-    @DisplayName("invalid handler (command without 'command' field) is skipped, others survive")
+    @DisplayName("invalid handler (command without 'command' field) on postTool is skipped, others survive")
     void invalidHandlerSkipped() {
-        final HookConfigDocument doc = parser.parse("{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"Bash\",\"hooks\":["
+        final HookConfigDocument doc = parser.parse("{\"hooks\":{\"PostToolUse\":[{\"matcher\":\"Bash\",\"hooks\":["
                 + "{\"type\":\"command\"}," + "{\"type\":\"command\",\"command\":\"ok\"}" + "]}]}}");
         final MergedHookConfig merged = merger
                 .merge(LayeredHookConfig.builder().put(HookConfigSource.PROJECT, doc).build());
@@ -275,7 +314,7 @@ class HookRegistryApplierTest {
         final DefaultHookRegistry registry = new DefaultHookRegistry();
         bootstrap().apply(merged, registry);
 
-        assertThat(registry.getHooks(HookEventType.PRE_TOOL)).hasSize(1);
+        assertThat(registry.getHooks(HookEventType.POST_TOOL)).hasSize(1);
     }
 
     @Test
@@ -312,9 +351,9 @@ class HookRegistryApplierTest {
     }
 
     @Test
-    @DisplayName("invalid matcher falls back to name-only without throwing")
+    @DisplayName("invalid matcher on postTool falls back to name-only without throwing")
     void invalidMatcherFallback() {
-        final HookConfigDocument doc = parser.parse("{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"\\u0000(\","
+        final HookConfigDocument doc = parser.parse("{\"hooks\":{\"PostToolUse\":[{\"matcher\":\"\\u0000(\","
                 + "\"hooks\":[{\"type\":\"command\",\"command\":\"x\"}]}]}}");
         final MergedHookConfig merged = merger
                 .merge(LayeredHookConfig.builder().put(HookConfigSource.PROJECT, doc).build());
@@ -322,7 +361,7 @@ class HookRegistryApplierTest {
         final DefaultHookRegistry registry = new DefaultHookRegistry();
         bootstrap().apply(merged, registry);
 
-        assertThat(registry.getHooks(HookEventType.PRE_TOOL)).hasSize(1);
+        assertThat(registry.getHooks(HookEventType.POST_TOOL)).hasSize(1);
     }
 
     /**

@@ -209,7 +209,7 @@ public class DefaultHookExecutor implements HookExecutor, AutoCloseable {
      * All hooks are launched concurrently and observe the same starting context &mdash; {@code updatedInput} /
      * {@code updatedOutput} threading is intentionally <b>not</b> performed (parallel hooks have no defined order).
      * Each hook is timed-out independently per {@link HookExecutionPolicy#timeoutFor(ExecutionHook)} /
-     * {@link HookExecutionPolicy#timeoutBehavior()}.
+     * {@link HookExecutionPolicy#timeoutBehaviorFor(ExecutionHook)}.
      *
      * <p>
      * {@code stopOnBlocked} is a no-op in parallel mode &mdash; already-launched hooks cannot be cancelled mid-flight,
@@ -264,7 +264,8 @@ public class DefaultHookExecutor implements HookExecutor, AutoCloseable {
      *
      * <p>
      * Exceptions inside the hook are mapped through {@link HookExecutionPolicy#onException(Exception)}. Timeouts are
-     * mapped according to {@link HookExecutionPolicy#timeoutBehavior()}: {@code FAIL_OPEN} returns
+     * mapped according to {@link HookExecutionPolicy#timeoutBehaviorFor(ExecutionHook)} — the hook's own declaration,
+     * or the policy's {@link HookExecutionPolicy#timeoutBehavior()} when it made none: {@code FAIL_OPEN} returns
      * {@link HookResult#success()} (with a WARN log), {@code FAIL_CLOSED} returns a BLOCKED result with a descriptive
      * feedback (with an ERROR log). An interrupted wait is always BLOCKED ({@link #onInterrupted}).
      */
@@ -308,7 +309,8 @@ public class DefaultHookExecutor implements HookExecutor, AutoCloseable {
      *
      * <p>
      * A failure <i>of the hook</i> goes through {@link HookExecutionPolicy#onException(Exception)}; expiry goes through
-     * {@link HookExecutionPolicy#timeoutBehavior()}. An interrupt goes through neither — see {@link #onInterrupted}
+     * {@link HookExecutionPolicy#timeoutBehaviorFor(ExecutionHook)}. An interrupt goes through neither — see
+     * {@link #onInterrupted}
      * for why it is answered with BLOCKED regardless of the policy.
      *
      * <p>
@@ -387,7 +389,9 @@ public class DefaultHookExecutor implements HookExecutor, AutoCloseable {
 
     private static <C extends HookContext> HookResult onTimeout(ExecutionHook<C> hook, HookExecutionPolicy policy,
             long elapsedMs, long limitMs) {
-        if (policy.timeoutBehavior() == TimeoutBehavior.FAIL_CLOSED) {
+        // The hook's own declaration wins over the chain's default: a declarative guard is FAIL_CLOSED under a
+        // FAIL_OPEN policy.
+        if (policy.timeoutBehaviorFor(hook) == TimeoutBehavior.FAIL_CLOSED) {
             log.error("Hook timed out (FAIL_CLOSED). hook={} elapsedMs={} limitMs={}", hook, elapsedMs, limitMs);
             return HookResult.block("Hook timed out after " + elapsedMs + "ms (limit=" + limitMs + "ms)");
         }

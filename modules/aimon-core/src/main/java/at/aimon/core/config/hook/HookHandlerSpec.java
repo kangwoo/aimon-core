@@ -51,9 +51,11 @@ import at.aimon.core.config.hook.rewake.RewakeSpecConfig;
  * boundary, so nothing downstream had to change.
  *
  * <p>
- * <b>{@code failOpen}.</b> A {@code command} handler on an event that can block ({@code preTool}, {@code onStart},
- * {@code preCompact}, {@code permissionRequest}) blocks when its command produces no exit status &mdash; a timeout, a
- * shell failure. {@code "failOpen": true} lets the operation proceed instead, for handlers that only observe. The
+ * <b>{@code failOpen}.</b> A handler on an event that can block ({@code preTool}, {@code onStart},
+ * {@code preCompact}, {@code permissionRequest}) blocks when it gives no answer &mdash; a {@code command} that
+ * produces no exit status (a timeout, a shell failure) or that the shell could not start, an {@code http} or
+ * {@code mcp} call that produces no verdict (unreachable, a non-2xx status, an unreadable answer).
+ * {@code "failOpen": true} lets the operation proceed instead, for handlers that only observe. The
  * field takes a JSON boolean and nothing else: it takes a guard off, so {@code "true"} or {@code 1} is not coerced
  * to {@code true}. A value that is not a JSON boolean is read as {@code false} &mdash; the guard stays closed &mdash;
  * and kept in {@link #getRejectedFailOpen()} so that {@link HookConfigLoader} can WARN with the file it came from.
