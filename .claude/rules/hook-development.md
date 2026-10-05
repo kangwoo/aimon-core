@@ -94,18 +94,28 @@ for side effects only. Wiring one up is a feature, not a bug fix.
 - Exit **2** vetoes with stderr as the reason (Claude Code parity), on the events that own a decision
   channel: `preTool` / `onStart` / `preCompact` block, `permissionRequest` denies. Elsewhere it is
   logged and the event proceeds. Any other non-zero exit is allowed — a broken script must not become
-  a silent gatekeeper. `onStart` is the newest of the four: a declarative `onStart` hook previously
-  had no veto at all.
-- **No exit code is a veto too (fail-closed).** On those four events a shell handler whose command
-  never produced an exit status — no execution environment, an unavailable one, a timeout, a shell
-  failure, an executor without shell support, an executor that throws (`LinkageError` included) —
-  blocks/denies, with the cause in the reason. The executor reports it as
-  `ShellHookOutcome.notRun(cause, detail)` (there is no cause-less factory) and `ShellHookVerdicts`
-  decides. A hook opts out per declaration with `failOpen: true` (entry level in frontmatter, handler
-  level in `hooks.json`; only a boolean `true` opens it — a non-boolean is a parse error in
-  frontmatter and is read as `false` with a WARN in `hooks.json`). The deny reason never names
-  `failOpen`, the command or an exception message — only the cause and the exception's type; its
-  reader is the party the guard constrains.
+  a silent gatekeeper — **except 126 and 127**, which the next rule reads as "not run". `onStart` is
+  the newest of the four: a declarative `onStart` hook previously had no veto at all.
+- **No answer is a veto too (fail-closed).** On those four events a shell handler whose command
+  never produced an exit status — no execution environment, an unavailable one, a skill directory
+  that could not be staged for `AIMON_SKILL_DIR` (`STAGING_FAILED`), a timeout, a shell failure, an
+  executor without shell support, an executor that throws (`LinkageError` included) — blocks/denies,
+  with the cause in the reason. So does a command the shell could not start: **exit 126 / 127**
+  (`COMMAND_NOT_EXECUTABLE` / `COMMAND_NOT_FOUND`) is read through `ShellHookOutcome.asGuardAnswer()`
+  on a guard event only — the runner still reports the code as observed, and an advisory event just
+  logs it. The executor reports a missing exit status as `ShellHookOutcome.notRun(cause, detail)`
+  (there is no cause-less factory) and `ShellHookVerdicts` decides; do not interpret an outcome on a
+  guard event anywhere else. A hook opts out per declaration with `failOpen: true` (entry level in
+  frontmatter, handler level in `hooks.json`; only a boolean `true` opens it — a non-boolean is a
+  parse error in frontmatter and is read as `false` with a WARN in `hooks.json`). The deny reason
+  never names `failOpen`, the command, the shell's stderr or an *unexpected* exception's message —
+  only the cause and the exception's type; its reader is the party the guard constrains. The one
+  message it does carry is `StagingException`'s on `STAGING_FAILED`: that text is the staging
+  layer's own (over the limit, changed since scanned) and is what the `Skill` tool already tells the
+  model for the same failure. Any new detail must be a fixed string or a type name.
+- The user-facing table of what blocks and what `failOpen` changes lives in **one** place,
+  `docs/features/hook/hook-config-guide.md` › "가드가 막는 경우" (and its `.en.md`). A change to guard
+  semantics updates that table; other docs link to it rather than restating it.
 - **An `onStart` block stops a fork as it stops a turn.** `DefaultSubagentExecutor.checkOnStartHooks`
   mirrors `OrcaAgentExecutor.checkOnStartHooks`: a blocked result ends the fork before its first LLM
   call as a failed `SubagentExecutionResult` (`CompletionReason.ERROR`, the

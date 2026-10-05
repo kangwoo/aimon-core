@@ -20,10 +20,11 @@
    - [`http`](#http)
    - [`mcp`](#mcp)
    - [`deny`](#deny)
-7. [템플릿 변수](#템플릿-변수)
-8. [Async Rewake (`asyncRewake`)](#async-rewake-asyncrewake)
-9. [예제 모음](#예제-모음)
-10. [트러블슈팅](#트러블슈팅)
+7. [가드가 막는 경우](#가드가-막는-경우)
+8. [템플릿 변수](#템플릿-변수)
+9. [Async Rewake (`asyncRewake`)](#async-rewake-asyncrewake)
+10. [예제 모음](#예제-모음)
+11. [트러블슈팅](#트러블슈팅)
 
 ---
 
@@ -273,6 +274,7 @@ path=$(echo "$payload" | jq -r '.tool_input.file_path')
 |------|-----------------------------------------------------------------------------------|
 | `0`  | 정상 진행.                                                                        |
 | `2`  | **veto** — stderr 가 거부 사유가 된다 (Claude Code parity). 4000자를 넘으면 잘린다.  |
+| `126` · `127` | 셸이 커맨드를 **시작하지 못했다** (실행할 수 없음 · 찾지 못함). 결정 채널이 있는 이벤트에서는 **veto 와 같다** — 아래 "커맨드를 돌리지 못했을 때". 나머지 이벤트에서는 "그 외" 와 같다. |
 | 그 외 | `WARN` 로그 + fail-soft (정상 진행). 깨진 스크립트가 조용한 게이트키퍼가 되면 안 된다. |
 | 없음 | 커맨드가 종료 코드를 내지 못했다 (timeout, 셸 실패). 결정 채널이 있는 이벤트에서는 **veto 와 같다** — 아래 "커맨드를 돌리지 못했을 때". |
 
@@ -301,7 +303,10 @@ behavior(`SubagentBehavior`)가 등록된 SubAgent 는 ReAct 루프를 돌지 �
 **커맨드를 돌리지 못했을 때 (fail-closed).** 위 네 이벤트의 `command` handler 가 **종료 코드를 내지 못하면** — timeout,
 셸 실패 — 그 이벤트의 거부 결과를 낸다(`preTool` · `onStart` · `preCompact` 는 block, `permissionRequest` 는 deny). 판단하지
 못한 가드는 통과시키지 않는다. 사유는 `Blocked: guard hook '<source>#<n>' (<event>) could not run its command — timed out:
-…` 꼴로 원인을 싣고, 커맨드 문자열은 싣지 않는다. 가드가 아니라 **관찰** 용도의 handler(감사 로그, 메트릭)라면
+…` 꼴로 원인을 싣고, 커맨드 문자열은 싣지 않는다. **exit 126 · 127 도 같은 경우다** — 셸이 "실행할 수 없다" · "찾지
+못했다" 로 끝낸 것이라 가드는 아무 답도 하지 않았다(`… — command not found: exit code 127`; 셸의 stderr 는 커맨드 줄을
+인용하므로 사유에 싣지 않는다). 스크립트가 스스로 126 · 127 로 끝나도 구별할 수 없으므로 똑같이 막힌다 — 가드 스크립트의
+"허용하되 오류" 는 1 처럼 다른 코드로 낸다. 가드가 아니라 **관찰** 용도의 handler(감사 로그, 메트릭)라면
 `"failOpen": true` 를 선언한다 — 그러면 WARN 만 남기고 진행한다. `failOpen` 은 exit 2 를 약하게 하지 않는다. 가드를 여는
 값은 JSON 불리언 `true` 하나뿐이다: `"true"` · `1` · `null` 같은 불리언 아닌 값은 강제 변환되지 않고 **`false` 로 읽힌다** —
 handler 는 그대로 등록되어 가드가 닫힌 채 남고, 파일 · 이벤트 · handler 를 밝힌 WARN 이 남는다(가드를 푸는 키이므로 느슨하게
@@ -392,6 +397,29 @@ MCP 서버의 tool 을 호출한다. `McpToolAction` + `McpActionExecutor`.
   에서는 exit 2 가 WARN 로그만 남기고 무시된다 — 이 아홉 이벤트에는 거부를 실을 결정 채널이
   아예 없다.
 - `reason` 은 비어 있을 수 없다 (validation 실패 시 entry skip).
+
+---
+
+## 가드가 막는 경우
+
+결정 채널이 있는 네 이벤트(`preTool` · `onStart` · `preCompact` · `permissionRequest`)에서 선언적 hook 이 **무엇을 거부로
+읽는지**, 그리고 `failOpen: true` 가 **무엇을 바꾸는지**를 한 표에 모은다. 규칙은 하나다 — **판단하지 못한 가드는 막는다.**
+`failOpen: true` 는 "이 handler 는 가드가 아니라 관찰용" 이라는 선언이고, **판정을 약하게 하지는 않는다.** 나머지 9개
+이벤트에서는 어느 행도 막지 않는다(WARN 후 진행). `hooks.json` 과 스킬 frontmatter 의 hook 에 똑같이 적용된다.
+
+| handler 에 일어난 일 | 읽는 법 | 기본 | `failOpen: true` |
+|----------------------|---------|------|------------------|
+| `command` 가 exit 0 | 판정: 허용 | 진행 | 진행 |
+| `command` 가 exit 2 | 판정: 거부 (stderr 가 사유) | **막는다** | **막는다** |
+| `command` 가 exit 126 · 127 (실행할 수 없음 · 찾지 못함) | 돌리지 못함 | **막는다** | 진행 (WARN) |
+| `command` 가 그 밖의 종료 코드 (1 · 3 · 130 …) | 스크립트 오작동 | 진행 (WARN) | 진행 (WARN) |
+| `command` 가 종료 코드를 내지 못함 — timeout, 셸 실패, 실행 환경 없음 · 사용 불가, 스킬 디렉터리 스테이징 실패, 셸을 지원하지 않는 실행기, 실행기가 던진 예외 | 돌리지 못함 | **막는다** | 진행 (WARN) |
+| `deny` handler | 판정: 거부 | **막는다** | **막는다** |
+
+"막는다" 는 `preTool` · `onStart` · `preCompact` 에서는 block, `permissionRequest` 에서는 deny 다. 돌리지 못해 막힌 사유는
+`Blocked: guard hook '<이름>' (<이벤트>) could not run its command — <원인>. A guard that cannot decide blocks
+(fail-closed).` 꼴이고, 커맨드 문자열 · 셸의 stderr · 예외 메시지 · `failOpen` 이라는 이름은 싣지 않는다 — 그 사유를 읽는
+쪽이 가드가 제약하는 당사자이기 때문이다.
 
 ---
 
@@ -790,7 +818,7 @@ fork 가 없어 발화하지 않는다. 전체 규칙은 [`aimon-skill-extension
 | `WARN hooks: only 'command' actions are valid on ...`                    | `preTool`/`postTool` 외의 이벤트는 셸 handler 전용.                          |
 | `WARN hooks: 'command' on ... cannot run: the configured shell executor does not support shell actions` | 셸을 지원하지 않는 실행기(`NoOpShellActionExecutor`)로 `hooks.json` 을 적용했다. `command` handler 는 등록되지 않는다 — `HostShellActionExecutor` 를 배선할 것. |
 | `WARN hooks config at ...: ... has a 'failOpen' that is not a JSON boolean (...); it is read as false` | `failOpen` 에 `"true"` · `1` · `null` 을 썼다. 그 handler 는 `failOpen: false` 로 등록된다(커맨드를 못 돌리면 막는다). 관찰용이라면 `true` 로 고칠 것. |
-| 도구가 `Blocked: guard hook '...' could not run its command` 로 막힘      | 결정 채널이 있는 이벤트의 `command` handler 가 종료 코드를 내지 못했다(timeout 등). 사유의 원인을 고치거나, 관찰용 handler 라면 `"failOpen": true` 를 선언. |
+| 도구가 `Blocked: guard hook '...' could not run its command` 로 막힘      | 결정 채널이 있는 이벤트의 `command` handler 가 종료 코드를 내지 못했거나(timeout 등) 셸이 커맨드를 시작하지 못했다(`command not found: exit code 127` · `command not executable: exit code 126` — 스크립트 경로와 실행 권한을 확인). 사유의 원인을 고치거나, 관찰용 handler 라면 `"failOpen": true` 를 선언. 전체 표는 [가드가 막는 경우](#가드가-막는-경우). |
 | `WARN hooks: 'asyncRewake' is not supported on event '...'`              | rewake 가능한 이벤트는 `preTool`/`preCompact`/`onSessionStart`/`onSessionEnd`/`onConfigReload`. hook 자체는 정상 등록됨. |
 | 셸 hook 이 exit 2 로 끝났는데 차단되지 않음                                | 해당 이벤트에 결정 채널이 없음. veto 는 `preTool`/`onStart`/`preCompact`(block), `permissionRequest`(deny) 에서만 유효. |
 | 커맨드 안의 `${tool_input.x}` / `${tool_name}` 이 빈 문자열                | 의도된 동작. 커맨드는 렌더링되지 않는다 — stdin JSON payload 나 `AIMON_*` env(`$AIMON_TOOL_NAME` 등) 를 사용. |

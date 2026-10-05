@@ -146,6 +146,7 @@ tier 가 디스패치 순서에서 뒤에 서고 순서에 의존하는 결과(`
 | exit 0 | 통과 | ✔ |
 | exit 2 | **거부**, stderr 가 사유 | ✔ |
 | 그 외 non-zero | **허용** — 깨진 스크립트가 조용한 게이트키퍼가 되면 안 된다 | ✔ |
+| exit 126 · 127 (실행할 수 없음 · 찾지 못함) | 결정 채널이 있는 이벤트에서는 "종료 코드 없음" 과 같이 읽는다 — **거부**, `failOpen: true` 면 허용. 나머지 이벤트에서는 그 외 non-zero 와 같다 | AIMON 고유 (Claude Code 는 non-blocking 오류로 읽는다) |
 | 종료 코드 없음 (환경 없음 · 사용 불가 · timeout · 셸 실패) | 결정 채널이 있는 이벤트에서는 **거부**(fail-closed), 사유에 원인. 핸들러가 `failOpen: true` 면 허용 | AIMON 고유 |
 | 사유 길이 | 4000자에서 자른다 (`MAX_DENY_REASON_LENGTH`) | AIMON 이 정한 상한 |
 

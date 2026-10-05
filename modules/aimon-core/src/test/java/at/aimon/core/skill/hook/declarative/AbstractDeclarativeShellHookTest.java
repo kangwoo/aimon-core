@@ -9,6 +9,8 @@ import java.util.List;
 import java.util.Map;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.compact.CompactionTrigger;
@@ -124,10 +126,38 @@ class AbstractDeclarativeShellHookTest {
 
     @Test
     void preCompact_crashedScript_failsSoftToSuccess() {
-        RecordingExecutor exec = RecordingExecutor.exiting(127, "boom");
+        RecordingExecutor exec = RecordingExecutor.exiting(1, "boom");
         DeclarativePreCompactHook hook = new DeclarativePreCompactHook("my-skill", ACTION, exec);
 
         assertThat(hook.execute(preCompactContext()).getStatus()).isEqualTo(HookStatus.SUCCESS);
+    }
+
+    // --- exit 126 / 127: the shell could not start the command (EE-66) -------------------------------------------
+
+    @ParameterizedTest
+    @ValueSource(ints = {126, 127})
+    void guardEvents_commandTheShellCouldNotStart_vetoes(int exit) {
+        RecordingExecutor exec = RecordingExecutor.exiting(exit, "sh: gate.sh: not found");
+
+        HookResult onStart = new DeclarativeOnStartHook("my-skill", ACTION, exec).execute(onStartContext());
+        HookResult preCompact = new DeclarativePreCompactHook("my-skill", ACTION, exec).execute(preCompactContext());
+        HookResult permission = new DeclarativePermissionRequestHook("my-skill", ACTION, exec)
+                .execute(permissionRequestContext());
+
+        assertThat(onStart.getStatus()).isEqualTo(HookStatus.BLOCKED);
+        assertThat(preCompact.getStatus()).isEqualTo(HookStatus.BLOCKED);
+        assertThat(permission.getDecision()).isEqualTo(Decision.DENY);
+        assertThat(onStart.getFeedback().orElseThrow()).contains("could not run its command")
+                .contains("exit code " + exit).doesNotContain("gate.sh");
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {126, 127})
+    void advisoryEvents_commandTheShellCouldNotStart_stillSucceeds(int exit) {
+        RecordingExecutor exec = RecordingExecutor.exiting(exit, "sh: gate.sh: not found");
+
+        assertThat(new DeclarativeOnStopHook("my-skill", ACTION, exec).execute(onStopContext()).getStatus())
+                .isEqualTo(HookStatus.SUCCESS);
     }
 
     // --- permissionRequest: denies -------------------------------------------------------------------------------

@@ -31,10 +31,12 @@ import at.aimon.core.skill.hook.action.ShellAction;
  * <li>{@link ShellAction} → executed via the supplied {@link ShellActionExecutor}, with the firing context as a JSON
  * document on standard input (see {@code ShellHookPayload}). Exit code
  * {@link ShellHookOutcome#DENY_EXIT_CODE} vetoes the tool and feeds stderr back to the model as the reason; any other
- * exit code allows it (Claude Code parity). A command that produced <em>no</em> exit status — no execution
- * environment, a timeout, a shell failure, a skill directory that could not be staged for {@code AIMON_SKILL_DIR}
- * (see {@link SkillHookDirectory}) — blocks the tool as well (fail-closed), unless the hook declared
- * {@code failOpen}; see {@link ShellHookVerdicts}.
+ * exit code allows it (Claude Code parity), except the two the shell reports for a command it could not start. A
+ * command that gave <em>no</em> answer — no execution environment, a timeout, a shell failure, a skill directory
+ * that could not be staged for {@code AIMON_SKILL_DIR} (see {@link SkillHookDirectory}), or exit
+ * {@value ShellHookOutcome#NOT_EXECUTABLE_EXIT_CODE} / {@value ShellHookOutcome#NOT_FOUND_EXIT_CODE} (not
+ * executable / not found) — blocks the tool as well (fail-closed), unless the hook declared {@code failOpen}; see
+ * {@link ShellHookVerdicts}.
  * <li>{@link HttpAction} → request issued via {@link HttpActionExecutor}; the JSON response can carry an
  * {@code allow}/{@code deny}/{@code defer} decision and an optional {@code updatedInput}.
  * <li>{@link McpToolAction} → MCP tool call via {@link McpActionExecutor}; result content can carry the same

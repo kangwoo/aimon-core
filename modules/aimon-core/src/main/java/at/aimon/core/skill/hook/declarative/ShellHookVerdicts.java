@@ -11,14 +11,15 @@ import org.slf4j.LoggerFactory;
  *
  * <p>
  * The rule is fail-closed: a guard that could not decide blocks. The cause does not matter — no execution
- * environment, an unavailable one, an executor without shell support, a timeout and a shell failure are the same
- * event from the guard's side ("no answer"), and letting any one of them through would make it the way to switch the
- * guard off. A hook opts out per declaration with {@code failOpen: true}, for the audit hooks that share the guard
- * events without being guards.
+ * environment, an unavailable one, an executor without shell support, a timeout, a shell failure and a command the
+ * shell could not start (exit 126 / 127, see {@link ShellHookOutcome#asGuardAnswer()}) are the same event from the
+ * guard's side ("no answer"), and letting any one of them through would make it the way to switch the guard off. A
+ * hook opts out per declaration with {@code failOpen: true}, for the audit hooks that share the guard events without
+ * being guards.
  *
  * <p>
  * Shared by {@link DeclarativePreToolHook} and {@link AbstractDeclarativeShellHook} so the two cannot word or decide
- * this differently. Commands that did report an exit status never come through here.
+ * this differently. Every other exit status is not a block here: 2 is the caller's veto, and the rest are allowed.
  */
 final class ShellHookVerdicts {
 
@@ -34,7 +35,7 @@ final class ShellHookVerdicts {
      * <p>
      * Only call this for an event that can act on a block; an advisory event has nothing to decide.
      *
-     * @param outcome
+     * @param reported
      *            what the executor reported (never null)
      * @param failOpen
      *            whether the hook declared {@code failOpen}
@@ -44,7 +45,9 @@ final class ShellHookVerdicts {
      *            the AIMON event name (never null)
      * @return the deny reason handed to the model or user, or empty when the outcome is not a block
      */
-    static Optional<String> guard(ShellHookOutcome outcome, boolean failOpen, String skillName, String eventName) {
+    static Optional<String> guard(ShellHookOutcome reported, boolean failOpen, String skillName, String eventName) {
+        // Exit 126 / 127 is the shell saying it never started the command: no answer either.
+        final ShellHookOutcome outcome = reported.asGuardAnswer();
         if (outcome.getUnrunCause().isEmpty()) {
             return Optional.empty();
         }

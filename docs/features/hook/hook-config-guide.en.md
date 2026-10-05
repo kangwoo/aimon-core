@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-config-guide.md
-source_commit: 2beae91
+source_commit: a88a1c2f
 ---
 
 # Hook Configuration Guide (`hooks.json`)
@@ -25,10 +25,11 @@ format, so an existing Claude Code configuration file can be carried over as is.
    - [`http`](#http)
    - [`mcp`](#mcp)
    - [`deny`](#deny)
-7. [Template variables](#template-variables)
-8. [Async Rewake (`asyncRewake`)](#async-rewake-asyncrewake)
-9. [Examples](#examples)
-10. [Troubleshooting](#troubleshooting)
+7. [What a guard blocks](#what-a-guard-blocks)
+8. [Template variables](#template-variables)
+9. [Async Rewake (`asyncRewake`)](#async-rewake-asyncrewake)
+10. [Examples](#examples)
+11. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -286,6 +287,7 @@ path=$(echo "$payload" | jq -r '.tool_input.file_path')
 |------|-----------------------------------------------------------------------------------|
 | `0`  | Proceed normally.                                                                 |
 | `2`  | **veto** — stderr becomes the refusal reason (Claude Code parity). Truncated beyond 4000 characters. |
+| `126` · `127` | The shell **could not start** the command (not executable · not found). On an event with a decision channel this **counts as a veto** — see "When the command could not run" below. On the other events it reads like "other". |
 | other | `WARN` log + fail-soft (proceeds normally). A broken script must not become a silent gatekeeper. |
 | none | The command produced no exit code (timeout, shell failure). On an event with a decision channel this **counts as a veto** — see "When the command could not run" below. |
 
@@ -317,7 +319,10 @@ the ReAct loop, so `onStart` never fires for it (backlog EE-73).
 exit code** — a timeout, a shell failure — the hook returns that event's refusal (`preTool`, `onStart` and `preCompact`
 block; `permissionRequest` denies). A guard that could not decide does not let the operation through. The reason names
 the cause, in the form `Blocked: guard hook '<source>#<n>' (<event>) could not run its command — timed out: …`, and never
-contains the command string. For a handler that **observes** rather than guards (audit logging, metrics), declare
+contains the command string. **Exit 126 and 127 are the same case** — the shell ended with "cannot execute" or "not
+found", so the guard gave no answer (`… — command not found: exit code 127`; the shell's stderr quotes the command line,
+so it is left out of the reason). A script that itself exits 126 or 127 cannot be told apart and is blocked the same
+way — a guard script reports "allow, but something went wrong" with another code, such as 1. For a handler that **observes** rather than guards (audit logging, metrics), declare
 `"failOpen": true`: it then leaves a WARN and proceeds. `failOpen` does not weaken an exit 2. The only value that opens
 the guard is the JSON boolean `true`: a value that is not a boolean, such as `"true"`, `1` or `null`, is not coerced and
 **is read as `false`** — the handler is still registered with its guard closed, and a WARN names the file, the event and
@@ -414,6 +419,30 @@ A `preTool`-only short circuit. Refuses immediately, with no transport involved.
   exit 2 leaves a WARN log and is ignored — those nine events have no decision channel to carry
   a refusal at all.
 - `reason` cannot be empty (a validation failure skips the entry).
+
+---
+
+## What a guard blocks
+
+One table for **what a declarative hook reads as a refusal** on the four events with a decision channel (`preTool`,
+`onStart`, `preCompact`, `permissionRequest`), and **what `failOpen: true` changes**. There is one rule — **a guard that
+could not decide blocks.** `failOpen: true` declares that the handler observes rather than guards; **it never weakens a
+verdict.** On the other 9 events no row blocks (a WARN, then the event proceeds). The table applies to hooks in
+`hooks.json` and in skill frontmatter alike.
+
+| What happened to the handler | How it is read | Default | `failOpen: true` |
+|------------------------------|----------------|---------|------------------|
+| `command` exits 0 | verdict: allow | proceeds | proceeds |
+| `command` exits 2 | verdict: refuse (stderr is the reason) | **blocks** | **blocks** |
+| `command` exits 126 or 127 (not executable · not found) | could not run | **blocks** | proceeds (WARN) |
+| `command` exits with any other code (1, 3, 130, …) | script malfunction | proceeds (WARN) | proceeds (WARN) |
+| `command` produces no exit code — a timeout, a shell failure, no execution environment or an unavailable one, a skill directory that could not be staged, an executor without shell support, an executor that throws | could not run | **blocks** | proceeds (WARN) |
+| `deny` handler | verdict: refuse | **blocks** | **blocks** |
+
+"Blocks" is a block on `preTool`, `onStart` and `preCompact` and a deny on `permissionRequest`. The reason for a guard
+that could not run has the form `Blocked: guard hook '<name>' (<event>) could not run its command — <cause>. A guard that
+cannot decide blocks (fail-closed).`, and it never carries the command string, the shell's stderr, an exception message
+or the name `failOpen` — the reader of that reason is the party the guard constrains.
 
 ---
 
@@ -824,7 +853,7 @@ are in [`aimon-skill-extensions.md`](../../references/aimon-skill-extensions.md)
 | `WARN hooks: only 'command' actions are valid on ...`                    | Events other than `preTool`/`postTool` accept shell handlers only.            |
 | `WARN hooks: 'command' on ... cannot run: the configured shell executor does not support shell actions` | `hooks.json` was applied with an executor that has no shell support (`NoOpShellActionExecutor`). `command` handlers are not registered — wire a `HostShellActionExecutor`. |
 | `WARN hooks config at ...: ... has a 'failOpen' that is not a JSON boolean (...); it is read as false` | `failOpen` was written as `"true"`, `1` or `null`. The handler is registered with `failOpen: false` (it blocks when its command cannot run). If it only observes, change the value to `true`. |
-| A tool is refused with `Blocked: guard hook '...' could not run its command` | A `command` handler on an event with a decision channel produced no exit code (a timeout, for one). Fix the cause named in the reason, or declare `"failOpen": true` if the handler only observes. |
+| A tool is refused with `Blocked: guard hook '...' could not run its command` | A `command` handler on an event with a decision channel produced no exit code (a timeout, for one), or the shell could not start the command (`command not found: exit code 127`, `command not executable: exit code 126` — check the script path and its execute permission). Fix the cause named in the reason, or declare `"failOpen": true` if the handler only observes. The full table is in [What a guard blocks](#what-a-guard-blocks). |
 | `WARN hooks: 'asyncRewake' is not supported on event '...'`              | Rewake-capable events are `preTool`/`preCompact`/`onSessionStart`/`onSessionEnd`/`onConfigReload`. The hook itself registers normally. |
 | A shell hook exited 2 but nothing was blocked                             | That event has no decision channel. A veto is effective only on `preTool`/`onStart`/`preCompact` (block) and `permissionRequest` (deny). |
 | `${tool_input.x}` / `${tool_name}` inside a command is empty              | Intended behaviour. Commands are not rendered — use the stdin JSON payload or the `AIMON_*` env (`$AIMON_TOOL_NAME` and so on). |

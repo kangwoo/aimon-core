@@ -82,9 +82,13 @@ class ShellActionRunnerTest {
 
         ShellHookOutcome outcome = ShellActionRunner.run(shell, ACTION, Map.of(), null);
 
-        // An exit code — even "command not found" — is an answer; only its absence is "could not run".
+        // The runner reports the exit code as it came: it serves advisory events too, and there 127 is only logged.
         assertThat(outcome.isObserved()).isTrue();
         assertThat(outcome.getExitCode()).isEqualTo(127);
         assertThat(outcome.getUnrunCause()).isEmpty();
+        // Reading "command not found" as "could not run" is the guard events' decision (EE-66), and it never
+        // carries the shell's stderr, which quotes the command.
+        assertThat(outcome.asGuardAnswer().getUnrunCause()).contains(ShellHookOutcome.Unrun.COMMAND_NOT_FOUND);
+        assertThat(outcome.asGuardAnswer().unrunReason()).isEqualTo("command not found: exit code 127");
     }
 }

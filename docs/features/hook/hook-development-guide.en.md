@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-development-guide.md
-source_commit: 4c9b3d2
+source_commit: 2bfe9a97
 ---
 
 # Hook Development Guide
@@ -104,8 +104,10 @@ There are 13 in total:
 > refusal is expressed as **exit 2** from the shell handler. The declarative veto on `ON_START`
 > was added recently — before that, an `onStart` shell hook exiting 2 had no effect whatsoever.
 > In those four chains a shell handler that **produces no exit code** (no execution environment,
-> a timeout, a shell failure) refuses as well — a guard that could not decide blocks. A handler
-> that only observes opts out with `failOpen: true`.
+> a timeout, a shell failure), or whose command the shell **could not start** (exit 126 or 127),
+> refuses as well — a guard that could not decide blocks. A handler that only observes opts out
+> with `failOpen: true`. The full table is in
+> [Hook configuration guide › What a guard blocks](hook-config-guide.en.md#what-a-guard-blocks).
 
 Adding a new event means adding all of: the hook interface, the context type, the
 `HookEventType` constant, the `HookExecutionManager` method, and **the firing site**. A constant

@@ -178,7 +178,10 @@ Claude Code 풍 `if` 문법은 `PredicateParser` 가 위 구현들로 번역한�
 효력이 있는 곳은 결정 채널을 가진 네 이벤트뿐이다 — `preTool`/`onStart`/`preCompact` 는 block,
 `permissionRequest` 는 deny. 나머지는 로그만 남기고 진행한다.
 
-**exit 2 외의 non-zero 는 허용**이다. 깨진 스크립트가 조용한 게이트키퍼가 되면 안 된다.
+**exit 2 외의 non-zero 는 허용**이다. 깨진 스크립트가 조용한 게이트키퍼가 되면 안 된다. 예외는 셸 자신이 보고하는 두 코드다 —
+**126(실행할 수 없음) · 127(찾지 못함)** 은 스크립트가 돌지 않았다는 뜻이므로 결정 채널을 가진 네 이벤트에서는 아래 "종료
+코드 없음" 과 같이 읽는다(`ShellHookOutcome.asGuardAnswer()`). 스크립트가 스스로 그 코드를 낼 수도 있어 구별되지 않지만,
+가드 스크립트가 없는 환경에서 가드가 통과로 바뀌는 쪽이 더 나쁘다(EE-66).
 
 **종료 코드가 없으면 거부다(fail-closed).** 명령을 돌리지 못했거나 끝나지 않았을 때 — 실행 환경 없음 · 사용 불가, timeout,
 셸 실패 — 실행기는 원인을 실어 보고하고(`ShellHookOutcome.notRun(cause, detail)`), 결정 채널을 가진 네 이벤트의 훅은 그것을

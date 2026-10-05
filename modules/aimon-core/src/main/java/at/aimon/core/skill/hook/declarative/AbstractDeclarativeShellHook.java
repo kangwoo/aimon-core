@@ -133,17 +133,15 @@ public abstract class AbstractDeclarativeShellHook<C extends HookContext> implem
     }
 
     private HookResult interpret(ShellHookOutcome outcome) {
-        if (!outcome.isObserved()) {
-            // No exit status. An advisory event has nothing to decide (the executor already logged why); an event
-            // with a decision channel blocks unless the hook declared failOpen.
+        if (!outcome.isDenied()) {
+            // No veto. An advisory event has nothing more to decide (the executor already logged what happened); an
+            // event with a decision channel still blocks when the command gave no answer at all — no exit status, or
+            // the shell's "could not start it" — unless the hook declared failOpen.
             if (!canVeto()) {
                 return HookResult.success();
             }
             return ShellHookVerdicts.guard(outcome, failOpen, skillName, eventName).flatMap(this::vetoResult)
                     .orElseGet(HookResult::success);
-        }
-        if (!outcome.isDenied()) {
-            return HookResult.success();
         }
         final Optional<HookResult> veto = vetoResult(outcome.denyReason());
         if (veto.isEmpty()) {
@@ -159,8 +157,9 @@ public abstract class AbstractDeclarativeShellHook<C extends HookContext> implem
 
     /**
      * Translates a veto into this event's decision result. A veto is an exit code of
-     * {@value ShellHookOutcome#DENY_EXIT_CODE}, or — fail-closed — a command that produced no exit status on a hook
-     * that did not declare {@code failOpen}.
+     * {@value ShellHookOutcome#DENY_EXIT_CODE}, or — fail-closed — a command that produced no exit status, or that the
+     * shell could not start (exit {@value ShellHookOutcome#NOT_EXECUTABLE_EXIT_CODE} /
+     * {@value ShellHookOutcome#NOT_FOUND_EXIT_CODE}), on a hook that did not declare {@code failOpen}.
      *
      * <p>
      * Most lifecycle events are advisory notifications with nowhere to put a decision; for those the default applies —
