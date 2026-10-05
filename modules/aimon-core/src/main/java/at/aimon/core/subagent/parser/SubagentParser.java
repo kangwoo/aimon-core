@@ -17,7 +17,8 @@ import at.aimon.core.subagent.Subagent;
  * description: Expert code reviewer
  * when-to-use: When you need code review or quality analysis
  * allowed-tools: Read, Grep, Glob, Bash
- * model: sonnet
+ * # no model: runs on the parent agent's model. Name one only as an id the configured provider serves; it is sent
+ * # as written (aliases are not resolved).
  * max-iterations: 50
  * ---
  * You are an expert code reviewer...

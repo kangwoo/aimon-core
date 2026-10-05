@@ -567,7 +567,9 @@ class CliConfigLoaderTest {
         @DisplayName("Should reject an unusable value rather than falling back")
         void rejectsAnUnusableValue() throws IOException {
             assertThatThrownBy(() -> loader.load(write(withEffort("mediumish")).toString()))
-                    .isInstanceOf(ConfigurationException.class).hasMessageContaining("Invalid configuration structure");
+                    .isInstanceOf(ConfigurationException.class).hasMessageContaining("Invalid configuration structure")
+                    // L-5: the wrapping sentence names the key and the rejected value, not only the file.
+                    .hasMessageContaining("llm.reasoningEffort").hasMessageContaining("mediumish");
         }
 
         @Test
@@ -584,7 +586,9 @@ class CliConfigLoaderTest {
                     """);
 
             assertThatThrownBy(() -> loader.load(configFile.toString())).isInstanceOf(ConfigurationException.class)
-                    .hasMessageContaining("Invalid configuration structure");
+                    .hasMessageContaining("Invalid configuration structure")
+                    // L-5: without --verbose the operator used to get the file name only.
+                    .hasMessageContaining("llm.reasoningEffor").hasMessageNotContaining("at.aimon.cli.config");
         }
     }
 

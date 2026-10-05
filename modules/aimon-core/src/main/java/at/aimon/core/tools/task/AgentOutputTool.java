@@ -381,8 +381,12 @@ public class AgentOutputTool extends AbstractTool {
                 ? TOOL_NAME + "(taskId=\"" + taskId + "\", from_offset=0) for the full progress log"
                 : null;
         output.append("Result:").append(Constants.NEWLINE);
-        output.append(SubagentResultFormatter.truncateTailKeep(result.getSummary(), pointer))
-                .append(Constants.DOUBLE_NEWLINE);
+        output.append(SubagentResultFormatter.truncateTailKeep(result.getSummary(), pointer)).append(Constants.NEWLINE);
+        // After the result, as the foreground Task result places it (L-25): Status: SUCCESS alone reads a cut answer
+        // as a whole one.
+        SubagentResultFormatter.completionReasonLine(result.getCompletionReason(), result.isSuccess())
+                .ifPresent(line -> output.append(line).append(Constants.NEWLINE));
+        output.append(Constants.NEWLINE);
 
         output.append("Execution Details:").append(Constants.NEWLINE);
         output.append("- Duration: ").append(result.getDurationMillis()).append(" ms").append(Constants.NEWLINE);

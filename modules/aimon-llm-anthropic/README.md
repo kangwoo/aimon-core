@@ -52,7 +52,8 @@ dependencies {
 // 1. 설정
 AnthropicConfig config = AnthropicConfig.builder()
     .apiKey(System.getenv("ANTHROPIC_KEY"))
-    .model("claude-sonnet-4-20250514")
+    // model 없음: AnthropicConfig 의 기본 모델로 돈다. 다른 모델이 필요할 때만 Messages API 가 서비스하는 id 를
+    // 적는다 — 쓰인 그대로 간다(별칭을 풀지 않는다).
     .build();
 
 // 2. 클라이언트 생성
@@ -103,7 +104,7 @@ if (response.hasToolUses()) {
 
 ```java
 LlmModel modelConfig = LlmModel.builder()
-    .name("claude-opus-4-20250514")
+    // name 없음: 클라이언트 설정의 모델로 간다. 이 호출만 다른 모델로 보내려면 서비스되는 id 를 .name(...) 으로 적는다.
     .temperature(0.7)
     .maxTokens(2048)
     .topP(0.9)

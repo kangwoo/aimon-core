@@ -75,8 +75,8 @@ import at.aimon.core.llms.anthropic.exception.ToolConversionException;
  * <pre>
  * {
  *     &#64;code
- *     AnthropicConfig config = AnthropicConfig.builder().apiKey(System.getenv("ANTHROPIC_KEY"))
- *             .model("claude-sonnet-4-20250514").build();
+ *     // No model(...): AnthropicConfig's default model is used.
+ *     AnthropicConfig config = AnthropicConfig.builder().apiKey(System.getenv("ANTHROPIC_KEY")).build();
  *
  *     LlmClient client = new AnthropicLlmClient(config);
  *

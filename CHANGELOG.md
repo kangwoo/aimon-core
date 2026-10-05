@@ -7,6 +7,28 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Fixed: four messages that did not say what they knew, and a REPL renderer that could die mid-turn
+
+- **The CLI's `Invalid configuration structure in: <file>` now names the key.** It appends `(at <dotted.key>: <Jackson's
+  reason>)` — `llm.reasoningEffor: Unrecognized field "reasoningEffor", not marked as ignorable` — so a typo or a bad
+  value no longer needs `--verbose` to locate. The full cause is still attached. Backlog L-5.
+- **The Anthropic thinking-budget clamp warning reads `only 1 token` and names both remedies.** Besides "Raise
+  maxTokens" it names the effort rungs that fit under that `maxTokens` (`low (2048) or minimal (1024)`), or, when the
+  budget came from `thinkingBudgetTokens`, says to lower that instead — a configured budget wins over the effort, so
+  lowering the effort would change nothing. Backlog L-15.
+- **A background subagent's answer cut at `max_tokens` is now named as such where the parent reads it.** `AgentOutput`
+  prints the same `Completion reason: TRUNCATED (the subagent's final answer is incomplete)` line after the result that
+  the foreground `Task` result prints, and the completion notice (queued notification and `SubagentTaskCompleted`
+  detail) puts it at the head, where the notice's 500-character cut cannot drop it. Backlog L-25.
+- **The REPL no longer throws on `InterruptedAt` or `RejectedAt`.** `OutputFormatter.displayEvent` handled 14 of the 16
+  `AgentExecutionEvent` subtypes; the other two reached an `IllegalStateException`. `InterruptedAt` is now a deliberate
+  no-op (the `[Interrupted]` result banner and the streamed text already show it) and `RejectedAt` prints an
+  `[Input rejected]` line, since no result follows a dropped input. A test now requires a display method for every
+  permitted subtype. Backlog RD-3.
+- **Copyable examples no longer name models the API answers 404.** The `aimon-llm-anthropic` README, the
+  `AnthropicConfig` / `AnthropicLlmClient` javadoc and the subagent parser format examples drop the model line and say
+  what runs without one. Backlog L-27.
+
 ### Policy: `internal` packages are not public API, and the build says so
 
 - **`docs/project/api-stability.md` §2 now names `<package>.internal` beside `*.impl`.** The five `internal` packages

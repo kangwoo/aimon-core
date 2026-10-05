@@ -1,4 +1,4 @@
-# 추론 스트림 — 등록 항목 9건 (열림 7 · 닫힘 2)
+# 추론 스트림 — 등록 항목 9건 (열림 6 · 닫힘 3)
 
 출처는 #62 다 — 모델의 숙고를 사용자가 볼 수 있게 만든 작업(`LlmStreamChunk.Kind.REASONING_DELTA` ·
 `AssistantReasoningDelta` · 양쪽 provider 의 opt-in 키). 설계는
@@ -208,6 +208,31 @@
 
 **언제 다시 볼까.** 세션 라우터의 이벤트가 REPL 로 흐르게 되는 순간, 또는 누가 그 예외를 밟을 때.
 전자가 먼저 올 가능성이 높다.
+
+### 닫힘 (2026-10-05)
+
+**두 서브타입이 이제 각자의 표시 메서드를 가지며, 그 체인이 빠지는 것을 테스트가 잡는다.** 이 항목이 "실제 내용" 이라고
+한 무엇을 인쇄할지는 이렇게 정했다.
+
+- **`InterruptedAt` — 의도적 no-op.** 인터럽트된 턴도 `CompletionReason.INTERRUPTED` 결과로 끝나고
+  `displayResult` 가 그것을 `[Interrupted]` 배너로 찍는다. 이 이벤트의 `getPartialOutput()` 은 텍스트 델타가 이미 화면에
+  그렸다. 둘 중 무엇을 찍어도 두 번 보인다 — `ExecutionCompleted` 가 no-op 인 것과 같은 이유다.
+- **`RejectedAt` — 오류 줄로 렌더.** 인터럽트와 달리 이 뒤에는 **아무것도 오지 않는다**: 입력은 iteration 전에 버려지므로
+  `displayResult` 에 닿는 결과가 없다. `[Input rejected] CONFLICTING_AGENT: requested agent 'X', session is bound to 'Y'
+  (inboxId=…)` 가 사용자가 보낸 것이 어디에도 가지 않았음을 알 유일한 자리다.
+
+**체인의 주석이 거짓이었던 것도 고쳤다.** *"sealed 계층이 이 체인을 갱신하도록 강제한다"* 는 문장을 빼고, 무엇이 실제로
+강제하는지를 적었다 — 새 `OutputFormatterTest.DisplayEventExhaustiveness.everySubtypeHasADisplayMethod` 가
+`AgentExecutionEvent.class.getPermittedSubclasses()` 를 돌며 각 서브타입을 단일 인자로 받는 `display*` 메서드가 있는지
+본다. 새 서브타입은 이제 REPL 이 밟기 전에 빌드에서 빨개진다.
+
+**처방은 실패하는 테스트로 먼저 확인했다 (규칙 다섯).** 이 항목이 첫 걸음으로 적은 반대 단언 둘과 망라 검사 하나, 세 건이
+옛 코드에서 실패했다.
+
+**트리거는 발화하지 않았다.** 라우터의 이벤트는 여전히 REPL 로 흐르지 않는다. 작업이 자기 완결적이라 기다리지 않았다.
+
+**어디** *(2026-10-05)* — `OutputFormatter.displayEvent` · `displayInterruptedAt` · `displayRejectedAt`,
+`OutputFormatterTest.DisplayEventExhaustiveness`.
 
 ---
 

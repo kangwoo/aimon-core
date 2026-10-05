@@ -9,6 +9,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Arrays;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -21,12 +22,17 @@ import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.impl.orca.OrcaAgentExecutionResult;
+import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
+import at.aimon.core.agent.stream.AgentExecutionEvent;
 import at.aimon.core.agent.stream.AssistantReasoningDelta;
 import at.aimon.core.agent.stream.AssistantTextDelta;
 import at.aimon.core.agent.stream.AssistantTextStreamCompleted;
 import at.aimon.core.agent.stream.AssistantTextStreamReset;
+import at.aimon.core.agent.stream.InterruptedAt;
+import at.aimon.core.agent.stream.RejectReason;
+import at.aimon.core.agent.stream.RejectedAt;
 import at.aimon.core.agent.stream.SubagentTaskCompleted;
 import at.aimon.core.command.execution.ExecutionMetadata;
 
@@ -521,6 +527,47 @@ class OutputFormatterTest {
             formatter.displayEvent(event(SubagentTaskCompleted.Outcome.FAILED, null));
 
             assertThat(getOutput()).contains("[Background task failed]").contains("researcher").contains("taskId=t-1");
+        }
+    }
+
+    @Nested
+    @DisplayName("displayEvent covers the whole sealed hierarchy")
+    class DisplayEventExhaustiveness {
+
+        @Test
+        @DisplayName("Every permitted AgentExecutionEvent subtype has a display method of its own")
+        void everySubtypeHasADisplayMethod() {
+            // RD-3: the dispatch chain's comment claimed the sealed hierarchy forced it to stay complete; it did not,
+            // and two subtypes reached the throwing else. This is what now notices a new subtype at build time.
+            for (Class<?> subtype : AgentExecutionEvent.class.getPermittedSubclasses()) {
+                assertThat(Arrays.stream(OutputFormatter.class.getMethods())
+                        .filter(m -> m.getName().startsWith("display") && m.getParameterCount() == 1)
+                        .anyMatch(m -> m.getParameterTypes()[0] == subtype))
+                        .as("OutputFormatter has a display method for %s", subtype.getSimpleName()).isTrue();
+            }
+        }
+
+        @Test
+        @DisplayName("InterruptedAt prints nothing: the result's [Interrupted] banner and the streamed text cover it")
+        void interruptedAtIsANoOp() {
+            final InterruptedAt event = InterruptedAt.builder().timestamp(Instant.now())
+                    .agentRuntimeId(AgentRuntimeId.of("agent:test")).iteration(2).reason(InterruptReason.USER_SIGINT)
+                    .iterationIndex(1).partialOutput("half an answer").build();
+
+            assertThatCode(() -> formatter.displayEvent(event)).doesNotThrowAnyException();
+            assertThat(getOutput()).isEmpty();
+        }
+
+        @Test
+        @DisplayName("RejectedAt prints the reason and both agent names, because no result follows a dropped input")
+        void rejectedAtIsRendered() {
+            final RejectedAt event = RejectedAt.builder().timestamp(Instant.now())
+                    .agentRuntimeId(AgentRuntimeId.of("agent:test")).reason(RejectReason.CONFLICTING_AGENT)
+                    .requestedAgent("researcher").existingAgent("default").inboxId("in-7").build();
+
+            assertThatCode(() -> formatter.displayEvent(event)).doesNotThrowAnyException();
+            assertThat(getOutput()).contains("[Input rejected]").contains("CONFLICTING_AGENT").contains("researcher")
+                    .contains("default").contains("in-7");
         }
     }
 }

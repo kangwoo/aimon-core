@@ -543,7 +543,7 @@ CLI 플래그는 picocli `negatable = true` 로 필드 하나가 `--streaming` /
 
 **백로그에 등록된 것** — [`../../backlog/reasoning-delta-stream-open-items.md`](../../backlog/reasoning-delta-stream-open-items.md)
 
-- **RD-3** — REPL 의 `OutputFormatter.displayEvent` 가 `InterruptedAt` · `RejectedAt` 에서 던진다
+- ~~**RD-3** — REPL 의 `OutputFormatter.displayEvent` 가 `InterruptedAt` · `RejectedAt` 에서 던진다~~ — 2026-10-05 닫힘
 - **RD-4** — 중립 우산 키를 열 것인가(세 번째 provider, 또는 벤더 사이 이동 요구가 트리거)
 - **RD-5** — `AssistantTextStreamReset` / `…Completed` 의 이름이 시도 경계라는 실제 역할보다 좁다
 - **RD-6** — 에이전트 정의의 `model.reasoningSummary`

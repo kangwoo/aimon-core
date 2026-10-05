@@ -2,6 +2,7 @@ package at.aimon.core.llms.anthropic;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.Locale;
 import java.util.OptionalInt;
 
 import org.junit.jupiter.api.DisplayName;
@@ -25,6 +26,25 @@ class AnthropicThinkingBudgetsTest {
 
     /** Large enough that no rung clamps, so the ladder itself is what is under test. */
     private static final int ROOMY_MAX_TOKENS = 64_000;
+
+    @Test
+    @DisplayName("the rungs named as fitting are exactly those that would not clamp, and the floor always fits")
+    void rungsThatFitAreThoseThatWouldNotClamp() {
+        // Every maxTokens that can clamp is above the floor, so the clamp warning always has a rung to name.
+        for (int maxTokens : new int[]{AnthropicThinkingBudgets.MINIMUM_BUDGET_TOKENS + 1, 4096, ROOMY_MAX_TOKENS}) {
+            final String named = AnthropicThinkingBudgets.describeRungsThatFit(maxTokens);
+            for (ReasoningEffort rung : new ReasoningEffort[]{ReasoningEffort.MINIMAL, ReasoningEffort.LOW,
+                    ReasoningEffort.MEDIUM, ReasoningEffort.HIGH}) {
+                final int budget = AnthropicThinkingBudgets.requestedBudget(rung, null);
+                final String entry = rung.name().toLowerCase(Locale.ROOT) + " (" + budget + ")";
+                if (budget < maxTokens) {
+                    assertThat(named).as("maxTokens %d", maxTokens).contains(entry);
+                } else {
+                    assertThat(named).as("maxTokens %d", maxTokens).doesNotContain(entry);
+                }
+            }
+        }
+    }
 
     @Test
     @DisplayName("the ladder is monotonic non-decreasing across all five rungs")

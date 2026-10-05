@@ -53,6 +53,7 @@ import at.aimon.core.subagent.execution.SubagentExecutionRequest;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
 import at.aimon.core.subagent.execution.SubagentExecutor;
 import at.aimon.core.subagent.execution.SubagentOutputSink;
+import at.aimon.core.subagent.execution.SubagentResultFormatter;
 import at.aimon.core.subagent.task.BackgroundTask;
 import at.aimon.core.subagent.task.BackgroundTaskState;
 import at.aimon.core.subagent.task.BackgroundTaskStore;
@@ -1036,7 +1037,14 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
             Throwable error) {
         final String raw;
         if (outcome == SubagentTaskCompleted.Outcome.COMPLETED) {
-            raw = result != null ? result.getSummary() : null;
+            // A reason line goes at the head, not after the summary: truncateDetail keeps the first 500 chars, so the
+            // end-of-answer marker of a long answer cut at max_tokens would not survive it (L-25).
+            final String summary = result != null ? result.getSummary() : null;
+            raw = result == null
+                    ? null
+                    : SubagentResultFormatter.completionReasonLine(result.getCompletionReason(), result.isSuccess())
+                            .map(line -> summary == null || summary.isBlank() ? line : line + " — " + summary)
+                            .orElse(summary);
         } else if (result != null && result.getErrorMessage() != null && !result.getErrorMessage().isBlank()) {
             raw = result.getErrorMessage();
         } else if (error != null) {

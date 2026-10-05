@@ -4,6 +4,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.function.Function;
+import java.util.regex.Pattern;
 
 import com.fasterxml.jackson.core.JsonParseException;
 import com.fasterxml.jackson.core.JsonParser;
@@ -16,6 +17,8 @@ import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import at.aimon.cli.exception.ConfigurationException;
 
 public class CliConfigLoader {
+    private static final Pattern JAVA_TYPE_ASIDE = Pattern.compile("\\s*\\((?:class|enum class) [^)]*\\)");
+
     private final ObjectMapper yamlMapper;
     private final Function<String, String> envVarResolver;
 
@@ -78,8 +81,8 @@ public class CliConfigLoader {
         } catch (JsonMappingException e) {
             // A placeholder failure thrown while a property was being read arrives wrapped in this; unwrapping it is
             // what keeps "Environment variable not set: X" instead of the generic structure message.
-            throw PlaceholderExpandingParser.placeholderFailureIn(e).orElseGet(
-                    () -> new ConfigurationException("Invalid configuration structure in: " + expandedPath, e));
+            throw PlaceholderExpandingParser.placeholderFailureIn(e).orElseGet(() -> new ConfigurationException(
+                    "Invalid configuration structure in: " + expandedPath + describeMappingFailure(e), e));
         } catch (IOException e) {
             throw new ConfigurationException("Failed to read configuration from: " + expandedPath, e);
         }
@@ -114,6 +117,33 @@ public class CliConfigLoader {
             throw PlaceholderExpandingParser.placeholderFailureIn(e)
                     .orElseGet(() -> new ConfigurationException("Failed to load configuration from: " + source, e));
         }
+    }
+
+    /**
+     * Names the key Jackson rejected and its own short reason, so the operator does not need {@code --verbose} to
+     * learn which line of the file is wrong. Empty when Jackson reports no path.
+     */
+    static String describeMappingFailure(JsonMappingException e) {
+        final StringBuilder key = new StringBuilder();
+        for (JsonMappingException.Reference reference : e.getPath()) {
+            if (reference.getFieldName() != null) {
+                if (key.length() > 0) {
+                    key.append('.');
+                }
+                key.append(reference.getFieldName());
+            } else if (reference.getIndex() >= 0) {
+                key.append('[').append(reference.getIndex()).append(']');
+            }
+        }
+        if (key.length() == 0) {
+            return "";
+        }
+        // The original message without Jackson's location suffix; its first line is the reason, the rest lists every
+        // known property, which the key already makes unnecessary to read here. The "(class ...)" aside names a Java
+        // type the operator never wrote, so it goes too; the full text stays on the cause for --verbose.
+        final String original = e.getOriginalMessage() == null ? "" : e.getOriginalMessage();
+        final String reason = JAVA_TYPE_ASIDE.matcher(original.lines().findFirst().orElse("")).replaceAll("").trim();
+        return reason.isEmpty() ? " (at " + key + ")" : " (at " + key + ": " + reason + ")";
     }
 
     private String expandPath(String path) {

@@ -416,14 +416,24 @@ final class AnthropicThinkingResolver {
             // budget clamped to maxTokens - 1 leaves one token for visible output and the turn ends on
             // stop_reason: max_tokens. Naming the reduced budget instead would point the operator at the harmless
             // half of the change.
+            //
+            // The second remedy differs by where the number came from: a configured budget wins over the ladder, so
+            // lowering the effort would change nothing and only the budget itself can be lowered.
+            final String lowerRemedy = configuredBudget != null
+                    ? "or lower thinkingBudgetTokens below " + maxTokens
+                    : "or lower the reasoning effort to " + AnthropicThinkingBudgets.describeRungsThatFit(maxTokens);
             resolution.record(AnthropicThinkingResolution.Finding.requiresThinking(
                     "thinkingBudgetClamped=" + requested + "->" + resolved,
                     "A thinking budget of {} tokens does not fit under maxTokens {}; sending {} instead, which leaves "
-                            + "only {} tokens for the visible answer. Raise maxTokens: thinking tokens are counted "
-                            + "against it, so the reply is what this squeezes out, not the reasoning.",
-                    requested, maxTokens, resolved, maxTokens - resolved));
+                            + "only {} for the visible answer. Raise maxTokens, {}: thinking tokens are counted "
+                            + "against maxTokens, so the reply is what this squeezes out, not the reasoning.",
+                    requested, maxTokens, resolved, tokens(maxTokens - resolved), lowerRemedy));
         }
         final ThinkingConfigEnabled enabled = ThinkingConfigEnabled.builder().budgetTokens(resolved).build();
         return resolution.parameter(ThinkingConfigParam.ofEnabled(enabled)).build();
+    }
+
+    private static String tokens(int count) {
+        return count == 1 ? "1 token" : count + " tokens";
     }
 }

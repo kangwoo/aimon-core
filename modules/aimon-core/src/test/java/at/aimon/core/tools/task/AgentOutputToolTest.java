@@ -16,6 +16,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.AgentRuntimeId;
+import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.tool.ToolContext;
@@ -118,6 +119,34 @@ class AgentOutputToolTest {
         assertThat(result.isSuccess()).isTrue();
         assertThat(result.getContent()).contains("Background Task Result").contains("Task ID: done")
                 .contains("Status: SUCCESS").contains("the answer").contains("Iterations: 2").contains("Tokens: 100");
+    }
+
+    @Test
+    void executeNamesATruncatedAnswerAfterTheResult() {
+        // L-25: the record says TRUNCATED, and Status: SUCCESS alone read as a whole answer.
+        Instant now = Instant.now();
+        ExecutionMetadata metadata = ExecutionMetadata.builder().iterationCount(2)
+                .tokenUsage(TokenUsage.of(40, 60, 100)).timestamps(now, now).build();
+        resultStore.save("cut", TaskResult.from(SubagentExecutionResult.success("half an ans",
+                SessionSnapshot.of(SessionId.generate(), "sys", List.of()), metadata, CompletionReason.TRUNCATED)));
+        controller.add("cut", null);
+        controller.settle("cut", BackgroundTaskState.COMPLETED);
+
+        ToolResult result = tool.execute(ToolInput.of(Map.of("taskId", "cut", "block", false)), ToolContext.empty());
+
+        assertThat(result.getContent()).contains("Status: SUCCESS")
+                .contains("Completion reason: TRUNCATED (the subagent's final answer is incomplete)");
+        assertThat(result.getContent().indexOf("Completion reason:"))
+                .isGreaterThan(result.getContent().indexOf("half an ans"));
+    }
+
+    @Test
+    void executePrintsNoCompletionReasonForAWholeAnswer() {
+        completed("done");
+
+        ToolResult result = tool.execute(ToolInput.of(Map.of("taskId", "done", "block", false)), ToolContext.empty());
+
+        assertThat(result.getContent()).doesNotContain("Completion reason");
     }
 
     @Test

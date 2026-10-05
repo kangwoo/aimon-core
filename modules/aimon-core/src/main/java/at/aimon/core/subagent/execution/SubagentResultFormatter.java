@@ -1,5 +1,10 @@
 package at.aimon.core.subagent.execution;
 
+import java.util.Objects;
+import java.util.Optional;
+
+import at.aimon.core.agent.budget.CompletionReason;
+
 /**
  * Bounds how much of a subagent's final answer is inlined into the parent agent's context (design §6).
  *
@@ -23,6 +28,28 @@ public final class SubagentResultFormatter {
     public static final int DEFAULT_MAX_CHARS = 32_000;
 
     private SubagentResultFormatter() {
+    }
+
+    /**
+     * The {@code Completion reason:} line that follows a subagent's result when it did not finish on its own terms,
+     * shared by the foreground {@code Task} result, the background {@code AgentOutput} result and the background
+     * completion notice so the three say it in the same words.
+     *
+     * @param reason
+     *            the result's completion reason
+     * @param success
+     *            whether the result carries an answer; a successful result with an unsuccessful reason is an answer
+     *            that is not whole (a final answer cut at {@code max_tokens}), and the line says so
+     * @return the line without a trailing newline, or empty when the reason is a successful one
+     */
+    public static Optional<String> completionReasonLine(CompletionReason reason, boolean success) {
+        Objects.requireNonNull(reason, "Completion reason cannot be null");
+        if (reason.isSuccessful()) {
+            return Optional.empty();
+        }
+        // It answered, but not on its own terms: the answer is there and it is not whole.
+        return Optional.of("Completion reason: " + reason.name()
+                + (success ? " (the subagent's final answer is incomplete)" : ""));
     }
 
     /**
