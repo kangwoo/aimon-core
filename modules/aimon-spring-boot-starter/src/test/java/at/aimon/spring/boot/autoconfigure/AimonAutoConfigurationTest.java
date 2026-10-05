@@ -691,6 +691,60 @@ class AimonAutoConfigurationTest {
     }
 
     @Test
+    @DisplayName("L-3 (a): provider=none without a bean does not start, whatever is declared under aimon.llm")
+    void providerNoneWithoutBeanNeverRunsWithUnreadDeclarations(@TempDir Path workspace) {
+        // Backlog L-3 named this as a deployment whose declarations silently do nothing. It is not a deployment:
+        // aimonUnresolvedLlmClient refuses it, from the one place where the absence of an LlmClient bean is
+        // knowable, and has since before the item was written. So there is no running shape here to add a second
+        // refusal to -- and the remedy the message gives (define the bean) turns it into the shape below.
+        minimal(workspace)
+                .withPropertyValues("aimon.llm.provider=none",
+                        "aimon.llm.model-capabilities.prod-assistant.supports-sampling-parameters=false",
+                        "aimon.llm.reasoning-effort=low", "aimon.llm.anthropic.thinking-mode=auto",
+                        "aimon.llm.openai.temperature=0.2")
+                .run(ctx -> assertThat(ctx).hasFailed().getFailure()
+                        .hasStackTraceContaining(AimonProperties.LLM_PROVIDER + "=" + AimonProperties.PROVIDER_NONE)
+                        .hasStackTraceContaining("defines no LlmClient"));
+    }
+
+    @Test
+    @DisplayName("L-3 (b): with an application LlmClient nothing under aimon.llm is refused, and a declaration is"
+            + " still usable")
+    void anApplicationClientMakesNoDemandOfTheLlmProperties(@TempDir Path workspace) {
+        // The decision, pinned: no vendor branch runs, so nothing here is read by this starter -- and nothing is
+        // refused either, because the answer depends on a bean the application owns. It can hand the declared
+        // registry to its own client through AimonProperties.modelCapabilityRegistry, and it can read the rest off
+        // the properties bean. Both vendor blocks at once, which either branch would refuse, to show neither ran.
+        final String[] declared = {"aimon.llm.model-capabilities.prod-assistant.supports-sampling-parameters=false",
+                "aimon.llm.reasoning-effort=low", "aimon.llm.anthropic.thinking-mode=auto",
+                "aimon.llm.openai.temperature=0.2"};
+        for (String provider : new String[]{"none", "anthropic", "openai", "some-gateway"}) {
+            runner.withPropertyValues("aimon.workspace.root=" + workspace,
+                    "aimon.agent-defaults.default-agent=" + AGENT, "aimon.llm.provider=" + provider)
+                    .withPropertyValues(declared).withUserConfiguration(ApplicationLlmConfiguration.class).run(ctx -> {
+                        assertThat(ctx).as("provider=%s", provider).hasNotFailed();
+                        assertThat(ctx).getBean(LlmClient.class).isSameAs(ApplicationLlmConfiguration.INSTANCE);
+                        final AimonProperties.Llm llm = ctx.getBean(AimonProperties.class).getLlm();
+                        assertThat(AimonProperties.modelCapabilityRegistry(llm).resolve("prod-assistant")
+                                .supportsSamplingParameters()).isFalse();
+                        assertThat(llm.getOpenai().getTemperature()).isEqualTo(0.2);
+                    });
+        }
+    }
+
+    @Test
+    @DisplayName("L-3 (b): a declaration nobody reads is still validated, so a broken one fails startup")
+    void anUnreadDeclarationIsStillValidated(@TempDir Path workspace) {
+        // What "not refused" does not mean. validateLlm runs for every deployment, the bring-your-own-client one
+        // included, so the registry an application gets from modelCapabilityRegistry is one that already built.
+        runner.withPropertyValues("aimon.workspace.root=" + workspace, "aimon.agent-defaults.default-agent=" + AGENT,
+                "aimon.llm.provider=none", "aimon.llm.model-capabilities.prod-assistant.lowest-reasoning-effort=low",
+                "aimon.llm.model-capabilities.prod-assistant.accepted-reasoning-efforts=none,low")
+                .withUserConfiguration(ApplicationLlmConfiguration.class).run(ctx -> assertThat(ctx).hasFailed()
+                        .getFailure().hasStackTraceContaining("aimon.llm.model-capabilities.prod-assistant"));
+    }
+
+    @Test
     @DisplayName("an application-defined LlmClient wins and no vendor client is built")
     void applicationLlmClientWins(@TempDir Path workspace) {
         minimal(workspace).withUserConfiguration(ApplicationLlmConfiguration.class).run(ctx -> {

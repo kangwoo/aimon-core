@@ -532,7 +532,7 @@ aimon:
   `model-capabilities`. The CLI keys on the same axis are camelCase.
 - `aimon.llm.openai.*` is the counterpart of the `anthropic` block above and **is read by the openai branch
   alone** — written under `provider: anthropic` (or no provider at all) it is not ignored, it **fails
-  startup**. It has two keys. `aimon.llm.openai.reasoning-summary` is one of `auto` · `concise` · `detailed`:
+  startup**. Two of its keys are covered here; the sampling defaults are in the next item. `aimon.llm.openai.reasoning-summary` is one of `auto` · `concise` · `detailed`:
   it asks for a summary of the model's reasoning and streams that text (Responses API only, and left unset the
   request does not change by a character). `aimon.llm.openai.responses-api-enabled` decides whether the
   Responses API (`/v1/responses`) path is used, and is `true` when unset.
@@ -567,6 +567,31 @@ aimon:
   server that refuses — the client says so once at WARN before sending. An agent definition's `model.reasoningEffort` wins over the property, so write
   `none` on whichever one actually reaches the request. **A misspelled key name fails startup here too.** The CLI
   keys on the same axis are camelCase (`llm.openai.responsesApiEnabled`).
+- **The sampling defaults live in the vendor blocks too, and the keys differ per block.** `aimon.llm.openai` has
+  `temperature` (`0.0`–`2.0`), `top-p` (`0.0`–`1.0`), `presence-penalty` and `frequency-penalty` (both
+  `-2.0`–`2.0`); `aimon.llm.anthropic` has `temperature` (`0.0`–`1.0`) **and nothing else** — the Anthropic API
+  has no penalties and that client reads `top_p` from the agent definition alone, so
+  a `top-p` written in that block fails startup as an unknown key. A value out of range fails startup too, naming
+  the property (`aimon.llm.anthropic.temperature=1.5 is invalid: Temperature must be between 0.0 and 1.0`).
+
+  ```yaml
+  aimon:
+    llm:
+      provider: openai
+      openai:
+        temperature: 0.2
+        top-p: 0.9
+  ```
+
+  **These are defaults, not overrides — agent definition > this property > nothing.** An agent definition's
+  `model.temperature` · `model.topP` wins; without one, this value is sent; with neither, nothing is sent and
+  the server's default applies. It is decided per parameter. On a request sent without the value the client
+  says so once at WARN — a model whose built-in capability row says it takes no sampling parameters (`gpt-5*`,
+  the o-series, some Claude models), `temperature` on an Anthropic request that carries a thinking parameter,
+  and the two penalties on a request that goes to `/v1/responses`. Background calls on the same client that state no value receive
+  this default as well. **Subagent requests can be the exception**: when the main agent's definition has no
+  `temperature`, the framework puts `0.7` on a subagent request explicitly, and an explicit value wins over
+  this property. The CLI keys on the same axis are camelCase (`llm.openai.topP`).
 - `supplied` under `knowledge` / `memory` means "**you declare that bean and the starter only connects the
   tools to it**". Spring made it, so Spring closes it, and the stack merely borrows. The same reason is
   why `knowledge.backend` **deliberately has no OpenSearch value** — `aimon-knowledge-opensearch` exists

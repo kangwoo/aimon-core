@@ -7,11 +7,14 @@ import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.constructor.SafeConstructor;
 
 import at.aimon.core.base.DefinitionAttributes;
+import at.aimon.core.base.text.YamlDuplicateKeys;
 
 /**
  * Parses subagent content including YAML frontmatter and markdown body.
@@ -77,6 +80,11 @@ import at.aimon.core.base.DefinitionAttributes;
  * </pre>
  */
 public class SubagentContentParser {
+    private static final Logger log = LoggerFactory.getLogger(SubagentContentParser.class);
+
+    /** How much of a description a warning quotes to say which subagent it is about. */
+    private static final int DESCRIPTION_EXCERPT_LENGTH = 60;
+
     // Matches YAML frontmatter between --- delimiters
     private static final Pattern FRONTMATTER_PATTERN = Pattern.compile("^---\\s*\n(.*?)\n---\\s*\n(.*)$",
             Pattern.DOTALL);
@@ -130,13 +138,39 @@ public class SubagentContentParser {
 
         try {
             final Map<String, Object> yamlData = newYaml().load(yamlContent);
-            return parseMetadata(yamlData, systemPrompt);
+            final SubagentContentResult result = parseMetadata(yamlData, systemPrompt);
+            warnAboutDuplicateKeys(result.getDescription(), yamlContent);
+            return result;
         } catch (SubagentParseException e) {
             // Preserve the specific field-level message instead of masking it with the generic wrapper.
             throw e;
         } catch (Exception e) {
             throw new SubagentParseException("Failed to parse YAML frontmatter", e);
         }
+    }
+
+    /**
+     * Says so when the front matter writes a key twice: snakeyaml keeps the last value and the earlier one is gone
+     * before anything downstream can notice. A warning rather than a refusal for the reason {@link #newYaml()} gives —
+     * a subagent file that loads today has to keep loading.
+     *
+     * <p>
+     * A subagent is named by its file, which this parser is not given, so the line quotes the start of the
+     * description to say which one it means.
+     */
+    private static void warnAboutDuplicateKeys(String description, String yamlContent) {
+        final List<String> duplicated = YamlDuplicateKeys.find(yamlContent);
+        if (duplicated.isEmpty()) {
+            return;
+        }
+        String document = "Subagent";
+        if (description != null && !description.isBlank()) {
+            final String oneLine = description.strip().replaceAll("\\s+", " ");
+            document = "Subagent (description: '" + (oneLine.length() > DESCRIPTION_EXCERPT_LENGTH
+                    ? oneLine.substring(0, DESCRIPTION_EXCERPT_LENGTH) + "…"
+                    : oneLine) + "')";
+        }
+        log.warn("{}", YamlDuplicateKeys.describe(document, duplicated));
     }
 
     /** Parses subagent metadata from YAML data. */

@@ -107,7 +107,7 @@ YAML error, an unknown property, a bad enum — is **identical to today's**, all
 | **A3** | **Post-bind reflective walk over the bound object graph** | Violates constraint A: `${VAR}` on `Integer`/enum still fails at bind, so the documented rule becomes type-dependent. Also needs `setAccessible` reflection over config classes, of which the CLI module has none, and per-type recursion rules for `List<String>`, `Map<String,String>` and `Map<String,ModelCapabilityConfig>` — a new list, of types instead of fields |
 | **A4** | **Regex substitution over the raw file text before the YAML parse** | **Breaks the shipped default config.** `default-config.yaml` carries `${OPENAI_KEY}` and `${GITHUB_TOKEN}` inside *comments* (`:138`, `:102`); a text pass expands commented-out examples, so `loadDefault()` would fail with `Environment variable not set: GITHUB_TOKEN` on a machine that has never used MCP |
 | **A5** | **Expand values generically but keep `resolveModelCapabilityKeys` as a post-bind special case** | Leaves a per-field remnant and puts collision detection in a second place, so the rule becomes "every value, plus the keys of one particular map" |
-| **A6** | **Add an escape (`$${VAR}` → literal `${VAR}`)** | New syntax, new documentation, and nothing in the tree needs it. Recorded as OQ-1 with the one plausible victim named (`mcp.servers[].args`) rather than pre-emptively built |
+| **A6** | **Add an escape (`$${VAR}` → literal `${VAR}`)** | New syntax, new documentation, and nothing in the tree needs it. Recorded as OQ-1 with the one plausible victim named (`mcp.servers[].args`) rather than pre-emptively built. **→ Added later (CE-1); §12.9** |
 | **A7** | **Bind from a re-serialised `JsonNode` tree** (`readTree` → walk → `readValue(treeAsTokens(root), …)`) — **revision 1's mechanism** | Satisfies constraint A and **violates constraint B for every file, whether or not it contains a placeholder.** Measured: on a `String` field `off`→`false`, `on`/`yes`→`true`, `0755`→`493`, `1.10`→`1.1`, `1e3`→`1000.0`; and `thinkingMode: off`, which binds `OFF` today, becomes `InvalidFormatException … from String "false"`, failing `CliConfigLoaderTest.unquotedOffBinds` (`:871`) and three of the twelve iterations of `everyModeSpellingBinds` (`:847`). Unfixable inside the mechanism: `off`, `no` and `false` all become `BooleanNode(false)`, so `unquotedOffBinds` and `otherYamlBooleansAreStillRefused` (`:889`) become mutually unsatisfiable. It also moved `.inf`'s report from `Invalid configuration structure` to `Invalid YAML syntax` for a file whose YAML is valid, and needed a null guard for empty input that the chosen mechanism does not |
 | **A8** | **Compose with snakeyaml's `Node` API and re-emit YAML text** | Preserves the written scalar (the emitter round-trips an implicitly-tagged scalar) but introduces a second YAML implementation path into `aimon-cli`, which today only uses Jackson's `YAMLFactory`, and pays a full parse-rewrite-emit-reparse for a substitution. The delegate gets the same fidelity for one class and no extra dependency |
 
@@ -464,7 +464,7 @@ No attribution lines.
 | 1 | `${VAR}` unset, anywhere in the config file | `ConfigurationException: Environment variable not set: VAR (at memory.dreamer.scorer.embedding.apiKey)`. Was: silent literal outside the five visited fields. **Intended, and a behaviour change** |
 | 2 | Two sibling keys expand to the same name | Refused, naming both spellings, the expansion and the path — measured identical to today for `modelCapabilities`. When the expanded name is one no config class declares, Jackson's unknown-property error on the first key arrives first (§4.1) |
 | 3 | `${VAR}` expands to something the field cannot bind (`TIMEOUT=abc`) | `ConfigurationException: Invalid configuration structure in: <file>`; the key is in the cause, visible only under `--verbose`. **This is registered item L-5 and it is deliberately not closed here** — §8 |
-| 4 | A value that should contain a literal `${` | Impossible; there is no escape. OQ-1 |
+| 4 | A value that should contain a literal `${` | Was impossible when this was approved (OQ-1). **Now `$${NAME}`** — §12.9 |
 | 5 | Expanded value itself contains `${OTHER}` | Left literal — one pass, not recursive. Same as today. Pinned |
 | 6 | Expanded value contains `$` or `\` | `Matcher.quoteReplacement`, carried over unchanged |
 | 7 | A scalar YAML reads as a boolean or a number (`off`, `0755`, `1.10`, `1e3`) | **Reaches its deserializer exactly as written**, whether or not the file contains placeholders. This is the property revision 1 lost; measured in probes E and F and pinned by four tests in §7.1 |
@@ -598,7 +598,8 @@ passed". No live-API probe is needed: neither fix touches a provider request.
   `${FOO}` in any value. The one plausible victim is `mcp.servers[].args`, where a stdio server's
   argument could carry a placeholder meant for a child shell (`command` is already expanded today, so
   only `args` changes). Recommendation: ship without an escape; if one is wanted, `$${VAR}` → literal is
-  the conventional form and is a two-line follow-up. **Needs a yes.**
+  the conventional form and is a two-line follow-up. **Needs a yes.** **→ The escape was added (CE-1);
+  what it means at its edges is §12.9.**
 - **OQ-2 — is the reviewer content that `${VAR}` now works on non-`String` keys?** It is the consequence
   that makes the rule one sentence (§2.2 constraint A), and it deletes a test that asserted the
   limitation. A reviewer who wants that asymmetry kept is choosing A3. **Needs a yes.**
@@ -731,6 +732,16 @@ fixture mirroring the real config classes, including a copy of `ThinkingModeDese
 **CE-2** 로 등록했다. 같은 문서의 **CE-1** 은 §9 OQ-1(리터럴 `${` 를 적을 escape 가 없다)이 이 국면 밖으로
 나가므로 함께 올라간 것이다. 나머지 OQ 는 이 국면 안에서 끝났으므로 여기 남는다.
 
+**그 뒤 CE-2 가 결정되었다 — 거절하지 않고 WARN 으로 알린다.** 위 표의 두 번째 반쪽은 그대로다(리터럴 중복은
+여전히 통과하고 뒤엣것이 이긴다). 달라진 것은 통과시키면서 **키 경로를 대고 말한다**는 것이다:
+``Configuration key `llm.timeout` is written more than once; the earlier value is discarded and the last one is
+used.`` 거절로 가지 않은 이유는 같은 질문에 이미 답한 표면이 있기 때문이다 — 에이전트 · 서브에이전트 · 스킬
+프론트매터의 세 파서는 snakeyaml 의 `LoaderOptions` 를 기본값에 두라고 javadoc 에 적어 두었고(조이면 오늘
+적재되는 파일이 적재되지 않는다), CLI 설정만 기동을 실패시키면 두 표면이 같은 실수에 다른 답을 한다. 그래서
+네 표면이 **같은 문장으로 경고**한다. 프론트매터 쪽은 로더 옵션을 건드리지 않고 같은 텍스트를 노드 트리로 한
+번 더 읽어 찾으며(`at.aimon.core.base.text.YamlDuplicateKeys`), `Yaml.load` 호출은 그대로라 어떤 정의도 파싱
+결과가 달라지지 않는다. 확장이 만든 충돌의 **거절**은 그대로이고 메시지도 그대로다.
+
 ### 12.3 "One measured limit" 은 반대였다 — 직접 잰 결과
 
 | 적힌 것 | 확장 결과 | 실제 |
@@ -798,3 +809,29 @@ static 이다 — 두 호출 지점이 모두 쓰고, 그 클래스의 예외에
 - **먼저 빨갛게 만든 것**: #53 의 새 테스트 9건이 `main` 의 로더에서 실패하고 #74 의 새 테스트 8건이
   `main` 의 파서에서 실패하는 것을 확인한 뒤 구현을 되돌렸다. 나머지 신규 테스트(§7.1 의 9~12, §7.2 의
   12~14)는 **양쪽에서 초록인 보존 핀**이며 그것이 그 테스트들의 일이다.
+
+### 12.9 escape 가 생겼다 — `$${NAME}` (CE-1)
+
+§2.3 A6 이 escape 를 기각한 이유는 위험이 아니라 **필요의 부재**였다(*"new syntax, new documentation, and
+nothing in the tree needs it"*). 그 기각이 지키던 것은 둘이다 — 규칙이 한 문장으로 남는 것과, 플레이스홀더가
+없는 스칼라가 건드려지지 않는 것(§2.2 제약 B). escape 는 둘 다 건드리지 않는 모양으로 들어갔다.
+
+| 적은 것 | 결과 | 이유 |
+|---|---|---|
+| `$${NAME}` | 리터럴 `${NAME}` | 변수를 **조회하지 않는다** — 설정되어 있지 않아도 기동한다 |
+| `$$${NAME}` | `$` + `NAME` 의 값 | `$${NAME}` 이 escape 가 되기 전에 뜻하던 것이다. 그 철자를 가져갔으므로 그 뜻에 다른 철자를 준다 |
+| `$$$${NAME}` | 리터럴 `$${NAME}` | 플레이스홀더 바로 앞에서 `$$` 하나가 `$` 하나다 |
+| `pa$$word` · `$$` · `$${` · `$${}` | 그대로 | escape 는 `$` 의 성질이 아니라 **플레이스홀더의** 성질이다. 완전한 `${NAME}` 이 뒤따르지 않는 `$$` 는 매치되지 않는다 |
+| `$${A${B}}` | 리터럴 `${A${B}}` | 이름은 첫 `}` 에서 끝난다(확장과 같은 경계). 안쪽 `${B}` 는 따로 풀리지 않는다 |
+| `$${HOME:-/tmp}` | 리터럴 `${HOME:-/tmp}` | `${NAME:default}` 문법은 없다. escape 없이 적으면 `HOME:-/tmp` 전체가 변수 이름이다 |
+
+제약 B 는 그대로 성립한다 — 고쳐 쓰는 조건은 여전히 "텍스트에 `${` 가 있다" 이고 `$${` 는 그것을 포함한다.
+`VALUE_STRING` 과 `FIELD_NAME` 밖의 토큰은 여전히 손대지 않는다.
+
+**형제 키 충돌 검사는 바뀌지 않았고, 바뀔 필요가 없었다.** 그 검사는 **확장된 철자**끼리 비교하므로
+`$${P}` 는 `${P}` 로 기록되고 `${P}` 는 (`P=prod` 에서) `prod` 로 기록된다 — 서로 다른 이름이라 충돌이
+아니다. `$${P}` 옆에 값이 문자 그대로 `${P}` 인 변수의 `${Q}` 를 적으면 둘은 정말로 같은 키가 되고, 그때는
+거절된다.
+
+**동작이 바뀌는 입력은 하나다.** `$${NAME}` 은 이 변경 전에 "`$` 뒤에 `NAME` 의 값" 이었다. 트리 안에는
+그렇게 적은 값이 없고(`modules/` · `docs/` 전수 grep, 2026-10-05), 그 뜻이 필요하면 `$$${NAME}` 으로 적는다.

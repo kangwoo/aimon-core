@@ -5,7 +5,9 @@ import java.util.Objects;
 import at.aimon.core.llms.openai.OpenAiReasoningSummary;
 
 /**
- * yaml 로 적은 OpenAI 전용 설정 — {@code llm.openai} 아래의 두 키.
+ * yaml 로 적은 OpenAI 전용 설정 — {@code llm.openai} 아래의 키들: {@code reasoningSummary},
+ * {@code responsesApiEnabled}, 그리고 샘플링 기본값 넷({@code temperature} · {@code topP} ·
+ * {@code presencePenalty} · {@code frequencyPenalty}).
  *
  * <p>
  * <b>이 라운드가 여는 네임스페이스다.</b> 지금까지 {@code llm.*} 아래 벤더 블록은 {@code anthropic} 하나뿐이었고,
@@ -28,6 +30,10 @@ public class OpenAiProviderConfig {
 
     private OpenAiReasoningSummary reasoningSummary;
     private Boolean responsesApiEnabled;
+    private Double temperature;
+    private Double topP;
+    private Double presencePenalty;
+    private Double frequencyPenalty;
 
     /** OpenAiProviderConfig를 생성한다. */
     public OpenAiProviderConfig() {
@@ -90,6 +96,77 @@ public class OpenAiProviderConfig {
     }
 
     /**
+     * 이 배포의 기본 {@code temperature} — 에이전트 정의가 자기 값을 적지 않은 요청에만 실린다.
+     *
+     * <p>
+     * <b>우선순위는 셋이고 여기가 가운데다.</b> 에이전트 정의의 {@code model.temperature} 가 있으면 그것이 이기고,
+     * 없으면 이 값이 실리며, 둘 다 없으면 <b>아무것도 실리지 않아</b> 서버 기본값이 적용된다 — 클라이언트는 값을
+     * 지어내지 않는다({@code docs/design/llm/request-parameters.md} §2). 서브에이전트 요청은 예외다: 메인
+     * 에이전트의 정의에 값이 없으면 코어가 {@code 0.7} 을 명시값으로 싣기 때문에 이 키가 닿지 않는다(같은 문서 §3.5).
+     *
+     * <p>
+     * <b>벤더 블록에 있는 이유는 뜻이 벤더마다 달라서다.</b> OpenAI 의 범위는 {@code 0.0}–{@code 2.0} 이고
+     * Anthropic 의 범위는 {@code 0.0}–{@code 1.0} 이다. 범위는 {@code OpenAIConfig} 한 곳이 알고, 벗어나면
+     * 클라이언트를 조립할 때 이 키의 이름으로 기동이 실패한다. 내장 capability 행이 샘플링을 받지 않는다고 적은
+     * 모델({@code gpt-5*} · o-series)에서는 값이 실리지 않고 클라이언트가 그 사실을 한 번 경고한다.
+     *
+     * @return 적힌 값, 또는 적지 않았으면 null
+     */
+    public Double getTemperature() {
+        return temperature;
+    }
+
+    public void setTemperature(Double temperature) {
+        this.temperature = temperature;
+    }
+
+    /**
+     * 이 배포의 기본 {@code top_p}. 범위 {@code 0.0}–{@code 1.0}. 우선순위와 억제 규칙은
+     * {@link #getTemperature()} 와 같다.
+     *
+     * @return 적힌 값, 또는 적지 않았으면 null
+     */
+    public Double getTopP() {
+        return topP;
+    }
+
+    public void setTopP(Double topP) {
+        this.topP = topP;
+    }
+
+    /**
+     * 이 배포의 기본 {@code presence_penalty}. 범위 {@code -2.0}–{@code 2.0}. 우선순위와 억제 규칙은
+     * {@link #getTemperature()} 와 같다.
+     *
+     * <p>
+     * <b>Responses API 로 가는 요청에는 자리가 없다.</b> 그 엔드포인트에는 penalty 파라미터가 없으므로 값은
+     * 실리지 않고 클라이언트가 한 번 경고한다. Chat Completions 로 가는 요청에만 닿는다.
+     *
+     * @return 적힌 값, 또는 적지 않았으면 null
+     */
+    public Double getPresencePenalty() {
+        return presencePenalty;
+    }
+
+    public void setPresencePenalty(Double presencePenalty) {
+        this.presencePenalty = presencePenalty;
+    }
+
+    /**
+     * 이 배포의 기본 {@code frequency_penalty}. 범위 {@code -2.0}–{@code 2.0}. {@link #getPresencePenalty()} 와
+     * 같은 규칙이다 — Responses API 로 가는 요청에는 자리가 없다.
+     *
+     * @return 적힌 값, 또는 적지 않았으면 null
+     */
+    public Double getFrequencyPenalty() {
+        return frequencyPenalty;
+    }
+
+    public void setFrequencyPenalty(Double frequencyPenalty) {
+        this.frequencyPenalty = frequencyPenalty;
+    }
+
+    /**
      * 이 블록에 적힌 것이 하나도 없는가.
      *
      * <p>
@@ -103,7 +180,8 @@ public class OpenAiProviderConfig {
      * @return 키가 모두 비어 있으면 true
      */
     public boolean isEmpty() {
-        return reasoningSummary == null && responsesApiEnabled == null;
+        return reasoningSummary == null && responsesApiEnabled == null && temperature == null && topP == null
+                && presencePenalty == null && frequencyPenalty == null;
     }
 
     @Override
@@ -116,17 +194,22 @@ public class OpenAiProviderConfig {
         }
         final OpenAiProviderConfig that = (OpenAiProviderConfig) o;
         return reasoningSummary == that.reasoningSummary
-                && Objects.equals(responsesApiEnabled, that.responsesApiEnabled);
+                && Objects.equals(responsesApiEnabled, that.responsesApiEnabled)
+                && Objects.equals(temperature, that.temperature) && Objects.equals(topP, that.topP)
+                && Objects.equals(presencePenalty, that.presencePenalty)
+                && Objects.equals(frequencyPenalty, that.frequencyPenalty);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(reasoningSummary, responsesApiEnabled);
+        return Objects.hash(reasoningSummary, responsesApiEnabled, temperature, topP, presencePenalty,
+                frequencyPenalty);
     }
 
     @Override
     public String toString() {
         return "OpenAiProviderConfig{" + "reasoningSummary=" + reasoningSummary + ", responsesApiEnabled="
-                + responsesApiEnabled + '}';
+                + responsesApiEnabled + ", temperature=" + temperature + ", topP=" + topP + ", presencePenalty="
+                + presencePenalty + ", frequencyPenalty=" + frequencyPenalty + '}';
     }
 }

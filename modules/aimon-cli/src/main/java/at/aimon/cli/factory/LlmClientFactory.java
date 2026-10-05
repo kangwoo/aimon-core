@@ -35,6 +35,9 @@ public class LlmClientFactory {
     /** provider 선택자의 yaml 키 경로. {@link #ANTHROPIC_KEY} 를 거절할 때 함께 부른다. */
     private static final String PROVIDER_KEY = "llm.provider";
 
+    /** The credential and model a throwaway vendor config is built with when one value is being checked on its own. */
+    private static final String PROBE = "probe";
+
     /** 설정에 따라 LLM 클라이언트를 생성한다. */
     public LlmClient create(LlmProviderConfig config) {
         if (config == null) {
@@ -98,15 +101,17 @@ public class LlmClientFactory {
         }
 
         applyThinking(builder, config.getAnthropic());
+        applyAnthropicSampling(builder, config.getAnthropic());
 
         try {
             return builder.build();
         } catch (IllegalArgumentException e) {
             // 이 catch 가 좁은 이유. build() 가 이 경로에서 던질 수 있는 IllegalArgumentException 은 다섯이고
             // (빈 apiKey · 범위 밖 temperature · 0 이하 maxTokens · 1024 미만 예산 · EXTENDED 아닌 모드의 예산),
-            // 앞의 셋은 여기까지 오지 않는다 — apiKey 는 validateApiKey 가 먼저 이름으로 거절하고, 나머지 둘은
-            // 어느 표면에서도 설정할 수 없다. 남는 둘이 **둘 다 예산의 것**이므로 메시지가 블록이 아니라 그 키
-            // 하나를 부른다. temperature 가 언젠가 설정 가능해지면 그것이 참이 아니게 되고, 그때 여기를 갈라야 한다.
+            // 앞의 셋은 여기까지 오지 않는다 — apiKey 는 validateApiKey 가, temperature 는 applyAnthropicSampling 이
+            // 각각 먼저 자기 키의 이름으로 거절하고, maxTokens 는 어느 표면에서도 설정할 수 없다. 남는 둘이
+            // **둘 다 예산의 것**이므로 메시지가 블록이 아니라 그 키 하나를 부른다. temperature 가 설정 가능해지면서
+            // 이 catch 를 가르는 대신 그 값을 build() 앞에서 따로 물은 것이 그 전제를 지키는 방법이다.
             throw new ConfigurationException(
                     "Invalid `" + ANTHROPIC_KEY + ".thinkingBudgetTokens` in the LLM config: " + e.getMessage(), e);
         }
@@ -136,6 +141,49 @@ public class LlmClientFactory {
         }
         if (anthropic.getReplayThinkingBlocks() != null) {
             builder.replayThinkingBlocks(anthropic.getReplayThinkingBlocks());
+        }
+    }
+
+    /**
+     * {@code llm.anthropic.temperature} 를 vendor config 에 옮긴다. <b>적혔을 때만</b> 옮기므로 적지 않은 배포의
+     * 요청에는 여전히 {@code temperature} 가 실리지 않는다.
+     *
+     * <p>
+     * 이 블록의 샘플링 키가 하나뿐인 것은 {@code AnthropicConfig} 가 가진 샘플링 필드가 하나뿐이어서다 — Anthropic API
+     * 에는 penalty 가 없고, 클라이언트는 {@code top_p} 를 요청의 {@code LlmModel} 에서만 읽는다. 클라이언트가 자기
+     * 설정에서 싣지 않을 값에 키를 주면 "설정했는데 읽히지 않는" 키가 된다.
+     */
+    private void applyAnthropicSampling(AnthropicConfig.Builder builder, AnthropicProviderConfig anthropic) {
+        if (anthropic == null || anthropic.getTemperature() == null) {
+            return;
+        }
+        final double temperature = anthropic.getTemperature();
+        requireAccepted(ANTHROPIC_KEY + ".temperature",
+                () -> AnthropicConfig.builder().apiKey(PROBE).temperature(temperature).build());
+        builder.temperature(temperature);
+    }
+
+    /**
+     * vendor config 가 이 값 <b>하나</b>를 받는지 물어보고, 받지 않으면 그 사유를 yaml 키의 이름과 함께 다시 던진다.
+     *
+     * <p>
+     * <b>범위를 여기 다시 적지 않기 위한 모양이다.</b> 샘플링 값의 유효범위는 벤더마다 다르고({@code temperature} 는
+     * OpenAI {@code 0.0}–{@code 2.0}, Anthropic {@code 0.0}–{@code 1.0}) 각 vendor config 의 생성자가 그것을 안다.
+     * 그런데 그 생성자의 예외는 자바 인자를 말할 뿐 어느 yaml 키가 틀렸는지 말하지 않고, 한 {@code build()} 가
+     * 여러 키의 사유로 던질 수 있으므로 감싸는 것만으로는 키를 고를 수 없다. 그래서 값 하나만 실은 config 를 지어
+     * 보고 버린다 — 규칙은 한 곳에 남고, 표면이 더하는 것은 키 경로뿐이다
+     * ({@code docs/design/llm/configuration-surface.md} §6.1).
+     *
+     * @param key
+     *            틀렸을 때 부를 yaml 키 경로
+     * @param probe
+     *            그 값 하나만 실은 vendor config 를 짓는 동작
+     */
+    private void requireAccepted(String key, Runnable probe) {
+        try {
+            probe.run();
+        } catch (IllegalArgumentException e) {
+            throw new ConfigurationException("Invalid `" + key + "` in the LLM config: " + e.getMessage(), e);
         }
     }
 
@@ -193,6 +241,35 @@ public class LlmClientFactory {
         if (openai.getResponsesApiEnabled() != null) {
             builder.responsesApiEnabled(openai.getResponsesApiEnabled());
         }
+        // 샘플링 기본값 넷. 적힌 것만 옮기고, 각 값은 옮기기 전에 자기 키의 이름으로 한 번 물어본다 — 넷이 한
+        // build() 를 지나므로 그 예외만으로는 어느 키가 틀렸는지 고를 수 없다(requireAccepted).
+        if (openai.getTemperature() != null) {
+            final double temperature = openai.getTemperature();
+            requireAccepted(OPENAI_KEY + ".temperature", () -> openAiProbe().temperature(temperature).build());
+            builder.temperature(temperature);
+        }
+        if (openai.getTopP() != null) {
+            final double topP = openai.getTopP();
+            requireAccepted(OPENAI_KEY + ".topP", () -> openAiProbe().topP(topP).build());
+            builder.topP(topP);
+        }
+        if (openai.getPresencePenalty() != null) {
+            final double presencePenalty = openai.getPresencePenalty();
+            requireAccepted(OPENAI_KEY + ".presencePenalty",
+                    () -> openAiProbe().presencePenalty(presencePenalty).build());
+            builder.presencePenalty(presencePenalty);
+        }
+        if (openai.getFrequencyPenalty() != null) {
+            final double frequencyPenalty = openai.getFrequencyPenalty();
+            requireAccepted(OPENAI_KEY + ".frequencyPenalty",
+                    () -> openAiProbe().frequencyPenalty(frequencyPenalty).build());
+            builder.frequencyPenalty(frequencyPenalty);
+        }
+    }
+
+    /** {@link #requireAccepted} 가 값 하나를 얹어 보는, 그 밖에는 아무것도 적히지 않은 OpenAI config. */
+    private static OpenAIConfig.Builder openAiProbe() {
+        return OpenAIConfig.builder().apiKey(PROBE).model(PROBE);
     }
 
     /**

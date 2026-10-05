@@ -4,14 +4,19 @@ import java.io.IOException;
 import java.io.Writer;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.fasterxml.jackson.core.Base64Variant;
 import com.fasterxml.jackson.core.JsonParser;
@@ -55,7 +60,17 @@ import at.aimon.cli.exception.ConfigurationException;
  *
  * <p>
  * Expansion is a single pass: a variable whose value is itself {@code ${OTHER}} stays literal, as it always has.
- * There is no escape syntax for a literal placeholder; nothing in the tree needs one.
+ *
+ * <p>
+ * <b>{@code $${NAME}} is the literal text {@code ${NAME}}.</b> Under a rule that reaches every scalar there was
+ * otherwise no way to write one: set, the variable was substituted; unset, startup failed. The value that needs it is
+ * an argument or environment entry of a stdio MCP server that the <em>child</em> process is meant to expand. The
+ * escape exists only directly in front of a placeholder, so {@code pa$$word} and a lone {@code $$} are still what
+ * they were. Directly in front of one, each {@code $$} is one literal {@code $} and an odd {@code $} left over opens
+ * the placeholder: {@code $$${NAME}} is a {@code $} followed by the variable's value — the meaning {@code $${NAME}}
+ * had before it became the escape — and {@code $$$${NAME}} is the text {@code $${NAME}}. An escaped placeholder ends
+ * where an expanded one would, at the first <code>}</code>, and names no variable: nothing is looked up, so nothing
+ * has to be set. What a variable expands to is not scanned again, for the escape any more than for a placeholder.
  *
  * <p>
  * <b>Two sibling keys that end up with the same name are refused</b> rather than letting the later one silently
@@ -63,9 +78,23 @@ import at.aimon.cli.exception.ConfigurationException;
  * property of every mapping. It fires only when expansion is what made the two collide — two keys written the same
  * way twice are yaml's own last-wins and are left alone, because expansion did not create that collision and this
  * class is not the place to start failing on it.
+ *
+ * <p>
+ * <b>Left alone, but not left unsaid.</b> A key written twice is logged at WARN with its path, once per key, saying
+ * the earlier value is discarded. It stays a warning because the same question has an answer elsewhere in this
+ * repository that cannot be a refusal: the agent, subagent and skill front-matter parsers keep snakeyaml's
+ * duplicate-key option at its default so that files which load today keep loading, and they report a duplicate in the
+ * same words ({@code YamlDuplicateKeys}). One answer on every surface an operator writes yaml on.
  */
 final class PlaceholderExpandingParser extends JsonParserDelegate {
-    private static final Pattern ENV_VAR_PATTERN = Pattern.compile("\\$\\{([^}]+)}");
+    private static final Logger log = LoggerFactory.getLogger(PlaceholderExpandingParser.class);
+
+    /**
+     * A placeholder and every {@code $} written directly in front of it. Group 1 is those leading dollars, group 2
+     * the name. Matching the whole run at once is what makes the escape a property of the placeholder rather than of
+     * the {@code $} character: a {@code $$} that no placeholder follows is never matched, so it is never changed.
+     */
+    private static final Pattern ENV_VAR_PATTERN = Pattern.compile("(\\$*)\\$\\{([^}]+)}");
 
     private final Function<String, String> envVarResolver;
 
@@ -320,13 +349,22 @@ final class PlaceholderExpandingParser extends JsonParserDelegate {
         final Matcher matcher = ENV_VAR_PATTERN.matcher(written);
         final StringBuilder expanded = new StringBuilder();
         while (matcher.find()) {
-            final String name = matcher.group(1);
+            // The dollars written in front of `{NAME}`: the one that opens the placeholder and any before it.
+            final int dollars = matcher.group(1).length() + 1;
+            final String name = matcher.group(2);
+            final String literalDollars = "$".repeat(dollars / 2);
+            if (dollars % 2 == 0) {
+                // Every `$$` is one literal `$`, and none is left to open a placeholder: `$${NAME}` is the text
+                // `${NAME}`. The variable is not looked up, so it does not have to be set.
+                matcher.appendReplacement(expanded, Matcher.quoteReplacement(literalDollars + "{" + name + "}"));
+                continue;
+            }
             final String value = envVarResolver.apply(name);
             if (value == null) {
                 throw new ConfigurationException(
                         "Environment variable not set: " + name + " (at " + currentPath() + ")");
             }
-            matcher.appendReplacement(expanded, Matcher.quoteReplacement(value));
+            matcher.appendReplacement(expanded, Matcher.quoteReplacement(literalDollars + value));
         }
         matcher.appendTail(expanded);
         return expanded.toString();
@@ -370,6 +408,7 @@ final class PlaceholderExpandingParser extends JsonParserDelegate {
         private final boolean array;
         private String fieldName;
         private Map<String, String> writtenByExpanded;
+        private Set<String> reportedDuplicates;
 
         Level(boolean array) {
             this.array = array;
@@ -380,8 +419,22 @@ final class PlaceholderExpandingParser extends JsonParserDelegate {
                 writtenByExpanded = new LinkedHashMap<>();
             }
             final String previous = writtenByExpanded.putIfAbsent(expanded, written);
-            if (previous == null || (previous.equals(expanded) && written.equals(expanded))) {
-                // Nothing seen before, or the same key written twice — a duplicate expansion did not create.
+            if (previous == null) {
+                return;
+            }
+            if (previous.equals(expanded) && written.equals(expanded)) {
+                // The same key written twice — a duplicate expansion did not create. Jackson keeps the last value,
+                // exactly as it did before this class could see both, and startup goes on; what changed is that the
+                // discarded value is now mentioned. Once per key, however many times it is written.
+                if (reportedDuplicates == null) {
+                    reportedDuplicates = new HashSet<>();
+                }
+                if (reportedDuplicates.add(expanded)) {
+                    log.warn(
+                            "Configuration key `{}` is written more than once;"
+                                    + " the earlier value is discarded and the last one is used.",
+                            enclosingPath.isEmpty() ? expanded : enclosingPath + "." + expanded);
+                }
                 return;
             }
             throw new ConfigurationException("Configuration keys `" + previous + "` and `" + written

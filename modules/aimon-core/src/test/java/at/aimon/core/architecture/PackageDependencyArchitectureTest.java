@@ -534,8 +534,12 @@ class PackageDependencyArchitectureTest {
     @Test
     @DisplayName("at.aimon.core.base should not depend on any other aimon packages")
     void coreShouldNotDependOnOtherAimonPackages() {
+        // snakeyaml is the one library besides slf4j, and it is here for one class: base.text.YamlDuplicateKeys, which
+        // the agent, subagent and skill front-matter parsers all call. Those three share no aimon package below
+        // themselves except this one, and what the rule guards -- base reaching up into another aimon package -- is
+        // untouched by a library every one of those parsers already depends on.
         ArchRule rule = classes().that().resideInAPackage(PKG_CORE).should().onlyDependOnClassesThat()
-                .resideInAnyPackage(PKG_CORE, PKG_JAVA, PKG_SLF4J);
+                .resideInAnyPackage(PKG_CORE, PKG_JAVA, PKG_SLF4J, PKG_SNAKEYAML);
 
         rule.check(classes);
     }
