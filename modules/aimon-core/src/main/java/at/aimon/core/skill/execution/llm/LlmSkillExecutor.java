@@ -46,8 +46,11 @@ import at.aimon.core.skill.execution.SkillToolDispatcher;
 import at.aimon.core.skill.fork.NoOpSkillForkExecutor;
 import at.aimon.core.skill.fork.SkillForkExecutor;
 import at.aimon.core.skill.fork.SkillForkOutcome;
+import at.aimon.core.skill.hook.ScopedSkillHookActivator;
+import at.aimon.core.skill.hook.SkillHookScope;
 import at.aimon.core.skill.render.SkillContentRenderer;
 import at.aimon.core.tools.CallerAllowedTools;
+import at.aimon.core.tools.HookRegistryAccess;
 import at.aimon.core.tools.ToolContextKeys;
 
 /**
@@ -433,6 +436,12 @@ public class LlmSkillExecutor implements SkillExecutor {
      * live {@code OrcaAgentRuntime}); falls back to the constructor-injected executor otherwise.
      *
      * <p>
+     * The skill's own hooks are layered over the registry the invoking execution dispatches against and handed to the
+     * fork for as long as it runs — what {@code SkillTool} does on the model's path, so a fork-mode skill's guards
+     * hold however the skill was invoked (EE-68). With no registry in {@code toolContext} there is nothing to layer
+     * over, and the fork runs as it would without a hook registry.
+     *
+     * <p>
      * Token usage is reported as zero — the forked subagent owns its own token accounting, which is propagated through
      * its execution attribution rather than aggregated into the parent skill's metadata.
      */
@@ -440,7 +449,12 @@ public class LlmSkillExecutor implements SkillExecutor {
             Instant startTime, TokenUsage accumulatedTokens) {
         final SkillForkExecutor effectiveForkExecutor = toolContext.get(ToolContextKeys.SKILL_FORK_EXECUTOR_KEY)
                 .orElse(forkExecutor);
-        final SkillForkOutcome outcome = effectiveForkExecutor.fork(skill, renderedBody, toolContext);
+        final SkillForkOutcome outcome;
+        try (SkillHookScope hookScope = activateHooks(skill, toolContext)) {
+            final ToolContext forkContext = hookScope.hookRegistry()
+                    .map(registry -> HookRegistryAccess.withHookRegistry(toolContext, registry)).orElse(toolContext);
+            outcome = effectiveForkExecutor.fork(skill, renderedBody, forkContext);
+        }
         final SkillExecutionMetadata metadata = buildMetadata(0, accumulatedTokens, startTime);
         if (outcome.isSuccess()) {
             return SkillExecutionResult.success(outcome.getFinalAnswer().orElse(""), metadata);
@@ -448,6 +462,17 @@ public class LlmSkillExecutor implements SkillExecutor {
         final String message = String.format("Skill fork failed for '%s': %s", skill.getName(),
                 outcome.getErrorMessage().orElse("(no message)"));
         return SkillExecutionResult.failure(message, new IllegalStateException(message), metadata);
+    }
+
+    /**
+     * Activates {@code skill}'s hooks over the registry in {@code toolContext}. Mirrors what
+     * {@code OrcaSkillToolProvider} wires into {@code SkillTool}: a {@link ScopedSkillHookActivator} when a registry
+     * is available, nothing when none is.
+     */
+    private static SkillHookScope activateHooks(Skill skill, ToolContext toolContext) {
+        return HookRegistryAccess.of(toolContext)
+                .map(registry -> new ScopedSkillHookActivator(registry).activate(skill, toolContext))
+                .orElse(SkillHookScope.EMPTY);
     }
 
     /**

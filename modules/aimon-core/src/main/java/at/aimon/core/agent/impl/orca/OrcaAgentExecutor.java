@@ -2124,6 +2124,12 @@ public class OrcaAgentExecutor
             if (scope.getPrincipal() != null) {
                 commandContextBuilder.put(ToolContextKeys.PRINCIPAL, scope.getPrincipal());
             }
+            // The registry this execution dispatches against, published by hand like the caller's identity: a
+            // `/my-skill` fork layers the skill's own hooks over it, and without it the user's slash command started a
+            // fork none of the skill's guards covered while the Skill tool-call path (createToolContext) did (EE-68).
+            if (scope.getHookRegistry() != null) {
+                commandContextBuilder.put(ToolContextKeys.HOOK_REGISTRY, scope.getHookRegistry());
+            }
             final ToolContext commandToolContext = commandContextBuilder
                     .put(ToolContextKeys.AGENT_RUNTIME_ID, agentRuntime.getId())
                     // The session id belongs here too: a `/my-skill` invocation of a fork-mode skill spawns a

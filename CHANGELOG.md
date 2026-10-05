@@ -7,6 +7,17 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Fixed: a skill invoked as `/my-skill` runs its fork under the skill's own hooks (EE-68)
+
+- **A fork-mode skill's frontmatter hooks now apply however the skill is invoked.** Until now only the `Skill` tool
+  activated them; the same skill typed by the user as a slash command forked without them — its `onStart` hook did not
+  fire, and an `onStart` or `preTool` guard that blocks let the fork run to a successful answer. `LlmSkillExecutor`
+  now layers the skill's hooks over the invoking execution's registry around the fork, the way `SkillTool` does, and
+  `OrcaAgentExecutor` publishes that registry (`ToolContextKeys.HOOK_REGISTRY`) in the slash command's tool context.
+- **What an operator may notice.** A skill guard that refused a model's `Skill` call now refuses the user's `/skill`
+  too: the command fails with `Skill fork failed for '<skill>': …`. Inline-mode skills are unchanged — they have no
+  fork, so their hooks fire on neither path. The hooks are still never registered with the runtime's registry (EE-49).
+
 ### Added: a shell can tell a hook's command from the model's (`ExecutionOptions.hook`)
 
 - **`ExecutionOptions.isHook()`** (builder: `hook(boolean)`, default `false`, carried by `toBuilder()`) marks a command
