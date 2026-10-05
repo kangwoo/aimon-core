@@ -87,7 +87,15 @@ jobs:
       # and holds the corpus still: it is the only thing that would catch the
       # axes silently ceasing to measure, which on a corpus with nothing to
       # catch looks exactly like a green run.
-      - name: Compare structure, fail on a mismatch in a current translation
+      #
+      # The second also holds every front matter the site or these scripts read
+      # (every translation, every other site page) to the notation mkdocs' YAML
+      # parser and the scripts' line regex read the same. That failure does not
+      # depend on the pair's state: only whoever wrote the front matter can
+      # create it, and mkdocs publishes a block it cannot read as page text with
+      # `--strict` green. The self-test's second half holds that rule to fixed
+      # cases, since the tree has nothing for it to reject.
+      - name: Compare structure, fail on a mismatch in a current translation or on front matter mkdocs would misread
         run: |
           python3 scripts/check-translation-structure.py --self-test
           python3 scripts/check-translation-structure.py --github

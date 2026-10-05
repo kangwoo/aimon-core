@@ -486,8 +486,8 @@ cron 이 재발화해도 런타임이 resolve 된다. 이 때문에 `AgentRuntim
 
 - **왜 그렇게 설계했는가** → [`../design/`](../design/README.md)
 - **의식적으로 보류한 것** → [`../design/backlog/`](../design/README.md#backlog--아직-결정하지-않은-것)
-- **버전 업그레이드 절차** → [`../migration/`](../README.md#6-문서는-이렇게-나뉘어-있다)
-- **기여·빌드·퍼블리싱** → [`../project/`](../README.md#6-문서는-이렇게-나뉘어-있다)
+- **버전 업그레이드 절차** → [`../migration/`](../migration/README.md)
+- **기여·빌드·퍼블리싱** → [`../project/`](../project/README.md)
 
 ## 관련 문서
 

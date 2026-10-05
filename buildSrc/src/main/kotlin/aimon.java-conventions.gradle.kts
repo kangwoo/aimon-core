@@ -251,6 +251,29 @@ dependencies {
     "testImplementation"(libs.findLibrary("spring-boot-starter-test").get())
 }
 
+// A module's tests run on the versions the module ships, unless the difference is a recorded choice (#91). This is the
+// check behind that sentence (backlog D-3): it compares the two resolved graphs and fails on a difference that
+// gradle/test-classpath-version-differences.txt does not record, on a recorded one whose versions moved, and on a
+// recorded one that is gone. The record used to be a comment block in gradle/libs.versions.toml, and on the day this
+// task first ran one of that block's three entries was already false and four differences were on no list.
+//
+// Registered here, on every module, because the `spring-boot-starter-test` three lines up is the largest single source
+// of such differences and every module gets it. The root `checkAll` aggregates it, so CI and the release gate both run
+// it — a version bump that opens, moves or closes a difference goes red in the PR that makes it.
+//
+// The graphs are handed over as `rootComponent` providers, so nothing is resolved while a project is being configured:
+// Gradle resolves them when the task runs, or when it writes the configuration cache entry.
+tasks.register<TestClasspathVersionsTask>("checkTestClasspathVersions") {
+    description = "Fails if the tests run on a library version the module does not ship, unless " +
+        "${RecordedDifferences.PATH} records why."
+    group = "verification"
+    moduleName.set(project.name)
+    shipped.set(configurations.named("runtimeClasspath").flatMap { it.incoming.resolutionResult.rootComponent })
+    underTest.set(configurations.named("testRuntimeClasspath").flatMap { it.incoming.resolutionResult.rootComponent })
+    recordedFile.set(rootProject.layout.projectDirectory.file(RecordedDifferences.PATH))
+    report.set(layout.buildDirectory.file("reports/test-classpath-versions/differences.txt"))
+}
+
 // Incubating Gradle API in a module build script (#120). Gradle does not hold it still across releases: it "may change
 // in future Gradle versions until it is no longer incubating", and such a change is highlighted in that release's notes
 // rather than deprecated first, as a public API's would be (docs.gradle.org/current/userguide/feature_lifecycle.html).

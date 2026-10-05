@@ -57,15 +57,16 @@ aws-sdk = "2.55.10"
 #   test compile classpaths. The annotation jar is inert on both sides, as the Testcontainers jars below are; it is
 #   aligned rather than accepted because the cost lands on spring-boot-starter, which no test in that module loads,
 #   not on a library its tests run on. It raised the Logback pair on aimon-session-testkit as well, until #114.
-# - Testcontainers (duct-tape): ACCEPTED. org.jetbrains:annotations 13.0 shipped (kotlin-stdlib, via okhttp), 17.0.0
-#   under test, on aimon-spring-boot-starter, aimon-filesystem-gridfs, aimon-filesystem-s3 and
-#   aimon-session-{mongodb,postgres,redis}. Both jars are CLASS-retention annotations and constant holders — nothing a
-#   test run loads — and no source here names them. Aligning would push Testcontainers below the version it asks for
-#   on six docker tiers to equalise a number nothing observes.
-# - The provider SDKs on aimon-spring-boot-starter's test classpath: ACCEPTED. error_prone_annotations 2.21.1 shipped
-#   (Caffeine, via aimon-session-routing), 2.33.0 under test (anthropic-java and openai-java both ask for it). An
-#   annotations jar no source here names; and the starter keeps both SDKs compileOnly so the application adds one,
-#   which then resolves 2.33.0 itself — the test classpath is that application's.
+# - Testcontainers (duct-tape): ACCEPTED, on six modules. The versions and the reason are no longer kept here: they are
+#   the first six lines of gradle/test-classpath-version-differences.txt, which `checkTestClasspathVersions` reads.
+# - The provider SDKs on aimon-spring-boot-starter's test classpath: was ACCEPTED (error_prone_annotations 2.21.1
+#   shipped, 2.33.0 under test). That difference no longer exists — Caffeine 3.3.0 asks for 2.50.0 and both classpaths
+#   resolve it — and this block went on saying it did until the check below was first run (2026-10-05).
+#
+# Which is why the accepted differences moved out of this comment (backlog D-3). A comment is a measurement of the day
+# it was written; `./gradlew checkTestClasspathVersions`, part of `checkAll`, fails on a difference that file does not
+# record, on a recorded one whose versions moved, and on a recorded one that is gone. Its first run also found four
+# differences on no list; they are in the file, marked undecided. docs/design/testing/test-classpath-version-check.md.
 #
 # JUnit carries no version on a module that only tests against it, on purpose: such a module gets
 # spring-boot-starter-test (aimon.java-conventions), which brings org.junit:junit-bom onto its *test*

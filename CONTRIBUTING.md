@@ -134,7 +134,7 @@ Before pushing:
 
 ```bash
 ./gradlew format     # Apply Spotless (Eclipse formatter)
-./gradlew checkAll   # checkFormat + checkStyle + checkJavadocCoverage + every module's unit tests + the BOM's verifyBom
+./gradlew checkAll   # checkFormat + checkStyle + checkJavadocCoverage + checkTestClasspathVersions + every module's unit tests + the BOM's verifyBom
 ```
 
 `checkAll` is the single gate: it runs the format check, Checkstyle, each module's `test` task **and** the
@@ -151,6 +151,13 @@ without javadoc the count goes up: document it (the list for a module is in
 `modules/<module>/build/reports/javadoc-coverage/warnings.txt`). If you document existing API the count goes down:
 lower that module's line to the number the failure names. `./gradlew javadocCoverage` prints the table without
 judging it.
+
+And it holds each module's tests to the library versions the module ships (`checkTestClasspathVersions`). A
+dependency change that makes a module's `testRuntimeClasspath` resolve a different version of a library than its
+`runtimeClasspath` fails unless `gradle/test-classpath-version-differences.txt` records that difference with a
+reason — and a recorded line fails too once its versions move or the difference is gone. The failure prints the
+line to add, rewrite or delete; why the list is checked rather than written in a comment is in
+[`docs/design/testing/test-classpath-version-check.md`](docs/design/testing/test-classpath-version-check.md).
 
 When a check fails, the HTML reports say why:
 
