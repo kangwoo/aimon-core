@@ -4,17 +4,24 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowableOfType;
 
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestFactory;
 
 import at.aimon.core.llm.ReasoningEffort;
+import at.aimon.llm.capability.testkit.DeclarableKeys;
+import at.aimon.llm.capability.testkit.ProbeValues;
 
 /**
  * What a configured capability entry means, in the one type both configuration surfaces translate into.
@@ -118,6 +125,84 @@ class ModelCapabilityDeclarationTest {
 
         assertThat(setters).hasSize(8);
         assertThat(message).contains(setters);
+    }
+
+    /**
+     * Every declarable key reaches the descriptor a client reads — the third hand-written hand-off, and the one the
+     * two surface contracts deliberately stop short of (backlog {@code L-13}).
+     *
+     * <p>
+     * {@code resolve(Builder)} copies one key per line. A ninth key added to the builder and forgotten there leaves
+     * the declaration right, both surface guards green, and the descriptor silently without it. Nothing here is
+     * written per key: the keys come from the declaration builder itself and the values are synthesised from each
+     * setter's parameter type, by the same two helpers the surface contracts use, so "every declarable key" means
+     * one thing across all three links.
+     *
+     * <p>
+     * The expectation is what {@link ModelCapabilities#builder()} yields when <em>its</em> setter of the same name
+     * is called with the same value. That same-name rule is checked rather than assumed: a key with no counterpart
+     * fails by name instead of being skipped. Two values per key, and they must produce two different descriptors —
+     * which is what keeps the equality from being vacuous. With one value, a dropped {@code Boolean} key would pass
+     * whenever the probe happened to pick the fail-open default, and a field left out of
+     * {@code ModelCapabilities.equals} would pass always.
+     *
+     * <p>
+     * <strong>The ladder pair is not special-cased.</strong> {@code lowestReasoningEffort} and
+     * {@code acceptedReasoningEfforts} fold into one field of the descriptor, but both have a same-named setter
+     * there that performs the fold, so each goes through the general rule with the fold on the expected side too.
+     * What that leaves unchecked is the two written <em>together</em>, which is not a hole: {@code build()} refuses
+     * the pair, and {@code bothLadderKeysAreRefused} pins that.
+     */
+    @TestFactory
+    @DisplayName("every declarable key reaches the descriptor, with no key named in this test")
+    Stream<DynamicTest> everyDeclarableKeyReachesTheDescriptor() {
+        return DeclarableKeys.names().stream().map(key -> DynamicTest.dynamicTest(key, () -> {
+            final List<ModelCapabilities> resolved = new ArrayList<>();
+            for (Object value : ProbeValues.distinctPairFor(key)) {
+                final ModelCapabilities actual = DeclarableKeys.expectedDeclaration(key, value).capabilities();
+
+                assertThat(actual)
+                        .as("`%s` was declared as %s and nothing else, but capabilities() is not what ModelCapabilities"
+                                + ".builder().%s(%s).build() yields. ModelCapabilityDeclaration.resolve(Builder)"
+                                + " copies the keys one line each: the line for `%s` is missing or forwards something"
+                                + " other than the declared value. An operator who writes this key gets a request"
+                                + " built as if they had not.", key, value, key, value, key)
+                        .isEqualTo(descriptorWithOnly(key, value));
+                resolved.add(actual);
+            }
+
+            assertThat(resolved.get(0))
+                    .as("`%s` declared as two different values gave two equal descriptors, so the equality above proves"
+                            + " nothing for this key: either ModelCapabilities.Builder#%s ignores its argument, or"
+                            + " ModelCapabilities.equals does not compare what it sets.", key, key)
+                    .isNotEqualTo(resolved.get(1));
+        }));
+    }
+
+    /**
+     * The descriptor {@link ModelCapabilities#builder()} yields when only the setter named {@code key} is called.
+     *
+     * <p>
+     * Looked up by name alone, so a boxed declaration value meets the descriptor's primitive parameter through
+     * reflection's own unboxing and nothing here knows which keys are booleans.
+     */
+    private static ModelCapabilities descriptorWithOnly(String key, Object value) {
+        final List<Method> setters = Arrays.stream(ModelCapabilities.Builder.class.getMethods())
+                .filter(method -> method.getName().equals(key)).filter(method -> method.getParameterCount() == 1)
+                .toList();
+        assertThat(setters).as(
+                "ModelCapabilityDeclaration.Builder declares the key `%s`, and this guard expects ModelCapabilities"
+                        + ".Builder to have exactly one single-argument setter of that name to compare against. If the"
+                        + " key is deliberately spelled differently on the descriptor, say how it maps here -- it is"
+                        + " not skipped, because a key this guard cannot compare is a key resolve(Builder) can drop.",
+                key).hasSize(1);
+        final ModelCapabilities.Builder builder = ModelCapabilities.builder();
+        try {
+            setters.get(0).invoke(builder, value);
+        } catch (IllegalAccessException | InvocationTargetException e) {
+            throw new AssertionError("ModelCapabilities.Builder#" + key + " refused the probe value " + value, e);
+        }
+        return builder.build();
     }
 
     @Test
