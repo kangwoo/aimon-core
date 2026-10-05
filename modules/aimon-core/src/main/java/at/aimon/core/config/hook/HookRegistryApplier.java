@@ -183,9 +183,17 @@ public final class HookRegistryApplier {
                 log.warn("hooks: invalid handler in {} on event '{}': {}", mhe.getSource(), event, ex.getMessage());
                 continue;
             }
+            // failOpen opens "could not decide", and a deny handler always has its verdict: on one the flag would
+            // only stop the hook declaring FAIL_CLOSED, so a matcher that threw or a pool that refused the hook
+            // would read as allow. Skill frontmatter drops it at the same point (SkillHookSetParser#parseFailOpen).
+            final boolean failOpen = spec.isFailOpen() && !(action instanceof DenyAction);
+            if (spec.isFailOpen() && !failOpen) {
+                log.warn("hooks: 'failOpen' has no effect on a 'deny' handler; ignored on {} ({})", event,
+                        mhe.getSource());
+            }
             // A handler that declared failOpen is not a guard: leaving it out leaves no guard off, so it keeps the
             // WARN-and-skip a non-guard event gets when it cannot run here.
-            final boolean guard = guardEvent && !spec.isFailOpen();
+            final boolean guard = guardEvent && !failOpen;
             // Reload-stable, unique per registered hook. The entry index is layer-scoped (see #apply) and the layer
             // itself is already part of the id through pseudoSkillName, so this pair is unique across layers without
             // repeating the source here. The handler index is required because the entry index alone repeats across
@@ -204,14 +212,9 @@ public final class HookRegistryApplier {
                         + " shell actions; skipping", event, mhe.getSource());
                 continue;
             }
-            if (spec.isFailOpen() && action instanceof DenyAction) {
-                // A deny handler always has its verdict; there is no "could not decide" for failOpen to open.
-                log.warn("hooks: 'failOpen' has no effect on a 'deny' handler; ignored on {} ({})", event,
-                        mhe.getSource());
-            }
             // Honoured for command, http and mcp alike: each can fail to produce a verdict.
             final DeclarativeHookOptions options = DeclarativeHookOptions.builder().hookIdDiscriminator(discriminator)
-                    .rewakeSpec(toRewakeSpec(spec, mhe, event, action)).failOpen(spec.isFailOpen()).build();
+                    .rewakeSpec(toRewakeSpec(spec, mhe, event, action)).failOpen(failOpen).build();
             switch (event) {
                 case DeclarativePreToolHook.EVENT_NAME -> {
                     // The shell question again, for the other two transports: a guard that can never be asked.

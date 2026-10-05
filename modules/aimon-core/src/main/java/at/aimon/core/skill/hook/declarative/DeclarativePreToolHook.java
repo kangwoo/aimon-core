@@ -28,7 +28,9 @@ import at.aimon.core.skill.hook.action.ShellAction;
  * <p>
  * Action semantics:
  * <ul>
- * <li>{@link DenyAction} → {@link HookResult#block(String)} with the configured reason.
+ * <li>{@link DenyAction} → {@link HookResult#block(String)} with the configured reason. {@code failOpen} is not read
+ * for it: a deny always has its verdict, so the flag could only open the cases where the hook itself was not run or
+ * its matcher threw, and those block.
  * <li>{@link ShellAction} → executed via the supplied {@link ShellActionExecutor}, with the firing context as a JSON
  * document on standard input (see {@code ShellHookPayload}). Exit code
  * {@link ShellHookOutcome#DENY_EXIT_CODE} vetoes the tool and feeds stderr back to the model as the reason; any other
@@ -152,8 +154,8 @@ public final class DeclarativePreToolHook implements PreToolHook {
      * @param processEnv
      *            process env snapshot used to populate the env whitelist for HTTP / MCP actions (must not be null)
      * @param options
-     *            config-derived options: hook-id discriminator, {@code failOpen} and {@code asyncRewake} spec (must
-     *            not be null)
+     *            config-derived options: hook-id discriminator, {@code failOpen} (ignored when {@code action} is a
+     *            {@link DenyAction}) and {@code asyncRewake} spec (must not be null)
      */
     // Declarative hooks bind one constructor parameter per config field, so they cannot be grouped.
     @SuppressWarnings("checkstyle:ParameterNumber")
@@ -165,9 +167,10 @@ public final class DeclarativePreToolHook implements PreToolHook {
         this.hookId = DeclarativeHookId.of(DeclarativePreToolHook.class, this.skillName,
                 options.getHookIdDiscriminator());
         this.rewakeSpec = options.getRewakeSpec().orElse(null);
-        this.failOpen = options.isFailOpen();
         this.predicate = Objects.requireNonNull(predicate, "Predicate cannot be null");
         this.action = Objects.requireNonNull(action, "Action cannot be null");
+        // Decided here as well as by the two config front-ends, so a hook built in code cannot open a deny either.
+        this.failOpen = options.isFailOpen() && !(this.action instanceof DenyAction);
         this.shellExecutor = Objects.requireNonNull(shellExecutor, "Shell executor cannot be null");
         this.httpExecutor = httpExecutor;
         this.mcpExecutor = mcpExecutor;
@@ -189,7 +192,8 @@ public final class DeclarativePreToolHook implements PreToolHook {
      * an action that does not keep its own deadline — a shell without cancellation, an MCP client that does not
      * answer the interrupt the MCP executor's deadline sends — cannot turn the guard into a pass under the event
      * policy's
-     * {@code FAIL_OPEN}. A hook that declared {@code failOpen} declares nothing and takes the policy's answer.
+     * {@code FAIL_OPEN}. A hook that declared {@code failOpen} declares nothing and takes the policy's answer —
+     * except one whose action is a {@link DenyAction}, on which {@code failOpen} is not read.
      */
     @Override
     public Optional<TimeoutBehavior> getTimeoutBehavior() {

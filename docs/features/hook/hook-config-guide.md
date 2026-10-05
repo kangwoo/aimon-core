@@ -503,7 +503,7 @@ MCP 서버의 tool 을 호출한다. `McpToolAction` + `McpActionExecutor`.
 | `command` 가 exit 126 · 127 (실행할 수 없음 · 찾지 못함) | 돌리지 못함 | **막는다** | 진행 (WARN) |
 | `command` 가 그 밖의 종료 코드 (1 · 3 · 130 …) | 스크립트 오작동 | 진행 (WARN) | 진행 (WARN) |
 | `command` 가 종료 코드를 내지 못함 — timeout, 셸 실패, 실행 환경 없음 · 사용 불가, 스킬 디렉터리 스테이징 실패, 셸을 지원하지 않는 실행기, 실행기가 던진 예외 | 돌리지 못함 | **막는다** | 진행 (WARN) |
-| `deny` handler | 판정: 거부 | **막는다** | **막는다** |
+| `deny` handler | 판정: 거부 | **막는다** | **막는다** — `deny` 에서는 `failOpen` 을 읽지 않는다(WARN). 아래 "이벤트 정책을 따른다" 세 행에서도 `deny` handler 는 기본 열대로 막는다 |
 | `http` · `mcp` 가 `decision: deny` 로 답함 | 판정: 거부 (`reason` 이 사유) | **막는다** | **막는다** |
 | `http` · `mcp` 가 그 밖의 읽을 수 있는 답을 함 (`allow` · `defer` · 결정 없음 · 빈 본문 · 일반 텍스트) | 판정: 허용 | 진행 | 진행 |
 | `http` · `mcp` 가 판정을 받지 못함 — 연결 실패, timeout, non-2xx, MCP 서버 미등록 · 미연결 · `isError`, 읽을 수 없는 답, 실행기 미배선, 실행기가 던진 예외 | 판정 없음 | **막는다** | 진행 (WARN) |

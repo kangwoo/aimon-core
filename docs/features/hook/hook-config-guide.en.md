@@ -544,7 +544,7 @@ verdict.** On the other 9 events no row blocks (a WARN, then the event proceeds)
 | `command` exits 126 or 127 (not executable · not found) | could not run | **blocks** | proceeds (WARN) |
 | `command` exits with any other code (1, 3, 130, …) | script malfunction | proceeds (WARN) | proceeds (WARN) |
 | `command` produces no exit code — a timeout, a shell failure, no execution environment or an unavailable one, a skill directory that could not be staged, an executor without shell support, an executor that throws | could not run | **blocks** | proceeds (WARN) |
-| `deny` handler | verdict: refuse | **blocks** | **blocks** |
+| `deny` handler | verdict: refuse | **blocks** | **blocks** — `failOpen` is not read on a `deny` (WARN). In the three "follows the event policy" rows below, a `deny` handler blocks as the default column says |
 | `http` or `mcp` answers `decision: deny` | verdict: refuse (`reason` is the reason) | **blocks** | **blocks** |
 | `http` or `mcp` gives any other readable answer (`allow`, `defer`, no decision, an empty body, plain text) | verdict: allow | proceeds | proceeds |
 | `http` or `mcp` gets no verdict — a connection failure, a timeout, a non-2xx status, an MCP server that is not registered or not connected or answers `isError`, an answer that cannot be read, an executor that is not wired, an executor that throws | no verdict | **blocks** | proceeds (WARN) |

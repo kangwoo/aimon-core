@@ -154,7 +154,10 @@ for side effects only. Wiring one up is a feature, not a bug fix.
   says, and neither is a `decision` outside `allow` / `deny` / `defer`. `run(...)` is the advisory
   reading (`attempt(...).orSuccess()`) and is what `postTool` calls — do not call `run` from a guard
   event. `failOpen` is read for `command`, `http` and `mcp` alike; only on `deny` is it ignored with
-  a WARN.
+  a WARN — by both front-ends (`HookRegistryApplier`, `SkillHookSetParser#parseFailOpen`) and again by
+  `DeclarativePreToolHook`'s constructor, so no source can build a deny hook that does not declare
+  `FAIL_CLOSED`. A deny always has its verdict; all the flag could open is the pool refusing the hook
+  or its matcher throwing.
 - **Who wires the http / mcp executors.** `aimon-cli` does, for both sources: `HookActionExecutors`
   hands one `HttpActionExecutor` and one late-bound `McpActionExecutor` to the hot-reload bootstrap
   (`hooks.json`) and to the skill parser (frontmatter). The skill parser is built before the runtime
