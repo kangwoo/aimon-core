@@ -78,6 +78,51 @@ Central is versioned independently).
   `ToolContextKeys` was initialised, so a string write that came first was not checked. `ToolContextKey` now knows
   those three names from the start. A write-once key declared elsewhere is still registered when its class loads.
 
+### Docs: the knowledge store guide's runtime example sets an execution environment provider (EE-62)
+
+- **`opensearch-knowledge-store-guide.md` (and its `.en.md`) now builds a `LocalExecutionEnvironmentProvider` and
+  passes it to `OrcaAgentRuntime.builder().executionEnvironmentProvider(…)`.** The example filled in the control
+  filesystem, the user locale and the knowledge store but not the provider, which the builder does not require. Copied
+  as it stood, it built a runtime whose every execution got an unavailable environment: `KnowledgeSearch` worked, and
+  every file tool and `Bash` call failed with `Execution environment unavailable: no ExecutionEnvironmentProvider is
+  configured`. The guide now says so, says who closes the provider, and points to the embedding guide for the rest of
+  the assembly.
+
+### Changed: staging a skill with no execution environment in the context is an error (EE-20)
+
+- **`Skill` and a skill-backed slash command no longer succeed with `${AIMON_SKILL_DIR}` empty when the tool context
+  has no `ToolContextKeys.EXECUTION_ENVIRONMENT`.** They logged a WARN and rendered the body anyway, so
+  `bash ${AIMON_SKILL_DIR}/x.sh` became `bash /x.sh` and the call reported success. They now fail with `Failed to stage
+  skill '<name>': No execution environment in tool context` — the message the file tools and `Bash` give for the same
+  missing key (execution-environment design §3: no host fallback). `SkillRenderContextAccess.builderFor` throws the
+  `IllegalStateException` that `ExecutionEnvironmentAccess.require` throws.
+- **Who notices.** Only a hand-built tool context: every executor (turn, slash command, fork, scheduled routine)
+  publishes the key, as an unavailable environment if nothing else. A skill with no staged resource (a hand-built
+  `Skill`) needs no environment and still renders with `${AIMON_SKILL_DIR}` empty. Tests that call `SkillTool` with
+  `ToolContext.empty()` on a registry-loaded skill need a context carrying an environment.
+
+### Fixed: every skill staging failure is reported as one (EE-15)
+
+- **`SkillBackedCommandExecutor` turns any exception from staging into a failed `CommandExecutionResult`.** It caught
+  only `StagingException` and `ExecutionEnvironmentUnavailableException`, but `stage()` can also throw what the
+  workspace's filesystem throws mid-copy (`InvalidPathException`, `BackendConnectionException`, …) or whatever a
+  provider's own environment throws. Those escaped the executor as exceptions. Through `DefaultCommandExecutionManager`
+  they still ended as a failure, but as `Command execution error: …` rather than `Failed to stage skill '<name>': …`;
+  a caller of the executor directly got the exception.
+- **The `Skill` tool no longer reports a refused skill directory as `Invalid parameter`.** An `InvalidPathException` from
+  staging is an `IllegalArgumentException`, so it fell into the tool's input-error branch. It now reads `Failed to stage
+  skill '<name>': …` like every other staging failure.
+
+### Fixed: an inline skill invoked as `/my-skill` can `Edit` what it `Read` (EE-31)
+
+- **The slash command's tool context now carries a read-stamp map (`ReadTool.FILE_STAMPS_KEY`).** It is built by hand in
+  `OrcaAgentExecutor.executeCommand` and never had one, so an inline skill's `Edit` answered "Read the file before
+  modifying it" to every call, even right after a `Read` of the same file. The map is fresh per command, as a turn's is
+  fresh per execution: a file read in an earlier turn or an earlier slash command must be read again.
+- **What an operator may notice.** The same gap switched `Write`'s stale-write guard off on that path, so an inline
+  slash skill could overwrite an existing file it had never read. That is now refused, as it is in a turn. Fork-mode
+  skills are unchanged; their fork already had its own map.
+
 ### Policy: `internal` packages are not public API, and the build says so
 
 - **`docs/project/api-stability.md` §2 now names `<package>.internal` beside `*.impl`.** The five `internal` packages

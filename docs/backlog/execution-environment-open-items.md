@@ -729,7 +729,7 @@ AIMON 패키지에 기대지 못하게 하는 것은 전부터 있던 규칙이�
 
 설계와 구현이 설계에서 벗어난 점: [`../design/tool/execution-environment-ee14-user-locale.md`](../design/tool/execution-environment-ee14-user-locale.md).
 
-## EE-15 — 스킬 명령 경로는 스테이징 예외 두 종류만 잡는다 · **열림**
+## EE-15 — 스킬 명령 경로는 스테이징 예외 두 종류만 잡는다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** `SkillBackedCommandExecutor` 가 `stage()` 에서 나오는 모든 실패를 `CommandExecutionResult.failure` 로 바꾸게 한다.
 
@@ -743,6 +743,34 @@ AIMON 패키지에 기대지 못하게 하는 것은 전부터 있던 규칙이�
 **언제 다시 볼까.** 슬래시 명령이 스킬 스테이징 중 예외로 끝났다는 보고가 있을 때, 또는 `stage()` 의 예외 계약을 좁힐 때.
 
 출처: 빌드 리뷰 3.
+
+### 닫힘 (2026-10-05)
+
+`SkillBackedCommandExecutor` 의 스테이징 catch 가 `StagingException | ExecutionEnvironmentUnavailableException` 에서
+`RuntimeException` 으로 넓어졌다. `stage()` 에서 무엇이 나오든 `Failed to stage skill '<name>': …` 실패 결과가 되고, 스킬은
+돌지 않는다. `SkillTool` 의 같은 자리도 같은 모양으로 넓혔다(아래 2).
+
+착수해 보니 항목의 서술과 달랐던 것.
+
+1. **근거(규칙 둘)는 참이었다.** `ExecutionEnvironment.stage` 의 계약은 `StagingException` 만 적지만, `LocalStaging.stage` 는
+   소스 읽기 실패만 `StagingException` 으로 감싸고, 사본을 쓰는 쪽(`rawFileSystem.write` · `deleteRecursive` · `exists`)의
+   실패는 그대로 던진다 — `VirtualFileSystem.write` 가 선언한 것만 해도 `InvalidPathException` · `BackendConnectionException` ·
+   `InsufficientStorageException` 이다. 제공자가 만든 환경(샌드박스)의 `stage()` 는 무엇이든 던질 수 있다. 테스트에서는 그런
+   예외를 던지는 `stage()` 를 직접 세웠고, 고치기 전 코드에서 둘 다 이 클래스 밖으로 새어 나왔다.
+2. **심각도(규칙 셋)는 경로마다 달랐다.** 프레임워크 안의 슬래시 경로에서는 적힌 것보다 가벼웠다 —
+   `DefaultCommandExecutionManager.execute` 의 바깥 `catch (Exception)` 이 받아 `Command execution error: …` 실패로 바꾸므로
+   예외로 끝나지는 않았다(읽어서 확인했고 돌려 보지는 않았다). 새어 나가는 것은 이 클래스나 `CompositeCommandExecutor` 를
+   직접 부르는 임베더에게만이고, 프레임워크 사용자가 보는 차이는 "스테이징 실패" 라는 이름이 빠진 메시지였다. 대신 항목이
+   "바깥 catch 가 막아 준다" 고 적은 **`SkillTool` 쪽이 틀렸다.** `InvalidPathException` 은 `IllegalArgumentException` 이라
+   바깥 catch 의 첫 갈래에 걸려 `Invalid parameter: …` 로 보고됐다 — 모델의 입력은 멀쩡한데 입력 탓을 하는 오류다. 재현
+   테스트로 확인했고 같은 변경에서 고쳤다.
+3. **처방(규칙 다섯)은 그대로 들었다.** catch 를 넓힌 자리에서 감싸는 호출은 컨텍스트 읽기와 `stage()` 뿐이라 다른 실패를
+   삼킬 범위가 없다.
+
+테스트: `SkillBackedCommandExecutorTest` — `stage()` 가 `InvalidPathException` 을 던지면 명령의 실패 결과가 되고 원인이
+보존된다, `BackendConnectionException` 을 던지면 실패 결과가 되고 스킬 실행기는 불리지 않는다. `SkillToolTest` —
+`InvalidPathException` 이 `Invalid parameter` 가 아니라 `Failed to stage skill '<name>'` 로 보고된다. 셋 다 고치기 전 코드에서
+실패한다.
 
 ## EE-16 — 호스트 경로 스킬 안의 심볼릭 링크 파일이 스테이징된다 · **닫힘** *(2026-09-29)*
 
@@ -819,7 +847,7 @@ notice 를 넘겨야 실제로 보인다. 테스트는 `BashToolTest` 와 `BashO
 
 출처: 빌드 리뷰 3.
 
-## EE-20 — 실행 환경 키가 없는 컨텍스트에서 `Skill` 이 성공한다 · **열림**
+## EE-20 — 실행 환경 키가 없는 컨텍스트에서 `Skill` 이 성공한다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** `EXECUTION_ENVIRONMENT` 가 없는 `ToolContext` 에서 `Skill` 이 오류를 돌려주게 한다.
 
@@ -831,6 +859,39 @@ notice 를 넘겨야 실제로 보인다. 테스트는 `BashToolTest` 와 `BashO
 **언제 다시 볼까.** 손으로 만든 컨텍스트로 `Skill` 을 부르는 임베더가 생길 때.
 
 출처: 빌드 리뷰 3.
+
+### 닫힘 (2026-10-05)
+
+`SkillRenderContextAccess.builderFor` 가 스테이징할 자원이 있는 스킬에 대해 환경을 `ExecutionEnvironmentAccess.require` 로
+꺼낸다. 컨텍스트에 `EXECUTION_ENVIRONMENT` 가 없으면 WARN 대신 `IllegalStateException("No execution environment in tool
+context")` 을 던지고, 두 호출처가 그것을 오류로 바꾼다 — `Skill` 도구는 `ToolResult.error("Failed to stage skill '<name>': No
+execution environment in tool context")`, 슬래시 명령은 같은 문구의 실패 결과다. 문구와 예외는 환경이 필요한 다른 도구(파일
+도구 · `Bash`)가 키가 없을 때 내는 것과 같다. 두 호출처가 그 예외를 오류로 받는 것은 EE-15 가 catch 를 넓힌 덕이다 — 그 전에도
+`Skill` 은 바깥 catch 가 `Skill activation failed: …` 로 받았겠지만 슬래시 경로에서는 `SkillBackedCommandExecutor` 밖으로
+예외가 새어 나갔을 것이다.
+
+**자원이 없는 스킬은 그대로다.** 손으로 만든 `Skill`(`StagedResource` 없음)은 스테이징할 것이 없으므로 환경을 보지 않고,
+`${AIMON_SKILL_DIR}` 를 비운 채 WARN 으로 렌더한다. 환경이 필요한 순간에만 묻는 것은 사용 불가 환경과 같은 선이다 — 사용 불가
+환경도 `stage()` 를 부를 때에야 실패하고, 자원 없는 스킬은 사용 불가 환경에서도 성공한다. 키가 없다고 그 스킬까지 막으면 호스트
+폴백을 막는 것이 아니라 아무 일도 하지 않을 스킬을 막는 것이다. 그래서 바뀐 것은 정확히 "스테이징이 필요한데 환경이 없는"
+한 칸이다.
+
+착수해 보니 항목의 서술과 달랐던 것.
+
+1. **근거(규칙 둘 · 여섯)는 참이었다.** main 소스에서 `ToolContext` 를 조립해 `Skill` 이나 슬래시 명령에 닿는 곳 —
+   `OrcaAgentExecutor.createToolContext` 와 `executeCommand`, `DefaultSubagentExecutor`, `RoutineExecutor` — 은 넷 다 키를
+   싣는다(제공자가 없거나 실패하면 사용 불가 환경으로라도). `ReActLlmDeriver` 도 컨텍스트를 만들지만 도구가 메모리 관찰 도구뿐이라
+   `Skill` 에 닿지 않는다. 그러니 키가 없는 컨텍스트는 정말로 손으로 만든 것뿐이다.
+2. **심각도(규칙 셋)는 적힌 대로 테스트와 임베더에 한정됐고, 그 "테스트" 가 실제로 있었다.** 고친 뒤 `aimon-core` 테스트에서
+   13건이 깨졌는데(`BuiltinSkillsIntegrationTest` 8건, `BuiltinSkillToolIntegrationTest` 5건), 전부 레지스트리로 적재한 스킬을
+   `ToolContext.empty()` 로 부르고 성공을 단언하던 것이었다 — 고치기 전에는 `${AIMON_SKILL_DIR}` 를 빈 문자열로 렌더한 본문을
+   성공으로 보고 있었다. 두 클래스에 환경을 실은 컨텍스트를 주었다. 프로덕션 경로에서 깨진 것은 없었다.
+3. **처방(규칙 다섯)은 그대로 들었다.**
+
+테스트: `SkillRenderContextAccessTest` — 자원이 있고 환경이 없으면 `NO_ENVIRONMENT_MESSAGE` 로 던진다(이전의 "디렉터리를 비워
+둔다" 테스트를 대신한다), 자원도 환경도 없으면 빈 컨텍스트다(그대로). `SkillToolTest` — 환경 없는 컨텍스트에서 스테이징할
+스킬을 부르면 오류이고 본문이 `bash /run.sh` 로 렌더되지 않는다. `SkillBackedCommandExecutorTest` — 같은 경우가 명령의 실패
+결과이고 스킬 실행기는 불리지 않는다. 셋 다 고치기 전 코드에서 실패한다.
 
 ## EE-21 — 제공자 팩토리로 만든 제공자는 소유자가 없다 · **닫힘** *(2026-09-30)*
 
@@ -1108,7 +1169,7 @@ not supported: this environment is already the isolated workflow branch 'k' (.wo
 
 출처: 빌드 리뷰 4.
 
-## EE-31 — 슬래시 커맨드 인라인 스킬에는 read stamp 가 없다 · **열림**
+## EE-31 — 슬래시 커맨드 인라인 스킬에는 read stamp 가 없다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** 스킬 기반 슬래시 커맨드가 만드는 `ToolContext` 에 `FILE_STAMPS_KEY` 를 싣는다.
 
@@ -1121,6 +1182,33 @@ not supported: this environment is already the isolated workflow branch 'k' (.wo
 **언제 다시 볼까.** EE-11 을 다룰 때, 또는 슬래시 커맨드 스킬이 파일을 고쳐야 할 때.
 
 출처: 빌드 리뷰 4.
+
+### 닫힘 (2026-10-05)
+
+`OrcaAgentExecutor.executeCommand` 가 명령 툴 컨텍스트에 `ReadTool.FILE_STAMPS_KEY` 를 새 `ConcurrentHashMap` 으로 싣는다.
+`PRINCIPAL` · `HOOK_REGISTRY` 처럼 손으로 싣는 키다 — 이 컨텍스트는 `createToolContext` 를 거치지 않는다. 맵은 명령마다 새로
+만든다. `createToolContext` 가 실행마다 새로 만드는 것과 같은 선이고, 앞 턴이나 앞 슬래시 명령에서 읽은 파일은 다시 읽어야
+고칠 수 있다. 포크 모드 스킬은 바뀌지 않았다 — 포크의 컨텍스트는 `DefaultSubagentExecutor` 가 자기 맵과 함께 만든다. 같은
+종류의 빈틈인 EE-11(스케줄 루틴)은 이 변경이 건드리지 않았다.
+
+착수해 보니 항목의 서술과 달랐던 것.
+
+1. **근거(규칙 둘 · 여섯)는 참이었다.** 인라인 스킬의 도구 호출은 `LlmSkillExecutor` → `SKILL_TOOL_DISPATCHER_KEY` 의
+   디스패처 → `SingleToolInvoker` 로 가고, 셋 다 받은 컨텍스트에 맵을 더하지 않는다. main 소스에서 맵을 싣는 곳은
+   `OrcaAgentExecutor.createToolContext` 와 `DefaultSubagentExecutor` 둘뿐이었다(`FILE_STAMPS_KEY` 의 `put` 호출처를 셌다).
+   고치기 전 코드에서 같은 슬래시 호출 안에 `Read` 다음 `Edit` 를 돌리면 `Edit` 가 "Read the file before modifying it" 로
+   실패했다.
+2. **심각도(규칙 셋)는 적힌 것보다 무거웠다.** 항목은 `Edit` 가 언제나 실패한다고만 적었는데, 같은 원인이 반대 방향으로도
+   작동했다. `Write` 는 맵이 없는 컨텍스트에서 낡은 쓰기 검사를 통째로 건너뛰므로(`FileStamps.checkBeforeModify` 의
+   `requireTracking=false`), 슬래시 인라인 스킬의 `Write` 는 **읽지 않은 기존 파일을 확인 없이 덮어썼다.** 턴에서는 거부되는
+   쓰기다. 재현 테스트가 고치기 전 코드에서 덮어쓰기를 확인했고, 이 변경 뒤로는 거부된다. 운영자가 알아챌 수 있는 동작
+   변화라 CHANGELOG 에 적었다.
+3. **처방(규칙 다섯)은 그대로 들었다.** 키 하나를 싣는 것으로 두 테스트가 초록이 됐다.
+
+테스트: `SlashSkillToolDispatchE2EIntegrationTest` — 실제 `OrcaAgentExecutor` 슬래시 흐름에서, 인라인 스킬이 `Read` 한 파일을
+같은 호출에서 `Edit` 할 수 있다, `Read` 없는 `Edit` 는 여전히 거부된다, 읽지 않은 기존 파일 위의 `Write` 가 거부된다, stamp 는
+다음 슬래시 호출로 넘어가지 않는다. 첫째와 셋째는 고치기 전 코드에서 실패한다. 그 테스트의 `ScriptedLlmClient.script` 는
+호출 카운터를 되돌리지 않아 한 테스트 안에서 스크립트를 두 번 걸 수 없었으므로 함께 고쳤다.
 
 ## EE-32 — `ToolContextKey` 의 한 번만 쓰는 이름 집합이 클래스 초기화에 기댄다 · **닫힘** *(2026-10-05)*
 
@@ -2050,7 +2138,7 @@ environment" 라고 부른다(`DefaultSubagentExecutionManager`, `TaskTool`). `E
 
 출처: [`../design/tool/execution-environment-ee14-user-locale.md`](../design/tool/execution-environment-ee14-user-locale.md) §3.4 · §10 Q7.
 
-## EE-62 — 지식 저장소 가이드의 런타임 예제에 실행 환경 제공자가 없다 · **열림**
+## EE-62 — 지식 저장소 가이드의 런타임 예제에 실행 환경 제공자가 없다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** `opensearch-knowledge-store-guide.md` 의 `OrcaAgentRuntime.builder()` 예제에
 `.executionEnvironmentProvider(…)` 를 넣거나, 그 예제가 일부만 보여 준다는 것을 적는다. 번역본
@@ -2066,6 +2154,32 @@ Javadoc). 예제를 그대로 옮긴 사용자는 빌드는 되지만 셸 · 파
 **언제 다시 볼까.** 지식 저장소 가이드를 다음에 고칠 때, 또는 기능 가이드의 런타임 조립 예제를 한꺼번에 점검할 때.
 
 출처: PR #206 리뷰.
+
+### 닫힘 (2026-10-05)
+
+항목이 연 두 갈래("예제에 넣는다" · "일부만 보여 준다고 적는다") 가운데 앞쪽을 골랐고, 뒤쪽도 함께 적었다. 예제는 이제
+`LocalExecutionEnvironmentProvider.builder().workspaceRoot(workspaceRoot).build()` 로 제공자를 만들어
+`.executionEnvironmentProvider(environmentProvider)` 로 넘긴다. 예제 바로 아래 문단이 세 가지를 말한다 — 빌더가 그 값을
+요구하지 않아 빠뜨려도 빌드된다는 것과 그때 무엇이 실패하는지, 런타임은 제공자를 닫지 않으니(`ownsExecutionEnvironmentProvider(true)`
+가 아니면) 만든 쪽이 닫는다는 것, 나머지 조립은 `embedding-agent-in-application.md` 를 따른다는 것. 번역본
+`opensearch-knowledge-store-guide.en.md` 도 같은 커밋에서 고쳤고 `source_commit` 은 이 수정 직전의 정본 커밋(`93a4909`)이다.
+제목(`ExecutionContext에 KnowledgeStore 주입`)은 옛 타입 이름을 담고 있지만 앵커가 바뀌므로 이 항목에서는 두었다.
+
+착수해 보니 항목의 서술과 달랐던 것.
+
+1. **근거(규칙 둘)는 참이었다.** 예제의 빌더 호출에 `executionEnvironmentProvider` 가 없고, 빌더 Javadoc 이 그것을 nullable
+   로 적으며, 없으면 `ExecutionEnvironments.resolveOrUnavailable` 이 `no ExecutionEnvironmentProvider is configured` 를 원인으로
+   단 사용 불가 환경을 돌려준다. 줄 번호는 정본 264–275행, 번역본 269–279행 그대로였다.
+2. **심각도(규칙 셋)는 적힌 대로였다 — 돌려서 확인했다.** 예제의 빌더 호출을 그대로(지식 저장소만 빼고) 옮긴 런타임으로 실제
+   `OrcaAgentExecutor` 턴을 돌려 `Read` 를 부르게 하자, 도구 결과가 "Execution environment unavailable: no
+   ExecutionEnvironmentProvider is configured" 였다. 빌드와 런타임 생성은 아무 경고 없이 통과한다. 이 확인은 일회성 프로브
+   테스트로 했고 커밋하지 않았다 — 문서 예제를 컴파일하거나 실행하는 장치는 이 저장소에 없다.
+3. **처방(규칙 다섯)에는 빠진 것이 하나 있었다.** 제공자를 예제에 넣으면 그 제공자를 **누가 닫는가**가 새로 생긴다.
+   `LocalExecutionEnvironmentProvider` 는 `workspaceRoot` 모드에서 파일 시스템과 셸을 소유하는 `AutoCloseable` 이고, 런타임은
+   기본값에서 그것을 닫지 않는다. 그래서 닫는 책임을 같은 문단에 적었다.
+
+검증: `python3 scripts/check-doc-links.py`(깨진 링크 0), `python3 scripts/check-translation-structure.py`(32쌍 모두 구조 일치),
+`python3 scripts/check-translation-staleness.py`(낡은 번역 0).
 
 ## EE-63 — 백그라운드 워크플로는 호출 컨텍스트의 스킬 훅을 물려받지 못한다 · **열림**
 

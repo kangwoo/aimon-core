@@ -2131,6 +2131,11 @@ public class OrcaAgentExecutor
             if (scope.getHookRegistry() != null) {
                 commandContextBuilder.put(ToolContextKeys.HOOK_REGISTRY, scope.getHookRegistry());
             }
+            // The read stamps an inline skill's Read records and its Edit checks (execution-environment §7), published
+            // by hand like the keys above (EE-31). Without the map Edit answered "not read" to every call, read or
+            // not. Fresh per command, as createToolContext's is fresh per execution: a file read by an earlier turn or
+            // an earlier slash command must be read again before this one modifies it.
+            commandContextBuilder.put(ReadTool.FILE_STAMPS_KEY, new ConcurrentHashMap<>());
             final ToolContext commandToolContext = commandContextBuilder
                     .put(ToolContextKeys.AGENT_RUNTIME_ID, agentRuntime.getId())
                     // The session id belongs here too: a `/my-skill` invocation of a fork-mode skill spawns a

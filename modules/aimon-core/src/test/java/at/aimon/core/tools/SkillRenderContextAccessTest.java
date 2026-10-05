@@ -45,14 +45,19 @@ class SkillRenderContextAccessTest {
         assertThat(rc.getSkillBaseDir()).contains("/ws/.aimon-staged/s/k1");
     }
 
+    /**
+     * EE-20: a skill with something to stage and a context with no environment to stage it into is an error, not an
+     * empty {@code ${AIMON_SKILL_DIR}} — execution-environment design §3, no host fallback. The tools that need the
+     * environment fail the same way ({@link ExecutionEnvironmentAccess#require}).
+     */
     @Test
-    @DisplayName("leaves the skill directory unset when there is no environment to stage into")
-    void shouldLeaveSkillDirUnsetWithoutEnvironment() {
-        RenderContext rc = SkillRenderContextAccess
-                .builderFor(skill("s").stagedResource(resource("/ws/.aimon-staged/s/k1")).build(), ToolContext.empty())
-                .build();
+    @DisplayName("EE-20: refuses to stage a skill when the context carries no execution environment")
+    void shouldRefuseToStageWithoutEnvironment() {
+        Skill skill = skill("s").stagedResource(resource("/ws/.aimon-staged/s/k1")).build();
 
-        assertThat(rc.getSkillBaseDir()).isEmpty();
+        assertThatThrownBy(() -> SkillRenderContextAccess.builderFor(skill, ToolContext.empty()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage(ExecutionEnvironmentAccess.NO_ENVIRONMENT_MESSAGE);
     }
 
     @Test

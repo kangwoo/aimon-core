@@ -19,8 +19,6 @@ import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.environment.StagedResource;
-import at.aimon.core.environment.exception.ExecutionEnvironmentUnavailableException;
-import at.aimon.core.environment.exception.StagingException;
 import at.aimon.core.llm.DynamicToolDefinitionProvider;
 import at.aimon.core.skill.ExecutionMode;
 import at.aimon.core.skill.Skill;
@@ -351,11 +349,14 @@ public class SkillTool extends AbstractTool {
             // would see them. Inline mode has no fork, so there the hooks do not fire.
             try (SkillHookScope hookScope = hookActivator.activate(skill, context)) {
                 // Stage the skill into this execution's environment (${AIMON_SKILL_DIR}), then render the
-                // instructions through the configured renderer (no-op by default).
+                // instructions through the configured renderer (no-op by default). Any staging failure is reported
+                // as one (EE-15) — not only the two types stage()'s contract names. An InvalidPathException would
+                // otherwise reach the outer catch below as an IllegalArgumentException and read "Invalid parameter",
+                // blaming the model's input for a directory name the workspace refused.
                 final RenderContext renderContext;
                 try {
                     renderContext = SkillRenderContextAccess.builderFor(skill, context).build();
-                } catch (StagingException | ExecutionEnvironmentUnavailableException e) {
+                } catch (RuntimeException e) {
                     log.warn("Failed to stage skill '{}': {}", skill.getName(), e.getMessage());
                     return ToolResult.error("Failed to stage skill '" + skill.getName() + "': " + e.getMessage());
                 }

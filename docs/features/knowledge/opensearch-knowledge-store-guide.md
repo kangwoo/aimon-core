@@ -261,6 +261,11 @@ System.out.println("마지막 인덱싱: " + status.getLastIndexedAt());
 ### ExecutionContext에 KnowledgeStore 주입
 
 ```java
+// 도구(Read · Write · Bash …)가 도는 작업 공간. 런타임은 빌려 쓰기만 하고, 닫는 것은 만든 쪽이다.
+LocalExecutionEnvironmentProvider environmentProvider = LocalExecutionEnvironmentProvider.builder()
+        .workspaceRoot(workspaceRoot)
+        .build();
+
 OrcaAgentRuntime context = OrcaAgentRuntime.builder()
         .agent(agent)
         .toolRegistry(toolRegistry)
@@ -269,10 +274,17 @@ OrcaAgentRuntime context = OrcaAgentRuntime.builder()
         .subagentRegistry(subagentRegistry)
         .skillRegistry(skillRegistry)
         .controlFileSystem(controlFileSystem)
+        .executionEnvironmentProvider(environmentProvider)
         .userLocale(userLocale)
         .knowledgeStore(store)       // KnowledgeStore 주입
         .build();
 ```
+
+`executionEnvironmentProvider` 는 빌더가 요구하지 않는 값이라 빠뜨려도 빌드는 된다. 그러나 없으면 모든 실행이 사용 불가
+환경을 받아, `KnowledgeSearch` 는 돌아도 파일 도구와 `Bash` 는 호출마다 "Execution environment unavailable: no
+ExecutionEnvironmentProvider is configured" 로 실패한다. 런타임은 제공자를 닫지 않으므로(`ownsExecutionEnvironmentProvider(true)` 를 주지 않는 한), 앱 종료 때
+`environmentProvider.close()` 를 부른다. 그 밖의 조립(LLM 클라이언트, 실행기, 런타임 등록)은
+[`embedding-agent-in-application.md`](../../getting-started/embedding-agent-in-application.md) 를 따른다.
 
 ### Agent의 RAG 동작 흐름
 

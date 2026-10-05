@@ -11,7 +11,6 @@ import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.base.Principal;
-import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.StagedResource;
 import at.aimon.core.skill.Skill;
 import at.aimon.core.skill.render.RenderContext;
@@ -63,8 +62,9 @@ public final class SkillRenderContextAccess {
      * <b>The skill directory is always a staged path.</b> {@code ${AIMON_SKILL_DIR}} is set to what the run's
      * {@code ExecutionEnvironment.stage(...)} returns for the skill's {@link Skill#getStagedResource() resource}
      * (execution-environment design §4.4) — a copy the run's shell and file tools can both read — and never to a
-     * repository path, which the shell may not be able to see. Without a resource (a hand-built skill) or without an
-     * environment in the context, it stays unset and renders empty, with a WARN.
+     * repository path, which the shell may not be able to see. Without a resource (a hand-built skill) there is
+     * nothing to stage: it stays unset and renders empty, with a WARN, and the context's environment is not consulted.
+     * With a resource and no environment in the context, there is no fallback: this throws.
      *
      * @param skill
      *            The skill being rendered (must not be null)
@@ -77,6 +77,9 @@ public final class SkillRenderContextAccess {
      *             if the skill cannot be staged; callers turn it into a tool or command error
      * @throws at.aimon.core.environment.exception.ExecutionEnvironmentUnavailableException
      *             if the run's environment is unavailable
+     * @throws IllegalStateException
+     *             if the skill has a resource to stage and the context carries no execution environment; the message
+     *             is {@link ExecutionEnvironmentAccess#NO_ENVIRONMENT_MESSAGE}
      */
     public static RenderContext.Builder builderFor(Skill skill, ToolContext context) {
         Objects.requireNonNull(skill, "Skill cannot be null");
@@ -89,14 +92,13 @@ public final class SkillRenderContextAccess {
         context.get(ToolContextKeys.PRINCIPAL).ifPresent((Principal p) -> builder.principal(p));
 
         final Optional<StagedResource> resource = skill.getStagedResource();
-        final Optional<ExecutionEnvironment> environment = ExecutionEnvironmentAccess.of(context);
         if (resource.isEmpty()) {
             log.warn("Skill '{}' carries no staged resource; ${{AIMON_SKILL_DIR}} renders empty", skill.getName());
-        } else if (environment.isEmpty()) {
-            log.warn("No execution environment to stage skill '{}' into; ${{AIMON_SKILL_DIR}} renders empty",
-                    skill.getName());
         } else {
-            builder.skillBaseDir(environment.get().stage(resource.get()));
+            // No environment is an error, as it is for every tool that needs one (design §3: no host fallback). It
+            // used to be a WARN and an empty ${AIMON_SKILL_DIR}, which renders `bash ${AIMON_SKILL_DIR}/x.sh` as
+            // `bash /x.sh` and reports success (EE-20).
+            builder.skillBaseDir(ExecutionEnvironmentAccess.require(context).stage(resource.get()));
         }
         return builder;
     }

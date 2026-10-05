@@ -2,6 +2,7 @@ package at.aimon.core.agent.impl.orca;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -59,6 +60,9 @@ import at.aimon.core.skill.SkillRegistry;
 import at.aimon.core.subagent.DefaultSubagentExecutionManager;
 import at.aimon.core.subagent.Subagent;
 import at.aimon.core.subagent.SubagentRegistry;
+import at.aimon.core.tools.file.EditTool;
+import at.aimon.core.tools.file.ReadTool;
+import at.aimon.core.tools.file.WriteTool;
 
 /**
  * E2E regression test for the tool calls an <em>inline</em> slash skill makes.
@@ -229,6 +233,104 @@ class SlashSkillToolDispatchE2EIntegrationTest {
         assertThat(llmClient.toolResultText()).contains(TruncatedResponses.REFUSED_TOOL_CALL_MESSAGE);
     }
 
+    @Test
+    @DisplayName("EE-31: an inline skill can Edit a file it Read in the same slash invocation")
+    void slashSkillEdit_AfterReadInSameInvocation_Succeeds() throws Exception {
+        Files.writeString(tempDir.resolve("notes.txt"), "status: draft");
+        toolRegistry.register(new ReadTool());
+        toolRegistry.register(new EditTool());
+
+        skillRegistry.add(inlineSkill("publish", "Publish: $ARGUMENTS", ReadTool.TOOL_NAME + " " + EditTool.TOOL_NAME));
+        llmClient.script(
+                LlmResponse.of("Reading",
+                        List.of(ToolUse.of("call-1", ReadTool.TOOL_NAME, Map.of("file_path", "notes.txt")))),
+                LlmResponse.of("Editing",
+                        List.of(ToolUse.of("call-2", EditTool.TOOL_NAME,
+                                Map.of("file_path", "notes.txt", "old_string", "draft", "new_string", "final")))),
+                LlmResponse.text("published"));
+
+        final OrcaAgentExecutionResult result = executor.execute(createContext(), createRequest("/publish notes"));
+
+        assertThat(result.isSuccess()).isTrue();
+        // Before EE-31 the command context carried no read-stamp map, so Edit always answered "not read".
+        assertThat(llmClient.toolResultText()).doesNotContain("Read the file before modifying it");
+        assertThat(Files.readString(tempDir.resolve("notes.txt"))).isEqualTo("status: final");
+    }
+
+    @Test
+    @DisplayName("EE-31: the stale-write guard still holds on the slash path — Edit without a Read is refused")
+    void slashSkillEdit_WithoutRead_IsStillRefused() throws Exception {
+        Files.writeString(tempDir.resolve("notes.txt"), "status: draft");
+        toolRegistry.register(new EditTool());
+
+        skillRegistry.add(inlineSkill("publish", "Publish: $ARGUMENTS", EditTool.TOOL_NAME));
+        llmClient.script(
+                LlmResponse.of("Editing",
+                        List.of(ToolUse.of("call-1", EditTool.TOOL_NAME,
+                                Map.of("file_path", "notes.txt", "old_string", "draft", "new_string", "final")))),
+                LlmResponse.text("published"));
+
+        final OrcaAgentExecutionResult result = executor.execute(createContext(), createRequest("/publish notes"));
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(llmClient.toolResultText()).contains("Read the file before modifying it");
+        assertThat(Files.readString(tempDir.resolve("notes.txt"))).isEqualTo("status: draft");
+    }
+
+    @Test
+    @DisplayName("EE-31: Write over an existing file it never Read is now refused on the slash path, as in a turn")
+    void slashSkillWrite_OverUnreadExistingFile_IsRefused() throws Exception {
+        Files.writeString(tempDir.resolve("notes.txt"), "status: draft");
+        toolRegistry.register(new WriteTool());
+
+        skillRegistry.add(inlineSkill("publish", "Publish: $ARGUMENTS", WriteTool.TOOL_NAME));
+        llmClient.script(
+                LlmResponse.of("Writing",
+                        List.of(ToolUse.of("call-1", WriteTool.TOOL_NAME,
+                                Map.of("file_path", "notes.txt", "content", "overwritten")))),
+                LlmResponse.text("published"));
+
+        final OrcaAgentExecutionResult result = executor.execute(createContext(), createRequest("/publish notes"));
+
+        assertThat(result.isSuccess()).isTrue();
+        // Without a stamp map Write skipped the stale-write guard altogether and overwrote the file blind.
+        assertThat(llmClient.toolResultText()).contains("Read the file before modifying it");
+        assertThat(Files.readString(tempDir.resolve("notes.txt"))).isEqualTo("status: draft");
+    }
+
+    @Test
+    @DisplayName("EE-31: read stamps do not carry over from one slash invocation to the next")
+    void slashSkillReadStamps_AreScopedToOneInvocation() throws Exception {
+        Files.writeString(tempDir.resolve("notes.txt"), "status: draft");
+        toolRegistry.register(new ReadTool());
+        toolRegistry.register(new EditTool());
+        skillRegistry.add(inlineSkill("publish", "Publish: $ARGUMENTS", ReadTool.TOOL_NAME + " " + EditTool.TOOL_NAME));
+        final OrcaAgentRuntime runtime = createContext();
+        final SessionId sessionId = SessionId.generate();
+
+        llmClient.script(
+                LlmResponse.of("Reading",
+                        List.of(ToolUse.of("call-1", ReadTool.TOOL_NAME, Map.of("file_path", "notes.txt")))),
+                LlmResponse.text("read"));
+        assertThat(executor
+                .execute(runtime,
+                        OrcaAgentExecutionRequest.builder().userInput("/publish a").sessionId(sessionId).build())
+                .isSuccess()).isTrue();
+
+        llmClient.script(
+                LlmResponse.of("Editing",
+                        List.of(ToolUse.of("call-2", EditTool.TOOL_NAME,
+                                Map.of("file_path", "notes.txt", "old_string", "draft", "new_string", "final")))),
+                LlmResponse.text("published"));
+        assertThat(executor
+                .execute(runtime,
+                        OrcaAgentExecutionRequest.builder().userInput("/publish b").sessionId(sessionId).build())
+                .isSuccess()).isTrue();
+
+        assertThat(llmClient.toolResultText()).contains("Read the file before modifying it");
+        assertThat(Files.readString(tempDir.resolve("notes.txt"))).isEqualTo("status: draft");
+    }
+
     private OrcaAgentRuntime createContext() {
         final LocalFileSystem fileSystem = new LocalFileSystem(new LocalFileSystemConfig(tempDir.toString()));
         fileSystem.initialize();
@@ -376,6 +478,7 @@ class SlashSkillToolDispatchE2EIntegrationTest {
         void script(LlmResponse... scripted) {
             responses.clear();
             responses.addAll(List.of(scripted));
+            callCount = 0;
         }
 
         String toolResultText() {
