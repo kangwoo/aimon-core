@@ -183,6 +183,13 @@ main 에는 `reloadSkill` / `reloadAll` 을 부르는 경로가 없다. 사용�
 - 파싱된 `SKILL.md` 본문은 재적재·재시작 때만 바뀐다. 모델이 옛 본문을 따르며 새 스크립트를 돌릴 수 있다(설계 §4.4 에 적었다).
 - EE-26 의 브랜치 경로(`stageCopy`)도 같은 코드를 탄다.
 
+- **다시 훑는 것은 `StagedResource.scan` 이 만든 리소스뿐이다 (리뷰가 잡았다, `a9f92304`).** 첫 구현은 어떤 리소스든 소스
+  디렉터리 **전체**를 다시 훑었다. 공개 빌더로 파일 일부만 적어 만든 리소스(`files=[run.sh]`)는 `run.sh` 가 바뀌면 적지 않은
+  `credentials.env` 까지 `.aimon-staged/` 로 복사됐다 — 모델의 파일 도구와 셸이 읽는 자리다. 출하되는 조립은 `scan()` 만
+  쓰므로 닿지 않았다. 손으로 만든 리소스는 이제 EE-3 이전처럼 거절한다.
+- 적재 시점에 크기 상한을 넘은 스킬도 다시 훑는다(`897e9741`). 전에는 오류가 "`.stageignore` 로 큰 파일을 빼라" 고 말하는데
+  그렇게 해도 재시작 전까지 같은 오류였다. 거절되는 호출의 비용은 목록 한 번과 파일당 메타데이터 한 번이고 내용은 읽지 않는다.
+
 **남은 것.** 첫 사용 뒤의 수정은 재시작 전까지 보이지 않는다. CLI · 부트스트랩의 재적재 경로는 여전히 없다.
 
 ## EE-4 — `.aimon-staged/` 를 `.gitignore` 에 넣는 코드가 없다 · **닫힘** *(2026-10-05)*
@@ -2719,6 +2726,13 @@ WARN 후 성공("degrading to success")이고 `McpToolAction` 도 같다. 정책
 - `mcp` 액션의 `timeout` 은 강제되지 않았다 — 이제 호출을 끝내고 `TIMEOUT` 으로 읽는다(`28b1e3bc`). 서버의 `requestTimeout`
   과는 작은 쪽이 이긴다.
 
+- **리뷰가 이 결정 안에서 넷을 더 잡았다.** `hooks.json` 의 `deny` 핸들러에 `failOpen: true` 를 쓰면 "무시한다" 고 WARN 을 찍고는
+  적용해서, matcher 가 던지거나 풀이 거절하면 그 deny 가 통과했다(`b8d8dd53`). Claude Code 형식의 거부
+  (`hookSpecificOutput.permissionDecision: "deny"`, `continue: false`)는 **허용**으로 읽혔다 — 이제 `decision: "block"` 과 함께
+  판정으로 읽고, 필드가 엇갈리면 엄격한 쪽이 이긴다(`95937b75`). `mcp` 호출이 `Error` 를 던지면 timeout 타이머가 풀리지 않아
+  나중에 다른 일을 하는 풀 스레드를 인터럽트했다(`1c49d8cc`). `http` 액션의 `timeout` 은 헤더까지만 제한했다 — 이제 본문까지
+  교환 전체를 제한하고 요청을 취소한다(`43302523`).
+
 **남은 것.** EE-84(부트스트랩 · 스타터 미배선, HTTP 훅의 판단 항목들).
 
 ## EE-66 — 가드 명령이 없어서 나는 exit 126/127 은 통과다 · **닫힘** *(2026-10-05)*
@@ -3335,10 +3349,10 @@ main 코드가 없고, 스냅숏의 `userLocale` 은 블록을 만드는 쪽이 
 그 경계를 넘는다(CLI 에는 이 틈이 없다: 스킬의 셸 훅이 이미 호스트에서 돈다). (2) 정하지 않고 가이드에 적어만 둔 것:
 템플릿 값은 escape 되지 않는다(JSON `body` 의 `"${tool_input.command}"` 에 따옴표가 들면 깨진 JSON 이 나가고, 서버가 4xx 로
 답하면 `failOpen` 감사 훅은 그 호출을 기록 없이 통과시킨다 — 모델이 요청 필드를 주입할 수도 있다), 평문 `http://` 를 받는다,
-`allowedEnvVars` 는 그것을 쓰는 같은 파일이 선언한다, 응답 본문이 멈추면 바깥 그물만 끝낸다, 실패 시 URL 이 쿼리 문자열째 WARN 에
+`allowedEnvVars` 는 그것을 쓰는 같은 파일이 선언한다, 실패 시 URL 이 쿼리 문자열째 WARN 에
 찍힌다, 1 MiB 상한은 상수다. `mcp` 호출에는 인터럽트가 닿지 않는 대기가 둘 남는다 — 다른 요청이 쥔 `synchronized sendRequest`
-모니터와 부분 줄의 `readLine()` (EE-88). Claude Code 의 `permissionDecision` / `decision: "block"` 철자는 이제 허용이 아니라
-"판정 없음" 이지만, 서버의 이유를 담은 deny 로 읽히지는 않는다.
+모니터와 부분 줄의 `readLine()` (EE-88). Claude Code 의 `permissionDecision: "defer"` 와 폐기된
+`decision: "approve"` 는 "판정 없음" 으로 읽는다 — 앞의 것은 "애플리케이션이 재개할 때까지 보류" 라 여기서 할 수 있는 것이 없다.
 
 **어디** *(2026-10-05)* — `aimon-cli/.../factory/HookActionExecutors.java`, `HttpActionExecutor.java`, `TemplateRenderer.java`,
 이음매는 `AimonStackSpec#skillParser` 와 `HookHotReloadBootstrap.Builder`.

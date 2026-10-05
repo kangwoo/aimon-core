@@ -17,7 +17,12 @@ whenever it produced no verdict, and `failOpen: true` is the one opt-out. The gu
   allow". Other non-zero codes are unchanged — exit 1 still allows.
 - **`http` and `mcp` guards block without a verdict** (EE-65): unreachable, timeout, any non-2xx, an unreadable answer,
   an unknown `decision` value (including Claude Code's `"block"`), or no executor wired. All of these used to be a pass.
-  `failOpen` is now honoured for these actions. A `postTool` handler still warns and proceeds.
+  `failOpen` is now honoured for these actions — never for a `deny` handler, from either `hooks.json` or front matter.
+  A `postTool` handler still warns and proceeds.
+- **Claude Code's answer shapes are read as verdicts:** `hookSpecificOutput.permissionDecision` (`deny`, `allow`,
+  `ask`), `decision: "block"` and `continue: false`. When fields disagree the strictest wins. They used to be read as
+  allow, or as no verdict.
+- **An `http` handler's `timeout` bounds the whole exchange**, response body included, and cancels the request.
 - **The hook executor's outer timeout no longer lets a guard through** (EE-64), and neither does a hook pool that
   refuses the hook (saturated or closed) or a hook that throws before reaching its action. `ExecutionHook#getTimeoutBehavior()`
   is new; a hook registered in code that declares `FAIL_CLOSED` gets the same treatment, and hooks that declare nothing
@@ -87,8 +92,11 @@ whenever it produced no verdict, and `failOpen: true` is the one opt-out. The gu
 
 - **On version-2 logs the default context engine no longer folds what the model has not answered yet into the
   summary.** A fresh tool result or the latest input follows `[boundary, summary]` verbatim. When only that is left it
-  warns instead of compacting, and summarizes it only at the blocking limit; `/compact` on a view that is only
-  unanswered input fails with "nothing to compact". This gives up the engine's promise of matching version-1 output.
+  warns instead of compacting; `/compact` on a view that is only unanswered input fails with "nothing to compact". At
+  the blocking limit the view is brought under the limit within the one `prepare` the executor makes — the unanswered
+  part is summarized together with what precedes it whenever leaving it out would not fit — and a forced compaction
+  that still ends at or over the limit is reported with `STILL_OVER_BLOCKING` / `isOverBlockingLimit()`. This gives up
+  the engine's promise of matching version-1 output.
 - **Each scheduled-routine fire carries its own read stamps.** An `Edit` step works after a `Read` step, and a `Write`
   step that overwrites an existing file is refused unless the file was read or written earlier in the same fire.
   Routines that overwrite a file without reading it must be re-registered with a `Read` step before the `Write`.
@@ -106,7 +114,10 @@ whenever it produced no verdict, and `failOpen: true` is the one opt-out. The gu
 - **CLI configuration: `$${NAME}` writes the literal text `${NAME}`** without reading the variable (breaking for anyone
   who relied on it meaning `$` + value; write `$$${NAME}` for that).
 - **A key written twice** in the CLI configuration file or in agent, subagent or skill front matter logs a warning
-  naming the key; the last value is still the one used.
+  naming the key; the last value is still the one used. Spellings YAML reads as one key (`yes`/`true`, `~`/`null`,
+  `1`/`0x1`) count as the same key.
+- **`NaN` is refused as `temperature`, `topP` or a penalty** — in `LlmModel`, `OpenAIConfig` and `AnthropicConfig`, and
+  so from starter properties, CLI yaml and agent front matter — with the out-of-range message.
 - **The directories a symbolic link in an on-disk bundle's `skills/` may resolve into are configurable:**
   `aimon.skill.allowed-link-roots`, `agent.allowedSkillLinkRoots`, `AimonStackSpec.Builder.allowedSkillLinkRoots`
   (default empty). Roots must be absolute and not a filesystem root — `PathSkillRepository.Builder` and
@@ -116,6 +127,9 @@ whenever it produced no verdict, and `failOpen: true` is the one opt-out. The gu
 
 - **A skill edited on disk before its first use no longer fails staging until restart**: it is rescanned and staged
   under its current content key, with one WARN. Parsed `SKILL.md` content still changes only on reload or restart.
+  This applies to resources made by `StagedResource.scan`; one assembled through `StagedResource.builder()` is refused
+  when its source changed, as before, so files it never listed cannot reach `.aimon-staged/`. A skill refused for
+  exceeding the staging limit stages on the next call once its large files are excluded or deleted.
 - **GridFS files report a content hash as their etag**, so rewriting a file with identical bytes no longer reads as
   "changed since it was read"; files written earlier keep the file id. The local filesystem gains an opt-in content-hash
   etag (`contentHashEtag` / `contentHashStamps`).
@@ -131,7 +145,8 @@ whenever it produced no verdict, and `failOpen: true` is the one opt-out. The gu
 
 - **`checkAll` includes `checkTestClasspathVersions`**: it fails when a module's tests resolve a different library
   version than the module ships, unless `gradle/test-classpath-version-differences.txt` records it with a reason; stale
-  entries fail too. A dependency bump that moves a recorded version now fails the gate until the file is updated.
+  entries fail too. A dependency bump that moves a recorded version now fails the gate until the file is updated, and
+  a dependency that does not resolve fails it before anything is compared.
 - **`check-doc-links.py` fails a link from a docs-site page to a directory the site builds**; the 41 such links were
   retargeted and `docs/migration/` and `docs/project/` have index pages.
 - **`check-translation-structure.py` fails on front matter mkdocs and the scripts would read differently**, and gains

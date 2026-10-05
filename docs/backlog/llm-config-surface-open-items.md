@@ -1,4 +1,4 @@
-# LLM 설정 표면 — 등록 항목 30건 (열림 6 · 닫힘 24)
+# LLM 설정 표면 — 등록 항목 30건 (열림 5 · 닫힘 25)
 
 출처는 #46 이다 — 모델 capability 표를 CLI yaml 과 스타터 프로퍼티에서 확장할 수 있게 한 작업.
 설계는 옛 `model-capability-config-key.md`(지금은 [`../design/llm/configuration-surface.md`](../design/llm/configuration-surface.md)) 이고,
@@ -1980,6 +1980,15 @@ function tools, use /v1/responses or set reasoning_effort to 'none'."*(`param: r
 **어디** *(2026-10-05)* — `LlmModel` 생성자의 범위 검사, 두 벤더 config 의 같은 검사.
 
 **언제 다시 볼까.** 값이 싸다 — 범위 검사를 다음에 건드릴 때 함께.
+
+### 닫힘 (2026-10-05)
+
+등록한 날 리뷰가 재현했고 고쳤다(`1116517c`). `LlmModel` · `OpenAIConfig` · `AnthropicConfig` 의 검사가 "범위 안이 아니다" 를
+묻는다 — `NaN` 은 범위를 벗어난 값과 같은 문구로, 키 이름과 함께 거절된다. 무한대는 이미 거절되고 있었고 이제 테스트가 고정한다.
+
+- **이 항목의 문장 하나가 좁았다.** CLI 로더는 따옴표 없는 `.nan` · `.inf` 를 이미 거절했다. 통과한 것은 **문자열 철자**다 —
+  따옴표 친 `"NaN"`(곧 `${VAR}` 가 확장되는 모양)과 bare `NaN`.
+- Anthropic 의 clamp 에도 같은 비교가 있다. 그 입력 둘이 더는 `NaN` 을 쥘 수 없으므로 코드는 두고 주석을 달았다.
 
 ---
 
