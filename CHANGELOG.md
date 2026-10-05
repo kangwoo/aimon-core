@@ -82,6 +82,15 @@ Central is versioned independently).
 
 ## [0.3.1] - 2026-10-04
 
+> **This patch release is not compatible with 0.3.0 — an exception to the patch promise in
+> [`docs/project/api-stability.md`](docs/project/api-stability.md) §1, recorded here after the fact.** That
+> policy says a patch is source- and binary-compatible; 0.3.1 shipped the `ExecutionEnvironment` work, which
+> breaks public SPI and behaviour. Upgrade from 0.3.0 as you would across a minor: read every
+> `Changed (breaking)` section below, plus the two marked inline — `ShellActionExecutor`'s `run` signatures
+> (under EE-9 · EE-12) and the new `ShellFeature` constant (under EE-13). The sharpest edges for a library user
+> are `OrcaToolProviderContext` (tools take a per-execution `ExecutionEnvironment`) and `HookContext`
+> (`getEnvironment()` → `getUserLocale()`, EE-14). Old name → new name: [`docs/migration/rename-maps.md`](docs/migration/rename-maps.md).
+
 ### Changed (breaking): an `onStart` hook that blocks stops a fork, and a `hooks.json` that does not load stops startup (EE-70, EE-71)
 
 Two places where a guard that could not judge still let the work through are closed. No type, method signature or wire
