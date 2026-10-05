@@ -685,7 +685,7 @@ BackgroundBashOwner getOwner();
 | S1 — 던지는 선언 가드는 통과된다(`ShellActionRunner` 는 `RuntimeException` 만 잡고, 훅 정책의 기본 예외 매퍼는 가드 이벤트에서 성공을 낸다) | `DeclarativePreToolHook` 과 `AbstractDeclarativeShellHook` 이 셸 분기를 `RuntimeException \| LinkageError` 로 감싸 `notRun(EXECUTION_FAILED, <클래스 이름>)` 으로 읽는다. 그래서 fail-closed 판정과 `failOpen` 이 그대로 적용된다. 예외 전체는 로그에만 |
 | S2 — 사유가 명령 문자열을 흘릴 수 있다(`LocalShell` 의 예외 메시지가 명령을 싣는다) | `EXECUTION_FAILED` 의 세부는 예외의 클래스 이름뿐이다. `shell()` 이 사용 불가 예외가 아닌 것을 던진 `ENVIRONMENT_UNAVAILABLE` 도 같다. `ExecutionEnvironmentUnavailableException` 의 메시지는 남겼다 — 도구가 이미 모델에게 그대로 보여 주는 값이고, 원인을 사유에 싣는다는 결정의 그 "원인" 이다. 메시지는 로그에 남는다 |
 | S3 — 스킬 frontmatter 의 `onStart` 가드는 막지 못한다(`DefaultSubagentExecutor` 가 `onStart` 결과를 advisory 로만 읽는다) | 포크의 `onStart` 동작은 바꾸지 않았다(사람의 결정). 문서를 사실대로 고쳤고, `onStart` 를 `SkillHookSet.GUARD_EVENTS` 에서 빼 `onStart` 만 있는 스킬이 백그라운드 워크플로를 거절하게 만들지 않는다(→ EE-70) |
-| S4 — 가드 스킬 포크가 `ScheduleTask` 로 루틴을 잡으면, 루틴은 나중에 런타임 레지스트리에서 스킬의 가드 없이 돈다 | 백그라운드 워크플로와 같은 이유로 `ScheduleTaskTool` 이 거절한다(`ToolResult.error`, 문구는 `HookRegistryAccess.scheduleRefusal`). 백그라운드 `Task` 는 그대로다(EE-69) |
+| S4 — 가드 스킬 포크가 `ScheduleTask` 로 루틴을 잡으면, 루틴은 나중에 런타임 레지스트리에서 스킬의 가드 없이 돈다 | 백그라운드 워크플로와 같은 이유로 `ScheduleTaskTool` 이 거절한다(`ToolResult.error`, 문구는 `HookRegistryAccess.scheduleRefusal`). 백그라운드 `Task` 는 그대로다(EE-69) *(2026-10-05, EE-69 닫힘 — 백그라운드 `Task` 도 같은 판정으로 거절한다. 문구는 `HookRegistryAccess.backgroundTaskRefusal`. §10.3 의 "문서화된 한계로 받아들인다" 는 더 이상 사실이 아니다)* |
 | S5 — 제공자가 실패하는 포크에서 스킬의 셸 가드를 돌리는 조립 테스트가 없다 | §10.1-5 |
 | `vetoResult` 를 두 번 불러 거부 채널을 탐침한다 | `canVeto()` 를 더했다 |
 | 가드 판정은 컨텍스트의 레지스트리가 `SkillScopedHookRegistry` **자신**이어야 한다 | `HookRegistryAccess` javadoc 에 적었다 — 감싸는 데코레이터는 백그라운드 거절을 끈다 |

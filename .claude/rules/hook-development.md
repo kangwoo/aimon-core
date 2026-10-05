@@ -177,9 +177,14 @@ for side effects only. Wiring one up is a feature, not a bug fix.
   `HookRegistryAccess.of(toolContext)` (the write-once `ToolContextKeys.HOOK_REGISTRY`) before any
   registry it holds itself; a background workflow run cannot carry it, so `Workflow` / `WorkflowJs`
   refuse background mode while a skill guard is active, and `ScheduleTask` refuses for the same
-  reason (a routine fires later on the runtime's registry). The guard check only sees the view when
-  the context's registry *is* the `SkillScopedHookRegistry` — a decorator around it disables these
-  refusals.
+  reason (a routine fires later on the runtime's registry). A background `Task` does carry the view,
+  but outlives the skill — the layer is switched off when the `Skill` tool returns and the subagent
+  runs on under the runtime's hooks only — so `TaskTool` refuses `run_in_background` under an active
+  skill guard too (foreground `Task` is untouched; observe-only skill hooks get a WARN). All four use
+  the one judgment, `HookRegistryAccess.activeSkillGuards`, and its refusal wordings; a new tool that
+  starts work which can outlive or escape the calling fork asks it too rather than deciding on its
+  own. The guard check only sees the view when the context's registry *is* the
+  `SkillScopedHookRegistry` — a decorator around it disables these refusals.
 - A handler's declared timeout is enforced by the action executor and, via
   `ExecutionHook#getExecutionBudget()`, widens the hook's outer net — subject to the same floor,
   +5s grace and 10-minute clamp as any other declared budget. In `hooks.json` the `timeout` field is

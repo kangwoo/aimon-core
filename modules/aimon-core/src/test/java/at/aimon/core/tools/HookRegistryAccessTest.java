@@ -106,4 +106,16 @@ class HookRegistryAccessTest {
         assertThat(HookRegistryAccess.backgroundRefusal(List.of("deploy", "audit"))).contains("'deploy', 'audit'")
                 .contains("guard hooks").contains("foreground");
     }
+
+    @Test
+    void backgroundTaskRefusal_parallelsTheWorkflowWordingAndSaysWhatOutlivesTheSkill() {
+        final String workflow = HookRegistryAccess.backgroundRefusal(List.of("deploy", "audit"));
+        final String task = HookRegistryAccess.backgroundTaskRefusal(List.of("deploy", "audit"));
+
+        // One opening for every tool that refuses background work under a guard skill.
+        final String opening = "Background mode is not available here: skill 'deploy', 'audit' has guard hooks active";
+        assertThat(workflow).startsWith(opening);
+        assertThat(task).startsWith(opening).contains("background subagent").contains("once the skill returns")
+                .contains("foreground").contains("run_in_background");
+    }
 }
