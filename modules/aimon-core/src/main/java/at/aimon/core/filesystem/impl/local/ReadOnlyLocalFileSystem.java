@@ -288,43 +288,53 @@ public final class ReadOnlyLocalFileSystem implements VirtualFileSystem {
         final List<String> files = new ArrayList<>();
         try {
             Files.walkFileTree(dir, EnumSet.of(FileVisitOption.FOLLOW_LINKS), Integer.MAX_VALUE,
-                    new SimpleFileVisitor<>() {
-                        @Override
-                        public FileVisitResult preVisitDirectory(Path d, BasicFileAttributes attributes)
-                                throws IOException {
-                            requireConfined(d);
-                            return FileVisitResult.CONTINUE;
-                        }
-
-                        @Override
-                        public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) throws IOException {
-                            if (attributes.isRegularFile()) {
-                                requireConfined(file);
-                                files.add(relative(file));
-                            } else if (attributes.isSymbolicLink()) {
-                                // The walk follows links, so a link seen as a link is a dangling one. It is not
-                                // listed, but it is still confined: one that names a place outside is refused
-                                // exactly as it would be with its target there.
-                                requireConfined(file);
-                            }
-                            return FileVisitResult.CONTINUE;
-                        }
-
-                        @Override
-                        public FileVisitResult visitFileFailed(Path file, IOException e) throws IOException {
-                            if (e instanceof FileSystemLoopException) {
-                                log.warn("Skipping '{}' while listing {}: the link loops back to an ancestor",
-                                        relative(file), directory);
-                                return FileVisitResult.CONTINUE;
-                            }
-                            throw e;
-                        }
-                    });
+                    new ConfinedListing(directory, files));
         } catch (IOException e) {
             throw new BackendConnectionException(BackendType.LOCAL, "Failed to list " + directory, e);
         }
         files.sort(null);
         return files;
+    }
+
+    /** The walk behind {@link #listRecursive}: every entry is confined, and regular files are collected. */
+    private final class ConfinedListing extends SimpleFileVisitor<Path> {
+
+        private final String directory;
+        private final List<String> files;
+
+        ConfinedListing(String directory, List<String> files) {
+            this.directory = directory;
+            this.files = files;
+        }
+
+        @Override
+        public FileVisitResult preVisitDirectory(Path d, BasicFileAttributes attributes) throws IOException {
+            requireConfined(d);
+            return FileVisitResult.CONTINUE;
+        }
+
+        @Override
+        public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) throws IOException {
+            // The walk follows links, so a link seen as a link is dangling: confined like a file, so one that
+            // names a place outside is refused as it would be with its target there, and never listed.
+            if (attributes.isRegularFile() || attributes.isSymbolicLink()) {
+                requireConfined(file);
+                if (attributes.isRegularFile()) {
+                    files.add(relative(file));
+                }
+            }
+            return FileVisitResult.CONTINUE;
+        }
+
+        @Override
+        public FileVisitResult visitFileFailed(Path file, IOException e) throws IOException {
+            if (e instanceof FileSystemLoopException) {
+                log.warn("Skipping '{}' while listing {}: the link loops back to an ancestor", relative(file),
+                        directory);
+                return FileVisitResult.CONTINUE;
+            }
+            throw e;
+        }
     }
 
     @Override

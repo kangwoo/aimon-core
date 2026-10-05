@@ -32,7 +32,8 @@ Central is versioned independently).
   `high` are each a 400 (*"Function tools with reasoning_effort are not supported for gpt-5.6-terra in
   /v1/chat/completions…"*); without tools all four are a 200. The client sends what was configured — it substitutes
   nothing, and a gateway may answer differently — and **warns once before it does**: a tools request for such a model
-  that carries a rung other than `none`, or no effort at all, logs what was measured and the two exits (L-28).
+  that goes out with a rung other than `none`, or with no effort at all — none configured, or one the client omitted
+  as off the model's ladder — logs what was measured and the two exits (L-28).
 - The sampling parameters (`temperature`, `topP`, the two penalties) are still Java-only.
 
 ### Fixed: foreground `Bash` is also stopped through the shell's cancellation signal (EE-54)
@@ -52,7 +53,8 @@ Central is versioned independently).
 - **A staged copy is written to a temporary sibling directory, verified there, and renamed into place.** `LocalStaging`
   used to copy into the target and delete it on failure, so a second process sharing the workspace could read a
   half-copied skill — or have its finished copy deleted by the other's failed one. On a host directory the publish is one
-  atomic rename: a reader sees no target or a complete one, and the loser of a race returns the winner's copy untouched.
+  atomic rename: a reader sees no target or a complete one, and the loser of a race returns the winner's copy untouched
+  — also when an invalid copy was in the way and the winner's landed while the loser was replacing it.
   On a file system without a directory rename (S3, GridFS) files are moved in one by one with the marker last; no stager
   deletes the target, and bytes that failed verification never reach it. The startup sweep also removes leftover
   `*.tmp-*` directories.
@@ -67,8 +69,9 @@ Central is versioned independently).
 - **`exists`, `isDirectory`, `getMetadata` and `list` check the real path first**, as `read` and `listRecursive` did. They
   followed links unchecked, so a link in a skill directory revealed whether a file outside the allowed roots existed and
   how large it was. A link that fails the check is an `InvalidPathException` from all of them — not `false`, which
-  would have let a refused directory stage as an empty copy. A dangling link is resolved before it is checked, so
-  "absent" and "refused" no longer tell the two apart.
+  would have let a refused directory stage as an empty copy. A dangling link is resolved before it is checked — one
+  segment at a time, as the kernel would — so "absent" and "refused" no longer tell the two apart. `listRecursive`
+  confines its start directory and the dangling links it meets for the same reason.
 - **`read` opens the path it checked**, without following links, closing the window in which the link could be swapped
   between the check and the open.
 
@@ -82,6 +85,9 @@ Central is versioned independently).
 - **`Edit` no longer archives a file whose size it could not read as zero bytes**, which skipped the limits; the result
   carries `[artifact not registered: its size could not be read, …]`. An unexpected failure while registering now adds a
   note too instead of nothing.
+- **A re-registration whose copy fails leaves the earlier archived copy in place.** The copy is written beside the
+  archive path and moved over it; it used to be written in place and deleted on failure, taking the copy the earlier
+  registration still pointed at. (EE-79)
 
 ### Tests: the declaration-to-descriptor hand-off is checked for every capability key (L-13)
 

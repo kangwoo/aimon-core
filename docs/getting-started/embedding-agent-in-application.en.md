@@ -551,7 +551,7 @@ aimon:
   WARN.
 
   **Forcing `gpt-5.6-terra` onto Chat Completions at `api.openai.com` means tool requests need
-  `aimon.llm.reasoning-effort=none`.** Five cells have been measured. A request carrying tools and no effort
+  `aimon.llm.reasoning-effort=none`.** Nine cells have been measured. A request carrying tools and no effort
   is an **HTTP 400** (2026-09-10) — *"Function tools with reasoning_effort are not supported for
   gpt-5.6-terra in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to
   'none'."* A request carrying `reasoning_effort: "none"` is a **200** both without tools and with one

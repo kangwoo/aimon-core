@@ -540,13 +540,13 @@ rung 집합, `temperature` 값 거부 — 은 내장 표의 근거이므로 [`mo
 
 - **`response.reasoning_text.delta` 가 어느 서버에서도 관측되지 않았다** — 원문 계열 분기가 실제 이벤트 이름과 맞는지 모른다.
   이름이 틀려도 400 이 아니라 빈 채널이다. [`RD-7`](../../backlog/reasoning-delta-stream-open-items.md)
-- **`incomplete` stop reason 두 갈래(`max_output_tokens`, `content_filter`)가 실제 응답으로 확인되지 않았다.**
-  [`RD-8`](../../backlog/reasoning-delta-stream-open-items.md)
+- **`incomplete` stop reason 의 `content_filter` 갈래가 실제 응답으로 확인되지 않았다.** `max_output_tokens` 갈래는
+  2026-10-05 에 응답 본문과 스트림 종료 이벤트 두 경로에서 실측했다. [`RD-8`](../../backlog/reasoning-delta-stream-open-items.md)
 - **보존 동작(§7.3)은 코드로 확인했을 뿐 실측하지 않았다.** [`RD-9`](../../backlog/reasoning-delta-stream-open-items.md)
 - **`responsesApiEnabled` 는 이제 설정 키이고**(`llm.openai.responsesApiEnabled` · `aimon.llm.openai.responses-api-enabled`,
   [`configuration-surface.md`](configuration-surface.md)), **그래서 `gpt-5.6-terra` 를 Chat 에 강제하는 조합이 운영자 경로에
   있다.** 그 경로에서 도구 요청이 실측으로 통하는 길은 `reasoning_effort: none` 하나다(§9). effort 를 적지 않으면 400 이고,
-  `low` · `medium` · `high` 는 Chat 에서 잰 적이 없다 — [`model-capabilities.md`](model-capabilities.md) §6.4 · §9
+  `low` · `medium` · `high` 도 도구와 함께면 400 이다(2026-10-05). 클라이언트는 그 요청을 내보내기 전에 한 번 WARN 한다 — [`model-capabilities.md`](model-capabilities.md) §6.4 · §9
 
 등록되지 않은 것.
 

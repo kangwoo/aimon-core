@@ -599,7 +599,7 @@ Two things go off with it. There is no reasoning-item round trip, so the model r
 call, and `reasoningSummary` above reaches nothing.
 
 **Forcing `gpt-5.6-terra` onto Chat Completions at `api.openai.com` means tool requests need
-`reasoningEffort: none`.** Five cells have been measured. A request carrying tools and no effort is an
+`reasoningEffort: none`.** Nine cells have been measured. A request carrying tools and no effort is an
 **HTTP 400** (2026-09-10) — *"Function tools with reasoning_effort are not supported for gpt-5.6-terra in
 /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'."* A request
 carrying `reasoning_effort: "none"` is a **200** both without tools and with one function tool (2026-10-05,

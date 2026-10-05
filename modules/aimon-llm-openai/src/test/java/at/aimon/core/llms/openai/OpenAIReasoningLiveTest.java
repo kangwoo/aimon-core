@@ -56,7 +56,9 @@ import at.aimon.core.llm.streaming.LlmStreamingOptions;
  * are rejected before generation and so are billed nothing.
  *
  * <p>
- * <strong>Cost.</strong> One tool-calling turn is captured once and shared, so the class makes four billable calls.
+ * <strong>Cost.</strong> One tool-calling turn is captured once and shared, so the class makes six billable calls —
+ * four here
+ * and the two of {@link TheBudgetRunsOut}.
  * Where a claim depends on the model <em>choosing</em> to call a tool, the test aborts through {@code assumeTrue}
  * rather than failing — but an empty reasoning channel is not in that category and is red, see
  * {@link ReasoningDeltasArriveOnAStream}.

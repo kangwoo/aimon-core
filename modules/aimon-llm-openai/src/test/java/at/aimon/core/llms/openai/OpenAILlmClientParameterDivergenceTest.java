@@ -394,6 +394,42 @@ class OpenAILlmClientParameterDivergenceTest {
     }
 
     @Test
+    @DisplayName("L-28: a rung an earlier gate omitted leaves a tools request with no effort, and that is warned about")
+    void forcedChatToolsWithAnOmittedRungIsWarned() {
+        // MINIMAL is off terra's ladder, so it is omitted — and what then goes out is tools with no effort, the
+        // shape measured as a 400 on 2026-09-10. The off-ladder warning alone says the call proceeds.
+        final OpenAILlmClient client = terraForcedOntoChat();
+
+        final ChatCompletionCreateParams params = sendAndCapture(client,
+                LlmModel.builder().reasoningEffort(ReasoningEffort.MINIMAL).build(), List.of(A_TOOL));
+
+        assertThat(wireBodyOf(params)).doesNotContain("reasoning_effort");
+        assertThat(warnings()).filteredOn(w -> w.contains(FORCED_CHAT_TOOLS_WARNING)).singleElement()
+                .satisfies(w -> assertThat(w).contains(TERRA).contains("no reasoningEffort"));
+    }
+
+    @Test
+    @DisplayName("L-28: a model that was never bound for the Responses API is not told the switch put it on Chat")
+    void aChatOnlyModelWithANoneRungIsNotWarned() {
+        // No reasoning round trip, so this model is on Chat Completions whatever the switch says — the warning's
+        // first sentence would be false, and nothing measured says its tools requests fail.
+        final ModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.builder()
+                .register("chat-only-with-none",
+                        ModelCapabilities.builder().supportsSamplingParameters(true).supportsReasoningEffort(true)
+                                .supportsToolsWithReasoning(true).lowestReasoningEffort(ReasoningEffort.NONE)
+                                .supportsReasoningTraceRoundTrip(false).build())
+                .build();
+        final OpenAILlmClient client = client(OpenAIConfig.builder().apiKey("test-key").model("chat-only-with-none")
+                .responsesApiEnabled(false).modelCapabilityRegistry(registry).build());
+
+        final ChatCompletionCreateParams params = sendAndCapture(client,
+                LlmModel.builder().reasoningEffort(ReasoningEffort.LOW).build(), List.of(A_TOOL));
+
+        assertThat(wireBodyOf(params)).contains("\"reasoning_effort\":\"low\"");
+        assertThat(warnings()).noneMatch(w -> w.contains(FORCED_CHAT_TOOLS_WARNING));
+    }
+
+    @Test
     @DisplayName("L-28: the warning is said once per configuration, not once per call")
     void forcedChatToolsWarningIsSaidOnce() {
         final OpenAILlmClient client = terraForcedOntoChat();

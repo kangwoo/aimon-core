@@ -146,6 +146,9 @@ config 로 옮기는 네 줄이다. 세려면 이렇게 좁힌다 —
 `reasoning_effort: none` 을 보낸다. 그 스위치는 오늘 프로그램으로만 켤 수 있다
 ([`llm-config-surface-open-items.md`](llm-config-surface-open-items.md) `L-2`).
 
+> **2026-10-05 — 두 문장 다 그 뒤로 바뀌었다.** 스위치는 설정 키가 되었고(L-2), 그 칸은 쟀다 — `none` 은 Chat 에서도 200 이다.
+> 나머지 rung 은 도구와 함께면 400 이고 클라이언트가 내보내기 전에 WARN 한다(L-28).
+
 ---
 
 ## 여기 없는 것

@@ -521,7 +521,7 @@ aimon:
   말합니다.
 
   **`gpt-5.6-terra` 를 `api.openai.com` 의 Chat Completions 로 강제하면 도구 요청에는
-  `aimon.llm.reasoning-effort=none` 이 필요합니다.** 실측한 칸은 다섯입니다. effort 를 적지 않고 도구를 실은
+  `aimon.llm.reasoning-effort=none` 이 필요합니다.** 실측한 칸은 아홉입니다. effort 를 적지 않고 도구를 실은
   요청은 **HTTP 400** 입니다(2026-09-10) — *"Function tools with reasoning_effort are not supported for
   gpt-5.6-terra in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to
   'none'."* `reasoning_effort: "none"` 을 실은 요청은 도구가 없을 때도, 함수 도구 하나를 실었을 때도 **200**

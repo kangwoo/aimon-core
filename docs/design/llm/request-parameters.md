@@ -289,7 +289,8 @@ Chat Completions 에서 도구가 있는 요청이고 모델 행이 `supportsToo
 - **terra 가 Chat 에서 도구 요청을 거절하는 것은 이 규칙으로 피할 수 없다.** effort 를 싣지 않은 도구 요청도 Chat 에서는
   400 이므로 처방은 파라미터 조정이 아니라 라우팅이다 — 측정과 오류 본문은
   [`openai-responses-path.md`](openai-responses-path.md) 의 측정 결론에 있다. 그 경로에서 terra 에 `none` 을 보내면
-  도구가 있든 없든 200 이다(2026-10-05 실측). 나머지 rung 은 그 경로에서 측정되지 않았다(§8).
+  도구가 있든 없든 200 이다(2026-10-05 실측). 나머지 rung(`low` · `medium` · `high`)은 도구 없이는 200, 도구와 함께면 400 이고,
+  클라이언트는 그 요청을 바꾸지 않고 내보내기 전에 한 번 WARN 한다(백로그 L-28).
 
 ### 4.5 `gpt-5.6-terra` 행과 계열 prefix override 약속 — 약속을 좁힌다
 
@@ -436,8 +437,8 @@ sampling parameters; it is being omitted and the call will succeed without it."`
 - **샘플링 값에 설정 표면이 없다** — 그 노브는 에이전트 정의나 프로그램 조립에서만 닿는다.
   [`../../backlog/llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md) L-2. 같은 항목의
   `responsesApiEnabled` 는 설정 키가 되었고, 그것이 운영자 경로로 내린 "Chat Completions 로 강제한 terra 의 `none`" 칸은
-  2026-10-05 에 쟀다(200). 그 경로의 `low` · `medium` · `high` 는 여전히 측정되지 않았다
-  ([`model-capabilities.md`](model-capabilities.md) §6.4)
+  2026-10-05 에 쟀다(200). 그 경로의 `low` · `medium` · `high` 도 같은 날 쟀다 — 도구와 함께면 400 이다
+  ([`model-capabilities.md`](model-capabilities.md) §6.3)
 - **reasoning 모델에 effort 를 설정하지 않았을 때 명시 effort 를 늘 보낼지** — 현재는 보내지 않고 서버 기본값에 맡긴다.
   기술자에 정책 기본값을 넣는 모양은 기각했지만(§6), 명시 전송 자체를 하지 않기로 닫은 판단은 기록되지 않았다. 백로그 미등록
 - **서브에이전트 요청의 temperature `0.7`** — 메인 에이전트가 temperature 를 정하지 않으면 서브에이전트 요청에 아무도

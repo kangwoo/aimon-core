@@ -505,6 +505,7 @@ public class OpenAILlmClient implements LlmClient {
                     "reasoningEffort {} is set on this request but {} does not accept tools together with reasoning; "
                             + "it is being omitted for this call.",
                     effort, modelName));
+            reportForcedChatToolsWithoutNone(Optional.empty(), capabilities, modelName, tools);
             return;
         }
 
@@ -513,6 +514,8 @@ public class OpenAILlmClient implements LlmClient {
         // capability is the set of accepted rungs rather than the lowest one.
         if (requested.isPresent() && !OpenAiRequestParameters.maySendEffort(requested.get(), capabilities, modelName,
                 this::reportDivergence)) {
+            // Omitted, so what goes out is tools with no effort at all — which is itself one of the refused shapes.
+            reportForcedChatToolsWithoutNone(Optional.empty(), capabilities, modelName, tools);
             return;
         }
 
@@ -542,7 +545,8 @@ public class OpenAILlmClient implements LlmClient {
      * says its request fails.
      *
      * @param requested
-     *            the effort about to be sent, or empty when none is
+     *            the effort about to be sent, or empty when none is — because none was configured, or because a gate
+     *            above omitted the one that was
      * @param capabilities
      *            the resolved capabilities
      * @param modelName
@@ -560,9 +564,10 @@ public class OpenAILlmClient implements LlmClient {
         final String carried = requested.map(effort -> "reasoningEffort " + effort).orElse("no reasoningEffort");
         reportDivergence("forcedChatToolsWithoutNone=" + carried + "@" + modelName,
                 "{} is on Chat Completions because responsesApiEnabled is false, and this request carries tools with "
-                        + "{}. api.openai.com refuses function tools on Chat Completions for this model unless "
-                        + "reasoning_effort is 'none' (HTTP 400, measured 2026-10-05). The request is sent as "
-                        + "configured. If it is refused, set reasoningEffort: none or enable the Responses API.",
+                        + "{}. api.openai.com refuses function tools on Chat Completions for gpt-5.6-terra, the "
+                        + "model these capabilities were measured on, unless reasoning_effort is 'none' (HTTP 400). "
+                        + "The request is sent as configured. If it is refused, set reasoningEffort: none or enable "
+                        + "the Responses API.",
                 modelName, carried);
     }
 

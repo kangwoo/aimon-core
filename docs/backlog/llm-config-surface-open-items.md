@@ -1871,6 +1871,15 @@ function tools, use /v1/responses or set reasoning_effort to 'none'."*(`param: r
 `forcedChatToolsWarningIsSaidOnce`, `theMeasuredWorkingShapesAreNotWarnedAbout`(`none` + 도구, 도구 없는 rung, `none` 이 없는 가족
 이름 — 셋 다 조용하다).
 
+> **보강 (2026-10-05, PR #227 리뷰).** 첫 구현은 WARN 을 effort 를 **내보내는** 경로 끝에만 두었다. 그래서 앞의 게이트가
+> effort 를 생략한 요청 — 터라에 `reasoningEffort: minimal`(사다리에 없어 생략된다) — 은 "도구만 있고 effort 없음" 으로 나가는데
+> WARN 이 없었다. 그 모양이 바로 2026-09-10 에 잰 400 이고, 그때 나오는 유일한 WARN 은 "생략했고 모델은 자기 기본값으로
+> 추론한다" 여서 호출이 진행된다고 읽힌다. 이제 effort 를 생략하는 두 게이트도 같은 판정을 부른다
+> (`forcedChatToolsWithAnOmittedRungIsWarned`, 고치기 전에 실패했다). 같은 리뷰가 짚은 둘도 고쳤다 — trace 왕복 조건을 붙잡는
+> 테스트가 없었고(`aChatOnlyModelWithANoneRungIsNotWarned`, 그 조건을 지우면 빨개진다), 메시지가 "for this model" · "measured
+> 2026-10-05" 라고 말했는데 잰 것은 `gpt-5.6-terra` 이고 effort 없는 칸의 날짜는 2026-09-10 이다. 이제 메시지는 모델을 이름으로
+> 대고 날짜를 적지 않는다.
+
 ---
 
 ## 관련 문서

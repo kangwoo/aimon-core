@@ -1,4 +1,4 @@
-# 실행 환경 — 등록 항목 80건 (열림 36 · 닫힘 44)
+# 실행 환경 — 등록 항목 80건 (열림 35 · 닫힘 45)
 
 출처는 `ExecutionEnvironment` 구현 작업이다. 설계는 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md)
 이고, 구현 계획(승인본)과 구현이 그 계획에서 벗어난 점은
@@ -856,7 +856,16 @@ AIMON 패키지에 기대지 못하게 하는 것은 전부터 있던 규칙이�
 테스트(`LocalStagingTest`, 새 파일 — "다른 프로세스" 는 같은 디렉터리 위의 둘째 제공자이고 소스 파일 시스템의 훅에서 움직이므로
 타이밍에 기대지 않는다): `targetIsNeverVisibleHalfCopied`, `failingStagerLeavesTheOtherProcessCopy`, `loserAdoptsTheWinnersCopy`. 셋 다
 고치기 전 코드에서 실패했다. `interruptedTargetIsReplaced` 는 전에도 통과한 회귀 가드다. 기존
-`LocalExecutionEnvironmentProviderStagingTest` 34건은 고치지 않고 통과한다.
+`LocalExecutionEnvironmentProviderStagingTest` 32건은 고치지 않고 통과하고, 거기에 스윕 테스트 하나
+(`sweepRemovesAbandonedTemporaryDirectories`)를 더했다.
+
+> **보강 (2026-10-05, PR #227 리뷰).** 위 "닫지 않은 것" (1) 을 닫았다. 리뷰가 재현한 대로, 잘못된 대상이 자리를 차지한 채 두
+> 프로세스가 같은 키를 스테이징하면 늦은 쪽이 **먼저 끝낸 쪽의 멀쩡한 사본**을 옆으로 옮기고 지웠다 — "스테이징됐나" 를 묻는
+> 것과 "자리에 뭔가 있나" 를 묻는 것이 두 단계라 그 사이에 완성본이 들어올 수 있었다. 바이트는 같아도 이긴 쪽이 이미 경로를
+> 내준 디렉터리가 사라진다. 이제 옆으로 옮긴 디렉터리가 그 키의 완성본이면 **되돌려 놓고** 자기 사본을 버린다. 되돌릴 자리가
+> 그새 또 찼으면 그 사본만 버리고 다시 시도한다. 테스트 `aValidCopyMovedAsideIsRestored` 는 워크스페이스 파일 시스템의 `exists`
+> 에 훅을 걸어 그 순간을 만들고, 대상 디렉터리의 inode 가 이긴 쪽의 것 그대로임을 단언한다(고치기 전에는 다른 inode 였다).
+> 남은 틈은 옮겼다가 되돌리는 두 rename 사이에 대상이 잠깐 없다는 것이다.
 
 ## EE-18 — 백그라운드 `Bash` 가 사용 불가 환경과 notice 를 다루지 않는다 · **닫힘** *(2026-09-29)*
 
@@ -923,7 +932,7 @@ notice 를 넘겨야 실제로 보인다. 테스트는 `BashToolTest` 와 `BashO
 크기를 몰라도 0 으로 등록되고 note 가 없다 — 거기에는 한도가 없다. (3) 작업 디렉터리 밖의 파일은 정규화한 전체 경로 아래에
 보관되어 워크스페이스 안의 같은 상대 경로와 겹칠 수 있다(`/tmp/a` 대 `<base>/tmp/a`). (4) 경로 세그먼트를 정제하지 않는다
 (이름의 `:` 는 로컬 제어 저장소에서 여전히 실패한다). (5) 재등록이 한도에 걸리거나 복사에 실패하면 이전 artifact 항목이 수집기에
-남는다 — 그리고 그때 이전 보관본이 지워진다(EE-79).
+남는다 — 그리고 그때 이전 보관본이 지워졌다(EE-79, 같은 날 닫았다).
 
 테스트(고치기 전 코드에서 실패했다): `ArtifactArchiveTest` 의 `sameNameInDifferentDirectoriesDoesNotCollide`,
 `reRegistrationIsCountedOnce`, `unknownSizeIsNotArchived`, `unexpectedFailureAddsNote`, `ArtifactAwareEditToolTest` 의
@@ -1481,6 +1490,22 @@ PR #195 리뷰 1 이 **macOS 에도 별칭이 있음**을 재현했다 — APFS 
 `existsIsNoOracleForAMissingOutsideTarget`, `isDirectoryConfined`, `getMetadataConfined`, `listConfined`, `readOpensTheCheckedPath`.
 마지막 것은 경합 테스트다 — 한 스레드가 링크를 루트 안팎으로 바꾸는 동안 2만 번 읽고, 옛 코드에서는 13번째 · 31번째 읽기에서
 루트 밖 내용이 나왔다.
+
+> **보강 (2026-10-05, PR #227 리뷰).** 위 처방에 구멍이 둘 있었고 둘 다 "루트 밖 대상이 있을 때와 없을 때 답이 같다" 는 약속을
+> 깼다. 루트를 벗어나는 것은 아니었다.
+>
+> 1. **끊어진 링크의 대상을 글자로 정규화했다.** `realParent.resolve(target).normalize()` 는 `x/..` 를 `x` 가 링크인지 보기 전에
+>    지운다. `out -> <밖>/dir`, `hop -> out/../probe` 이면 커널은 `<밖>/probe` 로 가는데 이 코드는 루트 안의 `probe` 로 갔다 —
+>    밖의 대상이 없으면 `exists("hop")` 이 예외 없이 답했고 `read("hop")` 은 링크가 가리키지 않는 파일을 돌려줬다. 이제 대상을
+>    **한 세그먼트씩** 따라간다(`followTarget`).
+> 2. **`listRecursive` 가 가두기 전에 물었다.** 시작 디렉터리를 `Files.isDirectory` 로 먼저 보고, 끊어진 링크는 가두지 않고
+>    건너뛰었다. 밖을 가리키는 링크는 대상이 없으면 빈 목록(또는 그 파일만 빠진 목록), 있으면 예외였다 — 앞의 것은 링크 규칙이
+>    막으려던 "조용히 빈 사본" 그대로다. 이제 시작 디렉터리를 먼저 가두고, 끊어진 링크도 가둔다. 루트 안을 가리키는 끊어진
+>    링크는 전처럼 목록에 없다.
+>
+> 테스트 `danglingLinkThroughALinkIsNotResolvedLexically`, `listRecursiveIsNoOracleForAMissingOutsideTarget` — 둘 다 고치기 전
+> 코드에서 실패했다. 같은 리뷰가 본 것 하나는 고치지 않았다: 조상이 보통 파일인 경로(`SKILL.md/x`)의 `read` · `getMetadata` 는
+> 이제 `FileNotFoundException` 이 아니라 `BackendConnectionException` 이다. 그것에 기대는 호출자는 없다.
 
 ## EE-37 — 스테이징 마커는 있는지만 본다 · **닫힘** *(2026-10-05)*
 
@@ -2878,7 +2903,7 @@ GridFS 와 같은 모양이다 — 경로를 검증·정규화하고, 디렉터�
 **언제 다시 볼까.** EE-60(시간대)을 결정할 때 — 두 항목은 같은 블록을 두고 묻는다. 또는 모델이 날짜를 틀리게 말한다는 보고가
 있을 때. 배선하기로 하면 수집기가 무엇을 모으는지(날짜를 실행마다 새로 읽는가, 프롬프트 캐시를 깨는가)가 함께 정해져야 한다.
 
-## EE-79 — 재등록의 복사가 실패하면 이전 보관본까지 지워진다 · **열림**
+## EE-79 — 재등록의 복사가 실패하면 이전 보관본까지 지워진다 · **닫힘** *(2026-10-05)*
 
 *(2026-10-05 등록. 출처는 EE-19 착수.)*
 
@@ -2894,6 +2919,21 @@ GridFS 와 같은 모양이다 — 경로를 검증·정규화하고, 디렉터�
 `discard`.
 
 **언제 다시 볼까.** `ArtifactArchive` 를 다음에 손볼 때, 또는 artifact 가 목록에는 있는데 열리지 않는다는 보고가 있을 때.
+
+### 닫힘 (2026-10-05)
+
+등록한 날 PR #227 의 리뷰가 같은 자리를 다시 짚어 그 PR 에서 닫았다. `ArtifactArchive` 는 이제 보관 경로 옆의
+`{보관 경로}.part-{hex 32자}` 에 복사하고 성공하면 보관 경로 위로 옮긴다. 실패하면 그 부분 사본만 지운다 — 보관 경로는 건드리지
+않는다. 이전 등록이 수집기에 남는 것은 그대로이고, 이제 그것이 가리키는 파일도 남는다.
+
+**심각도(규칙 셋)는 적은 것보다 한 칸 무거웠다.** 항목은 "실패하면 지운다" 만 적었는데, 리뷰가 짚은 대로 `LocalFileSystem.write`
+는 제자리에서 잘라 쓰므로 로컬 제어 저장소에서는 실패를 **알아차리기 전에** 이전 사본이 이미 망가져 있었다. 지우지 않는
+것만으로는 모자랐고, 옆에 쓰고 옮기는 쪽이 듣는 처방이었다(규칙 다섯).
+
+**닫지 않은 것.** S3 · GridFS 의 `move` 는 복사 후 삭제라 옮기는 도중의 실패는 여전히 보관 경로를 건드릴 수 있다.
+
+테스트: `ArtifactArchiveTest.failedReRegistrationKeepsTheEarlierCopy` — 복사 도중 끊기는 소스로 재등록하고, 첫 보관본의 내용이
+그대로이고 옆에 부분 사본이 남지 않음을 단언한다. 고치기 전에는 보관본이 없었다.
 
 ## EE-80 — 훅의 셸 액션은 취소 신호를 싣지 않는다 · **열림**
 

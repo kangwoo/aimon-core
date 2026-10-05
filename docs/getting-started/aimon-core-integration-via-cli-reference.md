@@ -574,7 +574,7 @@ llm:
 `reasoningSummary` 는 아무 데도 닿지 않는다.
 
 **`gpt-5.6-terra` 를 `api.openai.com` 의 Chat Completions 로 강제하면 도구 요청에는 `reasoningEffort: none` 이
-필요하다.** 실측한 칸은 다섯이다. effort 를 적지 않고 도구를 실은 요청은 **HTTP 400** 이다(2026-09-10) —
+필요하다.** 실측한 칸은 아홉이다. effort 를 적지 않고 도구를 실은 요청은 **HTTP 400** 이다(2026-09-10) —
 *"Function tools with reasoning_effort are not supported for gpt-5.6-terra in /v1/chat/completions. To use
 function tools, use /v1/responses or set reasoning_effort to 'none'."* `reasoning_effort: "none"` 을 실은 요청은
 도구가 없을 때도, 함수 도구 하나를 실었을 때도 **200** 이다(2026-10-05, `finish_reason: stop`,
