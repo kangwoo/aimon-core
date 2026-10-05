@@ -143,6 +143,45 @@ class ArtifactArchiveTest {
         }
 
         @Test
+        @DisplayName("EE-79: a re-registration whose copy fails leaves the earlier archived copy as it was")
+        void failedReRegistrationKeepsTheEarlierCopy() throws IOException {
+            final ArtifactArchive archive = new ArtifactArchive(controlFileSystem,
+                    ArtifactPolicy.builder().enabled(true).build());
+            final ArtifactCollector collector = new ArtifactCollector("exec-1");
+            final String report = write("report.md", "first version");
+            assertThat(archive.register(nonDurable(fileSystem, collector), report, -1)).isEmpty();
+            Files.writeString(Path.of(report), "second version, longer");
+            // The source breaks off part-way through the copy.
+            final VirtualFileSystem breaking = new DelegatingFileSystem(fileSystem) {
+                @Override
+                public java.io.InputStream openInputStream(String path) {
+                    return new java.io.InputStream() {
+                        private int served;
+
+                        @Override
+                        public int read() throws IOException {
+                            if (served++ < 5) {
+                                return 'x';
+                            }
+                            throw new IOException("source went away");
+                        }
+                    };
+                }
+            };
+
+            final Optional<String> note = archive.register(nonDurable(breaking, collector), report, -1);
+
+            assertThat(note).get().asString().startsWith("[artifact not registered:").contains("copying it");
+            // The first registration is still in the collector, so what it points at must still be what it archived.
+            final Path archived = base.resolve("control/artifacts/exec-1/report.md");
+            assertThat(archived).hasContent("first version");
+            try (java.util.stream.Stream<Path> beside = Files.list(archived.getParent())) {
+                assertThat(beside.map(p -> p.getFileName().toString())).as("no partial copy left beside it")
+                        .containsExactly("report.md");
+            }
+        }
+
+        @Test
         @DisplayName("a size that cannot be read is not taken for 0: nothing is archived and a note says why")
         void unknownSizeIsNotArchived() throws IOException {
             final ArtifactArchive archive = new ArtifactArchive(controlFileSystem,

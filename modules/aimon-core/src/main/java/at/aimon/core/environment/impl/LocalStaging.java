@@ -377,10 +377,19 @@ final class LocalStaging {
                     final String aside = temporarySibling(target);
                     try {
                         Files.move(hostTarget, hostRoot.resolve(aside), StandardCopyOption.ATOMIC_MOVE);
-                        displaced.add(aside);
                     } catch (IOException e) {
                         last = e;
+                        continue;
                     }
+                    // The check above and this move are two steps, and another stager can finish between them: what
+                    // was moved aside may be its complete copy, whose path it has already handed out. That one goes
+                    // back rather than being replaced by these same bytes under a new directory.
+                    if (isStaged(resource, aside) && restore(aside, hostTarget)) {
+                        log.debug("Staged copy {} appeared while replacing an invalid one; using it", target);
+                        discard(staging);
+                        return;
+                    }
+                    displaced.add(aside);
                 }
             }
             throw new StagingException(
@@ -388,6 +397,17 @@ final class LocalStaging {
                     last);
         } finally {
             displaced.forEach(this::discard);
+        }
+    }
+
+    /** Puts a directory that was moved aside back under the target's name; {@code false} when the name is taken. */
+    private boolean restore(String aside, Path hostTarget) {
+        try {
+            Files.move(hostRoot.resolve(aside), hostTarget, StandardCopyOption.ATOMIC_MOVE);
+            return true;
+        } catch (IOException e) {
+            log.debug("Could not put {} back at {}: {}", aside, hostTarget, e.getMessage());
+            return false;
         }
     }
 

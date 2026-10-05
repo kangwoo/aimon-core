@@ -161,6 +161,42 @@ class ReadOnlyLocalFileSystemTest {
     }
 
     @Test
+    @DisplayName("a dangling link whose target climbs out through another link is resolved the way the kernel would"
+            + " (EE-36)")
+    void danglingLinkThroughALinkIsNotResolvedLexically() throws Exception {
+        // demo/out -> <outside>, demo/hop -> out/../probe. The kernel resolves `out` first, so hop names
+        // <outside's parent>/probe; collapsing `out/..` as text would name demo/probe instead, a file inside the root.
+        final Path outside = Files.createDirectories(tempDir.resolve("outside/dir"));
+        link(root.resolve("demo/out"), outside);
+        link(root.resolve("demo/hop"), Path.of("out/../probe"));
+        Files.writeString(root.resolve("demo/probe"), "INSIDE");
+
+        assertThatThrownBy(() -> fs.exists("demo/hop")).isInstanceOf(InvalidPathException.class);
+        assertThatThrownBy(() -> fs.read("demo/hop")).isInstanceOf(InvalidPathException.class);
+        // And the answer is the same once the outside target is there.
+        Files.writeString(outside.getParent().resolve("probe"), "OUTSIDE");
+        assertThatThrownBy(() -> fs.exists("demo/hop")).isInstanceOf(InvalidPathException.class);
+    }
+
+    @Test
+    @DisplayName("listRecursive answers the same for an outside link whether or not its target is there (EE-36)")
+    void listRecursiveIsNoOracleForAMissingOutsideTarget() throws Exception {
+        link(root.resolve("gone-skill"), tempDir.resolve("no-such-dir"));
+        Files.createDirectories(root.resolve("s2"));
+        Files.writeString(root.resolve("s2/SKILL.md"), "# s2");
+        link(root.resolve("s2/data"), tempDir.resolve("no-such-file"));
+
+        // A linked start directory: refused like exists(), not an empty list that stages an empty copy.
+        assertThatThrownBy(() -> fs.listRecursive("gone-skill")).isInstanceOf(InvalidPathException.class);
+        // A dangling outside link among the files: refused, not a copy silently missing the file behind it.
+        assertThatThrownBy(() -> fs.listRecursive("s2")).isInstanceOf(InvalidPathException.class);
+        // Inside the root a dangling link is simply not a file.
+        Files.delete(root.resolve("s2/data"));
+        link(root.resolve("s2/data"), root.resolve("s2/no-such-file"));
+        assertThat(fs.listRecursive("s2")).containsExactly("s2/SKILL.md");
+    }
+
+    @Test
     @DisplayName("isDirectory refuses a linked directory that resolves outside the root (EE-36)")
     void isDirectoryConfined() throws Exception {
         link(root.resolve("demo/elsewhere"), tempDir);

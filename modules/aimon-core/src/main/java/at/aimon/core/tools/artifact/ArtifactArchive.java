@@ -3,6 +3,7 @@ package at.aimon.core.tools.artifact;
 import java.io.InputStream;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,6 +45,9 @@ public final class ArtifactArchive {
 
     /** The control-store directory archived artifacts are copied under. */
     public static final String ARTIFACTS_DIRECTORY = "artifacts";
+
+    /** Between an archive path and the random suffix of a copy still being written beside it. */
+    private static final String PARTIAL_INFIX = ".part-";
 
     private static final Logger log = LoggerFactory.getLogger(ArtifactArchive.class);
 
@@ -140,11 +144,15 @@ public final class ArtifactArchive {
             return Optional.of("[artifact not registered: archiving it would exceed this execution's limit of "
                     + policy.getMaxExecutionBytes() + " bytes]");
         }
+        // Copied beside the archive path and moved over it: a copy that fails part-way must not cost the copy an
+        // earlier registration of this file made, which the collector still lists.
+        final String partial = archivedPath + PARTIAL_INFIX + UUID.randomUUID().toString().replace("-", "");
         try (InputStream in = source.openInputStream(filePath)) {
-            controlFileSystem.write(archivedPath, in, size);
+            controlFileSystem.write(partial, in, size);
+            controlFileSystem.move(partial, archivedPath, true);
         } catch (Exception e) {
             log.warn("Failed to archive artifact {} to {}", filePath, archivedPath, e);
-            discard(archivedPath);
+            discard(partial);
             return Optional
                     .of("[artifact not registered: copying it to the control store failed: " + e.getMessage() + "]");
         }
@@ -174,13 +182,14 @@ public final class ArtifactArchive {
         return normalized == null || normalized.isEmpty() ? fileName : normalized;
     }
 
-    private void discard(String archivedPath) {
+    /** Removes this attempt's own partial copy; never the archive path, which may hold an earlier registration. */
+    private void discard(String partial) {
         try {
-            if (controlFileSystem.exists(archivedPath)) {
-                controlFileSystem.delete(archivedPath);
+            if (controlFileSystem.exists(partial)) {
+                controlFileSystem.delete(partial);
             }
         } catch (Exception e) {
-            log.debug("Could not remove the partial archive copy {}: {}", archivedPath, e.getMessage());
+            log.debug("Could not remove the partial archive copy {}: {}", partial, e.getMessage());
         }
     }
 

@@ -55,8 +55,8 @@ import at.aimon.core.filesystem.exception.InvalidPathException;
  * outside directory, are refused the same way, so none of these methods tells a caller what exists beyond the allowed
  * roots. {@link #listRecursive} checks every visited entry's real path, so a link anywhere on the way (a linked
  * subdirectory, a linked file) is covered; {@link #list} checks the directory it lists and names that directory's
- * entries without following them. A link that loops back to an ancestor is skipped with a WARN; a dangling link is
- * not a regular file and is not listed.
+ * entries without following them. A link that loops back to an ancestor is skipped with a WARN; a dangling link
+ * that stays inside the allowed roots is not a regular file and is not listed.
  *
  * <p>
  * {@link #read} opens the real path it checked, without following a link in its last segment, so a link swapped
@@ -168,8 +168,27 @@ public final class ReadOnlyLocalFileSystem implements VirtualFileSystem {
             if (hops >= MAX_LINK_HOPS) {
                 throw new FileSystemLoopException(path.toString());
             }
-            return realPath(realParent.resolve(Files.readSymbolicLink(path)).normalize(), hops + 1);
+            return followTarget(realParent, Files.readSymbolicLink(path), hops + 1);
         }
+    }
+
+    /**
+     * Where a link's target leads from the link's (real) directory, one segment at a time. Not
+     * {@code resolve(target).normalize()}: that drops {@code x/..} as text, and when {@code x} is itself a link the
+     * kernel goes to the parent of where {@code x} points, which is somewhere else.
+     */
+    private static Path followTarget(Path realParent, Path target, int hops) throws IOException {
+        Path current = target.isAbsolute() ? target.getRoot() : realParent;
+        for (Path segment : target) {
+            final String name = segment.toString();
+            if (name.equals("..")) {
+                // `current` is a real path, so its parent is where `..` leads.
+                current = current.getParent() == null ? current : current.getParent();
+            } else if (!name.equals(".") && !name.isEmpty()) {
+                current = realPath(current.resolve(name), hops);
+            }
+        }
+        return current;
     }
 
     @Override
@@ -257,7 +276,10 @@ public final class ReadOnlyLocalFileSystem implements VirtualFileSystem {
     @Override
     public List<String> listRecursive(String directory) {
         final Path dir = resolve(directory);
-        if (!Files.isDirectory(dir)) {
+        // Confined before it is looked at, as in list(): a start directory linked to the outside is refused whether
+        // or not its target is there, not answered with an empty list when it is not.
+        final Path realStart = confinedOrNull(dir);
+        if (realStart == null || !Files.isDirectory(realStart, LinkOption.NOFOLLOW_LINKS)) {
             return List.of();
         }
         // Files.walk without FOLLOW_LINKS visits a linked start directory as one non-regular entry, and a linked
@@ -279,6 +301,11 @@ public final class ReadOnlyLocalFileSystem implements VirtualFileSystem {
                             if (attributes.isRegularFile()) {
                                 requireConfined(file);
                                 files.add(relative(file));
+                            } else if (attributes.isSymbolicLink()) {
+                                // The walk follows links, so a link seen as a link is a dangling one. It is not
+                                // listed, but it is still confined: one that names a place outside is refused
+                                // exactly as it would be with its target there.
+                                requireConfined(file);
                             }
                             return FileVisitResult.CONTINUE;
                         }

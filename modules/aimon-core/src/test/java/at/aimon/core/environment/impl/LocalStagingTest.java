@@ -158,6 +158,60 @@ class LocalStagingTest {
     }
 
     @Test
+    @DisplayName("EE-17: a complete copy that lands between 'is it staged?' and 'move it aside' is put back, not"
+            + " replaced")
+    void aValidCopyMovedAsideIsRestored() throws Exception {
+        final StagedResource resource = StagedResource.scan(control, "skills/demo", "demo");
+        final Path target = target(resource);
+        // An interrupted copy is in the way, so a plain rename fails and the stager has to look at what is there.
+        Files.createDirectories(target.resolve("scripts"));
+        Files.writeString(target.resolve("SKILL.md"), "# de");
+        final ExecutionEnvironment winner = process();
+        final AtomicReference<Object> winnerDirectory = new AtomicReference<>();
+        final Map<String, FileTime> written = new LinkedHashMap<>();
+        final String marker = ".aimon-staged/demo/" + resource.getContentKey() + "/" + LocalStaging.MARKER;
+        // The other process finishes after this stager was told "no marker" and before it acts on that answer.
+        final VirtualFileSystem racing = new DelegatingFileSystem(rawWorkspace()) {
+            private boolean raced;
+
+            @Override
+            public boolean exists(String path) {
+                final boolean answer = super.exists(path);
+                if (!raced && path.equals(marker) && ownCopyIsComplete()) {
+                    raced = true;
+                    winner.stage(resource);
+                    winnerDirectory.set(fileKey(target));
+                    written.putAll(modifiedTimes(target));
+                }
+                return answer;
+            }
+
+            private boolean ownCopyIsComplete() {
+                return siblings(resource).stream().anyMatch(name -> LocalStaging.isTemporary(name)
+                        && Files.exists(target.resolveSibling(name).resolve(LocalStaging.MARKER)));
+            }
+        };
+        final LocalStaging loser = new LocalStaging(racing, racing, workspace, ".aimon-staged", Long.MAX_VALUE);
+
+        final String loserPath = loser.stage(resource);
+
+        assertThat(winnerDirectory.get()).as("the race happened").isNotNull();
+        assertThat(Path.of(loserPath)).isEqualTo(target);
+        // The same directory, not the same bytes under a new one: the winner's model may be running from it.
+        assertThat(fileKey(target)).isEqualTo(winnerDirectory.get());
+        assertThat(modifiedTimes(target)).isEqualTo(written);
+        assertThat(siblings(resource)).containsExactly(resource.getContentKey());
+    }
+
+    private static Object fileKey(Path path) {
+        try {
+            return Files.readAttributes(path, java.nio.file.attribute.BasicFileAttributes.class).fileKey();
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    @Test
     @DisplayName("EE-17: a copy made beside the target is not a content key, so the sweep's newest-copy rule and a"
             + " resource's files never meet it")
     void temporaryNamesAreNotContentKeys() {
