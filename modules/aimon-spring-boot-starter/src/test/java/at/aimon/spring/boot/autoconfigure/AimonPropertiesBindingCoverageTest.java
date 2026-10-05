@@ -15,7 +15,8 @@ import at.aimon.llm.capability.testkit.AbstractModelCapabilityBindingContractTes
  * <p>
  * #69 was the absence of the first half — {@code thinkingDialect} was a fully built declaration key with no property
  * here, so the refusal message advertising it was advice an operator could not act on, and silently so on this
- * surface, because Boot ignores an unknown property (backlog {@code L-1}). #82 was the absence of the second: a key can
+ * surface at the time, because Boot ignored an unknown property there (backlog {@code L-1}, since closed for this
+ * subtree). #82 was the absence of the second: a key can
  * bind here and still be dropped by {@code toDeclaration()}, the one line per key written by hand. What is asserted,
  * and why one contract serves this surface and the CLI's instead of a copy in each module, is written on the base
  * class.

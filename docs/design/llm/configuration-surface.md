@@ -60,7 +60,8 @@ thinking 블록 재전송을 끌 수 있어야 한다.
 | 에이전트 frontmatter | camelCase | `model.*` | `MarkdownAgentDefinitionParser.extractModel` | `LlmModel` |
 
 두 표기는 섞이지 않는다. CLI 는 빈 이름을 그대로 쓰고(`@JsonProperty` 없음, 네이밍 전략 없음), 스타터는 Boot 의
-kebab 규칙을 쓴다. 한 표면의 표기로 다른 표면을 쓰면 CLI 는 모르는 필드로 실패하고 스타터는 조용히 무시한다(§6.4).
+kebab 규칙을 쓴다. 한 표면의 표기로 다른 표면을 쓰면 CLI 는 모르는 필드로 실패하고, 스타터는 strict 서브트리 셋 아래에서는 실패하고
+그 밖에서는 조용히 무시한다(§6.4).
 
 ### 2.2 잎 이름
 
@@ -263,8 +264,8 @@ L-4 가 가진다.
 받는 rung 이 없는 모델은 `supportsReasoningEffort: false` 로 적는다. **중복 rung 은 조용히 접는다** — 반복된 rung 이
 하나와 다르게 읽힐 방법이 없다. 표면은 `List` 로 받고 선언으로 갈 때 집합이 된다.
 
-설정 키 `lowestReasoningEffort` 는 SPI 가 floor 를 읽기용으로 내놓지 않게 된 뒤에도 **개명하지 않는다.** 스타터는 모르는
-프로퍼티를 조용히 무시하므로(L-1), 개명하면 그 키를 선언한 모든 배포가 말없이 선언을 잃는다. 키는 남고 형제 키가 생긴다.
+설정 키 `lowestReasoningEffort` 는 SPI 가 floor 를 읽기용으로 내놓지 않게 된 뒤에도 **개명하지 않는다.** 스타터는 이
+서브트리의 모르는 프로퍼티를 거절하므로(§6.7), 개명하면 그 키를 선언한 모든 배포의 기동이 실패한다. 키는 남고 형제 키가 생긴다.
 
 ### 4.5 공유 번역기 한 곳 — `ModelCapabilityDeclaration` 과 `withDefaultsExtendedBy`
 
@@ -439,7 +440,7 @@ enum 이 상수를 얻으면 힌트가 따라오지 않은 채 초록일 수 없
 
 | 실패 | CLI | 스타터 | frontmatter |
 |---|---|---|---|
-| **모르는 잎 이름** | `ConfigurationException("Invalid configuration structure in: <file> (at <키>: <사유>)")`. 키와 Jackson 의 사유 첫 줄이 감싸는 문장에 실린다(L-5, 2026-10-05 닫힘) | **조용하다.** `@ConfigurationProperties` 의 기본 `ignoreUnknownFields = true`. 잎이 하나도 바인딩되지 않은 맵 항목은 만들어지지도 않는다(L-1). IDE 가 메타데이터로 모르는 잎을 표시하는 것이 남는 완화책이다 | `model:` 아래 모르는 키는 읽지 않는다 |
+| **모르는 잎 이름** | `ConfigurationException("Invalid configuration structure in: <file> (at <키>: <사유>)")`. 키와 Jackson 의 사유 첫 줄이 감싸는 문장에 실린다(L-5, 2026-10-05 닫힘) | **strict 서브트리 셋**(`aimon.llm.model-capabilities` · `aimon.llm.anthropic` · `aimon.llm.openai`) 아래에서는 Boot 의 `UnboundConfigurationPropertiesException` 이 적힌 키를 부르며 기동을 실패시킨다(§6.7). **그 밖은 조용하다** — `@ConfigurationProperties` 의 기본 `ignoreUnknownFields = true` 이고, `aimon.llm.reasoning-effor` 같은 `aimon.llm` 바로 아래 잎이 여기 든다(L-1). IDE 가 메타데이터로 모르는 잎을 표시하는 것이 그쪽에 남는 완화책이다 | `model:` 아래 모르는 키는 읽지 않는다 |
 | **enum 값 오류** | Jackson `InvalidFormatException` → 위와 같은 `ConfigurationException`(L-5) | 코어 enum 은 Boot 바인딩 실패가 프로퍼티와 변환을 부른다. vendor `String` 은 fold 가 프로퍼티와 허용 철자 전부를 부르는 `IllegalStateException` | `model.reasoningEffort` 는 키와 허용 값을 부르는 `AgentDefinitionParseException` |
 | **의미 오류** — 아무것도 선언하지 않음 · 본문이 빔 · 빈/공백 이름 · 대소문자만 다른 중복 · 두 ladder 키 · 빈 ladder | 코어 거절을 키 경로와 재던짐(§6.1) | 같음, `afterPropertiesSet` 시점 | — |
 | **예산 규칙 위반** | `llm.anthropic.thinkingBudgetTokens` 를 부르며 실패 | `aimon.llm.anthropic.thinking-budget-tokens` 를 부르며 실패 | — |
@@ -455,7 +456,8 @@ enum 이 상수를 얻으면 힌트가 따라오지 않은 채 초록일 수 없
 Spring Boot 바인더는 맵 키의 대소문자를 **보존**하고, 대괄호 없이 점이 들어간 이름으로는 항목을 **만들지 않으며**, 잎이
 하나도 바인딩되지 않은 항목도 만들지 않는다(Spring Boot 3.5.x, 2026-09-09 실측). 그래서:
 
-- 점이 있는 모델 이름은 대괄호 표기(`"[name.with.dot]"`)가 **필수**다 — 대괄호가 없으면 항목이 조용히 사라진다
+- 점이 있는 모델 이름은 대괄호 표기(`"[name.with.dot]"`)가 **필수**다 — 대괄호가 없으면 바인더는 항목을 만들지 않고, 남은
+  줄이 strict 서브트리의 unbound 원소가 되어 기동이 그 줄을 부르며 실패한다(§6.7)
 - 대소문자만 다른 두 키는 합쳐지지 않고 둘 다 도착하므로 **두 표면 모두에서** 번역기가 거절한다
 - 레지스트리가 조회에서 대소문자를 접으므로 `Prod-Assistant` 로 선언하고 `prod-assistant` 로 불러도 맞는다
 
@@ -474,6 +476,28 @@ YAML 1.1 은 인용하지 않은 `off` 를 불리언으로 읽는다. `off` 는 
 (jackson-dataformat-yaml 2.18.2 · snakeyaml 2.5, 2026-09-09 실측) 이 비대칭은 없애지 않고 문서화한다. 전용 deserializer 는 이
 키 하나에만 있다 — `ReasoningEffort` · `ThinkingDialect` · `thinkingDisplay` · `reasoningSummary` 의 어떤 철자도 YAML 의 불리언 ·
 null 리졸버와 부딪히지 않고, 대소문자는 매퍼 기능이 덮는다.
+
+### 6.7 스타터의 strict 서브트리
+
+스타터는 `aimon.*` 전체가 아니라 **세 서브트리 아래에서만** 모르는 키를 거절한다 —
+`aimon.llm.model-capabilities` · `aimon.llm.anthropic` · `aimon.llm.openai`. 셋 다 스타터가 모든 잎을 정의하는 닫힌 집합이다.
+`ignoreUnknownFields = false` 는 prefix 전체에 걸리므로 같은 prefix 아래 자기 키를 두는 호스트 앱을 깨고(§8), 이 장치는
+그 거절을 서브트리 사정거리로 얻는다. `AimonProperties` 의 타입은 그대로이므로 메타데이터와 문서 가드의 walker 도 그대로다.
+
+- **장치.** `AimonPropertiesBindingAutoConfiguration` 이 `ConfigurationPropertiesBindHandlerAdvisor` 빈 하나를 낸다.
+  advisor 는 애플리케이션의 **모든** `@ConfigurationProperties` 바인딩에 적용되므로 좁히는 일은
+  `StrictSubtreeBindHandler` 안에서 한다: 서브트리마다 Boot 의 `NoUnboundElementsBindHandler` 를 하나씩 두고, 이름이
+  서브트리 루트이거나 그 아래인 이벤트만 넘기며, 바인더가 **루트를 끝낼 때** 판정을 묻는다. 루트를 지나가지 않는 바인딩은
+  검사가 일어나지 않으므로 호스트 앱의 빈은 prefix 가 `aimon.llm` 이어도 영향을 받지 않는다
+- **빈 값은 오타가 아니다.** Boot 는 `key=` 를 `String` 이 아닌 타입에서 `null` 로 바꾸고 성공으로 보고하지 않으므로,
+  `NoUnboundElementsBindHandler` 를 그대로 쓰면 철자가 맞는 키의 빈 값(`${VAR:}` 의 결과)이 unbound 로 거절된다. 이 트리에서
+  빈 값은 "기본값을 둔다" 이므로, 바인더가 **실제로 물어본 이름**은 거절 목록에서 뺀다
+- **검사하지 않는 출처.** 환경 변수와 JVM 시스템 프로퍼티 — Boot 의 `UnboundElementsSourceFilter` 가 `ignoreUnknownFields = false`
+  에서 두는 것과 같은 예외다
+- **끄는 길.** `aimon.enabled=false` 는 슬라이스 자체를 끈다. 세 서브트리 아래에 자기 키를 두는 앱은
+  `spring.autoconfigure.exclude` 에 그 클래스를 적는다
+- **닿지 않는 모양.** `aimon.llm.reasoning-effort` 처럼 `aimon.llm` 바로 아래에 놓인 스칼라 잎. 그것을 덮는 prefix 는
+  `aimon.llm` 자신뿐이고, 그것을 strict 로 만드는 것은 호스트 앱이 거기 둔 키를 전부 거절하는 다른 결정이다(L-1)
 
 ---
 
@@ -505,7 +529,7 @@ null 리졸버와 부딪히지 않고, 대소문자는 매퍼 기능이 덮는�
 
 ```
    yaml / 프로퍼티 텍스트
-        │  (1) 바인더      Jackson(CLI, 모르는 필드에 실패) / Boot relaxed binding(스타터, 무시)
+        │  (1) 바인더      Jackson(CLI, 모르는 필드에 실패) / Boot relaxed binding(스타터, 이 서브트리에서 실패)
         ▼
    ModelCapabilityConfig · AimonProperties.ModelCapabilityProperties      ← 표면 (키마다 bean 프로퍼티)
         │  (2) 전달        LlmClientFactory.declarationOf(...) / toDeclaration()   ← 손으로 쓴, 키마다 한 줄
@@ -609,8 +633,8 @@ null 리졸버와 부딪히지 않고, 대소문자는 매퍼 기능이 덮는�
 | `lowestReasoningEffort` 를 `String` 으로 받아 번역기가 파싱 | 스타터에 손 힌트가 필요해져 "enum 선택자는 타입이 값을 싣는다" 가 깨진다. 코어 enum 을 프로퍼티 타입으로 쓰는 선례(`MemoryInjectionMode`)가 이미 있다 |
 | 번역기를 `aimon-bootstrap` 에 | `LlmClient` 는 두 표면 모두 스택 밖에서 만들어진다. 코어에 있어야 provider 모듈 테스트가 같은 번역기를 쓴다(§4.5) |
 | 번역 로직을 두 표면에 각각 인라인 | 규칙 넷(defaulting · 확장 · exact 등록 · 이름 검증)이 두 곳에 있으면 어긋남이 조용하다 |
-| `AimonProperties` 에 `ignoreUnknownFields = false` | `aimon.*` 트리 **전체**의 동작 변경이고, 같은 prefix 아래 자기 키를 두는 호스트 앱을 기동 실패로 만들 수 있다. 스타터 오타 문제 자체는 L-1 |
-| 항목을 `Map<String, Map<String, String>>` 로 받아 번역기가 잎을 검사 | 스타터 오타를 이 서브트리만 닫지만, 메타데이터에서 잎 이름과 enum 후보가 사라지고, 문서 가드가 `*.*` 를 기록해 **가이드의 잎 오타가 통과한다.** 설정 오타를 잡으려고 문서 오타를 못 잡게 만드는 거래다 — L-1 이 저울을 가진다 |
+| `AimonProperties` 에 `ignoreUnknownFields = false` | `aimon.*` 트리 **전체**의 동작 변경이고, 같은 prefix 아래 자기 키를 두는 호스트 앱을 기동 실패로 만들 수 있다. 같은 거절을 서브트리 사정거리로 얻는 것이 §6.7 이다 |
+| 항목을 `Map<String, Map<String, String>>` 로 받아 번역기가 잎을 검사 | 스타터 오타를 이 서브트리만 닫지만, 메타데이터에서 잎 이름과 enum 후보가 사라지고, 문서 가드가 `*.*` 를 기록해 **가이드의 잎 오타가 통과한다.** 설정 오타를 잡으려고 문서 오타를 못 잡게 만드는 거래다. §6.7 은 타입을 건드리지 않고 같은 서브트리를 닫는다 |
 | 테스트를 위해 `OpenAILlmClient.getConfig()` 공개 | 배포 모듈의 공개 표면을 테스트 편의로 넓힌다. 표면의 조립 메서드를 package-private 으로 추출한다(§5.3) |
 | 설정 키 `lowestReasoningEffort` 를 SPI 에 맞춰 개명 | 스타터가 모르는 프로퍼티에 침묵하므로 그 키를 선언한 배포가 말없이 선언을 잃는다(§4.4) |
 | 스타터 `reasoning-effort` 를 `String` 으로 받아 fold | `String` 은 `compileOnly` 벤더 클래스의 부재를 견디려는 모양이다. `ReasoningEffort` 는 코어라 늘 있고, `String` 은 IDE 완성과 메타데이터 타입만 잃는다 |
@@ -666,7 +690,8 @@ null 리졸버와 부딪히지 않고, 대소문자는 매퍼 기능이 덮는�
 
 등록된 항목 — [`../../backlog/llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md):
 
-- **L-1** — 스타터에서 모르는 잎 이름이 조용하다(CLI 와의 비대칭). 닫는 길 셋의 저울이 거기 있다
+- **L-1** — 스타터에서 모르는 잎 이름이 조용하다(CLI 와의 비대칭). strict 서브트리 셋은 닫혔고(§6.7), 남은 것은 어느
+  서브트리에도 들지 않는 `aimon.llm` 바로 아래의 스칼라 잎이다
 - **L-2** — 샘플링 파라미터에 아직 설정 표면이 없다. 배치는 §3.2 표대로다. Anthropic 쪽은
   `AnthropicConfig` 에 `topP` · penalty 필드부터 없다. 같은 항목의 `responsesApiEnabled` 절반은 표면을 얻었고, 거기 붙어 있던
   `gpt-5.6-terra` 를 Chat Completions 로 강제한 칸은 2026-10-05 에 쟀다([`model-capabilities.md`](model-capabilities.md) §6.3)
@@ -711,7 +736,9 @@ null 리졸버와 부딪히지 않고, 대소문자는 매퍼 기능이 덮는�
 | `aimon-spring-boot-starter/src/test/…/AimonAutoConfigurationTest.java` | `noPropertiesSignatureNamesAVendorType` — 시그니처 패키지 허용 목록 |
 | `aimon-spring-boot-starter/src/test/…/AimonConfigurationMetadataTest.java` | 손 힌트 집합 고정과 힌트 값 대조 |
 | `aimon-spring-boot-starter/src/test/…/AimonDocumentedPropertiesTest.java` | 트리 walker(맵 · `AimonProperties$` 중첩 타입), `everyStatedDefaultMatchesTheField` |
-| `aimon-spring-boot-starter/src/test/…/AimonPropertiesValidationTest.java` | 대괄호 · 대소문자 보존 · 스타터 오타 침묵의 한계 기록 테스트 |
+| `aimon-spring-boot-starter/src/test/…/AimonPropertiesValidationTest.java` | 대괄호 · 대소문자 보존 · 오타 거절 · 남은 침묵(`aimon.llm` 바로 아래 잎)의 한계 기록 테스트 |
+| `aimon-spring-boot-starter/…/autoconfigure/AimonPropertiesBindingAutoConfiguration.java` · `StrictSubtreeBindHandler.java` | strict 서브트리 목록과 advisor, 서브트리 안에서만 unbound 를 거절하는 handler(§6.7) |
+| `aimon-spring-boot-starter/src/test/…/AimonStrictSubtreeBindingTest.java` | §6.7 의 실측 — 거절 · 정상 바인딩 · 서브트리 밖 · 호스트 빈 · 빈 값 · 시스템 프로퍼티 · 킬 스위치 · `.imports` 등재 |
 | `aimon-cli/src/test/…/cli/config/CliConfigLoaderTest.java` | yaml 로 바인더를 지나는 키별 확인, `off` |
 | `aimon-llm-capability-testkit/…/testkit/AbstractModelCapabilityBindingContractTest.java` | 네 훅 · `valuesFor` · 두 중첩 확인, 계약 하나의 논거(javadoc) |
 | `aimon-llm-capability-testkit/…/testkit/DeclarableKeys.java` · `ProbeValues.java` · `SurfaceWriter.java` · `ModelCapabilityBindingProbe.java` | 키 발견, 값 쌍 합성과 검사, 일방향 변환, 빈 선언 거절의 번역 |
