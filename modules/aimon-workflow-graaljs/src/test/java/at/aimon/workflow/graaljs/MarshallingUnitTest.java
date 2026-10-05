@@ -13,6 +13,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import at.aimon.core.subagent.InMemorySubagentRegistry;
 import at.aimon.core.workflow.AgentTask;
 import at.aimon.workflow.graaljs.exception.JsScriptException;
 
@@ -81,12 +82,15 @@ class MarshallingUnitTest {
     @Test
     @DisplayName("attributes: nested and dotted spellings are the same attribute; scalars become text")
     void attributesNestedAndDottedAreEquivalent() {
+        // The resolver admits only the keys the operator allowed (EE-45); what is under test is the flattening.
+        final SubagentResolver allowing = SubagentResolver.inline(new InMemorySubagentRegistry(),
+                List.of("sandbox.slot", "sandbox.cpus", "gpu"));
         final AgentTask nested = AgentTaskMarshaller.toTask(context.eval("js",
                 "({ agentType: 'a', goal: 'g', attributes: { sandbox: { slot: 'build', cpus: 4 }, gpu: false } })"),
-                SubagentResolver.inline());
+                allowing);
         final AgentTask dotted = AgentTaskMarshaller.toTask(context.eval("js",
                 "({ agentType: 'a', goal: 'g', attributes: { 'sandbox.slot': 'build', 'sandbox.cpus': 4.0, gpu: false } })"),
-                SubagentResolver.inline());
+                allowing);
 
         assertThat(nested.getSubagent().getMetadata().getAttributes()).containsExactly(
                 Map.entry("sandbox.slot", "build"), Map.entry("sandbox.cpus", "4"), Map.entry("gpu", "false"));
@@ -145,7 +149,7 @@ class MarshallingUnitTest {
         // A large but finite number is still an ordinary value.
         assertThat(AgentTaskMarshaller
                 .toTask(context.eval("js", "({ agentType: 'a', goal: 'g', attributes: { big: 1.5e300 } })"),
-                        SubagentResolver.inline())
+                        SubagentResolver.inline(new InMemorySubagentRegistry(), List.of("big")))
                 .getSubagent().getMetadata().getAttributes()).containsKey("big");
     }
 

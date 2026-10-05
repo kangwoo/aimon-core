@@ -292,6 +292,24 @@ class SubagentResultDisplayHookTest {
         }
 
         @Test
+        @DisplayName("a blocked fork's Completion reason line is handed over apart from the hook's refusal")
+        void aBlockedForksReasonLineIsHandedOverApartFromTheRefusal() {
+            String refusal = "Execution blocked by OnStart hook [SUBAGENT/explorer]: no forks today";
+            SubagentExecutionResult blocked = SubagentExecutionResult.failure(refusal, snapshot(), metadata(),
+                    CompletionReason.BLOCKED);
+            String printed = printedByTaskTool(blocked);
+            String reasonLine = lastLine(printed);
+
+            hook.execute(createPostToolContext(TaskTool.TOOL_NAME, ToolUseResult.success("tool-1", printed),
+                    InvokerType.MAIN_AGENT));
+
+            assertThat(reasonLine).isEqualTo("Completion reason: BLOCKED");
+            verify(outputFormatter).displaySubagentResult("", subagent, description, blocked.getStatus(), 3, 300,
+                    refusal);
+            verify(outputFormatter).displaySubagentCompletionReason("", blocked.getStatus(), reasonLine);
+        }
+
+        @Test
         @DisplayName("a cut fork's Completion reason line is not printed in the success colour")
         void aCutForksReasonLineIsNotPrintedInTheSuccessColour() {
             CliSettings colourSettings = new CliSettings();

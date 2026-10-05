@@ -17,9 +17,14 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.AgentRuntimeId;
+import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.base.UserLocale;
+import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
+import at.aimon.core.hook.HookEventType;
+import at.aimon.core.hook.event.OnStartHook;
+import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.subagent.DefaultSubagentExecutionManager;
 import at.aimon.core.subagent.InMemorySubagentRegistry;
@@ -94,6 +99,31 @@ class WorkflowRealManagerIntegrationTest {
         assertThat(out).containsExactly("[HELLO]", "[dlrow]");
         // The real manager ran the behaviors; the ReAct/LLM executor was never invoked.
         verify(reactExecutor, never()).execute(any(), any());
+    }
+
+    @Test
+    @DisplayName("a step an onStart hook blocks is a failed, incomplete step whose reason is BLOCKED (EE-75)")
+    void aStepAnOnStartHookBlocksEndsBlocked() {
+        final DefaultHookRegistry hooks = new DefaultHookRegistry();
+        hooks.register(HookEventType.ON_START, (OnStartHook) context -> HookResult.block("STEP-REFUSED-8f02"));
+        final InMemorySubagentBehaviorRegistry behaviors = new InMemorySubagentBehaviorRegistry();
+        behaviors.register("upper", (ctx, req, support) -> support.success(req.getGoal().toUpperCase(Locale.ROOT)));
+        final DefaultSubagentExecutionManager hooked = new DefaultSubagentExecutionManager(reactExecutor, bgPool,
+                new DefaultHookExecutionManager(), behaviors);
+        final SubagentExecutionEnvironment env = SubagentExecutionEnvironment.builder()
+                .agentRuntimeId(AgentRuntimeId.of("agent:workflow-test"))
+                .subagentRegistry(new InMemorySubagentRegistry()).toolRegistry(new DefaultToolRegistry())
+                .hookRegistry(hooks).userLocale(UserLocale.createDefault())
+                .defaultModel(LlmModel.builder().name("gpt-4").build()).build();
+        final DefaultWorkflowRunner runner = new DefaultWorkflowRunner(hooked, env,
+                WorkflowConcurrencyConfig.enabled(4), WorkflowEventSink.NO_OP, WorkflowBudget.defaults());
+
+        final AgentStepResult step = runner.run(ctx -> ctx.agent(subagent("upper"), "hello"));
+
+        assertThat(step.isSuccess()).isFalse();
+        assertThat(step.isComplete()).isFalse();
+        assertThat(step.completionReason()).isEqualTo(CompletionReason.BLOCKED);
+        assertThat(step.text()).contains("OnStart", "STEP-REFUSED-8f02");
     }
 
     private static Subagent subagent(String name) {

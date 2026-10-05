@@ -1483,10 +1483,14 @@ public class OrcaAgentExecutor
 
         invokeOnStop(scope, commandExecutionResult.isSuccess(), commandExecutionResult.getResponse(), metadata);
 
-        // Return command execution result as failure or success based on command result
+        // Return command execution result as failure or success based on command result. A command whose final answer
+        // was cut at max_tokens — a slash skill, inline or fork-mode — ends the turn as the agent's own cut answer
+        // does:
+        // a success carrying the flagged partial text, with TRUNCATED as its reason (createTruncatedResult).
         if (commandExecutionResult.isSuccess()) {
             return OrcaAgentExecutionResult.success(commandExecutionResult.getResponse(),
-                    scope.transcriptBuffer.toSnapshot(), metadata, scope.artifactCollector.getArtifacts())
+                    scope.transcriptBuffer.toSnapshot(), metadata, scope.artifactCollector.getArtifacts(),
+                    commandExecutionResult.isTruncated() ? CompletionReason.TRUNCATED : CompletionReason.COMPLETED)
                     .withCompactionEvents(scope.compactionEvents);
         } else {
             return OrcaAgentExecutionResult.failure(commandExecutionResult.getResponse(),

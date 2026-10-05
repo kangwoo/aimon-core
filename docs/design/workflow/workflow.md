@@ -209,7 +209,8 @@ SPI 경계 유지, 저위험. 견고성이 더 필요해지면 `emit_result` 가
 `SubagentExecutionResult.getCompletionReason()`(`at.aimon.core.agent.budget.CompletionReason`) 은
 코어 최소 확장이다 — explicit-reason `success`/`failure` 오버로드를 추가하고 기존 3-arg 는
 `COMPLETED`/`ERROR` 로 위임해 back-compat 를 지킨다. `DefaultSubagentExecutor` 가 공급하는 사유는
-COMPLETED · TRUNCATED · budget stop reason · MAX_ITERATIONS · INTERRUPTED · ERROR 다. `TRUNCATED` 는 `max_tokens`
+COMPLETED · TRUNCATED · budget stop reason · MAX_ITERATIONS · INTERRUPTED · BLOCKED · ERROR 다. `BLOCKED` 는 `onStart`
+훅이 막아 시작하지 않은 포크다(iteration 0, `isSuccess()` 는 `false`). `TRUNCATED` 는 `max_tokens`
 에서 잘린 최종 답이다 — 부분 텍스트 끝에 마커가 붙고 `isSuccess()` 는 `true` 로 남는다. 턴과 같은 모양이다.
 
 워크플로 쪽은 `AgentStepResult.completionReason()` + `isComplete()` 로 노출한다 → judge·loop-until-dry

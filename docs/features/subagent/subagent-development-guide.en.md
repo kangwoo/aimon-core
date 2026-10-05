@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/subagent/subagent-development-guide.md
-source_commit: 26d5780
+source_commit: ca68a22
 ---
 
 # Subagent Development Guide
@@ -148,6 +148,7 @@ Subagent dbTriage = Subagent.builder()
 | `model(String)` | | `null` (the executor's default model) |
 | `maxIterations(int)` | | `1000` |
 | `attributes(Map<String, String>)` | | Empty map (the same as a markdown `attributes:` block flattened to dotted keys — e.g. `sandbox.slot`. The core only carries it; an outside component such as an execution environment provider reads it) |
+| `hidden(boolean)` | | `false` (the same as markdown `hidden: true`. Hides the subagent from the model — the `Task` tool leaves it out of its list and refuses a call that names it. The registry still resolves the name, so a `Workflow` role, a `WorkflowJs` `agentType` and a fork skill's `agent:` use it as before. In markdown only a bare `true` / `false` is accepted; anything else is a parse error) |
 
 > **The tool string format** is the same as markdown's `allowed-tools`: `"Read"`, `"Bash(git:*)"`, `"Bash(npm install)"`
 > and so on. Internally it goes through `AllowedTool.parse(...)`, so the parsing logic is not duplicated.
@@ -168,8 +169,8 @@ Subagent.builder().name("plain").systemPrompt("You are a plain agent.").build();
 You are a plain agent.
 ```
 
-Both end up with `maxIterations=1000`, `model=null`, `whenToUse=null`, no tool restriction and no attributes (an empty
-`attributes`). A markdown `attributes:` block (e.g. `sandbox:` → `slot: build` under `attributes:`) is the same as
+Both end up with `maxIterations=1000`, `model=null`, `whenToUse=null`, no tool restriction, no attributes (an empty
+`attributes`) and not hidden (`hidden=false`). A markdown `attributes:` block (e.g. `sandbox:` → `slot: build` under `attributes:`) is the same as
 `.attributes(Map.of("sandbox.slot", "build"))` in code.
 
 ---
@@ -414,12 +415,17 @@ agentExecutorFactory.withSubagentBehaviorRegistry(codeBehavior);  // OrcaAgentEx
 > `systemPrompt` is a required field on the data entry so it has to be filled with something, but since the behaviour
 > replaces the ReAct loop it is never actually used by a code-behaviour subagent (leave it as a placeholder).
 
-### A limitation: the OnStart/OnStop hooks do not fire
+### OnStart fires as a guard only, and OnStop does not fire
 
-The code path bypasses the ReAct loop, so **OnStart and OnStop — the hooks inside the loop — do not fire** (OnStart's
-conversation-feedback injection only means anything when there is a conversation loop, and OnStop's termination signal
-duplicates SubagentStop). The dispatch-boundary hooks **SubagentStart and SubagentStop still fire as they always did**,
-so nothing is lost for observability or auditing.
+The code path bypasses the ReAct loop, but **OnStart fires before the behaviour is invoked.** A block means the
+behaviour never runs and the fork ends with the same failed result a ReAct fork gets
+(`Execution blocked by OnStart hook [SUBAGENT/<name>]: <reason>`) — so that an operator's `onStart` guard in `hooks.json`
+does not pass a code subagent by. Three things differ from a ReAct fork. Feedback that is not a block is **discarded**
+(conversation-feedback injection only means anything when there is a conversation loop). The execution environment the
+hook receives is not the fork's but **the spawning execution's** (the one the behaviour gets from
+`context.getExecutionEnvironment()` — the runner creates no environment for the fork). **OnStop does not fire** (its
+termination signal duplicates SubagentStop). The dispatch-boundary hooks **SubagentStart and SubagentStop still fire as
+they always did**, so nothing is lost for observability or auditing.
 
 ### A full example
 

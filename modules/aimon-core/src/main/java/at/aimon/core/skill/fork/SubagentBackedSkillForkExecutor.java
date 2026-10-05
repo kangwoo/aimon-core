@@ -10,6 +10,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import at.aimon.core.agent.AgentRuntimeId;
+import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.permission.AllowedTool;
@@ -161,7 +162,11 @@ public final class SubagentBackedSkillForkExecutor implements SkillForkExecutor 
             final SubagentExecutionResult result = subagentExecutionManager.executeInline(env, taskId, effectiveTarget,
                     goal, description);
             if (result.isSuccess()) {
-                return SkillForkOutcome.success(result.getFinalAnswer());
+                // A fork cut at max_tokens is a success whose answer is partial; say so by type, not only by the
+                // marker its text ends in, so a slash invocation can end its turn TRUNCATED (L-26).
+                return result.getCompletionReason() == CompletionReason.TRUNCATED
+                        ? SkillForkOutcome.truncated(result.getFinalAnswer())
+                        : SkillForkOutcome.success(result.getFinalAnswer());
             }
             return SkillForkOutcome.failure(result.getErrorMessage());
         } catch (RuntimeException e) {

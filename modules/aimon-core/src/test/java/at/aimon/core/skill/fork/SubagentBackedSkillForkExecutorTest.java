@@ -18,6 +18,8 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import at.aimon.core.agent.AgentRuntimeIds;
+import at.aimon.core.agent.budget.CompletionReason;
+import at.aimon.core.agent.budget.TruncatedResponses;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.tool.ToolContext;
@@ -124,6 +126,28 @@ class SubagentBackedSkillForkExecutorTest {
                 .forClass(SubagentExecutionEnvironment.class);
         verify(subagentExecutionManager).executeInline(envCaptor.capture(), any(), any(), eq("rendered body"), any());
         assertThat(envCaptor.getValue().getAgentRuntimeId()).isEqualTo(AgentRuntimeIds.testCtx("ctx-42"));
+    }
+
+    @Test
+    void fork_ReportsAForkCutAtMaxTokensAsTruncated() {
+        // L-26: a cut fork is a success whose answer is partial. The outcome says so by type, so the slash path can end
+        // its turn TRUNCATED without reading the marker out of the text.
+        when(subagentRegistry.getSubagent("code-reviewer")).thenReturn(Optional.of(subagent("code-reviewer")));
+        final String cut = "LGT" + TruncatedResponses.TRUNCATION_MARKER;
+        when(subagentExecutionManager.executeInline(any(SubagentExecutionEnvironment.class), any(), any(),
+                eq("rendered body"), any())).thenReturn(
+                        SubagentExecutionResult
+                                .success(cut, SessionSnapshot.of(SessionId.generate(), "sys", List.of()),
+                                        ExecutionMetadata.builder().iterationCount(1).tokenUsage(TokenUsage.empty())
+                                                .timestamps(Instant.now(), Instant.now()).build(),
+                                        CompletionReason.TRUNCATED));
+
+        SkillForkOutcome outcome = executor.fork(forkSkill("code-reviewer"), "rendered body",
+                contextWithExecutionId("ctx-42"));
+
+        assertThat(outcome.isSuccess()).isTrue();
+        assertThat(outcome.isTruncated()).isTrue();
+        assertThat(outcome.getFinalAnswer()).contains(cut);
     }
 
     @Test
@@ -283,6 +307,20 @@ class SubagentBackedSkillForkExecutorTest {
     }
 
     /** A real, unrestricted subagent — a bare mock returns null metadata, which {@code Subagent.of} forbids. */
+    @Test
+    void fork_ToAHiddenSubagent_StillRuns() {
+        // EE-44: hidden means the model cannot list or launch the definition through Task. A skill's `agent:` is the
+        // skill author's choice, not the model's, so it resolves the name as before — and the definition handed to the
+        // manager is still marked hidden.
+        final Subagent hidden = Subagent.builder().name("code-reviewer").systemPrompt("you review").hidden(true)
+                .build();
+
+        final Subagent forked = captureForkedSubagent(hidden, forkSkill("code-reviewer"));
+
+        assertThat(forked.getName()).isEqualTo("code-reviewer");
+        assertThat(forked.getMetadata().isHidden()).isTrue();
+    }
+
     private static Subagent subagent(String name) {
         return Subagent.builder().name(name).systemPrompt("you are " + name).build();
     }

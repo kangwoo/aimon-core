@@ -65,9 +65,11 @@ import at.aimon.core.workflow.WorkflowScript;
  * {@value #ROLE_JUDGE} or {@value #ROLE_SKEPTIC}, one per role and not per angle. Only that definition's attributes
  * are copied, once per role at the start of each run (so every step of one role in a run — the perspectives of one
  * fan-out, say — gets the same attributes even if the registry is reloaded mid-run); its prompt, tools and model are
- * ignored by this tool, and the step names ({@code workflow:judge} …) do not change. Note that such a definition is
- * also an ordinary registered subagent: the model sees it and can call it through {@code Task}, where — and only
- * where — its own prompt is used.
+ * ignored by this tool, and the step names ({@code workflow:judge} …) do not change. Such a definition is otherwise
+ * an ordinary registered subagent — the model would see it and could call it through {@code Task}, where its own
+ * prompt would be used — so mark it {@code hidden: true}
+ * ({@link at.aimon.core.subagent.SubagentMetadata#isHidden()}): the {@code Task} tool then neither lists nor launches
+ * it, and this tool still finds it by name.
  *
  * <p>
  * <b>A failing registry does not fail the run.</b> If the role lookup throws, a WARN is logged and that role's steps

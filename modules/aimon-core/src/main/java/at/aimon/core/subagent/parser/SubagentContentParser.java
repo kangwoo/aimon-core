@@ -32,6 +32,10 @@ import at.aimon.core.base.text.YamlDuplicateKeys;
  * <li>max-iterations: Optional positive integer cap on the ReAct loop (defaults applied downstream)
  * <li>attributes: Optional free-form map the framework carries but never reads, flattened to dotted keys by
  * {@link DefinitionAttributes} (e.g. {@code sandbox.slot} for an execution environment provider)
+ * <li>hidden: Optional boolean. {@code true} keeps the definition out of the model's subagent list and makes the
+ * {@code Task} tool refuse it, while the registry still resolves the name — for a definition that exists only to be
+ * looked up, such as one giving a built-in {@code Workflow} role its attributes. Absent means {@code false}; anything
+ * but a bare {@code true} / {@code false} is a parse error
  * </ul>
  *
  * <p>
@@ -80,6 +84,9 @@ import at.aimon.core.base.text.YamlDuplicateKeys;
  * </pre>
  */
 public class SubagentContentParser {
+    /** Frontmatter key that hides a definition from the model. */
+    public static final String HIDDEN_KEY = "hidden";
+
     private static final Logger log = LoggerFactory.getLogger(SubagentContentParser.class);
 
     /** How much of a description a warning quotes to say which subagent it is about. */
@@ -194,7 +201,29 @@ public class SubagentContentParser {
             throw new SubagentParseException(e.getMessage(), e);
         }
 
-        return new SubagentContentResult(description, whenToUse, tools, model, maxIterations, systemPrompt, attributes);
+        return new SubagentContentResult(description, whenToUse, tools, model, maxIterations, systemPrompt, attributes)
+                .withHidden(parseHidden(yamlData));
+    }
+
+    /**
+     * Parses the optional {@code hidden} field.
+     *
+     * <p>
+     * Absent means not hidden. Present, it must be a bare YAML boolean: a quoted string, a number, a list or a key
+     * written with no value is rejected, naming the key and the value. Reading {@code hidden: "false"} or
+     * {@code hidden:} as either answer would silently decide whether the model can launch the definition, which is the
+     * one thing the key is for.
+     */
+    private boolean parseHidden(Map<String, Object> yamlData) {
+        if (!yamlData.containsKey(HIDDEN_KEY)) {
+            return false;
+        }
+        final Object value = yamlData.get(HIDDEN_KEY);
+        if (value instanceof Boolean hidden) {
+            return hidden;
+        }
+        throw new SubagentParseException("Invalid " + HIDDEN_KEY + " format: must be true or false, got: "
+                + (value == null ? "no value" : value.getClass().getSimpleName() + " '" + value + "'"));
     }
 
     /**

@@ -91,6 +91,54 @@ class SubagentContentParserTest {
     }
 
     @Test
+    void parse_HiddenTrue_IsHidden() {
+        String content = """
+                ---
+                description: Placement only
+                hidden: true
+                ---
+
+                System prompt here.
+                """;
+
+        assertThat(new SubagentContentParser().parse(content).isHidden()).isTrue();
+    }
+
+    @Test
+    void parse_HiddenFalseOrAbsent_IsNotHidden() {
+        String explicit = """
+                ---
+                description: Test
+                hidden: false
+                ---
+
+                System prompt here.
+                """;
+        String absent = """
+                ---
+                description: Test
+                ---
+
+                System prompt here.
+                """;
+
+        assertThat(new SubagentContentParser().parse(explicit).isHidden()).isFalse();
+        assertThat(new SubagentContentParser().parse(absent).isHidden()).isFalse();
+        assertThat(new SubagentContentParser().parse("no frontmatter at all").isHidden()).isFalse();
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest(name = "hidden: {0}")
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"\"true\"", "\"false\"", "1", "maybe", "[true]", ""})
+    void parse_HiddenThatIsNotABareBoolean_ThrowsNamingTheKey(String written) {
+        // The key decides whether the model can launch the definition, so a value that is not plainly true or false is
+        // refused rather than read as either (frontmatter strictness: present but unusable is an error).
+        String content = "---\ndescription: Test\nhidden: " + written + "\n---\n\nSystem prompt here.\n";
+
+        assertThatThrownBy(() -> new SubagentContentParser().parse(content)).isInstanceOf(SubagentParseException.class)
+                .hasMessageContaining("Invalid hidden format").hasMessageContaining("must be true or false");
+    }
+
+    @Test
     void parse_NonPositiveMaxIterations_ThrowsSubagentParseException() {
         // Arrange
         String content = """

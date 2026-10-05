@@ -423,7 +423,8 @@ clamp 경고의 범위(§6.4)는 다음 중 하나가 일어나면 다시 본다
 - clamp 의 목표가 `max_tokens − 1` 이 아니게 된다 — "정확히 1토큰" 과 L-15 의 전제가 함께 사라진다
 - 잘림 신호가 놓치는 짜임의 증거가 나온다. 알려진 누락은 이미 백로그에 있다 —
   [`L-25`](../../backlog/llm-config-surface-open-items.md)(백그라운드 포크의 잘린 답이 부모에게 완결처럼 보인다),
-  [`L-26`](../../backlog/llm-config-surface-open-items.md)(잘린 최종 답을 돌려준 슬래시 스킬을 실행한 턴이 `COMPLETED`)
+  [`L-26`](../../backlog/llm-config-surface-open-items.md)(잘린 최종 답을 돌려준 슬래시 스킬을 실행한 턴이 `COMPLETED`).
+  둘 다 2026-10-05 에 고쳐졌다 — 그 턴은 이제 `TRUNCATED` 로 끝난다
 
 잘림을 보고하는 방식이 바뀌는 것은 조건이 아니다.
 

@@ -3,6 +3,7 @@ package at.aimon.workflow.graaljs;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.Collection;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -102,9 +103,13 @@ public final class GraalJsWorkflowTool extends AbstractTool {
                 : List.of();
         this.engines = Objects.requireNonNull(builder.engines, "engines must not be null");
         this.sandbox = builder.sandbox != null ? builder.sandbox : JsSandboxConfig.defaults();
+        if (builder.subagentResolver != null && !builder.scriptAttributeKeys.isEmpty()) {
+            throw new IllegalStateException("scriptAttributeKeys configures the default subagentResolver and has no "
+                    + "effect on a custom one; set one or the other");
+        }
         this.subagentResolver = builder.subagentResolver != null
                 ? builder.subagentResolver
-                : SubagentResolver.inline(subagentRegistry);
+                : SubagentResolver.inline(subagentRegistry, builder.scriptAttributeKeys);
         this.backgroundRunner = builder.backgroundRunner; // nullable
     }
 
@@ -310,6 +315,7 @@ public final class GraalJsWorkflowTool extends AbstractTool {
         private GraalJsEngineHolder engines;
         private JsSandboxConfig sandbox;
         private SubagentResolver subagentResolver;
+        private List<String> scriptAttributeKeys = List.of();
         private WorkflowRunner backgroundRunner;
 
         private Builder() {
@@ -362,12 +368,42 @@ public final class GraalJsWorkflowTool extends AbstractTool {
         }
 
         /**
-         * Optional resolver; defaults to {@link SubagentResolver#inline(SubagentRegistry)} over this tool's
-         * {@code subagentRegistry}, so a step whose {@code agentType} names a registered subagent carries that
-         * subagent's attributes.
+         * Optional resolver; defaults to {@link SubagentResolver#inline(SubagentRegistry, Collection)} over
+         * this tool's {@code subagentRegistry} and {@link #scriptAttributeKeys(Collection)}, so a step whose
+         * {@code agentType} names a registered subagent carries that subagent's attributes. A custom resolver decides
+         * for itself what a script may set; combining it with {@code scriptAttributeKeys} fails {@link #build()}.
          */
         public Builder subagentResolver(SubagentResolver subagentResolver) {
             this.subagentResolver = subagentResolver;
+            return this;
+        }
+
+        /**
+         * The attribute keys a script may set on a step, as flattened dotted keys ({@code sandbox.profile}). Empty by
+         * default: a script that gives a step {@code attributes} fails with a script error naming the key.
+         *
+         * <p>
+         * The script is written by the model, and attributes are what an execution environment provider reads to place
+         * a step, so which keys a script may set is the operator's decision. A registered definition's own keys stay
+         * pinned whether or not they are listed here — the list only admits keys no registered definition sets for
+         * that step, which includes every key of a step whose {@code agentType} is unregistered or absent. List only
+         * keys whose every value is safe for a model to choose; a key such as {@code sandbox.slot} belongs in a
+         * registered definition instead.
+         *
+         * @param scriptAttributeKeys
+         *            the allowed keys (must not be null, nor contain a null or blank key)
+         * @return this builder
+         * @throws IllegalArgumentException
+         *             if a key is null or blank
+         */
+        public Builder scriptAttributeKeys(Collection<String> scriptAttributeKeys) {
+            Objects.requireNonNull(scriptAttributeKeys, "scriptAttributeKeys must not be null");
+            for (final String key : scriptAttributeKeys) {
+                if (key == null || key.isBlank()) {
+                    throw new IllegalArgumentException("scriptAttributeKeys must not contain a null or blank key");
+                }
+            }
+            this.scriptAttributeKeys = List.copyOf(scriptAttributeKeys);
             return this;
         }
 
@@ -377,6 +413,13 @@ public final class GraalJsWorkflowTool extends AbstractTool {
             return this;
         }
 
+        /**
+         * Builds the tool.
+         *
+         * @return the tool
+         * @throws IllegalStateException
+         *             if both a custom {@code subagentResolver} and {@code scriptAttributeKeys} were set
+         */
         public GraalJsWorkflowTool build() {
             return new GraalJsWorkflowTool(this);
         }

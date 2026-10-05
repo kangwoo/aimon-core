@@ -1,6 +1,8 @@
 package at.aimon.workflow.graaljs;
 
+import java.util.Collection;
 import java.util.Objects;
+import java.util.Set;
 
 import at.aimon.core.subagent.Subagent;
 import at.aimon.core.subagent.SubagentRegistry;
@@ -28,24 +30,51 @@ public interface SubagentResolver {
     Subagent resolve(SubagentDescriptor descriptor);
 
     /**
-     * The default inline resolver with deterministic SHA-256-derived names and no registry: a step's attributes are
-     * only the ones its descriptor gives.
+     * The default inline resolver with deterministic SHA-256-derived names and no registry. A step has no attributes:
+     * there is no registered definition to copy them from, and a script may set none — a descriptor that carries
+     * {@code attributes} fails with a {@code JsScriptException}.
      */
     static SubagentResolver inline() {
-        return new InlineSubagentResolver(null);
+        return new InlineSubagentResolver(null, Set.of());
     }
 
     /**
      * The default inline resolver that also copies the attributes of the subagent registered under a step's
-     * {@code agentType} and adds the descriptor's own. The registered keys are pinned: a descriptor value for one of
-     * them fails with a {@code JsScriptException} unless it is identical, so a script cannot move a registered
-     * subagent to another placement; keys the registered definition does not set may be added.
+     * {@code agentType}. A script may set none of its own: a descriptor attribute fails with a
+     * {@code JsScriptException} unless it restates a registered key with the registered value. Use
+     * {@link #inline(SubagentRegistry, Collection)} to let a script set chosen keys.
      *
      * @param registry
      *            the registry looked up by {@code agentType} (must not be null)
      * @return the resolver
      */
     static SubagentResolver inline(SubagentRegistry registry) {
-        return new InlineSubagentResolver(Objects.requireNonNull(registry, "registry must not be null"));
+        return inline(registry, Set.of());
+    }
+
+    /**
+     * The default inline resolver that copies the attributes of the subagent registered under a step's
+     * {@code agentType} and lets the script add the keys listed here, and no others.
+     *
+     * <p>
+     * An attribute is what an execution environment provider reads to place a step, and a script is model-authored, so
+     * two rules bound what a script can ask for. The registered keys are <b>pinned</b>: a descriptor value for one of
+     * them fails with a {@code JsScriptException} unless it is identical, so a script cannot move a registered subagent
+     * to another placement. Every other key — one the registered definition does not set, or any key of a step whose
+     * {@code agentType} is unregistered or absent — must be in {@code scriptAttributeKeys}, or the step fails the same
+     * way, naming the key. Listing a key does not unpin it.
+     *
+     * @param registry
+     *            the registry looked up by {@code agentType} (must not be null)
+     * @param scriptAttributeKeys
+     *            the attribute keys a script may set, as flattened dotted keys ({@code sandbox.profile}); must not be
+     *            null, nor contain a null or blank key. Empty allows none
+     * @return the resolver
+     * @throws IllegalArgumentException
+     *             if a key is null or blank
+     */
+    static SubagentResolver inline(SubagentRegistry registry, Collection<String> scriptAttributeKeys) {
+        return new InlineSubagentResolver(Objects.requireNonNull(registry, "registry must not be null"),
+                scriptAttributeKeys);
     }
 }

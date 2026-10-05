@@ -42,15 +42,16 @@ public final class SubagentMetadata {
     private final String model; // model id, sent as written; null or empty inherits the parent's
     private final int maxIterations; // Maximum ReAct loop iterations
     private final Map<String, String> attributes; // Free-form, flattened; carried, never read by the framework
+    private final boolean hidden; // Not offered to the model, and refused if the model names it
 
-    private SubagentMetadata(String description, String whenToUse, List<AllowedTool> allowedTools, String model,
-            int maxIterations, Map<String, String> attributes) {
-        this.description = description;
-        this.whenToUse = whenToUse;
-        this.allowedTools = List.copyOf(allowedTools);
-        this.model = model;
-        this.maxIterations = maxIterations;
-        this.attributes = DefinitionAttributes.copyOf(attributes);
+    private SubagentMetadata(Builder builder) {
+        this.description = builder.description;
+        this.whenToUse = builder.whenToUse;
+        this.allowedTools = List.copyOf(builder.allowedTools);
+        this.model = builder.model;
+        this.maxIterations = builder.maxIterations;
+        this.attributes = DefinitionAttributes.copyOf(builder.attributes);
+        this.hidden = builder.hidden;
     }
 
     public String getDescription() {
@@ -96,6 +97,24 @@ public final class SubagentMetadata {
     }
 
     /**
+     * Whether this definition is hidden from the model: the {@code Task} tool does not list it among the available
+     * subagents and refuses a call that names it. Set with {@code hidden: true} in the definition's frontmatter or
+     * {@link Builder#hidden(boolean)}.
+     *
+     * <p>
+     * It is for a definition that exists to be <em>looked up</em> rather than launched — one registered under a
+     * built-in {@code Workflow} role name ({@code workflow-judge} …) or a GraalJS {@code agentType} only to give those
+     * steps their {@linkplain #getAttributes() attributes}. Hiding it does not unregister it: the registry still
+     * resolves the name, so the workflow tools, a fork-mode skill's {@code agent:} and code that spawns it directly
+     * work as before, and an operator's {@code /agents} listing still shows it, marked hidden.
+     *
+     * @return {@code true} if the model is neither shown nor allowed to launch this subagent; {@code false} by default
+     */
+    public boolean isHidden() {
+        return hidden;
+    }
+
+    /**
      * Checks if this metadata has tools restrictions.
      *
      * @return true if there are tools defined, false otherwise
@@ -115,19 +134,19 @@ public final class SubagentMetadata {
         final SubagentMetadata that = (SubagentMetadata) o;
         return maxIterations == that.maxIterations && Objects.equals(description, that.description)
                 && Objects.equals(whenToUse, that.whenToUse) && Objects.equals(allowedTools, that.allowedTools)
-                && Objects.equals(model, that.model) && attributes.equals(that.attributes);
+                && Objects.equals(model, that.model) && attributes.equals(that.attributes) && hidden == that.hidden;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(description, whenToUse, allowedTools, model, maxIterations, attributes);
+        return Objects.hash(description, whenToUse, allowedTools, model, maxIterations, attributes, hidden);
     }
 
     @Override
     public String toString() {
         return "SubagentMetadata{" + "description='" + description + '\'' + ", whenToUse='" + whenToUse + '\''
                 + ", allowedTools=" + allowedTools + ", model='" + model + '\'' + ", maxIterations=" + maxIterations
-                + (attributes.isEmpty() ? "" : ", attributes=" + attributes) + '}';
+                + (attributes.isEmpty() ? "" : ", attributes=" + attributes) + (hidden ? ", hidden=true" : "") + '}';
     }
 
     /** Builder for SubagentMetadata. */
@@ -138,6 +157,7 @@ public final class SubagentMetadata {
         private String model;
         private int maxIterations = DEFAULT_MAX_ITERATIONS;
         private Map<String, String> attributes = Map.of();
+        private boolean hidden;
 
         /** description을 설정한다. */
         public Builder description(String description) {
@@ -199,9 +219,22 @@ public final class SubagentMetadata {
             return this;
         }
 
+        /**
+         * Sets whether the definition is hidden from the model (see {@link SubagentMetadata#isHidden()}).
+         *
+         * @param hidden
+         *            {@code true} to keep the definition out of the {@code Task} tool's list and refuse a call that
+         *            names it; {@code false} (the default) for an ordinary subagent
+         * @return This builder instance
+         */
+        public Builder hidden(boolean hidden) {
+            this.hidden = hidden;
+            return this;
+        }
+
         /** SubagentMetadata를 생성한다. */
         public SubagentMetadata build() {
-            return new SubagentMetadata(description, whenToUse, allowedTools, model, maxIterations, attributes);
+            return new SubagentMetadata(this);
         }
     }
 }

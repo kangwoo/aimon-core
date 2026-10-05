@@ -315,7 +315,7 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
         this.subagentBehaviorRegistry = subagentBehaviorRegistry != null
                 ? subagentBehaviorRegistry
                 : SubagentBehaviorRegistry.empty();
-        this.subagentBehaviorRunner = new SubagentBehaviorRunner(llmClient);
+        this.subagentBehaviorRunner = new SubagentBehaviorRunner(llmClient, hookExecutionManager);
         this.taskStore = options.getTaskStore();
         this.taskStopSignal = options.getTaskStopSignal();
         final TaskLeaseConfig leaseConfig = options.getLeaseConfig();

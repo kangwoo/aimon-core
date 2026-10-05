@@ -26,6 +26,7 @@ public final class SubagentContentResult {
     private final Integer maxIterations;
     private final String systemPrompt;
     private final Map<String, String> attributes;
+    private final boolean hidden;
 
     /**
      * Creates a new SubagentContentResult.
@@ -75,6 +76,31 @@ public final class SubagentContentResult {
         this.model = model;
         this.maxIterations = maxIterations;
         this.systemPrompt = Objects.requireNonNull(systemPrompt, "System prompt cannot be null");
+        this.hidden = false;
+    }
+
+    /** Copies {@code base} with its {@code hidden} flag replaced. */
+    private SubagentContentResult(SubagentContentResult base, boolean hidden) {
+        this.attributes = base.attributes;
+        this.description = base.description;
+        this.whenToUse = base.whenToUse;
+        this.tools = base.tools;
+        this.model = base.model;
+        this.maxIterations = base.maxIterations;
+        this.systemPrompt = base.systemPrompt;
+        this.hidden = hidden;
+    }
+
+    /**
+     * Returns this result with the definition's {@code hidden} flag set. The constructors leave it {@code false}; the
+     * parser calls this with what the frontmatter says.
+     *
+     * @param hidden
+     *            the parsed {@code hidden} value
+     * @return a result identical but for the flag (never null)
+     */
+    public SubagentContentResult withHidden(boolean hidden) {
+        return new SubagentContentResult(this, hidden);
     }
 
     public String getDescription() {
@@ -115,6 +141,16 @@ public final class SubagentContentResult {
         return attributes;
     }
 
+    /**
+     * Returns the parsed {@code hidden} value.
+     *
+     * @return {@code true} when the frontmatter says {@code hidden: true}; {@code false} when it says {@code false} or
+     *         does not set the key
+     */
+    public boolean isHidden() {
+        return hidden;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -127,12 +163,12 @@ public final class SubagentContentResult {
         return Objects.equals(description, that.description) && Objects.equals(whenToUse, that.whenToUse)
                 && Objects.equals(tools, that.tools) && Objects.equals(model, that.model)
                 && Objects.equals(maxIterations, that.maxIterations) && Objects.equals(systemPrompt, that.systemPrompt)
-                && attributes.equals(that.attributes);
+                && attributes.equals(that.attributes) && hidden == that.hidden;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(description, whenToUse, tools, model, maxIterations, systemPrompt, attributes);
+        return Objects.hash(description, whenToUse, tools, model, maxIterations, systemPrompt, attributes, hidden);
     }
 
     @Override

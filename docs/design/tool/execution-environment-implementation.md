@@ -1449,8 +1449,10 @@ attributes were always empty. EE-42 fills them without touching `EnvironmentRequ
   subagent registered under a step's `agentType`, and the script's own `attributes` may add keys to them. The
   registered keys are pinned: a script value for one of them fails the script unless it is identical, so a
   model-written script cannot move an operator-registered subagent to another slot. An unregistered `agentType` has
-  nothing to pin, and its script attributes are used as they are — EE-45 decides whether scripts may set them at all.
-  `GraalJsWorkflowTool` uses that resolver over its own registry by default.
+  nothing to pin, and its script attributes were at first used as they were. EE-45 closed that: a key no registered
+  definition sets for the step is accepted only if the operator listed it
+  (`SubagentResolver.inline(registry, scriptAttributeKeys)`, `GraalJsWorkflowTool.Builder.scriptAttributeKeys`), and the
+  list is empty by default. `GraalJsWorkflowTool` uses that resolver over its own registry by default.
 - **`DefinitionAttributes.overlay(base, override)`** is the one merge rule — generic, the override winning per key —
   and re-checks the merged map for a key that is both a value and a group. The pinning above is the graaljs
   resolver's check before it calls `overlay`, not a rule of `overlay`.

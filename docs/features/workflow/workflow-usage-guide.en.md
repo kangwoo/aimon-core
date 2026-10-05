@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/workflow/workflow-usage-guide.md
-source_commit: 3e95c28
+source_commit: 93a4909
 ---
 
 # Workflow Usage Guide (the library view)
@@ -295,7 +295,7 @@ AgentTask simple = AgentTask.of(reviewer, goal);  // the short form
 ```java
 result.isSuccess();          // whether the step succeeded
 result.isComplete();         // completionReason == COMPLETED
-result.completionReason();   // why it ended (a limit reached / an error / a cancellation …)
+result.completionReason();   // why it ended (a limit reached / an error / a cancellation / refused by an onStart hook (BLOCKED) …)
 result.text();               // the final text
 result.structured();         // Optional<Map<String,Object>> — where a resultSchema was given
 result.getLabel();

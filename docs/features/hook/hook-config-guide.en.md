@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-config-guide.md
-source_commit: 2beae91
+source_commit: ca68a22
 ---
 
 # Hook Configuration Guide (`hooks.json`)
@@ -307,11 +307,13 @@ other event leaves a WARN log and proceeds (`AbstractDeclarativeShellHook#vetoRe
 a fork starts, and the "user message" it sees then is the goal that fork was given. If the hook exits 2, or its command
 cannot be run, the fork ends without a single LLM call and its parent receives
 `Execution blocked by OnStart hook [SUBAGENT/<name>]: <reason>` (`Task` reports `Status: FAILURE`, a skill reports
-`Skill fork failed for '<skill>': …`, a background task settles as `FAILED`). A hook that was only meant to check user
+`Skill fork failed for '<skill>': …`, a background task settles as `FAILED`). The fork's completion reason is `BLOCKED`,
+not `ERROR` — read it from the `Completion reason: BLOCKED` line of a `Task` result or a workflow step's
+`completionReason`. A hook that was only meant to check user
 input should branch on `AIMON_INVOKER_TYPE` in its script — `MAIN_AGENT` for the main turn, `SUBAGENT` for a fork. That
 is the only way to exempt forks: `failOpen: true` lets a hook through **only when its command could not run**, and an
-exit 2 still blocks. One limit — a subagent whose name has a code behavior (`SubagentBehavior`) registered does not run
-the ReAct loop, so `onStart` never fires for it (backlog EE-73).
+exit 2 still blocks. A subagent whose name has a code behavior (`SubagentBehavior`) registered is no exception — it does
+not run the ReAct loop, but `onStart` fires before the behavior is invoked, and a block means the behavior never runs.
 
 **When the command could not run (fail-closed).** If a `command` handler on one of the four events above **produces no
 exit code** — a timeout, a shell failure — the hook returns that event's refusal (`preTool`, `onStart` and `preCompact`

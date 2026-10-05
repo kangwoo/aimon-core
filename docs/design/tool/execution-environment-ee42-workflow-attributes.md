@@ -270,6 +270,8 @@ is what the review of the implementation changed.
 - **Operator warning for role definitions (Q5).** The `WorkflowTool` class Javadoc, the guide and the backlog closing
   note say plainly that a `workflow-<role>` definition gives `Workflow` its attributes only, and is also an ordinary
   `Task`-callable subagent whose own prompt is used only when the model calls it that way. Q5 itself is EE-44.
+  *(2026-10-05: EE-44 added `hidden: true` — `SubagentMetadata.isHidden()` — and the warning became an instruction to
+  set it; a hidden definition is not listed by `Task` and is refused there, and is still looked up by name here.)*
 - **§5.2 wording (Q2).** The spec's sentence that a sandbox provider's default for a fork is the parent's sandbox is
   kept; the new text adds that an empty-attributes step follows that default. Q2 itself is EE-43.
 - **Design text nits.** The registry field is at `GraalJsWorkflowTool.java:73`, not `:83`. The `WorkflowTool`
@@ -309,7 +311,10 @@ is what the review of the implementation changed.
   model-written script passes `attributes: { 'sandbox.slot': 'privileged' }` to escape to the privileged slot. Now a
   script attribute whose key the registered definition already sets fails the script with a `JsScriptException`
   naming the `agentType`, the key, the registered value and the script's value; an identical value is accepted as a
-  no-op, and keys the registered definition does not set may still be added. The check lives in
+  no-op, and keys the registered definition does not set may still be added. *(2026-10-05, EE-45: no longer — a key
+  the registered definition does not set, and every key of an unregistered or absent `agentType`, is accepted only if
+  the operator listed it in `scriptAttributeKeys`, which is empty by default. Pinning left the escape open: rename the
+  step and ask for the slot.)* The check lives in
   `InlineSubagentResolver`, before it calls `overlay`. `DefinitionAttributes.overlay` keeps its generic
   override-wins semantics (§3.1) — the pinning is a graaljs policy about who wrote the override, not a merge rule.
   The residual gap is recorded in EE-45: an **unregistered** `agentType` (or none) has nothing to pin, so a script

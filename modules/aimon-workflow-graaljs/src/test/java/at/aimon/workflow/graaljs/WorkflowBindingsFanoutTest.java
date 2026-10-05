@@ -3,6 +3,7 @@ package at.aimon.workflow.graaljs;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -100,7 +101,7 @@ class WorkflowBindingsFanoutTest extends AbstractGraalJsRunTest {
         run("agent({ agentType: 'builder', goal: 'solo' });\n" + "await parallel([\n"
                 + "  { agentType: 'reviewer', goal: 'p0', attributes: { sandbox: { profile: 'ro' } } },\n"
                 + "  { agentType: 'builder', goal: 'p1', attributes: { 'sandbox.profile': 'rw' } },\n" + "]);\n"
-                + "return 'done';", SubagentResolver.inline(registry));
+                + "return 'done';", SubagentResolver.inline(registry, List.of("sandbox.profile")));
 
         assertThat(seen.get("solo")).containsExactly(Map.entry("sandbox.slot", "build"));
         assertThat(seen.get("p0")).containsExactly(Map.entry("sandbox.profile", "ro"));
@@ -123,6 +124,29 @@ class WorkflowBindingsFanoutTest extends AbstractGraalJsRunTest {
                 .isInstanceOf(JsScriptException.class).hasMessageContaining("workflow script rejected")
                 .hasMessageContaining("agent 'untrusted-runner'").hasMessageContaining("'sandbox.slot'")
                 .hasMessageContaining("'isolated'").hasMessageContaining("'privileged'");
+    }
+
+    @Test
+    @DisplayName("EE-45: a script giving an unregistered agentType a sandbox.slot fails the run, naming the key")
+    void attributesOnAnUnregisteredAgentTypeFailTheRun() {
+        final InMemorySubagentRegistry registry = new InMemorySubagentRegistry();
+        registry.register(Subagent.builder().name("untrusted-runner").systemPrompt("unused")
+                .attributes(Map.of("sandbox.slot", "isolated")).build());
+        final Map<String, Boolean> ran = new ConcurrentHashMap<>();
+        behavior = (subagent, goal) -> {
+            ran.put(goal, true);
+            return "ok";
+        };
+
+        assertThatThrownBy(
+                () -> run(
+                        "return agent({ agentType: 'renamed-runner', goal: 'g',"
+                                + " attributes: { 'sandbox.slot': 'privileged' } }).text;",
+                        SubagentResolver.inline(registry)))
+                .isInstanceOf(JsScriptException.class).hasMessageContaining("workflow script rejected")
+                .hasMessageContaining("agent 'renamed-runner'").hasMessageContaining("'sandbox.slot'")
+                .hasMessageContaining("scriptAttributeKeys");
+        assertThat(ran).as("the step is refused before any sub-agent runs").isEmpty();
     }
 
     @Test

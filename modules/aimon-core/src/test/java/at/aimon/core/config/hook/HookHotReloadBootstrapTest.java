@@ -51,8 +51,7 @@ class HookHotReloadBootstrapTest {
                 .projectRoot(projectDir).shellExecutor(SHELL_EXECUTOR).processEnv(Map.of()).registry(registry)
                 .executionManager(executionManager).invoker(INVOKER).start()) {
 
-            // No layer files present → bootstrap is a successful no-op.
-            assertThat(started.isBootstrapSucceeded()).isTrue();
+            // No layer files present → the initial load is a successful no-op.
             assertThat(started.isWatcherActive()).isTrue();
             assertThat(registry.getHooks(HookEventType.PRE_TOOL)).isEmpty();
         }
@@ -71,8 +70,18 @@ class HookHotReloadBootstrapTest {
                 .projectRoot(projectDir).shellExecutor(SHELL_EXECUTOR).processEnv(Map.of()).registry(registry)
                 .invoker(INVOKER).start()) {
 
-            assertThat(started.isBootstrapSucceeded()).isTrue();
             assertThat(registry.getHooks(HookEventType.PRE_TOOL)).hasSize(1);
+        }
+    }
+
+    @Test
+    @SuppressWarnings("deprecation")
+    void theDeprecatedBootstrapFlagIsAlwaysTrue() throws Exception {
+        try (HookHotReloadBootstrap.Started started = HookHotReloadBootstrap.builder().userHome(userDir)
+                .projectRoot(projectDir).shellExecutor(SHELL_EXECUTOR).processEnv(Map.of())
+                .registry(new DefaultHookRegistry()).invoker(INVOKER).start()) {
+
+            assertThat(started.isBootstrapSucceeded()).isTrue();
         }
     }
 

@@ -51,6 +51,28 @@ public enum CompletionReason {
      */
     TRUNCATED,
     /**
+     * A fork did not start because an {@code onStart} hook blocked it: the hook exited 2 or, unless it declares
+     * {@code failOpen: true}, its command could not be run at all. Nothing ran — no iteration, no tokens, no
+     * {@code onStop} — and the error message carries the hooks' reasons
+     * ({@code Execution blocked by OnStart hook [SUBAGENT/<name>]: ...}). Both ways a fork runs end with it: the ReAct
+     * loop and a registered code behavior.
+     *
+     * <p>
+     * A reason of its own, apart from {@link #ERROR}, so a caller can tell a refusal from a fault without reading the
+     * message: retrying the same fork under the same guard is refused again, where retrying after an error may not
+     * fail again.
+     *
+     * <p>
+     * Only a fork ends with this reason. A turn an {@code onStart} hook blocks does not end with a result at all: the
+     * executor throws {@code ExecutionBlockedByHookException}.
+     *
+     * <p>
+     * Added after the first release of this enum, so a peer running an older build does not know the name. The one
+     * codec that carries a fork's reason between nodes ({@code JsonTaskResultCodec}) reads a name it does not know as
+     * {@link #ERROR} for a failed result, which is what such a peer reported before this value existed.
+     */
+    BLOCKED,
+    /**
      * Execution ended with an unexpected error.
      *
      * <p>

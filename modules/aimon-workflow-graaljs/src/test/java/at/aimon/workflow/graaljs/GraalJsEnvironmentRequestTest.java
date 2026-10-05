@@ -96,8 +96,8 @@ class GraalJsEnvironmentRequestTest {
     }
 
     /**
-     * Runs {@code js} over a registry holding {@code builder} ({@code sandbox.slot: build}) and returns the requests
-     * the provider saw.
+     * Runs {@code js} over a registry holding {@code builder} ({@code sandbox.slot: build}), with the keys these
+     * scripts set allowed (EE-45), and returns the requests the provider saw.
      */
     private List<EnvironmentRequest> run(String js) {
         final InMemorySubagentRegistry registry = new InMemorySubagentRegistry();
@@ -109,7 +109,7 @@ class GraalJsEnvironmentRequestTest {
             return UnavailableExecutionEnvironment.of("not needed");
         };
         final GraalJsWorkflowScript script = new GraalJsWorkflowScript(js, Map.of(), JsSandboxConfig.defaults(),
-                engines, SubagentResolver.inline(registry), null);
+                engines, SubagentResolver.inline(registry, List.of("sandbox.profile", "sandbox.slot", "gpu")), null);
         final DefaultSubagentExecutionManager manager = new DefaultSubagentExecutionManager(new DefaultSubagentExecutor(
                 new DoneLlmClient(), new DefaultToolExecutionManager(), new DefaultHookExecutionManager()), pool);
         try (WorkflowRunner runner = WorkflowRunners.create(manager, env(registry, provider),
