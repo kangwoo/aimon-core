@@ -63,6 +63,14 @@ import at.aimon.core.filesystem.VirtualFileSystem;
  * stays the loaded version until then.
  *
  * <p>
+ * <b>Only a scanned resource is followed.</b> Scanning again is right when the resource's file list <em>is</em> its
+ * directory, which is what {@link StagedResource#isScanned()} says. A resource assembled by hand (SPI code, a remote
+ * repository's keys) lists what its author chose, and its directory may hold files it deliberately left out; a second
+ * scan would copy those into the staging area, where the model's file tools and shell read them. Such a resource is
+ * staged as recorded or refused with a {@link StagingException} — the changed-since-load refusal, or the read or size
+ * error that was met — and nothing but its listed files is ever written, not even to a temporary directory.
+ *
+ * <p>
  * <b>Other stagers of the same workspace (EE-17).</b> The lock here is this instance's; a second process, or a second
  * provider in this one, shares only the disk. So nothing is ever copied into the target itself: the files and the
  * marker go to a sibling {@code {contentKey}}{@value #TEMPORARY_INFIX}{@code {random}} directory, and a failed copy
@@ -197,6 +205,9 @@ final class LocalStaging {
             try {
                 return copyVerified(known, reader);
             } catch (SourceChangedException changed) {
+                if (!resource.isScanned()) {
+                    throw changed.ifUnchanged != null ? changed.ifUnchanged : changedSinceLoad(resource);
+                }
                 final StagedResource current = scanAgain(resource, known, reader, changed);
                 final String path;
                 try {
@@ -256,6 +267,13 @@ final class LocalStaging {
         return new StagingException(
                 "Cannot stage '" + resource.getName() + "': " + bytes + " bytes exceeds the staging limit of "
                         + maxStagedBytes + " bytes; exclude large files with " + StagedResource.STAGE_IGNORE_FILE);
+    }
+
+    /** The refusal a source that no longer matches its key got before EE-3; still what an assembled resource gets. */
+    private static StagingException changedSinceLoad(StagedResource resource) {
+        return new StagingException("Skill '" + resource.getName() + "' changed on disk after it was loaded, so its"
+                + " files no longer match the version this session uses. Restart the application, or reload the"
+                + " skill registry, to pick up the change.");
     }
 
     private static StagingException stillChanging(StagedResource resource) {

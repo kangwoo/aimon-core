@@ -356,6 +356,17 @@ public interface ExecutionEnvironmentProvider {
 검증 기록뿐이다 — main 소스에서 `StagedResource.getContentKey()` 를 읽는 곳은 로컬 제공자의 스테이징 하나라서, 다시 매긴
 키와 어긋날 다른 캐시가 없다. 별도 저장소에 있는 샌드박스 제공자의 `stage()` 는 이 변경에 들어 있지 않다.
 
+*다시 스캔하는 것은 스캔으로 만든 자원뿐이다.* 다시 스캔해도 되는 까닭은 자원의 파일 목록이 **곧 그 디렉터리**이기
+때문인데, 그것은 `StagedResource.scan(...)` 이 만든 자원에만 참이다. `StagedResource.builder()` 로 손수 조립한 자원(SPI
+코드, 원격 저장소의 키)은 작성자가 고른 목록을 갖고, 그 디렉터리에는 일부러 뺀 파일이 있을 수 있다 — 다시 스캔하면 그
+파일이 스테이징 영역에 복사되어 모델의 파일 도구와 셸이 읽게 된다. 그래서 자원은 자신의 출처를 싣는다
+(`StagedResource.isScanned()` — `scan()` 만 참으로 만들고 빌더에는 그렇게 말할 메서드가 없다). 로컬 제공자는 스캔된
+자원만 위와 같이 따라가고, 조립된 자원은 **기록된 대로 스테이징하거나 거부한다**: 바이트가 키와 어긋나면 EE-3 이전의
+`StagingException`("changed on disk after it was loaded … Restart the application, or reload the skill registry")이고,
+기록된 파일을 읽지 못했거나 상한을 넘게 자랐으면 그 읽기·크기 오류다. 어느 쪽이든 목록에 없는 파일은 임시 디렉터리에도
+쓰이지 않는다. 격리 브랜치의 `stage()` 도 같은 코드를 지나므로 같은 판단을 받는다. 출하되는 조립에서 자원을 만드는 곳은
+`DefaultSkillRegistry` 하나이고 `scan()` 을 쓰므로, 스킬에 대해서는 위 문단이 그대로다.
+
 **스킬을 렌더하는 모든 경로가 거친다.** `${AIMON_SKILL_DIR}` 에 들어가는 값은 언제나 `stage()` 의 반환값이다.
 `Skill` 도구, 스킬 포크, 스킬 기반 슬래시 커맨드(`SkillBackedCommandExecutor` → `LlmSkillExecutor`)가 모두 여기에
 해당한다. 커맨드 경로는 지금 렌더 컨텍스트에 스킬 디렉터리를 아예 싣지 않아 `${AIMON_SKILL_DIR}` 가 빈 문자열이

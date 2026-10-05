@@ -143,4 +143,27 @@ class StagedResourceTest {
         assertThat(resource.getFiles()).isEmpty();
         assertThat(resource.getTotalBytes()).isZero();
     }
+
+    @Test
+    @DisplayName("a scanned resource says so, and one assembled with the same values through the builder does not")
+    void scannedOrigin() {
+        final StagedResource scanned = StagedResource.scan(control, "skills/demo", "demo");
+        final StagedResource assembled = StagedResource.builder().sourceFileSystem(scanned.getSourceFileSystem())
+                .sourceDir(scanned.getSourceDir()).name(scanned.getName()).contentKey(scanned.getContentKey())
+                .totalBytes(scanned.getTotalBytes()).files(scanned.getFiles()).build();
+
+        assertThat(scanned.isScanned()).isTrue();
+        assertThat(assembled.isScanned()).isFalse();
+        assertThat(scanned.toString()).contains("scanned=true");
+        assertThat(assembled.toString()).contains("scanned=false");
+        assertThat(StagedResource.scan(control, "skills/none", "none").isScanned()).isTrue();
+    }
+
+    @Test
+    @DisplayName("the builder has no way to claim a scan: its only methods are the six values and build()")
+    void builderCannotClaimAScan() {
+        assertThat(java.util.Arrays.stream(StagedResource.Builder.class.getDeclaredMethods())
+                .filter(m -> !m.isSynthetic()).map(java.lang.reflect.Method::getName)).containsExactlyInAnyOrder(
+                        "sourceFileSystem", "sourceDir", "contentKey", "name", "totalBytes", "files", "build");
+    }
 }

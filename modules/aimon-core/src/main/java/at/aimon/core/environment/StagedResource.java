@@ -38,6 +38,13 @@ import at.aimon.core.filesystem.VirtualFileSystem;
  * <p>
  * The key is computed when the registry loads the resource, not on every {@code stage()} call, so staging never
  * re-reads the whole directory just to decide whether a copy exists.
+ *
+ * <p>
+ * <b>Scanned or assembled.</b> A resource {@link #scan} produced {@linkplain #isScanned() says so}: its file list
+ * <em>is</em> the rule above applied to its directory, so a provider that finds the source changed may apply the rule
+ * again and stage what is there now. A resource assembled through {@link #builder()} carries a file list its author
+ * chose — possibly a deliberate subset of a directory that holds more — and no provider may widen it: it is staged as
+ * recorded or refused. The builder cannot claim the first kind.
  */
 public final class StagedResource {
 
@@ -55,6 +62,7 @@ public final class StagedResource {
     private final String name;
     private final long totalBytes;
     private final List<String> files;
+    private final boolean scanned;
 
     private StagedResource(Builder builder) {
         this.sourceFileSystem = Objects.requireNonNull(builder.sourceFileSystem, "sourceFileSystem must not be null");
@@ -63,6 +71,7 @@ public final class StagedResource {
         this.name = Objects.requireNonNull(builder.name, "name must not be null");
         this.totalBytes = builder.totalBytes;
         this.files = List.copyOf(builder.files);
+        this.scanned = builder.scanned;
     }
 
     /**
@@ -112,8 +121,11 @@ public final class StagedResource {
             hashed.add(rel);
             total += bytes.length;
         }
-        return builder().sourceFileSystem(fileSystem).sourceDir(dir).name(name).contentKey(hasher.build())
-                .totalBytes(total).files(hashed).build();
+        final Builder builder = builder().sourceFileSystem(fileSystem).sourceDir(dir).name(name)
+                .contentKey(hasher.build()).totalBytes(total).files(hashed);
+        // Not a builder method: only this scan can say that the file list is the directory's.
+        builder.scanned = true;
+        return builder.build();
     }
 
     private static String unreadable(String rel, String name, Exception e) {
@@ -176,6 +188,19 @@ public final class StagedResource {
     }
 
     /**
+     * Whether {@link #scan} produced this resource, so that {@link #getFiles()} is everything under
+     * {@link #getSourceDir()} that {@code .stageignore} does not exclude. Scanning the same directory again then
+     * yields the same kind of resource, which is what lets a provider follow a source that changed since it was
+     * loaded. {@code false} for a resource assembled through {@link #builder()}, whose file list is its author's
+     * choice: nothing may be staged for it that it does not list.
+     *
+     * @return {@code true} only for a resource returned by {@link #scan}
+     */
+    public boolean isScanned() {
+        return scanned;
+    }
+
+    /**
      * Returns the source path of one of {@link #getFiles()}.
      *
      * @param relPath
@@ -194,7 +219,7 @@ public final class StagedResource {
     @Override
     public String toString() {
         return "StagedResource{name='" + name + "', contentKey='" + contentKey + "', files=" + files.size()
-                + ", totalBytes=" + totalBytes + '}';
+                + ", totalBytes=" + totalBytes + ", scanned=" + scanned + '}';
     }
 
     private static String relativize(String dir, String path) {
@@ -270,7 +295,10 @@ public final class StagedResource {
         }
     }
 
-    /** Builder for {@link StagedResource}. */
+    /**
+     * Builder for {@link StagedResource}. What it builds is never {@linkplain StagedResource#isScanned() scanned}:
+     * there is no method to say so.
+     */
     public static final class Builder {
         private VirtualFileSystem sourceFileSystem;
         private String sourceDir;
@@ -278,6 +306,8 @@ public final class StagedResource {
         private String name;
         private long totalBytes;
         private List<String> files = List.of();
+        /** Set by {@link StagedResource#scan} alone. */
+        private boolean scanned;
 
         private Builder() {
         }

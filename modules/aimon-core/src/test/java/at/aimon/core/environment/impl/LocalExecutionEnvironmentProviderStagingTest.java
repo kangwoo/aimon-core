@@ -731,6 +731,95 @@ class LocalExecutionEnvironmentProviderStagingTest {
         assertThat(copies("demo")).containsExactly(scan().getContentKey());
     }
 
+    // ---- a resource that was not scanned: its file list is the caller's, and no rescan may widen it ---------------
+
+    @Test
+    @DisplayName("a hand-built resource whose listed file changed is refused, and a file it never listed is not"
+            + " written anywhere in the workspace — not even into a temporary directory")
+    void handBuiltSubsetIsRefusedNotWidened() throws Exception {
+        final StagedResource subset = handBuiltSubset();
+        control.write("repo/tool/run.sh", "echo edited");
+        final List<String> written = new ArrayList<>();
+        final ExecutionEnvironment env = borrowedEnv(recordingWrites(written));
+
+        assertThatThrownBy(() -> env.stage(subset)).isInstanceOf(StagingException.class)
+                .hasMessageContaining("'tool' changed on disk after it was loaded")
+                .hasMessageContaining("Restart the application");
+
+        assertThat(written).as("every write the stager made").noneMatch(p -> p.endsWith("credentials.env"));
+        assertThat(filesUnderWorkspace()).noneMatch(p -> p.endsWith("credentials.env") || p.endsWith("run.sh"));
+        assertThat(copies("tool")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a hand-built resource is refused the same way for an isolated branch, which stages through the"
+            + " same code")
+    void handBuiltSubsetIsRefusedForABranchToo() throws Exception {
+        final StagedResource subset = handBuiltSubset();
+        control.write("repo/tool/run.sh", "echo edited");
+        final List<String> written = new ArrayList<>();
+        final VirtualFileSystem fs = recordingWrites(written);
+        final LocalStaging staging = new LocalStaging(fs, fs, workspace, ".aimon-staged", Long.MAX_VALUE);
+
+        assertThatThrownBy(() -> staging.stageCopy(subset)).isInstanceOf(StagingException.class)
+                .hasMessageContaining("changed on disk after it was loaded");
+
+        assertThat(written).noneMatch(p -> p.endsWith("credentials.env"));
+        assertThat(filesUnderWorkspace()).noneMatch(p -> p.endsWith("credentials.env"));
+    }
+
+    @Test
+    @DisplayName("a hand-built resource that is unchanged stages exactly its list")
+    void handBuiltSubsetUnchangedStagesItsList() {
+        final StagedResource subset = handBuiltSubset();
+
+        final String path = ownedEnv().stage(subset);
+
+        assertThat(Path.of(path, "run.sh")).hasContent("echo v1");
+        assertThat(Path.of(path, "credentials.env")).doesNotExist();
+    }
+
+    @Test
+    @DisplayName("a hand-built resource whose listed file is gone reports the read that failed; the rest of the"
+            + " directory is not staged in its place")
+    void handBuiltSubsetWithAMissingFileReportsTheRead() throws Exception {
+        final StagedResource subset = handBuiltSubset();
+        control.delete("repo/tool/run.sh");
+
+        assertThatThrownBy(() -> ownedEnv().stage(subset)).isInstanceOf(StagingException.class)
+                .hasMessageContaining("run.sh could not be read");
+
+        assertThat(filesUnderWorkspace()).noneMatch(p -> p.endsWith("credentials.env"));
+        assertThat(copies("tool")).isEmpty();
+    }
+
+    /** {@code repo/tool} holds a script and a secret; the resource lists the script only, as SPI code may. */
+    private StagedResource handBuiltSubset() {
+        control.write("repo/tool/run.sh", "echo v1");
+        control.write("repo/tool/credentials.env", "TOKEN=secret");
+        final byte[] script = "echo v1".getBytes(StandardCharsets.UTF_8);
+        return StagedResource.builder().sourceFileSystem(control).sourceDir("repo/tool").name("tool")
+                .contentKey(new StagedResource.ContentKeyBuilder().add("run.sh", script).build())
+                .totalBytes(script.length).files(List.of("run.sh")).build();
+    }
+
+    /** The workspace, with the path of every write made through it recorded. */
+    private VirtualFileSystem recordingWrites(List<String> written) {
+        return new DelegatingFileSystem(rawWorkspace()) {
+            @Override
+            public void write(String path, InputStream content, long contentLength) {
+                written.add(path);
+                super.write(path, content, contentLength);
+            }
+        };
+    }
+
+    private List<String> filesUnderWorkspace() throws Exception {
+        try (Stream<Path> walk = Files.walk(workspace)) {
+            return walk.filter(Files::isRegularFile).map(p -> workspace.relativize(p).toString()).sorted().toList();
+        }
+    }
+
     /** The directories beside (and including) the copies of a resource name. */
     private List<String> copies(String name) {
         final Path nameDir = workspace.resolve(".aimon-staged").resolve(name);
