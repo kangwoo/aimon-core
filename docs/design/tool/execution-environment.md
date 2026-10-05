@@ -474,7 +474,10 @@ public interface ExecutionEnvironmentProvider {
 불리면 명령을 **띄우지 않는다**. 선언하지 않은 셸은 신호를 무시한다. 매니저는 셸이 선언했을 때만 작업마다 신호를
 만들어 옵션에 싣는다. `KillShell(taskId)` 가 그 신호를 건다 — 취소된 작업은 `KILLED` 로 정착하고 죽기 전까지의 출력은
 `BashOutput` 으로 읽는다. 취소를 선언하지 않은 셸에서 돈 작업은 `KillShell` 이 오류로 답하고, `Bash` 의 시작 응답이
-미리 그렇게 말한다.
+미리 그렇게 말한다. 포그라운드 명령도 신호를 싣는다(EE-54) — 그쪽은 작업의 신호가 아니라 **실행의 인터럽트**가 건다.
+`BashTool` 이 셸 호출 동안만 실행 단위 `CancellationSignal` 에 리스너를 걸어 두므로, 스레드 인터럽트에 반응하지 않는
+셸도 사용자가 실행을 중단하면 명령을 멈춘다. 스레드 인터럽트(`THREAD_INTERRUPT`)는 그대로 함께 나가고, 어느 쪽으로
+끝나든 모델이 받는 결과는 같다. 실행의 인터럽트는 백그라운드 명령을 멈추지 않는다.
 
 **상한.** 모델이 끝내기를 잊은 명령의 안전장치는 `ExecutionEnvironment.backgroundCommandTimeout()` 이다. `BashTool` 은
 백그라운드 경로에서 이 값을 timeout 으로 쓰고, 환경이 정하지 않으면 24시간이다. 환경의 값이 **양방향으로** 이긴다
@@ -772,7 +775,7 @@ aimon-sandbox 는 `ExecutionEnvironmentProvider` 를 구현한다. 이 문서가
 | `notices()` 를 모델에게 보인다 | 셸 세션·샌드박스 재생성 시 notice 를 싣는다 |
 | 백그라운드 명령에 `ExecutionOptions.background` 를 켠다(§5.3) | 켜진 명령은 지속 셸 세션을 쥐지 않는다 |
 | 훅의 셸 액션(스킬 선언 훅과 `hooks.json` 훅)에 `ExecutionOptions.hook` 을 켠다(§10) | 켜진 명령은 지속 셸 세션 밖에서 돈다 — 세션 잠금을 잡지 않고 `cd`·`export` 를 세션에 저장하지 않는다. 세션의 현재 상태에서 시작해도 된다. 옵션을 파생하는 래퍼는 플래그를 넘긴다 |
-| 셸이 `ShellFeature.CANCELLATION` 을 선언하면 백그라운드 명령마다 `ExecutionOptions.getCancellation()` 에 신호를 싣고, `KillShell` 과 스택 종료가 그 신호를 건다(§5.3) | 선언했다면 신호가 걸릴 때 원격 명령과 그 명령이 띄운 것을 멈추고 그 `execute` 가 `ShellCancelledException` 을 던진다(멈춤을 요청만 하고 돌아와도 된다). 이미 걸린 신호면 명령을 띄우지 않는다. 옵션을 파생하는 래퍼는 신호를 넘긴다. 선언하지 않으면 `KillShell` 은 오류로 답한다 |
+| 셸이 `ShellFeature.CANCELLATION` 을 선언하면 백그라운드 명령마다 `ExecutionOptions.getCancellation()` 에 신호를 싣고, `KillShell` 과 스택 종료가 그 신호를 건다. 포그라운드 명령에는 선언과 무관하게 언제나 신호를 싣고, 실행의 인터럽트가 그 신호를 건다(§5.3) | 선언했다면 신호가 걸릴 때 원격 명령과 그 명령이 띄운 것을 멈추고 그 `execute` 가 `ShellCancelledException` 을 던진다(멈춤을 요청만 하고 돌아와도 된다). 이미 걸린 신호면 명령을 띄우지 않는다. 옵션을 파생하는 래퍼는 신호를 넘긴다. 선언하지 않으면 `KillShell` 은 오류로 답한다 |
 | 백그라운드 명령의 timeout 으로 `backgroundCommandTimeout()` 을 쓴다. 비어 있으면 24시간(§5.3) | 도는 명령이 슬롯을 깨워 두는 배치라면 감당할 수 있는 상한을 돌려준다. 0 이하는 무시된다 |
 | 런타임을 만들 때마다 `bindRuntime(id)` 를 부르고, 그 런타임이 사라질 때 핸들을 닫는다. 제공자 자체는 스택이 끝날 때 닫는다(§4.3) | 런타임별 자원을 쥔다면 `bindRuntime` 으로 통지를 받는다. 핸들이 닫혀도 **도는 명령은 멈추지 않고**, 같은 id 의 다른 바인딩이 쓰는 것은 놓지 않는다. 바인딩되지 않은 id 의 `resolve` 도 답한다 |
 | artifact 복사 경로와 상한을 정한다(§9.3) | 복사 대상 경로를 따로 정하지 않는다 — 코어의 artifact 도구가 복사한다 |

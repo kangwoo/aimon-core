@@ -26,9 +26,12 @@ import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.UnavailableExecutionEnvironment;
 import at.aimon.core.environment.exception.ExecutionEnvironmentUnavailableException;
 import at.aimon.core.shell.ExecutionOptions;
+import at.aimon.core.shell.ShellCancellation;
+import at.aimon.core.shell.ShellCancellationSource;
 import at.aimon.core.shell.ShellCommandResult;
 import at.aimon.core.shell.ShellFeature;
 import at.aimon.core.shell.VirtualShell;
+import at.aimon.core.shell.exception.ShellCancelledException;
 import at.aimon.core.shell.exception.ShellExecutionException;
 import at.aimon.core.shell.exception.ShellTimeoutException;
 import at.aimon.core.tools.ExecutionEnvironmentAccess;
@@ -73,6 +76,14 @@ import at.aimon.core.tools.ExecutionEnvironmentAccess;
  * timeout in {@link ExecutionOptions} and kills the process (and its descendants) when the deadline passes or the
  * calling thread is interrupted. That is what makes {@link InterruptBehavior#THREAD_INTERRUPT} mean something here: the
  * interrupt no longer only wakes a waiter while the command keeps running.
+ *
+ * <p>
+ * <b>The stop is sent twice, on purpose.</b> Reacting to a thread interrupt is something {@code LocalShell} does, not
+ * something the shell contract promises: a remote shell's blocking call may not notice the interrupt, and where it does
+ * the remote command keeps running. So a foreground call also carries a {@link ShellCancellation} that is tripped by
+ * the execution's own signal ({@link InterruptAccess#signalOf(ToolContext)}) — the stop a shell declares it honours
+ * with {@link ShellFeature#CANCELLATION}, and the one a background command is stopped with. Whichever of the two ends
+ * the command, the model reads the same result.
  *
  * <p>
  * Example usage:
@@ -292,9 +303,23 @@ public class BashTool extends AbstractTool implements ToolPermissionSubjectAware
             // so the tool thread simply blocks here. The executor's pre-registered Thread.interrupt() terminator
             // (see getInterruptBehavior below) unblocks the shell's waitFor, which then kills the process on its way
             // out — under the old wrapper an interrupt woke this thread but left the command running.
+            //
+            // The same stop also goes out on the command's own cancellation signal, for a shell whose blocking call
+            // does not answer a thread interrupt. The coordinator trips the execution's signal before it interrupts
+            // any thread, so a shell that honours both usually ends through this one; both ends are reported alike.
+            // The listener lives exactly as long as the shell call: the execution's signal outlives this command, and
+            // a later interrupt must find nothing of it.
+            final CancellationSignal signal = InterruptAccess.signalOf(context);
+            final ShellCancellationSource stop = ShellCancellationSource.create();
+            final CancellationSignal.Registration stopOnInterrupt = signal.onCancel(stop::cancel);
             final ShellCommandResult result;
             try {
-                result = shell.execute(() -> command, foregroundOptions(timeout));
+                result = shell.execute(() -> command, foregroundOptions(timeout, stop.token()));
+            } catch (ShellCancelledException e) {
+                // Only the execution's signal trips this command's cancellation, so this is the interrupt arriving by
+                // the other road. Same result as the thread-interrupt branch below, down to the wording.
+                log.warn("Bash command execution was interrupted");
+                return interruptedResult(signal);
             } catch (ShellTimeoutException e) {
                 log.warn("Bash command timed out after {}ms", timeout);
                 // Whatever the command printed before the shell killed it is the only diagnostic there will ever be,
@@ -315,6 +340,8 @@ public class BashTool extends AbstractTool implements ToolPermissionSubjectAware
                 // The one outcome with no exit status to report: the command never ran, so there is no output to
                 // carry either. Everything else goes through renderBody.
                 return ToolResult.error(renderNotices(e.notices()) + "Command failed: " + e.getMessage());
+            } finally {
+                stopOnInterrupt.remove();
             }
 
             // An exit code is a value, not an exception. The shell reports every code — including 0 — the same way,
@@ -459,28 +486,33 @@ public class BashTool extends AbstractTool implements ToolPermissionSubjectAware
      *
      * @param timeoutMs
      *            the already-clamped timeout in milliseconds
+     * @param cancellation
+     *            the signal that stops this command; a shell that does not declare
+     *            {@link ShellFeature#CANCELLATION} ignores it
      * @return the execution options
      */
-    private static ExecutionOptions foregroundOptions(long timeoutMs) {
+    private static ExecutionOptions foregroundOptions(long timeoutMs, ShellCancellation cancellation) {
         return ExecutionOptions.builder().timeout(Duration.ofMillis(timeoutMs)).maxCaptureBytes(MAX_CAPTURE_BYTES)
-                .redirectErrorStream(true).charset(StandardCharsets.UTF_8).build();
+                .redirectErrorStream(true).charset(StandardCharsets.UTF_8).cancellation(cancellation).build();
     }
 
     /**
      * Builds the options for one background call.
      *
      * <p>
-     * Identical to {@link #foregroundOptions(long)} except for the timeout, which is the whole point: a background
-     * command must not inherit the foreground ceiling, and must not run without one either — and for
-     * {@link ExecutionOptions#isBackground()}, which tells a shell with a persistent session not to let this command
-     * hold it. The cancellation signal is not set here: the manager adds one per task when the shell can honour it.
+     * Identical to {@link #foregroundOptions(long, ShellCancellation)} except for the timeout, which is the whole
+     * point: a background command must not inherit the foreground ceiling, and must not run without one either — and
+     * for {@link ExecutionOptions#isBackground()}, which tells a shell with a persistent session not to let this
+     * command hold it. The cancellation signal is not set here: the manager adds one per task when the shell can
+     * honour it, and it is the task's, not the execution's — a background command outlives the execution that
+     * started it, so that execution's interrupt must not stop it.
      *
      * @param timeoutMs
      *            the ceiling in milliseconds — the environment's, or the default
      * @return the execution options
      */
     private static ExecutionOptions backgroundOptions(long timeoutMs) {
-        return foregroundOptions(timeoutMs).toBuilder().background(true).build();
+        return foregroundOptions(timeoutMs, ShellCancellation.none()).toBuilder().background(true).build();
     }
 
     /**
@@ -596,15 +628,23 @@ public class BashTool extends AbstractTool implements ToolPermissionSubjectAware
 
     /**
      * Declares {@link InterruptBehavior#THREAD_INTERRUPT}: the tool thread blocks inside the shell's wait on the
-     * process, which is interruptible. The coordinator's pre-registered {@code Thread.interrupt()} terminator is the
-     * whole mechanism — the shell responds by destroying the process (and its descendants) and throwing, so waking the
-     * waiter and killing the command are now the same event.
+     * process, which is interruptible. The coordinator's pre-registered {@code Thread.interrupt()} terminator is what
+     * the framework does for this tool — a shell that reacts to it, as {@code LocalShell} does, destroys the process
+     * (and its descendants) and throws, so waking the waiter and killing the command are the same event.
      *
      * <p>
-     * There is no longer a second, registrar-bound terminator. The {@code future.cancel(true)} handle that used to be
-     * registered here belonged to the foreground future wrapper; with the wrapper gone there is nothing for it to
-     * cancel, and registering one would only claim a teardown path that does not exist. This is a simplification, not
-     * a lost capability: cancelling the future never killed the process either.
+     * It is not the only stop. A foreground call also hands the shell a cancellation signal tripped by the execution's
+     * {@link CancellationSignal} (see {@link #execute(ToolInput, ToolContext)}), because the shell contract promises
+     * to honour that signal and promises nothing about thread interrupts. The declaration stays
+     * {@code THREAD_INTERRUPT} all the same: the interrupt is still what unblocks a shell that knows nothing of
+     * cancellation, and this value is also what keeps the tool off the parallel worker pool.
+     *
+     * <p>
+     * There is no registrar-bound terminator. The {@code future.cancel(true)} handle that used to be registered here
+     * belonged to the foreground future wrapper; with the wrapper gone there is nothing for it to cancel, and
+     * registering one would only claim a teardown path that does not exist. This is a simplification, not a lost
+     * capability: cancelling the future never killed the process either. The cancellation signal is not such a
+     * handle — it is a listener on the execution's signal, removed when the shell call returns.
      */
     @Override
     public InterruptBehavior getInterruptBehavior() {
