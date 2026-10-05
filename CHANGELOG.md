@@ -7,6 +7,136 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Changed (breaking): declarative guard hooks block when they could not judge (EE-64, EE-65, EE-66, EE-69, EE-72, EE-73, EE-80)
+
+A guard event is `preTool`, `onStart`, `preCompact` or `permissionRequest`. A declarative hook on one of them now blocks
+whenever it produced no verdict, and `failOpen: true` is the one opt-out. The guide has the full table
+(`docs/features/hook/hook-config-guide.md`, "What a guard blocks").
+
+- **Exit 126 and 127 block** (EE-66). A guard command the shell could not start used to read as "script malfunction,
+  allow". Other non-zero codes are unchanged — exit 1 still allows.
+- **`http` and `mcp` guards block without a verdict** (EE-65): unreachable, timeout, any non-2xx, an unreadable answer,
+  an unknown `decision` value (including Claude Code's `"block"`), or no executor wired. All of these used to be a pass.
+  `failOpen` is now honoured for these actions. A `postTool` handler still warns and proceeds.
+- **The hook executor's outer timeout no longer lets a guard through** (EE-64), and neither does a hook pool that
+  refuses the hook (saturated or closed) or a hook that throws before reaching its action. `ExecutionHook#getTimeoutBehavior()`
+  is new; a hook registered in code that declares `FAIL_CLOSED` gets the same treatment, and hooks that declare nothing
+  are unchanged.
+- **The `timeout` of an `mcp` hook handler now ends the call.** It used to run up to the MCP server's `requestTimeout`;
+  the smaller of the two wins.
+- **An inapplicable entry under a guard event in `hooks.json` stops startup** (EE-72) — a `command` handler with no
+  command, an unparseable `preTool` matcher, an `http`/`mcp` handler with no executor — with the file, event, entry and
+  handler in the message; a reload keeps the previous config. An event name within two edits of a guard event
+  (`preTol`) is treated the same way. Other unknown names still warn, now with a suggestion.
+- **`Task` with `run_in_background` is refused inside the fork of a skill with active guard hooks** (EE-69), like
+  background workflows and `ScheduleTask`: the subagent would outlive the guard. Foreground `Task` is unaffected.
+- **`onStart` hooks fire for code-behavior subagents** (`SubagentBehavior`) too (EE-73); a block stops the behavior
+  before it runs. The hooks see the spawning execution's environment, and non-blocking feedback is discarded.
+- **A hook's shell command stops when its execution is interrupted** (EE-80), through the execution's cancellation
+  signal, on `preTool`, `permissionRequest`, a fork's `onStart`, and `postTool`/`permissionDenied` of a live execution.
+  A cancelled guard blocks regardless of `failOpen`. Other events are still bounded only by the command's timeout.
+
+### Fixed: the hook guide documented matchers the parser never supported
+
+- Regex (`mcp__.*`), input-field (`Bash(command=^git\s+push)`) and `&` matchers **load without error and never fire**.
+  The guide taught all three, and three of its example guards were written that way. The grammar is now documented as
+  implemented — tool name, `*` glob, `Tool(glob)` for `Bash` and path tools, `|` — and the examples are corrected.
+  **Check your own `hooks.json` and skill front matter for `Bash(command=…)`, `mcp__.*` or `&`.**
+
+### Added: `http` and `mcp` hook handlers run in the CLI; skill hooks get `AIMON_SKILL_DIR` (EE-50)
+
+- **`aimon-cli` runs `http` hook handlers, and `mcp` handlers when MCP servers are configured**, from both `hooks.json`
+  and skill front matter. They were registered and never called.
+- **`HttpActionExecutor.createDefault()` no longer follows redirects** — it re-sent env-templated headers to the
+  redirect target and took that host's answer as the verdict — **and reads at most 1 MiB of response.**
+- **Skill-declared shell hooks receive `AIMON_SKILL_DIR`** (and `skill_dir` on stdin): the skill's directory staged
+  into the environment the hook command runs in, so `bash "$AIMON_SKILL_DIR/scripts/guard.sh"` resolves. It is unset
+  for `hooks.json` hooks. If the skill cannot be staged the command is not run, and a guard blocks.
+
+### Removed (breaking): `UserLocale` (EE-60); renamed: `SubagentExecutionEnvironment` → `SubagentLaunchContext` (EE-61)
+
+- **`at.aimon.core.base.UserLocale` is gone**, with every `getUserLocale()` / `userLocale(…)` — on `HookContext` and
+  its event contexts, the tool, compaction and subagent contexts — and `ToolContextKeys.USER_LOCALE`. Its one field was
+  a time zone nothing read. Delete the calls; drop the `UserLocale` argument from `CompactionGuard` overrides and from
+  the `TaskTool`, `WorkflowTool`, `SubagentBackedSkillForkExecutor`, `CompactCommand` and `ReloadInvoker` constructors
+  (the other arguments keep their order), and `GraalJsWorkflowTool.Builder.userLocale`. Nothing persisted carried it.
+- **`SubagentExecutionEnvironment` is renamed `SubagentLaunchContext`** — same package, same members. It is the bundle
+  handed to `SubagentExecutionManager` to launch a subagent, not an execution environment. Replace the type name.
+- Both are in `docs/migration/rename-maps.md`.
+
+### Changed (breaking): subagents, forks and completion reasons (EE-44, EE-45, EE-75, L-26, RD-6)
+
+- **A subagent no longer gets an invented `temperature` of 0.7.** It inherits the starting agent's `temperature`,
+  `topP` and both penalties, and when the agent states none nothing is put on the request, so the deployment default
+  reaches it. It also inherits the agent's `model.reasoningEffort` and `model.reasoningSummary`; each is still judged
+  against the subagent's own model, so a rung that model does not accept is omitted and reported once.
+- **A fork blocked by an `onStart` hook ends `CompletionReason.BLOCKED`** instead of `ERROR` (`Task` prints
+  `Completion reason: BLOCKED`); a node on an older build reads it as `ERROR`. `HookRegistryReloader.bootstrap()` (use
+  `loadInitial()`) and `HookHotReloadBootstrap.Started.isBootstrapSucceeded()` are deprecated — always true since EE-71.
+- **A turn that runs a slash skill whose final answer was cut at `max_tokens` ends `TRUNCATED`**, not `COMPLETED`
+  (inline and fork-mode). `isTruncated()` is new on `SkillExecutionResult`, `SkillForkOutcome` and
+  `CommandExecutionResult`; the marker text is unchanged.
+- **A `WorkflowJs` script may set only the attribute keys the operator allowed**
+  (`GraalJsWorkflowTool.Builder.scriptAttributeKeys`, empty by default); registered keys stay pinned.
+  `SubagentResolver.inline()` / `inline(registry)` refuse all script attributes — use `inline(registry, keys)`.
+- **Added:** subagent definitions accept `hidden: true` — `Task` neither lists nor launches the definition, while
+  `Workflow` roles, `WorkflowJs` `agentType` and fork skills still resolve it. An agent definition can state
+  `model.reasoningSummary` (`none | auto | concise | detailed`), which takes precedence over the deployment key.
+
+### Changed (breaking): context compaction and scheduled routines (SL-6, EE-11)
+
+- **On version-2 logs the default context engine no longer folds what the model has not answered yet into the
+  summary.** A fresh tool result or the latest input follows `[boundary, summary]` verbatim. When only that is left it
+  warns instead of compacting, and summarizes it only at the blocking limit; `/compact` on a view that is only
+  unanswered input fails with "nothing to compact". This gives up the engine's promise of matching version-1 output.
+- **Each scheduled-routine fire carries its own read stamps.** An `Edit` step works after a `Read` step, and a `Write`
+  step that overwrites an existing file is refused unless the file was read or written earlier in the same fire.
+  Routines that overwrite a file without reading it must be re-registered with a `Read` step before the `Write`.
+
+### Changed: configuration surface (L-1, L-2, L-8, CE-1, CE-2, EE-35)
+
+- **The starter fails startup on an unknown key under `aimon.llm.model-capabilities`, `aimon.llm.anthropic` and
+  `aimon.llm.openai`** (breaking), naming the key, instead of ignoring it. Unknown keys elsewhere under `aimon.*` are
+  still ignored. An application with its own keys in those subtrees can exclude `AimonPropertiesBindingAutoConfiguration`.
+- **Default sampling parameters can be set from configuration:** `aimon.llm.openai.{temperature,top-p,presence-penalty,frequency-penalty}`
+  and `aimon.llm.anthropic.temperature` (CLI: `llm.openai.*`, `llm.anthropic.temperature`). An agent definition's value
+  wins, and a value outside the vendor's range fails startup naming the key.
+- **A model-capability declaration that shadows a built-in row without restating one of its flags logs one WARN** at
+  startup naming the row, the dropped flags and what to add. The declaration is still registered as written.
+- **CLI configuration: `$${NAME}` writes the literal text `${NAME}`** without reading the variable (breaking for anyone
+  who relied on it meaning `$` + value; write `$$${NAME}` for that).
+- **A key written twice** in the CLI configuration file or in agent, subagent or skill front matter logs a warning
+  naming the key; the last value is still the one used.
+- **The directories a symbolic link in an on-disk bundle's `skills/` may resolve into are configurable:**
+  `aimon.skill.allowed-link-roots`, `agent.allowedSkillLinkRoots`, `AimonStackSpec.Builder.allowedSkillLinkRoots`
+  (default empty). Roots must be absolute and not a filesystem root — `PathSkillRepository.Builder` and
+  `VirtualFileSystems.readOnlyLocal` now reject a relative root or `/` (breaking).
+
+### Fixed: execution environment (EE-3, EE-5, EE-26, EE-46, EE-55)
+
+- **A skill edited on disk before its first use no longer fails staging until restart**: it is rescanned and staged
+  under its current content key, with one WARN. Parsed `SKILL.md` content still changes only on reload or restart.
+- **GridFS files report a content hash as their etag**, so rewriting a file with identical bytes no longer reads as
+  "changed since it was read"; files written earlier keep the file id. The local filesystem gains an opt-in content-hash
+  etag (`contentHashEtag` / `contentHashStamps`).
+- **A workspace-resident skill is staged as a copy for an isolated workflow branch** instead of being handed the
+  parent's directory, which the branch's file tools could not read.
+- **An isolated workflow branch can no longer address `.worktrees/`** (`InvalidPathException`), and a shell-made
+  `.worktrees/` in a branch is never promoted by a merge. These writes used to land in another branch's directory.
+- **`LocalShell` re-enumerates a command's process tree when the kill grace runs out**, so a process forked during the
+  grace is killed with it. A process whose parent already exited still escapes, and the `KillShell` answer and tool
+  description now say so.
+
+### Build and docs tooling (D-3, T-3, T-4, T-5)
+
+- **`checkAll` includes `checkTestClasspathVersions`**: it fails when a module's tests resolve a different library
+  version than the module ships, unless `gradle/test-classpath-version-differences.txt` records it with a reason; stale
+  entries fail too. A dependency bump that moves a recorded version now fails the gate until the file is updated.
+- **`check-doc-links.py` fails a link from a docs-site page to a directory the site builds**; the 41 such links were
+  retargeted and `docs/migration/` and `docs/project/` have index pages.
+- **`check-translation-structure.py` fails on front matter mkdocs and the scripts would read differently**, and gains
+  `--drift`, a manual audit of what a translation must not translate.
+
 ### Removed (breaking): the user-context block, and the snapshot types that fed it (EE-78, EE-10, EE-24)
 
 - **The framework no longer has a synthetic `messages[0]` user-context block.** It was injected only when an executor

@@ -357,16 +357,29 @@ B-6 이 그렇게 어긋나 있었다. §7 은 그 항목을 "MCP 를 실제로 
 | [`spring-boot-starter-open-items.md`](spring-boot-starter-open-items.md) | `docs/design/integration/spring-boot-starter.md` (SBS-00 ~ SBS-12) | 34 | 4 | 26 | 4 |
 | [`interrupt-open-items.md`](interrupt-open-items.md) | `docs/design/agent-execution/interrupt.md` | 5 | 2 | 3 | 0 |
 | [`multi-instance-readiness.md`](multi-instance-readiness.md) | 아키텍처 리뷰 (2026-08-31) | 3 | 1 | 1 | 1 |
-| [`module-dependency-scope.md`](module-dependency-scope.md) | 아키텍처 리뷰 (2026-08-31) · #99 (2026-09-11) | 3 | 2 | 1 | 0 |
+| [`module-dependency-scope.md`](module-dependency-scope.md) | 아키텍처 리뷰 (2026-08-31) · #99 (2026-09-11) | 4 | 2 | 2 | 0 |
 | [`architecture-review-open-items.md`](architecture-review-open-items.md) | 아키텍처 리뷰 (2026-08-31) | 8 | 2 | 6 | 0 |
-| [`translation-tooling-open-items.md`](translation-tooling-open-items.md) | 번역 낡음 가드 작업 (2026-09-06) · #122 (2026-09-11) · #121 (2026-09-11) · #135 (2026-09-11) | 8 | 5 | 3 | 0 |
+| [`translation-tooling-open-items.md`](translation-tooling-open-items.md) | 번역 낡음 가드 작업 (2026-09-06) · #122 (2026-09-11) · #121 (2026-09-11) · #135 (2026-09-11) | 9 | 3 | 6 | 0 |
 | [`openai-model-capabilities-open-items.md`](openai-model-capabilities-open-items.md) | o-시리즈 reasoning-item 재생 프로브 (2026-09-09) | 1 | 0 | 1 | 0 |
-| [`llm-config-surface-open-items.md`](llm-config-surface-open-items.md) | `docs/design/llm/model-capability-config-key.md` §9 (#46) | 28 | 9 | 19 | 0 |
-| [`reasoning-delta-stream-open-items.md`](reasoning-delta-stream-open-items.md) | `docs/design/llm/reasoning-delta-stream.md` §11 (#62) | 9 | 6 | 3 | 0 |
-| [`config-value-expansion-open-items.md`](config-value-expansion-open-items.md) | `docs/design/integration/config-value-expansion-and-frontmatter-strictness.md` §9 (#53) | 2 | 2 | 0 | 0 |
+| [`llm-config-surface-open-items.md`](llm-config-surface-open-items.md) | `docs/design/llm/model-capability-config-key.md` §9 (#46) | 30 | 6 | 24 | 0 |
+| [`reasoning-delta-stream-open-items.md`](reasoning-delta-stream-open-items.md) | `docs/design/llm/reasoning-delta-stream.md` §11 (#62) | 9 | 3 | 6 | 0 |
+| [`config-value-expansion-open-items.md`](config-value-expansion-open-items.md) | `docs/design/integration/config-value-expansion-and-frontmatter-strictness.md` §9 (#53) | 2 | 0 | 2 | 0 |
 | [`live-api-test-tier.md`](live-api-test-tier.md) | 라이브 API 테스트 계층의 CI 신호 결정 — #81 (2026-09-10) | 2 | 0 | 1 | 1 |
-| [`session-log-open-items.md`](session-log-open-items.md) | `docs/design/session/session-log.md` §12 · `docs/design/agent-execution/context-engine.md` §13 (2026-09-24 · 2026-09-25) | 6 | 1 | 5 | 0 |
-| [`execution-environment-open-items.md`](execution-environment-open-items.md) | `docs/design/tool/execution-environment-implementation.md` §9 · §10 · `docs/design/tool/execution-environment.md` §14 (2026-09-28) · 빌드 리뷰 4 · PR #195 리뷰 1 · 워크스페이스 샌드박스 설계 리뷰 (2026-09-29) · PR #196 리뷰 · EE-42 설계 §7 · §8 (2026-09-29) · `docs/design/tool/workflow-isolation-hardening.md` §7 · PR #202 (2026-09-30) · EE-9 · EE-12 설계 §8 · §9 (2026-10-03) · EE-13 · EE-7 설계 §8 · §9 와 그 리뷰 (2026-10-03) · EE-14 설계 §2.3 · §10 · PR #206 리뷰 (2026-10-03) · EE-49 · EE-51 · EE-58 설계 §8 · §9 와 그 리뷰 · PR #207 리뷰 (2026-10-04) · EE-70 · EE-71 설계 §9 (2026-10-04) · aimon-sandbox PR #6 (2026-10-04) | 80 | 34 | 46 | 0 |
+| [`session-log-open-items.md`](session-log-open-items.md) | `docs/design/session/session-log.md` §12 · `docs/design/agent-execution/context-engine.md` §13 (2026-09-24 · 2026-09-25) | 6 | 0 | 6 | 0 |
+| [`execution-environment-open-items.md`](execution-environment-open-items.md) | `docs/design/tool/execution-environment-implementation.md` §9 · §10 · `docs/design/tool/execution-environment.md` §14 (2026-09-28) · 빌드 리뷰 4 · PR #195 리뷰 1 · 워크스페이스 샌드박스 설계 리뷰 (2026-09-29) · PR #196 리뷰 · EE-42 설계 §7 · §8 (2026-09-29) · `docs/design/tool/workflow-isolation-hardening.md` §7 · PR #202 (2026-09-30) · EE-9 · EE-12 설계 §8 · §9 (2026-10-03) · EE-13 · EE-7 설계 §8 · §9 와 그 리뷰 (2026-10-03) · EE-14 설계 §2.3 · §10 · PR #206 리뷰 (2026-10-03) · EE-49 · EE-51 · EE-58 설계 §8 · §9 와 그 리뷰 · PR #207 리뷰 (2026-10-04) · EE-70 · EE-71 설계 §9 (2026-10-04) · aimon-sandbox PR #6 (2026-10-04) | 88 | 25 | 63 | 0 |
+
+> **2026-10-05 — 일곱 등록부의 행을 세어서 고쳤다 (배치 `chore/backlog-batch-2026-10-05-c`).** 한 번에 서른두 항목이 닫히고
+> 열둘이 열렸다. 닫힌 것의 3분의 1은 착수가 아니라 **결정**이었다 — 메인테이너가 그날 정한 것(SL-6 · EE-11 · EE-60 · RD-4 ·
+> RD-6 · L-4)과, 항목 본문이 기울어 있던 쪽으로 정하고 항목별 커밋으로 남긴 것이다. 규칙 넷의 순서는 그대로 지켰고 값을 했다:
+> L-3 은 거절하기로 한 갈래가 **실행되는 배포로 존재하지 않아** 코드 없이 닫혔고, RD-6 은 전제 둘(끄는 값이 있다, 키가 중립이다)이
+> 틀려 결정문을 쓰기 전에 모양이 바뀌었다.
+>
+> **이 배치가 규칙에 더하는 것 둘.** (1) **세는 도구의 사각지대가 하나 더 있었다 (규칙 여섯).** 소스 두 파일에 날 NUL 바이트가
+> 있어 grep 이 그 파일들을 바이너리로 보고 건너뛰었다 — 이 디렉토리의 호출자 인구조사는 `DefaultWorkflowContext` 를 조용히
+> 빼고 세어 왔다. 메서드 참조(`::`)에 이어 두 번째다. escape 로 바꿨고, 세는 사람은 `grep -a` 를 쓴다. (2) **"막는다" 로 닫은
+> 가드 항목의 옆자리는 문서였다.** EE-72 는 파싱되지 않는 matcher 를 기동 실패로 만들었는데, 훅 가이드가 가르치던 세 형태는
+> 전부 **파싱되고 한 번도 발화하지 않는** 것이었다 — 예제 가드 셋이 그렇게 적혀 있었다. 코드의 가드를 조이는 동안 가장 넓은
+> 구멍은 복사해 쓰라고 내놓은 예제에 있었다(EE-85).
 
 > **2026-09-10 — 위 표의 두 칸을 세어서 고쳤다. 규칙 일곱의 두 번째 사례이고, 둘 다 같은 모양이다:
 > 본문을 고친 사람이 색인을 세지 않았다.**

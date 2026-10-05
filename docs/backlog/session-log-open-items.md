@@ -1,4 +1,4 @@
-# 세션 로그 · 봉인 — 등록 항목 6건 (열림 1 · 닫힘 5)
+# 세션 로그 · 봉인 — 등록 항목 6건 (열림 0 · 닫힘 6)
 
 출처는 context engine 과 session log 작업, 그리고 그 뒤에 리뷰가 남긴 항목을 고친 보강이다. 설계는
 [`../design/session/session-log.md`](../design/session/session-log.md) 와
@@ -163,7 +163,7 @@ drain 이 끝나는 평소 경로에서 `/clear` 는 전처럼 즉시 지운다.
 `DefaultTranscriptManagerSealingTest.aClearWhoseDrainGaveUpDefersItsDeletesUntilALateCheckpointCannotLand`(백그라운드 mailbox,
 저장소 호출 안에 걸린 체크포인트, 착지 순간에 세그먼트가 모두 남아 있는지 확인) 와 `SessionCheckpointMailboxTest` 의 drain 넷.
 
-## SL-6 — 기본 engine 은 auto 임계값을 넘는 미응답 도구 결과를 매번 요약으로 접는다 · **열림**
+## SL-6 — 기본 engine 은 auto 임계값을 넘는 미응답 도구 결과를 매번 요약으로 접는다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** `DefaultContextEngine` 의 뷰 모드에도 "모델이 아직 답하지 않은 것은 압축하지 않는다"(context-engine §13.10)를
 적용할지 정한다.
@@ -179,3 +179,21 @@ v1 in-place 와 같은 결과)대로 뷰 전체를 `[floorSeq, nextSeq)` span �
 
 **언제 다시 볼까.** 기본 engine 으로 도는 배포에서 큰 도구 결과를 부른 직후 같은 도구를 반복해 부르는 실행이 보고될 때,
 또는 기본 engine 이 v1 과의 동일성 약속을 내려놓을 때.
+
+### 닫힘 (2026-10-05)
+
+**결정 (2026-10-05, 메인테이너): 바꾼다.** v2 로그에서 기본 engine 은 모델이 아직 답하지 않은 부분을 요약에 넣지 않는다 —
+압축 뒤의 뷰는 `[경계, 요약]` + 답하지 않은 메시지 원문이다(`5c43f5f9`). §4 의 v1 동일성 약속은 내려놓았고 설계 문서가 무엇이
+달라지는지 적는다. v1 로그(in-place)는 그대로다.
+
+- **영향이 항목보다 넓다.** 압축 시점의 뷰는 거의 언제나 새 입력이나 도구 결과로 끝나므로, 큰 도구 결과만이 아니라 뷰 모드의
+  모든 AUTO 압축이 달라진다.
+- 정의는 롤링 engine 의 것을 다시 썼다(`ViewProjection.firstUnreadPosition()`, `SessionLogState.legalCuts()`).
+- 답하지 않은 부분만 남으면 압축하지 않는다 — 요약 호출도 훅도 span 변경도 없고 결정은 `WARN` 이다
+  (`NothingToCompactException`, breaker 는 세지 않는다).
+- **blocking 한계에서는 롤링 engine 과 다르다.** 답하지 않은 부분만 남아 한계에 닿으면 뷰 전체를 한 번 요약한다(롤링은
+  `BLOCK`). 기본 engine 에는 원문을 되찾을 `SessionHistory` 가 없고, 전에는 그 자리에서 실행이 살아남았다. 모델이 읽지 않은
+  것을 요약으로 받는 경우가 여기 하나 남는다.
+- 전체 뷰 요약을 고정하던 테스트 일곱의 기대값을 바꿨다.
+
+**남은 것.** 흡수할 앞부분이 작고 답하지 않은 부분이 크면 요약 호출 하나를 작은 앞부분에 쓴 뒤에야 no-op 상태에 닿는다.
