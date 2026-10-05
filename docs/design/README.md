@@ -129,6 +129,7 @@
 | 문서 | 무엇이 있나 |
 |------|------------|
 | [`documentation/translation-structure-check.md`](documentation/translation-structure-check.md) | 정본과 번역본의 구조 일치를 강제하는 검사 — 여섯 축의 처분, 실패/경고를 가르는 쌍의 상태, 예외 표현, 공허 통과가 아님을 보이는 프로브 |
+| [`documentation/docs-site.md`](documentation/docs-site.md) | 문서 사이트의 구조 — 접미사 레이아웃, 한국어가 루트인 이유(빌드 제약), 실측으로 정한 한국어 검색 구분자, `nav:` 를 쓰지 않는 이유, GitHub 과 같은 앵커, `docs/` 밖 링크를 렌더 시점에 바꾸는 훅 |
 | [`documentation/backlog-register-check.md`](documentation/backlog-register-check.md) | 백로그 등록부의 중복 ID 와, 항목과 어긋난 표제·색인 건수에 실패하는 검사 — 무엇을 항목과 상태로 읽는가, 번호로 인용되는 등록부의 선언된 읽기, 등록부 간 ID 유일성, 면제 없는 실패, 읽기 규칙을 하나씩 끄는 셀프 테스트 |
 
 ### testing — 모듈의 테스트가 무엇 위에서 도는가

@@ -21,6 +21,10 @@ Semantic Versioning 은 `0.x` 를 "아직 안정을 약속하지 않은 구간"�
 | `0.2` → `0.3` (minor) | **깨질 수 있다.** 변경은 `CHANGELOG.md` 에 전부 기록된다 |
 | `0.x` → `1.0` | §6 의 조건이 충족될 때 |
 
+**이 약속을 어긴 릴리스가 하나 있다 — `0.3.1`.** patch 인데 `ExecutionEnvironment` 작업의 파괴적 변경을
+실었다. 정책을 고치지 않고 예외로 남겼으며, 무엇이 깨졌는지는 `CHANGELOG.md` 의 `[0.3.1]` 첫머리에 있다.
+`0.3.0` 에서 올릴 때는 minor 를 넘을 때처럼 CHANGELOG 를 읽는다.
+
 의존성을 고정할 때 `0.2.+` 같은 열린 범위를 쓰지 않기를 권한다. 정확한 버전을 박고,
 올릴 때 CHANGELOG 를 읽는 편이 이 구간에서는 더 싸다.
 
@@ -179,15 +183,19 @@ publish 를 거절한다.
 
 `1.0` 은 날짜가 아니라 **상태**로 정한다. 아래가 모두 참일 때 올린다.
 
-- [ ] **핵심 SPI 가 한 릴리스 주기 동안 변경 없이 유지됨** — `Tool`, `Hook`, `LlmClient`,
-      `VirtualFileSystem`, `SessionRecordStore`, `AgentExecutor`
+- [ ] **핵심 SPI 가 한 릴리스 주기 동안 변경 없이 유지됨** — `Tool`, `ExecutionHook`, `LlmClient`,
+      `VirtualFileSystem`, `SessionRecordStore`, `AgentExecutor`. `ExecutionHook` 은 이벤트별 하위 인터페이스
+      (`PreToolHook` …)와 그것이 받는 `HookContext` 까지 포함한다 — 훅 구현체가 실제로 의존하는 표면이 그 셋이다.
+      문서에서 개념어로 쓰는 "Hook" 이라는 이름의 타입은 없다
 - [ ] **`aimon-core` 밖에서 온 백엔드 구현이 하나 이상 존재** — SPI 가 정말 구현 가능한지는 이 프로젝트가
       직접 쓴 구현체만으로는 증명되지 않는다
 - [ ] **스코프 모델이 이름 변경 없이 한 주기를 넘김** — 최근 두 번의 파괴적 변경이 모두 여기서 나왔다
 - [ ] **Spring Boot starter 의 미결 항목이 정리됨**
       ([`../backlog/spring-boot-starter-open-items.md`](../backlog/spring-boot-starter-open-items.md))
 - [ ] **공개 API 에 대한 javadoc 이 빠짐없이 존재**
-- [ ] **번역된 문서가 코드와 어긋나지 않음을 검사하는 CI 가 동작** — 문서가 API 의 일부인 프로젝트이므로
+- [x] **번역된 문서가 정본과 어긋나지 않음을 검사하는 CI 가 동작** — 문서가 API 의 일부인 프로젝트이므로.
+      `build.yml` 의 `translations` 잡이다. 번역의 짝은 코드가 아니라 정본이다 — 정본이 코드와 맞는지는 번역
+      검사의 일이 아니라 정본을 고치는 쪽의 일이다
 
 이 목록은 [`roadmap.md`](roadmap.md) 와 함께 읽는다.
 
