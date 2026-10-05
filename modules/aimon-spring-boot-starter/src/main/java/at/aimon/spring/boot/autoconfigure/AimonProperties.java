@@ -1460,10 +1460,21 @@ public class AimonProperties implements InitializingBean {
                 this.reasoningSummary = reasoningSummary;
             }
 
+            /**
+             * Returns whether the Responses API path is used.
+             *
+             * @return the written value, or {@code null} when the key is absent and the client's default applies
+             */
             public Boolean getResponsesApiEnabled() {
                 return responsesApiEnabled;
             }
 
+            /**
+             * Sets whether the Responses API path is used.
+             *
+             * @param responsesApiEnabled
+             *            {@code false} to send every request to Chat Completions; {@code null} to keep the default
+             */
             public void setResponsesApiEnabled(Boolean responsesApiEnabled) {
                 this.responsesApiEnabled = responsesApiEnabled;
             }
