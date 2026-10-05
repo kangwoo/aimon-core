@@ -327,7 +327,7 @@ llm:
 다른 것을 뜻하지도 않기 때문이다. 답으로 하는 일은 다르다 — OpenAI 는 rung 파라미터를 보내고 Anthropic 은
 토큰 예산으로 옮긴다 — 그리고 그 번역이 중립 enum 이 있는 이유다.
 
-에이전트 정의의 `model.reasoningEffort` 가 이것을 이긴다. 값이 이 모델의 사다리에 없으면 파라미터는
+에이전트 정의의 `model.reasoningEffort` 가 이것을 이긴다. 서브에이전트는 자기를 띄운 에이전트의 값을 물려받는다. 값이 이 모델의 사다리에 없으면 파라미터는
 **빠지고 보고된다** — 올려서 맞추지 않는다. 운영자가 하지 않은 요청이 조용히 나가는 것보다 낫기 때문이다.
 
 **Anthropic 에서는 `llm.anthropic.thinkingMode` 가 기본값 `off` 가 아니어야 뜻이 있다.** `off` 아래에서는
@@ -560,6 +560,14 @@ llm:
 
 이 벤더에서 추론 자체는 `encrypted_content` — 설계상 암호문 — 이므로 **요약이 사람이 읽을 수 있는 유일한
 대리물**이다. 그것이 이 키가 Anthropic 쪽의 `thinkingDisplay` 와 다른 이름을 가진 이유다.
+
+**에이전트 정의의 `model.reasoningSummary` 가 이 키를 이긴다.** 값은 `none` \| `auto` \| `concise` \| `detailed` 이고
+대소문자를 가리지 않는다. 뒤의 셋은 이 키와 철자가 같고, `none` 은 에이전트 정의에만 있다 — 이 키는 적지 않는 것으로
+끄지만, 배포가 켠 요약을 한 에이전트만 끄려면 적을 말이 필요하다. `off` · 불리언 · 빈 값 · 모르는 단어는 네 값을 부르는
+오류로 에이전트 로딩을 실패시킨다. 순서는 에이전트 정의의 값 > 이 키 > 요청하지 않음이고, 모델이 요약을 받는지
+(`supportsReasoningSummary`)는 그 다음에 본다. 서브에이전트는 자기 값을 적을 자리가 없어(`model` 이 이름 하나다) 자기를 띄운
+에이전트의 값을 물려받는다. `provider: anthropic` 에서는 `model.reasoningSummary` 가 무시되고 클라이언트가 한 번 WARN 으로
+말한다 — 그쪽에서 thinking 텍스트를 정하는 것은 `thinkingDisplay` 다.
 
 **Responses API 전용이다.** 모델이 추론 트레이스 왕복을 지원하지 않거나 그 엔드포인트가 꺼져 있으면
 요청은 Chat Completions 로 가는데 거기에는 이 파라미터가 없다 — 그 경우 클라이언트가 한 번 WARN 으로

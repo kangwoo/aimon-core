@@ -339,7 +339,8 @@ Unlike the `llm.anthropic` block, **both providers read this one.** The name is 
 something different per vendor. What each *does* with the answer differs — OpenAI sends a rung parameter,
 Anthropic translates it to a token budget — and that translation is what a neutral enum is for.
 
-An agent definition's `model.reasoningEffort` wins over this one. A rung that is not on this model's ladder is
+An agent definition's `model.reasoningEffort` wins over this one. A subagent inherits the value of the agent that
+started it. A rung that is not on this model's ladder is
 **omitted and reported**, never raised to the nearest one it has: a clamp is a request the operator did not
 make, and it would arrive silently.
 
@@ -585,6 +586,16 @@ llm:
 On this vendor the reasoning itself is `encrypted_content` — ciphertext by design — so **a summary is the only
 human-readable surrogate there is.** That is why this key has a different name from Anthropic's
 `thinkingDisplay`.
+
+**An agent definition's `model.reasoningSummary` wins over this key.** Its values are `none` \| `auto` \|
+`concise` \| `detailed`, case-insensitive. The last three are spelled as this key spells them, and `none` exists in
+the agent definition only — this key is turned off by leaving it out, but an agent needs a word to turn off a
+summary the deployment turned on. `off`, a boolean, an empty value or an unknown word fails loading the agent with
+an error that lists the four values. The order is the agent definition's value > this key > nothing asked for, and
+whether the model accepts a summary (`supportsReasoningSummary`) is checked after that. A subagent has nowhere to
+state a value of its own (its `model` is a single name), so it inherits the value of the agent that started it.
+Under `provider: anthropic`, `model.reasoningSummary` is ignored and the client says so once at WARN — what
+decides thinking text there is `thinkingDisplay`.
 
 **Responses API only.** If the model does not support the reasoning trace round trip, or that endpoint is
 switched off, the request goes to Chat Completions, which has no such parameter — and in that case the client

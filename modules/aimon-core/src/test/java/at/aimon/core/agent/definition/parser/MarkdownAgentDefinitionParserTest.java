@@ -18,6 +18,7 @@ import at.aimon.core.agent.definition.exception.AgentDefinitionParseException;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.ReasoningEffort;
+import at.aimon.core.llm.ReasoningSummary;
 
 @DisplayName("MarkdownAgentDefinitionParser Tests")
 class MarkdownAgentDefinitionParserTest {
@@ -199,6 +200,87 @@ class MarkdownAgentDefinitionParserTest {
                     model:
                       name: gpt-5.1
                       reasoningEffort: "%s"
+                    ---
+                    body""".formatted(written);
+        }
+    }
+
+    @Nested
+    @DisplayName("model.reasoningSummary")
+    class ReasoningSummaryParsing {
+
+        @Test
+        @DisplayName("Should bind each of the four values onto the neutral enum")
+        void shouldBindEveryValue() {
+            assertThat(parser.parse(stream(definitionWithSummary("\"none\""))).getModel().getReasoningSummary())
+                    .contains(ReasoningSummary.NONE);
+            assertThat(parser.parse(stream(definitionWithSummary("auto"))).getModel().getReasoningSummary())
+                    .contains(ReasoningSummary.AUTO);
+            assertThat(parser.parse(stream(definitionWithSummary("concise"))).getModel().getReasoningSummary())
+                    .contains(ReasoningSummary.CONCISE);
+            assertThat(parser.parse(stream(definitionWithSummary("detailed"))).getModel().getReasoningSummary())
+                    .contains(ReasoningSummary.DETAILED);
+        }
+
+        @Test
+        @DisplayName("An unquoted none is the word, not a YAML null")
+        void anUnquotedNoneIsTheWord() {
+            assertThat(parser.parse(stream(definitionWithSummary("none"))).getModel().getReasoningSummary())
+                    .contains(ReasoningSummary.NONE);
+        }
+
+        @Test
+        @DisplayName("Should accept any casing, as model.reasoningEffort does")
+        void shouldFoldCase() {
+            for (String written : new String[]{"detailed", "DETAILED", "Detailed", "\" detailed \""}) {
+                assertThat(parser.parse(stream(definitionWithSummary(written))).getModel().getReasoningSummary())
+                        .as(written).contains(ReasoningSummary.DETAILED);
+            }
+        }
+
+        @Test
+        @DisplayName("Should throw naming the key and the four accepted values when the word is unknown")
+        void shouldThrowOnAnUnknownWord() {
+            assertThatThrownBy(() -> parser.parse(stream(definitionWithSummary("brief"))))
+                    .isInstanceOf(AgentDefinitionParseException.class).hasMessageContaining("model.reasoningSummary")
+                    .hasMessageContaining("brief")
+                    .hasMessageContaining("Accepted values: none, auto, concise, detailed.");
+        }
+
+        @Test
+        @DisplayName("off, booleans and an empty value are refused rather than read as none")
+        void offAndBooleansAreRefused() {
+            // YAML reads an unquoted off as the boolean false, so the two arrive here as the same thing. Neither is
+            // guessed to mean none: the message names the word that does.
+            for (String written : new String[]{"off", "\"off\"", "false", "true", "no", "", "~"}) {
+                assertThatThrownBy(() -> parser.parse(stream(definitionWithSummary(written)))).as(written)
+                        .isInstanceOf(AgentDefinitionParseException.class)
+                        .hasMessageContaining("model.reasoningSummary")
+                        .hasMessageContaining("Accepted values: none, auto, concise, detailed.");
+            }
+        }
+
+        @Test
+        @DisplayName("A definition without the key leaves the summary request unset")
+        void anAbsentKeyLeavesItUnset() {
+            final String content = """
+                    ---
+                    name: test
+                    model:
+                      name: gpt-5.1
+                    ---
+                    body""";
+
+            assertThat(parser.parse(stream(content)).getModel().getReasoningSummary()).isEmpty();
+        }
+
+        private String definitionWithSummary(String written) {
+            return """
+                    ---
+                    name: test
+                    model:
+                      name: gpt-5.1
+                      reasoningSummary: %s
                     ---
                     body""".formatted(written);
         }

@@ -418,7 +418,10 @@ environment (design: [`design/tool/execution-environment.md`](../../design/tool/
 **Stale-write protection.** A tool that modifies an existing file checks the stamp in
 `ReadTool.FILE_STAMPS_KEY`. Not read in this execution → `"Read the file before modifying it"`; changed since it
 was read → `"File changed since it was read; Read it again"`. The key is the environment-normalised path, so
-`a.txt`, `./a.txt` and the absolute path are one entry.
+`a.txt`, `./a.txt` and the absolute path are one entry. A new map is created for each turn, each fork and each fire
+of a scheduled routine. So in a routine too, a `Write` step that overwrites an existing file, and an `Edit` step, need
+a `Read` step for that file earlier in the same fire. A routine that overwrote an existing file without a `Read` must
+be registered again with the `Read` step added.
 
 ### Creating a context (for tests/initialisation)
 

@@ -172,7 +172,7 @@ CLI 의 `default-config.yaml` 은 `reasoningEffort` 와 `acceptedReasoningEffort
 | `thinkingBudgetTokens` | `llm.anthropic.thinkingBudgetTokens` | `aimon.llm.anthropic.thinking-budget-tokens` | — | **벤더** | 이름 — `budget_tokens` 는 Anthropic 요청 본문의 필드다. 뜻 — 다른 벤더는 생각의 양을 토큰 수로 말하지 않는다 |
 | `replayThinkingBlocks` | `llm.anthropic.replayThinkingBlocks` | `aimon.llm.anthropic.replay-thinking-blocks` | — | **벤더** | 이름 — thinking 블록은 Anthropic 의 서명된 콘텐츠 블록이다 |
 | `thinkingDisplay` | `llm.anthropic.thinkingDisplay` | `aimon.llm.anthropic.thinking-display` | — | **벤더** | 이름 — "thinking" 과 Anthropic `thinking` 객체 안의 필드명 `display` |
-| `reasoningSummary` | `llm.openai.reasoningSummary` | `aimon.llm.openai.reasoning-summary` | — | **벤더** | 이름 — `reasoning.summary` 는 OpenAI 요청 본문의 경로이고, 값 `auto` · `concise` · `detailed` 는 OpenAI 의 어휘다 |
+| `reasoningSummary` | `llm.openai.reasoningSummary` | `aimon.llm.openai.reasoning-summary` | `model.reasoningSummary` | **벤더**(배포 키) · 이름은 중립(frontmatter) | 배포 키는 벤더다 — `reasoning.summary` 는 OpenAI 요청 본문의 경로이고, 값 `auto` · `concise` · `detailed` 는 OpenAI 의 어휘다. frontmatter 키는 중립 타입 `ReasoningSummary` 로 읽으며 지금 따르는 provider 는 OpenAI 하나다(Anthropic 은 무시하고 한 번 말한다). frontmatter 에만 `none` 이 있다 — 배포 키는 적지 않는 것으로 끄고, 그 서브트리는 모르는 값을 기동 실패로 거절한다 |
 | `responsesApiEnabled` | `llm.openai.responsesApiEnabled` | `aimon.llm.openai.responses-api-enabled` | — | **벤더** | 이름이 OpenAI 엔드포인트다. Chat Completions 만 구현한 게이트웨이가 설정만으로 닿는 404 의 출구이며, 적지 않으면 기본값은 `OpenAIConfig` 의 것(`true`)이다 |
 | 샘플링 기본값 — `temperature` · `topP` · `presencePenalty` · `frequencyPenalty` | `llm.openai.*` (넷) · `llm.anthropic.temperature` (하나) | `aimon.llm.openai.*` (넷) · `aimon.llm.anthropic.temperature` (하나) | `model.temperature` · `model.topP` | **벤더** | 뜻 — 이름은 중립이지만 유효범위가 벤더마다 다르고(`temperature` 는 OpenAI `0.0`–`2.0`, Anthropic `0.0`–`1.0`) 한쪽에는 없는 파라미터가 있다. 블록마다 키가 다른 이유는 §3.3 |
 
@@ -568,6 +568,11 @@ null 리졸버와 부딪히지 않고, 대소문자는 매퍼 기능이 덮는�
 ([`../integration/config-value-expansion-and-frontmatter-strictness.md`](../integration/config-value-expansion-and-frontmatter-strictness.md)).
 에이전트 정의의 effort 와 클라이언트 설정의 effort 가 함께 있을 때 무엇이 이기는지는
 [`request-parameters.md`](request-parameters.md) 가 정한다.
+
+**`model.reasoningSummary` 도 같은 자리에서 같은 규칙으로 읽는다.** 값은 `none` · `auto` · `concise` · `detailed` 이고
+중립 enum `ReasoningSummary` 에 fold 한다. 문자열이 아닌 값(인용하지 않은 `off` 가 되는 불리언, 빈 값)과 모르는 단어는 키와 네
+값을 부르는 `AgentDefinitionParseException` 이다. 뜻과 우선순위는 [`streaming.md`](streaming.md) §5.6 이 정한다.
+`canonicalForm` 은 이 키의 줄을 값이 있을 때만 싣는다.
 
 **`AgentDefinitionVersion.canonicalForm` 은 `model.reasoningEffort=` 줄을 싣는다.** 이 버전은 요청 시점보다 오래 사는 작업
 (예약된 cron 이 다시 울릴 때 그 사이 수정된 정의로 다시 만들어진 런타임에 붙는 것)을 위한 변경 감지기이고, 정의가 바뀌었다고

@@ -172,7 +172,7 @@ The only mutable value the framework identified is the `ReadTool.FILE_STAMPS_KEY
 builder.put(ReadTool.FILE_STAMPS_KEY, new ConcurrentHashMap<>());
 ```
 
-- This map is created once per execution and kept across iterations (so the stale-write check works across several iterations). A fork does not inherit its parent's stamps.
+- This map is created once per execution and kept across iterations (so the stale-write check works across several iterations). A fork does not inherit its parent's stamps. A scheduled routine also gets a new map for each fire.
 - (History) The old `READ_FILES_KEY` Set remembered paths only, so it could tell only whether a file had been read. A stamp also tells whether the file changed **after** it was read — [`design/tool/execution-environment.md`](../../design/tool/execution-environment.md) §7.
 
 > **A caution for new tools:** a tool that puts mutable state into `ToolContext` and mutates it must either declare `SEQUENTIAL` or use a thread-safe data structure.

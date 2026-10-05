@@ -34,6 +34,7 @@ public final class LlmModel {
     private final Double presencePenalty;
     private final Double frequencyPenalty;
     private final ReasoningEffort reasoningEffort;
+    private final ReasoningSummary reasoningSummary;
     private final Duration requestTimeout;
 
     private LlmModel(Builder builder) {
@@ -44,6 +45,7 @@ public final class LlmModel {
         presencePenalty = builder.presencePenalty;
         frequencyPenalty = builder.frequencyPenalty;
         reasoningEffort = builder.reasoningEffort;
+        reasoningSummary = builder.reasoningSummary;
         requestTimeout = builder.requestTimeout;
 
         // Validate ranges.
@@ -154,6 +156,20 @@ public final class LlmModel {
     }
 
     /**
+     * Gets whether this call asks the provider for a reasoning summary, and how detailed a one.
+     *
+     * <p>
+     * Empty means the caller says nothing and the provider follows its own deployment setting. A value — including
+     * {@link ReasoningSummary#NONE} — takes precedence over that setting. A provider or model that has no such
+     * request parameter ignores it and reports that once.
+     *
+     * @return Optional containing the reasoning summary request, or empty if not set
+     */
+    public Optional<ReasoningSummary> getReasoningSummary() {
+        return Optional.ofNullable(reasoningSummary);
+    }
+
+    /**
      * Gets the per-request worst-case timeout ceiling (safety net).
      *
      * <p>
@@ -180,20 +196,21 @@ public final class LlmModel {
                 && Objects.equals(maxTokens, that.maxTokens) && Objects.equals(topP, that.topP)
                 && Objects.equals(presencePenalty, that.presencePenalty)
                 && Objects.equals(frequencyPenalty, that.frequencyPenalty) && reasoningEffort == that.reasoningEffort
-                && Objects.equals(requestTimeout, that.requestTimeout);
+                && reasoningSummary == that.reasoningSummary && Objects.equals(requestTimeout, that.requestTimeout);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(name, temperature, maxTokens, topP, presencePenalty, frequencyPenalty, reasoningEffort,
-                requestTimeout);
+                reasoningSummary, requestTimeout);
     }
 
     @Override
     public String toString() {
         return "LlmModel{" + "model='" + name + '\'' + ", temperature=" + temperature + ", maxTokens=" + maxTokens
                 + ", topP=" + topP + ", presencePenalty=" + presencePenalty + ", frequencyPenalty=" + frequencyPenalty
-                + ", reasoningEffort=" + reasoningEffort + ", requestTimeout=" + requestTimeout + '}';
+                + ", reasoningEffort=" + reasoningEffort + ", reasoningSummary=" + reasoningSummary
+                + ", requestTimeout=" + requestTimeout + '}';
     }
 
     /**
@@ -221,6 +238,7 @@ public final class LlmModel {
         private Double presencePenalty;
         private Double frequencyPenalty;
         private ReasoningEffort reasoningEffort;
+        private ReasoningSummary reasoningSummary;
         private Duration requestTimeout;
 
         private Builder() {
@@ -342,6 +360,23 @@ public final class LlmModel {
          */
         public Builder reasoningEffort(ReasoningEffort reasoningEffort) {
             this.reasoningEffort = reasoningEffort;
+            return this;
+        }
+
+        /**
+         * Sets whether this call asks the provider for a reasoning summary, and how detailed a one.
+         *
+         * <p>
+         * A value set here takes precedence over the provider's deployment setting, in both directions:
+         * {@link ReasoningSummary#NONE} asks for no summary where the deployment asks for one, and a level asks for
+         * one where the deployment asks for none. Leaving it unset defers to the deployment.
+         *
+         * @param reasoningSummary
+         *            The reasoning summary request; {@code null} leaves it unset
+         * @return This builder
+         */
+        public Builder reasoningSummary(ReasoningSummary reasoningSummary) {
+            this.reasoningSummary = reasoningSummary;
             return this;
         }
 

@@ -183,7 +183,7 @@ builder.put(ReadTool.FILE_STAMPS_KEY, new ConcurrentHashMap<>());
 ```
 
 - 이 맵은 실행(execution) 당 1회 생성되어 iteration 사이에 유지된다(낡은 쓰기 검사가 여러 iteration에 걸쳐
-  동작). 포크는 부모의 stamp 를 물려받지 않는다.
+  동작). 포크는 부모의 stamp 를 물려받지 않는다. 스케줄 루틴도 발화마다 새 맵을 받는다.
 - (이력) 옛 `READ_FILES_KEY` Set 은 경로만 기억해 "읽었는가"만 볼 수 있었다. stamp 는 읽은 **뒤** 파일이
   바뀌었는지도 본다 — [`design/tool/execution-environment.md`](../../design/tool/execution-environment.md) §7.
 

@@ -160,17 +160,20 @@ engine 은 저장소를 모른다.
 
 ## 4. `DefaultContextEngine` — 지금의 동작
 
-기본 engine 은 오늘의 동작을 뷰 모델로 옮긴 것이다. 모델이 보는 것은 바뀌지 않는다.
+기본 engine 은 오늘의 동작을 뷰 모델로 옮긴 것이다. 판정 규칙은 그대로이고, 모델이 보는 것은 **한 가지만** 다르다 —
+뷰 모드의 요약은 모델이 아직 답하지 않은 부분(마지막 assistant 메시지 뒤의 도구 결과나 입력)을 흡수하지 않고 원문으로
+남긴다(§13.10). in-place(v1) 는 지금처럼 전부 요약한다. 처음 설계는 "모델이 보는 것은 바뀌지 않는다"(v1 in-place 와 같은
+결과)를 약속했고, 그 약속은 이 한 가지에서 내려놓았다(SL-6, 2026-10-05).
 
 | 지금 | `DefaultContextEngine` |
 |------|------------------------|
 | `DefaultCompactionGuard` 의 판정(blocking → breaker → auto → warning), 세션 락, 사전조건 | 그대로 |
-| 전체 compaction = `replaceWith([B, S])` | `summarize(뷰 시작, 끝, S)` — 뷰는 `[B, S]` 만 남고 로그는 그대로 |
+| 전체 compaction = `replaceWith([B, S])` | `summarize(뷰 시작, 미응답 부분의 시작, S)` — 뷰는 `[B, S]` 와 그 뒤의 미응답 메시지(원문)이고 로그는 그대로. 미응답 부분이 없으면(뷰가 assistant 메시지로 끝난다) `[B, S]` 만 남는다 |
 | 복구 = `DefaultPromptSizeRecoveryStrategy` 가 **가장 오래된 USER 메시지 하나**(마지막 USER 와 압축 마커 제외)를 뺀 목록으로 `replaceWith` | 그 메시지 하나를 `drop(s, s + 1)` — USER 메시지 앞뒤는 합법 절단면이므로 불변식을 지킨다 |
-| `/compact` = 엔진 직접 호출 | `compactNow` — 전체 compaction |
+| `/compact` = 엔진 직접 호출 | `compactNow` — 같은 절단면의 compaction. 턴 사이에는 뷰가 assistant 메시지로 끝나므로 전체다 |
 | budget-forced 패스 | `ContextRequest.budgetForced` — 유효 임계값을 warning 밴드로 |
 
-그래서 기본 engine 에서도 L4·L5 가 사라지고, L3 은 원문이 저장되는 데까지 해소된다. **정책을 바꾸지 않고 얻는 것**이 이
+그래서 기본 engine 에서도 L4·L5 가 사라지고, L3 은 원문이 저장되는 데까지 해소된다. **판정 정책을 바꾸지 않고 얻는 것**이 이
 분리의 첫 번째 이득이다.
 
 circuit breaker 는 지금처럼 `CompactionFailureStore` 뒤에 있다 — in-memory 기본, 스케일아웃에서는
@@ -517,9 +520,11 @@ CTX-05 가 선행 조건이다. 그때 되살린다면 고정 단위는 "메모�
   `CompactionGuard`, 요약하지 못하는 engine, engine 없는 Default guard 를 거절한다. `OrcaAgentRuntimeFactory` 는 노드의
   쓰기 형식으로 이것을 건다. `OrcaAgentRuntime.Builder` 가 파생하는 engine 은 형식을 받지 않으므로(v1) 그 경로로 들어온
   커스텀 guard 는 거절되지 않는다
-- **전체 compaction** 의 span 은 `[floorSeq, nextSeq)` 이고 요약 입력은 현재 뷰(이전 `[B, S]` 포함)다 — in-place 재압축이
-  보내던 것과 같으므로 L2 가 그대로다. `summarizeView` 가 span 을 거절하면 실패이고 로그는 그대로다
-- **`compactNow`** 는 뷰 전체를 MANUAL 로 요약하고 성공하면 breaker 를 리셋한다. 빈 뷰는 LLM 을 부르지 않고 실패한다.
+- **전체 compaction** 의 span 은 `[floorSeq, cut)` 이고 요약 입력은 그 절단면 앞의 뷰(이전 `[B, S]` 포함)다. `cut` 은
+  미응답 부분의 시작 이하의 마지막 합법 절단이고, 미응답 부분이 없으면 `nextSeq` 다(§13.10). 이전 요약을 다시 요약하는 것은
+  in-place 재압축과 같으므로 L2 가 그대로다. `summarizeView` 가 span 을 거절하면 실패이고 로그는 그대로다
+- **`compactNow`** 는 같은 절단면까지를 MANUAL 로 요약하고 성공하면 breaker 를 리셋한다. 빈 뷰와, 미응답 부분만 남은 뷰는
+  LLM 을 부르지 않고 실패한다.
   기본 engine 에는 `tryLock` 과 경합 실패가 없다 — §5.6 이 그것을 롤링 engine 의 절에 두었고, 롤링만
   `CompactionContendedException` 을 돌려준다
 - **복구 어댑터 `RecoveryDiff`.** 전략의 답을 뷰와 인스턴스로 대조한다(왼쪽부터 탐욕 — 같은 인스턴스가 둘이면 앞의 것이
@@ -660,8 +665,8 @@ CTX-05 가 선행 조건이다. 그때 되살린다면 고정 단위는 "메모�
   들어가고 로그 · 뷰 · 버퍼에는 들어가지 않으므로 v1 의 결과(boundary + summary 쌍)는 그대로다. 요약 입력의 크기를 못 박았던
   테스트 셋은 결함이 있던 요청 모양을 고정한 것이라 고쳤다
 - **롤링의 `SUMMARIZE_NOTE` 는 남는다.** 롤링은 `summarize()` 를 지원하는 **아무** `CompactionEngine` 과도 돌기 때문에 자기
-  입력을 스스로 닫는다. 기본 engine 은 이미 user 로 끝난 입력에 아무것도 더 붙이지 않는다. 기본 engine 의 뷰 모드는 뷰를
-  그대로 넘기므로, `summarize()` 를 직접 구현한 사용자 engine 이 요청을 닫는 것은 그 engine 의 몫이다
+  입력을 스스로 닫는다. 기본 engine 은 이미 user 로 끝난 입력에 아무것도 더 붙이지 않는다. 기본 engine 의 뷰 모드는 뷰의
+  절단면 앞부분을 그대로 넘기므로, `summarize()` 를 직접 구현한 사용자 engine 이 요청을 닫는 것은 그 engine 의 몫이다
 - **빈 응답이 이유를 말한다.** Anthropic 클라이언트의 `No content blocks` 예외 문장에 `stop_reason` 과 요청이 assistant
   메시지로 끝났는지(prefill 인지)가 들어간다. 예외 타입은 그대로 `LlmClientException` 이다
 
@@ -703,14 +708,37 @@ live 테스트의 keyless 쌍둥이가 처음 돌 때 드러난 결함이다. �
 - **복구.** `RecoveryDiff` 가 미응답 메시지를 빼는 전략의 답을 거절한다 — 두 engine 모두의 뷰 복구가 거친다.
   `DefaultPromptSizeRecoveryStrategy` 는 마지막 USER 를 빼지 않고 TOOL 을 빼지 않으므로 원래 거기에 닿지 않았다. 이 검사는
   사용자 전략을 위한 것이다
-- **기본 engine 의 뷰 모드는 바꾸지 않았다(결정).** 위 규칙은 롤링 engine 의 것이다. 기본 engine 은 뷰 전체를
-  `[floorSeq, nextSeq)` span 으로 요약하는데, 이것이 §4 가 약속한 "모델이 보는 것은 바뀌지 않는다"(v1 in-place 와 같은 결과)
-  자체다 — 미응답 부분을 남기면 그 약속을 깬다. 그리고 규칙이 막으려는 고리가 거기에는 없다: prune 도 placeholder 도 없고,
-  미응답 결과는 요약 호출에 **원문 그대로** 들어가며 `SessionHistory` 도 등록되지 않으므로 elide → 다시 읽기 → elide 가
-  생기지 않는다. 남는 위험은 하나다 — 기본 engine 의 auto 임계값을 넘는 도구 결과 하나가 모델이 읽기 전에 요약으로 접히고,
-  같은 도구를 다시 부르면 또 접힌다. 정보는 요약 안에 남고, 그 크기면 blocking 에도 가까우며, v1 과 같은 동작이다. 이 결과는
-  열어 두었고 [`SL-6`](../../backlog/session-log-open-items.md#sl-6--기본-engine-은-auto-임계값을-넘는-미응답-도구-결과를-매번-요약으로-접는다--열림)
-  이 정본이다
+- **기본 engine 의 뷰 모드도 같은 규칙을 따른다(결정, SL-6 · 2026-10-05).** 처음에는 바꾸지 않았다 — 기본 engine 은 뷰 전체를
+  `[floorSeq, nextSeq)` span 으로 요약했고, 그것이 §4 가 약속한 v1 in-place 와의 동일성이었다. 그 결과 auto 임계값을 넘는
+  도구 결과 하나가 모델이 읽기 전에 요약으로 접혔고, 모델이 같은 도구를 다시 부르면 또 접혔다. 지금은 미응답 부분의 정의
+  (`ViewProjection.firstUnreadPosition()`)와 합법 절단(`LegalCuts`)을 롤링과 **같은 것으로** 쓴다
+  - **무엇이 달라졌나.** `prepare` 는 대개 방금 들어온 입력이나 도구 결과로 끝나는 뷰를 받으므로, 달라지는 것은 큰 도구 결과만이
+    아니라 **모든** AUTO 압축의 결과다 — 전에는 `[B, S]` 였고 지금은 `[B, S]` + 미응답 메시지(원문)다. 미응답 부분이 도구
+    결과면 그 `tool_use` 를 낸 assistant 메시지도 함께 남는다(그 사이는 합법 절단이 아니다). 턴 사이의 `/compact` 처럼 뷰가
+    assistant 메시지로 끝나면 전과 같이 `[B, S]` 다. PostCompact 훅이 로그에 붙이는 메시지는 미응답 메시지 **뒤에** 온다
+  - **AUTO · budget-forced — 미응답 부분만 남았을 때.** 그 앞에 로그 항목이 하나도 없으면(뷰가 미응답 입력뿐이거나, 이미 있는
+    span 의 마커 뒤에 미응답 부분만 있다) 요약할 것이 없다. 요약 호출도 훅도 없고 뷰 상태도 그대로다. 결과는
+    `NothingToCompactException` 을 실은 실패이고, guard 는 그것을 `WARN`(`auto-compact threshold reached but nothing to
+    compact: …`)으로 돌려준다 — `COMPACT` 가 아니므로 `CompactBoundary` 이벤트와 압축 기록이 생기지 않고, breaker 에도 세지
+    않는다. 모델이 답할 때까지 iteration 마다 같은 `WARN` 이 나올 뿐 요약을 되풀이하지 않는다. 이전 요약의 마커만 다시
+    요약하지 않는 것은 그것이 아무것도 줄이지 못하기 때문이다
+  - **blocking 한계.** 먼저 같은 규칙으로 미응답 부분 앞을 요약한다. 그것으로 내려가지 못해도 그 호출은 그대로 보낸다
+    (`COMPACT`). 미응답 부분만 남은 채 blocking 한계에 있으면 — 처음부터 그랬든, 방금의 압축 뒤든 — **미응답 부분까지 전부
+    요약한다**(WARN 로그 한 줄). 한계를 넘는 요청은 보낼 수 없고, 접는 것이 실행을 실패시키는 것의 유일한 대안이기 때문이다.
+    이것이 이 engine 에서 모델이 읽지 않은 것을 요약자의 말로 받는 단 하나의 자리다. 한 번으로 끝난다 — 그 뒤의 뷰는
+    `[B, S]` 뿐이다. 롤링은 같은 자리에서 `BLOCK` 으로 끝낸다. 기본 engine 이 다르게 한 것은 이 engine 에는 접힌 원문을
+    되찾을 `SessionHistory` 가 없고, 바꾸기 전에도 이 자리에서는 실행이 살아남았기 때문이다
+  - **수동 `/compact`.** 롤링과 같다. 중단된 턴의 미응답 입력 앞에서 멈추고, 미응답 입력뿐이면 `nothing to compact` 실패다
+    (breaker 는 리셋하지 않는다)
+  - **in-place(v1 로그와 §13.2 의 폴백)는 바꾸지 않았다.** `replaceWith` 로 전부 요약한다. v1 쓰기 형식은 deprecated 경로이고,
+    거기에는 뷰도 절단면의 seq 도 없다
+  - **span 장부.** span 은 `[floorSeq, cut)` 이고 다음 압축이 넓힌다. 봉인(session-log §5)은 span 이 가린 구간만 가져가므로
+    미응답 메시지는 레코드에 남는다. 턴의 rewind 지점은 대개 `cut` 과 같은 자리다(그 턴의 입력이 미응답 부분의 시작이다)
+  - **테스트.** `DefaultContextEngineViewModeTest.Unanswered` 의 열 개와
+    `OrcaAgentExecutorViewModeTest.anUnansweredInputAloneIsNotCompactedAndNotReportedAsOne`. v1 과의 동일성을 못 박았던
+    테스트 일곱은 고쳤다 — `aCompactionRecordsASpanAndLeavesTheLogAlone` · `postCompactHooks…` · `aSecondCompactionAbsorbsTheFirstSpan`
+    · `InPlaceFallbackOverAView` 의 준비 메서드 · `DefaultContextEngineSummaryRequestTest` 의 도구 결과로 끝나는 요청 ·
+    `OrcaAgentExecutorViewModeTest` 의 둘
 - **`SessionHistory` 의 상한.** `seq` 읽기는 메시지와 이웃 넷, 각 `maxResultChars`(2000자)까지다. 검색은 일치마다 그만큼을
   더했으므로 `limit` 20 이면 20만 자까지 갈 수 있었다. 이제 결과가 `SEARCH_RESULT_PARTS`(10) × `maxResultChars` 에 닿으면 더
   일치를 붙이지 않고 그 사실을 적는다(첫 일치는 언제나 보인다). 방금 받은 도구 결과는 위 규칙으로 보호되므로, 큰 원문을

@@ -428,8 +428,10 @@ reasoning item 은 매 응답에 나오지 않는다 — 모델이 추론할 때
 - `OpenAIConfig.reasoningSummary(OpenAiReasoningSummary)` — `AUTO` · `CONCISE` · `DETAILED`. 기본은 미설정(opt-in)이다.
   SDK 의 `Reasoning.Summary` 가 아니라 프레임워크 enum 인 이유는 공개 설정 표면에 SDK 타입을 두면 벤더 SDK 가 우리 API 의
   일부가 되기 때문이다. 설정 키는 [`configuration-surface.md`](configuration-surface.md) 가 정한다
-- 요청은 클라이언트 단위(`OpenAIConfig`)이고 모델 이름은 요청 단위다. summary 는 §4.3 의 `reasoning` 객체에 effort 와 독립으로
-  들어간다
+- 배포의 값은 클라이언트 단위(`OpenAIConfig`)이고 모델 이름은 요청 단위다. 요청의 `LlmModel.reasoningSummary`(에이전트 정의의
+  `model.reasoningSummary`)가 있으면 그것이 `OpenAIConfig` 의 값을 이긴다 — `NONE` 은 요청하지 않음, 나머지 셋은 이름이 같은
+  벤더 값이다(`OpenAiReasoningSummaries.fromNeutral`). 해석은 `OpenAiRequestParameters.requestedSummary` 한 곳에서 하고
+  아래 게이트는 그 다음에 걸린다. summary 는 §4.3 의 `reasoning` 객체에 effort 와 독립으로 들어간다
 
 **게이트.** 요청 팩토리는 summary 를 싣기 전에 `ModelCapabilities.supportsReasoningSummary()` 를 본다. 거짓이면 생략하고 한 번
 보고한다 — `maySendEffort` 와 샘플링 생략이 이미 하는 방식이다.
@@ -450,7 +452,7 @@ reasoning item 은 매 응답에 나오지 않는다 — 모델이 추론할 때
 
 **전달.** 매퍼는 `response.reasoning_summary_text.delta` 와 `response.reasoning_text.delta` **두 계열 모두**를 하나의 게이트
 아래 `REASONING_DELTA` 로 흘린다. 원문 계열을 빼면 summary 대신 원문을 내는 모델에서, 추론을 보겠다고 요청한 배포가 아무것도 보지
-못한다. 게이트는 델타의 도착이 아니라 `reasoningSummary` 가 설정되었는지다 — `baseUrl` 뒤의 호환 게이트웨이는 요청 없이
+못한다. 게이트는 델타의 도착이 아니라 이 요청이 summary 를 요청했는지(위 해석의 답)다 — `baseUrl` 뒤의 호환 게이트웨이는 요청 없이
 summary 이벤트를 보낼 수 있고, 아무것도 설정하지 않은 배포는 달라지는 것이 없어야 한다. 전달 게이트의 정본은
 [`streaming.md`](streaming.md) 다.
 

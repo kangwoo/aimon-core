@@ -36,6 +36,7 @@ import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.Message;
+import at.aimon.core.llm.ReasoningSummary;
 import at.aimon.core.llm.ReasoningTrace;
 import at.aimon.core.llm.Role;
 import at.aimon.core.llm.TokenUsage;
@@ -418,6 +419,7 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
                         "frequencyPenalty {} has no Anthropic counterpart and is being dropped; the call will succeed "
                                 + "without it.",
                         p));
+        modelConfig.getReasoningSummary().ifPresent(this::reportIgnoredReasoningSummary);
 
         // Convert and add messages. Stripping the traces up front rather than passing a flag down keeps the converter
         // with one rule: it replays what it is given.
@@ -652,6 +654,39 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
                     modelName, e.toString());
             return ModelCapabilities.unknown();
         }
+    }
+
+    /**
+     * Says once that the call's {@code reasoningSummary} — an agent definition's {@code model.reasoningSummary} —
+     * reaches nothing on this provider.
+     *
+     * <p>
+     * The Messages API has no reasoning summary request. Whether thinking text streams here is decided by this
+     * client's own {@code thinkingDisplay}, whose vocabulary is a different one, so the value is not translated: it
+     * is ignored and the call goes out without it, as an effort that reaches nothing does. A level is always reported.
+     * {@link ReasoningSummary#NONE} is reported only when a {@code thinkingDisplay} is configured, because that is
+     * the one case where the agent asked for no reasoning text and may still get some; without a display the request
+     * already carries what {@code NONE} asked for and there is nothing to say.
+     *
+     * <p>
+     * Once per value through {@link #reportDivergence}, so a subagent that inherits the value on every call it makes
+     * does not repeat the line.
+     */
+    private void reportIgnoredReasoningSummary(ReasoningSummary summary) {
+        if (summary == ReasoningSummary.NONE) {
+            config.getThinkingDisplay()
+                    .ifPresent(display -> reportDivergence("reasoningSummaryIgnored=" + summary + "@" + display,
+                            "reasoningSummary {} is set on the model but has no Anthropic counterpart and is being "
+                                    + "ignored; thinkingDisplay {} still applies, so thinking text can still stream. "
+                                    + "Unset thinkingDisplay to stop it.",
+                            summary, display));
+            return;
+        }
+        reportDivergence("reasoningSummaryIgnored=" + summary,
+                "reasoningSummary {} is set on the model but has no Anthropic counterpart and is being ignored; the "
+                        + "call will succeed without it. Whether thinking text streams on this provider is decided "
+                        + "by thinkingDisplay.",
+                summary);
     }
 
     /**

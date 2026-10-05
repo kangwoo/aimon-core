@@ -137,12 +137,31 @@ RoutineExecutor
 | `AGENT_RUNTIME_ID` | `task.boundRuntimeId` | 도구를 해결한 바로 그 런타임. 이것이 없으면 routine 안에서 스케줄링 도구가 아예 못 쓰인다 |
 | `PRINCIPAL` | `task.owner` | 없으면 중첩 등록이 `Principal.system()` 으로 떨어져 원래 사람을 지운다 |
 | `EXECUTION_ID` | `ExecutionId.generate("routine:" + taskId)` | 발화마다 새로. 같은 작업의 두 발화를 구분하는 유일한 값 |
+| `FILE_STAMPS_KEY` | 빈 `ConcurrentHashMap` | 발화마다 새로. `Read` 가 기록하고 `Edit` · `Write` 가 대조하는 read stamp — 아래 "read stamp" 문단 |
 | `SESSION_ID` | **없음** | 세션이 없다 |
 | `INVOKING_SESSION_ID` | **없음** | 같은 이유 |
 
 `SessionId` 를 합성하지 **않는** 것이 결정이다(D3). 합성하면 세션 단위 상태 — 스킬 승인이 대표적이다 — 가
 사용자가 본 적 없고 발화마다 바뀌는 값으로 키잉된다. 식별자가 필요한 실행은 자기가 무엇인지 인정하는
 식별자를 받는다.
+
+**read stamp 는 발화 단위다.** 두 실행기가 실행마다 stamp 맵을 넣듯이 `RoutineExecutor` 도 발화마다 빈 맵을 넣는다
+([`execution-environment.md`](../tool/execution-environment.md) §7). 그래서 routine 의 파일 단계는 턴이나 포크의 파일
+도구와 같은 규칙을 따른다.
+
+- `Edit` 단계는 같은 발화의 앞 단계에서 그 파일을 `Read` 했으면 동작한다. 맵이 없던 때에는 언제나 "읽지 않았다" 로
+  거절됐다.
+- **기존 파일을 덮어쓰는 `Write` 단계는 같은 발화의 앞 단계에서 그 파일을 `Read` 해야 한다.** 읽지 않았으면
+  `Read the file before modifying it: <경로>` 로 실패하고 파일은 바뀌지 않는다. 새 파일을 만드는 `Write` 와, 같은
+  발화에서 자기가 쓴 파일을 다시 고치는 단계는 `Read` 가 필요 없다.
+- 맵은 그 발화의 `ToolContext` 만 참조한다. `RoutineExecutor` · `ScheduledTask` · `AgentRuntime` 은 발화보다 오래 살기
+  때문에 거기에 두지 않는다. 앞 발화에서 읽은 파일은 다음 발화에서 다시 읽어야 한다. 단계가 띄운 서브에이전트는
+  포크와 마찬가지로 자기 맵을 새로 받는다.
+
+**마이그레이션.** 맵이 없던 때에 등록한 routine 가운데 `Read` 없이 기존 파일을 덮어쓰는 `Write` 단계가 있으면 그
+단계가 이제 실패한다. 그 단계 앞에 같은 `file_path` 의 `Read` 단계를 넣어 다시 등록한다(작업 수정 API 가 없으므로 취소 후
+재등록이다). 읽은 내용이 필요 없어도 넣어야 한다 — 검사하는 것은 읽은 뒤 파일이 바뀌지 않았다는 사실이다. 실패한 단계의
+`maxRetries` 는 같은 이유로 다시 실패하므로 재시도로는 넘어가지 않는다.
 
 ### 3.3 그래서 승인 체인은 어떻게 되는가
 

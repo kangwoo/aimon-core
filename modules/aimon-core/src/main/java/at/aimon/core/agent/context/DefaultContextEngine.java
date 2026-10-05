@@ -6,6 +6,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.LongPredicate;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,9 +23,11 @@ import at.aimon.core.agent.compact.CompactionTrigger;
 import at.aimon.core.agent.compact.DefaultCompactionGuard;
 import at.aimon.core.agent.compact.NoOpCompactionGuard;
 import at.aimon.core.agent.compact.NoOpPromptSizeRecoveryStrategy;
+import at.aimon.core.agent.compact.NothingToCompactException;
 import at.aimon.core.agent.compact.PromptSizeRecoveryDecision;
 import at.aimon.core.agent.compact.PromptSizeRecoveryStrategy;
 import at.aimon.core.agent.compact.SummaryRequest;
+import at.aimon.core.agent.session.transcript.LegalCuts;
 import at.aimon.core.agent.session.transcript.SeqRange;
 import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.agent.session.transcript.SessionLogState;
@@ -47,19 +50,22 @@ import at.aimon.core.llm.token.TokenEstimator;
  * &rarr; warning), its per-session lock and its precondition; {@code forceCompact} semantics when the request is
  * budget-forced;
  * <li>{@link #recover} &mdash; the {@link PromptSizeRecoveryStrategy};
- * <li>{@link #compactNow} &mdash; a full MANUAL compaction through the {@link CompactionEngine}, resetting the guard's
+ * <li>{@link #compactNow} &mdash; a MANUAL compaction through the {@link CompactionEngine}, resetting the guard's
  * circuit breaker on success the way {@code /compact} always has.
  * </ul>
  *
  * <p>
- * <b>Two modes, chosen per transcript by its log format.</b> What the model sees is the same in both; what differs is
- * whether the record keeps the original.
+ * <b>Two modes, chosen per transcript by its log format.</b> They differ in whether the record keeps the original,
+ * and in one thing the model sees: view mode leaves the messages the model has not answered yet out of the summary,
+ * where the in-place mode still summarizes everything (context-engine §13.10).
  *
  * <ul>
  * <li><b>View mode</b> &mdash; a {@linkplain SessionLogFormat#V2 version-2} log. The log stays append-only. A
- * compaction summarizes the whole view through {@link CompactionEngine#summarize} and records the summary as the view
- * state's span ({@link TranscriptBuffer#summarizeView}), so the view is the {@code [boundary, summary]} pair and the
- * log still holds every message. A recovery drops what the strategy left out, as seq ranges
+ * compaction summarizes the view up to the part the model has not answered yet, through
+ * {@link CompactionEngine#summarize}, and records the summary as the view state's span
+ * ({@link TranscriptBuffer#summarizeView}), so the view is the {@code [boundary, summary]} pair followed by the
+ * unanswered messages, verbatim, and the log still holds every message. A recovery drops what the strategy left out, as
+ * seq ranges
  * ({@link TranscriptBuffer#dropFromView}) mapped back by position (see {@link RecoveryDiff}). The view is
  * {@link ViewProjection projected} from the log and the view state (context-engine §4).
  * <li><b>In place</b> &mdash; a version-1 log, which cannot persist a view state. A compaction or a recovery replaces
@@ -187,7 +193,7 @@ public final class DefaultContextEngine implements ContextEngine {
         if (compactionGuard instanceof DefaultCompactionGuard rules) {
             decision = rules.decide(buffer.getSessionId(), request.getSystemPrompt(), before.getMessages(),
                     request.getModel(), request.isBudgetForced(),
-                    forced -> summarizeIntoView(request, CompactionTrigger.AUTO, null, before));
+                    forced -> summarizeIntoView(request, CompactionTrigger.AUTO, null, before, forced));
         } else {
             decision = CompactionDecision.none();
         }
@@ -314,7 +320,7 @@ public final class DefaultContextEngine implements ContextEngine {
         }
         if (inViewMode(buffer)) {
             final CompactionResult result = summarizeIntoView(request, CompactionTrigger.MANUAL, instructions,
-                    ViewProjection.of(buffer.getLogState()));
+                    ViewProjection.of(buffer.getLogState()), false);
             if (result.isSuccess()) {
                 compactionGuard.recordExternalSuccess(buffer.getSessionId());
             }
@@ -354,12 +360,34 @@ public final class DefaultContextEngine implements ContextEngine {
     }
 
     /**
-     * Summarizes the whole view and records the summary as the view state's span over {@code [floorSeq, nextSeq)} —
-     * a span only widens, and this one covers every live seq, so it absorbs any span held. The log is not touched.
-     * PostCompact hooks fire through {@link CompactionEngine#summaryInstalled} once the span is in place.
+     * Summarizes the view up to the part the model has not answered yet, and records the summary as the view state's
+     * span over {@code [floorSeq, cut)} — a span only widens, and this one starts at the floor and ends at or after
+     * the end of any span held, so it absorbs that span. The log is not touched. PostCompact hooks fire through
+     * {@link CompactionEngine#summaryInstalled} once the span is in place.
+     *
+     * <p>
+     * <b>The unanswered part stays verbatim.</b> What follows the view's last assistant message — the tool results
+     * answering its call, or the input after its reply ({@link ViewProjection#firstUnreadPosition()}) — is what the
+     * next call asks the model to respond to. Folding it into the summary hands the model the summarizer's words in
+     * place of a tool result it has not read, and a model that calls the tool again gets the same treatment again
+     * (context-engine §13.10). The cut is the last legal one at or before the start of that part, so a tool result
+     * is never separated from its call: when the unanswered part is a tool result, the message that made the call
+     * stays with it. A view that ends with an assistant message has no unanswered part and is summarized whole.
+     *
+     * <p>
+     * <b>When only the unanswered part is left</b> — nothing precedes it, or only the markers of the span already
+     * held — there is nothing to summarize. A manual or AUTO compaction then fails with
+     * {@link NothingToCompactException} without calling the summarizer or any hook; the guard turns that into a
+     * warning and the request is sent as it is. At the blocking limit ({@code forced}) the whole view is summarized
+     * instead, unanswered part included: a request over the limit cannot be sent at all, and summarizing it is the
+     * only alternative to failing the execution. That happens once — the view that results has no unanswered part
+     * and is under the limit.
+     *
+     * @param forced
+     *            whether the blocking limit forced this compaction
      */
     private CompactionResult summarizeIntoView(ContextRequest request, CompactionTrigger trigger, String instructions,
-            ViewProjection before) {
+            ViewProjection before, boolean forced) {
         final TranscriptBuffer buffer = request.getTranscriptBuffer();
         final SessionLogState state = buffer.getLogState();
         if (before.size() == 0) {
@@ -367,7 +395,28 @@ public final class DefaultContextEngine implements ContextEngine {
             return CompactionResult.failure(new IllegalStateException("nothing to compact: the view is empty"),
                     CompactionMetadata.builder().trigger(trigger).startedAt(now).completedAt(now).build());
         }
-        final SummaryRequest summaryRequest = SummaryRequest.builder().messages(before.getMessages())
+        final int unreadFrom = before.firstUnreadPosition();
+        int absorbed = absorbablePrefix(state, before);
+        if (absorbed == 0 && forced) {
+            log.warn(
+                    "Session {} is at the blocking limit and only the {} message(s) the model has not answered yet"
+                            + " are left to compact; summarizing them, since the request cannot be sent as it is",
+                    buffer.getSessionId(), before.size() - unreadFrom);
+            absorbed = before.size();
+        }
+        if (absorbed == 0) {
+            final Instant now = Instant.now();
+            return CompactionResult.failure(
+                    new NothingToCompactException("nothing to compact: the view holds only the "
+                            + (before.size() - unreadFrom) + " message(s) the model has not answered yet"
+                            + (unreadFrom > 0 ? " after an earlier summary" : "")),
+                    CompactionMetadata.builder().trigger(trigger).startedAt(now).completedAt(now).build());
+        }
+        final List<Message> absorbedMessages = absorbed == before.size()
+                ? before.getMessages()
+                : before.getMessages().subList(0, absorbed);
+        final long cutSeq = absorbed == before.size() ? state.getNextSeq() : before.sourceSeq(absorbed);
+        final SummaryRequest summaryRequest = SummaryRequest.builder().messages(absorbedMessages)
                 .systemPrompt(request.getSystemPrompt()).sessionId(buffer.getSessionId())
                 .executionId(request.getCaller().getExecutionId().orElse(null)).trigger(trigger)
                 .model(request.getModel()).hookRegistry(requireHookRegistry(request))
@@ -386,9 +435,9 @@ public final class DefaultContextEngine implements ContextEngine {
         }
         final CompactionMetadata produced = summarized.getMetadata();
         final String summaryText = summarized.getSummaryText().orElse("");
-        final SummarySpan span = SummarySpan.builder().fromSeq(state.getFloorSeq()).toSeq(state.getNextSeq())
+        final SummarySpan span = SummarySpan.builder().fromSeq(state.getFloorSeq()).toSeq(cutSeq)
                 .summaryText(summaryText).boundaryId(UUID.randomUUID().toString()).trigger(trigger.name())
-                .preTokenCount(produced.getPreCompactTokenCount()).messagesSummarized(before.size())
+                .preTokenCount(produced.getPreCompactTokenCount()).messagesSummarized(absorbed)
                 .discoveredToolNames(produced.getDiscoveredToolNames()).build();
         try {
             buffer.summarizeView(span);
@@ -407,9 +456,53 @@ public final class DefaultContextEngine implements ContextEngine {
                         .messagesSummarized(produced.getMessagesSummarized()).startedAt(produced.getStartedAt())
                         .completedAt(Instant.now()).discoveredToolNames(produced.getDiscoveredToolNames()).build());
         compactionEngine.summaryInstalled(summaryRequest, installed, buffer);
-        log.info("Compaction recorded in the view: {} view messages summarized over seqs {} (trigger={})",
-                before.size(), span.getRange(), trigger);
+        log.info("Compaction recorded in the view: {} view messages summarized over seqs {}, {} left verbatim"
+                + " (trigger={})", absorbed, span.getRange(), before.size() - absorbed, trigger);
         return installed;
+    }
+
+    /**
+     * How many leading view messages a compaction may summarize: everything before the last legal cut at or before
+     * the start of the unanswered part.
+     *
+     * <p>
+     * The whole view when nothing is unanswered. Otherwise the cut is searched backwards from the first unanswered
+     * message, over the seqs of the log entries the view shows: a marker has no seq to cut at, a cut inside the span
+     * already held would narrow it, and a cut between a call and its result is not legal ({@link LegalCuts}, the rule
+     * the rolling engine cuts by). Zero when no such cut leaves a log entry to summarize — re-summarizing the markers
+     * of the held span alone would spend a summary call to shorten nothing.
+     */
+    private static int absorbablePrefix(SessionLogState state, ViewProjection view) {
+        final int unreadFrom = view.firstUnreadPosition();
+        if (unreadFrom >= view.size()) {
+            return view.size();
+        }
+        final long heldEnd = state.getViewState().getSummarySpan().map(SummarySpan::getToSeq)
+                .orElse(state.getFloorSeq());
+        final LongPredicate legal = state.legalCuts();
+        for (int position = unreadFrom; position > 0; position--) {
+            final long seq = view.sourceSeq(position);
+            if (seq == ViewProjection.MADE_BY_VIEW) {
+                continue;
+            }
+            if (seq < heldEnd) {
+                break;
+            }
+            if (legal.test(seq)) {
+                return holdsLogEntry(view, position) ? position : 0;
+            }
+        }
+        return 0;
+    }
+
+    /** Whether any of the first {@code count} view messages is a log entry rather than a marker the view made. */
+    private static boolean holdsLogEntry(ViewProjection view, int count) {
+        for (int position = 0; position < count; position++) {
+            if (view.sourceSeq(position) != ViewProjection.MADE_BY_VIEW) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private ContextView viewOf(ContextRequest request) {
