@@ -42,8 +42,7 @@ class UserContextMessageBuilderTest {
         @Test
         @DisplayName("emits working-directory and current-date reminders in a user-role message")
         void happyPathEmitsRequiredReminders() {
-            final AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder()
-                    .workingDirectory("/snapshot/is/not/the/source").currentDate(FIXED_INSTANT)
+            final AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder().currentDate(FIXED_INSTANT)
                     .userLocale(UserLocale.createDefault()).build();
 
             final Optional<Message> result = UserContextMessageBuilder.build(snapshot, "/workspace/project");
@@ -63,8 +62,8 @@ class UserContextMessageBuilderTest {
             extensions.put("claude-md", "# Project Rules\n- be concise");
             extensions.put("git-branch", "main");
 
-            final AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder().workingDirectory("/ws")
-                    .currentDate(FIXED_INSTANT).userLocale(UserLocale.createDefault()).extensions(extensions).build();
+            final AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder().currentDate(FIXED_INSTANT)
+                    .userLocale(UserLocale.createDefault()).extensions(extensions).build();
 
             final Optional<Message> result = UserContextMessageBuilder.build(snapshot, "/ws");
 
@@ -79,8 +78,8 @@ class UserContextMessageBuilderTest {
         @Test
         @DisplayName("without an execution there is no working-directory entry; current-date is still emitted")
         void snapshotAloneHasNoWorkingDirectory() {
-            final AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder().workingDirectory("/ws")
-                    .currentDate(FIXED_INSTANT).userLocale(UserLocale.createDefault()).build();
+            final AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder().currentDate(FIXED_INSTANT)
+                    .userLocale(UserLocale.createDefault()).build();
 
             final Optional<Message> result = UserContextMessageBuilder.build(snapshot);
 
@@ -93,11 +92,10 @@ class UserContextMessageBuilderTest {
         @Test
         @DisplayName("an execution without a working directory gets no entry — the snapshot's is not a fallback (EE-24)")
         void blankExecutionWorkingDirectoryDoesNotFallBackToTheSnapshot() {
-            // An unavailable environment's descriptor has a blank working directory. The snapshot's value is
-            // collected once per agent — on the default collector's advice, the JVM's user.dir, a host path — and
-            // must not be shown in its place (execution-environment design §5.1).
-            final AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder()
-                    .workingDirectory("/host/user/dir").currentDate(FIXED_INSTANT)
+            // An unavailable environment's descriptor has a blank working directory, and nothing stands in for it
+            // (execution-environment design §5.1). The snapshot used to: it carried a working directory of its own,
+            // collected once per agent, which is why it no longer has one (EE-10).
+            final AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder().currentDate(FIXED_INSTANT)
                     .userLocale(UserLocale.createDefault()).build();
 
             for (final String blank : new String[]{"", "   ", null}) {
@@ -120,8 +118,8 @@ class UserContextMessageBuilderTest {
             extensions.put("kept", "value");
             extensions.put("   ", "blank-key-skipped");
 
-            final AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder().workingDirectory("/ws")
-                    .currentDate(FIXED_INSTANT).userLocale(UserLocale.createDefault()).extensions(extensions).build();
+            final AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder().currentDate(FIXED_INSTANT)
+                    .userLocale(UserLocale.createDefault()).extensions(extensions).build();
 
             final Optional<Message> result = UserContextMessageBuilder.build(snapshot);
 

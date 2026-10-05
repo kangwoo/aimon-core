@@ -14,10 +14,16 @@ import at.aimon.core.base.UserLocale;
  *
  * <p>
  * An {@code AgentEnvironmentSnapshot} captures facts that are stable for the lifetime of the agent's execution
- * context: the working directory, the instant the snapshot was taken, the {@link UserLocale}, and an optional
+ * context: the instant the snapshot was taken, the {@link UserLocale}, and an optional
  * map of user-defined extensions. Because these values do not change between ReAct turns, they are collected exactly
  * once by an {@link AgentEnvironmentSnapshotProvider} and reused across iterations instead of being re-derived every
  * turn.
+ *
+ * <p>
+ * The working directory is deliberately <b>not</b> one of them. Where an execution runs is a fact of that execution's
+ * {@code ExecutionEnvironment} — two sessions of one agent may run in different workspaces, and an execution whose
+ * environment is unavailable has no directory at all — so it is read from the environment's descriptor when the
+ * execution starts, never collected once per agent.
  *
  * <p>
  * The snapshot is <b>agent-scoped, not session-scoped</b>: it is keyed by {@link AgentRuntimeId}, so every
@@ -34,8 +40,8 @@ import at.aimon.core.base.UserLocale;
  * <pre>
  * {
  *     &#64;code
- *     AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder().workingDirectory("/workspace/project")
- *             .currentDate(Instant.now()).userLocale(UserLocale.createDefault())
+ *     AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder().currentDate(Instant.now())
+ *            .userLocale(UserLocale.createDefault())
  *             .extensions(Map.of("gitBranch", "main")).build();
  * }
  * </pre>
@@ -44,13 +50,11 @@ import at.aimon.core.base.UserLocale;
  */
 public final class AgentEnvironmentSnapshot {
 
-    private final String workingDirectory;
     private final Instant currentDate;
     private final UserLocale userLocale;
     private final Map<String, String> extensions;
 
     private AgentEnvironmentSnapshot(Builder builder) {
-        this.workingDirectory = Objects.requireNonNull(builder.workingDirectory, "workingDirectory must not be null");
         this.currentDate = Objects.requireNonNull(builder.currentDate, "currentDate must not be null");
         this.userLocale = Objects.requireNonNull(builder.userLocale, "userLocale must not be null");
         this.extensions = builder.extensions != null
@@ -65,15 +69,6 @@ public final class AgentEnvironmentSnapshot {
      */
     public static Builder builder() {
         return new Builder();
-    }
-
-    /**
-     * Gets the working directory captured when the snapshot was taken.
-     *
-     * @return the working directory (never null)
-     */
-    public String getWorkingDirectory() {
-        return workingDirectory;
     }
 
     /**
@@ -115,43 +110,28 @@ public final class AgentEnvironmentSnapshot {
             return false;
         }
         AgentEnvironmentSnapshot that = (AgentEnvironmentSnapshot) o;
-        return workingDirectory.equals(that.workingDirectory) && currentDate.equals(that.currentDate)
-                && userLocale.equals(that.userLocale) && extensions.equals(that.extensions);
+        return currentDate.equals(that.currentDate) && userLocale.equals(that.userLocale)
+                && extensions.equals(that.extensions);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(workingDirectory, currentDate, userLocale, extensions);
+        return Objects.hash(currentDate, userLocale, extensions);
     }
 
     @Override
     public String toString() {
-        return "AgentEnvironmentSnapshot{" + "workingDirectory='" + workingDirectory + '\'' + ", currentDate="
-                + currentDate + ", userLocale=" + userLocale + ", extensions=" + extensions + '}';
+        return "AgentEnvironmentSnapshot{" + "currentDate=" + currentDate + ", userLocale=" + userLocale
+                + ", extensions=" + extensions + '}';
     }
 
     /** Builder for {@link AgentEnvironmentSnapshot}. */
     public static final class Builder {
-        private String workingDirectory;
         private Instant currentDate;
         private UserLocale userLocale;
         private Map<String, String> extensions;
 
         private Builder() {
-        }
-
-        /**
-         * Sets the working directory captured when the snapshot was taken.
-         *
-         * @param workingDirectory
-         *            the working directory (must not be null)
-         * @return this builder
-         * @throws NullPointerException
-         *             if {@code workingDirectory} is null
-         */
-        public Builder workingDirectory(String workingDirectory) {
-            this.workingDirectory = Objects.requireNonNull(workingDirectory, "workingDirectory must not be null");
-            return this;
         }
 
         /**
@@ -212,8 +192,7 @@ public final class AgentEnvironmentSnapshot {
          *
          * @return a new {@link AgentEnvironmentSnapshot}
          * @throws NullPointerException
-         *             if any required field ({@code workingDirectory}, {@code currentDate}, {@code userLocale}) is
-         *             unset
+         *             if any required field ({@code currentDate}, {@code userLocale}) is unset
          */
         public AgentEnvironmentSnapshot build() {
             return new AgentEnvironmentSnapshot(this);

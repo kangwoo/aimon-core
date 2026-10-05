@@ -31,8 +31,8 @@ class DefaultAgentEnvironmentSnapshotProviderTest {
     }
 
     private static AgentEnvironmentSnapshot newSession() {
-        return AgentEnvironmentSnapshot.builder().workingDirectory("/wd").currentDate(Instant.now())
-                .userLocale(UserLocale.createDefault()).build();
+        return AgentEnvironmentSnapshot.builder().currentDate(Instant.now()).userLocale(UserLocale.createDefault())
+                .build();
     }
 
     @Test

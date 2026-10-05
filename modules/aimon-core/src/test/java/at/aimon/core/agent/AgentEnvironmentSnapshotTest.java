@@ -16,8 +16,8 @@ import at.aimon.core.base.UserLocale;
 class AgentEnvironmentSnapshotTest {
 
     private static AgentEnvironmentSnapshot.Builder validBuilder() {
-        return AgentEnvironmentSnapshot.builder().workingDirectory("/workspace/project")
-                .currentDate(Instant.parse("2026-04-23T00:00:00Z")).userLocale(UserLocale.createDefault());
+        return AgentEnvironmentSnapshot.builder().currentDate(Instant.parse("2026-04-23T00:00:00Z"))
+                .userLocale(UserLocale.createDefault());
     }
 
     @Test
@@ -27,10 +27,9 @@ class AgentEnvironmentSnapshotTest {
         UserLocale userLocale = UserLocale.createDefault();
         Map<String, String> extensions = Map.of("branch", "main", "user", "alice");
 
-        AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder().workingDirectory("/wd").currentDate(now)
-                .userLocale(userLocale).extensions(extensions).build();
+        AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder().currentDate(now).userLocale(userLocale)
+                .extensions(extensions).build();
 
-        assertThat(snapshot.getWorkingDirectory()).isEqualTo("/wd");
         assertThat(snapshot.getCurrentDate()).isEqualTo(now);
         assertThat(snapshot.getUserLocale()).isEqualTo(userLocale);
         assertThat(snapshot.getExtensions()).isEqualTo(extensions);
@@ -45,19 +44,22 @@ class AgentEnvironmentSnapshotTest {
     }
 
     @Test
-    @DisplayName("build() throws NPE when workingDirectory is missing")
-    void build_missingWorkingDirectory_throwsNPE() {
-        AgentEnvironmentSnapshot.Builder b = AgentEnvironmentSnapshot.builder().currentDate(Instant.now())
-                .userLocale(UserLocale.createDefault());
-
-        assertThatThrownBy(b::build).isInstanceOf(NullPointerException.class).hasMessageContaining("workingDirectory");
+    @DisplayName("the snapshot has no working directory: that is the execution's, not the agent's (EE-10)")
+    void snapshotCarriesNoWorkingDirectory() {
+        // A regression guard, not a style check: the field was removed because a value collected once per agent
+        // cannot say where a given execution runs. Putting it back would bring back a second, staler source.
+        assertThat(AgentEnvironmentSnapshot.class.getDeclaredFields()).extracting(java.lang.reflect.Field::getName)
+                .contains("currentDate", "userLocale", "extensions").doesNotContain("workingDirectory");
+        assertThat(AgentEnvironmentSnapshot.class.getMethods()).extracting(java.lang.reflect.Method::getName)
+                .doesNotContain("getWorkingDirectory");
+        assertThat(AgentEnvironmentSnapshot.Builder.class.getMethods()).extracting(java.lang.reflect.Method::getName)
+                .doesNotContain("workingDirectory");
     }
 
     @Test
     @DisplayName("build() throws NPE when currentDate is missing")
     void build_missingCurrentDate_throwsNPE() {
-        AgentEnvironmentSnapshot.Builder b = AgentEnvironmentSnapshot.builder().workingDirectory("/wd")
-                .userLocale(UserLocale.createDefault());
+        AgentEnvironmentSnapshot.Builder b = AgentEnvironmentSnapshot.builder().userLocale(UserLocale.createDefault());
 
         assertThatThrownBy(b::build).isInstanceOf(NullPointerException.class).hasMessageContaining("currentDate");
     }
@@ -65,8 +67,7 @@ class AgentEnvironmentSnapshotTest {
     @Test
     @DisplayName("build() throws NPE when userLocale is missing")
     void build_missingUserLocale_throwsNPE() {
-        AgentEnvironmentSnapshot.Builder b = AgentEnvironmentSnapshot.builder().workingDirectory("/wd")
-                .currentDate(Instant.now());
+        AgentEnvironmentSnapshot.Builder b = AgentEnvironmentSnapshot.builder().currentDate(Instant.now());
 
         assertThatThrownBy(b::build).isInstanceOf(NullPointerException.class).hasMessageContaining("userLocale");
     }
@@ -76,8 +77,6 @@ class AgentEnvironmentSnapshotTest {
     void builder_setters_rejectNull() {
         AgentEnvironmentSnapshot.Builder b = AgentEnvironmentSnapshot.builder();
 
-        assertThatThrownBy(() -> b.workingDirectory(null)).isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("workingDirectory");
         assertThatThrownBy(() -> b.currentDate(null)).isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("currentDate");
         assertThatThrownBy(() -> b.userLocale(null)).isInstanceOf(NullPointerException.class)
@@ -116,12 +115,12 @@ class AgentEnvironmentSnapshotTest {
         Instant fixed = Instant.parse("2026-04-23T00:00:00Z");
         UserLocale userLocale = UserLocale.createDefault();
 
-        AgentEnvironmentSnapshot a = AgentEnvironmentSnapshot.builder().workingDirectory("/wd").currentDate(fixed)
-                .userLocale(userLocale).extensions(Map.of("x", "1")).build();
-        AgentEnvironmentSnapshot b = AgentEnvironmentSnapshot.builder().workingDirectory("/wd").currentDate(fixed)
-                .userLocale(userLocale).extensions(Map.of("x", "1")).build();
-        AgentEnvironmentSnapshot c = AgentEnvironmentSnapshot.builder().workingDirectory("/other").currentDate(fixed)
-                .userLocale(userLocale).extensions(Map.of("x", "1")).build();
+        AgentEnvironmentSnapshot a = AgentEnvironmentSnapshot.builder().currentDate(fixed).userLocale(userLocale)
+                .extensions(Map.of("x", "1")).build();
+        AgentEnvironmentSnapshot b = AgentEnvironmentSnapshot.builder().currentDate(fixed).userLocale(userLocale)
+                .extensions(Map.of("x", "1")).build();
+        AgentEnvironmentSnapshot c = AgentEnvironmentSnapshot.builder().currentDate(fixed).userLocale(userLocale)
+                .extensions(Map.of("x", "2")).build();
 
         assertThat(a).isEqualTo(b).hasSameHashCodeAs(b);
         assertThat(a).isNotEqualTo(c);
@@ -133,12 +132,12 @@ class AgentEnvironmentSnapshotTest {
     @DisplayName("toString contains key fields")
     void toString_containsKeyData() {
         Instant fixed = Instant.parse("2026-04-23T00:00:00Z");
-        AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder().workingDirectory("/wd")
-                .currentDate(fixed).userLocale(UserLocale.createDefault()).extensions(Map.of("branch", "main")).build();
+        AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder().currentDate(fixed)
+                .userLocale(UserLocale.createDefault()).extensions(Map.of("branch", "main")).build();
 
         String s = snapshot.toString();
 
-        assertThat(s).contains("workingDirectory").contains("/wd").contains("currentDate").contains(fixed.toString())
-                .contains("userLocale").contains("extensions").contains("branch").contains("main");
+        assertThat(s).contains("currentDate").contains(fixed.toString()).contains("userLocale").contains("extensions")
+                .contains("branch").contains("main").doesNotContain("workingDirectory");
     }
 }

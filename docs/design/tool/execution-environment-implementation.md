@@ -1259,12 +1259,14 @@ and why. Entries marked **(open)** are also tracked in
   routine context". It is in both executors, not in routines. With the map, a routine `Write` that overwrites a file
   would start failing without a preceding `Read`, and deployed routines would break. Without it, routines behave as
   before: `Edit` always refuses and `Write` does not check.
-- **`AgentEnvironmentSnapshot` keeps `workingDirectory` (open, EE-10).** §6 stage 5d takes the working directory out of
-  the snapshot. Instead, `UserContextMessageBuilder.build(snapshot, executionWorkingDirectory)` takes the working
-  directory from the execution's descriptor. This avoided churning every snapshot collector. Until 2026-10-05 the
-  snapshot's value was the fallback when the descriptor had none — which is the unavailable environment, so the block
-  could show a directory of the host (EE-24). It is no longer read: a blank descriptor means no `working-directory`
-  entry (`UserContextMessageBuilderTest`, `OrcaAgentExecutorUserContextInjectionTest`).
+- **`AgentEnvironmentSnapshot` kept `workingDirectory` (closed 2026-10-05, EE-10).** §6 stage 5d takes the working
+  directory out of the snapshot. The first implementation left it in and had
+  `UserContextMessageBuilder.build(snapshot, executionWorkingDirectory)` prefer the execution's descriptor, which
+  avoided churning every snapshot collector. The snapshot's value was then the fallback when the descriptor had none —
+  which is the unavailable environment, so the block could show a directory of the host (EE-24). The fallback went
+  first: a blank descriptor means no `working-directory` entry (`UserContextMessageBuilderTest`,
+  `OrcaAgentExecutorUserContextInjectionTest`). With no reader left, `AgentEnvironmentSnapshot.getWorkingDirectory()`
+  and `Builder.workingDirectory(String)` were removed, as the plan had it.
 - **Hook contexts (closed 2026-10-03, EE-9).** `HookContext.getEnvironmentDescriptor()` exists (default empty) and is
   filled for `PreToolContext` and `PostToolContext` (from the tool context in `SingleToolInvoker`). `CompactionRequest`
   did not gain a descriptor, and the compaction, lifecycle, subagent and permission contexts stay empty, so
