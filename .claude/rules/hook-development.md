@@ -130,10 +130,21 @@ for side effects only. Wiring one up is a feature, not a bug fix.
   frontmatter, handler level in `hooks.json`; only a boolean `true` opens it — a non-boolean is a
   parse error in frontmatter and is read as `false` with a WARN in `hooks.json`). The deny reason
   never names `failOpen`, the command, the shell's stderr or an *unexpected* exception's message —
-  only the cause and the exception's type; its reader is the party the guard constrains. The one
-  message it does carry is `StagingException`'s on `STAGING_FAILED`: that text is the staging
-  layer's own (over the limit, changed since scanned) and is what the `Skill` tool already tells the
-  model for the same failure. Any new detail must be a fixed string or a type name.
+  only the cause and the exception's type; its reader is the party the guard constrains. It carries
+  two messages, both because the model is already told the same text by a tool call that fails the
+  same way: `StagingException`'s on `STAGING_FAILED` (the staging layer's own — over the limit,
+  changed since scanned — which the `Skill` tool reports), and
+  `ExecutionEnvironmentUnavailableException`'s on `ENVIRONMENT_UNAVAILABLE`, passed through in
+  `DefaultShellActionExecutor.run`, `ShellActionRunner.run` and `SkillHookDirectory.export`. That one
+  is `UnavailableExecutionEnvironment#message()` — "Execution environment unavailable: " plus the
+  provider's own failure message when the environment was built from a `Throwable` — and it is
+  exactly what `Bash` / `Read` / `Write` / `Edit` return as their error
+  (`ToolResult.error(e.getMessage())`) for any call in that execution, and what `Grep` and `Skill`
+  carry inside theirs, so the guard discloses nothing
+  the guarded party is not handed anyway. The exception is the *typed* one only: any other throwable
+  from the environment (`shell()` throwing an `IllegalStateException`) gives its type, as before. A
+  tool that stops passing that message to the model takes this exception with it. Any new detail must
+  be a fixed string or a type name.
 - **A hook command is tied to the execution's cancellation signal, and a cancelled one blocks even
   with `failOpen`.** `ShellActionRunner` registers a per-call listener on
   `HookContext#getExecutionCancellation()` and removes it in `finally` (the signal outlives the

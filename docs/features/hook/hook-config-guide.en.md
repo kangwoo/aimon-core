@@ -571,7 +571,10 @@ verdict.** On the other 9 events no row blocks (a WARN, then the event proceeds)
 that could not run has the form `Blocked: guard hook '<name>' (<event>) could not run its command — <cause>. A guard that
 cannot decide blocks (fail-closed).` (for `http` and `mcp`: `could not get a verdict from its http call` / `… its mcp
 call`), and it never carries the command string, the shell's stderr, a URL, a header, a response body, an exception
-message or the name `failOpen` — the reader of that reason is the party the guard constrains. `http` and `mcp` handlers
+message or the name `failOpen` — the reader of that reason is the party the guard constrains. Only two causes carry a
+message: a skill directory that could not be staged, and an execution environment that is unavailable (`execution
+environment unavailable: …`). Both are word for word what a tool call (`Skill`; `Bash`, `Read` and the rest) already
+returns to the model for the same failure. `http` and `mcp` handlers
 can only be placed on `preTool` and `postTool`, so the one guard event those four rows apply to is `preTool`.
 
 A hook the pool did not take, and a hook that ended with an exception outside its handler, block by **the same

@@ -160,7 +160,11 @@ public final class ShellHookOutcome {
      * @param cause
      *            why there is no exit status (must not be null)
      * @param detail
-     *            what the failure said about itself, typically the exception message (may be null or blank)
+     *            what goes after the cause in the reason (may be null or blank). On a guard event the reason is read
+     *            by the party the guard constrains, so this is a fixed string or an exception's type, not its message;
+     *            the two messages that are passed on &mdash; a {@code StagingException}'s and an
+     *            {@code ExecutionEnvironmentUnavailableException}'s &mdash; are the ones a tool call failing the same
+     *            way already returns to the model
      * @return the outcome (never null)
      * @throws NullPointerException
      *             if cause is null

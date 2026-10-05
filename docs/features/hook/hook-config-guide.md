@@ -529,7 +529,9 @@ MCP 서버의 tool 을 호출한다. `McpToolAction` + `McpActionExecutor`.
 `Blocked: guard hook '<이름>' (<이벤트>) could not run its command — <원인>. A guard that cannot decide blocks
 (fail-closed).` 꼴이고(`http` · `mcp` 는 `could not get a verdict from its http call` · `… its mcp call`), 커맨드 문자열 ·
 셸의 stderr · URL · 헤더 · 응답 본문 · 예외 메시지 · `failOpen` 이라는 이름은 싣지 않는다 — 그 사유를 읽는 쪽이 가드가
-제약하는 당사자이기 때문이다. `http` · `mcp` handler 는 `preTool` 과 `postTool` 에만 둘 수 있으므로, 이 표에서 그 네 행이
+제약하는 당사자이기 때문이다. 메시지가 실리는 원인은 둘뿐이다: 스킬 디렉터리 스테이징 실패와 실행 환경 사용 불가
+(`execution environment unavailable: …`). 둘 다 같은 실패에서 도구 호출(`Skill`, `Bash` · `Read` 등)이 모델에게 이미
+돌려주는 문장 그대로다. `http` · `mcp` handler 는 `preTool` 과 `postTool` 에만 둘 수 있으므로, 이 표에서 그 네 행이
 해당하는 가드 이벤트는 `preTool` 하나다.
 
 풀이 받지 않은 hook 과 handler 밖에서 예외로 끝난 hook 은 바깥 그물에 끊긴 hook 과 **같은 선언**으로 막힌다 — 선언적 가드가

@@ -173,6 +173,25 @@ class DefaultShellActionExecutorTest {
     }
 
     @Test
+    void run_unavailableEnvironment_reasonCarriesTheMessageAToolCallInThatEnvironmentFailsWith() {
+        // The one exception message besides a staging failure's that reaches a deny reason. It may, because it is
+        // the text the model is handed anyway: Bash, Read, Write and Edit return this exception's message as their
+        // error for any call in the same environment. The provider's own failure message is part of it.
+        ExecutionEnvironment unavailable = UnavailableExecutionEnvironment
+                .of(new IllegalStateException("docker daemon not reachable"));
+        String whatAToolCallFailsWith = org.assertj.core.api.Assertions
+                .catchThrowableOfType(() -> unavailable.shell().execute(() -> "ls", ExecutionOptions.builder().build()),
+                        ExecutionEnvironmentUnavailableException.class)
+                .getMessage();
+
+        ShellHookOutcome outcome = executor.run(new ShellAction("guard", Duration.ofSeconds(1)), contextIn(unavailable),
+                Map.of(), null);
+
+        assertThat(whatAToolCallFailsWith).isEqualTo("Execution environment unavailable: docker daemon not reachable");
+        assertThat(outcome.unrunReason()).isEqualTo("execution environment unavailable: " + whatAToolCallFailsWith);
+    }
+
+    @Test
     void run_environmentThatGivesNoShell_reportsEnvironmentUnavailable() {
         ExecutionEnvironment broken = mock(ExecutionEnvironment.class);
         when(broken.shell()).thenThrow(new IllegalStateException("no shell here: provider internals"));
