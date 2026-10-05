@@ -102,8 +102,8 @@ public final class LocalExecutionEnvironmentProvider implements ExecutionEnviron
                     throw new IllegalStateException("Set either workspaceRoot or fileSystem, not both");
                 }
                 ownedRoot = builder.workspaceRoot.toAbsolutePath().normalize();
-                final LocalFileSystem localFileSystem = new LocalFileSystem(
-                        new LocalFileSystemConfig(ownedRoot.toString()));
+                final LocalFileSystem localFileSystem = new LocalFileSystem(LocalFileSystemConfig
+                        .builder(ownedRoot.toString()).contentHashEtag(builder.contentHashStamps).build());
                 ownedResources.add(builder.ownedResourceDecorator.apply(localFileSystem::close));
                 localFileSystem.initialize();
                 this.rawFileSystem = localFileSystem;
@@ -346,6 +346,7 @@ public final class LocalExecutionEnvironmentProvider implements ExecutionEnviron
         private List<PathRule> pathRules;
         private String stagingRoot = DEFAULT_STAGING_ROOT;
         private long maxStagedBytes = DEFAULT_MAX_STAGED_BYTES;
+        private boolean contentHashStamps;
         private Duration stagingSweepGrace = DEFAULT_STAGING_SWEEP_GRACE;
         private Duration backgroundCommandTimeout;
         private Clock clock = Clock.systemUTC();
@@ -440,6 +441,24 @@ public final class LocalExecutionEnvironmentProvider implements ExecutionEnviron
          */
         public Builder maxStagedBytes(long maxStagedBytes) {
             this.maxStagedBytes = maxStagedBytes;
+            return this;
+        }
+
+        /**
+         * Makes the file tools' read stamps compare file <em>content</em> in the workspace this provider builds for
+         * {@link #workspaceRoot(Path)}: its filesystem then reports a SHA-256 etag
+         * ({@link LocalFileSystemConfig.Builder#contentHashEtag(boolean)}), so a rewrite that keeps a file's size
+         * and modification time — possible where that time counts in whole seconds — is still seen as a change, and
+         * a rewrite of the same bytes is not. Off by default, because it costs a full read of the file for every
+         * stamp and every other metadata lookup. A filesystem handed in with {@link #fileSystem(VirtualFileSystem)}
+         * or {@link #ownedFileSystem(VirtualFileSystem)} is used as it is: configure it where it is built.
+         *
+         * @param contentHashStamps
+         *            whether the owned workspace filesystem hashes content into its etags
+         * @return this builder
+         */
+        public Builder contentHashStamps(boolean contentHashStamps) {
+            this.contentHashStamps = contentHashStamps;
             return this;
         }
 

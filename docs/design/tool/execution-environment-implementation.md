@@ -1217,6 +1217,11 @@ and why. Entries marked **(open)** are also tracked in
   uses the hex `ObjectId` of the newest revision, as §6 stage 5 planned. Every write uploads a new document, so the id
   changes with every rewrite; it also changes when the content does not, which is a false "changed" and the safe
   direction. This departs from the spec rather than from the plan, and review 3 of the build asked for it to be listed.
+  *Superseded 2026-10-05 (EE-5):* the etag is now the SHA-256 of the content, recorded in the file document's
+  `metadata.contentSha256` once the upload completes; a document without it still answers with its `ObjectId`. Q7 was
+  settled the same day: `LocalFileSystemConfig.Builder.contentHashEtag(true)` gives the local filesystem an opt-in
+  content-hash etag, off by default (it reads the whole file per `getMetadata`). See
+  `docs/design/filesystem/backend-contract.md` §4.2.
 - **The startup staging sweep never follows a symbolic link (review 3 of the build, blocking).** The plan's sweep used
   `Files.isDirectory` and `Files.list`, which follow links, so a `.aimon-staged` link (committed in a cloned repository,
   or made through the shell) led the sweep to delete week-old directories wherever it pointed. The sweep now does

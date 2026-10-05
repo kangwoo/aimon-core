@@ -6,9 +6,13 @@ import java.io.OutputStream;
 import java.nio.file.FileSystems;
 import java.nio.file.PathMatcher;
 import java.nio.file.Paths;
+import java.security.DigestOutputStream;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.HexFormat;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
@@ -34,6 +38,7 @@ import com.mongodb.client.model.Aggregates;
 import com.mongodb.client.model.Filters;
 import com.mongodb.client.model.Projections;
 import com.mongodb.client.model.Sorts;
+import com.mongodb.client.model.Updates;
 
 import at.aimon.core.filesystem.BackendStatus;
 import at.aimon.core.filesystem.BackendType;
@@ -99,6 +104,17 @@ public final class GridFSFileSystem implements VirtualFileSystem {
 
     /** Value of {@code metadata.type} on the zero-length document that materializes a directory. */
     public static final String DIRECTORY_MARKER_TYPE = "directory";
+
+    /**
+     * Key in a file document's {@code metadata} holding the SHA-256 of the file's content as lowercase hex, written
+     * once the upload has completed. A file that has it reports {@value #CONTENT_HASH_ETAG_PREFIX} plus that value as
+     * its {@link FileMetadata#getEtag() etag}; a file without it — written before this key existed, or by an older
+     * version of this class sharing the bucket — reports its document id.
+     */
+    public static final String CONTENT_HASH_METADATA_KEY = "contentSha256";
+
+    /** What a content-hash etag starts with, so it can never be taken for a document id (24 hex characters). */
+    public static final String CONTENT_HASH_ETAG_PREFIX = "sha256:";
 
     private static final Logger log = LoggerFactory.getLogger(GridFSFileSystem.class);
 
@@ -307,11 +323,9 @@ public final class GridFSFileSystem implements VirtualFileSystem {
         try {
             GridFSFile file = findFile(path);
             if (file != null) {
-                // Every write uploads a new GridFS document, so its id changes with each rewrite — an etag the file
-                // tools' read stamps can rely on (execution-environment design §7; md5 is gone from driver 5.x).
                 return FileMetadata.builder().path(path).size(file.getLength())
                         .createdAt(file.getUploadDate().toInstant()).modifiedAt(file.getUploadDate().toInstant())
-                        .mimeType(detectMimeType(path)).etag(file.getObjectId().toHexString()).build();
+                        .mimeType(detectMimeType(path)).etag(etagOf(file.getObjectId(), file.getMetadata())).build();
             }
 
             // A directory: created explicitly (a marker) or implied by something stored under it.
@@ -896,6 +910,49 @@ public final class GridFSFileSystem implements VirtualFileSystem {
                 config.getMaxFileSize());
     }
 
+    /**
+     * The etag of a file document: its content hash when the document carries one, its id otherwise (execution
+     * environment design §7; GridFS's own {@code md5} field is gone from driver 5.x).
+     *
+     * <p>
+     * The file tools' read stamps compare etags. A hash says "changed" only when the bytes did, where the id — a new
+     * one for every upload — also said it for a rewrite of the same bytes. The id stays as the answer for a document
+     * without a hash, so nothing has to be migrated and nothing is ever missed: a stamp holding an id and a stamp
+     * holding a hash never compare equal (the prefix keeps the two shapes apart), which is the old false positive at
+     * worst. That also covers the moment between an upload completing and its hash being recorded, and an upload
+     * whose hash could not be recorded at all.
+     *
+     * @param id
+     *            the file document's id
+     * @param metadata
+     *            the file document's metadata, or null
+     * @return the etag, never null
+     */
+    static String etagOf(ObjectId id, Document metadata) {
+        final Object hash = metadata == null ? null : metadata.get(CONTENT_HASH_METADATA_KEY);
+        return hash instanceof String hex && !hex.isBlank() ? CONTENT_HASH_ETAG_PREFIX + hex : id.toHexString();
+    }
+
+    /**
+     * Records the content hash on an upload that has completed. Failing to must not fail the write — the content is
+     * durable — so the document simply keeps reporting its id as its etag.
+     */
+    private void recordContentHash(String path, ObjectId id, String hex) {
+        try {
+            filesCollection.updateOne(Filters.eq("_id", id), Updates.set("metadata." + CONTENT_HASH_METADATA_KEY, hex));
+        } catch (MongoException e) {
+            log.warn("Failed to record the content hash of {}; its etag stays the file id: {}", path, e.getMessage());
+        }
+    }
+
+    private static MessageDigest sha256() {
+        try {
+            return MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is required of every Java platform", e);
+        }
+    }
+
     private List<ObjectId> revisionIds(String path) {
         final List<ObjectId> ids = new ArrayList<>();
         for (GridFSFile file : gridFSBucket.find(Filters.eq("filename", path))) {
@@ -983,20 +1040,33 @@ public final class GridFSFileSystem implements VirtualFileSystem {
      * try-with-resources would still {@code close()} the upload after a rejection and finalize a truncated file.
      * Overflow instead {@linkplain #onLimitExceeded() aborts} the upload, which reclaims the chunks already sent and
      * skips retiring the superseded revisions — so an over-sized write leaves the path exactly as it was.
+     *
+     * <p>
+     * And it hashes what it uploads: every accepted byte passes through a SHA-256 digest on its way to GridFS, and a
+     * successful close records the result on the new document ({@link #CONTENT_HASH_METADATA_KEY}) before the old
+     * revisions go. It cannot be part of the upload itself — the metadata is fixed when the upload is opened, before
+     * a byte has been seen — so it is a second write, and {@link #etagOf} says what a reader in between gets.
      */
     private final class SupersedingUploadStream extends SizeLimitedOutputStream {
 
         private final String path;
         private final GridFSUploadStream upload;
+        private final MessageDigest digest;
         private final List<ObjectId> superseded;
 
         /** Whether the upload has been finalized or abandoned; either way there is nothing left to close. */
         private boolean settled;
 
         SupersedingUploadStream(String path, GridFSUploadStream upload, List<ObjectId> superseded, long maxFileSize) {
-            super(upload, maxFileSize);
+            this(path, upload, sha256(), superseded, maxFileSize);
+        }
+
+        private SupersedingUploadStream(String path, GridFSUploadStream upload, MessageDigest digest,
+                List<ObjectId> superseded, long maxFileSize) {
+            super(new DigestOutputStream(upload, digest), maxFileSize);
             this.path = path;
             this.upload = upload;
+            this.digest = digest;
             this.superseded = superseded;
         }
 
@@ -1027,6 +1097,7 @@ public final class GridFSFileSystem implements VirtualFileSystem {
             }
             settled = true;
             upload.close();
+            recordContentHash(path, upload.getObjectId(), HexFormat.of().formatHex(digest.digest()));
             retireQuietly(superseded);
         }
     }

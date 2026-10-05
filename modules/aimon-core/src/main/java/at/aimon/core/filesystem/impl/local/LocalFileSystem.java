@@ -16,8 +16,11 @@ import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -270,11 +273,31 @@ public final class LocalFileSystem implements VirtualFileSystem {
             // Detect MIME type based on file content and extension
             final String mimeType = MimeTypeDetector.detectMimeType(targetPath);
 
+            // Optional, and a full read of the file when on: LocalFileSystemConfig.Builder#contentHashEtag (EE-5).
+            final String etag = config.isContentHashEtag() ? contentHashEtag(targetPath) : null;
+
             return FileMetadata.builder().path(path).size(attrs.size()).createdAt(attrs.creationTime().toInstant())
-                    .modifiedAt(attrs.lastModifiedTime().toInstant()).mimeType(mimeType).build();
+                    .modifiedAt(attrs.lastModifiedTime().toInstant()).mimeType(mimeType).etag(etag).build();
         } catch (IOException e) {
             throw new BackendConnectionException(BackendType.LOCAL, "Failed to read metadata for file: " + path, e);
         }
+    }
+
+    /** {@code "sha256:"} plus the lowercase hex SHA-256 of a file's bytes, streamed through the configured buffer. */
+    private String contentHashEtag(Path file) throws IOException {
+        final MessageDigest digest;
+        try {
+            digest = MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is required of every Java platform", e);
+        }
+        final byte[] buffer = new byte[config.getBufferSize()];
+        try (InputStream in = Files.newInputStream(file)) {
+            for (int read = in.read(buffer); read >= 0; read = in.read(buffer)) {
+                digest.update(buffer, 0, read);
+            }
+        }
+        return "sha256:" + HexFormat.of().formatHex(digest.digest());
     }
 
     @Override
