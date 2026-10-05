@@ -130,10 +130,21 @@ for side effects only. Wiring one up is a feature, not a bug fix.
   frontmatter, handler level in `hooks.json`; only a boolean `true` opens it — a non-boolean is a
   parse error in frontmatter and is read as `false` with a WARN in `hooks.json`). The deny reason
   never names `failOpen`, the command, the shell's stderr or an *unexpected* exception's message —
-  only the cause and the exception's type; its reader is the party the guard constrains. The one
-  message it does carry is `StagingException`'s on `STAGING_FAILED`: that text is the staging
-  layer's own (over the limit, changed since scanned) and is what the `Skill` tool already tells the
-  model for the same failure. Any new detail must be a fixed string or a type name.
+  only the cause and the exception's type; its reader is the party the guard constrains. It carries
+  two messages, both because the model is already told the same text by a tool call that fails the
+  same way: `StagingException`'s on `STAGING_FAILED` (the staging layer's own — over the limit,
+  changed since scanned — which the `Skill` tool reports), and
+  `ExecutionEnvironmentUnavailableException`'s on `ENVIRONMENT_UNAVAILABLE`, passed through in
+  `DefaultShellActionExecutor.run`, `ShellActionRunner.run` and `SkillHookDirectory.export`. That one
+  is `UnavailableExecutionEnvironment#message()` — "Execution environment unavailable: " plus the
+  provider's own failure message when the environment was built from a `Throwable` — and it is
+  exactly what `Bash` / `Read` / `Write` / `Edit` return as their error
+  (`ToolResult.error(e.getMessage())`) for any call in that execution, and what `Grep` and `Skill`
+  carry inside theirs, so the guard discloses nothing
+  the guarded party is not handed anyway. The exception is the *typed* one only: any other throwable
+  from the environment (`shell()` throwing an `IllegalStateException`) gives its type, as before. A
+  tool that stops passing that message to the model takes this exception with it. Any new detail must
+  be a fixed string or a type name.
 - **A hook command is tied to the execution's cancellation signal, and a cancelled one blocks even
   with `failOpen`.** `ShellActionRunner` registers a per-call listener on
   `HookContext#getExecutionCancellation()` and removes it in `finally` (the signal outlives the
@@ -148,13 +159,25 @@ for side effects only. Wiring one up is a feature, not a bug fix.
   subagent-lifecycle sites carry none.
 - **`http` / `mcp` actions follow the same rule on `preTool`** (the only guard event they can sit on).
   `HttpActionExecutor#attempt` / `McpActionExecutor#attempt` return an `ActionCallOutcome`: a
-  *verdict* (any readable 2xx / non-error answer — only `decision: deny` blocks) or *no verdict*,
-  carried as a not-run outcome (`EXECUTOR_NOT_WIRED`, `CALL_FAILED`, `TIMEOUT`, `INVALID_RESPONSE`)
-  and judged by the same `ShellHookVerdicts`. A non-2xx status is never a verdict, whatever its body
-  says, and neither is a `decision` outside `allow` / `deny` / `defer`. `run(...)` is the advisory
+  *verdict* (any readable 2xx / non-error answer) or *no verdict*, carried as a not-run outcome
+  (`EXECUTOR_NOT_WIRED`, `CALL_FAILED`, `TIMEOUT`, `INVALID_RESPONSE`) and judged by the same
+  `ShellHookVerdicts`. A non-2xx status is never a verdict, whatever its body says. `DecisionDocument`
+  is the one reader of the answer for both transports and reads a verdict in three places: the native
+  `decision` (`allow` / `defer` / `deny`, plus `block` as deny) and the two Claude Code spellings,
+  `hookSpecificOutput.permissionDecision` (`allow` / `deny` / `ask`) and `continue: false` (deny).
+  When they disagree the strictest wins — deny > unreadable > ask > allow — and an unreadable
+  statement (any other value, `permissionDecision: defer` included) is `INVALID_RESPONSE`. `ask` is
+  `Decision.ASK`, resolved on `preTool` by the manager's `AskPromptHandler` (default deny); it is a
+  verdict, so `failOpen` does not open it. A deny reason comes from the denying statement's own reason
+  field (`reason` / `permissionDecisionReason` / `stopReason`), never from `feedback`,
+  `systemMessage` or `additionalContext`. A new spelling goes into `DecisionDocument`, not into an
+  executor. `run(...)` is the advisory
   reading (`attempt(...).orSuccess()`) and is what `postTool` calls — do not call `run` from a guard
   event. `failOpen` is read for `command`, `http` and `mcp` alike; only on `deny` is it ignored with
-  a WARN.
+  a WARN — by both front-ends (`HookRegistryApplier`, `SkillHookSetParser#parseFailOpen`) and again by
+  `DeclarativePreToolHook`'s constructor, so no source can build a deny hook that does not declare
+  `FAIL_CLOSED`. A deny always has its verdict; all the flag could open is the pool refusing the hook
+  or its matcher throwing.
 - **Who wires the http / mcp executors.** `aimon-cli` does, for both sources: `HookActionExecutors`
   hands one `HttpActionExecutor` and one late-bound `McpActionExecutor` to the hot-reload bootstrap
   (`hooks.json`) and to the skill parser (frontmatter). The skill parser is built before the runtime
@@ -222,13 +245,20 @@ for side effects only. Wiring one up is a feature, not a bug fix.
 - A handler's declared timeout is enforced by the action executor and, via
   `ExecutionHook#getExecutionBudget()`, widens the hook's outer net — subject to the same floor,
   +5s grace and 10-minute clamp as any other declared budget. "Enforced by the executor" holds for all
-  three transports: the shell's `ExecutionOptions` timeout, `HttpRequest.timeout`, and for `mcp` a
-  deadline `McpActionExecutor` keeps itself (`McpClient.callTool` takes none) by interrupting the
-  calling thread, reported as `TIMEOUT` with the interrupt cleared. The per-server `requestTimeout`
-  still bounds the request underneath, so the smaller of the two wins; an interrupt that is not the
-  executor's own is `CANCELLED`. Do not move the call to another thread to bound it — the hook already
-  runs on a pool thread whose wait the outer net bounds, and that net is the fallback for a client that
-  ignores the interrupt. In `hooks.json` the `timeout` field is
+  three transports: the shell's `ExecutionOptions` timeout, and for `http` and `mcp` one `CallDeadline`
+  the executor keeps itself, because neither transport bounds the whole call — `McpClient.callTool`
+  takes no timeout, and `HttpRequest.timeout` stops at the response headers, so a body that stalls or
+  drips under `MAX_RESPONSE_BYTES` was unbounded. `CallDeadline` interrupts the calling thread when
+  the time is up (`HttpClient.send` cancels the exchange on an interrupt, the stdio MCP transport
+  stops polling), reported as `TIMEOUT`. `arm` goes right before the call and `disarm` in a
+  `finally` — a call that leaves through an `Error` must not leave its timer to interrupt the pool
+  thread later — and `disarm` leaves the interrupt flag as the call found it. The per-server
+  `requestTimeout` (mcp) and the request timeout (http) still bound the request underneath, so the
+  smaller wins; an interrupt that is not the executor's own is `CANCELLED` and stays set. Do not move
+  the call to another thread to bound it — the hook already runs on a pool thread whose wait the
+  outer net bounds, and that net is the fallback for a client that ignores the interrupt. A new
+  remote transport uses `CallDeadline` rather than a second mechanism. In `hooks.json` the `timeout`
+  field is
   **seconds** (Claude Code parity) with `timeoutMs` as a millisecond alias that wins when both are
   present; SKILL.md frontmatter accepts `action.timeoutMs` only.
 - A declarative hook re-attaches its `asyncRewake` spec on **every** fire — `DeclarativeRewake.attach`

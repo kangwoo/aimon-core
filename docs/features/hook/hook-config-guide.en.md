@@ -427,14 +427,26 @@ If the response body follows the JSON schema
 
 | Response | How it is read |
 |----------|----------------|
-| 2xx, a JSON object, `decision` is `deny` | verdict: refuse (`reason` is the reason) |
-| 2xx, a JSON object, `decision` is `allow` or `defer`, or absent | verdict: allow (`feedback` and `updatedInput` are applied as given) |
+| 2xx, a JSON object that refuses — `decision` is `deny` or `block`, `hookSpecificOutput.permissionDecision` is `deny`, `continue` is `false` | verdict: refuse (the reason is `reason`, `permissionDecisionReason`, `stopReason` respectively) |
+| 2xx, a JSON object, `hookSpecificOutput.permissionDecision` is `ask` | verdict: ask — the `AskPromptHandler` answers (`permissionDecisionReason` is the question) |
+| 2xx, a JSON object, `decision` is `allow` or `defer`, `permissionDecision` is `allow`, or no decision at all | verdict: allow (`feedback` and `updatedInput` are applied as given) |
 | 2xx with an empty body, text that is not declared as JSON (`ok`), or JSON that is not an object | verdict: allow — a webhook that carries no decision |
-| 2xx that cannot be read — a body whose `Content-Type` is JSON but does not parse, a `decision` that is not a string or not one of the three (`"block"`, say), an `updatedInput` that is not an object | **no verdict** (`response could not be read`) |
+| 2xx that cannot be read — a body whose `Content-Type` is JSON but does not parse, a `decision` (`"approve"`, say) or `permissionDecision` (`"defer"`, say) that is not a string or not a known value, a `continue` that is not a boolean, an `updatedInput` that is not an object | **no verdict** (`response could not be read`) |
 | non-2xx (whatever the body says) | **no verdict** (`call failed: HTTP <status>`) — a refusal is spelled `decision: deny` in a 2xx |
 | connection failure, transport error | **no verdict** (`call failed: <exception type>`) |
 | `timeout` exceeded | **no verdict** (`timed out`) |
 | executor not wired | **no verdict** (`action executor not wired`) |
+
+A policy endpoint written for Claude Code can be used as it is — besides `decision`, the verdict is read from Claude
+Code's two spellings (`hookSpecificOutput.permissionDecision`, `continue`). When one document carries several and they
+disagree, **the strictest is the verdict**: refuse > unreadable > ask > allow. `decision: allow` next to
+`permissionDecision: deny` is a refusal. The refusal reason shown to the model comes only from the reason field of the
+spelling that refused — `feedback`, `systemMessage` and `additionalContext` never become the reason. An `ask` is turned
+into allow or refuse by the hook execution manager's `AskPromptHandler`: unless the host supplied one it **refuses**,
+and the environment variable `AIMON_HOOK_ASK_DEFAULT=allow` changes that default to allow. An `ask` is a verdict, so
+`failOpen` does not open it. `permissionDecision: defer`, unlike `decision: defer`, is no verdict — Claude Code's `defer`
+means "hold this tool call until the calling application resumes it", there is no means to do that, and so it is not
+read as running the tool.
 
 On `postTool` a missing verdict still leaves a WARN and proceeds, as before.
 
@@ -455,8 +467,9 @@ On `postTool` a missing verdict still leaves a WARN and proceeds, as before.
   verdict. Write the final address in `url`.
 - **At most 1 MiB of response body is read.** A larger one is not truncated and guessed at: it is no verdict (`response
   could not be read: response larger than 1048576 bytes`).
-- **`timeout` is measured until the response headers arrive.** If the body stalls after that, the hook executor's outer
-  net cuts it off. The connect timeout is fixed at 5 seconds.
+- **`timeout` is measured over the whole exchange — the response body included.** An endpoint that sends its headers
+  and stalls, and one that drips its body a byte at a time under 1 MiB, are both cut off at the deadline (the request in
+  flight is cancelled and its connection closed) and the result is `timed out`. The connect timeout is fixed at 5 seconds.
 - **The proxy is the JVM default** — system properties such as `https.proxyHost` apply; the `HTTPS_PROXY` environment
   variable is not read.
 - **`${env.X}` reads the host process's environment.** The names it may read are the `allowedEnvVars` the handler lists
@@ -544,8 +557,9 @@ verdict.** On the other 9 events no row blocks (a WARN, then the event proceeds)
 | `command` exits 126 or 127 (not executable · not found) | could not run | **blocks** | proceeds (WARN) |
 | `command` exits with any other code (1, 3, 130, …) | script malfunction | proceeds (WARN) | proceeds (WARN) |
 | `command` produces no exit code — a timeout, a shell failure, no execution environment or an unavailable one, a skill directory that could not be staged, an executor without shell support, an executor that throws | could not run | **blocks** | proceeds (WARN) |
-| `deny` handler | verdict: refuse | **blocks** | **blocks** |
-| `http` or `mcp` answers `decision: deny` | verdict: refuse (`reason` is the reason) | **blocks** | **blocks** |
+| `deny` handler | verdict: refuse | **blocks** | **blocks** — `failOpen` is not read on a `deny` (WARN). In the three "follows the event policy" rows below, a `deny` handler blocks as the default column says |
+| `http` or `mcp` answers with a refusal (`decision: deny` or `block`, `permissionDecision: deny`, `continue: false`) | verdict: refuse (the server's reason field is the reason) | **blocks** | **blocks** |
+| `http` or `mcp` answers `permissionDecision: ask` | verdict: ask | as the `AskPromptHandler` answers — by default **blocks** | the same — a verdict, so `failOpen` does not apply |
 | `http` or `mcp` gives any other readable answer (`allow`, `defer`, no decision, an empty body, plain text) | verdict: allow | proceeds | proceeds |
 | `http` or `mcp` gets no verdict — a connection failure, a timeout, a non-2xx status, an MCP server that is not registered or not connected or answers `isError`, an answer that cannot be read, an executor that is not wired, an executor that throws | no verdict | **blocks** | proceeds (WARN) |
 | the handler runs past its own timeout and is cut off by the hook executor's outer net (declared timeout + 5 seconds) | no verdict | **blocks** | follows the event policy — the default policy proceeds (WARN) |
@@ -557,8 +571,11 @@ verdict.** On the other 9 events no row blocks (a WARN, then the event proceeds)
 that could not run has the form `Blocked: guard hook '<name>' (<event>) could not run its command — <cause>. A guard that
 cannot decide blocks (fail-closed).` (for `http` and `mcp`: `could not get a verdict from its http call` / `… its mcp
 call`), and it never carries the command string, the shell's stderr, a URL, a header, a response body, an exception
-message or the name `failOpen` — the reader of that reason is the party the guard constrains. `http` and `mcp` handlers
-can only be placed on `preTool` and `postTool`, so the one guard event those three rows apply to is `preTool`.
+message or the name `failOpen` — the reader of that reason is the party the guard constrains. Only two causes carry a
+message: a skill directory that could not be staged, and an execution environment that is unavailable (`execution
+environment unavailable: …`). Both are word for word what a tool call (`Skill`; `Bash`, `Read` and the rest) already
+returns to the model for the same failure. `http` and `mcp` handlers
+can only be placed on `preTool` and `postTool`, so the one guard event those four rows apply to is `preTool`.
 
 A hook the pool did not take, and a hook that ended with an exception outside its handler, block by **the same
 declaration** as a hook cut off by the outer net — the `FAIL_CLOSED` a declarative guard declares per hook
@@ -1029,7 +1046,7 @@ are in [`aimon-skill-extensions.md`](../../references/aimon-skill-extensions.md)
 | `WARN hooks: 'command' on ... cannot run: the configured shell executor does not support shell actions` | `hooks.json` was applied with an executor that has no shell support (`NoOpShellActionExecutor`). A `command` handler that is not a guard (an event that is not a guard event, or `failOpen: true`) is not registered — wire a `HostShellActionExecutor`. For a `command` on a guard event this is a startup failure, not a WARN. |
 | `WARN hooks config at ...: ... has a 'failOpen' that is not a JSON boolean (...); it is read as false` | `failOpen` was written as `"true"`, `1` or `null`. The handler is registered with `failOpen: false` (it blocks when its command cannot run). If it only observes, change the value to `true`. |
 | A tool is refused with `Blocked: guard hook '...' could not run its command` | A `command` handler on an event with a decision channel produced no exit code (a timeout, for one), or the shell could not start the command (`command not found: exit code 127`, `command not executable: exit code 126` — check the script path and its execute permission). Fix the cause named in the reason, or declare `"failOpen": true` if the handler only observes. The full table is in [What a guard blocks](#what-a-guard-blocks). |
-| A tool is refused with `Blocked: guard hook '...' could not get a verdict from its http call` (or `mcp call`) | An `http` or `mcp` handler on `preTool` got no verdict. Read the cause in the reason — `action executor not wired` (the host wired no executor — `aimon-cli` wires them, so this is an embedding host), `call failed: MCP server not registered` (`server` is not the name of a configured MCP server), `call failed: HTTP 307` (redirects are not followed), `call failed: HTTP 503` or `call failed: ConnectException` (the policy server), `timed out`, `response could not be read` (the `decision` value is not `allow`, `deny` or `defer`). Declare `"failOpen": true` if the handler only observes. |
+| A tool is refused with `Blocked: guard hook '...' could not get a verdict from its http call` (or `mcp call`) | An `http` or `mcp` handler on `preTool` got no verdict. Read the cause in the reason — `action executor not wired` (the host wired no executor — `aimon-cli` wires them, so this is an embedding host), `call failed: MCP server not registered` (`server` is not the name of a configured MCP server), `call failed: HTTP 307` (redirects are not followed), `call failed: HTTP 503` or `call failed: ConnectException` (the policy server), `timed out`, `response could not be read` (the `decision` or `permissionDecision` value is not a known one — the table under [http](#http)). Declare `"failOpen": true` if the handler only observes. |
 | `WARN hooks: 'asyncRewake' is not supported on event '...'`              | Rewake-capable events are `preTool`/`preCompact`/`onSessionStart`/`onSessionEnd`/`onConfigReload`. The hook itself registers normally. |
 | A shell hook exited 2 but nothing was blocked                             | That event has no decision channel. A veto is effective only on `preTool`/`onStart`/`preCompact` (block) and `permissionRequest` (deny). |
 | `${tool_input.x}` / `${tool_name}` inside a command is empty              | Intended behaviour. Commands are not rendered — use the stdin JSON payload or the `AIMON_*` env (`$AIMON_TOOL_NAME` and so on). |

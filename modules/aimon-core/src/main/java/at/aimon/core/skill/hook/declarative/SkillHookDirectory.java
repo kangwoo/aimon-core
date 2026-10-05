@@ -100,6 +100,7 @@ final class SkillHookDirectory {
             // tool already reports to the model for the same failure.
             return refuse(env, ShellHookOutcome.Unrun.STAGING_FAILED, e.getMessage(), null);
         } catch (ExecutionEnvironmentUnavailableException e) {
+            // Likewise the text every tool call in this environment already fails with.
             return refuse(env, ShellHookOutcome.Unrun.ENVIRONMENT_UNAVAILABLE, e.getMessage(), null);
         } catch (RuntimeException | LinkageError e) {
             // The type only, as for a shell failure: an unexpected message may carry the provider's internals.

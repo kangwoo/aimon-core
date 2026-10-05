@@ -1,12 +1,8 @@
 package at.aimon.core.skill.hook.declarative;
 
-import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.function.Supplier;
 
 import org.slf4j.Logger;
@@ -31,8 +27,8 @@ import at.aimon.core.skill.hook.action.McpToolAction;
  * Resolves the target server via {@link McpClientManager} at call time, renders the args template via
  * {@link TemplateRenderer}, and invokes {@link McpClient#callTool}. The {@link McpCallResult} is mapped to a
  * {@link HookResult} using the same JSON contract as the HTTP executor &mdash; if the result content is a JSON object
- * with a {@code decision} field, decisions {@code allow}/{@code deny}/{@code defer} are honored; otherwise the call is
- * treated as side-effect only and {@link HookResult#success()} is returned.
+ * it is read by {@link DecisionDocument}, the native {@code decision} and the Claude Code spellings alike; otherwise
+ * the call is treated as side-effect only and {@link HookResult#success()} is returned.
  *
  * <p>
  * <b>Verdict or no verdict.</b> {@link #attempt} tells the two apart, because a guard has to (see
@@ -40,8 +36,8 @@ import at.aimon.core.skill.hook.action.McpToolAction;
  * that is blank, plain text or JSON that is not an object is a side-effect call (allow), and a JSON object is read
  * as a decision document. No verdict is: a server that is not registered or not connected, a transport failure or
  * any other exception from the client, a result flagged {@code isError} (all {@code CALL_FAILED}), and a decision
- * document that cannot be read ({@code INVALID_RESPONSE} &mdash; a {@code decision} that is not text or not one of
- * {@code allow} / {@code deny} / {@code defer}, an {@code updatedInput} that is not an object).
+ * document that cannot be read ({@code INVALID_RESPONSE} &mdash; a decision field whose value is not one
+ * {@link DecisionDocument} knows, an {@code updatedInput} that is not an object).
  *
  * <p>
  * {@link #run} is the advisory reading of the same call: a missing verdict is logged at WARN and returned as
@@ -49,11 +45,13 @@ import at.aimon.core.skill.hook.action.McpToolAction;
  *
  * <p>
  * <b>Timeout.</b> The action's {@link McpToolAction#getTimeout() timeout} bounds the call. {@link McpClient#callTool}
- * takes none, so the deadline is kept here: when it passes, the calling thread is interrupted, which is how a
+ * takes none, so the deadline is kept here ({@link CallDeadline}, the mechanism the HTTP executor uses for the same
+ * purpose): when it passes, the calling thread is interrupted, which is how a
  * request is told to stop ({@code StdioMcpTransport} polls for its response and gives up on an interrupt), and the
- * outcome is {@code TIMEOUT} &mdash; no verdict. The interrupt is this executor's own and is cleared before returning.
- * No thread is created per call: the deadline rides on the JDK's shared delay scheduler and is cancelled when the
- * call returns.
+ * outcome is {@code TIMEOUT} &mdash; no verdict. The interrupt is this executor's own and is taken back before
+ * returning, so the thread's interrupt flag is left as the call found it. No thread is created per call: the deadline
+ * rides on the JDK's shared delay scheduler and is cancelled when the call ends &mdash; by returning, by throwing, or
+ * with an {@link Error} that this method lets through.
  *
  * <p>
  * The server's {@code requestTimeout} (per server, 30s by default) still applies underneath, so <em>the smaller of
@@ -198,12 +196,16 @@ public final class McpActionExecutor {
             final CallDeadline deadline = CallDeadline.arm(action.getTimeout());
             McpCallResult result = null;
             RuntimeException failure = null;
+            boolean timedOut = false;
             try {
                 result = client.callTool(action.getToolName(), renderedArgs);
             } catch (RuntimeException e) {
                 failure = e;
+            } finally {
+                // On every way out, an Error included: this thread belongs to the hook pool and runs something else
+                // next, and a deadline left armed would interrupt that.
+                timedOut = deadline.disarm();
             }
-            final boolean timedOut = deadline.disarm();
             if (failure != null) {
                 if (timedOut) {
                     log.warn("MCP hook '{}/{}' timed out after {}", action.getServerName(), action.getToolName(),
@@ -255,65 +257,6 @@ public final class McpActionExecutor {
         return DecisionDocument.read(root, objectMapper,
                 "MCP hook '" + action.getServerName() + "/" + action.getToolName() + "'",
                 "Denied by MCP hook " + action.getServerName() + "/" + action.getToolName(), false);
-    }
-
-    /**
-     * The deadline of one call, kept on the JDK's shared delay scheduler ({@link CompletableFuture#orTimeout}): when
-     * it passes while the call is still in flight, the calling thread is interrupted.
-     *
-     * <p>
-     * {@link #fire()} and {@link #disarm()} are mutually exclusive, so once {@code disarm} has returned no interrupt
-     * from this deadline can arrive any more, and one that already did is cleared there. Clearing can swallow an
-     * outside interrupt that landed in the same instant; the call is over either way, and the caller that sent it
-     * (the hook executor's net) has already decided without this hook's result.
-     */
-    private static final class CallDeadline {
-
-        private final Thread caller = Thread.currentThread();
-        private final CompletableFuture<Void> timer = new CompletableFuture<>();
-        private boolean armed = true;
-        private boolean fired;
-
-        static CallDeadline arm(Duration timeout) {
-            final CallDeadline deadline = new CallDeadline();
-            deadline.timer.orTimeout(toNanosSaturating(timeout), TimeUnit.NANOSECONDS)
-                    .whenComplete((ignored, thrown) -> {
-                        if (thrown instanceof TimeoutException) {
-                            deadline.fire();
-                        }
-                    });
-            return deadline;
-        }
-
-        private synchronized void fire() {
-            if (armed) {
-                fired = true;
-                caller.interrupt();
-            }
-        }
-
-        /**
-         * Ends the deadline and reports whether it had fired.
-         *
-         * @return true when the call ran out of time (the interrupt it caused has been cleared)
-         */
-        synchronized boolean disarm() {
-            armed = false;
-            // Cancels the scheduled timeout, so a call that answered leaves nothing behind.
-            timer.complete(null);
-            if (fired) {
-                Thread.interrupted();
-            }
-            return fired;
-        }
-
-        private static long toNanosSaturating(Duration timeout) {
-            try {
-                return timeout.toNanos();
-            } catch (ArithmeticException e) {
-                return Long.MAX_VALUE;
-            }
-        }
     }
 
     private static String summarise(String text) {

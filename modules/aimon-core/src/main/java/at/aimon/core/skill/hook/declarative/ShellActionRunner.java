@@ -105,7 +105,9 @@ final class ShellActionRunner {
             return ShellHookOutcome.notRun(ShellHookOutcome.Unrun.CANCELLED, "");
         } catch (ExecutionEnvironmentUnavailableException e) {
             // The environment is there but cannot be used. Not a reason to reach for another shell: the command is
-            // skipped, exactly as a tool call in the same execution would fail.
+            // skipped, exactly as a tool call in the same execution would fail. The message is passed on, unlike a
+            // shell failure's below: it is what Bash, Read and the other tools already return to the model for a call
+            // in this environment, so the deny reason says nothing its reader is not told anyway.
             log.warn("Hook shell action not run: the execution environment is unavailable (command={}): {}",
                     action.getCommand(), e.getMessage());
             return ShellHookOutcome.notRun(ShellHookOutcome.Unrun.ENVIRONMENT_UNAVAILABLE, e.getMessage());

@@ -51,22 +51,42 @@ import at.aimon.core.skill.hook.action.HttpMethod;
  * <li>{@code {"decision":"defer"}} → {@code HookResult.success()} (delegates to the next hook)
  * <li>{@code "updatedInput": {...}} carried alongside any decision → {@code HookResult.builder().updatedInput(...)}
  * </ul>
+ * The spellings an endpoint written for Claude Code uses are read as verdicts too &mdash; {@code decision: block},
+ * {@code hookSpecificOutput.permissionDecision} and {@code continue: false}; {@link DecisionDocument} has the whole
+ * mapping and what happens when two spellings disagree.
  *
  * <p>
  * <b>Verdict or no verdict.</b> {@link #attempt} tells the two apart, because a guard has to (see
  * {@link ActionCallOutcome}):
  * <ul>
- * <li><b>Verdict</b> &mdash; any 2xx response that can be read: a JSON object with {@code decision} absent or one of
- * {@code allow} / {@code deny} / {@code defer}; an empty body; a body that is not declared as JSON and does not parse
- * as a JSON object (a webhook answering {@code ok}). Only {@code deny} blocks.
- * <li><b>No verdict</b> &mdash; a transport failure or an interrupted call ({@code CALL_FAILED}), a request that ran
- * out of {@link HttpAction#getTimeout() time} ({@code TIMEOUT}), a non-2xx status ({@code CALL_FAILED}, whatever its
+ * <li><b>Verdict</b> &mdash; any 2xx response that can be read: a JSON object whose decision fields are absent or
+ * carry values {@link DecisionDocument} knows; an empty body; a body that is not declared as JSON and does not parse
+ * as a JSON object (a webhook answering {@code ok}). A deny blocks, and an {@code ask} is answered by the hook
+ * execution manager.
+ * <li><b>No verdict</b> &mdash; a transport failure ({@code CALL_FAILED}), a call interrupted from outside
+ * ({@code CANCELLED}), an exchange that ran out of {@link HttpAction#getTimeout() time} before its last body byte
+ * ({@code TIMEOUT}), a non-2xx status ({@code CALL_FAILED}, whatever its
  * body says &mdash; a refusal is spelled {@code decision: deny} in a 2xx), and a 2xx answer that cannot be read as a
- * decision ({@code INVALID_RESPONSE}): a body declared {@code application/json} that does not parse, a
- * {@code decision} that is not text or not one of the three values, an {@code updatedInput} that is not an object.
+ * decision ({@code INVALID_RESPONSE}): a body declared {@code application/json} that does not parse, a decision
+ * field whose value is not one {@link DecisionDocument} knows, an {@code updatedInput} that is not an object.
  * </ul>
  * {@link #run} is the advisory reading of the same call: it logs a missing verdict at WARN and returns
  * {@link HookResult#success()}, so a {@code postTool} webhook stays fail-soft for transport problems.
+ *
+ * <p>
+ * <b>Timeout.</b> The action's {@link HttpAction#getTimeout() timeout} bounds the whole exchange: connecting, the
+ * request, the wait for the response headers <em>and the response body</em>. The JDK's own
+ * {@link HttpRequest.Builder#timeout request timeout} stops counting when the headers arrive, so an endpoint that
+ * sent them and then stalled, or dripped its body under {@link #MAX_RESPONSE_BYTES}, was bounded by nothing here. The
+ * deadline is therefore kept by this executor, the way the MCP executor keeps its own ({@link CallDeadline}): when it
+ * passes, the calling thread is interrupted, {@link HttpClient#send} cancels the exchange and closes its connection,
+ * and the outcome is {@code TIMEOUT} &mdash; no verdict. That interrupt is this executor's own and is taken back
+ * before returning. The request timeout is still set, so a client that does not answer an interrupt keeps the bound
+ * it had; for such a client the hook executor's outer net ends the wait, and a guard still blocks.
+ *
+ * <p>
+ * An interrupt that is <em>not</em> this executor's &mdash; the hook executor cutting the hook off, the execution
+ * being cancelled &mdash; is reported as {@code CANCELLED} and left set.
  *
  * <p>
  * <b>What a request can reach and carry.</b> The URL is the configured one, never templated. Headers and body are
@@ -193,28 +213,49 @@ public final class HttpActionExecutor {
             return ActionCallOutcome.notRun(ShellHookOutcome.Unrun.CALL_FAILED, ShellActionRunner.failureDetail(e));
         }
 
+        // send() returns once the whole body is in, so the deadline covers the body as well as the headers.
+        final CallDeadline deadline = CallDeadline.arm(action.getTimeout());
+        HttpResponse<String> response = null;
+        IOException failure = null;
+        boolean interrupted = false;
+        boolean timedOut = false;
         try {
-            final HttpResponse<String> response = httpClient.send(request, HttpActionExecutor::cappedBody);
+            response = httpClient.send(request, HttpActionExecutor::cappedBody);
+        } catch (IOException e) {
+            failure = e;
+        } catch (InterruptedException e) {
+            // The client has cancelled the exchange on its way out; whose interrupt it was is settled below.
+            interrupted = true;
+        } finally {
+            // On every way out, an Error included: a deadline left armed would interrupt this pool thread later.
+            timedOut = deadline.disarm();
+        }
+        if (response != null) {
             return mapResponse(action, response);
-        } catch (HttpTimeoutException e) {
-            log.warn("HTTP hook to {} timed out after {}: {}", url, action.getTimeout(), e.getMessage());
+        }
+        if (timedOut || failure instanceof HttpTimeoutException) {
+            log.warn("HTTP hook to {} timed out after {}", url, action.getTimeout());
             return ActionCallOutcome.notRun(ShellHookOutcome.Unrun.TIMEOUT,
                     "no response within " + action.getTimeout().toMillis() + "ms");
-        } catch (IOException e) {
-            if (isResponseTooLarge(e)) {
-                log.warn("HTTP hook to {} answered with more than {} bytes; the body was not read", url,
-                        MAX_RESPONSE_BYTES);
-                return ActionCallOutcome.notRun(ShellHookOutcome.Unrun.INVALID_RESPONSE,
-                        "response larger than " + MAX_RESPONSE_BYTES + " bytes");
-            }
-            // The type only: a transport message routinely names the host and port.
-            log.warn("HTTP hook to {} failed (transport): {}", url, e.getMessage());
-            return ActionCallOutcome.notRun(ShellHookOutcome.Unrun.CALL_FAILED, ShellActionRunner.failureDetail(e));
-        } catch (InterruptedException e) {
+        }
+        if (interrupted) {
+            // Not our deadline: the thread running the hook was interrupted from outside. The flag stays set.
             Thread.currentThread().interrupt();
             log.warn("HTTP hook to {} interrupted", url);
             return ActionCallOutcome.notRun(ShellHookOutcome.Unrun.CANCELLED, "");
         }
+        if (failure == null) {
+            return ActionCallOutcome.notRun(ShellHookOutcome.Unrun.INVALID_RESPONSE, "no response");
+        }
+        if (isResponseTooLarge(failure)) {
+            log.warn("HTTP hook to {} answered with more than {} bytes; the body was not read", url,
+                    MAX_RESPONSE_BYTES);
+            return ActionCallOutcome.notRun(ShellHookOutcome.Unrun.INVALID_RESPONSE,
+                    "response larger than " + MAX_RESPONSE_BYTES + " bytes");
+        }
+        // The type only: a transport message routinely names the host and port.
+        log.warn("HTTP hook to {} failed (transport): {}", url, failure.getMessage());
+        return ActionCallOutcome.notRun(ShellHookOutcome.Unrun.CALL_FAILED, ShellActionRunner.failureDetail(failure));
     }
 
     private static HttpRequest buildRequest(HttpAction action, ToolInput toolInput,
@@ -222,6 +263,7 @@ public final class HttpActionExecutor {
         final TemplateRenderer renderer = TemplateRenderer.builder().toolInput(toolInput)
                 .envWhitelist(filterEnv(processEnv, action.getAllowedEnvVars())).context(contextAttributes).build();
 
+        // The client's own timeout ends at the response headers; attempt() keeps the deadline for the whole exchange.
         final HttpRequest.Builder reqBuilder = HttpRequest.newBuilder(action.getUrl()).timeout(action.getTimeout());
 
         for (Map.Entry<String, String> h : action.getHeaders().entrySet()) {
