@@ -131,8 +131,8 @@ public interface LlmStreamSink {
 
 **수명 계약.** `TEXT_DELTA` 0회 이상(배포가 요청했다면 `REASONING_DELTA` 가 그 사이에 섞인다) → 성공한
 스트림마다 `STREAM_END` 정확히 1회. **provider 오류에서는 스트리밍 호출 자체가 던지고 sink 는 `STREAM_END` 를
-받지 못한다.** 텍스트가 이미 흐른 시도라면 UI 가 "시작했는데 끝나지 않은 스트림" 을 보지 않도록 실행기가 합성 종료
-이벤트를 낸다(§7.2).
+받지 못한다.** delta 가 이미 흐른 시도라면 — 텍스트든 숙고든 — UI 가 "시작했는데 끝나지 않은 스트림" 을 보지
+않도록 실행기가 합성 종료 이벤트를 낸다(§7.2).
 
 `LlmStreamSink.discarding()` 은 모든 chunk 를 버린다. 취소 가능한 비스트리밍 호출이 abort 레버를 얻으려고
 스트리밍 경로를 탈 때 쓴다([`cancellation.md`](cancellation.md)). 그 경로에서도 추론 chunk 는 만들어졌다가
@@ -373,8 +373,10 @@ aggregator 에 chunk 미러링, 텍스트 delta 에서의 IRQ checkpoint. 핵심
 | 그 밖의 `RuntimeException` | provider 실패 / prompt-too-long 재발행 | eager 작업 폐기 → `emitErrorCompletion()` → rethrow |
 
 세 번째 줄이 §4.1 의 공백을 메운다 — provider 오류가 sink 를 침묵시키더라도 UI 소비자는 매달린 스트림을 보지
-않는다. 합성 `finishReason="error"` completion 은 **그 시도에서 텍스트 delta 가 하나 이상 발행되었을 때만**
-나간다 — UI 가 스트림 시작을 보지 못했다면 닫을 것도 없다.
+않는다. 합성 `finishReason="error"` completion 은 **그 시도에서 delta 가 하나 이상 발행되었을 때만** 나간다 —
+UI 가 스트림 시작을 보지 못했다면 닫을 것도 없다. 여기서 delta 는 두 채널 모두다. 숙고만 흘린 뒤 실패한 시도도
+구독자가 렌더링하던 스트림을 연 것이므로 닫혀야 한다. 두 채널의 인덱스 시퀀스는 따로지만(§5.2) 이 판정은 둘을 함께
+본다. `totalLength` 는 답 텍스트의 길이라 그 경우 `0` 이다.
 
 취소 시 프리픽스를 전사에 넣는 이유는 화면과 이력을 일치시키기 위해서다 — 최종 세션 스냅샷과 다음 LLM 호출이
 사용자가 본 것과 정확히 같은 텍스트를 싣는다. tool uses 는 의도적으로 비운다. 스트림 중간의 취소는 tool_call 을

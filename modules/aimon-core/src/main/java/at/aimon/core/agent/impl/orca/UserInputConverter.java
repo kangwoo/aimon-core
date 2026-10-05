@@ -81,11 +81,13 @@ final class UserInputConverter {
             return ImageContentBlock.ofBase64(imageInput.getData(), imageInput.getMimeType());
         } else if (userInput instanceof FileInput fileInput) {
             String mime = fileInput.getMimeType();
-            if (mime.startsWith("text/") || mime.equals("application/pdf")) {
+            if (DocumentContentBlock.isSupportedMimeType(mime)) {
                 return DocumentContentBlock.of(fileInput.getData(), mime, fileInput.getFileName());
             } else if (mime.startsWith("image/")) {
                 return ImageContentBlock.ofBase64(fileInput.getData(), mime);
             } else {
+                // An unlisted text/* type (text/yaml, text/x-java, ...) lands here too: FileInput.asText() decodes
+                // it as UTF-8, so the model still sees the content instead of the conversion throwing.
                 return TextContentBlock.of(fileInput.asText());
             }
         } else if (userInput instanceof AudioInput audioInput) {

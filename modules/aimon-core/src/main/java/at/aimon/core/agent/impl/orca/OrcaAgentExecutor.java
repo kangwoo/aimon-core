@@ -3461,9 +3461,13 @@ public class OrcaAgentExecutor
          * Emits a synthetic {@code finishReason="error"} completion when the gateway raises an unexpected
          * {@link RuntimeException} after deltas have already been emitted. No-op if no deltas were emitted on the
          * current attempt (UI never observed a stream start) or if a completion has already been emitted.
+         *
+         * <p>
+         * "Deltas" means either channel: an attempt that streamed only reasoning and then failed has started a
+         * stream the subscriber is rendering, so it needs the close as much as a text-only one does.
          */
         void emitErrorCompletion() {
-            if (completionEmitted || nextChunkIndex == 0) {
+            if (completionEmitted || (nextChunkIndex == 0 && nextReasoningChunkIndex == 0)) {
                 return;
             }
             scope.eventDispatcher.emitAssistantTextStreamCompleted(iteration, aggregator.peekText().length(), null,

@@ -7,6 +7,22 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Fixed: a `text/*` attachment outside the document allow-list no longer breaks the message; a thinking-only stream that fails is closed (#164)
+
+- **A `FileInput` with a `text/*` MIME type the document block does not accept is sent as text instead of
+  throwing.** `UserInputConverter` routed every `text/*` file to `DocumentContentBlock`, which accepts five types
+  (`application/pdf`, `text/plain`, `text/markdown`, `text/html`, `text/csv`) and threw `IllegalArgumentException` on
+  the rest, so attaching `text/yaml`, `text/xml`, `text/x-java` — or `text/plain; charset=utf-8` — failed the turn at
+  conversion. The converter now asks the block (new `DocumentContentBlock.isSupportedMimeType(String)`) and degrades
+  anything else to a `TextContentBlock` with the file's UTF-8 content, the fallback non-document files already took.
+- **A provider error after reasoning-only deltas now emits the synthetic `finishReason="error"` completion.** The
+  executor decided whether a subscriber had seen a stream start from the text channel's counter alone, so an attempt
+  that streamed only thinking and then failed left its `AssistantReasoningDelta`s with nothing closing them — in the
+  REPL, an open `[thinking]` line. Either channel now counts. `totalLength` stays the answer text's length, `0` here.
+- **Docs.** The `AnthropicConfig` / `AnthropicLlmClient` javadoc examples and the module README read
+  `ANTHROPIC_API_KEY`; they now read `ANTHROPIC_KEY`, the name the live tests, `CONTRIBUTING.md` and the CLI's sample
+  config use.
+
 ### Fixed: a skill invoked as `/my-skill` runs its fork under the skill's own hooks (EE-68)
 
 - **A fork-mode skill's frontmatter hooks now apply however the skill is invoked.** Until now only the `Skill` tool

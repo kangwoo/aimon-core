@@ -40,6 +40,18 @@ class DocumentContentBlockTest {
     }
 
     @Test
+    @DisplayName("isSupportedMimeType should agree with what of() accepts")
+    void isSupportedMimeType_matchesFactory() {
+        assertThat(DocumentContentBlock.isSupportedMimeType("application/pdf")).isTrue();
+        assertThat(DocumentContentBlock.isSupportedMimeType("text/csv")).isTrue();
+        assertThat(DocumentContentBlock.isSupportedMimeType("text/yaml")).isFalse();
+        assertThat(DocumentContentBlock.isSupportedMimeType("text/plain; charset=utf-8")).isFalse();
+        assertThat(DocumentContentBlock.isSupportedMimeType(null)).isFalse();
+        assertThatThrownBy(() -> DocumentContentBlock.of(SAMPLE_DATA, "text/yaml"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     @DisplayName("Should reject null data")
     void shouldRejectNullData() {
         assertThatThrownBy(() -> DocumentContentBlock.of(null, "application/pdf"))

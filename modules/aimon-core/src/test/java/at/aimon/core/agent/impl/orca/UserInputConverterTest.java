@@ -6,6 +6,8 @@ import java.nio.charset.StandardCharsets;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import at.aimon.core.agent.input.FileInput;
 import at.aimon.core.agent.input.ImageInput;
@@ -93,5 +95,18 @@ class UserInputConverterTest {
         ContentBlock block = UserInputConverter.toSingleContentBlock(input);
 
         assertThat(block).isInstanceOf(ImageContentBlock.class);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"text/xml", "text/yaml", "text/x-java", "text/plain; charset=utf-8"})
+    @DisplayName("Should degrade a text file the document block does not accept to a text block with its content")
+    void buildUserMessage_fileInput_unlistedText_degradesToText(String mimeType) {
+        byte[] textData = "key: value".getBytes(StandardCharsets.UTF_8);
+        FileInput input = FileInput.of(textData, mimeType, "config.yaml");
+
+        ContentBlock block = UserInputConverter.toSingleContentBlock(input);
+
+        assertThat(block).isInstanceOf(TextContentBlock.class);
+        assertThat(block.asText()).isEqualTo("key: value");
     }
 }

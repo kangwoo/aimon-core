@@ -83,8 +83,20 @@ public final class DocumentContentBlock implements ContentBlock {
         return new DocumentContentBlock(data, mimeType, fileName);
     }
 
+    /**
+     * Returns whether a document block can carry the given MIME type. Callers that route arbitrary input here should
+     * ask first rather than catch the {@link IllegalArgumentException} from {@link #of(byte[], String)}.
+     *
+     * @param mimeType
+     *            The MIME type to check (can be null)
+     * @return {@code true} if {@link #of(byte[], String)} accepts this MIME type
+     */
+    public static boolean isSupportedMimeType(String mimeType) {
+        return mimeType != null && SUPPORTED_MIME_TYPES.contains(mimeType);
+    }
+
     private static void validateMimeType(String mimeType) {
-        if (!SUPPORTED_MIME_TYPES.contains(mimeType)) {
+        if (!isSupportedMimeType(mimeType)) {
             throw new IllegalArgumentException(
                     "Unsupported document MIME type: " + mimeType + ". Supported types: " + SUPPORTED_MIME_TYPES);
         }
