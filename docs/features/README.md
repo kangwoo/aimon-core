@@ -9,7 +9,7 @@
 
 ---
 
-## [`agent-execution/`](agent-execution/) — 에이전트 실행
+## `agent-execution/` — 에이전트 실행
 
 ReAct 루프, 턴 처리, 중단, 입력 큐.
 
@@ -28,7 +28,7 @@ ReAct 루프, 턴 처리, 중단, 입력 큐.
 [`context-engine.md`](../design/agent-execution/context-engine.md) ·
 [`artifact.md`](../design/agent-execution/artifact.md)
 
-## [`session/`](session/) — 세션
+## `session/` — 세션
 
 대화 영속, 라이브 세션 핸들, 멀티 노드 배포.
 
@@ -47,7 +47,7 @@ IMPORTANT: 세션(`SessionRecord`)과 라이브 세션(`LiveSession`)의 차이�
 [`backends.md`](../design/session/backends.md) ·
 [`backends.md`](../design/session/backends.md)
 
-## [`tool/`](tool/) — 도구
+## `tool/` — 도구
 
 에이전트가 외부와 상호작용하는 단위.
 
@@ -60,7 +60,7 @@ IMPORTANT: 세션(`SessionRecord`)과 라이브 세션(`LiveSession`)의 차이�
 설계 근거: [`parallel-execution.md`](../design/tool/parallel-execution.md) ·
 [`tool-search.md`](../design/tool/tool-search.md)
 
-## [`skill/`](skill/) — 스킬
+## `skill/` — 스킬
 
 프롬프트·도구·훅을 묶은 선언적 능력 패키지.
 
@@ -76,7 +76,7 @@ IMPORTANT: 세션(`SessionRecord`)과 라이브 세션(`LiveSession`)의 차이�
 
 마이그레이션: [`custom-command-to-skill.md`](../migration/custom-command-to-skill.md)
 
-## [`hook/`](hook/) — 훅
+## `hook/` — 훅
 
 라이프사이클 13개 지점의 개입.
 
@@ -90,7 +90,7 @@ parity 경계: [`hooks-specification.md`](../references/hooks-specification.md)
 설계 근거: [`hook-system.md`](../design/hook/hook-system.md) ·
 [`async-rewake.md`](../design/hook/async-rewake.md)
 
-## [`subagent/`](subagent/) — 서브에이전트
+## `subagent/` — 서브에이전트
 
 격리 컨텍스트에서 도는 하위 에이전트.
 
@@ -101,7 +101,7 @@ parity 경계: [`hooks-specification.md`](../references/hooks-specification.md)
 설계 근거: [`code-defined-registration.md`](../design/subagent/code-defined-registration.md) ·
 [`execution.md`](../design/subagent/execution.md)
 
-## [`workflow/`](workflow/) — 워크플로
+## `workflow/` — 워크플로
 
 여러 서브에이전트의 결정론적 오케스트레이션.
 
@@ -115,7 +115,7 @@ phase [3](../design/workflow/workflow.md) ·
 [4](../design/workflow/workflow.md) ·
 [5](../design/workflow/workflow.md)
 
-## [`llm/`](llm/) — LLM 연동
+## `llm/` — LLM 연동
 
 프로바이더 추상화와 계측.
 
@@ -128,7 +128,7 @@ phase [3](../design/workflow/workflow.md) ·
 [`multimodal-content.md`](../design/llm/multimodal-content.md) ·
 [`cancellation.md`](../design/llm/cancellation.md)
 
-## [`memory/`](memory/) — 메모리
+## `memory/` — 메모리
 
 세션을 가로질러 남는 장기 기억.
 
@@ -138,7 +138,7 @@ phase [3](../design/workflow/workflow.md) ·
 
 설계 근거: [`peer-memory.md`](../design/memory/peer-memory.md)
 
-## [`knowledge/`](knowledge/) — 지식 / 위키
+## `knowledge/` — 지식 / 위키
 
 외부에서 넣어 준 문서의 색인과 검색.
 
@@ -151,7 +151,7 @@ phase [3](../design/workflow/workflow.md) ·
 설계 근거: [`knowledge-and-rag.md`](../design/knowledge/knowledge-and-rag.md)(인터페이스 + 키워드 검색) ·
 [`knowledge-and-rag.md`](../design/knowledge/knowledge-and-rag.md)(벡터/RAG — 앞 문서의 Phase 2 안을 대체)
 
-## [`scheduling/`](scheduling/) — 스케줄링
+## `scheduling/` — 스케줄링
 
 cron/일회성 예약 실행과 루틴.
 
@@ -161,7 +161,7 @@ cron/일회성 예약 실행과 루틴.
 
 설계 근거: [`llm-scheduling-agent.md`](../design/scheduling/llm-scheduling-agent.md)
 
-## [`observability/`](observability/) — 관측
+## `observability/` — 관측
 
 | 문서 | 내용 |
 |------|------|
@@ -189,4 +189,4 @@ cron/일회성 예약 실행과 루틴.
 - 기능 영역 디렉토리에 넣는다. 없으면 만든다 (디렉토리 이름은 카탈로그의 영역 이름을 따른다).
 - 이 색인의 해당 절에 한 줄 추가한다.
 - 그 기능이 [`../overview/features.md`](../overview/features.md) 카탈로그에 없다면 거기에도 추가한다.
-- **설계 근거는 여기 쓰지 않는다** — [`../design/`](../design/) 에 두고 링크한다.
+- **설계 근거는 여기 쓰지 않는다** — [`../design/`](../design/README.md) 에 두고 링크한다.

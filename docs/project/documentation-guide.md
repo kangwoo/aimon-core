@@ -110,8 +110,15 @@ IMPORTANT: **무엇이 열려 있는지의 정본은 `backlog/` 다.** 설계 �
   (`docs/features/tool/tool-development-guide.md`)를 쓴다.
 - `docs/` 밖(소스 파일, `CHANGELOG.md`)을 가리키는 상대 링크도 그대로 쓴다. 사이트 빌드 때
   [`scripts/mkdocs_github_links.py`](../../scripts/mkdocs_github_links.py) 가 GitHub URL 로 바꾼다.
-- 링크는 자동으로 검사된다 — `python3 scripts/check-doc-links.py` 가 경로와 `#앵커`를 둘 다 본다.
-  CI 의 `docs-links` 잡이 같은 것을 돌린다.
+- **사이트에 빌드되는 디렉토리**는 디렉토리로 링크하지 않는다 (`../features/` ✗). 그 디렉토리의
+  `README.md` 를 쓴다 — `*.en.md` 에서는 번역본이 있으면 `README.en.md`. GitHub 은 디렉토리 링크에 트리
+  화면을 열어 주지만 사이트에는 디렉토리의 페이지가 없고, MkDocs 는 그것을 INFO 로만 알려서
+  `mkdocs build --strict` 가 초록으로 지나간다. README 가 없는 디렉토리는 그 안의 페이지를 가리키거나
+  링크를 뺀다. `docs/` 밖이나 `backlog/` · `plan/` 을 가리키는 디렉토리 링크는 그대로 써도 된다 — 위의 훅이
+  바꾼다. 경계는 [`docs-site.md` §7.1](../design/documentation/docs-site.md#71-훅이-건드리지-않는-것--사이트에-빌드되는-디렉토리를-가리키는-링크)
+  에 있다.
+- 링크는 자동으로 검사된다 — `python3 scripts/check-doc-links.py` 가 경로와 `#앵커`, 그리고 위의 디렉토리
+  링크를 본다. CI 의 `docs-links` 잡이 같은 것을 돌린다.
 
 **제목을 고치면 앵커가 바뀐다.** 문서 안의 목차와 다른 문서의 `#fragment` 를 같은 PR 에서 다시 겨눈다.
 

@@ -21,6 +21,12 @@ this pair current", and computing that twice independently is exactly the drift
 above, except the divergence would be over which findings a shallow clone
 excuses. check-translation-staleness.py spends four paragraphs of its header on
 getting that right; a second, separately written copy of it would not.
+
+One answer is asked from outside the tree walk: which directories the site
+builds (`site_tree`, at the end). check-doc-links.py needs it to fail a link to a
+directory the site builds, and scripts/mkdocs_github_links.py -- the MkDocs hook,
+which holds MkDocs' own parse of the same setting -- compares the two on every
+site build.
 """
 
 import pathlib
@@ -379,3 +385,94 @@ def pair_state(translation, meta):
     if commits:
         return PairState(STALE, commits=commits, canonical=canonical)
     return PairState(FRESH, canonical=canonical)
+
+
+# --- what the site builds ----------------------------------------------------
+#
+# The site is `docs_dir` minus `exclude_docs`, both declared in mkdocs.yml. Two
+# readers need that answer and must not disagree on it:
+#
+#   * scripts/mkdocs_github_links.py, at render time, to turn a link into a tree
+#     the site does not build into a GitHub URL;
+#   * check-doc-links.py, to fail a link to a *directory* the site does build
+#     (backlog T-5) -- which is exactly the link the hook leaves alone.
+#
+# The hook is handed mkdocs' own parsed `exclude_docs` (a pathspec). This side
+# cannot have that: check-doc-links.py runs straight after actions/checkout, no
+# pip install, so neither `yaml` nor `pathspec` is importable -- the same reason
+# FRONT_MATTER above is a line regex. So mkdocs.yml is read with two regexes, and
+# only the one pattern shape that can be matched without a gitignore engine is
+# accepted: an anchored directory, `/backlog/` or `/a/b/`. Anything else -- a
+# bare `backlog/` (any depth), a wildcard, a `!` negation, a file pattern --
+# raises instead of being half-understood, and the link check goes red saying
+# so. Widen EXCLUDE_PATTERN and SiteTree.excluded together when that happens.
+#
+# What keeps the two readers from drifting is not this comment: the hook's
+# `on_config` asks both about every directory under `docs_dir` and stops the
+# site build when one answer differs.
+
+MKDOCS_DOCS_DIR = re.compile(r"^docs_dir:[ \t]*([^\s#]+)[ \t]*(?:#.*)?$", re.MULTILINE)
+MKDOCS_EXCLUDE_DOCS = re.compile(
+    r"^exclude_docs:[ \t]*\|[-+]?[ \t]*\n((?:[ \t]+.*(?:\n|\Z)|[ \t]*\n)*)", re.MULTILINE)
+MKDOCS_EXCLUDE_DOCS_KEY = re.compile(r"^exclude_docs:", re.MULTILINE)
+EXCLUDE_PATTERN = re.compile(r"^/(?:[^/*?\[\]!\\\s]+/)+$")
+
+
+class SiteTree:
+    """`docs_dir` and the directories `exclude_docs` keeps off the site."""
+
+    def __init__(self, docs_dir, excluded_dirs):
+        self.docs_dir = docs_dir
+        self.excluded_dirs = tuple(excluded_dirs)
+
+    def relative(self, path):
+        """`path` as a posix path inside `docs_dir` ("" for `docs_dir` itself), else None."""
+        try:
+            relative = path.relative_to(self.docs_dir).as_posix()
+        except ValueError:
+            return None
+        return "" if relative == "." else relative
+
+    def excluded(self, relative):
+        """Whether a path inside `docs_dir` is, or is under, an excluded directory."""
+        relative = relative.strip("/")
+        return any(relative == d or relative.startswith(d + "/") for d in self.excluded_dirs)
+
+    def builds(self, path):
+        """Whether the site builds `path` -- inside `docs_dir`, and not excluded."""
+        relative = self.relative(path)
+        return relative is not None and not self.excluded(relative)
+
+
+def site_tree(root=ROOT):
+    """What `root`/mkdocs.yml says the site builds, or None when there is no mkdocs.yml.
+
+    Raises ValueError on an `exclude_docs` this cannot read exactly -- see the
+    comment above for which shapes it reads and why the rest are refused.
+    """
+    config = pathlib.Path(root) / "mkdocs.yml"
+    if not config.is_file():
+        return None
+    text = config.read_text(encoding="utf-8", errors="replace")
+
+    m = MKDOCS_DOCS_DIR.search(text)
+    docs_dir = (config.parent / (m.group(1).strip("\"'") if m else "docs")).resolve()
+
+    excluded = []
+    m = MKDOCS_EXCLUDE_DOCS.search(text)
+    if m is None and MKDOCS_EXCLUDE_DOCS_KEY.search(text):
+        raise ValueError(
+            "mkdocs.yml: exclude_docs is not a `|` block of patterns, which is the only "
+            "form scripts/docs_tree.py reads")
+    for line in (m.group(1).splitlines() if m else ()):
+        pattern = line.strip()
+        if not pattern or pattern.startswith("#"):
+            continue
+        if not EXCLUDE_PATTERN.match(pattern):
+            raise ValueError(
+                f"mkdocs.yml: exclude_docs pattern {pattern!r} is not an anchored directory "
+                "(`/name/`), the only shape scripts/docs_tree.py matches without a gitignore "
+                "engine. Write it that way, or teach EXCLUDE_PATTERN and SiteTree.excluded "
+                "the new shape")
+        excluded.append(pattern.strip("/"))
+    return SiteTree(docs_dir, excluded)

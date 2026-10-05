@@ -1,12 +1,39 @@
 #!/usr/bin/env python3
 """Checks every relative markdown link in the repository, target and anchor.
 
-Two failures this catches, both of which have actually happened here:
+Three failures this catches, all of which have actually happened here:
 
   * a path that moved — a rename fixes the file and leaves every link to it dangling
   * an anchor that was never there — a plausible-looking `#section-name` invented
     from memory resolves to the top of the page, so the reader lands somewhere and
     never learns they were sent to the wrong place
+  * a link to a directory the site builds (backlog T-5) — github.com opens the tree
+    view, but the site has no page for a directory: mkdocs logs `unrecognized
+    relative link … left as is` at INFO, `mkdocs build --strict` stays green, and
+    the built page links to a path with no `index.html`. 41 of them were in the
+    tree when this rule was written
+
+WHICH DIRECTORY LINKS FAIL. One whose *source* and *target* are both built by the
+site — `docs_tree.site_tree()`'s reading of mkdocs.yml: inside `docs_dir`, and not
+under a directory `exclude_docs` names. Every other directory link is still accepted,
+because something opens it on every surface it is read on:
+
+  * the target is outside `docs_dir` (`../../modules/aimon-core/`) or under an
+    excluded directory (`../backlog/`): scripts/mkdocs_github_links.py rewrites it to
+    a GitHub tree URL at render time
+  * the source is not a site page (the repository-root README, `.claude/**`,
+    `docs/backlog/**`): it is only ever read on github.com, where the tree view opens
+
+The message says what to write instead: the directory's `README.md` — `README.en.md`
+from a `*.en.md` page when that translation exists, the way every other link in a
+translation is written — or, when the directory has no README, a page inside it. A
+README is not suggested into existence: whether a directory gets an index page is the
+author's call, and the failure is loud either way.
+
+The hook and this check must agree on what "built" means, and they read it through
+different parsers (the hook is handed mkdocs' pathspec; this cannot import one). The
+hook compares the two readings over every directory under `docs_dir` on each site
+build — see docs_tree.py › "what the site builds".
 
 External URLs are not checked. They fail for reasons that have nothing to do with
 this commit (rate limits, a host that is down, a login wall), and a docs gate that
@@ -22,7 +49,8 @@ check-backlog-registers.py reads the same shape, and why the two are left differ
 ways unfence() pairs fence markers and for a `#` comment in YAML front matter,
 which is not read, one page per case, so a change that
 alters one of those cases' answers goes red there until that case's expected answer
-changes too.
+changes too. It then pins the directory rule the same way: one link per case, in a
+small tree written to a temporary directory, never the real one.
 
 Usage:
     python3 scripts/check-doc-links.py [root]
@@ -32,8 +60,9 @@ Usage:
 import pathlib
 import re
 import sys
+import tempfile
 
-from docs_tree import SKIP_DIRS, anchors_of, slug, unfence
+from docs_tree import SKIP_DIRS, anchors_of, site_tree, slug, translation_suffix, unfence
 
 LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 EXTERNAL = re.compile(r"^(?:[a-z][a-z0-9+.-]*:|//|<)", re.IGNORECASE)
@@ -52,8 +81,24 @@ def resolves(fragment, anchors):
     return slug(fragment) in anchors
 
 
-def main(root_arg="."):
-    root = pathlib.Path(root_arg).resolve()
+def write_instead(source, dest, path_part):
+    """What a link from `source` to the built directory `dest` should say instead.
+
+    The page a directory has is its README (mkdocs builds `README.md` as the
+    directory's index). A translation links the translated README when there is
+    one and the canonical when there is not, as its other links do.
+    """
+    suffix = translation_suffix(source)
+    names = ([f"README{suffix}.md"] if suffix else []) + ["README.md"]
+    for name in names:
+        if (dest / name).is_file():
+            return f"write {path_part.rstrip('/')}/{name}"
+    return "it has no README.md, so link a page inside it or drop the link"
+
+
+def check(root):
+    """Every problem under `root`, as `(files, links checked, problem lines)`."""
+    site = site_tree(root)
     files = [
         p
         for p in sorted(root.rglob("*.md"))
@@ -79,6 +124,11 @@ def main(root_arg="."):
                 if not dest.exists():
                     problems.append(f"{where}  no such path      {target}")
                     continue
+                if dest.is_dir() and site and site.builds(f) and site.builds(dest):
+                    problems.append(
+                        f"{where}  built directory   {target}  (the site has no page for a "
+                        f"directory: {write_instead(f, dest, path_part)})")
+                    continue
             else:
                 dest = f
 
@@ -86,6 +136,18 @@ def main(root_arg="."):
                 continue
             if not resolves(fragment, anchors[dest]):
                 problems.append(f"{where}  no such anchor    {target}")
+
+    return files, checked, problems
+
+
+def main(root_arg="."):
+    root = pathlib.Path(root_arg).resolve()
+    try:
+        files, checked, problems = check(root)
+    except ValueError as unreadable:
+        # docs_tree.site_tree() refusing an exclude_docs it cannot match exactly.
+        print(f"cannot tell which directories the site builds: {unreadable}")
+        return 2
 
     print(f"checked {len(files)} files, {checked} relative links")
     if problems:
@@ -166,7 +228,7 @@ TOP_SHAPES = [
 ]
 
 
-def self_test():
+def heading_self_test():
     cases = [(name, ["# Page", ""] + lines, expected) for name, lines, expected in SHAPES]
     cases += [(name, lines + ["", "# Page"], expected) for name, lines, expected in TOP_SHAPES]
     print(f"self-test over {len(cases)} heading shape(s) named in docs_tree.anchors_of")
@@ -183,7 +245,141 @@ def self_test():
               "expected answer here.")
         return 1
     print("every heading shape above still reads the way docs_tree.anchors_of's docstring says")
+    print()
     return 0
+
+
+# --- the directory rule's self-test ------------------------------------------
+#
+# One link per case, in a tree written to a temporary directory. Each case names
+# the page the link is on, the link, and the advice the failure must carry -- or
+# None when the link must be accepted. The accepted cases are the boundary: they
+# are the directory links something else opens (the hook, or github.com), and a
+# rule that grew to fail them would send people to "fix" links that work.
+
+SITE_MKDOCS = "docs_dir: docs\nexclude_docs: |\n  /backlog/\n  /plan/\n"
+SITE_FILES = [
+    "README.md",
+    "modules/core/Tool.java",
+    "docs/README.md",
+    "docs/README.en.md",
+    "docs/features/README.md",
+    "docs/features/README.en.md",
+    "docs/features/tool/guide.md",
+    "docs/design/README.md",
+    "docs/design/backlog/deferred.md",
+    "docs/backlog/open-items.md",
+    "docs/plan/work.md",
+]
+README_EN = "write {}/README.en.md"
+README = "write {}/README.md"
+NO_README = "it has no README.md, so link a page inside it or drop the link"
+
+SITE_CASES = [
+    ("a site page linking a built directory that has a README fails",
+     "docs/overview.md", "features/", README.format("features")),
+    ("the same link with no trailing slash fails -- it is the directory either way",
+     "docs/overview.md", "features", README.format("features")),
+    ("the same link with a fragment fails, and the advice drops the fragment",
+     "docs/overview.md", "features/#tool", README.format("features")),
+    ("a `*.en.md` page is told to write the translated README when there is one",
+     "docs/overview.en.md", "features/", README_EN.format("features")),
+    ("a `*.en.md` page is told to write the canonical README when there is no translation",
+     "docs/overview.en.md", "design/", README.format("design")),
+    ("a built directory with no README fails, and no README is suggested",
+     "docs/features/README.md", "tool/", NO_README),
+    ("`design/backlog/` fails: `/backlog/` is anchored and excludes only the top-level one",
+     "docs/design/README.md", "backlog/", NO_README),
+    ("a link to `docs_dir` itself fails",
+     "docs/features/README.md", "../", README.format("..")),
+    ("a directory `exclude_docs` names is accepted -- the hook rewrites it",
+     "docs/design/README.md", "../backlog/", None),
+    ("a directory outside `docs_dir` is accepted -- the hook rewrites it",
+     "docs/features/tool/guide.md", "../../../modules/core/", None),
+    ("a page `exclude_docs` keeps off the site may link a built directory -- github.com only",
+     "docs/backlog/open-items.md", "../features/", None),
+    ("a page outside `docs_dir` may link a built directory -- github.com only",
+     "README.md", "docs/features/", None),
+    ("a link to a README is accepted",
+     "docs/overview.md", "features/README.md", None),
+]
+
+# exclude_docs shapes site_tree() must refuse rather than half-read: each one
+# excludes something an anchored-directory match would get wrong.
+UNREADABLE_EXCLUDES = [
+    ("a bare `backlog/`, which matches at any depth", "exclude_docs: |\n  backlog/\n"),
+    ("a wildcard", "exclude_docs: |\n  /dra*/\n"),
+    ("a negation", "exclude_docs: |\n  /backlog/\n  !/backlog/keep/\n"),
+    ("a file pattern", "exclude_docs: |\n  /notes.md\n"),
+    ("a form other than a `|` block", "exclude_docs: /backlog/\n"),
+]
+
+
+def site_fixture(root, mkdocs, page=None, link=None):
+    if mkdocs is not None:
+        (root / "mkdocs.yml").write_text(mkdocs, encoding="utf-8")
+    for name in SITE_FILES + ([page] if page else []):
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# Page\n", encoding="utf-8")
+    if page:
+        (root / page).write_text(f"# Page\n\n[link]({link})\n", encoding="utf-8")
+
+
+def site_self_test():
+    print(f"self-test over {len(SITE_CASES)} directory link(s) and "
+          f"{len(UNREADABLE_EXCLUDES) + 1} mkdocs.yml shape(s)")
+    failed = 0
+
+    def report(name, ok, got):
+        nonlocal failed
+        failed += not ok
+        print(f"  {'ok  ' if ok else 'FAIL'} {name}")
+        print(f"         {got}")
+
+    for name, page, link, advice in SITE_CASES:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp).resolve()
+            site_fixture(root, SITE_MKDOCS, page, link)
+            _, _, problems = check(root)
+        if advice is None:
+            ok = not problems
+        else:
+            ok = (len(problems) == 1 and "  built directory   " in problems[0]
+                  and problems[0].endswith(f"directory: {advice})"))
+        report(name, ok, problems[0] if problems else "accepted")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp).resolve()
+        site_fixture(root, None, "docs/overview.md", "features/")
+        _, _, problems = check(root)
+    report("with no mkdocs.yml there is no site, and no directory link fails",
+           not problems, problems[0] if problems else "accepted")
+
+    for name, exclude_docs in UNREADABLE_EXCLUDES:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp).resolve()
+            site_fixture(root, "docs_dir: docs\n" + exclude_docs)
+            try:
+                check(root)
+                got = None
+            except ValueError as refused:
+                got = str(refused)
+        report(f"exclude_docs with {name} is refused, not half-read",
+               got is not None, got or "read without complaint")
+
+    print()
+    if failed:
+        print(f"{failed} case(s) failed: the directory rule no longer draws the boundary this "
+              "script's docstring says (WHICH DIRECTORY LINKS FAIL). Say there what fails now "
+              "and why, then change the expected answer here.")
+        return 1
+    print("every directory link above is still failed or accepted as this script's docstring says")
+    return 0
+
+
+def self_test():
+    return max(heading_self_test(), site_self_test())
 
 
 if __name__ == "__main__":

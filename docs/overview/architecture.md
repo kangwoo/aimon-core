@@ -664,7 +664,7 @@ IMPORTANT: 마지막 셋은 `aimon-core` **밖**에 있다. 규칙을 찾을 때
 - [`deployment.md`](deployment.md) — 멀티 노드 배포 뷰
 - [`glossary.md`](glossary.md) — 용어와 수명 사전
 - [`scope-model.md`](scope-model.md) — 수명·소유권·소멸 책임 규칙
-- [`../features/`](../features/) — 기능별 상세 가이드
+- [`../features/`](../features/README.md) — 기능별 상세 가이드
 - [도구 개발 가이드](../features/tool/tool-development-guide.md)
 - [훅 개발 가이드](../features/hook/hook-development-guide.md)
 - [LLM Provider 개발 가이드](../features/llm/llm-provider-development-guide.md)
