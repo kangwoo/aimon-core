@@ -95,10 +95,9 @@ class FileToolTurnIntegrationTest {
         final OrcaAgentExecutionResult result = node.run(sessionId, "promote the config");
 
         assertThat(result.isSuccess()).isTrue();
-        // EditTool rebuilds the file line-by-line and drops the trailing newline on purpose (EditTool:267, "to match
-        // exact file content"), so the round-tripped content is normalized rather than byte-identical to the seed.
-        // Pinned here because it is observable behaviour of the assembled runtime, not an artefact of this test.
-        assertThat(node.readFile("config.txt")).isEqualTo("mode=final\nlevel=1");
+        // Byte-identical outside the replacement, trailing newline included. Edit used to rebuild the file line by line
+        // and drop that newline, and this line pinned it; EE-76 fixed it.
+        assertThat(node.readFile("config.txt")).isEqualTo("mode=final\nlevel=1\n");
         assertThat(result.getIterationCount()).isEqualTo(3);
     }
 

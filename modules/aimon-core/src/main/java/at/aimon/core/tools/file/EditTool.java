@@ -1,10 +1,8 @@
 package at.aimon.core.tools.file;
 
-import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
@@ -176,50 +174,50 @@ public class EditTool extends AbstractTool implements ToolPermissionSubjectAware
             }
 
             // Extract old_string and new_string parameters
-            final String oldString = input.getRequiredString("old_string");
-            final String newString = input.getRequiredString("new_string");
+            final String requestedOldString = input.getRequiredString("old_string");
+            final String requestedNewString = input.getRequiredString("new_string");
 
-            // Validate old_string and new_string are different
-            if (oldString.equals(newString)) {
-                return ToolResult.error("old_string and new_string must be different. They are currently identical.");
+            if (requestedOldString.isEmpty()) {
+                return ToolResult.error("old_string must not be empty.");
             }
 
             // Extract optional replace_all parameter (default: false)
             final boolean replaceAll = input.getBoolean("replace_all", false);
 
-            // Read current file content
-            final String fileContent = readFileContent(fileSystem, filePath);
+            // Read never shows line endings: it splits on CRLF, LF and a lone CR alike, so the model writes every
+            // line break in old_string as \n. Matching therefore runs on a view of the file with each line break
+            // folded to \n, and the replacement is spliced into the raw content at the matched span only -- every
+            // byte outside it, endings and trailing newlines included, is written back as stored.
+            final String oldString = LineBreakView.fold(requestedOldString);
+            final String newString = LineBreakView.fold(requestedNewString);
+            if (oldString.equals(newString)) {
+                return ToolResult.error(requestedOldString.equals(requestedNewString)
+                        ? "old_string and new_string must be different. They are currently identical."
+                        : "old_string and new_string differ only in line endings. Edit keeps the file's own line "
+                                + "endings, so this edit would change nothing.");
+            }
+
+            final String rawContent = readFileContent(fileSystem, filePath);
+            final LineBreakView view = LineBreakView.of(rawContent);
 
             // Check if old_string exists in file
-            if (!fileContent.contains(oldString)) {
+            final int count = countOccurrences(view.text, oldString);
+            if (count == 0) {
                 return ToolResult.error(
                         "old_string not found in file. Verify the exact content including whitespace and line breaks. "
                                 + "Remember to exclude line number prefixes from Read tools output.");
             }
 
             // If not replace_all, check that old_string is unique
-            if (!replaceAll) {
-                final int firstIndex = fileContent.indexOf(oldString);
-                final int lastIndex = fileContent.lastIndexOf(oldString);
-                if (firstIndex != lastIndex) {
-                    // Count occurrences
-                    final int count = countOccurrences(fileContent, oldString);
-                    return ToolResult.error(String.format("old_string appears %d times in the file. Either:\n"
-                            + "1. Make old_string unique by including more context (surrounding code)\n"
-                            + "2. Use replace_all: true to replace all occurrences", count));
-                }
+            if (!replaceAll && count > 1) {
+                return ToolResult.error(String.format("old_string appears %d times in the file. Either:\n"
+                        + "1. Make old_string unique by including more context (surrounding code)\n"
+                        + "2. Use replace_all: true to replace all occurrences", count));
             }
 
-            // Perform replacement
-            final String newContent;
-            final int replacementCount;
-            if (replaceAll) {
-                replacementCount = countOccurrences(fileContent, oldString);
-                newContent = fileContent.replace(oldString, newString);
-            } else {
-                replacementCount = 1;
-                newContent = fileContent.replaceFirst(escapeRegex(oldString), escapeReplacement(newString));
-            }
+            // Perform replacement; the lines new_string adds take the file's prevailing line ending
+            final String newContent = view.replace(oldString, newString.replace("\n", view.lineBreak), replaceAll);
+            final int replacementCount = replaceAll ? count : 1;
 
             // Write modified content back to file
             writeFileContent(fileSystem, filePath, newContent);
@@ -251,7 +249,9 @@ public class EditTool extends AbstractTool implements ToolPermissionSubjectAware
     }
 
     /**
-     * Reads the complete file content as a string.
+     * Reads the complete file content exactly as stored — line endings and trailing newlines included. Reading it
+     * line by line once dropped the last newline and turned every CRLF into LF, so each edit rewrote lines it did not
+     * name.
      *
      * @param fileSystem
      *            The execution environment's filesystem
@@ -262,24 +262,9 @@ public class EditTool extends AbstractTool implements ToolPermissionSubjectAware
      *             if an I/O error occurs
      */
     private String readFileContent(VirtualFileSystem fileSystem, String filePath) throws IOException {
-        final StringBuilder content = new StringBuilder();
-
-        try (InputStream inputStream = fileSystem.read(filePath);
-                BufferedReader reader = new BufferedReader(
-                        new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
-
-            String line;
-            while ((line = reader.readLine()) != null) {
-                content.append(line).append('\n');
-            }
+        try (InputStream inputStream = fileSystem.read(filePath)) {
+            return new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
         }
-
-        // Remove trailing newline if present (to match exact file content)
-        if (content.length() > 0 && content.charAt(content.length() - 1) == '\n') {
-            content.setLength(content.length() - 1);
-        }
-
-        return content.toString();
     }
 
     /**
@@ -321,30 +306,6 @@ public class EditTool extends AbstractTool implements ToolPermissionSubjectAware
     }
 
     /**
-     * Escapes special regex characters in a string for use in replaceFirst.
-     *
-     * @param str
-     *            The string to escape
-     * @return The escaped string
-     */
-    private String escapeRegex(String str) {
-        return str.replace("\\", "\\\\").replace(".", "\\.").replace("[", "\\[").replace("]", "\\]").replace("(", "\\(")
-                .replace(")", "\\)").replace("{", "\\{").replace("}", "\\}").replace("*", "\\*").replace("+", "\\+")
-                .replace("?", "\\?").replace("^", "\\^").replace("$", "\\$").replace("|", "\\|");
-    }
-
-    /**
-     * Escapes special replacement characters in a string for use in replaceFirst.
-     *
-     * @param str
-     *            The string to escape
-     * @return The escaped string
-     */
-    private String escapeReplacement(String str) {
-        return str.replace("\\", "\\\\").replace("$", "\\$");
-    }
-
-    /**
      * Names {@code file_path} — absolute and lexically normalized — as the value an {@code Edit(...)} pattern is
      * matched against.
      *
@@ -356,5 +317,76 @@ public class EditTool extends AbstractTool implements ToolPermissionSubjectAware
     @Override
     public Optional<PermissionSubject> permissionSubject(ToolInput input, ToolContext context) {
         return FilePathSubjects.filePathSubject(input, context);
+    }
+
+    /**
+     * The file content with each line break (CRLF, LF or a lone CR) folded to {@code \n}, and for every position of
+     * that view the offset in the raw content it came from, so a match found in the view can be spliced into the raw
+     * content without touching anything outside it.
+     */
+    static final class LineBreakView {
+        private final String raw;
+        private final String text;
+        private final int[] rawOffset;
+        private final String lineBreak;
+
+        private LineBreakView(String raw, String text, int[] rawOffset, String lineBreak) {
+            this.raw = raw;
+            this.text = text;
+            this.rawOffset = rawOffset;
+            this.lineBreak = lineBreak;
+        }
+
+        static String fold(String value) {
+            return value.replace("\r\n", "\n").replace('\r', '\n');
+        }
+
+        static LineBreakView of(String raw) {
+            final StringBuilder text = new StringBuilder(raw.length());
+            final int[] offsets = new int[raw.length() + 1];
+            int crlf = 0;
+            int lf = 0;
+            int cr = 0;
+            int i = 0;
+            while (i < raw.length()) {
+                offsets[text.length()] = i;
+                final char c = raw.charAt(i);
+                if (c == '\r') {
+                    if (i + 1 < raw.length() && raw.charAt(i + 1) == '\n') {
+                        crlf++;
+                        i += 2;
+                    } else {
+                        cr++;
+                        i++;
+                    }
+                    text.append('\n');
+                } else {
+                    if (c == '\n') {
+                        lf++;
+                    }
+                    text.append(c);
+                    i++;
+                }
+            }
+            offsets[text.length()] = raw.length();
+            // The prevailing ending; a tie, or a file with no line break at all, takes LF.
+            final String lineBreak = crlf > lf && crlf >= cr ? "\r\n" : cr > lf && cr > crlf ? "\r" : "\n";
+            return new LineBreakView(raw, text.toString(), offsets, lineBreak);
+        }
+
+        String replace(String target, String replacement, boolean all) {
+            final StringBuilder out = new StringBuilder(raw.length());
+            int rawCursor = 0;
+            int index = text.indexOf(target);
+            while (index >= 0) {
+                out.append(raw, rawCursor, rawOffset[index]).append(replacement);
+                rawCursor = rawOffset[index + target.length()];
+                if (!all) {
+                    break;
+                }
+                index = text.indexOf(target, index + target.length());
+            }
+            return out.append(raw, rawCursor, raw.length()).toString();
+        }
     }
 }

@@ -362,6 +362,11 @@ class AnthropicThinkingDialectTest {
         // line. singleElement() is what notices a second warning starting to fire on this path.
         assertThat(warnings()).singleElement().asString().contains("does not fit under maxTokens")
                 .contains("Raise maxTokens");
+        // L-15: the clamp always lands on maxTokens - 1, so the count is always one and must read as such; and the
+        // second edit that works -- a lower rung -- is named, because no effort was set and the ladder chose 4096.
+        assertThat(warnings()).singleElement().asString().contains("leaves only 1 token for the visible answer")
+                .contains("or lower the reasoning effort to").contains("minimal (")
+                .doesNotContain("thinkingBudgetTokens");
     }
 
     @Test

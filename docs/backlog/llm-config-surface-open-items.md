@@ -1,4 +1,4 @@
-# LLM 설정 표면 — 등록 항목 27건 (열림 14 · 닫힘 13)
+# LLM 설정 표면 — 등록 항목 27건 (열림 10 · 닫힘 17)
 
 출처는 #46 이다 — 모델 capability 표를 CLI yaml 과 스타터 프로퍼티에서 확장할 수 있게 한 작업.
 설계는 옛 `model-capability-config-key.md`(지금은 [`../design/llm/configuration-surface.md`](../design/llm/configuration-surface.md)) 이고,
@@ -330,6 +330,34 @@ CLI 도 **자기가 판단하는 자리에서는** 같은 규칙을 지킨다 �
 > **원인 예외가 프로퍼티 이름과 네 철자를 댄다**(`AnthropicProviderConfig.ThinkingModeDeserializer`).
 > 감싸는 문장은 여전히 파일 이름뿐이므로 이 항목은 그대로 열려 있고, 저 한 키는 고쳤을 때 무엇이
 > 보이게 되는지의 예시다.
+
+### 닫힘 (2026-10-05)
+
+**감싸는 문장이 이제 키와 Jackson 자신의 사유를 함께 싣는다.** `CliConfigLoader.describeMappingFailure` 가
+`JsonMappingException.getPath()` 로 점 경로(`llm.reasoningEffor`, 배열이면 `[i]`)를 만들고, 원래 메시지의 **첫 줄**을
+덧붙인다 — `Invalid configuration structure in: <file> (at llm.reasoningEffor: Unrecognized field "reasoningEffor", not
+marked as ignorable)`. 두 번째 줄부터는 알려진 프로퍼티 목록이라 키가 이미 그 역할을 하므로 뺐고, 운영자가 쓴 적 없는
+자바 타입을 대는 `(class at.aimon.cli.config.…)` 괄호도 뺐다. 원인 예외는 그대로 달려 있으므로 `--verbose` 의 전문은
+바뀌지 않는다. 경로가 없으면 접미사도 없다.
+
+**항목이 센 비용은 실제로 0이었다.** `Invalid configuration structure` 를 단언하는 기존 테스트는 넷이 아니라 열이었지만
+전부 `hasMessageContaining` 이라 문장 **뒤에** 붙이는 모양에서는 하나도 깨지지 않았다.
+
+**처방은 실패하는 테스트로 먼저 확인했다 (규칙 다섯).** `CliConfigLoaderTest` 의 두 단언 — 오타 키(`reasoningEffor`)와
+쓸 수 없는 값(`mediumish`) — 에 키 이름을 요구하는 조각을 더하고 옛 코드에서 두 건이 적힌 이유로 실패하는 것을 본 뒤
+고쳤다. 오타 쪽은 `at.aimon.cli.config` 가 메시지에 **없음**도 단언한다.
+
+**남은 것.** 열거형 값 오류의 사유 줄은 Jackson 이 쓰는 그대로라 `` `at.aimon.core.llm.ReasoningEffort` `` 같은 타입 이름이
+남는다 — 받아들이는 값 목록을 같은 줄에 대므로 지우지 않았다. 스타터 쪽 절반(L-1)은 그대로 열려 있다.
+
+**어디** *(2026-10-05)* — `CliConfigLoader.describeMappingFailure`, `CliConfigLoaderTest.SharedReasoningEffort` 의
+`rejectsAnUnusableValue` · `rejectsAMisspelledKey`.
+
+> **보강 (2026-10-05, PR #225 리뷰).** 위의 "Jackson 의 사유 첫 줄" 을 값 오류에서는 쓰지 않는다. 그 줄은 거절된 값을 인용하고
+> (`from String "mediumish"`), 이 문장은 `--verbose` 없이 stderr 로 나간다 — `${ENV}` 로 펼친 비밀이 잘못된 키에 들어가면 그대로
+> 찍힌다. `InvalidFormatException` 이면 기대한 모양만 댄다: 열거형은 받아들이는 값 목록, 그 밖에는 타입 이름(`expected
+> Integer`). 위 "남은 것" 의 열거형 타입 이름 문제도 이것으로 사라졌다. 리스트 안 키의 경로(`mcp.servers[0].comand`)와 값을
+> 찍지 않음을 테스트가 더 못박는다.
 
 ---
 
@@ -856,6 +884,26 @@ binding — 를 새 키에 대해서도 손을 대지 않고 확인되게 만든
 
 **언제 다시 볼까.** 그 문구를 다음에 건드릴 때, 또는 §16 의 재검토 트리거 중 하나가 발화할 때. 기다릴 크기가
 아니므로 지금 집어도 된다.
+
+### 닫힘 (2026-10-05)
+
+**경고가 이제 `only 1 token` 으로 읽히고, 듣는 처방 둘을 모두 댄다.** 남는 토큰 수는 단수형을 가려 찍는다. 두 번째
+처방은 **예산이 어디서 왔는지**에 따라 갈린다 — 이 항목이 적지 않았던 구분이다. 설정된 `thinkingBudgetTokens` 는
+사다리를 이기므로(`AnthropicThinkingBudgets.requestedBudget`) 그때 effort 를 내리라고 말하면 아무것도 바뀌지 않는다. 그래서
+설정된 예산이면 `or lower thinkingBudgetTokens below <maxTokens>` 를, 사다리가 고른 예산이면 그 `maxTokens` 아래에 들어가는
+단을 예산과 함께 높은 쪽부터 댄다(`or lower the reasoning effort to low (2048) or minimal (1024)`). 단의 목록은 새
+`AnthropicThinkingBudgets.describeRungsThatFit` 가 같은 `requestedBudget` 에서 계산하므로 사다리의 숫자가 바뀌어도 문구가
+따라간다. clamp 에 닿는 요청의 `maxTokens` 는 언제나 1024 보다 크므로 목록은 비지 않는다 — 이것도 테스트가 못박는다.
+
+**처방은 실패하는 테스트로 먼저 확인했다 (규칙 다섯).** 이 항목이 이름을 댄 테스트
+(`autoOnABuiltInBudgetedRowClampsUnderTheConfigDefaultMaxTokens`)의 기존 두 조각은 남기고 `leaves only 1 token for the
+visible answer` · effort 처방 · `thinkingBudgetTokens` 부재를 더했고, 설정된 예산 쪽은
+`AnthropicThinkingRequestTest.clampedConfiguredBudgetNamesTheBudgetNotTheEffort` 가, 단 목록의 성질은
+`AnthropicThinkingBudgetsTest.rungsThatFitAreThoseThatWouldNotClamp` 가 맡는다. 세 테스트 모두 임의로 정한 숫자(2048 ·
+4096)를 단언하지 않는다 — 그 클래스의 javadoc 이 그 숫자를 테스트로 묶지 말라고 적는다.
+
+**어디** *(2026-10-05)* — `AnthropicThinkingResolver.resolveExtendedThinking` 의 clamp 기록,
+`AnthropicThinkingBudgets.describeRungsThatFit`.
 
 ---
 
@@ -1583,6 +1631,27 @@ budgeted thinking 을 보내고(과금된다), `adaptive` 는 기존 경고와 �
 **언제 다시 볼까.** `AgentOutputTool` 이나 완료 알림을 다음에 건드릴 때, 또는 백그라운드 태스크의 잘린 답을 부모가 완결로 다뤘다는
 보고가 있을 때.
 
+### 닫힘 (2026-10-05)
+
+**세 자리가 이제 같은 문장으로 잘린 답을 말한다.** 전경 `Task` 결과가 쓰던 `Completion reason:` 줄을
+`SubagentResultFormatter.completionReasonLine` 으로 옮겨 셋이 함께 쓴다.
+
+- **`AgentOutput`** — 결과 **뒤에** 그 줄을 찍는다. 전경과 같은 위치다. 항목이 확인하지 않았던 것을 확인했다: 트리에서
+  `AgentOutput` 의 출력을 파싱하는 곳은 없다(`Background Task Result` 를 읽는 것은 테스트 둘뿐이다). 그러니 위치는 결정을
+  가르지 않았고, 전경과 맞추는 쪽을 골랐다.
+- **완료 알림** — 줄을 요약의 **앞**에 붙인다(`Completion reason: TRUNCATED (…) — <요약>`). 알림은 앞에서부터 500자를
+  남기므로 뒤에 붙이면 항목이 적은 바로 그 이유로 잘려 나간다. 큐 알림과 `SubagentTaskCompleted` 이벤트가 같은 detail 을
+  쓰므로 둘 다 고쳐졌고, REPL 은 detail 의 첫 줄을 찍으므로 거기서도 보인다.
+
+**처방은 실패하는 테스트로 먼저 확인했다 (규칙 다섯).** `AgentOutputToolTest.executeNamesATruncatedAnswerAfterTheResult`
+와 2000자짜리 잘린 답을 쓰는 `DefaultSubagentExecutionManagerBackgroundTest.truncatedBackgroundAnswerIsNamedInTheNotice` 가
+옛 코드에서 실패했다. 완결된 답에는 줄이 없다는 것도 단언한다. 전경 `TaskToolTest` 는 문자열 그대로 초록이다.
+
+**심각도는 여전히 재지 않았다 (규칙 셋).** 부모 모델이 무엇을 먼저 읽는지는 이 수정과 상관없어졌다 — 둘 다 말한다.
+
+**어디** *(2026-10-05)* — `SubagentResultFormatter.completionReasonLine`, `AgentOutputTool.formatAgentResult`,
+`DefaultSubagentExecutionManager.completionDetail`, `TaskTool` 의 결과 서식.
+
 ---
 
 ## L-26 — 잘린 최종 답을 돌려준 슬래시 스킬을 실행한 턴은 `COMPLETED` 로 끝난다
@@ -1657,6 +1726,22 @@ budgeted thinking 을 보내고(과금된다), `adaptive` 는 기존 경고와 �
 
 **언제 다시 볼까.** `aimon-llm-anthropic` 의 README 나 `AnthropicConfig` · `AnthropicLlmClient` 의 javadoc 을 다음에
 건드릴 때, 서브에이전트 파서를 건드릴 때, 또는 기본 모델이 다시 바뀔 때.
+
+### 닫힘 (2026-10-05)
+
+**남은 일곱 행을 처방의 첫째 모양으로 고쳤다 — 모델 줄을 빼고 그 자리에 모델이 없으면 무엇으로 도는지를 적었다.**
+#132 가 가이드에서 쓴 문장과 같은 뜻이다. README 의 `.model(...)` 은 `AnthropicConfig` 의 기본 모델을, `LlmModel` 의
+`.name(...)` 은 클라이언트 설정의 모델을(`AnthropicLlmClient` 가 `getName().orElse(config.getModel())` 로 읽는다), 두 파서
+javadoc 의 `model: sonnet` 은 부모 에이전트의 모델을 쓴다고 적고, 셋 다 "쓰인 그대로 간다, 별칭을 풀지 않는다" 를 붙였다.
+`Builder.model` 의 `@param` 은 예시 이름 대신 같은 규칙을 말한다. 잰 이름으로 바꾸는 둘째 모양은 고르지 않았다 — 낡을
+리터럴을 늘린다는 이 항목의 이유 그대로다.
+
+**다시 셌다.** `claude-sonnet-4-20250514` · `claude-opus-4-20250514` 는 main 소스와 모듈 README 에서 세 자리에 남는데, 셋
+다 예시가 아니라 **그 이름이 404 였다는 기록**을 적는 주석이다(`AnthropicConfig` 의 기본값 주석,
+`InMemoryModelCapabilityRegistry`, `AgentModelProviderCheck`). `model: sonnet` · `model: haiku` 는 main 소스에 0건이다.
+
+**어디** *(2026-10-05)* — `modules/aimon-llm-anthropic/README.md` 의 빠른 시작과 동적 모델 예시, `AnthropicConfig` 의 클래스
+javadoc 과 `Builder.model`, `AnthropicLlmClient` 의 클래스 javadoc, `MarkdownSubagentParser` · `SubagentParser` 의 형식 예시.
 
 ---
 

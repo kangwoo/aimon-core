@@ -39,6 +39,7 @@ import at.aimon.core.skill.policy.SkillInvocationRequest;
 import at.aimon.core.skill.render.NoOpSkillContentRenderer;
 import at.aimon.core.skill.render.RenderContext;
 import at.aimon.core.skill.render.SkillContentRenderer;
+import at.aimon.core.tools.ExecutionEnvironmentAccess;
 import at.aimon.core.tools.HookRegistryAccess;
 import at.aimon.core.tools.InvokingSessionAccess;
 import at.aimon.core.tools.SkillRenderContextAccess;
@@ -351,12 +352,23 @@ public class SkillTool extends AbstractTool {
             // would see them. Inline mode has no fork, so there the hooks do not fire.
             try (SkillHookScope hookScope = hookActivator.activate(skill, context)) {
                 // Stage the skill into this execution's environment (${AIMON_SKILL_DIR}), then render the
-                // instructions through the configured renderer (no-op by default).
+                // instructions through the configured renderer (no-op by default). Any staging failure is reported
+                // as one (EE-15) — not only the two types stage()'s contract names. An InvalidPathException would
+                // otherwise reach the outer catch below as an IllegalArgumentException and read "Invalid parameter",
+                // blaming the model's input for a directory name the workspace refused.
                 final RenderContext renderContext;
                 try {
                     renderContext = SkillRenderContextAccess.builderFor(skill, context).build();
                 } catch (StagingException | ExecutionEnvironmentUnavailableException e) {
+                    // Expected answers: over the limit, changed since loaded, environment down.
                     log.warn("Failed to stage skill '{}': {}", skill.getName(), e.getMessage());
+                    return ToolResult.error("Failed to stage skill '" + skill.getName() + "': " + e.getMessage());
+                } catch (RuntimeException e) {
+                    if (ExecutionEnvironmentAccess.NO_ENVIRONMENT_MESSAGE.equals(e.getMessage())) {
+                        log.warn("Failed to stage skill '{}': {}", skill.getName(), e.getMessage());
+                    } else {
+                        log.error("Failed to stage skill '{}': {}", skill.getName(), e.getMessage(), e);
+                    }
                     return ToolResult.error("Failed to stage skill '" + skill.getName() + "': " + e.getMessage());
                 }
                 final String renderedInstructions;

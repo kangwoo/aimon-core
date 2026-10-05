@@ -463,4 +463,97 @@ class EditToolTest {
         assertThat(result.isError()).isTrue();
         assertThat(result.getContent()).contains("Read the file before modifying it");
     }
+
+    // Line endings: Edit changes what old_string names and nothing else.
+
+    private String editFile(String name, String original, String oldString, String newString) throws IOException {
+        Path file = tempDir.resolve(name);
+        Files.writeString(file, original);
+        ToolResult result = editTool.execute(
+                ToolInput.of("file_path", file.toString(), "old_string", oldString, "new_string", newString),
+                createContextWithReadFile(file.toString()));
+        assertThat(result.isSuccess()).as(result.getContent()).isTrue();
+        return Files.readString(file);
+    }
+
+    @Test
+    void testExecute_KeepsTheTrailingNewline() throws IOException {
+        assertThat(editFile("trailing.txt", "alpha\nbeta\n", "alpha", "gamma")).isEqualTo("gamma\nbeta\n");
+    }
+
+    @Test
+    void testExecute_KeepsSeveralTrailingNewlines() throws IOException {
+        assertThat(editFile("blank-tail.txt", "alpha\n\n\n", "alpha", "gamma")).isEqualTo("gamma\n\n\n");
+    }
+
+    @Test
+    void testExecute_KeepsCrlfLineEndings() throws IOException {
+        assertThat(editFile("crlf.txt", "alpha\r\nbeta\r\n", "alpha", "gamma")).isEqualTo("gamma\r\nbeta\r\n");
+    }
+
+    @Test
+    void testExecute_MultiLineOldStringWithLfMatchesACrlfFileAndWritesCrlf() throws IOException {
+        // The model writes \n; a CRLF file still matches, and the lines it adds take the file's ending.
+        assertThat(editFile("crlf-multi.txt", "one\r\ntwo\r\nthree\r\n", "one\ntwo", "uno\ndos\nmas"))
+                .isEqualTo("uno\r\ndos\r\nmas\r\nthree\r\n");
+    }
+
+    @Test
+    void testExecute_LeavesMixedLineEndingsOutsideTheEditAlone() throws IOException {
+        assertThat(editFile("mixed.txt", "one\r\ntwo\nthree\r\n", "two", "dos")).isEqualTo("one\r\ndos\nthree\r\n");
+    }
+
+    @Test
+    void testExecute_MultiLineOldStringMatchesAMixedEndingFileAndTouchesOnlyTheSpan() throws IOException {
+        // Read shows clean lines whatever the endings, so the model joins them with \n. Only the matched span changes;
+        // the CRLF on the untouched last line stays.
+        assertThat(editFile("mixed-multi.txt", "one\r\ntwo\nthree\r\n", "one\ntwo", "uno\ndos"))
+                .isEqualTo("uno\r\ndos\nthree\r\n");
+    }
+
+    @Test
+    void testExecute_MatchesAndKeepsALoneCrFile() throws IOException {
+        assertThat(editFile("cr.txt", "one\rtwo\rthree\r", "one\ntwo", "uno\ndos")).isEqualTo("uno\rdos\rthree\r");
+    }
+
+    @Test
+    void testExecute_RejectsAnEditThatOnlyChangesLineEndings() throws IOException {
+        Path file = tempDir.resolve("endings-only.txt");
+        Files.writeString(file, "a\r\nb\r\n");
+
+        ToolResult result = editTool.execute(
+                ToolInput.of("file_path", file.toString(), "old_string", "a\r\nb", "new_string", "a\nb"),
+                createContextWithReadFile(file.toString()));
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).contains("differ only in line endings");
+        assertThat(Files.readString(file)).isEqualTo("a\r\nb\r\n");
+    }
+
+    @Test
+    void testExecute_RejectsAnEmptyOldString() throws IOException {
+        Path file = tempDir.resolve("empty-old.txt");
+        Files.writeString(file, "content");
+
+        ToolResult result = editTool.execute(
+                ToolInput.of("file_path", file.toString(), "old_string", "", "new_string", "x"),
+                createContextWithReadFile(file.toString()));
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).contains("must not be empty");
+    }
+
+    @Test
+    void testExecute_ReplaceAllSplicesEveryMatchIntoTheRawContent() throws IOException {
+        Path file = tempDir.resolve("crlf-all.txt");
+        Files.writeString(file, "x=1\r\ny=2\r\nx=1\r\n");
+
+        ToolResult result = editTool.execute(ToolInput.of(
+                Map.of("file_path", file.toString(), "old_string", "x=1", "new_string", "x=3", "replace_all", true)),
+                createContextWithReadFile(file.toString()));
+
+        assertThat(result.isSuccess()).as(result.getContent()).isTrue();
+        assertThat(result.getContent()).contains("2 occurrence(s)");
+        assertThat(Files.readString(file)).isEqualTo("x=3\r\ny=2\r\nx=3\r\n");
+    }
 }

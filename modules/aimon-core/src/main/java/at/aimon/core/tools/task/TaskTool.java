@@ -646,14 +646,8 @@ public class TaskTool extends AbstractTool {
         output.append("Result:").append(Constants.NEWLINE);
         output.append(SubagentResultFormatter.truncateTailKeep(result.getSummary(), null)).append(Constants.NEWLINE);
 
-        if (!result.getCompletionReason().isSuccessful()) {
-            output.append("Completion reason: ").append(result.getCompletionReason().name());
-            if (result.isSuccess()) {
-                // It answered, but not on its own terms: the answer is here and it is not whole.
-                output.append(" (the subagent's final answer is incomplete)");
-            }
-            output.append(Constants.NEWLINE);
-        }
+        SubagentResultFormatter.completionReasonLine(result.getCompletionReason(), result.isSuccess())
+                .ifPresent(line -> output.append(line).append(Constants.NEWLINE));
 
         return output.toString();
     }

@@ -584,39 +584,22 @@ public final class S3FileSystem implements VirtualFileSystem {
     @Override
     public FileSystemUsage getUsageSummary() {
         checkState();
+        return usageUnder("");
+    }
 
-        long[] totalSize = {0};
-        long[] fileCount = {0};
-        Set<String> directories = new HashSet<>();
+    @Override
+    public FileSystemUsage getUsageSummary(String path) {
+        checkState();
+        Objects.requireNonNull(path, "Path cannot be null");
+        validateDirectoryPath(path);
 
+        final String prefix = normalizeDirectory(path);
         try {
-            ListObjectsV2Request listRequest = ListObjectsV2Request.builder().bucket(config.getBucketName()).build();
-
-            forEachObject(listRequest, object -> {
-                String key = object.key();
-                // Skip directory markers
-                if (key.endsWith("/")) {
-                    return true;
-                }
-
-                fileCount[0]++;
-                totalSize[0] += object.size();
-
-                // Derive directories from path
-                int slashIdx = key.indexOf('/');
-                while (slashIdx >= 0) {
-                    directories.add(key.substring(0, slashIdx + 1));
-                    slashIdx = key.indexOf('/', slashIdx + 1);
-                }
-                return true;
-            });
-
+            requireDirectory(path, prefix);
         } catch (S3Exception e) {
-            throw new BackendConnectionException(BackendType.S3, "Failed to calculate usage summary", e);
+            throw new BackendConnectionException(BackendType.S3, "Failed to check directory: " + path, e);
         }
-
-        return FileSystemUsage.builder().totalSize(totalSize[0]).fileCount(fileCount[0])
-                .directoryCount(directories.size()).build();
+        return usageUnder(prefix);
     }
 
     @Override
@@ -703,6 +686,80 @@ public final class S3FileSystem implements VirtualFileSystem {
         ListObjectsV2Response response = s3Client.listObjectsV2(listRequest);
         List<S3Object> contents = response.contents();
         return contents.isEmpty() ? null : contents.get(0);
+    }
+
+    /**
+     * Throws unless {@code prefix} names a directory that exists. A directory exists here the same way
+     * {@link #isDirectory(String)} decides it: some key — a file or a {@code createDirectory} marker — lives under the
+     * prefix. An object stored at the prefix minus its slash is a regular file, which wins over any keys below it, as
+     * it does in {@code isDirectory}.
+     */
+    private void requireDirectory(String original, String prefix) {
+        if (prefix.isEmpty()) {
+            return; // the bucket root always exists
+        }
+        final String key = prefix.substring(0, prefix.length() - 1);
+        if (!key.isEmpty() && objectExists(key)) {
+            throw new InvalidPathException(original, "Not a directory");
+        }
+        if (findFirstObjectInDirectory(prefix) == null) {
+            throw new FileNotFoundException(original);
+        }
+    }
+
+    private boolean objectExists(String key) {
+        try {
+            s3Client.headObject(HeadObjectRequest.builder().bucket(config.getBucketName()).key(key).build());
+            return true;
+        } catch (NoSuchKeyException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Totals for every object under {@code prefix}; an empty prefix means the whole bucket. The directory the prefix
+     * names is not counted. Directories are the explicit and the implied as one set — {@code docs/a.txt} makes
+     * {@code docs/} a directory whether or not a marker for it was ever written, and a marker makes one even with
+     * nothing under it — each counted once, relative to the prefix.
+     */
+    private FileSystemUsage usageUnder(String prefix) {
+        long[] totalSize = {0};
+        long[] fileCount = {0};
+        Set<String> directories = new HashSet<>();
+
+        try {
+            ListObjectsV2Request.Builder request = ListObjectsV2Request.builder().bucket(config.getBucketName());
+            if (!prefix.isEmpty()) {
+                request.prefix(prefix);
+            }
+
+            forEachObject(request.build(), object -> {
+                String key = object.key();
+                if (key.equals(prefix)) {
+                    return true; // the directory's own marker
+                }
+                String remainder = key.substring(prefix.length());
+
+                // Derive directories from the path below the prefix; a marker's trailing slash names itself
+                int slashIdx = remainder.indexOf('/');
+                while (slashIdx >= 0) {
+                    directories.add(remainder.substring(0, slashIdx + 1));
+                    slashIdx = remainder.indexOf('/', slashIdx + 1);
+                }
+
+                if (!key.endsWith("/")) {
+                    fileCount[0]++;
+                    totalSize[0] += object.size();
+                }
+                return true;
+            });
+
+        } catch (S3Exception e) {
+            throw new BackendConnectionException(BackendType.S3, "Failed to calculate usage summary", e);
+        }
+
+        return FileSystemUsage.builder().totalSize(totalSize[0]).fileCount(fileCount[0])
+                .directoryCount(directories.size()).build();
     }
 
     private void deleteIfExists(String path) {

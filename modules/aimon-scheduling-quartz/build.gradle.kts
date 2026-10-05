@@ -28,3 +28,22 @@ dependencies {
     testRuntimeOnly(libs.h2)
     testRuntimeOnly(libs.postgresql)
 }
+
+// This module's tests run on the versions it ships (#91's bar; backlog D-2). spring-boot-starter-test, which
+// aimon.java-conventions gives every module, asks for jakarta.xml.bind-api 4.0.5 while Quartz brings the 4.0.4 this
+// module ships — a jar of code (JAXBContext, DatatypeConverter), not annotations — and snakeyaml 2.6 onto the test
+// compile classpath against the shipped 2.7 (measured 2026-10-05). Same source and same jar as aimon-cli, so the same
+// remedy: every version runtimeClasspath resolves becomes a strict constraint on both test classpaths. Why that
+// rather than naming the jars, and what it stays quiet about, is the comment on the identical block in
+// aimon-cli/build.gradle.kts.
+//
+// `shouldResolveConsistentlyWith` is @Incubating, still so in Gradle 9.8.0 (javap, 2026-10-05), and called on the terms
+// at the end of aimon.java-conventions.gradle.kts. Removed or re-signed, this script stops compiling; changed in what
+// it does, it may fail nothing, and
+//     ./gradlew -q :aimon-scheduling-quartz:dependencyInsight --configuration testRuntimeClasspath --dependency jakarta.xml.bind-api
+// would stop answering 4.0.4 "by consistent resolution" — run it after a Gradle upgrade until backlog D-3's check exists.
+configurations {
+    val shipped = runtimeClasspath.get()
+    testCompileClasspath { shouldResolveConsistentlyWith(shipped) }
+    testRuntimeClasspath { shouldResolveConsistentlyWith(shipped) }
+}

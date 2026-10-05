@@ -3,7 +3,9 @@ package at.aimon.core.environment.impl;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.HashSet;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.regex.Pattern;
@@ -22,8 +24,13 @@ import at.aimon.core.filesystem.VirtualFileSystem;
  * <p>
  * A resource is copied to {@code {stagingRoot}/{name}/{contentKey}/} on the <b>raw</b> workspace filesystem (the
  * model's file tools see the staging area read-only through the path rules). The copy is skipped only when the
- * target's {@value #MARKER} marker exists — the target is asked every time, never an in-memory record. The copy
- * takes exactly {@link StagedResource#getFiles()}, hashes what it copies with the same algorithm as
+ * target's {@value #MARKER} marker exists — the target is asked every time, never an in-memory record — and the copy
+ * on disk is the one its path names: the first time this instance meets a target it did not copy itself, it checks
+ * that the marker holds the content key, that the files are exactly the resource's, and that they hash to the key, and
+ * copies again otherwise (EE-37). That check is remembered per target, so it costs one read of the copy per process;
+ * a shell can still change a copy afterwards (design §2 non-goals). The first copy also writes
+ * {@code {stagingRoot}/}{@value #GITIGNORE} containing {@code *} unless one exists (EE-4). The copy takes exactly
+ * {@link StagedResource#getFiles()}, hashes what it copies with the same algorithm as
  * {@link StagedResource#scan}, and writes the marker last; a size over the limit, an unreadable recorded file or bytes
  * that no longer hash to the content key fail with {@link StagingException}, the partial target removed and no marker
  * written, so an incomplete or mislabelled copy is never served and the next call retries.
@@ -32,6 +39,9 @@ final class LocalStaging {
 
     /** Written last in a staged directory; its presence is what "already staged" means. */
     static final String MARKER = ".staged";
+
+    /** Written once at the top of the staging area so version control leaves the copies alone (EE-4). */
+    static final String GITIGNORE = ".gitignore";
 
     private static final Logger log = LoggerFactory.getLogger(LocalStaging.class);
 
@@ -44,6 +54,8 @@ final class LocalStaging {
     private final String stagingRoot;
     private final long maxStagedBytes;
     private final ConcurrentMap<String, Object> locks = new ConcurrentHashMap<>();
+    /** Targets this instance copied, or found already staged and checked against their content key. */
+    private final Set<String> verified = ConcurrentHashMap.newKeySet();
 
     LocalStaging(VirtualFileSystem rawFileSystem, VirtualFileSystem passthroughFileSystem, String stagingRoot,
             long maxStagedBytes) {
@@ -79,6 +91,9 @@ final class LocalStaging {
         if (name.isEmpty() || name.equals(".") || name.equals("..") || name.contains("/") || name.contains("\\")) {
             throw new StagingException("Cannot stage '" + name + "': the name is not a single path segment");
         }
+        if (name.equalsIgnoreCase(GITIGNORE)) {
+            throw new StagingException("Cannot stage '" + name + "': the name is reserved for the staging area");
+        }
         // The content key is the second directory, and every recorded file lands below it: a hand-built resource
         // (SPI code, a remote repository's keys) could otherwise write or delete outside its own copy.
         if (!CONTENT_KEY.matcher(resource.getContentKey()).matches()) {
@@ -95,23 +110,99 @@ final class LocalStaging {
         final VirtualFileSystem reader = inWorkspace ? rawFileSystem : source;
         final String target = VfsPaths.join(stagingRoot, resource.getName(), resource.getContentKey());
         final String marker = target + "/" + MARKER;
-        if (rawFileSystem.exists(marker)) {
+        if (verified.contains(target) && rawFileSystem.exists(marker)) {
             return absolute(target);
         }
-        if (resource.getTotalBytes() > maxStagedBytes) {
-            throw new StagingException("Cannot stage '" + resource.getName() + "': " + resource.getTotalBytes()
-                    + " bytes exceeds the staging limit of " + maxStagedBytes + " bytes; exclude large files with "
-                    + StagedResource.STAGE_IGNORE_FILE);
-        }
         synchronized (locks.computeIfAbsent(target, k -> new Object())) {
+            // Also on the reuse path: a workspace whose copies predate EE-4 would otherwise never get the file.
+            ensureGitignore();
             if (rawFileSystem.exists(marker)) {
-                return absolute(target);
+                if (verified.contains(target) || matchesContentKey(resource, target)) {
+                    verified.add(target);
+                    return absolute(target);
+                }
+                log.warn("Staged copy {} does not match its content key; staging it again", target);
+            }
+            if (resource.getTotalBytes() > maxStagedBytes) {
+                throw new StagingException("Cannot stage '" + resource.getName() + "': " + resource.getTotalBytes()
+                        + " bytes exceeds the staging limit of " + maxStagedBytes + " bytes; exclude large files with "
+                        + StagedResource.STAGE_IGNORE_FILE);
             }
             copy(resource, reader, target);
             rawFileSystem.write(marker, resource.getContentKey().getBytes(StandardCharsets.UTF_8));
+            verified.add(target);
         }
         log.debug("Staged {} ({} files) to {}", resource.getName(), resource.getFiles().size(), target);
         return absolute(target);
+    }
+
+    /**
+     * Whether a copy already on disk is the one its path names: the marker holds the content key, every resource file
+     * is there, and they hash to the content key. The key is predictable, so the path and the marker alone are no
+     * evidence — a copy committed to a repository or planted through the shell has both (EE-37).
+     *
+     * <p>
+     * A file that is not the resource's is removed, not taken as a mismatch. It is not harmless — a planted sibling
+     * module is what a staged script would import — but it is also what running a staged script leaves behind
+     * ({@code __pycache__}, {@code .DS_Store}), and re-copying the whole tree for it would delete the copy under any
+     * process still using it, on every start. Removing only the extra files closes the same hole without that.
+     */
+    private boolean matchesContentKey(StagedResource resource, String target) {
+        try {
+            if (!resource.getContentKey().equals(readString(target + "/" + MARKER))) {
+                return false;
+            }
+            final String prefix = target + "/";
+            final Set<String> onDisk = new HashSet<>();
+            for (String path : rawFileSystem.listRecursive(target)) {
+                onDisk.add(path.startsWith(prefix) ? path.substring(prefix.length()) : path);
+            }
+            final Set<String> expected = new HashSet<>(resource.getFiles());
+            expected.add(MARKER);
+            if (!onDisk.containsAll(expected)) {
+                return false;
+            }
+            final StagedResource.ContentKeyBuilder hasher = new StagedResource.ContentKeyBuilder();
+            for (String relPath : resource.getFiles()) {
+                try (InputStream in = rawFileSystem.read(prefix + relPath)) {
+                    hasher.add(relPath, in.readAllBytes());
+                }
+            }
+            if (!hasher.build().equals(resource.getContentKey())) {
+                return false;
+            }
+            onDisk.removeAll(expected);
+            for (String extra : onDisk) {
+                log.info("Removing {} from staged copy {}: it is not one of the resource's files", extra, target);
+                rawFileSystem.delete(prefix + extra);
+            }
+            return true;
+        } catch (IOException | RuntimeException e) {
+            log.debug("Could not verify staged copy {}: {}", target, e.getMessage());
+            return false;
+        }
+    }
+
+    private String readString(String path) throws IOException {
+        try (InputStream in = rawFileSystem.read(path)) {
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        }
+    }
+
+    /**
+     * Writes {@value #GITIGNORE} ({@code *}) at the top of the staging area unless one is there, so the copies — and
+     * the ignore file itself — never show up in the version control of a workspace that is a repository (EE-4). A
+     * file the user put there is left alone.
+     */
+    private void ensureGitignore() {
+        final String path = stagingRoot + "/" + GITIGNORE;
+        try {
+            if (!rawFileSystem.exists(path)) {
+                rawFileSystem.write(path, "*".getBytes(StandardCharsets.UTF_8));
+            }
+        } catch (RuntimeException e) {
+            log.warn("Could not write {}: {}", path, e.getMessage());
+        }
     }
 
     private void copy(StagedResource resource, VirtualFileSystem reader, String target) {

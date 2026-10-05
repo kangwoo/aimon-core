@@ -519,6 +519,53 @@ class CliConfigLoaderTest {
     }
 
     @Nested
+    @DisplayName("mapping failures name the key (L-5)")
+    class MappingFailureNamesTheKey {
+
+        private Path write(String body) throws IOException {
+            final Path configFile = tempDir.resolve("mapping.yaml");
+            Files.writeString(configFile, body);
+            return configFile;
+        }
+
+        @Test
+        @DisplayName("Should name a key inside a list entry with its index")
+        void namesAKeyInsideAListEntry() throws IOException {
+            Path configFile = write("""
+                    llm:
+                      provider: "openai"
+                      apiKey: "test-api-key"
+                      model: "gpt-5.1"
+                    mcp:
+                      servers:
+                        - name: "github"
+                          transportType: "STDIO"
+                          command: "npx"
+                          comand: "typo"
+                    """);
+
+            assertThatThrownBy(() -> loader.load(configFile.toString())).isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("mcp.servers[0].comand");
+        }
+
+        @Test
+        @DisplayName("Should not echo a value the key could not take")
+        void doesNotEchoTheRejectedValue() throws IOException {
+            Path configFile = write("""
+                    llm:
+                      provider: "openai"
+                      apiKey: "test-api-key"
+                      model: "gpt-5.1"
+                      timeout: "sk-not-a-number"
+                    """);
+
+            assertThatThrownBy(() -> loader.load(configFile.toString())).isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("llm.timeout").hasMessageContaining("expected Integer")
+                    .hasMessageNotContaining("sk-not-a-number");
+        }
+    }
+
+    @Nested
     @DisplayName("llm.reasoningEffort")
     class SharedReasoningEffort {
 
@@ -567,7 +614,11 @@ class CliConfigLoaderTest {
         @DisplayName("Should reject an unusable value rather than falling back")
         void rejectsAnUnusableValue() throws IOException {
             assertThatThrownBy(() -> loader.load(write(withEffort("mediumish")).toString()))
-                    .isInstanceOf(ConfigurationException.class).hasMessageContaining("Invalid configuration structure");
+                    .isInstanceOf(ConfigurationException.class).hasMessageContaining("Invalid configuration structure")
+                    // L-5: the wrapping sentence names the key and what it accepts, not only the file -- and not the
+                    // rejected value, which may be a secret expanded into the wrong key.
+                    .hasMessageContaining("llm.reasoningEffort").hasMessageContaining("expected one of:")
+                    .hasMessageContaining("medium").hasMessageNotContaining("mediumish");
         }
 
         @Test
@@ -584,7 +635,9 @@ class CliConfigLoaderTest {
                     """);
 
             assertThatThrownBy(() -> loader.load(configFile.toString())).isInstanceOf(ConfigurationException.class)
-                    .hasMessageContaining("Invalid configuration structure");
+                    .hasMessageContaining("Invalid configuration structure")
+                    // L-5: without --verbose the operator used to get the file name only.
+                    .hasMessageContaining("llm.reasoningEffor").hasMessageNotContaining("at.aimon.cli.config");
         }
     }
 

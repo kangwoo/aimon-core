@@ -30,8 +30,10 @@ import at.aimon.core.llm.capability.ModelCapabilityRegistry;
  * <pre>
  * {
  *     &#64;code
- *     AnthropicConfig config = AnthropicConfig.builder().apiKey(System.getenv("ANTHROPIC_KEY"))
- *             .model("claude-sonnet-4-20250514").temperature(0.7).timeout(Duration.ofSeconds(30)).build();
+ *     // No model(...): the default model is used. Name one only when another is needed, as an id the Messages API
+ *     // serves -- it is sent as written; aliases are not resolved.
+ *     AnthropicConfig config = AnthropicConfig.builder().apiKey(System.getenv("ANTHROPIC_KEY")).temperature(0.7)
+ *             .timeout(Duration.ofSeconds(30)).build();
  * }
  * </pre>
  */
@@ -318,7 +320,8 @@ public final class AnthropicConfig {
          * Sets the model name.
          *
          * @param model
-         *            The model name (e.g., "claude-sonnet-4-20250514", "claude-opus-4-20250514")
+         *            The model id, sent to the Messages API exactly as written — aliases are not resolved, so it must
+         *            be an id that API serves
          * @return This builder
          * @throws NullPointerException
          *             if model is null

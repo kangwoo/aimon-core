@@ -18,8 +18,9 @@ Which lines are headings is docs_tree.anchors_of's reading, and it is not the pa
 a heading inside an HTML comment block gets an anchor, and one behind indentation, `>`
 or a list marker does not. That docstring names each shape, says how
 check-backlog-registers.py reads the same shape, and why the two are left different.
-`--self-test` has cases for this side of those differences, for a raw HTML block and
-for two ways unfence() pairs fence markers, one page per case, so a change that
+`--self-test` has cases for this side of those differences, for a raw HTML block, for
+two ways unfence() pairs fence markers and for a `#` comment in YAML front matter,
+which is not read, one page per case, so a change that
 alters one of those cases' answers goes red there until that case's expected answer
 changes too.
 
@@ -134,12 +135,23 @@ SHAPES = [
      ["문단", "", "    " + FENCE3, "", TARGET, "", "    " + FENCE3], False),
 ]
 
+# Shapes that exist only at the top of a file, so the page is these lines with `# Page`
+# after them rather than before. YAML front matter is the one: the site drops it, and
+# github.com renders it as a table, so a `#` comment inside it is no heading on either
+# (backlog T-6).
+TOP_SHAPES = [
+    ("a `#` comment inside YAML front matter does not resolve, as the page shows no heading",
+     ["---", "name: explore", "# Target", "tools: Read", "---"], False),
+]
+
 
 def self_test():
-    print(f"self-test over {len(SHAPES)} heading shape(s) named in docs_tree.anchors_of")
+    cases = [(name, ["# Page", ""] + lines, expected) for name, lines, expected in SHAPES]
+    cases += [(name, lines + ["", "# Page"], expected) for name, lines, expected in TOP_SHAPES]
+    print(f"self-test over {len(cases)} heading shape(s) named in docs_tree.anchors_of")
     failed = 0
-    for name, lines, expected in SHAPES:
-        got = resolves("target", anchors_of("\n".join(["# Page", ""] + lines) + "\n"))
+    for name, page, expected in cases:
+        got = resolves("target", anchors_of("\n".join(page) + "\n"))
         failed += got != expected
         print(f"  {'ok  ' if got == expected else 'FAIL'} {name}")
         print(f"         `#target` {'resolves' if got else 'does not resolve'}")

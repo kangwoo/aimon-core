@@ -336,9 +336,10 @@ signature 에 모델을 싣지 않는 것은 조건이 설정 쌍의 성질이�
 2. **`AUTO` 의 계약은 표가 방언을 정하는 것이지 클라이언트가 양을 정하는 것이 아니다.** `AUTO` 전용 여유 규칙은 같은 모델·
    `max_tokens`·effort 에 운영자가 쓴 단어에 따라 다른 예산을 보내고, 리졸버에 예산 정책을 둘 둔다
 3. **쓸 만한 답 여유는 측정된 적 없는 수다.** 어떤 비율·하한도 ladder 의 가운데 rung 처럼 임의로 골라진다
-4. **경고가 처방을 말한다.** "Raise maxTokens" — 클라이언트 인스턴스당 첫 clamp 에서 한 번이다. 듣는 처방은 하나 더 있다
-   (`reasoningEffort` 를 `low` · `minimal` 로 내리기). 경고가 그것을 말하지 않고 문구가 언제나 `only 1 tokens` 로 읽히는 것은
-   [`L-15`](../../backlog/llm-config-surface-open-items.md) 다. 이 이유는 clamp 된 요청에만 해당한다(§6.4)
+4. **경고가 처방을 말한다.** "Raise maxTokens" 와 듣는 두 번째 처방 — 사다리가 고른 예산이면 그 `maxTokens` 아래에 드는
+   effort 단(`low` · `minimal`), 설정된 `thinkingBudgetTokens` 면 그 값을 내리기 — 를 함께 댄다. 클라이언트 인스턴스당 첫
+   clamp 에서 한 번이다([`L-15`](../../backlog/llm-config-surface-open-items.md), 2026-10-05 닫힘). 이 이유는 clamp 된 요청에만
+   해당한다(§6.4)
 5. **운영자가 켜지 않으면 닿지 않는다.** 기본 모드는 `OFF` 다(§4.5)
 
 ### 6.3 누가 닿는가 — 개수가 아니라 모양

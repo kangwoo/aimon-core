@@ -7,6 +7,150 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Fixed: `Edit` no longer rewrites line endings it was not asked to touch (EE-76)
+
+- **`Edit` keeps the file's bytes outside `old_string`.** It read files line by line, so every edit dropped one
+  trailing newline and turned a CRLF file into LF throughout. It now matches on a view of the file with every line
+  break (CRLF, LF, lone CR) folded to `\n` — what `Read` shows, and so what the model writes — and splices the
+  replacement into the stored bytes at the matched span only. Lines the edit adds take the file's prevailing ending.
+- **Two new refusals.** An empty `old_string` is an error (it used to loop forever counting occurrences), and so is an
+  edit whose `old_string` and `new_string` differ only in line endings, which would change nothing.
+
+### Fixed: `S3FileSystem.getUsageSummary(path)` counts only that subtree (EE-77)
+
+- **It used the interface default, which reports the whole bucket.** Wrapped in `PathRuleVirtualFileSystem` or
+  `ScopedVirtualFileSystem`, an S3 backend therefore counted every tenant and the control store. It now lists under the
+  path's prefix, throws `FileNotFoundException` for a missing path and `InvalidPathException` for a file.
+- **Behaviour change at the root:** `getUsageSummary()` now counts empty directories made with `createDirectory`, as
+  GridFS does, so the root and per-path counts follow one rule.
+
+### Fixed: messages that did not say what they knew, a REPL renderer that could die mid-turn, stale model examples
+
+- **The CLI's `Invalid configuration structure in: <file>` now names the key.** It appends `(at <dotted.key>: <Jackson's
+  reason>)` — `llm.reasoningEffor: Unrecognized field "reasoningEffor", not marked as ignorable` — so a typo or a bad
+  value no longer needs `--verbose` to locate. For a value the key cannot take it names the expected type or the
+  accepted values instead of Jackson's text, which quotes the value — a secret expanded from `${ENV}` into the wrong
+  key would otherwise reach stderr. The full cause is still attached. Backlog L-5.
+- **The Anthropic thinking-budget clamp warning reads `only 1 token` and names both remedies.** Besides "Raise
+  maxTokens" it names the effort rungs that fit under that `maxTokens` (`low (2048) or minimal (1024)`), or, when the
+  budget came from `thinkingBudgetTokens`, says to lower that instead — a configured budget wins over the effort, so
+  lowering the effort would change nothing. Backlog L-15.
+- **A background subagent's answer cut at `max_tokens` is now named as such where the parent reads it.** `AgentOutput`
+  prints the same `Completion reason: TRUNCATED (the subagent's final answer is incomplete)` line after the result that
+  the foreground `Task` result prints, and the completion notice (queued notification and `SubagentTaskCompleted`
+  detail) puts it at the head, where the notice's 500-character cut cannot drop it. Backlog L-25.
+- **The REPL no longer throws on `InterruptedAt` or `RejectedAt`.** `OutputFormatter.displayEvent` handled 14 of the 16
+  `AgentExecutionEvent` subtypes; the other two reached an `IllegalStateException`. `InterruptedAt` is now a deliberate
+  no-op (the `[Interrupted]` result banner and the streamed text already show it) and `RejectedAt` prints an
+  `[Input rejected]` line, since no result follows a dropped input. A test now requires a display method for every
+  permitted subtype. Backlog RD-3.
+- **Copyable examples no longer name models the API answers 404.** The `aimon-llm-anthropic` README, the
+  `AnthropicConfig` / `AnthropicLlmClient` javadoc and the subagent parser format examples drop the model line and say
+  what runs without one. Backlog L-27.
+
+### Build: Quartz and OpenSearch tests run on the versions those modules ship (backlog D-2)
+
+- **`aimon-scheduling-quartz` and `aimon-knowledge-opensearch` resolve both test classpaths consistently with
+  `runtimeClasspath`**, the block `aimon-cli` has carried since #99. `spring-boot-starter-test` had raised
+  `jakarta.xml.bind-api` 4.0.4 → 4.0.5 on the first and `jakarta.annotation-api` 1.3.5 → 3.0.0 on the second, and
+  `snakeyaml` 2.7 → 2.6 on both test compile classpaths; all four differences are now 0. Published POMs are unchanged.
+- **The annotation jar was inert on both sides** — nothing on the OpenSearch runtime classpath references a class in
+  1.3.5, and only `spring-context`, which no test there loads, names 3.0.0 — and it is aligned anyway so the next
+  client or Spring Boot bump cannot reopen the gap unseen. Why it is aligned rather than accepted like the
+  Testcontainers annotations is in `gradle/libs.versions.toml` and `docs/backlog/module-dependency-scope.md`.
+
+### Docs CI: the link check no longer anchors `#` comments in YAML front matter (backlog T-6)
+
+- **`docs_tree.anchors_of` blanks the front matter before reading headings**, the block
+  `check-translation-structure.py` already strips. Seventeen anchors in eight bundled agent files under
+  `modules/aimon-cli/src/main/resources/agents/` disappear; none was linked and no `docs/` anchor changed.
+  `check-doc-links.py --self-test` gains the case.
+
+### Fixed: the local staging area ignores itself and re-checks a copy it did not make (EE-4, EE-37)
+
+- **The first copy into `.aimon-staged/` writes `.aimon-staged/.gitignore` containing `*`.** Nothing wrote it
+  before; the docs asked users to add the directory to their own `.gitignore`, and a workspace that is a repository
+  showed every staged copy in `git status`. A `.gitignore` already there is left as it is. A staged resource named
+  `.gitignore` is refused.
+- **A staged copy is reused only when it is the copy its path names.** The marker used to be checked for existence
+  alone, and the path is predictable (`{name}/{contentKey}`), so a copy committed to a repository or planted through
+  the shell — with a marker holding the right key and other bytes — was served as is. The first time a provider meets
+  a copy it did not make, it now checks that the marker holds the key, that every resource file is there, and that
+  they hash to the key; otherwise it copies again. A file that is not the resource's is deleted rather than causing a
+  re-copy, so what running a staged script leaves (`__pycache__`) does not delete the copy under a running process on
+  every start. The check is remembered per copy, so a copy is read once per process. A shell can still change a copy
+  after that check (design §2 non-goals). The `.gitignore` is also written on the reuse path, so copies staged before
+  this change get it.
+
+### Fixed: `PathRuleVirtualFileSystem` hides its `DENY`ed subtrees from usage and fills `search` (EE-34, EE-39)
+
+- **`getUsageSummary()` and `getUsageSummary(path)` leave `DENY`ed subtrees out.** The no-arg call was delegated as
+  is, and so was a path naming the root or a directory above a hidden prefix, so the local environment's totals
+  counted the `.aimon/` control store. Above a hidden prefix the decorator now lists its way down and sums the
+  visible entries; elsewhere it still asks the delegate's path-scoped overload. An entry the delegate will not
+  describe — on a local workspace, a symbolic link — is counted as a zero-size file, as the delegate's own walk counts
+  it, instead of failing the whole total.
+- **`search` returns up to `maxResults` visible hits.** It passed `maxResults` to the delegate and then dropped
+  hidden hits, so a search whose walk met `.aimon/` first could come back short or empty while visible matches
+  existed (reproduced on the local file system). It now repeats the search with a doubled limit until it has enough
+  visible hits or the delegate runs out. A directory with no hidden prefix beneath it is searched once, as before.
+
+### Docs: `StackAgentRuntimeProvisioner.Assembly.getFileSystem()` says what it returns (EE-22)
+
+- **Its javadoc now says when the result is the control store** — a local setup with a caller-supplied provider — and
+  that a supplied or factory-made file system is returned whole, with `.aimon/` not hidden.
+
+### Fixed: the framework's write-once `ToolContext` keys are checked before `ToolContextKeys` is loaded (EE-32)
+
+- `executionEnvironment`, `executionEnvironmentProvider` and `hookRegistry` were registered as write-once only when
+  `ToolContextKeys` was initialised, so a string write that came first was not checked. `ToolContextKey` now knows
+  those three names from the start. A write-once key declared elsewhere is still registered when its class loads.
+
+### Docs: the knowledge store guide's runtime example sets an execution environment provider (EE-62)
+
+- **`opensearch-knowledge-store-guide.md` (and its `.en.md`) now builds a `LocalExecutionEnvironmentProvider` and
+  passes it to `OrcaAgentRuntime.builder().executionEnvironmentProvider(…)`.** The example filled in the control
+  filesystem, the user locale and the knowledge store but not the provider, which the builder does not require. Copied
+  as it stood, it built a runtime whose every execution got an unavailable environment: `KnowledgeSearch` worked, and
+  every file tool and `Bash` call failed with `Execution environment unavailable: no ExecutionEnvironmentProvider is
+  configured`. The guide now says so, says who closes the provider, and points to the embedding guide for the rest of
+  the assembly.
+
+### Changed: staging a skill with no execution environment in the context is an error (EE-20)
+
+- **`Skill` and a skill-backed slash command no longer succeed with `${AIMON_SKILL_DIR}` empty when the tool context
+  has no `ToolContextKeys.EXECUTION_ENVIRONMENT`.** They logged a WARN and rendered the body anyway, so
+  `bash ${AIMON_SKILL_DIR}/x.sh` became `bash /x.sh` and the call reported success. They now fail with `Failed to stage
+  skill '<name>': No execution environment in tool context` — the message the file tools and `Bash` give for the same
+  missing key (execution-environment design §3: no host fallback). `SkillRenderContextAccess.builderFor` throws the
+  `IllegalStateException` that `ExecutionEnvironmentAccess.require` throws.
+- **Who notices.** Only a hand-built tool context: every executor (turn, slash command, fork, scheduled routine)
+  publishes the key, as an unavailable environment if nothing else. A skill with no staged resource (a hand-built
+  `Skill`) needs no environment and still renders with `${AIMON_SKILL_DIR}` empty. Tests that call `SkillTool` with
+  `ToolContext.empty()` on a registry-loaded skill need a context carrying an environment.
+
+### Fixed: every skill staging failure is reported as one (EE-15)
+
+- **`SkillBackedCommandExecutor` turns any exception from staging into a failed `CommandExecutionResult`.** It caught
+  only `StagingException` and `ExecutionEnvironmentUnavailableException`, but `stage()` can also throw what the
+  workspace's filesystem throws mid-copy (`InvalidPathException`, `BackendConnectionException`, …) or whatever a
+  provider's own environment throws. Those escaped the executor as exceptions. Through `DefaultCommandExecutionManager`
+  they still ended as a failure, but as `Command execution error: …` rather than `Failed to stage skill '<name>': …`;
+  a caller of the executor directly got the exception.
+- **The `Skill` tool no longer reports a refused skill directory as `Invalid parameter`.** An `InvalidPathException` from
+  staging is an `IllegalArgumentException`, so it fell into the tool's input-error branch. It now reads `Failed to stage
+  skill '<name>': …` like every other staging failure.
+
+### Fixed: an inline skill invoked as `/my-skill` can `Edit` what it `Read` (EE-31)
+
+- **The slash command's tool context now carries a read-stamp map (`ReadTool.FILE_STAMPS_KEY`).** It is built by hand in
+  `OrcaAgentExecutor.executeCommand` and never had one, so an inline skill's `Edit` answered "Read the file before
+  modifying it" to every call, even right after a `Read` of the same file. The map is fresh per command, as a turn's is
+  fresh per execution: a file read in an earlier turn or an earlier slash command must be read again.
+- **What an operator may notice.** The same gap switched `Write`'s stale-write guard off on that path, so an inline
+  slash skill could overwrite an existing file it had never read. That is now refused, as it is in a turn. Fork-mode
+  skills are unchanged; their fork already had its own map.
+
 ### Policy: `internal` packages are not public API, and the build says so
 
 - **`docs/project/api-stability.md` §2 now names `<package>.internal` beside `*.impl`.** The five `internal` packages

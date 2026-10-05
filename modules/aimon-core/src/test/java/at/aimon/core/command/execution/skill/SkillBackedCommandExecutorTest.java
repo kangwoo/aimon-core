@@ -3,6 +3,7 @@ package at.aimon.core.command.execution.skill;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -33,6 +34,7 @@ import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.environment.UnavailableExecutionEnvironment;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.filesystem.VirtualFileSystems;
+import at.aimon.core.filesystem.exception.BackendConnectionException;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.shell.VirtualShell;
@@ -260,6 +262,26 @@ class SkillBackedCommandExecutorTest {
     }
 
     @Test
+    @DisplayName("EE-20: a skill to stage and no execution environment in the context is the command's error")
+    void shouldReportMissingEnvironmentAsCommandError() {
+        AtomicReference<SkillExecutionRequest> ran = new AtomicReference<>();
+        Skill skill = skillBuilder("deploy", "bash ${AIMON_SKILL_DIR}/scripts/x.sh").stagedResource(resource("deploy"))
+                .build();
+
+        CommandExecutionResult result = new SkillBackedCommandExecutor((c, r) -> {
+            ran.set(r);
+            return SkillExecutionResult.success("ok");
+        }).execute(CommandExecutionContext.builder().command(new SkillBackedCommand(skill))
+                .defaultModel(LlmModel.builder().build()).toolRegistry(new DefaultToolRegistry())
+                .toolContext(ToolContext.empty()).build(), CommandExecutionRequest.builder().build());
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.getResponse()).contains("Failed to stage skill 'deploy'")
+                .contains("No execution environment in tool context");
+        assertThat(ran).hasNullValue();
+    }
+
+    @Test
     @DisplayName("a staging failure is the command's error, not a crash")
     void shouldReportStagingFailureAsCommandError() {
         Skill skill = skillBuilder("deploy", "bash ${AIMON_SKILL_DIR}/scripts/x.sh").stagedResource(resource("deploy"))
@@ -275,6 +297,38 @@ class SkillBackedCommandExecutorTest {
 
         assertThat(result.isSuccess()).isFalse();
         assertThat(result.getError().orElseThrow().getMessage()).contains("provider down");
+    }
+
+    /**
+     * EE-15: {@code stage()} is not limited to the two exception types its contract names. A skill directory whose
+     * name the workspace's filesystem refuses ({@code InvalidPathException}), or a backend write that fails while the
+     * copy is being made, used to escape this executor as an exception instead of becoming the command's failure.
+     */
+    @Test
+    @DisplayName("EE-15: a staging failure of any type — an invalid path — is the command's error, not an exception")
+    void shouldReportInvalidPathDuringStagingAsCommandError() {
+        CommandExecutionResult result = executeWithStaging(
+                stagingFails(new InvalidPathException("deploy:v2", "Illegal char <:>")));
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.getResponse()).contains("Failed to stage skill 'deploy'").contains("Illegal char <:>");
+        assertThat(result.getError()).containsInstanceOf(InvalidPathException.class);
+    }
+
+    @Test
+    @DisplayName("EE-15: a backend failure while staging is the command's error, and the skill never runs")
+    void shouldReportBackendFailureDuringStagingAsCommandError() {
+        AtomicReference<SkillExecutionRequest> ran = new AtomicReference<>();
+        CommandExecutionResult result = executeWithStaging(
+                stagingFails(new BackendConnectionException("workspace store unreachable")), (c, r) -> {
+                    ran.set(r);
+                    return SkillExecutionResult.success("ok");
+                });
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.getResponse()).contains("Failed to stage skill 'deploy'")
+                .contains("workspace store unreachable");
+        assertThat(ran).hasNullValue();
     }
 
     @Test
@@ -385,6 +439,47 @@ class SkillBackedCommandExecutorTest {
     private static StagedResource resource(String name) {
         return StagedResource.builder().sourceFileSystem(VirtualFileSystems.readOnlyLocal(Path.of("/skills")))
                 .sourceDir(name).contentKey("0123456789abcdef").name(name).build();
+    }
+
+    private static CommandExecutionResult executeWithStaging(ExecutionEnvironment environment) {
+        return executeWithStaging(environment, (c, r) -> SkillExecutionResult.success("ok"));
+    }
+
+    private static CommandExecutionResult executeWithStaging(ExecutionEnvironment environment,
+            SkillExecutor skillExecutor) {
+        Skill skill = skillBuilder("deploy", "bash ${AIMON_SKILL_DIR}/scripts/x.sh").stagedResource(resource("deploy"))
+                .build();
+        ToolContext toolContext = ToolContext.builder().put(ToolContextKeys.EXECUTION_ENVIRONMENT, environment).build();
+        return new SkillBackedCommandExecutor(skillExecutor).execute(CommandExecutionContext.builder()
+                .command(new SkillBackedCommand(skill)).defaultModel(LlmModel.builder().build())
+                .toolRegistry(new DefaultToolRegistry()).toolContext(toolContext).build(),
+                CommandExecutionRequest.builder().build());
+    }
+
+    /** An environment whose {@code stage()} throws the given exception — one its contract does not name. */
+    private static ExecutionEnvironment stagingFails(RuntimeException failure) {
+        ExecutionEnvironment base = TestExecutionEnvironments.builder().build();
+        return new ExecutionEnvironment() {
+            @Override
+            public VirtualFileSystem fileSystem() {
+                return base.fileSystem();
+            }
+
+            @Override
+            public VirtualShell shell() {
+                return base.shell();
+            }
+
+            @Override
+            public EnvironmentDescriptor descriptor() {
+                return base.descriptor();
+            }
+
+            @Override
+            public String stage(StagedResource resource) {
+                throw failure;
+            }
+        };
     }
 
     /** An environment whose {@code stage()} answers with a fixed directory, so the rendered path is provably its. */

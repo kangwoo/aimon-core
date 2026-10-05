@@ -1,5 +1,6 @@
 package at.aimon.core.llms.anthropic;
 
+import java.util.Locale;
 import java.util.Optional;
 import java.util.OptionalInt;
 
@@ -140,6 +141,34 @@ final class AnthropicThinkingBudgets {
         final int requested = requestedBudget(effort, configuredBudget);
         final int clamped = Math.min(requested, maxTokens - 1);
         return OptionalInt.of(Math.max(clamped, MINIMUM_BUDGET_TOKENS));
+    }
+
+    /**
+     * Names the ladder rungs whose budget would be sent unclamped under {@code maxTokens}, highest first, each with
+     * its budget — for the clamp warning's second remedy.
+     *
+     * <p>
+     * Never empty for a request that reaches the clamp: {@link #budgetFor} gives up below
+     * {@link #MINIMUM_BUDGET_TOKENS}, so any {@code maxTokens} that can clamp is above the {@code MINIMAL} rung's
+     * budget.
+     *
+     * @param maxTokens
+     *            the {@code max_tokens} this request carries
+     * @return e.g. {@code "low (2048) or minimal (1024)"}
+     */
+    static String describeRungsThatFit(int maxTokens) {
+        final StringBuilder names = new StringBuilder();
+        for (ReasoningEffort rung : new ReasoningEffort[]{ReasoningEffort.HIGH, ReasoningEffort.MEDIUM,
+                ReasoningEffort.LOW, ReasoningEffort.MINIMAL}) {
+            final int rungBudget = requestedBudget(rung, null);
+            if (rungBudget < maxTokens) {
+                if (names.length() > 0) {
+                    names.append(" or ");
+                }
+                names.append(rung.name().toLowerCase(Locale.ROOT)).append(" (").append(rungBudget).append(')');
+            }
+        }
+        return names.toString();
     }
 
     /**

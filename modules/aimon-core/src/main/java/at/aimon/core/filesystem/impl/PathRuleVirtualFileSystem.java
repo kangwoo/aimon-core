@@ -13,6 +13,7 @@ import at.aimon.core.filesystem.PathRule;
 import at.aimon.core.filesystem.VfsPaths;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.filesystem.exception.FileAccessDeniedException;
+import at.aimon.core.filesystem.exception.InvalidPathException;
 
 /**
  * A {@link VirtualFileSystem} decorator that applies {@link PathRule}s by root-anchored prefix
@@ -197,21 +198,121 @@ public final class PathRuleVirtualFileSystem implements VirtualFileSystem {
         delegate.deleteRecursive(path);
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>
+     * Hidden hits do not count against {@code maxResults}: when the delegate's answer was cut at the limit and some of
+     * it was hidden, the search is repeated with a doubled limit until {@code maxResults} visible hits are found or
+     * the delegate runs out (EE-39). A directory with no {@code DENY} prefix beneath it is searched once.
+     */
     @Override
     public List<String> search(String directory, String pattern, int maxResults) {
         checkRead(directory);
-        return visible(delegate.search(directory, pattern, maxResults));
+        if (!hidesBelow(resolve(directory))) {
+            return delegate.search(directory, pattern, maxResults);
+        }
+        int limit = maxResults;
+        while (true) {
+            final List<String> found = delegate.search(directory, pattern, limit);
+            final List<String> shown = visible(found);
+            if (shown.size() >= maxResults) {
+                return shown.subList(0, maxResults);
+            }
+            if (found.size() < limit || limit == Integer.MAX_VALUE) {
+                return shown;
+            }
+            limit = limit > Integer.MAX_VALUE / 2 ? Integer.MAX_VALUE : limit * 2;
+        }
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>
+     * {@code DENY}ed subtrees are left out, so the total does not reveal the size of the control store (EE-34).
+     */
     @Override
     public FileSystemUsage getUsageSummary() {
-        return delegate.getUsageSummary();
+        if (!hidesBelow("")) {
+            return delegate.getUsageSummary();
+        }
+        final UsageTotals totals = new UsageTotals();
+        addUsage(baseWorkingDir, totals);
+        return totals.build();
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>
+     * {@code DENY}ed subtrees are left out (EE-34). A directory with no {@code DENY} prefix beneath it is answered by
+     * the delegate's path-scoped overload; above one, the directories on the way down to it are listed and each
+     * visible entry is summed. The result is therefore only as precise as the delegate's path-scoped overload: a
+     * backend that ignores the path there over-reports.
+     */
     @Override
     public FileSystemUsage getUsageSummary(String path) {
         checkRead(path);
-        return delegate.getUsageSummary(path);
+        final UsageTotals totals = new UsageTotals();
+        addUsage(path, totals);
+        return totals.build();
+    }
+
+    /**
+     * Whether a {@code DENY} rule's prefix lies beneath the base-relative directory {@code rel}. Callers have already
+     * passed {@link #checkRead}, so {@code rel} is not itself covered by a {@code DENY} rule.
+     */
+    private boolean hidesBelow(String rel) {
+        return rules.stream().filter(rule -> rule.getAccess() == PathRule.Access.DENY)
+                .anyMatch(rule -> rel.isEmpty() || VfsPaths.isUnderIgnoreCase(rule.getPrefix(), rel));
+    }
+
+    /** Adds the visible contents of {@code directory} (not the directory itself) to {@code totals}. */
+    private void addUsage(String directory, UsageTotals totals) {
+        if (!hidesBelow(resolve(directory))) {
+            totals.add(delegate.getUsageSummary(directory));
+            return;
+        }
+        for (String child : visible(delegate.list(directory))) {
+            if (delegate.isDirectory(child)) {
+                totals.directories++;
+                addUsage(child, totals);
+            } else {
+                totals.files++;
+                totals.size += sizeOf(child);
+            }
+        }
+    }
+
+    /**
+     * The size of a listed non-directory entry, or 0 for one the delegate will not describe. A local delegate refuses
+     * any path through a symbolic link, while its own usage walk counts the link as a file without following it; a
+     * link on the way down to a {@code DENY} prefix is counted the same way here rather than failing the whole total.
+     */
+    private long sizeOf(String entry) {
+        try {
+            return delegate.getMetadata(entry).getSize();
+        } catch (InvalidPathException e) {
+            return 0;
+        }
+    }
+
+    /** A mutable running total for {@link #getUsageSummary(String)}. */
+    private static final class UsageTotals {
+        private long size;
+        private long files;
+        private long directories;
+
+        void add(FileSystemUsage usage) {
+            size += usage.getTotalSize();
+            files += usage.getFileCount();
+            directories += usage.getDirectoryCount();
+        }
+
+        FileSystemUsage build() {
+            return FileSystemUsage.builder().totalSize(size).fileCount(files).directoryCount(directories).build();
+        }
     }
 
     @Override

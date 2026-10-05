@@ -22,8 +22,10 @@ import at.aimon.core.agent.stream.AssistantTextStreamReset;
 import at.aimon.core.agent.stream.CompactBoundary;
 import at.aimon.core.agent.stream.ExecutionCompleted;
 import at.aimon.core.agent.stream.ExecutionError;
+import at.aimon.core.agent.stream.InterruptedAt;
 import at.aimon.core.agent.stream.IterationCompleted;
 import at.aimon.core.agent.stream.IterationStarted;
+import at.aimon.core.agent.stream.RejectedAt;
 import at.aimon.core.agent.stream.SkillTurnSuspendedEvent;
 import at.aimon.core.agent.stream.SubagentTaskCompleted;
 import at.aimon.core.agent.stream.ToolResultReady;
@@ -340,9 +342,10 @@ public class OutputFormatter {
     public void displayEvent(AgentExecutionEvent event) {
         Objects.requireNonNull(event, "event cannot be null");
         // Java 17 instanceof pattern chain — project toolchain is -source 17, which does not yet support pattern
-        // switch. The sealed AgentExecutionEvent hierarchy still forces us to update this chain when a new permitted
-        // subtype is added (the final else throws), so exhaustiveness is maintained at runtime rather than compile
-        // time. Upgrade to pattern-matching switch once the source level moves to 21.
+        // switch. The sealed hierarchy does NOT force this chain to stay complete: two subtypes once reached the
+        // throwing else unnoticed (RD-3). What notices a new permitted subtype is
+        // OutputFormatterTest.DisplayEventExhaustiveness, which requires a display method per subtype. Upgrade to
+        // pattern-matching switch once the source level moves to 21.
         if (event instanceof IterationStarted started) {
             displayIterationStarted(started);
         } else if (event instanceof AssistantMessageReceived assistant) {
@@ -371,6 +374,10 @@ public class OutputFormatter {
             displaySkillTurnSuspended(suspended);
         } else if (event instanceof SubagentTaskCompleted subagentDone) {
             displaySubagentTaskCompleted(subagentDone);
+        } else if (event instanceof InterruptedAt interrupted) {
+            displayInterruptedAt(interrupted);
+        } else if (event instanceof RejectedAt rejected) {
+            displayRejectedAt(rejected);
         } else {
             throw new IllegalStateException("Unhandled AgentExecutionEvent subtype: " + event.getClass().getName());
         }
@@ -589,6 +596,30 @@ public class OutputFormatter {
                 .append(" (taskId=").append(event.getTaskId()).append(')');
         event.getDetail().ifPresent(detail -> line.append(" — ").append(firstLine(detail)));
         displayInfo(line.toString());
+    }
+
+    /**
+     * No-op: an interrupted turn still ends in a result with {@link CompletionReason#INTERRUPTED}, which
+     * {@link #displayResult(AgentExecutionResult)} renders as the "[Interrupted]" banner, and the partial output this
+     * event carries has already been painted by the text deltas. Printing either here would show it twice.
+     */
+    public void displayInterruptedAt(InterruptedAt event) {
+        Objects.requireNonNull(event, "event cannot be null");
+    }
+
+    /**
+     * Renders a rejected inbox input as an error line. Unlike an interrupt, nothing follows it: the input is dropped
+     * before any iteration runs, so no result reaches {@link #displayResult(AgentExecutionResult)} and this line is the
+     * only place the user learns that what they sent went nowhere.
+     */
+    public void displayRejectedAt(RejectedAt event) {
+        Objects.requireNonNull(event, "event cannot be null");
+        final StringBuilder line = new StringBuilder("[Input rejected] ").append(event.getReason().name())
+                .append(": requested agent '").append(event.getRequestedAgent()).append('\'');
+        event.getExistingAgent()
+                .ifPresent(existing -> line.append(", session is bound to '").append(existing).append('\''));
+        line.append(" (inboxId=").append(event.getInboxId()).append(')');
+        displayError(line.toString());
     }
 
     /** Returns only the first line of {@code text}, so a multi-line detail stays a single terminal line. */

@@ -23,6 +23,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.AgentRuntimeId;
+import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.queue.DefaultMessageQueueManager;
 import at.aimon.core.agent.queue.InMemoryMessageQueueRepository;
 import at.aimon.core.agent.queue.QueuedInput;
@@ -273,6 +274,31 @@ class DefaultSubagentExecutionManagerBackgroundTest {
             Thread.sleep(10);
         }
         throw new AssertionError("expected at least " + expected + " item(s), saw " + size.getAsInt());
+    }
+
+    @Test
+    @DisplayName("a truncated background answer says so at the head of the notice, where the 500-char cut cannot reach")
+    void truncatedBackgroundAnswerIsNamedInTheNotice() throws InterruptedException {
+        // L-25: the notice cut the summary from the front, so the end-of-answer marker of a long cut answer was lost.
+        Instant now = Instant.now();
+        when(reactExecutor.execute(any(), any())).thenReturn(SubagentExecutionResult.success(
+                "x".repeat(2_000), SessionSnapshot.of(SessionId.generate()), ExecutionMetadata.builder()
+                        .iterationCount(1).tokenUsage(TokenUsage.empty()).timestamps(now, now).build(),
+                CompletionReason.TRUNCATED));
+        DefaultSubagentExecutionManager manager = newManager(Executors.newSingleThreadExecutor());
+        DefaultMessageQueueManager queue = new DefaultMessageQueueManager(new InMemoryMessageQueueRepository());
+        List<AgentExecutionEvent> events = new CopyOnWriteArrayList<>();
+
+        manager.executeInBackground(
+                envBuilder(registryWithExplore()).messageQueueManager(queue).parentEventSink(events::add).build(), "t1",
+                SUBAGENT, "go", "").join();
+        awaitTerminal(manager, "t1");
+        awaitAtLeast(() -> queue.snapshot().size(), 1);
+        awaitAtLeast(events::size, 1);
+
+        assertThat(queue.snapshot().get(0).getInputText()).contains("Completion reason: TRUNCATED");
+        assertThat(((SubagentTaskCompleted) events.get(0)).getDetail()).hasValueSatisfying(
+                detail -> assertThat(detail).startsWith("Completion reason: TRUNCATED").endsWith("… (truncated)"));
     }
 
     @Test

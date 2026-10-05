@@ -1089,6 +1089,24 @@ class SkillToolTest {
     }
 
     @Test
+    void testExecute_StagedSkillWithoutEnvironment_ReturnsError() {
+        // EE-20: no environment in the context is an error (design §3), not a success with ${AIMON_SKILL_DIR} empty
+        StagedResource resource = StagedResource.builder().sourceFileSystem(new NoFileSystemStub())
+                .sourceDir("skills/deploy").contentKey("k1").name("deploy").build();
+        Skill skill = Skill.builder().name("deploy")
+                .metadata(SkillMetadata.builder().name("deploy").description("deploys").build())
+                .content(SkillContent.of("bash ${AIMON_SKILL_DIR}/run.sh")).stagedResource(resource).build();
+        mockRegistry.addSkill(skill);
+
+        ToolResult result = new SkillTool(mockRegistry, new DefaultSkillContentRenderer())
+                .execute(ToolInput.of(Map.of("skill", "deploy")), ToolContext.empty());
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).contains("Failed to stage skill 'deploy'")
+                .contains("No execution environment in tool context").doesNotContain("bash /run.sh");
+    }
+
+    @Test
     void testExecute_StagingFails_ReturnsError() {
         StagedResource resource = StagedResource.builder().sourceFileSystem(new NoFileSystemStub())
                 .sourceDir("skills/big").contentKey("k1").name("big").totalBytes(1).build();
@@ -1104,6 +1122,46 @@ class SkillToolTest {
 
         assertThat(result.isError()).isTrue();
         assertThat(result.getContent()).contains("Failed to stage skill 'big'").contains("sandbox is down");
+    }
+
+    @Test
+    void testExecute_StagingThrowsInvalidPath_ReportedAsStagingFailureNotAsInvalidParameter() {
+        // EE-15: InvalidPathException is an IllegalArgumentException, so the outer catch used to report a skill
+        // directory the workspace refuses as "Invalid parameter" — the model's input was fine, the staging was not.
+        StagedResource resource = StagedResource.builder().sourceFileSystem(new NoFileSystemStub())
+                .sourceDir("skills/deploy").contentKey("k1").name("deploy").build();
+        Skill skill = Skill.builder().name("deploy")
+                .metadata(SkillMetadata.builder().name("deploy").description("deploys").build())
+                .content(SkillContent.of("x")).stagedResource(resource).build();
+        mockRegistry.addSkill(skill);
+        ExecutionEnvironment environment = new ExecutionEnvironment() {
+            @Override
+            public VirtualFileSystem fileSystem() {
+                return new NoFileSystemStub();
+            }
+
+            @Override
+            public VirtualShell shell() {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public EnvironmentDescriptor descriptor() {
+                return EnvironmentDescriptor.builder().workingDirectory("/ws").build();
+            }
+
+            @Override
+            public String stage(StagedResource r) {
+                throw new java.nio.file.InvalidPathException("deploy:v2", "Illegal char <:>");
+            }
+        };
+        ToolContext context = ToolContext.builder().put(ToolContextKeys.EXECUTION_ENVIRONMENT, environment).build();
+
+        ToolResult result = skillTool.execute(ToolInput.of(Map.of("skill", "deploy")), context);
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).contains("Failed to stage skill 'deploy'").contains("Illegal char <:>")
+                .doesNotContain("Invalid parameter");
     }
 
     /** An environment whose stage() returns a fixed path and records what it was asked to stage. */

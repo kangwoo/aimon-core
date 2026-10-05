@@ -350,6 +350,17 @@ class AnthropicThinkingRequestTest {
     }
 
     @Test
+    @DisplayName("a clamped configured budget names thinkingBudgetTokens as the second remedy, not the effort")
+    void clampedConfiguredBudgetNamesTheBudgetNotTheEffort() {
+        // L-15: a configured budget wins over the ladder, so lowering the effort would change nothing here.
+        send(client(config().thinkingMode(AnthropicThinkingMode.EXTENDED).thinkingBudgetTokens(6000).build()),
+                LlmModel.builder().reasoningEffort(ReasoningEffort.LOW).build());
+
+        assertThat(warnings()).filteredOn(w -> w.contains("does not fit under maxTokens")).singleElement().asString()
+                .contains("or lower thinkingBudgetTokens below 4096").doesNotContain("reasoning effort");
+    }
+
+    @Test
     @DisplayName("each divergence is reported exactly once across two sends")
     void divergenceIsReportedOncePerSignature() {
         final AnthropicLlmClient client = client(config().thinkingMode(AnthropicThinkingMode.EXTENDED).build());

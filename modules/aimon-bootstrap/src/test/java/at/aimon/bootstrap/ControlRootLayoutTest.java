@@ -22,6 +22,8 @@ import at.aimon.core.agent.impl.AgentBundle;
 import at.aimon.core.agent.impl.orca.OrcaAgentRuntime;
 import at.aimon.core.environment.EnvironmentRequest;
 import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.environment.impl.LocalExecutionEnvironmentProvider;
+import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.filesystem.exception.FileAccessDeniedException;
 import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.LlmModel;
@@ -117,6 +119,25 @@ class ControlRootLayoutTest {
             assertThat(ops.fileSystem().exists(".aimon/probe.txt")).as("the control store is hidden").isFalse();
             assertThatThrownBy(() -> ops.fileSystem().read(".aimon/probe.txt"))
                     .isInstanceOf(FileAccessDeniedException.class);
+        }
+    }
+
+    @Test
+    @DisplayName("EE-22: with a caller's provider the stack does not know the workspace, and fileSystem(id) is the control store")
+    void callerProviderLeavesFileSystemAtTheControlStore(@TempDir Path root, @TempDir Path elsewhere) throws Exception {
+        final AgentRuntimeId ops = AgentRuntimeId.fromName("ops");
+        try (LocalExecutionEnvironmentProvider provider = LocalExecutionEnvironmentProvider.builder()
+                .workspaceRoot(elsewhere).contentSearch(false).build();
+                AimonStack stack = AimonStackBuilder
+                        .build(spec(root).executionEnvironment(ExecutionEnvironmentSpec.shared(provider)).build())) {
+            final VirtualFileSystem answered = stack.fileSystem(ops).orElseThrow();
+            answered.write("probe.txt", "where does this land");
+
+            final Path workspace = Path.of(AgentWorkspaceLayout.resolve(root.toString(), ops));
+            assertThat(workspace.resolve(".aimon/probe.txt")).as("inside the control store").exists();
+            assertThat(workspace.resolve("probe.txt")).doesNotExist();
+            assertThat(elsewhere.resolve("probe.txt")).as("the provider's workspace is not reached").doesNotExist();
+            assertThat(stack.runtime(ops).orElseThrow().getControlFileSystem().exists("probe.txt")).isTrue();
         }
     }
 

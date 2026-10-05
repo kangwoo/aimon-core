@@ -437,7 +437,7 @@ enum 이 상수를 얻으면 힌트가 따라오지 않은 채 초록일 수 없
 
 | 실패 | CLI | 스타터 | frontmatter |
 |---|---|---|---|
-| **모르는 잎 이름** | `ConfigurationException("Invalid configuration structure in: <file>")`. 어느 키인지는 원인 예외에만 있다(L-5) | **조용하다.** `@ConfigurationProperties` 의 기본 `ignoreUnknownFields = true`. 잎이 하나도 바인딩되지 않은 맵 항목은 만들어지지도 않는다(L-1). IDE 가 메타데이터로 모르는 잎을 표시하는 것이 남는 완화책이다 | `model:` 아래 모르는 키는 읽지 않는다 |
+| **모르는 잎 이름** | `ConfigurationException("Invalid configuration structure in: <file> (at <키>: <사유>)")`. 키와 Jackson 의 사유 첫 줄이 감싸는 문장에 실린다(L-5, 2026-10-05 닫힘) | **조용하다.** `@ConfigurationProperties` 의 기본 `ignoreUnknownFields = true`. 잎이 하나도 바인딩되지 않은 맵 항목은 만들어지지도 않는다(L-1). IDE 가 메타데이터로 모르는 잎을 표시하는 것이 남는 완화책이다 | `model:` 아래 모르는 키는 읽지 않는다 |
 | **enum 값 오류** | Jackson `InvalidFormatException` → 위와 같은 `ConfigurationException`(L-5) | 코어 enum 은 Boot 바인딩 실패가 프로퍼티와 변환을 부른다. vendor `String` 은 fold 가 프로퍼티와 허용 철자 전부를 부르는 `IllegalStateException` | `model.reasoningEffort` 는 키와 허용 값을 부르는 `AgentDefinitionParseException` |
 | **의미 오류** — 아무것도 선언하지 않음 · 본문이 빔 · 빈/공백 이름 · 대소문자만 다른 중복 · 두 ladder 키 · 빈 ladder | 코어 거절을 키 경로와 재던짐(§6.1) | 같음, `afterPropertiesSet` 시점 | — |
 | **예산 규칙 위반** | `llm.anthropic.thinkingBudgetTokens` 를 부르며 실패 | `aimon.llm.anthropic.thinking-budget-tokens` 를 부르며 실패 | — |
@@ -669,7 +669,7 @@ null 리졸버와 부딪히지 않고, 대소문자는 매퍼 기능이 덮는�
   `AnthropicConfig` 에 `topP` · penalty 필드부터 없다. `gpt-5.6-terra` 를 Chat Completions 로 강제한 칸의 미측정도 여기 붙어 있다
 - **L-3** — `provider=none` 과 애플리케이션 자체 `LlmClient` 빈 배포에서 선언과 벤더 블록이 조용히 읽히지 않는다
 - **L-4** — 설정에서 prefix 를 선언할 길을 열 것인가(코어 쪽이 순수 추가가 아니다)
-- **L-5** — CLI 매핑 오류 메시지가 어느 키인지 말하지 않는다
+- ~~**L-5** — CLI 매핑 오류 메시지가 어느 키인지 말하지 않는다~~ — 2026-10-05 닫힘
 - **L-8** — 선언이 내장 행을 가리면서 그 행의 플래그를 적지 않았을 때 알리지 않는다
 - **L-13** — 선언에서 기술자로 가는 세 번째 손 전달(고리 3)에 가드가 없다
 - **L-14** — 바인더 고리(고리 1)는 키마다 손으로 확인되고, 스타터에는 확인되지 않는 키가 있다
