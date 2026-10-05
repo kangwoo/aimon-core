@@ -248,8 +248,15 @@ L-4 가 가진다.
 고치려는 선언이다 — `claude-*` 행은 샘플링 억제(`supportsSamplingParameters: false`)도 말하므로, 그 이름에
 `thinkingDialect` 만 적으면 억제가 풀려 샘플링 파라미터가 400 을 내는 모델로 가고, 억제할 것이 없으므로 억제 경고도
 나지 않는다. 그래서 운영 문서는 행 전체를 적는 모양을 보인다. `thinkingDialect: unknown` 도 유효한 진술이다 — "이
-이름에 대해 내장 행의 방언으로 행동하지 말라". 선언이 내장 행을 가리면서 그 행의 플래그를 빠뜨렸을 때 기동 시 알리는
-일반형은 L-8 이 가진다. 선언이 행을 대체한다는 사실은 [`model-capabilities.md`](model-capabilities.md) 가 한 문장으로
+이름에 대해 내장 행의 방언으로 행동하지 말라".
+
+**그 귀결은 레지스트리를 만들 때 WARN 으로 알린다.** 선언한 이름을 내장 행(exact 든 prefix 든)이 이미 덮고 있고, 그 행이
+fail-open 이 아닌 값으로 둔 플래그를 선언이 **적지 않았으면**, `withDefaultsExtendedBy` 가 WARN 한 줄을 낸다 — 모델 이름,
+가린 행, 떨어진 플래그마다 그 행이 주던 값과 지금 값, 옮겨 적을 줄. 병합하지 않고 거절하지도 않는다: 선언은 적힌 그대로
+등록된다. 판정은 `ModelCapabilityDeclaration` 이 "적지 않음" 과 "기본값을 적음" 을 구분해 들고 있기 때문에 가능하고, 그래서
+**적은 플래그는 값이 무엇이든 보고하지 않는다** — fail-open 값이 의도라면 그 값을 직접 적는 것이 경고를 끄는 길이다.
+ladder 는 두 키 중 어느 것으로 적어도 적은 것이다. 같은 발견은 프로세스당 한 번만 말한다: 스타터는 같은 프로퍼티로
+레지스트리를 두 번 만든다(`afterPropertiesSet` 의 검증, LLM 슬라이스의 사용). 선언이 행을 대체한다는 사실은 [`model-capabilities.md`](model-capabilities.md) 가 한 문장으로
 가리키고, 규칙은 여기가 정본이다.
 
 ### 4.4 설정 표면은 내장 표의 어떤 행이든 표현한다
@@ -698,7 +705,7 @@ null 리졸버와 부딪히지 않고, 대소문자는 매퍼 기능이 덮는�
 - **L-3** — `provider=none` 과 애플리케이션 자체 `LlmClient` 빈 배포에서 선언과 벤더 블록이 조용히 읽히지 않는다
 - **L-4** — 설정에서 prefix 를 선언할 길을 열 것인가(코어 쪽이 순수 추가가 아니다)
 - ~~**L-5** — CLI 매핑 오류 메시지가 어느 키인지 말하지 않는다~~ — 2026-10-05 닫힘
-- **L-8** — 선언이 내장 행을 가리면서 그 행의 플래그를 적지 않았을 때 알리지 않는다
+- ~~**L-8** — 선언이 내장 행을 가리면서 그 행의 플래그를 적지 않았을 때 알리지 않는다~~ — 2026-10-05 닫힘(기동 시 WARN, §4)
 - ~~**L-13** — 선언에서 기술자로 가는 세 번째 손 전달(고리 3)에 가드가 없다~~ — 2026-10-05 닫힘
 - **L-14** — 바인더 고리(고리 1)는 키마다 손으로 확인된다. 지금의 여덟 키는 두 표면에서 전부 덮였고, 남은 것은 변환이
   필요한 타입의 다음 키다. 스타터에서 **이름**이 어긋나는 쪽은 §6.7 이 기동 실패로 만든다
@@ -723,7 +730,9 @@ null 리졸버와 부딪히지 않고, 대소문자는 매퍼 기능이 덮는�
 | 파일 | 무엇을 확인하나 |
 |---|---|
 | `aimon-core/…/llm/capability/ModelCapabilityDeclaration.java` | 박싱 필드 · `null` 세터 · `build()` 의 두 거절 · `capabilities()` · `equals` 범위 |
-| `aimon-core/…/llm/capability/InMemoryModelCapabilityRegistry.java` | `withDefaultsExtendedBy` — 내장 표에서 시작, exact 등록, 이름 · 대소문자 중복 · `null` 값 거절 |
+| `aimon-core/…/llm/capability/InMemoryModelCapabilityRegistry.java` | `withDefaultsExtendedBy` — 내장 표에서 시작, exact 등록, 이름 · 대소문자 중복 · `null` 값 거절, 가린 행에 대한 WARN 과 프로세스당 한 번 |
+| `aimon-core/…/llm/capability/ShadowedBuiltInRow.java` | 선언이 적지 않아 떨어진 플래그의 판정과 WARN 문장(§4) |
+| `aimon-core/src/test/…/llm/capability/DeclarationShadowWarningTest.java` | 그 WARN 이 울리는 모양과 울리지 않는 모양 |
 | `aimon-core/…/agent/definition/parser/MarkdownAgentDefinitionParser.java` | `extractModel` 이 읽는 키, `model.reasoningEffort` fold 와 `AgentDefinitionParseException` |
 | `aimon-core/…/agent/AgentDefinitionVersion.java` | `canonicalForm` 의 `model.reasoningEffort=` 줄과 변경 감지기의 목적 |
 | `aimon-cli/…/cli/config/CliConfigLoader.java` | 매퍼 기능(`ACCEPT_CASE_INSENSITIVE_ENUMS`), 바인딩 전 확장, 매핑 오류의 일반 메시지 |

@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/aimon-core-integration-via-cli-reference.md
-source_commit: 2bfe9a9
+source_commit: 75ac0d2
 ---
 
 # aimon-core integration guide — following aimon-cli as the reference
@@ -410,8 +410,10 @@ modelCapabilities:
 ```
 
 The first form puts `supportsSamplingParameters` back at its fail-open `true`, so `temperature` goes to a
-model that answers 400 to it — and **with no warning**, because the suppression WARN fires only when the flag
-is `false`. `thinkingMode: extended` is no escape either: that branch omits `temperature` and still sets
+model that answers 400 to it. At request time there is **no warning** — the suppression WARN fires only when
+the flag is `false`. What you get instead is **one WARN at startup**, naming the built-in row the entry
+shadowed, each flag that fell back with the value that row gave it, and the lines to copy. If the fail-open
+value is what you mean, write it (`supportsSamplingParameters: true`) and the warning stops. `thinkingMode: extended` is no escape either: that branch omits `temperature` and still sets
 `top_p`.
 
 **The rule is one line — the entry is the whole row, so copy every flag the built-in row states.** For a

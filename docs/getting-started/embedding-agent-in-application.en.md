@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/embedding-agent-in-application.md
-source_commit: 389e066
+source_commit: 4db0101
 ---
 
 # Embedding an AIMON agent in your application
@@ -429,8 +429,9 @@ aimon:
   **For a name it does know it does not — an entry is that name's whole row, so a flag you leave out falls
   back to its fail-open value rather than to what that row said.** The `claude-*` rows state two things, the
   dialect **and** the sampling suppression, so writing only `thinking-dialect` for `claude-sonnet-5` puts the
-  suppression back at `true` and sends `temperature` to a model that answers 400 to it — and **with no
-  warning**, because the suppression WARN fires only when the flag is `false`. For such a name, copy every
+  suppression back at `true` and sends `temperature` to a model that answers 400 to it — with no warning at
+  request time, because the suppression WARN fires only when the flag is `false`, and with **one WARN at
+  startup** instead, naming the shadowed row, the flags that fell back and the lines to copy. For such a name, copy every
   flag that row states (`thinking-dialect` and `supports-sampling-parameters: false`). `thinking-dialect` is
   read by the anthropic branch only and `supports-reasoning-summary` by the OpenAI Responses path only — the
   latter is where you describe a gateway that takes `reasoning.effort` and 400s on `reasoning.summary`. The

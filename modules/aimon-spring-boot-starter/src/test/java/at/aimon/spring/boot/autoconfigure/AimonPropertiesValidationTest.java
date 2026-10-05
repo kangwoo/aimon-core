@@ -6,9 +6,12 @@ import java.util.Map;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.MapPropertySource;
 
@@ -838,7 +841,7 @@ class AimonPropertiesValidationTest {
         // The starter half of the pair in LlmClientFactoryTest, so neither surface can drift from the yaml the two
         // operator guides print. An entry is the whole row: naming only the dialect for a claude-* name hands the
         // sampling suppression back at its fail-open true, and restating it is what the guides now prescribe.
-        // The mechanism is #46's; the general remedy is L-8.
+        // The mechanism is #46's. L-8 made it audible -- theShadowWarningIsLoggedOnceOnThisSurface below.
         runner.withPropertyValues("aimon.llm.model-capabilities.claude-sonnet-5.thinking-dialect=unknown").run(
                 ctx -> assertThat(AimonProperties.modelCapabilityRegistry(ctx.getBean(AimonProperties.class).getLlm())
                         .resolve("claude-sonnet-5").supportsSamplingParameters()).isTrue());
@@ -849,6 +852,32 @@ class AimonPropertiesValidationTest {
                         AimonProperties.modelCapabilityRegistry(ctx.getBean(AimonProperties.class).getLlm())
                                 .resolve("claude-sonnet-5").supportsSamplingParameters())
                         .isFalse());
+    }
+
+    @Test
+    @ExtendWith(OutputCaptureExtension.class)
+    @DisplayName("a declaration that shadows a built-in row it does not restate warns once, however often it is read")
+    void theShadowWarningIsLoggedOnceOnThisSurface(CapturedOutput output) {
+        // L-8, on this surface. The judgement and the sentence are the core's; what is specific here is the count.
+        // This surface builds the registry from the same properties more than once -- afterPropertiesSet builds one
+        // to validate and throws it away, then the LLM slice (or an application's own bean method, through the public
+        // accessor) builds the one that is used -- and the operator should read one line, not one per construction.
+        // A name no other test in this module declares, because "once" is per process.
+        final String warning = "Model capability declaration 'claude-opus-4-7'";
+
+        runner.withPropertyValues("aimon.llm.model-capabilities.claude-opus-4-7.thinking-dialect=unknown",
+                "aimon.llm.model-capabilities.claude-opus-4-7.supports-sampling-parameters=false").run(ctx -> {
+                    assertThat(ctx).hasNotFailed();
+                    AimonProperties.modelCapabilityRegistry(ctx.getBean(AimonProperties.class).getLlm());
+                });
+        assertThat(output.getAll()).doesNotContain(warning);
+
+        runner.withPropertyValues("aimon.llm.model-capabilities.claude-opus-4-7.thinking-dialect=unknown").run(ctx -> {
+            assertThat(ctx).hasNotFailed();
+            AimonProperties.modelCapabilityRegistry(ctx.getBean(AimonProperties.class).getLlm());
+        });
+        assertThat(output.getAll()).containsOnlyOnce(warning).contains("prefix row 'claude-opus-4-7'")
+                .contains("supportsSamplingParameters=false (now true)");
     }
 
     @Test

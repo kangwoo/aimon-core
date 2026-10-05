@@ -408,7 +408,8 @@ aimon:
   **내장 표가 아는 이름에 대해서는 그렇지 않습니다 — 항목 하나가 그 이름의 행 전체이므로, 적지 않은 플래그는
   그 행이 말하던 값이 아니라 fail-open 값으로 떨어집니다.** `claude-*` 행은 방언과 **샘플링 억제** 두 가지를
   말하므로, `claude-sonnet-5` 에 `thinking-dialect` 만 적으면 억제가 `true` 로 되돌아가 `temperature` 가
-  400 을 내는 모델로 나갑니다 — 억제 WARN 은 플래그가 `false` 일 때만 울리므로 **경고도 없이**입니다.
+  400 을 내는 모델로 나갑니다 — 억제 WARN 은 플래그가 `false` 일 때만 울리므로 요청 시점에는 경고가 없고,
+  대신 **기동 시 WARN 한 줄**이 가린 행 · 떨어진 플래그 · 옮겨 적을 줄을 부릅니다.
   그런 이름에는 그 행이 말하던 플래그를 전부 옮겨 적습니다(`thinking-dialect` 와
   `supports-sampling-parameters: false`). `thinking-dialect` 는 anthropic 분기만,
   `supports-reasoning-summary` 는 OpenAI Responses 경로만 읽습니다 — 후자는 `reasoning.effort` 는 받고
