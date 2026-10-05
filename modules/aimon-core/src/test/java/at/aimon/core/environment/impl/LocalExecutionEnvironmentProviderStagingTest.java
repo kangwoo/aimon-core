@@ -33,6 +33,7 @@ import at.aimon.core.environment.EnvironmentRequest;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.StagedResource;
 import at.aimon.core.environment.exception.StagingException;
+import at.aimon.core.filesystem.FileMetadata;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
@@ -791,6 +792,134 @@ class LocalExecutionEnvironmentProviderStagingTest {
 
         assertThat(filesUnderWorkspace()).noneMatch(p -> p.endsWith("credentials.env"));
         assertThat(copies("tool")).isEmpty();
+    }
+
+    // ---- a skill that was over the size limit when it was loaded ---------------------------------------------------
+
+    @Test
+    @DisplayName("a skill over the limit at load stages once .stageignore excludes the large file — the advice in the"
+            + " error works without a restart — and the answer is remembered")
+    void overLimitAtLoadStagesAfterStageignore() {
+        control.write("skills/demo/assets/big.bin", "x".repeat(500));
+        final List<String> contentReads = new ArrayList<>();
+        final StagedResource loaded = StagedResource.scan(countingReads(contentReads), "skills/demo", "demo");
+        final ExecutionEnvironment env = ownedEnv(LocalExecutionEnvironmentProvider.builder().maxStagedBytes(100));
+        assertThatThrownBy(() -> env.stage(loaded)).isInstanceOf(StagingException.class)
+                .hasMessageContaining(loaded.getTotalBytes() + " bytes exceeds the staging limit of 100 bytes");
+
+        control.write("skills/demo/.stageignore", "assets/\n");
+        final String path = env.stage(loaded);
+
+        assertThat(path).isEqualTo(root() + "/.aimon-staged/demo/" + scan().getContentKey());
+        assertThat(Path.of(path, "scripts/run.sh")).hasContent("echo staged-script");
+        assertThat(Path.of(path, "assets/big.bin")).doesNotExist();
+        assertThat(copies("demo")).containsExactly(scan().getContentKey());
+        contentReads.clear();
+        assertThat(env.stage(loaded)).isEqualTo(path);
+        assertThat(contentReads).as("a remembered copy costs what any staged copy costs").isEmpty();
+    }
+
+    @Test
+    @DisplayName("a skill over the limit at load stages once the large file is deleted")
+    void overLimitAtLoadStagesAfterTheLargeFileIsDeleted() {
+        control.write("skills/demo/assets/big.bin", "x".repeat(500));
+        final StagedResource loaded = scan();
+        final ExecutionEnvironment env = ownedEnv(LocalExecutionEnvironmentProvider.builder().maxStagedBytes(100));
+        assertThatThrownBy(() -> env.stage(loaded)).isInstanceOf(StagingException.class);
+
+        control.delete("skills/demo/assets/big.bin");
+
+        assertThat(env.stage(loaded)).isEqualTo(root() + "/.aimon-staged/demo/" + scan().getContentKey());
+    }
+
+    @Test
+    @DisplayName("a skill still over the limit is refused with its current size, from file sizes alone: no file of it"
+            + " is read again, on any call")
+    void stillOverLimitIsRefusedWithoutReadingTheSkill() {
+        control.write("skills/demo/assets/big.bin", "x".repeat(500));
+        final List<String> contentReads = new ArrayList<>();
+        final StagedResource loaded = StagedResource.scan(countingReads(contentReads), "skills/demo", "demo");
+        final ExecutionEnvironment env = ownedEnv(LocalExecutionEnvironmentProvider.builder().maxStagedBytes(100));
+        contentReads.clear();
+
+        assertThatThrownBy(() -> env.stage(loaded)).isInstanceOf(StagingException.class)
+                .hasMessageContaining(loaded.getTotalBytes() + " bytes exceeds the staging limit");
+        control.write("skills/demo/assets/big.bin", "x".repeat(300));
+        final long current = scan().getTotalBytes();
+        for (int call = 0; call < 3; call++) {
+            assertThatThrownBy(() -> env.stage(loaded)).isInstanceOf(StagingException.class)
+                    .hasMessageContaining(current + " bytes exceeds the staging limit of 100 bytes")
+                    .hasMessageContaining(".stageignore");
+        }
+
+        assertThat(contentReads).as("content reads of the skill's files").isEmpty();
+        assertThat(copies("demo")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a source that cannot report sizes is scanned in full instead, and is staged or refused all the same")
+    void overLimitAtLoadOnASourceWithoutMetadata() {
+        control.write("skills/demo/assets/big.bin", "x".repeat(500));
+        final VirtualFileSystem readSideOnly = new DelegatingFileSystem(control) {
+            @Override
+            public FileMetadata getMetadata(String path) {
+                throw new UnsupportedOperationException("read side only");
+            }
+        };
+        final StagedResource loaded = StagedResource.scan(readSideOnly, "skills/demo", "demo");
+        final ExecutionEnvironment env = ownedEnv(LocalExecutionEnvironmentProvider.builder().maxStagedBytes(100));
+        assertThatThrownBy(() -> env.stage(loaded)).isInstanceOf(StagingException.class)
+                .hasMessageContaining(loaded.getTotalBytes() + " bytes exceeds the staging limit");
+
+        control.write("skills/demo/assets/big.bin", "x".repeat(300));
+        assertThatThrownBy(() -> env.stage(loaded)).isInstanceOf(StagingException.class)
+                .hasMessageContaining(scan().getTotalBytes() + " bytes exceeds the staging limit");
+        control.write("skills/demo/.stageignore", "assets/\n");
+
+        assertThat(env.stage(loaded)).endsWith("/" + scan().getContentKey());
+    }
+
+    @Test
+    @DisplayName("an assembled resource recorded over the limit keeps the plain refusal: its directory is not looked"
+            + " at, however small it has become")
+    void handBuiltOverLimitIsRefusedAsRecorded() {
+        final StagedResource subset = handBuiltSubset();
+        final List<String> listed = new ArrayList<>();
+        final VirtualFileSystem source = new DelegatingFileSystem(control) {
+            @Override
+            public List<String> listRecursive(String directory) {
+                listed.add(directory);
+                return super.listRecursive(directory);
+            }
+        };
+        final StagedResource big = StagedResource.builder().sourceFileSystem(source).sourceDir("repo/tool").name("tool")
+                .contentKey(subset.getContentKey()).totalBytes(5000).files(List.of("run.sh")).build();
+        final ExecutionEnvironment env = ownedEnv(LocalExecutionEnvironmentProvider.builder().maxStagedBytes(100));
+
+        assertThatThrownBy(() -> env.stage(big)).isInstanceOf(StagingException.class)
+                .hasMessageContaining("5000 bytes exceeds the staging limit of 100 bytes");
+
+        assertThat(listed).isEmpty();
+        assertThat(copies("tool")).isEmpty();
+    }
+
+    /** The control store, with every content read made through it recorded ({@code .stageignore} aside). */
+    private VirtualFileSystem countingReads(List<String> contentReads) {
+        return new DelegatingFileSystem(control) {
+            @Override
+            public InputStream read(String path) {
+                if (!path.endsWith(StagedResource.STAGE_IGNORE_FILE)) {
+                    contentReads.add(path);
+                }
+                return super.read(path);
+            }
+
+            @Override
+            public InputStream openInputStream(String path) {
+                contentReads.add(path);
+                return super.openInputStream(path);
+            }
+        };
     }
 
     /** {@code repo/tool} holds a script and a secret; the resource lists the script only, as SPI code may. */

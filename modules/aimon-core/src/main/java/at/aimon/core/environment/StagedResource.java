@@ -33,7 +33,8 @@ import at.aimon.core.filesystem.VirtualFileSystem;
  *
  * <p>
  * A source needs only the read side of {@link VirtualFileSystem}: {@code exists}, {@code isDirectory},
- * {@code listRecursive} and {@code read}/{@code openInputStream}.
+ * {@code listRecursive} and {@code read}/{@code openInputStream}. {@link #sizeOf} additionally asks for
+ * {@code getMetadata}, and its callers do without it when the source has none.
  *
  * <p>
  * The key is computed when the registry loads the resource, not on every {@code stage()} call, so staging never
@@ -95,15 +96,7 @@ public final class StagedResource {
         Objects.requireNonNull(directory, "directory must not be null");
         Objects.requireNonNull(name, "name must not be null");
         final String dir = trimTrailingSlash(directory);
-        final List<String> relPaths = new ArrayList<>();
-        if (fileSystem.exists(dir) && fileSystem.isDirectory(dir)) {
-            for (String path : fileSystem.listRecursive(dir)) {
-                relPaths.add(relativize(dir, path));
-            }
-        }
-        final StageIgnore ignore = readStageIgnore(fileSystem, dir);
-        relPaths.removeIf(ignore::ignored);
-        relPaths.sort(null);
+        final List<String> relPaths = fileSet(fileSystem, dir);
 
         final ContentKeyBuilder hasher = new ContentKeyBuilder();
         final List<String> hashed = new ArrayList<>();
@@ -126,6 +119,50 @@ public final class StagedResource {
         // Not a builder method: only this scan can say that the file list is the directory's.
         builder.scanned = true;
         return builder.build();
+    }
+
+    /**
+     * The size {@link #scan} would record for a directory as it is now, taken from
+     * {@link VirtualFileSystem#getMetadata file metadata}: the same file set — the listing less what
+     * {@code .stageignore} excludes — and no file content read apart from {@code .stageignore} itself. It is how a
+     * provider can tell that a resource is still too large to stage without reading it again.
+     *
+     * <p>
+     * Unlike {@code scan}, this needs {@code getMetadata} of the source. A source that has only the read side throws
+     * from here, and the caller falls back to scanning.
+     *
+     * @param fileSystem
+     *            the source filesystem (must not be null)
+     * @param directory
+     *            the directory on it (must not be null)
+     * @return the sum of the sizes of the files {@code scan} would hash; 0 for a missing directory
+     * @throws RuntimeException
+     *             whatever the source filesystem throws when the directory cannot be listed or a file's metadata
+     *             cannot be read
+     */
+    public static long sizeOf(VirtualFileSystem fileSystem, String directory) {
+        Objects.requireNonNull(fileSystem, "fileSystem must not be null");
+        Objects.requireNonNull(directory, "directory must not be null");
+        final String dir = trimTrailingSlash(directory);
+        long total = 0;
+        for (String rel : fileSet(fileSystem, dir)) {
+            total += fileSystem.getMetadata(join(dir, rel)).getSize();
+        }
+        return total;
+    }
+
+    /** The file-set rule: the recursive listing, less what {@code .stageignore} excludes, sorted. */
+    private static List<String> fileSet(VirtualFileSystem fileSystem, String dir) {
+        final List<String> relPaths = new ArrayList<>();
+        if (fileSystem.exists(dir) && fileSystem.isDirectory(dir)) {
+            for (String path : fileSystem.listRecursive(dir)) {
+                relPaths.add(relativize(dir, path));
+            }
+        }
+        final StageIgnore ignore = readStageIgnore(fileSystem, dir);
+        relPaths.removeIf(ignore::ignored);
+        relPaths.sort(null);
+        return relPaths;
     }
 
     private static String unreadable(String rel, String name, Exception e) {

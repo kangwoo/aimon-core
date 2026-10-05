@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/skill/builtin-agent-skill-guide.md
-source_commit: a88a1c2f
+source_commit: ff0e6ff2
 ---
 
 # Built-in Agent/Skill Guide
@@ -424,6 +424,8 @@ that path as well.
   changes only when the registry is reloaded or the application is restarted.
 - **`.stageignore`** (a gitignore subset: globs, `dir/`, `!`, `#`) in the skill directory keeps large assets out of the
   copy. One skill directory stages at most 50 MB by default (starter property `aimon.environment.staging.max-bytes`).
+  A skill refused for being over the limit stages from the next call on, without a restart, once the large files are
+  excluded with `.stageignore` or deleted. While it is still over, the error gives its current size in bytes.
 - **A skill installed as a link.** In the `skills/` directory of a bundle read from disk, a skill directory — or a
   file or directory inside one — may be a symbolic link. A link is followed only when its real path lies inside
   `skills/` or inside an **allowed link root**; a skill with a link that points anywhere else is not loaded (that skill

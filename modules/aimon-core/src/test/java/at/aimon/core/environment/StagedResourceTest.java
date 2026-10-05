@@ -166,4 +166,24 @@ class StagedResourceTest {
                 .filter(m -> !m.isSynthetic()).map(java.lang.reflect.Method::getName)).containsExactlyInAnyOrder(
                         "sourceFileSystem", "sourceDir", "contentKey", "name", "totalBytes", "files", "build");
     }
+
+    @Test
+    @DisplayName("sizeOf is the size scan would record, .stageignore applied, without reading a file's content")
+    void sizeOfMatchesScanWithoutReading() {
+        control.write("skills/demo/.stageignore", "templates/\n");
+        final java.util.List<String> reads = new java.util.ArrayList<>();
+        final VirtualFileSystem counting = new DelegatingFileSystem(control) {
+            @Override
+            public InputStream read(String path) {
+                reads.add(path);
+                return super.read(path);
+            }
+        };
+
+        final long size = StagedResource.sizeOf(counting, "skills/demo/");
+
+        assertThat(reads).containsExactly("skills/demo/.stageignore");
+        assertThat(size).isEqualTo(StagedResource.scan(control, "skills/demo", "demo").getTotalBytes());
+        assertThat(StagedResource.sizeOf(control, "skills/none")).isZero();
+    }
 }
