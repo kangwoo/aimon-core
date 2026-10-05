@@ -216,6 +216,16 @@ source_commit: eec9ccd
 실제로 오픈소스 전환 스쿼시가 32건 중 19건의 SHA 를 한 번에 없앴고, 두 발견이 exit code 를 공유한
 탓에 그 상태로 계속 초록이었다.
 
+**frontmatter 는 `key: value` 줄로만 쓴다.** 이 블록은 두 파서가 읽는다 — 검사 스크립트의 줄 정규식과
+mkdocs 의 YAML. YAML 이 거부하는 줄이 하나라도 있으면(값 안의 `: `, 백틱이나 `[` 로 시작하는 값, 키의 콜론
+뒤에 공백이 없는 줄) mkdocs 는 블록을 통째로 본문으로 발행하고 `mkdocs build --strict` 는 그때도 초록이다.
+그래서 `python3 scripts/check-translation-structure.py` 가 번역본과 사이트 페이지의 frontmatter 를 두 파서가
+똑같이 읽는 모양으로 제한한다: 값은 글자·숫자·`_`·`.`·`/` 로 시작하는 맨 값이거나 큰따옴표로 감싼 값이고,
+빈 줄·주석·들여쓰기·목록은 쓰지 않는다. `translated_from` 과 `source_commit` 은 따옴표 없이 쓴다. 숫자만으로 된
+SHA 약어(`1234567`)는 YAML 이 정수로 읽으므로 글자가 들어갈 때까지 길게 쓴다(`git rev-parse --short=12`).
+실패 메시지가 무엇을 쓸지 말해 준다. 근거는
+[`translation-structure-check.md`](../design/documentation/translation-structure-check.md) §4.6.
+
 히스토리 재작성으로 적어 둔 SHA 가 사라졌다면, 정본이 **번역한 그 상태로** 담겨 있는 가장 오래된
 커밋을 겨눈다. 그리고 겨누기 전에 정말 그 상태인지 확인한다 — 어긋난 번역에 붙은 해석 가능한 SHA 는
 해석 불가보다 나쁘다. 침묵은 모른다고 말하지만 그것은 안다고 거짓말한다.

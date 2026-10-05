@@ -84,6 +84,36 @@ whatever the pair's state. The one that does look at state is the
 self-invalidation rule -- "this axis matches again, drop the exemption" -- whose
 trigger depends on both files, so it fails only on a FRESH pair.
 
+FRONT MATTER NOTATION is checked for every key, not only the two above (backlog
+T-3). The failure those two guard against is not theirs alone: any line YAML
+refuses makes mkdocs publish the whole block as page text with `--strict` green,
+and `translated_from: docs/a: b.md` does it as well as an unquoted reason. Since
+YAML cannot be asked (nothing is pip-installed where this runs), every front
+matter the site or these scripts read is held to a subset decidable with line
+patterns, inside which the two parsers were measured to agree:
+
+    key: value                  plain: starts with a letter, a digit, `_`, `.` or
+    other_key: "quoted value"   `/`; no `: `, no ` #`, no trailing `:`; not a YAML
+                                number, boolean, null or date. quoted: `"..."`
+                                with no `"` or `\\` inside and nothing after
+
+and nothing else -- no blank or comment line, no indentation, no tab, no list or
+nested mapping, no repeated key, no empty value; fences exactly `---`.
+`translated_from` and `source_commit` must be plain, since the scripts use them
+by value. The rule, the reasons and each sentence it prints are
+docs_tree.front_matter_defects'; this script points it at two populations --
+every translation (with the pair's other declaration defects, EXIT 1 whatever the
+pair's state) and every other page the site builds (not pairs, so counted on
+their own summary line). Files neither the site nor these scripts read front
+matter from -- agent and skill definitions, .claude/rules -- are not in scope:
+their own parsers read real YAML, and 46 of those 66 files are outside this subset.
+
+`--self-test` therefore has two halves. The first swaps one axis pattern at a
+time and holds the corpus still. The second holds the notation rule to one front
+matter per case, each labelled with what mkdocs was measured to do with it, and
+never reads the tree: with nothing to reject there, the cases are the only place
+the rule is seen rejecting.
+
 Usage:
     python3 scripts/check-translation-structure.py [--github]
     python3 scripts/check-translation-structure.py --self-test
@@ -91,8 +121,9 @@ Usage:
 import re
 import sys
 
-from docs_tree import (FRESH, FRONT_MATTER, ROOT, canonical_of, frontmatter, git,
-                       is_shallow_clone, pair_state, translations)
+from docs_tree import (FRESH, FRONT_MATTER, FRONT_MATTER_KEY, ROOT, canonical_of,
+                       front_matter_defects, frontmatter, git, is_shallow_clone, markdown_files,
+                       pair_state, site_tree, translation_suffix, translations)
 
 # --- the axes ---------------------------------------------------------------
 
@@ -310,6 +341,35 @@ def read_exemptions(meta):
     return tuple(axes), []
 
 
+# --- front matter notation --------------------------------------------------
+
+EXEMPTION_KEYS = ("structure_exempt", "structure_exempt_reason")
+
+
+def notation_defects(path, site, exemption_defects=()):
+    """Sentences for every line of `path`'s front matter outside the readable subset.
+
+    The subset and the reason for it are docs_tree.front_matter_defects'. This
+    only decides two things that function cannot: whether mkdocs builds the file,
+    and whether a line is already reported. `read_exemptions` owns the two
+    exemption keys and holds them to a narrower shape with its own sentence, so
+    when it has spoken, the general sentence about the same line is dropped --
+    two findings for one unquoted reason reads as two problems.
+    """
+    text = path.read_text(encoding="utf-8", errors="replace")
+    built = site is not None and site.builds(path)
+    out = []
+    for number, key, why in front_matter_defects(text, site_page=built):
+        if exemption_defects and key in EXEMPTION_KEYS:
+            continue
+        out.append(f"front matter, line {number}: {why}")
+    return out
+
+
+def has_front_matter(path):
+    return FRONT_MATTER.match(path.read_text(encoding="utf-8", errors="replace")) is not None
+
+
 # --- reporting --------------------------------------------------------------
 
 class Finding:
@@ -466,13 +526,190 @@ def self_test():
     return 0
 
 
+# --- the notation regression ------------------------------------------------
+#
+# The tree holds nothing the notation rule rejects, so this is the only place the
+# rule is seen to reject anything. One front matter per case, never the tree's.
+#
+# The middle column is what mkdocs 1.6.1 (PyYAML, through mkdocs.utils.meta.
+# get_data) was MEASURED to do with that block on 2026-10-05, and is why the case
+# is there:
+#
+#   LEAK   YAML refuses the block or reads a non-mapping; get_data() returns no
+#          metadata and leaves the block in the page, which the site publishes
+#   DIFF   mkdocs reads the block, and holds a different key set or a different
+#          value from the one FRONT_MATTER_KEY reads
+#   same   the two read the same thing
+#
+# That column is a record, not something this run re-measures: nothing here
+# imports yaml, for the reason docs_tree.FRONT_MATTER is a regex. What the run
+# asserts is the third column -- that the rule still rejects every LEAK and DIFF
+# with a sentence naming the cause, still accepts the `same` forms it means to,
+# and still rejects the `same` forms the subset leaves out on purpose.
+
+_TWO = "translated_from: docs/a.md\nsource_commit: eec9ccd"
+_NOTE = _TWO + "\nnote: "
+
+NOTATION_CASES = [
+    # (what, mkdocs measured, front matter block, expected substring -- None = accepted)
+    ("the two keys every translation carries", "same", _TWO, None),
+    ("a colon with no space after it in a value", "same",
+     "translated_from: docs/a:b.md\nsource_commit: eec9ccd", None),
+    ("a backtick in the middle of a value", "same",
+     "translated_from: docs/`a`.md\nsource_commit: eec9ccd", None),
+    ("a `#` with no space before it", "same",
+     "translated_from: docs/a.md#x\nsource_commit: eec9ccd", None),
+    ("an abbreviation that only looks numeric (`12e4567`, `0189456`)", "same",
+     "translated_from: docs/a.md\nsource_commit: 12e4567\nother: 0189456", None),
+    ("a version string", "same", _NOTE + "0.2.4", None),
+    ("a comma string, the exemption list's form", "same",
+     _TWO + "\nstructure_exempt: list-items, fences", None),
+    ("Korean plain text", "same", _NOTE + "\ud55c\uae00 \uac12 \ud558\ub098", None),
+    ("brackets and quotes in the middle of a plain value", "same",
+     _NOTE + "see [a](b.md), it's \"fine\"", None),
+    ("a quoted value holding a colon, a backtick and a bracket", "same (minus the quotes)",
+     _NOTE + '"\ud45c \uc81c\ubaa9: `a` [b]"', None),
+
+    ("a colon followed by a space in a value", "LEAK",
+     "translated_from: docs/a: b.md\nsource_commit: eec9ccd", "colon followed by a space"),
+    ("a value ending in a colon", "LEAK",
+     "translated_from: docs/a.md:\nsource_commit: eec9ccd", "colon followed by a space"),
+    ("a value opening with a backtick", "LEAK",
+     "translated_from: `docs/a.md`\nsource_commit: eec9ccd", "starts with '`'"),
+    ("a value opening with `*`", "LEAK", _NOTE + "*emphasis* first", "starts with '*'"),
+    ("a value opening with `[` and never closing", "LEAK", _NOTE + "[a", "starts with '['"),
+    ("no space after the key's colon", "LEAK",
+     "translated_from:docs/a.md\nsource_commit: eec9ccd", "no space after the colon"),
+    ("an indented key", "LEAK",
+     "translated_from: docs/a.md\n  source_commit: eec9ccd", "is indented"),
+    ("a quoted value with text after the closing quote", "LEAK",
+     _NOTE + '"a" b', "nothing after the closing quote"),
+    ("a quoted value never closed", "LEAK", _NOTE + '"a', "nothing after the closing quote"),
+    ("a block holding only a comment", "LEAK", "# nothing", "is a comment"),
+    ("an empty block", "LEAK", "", "is blank"),
+
+    ("a flow list", "DIFF", _NOTE + "[a, b]", "starts with '['"),
+    ("a block list", "DIFF", _TWO + "\ntags:\n  - a\n  - b", "tags: has no value"),
+    ("a list item at column 0", "LEAK", _TWO + "\n- a", "is a YAML list item"),
+    ("a nested mapping", "DIFF", _TWO + "\nsearch:\n  exclude: true", "search: has no value"),
+    ("a plain value continued on the next line", "DIFF", _NOTE + "one\n  two", "is indented"),
+    ("an empty value", "DIFF", "translated_from: docs/a.md\nsource_commit:",
+     "source_commit: has no value"),
+    ("a space and `#` in a value", "DIFF",
+     "translated_from: docs/a.md #x\nsource_commit: eec9ccd", "as a comment"),
+    ("an all-digit abbreviation", "DIFF", "translated_from: docs/a.md\nsource_commit: 1234567",
+     "git rev-parse --short=12 1234567"),
+    ("an all-digit abbreviation with a leading zero (mkdocs holds 42798)", "DIFF",
+     "translated_from: docs/a.md\nsource_commit: 0123456", "as a number"),
+    ("`yes`", "DIFF", _NOTE + "yes", 'as a boolean and the scripts read it as text'),
+    ("`null`", "DIFF", _NOTE + "null", "as null"),
+    ("a date", "DIFF", _NOTE + "2026-09-06", "as a date"),
+    ("a float", "DIFF", _NOTE + "1.5", "as a number"),
+    ("a sexagesimal (`1:30` is 90)", "DIFF", _NOTE + "1:30", "as a number"),
+    ("a single-quoted value", "DIFF", _NOTE + "'a'", "starts with \"'\""),
+    ("a quoted value with a backslash (YAML unescapes it)", "DIFF", _NOTE + '"a\\b"',
+     "neither `\"` nor `\\`"),
+    ("translated_from in quotes (the scripts keep the quotes)", "DIFF",
+     'translated_from: "docs/a.md"\nsource_commit: eec9ccd', "Write it unquoted"),
+    ("a key with a hyphen (FRONT_MATTER_KEY does not read it)", "DIFF", _TWO + "\nmy-key: v",
+     "letters, digits and `_`"),
+
+    ("a blank line", "same -- left out", "translated_from: docs/a.md\n\nsource_commit: eec9ccd",
+     "is blank"),
+    ("a comment line", "same -- left out",
+     "translated_from: docs/a.md\n# note\nsource_commit: eec9ccd", "is a comment"),
+    ("a tab after the key's colon", "same -- left out",
+     "translated_from:\tdocs/a.md\nsource_commit: eec9ccd", "holds a tab"),
+    ("a key declared twice", "same -- left out", _TWO + "\ntranslated_from: docs/b.md",
+     "declared on line 2 too"),
+]
+
+# Whole files: the fences, and the reading mkdocs has when there is no fence.
+NOTATION_FILE_CASES = [
+    # (what, mkdocs measured, file text, site page, expected substring -- None = accepted)
+    ("no front matter at all", "same", "# Title\n\nBody.\n", True, None),
+    ("a `---` rule further down the page", "same", "# Title\n\n---\n\nBody.\n", True, None),
+    ("spaces after the opening `---`", "DIFF", "--- \n" + _TWO + "\n---\n\n# T\n", True,
+     "spaces or tabs after `---`"),
+    ("closed by `...`", "DIFF", "---\n" + _TWO + "\n...\n\n# T\n", True, "no later line closes it"),
+    ("a tab after the closing `---`", "DIFF", "---\n" + _TWO + "\n---\t\n\n# T\n", True,
+     "no later line closes it"),
+    ("the closing `---` is the file's last bytes", "LEAK", "---\n" + _TWO + "\n---", True,
+     "no later line closes it"),
+    ("a byte-order mark before the opening `---`", "DIFF", "\ufeff---\n" + _TWO + "\n---\n\n# T\n",
+     True, "byte-order mark"),
+    ("a site page opening with `Key: value` and no fence (mkdocs drops the lines)", "DIFF",
+     "Status: draft\nOwner: me\n\n# T\n", True, "MultiMarkdown"),
+    ("the same opening in a file the site does not build", "not read by mkdocs",
+     "Status: draft\nOwner: me\n\n# T\n", False, None),
+]
+
+
+def notation_self_test():
+    """Hold the notation rule to one front matter per case.
+
+    A case fails when the rule's verdict changes, or when it rejects for another
+    reason than the one named: a rule that still says "no" to a list but now says
+    it about the wrong line would otherwise pass as unchanged.
+    """
+    cases = [(what, measured, f"---\n{block}\n---\n\n# T\n", True, expected)
+             for what, measured, block, expected in NOTATION_CASES] + NOTATION_FILE_CASES
+
+    print()
+    print(f"front matter notation over {len(cases)} case(s)")
+    failed = 0
+    for what, measured, text, site_page, expected in cases:
+        sentences = [why for _, _, why in front_matter_defects(text, site_page=site_page)]
+        if expected is None:
+            good = not sentences
+            got = "accepted" if good else f"REJECTED: {sentences[0]}"
+        else:
+            good = any(expected in s for s in sentences)
+            got = ("rejected" if good else
+                   f"rejected for another reason: {sentences[0]}" if sentences else "ACCEPTED")
+        failed += not good
+        print(f"  {'ok  ' if good else 'FAIL'} {what}  [mkdocs: {measured}]  -> {got}")
+
+    # The two exemption keys have an owner with a narrower rule and its own
+    # sentence; the general rule must stand down on a line that owner reported.
+    doubled = FRONT_MATTER.match("---\n" + _TWO + "\nstructure_exempt: list-items\n"
+                                 "structure_exempt_reason: \ud45c \uc81c\ubaa9: \ub458\ub85c \uac08\ub9b0\ub2e4\n---\n")
+    meta = dict(FRONT_MATTER_KEY.findall(doubled.group(1)))
+    owner = read_exemptions(meta)[1]
+    general = [key for _, key, _ in front_matter_defects(doubled.group(0))]
+    good = len(owner) == 1 and general == ["structure_exempt_reason"]
+    failed += not good
+    print(f"  {'ok  ' if good else 'FAIL'} an unquoted reason holding `: ` is seen by both rules "
+          "(the owner's sentence is the one printed)")
+
+    if failed:
+        print()
+        print(f"{failed} notation case(s) failed. The subset is specified in scripts/docs_tree.py "
+              "above front_matter_defects(); a case whose verdict is MEANT to change needs that "
+              "comment, this table and docs/design/documentation/translation-structure-check.md "
+              "\u00a74.6 changed with it -- and the new form measured against mkdocs first.")
+        return 1
+    print()
+    print("the notation rule rejects every form mkdocs and the scripts read differently")
+    return 0
+
+
 def main():
     if "--self-test" in sys.argv:
-        return self_test()
+        # Both halves always run: stopping at the first would hide the second's verdict.
+        return max(self_test(), notation_self_test())
     github = "--github" in sys.argv
 
     in_repo = git("rev-parse", "--is-inside-work-tree") is not None
     shallow = is_shallow_clone() if in_repo else False
+
+    try:
+        site = site_tree()
+    except ValueError as unreadable:
+        # docs_tree.site_tree() refusing an exclude_docs it cannot match exactly.
+        # check-doc-links.py exits 2 on the same refusal, with the same sentence.
+        print(f"cannot tell which pages the site builds: {unreadable}")
+        return 2
 
     findings = []
     matching = 0
@@ -480,6 +717,7 @@ def main():
     exempt_axes_total = 0
     exempt_files = 0
     unknown_state = 0
+    notation_defective = 0
     skipped = []
 
     for translation in translations():
@@ -492,6 +730,12 @@ def main():
         # one line above a MISMATCH and an exit 1.
         exempt, defects = read_exemptions(meta)
         pair_findings = [Finding(rel, "hard", d) for d in defects]
+        # Notation is a declaration defect like the ones above: only whoever wrote
+        # this front matter can create or clear it, so it fails whatever the pair's
+        # state (design section 4.5).
+        unreadable = notation_defects(translation, site, defects)
+        pair_findings += [Finding(rel, "hard", d) for d in unreadable]
+        notation_defective += bool(unreadable)
         if exempt:
             exempt_axes_total += len(exempt)
             exempt_files += 1
@@ -555,8 +799,28 @@ def main():
         else:
             matching += 1
 
+    # The other files mkdocs reads front matter from: site pages that are not
+    # translations. No script reads their values, but the site still publishes the
+    # block as page text when YAML refuses it, and a block this cannot decide about
+    # is refused rather than waved through. They are not pairs, so they are counted
+    # on their own line and never among the pairs above.
+    canonical_pages = [p for p in markdown_files()
+                       if translation_suffix(p) is None and site is not None and site.builds(p)]
+    notation = {
+        "translations": len(translations()),
+        "pages": len(canonical_pages),
+        "with_block": sum(1 for p in canonical_pages if has_front_matter(p)),
+        "defective": notation_defective,
+    }
+    for page in canonical_pages:
+        sentences = notation_defects(page, site)
+        if sentences:
+            notation["defective"] += 1
+            rel = page.relative_to(ROOT).as_posix()
+            findings.extend(Finding(rel, "hard", s) for s in sentences)
+
     return report(findings, matching, mismatched_pairs, skipped, exempt_axes_total,
-                  exempt_files, unknown_state, shallow, in_repo, github)
+                  exempt_files, unknown_state, shallow, in_repo, github, notation)
 
 
 def axis_matches(a, b, axis, positional):
@@ -588,7 +852,7 @@ def _first_difference(x, y):
 
 
 def report(findings, matching, mismatched_pairs, skipped, exempt_axes_total,
-           exempt_files, unknown_state, shallow, in_repo, github):
+           exempt_files, unknown_state, shallow, in_repo, github, notation):
     hard = [f for f in findings if f.severity == "hard"]
     soft = [f for f in findings if f.severity == "soft"]
     advisory = [f for f in findings if f.severity == "advisory"]
@@ -601,6 +865,12 @@ def report(findings, matching, mismatched_pairs, skipped, exempt_axes_total,
     print(f"checked {total} pair(s): {matching} structurally identical, "
           f"{len(mismatched_pairs)} with findings, {len(skipped)} not comparable, "
           f"{exempt_axes_total} axis exemption(s) in {exempt_files} file(s)")
+    # Printed on every run for the reason the exemption total is: with nothing to
+    # catch, a rule that stopped reading looks like a rule that read and found
+    # nothing. The counts say what it was pointed at.
+    print(f"front matter notation: {notation['translations']} translation(s) and "
+          f"{notation['pages']} other site page(s) read; {notation['with_block']} of those "
+          f"pages carry front matter; {notation['defective']} file(s) outside the subset")
 
     by_file = {}
     for f in findings:
@@ -656,8 +926,9 @@ def report(findings, matching, mismatched_pairs, skipped, exempt_axes_total,
     if hard:
         print()
         print(f"{len(hard)} finding(s) failed: a translation that claims to be current "
-              "does not match its canonical's structure, or its exemption front matter "
-              "is malformed. See CONTRIBUTING.md, \"When writing a translation\".")
+              "does not match its canonical's structure, or a front matter is written in a "
+              "form mkdocs and these scripts do not read the same way. See CONTRIBUTING.md, "
+              "\"When writing a translation\".")
         return 1
     return 0
 
