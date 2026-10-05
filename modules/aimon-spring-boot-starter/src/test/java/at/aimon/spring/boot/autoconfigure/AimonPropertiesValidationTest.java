@@ -798,6 +798,40 @@ class AimonPropertiesValidationTest {
                         .resolve("prod-assistant").supportsReasoningSummary()).isFalse());
     }
 
+    // The three Boolean keys below had no property-string test on this surface (backlog L-14): the binding contract in
+    // AimonPropertiesBindingCoverageTest writes through bean setters and so never passes through Boot's binder, and
+    // the only place these names appeared here was as result assertions. Each is written alone, as text, with the
+    // value that is NOT ModelCapabilities.unknown()'s, so a name that failed to bind could not pass by default.
+
+    @Test
+    @DisplayName("supports-reasoning-effort binds from text and reaches the descriptor a client reads")
+    void theReasoningEffortFlagBinds() {
+        runner.withPropertyValues("aimon.llm.model-capabilities.prod-assistant.supports-reasoning-effort=true").run(
+                ctx -> assertThat(AimonProperties.modelCapabilityRegistry(ctx.getBean(AimonProperties.class).getLlm())
+                        .resolve("prod-assistant").supportsReasoningEffort()).isTrue());
+    }
+
+    @Test
+    @DisplayName("supports-tools-with-reasoning binds from text and reaches the descriptor a client reads")
+    void theToolsWithReasoningFlagBinds() {
+        runner.withPropertyValues("aimon.llm.model-capabilities.prod-assistant.supports-tools-with-reasoning=false")
+                .run(ctx -> assertThat(
+                        AimonProperties.modelCapabilityRegistry(ctx.getBean(AimonProperties.class).getLlm())
+                                .resolve("prod-assistant").supportsToolsWithReasoning())
+                        .isFalse());
+    }
+
+    @Test
+    @DisplayName("supports-reasoning-trace-round-trip binds from text and reaches the descriptor a client reads")
+    void theReasoningTraceRoundTripFlagBinds() {
+        runner.withPropertyValues(
+                "aimon.llm.model-capabilities.prod-assistant.supports-reasoning-trace-round-trip=true")
+                .run(ctx -> assertThat(
+                        AimonProperties.modelCapabilityRegistry(ctx.getBean(AimonProperties.class).getLlm())
+                                .resolve("prod-assistant").supportsReasoningTraceRoundTrip())
+                        .isTrue());
+    }
+
     @Test
     @DisplayName("a declaration replaces the built-in row for its name, and the full form is what keeps it")
     void aDeclarationReplacesTheBuiltInRowRatherThanPatchingIt() {
