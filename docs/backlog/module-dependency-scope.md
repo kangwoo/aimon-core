@@ -1,4 +1,4 @@
-# 백엔드 모듈의 POM 스코프와 테스트 클래스패스 버전 — 등록 항목 3건 (열림 3 · 결정 대기)
+# 백엔드 모듈의 POM 스코프와 테스트 클래스패스 버전 — 등록 항목 3건 (열림 2 · 닫힘 1)
 
 `.claude/rules/code-style.md` 와 `.claude/rules/architecture.md` 가 같은 규칙을 두 번 적고 있다 —
 **implementation 모듈은 `implementation(project(":aimon-core"))` 를 쓰고, 파사드만 `api()` 를 쓴다.**
@@ -215,7 +215,7 @@ Boot 올림이 여는 차이를 테스트가 발행 버전을 따라가게 해�
 **언제 다시 볼까**
 - 다음 차이가 검사가 아니라 읽기로 발견될 때
 - 다음 Spring Boot 또는 Testcontainers 버전 올림
-- D-2 를 결정할 때 — 받아들이는 쪽을 고르면 산문 목록이 한 번 더 늘어난다
+- ~~D-2 를 결정할 때 — 받아들이는 쪽을 고르면 산문 목록이 한 번 더 늘어난다~~ — D-2 는 2026-10-05 에 두 모듈 모두 맞추는 쪽으로 닫혔다. 받아들인 목록은 늘지 않았고, 대신 `shouldResolveConsistentlyWith` 를 쓰는 모듈이 하나에서 셋이 되어 아래 Gradle 트리거의 범위가 넓어졌다
 - Gradle 을 올릴 때 — `aimon-cli` 가 테스트 클래스패스를 맞추는 `shouldResolveConsistentlyWith` 는 `@Incubating` 이다
   (#120). 없어지면 모든 빌드가 설정 단계에서 멈춘다. 동작만 바뀌면 아무것도 실패하지 않은 채 그 모듈의 테스트가 다시
   `spring-boot-starter-test` 가 올린 버전 위에서 돌 수 있다. 그것을 알아챌 것이 이 검사다.
