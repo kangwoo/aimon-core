@@ -337,6 +337,144 @@ class PlaceholderExpandingParserTest {
     }
 
     @Nested
+    @DisplayName("Cost of a scan")
+    class ScanCost {
+
+        /**
+         * How many characters of the input the scan looked at. This, not a clock, is what the tests below bound: the
+         * pattern this scan replaced re-read the whole run of {@code $} from every position in it, which is a number
+         * of reads (about n²/2), and a machine that is ten times slower reads exactly as many characters. A bound on
+         * elapsed time would have had to guess at the machine; this one cannot be flaky.
+         */
+        private static final class CountingText implements CharSequence {
+            private final String text;
+            private long reads;
+
+            CountingText(String text) {
+                this.text = text;
+            }
+
+            @Override
+            public int length() {
+                return text.length();
+            }
+
+            @Override
+            public char charAt(int index) {
+                reads++;
+                return text.charAt(index);
+            }
+
+            @Override
+            public CharSequence subSequence(int start, int end) {
+                reads += end - start;
+                return text.subSequence(start, end);
+            }
+
+            @Override
+            public String toString() {
+                reads += text.length();
+                return text;
+            }
+        }
+
+        private static final int N = 100_000;
+
+        /** A few reads per character: once to scan, once to copy, and slack. n²/2 is 50,000 reads per character. */
+        private static final long READS_PER_CHARACTER = 8;
+
+        private void assertLinear(String written, String expected) {
+            final CountingText text = new CountingText(written);
+
+            final String expanded = PlaceholderExpandingParser.expand(text, STUB);
+
+            assertThat(expanded.length()).isEqualTo(expected.length());
+            assertThat(expanded.equals(expected)).as("expands as before").isTrue();
+            assertThat(text.reads).as("characters read for %d characters of input", written.length())
+                    .isLessThanOrEqualTo(READS_PER_CHARACTER * written.length());
+        }
+
+        @Test
+        @DisplayName("Should read a long run of $ that no placeholder follows a bounded number of times")
+        void aRunOfDollarsBeforeSomethingElseIsLinear() {
+            final String run = "$".repeat(N);
+            assertLinear(run + " ${X}", run + " stub-X");
+            assertLinear(run + "{", run + "{");
+            assertLinear(run + "{}", run + "{}");
+            assertLinear(run, run);
+        }
+
+        @Test
+        @DisplayName("Should read a long run of $ in front of a placeholder a bounded number of times")
+        void aRunOfDollarsBeforeAPlaceholderIsLinear() {
+            // N + 1 dollars: N / 2 literal ones and the one that opens the placeholder.
+            assertLinear("$".repeat(N + 1) + "{X}", "$".repeat(N / 2) + "stub-X");
+            assertLinear("$".repeat(N) + "{X}", "$".repeat(N / 2 - 1) + "${X}");
+        }
+
+        @Test
+        @DisplayName("Should read many unclosed placeholders a bounded number of times")
+        void unclosedPlaceholdersAreLinear() {
+            // The same shape one level in: every `${a` used to be followed to the end of the text looking for `}`.
+            final String unclosed = "${a".repeat(N / 3);
+            assertLinear(unclosed, unclosed);
+            assertLinear("${}".repeat(N / 3), "${}".repeat(N / 3));
+        }
+
+        @Test
+        @DisplayName("Should expand every short text exactly as the pattern it replaced did")
+        void theScanAgreesWithThePatternItReplaced() {
+            // The pattern the scan replaced, kept here as the definition of what it must still do. Every text of up
+            // to eight characters over the five characters that matter to it: 488,280 of them, which covers every
+            // way a run of `$`, a `{`, a `}` and a name can meet.
+            final java.util.regex.Pattern replaced = java.util.regex.Pattern.compile("(\\$*)\\$\\{([^}]+)}");
+            final char[] alphabet = {'$', '{', '}', 'a', ' '};
+            final Function<String, String> value = name -> "<" + name + "$$>";
+            final char[] text = new char[8];
+            long compared = 0;
+            for (int length = 0; length <= text.length; length++) {
+                final int[] digits = new int[length];
+                boolean more = true;
+                while (more) {
+                    for (int i = 0; i < length; i++) {
+                        text[i] = alphabet[digits[i]];
+                    }
+                    final String written = new String(text, 0, length);
+                    final java.util.regex.Matcher matcher = replaced.matcher(written);
+                    final StringBuilder expected = new StringBuilder();
+                    while (matcher.find()) {
+                        final int dollars = matcher.group(1).length() + 1;
+                        final String body = dollars % 2 == 0
+                                ? "{" + matcher.group(2) + "}"
+                                : value.apply(matcher.group(2));
+                        matcher.appendReplacement(expected,
+                                java.util.regex.Matcher.quoteReplacement("$".repeat(dollars / 2) + body));
+                    }
+                    matcher.appendTail(expected);
+
+                    if (!PlaceholderExpandingParser.expand(written, value).contentEquals(expected)) {
+                        fail("`%s` expands to `%s`, and the pattern gave `%s`", written,
+                                PlaceholderExpandingParser.expand(written, value), expected);
+                    }
+                    compared++;
+                    int position = length - 1;
+                    while (position >= 0 && ++digits[position] == alphabet.length) {
+                        digits[position--] = 0;
+                    }
+                    more = position >= 0;
+                }
+            }
+            assertThat(compared).isEqualTo(488_281L);
+        }
+
+        @Test
+        @DisplayName("Should read a value made of placeholders a bounded number of times")
+        void manyPlaceholdersAreLinear() {
+            assertLinear("${A}-".repeat(N / 5), "stub-A-".repeat(N / 5));
+        }
+    }
+
+    @Nested
     @DisplayName("Sibling key collisions")
     class SiblingKeyCollisions {
 
